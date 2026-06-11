@@ -3,7 +3,7 @@
  * Communicates with the background service worker via chrome.runtime.sendMessage.
  */
 
-import type { CipherclerkState, OriginPermissionDisplay } from "./types";
+import type { CipherclerkState, OriginPermissionDisplay, ProfileInfo, ReceiptEventSummary } from "./types";
 
 // ---------------------------------------------------------------------------
 // DOM Elements
@@ -33,6 +33,12 @@ const settingsBtn = document.getElementById("settingsBtn")!;
 const intentsBtn = document.getElementById("intentsBtn")!;
 const intentsSection = document.getElementById("intentsSection")!;
 const intentsContainer = document.getElementById("intentsContainer")!;
+const profileSelect = document.getElementById("profileSelect") as HTMLSelectElement;
+const profilePubkey = document.getElementById("profilePubkey")!;
+const newProfileName = document.getElementById("newProfileName") as HTMLInputElement;
+const createProfileBtn = document.getElementById("createProfileBtn") as HTMLButtonElement;
+const profileError = document.getElementById("profileError")!;
+const receiptsContainer = document.getElementById("receiptsContainer")!;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -132,6 +138,92 @@ async function loadLog(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// Identity profiles (mirrors `dregg id create / list / use`)
+// ---------------------------------------------------------------------------
+
+function showProfileError(text: string): void {
+  profileError.textContent = text;
+  profileError.style.display = text ? "block" : "none";
+}
+
+function renderProfiles(profiles: ProfileInfo[]): void {
+  profileSelect.innerHTML = "";
+  if (!profiles || profiles.length === 0) {
+    const opt = document.createElement("option");
+    opt.value = "";
+    opt.textContent = "--";
+    profileSelect.appendChild(opt);
+    profilePubkey.textContent = "";
+    return;
+  }
+  for (const p of profiles) {
+    const opt = document.createElement("option");
+    opt.value = p.name;
+    opt.textContent = p.active ? `${p.name} (active)` : p.name;
+    if (p.active) opt.selected = true;
+    profileSelect.appendChild(opt);
+  }
+  const active = profiles.find(p => p.active);
+  profilePubkey.textContent = active ? active.publicKeyHex : "";
+}
+
+async function loadProfiles(): Promise<void> {
+  const profiles = await sendMessage<ProfileInfo[]>("dregg:listProfiles");
+  renderProfiles(profiles || []);
+}
+
+profileSelect.addEventListener("change", async () => {
+  const name = profileSelect.value;
+  if (!name) return;
+  showProfileError("");
+  const result = await sendMessage<{ active?: string; error?: string }>("dregg:useProfile", { name });
+  if (result?.error) {
+    showProfileError(result.error);
+  }
+  await loadProfiles();
+  await loadReceipts();
+});
+
+createProfileBtn.addEventListener("click", async () => {
+  const name = newProfileName.value.trim();
+  if (!name) return;
+  showProfileError("");
+  createProfileBtn.disabled = true;
+  const result = await sendMessage<{ created?: ProfileInfo; error?: string }>("dregg:createProfile", { name });
+  createProfileBtn.disabled = false;
+  if (result?.error) {
+    showProfileError(result.error);
+    return;
+  }
+  newProfileName.value = "";
+  await loadProfiles();
+});
+
+// ---------------------------------------------------------------------------
+// Recent receipts (node SSE /api/events/stream; reading clears the badge)
+// ---------------------------------------------------------------------------
+
+async function loadReceipts(): Promise<void> {
+  const result = await sendMessage<{ receipts: ReceiptEventSummary[]; unseen: number }>("dregg:getRecentReceipts");
+  const receipts = result?.receipts || [];
+  if (receipts.length === 0) {
+    receiptsContainer.innerHTML = '<div class="empty">No receipts observed yet</div>';
+    return;
+  }
+  receiptsContainer.innerHTML = receipts.slice(0, 8).map(r => {
+    const short = r.receiptHash ? r.receiptHash.slice(0, 12) + "..." : "?";
+    const kinds = r.kinds && r.kinds.length > 0 ? r.kinds.join(", ") : "(no effect summary)";
+    const time = r.timestamp ? new Date(r.timestamp * 1000).toLocaleTimeString() : "";
+    const proof = r.hasProof ? " &#x2713;proof" : "";
+    return `<div class="log-entry">
+      <span style="font-family:monospace;color:#a78bfa;" title="${escapeHtml(r.receiptHash)}">${escapeHtml(short)}</span>
+      <span style="font-size:11px;"> ${escapeHtml(kinds)}${proof}</span>
+      <div class="time">${escapeHtml(r.finality || "")} · h${r.height} · ${escapeHtml(time)}</div>
+    </div>`;
+  }).join("");
+}
+
+// ---------------------------------------------------------------------------
 // Lock / Unlock
 // ---------------------------------------------------------------------------
 
@@ -156,6 +248,8 @@ lockBtn.addEventListener("click", async () => {
   }
   await refresh();
   await loadLog();
+  await loadProfiles();
+  await loadReceipts();
 });
 
 // ---------------------------------------------------------------------------
@@ -692,3 +786,5 @@ refreshQuotaBtn.addEventListener("click", loadStorageQuota);
 
 refresh();
 loadLog();
+loadProfiles();
+loadReceipts();

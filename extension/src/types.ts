@@ -150,6 +150,12 @@ export type MessageType =
   | "dregg:nodeIdentity"
   | "dregg:faucetFund"
   | "dregg:submitJsonTurn"
+  // Named identity profiles (mirrors `dregg id` / sdk profiles)
+  | "dregg:listProfiles"
+  | "dregg:createProfile"
+  | "dregg:useProfile"
+  // Receipt stream (node SSE /api/events/stream)
+  | "dregg:getRecentReceipts"
   // Node configuration
   | "dregg:getNodeConfig"
   | "dregg:setNodeConfig"
@@ -284,17 +290,50 @@ export interface CipherclerkState {
   needsPassphraseSetup: boolean;
   hasStealthKeys: boolean;
   stealthNotesCount: number;
+  /** Named identity profiles (public faces only). */
+  profiles: ProfileInfo[];
+  /** Name of the active profile. */
+  activeProfile: string;
   /** Whether the WASM cryptographic module finished loading successfully. */
   wasmReady: boolean;
   /** Load error message if the WASM module failed to initialize, else null. */
   wasmError: string | null;
 }
 
+/**
+ * A named identity profile — the extension-side mirror of the CLI/SDK
+ * `dregg id` profile store (`$DREGG_HOME/profiles/<name>.json`): an identity
+ * is a *name you chose*, not a hex key you pasted. Key material lives in the
+ * encrypted state envelope; this is the in-memory record.
+ */
+export interface ProfileEntry {
+  /** The chosen name: 1-64 chars of [a-z0-9-_] (same rule as the CLI). */
+  name: string;
+  publicKey: number[];
+  /** Null while locked. */
+  secretKey: number[] | null;
+  /** Unix ms at creation. */
+  createdAt: number;
+}
+
+/** A profile's public face (popup display). */
+export interface ProfileInfo {
+  name: string;
+  publicKeyHex: string;
+  createdAt: number;
+  active: boolean;
+}
+
 /** Internal full cipherclerk state (in-memory). */
 export interface InternalCipherclerkState {
   locked: boolean;
+  /** The ACTIVE profile's keypair (all signing paths read these). */
   publicKey: number[];
   secretKey: number[] | null;
+  /** All named profiles, including the active one. */
+  profiles: ProfileEntry[];
+  /** Name of the active profile (its keypair mirrors publicKey/secretKey). */
+  activeProfile: string;
   tokens: CapabilityToken[];
   receiptChain: string[];
   log: LogEntry[];
@@ -361,6 +400,35 @@ export interface SignTurnResult {
   outboxId?: string;
   error?: string;
   nodeResult?: Record<string, unknown>;
+  /** Receipt fields from the node's signed-turn commit response. */
+  receipt?: {
+    turnHash?: string;
+    proofStatus?: string;
+    witnessCount?: number;
+    finality?: string;
+  };
+}
+
+/**
+ * One committed receipt from the node's SSE stream
+ * (`/api/events/stream`, node/src/events.rs `ReceiptEvent`).
+ */
+export interface ReceiptEventSummary {
+  /** Position in the node's receipt chain — the SSE resume cursor. */
+  chainIndex: number;
+  receiptHash: string;
+  turnHash: string;
+  /** Cells this commit touched (hex), deduplicated. */
+  cells: string[];
+  /** Effect-kind summaries from the commit record. */
+  kinds: string[];
+  height: number;
+  /** Whether a STARK attestation was attached at send time. */
+  hasProof: boolean;
+  finality: string;
+  timestamp: number;
+  /** When the extension observed it (ms). */
+  seenAt: number;
 }
 
 export type OutboxStatus = "pending" | "submitting" | "submitted" | "failed";
@@ -373,6 +441,12 @@ export interface OutboxEntry {
   endpoint: string;
   method: "POST";
   body: string;
+  /**
+   * How `body` is stored: "utf8" (default; JSON/string bodies) or "base64"
+   * (raw byte bodies, e.g. postcard SignedTurn envelopes — decoded back to
+   * bytes at submit time).
+   */
+  bodyEncoding?: "utf8" | "base64";
   headers?: Record<string, string>;
   nodeUrl: string;
   turnId?: string;

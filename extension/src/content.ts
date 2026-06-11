@@ -84,9 +84,11 @@ async function requestOriginPermission(origin: string, method: string): Promise<
 // Forward requests from page -> background (with security checks).
 window.addEventListener(`dregg:request:${SESSION_NONCE}`, (async (event: Event): Promise<void> => {
   const customEvent = event as CustomEvent;
-  // Only accept trusted events (not synthetically dispatched).
-  if (!customEvent.isTrusted) return;
-
+  // NOTE: no isTrusted check — script-dispatched CustomEvents are NEVER
+  // trusted (isTrusted is true only for UA-generated events), so requiring it
+  // would drop every page request, including page.js's own. The channel's
+  // authentication is the per-injection SESSION_NONCE event name plus the
+  // per-origin/per-method allowlist below.
   const detail = customEvent.detail;
   if (!detail || !detail.type) return;
 

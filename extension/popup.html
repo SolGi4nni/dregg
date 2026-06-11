@@ -135,6 +135,27 @@
   <!-- Cipherclerk tab -->
   <div class="tab-content active" id="tab-cipherclerk">
     <div class="section">
+      <div class="section-title">Identity</div>
+      <div class="stat" style="align-items:center;">
+        <span>Profile</span>
+        <select id="profileSelect" style="background:#0f172a;color:#a78bfa;border:1px solid #374151;border-radius:6px;padding:4px 8px;font-size:12px;max-width:180px;">
+          <option value="">--</option>
+        </select>
+      </div>
+      <div class="ref-meta" id="profilePubkey" style="color:#6b7280;font-size:10px;font-family:monospace;word-break:break-all;padding:2px 12px;"></div>
+      <div style="display:flex;gap:6px;margin-top:6px;">
+        <input type="text" id="newProfileName" class="accept-input" placeholder="new profile name (a-z 0-9 - _)" style="margin-bottom:0;flex:1;">
+        <button id="createProfileBtn" class="small-btn" style="flex-shrink:0;">New</button>
+      </div>
+      <div id="profileError" style="display:none;color:#f87171;font-size:11px;padding:4px 0;"></div>
+    </div>
+    <div class="section">
+      <div class="section-title">Recent Receipts</div>
+      <div id="receiptsContainer">
+        <div class="empty">No receipts observed yet</div>
+      </div>
+    </div>
+    <div class="section">
       <div class="section-title">Tokens</div>
       <div class="stat">
         <span>Active tokens</span>

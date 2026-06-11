@@ -1,4 +1,4 @@
-import { test, expect } from '../fixtures/extension';
+import { test, expect, unlockPopup } from '../fixtures/extension';
 import { MockNode } from '../fixtures/node-mock';
 
 let mockNode: MockNode;
@@ -75,17 +75,19 @@ test.describe('Accept capability', () => {
   });
 
   test('accept with dregg:// URI triggers enliven flow', async ({ popup }) => {
+    // The clerk is locked at rest; enlivening requires the unlocked clerk.
+    await unlockPopup(popup);
     await popup.locator('.tab-btn[data-tab="capabilities"]').click();
-    const uri = 'dregg://node_mock_001/' + 'b'.repeat(64);
+    // Full sturdy-ref shape: dregg://<node>/<cell>/<secret>.
+    const uri = `dregg://node_mock_001/${'b'.repeat(64)}/mock_bearer_secret`;
     await popup.locator('#acceptUriInput').fill(uri);
     await popup.locator('#acceptCapBtn').click();
 
-    // Button should change to "..." while processing.
+    // The mock node's peer-exchange answers with a cap grant; the button
+    // reports the real success state.
     const btn = popup.locator('#acceptCapBtn');
-    await popup.waitForTimeout(300);
-    const text = await btn.textContent();
-    // Should show either "Accepted!" or error state.
-    expect(text).toMatch(/Accepted!|Failed|Accept Capability|\.\.\./);
+    await expect(btn).toHaveText('Accepted!', { timeout: 5000 });
+    expect(mockNode.state.lastPeerExchange).toMatchObject({ node_id: 'node_mock_001' });
   });
 });
 

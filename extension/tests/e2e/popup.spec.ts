@@ -1,12 +1,12 @@
-import { test, expect } from '../fixtures/extension';
+import { test, expect, unlockPopup } from '../fixtures/extension';
 
 test.describe('Tab navigation', () => {
-  test('all four tabs are present', async ({ popup }) => {
+  test('all five tabs are present', async ({ popup }) => {
     const tabs = popup.locator('.tab-btn');
-    await expect(tabs).toHaveCount(4);
+    await expect(tabs).toHaveCount(5);
 
     const tabTexts = await tabs.allTextContents();
-    expect(tabTexts).toEqual(['Cipherclerk', 'Caps', 'Directory', 'Storage']);
+    expect(tabTexts).toEqual(['Cipherclerk', 'Account', 'Caps', 'Directory', 'Storage']);
   });
 
   test('cipherclerk tab is active by default', async ({ popup }) => {
@@ -74,6 +74,9 @@ test.describe('Popup layout', () => {
   });
 
   test('all action buttons are present in cipherclerk tab', async ({ popup }) => {
+    // backupBtn (Show Recovery Phrase) only renders for an UNLOCKED clerk
+    // with a mnemonic; go through the real unlock flow first.
+    await unlockPopup(popup);
     await expect(popup.locator('#lockBtn')).toBeVisible();
     await expect(popup.locator('#backupBtn')).toBeVisible();
     await expect(popup.locator('#intentsBtn')).toBeVisible();

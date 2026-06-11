@@ -142,14 +142,29 @@ test.describe('Restricted methods', () => {
 
   test('unknown method is rejected with clear error', async ({ context }) => {
     const page = await context.newPage();
+    // The content script removes the injected page.js script tag (with its
+    // data-dregg-nonce) once loaded, so harvest the session nonce from the
+    // event channel itself: wrap dispatchEvent before page.js loads and
+    // capture the `dregg:request:<nonce>` type of its first real request.
+    await page.addInitScript(() => {
+      (window as any).__dreggNonce = null;
+      const orig = window.dispatchEvent.bind(window);
+      window.dispatchEvent = ((ev: Event) => {
+        const m = /^dregg:request:(.+)$/.exec(ev?.type || '');
+        if (m) (window as any).__dreggNonce = m[1];
+        return orig(ev);
+      }) as typeof window.dispatchEvent;
+    });
     await page.goto('https://example.com');
     await page.waitForFunction(() => 'dregg' in window, null, { timeout: 5000 });
 
     // Try to call a method that does not exist via the internal sendMessage.
     const result = await page.evaluate(async () => {
       try {
+        // Trigger one legitimate call so the wrapper observes the nonce.
+        await (window as any).dregg.isConnected();
         // Dispatch a raw event with an unknown method type.
-        const nonce = document.querySelector('script[data-dregg-nonce]')?.getAttribute('data-dregg-nonce');
+        const nonce = (window as any).__dreggNonce;
         if (!nonce) return { error: 'no nonce found' };
 
         return new Promise((resolve) => {
@@ -170,10 +185,10 @@ test.describe('Restricted methods', () => {
         return { error: e.message };
       }
     });
-    // Should receive an error about the method not being available.
-    if (result && 'error' in result && !('timeout' in result)) {
-      expect((result as any).error).toContain('not available');
-    }
+    // Must receive the content script's clear rejection — a silent timeout
+    // would mean unknown methods are dropped instead of refused.
+    expect(result && 'error' in result, `expected an error, got ${JSON.stringify(result)}`).toBe(true);
+    expect((result as any).error).toContain('not available');
     await page.close();
   });
 });

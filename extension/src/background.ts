@@ -6,6 +6,8 @@
 
 import { nodeRequest, nodeRequestRaw, getNodeHeaders } from "./api";
 import { compatSession, extensionPrefix, isExtensionPageUrl } from "./browser-compat";
+import { explainTurn } from "./explain";
+import { createSseParser } from "./sse";
 import type {
   AuthorizeRequest,
   AuthorizeResult,
@@ -32,6 +34,9 @@ import type {
   PageResponseMessage,
   PredicateFact,
   PredicateProofResult,
+  ProfileEntry,
+  ProfileInfo,
+  ReceiptEventSummary,
   ReceiptWitnessArtifacts,
   DreggWasm,
   SignTurnResult,
@@ -78,6 +83,14 @@ const WS_AUTH_TIMEOUT_MS = 5000;
 const OUTBOX_MAX_ENTRIES = 200;
 const OUTBOX_FLUSH_INTERVAL_MS = 30_000;
 const OUTBOX_ALARM_NAME = "dregg-outbox-flush";
+// Receipt stream (node SSE /api/events/stream).
+const RECENT_RECEIPTS_KEY = "dregg_recent_receipts";
+const RECENT_RECEIPTS_MAX = 50;
+const RECEIPT_STREAM_MAX_BACKOFF_MS = 60_000;
+// Per-profile mnemonics for profiles created after the first (the first
+// profile's mnemonic stays at MNEMONIC_KEY for migration compatibility).
+const PROFILE_MNEMONICS_KEY = "dregg_profile_mnemonics_encrypted";
+const DEFAULT_PROFILE_NAME = "default";
 
 // ---------------------------------------------------------------------------
 // Node configuration
@@ -106,6 +119,7 @@ async function saveNodeConfig(config: Partial<NodeConfig>): Promise<void> {
     nodeWs = null;
   }
   connectNodeWs();
+  restartReceiptStream();
 }
 
 // ---------------------------------------------------------------------------
@@ -123,7 +137,10 @@ declare const __dregg_wasm_init: (() => Promise<DreggWasm>) | undefined;
 const wasmReady = (async (): Promise<void> => {
   try {
     try {
-      importScripts("./dregg_wasm.js");
+      // Absolute URL: the SW lives at dist/background.js, the wasm-bindgen
+      // no-modules glue at the extension root — a "./" relative path would
+      // (silently) look in dist/ and leave the broken fallback to run.
+      importScripts(chrome.runtime.getURL("dregg_wasm.js"));
     } catch (_importErr) {
       // importScripts failed -- dev mode, fall through.
     }
@@ -577,11 +594,35 @@ function outboxBackoffMs(attempts: number): number {
   return Math.min(5 * 60_000, 2_000 * Math.max(1, Math.pow(2, Math.min(attempts, 7))));
 }
 
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary);
+}
+
+function base64ToBytes(b64: string): Uint8Array {
+  return Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+}
+
+function hexToBytes(hex: string): Uint8Array {
+  const out = new Uint8Array(hex.length >> 1);
+  for (let i = 0; i < out.length; i++) {
+    out[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+  }
+  return out;
+}
+
+/** Materialize an outbox entry's stored body for fetch. */
+function outboxBody(entry: { body: string; bodyEncoding?: "utf8" | "base64" }): string | Uint8Array {
+  return entry.bodyEncoding === "base64" ? base64ToBytes(entry.body) : entry.body;
+}
+
 async function enqueueOutboxEntry(input: {
   kind: OutboxEntry["kind"];
   label: string;
   endpoint: string;
   body: string;
+  bodyEncoding?: "utf8" | "base64";
   headers?: Record<string, string>;
   turnId?: string;
   metadata?: Record<string, unknown>;
@@ -607,6 +648,7 @@ async function enqueueOutboxEntry(input: {
     endpoint: input.endpoint,
     method: "POST",
     body: input.body,
+    bodyEncoding: input.bodyEncoding,
     headers: input.headers,
     nodeUrl: nodeConfig.nodeUrl,
     turnId: input.turnId,
@@ -655,6 +697,134 @@ async function submitNodeJsonWithOutbox<T = unknown>(input: {
   return { submitted: false, queued: true, outboxId: entry.id, error: entry.lastError || "queued" };
 }
 
+async function submitNodeBytesWithOutbox<T = unknown>(input: {
+  kind: OutboxEntry["kind"];
+  label: string;
+  endpoint: string;
+  body: Uint8Array;
+  headers?: Record<string, string>;
+  turnId?: string;
+  metadata?: Record<string, unknown>;
+}): Promise<OutboxSubmitResult<T>> {
+  const headers = { "Content-Type": "application/octet-stream", ...(input.headers || {}) };
+  const resp = await nodeRequest<T>(nodeConfig, input.endpoint, {
+    method: "POST",
+    body: input.body as unknown as BodyInit,
+    headers,
+  });
+  if (resp.ok) return { submitted: true, data: resp.data };
+  if (!shouldQueueNodeFailure(resp as NodeRequestResult<unknown>)) {
+    return { submitted: false, queued: false, error: resp.error || "node rejected submission", status: resp.status };
+  }
+  const entry = await enqueueOutboxEntry({
+    kind: input.kind,
+    label: input.label,
+    endpoint: input.endpoint,
+    body: bytesToBase64(input.body),
+    bodyEncoding: "base64",
+    headers,
+    turnId: input.turnId,
+    metadata: input.metadata,
+    error: resp.error || "node unavailable",
+  });
+  return { submitted: false, queued: true, outboxId: entry.id, error: entry.lastError || "queued" };
+}
+
+/** The node's signed-turn commit response (`SubmitSignedTurnResponse`). */
+interface SubmitSignedTurnResponse {
+  accepted?: boolean;
+  turn_hash?: string | null;
+  signer?: string | null;
+  action_count?: number;
+  proof_status?: string;
+  has_witness?: boolean;
+  witness_count?: number;
+  error?: string | null;
+}
+
+/**
+ * Wrap signed postcard `Turn` bytes in the `SignedTurn` envelope the node's
+ * `/turns/submit` (alias `/api/turns/submit-signed`) expects, and submit.
+ *
+ * `SignedTurn { turn: Turn, signature: Signature, signer: PublicKey }`
+ * postcard-serializes as the concatenation of its fields; `Signature` /
+ * `PublicKey` serialize their inner arrays as byte slices (one varint length
+ * byte — 0x40 / 0x20 — then the raw bytes). The signature is Ed25519 over the
+ * canonical `Turn::hash` (v3) — exactly the `turn_id` the wasm signer
+ * returned — which the node re-derives and verifies, then checks
+ * `turn.agent == CellId::derive_raw(signer, blake3("default"))`.
+ *
+ * This replaces the legacy JSON `{turn_id, turn_bytes, sender_pubkey}` body,
+ * which the current node (postcard `SignedTurn` decoder) rejects outright.
+ */
+async function submitSignedTurnBytes(input: {
+  turnBytes: Uint8Array;
+  turnIdHex: string;
+  secretKey: number[];
+  publicKey: number[];
+  label: string;
+  metadata?: Record<string, unknown>;
+}): Promise<OutboxSubmitResult<SubmitSignedTurnResponse>> {
+  requireWasm("submitSignedTurn");
+  const w = wasm!;
+  const turnHash = hexToBytes(input.turnIdHex);
+  const signature = w.sign_message(new Uint8Array(input.secretKey), turnHash);
+  const envelope = new Uint8Array(input.turnBytes.length + 1 + 64 + 1 + 32);
+  let off = 0;
+  envelope.set(input.turnBytes, off); off += input.turnBytes.length;
+  envelope[off++] = 0x40; // varint len 64 (Signature inner slice)
+  envelope.set(signature, off); off += 64;
+  envelope[off++] = 0x20; // varint len 32 (PublicKey inner slice)
+  envelope.set(new Uint8Array(input.publicKey), off);
+
+  const headers: Record<string, string> = {};
+  if (nodeConfig.devnetKey) headers["Authorization"] = `Bearer ${nodeConfig.devnetKey}`;
+  return submitNodeBytesWithOutbox<SubmitSignedTurnResponse>({
+    kind: "turn",
+    label: input.label,
+    endpoint: "/api/turns/submit-signed",
+    body: envelope,
+    headers,
+    turnId: input.turnIdHex,
+    metadata: input.metadata,
+  });
+}
+
+/**
+ * Canonicalize + submit a wasm-built turn.
+ *
+ * The `cipherclerk_*` turn builders return `turn_id = blake3(turn_bytes)` —
+ * an encoding hash, NOT the canonical `Turn::hash` (v3) the node verifies the
+ * `SignedTurn` envelope signature against. Route the built bytes through
+ * `sign_turn_v3` (idempotent for already-signed actions) to obtain the
+ * canonical hash + re-encoded bytes, then submit on the signed-byte path.
+ */
+async function signAndSubmitBuiltTurn(input: {
+  turnBytes: Uint8Array;
+  secretKey: number[];
+  publicKey: number[];
+  label: string;
+  metadata?: Record<string, unknown>;
+}): Promise<{ turnId: string; submit: OutboxSubmitResult<SubmitSignedTurnResponse> } | { error: string }> {
+  requireWasm("signAndSubmitBuiltTurn");
+  const w = wasm!;
+  let signed: { turn_id: string; turn_bytes: Uint8Array };
+  try {
+    signed = w.sign_turn_v3(input.turnBytes, new Uint8Array(input.secretKey), new Uint8Array(32));
+  } catch (e: unknown) {
+    return { error: (e as Error).message || "sign_turn_v3 failed" };
+  }
+  const submit = await submitSignedTurnBytes({
+    turnBytes: new Uint8Array(signed.turn_bytes),
+    turnIdHex: signed.turn_id,
+    secretKey: input.secretKey,
+    publicKey: input.publicKey,
+    label: input.label,
+    metadata: input.metadata,
+  });
+  return { turnId: signed.turn_id, submit };
+}
+
 async function flushOutbox(options: { force?: boolean } = {}): Promise<{ submitted: number; failed: number; pending: number; entries: OutboxEntry[] }> {
   const entries = await readOutbox();
   const now = Date.now();
@@ -671,7 +841,7 @@ async function flushOutbox(options: { force?: boolean } = {}): Promise<{ submitt
     const targetConfig = entry.nodeUrl ? { ...nodeConfig, nodeUrl: entry.nodeUrl } : nodeConfig;
     const resp = await nodeRequest(targetConfig, entry.endpoint, {
       method: entry.method,
-      body: entry.body,
+      body: outboxBody(entry) as unknown as BodyInit,
       headers: entry.headers,
     });
     entry.updatedAt = Date.now();
@@ -718,6 +888,49 @@ async function dropOutboxEntry(id: string): Promise<{ dropped: boolean; id: stri
 let state: InternalCipherclerkState | null = null;
 let cclerkPassphrase: string | null = null;
 
+// ---------------------------------------------------------------------------
+// Named identity profiles
+//
+// Mirrors the CLI/SDK profile store semantics (`dregg id create/list/use`,
+// sdk/src/profiles.rs): an identity is a *name you chose*. The active
+// profile's keypair is mirrored into the top-level publicKey/secretKey so
+// every existing signing path reads the active identity. Key derivation is
+// the SAME as the CLI/SDK: blake3 derive_key("dregg/0", seed) → Ed25519
+// (performed in wasm; the golden vector is pinned in
+// test/derivation.test.mjs alongside sdk/src/profiles.rs and
+// cli/src/commands/id.rs so all three drift-fail together).
+// ---------------------------------------------------------------------------
+
+/** Same name rule as the CLI/SDK store: 1-64 chars of [a-z0-9-_]. */
+function validProfileName(name: string): boolean {
+  return /^[a-z0-9_-]{1,64}$/.test(name);
+}
+
+/** Migrate a pre-profile state in place: the existing key becomes "default". */
+function ensureProfiles(s: InternalCipherclerkState): void {
+  if (!Array.isArray(s.profiles) || s.profiles.length === 0) {
+    s.profiles = [{
+      name: DEFAULT_PROFILE_NAME,
+      publicKey: s.publicKey,
+      secretKey: s.secretKey,
+      createdAt: Date.now(),
+    }];
+    s.activeProfile = DEFAULT_PROFILE_NAME;
+  }
+  if (!s.activeProfile || !s.profiles.some(p => p.name === s.activeProfile)) {
+    s.activeProfile = s.profiles[0].name;
+  }
+}
+
+function profileInfos(s: InternalCipherclerkState): ProfileInfo[] {
+  return (s.profiles || []).map(p => ({
+    name: p.name,
+    publicKeyHex: p.publicKey.map(b => b.toString(16).padStart(2, "0")).join(""),
+    createdAt: p.createdAt,
+    active: p.name === s.activeProfile,
+  }));
+}
+
 /**
  * One-time migration: copy legacy "dregg_cipherclerk*" storage keys to the new
  * "dregg_cipherclerk*" names.  Runs at most once per installation (guarded by
@@ -755,6 +968,7 @@ async function loadState(): Promise<InternalCipherclerkState> {
   const stored = await chrome.storage.local.get(STORAGE_KEY);
   if (stored[STORAGE_KEY]) {
     state = stored[STORAGE_KEY] as InternalCipherclerkState;
+    ensureProfiles(state);
     state.needsPassphraseSetup = true;
     const internalKey = await getInternalEncryptionKey();
     cclerkPassphrase = internalKey;
@@ -773,11 +987,22 @@ async function loadState(): Promise<InternalCipherclerkState> {
       publicKey?: number[];
       hasMnemonic?: boolean;
       needsPassphraseSetup?: boolean;
+      profilesPublic?: Array<{ name: string; publicKey: number[]; createdAt: number }>;
+      activeProfile?: string;
     };
     state = {
       locked: true,
       publicKey: envelope.publicKey || [],
       secretKey: null,
+      // Public faces only while locked (names + pubkeys are not secret);
+      // secret keys come back on unlock.
+      profiles: (envelope.profilesPublic || []).map(p => ({
+        name: p.name,
+        publicKey: p.publicKey,
+        secretKey: null,
+        createdAt: p.createdAt,
+      })),
+      activeProfile: envelope.activeProfile || DEFAULT_PROFILE_NAME,
       tokens: [],
       receiptChain: [],
       log: [],
@@ -788,6 +1013,7 @@ async function loadState(): Promise<InternalCipherclerkState> {
       stealthPrivate: null,
       stealthNotes: [],
     };
+    ensureProfiles(state);
     return state;
   }
 
@@ -798,6 +1024,13 @@ async function loadState(): Promise<InternalCipherclerkState> {
     locked: true,
     publicKey: Array.from(keypair.publicKey),
     secretKey: Array.from(keypair.secretKey),
+    profiles: [{
+      name: DEFAULT_PROFILE_NAME,
+      publicKey: Array.from(keypair.publicKey),
+      secretKey: Array.from(keypair.secretKey),
+      createdAt: Date.now(),
+    }],
+    activeProfile: DEFAULT_PROFILE_NAME,
     tokens: [],
     receiptChain: [],
     log: [],
@@ -812,6 +1045,11 @@ async function loadState(): Promise<InternalCipherclerkState> {
   const internalKey = await getInternalEncryptionKey();
   cclerkPassphrase = internalKey;
   state.locked = false;
+  // Set BEFORE saveState: the flag rides on the at-rest envelope and is what
+  // lets unlockCipherclerk fall back to the internal key while no user
+  // passphrase exists. Saving first would leave a fresh install permanently
+  // locked (no input could ever decrypt it).
+  state.needsPassphraseSetup = true;
   await saveState();
 
   const encryptedMnemonic = await encryptWithPassphrase(mnemonic, internalKey);
@@ -820,7 +1058,6 @@ async function loadState(): Promise<InternalCipherclerkState> {
   state.locked = true;
   state.secretKey = null;
   cclerkPassphrase = null;
-  state.needsPassphraseSetup = true;
 
   return state;
 }
@@ -831,9 +1068,12 @@ async function saveState(): Promise<void> {
     cclerkPassphrase = await getInternalEncryptionKey();
   }
   if (cclerkPassphrase && !state.locked) {
+    ensureProfiles(state);
     const plaintext = JSON.stringify({
       publicKey: state.publicKey,
       secretKey: state.secretKey,
+      profiles: state.profiles,
+      activeProfile: state.activeProfile,
       tokens: state.tokens,
       receiptChain: state.receiptChain,
       log: state.log,
@@ -845,9 +1085,24 @@ async function saveState(): Promise<void> {
       stealthNotes: state.stealthNotes || [],
     });
     const envelope = await encryptWithPassphrase(plaintext, cclerkPassphrase);
-    (envelope as EncryptedEnvelope & { publicKey?: number[]; hasMnemonic?: boolean; needsPassphraseSetup?: boolean }).publicKey = state.publicKey;
-    (envelope as EncryptedEnvelope & { hasMnemonic?: boolean }).hasMnemonic = state.hasMnemonic;
-    (envelope as EncryptedEnvelope & { needsPassphraseSetup?: boolean }).needsPassphraseSetup = state.needsPassphraseSetup || false;
+    const env = envelope as EncryptedEnvelope & {
+      publicKey?: number[];
+      hasMnemonic?: boolean;
+      needsPassphraseSetup?: boolean;
+      profilesPublic?: Array<{ name: string; publicKey: number[]; createdAt: number }>;
+      activeProfile?: string;
+    };
+    env.publicKey = state.publicKey;
+    env.hasMnemonic = state.hasMnemonic;
+    env.needsPassphraseSetup = state.needsPassphraseSetup || false;
+    // Public faces ride outside the ciphertext so the locked popup can show
+    // names + pubkeys (not secret); secret keys only live in the ciphertext.
+    env.profilesPublic = state.profiles.map(p => ({
+      name: p.name,
+      publicKey: p.publicKey,
+      createdAt: p.createdAt,
+    }));
+    env.activeProfile = state.activeProfile;
     await chrome.storage.local.set({ [ENCRYPTED_STATE_KEY]: envelope });
     await chrome.storage.local.remove(STORAGE_KEY);
   }
@@ -861,6 +1116,7 @@ async function lockCipherclerk(): Promise<void> {
   }
   state.locked = true;
   state.secretKey = null;
+  for (const p of state.profiles || []) p.secretKey = null;
   cclerkPassphrase = null;
   if (lockTimer !== null) {
     clearTimeout(lockTimer);
@@ -890,6 +1146,8 @@ async function unlockCipherclerk(passphrase: string): Promise<{ success: boolean
         locked: false,
         publicKey: decrypted.publicKey,
         secretKey: decrypted.secretKey,
+        profiles: decrypted.profiles || [],
+        activeProfile: decrypted.activeProfile || DEFAULT_PROFILE_NAME,
         tokens: decrypted.tokens || [],
         receiptChain: decrypted.receiptChain || [],
         log: decrypted.log || [],
@@ -900,8 +1158,10 @@ async function unlockCipherclerk(passphrase: string): Promise<{ success: boolean
         stealthPrivate: decrypted.stealthPrivate || null,
         stealthNotes: decrypted.stealthNotes || [],
       };
+      ensureProfiles(state);
       cclerkPassphrase = attempt;
       resetLockTimer();
+      restartReceiptStream();
       return { success: true, needsPassphraseSetup: state.needsPassphraseSetup };
     } catch (_e) {
       // Try next attempt.
@@ -937,6 +1197,25 @@ async function setPassphrase(newPassphrase: string): Promise<void> {
       const encryptedMnemonic = await encryptWithPassphrase(mnemonic, newPassphrase);
       await chrome.storage.local.set({ [MNEMONIC_KEY]: encryptedMnemonic });
     }
+
+    // Re-encrypt per-profile mnemonics under the new passphrase too.
+    const profileMnemonics = await readProfileMnemonics();
+    let changed = false;
+    for (const [name, envelope] of Object.entries(profileMnemonics)) {
+      for (const key of keysToTry) {
+        try {
+          const plain = await decryptWithPassphrase(envelope, key);
+          profileMnemonics[name] = await encryptWithPassphrase(plain, newPassphrase);
+          changed = true;
+          break;
+        } catch (_e) {
+          // Try next key.
+        }
+      }
+    }
+    if (changed) {
+      await chrome.storage.local.set({ [PROFILE_MNEMONICS_KEY]: profileMnemonics });
+    }
   }
 
   await saveState();
@@ -944,9 +1223,19 @@ async function setPassphrase(newPassphrase: string): Promise<void> {
 }
 
 async function getMnemonic(): Promise<string | null> {
-  const mnemonicStored = await chrome.storage.local.get(MNEMONIC_KEY);
-  if (!mnemonicStored[MNEMONIC_KEY]) return null;
   if (!cclerkPassphrase) return null;
+
+  // The ACTIVE profile's recovery phrase: the first profile's lives at
+  // MNEMONIC_KEY (migration-compatible); later profiles in the map.
+  let envelope: EncryptedEnvelope | undefined;
+  const active = state?.activeProfile || DEFAULT_PROFILE_NAME;
+  if (active === DEFAULT_PROFILE_NAME) {
+    const mnemonicStored = await chrome.storage.local.get(MNEMONIC_KEY);
+    envelope = mnemonicStored[MNEMONIC_KEY];
+  } else {
+    envelope = (await readProfileMnemonics())[active];
+  }
+  if (!envelope) return null;
 
   const keysToTry: string[] = [cclerkPassphrase];
   const internalKey = await getInternalEncryptionKey();
@@ -956,7 +1245,7 @@ async function getMnemonic(): Promise<string | null> {
 
   for (const key of keysToTry) {
     try {
-      return await decryptWithPassphrase(mnemonicStored[MNEMONIC_KEY], key);
+      return await decryptWithPassphrase(envelope, key);
     } catch (_e) {
       // Try next.
     }
@@ -977,6 +1266,13 @@ async function recoverFromMnemonic(
     locked: false,
     publicKey: Array.from(keypair.publicKey),
     secretKey: Array.from(keypair.secretKey),
+    profiles: [{
+      name: DEFAULT_PROFILE_NAME,
+      publicKey: Array.from(keypair.publicKey),
+      secretKey: Array.from(keypair.secretKey),
+      createdAt: Date.now(),
+    }],
+    activeProfile: DEFAULT_PROFILE_NAME,
     tokens: [],
     receiptChain: [],
     log: [],
@@ -994,6 +1290,82 @@ async function recoverFromMnemonic(
   await saveState();
   resetLockTimer();
   return { success: true, publicKey: state.publicKey };
+}
+
+// ─── profile verbs (mirror `dregg id create / list / use`) ───
+
+/** Read the per-profile encrypted-mnemonic map (profiles beyond the first). */
+async function readProfileMnemonics(): Promise<Record<string, EncryptedEnvelope>> {
+  const stored = await chrome.storage.local.get(PROFILE_MNEMONICS_KEY);
+  return (stored[PROFILE_MNEMONICS_KEY] || {}) as Record<string, EncryptedEnvelope>;
+}
+
+/**
+ * Create a named profile with a fresh mnemonic-derived Ed25519 keypair
+ * (the same `blake3 derive_key("dregg/0", seed)` derivation as the CLI/SDK
+ * store). Fails if the name is taken. Does NOT switch the active profile.
+ */
+async function createProfile(name: string): Promise<{ created?: ProfileInfo; error?: string }> {
+  const cc = await loadState();
+  if (cc.locked) return { error: "Cipherclerk is locked" };
+  if (!validProfileName(name)) {
+    return { error: `Invalid profile name ${JSON.stringify(name)}: use 1-64 chars of [a-z0-9-_]` };
+  }
+  if (cc.profiles.some(p => p.name === name)) {
+    return { error: `Profile "${name}" already exists` };
+  }
+  let mnemonic: string;
+  let keypair: { publicKey: Uint8Array; secretKey: Uint8Array };
+  try {
+    mnemonic = await generateMnemonic();
+    keypair = await deriveKeypairFromMnemonic(mnemonic, "");
+  } catch (e: unknown) {
+    return { error: (e as Error).message || "key derivation failed" };
+  }
+  const entry: ProfileEntry = {
+    name,
+    publicKey: Array.from(keypair.publicKey),
+    secretKey: Array.from(keypair.secretKey),
+    createdAt: Date.now(),
+  };
+  cc.profiles.push(entry);
+  // The profile's recovery phrase, encrypted under the same passphrase as
+  // the state envelope.
+  const key = cclerkPassphrase || await getInternalEncryptionKey();
+  const mnemonics = await readProfileMnemonics();
+  mnemonics[name] = await encryptWithPassphrase(mnemonic, key);
+  await chrome.storage.local.set({ [PROFILE_MNEMONICS_KEY]: mnemonics });
+  await saveState();
+  notifySubscribers("profiles", { profiles: profileInfos(cc) });
+  return {
+    created: {
+      name,
+      publicKeyHex: entry.publicKey.map(b => b.toString(16).padStart(2, "0")).join(""),
+      createdAt: entry.createdAt,
+      active: false,
+    },
+  };
+}
+
+/** Switch the active profile (the keypair every signing path reads). */
+async function useProfile(name: string): Promise<{ active?: string; error?: string }> {
+  const cc = await loadState();
+  if (cc.locked) return { error: "Cipherclerk is locked" };
+  const profile = cc.profiles.find(p => p.name === name);
+  if (!profile) return { error: `Profile "${name}" not found` };
+  cc.activeProfile = name;
+  cc.publicKey = profile.publicKey;
+  cc.secretKey = profile.secretKey;
+  await saveState();
+  notifySubscribers("profiles", { profiles: profileInfos(cc) });
+  // The receipt stream filters on the active profile's cell.
+  restartReceiptStream();
+  return { active: name };
+}
+
+async function listProfiles(): Promise<ProfileInfo[]> {
+  const cc = await loadState();
+  return profileInfos(cc);
 }
 
 // ---------------------------------------------------------------------------
@@ -1192,7 +1564,7 @@ async function authorize(request: AuthorizeRequest): Promise<AuthorizeResult> {
   if (mode === "selective" && request._predicateFacts) {
     let stateRoot = 0;
     try {
-      const statusResult = await nodeRequest<{ merkle_root?: string; state_root?: string }>(nodeConfig, "/status");
+      const statusResult = await nodeRequest<{ merkle_root?: string; state_root?: string }>(nodeConfig, "/api/node/status");
       if (statusResult.ok && statusResult.data) {
         const merkleRoot = statusResult.data.merkle_root || statusResult.data.state_root || "";
         if (merkleRoot) {
@@ -1544,6 +1916,56 @@ function showIntentConfirmation(action: string, matchSpec: MatchSpec | unknown, 
   });
 }
 
+/**
+ * Authorization-first signing surface: show the citizen the clerk's faithful
+ * reading of the turn (src/explain.ts — the same human terms
+ * sdk/src/explain.rs renders) before any signature is released. Returns true
+ * only when the user explicitly accepts in the nonce-bound popup.
+ */
+function showTurnConfirmation(input: {
+  explanation: string;
+  turnId: string;
+  origin?: string;
+  hasUnknown: boolean;
+}): Promise<boolean> {
+  return new Promise((resolve) => {
+    const nonce = registerPendingDecision("confirm-intent.html", {
+      action: "signTurn",
+      explanation: input.explanation,
+      turnId: input.turnId,
+      hasUnknown: input.hasUnknown,
+      origin: input.origin || "unknown",
+    });
+    const popupUrl = chrome.runtime.getURL("confirm-intent.html") + "#nonce=" + nonce;
+
+    chrome.windows.create({
+      url: popupUrl,
+      type: "popup",
+      width: 460,
+      height: 520,
+      focused: true,
+    }, (win) => {
+      const listener = (message: Record<string, unknown>, sender: chrome.runtime.MessageSender): void => {
+        if (message.type !== "dregg:intentConfirmation") return;
+        if (!validatePopupSender(message, sender, nonce, "confirm-intent.html")) return;
+        chrome.runtime.onMessage.removeListener(listener);
+        resolve(message.confirmed === true);
+      };
+      chrome.runtime.onMessage.addListener(listener);
+      if (win?.id) {
+        chrome.windows.onRemoved.addListener(function onClose(closedId: number) {
+          if (closedId === win.id) {
+            chrome.windows.onRemoved.removeListener(onClose);
+            chrome.runtime.onMessage.removeListener(listener);
+            consumePendingDecision(nonce);
+            resolve(false);
+          }
+        });
+      }
+    });
+  });
+}
+
 async function computeIntentId(kind: string, matchSpec: MatchSpec, expiry: number): Promise<string> {
   const intentInput = {
     kind: kind === "need" ? "Need" : kind === "offer" ? "Offer" : "Query",
@@ -1755,7 +2177,7 @@ const liveRefs = new Map<string, Omit<ExtensionLiveRef, "refId">>();
 async function shareCapability(cellId: string): Promise<{ uri?: string; cellId?: string; nodeId?: string; error?: string }> {
   const cc = await loadState();
   if (cc.locked) return { error: "Cipherclerk is locked" };
-  const resp = await nodeRequest<{ node_id?: string; secret?: string }>(nodeConfig, "/turns/bearer-auth", {
+  const resp = await nodeRequest<{ node_id?: string; secret?: string }>(nodeConfig, "/api/turns/bearer-auth", {
     method: "POST",
     body: JSON.stringify({ cell_id: cellId }),
   });
@@ -1775,7 +2197,7 @@ async function acceptCapability(uri: string, tabId?: number): Promise<{ refId?: 
   const parts = uri.replace("dregg://", "").split("/");
   if (parts.length < 3) return { error: "Invalid URI format. Expected: dregg://<node>/<cell>/<secret>" };
   const [nodeId, cellId, secret] = parts;
-  const resp = await nodeRequest<{ permissions?: string; cap_id?: string }>(nodeConfig, "/turns/peer-exchange", {
+  const resp = await nodeRequest<{ permissions?: string; cap_id?: string }>(nodeConfig, "/api/turns/peer-exchange", {
     method: "POST",
     body: JSON.stringify({ node_id: nodeId, cell_id: cellId, secret }),
   });
@@ -1800,7 +2222,7 @@ async function acceptCapability(uri: string, tabId?: number): Promise<{ refId?: 
 async function createHandoff(cellId: string, recipientPk: string): Promise<{ certificateHash?: string; cellId?: string; recipientPk?: string; error?: string }> {
   const cc = await loadState();
   if (cc.locked) return { error: "Cipherclerk is locked" };
-  const resp = await nodeRequest<{ certificate_hash?: string }>(nodeConfig, "/turns/peer-exchange", {
+  const resp = await nodeRequest<{ certificate_hash?: string }>(nodeConfig, "/api/turns/peer-exchange", {
     method: "POST",
     body: JSON.stringify({ cell_id: cellId, recipient_pk: recipientPk }),
   });
@@ -1922,7 +2344,7 @@ async function storageQuota(): Promise<StorageQuotaResult> {
 // ---------------------------------------------------------------------------
 
 async function getFederationStatus(): Promise<{ mode?: string; height?: number; peerCount?: number; merkleRoot?: string; error?: string }> {
-  const resp = await nodeRequest<{ federation_mode?: string; latest_height?: number; peer_count?: number; merkle_root?: string }>(nodeConfig, "/status");
+  const resp = await nodeRequest<{ federation_mode?: string; latest_height?: number; peer_count?: number; merkle_root?: string }>(nodeConfig, "/api/node/status");
   if (!resp.ok) return { error: `Federation status failed: ${resp.error}` };
   return {
     mode: resp.data?.federation_mode || "unknown",
@@ -1947,20 +2369,17 @@ async function proposeRoutes(routes: unknown[]): Promise<{ proposalId?: string; 
       method: "propose_routes",
       memo_json: JSON.stringify({ routes }),
     }));
-    const submit = await submitNodeJsonWithOutbox<{ proposal_id?: string }>({
-      kind: "turn",
+    const result = await signAndSubmitBuiltTurn({
+      turnBytes: new Uint8Array(built.turn_bytes),
+      secretKey: cc.secretKey,
+      publicKey: cc.publicKey,
       label: "propose routes",
-      endpoint: "/turns/submit",
-      turnId: built.turn_id,
-      body: {
-        turn_id: built.turn_id,
-        turn_bytes: Array.from(built.turn_bytes),
-        sender_pubkey: cc.publicKey,
-      },
       metadata: { action: "proposeRoutes", routes },
     });
-    if (submit.submitted) return { proposalId: submit.data?.proposal_id || built.turn_id, submitted: true };
-    if (submit.queued) return { proposalId: built.turn_id, submitted: false, queued: true, error: `Queued for retry: ${submit.error}` };
+    if ("error" in result) return { error: `Proposal failed: ${result.error}` };
+    const { turnId, submit } = result;
+    if (submit.submitted) return { proposalId: turnId, submitted: true };
+    if (submit.queued) return { proposalId: turnId, submitted: false, queued: true, error: `Queued for retry: ${submit.error}` };
     return { error: `Proposal failed: ${submit.error}` };
   } catch (e: unknown) {
     const err = e as Error;
@@ -1983,18 +2402,15 @@ async function voteOnProposal(proposalId: string, approve: boolean): Promise<{ a
       method: "vote_on_proposal",
       memo_json: JSON.stringify({ proposal_id: proposalId, vote: !!approve }),
     }));
-    const submit = await submitNodeJsonWithOutbox<{ accepted?: boolean }>({
-      kind: "turn",
+    const result = await signAndSubmitBuiltTurn({
+      turnBytes: new Uint8Array(built.turn_bytes),
+      secretKey: cc.secretKey,
+      publicKey: cc.publicKey,
       label: "vote on proposal",
-      endpoint: "/turns/submit",
-      turnId: built.turn_id,
-      body: {
-        turn_id: built.turn_id,
-        turn_bytes: Array.from(built.turn_bytes),
-        sender_pubkey: cc.publicKey,
-      },
       metadata: { action: "voteOnProposal", proposalId, approve },
     });
+    if ("error" in result) return { error: `Vote failed: ${result.error}` };
+    const { submit } = result;
     if (submit.submitted) return { accepted: submit.data?.accepted !== false, proposalId };
     if (submit.queued) return { accepted: false, proposalId, queued: true, error: `Queued for retry: ${submit.error}` };
     return { error: `Vote failed: ${submit.error}` };
@@ -2196,19 +2612,26 @@ async function submitJsonTurn(spec: {
 }
 
 /**
- * Sign and submit a pre-built postcard-encoded Turn (v3 wire format).
- * starbridge-apps turn-builders produce raw bytes; this is the canonical
- * surface for that path.
+ * Sign and submit a pre-built encoded Turn (v3 wire format) — the
+ * authorization-first signing surface.
  *
- * Wired to the wasm `sign_turn_v3` export, which decodes the postcard Turn,
- * replaces every `Authorization::Unchecked` action with a real Ed25519
- * signature via the canonical `AgentCipherclerk::sign_action` path (the same
- * path `DreggRuntime::execute_turn_for_agent` uses), and re-encodes. The
- * federation_id is all-zeros for the devnet/sim genesis the extension submits
- * against. The signed bytes are then submitted via the node /turns/submit
- * outbox path, mirroring the other turn builders.
+ * Wired to the wasm `sign_turn_v3` export, which decodes the Turn (postcard
+ * or JSON), replaces every `Authorization::Unchecked` action with a real
+ * Ed25519 signature via the canonical `AgentCipherclerk::sign_action` path
+ * (the same path `DreggRuntime::execute_turn_for_agent` uses), and re-encodes.
+ * The federation_id is all-zeros for the devnet/sim genesis the extension
+ * submits against.
+ *
+ * BEFORE anything leaves the extension, the clerk's faithful reading of the
+ * decoded turn (src/explain.ts — the same human terms `sdk/src/explain.rs`
+ * renders, bound to the canonical `Turn::hash`) is shown in a nonce-bound
+ * confirmation popup. Only on explicit acceptance is the `SignedTurn`
+ * envelope built and submitted to the node's signed-byte path
+ * (`/api/turns/submit-signed`, durable-outbox-backed). The result carries the
+ * node's receipt fields (turn hash / proof status / witness count) — the
+ * Receipt is the result noun.
  */
-async function signTurnV3(turnBytes: Uint8Array): Promise<SignTurnResult> {
+async function signTurnV3(turnBytes: Uint8Array, origin?: string): Promise<SignTurnResult> {
   requireWasm("signTurnV3");
   const w = wasm!;
   const cc = await loadState();
@@ -2218,7 +2641,7 @@ async function signTurnV3(turnBytes: Uint8Array): Promise<SignTurnResult> {
   }
   if (!cc.secretKey) return { error: "Cipherclerk secret key not available", submitted: false };
 
-  let signed: { turn_id: string; turn_bytes: Uint8Array; signer_pubkey: string };
+  let signed: { turn_id: string; turn_bytes: Uint8Array; turn_bytes_json: Uint8Array; signer_pubkey: string };
   try {
     // federation_id = all-zeros (devnet/sim genesis). 32 bytes.
     const federationId = new Uint8Array(32);
@@ -2228,19 +2651,54 @@ async function signTurnV3(turnBytes: Uint8Array): Promise<SignTurnResult> {
     return { error: err.message || "sign_turn_v3 failed", submitted: false };
   }
 
-  const submit = await submitNodeJsonWithOutbox<{ turn_id?: string }>({
-    kind: "turn",
-    label: "sign turn (v3)",
-    endpoint: "/turns/submit",
+  // The clerk's reading of exactly the term that was signed: decode the
+  // round-trippable JSON encoding the signer emitted alongside the postcard
+  // bytes and render it. A decode failure is shown as such — never sign blind.
+  let explanation: string;
+  let hasUnknown = false;
+  try {
+    const turnJson = JSON.parse(new TextDecoder().decode(new Uint8Array(signed.turn_bytes_json)));
+    const rendered = explainTurn(turnJson, signed.turn_id);
+    explanation = rendered.text;
+    hasUnknown = rendered.hasUnknown;
+  } catch (_e) {
+    explanation = `COULD NOT DECODE this turn for display.\n[turn ${signed.turn_id}]`;
+    hasUnknown = true;
+  }
+
+  const confirmed = await showTurnConfirmation({
+    explanation,
     turnId: signed.turn_id,
-    body: {
-      turn_id: signed.turn_id,
-      turn_bytes: Array.from(signed.turn_bytes),
-      sender_pubkey: cc.publicKey,
-    },
+    origin,
+    hasUnknown,
+  });
+  if (!confirmed) {
+    return { error: "User declined to sign this turn", submitted: false };
+  }
+
+  const submit = await submitSignedTurnBytes({
+    turnBytes: new Uint8Array(signed.turn_bytes),
+    turnIdHex: signed.turn_id,
+    secretKey: cc.secretKey,
+    publicKey: cc.publicKey,
+    label: "sign turn (v3)",
     metadata: { action: "signTurnV3" },
   });
-  if (submit.submitted) return { turnId: submit.data?.turn_id || signed.turn_id, submitted: true };
+  if (submit.submitted) {
+    const d = submit.data ?? {};
+    if (d.accepted === false) {
+      return { turnId: signed.turn_id, submitted: false, error: d.error || "node rejected turn" };
+    }
+    return {
+      turnId: d.turn_hash || signed.turn_id,
+      submitted: true,
+      receipt: {
+        turnHash: d.turn_hash ?? undefined,
+        proofStatus: d.proof_status,
+        witnessCount: d.witness_count,
+      },
+    };
+  }
   if (submit.queued) return { turnId: signed.turn_id, submitted: false, queued: true, error: `Queued for retry: ${submit.error}` };
   return { error: `Turn submission failed: ${submit.error}`, submitted: false };
 }
@@ -2316,6 +2774,8 @@ async function getCipherclerkState(): Promise<CipherclerkState> {
     needsPassphraseSetup: cc.needsPassphraseSetup || false,
     hasStealthKeys: cc.stealthMeta !== null && cc.stealthMeta !== undefined,
     stealthNotesCount: (cc.stealthNotes || []).length,
+    profiles: profileInfos(cc),
+    activeProfile: cc.activeProfile,
     wasmReady: wasmLoaded,
     wasmError: wasmLoadError,
   };
@@ -2448,6 +2908,8 @@ const POPUP_ONLY_METHODS = new Set<MessageType>([
   "dregg:getNodeConfig", "dregg:setNodeConfig",
   "dregg:getLiveRefs", "dregg:dropLiveRef",
   "dregg:nodeIdentity", "dregg:faucetFund", "dregg:submitJsonTurn",
+  "dregg:listProfiles", "dregg:createProfile", "dregg:useProfile",
+  "dregg:getRecentReceipts",
 ]);
 
 async function handleMessage(message: Record<string, unknown>, sender: chrome.runtime.MessageSender): Promise<Record<string, unknown>> {
@@ -2931,16 +3393,11 @@ async function handleMessage(message: Record<string, unknown>, sender: chrome.ru
       // Submit the signed factory turn to the node. The node's executor
       // validates the factory descriptor + params and mints the cell,
       // tracking provenance for downstream verifyProvenance calls.
-      const submit = await submitNodeJsonWithOutbox<Record<string, unknown>>({
-        kind: "turn",
+      const submitResult = await signAndSubmitBuiltTurn({
+        turnBytes: new Uint8Array(turnData.turn_bytes),
+        secretKey: cc.secretKey,
+        publicKey: cc.publicKey,
         label: "create cell from factory",
-        endpoint: "/turns/submit",
-        turnId: turnData.turn_id,
-        body: {
-          turn_id: turnData.turn_id,
-          turn_bytes: Array.from(turnData.turn_bytes),
-          sender_pubkey: cc.publicKey,
-        },
         metadata: {
           action: "createFromFactory",
           childVk: turnData.child_vk,
@@ -2949,6 +3406,11 @@ async function handleMessage(message: Record<string, unknown>, sender: chrome.ru
           agentCellId: turnData.agent_cell_id,
         },
       });
+      if ("error" in submitResult) {
+        return { id: message.id, error: `Failed to sign factory turn: ${submitResult.error}` };
+      }
+      const submit = submitResult.submit;
+      turnData.turn_id = submitResult.turnId;
 
       if (!submit.submitted) {
         return {
@@ -3180,18 +3642,18 @@ async function handleMessage(message: Record<string, unknown>, sender: chrome.ru
             view_pubkey: recipientMeta.viewPubkey,
           },
         }));
-        const submit = await submitNodeJsonWithOutbox({
-          kind: "turn",
+        const submitResult = await signAndSubmitBuiltTurn({
+          turnBytes: new Uint8Array(result.turn_bytes),
+          secretKey: cc.secretKey,
+          publicKey: cc.publicKey,
           label: "private transfer",
-          endpoint: "/turns/submit",
-          turnId: result.turn_id,
-          body: {
-            turn_id: result.turn_id,
-            turn_bytes: Array.from(result.turn_bytes),
-            sender_pubkey: cc.publicKey,
-          },
           metadata: { action: "privateTransfer", amount, assetType: assetTypeU64 },
         });
+        if ("error" in submitResult) {
+          return { id: message.id, error: `Failed to sign private transfer: ${submitResult.error}` };
+        }
+        const submit = submitResult.submit;
+        result.turn_id = submitResult.turnId;
         cc.log.push({
           action: "privateTransfer",
           resource: "*",
@@ -3221,13 +3683,36 @@ async function handleMessage(message: Record<string, unknown>, sender: chrome.ru
       }
     }
 
-    // Turn v3: pre-built postcard-encoded Turn bytes signed by the cipherclerk.
+    // Turn v3: pre-built encoded Turn bytes signed by the cipherclerk
+    // (authorization-first: the explain rendering is confirmed by the user
+    // before the signature leaves the extension).
     case "dregg:signTurnV3": {
       const turnBytes = new Uint8Array(message.turnBytes as number[]);
-      const result = await signTurnV3(turnBytes);
+      const origin = (message._origin as string) || (sender?.tab?.url && new URL(sender.tab.url).origin) || undefined;
+      const result = await signTurnV3(turnBytes, origin);
       resetLockTimer();
       return { id: message.id, result };
     }
+
+    // Named identity profiles (mirrors `dregg id create / list / use`).
+    case "dregg:listProfiles":
+      return { id: message.id, result: await listProfiles() };
+
+    case "dregg:createProfile": {
+      const result = await createProfile(String(message.name || ""));
+      resetLockTimer();
+      return { id: message.id, result };
+    }
+
+    case "dregg:useProfile": {
+      const result = await useProfile(String(message.name || ""));
+      resetLockTimer();
+      return { id: message.id, result };
+    }
+
+    // Recent receipts from the node's SSE stream; reading clears the badge.
+    case "dregg:getRecentReceipts":
+      return { id: message.id, result: await getRecentReceipts() };
 
     // Federation registry
     case "dregg:registerFederation": {
@@ -3285,6 +3770,187 @@ chrome.runtime.onMessage.addListener((message: Record<string, unknown>, sender: 
 });
 
 // ---------------------------------------------------------------------------
+// Receipt stream — the node's SSE nervous-system edge
+// (`GET /api/events/stream`, node/src/events.rs).
+//
+// MV3 service workers have no EventSource, so this consumes the stream via
+// fetch + ReadableStream through the parser in src/sse.ts. Each event's
+// `id:` is the node's receipt-chain index; on reconnect we send
+// `Last-Event-ID` so the node resumes from the next entry (at-least-once
+// across reconnects — the chain, not the broadcast, is the source of truth).
+// The stream is filtered to the ACTIVE profile's cell (`?cell=<hex>`) when
+// the wasm cell-id helper is available; receipts surface as a toolbar badge
+// count plus the popup's recent-receipts list.
+// ---------------------------------------------------------------------------
+
+let receiptStreamAbort: AbortController | null = null;
+let receiptStreamBackoffMs = 1000;
+let receiptStreamTimer: ReturnType<typeof setTimeout> | null = null;
+let recentReceipts: ReceiptEventSummary[] = [];
+let receiptLastEventId: string | null = null;
+let unseenReceiptCount = 0;
+let recentReceiptsLoaded = false;
+
+async function loadRecentReceipts(): Promise<void> {
+  if (recentReceiptsLoaded) return;
+  recentReceiptsLoaded = true;
+  const stored = await chrome.storage.local.get(RECENT_RECEIPTS_KEY);
+  const data = stored[RECENT_RECEIPTS_KEY] as {
+    receipts?: ReceiptEventSummary[];
+    lastEventId?: string | null;
+    unseen?: number;
+  } | undefined;
+  if (data) {
+    recentReceipts = Array.isArray(data.receipts) ? data.receipts : [];
+    receiptLastEventId = data.lastEventId ?? null;
+    unseenReceiptCount = data.unseen || 0;
+  }
+  updateReceiptBadge();
+}
+
+async function persistRecentReceipts(): Promise<void> {
+  await chrome.storage.local.set({
+    [RECENT_RECEIPTS_KEY]: {
+      receipts: recentReceipts,
+      lastEventId: receiptLastEventId,
+      unseen: unseenReceiptCount,
+    },
+  });
+}
+
+function updateReceiptBadge(): void {
+  try {
+    chrome.action.setBadgeBackgroundColor({ color: "#a78bfa" });
+    chrome.action.setBadgeText({ text: unseenReceiptCount > 0 ? String(unseenReceiptCount) : "" });
+  } catch (_e) {
+    // Badge API unavailable (e.g. headless test harness) — non-fatal.
+  }
+}
+
+async function handleReceiptStreamEvent(data: string): Promise<void> {
+  let raw: Record<string, unknown>;
+  try {
+    raw = JSON.parse(data) as Record<string, unknown>;
+  } catch {
+    return;
+  }
+  const summary: ReceiptEventSummary = {
+    chainIndex: Number(raw.chain_index ?? 0),
+    receiptHash: String(raw.receipt_hash ?? ""),
+    turnHash: String(raw.turn_hash ?? ""),
+    cells: Array.isArray(raw.cells) ? raw.cells.map(String) : [],
+    kinds: Array.isArray(raw.kinds) ? raw.kinds.map(String) : [],
+    height: Number(raw.height ?? 0),
+    hasProof: !!raw.has_proof,
+    finality: String(raw.finality ?? ""),
+    timestamp: Number(raw.timestamp ?? 0),
+    seenAt: Date.now(),
+  };
+  recentReceipts.unshift(summary);
+  if (recentReceipts.length > RECENT_RECEIPTS_MAX) recentReceipts.length = RECENT_RECEIPTS_MAX;
+  unseenReceiptCount++;
+  updateReceiptBadge();
+  await persistRecentReceipts();
+  notifySubscribers("receipt", {
+    hash: summary.receiptHash,
+    turnHash: summary.turnHash,
+    cells: summary.cells,
+    kinds: summary.kinds,
+    height: summary.height,
+    hasProof: summary.hasProof,
+    finality: summary.finality,
+  });
+  pushActivity("turn_lifecycle", {
+    phase: "committed",
+    receipt_hash: summary.receiptHash,
+    turn_hash: summary.turnHash,
+    kinds: summary.kinds,
+  }, { source: "node-sse" });
+}
+
+async function connectReceiptStream(): Promise<void> {
+  if (receiptStreamAbort) return; // already running
+  await loadRecentReceipts();
+
+  const abort = new AbortController();
+  receiptStreamAbort = abort;
+
+  // Filter to the ACTIVE profile's cell when the wasm helper can derive it;
+  // otherwise tail every receipt the node commits.
+  let filter = "";
+  try {
+    await wasmReady;
+    const cc = await loadState();
+    const cellId = await clientCellIdHex(cc);
+    if (cellId) filter = `?cell=${cellId}`;
+  } catch (_e) {
+    // No filter.
+  }
+
+  const url = nodeConfig.nodeUrl.replace(/\/$/, "") + "/api/events/stream" + filter;
+  const headers: Record<string, string> = { Accept: "text/event-stream" };
+  if (nodeConfig.devnetKey) headers["X-Devnet-Key"] = nodeConfig.devnetKey;
+  if (receiptLastEventId !== null) headers["Last-Event-ID"] = receiptLastEventId;
+
+  try {
+    const resp = await fetch(url, { headers, signal: abort.signal });
+    if (!resp.ok || !resp.body) throw new Error(`HTTP ${resp.status}`);
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    const parser = createSseParser();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      for (const ev of parser.feed(decoder.decode(value, { stream: true }))) {
+        receiptStreamBackoffMs = 1000; // events flowing — reset backoff
+        if (ev.id !== null) receiptLastEventId = ev.id;
+        if (ev.event !== "receipt") continue;
+        await handleReceiptStreamEvent(ev.data);
+      }
+    }
+    throw new Error("receipt stream ended");
+  } catch (_e) {
+    if (receiptStreamAbort === abort) {
+      receiptStreamAbort = null;
+      scheduleReceiptStreamReconnect();
+    }
+  }
+}
+
+function scheduleReceiptStreamReconnect(): void {
+  if (receiptStreamTimer !== null) return;
+  const delay = receiptStreamBackoffMs;
+  receiptStreamBackoffMs = Math.min(receiptStreamBackoffMs * 2, RECEIPT_STREAM_MAX_BACKOFF_MS);
+  receiptStreamTimer = setTimeout(() => {
+    receiptStreamTimer = null;
+    connectReceiptStream();
+  }, delay);
+}
+
+/** Tear down and reconnect (node config / active profile changed). */
+function restartReceiptStream(): void {
+  if (receiptStreamTimer !== null) {
+    clearTimeout(receiptStreamTimer);
+    receiptStreamTimer = null;
+  }
+  receiptStreamBackoffMs = 1000;
+  const abort = receiptStreamAbort;
+  receiptStreamAbort = null;
+  if (abort) abort.abort();
+  connectReceiptStream();
+}
+
+/** Popup read: the recent-receipts list; reading clears the unseen badge. */
+async function getRecentReceipts(): Promise<{ receipts: ReceiptEventSummary[]; unseen: number }> {
+  await loadRecentReceipts();
+  const unseen = unseenReceiptCount;
+  unseenReceiptCount = 0;
+  updateReceiptBadge();
+  await persistRecentReceipts();
+  return { receipts: recentReceipts.slice(), unseen };
+}
+
+// ---------------------------------------------------------------------------
 // WebSocket connection
 // ---------------------------------------------------------------------------
 
@@ -3295,7 +3961,7 @@ let wsAuthenticated = false;
 
 async function fetchNodePublicKey(): Promise<void> {
   try {
-    const resp = await nodeRequest<{ public_key?: string }>(nodeConfig, "/status");
+    const resp = await nodeRequest<{ public_key?: string }>(nodeConfig, "/api/node/status");
     if (resp.ok && resp.data?.public_key) {
       nodePublicKey = resp.data.public_key;
     }
@@ -3600,8 +4266,10 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 // Initialization
 // ---------------------------------------------------------------------------
 
-loadNodeConfig();
+loadNodeConfig().then(() => {
+  connectNodeWs();
+  connectReceiptStream();
+});
 loadState();
-connectNodeWs();
 startDiscoveryPolling();
 startOutboxFlushLoop();

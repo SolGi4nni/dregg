@@ -77,11 +77,37 @@
       color: #e0e0e0;
     }
     #rejectBtn:hover { background: #4b5563; }
+    .explanation {
+      display: none;
+      background: #0f172a;
+      border: 1px solid #374151;
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 16px;
+      font-family: 'Courier New', monospace;
+      font-size: 11px;
+      line-height: 1.5;
+      color: #e0e0e0;
+      white-space: pre-wrap;
+      word-break: break-all;
+      max-height: 280px;
+      overflow-y: auto;
+    }
+    .unknown-warning {
+      display: none;
+      background: #451a03;
+      border: 1px solid #92400e;
+      border-radius: 6px;
+      color: #fbbf24;
+      font-size: 12px;
+      padding: 8px 12px;
+      margin-bottom: 16px;
+    }
   </style>
 </head>
 <body>
-  <h1>Confirm Intent</h1>
-  <p class="subtitle">A page wants to broadcast an intent on your behalf.</p>
+  <h1 id="title">Confirm Intent</h1>
+  <p class="subtitle" id="subtitle">A page wants to broadcast an intent on your behalf.</p>
 
   <div class="details" id="details">
     <div class="detail-row">
@@ -92,15 +118,24 @@
       <span class="detail-label">Action</span>
       <span class="detail-value" id="action">--</span>
     </div>
-    <div class="detail-row">
+    <div class="detail-row" id="specRow">
       <span class="detail-label">Spec</span>
       <span class="detail-value" id="spec">--</span>
     </div>
-    <div class="detail-row">
+    <div class="detail-row" id="optionsRow">
       <span class="detail-label">Options</span>
       <span class="detail-value" id="options">--</span>
     </div>
   </div>
+
+  <!-- The cipherclerk's faithful reading of a turn about to be signed
+       (src/explain.ts — the same human terms sdk/src/explain.rs renders,
+       bound to the canonical [turn <hash>] the node verifies). -->
+  <div class="unknown-warning" id="unknownWarning">
+    This turn contains parts this cipherclerk version cannot read.
+    Accepting would be signing blind &mdash; reject unless you are certain.
+  </div>
+  <pre class="explanation" id="explanation"></pre>
 
   <div class="buttons">
     <button id="rejectBtn">Reject</button>

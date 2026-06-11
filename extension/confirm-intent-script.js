@@ -34,9 +34,33 @@ async function init() {
     if (resp && resp.result && resp.result.payload) {
       const p = resp.result.payload;
       actionEl.textContent = p.action || 'unknown';
-      specEl.textContent = JSON.stringify(p.matchSpec || {}, null, 2);
-      optionsEl.textContent = JSON.stringify(p.options || {}, null, 2);
       if (originEl) originEl.textContent = p.origin || 'unknown';
+      if (p.action === 'signTurn' && typeof p.explanation === 'string') {
+        // Turn-signing confirmation: show the cipherclerk's faithful reading
+        // of the turn (the same human terms the SDK's explain renders, bound
+        // to the canonical [turn <hash>]) instead of raw spec JSON.
+        const titleEl = document.getElementById('title');
+        const subtitleEl = document.getElementById('subtitle');
+        if (titleEl) titleEl.textContent = 'Sign Turn';
+        if (subtitleEl) subtitleEl.textContent =
+          'A page asks your cipherclerk to sign this turn. This is exactly what it does:';
+        const explanationEl = document.getElementById('explanation');
+        if (explanationEl) {
+          explanationEl.textContent = p.explanation;
+          explanationEl.style.display = 'block';
+        }
+        if (p.hasUnknown) {
+          const warningEl = document.getElementById('unknownWarning');
+          if (warningEl) warningEl.style.display = 'block';
+        }
+        const specRow = document.getElementById('specRow');
+        const optionsRow = document.getElementById('optionsRow');
+        if (specRow) specRow.style.display = 'none';
+        if (optionsRow) optionsRow.style.display = 'none';
+      } else {
+        specEl.textContent = JSON.stringify(p.matchSpec || {}, null, 2);
+        optionsEl.textContent = JSON.stringify(p.options || {}, null, 2);
+      }
       initialized = true;
     } else {
       actionEl.textContent = 'Error: pending decision not found.';

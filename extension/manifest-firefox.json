@@ -7,6 +7,7 @@
     "storage",
     "activeTab",
     "contextMenus",
+    "alarms",
     "https://devnet.dregg.fg-goose.online/*",
     "http://localhost:8420/*",
     "ws://localhost:8420/*",
