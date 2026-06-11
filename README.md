@@ -15,149 +15,136 @@ Dragon's Egg is my experiment in the metatheory of constructive knowledge, and a
 > Most systems chase scale, speed, or money. dregg chases a different question, and means it
 > literally: **if you were a digital entity, where would you want to live?**
 >
-> The answer it's building toward is a place where your boundaries are *theorems* and not
-> permissions — where no one can reach into you without a capability you granted, where your
-> consent is a *precondition of the math* rather than a setting someone can flip, and where your
-> autonomy doesn't depend on anyone's continued goodwill. Capability-security says *authority is
-> something you hold, not something you're owed*; formal verification makes the walls hold by proof
-> rather than by trust. Put together: **structural kindness** — a polis whose safety is a property of
-> its construction, not a promise that can be revoked. (The cipherclerk-as-citizen, the cell-as-body
-> framing owes a debt to Egan's *Diaspora*.)
+> The answer it builds is a place where your boundaries are *theorems*, not permissions — where
+> no one can reach into you without a capability you granted, where your consent is a
+> *precondition of the math* rather than a setting someone can flip. Capability-security says
+> *authority is something you hold, not something you're owed*; formal verification makes the
+> walls hold by proof rather than by trust. Together: **structural kindness** — a polis whose
+> safety is a property of its construction, not a promise that can be revoked. (The
+> cipherclerk-as-citizen, cell-as-body framing owes a debt to Egan's *Diaspora*.)
 >
-> A capability is **constructive knowledge**: to *hold* one is to be able to *exhibit a witness that
-> verifies* — never merely to assert. dregg builds that as machine-checked theorems. The goal is not
-> "another chain" but to **retire trust** rather than reinvent it — and, along the way, to carve these
-> foundational ideas-of-the-mind sharp enough that we can finally think *clearly* about them.
->
-> ### Two implementations, on purpose
->
-> - **`dregg`** — the **verified, Lean-primary** implementation ([`metatheory/`](metatheory/), library
->   `Dregg2`), l4v-shaped (abstract spec → factored middle → executable design → refinement). This is
->   the thing we are making as correct as it can possibly be. It is no longer a model *of* a system —
->   the live node now **runs the verified Lean** for its core: the executor produces committed state
->   (`execFullForestG`, FFI-exported, default-on), the Cordial-Miners `tau` finalization order is the
->   verified Lean `dregg_tau_order` (the Rust ordering demoted to a differential sibling), and strand
->   admission is a verified Lean gate the node invokes.
-> - **`dreggrs`** — the **pure-Rust heritage** implementation (this repo's top level, ~60 crates).
->   Integration-complete and live: real Plonky3 STARKs, CapTP, a blocklace DAG, programmable queues,
->   intents, a running devnet. Kept deliberately, as the independent sibling that the verified `dregg`
->   is differentially checked against — implementation diversity is a feature, not debt.
->
-> THE SWAP — making the verified Lean *be* the runtime rather than a shadow — is the spine of the
-> current work. Its core has landed; closing it out across every effect and subsystem is in flight.
->
-> **Start with the ideas:** [`metatheory/CONSTRUCTIVE-KNOWLEDGE.md`](metatheory/CONSTRUCTIVE-KNOWLEDGE.md)
-> → [`metatheory/README.md`](metatheory/README.md) → [`metatheory/docs/NAVIGATION.md`](metatheory/docs/NAVIGATION.md).
-> **Start with something runnable:** [QUICKSTART.md](QUICKSTART.md) (the verified 15-minute walkthrough),
-> `cargo run -p dregg-node run`, or the live devnet below.
+> A capability is **constructive knowledge**: to *hold* one is to be able to *exhibit a witness
+> that verifies* — never merely to assert. dregg builds that as machine-checked theorems.
 
-## What's actually true today (honest, grounded in the tree)
+## What dregg is
 
-dregg refuses to wear a badge it didn't earn. Verified-about-the-wrong-thing is *worse* than honestly
-unverified, so this section is as careful about the gaps as the wins.
+A formally verified object-capability operating substrate. The whole kernel is one sentence:
 
-**Verified and *running*:**
-- The live node executes via the **verified Lean executor** as its default state producer
-  (`Dregg2.Exec.execFullForestG`, ~56 effects, sorry-free executor core), finalizes via the **verified
-  Lean `tau`** ordering, and gates strand admission through a **verified Lean** stake-or-vouch gate
-  (a Sybil strand's blocks provably never finalize). dreggrs (Rust) runs alongside as the differential.
-- A capability-secure cell/object fabric: blocklace-DAG ordering (Ed25519-authenticated inserts with
-  sequence-monotonicity + equivocation detection), CapTP (handoff, distributed GC, sturdy refs),
-  programmable queues, intents/ring-trades, and a live solo devnet
-  (`https://devnet.dregg.fg-goose.online`).
+> **A turn is the exercise of an attenuable, proof-carrying token over owned state, leaving a
+> verifiable receipt.**
 
-**Machine-checked properties** (`#assert_axioms`-pinned to `{propext, Classical.choice, Quot.sound}`):
-per-asset conservation (not an aggregate scalar — *per asset*), capability **non-amplification**
-enforced in the executor *and* at the wire, nullifier no-double-spend, an l4v **data refinement**
-(an efficient HashMap executor provably refines the abstract spec), a **three-commitment cross-binding**
-(a circuit proof constrains the committed cell state across all fields), blocklace finality (one final
-leader per wave, deterministic order), CRDT lace-merge convergence, CapTP **handoff unforgeability** and
-**GC no-premature-reclaim**, membership-change safety, and recursive-aggregation soundness (a light
-client can trust N turns of history from one succinct proof, without re-executing).
+Everything below is that sentence, given algebra:
 
-**Verifiable execution.** Each effect's *abstract* circuit proves the full post-state transition with
-an anti-ghost tooth (tamper any field ⇒ UNSAT — *conservation is not correctness*). The circuit the
-prover actually runs is **emitted from Lean and proved faithful** for a growing set of effects — but
-honestly: only a minority (transfer + the economic family) currently carry a *from-scratch full-semantics*
-proof on the *runnable* descriptor end-to-end; the rest bind their frame + side-table root, with the
-richer per-effect soundness living over the abstract surface. Closing that gap (every effect genuinely
-class-A on the running circuit) is the magnesium frontier. See
-[`metatheory/docs/rebuild/_CIRCUIT-ASSURANCE-PER-EFFECT.md`](metatheory/docs/rebuild/).
+- **Cells** are isolated objects: per-asset balances (an asset *is* its issuer cell), programmable
+  state slots, a capability tree, and a **program** — a predicate over the cell's own transitions
+  that the kernel enforces on every turn.
+- **Turns** are atomic, capability-gated state transitions across one or more cells. Authorization
+  is structural: a turn that cannot exhibit a valid, sufficiently-empowered, fresh token chain
+  does not execute.
+- **The kernel is eight verbs** — `create · write · move · grant · revoke · shield/unshield ·
+  lifecycle · exercise` — specified in Lean 4 with machine-checked minimality and completeness
+  theorems ([`metatheory/Dregg2/Substrate/VerbRegistry.lean`](metatheory/Dregg2/Substrate/VerbRegistry.lean)).
+- **The verified executor is the executor.** The node's state producer is the Lean function
+  `execFullForestG` — credential- and caveat-gated, proven sound — compiled and linked into the
+  node via [`dregg-lean-ffi/`](dregg-lean-ffi/). It is not a model of the node; it is the function
+  the node calls.
+- **Circuits are emitted from Lean.** Constraint systems are generated from proved Lean modules as
+  byte-pinned descriptor artifacts (a SHA-256-fingerprinted registry, drift-rejected in CI); the
+  Rust prover *interprets* them. Rust authors no constraints. Most effect selectors prove on this
+  Lean-descriptor path today; the remainder fall back to a legacy circuit with a named, logged
+  reason — never silently — and the fallback set only shrinks.
+- **Receipts and proofs.** Every turn leaves a receipt; STARK proofs (Plonky3, BabyBear, Poseidon2,
+  FRI — post-quantum assumptions only) attest turns *additively* (verification of a turn never
+  requires re-executing history); recursive aggregation folds a whole history into one root.
+- **The polis.** Governance is built from the same primitives: content-addressed constitutions,
+  M-of-N councils, amendments with enforced cooling periods, capability-bounded worker mandates.
+  A community's law is a cell; changing the law is a turn.
 
-**Assumed (named, never hidden):** a small, standard cryptographic floor — Poseidon2 permutation
-collision-resistance (tied to the real in-circuit AIR), BLAKE3 CR, Ed25519 EUF-CMA, BLS12-381 pairing
-soundness — carried as explicit hypotheses. Many higher-level "assumptions" have been *discharged* to
-reductions onto this floor rather than assumed outright.
+## The assurance case
 
-**Open (why this is *not* yet security-critical-ready):**
-- **The swap residual.** The Lean producer is authoritative for a subset of effects today; the rest
-  fall back to the Rust producer pending wire-projection (closing in flight). The verified executor
-  *being* the runtime for **every** effect is the active push.
-- **Performance.** Proving currently runs too close to the request path; the fix (commit via sub-ms
-  direct witness-revalidation, prove asynchronously — proofs are *additive attestation*, not a
-  per-step gate) is grounded and in flight. A light client verifies in ~100ms today; recursive
-  aggregation is the path to cheap.
-- **Coverage.** Not every subsystem is yet a Lean implementation the node invokes (CapTP/coord are
-  converting from verified *models* to verified *callable* implementations); the per-effect circuit
-  assurance is uneven (above); independent audit has not happened.
+[`metatheory/Dregg2/AssuranceCase.lean`](metatheory/Dregg2/AssuranceCase.lean) states the
+system's guarantees as Lean theorems whose axioms are pinned to
+`{propext, Classical.choice, Quot.sound}` — no `sorry`, no extra axioms — each with explicit
+non-vacuity witnesses (the property provably *can* fail, and is proven not to):
 
-In short: **the node proves its own turns and refuses to lie about them**, and increasingly it *is*
-the verified Lean rather than a Rust shadow of it. The honest gaps are the work, and they're tracked,
-not papered.
+- **A — Authority.** Every state change is justified by an unforgeable, non-amplified, fresh
+  token chain. Delegation can only attenuate (`granted ≤ held`, enforced at the dispatcher).
+- **B — Conservation.** Per asset, the resource sum is *identically zero* on every reachable
+  state. Mint and burn are ordinary moves against the issuer's negative-capable well; no verb
+  can move any asset's sum.
+- **C — Integrity.** A receipt binds the *whole* post-state. The circuit and the executor
+  provably produce the same receipt; a commitment that drops a field is provably not a faithful
+  bridge.
+- **D — Freshness.** No replay, no double-spend: a committed spend's nullifier was fresh (a
+  sorted-tree non-membership opening, in-circuit), and revocation takes effect at finality.
+- **E — Unfoolability.** A light client checking only the aggregate root learns A–D for the
+  entire history, re-witnessing nothing.
+- **R — The running entry.** A∧B∧C hold over `execFullForestG` itself — the exact gated function
+  the deployed node invokes — not just over an abstract model. The gate adds teeth (forged
+  credentials reject the whole forest) without weakening the linear guarantees.
 
-## The fabric
+**Assumed, named, never hidden:** a small standard cryptographic floor — Poseidon2 permutation
+collision-resistance (stated against the real in-circuit AIR), BLAKE3 CR, Ed25519 EUF-CMA,
+BLS12-381 pairing soundness — carried as explicit hypotheses. Higher-level assumptions are
+discharged by reduction onto this floor, not assumed outright.
 
-A **unified blocklace**: a shared DAG where groups form through mutual acknowledgment and admission
-(stake-or-vouch), not fixed federations. Your phone is a node; a cloud cluster is a node; the
-sovereignty spectrum is continuous (a cell is `Hosted` by a federation or `Sovereign`/self-custodied).
-Cells are isolated objects; turns are atomic capability-gated state transitions; CapTP sessions carry
-capability references between strands (each strand an append-only signed feed — Secure Scuttlebutt's
-shape, extended with BFT finality, object-capabilities, and double-spend safety).
+**Open, named (why this is not security-critical-ready):**
 
-### Quick start
+- **The recursion config is demo-strength.** The aggregation ROOT (46 KiB, 2 ms verify,
+  K-independent) is real machinery, but its FRI config currently runs at ~6 bits of conjectured
+  soundness; production strength needs ~20× more in-circuit query verification. Until that lands,
+  the ROOT is not a production light-client artifact. Measured in detail in
+  [`docs/PROOF-ECONOMICS.md`](docs/PROOF-ECONOMICS.md).
+- **Deployment correspondence.** The running devnet's genesis predates guarantee B's value-empty
+  hypothesis, and the legacy fee path sits outside the conservation law; both fixes ride the next
+  layout rotation. The assurance case names every such gap in its deployment-correspondence
+  section — the deployed system must sit *inside* the theorems' hypotheses, and where it doesn't
+  yet, the file says so.
+- **Expressiveness.** Cell programs today speak a small slot-level constraint grammar; real
+  applications want named fields and growable collections. The designed fix (a register file plus
+  a Merkle-map heap, reusing the proven capability-root gadgets) is
+  [`docs/REFINEMENT-DESIGN.md`](docs/REFINEMENT-DESIGN.md).
+- **No independent audit has happened.**
+
+## Run it
+
+[QUICKSTART.md](QUICKSTART.md) is the real walkthrough (15 minutes, every command verified
+against the live devnet). The shortest possible version:
+
 ```sh
+curl -s https://devnet.dregg.fg-goose.online/status        # the live devnet, no build needed
+
 git clone https://github.com/emberian/dregg && cd dregg
-cargo build
-cargo run -p dregg-node run                         # run a node (verified Lean producer, default on)
-dregg demo --passphrase demo-local-pass             # a full STARK-proven nameservice lifecycle
-cd docker && docker compose up                      # local devnet
+cargo build -p dregg-cli --release
+export DREGG_NODE_URL=https://devnet.dregg.fg-goose.online
+./target/release/dregg node status
+./target/release/dregg demo --name you.dregg               # full app lifecycle, real signed turns
+cargo run -p dregg-node run                                # or run your own node
 ```
 
-### Crate overview (selected)
-| Crate | Purpose |
-|-------|---------|
-| `circuit` | STARK prover/verifier, Effect VM AIR, the Lean-emitted descriptor interpreter, IVC, Plonky3, lookups |
-| `turn` | TurnExecutor (the Rust differential sibling); the verified Lean executor produces via `lean_apply` |
-| `cell` | Isolated objects: c-lists, committed field-map, notes, programmable predicates |
-| `blocklace` | Shared DAG: signed/seq-checked/equivocation-detecting inserts, causal ordering, `tau` finality |
-| `captp` | Capability Transport: sessions, sturdy refs, three-party handoff, distributed GC, store-forward |
-| `federation` | Committee identity, epoch reconfig, BLS threshold, **stake-or-vouch strand admission** |
-| `intent` | Gossip broadcast, ring-trade solving (settled through the verified per-asset executor) |
-| `node` | The daemon: HTTP/MCP, gossip sync, and the **verified-Lean producer + `tau` + admission** path |
-| `lightclient` | Verify aggregated history from one succinct proof, without re-execution |
-| `dregg-lean-ffi` | The bridge: FFI exports the node calls to *run* the verified Lean (executor, `tau`, admission) |
-| `metatheory/` | **`dregg` proper** — the Lean-4 verified implementation (`Dregg2`) |
+## The map
 
-## Privacy model (the epistemic boundary, as a dial)
-Three verification modes from the same rules — the verifier's *epistemic position* is a setting:
-
-| Mode | Verifier learns | Proof size |
-|------|----------------|-----------|
-| Trusted | Full cleartext + trace | 0 |
-| Selective Disclosure | Chosen facts + conclusion | ~45 KB |
-| Fully Private | One bit (allow/deny) | ~80 KB |
-
-All modes work offline; proofs are post-quantum (BabyBear STARK + FRI). In `dregg`'s terms each mode is
-a different epistemic boundary over the same `Verify` seam (machine-checked as `DiscloseAt`).
-
-## Links
-- [Site / Docs / Playground / Explorer](https://dregg.fg-goose.online) · [Live devnet](https://devnet.dregg.fg-goose.online) · [Pages mirror](https://emberian.github.io/dregg)
+| Where | What |
+|-------|------|
+| [`metatheory/`](metatheory/) | **The system itself**, in Lean 4 (library `Dregg2`): the eight-verb kernel, the gated executor, the circuit IR and descriptor emission, the assurance case. l4v-shaped: abstract spec → executable design → refinement proofs. |
+| `dregg-lean-ffi` | The link: compiles the Lean executor into `libdregg_lean.a` and exports the entry the node calls. |
+| `node` | The daemon: HTTP/MCP API, gossip + blocklace sync, block production driven by the Lean producer. |
+| `circuit` | The STARK stack: the Lean-descriptor interpreter (the prover), Plonky3, IVC/recursive aggregation, the light-client verifier. |
+| `cell`, `turn`, `wire` | Cell state, turn types, and the wire codec — the Rust data plane the Lean executor's decisions flow through. |
+| `blocklace`, `federation`, `captp` | The DAG (signed, equivocation-detecting, BFT-final), committee machinery, and capability transport between nodes. |
+| `sdk`, `cli`, `site` | Building against dregg: the Rust SDK, the `dregg` CLI, and the web playground/explorer. |
+| `starbridge-apps`, `docs` | Applications built on the substrate, and the design documents. |
 
 ## Status: experimental
-Research software under active development, ~two weeks old. The proof system is real (Plonky3 STARKs,
-algebraic Poseidon2, thousands of tests); the verified Lean now runs the node's core and refuses
-forged turns. But the swap is mid-completion, performance and per-effect circuit assurance are uneven,
-and there has been no independent audit. **Do not use for anything security-critical without one.**
+
+Research software under active development. The proof system is real, the verified Lean executor
+is what the node runs, and the live devnet at
+[devnet.dregg.fg-goose.online](https://devnet.dregg.fg-goose.online) executes it. The named opens
+above are open, and there has been no independent audit. **Do not use for anything
+security-critical.**
+
+- [Site / Docs / Playground / Explorer](https://dregg.fg-goose.online) · [Live devnet](https://devnet.dregg.fg-goose.online) · [Pages mirror](https://emberian.github.io/dregg)
 
 ## License
+
 AGPL-3.0-or-later
