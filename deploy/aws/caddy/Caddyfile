@@ -1,62 +1,100 @@
+# CORS OWNERSHIP: Caddy is the single owner of the Access-Control-* response
+# headers for proxied routes (the global `header` directives in the site block
+# below). The node emits its own origin-aware, allowlist-gated CORS headers;
+# without this strip a browser sees BOTH (Caddy's value, set before the proxy
+# runs, plus the upstream's appended copy) and rejects the response for having
+# a duplicate Access-Control-Allow-Origin. Stripping the upstream copies here
+# leaves exactly one header — Caddy's. Clients that talk to the node directly
+# (no proxy) still get the node's origin-aware headers.
+(strip_upstream_cors) {
+    header_down -Access-Control-Allow-Origin
+    header_down -Access-Control-Allow-Methods
+    header_down -Access-Control-Allow-Headers
+}
+
 devnet.dregg.fg-goose.online, dregg.fg-goose.online {
     # HTTP API
     handle /api/* {
-        reverse_proxy localhost:8420
+        reverse_proxy localhost:8420 {
+            import strip_upstream_cors
+        }
     }
 
     # WebSocket endpoint
     handle /ws {
-        reverse_proxy localhost:8420
+        reverse_proxy localhost:8420 {
+            import strip_upstream_cors
+        }
     }
 
     # Node status/health
     handle /status {
-        reverse_proxy localhost:8420
+        reverse_proxy localhost:8420 {
+            import strip_upstream_cors
+        }
     }
 
     # Federation endpoints
     handle /federation/* {
-        reverse_proxy localhost:8420
+        reverse_proxy localhost:8420 {
+            import strip_upstream_cors
+        }
     }
 
     # Programmable queue endpoints
     handle /queues/* {
-        reverse_proxy localhost:8420
+        reverse_proxy localhost:8420 {
+            import strip_upstream_cors
+        }
     }
 
     # Checkpoint endpoints
     handle /checkpoint/* {
-        reverse_proxy localhost:8420
+        reverse_proxy localhost:8420 {
+            import strip_upstream_cors
+        }
     }
 
     # PIR endpoints
     handle /pir/* {
-        reverse_proxy localhost:8420
+        reverse_proxy localhost:8420 {
+            import strip_upstream_cors
+        }
     }
 
     # Wallet endpoints
     handle /cipherclerk {
-        reverse_proxy localhost:8420
+        reverse_proxy localhost:8420 {
+            import strip_upstream_cors
+        }
     }
 
     # Discord bot Starbridge RemoteRuntime read surface
     handle /discord-bot/api/* {
         uri strip_prefix /discord-bot
-        reverse_proxy localhost:8080
+        reverse_proxy localhost:8080 {
+            import strip_upstream_cors
+        }
     }
     handle /discord-bot/observability/stream {
         uri strip_prefix /discord-bot
-        reverse_proxy localhost:8080
+        reverse_proxy localhost:8080 {
+            import strip_upstream_cors
+        }
     }
 
     # Faucet
     handle /faucet/* {
-        reverse_proxy localhost:8420
+        reverse_proxy localhost:8420 {
+            import strip_upstream_cors
+        }
     }
 
     # Governed Namespace (service mesh)
     handle /namespace/* {
-        reverse_proxy localhost:3003
+        reverse_proxy localhost:3003 {
+            import strip_upstream_cors
+        }
     }
     handle /app/namespace/* {
         root * /opt/dregg/apps/governed-namespace/frontend
@@ -104,8 +142,8 @@ devnet.dregg.fg-goose.online, dregg.fg-goose.online {
     # at the node on another origin, set DREGG_CORS_ORIGINS (or --cors-origin)
     # on dregg-node to that site origin so the node echoes it back.
     header Access-Control-Allow-Origin "*"
-    header Access-Control-Allow-Methods "GET, POST, OPTIONS"
-    header Access-Control-Allow-Headers "Content-Type, Authorization"
+    header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS"
+    header Access-Control-Allow-Headers "Content-Type, Authorization, X-Devnet-Key"
 
     # Security headers
     header X-Content-Type-Options "nosniff"

@@ -125,6 +125,19 @@ pub struct BlocklaceHandle {
     /// peer while preserving eventual re-request (liveness). See
     /// `dregg_net::peer_score::RequestBackoff`.
     pub pull_backoff: Arc<RwLock<dregg_net::peer_score::RequestBackoff<BlockId>>>,
+    /// Instant of the last block WE produced (turn, ack, or heartbeat). The
+    /// cadence task measures idleness against this so the low-frequency idle
+    /// heartbeat fires only when the node has genuinely produced nothing for a
+    /// full idle window (mutation-driven production resets it).
+    pub last_produced: Arc<RwLock<std::time::Instant>>,
+    /// Set when a peer's non-Ack block (turn / membership / checkpoint) lands in
+    /// our lace and is consumed by the cadence task, which answers with one
+    /// `Payload::Ack` block linking the current tips. This is the REACTIVE,
+    /// mutation-driven half of Cordial-Miners attestation (blocks answer
+    /// blocks): peers' turns accumulate our acknowledgment within one cadence
+    /// check tick instead of waiting for the idle heartbeat. Naturally
+    /// debounced — any number of pushes between ticks collapse into one ack.
+    pub ack_pending: Arc<std::sync::atomic::AtomicBool>,
 }
 
 /// A read-only view of one blocklace block, shaped to mirror the wasm
@@ -304,6 +317,7 @@ impl BlocklaceHandle {
         };
         let block_id = block.id();
         Self::persist_block_to_store(state, &block).await;
+        *self.last_produced.write().await = std::time::Instant::now();
 
         // Heartbeats still advance ordering bookkeeping (the finality executor
         // treats Ack as a no-op for execution but the seq/tip have advanced).
@@ -327,6 +341,7 @@ impl BlocklaceHandle {
 
         // Persist the newly created block to the store.
         Self::persist_block_to_store(state, &block).await;
+        *self.last_produced.write().await = std::time::Instant::now();
 
         // Determine initial finality based on participant count.
         let constitution = self.constitution.read().await;
@@ -870,6 +885,7 @@ pub async fn run_blocklace_sync(
     blocklace_checkpoint_interval: u64,
     constitution_timeout_ms: u64,
     block_cadence_ms: u64,
+    idle_heartbeat_ms: u64,
 ) -> Option<BlocklaceHandle> {
     // Blocklace tuning params (from CLI --blocklace-* or safe defaults in main).
     // This is the core of making blocklace easy to configure/enable/disable/tune
@@ -1138,6 +1154,8 @@ pub async fn run_blocklace_sync(
             Duration::from_secs(1),
             Duration::from_secs(30),
         ))),
+        last_produced: Arc::new(RwLock::new(std::time::Instant::now())),
+        ack_pending: Arc::new(std::sync::atomic::AtomicBool::new(false)),
     };
 
     info!("blocklace gossip layer initialized, processing messages");
@@ -1187,13 +1205,21 @@ pub async fn run_blocklace_sync(
     // ─── Spawn the Block Production Cadence Task ─────────────────────────────
     //
     // The pure blocklace protocol is quiescent: a block is only produced when a
-    // turn is submitted. For a devnet / explorer we also want the chain to make
-    // visible progress over time even when idle, so (when cadence > 0) this task
-    // drains the consensus queue into real blocks and, if the queue is empty,
-    // produces an empty heartbeat block. Every block links to the current tips
-    // (real parent hashes) and advances the creator's seq (real height).
+    // turn is submitted. Block production here is MUTATION-DRIVEN: each check
+    // tick produces a block only for pending queued turns, a pending reactive
+    // ack of received peer blocks, or — when the node has produced nothing for
+    // `idle_heartbeat_ms` — one low-frequency idle heartbeat so liveness /
+    // finality probes (and post-GST attestation exchange) still advance. Every
+    // produced block links the current tips (real parent hashes) and advances
+    // the creator's seq (real height). An idle node no longer grows the DAG by
+    // an empty block every tick.
     if block_cadence_ms > 0 {
-        spawn_block_cadence(state.clone(), handle.clone(), block_cadence_ms);
+        spawn_block_cadence(
+            state.clone(),
+            handle.clone(),
+            block_cadence_ms,
+            idle_heartbeat_ms,
+        );
     } else {
         info!(
             "block cadence disabled (--block-cadence-ms 0): blocks produced only on turn submission"
@@ -1341,6 +1367,22 @@ async fn handle_push(
     }
 
     let inserted = outcome.inserted.len();
+
+    // REACTIVE ATTESTATION: a peer's freshly-inserted non-Ack block (turn /
+    // membership / checkpoint) is a mutation that wants our acknowledgment —
+    // flag the cadence task to answer with one `Payload::Ack` block on its next
+    // check tick. Acking only NON-Ack foreign blocks terminates the exchange
+    // (acks do not beget acks), so n nodes acking one turn produce exactly the
+    // n attestation blocks the 2f+1 quorum needs, not a storm.
+    if outcome
+        .inserted
+        .iter()
+        .any(|b| b.creator != handle.self_key && b.payload != Payload::Ack)
+    {
+        handle
+            .ack_pending
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
 
     // Clear pull-backoff for every block that just landed: a later miss of the
     // same id (after a re-org / GC) should start fresh, not deep in backoff.
@@ -1549,58 +1591,134 @@ async fn handle_frontier(
 
 // ─── Block Production Cadence ────────────────────────────────────────────────
 
-/// Spawn a background task that produces blocks on a fixed cadence.
+/// What the cadence task does on one check tick. Pure decision so the
+/// no-empty-block-spam property is unit-testable without a running node.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CadenceAction {
+    /// Queued turns are pending: submit them as real turn blocks.
+    DrainTurns,
+    /// A peer's non-Ack block landed since the last tick: answer with one
+    /// `Payload::Ack` block (Cordial-Miners reactive attestation).
+    ReactiveAck,
+    /// Nothing pending and the node produced no block for a full idle window:
+    /// one low-frequency heartbeat block so liveness/finality probes advance.
+    IdleHeartbeat,
+    /// Nothing to do — produce NO block.
+    Nothing,
+}
+
+/// Decide the cadence action for one check tick. Block production is
+/// MUTATION-DRIVEN: a block is produced only for pending turns, a pending
+/// reactive ack, or an expired idle-heartbeat window (`idle_heartbeat_ms == 0`
+/// disables the idle heartbeat entirely).
+pub(crate) fn cadence_decision(
+    queued_turns: usize,
+    ack_pending: bool,
+    idle_for: Duration,
+    idle_heartbeat_ms: u64,
+) -> CadenceAction {
+    if queued_turns > 0 {
+        CadenceAction::DrainTurns
+    } else if ack_pending {
+        CadenceAction::ReactiveAck
+    } else if idle_heartbeat_ms > 0 && idle_for >= Duration::from_millis(idle_heartbeat_ms) {
+        CadenceAction::IdleHeartbeat
+    } else {
+        CadenceAction::Nothing
+    }
+}
+
+/// Spawn the block-production cadence task.
 ///
-/// On each tick:
-///   1. Drain any signed turns queued in `consensus_queue` and submit them as
-///      real turn blocks (these flow through the finality executor and update
-///      the ledger + attested roots).
-///   2. If the queue was empty, produce a single empty *heartbeat* block
-///      (`Payload::Ack`). A heartbeat carries no turn but is still a real,
-///      Ed25519-signed block that links to the current tips — so the DAG keeps
-///      advancing (real seq, real block id, real parent links) even when the
-///      node is idle.
+/// `check_ms` is a CHECK interval, not a production interval: most ticks
+/// produce nothing. On each tick the task either
+///   1. drains signed turns queued in `consensus_queue` into real turn blocks
+///      (these flow through the finality executor and update the ledger +
+///      attested roots),
+///   2. answers freshly-received peer turn blocks with one `Payload::Ack`
+///      block (reactive attestation, see `BlocklaceHandle::ack_pending`), or
+///   3. produces one idle *heartbeat* block (`Payload::Ack`) — but only when
+///      the node has produced no block at all for `idle_heartbeat_ms`. A
+///      heartbeat is a real, Ed25519-signed block linking the current tips
+///      (real seq, real parents), so the DAG provably advances while idle and
+///      post-GST peers keep exchanging attestations — at heartbeat frequency,
+///      not at check frequency.
 ///
-/// This is what makes a solo node "produce blocks over time" rather than only
-/// when a turn happens to arrive. Disabled when `cadence_ms == 0`.
-fn spawn_block_cadence(state: NodeState, handle: BlocklaceHandle, cadence_ms: u64) {
+/// This replaces the old unconditional block-per-tick cadence (which grew the
+/// DAG by an empty block every `check_ms` forever). Turn submission itself is
+/// NOT gated on this task: the API submits turn blocks directly
+/// (`BlocklaceHandle::submit_turn`), so turns commit promptly regardless of
+/// the check interval. Disabled when `check_ms == 0` (purely quiescent:
+/// blocks only on turn submission).
+fn spawn_block_cadence(
+    state: NodeState,
+    handle: BlocklaceHandle,
+    check_ms: u64,
+    idle_heartbeat_ms: u64,
+) {
     tokio::spawn(async move {
-        let mut ticker = tokio::time::interval(Duration::from_millis(cadence_ms));
+        let mut ticker = tokio::time::interval(Duration::from_millis(check_ms));
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         // Skip the immediate first tick so we don't emit a block at t=0 before
         // genesis/state has settled.
         ticker.tick().await;
-        info!(cadence_ms, "block production cadence active");
+        info!(
+            check_ms,
+            idle_heartbeat_ms,
+            "block production cadence active (mutation-driven; blocks only on pending turns, reactive acks, or idle heartbeat)"
+        );
         loop {
             ticker.tick().await;
 
-            // Drain queued turns (if any) into real turn blocks.
             let queued: Vec<dregg_sdk::SignedTurn> = {
                 let mut s = state.write().await;
                 std::mem::take(&mut s.consensus_queue)
             };
+            // LOAD (not consume) the ack flag: if this tick drains turns
+            // instead, the pending ack stays armed for the next tick rather
+            // than being silently swallowed. It is cleared only on the
+            // ReactiveAck branch, just before the ack block is created.
+            let ack_pending = handle.ack_pending.load(std::sync::atomic::Ordering::Relaxed);
+            let idle_for = handle.last_produced.read().await.elapsed();
 
-            if !queued.is_empty() {
-                let n = queued.len();
-                for signed in queued {
-                    match postcard::to_stdvec(&signed) {
-                        Ok(turn_data) => {
-                            handle.submit_turn(&state, turn_data).await;
-                        }
-                        Err(e) => {
-                            warn!(error = %e, "failed to encode queued turn for block production");
+            match cadence_decision(queued.len(), ack_pending, idle_for, idle_heartbeat_ms) {
+                CadenceAction::DrainTurns => {
+                    let n = queued.len();
+                    for signed in queued {
+                        match postcard::to_stdvec(&signed) {
+                            Ok(turn_data) => {
+                                handle.submit_turn(&state, turn_data).await;
+                            }
+                            Err(e) => {
+                                warn!(error = %e, "failed to encode queued turn for block production");
+                            }
                         }
                     }
+                    debug!(
+                        turns = n,
+                        "cadence: produced turn block(s) from consensus queue"
+                    );
                 }
-                debug!(
-                    turns = n,
-                    "cadence: produced turn block(s) from consensus queue"
-                );
-                continue;
+                CadenceAction::ReactiveAck => {
+                    // Clear BEFORE creating the ack: a push racing in after the
+                    // clear re-arms the flag (worst case one extra ack next
+                    // tick); a push racing in before the ack's lace lock is
+                    // already covered by this ack's tip links.
+                    handle
+                        .ack_pending
+                        .store(false, std::sync::atomic::Ordering::Relaxed);
+                    handle.submit_heartbeat(&state).await;
+                    debug!("cadence: produced reactive ack block for received peer blocks");
+                }
+                CadenceAction::IdleHeartbeat => {
+                    handle.submit_heartbeat(&state).await;
+                    debug!(
+                        idle_heartbeat_ms,
+                        "cadence: produced idle heartbeat block (no mutations for a full idle window)"
+                    );
+                }
+                CadenceAction::Nothing => {}
             }
-
-            // Idle: produce an empty heartbeat block so height keeps advancing.
-            handle.submit_heartbeat(&state).await;
         }
     });
 }
@@ -2761,6 +2879,121 @@ mod tests {
         // A QUIC-transport-style id (random TLS-cert hash) is correctly unknown.
         let transport_style_id: [u8; 32] = [0x7c; 32];
         assert!(peer_keys.get(&transport_style_id).is_none());
+    }
+
+    // ── Block-production cadence: mutation-driven, no empty-block spam ──────
+
+    /// THE idle pin: an idle node (no queued turns, no acks owed) produces at
+    /// most ⌊elapsed / idle_heartbeat⌋ blocks — NOT one per check tick. This is
+    /// the regression test for the 2s-empty-block-spam behavior (which grew the
+    /// DAG 25→59 overnight with one real turn: ~one block per tick, i.e. 300
+    /// blocks over the 10 virtual minutes simulated here instead of 5).
+    #[test]
+    fn idle_interval_produces_at_most_heartbeat_blocks() {
+        let check_ms: u64 = 2_000;
+        let idle_heartbeat_ms: u64 = 120_000;
+        let total_ms: u64 = 600_000; // 10 idle minutes
+        let ticks = total_ms / check_ms;
+
+        let mut idle_for_ms: u64 = 0;
+        let mut blocks_produced = 0u64;
+        for _ in 0..ticks {
+            idle_for_ms += check_ms;
+            match cadence_decision(
+                0,
+                false,
+                Duration::from_millis(idle_for_ms),
+                idle_heartbeat_ms,
+            ) {
+                CadenceAction::IdleHeartbeat => {
+                    blocks_produced += 1;
+                    idle_for_ms = 0; // producing a block resets last_produced
+                }
+                CadenceAction::Nothing => {}
+                other => panic!("idle tick must never produce {other:?}"),
+            }
+        }
+
+        assert_eq!(
+            blocks_produced,
+            total_ms / idle_heartbeat_ms,
+            "idle production = exactly one heartbeat per idle window"
+        );
+        assert!(
+            blocks_produced <= total_ms / idle_heartbeat_ms,
+            "no-empty-block-spam: idle interval ⇒ ≤ ⌊elapsed/heartbeat⌋ blocks"
+        );
+    }
+
+    /// Queued turns drain on the very next check tick — and take priority over
+    /// both the reactive ack and the idle heartbeat (turns commit promptly).
+    #[test]
+    fn queued_turns_drain_on_next_tick() {
+        // Fresh mutation, nothing else pending.
+        assert_eq!(
+            cadence_decision(3, false, Duration::from_millis(0), 120_000),
+            CadenceAction::DrainTurns
+        );
+        // Turns win even when an ack is owed and the idle window expired.
+        assert_eq!(
+            cadence_decision(1, true, Duration::from_secs(3_600), 120_000),
+            CadenceAction::DrainTurns
+        );
+        // Turns drain even when the idle heartbeat is disabled.
+        assert_eq!(
+            cadence_decision(1, false, Duration::from_millis(0), 0),
+            CadenceAction::DrainTurns
+        );
+    }
+
+    /// A received peer turn block is a mutation: it is answered with one
+    /// reactive ack block promptly (next tick), not deferred to the heartbeat.
+    #[test]
+    fn received_peer_blocks_get_prompt_reactive_ack() {
+        assert_eq!(
+            cadence_decision(0, true, Duration::from_millis(0), 120_000),
+            CadenceAction::ReactiveAck
+        );
+        // Reactive ack also fires when idle heartbeats are disabled —
+        // attestation is mutation-driven, not heartbeat-driven.
+        assert_eq!(
+            cadence_decision(0, true, Duration::from_millis(0), 0),
+            CadenceAction::ReactiveAck
+        );
+    }
+
+    /// Nothing pending + window not expired ⇒ NO block. (The old cadence
+    /// produced a heartbeat here unconditionally.)
+    #[test]
+    fn quiet_tick_produces_no_block() {
+        assert_eq!(
+            cadence_decision(0, false, Duration::from_millis(2_000), 120_000),
+            CadenceAction::Nothing
+        );
+        assert_eq!(
+            cadence_decision(0, false, Duration::from_millis(119_999), 120_000),
+            CadenceAction::Nothing
+        );
+        // idle_heartbeat_ms == 0 disables the idle heartbeat entirely.
+        assert_eq!(
+            cadence_decision(0, false, Duration::from_secs(86_400), 0),
+            CadenceAction::Nothing
+        );
+    }
+
+    /// The idle heartbeat fires exactly at window expiry (liveness floor: the
+    /// DAG still provably advances while idle, for finality probes + post-GST
+    /// attestation exchange).
+    #[test]
+    fn idle_heartbeat_fires_at_window_expiry() {
+        assert_eq!(
+            cadence_decision(0, false, Duration::from_millis(120_000), 120_000),
+            CadenceAction::IdleHeartbeat
+        );
+        assert_eq!(
+            cadence_decision(0, false, Duration::from_millis(500_000), 120_000),
+            CadenceAction::IdleHeartbeat
+        );
     }
 
     #[test]

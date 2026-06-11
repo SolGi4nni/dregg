@@ -120,14 +120,25 @@ enum Command {
         #[arg(long, default_value = "10000")]
         blocklace_wave_timeout_ms: u64,
 
-        /// Block production cadence in milliseconds. When > 0, the node produces
-        /// a block on this interval even when no turns have been submitted (an
-        /// empty heartbeat block), so height advances over time and the
-        /// blocklace DAG always has a live tip. Set 0 to disable the heartbeat
-        /// (purely quiescent: blocks are only produced when turns arrive).
-        /// Default 2000ms (devnet-friendly steady cadence).
+        /// Block production CHECK interval in milliseconds. Block production is
+        /// mutation-driven: on each check tick the node produces a block only
+        /// when there are pending queued turns, a reactive ack owed for
+        /// received peer blocks, or the idle-heartbeat window has expired (see
+        /// --idle-heartbeat-ms). Most ticks produce nothing — an idle node no
+        /// longer emits an empty block per tick. Set 0 to disable the cadence
+        /// task entirely (purely quiescent: blocks only on turn submission).
+        /// Default 2000ms (bounds turn-drain / reactive-ack latency).
         #[arg(long, default_value = "2000")]
         block_cadence_ms: u64,
+
+        /// Idle heartbeat interval in milliseconds. When the node has produced
+        /// no block at all for this long, it emits ONE empty heartbeat block
+        /// (a real, signed block linking the current tips) so liveness and
+        /// finality probes still advance while idle. Set 0 to disable idle
+        /// heartbeats. Also configurable via the DREGG_IDLE_HEARTBEAT_MS env
+        /// var (the env var wins when set). Default 120000 (2 minutes).
+        #[arg(long, default_value = "120000")]
+        idle_heartbeat_ms: u64,
 
         /// Enable the faucet endpoint (POST /api/faucet).
         /// Only suitable for devnets. Allows anyone to request computrons from the
@@ -347,6 +358,7 @@ async fn main() {
             blocklace_checkpoint_interval,
             blocklace_wave_timeout_ms,
             block_cadence_ms,
+            idle_heartbeat_ms,
             enable_faucet,
             federation_mode,
             consensus,
@@ -369,6 +381,7 @@ async fn main() {
                 blocklace_checkpoint_interval,
                 blocklace_wave_timeout_ms,
                 block_cadence_ms,
+                idle_heartbeat_ms,
                 enable_faucet,
                 &federation_mode,
                 &consensus,
@@ -444,6 +457,7 @@ async fn run_node(
     blocklace_checkpoint_interval: u64,
     blocklace_wave_timeout_ms: u64,
     block_cadence_ms: u64,
+    idle_heartbeat_ms: u64,
     enable_faucet: bool,
     federation_mode_str: &str,
     consensus_engine: &str,
@@ -708,6 +722,14 @@ async fn run_node(
             );
             let sync_state = node_state.clone();
             let gossip_port_copy = gossip_port;
+            // Idle-heartbeat window: env var wins over the CLI flag so an
+            // operator can retune a deployed unit via /etc/dregg/node.env
+            // without editing the systemd ExecStart line (same pattern as
+            // DREGG_PROVE_TURNS above).
+            let idle_heartbeat_ms = std::env::var("DREGG_IDLE_HEARTBEAT_MS")
+                .ok()
+                .and_then(|v| v.trim().parse::<u64>().ok())
+                .unwrap_or(idle_heartbeat_ms);
             let blocklace_handle = blocklace_sync::run_blocklace_sync(
                 sync_state,
                 gossip_port_copy,
@@ -715,6 +737,7 @@ async fn run_node(
                 blocklace_checkpoint_interval,
                 blocklace_wave_timeout_ms,
                 block_cadence_ms,
+                idle_heartbeat_ms,
             )
             .await;
             if let Some(handle) = blocklace_handle {
