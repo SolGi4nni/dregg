@@ -23,6 +23,8 @@ pub mod gossip;
 mod mcp;
 pub mod metrics;
 pub mod multi_group;
+#[cfg(test)]
+mod mailbox_crank_e2e;
 mod prove_pool;
 mod relay_service;
 mod routing_table;

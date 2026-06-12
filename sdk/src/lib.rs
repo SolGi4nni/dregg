@@ -118,6 +118,8 @@ pub mod events;
 pub mod explain;
 pub mod factories;
 pub mod full_turn_proof;
+#[cfg(feature = "captp")]
+pub mod mailbox;
 pub mod mnemonic;
 #[cfg(feature = "captp")]
 pub mod names;
@@ -266,6 +268,17 @@ pub use names::{
 // CapTP client types for capability sharing and pipelining.
 #[cfg(feature = "captp")]
 pub use captp_client::{CapTpClient, CapTpConfig, EventualRef, LiveRef};
+
+// The mailbox crank (ORGANS §2): drain a hosted inbox, execute sealed
+// turn-intents through the owner's `.turn()` path, custody-receipted by the
+// relay's existing dequeue proofs.
+#[cfg(feature = "captp")]
+pub use mailbox::{
+    CrankDisposition, CrankOutcome, CrankReport, CustodyReceipt, DeliveredMessage, MailboxCrank,
+    MailboxTransport, MailboxTurnIntent, RefusalReason, seal_intent,
+};
+#[cfg(all(feature = "captp", feature = "federation-client", feature = "network"))]
+pub use mailbox::RelayHttpTransport;
 #[cfg(feature = "captp")]
 pub use dregg_captp::handoff::HandoffCertificate;
 #[cfg(feature = "captp")]

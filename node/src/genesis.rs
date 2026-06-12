@@ -16,6 +16,7 @@ use starbridge_identity::ISSUER_FACTORY_VK;
 use starbridge_nameservice::NAME_FACTORY_VK;
 use starbridge_privacy_voting::{BALLOT_FACTORY_VK, POLL_FACTORY_VK};
 use starbridge_storage_gateway_mandate::SGM_FACTORY_VK;
+use dregg_storage_templates::cap_inbox::CAP_INBOX_FACTORY_VK;
 use starbridge_subscription::SUBSCRIPTION_FACTORY_VK;
 
 /// A validator entry in the genesis configuration.
@@ -410,6 +411,16 @@ pub fn default_starbridge_genesis_cells() -> Vec<StarbridgeGenesisCell> {
             owner_agent: "alice".into(),
             uri_hint: "bounty-default".into(),
         },
+        // The storage-template CapInbox factory (mailbox organ). Seeded
+        // exactly like the subscription factory above: the descriptor is
+        // registered by `starbridge_seed::register_starbridge_factory_descriptors`
+        // and this entry births the default inbox cell at boot.
+        StarbridgeGenesisCell {
+            label: "cap-inbox".into(),
+            factory_vk_hex: hex_encode(&CAP_INBOX_FACTORY_VK),
+            owner_agent: "alice".into(),
+            uri_hint: "inbox-default".into(),
+        },
     ]
 }
 
@@ -470,8 +481,8 @@ mod tests {
         let cells = default_starbridge_genesis_cells();
         assert_eq!(
             cells.len(),
-            9,
-            "devnet genesis must seed all starbridge app cells"
+            10,
+            "devnet genesis must seed all starbridge app cells + the cap-inbox factory cell"
         );
 
         let labels: Vec<&str> = cells.iter().map(|c| c.label.as_str()).collect();
@@ -484,6 +495,7 @@ mod tests {
         assert!(labels.contains(&"privacy-voting-poll"));
         assert!(labels.contains(&"privacy-voting-ballot"));
         assert!(labels.contains(&"bounty-board-bounty"));
+        assert!(labels.contains(&"cap-inbox"));
 
         for cell in &cells {
             assert_eq!(cell.owner_agent, "alice");
@@ -526,7 +538,7 @@ mod tests {
         let starbridge = json["starbridge_cells"]
             .as_array()
             .expect("starbridge_cells array present");
-        assert_eq!(starbridge.len(), 9);
+        assert_eq!(starbridge.len(), 10);
         assert_eq!(starbridge[0]["label"], "nameservice-registry");
         assert_eq!(starbridge[0]["owner_agent"], "alice");
         assert_eq!(starbridge[0]["uri_hint"], "registry-default");

@@ -29,6 +29,11 @@ dregg-wire = { path = "../wire", optional = true }
 # `captp` feature: dregg-captp pulls async runtimes that are non-wasm32.
 # captp_client + names are gated on this.
 dregg-captp = { path = "../captp", optional = true }
+# `captp` feature (mailbox crank): the relay hosted-inbox dequeue-proof
+# verifier (`dregg_storage::queue::verify_dequeue_proof{,_against}`) — the
+# crank checks custody with the SAME verifier the relay's queue produces
+# proofs for, no reimplementation.
+dregg-storage = { path = "../storage", optional = true }
 dregg-circuit = { path = "../circuit" }
 dregg-commit = { path = "../commit" }
 # The light-client artifact (`AttestedHistory`) — the SDK's second
@@ -70,7 +75,7 @@ zeroize = { workspace = true }
 default = ["federation-client", "network", "captp"]
 federation-client = ["dep:reqwest"]
 network = ["dep:dregg-wire", "dep:tokio", "dep:futures-core"]
-captp = ["dep:dregg-captp"]
+captp = ["dep:dregg-captp", "dep:dregg-storage"]
 # PLATFORM gate, OFF by default: only wasm32/zkvm builds set it. It compiles the legacy
 # Rust-producer path IN PLACE OF the verified Lean producer — a statement about the
 # target's linker, never about which guarantees this dregg has. On native the producer is

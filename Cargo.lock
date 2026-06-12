@@ -2542,6 +2542,7 @@ dependencies = [
  "dregg-lean-ffi",
  "dregg-lightclient",
  "dregg-macaroon",
+ "dregg-storage",
  "dregg-token",
  "dregg-trace",
  "dregg-turn",

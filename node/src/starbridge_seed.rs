@@ -483,6 +483,10 @@ fn register_starbridge_factory_descriptors() -> Vec<FactoryDescriptor> {
     starbridge_storage_gateway_mandate::register(&ctx);
     starbridge_privacy_voting::register(&ctx);
     starbridge_bounty_board::register(&ctx);
+    // The storage-template CapInbox factory (mailbox organ) registers through
+    // the same StarbridgeAppContext mount as the apps above, so its descriptor
+    // deploys and its genesis cell births via the identical machinery.
+    dregg_storage_templates::cap_inbox::register(&ctx);
 
     ctx.factory_registry().descriptors()
 }
@@ -591,15 +595,21 @@ mod tests {
         let cells = default_starbridge_genesis_cells();
         let genesis = serde_json::json!({ "starbridge_cells": cells });
         let parsed = parse_starbridge_cells(&genesis).expect("parse cells");
-        assert_eq!(parsed.len(), 9);
+        assert_eq!(parsed.len(), 10);
         assert_eq!(parsed[0].label, "nameservice-registry");
     }
 
     #[test]
     fn register_starbridge_factory_descriptors_covers_all_apps() {
         // Six single-factory apps + privacy-voting (poll + ballot = 2) +
-        // bounty-board (1) = 9 factory descriptors.
+        // bounty-board (1) + the storage-template cap-inbox factory (1)
+        // = 10 factory descriptors.
         let descriptors = register_starbridge_factory_descriptors();
-        assert_eq!(descriptors.len(), 9);
+        assert_eq!(descriptors.len(), 10);
+        assert!(
+            descriptors.iter().any(|d| d.factory_vk
+                == dregg_storage_templates::cap_inbox::CAP_INBOX_FACTORY_VK),
+            "cap-inbox factory descriptor must be registered for boot seeding"
+        );
     }
 }

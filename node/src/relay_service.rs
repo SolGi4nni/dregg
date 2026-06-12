@@ -170,6 +170,13 @@ pub struct RelayTemplateQueueEntry {
     pub deposit: u64,
     pub enqueued_at: u64,
     pub size: usize,
+    /// The retained message body (base64 ciphertext), held until drain.
+    /// The queue/proof layer commits only to `content_hash`; the body is
+    /// the store-and-forward payload the recipient's crank decrypts. The
+    /// hash binds it: a recipient recomputes the content hash from the
+    /// delivered body and the dequeue proof's roots cover that hash.
+    #[serde(default)]
+    pub payload_b64: String,
 }
 
 impl From<&RelayTemplateQueueEntry> for QueueEntry {
@@ -317,6 +324,7 @@ impl RelayTemplateState {
             deposit,
             enqueued_at: height,
             size: msg.size(),
+            payload_b64: inbox_message_payload_b64(&msg),
         });
         inbox.pending_messages = inbox.queue_entries.len();
         inbox.queue_root = queue_root_from_template_entries(
@@ -335,7 +343,7 @@ impl RelayTemplateState {
         owner: &[u8; 32],
         max: usize,
         height: u64,
-    ) -> Result<Vec<(QueueEntry, DequeueProof)>, String> {
+    ) -> Result<Vec<(QueueEntry, DequeueProof, String)>, String> {
         let before = self.clone();
         let inbox = match self.hosted_inboxes.get_mut(owner) {
             Some(inbox) if !inbox.evicted => inbox,
@@ -348,11 +356,14 @@ impl RelayTemplateState {
             inbox.queue_entries.iter().map(QueueEntry::from),
         )?;
         let mut drained = Vec::with_capacity(drain_count);
-        for _ in 0..drain_count {
+        for i in 0..drain_count {
             let (entry, proof) = queue
                 .dequeue()
                 .map_err(|e| format!("relay template drain queue rejected: {e:?}"))?;
-            drained.push((entry, proof));
+            // Deliver the retained body alongside the proof; the entry's
+            // content_hash (covered by the proof roots) binds it.
+            let payload_b64 = inbox.queue_entries[i].payload_b64.clone();
+            drained.push((entry, proof, payload_b64));
         }
         inbox.queue_entries.drain(0..drain_count);
         inbox.pending_messages = inbox.queue_entries.len();
@@ -577,8 +588,21 @@ pub struct DrainedMessage {
     pub sender: String,
     pub deposit: u64,
     pub enqueued_at: u64,
+    /// Entry size in bytes — part of the proof-covered `QueueEntry` leaf.
+    pub size: usize,
     pub proof_old_root: String,
     pub proof_new_root: String,
+    /// Absolute head index (metadata; NOT root-bound — see `DequeueProof`).
+    pub proof_position: usize,
+    /// Leaf hashes of the entries remaining after this dequeue, FIFO (hex).
+    /// Together with the roots + the entry fields this is the FULL
+    /// `dregg_storage::queue::DequeueProof`, so the recipient's crank can
+    /// run `verify_dequeue_proof{,_against}` itself.
+    pub proof_remaining_leaves: Vec<String>,
+    /// Base64 ciphertext body, retained from send. `content_hash` (covered
+    /// by the dequeue proof's roots) binds it — recipients MUST recompute
+    /// and compare.
+    pub payload: String,
 }
 
 /// GET /relay/inbox/:id/status response.
@@ -988,7 +1012,7 @@ async fn handle_drain(
     // Store delivery proofs and build response.
     let messages: Vec<DrainedMessage> = drained
         .into_iter()
-        .map(|(entry, proof)| {
+        .map(|(entry, proof, payload)| {
             // Cache the proof for later retrieval.
             s.delivery_proofs.insert(entry.content_hash, proof.clone());
             s.messages_delivered += 1;
@@ -998,8 +1022,16 @@ async fn handle_drain(
                 sender: hex_encode(&entry.sender),
                 deposit: entry.deposit,
                 enqueued_at: entry.enqueued_at,
+                size: entry.size,
                 proof_old_root: hex_encode(&proof.old_root),
                 proof_new_root: hex_encode(&proof.new_root),
+                proof_position: proof.position,
+                proof_remaining_leaves: proof
+                    .remaining_leaves
+                    .iter()
+                    .map(|leaf| hex_encode(leaf))
+                    .collect(),
+                payload,
             }
         })
         .collect();
@@ -1214,6 +1246,18 @@ fn inbox_message_content_hash(msg: &InboxMessage) -> [u8; 32] {
         }
     }
     *blake3::hash(&buf).as_bytes()
+}
+
+/// Base64 of the message body the relay retains for delivery (the same bytes
+/// `inbox_message_content_hash` commits to, minus the tag/sender framing).
+fn inbox_message_payload_b64(msg: &InboxMessage) -> String {
+    use base64::Engine;
+    let body: &[u8] = match msg {
+        InboxMessage::Capability { cert_bytes, .. } => cert_bytes,
+        InboxMessage::SturdyRef { uri, .. } => uri.as_bytes(),
+        InboxMessage::Encrypted { ciphertext, .. } => ciphertext,
+    };
+    base64::engine::general_purpose::STANDARD.encode(body)
 }
 
 fn template_queue_from_entries(
