@@ -2150,11 +2150,12 @@ async fn execute_finalized_turn(
     // shared producer gate every ingress uses (`executor_setup::execute_via_producer`,
     // #171): finalized turns, thin-HTTP turns, and remote signed envelopes all execute
     // on the same authoritative state producer.
+    let lean_producer_enabled = s.lean_producer_enabled;
     let exec_result = crate::executor_setup::execute_via_producer(
         &executor,
         &signed_turn.turn,
         &mut s.ledger,
-        s.lean_producer_enabled,
+        lean_producer_enabled,
     );
 
     match exec_result {

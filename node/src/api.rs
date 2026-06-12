@@ -2721,11 +2721,12 @@ async fn post_submit_turn(
     // envelope ingress and blocklace-finalized turns.
     let executor = crate::executor_setup::new_submit_executor(&s);
     seed_executor_receipt_head(&executor, turn.agent, previous_receipt_hash);
+    let lean_producer_enabled = s.lean_producer_enabled;
     let exec_result = crate::executor_setup::execute_via_producer(
         &executor,
         &turn,
         &mut s.ledger,
-        s.lean_producer_enabled,
+        lean_producer_enabled,
     );
 
     match exec_result {
@@ -2991,11 +2992,12 @@ async fn post_submit_signed_turn(
     // the wire marshal).
     let executor = crate::executor_setup::new_submit_executor(&s);
     seed_executor_receipt_head(&executor, signed.turn.agent, expected_prev);
+    let lean_producer_enabled = s.lean_producer_enabled;
     let exec_result = crate::executor_setup::execute_via_producer(
         &executor,
         &signed.turn,
         &mut s.ledger,
-        s.lean_producer_enabled,
+        lean_producer_enabled,
     );
 
     match exec_result {
@@ -4895,13 +4897,14 @@ async fn post_resolve_conditional(
             let conditional = s.pending_conditionals.remove(idx);
 
             let executor = crate::executor_setup::new_submit_executor(&s);
+            let lean_producer_enabled = s.lean_producer_enabled;
             // ONE executor gate (#171): resolved conditionals commit through the
             // same producer-aware path as every other ingress.
             let exec_result = crate::executor_setup::execute_via_producer(
                 &executor,
                 &conditional.turn,
                 &mut s.ledger,
-                s.lean_producer_enabled,
+                lean_producer_enabled,
             );
 
             match exec_result {
@@ -6105,13 +6108,14 @@ async fn post_faucet(
     // Pre-execution ledger snapshot for the witness revalidation below (the
     // proof's pre-state must be captured BEFORE the executor mutates it).
     let pre_ledger = s.ledger.clone();
+    let lean_producer_enabled = s.lean_producer_enabled;
     // ONE executor gate (#171): faucet turns commit through the same
     // producer-aware path as every other ingress.
     let exec_result = crate::executor_setup::execute_via_producer(
         &executor,
         &faucet_turn,
         &mut s.ledger,
-        s.lean_producer_enabled,
+        lean_producer_enabled,
     );
 
     match exec_result {
@@ -6619,7 +6623,7 @@ async fn post_bearer_auth(
     let _target_cell =
         hex_decode_32_result(&req.target_cell).map_err(|_| StatusCode::BAD_REQUEST)?;
 
-    let mut executor = crate::executor_setup::new_verify_executor(&s);
+    let executor = crate::executor_setup::new_verify_executor(&s);
 
     // Call the executor's verify_bearer_cap with an empty path (top-level check).
     match executor.verify_bearer_cap(&bearer_proof, &s.ledger, &[]) {
