@@ -349,6 +349,14 @@ impl AgentRuntime {
         self.executor.set_block_height(height);
     }
 
+    /// The block height the embedded executor currently evaluates
+    /// time-gated program constraints against. Turn builders that must
+    /// stamp the execution height (the identity pre-rotation rotate verb,
+    /// [`crate::identity`]) read it here.
+    pub fn block_height(&self) -> u64 {
+        self.executor.block_height
+    }
+
     /// Deploy a [`FactoryDescriptor`] into this runtime's executor.
     ///
     /// Once deployed, an `Effect::CreateCellFromFactory` referencing the

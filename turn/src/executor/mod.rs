@@ -316,6 +316,11 @@ pub fn project_slot_caveat_manifest(
             | dregg_cell::StateConstraint::RateLimit { .. }
             | dregg_cell::StateConstraint::RateLimitBySum { .. }
             | dregg_cell::StateConstraint::PreimageGate { .. }
+            // `KeyRotationGate` (pre-rotation) is executor-enforced like
+            // `PreimageGate`; no AIR projection yet (the preimage exhibit
+            // reads the OLD digest register — a future row-bound gadget
+            // pins (state_before.fields[d], state_after.fields[d])).
+            | dregg_cell::StateConstraint::KeyRotationGate { .. }
             | dregg_cell::StateConstraint::TemporalPredicate { .. }
             | dregg_cell::StateConstraint::BoundDelta { .. }
             | dregg_cell::StateConstraint::AnyOf { .. }

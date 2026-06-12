@@ -164,6 +164,10 @@ pub enum PolisError {
     /// The tool-scope commitment must be nonzero (a zero scope is
     /// indistinguishable from the unborn slot).
     ZeroToolScope,
+    /// An identity charter must carry a nonzero rotation cooling period —
+    /// the recovery-cooling composition is load-bearing (a zero window
+    /// would let a preimage-holding thief rotate instantly and invisibly).
+    ZeroCoolingPeriod,
 }
 
 impl std::fmt::Display for PolisError {
@@ -208,6 +212,12 @@ impl std::fmt::Display for PolisError {
             PolisError::ZeroSlice => write!(f, "worker mandate slice must be nonzero"),
             PolisError::ZeroToolScope => {
                 write!(f, "worker mandate tool-scope commitment must be nonzero")
+            }
+            PolisError::ZeroCoolingPeriod => {
+                write!(
+                    f,
+                    "identity charter rotation cooling period must be >= 1 block"
+                )
             }
         }
     }
@@ -1095,6 +1105,286 @@ pub mod mandate {
 }
 
 // =============================================================================
+// Identity — the person as a governance cell, with KERI-shaped pre-rotation
+// =============================================================================
+
+pub mod identity {
+    //! The identity cell: a person's identity as a small governance cell
+    //! (`docs/REFINEMENT-DESIGN.md` Decision 2 — devices are council
+    //! members, recovery is amendment-with-cooling) carrying the
+    //! **pre-rotation register** (`docs/ORGANS.md` "Identity rider"; kernel
+    //! semantics proven in `metatheory/Dregg2/Apps/PreRotation.lean`).
+    //!
+    //! ## Pre-rotation in one line
+    //!
+    //! Every key-state event commits to the digest of the NEXT, unexposed
+    //! key set; rotation must exhibit the preimage — so compromising the
+    //! CURRENT signing keys does not suffice to rotate
+    //! (`rotate_compromise_resistant`), and the public commitment stream
+    //! pins the entire key history (`rotChain_pinned_by_commitments`).
+    //!
+    //! ## Slot schema
+    //!
+    //! | slot | name | constraint teeth |
+    //! |------|------|------------------|
+    //! | 0 | STATE | `AllowedTransitions` UNINIT→ACTIVE→{ACTIVE, RETIRED}; RETIRED terminal/inert |
+    //! | 1 | NEXT_KEYS_DIGEST | `KeyRotationGate` (the register; rotation = preimage exhibit + fresh re-commit) |
+    //! | 2 | CURRENT_KEYS_COMMIT | written ONLY by the gate (`new == exhibited preimage`); nonzero while ACTIVE |
+    //! | 3 | LAST_ROTATED_AT | the cooling anchor; stamped to the rotation height by the gate |
+    //! | 4 | COUNCIL_COMMIT | pinned to the device/recovery council's `members_commitment()` |
+    //! | 5..7 | reserved | pinned zero |
+    //!
+    //! ## The rotate verb (the `KeyRotationGate`, executor-enforced)
+    //!
+    //! A turn that moves any rotation register is admitted ONLY when it
+    //! carries a `Preimage32` witness `K` with `blake3(K) ==
+    //! old[NEXT_KEYS_DIGEST]` (the preimage EXHIBIT against the PRE-state
+    //! register), installs `new[CURRENT_KEYS_COMMIT] == K`, re-commits a
+    //! fresh nonzero `new[NEXT_KEYS_DIGEST]` in the SAME turn (the forward
+    //! chain), and waits out the cooling window
+    //! (`old[LAST_ROTATED_AT] + cooling_period <= height`, stamping
+    //! `new[LAST_ROTATED_AT] = height`). The guard never reads the current
+    //! key commitment — current-key theft contributes nothing
+    //! (`rotate_current_keys_irrelevant`, the `rfl` theorem).
+    //!
+    //! ## Cooling / recovery composition
+    //!
+    //! Per-cell cooling is INSIDE the gate (the Lean `rotateWriteCooled`
+    //! production shape): even a preimage-holding rotation waits in the
+    //! open, visible to the council — pre-rotation removes the attacker's
+    //! ABILITY, cooling removes their SPEED/STEALTH; the composition
+    //! strictly dominates either alone (`cooling_blocks_admitted_preimage`
+    //! / `preimage_blocks_cooled_rotation`). The council-certified recovery
+    //! ceremony composes ON TOP via the existing amendment machinery: a
+    //! rotation proposal is an [`super::council`] amendment-variant cell
+    //! staging the rotation's hash with its own `TemporalGate`, whose ENACT
+    //! turn carries the rotate effects — and the identity cell's gate STILL
+    //! demands the preimage (recovery is empowered, never amplified).
+    //!
+    //! ## Genesis
+    //!
+    //! A factory-born identity cell mints empty (all-zero registers — the
+    //! polis bootstrap shape). The genesis turn (UNINIT → ACTIVE) installs
+    //! the FIRST pre-commitment without a preimage (nothing was committed
+    //! yet — KERI `icp`): the birth key-set commitment, the first
+    //! next-keys digest, and the pinned council commitment, all in one
+    //! turn. While ACTIVE both key registers are nonzero — the chain can
+    //! never be nulled.
+    //!
+    //! ## Key history
+    //!
+    //! The receipt stream over slots 1/2 IS the key-event log: each
+    //! rotation receipt shows the exhibited commitment (slot 2) equal to
+    //! the preimage of the PREVIOUS receipt's slot 1, and publishes the
+    //! next link. This is the KERI KEL shape the ORGANS export lane
+    //! serializes.
+
+    use super::council::CouncilCharter;
+    use super::*;
+    use dregg_cell::program::HashKind;
+
+    /// Slot 1 — the `next_keys_digest` register: the commitment to the
+    /// NEXT, unexposed key set (KERI `n`).
+    pub const NEXT_KEYS_DIGEST_SLOT: u8 = 1;
+    /// Slot 2 — the installed (current) key-set commitment (KERI `k`,
+    /// as its 32-byte commitment).
+    pub const CURRENT_KEYS_COMMIT_SLOT: u8 = 2;
+    /// Slot 3 — the height of the last rotation event (cooling anchor).
+    pub const LAST_ROTATED_AT_SLOT: u8 = 3;
+    /// Slot 4 — the device/recovery council's published membership
+    /// commitment (pinned literal).
+    pub const COUNCIL_COMMIT_SLOT: u8 = 4;
+    /// Slots 5..7 — reserved, pinned zero.
+    pub const RESERVED_SLOTS: [u8; 3] = [5, 6, 7];
+
+    /// Birth state (factory-born; registers all zero).
+    pub const STATE_UNINIT: u64 = 0;
+    /// The identity is live: registers populated, rotations admitted
+    /// through the gate.
+    pub const STATE_ACTIVE: u64 = 1;
+    /// Terminal: the identity is retired. Inert — no transition row out,
+    /// so no further rotation (or any touch) can commit.
+    pub const STATE_RETIRED: u64 = 2;
+
+    /// The published terms of one identity cell: the device/recovery
+    /// council and the rotation cooling window. Content-addressed into the
+    /// factory vk — "is this identity governed by THESE devices under THIS
+    /// cooling window?" is a hash check.
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub struct IdentityCharter {
+        /// The governing council: devices (and/or recovery friends) with
+        /// their threshold — [`CouncilCharter`], reused verbatim. Its
+        /// commitment is pinned into [`COUNCIL_COMMIT_SLOT`].
+        pub council: CouncilCharter,
+        /// Blocks a rotation must wait after the previous rotation (the
+        /// recovery cooling window; must be >= 1).
+        pub cooling_period: u64,
+    }
+
+    impl IdentityCharter {
+        /// Fail-closed validation.
+        pub fn validate(&self) -> Result<(), PolisError> {
+            self.council.validate()?;
+            if self.cooling_period == 0 {
+                return Err(PolisError::ZeroCoolingPeriod);
+            }
+            Ok(())
+        }
+    }
+
+    /// Commit a key set (ordered Ed25519 public keys) to its 32-byte
+    /// commitment — the value the `Preimage32` witness presents at
+    /// rotation and [`CURRENT_KEYS_COMMIT_SLOT`] installs.
+    pub fn key_set_commitment(keys: &[[u8; 32]]) -> FieldElement {
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-polis:identity-keyset v1");
+        hasher.update(&(keys.len() as u64).to_be_bytes());
+        for k in keys {
+            hasher.update(k);
+        }
+        *hasher.finalize().as_bytes()
+    }
+
+    /// The `next_keys_digest` register value for a key-set commitment:
+    /// plain `blake3(commitment)` — EXACTLY the digest the gate's
+    /// `HashKind::Blake3` recomputes from the exhibited preimage.
+    pub fn next_keys_digest(key_set_commit: &FieldElement) -> FieldElement {
+        *blake3::hash(key_set_commit).as_bytes()
+    }
+
+    /// The identity constraint set (see module docs).
+    pub fn identity_state_constraints(
+        charter: &IdentityCharter,
+    ) -> Result<Vec<StateConstraint>, PolisError> {
+        charter.validate()?;
+        let mut cs = vec![
+            // ── the lifecycle; RETIRED has NO outgoing row (inert) ──
+            StateConstraint::AllowedTransitions {
+                slot_index: STATE_SLOT,
+                allowed: vec![
+                    (field_from_u64(STATE_UNINIT), field_from_u64(STATE_UNINIT)),
+                    (field_from_u64(STATE_UNINIT), field_from_u64(STATE_ACTIVE)),
+                    (field_from_u64(STATE_ACTIVE), field_from_u64(STATE_ACTIVE)),
+                    (field_from_u64(STATE_ACTIVE), field_from_u64(STATE_RETIRED)),
+                ],
+            },
+            // ── THE PRE-ROTATION GATE (the rotate verb as a guarded
+            //    write; cooling conjoined — the `rotateWriteCooled`
+            //    production shape) ──
+            StateConstraint::KeyRotationGate {
+                digest_slot: NEXT_KEYS_DIGEST_SLOT,
+                current_slot: CURRENT_KEYS_COMMIT_SLOT,
+                last_rotated_slot: LAST_ROTATED_AT_SLOT,
+                cooling_period: charter.cooling_period,
+                hash_kind: HashKind::Blake3,
+            },
+            // ── an ACTIVE identity always carries a live pre-commitment
+            //    and a published current key set: genesis must install
+            //    both; no rotation can null the chain ──
+            when_state(
+                STATE_ACTIVE,
+                SimpleStateConstraint::Not(Box::new(SimpleStateConstraint::FieldEquals {
+                    index: NEXT_KEYS_DIGEST_SLOT,
+                    value: FIELD_ZERO,
+                })),
+            ),
+            when_state(
+                STATE_ACTIVE,
+                SimpleStateConstraint::Not(Box::new(SimpleStateConstraint::FieldEquals {
+                    index: CURRENT_KEYS_COMMIT_SLOT,
+                    value: FIELD_ZERO,
+                })),
+            ),
+            // ── council publication (pinned once out of UNINIT) ──
+            pin_term(COUNCIL_COMMIT_SLOT, charter.council.members_commitment()),
+        ];
+        for s in RESERVED_SLOTS {
+            cs.push(pinned_zero(s));
+        }
+        Ok(cs)
+    }
+
+    /// The `CellProgram` installed on the identity cell.
+    pub fn identity_cell_program(charter: &IdentityCharter) -> Result<CellProgram, PolisError> {
+        Ok(CellProgram::Predicate(identity_state_constraints(
+            charter,
+        )?))
+    }
+
+    /// **The identity factory (per-charter, content-addressed).** Births
+    /// exactly ONE identity cell; the council commitment and the cooling
+    /// window are its content address.
+    pub fn identity_factory_descriptor(
+        charter: &IdentityCharter,
+    ) -> Result<FactoryDescriptor, PolisError> {
+        Ok(polis_descriptor(
+            "dregg-polis:identity-factory v1",
+            identity_state_constraints(charter)?,
+            Some(1),
+        ))
+    }
+
+    // -------------------------------------------------------------------------
+    // Legibility — read the key state back out of the ledger
+    // -------------------------------------------------------------------------
+
+    /// One identity-cell lifecycle state, decoded.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum IdentityState {
+        /// Birth state; registers not yet populated.
+        Uninit,
+        /// Live: registers populated, rotations gated.
+        Active,
+        /// Terminal: retired, inert.
+        Retired,
+        /// Not a value this machine emits.
+        Unknown(u64),
+    }
+
+    /// An identity cell, made legible: the decoded key state. Pure over
+    /// the 8 field slots (a node read, a receipt post-state, or a
+    /// light-client proof).
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub struct IdentityStatus {
+        /// Decoded lifecycle state.
+        pub state: IdentityState,
+        /// The committed next-keys digest (the unexposed pre-commitment).
+        pub next_keys_digest: FieldElement,
+        /// The installed (current) key-set commitment.
+        pub current_keys_commit: FieldElement,
+        /// Height of the last rotation event (the cooling anchor).
+        pub last_rotated_at: u64,
+        /// Whether the council-commitment slot matches the charter.
+        pub council_commit_matches: bool,
+    }
+
+    /// Decode an identity cell's fields against its charter.
+    pub fn inspect_identity(
+        charter: &IdentityCharter,
+        fields: &[FieldElement; 8],
+    ) -> IdentityStatus {
+        let to_u64 = |f: &FieldElement| {
+            let mut b = [0u8; 8];
+            b.copy_from_slice(&f[24..32]);
+            u64::from_be_bytes(b)
+        };
+        let state = match to_u64(&fields[STATE_SLOT as usize]) {
+            STATE_UNINIT => IdentityState::Uninit,
+            STATE_ACTIVE => IdentityState::Active,
+            STATE_RETIRED => IdentityState::Retired,
+            other => IdentityState::Unknown(other),
+        };
+        IdentityStatus {
+            state,
+            next_keys_digest: fields[NEXT_KEYS_DIGEST_SLOT as usize],
+            current_keys_commit: fields[CURRENT_KEYS_COMMIT_SLOT as usize],
+            last_rotated_at: to_u64(&fields[LAST_ROTATED_AT_SLOT as usize]),
+            council_commit_matches: fields[COUNCIL_COMMIT_SLOT as usize]
+                == charter.council.members_commitment(),
+        }
+    }
+}
+
+// =============================================================================
 // Program-level tests (executor-independent; the e2e half runs on the real
 // TurnExecutor in `sdk/tests/polis_governance_e2e.rs` +
 // `sdk/tests/polis_orchestration_e2e.rs`)
@@ -1612,5 +1902,346 @@ mod tests {
         p2.council_threshold = 3;
         let v2 = constitution_factory_descriptor(&p2).unwrap();
         assert_ne!(v1.hash(), v2.hash());
+    }
+}
+
+// =============================================================================
+// Identity pre-rotation program-level tests (executor-independent; the e2e
+// half runs on the real TurnExecutor in `sdk/tests/identity_prerotation_e2e.rs`)
+// =============================================================================
+
+#[cfg(test)]
+mod identity_tests {
+    use super::council::CouncilCharter;
+    use super::identity::*;
+    use super::*;
+    use dregg_cell::preconditions::EvalContext;
+    use dregg_cell::program::{ProgramError, TransitionMeta, WitnessBlobView, WitnessBundle, WitnessKindTag};
+    use dregg_cell::state::CellState;
+
+    fn devices_2of2() -> CouncilCharter {
+        CouncilCharter::new(
+            vec![
+                CellId::from_bytes([0xD1; 32]),
+                CellId::from_bytes([0xD2; 32]),
+            ],
+            2,
+        )
+    }
+
+    fn charter() -> IdentityCharter {
+        IdentityCharter {
+            council: devices_2of2(),
+            cooling_period: 50,
+        }
+    }
+
+    fn ctx_at(height: u64) -> EvalContext {
+        EvalContext {
+            block_height: height,
+            timestamp: 0,
+            current_epoch: 0,
+            sender: None,
+            sender_epoch_count: 0,
+            revealed_preimage: None,
+        }
+    }
+
+    /// Evaluate with an exhibited `Preimage32` witness (the rotate-verb shape).
+    fn eval_revealing(
+        program: &CellProgram,
+        new: &CellState,
+        old: Option<&CellState>,
+        height: u64,
+        preimage: Option<[u8; 32]>,
+    ) -> Result<(), ProgramError> {
+        let blobs: Vec<WitnessBlobView<'_>> = Vec::new();
+        let stored;
+        let blobs = match &preimage {
+            Some(p) => {
+                stored = p.to_vec();
+                vec![WitnessBlobView {
+                    kind: WitnessKindTag::Preimage32,
+                    bytes: &stored,
+                }]
+            }
+            None => blobs,
+        };
+        program.evaluate_full(
+            new,
+            old,
+            Some(&ctx_at(height)),
+            &TransitionMeta::wildcard(),
+            &WitnessBundle {
+                blobs: &blobs,
+                registry: None,
+            },
+        )
+    }
+
+    /// The genesis (KERI `icp`) post-state: birth keys + first pre-commitment.
+    fn genesis_state(
+        ch: &IdentityCharter,
+        birth_commit: FieldElement,
+        first_digest: FieldElement,
+    ) -> CellState {
+        let mut s = CellState::new(0);
+        s.fields[STATE_SLOT as usize] = field_from_u64(STATE_ACTIVE);
+        s.fields[NEXT_KEYS_DIGEST_SLOT as usize] = first_digest;
+        s.fields[CURRENT_KEYS_COMMIT_SLOT as usize] = birth_commit;
+        s.fields[COUNCIL_COMMIT_SLOT as usize] = ch.council.members_commitment();
+        s
+    }
+
+    /// Key generations: G0 (birth), G1 (pre-committed at genesis), G2.
+    fn generations() -> ([u8; 32], [u8; 32], [u8; 32]) {
+        let g0 = key_set_commitment(&[[0x10; 32], [0x11; 32]]);
+        let g1 = key_set_commitment(&[[0x20; 32], [0x21; 32]]);
+        let g2 = key_set_commitment(&[[0x30; 32], [0x31; 32]]);
+        (g0, g1, g2)
+    }
+
+    /// The post-state of an honest rotation to `new_commit` at `height`.
+    fn rotated(
+        base: &CellState,
+        new_commit: FieldElement,
+        fresh_digest: FieldElement,
+        height: u64,
+    ) -> CellState {
+        let mut s = base.clone();
+        s.fields[NEXT_KEYS_DIGEST_SLOT as usize] = fresh_digest;
+        s.fields[CURRENT_KEYS_COMMIT_SLOT as usize] = new_commit;
+        s.fields[LAST_ROTATED_AT_SLOT as usize] = field_from_u64(height);
+        s
+    }
+
+    #[test]
+    fn genesis_installs_first_precommitment() {
+        let ch = charter();
+        let p = identity_cell_program(&ch).unwrap();
+        let born = CellState::new(0);
+        let (g0, g1, _) = generations();
+        let active = genesis_state(&ch, g0, next_keys_digest(&g1));
+        assert!(
+            eval_revealing(&p, &active, Some(&born), 0, None).is_ok(),
+            "genesis (no preimage — nothing committed yet) must commit"
+        );
+        // ACTIVE without a pre-commitment: refused (the chain must start).
+        let mut chainless = active.clone();
+        chainless.fields[NEXT_KEYS_DIGEST_SLOT as usize] = FIELD_ZERO;
+        assert!(
+            eval_revealing(&p, &chainless, Some(&born), 0, None).is_err(),
+            "ACTIVE demands a live next-keys digest"
+        );
+        // ACTIVE without a current key commitment: refused.
+        let mut keyless = active.clone();
+        keyless.fields[CURRENT_KEYS_COMMIT_SLOT as usize] = FIELD_ZERO;
+        assert!(eval_revealing(&p, &keyless, Some(&born), 0, None).is_err());
+        // Council commitment is pinned: a wrong commitment is refused.
+        let mut usurped = active.clone();
+        usurped.fields[COUNCIL_COMMIT_SLOT as usize] = field_from_u64(0xBAD);
+        assert!(eval_revealing(&p, &usurped, Some(&born), 0, None).is_err());
+    }
+
+    #[test]
+    fn honest_rotation_exhibits_preimage_and_chains() {
+        let ch = charter();
+        let p = identity_cell_program(&ch).unwrap();
+        let (g0, g1, g2) = generations();
+        let active = genesis_state(&ch, g0, next_keys_digest(&g1));
+        // Cooled (height 100 >= 0 + 50), exhibiting G1 (the committed
+        // preimage), installing it, committing G2's digest.
+        let post = rotated(&active, g1, next_keys_digest(&g2), 100);
+        assert!(
+            eval_revealing(&p, &post, Some(&active), 100, Some(g1)).is_ok(),
+            "honest rotation must commit"
+        );
+        // The register now holds the FRESH commitment — the next link.
+        assert_eq!(
+            post.fields[NEXT_KEYS_DIGEST_SLOT as usize],
+            next_keys_digest(&g2)
+        );
+    }
+
+    #[test]
+    fn forged_key_set_refused() {
+        // COMPROMISE RESISTANCE: presenting ANY key set other than the
+        // pre-committed one is refused — an admitted forgery would BE a
+        // blake3 collision (`rotate_compromise_resistant`).
+        let ch = charter();
+        let p = identity_cell_program(&ch).unwrap();
+        let (g0, g1, g2) = generations();
+        let active = genesis_state(&ch, g0, next_keys_digest(&g1));
+        let forged = key_set_commitment(&[[0xEE; 32]]);
+        let post = rotated(&active, forged, next_keys_digest(&g2), 100);
+        assert!(
+            eval_revealing(&p, &post, Some(&active), 100, Some(forged)).is_err(),
+            "wrong preimage must be refused"
+        );
+    }
+
+    #[test]
+    fn rotation_without_preimage_refused_even_with_current_keys() {
+        // THE TOOTH: a turn that moves the key registers WITHOUT exhibiting
+        // the preimage is refused — even though it is (at the executor
+        // level) signed by the CURRENT keys. Current keys do not occur in
+        // the guard (`rotate_current_keys_irrelevant`): exfiltrating every
+        // signing key gains exactly nothing toward rotating.
+        let ch = charter();
+        let p = identity_cell_program(&ch).unwrap();
+        let (g0, g1, g2) = generations();
+        let active = genesis_state(&ch, g0, next_keys_digest(&g1));
+        let post = rotated(&active, g1, next_keys_digest(&g2), 100);
+        assert!(
+            matches!(
+                eval_revealing(&p, &post, Some(&active), 100, None),
+                Err(ProgramError::PreimageWitnessMissing)
+            ),
+            "no preimage exhibited ⇒ refused, regardless of signatures"
+        );
+    }
+
+    #[test]
+    fn install_must_match_exhibited_preimage() {
+        // The exhibit and the install are the SAME value: revealing the
+        // right preimage but installing a different current commitment is
+        // refused (`rotate_installs`).
+        let ch = charter();
+        let p = identity_cell_program(&ch).unwrap();
+        let (g0, g1, g2) = generations();
+        let active = genesis_state(&ch, g0, next_keys_digest(&g1));
+        let mut post = rotated(&active, g1, next_keys_digest(&g2), 100);
+        post.fields[CURRENT_KEYS_COMMIT_SLOT as usize] = key_set_commitment(&[[0xEE; 32]]);
+        assert!(eval_revealing(&p, &post, Some(&active), 100, Some(g1)).is_err());
+    }
+
+    #[test]
+    fn rotation_must_recommit_fresh_digest() {
+        // The chain never ends: zeroing the register is refused even with
+        // the right preimage.
+        let ch = charter();
+        let p = identity_cell_program(&ch).unwrap();
+        let (g0, g1, _) = generations();
+        let active = genesis_state(&ch, g0, next_keys_digest(&g1));
+        let post = rotated(&active, g1, FIELD_ZERO, 100);
+        assert!(eval_revealing(&p, &post, Some(&active), 100, Some(g1)).is_err());
+    }
+
+    #[test]
+    fn cooling_blocks_admitted_preimage() {
+        // STRICT DOMINATION, one direction: an event the bare preimage
+        // gate would admit (the right preimage, honestly installed) is
+        // STILL refused inside the cooling window — slow and visible.
+        let ch = charter(); // cooling_period = 50
+        let p = identity_cell_program(&ch).unwrap();
+        let (g0, g1, g2) = generations();
+        let mut active = genesis_state(&ch, g0, next_keys_digest(&g1));
+        active.fields[LAST_ROTATED_AT_SLOT as usize] = field_from_u64(100);
+        // Inside the window (100 + 50 > 149): refused.
+        let inside = rotated(&active, g1, next_keys_digest(&g2), 149);
+        assert!(
+            eval_revealing(&p, &inside, Some(&active), 149, Some(g1)).is_err(),
+            "preimage-holding rotation still waits out the window"
+        );
+        // At the boundary (100 + 50 <= 150): admitted (no over-tightening).
+        let at = rotated(&active, g1, next_keys_digest(&g2), 150);
+        assert!(eval_revealing(&p, &at, Some(&active), 150, Some(g1)).is_ok());
+        // Cooled but FORGED: still refused — cooling alone would have
+        // admitted the patient attacker (`preimage_blocks_cooled_rotation`).
+        let forged = key_set_commitment(&[[0xEE; 32]]);
+        let cooled_forged = rotated(&active, forged, next_keys_digest(&g2), 150);
+        assert!(eval_revealing(&p, &cooled_forged, Some(&active), 150, Some(forged)).is_err());
+    }
+
+    #[test]
+    fn rotation_stamps_its_height() {
+        let ch = charter();
+        let p = identity_cell_program(&ch).unwrap();
+        let (g0, g1, g2) = generations();
+        let active = genesis_state(&ch, g0, next_keys_digest(&g1));
+        // Stamping a height other than the execution height: refused
+        // (back/future-dating the cooling anchor would warp the window).
+        let post = rotated(&active, g1, next_keys_digest(&g2), 90);
+        assert!(eval_revealing(&p, &post, Some(&active), 100, Some(g1)).is_err());
+    }
+
+    #[test]
+    fn chain_pinned_by_commitments() {
+        // THE FORWARD CHAIN: two admitted rotations replay link-for-link;
+        // the commitment stream reconstructs the key history, and a forged
+        // first link kills the chain (`rotChain_pinned_by_commitments`).
+        let ch = charter();
+        let p = identity_cell_program(&ch).unwrap();
+        let (g0, g1, g2) = generations();
+        let g3 = key_set_commitment(&[[0x40; 32], [0x41; 32]]);
+        let active = genesis_state(&ch, g0, next_keys_digest(&g1));
+        // Link 1: G0 → G1 at height 100.
+        let s1 = rotated(&active, g1, next_keys_digest(&g2), 100);
+        assert!(eval_revealing(&p, &s1, Some(&active), 100, Some(g1)).is_ok());
+        // Link 2: G1 → G2 at height 200 (cooled past 100 + 50).
+        let s2 = rotated(&s1, g2, next_keys_digest(&g3), 200);
+        assert!(eval_revealing(&p, &s2, Some(&s1), 200, Some(g2)).is_ok());
+        // Reconstruct: each installed commitment is the preimage of the
+        // PREVIOUS state's register — the receipt stream IS the KEL.
+        assert_eq!(
+            next_keys_digest(&s1.fields[CURRENT_KEYS_COMMIT_SLOT as usize]),
+            active.fields[NEXT_KEYS_DIGEST_SLOT as usize]
+        );
+        assert_eq!(
+            next_keys_digest(&s2.fields[CURRENT_KEYS_COMMIT_SLOT as usize]),
+            s1.fields[NEXT_KEYS_DIGEST_SLOT as usize]
+        );
+        // A stale-generation replay (exhibiting G1 again after G1 was
+        // exposed) no longer matches the advanced register: refused.
+        let replay = rotated(&s2, g1, next_keys_digest(&g3), 300);
+        assert!(eval_revealing(&p, &replay, Some(&s2), 300, Some(g1)).is_err());
+    }
+
+    #[test]
+    fn retired_identity_is_inert() {
+        let ch = charter();
+        let p = identity_cell_program(&ch).unwrap();
+        let (g0, g1, g2) = generations();
+        let active = genesis_state(&ch, g0, next_keys_digest(&g1));
+        let mut retired = active.clone();
+        retired.fields[STATE_SLOT as usize] = field_from_u64(STATE_RETIRED);
+        assert!(eval_revealing(&p, &retired, Some(&active), 0, None).is_ok());
+        // No rotation can commit on a retired identity (no transition row).
+        let post = rotated(&retired, g1, next_keys_digest(&g2), 100);
+        assert!(eval_revealing(&p, &post, Some(&retired), 100, Some(g1)).is_err());
+    }
+
+    #[test]
+    fn charter_fail_closed_and_content_addressed() {
+        let mut ch = charter();
+        ch.cooling_period = 0;
+        assert_eq!(
+            identity_state_constraints(&ch),
+            Err(PolisError::ZeroCoolingPeriod)
+        );
+        let a = identity_factory_descriptor(&charter()).unwrap();
+        let b = identity_factory_descriptor(&charter()).unwrap();
+        assert_eq!(a.factory_vk, b.factory_vk);
+        let mut longer = charter();
+        longer.cooling_period = 100;
+        let c = identity_factory_descriptor(&longer).unwrap();
+        assert_ne!(
+            a.factory_vk, c.factory_vk,
+            "the cooling window is part of the identity's content address"
+        );
+    }
+
+    #[test]
+    fn inspect_identity_decodes() {
+        let ch = charter();
+        let (g0, g1, _) = generations();
+        let mut active = genesis_state(&ch, g0, next_keys_digest(&g1));
+        active.fields[LAST_ROTATED_AT_SLOT as usize] = field_from_u64(123);
+        let status = inspect_identity(&ch, &active.fields);
+        assert_eq!(status.state, IdentityState::Active);
+        assert_eq!(status.next_keys_digest, next_keys_digest(&g1));
+        assert_eq!(status.current_keys_commit, g0);
+        assert_eq!(status.last_rotated_at, 123);
+        assert!(status.council_commit_matches);
     }
 }

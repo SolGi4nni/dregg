@@ -57,6 +57,7 @@ pub struct TurnBuilder<'rt> {
     acting: Acting,
     method: String,
     effects: Vec<Effect>,
+    witness_blobs: Vec<dregg_turn::action::WitnessBlob>,
     fee: Option<u64>,
 }
 
@@ -67,6 +68,7 @@ impl<'rt> TurnBuilder<'rt> {
             acting: Acting::Agent,
             method: "execute".to_string(),
             effects: Vec::new(),
+            witness_blobs: Vec::new(),
             fee: None,
         }
     }
@@ -174,6 +176,19 @@ impl<'rt> TurnBuilder<'rt> {
         self
     }
 
+    /// Exhibit a 32-byte preimage witness with this turn (the `reveal`
+    /// verb). The blob rides `Action::witness_blobs` UNDER the signature
+    /// and is what `PreimageGate` / `KeyRotationGate` cell programs verify
+    /// against the committed digest — the identity pre-rotation rotate
+    /// turn carries the presented key-set commitment this way.
+    pub fn reveal(mut self, preimage: [u8; 32]) -> Self {
+        self.witness_blobs.push(dregg_turn::action::WitnessBlob {
+            kind: dregg_turn::action::WitnessKind::Preimage32,
+            bytes: preimage.to_vec(),
+        });
+        self
+    }
+
     // ─── terminal ───
 
     /// Sign the built action with this identity's key over the canonical
@@ -189,7 +204,11 @@ impl<'rt> TurnBuilder<'rt> {
             ));
         }
         let target = self.acting_cell();
-        let unsigned = raw::unsigned_action_named(target, &self.method, self.effects);
+        let mut unsigned = raw::unsigned_action_named(target, &self.method, self.effects);
+        // Witnesses are attached BEFORE signing so the signature covers
+        // them (the `set_field_with_preimage` shape in the executor's
+        // coverage tests).
+        unsigned.witness_blobs = self.witness_blobs;
         let action = self.runtime.sign_action_for_runtime(unsigned);
         Ok(AuthorizedTurn {
             runtime: self.runtime,

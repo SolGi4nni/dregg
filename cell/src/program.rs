@@ -629,6 +629,9 @@ impl StateConstraint {
 /// - 2 sender-bound: `SenderAuthorized`, `CapabilityUniqueness`
 /// - 2 rate/temporal: `RateLimit`, `RateLimitBySum`, `TemporalGate`
 /// - 1 preimage: `PreimageGate`
+/// - 1 pre-rotation: `KeyRotationGate` (preimage exhibit against the OLD
+///   digest register + install + fresh re-commit + cooling — the identity
+///   rider, `metatheory/Dregg2/Apps/PreRotation.lean`)
 /// - 1 sequence: `MonotonicSequence`
 /// - 1 state-machine: `AllowedTransitions`
 /// - 1 witness-attached: `TemporalPredicate`
@@ -969,6 +972,67 @@ pub enum StateConstraint {
     /// The cell's own post-turn balance must be `<= max`.
     /// See [`SimpleStateConstraint::BalanceLte`].
     BalanceLte { max: u64 },
+
+    /// **Pre-rotation gate (KERI-shaped)** — the identity rider
+    /// (`docs/ORGANS.md` "Identity rider"; kernel semantics proven in
+    /// `metatheory/Dregg2/Apps/PreRotation.lean`, the `rotateWriteCooled`
+    /// production shape).
+    ///
+    /// `digest_slot` is the `next_keys_digest` register: the commitment to
+    /// the NEXT, unexposed key set, committed BEFORE exposure.
+    /// `current_slot` publishes the installed (current) key-set commitment.
+    /// `last_rotated_slot` is the cooling anchor (block height of the last
+    /// rotation event).
+    ///
+    /// Semantics, fail-closed:
+    ///
+    /// * **No-op turn** — all three slots unchanged: admitted (the gate only
+    ///   guards the rotation registers).
+    /// * **Inception** — `old[digest_slot] == 0` and the register is being
+    ///   written: the FIRST pre-commitment may be installed without a
+    ///   preimage (nothing was committed yet — KERI `icp`). The new digest
+    ///   must be nonzero; `current_slot` freely declares the birth key-set
+    ///   commitment; a nonzero `last_rotated_slot` stamp must not be
+    ///   future-dated.
+    /// * **Rotation** — `old[digest_slot] != 0` and any of the three slots
+    ///   changes (KERI `rot`). Admitted ONLY when:
+    ///   1. the action carries a `Preimage32` witness (the presented new
+    ///      key-set commitment) with `hash(preimage) == old[digest_slot]`
+    ///      — the preimage EXHIBIT against the PRE-state register (Lean
+    ///      `rotateWrite_exhibits_preimage`; note this deliberately differs
+    ///      from [`StateConstraint::PreimageGate`], which checks the
+    ///      POST-state slot and therefore cannot express pre-rotation);
+    ///   2. `new[current_slot] == preimage` — the presented set is
+    ///      INSTALLED (`rotate_installs`);
+    ///   3. `new[digest_slot] != 0` — the fresh next-commitment is written
+    ///      in the SAME turn (the forward chain,
+    ///      `rotateWrite_commits_fresh` / `rotChain_pinned_by_commitments`);
+    ///   4. `old[last_rotated_slot] + cooling_period <= ctx.block_height`
+    ///      — the cooling window (Lean `TemporalAtom.cooledSince`;
+    ///      `rotateWriteCooled_refuses_inside`);
+    ///   5. `new[last_rotated_slot] == ctx.block_height` — the rotation
+    ///      stamps its own height (the next window's anchor).
+    ///
+    /// The guard NEVER reads `old[current_slot]` — the current (exposed,
+    /// possibly stolen) keys contribute nothing toward admission. This is
+    /// the structural half of compromise resistance, the Rust mirror of the
+    /// `rfl` theorem `rotate_current_keys_irrelevant`; under hash collision
+    /// resistance any presented set other than the pre-committed one is
+    /// refused (`rotate_compromise_resistant` — an admitted forgery would
+    /// BE a collision).
+    KeyRotationGate {
+        /// The `next_keys_digest` register slot.
+        digest_slot: u8,
+        /// The installed (current) key-set commitment slot.
+        current_slot: u8,
+        /// The cooling anchor: height of the last rotation event.
+        last_rotated_slot: u8,
+        /// Blocks a rotation must wait after the previous one (the
+        /// recovery cooling window, visible to the council).
+        cooling_period: u64,
+        /// Hash binding the digest register to its preimage.
+        hash_kind: HashKind,
+    },
 }
 
 /// Error from evaluating a cell program.
@@ -2004,21 +2068,141 @@ fn evaluate_constraint_full(
                 .or_else(|| ctx.and_then(|c| c.revealed_preimage))
                 .ok_or(ProgramError::PreimageWitnessMissing)?;
             let expected = new_state.fields[idx];
-            let hash = match hash_kind {
-                HashKind::Blake3 => *blake3::hash(&preimage).as_bytes(),
-                HashKind::Poseidon2 => {
-                    // Use BLAKE3 of a domain-tagged preimage as a stand-in
-                    // until a Poseidon2-on-bytes helper is wired through
-                    // here. Executor-side use only; AIR enforcement will
-                    // use the actual Poseidon2 gadget.
-                    let mut tagged = Vec::with_capacity(40);
-                    tagged.extend_from_slice(b"poseidon2-stub:");
-                    tagged.extend_from_slice(&preimage);
-                    *blake3::hash(&tagged).as_bytes()
-                }
-            };
+            let hash = hash_preimage32(hash_kind, &preimage);
             if hash != expected {
                 return violated(constraint, "preimage does not match commitment".into());
+            }
+            Ok(())
+        }
+
+        StateConstraint::KeyRotationGate {
+            digest_slot,
+            current_slot,
+            last_rotated_slot,
+            cooling_period,
+            hash_kind,
+        } => {
+            let d = check_index(*digest_slot)?;
+            let c = check_index(*current_slot)?;
+            let r = check_index(*last_rotated_slot)?;
+            // Resolve the pre-state rotation registers. A fresh cell
+            // (init path: no old state, nonce == 0) reads as all-zero;
+            // any other missing-old case is fail-closed.
+            let zeros;
+            let old_fields: &[FieldElement; STATE_SLOTS] = match old_state {
+                Some(old) => &old.fields,
+                None => {
+                    if new_state.nonce != 0 {
+                        return Err(ProgramError::TransitionCheckRequiresOldState {
+                            constraint: constraint.clone(),
+                            index: *digest_slot,
+                        });
+                    }
+                    zeros = [FIELD_ZERO; STATE_SLOTS];
+                    &zeros
+                }
+            };
+            let unchanged = new_state.fields[d] == old_fields[d]
+                && new_state.fields[c] == old_fields[c]
+                && new_state.fields[r] == old_fields[r];
+            if unchanged {
+                // Not a rotation event: the gate only guards the
+                // rotation registers.
+                return Ok(());
+            }
+            if old_fields[d] == FIELD_ZERO {
+                // INCEPTION (KERI `icp`): nothing was pre-committed yet, so
+                // the first commitment is installed without a preimage. The
+                // chain must START: a zero digest is the unborn sentinel.
+                if new_state.fields[d] == FIELD_ZERO {
+                    return violated(
+                        constraint,
+                        "inception must commit a nonzero next-keys digest".into(),
+                    );
+                }
+                // A nonzero inception stamp must not be future-dated.
+                if new_state.fields[r] != FIELD_ZERO {
+                    let height = ctx
+                        .ok_or(ProgramError::MissingContextField {
+                            field: "block_height",
+                        })?
+                        .block_height;
+                    let stamp = field_to_u64(&new_state.fields[r]);
+                    if stamp > height {
+                        return violated(
+                            constraint,
+                            format!("inception stamp {stamp} is future-dated (height {height})"),
+                        );
+                    }
+                }
+                return Ok(());
+            }
+            // ROTATION (KERI `rot`). NOTE: `old_fields[c]` — the current,
+            // exposed key set — is deliberately never read here
+            // (`rotate_current_keys_irrelevant`): holding the current keys
+            // contributes nothing toward rotating.
+            let height = ctx
+                .ok_or(ProgramError::MissingContextField {
+                    field: "block_height",
+                })?
+                .block_height;
+            // 1. The preimage EXHIBIT against the PRE-state register.
+            let preimage = witnesses
+                .blobs
+                .iter()
+                .find_map(|b| {
+                    if b.kind == WitnessKindTag::Preimage32 && b.bytes.len() == 32 {
+                        let mut buf = [0u8; 32];
+                        buf.copy_from_slice(b.bytes);
+                        Some(buf)
+                    } else {
+                        None
+                    }
+                })
+                .or_else(|| ctx.and_then(|c| c.revealed_preimage))
+                .ok_or(ProgramError::PreimageWitnessMissing)?;
+            if hash_preimage32(hash_kind, &preimage) != old_fields[d] {
+                return violated(
+                    constraint,
+                    "rotation does not exhibit the preimage of the committed next-keys digest"
+                        .into(),
+                );
+            }
+            // 2. The presented key set is INSTALLED.
+            if new_state.fields[c] != preimage {
+                return violated(
+                    constraint,
+                    "rotation must install the exhibited key-set commitment as current".into(),
+                );
+            }
+            // 3. The forward chain: the fresh next-commitment rides the
+            //    same turn.
+            if new_state.fields[d] == FIELD_ZERO {
+                return violated(
+                    constraint,
+                    "rotation must commit a fresh nonzero next-keys digest (the chain)".into(),
+                );
+            }
+            // 4. The cooling window (cooledSince lastRotatedAt period).
+            let last = field_to_u64(&old_fields[r]);
+            if last.saturating_add(*cooling_period) > height {
+                return violated(
+                    constraint,
+                    format!(
+                        "rotation inside the cooling window: last rotation at {last}, \
+                         period {cooling_period}, height {height}"
+                    ),
+                );
+            }
+            // 5. The rotation stamps its own height (the next window's
+            //    anchor).
+            if field_to_u64(&new_state.fields[r]) != height
+                || new_state.fields[r][..24] != [0u8; 24]
+            {
+                return violated(
+                    constraint,
+                    format!("rotation must stamp the current height {height}"),
+                );
             }
             Ok(())
         }
@@ -2604,6 +2788,25 @@ fn evaluate_simple_constraint(
     }
 }
 
+/// Hash a 32-byte preimage under the named [`HashKind`] — the shared
+/// digest function behind [`StateConstraint::PreimageGate`] and
+/// [`StateConstraint::KeyRotationGate`].
+///
+/// `Poseidon2` uses BLAKE3 of a domain-tagged preimage as a stand-in until
+/// a Poseidon2-on-bytes helper is wired through here. Executor-side use
+/// only; AIR enforcement will use the actual Poseidon2 gadget.
+fn hash_preimage32(hash_kind: &HashKind, preimage: &[u8; 32]) -> [u8; 32] {
+    match hash_kind {
+        HashKind::Blake3 => *blake3::hash(preimage).as_bytes(),
+        HashKind::Poseidon2 => {
+            let mut tagged = Vec::with_capacity(47);
+            tagged.extend_from_slice(b"poseidon2-stub:");
+            tagged.extend_from_slice(preimage);
+            *blake3::hash(&tagged).as_bytes()
+        }
+    }
+}
+
 // ============================================================================
 // Field arithmetic / comparisons
 // ============================================================================
@@ -2961,6 +3164,17 @@ pub enum StateConstraintView {
     /// The cell's own post-turn balance must be `<= max`.
     BalanceLte {
         max: u64,
+    },
+    /// KERI-shaped pre-rotation gate: rotating the `digest_slot` register
+    /// demands the preimage of the OLD committed digest, installs it into
+    /// `current_slot`, re-commits fresh, and waits `cooling_period` blocks
+    /// since `last_rotated_slot`.
+    KeyRotationGate {
+        digest_slot: u8,
+        current_slot: u8,
+        last_rotated_slot: u8,
+        cooling_period: u64,
+        hash_kind: String,
     },
 }
 
@@ -3325,6 +3539,22 @@ impl StateConstraint {
             }
             StateConstraint::BalanceGte { min } => StateConstraintView::BalanceGte { min: *min },
             StateConstraint::BalanceLte { max } => StateConstraintView::BalanceLte { max: *max },
+            StateConstraint::KeyRotationGate {
+                digest_slot,
+                current_slot,
+                last_rotated_slot,
+                cooling_period,
+                hash_kind,
+            } => StateConstraintView::KeyRotationGate {
+                digest_slot: *digest_slot,
+                current_slot: *current_slot,
+                last_rotated_slot: *last_rotated_slot,
+                cooling_period: *cooling_period,
+                hash_kind: match hash_kind {
+                    HashKind::Poseidon2 => "Poseidon2".to_string(),
+                    HashKind::Blake3 => "Blake3".to_string(),
+                },
+            },
         }
     }
 }
@@ -3786,6 +4016,122 @@ mod tests {
         );
         // No preimage in ctx → missing
         assert!(p.evaluate(&s, None, Some(&EvalContext::default())).is_err());
+    }
+
+    /// `KeyRotationGate`: the rotate verb as a guarded write — preimage
+    /// exhibit against the OLD digest register, install, fresh re-commit,
+    /// cooling. The full triangle lives in `starbridge_polis::identity`
+    /// tests; this pins the constraint's own semantics.
+    #[test]
+    fn key_rotation_gate_semantics() {
+        let gate = StateConstraint::KeyRotationGate {
+            digest_slot: 1,
+            current_slot: 2,
+            last_rotated_slot: 3,
+            cooling_period: 50,
+            hash_kind: HashKind::Blake3,
+        };
+        let p = CellProgram::Predicate(vec![gate]);
+        let next: [u8; 32] = [0xAB; 32]; // the pre-committed key-set commitment
+        let digest = *blake3::hash(&next).as_bytes();
+
+        let ctx = |height: u64, preimage: Option<[u8; 32]>| EvalContext {
+            block_height: height,
+            revealed_preimage: preimage,
+            ..EvalContext::default()
+        };
+
+        // Committed state: digest register live, last rotation at 100.
+        let mut old = CellState::new(0);
+        old.nonce = 1;
+        old.fields[1] = digest;
+        old.fields[2] = [0x01; 32]; // current keys (must be irrelevant)
+        old.fields[3] = field_from_u64(100);
+
+        // No-op turn (registers untouched): admitted without a preimage.
+        assert!(p.evaluate(&old, Some(&old), Some(&ctx(0, None))).is_ok());
+
+        // Honest rotation at height 200 (cooled past 100 + 50): exhibit
+        // `next`, install it, commit fresh, stamp 200.
+        let mut rotated = old.clone();
+        rotated.fields[1] = *blake3::hash(&[0xCD; 32]).as_bytes();
+        rotated.fields[2] = next;
+        rotated.fields[3] = field_from_u64(200);
+        assert!(
+            p.evaluate(&rotated, Some(&old), Some(&ctx(200, Some(next))))
+                .is_ok()
+        );
+        // CURRENT KEYS ARE IRRELEVANT: the same rotation from a state with
+        // ANY other current key set is decided identically (the structural
+        // mirror of `rotate_current_keys_irrelevant`).
+        let mut stolen = old.clone();
+        stolen.fields[2] = [0xEE; 32];
+        let mut rotated2 = rotated.clone();
+        rotated2.fields[2] = next;
+        assert!(
+            p.evaluate(&rotated2, Some(&stolen), Some(&ctx(200, Some(next))))
+                .is_ok()
+        );
+
+        // Wrong preimage (forged key set): refused.
+        assert!(
+            p.evaluate(&rotated, Some(&old), Some(&ctx(200, Some([0xEE; 32]))))
+                .is_err()
+        );
+        // No preimage at all: refused even though the turn is well-formed.
+        assert!(
+            matches!(
+                p.evaluate(&rotated, Some(&old), Some(&ctx(200, None))),
+                Err(ProgramError::PreimageWitnessMissing)
+            ),
+            "rotation without the exhibit must surface PreimageWitnessMissing"
+        );
+        // Install mismatch: exhibiting the right preimage but installing a
+        // different current commitment is refused.
+        let mut misinstalled = rotated.clone();
+        misinstalled.fields[2] = [0x99; 32];
+        assert!(
+            p.evaluate(&misinstalled, Some(&old), Some(&ctx(200, Some(next))))
+                .is_err()
+        );
+        // Chain break: zeroing the register is refused.
+        let mut chainless = rotated.clone();
+        chainless.fields[1] = FIELD_ZERO;
+        assert!(
+            p.evaluate(&chainless, Some(&old), Some(&ctx(200, Some(next))))
+                .is_err()
+        );
+        // Cooling: inside the window (100 + 50 > 149) even the honest
+        // rotation is refused; the stamp must equal the height.
+        let mut early = rotated.clone();
+        early.fields[3] = field_from_u64(149);
+        assert!(
+            p.evaluate(&early, Some(&old), Some(&ctx(149, Some(next))))
+                .is_err()
+        );
+        let mut misstamped = rotated.clone();
+        misstamped.fields[3] = field_from_u64(150);
+        assert!(
+            p.evaluate(&misstamped, Some(&old), Some(&ctx(200, Some(next))))
+                .is_err()
+        );
+
+        // Inception: from the unborn register (old digest == 0) the first
+        // commitment installs without a preimage; a zero digest is refused.
+        let born = CellState::new(0);
+        let mut inducted = CellState::new(0);
+        inducted.fields[1] = digest;
+        inducted.fields[2] = [0x01; 32];
+        assert!(
+            p.evaluate(&inducted, Some(&born), Some(&ctx(0, None)))
+                .is_ok()
+        );
+        let mut zeroed = inducted.clone();
+        zeroed.fields[1] = FIELD_ZERO;
+        assert!(
+            p.evaluate(&zeroed, Some(&born), Some(&ctx(0, None)))
+                .is_err()
+        );
     }
 
     #[test]
@@ -4966,6 +5312,16 @@ mod tests {
             (StateConstraint::SenderInSlot { index: 2 }, "SenderInSlot"),
             (StateConstraint::BalanceGte { min: 10 }, "BalanceGte"),
             (StateConstraint::BalanceLte { max: 0 }, "BalanceLte"),
+            (
+                StateConstraint::KeyRotationGate {
+                    digest_slot: 1,
+                    current_slot: 2,
+                    last_rotated_slot: 3,
+                    cooling_period: 50,
+                    hash_kind: HashKind::Blake3,
+                },
+                "KeyRotationGate",
+            ),
         ];
 
         // COVERAGE TOOTH: this match must name every variant exactly once.
@@ -5014,7 +5370,8 @@ mod tests {
                 | StateConstraint::SenderIs { .. }
                 | StateConstraint::SenderInSlot { .. }
                 | StateConstraint::BalanceGte { .. }
-                | StateConstraint::BalanceLte { .. } => {}
+                | StateConstraint::BalanceLte { .. }
+                | StateConstraint::KeyRotationGate { .. } => {}
             }
         }
 

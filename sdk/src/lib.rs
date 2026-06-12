@@ -118,6 +118,7 @@ pub mod events;
 pub mod explain;
 pub mod factories;
 pub mod full_turn_proof;
+pub mod identity;
 #[cfg(feature = "captp")]
 pub mod mailbox;
 pub mod mnemonic;
