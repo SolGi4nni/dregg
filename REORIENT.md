@@ -1,6 +1,6 @@
 # REORIENT — read this first after any context loss
 
-*(maintained for session continuity; update at every major landing. Last: 2026-06-12 ~10:00)*
+*(maintained for session continuity; update at every major landing. Last: 2026-06-12 ~14:20)*
 
 ## What this project is, in one breath
 
@@ -108,15 +108,24 @@ THE EPOCH (docs/EPOCH-DESIGN.md) — boundary/interior proving. LANDED + pushed:
   at **120.4 KiB** vs v1 **350.5 KiB** (−65.6%), below the v1 baseline. Live
   v1 path untouched; IR-v2 is additive behind recursion gating.
 
-IN FLIGHT (subagents running, do not step on working tree):
-- registers 8→16 (`agent-qzo8iiar`, `cell/src/state.rs` already touched).
-- heap_root commitment limb (`agent-j4tp7z0z`).
-- fresh-key sorted INSERT map-op (`agent-05072rgr`, `circuit/src/descriptor_ir2.rs`).
-- Full `cargo test -p dregg-turn --tests` + `cargo check --workspace` after
-  the heap-field executor change.
+LANDED TODAY (`f5a25fd16` on main, fast-forward):
+- **registers 8→16 + heap_root commitment limb**: `STATE_SLOTS` 8→16 across
+  cell/turn/node/rbg/apps; `CellState` gains `heap_root` + `heap_map` with
+  sorted-Poseidon2 canonical root; `compute_canonical_state_commitment`
+  absorbs `heap_root` (context v6→v7); umem projection exposes `HeapRoot`.
+  Legacy cells carry the fixed `empty_heap_root()` no-op constant.
+  Verification: `cargo check --workspace` green; dregg-cell lib 591 pass;
+  dregg-turn lib 446 pass; umem_bridge 6 pass; proptest_invariants 5 pass.
+
+IN FLIGHT / QUEUED:
+- fresh-key sorted INSERT map-op: partial work in `descriptor_ir2.rs` was
+  reverted after the subagent timed out with 71 compile errors; queued for redo.
+- PI v3: unblocked now that registers-16 + heap_root are in; needs
+  `committed_height` limb in `CellState` + rateBound/challengeWindow caveat
+  tags + executor PI wiring.
 
 STILL DEFERRED (the flag-day — would orphan the live v1 path until the relayout
-lands; do as ONE VK epoch): the three in-flight slices above · RESERVED
+lands; do as ONE VK epoch): fresh-key INSERT redo · PI v3 · RESERVED
 removal + 186→159 compaction (now subsumed by universal-memory table reshape) ·
 descriptor IR-v2 REGEN (EmitAllJson still emits v1; the 26 v2 descriptors live
 in EffectVmEmitV2.v2Registry) + VK bump · PI v3 (committed-height column +
