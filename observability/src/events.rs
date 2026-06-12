@@ -731,6 +731,16 @@ fn constraint_dissect(
             ..
         } => ("bound_delta", Some(*local_slot), vec![*peer_slot]),
         SC::AnyOf { .. } => ("any_of", None, vec![]),
+        SC::KeyRotationGate {
+            digest_slot,
+            current_slot,
+            last_rotated_slot,
+            ..
+        } => (
+            "key_rotation_gate",
+            Some(*digest_slot),
+            vec![*current_slot, *last_rotated_slot],
+        ),
         SC::Custom { .. } => ("custom", None, vec![]),
         // Witnessed predicates are checked by the executor's predicate
         // registry; the observability layer surfaces them as a generic
