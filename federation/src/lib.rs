@@ -64,6 +64,11 @@
 /// distinct-rooted-vouched, or ≥`min_bond` bonded) are finalizable; bonded equivocators are
 /// slashed. Faithful mirror of the verified Lean `Dregg2.Distributed.StrandAdmission`.
 pub mod admission;
+/// Randomness beacon (ORGANS §6 weld): the UNIQUE threshold-BLS group signature over a
+/// domain-separated `(epoch, height)` message, hashed into 32 bytes of unbiasable public
+/// randomness — no member can steer it (uniqueness), no sub-threshold set can compute it early.
+/// Includes the deterministic-draw / jury-selection consumer surface.
+pub mod beacon;
 /// Differential: the verified Lean `Dregg2.Distributed.BlsQuorumCert` model ⟺ this crate's real BLS
 /// aggregate-verify. Pins `faultBudget`/`quorumThreshold` against `fault_tolerance`/`quorum_threshold`
 /// (exhaustive `0..=512` sweep + `StrictBft ⇔ 3∤n`), and drives the REAL `hints` weighted-threshold

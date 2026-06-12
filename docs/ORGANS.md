@@ -121,10 +121,20 @@ no-late-switch keystones; causal-order anti-frontrunning; the preimage
 gate); a probability model over beacon streams (consensus-liveness facing);
 real BLS threshold signatures in the federation crate.
 
-**The weld (shortcut):** a committee threshold-signature beacon — the
-deterministic group signature over the epoch/height is unbiasable
-randomness from machinery already present. Commit-reveal among named
-parties is a wave; a VRF-grade public beacon is its own later effort.
+**WELDED** (`federation/src/beacon.rs`): a committee threshold-signature
+beacon — `beacon_at(epoch, height)` under the `dregg-randomness-beacon-v1`
+domain, verified by anyone holding the group public key; `deterministic_draw`
+/ `select_jury` consumers. One correction discovered en route: the hinTS
+aggregate in `threshold.rs` is SUBSET-DEPENDENT (different quorums yield
+different all-verifying aggregates — right for quorum certificates, wrong
+for a beacon, which would be grindable over C(n,t) subsets; pinned
+executably by `hints_aggregate_is_subset_dependent_hence_not_a_beacon`).
+The beacon therefore uses classical unique threshold-BLS (`σ = H(msg)^{f(0)}`,
+same curve/hash-to-curve, Shamir-dealt group secret): every t-subset
+produces the SAME signature — nothing to grind. Named upgrade path: DKG
+replaces the dealer (no party ever holds f(0)), proactive resharing
+anchored in epoch transitions, drand-style chaining. Commit-reveal among
+named parties is a wave; a VRF-grade public beacon is its own later effort.
 
 ## Identity rider (from the resonance study, adopted outright)
 
