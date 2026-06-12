@@ -21,6 +21,9 @@ Last sweep: 2026-06-12 (the Grand Convergence session).
 - fresh-key sorted-INSERT map-op (reuses MapAbsent adjacency; named in cff8509ba).
 - per-turn chip amortization (blocked on an IR-v2 turn assembly; named in 0b05afc1a).
 - MMR §6 CommitBindsMMR layout fact (node writes both roots at dense positions; the Receipt-apex residual premise, 7894e5789) — discharged-by-construction at the flag-day.
+- Full-cohort descriptor regen at the ROTATED 25-slot block (the staged probe `EffectVmEmitRotation.lean` is the validated reference shape; the 26 per-effect descriptors still emit 186/14) — the §3 steps 1-2 motion of docs/ROTATION-CUTOVER.md.
+- balance/nonce → NAMED-register assignment (RotatedLimbs carries no separate balance/nonce limbs; the umem projection maps them to the heap domain — pick ONE canonical story; ember-visible decision, ROTATION-CUTOVER.md §2 note).
+- cells_root + iroot per-turn PRODUCERS in turn/ (the rotated block's first/last limbs; MMR theory landed, executor carrier missing) + lifecycle/epoch trace carriers (CellState tracks them, the trace doesn't) — ROTATION-CUTOVER.md §5 items 3-5.
 
 ## Metatheory closures (Lean-side, mostly lane-sized)
 
@@ -48,6 +51,7 @@ Last sweep: 2026-06-12 (the Grand Convergence session).
 - Hosted-operator epoch-key custody posture (sovereign-member groups ride the SDK noun client-side; channels residue — partly an ember-decision).
 
 - Divergence-ledger doc churn: `turn/tests/rust_lean_divergence_finder.rs` overwrites the git-tracked `metatheory/docs/rebuild/_RUST-LEAN-DIVERGENCE-LEDGER.md` on every run, dirtying trees and blocking persvati pushes — emit to a build artifact path (or commit deliberately), one-line fix.
+- CLI `config init` is not path-injectable: `cli/src/config.rs::config_path()` hardcodes `~/.dregg` (ignores env overrides), so `dregg config init` mutates the real home and preflight can only gate the read-only `config show` (preflight/checks/cli.rs). Honor a `DREGG_HOME`-style override in `config_path()`, then restore a hermetic preflight `cli_config_init` check (create-in-tmp + file-exists + reload round-trip).
 
 ## Crypto / protocol artifacts (bounded, sequenced after the rotation)
 

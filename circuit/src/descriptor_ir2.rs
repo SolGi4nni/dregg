@@ -4915,4 +4915,110 @@ mod tests {
             ),
         }
     }
+
+    // ==== THE ROTATION (staged) — the Lean-emitted rotated-state probe ====
+    //
+    // `Dregg2/Circuit/Emit/EffectVmEmitRotation.lean` emits the rotated state block
+    // (cells root · 16 registers · cap/nullifier/heap roots · lifecycle · epoch ·
+    // committed height · the receipt-index MMR root LAST · the chained commitment)
+    // as a graduated IR-v2 descriptor; the Lean keystones are
+    // `rotationProbeV2_pins_commit` / `wireCommit_binds` /
+    // `rotationProbe_commit_binds_published`. These tests are the Rust teeth:
+    // honest witness proves+verifies (size measured), EVERY column and PI is
+    // tamper-refused, and the layout/absorption coverage is drift-guarded in
+    // `effect_vm_descriptors.rs`.
+
+    fn rotation_probe_desc() -> EffectVmDescriptor2 {
+        parse_vm_descriptor2(
+            crate::effect_vm_descriptors::DREGG_EFFECTVM_ROTATION_STATE_V3_STAGED_JSON,
+        )
+        .expect("staged rotation probe parses")
+    }
+
+    /// The honest rotated-block witness: 24 distinct limbs (`100 + col`), the genuine
+    /// 4-ary chained absorption (site digests on the chain carriers, final on
+    /// `STATE_COMMIT`), PI = [published commit, committed height].
+    fn rotation_probe_trace() -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
+        use crate::effect_vm::columns::rotation as rot;
+        use crate::poseidon2::hash_many;
+        let mut row = vec![BabyBear::ZERO; rot::PROBE_WIDTH];
+        for (i, cell) in row.iter_mut().enumerate().take(rot::IROOT + 1) {
+            *cell = BabyBear::new(100 + i as u32);
+        }
+        // site 0: the first four limbs; sites 1..=6: digest + three limbs (arity 4);
+        // site 7: digest + committed height (arity 2); the final site: digest + the
+        // iroot LITERALLY LAST (arity 2) -> STATE_COMMIT.
+        let mut d = hash_many(&[row[0], row[1], row[2], row[3]]);
+        row[rot::CHAIN_BASE] = d;
+        for k in 1..=6 {
+            let b = 3 * k + 1;
+            d = hash_many(&[d, row[b], row[b + 1], row[b + 2]]);
+            row[rot::CHAIN_BASE + k] = d;
+        }
+        d = hash_many(&[d, row[rot::COMMITTED_HEIGHT]]);
+        row[rot::CHAIN_BASE + 7] = d;
+        let commit = hash_many(&[d, row[rot::IROOT]]);
+        row[rot::STATE_COMMIT] = commit;
+        let pi = vec![commit, row[rot::COMMITTED_HEIGHT]];
+        (vec![row; 4], pi)
+    }
+
+    /// The staged acceptance gate: the Lean-emitted rotated-state probe proves and
+    /// verifies through the IR-v2 multi-table assembly (main + chip + byte — every
+    /// absorption a real permutation row), and the staged shape's proof size is
+    /// measured (printed; run with `--nocapture` to read it).
+    #[test]
+    fn rotation_probe_honest_witness_proves_verifies_and_measures() {
+        let desc = rotation_probe_desc();
+        let (rows, pi) = rotation_probe_trace();
+        let proof =
+            prove_vm_descriptor2(&desc, &rows, &pi, &MemBoundaryWitness::default(), &[])
+                .expect("honest rotated-block witness must prove");
+        assert_eq!(
+            proof.degree_bits.len(),
+            2,
+            "rotation probe commits main + chip only (no range/mem/map lookups; \
+             descriptor-empty tables elided)"
+        );
+        verify_vm_descriptor2(&desc, &proof, &pi).expect("rotation probe proof must verify");
+        let total = postcard::to_allocvec(&proof).expect("postcard").len();
+        println!(
+            "rotation-state v3-staged probe proof: {total} bytes (~{:.1} KiB)",
+            total as f64 / 1024.0
+        );
+    }
+
+    /// TAMPER-REFUSAL, every column: each of the 33 probe columns (all 24 limbs —
+    /// including the widened registers r8..r15, the heap_root limb, the committed
+    /// height, and the iroot — plus the commitment carrier and every chain carrier)
+    /// is load-bearing: a +1 tamper on any of them refuses. So do both PIs (the
+    /// published commit and the published height). Tampers refuse either eagerly or
+    /// at the batch self-verify; the debug prover may panic on the violated tooth —
+    /// both are refusals (the absent-gauntlet pattern).
+    #[test]
+    fn rotation_probe_refuses_every_tampered_column_and_pi() {
+        use crate::effect_vm::columns::rotation as rot;
+        use std::panic::{AssertUnwindSafe, catch_unwind};
+        let desc = rotation_probe_desc();
+        let (rows, pi) = rotation_probe_trace();
+        let refused = |rows: &Vec<Vec<BabyBear>>, pi: &Vec<BabyBear>| -> bool {
+            let r = catch_unwind(AssertUnwindSafe(|| {
+                prove_vm_descriptor2(&desc, rows, pi, &MemBoundaryWitness::default(), &[])
+            }));
+            match r {
+                Err(_) => true,
+                Ok(res) => res.is_err(),
+            }
+        };
+        for col in 0..rot::PROBE_WIDTH {
+            let mut t = rows.clone();
+            t[0][col] = t[0][col] + BabyBear::ONE;
+            assert!(refused(&t, &pi), "tampered column {col} must refuse");
+        }
+        for k in 0..pi.len() {
+            let mut p = pi.clone();
+            p[k] = p[k] + BabyBear::ONE;
+            assert!(refused(&rows, &p), "tampered PI {k} must refuse");
+        }
+    }
 }

@@ -294,6 +294,66 @@ pub mod aux_off {
     pub const NEW_BAL_HI_BIT_BASE: usize = 36 + super::BAL_LIMB_BITS; // 66
 }
 
+/// THE ROTATED STATE BLOCK (THE ROTATION, STAGED — `docs/UNIVERSAL-MAP-ROTATION.md`
+/// §2.1/§2.4/§2.6, cutover = `docs/ROTATION-CUTOVER.md`).
+///
+/// NOTHING on the live wire path reads these: the live layout above (186-wide,
+/// 14-slot state block) stays byte-identical until the one VK flag-day. These
+/// constants mirror the LEAN-EMITTED staged layout — the Lean twin is
+/// `metatheory/Dregg2/Circuit/Emit/EffectVmEmitRotation.lean`, whose
+/// `rotationLayoutManifest` is byte-pinned both there (`#guard`) and here
+/// (`rotation_layout_matches_lean` in `effect_vm_descriptors.rs` rebuilds the
+/// manifest from THESE constants and compares against the committed
+/// `circuit/descriptors/rotation-layout-v3-staged.json`). Rust never invents a
+/// layout fact (law #1 of the rotation spec).
+///
+/// The block is the rotated `recStateCommit` payload, ABSORPTION-ORDERED
+/// (`RotatedLimbs.toList`): cells root · the 16 named registers · the map
+/// roots adjacent and uniform (cap, nullifier, heap) · lifecycle · epoch ·
+/// committed height · the receipt-index MMR root literally LAST · then the
+/// commitment carrier. The commitment is the 4-ary CHAINED chip absorption
+/// (8 permutation sites; Lean `wireCommit`, keystone `wireCommit_binds`).
+/// NOTE the obsolete 186-wide fan-out is deliberately NOT widened to carry
+/// this block (the post-LogUp main table is far thinner — `EPOCH-DESIGN.md`);
+/// the staged probe trace is the block + chain carriers alone, and the
+/// flag-day descriptor regen decides the final main-table packing.
+pub mod rotation {
+    /// The cells-root limb column.
+    pub const CELLS_ROOT: usize = 0;
+    /// Register `i` at `REG_BASE + i`, `i < NUM_REGISTERS`.
+    pub const REG_BASE: usize = 1;
+    /// The rotated register-file width (8 → 16; `RotationLayout.NUM_REGISTERS`).
+    pub const NUM_REGISTERS: usize = 16;
+    /// The cap-map root limb column.
+    pub const CAP_ROOT: usize = 17;
+    /// The nullifier-map root limb column.
+    pub const NULLIFIER_ROOT: usize = 18;
+    /// The heap-map root limb column (§2.4 — the rotation's `heap_root` limb).
+    pub const HEAP_ROOT: usize = 19;
+    /// The lifecycle scalar limb column.
+    pub const LIFECYCLE: usize = 20;
+    /// The epoch scalar limb column.
+    pub const EPOCH: usize = 21;
+    /// The committed-height scalar limb column (§2.6 — the PI-v3 limb).
+    pub const COMMITTED_HEIGHT: usize = 22;
+    /// The receipt-index MMR root carrier (`iroot = mroot log`), absorbed LAST.
+    pub const IROOT: usize = 23;
+    /// The rotated state commitment carrier (the chained absorption's digest).
+    pub const STATE_COMMIT: usize = 24;
+    /// The rotated state block width: 23 limbs + iroot + state_commit.
+    pub const BLOCK_SIZE: usize = 25;
+    /// The chained-absorption intermediate-digest carriers (one per non-final site).
+    pub const CHAIN_BASE: usize = 25;
+    /// Number of chain carriers (9 sites — 7 arity-4 + 2 arity-2 (the deployed chip
+    /// pins arity ∈ {2,4}; the arity-2 tail keeps the iroot LITERALLY LAST) — with
+    /// the final digest on `STATE_COMMIT`).
+    pub const NUM_CHAIN: usize = 8;
+    /// The staged probe trace width: the rotated block + the chain carriers.
+    pub const PROBE_WIDTH: usize = 33;
+    /// The chip absorption arity of the chained realization's body sites.
+    pub const CHAIN_ARITY: usize = 4;
+}
+
 /// Effect parameter meanings per effect type.
 ///
 /// Transfer:

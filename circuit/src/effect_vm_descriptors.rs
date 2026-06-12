@@ -659,6 +659,38 @@ pub const V2_DESCRIPTORS: &[(&str, &str, &str)] = &[
     ),
 ];
 
+// ==== ROTATION v3-STAGED artifacts (THE ROTATION — `docs/ROTATION-CUTOVER.md`) ====
+//
+// Byte-exact from `EmitRotationV3.lean` (the verified emission is
+// `Dregg2/Circuit/Emit/EffectVmEmitRotation.lean`). STAGED: nothing on the live wire
+// reads these — they ride the recursion-gated IR-v2 path only (the staged probe proves
+// through `prove_vm_descriptor2`, tests in `descriptor_ir2.rs`). NOT part of
+// `V2_DESCRIPTORS` (its 26-entry pin is the graduation cohort) nor `ALL_DESCRIPTORS`
+// (the live v1 registry stays byte-identical).
+
+/// The Lean-pinned rotation layout manifest (`rotationLayoutManifest`, `#guard`-byte-pinned
+/// in Lean; the Rust twin test `rotation_layout_matches_lean` rebuilds it from
+/// `effect_vm::columns::rotation` + `pi::v3` and compares — both sides pin, neither parses).
+pub const ROTATION_LAYOUT_V3_STAGED_JSON: &str =
+    include_str!("../descriptors/rotation-layout-v3-staged.json");
+pub const ROTATION_LAYOUT_V3_STAGED_FP: &str =
+    "518b290c2cc9aabd04a113611480059762d6720b04b2d6667e49aec49bfde3da";
+
+/// The staged rotation-state probe descriptor (`rotationProbeVmDescriptor2` =
+/// `graduateV1` of the 8-site chained absorption + the two PI pins; Lean keystones
+/// `rotationProbeV2_pins_commit` / `rotationProbe_commit_binds_published`).
+pub const DREGG_EFFECTVM_ROTATION_STATE_V3_STAGED_JSON: &str =
+    include_str!("../descriptors/dregg-effectvm-rotation-state-v3-staged.json");
+pub const DREGG_EFFECTVM_ROTATION_STATE_V3_STAGED_FP: &str =
+    "f80801c9eb428d005232c250ff2d873432a7edb982dd6c0bf39c669311554c26";
+
+/// The v3-staged registry (keyed by Lean def-name, the `V2_DESCRIPTORS` pattern).
+pub const V3_STAGED_DESCRIPTORS: &[(&str, &str, &str)] = &[(
+    "rotationProbeVmDescriptor2",
+    DREGG_EFFECTVM_ROTATION_STATE_V3_STAGED_JSON,
+    DREGG_EFFECTVM_ROTATION_STATE_V3_STAGED_FP,
+)];
+
 // ==== ALL unique descriptors (name -> json, fingerprint): the total name registry ====
 pub const ALL_DESCRIPTORS: &[(&str, &str, &str)] = &[
     (
@@ -1063,5 +1095,111 @@ mod tests {
         .unwrap();
         assert_eq!(t.trace_width, 186, "graduated transfer keeps the 186 base width");
         assert_eq!(t.public_input_count, 34);
+    }
+
+    /// THE ROTATION LAYOUT DRIFT GUARD (staged): rebuild the Lean
+    /// `rotationLayoutManifest` byte-for-byte from `effect_vm::columns::rotation`
+    /// + `pi::v3` and compare against the committed Lean-emitted file. Both sides
+    /// PIN (Lean `#guard`s the same literal), neither parses — a layout fact can
+    /// only change by re-emitting from Lean AND re-anchoring these constants.
+    #[test]
+    fn rotation_layout_matches_lean() {
+        use crate::effect_vm::columns::rotation as rot;
+        use crate::effect_vm::pi;
+        let twin = format!(
+            "{{\"v\":\"dregg-rotation-layout-v3-staged\",\"block_size\":{},\"cells_root\":{},\
+             \"reg_base\":{},\"num_registers\":{},\"cap_root\":{},\"nullifier_root\":{},\
+             \"heap_root\":{},\"lifecycle\":{},\"epoch\":{},\"committed_height\":{},\
+             \"iroot\":{},\"state_commit\":{},\"chain_base\":{},\"num_chain\":{},\
+             \"probe_width\":{},\"chain_arity\":{},\"pi_v3\":{{\"v2_base_count\":{},\
+             \"committed_height\":{},\"rate_bound_tag\":{},\"challenge_window_tag\":{}}}}}",
+            rot::BLOCK_SIZE,
+            rot::CELLS_ROOT,
+            rot::REG_BASE,
+            rot::NUM_REGISTERS,
+            rot::CAP_ROOT,
+            rot::NULLIFIER_ROOT,
+            rot::HEAP_ROOT,
+            rot::LIFECYCLE,
+            rot::EPOCH,
+            rot::COMMITTED_HEIGHT,
+            rot::IROOT,
+            rot::STATE_COMMIT,
+            rot::CHAIN_BASE,
+            rot::NUM_CHAIN,
+            rot::PROBE_WIDTH,
+            rot::CHAIN_ARITY,
+            pi::BASE_COUNT,
+            pi::v3::COMMITTED_HEIGHT,
+            pi::v3::RATE_BOUND_TAG,
+            pi::v3::CHALLENGE_WINDOW_TAG,
+        );
+        assert_eq!(
+            twin, ROTATION_LAYOUT_V3_STAGED_JSON,
+            "rotation layout drift: columns::rotation / pi::v3 no longer match the \
+             Lean-emitted manifest (re-emit EmitRotationV3.lean and re-anchor)"
+        );
+        // The manifest file itself is fingerprint-pinned (stale-file tooth).
+        assert_eq!(
+            sha256_hex(ROTATION_LAYOUT_V3_STAGED_JSON.as_bytes()),
+            ROTATION_LAYOUT_V3_STAGED_FP,
+            "rotation layout manifest: SHA-256 drift"
+        );
+    }
+
+    /// The v3-staged probe registry: fingerprint binding + round-trip through the
+    /// IR-v2 decoder + PRESENCE — the probe's chip-lookup chain must absorb EVERY
+    /// rotated limb column exactly once, in the manifest's absorption order, with
+    /// the final digest on `STATE_COMMIT` (a re-emit that drops a limb — e.g. the
+    /// heap_root — fails HERE, before any prover runs).
+    #[test]
+    fn v3_staged_descriptors_parse_match_fingerprint_and_cover_all_limbs() {
+        use crate::descriptor_ir2::VmConstraint2;
+        use crate::effect_vm::columns::rotation as rot;
+        use crate::lean_descriptor_air::LeanExpr;
+        assert_eq!(V3_STAGED_DESCRIPTORS.len(), 1, "expected 1 v3-staged descriptor");
+        let (key, json, fp) = &V3_STAGED_DESCRIPTORS[0];
+        assert_eq!(&sha256_hex(json.as_bytes()), fp, "v3 staged {key}: SHA-256 drift");
+        let d = parse_vm_descriptor2(json)
+            .unwrap_or_else(|e| panic!("v3 staged {key} failed parse_vm_descriptor2: {e}"));
+        assert_eq!(d.trace_width, rot::PROBE_WIDTH);
+        assert_eq!(d.public_input_count, 2);
+        assert!(d.hash_sites.is_empty() && d.ranges.is_empty(), "graduated carriers only");
+        // PRESENCE: walk the chip lookups in order; collect fresh (non-chain) absorbed
+        // columns; they must be exactly 0..=IROOT in order, and each non-final site's
+        // digest must be the next chain carrier, the final site's digest STATE_COMMIT.
+        let mut absorbed: Vec<usize> = Vec::new();
+        let mut digests: Vec<usize> = Vec::new();
+        for c in &d.constraints {
+            if let VmConstraint2::Lookup(l) = c {
+                let vars: Vec<usize> = l
+                    .tuple
+                    .iter()
+                    .filter_map(|e| match e {
+                        LeanExpr::Var(v) => Some(*v),
+                        _ => None,
+                    })
+                    .collect();
+                let (digest, inputs) = vars.split_last().expect("chip tuple has a digest");
+                digests.push(*digest);
+                for v in inputs {
+                    if *v < rot::BLOCK_SIZE {
+                        absorbed.push(*v);
+                    }
+                }
+            }
+        }
+        let expected: Vec<usize> = (0..=rot::IROOT).collect();
+        assert_eq!(
+            absorbed, expected,
+            "the probe must absorb every rotated limb column exactly once, in the \
+             absorption order (cells root, 16 registers, cap/nullifier/heap roots, \
+             lifecycle, epoch, committed height, iroot LAST)"
+        );
+        let expected_digests: Vec<usize> = (0..rot::NUM_CHAIN)
+            .map(|k| rot::CHAIN_BASE + k)
+            .chain(std::iter::once(rot::STATE_COMMIT))
+            .collect();
+        assert_eq!(digests, expected_digests, "chained digest carriers, final = STATE_COMMIT");
     }
 }
