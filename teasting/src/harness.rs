@@ -467,10 +467,17 @@ fn build_ordering_blocklace(finality_lace: &Blocklace) -> dregg_blocklace::Block
             Payload::Ack => vec![],
             _ => vec![],
         };
+        // The ordering lace is an unsigned PROJECTION of the already-verified
+        // finality lace (same seam as demo/sdk-consensus and node/blocklace_sync):
+        // signatures were checked on `finality::Blocklace::receive_block`, so the
+        // projection uses the causal-closure-only path. The verified `insert`
+        // would reject these unsigned skeleton blocks outright.
         let ordering_block =
             dregg_blocklace::Block::new(block.creator, block.seq, predecessors, payload);
         let oid = ordering_block.id();
-        let _ = ordering_lace.insert(ordering_block);
+        ordering_lace
+            .insert_unverified(ordering_block)
+            .expect("ordering projection of a causally-closed finality lace must insert");
         f2o.insert(fid, oid);
     }
 
