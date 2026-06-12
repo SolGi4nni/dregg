@@ -32,6 +32,16 @@ Last sweep: 2026-06-12 (the Grand Convergence session).
   heap is where apps live" argument is VACUOUS until programs can constrain heap fields).
   Lean Exec.Program + cell/program.rs lockstep + the DSL surface. = the language-uplift R3
   named-fields work, now critical path. LANE RUNNING.
+- HEAP-KEYED CAVEATS (rotation-URGENT — wire shape): SlotCaveatEntry is slot_index:u8
+  (trace.rs:178), so capability attenuation cannot scope to heap fields; if apps live in
+  the heap, the caveat operand must become domain×key. The entry is a PI/trace shape ⇒
+  widening it is ROTATION material — decide before the cutover freezes the wire (fold
+  into ROTATION-CUTOVER pre-gates when the measurement lane frees the doc).
+- guardAtom IR kind (umem adapter c) confirmed NOT landed (absent from DescriptorIR2.lean
+  + descriptor_ir2.rs): in-circuit policy/caveat enforcement for v2/v3 = cap-crown phase D
+  + Policy.lean line, rides rotation — now confirmed-open, not quietly-done.
+- PI v3 rateBound/challengeWindow tags: kimi wired the SLOTS — verify they connect to
+  enforcement (caveat layer) or are carried-only; one look.
 - Register-count measurement: 16 vs 24 vs 32 probe variants of the staged rotation
   emission; measure the always-paid delta (commit-chain sites + opened columns) before the
   count freezes at cutover. Folds into ROTATION-CUTOVER pre-gates. LANE RUNNING.
@@ -49,6 +59,7 @@ Last sweep: 2026-06-12 (the Grand Convergence session).
 - QueueRoot/commitment: leaf/node level-tags + length binding in `blake3_binary_root` (domain separation is computational-only today; named in f0e11ea3a).
 - Trustline: `settled`-era pureCredit — Lean has both collateral points; the Rust pureCredit realization (issuer-well draws) is open (7da845758 divergence 1-as-Rust).
 - Fibration (#35): `DistConservationBound`/`DistAttenuationBound` carried hypotheses → theorems.
+- Quorum unification (#170) Lean lift: raise `quorumThreshold` in `Distributed/BlsQuorumCert.lean` + `EpochReconfig.lean` to the strict supermajority `⌊2n/3⌋+1` and discharge the `StrictBft` hypothesis; lift `MembershipSafety.lean`'s `computeThreshold` `n=0 ↦ 0` guard to the fail-closed 1 (Rust unified on `dregg_blocklace::supermajority_threshold`; bls_quorum_diff.rs/epoch_diff.rs/membership_safety_differential.rs pin the exact `+1 at 3∣n` and n=0 relations until then).
 
 ## Node / runtime closures
 
