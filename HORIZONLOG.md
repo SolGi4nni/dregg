@@ -67,6 +67,28 @@ Last sweep: 2026-06-12 (the Grand Convergence session).
 - Willow geometry for storage caps (3D area caveats, range reconciliation) — adopted design, not scheduled.
 - Room-as-OS + delay-tolerant polis (docs/ROOM-AS-OS.md, docs/DELAY-TOLERANT-POLIS.md).
 
+## HANDOFF READINESS (the pug bar — a stranger evaluates dregg as a finished, usable thing)
+
+*(ember 2026-06-12: aiming to hand the system to pug to evaluate usefulness/usability
+for HIS purposes. Everything here is judged by "works without ember in the loop.")*
+
+- FRESH-CLONE BUILD: clone → documented steps → running node, no tribal knowledge. The FFI
+  archive seeding (elan on PATH, lake build, seed-dregg2-closure.sh) is currently
+  tribal-knowledge-heavy and has bitten US twice this session — it must be one documented
+  command (or build.rs does it) with a loud, teaching failure mode.
+- QUICKSTART re-verified against the POST-ROTATION reality, every command actually run
+  (it was verified pre-rotation; #110's closure predates the organs + rotation).
+- The organs reachable as a STRANGER would reach them: SDK two-nouns + trustline/channel/
+  mailbox/storage nouns each with a copy-paste example that runs against a local node;
+  error messages that teach (refusals say WHY and what would be admitted).
+- An evaluator's README: what dregg IS (teach-what-is register), what it guarantees
+  (AssuranceCase in human terms), what it does NOT yet do (honest scope), and the three
+  things to try in the first ten minutes.
+- The site/playground consistent with the shipped system (no stale pre-rotation surfaces).
+- One real end-to-end story pug can run start-to-finish: e.g. two agents, a trustline,
+  a channel, a mailbox — money moves, messages flow, a removed member goes dark, every
+  receipt checkable. The demo IS the evaluation artifact.
+
 ## Decisions pending (ember)
 
 - #93 proof-audit: build a harness, or declare `#assert_axioms` + non-vacuity-both-polarities + the Convergence gauntlet its successor and close. (Recommendation: the latter.)
