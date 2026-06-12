@@ -106,6 +106,7 @@ pub mod pending;
 pub mod presence_discharge;
 pub mod routing;
 pub mod turn;
+pub mod umem;
 pub mod verify;
 pub mod witnessed_receipt;
 

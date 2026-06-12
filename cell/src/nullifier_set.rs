@@ -101,6 +101,12 @@ impl NullifierSet {
         self.nullifiers.contains(nullifier)
     }
 
+    /// Iterate the nullifiers in sorted order (the universal-memory projection
+    /// walks the set: every spent nullifier is a present `nullifiers`-domain cell).
+    pub fn iter(&self) -> impl Iterator<Item = &Nullifier> {
+        self.nullifiers.iter()
+    }
+
     /// Remove a nullifier from the set.
     ///
     /// Used ONLY by the turn-journal rollback path to undo a speculative insert

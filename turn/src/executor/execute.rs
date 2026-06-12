@@ -118,6 +118,19 @@ fn collect_referenced_cells(
 }
 
 impl TurnExecutor {
+    /// Snapshot the universal-map projection of the full executor state (the ledger +
+    /// the executor-owned side tables) — THE EXECUTOR-STATE BRIDGE's pre/post surfaces
+    /// (`crate::umem`; Lean twin `Dregg2/Exec/UniversalBridge.uproj`). Called only when
+    /// [`TurnExecutor::umem_witness_enabled`] is set.
+    fn umem_snapshot(&self, ledger: &Ledger) -> crate::umem::UProjection {
+        crate::umem::project_executor_state(
+            ledger,
+            &self.note_nullifiers.lock().unwrap(),
+            &self.bridged_nullifiers.lock().unwrap(),
+            &self.factory_registry.borrow(),
+        )
+    }
+
     /// Execute a turn against a ledger, returning the result.
     ///
     /// This is the main entry point. The executor:
@@ -862,6 +875,18 @@ impl TurnExecutor {
         // PHASE 2: Execute call forest (rolled back on failure).
         // The journal only records forest effects — fee/nonce are already final.
         // =====================================================================
+        // THE EXECUTOR-STATE BRIDGE (recursion-gated, OFF by default): snapshot the
+        // universal-map projection at the journal window's start so the committed
+        // turn can be re-read as a Blum memory-op trace (`crate::umem::emit_trace`).
+        let umem_pre = if self
+            .umem_witness_enabled
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            Some(self.umem_snapshot(ledger))
+        } else {
+            None
+        };
+
         let mut journal = LedgerJournal::with_capacity(16);
         let mut computrons_used: u64 = 0;
         let mut all_effects_hashes: Vec<[u8; 32]> = Vec::new();
@@ -1038,6 +1063,20 @@ impl TurnExecutor {
         // =====================================================================
         if let (Some(gate_cell), Some((digest, _fee))) = (&self.budget_gate, &budget_debit_digest) {
             gate_cell.lock().unwrap().commit_debit(digest);
+        }
+
+        // THE EXECUTOR-STATE BRIDGE: the forest committed — snapshot the post
+        // projection and re-read the journal as the turn's Blum write trace. The
+        // window deliberately closes BEFORE Phase 3 fee distribution (the witness
+        // covers the forest's effect semantics; fee/nonce legs are turn-level and
+        // outside the journal, exactly as the journal itself scopes).
+        if let Some(pre) = umem_pre {
+            let post = self.umem_snapshot(ledger);
+            let witness = crate::umem::emit_trace(&pre, &post, journal.entries());
+            if let Err(e) = &witness {
+                tracing::warn!("umem witness emission refused: {e}");
+            }
+            *self.last_umem_witness.lock().unwrap() = Some(witness);
         }
 
         // =====================================================================

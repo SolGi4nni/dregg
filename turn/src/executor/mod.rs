@@ -591,6 +591,17 @@ pub struct TurnExecutor {
     /// mutability reason as the other executor side-tables (`&self`
     /// execution path).
     pub consumed_cap_witnesses: Mutex<Vec<crate::turn::ConsumedCapWitness>>,
+    /// THE EXECUTOR-STATE BRIDGE flag (`docs/UNIVERSAL-MAP-ROTATION.md` §2.3 — the
+    /// universal-memory witness lane, recursion-gated like the umem circuit leg): when
+    /// set, `execute()` snapshots the universal-map projection (`crate::umem`) around
+    /// the forest journal window and emits the turn's Blum op trace into
+    /// [`Self::last_umem_witness`]. OFF by default — the live proving path is
+    /// untouched.
+    pub umem_witness_enabled: std::sync::atomic::AtomicBool,
+    /// The most recent turn's universal-memory witness (pre/post projections + the
+    /// Blum write trace whose fold connects them), or the emitter's refusal. `None`
+    /// until a turn commits with [`Self::umem_witness_enabled`] set.
+    pub last_umem_witness: Mutex<Option<Result<crate::umem::UmemTurnWitness, String>>>,
 }
 
 impl TurnExecutor {
@@ -625,6 +636,8 @@ impl TurnExecutor {
             witnessed_registry: Some(dregg_cell::WitnessedPredicateRegistry::default_builtins()),
             custom_effect_registry: None,
             consumed_cap_witnesses: Mutex::new(Vec::new()),
+            umem_witness_enabled: std::sync::atomic::AtomicBool::new(false),
+            last_umem_witness: Mutex::new(None),
         }
     }
 
@@ -663,6 +676,8 @@ impl TurnExecutor {
             witnessed_registry: Some(dregg_cell::WitnessedPredicateRegistry::default_builtins()),
             custom_effect_registry: None,
             consumed_cap_witnesses: Mutex::new(Vec::new()),
+            umem_witness_enabled: std::sync::atomic::AtomicBool::new(false),
+            last_umem_witness: Mutex::new(None),
         }
     }
 
@@ -697,6 +712,8 @@ impl TurnExecutor {
             witnessed_registry: Some(dregg_cell::WitnessedPredicateRegistry::default_builtins()),
             custom_effect_registry: None,
             consumed_cap_witnesses: Mutex::new(Vec::new()),
+            umem_witness_enabled: std::sync::atomic::AtomicBool::new(false),
+            last_umem_witness: Mutex::new(None),
         }
     }
 

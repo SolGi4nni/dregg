@@ -254,6 +254,12 @@ impl BridgedNullifierSet {
         }
     }
 
+    /// Iterate the bridged nullifiers in sorted order (the universal-memory
+    /// projection walks the set).
+    pub fn iter(&self) -> impl Iterator<Item = &[u8; 32]> {
+        self.nullifiers.iter()
+    }
+
     /// Number of bridged nullifiers.
     pub fn len(&self) -> usize {
         self.nullifiers.len()
