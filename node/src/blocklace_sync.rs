@@ -3087,7 +3087,9 @@ mod tests {
         let counts = sched.counts_for(cell_id);
         let roots = sched.roots_for(cell_id, turn.nonce);
 
-        let mut pi_bb = vec![BabyBear::ZERO; p::BASE_COUNT];
+        // ACTIVE_BASE_COUNT (PI v3): the verifier refuses < 204; the v3 tail
+        // (committed_height + caveat tags) rides as zeros in this synthetic WR.
+        let mut pi_bb = vec![BabyBear::ZERO; p::ACTIVE_BASE_COUNT];
         let (th, eg, _, prev) = dregg_turn::TurnExecutor::compute_turn_identity_pi(turn);
         for i in 0..p::TURN_HASH_LEN {
             pi_bb[p::TURN_HASH_BASE + i] = th[i];
