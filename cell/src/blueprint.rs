@@ -164,6 +164,12 @@ pub enum BlueprintError {
     /// time-ungated; the Lean contract (`slash_requires_deadline`) requires a
     /// real deadline. Rejected at build (fail-closed).
     ZeroDeadline,
+    /// A trustline with `line == 0` is undrawable and its all-zero terms are
+    /// indistinguishable from an unborn cell. Rejected at build (fail-closed).
+    ZeroLine,
+    /// A trustline party identity is the all-zero field — settlement would
+    /// target the zero cell. Rejected at build (fail-closed).
+    ZeroParty,
 }
 
 impl std::fmt::Display for BlueprintError {
@@ -175,6 +181,15 @@ impl std::fmt::Display for BlueprintError {
             ),
             BlueprintError::ZeroDeadline => {
                 write!(f, "obligation deadline must be a nonzero block height")
+            }
+            BlueprintError::ZeroLine => {
+                write!(f, "trustline line ceiling must be nonzero")
+            }
+            BlueprintError::ZeroParty => {
+                write!(
+                    f,
+                    "trustline issuer/holder identities must be nonzero fields"
+                )
             }
         }
     }
@@ -512,6 +527,135 @@ pub fn bridge_factory_descriptor(terms: &BridgeTerms) -> Result<FactoryDescripto
 }
 
 // =============================================================================
+// Trustline — Dregg2.Apps.Trustline (the ORGANS §1 weld)
+// =============================================================================
+
+/// Trustline slot 0 — lifecycle state ([`STATE_UNINIT`] → [`STATE_OPEN`] →
+/// [`TL_STATE_CLOSED`]).
+pub const TL_STATE_SLOT: u8 = 0;
+/// Trustline slot 1 — `line_ceiling`: the extended line N (Lean
+/// `Line.ceiling`, the attenuation bound). Term-pinned once OPEN
+/// (`ceiling_immutable_forever`).
+pub const TL_CEILING_SLOT: u8 = 1;
+/// Trustline slot 2 — issuer identity (the party whose escrowed well backs
+/// draws; 32-byte `CellId` encoding). Term-pinned once OPEN.
+pub const TL_ISSUER_SLOT: u8 = 2;
+/// Trustline slot 3 — holder identity (the counterparty who may exercise the
+/// line; 32-byte `CellId` encoding). Term-pinned once OPEN.
+pub const TL_HOLDER_SLOT: u8 = 3;
+/// Trustline slot 4 — `drawn`: the shared counter (Lean `Line.drawn` =
+/// `BudgetSlice.spent`). Up on draw, down on repay; bounded by the ceiling
+/// for the cell's whole life (`trustline_within_line_forever`).
+pub const TL_DRAWN_SLOT: u8 = 4;
+/// Trustline slot 5 — `settled`: cumulative drawn value already redeemed to
+/// the holder by epoch settlement (`rebalance_budgets` applied as a ledger
+/// move). Monotonic, never exceeds `drawn` — settled credit cannot be
+/// repaid back, and the payout invariant `settled ≤ drawn ≤ ceiling` is the
+/// escrow-solvency proof (payouts can never exceed the funded line).
+pub const TL_SETTLED_SLOT: u8 = 5;
+/// Trustline slot 6 — last draw digest (audit word; the per-draw anti-replay
+/// REGISTRY is the Stingray slice's `debits` list + the node's persistent
+/// digest set — see `no_double_draw_forever`).
+pub const TL_DIGEST_SLOT: u8 = 6;
+
+/// Terminal state of a closed trustline (inert — no row out of CLOSED in the
+/// transition table, the settlement-family no-double-resolve shape).
+pub const TL_STATE_CLOSED: u64 = 2;
+
+/// The published terms of one directional trustline: issuer extends holder a
+/// line of `line` (Lean `Dregg2.Apps.Trustline.Line.init`). DIRECTIONAL —
+/// the A→B line is a different cell from B→A; "mutual" credit is the pair.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TrustlineTerms {
+    /// The extended line N — the attenuation bound (`Line.ceiling`). The
+    /// open flow escrows exactly this amount in the trustline cell's own
+    /// balance (fullReserve backing), so the line is solvent by construction.
+    pub line: u64,
+    /// Issuer identity (32-byte `CellId` encoding) — whose escrow backs draws.
+    pub issuer: FieldElement,
+    /// Holder identity (32-byte `CellId` encoding) — who may exercise the line.
+    pub holder: FieldElement,
+}
+
+/// The trustline constraint set for one line. The Lean keystones each
+/// constraint realizes (`metatheory/Dregg2/Apps/Trustline.lean`):
+///
+/// 1. term pins on ceiling/issuer/holder — `ceiling_immutable_forever` (and
+///    the parties are immutable registers, design doc §3);
+/// 2. `AllowedTransitions` — OPEN is the live state; CLOSED is terminal and
+///    inert (no row out), the settlement-family no-double-resolve shape;
+/// 3. `FieldLteField(drawn ≤ ceiling)` — `trustline_within_line_forever` /
+///    `draw_within_line` (the `boundedBy` ceiling, executor-enforced on
+///    EVERY turn that touches the cell);
+/// 4. `Monotonic(settled)` + `FieldLteField(settled ≤ drawn)` — settlement
+///    only redeems what was actually drawn, exactly once (the
+///    `settlePay_conserves_hard` leg: combined with tooth 3, cumulative
+///    payouts ≤ ceiling = the escrowed balance, so the escrow is solvent at
+///    every reachable state).
+///
+/// Fails closed on a zero line (an undrawable line whose all-zero terms are
+/// indistinguishable from an unborn cell) and zero party identities (a zero
+/// holder would make settlement target the zero cell).
+pub fn trustline_state_constraints(
+    terms: &TrustlineTerms,
+) -> Result<Vec<StateConstraint>, BlueprintError> {
+    if terms.line == 0 {
+        return Err(BlueprintError::ZeroLine);
+    }
+    if terms.issuer == FIELD_ZERO || terms.holder == FIELD_ZERO {
+        return Err(BlueprintError::ZeroParty);
+    }
+    Ok(vec![
+        // ── 1. term integrity (Lean: immutable ceiling + party registers) ──
+        pin_term(TL_CEILING_SLOT, field_from_u64(terms.line)),
+        pin_term(TL_ISSUER_SLOT, terms.issuer),
+        pin_term(TL_HOLDER_SLOT, terms.holder),
+        // ── 2. the lifecycle (CLOSED is terminal/inert) ──
+        StateConstraint::AllowedTransitions {
+            slot_index: TL_STATE_SLOT,
+            allowed: vec![
+                (field_from_u64(STATE_UNINIT), field_from_u64(STATE_UNINIT)),
+                (field_from_u64(STATE_UNINIT), field_from_u64(STATE_OPEN)),
+                (field_from_u64(STATE_OPEN), field_from_u64(STATE_OPEN)),
+                (field_from_u64(STATE_OPEN), field_from_u64(TL_STATE_CLOSED)),
+            ],
+        },
+        // ── 3. BOUNDED BY THE LINE (trustline_within_line_forever) ──
+        StateConstraint::FieldLteField {
+            left_index: TL_DRAWN_SLOT,
+            right_index: TL_CEILING_SLOT,
+        },
+        // ── 4. settlement teeth (monotone redemption, never beyond drawn) ──
+        StateConstraint::Monotonic {
+            index: TL_SETTLED_SLOT,
+        },
+        StateConstraint::FieldLteField {
+            left_index: TL_SETTLED_SLOT,
+            right_index: TL_DRAWN_SLOT,
+        },
+    ])
+}
+
+/// The `CellProgram` installed on the trustline cell for its whole life.
+pub fn trustline_cell_program(terms: &TrustlineTerms) -> Result<CellProgram, BlueprintError> {
+    Ok(CellProgram::Predicate(trustline_state_constraints(terms)?))
+}
+
+/// **The trustline factory (per-line, content-addressed)** — the cell shape
+/// of docs/TRUSTLINES.md §3, Lean twin `Dregg2.Apps.Trustline`. Like the
+/// settlement families, each line gets its own descriptor whose constraints
+/// bake the terms as literals; the escrowed value lives in the cell's own
+/// `balance` (funding and settling are ordinary conserving `Transfer`s).
+pub fn trustline_factory_descriptor(
+    terms: &TrustlineTerms,
+) -> Result<FactoryDescriptor, BlueprintError> {
+    Ok(settlement_descriptor(
+        "dregg-blueprint:trustline-factory v1",
+        trustline_state_constraints(terms)?,
+    ))
+}
+
+// =============================================================================
 // Program-level tests (the executor-independent half; the end-to-end half
 // lives in `sdk/tests/factory_settlement_e2e.rs` on the real TurnExecutor)
 // =============================================================================
@@ -786,6 +930,159 @@ mod tests {
         let mut cancelled = locked.clone();
         cancelled.fields[STATE_SLOT as usize] = field_from_u64(STATE_RESOLVED_B);
         assert!(eval(&p, &cancelled, Some(&locked), 0).is_ok());
+    }
+
+    // ── Trustline program teeth (Lean Dregg2.Apps.Trustline polarities) ──
+
+    fn tl_terms() -> TrustlineTerms {
+        TrustlineTerms {
+            line: 100,
+            issuer: field_from_u64(0xA11CE),
+            holder: field_from_u64(0xB0B),
+        }
+    }
+
+    /// The post-open state of the canonical test trustline (Lean `demo₀`).
+    fn tl_open_state(t: &TrustlineTerms) -> CellState {
+        let mut s = CellState::new(0);
+        s.fields[TL_STATE_SLOT as usize] = field_from_u64(STATE_OPEN);
+        s.fields[TL_CEILING_SLOT as usize] = field_from_u64(t.line);
+        s.fields[TL_ISSUER_SLOT as usize] = t.issuer;
+        s.fields[TL_HOLDER_SLOT as usize] = t.holder;
+        s
+    }
+
+    fn tl_with(base: &CellState, drawn: u64, settled: u64) -> CellState {
+        let mut s = base.clone();
+        s.fields[TL_DRAWN_SLOT as usize] = field_from_u64(drawn);
+        s.fields[TL_SETTLED_SLOT as usize] = field_from_u64(settled);
+        s
+    }
+
+    #[test]
+    fn trustline_birth_and_open() {
+        let t = tl_terms();
+        let p = trustline_cell_program(&t).unwrap();
+        let born = CellState::new(0);
+        assert!(eval(&p, &born, None, 0).is_ok(), "all-zero birth passes");
+        assert!(
+            eval(&p, &tl_open_state(&t), Some(&born), 0).is_ok(),
+            "open writes the terms"
+        );
+        // Tampered ceiling at open: rejected (term pin).
+        let mut bad = tl_open_state(&t);
+        bad.fields[TL_CEILING_SLOT as usize] = field_from_u64(1_000_000);
+        assert!(eval(&p, &bad, Some(&born), 0).is_err());
+    }
+
+    #[test]
+    fn trustline_ceiling_immutable_forever() {
+        // Lean `ceiling_immutable_forever`: no op moves the ceiling.
+        let t = tl_terms();
+        let p = trustline_cell_program(&t).unwrap();
+        let old = tl_open_state(&t);
+        let mut new = old.clone();
+        new.fields[TL_CEILING_SLOT as usize] = field_from_u64(101);
+        assert!(eval(&p, &new, Some(&old), 0).is_err());
+        // Re-pointing the holder is equally rejected.
+        let mut new2 = old.clone();
+        new2.fields[TL_HOLDER_SLOT as usize] = field_from_u64(0xDEAD);
+        assert!(eval(&p, &new2, Some(&old), 0).is_err());
+    }
+
+    #[test]
+    fn trustline_draw_within_line_and_refusal() {
+        let t = tl_terms();
+        let p = trustline_cell_program(&t).unwrap();
+        let open = tl_open_state(&t);
+        // POSITIVE: a within-line draw admits (Lean `draw_within_line`).
+        assert!(eval(&p, &tl_with(&open, 30, 0), Some(&open), 0).is_ok());
+        // The boundary draw (exactly the line) admits — the bound is tight.
+        assert!(eval(&p, &tl_with(&open, 100, 0), Some(&open), 0).is_ok());
+        // NEGATIVE: an over-line draw is refused (`over_line_draw_refused`).
+        assert!(eval(&p, &tl_with(&open, 101, 0), Some(&open), 0).is_err());
+    }
+
+    #[test]
+    fn trustline_repay_monotone_down_with_settled_floor() {
+        let t = tl_terms();
+        let p = trustline_cell_program(&t).unwrap();
+        let open = tl_open_state(&t);
+        let drawn30 = tl_with(&open, 30, 0);
+        // Repay restores the line (Lean `draw_repay_roundtrip` shape).
+        assert!(eval(&p, &tl_with(&open, 20, 0), Some(&drawn30), 0).is_ok());
+        assert!(eval(&p, &tl_with(&open, 0, 0), Some(&drawn30), 0).is_ok());
+        // Settled credit cannot be repaid back: drawn may not drop below
+        // settled (the redeemed part is hard money in the holder's hands).
+        let settled20 = tl_with(&open, 30, 20);
+        assert!(eval(&p, &tl_with(&open, 25, 20), Some(&settled20), 0).is_ok());
+        assert!(
+            eval(&p, &tl_with(&open, 10, 20), Some(&settled20), 0).is_err(),
+            "repaying below the settled floor must be refused"
+        );
+    }
+
+    #[test]
+    fn trustline_settlement_teeth() {
+        let t = tl_terms();
+        let p = trustline_cell_program(&t).unwrap();
+        let open = tl_open_state(&t);
+        let pos = tl_with(&open, 30, 0);
+        // Settle redeems up to drawn (settlePay_conserves_hard leg).
+        assert!(eval(&p, &tl_with(&open, 30, 30), Some(&pos), 0).is_ok());
+        // Settling beyond drawn is refused (would over-pay the escrow).
+        assert!(eval(&p, &tl_with(&open, 30, 31), Some(&pos), 0).is_err());
+        // Settlement is monotone: un-settling is refused.
+        let settled = tl_with(&open, 30, 30);
+        assert!(eval(&p, &tl_with(&open, 30, 10), Some(&settled), 0).is_err());
+    }
+
+    #[test]
+    fn trustline_closed_is_inert() {
+        let t = tl_terms();
+        let p = trustline_cell_program(&t).unwrap();
+        let open = tl_open_state(&t);
+        let mut closed = open.clone();
+        closed.fields[TL_STATE_SLOT as usize] = field_from_u64(TL_STATE_CLOSED);
+        assert!(eval(&p, &closed, Some(&open), 0).is_ok(), "OPEN → CLOSED");
+        // Any touch of a closed line is rejected — including reopening.
+        assert!(eval(&p, &closed, Some(&closed), 0).is_err());
+        assert!(eval(&p, &open, Some(&closed), 0).is_err());
+    }
+
+    #[test]
+    fn trustline_zero_terms_rejected_at_build() {
+        let mut t = tl_terms();
+        t.line = 0;
+        assert_eq!(
+            trustline_state_constraints(&t),
+            Err(BlueprintError::ZeroLine)
+        );
+        let mut t2 = tl_terms();
+        t2.holder = FIELD_ZERO;
+        assert_eq!(
+            trustline_state_constraints(&t2),
+            Err(BlueprintError::ZeroParty)
+        );
+    }
+
+    #[test]
+    fn trustline_descriptors_are_per_line_content_addressed() {
+        let a = trustline_factory_descriptor(&tl_terms()).unwrap();
+        let b = trustline_factory_descriptor(&tl_terms()).unwrap();
+        assert_eq!(a.factory_vk, b.factory_vk, "same line → same factory");
+        let mut t2 = tl_terms();
+        t2.line = 101;
+        let c = trustline_factory_descriptor(&t2).unwrap();
+        assert_ne!(a.factory_vk, c.factory_vk);
+        // Directionality: swapping issuer/holder is a DIFFERENT line.
+        let swapped = TrustlineTerms {
+            line: tl_terms().line,
+            issuer: tl_terms().holder,
+            holder: tl_terms().issuer,
+        };
+        let d = trustline_factory_descriptor(&swapped).unwrap();
+        assert_ne!(a.factory_vk, d.factory_vk, "A→B ≠ B→A");
     }
 
     #[test]

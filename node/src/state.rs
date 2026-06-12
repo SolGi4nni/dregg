@@ -356,6 +356,9 @@ pub struct NodeStateInner {
     /// Storage gateway service (ORGANS §3 weld): the content-addressed store
     /// plus the object index, admitted under the StorageGatewayMandate cell.
     pub storage_gateway: crate::storage_service::StorageGatewayService,
+    /// Trustline registry (ORGANS §1 weld): the forever draw-digest
+    /// anti-replay set per trustline cell (`no_double_draw_forever`).
+    pub trustlines: crate::trustline_service::TrustlineRegistry,
 }
 
 /// Maximum number of events retained in the ring buffer for REST polling.
@@ -785,6 +788,7 @@ impl NodeState {
                 solo_consensus: None,
                 blocklace_handle: None,
                 storage_gateway: crate::storage_service::StorageGatewayService::from_env(),
+                trustlines: crate::trustline_service::TrustlineRegistry::default(),
             })),
             events_tx,
             gossip: Arc::new(RwLock::new(None)),
@@ -892,6 +896,7 @@ impl NodeState {
                 solo_consensus: None,
                 blocklace_handle: None,
                 storage_gateway: crate::storage_service::StorageGatewayService::from_env(),
+                trustlines: crate::trustline_service::TrustlineRegistry::default(),
             })),
             events_tx,
             gossip: Arc::new(RwLock::new(None)),

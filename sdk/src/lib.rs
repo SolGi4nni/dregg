@@ -131,6 +131,7 @@ pub mod program;
 pub mod raw;
 pub mod receipt;
 pub mod runtime;
+pub mod trustline;
 pub mod turns;
 pub mod verify;
 pub mod witness_artifact;

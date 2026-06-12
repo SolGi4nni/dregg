@@ -32,6 +32,7 @@ mod starbridge_seed;
 mod state;
 mod storage_service;
 mod strand_admission_gate;
+mod trustline_service;
 mod turn_proving;
 mod ws;
 

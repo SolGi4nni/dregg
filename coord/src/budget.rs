@@ -129,12 +129,43 @@ impl BudgetSlice {
         Ok(())
     }
 
+    /// Anti-replay debit: like [`Self::try_debit`], but a digest already in
+    /// this slice's registry is REFUSED with [`BudgetError::DuplicateDebit`]
+    /// and the counter is unmoved.
+    ///
+    /// This is the trustline draw gate (Lean
+    /// `Dregg2.Apps.Trustline.draw_fires_iff_tryDebit`): for a fresh digest
+    /// it is exactly `tryDebit`; the freshness check is the one extra leg.
+    pub fn try_debit_fresh(&mut self, amount: u64, digest: DebitDigest) -> Result<(), BudgetError> {
+        if self.debits.contains(&digest) {
+            return Err(BudgetError::DuplicateDebit { digest });
+        }
+        self.try_debit(amount, digest)
+    }
+
     /// Refund a previously debited amount back to this slice.
     ///
     /// Used by fast unlock to credit resources back after a 2PC abort.
     /// The `spent` counter is decremented by the refund amount.
     pub fn refund(&mut self, amount: u64) {
         self.spent = self.spent.saturating_sub(amount);
+    }
+
+    /// Unwind one debit completely: restore the spent amount AND remove the
+    /// digest from the registry. Used when the authoritative executor REJECTS
+    /// the operation the debit was reserved for — the digest must not linger
+    /// in the slice (it would poison the spending certificate and permanently
+    /// burn an identifier whose operation never committed).
+    ///
+    /// Returns `true` if the digest was found and unwound.
+    pub fn unwind_debit(&mut self, amount: u64, digest: &DebitDigest) -> bool {
+        if let Some(pos) = self.debits.iter().position(|d| d == digest) {
+            self.debits.swap_remove(pos);
+            self.spent = self.spent.saturating_sub(amount);
+            true
+        } else {
+            false
+        }
     }
 
     /// Generate a spending certificate for this slice.
@@ -349,6 +380,48 @@ impl StingrayCounter {
             .get_mut(&silo)
             .ok_or(BudgetError::UnknownSilo { silo })?;
         slice.try_debit(amount, digest)
+    }
+
+    /// Anti-replay debit on a silo's slice — [`BudgetSlice::try_debit_fresh`]
+    /// through the coordinator (the trustline draw gate).
+    pub fn try_debit_fresh(
+        &mut self,
+        silo: SiloId,
+        amount: u64,
+        digest: DebitDigest,
+    ) -> Result<(), BudgetError> {
+        let slice = self
+            .silo_states
+            .get_mut(&silo)
+            .ok_or(BudgetError::UnknownSilo { silo })?;
+        slice.try_debit_fresh(amount, digest)
+    }
+
+    /// Refund `amount` to a silo's slice (the trustline repay leg: the spent
+    /// counter restores, but committed digests stay burned — Lean
+    /// `repay_draws_fixed`).
+    pub fn refund(&mut self, silo: SiloId, amount: u64) -> Result<(), BudgetError> {
+        let slice = self
+            .silo_states
+            .get_mut(&silo)
+            .ok_or(BudgetError::UnknownSilo { silo })?;
+        slice.refund(amount);
+        Ok(())
+    }
+
+    /// Unwind one debit (amount + digest) on a silo's slice — see
+    /// [`BudgetSlice::unwind_debit`]. For executor-rejected operations only.
+    pub fn unwind_debit(
+        &mut self,
+        silo: SiloId,
+        amount: u64,
+        digest: &DebitDigest,
+    ) -> Result<bool, BudgetError> {
+        let slice = self
+            .silo_states
+            .get_mut(&silo)
+            .ok_or(BudgetError::UnknownSilo { silo })?;
+        Ok(slice.unwind_debit(amount, digest))
     }
 
     /// Get the remaining budget for a specific silo.
@@ -830,6 +903,10 @@ pub enum BudgetError {
     },
     /// Duplicate spending certificate from the same silo.
     DuplicateCertificate { silo: SiloId },
+    /// A debit digest was replayed against the same slice — the anti-replay
+    /// leg of the trustline draw gate (Lean `draw_replay_refused`). The
+    /// counter is unmoved.
+    DuplicateDebit { digest: DebitDigest },
     /// A certificate claims more spending than the silo's ceiling allows.
     CertificateExceedsCeiling {
         silo: SiloId,
@@ -888,6 +965,9 @@ impl core::fmt::Display for BudgetError {
             }
             BudgetError::DuplicateCertificate { .. } => {
                 write!(f, "duplicate spending certificate from silo")
+            }
+            BudgetError::DuplicateDebit { .. } => {
+                write!(f, "debit digest replayed against this slice (anti-replay)")
             }
             BudgetError::CertificateExceedsCeiling {
                 claimed, ceiling, ..
@@ -985,6 +1065,67 @@ mod tests {
     }
 
     // ── Bounded Counter Tests ─────────────────────────────────────────────
+
+    #[test]
+    fn test_try_debit_fresh_refuses_replay_counter_unmoved() {
+        // The trustline draw gate (Lean draw_replay_refused +
+        // draw_fires_iff_tryDebit): a fresh digest debits exactly like
+        // try_debit; a replayed digest is refused with the counter unmoved.
+        let silos = test_silos(1);
+        let silo = silos[0];
+        let mut coord = StingrayCounter::new(test_agent(), 100, silos, 0).unwrap();
+
+        assert!(coord.try_debit_fresh(silo, 30, test_digest(7)).is_ok());
+        assert_eq!(coord.remaining(&silo), Some(70));
+
+        // Replay: refused, any amount, counter unmoved.
+        let err = coord.try_debit_fresh(silo, 1, test_digest(7)).unwrap_err();
+        assert!(matches!(err, BudgetError::DuplicateDebit { .. }));
+        assert_eq!(coord.remaining(&silo), Some(70));
+
+        // A fresh digest on the same slice still admits.
+        assert!(coord.try_debit_fresh(silo, 70, test_digest(8)).is_ok());
+        assert_eq!(coord.remaining(&silo), Some(0));
+    }
+
+    #[test]
+    fn test_refund_restores_spent_but_digests_stay_burned() {
+        // The trustline repay leg (Lean draw_repay_roundtrip +
+        // repay_draws_fixed): spent restores; the digest registry is untouched
+        // so the spent digest can never debit again.
+        let silos = test_silos(1);
+        let silo = silos[0];
+        let mut coord = StingrayCounter::new(test_agent(), 100, silos, 0).unwrap();
+
+        coord.try_debit_fresh(silo, 30, test_digest(7)).unwrap();
+        coord.refund(silo, 30).unwrap();
+        assert_eq!(coord.remaining(&silo), Some(100), "line restored");
+        let err = coord.try_debit_fresh(silo, 10, test_digest(7)).unwrap_err();
+        assert!(
+            matches!(err, BudgetError::DuplicateDebit { .. }),
+            "repayment must not resurrect a spent digest"
+        );
+    }
+
+    #[test]
+    fn test_unwind_debit_removes_digest_and_restores() {
+        // The executor-rejection unwind: amount AND digest are released, so
+        // the certificate never carries a debit whose operation never
+        // committed and the digest is reusable for a retried operation.
+        let silos = test_silos(1);
+        let silo = silos[0];
+        let mut coord = StingrayCounter::new(test_agent(), 100, silos, 0).unwrap();
+
+        coord.try_debit_fresh(silo, 30, test_digest(7)).unwrap();
+        assert!(coord.unwind_debit(silo, 30, &test_digest(7)).unwrap());
+        assert_eq!(coord.remaining(&silo), Some(100));
+        assert!(
+            coord.try_debit_fresh(silo, 30, test_digest(7)).is_ok(),
+            "an unwound digest is fresh again"
+        );
+        // Unwinding a digest that was never debited reports false.
+        assert!(!coord.unwind_debit(silo, 5, &test_digest(99)).unwrap());
+    }
 
     #[test]
     fn test_slice_ceiling_various_f() {

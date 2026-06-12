@@ -1734,6 +1734,10 @@ pub fn router_with_cors(
         // whose ADMISSION is the StorageGatewayMandate cell (capability +
         // op allowlist + prefix scope + executor-enforced volume debit).
         .merge(crate::storage_service::routes())
+        // Trustlines (ORGANS §1): open (the funded birth edge, seeding the
+        // Stingray coordinator) / draw / repay (the bilateral counter) /
+        // settle (rebalance applied back to the ledger as moves) / status.
+        .merge(crate::trustline_service::routes())
         // Queue operations
         .route_layer(middleware::from_fn_with_state(state.clone(), require_auth));
 
