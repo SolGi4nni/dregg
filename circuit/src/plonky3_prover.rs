@@ -621,6 +621,17 @@ pub fn poseidon2_permute_aux_witness(input: [BabyBear; WIDTH]) -> Vec<BabyBear> 
     out
 }
 
+// NOTE on S-box arithmetization (measured 2026-06-11, docs/PROOF-ECONOMICS.md §2c):
+// a 1-register variant of the gadget above (committed cube `s3 = x³` per S-box, so no
+// constraint exceeds degree 3 — the `sbox_registers = 1` shape the IR-v2 chip
+// descriptor params describe) was built and measured against this inline-x⁷ form.
+// It is worse at every security-parity FRI point: +141 aux columns per permutation
+// ⇒ +25.8 KiB on the transfer proof at (lb=3, q=38), and the lower blowup it enables
+// loses outright at constant conjectured soundness (queries dominate IR-v2 proof
+// size; the winning direction is HIGHER blowup with FEWER queries). The inline
+// gadget therefore stays; re-run `effect_vm_ir2_size_measure::ir2_fri_grid` before
+// revisiting.
+
 // ============================================================================
 // Trace generation for the sound Poseidon2 AIR
 // ============================================================================

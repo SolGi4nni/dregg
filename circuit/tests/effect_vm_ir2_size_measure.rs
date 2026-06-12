@@ -29,7 +29,8 @@
 use std::time::Instant;
 
 use dregg_circuit::descriptor_ir2::{
-    MemBoundaryWitness, parse_vm_descriptor2, prove_vm_descriptor2, verify_vm_descriptor2,
+    MemBoundaryWitness, parse_vm_descriptor2, prove_vm_descriptor2,
+    prove_vm_descriptor2_with_config, verify_vm_descriptor2, verify_vm_descriptor2_with_config,
 };
 use dregg_circuit::effect_vm::{CellState, Effect, generate_effect_vm_trace, sel};
 use dregg_circuit::effect_vm_descriptors::{descriptor2_for_key, descriptor_for_selector};
@@ -135,4 +136,58 @@ fn ir2_vs_v1_transfer_proof_size() {
         "prove: v1 {v1_prove_ms} ms vs IR-v2 {v2_prove_ms} ms | verify: v1 {v1_verify_ms:.1} ms \
          vs IR-v2 {v2_verify_ms:.1} ms"
     );
+}
+
+/// THE FRI GRID: the same real transfer proven through the IR-v2 batch at every
+/// security-parity `(log_blowup, num_queries)` point the degree-7 chip admits
+/// (`q × lb + 16 PoW ≥ 130 bits` conjectured throughout — v1-`create_config` parity
+/// on both the conjectured AND proven ledgers). This is the measurement `ir2_config`'s
+/// `(6, 19)` pin stands on; re-run it before moving the pin. Queries dominate IR-v2
+/// proof size (tables are 2³–2⁸ rows, so high-blowup LDE costs the prover only
+/// milliseconds): size falls monotonically with blowup, prove time roughly doubles
+/// per step. Points below lb=3 are unprovable with the inline x⁷ S-box (quotient
+/// needs 8 chunks); they were measured with a degree-3 registered-S-box chip variant
+/// and LOST at parity anyway (+89/+356 KiB at lb=2/lb=1) — docs/PROOF-ECONOMICS.md §2c.
+#[test]
+fn ir2_fri_grid() {
+    use dregg_circuit::plonky3_prover::create_config_with_fri;
+
+    let state = CellState::new(100_000, 0);
+    let effects = vec![Effect::Transfer {
+        amount: 50,
+        direction: 1,
+    }];
+    let (base_trace, pis) = generate_effect_vm_trace(&state, &effects);
+    let v2_json = descriptor2_for_key("transferVmDescriptor2").expect("v2 transfer descriptor");
+    let v2_desc = parse_vm_descriptor2(v2_json).expect("v2 transfer descriptor parses");
+    let v2_dpis: Vec<BabyBear> = pis[..v2_desc.public_input_count].to_vec();
+    let mem_boundary = MemBoundaryWitness::default();
+    let map_heaps: Vec<Vec<dregg_circuit::heap_root::HeapLeaf>> = vec![];
+
+    for (lb, q) in [(3usize, 38usize), (4, 29), (5, 23), (6, 19), (7, 17), (8, 15)] {
+        let config = create_config_with_fri(lb, 0, 3, q, 16);
+        let t0 = Instant::now();
+        let proof = prove_vm_descriptor2_with_config(
+            &v2_desc,
+            &base_trace,
+            &v2_dpis,
+            &mem_boundary,
+            &map_heaps,
+            &config,
+        )
+        .expect("IR-v2 transfer proves at this grid point");
+        let prove_ms = t0.elapsed().as_millis();
+        let t1 = Instant::now();
+        verify_vm_descriptor2_with_config(&v2_desc, &proof, &v2_dpis, &config)
+            .expect("IR-v2 transfer verifies at this grid point");
+        let verify_ms = t1.elapsed().as_micros() as f64 / 1000.0;
+        let label = format!("lb={lb} q={q}");
+        let bytes = breakdown(&label, &proof);
+        println!(
+            "[{label}] {bytes} B ({:.1} KiB) | prove+selfverify: {prove_ms} ms | \
+             verify: {verify_ms:.1} ms | conj bits: {}",
+            kib(bytes),
+            lb * q + 16,
+        );
+    }
 }

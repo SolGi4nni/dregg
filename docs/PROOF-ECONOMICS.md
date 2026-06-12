@@ -88,25 +88,29 @@ knob combined.
 
 Measured by `circuit/tests/effect_vm_ir2_size_measure.rs` (release, recursion
 feature): the SAME real transfer effect proven through the live v1 descriptor
-path (`lean_descriptor_air::prove_vm_descriptor`) and through the IR-v2 batch
-STARK (`descriptor_ir2::prove_vm_descriptor2`), both under the current
-production FRI config (`create_config`: lb=3, **q=38**, pow=16 — the −23% query
-rotation has landed, which is why the v1 baseline below reads 350.5 KiB rather
-than §1's q=50-era 451.7 KiB).
+path (`lean_descriptor_air::prove_vm_descriptor`) under the production
+`create_config` (lb=3, **q=38**, pow=16 — the −23% query rotation has landed,
+which is why the v1 baseline below reads 350.5 KiB rather than §1's q=50-era
+451.7 KiB) and through the IR-v2 batch STARK
+(`descriptor_ir2::prove_vm_descriptor2`) under IR-v2's own `ir2_config`
+(lb=6, **q=19**, pow=16 — exact security parity with `create_config` on both
+ledgers: 130 conjectured / ~73 proven bits; §2c is the measured grid that
+config stands on).
 
 | path | bytes | prove | verify | opened_values | committed tables |
 |---|---:|---:|---:|---:|---|
-| v1 (single-table, 1,654-col extended row) | **350.5 KiB** (358,900 B) | 51 ms | 14.9 ms | 25.0 KiB | 1 (degree_bits `[6]`) |
-| IR-v2 (transfer: main + chip + byte) | **202.6 KiB** (207,418 B) | 23 ms | 10.1 ms | 18.9 KiB | 3 (degree_bits `[6, 3, 8]`) |
+| v1 (single-table, 1,654-col extended row) | **350.5 KiB** (358,900 B) | 41 ms | 12.2 ms | 25.0 KiB | 1 (degree_bits `[6]`) |
+| IR-v2 (transfer: main + chip + range) | **120.4 KiB** (123,292 B) | 55 ms | 4.1 ms | 20.0 KiB | 3 (degree_bits `[6, 3, 4]`) |
 
-**IR-v2 is 0.58x the size (−42.2%, 147.9 KiB smaller), 2.2x faster to prove,
-1.5x faster to verify** — the EPOCH thesis lands. The two cures behind the
-flip (both in `descriptor_ir2.rs`, the in-tree fix this section measures):
+**IR-v2 is 0.344x the size (−65.6%, 230.1 KiB smaller) and 3x faster to
+verify**, at ~1.3x the prover time (the high-blowup LDE — milliseconds at
+these tiny tables) — the EPOCH thesis lands. The structural cures behind the
+flip (all in `descriptor_ir2.rs`):
 
 - **The chip-table lever works.** The poseidon2 chip table proves at 2³ = 8
   rows — transfer's real permutation count — versus the 1,408 inline aux
   columns (4 × 352) the v1 extended row carries on all 64 rows. The committed
-  hashing area collapses; `opened_values` drops from 25.0 KiB to 18.9 KiB.
+  hashing area collapses; `opened_values` drops from 25.0 KiB to 20.0 KiB.
 - **Descriptor-empty tables are NOT committed.** Presence is a function of the
   constraint list alone (`Presence::of`), so prover and verifier agree on the
   table set: transfer declares zero mem/map ops, so the memory, boundary, and
@@ -128,6 +132,68 @@ anti-ghost teeth still bite (a forged `FINAL_BAL_LO` PI and a mutated last-row
 `state_commit` cell both REFUSE — the chip table only carries genuine Poseidon2
 rows, so a forged digest's lookup cannot be served). The assembly change did
 not break soundness. The full VK cutover may ride on IR-v2 from here.
+
+## 2c. IR-v2 knobs: the FRI point, the limb width, the S-box shape (measured)
+
+The IR-v2 wire shape is three decisions. The fact driving all three: IR-v2's
+committed tables are TINY (2³–2⁸ rows), so the prover-side LDE cost of high
+blowup is milliseconds, while every FRI query opens a row of every committed
+matrix plus its Merkle paths — **queries dominate the wire**. So the v1
+intuition ("low blowup, prover-friendly") inverts: IR-v2 trades blowup UP for
+queries DOWN. Measured by
+`effect_vm_ir2_size_measure.rs::ir2_fri_grid` (release, `--test-threads=1`),
+the same real transfer at every `(log_blowup, num_queries)` point with
+v1-`create_config` security parity on BOTH ledgers (conjectured
+`q·lb + 16 PoW ≥ 130` bits; proven/Johnson `q·lb/2 + 16 ≥ 73`):
+
+| (lb, q) | bytes | Δ vs (3,38) | prove | verify | conj bits |
+|---|---:|---:|---:|---:|---:|
+| (3, 38) | 194.1 KiB | — | 29 ms | 6.9 ms | 130 |
+| (4, 29) | 159.7 KiB | −18% | 20 ms | 6.2 ms | 132 |
+| (5, 23) | 136.1 KiB | −30% | 32 ms | 4.9 ms | 131 |
+| **(6, 19) = `ir2_config`** | **120.4 KiB** | **−38%** | 58 ms | 4.1 ms | 130 |
+| (7, 17) | 114.0 KiB | −41% | 101 ms | 4.0 ms | 135 |
+| (8, 15) | 106.5 KiB | −45% | 183 ms | 3.6 ms | 136 |
+
+- **The FRI point: `ir2_config` = (lb=6, q=19, pow=16).** Size falls
+  monotonically with blowup at parity; prover time doubles per step once the
+  LDE dominates. (6,19) is the knee — (7,17) buys 6.5 KiB for a further
+  prover doubling: declined. One config for every v2 descriptor (the batch
+  degree ceiling is 8 = `setFieldDynVmDescriptor2`'s pinned slot gate, far
+  inside lb=6; `descriptor_ir2::tests::ir2_degree_budget` freezes the
+  per-table degrees: main ≤ 3 / setFieldDyn 8 · chip 7 · map_ops 4 ·
+  range/memory/boundary 3). The IR-v2 path is pre-cutover, so the config pins
+  its wire shape without a VK/registry bump.
+- **DOWN-blowup loses, so the chip's degree-7 S-box stays inline.** The
+  "drop blowup 3→2" direction requires a degree-≤5 chip (degree-7
+  constraints need blowup ≥ 6) — i.e. the registered committed-cube S-box
+  layout (`sbox_registers: 1`, the shape the chip descriptor params name).
+  It loses twice. (a) At parity lb=2 needs q=57 and lb=1 needs q=114, and
+  the measured per-query opening cost at these table shapes (~4.6 KiB/query
+  at (3,38)) puts any lb=2 point above ~260 KiB before chip-shape costs —
+  size at parity is monotone in blowup in the wrong direction. (b) The
+  registered layout itself adds 141 committed columns per permutation
+  (8·16 + 13 committed cubes), measured in this lane (variant since removed)
+  at +25.8 KiB on transfer at (3,38) and +89/+356 KiB at the lb=2/lb=1
+  parity points. The inline x⁷ gadget therefore stays; the descriptor
+  `sbox_registers: 1` pin describes a layout the chip deliberately does not
+  use (frozen descriptor metadata — no off-cycle regen; the permutation
+  FUNCTION is identical either way).
+- **The range-limb width: 4-bit nibbles against a 2⁴ table** (`LIMB_BITS = 4`),
+  not 8-bit bytes against 2⁸. Measured better at EVERY grid point — byte →
+  nibble: 202.6→194.1 (3,38), 166.0→159.7 (4,29), 140.7→136.1 (5,23),
+  **124.1→120.4 (6,19)**, 117.0→114.0 (7,17), 108.8→106.5 (8,15) KiB — and
+  the 2⁸-row table's LDE was the high-blowup prover's dominant cost
+  (prove at (6,19): ~330 ms byte → ~55 ms nibble). The doubled limb count
+  costs only a few opened main columns per query. The table's HEIGHT is its
+  CONTENT (the AIR pins `value = row index`), so `verify_vm_descriptor2`
+  refuses any committed height ≠ 2⁴ — `ir2_oversized_byte_table_refuses`
+  demonstrates the raw batch verifier ACCEPTS a taller (range-widening)
+  table, so that explicit pin is the load-bearing tooth.
+
+The v1 path (`create_config`, §2) is unchanged: its single 1,654-column
+extended row makes queries expensive in a different way, and its config is
+on-wire (VK-bound) — its knobs only move inside a rotation epoch.
 
 ## 3. The transport story (who needs which proof)
 

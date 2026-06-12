@@ -97,7 +97,7 @@ use crate::lean_descriptor_air::{
 };
 use crate::lean_descriptor_air::{EffectVmDescriptor, RangeSpec};
 use crate::plonky3_prover::{
-    DreggStarkConfig, POSEIDON2_PERM_AUX_COLS, POSEIDON2_WIDTH, create_config,
+    DreggStarkConfig, POSEIDON2_PERM_AUX_COLS, POSEIDON2_WIDTH, create_config_with_fri,
     poseidon2_permute_aux_witness, poseidon2_permute_expr, to_p3,
 };
 
@@ -129,9 +129,19 @@ pub const SUBMASK_BITS: usize = 30;
 /// Bit width of the memory serial-gap / boundary address range checks.
 const MEM_GAP_BITS: usize = 30;
 
-/// Bits per range-table byte limb (the shared `[0,256)` table).
-pub const LIMB_BITS: usize = 8;
-/// The byte-table height (pinned: the table AIR forces `value = row index`).
+/// Bits per range-table limb: 4-bit nibble chunks against a `[0,16)` table.
+///
+/// MEASURED better than 8-bit byte limbs at every FRI grid point
+/// (docs/PROOF-ECONOMICS.md §2c): the table's degree_bits drop 8 → 4, which shortens
+/// the whole batch's FRI commit phase and the table's per-query Merkle paths
+/// (transfer at the production `ir2_config`: 124.1 → 120.4 KiB, prove ~330 → ~55 ms —
+/// the 2¹⁴-point byte-table LDE was the high-blowup prover's dominant cost), while
+/// the doubled limb count adds only a few opened main columns per query.
+pub const LIMB_BITS: usize = 4;
+/// The range-table height. PINNED, prove- AND verify-side: the table AIR forces
+/// `value = row index`, so its committed HEIGHT is its value range — a taller table
+/// would silently widen every limb's admissible range. `verify_vm_descriptor2`
+/// refuses any other height (`ir2_oversized_byte_table_refuses`).
 pub const BYTE_TABLE_HEIGHT: usize = 1 << LIMB_BITS;
 
 /// Minimum height for the auxiliary tables (chip / memory / boundary / map-ops).
@@ -905,7 +915,30 @@ const MAP_WIDTH: usize = MAP_NEW_CHAIN0 + (HEAP_TREE_DEPTH - 1); // 71
 //    state = (in0..in3, arity tag) — the hash_many shape every hash-site lookup queries)
 //    OR a Merkle-node permutation (`is_fact = 1`, arity pinned 0: state = fact_state
 //    (in0, in1) — `poseidon2::hash_fact`'s marker shape, provided on the `ir2_fact` bus
-//    for the map-ops chains). One aux block per UNIQUE permutation, either way. --
+//    for the map-ops chains). One aux block per UNIQUE permutation, either way.
+//
+//    PROVENANCE (#175): the permutation constraints are `poseidon2_permute_expr`
+//    (`plonky3_prover.rs`) — the in-repo round-by-round arithmetization (every round's
+//    full 16-lane output committed and equality-constrained; no shortcut columns), the
+//    SAME gadget the v1 hash sites and `effect_vm_p3_full_air.rs` discharge
+//    `Poseidon2SpongeCR` with. Its round constants / internal diagonal are the audited
+//    p3-baby-bear `BABYBEAR_POSEIDON2_RC_16` / `..INTERNAL_DIAG_16` tables (descriptor
+//    `params` pin those source names; `parse_chip_params` refuses a mismatch), and the
+//    permutation FUNCTION is conformance-KAT'd against the pinned-rev plonky3
+//    `default_babybear_poseidon2_16()` (`poseidon2::tests::poseidon2_plonky3_cross_check_kat`).
+//    The audited `p3-poseidon2-circuit-air` is used where its layout is forced on us —
+//    the recursion verifier circuit (`plonky3_recursion_impl.rs`). NOTE: the descriptor
+//    param `sbox_registers: 1` describes the p3-air REGISTERED layout, which this chip
+//    deliberately does NOT use (measured net-negative, see `max_constraint_degree` +
+//    docs/PROOF-ECONOMICS.md §2c); the parameter is a frozen descriptor pin (no regen
+//    off-cycle), and the permutation function is unaffected by arithmetization shape.
+//
+//    AMORTIZATION (#175): ONE chip table per batch proof serves ALL hash facts — the
+//    main table's hash-site lookups and the map-ops leaf absorbs ride `BUS_P2`, the
+//    map-ops Merkle-chain facts ride `BUS_FACT`, both LogUp-served by this single
+//    table. Cross-EFFECT amortization (one chip table for a whole turn) needs the
+//    IR-v2 turn assembly, which does not exist yet (this path is per-effect,
+//    recursion-gated, pre-cutover); it lands with the recursion aggregation. --
 const CHIP_ARITY: usize = 0;
 const CHIP_IN0: usize = 1;
 const CHIP_OUT: usize = CHIP_IN0 + CHIP_RATE; // 9
@@ -964,7 +997,12 @@ impl<F: PrimeCharacteristicRing + Sync> BaseAir<F> for Ir2Air {
 
     fn max_constraint_degree(&self) -> Option<usize> {
         match self {
-            // The Poseidon2 S-box (degree 7) dominates the only permutation-bearing table.
+            // The inline Poseidon2 S-box (x⁷ between committed round-state blocks).
+            // A 1-register (committed-cube, degree-3) variant was built and MEASURED
+            // worse at every security-parity FRI point: +141 aux columns ⇒ +25.8 KiB
+            // on transfer at (lb=3, q=38), and the low blowup it would enable loses
+            // to high-blowup/few-queries anyway (docs/PROOF-ECONOMICS.md §2c).
+            // Guarded by `ir2_degree_budget`.
             Ir2Air::Chip => Some(7),
             // Let the symbolic analysis infer the rest (map-ops is lookup-spine only now;
             // descriptor gates vary on main).
@@ -1171,11 +1209,16 @@ where
                 // exactly (in0, in1), so their in0/in1 are exempt; in2.. stay pinned.
                 for i in 0..2 {
                     // in0/in1 vanish unless arity ∈ {2,4} or the row is a fact row.
+                    // With arity ∈ {0,2,4} and is_fact·arity = 0 both pinned above,
+                    // `(arity−2)(arity−4) − 8·is_fact` is 8 exactly on non-fact arity-0
+                    // (pad) rows and 0 on absorb and fact rows — the same gate as the
+                    // older `(arity−2)(arity−4)(1−is_fact)` form at degree 3 instead of
+                    // 4, for free (no extra columns; the S-box still sets the table's
+                    // degree — see `max_constraint_degree`).
                     let inp: AB::Expr = local[CHIP_IN0 + i].into();
                     builder.assert_zero(
-                        inp * (arity.clone() - two.clone())
-                            * (arity.clone() - four.clone())
-                            * (AB::Expr::ONE - is_fact.clone()),
+                        inp * ((arity.clone() - two.clone()) * (arity.clone() - four.clone())
+                            - AB::Expr::from_u64(8) * is_fact.clone()),
                     );
                 }
                 for i in 2..4 {
@@ -1415,6 +1458,12 @@ where
                 // permutations, so a forged link has no serving entry. (On reads
                 // old_value = value makes the chains coincide; both final lookups share
                 // (l, r), whose unique genuine digest forces new_root = root.)
+                // The in-tuple dir-mix makes these LogUp legs degree 4 (the map-ops
+                // table's max — comfortably inside `ir2_config`'s blowup). A committed
+                // left-operand column per level would bring the legs to degree 3, but
+                // that was measured net-NEGATIVE: +32 opened columns per query on every
+                // map-bearing proof, buying nothing because low blowup LOSES at FRI
+                // security parity (docs/PROOF-ECONOMICS.md §2c).
                 let fact_bus = LookupBus::new(BUS_FACT);
                 let mut cur_old: AB::Expr = local[MAP_OLD_LEAF].into();
                 let mut cur_new: AB::Expr = local[MAP_NEW_LEAF].into();
@@ -1480,7 +1529,8 @@ fn eval_c(e: &LeanExpr, row: &[BabyBear]) -> BabyBear {
     }
 }
 
-/// Concrete permutation: full aux block + the squeezed digest (`state[0]` of the last round).
+/// Concrete permutation: full aux block (`poseidon2_permute_expr`'s committed
+/// round-state layout) + the squeezed digest (`state[0]` of the last round block).
 fn perm_aux(st: [BabyBear; POSEIDON2_WIDTH]) -> (Vec<BabyBear>, BabyBear) {
     let aux = poseidon2_permute_aux_witness(st);
     let digest = aux[aux.len() - POSEIDON2_WIDTH];
@@ -1506,18 +1556,18 @@ fn fact_state_c(l: BabyBear, r: BabyBear) -> [BabyBear; POSEIDON2_WIDTH] {
 
 /// Fill one `bits`-wide decomposition (limbs + top bits) of `val`, counting the byte-bus
 /// queries into `hist`. `val` must already be `< 2^bits`.
-fn fill_decomp(val: u32, bits: usize, out: &mut Vec<BabyBear>, hist: &mut [u64; 256]) {
+fn fill_decomp(val: u32, bits: usize, out: &mut Vec<BabyBear>, hist: &mut [u64; BYTE_TABLE_HEIGHT]) {
     let (n, top_bits) = limb_geom(bits);
     let partial = top_bits < LIMB_BITS;
     for i in 0..n {
-        let byte = ((val >> (i * LIMB_BITS)) & 0xff) as u32;
+        let byte = ((val >> (i * LIMB_BITS)) & ((1 << LIMB_BITS) - 1)) as u32;
         out.push(BabyBear::new(byte));
         if !(i == n - 1 && partial) {
             hist[byte as usize] += 1;
         }
     }
     if partial {
-        let top = (val >> ((n - 1) * LIMB_BITS)) & 0xff;
+        let top = (val >> ((n - 1) * LIMB_BITS)) & ((1 << LIMB_BITS) - 1);
         for b in 0..top_bits {
             out.push(BabyBear::new((top >> b) & 1));
         }
@@ -1611,7 +1661,7 @@ fn build_traces(
     map_heaps: &[Vec<HeapLeaf>],
     check: bool,
 ) -> Result<Ir2Traces, String> {
-    let mut byte_hist = [0u64; 256];
+    let mut byte_hist = [0u64; BYTE_TABLE_HEIGHT];
 
     // ---- main: base wires + range limb blocks + submask bit blocks. ----
     let mut main: Vec<Vec<BabyBear>> = Vec::with_capacity(base_trace.len());
@@ -2067,6 +2117,27 @@ fn instance_airs(desc: &EffectVmDescriptor2, layout: MainLayout, presence: Prese
     airs
 }
 
+/// The IR-v2 FRI configuration: `log_blowup = 6, 19 queries, 16 PoW bits` — the
+/// MEASURED size-optimal point at security parity with the v1 `create_config`
+/// (conjectured capacity-bound: `19 × 6 + 16 = 130` bits, identical to v1's
+/// `38 × 3 + 16`; proven/Johnson: `19 × 3 + 16 = 73`, identical to v1's `38 × 1.5
+/// + 16`). The full measured grid lives in `tests/effect_vm_ir2_size_measure.rs::
+/// ir2_fri_grid` and `docs/PROOF-ECONOMICS.md` §2c. The shape of the trade, in brief:
+/// queries dominate IR-v2 proof size (the tables are 2³–2⁸ rows, so the prover-side
+/// LDE cost of high blowup is milliseconds), so RAISING blowup and CUTTING queries
+/// shrinks the wire — transfer: 194.1 KiB at (3, 38) → 120.4 KiB at (6, 19) — while
+/// DROPPING blowup at parity (the (2, 57) / (1, 114) points) inflates it. The next
+/// step up, (7, 17), buys only ~6.5 KiB for a further prover doubling: declined.
+///
+/// One config for every v2 descriptor: the whole-batch constraint-degree ceiling is 8
+/// (`setFieldDynVmDescriptor2`'s pinned slot gate; everything else ≤ 7 — guarded by
+/// `ir2_degree_budget`), far inside `log_blowup = 6`. Proofs are NOT interchangeable
+/// across configs (FRI shape + Fiat–Shamir differ); the IR-v2 path is pre-cutover,
+/// so this pins its wire shape.
+fn ir2_config() -> DreggStarkConfig {
+    create_config_with_fri(6, 0, 3, 19, 16)
+}
+
 fn prove_vm_descriptor2_inner(
     desc: &EffectVmDescriptor2,
     base_trace: &[Vec<BabyBear>],
@@ -2074,6 +2145,7 @@ fn prove_vm_descriptor2_inner(
     mem_boundary: &MemBoundaryWitness,
     map_heaps: &[Vec<HeapLeaf>],
     check: bool,
+    config: &DreggStarkConfig,
 ) -> Result<BatchProof<DreggStarkConfig>, String> {
     let layout = check_descriptor2(desc)?;
     if base_trace.is_empty() {
@@ -2131,7 +2203,6 @@ fn prove_vm_descriptor2_inner(
     let mut pvs: Vec<Vec<P3BabyBear>> = vec![pis];
     pvs.resize(airs.len(), vec![]);
 
-    let config = create_config();
     let instances: Vec<StarkInstance<'_, DreggStarkConfig, Ir2Air>> = airs
         .iter()
         .zip(matrices.iter())
@@ -2143,11 +2214,11 @@ fn prove_vm_descriptor2_inner(
         })
         .collect();
 
-    let prover_data = ProverData::from_instances(&config, &instances);
+    let prover_data = ProverData::from_instances(config, &instances);
     let common = &prover_data.common;
-    let proof = prove_batch(&config, &instances, &prover_data);
+    let proof = prove_batch(config, &instances, &prover_data);
 
-    verify_batch(&config, &airs, &proof, &pvs, common)
+    verify_batch(config, &airs, &proof, &pvs, common)
         .map_err(|e| format!("IR v2 batch self-verify failed: {e:?}"))?;
     Ok(proof)
 }
@@ -2172,7 +2243,39 @@ pub fn prove_vm_descriptor2(
     mem_boundary: &MemBoundaryWitness,
     map_heaps: &[Vec<HeapLeaf>],
 ) -> Result<BatchProof<DreggStarkConfig>, String> {
-    prove_vm_descriptor2_inner(desc, base_trace, public_inputs, mem_boundary, map_heaps, true)
+    prove_vm_descriptor2_inner(
+        desc,
+        base_trace,
+        public_inputs,
+        mem_boundary,
+        map_heaps,
+        true,
+        &ir2_config(),
+    )
+}
+
+/// Measurement-only variant of [`prove_vm_descriptor2`] under an explicit FRI config
+/// (`tests/effect_vm_ir2_size_measure.rs` proves the SAME statement across the
+/// `(log_blowup, num_queries)` grid). Proofs from non-default configs must never leak
+/// onto the wire — the production IR-v2 config is `ir2_config` alone.
+#[doc(hidden)]
+pub fn prove_vm_descriptor2_with_config(
+    desc: &EffectVmDescriptor2,
+    base_trace: &[Vec<BabyBear>],
+    public_inputs: &[BabyBear],
+    mem_boundary: &MemBoundaryWitness,
+    map_heaps: &[Vec<HeapLeaf>],
+    config: &DreggStarkConfig,
+) -> Result<BatchProof<DreggStarkConfig>, String> {
+    prove_vm_descriptor2_inner(
+        desc,
+        base_trace,
+        public_inputs,
+        mem_boundary,
+        map_heaps,
+        true,
+        config,
+    )
 }
 
 /// **`verify_vm_descriptor2`** — verify an IR v2 batch proof against the descriptor
@@ -2181,6 +2284,18 @@ pub fn verify_vm_descriptor2(
     desc: &EffectVmDescriptor2,
     proof: &BatchProof<DreggStarkConfig>,
     public_inputs: &[BabyBear],
+) -> Result<(), String> {
+    verify_vm_descriptor2_with_config(desc, proof, public_inputs, &ir2_config())
+}
+
+/// Measurement-only variant of [`verify_vm_descriptor2`] under an explicit FRI config
+/// (see [`prove_vm_descriptor2_with_config`]).
+#[doc(hidden)]
+pub fn verify_vm_descriptor2_with_config(
+    desc: &EffectVmDescriptor2,
+    proof: &BatchProof<DreggStarkConfig>,
+    public_inputs: &[BabyBear],
+    config: &DreggStarkConfig,
 ) -> Result<(), String> {
     let layout = check_descriptor2(desc)?;
     let presence = Presence::of(desc, &layout);
@@ -2193,12 +2308,27 @@ pub fn verify_vm_descriptor2(
             airs.len()
         ));
     }
-    let config = create_config();
+    // The range table's HEIGHT is its CONTENT (the AIR pins `value = row index` and
+    // nothing else): a prover committing a taller table would widen every limb's
+    // admissible range to `[0, 2^height_bits)` and break every range check riding the
+    // byte bus. Heights of the other tables are semantically free (their rows are
+    // individually constrained and multiset/lookup-balanced; padding is gated), but
+    // THIS one is pinned to the deployed `BYTE_TABLE_HEIGHT`.
+    if presence.byte {
+        let byte_idx = 1 + usize::from(presence.chip);
+        if proof.degree_bits[byte_idx] != LIMB_BITS {
+            return Err(format!(
+                "range-table instance committed at 2^{} rows; the deployed table is \
+                 2^{LIMB_BITS} (a taller table widens the limb range)",
+                proof.degree_bits[byte_idx]
+            ));
+        }
+    }
     let pis: Vec<P3BabyBear> = public_inputs.iter().map(|&v| to_p3(v)).collect();
     let mut pvs: Vec<Vec<P3BabyBear>> = vec![pis];
     pvs.resize(airs.len(), vec![]);
-    let common = ProverData::from_airs_and_degrees(&config, &airs, &proof.degree_bits).common;
-    verify_batch(&config, &airs, proof, &pvs, &common)
+    let common = ProverData::from_airs_and_degrees(config, &airs, &proof.degree_bits).common;
+    verify_batch(config, &airs, proof, &pvs, &common)
         .map_err(|e| format!("IR v2 verification failed: {e:?}"))
 }
 
@@ -2210,6 +2340,87 @@ pub fn verify_vm_descriptor2(
 mod tests {
     use super::*;
     use crate::poseidon2::hash_many;
+
+    /// Compute per-instance max constraint degrees (incl. LogUp legs) for a descriptor's
+    /// committed table set — the quantity that drives the FRI `log_blowup` floor
+    /// (`log_blowup >= log2_ceil(max_degree - 1)` per instance).
+    fn instance_degrees(desc: &EffectVmDescriptor2) -> Vec<(String, usize)> {
+        use p3_air::symbolic::AirLayout;
+        use p3_batch_stark::symbolic::get_max_constraint_degree;
+        use p3_field::extension::BinomialExtensionField;
+        use p3_lookup::{LogUpGadget, Lookups};
+        type Ef = BinomialExtensionField<P3BabyBear, 4>;
+
+        let layout = check_descriptor2(desc).expect("descriptor checks");
+        let presence = Presence::of(desc, &layout);
+        let airs = instance_airs(desc, layout, presence);
+        airs.iter()
+            .map(|air| {
+                let lookups = Lookups::<P3BabyBear>::from_air::<Ef, _>(air);
+                let deg = get_max_constraint_degree::<P3BabyBear, Ef, _, _>(
+                    air,
+                    AirLayout::from_air::<P3BabyBear>(air),
+                    &lookups,
+                    &LogUpGadget::new(),
+                );
+                let name = match air {
+                    Ir2Air::Main { .. } => "main",
+                    Ir2Air::Chip => "chip",
+                    Ir2Air::ByteTable => "byte",
+                    Ir2Air::Memory => "memory",
+                    Ir2Air::MemBoundary => "boundary",
+                    Ir2Air::MapOps => "map_ops",
+                };
+                (name.to_string(), deg)
+            })
+            .collect()
+    }
+
+    /// THE DEGREE-BUDGET TOOTH: per-table max constraint degrees (including the LogUp
+    /// legs) of every graduated v2 descriptor + the full six-table gauntlet, frozen at
+    /// their measured values. The whole-batch ceiling (8, `setFieldDynVmDescriptor2`'s
+    /// pinned slot gate) sits far inside `ir2_config`'s `log_blowup = 6`; this tooth
+    /// exists so a degree blowup (a new constraint or lookup leg compounding past the
+    /// frozen budget) is caught symbolically, per table, with names — not as a deep
+    /// prover panic on one descriptor later.
+    ///
+    /// Measured (2026-06-11): main ≤ 3 (setFieldDyn 8) · chip 7 (inline S-box) ·
+    /// byte 3 · memory 3 · boundary 3 · map_ops 4 (in-tuple dir-mix legs).
+    #[test]
+    fn ir2_degree_budget() {
+        let mut cohort: Vec<(String, EffectVmDescriptor2)> =
+            crate::effect_vm_descriptors::V2_DESCRIPTORS
+                .iter()
+                .map(|(key, json, _)| {
+                    (key.to_string(), parse_vm_descriptor2(json).expect("registry entry parses"))
+                })
+                .collect();
+        cohort.push(("ir2-test-gauntlet".to_string(), test_desc()));
+        for (key, desc) in &cohort {
+            let degs = instance_degrees(desc);
+            println!("{key} degrees: {degs:?}");
+            for (table, deg) in degs {
+                let budget = match table.as_str() {
+                    // Lean-emitted, fingerprint-pinned constraint polynomials; the
+                    // dynamic slot gate is the one descriptor above 3.
+                    "main" if key == "setFieldDynVmDescriptor2" => 8,
+                    "main" => 3,
+                    // The inline x⁷ S-box between committed round-state blocks.
+                    "chip" => 7,
+                    // The in-tuple dir-mix lookup legs.
+                    "map_ops" => 4,
+                    // Value-pinned table + decomposition booleans + Blum legs.
+                    "byte" | "memory" | "boundary" => 3,
+                    other => panic!("{key}: unknown table {other}"),
+                };
+                assert!(
+                    deg <= budget,
+                    "{key}/{table}: constraint degree {deg} exceeds the frozen IR-v2 \
+                     budget of {budget}"
+                );
+            }
+        }
+    }
 
     /// The Lean `#guard`-pinned demo-v2 golden (DescriptorIR2 §10): every v2 constraint
     /// kind + the five tables, byte-for-byte.
@@ -2455,6 +2666,7 @@ mod tests {
                 &test_boundary(),
                 &[test_heap()],
                 false,
+                &ir2_config(),
             )
         });
         match r {
@@ -2484,6 +2696,7 @@ mod tests {
                 &test_boundary(),
                 &[test_heap()],
                 false,
+                &ir2_config(),
             )
         });
         match r {
@@ -2514,6 +2727,7 @@ mod tests {
                 &test_boundary(),
                 &[test_heap()],
                 false,
+                &ir2_config(),
             )
         });
         match r {
@@ -2546,6 +2760,65 @@ mod tests {
                 "forged digest produced an accepted proof — chip tooth OPEN"
             ),
         }
+    }
+
+    /// A prover committing a TALLER range table (rows continuing past
+    /// `BYTE_TABLE_HEIGHT` with multiplicity 0 — every transition and lookup
+    /// constraint still satisfied, the LogUp legs still balanced) widens the
+    /// admissible limb range. The RAW batch verifier accepts that assembly — the
+    /// table height is prover-supplied `degree_bits` — so the explicit height pin in
+    /// `verify_vm_descriptor2` is load-bearing; this asserts BOTH halves.
+    #[test]
+    fn ir2_oversized_byte_table_refuses() {
+        let desc = test_desc();
+        let layout = check_descriptor2(&desc).expect("gauntlet checks");
+        let presence = Presence::of(&desc, &layout);
+        let mut traces = build_traces(
+            &desc,
+            &layout,
+            presence,
+            &test_trace(),
+            &test_boundary(),
+            &[test_heap()],
+            true,
+        )
+        .expect("honest traces");
+        // The attack: a double-height range table, the increment chain continued and
+        // every extra row carrying multiplicity 0.
+        let byte = traces.byte.as_mut().expect("gauntlet commits the range table");
+        for b in BYTE_TABLE_HEIGHT..2 * BYTE_TABLE_HEIGHT {
+            byte.push(vec![BabyBear::new(b as u32), BabyBear::ZERO]);
+        }
+        let airs = instance_airs(&desc, layout, presence);
+        let mut matrices = vec![to_matrix(&traces.main)];
+        for t in [&traces.chip, &traces.byte, &traces.memory, &traces.boundary, &traces.map_ops]
+            .into_iter()
+            .flatten()
+        {
+            matrices.push(to_matrix(t));
+        }
+        let pvs: Vec<Vec<P3BabyBear>> = vec![vec![]; airs.len()];
+        let config = ir2_config();
+        let instances: Vec<StarkInstance<'_, DreggStarkConfig, Ir2Air>> = airs
+            .iter()
+            .zip(matrices.iter())
+            .zip(pvs.iter())
+            .map(|((air, trace), pv)| StarkInstance {
+                air,
+                trace,
+                public_values: pv.clone(),
+            })
+            .collect();
+        let prover_data = ProverData::from_instances(&config, &instances);
+        let proof = prove_batch(&config, &instances, &prover_data);
+        verify_batch(&config, &airs, &proof, &pvs, &prover_data.common)
+            .expect("the RAW batch verifier accepts the oversized table — the pin is the tooth");
+        let err = verify_vm_descriptor2(&desc, &proof, &[])
+            .expect_err("the IR-v2 verifier must refuse the oversized range table");
+        assert!(
+            err.contains("range-table instance committed"),
+            "refusal must be the height pin, got: {err}"
+        );
     }
 
     /// An out-of-range balance wire (2^30) must refuse (the tight top-limb bound).
