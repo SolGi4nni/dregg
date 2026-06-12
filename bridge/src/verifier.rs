@@ -190,8 +190,17 @@ impl ProofVerifier for StarkProofVerifier {
         }
 
         // 6. Verify the STARK proof cryptographically using DSL circuit.
-        let circuit = dregg_dsl_runtime::descriptors::circuit_for_air_name(&stark_proof.air_name)
-            .unwrap_or_else(|| dregg_dsl_runtime::descriptors::merkle_poseidon2_circuit());
+        // FAIL-CLOSED: an AIR name with no registered descriptor is REFUSED.
+        // Falling back to a default circuit would let the prover choose the
+        // constraint semantics the verifier checks against. (The `ProofVerifier`
+        // trait returns bool, so the refusal surfaces as `false`; the typed
+        // refusal lives in SdkError::UnknownAir / VerifyError::UnknownAir on the
+        // Result-returning verify paths.)
+        let circuit =
+            match dregg_dsl_runtime::descriptors::circuit_for_air_name(&stark_proof.air_name) {
+                Some(c) => c,
+                None => return false,
+            };
         stark::verify(&circuit, &stark_proof, &pi).is_ok()
     }
 }
@@ -595,6 +604,37 @@ mod tests {
 
         let verifier = StarkProofVerifier::new();
         assert!(verifier.verify(&proof_bytes, "read", "api/v1/users", &vk));
+    }
+
+    /// Task #163 fail-closed regression: an AIR name that does not resolve to a
+    /// registered circuit descriptor must be REFUSED at dispatch — never routed
+    /// to a default circuit. (Previously unknown names fell through to
+    /// `merkle_poseidon2_circuit()` and were only rejected incidentally by the
+    /// air-name binding inside `stark::verify`; the refusal is now explicit.)
+    #[test]
+    fn test_stark_verifier_refuses_unknown_air() {
+        let (proof_bytes, _public_inputs, vk) = generate_bound_proof("read", "api/v1/users");
+
+        let verifier = StarkProofVerifier::new();
+        // Baseline: the honest proof with a registered AIR name verifies.
+        assert!(verifier.verify(&proof_bytes, "read", "api/v1/users", &vk));
+
+        // Relabel the otherwise-valid proof with an unregistered AIR name.
+        let mut proof = stark::proof_from_bytes(&proof_bytes).expect("roundtrip");
+        proof.air_name = "evil-unregistered-air-v0".to_string();
+        let relabeled = proof_to_bytes(&proof);
+        assert!(
+            !verifier.verify(&relabeled, "read", "api/v1/users", &vk),
+            "unknown AIR must be refused at dispatch (fail-closed)"
+        );
+
+        // Malformed (empty) AIR name refuses too.
+        proof.air_name = String::new();
+        let empty_air = proof_to_bytes(&proof);
+        assert!(
+            !verifier.verify(&empty_air, "read", "api/v1/users", &vk),
+            "empty AIR name must be refused"
+        );
     }
 
     #[test]

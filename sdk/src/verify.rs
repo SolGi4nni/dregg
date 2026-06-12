@@ -154,8 +154,13 @@ pub fn verify_authorization_proof(
 
     // SECURITY: All membership proofs verified via DSL circuits (DSL cutover).
     // Dispatch to the correct DSL circuit based on the proof's air_name.
+    // FAIL-CLOSED: an AIR name that does not resolve to a registered descriptor
+    // is REFUSED. Falling back to a default circuit would let the prover pick
+    // the constraint semantics the verifier checks against.
     let circuit = dregg_dsl_runtime::descriptors::circuit_for_air_name(&stark_proof.air_name)
-        .unwrap_or_else(|| dregg_dsl_runtime::descriptors::merkle_poseidon2_circuit());
+        .ok_or_else(|| SdkError::UnknownAir {
+            air_name: stark_proof.air_name.clone(),
+        })?;
     if stark::verify(&circuit, &stark_proof, &pi).is_err() {
         return Ok(false);
     }
@@ -265,8 +270,11 @@ pub fn verify_selective_disclosure(
     }
 
     // 3. Verify the STARK proof cryptographically using DSL circuit.
+    // FAIL-CLOSED: unknown AIR names are refused (see verify_authorization_proof).
     let circuit = dregg_dsl_runtime::descriptors::circuit_for_air_name(&stark_proof.air_name)
-        .unwrap_or_else(|| dregg_dsl_runtime::descriptors::merkle_poseidon2_circuit());
+        .ok_or_else(|| SdkError::UnknownAir {
+            air_name: stark_proof.air_name.clone(),
+        })?;
     if stark::verify(&circuit, &stark_proof, &pi).is_err() {
         return Ok(false);
     }
@@ -931,5 +939,131 @@ mod tests {
 
         let pred = VerifyOutcome::PredicateProofInvalid;
         assert!(!pred.is_ok());
+    }
+
+    /// Build a synthetic StarkProof that reaches the circuit-dispatch step of
+    /// `verify_authorization_proof` / `verify_selective_disclosure`: correct
+    /// federation root at pi[1] and the ("","") action binding at pi[2..6].
+    fn dispatch_reaching_proof(
+        air_name: &str,
+        federation_root: dregg_circuit::BabyBear,
+    ) -> dregg_circuit::stark::StarkProof {
+        let binding = dregg_circuit::compute_action_binding("", "");
+        let mut public_inputs = vec![42, federation_root.as_u32()];
+        public_inputs.extend(binding.iter().map(|b| b.as_u32()));
+
+        dregg_circuit::stark::StarkProof {
+            trace_commitment: [0u8; 32],
+            constraint_commitment: [0u8; 32],
+            fri_commitments: vec![],
+            fri_final_poly: vec![],
+            query_proofs: vec![],
+            public_inputs,
+            trace_len: 4,
+            num_cols: 6,
+            air_name: air_name.to_string(),
+            nonce: None,
+            boundary_commitment: None,
+            boundary_query_values: vec![],
+            boundary_query_paths: vec![],
+            pow_nonce: 0,
+            pow_bits: 0,
+        }
+    }
+
+    /// Task #163 fail-closed: an AIR name that does not resolve to a registered
+    /// circuit descriptor must REFUSE with the typed `SdkError::UnknownAir` —
+    /// never fall through to a default circuit, never a silent `Ok(false)`.
+    #[test]
+    fn verify_authorization_proof_refuses_unknown_air_typed() {
+        use dregg_circuit::BabyBear;
+        use dregg_circuit::stark;
+
+        let federation_root = BabyBear::new(31337);
+        let proof = dispatch_reaching_proof("totally-unknown-air-v0", federation_root);
+        let proof_bytes = stark::proof_to_bytes(&proof);
+        let mut federation_root_bytes = [0u8; 32];
+        federation_root_bytes[0..4].copy_from_slice(&federation_root.as_u32().to_le_bytes());
+
+        let result = verify_authorization_proof(&proof_bytes, &federation_root_bytes, "", "");
+        match result {
+            Err(SdkError::UnknownAir { air_name }) => {
+                assert_eq!(air_name, "totally-unknown-air-v0");
+            }
+            other => panic!(
+                "unknown AIR must refuse with typed SdkError::UnknownAir, got {:?}",
+                other
+            ),
+        }
+    }
+
+    /// Malformed (empty) AIR identifier refuses the same way.
+    #[test]
+    fn verify_authorization_proof_refuses_empty_air_name() {
+        use dregg_circuit::BabyBear;
+        use dregg_circuit::stark;
+
+        let federation_root = BabyBear::new(31338);
+        let proof = dispatch_reaching_proof("", federation_root);
+        let proof_bytes = stark::proof_to_bytes(&proof);
+        let mut federation_root_bytes = [0u8; 32];
+        federation_root_bytes[0..4].copy_from_slice(&federation_root.as_u32().to_le_bytes());
+
+        let result = verify_authorization_proof(&proof_bytes, &federation_root_bytes, "", "");
+        assert!(
+            matches!(result, Err(SdkError::UnknownAir { .. })),
+            "empty AIR name must refuse with typed SdkError::UnknownAir, got {:?}",
+            result
+        );
+    }
+
+    /// Known AIR names must NOT be refused as unknown: they proceed to STARK
+    /// verification (which rejects this synthetic proof with Ok(false), the
+    /// pre-existing behavior).
+    #[test]
+    fn verify_authorization_proof_known_air_not_refused() {
+        use dregg_circuit::BabyBear;
+        use dregg_circuit::stark;
+
+        let federation_root = BabyBear::new(31339);
+        let proof = dispatch_reaching_proof("dregg-merkle-poseidon2-v1", federation_root);
+        let proof_bytes = stark::proof_to_bytes(&proof);
+        let mut federation_root_bytes = [0u8; 32];
+        federation_root_bytes[0..4].copy_from_slice(&federation_root.as_u32().to_le_bytes());
+
+        let result = verify_authorization_proof(&proof_bytes, &federation_root_bytes, "", "");
+        assert!(
+            matches!(result, Ok(false)),
+            "known AIR must reach STARK verification (Ok(false) for synthetic proof), got {:?}",
+            result
+        );
+    }
+
+    /// The selective-disclosure path refuses unknown AIRs with the same typed error.
+    #[test]
+    fn verify_selective_disclosure_refuses_unknown_air_typed() {
+        use dregg_circuit::BabyBear;
+        use dregg_circuit::stark;
+
+        let facts = vec![dregg_trace::Fact {
+            predicate: dregg_trace::symbol_from_str("has_access"),
+            terms: vec![dregg_trace::Term::Const(dregg_trace::symbol_from_str(
+                "resource_x",
+            ))],
+        }];
+
+        let federation_root = BabyBear::new(31340);
+        let proof = dispatch_reaching_proof("totally-unknown-air-v0", federation_root);
+        let proof_bytes = stark::proof_to_bytes(&proof);
+        let mut federation_root_bytes = [0u8; 32];
+        federation_root_bytes[0..4].copy_from_slice(&federation_root.as_u32().to_le_bytes());
+
+        let result =
+            verify_selective_disclosure(&proof_bytes, &federation_root_bytes, "", "", &facts);
+        assert!(
+            matches!(result, Err(SdkError::UnknownAir { .. })),
+            "unknown AIR must refuse with typed SdkError::UnknownAir, got {:?}",
+            result
+        );
     }
 }

@@ -293,19 +293,16 @@ impl BridgePresentationProof {
                 .collect();
 
             // Dispatch to DSL circuit based on AIR name (unified path).
+            // FAIL-CLOSED: an AIR name with no registered descriptor is REFUSED.
+            // Guessing a circuit for a legacy/unknown name would let the prover
+            // choose the constraint semantics the verifier checks against.
             use dregg_dsl_runtime::descriptors;
             let air_name = &real.issuer_membership_stark_proof.air_name;
-            if let Some(circuit) = descriptors::circuit_for_air_name(air_name) {
-                stark::verify(&circuit, &real.issuer_membership_stark_proof, &pi)
-            } else {
-                // Fallback: try blinded and standard merkle circuits for legacy air names.
-                let blinded = descriptors::blinded_merkle_poseidon2_circuit();
-                let standard = descriptors::merkle_poseidon2_circuit();
-                if air_name.contains("blinded") {
-                    stark::verify(&blinded, &real.issuer_membership_stark_proof, &pi)
-                } else {
-                    stark::verify(&standard, &real.issuer_membership_stark_proof, &pi)
-                }
+            match descriptors::circuit_for_air_name(air_name) {
+                Some(circuit) => stark::verify(&circuit, &real.issuer_membership_stark_proof, &pi),
+                None => Err(format!(
+                    "unknown AIR '{air_name}': no registered circuit descriptor — refusing to verify"
+                )),
             }
         })
     }
@@ -2104,15 +2101,12 @@ pub fn verify_presentation_full(
 
     // 5. Verify the real STARK proof.
     //    Dispatch to DSL circuit based on AIR name.
+    //    FAIL-CLOSED: unknown AIR names are refused — no default-circuit fallback.
     let air_name = &real.issuer_membership_stark_proof.air_name;
-    let circuit =
-        dregg_dsl_runtime::descriptors::circuit_for_air_name(air_name).unwrap_or_else(|| {
-            if air_name.contains("blinded") {
-                dregg_dsl_runtime::descriptors::blinded_merkle_poseidon2_circuit()
-            } else {
-                dregg_dsl_runtime::descriptors::merkle_poseidon2_circuit()
-            }
-        });
+    let circuit = match dregg_dsl_runtime::descriptors::circuit_for_air_name(air_name) {
+        Some(c) => c,
+        None => return false,
+    };
     stark::verify(&circuit, &real.issuer_membership_stark_proof, &pi).is_ok()
 }
 
@@ -2175,6 +2169,11 @@ pub enum VerifyError {
     NoStarkProof,
     /// Proof has fewer public inputs than required.
     MalformedPublicInputs,
+    /// The proof carries an AIR name that does not resolve to any registered
+    /// circuit descriptor. Verification REFUSES rather than guessing a default
+    /// circuit: an unknown AIR means the verifier has no pinned constraint
+    /// semantics for the proof.
+    UnknownAir(String),
 }
 
 impl std::fmt::Display for VerifyError {
@@ -2190,6 +2189,10 @@ impl std::fmt::Display for VerifyError {
             Self::CompositionMismatch => write!(f, "composition commitment mismatch"),
             Self::NoStarkProof => write!(f, "no real STARK proof present"),
             Self::MalformedPublicInputs => write!(f, "malformed public inputs"),
+            Self::UnknownAir(name) => write!(
+                f,
+                "unknown AIR '{name}': no registered circuit descriptor — refusing to verify"
+            ),
         }
     }
 }
@@ -2431,8 +2434,9 @@ pub fn verify_proof_complete(
 
     // 8. STARK cryptographic verification.
     // Dispatches on air_name to select the correct AIR for verification.
-    // Any AIR that passes cryptographic verification is accepted — the tier is
-    // informational only (per verification-policy-design.md).
+    // FAIL-CLOSED: an AIR name with no registered descriptor is REFUSED with a
+    // typed error. Guessing a circuit for an unknown name would let the prover
+    // choose the constraint semantics the verifier checks against.
     let air_name = &real.issuer_membership_stark_proof.air_name;
     let (stark_result, proof_tier) =
         if let Some(circuit) = dregg_dsl_runtime::descriptors::circuit_for_air_name(air_name) {
@@ -2440,18 +2444,8 @@ pub fn verify_proof_complete(
                 stark::verify(&circuit, &real.issuer_membership_stark_proof, &pi),
                 dregg_circuit::ProofTier::Production,
             )
-        } else if air_name.contains("blinded") {
-            let circuit = dregg_dsl_runtime::descriptors::blinded_merkle_poseidon2_circuit();
-            (
-                stark::verify(&circuit, &real.issuer_membership_stark_proof, &pi),
-                dregg_circuit::ProofTier::Production,
-            )
         } else {
-            let circuit = dregg_dsl_runtime::descriptors::merkle_poseidon2_circuit();
-            (
-                stark::verify(&circuit, &real.issuer_membership_stark_proof, &pi),
-                dregg_circuit::ProofTier::Production,
-            )
+            return Err(VerifyError::UnknownAir(air_name.clone()));
         };
 
     if let Err(e) = stark_result {
@@ -2508,15 +2502,12 @@ pub fn verify_presentation(proof: &BridgePresentationProof, federation_root: &[u
         }
 
         // Dispatch to DSL circuit based on AIR name.
+        // FAIL-CLOSED: unknown AIR names are refused — no default-circuit fallback.
         let air_name = &real.issuer_membership_stark_proof.air_name;
-        let circuit = dregg_dsl_runtime::descriptors::circuit_for_air_name(air_name)
-            .unwrap_or_else(|| {
-                if air_name.contains("blinded") {
-                    dregg_dsl_runtime::descriptors::blinded_merkle_poseidon2_circuit()
-                } else {
-                    dregg_dsl_runtime::descriptors::merkle_poseidon2_circuit()
-                }
-            });
+        let circuit = match dregg_dsl_runtime::descriptors::circuit_for_air_name(air_name) {
+            Some(c) => c,
+            None => return false,
+        };
         stark::verify(&circuit, &real.issuer_membership_stark_proof, &pi).is_ok()
     } else {
         // No real proof = not verified. Mock proofs provide no security guarantee.
@@ -2550,15 +2541,12 @@ pub fn verify_presentation_bb(proof: &BridgePresentationProof, expected_root: Ba
         }
 
         // Dispatch to DSL circuit based on AIR name.
+        // FAIL-CLOSED: unknown AIR names are refused — no default-circuit fallback.
         let air_name = &real.issuer_membership_stark_proof.air_name;
-        let circuit = dregg_dsl_runtime::descriptors::circuit_for_air_name(air_name)
-            .unwrap_or_else(|| {
-                if air_name.contains("blinded") {
-                    dregg_dsl_runtime::descriptors::blinded_merkle_poseidon2_circuit()
-                } else {
-                    dregg_dsl_runtime::descriptors::merkle_poseidon2_circuit()
-                }
-            });
+        let circuit = match dregg_dsl_runtime::descriptors::circuit_for_air_name(air_name) {
+            Some(c) => c,
+            None => return false,
+        };
         stark::verify(&circuit, &real.issuer_membership_stark_proof, &pi).is_ok()
     } else {
         false
@@ -3446,6 +3434,126 @@ mod tests {
             proof_bytes.len() > 1000,
             "Real Poseidon2 STARK proof should be > 1KB, got {} bytes",
             proof_bytes.len()
+        );
+    }
+
+    /// Task #163 fail-closed regression: every verify entry point in this
+    /// module must REFUSE a proof whose AIR name does not resolve to a
+    /// registered circuit descriptor — never fall back to a guessed circuit.
+    /// A cryptographically valid proof is relabeled with an unregistered AIR
+    /// name; verification must refuse loudly (typed `VerifyError::UnknownAir`
+    /// on the Result path, `Err(String)` naming the AIR on `verify_issuer_stark`,
+    /// `false` on the bool paths).
+    #[test]
+    fn test_unknown_air_refused_all_verify_paths() {
+        // Build a real proof (same setup as test_prove_real_poseidon2).
+        let key = test_key();
+        let issuer_hash = bytes_to_babybear(&key);
+        let depth = 8;
+        let mut current = issuer_hash;
+        for i in 0..depth {
+            let position = (i % 4) as u8;
+            let siblings = [
+                BabyBear::new(hash_index(i, 0, &key)),
+                BabyBear::new(hash_index(i, 1, &key)),
+                BabyBear::new(hash_index(i, 2, &key)),
+            ];
+            current = compute_parent_poseidon2(current, position, &siblings);
+        }
+        let fed_root_bb = current;
+        let mut fed_root_bytes = [0u8; 32];
+        fed_root_bytes[..4].copy_from_slice(&fed_root_bb.0.to_le_bytes());
+
+        let mut builder =
+            BridgePresentationBuilder::new_with_root_bb(key, fed_root_bytes, fed_root_bb);
+        let token = MacaroonToken::mint(key, b"kid-163", "dregg.dev");
+        builder.set_root_token(token);
+
+        let request = AuthRequest {
+            action: Some("anything".into()),
+            ..Default::default()
+        };
+        let mut proof = builder.prove(&request).expect("prove should succeed");
+
+        // Baselines: the honest proof verifies on every path.
+        assert!(
+            proof.verify_issuer_stark().unwrap().is_ok(),
+            "baseline: honest proof must verify via verify_issuer_stark"
+        );
+        assert!(
+            verify_presentation_bb(&proof, fed_root_bb),
+            "baseline: honest proof must verify via verify_presentation_bb"
+        );
+
+        // Relabel with an unregistered AIR name.
+        proof
+            .real_stark_proof
+            .as_mut()
+            .unwrap()
+            .issuer_membership_stark_proof
+            .air_name = "evil-unregistered-air-v0".to_string();
+
+        // verify_issuer_stark: loud string error naming the AIR.
+        let issuer_result = proof.verify_issuer_stark().unwrap();
+        assert!(
+            matches!(issuer_result, Err(ref m) if m.contains("unknown AIR")),
+            "verify_issuer_stark must refuse unknown AIR loudly, got {:?}",
+            issuer_result
+        );
+
+        // verify_presentation_bb (bool path): refusal.
+        assert!(
+            !verify_presentation_bb(&proof, fed_root_bb),
+            "verify_presentation_bb must refuse unknown AIR"
+        );
+
+        // verify_proof_complete (typed path): VerifyError::UnknownAir.
+        let wire = proof.into_wire_proof();
+        let complete = verify_proof_complete(&wire, "anything", "", &fed_root_bytes, 0, 0);
+        assert!(
+            matches!(complete, Err(VerifyError::UnknownAir(ref n)) if n == "evil-unregistered-air-v0"),
+            "verify_proof_complete must refuse unknown AIR with typed VerifyError::UnknownAir, got {:?}",
+            complete
+        );
+    }
+
+    /// Known AIR names still flow through verify_proof_complete unchanged
+    /// (no behavior change for registered identifiers).
+    #[test]
+    fn test_known_air_still_verifies_proof_complete() {
+        let key = test_key();
+        let issuer_hash = bytes_to_babybear(&key);
+        let depth = 8;
+        let mut current = issuer_hash;
+        for i in 0..depth {
+            let position = (i % 4) as u8;
+            let siblings = [
+                BabyBear::new(hash_index(i, 0, &key)),
+                BabyBear::new(hash_index(i, 1, &key)),
+                BabyBear::new(hash_index(i, 2, &key)),
+            ];
+            current = compute_parent_poseidon2(current, position, &siblings);
+        }
+        let fed_root_bb = current;
+        let mut fed_root_bytes = [0u8; 32];
+        fed_root_bytes[..4].copy_from_slice(&fed_root_bb.0.to_le_bytes());
+
+        let mut builder =
+            BridgePresentationBuilder::new_with_root_bb(key, fed_root_bytes, fed_root_bb);
+        let token = MacaroonToken::mint(key, b"kid-163b", "dregg.dev");
+        builder.set_root_token(token);
+
+        let request = AuthRequest {
+            action: Some("anything".into()),
+            ..Default::default()
+        };
+        let proof = builder.prove(&request).expect("prove should succeed");
+        let wire = proof.into_wire_proof();
+        let complete = verify_proof_complete(&wire, "anything", "", &fed_root_bytes, 0, 0);
+        assert!(
+            complete.is_ok(),
+            "known AIR must continue to verify via verify_proof_complete, got {:?}",
+            complete.err()
         );
     }
 

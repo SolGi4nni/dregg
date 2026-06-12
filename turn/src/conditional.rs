@@ -338,9 +338,20 @@ fn resolve_inner(
             let pi: Vec<BabyBear> = public_outputs.iter().map(|&v| BabyBear::new(v)).collect();
 
             // Verify the STARK proof using DSL circuit dispatch.
-            let circuit =
-                dregg_dsl_runtime::descriptors::circuit_for_air_name(&stark_proof.air_name)
-                    .unwrap_or_else(|| dregg_dsl_runtime::descriptors::merkle_poseidon2_circuit());
+            // FAIL-CLOSED: an AIR name with no registered descriptor is REFUSED —
+            // falling back to a default circuit would let the prover choose the
+            // constraint semantics the verifier checks against.
+            let circuit = match dregg_dsl_runtime::descriptors::circuit_for_air_name(
+                &stark_proof.air_name,
+            ) {
+                Some(c) => c,
+                None => {
+                    return ConditionalResult::InvalidProof(format!(
+                        "unknown AIR '{}': no registered circuit descriptor — refusing to verify",
+                        stark_proof.air_name
+                    ));
+                }
+            };
             if stark::verify(&circuit, &stark_proof, &pi).is_err() {
                 return ConditionalResult::InvalidProof("STARK verification failed".to_string());
             }
@@ -394,9 +405,18 @@ fn resolve_inner(
             let pi: Vec<BabyBear> = public_outputs.iter().map(|&v| BabyBear::new(v)).collect();
 
             // Verify the STARK proof using DSL circuit dispatch.
-            let circuit =
-                dregg_dsl_runtime::descriptors::circuit_for_air_name(&stark_proof.air_name)
-                    .unwrap_or_else(|| dregg_dsl_runtime::descriptors::merkle_poseidon2_circuit());
+            // FAIL-CLOSED: unknown AIR names are refused (see RemoteProof arm).
+            let circuit = match dregg_dsl_runtime::descriptors::circuit_for_air_name(
+                &stark_proof.air_name,
+            ) {
+                Some(c) => c,
+                None => {
+                    return ConditionalResult::InvalidProof(format!(
+                        "unknown AIR '{}': no registered circuit descriptor — refusing to verify",
+                        stark_proof.air_name
+                    ));
+                }
+            };
             if stark::verify(&circuit, &stark_proof, &pi).is_err() {
                 return ConditionalResult::InvalidProof("STARK verification failed".to_string());
             }
@@ -563,6 +583,123 @@ mod tests {
         let proof_bytes = proof_to_bytes(&proof);
         let public_outputs: Vec<u32> = public_inputs.iter().map(|bb| bb.0).collect();
         (proof_bytes, public_outputs)
+    }
+
+    /// Task #163 fail-closed regression: a proof carrying an AIR name that does
+    /// not resolve to a registered circuit descriptor must be REFUSED with a
+    /// typed, loud `InvalidProof` naming the unknown AIR — never dispatched to
+    /// a default circuit. (Previously unknown names fell through to
+    /// `merkle_poseidon2_circuit()` and were only rejected incidentally by the
+    /// air-name binding inside `stark::verify`.)
+    #[test]
+    fn unknown_air_refused_remote_proof() {
+        let fed_root = [7u8; 32];
+        let (proof_bytes, public_outputs) = generate_valid_stark_proof(777);
+        // Relabel the otherwise-valid proof with an unregistered AIR name.
+        let mut stark_proof = circuit_stark::proof_from_bytes(&proof_bytes).expect("roundtrip");
+        stark_proof.air_name = "evil-unregistered-air-v0".to_string();
+        let relabeled_bytes = proof_to_bytes(&stark_proof);
+
+        let condition = ProofCondition::RemoteProof {
+            federation_root: fed_root,
+            expected_air: "evil-unregistered-air-v0".to_string(),
+            expected_conclusion: public_outputs[0],
+        };
+        let proof = ConditionProof::StarkProof {
+            proof_bytes: relabeled_bytes,
+            federation_root: fed_root,
+            public_outputs,
+            air_name: "evil-unregistered-air-v0".to_string(),
+        };
+        let trusted = vec![(fed_root, 5u64)];
+        let mut n = nullifiers();
+        let result = resolve_condition(
+            &condition,
+            &proof,
+            10,
+            100,
+            &trusted,
+            DEFAULT_MAX_ROOT_AGE,
+            &mut n,
+            &[],
+        );
+        assert!(
+            matches!(result, ConditionalResult::InvalidProof(ref m) if m.contains("unknown AIR")),
+            "unknown AIR must be refused loudly (typed InvalidProof naming the AIR), got {:?}",
+            result
+        );
+    }
+
+    /// Same refusal on the LocalProof arm (the second dispatch site).
+    #[test]
+    fn unknown_air_refused_local_proof() {
+        let (proof_bytes, public_outputs) = generate_valid_stark_proof(778);
+        let mut stark_proof = circuit_stark::proof_from_bytes(&proof_bytes).expect("roundtrip");
+        stark_proof.air_name = "evil-unregistered-air-v0".to_string();
+        let relabeled_bytes = proof_to_bytes(&stark_proof);
+
+        let condition = ProofCondition::LocalProof {
+            expected_air: "evil-unregistered-air-v0".to_string(),
+            expected_public_inputs: public_outputs.clone(),
+        };
+        let proof = ConditionProof::StarkProof {
+            proof_bytes: relabeled_bytes,
+            federation_root: [0u8; 32],
+            public_outputs,
+            air_name: "evil-unregistered-air-v0".to_string(),
+        };
+        let mut n = nullifiers();
+        let result = resolve_condition(
+            &condition,
+            &proof,
+            10,
+            100,
+            &[],
+            DEFAULT_MAX_ROOT_AGE,
+            &mut n,
+            &[],
+        );
+        assert!(
+            matches!(result, ConditionalResult::InvalidProof(ref m) if m.contains("unknown AIR")),
+            "unknown AIR must be refused loudly (typed InvalidProof naming the AIR), got {:?}",
+            result
+        );
+    }
+
+    /// Malformed (empty) AIR identifier refuses too.
+    #[test]
+    fn empty_air_name_refused_local_proof() {
+        let (proof_bytes, public_outputs) = generate_valid_stark_proof(779);
+        let mut stark_proof = circuit_stark::proof_from_bytes(&proof_bytes).expect("roundtrip");
+        stark_proof.air_name = String::new();
+        let relabeled_bytes = proof_to_bytes(&stark_proof);
+
+        let condition = ProofCondition::LocalProof {
+            expected_air: String::new(),
+            expected_public_inputs: public_outputs.clone(),
+        };
+        let proof = ConditionProof::StarkProof {
+            proof_bytes: relabeled_bytes,
+            federation_root: [0u8; 32],
+            public_outputs,
+            air_name: String::new(),
+        };
+        let mut n = nullifiers();
+        let result = resolve_condition(
+            &condition,
+            &proof,
+            10,
+            100,
+            &[],
+            DEFAULT_MAX_ROOT_AGE,
+            &mut n,
+            &[],
+        );
+        assert!(
+            matches!(result, ConditionalResult::InvalidProof(ref m) if m.contains("unknown AIR")),
+            "empty AIR name must be refused, got {:?}",
+            result
+        );
     }
 
     #[test]

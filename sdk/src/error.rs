@@ -96,6 +96,17 @@ pub enum SdkError {
     #[error("IVC proof error: {0}")]
     IvcError(String),
 
+    /// A proof carried an AIR name that does not resolve to any registered
+    /// circuit descriptor. Verification REFUSES rather than falling back to a
+    /// default circuit: an unknown AIR means the verifier has no pinned
+    /// constraint semantics for the proof, so accepting it (or verifying it
+    /// against a guessed circuit) would let the prover choose the semantics.
+    #[error("unknown AIR '{air_name}': no registered circuit descriptor — refusing to verify")]
+    UnknownAir {
+        /// The unrecognized AIR name carried by the proof.
+        air_name: String,
+    },
+
     /// The cipherclerk's receipt chain head and the receipt's claimed
     /// predecessor disagree. This is a fork-detection signal — the
     /// cipherclerk and the executor that produced the receipt have
