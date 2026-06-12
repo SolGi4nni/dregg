@@ -332,17 +332,22 @@ pub struct UMemOpSpec {
     pub kind: MemKind,
 }
 
-/// Map reconciliation kind (Lean `MapOpKind`; wire codes 0/1/2).
+/// Map reconciliation kind (Lean `MapOpKind`; wire codes 0/1/2/3).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MapKind {
     /// Membership read (root unchanged).
     Read,
-    /// Sorted insert-or-update write (realized: in-place update at an existing key;
-    /// fresh-key sorted INSERT is the separate follow-up at witness-build lines 3096–3099).
+    /// In-place value UPDATE at an existing key (root advances; the old and new
+    /// leaves share the SAME sibling path).
     Write,
     /// Non-membership / bracketed-gap read (realized and tested; see `ir2_absent_*` tests
-    /// and the map-absent table assembly). The `value` field is pinned to `const 0`.
+    /// and the map-absent table assembly). The `value` field is pinned to `const 0`
+    /// and `new_root` is pinned to `root`.
     Absent,
+    /// Sorted INSERT at a fresh key (root advances; the new leaf's membership path
+    /// is against the NEW tree). Freshness must be established separately, e.g. by a
+    /// paired `MapKind::Absent` opening against the same pre-root.
+    Insert,
 }
 
 impl MapKind {
@@ -352,6 +357,7 @@ impl MapKind {
             MapKind::Read => 0,
             MapKind::Write => 1,
             MapKind::Absent => 2,
+            MapKind::Insert => 3,
         }
     }
 }
@@ -670,6 +676,7 @@ fn parse_constraint2(c: &mut JsonCursor) -> Result<VmConstraint2, String> {
                 "read" => MapKind::Read,
                 "write" => MapKind::Write,
                 "absent" => MapKind::Absent,
+                "insert" => MapKind::Insert,
                 other => return Err(format!("unknown map_op kind \"{other}\"")),
             };
             c.expect(b',')?;
@@ -1799,11 +1806,20 @@ where
                 let is_real: AB::Expr = local[MAP_IS_REAL].into();
                 let op: AB::Expr = local[MAP_OP].into();
                 builder.assert_zero(is_real.clone() * (is_real.clone() - AB::Expr::ONE));
-                builder.assert_zero(op.clone() * (op.clone() - AB::Expr::ONE));
+                // op ∈ {0 (read), 1 (write), 3 (insert)}. Absent (2) is received by the
+                // map-absent table; the map-log multiset partitions by op code.
+                builder.assert_zero(
+                    op.clone()
+                        * (op.clone() - AB::Expr::ONE)
+                        * (op.clone() - AB::Expr::from_u64(3)),
+                );
                 // A read returns the committed value: old_value = value on read rows.
+                // The `(op - 3)` factor disables this leg for insert (op = 3), where there
+                // is no committed old leaf.
                 builder.assert_zero(
                     is_real.clone()
-                        * (AB::Expr::ONE - op)
+                        * (AB::Expr::ONE - op.clone())
+                        * (op.clone() - AB::Expr::from_u64(3))
                         * (local[MAP_OLD_VALUE].into() - local[MAP_VALUE].into()),
                 );
                 for lvl in 0..HEAP_TREE_DEPTH {
@@ -1811,8 +1827,18 @@ where
                     builder.assert_zero(dir.clone() * (dir - AB::Expr::ONE));
                 }
 
+                // Selector: the old-leaf/old-path legs apply to read/write (op ∈ {0,1})
+                // but are vacuous for insert (op = 3). `not_insert` is the unique degree-2
+                // polynomial that is 1 at op = 0 and op = 1, and 0 at op = 3.
+                let inv6 = AB::Expr::from_u64(
+                    BabyBear::new(6).inverse().expect("6 != 0").as_u32() as u64,
+                );
+                let not_insert: AB::Expr = AB::Expr::ONE
+                    - inv6 * op.clone() * (op.clone() - AB::Expr::ONE);
+
                 // Leaf digests ride the chip bus: hash[key, old_value] and hash[key, value]
                 // are arity-2 absorb lookups (gated by is_real — pad rows query nothing).
+                // The old-leaf lookup is suppressed on insert rows.
                 let p2 = LookupBus::new(BUS_P2);
                 let leaf_tuple = |val_col: usize, leaf_col: usize| -> Vec<AB::Expr> {
                     let mut t: Vec<AB::Expr> = Vec::with_capacity(CHIP_TUPLE_LEN);
@@ -1828,24 +1854,14 @@ where
                 p2.lookup_key(
                     builder,
                     leaf_tuple(MAP_OLD_VALUE, MAP_OLD_LEAF),
-                    is_real.clone(),
+                    is_real.clone() * not_insert.clone(),
                 );
                 p2.lookup_key(builder, leaf_tuple(MAP_VALUE, MAP_NEW_LEAF), is_real.clone());
 
-                // The two sibling-sharing chains (the in-place sorted-tree leaf update,
-                // HeapUpdateWitness's shape) ride the fact bus: each node hash is one
-                // (l, r, out) lookup into a fact-marked chip row. The final links ARE the
-                // root columns, so the old path authenticates against the pre-root and
-                // the new path IS the post-root — the table only carries genuine
-                // permutations, so a forged link has no serving entry. (On reads
-                // old_value = value makes the chains coincide; both final lookups share
-                // (l, r), whose unique genuine digest forces new_root = root.)
-                // The in-tuple dir-mix makes these LogUp legs degree 4 (the map-ops
-                // table's max — comfortably inside `ir2_config`'s blowup). A committed
-                // left-operand column per level would bring the legs to degree 3, but
-                // that was measured net-NEGATIVE: +32 opened columns per query on every
-                // map-bearing proof, buying nothing because low blowup LOSES at FRI
-                // security parity (docs/PROOF-ECONOMICS.md §2c).
+                // The sibling-sharing chains ride the fact bus. Write/read share one path;
+                // insert uses the SAME columns for a membership opening of the NEW leaf
+                // against the NEW root (no old leaf exists at a fresh key). The old-path
+                // lookups are gated by `not_insert`; the new-path lookup is always active.
                 let fact_bus = LookupBus::new(BUS_FACT);
                 let mut cur_old: AB::Expr = local[MAP_OLD_LEAF].into();
                 let mut cur_new: AB::Expr = local[MAP_NEW_LEAF].into();
@@ -1865,15 +1881,19 @@ where
                     } else {
                         local[MAP_OLD_CHAIN0 + lvl].into()
                     };
-                    let (lo, ro) = mix(cur_old);
-                    fact_bus.lookup_key(builder, [lo, ro, out_old.clone()], is_real.clone());
+                    let (lo, ro) = mix(cur_old.clone());
+                    fact_bus.lookup_key(
+                        builder,
+                        [lo, ro, out_old.clone()],
+                        is_real.clone() * not_insert.clone(),
+                    );
                     cur_old = out_old;
                     let out_new: AB::Expr = if last {
                         local[MAP_NEW_ROOT].into()
                     } else {
                         local[MAP_NEW_CHAIN0 + lvl].into()
                     };
-                    let (ln, rn) = mix(cur_new);
+                    let (ln, rn) = mix(cur_new.clone());
                     fact_bus.lookup_key(builder, [ln, rn, out_new.clone()], is_real.clone());
                     cur_new = out_new;
                 }
@@ -3095,8 +3115,8 @@ fn build_traces(
                     .update_witness(HeapLeaf { addr: key, value })
                     .ok_or_else(|| {
                         format!(
-                            "map op {i}: write key {} not present — a fresh-key sorted INSERT \
-                             is the named follow-up lane (only in-place updates are realized)",
+                            "map op {i}: write key {} not present — use MapKind::Insert for \
+                             fresh-key sorted inserts",
                             key.as_u32()
                         )
                     })?;
@@ -3122,6 +3142,34 @@ fn build_traces(
                 trees.push(CanonicalHeapTree::new(new_leaves, HEAP_TREE_DEPTH));
                 (w.old_leaf.value, w.siblings, w.directions)
             }
+            MapKind::Insert => {
+                let w = tree
+                    .insert_witness(HeapLeaf { addr: key, value })
+                    .ok_or_else(|| {
+                        format!(
+                            "map op {i}: insert key {} already present or collides with \
+                             sentinels",
+                            key.as_u32()
+                        )
+                    })?;
+                if check && w.new_root != new_root {
+                    return Err(format!(
+                        "map op {i}: claimed new_root {} != genuine sorted insert {}",
+                        new_root.as_u32(),
+                        w.new_root.as_u32()
+                    ));
+                }
+                // Advance the working set: the post-insert heap is reachable for later ops.
+                let mut new_leaves: Vec<HeapLeaf> = tree
+                    .sorted_leaves()
+                    .iter()
+                    .filter(|l| l.addr != SENTINEL_MIN && l.addr != SENTINEL_MAX)
+                    .copied()
+                    .collect();
+                new_leaves.push(HeapLeaf { addr: key, value });
+                trees.push(CanonicalHeapTree::new(new_leaves, HEAP_TREE_DEPTH));
+                (BabyBear::ZERO, w.siblings, w.directions)
+            }
             MapKind::Absent => unreachable!("absent handled above"),
         };
         let mut cols = vec![BabyBear::ZERO; MAP_WIDTH];
@@ -3146,38 +3194,53 @@ fn build_traces(
             t.push(d.as_u32());
             t
         };
-        let old_leaf = leaf_digest(key, old_value);
+        let is_insert = *kind == MapKind::Insert;
         let new_leaf = leaf_digest(key, value);
-        *chip_hist
-            .entry(absorb2_tuple(key, old_value, old_leaf))
-            .or_insert(0) += 1;
         *chip_hist
             .entry(absorb2_tuple(key, value, new_leaf))
             .or_insert(0) += 1;
-        cols[MAP_OLD_LEAF] = old_leaf;
         cols[MAP_NEW_LEAF] = new_leaf;
-        let mut cur_old = old_leaf;
+        if is_insert {
+            // Insert rows have no committed old leaf; the AIR's old-path legs are gated
+            // away by `op - 3`. Leave old-leaf / old-chain columns at zero.
+            cols[MAP_OLD_VALUE] = BabyBear::ZERO;
+        } else {
+            let old_leaf = leaf_digest(key, old_value);
+            *chip_hist
+                .entry(absorb2_tuple(key, old_value, old_leaf))
+                .or_insert(0) += 1;
+            cols[MAP_OLD_LEAF] = old_leaf;
+            let mut cur_old = old_leaf;
+            for lvl in 0..HEAP_TREE_DEPTH {
+                let sib = sibs[lvl];
+                let mix = |cur: BabyBear| -> (BabyBear, BabyBear) {
+                    if dirs[lvl] != 0 { (sib, cur) } else { (cur, sib) }
+                };
+                let (lo, ro) = mix(cur_old);
+                let d_old = perm_aux(fact_state_c(lo, ro)).1;
+                *fact_hist
+                    .entry((lo.as_u32(), ro.as_u32(), d_old.as_u32()))
+                    .or_insert(0) += 1;
+                if lvl + 1 < HEAP_TREE_DEPTH {
+                    cols[MAP_OLD_CHAIN0 + lvl] = d_old;
+                }
+                cur_old = d_old;
+            }
+        }
         let mut cur_new = new_leaf;
         for lvl in 0..HEAP_TREE_DEPTH {
             let sib = sibs[lvl];
             let mix = |cur: BabyBear| -> (BabyBear, BabyBear) {
                 if dirs[lvl] != 0 { (sib, cur) } else { (cur, sib) }
             };
-            let (lo, ro) = mix(cur_old);
-            let d_old = perm_aux(fact_state_c(lo, ro)).1;
-            *fact_hist
-                .entry((lo.as_u32(), ro.as_u32(), d_old.as_u32()))
-                .or_insert(0) += 1;
             let (ln, rn) = mix(cur_new);
             let d_new = perm_aux(fact_state_c(ln, rn)).1;
             *fact_hist
                 .entry((ln.as_u32(), rn.as_u32(), d_new.as_u32()))
                 .or_insert(0) += 1;
             if lvl + 1 < HEAP_TREE_DEPTH {
-                cols[MAP_OLD_CHAIN0 + lvl] = d_old;
                 cols[MAP_NEW_CHAIN0 + lvl] = d_new;
             }
-            cur_old = d_old;
             cur_new = d_new;
         }
         map_rows.push(cols);
@@ -4161,6 +4224,155 @@ mod tests {
             "map-only descriptor commits main + chip + map-ops (chains ride the chip bus)"
         );
         verify_vm_descriptor2(&desc, &proof, &[]).expect("map write proof must verify");
+    }
+
+    /// A map INSERT at a FRESH key proves: the new root is the genuine sorted insert,
+    /// and a later read against the NEW root sees the inserted value.
+    #[test]
+    fn ir2_map_insert_fresh_proves() {
+        let tree = CanonicalHeapTree::new(test_heap(), HEAP_TREE_DEPTH);
+        let root = tree.root();
+        let w = tree
+            .insert_witness(HeapLeaf {
+                addr: BabyBear::new(150),
+                value: BabyBear::new(55),
+            })
+            .expect("key 150 fresh");
+        let desc = EffectVmDescriptor2 {
+            name: "ir2-map-insert".to_string(),
+            trace_width: 6,
+            public_input_count: 0,
+            tables: vec![],
+            constraints: vec![VmConstraint2::MapOp(MapOpSpec {
+                guard: LeanExpr::Var(5),
+                root: LeanExpr::Var(0),
+                key: LeanExpr::Var(1),
+                value: LeanExpr::Var(2),
+                new_root: LeanExpr::Var(3),
+                op: MapKind::Insert,
+            })],
+            hash_sites: vec![],
+            ranges: vec![],
+        };
+        let mut rows = vec![
+            vec![
+                root,
+                BabyBear::new(150),
+                BabyBear::new(55),
+                w.new_root,
+                BabyBear::ZERO,
+                BabyBear::ZERO,
+            ];
+            4
+        ];
+        rows[0][5] = BabyBear::ONE;
+        let proof = prove_vm_descriptor2(
+            &desc,
+            &rows,
+            &[],
+            &MemBoundaryWitness::default(),
+            &[test_heap()],
+        )
+        .expect("map insert fresh must prove");
+        assert_eq!(
+            proof.degree_bits.len(),
+            3,
+            "map-only descriptor commits main + chip + map-ops (insert chains ride the chip bus)"
+        );
+        verify_vm_descriptor2(&desc, &proof, &[]).expect("map insert proof must verify");
+
+        // A chained read against the post-insert root must open to the inserted value.
+        let read_desc = EffectVmDescriptor2 {
+            name: "ir2-map-insert-readback".to_string(),
+            trace_width: 6,
+            public_input_count: 0,
+            tables: vec![],
+            constraints: vec![VmConstraint2::MapOp(MapOpSpec {
+                guard: LeanExpr::Var(5),
+                root: LeanExpr::Var(0),
+                key: LeanExpr::Var(1),
+                value: LeanExpr::Var(2),
+                new_root: LeanExpr::Var(3),
+                op: MapKind::Read,
+            })],
+            hash_sites: vec![],
+            ranges: vec![],
+        };
+        let mut read_rows = vec![
+            vec![
+                w.new_root,
+                BabyBear::new(150),
+                BabyBear::new(55),
+                w.new_root,
+                BabyBear::ZERO,
+                BabyBear::ZERO,
+            ];
+            4
+        ];
+        read_rows[0][5] = BabyBear::ONE;
+        let read_heap: Vec<HeapLeaf> = {
+            let mut leaves = test_heap();
+            leaves.push(HeapLeaf {
+                addr: BabyBear::new(150),
+                value: BabyBear::new(55),
+            });
+            leaves
+        };
+        prove_vm_descriptor2(
+            &read_desc,
+            &read_rows,
+            &[],
+            &MemBoundaryWitness::default(),
+            &[read_heap],
+        )
+        .expect("read-back against post-insert root must prove");
+    }
+
+    /// An `insert` claim for a key that is ALREADY present must refuse: the sorted
+    /// tree has no authenticated gap for it, and the insert-witness builder fails.
+    #[test]
+    fn ir2_map_insert_present_refuses() {
+        let tree = CanonicalHeapTree::new(test_heap(), HEAP_TREE_DEPTH);
+        let root = tree.root();
+        let desc = EffectVmDescriptor2 {
+            name: "ir2-map-insert-present".to_string(),
+            trace_width: 6,
+            public_input_count: 0,
+            tables: vec![],
+            constraints: vec![VmConstraint2::MapOp(MapOpSpec {
+                guard: LeanExpr::Var(5),
+                root: LeanExpr::Var(0),
+                key: LeanExpr::Var(1),
+                value: LeanExpr::Var(2),
+                new_root: LeanExpr::Var(3),
+                op: MapKind::Insert,
+            })],
+            hash_sites: vec![],
+            ranges: vec![],
+        };
+        let mut rows = vec![
+            vec![
+                root,
+                BabyBear::new(100), // key 100 is already present in test_heap
+                BabyBear::new(99),
+                root,
+                BabyBear::ZERO,
+                BabyBear::ZERO,
+            ];
+            4
+        ];
+        rows[0][5] = BabyBear::ONE;
+        assert!(
+            prove_vm_descriptor2(
+                &desc,
+                &rows,
+                &[],
+                &MemBoundaryWitness::default(),
+                &[test_heap()],
+            )
+            .is_err(),
+            "insert at a present key must refuse"
+        );
     }
 
     // ================================================================

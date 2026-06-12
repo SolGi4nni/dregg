@@ -237,13 +237,32 @@ pub struct HeapUpdateWitness {
     pub new_root: BabyBear,
 }
 
+/// A heap **insert** witness for a FRESH address: the new leaf is spliced into
+/// its unique sorted position in the leaf list and the tree is rebuilt. The
+/// returned path is a membership opening of the NEW leaf against the NEW root;
+/// freshness is proved separately (e.g. by a paired `MapKind::Absent` gap
+/// opening against `old_root`).
+#[derive(Clone, Debug)]
+pub struct HeapInsertWitness {
+    /// The inserted leaf.
+    pub new_leaf: HeapLeaf,
+    /// Sibling digests along the path from the new leaf to the new root.
+    pub siblings: Vec<BabyBear>,
+    /// Direction bits along the path (0 = new leaf is left child, 1 = right).
+    pub directions: Vec<u8>,
+    /// The authenticated pre-insert root.
+    pub old_root: BabyBear,
+    /// The recomputed post-insert root.
+    pub new_root: BabyBear,
+}
+
 impl CanonicalHeapTree {
     /// Build a [`HeapUpdateWitness`] that rewrites the value at
     /// `new_leaf.addr` to `new_leaf.value`. Returns `None` if no leaf with
     /// that address is present (a fabricated old leaf has no authenticated
-    /// position; fresh-address inserts are Phase E). The returned `old_root`
-    /// equals this tree's root; `new_root` is the root after the single-leaf
-    /// replacement (recomputed over the shared sibling path).
+    /// position; fresh-address inserts use [`CanonicalHeapTree::insert_witness`]).
+    /// The returned `old_root` equals this tree's root; `new_root` is the root
+    /// after the single-leaf replacement (recomputed over the shared sibling path).
     pub fn update_witness(&self, new_leaf: HeapLeaf) -> Option<HeapUpdateWitness> {
         let pos = self.position_of(new_leaf.addr)?;
         let old_leaf = self.sorted_leaves[pos];
@@ -267,6 +286,40 @@ impl CanonicalHeapTree {
             directions,
             old_root: self.root(),
             new_root: cur,
+        })
+    }
+
+    /// Build a sorted INSERT witness for a FRESH address: the new leaf is
+    /// spliced into its unique sorted position, the tree is rebuilt, and a
+    /// membership path for the new leaf against the NEW root is returned.
+    /// Returns `None` if the address is already present (use `update_witness`)
+    /// or collides with the sentinels.
+    pub fn insert_witness(&self, new_leaf: HeapLeaf) -> Option<HeapInsertWitness> {
+        let key = new_leaf.addr;
+        if key == SENTINEL_MIN || key.as_u32() >= SENTINEL_MAX.as_u32() {
+            return None;
+        }
+        if self.position_of(key).is_some() {
+            return None;
+        }
+        // Insertion position in the sentinel-bracketed sorted leaf list.
+        let pos = self.sorted_leaves.iter().position(|l| l.addr > key)?;
+        let new_real: Vec<HeapLeaf> = self.sorted_leaves[..pos]
+            .iter()
+            .chain(std::iter::once(&new_leaf))
+            .chain(&self.sorted_leaves[pos..])
+            .filter(|l| l.addr != SENTINEL_MIN && l.addr != SENTINEL_MAX)
+            .copied()
+            .collect();
+        let new_tree = CanonicalHeapTree::new(new_real, self.depth);
+        let new_pos = new_tree.position_of(key)?;
+        let (siblings, directions) = new_tree.prove_membership(new_pos)?;
+        Some(HeapInsertWitness {
+            new_leaf,
+            siblings,
+            directions,
+            old_root: self.root(),
+            new_root: new_tree.root(),
         })
     }
 }
@@ -396,5 +449,42 @@ mod tests {
             value: BabyBear::new(1),
         };
         assert!(tree.update_witness(absent).is_none());
+    }
+
+    /// A sorted INSERT witness authenticates the new leaf against the new root,
+    /// and the new root equals the root of the independently rebuilt tree.
+    #[test]
+    fn insert_witness_recomputes_post_root() {
+        let tree = CanonicalHeapTree::new(
+            vec![entry(1, 1, 10), entry(1, 3, 30)],
+            HEAP_TREE_DEPTH,
+        );
+        let new_leaf = HeapLeaf {
+            addr: heap_addr(BabyBear::new(1), BabyBear::new(2)),
+            value: BabyBear::new(20),
+        };
+        let w = tree.insert_witness(new_leaf).expect("addr is fresh");
+        assert_eq!(w.old_root, tree.root());
+        let rebuilt = compute_heap_root(vec![
+            entry(1, 1, 10),
+            entry(1, 2, 20),
+            entry(1, 3, 30),
+        ]);
+        assert_eq!(
+            w.new_root, rebuilt,
+            "insert-witness new root must equal the rebuilt tree root"
+        );
+        // Recompute the path top from the witness to cross-check.
+        let mut cur = new_leaf.digest();
+        for level in 0..HEAP_TREE_DEPTH {
+            cur = if w.directions[level] == 0 {
+                hash_fact(cur, &[w.siblings[level]])
+            } else {
+                hash_fact(w.siblings[level], &[cur])
+            };
+        }
+        assert_eq!(cur, w.new_root, "witness path must open to the new root");
+        // A present address has no insert witness.
+        assert!(tree.insert_witness(entry(1, 1, 99)).is_none());
     }
 }
