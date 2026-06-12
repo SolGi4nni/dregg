@@ -25,6 +25,17 @@ Last sweep: 2026-06-12 (the Grand Convergence session).
 - balance/nonce → NAMED-register assignment (RotatedLimbs carries no separate balance/nonce limbs; the umem projection maps them to the heap domain — pick ONE canonical story; ember-visible decision, ROTATION-CUTOVER.md §2 note).
 - cells_root + iroot per-turn PRODUCERS in turn/ (the rotated block's first/last limbs; MMR theory landed, executor carrier missing) + lifecycle/epoch trace carriers (CellState tracks them, the trace doesn't) — ROTATION-CUTOVER.md §5 items 3-5.
 
+## LOAD-BEARING NOW (promoted 2026-06-12 — the register argument depends on these)
+
+- Heap-addressable constraint language: program atoms that gate HEAP KEYS, not just slot
+  indices (the executor already admits heap fields, b133354fc; the "registers are the L1,
+  heap is where apps live" argument is VACUOUS until programs can constrain heap fields).
+  Lean Exec.Program + cell/program.rs lockstep + the DSL surface. = the language-uplift R3
+  named-fields work, now critical path. LANE RUNNING.
+- Register-count measurement: 16 vs 24 vs 32 probe variants of the staged rotation
+  emission; measure the always-paid delta (commit-chain sites + opened columns) before the
+  count freezes at cutover. Folds into ROTATION-CUTOVER pre-gates. LANE RUNNING.
+
 ## Metatheory closures (Lean-side, mostly lane-sized)
 
 - CrashRecovery × registries: extend the recovery model to `(writes, burns)` and lift `draw_replay_refused_across_epochs` across the crash cut (named by the persist lane; Rust half landed with `forever_digests`).
