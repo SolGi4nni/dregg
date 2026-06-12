@@ -440,6 +440,35 @@ impl RemoteAuthorizedTurn<'_> {
         &self.action
     }
 
+    /// Assemble the canonical turn envelope around the signed action with the
+    /// live node bindings. Every remote turn is stamped with `valid_until` —
+    /// load-bearing twice over: the executor's expiry gate AND the verified
+    /// Lean producer's wire marshal (an unstamped turn falls back to the
+    /// legacy Rust producer on every node).
+    fn build_turn(&self, nonce: u64, previous_receipt_hash: Option<[u8; 32]>) -> Turn {
+        let mut forest = CallForest::new();
+        forest.add_root(self.action.clone());
+        Turn {
+            agent: self.runtime.cell,
+            nonce,
+            fee: self.fee,
+            memo: None,
+            valid_until: Some(now_secs() + REMOTE_TURN_VALIDITY_HORIZON_SECS),
+            call_forest: forest,
+            depends_on: vec![],
+            previous_receipt_hash,
+            conservation_proof: None,
+            sovereign_witnesses: std::collections::HashMap::new(),
+            execution_proof: None,
+            execution_proof_cell: None,
+            execution_proof_new_commitment: None,
+            custom_program_proofs: None,
+            effect_binding_proofs: Vec::new(),
+            cross_effect_dependencies: Vec::new(),
+            effect_witness_index_map: Vec::new(),
+        }
+    }
+
     /// Build the turn envelope with live node bindings (nonce, receipt-chain
     /// head, `valid_until` horizon), envelope-sign it, and submit. A chain-head
     /// race (another commit landing between read and submit) is retried once
@@ -457,30 +486,7 @@ impl RemoteAuthorizedTurn<'_> {
         for attempt in 0..2 {
             let nonce = self.runtime.current_nonce().await?;
             let previous_receipt_hash = self.runtime.receipt_chain_head().await?;
-            let mut forest = CallForest::new();
-            forest.add_root(self.action.clone());
-            let turn = Turn {
-                agent: self.runtime.cell,
-                nonce,
-                fee: self.fee,
-                memo: None,
-                // Load-bearing twice over: the executor's expiry gate AND the
-                // verified Lean producer's wire marshal (an unstamped turn
-                // falls back to the legacy Rust producer on every node).
-                valid_until: Some(now_secs() + REMOTE_TURN_VALIDITY_HORIZON_SECS),
-                call_forest: forest,
-                depends_on: vec![],
-                previous_receipt_hash,
-                conservation_proof: None,
-                sovereign_witnesses: std::collections::HashMap::new(),
-                execution_proof: None,
-                execution_proof_cell: None,
-                execution_proof_new_commitment: None,
-                custom_program_proofs: None,
-                effect_binding_proofs: Vec::new(),
-                cross_effect_dependencies: Vec::new(),
-                effect_witness_index_map: Vec::new(),
-            };
+            let turn = self.build_turn(nonce, previous_receipt_hash);
             let resp = self.runtime.submit_envelope(&turn).await?;
             if resp.accepted {
                 return Ok(RemoteReceipt {
@@ -507,4 +513,274 @@ impl RemoteAuthorizedTurn<'_> {
 /// against the node's verifier (`request_action = hex(blake3(name))`).
 pub fn method_symbol(name: &str) -> [u8; 32] {
     symbol(name)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dregg_types::Signature;
+
+    /// Poll a future that must complete without any pending I/O (every async
+    /// fn under test short-circuits before its first real await point — e.g.
+    /// the federation binding is pre-seeded, or the one-shot guard fires).
+    fn poll_ready<F: std::future::Future>(fut: F) -> F::Output {
+        use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
+        fn noop(_: *const ()) {}
+        fn clone(_: *const ()) -> RawWaker {
+            RawWaker::new(std::ptr::null(), &VTABLE)
+        }
+        static VTABLE: RawWakerVTable = RawWakerVTable::new(clone, noop, noop, noop);
+        let waker = unsafe { Waker::from_raw(RawWaker::new(std::ptr::null(), &VTABLE)) };
+        let mut cx = Context::from_waker(&waker);
+        let mut fut = Box::pin(fut);
+        match fut.as_mut().poll(&mut cx) {
+            Poll::Ready(v) => v,
+            Poll::Pending => panic!("test future hit real I/O (should have short-circuited)"),
+        }
+    }
+
+    const TEST_FED: [u8; 32] = [7u8; 32];
+
+    /// A runtime whose federation binding is pre-seeded, so signing never
+    /// touches the network.
+    fn offline_runtime() -> RemoteRuntime {
+        let clerk = AgentCipherclerk::new();
+        let runtime = RemoteRuntime::connect("http://127.0.0.1:0/", clerk);
+        runtime
+            .federation_id
+            .set(TEST_FED)
+            .expect("fresh OnceLock");
+        runtime
+    }
+
+    // ─── identity binding ───
+
+    #[test]
+    fn agent_cell_matches_node_ingress_derivation() {
+        // The node's `/turns/submit` ingress enforces
+        // `turn.agent == CellId::derive_raw(signer pubkey, blake3("default"))`;
+        // the runtime must act as exactly that cell or every submit refuses.
+        let runtime = offline_runtime();
+        let default_token_id = *blake3::hash(b"default").as_bytes();
+        let expected =
+            CellId::derive_raw(&runtime.cipherclerk.public_key().0, &default_token_id);
+        assert_eq!(runtime.cell_id(), expected);
+    }
+
+    // ─── builder staging ───
+
+    #[test]
+    fn sign_refuses_an_empty_turn() {
+        let runtime = offline_runtime();
+        let Err(err) = poll_ready(runtime.turn().sign()) else {
+            panic!("empty turn must refuse");
+        };
+        assert!(
+            err.to_string().contains("empty turn"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn builder_stages_effects_method_and_target() {
+        let runtime = offline_runtime();
+        let me = runtime.cell_id();
+        let other = CellId([9u8; 32]);
+
+        let authorized = poll_ready(
+            runtime
+                .turn()
+                .method("settle")
+                .fee(123)
+                .transfer(other, 42)
+                .write_u64(3, 77)
+                .increment_nonce()
+                .sign(),
+        )
+        .expect("sign");
+
+        let action = authorized.action();
+        assert_eq!(action.target, me, "default target is the agent cell");
+        assert_eq!(action.method, symbol("settle"), "method symbol staged");
+        assert_eq!(authorized.fee, 123);
+        assert_eq!(action.effects.len(), 3);
+        match &action.effects[0] {
+            Effect::Transfer { from, to, amount } => {
+                assert_eq!(*from, me);
+                assert_eq!(*to, other);
+                assert_eq!(*amount, 42);
+            }
+            e => panic!("expected Transfer, got {e:?}"),
+        }
+        match &action.effects[1] {
+            Effect::SetField { cell, index, value } => {
+                assert_eq!(*cell, me);
+                assert_eq!(*index, 3);
+                assert_eq!(*value, dregg_cell::field_from_u64(77));
+            }
+            e => panic!("expected SetField, got {e:?}"),
+        }
+        match &action.effects[2] {
+            Effect::IncrementNonce { cell } => assert_eq!(*cell, me),
+            e => panic!("expected IncrementNonce, got {e:?}"),
+        }
+    }
+
+    #[test]
+    fn builder_on_retargets_acting_cell() {
+        let runtime = offline_runtime();
+        let target = CellId([5u8; 32]);
+        let authorized = poll_ready(runtime.turn().on(target).transfer(CellId([6u8; 32]), 1).sign())
+            .expect("sign");
+        assert_eq!(authorized.action().target, target);
+        match &authorized.action().effects[0] {
+            Effect::Transfer { from, .. } => assert_eq!(*from, target, "acting cell is the target"),
+            e => panic!("expected Transfer, got {e:?}"),
+        }
+    }
+
+    // ─── action signing (the executor-side contract) ───
+
+    #[test]
+    fn signed_action_verifies_over_the_federation_bound_message() {
+        let runtime = offline_runtime();
+        let authorized =
+            poll_ready(runtime.turn().transfer(CellId([9u8; 32]), 5).sign()).expect("sign");
+        let action = authorized.action();
+
+        let Authorization::Signature(r, s) = &action.authorization else {
+            panic!("expected Authorization::Signature, got {:?}", action.authorization);
+        };
+        let mut sig = [0u8; 64];
+        sig[..32].copy_from_slice(r);
+        sig[32..].copy_from_slice(s);
+
+        // EXACTLY the executor's verification: the canonical signing message
+        // (computed over the Unchecked shape) under the bound federation id.
+        let unsigned = Action {
+            authorization: Authorization::Unchecked,
+            ..action.clone()
+        };
+        let message = TurnExecutor::compute_signing_message(&unsigned, &TEST_FED);
+        let pk = runtime.cipherclerk.public_key();
+        assert!(
+            pk.verify(&message, &Signature(sig)),
+            "action signature must verify over the federation-bound message"
+        );
+
+        // Cross-federation replay refuses: the same signature under a
+        // DIFFERENT federation id must not verify.
+        let foreign = TurnExecutor::compute_signing_message(&unsigned, &[8u8; 32]);
+        assert!(
+            !pk.verify(&foreign, &Signature(sig)),
+            "signature must be federation-bound"
+        );
+    }
+
+    // ─── turn envelope construction ───
+
+    #[test]
+    fn build_turn_stamps_valid_until_and_bindings() {
+        let runtime = offline_runtime();
+        let authorized =
+            poll_ready(runtime.turn().transfer(CellId([9u8; 32]), 5).sign()).expect("sign");
+
+        let prev = Some([0xCD; 32]);
+        let before = now_secs();
+        let turn = authorized.build_turn(41, prev);
+        let after = now_secs();
+
+        assert_eq!(turn.agent, runtime.cell_id());
+        assert_eq!(turn.nonce, 41);
+        assert_eq!(turn.fee, DEFAULT_REMOTE_FEE);
+        assert_eq!(turn.previous_receipt_hash, prev);
+        assert_eq!(turn.call_forest.action_count(), 1);
+
+        // The valid_until stamp is load-bearing twice over (executor expiry
+        // gate + the verified Lean producer's wire marshal): ALWAYS Some,
+        // wall-clock now + the horizon.
+        let vu = turn
+            .valid_until
+            .expect("remote turns are ALWAYS stamped with valid_until");
+        assert!(
+            vu >= before + REMOTE_TURN_VALIDITY_HORIZON_SECS
+                && vu <= after + REMOTE_TURN_VALIDITY_HORIZON_SECS,
+            "valid_until must be now + horizon (got {vu})"
+        );
+
+        // No phantom proof material on a fresh remote turn.
+        assert!(turn.conservation_proof.is_none());
+        assert!(turn.execution_proof.is_none());
+        assert!(turn.effect_binding_proofs.is_empty());
+    }
+
+    // ─── envelope signing (the node ingress predicate) ───
+
+    #[test]
+    fn envelope_tamper_fails_the_node_ingress_predicate() {
+        let runtime = offline_runtime();
+        let authorized =
+            poll_ready(runtime.turn().transfer(CellId([9u8; 32]), 5).sign()).expect("sign");
+        let turn = authorized.build_turn(0, None);
+
+        let signed = runtime.cipherclerk.sign_turn(&turn);
+        // The node's exact acceptance predicate.
+        assert!(
+            signed.signer.verify(&signed.turn.hash(), &signed.signature),
+            "honest envelope must verify"
+        );
+        assert_eq!(signed.signer, runtime.cipherclerk.public_key());
+
+        // Tampering ANY turn field after signing breaks the envelope.
+        let mut tampered = signed.clone();
+        tampered.turn.fee += 1;
+        assert!(
+            !tampered.signer.verify(&tampered.turn.hash(), &tampered.signature),
+            "tampered envelope must refuse"
+        );
+    }
+
+    #[test]
+    fn submit_is_one_shot() {
+        let runtime = offline_runtime();
+        let mut authorized =
+            poll_ready(runtime.turn().transfer(CellId([9u8; 32]), 5).sign()).expect("sign");
+        authorized.submitted = true;
+        let err = poll_ready(authorized.submit()).expect_err("second submit must refuse");
+        assert!(err.to_string().contains("one-shot"), "unexpected error: {err}");
+    }
+
+    // ─── wire plumbing ───
+
+    #[test]
+    fn hex_decode_32_roundtrips_and_refuses_garbage() {
+        let value = [0xAB; 32];
+        assert_eq!(hex_decode_32(&hex_encode(&value)).unwrap(), value);
+        assert!(hex_decode_32("zz").is_err(), "non-hex refuses");
+        assert!(hex_decode_32("abcd").is_err(), "wrong length refuses");
+    }
+
+    #[test]
+    fn node_response_shapes_parse() {
+        let feds: Vec<FederationInfoLite> = serde_json::from_str(
+            r#"[{"federation_id":"aa","is_local":true,"member_count":3,"committee_epoch":2,"extra":1}]"#,
+        )
+        .expect("federations shape");
+        assert!(feds[0].is_local);
+        assert_eq!(feds[0].member_count, 3);
+        assert_eq!(feds[0].committee_epoch, 2);
+
+        let receipts: Vec<RemoteReceiptInfo> = serde_json::from_str(
+            r#"[{"turn_hash":"00","receipt_hash":"11","chain_index":4,"chain_head":true,"has_proof":false}]"#,
+        )
+        .expect("receipts shape");
+        assert!(receipts[0].chain_head);
+
+        let resp: SubmitSignedTurnResponseLite = serde_json::from_str(
+            r#"{"accepted":false,"turn_hash":null,"error":"receipt chain mismatch"}"#,
+        )
+        .expect("submit response shape");
+        assert!(!resp.accepted);
+        assert_eq!(resp.error.as_deref(), Some("receipt chain mismatch"));
+    }
 }

@@ -7576,6 +7576,218 @@ mod tests {
         assert!(tx.chars().all(|ch| ch.is_ascii_hexdigit()));
     }
 
+    /// #171 remote `.turn()` e2e through the HTTP router: a keypair the node
+    /// has NEVER seen locally builds + signs a canonical turn, submits the
+    /// postcard `SignedTurn` envelope to `POST /turns/submit`, it executes
+    /// through the ONE producer gate (`executor_setup::execute_via_producer`),
+    /// and the receipt is retrievable from `GET /api/receipts` — while a
+    /// tampered envelope, a wrong-agent envelope, and a replayed envelope all
+    /// refuse. Mirrors the exact `dregg_sdk::remote::RemoteRuntime` flow
+    /// (federation-bound action signature, `valid_until` stamp, receipt-chain
+    /// binding).
+    #[tokio::test]
+    async fn remote_signed_envelope_e2e_accepts_then_refuses_tamper_and_replay() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let state = NodeState::new(tmp.path(), vec![]).expect("node state");
+        state.write().await.unlocked = true;
+        let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+        // enable_faucet: the devnet onboarding surface the remote SDK uses.
+        let app = router(state.clone(), true, recorder.handle());
+        // Loopback client: `require_auth`'s pre-passphrase window admits only
+        // loopback callers (F-CRIT-1). The REMOTENESS under test is the
+        // keypair/identity (never seen by the node), not the socket.
+        let addr: std::net::SocketAddr = "127.0.0.1:4444".parse().unwrap();
+
+        // The remote agent: a fresh keypair this node has never seen, plus a
+        // second fresh cell as the transfer recipient.
+        let clerk = dregg_sdk::AgentCipherclerk::new();
+        let clerk2 = dregg_sdk::AgentCipherclerk::new();
+        let default_token_id = *blake3::hash(b"default").as_bytes();
+        let agent = dregg_cell::CellId::derive_raw(&clerk.public_key().0, &default_token_id);
+        let recipient = dregg_cell::CellId::derive_raw(&clerk2.public_key().0, &default_token_id);
+
+        // Devnet onboarding over HTTP: materialize both hosted cells with
+        // their REAL owner keys (the same `POST /api/faucet` call
+        // `RemoteRuntime::faucet` makes).
+        for (cell, owner) in [(agent, &clerk), (recipient, &clerk2)] {
+            let body = serde_json::json!({
+                "recipient": hex_encode(&cell.0),
+                "amount": 5_000u64,
+                "public_key": hex_encode(&owner.public_key().0),
+            });
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/api/faucet")
+                        .header("content-type", "application/json")
+                        .extension(ConnectInfo(addr))
+                        .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                        .expect("faucet request"),
+                )
+                .await
+                .expect("faucet response");
+            assert_eq!(response.status(), StatusCode::OK);
+            let bytes = response.into_body().collect().await.expect("body").to_bytes();
+            let json: serde_json::Value = serde_json::from_slice(&bytes).expect("faucet json");
+            assert_eq!(json["success"], true, "faucet must succeed: {json}");
+        }
+
+        // The two node bindings the remote SDK discovers before signing.
+        let (fed_id, expected_prev) = {
+            let s = state.read().await;
+            (
+                crate::executor_setup::federation_id_for_executor(&s),
+                s.cclerk.receipt_chain().last().map(|r| r.receipt_hash()),
+            )
+        };
+        assert!(
+            expected_prev.is_some(),
+            "faucet turns must have committed receipts to bind against"
+        );
+
+        // Sign the action over the canonical federation-bound message — the
+        // node-side executor verifies EXACTLY this (one gate, no parallel
+        // verification path).
+        let unsigned = Action {
+            target: agent,
+            method: *blake3::hash(b"execute").as_bytes(),
+            args: vec![],
+            authorization: Authorization::Unchecked,
+            preconditions: dregg_cell::Preconditions::default(),
+            effects: vec![Effect::Transfer {
+                from: agent,
+                to: recipient,
+                amount: 7,
+            }],
+            may_delegate: DelegationMode::None,
+            commitment_mode: CommitmentMode::Full,
+            balance_change: None,
+            witness_blobs: vec![],
+        };
+        let message = dregg_turn::TurnExecutor::compute_signing_message(&unsigned, &fed_id);
+        let sig = clerk.sign_bytes(&message);
+        let action = Action {
+            authorization: Authorization::from_sig_bytes(sig.0),
+            ..unsigned
+        };
+        let mut forest = CallForest::new();
+        forest.add_root(action);
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        let turn = Turn {
+            agent,
+            nonce: 0,
+            fee: 1_000,
+            memo: None,
+            // The remote SDK ALWAYS stamps valid_until (executor expiry gate +
+            // the verified Lean producer's wire marshal).
+            valid_until: Some(now + 3600),
+            call_forest: forest,
+            depends_on: vec![],
+            previous_receipt_hash: expected_prev,
+            conservation_proof: None,
+            sovereign_witnesses: std::collections::HashMap::new(),
+            execution_proof: None,
+            execution_proof_cell: None,
+            execution_proof_new_commitment: None,
+            custom_program_proofs: None,
+            effect_binding_proofs: Vec::new(),
+            cross_effect_dependencies: Vec::new(),
+            effect_witness_index_map: Vec::new(),
+        };
+        let signed = clerk.sign_turn(&turn);
+        let envelope = postcard::to_stdvec(&signed).expect("envelope encode");
+
+        let submit = |bytes: Vec<u8>| {
+            app.clone().oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/turns/submit")
+                    .header("content-type", "application/octet-stream")
+                    .extension(ConnectInfo(addr))
+                    .body(Body::from(bytes))
+                    .expect("submit request"),
+            )
+        };
+
+        // ── ACCEPT: the honest remote envelope commits. ──
+        let response = submit(envelope.clone()).await.expect("submit response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = response.into_body().collect().await.expect("body").to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).expect("submit json");
+        assert_eq!(
+            json["accepted"], true,
+            "honest remote envelope must commit: {json}"
+        );
+        let turn_hash_hex = hex_encode(&turn.hash());
+        assert_eq!(json["turn_hash"], serde_json::json!(turn_hash_hex));
+
+        // ── RECEIPT RETRIEVABLE: the committed receipt appears on the public
+        // receipts surface under the canonical turn hash. ──
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/receipts")
+                    .extension(ConnectInfo(addr))
+                    .body(Body::empty())
+                    .expect("receipts request"),
+            )
+            .await
+            .expect("receipts response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = response.into_body().collect().await.expect("body").to_bytes();
+        let receipts: serde_json::Value = serde_json::from_slice(&bytes).expect("receipts json");
+        assert!(
+            receipts
+                .as_array()
+                .expect("receipts array")
+                .iter()
+                .any(|r| r["turn_hash"] == serde_json::json!(turn_hash_hex)),
+            "committed remote turn's receipt must be retrievable: {receipts}"
+        );
+
+        // ── TAMPER REFUSES: any post-signing mutation breaks the envelope. ──
+        let mut tampered = signed.clone();
+        tampered.turn.fee += 1;
+        let response = submit(postcard::to_stdvec(&tampered).expect("encode"))
+            .await
+            .expect("tamper response");
+        let bytes = response.into_body().collect().await.expect("body").to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).expect("tamper json");
+        assert_eq!(json["accepted"], false, "tampered envelope must refuse");
+        assert_eq!(json["error"], serde_json::json!("invalid turn signature"));
+
+        // ── WRONG AGENT REFUSES: an honestly-signed envelope whose turn acts
+        // as someone ELSE's cell refuses at the ingress binding. ──
+        let mut wrong = turn.clone();
+        wrong.agent = recipient;
+        let wrong_signed = clerk.sign_turn(&wrong);
+        let response = submit(postcard::to_stdvec(&wrong_signed).expect("encode"))
+            .await
+            .expect("wrong-agent response");
+        let bytes = response.into_body().collect().await.expect("body").to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).expect("wrong-agent json");
+        assert_eq!(json["accepted"], false, "wrong-agent envelope must refuse");
+        assert_eq!(
+            json["error"],
+            serde_json::json!("turn agent does not match signer default cell")
+        );
+
+        // ── REPLAY REFUSES: the exact accepted envelope, resubmitted, is
+        // rejected — its receipt-chain binding now points behind the head. ──
+        let response = submit(envelope).await.expect("replay response");
+        let bytes = response.into_body().collect().await.expect("body").to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).expect("replay json");
+        assert_eq!(json["accepted"], false, "replayed envelope must refuse");
+        assert_eq!(json["error"], serde_json::json!("receipt chain mismatch"));
+    }
+
     #[test]
     fn test_proposal_creation_and_vote_commit() {
         let node_a = test_key("node_a");

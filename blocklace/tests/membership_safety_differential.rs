@@ -27,16 +27,24 @@ fn participants(n: u8) -> Vec<[u8; 32]> {
     (1..=n).map(key).collect()
 }
 
-/// `compute_threshold` golden table — matches the Lean `#guard computeThreshold _ == _`.
+/// `compute_threshold` golden table — matches the Lean `#guard computeThreshold _ == _`
+/// at every populated size. Since the #170 quorum unification the real
+/// `compute_threshold` DELEGATES to `dregg_blocklace::supermajority_threshold` (THE one
+/// quorum formula), whose `n = 0` is 1 (fail-closed: an empty constitution can never
+/// ratify) where the Lean transcription's `n = 0 ↦ 0` guard is 0 — pinned EXPLICITLY
+/// here, same discipline as the federation diffs' `3 ∣ n` pins. Residual lane: lift
+/// the Lean `computeThreshold` n=0 guard and drop this carve-out (HORIZONLOG).
 #[test]
 fn differential_compute_threshold_table() {
-    // Lean: computeThreshold {1,3,4,7,10,0} == {1,3,3,5,7,0}
+    // Lean: computeThreshold {1,3,4,7,10} == {1,3,3,5,7} — agreement for all n ≥ 1.
     assert_eq!(compute_threshold(1), 1);
     assert_eq!(compute_threshold(3), 3);
     assert_eq!(compute_threshold(4), 3);
     assert_eq!(compute_threshold(7), 5);
     assert_eq!(compute_threshold(10), 7);
-    assert_eq!(compute_threshold(0), 0);
+    // Lean: computeThreshold 0 == 0 (vacuous); real: 1 (fail-closed, strictly
+    // safe-side — no empty vote set can meet it).
+    assert_eq!(compute_threshold(0), 1);
 }
 
 /// The federations carry the thresholds the Lean `fed3 / fed4 / fed1` carry.

@@ -42,6 +42,12 @@ Last sweep: 2026-06-12 (the Grand Convergence session).
   + Policy.lean line, rides rotation — now confirmed-open, not quietly-done.
 - PI v3 rateBound/challengeWindow tags: kimi wired the SLOTS — verify they connect to
   enforcement (caveat layer) or are carried-only; one look.
+- PI v3 producer/verifier tear (RED at HEAD): 007c2f1d2 bumped `inner_pi::ACTIVE_BASE_COUNT`
+  to 204 but the witness producer still emits 201 PIs, so
+  `node blocklace_sync::tests::distributed_witness_path_gossip_materialize_aggregate_verify`
+  fails ("bilateral bundle entry 0 has 201 public inputs, expected at least 204",
+  turn/src/executor/proof_verify.rs:1465) — the PI v3 lane closes producer emission to the
+  new layout (found red by the remote-lane finisher 2026-06-12; unrelated to #170/#171).
 - Register-count measurement: 16 vs 24 vs 32 probe variants of the staged rotation
   emission; measure the always-paid delta (commit-chain sites + opened columns) before the
   count freezes at cutover. Folds into ROTATION-CUTOVER pre-gates. LANE RUNNING.

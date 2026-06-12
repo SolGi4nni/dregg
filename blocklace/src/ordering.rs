@@ -558,7 +558,9 @@ pub fn is_cordial(blocklace: &Blocklace, block_id: &BlockId, participants: &[[u8
         })
         .collect();
 
-    acknowledged.len() > participants.len() * 2 / 3
+    // THE one quorum formula (#170): `> 2n/3` ⟺ `≥ ⌊2n/3⌋ + 1` — consume
+    // `supermajority_threshold` instead of restating it inline.
+    acknowledged.len() >= supermajority_threshold(participants.len())
 }
 
 // ─── Unified Blocklace: Reference Groups and Filtered Ordering ──────────────

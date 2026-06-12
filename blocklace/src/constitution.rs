@@ -732,12 +732,12 @@ impl ConstitutionManager {
 
 /// Compute the default supermajority threshold for n participants.
 ///
-/// Uses floor(2n/3) + 1, matching the BFT requirement of tolerating < n/3 faults.
+/// DELEGATES to [`crate::ordering::supermajority_threshold`] — THE one quorum
+/// formula (#170 unification): `⌊2n/3⌋ + 1`. `n = 0` returns 1 (fail-closed):
+/// an empty constitution can never ratify anything, instead of a vacuous
+/// threshold of 0 that an empty vote set would satisfy.
 pub fn compute_threshold(n: usize) -> usize {
-    if n == 0 {
-        return 0;
-    }
-    (n * 2 / 3) + 1
+    crate::ordering::supermajority_threshold(n)
 }
 
 // ─── Phase 3: Governance as a Lens ────────────────────────────────────────────
@@ -1097,7 +1097,16 @@ mod tests {
         assert_eq!(compute_threshold(7), 5); // 2*7/3 + 1 = 5
         assert_eq!(compute_threshold(10), 7); // 2*10/3 + 1 = 7
         assert_eq!(compute_threshold(1), 1); // 2*1/3 + 1 = 1
-        assert_eq!(compute_threshold(0), 0);
+        assert_eq!(compute_threshold(0), 1); // empty constitution: fail-closed
+        // THE one quorum formula (#170): the constitution threshold IS the
+        // blocklace supermajority — no second formula to drift.
+        for n in 0..=64 {
+            assert_eq!(
+                compute_threshold(n),
+                crate::ordering::supermajority_threshold(n),
+                "constitution threshold diverges from the unified quorum at n={n}"
+            );
+        }
     }
 
     // ─── Propose join → threshold approvals → member added ──────────────────
