@@ -34,6 +34,10 @@ key `~/.ssh/negneg-cq.pem`, token in `/etc/dregg/node.env` there).
    Main loop commits; agents never run git. Plain constructive register (language
    design / developer experience framing).
 
+**STANDING PRACTICE (ember 2026-06-12): every named follow-up/residue/closure lane goes
+into `HORIZONLOG.md` IN THE SAME BREATH as it is named** — reports and commit messages are
+not durable across compaction; the log is the burn-down. Sweep it at every Convergence.
+
 ## Where everything is
 
 - **The epoch design**: `docs/REFINEMENT-DESIGN.md` — five decisions: THE HEAP
