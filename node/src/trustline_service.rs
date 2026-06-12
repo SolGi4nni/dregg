@@ -172,7 +172,7 @@ impl TrustlineRefusal {
         }
     }
 
-    fn detail(&self) -> String {
+    pub(crate) fn detail(&self) -> String {
         match self {
             TrustlineRefusal::Locked => "node cipherclerk is locked".into(),
             TrustlineRefusal::NoTrustline(d)
@@ -211,11 +211,11 @@ impl IntoResponse for TrustlineRefusal {
 // Slot / hex helpers
 // =============================================================================
 
-fn hex_encode(bytes: &[u8]) -> String {
+pub(crate) fn hex_encode(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-fn hex_decode_32(hex: &str) -> Option<[u8; 32]> {
+pub(crate) fn hex_decode_32(hex: &str) -> Option<[u8; 32]> {
     if hex.len() != 64 {
         return None;
     }
@@ -235,7 +235,7 @@ fn slot_u64(cell: &dregg_cell::Cell, index: u8) -> u64 {
     u64::from_be_bytes(f[24..32].try_into().expect("8-byte tail"))
 }
 
-fn field_u64(value: u64) -> [u8; 32] {
+pub(crate) fn field_u64(value: u64) -> [u8; 32] {
     let mut f = [0u8; 32];
     f[24..32].copy_from_slice(&value.to_be_bytes());
     f
@@ -333,7 +333,7 @@ fn require_operator_authority(
 /// extend the cipherclerk receipt chain, cell-agent turns (the one-time
 /// adopt) do not (the receipt belongs to the cell's history — the
 /// `AgentRuntime::execute_as` semantics).
-fn run_signed_turn(
+pub(crate) fn run_signed_turn(
     s: &mut NodeStateInner,
     agent: CellId,
     target: CellId,

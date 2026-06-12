@@ -1443,6 +1443,18 @@ async fn handle_push(
         // (The block itself is still retained as slashable evidence and continues
         // to propagate — only this peer's relay privilege is demoted.)
         handle.gossip.penalize_equivocation_relay(from).await;
+
+        // ADJUDICATION WELD (ORGANS §5 / CONSENSUS-FLEX §7): propagated fork
+        // evidence reaches the SLASH path, not just membership auto-evict.
+        // Each retained proof is reduced to the self-contained wire value
+        // (`EvidenceOfEquivocation`); if the equivocator posted a bond on
+        // this node, the exhibit slashes it as one conserved executor move
+        // from the bonded cell — no operator in the loop, no-double-resolve
+        // via the burned evidence digest. Unbonded / already-resolved /
+        // different-seq proofs are logged no-ops.
+        for proof in &outcome.equivocations {
+            crate::equivocation_court_service::slash_from_proof(state, proof).await;
+        }
     }
 
     let inserted = outcome.inserted.len();

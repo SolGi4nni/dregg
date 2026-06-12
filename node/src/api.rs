@@ -1738,6 +1738,10 @@ pub fn router_with_cors(
         // Stingray coordinator) / draw / repay (the bilateral counter) /
         // settle (rebalance applied back to the ledger as moves) / status.
         .merge(crate::trustline_service::routes())
+        // Equivocation court (ORGANS §5): bond (slashable stake escrowed in
+        // a real bond cell) / evidence (the witness-first slash, executed as
+        // one conserved executor move from the bonded cell) / status.
+        .merge(crate::equivocation_court_service::routes())
         // Queue operations
         .route_layer(middleware::from_fn_with_state(state.clone(), require_auth));
 

@@ -359,6 +359,11 @@ pub struct NodeStateInner {
     /// Trustline registry (ORGANS §1 weld): the forever draw-digest
     /// anti-replay set per trustline cell (`no_double_draw_forever`).
     pub trustlines: crate::trustline_service::TrustlineRegistry,
+    /// Equivocation court ledger (ORGANS §5 weld): the witness-first court
+    /// (burned evidence digests + the slashable admission registry) and the
+    /// strand-key → bond-cell bindings, so blocklace fork evidence executes
+    /// as an ordinary conserved move from the bonded cell.
+    pub equivocation_court: crate::equivocation_court_service::CourtLedger,
 }
 
 /// Maximum number of events retained in the ring buffer for REST polling.
@@ -789,6 +794,7 @@ impl NodeState {
                 blocklace_handle: None,
                 storage_gateway: crate::storage_service::StorageGatewayService::from_env(),
                 trustlines: crate::trustline_service::TrustlineRegistry::default(),
+                equivocation_court: crate::equivocation_court_service::CourtLedger::default(),
             })),
             events_tx,
             gossip: Arc::new(RwLock::new(None)),
@@ -897,6 +903,7 @@ impl NodeState {
                 blocklace_handle: None,
                 storage_gateway: crate::storage_service::StorageGatewayService::from_env(),
                 trustlines: crate::trustline_service::TrustlineRegistry::default(),
+                equivocation_court: crate::equivocation_court_service::CourtLedger::default(),
             })),
             events_tx,
             gossip: Arc::new(RwLock::new(None)),

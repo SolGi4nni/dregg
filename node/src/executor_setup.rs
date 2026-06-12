@@ -63,6 +63,14 @@ pub fn configure_turn_executor(
     // conditional-turn verification of our receipts was impossible.
     executor.set_executor_signing_key(s.cclerk.gossip_signing_key().to_bytes());
 
+    // ORGANS §5 (adjudication): install the court's `validEquivocation`
+    // predicate atom into the executor's witnessed-predicate registry, so
+    // turn admission / cell programs can gate on a verified fork exhibit
+    // (CONSENSUS-FLEX §7 item 2, live on every node executor).
+    if let Some(registry) = executor.witnessed_registry.as_mut() {
+        dregg_federation::court::register_equivocation_court(registry);
+    }
+
     // THE EPOCH §5 (signed wells): wire the genesis-declared wells so fees
     // are MOVES to the fee well and Burn is a MOVE to the asset's issuer
     // well — every committed turn conserves exactly
