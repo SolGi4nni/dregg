@@ -47,6 +47,8 @@ Last sweep: 2026-06-12 (the Grand Convergence session).
 - Trustline payment-channel parity: channel close (TL_STATE_CLOSED residual-escrow return) · one-factory collateral parameter · MCP `dregg_extend_trustline` · remote-silo pubkey registration (n=1 collapses it) · multilateral rippling (TRUSTLINES.md §7).
 - Hosted-operator epoch-key custody posture (sovereign-member groups ride the SDK noun client-side; channels residue — partly an ember-decision).
 
+- Divergence-ledger doc churn: `turn/tests/rust_lean_divergence_finder.rs` overwrites the git-tracked `metatheory/docs/rebuild/_RUST-LEAN-DIVERGENCE-LEDGER.md` on every run, dirtying trees and blocking persvati pushes — emit to a build artifact path (or commit deliberately), one-line fix.
+
 ## Crypto / protocol artifacts (bounded, sequenced after the rotation)
 
 - DKG ceremony-as-cell-app: rounds over blocklace broadcast + seal-pair channels + slashable complaints (core landed 29509149d; transport is the artifact).
