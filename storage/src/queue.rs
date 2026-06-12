@@ -62,12 +62,30 @@ pub struct QueueEntry {
 }
 
 /// Proof that an entry was dequeued (for deposit refund).
+///
+/// A dequeue proof witnesses the transition `old_root → new_root` removing
+/// exactly `entry` from the HEAD of the queue:
+///
+/// * `old_root  == merkle_root([hash_entry(entry)] ++ remaining_leaves)`
+/// * `new_root  == merkle_root(remaining_leaves)`
+///
+/// `remaining_leaves` are the leaf commitments of the pending entries that
+/// FOLLOW the head, in FIFO order — the full witness needed because the queue
+/// root commits only to the pending window (head..tail) and removing the head
+/// shifts every leaf (no succinct sibling-path proof exists for this shape).
+///
+/// `position` (the absolute head index since queue creation) is NOT bound by
+/// the roots — the commitment covers only the pending window. It is carried
+/// as metadata; do not trust it cryptographically.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DequeueProof {
     pub entry: QueueEntry,
     pub old_root: [u8; 32],
     pub new_root: [u8; 32],
     pub position: usize,
+    /// Leaf hashes (`hash_entry`) of the pending entries remaining AFTER the
+    /// dequeued head, in FIFO order. Empty iff the dequeue emptied the queue.
+    pub remaining_leaves: Vec<[u8; 32]>,
 }
 
 /// Errors from queue operations.
@@ -189,6 +207,7 @@ impl MerkleQueue {
             old_root,
             new_root: self.root,
             position,
+            remaining_leaves: self.pending_leaves(),
         };
 
         Ok(Some((entry, proof)))
@@ -289,6 +308,7 @@ impl MerkleQueue {
             old_root,
             new_root: self.root,
             position,
+            remaining_leaves: self.pending_leaves(),
         };
 
         Ok((entry, proof))
@@ -363,6 +383,11 @@ impl MerkleQueue {
         let leaves: Vec<[u8; 32]> = pending.iter().map(hash_entry).collect();
         self.root = merkle_root(&leaves);
     }
+
+    /// Leaf hashes of the current pending window (head..tail), in FIFO order.
+    fn pending_leaves(&self) -> Vec<[u8; 32]> {
+        self.entries[self.head..].iter().map(hash_entry).collect()
+    }
 }
 
 /// The canonical empty-queue root (typed framework's empty MerkleRoot).
@@ -407,22 +432,46 @@ fn merkle_root(leaves: &[[u8; 32]]) -> [u8; 32] {
     crate::commitment::blake3_binary_root(leaves)
 }
 
-/// Verify a dequeue proof: that dequeueing the given entry from a queue with
-/// old_root produces new_root.
+/// Verify a dequeue proof STRUCTURALLY: the transition `old_root → new_root`
+/// removes exactly `proof.entry` from the HEAD of the committed queue.
 ///
-/// This reconstructs what the new root should be by removing the entry at `position`
-/// from the old state. In practice, a full verifier would need the sibling hashes;
-/// here we provide a simplified check that the proof is internally consistent.
+/// Recomputes both roots against the same commitment scheme `enqueue`/
+/// `recompute_root` use (domain-tagged `hash_entry` leaves under
+/// `commitment::blake3_binary_root`, empty = the typed empty sentinel):
+///
+/// 1. `hash_entry(proof.entry)` must be the FIRST leaf under `old_root`,
+///    with `proof.remaining_leaves` as the rest of the pending window.
+/// 2. `new_root` must be the root of exactly `proof.remaining_leaves` —
+///    the queue with that head removed and nothing else changed.
+///
+/// Fail-closed: any mismatch (wrong head entry, tampered roots, added/
+/// dropped/reordered remaining leaves) returns `false`.
+///
+/// NOTE: structural validity proves the TRANSITION is a well-formed head
+/// dequeue; it does NOT prove `old_root` was ever the live queue root. To
+/// also refuse replayed/stale proofs, verify against the known live root
+/// with [`verify_dequeue_proof_against`].
 pub fn verify_dequeue_proof(proof: &DequeueProof) -> bool {
-    // Basic consistency: old_root != new_root (unless the queue is pathological).
-    // The proof is valid if old_root and new_root differ (state changed).
-    // A full implementation would verify Merkle paths; for Phase 1 we verify
-    // that the roots are different and the entry is well-formed.
-    proof.old_root != proof.new_root || {
-        // Edge case: if dequeueing produces an empty queue, both could be the empty root.
-        // That's only valid if old_root was a single-element tree.
-        proof.new_root == empty_queue_root()
+    // (1) old_root commits to [head leaf, remaining...].
+    let head_leaf = hash_entry(&proof.entry);
+    let mut old_leaves = Vec::with_capacity(1 + proof.remaining_leaves.len());
+    old_leaves.push(head_leaf);
+    old_leaves.extend_from_slice(&proof.remaining_leaves);
+    if merkle_root(&old_leaves) != proof.old_root {
+        return false;
     }
+    // (2) new_root is exactly the queue with the head removed.
+    // (merkle_root([]) == empty_queue_root(), so emptying dequeues check too.)
+    merkle_root(&proof.remaining_leaves) == proof.new_root
+}
+
+/// Verify a dequeue proof AGAINST a known pre-state root (e.g. the live
+/// queue root the verifier tracked). Refuses replayed/stale proofs whose
+/// `old_root` no longer matches, in addition to the full structural check
+/// of [`verify_dequeue_proof`]. On success the verifier should advance its
+/// tracked root to `proof.new_root`.
+pub fn verify_dequeue_proof_against(proof: &DequeueProof, expected_pre_root: &[u8; 32]) -> bool {
+    proof.old_root == *expected_pre_root && verify_dequeue_proof(proof)
 }
 
 /// Serialize a QueueEntry to bytes for WAL storage.

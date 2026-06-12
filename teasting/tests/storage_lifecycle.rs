@@ -313,32 +313,32 @@ fn tampered_dequeue_proof_rejected() {
     let (_dequeued, valid_proof) = queue.dequeue().unwrap();
     assert!(verify_dequeue_proof(&valid_proof), "valid proof must pass");
 
-    // Tamper with the proof: change the old_root.
+    // Tamper with the proof: change the old_root. The verifier recomputes the
+    // pre-root from the claimed head leaf + remaining leaves, so a fabricated
+    // old_root refuses.
     let mut tampered = valid_proof.clone();
     tampered.old_root = [0xFF; 32];
-    // After tampering, the proof's old_root != new_root still holds but is based on
-    // a fabricated root. verify_dequeue_proof checks structural consistency.
-    // The key check: if old_root == new_root (impossible tampering scenario), it fails.
+    assert!(
+        !verify_dequeue_proof(&tampered),
+        "proof with fabricated old_root must be rejected"
+    );
+
+    // old_root == new_root is never a dequeue.
     let mut same_root_tamper = valid_proof.clone();
     same_root_tamper.old_root = same_root_tamper.new_root;
-    // This should fail unless it equals the empty queue marker.
-    let is_empty_root = same_root_tamper.new_root == empty_queue_root();
-    if !is_empty_root {
-        assert!(
-            !verify_dequeue_proof(&same_root_tamper),
-            "proof with same old/new root must be rejected (non-empty)"
-        );
-    }
+    assert!(
+        !verify_dequeue_proof(&same_root_tamper),
+        "proof with same old/new root must be rejected"
+    );
 
-    // Tamper with entry content hash (different entry than what was actually dequeued).
+    // Tamper with entry content hash (different entry than what was actually
+    // dequeued). The entry is bound by the leaf commitment under old_root,
+    // so this refuses too.
     let mut content_tampered = valid_proof.clone();
     content_tampered.entry.content_hash = [0xDE; 32];
-    // The structural check still passes because verify_dequeue_proof only checks
-    // root transitions. Full verification requires the Merkle path, which we test
-    // via the invariant that roots differ.
-    assert_ne!(
-        content_tampered.entry.content_hash,
-        valid_proof.entry.content_hash
+    assert!(
+        !verify_dequeue_proof(&content_tampered),
+        "proof claiming a different entry must be rejected"
     );
 }
 
