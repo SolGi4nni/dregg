@@ -58,9 +58,10 @@ export async function nodeRequest<T = unknown>(
 export async function nodeRequestRaw(
   config: NodeConfig,
   path: string,
+  extraHeaders: Record<string, string> = {},
 ): Promise<{ ok: true; data: ArrayBuffer } | { ok: false; error: string }> {
   const url = config.nodeUrl.replace(/\/$/, "") + path;
-  const headers = getNodeHeaders(config);
+  const headers = { ...getNodeHeaders(config), ...extraHeaders };
 
   try {
     const resp = await fetch(url, {

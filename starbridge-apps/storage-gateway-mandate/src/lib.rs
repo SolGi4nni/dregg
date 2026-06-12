@@ -282,6 +282,18 @@ pub fn sgm_factory_descriptor() -> FactoryDescriptor {
             StateConstraint::WriteOnce {
                 index: VOLUME_CEILING_SLOT,
             },
+            // The authorization scope commitments are equally one-shot: a
+            // mutable prefix/compartment would let a later turn silently
+            // re-point the mandate's PUT scope or GET clearance. The executor
+            // installs these `state_constraints` as the born cell's program
+            // (`apply_create_cell_from_factory`), so this is the binding that
+            // actually bites on the live gateway cell.
+            StateConstraint::WriteOnce {
+                index: KEY_PREFIX_HASH_SLOT,
+            },
+            StateConstraint::WriteOnce {
+                index: READ_COMPARTMENT_SLOT,
+            },
             StateConstraint::Monotonic {
                 index: VOLUME_SPENT_SLOT,
             },

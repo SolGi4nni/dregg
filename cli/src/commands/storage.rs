@@ -97,7 +97,9 @@ async fn write_file(
     ));
 
     let client = http_client();
-    let url = api_url(cfg, "/files/write");
+    // Mandate-gated storage route: admission = the StorageGatewayMandate cell
+    // (op allowlist + key-prefix scope + executor-enforced volume debit).
+    let url = api_url(cfg, "/storage/put");
     let resp = client
         .post(&url)
         .header("content-type", "application/octet-stream")
@@ -140,8 +142,14 @@ async fn read_file(
     let spinner = ctx.spinner(&format!("Fetching {}...", abbrev_hex(hash, 8, 4)));
 
     let client = http_client();
-    let url = api_url(cfg, &format!("/files/read/{}", hash));
-    let resp = client.get(&url).send().await?;
+    // Mandate-gated storage route; GET requires the read-compartment
+    // clearance label pinned in the gateway cell.
+    let url = api_url(cfg, &format!("/storage/get/{}", hash));
+    let resp = client
+        .get(&url)
+        .header("x-dregg-clearance", "storage-read")
+        .send()
+        .await?;
 
     if !resp.status().is_success() {
         spinner.finish_and_clear();

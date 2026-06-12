@@ -1730,6 +1730,10 @@ pub fn router_with_cors(
         .route("/proofs/compose", post(post_compose_proofs))
         .route("/turns/bearer-auth", post(post_bearer_auth))
         .route("/turns/peer-exchange", post(post_peer_exchange))
+        // Storage gateway (ORGANS §3): content-addressed put/get/stat/list
+        // whose ADMISSION is the StorageGatewayMandate cell (capability +
+        // op allowlist + prefix scope + executor-enforced volume debit).
+        .merge(crate::storage_service::routes())
         // Queue operations
         .route_layer(middleware::from_fn_with_state(state.clone(), require_auth));
 

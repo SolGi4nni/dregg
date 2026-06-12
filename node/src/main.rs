@@ -30,6 +30,7 @@ mod relay_service;
 mod routing_table;
 mod starbridge_seed;
 mod state;
+mod storage_service;
 mod strand_admission_gate;
 mod turn_proving;
 mod ws;

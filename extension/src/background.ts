@@ -2300,11 +2300,16 @@ async function resolvePath(path: string): Promise<Record<string, unknown>> {
 // Storage operations
 // ---------------------------------------------------------------------------
 
+// The node's storage routes are admitted by the StorageGatewayMandate cell
+// (op allowlist + key-prefix scope + volume budget — each op commits a real
+// debit turn). GETs additionally present the read-compartment clearance label.
+const STORAGE_READ_CLEARANCE = "storage-read";
+
 async function storageWrite(dataBase64: string): Promise<{ hash?: string; size?: number; error?: string }> {
   const cc = await loadState();
   if (cc.locked) return { error: "Cipherclerk is locked" };
   const binary = Uint8Array.from(atob(dataBase64), c => c.charCodeAt(0));
-  const resp = await nodeRequest<{ hash?: string; size?: number }>(nodeConfig, "/files/write", {
+  const resp = await nodeRequest<{ hash?: string; size?: number }>(nodeConfig, "/storage/put", {
     method: "POST",
     headers: { "Content-Type": "application/octet-stream" },
     body: binary,
@@ -2314,7 +2319,9 @@ async function storageWrite(dataBase64: string): Promise<{ hash?: string; size?:
 }
 
 async function storageRead(hash: string): Promise<{ hash?: string; data?: string; size?: number; error?: string }> {
-  const result = await nodeRequestRaw(nodeConfig, `/files/read/${hash}`);
+  const result = await nodeRequestRaw(nodeConfig, `/storage/get/${hash}`, {
+    "X-Dregg-Clearance": STORAGE_READ_CLEARANCE,
+  });
   if (!result.ok) return { error: result.error };
   const bytes = new Uint8Array(result.data);
   const base64 = btoa(String.fromCharCode(...bytes));

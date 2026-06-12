@@ -210,8 +210,8 @@ export class MockNode {
       }
     });
 
-    // Storage: write file.
-    this.app.post('/files/write', (req, res) => {
+    // Storage: put blob (mandate-gated route on the real node).
+    this.app.post('/storage/put', (req, res) => {
       const data = req.body.data || '';
       const hash = `sha256_${Buffer.from(data).toString('hex').slice(0, 16)}`;
       this.state.storedFiles.set(hash, data);
@@ -220,8 +220,9 @@ export class MockNode {
       res.json({ hash, size: data.length });
     });
 
-    // Storage: read file by hash.
-    this.app.get('/files/read/:hash', (req, res) => {
+    // Storage: get blob by hash (mandate-gated; the real node requires the
+    // x-dregg-clearance read-compartment header).
+    this.app.get('/storage/get/:hash', (req, res) => {
       const content = this.state.storedFiles.get(req.params.hash);
       if (content) {
         res.json({ hash: req.params.hash, data: content, size: content.length });

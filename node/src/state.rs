@@ -353,6 +353,9 @@ pub struct NodeStateInner {
     pub solo_consensus: Option<dregg_federation::solo::SoloConsensusState>,
     /// Blocklace consensus handle (set after federation sync starts).
     pub blocklace_handle: Option<crate::blocklace_sync::BlocklaceHandle>,
+    /// Storage gateway service (ORGANS §3 weld): the content-addressed store
+    /// plus the object index, admitted under the StorageGatewayMandate cell.
+    pub storage_gateway: crate::storage_service::StorageGatewayService,
 }
 
 /// Maximum number of events retained in the ring buffer for REST polling.
@@ -781,6 +784,7 @@ impl NodeState {
                 proof_pending_order: VecDeque::new(),
                 solo_consensus: None,
                 blocklace_handle: None,
+                storage_gateway: crate::storage_service::StorageGatewayService::from_env(),
             })),
             events_tx,
             gossip: Arc::new(RwLock::new(None)),
@@ -887,6 +891,7 @@ impl NodeState {
                 proof_pending_order: VecDeque::new(),
                 solo_consensus: None,
                 blocklace_handle: None,
+                storage_gateway: crate::storage_service::StorageGatewayService::from_env(),
             })),
             events_tx,
             gossip: Arc::new(RwLock::new(None)),
