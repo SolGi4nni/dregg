@@ -1533,11 +1533,47 @@ var CellProgramBuilder = class {
     return programmedCellDescriptor(this.staged);
   }
 };
+
+// src/deploy.ts
+var DeployChecker = class {
+  constructor(wasm) {
+    this.wasm = wasm;
+  }
+  /**
+   * Parse DreggDL → lower to the real `CallForest` → run the static assurance
+   * over the whole declared authority layout → return the {@link DeployVerdict}.
+   *
+   * This is exactly what `dregg-deploy check <file>` runs (the same lowering +
+   * the same `dregg_userspace_verify::analyze`).
+   *
+   * @param text DreggDL surface text — TOML, or JSON when it starts with `{`.
+   * @param ring When `true`, also run the ring-balance check (a settlement
+   *   ring declared as bare funding transfers must net to zero).
+   * @throws Error naming the offending row on a parse / lowering error.
+   */
+  check(text, ring = false) {
+    const json = this.wasm.deploy_check(text, ring);
+    return JSON.parse(json);
+  }
+  /**
+   * Run only the real `Lowered::from_deployment` lowering (no check) and return
+   * the resolved artifact: the ordered births → funds → grants `CallForest` the
+   * checker consumes, the resolved federation id, and the resolved
+   * factory / cell content-addresses. This is `dregg-deploy lower <file>`.
+   *
+   * @throws Error naming the offending row on a parse / lowering error.
+   */
+  lower(text) {
+    const json = this.wasm.deploy_lower(text);
+    return JSON.parse(json);
+  }
+};
 export {
   AgentRuntime,
   AttestedQuery,
   AuthorizedTurn,
   ChannelsClient,
+  DeployChecker,
   EmptyTurnError,
   Identity,
   MAIN_IDENTITY_PATH,
