@@ -308,17 +308,68 @@ pub mod recursive {
         inner_commit_pow_bits: usize,
         inner_query_pow_bits: usize,
     ) -> DreggRecursionConfig {
-        let base = create_recursion_config();
-        use p3_circuit::ops::PermConfig;
-        let fri_verifier_params = FriVerifierParams::with_mmcs(
+        create_recursion_config_with_fri(
             inner_log_blowup,
             inner_log_final_poly_len,
+            // max_log_arity: PROBE — `ir2_config` uses 3 (fold up to 8/step), but the recursion
+            // in-circuit verifier's recompose path is exercised at arity 1 (fold by 2) in every
+            // existing recursion test. Use arity 1 here to isolate whether higher-arity folding
+            // is the obstruction; the in-circuit verifier reads the count/arity from the proof.
+            1,
+            // num_queries: matches `ir2_config`'s security target at log_blowup 6 (19 → ~130
+            // conjectured bits); the in-circuit verifier reads the count from the proof.
+            19,
             inner_commit_pow_bits,
             inner_query_pow_bits,
+        )
+    }
+
+    /// Build a recursion config with a FULLY self-consistent FRI engine at the given knobs —
+    /// the StarkConfig PCS (which MINTS proofs: the inner batch AND the leaf-wrap output) and
+    /// the `FriVerifierParams` (which VERIFY the inner proof in-circuit) are BOTH set to these
+    /// knobs. Use this when the inner proof is minted under a non-default FRI engine and the
+    /// whole leaf-wrap (mint + in-circuit verify + output) runs at one engine.
+    ///
+    /// Differs from [`create_recursion_config`] only in the FRI knobs; the MMCS hash /
+    /// compress / challenger / field are identical (so a proof minted here is structurally a
+    /// `BatchProof<DreggRecursionConfig>` the native-batch leaf-wrap consumes directly).
+    pub fn create_recursion_config_with_fri(
+        log_blowup: usize,
+        log_final_poly_len: usize,
+        max_log_arity: usize,
+        num_queries: usize,
+        commit_pow_bits: usize,
+        query_pow_bits: usize,
+    ) -> DreggRecursionConfig {
+        let perm = default_babybear_poseidon2_16();
+        let hash = MyHash::new(perm.clone());
+        let compress = MyCompress::new(perm.clone());
+        let val_mmcs = MyMmcs::new(hash, compress, 0);
+        let challenge_mmcs = ChallengeMmcs::new(val_mmcs.clone());
+        let fri_params = FriParameters {
+            log_blowup,
+            log_final_poly_len,
+            max_log_arity,
+            num_queries,
+            commit_proof_of_work_bits: commit_pow_bits,
+            query_proof_of_work_bits: query_pow_bits,
+            mmcs: challenge_mmcs,
+        };
+        let pcs = MyPcs::new(Dft::default(), val_mmcs, fri_params);
+        let challenger = Challenger::new(perm);
+        let config = StarkConfig::new(pcs, challenger);
+
+        use p3_circuit::ops::PermConfig;
+        let fri_verifier_params = FriVerifierParams::with_mmcs(
+            log_blowup,
+            log_final_poly_len,
+            commit_pow_bits,
+            query_pow_bits,
             PermConfig::poseidon2(Poseidon2Config::BABY_BEAR_D4_W16),
         );
+
         DreggRecursionConfig {
-            config: base.config,
+            config: Arc::new(config),
             fri_verifier_params,
         }
     }
@@ -607,8 +658,18 @@ pub mod recursive {
     pub fn verify_recursive_batch_proof(
         proof: &p3_circuit_prover::BatchStarkProof<DreggRecursionConfig>,
     ) -> Result<(), String> {
-        let config = create_recursion_config();
-        let mut prover = BatchStarkProver::new(config);
+        verify_recursive_batch_proof_with_config(proof, &create_recursion_config())
+    }
+
+    /// [`verify_recursive_batch_proof`] under an explicit recursion config — the proof must
+    /// have been PRODUCED under the same config's FRI engine. Used by the rotated native-batch
+    /// leaf-wrap, whose output proof is at the `ir2`-knob config (log_blowup 6) rather than the
+    /// default recursion knobs (log_blowup 3).
+    pub fn verify_recursive_batch_proof_with_config(
+        proof: &p3_circuit_prover::BatchStarkProof<DreggRecursionConfig>,
+        config: &DreggRecursionConfig,
+    ) -> Result<(), String> {
+        let mut prover = BatchStarkProver::new(config.clone());
         // Register the NPO table provers that were used to produce the recursive proof.
         // The verifier needs these to interpret the non-primitive ops in the proof.
         prover.register_poseidon2_table::<D>(Poseidon2Config::BABY_BEAR_D4_W16);

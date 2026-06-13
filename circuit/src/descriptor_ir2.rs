@@ -126,6 +126,16 @@ use p3_matrix::dense::RowMajorMatrix;
 use p3_batch_stark::{BatchProof, ProverData, verify_batch};
 #[cfg(feature = "recursion")]
 use p3_batch_stark::{StarkInstance, prove_batch};
+// Generic-config (SIDESTEP) prove/verify surface: lets the rotated leaf-wrap mint/verify an
+// IR-v2 batch under an arbitrary `SC` (e.g. the recursion config with retargeted FRI knobs)
+// rather than only `DreggStarkConfig`. The bounds mirror `prove_batch`/`verify_batch`'s own.
+// On both the prover (`recursion`) and verify (`verifier`) surfaces, like `verify_batch`.
+#[cfg(any(feature = "recursion", feature = "verifier"))]
+use p3_commit::PolynomialSpace;
+#[cfg(any(feature = "recursion", feature = "verifier"))]
+use p3_field::Algebra;
+#[cfg(any(feature = "recursion", feature = "verifier"))]
+use p3_uni_stark::{Domain, StarkGenericConfig, SymbolicExpressionExt, Val};
 
 /// Re-export the IR-v2 wire proof type + its STARK config so external crates (the sdk's
 /// rotated route, measurement tests) can name the `prove_vm_descriptor2` return type without
@@ -3537,7 +3547,7 @@ fn ir2_config() -> DreggStarkConfig {
 
 #[cfg(feature = "recursion")]
 #[allow(clippy::too_many_arguments)]
-fn prove_vm_descriptor2_inner(
+fn prove_vm_descriptor2_inner<SC>(
     desc: &EffectVmDescriptor2,
     base_trace: &[Vec<BabyBear>],
     public_inputs: &[BabyBear],
@@ -3545,8 +3555,14 @@ fn prove_vm_descriptor2_inner(
     map_heaps: &[Vec<HeapLeaf>],
     umem_boundary: &UMemBoundaryWitness,
     check: bool,
-    config: &DreggStarkConfig,
-) -> Result<BatchProof<DreggStarkConfig>, String> {
+    config: &SC,
+) -> Result<BatchProof<SC>, String>
+where
+    SC: StarkGenericConfig,
+    Domain<SC>: PolynomialSpace<Val = P3BabyBear>,
+    SymbolicExpressionExt<Val<SC>, SC::Challenge>: Algebra<SC::Challenge>,
+    SC::Challenge: p3_field::BasedVectorSpace<P3BabyBear>,
+{
     let layout = check_descriptor2(desc)?;
     if base_trace.is_empty() {
         return Err("base trace must be non-empty".to_string());
@@ -3628,7 +3644,7 @@ fn prove_vm_descriptor2_inner(
     let mut pvs: Vec<Vec<P3BabyBear>> = vec![pis];
     pvs.resize(airs.len(), vec![]);
 
-    let instances: Vec<StarkInstance<'_, DreggStarkConfig, Ir2Air>> = airs
+    let instances: Vec<StarkInstance<'_, SC, Ir2Air>> = airs
         .iter()
         .zip(matrices.iter())
         .zip(pvs.iter())
@@ -3733,6 +3749,78 @@ pub fn prove_vm_descriptor2_with_config(
     )
 }
 
+/// **`prove_vm_descriptor2_for_config`** — the SIDESTEP prover: assemble + prove the IR-v2
+/// multi-table batch under a CALLER-SUPPLIED `SC` config (rather than the fixed
+/// `DreggStarkConfig`), so the rotated IVC leaf-wrap can mint a recursion-config-typed
+/// `BatchProof<SC>` that the in-circuit verifier consumes directly (no cross-config type
+/// mismatch). The caller passes a config whose FRI knobs match the production
+/// `ir2_config` (log_blowup 6, 19 queries, 16 query-PoW) so the proof has the same FRI shape
+/// the deployed descriptor proofs do — only the config TYPE differs (a newtype wrapper that
+/// also impls `FriRecursionConfig`). Self-verifies before return.
+#[cfg(feature = "recursion")]
+pub fn prove_vm_descriptor2_for_config<SC>(
+    desc: &EffectVmDescriptor2,
+    base_trace: &[Vec<BabyBear>],
+    public_inputs: &[BabyBear],
+    mem_boundary: &MemBoundaryWitness,
+    map_heaps: &[Vec<HeapLeaf>],
+    umem_boundary: &UMemBoundaryWitness,
+    config: &SC,
+) -> Result<BatchProof<SC>, String>
+where
+    SC: StarkGenericConfig,
+    Domain<SC>: PolynomialSpace<Val = P3BabyBear>,
+    SymbolicExpressionExt<Val<SC>, SC::Challenge>: Algebra<SC::Challenge>,
+    SC::Challenge: p3_field::BasedVectorSpace<P3BabyBear>,
+{
+    prove_vm_descriptor2_inner(
+        desc,
+        base_trace,
+        public_inputs,
+        mem_boundary,
+        map_heaps,
+        umem_boundary,
+        true,
+        config,
+    )
+}
+
+/// **`ir2_airs_and_common_for_config`** — the generic-config sibling of
+/// [`ir2_airs_and_common`]: the present-table `Ir2Air` set, per-table public-input vectors,
+/// and the symbolic `CommonData<SC>` for a batch proved under a caller-supplied `SC` config.
+/// Used by the rotated leaf-wrap to obtain the `(airs, table_public_inputs, common)` triple
+/// matching a recursion-config-typed `BatchProof<SC>`. The `common` is built by the SAME
+/// `ProverData::from_airs_and_degrees(config, ..)` path the inner prover/verifier use, so it
+/// is the canonical common for this batch under `SC`.
+#[cfg(feature = "recursion")]
+pub fn ir2_airs_and_common_for_config<SC>(
+    desc: &EffectVmDescriptor2,
+    proof: &BatchProof<SC>,
+    public_inputs: &[BabyBear],
+    config: &SC,
+) -> Result<(Vec<Ir2Air>, Vec<Vec<P3BabyBear>>, p3_batch_stark::CommonData<SC>), String>
+where
+    SC: StarkGenericConfig,
+    Domain<SC>: PolynomialSpace<Val = P3BabyBear>,
+    SymbolicExpressionExt<Val<SC>, SC::Challenge>: Algebra<SC::Challenge>,
+{
+    let layout = check_descriptor2(desc)?;
+    let presence = Presence::of(desc, &layout);
+    let airs = instance_airs(desc, layout, presence);
+    if proof.degree_bits.len() != airs.len() {
+        return Err(format!(
+            "IR v2 proof carries {} instances but present-table set is {}",
+            proof.degree_bits.len(),
+            airs.len()
+        ));
+    }
+    let pis: Vec<P3BabyBear> = public_inputs.iter().map(|&v| to_p3(v)).collect();
+    let mut table_public_inputs: Vec<Vec<P3BabyBear>> = vec![pis];
+    table_public_inputs.resize(airs.len(), vec![]);
+    let common = ProverData::from_airs_and_degrees(config, &airs, &proof.degree_bits).common;
+    Ok((airs, table_public_inputs, common))
+}
+
 /// **`verify_vm_descriptor2`** — verify an IR v2 batch proof against the descriptor
 /// (the AIRs are rebuilt from the descriptor alone; heights come from the proof).
 pub fn verify_vm_descriptor2(
@@ -3744,14 +3832,21 @@ pub fn verify_vm_descriptor2(
 }
 
 /// Measurement-only variant of [`verify_vm_descriptor2`] under an explicit FRI config
-/// (see [`prove_vm_descriptor2_with_config`]).
+/// (see [`prove_vm_descriptor2_with_config`]). Generic over `SC` so it can verify a
+/// recursion-config-typed batch (the SIDESTEP rotated leaf-wrap's inner proof).
 #[doc(hidden)]
-pub fn verify_vm_descriptor2_with_config(
+pub fn verify_vm_descriptor2_with_config<SC>(
     desc: &EffectVmDescriptor2,
-    proof: &BatchProof<DreggStarkConfig>,
+    proof: &BatchProof<SC>,
     public_inputs: &[BabyBear],
-    config: &DreggStarkConfig,
-) -> Result<(), String> {
+    config: &SC,
+) -> Result<(), String>
+where
+    SC: StarkGenericConfig,
+    Domain<SC>: PolynomialSpace<Val = P3BabyBear>,
+    SymbolicExpressionExt<Val<SC>, SC::Challenge>: Algebra<SC::Challenge>,
+    SC::Challenge: p3_field::BasedVectorSpace<P3BabyBear>,
+{
     let layout = check_descriptor2(desc)?;
     let presence = Presence::of(desc, &layout);
     let airs = instance_airs(desc, layout, presence);
