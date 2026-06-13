@@ -154,6 +154,43 @@ inductive SimpleConstraint where
   `exhibitedCommit`) and on an absent slot. Mirrors `SimpleStateConstraint::CountGe`.
   Admit-char: `evalSimpleCtx_countGe_iff`. -/
   | countGe (m : Nat) (f : FieldName)
+  /-- **`senderMemberOf members`** (apps gap 3) — turn-context atom: the turn's SENDER
+  (the acting cell's identity, carried in `TurnCtx.sender`) is a member of the literal id-set
+  `members`. The CLEAN form of the `anyOf [senderIs a, senderIs b, …]` idiom a multi-admin board
+  needs — one atom instead of a manually-enumerated disjunction (which an N-member board would have
+  to widen by hand each time a member joins). Composing it under `anyOf` with `immutable f` gives
+  the MULTI-admin actor binding: `anyOf [immutable f, senderMemberOf board]` — slot `f` flips only
+  in a turn sent by SOMEONE on the board, the natural generalization of the single-key
+  `anyOf [immutable f, senderIs k]` polis tooth. Mirrors `SimpleStateConstraint::SenderMemberOf
+  { members }` (`cell/src/program.rs`); the Rust evaluator reads `ctx.sender` against the member
+  list. COST (§8): FREE / i-confluent — a predicate over the single turn's own context with no
+  cross-turn invariant (exactly the `senderIs` classification: a pk-equality, here a set-membership,
+  decided entirely by the acting turn). FAIL-CLOSED in the ctx-less evaluator (`MissingContextField`)
+  and on an empty/absent sender. Admit-char: `evalSimpleCtx_senderMemberOf_iff`. -/
+  | senderMemberOf (members : List Int)
+  /-- **`balanceDeltaLe max`** (apps gap 4) — turn-context atom: a RATE CEILING on the cell's
+  OWN sealed kernel balance across the transition — `new.balance − old.balance ≤ max` (the delta
+  twin of the absolute `balanceLe`). Reads BOTH the pre-turn balance (`TurnCtx.balanceBefore`) and
+  the post-turn balance (`TurnCtx.balance`), the sealed kernel balances the executor holds at
+  evaluation time — NOT record fields. A withdrawal-rate / spend-cap gate ("this cell may not GAIN
+  more than `max` per turn"); paired with `balanceDeltaGe` it bounds the per-turn movement in both
+  directions. Mirrors `SimpleStateConstraint::BalanceDeltaLte { max }` (`cell/src/program.rs`),
+  reading `old_balance`/`new_balance` from the executor context. COST (§8): the BOUNDED / ordering
+  pole — a rate-bound on a DECREMENTABLE quantity (the balance) is exactly the
+  `bounded_resource_not_iconfluent` case the moment concurrent debits exist; single-cell serial
+  execution makes it safe today (n=1 collapses the bound, per the single-machine principle), n>1
+  forces ordering on the cell. NOT i-confluent. FAIL-CLOSED on an absent pre- OR post-balance.
+  Admit-char: `evalSimpleCtx_balanceDeltaLe_iff`. -/
+  | balanceDeltaLe (max : Int)
+  /-- **`balanceDeltaGe min`** (apps gap 4) — turn-context atom: a RATE FLOOR on the cell's OWN
+  sealed kernel balance across the transition — `new.balance − old.balance ≥ min` (the delta twin
+  of the absolute `balanceGe`). Reads `TurnCtx.balanceBefore` and `TurnCtx.balance`. The lower-bound
+  rate gate ("this cell may not LOSE more than `−min` per turn" when `min < 0`; "must gain at least
+  `min`" when `min > 0`). Mirrors `SimpleStateConstraint::BalanceDeltaGte { min }`. COST (§8): the
+  BOUNDED / ordering pole, same as `balanceDeltaLe` — a rate-bound on the decrementable balance,
+  i-confluent only under the single serializer (n=1). NOT i-confluent. FAIL-CLOSED on an absent
+  pre- OR post-balance. Admit-char: `evalSimpleCtx_balanceDeltaGe_iff`. -/
+  | balanceDeltaGe (min : Int)
   deriving Repr
 
 /-- **The full state-constraint catalog** — simple constraints plus the cross-slot,
@@ -203,6 +240,21 @@ inductive StateConstraint where
   `clearanceGe`: that fixes the box-label and reads the ACTOR's label; `reachable` reads an arbitrary
   state field as the source. Fail-closed on absent/ill-typed `fromField`. -/
   | reachable     (g : ClearanceGraph) (fromField : FieldName) (toLabel : Label)
+  /-- **`affineDeltaLe terms c`** (apps gap 2) — a genuine MULTI-FIELD DELTA gate across the
+  `(old, new)` transition: `Σ cᵢ·(new[fᵢ] − old[fᵢ]) ≤ c`. Reads BOTH the old and new records and
+  combines several field deltas in one affine bound — what the single-field `deltaBounded` /
+  `fieldDelta` CANNOT express. The real budget-delta / rate gate: e.g. a treasury cell with two
+  spend slots `out_a`, `out_b` bounds the COMBINED outflow per turn,
+  `[(1,"out_a"),(1,"out_b")] ≤ budget` over the deltas; or a weighted basket `2·Δprice − Δindex ≤ k`.
+  Distinct from the post-state-only `affineLe` (a band on the new record) and from `sumEqualsAcross`
+  (an intra-cell conservation equation): this is a one-sided affine inequality on the DIFFERENCES.
+  Maps to a PLONK linear gate over the `(old, new)` wire pair. FAIL-CLOSED: any absent/ill-typed
+  term field on EITHER side ⇒ `false` (the delta is not evaluable). COST (§8): the BOUNDED /
+  ordering pole — a bound on per-turn CHANGE of (generally decrementable) quantities is the
+  `bounded_resource_not_iconfluent` case under concurrent writers; single-cell serial execution
+  keeps it safe today (n=1), n>1 forces ordering. NOT i-confluent (a rate gate is never
+  coordination-free in general). Admit-char: `evalConstraint_affineDeltaLe_iff`. -/
+  | affineDeltaLe (terms : List (Int × FieldName)) (c : Int)
   deriving Repr
 
 /-! ## Evaluation — the executable admissibility check. -/
@@ -226,6 +278,17 @@ def affineSum (v : Value) (terms : List (Int × FieldName)) : Option Int :=
     (fun t acc => match acc, v.scalar t.2 with
                   | some s, some x => some (s + t.1 * x)
                   | _,      _      => none)
+    (some 0)
+
+/-- `Σ kᵢ·(new[fᵢ] − old[fᵢ])` over named scalar fields — the affine combination of the per-field
+DELTAS across the `(old, new)` transition (`none` if ANY field is absent/ill-typed on EITHER side —
+fail-closed, so a delta gate over a missing field cannot be satisfied). The reader behind
+`affineDeltaLe` (apps gap 2): a multi-field rate gate `deltaBounded`/`fieldDelta` cannot express. -/
+def affineDeltaSum (old new : Value) (terms : List (Int × FieldName)) : Option Int :=
+  terms.foldr
+    (fun t acc => match acc, old.scalar t.2, new.scalar t.2 with
+                  | some s, some a, some b => some (s + t.1 * (b - a))
+                  | _,      _,      _      => none)
     (some 0)
 
 /-- Read a named field as a numeric clearance `Label` (`Label.id`), `none` if absent/ill-typed
@@ -275,6 +338,9 @@ def evalSimple : SimpleConstraint → Value → Value → Bool
   | .preimageGate _,    _,   _   => false
   | .delegationEpochEquals _, _, _ => false
   | .countGe _ _,       _,   _   => false
+  | .senderMemberOf _,  _,   _   => false
+  | .balanceDeltaLe _,  _,   _   => false
+  | .balanceDeltaGe _,  _,   _   => false
 
 /-- **Evaluate a full state constraint** against `(old, new)`. -/
 def evalConstraint : StateConstraint → Value → Value → Bool
@@ -317,6 +383,9 @@ def evalConstraint : StateConstraint → Value → Value → Bool
       match actorLabelOf new ff with
       | some fromLabel => dominatesD g fromLabel toL
       | none           => false                  -- absent/ill-typed source field ⇒ fail-closed
+  | .affineDeltaLe terms c, old, new =>
+      match affineDeltaSum old new terms with
+      | some s => intLe s c | none => false       -- absent/ill-typed term field (either side) ⇒ fail-closed
 
 /-! ## RecordProgram + TransitionGuard dispatch + default-deny. -/
 
@@ -535,6 +604,18 @@ theorem evalConstraint_affineEq_iff (terms : List (Int × FieldName)) (c : Int) 
   | none   => simp [h]
   | some s => simp [h]
 
+/-- **`affineDeltaLe` admit-char (apps gap 2).** Admits IFF every term-field reads on BOTH the
+old and new record AND the affine combination of the per-field deltas `Σ kᵢ·(new[fᵢ] − old[fᵢ]) ≤ c`.
+The genuine multi-field rate gate: a missing field on either side (the `none` from `affineDeltaSum`)
+fails closed. -/
+theorem evalConstraint_affineDeltaLe_iff (terms : List (Int × FieldName)) (c : Int) (o n : Value) :
+    evalConstraint (.affineDeltaLe terms c) o n = true ↔
+      ∃ s, affineDeltaSum o n terms = some s ∧ s ≤ c := by
+  unfold evalConstraint
+  cases h : affineDeltaSum o n terms with
+  | none   => simp [h]
+  | some s => simp [h, intLe]
+
 /-- **`reachable` ⇒ semantic dominance (soundness).** An admitted `reachable` means the
 source-field's label `dominates`/reaches `toLabel` in `g` (lifting `dominatesD` to the
 `Prop`-level closure via the proved-sound `dominates_of_dominatesD`). The DAG-prerequisite teeth. -/
@@ -678,6 +759,26 @@ def consvProgram : RecordProgram := .predicate [.affineEq [(1, "inp"), (-1, "o0"
 example : evalConstraint (.affineEq [(1,"i"),(-1,"o")] 0) (.record []) (.record [("i", .int 7),("o", .int 7)]) = true := by decide
 example : evalConstraint (.affineEq [(1,"i"),(-1,"o")] 0) (.record []) (.record [("i", .int 7),("o", .int 6)]) = false := by decide
 
+-- affineDeltaLe (apps gap 2): a treasury cell bounds its COMBINED per-turn outflow across two
+-- spend slots — Δout_a + Δout_b ≤ 5 (a budget-delta gate no single-field deltaBounded can express).
+def budgetProgram : RecordProgram := .predicate [.affineDeltaLe [(1, "out_a"), (1, "out_b")] 5]
+-- ADMIT: out_a 10→12 (+2), out_b 20→23 (+3) → combined +5 ≤ 5.
+#guard (budgetProgram.admits 0
+  (.record [("out_a", .int 10), ("out_b", .int 20)])
+  (.record [("out_a", .int 12), ("out_b", .int 23)]))           -- true  (Σ delta = 5)
+-- REJECT: out_a 10→14 (+4), out_b 20→23 (+3) → combined +7 > 5 (the over-budget withdrawal).
+#guard (budgetProgram.admits 0
+  (.record [("out_a", .int 10), ("out_b", .int 20)])
+  (.record [("out_a", .int 14), ("out_b", .int 23)])) == false   -- false (Σ delta = 7)
+-- REJECT: a term field absent on the new side ⇒ fail-closed (the delta is not evaluable).
+#guard (budgetProgram.admits 0
+  (.record [("out_a", .int 10), ("out_b", .int 20)])
+  (.record [("out_a", .int 12)])) == false                       -- false (out_b missing)
+example : evalConstraint (.affineDeltaLe [(1,"a"),(1,"b")] 5)
+  (.record [("a", .int 0),("b", .int 0)]) (.record [("a", .int 2),("b", .int 3)]) = true := by decide
+example : evalConstraint (.affineDeltaLe [(1,"a"),(1,"b")] 5)
+  (.record [("a", .int 0),("b", .int 0)]) (.record [("a", .int 4),("b", .int 3)]) = false := by decide
+
 -- reachable: a workflow `step` field must reach the prerequisite marker `done` (id 1) in the DAG.
 -- DAG: step-id 2 (review) reaches 1 (drafted); step-id 3 (publish) reaches 2 reaches 1.
 def workflowDag : ClearanceGraph :=
@@ -700,6 +801,7 @@ example : evalConstraint (.reachable workflowDag "step" (Label.id 1)) (.record [
 #assert_axioms evalSimple_strictMono_iff
 #assert_axioms evalConstraint_affineLe_iff
 #assert_axioms evalConstraint_affineEq_iff
+#assert_axioms evalConstraint_affineDeltaLe_iff
 #assert_axioms evalConstraint_reachable_sound
 
 /-! ## Turn-context evaluation (`docs/CELL-PROGRAM-LANGUAGE.md` §3).
@@ -722,6 +824,13 @@ structure TurnCtx where
   sender       : Option Int := none
   balance      : Option Int := none
   revealedHash : Option Int := none
+  /-- The touched cell's OWN PRE-turn sealed kernel balance (`CellState::balance` BEFORE the
+  effect applied), the `balance` field's old-side twin. The executor holds both the pre- and
+  post-turn balance at program-check time (Rust carrier: the journal's pre-image / the cell's
+  prior `balance`); the rate atoms `balanceDeltaLe`/`balanceDeltaGe` read `new.balance − old.balance`
+  from `(balance, balanceBefore)`. APPENDED (so existing `TurnCtx { … }` literals and the empty
+  context are unchanged — absence FAILS CLOSED, the delta atoms refuse). -/
+  balanceBefore : Option Int := none
   /-- The TOUCHED cell's own post-turn `delegation_epoch` (the R7 capability-freshness
   counter), stamped PER CELL by the executor's program-check loop. Rust carrier:
   `TransitionMeta::delegation_epoch` (per-cell, unlike the per-action `EvalContext`) —
@@ -765,6 +874,15 @@ def evalSimpleCtx (ctx : TurnCtx) : SimpleConstraint → Value → Value → Boo
   | .countGe m f,       _,   new => match ctx.exhibitedCommit, new.scalar f with
                                     | some c, some v =>
                                         c == v && decide (m ≤ ctx.exhibited.eraseDups.length)
+                                    | _,      _      => false
+  | .senderMemberOf ms, _,   _   => match ctx.sender with
+                                    | some s => ms.contains s
+                                    | none   => false
+  | .balanceDeltaLe mx, _,   _   => match ctx.balanceBefore, ctx.balance with
+                                    | some a, some b => intLe (b - a) mx
+                                    | _,      _      => false
+  | .balanceDeltaGe mn, _,   _   => match ctx.balanceBefore, ctx.balance with
+                                    | some a, some b => intLe mn (b - a)
                                     | _,      _      => false
   | .not c,             old, new => !(evalSimpleCtx ctx c old new)
   | c,                  old, new => evalSimple c old new
@@ -851,6 +969,17 @@ theorem evalSimpleCtx_senderInField_iff (ctx : TurnCtx) (f : FieldName) (o n : V
       · rintro rfl; exact ⟨s, rfl, rfl⟩
       · rintro ⟨x, rfl, rfl⟩; rfl
 
+/-- **`senderMemberOf` admit-char (apps gap 3).** Admits IFF the context carries a sender AND
+that sender is in the literal member set — the multi-admin generalization of `senderIs`. A sender
+not on the board, or no sender at all, is REJECTED (fail-closed). -/
+theorem evalSimpleCtx_senderMemberOf_iff (ctx : TurnCtx) (ms : List Int) (o n : Value) :
+    evalSimpleCtx ctx (.senderMemberOf ms) o n = true ↔
+      ∃ s, ctx.sender = some s ∧ ms.contains s = true := by
+  unfold evalSimpleCtx
+  cases hs : ctx.sender with
+  | none   => simp
+  | some s => simp
+
 /-- **`balanceGe` admit-char.** Admits IFF the cell's own balance is present and `≥ v`. -/
 theorem evalSimpleCtx_balanceGe_iff (ctx : TurnCtx) (v : Int) (o n : Value) :
     evalSimpleCtx ctx (.balanceGe v) o n = true ↔
@@ -868,6 +997,35 @@ theorem evalSimpleCtx_balanceLe_iff (ctx : TurnCtx) (v : Int) (o n : Value) :
   cases hb : ctx.balance with
   | none   => simp
   | some b => simp [intLe, decide_eq_true_eq]
+
+/-- **`balanceDeltaLe` admit-char (apps gap 4).** Admits IFF BOTH the pre- and post-turn sealed
+balances are present AND the per-turn change is at most `max`: `new.balance − old.balance ≤ max`.
+The rate-ceiling twin of `balanceLe`; an absent pre- OR post-balance fails closed (a rate gate
+cannot be satisfied without both endpoints). -/
+theorem evalSimpleCtx_balanceDeltaLe_iff (ctx : TurnCtx) (mx : Int) (o n : Value) :
+    evalSimpleCtx ctx (.balanceDeltaLe mx) o n = true ↔
+      ∃ a b, ctx.balanceBefore = some a ∧ ctx.balance = some b ∧ b - a ≤ mx := by
+  unfold evalSimpleCtx
+  cases ha : ctx.balanceBefore with
+  | none   => simp
+  | some a =>
+    cases hb : ctx.balance with
+    | none   => simp
+    | some b => simp [intLe, decide_eq_true_eq]
+
+/-- **`balanceDeltaGe` admit-char (apps gap 4).** Admits IFF BOTH the pre- and post-turn sealed
+balances are present AND the per-turn change is at least `min`: `new.balance − old.balance ≥ min`.
+The rate-floor twin of `balanceGe`; an absent pre- OR post-balance fails closed. -/
+theorem evalSimpleCtx_balanceDeltaGe_iff (ctx : TurnCtx) (mn : Int) (o n : Value) :
+    evalSimpleCtx ctx (.balanceDeltaGe mn) o n = true ↔
+      ∃ a b, ctx.balanceBefore = some a ∧ ctx.balance = some b ∧ mn ≤ b - a := by
+  unfold evalSimpleCtx
+  cases ha : ctx.balanceBefore with
+  | none   => simp
+  | some a =>
+    cases hb : ctx.balance with
+    | none   => simp
+    | some b => simp [intLe, decide_eq_true_eq]
 
 /-- **`preimageGate` admit-char.** Admits IFF a reveal was hashed AND the hash equals the
 commitment held in `new[f]`. -/
@@ -1045,6 +1203,44 @@ def drainTooth : StateConstraint := .anyOf [.not (.fieldEquals "state" 2), .bala
 #guard evalSimpleCtx { balance := some 9 } (.balanceGe 10) (.record []) (.record []) == false
 #guard evalSimpleCtx {} (.balanceGe 0) (.record []) (.record []) == false  -- fail-closed
 
+-- senderMemberOf (apps gap 3): a board {17, 42, 99}. A member sender ADMITS; a stranger REJECTS;
+-- no sender REJECTS (fail-closed). The clean form of anyOf [senderIs 17, senderIs 42, senderIs 99].
+#guard evalSimpleCtx { sender := some 42 } (.senderMemberOf [17, 42, 99]) (.record []) (.record [])
+#guard evalSimpleCtx { sender := some 7 } (.senderMemberOf [17, 42, 99]) (.record []) (.record []) == false
+#guard evalSimpleCtx {} (.senderMemberOf [17, 42, 99]) (.record []) (.record []) == false  -- fail-closed
+
+/-- The MULTI-admin actor binding (apps gap 3): slot `approve` flips only for a turn sent by
+SOMEONE on the board `{17, 42}` — the N-member generalization of the single-key polis tooth
+`anyOf [immutable f, senderIs k]`. -/
+def boardBound : StateConstraint := .anyOf [.immutable "approve", .senderMemberOf [17, 42]]
+
+-- A board member (42) flips the slot: ADMITTED.
+#guard evalConstraintCtx { sender := some 42 } boardBound
+  (.record [("approve", .int 0)]) (.record [("approve", .int 1)])
+-- A non-member (99) — a real identity, possibly a real stolen capability — flipping: REJECTED.
+#guard evalConstraintCtx { sender := some 99 } boardBound
+  (.record [("approve", .int 0)]) (.record [("approve", .int 1)]) == false
+-- A turn leaving the slot alone: ADMITTED for anyone (the ceremony stays open).
+#guard evalConstraintCtx { sender := some 99 } boardBound
+  (.record [("approve", .int 0)]) (.record [("approve", .int 0)])
+
+-- balanceDeltaLe / balanceDeltaGe (apps gap 4): a withdrawal-RATE gate on the sealed balance.
+-- The cell may not move more than +5 per turn (ceiling) and not lose more than 5 per turn (floor
+-- min = −5). An over-rate withdrawal (the adversarial drain) REJECTS; a within-rate move ADMITS;
+-- an absent endpoint REJECTS (fail-closed).
+#guard evalSimpleCtx { balance := some 105, balanceBefore := some 100 } (.balanceDeltaLe 5)
+  (.record []) (.record [])                                                            -- +5 ≤ 5
+#guard evalSimpleCtx { balance := some 110, balanceBefore := some 100 } (.balanceDeltaLe 5)
+  (.record []) (.record []) == false                                                   -- +10 > 5 (over-rate)
+#guard evalSimpleCtx { balance := some 95, balanceBefore := some 100 } (.balanceDeltaGe (-5))
+  (.record []) (.record [])                                                            -- −5 ≥ −5
+#guard evalSimpleCtx { balance := some 90, balanceBefore := some 100 } (.balanceDeltaGe (-5))
+  (.record []) (.record []) == false                                                   -- −10 < −5 (over-drain)
+#guard evalSimpleCtx { balance := some 105 } (.balanceDeltaLe 5)
+  (.record []) (.record []) == false                                                   -- no pre-balance ⇒ fail-closed
+#guard evalSimpleCtx { balanceBefore := some 100 } (.balanceDeltaGe (-5))
+  (.record []) (.record []) == false                                                   -- no post-balance ⇒ fail-closed
+
 /-- The committed-escrow gate (blueprint gap 1): `state = 2 (RELEASED) ⇒ reveal the preimage
 of the commitment held in `commit`.` Composable BECAUSE `preimageGate` is a simple atom. -/
 def committedRelease : StateConstraint := .anyOf [.not (.fieldEquals "state" 2), .preimageGate "commit"]
@@ -1093,6 +1289,11 @@ def committedRelease : StateConstraint := .anyOf [.not (.fieldEquals "state" 2),
 -- ... and on the two NEW context atoms (both fail closed under the empty context).
 #guard evalSimpleCtx TurnCtx.empty (.delegationEpochEquals "epoch") (.record []) (.record [("epoch", .int 0)]) == evalSimple (.delegationEpochEquals "epoch") (.record []) (.record [("epoch", .int 0)])
 #guard evalSimpleCtx TurnCtx.empty (.countGe 1 "qc") (.record []) (.record [("qc", .int 55)]) == evalSimple (.countGe 1 "qc") (.record []) (.record [("qc", .int 55)])
+-- ... and on the three NEWEST context atoms (senderMemberOf / balanceDeltaLe / balanceDeltaGe —
+-- each fails closed under the empty context, so the conservative extension holds verbatim).
+#guard evalSimpleCtx TurnCtx.empty (.senderMemberOf [17, 42]) (.record []) (.record []) == evalSimple (.senderMemberOf [17, 42]) (.record []) (.record [])
+#guard evalSimpleCtx TurnCtx.empty (.balanceDeltaLe 5) (.record []) (.record []) == evalSimple (.balanceDeltaLe 5) (.record []) (.record [])
+#guard evalSimpleCtx TurnCtx.empty (.balanceDeltaGe (-5)) (.record []) (.record []) == evalSimple (.balanceDeltaGe (-5)) (.record []) (.record [])
 
 #assert_axioms evalSimpleCtx_delegationEpochEquals_iff
 #assert_axioms evalSimpleCtx_delegationEpochEquals_absent_epoch_refuses
@@ -1108,8 +1309,11 @@ def committedRelease : StateConstraint := .anyOf [.not (.fieldEquals "state" 2),
 #assert_axioms admitsCtx_empty
 #assert_axioms evalSimpleCtx_senderIs_iff
 #assert_axioms evalSimpleCtx_senderInField_iff
+#assert_axioms evalSimpleCtx_senderMemberOf_iff
 #assert_axioms evalSimpleCtx_balanceGe_iff
 #assert_axioms evalSimpleCtx_balanceLe_iff
+#assert_axioms evalSimpleCtx_balanceDeltaLe_iff
+#assert_axioms evalSimpleCtx_balanceDeltaGe_iff
 #assert_axioms evalSimpleCtx_preimageGate_iff
 #assert_axioms actorBound_owner_flips
 #assert_axioms actorBound_flip_requires_sender
