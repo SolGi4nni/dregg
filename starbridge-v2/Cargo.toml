@@ -1,0 +1,89 @@
+# Starbridge v2 — the NATIVE (gpui) dregg shell.
+#
+# STANDALONE WORKSPACE (this file declares its own `[workspace]`). It is
+# deliberately EXCLUDED from the main `/Users/ember/dev/breadstuffs/Cargo.toml`
+# members — gpui drags a very heavy native dep tree (a windowing/font/GPU
+# stack: it pulls metal/wgpu-style backends, harfbuzz/cosmic-text font shaping,
+# objc on macOS, a winit-class event loop). Feature-unifying that onto the main
+# workspace would (a) balloon every `cargo check --workspace` and (b) risk the
+# same feature-unification footgun the `wasm/` and `sdk-py/` crates are
+# excluded to avoid (see the root Cargo.toml comment on `no-lean-link`).
+#
+# Like `wasm/` and `sdk-py/`, this builds via its own manifest path:
+#   cargo build --manifest-path starbridge-v2/Cargo.toml
+#
+# THE NODE LINK: this shell is a CLIENT. It speaks the node's HTTP+SSE wire
+# contract (node/src/api.rs routes, node/src/events.rs SSE stream). It does
+# NOT link the executor or the Lean archive (`libdregg_lean.a`) — a native
+# ocap *shell* renders state and drives turns; the verified semantics run in
+# the node it connects to. The data models in `src/model/` mirror the node's
+# JSON response types (the real wire contract), keeping the shell decoupled
+# from the heavyweight workspace crates. The SDK's turn-building/signing
+# surface can be linked later behind a feature when local key custody lands
+# (see docs/STARBRIDGE-V2.md §"Build-out lanes").
+
+[workspace]
+members = ["."]
+resolver = "2"
+
+# gpui is consumed FROM GIT (it is not on crates.io), and the zed monorepo it
+# lives in applies a `[patch.crates-io]` table that consumers must replicate —
+# gpui's `util`/`http_client` deps call methods (e.g.
+# `smol::process::Child::adopt_raw_pid`) that exist only in zed's FORKED
+# `async-process`. Without these patches the stock `async-process 2.5.0`
+# resolves and the gpui tree fails to compile. Mirrors zed's root Cargo.toml
+# `[patch.crates-io]` (the subset our build path pulls).
+[patch.crates-io]
+async-process = { git = "https://github.com/zed-industries/async-process.git", rev = "0b6d6713570af61806e1e5cb40e0f757cb93fd9d" }
+async-task = { git = "https://github.com/smol-rs/async-task.git", rev = "b4486cd71e4e94fbda54ce6302444de14f4d190e" }
+# Vendored pathfinder_simd 0.5.6 (transitive via gpui → font-kit → pathfinder)
+# with one fix: `build.rs` no longer sets the `pf_rustc_nightly` cfg, so the
+# crate selects its portable SCALAR path on aarch64 instead of an SIMD module
+# that uses nightly portable-SIMD intrinsics removed in current toolchains.
+# A pure perf trade (correct results either way). See vendor/pathfinder_simd/build.rs.
+pathfinder_simd = { path = "vendor/pathfinder_simd" }
+
+[package]
+name = "starbridge-v2"
+version = "0.1.0"
+edition = "2021"
+# Builds on the rolling `nightly` (pinned in this crate's rust-toolchain.toml):
+# gpui at this zed rev uses `std::hint::cold_path`, stabilized in nightly after
+# the repo root's `nightly-2026-01-01` pin. The pathfinder_simd-on-nightly
+# breakage is handled by the vendored patch (see [patch] above).
+rust-version = "1.94.0"
+authors = ["Dregg Contributors"]
+license = "AGPL-3.0-or-later"
+homepage = "https://dregg.dev"
+repository = "https://github.com/emberian/dregg"
+description = "Starbridge v2 — the native gpui ocap shell for a dregg node (someday an seL4 component)"
+
+[[bin]]
+name = "starbridge-v2"
+path = "src/main.rs"
+
+[dependencies]
+# gpui — Zed's GPU-accelerated Rust UI framework. Published from the zed
+# monorepo, so we pin a commit (zed HEAD as of scaffolding). gpui is the
+# single heavy dependency; it is why this crate is a standalone workspace.
+gpui = { git = "https://github.com/zed-industries/zed", rev = "fca2ccd403e8d13c8f4b968cda2f2c322f420f5a" }
+# The platform bootstrap: `gpui_platform::application()` selects the OS backend
+# (Metal on macOS, etc.) and returns a `gpui::Application`. The gpui examples
+# import it from here; `gpui::Application` has no public `new()` at this rev.
+# (This is also the seam where an seL4 framebuffer backend would plug in — a
+# build-out lane in docs/STARBRIDGE-V2.md §5.)
+gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "fca2ccd403e8d13c8f4b968cda2f2c322f420f5a" }
+
+# Wire contract: the shell de/serializes the node's JSON responses. These
+# mirror node/src/api.rs response structs — see src/model/.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# HTTP + SSE client against the node's routes. blocking is fine for the
+# scaffold's mock loader; the live client will move to gpui's async executor.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream", "blocking"] }
+futures = "0.3"
+
+# Time / formatting for the receipt stream + inspector.
+hex = "0.4"
+anyhow = "1"
