@@ -206,7 +206,7 @@ pub use air::{AIR_DESCRIPTOR, EffectVmAir};
 
 // ---- Re-export trace generation ----
 pub use trace::{
-    EffectVmContext, SlotCaveatEntry, canonical_id_to_felts_4, encode_net_delta,
+    EffectVmContext, RotCaveatEntry, SlotCaveatEntry, canonical_id_to_felts_4, encode_net_delta,
     extract_custom_proof_commitments, extract_net_delta, extract_slot_caveat_manifest,
     generate_effect_vm_trace, generate_effect_vm_trace_ext,
 };

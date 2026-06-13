@@ -103,6 +103,11 @@ mod tests {
     }
 
     #[test]
+    fn preflight_lean_marshal() {
+        assert_all_passed("lean_marshal", checks::lean_marshal::run());
+    }
+
+    #[test]
     fn preflight_privacy() {
         assert_all_passed("privacy", checks::privacy::run());
     }

@@ -121,6 +121,39 @@ inductive SimpleConstraint where
   `anyOf`/`not` (committed-escrow `state = RELEASED ⇒ reveal`). Mirrors
   `SimpleStateConstraint::PreimageGate`. -/
   | preimageGate (f : FieldName)
+  /-- **`delegationEpochEquals f`** — the post-state slot `new[f]` equals the touched cell's
+  own post-turn `delegation_epoch` (the R7 capability-freshness counter, carried in
+  `TurnCtx.delegationEpoch`; Rust carrier: `TransitionMeta::delegation_epoch`, stamped PER
+  CELL by the executor's program-check loop). THE atom that discharges the channel-group
+  `DelegationEpochTie` premise (`Apps/ChannelGroup.lean`): the group's epoch slot ≡
+  `delegation_epoch` becomes PROGRAM-ENFORCED, so forward-key darkness and capability
+  staleness compose IN the program rather than via the canonical builders' out-of-band
+  fail-closed checks (kept as defense-in-depth). FAIL-CLOSED on an absent stamp (legacy
+  evaluators, ctx-less evaluation) and on an absent/ill-typed slot. Mirrors
+  `SimpleStateConstraint::DelegationEpochEquals`. Admit-char:
+  `evalSimpleCtx_delegationEpochEquals_iff`. -/
+  | delegationEpochEquals (f : FieldName)
+  /-- **`countGe m f`** — the count-≥ / order-statistic atom (in-program M-of-N): the turn's
+  witness EXHIBITS an element set (`TurnCtx.exhibited`, the opaque-scalar reading of the
+  unique Cleartext blob) whose §8-portal canonical sorted-set commitment
+  (`TurnCtx.exhibitedCommit`, Rust `count_ge_set_commitment`) equals `new[f]`, and whose
+  DISTINCT count (`List.eraseDups`) is `≥ m`.
+
+  WHY THIS DOES NOT FAIL THE WAY THE POLIS `affineLe`-FLAG TRICK DID: summing flag slots
+  breaks on unbounded counters — ONE slot inflated to `m` fakes the quorum arithmetic.
+  Here NOTHING accumulates in state: the witness RE-EXHIBITS the full element set on every
+  turn, distinctness is structural in the evaluator (`eraseDups` — a duplicate-padded
+  exhibit collapses), and the set is bound to the slot commitment, so `m` cannot be
+  counterfeited by arithmetic aliasing.
+
+  HONEST SCOPE: the atom discharges "the committed set opens and has ≥ m distinct
+  elements" — it does NOT bind each element to a live approver of THIS turn (per-element
+  signatures are not in the scalar evaluator; the approval binding stays the polis
+  actor-bound approval-slot ceremony feeding the committed set, and the commitment slot
+  itself must be governance-written). FAIL-CLOSED on a missing/malformed witness (absent
+  `exhibitedCommit`) and on an absent slot. Mirrors `SimpleStateConstraint::CountGe`.
+  Admit-char: `evalSimpleCtx_countGe_iff`. -/
+  | countGe (m : Nat) (f : FieldName)
   deriving Repr
 
 /-- **The full state-constraint catalog** — simple constraints plus the cross-slot,
@@ -240,6 +273,8 @@ def evalSimple : SimpleConstraint → Value → Value → Bool
   | .balanceGe _,       _,   _   => false
   | .balanceLe _,       _,   _   => false
   | .preimageGate _,    _,   _   => false
+  | .delegationEpochEquals _, _, _ => false
+  | .countGe _ _,       _,   _   => false
 
 /-- **Evaluate a full state constraint** against `(old, new)`. -/
 def evalConstraint : StateConstraint → Value → Value → Bool
@@ -687,6 +722,21 @@ structure TurnCtx where
   sender       : Option Int := none
   balance      : Option Int := none
   revealedHash : Option Int := none
+  /-- The TOUCHED cell's own post-turn `delegation_epoch` (the R7 capability-freshness
+  counter), stamped PER CELL by the executor's program-check loop. Rust carrier:
+  `TransitionMeta::delegation_epoch` (per-cell, unlike the per-action `EvalContext`) —
+  this `TurnCtx` models exactly the slice of executor context the atoms read, so it lands
+  here. Absence FAILS CLOSED (`delegationEpochEquals` refuses). -/
+  delegationEpoch : Option Int := none
+  /-- The witness-exhibited element set for `countGe` (the opaque-scalar reading of the
+  unique Cleartext blob, Rust postcard `Vec<[u8;32]>`). RE-EXHIBITED on every turn —
+  nothing accumulates in state (the anti-`affineLe`-flag design). -/
+  exhibited : List Int := []
+  /-- The §8-portal canonical sorted-set commitment of the DEDUPED exhibited set (Rust
+  `count_ge_set_commitment` — BLAKE3 over the length-prefixed sorted elements). Like
+  `revealedHash` for `preimageGate`, the hash binding itself is the crypto portal; the
+  ordering/counting laws are proved here. Absence fails closed. -/
+  exhibitedCommit : Option Int := none
   deriving Repr
 
 /-- The empty context: every context atom fails closed under it. -/
@@ -708,6 +758,13 @@ def evalSimpleCtx (ctx : TurnCtx) : SimpleConstraint → Value → Value → Boo
                                     | none   => false
   | .preimageGate f,    _,   new => match ctx.revealedHash, new.scalar f with
                                     | some h, some c => h == c
+                                    | _,      _      => false
+  | .delegationEpochEquals f, _, new => match ctx.delegationEpoch, new.scalar f with
+                                    | some d, some v => d == v
+                                    | _,      _      => false
+  | .countGe m f,       _,   new => match ctx.exhibitedCommit, new.scalar f with
+                                    | some c, some v =>
+                                        c == v && decide (m ≤ ctx.exhibited.eraseDups.length)
                                     | _,      _      => false
   | .not c,             old, new => !(evalSimpleCtx ctx c old new)
   | c,                  old, new => evalSimple c old new
@@ -829,6 +886,91 @@ theorem evalSimpleCtx_preimageGate_iff (ctx : TurnCtx) (f : FieldName) (o n : Va
       · rintro rfl; exact ⟨h, rfl, rfl⟩
       · rintro ⟨x, rfl, rfl⟩; rfl
 
+/-! ### The program-readable `delegation_epoch` atom (the channels closure lane). -/
+
+/-- **`delegationEpochEquals` admit-char.** Admits IFF the executor stamped the touched
+cell's delegation epoch AND the post-state slot holds exactly that value — the in-program
+form of the channel-group `DelegationEpochTie` (`Apps/ChannelGroup.lean` consumes this to
+DISCHARGE the premise on admitted turns). -/
+theorem evalSimpleCtx_delegationEpochEquals_iff (ctx : TurnCtx) (f : FieldName) (o n : Value) :
+    evalSimpleCtx ctx (.delegationEpochEquals f) o n = true ↔
+      ∃ d, ctx.delegationEpoch = some d ∧ n.scalar f = some d := by
+  unfold evalSimpleCtx
+  cases hd : ctx.delegationEpoch with
+  | none   => simp
+  | some d =>
+    cases hv : n.scalar f with
+    | none   => simp
+    | some v =>
+      simp only [beq_iff_eq, Option.some.injEq]
+      constructor
+      · rintro rfl; exact ⟨d, rfl, rfl⟩
+      · rintro ⟨x, rfl, rfl⟩; rfl
+
+/-- **`delegationEpochEquals` fails closed on a missing stamp** — a legacy/ctx-less
+evaluation (no executor in the loop) can never satisfy the tie. -/
+theorem evalSimpleCtx_delegationEpochEquals_absent_epoch_refuses (ctx : TurnCtx)
+    (f : FieldName) (o n : Value) (h : ctx.delegationEpoch = none) :
+    evalSimpleCtx ctx (.delegationEpochEquals f) o n = false := by
+  cases hv : n.scalar f <;> simp [evalSimpleCtx, h, hv]
+
+/-- **`delegationEpochEquals` fails closed on an absent/ill-typed slot.** -/
+theorem evalSimpleCtx_delegationEpochEquals_absent_slot_refuses (ctx : TurnCtx)
+    (f : FieldName) (o n : Value) (h : n.scalar f = none) :
+    evalSimpleCtx ctx (.delegationEpochEquals f) o n = false := by
+  cases hd : ctx.delegationEpoch <;> simp [evalSimpleCtx, hd, h]
+
+/-- The ctx-LESS evaluator fails closed on `delegationEpochEquals` (definitional). -/
+theorem evalSimple_delegationEpochEquals_fails (f : FieldName) (o n : Value) :
+    evalSimple (.delegationEpochEquals f) o n = false := rfl
+
+/-! ### The count-≥ / order-statistic atom (in-program M-of-N). -/
+
+/-- **`countGe` admit-char.** Admits IFF the witness commitment is present, binds to the
+post-state slot, AND the exhibited set has at least `m` DISTINCT elements
+(`List.eraseDups` — duplicates collapse, so a padded exhibit cannot fake the quorum;
+contrast the polis `affineLe`-flag trick, which an unbounded counter defeats). -/
+theorem evalSimpleCtx_countGe_iff (ctx : TurnCtx) (m : Nat) (f : FieldName) (o n : Value) :
+    evalSimpleCtx ctx (.countGe m f) o n = true ↔
+      ∃ c, ctx.exhibitedCommit = some c ∧ n.scalar f = some c ∧
+        m ≤ ctx.exhibited.eraseDups.length := by
+  unfold evalSimpleCtx
+  cases hc : ctx.exhibitedCommit with
+  | none   => simp
+  | some c =>
+    cases hv : n.scalar f with
+    | none   => simp
+    | some v =>
+      simp only [Bool.and_eq_true, beq_iff_eq, decide_eq_true_eq, Option.some.injEq]
+      constructor
+      · rintro ⟨rfl, hm⟩; exact ⟨c, rfl, rfl, hm⟩
+      · rintro ⟨x, rfl, rfl, hm⟩; exact ⟨rfl, hm⟩
+
+/-- **`countGe` fails closed on a missing/malformed witness** (no exhibited-set
+commitment in context — the Rust missing/ambiguous/undecodable-blob refusals). -/
+theorem evalSimpleCtx_countGe_absent_witness_refuses (ctx : TurnCtx) (m : Nat)
+    (f : FieldName) (o n : Value) (h : ctx.exhibitedCommit = none) :
+    evalSimpleCtx ctx (.countGe m f) o n = false := by
+  cases hv : n.scalar f <;> simp [evalSimpleCtx, h, hv]
+
+/-- **`countGe` fails closed on an absent/ill-typed commitment slot.** -/
+theorem evalSimpleCtx_countGe_absent_slot_refuses (ctx : TurnCtx) (m : Nat)
+    (f : FieldName) (o n : Value) (h : n.scalar f = none) :
+    evalSimpleCtx ctx (.countGe m f) o n = false := by
+  cases hc : ctx.exhibitedCommit <;> simp [evalSimpleCtx, hc, h]
+
+/-- An admitted `countGe` yields the quorum bound on the DISTINCT count (the consumable
+form for app keystones — `Apps/ChannelGroup.lean`'s council point). -/
+theorem evalSimpleCtx_countGe_quorum (ctx : TurnCtx) (m : Nat) (f : FieldName) (o n : Value)
+    (h : evalSimpleCtx ctx (.countGe m f) o n = true) :
+    m ≤ ctx.exhibited.eraseDups.length := by
+  obtain ⟨c, _, _, hm⟩ := (evalSimpleCtx_countGe_iff ctx m f o n).mp h
+  exact hm
+
+/-- The ctx-LESS evaluator fails closed on `countGe` (definitional). -/
+theorem evalSimple_countGe_fails (m : Nat) (f : FieldName) (o n : Value) :
+    evalSimple (.countGe m f) o n = false := rfl
+
 /-! ### THE actor-bound approval keystone (polis gap 5 → dissolved).
 
 `anyOf [immutable f, senderIs k]` is the per-slot actor binding the polis council installs per
@@ -920,10 +1062,47 @@ def committedRelease : StateConstraint := .anyOf [.not (.fieldEquals "state" 2),
 #guard evalConstraintCtx {} committedRelease
   (.record []) (.record [("state", .int 1), ("commit", .int 77)])
 
+-- delegationEpochEquals: ADMIT when the slot equals the stamped epoch; REFUSE divergence
+-- (the forged epoch slot); REFUSE an absent stamp (legacy evaluation); REFUSE an absent slot.
+#guard evalSimpleCtx { delegationEpoch := some 2 } (.delegationEpochEquals "epoch")
+  (.record []) (.record [("epoch", .int 2)])
+#guard evalSimpleCtx { delegationEpoch := some 2 } (.delegationEpochEquals "epoch")
+  (.record []) (.record [("epoch", .int 3)]) == false
+#guard evalSimpleCtx {} (.delegationEpochEquals "epoch")
+  (.record []) (.record [("epoch", .int 2)]) == false
+#guard evalSimpleCtx { delegationEpoch := some 2 } (.delegationEpochEquals "epoch")
+  (.record []) (.record []) == false
+
+-- countGe: a 2-distinct exhibit meets threshold 2; a DUPLICATE-PADDED exhibit collapses
+-- (THE anti-affineLe tooth: [7,7,7] is ONE approver, not three); a mismatched commitment
+-- refuses; a missing witness refuses; threshold 3 over 2 distinct refuses.
+#guard evalSimpleCtx { exhibited := [7, 9], exhibitedCommit := some 55 } (.countGe 2 "qc")
+  (.record []) (.record [("qc", .int 55)])
+#guard evalSimpleCtx { exhibited := [7, 7, 7], exhibitedCommit := some 55 } (.countGe 2 "qc")
+  (.record []) (.record [("qc", .int 55)]) == false
+#guard evalSimpleCtx { exhibited := [7, 9], exhibitedCommit := some 55 } (.countGe 2 "qc")
+  (.record []) (.record [("qc", .int 66)]) == false
+#guard evalSimpleCtx { exhibited := [7, 9] } (.countGe 2 "qc")
+  (.record []) (.record [("qc", .int 55)]) == false
+#guard evalSimpleCtx { exhibited := [7, 9], exhibitedCommit := some 55 } (.countGe 3 "qc")
+  (.record []) (.record [("qc", .int 55)]) == false
+
 -- The conservative extension, witnessed computably on a context atom and a legacy atom.
 #guard evalSimpleCtx TurnCtx.empty (.senderIs 17) (.record []) (.record []) == evalSimple (.senderIs 17) (.record []) (.record [])
 #guard evalSimpleCtx TurnCtx.empty (.monotonic "n") (.record [("n", .int 1)]) (.record [("n", .int 2)]) == evalSimple (.monotonic "n") (.record [("n", .int 1)]) (.record [("n", .int 2)])
+-- ... and on the two NEW context atoms (both fail closed under the empty context).
+#guard evalSimpleCtx TurnCtx.empty (.delegationEpochEquals "epoch") (.record []) (.record [("epoch", .int 0)]) == evalSimple (.delegationEpochEquals "epoch") (.record []) (.record [("epoch", .int 0)])
+#guard evalSimpleCtx TurnCtx.empty (.countGe 1 "qc") (.record []) (.record [("qc", .int 55)]) == evalSimple (.countGe 1 "qc") (.record []) (.record [("qc", .int 55)])
 
+#assert_axioms evalSimpleCtx_delegationEpochEquals_iff
+#assert_axioms evalSimpleCtx_delegationEpochEquals_absent_epoch_refuses
+#assert_axioms evalSimpleCtx_delegationEpochEquals_absent_slot_refuses
+#assert_axioms evalSimple_delegationEpochEquals_fails
+#assert_axioms evalSimpleCtx_countGe_iff
+#assert_axioms evalSimpleCtx_countGe_absent_witness_refuses
+#assert_axioms evalSimpleCtx_countGe_absent_slot_refuses
+#assert_axioms evalSimpleCtx_countGe_quorum
+#assert_axioms evalSimple_countGe_fails
 #assert_axioms evalSimpleCtx_empty
 #assert_axioms evalConstraintCtx_empty
 #assert_axioms admitsCtx_empty

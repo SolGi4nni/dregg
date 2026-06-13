@@ -39,18 +39,28 @@ Last sweep: 2026-06-12 (the Grand Convergence session).
   proof-of-life (channel + heap counter in one program). REMAINS (this lane's tail):
   (a) the DSL surface atom (dregg-dsl has no heap-keyed syntax yet — programs construct
   `StateConstraint::HeapField` directly); (b) multi-key heap atoms (prefixOf/affine/
-  sumEquals over heap keys — only single-key atoms lifted); (c) heap-keyed caveat operand =
-  the SlotCaveatEntry u8 wire item already tracked below.
-- HEAP-KEYED CAVEATS (rotation-URGENT — wire shape): SlotCaveatEntry is slot_index:u8
-  (trace.rs:178), so capability attenuation cannot scope to heap fields; if apps live in
-  the heap, the caveat operand must become domain×key. The entry is a PI/trace shape ⇒
-  widening it is ROTATION material — decide before the cutover freezes the wire (fold
-  into ROTATION-CUTOVER pre-gates when the measurement lane frees the doc).
+  sumEquals over heap keys — only single-key atoms lifted); (c) heap-keyed caveat operand:
+  wire shape STAGED 2026-06-12 (the line below) — the runtime discharge remains.
+- HEAP-KEYED CAVEATS wire shape: **STAGED 2026-06-12** (this lane) — the widened operand
+  is `(domain_tag, key)` on the umem `domainCode` codes (registers 0 · heap 1; key u8→felt;
+  entry = 7 felts, manifest = 29), Lean-first in `EffectVmEmitRotationCaveat.lean`
+  (no-aliasing keystone `caveat_operand_no_aliasing`, `caveatCommit_binds`, the R=24 probe
+  `rotationCaveatProbe_binds_published`) + Rust staged twins/teeth (`rotation::caveat`,
+  `RotCaveatEntry` fail-closed decode, forged-domain/tampered-heap-key refusals; pins
+  byte-frozen, live v1 manifest untouched). ROTATION-CUTOVER §3 pre-gate ✓. REMAINS:
+  (a) the EXECUTOR runtime discharge of heap-domain entries (named premise
+  `HeapCaveatRuntimeDischarge`; template = `verify_slot_caveat_manifest`; semantics
+  already welded via `tagHeapAtom` → `HeapAtom.lift` → `evalHeap`) — ROTATION-CUTOVER §5
+  item 9; (b) at the flag-day the staged 29-felt manifest replaces the live 25-felt slot
+  manifest in the regenerated PI region.
 - guardAtom IR kind (umem adapter c) confirmed NOT landed (absent from DescriptorIR2.lean
   + descriptor_ir2.rs): in-circuit policy/caveat enforcement for v2/v3 = cap-crown phase D
   + Policy.lean line, rides rotation — now confirmed-open, not quietly-done.
-- PI v3 rateBound/challengeWindow tags: kimi wired the SLOTS — verify they connect to
-  enforcement (caveat layer) or are carried-only; one look.
+- PI v3 rateBound/challengeWindow tags: LOOKED 2026-06-12 — **carried-only**: the producer
+  copies context values into PI 202/203 (trace.rs) and the verifier PINS BOTH TO ZERO
+  sentinels (proof_verify.rs:269-270); no AIR constraint and no caveat-layer evaluator
+  reads them. Enforcement arrives with the optimistic-proving/dispute modes (#169), which
+  already own these slots by name — nothing further pre-#169.
 - PI v3 producer/verifier tear (RED at HEAD): 007c2f1d2 bumped `inner_pi::ACTIVE_BASE_COUNT`
   to 204 but the witness producer still emits 201 PIs, so
   `node blocklace_sync::tests::distributed_witness_path_gossip_materialize_aggregate_verify`
@@ -67,9 +77,8 @@ Last sweep: 2026-06-12 (the Grand Convergence session).
 ## Metatheory closures (Lean-side, mostly lane-sized)
 
 - CrashRecovery × registries: extend the recovery model to `(writes, burns)` and lift `draw_replay_refused_across_epochs` across the crash cut (named by the persist lane; Rust half landed with `forever_digests`).
-- Channels: program-readable `delegation_epoch` — an EvalContext/`Exec.Program` atom discharging the `DelegationEpochTie` premise (ChannelGroup.lean 0c57aac80; executor + Lean lockstep).
-- Channels: count-equal / order-statistic constraint atom (in-program M-of-N council; slot-in point named in ChannelGroup.lean's adminGated docstring).
-- Argus R1/R2: the Rust descriptor-AIR transcription gap — `Boundary` arm at `lean_descriptor_air.rs:909` so `EffectVmDescriptorAir::eval ≈ decideVm` (exact statement in the 7894e5789 apex inventory).
+- ~~Channels: program-readable `delegation_epoch`~~ CLOSED (executor-atoms lane): `DelegationEpochEquals` atom (Rust both enums + `TransitionMeta::delegation_epoch` per-cell stamp; Lean `delegationEpochEquals` + iff/absence theorems); channel blueprint constraint 6 installs it; `DelegationEpochTie` DISCHARGED on admitted turns (`admitted_ties_delegation_epoch` + `remove_darkens_both_discharged`; premise form kept for foreign/pre-atom states). Tails: the Lean-producer/wire path has no per-cell delegation_epoch carrier yet (a `DelegationEpochEquals` program evaluated there fails closed — wire lockstep before channels ride the producer); pre-atom channel cells keep the old program (no live-cell program-upgrade verb).
+- ~~Channels: count-equal / order-statistic constraint atom~~ CLOSED (executor-atoms lane): `CountGe{threshold, set_commitment_slot}` — the witness RE-EXHIBITS the distinct element set each turn against the openable sorted-set commitment (the anti-affineLe-flag design); Lean `countGe` + `councilGated` keystones; `council_count_ge_shape` blueprint test + `test_program_count_ge_enforced` executor test. Tails: per-element approval binding (exhibited ≠ "approved THIS turn") — the actor-bound approval-slot ceremony must write the quorum commitment slot before `councilGated` replaces `senderIs admin` in the DEPLOYED channel program; CountGe AIR projection (witness-side scalar enforcement only; classified no-SlotCaveat-projection).
 - Argus fee-wrapper conservation: `FeeChainStep` + `wellformed_history_conserves_modulo_burn` in `Distributed/HistoryAggregation.lean` (statement written in the apex inventory).
 - Argus joint-AIR fold (Silver→Gold layer: per-leg descriptors folded; not an Argus/ statement).
 - Coeffect dst-liveness (named in the 4dd84a3ae audit; outside the four apex modules).

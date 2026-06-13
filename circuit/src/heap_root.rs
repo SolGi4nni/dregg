@@ -437,8 +437,7 @@ mod tests {
         let w = tree.update_witness(new_leaf).expect("addr is present");
         assert_eq!(w.old_leaf.value, BabyBear::new(20));
         assert_eq!(w.old_root, tree.root());
-        let rebuilt =
-            compute_heap_root(vec![entry(1, 1, 10), entry(1, 2, 77), entry(2, 1, 30)]);
+        let rebuilt = compute_heap_root(vec![entry(1, 1, 10), entry(1, 2, 77), entry(2, 1, 30)]);
         assert_eq!(
             w.new_root, rebuilt,
             "path-recomputed post-root must equal the rebuilt tree root"
@@ -455,21 +454,14 @@ mod tests {
     /// and the new root equals the root of the independently rebuilt tree.
     #[test]
     fn insert_witness_recomputes_post_root() {
-        let tree = CanonicalHeapTree::new(
-            vec![entry(1, 1, 10), entry(1, 3, 30)],
-            HEAP_TREE_DEPTH,
-        );
+        let tree = CanonicalHeapTree::new(vec![entry(1, 1, 10), entry(1, 3, 30)], HEAP_TREE_DEPTH);
         let new_leaf = HeapLeaf {
             addr: heap_addr(BabyBear::new(1), BabyBear::new(2)),
             value: BabyBear::new(20),
         };
         let w = tree.insert_witness(new_leaf).expect("addr is fresh");
         assert_eq!(w.old_root, tree.root());
-        let rebuilt = compute_heap_root(vec![
-            entry(1, 1, 10),
-            entry(1, 2, 20),
-            entry(1, 3, 30),
-        ]);
+        let rebuilt = compute_heap_root(vec![entry(1, 1, 10), entry(1, 2, 20), entry(1, 3, 30)]);
         assert_eq!(
             w.new_root, rebuilt,
             "insert-witness new root must equal the rebuilt tree root"

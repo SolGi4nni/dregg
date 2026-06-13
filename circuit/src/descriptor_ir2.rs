@@ -768,7 +768,8 @@ pub fn parse_vm_descriptor_any(json: &str) -> Result<AnyVmDescriptor, String> {
 
     let name = name.ok_or("descriptor missing \"name\"")?;
     let trace_width = trace_width.ok_or("descriptor missing \"trace_width\"")?;
-    let public_input_count = public_input_count.ok_or("descriptor missing \"public_input_count\"")?;
+    let public_input_count =
+        public_input_count.ok_or("descriptor missing \"public_input_count\"")?;
     let constraints = constraints.ok_or("descriptor missing \"constraints\"")?;
 
     match ir {
@@ -871,7 +872,9 @@ impl MainLayout {
         let mut ranges = Vec::new();
         let mut submasks = Vec::new();
         for (ci, k) in desc.constraints.iter().enumerate() {
-            let VmConstraint2::Lookup(l) = k else { continue };
+            let VmConstraint2::Lookup(l) = k else {
+                continue;
+            };
             match l.table {
                 TID_RANGE => {
                     let bits = range_bits.ok_or_else(|| {
@@ -981,7 +984,9 @@ fn check_descriptor2(desc: &EffectVmDescriptor2) -> Result<MainLayout, String> {
                     return Err(format!("constraint {ci}: pi_binding col out of bounds"));
                 }
                 if *pi_index >= desc.public_input_count {
-                    return Err(format!("constraint {ci}: pi_binding pi_index out of bounds"));
+                    return Err(format!(
+                        "constraint {ci}: pi_binding pi_index out of bounds"
+                    ));
                 }
             }
             VmConstraint2::Lookup(l) => {
@@ -1398,11 +1403,10 @@ fn eval_lex_lt<AB>(
     bus.lookup_key(builder, [dhi.into()], AB::Expr::ONE);
     eval_decomp(builder, dlo.into(), &dlo_limbs, KEY_LO_BITS);
     let one = AB::Expr::ONE;
-    let c_dhi = dhi.into()
-        - gate.clone() * s.clone() * (b_hi4.clone() - a_hi4.clone() - one.clone());
+    let c_dhi =
+        dhi.into() - gate.clone() * s.clone() * (b_hi4.clone() - a_hi4.clone() - one.clone());
     let c_eq = gate.clone() * (one.clone() - s.clone()) * (b_hi4 - a_hi4);
-    let c_dlo =
-        dlo.into() - gate * (one.clone() - s) * (b_lo27 - a_lo27 - one);
+    let c_dlo = dlo.into() - gate * (one.clone() - s) * (b_lo27 - a_lo27 - one);
     if transition_only {
         let mut tb = builder.when_transition();
         tb.assert_zero(c_dhi);
@@ -1428,8 +1432,7 @@ where
         match self {
             // ----------------------------------------------------------------
             Ir2Air::Main { desc, layout } => {
-                let pv: Vec<AB::Expr> =
-                    builder.public_values().iter().map(|&v| v.into()).collect();
+                let pv: Vec<AB::Expr> = builder.public_values().iter().map(|&v| v.into()).collect();
 
                 // -- The embedded v1 forms, on the v1 domains. --
                 {
@@ -1769,9 +1772,8 @@ where
                 eval_decomp(builder, local[MB_AGAP].into(), &agap_limbs, MEM_GAP_BITS);
                 // Address magnitude bound (so the increasing chain cannot wrap the field):
                 // addr_chk = is_real·addr ∈ [0, 2^30).
-                builder.assert_zero(
-                    local[MB_ACHK].into() - is_real.clone() * local[MB_ADDR].into(),
-                );
+                builder
+                    .assert_zero(local[MB_ACHK].into() - is_real.clone() * local[MB_ADDR].into());
                 let achk_limbs: Vec<AB::Var> =
                     local[MB_ACHK_LIMB0..MB_ACHK_LIMB0 + decomp_cols(MEM_GAP_BITS)].to_vec();
                 eval_decomp(builder, local[MB_ACHK].into(), &achk_limbs, MEM_GAP_BITS);
@@ -1830,11 +1832,10 @@ where
                 // Selector: the old-leaf/old-path legs apply to read/write (op ∈ {0,1})
                 // but are vacuous for insert (op = 3). `not_insert` is the unique degree-2
                 // polynomial that is 1 at op = 0 and op = 1, and 0 at op = 3.
-                let inv6 = AB::Expr::from_u64(
-                    BabyBear::new(6).inverse().expect("6 != 0").as_u32() as u64,
-                );
-                let not_insert: AB::Expr = AB::Expr::ONE
-                    - inv6 * op.clone() * (op.clone() - AB::Expr::ONE);
+                let inv6 =
+                    AB::Expr::from_u64(BabyBear::new(6).inverse().expect("6 != 0").as_u32() as u64);
+                let not_insert: AB::Expr =
+                    AB::Expr::ONE - inv6 * op.clone() * (op.clone() - AB::Expr::ONE);
 
                 // Leaf digests ride the chip bus: hash[key, old_value] and hash[key, value]
                 // are arity-2 absorb lookups (gated by is_real — pad rows query nothing).
@@ -1856,7 +1857,11 @@ where
                     leaf_tuple(MAP_OLD_VALUE, MAP_OLD_LEAF),
                     is_real.clone() * not_insert.clone(),
                 );
-                p2.lookup_key(builder, leaf_tuple(MAP_VALUE, MAP_NEW_LEAF), is_real.clone());
+                p2.lookup_key(
+                    builder,
+                    leaf_tuple(MAP_VALUE, MAP_NEW_LEAF),
+                    is_real.clone(),
+                );
 
                 // The sibling-sharing chains ride the fact bus. Write/read share one path;
                 // insert uses the SAME columns for a membership opening of the NEW leaf
@@ -1869,10 +1874,9 @@ where
                     let sib: AB::Expr = local[MAP_SIB0 + lvl].into();
                     let dir: AB::Expr = local[MAP_DIR0 + lvl].into();
                     let mix = |cur: AB::Expr| -> (AB::Expr, AB::Expr) {
-                        let left = (AB::Expr::ONE - dir.clone()) * cur.clone()
-                            + dir.clone() * sib.clone();
-                        let right =
-                            (AB::Expr::ONE - dir.clone()) * sib.clone() + dir.clone() * cur;
+                        let left =
+                            (AB::Expr::ONE - dir.clone()) * cur.clone() + dir.clone() * sib.clone();
+                        let right = (AB::Expr::ONE - dir.clone()) * sib.clone() + dir.clone() * cur;
                         (left, right)
                     };
                     let last = lvl + 1 == HEAP_TREE_DEPTH;
@@ -2019,8 +2023,8 @@ where
                     for lvl in 0..HEAP_TREE_DEPTH {
                         let sib: AB::Expr = local[sib0 + lvl].into();
                         let dir: AB::Expr = local[dir0 + lvl].into();
-                        let left = (AB::Expr::ONE - dir.clone()) * cur.clone()
-                            + dir.clone() * sib.clone();
+                        let left =
+                            (AB::Expr::ONE - dir.clone()) * cur.clone() + dir.clone() * sib.clone();
                         let right = (AB::Expr::ONE - dir.clone()) * sib + dir * cur;
                         let out: AB::Expr = if lvl + 1 == HEAP_TREE_DEPTH {
                             local[MA_ROOT].into()
@@ -2066,9 +2070,9 @@ where
                 builder
                     .when_first_row()
                     .assert_zero(local[UM_SERIAL].into() - AB::Expr::ONE);
-                builder.when_transition().assert_zero(
-                    next[UM_SERIAL].into() - local[UM_SERIAL].into() - AB::Expr::ONE,
-                );
+                builder
+                    .when_transition()
+                    .assert_zero(next[UM_SERIAL].into() - local[UM_SERIAL].into() - AB::Expr::ONE);
                 // Read discipline on the Option cell: a read returns its claimed prior cell.
                 builder.assert_zero(
                     is_real.clone()
@@ -2108,15 +2112,12 @@ where
                 // indicator, and a nullifier-domain write installing `none` is UNSAT —
                 // `UniversalMemory.InsertOnlyAt`, in-circuit. This is what upgrades a
                 // `present = 0` read into the PROVED freshness fact.
-                let dom_m3 =
-                    local[UM_DOMAIN].into() - AB::Expr::from_u64(NULLIFIER_DOMAIN as u64);
+                let dom_m3 = local[UM_DOMAIN].into() - AB::Expr::from_u64(NULLIFIER_DOMAIN as u64);
                 builder.assert_zero(dom_m3.clone() * is_null.clone());
                 builder.assert_zero(
                     dom_m3 * local[UM_NULL_INV].into() - (is_real.clone() - is_null.clone()),
                 );
-                builder.assert_zero(
-                    is_null * kind * (AB::Expr::ONE - present),
-                );
+                builder.assert_zero(is_null * kind * (AB::Expr::ONE - present));
 
                 // The table carries EXACTLY the gathered log (umemTableFaithful).
                 let umem_log = PermutationCheckBus::new(BUS_UMEM_LOG);
@@ -2219,8 +2220,8 @@ where
                 }
                 builder.assert_zero(local[UB_DGAP].into() * local[UB_SAME_DOM].into());
                 let next_hi4: AB::Expr = next[UB_KEY_HI4].into();
-                let next_lo27 = next[UB_KEY].into()
-                    - next[UB_KEY_HI4].into() * AB::Expr::from_u64(KEY_HI_BASE);
+                let next_lo27 =
+                    next[UB_KEY].into() - next[UB_KEY_HI4].into() * AB::Expr::from_u64(KEY_HI_BASE);
                 eval_lex_lt(
                     builder,
                     hi4,
@@ -2310,7 +2311,12 @@ fn fact_state_c(l: BabyBear, r: BabyBear) -> [BabyBear; POSEIDON2_WIDTH] {
 
 /// Fill one `bits`-wide decomposition (limbs + top bits) of `val`, counting the byte-bus
 /// queries into `hist`. `val` must already be `< 2^bits`.
-fn fill_decomp(val: u32, bits: usize, out: &mut Vec<BabyBear>, hist: &mut [u64; BYTE_TABLE_HEIGHT]) {
+fn fill_decomp(
+    val: u32,
+    bits: usize,
+    out: &mut Vec<BabyBear>,
+    hist: &mut [u64; BYTE_TABLE_HEIGHT],
+) {
     let (n, top_bits) = limb_geom(bits);
     let partial = top_bits < LIMB_BITS;
     for i in 0..n {
@@ -2551,8 +2557,11 @@ fn build_traces(
             for k in &desc.constraints {
                 if let VmConstraint2::Lookup(l) = k {
                     if l.table == TID_P2 {
-                        let tuple: Vec<u32> =
-                            l.tuple.iter().map(|e| eval_c(e, base_row).as_u32()).collect();
+                        let tuple: Vec<u32> = l
+                            .tuple
+                            .iter()
+                            .map(|e| eval_c(e, base_row).as_u32())
+                            .collect();
                         *chip_hist.entry(tuple).or_insert(0) += 1;
                     }
                 }
@@ -2570,7 +2579,9 @@ fn build_traces(
                     continue;
                 }
                 if g != BabyBear::ONE {
-                    return Err(format!("row {ri}: mem_op guard evaluates to {g:?}, not 0/1"));
+                    return Err(format!(
+                        "row {ri}: mem_op guard evaluates to {g:?}, not 0/1"
+                    ));
                 }
                 mem_log.push([
                     eval_c(&m.addr, base_row),
@@ -2587,126 +2598,136 @@ fn build_traces(
     let mut memory: Option<Vec<Vec<BabyBear>>> = None;
     let mut boundary: Option<Vec<Vec<BabyBear>>> = None;
     if presence.memory {
-    let mem_height = next_pow2(mem_log.len());
-    let mut mem_rows: Vec<Vec<BabyBear>> = Vec::with_capacity(mem_height);
-    for i in 0..mem_height {
-        let serial = (i + 1) as u32;
-        let mut row = vec![BabyBear::ZERO; MEM_ADDR];
-        let (tuple, is_real): ([BabyBear; 5], bool) = if i < mem_log.len() {
-            (mem_log[i], true)
-        } else {
-            ([BabyBear::ZERO; 5], false)
-        };
-        row.extend_from_slice(&tuple);
-        row.push(BabyBear::new(serial));
-        row.push(if is_real { BabyBear::ONE } else { BabyBear::ZERO });
-        let gap = if is_real {
-            let prev = tuple[3].as_u32();
-            if prev >= serial {
+        let mem_height = next_pow2(mem_log.len());
+        let mut mem_rows: Vec<Vec<BabyBear>> = Vec::with_capacity(mem_height);
+        for i in 0..mem_height {
+            let serial = (i + 1) as u32;
+            let mut row = vec![BabyBear::ZERO; MEM_ADDR];
+            let (tuple, is_real): ([BabyBear; 5], bool) = if i < mem_log.len() {
+                (mem_log[i], true)
+            } else {
+                ([BabyBear::ZERO; 5], false)
+            };
+            row.extend_from_slice(&tuple);
+            row.push(BabyBear::new(serial));
+            row.push(if is_real {
+                BabyBear::ONE
+            } else {
+                BabyBear::ZERO
+            });
+            let gap = if is_real {
+                let prev = tuple[3].as_u32();
+                if prev >= serial {
+                    return Err(format!(
+                        "memory op {i}: claimed prev serial {prev} not before own serial {serial}"
+                    ));
+                }
+                serial - 1 - prev
+            } else {
+                0
+            };
+            if (gap as u64) >= (1u64 << MEM_GAP_BITS) {
                 return Err(format!(
-                    "memory op {i}: claimed prev serial {prev} not before own serial {serial}"
+                    "memory op {i}: serial gap {gap} >= 2^{MEM_GAP_BITS}"
                 ));
             }
-            serial - 1 - prev
-        } else {
-            0
-        };
-        if (gap as u64) >= (1u64 << MEM_GAP_BITS) {
-            return Err(format!("memory op {i}: serial gap {gap} >= 2^{MEM_GAP_BITS}"));
+            row.push(BabyBear::new(gap));
+            fill_decomp(gap, MEM_GAP_BITS, &mut row, &mut byte_hist);
+            debug_assert_eq!(row.len(), MEM_WIDTH);
+            mem_rows.push(row);
         }
-        row.push(BabyBear::new(gap));
-        fill_decomp(gap, MEM_GAP_BITS, &mut row, &mut byte_hist);
-        debug_assert_eq!(row.len(), MEM_WIDTH);
-        mem_rows.push(row);
-    }
-    memory = Some(mem_rows);
+        memory = Some(mem_rows);
 
-    // ---- memory boundary: declared addrs (strictly increasing), replayed final image. ----
-    if mem_boundary.addrs.len() != mem_boundary.init_vals.len() {
-        return Err("mem boundary addrs/init_vals length mismatch".to_string());
-    }
-    for w in mem_boundary.addrs.windows(2) {
-        if w[1] <= w[0] {
-            return Err(format!(
-                "mem boundary addresses must be strictly increasing ({} then {})",
-                w[0], w[1]
-            ));
+        // ---- memory boundary: declared addrs (strictly increasing), replayed final image. ----
+        if mem_boundary.addrs.len() != mem_boundary.init_vals.len() {
+            return Err("mem boundary addrs/init_vals length mismatch".to_string());
         }
-    }
-    for &a in &mem_boundary.addrs {
-        if (a as u64) >= (1u64 << MEM_GAP_BITS) {
-            return Err(format!("mem boundary address {a} >= 2^{MEM_GAP_BITS}"));
+        for w in mem_boundary.addrs.windows(2) {
+            if w[1] <= w[0] {
+                return Err(format!(
+                    "mem boundary addresses must be strictly increasing ({} then {})",
+                    w[0], w[1]
+                ));
+            }
         }
-    }
-    // Replay: image addr → (value, serial); count per-address op multiplicity.
-    let mut image: BTreeMap<u32, (BabyBear, u32)> = mem_boundary
-        .addrs
-        .iter()
-        .zip(&mem_boundary.init_vals)
-        .map(|(&a, &v)| (a, (BabyBear::new(v), 0u32)))
-        .collect();
-    let mut addr_mult: BTreeMap<u32, u64> = BTreeMap::new();
-    for (i, op) in mem_log.iter().enumerate() {
-        let a = op[0].as_u32();
-        let Some(&(cur_v, cur_s)) = image.get(&a) else {
-            return Err(format!(
-                "memory op {i} touches undeclared address {a} (memClosed)"
-            ));
-        };
-        if check && (op[2] != cur_v || op[3].as_u32() != cur_s) {
-            return Err(format!(
-                "memory op {i} at addr {a}: claimed prev ({}, {}) != replayed ({}, {cur_s})",
-                op[2].as_u32(),
-                op[3].as_u32(),
-                cur_v.as_u32(),
-            ));
+        for &a in &mem_boundary.addrs {
+            if (a as u64) >= (1u64 << MEM_GAP_BITS) {
+                return Err(format!("mem boundary address {a} >= 2^{MEM_GAP_BITS}"));
+            }
         }
-        image.insert(a, (op[1], (i + 1) as u32));
-        *addr_mult.entry(a).or_insert(0) += 1;
-    }
-    let mb_height = next_pow2(mem_boundary.addrs.len());
-    let mut mb_rows: Vec<Vec<BabyBear>> = Vec::with_capacity(mb_height);
-    for i in 0..mb_height {
-        let mut row: Vec<BabyBear> = Vec::with_capacity(MB_WIDTH);
-        let (addr, init_v, is_real) = if i < mem_boundary.addrs.len() {
-            (
-                mem_boundary.addrs[i],
-                BabyBear::new(mem_boundary.init_vals[i]),
-                true,
-            )
-        } else {
-            (0, BabyBear::ZERO, false)
-        };
-        let (fin_v, fin_s) = if is_real {
-            image[&addr]
-        } else {
-            (BabyBear::ZERO, 0)
-        };
-        row.push(BabyBear::new(addr));
-        row.push(init_v);
-        row.push(fin_v);
-        row.push(BabyBear::new(fin_s));
-        row.push(if is_real { BabyBear::ONE } else { BabyBear::ZERO });
-        row.push(BabyBear::new(
-            (*addr_mult.get(&addr).unwrap_or(&0) % (BABYBEAR_P as u64)) as u32
-                * (is_real as u32),
-        ));
-        // agap: bound on real→real transitions; zero elsewhere.
-        let agap = if i + 1 < mem_boundary.addrs.len() {
-            mem_boundary.addrs[i + 1] - addr - 1
-        } else {
-            0
-        };
-        row.push(BabyBear::new(agap));
-        fill_decomp(agap, MEM_GAP_BITS, &mut row, &mut byte_hist);
-        // addr_chk = is_real·addr.
-        let achk = if is_real { addr } else { 0 };
-        row.push(BabyBear::new(achk));
-        fill_decomp(achk, MEM_GAP_BITS, &mut row, &mut byte_hist);
-        debug_assert_eq!(row.len(), MB_WIDTH);
-        mb_rows.push(row);
-    }
-    boundary = Some(mb_rows);
+        // Replay: image addr → (value, serial); count per-address op multiplicity.
+        let mut image: BTreeMap<u32, (BabyBear, u32)> = mem_boundary
+            .addrs
+            .iter()
+            .zip(&mem_boundary.init_vals)
+            .map(|(&a, &v)| (a, (BabyBear::new(v), 0u32)))
+            .collect();
+        let mut addr_mult: BTreeMap<u32, u64> = BTreeMap::new();
+        for (i, op) in mem_log.iter().enumerate() {
+            let a = op[0].as_u32();
+            let Some(&(cur_v, cur_s)) = image.get(&a) else {
+                return Err(format!(
+                    "memory op {i} touches undeclared address {a} (memClosed)"
+                ));
+            };
+            if check && (op[2] != cur_v || op[3].as_u32() != cur_s) {
+                return Err(format!(
+                    "memory op {i} at addr {a}: claimed prev ({}, {}) != replayed ({}, {cur_s})",
+                    op[2].as_u32(),
+                    op[3].as_u32(),
+                    cur_v.as_u32(),
+                ));
+            }
+            image.insert(a, (op[1], (i + 1) as u32));
+            *addr_mult.entry(a).or_insert(0) += 1;
+        }
+        let mb_height = next_pow2(mem_boundary.addrs.len());
+        let mut mb_rows: Vec<Vec<BabyBear>> = Vec::with_capacity(mb_height);
+        for i in 0..mb_height {
+            let mut row: Vec<BabyBear> = Vec::with_capacity(MB_WIDTH);
+            let (addr, init_v, is_real) = if i < mem_boundary.addrs.len() {
+                (
+                    mem_boundary.addrs[i],
+                    BabyBear::new(mem_boundary.init_vals[i]),
+                    true,
+                )
+            } else {
+                (0, BabyBear::ZERO, false)
+            };
+            let (fin_v, fin_s) = if is_real {
+                image[&addr]
+            } else {
+                (BabyBear::ZERO, 0)
+            };
+            row.push(BabyBear::new(addr));
+            row.push(init_v);
+            row.push(fin_v);
+            row.push(BabyBear::new(fin_s));
+            row.push(if is_real {
+                BabyBear::ONE
+            } else {
+                BabyBear::ZERO
+            });
+            row.push(BabyBear::new(
+                (*addr_mult.get(&addr).unwrap_or(&0) % (BABYBEAR_P as u64)) as u32
+                    * (is_real as u32),
+            ));
+            // agap: bound on real→real transitions; zero elsewhere.
+            let agap = if i + 1 < mem_boundary.addrs.len() {
+                mem_boundary.addrs[i + 1] - addr - 1
+            } else {
+                0
+            };
+            row.push(BabyBear::new(agap));
+            fill_decomp(agap, MEM_GAP_BITS, &mut row, &mut byte_hist);
+            // addr_chk = is_real·addr.
+            let achk = if is_real { addr } else { 0 };
+            row.push(BabyBear::new(achk));
+            fill_decomp(achk, MEM_GAP_BITS, &mut row, &mut byte_hist);
+            debug_assert_eq!(row.len(), MB_WIDTH);
+            mb_rows.push(row);
+        }
+        boundary = Some(mb_rows);
     } // if presence.memory
 
     // ---- the UNIVERSAL memory log (per row, per declared umem op, guard = 1). ----
@@ -2719,15 +2740,18 @@ fn build_traces(
                     continue;
                 }
                 if g != BabyBear::ONE {
-                    return Err(format!("row {ri}: umem_op guard evaluates to {g:?}, not 0/1"));
+                    return Err(format!(
+                        "row {ri}: umem_op guard evaluates to {g:?}, not 0/1"
+                    ));
                 }
                 let present = eval_c(&m.present, base_row);
                 let value = eval_c(&m.value, base_row);
                 let prev_present = eval_c(&m.prev_present, base_row);
                 let prev_value = eval_c(&m.prev_value, base_row);
-                for (p, v, what) in
-                    [(present, value, "cell"), (prev_present, prev_value, "prev cell")]
-                {
+                for (p, v, what) in [
+                    (present, value, "cell"),
+                    (prev_present, prev_value, "prev cell"),
+                ] {
                     if p != BabyBear::ZERO && p != BabyBear::ONE {
                         return Err(format!(
                             "row {ri}: umem_op {what} present bit is {p:?}, not 0/1"
@@ -2771,7 +2795,11 @@ fn build_traces(
             let mut row: Vec<BabyBear> = Vec::with_capacity(UM_WIDTH);
             row.extend_from_slice(&tuple);
             row.push(BabyBear::new(serial));
-            row.push(if is_real { BabyBear::ONE } else { BabyBear::ZERO });
+            row.push(if is_real {
+                BabyBear::ONE
+            } else {
+                BabyBear::ZERO
+            });
             let gap = if is_real {
                 let prev = tuple[6].as_u32();
                 if prev >= serial {
@@ -2792,7 +2820,11 @@ fn build_traces(
             let domain = tuple[0];
             byte_hist[domain.as_u32() as usize] += 1; // the domain nibble lookup, every row
             let is_null = is_real && domain.as_u32() == NULLIFIER_DOMAIN;
-            row.push(if is_null { BabyBear::ONE } else { BabyBear::ZERO });
+            row.push(if is_null {
+                BabyBear::ONE
+            } else {
+                BabyBear::ZERO
+            });
             let null_inv = if !is_real || is_null {
                 BabyBear::ZERO
             } else {
@@ -2905,10 +2937,14 @@ fn build_traces(
             row.push(fin_p);
             row.push(fin_v);
             row.push(BabyBear::new(fin_s));
-            row.push(if is_real { BabyBear::ONE } else { BabyBear::ZERO });
+            row.push(if is_real {
+                BabyBear::ONE
+            } else {
+                BabyBear::ZERO
+            });
             row.push(BabyBear::new(
-                (*addr_mult.get(&(domain, key.as_u32())).unwrap_or(&0)
-                    % (BABYBEAR_P as u64)) as u32
+                (*addr_mult.get(&(domain, key.as_u32())).unwrap_or(&0) % (BABYBEAR_P as u64))
+                    as u32
                     * (is_real as u32),
             ));
             fill_canon(key.as_u32(), is_real, &mut row, &mut byte_hist);
@@ -2922,7 +2958,11 @@ fn build_traces(
             };
             row.push(BabyBear::new(dgap));
             byte_hist[dgap as usize] += 1; // the dgap nibble lookup, every row
-            row.push(if same_dom { BabyBear::ONE } else { BabyBear::ZERO });
+            row.push(if same_dom {
+                BabyBear::ONE
+            } else {
+                BabyBear::ZERO
+            });
             // dgap·inv = next_real − same_dom: the inverse witness when domains differ.
             row.push(if next_real && dgap != 0 {
                 BabyBear::new(dgap).inverse().expect("dgap != 0")
@@ -2951,7 +2991,9 @@ fn build_traces(
                     continue;
                 }
                 if g != BabyBear::ONE {
-                    return Err(format!("row {ri}: map_op guard evaluates to {g:?}, not 0/1"));
+                    return Err(format!(
+                        "row {ri}: map_op guard evaluates to {g:?}, not 0/1"
+                    ));
                 }
                 map_log.push((
                     [
@@ -2969,67 +3011,230 @@ fn build_traces(
     let mut map_ops: Option<Vec<Vec<BabyBear>>> = None;
     let mut map_absent: Option<Vec<Vec<BabyBear>>> = None;
     if presence.map_ops || presence.map_absent {
-    let mut trees: Vec<CanonicalHeapTree> = map_heaps
-        .iter()
-        .map(|leaves| CanonicalHeapTree::new(leaves.clone(), HEAP_TREE_DEPTH))
-        .collect();
-    let mut map_rows: Vec<Vec<BabyBear>> = Vec::new();
-    let mut ma_rows: Vec<Vec<BabyBear>> = Vec::new();
-    for (i, (tuple, kind)) in map_log.iter().enumerate() {
-        let [root, key, value, _opc, new_root] = *tuple;
-        let tree = trees
+        let mut trees: Vec<CanonicalHeapTree> = map_heaps
             .iter()
-            .find(|t| t.root() == root)
-            .cloned()
-            .ok_or_else(|| format!("map op {i}: no witness heap with root {}", root.as_u32()))?;
-
-        // -- `absent`: the bracketed sorted-gap non-membership opening, its own table. --
-        if *kind == MapKind::Absent {
-            if check && new_root != root {
-                return Err(format!("map op {i}: absent must preserve the root"));
-            }
-            if check && value != BabyBear::ZERO {
-                return Err(format!("map op {i}: absent carries the canonical value 0"));
-            }
-            let key_u = key.as_u32();
-            if key == SENTINEL_MIN || key.as_u32() >= SENTINEL_MAX.as_u32() {
-                return Err(format!(
-                    "map op {i}: absent key {key_u} collides with the sentinel range"
-                ));
-            }
-            if tree.position_of(key).is_some() {
-                return Err(format!(
-                    "map op {i}: absent key {key_u} IS present in the heap — no bracketing \
-                     witness exists (the gap teeth would refuse it in-circuit)"
-                ));
-            }
-            let leaves = tree.sorted_leaves();
-            let lo_pos = leaves
+            .map(|leaves| CanonicalHeapTree::new(leaves.clone(), HEAP_TREE_DEPTH))
+            .collect();
+        let mut map_rows: Vec<Vec<BabyBear>> = Vec::new();
+        let mut ma_rows: Vec<Vec<BabyBear>> = Vec::new();
+        for (i, (tuple, kind)) in map_log.iter().enumerate() {
+            let [root, key, value, _opc, new_root] = *tuple;
+            let tree = trees
                 .iter()
-                .rposition(|l| l.addr.as_u32() < key_u)
-                .ok_or_else(|| format!("map op {i}: no lower bracket for key {key_u}"))?;
-            let lo = leaves[lo_pos];
-            let hi = *leaves
-                .get(lo_pos + 1)
-                .ok_or_else(|| format!("map op {i}: no upper bracket for key {key_u}"))?;
-            debug_assert!(hi.addr.as_u32() > key_u);
-            let (lo_sibs, lo_dirs) = tree
-                .prove_membership(lo_pos)
-                .ok_or_else(|| format!("map op {i}: lower bracket path failed"))?;
-            let (hi_sibs, hi_dirs) = tree
-                .prove_membership(lo_pos + 1)
-                .ok_or_else(|| format!("map op {i}: upper bracket path failed"))?;
+                .find(|t| t.root() == root)
+                .cloned()
+                .ok_or_else(|| {
+                    format!("map op {i}: no witness heap with root {}", root.as_u32())
+                })?;
 
-            let mut cols: Vec<BabyBear> = Vec::with_capacity(MA_WIDTH);
-            cols.push(root);
-            cols.push(key);
-            cols.push(new_root);
-            cols.push(BabyBear::ONE);
-            cols.push(lo.addr);
-            cols.push(lo.value);
-            cols.push(hi.addr);
-            cols.push(hi.value);
-            // The two leaf digests (chip absorbs) + the two fact chains to the root.
+            // -- `absent`: the bracketed sorted-gap non-membership opening, its own table. --
+            if *kind == MapKind::Absent {
+                if check && new_root != root {
+                    return Err(format!("map op {i}: absent must preserve the root"));
+                }
+                if check && value != BabyBear::ZERO {
+                    return Err(format!("map op {i}: absent carries the canonical value 0"));
+                }
+                let key_u = key.as_u32();
+                if key == SENTINEL_MIN || key.as_u32() >= SENTINEL_MAX.as_u32() {
+                    return Err(format!(
+                        "map op {i}: absent key {key_u} collides with the sentinel range"
+                    ));
+                }
+                if tree.position_of(key).is_some() {
+                    return Err(format!(
+                        "map op {i}: absent key {key_u} IS present in the heap — no bracketing \
+                     witness exists (the gap teeth would refuse it in-circuit)"
+                    ));
+                }
+                let leaves = tree.sorted_leaves();
+                let lo_pos = leaves
+                    .iter()
+                    .rposition(|l| l.addr.as_u32() < key_u)
+                    .ok_or_else(|| format!("map op {i}: no lower bracket for key {key_u}"))?;
+                let lo = leaves[lo_pos];
+                let hi = *leaves
+                    .get(lo_pos + 1)
+                    .ok_or_else(|| format!("map op {i}: no upper bracket for key {key_u}"))?;
+                debug_assert!(hi.addr.as_u32() > key_u);
+                let (lo_sibs, lo_dirs) = tree
+                    .prove_membership(lo_pos)
+                    .ok_or_else(|| format!("map op {i}: lower bracket path failed"))?;
+                let (hi_sibs, hi_dirs) = tree
+                    .prove_membership(lo_pos + 1)
+                    .ok_or_else(|| format!("map op {i}: upper bracket path failed"))?;
+
+                let mut cols: Vec<BabyBear> = Vec::with_capacity(MA_WIDTH);
+                cols.push(root);
+                cols.push(key);
+                cols.push(new_root);
+                cols.push(BabyBear::ONE);
+                cols.push(lo.addr);
+                cols.push(lo.value);
+                cols.push(hi.addr);
+                cols.push(hi.value);
+                // The two leaf digests (chip absorbs) + the two fact chains to the root.
+                let leaf_digest = |a: BabyBear, b: BabyBear| perm_aux(hash2_state_c(a, b)).1;
+                let absorb2_tuple = |a: BabyBear, b: BabyBear, d: BabyBear| -> Vec<u32> {
+                    let mut t = vec![2u32, a.as_u32(), b.as_u32()];
+                    t.extend(std::iter::repeat(0u32).take(CHIP_RATE - 2));
+                    t.push(d.as_u32());
+                    t
+                };
+                let lo_leaf = leaf_digest(lo.addr, lo.value);
+                let hi_leaf = leaf_digest(hi.addr, hi.value);
+                *chip_hist
+                    .entry(absorb2_tuple(lo.addr, lo.value, lo_leaf))
+                    .or_insert(0) += 1;
+                *chip_hist
+                    .entry(absorb2_tuple(hi.addr, hi.value, hi_leaf))
+                    .or_insert(0) += 1;
+                cols.push(lo_leaf);
+                cols.push(hi_leaf);
+                let mut chains: Vec<Vec<BabyBear>> = Vec::with_capacity(2);
+                for (leaf, sibs, dirs) in
+                    [(lo_leaf, &lo_sibs, &lo_dirs), (hi_leaf, &hi_sibs, &hi_dirs)]
+                {
+                    let mut chain: Vec<BabyBear> = Vec::with_capacity(HEAP_TREE_DEPTH - 1);
+                    let mut cur = leaf;
+                    for lvl in 0..HEAP_TREE_DEPTH {
+                        let sib = sibs[lvl];
+                        let (l, r) = if dirs[lvl] != 0 {
+                            (sib, cur)
+                        } else {
+                            (cur, sib)
+                        };
+                        let d = perm_aux(fact_state_c(l, r)).1;
+                        *fact_hist
+                            .entry((l.as_u32(), r.as_u32(), d.as_u32()))
+                            .or_insert(0) += 1;
+                        if lvl + 1 < HEAP_TREE_DEPTH {
+                            chain.push(d);
+                        }
+                        cur = d;
+                    }
+                    debug_assert_eq!(cur, root, "bracket path must authenticate against the root");
+                    chains.push(chain);
+                }
+                for sibs in [&lo_sibs, &hi_sibs] {
+                    debug_assert_eq!(sibs.len(), HEAP_TREE_DEPTH);
+                }
+                cols.extend_from_slice(&lo_sibs);
+                cols.extend(lo_dirs.iter().map(|&d| BabyBear::new(d as u32)));
+                cols.extend_from_slice(&chains[0]);
+                cols.extend_from_slice(&hi_sibs);
+                cols.extend(hi_dirs.iter().map(|&d| BabyBear::new(d as u32)));
+                cols.extend_from_slice(&chains[1]);
+                // Canonical decompositions of (lo_addr, key, hi_addr) + the two gap comparators.
+                fill_canon(lo.addr.as_u32(), true, &mut cols, &mut byte_hist);
+                fill_canon(key_u, true, &mut cols, &mut byte_hist);
+                fill_canon(hi.addr.as_u32(), true, &mut cols, &mut byte_hist);
+                fill_lex_lt(lo.addr.as_u32(), key_u, true, &mut cols, &mut byte_hist)?;
+                fill_lex_lt(key_u, hi.addr.as_u32(), true, &mut cols, &mut byte_hist)?;
+                debug_assert_eq!(cols.len(), MA_WIDTH);
+                ma_rows.push(cols);
+                continue;
+            }
+
+            let (old_value, sibs, dirs) = match kind {
+                MapKind::Read => {
+                    let pos = tree.position_of(key).ok_or_else(|| {
+                        format!("map op {i}: read key {} not in heap", key.as_u32())
+                    })?;
+                    let leaf = tree.sorted_leaves()[pos];
+                    if check && leaf.value != value {
+                        return Err(format!(
+                            "map op {i}: read at key {} opens to {}, row claims {}",
+                            key.as_u32(),
+                            leaf.value.as_u32(),
+                            value.as_u32()
+                        ));
+                    }
+                    if check && new_root != root {
+                        return Err(format!("map op {i}: read must preserve the root"));
+                    }
+                    let (sibs, dirs) = tree
+                        .prove_membership(pos)
+                        .ok_or_else(|| format!("map op {i}: membership path failed"))?;
+                    (value, sibs, dirs)
+                }
+                MapKind::Write => {
+                    let w = tree
+                        .update_witness(HeapLeaf { addr: key, value })
+                        .ok_or_else(|| {
+                            format!(
+                                "map op {i}: write key {} not present — use MapKind::Insert for \
+                             fresh-key sorted inserts",
+                                key.as_u32()
+                            )
+                        })?;
+                    if check && w.new_root != new_root {
+                        return Err(format!(
+                            "map op {i}: claimed new_root {} != genuine sorted write {}",
+                            new_root.as_u32(),
+                            w.new_root.as_u32()
+                        ));
+                    }
+                    // Advance the working set: the post-write heap is reachable for later ops.
+                    let new_leaves: Vec<HeapLeaf> = tree
+                        .sorted_leaves()
+                        .iter()
+                        .map(|l| {
+                            if l.addr == key {
+                                HeapLeaf { addr: key, value }
+                            } else {
+                                *l
+                            }
+                        })
+                        .collect();
+                    trees.push(CanonicalHeapTree::new(new_leaves, HEAP_TREE_DEPTH));
+                    (w.old_leaf.value, w.siblings, w.directions)
+                }
+                MapKind::Insert => {
+                    let w = tree
+                        .insert_witness(HeapLeaf { addr: key, value })
+                        .ok_or_else(|| {
+                            format!(
+                                "map op {i}: insert key {} already present or collides with \
+                             sentinels",
+                                key.as_u32()
+                            )
+                        })?;
+                    if check && w.new_root != new_root {
+                        return Err(format!(
+                            "map op {i}: claimed new_root {} != genuine sorted insert {}",
+                            new_root.as_u32(),
+                            w.new_root.as_u32()
+                        ));
+                    }
+                    // Advance the working set: the post-insert heap is reachable for later ops.
+                    let mut new_leaves: Vec<HeapLeaf> = tree
+                        .sorted_leaves()
+                        .iter()
+                        .filter(|l| l.addr != SENTINEL_MIN && l.addr != SENTINEL_MAX)
+                        .copied()
+                        .collect();
+                    new_leaves.push(HeapLeaf { addr: key, value });
+                    trees.push(CanonicalHeapTree::new(new_leaves, HEAP_TREE_DEPTH));
+                    (BabyBear::ZERO, w.siblings, w.directions)
+                }
+                MapKind::Absent => unreachable!("absent handled above"),
+            };
+            let mut cols = vec![BabyBear::ZERO; MAP_WIDTH];
+            cols[MAP_ROOT] = root;
+            cols[MAP_KEY] = key;
+            cols[MAP_VALUE] = value;
+            cols[MAP_OP] = BabyBear::new(kind.code());
+            cols[MAP_NEW_ROOT] = new_root;
+            cols[MAP_IS_REAL] = BabyBear::ONE;
+            cols[MAP_OLD_VALUE] = old_value;
+            for lvl in 0..HEAP_TREE_DEPTH {
+                cols[MAP_SIB0 + lvl] = sibs[lvl];
+                cols[MAP_DIR0 + lvl] = BabyBear::new(dirs[lvl] as u32);
+            }
+            // The opening's permutations ride the chip table: the two leaf hashes are
+            // absorb (arity-2) tuples on the chip bus, the chains' node hashes are fact
+            // tuples on the fact bus. The row carries digests only, never aux.
             let leaf_digest = |a: BabyBear, b: BabyBear| perm_aux(hash2_state_c(a, b)).1;
             let absorb2_tuple = |a: BabyBear, b: BabyBear, d: BabyBear| -> Vec<u32> {
                 let mut t = vec![2u32, a.as_u32(), b.as_u32()];
@@ -3037,243 +3242,94 @@ fn build_traces(
                 t.push(d.as_u32());
                 t
             };
-            let lo_leaf = leaf_digest(lo.addr, lo.value);
-            let hi_leaf = leaf_digest(hi.addr, hi.value);
+            let is_insert = *kind == MapKind::Insert;
+            let new_leaf = leaf_digest(key, value);
             *chip_hist
-                .entry(absorb2_tuple(lo.addr, lo.value, lo_leaf))
+                .entry(absorb2_tuple(key, value, new_leaf))
                 .or_insert(0) += 1;
-            *chip_hist
-                .entry(absorb2_tuple(hi.addr, hi.value, hi_leaf))
-                .or_insert(0) += 1;
-            cols.push(lo_leaf);
-            cols.push(hi_leaf);
-            let mut chains: Vec<Vec<BabyBear>> = Vec::with_capacity(2);
-            for (leaf, sibs, dirs) in
-                [(lo_leaf, &lo_sibs, &lo_dirs), (hi_leaf, &hi_sibs, &hi_dirs)]
-            {
-                let mut chain: Vec<BabyBear> = Vec::with_capacity(HEAP_TREE_DEPTH - 1);
-                let mut cur = leaf;
+            cols[MAP_NEW_LEAF] = new_leaf;
+            if is_insert {
+                // Insert rows have no committed old leaf; the AIR's old-path legs are gated
+                // away by `op - 3`. Leave old-leaf / old-chain columns at zero.
+                cols[MAP_OLD_VALUE] = BabyBear::ZERO;
+            } else {
+                let old_leaf = leaf_digest(key, old_value);
+                *chip_hist
+                    .entry(absorb2_tuple(key, old_value, old_leaf))
+                    .or_insert(0) += 1;
+                cols[MAP_OLD_LEAF] = old_leaf;
+                let mut cur_old = old_leaf;
                 for lvl in 0..HEAP_TREE_DEPTH {
                     let sib = sibs[lvl];
-                    let (l, r) = if dirs[lvl] != 0 { (sib, cur) } else { (cur, sib) };
-                    let d = perm_aux(fact_state_c(l, r)).1;
+                    let mix = |cur: BabyBear| -> (BabyBear, BabyBear) {
+                        if dirs[lvl] != 0 {
+                            (sib, cur)
+                        } else {
+                            (cur, sib)
+                        }
+                    };
+                    let (lo, ro) = mix(cur_old);
+                    let d_old = perm_aux(fact_state_c(lo, ro)).1;
                     *fact_hist
-                        .entry((l.as_u32(), r.as_u32(), d.as_u32()))
+                        .entry((lo.as_u32(), ro.as_u32(), d_old.as_u32()))
                         .or_insert(0) += 1;
                     if lvl + 1 < HEAP_TREE_DEPTH {
-                        chain.push(d);
+                        cols[MAP_OLD_CHAIN0 + lvl] = d_old;
                     }
-                    cur = d;
+                    cur_old = d_old;
                 }
-                debug_assert_eq!(cur, root, "bracket path must authenticate against the root");
-                chains.push(chain);
             }
-            for sibs in [&lo_sibs, &hi_sibs] {
-                debug_assert_eq!(sibs.len(), HEAP_TREE_DEPTH);
-            }
-            cols.extend_from_slice(&lo_sibs);
-            cols.extend(lo_dirs.iter().map(|&d| BabyBear::new(d as u32)));
-            cols.extend_from_slice(&chains[0]);
-            cols.extend_from_slice(&hi_sibs);
-            cols.extend(hi_dirs.iter().map(|&d| BabyBear::new(d as u32)));
-            cols.extend_from_slice(&chains[1]);
-            // Canonical decompositions of (lo_addr, key, hi_addr) + the two gap comparators.
-            fill_canon(lo.addr.as_u32(), true, &mut cols, &mut byte_hist);
-            fill_canon(key_u, true, &mut cols, &mut byte_hist);
-            fill_canon(hi.addr.as_u32(), true, &mut cols, &mut byte_hist);
-            fill_lex_lt(lo.addr.as_u32(), key_u, true, &mut cols, &mut byte_hist)?;
-            fill_lex_lt(key_u, hi.addr.as_u32(), true, &mut cols, &mut byte_hist)?;
-            debug_assert_eq!(cols.len(), MA_WIDTH);
-            ma_rows.push(cols);
-            continue;
-        }
-
-        let (old_value, sibs, dirs) = match kind {
-            MapKind::Read => {
-                let pos = tree.position_of(key).ok_or_else(|| {
-                    format!("map op {i}: read key {} not in heap", key.as_u32())
-                })?;
-                let leaf = tree.sorted_leaves()[pos];
-                if check && leaf.value != value {
-                    return Err(format!(
-                        "map op {i}: read at key {} opens to {}, row claims {}",
-                        key.as_u32(),
-                        leaf.value.as_u32(),
-                        value.as_u32()
-                    ));
-                }
-                if check && new_root != root {
-                    return Err(format!("map op {i}: read must preserve the root"));
-                }
-                let (sibs, dirs) = tree
-                    .prove_membership(pos)
-                    .ok_or_else(|| format!("map op {i}: membership path failed"))?;
-                (value, sibs, dirs)
-            }
-            MapKind::Write => {
-                let w = tree
-                    .update_witness(HeapLeaf { addr: key, value })
-                    .ok_or_else(|| {
-                        format!(
-                            "map op {i}: write key {} not present — use MapKind::Insert for \
-                             fresh-key sorted inserts",
-                            key.as_u32()
-                        )
-                    })?;
-                if check && w.new_root != new_root {
-                    return Err(format!(
-                        "map op {i}: claimed new_root {} != genuine sorted write {}",
-                        new_root.as_u32(),
-                        w.new_root.as_u32()
-                    ));
-                }
-                // Advance the working set: the post-write heap is reachable for later ops.
-                let new_leaves: Vec<HeapLeaf> = tree
-                    .sorted_leaves()
-                    .iter()
-                    .map(|l| {
-                        if l.addr == key {
-                            HeapLeaf { addr: key, value }
-                        } else {
-                            *l
-                        }
-                    })
-                    .collect();
-                trees.push(CanonicalHeapTree::new(new_leaves, HEAP_TREE_DEPTH));
-                (w.old_leaf.value, w.siblings, w.directions)
-            }
-            MapKind::Insert => {
-                let w = tree
-                    .insert_witness(HeapLeaf { addr: key, value })
-                    .ok_or_else(|| {
-                        format!(
-                            "map op {i}: insert key {} already present or collides with \
-                             sentinels",
-                            key.as_u32()
-                        )
-                    })?;
-                if check && w.new_root != new_root {
-                    return Err(format!(
-                        "map op {i}: claimed new_root {} != genuine sorted insert {}",
-                        new_root.as_u32(),
-                        w.new_root.as_u32()
-                    ));
-                }
-                // Advance the working set: the post-insert heap is reachable for later ops.
-                let mut new_leaves: Vec<HeapLeaf> = tree
-                    .sorted_leaves()
-                    .iter()
-                    .filter(|l| l.addr != SENTINEL_MIN && l.addr != SENTINEL_MAX)
-                    .copied()
-                    .collect();
-                new_leaves.push(HeapLeaf { addr: key, value });
-                trees.push(CanonicalHeapTree::new(new_leaves, HEAP_TREE_DEPTH));
-                (BabyBear::ZERO, w.siblings, w.directions)
-            }
-            MapKind::Absent => unreachable!("absent handled above"),
-        };
-        let mut cols = vec![BabyBear::ZERO; MAP_WIDTH];
-        cols[MAP_ROOT] = root;
-        cols[MAP_KEY] = key;
-        cols[MAP_VALUE] = value;
-        cols[MAP_OP] = BabyBear::new(kind.code());
-        cols[MAP_NEW_ROOT] = new_root;
-        cols[MAP_IS_REAL] = BabyBear::ONE;
-        cols[MAP_OLD_VALUE] = old_value;
-        for lvl in 0..HEAP_TREE_DEPTH {
-            cols[MAP_SIB0 + lvl] = sibs[lvl];
-            cols[MAP_DIR0 + lvl] = BabyBear::new(dirs[lvl] as u32);
-        }
-        // The opening's permutations ride the chip table: the two leaf hashes are
-        // absorb (arity-2) tuples on the chip bus, the chains' node hashes are fact
-        // tuples on the fact bus. The row carries digests only, never aux.
-        let leaf_digest = |a: BabyBear, b: BabyBear| perm_aux(hash2_state_c(a, b)).1;
-        let absorb2_tuple = |a: BabyBear, b: BabyBear, d: BabyBear| -> Vec<u32> {
-            let mut t = vec![2u32, a.as_u32(), b.as_u32()];
-            t.extend(std::iter::repeat(0u32).take(CHIP_RATE - 2));
-            t.push(d.as_u32());
-            t
-        };
-        let is_insert = *kind == MapKind::Insert;
-        let new_leaf = leaf_digest(key, value);
-        *chip_hist
-            .entry(absorb2_tuple(key, value, new_leaf))
-            .or_insert(0) += 1;
-        cols[MAP_NEW_LEAF] = new_leaf;
-        if is_insert {
-            // Insert rows have no committed old leaf; the AIR's old-path legs are gated
-            // away by `op - 3`. Leave old-leaf / old-chain columns at zero.
-            cols[MAP_OLD_VALUE] = BabyBear::ZERO;
-        } else {
-            let old_leaf = leaf_digest(key, old_value);
-            *chip_hist
-                .entry(absorb2_tuple(key, old_value, old_leaf))
-                .or_insert(0) += 1;
-            cols[MAP_OLD_LEAF] = old_leaf;
-            let mut cur_old = old_leaf;
+            let mut cur_new = new_leaf;
             for lvl in 0..HEAP_TREE_DEPTH {
                 let sib = sibs[lvl];
                 let mix = |cur: BabyBear| -> (BabyBear, BabyBear) {
-                    if dirs[lvl] != 0 { (sib, cur) } else { (cur, sib) }
+                    if dirs[lvl] != 0 {
+                        (sib, cur)
+                    } else {
+                        (cur, sib)
+                    }
                 };
-                let (lo, ro) = mix(cur_old);
-                let d_old = perm_aux(fact_state_c(lo, ro)).1;
+                let (ln, rn) = mix(cur_new);
+                let d_new = perm_aux(fact_state_c(ln, rn)).1;
                 *fact_hist
-                    .entry((lo.as_u32(), ro.as_u32(), d_old.as_u32()))
+                    .entry((ln.as_u32(), rn.as_u32(), d_new.as_u32()))
                     .or_insert(0) += 1;
                 if lvl + 1 < HEAP_TREE_DEPTH {
-                    cols[MAP_OLD_CHAIN0 + lvl] = d_old;
+                    cols[MAP_NEW_CHAIN0 + lvl] = d_new;
                 }
-                cur_old = d_old;
+                cur_new = d_new;
             }
+            map_rows.push(cols);
         }
-        let mut cur_new = new_leaf;
-        for lvl in 0..HEAP_TREE_DEPTH {
-            let sib = sibs[lvl];
-            let mix = |cur: BabyBear| -> (BabyBear, BabyBear) {
-                if dirs[lvl] != 0 { (sib, cur) } else { (cur, sib) }
-            };
-            let (ln, rn) = mix(cur_new);
-            let d_new = perm_aux(fact_state_c(ln, rn)).1;
-            *fact_hist
-                .entry((ln.as_u32(), rn.as_u32(), d_new.as_u32()))
-                .or_insert(0) += 1;
-            if lvl + 1 < HEAP_TREE_DEPTH {
-                cols[MAP_NEW_CHAIN0 + lvl] = d_new;
+        // Pad rows: all-zero for map-ops (is_real = 0 gates every lookup and the log receive);
+        // canon/comparator-shaped zeros for map-absent (its hi4/dhi/limb lookups ride the byte
+        // bus with multiplicity ONE on every row, so pads contribute their zero queries).
+        if presence.map_ops {
+            let map_height = next_pow2(map_rows.len());
+            while map_rows.len() < map_height {
+                map_rows.push(vec![BabyBear::ZERO; MAP_WIDTH]);
             }
-            cur_new = d_new;
+            map_ops = Some(map_rows);
+        } else if !map_rows.is_empty() {
+            return Err("read/write map ops gathered but the map-ops table is absent".to_string());
         }
-        map_rows.push(cols);
-    }
-    // Pad rows: all-zero for map-ops (is_real = 0 gates every lookup and the log receive);
-    // canon/comparator-shaped zeros for map-absent (its hi4/dhi/limb lookups ride the byte
-    // bus with multiplicity ONE on every row, so pads contribute their zero queries).
-    if presence.map_ops {
-        let map_height = next_pow2(map_rows.len());
-        while map_rows.len() < map_height {
-            map_rows.push(vec![BabyBear::ZERO; MAP_WIDTH]);
-        }
-        map_ops = Some(map_rows);
-    } else if !map_rows.is_empty() {
-        return Err("read/write map ops gathered but the map-ops table is absent".to_string());
-    }
-    if presence.map_absent {
-        let ma_height = next_pow2(ma_rows.len());
-        while ma_rows.len() < ma_height {
-            let mut cols: Vec<BabyBear> = vec![BabyBear::ZERO; MA_A_DEC0];
-            for _ in 0..3 {
-                fill_canon(0, false, &mut cols, &mut byte_hist);
+        if presence.map_absent {
+            let ma_height = next_pow2(ma_rows.len());
+            while ma_rows.len() < ma_height {
+                let mut cols: Vec<BabyBear> = vec![BabyBear::ZERO; MA_A_DEC0];
+                for _ in 0..3 {
+                    fill_canon(0, false, &mut cols, &mut byte_hist);
+                }
+                for _ in 0..2 {
+                    fill_lex_lt(0, 0, false, &mut cols, &mut byte_hist)?;
+                }
+                debug_assert_eq!(cols.len(), MA_WIDTH);
+                ma_rows.push(cols);
             }
-            for _ in 0..2 {
-                fill_lex_lt(0, 0, false, &mut cols, &mut byte_hist)?;
-            }
-            debug_assert_eq!(cols.len(), MA_WIDTH);
-            ma_rows.push(cols);
+            map_absent = Some(ma_rows);
+        } else if !ma_rows.is_empty() {
+            return Err("absent map ops gathered but the map-absent table is absent".to_string());
         }
-        map_absent = Some(ma_rows);
-    } else if !ma_rows.is_empty() {
-        return Err("absent map ops gathered but the map-absent table is absent".to_string());
-    }
     } // if presence.map_ops || presence.map_absent
 
     // ---- chip table: one row per unique permutation (absorb + fact), mult-counted. ----
@@ -3345,7 +3401,11 @@ fn build_traces(
 /// The PRESENT instance AIRs for a checked descriptor, in canonical instance order
 /// (main, then chip / byte / memory+boundary / map-ops, each iff the descriptor uses it).
 /// Presence is a function of the descriptor alone, so the verifier rebuilds the same set.
-fn instance_airs(desc: &EffectVmDescriptor2, layout: MainLayout, presence: Presence) -> Vec<Ir2Air> {
+fn instance_airs(
+    desc: &EffectVmDescriptor2,
+    layout: MainLayout,
+    presence: Presence,
+) -> Vec<Ir2Air> {
     let mut airs = vec![Ir2Air::Main {
         desc: desc.clone(),
         layout: MainLayoutPub(layout),
@@ -3706,7 +3766,10 @@ mod tests {
             crate::effect_vm_descriptors::V2_DESCRIPTORS
                 .iter()
                 .map(|(key, json, _)| {
-                    (key.to_string(), parse_vm_descriptor2(json).expect("registry entry parses"))
+                    (
+                        key.to_string(),
+                        parse_vm_descriptor2(json).expect("registry entry parses"),
+                    )
                 })
                 .collect();
         cohort.push(("ir2-test-gauntlet".to_string(), test_desc()));
@@ -3762,15 +3825,24 @@ mod tests {
         assert!(matches!(d.constraints[0], VmConstraint2::Base(_)));
         assert!(matches!(
             d.constraints[1],
-            VmConstraint2::Lookup(LookupSpec { table: TID_RANGE, .. })
+            VmConstraint2::Lookup(LookupSpec {
+                table: TID_RANGE,
+                ..
+            })
         ));
         assert!(matches!(
             d.constraints[2],
-            VmConstraint2::MemOp(MemOpSpec { kind: MemKind::Read, .. })
+            VmConstraint2::MemOp(MemOpSpec {
+                kind: MemKind::Read,
+                ..
+            })
         ));
         assert!(matches!(
             d.constraints[3],
-            VmConstraint2::MapOp(MapOpSpec { op: MapKind::Write, .. })
+            VmConstraint2::MapOp(MapOpSpec {
+                op: MapKind::Write,
+                ..
+            })
         ));
     }
 
@@ -3913,14 +3985,9 @@ mod tests {
     #[test]
     fn ir2_honest_witness_proves_and_verifies() {
         let desc = test_desc();
-        let proof = prove_vm_descriptor2(
-            &desc,
-            &test_trace(),
-            &[],
-            &test_boundary(),
-            &[test_heap()],
-        )
-        .expect("honest IR v2 witness must prove");
+        let proof =
+            prove_vm_descriptor2(&desc, &test_trace(), &[], &test_boundary(), &[test_heap()])
+                .expect("honest IR v2 witness must prove");
         assert_eq!(
             proof.degree_bits.len(),
             6,
@@ -3938,9 +4005,14 @@ mod tests {
         let mut desc = test_desc();
         desc.constraints
             .retain(|k| !matches!(k, VmConstraint2::MemOp(_) | VmConstraint2::MapOp(_)));
-        let proof =
-            prove_vm_descriptor2(&desc, &test_trace(), &[], &MemBoundaryWitness::default(), &[])
-                .expect("chip+range-only witness must prove");
+        let proof = prove_vm_descriptor2(
+            &desc,
+            &test_trace(),
+            &[],
+            &MemBoundaryWitness::default(),
+            &[],
+        )
+        .expect("chip+range-only witness must prove");
         assert_eq!(
             proof.degree_bits.len(),
             3,
@@ -3977,9 +4049,7 @@ mod tests {
         rows[0][5] = BabyBear::new(7); // value
         rows[0][6] = BabyBear::new(7); // prev_value (read discipline forces equality)
         // Pre-flight replay refuses.
-        assert!(
-            prove_vm_descriptor2(&desc, &rows, &[], &test_boundary(), &[test_heap()]).is_err()
-        );
+        assert!(prove_vm_descriptor2(&desc, &rows, &[], &test_boundary(), &[test_heap()]).is_err());
         // In-circuit tooth: bypass the replay; the mem_check bus cannot balance.
         let r = std::panic::catch_unwind(|| {
             prove_vm_descriptor2_inner(
@@ -4009,9 +4079,7 @@ mod tests {
         let desc = test_desc();
         let mut rows = test_trace();
         rows[0][11] = BabyBear::new(78);
-        assert!(
-            prove_vm_descriptor2(&desc, &rows, &[], &test_boundary(), &[test_heap()]).is_err()
-        );
+        assert!(prove_vm_descriptor2(&desc, &rows, &[], &test_boundary(), &[test_heap()]).is_err());
         let r = std::panic::catch_unwind(|| {
             prove_vm_descriptor2_inner(
                 &desc,
@@ -4041,9 +4109,7 @@ mod tests {
         for row in &mut rows {
             row[14] = BabyBear::new(0b1000); // keep has a bit held lacks
         }
-        assert!(
-            prove_vm_descriptor2(&desc, &rows, &[], &test_boundary(), &[test_heap()]).is_err()
-        );
+        assert!(prove_vm_descriptor2(&desc, &rows, &[], &test_boundary(), &[test_heap()]).is_err());
         let r = std::panic::catch_unwind(|| {
             prove_vm_descriptor2_inner(
                 &desc,
@@ -4112,7 +4178,10 @@ mod tests {
         .expect("honest traces");
         // The attack: a double-height range table, the increment chain continued and
         // every extra row carrying multiplicity 0.
-        let byte = traces.byte.as_mut().expect("gauntlet commits the range table");
+        let byte = traces
+            .byte
+            .as_mut()
+            .expect("gauntlet commits the range table");
         for b in BYTE_TABLE_HEIGHT..2 * BYTE_TABLE_HEIGHT {
             byte.push(vec![BabyBear::new(b as u32), BabyBear::ZERO]);
         }
@@ -4165,9 +4234,7 @@ mod tests {
         for row in &mut rows {
             row[3] = BabyBear::new(1 << 30);
         }
-        assert!(
-            prove_vm_descriptor2(&desc, &rows, &[], &test_boundary(), &[test_heap()]).is_err()
-        );
+        assert!(prove_vm_descriptor2(&desc, &rows, &[], &test_boundary(), &[test_heap()]).is_err());
     }
 
     /// A map WRITE (in-place update at an existing key) proves: the new root is the
@@ -4396,15 +4463,27 @@ mod tests {
         assert_eq!(d.constraints.len(), 3);
         assert!(matches!(
             &d.constraints[0],
-            VmConstraint2::UMemOp(UMemOpSpec { kind: MemKind::Write, domain: NULLIFIER_DOMAIN, .. })
+            VmConstraint2::UMemOp(UMemOpSpec {
+                kind: MemKind::Write,
+                domain: NULLIFIER_DOMAIN,
+                ..
+            })
         ));
         assert!(matches!(
             &d.constraints[1],
-            VmConstraint2::UMemOp(UMemOpSpec { kind: MemKind::Read, domain: NULLIFIER_DOMAIN, .. })
+            VmConstraint2::UMemOp(UMemOpSpec {
+                kind: MemKind::Read,
+                domain: NULLIFIER_DOMAIN,
+                ..
+            })
         ));
         assert!(matches!(
             &d.constraints[2],
-            VmConstraint2::UMemOp(UMemOpSpec { kind: MemKind::Write, domain: 0, .. })
+            VmConstraint2::UMemOp(UMemOpSpec {
+                kind: MemKind::Write,
+                domain: 0,
+                ..
+            })
         ));
         check_descriptor2(&d).expect("umem golden must check");
     }
@@ -4801,10 +4880,7 @@ mod tests {
     fn absent_trace(key: u32) -> Vec<Vec<BabyBear>> {
         let tree = CanonicalHeapTree::new(test_heap(), HEAP_TREE_DEPTH);
         let root = tree.root();
-        let mut rows = vec![
-            vec![root, BabyBear::new(key), root, BabyBear::ZERO];
-            4
-        ];
+        let mut rows = vec![vec![root, BabyBear::new(key), root, BabyBear::ZERO]; 4];
         rows[0][3] = BabyBear::ONE;
         rows
     }
@@ -4871,8 +4947,7 @@ mod tests {
         )
         .expect("honest absent traces");
         traces.main[0][1] = BabyBear::new(100); // the forged claim, main side
-        traces.map_absent.as_mut().expect("absent table present")[0][MA_KEY] =
-            BabyBear::new(100); // …and table side (multiset balanced)
+        traces.map_absent.as_mut().expect("absent table present")[0][MA_KEY] = BabyBear::new(100); // …and table side (multiset balanced)
         let airs = instance_airs(&desc, layout, presence);
         let mut matrices = vec![to_matrix(&traces.main)];
         for t in [
@@ -4971,9 +5046,8 @@ mod tests {
     fn rotation_probe_honest_witness_proves_verifies_and_measures() {
         let desc = rotation_probe_desc();
         let (rows, pi) = rotation_probe_trace();
-        let proof =
-            prove_vm_descriptor2(&desc, &rows, &pi, &MemBoundaryWitness::default(), &[])
-                .expect("honest rotated-block witness must prove");
+        let proof = prove_vm_descriptor2(&desc, &rows, &pi, &MemBoundaryWitness::default(), &[])
+            .expect("honest rotated-block witness must prove");
         assert_eq!(
             proof.degree_bits.len(),
             2,
@@ -5071,8 +5145,11 @@ mod tests {
             let desc = rotation_probe_desc_key(key);
             let (rows, pi) = rotation_probe_trace_r(r);
             let t0 = std::time::Instant::now();
-            let proof = prove_vm_descriptor2(&desc, &rows, &pi, &MemBoundaryWitness::default(), &[])
-                .unwrap_or_else(|e| panic!("honest R={r} rotated-block witness must prove: {e}"));
+            let proof =
+                prove_vm_descriptor2(&desc, &rows, &pi, &MemBoundaryWitness::default(), &[])
+                    .unwrap_or_else(|e| {
+                        panic!("honest R={r} rotated-block witness must prove: {e}")
+                    });
             let prove_ms = t0.elapsed().as_secs_f64() * 1e3;
             assert_eq!(
                 proof.degree_bits.len(),
@@ -5164,6 +5241,167 @@ mod tests {
             t[0][col] = t[0][col] + BabyBear::ONE;
             assert!(refused(&t, &pi), "tampered column {col} must refuse");
         }
+        for k in 0..pi.len() {
+            let mut p = pi.clone();
+            p[k] = p[k] + BabyBear::ONE;
+            assert!(refused(&rows, &p), "tampered PI {k} must refuse");
+        }
+    }
+
+    // ==== THE WIDENED CAVEAT OPERAND (staged) — the heap-caveat wire shape ====
+    //
+    // `Dregg2/Circuit/Emit/EffectVmEmitRotationCaveat.lean` emits the R=24 rotated
+    // block + the 29-felt caveat manifest block (count + 4 × 7-felt entries
+    // [type_tag, DOMAIN_TAG, KEY, p0..p3] — the operand widened from slot_index:u8
+    // to (domain, key) with felt keys) + the chained caveat commitment, three PI
+    // pins. Lean keystones: `caveat_operand_no_aliasing` (slot/heap domain
+    // separation as a theorem), `caveatCommit_binds`,
+    // `rotationCaveatProbe_binds_published`. These tests are the Rust teeth: the
+    // honest witness (one register caveat + one HEAP-KEY caveat) proves+verifies;
+    // a forged DOMAIN TAG refuses; a tampered HEAP KEY refuses; every manifest
+    // column and every PI is load-bearing.
+
+    fn rotation_caveat_probe_desc() -> EffectVmDescriptor2 {
+        parse_vm_descriptor2(
+            crate::effect_vm_descriptors::DREGG_EFFECTVM_ROTATION_CAVEAT_V3_STAGED_JSON,
+        )
+        .expect("staged caveat probe parses")
+    }
+
+    /// The honest caveat-probe witness: the R=24 rotated-block witness (the
+    /// parametric builder's limbs and chain), then the caveat manifest —
+    /// entry 0 caveats REGISTER 3 (monotonic), entry 1 caveats HEAP KEY
+    /// 123456789 (≥ 50; a key no u8 could carry) — and the genuine chained
+    /// caveat absorption. PI = [state commit, height, caveat commit].
+    fn rotation_caveat_probe_trace() -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
+        use crate::effect_vm::RotCaveatEntry;
+        use crate::effect_vm::columns::rotation::caveat as cav;
+        use crate::effect_vm_descriptors::rotation_layout_for;
+        use crate::poseidon2::hash_many;
+        let lay = rotation_layout_for(cav::R);
+        let (rot_rows, rot_pi) = rotation_probe_trace_r(cav::R);
+        let mut row = vec![BabyBear::ZERO; cav::PROBE_WIDTH];
+        row[..lay.probe_width].copy_from_slice(&rot_rows[0]);
+        // The manifest block: count + the four entries (7 felts each).
+        let e0 = RotCaveatEntry {
+            type_tag: crate::effect_vm::pi::SLOT_CAVEAT_TAG_MONOTONIC,
+            domain_tag: cav::DOMAIN_REGISTERS,
+            key: BabyBear::new(3),
+            params: [BabyBear::ZERO; 4],
+        };
+        let e1 = RotCaveatEntry {
+            type_tag: crate::effect_vm::pi::SLOT_CAVEAT_TAG_FIELD_GTE,
+            domain_tag: cav::DOMAIN_HEAP,
+            key: BabyBear::new(123_456_789),
+            params: [
+                BabyBear::new(50),
+                BabyBear::ZERO,
+                BabyBear::ZERO,
+                BabyBear::ZERO,
+            ],
+        };
+        row[cav::COUNT_COL] = BabyBear::new(2);
+        e0.write_to(&mut row[cav::ENTRY_BASE..cav::ENTRY_BASE + cav::ENTRY_SIZE]);
+        e1.write_to(
+            &mut row[cav::ENTRY_BASE + cav::ENTRY_SIZE..cav::ENTRY_BASE + 2 * cav::ENTRY_SIZE],
+        );
+        // (entries 2/3 stay zero — "no caveat".)
+        // The chained caveat absorption: 4-wide head, 3-wide groups, final singleton.
+        let last = cav::BASE + cav::MANIFEST_SIZE - 1; // col 71
+        let mut d = hash_many(&[row[43], row[44], row[45], row[46]]);
+        let mut chain = 0usize;
+        row[cav::CHAIN_BASE + chain] = d;
+        chain += 1;
+        let mut col = 47;
+        while col <= last {
+            let remaining = last - col + 1;
+            if remaining >= 3 {
+                d = hash_many(&[d, row[col], row[col + 1], row[col + 2]]);
+                col += 3;
+            } else {
+                d = hash_many(&[d, row[col]]);
+                col += 1;
+            }
+            if col <= last {
+                row[cav::CHAIN_BASE + chain] = d;
+                chain += 1;
+            }
+        }
+        assert_eq!(chain, cav::NUM_CHAIN, "caveat chain carrier count");
+        row[cav::CAVEAT_COMMIT] = d;
+        let pi = vec![rot_pi[0], rot_pi[1], d];
+        (vec![row; 4], pi)
+    }
+
+    /// The staged acceptance gate: the Lean-emitted caveat probe proves and
+    /// verifies through the IR-v2 multi-table assembly (every absorption a real
+    /// permutation row), proof size measured.
+    #[test]
+    fn rotation_caveat_probe_honest_witness_proves_verifies_and_measures() {
+        let desc = rotation_caveat_probe_desc();
+        let (rows, pi) = rotation_caveat_probe_trace();
+        let proof = prove_vm_descriptor2(&desc, &rows, &pi, &MemBoundaryWitness::default(), &[])
+            .expect("honest caveat-probe witness must prove");
+        assert_eq!(
+            proof.degree_bits.len(),
+            2,
+            "caveat probe commits main + chip only"
+        );
+        verify_vm_descriptor2(&desc, &proof, &pi).expect("caveat probe proof must verify");
+        let total = postcard::to_allocvec(&proof).expect("postcard").len();
+        println!(
+            "rotation-caveat v3-staged probe proof (R=24 + 29-felt manifest): {total} bytes \
+             (~{:.1} KiB)",
+            total as f64 / 1024.0
+        );
+    }
+
+    /// THE OPERAND TEETH: a forged DOMAIN TAG (heap → registers — the aliasing
+    /// attack the u8 operand could not even EXPRESS — or heap → caps) refuses; a
+    /// tampered HEAP KEY refuses (the key is commitment-carried, not metadata);
+    /// so do the count, every entry column, the caveat chain, the commitment
+    /// carrier, and every PI. Tampers refuse eagerly or at the batch self-verify;
+    /// the debug prover may panic on the violated tooth — both are refusals (the
+    /// absent-gauntlet pattern).
+    #[test]
+    fn rotation_caveat_probe_refuses_forged_domain_and_tampered_key() {
+        use crate::effect_vm::columns::rotation::caveat as cav;
+        use std::panic::{AssertUnwindSafe, catch_unwind};
+        let desc = rotation_caveat_probe_desc();
+        let (rows, pi) = rotation_caveat_probe_trace();
+        let refused = |rows: &Vec<Vec<BabyBear>>, pi: &Vec<BabyBear>| -> bool {
+            let r = catch_unwind(AssertUnwindSafe(|| {
+                prove_vm_descriptor2(&desc, rows, pi, &MemBoundaryWitness::default(), &[])
+            }));
+            match r {
+                Err(_) => true,
+                Ok(res) => res.is_err(),
+            }
+        };
+        // The named attacks, by column: entry 1 (the heap caveat) lives at base 51.
+        let e1 = cav::ENTRY_BASE + cav::ENTRY_SIZE;
+        // Forge the heap entry's DOMAIN TAG to the registers plane (slot/heap aliasing).
+        let mut t = rows.clone();
+        t[0][e1 + 1] = BabyBear::new(cav::DOMAIN_REGISTERS);
+        assert!(
+            refused(&t, &pi),
+            "forged domain tag (heap→registers) must refuse"
+        );
+        // Forge it to a non-caveat plane (caps = 2).
+        let mut t = rows.clone();
+        t[0][e1 + 1] = BabyBear::new(2);
+        assert!(refused(&t, &pi), "forged domain tag (heap→caps) must refuse");
+        // Tamper the HEAP KEY (point the caveat at a different heap field).
+        let mut t = rows.clone();
+        t[0][e1 + 2] = t[0][e1 + 2] + BabyBear::ONE;
+        assert!(refused(&t, &pi), "tampered heap key must refuse");
+        // Every caveat column is load-bearing: the manifest block, the chain, the carrier.
+        for col in cav::BASE..cav::PROBE_WIDTH {
+            let mut t = rows.clone();
+            t[0][col] = t[0][col] + BabyBear::ONE;
+            assert!(refused(&t, &pi), "tampered caveat column {col} must refuse");
+        }
+        // Every PI is load-bearing — including the published caveat commit.
         for k in 0..pi.len() {
             let mut p = pi.clone();
             p[k] = p[k] + BabyBear::ONE;

@@ -10,15 +10,16 @@
 //! parallel verified core `Dregg2/Circuit/Argus/InterpCore.lean` shrinks the
 //! interpreter TCB by proving `decideVm = true ↔ satisfiedVm`
 //! (`decideVm_iff_satisfiedVm`, axiom-clean) — a TOTAL, computable Boolean
-//! reference. `InterpCore.lean`'s own doc-comment (§5) names the precise
-//! remaining obligation as a Rust↔Lean transcription OUTSIDE Lean's kernel:
+//! reference. `InterpCore.lean`'s own doc-comment names the precise remaining
+//! obligation as a Rust↔Lean transcription OUTSIDE Lean's kernel:
 //!
-//!   > "This file shrinks the TCB to (a) `decideVm` (verified here) and (b) the
-//!   >  transcription `eval ≈ decideVm`."
-//!   > "(R2) Domain factoring is in the Rust … the cross-row domain
-//!   >  quantification (∀ windows) is the residual the multi-row AIR adds."
+//!   > "The TCB is (a) `decideVm` (verified here) and (b) the transcription
+//!   >  `eval ≈ decideVm`."
+//!   > "the multi-row AIR quantifies windows over the trace with the
+//!   >  `when_transition` factoring … The factoring belongs to the LIFT, not
+//!   >  the reference."
 //!
-//! THIS FILE IS THE RUST-SIDE DISCHARGE OF (b)+(R2). It transcribes `decideVm`
+//! THIS FILE IS THE ROW-DOMAIN (R2) LEG OF (b). It transcribes `decideVm`
 //! into Rust (`oracle_decide_vm`, the multi-row lift = the running AIR's domain
 //! factoring), then proves — over a GENERATED corpus, not a fixed ~6-case hand
 //! list — that the running `EffectVmDescriptorAir`'s accept/reject decision
@@ -56,7 +57,14 @@
 //! coverage of every IR form), NOT a Lean-kernel PROOF that the Rust `eval`
 //! equals `decideVm` for all inputs — that would require extracting/modelling the
 //! p3 `eval` in Lean (out of scope; the Rust AIR is the un-verified leaf by
-//! design, per `InterpCore.lean` §5). R1 from `InterpCore` is now CLOSED: the Rust
+//! design, per `InterpCore.lean`). The hand-transcription `oracle_decide_vm`
+//! itself is pinned against the LEAN-COMPUTED `decideVm` verdicts by the golden
+//! corpus (`Dregg2/Circuit/Argus/InterpGolden.lean` ↔
+//! `lean_descriptor_air.rs::tests::lean_decide_vm_golden_corpus_agrees` — every
+//! arm, all four flag settings, both polarities), closing the cascade
+//! `decideVm ≡ golden ≡ ℤ-transcription ≈ oracle ≡ AIR`, with the remaining
+//! `≈` the ℤ→BabyBear field representation (corpus values bounded ≪ p, the
+//! prover differentials running the real field). R1 from `InterpCore` is CLOSED: the Rust
 //! `VmConstraint` enum has a `Boundary { row, body }` variant realizing Lean's
 //! `VmConstraint.boundary` (a `when_first_row`/`when_last_row`-guarded `assert_zero`
 //! of the body polynomial), and this generator NOW emits `Boundary{First}` and

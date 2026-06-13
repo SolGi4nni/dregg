@@ -206,6 +206,19 @@ pub struct TransitionMeta {
     pub method: [u8; 32],
     /// Bitwise-OR of every effect's `effect_kind_mask()`.
     pub effects_mask: u32,
+    /// The TOUCHED cell's own post-turn `delegation_epoch`
+    /// (`CellState::delegation_epoch()` — the R7 capability-freshness
+    /// counter, sealed P0-1). Supplied PER CELL by the executor's
+    /// program-check loop (`execute_tree.rs`), read by
+    /// [`StateConstraint::DelegationEpochEquals`]. `None` (the
+    /// `new`/`wildcard` default, and every legacy caller) FAILS CLOSED:
+    /// the atom surfaces `MissingContextField`. Lives here rather than
+    /// on `EvalContext` because the epoch is per-touched-cell (the meta
+    /// is rebuilt per cell in the check loop) while `EvalContext` is
+    /// per-action — and `EvalContext` is constructed by struct literal
+    /// across many crates (incl. the sp1 guest), so this carrier keeps
+    /// the wire-visible context struct untouched.
+    pub delegation_epoch: Option<u64>,
 }
 
 impl TransitionMeta {
@@ -214,6 +227,7 @@ impl TransitionMeta {
         Self {
             method,
             effects_mask,
+            delegation_epoch: None,
         }
     }
     /// A wildcard meta — matches `Always` only; useful for tests.
@@ -221,7 +235,15 @@ impl TransitionMeta {
         Self {
             method: [0u8; 32],
             effects_mask: 0,
+            delegation_epoch: None,
         }
+    }
+    /// Stamp the touched cell's post-turn `delegation_epoch` onto this
+    /// meta (the executor's per-cell program-check loop does this for
+    /// every evaluated cell; see [`StateConstraint::DelegationEpochEquals`]).
+    pub fn with_delegation_epoch(mut self, epoch: u64) -> Self {
+        self.delegation_epoch = Some(epoch);
+        self
     }
 }
 
@@ -665,6 +687,67 @@ pub enum SimpleStateConstraint {
     /// `SimpleConstraint`. See [`HeapAtom`] for the full semantics +
     /// Lean theorem names. APPEND-ONLY (postcard variant indices).
     HeapField { key: u64, atom: HeapAtom },
+    /// **Program-readable `delegation_epoch` (the channels closure
+    /// lane):** the post-state slot `new[index]` must equal the touched
+    /// cell's own post-turn `delegation_epoch` (the R7
+    /// capability-freshness counter, [`TransitionMeta::delegation_epoch`],
+    /// stamped per cell by the executor's program-check loop). This is
+    /// the atom that DISCHARGES the channel-group `DelegationEpochTie`
+    /// premise (`metatheory/Dregg2/Apps/ChannelGroup.lean`): with
+    /// `DelegationEpochEquals { index: CH_EPOCH_SLOT }` installed, the
+    /// group's epoch slot ≡ `delegation_epoch` is PROGRAM-ENFORCED on
+    /// every admitted turn — forward-key darkness and R7 capability
+    /// staleness are tied IN the program, not only by the canonical
+    /// builders' fail-closed checks (which remain as defense-in-depth).
+    /// Comparison is full 32-byte (`field_from_u64(epoch)`), not a low-
+    /// limb projection. Fail-closed: a meta without the stamp (legacy
+    /// `evaluate*` entrypoints, wildcard metas) surfaces
+    /// `MissingContextField { field: "delegation_epoch" }`.
+    /// Lean twin: `SimpleConstraint.delegationEpochEquals` +
+    /// `evalSimpleCtx_delegationEpochEquals_iff`
+    /// (`metatheory/Dregg2/Exec/Program.lean`). Lives in
+    /// `SimpleStateConstraint` so it composes under `AnyOf`/`Not`.
+    /// APPEND-ONLY (postcard variant indices).
+    DelegationEpochEquals { index: u8 },
+    /// **Count-≥ / order-statistic atom (in-program M-of-N):** the turn
+    /// must EXHIBIT, in its witness blobs (the unique `Cleartext` blob,
+    /// postcard `Vec<[u8; 32]>`), a set of at least `threshold` DISTINCT
+    /// 32-byte elements whose canonical sorted-set commitment
+    /// ([`count_ge_set_commitment`]) equals the commitment held in
+    /// `new[set_commitment_slot]`.
+    ///
+    /// WHY THIS SHAPE (and not the polis `AffineLe`-over-flag-slots
+    /// trick, which FAILED on unbounded counters): a sum over flag slots
+    /// can be faked by inflating ONE slot to `M`. Here nothing
+    /// accumulates in state — the witness RE-EXHIBITS the full element
+    /// set on every turn, distinctness is structural (`BTreeSet`), and
+    /// the set is bound to the slot commitment, so `M` cannot be
+    /// counterfeited by arithmetic aliasing.
+    ///
+    /// HONEST SCOPE (what the runtime can and cannot discharge today):
+    /// the atom discharges "the committed set opens and has ≥ M distinct
+    /// elements". It does NOT verify that each element is a live council
+    /// member who APPROVED this turn — per-element signatures are not in
+    /// the scalar evaluator; the approval binding stays the polis
+    /// actor-bound approval-slot ceremony (`AnyOf[Immutable{slot_i},
+    /// SenderIs{member_i}]`), whose slots feed the committed set. The
+    /// commitment slot itself MUST be governance-written (actor-bound /
+    /// admin-gated), else whoever can write the slot mints quorums —
+    /// which is why the deployed channel program keeps `SenderIs{admin}`
+    /// and the council point ships as a blueprint-test shape
+    /// (`council_count_ge_shape` in `blueprint.rs`).
+    ///
+    /// Fail-closed: missing blob ⇒ `MissingContextField`; ambiguous
+    /// (multiple Cleartext blobs) or undecodable blob ⇒
+    /// `WitnessedPredicateRejected`; commitment mismatch or
+    /// distinct-count < threshold ⇒ `ConstraintViolated`.
+    /// Lean twin: `SimpleConstraint.countGe` +
+    /// `evalSimpleCtx_countGe_iff` (`metatheory/Dregg2/Exec/Program.lean`).
+    /// APPEND-ONLY (postcard variant indices).
+    CountGe {
+        threshold: u32,
+        set_commitment_slot: u8,
+    },
 }
 
 impl SimpleStateConstraint {
@@ -1127,6 +1210,21 @@ pub enum StateConstraint {
     /// fail-closed-coherent per the Lean theorems on [`HeapAtom`]'s
     /// docstring. APPEND-ONLY (postcard variant indices).
     HeapField { key: u64, atom: HeapAtom },
+
+    /// `new[index]` must equal the touched cell's post-turn
+    /// `delegation_epoch`. Top-level twin of
+    /// [`SimpleStateConstraint::DelegationEpochEquals`] (ONE evaluator
+    /// arm, the `SenderIs`/`HeapField` precedent). APPEND-ONLY.
+    DelegationEpochEquals { index: u8 },
+
+    /// The witness must exhibit ≥ `threshold` distinct elements opening
+    /// the commitment in `new[set_commitment_slot]`. Top-level twin of
+    /// [`SimpleStateConstraint::CountGe`] (ONE evaluator arm).
+    /// APPEND-ONLY.
+    CountGe {
+        threshold: u32,
+        set_commitment_slot: u8,
+    },
 }
 
 /// Error from evaluating a cell program.
@@ -1361,7 +1459,7 @@ impl CellProgram {
             CellProgram::None => Ok(()),
             CellProgram::Predicate(constraints) => {
                 for constraint in constraints {
-                    evaluate_constraint_full(constraint, new_state, old_state, ctx, witnesses)?;
+                    evaluate_constraint_full(constraint, new_state, old_state, ctx, meta, witnesses)?;
                 }
                 Ok(())
             }
@@ -1399,7 +1497,7 @@ impl CellProgram {
                         }
                         for constraint in &case.constraints {
                             evaluate_constraint_full(
-                                constraint, new_state, old_state, ctx, witnesses,
+                                constraint, new_state, old_state, ctx, meta, witnesses,
                             )?;
                         }
                     }
@@ -1535,6 +1633,7 @@ fn evaluate_constraint(
         new_state,
         old_state,
         ctx,
+        &TransitionMeta::wildcard(),
         &WitnessBundle::empty(),
     )
 }
@@ -1551,6 +1650,7 @@ fn evaluate_constraint_full(
     new_state: &CellState,
     old_state: Option<&CellState>,
     ctx: Option<&EvalContext>,
+    meta: &TransitionMeta,
     witnesses: &WitnessBundle<'_>,
 ) -> Result<(), ProgramError> {
     match constraint {
@@ -2412,7 +2512,7 @@ fn evaluate_constraint_full(
             }
             let mut last_err: Option<ProgramError> = None;
             for v in variants {
-                match evaluate_simple_constraint(v, new_state, old_state, ctx, witnesses) {
+                match evaluate_simple_constraint(v, new_state, old_state, ctx, meta, witnesses) {
                     Ok(()) => return Ok(()),
                     Err(e) => last_err = Some(e),
                 }
@@ -2526,7 +2626,7 @@ fn evaluate_constraint_full(
 
         StateConstraint::AllOf { variants } => {
             for v in variants {
-                evaluate_simple_constraint(v, new_state, old_state, ctx, witnesses)?;
+                evaluate_simple_constraint(v, new_state, old_state, ctx, meta, witnesses)?;
             }
             Ok(())
         }
@@ -2739,7 +2839,102 @@ fn evaluate_constraint_full(
         StateConstraint::HeapField { key, atom } => {
             evaluate_heap_atom(constraint, *key, atom, new_state, old_state)
         }
+
+        // ─── Program-readable delegation_epoch (the channels closure lane) ───
+        StateConstraint::DelegationEpochEquals { index } => {
+            let idx = check_index(*index)?;
+            // Fail-closed: only the executor's per-cell program-check loop
+            // stamps the epoch (`TransitionMeta::with_delegation_epoch`);
+            // every legacy/wildcard meta surfaces the sentinel.
+            let epoch = meta
+                .delegation_epoch
+                .ok_or(ProgramError::MissingContextField {
+                    field: "delegation_epoch",
+                })?;
+            // Full 32-byte equality against the canonical encoding — a slot
+            // with garbage upper limbs and a matching low limb is refused.
+            if new_state.fields[idx] != field_from_u64(epoch) {
+                return violated(
+                    constraint,
+                    format!(
+                        "slot[{idx}] != delegation_epoch ({epoch}): the epoch slot diverged \
+                         from the capability-freshness counter (DelegationEpochEquals)"
+                    ),
+                );
+            }
+            Ok(())
+        }
+
+        // ─── Count-≥ / order-statistic atom (in-program M-of-N) ───
+        StateConstraint::CountGe {
+            threshold,
+            set_commitment_slot,
+        } => {
+            let idx = check_index(*set_commitment_slot)?;
+            // The witness re-exhibits the FULL element set every turn (the
+            // anti-AffineLe design: nothing accumulates in state, so no
+            // counter slot can fake M). Bind by uniqueness, fail closed on
+            // ambiguity — the `unique_blob_of_kinds` discipline.
+            let (_, blob) = unique_blob_of_kinds(witnesses, &[WitnessKindTag::Cleartext])
+                .map_err(|e| match e {
+                    UniqueBlobError::Missing => ProgramError::MissingContextField {
+                        field: "count-ge set-exhibit witness (Cleartext)",
+                    },
+                    UniqueBlobError::Ambiguous => ProgramError::WitnessedPredicateRejected {
+                        kind_name: "CountGe",
+                        reason: "ambiguous: more than one Cleartext witness blob; \
+                                 the set exhibit cannot be bound"
+                            .to_string(),
+                    },
+                })?;
+            let elements: Vec<[u8; 32]> = postcard::from_bytes(blob.bytes).map_err(|_| {
+                ProgramError::WitnessedPredicateRejected {
+                    kind_name: "CountGe",
+                    reason: "set-exhibit blob is not a postcard Vec<[u8;32]>".to_string(),
+                }
+            })?;
+            // Distinctness is structural: duplicates collapse in the set
+            // (a duplicate-padded exhibit dedupes to the SAME committed set,
+            // so the commitment still binds and the count stays honest).
+            let set: std::collections::BTreeSet<[u8; 32]> = elements.into_iter().collect();
+            let commitment = count_ge_set_commitment(&set);
+            if new_state.fields[idx] != commitment {
+                return violated(
+                    constraint,
+                    format!(
+                        "exhibited set does not open the commitment in slot[{idx}] (CountGe)"
+                    ),
+                );
+            }
+            if (set.len() as u64) < (*threshold as u64) {
+                return violated(
+                    constraint,
+                    format!(
+                        "exhibited set has {} distinct element(s) < threshold {threshold} (CountGe)",
+                        set.len()
+                    ),
+                );
+            }
+            Ok(())
+        }
     }
+}
+
+/// Domain tag for [`count_ge_set_commitment`].
+const COUNT_GE_SET_DOMAIN: &str = "dregg-countge-set-v1";
+
+/// Canonical openable commitment over a `CountGe` element set: BLAKE3
+/// (derive-key domain) over the length-prefixed SORTED 32-byte elements —
+/// the same openable sorted-set shape as the channel membership root
+/// (`blueprint::channel_member_root`) and the mailbox sender set. An empty
+/// set commits to a nonzero value distinct from the all-zero unborn slot.
+pub fn count_ge_set_commitment(elements: &std::collections::BTreeSet<[u8; 32]>) -> FieldElement {
+    let mut hasher = blake3::Hasher::new_derive_key(COUNT_GE_SET_DOMAIN);
+    hasher.update(&(elements.len() as u64).to_le_bytes());
+    for e in elements {
+        hasher.update(e);
+    }
+    *hasher.finalize().as_bytes()
 }
 
 /// Evaluate a [`HeapAtom`] lifted over heap `key` against the
@@ -2988,6 +3183,16 @@ fn lift_simple(s: &SimpleStateConstraint) -> StateConstraint {
             key: *key,
             atom: atom.clone(),
         },
+        SimpleStateConstraint::DelegationEpochEquals { index } => {
+            StateConstraint::DelegationEpochEquals { index: *index }
+        }
+        SimpleStateConstraint::CountGe {
+            threshold,
+            set_commitment_slot,
+        } => StateConstraint::CountGe {
+            threshold: *threshold,
+            set_commitment_slot: *set_commitment_slot,
+        },
     }
 }
 
@@ -3011,12 +3216,13 @@ fn evaluate_simple_constraint(
     new_state: &CellState,
     old_state: Option<&CellState>,
     ctx: Option<&EvalContext>,
+    meta: &TransitionMeta,
     witnesses: &WitnessBundle<'_>,
 ) -> Result<(), ProgramError> {
     match s {
         SimpleStateConstraint::Not(inner) => {
             let lifted_inner = lift_simple(inner);
-            match evaluate_constraint_full(&lifted_inner, new_state, old_state, ctx, witnesses) {
+            match evaluate_constraint_full(&lifted_inner, new_state, old_state, ctx, meta, witnesses) {
                 // Inner accepted ⇒ Not rejects.
                 Ok(()) => Err(ProgramError::ConstraintViolated {
                     constraint: lifted_inner.clone(),
@@ -3035,7 +3241,7 @@ fn evaluate_simple_constraint(
         }
         other => {
             let lifted = lift_simple(other);
-            evaluate_constraint_full(&lifted, new_state, old_state, ctx, witnesses)
+            evaluate_constraint_full(&lifted, new_state, old_state, ctx, meta, witnesses)
         }
     }
 }
@@ -3431,6 +3637,16 @@ pub enum StateConstraintView {
     /// Heap-keyed atom lifted over heap key `key` (the rotation's
     /// app-state lane; `key >= STATE_SLOTS` lives in `fields_map`).
     HeapField { key: u64, atom: HeapAtomView },
+    /// `new[index]` ≡ the cell's own post-turn `delegation_epoch` (the
+    /// channels closure lane — a live group cell self-describes that its
+    /// epoch slot IS the capability-freshness counter).
+    DelegationEpochEquals { index: u8 },
+    /// Witness-exhibited distinct-count ≥ `threshold` bound to the set
+    /// commitment in `new[set_commitment_slot]` (in-program M-of-N).
+    CountGe {
+        threshold: u32,
+        set_commitment_slot: u8,
+    },
 }
 
 /// [`HeapAtom`] view, nested inside [`StateConstraintView::HeapField`].
@@ -3857,6 +4073,16 @@ impl StateConstraint {
                 key: *key,
                 atom: atom.to_view(),
             },
+            StateConstraint::DelegationEpochEquals { index } => {
+                StateConstraintView::DelegationEpochEquals { index: *index }
+            }
+            StateConstraint::CountGe {
+                threshold,
+                set_commitment_slot,
+            } => StateConstraintView::CountGe {
+                threshold: *threshold,
+                set_commitment_slot: *set_commitment_slot,
+            },
         }
     }
 }
@@ -3946,6 +4172,16 @@ impl SimpleStateConstraint {
             SimpleStateConstraint::HeapField { key, atom } => StateConstraintView::HeapField {
                 key: *key,
                 atom: atom.to_view(),
+            },
+            SimpleStateConstraint::DelegationEpochEquals { index } => {
+                StateConstraintView::DelegationEpochEquals { index: *index }
+            }
+            SimpleStateConstraint::CountGe {
+                threshold,
+                set_commitment_slot,
+            } => StateConstraintView::CountGe {
+                threshold: *threshold,
+                set_commitment_slot: *set_commitment_slot,
             },
         }
     }
@@ -5876,6 +6112,17 @@ mod tests {
                 },
                 "HeapField",
             ),
+            (
+                StateConstraint::DelegationEpochEquals { index: 2 },
+                "DelegationEpochEquals",
+            ),
+            (
+                StateConstraint::CountGe {
+                    threshold: 2,
+                    set_commitment_slot: 5,
+                },
+                "CountGe",
+            ),
         ];
 
         // COVERAGE TOOTH: this match must name every variant exactly once.
@@ -5926,7 +6173,9 @@ mod tests {
                 | StateConstraint::BalanceGte { .. }
                 | StateConstraint::BalanceLte { .. }
                 | StateConstraint::KeyRotationGate { .. }
-                | StateConstraint::HeapField { .. } => {}
+                | StateConstraint::HeapField { .. }
+                | StateConstraint::DelegationEpochEquals { .. }
+                | StateConstraint::CountGe { .. } => {}
             }
         }
 
@@ -6048,6 +6297,17 @@ mod tests {
                 },
                 "HeapField",
             ),
+            (
+                SimpleStateConstraint::DelegationEpochEquals { index: 2 },
+                "DelegationEpochEquals",
+            ),
+            (
+                SimpleStateConstraint::CountGe {
+                    threshold: 2,
+                    set_commitment_slot: 5,
+                },
+                "CountGe",
+            ),
         ];
         for (sc, expected_kind) in &simples {
             match sc {
@@ -6068,7 +6328,9 @@ mod tests {
                 | SimpleStateConstraint::BalanceGte { .. }
                 | SimpleStateConstraint::BalanceLte { .. }
                 | SimpleStateConstraint::PreimageGate { .. }
-                | SimpleStateConstraint::HeapField { .. } => {}
+                | SimpleStateConstraint::HeapField { .. }
+                | SimpleStateConstraint::DelegationEpochEquals { .. }
+                | SimpleStateConstraint::CountGe { .. } => {}
             }
             let json = serde_json::to_value(sc.to_view()).expect("simple view serializes");
             assert_eq!(

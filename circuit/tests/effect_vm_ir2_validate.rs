@@ -45,7 +45,10 @@ fn ir2_validate_transfer_proves_verifies_and_refuses_ghost() {
     let json = descriptor2_for_key("transferVmDescriptor2")
         .expect("transfer v2 descriptor must be registered");
     let desc = parse_vm_descriptor2(json).expect("transfer v2 descriptor must parse");
-    assert_eq!(desc.trace_width, 186, "graduated transfer keeps the 186 base width");
+    assert_eq!(
+        desc.trace_width, 186,
+        "graduated transfer keeps the 186 base width"
+    );
     assert_eq!(desc.tables.len(), 5, "the five EPOCH tables");
     // Transfer is a graduated v1 face: chip + range lookups only, no mem/map ops.
     assert!(
@@ -109,8 +112,8 @@ fn ir2_validate_transfer_proves_verifies_and_refuses_ghost() {
                 prove_vm_descriptor2(&desc, &base_trace, &fdpis, &mem_boundary, &map_heaps)
             });
             let refused = match r {
-                Err(_) => true,             // debug prover panicked on the unsatisfiable binding
-                Ok(res) => res.is_err(),    // or returned a prove/self-verify error
+                Err(_) => true,          // debug prover panicked on the unsatisfiable binding
+                Ok(res) => res.is_err(), // or returned a prove/self-verify error
             };
             assert!(
                 refused,
@@ -145,5 +148,8 @@ fn ir2_validate_transfer_proves_verifies_and_refuses_ghost() {
         );
         proven += 1;
     }
-    assert_eq!(proven, 2, "both transfer directions must pass the IR-v2 gate");
+    assert_eq!(
+        proven, 2,
+        "both transfer directions must pass the IR-v2 gate"
+    );
 }

@@ -26,8 +26,8 @@
 
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::heap_root::{
-    self, compute_heap_root, compute_heap_root_entries, empty_heap_root, heap_addr,
-    CanonicalHeapTree, HeapLeaf, HEAP_TREE_DEPTH, SENTINEL_MAX, SENTINEL_MIN,
+    self, CanonicalHeapTree, HEAP_TREE_DEPTH, HeapLeaf, SENTINEL_MAX, SENTINEL_MIN,
+    compute_heap_root, compute_heap_root_entries, empty_heap_root, heap_addr,
 };
 use dregg_circuit::poseidon2::{hash_fact, hash_many};
 
@@ -83,7 +83,10 @@ fn scheme_equals_independent_reference() {
     let entries = entries_demo();
     let scheme = compute_heap_root(to_leaves(&entries));
     let reference = reference_root(&entries);
-    assert_eq!(scheme, reference, "CanonicalHeapTree must equal the hand-built tree");
+    assert_eq!(
+        scheme, reference,
+        "CanonicalHeapTree must equal the hand-built tree"
+    );
 
     let felt_entries: Vec<((BabyBear, BabyBear), BabyBear)> = entries
         .iter()
@@ -112,7 +115,11 @@ fn addr_and_leaf_match_lean_gadget_images() {
     let key = BabyBear::new(4);
     let value = BabyBear::new(42);
     let addr = heap_addr(coll, key);
-    assert_eq!(addr, hash_many(&[coll, key]), "addr = hash[coll, key], untagged arity-2");
+    assert_eq!(
+        addr,
+        hash_many(&[coll, key]),
+        "addr = hash[coll, key], untagged arity-2"
+    );
     let leaf = HeapLeaf { addr, value };
     assert_eq!(
         leaf.digest(),
@@ -168,7 +175,10 @@ fn update_witness_agrees_with_rebuild() {
         ((2, 1), 30),
         ((7, 99), 7777),
     ]));
-    assert_eq!(w.new_root, rebuilt, "witness post-root == rebuilt post-root");
+    assert_eq!(
+        w.new_root, rebuilt,
+        "witness post-root == rebuilt post-root"
+    );
     assert_eq!(w.old_root, tree.root());
     assert_eq!(w.old_leaf.value, BabyBear::new(4242));
 }

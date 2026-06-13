@@ -791,6 +791,14 @@ fn constraint_dissect(
         // Heap-keyed atoms bind a u64 fields_map key, which does not fit
         // the u8 slot lanes; consumers read the key from the program view.
         SC::HeapField { .. } => ("heap_field", None, vec![]),
+        // The program-readable delegation_epoch tie: primary slot is the
+        // epoch slot the counter is pinned to.
+        SC::DelegationEpochEquals { index } => ("delegation_epoch_equals", Some(*index), vec![]),
+        // In-program M-of-N: primary slot is the quorum set-commitment slot.
+        SC::CountGe {
+            set_commitment_slot,
+            ..
+        } => ("count_ge", Some(*set_commitment_slot), vec![]),
     }
 }
 

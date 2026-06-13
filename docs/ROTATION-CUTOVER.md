@@ -29,6 +29,7 @@ FLIPS at the cutover commit, which pins bump, and what is staged vs. live today.
 | THE WIRE PROPAGATION, staged: rotated 25-slot state block (absorption-ordered), `wireCommit` = 4-ary chained chip realization + re-proved keystone (`wireCommit_binds` + heap_root/reg/named-field/log teeth), `rotationProbeVmDescriptor2` (graduated IR-v2 probe: 8 chip lookups + published-commit/height PI pins), `rotationLayoutManifest` (byte-pinned) | `metatheory/Dregg2/Circuit/Emit/EffectVmEmitRotation.lean`, driver `EmitRotationV3.lean` | STAGED (this lane) |
 | staged artifacts on the Rust side: `circuit/descriptors/rotation-layout-v3-staged.json` + `dregg-effectvm-rotation-state-v3-staged.json`, `effect_vm_descriptors.rs::V3_STAGED_DESCRIPTORS` (sha-256 pinned), `columns.rs::rotation` (drift-guarded `rotation_layout_matches_lean`), probe prove/verify/size + per-column tamper-refusal in `descriptor_ir2.rs` | circuit | STAGED (this lane) |
 | PI v3 drift guard (`pi_v3_offsets_match_lean`) | `circuit/src/effect_vm/pi.rs` | LIVE test |
+| THE WIDENED CAVEAT OPERAND, staged: `(domain_tag, key)` entries (7 felts, umem `domainCode` discipline, key u8→felt) + `caveat_operand_no_aliasing` keystone + `caveatCommit_binds` + the R=24 caveat probe (`rotationCaveatProbe_binds_published`) + forged-domain/tampered-heap-key teeth | `metatheory/Dregg2/Circuit/Emit/EffectVmEmitRotationCaveat.lean`, `circuit` (`columns.rs::rotation::caveat`, `trace.rs::RotCaveatEntry`, `V3_STAGED_CAVEAT_DESCRIPTORS`, `descriptor_ir2.rs` teeth) | STAGED (this lane) |
 
 ## §2 — The staged commitment shape (what the cutover realizes)
 
@@ -114,6 +115,26 @@ Pre-gates (ALL green before anything flips):
       `NUM_REGISTERS = 24`; the R-parametric emission (`rotationProbeVmDescriptorR2`)
       and `wireCommitR_binds` make this a parameter instantiation, not new design.
 
+- [x] **Caveat operand widened (staged)** — the second wire-shape pre-gate: the in-circuit
+      caveat operand is no longer slot-only. The rotated entry is **7 felts
+      `[type_tag, domain_tag, key, p0..p3]`** (`SlotCaveatEntry`'s 6 + the domain tag; the
+      key widens u8 → felt so HEAP KEYS are reachable); domain tags are the umem
+      `domainCode` wire codes (registers 0 · heap 1; everything else REFUSES, fail closed);
+      the manifest is 1 count + 4 entries = **29 felts**, bound by its own chained chip
+      commitment (`caveatCommit`, arity-{2,4} chunking, 10 sites). Lean keystones
+      (`EffectVmEmitRotationCaveat.lean`): **`caveat_operand_no_aliasing`** (a slot operand
+      and a heap operand can NEVER collide — domain separation as a theorem),
+      `caveatCommit_binds` (equal commits ⇒ equal manifests), and the end-to-end
+      `rotationCaveatProbe_binds_published` at the CONFIRMED R=24 (probe layout: rotation
+      block `0..42` · manifest `43..71` · chain `72..80` · `CAVEAT_COMMIT` 81 · width 82;
+      probe proof measures ~107.9 KiB ≈ +11.4 KiB over the bare R=24 probe). Rust staged
+      twins + teeth: `columns.rs::rotation::caveat`, `trace.rs::RotCaveatEntry`
+      (fail-closed `from_felts`), `rotation_caveat_layout_matches_lean` byte pin,
+      forged-domain-tag / tampered-heap-key refusal gauntlet (`descriptor_ir2.rs`).
+      REMAINS (HORIZONLOG'd): the executor's runtime discharge of heap-keyed caveats
+      (named premise `HeapCaveatRuntimeDischarge`) + the flag-day fold of the staged
+      manifest into the live PI region (replaces `SLOT_CAVEAT_MANIFEST_BASE` 101..126).
+
 - [ ] **GATE 0**: `effect_vm_ir2_size_measure` at-or-under the v1 350.5 KiB
       baseline (per-effect; the staged probe's block-only shape measures ~tens of
       KiB — see the test print — but the GATE is the per-effect transfer figure).
@@ -189,3 +210,9 @@ Post-flip gauntlets (block the deploy, not the commit):
 7. **The 3-verb circuit descriptors** (gated on the executor rotation —
    `UNIVERSAL-MAP-ROTATION.md` §2.3; never before it).
 8. **cell ≡ circuit rotated differential** (§3 post-flip gauntlets).
+9. **Heap-caveat runtime discharge** — the executor leg of the widened operand:
+   discharge heap-domain entries at run time the way `verify_slot_caveat_manifest`
+   discharges slot entries (the semantics are already pinned: `tagHeapAtom` →
+   `HeapAtom.lift k` → `evalHeap`, `EffectVmEmitRotationCaveat.lean` §5; the named
+   premise is `HeapCaveatRuntimeDischarge`). At the flag-day the staged 29-felt
+   manifest replaces the live 25-felt slot manifest in the regenerated PI region.

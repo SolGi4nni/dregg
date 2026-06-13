@@ -352,6 +352,53 @@ pub mod rotation {
     pub const PROBE_WIDTH: usize = 33;
     /// The chip absorption arity of the chained realization's body sites.
     pub const CHAIN_ARITY: usize = 4;
+
+    /// THE WIDENED CAVEAT OPERAND (staged — the second rotation wire-shape
+    /// pre-gate, `docs/ROTATION-CUTOVER.md` §3). The live `SlotCaveatEntry`
+    /// operand is `slot_index: u8` — slot-only; the rotated operand is
+    /// `(domain_tag, key)` on the universal-memory `UDomain` wire codes
+    /// (registers 0 · heap 1 — `turn/src/umem.rs`), key widened `u8 → felt`
+    /// so capability attenuation reaches HEAP KEYS. Lean twin:
+    /// `Dregg2/Circuit/Emit/EffectVmEmitRotationCaveat.lean` (the no-aliasing
+    /// keystone `caveat_operand_no_aliasing`: a slot operand and a heap
+    /// operand can NEVER collide — domain separation as a theorem); the
+    /// byte-pin twin test is `rotation_caveat_layout_matches_lean`
+    /// (`effect_vm_descriptors.rs`). Columns are for the staged R=24 probe
+    /// (the CONFIRMED register count): the rotation R=24 part occupies
+    /// `0..43` (`rotation_layout_for(24)`), the caveat manifest block and
+    /// its chain follow.
+    pub mod caveat {
+        /// The staged probe's register count (CONFIRMED R=24, ember 2026-06-12).
+        pub const R: usize = 24;
+        /// The caveat manifest block base (= `rotation_layout_for(24).probe_width`).
+        pub const BASE: usize = 43;
+        /// The caveat count column.
+        pub const COUNT_COL: usize = 43;
+        /// Entry `i`'s base column: `ENTRY_BASE + i * ENTRY_SIZE`.
+        pub const ENTRY_BASE: usize = 44;
+        /// Felts per entry: `[type_tag, domain_tag, key, p0, p1, p2, p3]`.
+        pub const ENTRY_SIZE: usize = 7;
+        /// Maximum caveat entries (unchanged from the live manifest).
+        pub const MAX_CAVEATS: usize = 4;
+        /// The manifest block width: 1 count + 4 × 7 = 29 felts.
+        pub const MANIFEST_SIZE: usize = 29;
+        /// The caveat chain carriers (9 — sites 0..8 of the 10-site chain).
+        pub const CHAIN_BASE: usize = 72;
+        /// Number of caveat chain carriers.
+        pub const NUM_CHAIN: usize = 9;
+        /// The caveat-commitment carrier (the chain's final digest).
+        pub const CAVEAT_COMMIT: usize = 81;
+        /// The caveat probe trace width: 43 + 29 + 9 + 1.
+        pub const PROBE_WIDTH: usize = 82;
+        /// The registers (slot) domain wire code (`UDomain::Registers`).
+        pub const DOMAIN_REGISTERS: u32 = 0;
+        /// The heap domain wire code (`UDomain::Heap`).
+        pub const DOMAIN_HEAP: u32 = 1;
+        /// PI slots: published state commit · committed height · caveat commit.
+        pub const PUB_COMMIT: usize = 0;
+        pub const PUB_HEIGHT: usize = 1;
+        pub const PUB_CAVEAT: usize = 2;
+    }
 }
 
 /// Effect parameter meanings per effect type.

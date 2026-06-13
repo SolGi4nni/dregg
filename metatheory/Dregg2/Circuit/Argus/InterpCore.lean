@@ -42,36 +42,39 @@ transcription, and `decideVm` is the spec it must match. This SHRINKS the interp
     (`decideSites_eq_go` ties the two recursions), so the digest-chaining order is realized
     faithfully — site `i` reads digests `[0..i)`.
 
-## The residual (named, not papered).
+## The Rust transcription edge (outside the kernel, pinned differentially — not carried).
 
 `decideVm` decides `satisfiedVm` — the Lean ABSTRACT denotation. It does NOT, by itself, prove
 the Rust `EffectVmDescriptorAir::eval` realizes `satisfiedVm`; that is a Rust↔Lean transcription
-obligation OUTSIDE Lean's kernel. This file shrinks the TCB to (a) `decideVm` (verified here) and
-(b) the transcription `eval ≈ decideVm`. Two transcription mismatches are EXPLICITLY recorded as
-the precise remaining path (`§5`), discovered by reading `lean_descriptor_air.rs`:
+obligation OUTSIDE Lean's kernel. The TCB is (a) `decideVm` (verified here) and (b) the
+transcription `eval ≈ decideVm`. (b) is held by a differential battery, layer by layer:
 
-  (R1) **The Rust `VmConstraint` enum has NO `Boundary` variant** (`lean_descriptor_air.rs:909`:
-       only `Gate` / `Transition` / `PiBinding`). Lean's `VmConstraint.boundary (row) (body)`
-       (`EffectVmEmit.lean:225`) — a general boundary polynomial vanishing on first/last — is NOT
-       realized by the running interpreter. The `decideConstraint_boundary_*` lemmas DO decide it
-       (so the reference is complete over Lean's form), but the Rust transcription drops the arm.
-       Status: NO current descriptor emits `.boundary` (all boundary pins go through
-       `.piBinding`), so the gap is currently VACUOUS on the emitted corpus — but the reference
-       and the Rust enum DISAGREE in shape, and a future `.boundary`-emitting descriptor would not
-       be enforced by the Rust AIR. `decideConstraints_no_boundary_agrees` makes the
-       currently-vacuous agreement precise: on a `.boundary`-free constraint list the reference and
-       a `Boundary`-less interpreter decide the SAME thing.
-  (R2) **Domain factoring is in the Rust, not in `satisfiedVm`.** Rust gates `Gate`/`Transition`
-       with `when_transition` (rows `0..n-2`) and binds hash digests on the WHOLE domain;
-       `satisfiedVm` (a SINGLE row-window denotation) carries `gate`/`transition` UNGUARDED and the
-       boundary guards as `isFirst/isLast →`. The single-window reading is faithful PER WINDOW (the
-       Rust's row-quantified set instantiated at one window), which is exactly what the class-A
-       per-effect theorems consume; the cross-row domain quantification (∀ windows) is the residual
-       the multi-row AIR adds. This file does not model the multi-row quantifier.
+  * **Arm shape (the old "R1").** The Rust `VmConstraint` enum carries ALL of Lean's forms —
+    `Gate` / `Transition` / `Boundary{First,Last}` / `PiBinding{First,Last}`
+    (`lean_descriptor_air.rs`; the `Boundary` arm is a `when_first_row`/`when_last_row`-guarded
+    `assert_zero`, witnessed both polarities through the real prover in
+    `boundary_form_realized_both_polarities`). [TOMBSTONE: the enum once had NO `Boundary` arm,
+    and §6 below stated the agreement only over boundary-FREE lists — a vacuity on the emitted
+    corpus. That statement is retired; §6 now states the FULL-arm agreement.]
+  * **Row domain (the old "R2").** `satisfiedVm`/`decideVm` is a SINGLE row-window denotation;
+    the multi-row AIR quantifies windows over the trace with the `when_transition` factoring —
+    `gate`/`transition` enforced on windows `r < n−1`, `boundary`/`piBinding` at the unique
+    `isFirst`/`isLast` windows, hash sites + ranges on EVERY row. The factoring belongs to the
+    LIFT, not the reference: `decideVm` carries `gate`/`transition` UNGUARDED on every window
+    (including `isLast = true` — the golden corpus pins exactly that). The lift is pinned by the
+    generated exhaustive differential (`circuit/tests/effect_vm_descriptor_exhaustive_
+    differential.rs`: AIR ≡ the factored multi-row reference on every IR form, both polarities).
+  * **The verdicts of `decideVm` ITSELF (the golden leg).** `Argus/InterpGolden.lean` computes
+    `decideVm`'s verdicts IN LEAN over a 35-case corpus — every constraint arm, every expr /
+    hash-input form, all four `isFirst`/`isLast` settings (incl. the single-row window),
+    on-row/off-row boundary legs, the ℤ-only negative-range leg — and
+    `lean_descriptor_air.rs::tests::lean_decide_vm_golden_corpus_agrees` re-decides the SAME
+    bytes (descriptors via the `EmitRoundtrip`-proven `emitVmJson` codec) with an exact ℤ
+    transcription, arm for arm.
 
 So: VERIFIED that `satisfiedVm` is decided by a tiny total core, with full case-completeness over
-every IR constructor; the RESIDUAL is the Rust-side transcription of that core (R1 shape mismatch
-+ R2 row-domain quantifier), stated precisely. No `sorry`, no `:= True`, no `native_decide`. The
+every IR constructor; the Rust transcription of that core is differential-pinned at every layer
+(arm shape · row domain · verdict golden). No `sorry`, no `:= True`, no `native_decide`. The
 file owns only its own declarations and imports the IR + denotation read-only.
 -/
 import Dregg2.Circuit.Emit.EffectVmEmit
@@ -313,56 +316,54 @@ instance instDecidableSatisfiedVm (hash : List ℤ → ℤ) (d : EffectVmDescrip
 
 #assert_axioms instDecidableSatisfiedVm
 
-/-! ## §6 — The residual, made precise (R1: the Rust `Boundary`-arm gap).
+/-! ## §6 — The FULL-arm agreement (the de-vacuified R1 statement).
 
-The Rust `VmConstraint` enum (`lean_descriptor_air.rs:909`) has ONLY `Gate`/`Transition`/`PiBinding`
-— NO `Boundary`. Lean's `decideConstraint` decides `.boundary` (the per-constructor lemmas above
-prove it), so the REFERENCE is complete over Lean's IR; but the Rust transcription drops that arm.
-The agreement is currently VACUOUS because no emitted descriptor uses `.boundary`. We make THAT
-precise: a constraint list with no `.boundary` is decided identically whether or not the
-interpreter handles `.boundary`. -/
+TOMBSTONE — what stood here: `decideConstraints_no_boundary_agrees`, stated over constraint lists
+with NO `.boundary` form (an `IsNotBoundary` hypothesis narrowing the agreement to the arms the
+then-`Boundary`-less Rust enum could represent, with the boundary arm read as `True`). That was
+the precise record of a SHAPE GAP: the agreement held only because no v1 descriptor emitted
+`.boundary`. The gap is closed — `lean_descriptor_air.rs::VmConstraint::Boundary { row, body }`
+realizes Lean's `VmConstraint.boundary` as a `when_first_row`/`when_last_row`-guarded
+`assert_zero`, accept AND reject witnessed through the real prover
+(`boundary_form_realized_both_polarities`) and through the generated exhaustive differential —
+so the hypothesis-narrowed statement is RETIRED and replaced by the agreement over EVERY
+constraint list, the boundary arm carrying its REAL guarded semantics. One match arm per Rust
+match arm: this is the explicit per-arm shape the interpreter transcribes (and the golden corpus
+`Argus/InterpGolden.lean` pins verdict-by-verdict). -/
 
-/-- A constraint is NOT a boundary form (the predicate the Rust enum's shape implicitly assumes of
-every constraint it can represent). -/
-def IsNotBoundary : VmConstraint → Prop
-  | .boundary _ _ => False
-  | _             => True
-
-/-- On a constraint list with NO `.boundary` form, the reference `decideConstraints` and a
-`Boundary`-unaware interpreter decide the SAME predicate — every constraint is `gate`/`transition`/
-`piBinding`, all of which the Rust enum carries. This locates R1's CURRENT vacuity precisely: the
-shape gap bites only a (presently non-existent) `.boundary`-emitting descriptor. -/
-theorem decideConstraints_no_boundary_agrees (env : VmRowEnv) (iF iL : Bool)
-    (cs : List VmConstraint) (hnb : ∀ c ∈ cs, IsNotBoundary c) :
+/-- **The full-arm agreement.** For EVERY constraint list — boundary forms included — the
+reference `decideConstraints` decides exactly the per-arm predicate the (now arm-complete) Rust
+interpreter transcribes: unguarded `gate`/`transition`, and `isFirst`/`isLast`-guarded
+`boundary`/`piBinding`. Non-vacuous on `.boundary`-carrying lists (contrast the tombstoned
+predecessor, which assumed them away). -/
+theorem decideConstraints_decides_all_arms (env : VmRowEnv) (iF iL : Bool)
+    (cs : List VmConstraint) :
     decideConstraints env iF iL cs = true
       ↔ ∀ c ∈ cs, (match c with
           | .gate body          => body.eval env.loc = 0
           | .transition hi lo   => env.nxt (sbCol hi) = env.loc (saCol lo)
+          | .boundary .first b  => iF = true → b.eval env.loc = 0
+          | .boundary .last  b  => iL = true → b.eval env.loc = 0
           | .piBinding .first col k => iF = true → env.loc col = env.pub k
-          | .piBinding .last  col k => iL = true → env.loc col = env.pub k
-          | .boundary _ _       => True) := by
+          | .piBinding .last  col k => iL = true → env.loc col = env.pub k) := by
   rw [decideConstraints_iff]
   constructor
   · intro h c hc
-    have := h c hc
+    have hcc := h c hc
     cases c with
-    | gate body => simpa [VmConstraint.holdsVm] using this
-    | transition hi lo => simpa [VmConstraint.holdsVm] using this
-    | boundary row b => simp
-    | piBinding row col k =>
-        cases row <;> simpa [VmConstraint.holdsVm] using this
+    | gate body => exact hcc
+    | transition hi lo => exact hcc
+    | boundary row b => cases row <;> exact hcc
+    | piBinding row col k => cases row <;> exact hcc
   · intro h c hc
-    have hc' := h c hc
+    have hcc := h c hc
     cases c with
-    | gate body => simpa [VmConstraint.holdsVm] using hc'
-    | transition hi lo => simpa [VmConstraint.holdsVm] using hc'
-    | boundary row b =>
-        -- excluded by hypothesis: a `.boundary` in `cs` contradicts `IsNotBoundary`.
-        exact absurd (hnb (.boundary row b) hc) (by simp [IsNotBoundary])
-    | piBinding row col k =>
-        cases row <;> simpa [VmConstraint.holdsVm] using hc'
+    | gate body => exact hcc
+    | transition hi lo => exact hcc
+    | boundary row b => cases row <;> exact hcc
+    | piBinding row col k => cases row <;> exact hcc
 
-#assert_axioms decideConstraints_no_boundary_agrees
+#assert_axioms decideConstraints_decides_all_arms
 
 /-! ## §7 — Non-vacuity witnesses (the reference rejects AND accepts).
 
@@ -409,6 +410,58 @@ theorem decideVm_selectorOnly_rejects (hash : List ℤ → ℤ) (s : Nat) (env :
 
 #assert_axioms decideVm_selectorOnly_accepts
 #assert_axioms decideVm_selectorOnly_rejects
+
+/-! ### Boundary-arm non-vacuity (the §6 de-vacuification's teeth).
+
+The full-arm agreement would still be cheap if the boundary arm never separated environments.
+These three pin the `.boundary` semantics THROUGH `decideVm`, on a minimal boundary-only
+descriptor (the Lean mirror of the Rust prover test `boundary_form_realized_both_polarities`):
+accepted on an honest boundary row, REJECTED on a violating one, and VACUOUS off the boundary
+row (the `isFirst →` guard) — the three legs the golden corpus carries as
+`boundary-first-{accept,reject,vacuous}*`. -/
+
+/-- A descriptor whose ONLY constraint is a first-row boundary equality `loc i = loc j`, in the
+emitter's canonical `a + (−1)·b` body shape. -/
+def boundaryOnlyDescriptor (i j : Nat) : EffectVmDescriptor where
+  name        := "dregg-interpcore-boundarytest-v0"
+  traceWidth  := EFFECT_VM_WIDTH
+  piCount     := 0
+  constraints := [.boundary .first (.add (.var i) (.mul (.const (-1)) (.var j)))]
+  hashSites   := []
+  ranges      := []
+
+/-- **Boundary non-vacuity (accept).** On a first row whose cells agree, `decideVm` ACCEPTS the
+boundary-only descriptor. -/
+theorem decideVm_boundaryOnly_accepts (hash : List ℤ → ℤ) (i j : Nat) (env : VmRowEnv)
+    (iL : Bool) (h : env.loc i = env.loc j) :
+    decideVm hash (boundaryOnlyDescriptor i j) env true iL = true := by
+  have hb : (EmittedExpr.add (.var i) (.mul (.const (-1)) (.var j))).eval env.loc = 0 := by
+    simp only [evalExpr_add, evalExpr_mul, evalExpr_var, evalExpr_const]
+    omega
+  simp [decideVm, decideConstraints, decideConstraint, boundaryOnlyDescriptor,
+    decideSites, decideSitesGo, decideRanges, hb]
+
+/-- **Boundary non-vacuity (reject).** On a first row whose cells DISAGREE, `decideVm` REJECTS
+the boundary-only descriptor — the boundary arm separates environments. -/
+theorem decideVm_boundaryOnly_rejects (hash : List ℤ → ℤ) (i j : Nat) (env : VmRowEnv)
+    (iL : Bool) (h : env.loc i ≠ env.loc j) :
+    decideVm hash (boundaryOnlyDescriptor i j) env true iL = false := by
+  simp [decideVm, decideConstraints, decideConstraint, boundaryOnlyDescriptor,
+    decideSites, decideSitesGo, decideRanges]
+  omega
+
+/-- **Boundary guard vacuity (off-row).** Off the first row (`isFirst = false`) the boundary
+constraint imposes NOTHING — `decideVm` accepts however broken the cells are. Exactly the
+`when_first_row` semantics the Rust arm transcribes. -/
+theorem decideVm_boundaryOnly_off_row_vacuous (hash : List ℤ → ℤ) (i j : Nat) (env : VmRowEnv)
+    (iL : Bool) :
+    decideVm hash (boundaryOnlyDescriptor i j) env false iL = true := by
+  simp [decideVm, decideConstraints, decideConstraint, boundaryOnlyDescriptor,
+    decideSites, decideSitesGo, decideRanges]
+
+#assert_axioms decideVm_boundaryOnly_accepts
+#assert_axioms decideVm_boundaryOnly_rejects
+#assert_axioms decideVm_boundaryOnly_off_row_vacuous
 
 /-! ## §8 — Module-wide axiom-hygiene pin.
 

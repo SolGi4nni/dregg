@@ -146,7 +146,8 @@ pub use predicate::{
     WitnessedPredicateRegistry, WitnessedPredicateVerifier, canonical_predicate_vk,
 };
 pub use program::{
-    CellProgram, HeapAtom, ProgramError, StateConstraint, field_from_u64, field_from_u64_be,
+    CellProgram, HeapAtom, ProgramError, StateConstraint, count_ge_set_commitment, field_from_u64,
+    field_from_u64_be,
 };
 pub use revocation_channel::{
     ChannelId, RevocationChannel, RevocationChannelError, RevocationChannelSet,

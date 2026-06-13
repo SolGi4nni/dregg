@@ -73,11 +73,7 @@ fn make_open_cell(seed: u8, balance: i64) -> Cell {
 
 /// Execute the real multi-verb turn on the production executor and return the emitted
 /// umem witness ops (+ pre projection) and the receipt hash.
-fn real_turn_trace() -> (
-    BTreeMap<UKey, UVal>,
-    Vec<UmemOp>,
-    [u8; 32],
-) {
+fn real_turn_trace() -> (BTreeMap<UKey, UVal>, Vec<UmemOp>, [u8; 32]) {
     let agent = make_open_cell(11, 1000);
     let target = make_open_cell(12, 10);
     let (agent_id, target_id) = (agent.id(), target.id());

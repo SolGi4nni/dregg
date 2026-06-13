@@ -10,8 +10,10 @@ import Dregg2.Circuit.Argus.Nonce
 import Dregg2.Circuit.Argus.Policy
 
 -- The interpreter edge: the verified descriptor-evaluator (decideVm = satisfiedVm,
--- the TCB-shrinking reference) + the emit round-trip (the serialize edge closed).
+-- the TCB-shrinking reference) + the decideVm golden corpus (the Rust-transcription
+-- verdict pin) + the emit round-trip (the serialize edge closed).
 import Dregg2.Circuit.Argus.InterpCore
+import Dregg2.Circuit.Argus.InterpGolden
 import Dregg2.Circuit.Argus.EmitRoundtrip
 
 -- The five protocol layers (the apex).

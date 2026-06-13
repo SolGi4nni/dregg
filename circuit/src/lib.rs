@@ -167,13 +167,6 @@ pub mod presentation;
 /// it, and the EffectVM circuit seeds its `cap_root` column from the same value
 /// (cap Phase A). Pure Poseidon2 (no plonky3): available in the `mock` build.
 pub mod cap_root;
-/// THE HEAP's canonical, openable commitment (REFINEMENT-DESIGN Decision 1):
-/// the sorted Poseidon2 binary Merkle map over `(collection_id, key) → value`,
-/// generalizing `cap_root` with the generic `hash[addr, value]` leaf. The
-/// SINGLE source of truth for the `heap_root` register value; the descriptor
-/// gadget (`EffectVmEmitHeapRoot.lean`) recomputes its address/leaf images
-/// in-row. Pure Poseidon2 (no plonky3): available in the `mock` build.
-pub mod heap_root;
 #[allow(deprecated)]
 pub mod committed_threshold;
 pub mod effect_vm;
@@ -183,6 +176,13 @@ pub mod effect_vm;
 pub mod effect_vm_descriptors;
 #[allow(deprecated)]
 pub mod garbled;
+/// THE HEAP's canonical, openable commitment (REFINEMENT-DESIGN Decision 1):
+/// the sorted Poseidon2 binary Merkle map over `(collection_id, key) → value`,
+/// generalizing `cap_root` with the generic `hash[addr, value]` leaf. The
+/// SINGLE source of truth for the `heap_root` register value; the descriptor
+/// gadget (`EffectVmEmitHeapRoot.lean`) recomputes its address/leaf images
+/// in-row. Pure Poseidon2 (no plonky3): available in the `mock` build.
+pub mod heap_root;
 pub mod native_signature;
 #[allow(deprecated)]
 pub mod non_membership;

@@ -202,6 +202,110 @@ impl SlotCaveatEntry {
     }
 }
 
+/// STAGED (THE ROTATION — the widened caveat operand,
+/// `docs/ROTATION-CUTOVER.md` §3 pre-gate). NOTHING live reads this type:
+/// the live `SlotCaveatEntry` manifest at PI 101..126 is untouched; the
+/// staged probe + tamper teeth ride the recursion-gated IR-v2 path
+/// (`descriptor_ir2.rs`).
+///
+/// The rotated caveat entry widens `SlotCaveatEntry`'s `slot_index: u8` into
+/// a DOMAIN-TAGGED operand `(domain_tag, key)` on the universal-memory
+/// `UDomain` wire codes (registers 0 · heap 1 — `turn/src/umem.rs`): the
+/// heap is the app-state lane, so capability attenuation must scope to heap
+/// keys, and heap keys are FELTS (no u8 can carry them). A register (slot)
+/// operand can NEVER alias a heap operand — domain separation is a THEOREM
+/// (`caveat_operand_no_aliasing`,
+/// `metatheory/Dregg2/Circuit/Emit/EffectVmEmitRotationCaveat.lean`), the
+/// same discipline as the umem `Domain` tags. 7-felt packing:
+/// `[type_tag, domain_tag, key, p0, p1, p2, p3]`
+/// (`columns::rotation::caveat::ENTRY_SIZE`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RotCaveatEntry {
+    /// One of `pi::SLOT_CAVEAT_TAG_*` (the slot and heap planes share ONE
+    /// tag space); zero means "no caveat".
+    pub type_tag: u32,
+    /// `caveat::DOMAIN_REGISTERS` (0) or `caveat::DOMAIN_HEAP` (1). Decode
+    /// REFUSES anything else (fail closed — there is no default plane).
+    pub domain_tag: u32,
+    /// The in-domain key: a register index (`< caveat::R`) in the registers
+    /// domain; an arbitrary heap-key felt in the heap domain.
+    pub key: BabyBear,
+    pub params: [BabyBear; 4],
+}
+
+impl RotCaveatEntry {
+    pub const SIZE: usize = super::columns::rotation::caveat::ENTRY_SIZE;
+
+    pub const fn zero() -> Self {
+        Self {
+            type_tag: 0,
+            domain_tag: 0,
+            key: BabyBear::ZERO,
+            params: [BabyBear::ZERO; 4],
+        }
+    }
+
+    /// Encode this entry into `out[..SIZE]` as
+    /// `(type_tag, domain_tag, key, p0, p1, p2, p3)`.
+    pub fn write_to(&self, out: &mut [BabyBear]) {
+        debug_assert!(out.len() >= Self::SIZE);
+        out[0] = BabyBear::new(self.type_tag);
+        out[1] = BabyBear::new(self.domain_tag);
+        out[2] = self.key;
+        for i in 0..4 {
+            out[3 + i] = self.params[i];
+        }
+    }
+
+    /// Decode an entry from its 7-felt packing — FAIL CLOSED:
+    ///   * a forged/unknown domain tag REFUSES (only registers/heap are
+    ///     caveat-scopable; caps/nullifiers/index are kernel planes);
+    ///   * a registers-domain key outside the rotated register file
+    ///     (`>= caveat::R`, the CONFIRMED R=24) REFUSES;
+    ///   * a heap-domain key is any felt (heap keys are felts — the point).
+    /// The zero entry (`type_tag == 0`) decodes as "no caveat" with no
+    /// further checks (the all-zero padding rows).
+    pub fn from_felts(f: &[BabyBear]) -> Result<Self, String> {
+        use super::columns::rotation::caveat;
+        if f.len() < Self::SIZE {
+            return Err(format!(
+                "RotCaveatEntry: need {} felts, got {}",
+                Self::SIZE,
+                f.len()
+            ));
+        }
+        let entry = Self {
+            type_tag: f[0].0,
+            domain_tag: f[1].0,
+            key: f[2],
+            params: [f[3], f[4], f[5], f[6]],
+        };
+        if entry.type_tag == 0 {
+            return Ok(entry);
+        }
+        match entry.domain_tag {
+            caveat::DOMAIN_REGISTERS => {
+                if (entry.key.0 as usize) >= caveat::R {
+                    return Err(format!(
+                        "RotCaveatEntry: registers-domain key {} outside the \
+                         R={} register file (refused)",
+                        entry.key.0,
+                        caveat::R
+                    ));
+                }
+            }
+            caveat::DOMAIN_HEAP => {}
+            other => {
+                return Err(format!(
+                    "RotCaveatEntry: unknown domain tag {other} (refused — \
+                     only registers 0 / heap 1 are caveat-scopable)"
+                ));
+            }
+        }
+        Ok(entry)
+    }
+}
+
 impl Default for EffectVmContext {
     fn default() -> Self {
         Self {
@@ -1257,7 +1361,8 @@ pub fn generate_effect_vm_trace_ext(
     // commitment already absorbed it. The tag slots are staged zero
     // sentinels today; the optimistic-proving / dispute modes (#169) will
     // populate them later.
-    public_inputs[pi::v3::COMMITTED_HEIGHT] = BabyBear::new((context.committed_height & 0x7FFF_FFFF) as u32);
+    public_inputs[pi::v3::COMMITTED_HEIGHT] =
+        BabyBear::new((context.committed_height & 0x7FFF_FFFF) as u32);
     public_inputs[pi::v3::RATE_BOUND_TAG] = BabyBear::new(context.rate_bound_tag);
     public_inputs[pi::v3::CHALLENGE_WINDOW_TAG] = BabyBear::new(context.challenge_window_tag);
 

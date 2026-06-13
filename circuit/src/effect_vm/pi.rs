@@ -733,7 +733,11 @@ mod v3_drift_guard {
     /// Rust never invents a layout fact (law #1 of the rotation spec).
     #[test]
     fn pi_v3_offsets_match_lean() {
-        assert_eq!(super::BASE_COUNT, 201, "v2 prefix drifted: re-anchor RotationLayout.PiV3.V2_BASE_COUNT");
+        assert_eq!(
+            super::BASE_COUNT,
+            201,
+            "v2 prefix drifted: re-anchor RotationLayout.PiV3.V2_BASE_COUNT"
+        );
         assert_eq!(super::v3::COMMITTED_HEIGHT, 201);
         assert_eq!(super::v3::RATE_BOUND_TAG, 202);
         assert_eq!(super::v3::CHALLENGE_WINDOW_TAG, 203);

@@ -354,7 +354,16 @@ pub fn project_slot_caveat_manifest(
             // Heap-keyed atoms bind a fields_map key, not a u8 register
             // slot — executor-enforced by the scalar evaluator
             // (`evaluate_heap_atom`); no SlotCaveat AIR projection.
-            | dregg_cell::StateConstraint::HeapField { .. } => None,
+            | dregg_cell::StateConstraint::HeapField { .. }
+            // The delegation_epoch tie reads the sealed per-cell counter
+            // (`TransitionMeta::delegation_epoch`), not a state column in
+            // the current AIR layout — executor-enforced like the other
+            // context atoms until the context columns land.
+            | dregg_cell::StateConstraint::DelegationEpochEquals { .. }
+            // CountGe opens a witness-exhibited set against a slot
+            // commitment — witness-side enforcement (the scalar evaluator
+            // + the unique Cleartext blob), no SlotCaveat AIR projection.
+            | dregg_cell::StateConstraint::CountGe { .. } => None,
         };
         if let Some(e) = entry {
             entries[count] = e;

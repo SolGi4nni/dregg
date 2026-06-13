@@ -26,8 +26,9 @@ use crate::report::{CheckResult, run_check};
 const EXAMPLE_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// If any of these strings appear in an example's stdout or stderr the example is
-/// considered infrastructure-dependent and is reported as SKIP (not FAIL).
-/// Examples must print one of these markers when they detect missing infrastructure.
+/// reported as INFRA SKIP — which FAILS the gate (green-or-bust: a skipped
+/// example is a failing example; there are no non-fatal skips). The markers
+/// exist so the failure reason names the missing infrastructure precisely.
 const SKIP_MARKERS: &[&str] = &[
     "SKIP: node not running",
     "SKIP: missing env",

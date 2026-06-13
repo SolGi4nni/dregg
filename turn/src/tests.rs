@@ -1867,6 +1867,256 @@ fn test_program_heap_field_constraint_enforced() {
 }
 
 // =============================================================================
+// Test: DelegationEpochEquals gates a real submitted turn (accept + refuse)
+// =============================================================================
+
+/// THE EXECUTOR-PATH TOOTH for `StateConstraint::DelegationEpochEquals` (the
+/// channels closure lane): a cell program pinning a slot to the cell's own
+/// `delegation_epoch` gates real submitted turns through
+/// `TurnExecutor::execute` — a turn FORGING the epoch slot away from the
+/// counter REFUSES; the unified slot-write + `RevokeDelegation` bump in ONE
+/// turn ACCEPTS (the channel-group epoch-unification story). Lean twin:
+/// `evalSimpleCtx_delegationEpochEquals_iff` + `admitted_ties_delegation_epoch`
+/// (`metatheory/Dregg2/{Exec/Program,Apps/ChannelGroup}.lean`). Cited by the
+/// coverage classifier in `teasting/tests/protocol_coverage_gate.rs`.
+#[test]
+fn test_program_delegation_epoch_equals_enforced() {
+    use dregg_cell::program::StateConstraint;
+    use dregg_cell::field_from_u64;
+
+    const EPOCH_SLOT: usize = 2;
+    let program = dregg_cell::CellProgram::Predicate(vec![
+        StateConstraint::DelegationEpochEquals {
+            index: EPOCH_SLOT as u8,
+        },
+    ]);
+
+    let mut ledger = Ledger::new();
+    let (agent, _) = make_open_cell(1, 50_000);
+    let target = make_programmed_cell(2, 0, program);
+    let agent_id = agent.id();
+    let target_id = target.id();
+
+    let mut agent_with_cap = agent;
+    agent_with_cap
+        .capabilities
+        .grant(target_id, AuthRequired::None);
+    ledger.insert_cell(agent_with_cap).unwrap();
+    ledger.insert_cell(target).unwrap();
+
+    let executor = zero_cost_executor();
+
+    // REFUSE: forging the epoch slot away from delegation_epoch (slot 5,
+    // counter 0) — the program reads the executor-stamped counter.
+    let mut builder = TurnBuilder::new(agent_id, 0);
+    builder.add_action(
+        ActionBuilder::new_unchecked_for_tests(target_id, "forge_epoch", agent_id)
+            .effect_set_field(target_id, EPOCH_SLOT, field_from_u64(5))
+            .build(),
+    );
+    let result = execute_chained(&executor, &builder.fee(500).build(), &mut ledger);
+    assert!(
+        result.is_rejected(),
+        "expected rejection for the forged epoch slot, got: {result:?}"
+    );
+    let (error, _) = result.unwrap_rejected();
+    match error {
+        TurnError::ProgramViolation { cell, .. } => assert_eq!(cell, target_id),
+        other => panic!("expected ProgramViolation, got {other:?}"),
+    }
+    assert_eq!(
+        ledger.get(&target_id).unwrap().state.fields[EPOCH_SLOT],
+        field_from_u64(0),
+        "the forged epoch slot must not have leaked"
+    );
+
+    // ACCEPT: the honest no-op tie (slot 0 = counter 0).
+    let mut builder = TurnBuilder::new(agent_id, 1);
+    builder.add_action(
+        ActionBuilder::new_unchecked_for_tests(target_id, "tie_zero", agent_id)
+            .effect_set_field(target_id, EPOCH_SLOT, field_from_u64(0))
+            .build(),
+    );
+    let result = execute_chained(&executor, &builder.fee(500).build(), &mut ledger);
+    assert!(result.is_committed(), "tie at epoch 0 must admit: {result:?}");
+
+    // THE UNIFICATION: spawn a delegated child of the target (the epoch
+    // anchor), then step the slot AND bump delegation_epoch via
+    // `RevokeDelegation` in the SAME turn — slot 1 = counter 1: ACCEPT.
+    let child_pk = [77u8; 32];
+    let child_token = [0u8; 32];
+    let child_id = CellId::derive_raw(&child_pk, &child_token);
+    let mut builder = TurnBuilder::new(agent_id, 2);
+    builder.add_action(
+        ActionBuilder::new_unchecked_for_tests(target_id, "spawn_anchor", agent_id)
+            .effect(Effect::SpawnWithDelegation {
+                child_public_key: child_pk,
+                child_token_id: child_token,
+                max_staleness: 300,
+            })
+            .build(),
+    );
+    let result = execute_chained(&executor, &builder.fee(500).build(), &mut ledger);
+    assert!(result.is_committed(), "anchor spawn must commit: {result:?}");
+    // The target (grantor) needs a c-list entry for the child to revoke.
+    ledger
+        .get_mut(&target_id)
+        .unwrap()
+        .capabilities
+        .grant(child_id, AuthRequired::None);
+
+    let mut builder = TurnBuilder::new(agent_id, 3);
+    builder.add_action(
+        ActionBuilder::new_unchecked_for_tests(target_id, "epoch_step", agent_id)
+            .effect_set_field(target_id, EPOCH_SLOT, field_from_u64(1))
+            .effect(Effect::RevokeDelegation { child: child_id })
+            .build(),
+    );
+    let result = execute_chained(&executor, &builder.fee(500).build(), &mut ledger);
+    assert!(
+        result.is_committed(),
+        "slot write + delegation-epoch bump in ONE turn must admit: {result:?}"
+    );
+    let cell = ledger.get(&target_id).unwrap();
+    assert_eq!(cell.state.delegation_epoch(), 1);
+    assert_eq!(cell.state.fields[EPOCH_SLOT], field_from_u64(1));
+
+    // REFUSE again at the new counter: a bare slot step WITHOUT the bump
+    // (slot 2, counter 1) — the divergence is refused, state pinned.
+    let mut builder = TurnBuilder::new(agent_id, 4);
+    builder.add_action(
+        ActionBuilder::new_unchecked_for_tests(target_id, "bare_step", agent_id)
+            .effect_set_field(target_id, EPOCH_SLOT, field_from_u64(2))
+            .build(),
+    );
+    let result = execute_chained(&executor, &builder.fee(500).build(), &mut ledger);
+    assert!(
+        result.is_rejected(),
+        "a slot step without the delegation-epoch bump must refuse: {result:?}"
+    );
+    assert_eq!(
+        ledger.get(&target_id).unwrap().state.fields[EPOCH_SLOT],
+        field_from_u64(1),
+        "the diverged slot write must not have leaked"
+    );
+}
+
+// =============================================================================
+// Test: CountGe gates a real submitted turn (accept + refuse, the M-of-N tooth)
+// =============================================================================
+
+/// THE EXECUTOR-PATH TOOTH for `StateConstraint::CountGe` (in-program M-of-N):
+/// the witness re-exhibits the distinct approver set each turn against the
+/// slot commitment — a 2-distinct exhibit ACCEPTS at threshold 2; a
+/// duplicate-padded exhibit ([A, A] = ONE approver) REFUSES (the
+/// distinctness tooth the polis affineLe-flag trick lacked); a missing
+/// witness REFUSES. Lean twin: `evalSimpleCtx_countGe_iff` + `councilGated`
+/// (`metatheory/Dregg2/{Exec/Program,Apps/ChannelGroup}.lean`). Cited by the
+/// coverage classifier in `teasting/tests/protocol_coverage_gate.rs`.
+#[test]
+fn test_program_count_ge_enforced() {
+    use dregg_cell::program::StateConstraint;
+    use dregg_cell::{count_ge_set_commitment, field_from_u64};
+
+    const QC_SLOT: usize = 1;
+    let program = dregg_cell::CellProgram::Predicate(vec![StateConstraint::CountGe {
+        threshold: 2,
+        set_commitment_slot: QC_SLOT as u8,
+    }]);
+
+    let member_a = [0xA1u8; 32];
+    let member_b = [0xB2u8; 32];
+    let quorum: std::collections::BTreeSet<[u8; 32]> =
+        [member_a, member_b].into_iter().collect();
+    let commitment = count_ge_set_commitment(&quorum);
+    let solo: std::collections::BTreeSet<[u8; 32]> = [member_a].into_iter().collect();
+    let solo_commitment = count_ge_set_commitment(&solo);
+
+    let mut ledger = Ledger::new();
+    let (agent, _) = make_open_cell(1, 50_000);
+    let target = make_programmed_cell(2, 0, program);
+    let agent_id = agent.id();
+    let target_id = target.id();
+    let mut agent_with_cap = agent;
+    agent_with_cap
+        .capabilities
+        .grant(target_id, AuthRequired::None);
+    ledger.insert_cell(agent_with_cap).unwrap();
+    ledger.insert_cell(target).unwrap();
+
+    let executor = zero_cost_executor();
+
+    let exhibit = |elems: &[[u8; 32]]| -> Vec<u8> {
+        postcard::to_allocvec(&elems.to_vec()).unwrap()
+    };
+    let quorum_action = |value: dregg_cell::FieldElement, blob: Option<Vec<u8>>| {
+        let mut action =
+            ActionBuilder::new_unchecked_for_tests(target_id, "council_write", agent_id)
+                .effect_set_field(target_id, QC_SLOT, value)
+                .build();
+        if let Some(bytes) = blob {
+            action.witness_blobs = vec![crate::action::WitnessBlob {
+                kind: crate::action::WitnessKind::Cleartext,
+                bytes,
+            }];
+        }
+        action
+    };
+
+    // ACCEPT: the 2-distinct exhibit opens the committed quorum (threshold 2).
+    let mut builder = TurnBuilder::new(agent_id, 0);
+    builder.add_action(quorum_action(commitment, Some(exhibit(&[member_a, member_b]))));
+    let result = execute_chained(&executor, &builder.fee(500).build(), &mut ledger);
+    assert!(
+        result.is_committed(),
+        "a bound 2-of-2 exhibit must admit, got: {result:?}"
+    );
+    assert_eq!(ledger.get(&target_id).unwrap().state.fields[QC_SLOT], commitment);
+
+    // REFUSE (the distinctness tooth): a duplicate-padded exhibit dedupes to
+    // ONE element — the commitment binds ({A} opens solo_commitment) but the
+    // distinct count 1 < 2.
+    let mut builder = TurnBuilder::new(agent_id, 1);
+    builder.add_action(quorum_action(
+        solo_commitment,
+        Some(exhibit(&[member_a, member_a])),
+    ));
+    let result = execute_chained(&executor, &builder.fee(500).build(), &mut ledger);
+    assert!(
+        result.is_rejected(),
+        "a duplicate-padded exhibit must not count as a quorum: {result:?}"
+    );
+    let (error, _) = result.unwrap_rejected();
+    match error {
+        TurnError::ProgramViolation { cell, .. } => assert_eq!(cell, target_id),
+        other => panic!("expected ProgramViolation, got {other:?}"),
+    }
+    assert_eq!(
+        ledger.get(&target_id).unwrap().state.fields[QC_SLOT],
+        commitment,
+        "the refused write must not have leaked"
+    );
+
+    // REFUSE: an exhibit that does not open the slot commitment.
+    let mut builder = TurnBuilder::new(agent_id, 2);
+    builder.add_action(quorum_action(commitment, Some(exhibit(&[member_a]))));
+    let result = execute_chained(&executor, &builder.fee(500).build(), &mut ledger);
+    assert!(
+        result.is_rejected(),
+        "an exhibit not opening the commitment must refuse: {result:?}"
+    );
+
+    // REFUSE: no witness at all (fail-closed absence).
+    let mut builder = TurnBuilder::new(agent_id, 3);
+    builder.add_action(quorum_action(commitment, None));
+    let result = execute_chained(&executor, &builder.fee(500).build(), &mut ledger);
+    assert!(
+        result.is_rejected(),
+        "a quorum-gated write without an exhibit must refuse: {result:?}"
+    );
+}
+
+// =============================================================================
 // Test: Transfer to non-existent cell
 // =============================================================================
 

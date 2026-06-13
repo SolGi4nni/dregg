@@ -26,21 +26,34 @@ prove the ORDERING/REWRITE laws the program enforces on the commitments themselv
 record substrate is strictly fail-closed on an absent field where Rust's 8 slots are
 always-present; every modeled state carries all 8 fields, so the two readings agree.
 
-## The capability-darkness half (HONEST — a named interface premise, not a proof)
+## The capability-darkness half (PROGRAM-ENFORCED — the tie is an atom, not a premise)
 
 The group's key epoch and the capability freshness epoch are THE SAME counter
-(`sdk/src/channels.rs` module docs) — but the `delegation_epoch` side of that tie lives in
-the EXECUTOR (`RevokeDelegation{epoch_anchor}` bumps it; R7's epoch-at-retrieval
-`CapabilityStale` refusal, `turn/src/executor/apply.rs`, stales every group-held cap with
-`stored_epoch < delegation_epoch`), OUTSIDE the cell program: a cell program cannot read
-`delegation_epoch` yet. The tie is carried by the canonical turn builders' fail-closed checks
-(`Channel::epoch_step`, `sdk/src/channels.rs`; `node/src/channels_service.rs`) — so here it is
-the NAMED premise `DelegationEpochTie` (the SAME residue the Rust docs name loudly), and
-`remove_darkens_both` is the composition theorem UNDER that premise. The closure lane is the
-program-readable `delegation_epoch` executor atom (the executor lane owns those files — out of
-scope here). Likewise the in-program M-of-N council gate needs a count-equal/order-statistic
-atom (`SimpleConstraint.countEqual`-shaped, slotting into `adminGated`'s `anyOf` in place of
-`senderIs admin`) the constraint language does not yet have — named loudly, not attempted.
+(`sdk/src/channels.rs` module docs). The `delegation_epoch` side lives in the EXECUTOR
+(`RevokeDelegation{epoch_anchor}` bumps it; R7's epoch-at-retrieval `CapabilityStale`
+refusal, `turn/src/executor/apply.rs`, stales every group-held cap with
+`stored_epoch < delegation_epoch`) — and the program READS it through the
+`delegationEpochEquals` atom (constraint 6 below; executor carrier
+`TransitionMeta::delegation_epoch`, stamped per touched cell): the epoch SLOT ≡
+`delegation_epoch` on EVERY admitted turn. `admitted_ties_delegation_epoch` therefore
+DISCHARGES the `DelegationEpochTie` premise on admitted turns, and
+`remove_darkens_both_discharged` is the composition with no interface premise left.
+The canonical builders' fail-closed checks (`Channel::epoch_step`, `sdk/src/channels.rs`;
+`node/src/channels_service.rs`) remain as defense-in-depth. The premise FORM
+(`DelegationEpochTie` + `remove_darkens_both`) is kept: it states the composition for any
+state/epoch pair regardless of HOW the tie is established — group cells running a foreign
+or pre-atom program, and the circuit lane, consume that general form.
+
+The in-program M-of-N council gate has its atom too: `countGe` (the count-≥ /
+order-statistic atom; the witness RE-EXHIBITS the distinct approver set each turn, so the
+polis `affineLe`-flag failure mode — one inflated counter faking the quorum — cannot
+occur). `councilGated` below is `adminGated` with the quorum disjunct; its keystones
+(`council_*`) prove the gate's three faces. HONEST residue: `countGe` discharges
+"committed set opens ∧ ≥ m distinct elements" — binding each element to a live approver
+of THIS turn stays with the actor-bound approval-slot ceremony that writes the quorum
+commitment slot, which is why the DEPLOYED `channelConstraints` keeps `senderIs admin`
+governance and the council point ships as the proved shape (Lean) + blueprint-test shape
+(Rust `council_count_ge_shape`).
 
 Keystones (all `#assert_axioms`-pinned, non-vacuity both polarities via `#guard`):
   * `membership_change_steps_epoch` — an admitted root change strictly increases the epoch;
@@ -49,10 +62,15 @@ Keystones (all `#assert_axioms`-pinned, non-vacuity both polarities via `#guard`
                                       (and the full remove+rekey turn ADMITS — `#guard`);
   * `epoch_never_rewinds`           — epoch monotone forever along any admitted schedule;
   * `admin_gates`                   — a non-admin sender cannot move any control-plane slot;
-  * `remove_darkens_both`           — under `DelegationEpochTie`: an admitted remove turn ⇒
-                                      forward-key darkness (fresh commitment ≠ old) AND
-                                      capability staleness (every cap stamped ≤ the pre-epoch
-                                      is R7-stale at the new delegation epoch).
+  * `admitted_ties_delegation_epoch`— an admitted turn ⇒ `DelegationEpochTie` at the post
+                                      state (the atom discharges the premise);
+  * `remove_darkens_both`           — the general (premise-form) composition;
+  * `remove_darkens_both_discharged`— the premise-free composition: an admitted remove turn
+                                      ⇒ forward-key darkness (fresh commitment ≠ old) AND
+                                      capability staleness (every cap stamped ≤ the
+                                      pre-epoch is R7-stale at the new delegation epoch);
+  * `council_*`                     — the M-of-N point: quorum-or-admin gates a flip,
+                                      a valid m-distinct exhibit flips without the admin.
 -/
 import Dregg2.Exec.Program
 
@@ -130,6 +148,7 @@ def channelConstraints (admin tag : Int) : List StateConstraint :=
   , adminGated admin epochF
   , adminGated admin keyCommitF
   , adminGated admin stateF
+  , .simple (.delegationEpochEquals epochF)                                    -- 6. THE TIE
   ]
 
 /-- **The channel-group program** (`channel_cell_program`, `blueprint.rs:906`): the
@@ -356,17 +375,18 @@ theorem admin_gates {admin tag : Int} {ctx : TurnCtx} {m : Nat} {o n : Value}
 
 /-! ## KEYSTONE 6 — the capability-darkness composition (under the NAMED premise). -/
 
-/-- **`DelegationEpochTie` — THE NAMED INTERFACE PREMISE** (the capability half, stated
-honestly). The group's epoch SLOT equals the executor's `delegation_epoch` counter for the
-group cell. This tie lives OUTSIDE the cell program: it is carried by the canonical
-epoch-stepping turn builders' fail-closed checks (`Channel::epoch_step`,
-`sdk/src/channels.rs`, asserts `epoch slot ≡ delegation_epoch` before EVERY step;
-`node/src/channels_service.rs` likewise) because every such turn carries the
-`RevokeDelegation{epoch_anchor}` effect — the one kernel verb that bumps `delegation_epoch` —
-in the SAME atomic turn as the slot write. A cell program cannot read `delegation_epoch` yet;
-the closure lane is the program-readable executor atom (executor lane — out of scope here).
-Until then this premise is exactly the residue the Rust docs name loudly: a divergence is
-detectable by any member (`epoch slot ≠ delegation_epoch` is loud), never silently assumed. -/
+/-- **`DelegationEpochTie`** — the capability half's tie, as a STRUCTURE: the group's epoch
+SLOT equals the executor's `delegation_epoch` counter for the group cell. On every turn
+ADMITTED by `channelProgram` the tie is PROGRAM-ENFORCED — constraint 6
+(`delegationEpochEquals epochF`) reads the executor-stamped counter
+(`TurnCtx.delegationEpoch`; Rust `TransitionMeta::delegation_epoch`), and
+`admitted_ties_delegation_epoch` DISCHARGES this structure from admission. The structure
+form is kept (rather than inlined away) because `remove_darkens_both` under it states the
+composition for ANY state/epoch pair regardless of how the tie arose — group cells governed
+by a foreign/pre-atom program, the canonical builders' fail-closed checks
+(`Channel::epoch_step`, `sdk/src/channels.rs`; `node/src/channels_service.rs` — kept as
+defense-in-depth), and the circuit lane all consume the general form. A divergence remains
+loudly detectable by any member (`epoch slot ≠ delegation_epoch`). -/
 structure DelegationEpochTie (s : Value) (delegationEpoch : Int) : Prop where
   /-- The post-state epoch slot IS the executor's delegation epoch for the group cell. -/
   tie : s.scalar epochF = some delegationEpoch
@@ -423,6 +443,108 @@ theorem remove_darkens_both {admin tag : Int} {ctx : TurnCtx} {m : Nat} {o n : V
   simp only [r7Stale, decide_eq_true_eq]
   omega
 
+/-! ## KEYSTONE 6′ — the tie DISCHARGES: constraint 6 reads the executor's counter. -/
+
+/-- **`admitted_ties_delegation_epoch`** — constraint 6 (`delegationEpochEquals epochF`)
+read off an admitted turn: with the executor's per-cell stamp `d` in context
+(`TurnCtx.delegationEpoch = some d`), the post-state epoch slot IS `d` — exactly
+`DelegationEpochTie n d`. The premise of `remove_darkens_both` is therefore DISCHARGED on
+every program-admitted turn; only foreign/pre-atom-governed states still need the premise
+form. -/
+theorem admitted_ties_delegation_epoch {admin tag : Int} {ctx : TurnCtx} {m : Nat}
+    {o n : Value} {d : Int}
+    (h : (channelProgram admin tag).admitsCtx ctx m o n = true)
+    (hd : ctx.delegationEpoch = some d) :
+    DelegationEpochTie n d := by
+  have hcon : evalConstraintCtx ctx (.simple (.delegationEpochEquals epochF)) o n = true :=
+    admitted_mem h (by
+      unfold channelConstraints
+      exact .tail _ (.tail _ (.tail _ (.tail _ (.tail _ (.tail _ (.tail _ (.tail _ (.tail _
+        (.tail _ (.tail _ (.head _))))))))))))
+  have hsim : evalSimpleCtx ctx (.delegationEpochEquals epochF) o n = true := hcon
+  obtain ⟨d', hd', hn⟩ := (evalSimpleCtx_delegationEpochEquals_iff ctx epochF o n).mp hsim
+  rw [hd] at hd'
+  cases hd'
+  exact ⟨hn⟩
+
+/-- **`remove_darkens_both_discharged`** — the PREMISE-FREE composition: an admitted turn
+that changes the membership root yields, at the executor-stamped delegation epoch `d`,
+forward-key darkness (the key commitment is rewritten) AND R7 staleness of every cap
+stamped at or before the pre-epoch. `remove_darkens_both` ∘ the discharge — no interface
+premise remains on the program-admitted path. -/
+theorem remove_darkens_both_discharged {admin tag : Int} {ctx : TurnCtx} {m : Nat}
+    {o n : Value} {d k₀ : Int}
+    (h : (channelProgram admin tag).admitsCtx ctx m o n = true)
+    (hroot : evalSimple (.immutable memberRootF) o n = false)
+    (hk₀ : o.scalar keyCommitF = some k₀)
+    (hd : ctx.delegationEpoch = some d) :
+    (n.scalar keyCommitF ≠ some k₀) ∧
+    (∀ e a, o.scalar epochF = some a → e ≤ a → r7Stale (some e) d = true) :=
+  remove_darkens_both h hroot hk₀ (admitted_ties_delegation_epoch h hd)
+
+/-! ## KEYSTONE 7 — the M-of-N council point (`countGe` slots into the governance anyOf). -/
+
+/-- `council_gated(slot)` — `adminGated` with the quorum disjunct: slot `f` flips only in a
+turn SENT by the admin OR carrying an `mOf`-distinct quorum exhibit bound to the commitment
+held in `new[quorumF]`. The successor governance shape for the control plane; the deployed
+`channelConstraints` keeps `adminGated` until the quorum-commitment slot is itself
+governance-written by the actor-bound approval ceremony (the module docs' honest residue —
+`countGe` proves the COUNT, not per-element approval of THIS turn). Rust shape:
+`council_count_ge_shape` (`cell/src/blueprint.rs`). -/
+def councilGated (admin : Int) (mOf : Nat) (quorumF f : FieldName) : StateConstraint :=
+  .anyOf [.immutable f, .senderIs admin, .countGe mOf quorumF]
+
+/-- A turn leaving the council-gated slot untouched admits for ANY sender (the ceremony
+turns — propose / approve / certify — stay open under the binding). -/
+theorem council_untouched_open (admin : Int) (mOf : Nat) (quorumF f : FieldName)
+    (ctx : TurnCtx) (o n : Value)
+    (huntouched : evalSimple (.immutable f) o n = true) :
+    evalConstraintCtx ctx (councilGated admin mOf quorumF f) o n = true := by
+  have himm : evalSimpleCtx ctx (.immutable f) o n = true := huntouched
+  simp [councilGated, evalConstraintCtx, himm]
+
+/-- **The negative tooth** — a FLIP with neither the admin sender NOR an admitted quorum
+exhibit is REFUSED: capability possession alone cannot move a council-gated slot, and a
+duplicate-padded exhibit is not a quorum (`evalSimpleCtx_countGe_iff`'s `eraseDups`). -/
+theorem council_flip_requires_admin_or_quorum (admin : Int) (mOf : Nat)
+    (quorumF f : FieldName) (ctx : TurnCtx) (o n : Value)
+    (hflip : evalSimple (.immutable f) o n = false)
+    (hs : ctx.sender ≠ some admin)
+    (hq : evalSimpleCtx ctx (.countGe mOf quorumF) o n = false) :
+    evalConstraintCtx ctx (councilGated admin mOf quorumF f) o n = false := by
+  have himm : evalSimpleCtx ctx (.immutable f) o n = false := hflip
+  have hsend : evalSimpleCtx ctx (.senderIs admin) o n = false := by
+    show (ctx.sender == some admin) = false
+    exact beq_eq_false_iff_ne.mpr hs
+  simp [councilGated, evalConstraintCtx, himm, hsend, hq]
+
+/-- **The quorum flips** — a valid `mOf`-distinct exhibit bound to the quorum commitment
+admits the flip WITHOUT the admin: governance is no longer a single key (the M-of-N
+point). -/
+theorem council_quorum_flips (admin : Int) (mOf : Nat) (quorumF f : FieldName)
+    (ctx : TurnCtx) (o n : Value)
+    (hq : evalSimpleCtx ctx (.countGe mOf quorumF) o n = true) :
+    evalConstraintCtx ctx (councilGated admin mOf quorumF f) o n = true := by
+  simp [councilGated, evalConstraintCtx, hq]
+
+/-- An admitted FLIP by a non-admin sender EXHIBITS the quorum: at least `mOf` distinct
+approver elements were re-exhibited this turn (consumes `evalSimpleCtx_countGe_quorum`;
+the order-statistic reading of admission). -/
+theorem council_flip_nonadmin_has_quorum (admin : Int) (mOf : Nat) (quorumF f : FieldName)
+    (ctx : TurnCtx) (o n : Value)
+    (hany : evalConstraintCtx ctx (councilGated admin mOf quorumF f) o n = true)
+    (hflip : evalSimple (.immutable f) o n = false)
+    (hs : ctx.sender ≠ some admin) :
+    mOf ≤ ctx.exhibited.eraseDups.length := by
+  cases hq : evalSimpleCtx ctx (.countGe mOf quorumF) o n with
+  | true  => exact evalSimpleCtx_countGe_quorum ctx mOf quorumF o n hq
+  | false =>
+    exfalso
+    have hfalse := council_flip_requires_admin_or_quorum admin mOf quorumF f ctx o n
+      hflip hs hq
+    rw [hfalse] at hany
+    cases hany
+
 /-! ## Axiom hygiene — every keystone pinned. -/
 
 #assert_axioms membership_change_steps_epoch
@@ -432,6 +554,12 @@ theorem remove_darkens_both {admin tag : Int} {ctx : TurnCtx} {m : Nat} {o n : V
 #assert_axioms epoch_never_rewinds
 #assert_axioms admin_gates
 #assert_axioms remove_darkens_both
+#assert_axioms admitted_ties_delegation_epoch
+#assert_axioms remove_darkens_both_discharged
+#assert_axioms council_untouched_open
+#assert_axioms council_flip_requires_admin_or_quorum
+#assert_axioms council_quorum_flips
+#assert_axioms council_flip_nonadmin_has_quorum
 
 /-! ## It runs — non-vacuity BOTH polarities on the canonical test channel.
 
@@ -442,8 +570,15 @@ one_turn` tests: admin `17`, tag `99`, commitments as opaque scalars (`300`/`200
 private def adm : Int := 17
 private def tg  : Int := 99
 private def prog : RecordProgram := channelProgram adm tg
-private def adminCtx    : TurnCtx := { sender := some adm }
-private def strangerCtx : TurnCtx := { sender := some 5 }
+/-- The admin's context with the executor's delegation-epoch stamp at 1 (the post-birth /
+steady-state counter — every canonical turn's `TransitionMeta` carries the touched cell's
+counter, so the test contexts do too). -/
+private def adminCtx1    : TurnCtx := { sender := some adm, delegationEpoch := some 1 }
+/-- The admin's context stamped at delegation epoch 2 (the post-remove counter: the remove
+turn carries `RevokeDelegation{anchor}`, bumping 1 → 2 in the SAME turn as the slot write). -/
+private def adminCtx2    : TurnCtx := { sender := some adm, delegationEpoch := some 2 }
+private def strangerCtx1 : TurnCtx := { sender := some 5, delegationEpoch := some 1 }
+private def strangerCtx2 : TurnCtx := { sender := some 5, delegationEpoch := some 2 }
 
 /-- The unborn cell: all 8 slots zero. -/
 private def stUninit : Value := .record
@@ -490,29 +625,37 @@ private def stClosed : Value := .record
   [(stateF, .int 2), (memberRootF, .int 300), (epochF, .int 1), (keyCommitF, .int 1100),
    (adminF, .int 17), (appAF, .int 0), (appBF, .int 0), (tagF, .int 99)]
 
--- Birth (UNINIT → OPEN, terms pinned, first epoch + key + roster in one turn): ADMITTED.
-#guard prog.admitsCtx adminCtx 0 stUninit stOpen
--- THE keystone, positive polarity: the FULL remove+rekey turn (root + epoch + fresh key) ADMITS.
-#guard prog.admitsCtx adminCtx 0 stOpen stRemoved
+-- Birth (UNINIT → OPEN, terms pinned, first epoch + key + roster + the anchor revocation
+-- bumping delegation_epoch 0 → 1, ALL in one turn): ADMITTED at stamp 1.
+#guard prog.admitsCtx adminCtx1 0 stUninit stOpen
+-- THE keystone, positive polarity: the FULL remove+rekey turn (root + epoch + fresh key +
+-- the delegation-epoch bump to 2) ADMITS at stamp 2.
+#guard prog.admitsCtx adminCtx2 0 stOpen stRemoved
+-- THE NEW TOOTH (constraint 6, the executor-atom tie): the SAME otherwise-legal remove turn
+-- with the epoch slot FORGED away from the executor's counter (slot 2, stamp 1 — i.e. the
+-- turn did NOT carry the anchor revocation) — REFUSED.
+#guard prog.admitsCtx adminCtx1 0 stOpen stRemoved == false
+-- ... and a turn with NO stamp at all (a legacy/foreign evaluation path) — REFUSED (fail-closed).
+#guard prog.admitsCtx { sender := some adm } 0 stOpen stRemoved == false
 -- THE keystone, negative polarity: remove with a STALE key (epoch steps, key kept) — REFUSED.
-#guard prog.admitsCtx adminCtx 0 stOpen stRemovedStaleKey == false
+#guard prog.admitsCtx adminCtx2 0 stOpen stRemovedStaleKey == false
 -- Remove WITHOUT an epoch step — REFUSED (triple leg 1).
-#guard prog.admitsCtx adminCtx 0 stOpen stRemovedNoStep == false
+#guard prog.admitsCtx adminCtx1 0 stOpen stRemovedNoStep == false
 -- SILENT rekey within an epoch — REFUSED (triple leg 2).
-#guard prog.admitsCtx adminCtx 0 stOpen stSilentRekey == false
+#guard prog.admitsCtx adminCtx1 0 stOpen stSilentRekey == false
 -- Epoch REWIND — REFUSED (Monotonic{epoch}), even with a fresh key and an admin sender.
-#guard prog.admitsCtx adminCtx 0 stRemoved stRewound == false
+#guard prog.admitsCtx adminCtx1 0 stRemoved stRewound == false
 -- A NON-ADMIN sender attempting the full (otherwise-legal) remove turn — REFUSED (governance).
-#guard prog.admitsCtx strangerCtx 0 stOpen stRemoved == false
+#guard prog.admitsCtx strangerCtx2 0 stOpen stRemoved == false
 -- ... and with NO sender in context — REFUSED (fail-closed).
 #guard prog.admitsCtx {} 0 stOpen stRemoved == false
 -- The app plane stays OPEN: a stranger's app-slot write touching no gated slot ADMITS.
-#guard prog.admitsCtx strangerCtx 0 stOpen stAppWrite
+#guard prog.admitsCtx strangerCtx1 0 stOpen stAppWrite
 -- Lifecycle: OPEN → CLOSED by the admin ADMITS; CLOSED is terminal (no row out) — REFUSED.
-#guard prog.admitsCtx adminCtx 0 stOpen stClosed
-#guard prog.admitsCtx adminCtx 0 stClosed stOpen == false
+#guard prog.admitsCtx adminCtx1 0 stOpen stClosed
+#guard prog.admitsCtx adminCtx1 0 stClosed stOpen == false
 -- Term pins: an admin-slot rewrite once OPEN is REFUSED (pin), even by the admin.
-#guard prog.admitsCtx adminCtx 0 stOpen
+#guard prog.admitsCtx adminCtx1 0 stOpen
   (.record [(stateF, .int 1), (memberRootF, .int 300), (epochF, .int 1),
             (keyCommitF, .int 1100), (adminF, .int 55), (appAF, .int 0), (appBF, .int 0),
             (tagF, .int 99)]) == false
@@ -527,5 +670,34 @@ private def stClosed : Value := .record
 example : DelegationEpochTie stRemoved 2 := ⟨by decide⟩
 -- ... and REFUTABLE when the counters diverge (the loud detectable divergence).
 example : ¬ DelegationEpochTie stRemoved 3 := fun ⟨h⟩ => absurd h (by decide)
+-- ... and the DISCHARGE is computable: the admitted remove turn at stamp 2 YIELDS the tie
+-- (constraint 6 read off admission — no premise supplied).
+example : DelegationEpochTie stRemoved 2 :=
+  admitted_ties_delegation_epoch (admin := adm) (tag := tg) (ctx := adminCtx2) (m := 0)
+    (o := stOpen) (by decide) rfl
+
+/-! ### The council point runs — `councilGated` over the member-root slot, quorum 2.
+`"qc"` plays the quorum-commitment slot (`CH_APP_SLOT_A` in the Rust blueprint shape,
+`council_count_ge_shape`); `555` is the opaque §8-portal commitment of the approver set
+`{70, 90}`. -/
+
+private def councilC : StateConstraint := councilGated adm 2 "qc" memberRootF
+private def quorumCtx : TurnCtx :=
+  { sender := some 5, exhibited := [70, 90], exhibitedCommit := some 555 }
+private def dupQuorumCtx : TurnCtx :=
+  { sender := some 5, exhibited := [70, 70, 70], exhibitedCommit := some 555 }
+private def cOld : Value := .record [(memberRootF, .int 300), ("qc", .int 555)]
+private def cNew : Value := .record [(memberRootF, .int 200), ("qc", .int 555)]
+
+-- A NON-admin flip carrying a 2-distinct exhibit bound to the commitment: ADMITTED (M-of-N).
+#guard evalConstraintCtx quorumCtx councilC cOld cNew
+-- The duplicate-padded exhibit ([70,70,70] = ONE approver, not three) — REFUSED (eraseDups).
+#guard evalConstraintCtx dupQuorumCtx councilC cOld cNew == false
+-- The admin still flips without any exhibit (the senderIs disjunct).
+#guard evalConstraintCtx { sender := some adm } councilC cOld cNew
+-- A stranger with no exhibit — REFUSED (neither disjunct).
+#guard evalConstraintCtx { sender := some 5 } councilC cOld cNew == false
+-- A stranger leaving the slot untouched — ADMITTED (the ceremony stays open).
+#guard evalConstraintCtx { sender := some 5 } councilC cOld cOld
 
 end Dregg2.Apps.ChannelGroup

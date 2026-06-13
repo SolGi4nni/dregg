@@ -228,8 +228,9 @@ fn check_derivation_proof() -> Result<(), String> {
 fn check_effect_vm_proof() -> Result<(), String> {
     // Prove a multi-effect turn via the effect VM STARK.
     use dregg_circuit::effect_vm::{
-        CellState, Effect as VmEffect, EffectVmAir, compute_effects_hash, generate_effect_vm_trace,
+        CellState, Effect as VmEffect, compute_effects_hash, generate_effect_vm_trace, pi,
     };
+    use dregg_circuit::effect_vm_p3_full_air::{prove_effect_vm_p3, verify_effect_vm_p3};
 
     let initial_state = CellState::new(1000, 0);
     let effects = vec![
@@ -250,20 +251,27 @@ fn check_effect_vm_proof() -> Result<(), String> {
 
     let (effects_hash_lo, effects_hash_hi) = compute_effects_hash(&effects);
 
-    let (trace, _public_inputs) = generate_effect_vm_trace(&initial_state, &effects);
+    let (trace, public_inputs) = generate_effect_vm_trace(&initial_state, &effects);
     if trace.is_empty() {
         return Err("effect VM trace should not be empty".into());
     }
-
-    // The AIR constraints are enforced; verify via constraint prover path.
-    // Height: power of 2 with a 64-row minimum (the FRI single-row-gap
-    // closure, task #90), matching the trace generator's MIN_TRACE_HEIGHT.
-    let _air = EffectVmAir::new(effects.len().next_power_of_two().max(64));
-    // The trace itself being well-formed (no assertion panics in generate) proves
-    // the constraints hold. For the preflight, confirming trace generation succeeds
-    // and the hash commits to the effects is sufficient.
     if effects_hash_lo == BabyBear::ZERO && effects_hash_hi == BabyBear::ZERO {
         return Err("effects hash should not be zero for non-empty effects".into());
+    }
+
+    // PROVE through the audited Plonky3 prover and VERIFY through the
+    // audited verifier — the preflight gate exercises the real proof path,
+    // not just witness generation (constraint enforcement ≠ trace success).
+    let proof = prove_effect_vm_p3(&trace, &public_inputs)
+        .map_err(|e| format!("effect VM p3 prove failed: {e}"))?;
+    verify_effect_vm_p3(&proof, &public_inputs)
+        .map_err(|e| format!("effect VM p3 verify rejected an honest proof: {e}"))?;
+
+    // ANTI-GHOST TOOTH: a forged post-state commitment MUST be rejected.
+    let mut forged = public_inputs.clone();
+    forged[pi::NEW_COMMIT] = forged[pi::NEW_COMMIT] + BabyBear::new(1);
+    if verify_effect_vm_p3(&proof, &forged).is_ok() {
+        return Err("effect VM p3 verifier ACCEPTED a forged post-state commitment".into());
     }
 
     Ok(())

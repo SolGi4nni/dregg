@@ -827,11 +827,27 @@ pub fn channel_key_commitment(epoch: u64, key: &[u8; 32]) -> FieldElement {
 /// 5. **governance** — membership / epoch / key / lifecycle writes admit
 ///    only the admin sender (`AnyOf[Immutable{slot}, SenderIs{admin}]`, the
 ///    polis per-slot actor binding). A turn that touches none of the gated
-///    slots admits any sender (posting is off-cell anyway). An in-program
-///    M-of-N council gate needs a count-equal/order-statistic atom the
-///    constraint language does not yet have (a Lean `Exec.Program` +
-///    executor lane addition, named loudly here); until then a council
-///    governs by holding the admin key.
+///    slots admits any sender (posting is off-cell anyway). The in-program
+///    M-of-N council gate has its atom now ([`StateConstraint::CountGe`];
+///    proved shape `councilGated`, `metatheory/Dregg2/Apps/ChannelGroup.lean`;
+///    runtime shape `council_count_ge_shape` below) — it stays OUT of the
+///    deployed program until the quorum-commitment slot is itself written by
+///    the actor-bound approval ceremony (`CountGe` proves the distinct COUNT,
+///    not per-element approval of THIS turn; see its docstring), so a council
+///    governs by holding the admin key today.
+/// 6. **THE EPOCH IS THE DELEGATION EPOCH** —
+///    `DelegationEpochEquals { index: CH_EPOCH_SLOT }`: the epoch slot equals
+///    the cell's own post-turn `delegation_epoch` (the R7 capability-freshness
+///    counter) on EVERY admitted turn. This is the program-enforced form of
+///    the tie the canonical builders check fail-closed
+///    (`Channel::epoch_step`, `sdk/src/channels.rs`;
+///    `node/src/channels_service.rs` — both kept as defense-in-depth): an
+///    epoch-slot write that does not ride the same turn as the anchor
+///    `RevokeDelegation` (or any forged divergence between the two counters)
+///    is REFUSED by the program itself. Lean: constraint 6 of
+///    `channelConstraints` + `admitted_ties_delegation_epoch`, which
+///    DISCHARGES the `DelegationEpochTie` premise
+///    (`metatheory/Dregg2/Apps/ChannelGroup.lean`).
 ///
 /// Fails closed on a zero admin (no governor) and a zero tag
 /// (indistinguishable from an unborn cell).
@@ -899,6 +915,10 @@ pub fn channel_state_constraints(
         admin_gated(CH_EPOCH_SLOT),
         admin_gated(CH_KEY_COMMIT_SLOT),
         admin_gated(CH_STATE_SLOT),
+        // ── 6. THE EPOCH IS THE DELEGATION EPOCH (the program-readable tie) ──
+        StateConstraint::DelegationEpochEquals {
+            index: CH_EPOCH_SLOT,
+        },
     ])
 }
 
@@ -1377,6 +1397,26 @@ mod tests {
         )
     }
 
+    /// Channel-program evaluation with the executor's per-cell
+    /// `delegation_epoch` stamp (constraint 6 reads it; the executor's
+    /// program-check loop stamps it on every touched cell —
+    /// `turn/src/executor/execute_tree.rs`).
+    fn eval_ch(
+        program: &CellProgram,
+        new: &CellState,
+        old: Option<&CellState>,
+        ctx: &EvalContext,
+        delegation_epoch: u64,
+    ) -> Result<(), crate::program::ProgramError> {
+        program.evaluate_full(
+            new,
+            old,
+            Some(ctx),
+            &TransitionMeta::wildcard().with_delegation_epoch(delegation_epoch),
+            &WitnessBundle::empty(),
+        )
+    }
+
     const ADMIN: [u8; 32] = [0xADu8; 32];
     const STRANGER: [u8; 32] = [0x57u8; 32];
 
@@ -1417,17 +1457,18 @@ mod tests {
         let p = channel_cell_program(&t).unwrap();
         let born = CellState::new(0);
         assert!(
-            eval_ctx(&p, &born, None, &ctx_sender(ADMIN, 0)).is_ok(),
-            "all-zero birth passes"
+            eval_ch(&p, &born, None, &ctx_sender(ADMIN, 0), 0).is_ok(),
+            "all-zero birth passes (epoch slot 0 = delegation_epoch 0)"
         );
         assert!(
-            eval_ctx(&p, &ch_open_state(&t), Some(&born), &ctx_sender(ADMIN, 0)).is_ok(),
-            "the open turn writes terms + the first epoch"
+            eval_ch(&p, &ch_open_state(&t), Some(&born), &ctx_sender(ADMIN, 0), 1).is_ok(),
+            "the open turn writes terms + the first epoch (and the anchor \
+             revocation bumps delegation_epoch 0 → 1 in the same turn)"
         );
         // Open with a tampered admin slot: rejected (term pin).
         let mut bad = ch_open_state(&t);
         bad.fields[CH_ADMIN_SLOT as usize] = STRANGER;
-        assert!(eval_ctx(&p, &bad, Some(&born), &ctx_sender(ADMIN, 0)).is_err());
+        assert!(eval_ch(&p, &bad, Some(&born), &ctx_sender(ADMIN, 0), 1).is_err());
     }
 
     /// THE KEYSTONE, slot side: remove + rekey are ONE turn or UNSAT.
@@ -1439,12 +1480,21 @@ mod tests {
         let admin = ctx_sender(ADMIN, 0);
 
         // The canonical remove: drop a member AND step the epoch AND commit
-        // a fresh key — admitted.
+        // a fresh key (delegation_epoch riding 1 → 2) — admitted.
         let mut removed = open.clone();
         removed.fields[CH_MEMBER_ROOT_SLOT as usize] = channel_member_root(&ch_member_set(2));
         removed.fields[CH_EPOCH_SLOT as usize] = field_from_u64(2);
         removed.fields[CH_KEY_COMMIT_SLOT as usize] = channel_key_commitment(2, &[0x22; 32]);
-        assert!(eval_ctx(&p, &removed, Some(&open), &admin).is_ok());
+        assert!(eval_ch(&p, &removed, Some(&open), &admin, 2).is_ok());
+
+        // THE TIE TOOTH (constraint 6): the SAME otherwise-legal remove turn
+        // whose epoch slot is FORGED away from the cell's delegation_epoch
+        // (slot 2, counter still 1 — the turn did not carry the anchor
+        // revocation): UNSAT.
+        assert!(
+            eval_ch(&p, &removed, Some(&open), &admin, 1).is_err(),
+            "an epoch-slot write diverging from delegation_epoch must refuse"
+        );
 
         // Remove WITHOUT the epoch step: UNSAT (membership ⇒ epoch tooth).
         let mut no_epoch = removed.clone();
@@ -1452,7 +1502,7 @@ mod tests {
         no_epoch.fields[CH_KEY_COMMIT_SLOT as usize] =
             open.fields[CH_KEY_COMMIT_SLOT as usize];
         assert!(
-            eval_ctx(&p, &no_epoch, Some(&open), &admin).is_err(),
+            eval_ch(&p, &no_epoch, Some(&open), &admin, 1).is_err(),
             "membership change without an epoch step must refuse"
         );
 
@@ -1462,7 +1512,7 @@ mod tests {
         stale_key.fields[CH_KEY_COMMIT_SLOT as usize] =
             open.fields[CH_KEY_COMMIT_SLOT as usize];
         assert!(
-            eval_ctx(&p, &stale_key, Some(&open), &admin).is_err(),
+            eval_ch(&p, &stale_key, Some(&open), &admin, 2).is_err(),
             "an epoch step carrying the stale key must refuse"
         );
 
@@ -1470,21 +1520,29 @@ mod tests {
         let mut silent = open.clone();
         silent.fields[CH_KEY_COMMIT_SLOT as usize] = channel_key_commitment(1, &[0x99; 32]);
         assert!(
-            eval_ctx(&p, &silent, Some(&open), &admin).is_err(),
+            eval_ch(&p, &silent, Some(&open), &admin, 1).is_err(),
             "rekey without an epoch step must refuse"
         );
 
-        // Epoch rewind: UNSAT (Monotonic).
+        // Epoch rewind: UNSAT (Monotonic), even with the counter rewound too.
         let mut rewind = removed.clone();
         rewind.fields[CH_EPOCH_SLOT as usize] = field_from_u64(0);
-        assert!(eval_ctx(&p, &rewind, Some(&open), &admin).is_err());
+        assert!(eval_ch(&p, &rewind, Some(&open), &admin, 0).is_err());
 
         // A pure rekey (epoch step + fresh key, membership unchanged):
         // admitted — compromise recovery.
         let mut rekey = open.clone();
         rekey.fields[CH_EPOCH_SLOT as usize] = field_from_u64(2);
         rekey.fields[CH_KEY_COMMIT_SLOT as usize] = channel_key_commitment(2, &[0x33; 32]);
-        assert!(eval_ctx(&p, &rekey, Some(&open), &admin).is_ok());
+        assert!(eval_ch(&p, &rekey, Some(&open), &admin, 2).is_ok());
+
+        // Defense-in-depth fail-closed: with NO delegation_epoch stamp at all
+        // (a legacy/wildcard meta — no executor in the loop), the program
+        // refuses even the canonical remove (MissingContextField).
+        assert!(
+            eval_ctx(&p, &removed, Some(&open), &admin).is_err(),
+            "an unstamped evaluation of the channel program must fail closed"
+        );
     }
 
     /// The governance algebra gates membership: only the admin sender may
@@ -1501,20 +1559,20 @@ mod tests {
         joined.fields[CH_KEY_COMMIT_SLOT as usize] = channel_key_commitment(2, &[0x44; 32]);
 
         // Admin joins a member: admitted.
-        assert!(eval_ctx(&p, &joined, Some(&open), &ctx_sender(ADMIN, 0)).is_ok());
+        assert!(eval_ch(&p, &joined, Some(&open), &ctx_sender(ADMIN, 0), 2).is_ok());
         // A NON-MEMBER (any non-admin sender) forcing their own join:
         // refused — the SenderIs gate.
         assert!(
-            eval_ctx(&p, &joined, Some(&open), &ctx_sender(STRANGER, 0)).is_err(),
+            eval_ch(&p, &joined, Some(&open), &ctx_sender(STRANGER, 0), 2).is_err(),
             "non-admin membership write must refuse"
         );
         // No sender at all (system turn): fail-closed on gated slots.
-        assert!(eval_ctx(&p, &joined, Some(&open), &ctx_at(0)).is_err());
+        assert!(eval_ch(&p, &joined, Some(&open), &ctx_at(0), 2).is_err());
         // A non-admin turn touching NOTHING gated: admitted (app slots are
         // free; the control plane alone is governed).
         let mut app_write = open.clone();
         app_write.fields[CH_APP_SLOT_A as usize] = field_from_u64(7);
-        assert!(eval_ctx(&p, &app_write, Some(&open), &ctx_sender(STRANGER, 0)).is_ok());
+        assert!(eval_ch(&p, &app_write, Some(&open), &ctx_sender(STRANGER, 0), 1).is_ok());
 
         // ── Heap proof-of-life: a HEAP-keyed constraint coexists with the
         // channel's slot constraints in ONE program (the rotation's
@@ -1534,12 +1592,12 @@ mod tests {
         // Heap counter advances, control plane untouched: admitted for anyone.
         let mut seq_up = open_h.clone();
         assert!(seq_up.set_field_ext(64, field_from_u64(6)));
-        assert!(eval_ctx(&p2, &seq_up, Some(&open_h), &ctx_sender(STRANGER, 0)).is_ok());
+        assert!(eval_ch(&p2, &seq_up, Some(&open_h), &ctx_sender(STRANGER, 0), 1).is_ok());
         // Heap counter REWINDS: the heap tooth bites (slots all clean).
         let mut seq_down = open_h.clone();
         assert!(seq_down.set_field_ext(64, field_from_u64(4)));
         assert!(
-            eval_ctx(&p2, &seq_down, Some(&open_h), &ctx_sender(STRANGER, 0)).is_err(),
+            eval_ch(&p2, &seq_down, Some(&open_h), &ctx_sender(STRANGER, 0), 1).is_err(),
             "heap-keyed Monotonic must refuse a rewind of heap[64]"
         );
         // The SLOT teeth still bite under p2: a stranger forcing membership
@@ -1549,10 +1607,10 @@ mod tests {
         joined_h.fields[CH_EPOCH_SLOT as usize] = field_from_u64(2);
         joined_h.fields[CH_KEY_COMMIT_SLOT as usize] = channel_key_commitment(2, &[0x44; 32]);
         assert!(
-            eval_ctx(&p2, &joined_h, Some(&open_h), &ctx_sender(STRANGER, 0)).is_err(),
+            eval_ch(&p2, &joined_h, Some(&open_h), &ctx_sender(STRANGER, 0), 2).is_err(),
             "slot governance must keep biting with the heap atom installed"
         );
-        assert!(eval_ctx(&p2, &joined_h, Some(&open_h), &ctx_sender(ADMIN, 0)).is_ok());
+        assert!(eval_ch(&p2, &joined_h, Some(&open_h), &ctx_sender(ADMIN, 0), 2).is_ok());
     }
 
     #[test]
@@ -1565,17 +1623,107 @@ mod tests {
         // Re-pointing the admin or the tag is refused even FOR the admin.
         let mut usurp = open.clone();
         usurp.fields[CH_ADMIN_SLOT as usize] = STRANGER;
-        assert!(eval_ctx(&p, &usurp, Some(&open), &admin).is_err());
+        assert!(eval_ch(&p, &usurp, Some(&open), &admin, 1).is_err());
         let mut retag = open.clone();
         retag.fields[CH_TAG_SLOT as usize] = field_from_u64(2);
-        assert!(eval_ctx(&p, &retag, Some(&open), &admin).is_err());
+        assert!(eval_ch(&p, &retag, Some(&open), &admin, 1).is_err());
 
         // OPEN → CLOSED admits (admin); any touch of a closed group refuses.
         let mut closed = open.clone();
         closed.fields[CH_STATE_SLOT as usize] = field_from_u64(CH_STATE_CLOSED);
-        assert!(eval_ctx(&p, &closed, Some(&open), &admin).is_ok());
-        assert!(eval_ctx(&p, &closed, Some(&closed), &admin).is_err());
-        assert!(eval_ctx(&p, &open, Some(&closed), &admin).is_err());
+        assert!(eval_ch(&p, &closed, Some(&open), &admin, 1).is_ok());
+        assert!(eval_ch(&p, &closed, Some(&closed), &admin, 1).is_err());
+        assert!(eval_ch(&p, &open, Some(&closed), &admin, 1).is_err());
+    }
+
+    /// **The council shape (`CountGe` — in-program M-of-N), at the blueprint
+    /// level.** The proved Lean twin is `councilGated` + the `council_*`
+    /// keystones (`metatheory/Dregg2/Apps/ChannelGroup.lean`). This ships as
+    /// a TEST shape, not a change to the deployed `channel_state_constraints`
+    /// governance: `CountGe` discharges "the committed set opens ∧ ≥ M
+    /// distinct elements" — it does NOT bind each element to a live approver
+    /// of THIS turn, so until the quorum-commitment slot (`CH_APP_SLOT_A`
+    /// here) is itself written by the actor-bound approval ceremony, wiring
+    /// it into the live control plane would let whoever can write that slot
+    /// mint quorums. The executor-path accept/refuse twin is
+    /// `turn::tests::test_program_count_ge_enforced`.
+    #[test]
+    fn council_count_ge_shape() {
+        use crate::program::{WitnessBlobView, WitnessKindTag};
+
+        let t = ch_terms();
+        // The council roster: members A and B (2-of-N quorum threshold 2).
+        let member_a = [0xA1u8; 32];
+        let member_b = [0xB2u8; 32];
+        let quorum: std::collections::BTreeSet<[u8; 32]> =
+            [member_a, member_b].into_iter().collect();
+        let commitment = crate::program::count_ge_set_commitment(&quorum);
+
+        // councilGated(member_root): AnyOf[Immutable, SenderIs admin, CountGe 2 @ app_a].
+        let council = CellProgram::Predicate(vec![StateConstraint::AnyOf {
+            variants: vec![
+                SimpleStateConstraint::Immutable {
+                    index: CH_MEMBER_ROOT_SLOT,
+                },
+                SimpleStateConstraint::SenderIs { pk: t.admin },
+                SimpleStateConstraint::CountGe {
+                    threshold: 2,
+                    set_commitment_slot: CH_APP_SLOT_A,
+                },
+            ],
+        }]);
+
+        let mut open = ch_open_state(&t);
+        open.fields[CH_APP_SLOT_A as usize] = commitment;
+        let mut flipped = open.clone();
+        flipped.fields[CH_MEMBER_ROOT_SLOT as usize] = channel_member_root(&ch_member_set(2));
+
+        let exhibit =
+            |elems: &[[u8; 32]]| postcard::to_allocvec(&elems.to_vec()).unwrap();
+        let eval_with = |new: &CellState,
+                         ctx: &EvalContext,
+                         blob: Option<&[u8]>|
+         -> Result<(), crate::program::ProgramError> {
+            let views: Vec<WitnessBlobView<'_>> = blob
+                .map(|b| {
+                    vec![WitnessBlobView {
+                        kind: WitnessKindTag::Cleartext,
+                        bytes: b,
+                    }]
+                })
+                .unwrap_or_default();
+            council.evaluate_full(
+                new,
+                Some(&open),
+                Some(ctx),
+                &TransitionMeta::wildcard(),
+                &WitnessBundle {
+                    blobs: &views,
+                    registry: None,
+                },
+            )
+        };
+
+        // A NON-admin flip carrying the 2-distinct quorum exhibit: ADMITTED.
+        let both = exhibit(&[member_a, member_b]);
+        assert!(
+            eval_with(&flipped, &ctx_sender(STRANGER, 0), Some(&both)).is_ok(),
+            "a bound 2-of-2 quorum exhibit must admit the flip without the admin"
+        );
+        // The duplicate-padded exhibit ([A, A] = ONE approver): REFUSED — the
+        // distinctness tooth (this is what the affineLe-flag trick could not
+        // enforce against unbounded counters).
+        let dup = exhibit(&[member_a, member_a]);
+        assert!(
+            eval_with(&flipped, &ctx_sender(STRANGER, 0), Some(&dup)).is_err(),
+            "a duplicate-padded exhibit must not count as a quorum"
+        );
+        // No exhibit at all: REFUSED (fail-closed witness absence).
+        assert!(eval_with(&flipped, &ctx_sender(STRANGER, 0), None).is_err());
+        // The admin still flips without any exhibit (the SenderIs disjunct).
+        assert!(eval_with(&flipped, &ctx_sender(ADMIN, 0), None).is_ok());
+        // A stranger leaving the slot untouched: ADMITTED (ceremony open).
+        assert!(eval_with(&open, &ctx_sender(STRANGER, 0), None).is_ok());
     }
 
     #[test]

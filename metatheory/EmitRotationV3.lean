@@ -20,10 +20,13 @@ executable: run with `lake env lean --run EmitRotationV3.lean`.
 -/
 import Dregg2.Circuit.Emit.EffectVmEmitRotation
 import Dregg2.Circuit.Emit.EffectVmEmitRotationR
+import Dregg2.Circuit.Emit.EffectVmEmitRotationCaveat
 
 open Dregg2.Circuit.DescriptorIR2 (emitVmJson2)
 open Dregg2.Circuit.Emit.EffectVmEmitRotation
 open Dregg2.Circuit.Emit.EffectVmEmitRotationR (rotationProbeVmDescriptorR2)
+open Dregg2.Circuit.Emit.EffectVmEmitRotationCaveat
+  (rotationCaveatLayoutManifest rotationCaveatProbeVmDescriptor2)
 
 def main : IO Unit := do
   IO.println s!"rotationLayoutManifest\t{rotationLayoutManifest}"
@@ -33,3 +36,6 @@ def main : IO Unit := do
     s!"rotationProbeVmDescriptorR24\t{(rotationProbeVmDescriptorR2 24).name}\t{emitVmJson2 (rotationProbeVmDescriptorR2 24)}"
   IO.println
     s!"rotationProbeVmDescriptorR32\t{(rotationProbeVmDescriptorR2 32).name}\t{emitVmJson2 (rotationProbeVmDescriptorR2 32)}"
+  IO.println s!"rotationCaveatLayoutManifest\t{rotationCaveatLayoutManifest}"
+  IO.println
+    s!"rotationCaveatProbeVmDescriptor2\t{rotationCaveatProbeVmDescriptor2.name}\t{emitVmJson2 rotationCaveatProbeVmDescriptor2}"

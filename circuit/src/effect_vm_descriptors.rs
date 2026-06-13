@@ -721,6 +721,34 @@ pub const V3_STAGED_DESCRIPTORS: &[(&str, &str, &str)] = &[
     ),
 ];
 
+/// THE WIDENED CAVEAT OPERAND artifacts (staged — the second rotation wire-shape
+/// pre-gate). The layout manifest is byte-pinned BOTH sides (Lean `#guard` in
+/// `EffectVmEmitRotationCaveat.lean`; Rust twin `rotation_caveat_layout_matches_lean`
+/// rebuilds from `columns::rotation::caveat` — both pin, neither parses); the probe
+/// descriptor is the R=24 rotated block + the 29-felt caveat manifest block + its
+/// chained commitment, three PI pins (state commit · height · caveat commit). Lean
+/// keystones: `caveat_operand_no_aliasing` (slot/heap domain separation as a theorem),
+/// `caveatCommit_binds` (a forged domain tag / tampered heap key moves the commit),
+/// `rotationCaveatProbe_binds_published` (end-to-end, wire form).
+pub const ROTATION_CAVEAT_LAYOUT_V3_STAGED_JSON: &str =
+    include_str!("../descriptors/rotation-caveat-layout-v3-staged.json");
+pub const ROTATION_CAVEAT_LAYOUT_V3_STAGED_FP: &str =
+    "8cfcaf978f7123f9f159f9ae05ab85ef9a245c93d9d9e1b6e2ce7b9500c890a8";
+
+pub const DREGG_EFFECTVM_ROTATION_CAVEAT_V3_STAGED_JSON: &str =
+    include_str!("../descriptors/dregg-effectvm-rotation-caveat-v3-staged-r24.json");
+pub const DREGG_EFFECTVM_ROTATION_CAVEAT_V3_STAGED_FP: &str =
+    "a1d926d7c8cd8ac08e1957eae3353e87bf9bbcfaebf89bbb1dea6f981bdbb89b";
+
+/// The caveat-operand staged registry (kept SEPARATE from `V3_STAGED_DESCRIPTORS`
+/// so the three rotation-probe pins stay byte-frozen and their coverage walker
+/// unchanged).
+pub const V3_STAGED_CAVEAT_DESCRIPTORS: &[(&str, &str, &str)] = &[(
+    "rotationCaveatProbeVmDescriptor2",
+    DREGG_EFFECTVM_ROTATION_CAVEAT_V3_STAGED_JSON,
+    DREGG_EFFECTVM_ROTATION_CAVEAT_V3_STAGED_FP,
+)];
+
 /// The rotated probe layout at register count `r` (the Rust twin of the Lean parametric
 /// layout `EffectVmEmitRotationR`: columns are FUNCTIONS of R; the chunking is 4-wide head,
 /// 3-wide chip groups while ≥ 3 remain, singletons after — arity ∈ {2,4}, NEVER 3 — and the
@@ -1140,7 +1168,11 @@ mod tests {
             // (b) round-trips through the v2 multi-table decoder
             let d = parse_vm_descriptor2(json)
                 .unwrap_or_else(|e| panic!("v2 descriptor {key} failed parse_vm_descriptor2: {e}"));
-            assert_eq!(d.tables.len(), 5, "v2 descriptor {key}: not the five EPOCH tables");
+            assert_eq!(
+                d.tables.len(),
+                5,
+                "v2 descriptor {key}: not the five EPOCH tables"
+            );
             assert!(d.trace_width > 0, "v2 descriptor {key}: zero trace_width");
             // graduated v1 descriptors carry NO legacy hash-site/range carriers (lookup-shaped).
             assert!(
@@ -1155,7 +1187,10 @@ mod tests {
             descriptor2_for_key("transferVmDescriptor2").expect("transfer v2 present"),
         )
         .unwrap();
-        assert_eq!(t.trace_width, 186, "graduated transfer keeps the 186 base width");
+        assert_eq!(
+            t.trace_width, 186,
+            "graduated transfer keeps the 186 base width"
+        );
         assert_eq!(t.public_input_count, 34);
     }
 
@@ -1221,7 +1256,11 @@ mod tests {
         use crate::descriptor_ir2::VmConstraint2;
         use crate::effect_vm::columns::rotation as rot;
         use crate::lean_descriptor_air::LeanExpr;
-        assert_eq!(V3_STAGED_DESCRIPTORS.len(), 3, "expected 3 v3-staged descriptors");
+        assert_eq!(
+            V3_STAGED_DESCRIPTORS.len(),
+            3,
+            "expected 3 v3-staged descriptors"
+        );
         // The R=16 entry is the deployed reference: its parametric twin must agree with
         // the pinned `columns.rs::rotation` constants exactly.
         let l16 = rotation_layout_for(16);
@@ -1245,12 +1284,19 @@ mod tests {
                 other => panic!("unknown v3-staged key {other}"),
             };
             let lay = rotation_layout_for(r);
-            assert_eq!(&sha256_hex(json.as_bytes()), fp, "v3 staged {key}: SHA-256 drift");
+            assert_eq!(
+                &sha256_hex(json.as_bytes()),
+                fp,
+                "v3 staged {key}: SHA-256 drift"
+            );
             let d = parse_vm_descriptor2(json)
                 .unwrap_or_else(|e| panic!("v3 staged {key} failed parse_vm_descriptor2: {e}"));
             assert_eq!(d.trace_width, lay.probe_width, "{key}: probe width");
             assert_eq!(d.public_input_count, 2);
-            assert!(d.hash_sites.is_empty() && d.ranges.is_empty(), "graduated carriers only");
+            assert!(
+                d.hash_sites.is_empty() && d.ranges.is_empty(),
+                "graduated carriers only"
+            );
             // PRESENCE: walk the chip lookups in order; collect fresh (non-chain) absorbed
             // columns; they must be exactly 0..=IROOT in order, and each non-final site's
             // digest must be the next chain carrier, the final site's digest STATE_COMMIT.
@@ -1302,5 +1348,186 @@ mod tests {
                 "{key}: chained digest carriers, final = STATE_COMMIT"
             );
         }
+    }
+
+    /// THE CAVEAT-OPERAND LAYOUT DRIFT GUARD (staged): rebuild the Lean
+    /// `rotationCaveatLayoutManifest` byte-for-byte from
+    /// `columns::rotation::caveat` and compare against the committed
+    /// Lean-emitted file. Both sides PIN (Lean `#guard`s the same literal),
+    /// neither parses.
+    #[test]
+    fn rotation_caveat_layout_matches_lean() {
+        use crate::effect_vm::columns::rotation::caveat as cav;
+        let twin = format!(
+            "{{\"v\":\"dregg-rotation-caveat-layout-v3-staged\",\"r\":{},\
+             \"caveat_base\":{},\"count_col\":{},\"entry_base\":{},\"entry_size\":{},\
+             \"max_caveats\":{},\"manifest_size\":{},\"chain_base\":{},\"num_chain\":{},\
+             \"caveat_commit\":{},\"probe_width\":{},\"domain_registers\":{},\
+             \"domain_heap\":{},\"pub_commit\":{},\"pub_height\":{},\"pub_caveat\":{}}}",
+            cav::R,
+            cav::BASE,
+            cav::COUNT_COL,
+            cav::ENTRY_BASE,
+            cav::ENTRY_SIZE,
+            cav::MAX_CAVEATS,
+            cav::MANIFEST_SIZE,
+            cav::CHAIN_BASE,
+            cav::NUM_CHAIN,
+            cav::CAVEAT_COMMIT,
+            cav::PROBE_WIDTH,
+            cav::DOMAIN_REGISTERS,
+            cav::DOMAIN_HEAP,
+            cav::PUB_COMMIT,
+            cav::PUB_HEIGHT,
+            cav::PUB_CAVEAT,
+        );
+        assert_eq!(
+            twin, ROTATION_CAVEAT_LAYOUT_V3_STAGED_JSON,
+            "caveat-operand layout drift: columns::rotation::caveat no longer matches \
+             the Lean-emitted manifest (re-emit EmitRotationV3.lean and re-anchor)"
+        );
+        assert_eq!(
+            sha256_hex(ROTATION_CAVEAT_LAYOUT_V3_STAGED_JSON.as_bytes()),
+            ROTATION_CAVEAT_LAYOUT_V3_STAGED_FP,
+            "caveat-operand layout manifest: SHA-256 drift"
+        );
+    }
+
+    /// The staged caveat probe: fingerprint binding + round-trip through the IR-v2
+    /// decoder + PRESENCE — the chip-lookup chain must absorb the WHOLE R=24 rotated
+    /// block (cells root … iroot) AND the WHOLE 29-felt caveat manifest block (count +
+    /// every entry's type tag, DOMAIN TAG, KEY, params) exactly once, in order, with
+    /// the rotation digest landing on `state_commit` and the caveat digest on
+    /// `CAVEAT_COMMIT`. A re-emit that drops a manifest column (e.g. a domain tag)
+    /// fails HERE, before any prover runs.
+    #[test]
+    fn v3_staged_caveat_descriptor_parses_matches_fingerprint_and_covers_manifest() {
+        use crate::descriptor_ir2::VmConstraint2;
+        use crate::effect_vm::columns::rotation::caveat as cav;
+        use crate::lean_descriptor_air::LeanExpr;
+        assert_eq!(V3_STAGED_CAVEAT_DESCRIPTORS.len(), 1);
+        let (key, json, fp) = V3_STAGED_CAVEAT_DESCRIPTORS[0];
+        assert_eq!(&sha256_hex(json.as_bytes()), fp, "{key}: SHA-256 drift");
+        let d = parse_vm_descriptor2(json)
+            .unwrap_or_else(|e| panic!("{key} failed parse_vm_descriptor2: {e}"));
+        assert_eq!(d.trace_width, cav::PROBE_WIDTH, "{key}: probe width");
+        assert_eq!(d.public_input_count, 3, "{key}: three PI pins");
+        assert!(
+            d.hash_sites.is_empty() && d.ranges.is_empty(),
+            "graduated carriers only"
+        );
+        let rot = rotation_layout_for(cav::R);
+        // Walk the chip lookups in order; collect fresh (non-carrier) absorbed columns.
+        // Fresh = a rotated limb column (0..=iroot) or a caveat manifest column
+        // (BASE..BASE+MANIFEST_SIZE). Expected coverage: the rotation absorption order,
+        // then the manifest columns in order. Digest carriers: the rotation chain +
+        // state_commit, then the caveat chain + CAVEAT_COMMIT.
+        let is_fresh =
+            |v: usize| v <= rot.iroot || (cav::BASE..cav::BASE + cav::MANIFEST_SIZE).contains(&v);
+        let mut absorbed: Vec<usize> = Vec::new();
+        let mut digests: Vec<usize> = Vec::new();
+        for c in &d.constraints {
+            if let VmConstraint2::Lookup(l) = c {
+                let vars: Vec<usize> = l
+                    .tuple
+                    .iter()
+                    .filter_map(|e| match e {
+                        LeanExpr::Var(v) => Some(*v),
+                        _ => None,
+                    })
+                    .collect();
+                let (digest, inputs) = vars.split_last().expect("chip tuple has a digest");
+                digests.push(*digest);
+                let fresh: Vec<usize> = inputs.iter().copied().filter(|v| is_fresh(*v)).collect();
+                let chained = inputs.len() - fresh.len();
+                assert!(
+                    (chained == 0 && fresh.len() == 4)
+                        || (chained == 1 && (fresh.len() == 3 || fresh.len() == 1)),
+                    "{key}: site shape must be 4-fresh head or carrier+3 / carrier+1 \
+                     (chip arity ∈ {{2,4}}), got {chained} chained + {} fresh",
+                    fresh.len()
+                );
+                absorbed.extend(fresh);
+            }
+        }
+        let expected: Vec<usize> = (0..=rot.iroot)
+            .chain(cav::BASE..cav::BASE + cav::MANIFEST_SIZE)
+            .collect();
+        assert_eq!(
+            absorbed, expected,
+            "{key}: must absorb every rotated limb AND every caveat manifest felt \
+             (count, type tags, DOMAIN TAGS, KEYS, params) exactly once, in order"
+        );
+        let expected_digests: Vec<usize> = (0..rot.num_chain)
+            .map(|k| rot.chain_base + k)
+            .chain(std::iter::once(rot.state_commit))
+            .chain((0..cav::NUM_CHAIN).map(|k| cav::CHAIN_BASE + k))
+            .chain(std::iter::once(cav::CAVEAT_COMMIT))
+            .collect();
+        assert_eq!(
+            digests, expected_digests,
+            "{key}: rotation chain → state_commit, then caveat chain → CAVEAT_COMMIT"
+        );
+    }
+
+    /// The widened-entry codec teeth: round-trip + FAIL-CLOSED decode. A forged
+    /// domain tag REFUSES; a registers-domain key outside the R=24 file REFUSES;
+    /// a heap-domain key carries an arbitrary felt (the operand the u8 slot index
+    /// could not express).
+    #[test]
+    fn rot_caveat_entry_codec_fail_closed() {
+        use crate::effect_vm::RotCaveatEntry;
+        use crate::effect_vm::columns::rotation::caveat as cav;
+        use crate::field::BabyBear;
+        // Heap-domain round-trip with a large felt key.
+        let heap = RotCaveatEntry {
+            type_tag: crate::effect_vm::pi::SLOT_CAVEAT_TAG_FIELD_GTE,
+            domain_tag: cav::DOMAIN_HEAP,
+            key: BabyBear::new(123_456_789),
+            params: [
+                BabyBear::new(50),
+                BabyBear::ZERO,
+                BabyBear::ZERO,
+                BabyBear::ZERO,
+            ],
+        };
+        let mut buf = [BabyBear::ZERO; 7];
+        heap.write_to(&mut buf);
+        assert_eq!(
+            RotCaveatEntry::from_felts(&buf).expect("heap entry decodes"),
+            heap
+        );
+        // Registers-domain round-trip (key inside the file).
+        let slot = RotCaveatEntry {
+            type_tag: crate::effect_vm::pi::SLOT_CAVEAT_TAG_MONOTONIC,
+            domain_tag: cav::DOMAIN_REGISTERS,
+            key: BabyBear::new(3),
+            params: [BabyBear::ZERO; 4],
+        };
+        slot.write_to(&mut buf);
+        assert_eq!(
+            RotCaveatEntry::from_felts(&buf).expect("slot entry decodes"),
+            slot
+        );
+        // A forged domain tag REFUSES (caps plane = 2 is NOT caveat-scopable).
+        let mut forged = buf;
+        forged[1] = BabyBear::new(2);
+        assert!(
+            RotCaveatEntry::from_felts(&forged).is_err(),
+            "forged domain tag must refuse"
+        );
+        // A registers-domain key outside the R=24 file REFUSES.
+        let mut oob = buf;
+        oob[2] = BabyBear::new(cav::R as u32);
+        assert!(
+            RotCaveatEntry::from_felts(&oob).is_err(),
+            "register key ≥ R must refuse"
+        );
+        // The zero entry is "no caveat".
+        let zero = [BabyBear::ZERO; 7];
+        assert_eq!(
+            RotCaveatEntry::from_felts(&zero).expect("zero entry decodes"),
+            RotCaveatEntry::zero()
+        );
     }
 }

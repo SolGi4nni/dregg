@@ -208,6 +208,18 @@ fn state_constraint_executor_coverage(c: &StateConstraint) -> bool {
         // refuse + accept, heap state checked on both sides).
         StateConstraint::HeapField { .. } => true,
 
+        // The program-readable delegation_epoch tie (channels closure lane):
+        // enforced through the executor commit path by
+        // turn::tests::test_program_delegation_epoch_equals_enforced (a
+        // forged epoch slot REFUSES; the slot write + RevokeDelegation bump
+        // in ONE turn ACCEPTS; state checked on both sides).
+        StateConstraint::DelegationEpochEquals { .. } => true,
+        // In-program M-of-N (the count-≥ atom): enforced through the
+        // executor commit path by turn::tests::test_program_count_ge_enforced
+        // (a 2-distinct exhibit ACCEPTS; duplicate-padded / unbound / missing
+        // exhibits REFUSE; state checked on both sides).
+        StateConstraint::CountGe { .. } => true,
+
         // Not yet enforced/confirmed through the executor (#142 work-list):
         StateConstraint::FieldGteHeight { .. } => false, // not attempted (height-relative)
         StateConstraint::FieldLteHeight { .. } => false, // not attempted (height-relative)

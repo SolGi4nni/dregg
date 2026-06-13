@@ -1466,11 +1466,24 @@ fn vm_site_input_state_concrete(
 ///     range conjuncts are window-independent (they read only `env.loc`), so the per-window reading
 ///     is the same predicate on each row; enforcing on all rows is the conjunction over windows.
 ///
-/// So `descriptor_air_accepts(d, trace, pi)` ⟺ `∀ r ∈ [0,n). decideVm hash d (window r) (r==0) (r==n−1)`
-/// — the cross-row conjunction of the verified single-window reference. The class-A per-effect
-/// theorems consume the single window; the multi-row quantifier is the residual this AIR adds, and
-/// `tests/effect_vm_descriptor_exhaustive_differential.rs` discharges the equality over a generated
-/// corpus covering every constraint form (incl. `Boundary{First,Last}`) and both polarities.
+/// So `descriptor_air_accepts(d, trace, pi)` ⟺ the `when_transition`-FACTORED conjunction of
+/// `decideVm`'s clauses over the trace domain:
+///
+///     [∀ r < n−1: the gate/transition conjunct at window r]
+///   ∧ [the boundary/PI conjuncts at the first (r = 0) and last (r = n−1) windows]
+///   ∧ [∀ r: the hash-site + range conjuncts]
+///
+/// NOT the verbatim `∀ r. decideVm hash d (window r) (r==0) (r==n−1)`: `decideVm` carries
+/// `gate`/`transition` UNGUARDED on EVERY window — including the `isLast` one — while this AIR's
+/// `when_transition` exempts the last row (so a trace whose only gate break is on row `n−1` is
+/// ACCEPTED here but rejected by the verbatim ∀-window conjunction; in practice emitted gate
+/// bodies also vanish on NoOp pad rows). The factoring belongs to THIS LIFT — the per-window
+/// reference is `decideVm`, pinned verdict-by-verdict by the Lean-emitted golden corpus
+/// (`Dregg2/Circuit/Argus/InterpGolden.lean` ↔ `tests::lean_decide_vm_golden_corpus_agrees`,
+/// including an unguarded-transition-at-isLast case). The class-A per-effect theorems consume the
+/// single window; the factored multi-row quantifier is what this AIR adds, and
+/// `tests/effect_vm_descriptor_exhaustive_differential.rs` discharges AIR ≡ factored-lift over a
+/// generated corpus covering every constraint form (incl. `Boundary{First,Last}`), both polarities.
 #[derive(Clone)]
 pub struct EffectVmDescriptorAir {
     /// The descriptor whose constraints this AIR enforces.
@@ -8060,5 +8073,546 @@ mod tests {
     /// `state::STATE_COMMIT` offset within a state block (= 12).
     fn state_commit_off() -> usize {
         12
+    }
+
+    // ========================================================================
+    // The Lean-emitted `decideVm` GOLDEN CORPUS — the R1/R2 transcription pin.
+    //
+    // `Dregg2/Circuit/Argus/InterpCore.lean` proves `decideVm = true ↔ satisfiedVm`
+    // (the verified total reference this interpreter transcribes). The Rust-side
+    // differentials (`tests/effect_vm_descriptor_exhaustive_differential.rs`,
+    // `lean_emitted_effectvm_transfer_differential`) pin the running AIR against
+    // RUST transcriptions of `decideVm` (`oracle_decide_vm`/`denote_vm_descriptor`)
+    // — leaving the hand-transcription itself unpinned against the Lean function.
+    // THIS golden closes that leg: `Dregg2/Circuit/Argus/InterpGolden.lean` computes
+    // `decideVm`'s verdicts IN LEAN over a 35-case corpus covering every constraint
+    // arm (incl. `Boundary{First,Last}` on-row/off-row), every expr/hash-input form,
+    // all four `isFirst`/`isLast` flag settings (incl. the single-row window), the
+    // unguarded-gate/transition-at-last semantics, and the ranges' ℤ-only negative
+    // leg — and `lean_decide_vm_golden_corpus_agrees` re-decides each case with an
+    // exact ℤ (i128) transcription of `decideVm`, arm for arm. The descriptor bytes
+    // ride the production codec (`emitVmJson` → `parse_vm_descriptor`, the round-trip
+    // `EmitRoundtrip.parseVmJson_emitVmJson` proves lossless). The hash portal is the
+    // corpus's computable `toyHash` on BOTH sides (the golden pins the SITE-WALK
+    // semantics — binding equation, accumulator order, input resolution — not the
+    // Poseidon2 instance, which the prover differentials run for real). Corpus
+    // values are ≪ 2^40, so ℤ and i128 agree exactly.
+    //
+    // Regenerate after a corpus edit:
+    //   cd metatheory && lake env lean --run Dregg2/Circuit/Argus/InterpGolden.lean
+    // ========================================================================
+
+    /// The corpus bytes (`InterpGolden.goldenText`), embedded VERBATIM.
+    const LEAN_DECIDE_VM_GOLDEN: &str = r#"CASE gate-eq-accept
+DESC {"name":"dregg-interpgolden-gate-eq-accept","trace_width":186,"public_input_count":4,"constraints":[{"t":"gate","body":{"t":"add","l":{"t":"var","v":5},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":6}}}}],"hash_sites":[],"ranges":[]}
+LOC 5:42 6:42
+NXT 
+PUB 0 0 0 0
+FLAGS false false
+VERDICT true
+CASE gate-eq-reject
+DESC {"name":"dregg-interpgolden-gate-eq-reject","trace_width":186,"public_input_count":4,"constraints":[{"t":"gate","body":{"t":"add","l":{"t":"var","v":5},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":6}}}}],"hash_sites":[],"ranges":[]}
+LOC 5:42 6:43
+NXT 
+PUB 0 0 0 0
+FLAGS false false
+VERDICT false
+CASE gate-const-zero-accept
+DESC {"name":"dregg-interpgolden-gate-const-zero-accept","trace_width":186,"public_input_count":4,"constraints":[{"t":"gate","body":{"t":"const","v":0}}],"hash_sites":[],"ranges":[]}
+LOC 
+NXT 
+PUB 0 0 0 0
+FLAGS false false
+VERDICT true
+CASE gate-const-neg-reject
+DESC {"name":"dregg-interpgolden-gate-const-neg-reject","trace_width":186,"public_input_count":4,"constraints":[{"t":"gate","body":{"t":"const","v":-3}}],"hash_sites":[],"ranges":[]}
+LOC 
+NXT 
+PUB 0 0 0 0
+FLAGS false false
+VERDICT false
+CASE gate-mul-zero-accept
+DESC {"name":"dregg-interpgolden-gate-mul-zero-accept","trace_width":186,"public_input_count":4,"constraints":[{"t":"gate","body":{"t":"mul","l":{"t":"var","v":2},"r":{"t":"var","v":3}}}],"hash_sites":[],"ranges":[]}
+LOC 2:0 3:7
+NXT 
+PUB 0 0 0 0
+FLAGS false false
+VERDICT true
+CASE gate-nested-accept
+DESC {"name":"dregg-interpgolden-gate-nested-accept","trace_width":186,"public_input_count":4,"constraints":[{"t":"gate","body":{"t":"add","l":{"t":"mul","l":{"t":"add","l":{"t":"var","v":2},"r":{"t":"var","v":3}},"r":{"t":"var","v":4}},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":7}}}}],"hash_sites":[],"ranges":[]}
+LOC 2:3 3:4 4:10 7:70
+NXT 
+PUB 0 0 0 0
+FLAGS false false
+VERDICT true
+CASE gate-nested-reject
+DESC {"name":"dregg-interpgolden-gate-nested-reject","trace_width":186,"public_input_count":4,"constraints":[{"t":"gate","body":{"t":"add","l":{"t":"mul","l":{"t":"add","l":{"t":"var","v":2},"r":{"t":"var","v":3}},"r":{"t":"var","v":4}},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":7}}}}],"hash_sites":[],"ranges":[]}
+LOC 2:3 3:4 4:10 7:71
+NXT 
+PUB 0 0 0 0
+FLAGS false false
+VERDICT false
+CASE transition-accept
+DESC {"name":"dregg-interpgolden-transition-accept","trace_width":186,"public_input_count":4,"constraints":[{"t":"transition","hi":3,"lo":5}],"hash_sites":[],"ranges":[]}
+LOC 81:9
+NXT 57:9
+PUB 0 0 0 0
+FLAGS false false
+VERDICT true
+CASE transition-reject
+DESC {"name":"dregg-interpgolden-transition-reject","trace_width":186,"public_input_count":4,"constraints":[{"t":"transition","hi":3,"lo":5}],"hash_sites":[],"ranges":[]}
+LOC 81:8
+NXT 57:9
+PUB 0 0 0 0
+FLAGS false false
+VERDICT false
+CASE transition-unguarded-at-last-reject
+DESC {"name":"dregg-interpgolden-transition-unguarded-at-last-reject","trace_width":186,"public_input_count":4,"constraints":[{"t":"transition","hi":3,"lo":5}],"hash_sites":[],"ranges":[]}
+LOC 81:8
+NXT 57:9
+PUB 0 0 0 0
+FLAGS false true
+VERDICT false
+CASE boundary-first-accept-on-row
+DESC {"name":"dregg-interpgolden-boundary-first-accept-on-row","trace_width":186,"public_input_count":4,"constraints":[{"t":"boundary","row":"first","body":{"t":"add","l":{"t":"var","v":100},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":101}}}}],"hash_sites":[],"ranges":[]}
+LOC 100:5 101:5
+NXT 
+PUB 0 0 0 0
+FLAGS true false
+VERDICT true
+CASE boundary-first-reject-on-row
+DESC {"name":"dregg-interpgolden-boundary-first-reject-on-row","trace_width":186,"public_input_count":4,"constraints":[{"t":"boundary","row":"first","body":{"t":"add","l":{"t":"var","v":100},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":101}}}}],"hash_sites":[],"ranges":[]}
+LOC 100:5 101:6
+NXT 
+PUB 0 0 0 0
+FLAGS true false
+VERDICT false
+CASE boundary-first-vacuous-off-row
+DESC {"name":"dregg-interpgolden-boundary-first-vacuous-off-row","trace_width":186,"public_input_count":4,"constraints":[{"t":"boundary","row":"first","body":{"t":"add","l":{"t":"var","v":100},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":101}}}}],"hash_sites":[],"ranges":[]}
+LOC 100:5 101:6
+NXT 
+PUB 0 0 0 0
+FLAGS false false
+VERDICT true
+CASE boundary-last-accept-on-row
+DESC {"name":"dregg-interpgolden-boundary-last-accept-on-row","trace_width":186,"public_input_count":4,"constraints":[{"t":"boundary","row":"last","body":{"t":"add","l":{"t":"var","v":102},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":103}}}}],"hash_sites":[],"ranges":[]}
+LOC 102:8 103:8
+NXT 
+PUB 0 0 0 0
+FLAGS false true
+VERDICT true
+CASE boundary-last-reject-on-row
+DESC {"name":"dregg-interpgolden-boundary-last-reject-on-row","trace_width":186,"public_input_count":4,"constraints":[{"t":"boundary","row":"last","body":{"t":"add","l":{"t":"var","v":102},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":103}}}}],"hash_sites":[],"ranges":[]}
+LOC 102:8 103:9
+NXT 
+PUB 0 0 0 0
+FLAGS false true
+VERDICT false
+CASE boundary-last-vacuous-off-row
+DESC {"name":"dregg-interpgolden-boundary-last-vacuous-off-row","trace_width":186,"public_input_count":4,"constraints":[{"t":"boundary","row":"last","body":{"t":"add","l":{"t":"var","v":102},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":103}}}}],"hash_sites":[],"ranges":[]}
+LOC 102:8 103:9
+NXT 
+PUB 0 0 0 0
+FLAGS true false
+VERDICT true
+CASE boundary-single-row-both-hold
+DESC {"name":"dregg-interpgolden-boundary-single-row-both-hold","trace_width":186,"public_input_count":4,"constraints":[{"t":"boundary","row":"first","body":{"t":"add","l":{"t":"var","v":100},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":101}}}},{"t":"boundary","row":"last","body":{"t":"add","l":{"t":"var","v":102},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":103}}}}],"hash_sites":[],"ranges":[]}
+LOC 100:5 101:5 102:8 103:8
+NXT 
+PUB 0 0 0 0
+FLAGS true true
+VERDICT true
+CASE boundary-single-row-last-broken
+DESC {"name":"dregg-interpgolden-boundary-single-row-last-broken","trace_width":186,"public_input_count":4,"constraints":[{"t":"boundary","row":"first","body":{"t":"add","l":{"t":"var","v":100},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":101}}}},{"t":"boundary","row":"last","body":{"t":"add","l":{"t":"var","v":102},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":103}}}}],"hash_sites":[],"ranges":[]}
+LOC 100:5 101:5 102:8 103:9
+NXT 
+PUB 0 0 0 0
+FLAGS true true
+VERDICT false
+CASE pi-first-accept
+DESC {"name":"dregg-interpgolden-pi-first-accept","trace_width":186,"public_input_count":4,"constraints":[{"t":"pi_binding","row":"first","col":10,"pi_index":0}],"hash_sites":[],"ranges":[]}
+LOC 10:77
+NXT 
+PUB 77 0 0 0
+FLAGS true false
+VERDICT true
+CASE pi-first-reject
+DESC {"name":"dregg-interpgolden-pi-first-reject","trace_width":186,"public_input_count":4,"constraints":[{"t":"pi_binding","row":"first","col":10,"pi_index":0}],"hash_sites":[],"ranges":[]}
+LOC 10:77
+NXT 
+PUB 78 0 0 0
+FLAGS true false
+VERDICT false
+CASE pi-first-vacuous-off-row
+DESC {"name":"dregg-interpgolden-pi-first-vacuous-off-row","trace_width":186,"public_input_count":4,"constraints":[{"t":"pi_binding","row":"first","col":10,"pi_index":0}],"hash_sites":[],"ranges":[]}
+LOC 10:77
+NXT 
+PUB 78 0 0 0
+FLAGS false false
+VERDICT true
+CASE pi-last-accept
+DESC {"name":"dregg-interpgolden-pi-last-accept","trace_width":186,"public_input_count":4,"constraints":[{"t":"pi_binding","row":"last","col":11,"pi_index":2}],"hash_sites":[],"ranges":[]}
+LOC 11:5
+NXT 
+PUB 0 0 5 0
+FLAGS false true
+VERDICT true
+CASE pi-last-reject
+DESC {"name":"dregg-interpgolden-pi-last-reject","trace_width":186,"public_input_count":4,"constraints":[{"t":"pi_binding","row":"last","col":11,"pi_index":2}],"hash_sites":[],"ranges":[]}
+LOC 11:5
+NXT 
+PUB 0 0 6 0
+FLAGS false true
+VERDICT false
+CASE pi-last-vacuous-off-row
+DESC {"name":"dregg-interpgolden-pi-last-vacuous-off-row","trace_width":186,"public_input_count":4,"constraints":[{"t":"pi_binding","row":"last","col":11,"pi_index":2}],"hash_sites":[],"ranges":[]}
+LOC 11:5
+NXT 
+PUB 0 0 6 0
+FLAGS false false
+VERDICT true
+CASE site-single-accept
+DESC {"name":"dregg-interpgolden-site-single-accept","trace_width":186,"public_input_count":4,"constraints":[],"hash_sites":[{"digest_col":120,"arity":2,"inputs":[{"t":"col","c":30},{"t":"zero"}]}],"ranges":[]}
+LOC 30:9 120:7006
+NXT 
+PUB 0 0 0 0
+FLAGS false false
+VERDICT true
+CASE site-single-reject
+DESC {"name":"dregg-interpgolden-site-single-reject","trace_width":186,"public_input_count":4,"constraints":[],"hash_sites":[{"digest_col":120,"arity":2,"inputs":[{"t":"col","c":30},{"t":"zero"}]}],"ranges":[]}
+LOC 30:9 120:7007
+NXT 
+PUB 0 0 0 0
+FLAGS false false
+VERDICT false
+CASE site-chain-accept
+DESC {"name":"dregg-interpgolden-site-chain-accept","trace_width":186,"public_input_count":4,"constraints":[],"hash_sites":[{"digest_col":120,"arity":2,"inputs":[{"t":"col","c":30},{"t":"zero"}]},{"digest_col":121,"arity":2,"inputs":[{"t":"digest","k":0},{"t":"col","c":31}]}],"ranges":[]}
+LOC 30:9 31:4 120:7006 121:223917
+NXT 
+PUB 0 0 0 0
+FLAGS false false
+VERDICT true
+CASE site-chain-first-corrupt-reject
+DESC {"name":"dregg-interpgolden-site-chain-first-corrupt-reject","trace_width":186,"public_input_count":4,"constraints":[],"hash_sites":[{"digest_col":120,"arity":2,"inputs":[{"t":"col","c":30},{"t":"zero"}]},{"digest_col":121,"arity":2,"inputs":[{"t":"digest","k":0},{"t":"col","c":31}]}],"ranges":[]}
+LOC 30:9 31:4 120:7007 121:223917
+NXT 
+PUB 0 0 0 0
+FLAGS false false
+VERDICT false
+CASE site-arity4-accept
+DESC {"name":"dregg-interpgolden-site-arity4-accept","trace_width":186,"public_input_count":4,"constraints":[],"hash_sites":[{"digest_col":122,"arity":4,"inputs":[{"t":"col","c":30},{"t":"col","c":31},{"t":"zero"},{"t":"col","c":32}]}],"ranges":[]}
+LOC 30:1 31:2 32:3 122:6496363
+NXT 
+PUB 0 0 0 0
+FLAGS false false
+VERDICT true
+CASE range-accept
+DESC {"name":"dregg-interpgolden-range-accept","trace_width":186,"public_input_count":4,"constraints":[],"hash_sites":[],"ranges":[{"wire":40,"bits":12}]}
+LOC 40:4095
+NXT 
+PUB 0 0 0 0
+FLAGS false false
+VERDICT true
+CASE range-reject-high
+DESC {"name":"dregg-interpgolden-range-reject-high","trace_width":186,"public_input_count":4,"constraints":[],"hash_sites":[],"ranges":[{"wire":40,"bits":12}]}
+LOC 40:4096
+NXT 
+PUB 0 0 0 0
+FLAGS false false
+VERDICT false
+CASE range-reject-negative
+DESC {"name":"dregg-interpgolden-range-reject-negative","trace_width":186,"public_input_count":4,"constraints":[],"hash_sites":[],"ranges":[{"wire":40,"bits":12}]}
+LOC 40:-1
+NXT 
+PUB 0 0 0 0
+FLAGS false false
+VERDICT false
+CASE combined-accept
+DESC {"name":"dregg-interpgolden-combined-accept","trace_width":186,"public_input_count":4,"constraints":[{"t":"gate","body":{"t":"add","l":{"t":"var","v":5},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":6}}}},{"t":"transition","hi":3,"lo":5},{"t":"boundary","row":"first","body":{"t":"add","l":{"t":"var","v":100},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":101}}}},{"t":"pi_binding","row":"last","col":11,"pi_index":2}],"hash_sites":[{"digest_col":120,"arity":2,"inputs":[{"t":"col","c":30},{"t":"zero"}]}],"ranges":[{"wire":40,"bits":12}]}
+LOC 5:42 6:42 81:9 100:5 101:5 11:5 30:9 120:7006 40:4095
+NXT 57:9
+PUB 0 0 5 0
+FLAGS true true
+VERDICT true
+CASE combined-range-violation-reject
+DESC {"name":"dregg-interpgolden-combined-range-violation-reject","trace_width":186,"public_input_count":4,"constraints":[{"t":"gate","body":{"t":"add","l":{"t":"var","v":5},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":6}}}},{"t":"transition","hi":3,"lo":5},{"t":"boundary","row":"first","body":{"t":"add","l":{"t":"var","v":100},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":101}}}},{"t":"pi_binding","row":"last","col":11,"pi_index":2}],"hash_sites":[{"digest_col":120,"arity":2,"inputs":[{"t":"col","c":30},{"t":"zero"}]}],"ranges":[{"wire":40,"bits":12}]}
+LOC 5:42 6:42 81:9 100:5 101:5 11:5 30:9 120:7006 40:4096
+NXT 57:9
+PUB 0 0 5 0
+FLAGS true true
+VERDICT false
+CASE empty-descriptor-accept
+DESC {"name":"dregg-interpgolden-empty-descriptor-accept","trace_width":186,"public_input_count":4,"constraints":[],"hash_sites":[],"ranges":[]}
+LOC 
+NXT 
+PUB 0 0 0 0
+FLAGS false false
+VERDICT true
+"#;
+
+    /// Sparse-row lookup, default 0 — Lean `InterpGolden.assignOf`.
+    fn z_lookup(pairs: &[(usize, i128)], n: usize) -> i128 {
+        pairs.iter().find(|p| p.0 == n).map(|p| p.1).unwrap_or(0)
+    }
+
+    /// Lean `InterpGolden.toyHash`: the Horner fold `foldl (a*31 + x) 7`.
+    fn toy_hash_z(xs: &[i128]) -> i128 {
+        xs.iter().fold(7i128, |a, x| a * 31 + x)
+    }
+
+    /// `EmittedExpr.eval` over ℤ — the four AST arms `InterpCore.evalExpr_*` pin
+    /// (`InterpCore.lean:95-102`).
+    fn eval_expr_z(e: &LeanExpr, loc: &[(usize, i128)]) -> i128 {
+        match e {
+            LeanExpr::Var(i) => z_lookup(loc, *i),
+            LeanExpr::Const(c) => *c as i128,
+            LeanExpr::Add(a, b) => eval_expr_z(a, loc) + eval_expr_z(b, loc),
+            LeanExpr::Mul(a, b) => eval_expr_z(a, loc) * eval_expr_z(b, loc),
+        }
+    }
+
+    /// `InterpCore.decideConstraint` (`InterpCore.lean:126-132`), arm for arm:
+    ///   `.gate body          => decide (body.eval loc = 0)`
+    ///   `.transition hi lo   => decide (nxt (sbCol hi) = loc (saCol lo))`
+    ///   `.boundary .first b  => !isFirst || decide (b.eval loc = 0)`   (resp. `.last`)
+    ///   `.piBinding .first c k => !isFirst || decide (loc c = pub k)`  (resp. `.last`)
+    fn decide_constraint_z(
+        loc: &[(usize, i128)],
+        nxt: &[(usize, i128)],
+        pubs: &[i128],
+        is_first: bool,
+        is_last: bool,
+        c: &VmConstraint,
+    ) -> bool {
+        match c {
+            VmConstraint::Gate(body) => eval_expr_z(body, loc) == 0,
+            VmConstraint::Transition { hi, lo } => {
+                z_lookup(nxt, EFFECTVM_STATE_BEFORE_BASE + hi)
+                    == z_lookup(loc, EFFECTVM_STATE_AFTER_BASE + lo)
+            }
+            VmConstraint::Boundary {
+                row: VmRow::First,
+                body,
+            } => !is_first || eval_expr_z(body, loc) == 0,
+            VmConstraint::Boundary {
+                row: VmRow::Last,
+                body,
+            } => !is_last || eval_expr_z(body, loc) == 0,
+            VmConstraint::PiBinding {
+                row: VmRow::First,
+                col,
+                pi_index,
+            } => !is_first || z_lookup(loc, *col) == pubs.get(*pi_index).copied().unwrap_or(0),
+            VmConstraint::PiBinding {
+                row: VmRow::Last,
+                col,
+                pi_index,
+            } => !is_last || z_lookup(loc, *col) == pubs.get(*pi_index).copied().unwrap_or(0),
+        }
+    }
+
+    /// `InterpCore.decideSitesGo` (`InterpCore.lean:234-239`): the ordered digest
+    /// accumulator (`acc ++ [d]`), each site's `digest_col` bound to
+    /// `toyHash (resolvedInputs)`, where a `Digest k` input reads the RESOLVED
+    /// digest `acc.getD k 0` (NOT the digest column) — `HashInput.resolve`.
+    fn decide_sites_z(loc: &[(usize, i128)], sites: &[VmHashSite]) -> bool {
+        let mut acc: Vec<i128> = Vec::with_capacity(sites.len());
+        for s in sites {
+            let inputs: Vec<i128> = s
+                .inputs
+                .iter()
+                .map(|inp| match inp {
+                    HashInput::Col(c) => z_lookup(loc, *c),
+                    HashInput::Digest(k) => acc.get(*k).copied().unwrap_or(0),
+                    HashInput::Zero => 0,
+                })
+                .collect();
+            let d = toy_hash_z(&inputs);
+            if z_lookup(loc, s.digest_col) != d {
+                return false;
+            }
+            acc.push(d);
+        }
+        true
+    }
+
+    /// `InterpCore.decideRanges` (`InterpCore.lean:271-272`): `0 ≤ loc wire` AND
+    /// `loc wire < 2^bits` — over ℤ, so the negative leg is REAL here (a field
+    /// representation cannot see it; the corpus pins it through this transcription).
+    fn decide_ranges_z(loc: &[(usize, i128)], ranges: &[RangeSpec]) -> bool {
+        ranges.iter().all(|r| {
+            let v = z_lookup(loc, r.wire);
+            0 <= v && v < (1i128 << r.bits)
+        })
+    }
+
+    /// **`decide_vm_z`** — the exact ℤ transcription of `InterpCore.decideVm`
+    /// (`InterpCore.lean:289-292`): `decideConstraints && (decideSites && decideRanges)`.
+    fn decide_vm_z(
+        desc: &EffectVmDescriptor,
+        loc: &[(usize, i128)],
+        nxt: &[(usize, i128)],
+        pubs: &[i128],
+        is_first: bool,
+        is_last: bool,
+    ) -> bool {
+        desc.constraints
+            .iter()
+            .all(|c| decide_constraint_z(loc, nxt, pubs, is_first, is_last, c))
+            && (decide_sites_z(loc, &desc.hash_sites) && decide_ranges_z(loc, &desc.ranges))
+    }
+
+    /// One parsed golden case.
+    struct ZGoldenCase {
+        name: String,
+        desc: EffectVmDescriptor,
+        loc: Vec<(usize, i128)>,
+        nxt: Vec<(usize, i128)>,
+        pubs: Vec<i128>,
+        is_first: bool,
+        is_last: bool,
+        verdict: bool,
+    }
+
+    /// Parse the 7-line-per-case golden format (`InterpGolden.GoldenCase.render`).
+    fn parse_golden_corpus(text: &str) -> Vec<ZGoldenCase> {
+        fn pairs(s: &str) -> Vec<(usize, i128)> {
+            s.split_whitespace()
+                .map(|kv| {
+                    let (k, v) = kv.split_once(':').expect("golden pair `k:v`");
+                    (k.parse().expect("col"), v.parse().expect("val"))
+                })
+                .collect()
+        }
+        fn ints(s: &str) -> Vec<i128> {
+            s.split_whitespace()
+                .map(|x| x.parse().expect("int"))
+                .collect()
+        }
+        fn boolean(s: &str) -> bool {
+            match s {
+                "true" => true,
+                "false" => false,
+                other => panic!("golden bool, got {other:?}"),
+            }
+        }
+        let mut out = Vec::new();
+        let mut lines = text.lines();
+        while let Some(line) = lines.next() {
+            let Some(name) = line.strip_prefix("CASE ") else {
+                assert!(line.trim().is_empty(), "unexpected golden line {line:?}");
+                continue;
+            };
+            let take = |l: Option<&str>, pfx: &str| -> String {
+                l.and_then(|s| s.strip_prefix(pfx))
+                    .unwrap_or_else(|| panic!("case {name}: expected `{pfx}` line"))
+                    .to_string()
+            };
+            let desc_json = take(lines.next(), "DESC ");
+            let loc = pairs(&take(lines.next(), "LOC"));
+            let nxt = pairs(&take(lines.next(), "NXT"));
+            let pubs = ints(&take(lines.next(), "PUB"));
+            let flags = take(lines.next(), "FLAGS ");
+            let (f, l) = flags.split_once(' ').expect("two flags");
+            let verdict = boolean(&take(lines.next(), "VERDICT "));
+            let desc = parse_vm_descriptor(&desc_json)
+                .unwrap_or_else(|e| panic!("case {name}: descriptor must parse: {e}"));
+            assert!(
+                desc.check_bounds().is_ok(),
+                "case {name}: descriptor must be in-bounds"
+            );
+            out.push(ZGoldenCase {
+                name: name.to_string(),
+                desc,
+                loc,
+                nxt,
+                pubs,
+                is_first: boolean(f),
+                is_last: boolean(l),
+                verdict,
+            });
+        }
+        out
+    }
+
+    /// **The Lean→Rust `decideVm` golden differential (Argus R1/R2).** Every corpus
+    /// case's Lean-computed `decideVm` verdict equals the Rust ℤ-transcription's
+    /// decision; coverage asserts pin all six constraint arms, all four flag
+    /// settings, hash sites, ranges, and BOTH polarities, so the agreement is
+    /// non-vacuous. A mismatch on any case is a transcription drift between the
+    /// running interpreter's reference semantics and the verified Lean core.
+    #[test]
+    fn lean_decide_vm_golden_corpus_agrees() {
+        let cases = parse_golden_corpus(LEAN_DECIDE_VM_GOLDEN);
+        assert_eq!(cases.len(), 35, "the pinned corpus size");
+
+        let (mut accepts, mut rejects) = (0usize, 0usize);
+        // gate / transition / boundary-first / boundary-last / pi-first / pi-last
+        let mut kinds = [0usize; 6];
+        // (isFirst, isLast) ∈ {FF, TF, FT, TT}
+        let mut flag_combos = [0usize; 4];
+        let (mut with_sites, mut with_ranges) = (0usize, 0usize);
+
+        for case in &cases {
+            let got = decide_vm_z(
+                &case.desc,
+                &case.loc,
+                &case.nxt,
+                &case.pubs,
+                case.is_first,
+                case.is_last,
+            );
+            assert_eq!(
+                got, case.verdict,
+                "case `{}`: Rust decideVm transcription ({got}) disagrees with the \
+                 Lean-computed verdict ({})",
+                case.name, case.verdict
+            );
+
+            if case.verdict {
+                accepts += 1;
+            } else {
+                rejects += 1;
+            }
+            for c in &case.desc.constraints {
+                match c {
+                    VmConstraint::Gate(_) => kinds[0] += 1,
+                    VmConstraint::Transition { .. } => kinds[1] += 1,
+                    VmConstraint::Boundary {
+                        row: VmRow::First, ..
+                    } => kinds[2] += 1,
+                    VmConstraint::Boundary {
+                        row: VmRow::Last, ..
+                    } => kinds[3] += 1,
+                    VmConstraint::PiBinding {
+                        row: VmRow::First, ..
+                    } => kinds[4] += 1,
+                    VmConstraint::PiBinding {
+                        row: VmRow::Last, ..
+                    } => kinds[5] += 1,
+                }
+            }
+            flag_combos[(case.is_first as usize) | ((case.is_last as usize) << 1)] += 1;
+            if !case.desc.hash_sites.is_empty() {
+                with_sites += 1;
+            }
+            if !case.desc.ranges.is_empty() {
+                with_ranges += 1;
+            }
+        }
+
+        assert!(accepts > 0 && rejects > 0, "both polarities must occur");
+        assert!(
+            kinds.iter().all(|&k| k > 0),
+            "every constraint arm must occur (gate/transition/boundaryF/boundaryL/piF/piL): {kinds:?}"
+        );
+        assert!(
+            flag_combos.iter().all(|&k| k > 0),
+            "all four isFirst/isLast settings must occur (incl. the single-row window): {flag_combos:?}"
+        );
+        assert!(
+            with_sites > 0 && with_ranges > 0,
+            "hash sites and ranges must occur"
+        );
     }
 }

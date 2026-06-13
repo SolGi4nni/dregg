@@ -1,13 +1,25 @@
 //! CLI functionality checks: spawn the dregg CLI binary as a subprocess.
+//!
+//! Every check here asserts something REAL about the CLI's offline surface
+//! (green-or-bust): exact version string, the config-show report, the
+//! doctor report shape, and a well-formed zsh completion script. Checks
+//! are read-only — `config init` writes to the real `~/.dregg` (it does
+//! not honor an env override yet), so preflight exercises `config show`
+//! instead; see HORIZONLOG for the path-injectable `config init` follow-up.
 
 use std::process::Command;
 
 use crate::report::{CheckResult, run_check};
 
+/// Number of health checks the `dregg doctor` report runs (mirrors
+/// `cli/src/commands/doctor.rs`). Like the demo-agent EXAMPLES registry,
+/// updating this is a conscious act when a doctor check is added/retired.
+const DOCTOR_CHECK_COUNT: usize = 8;
+
 pub fn run() -> Vec<CheckResult> {
     vec![
         run_check("cli_version", check_cli_version),
-        run_check("cli_config_init", check_cli_config_init),
+        run_check("cli_config_show", check_cli_config_show),
         run_check("cli_doctor", check_cli_doctor),
         run_check("cli_completions", check_cli_completions),
     ]
@@ -21,10 +33,6 @@ fn run_cli(args: &[&str]) -> Result<(String, String), String> {
 
     let output = Command::new("cargo")
         .args(&cmd_args)
-        .env(
-            "DREGG_HOME",
-            std::env::temp_dir().join("preflight-cli-home"),
-        )
         .output()
         .map_err(|e| format!("failed to spawn cargo: {e}"))?;
 
@@ -43,102 +51,85 @@ fn run_cli(args: &[&str]) -> Result<(String, String), String> {
     }
 }
 
+/// `dregg version` exits 0 and reports EXACTLY the workspace version
+/// (dregg-cli shares `version.workspace`, so `env!("CARGO_PKG_VERSION")`
+/// here is the same value the CLI must print).
 fn check_cli_version() -> Result<(), String> {
-    let (stdout, _stderr) = run_cli(&["version"]).or_else(|_| run_cli(&["--version"]))?;
+    let (stdout, stderr) = run_cli(&["version"])?;
+    let version = env!("CARGO_PKG_VERSION");
 
-    // Should print something (version string).
-    if stdout.trim().is_empty() {
-        return Err("version command produced no output".into());
+    // Human mode prints `dregg {version}` to stderr; JSON mode prints
+    // {"name":"dregg","version":...} to stdout. Both must carry the
+    // exact workspace version and the binary name.
+    let combined = format!("{stdout}\n{stderr}");
+    if !combined.contains(version) || !combined.contains("dregg") {
+        return Err(format!(
+            "version output must report dregg + the workspace version {version:?}; \
+             got stdout={stdout:?} stderr={stderr:?}"
+        ));
     }
-
     Ok(())
 }
 
-fn check_cli_config_init() -> Result<(), String> {
-    // Use a temp directory for config.
-    let tmp_home =
-        std::env::temp_dir().join(format!("preflight-cli-config-{}", std::process::id()));
-    std::fs::create_dir_all(&tmp_home).map_err(|e| format!("create tmp dir failed: {e}"))?;
+/// `dregg config show` (read-only) exits 0 and reports the config path and
+/// the effective node URL — the two facts every other CLI command depends on.
+fn check_cli_config_show() -> Result<(), String> {
+    let (stdout, stderr) = run_cli(&["config", "show"])?;
+    let combined = format!("{stdout}\n{stderr}");
 
-    let output = Command::new("cargo")
-        .args(["run", "-p", "dregg-cli", "--", "config", "init"])
-        .env("DREGG_HOME", &tmp_home)
-        .output()
-        .map_err(|e| format!("failed to spawn: {e}"))?;
-
-    // Config init should exit 0 (or at least not crash).
-    // Some CLIs output to stderr for info messages.
-    if !output.status.success() {
-        // Acceptable: config init may fail if deps are missing, but should not panic.
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        if stderr.contains("panic") || stderr.contains("RUST_BACKTRACE") {
-            return Err(format!("config init panicked: {stderr}"));
+    for needle in ["Configuration", "Node URL"] {
+        if !combined.contains(needle) {
+            return Err(format!(
+                "config show must report {needle:?}; got stdout={stdout:?} stderr={stderr:?}"
+            ));
         }
-        // Non-panic failure is acceptable (e.g., "no node configured").
     }
-
-    // Check if config file was created.
-    let config_path = tmp_home.join("config.toml");
-    let alt_config_path = tmp_home.join("dregg.toml");
-    if !config_path.exists() && !alt_config_path.exists() {
-        // This is acceptable - the CLI may use a different config path
-        // or may not have created one due to missing node.
-    }
-
-    // Cleanup.
-    let _ = std::fs::remove_dir_all(&tmp_home);
     Ok(())
 }
 
+/// `dregg doctor` exits 0 (its report carries the diagnosis; the command
+/// itself must not error), runs EXACTLY the registered number of health
+/// checks, and prints the pass/fail summary line. No node is required:
+/// node-dependent checks may report ✗, but they must all RUN and be
+/// reported.
 fn check_cli_doctor() -> Result<(), String> {
-    let output = Command::new("cargo")
-        .args(["run", "-p", "dregg-cli", "--", "doctor"])
-        .env(
-            "DREGG_HOME",
-            std::env::temp_dir().join("preflight-cli-doctor"),
-        )
-        .output()
-        .map_err(|e| format!("failed to spawn: {e}"))?;
+    let (stdout, stderr) = run_cli(&["doctor"])?;
+    let combined = format!("{stdout}\n{stderr}");
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-
-    // Doctor may fail (no node running) but should not panic.
-    if stderr.contains("panic") || stdout.contains("panic") {
-        return Err(format!("doctor panicked: {stderr}"));
+    // Each health check renders as an indicator line "  ✓ ..." / "  ✗ ...".
+    let check_lines = combined
+        .lines()
+        .filter(|l| {
+            let t = l.trim_start();
+            t.starts_with('\u{2713}') || t.starts_with('\u{2717}')
+        })
+        .count();
+    if check_lines != DOCTOR_CHECK_COUNT {
+        return Err(format!(
+            "doctor must report exactly {DOCTOR_CHECK_COUNT} health checks \
+             (the registered count), found {check_lines} indicator lines:\n{combined}"
+        ));
     }
 
-    // Doctor should produce SOME output (even if checks fail).
-    if stdout.is_empty() && stderr.is_empty() {
-        return Err("doctor produced no output at all".into());
+    // The summary line: "All N checks passed." or "N passed, M failed."
+    if !combined.contains("passed") {
+        return Err(format!("doctor must print a pass/fail summary:\n{combined}"));
     }
 
     Ok(())
 }
 
+/// `dregg completions zsh` exits 0 and emits a structurally valid zsh
+/// completion script for the `dregg` binary (clap_complete always opens
+/// with `#compdef` and defines the `_dregg` function).
 fn check_cli_completions() -> Result<(), String> {
-    let output = Command::new("cargo")
-        .args(["run", "-p", "dregg-cli", "--", "completions", "zsh"])
-        .output()
-        .map_err(|e| format!("failed to spawn: {e}"))?;
+    let (stdout, _stderr) = run_cli(&["completions", "zsh"])?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("completions command failed: {stderr}"));
+    if !stdout.contains("#compdef dregg") {
+        return Err("zsh completions must start with `#compdef dregg`".into());
     }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    if stdout.trim().is_empty() {
-        return Err("completions should produce shell completion script".into());
+    if !stdout.contains("_dregg") {
+        return Err("zsh completions must define the `_dregg` function".into());
     }
-
-    // Basic sanity: zsh completions typically contain compdef or _arguments.
-    if !stdout.contains("compdef") && !stdout.contains("_dregg") && !stdout.contains("#compdef") {
-        // May use clap_complete format which looks different, just verify non-empty.
-        if stdout.len() < 50 {
-            return Err("completions output seems too short to be valid".into());
-        }
-    }
-
     Ok(())
 }

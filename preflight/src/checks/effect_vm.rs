@@ -345,9 +345,10 @@ fn check_custom_dispatch() -> Result<(), String> {
     Ok(())
 }
 
-/// Adversarial: an overdraft transfer should not produce valid trace continuity.
-/// The Effect VM trace generator should either panic or produce a trace that
-/// violates constraints (balance goes negative).
+/// Adversarial: an overdraft transfer MUST be rejected by the trace
+/// generator (its running-balance underflow guard panics). If generation
+/// ever ACCEPTS an overdraft, the guard has been removed and this gate
+/// fails — no "the verifier would catch it later" hand-waving.
 fn check_adversarial_overdraft() -> Result<(), String> {
     let initial = CellState::new(100, 0); // only 100 balance
 
@@ -359,30 +360,16 @@ fn check_adversarial_overdraft() -> Result<(), String> {
         Effect::NoOp,
     ];
 
-    // The trace generator may either:
-    // 1. Produce a trace with underflow (which the verifier would reject), or
-    // 2. Panic during generation (which we catch).
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         generate_effect_vm_trace(&initial, &effects)
     }));
 
     match result {
-        Err(_panic) => {
-            // Good: trace generation rejects overdraft.
-        }
-        Ok((trace, _public_inputs)) => {
-            // If trace was generated, verify the net delta reflects the overdraft.
-            // The verifier would catch this via boundary constraints (balance can't go negative).
-            // For the preflight, we just verify the trace was generated (the AIR verifier
-            // enforces the constraint, and an honest prover wouldn't submit this).
-            if trace.is_empty() {
-                return Err("if overdraft doesn't panic, trace should still be generated".into());
-            }
-            // The net delta should show -200 (outflow exceeding balance).
-            // This is acceptable: the trace is valid but the STARK verifier
-            // would reject it because the boundary constraint (balance >= 0) fails.
-        }
+        Err(_panic) => Ok(()), // the underflow guard fired
+        Ok(_) => Err(
+            "trace generator ACCEPTED an overdraft transfer (amount 200 > balance 100); \
+             the running-balance underflow guard is gone"
+                .into(),
+        ),
     }
-
-    Ok(())
 }

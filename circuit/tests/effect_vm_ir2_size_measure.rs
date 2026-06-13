@@ -33,7 +33,7 @@ use dregg_circuit::descriptor_ir2::{
     prove_vm_descriptor2_with_config, verify_vm_descriptor2, verify_vm_descriptor2_with_config,
 };
 use dregg_circuit::effect_vm::{CellState, Effect, generate_effect_vm_trace, sel};
-use dregg_circuit::effect_vm_descriptors::{descriptor2_for_key, descriptor_for_selector};
+use dregg_circuit::effect_vm_descriptors::{descriptor_for_selector, descriptor2_for_key};
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::lean_descriptor_air::{
     descriptor_recursion_matrix, parse_vm_descriptor, prove_vm_descriptor, verify_vm_descriptor,
@@ -52,7 +52,9 @@ fn breakdown(
     let commitments = postcard::to_allocvec(&proof.commitments).unwrap().len();
     let opened = postcard::to_allocvec(&proof.opened_values).unwrap().len();
     let opening = postcard::to_allocvec(&proof.opening_proof).unwrap().len();
-    let lookups = postcard::to_allocvec(&proof.global_lookup_data).unwrap().len();
+    let lookups = postcard::to_allocvec(&proof.global_lookup_data)
+        .unwrap()
+        .len();
     println!(
         "[{label}] total: {total} B ({:.1} KiB) | commitments: {commitments} B | \
          opened_values: {opened} B ({:.1} KiB) | opening_proof: {opening} B ({:.1} KiB) | \
@@ -76,7 +78,11 @@ fn ir2_vs_v1_transfer_proof_size() {
         direction: 1,
     }];
     let (base_trace, pis) = generate_effect_vm_trace(&state, &effects);
-    assert_eq!(base_trace[0].len(), 186, "canonical 186-col EffectVM layout");
+    assert_eq!(
+        base_trace[0].len(),
+        186,
+        "canonical 186-col EffectVM layout"
+    );
 
     // ---- v1: the LIVE single-table descriptor-interpreter path (the SDK cutover prover). ----
     let v1_json = descriptor_for_selector(sel::TRANSFER).expect("v1 transfer descriptor");
@@ -101,7 +107,10 @@ fn ir2_vs_v1_transfer_proof_size() {
     // ---- IR-v2: the EPOCH five-table batch STARK. ----
     let v2_json = descriptor2_for_key("transferVmDescriptor2").expect("v2 transfer descriptor");
     let v2_desc = parse_vm_descriptor2(v2_json).expect("v2 transfer descriptor parses");
-    assert_eq!(v2_desc.trace_width, 186, "graduated transfer keeps the 186 base width");
+    assert_eq!(
+        v2_desc.trace_width, 186,
+        "graduated transfer keeps the 186 base width"
+    );
     assert_eq!(v2_desc.tables.len(), 5, "the five EPOCH tables");
     let v2_dpis: Vec<BabyBear> = pis[..v2_desc.public_input_count].to_vec();
     // Transfer declares no memory ops and no map ops → empty boundary + no witness heaps.
@@ -348,7 +357,14 @@ fn ir2_fri_grid() {
     let mem_boundary = MemBoundaryWitness::default();
     let map_heaps: Vec<Vec<dregg_circuit::heap_root::HeapLeaf>> = vec![];
 
-    for (lb, q) in [(3usize, 38usize), (4, 29), (5, 23), (6, 19), (7, 17), (8, 15)] {
+    for (lb, q) in [
+        (3usize, 38usize),
+        (4, 29),
+        (5, 23),
+        (6, 19),
+        (7, 17),
+        (8, 15),
+    ] {
         let config = create_config_with_fri(lb, 0, 3, q, 16);
         let t0 = Instant::now();
         let proof = prove_vm_descriptor2_with_config(

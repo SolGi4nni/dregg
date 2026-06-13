@@ -851,12 +851,20 @@ impl TurnExecutor {
                 sender_epoch_count,
                 revealed_preimage: None,
             };
+            // Stamp the TOUCHED cell's own post-turn delegation_epoch onto the
+            // per-cell meta — the program-readable R7 freshness counter
+            // (`StateConstraint::DelegationEpochEquals`; the channels closure
+            // lane). Post-effects state: a `RevokeDelegation{anchor}` carried
+            // by this turn is already reflected.
+            let cell_meta = meta
+                .clone()
+                .with_delegation_epoch(touched_cell.state.delegation_epoch());
             let result = Self::evaluate_cell_program_for_executor(
                 &touched_cell.program,
                 &touched_cell.state,
                 old_state,
                 &ctx,
-                &meta,
+                &cell_meta,
                 &witnesses,
             );
             if let Err(e) = result {
