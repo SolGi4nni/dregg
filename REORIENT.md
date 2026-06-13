@@ -57,6 +57,57 @@ not durable across compaction; the log is the burn-down. Sweep it at every Conve
 - **Memory**: `~/.claude/projects/-Users-ember-dev-breadstuffs/memory/` —
   `project-refinement-epoch.md` is the live resume file; MEMORY.md is the index.
 
+## ⚑⚑⚑ LATE-NIGHT STATE (2026-06-13, ~32 commits — the swarm-of-surfaces wave + the TOY AUDIT)
+
+After the rotation engine landed (`15353932c`, G1+G3 — the flip is now mechanical), ember
+opened a broad surface wave (master-interface swarm, discord, pg-dregg/pg17, MCP, perf,
+firmament, paper) AND forced a TOY AUDIT that found a real recurring failure:
+- ⚠ **THE TOY DISEASE (caught + being repaired).** My swarm briefs said "don't edit
+  Cargo.toml / build on existing deps" — which FORCES agents to REIMPLEMENT a real
+  subsystem when the real thing is in an un-depended crate. Hit 3× in the starbridge-v2
+  swarm: `cipherclerk.rs` reinvented `dregg_sdk::AgentCipherclerk` (FIXED — real now,
+  `4bfbdef79`-era lane); `world.rs` reinvented `dregg_sdk::DreggEngine` (its own comment
+  referenced it!); `edit.rs` reinvented `dregg-userspace-verify::analyze`. The scar +
+  4-point fix is in memory [[feedback-argus-orchestration-method]]. **EVERY swarm brief now:
+  name the real component, forbid reimplementation, "report a missing dep/route — never
+  reinvent," main loop does the dep-add + wiring.**
+- **STARBRIDGE INTEGRATION PASS (running, a1d1f9d — I REVIEW its diff before commit).**
+  De-toys the foundation: world→DreggEngine, edit→real analyze, fixes replay.rs
+  `fork.diverged()` (gpui-only bug), wires the 4 panels (debug/replay/cipherclerk/editor)
+  into cockpit, builds native-full green + window opens. The 4 modules are on disk; cipherclerk
+  is already real; dregg-sdk dep already added.
+- **DISCORD SWARM (2 of 3 running; HELD for integration).** assets/protocol + identity-polis
+  (DONE, real — `/council-approve` real turn, cipherclerk real macaroons) + explorer/ops.
+  Crate currently RED on a sibling 1-liner `commands/handoff.rs:90` `short(&fed_id,24)` wrong
+  arity — I FIX that + wire the reported main.rs registrations at the discord integration pass
+  when all 3 land. (Note: `discord_caps.rs` is a CapTP action-registry, NOT a per-command gate;
+  real authz = cipherclerk Ed25519 signing + executor enforcement.)
+
+### ⚑⚑ THE AUTHORIZATION MODEL — the foundational thread (study running, a5056ab)
+ember (2026-06-13): "we need to DEFINITELY figure out how to actually integrate these major
+foundational aspects of the token/authorization model... we're supposed to have a dual
+multiaspect **biscuit/macaroon/cap/zk**... something was missing somewhere and never worked
+out enough." The cipherclerk audit (`docs/CIPHERCLERK-AUDIT.md`, `4bfbdef79`) found the seam:
+the agent MACAROON layer (federation-membership tree) and the kernel CAP-CROWN (in-circuit
+c-list `granted⊆held`, #103) are UNINTEGRATED — a token authorizes at the macaroon layer while
+the cap-root knows nothing; non-amplification is told as TWO informal stories, not one proven
+arrow. ⚑ ember GUARDRAILS (do not violate): (1) it's FOUR aspects, not "two trees to collapse"
+— integrate, don't reduce; (2) **the cipherclerk IS a sovereign executor BY DESIGN** ("someone
+needs to execute sovereign nodes, that's where they go") — the "overloaded clerk, split it"
+audit point is RETRACTED; (3) DON'T prematurely foreclose what's been built. Study →
+`docs/AUTHORIZATION-MODEL.md` (the 4-aspect map + recovered intent + seam diagnosis + staged
+integration). This is the deepest open thread. Possible convergence extends #103.
+
+### Commits since the 14-landing block (15→32)
+ebaad4f14 shell · def4c3f6d playground · a7734efcc DreggDL · f4d0efa5d analyzer+members ·
+152e6b3a5 seL4-scaffold · dc750e1d7 snapshot · fd9763dce starbridge-scaffold · 51850ee91
+rotation-staged · 870bb0f7f demo · bfe802c1b pg-dregg-proposal · efa548ee1 pg-dregg-M1 ·
+5eae45bd1 pg-dregg-storage · cfea479d5 pg-dregg-DX · 1366d6026 pg17 · e5303e958 starbridge-
+master · 58ee5bbab Robigalia-v0-BOOTS · 485f682f8 firmament-STARK-heart · dcf7d2684
+firmament-n=1-decision · 15353932c ROTATION-ENGINE-G1+G3 · 318342397 MCP · a5884dbce perf ·
+4bfbdef79 cipherclerk-audit · (+ REORIENT/paper/pg17 doc commits). Deploy still HELD (flip
+mechanical now but not walked; fresh-genesis redeploy is ember's call).
+
 ## ⚑⚑⚑ TONIGHT'S LANDINGS (2026-06-13 night, head 870bb0f7f — Opus, 14 commits)
 
 The pug-worthiness + frontier waves LANDED green by file set (verification economy:
