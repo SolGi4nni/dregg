@@ -79,9 +79,24 @@ each lane verified its own narrow suite; no full-suite re-runs):
   (rotated trace + e2e prove/verify + **cell≡circuit differential HOLDS** + anti-ghost) —
   STAGED-ADDITIVE, v1 byte-identical, **NO VK bump**. Rotated R=24 transfer = 144.1 KiB.
 
-### THE IRREVERSIBLE FLIP — NOT a mechanical tail; the HARD CORE is UNBUILT (cutover lane RED, 2026-06-13)
-⚠ CORRECTION: the "mechanical tail" framing (from the staged-flip lane's report, which I
-relayed) is REFUTED BY THE CODE. The staged long pole (`51850ee91`) proved the rotated SHAPE
+### THE IRREVERSIBLE FLIP — HARD CORE BUILT (G1+G3, `15353932c`); the flip is NOW genuinely mechanical (2026-06-13)
+✅ UPDATE: G1+G3 are BUILT, staged-additive, fully green (`15353932c`). The LIVE rotated trace
+generator (`circuit/src/effect_vm/trace_rotated.rs`) + the cell v9 Poseidon2 commitment
+(`cell/src/commitment.rs::compute_canonical_state_commitment_v9`) exist; the LIVE cell≡circuit
+differential HOLDS (cell_v9 == circuit row-0 STATE_COMMIT == producer wire_commit); the
+live-generated proof is 144.1 KiB proved+verified; anti-ghost bites. Live v1 byte-untouched,
+all behind `DREGG_ROTATED_PROVER` + the `recursion` feature (off by default). The remaining
+flip (G2/G4/G5) is NOW actually mechanical — config/regen/VK acts, no new machinery:
+G2 = flip defaults (DREGG_ROTATED_PROVER default-on / route cutover to prove_effect_vm_rotated_ir2;
+cell context v8→v9 — the v9 fn EXISTS; EmitAllJson→v3Registry; NUM_REGISTERS 16→24; the 59
+re-pins) · G4 = widen the generator beyond transfer (additive descriptors through the SAME
+shape-general generator) · G5 = VK epoch + delete v1. Deploy path when ember calls it:
+G2→G4→G5 (mechanical) → persvati gauntlet → FRESH graviton redeploy (new VK+context = fresh
+genesis, existing devnet disposable). The hard part is DONE.
+
+--- (historical, for the record) ---
+The earlier "mechanical tail" framing (from the staged-flip lane's report, which I
+relayed) was REFUTED BY THE CODE before the irreversible epoch — caught the deferred hard core. The staged long pole (`51850ee91`) proved the rotated SHAPE
 sound but does so by feeding the circuit a HAND-BUILT 311-col trace INSIDE the test
 (`effect_vm_rotation_flip.rs` `fill_block`/`fill_caveat`). The LIVE machinery does not exist —
 walking the door now would BRICK the live prover. The genuinely-hard, UNBUILT core (the
