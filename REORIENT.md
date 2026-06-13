@@ -79,13 +79,35 @@ each lane verified its own narrow suite; no full-suite re-runs):
   (rotated trace + e2e prove/verify + **cell≡circuit differential HOLDS** + anti-ghost) —
   STAGED-ADDITIVE, v1 byte-identical, **NO VK bump**. Rotated R=24 transfer = 144.1 KiB.
 
-### THE IRREVERSIBLE FLIP TAIL — still ahead, GATED (do NOT do casually)
-The one-way door, deliberately not walked tonight (ROTATION-CUTOVER §3 steps 2-6 / §4):
-regen `EmitAllJson` to emit the rotated R=24 `v3Registry` as the LIVE registry (fingerprints
-bump) · `columns.rs::rotation::NUM_REGISTERS` 16→24 (nothing live depends on 16; R=24 uses
-`rotation_layout_for(24)`) · cell `CANONICAL_COMMITMENT_CONTEXT` v8→v9 · executor PI reads
-`pi::v3` LIVE · VK/commitment bump + succession drill · delete v1. REQUIRES the persvati
-workspace gauntlet first. v1 is DORMANT-BUT-PRESENT. Deploy stays low-priority (next week).
+### THE IRREVERSIBLE FLIP — NOT a mechanical tail; the HARD CORE is UNBUILT (cutover lane RED, 2026-06-13)
+⚠ CORRECTION: the "mechanical tail" framing (from the staged-flip lane's report, which I
+relayed) is REFUTED BY THE CODE. The staged long pole (`51850ee91`) proved the rotated SHAPE
+sound but does so by feeding the circuit a HAND-BUILT 311-col trace INSIDE the test
+(`effect_vm_rotation_flip.rs` `fill_block`/`fill_caveat`). The LIVE machinery does not exist —
+walking the door now would BRICK the live prover. The genuinely-hard, UNBUILT core (the
+cutover lane's G1–G5, with a 59-artifact re-pin inventory captured in its report):
+- **G1 (HARD, unbuilt)**: a LIVE rotated trace generator emitting 311 cols from a real turn +
+  move SDK routing `prove_effect_vm_with_cutover` from IR-v1/186-col (`trace.rs:51`,
+  `EFFECT_VM_WIDTH=186`) to IR-v2 `prove_vm_descriptor2` / 38-PI. Today the 311-col trace is
+  test-only, hand-welded. THIS IS A REAL BUILD.
+- **G3 (HARD, unbuilt)**: cell↔circuit commitment convergence — `cell/src/commitment.rs`
+  commits with BLAKE3 `CANONICAL_COMMITMENT_CONTEXT "…v8"` (line 85); the flip needs cell to
+  emit the circuit's Poseidon2 chained `wireCommit` (rotated absorption). NO v9/wire_commit/
+  rotated path exists in `cell/`; the live-wire cell≡circuit differential is DEFERRED in the
+  flip test (~line 264). Re-implementing the canonical commitment + re-pinning the golden-byte
+  suite (`commitment.rs` ~573–1190).
+- **G2 (mechanical, AFTER G1)**: `EmitAllJson`→`v3Registry` live + all 59 byte re-pins +
+  `columns::rotation::NUM_REGISTERS` 16→24 (line 326; cosmetic, must NOT land alone).
+- **G4**: executor PI v3 LIVE producer/verifier reconcile + `committed_height` read (the
+  HORIZONLOG "producer emits 201" entry may be STALE — `aggregate_test_wr` already uses
+  ACTIVE_BASE_COUNT 204; the real witness-path producer `materialize_blocklace_artifacts`
+  node/src/blocklace_sync.rs:2619 needs the test RUN to confirm end-to-end).
+- **G5**: VK/fingerprint epoch + a succession record (none exists today; "VK" = the 26+
+  descriptor SHA fingerprints) + v1 deletion. Each gated green before the next; persvati
+  gauntlet before deploy.
+v1 is the LIVE path (IR-v1/186-col/BLAKE3-v8) and is GREEN. The rotation is staged-in-shape
+only. DECISION PENDING (ember): commission the G1/G3/G4 core build, vs keep staged + deploy
+the current green system modestly. Do NOT attempt the flip until G1+G3 are built+validated.
 
 ### RUNNING (2026-06-13 night) — land each by file set when it reports
 - **pg-dregg M1** (postgres RLS extension; STANDALONE workspace `pg-dregg/`, own target —
