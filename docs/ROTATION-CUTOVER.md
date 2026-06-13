@@ -141,15 +141,30 @@ Pre-gates (ALL green before anything flips):
       KiB — see the test print — but the GATE is the per-effect transfer figure).
       **GREEN**: v1 358,900 B (350.5 KiB) → IR-v2 123,292 B (120.4 KiB), ratio 0.344
       (-65.6%); re-confirmed this lane post-regen (the additive staging does not move it).
-- [ ] The 3-verb executor bridge (`RecordKernelState` → the ONE universal map)
+- [x] The 3-verb executor bridge (`RecordKernelState` → the ONE universal map)
       landed and soaked (`VerbCompression.lean:87-89` — "rides THE ONE ROTATION";
       first real-turn umem proof landed `93a34fa74`).
+      **EXTENDED THIS LANE**: the per-turn ROTATION PRODUCERS now derive the
+      witness-carried rotated limbs (`cells_root`, `iroot` MMR, `lifecycle`/`epoch`)
+      from the real `RecordKernelState` — `turn/src/rotation_witness.rs` (the file
+      §5 items 3-5 named as DELIBERATELY UNBUILT), built TOGETHER with the rotated
+      trace builder that consumes them (`circuit/tests/effect_vm_rotation_flip.rs`).
 - [ ] Lean adapters: cap-leaf value-codec · MMR boundary-derivation · guardAtom
       atoms (`UNIVERSAL-MAP-ROTATION.md` §3) — to whatever extent the rotation
       carries §2.2/§2.3 (detachable: the LAYOUT items §2.1/§2.4/§2.6 do not
       depend on them).
 - [ ] `absent` map-op realization driven through a real nullifier witness
       (staged `MapKind::Insert` landed; the absent lane has its gauntet tests).
+
+**LANE STATUS (the producers + trace builder + differential, staged-additive):** the
+genuinely-new deferred long pole is DONE and GREEN — `turn/src/rotation_witness.rs`
+(producers) + `circuit/tests/effect_vm_rotation_flip.rs` (rotated trace builder +
+end-to-end prove+verify of `transferVmDescriptor2R24` at ~144.1 KiB + cell≡circuit
+differential + anti-ghost teeth) land BESIDE v1 (v1 byte-identical, no VK bump, all 11
+registry drift guards + 3 gate harnesses still green). The flip steps below are now the
+MECHANICAL irreversible tail (registry-default + VK + cell context v8→v9 + executor PI +
+v1 deletion) — the rotated path is proven green FIRST, exactly the cutover doc's safety
+sequencing (§5.1: measure before the irreversible bump). **v1 is left DORMANT-BUT-PRESENT.**
 
 The flip itself (ONE commit, regenerated, nothing hand-edited):
 
@@ -208,21 +223,27 @@ Post-flip gauntlets (block the deploy, not the commit):
    beside v1/v2 (no VK bump, the live wire untouched). The FLIP (§3 steps 1-6) replaces the
    v1 registry with this rotated one — still the main loop's act.
 2. **The balance/nonce register-name assignment** (§2 note) — ember decision.
-3. **The cells_root producer**: the rotated block's `cells_root` limb needs the
-   turn-level cells-root carrier wired into the per-turn witness (today the
-   probe witnesses it as a free limb; the executor must supply it). The Lean
-   `EffectVmEmitRotationV3` §3 boundary note NAMES this as `turn/src/rotation_witness.rs`
-   (with iroot + lifecycle/epoch) — DELIBERATELY UNBUILT: a producer is only
-   validatable against the rotated trace builder, which is the flip's act (no live
-   verifier consumes the staged commitment yet). Building it now = an unvalidatable
-   witness; correct sequence is producer + trace builder together at the flip.
-4. **The iroot producer**: the MMR root over the receipt log must be computed by
-   the executor per turn (Lean MMR theory landed; `turn/` carrier missing). Same
-   sequencing as item 3 (no Rust MMR/iroot primitive exists yet either).
-5. **lifecycle/epoch carriers in the trace**: live `CellState` tracks them (the umem
-   projection already maps `Lifecycle`/`DelegationEpoch` into the heap/caps domains —
-   `turn/src/umem.rs:307,355`); the v1 trace does not — the regen adds the columns, the
-   executor populates (with item 3-4, at the flip).
+3. ~~**The cells_root producer**~~ **BUILT THIS LANE** (`turn/src/rotation_witness.rs::cells_root`):
+   the turn-level boundary view over present cells (sorted-Poseidon2 root via
+   `dregg_circuit::heap_root`, set-valued — `cells_root_is_set_valued`). Built
+   TOGETHER with the rotated trace builder that consumes it
+   (`circuit/tests/effect_vm_rotation_flip.rs`), so it is validated, not unvalidatable:
+   the rotated transfer (`transferVmDescriptor2R24`) proves+verifies end-to-end on a
+   real turn (~144.1 KiB) and the cell≡circuit differential asserts the producer's
+   limb EQUALS the trace's before/after `cells_root` carrier.
+4. ~~**The iroot producer**~~ **BUILT THIS LANE** (`rotation_witness.rs::iroot`): the
+   left-leaning Poseidon2 MMR fold over the receipt log — the Rust twin of the Lean
+   `mroot_injective`. The non-omission tooth is tested (`iroot_binds_the_whole_log`:
+   tamper/truncate/extend/reorder each move the root); the differential binds the
+   producer's iroot to the trace's after-block iroot carrier, and the anti-ghost
+   gauntlet REFUSES a tampered iroot at prove time.
+5. ~~**lifecycle/epoch carriers in the trace**~~ **BUILT THIS LANE**
+   (`rotation_witness.rs::lifecycle_felt`/`epoch_felt`): the lifecycle limb folds the
+   variant discriminant + payload so distinct states commit distinctly
+   (`lifecycle_felt_separates_states`); the rotated trace builder populates them and
+   the differential asserts producer == trace for both. The REGEN-TO-DEFAULT that
+   moves these onto the LIVE wire (replacing the v1 columns) remains the flip's act
+   (§3 steps 2-4) — staged-additive today, v1 untouched.
 6. ~~**GATE 0 re-measure** after the regen (the staged probe measures the block
    shape only).~~ **MEASURED green, this lane**: the per-effect GATE figure is the
    transfer IR-v2 size (`effect_vm_ir2_size_measure`), which the staged additive regen
@@ -232,7 +253,15 @@ Post-flip gauntlets (block the deploy, not the commit):
    per-effect baseline.
 7. **The 3-verb circuit descriptors** (gated on the executor rotation —
    `UNIVERSAL-MAP-ROTATION.md` §2.3; never before it).
-8. **cell ≡ circuit rotated differential** (§3 post-flip gauntlets).
+8. ~~**cell ≡ circuit rotated differential**~~ **LANDED THIS LANE (staged)**
+   (`circuit/tests/effect_vm_rotation_flip.rs`): the producer's limbs derived from the
+   real executed turn's `RecordKernelState` EQUAL the limbs the circuit trace carries
+   — the welded scalars (`r0↔balance_lo` … `cap_root`) on the before block, the
+   witness-carried limbs (`cells_root` · map roots · `lifecycle` · `epoch` ·
+   `committed_height` · `iroot`) on both blocks, and the producer's
+   independently-computed `wire_commit(before)` == the row-0 trace `STATE_COMMIT`
+   carrier. The LIVE-WIRE differential (cell `compute_canonical_state_commitment` v9
+   == circuit) lands with the cell-context bump at the flip (§4).
 9. **Heap-caveat runtime discharge** — the executor leg of the widened operand:
    discharge heap-domain entries at run time the way `verify_slot_caveat_manifest`
    discharges slot entries (the semantics are already pinned: `tagHeapAtom` →
