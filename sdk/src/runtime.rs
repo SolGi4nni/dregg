@@ -392,41 +392,44 @@ impl AgentRuntime {
 
     /// Run one fully-built turn against `ledger`, choosing the PRODUCER per [`Self::lean_producer_enabled`].
     ///
-    /// THE SWAP authority inversion lives here: when producer mode is on (and the crate was built
-    /// by default on native), the VERIFIED Lean executor produces the committed ledger
-    /// via `dregg_turn::lean_apply::produce_via_lean`, and the Rust `TurnExecutor` is demoted to a
-    /// parallel differential — its post-state root is compared against the Lean-produced root, and a
-    /// divergence is logged loudly (`error!`) as a real soundness finding, never silently reconciled.
-    /// The returned [`TurnResult`] is always the Rust executor's (it carries the receipt / events the
-    /// commit path consumes); only the COMMITTED ledger state is swapped to the verified output.
+    /// THE SWAP authority inversion (Stage 0) lives here: when producer mode is on (and the crate
+    /// was built by default on native), on the COVERED set the VERIFIED Lean executor is
+    /// AUTHORITATIVE via `dregg_turn::lean_apply::produce_via_lean` — its post-state AND its commit
+    /// verdict are committed unconditionally — and the Rust `TurnExecutor` is demoted to a checked
+    /// reference. A Lean↔Rust disagreement on a covered turn is a surfaced RUST BUG (`error!`), NOT a
+    /// fallback to Rust: the verified verdict is what was committed. The returned [`TurnResult`]
+    /// follows the AUTHORITATIVE (Lean) verdict, with the receipt's `post_state_hash` pinned to the
+    /// installed Lean root.
     ///
-    /// When producer mode is off — or the turn is ineligible for the verified producer (an effect
-    /// with no wire arm) / the archive is unlinked — this is exactly the legacy
-    /// `self.executor.execute(turn, ledger)` path, byte-for-byte unchanged.
+    /// When producer mode is off — or the turn is outside the covered set (an uncovered/root-gap
+    /// effect) — this is the legacy `self.executor.execute(turn, ledger)` path, explicitly FENCED
+    /// (the uncovered partition is named + surfaced, not a silent Rust default).
     fn run_turn(&self, turn: &Turn, ledger: &mut Ledger) -> TurnResult {
         #[cfg(not(feature = "no-lean-link"))]
         {
             if self.lean_producer_enabled {
                 use dregg_turn::lean_apply::{self, ProducerOutcome};
-                let (rust_result, outcome) =
-                    lean_apply::produce_via_lean(&self.executor, turn, ledger);
+                let (result, outcome) = lean_apply::produce_via_lean(&self.executor, turn, ledger);
                 match &outcome {
-                    ProducerOutcome::LeanProduced {
+                    ProducerOutcome::LeanAuthoritative {
                         committed,
-                        agree,
+                        rust_agreed,
                         lean_root,
                         rust_root,
                         rust_committed,
                     } => {
-                        if *agree {
+                        if *rust_agreed {
                             tracing::info!(
                                 target: "dregg::sdk::lean_producer",
                                 agent = ?turn.agent,
                                 committed = *committed,
-                                "THE SWAP producer mode (SDK): verified Lean executor PRODUCED the \
-                                 committed state; Rust differential AGREES"
+                                "THE SWAP producer mode (SDK): verified Lean executor is \
+                                 AUTHORITATIVE for this covered turn; Rust reference AGREES"
                             );
                         } else {
+                            // THE AUTHORITY INVERSION's tooth: a covered Lean↔Rust disagreement is
+                            // the Rust path being WRONG. The verified Lean verdict was committed;
+                            // this surfaces the Rust bug — it is NOT a fallback to Rust.
                             tracing::error!(
                                 target: "dregg::sdk::lean_producer",
                                 agent = ?turn.agent,
@@ -434,9 +437,10 @@ impl AgentRuntime {
                                 rust_committed = *rust_committed,
                                 lean_root = ?lean_root,
                                 rust_root = ?rust_root,
-                                "THE SWAP producer DIVERGENCE (SDK): verified Lean producer and Rust \
-                                 differential disagree on the committed state — REAL soundness \
-                                 finding (Lean output committed; investigate)"
+                                "THE SWAP authority inversion (SDK): verified Lean executor \
+                                 (AUTHORITATIVE) and the demoted Rust reference DISAGREE on a \
+                                 covered turn — the Rust path is BUGGY (REAL finding). The verified \
+                                 Lean verdict was committed; Rust was NOT allowed to override it"
                             );
                         }
                     }
@@ -446,29 +450,12 @@ impl AgentRuntime {
                             agent = ?turn.agent,
                             reason = %reason,
                             "THE SWAP producer mode (SDK): turn outside the swap-safe covered set \
-                             — fell back to the Rust producer for this turn (no silent divergence)"
-                        );
-                    }
-                    ProducerOutcome::CoveredDivergence {
-                        lean_committed,
-                        rust_committed,
-                        lean_root,
-                        rust_root,
-                    } => {
-                        tracing::error!(
-                            target: "dregg::sdk::lean_producer",
-                            agent = ?turn.agent,
-                            lean_committed = *lean_committed,
-                            rust_committed = *rust_committed,
-                            lean_root = ?lean_root,
-                            rust_root = ?rust_root,
-                            "THE SWAP producer COVERED-SET DIVERGENCE (SDK): a turn classified \
-                             swap-safe diverged — REAL soundness finding. Kept the Rust post-state; \
-                             did NOT commit the divergent Lean state"
+                             — FENCED onto the legacy Rust path for this turn (explicit, surfaced; \
+                             the named burning-down partition, not a silent Rust default)"
                         );
                     }
                 }
-                return rust_result;
+                return result;
             }
         }
         // Legacy Rust-producer path (also the only path under the `no-lean-link` platform gate).

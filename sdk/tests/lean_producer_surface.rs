@@ -10,9 +10,9 @@
 //! Two complementary, non-vacuous assertions:
 //!
 //!   1. ANTI-FALLBACK TOOTH (`producer_actually_runs_not_fallback`): drive `produce_via_lean`
-//!      directly on a runtime-shaped turn and assert the outcome is `LeanProduced { agree: true }`
-//!      — NOT `Fallback`. Without this, a silent fallback to the Rust producer would make the
-//!      root-equality check below pass vacuously.
+//!      directly on a runtime-shaped turn and assert the outcome is
+//!      `LeanAuthoritative { rust_agreed: true }` — NOT `Fallback`. Without this, a silent fallback
+//!      to the Rust producer would make the root-equality check below pass vacuously.
 //!
 //!   2. SURFACE ROOT-EQUALITY (`sdk_execute_producer_matches_rust_reference`): run identical
 //!      effects through the real `AgentRuntime::execute` surface twice — once with producer mode ON
@@ -91,8 +91,8 @@ fn single_effect_turn(agent: CellId, target: CellId, nonce: u64, effect: Effect)
 }
 
 /// ANTI-FALLBACK TOOTH. Drive the producer helper the SDK surface uses on a representative turn and
-/// assert the VERIFIED executor actually produced the state (`LeanProduced`, agreeing with the Rust
-/// differential) — never a silent `Fallback`. This guards the root-equality test below from passing
+/// assert the VERIFIED executor is AUTHORITATIVE (`LeanAuthoritative`, with the Rust reference
+/// agreeing) — never a silent `Fallback`. This guards the root-equality test below from passing
 /// vacuously on an ineligible turn.
 #[test]
 fn producer_actually_runs_not_fallback() {
@@ -124,9 +124,9 @@ fn producer_actually_runs_not_fallback() {
     let (_rust_result, outcome) = lean_apply::produce_via_lean(&executor, &turn, &mut ledger);
 
     match outcome {
-        ProducerOutcome::LeanProduced {
+        ProducerOutcome::LeanAuthoritative {
             committed,
-            agree,
+            rust_agreed,
             lean_root,
             rust_root,
             ..
@@ -136,24 +136,15 @@ fn producer_actually_runs_not_fallback() {
                 "expected the verified producer to COMMIT the transfer (open permissions, funded)"
             );
             assert!(
-                agree,
-                "PRODUCER DIVERGENCE: verified Lean producer disagrees with the Rust differential \
-                 (lean_root={lean_root:?} rust_root={rust_root:?}) — a real soundness finding"
+                rust_agreed,
+                "RUST BUG SURFACED: the demoted Rust reference disagrees with the AUTHORITATIVE \
+                 verified Lean verdict (lean_root={lean_root:?} rust_root={rust_root:?}) — the \
+                 Lean verdict was committed; Rust did not override it"
             );
         }
         ProducerOutcome::Fallback { reason } => panic!(
             "turn was NOT eligible for the verified producer (a marshaller gap): {reason}; the SDK \
              producer surface cannot be exercised — fix the gap, do not weaken the test"
-        ),
-        ProducerOutcome::CoveredDivergence {
-            lean_committed,
-            rust_committed,
-            lean_root,
-            rust_root,
-        } => panic!(
-            "PRODUCER DIVERGENCE on the COVERED path (a real soundness finding; the conservative \
-             Rust state was kept): lean_committed={lean_committed} rust_committed={rust_committed} \
-             lean_root={lean_root:?} rust_root={rust_root:?}"
         ),
     }
 

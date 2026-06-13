@@ -130,6 +130,52 @@ pub struct DescriptorParticipant {
     pub proof: crate::effect_vm_p3_full_air::EffectVmP3Proof,
     /// The full EffectVM public-input vector this proof attests.
     pub public_inputs: Vec<BabyBear>,
+    /// THE ROTATED LEG (C4 cutover). When present, the recursion path
+    /// ([`crate::ivc_turn_chain::prove_chain_core`] /
+    /// [`crate::joint_turn_recursive::prove_joint_core`]) mints the in-circuit leaf
+    /// from this rotated multi-table `Ir2BatchProof` via
+    /// [`crate::ivc_turn_chain::prove_descriptor_leaf_rotated_with_config`] instead of
+    /// the v1 uni-STARK `EffectVmDescriptorAir` wrap. The v1 `proof`/`public_inputs`
+    /// above stay carried (host admission still reads them) until C7 deletes the v1 leg
+    /// and the rotated leg becomes mandatory. `serde`-free (proofs are not serialized
+    /// on this struct).
+    #[cfg(feature = "recursion")]
+    pub rotated: Option<RotatedParticipantLeg>,
+}
+
+/// The rotated per-cell leg a [`DescriptorParticipant`] carries at/after C4: the rotated
+/// multi-table `Ir2BatchProof` (minted under the leaf-wrap config — log_blowup 6), its
+/// descriptor (needed to rebuild the AIR set for the in-circuit verifier), and the 38-PI
+/// vector it attests (the v1 prefix `[0..34)` + the 4 appended rotated commit/height/caveat
+/// pins). The chain roots are read from this PI vector's ROTATED commit positions (PI 34/35).
+#[cfg(feature = "recursion")]
+pub struct RotatedParticipantLeg {
+    /// The rotated multi-table batch proof, minted under
+    /// [`crate::ivc_turn_chain::ir2_leaf_wrap_config`].
+    pub proof: crate::descriptor_ir2::Ir2BatchProof<
+        crate::plonky3_recursion_impl::recursive::DreggRecursionConfig,
+    >,
+    /// The rotated descriptor this proof satisfies (rebuilds the `Ir2Air` set).
+    pub descriptor: crate::descriptor_ir2::EffectVmDescriptor2,
+    /// The 38-PI vector (`ROT_PI_COUNT`) the proof attests.
+    pub public_inputs: Vec<BabyBear>,
+}
+
+#[cfg(feature = "recursion")]
+impl RotatedParticipantLeg {
+    /// The rotated OLD-state commitment (PI 34 — the row-0 before-block `state_commit`).
+    pub fn old_root(&self) -> BabyBear {
+        self.public_inputs[crate::effect_vm::trace_rotated::V1_PI_COUNT]
+    }
+    /// The rotated NEW-state commitment (PI 35 — the last-row after-block `state_commit`).
+    /// This is the next finalized turn's required `old_root` (the temporal binding).
+    pub fn new_root(&self) -> BabyBear {
+        self.public_inputs[crate::effect_vm::trace_rotated::V1_PI_COUNT + 1]
+    }
+    /// The shared turn identity (the v1 `TURN_HASH` slot, carried in the rotated prefix).
+    pub fn shared_turn_id(&self) -> BabyBear {
+        self.public_inputs[pi::TURN_HASH_BASE]
+    }
 }
 
 impl DescriptorParticipant {
@@ -141,6 +187,38 @@ impl DescriptorParticipant {
     /// This cell's post-state commitment (`NEW_COMMIT` position 0).
     pub fn cell_commit(&self) -> BabyBear {
         self.public_inputs[pi::NEW_COMMIT_BASE]
+    }
+
+    /// Construct a participant with ONLY the v1 leg (the rotated leg absent). Pre-C4
+    /// callers / v1 tests use this; the struct-literal form `DescriptorParticipant { proof,
+    /// public_inputs }` no longer compiles under `recursion` (the `rotated` field), so this
+    /// is the migration shim.
+    pub fn v1(
+        proof: crate::effect_vm_p3_full_air::EffectVmP3Proof,
+        public_inputs: Vec<BabyBear>,
+    ) -> Self {
+        Self {
+            proof,
+            public_inputs,
+            #[cfg(feature = "recursion")]
+            rotated: None,
+        }
+    }
+
+    /// Construct a participant carrying BOTH the v1 leg (for host admission) and the
+    /// rotated leg (for the in-circuit recursion leaf). At/after C4 the recursion cores
+    /// prefer the rotated leg.
+    #[cfg(feature = "recursion")]
+    pub fn with_rotated(
+        proof: crate::effect_vm_p3_full_air::EffectVmP3Proof,
+        public_inputs: Vec<BabyBear>,
+        rotated: RotatedParticipantLeg,
+    ) -> Self {
+        Self {
+            proof,
+            public_inputs,
+            rotated: Some(rotated),
+        }
     }
 }
 
@@ -480,6 +558,49 @@ pub fn recursion_binding_trace_descriptor(
     let pairs: Vec<(BabyBear, BabyBear)> = participants
         .iter()
         .map(|p| (p.shared_turn_id(), p.cell_commit()))
+        .collect();
+    let (trace, pis) = generate_joint_trace_pairs_unchecked(&pairs, shared_tid);
+    Ok((trace_to_matrix(&trace), pis))
+}
+
+/// [`recursion_binding_trace_descriptor`] reading each cell's ROTATED post-state commitment
+/// (PI 35) as the bundle-digest content, and the rotated leg's `shared_turn_id` (carried in
+/// the rotated prefix). Used by [`crate::joint_turn_recursive::prove_joint_core_rotated`].
+/// Fails closed if any participant carries no rotated leg.
+#[cfg(feature = "recursion")]
+pub fn recursion_binding_trace_descriptor_rotated(
+    participants: &[&DescriptorParticipant],
+) -> Result<(RowMajorMatrix<P3BabyBear>, Vec<BabyBear>), JointAggError> {
+    if participants.len() < 2 {
+        return Err(JointAggError::TooFewParticipants {
+            count: participants.len(),
+        });
+    }
+    let legs: Vec<&RotatedParticipantLeg> = participants
+        .iter()
+        .enumerate()
+        .map(|(i, p)| {
+            p.rotated
+                .as_ref()
+                .ok_or(JointAggError::ParticipantProofInvalid {
+                    index: i,
+                    reason: "rotated joint binding: participant carries no rotated leg".to_string(),
+                })
+        })
+        .collect::<Result<_, _>>()?;
+    let shared_tid = legs[0].shared_turn_id();
+    for (i, leg) in legs.iter().enumerate() {
+        if leg.shared_turn_id() != shared_tid {
+            return Err(JointAggError::SharedTurnIdMismatch {
+                index: i,
+                expected: shared_tid.0,
+                found: leg.shared_turn_id().0,
+            });
+        }
+    }
+    let pairs: Vec<(BabyBear, BabyBear)> = legs
+        .iter()
+        .map(|leg| (leg.shared_turn_id(), leg.new_root()))
         .collect();
     let (trace, pis) = generate_joint_trace_pairs_unchecked(&pairs, shared_tid);
     Ok((trace_to_matrix(&trace), pis))
@@ -1019,10 +1140,7 @@ mod tests {
             let dpis = &public_inputs[..desc.public_input_count];
             let proof = prove_vm_descriptor(&desc, &trace, dpis)
                 .expect("descriptor proves the honest transfer participant");
-            DescriptorParticipant {
-                proof,
-                public_inputs,
-            }
+            DescriptorParticipant::v1(proof, public_inputs)
         };
 
         let p0 = make(100, 0, 0xABCD);

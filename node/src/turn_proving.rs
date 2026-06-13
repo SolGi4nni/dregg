@@ -405,6 +405,7 @@ pub fn prove_and_verify_finalized_turn_freshness(
         non_revocation: Some(NonRevocationWitness { tree, item_hash }),
         cap_membership: None,
         turn_hash,
+        rotation: None,
     };
     let proof = prove_full_turn(&witness).map_err(FullTurnProvingError::Prove)?;
 
@@ -517,6 +518,7 @@ pub fn prove_and_verify_finalized_turn_capability(
             .map(|(tree, item_hash)| NonRevocationWitness { tree, item_hash }),
         cap_membership: Some(CapMembershipWitness::from_consumed(consumed)),
         turn_hash,
+        rotation: None,
     };
     let proof = prove_full_turn(&witness).map_err(FullTurnProvingError::Prove)?;
 

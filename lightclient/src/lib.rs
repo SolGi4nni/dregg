@@ -397,10 +397,7 @@ mod tests {
             prove_vm_descriptor(&desc, &trace, dpis).expect("descriptor proves honest transfer");
         (
             FinalizedTurn::new(
-                DescriptorParticipant {
-                    proof,
-                    public_inputs,
-                },
+                DescriptorParticipant::v1(proof, public_inputs),
                 trace,
             ),
             old_root,

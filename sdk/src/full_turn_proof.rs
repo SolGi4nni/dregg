@@ -165,6 +165,61 @@ pub struct FullTurnWitness {
 
     /// The turn hash for binding (prevents proof replay on different turns).
     pub turn_hash: [u8; 32],
+
+    // -- ROTATION witness (C4 cutover, the rotated effect-vm leg) --
+    /// Present when the caller has threaded the per-turn rotation producer witnesses for the
+    /// acting cell's before/after `RecordKernelState`. When present (and `recursion` is on),
+    /// [`prove_full_turn`] proves the effect-vm leg through the ROTATED IR-v2 path
+    /// ([`prove_effect_vm_rotated_ir2_with_caveat`]) and attaches it as the `"effect-vm-rotated"`
+    /// sub-proof (a multi-table `Ir2BatchProof`); [`verify_full_turn`] verifies it via
+    /// `descriptor_ir2::verify_vm_descriptor2`. When ABSENT (or under `not(recursion)`), the
+    /// byte-identical v1 `"effect-vm"` leg is used — so pre-rotation callers are unaffected.
+    ///
+    /// NOT feature-gated: its types are always-available (`RotationWitness` from `dregg-turn`,
+    /// `RotatedCaveatManifest` from `dregg-circuit::effect_vm::trace_rotated`), so downstream
+    /// crates without their own `recursion` feature (e.g. `dregg-node`) set `rotation: None`
+    /// unconditionally. Only the rotated PROVE/VERIFY code is `recursion`-gated; under
+    /// `not(recursion)` a present `rotation` is ignored (the v1 leg runs).
+    pub rotation: Option<RotationTurnWitness>,
+}
+
+/// The per-turn rotation witnesses + caveat manifest for the rotated effect-vm leg of a full
+/// turn. The producer witnesses are minted by
+/// `dregg_turn::rotation_witness::produce(cell, ledger, nullifier_root, receipt_log)` for the
+/// acting cell's before/after `RecordKernelState`; the caveat manifest defaults to the empty
+/// (non-transfer) manifest.
+pub struct RotationTurnWitness {
+    /// The acting cell's BEFORE-state rotation producer witness.
+    pub before: dregg_turn::rotation_witness::RotationWitness,
+    /// The acting cell's AFTER-state rotation producer witness.
+    pub after: dregg_turn::rotation_witness::RotationWitness,
+    /// The rotated caveat manifest (the transfer reference manifest for a single transfer;
+    /// the empty manifest otherwise). Defaults via [`RotationTurnWitness::for_effects`].
+    pub caveat: dregg_circuit::effect_vm::trace_rotated::RotatedCaveatManifest,
+}
+
+impl RotationTurnWitness {
+    /// Build with the caveat manifest defaulted by the turn's effects (transfer → the
+    /// two-domain reference manifest; everything else → empty), matching the standalone
+    /// `prove_effect_vm_rotated_ir2`.
+    pub fn for_effects(
+        before: dregg_turn::rotation_witness::RotationWitness,
+        after: dregg_turn::rotation_witness::RotationWitness,
+        effects: &[VmEffectKind],
+    ) -> Self {
+        use dregg_circuit::effect_vm::trace_rotated::{
+            empty_caveat_manifest, transfer_caveat_manifest,
+        };
+        let caveat = match effects {
+            [VmEffectKind::Transfer { .. }] => transfer_caveat_manifest(),
+            _ => empty_caveat_manifest(),
+        };
+        Self {
+            before,
+            after,
+            caveat,
+        }
+    }
 }
 
 /// Authorization witness for the derivation sub-proof.
@@ -751,6 +806,31 @@ pub fn prove_effect_vm_rotated_ir2(
     prove_effect_vm_rotated_ir2_with_caveat(initial_state, effects, before_w, after_w, &caveat)
 }
 
+/// Re-derive the rotated 38-PI vector for a turn (the same `dpis` the rotated prover binds).
+/// Used by [`prove_full_turn`] to record the rotated leg's `sub_public_inputs` and to extend
+/// the composed PI without re-proving.
+#[cfg(feature = "recursion")]
+fn rotated_effect_pi_for(
+    initial_state: &CellState,
+    effects: &[VmEffectKind],
+    rot: &RotationTurnWitness,
+) -> Result<Vec<BabyBear>, SdkError> {
+    use dregg_circuit::effect_vm::trace_rotated::{
+        RotatedBlockWitness, generate_rotated_effect_vm_trace,
+    };
+    let bridge = |w: &dregg_turn::rotation_witness::RotationWitness| {
+        RotatedBlockWitness::new(w.pre_limbs.clone(), w.iroot)
+    };
+    let before = bridge(&rot.before)
+        .map_err(|e| SdkError::InvalidWitness(format!("rotated before-witness: {e}")))?;
+    let after = bridge(&rot.after)
+        .map_err(|e| SdkError::InvalidWitness(format!("rotated after-witness: {e}")))?;
+    let (_trace, dpis) =
+        generate_rotated_effect_vm_trace(initial_state, effects, &before, &after, &rot.caveat)
+            .map_err(|e| SdkError::InvalidWitness(format!("rotated PI re-derive: {e}")))?;
+    Ok(dpis)
+}
+
 /// The cohort-general rotated IR-v2 prover (G4): proves ANY of the 26 rotated cohort effects
 /// (resolved by `rotated_descriptor_name_for_effect`) through the shared 311-column trace,
 /// with an explicit caveat manifest. Returns the IR-v2 batch proof; self-verifies before
@@ -887,6 +967,55 @@ fn verify_effect_vm_proof_with_cutover(
     verify_effect_vm_p3(proof, public_inputs).map_err(|e| format!("{e}"))
 }
 
+/// Verify a ROTATED effect-vm sub-proof (the C4 `"effect-vm-rotated"` leg): deserialize the
+/// `Ir2BatchProof` and verify it SELECTOR-BOUND against the rotated cohort descriptors. A sound
+/// rotated proof binds its own descriptor (each carries the Lean selector tooth), so exactly one
+/// cohort member accepts. Zero ⇒ not a rotated cohort proof (reject); more than one ⇒ ambiguous
+/// (reject rather than launder a wrong-descriptor acceptance).
+#[cfg(feature = "recursion")]
+fn verify_effect_vm_rotated_with_cutover(
+    proof_bytes: &[u8],
+    public_inputs: &[BabyBear],
+) -> Result<(), String> {
+    use dregg_circuit::descriptor_ir2::{
+        Ir2BatchProof, DreggStarkConfig, parse_vm_descriptor2, verify_vm_descriptor2,
+    };
+    use dregg_circuit::effect_vm_descriptors::V3_STAGED_REGISTRY_TSV;
+
+    let proof: Ir2BatchProof<DreggStarkConfig> = postcard::from_bytes(proof_bytes)
+        .map_err(|e| format!("rotated effect-vm proof deserialize: {e}"))?;
+
+    let mut bound: Vec<&str> = Vec::new();
+    for line in V3_STAGED_REGISTRY_TSV.lines() {
+        let mut it = line.splitn(3, '\t');
+        let name = match it.next() {
+            Some(n) => n,
+            None => continue,
+        };
+        let _display = it.next();
+        let json = match it.next() {
+            Some(j) => j,
+            None => continue,
+        };
+        if let Ok(desc) = parse_vm_descriptor2(json) {
+            if public_inputs.len() >= desc.public_input_count {
+                let dpis = &public_inputs[..desc.public_input_count];
+                if verify_vm_descriptor2(&desc, &proof, dpis).is_ok() {
+                    bound.push(name);
+                }
+            }
+        }
+    }
+    match bound.as_slice() {
+        [_only] => Ok(()),
+        [] => Err("rotated effect-vm proof verified under NO cohort descriptor".to_string()),
+        multi => Err(format!(
+            "rotated effect-vm proof verified under MULTIPLE cohort descriptors {multi:?} — \
+             selector binding ambiguous, rejecting"
+        )),
+    }
+}
+
 // ============================================================================
 // Proof Generation
 // ============================================================================
@@ -924,19 +1053,56 @@ pub fn prove_full_turn(witness: &FullTurnWitness) -> Result<FullTurnProof, SdkEr
     // back to the hand-written `EffectVmP3Air` with a named, logged reason.
     // `DREGG_DESCRIPTOR_PROVER=0` opts out. Same wire proof type either way; the
     // differential harness guards equivalence.
-    let effect_proof = prove_effect_vm_with_cutover(&witness.effects, &effect_trace, &effect_pi)?;
-    let effect_proof_bytes = postcard::to_allocvec(&effect_proof).map_err(|e| {
-        SdkError::InvalidWitness(format!("effect-vm p3 proof serialize failed: {e}"))
-    })?;
-
+    // THE ROTATED LEG (C4 cutover): when the caller threaded the rotation producer witnesses,
+    // prove the effect-vm transition through the ROTATED IR-v2 path (the multi-table
+    // `Ir2BatchProof`) and attach it as the `"effect-vm-rotated"` sub-proof. Its PI vector is
+    // the rotated 38-PI (the v1 prefix `[0..34)` — OLD/NEW_COMMIT/turn-id/effects-hash carried
+    // at their v1 offsets — plus the 4 appended rotated commit/height/caveat pins at 34..37).
+    // The v1 `"effect-vm"` leg is the byte-identical default when no rotation witness is present.
     components.has_state_transition = true;
-    all_public_inputs.extend_from_slice(&effect_pi);
-    sub_proofs.push(AttachedSubProof {
-        label: "effect-vm".into(),
-        proof_bytes: effect_proof_bytes.clone(),
-        sub_public_inputs: effect_pi.clone(),
-        vk_hash: compute_vk_hash_bytes(&effect_vm_circuit_descriptor()),
-    });
+    #[cfg(feature = "recursion")]
+    let rotated_effect_pi: Option<Vec<BabyBear>> = if let Some(rot) = &witness.rotation {
+        let proof = prove_effect_vm_rotated_ir2_with_caveat(
+            &witness.initial_cell_state,
+            &witness.effects,
+            &rot.before,
+            &rot.after,
+            &rot.caveat,
+        )?;
+        // Re-derive the rotated PI vector (the prover's self-verify already bound it; we need
+        // the felts for the composed PI + the sub-proof's `sub_public_inputs`).
+        let rot_pi = rotated_effect_pi_for(&witness.initial_cell_state, &witness.effects, rot)?;
+        let proof_bytes = postcard::to_allocvec(&proof).map_err(|e| {
+            SdkError::InvalidWitness(format!("rotated effect-vm proof serialize failed: {e}"))
+        })?;
+        all_public_inputs.extend_from_slice(&rot_pi);
+        sub_proofs.push(AttachedSubProof {
+            label: "effect-vm-rotated".into(),
+            proof_bytes,
+            sub_public_inputs: rot_pi.clone(),
+            vk_hash: compute_vk_hash_bytes(&effect_vm_circuit_descriptor()),
+        });
+        Some(rot_pi)
+    } else {
+        None
+    };
+    #[cfg(not(feature = "recursion"))]
+    let rotated_effect_pi: Option<Vec<BabyBear>> = None;
+
+    if rotated_effect_pi.is_none() {
+        let effect_proof =
+            prove_effect_vm_with_cutover(&witness.effects, &effect_trace, &effect_pi)?;
+        let effect_proof_bytes = postcard::to_allocvec(&effect_proof).map_err(|e| {
+            SdkError::InvalidWitness(format!("effect-vm p3 proof serialize failed: {e}"))
+        })?;
+        all_public_inputs.extend_from_slice(&effect_pi);
+        sub_proofs.push(AttachedSubProof {
+            label: "effect-vm".into(),
+            proof_bytes: effect_proof_bytes.clone(),
+            sub_public_inputs: effect_pi.clone(),
+            vk_hash: compute_vk_hash_bytes(&effect_vm_circuit_descriptor()),
+        });
+    }
 
     // ========================================================================
     // 2. Authorization proof (derivation chain)
@@ -1300,6 +1466,18 @@ pub fn verify_full_turn_bound(
                 verify_effect_vm_proof_with_cutover(&p3, &attached.sub_public_inputs)
                     .map_err(|e| format!("{e}"))
             }
+            // EFFECT VM ROTATED (C4 cutover): the multi-table `Ir2BatchProof` over a rotated
+            // R=24 descriptor. Resolve the descriptor SELECTOR-BOUND (a sound rotated proof
+            // verifies under exactly one cohort descriptor — its own effect's), then verify
+            // via the audited IR-v2 batch verifier. `not(recursion)` builds never produce this
+            // leg, so the arm is recursion-gated.
+            #[cfg(feature = "recursion")]
+            "effect-vm-rotated" => {
+                verify_effect_vm_rotated_with_cutover(
+                    &attached.proof_bytes,
+                    &attached.sub_public_inputs,
+                )
+            }
             // AUTHORIZATION / MEMBERSHIP / NON-REVOCATION: all now verified by
             // the AUDITED Plonky3 verifier (`p3-batch-stark`). ZERO `stark::`
             // calls remain. Each proof is a postcard-serialized batch proof; the
@@ -1384,15 +1562,28 @@ pub fn verify_full_turn_bound(
         })?;
     }
 
-    // 4. Check Effect VM public input bindings (old/new commitment).
+    // 4. Check Effect VM public input bindings (old/new commitment). The effect-vm leg is
+    //    EITHER the v1 `"effect-vm"` (204-PI) or the rotated `"effect-vm-rotated"` (38-PI).
+    //    The rotated 38-PI is the v1 prefix `[0..34)` + 4 appended pins, so OLD_COMMIT(0) /
+    //    NEW_COMMIT(4) / TURN_HASH(25) / EFFECTS_HASH(8) / NET_DELTA(16-17) all carry the SAME
+    //    values at the SAME offsets — the cross-bindings below read those unchanged. Only
+    //    offsets >= 34 (e.g. NOTESPEND_NULLIFIER at 198) are absent from the rotated leg.
     let effect_sub = proof
         .composed
         .sub_proofs
         .iter()
-        .find(|sp| sp.label == "effect-vm")
+        .find(|sp| sp.label == "effect-vm" || sp.label == "effect-vm-rotated")
         .ok_or(FullTurnVerifyError::MissingComponent("effect-vm".into()))?;
+    let effect_is_rotated = effect_sub.label == "effect-vm-rotated";
 
-    if effect_sub.sub_public_inputs.len() < effect_vm::pi::ACTIVE_BASE_COUNT {
+    // The rotated leg carries the v1 prefix (>= V1_PI_COUNT = 34 felts); the v1 leg carries the
+    // full 204. The cross-bindings only read offsets < 34, so 34 is the binding floor for both.
+    let min_pi = if effect_is_rotated {
+        dregg_circuit::effect_vm::trace_rotated::V1_PI_COUNT
+    } else {
+        effect_vm::pi::ACTIVE_BASE_COUNT
+    };
+    if effect_sub.sub_public_inputs.len() < min_pi {
         return Err(FullTurnVerifyError::MalformedPublicInputs(
             "effect VM PI too short".into(),
         ));
@@ -1607,6 +1798,21 @@ pub fn verify_full_turn_bound(
     //    Together (a)+(b): freshness is against THE canonical accumulator AND
     //    for THIS turn's nullifier — the full no-double-spend property.
     if proof.components.has_non_revocation && proof.components.has_state_transition {
+        // BOUNDARY (named): the rotated leg's 38-PI does NOT carry NOTESPEND_NULLIFIER (offset
+        // 198 > the rotated 38-PI). A note-spending turn therefore must NOT route through the
+        // rotated effect-vm leg until the rotated note-spend descriptor exposes the nullifier
+        // in its PI. The rotated cohort prover (`prove_effect_vm_rotated_ir2_with_caveat`)
+        // produces the transfer/grant/&c shapes; note-spend-with-freshness stays on the v1 leg.
+        // Refuse rather than silently skip the binding (would weaken no-double-spend).
+        if effect_is_rotated {
+            return Err(FullTurnVerifyError::MalformedPublicInputs(
+                "rotated effect-vm leg cannot carry a no-double-spend freshness binding \
+                 (NOTESPEND_NULLIFIER absent from the rotated 38-PI); a note-spending turn must \
+                 use the v1 effect-vm leg until the rotated note-spend descriptor exposes the \
+                 nullifier"
+                    .into(),
+            ));
+        }
         let effect_nullifier = effect_sub.sub_public_inputs[effect_vm::pi::NOTESPEND_NULLIFIER];
         if effect_nullifier != BabyBear::ZERO {
             let revoc_sub = proof
@@ -1973,6 +2179,7 @@ pub fn prove_turn_with_auth(
         non_revocation: None,
         cap_membership: None,
         turn_hash,
+        rotation: None,
     };
     prove_full_turn(&witness)
 }
@@ -1995,6 +2202,7 @@ pub fn prove_turn_self_sovereign(
         non_revocation: None,
         cap_membership: None,
         turn_hash,
+        rotation: None,
     };
     prove_full_turn(&witness)
 }
@@ -2312,6 +2520,7 @@ mod tests {
             }),
             cap_membership: None,
             turn_hash: [0x77u8; 32],
+            rotation: None,
         };
 
         let proof = prove_full_turn(&witness).expect("full turn proof should generate");
@@ -2365,6 +2574,7 @@ mod tests {
             }),
             cap_membership: None,
             turn_hash: [0x91u8; 32],
+            rotation: None,
         };
         let proof = prove_full_turn(&witness).expect("honest fresh-spend proof should generate");
 
@@ -2437,6 +2647,7 @@ mod tests {
             }),
             cap_membership: None,
             turn_hash: [0x92u8; 32],
+            rotation: None,
         };
         let proof = prove_full_turn(&witness)
             .expect("proof generates (the forgery is a verify-time property)");
@@ -2555,6 +2766,7 @@ mod tests {
             }),
             cap_membership: None,
             turn_hash: [0xB1u8; 32],
+            rotation: None,
         };
         let proof = prove_full_turn(&witness).expect("honest fresh-spend proof should generate");
 
@@ -2626,6 +2838,7 @@ mod tests {
             }),
             cap_membership: None,
             turn_hash: [0xB2u8; 32],
+            rotation: None,
         };
         let proof = prove_full_turn(&witness)
             .expect("proof generates (the mismatch is a verify-time property)");
@@ -2780,6 +2993,7 @@ mod tests {
             non_revocation: None,
             cap_membership: None,
             turn_hash: [0x88u8; 32],
+            rotation: None,
         };
         let mut proof = prove_full_turn(&witness).expect("honest proof should generate");
 

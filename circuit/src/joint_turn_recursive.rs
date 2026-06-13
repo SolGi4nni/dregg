@@ -330,6 +330,116 @@ fn prove_joint_core(
     })
 }
 
+// ============================================================================
+// C4 — THE ROTATED joint fold (the v1-deletion path).
+// ============================================================================
+
+/// Prove a joint turn recursively through the ROTATED leaf-wrap: every per-cell leaf is the
+/// rotated multi-table `Ir2BatchProof` (carried on `participant.rotated`), minted in-circuit
+/// via [`crate::ivc_turn_chain::prove_descriptor_leaf_rotated_with_config`] at
+/// [`crate::ivc_turn_chain::ir2_leaf_wrap_config`]. The whole tree runs at the wrap config.
+pub fn prove_joint_turn_recursive_rotated(
+    cells: &[JointCell],
+) -> Result<RecursiveJointTurnProof, JointAggError> {
+    if cells.len() < 2 {
+        return Err(JointAggError::TooFewParticipants { count: cells.len() });
+    }
+    // (1a) per-cell descriptor admission, selector-bound (host gate).
+    let mut selectors = Vec::with_capacity(cells.len());
+    for (i, c) in cells.iter().enumerate() {
+        let s = verify_descriptor_participant(&c.participant)
+            .map_err(|reason| JointAggError::ParticipantProofInvalid { index: i, reason })?;
+        selectors.push(s);
+    }
+    let refs: Vec<&JointCell> = cells.iter().collect();
+    prove_joint_core_rotated(&refs, &selectors)
+}
+
+/// The rotated joint fold core: like [`prove_joint_core`] but mints rotated native-batch
+/// leaves and runs the whole tree at the wrap config.
+fn prove_joint_core_rotated(
+    cells: &[&JointCell],
+    selectors: &[usize],
+) -> Result<RecursiveJointTurnProof, JointAggError> {
+    use crate::ivc_turn_chain::{ir2_leaf_wrap_config, prove_descriptor_leaf_rotated_with_config};
+    use crate::joint_turn_aggregation::recursion_binding_trace_descriptor_rotated;
+
+    if selectors.len() != cells.len() {
+        return Err(JointAggError::AggregationProofInvalid {
+            reason: format!(
+                "selector count {} != cell count {}",
+                selectors.len(),
+                cells.len()
+            ),
+        });
+    }
+    let participants: Vec<&DescriptorParticipant> = cells.iter().map(|c| &c.participant).collect();
+
+    let config = ir2_leaf_wrap_config();
+    let backend = create_recursion_backend();
+    let params = ProveNextLayerParams::default();
+
+    // (2) binding leaf over the ROTATED commitments (shared-tid agreement + digest).
+    let (binding_matrix, binding_pis) =
+        recursion_binding_trace_descriptor_rotated(&participants)?;
+    let binding_air = JointTurnAggregationAir;
+    let binding_inner = prove_inner_for_air(&binding_air, binding_matrix, &binding_pis);
+    verify_inner_for_air(&binding_air, &binding_inner, &binding_pis)
+        .map_err(|reason| JointAggError::AggregationProofInvalid { reason })?;
+    let shared_turn_id = binding_pis[0];
+    let bundle_digest = binding_pis[2];
+
+    // (3)+(4) one rotated descriptor leaf per cell.
+    let mut batch_leaves: Vec<RecursionOutput<DreggRecursionConfig>> =
+        Vec::with_capacity(cells.len() + 1);
+    for (i, c) in cells.iter().enumerate() {
+        let leg = c.participant.rotated.as_ref().ok_or_else(|| {
+            JointAggError::ParticipantProofInvalid {
+                index: i,
+                reason: "rotated joint fold: cell carries no rotated leg".to_string(),
+            }
+        })?;
+        let wrapped = prove_descriptor_leaf_rotated_with_config(
+            &leg.descriptor,
+            &leg.proof,
+            &leg.public_inputs,
+            &config,
+        )
+        .map_err(|reason| JointAggError::ParticipantProofInvalid { index: i, reason })?;
+        batch_leaves.push(wrapped);
+    }
+
+    // The binding leaf wrapped uni->batch at the wrap config.
+    {
+        let p3_pis: Vec<P3BabyBear> = binding_pis.iter().map(|&v| to_p3(v)).collect();
+        let input = RecursionInput::UniStark {
+            proof: &binding_inner,
+            air: &binding_air,
+            public_inputs: p3_pis,
+            preprocessed_commit: None,
+        };
+        let wrapped =
+            build_and_prove_next_layer::<DreggRecursionConfig, JointTurnAggregationAir, _, D>(
+                &input, &config, &backend, &params,
+            )
+            .map_err(|e| JointAggError::AggregationProofInvalid {
+                reason: format!("recursive binding layer failed: {e:?}"),
+            })?;
+        batch_leaves.push(wrapped);
+    }
+
+    // (5) Pairwise-aggregate up a binary tree to ONE root batch proof.
+    let root = aggregate_tree(batch_leaves, &config, &backend, &params)?;
+
+    Ok(RecursiveJointTurnProof {
+        root,
+        binding_proof: binding_inner,
+        shared_turn_id,
+        bundle_digest,
+        num_cells: cells.len(),
+    })
+}
+
 /// Fold a vector of batch-STARK proofs to ONE via 2-to-1 aggregation layers.
 ///
 /// On each level, consecutive pairs are aggregated with
@@ -446,10 +556,7 @@ mod tests {
         let proof =
             prove_vm_descriptor(&desc, &trace, dpis).expect("descriptor proves honest transfer");
         JointCell::new(
-            DescriptorParticipant {
-                proof,
-                public_inputs,
-            },
+            DescriptorParticipant::v1(proof, public_inputs),
             trace,
         )
     }

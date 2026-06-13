@@ -128,6 +128,82 @@ CHECKPOINT LADDER (each a coherent green boundary; relaunch from the last done):
      from-scratch ROTATED OUTER AIR + Lean emission (a 38-PI inner-row aggregation AIR), distinct
      from the mechanical 204→38 reslice. This is the precise residual C3/C4 wall blocking grep-zero
      of `EffectVmAir` / `ACTIVE_BASE_COUNT` on the live bilateral path.
+
+### §EXEC.2 — THE C4-C7 EXECUTE LANE (2026-06-13, the v1-deletion sprint)
+
+State coming in is FURTHER than the census: **C3 ARCHITECTURE PROVEN** (leaf-wrap +
+2-leaf aggregation gate both green, `bbea731e7`/`983255781`/fork `72ffc56`); **the
+residue is RESOLVED** (`rotation-v3-staged-registry.tsv` has all 36 cohort members incl.
+`revokeCapabilityVmDescriptor2R24` + `customVmDescriptor2R24` — `RevokeCapability` was
+graduated by the cap-crown `53c6e417c`); **C6 cell commitment is ALREADY v9 LIVE**
+(`CANONICAL_COMMITMENT_CONTEXT = "…v9"`, `cell/src/commitment.rs:110`; the cap-crown
+flag-day bumped it).
+
+**THE BILATERAL DECISION (made 2026-06-13, ember architecture-grant "implement whatever
+all new things we need"): BUILD — emit a Lean-authored rotated aggregation AIR (law #1).**
+Census verdict: `post_aggregate_bundle` is a REAL feature — HTTP `/turns/aggregate`
+(`api.rs:1723`), MCP `dregg_bilateral_action` (`mcp.rs:1821`), WASM
+`DreggRuntime::prove_bilateral_aggregate`, the verifier CLI, and the adversarial gauntlet
+`teasting/tests/multi_cell_cross_fed_binding.rs` (cross-federation conservation — the only
+mechanism preventing cross-federation double-spend). So RETIRE is OFF the table.
+
+PRECISE SCOPE CORRECTION (verified, do not re-conflate): the bilateral AIR does NOT ingest
+an `EffectVmP3Proof` / the effect-vm 38-PI. Its constraints read the **bilateral-schedule
+PI contract** — `inner_pi::{TURN_HASH_BASE 25, EFFECTS_HASH_GLOBAL_BASE 29, ACTOR_NONCE 33,
+PREVIOUS_RECEIPT_HASH_BASE 34, OUTBOUND_TRANSFER_COUNT 38..44, OUTGOING_TRANSFER_ROOT_BASE
+45..72, IS_AGENT_CELL 73}` — a ~49-felt turn-identity+schedule layout that happens to live
+inside the v1 PI module. The ONLY v1 coupling is (a) `PI_BUFFER_WIDTH =
+inner_pi::ACTIVE_BASE_COUNT` (the 204 buffer width) and (b) those offset constants living in
+`effect_vm::pi`. The "38-PI" in the prior wall note conflated the effect-vm rotation PI with
+the bilateral inner-row PI — the bilateral inner row is the schedule contract, sized to its
+own count, NOT 38. The aggregation AIR is a DISTINCT constraint family (cumulative-sum +
+first/last-row boundary + cross-row schedule replay), so the Lean emission is a NEW module
+(`EffectVmEmitBilateralAgg.lean`), not a `rotateV3` lift of a per-effect descriptor.
+
+✅ **THE LEAN FOUNDATION LANDED (2026-06-13, this lane; axiom-clean, full `Dregg2` builds):**
+  * **The grammar unlock** — the IR-v2 base grammar could not express a cross-row
+    constraint (the `EmittedExpr` gate body reads only the current row), so the cumulative
+    `next[cum] = local[cum] + next[is_agent]` was inexpressible. Added a NEW two-row primitive
+    to `Dregg2/Circuit/DescriptorIR2.lean`: `WindowExpr` (`loc c`/`nxt c`/const/add/mul),
+    `WindowConstraint {body, onTransition}` + its `holdsAt`/`toJson`, and the
+    `VmConstraint2.windowGate` variant (+ its `holdsAt`/`toJson` arms). Zero regression — the
+    whole emit tree (`EffectVmEmitV2`/`RotationV3`/…) + the full `Dregg2` root rebuild clean.
+  * **The descriptor** — `Dregg2/Circuit/Emit/EffectVmEmitBilateralAgg.lean`:
+    `bilateralAggDescriptor` (the DECOUPLED `Sched.*` 49-felt schedule layout as its own region
+    + `Agg.*` 87-col main + `OuterPi.*` 23 fixed PI), CG-2 (turn-id PI bindings on both boundary
+    rows) + CG-3 (schedule replay equalities) + CG-4 (boolean/padding gates + the two
+    `windowGate` cumulative transitions) + the boundaries. Byte-pinned `#guard`s (width 87,
+    PI 23, 70 constraints, exactly 2 window gates, versioned wire).
+  * **The teeth** (axiom-clean): `agg_rejects_turn_mismatch` (a row disagreeing on turn-id is
+    UNSAT) + `agg_rejects_bad_agent_count` (the last-row `cum ≠ 1` boundary — two agent rows
+    REFUSED) — the cross-federation-double-spend rejections as theorems.
+  * REMAINING (the Rust lane, NOT yet done): decode `windowGate` in `descriptor_ir2.rs` (the
+    `when_transition` arm over the WindowExpr) + emit `bilateralAggDescriptor` to JSON
+    (EmitAllJson) + RESTRUCTURE the witnessed-receipt to carry the standalone 49-felt schedule
+    block (so the aggregation reads it independently of the rotated effect-vm 38-PI) + rewire
+    `aggregate_bilateral_prover.rs` to interpret the Lean descriptor instead of the hand AIR +
+    re-prove the `teasting/multi_cell_cross_fed_binding` gauntlet. THEN the bilateral path
+    grep-zeroes `effect_vm::pi`/`ACTIVE_BASE_COUNT`.
+
+EXECUTION ORDER tonight (highest-leverage, lowest-risk first; everything staged-green or
+WIP, NEVER committed by this lane — the main loop commits):
+  * C6-cleanup: the stale "v8 is LIVE / do NOT bump" comment at `cell/src/commitment.rs`
+    is FIXED (the live ctx is v9). ✅
+  * C4-recursion: widen `FinalizedTurn`/`DescriptorParticipant`/`JointCell` to carry a
+    rotated `Ir2BatchProof<DreggRecursionConfig>` + its `EffectVmDescriptor2`; mint leaves
+    via `prove_descriptor_leaf_rotated_with_config(.., ir2_leaf_wrap_config())`; run
+    `prove_chain_core`/`prove_joint_core` at the wrap config (the aggregation gate proves
+    this folds). The two consumers are SETUP/DEMO-invoked (lightclient), so this is
+    self-contained.
+  * FLOW-B flat leg: widen `FullTurnWitness` with the rotation witnesses [before/after
+    RotationWitness]; route `prove_full_turn`'s effect-vm leg through
+    `prove_effect_vm_rotated_ir2_with_caveat`; change `AttachedSubProof.effect_vm_proof`
+    wire type → `Ir2BatchProof`; thread from node `turn_proving` + the ~70 call-sites.
+  * THE BILATERAL Lean build (the long pole): `EffectVmEmitBilateralAgg.lean` emits the
+    aggregation AIR (the schedule-PI layout + CG-2..CG-5 + the cumulative/boundary
+    constraints) as a Lean-proved descriptor; the Rust side interprets it (decoupling the
+    bilateral AIR from `effect_vm::pi`); re-prove the gauntlet.
+  * C5 regen (registry→default, R=24 live, re-pin, reseed FFI) → C7 DELETE + grep-zero.
   4. C4 = reroute the ~70 v1 call-sites + `aggregate_bilateral_prover.rs` (204→38 PI slice) + un-gate.
   5. C5 = regen (EmitAllJson→v3Registry live, R=16 probe→R=24, re-pin artifacts, reseed FFI closure).
   6. C6 = VK epoch + succession record.

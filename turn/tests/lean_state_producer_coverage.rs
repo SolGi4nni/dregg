@@ -1121,7 +1121,7 @@ fn covered_disagreement_resolves_to_lean_not_rust() {
         "the Rust reference must REJECT a revoke of a non-delegated child (the buggy split)"
     );
     let host = ShadowHostCtx::diag();
-    let (lean_only, lean_committed) =
+    let (mut lean_only, lean_committed) =
         execute_via_lean(&turn, &pre, &host).expect("the verified producer must run on a covered turn");
     assert!(
         lean_committed,

@@ -489,6 +489,69 @@ fn trace_to_matrix(trace: &[[BabyBear; 4]]) -> RowMajorMatrix<P3BabyBear> {
     RowMajorMatrix::new(values, 4)
 }
 
+/// Read a finalized turn's chain roots from its ROTATED leg (PI 34/35), failing closed if no
+/// rotated leg is present.
+fn rotated_roots(t: &FinalizedTurn) -> Result<(BabyBear, BabyBear), TurnChainError> {
+    let leg = t
+        .participant
+        .rotated
+        .as_ref()
+        .ok_or_else(|| TurnChainError::RecursionFailed {
+            reason: "rotated chain trace: a finalized turn carries no rotated leg".to_string(),
+        })?;
+    Ok((leg.old_root(), leg.new_root()))
+}
+
+/// [`generate_chain_trace`] reading the ROTATED chain roots (PI 34/35) instead of the v1
+/// OLD/NEW_COMMIT (PI 0/4). The binding leaf the rotated fold wraps therefore commits to the
+/// rotated v9 commitments.
+fn generate_chain_trace_rotated(
+    turns: &[&FinalizedTurn],
+) -> Result<(Vec<[BabyBear; 4]>, Vec<BabyBear>, BabyBear), TurnChainError> {
+    if turns.len() < 2 {
+        return Err(TurnChainError::TooFewTurns { count: turns.len() });
+    }
+    for i in 1..turns.len() {
+        let (_, prev_new) = rotated_roots(turns[i - 1])?;
+        let (this_old, _) = rotated_roots(turns[i])?;
+        if prev_new != this_old {
+            return Err(TurnChainError::ChainBreak {
+                index: i,
+                expected_old_root: prev_new.0,
+                found_old_root: this_old.0,
+            });
+        }
+    }
+    let n = turns.len();
+    let padded_len = n.next_power_of_two().max(2);
+    let mut trace: Vec<[BabyBear; 4]> = Vec::with_capacity(padded_len);
+    let mut acc = BabyBear::ZERO;
+    for (i, t) in turns.iter().enumerate() {
+        let (old_root, new_root) = rotated_roots(t)?;
+        let idx = BabyBear::new(i as u32);
+        let acc_out = hash_4_to_1(&[acc, old_root, new_root, idx]);
+        trace.push([old_root, new_root, acc, acc_out]);
+        acc = acc_out;
+    }
+    let final_root = trace.last().unwrap()[1];
+    for i in n..padded_len {
+        let idx = BabyBear::new(i as u32);
+        let acc_out = hash_4_to_1(&[acc, final_root, final_root, idx]);
+        trace.push([final_root, final_root, acc, acc_out]);
+        acc = acc_out;
+    }
+    let genesis_root = trace[0][0];
+    let chain_digest = trace.last().unwrap()[3];
+    let pis = vec![
+        genesis_root,
+        final_root,
+        BabyBear::new(n as u32),
+        chain_digest,
+    ];
+    let digest = pis[3];
+    Ok((trace, pis, digest))
+}
+
 // ============================================================================
 // Per-turn leaf: the REAL descriptor AIR re-proven recursion-compatibly.
 // ============================================================================
@@ -870,6 +933,138 @@ fn prove_chain_core(
     })
 }
 
+// ============================================================================
+// C4 — THE ROTATED whole-chain fold (the v1-deletion path).
+// ============================================================================
+
+/// Fold K finalized turns into one whole-chain proof through the ROTATED leaf-wrap.
+///
+/// Identical in shape to [`prove_turn_chain_recursive`], but every per-turn leaf is the
+/// rotated multi-table `Ir2BatchProof` (carried on `participant.rotated`), minted in-circuit
+/// via [`prove_descriptor_leaf_rotated_with_config`] at [`ir2_leaf_wrap_config`] — NOT the v1
+/// uni-STARK `EffectVmDescriptorAir` wrap. The whole tree (binding leaf + aggregation) runs at
+/// the ONE wrap config, exactly as the aggregation gate
+/// (`rotation_batchstark_leaf_smoke::two_rotated_leaves_aggregate_at_wrap_config`) proves it
+/// folds. Every turn MUST carry a rotated leg (`participant.rotated == Some`); a missing leg
+/// fails closed.
+///
+/// The temporal binding is read from the ROTATED commitments (PI 34/35 — the rotated trace's
+/// before/after `state_commit` carriers), so the chain continuity tooth
+/// (`prev.new_root == next.old_root`) binds the rotated v9 commitment.
+pub fn prove_turn_chain_recursive_rotated(
+    turns: &[FinalizedTurn],
+) -> Result<WholeChainProof, TurnChainError> {
+    // Host admission: descriptor-verify every turn, selector-bound (the v1 leg gate; the
+    // rotated leaf re-proof is the soundness boundary, this is admission discipline).
+    let mut selectors = Vec::with_capacity(turns.len());
+    for (i, t) in turns.iter().enumerate() {
+        let s = verify_descriptor_participant(&t.participant)
+            .map_err(|reason| TurnChainError::TurnProofInvalid { index: i, reason })?;
+        selectors.push(s);
+    }
+    let refs: Vec<&FinalizedTurn> = turns.iter().collect();
+    prove_chain_core_rotated(&refs, &selectors)
+}
+
+/// The rotated fold core: like [`prove_chain_core`] but mints rotated native-batch leaves and
+/// runs the whole tree at [`ir2_leaf_wrap_config`].
+fn prove_chain_core_rotated(
+    turns: &[&FinalizedTurn],
+    selectors: &[usize],
+) -> Result<WholeChainProof, TurnChainError> {
+    if selectors.len() != turns.len() {
+        return Err(TurnChainError::RecursionFailed {
+            reason: format!(
+                "selector count {} != turn count {}",
+                selectors.len(),
+                turns.len()
+            ),
+        });
+    }
+    // Host-side continuity + the binding witness. The binding leaf reads the chain roots from
+    // `FinalizedTurn::old_root/new_root`, which the rotated path overrides to the rotated
+    // commitments (see `generate_chain_trace_rotated`).
+    let (_, chain_pis, chain_digest) = generate_chain_trace_rotated(turns)?;
+    let genesis_root = chain_pis[0];
+    let final_root = chain_pis[1];
+
+    // The ONE FRI engine the whole rotated tree runs at (inner proof + leaf-wrap + binding +
+    // aggregation), so the in-circuit FRI verifier params match every child's FRI engine.
+    let config = ir2_leaf_wrap_config();
+    let backend = create_recursion_backend();
+    let params = ProveNextLayerParams::default();
+
+    // Chain-binding leaf, wrapped to a batch at the wrap config.
+    let (binding_inner, binding_pis) = prove_chain_binding_leaf_rotated(turns)?;
+
+    let mut batch_leaves: Vec<RecursionOutput<DreggRecursionConfig>> =
+        Vec::with_capacity(turns.len() + 1);
+
+    // One rotated descriptor leaf per finalized turn.
+    for (i, t) in turns.iter().enumerate() {
+        let leg = t.participant.rotated.as_ref().ok_or_else(|| {
+            TurnChainError::TurnProofInvalid {
+                index: i,
+                reason: "rotated fold: finalized turn carries no rotated leg (participant.rotated \
+                         == None) — mint it with prove_descriptor_leaf_rotated"
+                    .to_string(),
+            }
+        })?;
+        let wrapped = prove_descriptor_leaf_rotated_with_config(
+            &leg.descriptor,
+            &leg.proof,
+            &leg.public_inputs,
+            &config,
+        )
+        .map_err(|reason| TurnChainError::TurnProofInvalid { index: i, reason })?;
+        batch_leaves.push(wrapped);
+    }
+
+    // The chain-binding leaf wrapped uni->batch at the wrap config.
+    {
+        let air = TurnChainBindingAir;
+        let p3_pis: Vec<P3BabyBear> = binding_pis.iter().map(|&v| to_p3(v)).collect();
+        let input = RecursionInput::UniStark {
+            proof: &binding_inner,
+            air: &air,
+            public_inputs: p3_pis,
+            preprocessed_commit: None,
+        };
+        let wrapped =
+            build_and_prove_next_layer::<DreggRecursionConfig, TurnChainBindingAir, _, D>(
+                &input, &config, &backend, &params,
+            )
+            .map_err(|e| TurnChainError::RecursionFailed {
+                reason: format!("recursive chain-binding leaf failed: {e:?}"),
+            })?;
+        batch_leaves.push(wrapped);
+    }
+
+    let root = aggregate_tree(batch_leaves, &config, &backend, &params)?;
+
+    Ok(WholeChainProof {
+        root,
+        binding_proof: binding_inner,
+        genesis_root,
+        final_root,
+        chain_digest,
+        num_turns: turns.len(),
+    })
+}
+
+/// Build the chain-binding leaf reading the ROTATED chain roots (PI 34/35), at the wrap config.
+fn prove_chain_binding_leaf_rotated(
+    turns: &[&FinalizedTurn],
+) -> Result<(RecursionCompatibleProof, Vec<BabyBear>), TurnChainError> {
+    let (trace, pis, _digest) = generate_chain_trace_rotated(turns)?;
+    let matrix = trace_to_matrix(&trace);
+    let air = TurnChainBindingAir;
+    let proof = prove_inner_for_air(&air, matrix, &pis);
+    verify_inner_for_air(&air, &proof, &pis)
+        .map_err(|reason| TurnChainError::RecursionFailed { reason })?;
+    Ok((proof, pis))
+}
+
 /// Fold a vector of batch-STARK proofs to ONE via 2-to-1 aggregation layers.
 /// (Same binary-tree fold as [`joint_turn_recursive`](crate::joint_turn_recursive).)
 fn aggregate_tree(
@@ -1043,10 +1238,7 @@ mod tests {
             prove_vm_descriptor(&desc, &trace, dpis).expect("descriptor proves honest transfer");
         (
             FinalizedTurn::new(
-                DescriptorParticipant {
-                    proof,
-                    public_inputs,
-                },
+                DescriptorParticipant::v1(proof, public_inputs),
                 trace,
             ),
             old_root,
@@ -1392,10 +1584,7 @@ mod tests {
         stub_pis[pi::NEW_COMMIT] = claimed_new;
 
         let stub_turn = FinalizedTurn::new(
-            DescriptorParticipant {
-                proof: donor.participant.proof,
-                public_inputs: stub_pis,
-            },
+            DescriptorParticipant::v1(donor.participant.proof, stub_pis),
             stub_trace,
         );
         let turns = [t0, stub_turn];

@@ -51,10 +51,7 @@ fn make_turn(balance: u64, nonce: u32, amount: u64) -> (FinalizedTurn, BabyBear,
         prove_vm_descriptor(&desc, &trace, dpis).expect("descriptor proves honest transfer");
     (
         FinalizedTurn::new(
-            DescriptorParticipant {
-                proof,
-                public_inputs,
-            },
+            DescriptorParticipant::v1(proof, public_inputs),
             trace,
         ),
         old_root,

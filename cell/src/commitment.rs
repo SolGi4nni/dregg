@@ -622,17 +622,20 @@ pub fn canonical_to_babybear_pi(canonical: &[u8; 32]) -> [u32; 8] {
 }
 
 // ============================================================================
-// v9 — THE ROTATED canonical commitment (G3, staged-additive).
+// v9 — THE ROTATED canonical commitment (G3).
 // ============================================================================
 //
-// The v8 BLAKE3 absorption above (`CANONICAL_COMMITMENT_CONTEXT = "…v8"`) is the LIVE
-// default and stays byte-identical. v9 is the ADDITIVE rotated commitment that produces the
-// circuit's Poseidon2-chained `wireCommit` (rotated absorption order) — the cell-side
-// computation of the EffectVM rotated trace's row-0 `STATE_COMMIT` carrier. It matches
-// `dregg_turn::rotation_witness::wire_commit` / the Lean `EffectVmEmitRotationR.wireCommitR`
-// spec exactly (the differential `live_cell_v9_equals_circuit_state_commit` in
-// `circuit/tests/effect_vm_rotation_flip.rs` guards the byte-identity), closing the deferred
-// cell≡circuit binding. Do NOT bump the live context to v9 (that is the flag-day, G2).
+// `CANONICAL_COMMITMENT_CONTEXT` is LIVE at v9 (the cap-crown flag-day bumped it; see the
+// const above). The two commitment shapes:
+//   * the BLAKE3 whole-cell absorption (`compute_canonical_state_commitment`, ctx v9) — the
+//     canonical 32-byte cell commitment the kernel/ledger uses;
+//   * the Poseidon2-chained `wireCommit` (`compute_canonical_state_commitment_v9_felt`,
+//     rotated absorption order) — the cell-side reconstruction of the EffectVM rotated trace's
+//     row-0 `STATE_COMMIT` carrier, byte-identical to `dregg_turn::rotation_witness::wire_commit`
+//     / the Lean `EffectVmEmitRotationR.wireCommitR` spec (guarded by the differential
+//     `live_cell_v9_equals_circuit_state_commit` in `circuit/tests/effect_vm_rotation_flip.rs`).
+// The cell≡circuit binding is closed: the cell-side felt commitment and the circuit-side
+// STATE_COMMIT converge on ONE rotated shape at v9.
 
 /// The CONFIRMED rotated register count (ember 2026-06-12, `ROTATION-CUTOVER.md` §2b).
 pub const V9_NUM_REGISTERS: usize = 24;

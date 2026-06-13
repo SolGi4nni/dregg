@@ -1,19 +1,22 @@
 //! lean_apply.rs — THE SWAP state-producer: reconstitute a `cell::Ledger` from the verified
 //! Lean executor's produced `WireState`.
 //!
-//! # The authority inversion this closes
+//! # The authority inversion (Stage 0 / CRITICAL-1)
 //!
-//! Today the node runs the verified Lean executor (`dregg_exec_full_forest_auth` /
-//! `execFullForestG`, proven sorry-free) only as a passive veto-only SHADOW: the FFI produces a
-//! full post-state, but `decode_shadow_verdict` keeps only `{committed, loglen, status}` and the
-//! node commits the post-state the LEGACY Rust `TurnExecutor` produced. The verified executor is
-//! never the state PRODUCER.
+//! On the COVERED set the verified Lean executor (`dregg_exec_full_forest_auth` / `execFullForestG`,
+//! proven sorry-free) is the AUTHORITATIVE state producer AND verdict: `produce_via_lean` installs
+//! its post-state and commit decision UNCONDITIONALLY, and demotes the legacy Rust `TurnExecutor` to
+//! a checked REFERENCE that is verified AGAINST. A Lean↔Rust disagreement on a covered turn is a
+//! surfaced RUST BUG (Rust is the artifact dregg2 replaces *because it is buggy*), NEVER a fallback
+//! that lets the Rust path win. This is a refinement, not a differential: the verified producer's
+//! output is what gets committed, not gated behind agreement with the thing it replaces.
 //!
-//! The missing mechanism — which `dregg-lean-ffi/src/marshal.rs` names as "the biggest gap" — is a
-//! `WireState → cell::Ledger` extractor. This module is that extractor. `dregg_lean_ffi`'s
-//! `decode_shadow_state` now keeps the post-state `WireState`; here we map it back onto real
-//! `CellId`s and reconstitute the authoritative ledger, so the verified executor's output can BE
-//! the committed state.
+//! The enabling mechanism — which `dregg-lean-ffi/src/marshal.rs` named as "the biggest gap" — is a
+//! `WireState → cell::Ledger` extractor. This module is that extractor: `dregg_lean_ffi`'s
+//! `decode_shadow_state` keeps the post-state `WireState`, and here we map it back onto real
+//! `CellId`s and reconstitute the authoritative ledger, so the verified executor's output IS the
+//! committed state. The receipt the commit path chains is re-stamped to attest the installed (Lean)
+//! root, so the receipt and the ledger agree on the authoritative post-state.
 //!
 //! # The id seam
 //!
@@ -1151,12 +1154,17 @@ pub fn produce_via_lean(
     let lean_root = lean_ledger.root();
 
     // PRE-STATE SNAPSHOT: capture the pre-state (and its root) BEFORE the Rust reference mutates
-    // `ledger`, so the authority-inversion's REJECT branch can restore EXACTLY the pre-state a
-    // verified rejection mandates (a verified reject = no state edit), and the synthesized
-    // authoritative receipt can pin the correct `pre_state_hash`. Mirrors the strict-veto snapshot
-    // in `executor::execute_with_shadow` — the cost is one clone on the covered path.
+    // `ledger`. The verdict is already known (`lean_committed`), so we only pay the clone when the
+    // authoritative verdict is REJECT — the branch that must restore EXACTLY the pre-state a verified
+    // rejection mandates (a verified reject = no state edit). `pre_root` (cheap) is always taken for
+    // the synthesized-receipt `pre_state_hash`. Mirrors the strict-veto snapshot in
+    // `executor::execute_with_shadow`, but lazily — the agreeing commit path pays no clone.
     let pre_root = ledger.root();
-    let pre_snapshot = ledger.clone();
+    let pre_snapshot = if lean_committed {
+        None
+    } else {
+        Some(ledger.clone())
+    };
 
     // REFERENCE: run the Rust executor in place — it mutates `ledger` to the Rust post-state and
     // yields the `TurnResult` (receipt/events) that is the commit-path substrate. This is the
@@ -1188,8 +1196,9 @@ pub fn produce_via_lean(
     } else {
         // The authoritative verdict is REJECT: a verified rejection is NO state edit. The Rust
         // reference already mutated `ledger` to its (possibly committed) post-state; restore the
-        // exact pre-state the verified rejection mandates.
-        *ledger = pre_snapshot;
+        // exact pre-state the verified rejection mandates. `pre_snapshot` is `Some` here (taken
+        // exactly on the `!lean_committed` path above).
+        *ledger = pre_snapshot.expect("pre-state snapshot is taken on the verified-reject path");
         let result = match rust_result {
             // Rust agreed (also rejected): carry its rejection reason unchanged.
             r @ TurnResult::Rejected { .. } => r,
