@@ -24,7 +24,8 @@
     <p class="hero__note">
       Open source (AGPL-3.0-or-later) ·
       <a href="https://github.com/emberian/dregg">github.com/emberian/dregg</a> ·
-      a live devnet runs the same node you can build from the repo.
+      a live devnet runs the same node you can build from the repo — and the node's
+      state producer <strong>is the proved Lean function</strong>, not a model of it.
     </p>
   </div>
 </header>
@@ -53,28 +54,42 @@
       <div class="quickstart__step">
         <span class="quickstart__n">2</span>
         <div>
-          <p><strong>Touch a turn.</strong> The <a href="/playground/">playground</a> runs the
-          real executor in your browser as WebAssembly — no install, no server. Stage a
-          transfer, run it, and then try to break the rules: overdraw a balance, replay a
-          spent authorization. Watch the substrate reject you. The rejection is the product.</p>
+          <p><strong>Touch the live node — no install, just <code>curl</code>.</strong> The
+          public devnet is the same node the repo builds. Ask it what it is, then faucet
+          yourself a cell and read it back:</p>
+          <pre><code class="language-bash">curl -s https://devnet.dregg.fg-goose.online/status
+# → healthy, solo federation, state_producer:"lean", full_turn_proving:true
+
+CELL=$(python3 -c "import secrets;print(secrets.token_hex(32))")
+curl -s -X POST https://devnet.dregg.fg-goose.online/api/faucet \
+  -H 'content-type: application/json' -d "{\"recipient\":\"$CELL\",\"amount\":1000}"
+curl -s https://devnet.dregg.fg-goose.online/api/cell/$CELL</code></pre>
+          <p>The <code>status</code> line is the honest contract: it names that the state
+          producer is <em>Lean</em> — the proved kernel itself, not a re-implementation.</p>
         </div>
       </div>
       <div class="quickstart__step">
         <span class="quickstart__n">3</span>
         <div>
-          <p><strong>Watch it in the explorer.</strong> The <a href="/explorer/">explorer</a>
-          shows a live federation: cells, turns, receipts. Open any cell and scrub its history
-          backward — time travel is just reading receipts, because the receipts <em>are</em>
-          the history.</p>
+          <p><strong>Touch a turn in your browser.</strong> The
+          <a href="/playground/">playground</a> runs the real executor as WebAssembly — no
+          server. Stage a transfer, run it, and then try to break the rules: overdraw a
+          balance, replay a spent authorization. Watch the substrate reject you. The rejection
+          is the product. Then open the <a href="/explorer/">explorer</a> on the live
+          federation and scrub any cell's history backward — time travel is just reading
+          receipts, because the receipts <em>are</em> the history.</p>
         </div>
       </div>
       <div class="quickstart__step">
         <span class="quickstart__n">4</span>
         <div>
-          <p><strong>Learn what the proof badge means.</strong> Objects in the explorer carry
-          a verification status. <a href="/verify.html">The Verify page</a> explains exactly
-          what is proven, what it rests on, and how to check the proofs yourself — the
-          guarantees are theorems in open Lean you can build from the repo.</p>
+          <p><strong>Decide whether to trust it.</strong> Objects in the explorer carry a
+          verification status, never hand-set. <a href="/verify.html">The Verify page</a>
+          states exactly what is proven, the eight-carrier assumption floor it rests on, and
+          the honest deployment seams — then shows you how to check the proofs yourself by
+          building the Lean development from the repo. The longer
+          <a href="https://github.com/emberian/dregg/blob/main/docs/EVALUATION.md">evaluation
+          guide</a> is the "should I trust it, and why" companion.</p>
         </div>
       </div>
     </div>
@@ -131,6 +146,50 @@
   </div>
 </section>
 
+<!-- ==================== WHY NOT A TOY ==================== -->
+<section class="section wrap">
+  <span class="section__label">Why this is not a toy</span>
+  <h2 class="section__title">Real organs, on one path, over a verified executor</h2>
+  <p class="section__intro">
+    The same small machine carries real, composing systems. Three of them — a line of
+    credit, an encrypted group, an asynchronous handoff — are the
+    <a href="https://github.com/emberian/dregg/blob/main/docs/ORGANS.md">organs</a>: each is
+    an SDK noun that rides the <em>same</em> <code>.turn()</code> path through the verified
+    executor, with no new executor entry. Each is an executable test you can read.
+  </p>
+  <div class="flow">
+    <div class="flow__step">
+      <span class="flow__n">Trustline</span>
+      <p class="flow__name">A line of credit, as an attenuated capability</p>
+      <p class="flow__desc">"Issuer A extends holder B a line of N" is <em>granted ⊆ held</em> made numeric. The cell's installed program enforces <code>drawn ≤ ceiling</code> for life — the executor itself refuses an over-line draw. <code>sdk/src/trustline.rs</code> is the story tooth-by-tooth.</p>
+    </div>
+    <div class="flow__step">
+      <span class="flow__n">Channel</span>
+      <p class="flow__name">An encrypted group whose membership is physics</p>
+      <p class="flow__desc">A and B form a group whose membership root, key epoch, and epoch key all live on-cell. The keystone: a <code>remove(member)</code> darkens <em>both</em> the ciphertext plane and the capability plane in <strong>one</strong> atomic turn. <code>sdk/src/channels.rs</code>.</p>
+    </div>
+    <div class="flow__step">
+      <span class="flow__n">Mailbox</span>
+      <p class="flow__name">An asynchronous handoff between two nodes</p>
+      <p class="flow__desc">A sends B a <em>sealed</em> turn-intent while B is offline; B's crank drains the hosted inbox over a real HTTP route, the executor-anchored sender gate admits A, and the intent executes as a turn on B's cell — with a checkable custody receipt. An ungranted sender is refused. <code>node/src/mailbox_crank_e2e.rs</code>.</p>
+    </div>
+  </div>
+  <div class="features" style="margin-top: var(--s5);">
+    <div class="feature">
+      <h3>The executor <em>is</em> a memory program</h3>
+      <p style="color: var(--fg-dim);">Universal memory: every kernel field and the receipt log project onto one domain-tagged address space, and the executor's post-state <em>equals</em> the fold of the verb's emitted memory trace over the pre-state. So "the receipt binds the whole post-state" is a constructive fact — every field has a universal address; nothing is left off the map. This is the integrity guarantee's load-bearing leg.</p>
+    </div>
+    <div class="feature">
+      <h3>Circuits are emitted from Lean</h3>
+      <p style="color: var(--fg-dim);">Constraint systems are generated from proved Lean modules as byte-pinned descriptor artifacts; the Rust prover only <em>interprets</em> them. Rust authors zero constraints. One Lean term has two provably-agreeing readings — the executor that runs and the circuit that proves — so circuit and executor cannot disagree about what a turn did.</p>
+    </div>
+    <div class="feature">
+      <h3>Polyglot SDKs, one verified core</h3>
+      <p style="color: var(--fg-dim);">The Python SDK <em>embeds the real Lean kernel</em> over the FFI — not a port. A TypeScript organ surface gives the same nouns to the browser. A userspace-verify lint tool checks SDK-produced subgraphs against the descriptors, and DreggDL is a checkable deployment spec. Every surface narrows to the same proved executor.</p>
+    </div>
+  </div>
+</section>
+
 <!-- ==================== GUARANTEES ==================== -->
 <section class="section wrap section--feature">
   <span class="section__label">The assurance case</span>
@@ -138,15 +197,22 @@
   <p class="section__intro">
     These cards are not marketing copy: they are embedded at build time from a catalog
     generated out of <code>Dregg2/AssuranceCase.lean</code>, where each guarantee names an
-    apex theorem machine-pinned to the Lean kernel's three axioms. This page cannot say more
-    than the proofs do — the build fails if it tries.
+    apex theorem machine-pinned to the Lean kernel's three axioms. Five guarantees to a light
+    client — <strong>Authority, Conservation, Integrity, Freshness, Unfoolability</strong> —
+    plus <strong>the running entry</strong>: Authority, Conservation and Integrity hold over
+    <em>what the node actually runs</em>, because the running system calls the proved
+    function. This page cannot say more than the proofs do — the build fails if it tries.
   </p>
   <catalog view="guarantees">
   <p class="guarantee-foot">
-    The full delimitation — the assumption floor, the named Rust components inside the trust
-    base, and the present limitations, stated plainly — is
-    <a href="/verify.html">the Verify page</a> and
-    <a href="/learn/concepts/trust-boundary.html">rung 7 of the protocol docs</a>.
+    The guarantees are unconditional in the Lean-kernel sense <em>modulo</em> a small,
+    explicit set of cryptographic assumptions that enter as typed hypotheses, never as
+    axioms — and the present deployment seams (a single-node devnet; per-turn proving staged,
+    not yet auto-attached; the verified producer covering a named subset of effects) are
+    stated, not hidden. The full delimitation is <a href="/verify.html">the Verify page</a>,
+    <a href="/learn/concepts/trust-boundary.html">rung 7 of the protocol docs</a>, and the
+    <a href="https://github.com/emberian/dregg/blob/main/docs/ASSURANCE.md">assurance
+    specification</a>.
   </p>
 </section>
 
@@ -174,13 +240,21 @@
 <section class="section wrap" id="quickstart">
   <span class="section__label">Run it yourself</span>
   <h2 class="section__title">From clone to a verified turn</h2>
+  <p class="section__intro">
+    No build needed to look — the <code>curl</code> path above drives the live devnet. To run
+    your own node, drive real apps, and check the proofs, clone and build. The
+    <a href="https://github.com/emberian/dregg/blob/main/QUICKSTART.md">QUICKSTART</a> is the
+    fifteen-minute hands-on tour; <code>scripts/bootstrap.sh</code> sets up the toolchain.
+  </p>
   <div class="quickstart">
     <div class="quickstart__steps">
       <div class="quickstart__step">
         <span class="quickstart__n">1</span>
         <div>
-          <p>Build and run a node:</p>
+          <p>Build and run a node (the seeded apps want a freshly-initialized node — the
+          shared devnet's data dir predates genesis seeding):</p>
           <pre><code class="language-bash">git clone https://github.com/emberian/dregg &amp;&amp; cd dregg
+./scripts/bootstrap.sh   # toolchain: rust, lean/elan
 cargo build
 cargo run -p dregg-node -- run</code></pre>
         </div>

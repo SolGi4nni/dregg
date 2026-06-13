@@ -47,6 +47,33 @@
     <catalog view="guarantees">
   </section>
 
+  <section class="section section--compact" id="running-entry">
+    <span class="section__label">The running entry</span>
+    <h2 class="section__title">The proofs are about the node, not a model of it</h2>
+    <p style="color: var(--fg-dim); margin-bottom: var(--s4);">
+      The strongest thing this page can say: the guarantees above are not about a paper
+      abstraction. The node's state producer <em>is</em> the verified Lean function
+      <code>execFullForestG</code> — credential- and caveat-gated, proven sound — compiled and
+      linked into the node over a C ABI (<code>dregg-lean-ffi/</code>). It is not a model of
+      what the node does; it is the function the node calls. So Authority, Conservation and
+      Integrity hold over <em>execution itself</em>. One theorem, <code>running_entry_sound</code>,
+      proves over that exact function: conservation with no zero-net side condition, no
+      amplification on every delegation edge, and per-node credential + caveat attestation —
+      with fail-closed teeth (an unauthorized turn does not execute). A running node will tell
+      you the same fact about itself:
+    </p>
+    <pre><code class="language-bash">curl -s https://devnet.dregg.fg-goose.online/status
+# → "state_producer":"lean", "lean_producer":true, "full_turn_proving":true</code></pre>
+    <p style="color: var(--fg-dim); margin-top: var(--s4);">
+      And the integrity guarantee's load-bearing leg is constructive: the executor <em>is a
+      memory program</em>. Every kernel field and the receipt log project onto one
+      domain-tagged address space, and the executor's post-state <em>equals</em> the fold of
+      the verb's emitted memory trace over the pre-state. "The receipt binds the whole
+      post-state" is therefore a fact with a witness, not an assertion — every field has a
+      universal address, and nothing is left off the map.
+    </p>
+  </section>
+
   <section class="section section--compact" id="floor">
     <span class="section__label">The assumption floor</span>
     <h2 class="section__title">What it rests on</h2>
@@ -61,6 +88,57 @@
       the present limitations, stated plainly — is
       <a href="/learn/concepts/trust-boundary.html">rung 7 · the trust boundary</a>.
     </p>
+  </section>
+
+  <section class="section section--compact" id="discipline">
+    <span class="section__label">The proof discipline</span>
+    <h2 class="section__title">Why the badges stay honest</h2>
+    <p style="color: var(--fg-dim); margin-bottom: var(--s4);">
+      Assurance here is not a one-time audit; it is a discipline that runs on every change.
+      <code>lake build</code> enforces it. Three layered mechanisms:
+    </p>
+    <div class="link-cards">
+      <a class="link-card" href="https://github.com/emberian/dregg/blob/main/metatheory/Dregg2/AssuranceCase.lean">
+        <span class="link-card__title">Kernel hygiene · <code>#assert_axioms</code></span>
+        <span class="link-card__desc">Every advertised keystone is pinned to the kernel triple plus the named crypto carriers (which enter as hypotheses, not axioms). A keystone that silently acquires a <code>sorry</code> or an <code>axiom</code> fails its pin — the build goes red.</span>
+      </a>
+      <a class="link-card" href="https://github.com/emberian/dregg/blob/main/docs/ASSURANCE.md">
+        <span class="link-card__title">Non-vacuity, both polarities</span>
+        <span class="link-card__desc">A guarantee proved over a <code>:= True</code> predicate is broken even if it type-checks. So every load-bearing predicate is shown to <em>discriminate</em>: teeth theorems witness the false side, and concrete checks exercise both the satisfied and the refused case. A predicate that cannot be made false is not a guarantee.</span>
+      </a>
+      <a class="link-card" href="https://github.com/emberian/dregg/blob/main/docs/ASSURANCE.md">
+        <span class="link-card__title">The Convergence gauntlet</span>
+        <span class="link-card__desc">Whole-tree rounds catch what per-module verification structurally cannot — feature unification, cross-crate match-arm coverage, the corpus-wide zero-<code>sorry</code> grep, and the Rust↔Lean differential harnesses that pin the deployed code against the model.</span>
+      </a>
+    </div>
+  </section>
+
+  <section class="section section--compact" id="seams">
+    <span class="section__label">The honest seams</span>
+    <h2 class="section__title">What is staged, not yet cut over</h2>
+    <p style="color: var(--fg-dim); margin-bottom: var(--s4);">
+      The proofs are strong and load-bearing; the <em>deployment</em> is a research-grade
+      devnet with named gaps. A seam the case does not name is a seam the case launders — so
+      these are stated, not hidden. They calibrate, not retract: the guarantees hold over
+      whatever state the executor actually runs on.
+    </p>
+    <div class="flow">
+      <div class="flow__step">
+        <span class="flow__n">Single-node devnet</span>
+        <p class="flow__name">Solo federation</p>
+        <p class="flow__desc">The public devnet runs one node, no peers. Consensus is live in the single-machine sense; the Byzantine-fault-tolerant multi-node path, while modeled and proved, is not what the public devnet exercises. Many of dregg's strongest properties are single-machine properties that become topology-bounded under real distribution.</p>
+      </div>
+      <div class="flow__step">
+        <span class="flow__n">Per-turn proving</span>
+        <p class="flow__name">Staged, not auto-attached</p>
+        <p class="flow__desc">On the shared devnet each turn's witness lands immediately, but automatic per-turn STARK attachment is the gap. The proving machinery is real — you can produce and self-verify an EffectVM STARK in the <a href="/playground/#proofs">playground</a> — the devnet's automatic attachment is what is staged.</p>
+      </div>
+      <div class="flow__step">
+        <span class="flow__n">Producer coverage</span>
+        <p class="flow__name">A named subset, not all effects</p>
+        <p class="flow__desc">The verified Lean producer is authoritative for a named set of effect shapes (the node reports <code>producer_covered_effects</code> live). Shapes outside it fall back to the unverified Rust executor — <em>logged, never silent</em> — with the Lean verdict as a differential. The graduation lane burns the fallback set down.</p>
+      </div>
+    </div>
   </section>
 
   <section class="section section--compact" id="check">
