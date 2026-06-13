@@ -184,6 +184,13 @@ export function initTurnWorkbench(wasmExports) {
     fetch(SUBMIT_SCHEMA_URL).then((r) => (r.ok ? r.json() : null)),
   ]).then(([ont]) => { ontology = ont; render(section); }).catch(() => render(section));
 
+  // Boot the local runtime up front so the alice/bob agents exist BEFORE the
+  // user stages anything — otherwise the first staged `transfer`/`grant` has an
+  // empty `to` (no agents to default to) and the executor correctly rejects it
+  // with a "got 0 hex chars" error on the very first click. ensureRuntime is
+  // idempotent; this just primes it.
+  ensureRuntime();
+
   render(section);
 }
 

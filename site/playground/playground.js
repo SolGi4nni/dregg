@@ -21,6 +21,7 @@ import { initEffectVm } from './sections/effect-vm.js';
 import { initBlocklaceSim } from './sections/blocklace-sim.js';
 import { initCircuitPlayground } from './sections/circuit-playground.js';
 import { initTurnWorkbench } from './sections/turn-workbench.js';
+import { initOrgans } from './sections/organs.js';
 
 // New-world sections
 import { initThemeToggle } from './sections/theme-toggle.js';
@@ -138,6 +139,14 @@ const PLAYGROUND_SCENARIOS = [
     starbridgeHref: '/starbridge/?at=dregg://federation/0',
     starbridgeLabel: 'Open federation in Starbridge',
     sections: ['sovereign', 'bearer', 'factories', 'private-transfers', 'composition'],
+  },
+  {
+    id: 'organs',
+    label: 'Organs',
+    lede: 'The v0.3.0 SDK nouns (docs/ORGANS.md): bilateral credit, group key-epochs, hosted inbox, and the light-client read — driven against a real node through the actual @dregg/sdk client.',
+    starbridgeHref: '/starbridge/?at=dregg://turn/demo',
+    starbridgeLabel: 'Open a turn in Starbridge',
+    sections: ['organs'],
   },
   {
     id: 'apps',
@@ -388,6 +397,7 @@ async function main() {
   initBlocklaceSim(wasmExports);
   initCircuitPlayground(wasmExports);
   initTurnWorkbench(wasmExports);
+  initOrgans();
   initThemeToggle();
   initBlindedQueues(wasmExports);
   initProgrammableQueues(wasmExports);

@@ -10,8 +10,9 @@ export function initOverview() {
       <p>
         Dragon's Egg is a distributed object-capability runtime that combines macaroon-style tokens,
         STARK proofs, Merkle commitments, and Datalog policy evaluation into a single coherent
-        authorization system. Everything you see here runs entirely in your browser via WebAssembly
-        — no server, no backend, no trust assumptions.
+        authorization system. The core primitives below run entirely in your browser via WebAssembly
+        — no server, no backend, no trust assumptions. The v0.3.0 <em>organs</em> (trustline, channels)
+        are node-backed services; the Organs tab drives them against a real node through the actual SDK.
       </p>
       <span class="next-hint" data-next="tokens">Start the tour: mint your first token &#8594;</span>
     </div>
@@ -79,6 +80,10 @@ export function initOverview() {
       <div class="overview-cap" data-nav="capabilities">
         <div class="overview-cap__title">Capabilities</div>
         <div class="overview-cap__desc">Delegation chains with cryptographic attenuation. Grant, narrow, revoke — monotonically reducing scope.</div>
+      </div>
+      <div class="overview-cap" data-nav="organs">
+        <div class="overview-cap__title">Organs <span style="font-size:0.7em;color:var(--accent-bright);">v0.3.0</span></div>
+        <div class="overview-cap__desc">The SDK nouns: a bilateral trustline, a group key-epoch channel, a hosted inbox, a light-client read. Driven against a real node through the actual @dregg/sdk client.</div>
       </div>
       <div class="overview-cap" data-nav="federation">
         <div class="overview-cap__title">Federation</div>

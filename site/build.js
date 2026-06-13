@@ -620,6 +620,17 @@ function build() {
     if (fs.existsSync(jsSrc)) {
       fs.copyFileSync(jsSrc, path.join(sdkDstDir, 'index.js'));
     }
+    // The browser-safe, fetch-only entry (BrowserNodeClient + organ clients).
+    // The playground's Organs section imports this; it is self-contained
+    // (built with tsup --no-splitting --platform browser) so no node builtins
+    // or shared chunks leak into the browser ESM graph.
+    const browserSrc = path.join(sdkSrcDir, 'browser.mjs');
+    if (fs.existsSync(browserSrc)) {
+      fs.copyFileSync(browserSrc, path.join(sdkDstDir, 'browser.mjs'));
+      console.log('  Copy: pkg/@dregg/sdk/browser.mjs (fetch-only organ surface for the playground)');
+    } else {
+      console.log('  Warning: sdk-ts/dist/browser.mjs missing — the playground Organs section will show "SDK bundle not served" (run `cd sdk-ts && npm run build` then rebuild browser.mjs with --no-splitting --platform browser).');
+    }
   } else {
     console.log('  Skip: @dregg/sdk (no dist/ yet; run `cd sdk-ts && npm run build`)');
   }

@@ -1,25 +1,31 @@
 import {
+  ChannelsClient,
+  TrustlineClient
+} from "./chunk-NXSLBHQJ.mjs";
+import {
   Blake3Hasher,
   actionHash,
   actionSigningMessage,
   blake3,
   blake3DeriveKey,
-  bytesEqual,
   deriveCellId,
   ed25519PublicKey,
   ed25519Sign,
   effectHash,
   encodeSignedTurn,
-  exactBytes,
   fieldFromU64,
+  symbol,
+  turnHash,
+  unsignedActionNamed
+} from "./chunk-JGRCUNFP.mjs";
+import {
+  bytesEqual,
+  exactBytes,
   hexDecode,
   hexDecodeExact,
   hexEncode,
-  symbol,
-  turnHash,
-  u64le,
-  unsignedActionNamed
-} from "./chunk-M2JOPFUQ.mjs";
+  u64le
+} from "./chunk-O4UULVUH.mjs";
 import {
   __export
 } from "./chunk-7P6ASYW6.mjs";
@@ -805,127 +811,6 @@ var AuthorizedTurn = class {
       }
     }
     throw lastError;
-  }
-};
-
-// src/trustline.ts
-function asHex(cell) {
-  return typeof cell === "string" ? cell : hexEncode(cell);
-}
-var TrustlineClient = class {
-  constructor(node) {
-    this.node = node;
-  }
-  /**
-   * Open a directional line `operator → holder` of `line`, escrowed in full
-   * (fullReserve). The node births the per-line cell, funds it, grants the
-   * holder + operator their capabilities, and opens it — four turns.
-   *
-   * `salt` disambiguates multiple lines to the same holder.
-   */
-  open(holder, line, salt) {
-    const body = { holder: asHex(holder), line: Number(line) };
-    if (salt !== void 0) body.salt = salt;
-    return this.node.postJson("/trustline/open", body);
-  }
-  /**
-   * Draw `amount` against the line (debits the shared counter). Supply a
-   * `digest` (hex) for client-side replay protection across retries; the
-   * node derives one otherwise. Draws are one-shot per digest.
-   */
-  draw(trustline, amount, digest) {
-    const body = { trustline: asHex(trustline), amount: Number(amount) };
-    if (digest !== void 0) body.digest = digest;
-    return this.node.postJson("/trustline/draw", body);
-  }
-  /** Repay `amount`, restoring the line (never resurrects a burned digest). */
-  repay(trustline, amount) {
-    return this.node.postJson("/trustline/repay", {
-      trustline: asHex(trustline),
-      amount: Number(amount)
-    });
-  }
-  /** Settle outstanding draws as ledger moves to the holders (epoch sweep). */
-  settle(trustline) {
-    return this.node.postJson("/trustline/settle", { trustline: asHex(trustline) });
-  }
-  /** Close the line: settle outstanding to the holder, residual to the issuer. */
-  close(trustline) {
-    return this.node.postJson("/trustline/close", { trustline: asHex(trustline) });
-  }
-  /** Live position: line / drawn / remaining / escrow / coordinator state. */
-  status(trustline) {
-    return this.node.getJson(`/trustline/status/${asHex(trustline)}`);
-  }
-};
-
-// src/channels.ts
-function asHex2(cell) {
-  return typeof cell === "string" ? cell : hexEncode(cell);
-}
-function memberJson(m) {
-  return { cell: asHex2(m.cell), seal_pk: typeof m.sealPk === "string" ? m.sealPk : hexEncode(m.sealPk) };
-}
-var ChannelsClient = class {
-  constructor(node) {
-    this.node = node;
-  }
-  /**
-   * Birth the group at epoch 1 with `members` as founders. `tag` (u64) names
-   * the group among the operator's groups. Returns the first fan-out.
-   */
-  create(tag, members) {
-    return this.node.postJson("/channels/create", {
-      tag: Number(tag),
-      members: members.map(memberJson)
-    });
-  }
-  /** Add a member — one unified epoch step; returns the fresh fan-out. */
-  join(channel, member) {
-    return this.node.postJson("/channels/join", {
-      channel: asHex2(channel),
-      member: memberJson(member)
-    });
-  }
-  /**
-   * Remove a member — one unified epoch step that darkens BOTH their
-   * forward-read ability and their group-held capabilities. The removed
-   * member is simply absent from the returned fan-out.
-   */
-  remove(channel, member) {
-    return this.node.postJson("/channels/remove", {
-      channel: asHex2(channel),
-      member: asHex2(member)
-    });
-  }
-  /** Advance the epoch without a membership change (a fresh key fan-out). */
-  rekey(channel) {
-    return this.node.postJson("/channels/rekey", { channel: asHex2(channel) });
-  }
-  /**
-   * Post a message body. Encrypt client-side under the CURRENT epoch key,
-   * then POST only `nonce` + `ciphertext` (hex). The body never touches the
-   * chain — only this transport relay does.
-   */
-  post(channel, epoch, nonce, ciphertext) {
-    return this.node.postJson("/channels/post", {
-      channel: asHex2(channel),
-      epoch: Number(epoch),
-      nonce: typeof nonce === "string" ? nonce : hexEncode(nonce),
-      ciphertext: typeof ciphertext === "string" ? ciphertext : hexEncode(ciphertext)
-    });
-  }
-  /** Live group state: epoch, roster commitment, the `epochs_unified` tooth. */
-  status(channel) {
-    return this.node.getJson(`/channels/status/${asHex2(channel)}`);
-  }
-  /**
-   * Subscribe to the group's message stream (`GET /channels/messages/{cell}`,
-   * SSE) as an async iterable of ciphertext envelopes. Open each body with
-   * the epoch key you hold from the fan-out.
-   */
-  async *messages(channel) {
-    yield* this.node.sseStream(`/channels/messages/${asHex2(channel)}`);
   }
 };
 

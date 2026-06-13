@@ -22,6 +22,11 @@
       "import": "./dist/wasm.mjs",
       "require": "./dist/wasm.js"
     },
+    "./browser": {
+      "types": "./dist/browser.d.ts",
+      "import": "./dist/browser.mjs",
+      "require": "./dist/browser.js"
+    },
     "./package.json": "./package.json"
   },
   "files": [
@@ -30,7 +35,8 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsup src/index.ts src/raw.ts src/wasm.ts --format cjs,esm --dts --clean",
+    "build": "tsup src/index.ts src/browser.ts src/raw.ts src/wasm.ts --format cjs,esm --dts --clean && npm run build:browser-esm",
+    "build:browser-esm": "tsup src/browser.ts --format esm --no-splitting --platform browser --out-dir dist",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src/",
     "test": "npm run build && node --test 'test/*.test.mjs'",
