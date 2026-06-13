@@ -112,7 +112,12 @@ starbridge-v2 (bin)
 │               dynamics) plus the workspace tabs (composer · objects · debugger
 │               · replay · cipherclerk · editor), rendering `World` directly. The
 │               OBJECTS tab projects proofs / nullifiers / cell lifecycle through
-│               `reflect`.
+│               `reflect`. A ⌘K COMMAND PALETTE (`palette`) overlays the whole
+│               cockpit: one fuzzy-searchable surface over EVERY action.
+└── palette    — the ⌘K command registry + fuzzy matcher + selection model
+                (gpui-free, testable). Every cockpit action is one `CommandId`;
+                the cockpit dispatches a selected command through the SAME
+                `&mut Cockpit` verb the buttons call — no parallel action path.
 ├── views      — shared gpui palette/primitives.
 ├── client     — the wire-contract NodeClient (feature sel4-thin).
 └── model      — the node's JSON response types, mirrored (feature sel4-thin).
@@ -217,26 +222,77 @@ receipts; the "designed-pending" rows are reachable through the same
 `World::turn` / `commit_turn` path (every `Effect` variant is constructible) and
 are a UI/affordance burn-down, not a semantics gap.
 
+### The developer experience: cipherclerk + ⌘K (live)
+
+Two DX surfaces are first-class and wired to the real engine, not read-only
+demos:
+
+**The cipherclerk surface — real macaroon mint · attenuate · delegate ·
+discharge.** The CIPHERCLERK tab drives the REAL `dregg_sdk::AgentCipherclerk`
+(no reimplemented crypto) through an action layer (`cipherclerk` module):
+`mint` forges a root macaroon on the holder's clerk; `attenuate` confines it
+(the narrowing is genuine — the attenuated token carries strictly more caveats);
+`delegate` produces a real signed, recipient-targeted `DelegatedToken` envelope
+and files it; `discharge` runs the real verify verdict (HMAC chain + caveat
+evaluation). Two **real-semantics findings** surfaced and are honored by the
+surface:
+
+  1. *The macaroon action vocabulary is the atomic letters `r`/`w`/`c`/`d`/`C`*,
+     not English words. `dregg_macaroon::action::Action::parse` decomposes a
+     request action into those flags and requires EACH to be allowed — so a
+     `"read"`-the-word request parses to `{r,d}` and an `r`-only token DENIES it.
+     The discharge surface speaks the atomic letters.
+  2. *An attenuated `HeldToken` carries a ZEROED root key* (it dropped the
+     forging key), so the **holder cannot self-`verify_token`** a confined token
+     — only the **verifying service**, which holds the root key, can discharge
+     it. The surface exposes both: a holder-side self-check (`discharge`) for a
+     root token, and a service-side `discharge_presented(token, root_key, req)`
+     for a presented confined token.
+
+**The ⌘K command palette — one searchable surface over ALL actions.** Press ⌘K
+(or Ctrl-K) to open a centered, fuzzy-filtered palette over EVERY action in the
+cockpit: the composer verbs, the cipherclerk loop, the workspace navigation, the
+replay scrubber (step/genesis/head/fork/clear), the debugger retarget, and the
+inspector. The palette is honestly comprehensive because a palette command
+carries only a stable `CommandId` that the cockpit dispatches through *the exact
+same `&mut Cockpit` method the buttons call* — there is no second action path,
+so the palette can never drift from what the cockpit can do.
+
 ## Tests
 
 The headless heart is fully `cargo test`-able under just `embedded-executor`
 (no gpui, no window):
 
 ```
-cd starbridge-v2 && cargo test --no-default-features --features embedded-executor --lib
+cd starbridge-v2 && cargo test --release --no-default-features --features embedded-executor --lib
 ```
 
-67 tests (green) cover: transfer commits + conserves; **overspend rejected**;
-**over-grant rejected** (no-amplification); legitimate grant grows the ocap
-graph; createCell grows the ledger under conservation; setField writes state;
-emit-event commits; the receipt chain links across turns; the image commitment
-moves with history; the dynamics stream observes transitions; the reflective
-model projects cells, receipts, the image, **proof/STARK status, factories, and
-nullifiers**; the demo world boots with real provenance; **seal/unseal round-trip
-the lifecycle, destroy retires a cell terminally, burn reduces supply (and
-over-burn rejects), factory-birth installs a child through the registry (and an
-unregistered factory rejects), and a multi-action call-forest commits atomically
-(all-or-nothing)**.
+> **Run the suite in `--release`.** The tests exercise the embedded VERIFIED
+> executor (the linked Lean archive) and the cipherclerk's real macaroon HMAC /
+> caveat crypto. In a debug build those paths are pathologically slow and pin the
+> CPU; `--release` makes the suite run in seconds. (Plain `cargo test` without
+> `--release` is correct but unbearably slow — prefer release for any iteration.)
+
+The headless tests (green) cover: transfer commits + conserves; **overspend
+rejected**; **over-grant rejected** (no-amplification); legitimate grant grows
+the ocap graph; createCell grows the ledger under conservation; setField writes
+state; emit-event commits; the receipt chain links across turns; the image
+commitment moves with history; the dynamics stream observes transitions; the
+reflective model projects cells, receipts, the image, **proof/STARK status,
+factories, and nullifiers**; the demo world boots with real provenance;
+**seal/unseal round-trip the lifecycle, destroy retires a cell terminally, burn
+reduces supply (and over-burn rejects), factory-birth installs a child through
+the registry (and an unregistered factory rejects), and a multi-action
+call-forest commits atomically (all-or-nothing)**.
+
+The DX surfaces are tested too: the **cipherclerk action layer** (mint forges a
+real root; attenuate genuinely narrows; delegate files a real recipient
+envelope; **discharge runs the real verify verdict** — a service-confined token
+authorizes its own service/action and DENIES a wider action, a different
+service, or an expired request; the full mint→attenuate→delegate→discharge loop)
+and the **⌘K palette** (the registry covers the whole action surface; the fuzzy
+matcher prefers word-starts + contiguous runs; search finds commands by title
+AND by keyword concept; the open/type/select/accept interaction model).
 
 ## Status
 

@@ -142,7 +142,15 @@ fn run_window(world: world::World, anchors: [dregg_cell::CellId; 3]) {
                 }),
                 ..Default::default()
             },
-            |_window, cx| cx.new(|_cx| cockpit::Cockpit::new(shared.clone(), anchors)),
+            |window, cx| {
+                let view = cx.new(|cx| {
+                    let focus = cx.focus_handle();
+                    cockpit::Cockpit::new(shared.clone(), anchors, focus)
+                });
+                // Focus the cockpit root so it receives ⌘K + palette keystrokes.
+                view.update(cx, |c, cx| c.focus_on_open(window, cx));
+                view
+            },
         )
         .expect("failed to open window");
         cx.activate(true);

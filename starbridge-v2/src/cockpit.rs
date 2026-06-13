@@ -25,17 +25,18 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use gpui::{
-    div, prelude::*, px, Context, Hsla, IntoElement, MouseButton, ParentElement, Render,
-    SharedString, Styled, Window,
+    div, prelude::*, px, Context, FocusHandle, Hsla, IntoElement, KeyDownEvent, MouseButton,
+    ParentElement, Render, SharedString, Styled, Window,
 };
 
 use dregg_cell::CellId;
 
 use crate::views::{pill, section_title, theme};
 use starbridge_v2::dynamics;
+use starbridge_v2::palette::{Category, CommandId, CommandPalette};
 use starbridge_v2::reflect::{self, Field, FieldValue, Inspectable, ObjectKind};
 use starbridge_v2::world::{self, CommitOutcome, World};
-// The four feature panels — wired in as tabs of the master interface.
+// The feature panels — wired in as tabs of the master interface.
 use starbridge_v2::{cipherclerk, debug, edit, replay};
 
 /// Which object the inspector is focused on.
@@ -112,14 +113,25 @@ pub struct Cockpit {
     // --- CIPHERCLERK panel state -------------------------------------------
     /// The HD-derived identity vault (real `AgentCipherclerk`s).
     clerk: cipherclerk::Cipherclerk,
+    /// The last cipherclerk action's result banner (real mint/attenuate/
+    /// delegate/discharge outcome).
+    clerk_outcome: Option<cipherclerk::ClerkOutcome>,
 
     // --- EDITOR panel state ------------------------------------------------
     /// The live-editor's authoring/validation/deploy state.
     editor: edit::EditorState,
+
+    // --- the ⌘K COMMAND PALETTE --------------------------------------------
+    /// The command palette over EVERY action (open with ⌘K). The cockpit feeds
+    /// it keystrokes and dispatches its selected `CommandId` through the same
+    /// `&mut Cockpit` verbs the buttons call.
+    palette: CommandPalette,
+    /// Focus handle for the root, so the cockpit receives key events.
+    focus: FocusHandle,
 }
 
 impl Cockpit {
-    pub fn new(world: Rc<RefCell<World>>, anchors: [CellId; 3]) -> Self {
+    pub fn new(world: Rc<RefCell<World>>, anchors: [CellId; 3], focus: FocusHandle) -> Self {
         let cells = sorted_cells(&world.borrow());
 
         // Seed the debugger with a demo turn (treasury → user transfer) that
@@ -159,7 +171,10 @@ impl Cockpit {
             replay_cursor,
             replay_fork: None,
             clerk,
+            clerk_outcome: None,
             editor,
+            palette: CommandPalette::new(),
+            focus,
         }
     }
 
@@ -279,6 +294,239 @@ impl Cockpit {
         cx.notify();
     }
 
+    // --- the CIPHERCLERK action loop (real macaroons) -----------------------
+    //
+    // These drive the REAL `AgentCipherclerk` via the `cipherclerk` action
+    // layer (mint → attenuate → delegate → discharge). The demo acts on the two
+    // seeded identities (alice mints/attenuates/delegates; bob receives) and the
+    // "dns" service, so the operator can watch the wallet + delegation vault
+    // grow and see the discharge verdict.
+
+    fn run_clerk_mint(&mut self, cx: &mut Context<Self>) {
+        let out = self.clerk.mint("alice", "dns");
+        self.clerk_outcome = Some(out);
+        cx.notify();
+    }
+
+    fn run_clerk_attenuate(&mut self, cx: &mut Context<Self>) {
+        // Confine alice's dns root to read-only with a far-future expiry.
+        let out = self.clerk.attenuate_latest("alice", "dns", "r", Some(4_000_000_000));
+        self.clerk_outcome = Some(out);
+        cx.notify();
+    }
+
+    fn run_clerk_delegate(&mut self, cx: &mut Context<Self>) {
+        // Hand a dns/read capability to bob as a real signed envelope.
+        let out = self.clerk.delegate_to("alice", "bob", "dns", "r");
+        self.clerk_outcome = Some(out);
+        cx.notify();
+    }
+
+    fn run_clerk_discharge(&mut self, cx: &mut Context<Self>) {
+        // Discharge alice's dns token against an atomic 'r' (read) request now.
+        // (The macaroon action vocabulary is the atomic letters r/w/c/d/C.)
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        let out = self.clerk.discharge("alice", "dns", "r", now);
+        self.clerk_outcome = Some(out);
+        cx.notify();
+    }
+
+    // --- replay scrubber + debugger retarget (palette-drivable) -------------
+
+    fn replay_step_back(&mut self, cx: &mut Context<Self>) {
+        self.replay_cursor = self.replay_cursor.saturating_sub(1);
+        cx.notify();
+    }
+
+    fn replay_step_forward(&mut self, cx: &mut Context<Self>) {
+        let len = self.world.borrow().recorded_turns().len();
+        self.replay_cursor = (self.replay_cursor + 1).min(len);
+        cx.notify();
+    }
+
+    fn replay_to_genesis(&mut self, cx: &mut Context<Self>) {
+        self.replay_cursor = 0;
+        cx.notify();
+    }
+
+    fn replay_to_head(&mut self, cx: &mut Context<Self>) {
+        self.replay_cursor = self.world.borrow().recorded_turns().len();
+        cx.notify();
+    }
+
+    /// Pin a what-if FORK at the current scrubber cursor: re-run the cursor's
+    /// real turn as the "alternate" (a no-op divergence baseline) so the panel
+    /// shows the fork machinery live. (A richer alt-turn editor is a follow-on;
+    /// this proves the verified-fork path through the palette.)
+    fn replay_fork_here(&mut self, cx: &mut Context<Self>) {
+        let w = self.world.borrow();
+        let history = w.recorded_turns();
+        let k = self.replay_cursor.min(history.len());
+        // Use the treasury anchor for a representative alternate transfer.
+        let [treasury, _service, user] = self.anchors;
+        // A small alternate transfer the branch point can apply.
+        let alt = world::bare_turn(
+            treasury,
+            history
+                .replay_to(k)
+                .ok()
+                .and_then(|l| l.get(&treasury).map(|c| c.state.nonce()))
+                .unwrap_or(0),
+            vec![world::transfer(treasury, user, 1)],
+        );
+        match history.fork_at(k, alt) {
+            Ok(fork) => {
+                drop(w);
+                self.replay_fork = Some(fork);
+            }
+            Err(_) => {
+                drop(w);
+                self.replay_fork = None;
+            }
+        }
+        cx.notify();
+    }
+
+    fn replay_clear_fork(&mut self, cx: &mut Context<Self>) {
+        self.replay_fork = None;
+        cx.notify();
+    }
+
+    /// Retarget the debugger to a transfer FROM the currently-selected cell (so
+    /// the operator can step any cell's outgoing turn, not just the seeded one).
+    fn debug_retarget_selected(&mut self, cx: &mut Context<Self>) {
+        if let Selection::Cell(id) = self.selection {
+            let [_t, _s, user] = self.anchors;
+            // Target = the selected cell; pay a token amount to `user` so there
+            // is an effect to step (the debugger re-executes faithfully).
+            let to = if user == id { self.anchors[0] } else { user };
+            self.debug_turn = self.world.borrow().turn(id, vec![world::transfer(id, to, 100)]);
+            self.tab = Tab::Debugger;
+            cx.notify();
+        } else {
+            self.last_outcome = Some("debugger retarget: select a cell first".to_string());
+            cx.notify();
+        }
+    }
+
+    // --- THE CENTRAL DISPATCHER — one path for buttons AND the palette -------
+
+    /// Run a palette [`CommandId`] through the SAME `&mut Cockpit` verbs the
+    /// buttons call. This is what keeps the ⌘K palette honestly "over ALL
+    /// actions": there is no parallel action path — every command lands here and
+    /// routes to the one method that already implements it.
+    fn dispatch(&mut self, id: CommandId, cx: &mut Context<Self>) {
+        match id {
+            CommandId::Transfer => self.run_demo_transfer(cx),
+            CommandId::ComposeMulti => self.run_compose_multi(cx),
+            CommandId::Grant => self.run_demo_grant(cx),
+            CommandId::CreateCell => self.run_demo_create(cx),
+            CommandId::Seal => self.run_seal(cx),
+            CommandId::Burn => self.run_burn(cx),
+            CommandId::OverGrant => self.run_over_grant(cx),
+
+            CommandId::GoComposer => self.set_tab(Tab::Composer, cx),
+            CommandId::GoObjects => self.set_tab(Tab::Objects, cx),
+            CommandId::GoDebugger => self.set_tab(Tab::Debugger, cx),
+            CommandId::GoReplay => self.set_tab(Tab::Replay, cx),
+            CommandId::GoCipherclerk => self.set_tab(Tab::Cipherclerk, cx),
+            CommandId::GoEditor => self.set_tab(Tab::Editor, cx),
+
+            CommandId::ReplayStepBack => self.replay_step_back(cx),
+            CommandId::ReplayStepForward => self.replay_step_forward(cx),
+            CommandId::ReplayToGenesis => self.replay_to_genesis(cx),
+            CommandId::ReplayToHead => self.replay_to_head(cx),
+            CommandId::ReplayForkHere => self.replay_fork_here(cx),
+            CommandId::ReplayClearFork => self.replay_clear_fork(cx),
+
+            CommandId::ClerkMint => self.run_clerk_mint(cx),
+            CommandId::ClerkAttenuate => self.run_clerk_attenuate(cx),
+            CommandId::ClerkDelegate => self.run_clerk_delegate(cx),
+            CommandId::ClerkDischarge => self.run_clerk_discharge(cx),
+
+            CommandId::DebugRetargetSelected => self.debug_retarget_selected(cx),
+            CommandId::SelectImage => {
+                self.selection = Selection::Image;
+                cx.notify();
+            }
+            CommandId::Dismiss => {
+                self.palette.close();
+                cx.notify();
+            }
+        }
+    }
+
+    fn set_tab(&mut self, tab: Tab, cx: &mut Context<Self>) {
+        self.tab = tab;
+        cx.notify();
+    }
+
+    /// Focus the cockpit root so it receives key events (called on window open).
+    pub fn focus_on_open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        window.focus(&self.focus, cx);
+    }
+
+    // --- the ⌘K key handler -------------------------------------------------
+
+    /// Handle a key event. ⌘K toggles the palette; while it is open, typed
+    /// characters filter, ↑/↓ move the selection, Enter dispatches, Esc closes.
+    /// Returns nothing — it mutates palette state + may dispatch a command.
+    fn on_key(&mut self, ev: &KeyDownEvent, cx: &mut Context<Self>) {
+        let ks = &ev.keystroke;
+        let key = ks.key.as_str();
+        let cmd = ks.modifiers.platform || ks.modifiers.control;
+
+        // ⌘K / Ctrl-K toggles the palette from anywhere.
+        if cmd && key == "k" {
+            self.palette.toggle();
+            cx.notify();
+            return;
+        }
+
+        if !self.palette.is_open() {
+            return;
+        }
+
+        match key {
+            "escape" => {
+                self.palette.close();
+                cx.notify();
+            }
+            "enter" => {
+                if let Some(id) = self.palette.accept() {
+                    self.dispatch(id, cx);
+                }
+                cx.notify();
+            }
+            "backspace" => {
+                self.palette.backspace();
+                cx.notify();
+            }
+            "down" => {
+                self.palette.select_next();
+                cx.notify();
+            }
+            "up" => {
+                self.palette.select_prev();
+                cx.notify();
+            }
+            _ => {
+                // A typed character (cmd not held) filters the query.
+                if !cmd {
+                    if let Some(ch) = ks.key_char.as_ref().and_then(|s| s.chars().next()) {
+                        if !ch.is_control() {
+                            self.palette.push_char(ch);
+                            cx.notify();
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     fn note_outcome(&mut self, outcome: CommitOutcome) {
         self.last_outcome = Some(match outcome {
             CommitOutcome::Committed { receipt, .. } => {
@@ -309,6 +557,12 @@ impl Cockpit {
                     .text_xs()
                     .text_color(theme::muted())
                     .child("the live, verified, ocap image"),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme::accent())
+                    .child("⌘K · command palette (every action)"),
             )
             .child(
                 div()
@@ -573,7 +827,7 @@ impl Cockpit {
             Tab::Objects => self.objects_panel().into_any_element(),
             Tab::Debugger => self.debugger_panel().into_any_element(),
             Tab::Replay => self.replay_panel().into_any_element(),
-            Tab::Cipherclerk => self.cipherclerk_panel().into_any_element(),
+            Tab::Cipherclerk => self.cipherclerk_panel(cx).into_any_element(),
             Tab::Editor => self.editor_panel().into_any_element(),
         }
     }
@@ -657,10 +911,27 @@ impl Cockpit {
 
     /// THE CIPHERCLERK panel — maps `cipherclerk::render`'s reflective lists
     /// onto the cockpit's shared inspector rows.
-    fn cipherclerk_panel(&self) -> impl IntoElement {
+    fn cipherclerk_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let panel = cipherclerk::render(&self.clerk);
         let mut col = div().flex().flex_col().gap_1().p_3().size_full();
         col = col.child(section_title("CIPHERCLERK · identities · tokens · delegations").mb_1());
+
+        // The REAL macaroon action loop (mint → attenuate → delegate → discharge),
+        // each driving `AgentCipherclerk`. Acts on alice (the holder) + bob (the
+        // delegatee) over the "dns" service.
+        col = col.child(div().text_xs().text_color(theme::muted()).child("ACTIONS (alice · service 'dns')"));
+        col = col.child(
+            div()
+                .flex()
+                .flex_wrap()
+                .gap_1()
+                .child(clerk_button(cx, "mint root", theme::good(), Cockpit::run_clerk_mint))
+                .child(clerk_button(cx, "attenuate → r", theme::accent(), Cockpit::run_clerk_attenuate))
+                .child(clerk_button(cx, "delegate → bob", theme::accent(), Cockpit::run_clerk_delegate))
+                .child(clerk_button(cx, "discharge (verify)", theme::warn(), Cockpit::run_clerk_discharge)),
+        );
+        // The real action result banner.
+        col = col.child(self.clerk_banner());
 
         col = col.child(div().text_xs().text_color(theme::muted()).mt_1().child("IDENTITIES"));
         for ins in &panel.identities {
@@ -681,6 +952,35 @@ impl Cockpit {
             col = col.child(inspectable_row(ins));
         }
         col
+    }
+
+    /// The cipherclerk action result banner (the real mint/attenuate/delegate/
+    /// discharge outcome). Colors a denied discharge or a failure red.
+    fn clerk_banner(&self) -> impl IntoElement {
+        let (txt, color) = match &self.clerk_outcome {
+            None => ("(run a clerk action above)".to_string(), theme::muted()),
+            Some(o) => {
+                let denied = matches!(
+                    o,
+                    cipherclerk::ClerkOutcome::Discharged { authorized: false, .. }
+                );
+                let color = if !o.is_ok() || denied {
+                    theme::bad()
+                } else {
+                    theme::good()
+                };
+                (o.banner(), color)
+            }
+        };
+        div()
+            .mt_1()
+            .mb_1()
+            .p_2()
+            .rounded_md()
+            .bg(theme::panel())
+            .text_xs()
+            .text_color(color)
+            .child(txt)
     }
 
     /// THE OBJECTS panel — the reflective object views over the protocol
@@ -725,6 +1025,137 @@ impl Cockpit {
         col
     }
 
+    /// THE ⌘K COMMAND PALETTE overlay — a centered, fuzzy-filtered list over
+    /// EVERY action. Rendered on top of the cockpit when open. The query +
+    /// selection live in `self.palette`; keystrokes are handled in [`on_key`];
+    /// a click on a row also dispatches it.
+    fn palette_overlay(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let results = self.palette.results();
+        let selected = self.palette.selected();
+        let query = self.palette.query().to_string();
+
+        // A full-screen scrim that closes the palette on a click-out.
+        let scrim = div()
+            .id("palette-scrim")
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+            .bg(gpui::rgba(0x00000088))
+            .flex()
+            .flex_col()
+            .items_center()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _ev, _w, cx| {
+                    this.palette.close();
+                    cx.notify();
+                }),
+            );
+
+        // The palette card.
+        let mut card = div()
+            .id("palette-card")
+            .mt(px(120.))
+            .w(px(560.))
+            .max_h(px(440.))
+            .flex()
+            .flex_col()
+            .rounded_md()
+            .border_1()
+            .border_color(theme::accent())
+            .bg(theme::panel())
+            // Swallow clicks on the card so they don't reach the scrim's close.
+            .on_mouse_down(MouseButton::Left, |_ev, _w, cx| cx.stop_propagation());
+
+        // The query line.
+        card = card.child(
+            div()
+                .flex()
+                .justify_between()
+                .px_3()
+                .py_2()
+                .border_b_1()
+                .border_color(theme::border())
+                .child(
+                    div()
+                        .text_color(theme::text())
+                        .child(if query.is_empty() {
+                            "⌘K  type to search every action…".to_string()
+                        } else {
+                            format!("⌘K  {query}▌")
+                        }),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(theme::muted())
+                        .child(format!("{} match", results.len())),
+                ),
+        );
+
+        // The results list.
+        let mut list = div().flex().flex_col().gap_0p5().p_1().overflow_hidden();
+        if results.is_empty() {
+            list = list.child(
+                div()
+                    .px_2()
+                    .py_1()
+                    .text_xs()
+                    .text_color(theme::muted())
+                    .child("(no matching action — Esc to close)"),
+            );
+        }
+        for (i, hit) in results.iter().enumerate().take(12) {
+            let active = i == selected;
+            let (badge, bcolor) = category_badge(hit.command.category);
+            let id = hit.command.id;
+            list = list.child(
+                div()
+                    .id(SharedString::from(format!("palette-row-{i}")))
+                    .flex()
+                    .justify_between()
+                    .items_center()
+                    .px_2()
+                    .py_1()
+                    .rounded_md()
+                    .bg(if active { theme::panel_hi() } else { theme::panel() })
+                    .cursor_pointer()
+                    .hover(|s| s.bg(theme::border()))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _ev, _w, cx| {
+                            this.palette.close();
+                            this.dispatch(id, cx);
+                            cx.notify();
+                        }),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(if active { theme::accent() } else { theme::text() })
+                            .child(format!("{} {}", if active { "▸" } else { " " }, hit.command.title)),
+                    )
+                    .child(pill(badge, bcolor)),
+            );
+        }
+        card = card.child(list);
+
+        // Footer hint.
+        card = card.child(
+            div()
+                .px_3()
+                .py_1()
+                .border_t_1()
+                .border_color(theme::border())
+                .text_xs()
+                .text_color(theme::muted())
+                .child("↑↓ select · ⏎ run · esc close"),
+        );
+
+        scrim.child(card)
+    }
+
     /// THE LIVE EDITOR panel — `edit::render_panel` is gpui-free text; the
     /// cockpit presents it line-by-line.
     fn editor_panel(&self) -> impl IntoElement {
@@ -740,7 +1171,16 @@ impl Cockpit {
 
 impl Render for Cockpit {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let palette_open = self.palette.is_open();
         div()
+            .id("cockpit-root")
+            .track_focus(&self.focus)
+            .key_context("Cockpit")
+            // ⌘K + the palette's typing/selection all flow through one handler.
+            .on_key_down(cx.listener(|this, ev: &KeyDownEvent, _w, cx| {
+                this.on_key(ev, cx);
+            }))
+            .relative()
             .flex()
             .size_full()
             .bg(theme::bg())
@@ -795,6 +1235,8 @@ impl Render for Cockpit {
                     .child(self.tab_bar(cx))
                     .child(div().flex_1().overflow_hidden().child(self.workspace(cx))),
             )
+            // THE ⌘K COMMAND PALETTE overlay (absolute, on top) when open.
+            .when(palette_open, |root| root.child(self.palette_overlay(cx)))
     }
 }
 
@@ -910,4 +1352,47 @@ fn verb_button(
             }),
         )
         .child(label.to_string())
+}
+
+/// A compact cipherclerk action button (smaller than a composer verb; the
+/// clerk panel has four in a wrap row).
+fn clerk_button(
+    cx: &mut Context<Cockpit>,
+    label: &str,
+    color: Hsla,
+    handler: fn(&mut Cockpit, &mut Context<Cockpit>),
+) -> impl IntoElement {
+    let id = SharedString::from(format!("clerk-{label}"));
+    div()
+        .id(id)
+        .px_2()
+        .py_1()
+        .rounded_md()
+        .bg(theme::panel_hi())
+        .border_1()
+        .border_color(theme::border())
+        .text_xs()
+        .text_color(color)
+        .cursor_pointer()
+        .hover(|s| s.bg(theme::border()))
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(move |this, _ev, _window, cx| {
+                handler(this, cx);
+            }),
+        )
+        .child(label.to_string())
+}
+
+/// A short label + color for a palette command's category badge.
+fn category_badge(cat: Category) -> (&'static str, Hsla) {
+    match cat {
+        Category::Verb => (cat.label(), theme::good()),
+        Category::Navigate => (cat.label(), theme::accent()),
+        Category::Replay => (cat.label(), theme::warn()),
+        Category::Clerk => (cat.label(), theme::accent()),
+        Category::Debug => (cat.label(), theme::warn()),
+        Category::Inspect => (cat.label(), theme::muted()),
+        Category::Palette => (cat.label(), theme::muted()),
+    }
 }

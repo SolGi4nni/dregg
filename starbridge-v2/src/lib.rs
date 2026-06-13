@@ -19,6 +19,8 @@ pub mod dynamics;
 #[cfg(feature = "embedded-executor")]
 pub mod edit;
 #[cfg(feature = "embedded-executor")]
+pub mod palette;
+#[cfg(feature = "embedded-executor")]
 pub mod reflect;
 #[cfg(feature = "embedded-executor")]
 pub mod replay;

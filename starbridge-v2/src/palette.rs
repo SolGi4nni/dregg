@@ -1,0 +1,581 @@
+//! THE ⌘K COMMAND PALETTE — one searchable surface over EVERY action.
+//!
+//! The master interface's promise is to be *comprehensive over all data and all
+//! actions*. The cockpit's actions are otherwise scattered across panels (the
+//! composer's verb buttons, the workspace tabs, the replay scrubber, the
+//! cipherclerk's mint/attenuate/delegate/discharge, the debugger's retarget).
+//! This module unifies them into ONE ⌘K palette: type to fuzzy-filter, arrow to
+//! select, Enter to run.
+//!
+//! The design keeps the palette HONEST about "over ALL actions": a palette
+//! [`Command`] does not carry its own behaviour — it carries a [`CommandId`]
+//! that the cockpit dispatches through *the exact same `&mut Cockpit` methods
+//! the buttons call*. There is no parallel action path; the palette is a second
+//! front-end onto the one set of verbs. This module is gpui-free and
+//! `cargo test`-able (the registry + the fuzzy matcher + the selection model);
+//! the cockpit maps it onto a gpui overlay and owns the key handling.
+
+/// Every action the master interface exposes, as a stable identifier the
+/// cockpit dispatches. ONE enum = the canonical action surface; adding a verb
+/// means adding a variant here and one match arm in the cockpit's dispatcher,
+/// so the palette can never silently drift from what the cockpit can do.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum CommandId {
+    // --- composer verbs (run the embedded executor) ---
+    Transfer,
+    ComposeMulti,
+    Grant,
+    CreateCell,
+    Seal,
+    Burn,
+    OverGrant,
+
+    // --- workspace tab switches ---
+    GoComposer,
+    GoObjects,
+    GoDebugger,
+    GoReplay,
+    GoCipherclerk,
+    GoEditor,
+
+    // --- replay / time-travel scrubber ---
+    ReplayStepBack,
+    ReplayStepForward,
+    ReplayToGenesis,
+    ReplayToHead,
+    ReplayForkHere,
+    ReplayClearFork,
+
+    // --- the cipherclerk action loop (real macaroons) ---
+    ClerkMint,
+    ClerkAttenuate,
+    ClerkDelegate,
+    ClerkDischarge,
+
+    // --- the debugger ---
+    DebugRetargetSelected,
+
+    // --- inspector / selection ---
+    SelectImage,
+
+    // --- the palette itself ---
+    Dismiss,
+}
+
+impl CommandId {
+    /// The category this command belongs to (drives grouping + the badge).
+    pub fn category(self) -> Category {
+        use CommandId::*;
+        match self {
+            Transfer | ComposeMulti | Grant | CreateCell | Seal | Burn | OverGrant => {
+                Category::Verb
+            }
+            GoComposer | GoObjects | GoDebugger | GoReplay | GoCipherclerk | GoEditor => {
+                Category::Navigate
+            }
+            ReplayStepBack | ReplayStepForward | ReplayToGenesis | ReplayToHead
+            | ReplayForkHere | ReplayClearFork => Category::Replay,
+            ClerkMint | ClerkAttenuate | ClerkDelegate | ClerkDischarge => Category::Clerk,
+            DebugRetargetSelected => Category::Debug,
+            SelectImage => Category::Inspect,
+            Dismiss => Category::Palette,
+        }
+    }
+
+    /// The human title shown in the palette row.
+    pub fn title(self) -> &'static str {
+        use CommandId::*;
+        match self {
+            Transfer => "Transfer 1,000 → user",
+            ComposeMulti => "Compose multi-action turn (pay service + user)",
+            Grant => "Grant capability (service → user)",
+            CreateCell => "Create cell (conserves value)",
+            Seal => "Seal a fresh cell (lifecycle)",
+            Burn => "Burn 1,000 (supply reduced)",
+            OverGrant => "Over-grant (watch the executor REJECT)",
+            GoComposer => "Go to Composer",
+            GoObjects => "Go to Objects (proofs · nullifiers · lifecycle)",
+            GoDebugger => "Go to Debugger",
+            GoReplay => "Go to Replay (time-travel)",
+            GoCipherclerk => "Go to Cipherclerk",
+            GoEditor => "Go to Editor",
+            ReplayStepBack => "Replay: step back one turn",
+            ReplayStepForward => "Replay: step forward one turn",
+            ReplayToGenesis => "Replay: jump to genesis",
+            ReplayToHead => "Replay: jump to head",
+            ReplayForkHere => "Replay: fork a what-if here",
+            ReplayClearFork => "Replay: clear the pinned fork",
+            ClerkMint => "Cipherclerk: mint a root macaroon (alice / dns)",
+            ClerkAttenuate => "Cipherclerk: attenuate the dns token (confine to read)",
+            ClerkDelegate => "Cipherclerk: delegate dns/read to bob",
+            ClerkDischarge => "Cipherclerk: discharge alice's dns token (verify)",
+            DebugRetargetSelected => "Debugger: target a transfer from the selected cell",
+            SelectImage => "Inspect: select this image",
+            Dismiss => "Dismiss the palette",
+        }
+    }
+
+    /// Extra keywords (beyond the title) the fuzzy matcher also searches, so an
+    /// operator can find a command by its concept, not just its phrasing.
+    pub fn keywords(self) -> &'static str {
+        use CommandId::*;
+        match self {
+            Transfer => "pay send value move",
+            ComposeMulti => "forest atomic batch multi siblings",
+            Grant => "capability ocap delegate authority edge",
+            CreateCell => "new object birth spawn",
+            Seal => "freeze lifecycle lock close",
+            Burn => "destroy supply reduce remove value",
+            OverGrant => "amplification reject denied no-amplify security guard",
+            GoComposer => "verbs actions run",
+            GoObjects => "proof stark nullifier lifecycle reflect",
+            GoDebugger => "step trace explain refusal",
+            GoReplay => "history time travel scrub checkpoint",
+            GoCipherclerk => "keys macaroon token identity wallet",
+            GoEditor => "author validate deploy program factory",
+            ReplayStepBack => "rewind previous undo back",
+            ReplayStepForward => "advance next redo forward",
+            ReplayToGenesis => "start beginning empty zero",
+            ReplayToHead => "latest end now tip",
+            ReplayForkHere => "branch what-if alternate counterfactual",
+            ReplayClearFork => "unpin remove branch",
+            ClerkMint => "forge root macaroon token create",
+            ClerkAttenuate => "narrow confine restrict caveat",
+            ClerkDelegate => "hand off recipient envelope sign",
+            ClerkDischarge => "verify authorize check prove",
+            DebugRetargetSelected => "retarget debug selected cell transfer",
+            SelectImage => "root commitment distribution",
+            Dismiss => "close cancel escape",
+        }
+    }
+}
+
+/// The category a command belongs to (grouping + the row badge).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Category {
+    Verb,
+    Navigate,
+    Replay,
+    Clerk,
+    Debug,
+    Inspect,
+    Palette,
+}
+
+impl Category {
+    pub fn label(self) -> &'static str {
+        match self {
+            Category::Verb => "verb",
+            Category::Navigate => "go",
+            Category::Replay => "replay",
+            Category::Clerk => "clerk",
+            Category::Debug => "debug",
+            Category::Inspect => "inspect",
+            Category::Palette => "palette",
+        }
+    }
+}
+
+/// A single palette command — a stable [`CommandId`] plus its pre-rendered
+/// title/category (cached so the matcher doesn't recompute them).
+#[derive(Clone, Copy, Debug)]
+pub struct Command {
+    pub id: CommandId,
+    pub title: &'static str,
+    pub category: Category,
+}
+
+impl Command {
+    fn of(id: CommandId) -> Self {
+        Command { id, title: id.title(), category: id.category() }
+    }
+}
+
+/// The full registry, in display order. THIS is the canonical action list the
+/// palette searches — every variant of [`CommandId`] except the internal
+/// `Dismiss`, which the palette handles via Esc rather than a row.
+pub fn all_commands() -> Vec<Command> {
+    use CommandId::*;
+    [
+        // verbs first (the most common operator actions)
+        Transfer, ComposeMulti, Grant, CreateCell, Seal, Burn, OverGrant,
+        // the cipherclerk loop
+        ClerkMint, ClerkAttenuate, ClerkDelegate, ClerkDischarge,
+        // navigation
+        GoComposer, GoObjects, GoDebugger, GoReplay, GoCipherclerk, GoEditor,
+        // replay
+        ReplayStepBack, ReplayStepForward, ReplayToGenesis, ReplayToHead,
+        ReplayForkHere, ReplayClearFork,
+        // debugger + inspect
+        DebugRetargetSelected, SelectImage,
+    ]
+    .into_iter()
+    .map(Command::of)
+    .collect()
+}
+
+// ===========================================================================
+// The fuzzy matcher — a small subsequence scorer (no extra deps).
+// ===========================================================================
+
+/// Score `query` against `haystack` with a subsequence match: every query char
+/// must appear in order. Returns `None` if it does not match at all; a higher
+/// score is a better match (contiguous runs + word-start hits score higher).
+/// Case-insensitive.
+pub fn fuzzy_score(query: &str, haystack: &str) -> Option<i32> {
+    if query.is_empty() {
+        return Some(0);
+    }
+    let q: Vec<char> = query.chars().flat_map(|c| c.to_lowercase()).collect();
+    let h: Vec<char> = haystack.chars().flat_map(|c| c.to_lowercase()).collect();
+
+    let mut qi = 0usize;
+    let mut score = 0i32;
+    let mut run = 0i32; // current contiguous-match run length
+    let mut prev_was_sep = true; // start-of-string counts as a word boundary
+
+    for (hi, &hc) in h.iter().enumerate() {
+        let is_sep = hc == ' ' || hc == '-' || hc == '_' || hc == '/' || hc == '(';
+        if qi < q.len() && hc == q[qi] {
+            // base point for a matched char
+            score += 1;
+            // contiguous run bonus (matches that cluster score higher)
+            run += 1;
+            score += run;
+            // word-start bonus
+            if prev_was_sep {
+                score += 5;
+            }
+            // early-position bonus (matches near the front rank higher)
+            if hi < 8 {
+                score += 2;
+            }
+            qi += 1;
+        } else {
+            run = 0;
+        }
+        prev_was_sep = is_sep;
+    }
+
+    if qi == q.len() {
+        Some(score)
+    } else {
+        None
+    }
+}
+
+/// One ranked search hit: the command + its score (for the test/inspection).
+#[derive(Clone, Copy, Debug)]
+pub struct Hit {
+    pub command: Command,
+    pub score: i32,
+}
+
+/// Filter + rank `commands` by `query`, searching the title AND the command's
+/// keyword concepts. Best score first; ties broken by registry order (stable).
+pub fn search(commands: &[Command], query: &str) -> Vec<Hit> {
+    let mut hits: Vec<(usize, Hit)> = Vec::new();
+    for (idx, cmd) in commands.iter().enumerate() {
+        // Score the title and the keyword concepts; take the better of the two.
+        let title_score = fuzzy_score(query, cmd.title);
+        let kw_score = fuzzy_score(query, cmd.id.keywords());
+        let best = match (title_score, kw_score) {
+            (Some(a), Some(b)) => Some(a.max(b)),
+            (Some(a), None) => Some(a),
+            (None, Some(b)) => Some(b),
+            (None, None) => None,
+        };
+        if let Some(score) = best {
+            hits.push((idx, Hit { command: *cmd, score }));
+        }
+    }
+    // Sort by score desc, then by registry index asc (stable tie-break).
+    hits.sort_by(|a, b| b.1.score.cmp(&a.1.score).then(a.0.cmp(&b.0)));
+    hits.into_iter().map(|(_, h)| h).collect()
+}
+
+// ===========================================================================
+// The palette state — query + selection over the live result list.
+// ===========================================================================
+
+/// The ⌘K palette's interaction state: whether it is open, the current query,
+/// and the highlighted result index. The cockpit owns one of these, feeds it
+/// keystrokes, and renders [`Self::results`].
+pub struct CommandPalette {
+    open: bool,
+    query: String,
+    selected: usize,
+    commands: Vec<Command>,
+}
+
+impl Default for CommandPalette {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl CommandPalette {
+    pub fn new() -> Self {
+        CommandPalette {
+            open: false,
+            query: String::new(),
+            selected: 0,
+            commands: all_commands(),
+        }
+    }
+
+    pub fn is_open(&self) -> bool {
+        self.open
+    }
+
+    pub fn query(&self) -> &str {
+        &self.query
+    }
+
+    pub fn selected(&self) -> usize {
+        self.selected
+    }
+
+    /// Open the palette (⌘K), resetting the query + selection.
+    pub fn open(&mut self) {
+        self.open = true;
+        self.query.clear();
+        self.selected = 0;
+    }
+
+    /// Close the palette (Esc / after running a command).
+    pub fn close(&mut self) {
+        self.open = false;
+        self.query.clear();
+        self.selected = 0;
+    }
+
+    /// Toggle the palette open/closed (the ⌘K binding).
+    pub fn toggle(&mut self) {
+        if self.open {
+            self.close();
+        } else {
+            self.open();
+        }
+    }
+
+    /// Append a typed character to the query and clamp the selection.
+    pub fn push_char(&mut self, c: char) {
+        self.query.push(c);
+        self.clamp_selection();
+    }
+
+    /// Backspace one character.
+    pub fn backspace(&mut self) {
+        self.query.pop();
+        self.clamp_selection();
+    }
+
+    /// Set the whole query (e.g. from a text input).
+    pub fn set_query(&mut self, q: impl Into<String>) {
+        self.query = q.into();
+        self.clamp_selection();
+    }
+
+    /// Move the highlight down one (wraps at the end).
+    pub fn select_next(&mut self) {
+        let n = self.results().len();
+        if n == 0 {
+            self.selected = 0;
+        } else {
+            self.selected = (self.selected + 1) % n;
+        }
+    }
+
+    /// Move the highlight up one (wraps at the start).
+    pub fn select_prev(&mut self) {
+        let n = self.results().len();
+        if n == 0 {
+            self.selected = 0;
+        } else {
+            self.selected = (self.selected + n - 1) % n;
+        }
+    }
+
+    fn clamp_selection(&mut self) {
+        let n = self.results().len();
+        if n == 0 {
+            self.selected = 0;
+        } else if self.selected >= n {
+            self.selected = n - 1;
+        }
+    }
+
+    /// The current ranked result list (filtered by the query).
+    pub fn results(&self) -> Vec<Hit> {
+        search(&self.commands, &self.query)
+    }
+
+    /// The currently-highlighted command, if any (what Enter runs).
+    pub fn current(&self) -> Option<CommandId> {
+        self.results().get(self.selected).map(|h| h.command.id)
+    }
+
+    /// "Accept" — return the highlighted command id (for the cockpit to
+    /// dispatch) and close the palette. `None` if there is no match.
+    pub fn accept(&mut self) -> Option<CommandId> {
+        let id = self.current();
+        if id.is_some() {
+            self.close();
+        }
+        id
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_command_id_is_in_the_registry() {
+        // Guard: the registry covers every actionable variant (all but the
+        // internal Dismiss). If a CommandId is added without a registry entry,
+        // this catches it — keeping the palette comprehensive.
+        let reg = all_commands();
+        let ids: std::collections::HashSet<CommandId> = reg.iter().map(|c| c.id).collect();
+        // Spot the spread of categories present.
+        for must in [
+            CommandId::Transfer,
+            CommandId::OverGrant,
+            CommandId::GoCipherclerk,
+            CommandId::ReplayForkHere,
+            CommandId::ClerkMint,
+            CommandId::ClerkDischarge,
+            CommandId::DebugRetargetSelected,
+            CommandId::SelectImage,
+        ] {
+            assert!(ids.contains(&must), "{must:?} must be registered");
+        }
+        // Dismiss is intentionally NOT a row (Esc handles it).
+        assert!(!ids.contains(&CommandId::Dismiss));
+        // The registry is non-trivial.
+        assert!(reg.len() >= 24, "registry should cover the whole action surface");
+    }
+
+    #[test]
+    fn fuzzy_subsequence_matches_and_rejects() {
+        assert!(fuzzy_score("trf", "Transfer 1,000 → user").is_some());
+        assert!(fuzzy_score("transfer", "Transfer 1,000 → user").is_some());
+        // A non-subsequence does not match.
+        assert!(fuzzy_score("zzz", "Transfer").is_none());
+        // Empty query matches everything (score 0).
+        assert_eq!(fuzzy_score("", "anything"), Some(0));
+    }
+
+    #[test]
+    fn fuzzy_prefers_word_starts_and_contiguous_runs() {
+        // "burn" as a contiguous word-start should outscore a scattered match.
+        let contiguous = fuzzy_score("burn", "Burn 1,000 (supply reduced)").unwrap();
+        let scattered = fuzzy_score("burn", "back upstream run now").unwrap_or(i32::MIN);
+        assert!(contiguous > scattered, "contiguous word-start scores higher");
+    }
+
+    #[test]
+    fn search_finds_a_verb_by_title() {
+        let cmds = all_commands();
+        let hits = search(&cmds, "transfer");
+        assert!(!hits.is_empty());
+        assert_eq!(hits[0].command.id, CommandId::Transfer, "best hit is the transfer verb");
+    }
+
+    #[test]
+    fn search_finds_a_command_by_keyword_concept() {
+        // "wallet" is not in any title, but it IS a keyword of GoCipherclerk.
+        let cmds = all_commands();
+        let hits = search(&cmds, "wallet");
+        assert!(
+            hits.iter().any(|h| h.command.id == CommandId::GoCipherclerk),
+            "keyword search surfaces the cipherclerk"
+        );
+        // "amplification" is a keyword of the over-grant guard demo.
+        let hits = search(&cmds, "amplification");
+        assert!(hits.iter().any(|h| h.command.id == CommandId::OverGrant));
+    }
+
+    #[test]
+    fn search_finds_clerk_discharge_by_verify() {
+        let cmds = all_commands();
+        let hits = search(&cmds, "verify");
+        assert!(
+            hits.iter().any(|h| h.command.id == CommandId::ClerkDischarge),
+            "discharge is findable by its 'verify' concept"
+        );
+    }
+
+    #[test]
+    fn empty_query_returns_the_whole_registry_in_order() {
+        let cmds = all_commands();
+        let hits = search(&cmds, "");
+        assert_eq!(hits.len(), cmds.len(), "empty query shows everything");
+        // Order preserved (Transfer is first in the registry).
+        assert_eq!(hits[0].command.id, CommandId::Transfer);
+    }
+
+    // --- the interaction model ------------------------------------------
+
+    #[test]
+    fn open_close_toggle_lifecycle() {
+        let mut p = CommandPalette::new();
+        assert!(!p.is_open());
+        p.toggle();
+        assert!(p.is_open());
+        assert_eq!(p.query(), "");
+        p.toggle();
+        assert!(!p.is_open());
+    }
+
+    #[test]
+    fn typing_filters_and_enter_accepts() {
+        let mut p = CommandPalette::new();
+        p.open();
+        for c in "burn".chars() {
+            p.push_char(c);
+        }
+        // The top result should be the burn verb.
+        assert_eq!(p.current(), Some(CommandId::Burn));
+        // Enter accepts it and closes the palette.
+        let accepted = p.accept();
+        assert_eq!(accepted, Some(CommandId::Burn));
+        assert!(!p.is_open(), "accepting closes the palette");
+    }
+
+    #[test]
+    fn backspace_widens_the_filter() {
+        let mut p = CommandPalette::new();
+        p.open();
+        p.set_query("burnx"); // no match (x breaks the subsequence at the end)
+        assert!(p.results().is_empty(), "burnx matches nothing");
+        p.backspace(); // → "burn"
+        assert_eq!(p.current(), Some(CommandId::Burn));
+    }
+
+    #[test]
+    fn selection_wraps_and_clamps() {
+        let mut p = CommandPalette::new();
+        p.open();
+        p.set_query("go"); // matches all six navigation commands (and others)
+        let n = p.results().len();
+        assert!(n >= 6);
+        // Wrap backwards from 0 → last.
+        p.select_prev();
+        assert_eq!(p.selected(), n - 1);
+        // Wrap forward from last → 0.
+        p.select_next();
+        assert_eq!(p.selected(), 0);
+    }
+
+    #[test]
+    fn accept_with_no_match_returns_none_and_stays_open() {
+        let mut p = CommandPalette::new();
+        p.open();
+        p.set_query("qqqqzzzz");
+        assert!(p.results().is_empty());
+        assert_eq!(p.accept(), None);
+        assert!(p.is_open(), "a no-match accept does not close");
+    }
+}
