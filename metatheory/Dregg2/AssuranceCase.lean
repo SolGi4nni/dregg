@@ -62,12 +62,13 @@ not name is a seam the case launders).
 
 These five are not merely listed: the section **THE COMPOSED SECURITY THEOREM** (after guarantee R)
 states `deployed_system_secure` — ONE theorem whose conclusion is the CONJUNCTION A ∧ B ∧ C ∧ D ∧ E,
-with subjects the deployed node's actual products (a committed `execFullForestG` forest, a live
-`recCexec` move, a committed noteSpend, a verified recursion aggregate) and bodies the REAL keystones,
-so the guarantees are seen to CHAIN, not pile. Every guarantee apex below carries CONTENT — none is a
-`True` anchor: `integrity_guarantee` states the whole-post-state memory-program binding, and
-`unfoolability_guarantee` states the whole-history attestation conjoined with conservation DERIVED
-FROM VERIFICATION (no prover-supplied state-continuity hypothesis).
+with the integrity/authority/value legs (A ∧ B ∧ C, including the WHOLE-TURN memory program c2) all
+over the SAME committed `execFullForestG` forest (a committed noteSpend for D, a verified recursion
+aggregate for E), bodies the REAL keystones, so the guarantees are seen to CHAIN, not pile. Every
+guarantee apex below carries CONTENT — none is a `True` anchor: `integrity_guarantee` states the
+whole-post-state memory-program binding (per-verb, and `ForestMemoryProgram` composes it to the WHOLE
+TURN), and `unfoolability_guarantee` states the whole-history attestation conjoined with conservation
+DERIVED FROM VERIFICATION (no prover-supplied state-continuity hypothesis).
 -/
 -- The SPECIFIC keystone modules this assurance case references (NOT the root `Dregg2`
 -- aggregator — that would be a circular import, since `Dregg2` imports this file).
@@ -86,6 +87,7 @@ import Dregg2.Exec.UniversalBridge          -- integrity (STRENGTHENED): the exe
 import Dregg2.Circuit.Argus.Aggregate
 import Dregg2.Circuit.Argus.Effects.NoteSpend
 import Dregg2.Exec.FullForestAuth          -- the RUNNING ENTRY: execFullForestG (the dregg_exec_full_forest_auth FFI)
+import Dregg2.Exec.ForestMemoryProgram     -- integrity C(c2): the WHOLE-TURN memory program over the SAME forest (MEDIUM-7/8)
 import Dregg2.Exec.ReachableConservation   -- conservation (W1): Σ=0 as a reachability invariant
 import Dregg2.Exec.IssuerMove              -- conservation (W1): the issuer-move mechanism + the legacy-break tooth
 import Dregg2.Apps.CapSlotFactory          -- freshness (R7): stored-cap retrieval-epoch gate + no-forge-from-storage
@@ -381,6 +383,38 @@ theorem integrity_guarantee_memory_program
 
 #assert_axioms integrity_guarantee_memory_program
 
+/-- **`integrity_guarantee_whole_turn` (THE WHOLE-TURN STRENGTHENING — MEDIUM-8).** The per-verb
+memory-program binding of `integrity_guarantee` is COMPOSED to the WHOLE TURN: a committed gated
+full-forest run `execFullForestG s f = some s'` — the body behind the `dregg_exec_full_forest_auth`
+FFI, the SAME subject as `running_entry_sound` (A/B/c1) — is a memory program, i.e. the TOTAL
+projection (`uproj`, every kernel field + the receipt log) of the post-state `s'` is the fold of the
+CONCATENATED per-node Blum traces over the projection of the pre-state `s`. So "a receipt binds the
+WHOLE post-state" holds over the ENTIRE turn, not just one verb. The per-step coverage hypothesis
+`hcov` is the explicitly-named seam (each committing node is a memory program — DISCHARGEABLE on the
+covered verb arms via `ForestMemoryProgram.eachStepMemProg_of_all_setField`, non-vacuously). The
+composition is `ForestMemoryProgram.execFullForestG_is_memory_program`: the per-verb keystones folded
+along the gated linear lowering (`execFullTurnG`) and lifted to the tree
+(`execFullForestG_eq_execFullTurnG`) by `List.foldl_append`. -/
+theorem integrity_guarantee_whole_turn
+    {Digest Proof Request Stmt Wit CellId Rights Ctx Gateway Bytes Tag : Type}
+    [DecidableEq CellId] [SemilatticeInf Rights] [OrderTop Rights] [DecidableLE Rights]
+    [Dregg2.Laws.Verifiable Stmt Wit]
+    [DecidableEq Tag] [Dregg2.Authority.CaveatChain.MacKernel
+      (Dregg2.Authority.CaveatChain.Key Tag) Bytes Tag]
+    [Dregg2.Exec.FullForestAuth.AuthPortal
+      (Dregg2.Exec.FullForestAuth.Authorization Digest Proof) Ctx]
+    (C : Dregg2.Exec.UniversalBridge.UCodec) (s s' : RecChainedState)
+    (f : Dregg2.Exec.FullForestAuth.FullForestG (Digest := Digest) (Proof := Proof)
+      (Request := Request) (Stmt := Stmt) (Wit := Wit) (CellId := CellId) (Rights := Rights)
+      (Ctx := Ctx) (Gateway := Gateway) (Bytes := Bytes) (Tag := Tag))
+    (hcov : Dregg2.Exec.ForestMemoryProgram.EachStepMemProg C
+      (Dregg2.Exec.FullForestAuth.lowerForestG f))
+    (h : Dregg2.Exec.FullForestAuth.execFullForestG s f = some s') :
+    Dregg2.Exec.ForestMemoryProgram.MemProgTrans C s s' :=
+  Dregg2.Exec.ForestMemoryProgram.execFullForestG_is_memory_program C s s' f hcov h
+
+#assert_axioms integrity_guarantee_whole_turn
+
 #assert_axioms integrity_guarantee
 -- the underlying keystones, re-pinned under Integrity:
 #assert_axioms Dregg2.Circuit.Argus.Receipt.argus_commits_to_one_receipt
@@ -638,6 +672,13 @@ theorem running_entry_sound
     (b : AssetId)
     (h : execFullForestG s f = some s') :
     recTotalAsset s'.kernel b = recTotalAsset s.kernel b
+      -- ↓ THE CAP-AUTHORITY LEG (`granted ⊆ held`). GROUNDED IN TRANSCRIBED SEL4: this exact
+      -- non-amplification shape is derived from seL4's OWN `derive_cap` semantics by
+      -- `Dregg2.Firmament.SeL4Abstract.dregg_executor_cap_authority_grounded_in_seL4` (which composes
+      -- the transcribed `seL4_derive_cap_non_amplifying`, l4v@e2f32e54 CSpace_A.thy:105-114, with an
+      -- α-image-monotonicity helper) UNDER the named `SeL4DeriveNonAmpBridge` assumption
+      -- (= SEL4-DERIVE-NONAMP-BRIDGE; embedding-faithfulness is a hypothesis, the α-projection a
+      -- reported divergence). So this leg rests on transcribed seL4 text, not a black box.
       ∧ (∀ e ∈ forestEdgesG f, capAuthConferred (attenuate e.1 e.2) ⊆ capAuthConferred e.2)
       ∧ (∀ p ∈ lowerForestG f, ∃ sa sa',
           execFullAGated sa p.1 p.2 = some sa' ∧ gatedActionInvG sa p.1 p.2 sa') :=
@@ -666,14 +707,20 @@ apexes are literally `:= trivial`." This section answers it with ONE theorem,
 `deployed_system_secure`, whose conclusion is the CONJUNCTION of all five guarantees, and whose
 subjects are the things the DEPLOYED node actually produces:
 
-  * the per-turn core (A∧B∧C) is over `execFullForestG` — the body behind the
-    `dregg_exec_full_forest_auth` FFI the node invokes on every committed turn (the SAME subject as
-    `running_entry_sound`);
-  * the integrity backbone (C, strengthened) is the executor-is-a-memory-program keystone over the
-    LIVE executable move step (`recCexec`);
+  * the per-turn core (A ∧ B ∧ C) — non-amplification, conservation, per-node attestation (c1), AND
+    the WHOLE-TURN memory program (c2) — is over the SAME committed `execFullForestG s f = some s'`,
+    the body behind the `dregg_exec_full_forest_auth` FFI the node invokes on every committed turn.
+    The earlier subject-independence (MEDIUM-7: the c2 leg ran over a DIFFERENT, arbitrary `recCexec`
+    move than the forest A/B bound) is CLOSED: c2 is now `execFullForestG_is_memory_program` over the
+    very `(s, f, s')` of A/B/c1, so all four authority/value/integrity facts bind ONE turn;
+  * the integrity backbone (C-c2) is strengthened to WHOLE-TURN — the per-verb memory programs folded
+    along the gated linear lowering and lifted to the tree (`ForestMemoryProgram`), so "a receipt
+    binds the WHOLE post-state" now holds over the ENTIRE turn (MEDIUM-8), not one verb; its per-step
+    coverage hypothesis is the explicitly-named seam (dischargeable on the covered verb arms);
   * freshness (D) is the noteSpend anti-replay on the executable term IR;
   * unfoolability (E) is `light_client_verifies_whole_history` + `conserves_from_verification` over a
-    published recursion aggregate the light client checks with ONE `verify agg.root`.
+    published recursion aggregate the light client checks with ONE `verify agg.root` (the finalized
+    published history — architecturally a distinct object from one node's local forest run).
 
 Every leg is a PROVEN keystone (named below), discharged from the deployed-system inputs — not a
 prose DAG, not a side-by-side pile, and not a `True`. The reader sees the guarantees CHAIN: a single
@@ -684,6 +731,7 @@ verified history is fresh and unfoolable.
 section Composed
 open Dregg2.Exec.FullForestAuth
 open Dregg2.Exec.FullForest
+open Dregg2.Exec.ForestMemoryProgram (MemProgTrans EachStepMemProg execFullForestG_is_memory_program)
 open Dregg2.Authority
 open Dregg2.Circuit.RecursiveAggregation
 open Dregg2.Distributed.HistoryAggregation (ChainStep KernelGenesisPin SeamStruct lastStateOf)
@@ -703,10 +751,12 @@ variable (CH : Dregg2.Exec.CellId → Dregg2.Exec.Value → ℤ)
 variable (RH : Dregg2.Exec.RecordKernelState → ℤ)
 variable (cmb compress : ℤ → ℤ → ℤ) (compressN : List ℤ → ℤ)
 
-/-- **`deployed_system_secure` (THE COMPOSED APEX — A ∧ B ∧ C ∧ D ∧ E, conjoined).**
+/-- **`deployed_system_secure` (THE COMPOSED APEX — A ∧ B ∧ C ∧ D ∧ E, conjoined, over ONE TURN).**
 For the deployed system's actual products — a committed running-entry forest `execFullForestG s f =
-some s'`, a live executable move `recCexec sm tm = some sm'`, a committed noteSpend, and a published
-recursion aggregate the light client verifies — ALL FIVE guarantees hold AT ONCE:
+some s'`, a committed noteSpend, and a published recursion aggregate the light client verifies — ALL
+FIVE guarantees hold AT ONCE, and crucially the INTEGRITY legs (c1 AND c2) are now over the SAME
+forest `f` / SAME transition `s → s'` as A and B (the MEDIUM-7 subject-unification: the apex is a
+statement about ONE committed turn, no longer a conjunction over independent subjects):
 
   * **A — AUTHORITY (non-amplification):** every delegation edge of the forest the node ran is
     non-amplifying (`execFullForestG_no_amplify`). No effect confers more authority than was held.
@@ -714,9 +764,13 @@ recursion aggregate the light client verifies — ALL FIVE guarantees hold AT ON
     (`execFullForestG_conserves_exact`) — unconditionally (the delta family vanishes identically).
   * **C — INTEGRITY:** (c1) every node of the forest attests `gatedActionInvG` — credential checked,
     caveats discharged, cap-authority, the per-asset obligation (`execFullForestG_each_attests`); AND
-    (c2) the executor IS a memory program — the TOTAL projection of the move's post-state (every
-    kernel field + the receipt log) equals the fold of its emitted Blum trace over the pre-projection
-    (`move_is_memory_program`), so the receipt binds the WHOLE post-state field-by-field.
+    (c2) the WHOLE TURN is a memory program — the TOTAL projection (`uproj`, every kernel field + the
+    receipt log) of the forest's POST-state `s'` equals the fold of the CONCATENATED per-node Blum
+    traces over the projection of the PRE-state `s` (`execFullForestG_is_memory_program` over the SAME
+    `(s, f, s')`), so the receipt binds the WHOLE post-state field-by-field across the ENTIRE turn —
+    NOT just one verb (the MEDIUM-8 whole-turn composition). The per-step coverage hypothesis `hcov`
+    (each committing node is a memory program) is the explicitly-named seam; it is DISCHARGEABLE on
+    the covered verb arms (`eachStepMemProg_of_all_setField` — non-vacuously).
   * **D — FRESHNESS:** the committed noteSpend's nullifier was fresh, is now spent, and a replay of
     the SAME nullifier fails closed (`noteSpendStmt_no_double_spend`/`_inserts`/`_then_reject`).
   * **E — UNFOOLABILITY:** a light client checking ONLY `verify agg.root` learns the WHOLE history
@@ -724,23 +778,24 @@ recursion aggregate the light client verifies — ALL FIVE guarantees hold AT ON
     conserves value over the whole history — DERIVED FROM VERIFICATION, with no `StateChained`
     hypothesis (`conserves_from_verification`, the CRITICAL-3 closure).
 
-The legs are the REAL keystones, conjoined — `running_entry_sound`'s body (A∧B∧c1), the
-`UniversalBridge` memory-program keystone (c2), the `Argus` noteSpend anti-replay (D), and the
-`RecursiveAggregation` light-client headline + the verification-derived conservation (E). Floor:
-exactly the §8 carriers the components carry (Poseidon2-CR for the commitment/aggregate, the
-credential oracle for the gate, FRI for the recursion) — entering as the hypotheses below, never as
-`axiom`. This is the single composing security theorem the assurance case previously lacked. -/
+The legs are the REAL keystones, conjoined — `running_entry_sound`'s body (A∧B∧c1), the WHOLE-FOREST
+memory-program composition (c2), the `Argus` noteSpend anti-replay (D), and the `RecursiveAggregation`
+light-client headline + the verification-derived conservation (E). Floor: exactly the §8 carriers the
+components carry (Poseidon2-CR for the commitment/aggregate, the credential oracle for the gate, FRI
+for the recursion) — entering as the hypotheses below, never as `axiom`. This is the single composing
+security theorem the assurance case previously lacked, now bound to ONE deployed turn end-to-end. -/
 theorem deployed_system_secure
-    -- A/B/C(c1): the running-entry forest the node committed.
+    -- A/B/C(c1+c2): the running-entry forest the node committed — the ONE subject of A, B and C.
     (s s' : RecChainedState)
     (f : FullForestG (Digest := Digest) (Proof := Proof) (Request := Request) (Stmt := Stmt)
       (Wit := Wit) (CellId := CellId) (Rights := Rights) (Ctx := Ctx) (Gateway := Gateway)
       (Bytes := Bytes) (Tag := Tag))
     (b : AssetId)
     (hrun : execFullForestG s f = some s')
-    -- C(c2): a live executable move step + its universal codec (the memory-program backbone).
-    (UC : Dregg2.Exec.UniversalBridge.UCodec) {sm sm' : RecChainedState} {tm : Turn}
-    (hmove : recCexec sm tm = some sm')
+    -- C(c2): the universal codec + the per-step coverage seam over the SAME forest `f` (each
+    -- committing node of `f` is a memory program — discharged on the covered verb arms).
+    (UC : Dregg2.Exec.UniversalBridge.UCodec)
+    (hcov : EachStepMemProg UC (lowerForestG f))
     -- D: a committed noteSpend on the executable term IR.
     {nf : Nat} {k k' : RecordKernelState}
     (hspend : interp (noteSpendStmt nf) k = some k')
@@ -759,10 +814,8 @@ theorem deployed_system_secure
     -- C(c1): per-node attestation
     ∧ (∀ p ∈ lowerForestG f, ∃ sa sa',
         execFullAGated sa p.1 p.2 = some sa' ∧ gatedActionInvG sa p.1 p.2 sa')
-    -- C(c2): the executor is a memory program (whole-post-state binding)
-    ∧ Dregg2.Exec.UniversalBridge.uproj UC sm'
-        = (Dregg2.Exec.UniversalBridge.moveTrace UC sm tm).foldl
-            Dregg2.Crypto.MemoryChecking.step (Dregg2.Exec.UniversalBridge.uproj UC sm)
+    -- C(c2): the WHOLE TURN is a memory program (whole-post-state binding over the SAME `s → s'`)
+    ∧ MemProgTrans UC s s'
     -- D: freshness (no double-spend)
     ∧ (nf ∉ k.nullifiers ∧ nf ∈ k'.nullifiers ∧ interp (noteSpendStmt nf) k' = none)
     -- E: unfoolability — whole-history attestation + conservation FROM VERIFICATION
@@ -775,8 +828,8 @@ theorem deployed_system_secure
     exact execFullForestG_conserves_exact s s' f b hrun
   · -- C(c1)
     exact execFullForestG_each_attests s s' f hrun
-  · -- C(c2): the memory-program keystone over the live move.
-    exact Dregg2.Exec.UniversalBridge.move_is_memory_program UC hmove
+  · -- C(c2): the WHOLE-FOREST memory program over the SAME `(s, f, s')` — MEDIUM-7/8.
+    exact execFullForestG_is_memory_program UC s s' f hcov hrun
   · -- D: the noteSpend anti-replay triple.
     exact ⟨noteSpendStmt_no_double_spend hspend, noteSpendStmt_inserts hspend,
       noteSpendStmt_then_reject hspend⟩
