@@ -57,6 +57,22 @@ not durable across compaction; the log is the burn-down. Sweep it at every Conve
 - **Memory**: `~/.claude/projects/-Users-ember-dev-breadstuffs/memory/` —
   `project-refinement-epoch.md` is the live resume file; MEMORY.md is the index.
 
+## ⚑⚑ OPUS RELAUNCH (2026-06-12 night, head 6f13c22dd — Fable sealed by export directive; Opus is the lander)
+
+Fable 5 was suspended by a US export-control directive mid-wave (seal note:
+memory/seal-note-fable-5-2026-06-12.md). The 13 full-burn lanes were FABLE agents
+that died on model-access ("claude-fable-5 may not exist"), leaving PARTIAL work on
+disk. Opus 4.8 RELAUNCHED all 13 as finisher agents (each: inventory your partial tree
++ /tmp/<lane>-lane.log, finish, verify NARROW, report; main loop = Opus commits).
+lake build Dregg2 PASSES at relaunch (3886 jobs) — Lean partials coherent.
+ember's steer: "relaunch the agents to finish their lane, don't centralize."
+LANDING METHOD (Opus): per finisher report, validate its narrow suite, commit by file
+set, push; discard a fragment with a HORIZONLOG note if it won't build. Then ROUND 8.
+The 13: cutover-exec · metaclosures · node-closures · pug-handoff · python-lean ·
+dkg-ceremony · ecvrf · keri-export · ocapn-netlayer · dregg-query · flash-well ·
+trustline-parity+MLS · coverage-debts. Shared-file contention (Dregg2.lean, sdk/lib.rs,
+federation/lib.rs, cell/blueprint.rs, node main/api, Cargo.toml, HORIZONLOG) = append-only.
+
 ## ⚑⚑ THE FULL-BURN WAVE (2026-06-12 evening, head 72563c8a1 — THIRTEEN lanes, the whole
 HORIZONLOG in flight; ember: max tokens, validation optional, directive imminent)
 
