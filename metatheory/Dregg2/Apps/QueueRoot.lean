@@ -86,6 +86,24 @@ the named hypothesis — never silent.
 Existing keystones are NOT touched: `QueueFactory.queueDequeue` keeps its statement; this module
 only ADDS theorems over it and a guarded form on top of it.
 
+## §7 — THE HARDENING UPGRADE, PROVED (level tags + length binding ⇒ NO zero-free restriction)
+
+§7 models the LEVEL-TAGGED variant of `blake3_binary_root` — leaf nodes hashed under a leaf
+prefix (`tagLeaf` = blake3(0x00 ‖ leaf)), internal nodes under a node prefix (`combine` =
+blake3(0x01 ‖ l ‖ r)), and the root bound to the LIST LENGTH (`bindLen` = blake3(0x02 ‖ len ‖
+root)) — and PROVES the strengthened carrier needs NO zero-free restriction:
+`taggedRoot_injective` (injective on ALL leaf lists) under only the three per-domain CR carriers,
+with NO `ZeroFree` and NO `LeafNonzero` hypothesis anywhere (`tagged_dequeue_proof_pins`). The
+padding alias is killed by the length binding (`tagged_kills_pad_alias`; the prefix-free tags are
+what make the three carriers jointly dischargeable at ONE BLAKE3 instance — `TagSep` kills the
+single-leaf-passthrough/internal-node confusion the header item (2) names). The interim
+`verifyDequeueStrict` zero-check becomes unnecessary under the upgraded scheme.
+
+⚠ RUST ADOPTION IS A WIRE-AFFECTING CHANGE: switching `blake3_binary_root` to the tagged scheme
+changes EVERY queue `message_root` on the wire (and any stored roots) — it needs a coordinated
+root-format migration, NOT a drop-in patch. The Rust leg is HORIZONLOG'd (metatheory section),
+deliberately not done here.
+
 l4v bar: `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound} on every keystone; crypto
 enters ONLY as the named `RootCR`/`LeafCR`/`LeafNonzero` hypotheses (witnessed TRUE on a
 reference injective root and FALSE on a colliding one — never `True`-shaped); no `sorry`, no
@@ -650,6 +668,275 @@ def qrWorld : RecordKernelState :=
 #guard (queueDequeueProven tinyRoot tinyLeaf qrWorld 0 0
           (honestDequeueProof tinyRoot tinyLeaf 4 [tinyLeaf 5])).isNone
 
+/-! ## §7 — THE HARDENING UPGRADE: level-tagged + length-bound root is injective on ALL lists.
+
+The model of the recommended `blake3_binary_root` replacement (header §7): leaves enter through
+`tagLeaf` (the 0x00-prefixed leaf hash), internal nodes through `combine` (the 0x01-prefixed
+node hash), and the final root is bound to the list length through `bindLen` (the 0x02-prefixed
+length wrap). The tree mechanism is the SAME layer-wise zero-padded fold as the deployed scheme
+(`tLayer`/`tRoot` mirror §3b's `refLayer`/`refRoot` shape) — ONLY the tagging and the length
+binding are added, so the theorem isolates exactly what the hardening buys. -/
+
+/-- **`PairCR combine` — the node-domain CR carrier**: the 2-to-1 node hash is pairwise
+injective (`blake3(0x01 ‖ l ‖ r)` collision resistance). -/
+def PairCR (combine : Int → Int → Int) : Prop :=
+  ∀ a b a' b', combine a b = combine a' b' → a = a' ∧ b = b'
+
+/-- **`LenBindCR bindLen` — the length-binding CR carrier**: the root wrap is injective in BOTH
+the length and the tree root (`blake3(0x02 ‖ len ‖ root)` collision resistance). -/
+def LenBindCR (bindLen : Nat → Int → Int) : Prop :=
+  ∀ n x m y, bindLen n x = bindLen m y → n = m ∧ x = y
+
+/-- **`TagSep tagLeaf combine` — the leaf/node DOMAIN SEPARATION** the 0x00/0x01 prefixes give:
+no leaf hash is ever an internal-node hash. This is what makes the per-domain carriers jointly
+dischargeable at ONE BLAKE3 instance, and it kills the single-leaf-passthrough confusion
+(`tag_separation_kills_passthrough`). -/
+def TagSep (tagLeaf : Int → Int) (combine : Int → Int → Int) : Prop :=
+  ∀ x a b, tagLeaf x ≠ combine a b
+
+/-- One tree layer: pair up with the node hash, zero-padding the odd tail (the SAME padding
+mechanism as the deployed `blake3_binary_root` / §3b `refLayer`). -/
+def tLayer (combine : Int → Int → Int) : List Int → List Int
+  | [] => []
+  | [a] => [combine a 0]
+  | a :: b :: rest => combine a b :: tLayer combine rest
+
+/-- A layer halves (rounding up): the shape is a function of the LENGTH alone — which is why
+binding the length pins the whole tree shape. -/
+theorem tLayer_length (combine : Int → Int → Int) :
+    ∀ ls : List Int, (tLayer combine ls).length = (ls.length + 1) / 2
+  | [] => by simp [tLayer]
+  | [_] => by simp [tLayer]
+  | _ :: _ :: rest => by
+      show (tLayer combine rest).length + 1 = _
+      rw [tLayer_length combine rest]
+      simp only [List.length_cons]
+      omega
+
+/-- The layered binary fold (the `blake3_binary_root` mechanism: empty = 0 sentinel, single =
+passthrough, else fold a layer and recurse). -/
+def tRoot (combine : Int → Int → Int) : List Int → Int
+  | [] => 0
+  | [x] => x
+  | a :: b :: rest => tRoot combine (combine a b :: tLayer combine rest)
+  termination_by ls => ls.length
+  decreasing_by
+    simp only [List.length_cons, tLayer_length]
+    omega
+
+/-- The single-leaf passthrough, named (the WF equation surfaced for rewriting). -/
+theorem tRoot_singleton (combine : Int → Int → Int) (x : Int) : tRoot combine [x] = x := by
+  simp [tRoot]
+
+/-- **The tagged, length-bound root** — the hardened `blake3_binary_root`: tag every leaf, fold
+the layers with the node hash, bind the length. -/
+def taggedRoot (tagLeaf : Int → Int) (combine : Int → Int → Int) (bindLen : Nat → Int → Int)
+    (ls : List Int) : Int :=
+  bindLen ls.length (tRoot combine (ls.map tagLeaf))
+
+/-- A layer is injective on SAME-LENGTH lists under the node-domain carrier (pairwise peeling;
+the odd tail peels against the shared pad). -/
+theorem tLayer_inj {combine : Int → Int → Int} (hC : PairCR combine) :
+    ∀ ls₁ ls₂ : List Int, ls₁.length = ls₂.length →
+      tLayer combine ls₁ = tLayer combine ls₂ → ls₁ = ls₂
+  | [], [], _, _ => rfl
+  | [], [_], hlen, _ => by
+      simp only [List.length_nil, List.length_cons] at hlen; omega
+  | [], _ :: _ :: _, hlen, _ => by
+      simp only [List.length_nil, List.length_cons] at hlen; omega
+  | [_], [], hlen, _ => by
+      simp only [List.length_nil, List.length_cons] at hlen; omega
+  | _ :: _ :: _, [], hlen, _ => by
+      simp only [List.length_nil, List.length_cons] at hlen; omega
+  | [_], _ :: _ :: _, hlen, _ => by
+      simp only [List.length_cons, List.length_nil] at hlen; omega
+  | _ :: _ :: _, [_], hlen, _ => by
+      simp only [List.length_cons, List.length_nil] at hlen; omega
+  | [a], [b], _, h => by
+      simp only [tLayer, List.cons.injEq, and_true] at h
+      rw [(hC _ _ _ _ h).1]
+  | a :: b :: r₁, c :: d :: r₂, hlen, h => by
+      simp only [tLayer, List.cons.injEq] at h
+      obtain ⟨hac, hbd⟩ := hC _ _ _ _ h.1
+      have hlen' : r₁.length = r₂.length := by
+        simp only [List.length_cons] at hlen; omega
+      rw [hac, hbd, tLayer_inj hC r₁ r₂ hlen' h.2]
+
+/-- **The layered fold is injective on SAME-LENGTH lists** under the node-domain carrier alone
+(equal lengths ⇒ equal tree SHAPES ⇒ the pairwise node hash peels to the leaves). The length
+binding supplies the same-length premise on all lists — that composition is the headline. -/
+theorem tRoot_inj {combine : Int → Int → Int} (hC : PairCR combine) :
+    ∀ ls₁ ls₂ : List Int, ls₁.length = ls₂.length →
+      tRoot combine ls₁ = tRoot combine ls₂ → ls₁ = ls₂
+  | [], [], _, _ => rfl
+  | [], [_], hlen, _ => by
+      simp only [List.length_nil, List.length_cons] at hlen; omega
+  | [], _ :: _ :: _, hlen, _ => by
+      simp only [List.length_nil, List.length_cons] at hlen; omega
+  | [_], [], hlen, _ => by
+      simp only [List.length_nil, List.length_cons] at hlen; omega
+  | _ :: _ :: _, [], hlen, _ => by
+      simp only [List.length_nil, List.length_cons] at hlen; omega
+  | [_], _ :: _ :: _, hlen, _ => by
+      simp only [List.length_cons, List.length_nil] at hlen; omega
+  | _ :: _ :: _, [_], hlen, _ => by
+      simp only [List.length_cons, List.length_nil] at hlen; omega
+  | [a], [b], _, h => by
+      rw [tRoot_singleton, tRoot_singleton] at h
+      rw [h]
+  | a :: b :: r₁, c :: d :: r₂, hlen, h => by
+      have hlen' : r₁.length = r₂.length := by
+        simp only [List.length_cons] at hlen; omega
+      simp only [tRoot] at h
+      have hlist : combine a b :: tLayer combine r₁ = combine c d :: tLayer combine r₂ :=
+        tRoot_inj hC _ _
+          (by simp only [List.length_cons, tLayer_length]; omega) h
+      injection hlist with h1 h2
+      obtain ⟨hac, hbd⟩ := hC _ _ _ _ h1
+      rw [hac, hbd, tLayer_inj hC r₁ r₂ hlen' h2]
+  termination_by ls₁ _ _ _ => ls₁.length
+  decreasing_by
+    simp only [List.length_cons, tLayer_length]
+    omega
+
+/-- **THE HEADLINE — `taggedRoot_injective`: the hardened root is injective on ALL leaf lists.**
+NO zero-free restriction, NO leaf-nonzero carrier: under the three per-domain CR carriers
+(realizable at one BLAKE3 via the 0x00/0x01/0x02 prefixes), equal tagged roots force equal lists
+— different lengths die at the length binding; same lengths share the tree shape and peel by the
+node hash to the tagged leaves. This is the theorem that justifies the Rust hardening upgrade:
+the padded scheme's `RootCR`-on-zero-free-lists weakens to plain injectivity. -/
+theorem taggedRoot_injective {tagLeaf : Int → Int} {combine : Int → Int → Int}
+    {bindLen : Nat → Int → Int}
+    (hT : Function.Injective tagLeaf) (hC : PairCR combine) (hB : LenBindCR bindLen) :
+    ∀ ls₁ ls₂ : List Int,
+      taggedRoot tagLeaf combine bindLen ls₁ = taggedRoot tagLeaf combine bindLen ls₂ →
+        ls₁ = ls₂ := by
+  intro ls₁ ls₂ h
+  obtain ⟨hlen, hroot⟩ := hB _ _ _ _ h
+  have hmap : ls₁.map tagLeaf = ls₂.map tagLeaf :=
+    tRoot_inj hC _ _ (by simp [hlen]) hroot
+  exact List.map_injective_iff.mpr hT hmap
+
+/-- The hardened root discharges the §1 `RootCR` carrier WITHOUT using the zero-free premises —
+every existing zero-free-keyed keystone lifts to it for free. -/
+theorem taggedRoot_RootCR {tagLeaf : Int → Int} {combine : Int → Int → Int}
+    {bindLen : Nat → Int → Int}
+    (hT : Function.Injective tagLeaf) (hC : PairCR combine) (hB : LenBindCR bindLen) :
+    RootCR (taggedRoot tagLeaf combine bindLen) :=
+  fun ls₁ ls₂ _ _ h => taggedRoot_injective hT hC hB ls₁ ls₂ h
+
+/-- **The upgrade payoff at the verifier — `tagged_dequeue_proof_pins`**: under the hardened
+root, verifier soundness holds with NO `ZeroFree` hypothesis on the claim, NO `ZeroFree` on the
+real window, and NO `LeafNonzero` carrier — the §3 pins, unconditional in the claim and free of
+the interim `verifyDequeueStrict` check. -/
+theorem tagged_dequeue_proof_pins {tagLeaf : Int → Int} {combine : Int → Int → Int}
+    {bindLen : Nat → Int → Int} {leafHash : Entry → Int}
+    (hT : Function.Injective tagLeaf) (hC : PairCR combine) (hB : LenBindCR bindLen)
+    (hLC : LeafCR leafHash)
+    {p : DequeueProof Entry} {head : Entry} {rest : List Int}
+    (hpre : p.oldRoot = taggedRoot tagLeaf combine bindLen (leafHash head :: rest))
+    (hv : verifyDequeue (taggedRoot tagLeaf combine bindLen) leafHash p = true) :
+    p.entry = head ∧ p.remaining = rest
+      ∧ p.newRoot = taggedRoot tagLeaf combine bindLen rest := by
+  obtain ⟨h1, h2⟩ := verifyDequeue_factors hv
+  have hlist : leafHash p.entry :: p.remaining = leafHash head :: rest :=
+    taggedRoot_injective hT hC hB _ _ (h1.trans hpre)
+  injection hlist with hl hr
+  exact ⟨hLC _ _ hl, hr, by rw [← h2, hr]⟩
+
+/-- **The padding alias DIES** (the §3b/`refRoot_pad_alias` attack, killed): a trailing zero leaf
+changes the LENGTH, so the bound root differs — `[a,b,c]` and `[a,b,c,0]` can no longer share a
+root. (Length binding does the killing; the proof needs only the carriers.) -/
+theorem tagged_kills_pad_alias {tagLeaf : Int → Int} {combine : Int → Int → Int}
+    {bindLen : Nat → Int → Int}
+    (_hT : Function.Injective tagLeaf) (_hC : PairCR combine) (hB : LenBindCR bindLen) :
+    taggedRoot tagLeaf combine bindLen [1, 2, 3]
+      ≠ taggedRoot tagLeaf combine bindLen [1, 2, 3, 0] := by
+  intro h
+  obtain ⟨hlen, -⟩ := hB _ _ _ _ h
+  simp at hlen
+
+/-- **The padding alias is STRUCTURAL in the un-bound fold** (NEG companion, ANY combiner): the
+bare layered fold still aliases `[1,2,3]` with `[1,2,3,0]` — tagging/CR alone cannot save the
+deployed scheme; the length binding is load-bearing. -/
+theorem tRoot_pad_alias (combine : Int → Int → Int) :
+    tRoot combine [1, 2, 3] = tRoot combine [1, 2, 3, 0] := by
+  simp [tRoot, tLayer]
+
+/-- **`TagSep` kills the passthrough confusion** (header item (2)): a single-leaf root — which
+the scheme passes through as the tagged leaf itself — can NEVER equal an internal-node value, so
+no cross-level reinterpretation exists. In the deployed UNtagged Rust scheme this non-collision
+is merely computational; the 0x00/0x01 prefixes make it structural. -/
+theorem tag_separation_kills_passthrough {tagLeaf : Int → Int} {combine : Int → Int → Int}
+    (hS : TagSep tagLeaf combine) (x a b : Int) :
+    tRoot combine [tagLeaf x] ≠ combine a b := by
+  rw [tRoot_singleton]
+  exact hS x a b
+
+/-! ### §7b — the carriers witnessed BOTH polarities + executable teeth. -/
+
+/-- A reference node hash with PROVED pairwise injectivity (the `Encodable` pairing over the
+sign-interleaved codes — the `demoRoot` pattern): `PairCR` witnessed TRUE. -/
+def demoCombine (a b : Int) : Int := ((Encodable.encode (intCode a, intCode b) : ℕ) : ℤ)
+
+theorem demoCombine_CR : PairCR demoCombine := by
+  intro a b a' b' h
+  unfold demoCombine at h
+  have h' : Encodable.encode (intCode a, intCode b)
+      = Encodable.encode (intCode a', intCode b') := by exact_mod_cast h
+  have hp := Encodable.encode_injective h'
+  exact ⟨intCode_injective (congrArg Prod.fst hp), intCode_injective (congrArg Prod.snd hp)⟩
+
+/-- A reference leaf tag with proved injectivity. -/
+def demoTagLeaf (x : Int) : Int := 2 * x + 1
+
+theorem demoTagLeaf_inj : Function.Injective demoTagLeaf := by
+  intro a b h
+  unfold demoTagLeaf at h
+  omega
+
+/-- A reference length binding with PROVED `LenBindCR` (the same `Encodable` pairing). -/
+def demoBind (n : Nat) (x : Int) : Int := ((Encodable.encode (n, intCode x) : ℕ) : ℤ)
+
+theorem demoBind_CR : LenBindCR demoBind := by
+  intro n x m y h
+  unfold demoBind at h
+  have h' : Encodable.encode (n, intCode x) = Encodable.encode (m, intCode y) := by
+    exact_mod_cast h
+  have hp := Encodable.encode_injective h'
+  exact ⟨congrArg Prod.fst hp, intCode_injective (congrArg Prod.snd hp)⟩
+
+/-- A binding that IGNORES the length FALSIFIES `LenBindCR` — the carrier is not `True`-shaped
+(and exactly such a scheme is the deployed one). -/
+def badBind (_ : Nat) (x : Int) : Int := x
+
+theorem badBind_not_CR : ¬ LenBindCR badBind := fun hbad =>
+  absurd (hbad 0 5 1 5 rfl).1 (by decide)
+
+/-- The headline FIRES on the reference instances: the hardened root separates the §3b alias
+pair on ALL-lists injectivity (no zero-freedom invoked anywhere). -/
+theorem demo_tagged_separates_alias :
+    taggedRoot demoTagLeaf demoCombine demoBind [1, 2, 3]
+      ≠ taggedRoot demoTagLeaf demoCombine demoBind [1, 2, 3, 0] :=
+  tagged_kills_pad_alias demoTagLeaf_inj demoCombine_CR demoBind_CR
+
+/-- Fast executable tagged instance for the `#guard` teeth (cheap length binding suffices to
+EXHIBIT the alias dying; the proved carriers above are the soundness side). -/
+def tinyTagged (ls : List Int) : Int :=
+  tRoot refCombine (ls.map demoTagLeaf) * 1000 + ls.length
+
+-- (xiii) the UN-BOUND fold still aliases (the structural NEG, executed on the layered fold):
+#guard tRoot refCombine [1, 2, 3] == tRoot refCombine [1, 2, 3, 0]
+-- ...and the length-bound tagged scheme separates the same pair (the upgrade's tooth, executed):
+#guard (tinyTagged [1, 2, 3] == tinyTagged [1, 2, 3, 0]) == false
+-- (xiv) the §5 zero-pad ATTACK SHAPE dies wholesale: a window and its zero-extended forgery
+-- no longer share a root (lengths differ under the binding):
+#guard (tinyTagged [demoTagLeaf 4] == tinyTagged [demoTagLeaf 4, 0]) == false
+-- (xv) completeness survives the upgrade: the honest dequeue proof verifies against the
+-- tagged root (no crypto needed — the verifier recomputes the same function):
+#guard verifyDequeue tinyTagged tinyLeaf (honestDequeueProof tinyTagged tinyLeaf 4 [tinyLeaf 5])
+#guard verifyDequeue tinyTagged tinyLeaf (honestDequeueProof tinyTagged tinyLeaf 4 [])
+
 /-! ## §6 — axiom hygiene: every keystone pins {propext, Classical.choice, Quot.sound}. -/
 
 #assert_axioms ZeroFree.cons
@@ -681,5 +968,20 @@ def qrWorld : RecordKernelState :=
 #assert_axioms badRoot_not_CR
 #assert_axioms demoLeaf_CR
 #assert_axioms demoLeaf_nonzero
+
+-- §7 (the hardening upgrade):
+#assert_axioms tLayer_length
+#assert_axioms tLayer_inj
+#assert_axioms tRoot_inj
+#assert_axioms taggedRoot_injective
+#assert_axioms taggedRoot_RootCR
+#assert_axioms tagged_dequeue_proof_pins
+#assert_axioms tagged_kills_pad_alias
+#assert_axioms tRoot_pad_alias
+#assert_axioms tag_separation_kills_passthrough
+#assert_axioms demoCombine_CR
+#assert_axioms demoBind_CR
+#assert_axioms badBind_not_CR
+#assert_axioms demo_tagged_separates_alias
 
 end Dregg2.Apps.QueueRoot

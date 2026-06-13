@@ -35,23 +35,32 @@ reindexing of the guarantee. (We adopt the framing; we do not re-derive the 16-m
    `immediate_revocation` (n=1 / instantaneous) is the **terminal-fibre collapse** (window `= 0`);
    `tightness_tooth` is the **negative tooth** (the window is non-empty distributed).
 2. **Conservation** — the terminal fibre is `Exec.Unified.unified_ledger_conserves` (n=1 ledger
-   exactly conserves: window `0`). Its *distributed* bound — by how much a partition can transiently
-   skew the visible total before reconciliation — is **not yet derived in Lean**, so it is carried as
-   an EXPLICIT named hypothesis `DistConservationBound` (never `sorry`, never `True`).
-3. **Attenuation** — the terminal fibre is `Authority.Caveat.attenuate_narrows` (a child token admits
-   ⊆ the parent: window `0`, the inclusion is exact). Its *distributed* bound — stale-token honoring
-   across a partition, exactly the revocation-style window — is carried as the named hypothesis
-   `DistAttenuationBound` until it is derived from the revocation fibre.
+   exactly conserves: window `0`). Its *distributed* bound is the hypothesis structure
+   `DistConservationBound`; **§12 DISCHARGES it with a DERIVED witness**
+   (`distConservationBound_derived`): for any per-deployment view of locally-executed finalized
+   prefixes, conservation holds with window ZERO at EVERY base point — conservation is
+   PREFIX-CLOSED (`HistoryAggregation.wellformed_history_conserves`), so a partition cannot skew
+   the visible total at all. (Honest scope: the EXACT body executor; the FEE-wrapped history's
+   cross-node skew = the missing turns' burns — `Distributed/FeeHistory`.)
+3. **Attenuation** — the terminal fibre is `Authority.attenuate_narrows` (a child token admits
+   ⊆ the parent: window `0`, the inclusion is exact). Its *distributed* bound is
+   `DistAttenuationBound`; **§13 DISCHARGES it, derived from the revocation fibre** exactly as
+   this header always said it should be (`distAttenuationBound_derived`): an attenuation event =
+   the broad parent revoked + the narrowed child live; the stale-token honoring window IS the
+   revocation propagation window, and the narrowing itself is window-free.
 
-The honesty discipline: a fibre whose distributed bound is not yet a theorem is a **named open**, not
-a vacuity. The `lift` functor is real precisely because (a) it has a non-vacuity witness (a deployment
-where the bound is positive) AND (b) a negative tooth (a deployment where the guarantee
-weakens — the same `tightness_tooth` instance, re-read as "the fibre over this base point is strictly
-weaker than the terminal fibre").
+The honesty discipline: the two former named opens are now THEOREM-witnessed structures (the
+hypothesis shapes remain for generality, but a derived witness inhabits each — no vacuity, no
+carried hypothesis). The `lift` functor is real precisely because (a) it has a non-vacuity witness
+(a deployment where the bound is positive) AND (b) a negative tooth (a deployment where the
+guarantee weakens — the same `tightness_tooth` instance, re-read as "the fibre over this base
+point is strictly weaker than the terminal fibre"; §13's stale-token fibre inherits it).
 
 Pure, computable where decidable.
 -/
 import Dregg2.Distributed.Revocation
+import Dregg2.Distributed.HistoryAggregation
+import Dregg2.Authority.Caveat
 
 namespace Dregg2.Distributed.Fibration
 
@@ -464,6 +473,151 @@ theorem three_fibres_one_lift
   ⟨lift_from_apex (revocationFibre log cred m n τ hrev) src dst hsrc,
    lift_from_apex (conservationFibre Hc) src dst hsrc,
    lift_from_apex (attenuationFibre Ha) src dst hsrc⟩
+
+/-! ## 12. CONSERVATION DISCHARGED (#35) — the carried hypothesis now has a DERIVED witness.
+
+`DistConservationBound` packaged "by how much can a partition transiently skew the visible
+total". The landed answer: NOT AT ALL — conservation is PREFIX-CLOSED. Every locally-executed
+finalized prefix is a genuine `recCexec` run from genesis (`execute_finalized_turn` maintains
+exactly this), and EVERY committed turn conserves (`recChained_run_conserves`), so a node that
+has received ANY prefix of the history already sees the genesis total. The window is `0` at
+EVERY base point, not just the apex — STRONGER than the fibre shape demanded.
+
+HONEST SCOPE: this is the EXACT body executor (`recCexec`, the strand the light client checks).
+The FEE-wrapped history (`runTurn`) burns per turn, so two nodes at different heights see totals
+differing by exactly the missing turns' burns — that statement is
+`Distributed/FeeHistory.wellformed_history_conserves_modulo_burn`, and its reconciliation window
+IS the propagation delay of the missing turns. -/
+
+section ConservationDischarge
+
+open Dregg2.Distributed.HistoryAggregation
+  (ChainStep StateChained lastStateOf wellformed_history_conserves honestStep)
+open Dregg2.Exec (RecChainedState recTotal)
+open Dregg2.Exec.ConsensusExec (teethGenesis)
+
+variable (g : RecChainedState) (view : B → Time → List ChainStep)
+
+/-- The conservation property at a base point: the locally-VISIBLE ledger total (the fold of the
+finalized turns this deployment's node has executed by elapsed `t`) equals the genesis total. -/
+def consProperty (b : B) (t : Time) : Prop :=
+  recTotal (lastStateOf g (view b t)).kernel = recTotal g.kernel
+
+/-- **THE DISCHARGE — a derived `DistConservationBound` witness.** For ANY view assignment whose
+prefixes are genuine state-chained executor runs from genesis (`hview` — what
+`execute_finalized_turn` maintains), conservation holds with window ZERO at EVERY deployment:
+`wellformed_history_conserves` applied to the local prefix. The §8 named open is closed — and the
+derived bound is stronger than required (`0` off-apex too: prefix-closure beats reconciliation). -/
+def distConservationBound_derived (hview : ∀ b t, StateChained g (view b t)) :
+    DistConservationBound (consProperty g view) where
+  cwindow _ := 0
+  reconciledAfter b t _ := wellformed_history_conserves g (view b t) (hview b t)
+  cwindowApexZero _ _ := rfl
+
+/-- A REAL view: every deployment has executed the one-step honest teeth chain. -/
+def demoView : B → Time → List ChainStep := fun _ _ => [honestStep]
+
+theorem demoView_chained : ∀ b t, StateChained teethGenesis (demoView b t) :=
+  fun _ _ => ⟨rfl, trivial⟩
+
+/-- **Non-vacuity**: the discharged conservation fibre FIRES on a real executed history — at
+EVERY base point and EVERY elapsed time the visible total equals genesis (window 0, off-apex
+included). -/
+theorem conservation_fibre_real (b : B) (t : Time) :
+    consProperty teethGenesis demoView b t :=
+  (distConservationBound_derived teethGenesis demoView demoView_chained).reconciledAfter
+    b t (Nat.zero_le t)
+
+/-- The discharged witness builds the SAME `Fibre` the §8 machinery transports — the
+conservation fibre is now hypothesis-free end to end. -/
+theorem conservation_discharged_collapse (b : B) (hb : IsApex b) (t : Time) :
+    (conservationFibre
+        (distConservationBound_derived teethGenesis demoView demoView_chained)).bound b = 0
+      ∧ consProperty teethGenesis demoView b t :=
+  conservation_terminal_collapse
+    (distConservationBound_derived teethGenesis demoView demoView_chained) b hb t
+
+-- the visible total really is the genesis total on the real chain (executed check):
+#guard recTotal (Dregg2.Distributed.HistoryAggregation.lastStateOf teethGenesis
+        [Dregg2.Distributed.HistoryAggregation.honestStep]).kernel
+    == recTotal teethGenesis.kernel
+
+end ConservationDischarge
+
+/-! ## 13. ATTENUATION DISCHARGED (#35) — derived from the REVOCATION fibre, as §9 prescribed.
+
+The distributed face of attenuation is STALE-TOKEN HONORING: a narrowing event (the broad parent
+superseded by `tok.attenuate c`) propagates like a revocation of the parent — until it arrives, a
+node may still honor the stale broad token. So the attenuation window IS the revocation window
+(`eventual_bounded_revocation` at the superseded credential), and the narrowing itself —
+everything the live child admits, the parent admitted — is `attenuate_narrows`, exact at every
+deployment with no window at all. -/
+
+section AttenuationDischarge
+
+open Dregg2.Authority (Token Caveat Discharges attenuate_narrows)
+
+variable {Digest Proof : Type} [AddCommGroup Digest] [CryptoKernel Digest Proof]
+variable {Ctx Gateway : Type}
+
+/-- The stale-token attenuation property at a base point, elapsed `t` after the narrowing event
+at `(m, τ)`: (i) the SUPERSEDED broad credential is no longer honored at `n` (the stale half —
+the parent's revocation has propagated), and (ii) everything the LIVE narrowed token admits, the
+parent admitted (the narrowing half — `attenuate_narrows`, time-independent). -/
+def attProperty (log : List RevEvent) (cred : VC Digest Proof) (m n : Node) (τ : Time)
+    (tok : Token Ctx Gateway) (c : Caveat Ctx Gateway) (b : B) (elapsed : Time) : Prop :=
+  honors b.topo log n (τ + elapsed) cred = false
+    ∧ ∀ ctx d, (tok.attenuate c).admits ctx d = true → tok.admits ctx d = true
+
+/-- **THE DISCHARGE — a derived `DistAttenuationBound` witness, from the revocation fibre.**
+Window = the propagation delay of the parent's supersession (`eventual_bounded_revocation`);
+the narrowing conjunct is window-free (`attenuate_narrows`); the apex collapse is the
+instantaneous-topology fact. The §9 named open is closed by exactly the derivation it named. -/
+def distAttenuationBound_derived (log : List RevEvent) (cred : VC Digest Proof)
+    (m n : Node) (τ : Time) (hrev : RevokedAt log cred m τ)
+    (tok : Token Ctx Gateway) (c : Caveat Ctx Gateway) :
+    DistAttenuationBound (attProperty log cred m n τ tok c) where
+  awindow b := b.topo.delay m n
+  narrowedAfter b elapsed hle :=
+    ⟨eventual_bounded_revocation b.topo log cred m τ hrev n (τ + elapsed)
+        (Nat.add_le_add_left hle τ),
+     fun ctx d h => attenuate_narrows tok c ctx d h⟩
+  awindowApexZero b hb := hb.1 m n
+
+/-- A concrete narrowed pair for the teeth: a bare biscuit parent, narrowed by a refusing caveat
+(a REAL narrowing — the child admits nothing, the parent admitted everything). -/
+def demoTok : Token Unit Unit := { kind := .biscuit, caveats := [] }
+def demoCav : Caveat Unit Unit := .local (fun _ => false)
+
+/-- **The derived attenuation fibre inherits the NEGATIVE TOOTH**: over the distributed base
+point its window is strictly positive AND the stale broad token is STILL HONORED inside it
+(`tightness_tooth`) — the fibre genuinely weakens off the apex; the discharge is not vacuous. -/
+theorem att_fibre_weakens_offApex :
+    0 < (attenuationFibre
+          (distAttenuationBound_derived toothLog toothCred 0 1 0 tooth_revoked
+            demoTok demoCav)).bound distBase
+    ∧ ¬ attProperty toothLog toothCred 0 1 0 demoTok demoCav distBase 4 := by
+  constructor
+  · show 0 < toothTopology.delay 0 1
+    decide
+  · rintro ⟨h1, -⟩
+    have h1' : honors toothTopology toothLog 1 4 toothCred = false := h1
+    rw [tightness_tooth.2.2] at h1'
+    exact Bool.noConfusion h1'
+
+/-- **The terminal collapse fires on the derived fibre**: over an apex point the window is `0`
+and the stale parent is unhonored at every elapsed time while the child's narrowing is exact —
+the single-machine collapse of attenuation, now derived end to end. -/
+theorem att_fibre_terminal (b : B) (hb : IsApex b) (elapsed : Time) :
+    (attenuationFibre
+        (distAttenuationBound_derived toothLog toothCred 0 1 0 tooth_revoked
+          demoTok demoCav)).bound b = 0
+      ∧ attProperty toothLog toothCred 0 1 0 demoTok demoCav b elapsed :=
+  attenuation_terminal_collapse
+    (distAttenuationBound_derived toothLog toothCred 0 1 0 tooth_revoked demoTok demoCav)
+    b hb elapsed
+
+end AttenuationDischarge
 
 /-! ## 11. Axiom-hygiene tripwires.
 

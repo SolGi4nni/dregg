@@ -749,6 +749,19 @@ pub const V3_STAGED_CAVEAT_DESCRIPTORS: &[(&str, &str, &str)] = &[(
     DREGG_EFFECTVM_ROTATION_CAVEAT_V3_STAGED_FP,
 )];
 
+/// THE FULL-COHORT REGEN at the rotated R=24 block (`ROTATION-CUTOVER.md` §5 item 1):
+/// all 26 cohort descriptors re-emitted past their v1 layout with the rotated
+/// BEFORE/AFTER blocks + the widened-caveat region (Lean `rotateV3` /
+/// `EffectVmEmitRotationV3.lean`; `v3Registry` is the source). The TSV is `key\tname\tjson`
+/// per line, sha-256 pinned by `v3_staged_registry_parses_matches_fingerprint_and_covers`.
+/// STAGED: a new constant, no VK bump, the live wire untouched. Each descriptor's
+/// `trace_width = EFFECT_VM_WIDTH (186) + APPENDIX_SPAN (125) = 311`; the rotated
+/// commitments ride four appended PI slots (rotated OLD/NEW commit · height · caveat commit).
+pub const V3_STAGED_REGISTRY_TSV: &str =
+    include_str!("../descriptors/rotation-v3-staged-registry.tsv");
+pub const V3_STAGED_REGISTRY_FP: &str =
+    "1d94da6e28f1d4af27b3e897505e34453e861971a49b52bb79cc01ce045c4dcc";
+
 /// The rotated probe layout at register count `r` (the Rust twin of the Lean parametric
 /// layout `EffectVmEmitRotationR`: columns are FUNCTIONS of R; the chunking is 4-wide head,
 /// 3-wide chip groups while ≥ 3 remain, singletons after — arity ∈ {2,4}, NEVER 3 — and the
@@ -1468,6 +1481,160 @@ mod tests {
             digests, expected_digests,
             "{key}: rotation chain → state_commit, then caveat chain → CAVEAT_COMMIT"
         );
+    }
+
+    /// THE FULL-COHORT REGEN drift guard (`ROTATION-CUTOVER.md` §5 item 1): the staged
+    /// 26-descriptor registry is sha-pinned (whole TSV), every line round-trips through the
+    /// IR-v2 decoder, and each descriptor carries the rotated appendix EXACTLY — two rotated
+    /// state blocks (each absorbing cells-root … iroot in order onto its own state-commit
+    /// carrier) + the widened-caveat region (the 29-felt manifest onto CAVEAT_COMMIT), with
+    /// the four appended PI pins (rotated OLD/NEW commit · height · caveat commit) at the
+    /// descriptor's own `piCount..piCount+3`. A re-emit that drops a limb, a manifest felt,
+    /// or a PI pin fails HERE, before any prover runs. STAGED: nothing on the live wire.
+    #[test]
+    fn v3_staged_registry_parses_matches_fingerprint_and_covers() {
+        use crate::descriptor_ir2::VmConstraint2;
+        use crate::effect_vm::columns::EFFECT_VM_WIDTH;
+        use crate::effect_vm::columns::rotation::caveat as cav;
+        use crate::lean_descriptor_air::{LeanExpr, VmConstraint};
+
+        // Whole-TSV fingerprint (the Lean driver `EmitRotationV3.lean` is the byte source).
+        assert_eq!(
+            sha256_hex(V3_STAGED_REGISTRY_TSV.as_bytes()),
+            V3_STAGED_REGISTRY_FP,
+            "v3 full-cohort registry TSV: SHA-256 drift (re-run EmitRotationV3.lean)"
+        );
+
+        // The rotated geometry (R=24), relative to a block base. Mirrors the Lean
+        // `EffectVmEmitRotationV3` §1 constants and the caveat region inside it.
+        const V1_WIDTH: usize = EFFECT_VM_WIDTH; // 186
+        const B_SPAN: usize = 43;
+        const B_STATE_COMMIT: usize = 32;
+        const B_COMMITTED_HEIGHT: usize = 30;
+        const C_SPAN: usize = 39;
+        const C_COMMIT: usize = 38;
+        const APPENDIX_SPAN: usize = 2 * B_SPAN + C_SPAN; // 125
+        let rot = rotation_layout_for(24);
+        assert_eq!(rot.iroot, 31, "R=24 iroot offset");
+        assert_eq!(rot.state_commit, B_STATE_COMMIT);
+        assert_eq!(rot.committed_height, B_COMMITTED_HEIGHT);
+
+        let mut n = 0usize;
+        for line in V3_STAGED_REGISTRY_TSV.lines() {
+            if line.is_empty() {
+                continue;
+            }
+            n += 1;
+            let mut it = line.splitn(3, '\t');
+            let key = it.next().expect("tsv key");
+            let _name = it.next().expect("tsv name");
+            let json = it.next().expect("tsv json");
+            let d = parse_vm_descriptor2(json)
+                .unwrap_or_else(|e| panic!("v3 registry {key} failed parse_vm_descriptor2: {e}"));
+            assert_eq!(
+                d.trace_width,
+                V1_WIDTH + APPENDIX_SPAN,
+                "{key}: rotated trace width = v1 width + appendix"
+            );
+            assert!(
+                d.hash_sites.is_empty() && d.ranges.is_empty(),
+                "{key}: graduated carriers only"
+            );
+
+            // The three appendix blocks, at fixed bases past the v1 layout.
+            let before_base = V1_WIDTH;
+            let after_base = V1_WIDTH + B_SPAN;
+            let caveat_base = V1_WIDTH + 2 * B_SPAN;
+
+            // A "fresh limb" of the appendix is a column inside one of the three blocks'
+            // LIMB ranges (before/after rotated limbs 0..=iroot, or the caveat manifest
+            // 0..MANIFEST_SIZE) — NOT a chain-carrier column (those ride the accumulator as
+            // inputs but are not absorbed data). We audit only appendix sites (digest >=
+            // V1_WIDTH); the v1 descriptor's own chip lookups absorb columns < V1_WIDTH.
+            let is_limb = |v: usize| -> bool {
+                (before_base..=before_base + rot.iroot).contains(&v)
+                    || (after_base..=after_base + rot.iroot).contains(&v)
+                    || (caveat_base..caveat_base + cav::MANIFEST_SIZE).contains(&v)
+            };
+            let mut digests: Vec<usize> = Vec::new();
+            let mut absorbed: Vec<usize> = Vec::new();
+            for c in &d.constraints {
+                if let VmConstraint2::Lookup(l) = c {
+                    let vars: Vec<usize> = l
+                        .tuple
+                        .iter()
+                        .filter_map(|e| match e {
+                            LeanExpr::Var(v) => Some(*v),
+                            _ => None,
+                        })
+                        .collect();
+                    let (digest, inputs) = vars.split_last().expect("chip tuple has a digest");
+                    if *digest >= V1_WIDTH {
+                        digests.push(*digest);
+                        for v in inputs {
+                            if is_limb(*v) {
+                                absorbed.push(*v);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Expected fresh absorption: before-block limbs 0..=iroot, after-block limbs,
+            // then the caveat manifest 0..MANIFEST_SIZE — all relative to their bases.
+            let mut expected_absorbed: Vec<usize> = Vec::new();
+            expected_absorbed.extend((0..=rot.iroot).map(|i| before_base + i));
+            expected_absorbed.extend((0..=rot.iroot).map(|i| after_base + i));
+            expected_absorbed.extend((0..cav::MANIFEST_SIZE).map(|i| caveat_base + i));
+            assert_eq!(
+                absorbed, expected_absorbed,
+                "{key}: appendix must absorb the BEFORE block, the AFTER block, then the \
+                 29-felt caveat manifest, each limb exactly once in absorption order"
+            );
+
+            // Expected digest carriers: before chain → before state_commit; after chain →
+            // after state_commit; caveat chain → caveat commit.
+            let mut expected_digests: Vec<usize> = Vec::new();
+            expected_digests.extend((0..rot.num_chain).map(|k| before_base + rot.chain_base + k));
+            expected_digests.push(before_base + B_STATE_COMMIT);
+            expected_digests.extend((0..rot.num_chain).map(|k| after_base + rot.chain_base + k));
+            expected_digests.push(after_base + B_STATE_COMMIT);
+            // Caveat region: carriers/commit are BLOCK-RELATIVE here (the cav::* constants are
+            // absolute within the standalone caveat probe at base cav::BASE).
+            let cav_chain_rel = cav::CHAIN_BASE - cav::BASE; // 29
+            expected_digests.extend((0..cav::NUM_CHAIN).map(|k| caveat_base + cav_chain_rel + k));
+            expected_digests.push(caveat_base + C_COMMIT);
+            assert_eq!(
+                digests, expected_digests,
+                "{key}: before chain→state_commit, after chain→state_commit, \
+                 caveat chain→CAVEAT_COMMIT"
+            );
+
+            // The four appended PI pins live at the descriptor's OWN piCount..piCount+3,
+            // bound to: first-row before state_commit, last-row after state_commit,
+            // last-row after committed_height, last-row caveat commit.
+            let pi_base = d.public_input_count - 4;
+            let mut pins: Vec<(usize, usize)> = Vec::new(); // (col, pi_index)
+            for c in &d.constraints {
+                if let VmConstraint2::Base(VmConstraint::PiBinding { col, pi_index, .. }) = c {
+                    if *pi_index >= pi_base {
+                        pins.push((*col, *pi_index));
+                    }
+                }
+            }
+            pins.sort_by_key(|(_, pi)| *pi);
+            assert_eq!(
+                pins,
+                vec![
+                    (before_base + B_STATE_COMMIT, pi_base),
+                    (after_base + B_STATE_COMMIT, pi_base + 1),
+                    (after_base + B_COMMITTED_HEIGHT, pi_base + 2),
+                    (caveat_base + C_COMMIT, pi_base + 3),
+                ],
+                "{key}: four appended PI pins (rotated OLD/NEW commit · height · caveat commit)"
+            );
+        }
+        assert_eq!(n, 26, "expected the full 26-member cohort");
     }
 
     /// The widened-entry codec teeth: round-trip + FAIL-CLOSED decode. A forged

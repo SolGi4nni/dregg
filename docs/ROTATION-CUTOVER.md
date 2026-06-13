@@ -30,6 +30,7 @@ FLIPS at the cutover commit, which pins bump, and what is staged vs. live today.
 | staged artifacts on the Rust side: `circuit/descriptors/rotation-layout-v3-staged.json` + `dregg-effectvm-rotation-state-v3-staged.json`, `effect_vm_descriptors.rs::V3_STAGED_DESCRIPTORS` (sha-256 pinned), `columns.rs::rotation` (drift-guarded `rotation_layout_matches_lean`), probe prove/verify/size + per-column tamper-refusal in `descriptor_ir2.rs` | circuit | STAGED (this lane) |
 | PI v3 drift guard (`pi_v3_offsets_match_lean`) | `circuit/src/effect_vm/pi.rs` | LIVE test |
 | THE WIDENED CAVEAT OPERAND, staged: `(domain_tag, key)` entries (7 felts, umem `domainCode` discipline, key u8→felt) + `caveat_operand_no_aliasing` keystone + `caveatCommit_binds` + the R=24 caveat probe (`rotationCaveatProbe_binds_published`) + forged-domain/tampered-heap-key teeth | `metatheory/Dregg2/Circuit/Emit/EffectVmEmitRotationCaveat.lean`, `circuit` (`columns.rs::rotation::caveat`, `trace.rs::RotCaveatEntry`, `V3_STAGED_CAVEAT_DESCRIPTORS`, `descriptor_ir2.rs` teeth) | STAGED (this lane) |
+| THE FULL-COHORT REGEN at the rotated R=24 block, staged: `rotateV3` (ONE parametric transformation — appends two rotated state blocks + the widened-caveat region past ANY v1 descriptor, +125 cols, 4 appended PI pins; col-chained ⇒ byte-identical to the digest-chained R=24 probe, `#guard` tripwire), v1-survival keystone `rotateV3_satisfiedVm_v1` (every per-effect theorem composes unchanged), end-to-end `rotV3_binds_published` (one theorem, 26 descriptors — same published commits ⇒ equal whole before+after blocks + iroots + height + caveat manifest under the ONE CR floor), `v3Registry` (all 26 graduated, `attenuateV3`/`setFieldDynV3` keep their extras), welds r0↔BALANCE_LO · r1↔NONCE · r2↔BALANCE_HI · r3..r10↔fields · CAP_ROOT↔CAP_ROOT | `metatheory/Dregg2/Circuit/Emit/EffectVmEmitRotationV3.lean`, Rust twin `circuit/descriptors/rotation-v3-staged-registry.tsv` + `V3_STAGED_REGISTRY_TSV` (sha-256 pinned; `v3_staged_registry_parses_matches_fingerprint_and_covers` walks all 26 — absorption + chain + 4 PI pins) | STAGED (this lane) |
 
 ## §2 — The staged commitment shape (what the cutover realizes)
 
@@ -135,9 +136,11 @@ Pre-gates (ALL green before anything flips):
       (named premise `HeapCaveatRuntimeDischarge`) + the flag-day fold of the staged
       manifest into the live PI region (replaces `SLOT_CAVEAT_MANIFEST_BASE` 101..126).
 
-- [ ] **GATE 0**: `effect_vm_ir2_size_measure` at-or-under the v1 350.5 KiB
+- [x] **GATE 0**: `effect_vm_ir2_size_measure` at-or-under the v1 350.5 KiB
       baseline (per-effect; the staged probe's block-only shape measures ~tens of
       KiB — see the test print — but the GATE is the per-effect transfer figure).
+      **GREEN**: v1 358,900 B (350.5 KiB) → IR-v2 123,292 B (120.4 KiB), ratio 0.344
+      (-65.6%); re-confirmed this lane post-regen (the additive staging does not move it).
 - [ ] The 3-verb executor bridge (`RecordKernelState` → the ONE universal map)
       landed and soaked (`VerbCompression.lean:87-89` — "rides THE ONE ROTATION";
       first real-turn umem proof landed `93a34fa74`).
@@ -195,18 +198,38 @@ Post-flip gauntlets (block the deploy, not the commit):
 
 ## §5 — What remains UNDONE after this lane (the honest list)
 
-1. **The full-cohort regen at the rotated block** (§3 step 1-2) — the probe pins
-   the SHAPE; the 26 per-effect descriptors still emit against the 186/14 layout.
+1. ~~**The full-cohort regen at the rotated block** (§3 step 1-2) — the probe pins
+   the SHAPE; the 26 per-effect descriptors still emit against the 186/14 layout.~~
+   **DONE (staged), this lane** — `EffectVmEmitRotationV3.lean::v3Registry` re-emits all
+   26 cohort members at the rotated R=24 block via the ONE parametric `rotateV3`; the
+   soundness keystones (`rotateV3_satisfiedVm_v1`, `rotV3_binds_published`) lift ONCE for
+   all 26, axiom-clean; Rust twin `rotation-v3-staged-registry.tsv` is sha-pinned and the
+   coverage/drift test walks every descriptor's absorption + chain + 4 PI pins. STAGED
+   beside v1/v2 (no VK bump, the live wire untouched). The FLIP (§3 steps 1-6) replaces the
+   v1 registry with this rotated one — still the main loop's act.
 2. **The balance/nonce register-name assignment** (§2 note) — ember decision.
 3. **The cells_root producer**: the rotated block's `cells_root` limb needs the
    turn-level cells-root carrier wired into the per-turn witness (today the
-   probe witnesses it as a free limb; the executor must supply it).
+   probe witnesses it as a free limb; the executor must supply it). The Lean
+   `EffectVmEmitRotationV3` §3 boundary note NAMES this as `turn/src/rotation_witness.rs`
+   (with iroot + lifecycle/epoch) — DELIBERATELY UNBUILT: a producer is only
+   validatable against the rotated trace builder, which is the flip's act (no live
+   verifier consumes the staged commitment yet). Building it now = an unvalidatable
+   witness; correct sequence is producer + trace builder together at the flip.
 4. **The iroot producer**: the MMR root over the receipt log must be computed by
-   the executor per turn (Lean MMR theory landed; `turn/` carrier missing).
-5. **lifecycle/epoch carriers in the trace**: live `CellState` tracks them; the
-   v1 trace does not — the regen adds the columns, the executor populates.
-6. **GATE 0 re-measure** after the regen (the staged probe measures the block
-   shape only).
+   the executor per turn (Lean MMR theory landed; `turn/` carrier missing). Same
+   sequencing as item 3 (no Rust MMR/iroot primitive exists yet either).
+5. **lifecycle/epoch carriers in the trace**: live `CellState` tracks them (the umem
+   projection already maps `Lifecycle`/`DelegationEpoch` into the heap/caps domains —
+   `turn/src/umem.rs:307,355`); the v1 trace does not — the regen adds the columns, the
+   executor populates (with item 3-4, at the flip).
+6. ~~**GATE 0 re-measure** after the regen (the staged probe measures the block
+   shape only).~~ **MEASURED green, this lane**: the per-effect GATE figure is the
+   transfer IR-v2 size (`effect_vm_ir2_size_measure`), which the staged additive regen
+   does NOT move — v1 `350.5 KiB` → IR-v2 `120.4 KiB` (ratio 0.344, -65.6%), well under the
+   350.5 KiB ceiling. The rotated cohort's own block-shape adds the +125-col appendix only
+   when it graduates to the live wire (the flip), where it re-measures against the flipped
+   per-effect baseline.
 7. **The 3-verb circuit descriptors** (gated on the executor rotation —
    `UNIVERSAL-MAP-ROTATION.md` §2.3; never before it).
 8. **cell ≡ circuit rotated differential** (§3 post-flip gauntlets).

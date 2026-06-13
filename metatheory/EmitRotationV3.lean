@@ -21,12 +21,14 @@ executable: run with `lake env lean --run EmitRotationV3.lean`.
 import Dregg2.Circuit.Emit.EffectVmEmitRotation
 import Dregg2.Circuit.Emit.EffectVmEmitRotationR
 import Dregg2.Circuit.Emit.EffectVmEmitRotationCaveat
+import Dregg2.Circuit.Emit.EffectVmEmitRotationV3
 
 open Dregg2.Circuit.DescriptorIR2 (emitVmJson2)
 open Dregg2.Circuit.Emit.EffectVmEmitRotation
 open Dregg2.Circuit.Emit.EffectVmEmitRotationR (rotationProbeVmDescriptorR2)
 open Dregg2.Circuit.Emit.EffectVmEmitRotationCaveat
   (rotationCaveatLayoutManifest rotationCaveatProbeVmDescriptor2)
+open Dregg2.Circuit.Emit.EffectVmEmitRotationV3 (v3Registry)
 
 def main : IO Unit := do
   IO.println s!"rotationLayoutManifest\t{rotationLayoutManifest}"
@@ -39,3 +41,8 @@ def main : IO Unit := do
   IO.println s!"rotationCaveatLayoutManifest\t{rotationCaveatLayoutManifest}"
   IO.println
     s!"rotationCaveatProbeVmDescriptor2\t{rotationCaveatProbeVmDescriptor2.name}\t{emitVmJson2 rotationCaveatProbeVmDescriptor2}"
+  -- THE FULL-COHORT REGEN (ROTATION-CUTOVER §5 item 1): all 26 v2Registry members at the
+  -- rotated R=24 block — `key\tname\tjson`, the byte source of
+  -- `circuit/descriptors/rotation-v3-staged-registry.tsv`.
+  for (key, d) in v3Registry do
+    IO.println s!"v3rot\t{key}\t{d.name}\t{emitVmJson2 d}"
