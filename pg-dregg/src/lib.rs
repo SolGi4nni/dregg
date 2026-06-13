@@ -24,6 +24,7 @@
 //! the postgres layer is formally verified; we name the seam.
 
 pub mod authz;
+pub mod mirror;
 
 // The PG_MODULE_MAGIC block + the `__pgrx_marker` the schema generator links
 // against MUST live at the crate ROOT (cargo-pgrx's pgrx_embed binary calls

@@ -55,6 +55,18 @@ pg16 = ["pgrx", "pgrx/pg16", "dep:pgrx-tests", "pgrx-tests/pg16"]
 pg17 = ["pgrx", "pgrx/pg17", "dep:pgrx-tests", "pgrx-tests/pg17"]
 # pg_test enables the #[pg_test]s (cargo-pgrx sets this).
 pg_test = []
+# Tier C (docs/PG-DREGG.md §10) — the VERIFIED STORE. Links the proof verifier
+# (the STARK/PI light-client checker) so `dregg_verify_turn` runs the REAL
+# verifier in the backend (AUTHORIZED, §8.1). Off by default: the Tier A authz
+# build stays circuit-free; the verified-store build opts in. (The verifier
+# crate dep is wired when this tier is implemented; the feature is declared now
+# so the build path is explicit and the mirror core compiles either way.)
+tier-c = []
+# Tier D (docs/PG-DREGG.md §11) — the EXECUTOR-IN-POSTGRES endgame. Links the
+# verified Lean executor so `dregg_submit_turn` executes a turn inside the
+# backend (AUTHORIZED, §8.1; gated on the pg/Lean process-model spike). Implies
+# tier-c (executing implies verifying).
+tier-d = ["tier-c"]
 
 [dependencies]
 # pgrx is OPTIONAL: only the extension build pulls it (and its postgres

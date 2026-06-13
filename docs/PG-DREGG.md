@@ -581,3 +581,444 @@ over a plain materialized view: a `dregg_receipts` answer can carry its MMR
 opening so a downstream consumer verifies non-omission. This is a genuinely nice
 secondary surface, but it is independent of, and should not gate, the
 authz/RLS layer that is this proposal's thesis.
+
+---
+
+# Part II — making `pg-dregg` first-class: storage, query, execution
+
+§1–§7 are the LANDED M1: dregg capabilities as PostgreSQL RLS (Tier A). They
+make postgres a first-class *authorization* surface for dregg. Part II asks the
+larger question — *can postgres be a first-class **storage, query, and
+execution** surface for dregg, using pg for ALL of it, without weakening one
+guarantee?* The answer is **yes, and there is exactly one invariant that makes
+it sound.** State the invariant first; every tier below is a way of honouring
+it.
+
+## 8. The spine invariant — reads are free SQL, state mutates only through verified turns
+
+> **THE INVARIANT.** Postgres may be dregg's first-class storage and query
+> surface *without weakening a single guarantee*, **iff** every row that
+> represents dregg state appears **only** as the result of a verified turn
+> executed by the real kernel (the embedded Lean executor, or a node) — **never**
+> by a bare SQL `INSERT`/`UPDATE`/`DELETE`. Ordinary SQL `SELECT` queries the
+> materialized state freely; **writes pass through the verifier.**
+
+This is the whole game. dregg's guarantees — conservation (value is neither
+created nor destroyed across a turn), no-amplification (a delegated capability
+admits a subset of its grantor's), nullifier-uniqueness (no double-spend),
+authenticated state-root evolution (the post-state commitment is the verified
+fold of the pre-state and the turn) — are *properties of the executor's
+transition function*. They live in the **write path**, not in the bytes at rest.
+A `SELECT` cannot violate them; it only observes. A bare `UPDATE cells SET
+balance = balance + 1000000` **annihilates all of them at once** — it forges
+value, with no turn, no proof, no nullifier, no root update. So:
+
+- **Reads are free.** Any `SELECT`, join, aggregate, window function, recursive
+  CTE over the materialized state is sound by construction, because reading
+  cannot break an invariant of the transition function. This is what lets
+  postgres be a genuinely first-class *query* surface: the full power of SQL,
+  RLS-gated by Tier A, with zero new trust.
+- **Writes are gated.** A row representing dregg state may enter a table *only*
+  as the post-image of a verified turn. The mechanism that enforces this is the
+  tier ladder: Tier B *materializes* verified-turn output (the node is the
+  writer, SQL is forbidden to write); Tier C makes the *verifier itself* the
+  gate (`dregg_verify_turn` in a `CHECK`/trigger — a row cannot exist unless it
+  is a verified-turn result); Tier D makes the *executor* a postgres function
+  (`dregg_submit_turn` — postgres becomes the kernel and produces the rows
+  itself, atomically).
+
+**If you let SQL mutate cells directly, you bypass the executor and the design
+is unsound.** Every tier below is therefore measured against this one question:
+*does a state row ever exist except as a verified-turn post-image?* When the
+answer is "no", postgres is first-class AND sound. The honest failure mode is
+naming it loudly: a tier that grants an application `UPDATE` on a state table
+has silently re-opened the bypass, and is wrong no matter how convenient.
+
+The tiers:
+
+| Tier | What postgres becomes | Writer of state rows | Verifier in the loop | Status |
+|---|---|---|---|---|
+| **A** authz | a capability-gated **policy** surface | (app's own tables) | dregg-auth (caps) | **LANDED (M1)** |
+| **B** mirror | a first-class **query** surface over dregg state | the **node** (SQL forbidden) | upstream (the node already verified) | proposed **M2** |
+| **C** verified store | a **verifying light client, in SQL** | the node, *through* `dregg_verify_turn` | the verifier, in a `CHECK` | proposed **M3** |
+| **D** executor-in-pg | **a dregg node** | postgres itself | the embedded Lean executor | **v-future** |
+
+Tiers compose: B's tables are what C gates and D produces. A's RLS gates the
+*reads* of all of them.
+
+### 8.1 Circuits and online operation ARE authorized here
+
+A note that reshapes the cost/payoff of the heavier tiers. §4 frames the M1
+authz layer's *circuit-free, fully-offline* profile (`cargo tree -i dregg-
+circuit -p dregg-auth` is empty) as a virtue — and for **Tier A** it is: a
+capability check should not need a proof system or a network. But that circuit-
+free property is a *property of Tier A*, **not a design boundary on `pg-dregg`
+as a whole.** `pg-dregg` is explicitly authorized to **link the circuit/proof
+stack and to operate online** when a tier needs it. That changes the calculus
+for Tiers C and D decisively:
+
+- Tier C *wants* the proof **verifier** in the backend — that is not a
+  reluctant heavyweight to be avoided, it is the **point** of the verified
+  store, and linking it is sanctioned.
+- Tier D *wants* the executor — likewise sanctioned where the payoff (postgres
+  *is* a dregg node) is wanted.
+- `pg-dregg` may therefore depend on the real dregg types and the real verifier
+  (and, at Tier D, the executor), not only on the offline `dregg-auth` core.
+
+So read the C/D cost sections below as **"here is what it links and the
+operational weight to plan for,"** NOT as "here is why to avoid it." The only
+thing the heavier tiers must never trade away is the **spine invariant** — and
+linking the verifier/executor *strengthens* it (the gate becomes the real
+verifier / the real kernel), never weakens it. The offline profile stays the
+**default for Tier A**, because a row-read policy genuinely should not pull a
+prover; the online/circuit profile is a first-class, authorized build for the
+tiers whose whole job is verified writes and execution.
+
+## 9. Tier B — dregg state as queryable postgres tables
+
+**The proposition.** Materialize the live dregg state — cells, receipts/turns,
+the blocklace DAG, capabilities + the delegation graph, the universal-memory
+multiset — as real, indexed, RLS-gated SQL tables, so the explorer, analytics,
+and app queries are *plain SQL joins* instead of bespoke RPC against a node.
+The concrete schema is `pg-dregg/sql/schema-tierB.sql` (a marked DESIGN SKETCH);
+this section is its rationale and soundness argument.
+
+### 9.1 The mirror is a projection of an artifact that already exists
+
+The decisive fact: **the node already persists exactly this, in exactly this
+shape.** `persist/src/commit_log.rs`'s `CommitRecord` is the authoritative,
+append-only, crash-consistent record of every verified turn the node applied —
+and it already carries `ordinal · height · block_id · turn_hash · creator ·
+receipt_hash · ledger_root · touched_cells: Vec<Cell>`. The commit log writes
+the cursor, the per-turn index (receipt-by-hash, turn-by-hash, turn-by-(height,
+creator)), and the per-turn cell snapshots **in one redb transaction** with the
+ledger-root post-state binding. Tier B is *that record, projected into SQL
+tables.* We are not inventing a schema; we are giving the commit log a SQL face:
+
+- `dregg.turns` ⟵ `CommitRecord` (one row per ordinal),
+- `dregg.cells` ⟵ `LedgerCheckpoint.cells` + `CommitRecord.touched_cells`
+  (latest post-image per cell; `dregg.cell_history` keeps every post-image, which
+  is just the cell-by-(id,ordinal) index surfaced),
+- `dregg.capabilities` ⟵ each cell's `CapabilitySet` / `CapabilityRef`
+  (cell/src/capability.rs) — the delegation graph as edges,
+- `dregg.blocks` / `dregg.block_edges` ⟵ `persist/src/blocklace_store.rs` (the
+  consensus DAG),
+- `dregg.memory` ⟵ the universal-memory multiset (§11).
+
+Every column in the sketch is provenance-tagged to its Rust source so the mirror
+is a *faithful* projection.
+
+### 9.2 Mirror, or backend? — the one architectural decision
+
+There are two ways to populate Tier B, and they sit at different points on the
+sound↔invasive axis:
+
+**(B1) Postgres as a MIRROR the node writes to (recommended for M2).** The node
+keeps redb as its source of truth; a small sink in the commit path (right where
+`CommitRecord` is written) upserts the same record into postgres in the same
+logical commit. Postgres is a *read replica of verified state.* The spine
+invariant holds **trivially**: the only writer is the node's commit path, which
+only ever writes verified-turn output, and applications get `SELECT` only.
+
+- *Soundness:* airtight — postgres never decides anything; it reflects what the
+  node already verified. The mirror can even re-check each row's `ledger_root`
+  chains to the previous (the Tier-C tooth, §10, applied read-only) to detect a
+  tampered mirror.
+- *Cost:* a dual-write (redb + pg) in the commit path, and an eventual-vs-strict
+  consistency choice (write pg in the same redb transaction boundary, or
+  async-tail it from the commit log — the commit log is replayable, so an
+  async tailer that resumes from `commit_cursor()` is crash-safe and never loses
+  a turn).
+- *Payoff:* the entire query surface, immediately, at near-zero risk.
+
+**(B2) Postgres as THE node's persist backend (replacing/augmenting redb).** The
+node's `PersistentStore` trait is re-implemented over postgres: the commit log,
+ledger checkpoints, and indices live in pg tables, and redb is retired or kept
+as a cache. Postgres is now the *system of record.*
+
+- *Soundness:* still sound — the same commit-path code writes, the same
+  one-transaction atomicity is available (pg is ACID, like redb), and the spine
+  invariant is identical (the executor is the only writer). The CommitRecord
+  invariants (`commit_cursor() == commit_log.len()`, no torn state, no
+  double-apply) port to pg transactions one-for-one.
+- *Cost:* a real engineering lift — re-implement `PersistentStore` over `tokio-
+  postgres`/`sqlx`, port the crash-consistency proofs' assumptions (redb's
+  single-writer fsync boundary ⟶ a pg transaction), and accept a network round-
+  trip per commit where redb was in-process. It also couples node availability
+  to pg availability.
+- *Payoff:* one store, not two; no dual-write skew; the node's durability *is*
+  the DBA's postgres backups/replication/PITR — operationally huge.
+
+**Recommendation: B1 for M2** (mirror — fast, airtight, reversible), with B2
+recorded as the natural successor once the mirror has proven the schema and the
+query surface in production. B1 and B2 share the schema; B2 is "promote the
+mirror to the source of truth," not a rewrite of the tables.
+
+### 9.3 Soundness of Tier B
+
+The mirror tables are **read-only to applications** (the `dregg_reader` role gets
+`SELECT`, never `INSERT/UPDATE/DELETE`; the only writer is `dregg_kernel`, the
+node's commit path). `FORCE ROW LEVEL SECURITY` + `REVOKE … FROM PUBLIC` close
+the privilege side. Therefore no application SQL can create a state row — the
+spine invariant holds by *construction of the privilege model*, before any
+trigger. Reads are RLS-gated by Tier A (§6 of the sketch): the explorer is
+literally "the rows your capability admits." Tier B weakens **nothing**: it adds
+a query surface over already-verified state and forbids the only operation
+(application writes) that could break an invariant.
+
+### 9.4 Tier B verdict: **GREEN**
+
+The artifact already exists (`CommitRecord`), the mirror is a projection, the
+soundness is by privilege construction, and the payoff (full SQL over dregg
+state, RLS-gated) is large and immediate. **Biggest risk:** mirror *staleness /
+skew* under B1 — a crash between the redb commit and the pg write. Mitigated by
+tailing the replayable commit log from `commit_cursor()` (crash-safe, exactly-
+once) rather than a best-effort dual-write, and by the read-only root-chain
+re-check that detects a diverged mirror. This is the M2 milestone.
+
+## 10. Tier C — writes through the verifier (the CHECK tooth)
+
+**The proposition.** Make the *verifier itself* the gate on the state tables, so
+that **no row can exist unless it is the result of a verified turn** — enforced
+by postgres, not by trusting the writer. This turns Tier B's "the node promises
+it only writes verified output" into "postgres *checks* that every write is
+verified output." It is the verifying light client, realized as the store.
+
+### 10.1 The gate
+
+A turn arrives as `(envelope, receipt, proof, vk)`. Tier C adds a function
+
+```sql
+-- TRUE iff `proof` is a valid proof that applying the turn in `envelope`
+-- to the pre-state root produces `receipt` (whose post-state root is
+-- receipt.ledger_root), under verification key `vk`. Pure verification:
+-- no execution, no Lean executor — just the STARK/PI verifier + the
+-- root-binding check (the snapshot.rs `claimed_root` anti-substitution tooth,
+-- lifted into SQL).
+CREATE FUNCTION dregg_verify_turn(envelope bytea, receipt bytea, proof bytea, vk bytea)
+    RETURNS boolean STABLE PARALLEL SAFE;
+```
+
+and gates every state write on it. The cleanest shape is a **single
+`dregg.commit_log` table whose `INSERT` trigger is the only path to state**, and
+whose trigger:
+
+1. verifies `dregg_verify_turn(envelope, receipt, proof, vk)` — else `RAISE`;
+2. checks `receipt.prev_root = (SELECT ledger_root FROM dregg.turns ORDER BY
+   ordinal DESC LIMIT 1)` — the post-state of turn *N* is the pre-state of *N+1*,
+   so the roots **chain** (this is exactly `snapshot.rs`'s `claimed_root`
+   binding and `CommitRecord`'s "ledger_root binds the record to a concrete
+   post-state");
+3. derives the `dregg.cells` / `dregg.memory` / `dregg.capabilities` post-images
+   from the verified receipt and upserts them **in the same transaction**.
+
+```sql
+CREATE FUNCTION dregg.apply_verified_turn() RETURNS trigger AS $$
+BEGIN
+  IF NOT dregg_verify_turn(NEW.envelope, NEW.receipt, NEW.proof, NEW.vk) THEN
+    RAISE EXCEPTION 'dregg: turn proof does not verify — refused';
+  END IF;
+  IF NEW.prev_root IS DISTINCT FROM
+       (SELECT ledger_root FROM dregg.turns ORDER BY ordinal DESC LIMIT 1) THEN
+    RAISE EXCEPTION 'dregg: turn does not chain to the head root — refused';
+  END IF;
+  -- derive + upsert cells/memory/caps from the verified receipt (SECURITY DEFINER)
+  PERFORM dregg.materialize_post_state(NEW.receipt);
+  RETURN NEW;
+END $$ LANGUAGE plpgsql SECURITY DEFINER;
+
+CREATE TRIGGER verify_before_apply BEFORE INSERT ON dregg.commit_log
+  FOR EACH ROW EXECUTE FUNCTION dregg.apply_verified_turn();
+```
+
+Now the spine invariant is enforced by the **database engine**: a row in
+`dregg.cells` exists *iff* some `dregg.commit_log` insert carried a turn whose
+proof verified and whose root chained. A forged `INSERT INTO dregg.cells`
+doesn't exist as a path (no write grant); the only door is `dregg.commit_log`,
+and that door runs the verifier. This is "a verifying light client, in SQL,
+made into the store" — precisely the project's framing.
+
+### 10.2 What it links (and the authorized profile)
+
+Tier A/B link only `dregg-auth` (pure Rust, no circuit). **Tier C links the
+proof verifier — and that is sanctioned** (§8.1): the verified store's whole job
+is to run the real verifier on the write path. The recommended shape:
+
+- **(C-embed) embed the verifier in the backend (recommended).** Link the
+  STARK/PI verifier — the light-client checker — into the extension. Built
+  Lean-free with the `no-lean-link` profile (the verifier is verification-only —
+  no executor, no Lean runtime — so it is far lighter than Tier D, even though it
+  is heavier than `dregg-auth`: plonky3 + the PI checker, multi-MB). This is the
+  authorized, first-class form: the backend itself verifies every turn. The
+  `pg-dregg` crate gains a `tier-c` feature that pulls the verifier crate; the
+  Tier A build stays circuit-free by default, and the verified-store build opts
+  in.
+- **(C-callout) call out to a node's verify endpoint (the light alternative).**
+  `dregg_verify_turn` becomes a foreign call (a node RPC / a background worker)
+  to a co-located node that runs the real verifier. Keeps the backend light at
+  the cost of a synchronous dependency and a trust boundary (the callout target
+  must be the real verifier, co-located and authenticated). Use this only where
+  embedding the verifier is genuinely unwanted; C-embed is the first-class path.
+
+### 10.3 Soundness, and the honest failure mode
+
+Done right, Tier C is the *strongest* sound tier short of D: the database refuses
+to hold any state that is not a verified-turn post-image, and the root-chaining
+makes the table a hash-chain a light client could itself check. The honest
+failure mode to forbid loudly: **if `dregg_verify_turn` is stubbed to `TRUE`
+(or the trigger is dropped, or an app is granted a direct write), the gate is
+gone and the store silently accepts forged state.** So Tier C's correctness rests
+on (a) the verifier being the *real* verifier (named differential, as in §4),
+and (b) the trigger + privilege lockdown being audited as load-bearing. A
+stubbed verifier here is the same disease as a vacuous spec: a labeled gate that
+doesn't gate.
+
+### 10.4 Tier C verdict: **GREEN/YELLOW** (GREEN on intent, YELLOW on the carve-out)
+
+Sound and high-value, and — now that linking the verifier is authorized
+(§8.1) — the *right* shape rather than a reluctant one. It is GREEN on intent
+(embed the real verifier; the database refuses any non-verified state) and
+YELLOW only on the engineering of carving the verifier out Lean-free behind the
+`tier-c` feature (real work, but bounded — the light client already isolates the
+checker from the executor). **Biggest risk:** the verifier carve-out is more
+Lean-entangled than the light-client framing suggests, in which case C-callout
+(verify via a co-located node) preserves soundness while the carve-out matures.
+Recommended as **M3**, after the B mirror is in production and the schema is
+proven.
+
+## 11. Tier D — the executor as a postgres function (the AWESOME endgame)
+
+**The proposition.** Run the **embedded kernel inside the backend**, so
+
+```sql
+SELECT dregg_submit_turn(envelope);   -- returns the receipt
+```
+
+*executes* the turn — the real verified executor produces the post-state — and
+the cells/memory/caps tables update **atomically in the same SQL transaction.**
+At this point **postgres IS a dregg node**: a developer's existing postgres is
+their dregg node; turns are submitted as SQL; state is queried as SQL; the whole
+thing is one ACID transaction.
+
+### 11.1 What it links (authorized weight to plan for)
+
+Tier D embeds the **verified Lean executor** — the `state_producer = "lean"`
+path the node already runs (`node/src/api.rs`: `DREGG_LEAN_PRODUCER`, the SWAP
+boundary; `dregg_exec_full_forest_auth`). Linking it is authorized (§8.1); the
+weight to plan for is the multi-MB Lean static lib (`libdregg_lean.a`) plus a
+Lean runtime in **every backend process** — the master-interface-build weight,
+in pg's per-connection process model. So backend memory and startup grow, and
+the Lean runtime must be safe under pg's `fork()`-per-backend and error model.
+That last point is the *real* gate on Tier D, and it is a technical hazard, not
+a policy one (§11.3): authorizing the link does not make pg's `setjmp`/`longjmp`
+error path automatically safe for a Lean runtime mid-stack.
+
+### 11.2 Why it is still sound (and uniquely powerful)
+
+The executor inside the backend is *the same verified executor the node runs* —
+the one whose transition function carries conservation / no-amplification /
+nullifier-uniqueness (the machine-checked guarantees in
+`metatheory/Dregg2/`). So `dregg_submit_turn` produces *only* verified post-
+state, by definition; the spine invariant holds because the writer is literally
+the kernel. The unique win over Tier C: **atomicity with application data.** A
+turn and the application's own (non-dregg) rows commit or roll back *together*,
+in one transaction — something neither a separate node nor Tier C's mirror can
+offer. `BEGIN; SELECT dregg_submit_turn(pay_invoice); UPDATE invoices SET paid =
+true; COMMIT;` is atomic across the kernel and the app. That is the AWESOME
+endgame: dregg state and app state share a transaction.
+
+### 11.3 Tier D verdict: **YELLOW (authorized; gated on the pg/Lean process model), the north star**
+
+The verdict moves up from RED now that embedding the executor is sanctioned
+(§8.1): the blocker is no longer "is this an allowed thing to link" but the one
+genuine technical hazard. It is the *most* sound tier — the kernel itself is the
+writer — and the only thing standing between it and GREEN is whether the Lean
+runtime is robust under postgres's per-backend `fork()` / error model (pg uses
+`setjmp`/`longjmp` for error handling; a Lean runtime mid-stack is a hazard that
+needs a spike to clear). **Biggest risk: exactly that** — pg's longjmp error
+unwinding vs the Lean runtime's stack. Recommendation: pursue after B+C are in
+production, *front-loaded by a small spike* that links the executor into one
+backend and hammers the error path; if the spike is clean, Tier D is GREEN and
+the "your postgres IS your dregg node, atomic with your app data" payoff is
+real. A lighter intermediate that sidesteps the hazard entirely is
+**D-sidecar**:
+`dregg_submit_turn` hands the envelope to a co-located node over a unix socket
+and the node executes; you lose single-transaction atomicity but keep the SQL
+submit ergonomics without linking Lean into the backend — a sound, much cheaper
+75% of the payoff, and a sensible stepping stone.
+
+## 12. Integration wins (each composes with the spine)
+
+- **Universal memory → ONE table (the elegance).** `docs/UNIVERSAL-MEMORY.md`
+  proves dregg's whole state is one Blum multiset over `Domain × κ`, `Domain ∈
+  {registers, heap, caps, nullifiers, index}`, with the four map roots as
+  *derived boundary views*. That maps **exactly** onto one postgres table
+  `dregg.memory(domain, collection, key, value, last_ordinal)` — a future state
+  component is a new `domain` *value*, never a new table. The typed tables of
+  §9 (cells/caps) can then be **views over this one relation**, and the boundary
+  roots are `dregg_domain_root('caps', …)` aggregates whose equality with the
+  committed map root is the Lean-proved `boundary_root_derived`. The single
+  table *is* the honest model; the typed tables are query sugar. (ember decision:
+  lead with typed tables for ergonomics, or with the single table for honesty?)
+- **dregg-analyzer → pg as the trace/attestation store.** `dregg-analyzer`'s
+  captures (blocklace / receipts / WAL / network / forest) and `AnalysisReport`s
+  land in pg tables; the analyzer's safety findings become SQL the operator
+  queries, and the attestation traces are durable and joinable to `dregg.turns`.
+- **dregg-query → attested read SRFs (already §7).** Surface `dregg-query`'s
+  evaluator as set-returning functions; an answer carries its MMR non-omission
+  opening, so a `SELECT dregg_receipts(since)` is a *provably complete* answer,
+  not just a view. This is the read-side complement to Tier C's verified writes:
+  reads are not only free, they can be *attested* free.
+- **persist snapshots → ship/install via pg.** `persist/src/snapshot.rs`'s
+  `{checkpoint ⊕ overlay}` with the `claimed_root` anti-substitution tooth is
+  exactly a Tier-B/C bootstrap: a joiner `COPY`s a snapshot into the mirror and
+  the root-chain check (§10.1 step 2) re-validates it — node bootstrap as a SQL
+  bulk-load.
+- **The SDKs → a pg-backed dev loop.** With Tier D (or D-sidecar), the SDK's
+  dev loop is `psql`: mint, submit turns, and query state without standing up a
+  node — the lowest-friction "hello, dregg" a developer can have. This is the
+  usability/teaching win the refinement epoch is asking for.
+
+## 13. Recommended sequencing + feasibility verdicts
+
+| Milestone | Tier | Deliverable | Verdict |
+|---|---|---|---|
+| **M1** (landed) | A | caps as RLS (`dregg_cap_admits`) | shipped |
+| **M2** (next) | B1 | the **mirror**: node tails its commit log into RLS-gated pg tables; the explorer + analytics as plain SQL | **GREEN** |
+| **M3** | C | `dregg_verify_turn` CHECK tooth: embed the real verifier behind a `tier-c` feature (authorized, §8.1), or C-callout; state rows exist *only* as verified-turn post-images | **GREEN/YELLOW** |
+| **future** | B2 / D | promote the mirror to the node's persist backend (B2); the executor as a pg function (D) — front-loaded by the pg/Lean process-model spike — or D-sidecar | **YELLOW** (D, post-spike) |
+
+The throughline is the spine: **M2 gives postgres a first-class query surface
+with airtight soundness (only the node writes, apps read), M3 makes the verifier
+the gate so even the writer cannot forge, and D is the endgame where postgres
+becomes the node.** Each step is sound because each honours the one invariant —
+no state row exists except as a verified-turn post-image — and the design's job
+is to keep that invariant visibly load-bearing at every tier, never to trade it
+for convenience.
+
+### ember decisions surfaced (Part II)
+
+5. **M2 = the B1 mirror** (node tails commit log → pg), or jump to B2 (pg as the
+   node's persist backend)? Recommendation: B1 first (airtight, reversible);
+   B2 once the schema is proven.
+6. **Tier B tables: typed (cells/caps/turns) or the single universal-memory
+   table** with typed views over it? Recommendation: typed tables for query
+   ergonomics, documented as views over the one honest `dregg.memory` relation.
+7. **Tier C verifier embedding: C-embed (verifier in the backend behind a
+   `tier-c` feature — authorized, §8.1) vs C-callout (a co-located node
+   verifies)?** Recommendation: C-embed is the first-class path; C-callout only
+   if the carve-out is too Lean-entangled.
+8. **Tier D: pursue the in-backend Lean executor (authorized, §8.1), or stop at
+   D-sidecar** (SQL submit ergonomics, node executes over a socket, no Lean in
+   the backend)? Recommendation: run the pg/Lean process-model **spike** first;
+   if clean, pursue full D for the single-transaction atomicity payoff;
+   otherwise D-sidecar is 75% of the payoff at a fraction of the risk.
+
+> **Note (correction folded in).** An earlier draft treated `pg-dregg`'s
+> circuit-free / offline profile as a design boundary for the whole crate and so
+> ranked C/D as heavyweights to avoid. That was wrong: the offline profile is a
+> property of **Tier A only**; `pg-dregg` is authorized to link circuits and
+> operate online for the tiers that need it (§8.1). The verdicts above reflect
+> the corrected stance — C and D are first-class, authorized targets, gated only
+> by their genuine engineering (the verifier carve-out; the pg/Lean process
+> model), not by any prohibition on linking the proof stack.
