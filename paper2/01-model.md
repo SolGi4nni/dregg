@@ -95,9 +95,9 @@ verb and the behavior it provides has no other provider.
 | `shield` / `unshield` | evidence / introduce | note-create / note-spend: grow the evidence ledger |
 | `lifecycle` | retirement / eliminate | the seal/destroy/sovereign custody automaton |
 
-The wire vocabulary turns actually carry is larger (52 effect tags), and a
+The wire vocabulary turns actually carry is larger (27 effect tags), and a
 total, compiler-checked cover (`VerbRegistry.classify`,
-`classify_total`, `cover_hits_all_three`) sends every tag to exactly one of
+`classify_total`, `cover_hits_both`) sends every tag to exactly one of
 three places: a kernel verb; **turn structure** (exercising a capability is a
 *use*, not a verb; a refusal is an *outcome*; the nonce is prologue;
 pipelining is composition); or a **factory pattern** — a cell program built
