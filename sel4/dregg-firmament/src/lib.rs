@@ -93,6 +93,17 @@ pub mod router;
 pub mod emulated_kernel;
 pub mod microkit_facade;
 
+// The COMPOSITOR-PD — the minimal framebuffer/input multiplexer on the
+// EmulatedKernel (`docs/DREGG-DESKTOP-OS.md §2 L5` + `§6 R3 Stage D`, native-now
+// on the semihost). It is the SOLE holder of the framebuffer region, models its
+// scene as a dregg cell, and enforces the verified scene (T1 non-overlap / T2
+// label-binding / T3 focus-exclusivity — the anti-ghost teeth PROVEN in the Lean
+// `Dregg2.Apps.Compositor` AppSpec) AS THE GATE on every `present()` an app-PD
+// submits over an Endpoint. The ONLY new TCB; NO app logic, NO widget toolkit,
+// NO placement policy. std-backed (semihost); the scene authority is the genuine
+// `is_attenuation` (`granted ⊆ held`) lattice, never reinvented.
+pub mod compositor_pd;
+
 // The v1 PROCESS-backed PD substrate (the MMU-enforced isolation upgrade). It
 // is Unix-only and behind the `process-pd` feature: PDs become forked host
 // PROCESSES so the host MMU enforces address-space separation, shared regions
@@ -114,6 +125,11 @@ pub use emulated_kernel::{
 pub use microkit_facade::{
     Channel, ChannelSet, ChannelTable, ChannelWiring, EventLoop, Handler, MessageInfo,
     NullHandler, ProtectionDomain, Region,
+};
+pub use compositor_pd::{
+    cell_seed, decode_present, encode_present, label_of, CompositorPd, FrameCommit, Present,
+    Refusal, RegionId, Scene, Surface, FRAMEBUFFER_TILES, LABEL_PRESENT, LABEL_PRESENT_OK,
+    LABEL_PRESENT_REFUSED,
 };
 
 // The v1 process-backed substrate's public surface (Unix + `process-pd` only):
