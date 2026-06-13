@@ -1,0 +1,39 @@
+# Cargo config for the STEP-4 root-task PD that hosts the verified executor.
+#
+# Mirrors the rust-sel4 musl-root-task build (hacking/nix/.../instances:musl):
+#   * build-std WITH `std` (sel4-root-task-with-std pulls std: malloc/TLS/unwind)
+#   * target = aarch64-sel4-roottask-musl (the vendored rust-sel4 target spec:
+#     os=linux, env=musl, static, panic=abort, rust-lld) — provided via
+#     RUST_TARGET_PATH below.
+#   * rustflags add the seL4-musl libc (`-L <musl-sel4>/lib`) + a dummy libunwind
+#     (the roottask-musl target wants -lunwind; std=panic=abort doesn't use it).
+#
+# SEL4_PREFIX / SEL4_INCLUDE_DIRS (the kernel.elf + libsel4 headers this PD's
+# `sel4` crate binds against) are supplied by the build script
+# `scripts/build-roottask.sh` from `./sel4-prefix` (provisioned by
+# `scripts/provision-sel4.sh`). They are env-at-build-time, not pinned here, so a
+# fresh checkout re-provisions reproducibly.
+
+[unstable]
+unstable-options = true
+build-std = ["core", "alloc", "compiler_builtins", "std", "panic_abort"]
+build-std-features = ["compiler-builtins-mem"]
+
+[build]
+target = "aarch64-sel4-roottask-musl"
+rustflags = ["-Zunstable-options"]
+
+[env]
+# The vendored rust-sel4 target specs (aarch64-sel4-roottask-musl.json lives here).
+RUST_TARGET_PATH = { value = "/Users/ember/sel4-sdk/rust-sel4/support/targets", force = true }
+
+# The seL4-musl libc + a dummy libunwind, both provisioned into ./out by
+# scripts/provision-sel4.sh. -L makes `-lc`/`-lunwind` from the target's link
+# args resolve to the seL4 (sysinfo-routed) musl rather than any host libc.
+[target.aarch64-sel4-roottask-musl]
+rustflags = [
+    "-Zunstable-options",
+    "-L", "/Users/ember/dev/breadstuffs/sel4/dregg-pd/executor-rootserver/out/musl-sel4/lib",
+    "-L", "/Users/ember/dev/breadstuffs/sel4/dregg-pd/executor-rootserver/out/dummy-libunwind/lib",
+]
+linker = "rust-lld"

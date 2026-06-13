@@ -1,11 +1,13 @@
-# The executor-PD wall — PASSED: the verified executor runs on real aarch64
+# The executor-PD wall — PASSED, and step 4 DONE: the verified executor runs INSIDE seL4
 
 *The firmament's one true blocker (docs/FIRMAMENT.md §6, §7) — the ELF Lean
-runtime — is BUILT, and the VERIFIED executor now runs one real turn through
-`dregg_exec_full_forest_auth` on aarch64-linux-musl, emitting a correct accepted
-receipt. The remaining step is the seL4-PD host (step 4). Probed against the live
-toolchain (leanrt v4.30.0, Lean `d024af099`, the in-tree `metatheory/` closure)
-and run under an aarch64 Linux/musl runtime on 2026-06-13.*
+runtime — is BUILT, the VERIFIED executor runs one real turn through
+`dregg_exec_full_forest_auth` on aarch64-linux-musl, AND (step 4) that turn now
+runs INSIDE a real seL4 protection domain booted under qemu-system-aarch64,
+emitting the identical accepted receipt over serial (`../executor-rootserver/`,
+`out/sel4-boot-evidence.log`). Probed against the live toolchain (leanrt v4.30.0,
+Lean `d024af099`, the in-tree `metatheory/` closure), run under aarch64 Linux/musl
+AND on seL4, on 2026-06-13.*
 
 ## The four-step excision plan — where each stands now
 
@@ -14,7 +16,7 @@ and run under an aarch64 Linux/musl runtime on 2026-06-13.*
 | (1) | ELF-recompile the Lean closure under leanc | **✅ GREEN** |
 | (2) | ELF leanrt + the Lean library bottom-half (Init/Std/Lean/mathlib/deps) | **✅ GREEN — built** |
 | (3) | GMP for ELF | **✅ GREEN — real GMP 6.3.0 cross-built** |
-| (4) | host on seL4 (`sel4-musl` + `root-task-with-std`) | ◐ the remaining step |
+| (4) | host on seL4 (`sel4-musl` + `root-task-with-std`) | **✅ DONE** — the verified turn runs INSIDE a seL4 PD (`../executor-rootserver/`) |
 
 **The turn runs.** `scripts/link-probe.sh` links the verified closure + the ELF
 runtime into a static `aarch64-linux-musl` executable (`out/dregg-executor.elf`,
@@ -88,18 +90,18 @@ body is `lean_nat_dec_lt(p1,p2)` (`aux-defs.c`). Three sibling auxiliaries
 (`l_instDecidableLtBitVec___aux__1___redArg`, two `Std.Time.Duration` ones) share the
 gap but are unreachable on the turn (verified) and stay abort-guarded in dead-stub.c.
 
-## The remaining step (4): the seL4-PD host
+## Step (4): the seL4-PD host — DONE
 
-The executor is a **root-task-with-std**-style PD (it needs malloc/pthread/TLS/
-C++-exceptions), not a bare Microkit PD. The substrate exists in rust-sel4
-(`~/sel4-sdk/rust-sel4/crates/experimental/sel4-musl` +
-`crates/private/support/sel4-root-task-with-std`). The next concrete action: wire
-`sel4-musl`'s syscall handler, link `out/dregg-executor.elf`'s object set (or the
-archives) into a `root-task-with-std` PD, and boot it under `qemu-system-aarch64`
-via the Microkit/loader path (../Makefile). Decision §8.3: root-task (simpler,
-weaker isolation) vs. a Microkit-PD musl substrate (the steady-state `dregg.system`
-shape). The Lean runtime is now an ordinary musl aarch64 image — the hard part
-(an ELF runtime that runs the verified turn) is done.
+The executor is now hosted as a **root-task-with-std**-style PD and **the verified
+turn runs INSIDE a real seL4 protection domain**, booted under
+`qemu-system-aarch64`: the seL4 kernel boots, drops to user space, the PD installs
+its `sel4-musl` syscall handler, the Lean runtime initializes, and
+`dregg_exec_full_forest_auth` produces the identical `status:2 ok:1` receipt over
+serial. The full lane + the boot evidence + the precise wall-by-wall journey
+(11 walls cleared, incl. building `muslForSeL4`, a root-task seL4 kernel, fixing
+the loader's macOS cross-asm, the RAM/CNode sizing, and the syscall/`__sysinfo`/
+`/dev/urandom` startup surface) live in **`../executor-rootserver/`** (see its
+`WALL-roottask.md`). The reproducer is `../executor-rootserver/scripts/build-image.sh`.
 
 ## Reproduce
 

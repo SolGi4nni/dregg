@@ -1,0 +1,57 @@
+# executor-rootserver — STEP 4 of the firmament-heart excision: host the VERIFIED
+# dregg executor inside a real seL4 protection domain.
+#
+# This is the `root-task-with-std` PD that the executor-pd/WALL.md §"remaining
+# step (4)" describes. The sibling `executor-pd/` lane BANKED steps 1-3: the
+# verified `dregg_exec_full_forest_auth` (= `execFullForestG` + admission, proved
+# in `metatheory/`) ELF-recompiles for aarch64 and runs ONE real turn as a static
+# `aarch64-linux-musl` binary (status:2 ok:1 — `out/dregg-executor-run.log`). The
+# Lean runtime there became an ordinary musl image.
+#
+# Step 4 hosts that musl image on seL4. A Microkit PD is `no_std`; the Lean
+# runtime needs malloc/pthread/TLS/C++-exceptions — so this is a *raw seL4 root
+# task* built on `sel4-root-task-with-std`, with `sel4-musl` intercepting the
+# musl libc's Linux-syscall surface (Brk/Mmap/Write/...) and routing it to an
+# in-PD handler. The pattern is the upstream reference
+# `~/sel4-sdk/rust-sel4/crates/private/tests/root-task/musl/`, here driving the
+# verified executor instead of a `vec![1,2,3]`.
+#
+# THE KEY CONSTRAINT (WALL-roottask.md §1): the executor's C closure + Lean
+# runtime must be relinked against **muslForSeL4** (the seL4/musllibc fork), whose
+# syscall path is an indirect call through the `__sysinfo` function pointer that
+# `sel4-musl` populates — NOT stock musl's direct `svc #0` (which would trap to
+# the seL4 kernel as an seL4 syscall). `scripts/relink-roottask.sh` rebuilds the
+# closure against the seL4 musl this crate's build provisions.
+#
+# Standalone workspace (own target dir; swarm-safe; never edits the shared
+# dregg-pd members list — same rationale as executor-pd/Cargo.toml).
+[workspace]
+
+[package]
+name = "dregg-executor-rootserver"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "dregg-executor-rootserver"
+path = "src/main.rs"
+
+[dependencies]
+# Path-depend on the VENDORED rust-sel4 checkout (HEAD = efef73cc, the exact rev
+# the working dregg Microkit PDs pin), which carries sel4-musl +
+# sel4-root-task-with-std + the syscall-types. These are NOT published to
+# crates.io, so a path dep on the local SDK checkout is the supported route (the
+# upstream tests-root-task-musl crate path-deps them the same way).
+sel4 = { path = "/Users/ember/sel4-sdk/rust-sel4/crates/sel4", default-features = false }
+sel4-musl = { path = "/Users/ember/sel4-sdk/rust-sel4/crates/experimental/sel4-musl" }
+sel4-linux-syscall-types = { path = "/Users/ember/sel4-sdk/rust-sel4/crates/experimental/sel4-linux-syscall-types" }
+sel4-root-task-with-std = { path = "/Users/ember/sel4-sdk/rust-sel4/crates/private/support/sel4-root-task-with-std" }
+sel4-dlmalloc = { path = "/Users/ember/sel4-sdk/rust-sel4/crates/sel4-dlmalloc" }
+one-shot-mutex = "0.2.1"
+
+[profile.release]
+panic = "abort"
+opt-level = "s"
+lto = true
+codegen-units = 1

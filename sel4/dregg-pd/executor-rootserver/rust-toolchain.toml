@@ -1,0 +1,8 @@
+# Match the VENDORED rust-sel4's own toolchain (its rust-toolchain.toml at HEAD
+# efef73cc): nightly-2026-04-04 with rust-src (build-std for the tier-3 musl
+# root-task target) + rustc-dev/llvm-tools. The seL4 root-task `std` build needs
+# `std` in the build-std set, which this nightly's rust-src provides.
+[toolchain]
+channel = "nightly-2026-04-04"
+profile = "minimal"
+components = ["rust-src", "llvm-tools-preview"]
