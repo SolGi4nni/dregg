@@ -649,6 +649,172 @@ fn v9_lifecycle_felt(lc: &crate::lifecycle::CellLifecycle) -> dregg_circuit::fie
     hash_bytes(&bytes)
 }
 
+/// **THE v9 AUTHORITY DIGEST** — the single Poseidon2 felt that folds ALL authority-bearing
+/// cell state that NO other rotated limb carries.
+///
+/// ## Why this exists (the rotated-commitment design call, G3)
+///
+/// The v8 BLAKE3 commitment ([`compute_canonical_state_commitment`]) binds the cell's FULL
+/// authority-bearing state: identity (`id`/`public_key`/`token_id`), `mode`, the eight
+/// `Permissions` fields, the `verification_key`, `delegate`, the `delegation` snapshot, the
+/// `program`, and the CellState authority sub-state (`field_visibility`, `commitments`,
+/// `proved_state`, `swiss_table_root`, `refcount_table_root`, `fields_root`,
+/// `system_roots_digest`, all 16 `fields`). The rotated v9 commitment's NAMED limbs cover
+/// only a SUBSET of this: balance/nonce (r0/r1/r2), `fields[0..8]` (r3..r10), `cap_root`
+/// (r25), `nullifier_root`/`heap_root` (r26/r27), `lifecycle`/`epoch`/`committed_height`
+/// (r28/r29/r30). Everything else — permissions, VK, delegate, delegation, program, mode,
+/// token_id, the visibility/commitment/proved/side-table sub-roots, and `fields[8..16]` —
+/// would be DROPPED by a rotated commitment that left the app-register headroom zeroed.
+///
+/// Dropping authority state is a soundness hole (two cells with identical
+/// balance/nonce/fields[0..8]/roots but DIFFERENT permissions or VK would commit identically,
+/// so a verifier could not tell a locked-down cell from a wide-open one). To close it, the
+/// rotated commitment binds this digest into register **r23** (the last app register; the
+/// Lean welds `EffectVmEmitRotationV3.weldsAt` constrain only r0..r10 + cap_root, so r23 is a
+/// freely-witnessed limb that the anti-ghost keystone `wireCommitR_binds` /
+/// `rotatedCommit_binds_reg` ALREADY binds — no Lean change is needed; r23 is "just a
+/// register" the commitment proves bound). The digest is computed cell-locally, so both the
+/// cell-side v9 commitment and the producer ([`dregg_turn::rotation_witness::produce`]) build
+/// the SAME r23 from the SAME `&Cell`, and the circuit trace carries it on the wire.
+///
+/// ## What it folds (the authority residue not on a named limb)
+///
+/// This walks the SAME byte serialization v8 uses for these fields (so v8 and v9 agree on
+/// "what is authority state"): identity, mode, permissions, VK, delegate, delegation,
+/// program, and the CellState authority sub-state that no named limb carries —
+/// `field_visibility`, `commitments`, `proved_state`, `swiss_table_root`,
+/// `refcount_table_root`, `fields_root`, `system_roots_digest`, and `fields[8..16]`. The
+/// fields the rotated limbs already carry (balance/nonce/`fields[0..8]`/cap_root/heap_root/
+/// committed_height/delegation_epoch) are NOT re-absorbed here — they are bound by their own
+/// limbs. The accumulated bytes are hashed to a felt via the same Poseidon2 `hash_bytes` the
+/// other byte-rooted limbs use, under a dedicated domain context.
+pub fn compute_authority_digest_felt(cell: &Cell) -> dregg_circuit::field::BabyBear {
+    use crate::state::STATE_SLOTS;
+    use dregg_circuit::poseidon2::hash_bytes;
+
+    // Collect the authority residue into a byte buffer, domain-separated, then fold to a
+    // felt. Domain prefix so this digest can never collide with a bare root felt.
+    let mut bytes: Vec<u8> = Vec::with_capacity(256);
+    bytes.extend_from_slice(b"dregg-cell:v9-authority-digest v1");
+
+    // ---- Identity ----
+    bytes.extend_from_slice(cell.id.as_bytes());
+    bytes.extend_from_slice(&cell.public_key);
+    bytes.extend_from_slice(&cell.token_id);
+
+    // ---- Mode ----
+    bytes.push(match cell.mode {
+        crate::cell::CellMode::Hosted => 0,
+        crate::cell::CellMode::Sovereign => 1,
+    });
+
+    // ---- Permissions (eight AuthRequired fields, canonical order) ----
+    {
+        let p = &cell.permissions;
+        for auth in [
+            &p.send,
+            &p.receive,
+            &p.set_state,
+            &p.set_permissions,
+            &p.set_verification_key,
+            &p.increment_nonce,
+            &p.delegate,
+            &p.access,
+        ] {
+            bytes.push(auth_byte(auth));
+            if let AuthRequired::Custom { vk_hash } = auth {
+                bytes.extend_from_slice(vk_hash);
+            }
+        }
+    }
+
+    // ---- Verification key ----
+    match &cell.verification_key {
+        Some(vk) => {
+            bytes.push(1);
+            bytes.extend_from_slice(&vk.hash);
+        }
+        None => bytes.push(0),
+    }
+
+    // ---- Delegate ----
+    match &cell.delegate {
+        Some(d) => {
+            bytes.push(1);
+            bytes.extend_from_slice(d.as_bytes());
+        }
+        None => bytes.push(0),
+    }
+
+    // ---- Delegation snapshot ----
+    match &cell.delegation {
+        Some(deleg) => {
+            bytes.push(1);
+            bytes.extend_from_slice(deleg.source.as_bytes());
+            bytes.extend_from_slice(&deleg.delegation_epoch.to_le_bytes());
+            bytes.extend_from_slice(&deleg.refreshed_at.to_le_bytes());
+            bytes.extend_from_slice(&deleg.max_staleness.to_le_bytes());
+            bytes.extend_from_slice(&(deleg.snapshot.len() as u64).to_le_bytes());
+            for cap in &deleg.snapshot {
+                // The same 7-field leaf the cap_root absorbs, so a tampered delegated cap
+                // moves this digest (the snapshot is authority-bearing — audit P2-4).
+                bytes.extend_from_slice(&felt_to_bytes32(cap_ref_to_leaf(cap).digest()));
+            }
+        }
+        None => bytes.push(0),
+    }
+
+    // ---- Program ----
+    match &cell.program {
+        crate::program::CellProgram::None => bytes.push(0),
+        crate::program::CellProgram::Predicate(constraints) => {
+            bytes.push(1);
+            let s = postcard::to_allocvec(constraints).unwrap_or_default();
+            bytes.extend_from_slice(&(s.len() as u64).to_le_bytes());
+            bytes.extend_from_slice(&s);
+        }
+        crate::program::CellProgram::Circuit { circuit_hash } => {
+            bytes.push(2);
+            bytes.extend_from_slice(circuit_hash);
+        }
+        crate::program::CellProgram::Cases(cases) => {
+            bytes.push(3);
+            let s = postcard::to_allocvec(cases).unwrap_or_default();
+            bytes.extend_from_slice(&(s.len() as u64).to_le_bytes());
+            bytes.extend_from_slice(&s);
+        }
+    }
+
+    // ---- CellState authority sub-state NOT carried by a named rotated limb ----
+    let st = &cell.state;
+    // fields[8..16] (fields[0..8] are welded to r3..r10).
+    for field in &st.fields[8..STATE_SLOTS] {
+        bytes.extend_from_slice(field);
+    }
+    // visibility, commitments, proved_state.
+    for vis in &st.field_visibility {
+        bytes.push(visibility_byte(*vis));
+    }
+    for commit in &st.commitments {
+        match commit {
+            Some(h) => {
+                bytes.push(1);
+                bytes.extend_from_slice(h);
+            }
+            None => bytes.push(0),
+        }
+    }
+    bytes.push(st.proved_state as u8);
+    // side-table / overflow roots (authority-bearing: they gate enliven / drop-ref /
+    // handoff and fold the unbounded record + the 8 kernel side-tables).
+    bytes.extend_from_slice(&st.swiss_table_root);
+    bytes.extend_from_slice(&st.refcount_table_root);
+    bytes.extend_from_slice(&st.fields_root);
+    bytes.extend_from_slice(&st.system_roots_digest());
+
+    hash_bytes(&bytes)
+}
+
 /// Build the 31 pre-iroot rotated limbs for a cell + turn-context, in the Lean-pinned
 /// absorption order (`EffectVmEmitRotationV3.preLimbsAt`). Byte-identical to the producer
 /// `dregg_turn::rotation_witness::produce`'s `pre_limbs`.
@@ -673,7 +839,14 @@ pub fn compute_rotated_pre_limbs(
         // r3..r10 ↔ fields[0..7] (the same Horner packing the v1 state block carries).
         pre[4 + i] = fold_bytes32_to_bb(&cell.state.fields[i]);
     }
-    // r11..r23 (limbs 12..=24): app-register headroom — zero for a kernel turn.
+    // r11..r22 (limbs 12..=23): app-register headroom — zero for a kernel turn.
+    // r23 (limb 24): THE AUTHORITY DIGEST — folds ALL authority-bearing state no other
+    // rotated limb carries (permissions/VK/delegate/delegation/program/mode/token_id +
+    // visibility/commitments/proved/side-table roots + fields[8..16]). This closes the
+    // authority-state drop the rotated commitment would otherwise have (see
+    // `compute_authority_digest_felt`). The Lean welds leave r23 free, so the anti-ghost
+    // keystone binds it automatically.
+    pre[24] = compute_authority_digest_felt(cell);
     // limb 25: cap_root (welded) — the SAME openable sorted-Poseidon2 felt the circuit's
     // `cap_root` column carries.
     pre[25] = compute_canonical_capability_root_felt(&cell.capabilities);
@@ -1406,6 +1579,75 @@ mod tests {
         let cell2 = Cell::with_balance(test_key(7), test_token(0), 99_999);
         let moved_bal = compute_canonical_state_commitment_v9_felt(&cell2, &v9_ctx(11, 22));
         assert_ne!(base, moved_bal, "balance (welded r0/r2) is bound");
+    }
+
+    /// THE AUTHORITY-COVERAGE TOOTH (the rotated-commitment design call): v9 binds the FULL
+    /// authority-bearing state via the r23 authority digest — NOT just the named-limb subset.
+    /// Two cells identical in balance/nonce/fields[0..8]/roots but differing in permissions,
+    /// VK, program, delegate, a high field (fields[8..16]), proved_state, or a side-table root
+    /// MUST commit distinctly. This is the soundness property that a rotated commitment with a
+    /// zeroed app-register headroom would FAIL.
+    #[test]
+    fn v9_binds_full_authority_state() {
+        let base_cell = Cell::with_balance(test_key(7), test_token(0), 100_000);
+        let ctx = v9_ctx(11, 22);
+        let base = compute_canonical_state_commitment_v9_felt(&base_cell, &ctx);
+
+        // permissions differ ⇒ commitment differs.
+        let mut perms_cell = base_cell.clone();
+        perms_cell.permissions.set_state = AuthRequired::Impossible;
+        assert_ne!(
+            base,
+            compute_canonical_state_commitment_v9_felt(&perms_cell, &ctx),
+            "v9 must bind permissions (a locked-down cell ≠ a wide-open one)"
+        );
+
+        // verification key differs ⇒ commitment differs.
+        let mut vk_cell = base_cell.clone();
+        #[allow(deprecated)]
+        let vk = crate::cell::VerificationKey::new(b"v9-authority-vk".to_vec());
+        vk_cell.verification_key = Some(vk);
+        assert_ne!(
+            base,
+            compute_canonical_state_commitment_v9_felt(&vk_cell, &ctx),
+            "v9 must bind the verification key"
+        );
+
+        // a HIGH field (fields[8..16], NOT welded to a named limb) differs ⇒ differs.
+        let mut hi_field_cell = base_cell.clone();
+        hi_field_cell.state.fields[12] = [3u8; 32];
+        assert_ne!(
+            base,
+            compute_canonical_state_commitment_v9_felt(&hi_field_cell, &ctx),
+            "v9 must bind fields[8..16] (only fields[0..8] are welded to r3..r10)"
+        );
+
+        // proved_state differs ⇒ differs.
+        let mut proved_cell = base_cell.clone();
+        proved_cell.state.proved_state = !proved_cell.state.proved_state;
+        assert_ne!(
+            base,
+            compute_canonical_state_commitment_v9_felt(&proved_cell, &ctx),
+            "v9 must bind proved_state"
+        );
+
+        // a side-table root differs ⇒ differs.
+        let mut sr_cell = base_cell.clone();
+        sr_cell.state.swiss_table_root = [7u8; 32];
+        assert_ne!(
+            base,
+            compute_canonical_state_commitment_v9_felt(&sr_cell, &ctx),
+            "v9 must bind the swiss-table (CapTP) root"
+        );
+
+        // mode differs ⇒ differs.
+        let mut mode_cell = base_cell.clone();
+        mode_cell.mode = crate::cell::CellMode::Sovereign;
+        assert_ne!(
+            base,
+            compute_canonical_state_commitment_v9_felt(&mode_cell, &ctx),
+            "v9 must bind the hosted/sovereign mode"
+        );
     }
 
     /// v9 is ADDITIVE: it does NOT touch the v8 default. The v8 byte commitment of a cell is

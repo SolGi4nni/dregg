@@ -48,7 +48,9 @@
 //!   per-cell shape (the v1 state block is one cell's before/after). The turn-level
 //!   `cells_root` and `iroot` are the same for every effect row of the turn.
 
-use dregg_cell::commitment::compute_canonical_capability_root_felt;
+use dregg_cell::commitment::{
+    compute_authority_digest_felt, compute_canonical_capability_root_felt,
+};
 use dregg_cell::{Cell, Ledger, lifecycle::CellLifecycle};
 use dregg_circuit::effect_vm::{fold_bytes32_to_bb, split_u64};
 use dregg_circuit::field::BabyBear;
@@ -265,7 +267,13 @@ pub fn produce(
         // v1 circuit state block carries (`fold_bytes32_to_bb`, the same Horner packing).
         pre_limbs[4 + i] = fold_bytes32_to_bb(&cell.state.fields[i]);
     }
-    // r11..r23 (limbs 12..=24): app-register headroom — zero for this kernel turn.
+    // r11..r22 (limbs 12..=23): app-register headroom — zero for this kernel turn.
+    // r23 (limb 24): THE AUTHORITY DIGEST — folds ALL authority-bearing cell state that no
+    // other rotated limb carries (permissions/VK/delegate/delegation/program/mode/token_id +
+    // visibility/commitments/proved/side-table roots + fields[8..16]). Byte-identical to the
+    // cell-side `commitment::compute_rotated_pre_limbs` so the three-way agreement holds; the
+    // commitment binds it (the Lean welds leave r23 free, the anti-ghost keystone binds it).
+    pre_limbs[24] = compute_authority_digest_felt(cell);
     // limb 25: cap_root (welded) — the SAME openable sorted-Poseidon2 felt the circuit's
     // `cap_root` column carries (cell and circuit compute it through the SAME impl, the A2
     // differential guards it), so the `cap_root ↔ cap_root` weld holds by construction.
