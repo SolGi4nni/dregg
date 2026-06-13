@@ -19,7 +19,9 @@ use crate::tables;
 use crate::{PersistentStore, Result, StoreError};
 
 /// Build the 65-byte composite key: namespace ++ scope ++ digest.
-fn forever_key(namespace: u8, scope: &[u8; 32], digest: &[u8; 32]) -> [u8; 65] {
+/// `pub(crate)` so the commit log can burn digests in the SAME transaction
+/// as a turn's commit record (`commit_finalized_turn_with_burns`).
+pub(crate) fn forever_key(namespace: u8, scope: &[u8; 32], digest: &[u8; 32]) -> [u8; 65] {
     let mut key = [0u8; 65];
     key[0] = namespace;
     key[1..33].copy_from_slice(scope);

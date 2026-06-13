@@ -5,12 +5,6 @@
 
 use redb::TableDefinition;
 
-/// Token chain storage: token_id (32 bytes) -> serialized TokenChain.
-///
-/// Key: 32-byte token identifier (fixed-size).
-/// Value: postcard-serialized `TokenChain` struct.
-pub const TOKEN_CHAINS: TableDefinition<&[u8; 32], &[u8]> = TableDefinition::new("token_chains");
-
 /// Revocation set: token_id (string) -> revocation timestamp.
 ///
 /// Key: token ID as a string (variable length).
@@ -22,31 +16,6 @@ pub const REVOCATIONS: TableDefinition<&str, i64> = TableDefinition::new("revoca
 /// Key: block height (monotonically increasing).
 /// Value: postcard-serialized `StoredAttestedRoot` struct.
 pub const ATTESTED_ROOTS: TableDefinition<u64, &[u8]> = TableDefinition::new("attested_roots");
-
-/// Signing keys (encrypted): name (string) -> encrypted key blob.
-///
-/// Key: human-readable key name.
-/// Value: encrypted key blob (nonce || ciphertext || tag).
-pub const SIGNING_KEYS: TableDefinition<&str, &[u8]> = TableDefinition::new("signing_keys");
-
-/// Public keys: name (string) -> 32-byte public key.
-///
-/// Key: human-readable key name.
-/// Value: 32-byte raw public key.
-pub const PUBLIC_KEYS: TableDefinition<&str, &[u8; 32]> = TableDefinition::new("public_keys");
-
-/// Audit log: sequence number (u64) -> serialized StoredAuditEvent.
-///
-/// Key: monotonically increasing sequence number (0-based).
-/// Value: postcard-serialized `StoredAuditEvent` struct.
-pub const AUDIT_LOG: TableDefinition<u64, &[u8]> = TableDefinition::new("audit_log");
-
-/// Audit token index: composite key (token_id_hex + sequence) -> sequence number.
-///
-/// This is a secondary index for looking up audit events by token ID.
-/// Key: "{token_id_hex}:{sequence}" (string for range scanning).
-/// Value: the global sequence number in the audit log.
-pub const AUDIT_TOKEN_INDEX: TableDefinition<&str, u64> = TableDefinition::new("audit_token_index");
 
 /// Metadata table for store-level counters and configuration.
 ///
@@ -80,9 +49,6 @@ pub const CHECKPOINTS: TableDefinition<u64, &[u8]> = TableDefinition::new("check
 pub const METADATA_BYTES: TableDefinition<&str, &[u8]> = TableDefinition::new("metadata_bytes");
 
 // Metadata key constants.
-
-/// Key for the next audit sequence number.
-pub const META_AUDIT_NEXT_SEQ: &str = "audit_next_sequence";
 
 /// Key for the latest attested root height.
 pub const META_LATEST_ROOT_HEIGHT: &str = "latest_root_height";
@@ -189,12 +155,15 @@ pub const IDX_TURN_BY_HASH: TableDefinition<&[u8; 32], u64> =
 
 /// Index — turns by (height, creator): composite key -> commit ordinal (u64).
 ///
-/// Key layout: 8-byte big-endian height ++ 32-byte creator. Big-endian height
-/// makes redb's lexicographic range scan equal a height-ordered scan, so
-/// "all turns at height H" and "all turns by creator C in height order" are
-/// efficient range queries. A `(height, creator)` pair is unique per commit
-/// because each finalized blocklace block carries exactly one turn and the
-/// node assigns a fresh height per applied turn.
+/// Key layout: 8-byte big-endian height ++ 32-byte creator ++ 8-byte
+/// big-endian ordinal. Big-endian height makes redb's lexicographic range
+/// scan equal a height-ordered scan, so "all turns at height H" and "all
+/// turns by creator C in height order" are efficient range queries. The
+/// trailing ordinal keeps keys unique when several turns commit at the same
+/// `(height, creator)` — the normal case for ROUTE-level turns (the
+/// trustline/court/channels services), several of which can commit between
+/// two attested-height advances. Stores written with the older 40-byte key
+/// are migrated by `migrate_height_creator_index` at open.
 pub const IDX_TURN_BY_HEIGHT_CREATOR: TableDefinition<&[u8], u64> =
     TableDefinition::new("idx_turn_by_height_creator");
 
@@ -248,3 +217,17 @@ pub const NS_TRUSTLINE_DIGEST: u8 = 1;
 /// Namespace byte: the equivocation court's resolved-evidence digests
 /// (scope = all-zero; evidence digests are global, not per-cell).
 pub const NS_COURT_RESOLVED: u8 = 2;
+
+// ─── Durable Channel Rosters (docs/PERSISTENCE.md §3, the roster caveat) ─────
+//
+// The channel-group cell holds only the roster's COMMITMENT
+// (`CH_MEMBER_ROOT_SLOT`); the member→seal-pk CONTENT is node-held and
+// verifiable-but-not-derivable from the cell. This table is the durable
+// carrier: written after every committed epoch step, re-committed against the
+// on-cell root at load (a stale durable roster is DISCARDED, fail-closed —
+// `RosterStale` then means genuine divergence, not a mere restart).
+
+/// Channel rosters: channel cell id (32 bytes) -> postcard-serialized roster
+/// (`BTreeMap<CellId, [u8; 32]>` — member cell → X25519 seal pk).
+pub const CHANNEL_ROSTERS: TableDefinition<&[u8; 32], &[u8]> =
+    TableDefinition::new("channel_rosters");

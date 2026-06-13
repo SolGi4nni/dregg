@@ -2217,6 +2217,7 @@ dependencies = [
  "blake3",
  "criterion",
  "crossbeam-channel",
+ "curve25519-dalek",
  "dregg-blocklace",
  "dregg-captp",
  "dregg-cell",
@@ -2231,6 +2232,7 @@ dependencies = [
  "postcard",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tokio",
  "tracing",
 ]
@@ -2435,8 +2437,6 @@ name = "dregg-persist"
 version = "0.1.0"
 dependencies = [
  "blake3",
- "chacha20poly1305",
- "dregg-audit",
  "dregg-blocklace",
  "dregg-cell",
  "dregg-circuit",
@@ -2444,12 +2444,11 @@ dependencies = [
  "dregg-federation",
  "dregg-types",
  "ed25519-dalek",
- "getrandom 0.3.4",
  "postcard",
  "redb",
  "serde",
- "subtle",
  "tempfile",
+ "tracing",
 ]
 
 [[package]]
@@ -2501,6 +2500,17 @@ dependencies = [
  "postcard",
  "proptest",
  "serde",
+]
+
+[[package]]
+name = "dregg-query"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "hex",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -2596,22 +2606,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dregg-sdk-py"
-version = "0.1.0"
-dependencies = [
- "blake3",
- "dregg-cell",
- "dregg-sdk",
- "dregg-turn",
- "dregg-types",
- "hex",
- "postcard",
- "pyo3",
- "serde_json",
- "ureq",
-]
-
-[[package]]
 name = "dregg-secrets"
 version = "0.1.0"
 dependencies = [
@@ -2686,8 +2680,10 @@ dependencies = [
  "dregg-wire",
  "ed25519-dalek",
  "getrandom 0.3.4",
+ "hex",
  "postcard",
  "serde",
+ "sha2 0.10.9",
  "starbridge-compartment-workflow-mandate",
  "starbridge-governed-namespace",
  "starbridge-identity",
@@ -5508,64 +5504,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pyo3"
-version = "0.28.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "91fd8e38a3b50ed1167fb981cd6fd60147e091784c427b8f7183a7ee32c31c12"
-dependencies = [
- "libc",
- "once_cell",
- "portable-atomic",
- "pyo3-build-config",
- "pyo3-ffi",
- "pyo3-macros",
-]
-
-[[package]]
-name = "pyo3-build-config"
-version = "0.28.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e368e7ddfdeb98c9bca7f8383be1648fd84ab466bf2bc015e94008db6d35611e"
-dependencies = [
- "target-lexicon",
-]
-
-[[package]]
-name = "pyo3-ffi"
-version = "0.28.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f29e10af80b1f7ccaf7f69eace800a03ecd13e883acfacc1e5d0988605f651e"
-dependencies = [
- "libc",
- "pyo3-build-config",
-]
-
-[[package]]
-name = "pyo3-macros"
-version = "0.28.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "df6e520eff47c45997d2fc7dd8214b25dd1310918bbb2642156ef66a67f29813"
-dependencies = [
- "proc-macro2",
- "pyo3-macros-backend",
- "quote",
- "syn 2.0.117",
-]
-
-[[package]]
-name = "pyo3-macros-backend"
-version = "0.28.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c4cdc218d835738f81c2338f822078af45b4afdf8b2e33cbb5916f108b813acb"
-dependencies = [
- "heck",
- "proc-macro2",
- "pyo3-build-config",
- "quote",
- "syn 2.0.117",
-]
-
-[[package]]
 name = "quanta"
 version = "0.12.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7165,12 +7103,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "target-lexicon"
-version = "0.13.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "adb6935a6f5c20170eeceb1a3835a49e12e19d792f6dd344ccc76a985ca5a6ca"
-
-[[package]]
 name = "tempfile"
 version = "3.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7807,24 +7739,6 @@ name = "unty"
 version = "0.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6d49784317cd0d1ee7ec5c716dd598ec5b4483ea832a2dced265471cc0f690ae"
-
-[[package]]
-name = "ureq"
-version = "2.12.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "02d1a66277ed75f640d608235660df48c8e3c19f3b4edb6a263315626cc3c01d"
-dependencies = [
- "base64 0.22.1",
- "flate2",
- "log",
- "once_cell",
- "rustls 0.23.40",
- "rustls-pki-types",
- "serde",
- "serde_json",
- "url",
- "webpki-roots 0.26.11",
-]
 
 [[package]]
 name = "url"

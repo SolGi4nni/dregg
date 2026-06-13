@@ -5,11 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
-description = "Persistent storage backend for dregg token chains, federation state, and audit logs"
-
-# No [features]: the audit-log bridge is CORE SEMANTICS (an auditable dregg must not be
-# silently compilable into an unauditable one) and is always compiled in.
-# See docs/FEATURE-HYGIENE.md.
+description = "The node's one durable store: commit log, checkpoints, blocklace, forever digests"
 
 [dependencies]
 redb = "2"
@@ -17,16 +13,13 @@ serde = { version = "1", features = ["derive"] }
 postcard = { version = "1", features = ["use-std"] }
 blake3 = "1"
 ed25519-dalek = { version = "2", features = ["rand_core"] }
-getrandom = { workspace = true }
-chacha20poly1305 = { workspace = true }
-subtle = "2"
+tracing = { workspace = true }
 dregg-types = { path = "../types" }
 dregg-commit = { path = "../commit" }
 dregg-cell = { path = "../cell" }
 dregg-circuit = { path = "../circuit" }
 dregg-blocklace = { path = "../blocklace" }
 dregg-federation = { path = "../federation" }
-dregg-audit = { path = "../audit" }
 
 [dev-dependencies]
 tempfile = "3"

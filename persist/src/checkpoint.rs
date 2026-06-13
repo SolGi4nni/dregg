@@ -1,8 +1,8 @@
 //! Checkpoint persistent storage and pruning operations.
 //!
 //! Stores checkpoints (federation-attested state snapshots) and provides
-//! pruning operations that delete blocks, receipts, and audit log entries
-//! older than the latest checkpoint.
+//! pruning operations that delete attested roots older than the latest
+//! checkpoint.
 //!
 //! Pruning is always opt-in (archival nodes skip it). After pruning, the node
 //! can still function normally — it just cannot serve historical data below
@@ -18,8 +18,6 @@ use crate::{PersistentStore, Result, StoreError};
 pub struct PruneResult {
     /// Number of attested roots removed.
     pub roots_pruned: u64,
-    /// Number of audit log entries removed.
-    pub audit_entries_pruned: u64,
 }
 
 impl PersistentStore {
@@ -108,7 +106,6 @@ impl PersistentStore {
     ///
     /// Removes:
     /// - Attested roots at heights strictly below `height`
-    /// - Audit log entries with sequence numbers below the checkpoint boundary
     ///
     /// Does NOT remove:
     /// - Revocations (they are a cumulative set, not height-indexed)
@@ -117,8 +114,7 @@ impl PersistentStore {
     /// - The checkpoints themselves (always retained)
     ///
     /// All pruning is performed within a single write transaction to ensure
-    /// atomicity. A crash between pruning roots and audit entries cannot leave
-    /// the store in a partially-pruned state.
+    /// atomicity.
     ///
     /// Returns a summary of what was pruned.
     pub fn prune_before(&self, height: u64) -> Result<PruneResult> {
@@ -140,43 +136,6 @@ impl PersistentStore {
             for key in &roots_to_remove {
                 roots_table.remove(*key)?;
                 result.roots_pruned += 1;
-            }
-            drop(roots_table);
-
-            // Prune audit log entries older than the checkpoint.
-            // We use a heuristic: audit entries are roughly 1:1 with block heights,
-            // so we prune entries with sequence < height. This is approximate but safe.
-            let mut log_table = write_txn.open_table(tables::AUDIT_LOG)?;
-            let mut idx_table = write_txn.open_table(tables::AUDIT_TOKEN_INDEX)?;
-
-            let mut to_remove = Vec::new();
-            let mut index_keys_to_remove = Vec::new();
-            {
-                let range = log_table.range(0..height)?;
-                for entry in range {
-                    let entry = entry
-                        .map_err(|e: redb::StorageError| StoreError::Database(e.to_string()))?;
-                    let seq = entry.0.value();
-                    to_remove.push(seq);
-
-                    // Decode the event to find its token index key.
-                    if let Ok(event) =
-                        postcard::from_bytes::<crate::audit::StoredAuditEvent>(entry.1.value())
-                    {
-                        let token_hex: String =
-                            event.token_id.iter().map(|b| format!("{b:02x}")).collect();
-                        let index_key = format!("{token_hex}:{seq:020}");
-                        index_keys_to_remove.push(index_key);
-                    }
-                }
-            }
-
-            for seq in &to_remove {
-                log_table.remove(*seq)?;
-                result.audit_entries_pruned += 1;
-            }
-            for key in &index_keys_to_remove {
-                idx_table.remove(key.as_str())?;
             }
         }
         write_txn.commit()?;

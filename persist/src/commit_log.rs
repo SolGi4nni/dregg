@@ -103,13 +103,19 @@ pub struct CommitRecord {
 }
 
 impl CommitRecord {
-    /// Encode the `(height, creator)` composite index key: 8-byte big-endian
-    /// height ++ 32-byte creator. Big-endian height makes redb's lexicographic
-    /// order a height-major order, so range scans are height-ordered.
-    pub fn height_creator_key(height: u64, creator: &[u8; 32]) -> [u8; 40] {
-        let mut key = [0u8; 40];
+    /// Encode the `(height, creator, ordinal)` composite index key: 8-byte
+    /// big-endian height ++ 32-byte creator ++ 8-byte big-endian ordinal.
+    /// Big-endian height makes redb's lexicographic order a height-major
+    /// order, so range scans are height-ordered. The trailing ordinal makes
+    /// the key unique even when several turns commit at the same
+    /// `(height, creator)` — which is the normal case for ROUTE-level turns
+    /// (trustline/court/channels services), several of which can commit
+    /// between two attested-height advances.
+    pub fn height_creator_key(height: u64, creator: &[u8; 32], ordinal: u64) -> [u8; 48] {
+        let mut key = [0u8; 48];
         key[0..8].copy_from_slice(&height.to_be_bytes());
         key[8..40].copy_from_slice(creator);
+        key[40..48].copy_from_slice(&ordinal.to_be_bytes());
         key
     }
 }
@@ -196,6 +202,26 @@ impl PersistentStore {
         expected_ordinal: u64,
         record: &CommitRecord,
     ) -> Result<u64> {
+        self.commit_finalized_turn_with_burns(expected_ordinal, record, &[])
+    }
+
+    /// [`Self::commit_finalized_turn`] PLUS forever-digest burns in the SAME
+    /// redb transaction — the same-transaction burn weld (docs/PERSISTENCE.md
+    /// §3): a turn that burns an anti-replay digest (a trustline draw, a court
+    /// slash) lands its commit record AND its digest atomically, so no crash
+    /// can leave the turn durable without its burn or the burn durable without
+    /// its turn. Each burn is `(namespace, scope, digest)` exactly as
+    /// [`PersistentStore::record_forever_digest`] takes them.
+    ///
+    /// On an idempotent replay (the record at `expected_ordinal` already holds
+    /// the same `turn_hash`), the burns were already written by the original
+    /// commit and the call is a no-op success.
+    pub fn commit_finalized_turn_with_burns(
+        &self,
+        expected_ordinal: u64,
+        record: &CommitRecord,
+        burns: &[(u8, [u8; 32], [u8; 32])],
+    ) -> Result<u64> {
         let write_txn = self.db.begin_write()?;
         let assigned;
         {
@@ -258,8 +284,11 @@ impl PersistentStore {
                 let mut idx_turn = write_txn.open_table(tables::IDX_TURN_BY_HASH)?;
                 idx_turn.insert(&stored_record.turn_hash, assigned)?;
 
-                let hc_key =
-                    CommitRecord::height_creator_key(stored_record.height, &stored_record.creator);
+                let hc_key = CommitRecord::height_creator_key(
+                    stored_record.height,
+                    &stored_record.creator,
+                    assigned,
+                );
                 let mut idx_hc = write_txn.open_table(tables::IDX_TURN_BY_HEIGHT_CREATOR)?;
                 idx_hc.insert(hc_key.as_slice(), assigned)?;
 
@@ -271,7 +300,18 @@ impl PersistentStore {
                 }
             }
 
-            // 3. Advance the durable cursor LAST within the txn (still atomic).
+            // 3. Burn the turn's forever digests in the SAME transaction (the
+            //    same-transaction burn weld): the record and its anti-replay
+            //    burns are one atomic durability event.
+            if !burns.is_empty() {
+                let mut forever = write_txn.open_table(tables::FOREVER_DIGESTS)?;
+                for (namespace, scope, digest) in burns {
+                    let key = crate::forever_digests::forever_key(*namespace, scope, digest);
+                    forever.insert(&key, ())?;
+                }
+            }
+
+            // 4. Advance the durable cursor LAST within the txn (still atomic).
             meta.insert(tables::META_COMMIT_CURSOR, assigned + 1)?;
         }
         write_txn.commit()?;
@@ -447,8 +487,8 @@ impl PersistentStore {
 
     /// All commit records at a given height, in creator order (turns-by-height).
     pub fn turns_at_height(&self, height: u64) -> Result<Vec<CommitRecord>> {
-        let lo = CommitRecord::height_creator_key(height, &[0u8; 32]);
-        let hi = CommitRecord::height_creator_key(height, &[0xffu8; 32]);
+        let lo = CommitRecord::height_creator_key(height, &[0u8; 32], 0);
+        let hi = CommitRecord::height_creator_key(height, &[0xffu8; 32], u64::MAX);
         self.turns_in_key_range(lo.as_slice(), hi.as_slice(), true)
     }
 
@@ -465,7 +505,7 @@ impl PersistentStore {
             let entry =
                 entry.map_err(|e: redb::StorageError| StoreError::Database(e.to_string()))?;
             let key = entry.0.value();
-            if key.len() == 40 && &key[8..40] == creator.as_slice() {
+            if key.len() == 48 && &key[8..40] == creator.as_slice() {
                 let ordinal = entry.1.value();
                 if let Some(guard) = log.get(ordinal)? {
                     out.push(postcard::from_bytes(guard.value())?);
@@ -554,7 +594,7 @@ impl PersistentStore {
                 "turn_by_hash",
                 &mut report,
             )?;
-            let hc_key = CommitRecord::height_creator_key(record.height, &record.creator);
+            let hc_key = CommitRecord::height_creator_key(record.height, &record.creator, ordinal);
             match idx_hc.get(hc_key.as_slice())? {
                 Some(g) if g.value() == ordinal => {}
                 Some(g) => report.mismatched_entries.push(format!(
@@ -586,7 +626,17 @@ impl PersistentStore {
         for entry in idx_hc.iter()? {
             let entry =
                 entry.map_err(|e: redb::StorageError| StoreError::Database(e.to_string()))?;
+            let key = entry.0.value();
             let ordinal = entry.1.value();
+            if key.len() != 48 {
+                // Pre-(height,creator,ordinal) legacy key shape — the boot
+                // migration (`migrate_height_creator_index`) rebuilds these.
+                report.orphan_entries.push(format!(
+                    "turn_by_height_creator legacy {}-byte key -> ordinal {ordinal}",
+                    key.len()
+                ));
+                continue;
+            }
             if log.get(ordinal)?.is_none() {
                 report.orphan_entries.push(format!(
                     "turn_by_height_creator -> missing ordinal {ordinal}"
@@ -683,7 +733,11 @@ impl PersistentStore {
             for record in &records {
                 idx_receipt.insert(&record.receipt_hash, record.ordinal)?;
                 idx_turn.insert(&record.turn_hash, record.ordinal)?;
-                let hc_key = CommitRecord::height_creator_key(record.height, &record.creator);
+                let hc_key = CommitRecord::height_creator_key(
+                    record.height,
+                    &record.creator,
+                    record.ordinal,
+                );
                 idx_hc.insert(hc_key.as_slice(), record.ordinal)?;
                 for cell in &record.touched_cells {
                     let cell_bytes = postcard::to_stdvec(cell)
@@ -695,6 +749,38 @@ impl PersistentStore {
         }
         write_txn.commit()?;
         Ok(replayed)
+    }
+
+    /// One-time migration: the `(height, creator)` index key gained a trailing
+    /// ordinal (40 → 48 bytes) when route-level turns started committing to
+    /// the log (several can share a `(height, creator)` pair). A store written
+    /// by an older node carries 40-byte keys; rebuilding the index from the
+    /// log (the source of truth) re-derives every entry in the new shape.
+    /// Called from [`PersistentStore::open`]; a no-op on already-migrated and
+    /// fresh stores.
+    pub(crate) fn migrate_height_creator_index(&self) -> Result<()> {
+        let needs_migration = {
+            let read_txn = self.db.begin_read()?;
+            let idx_hc = read_txn.open_table(tables::IDX_TURN_BY_HEIGHT_CREATOR)?;
+            let mut found_legacy = false;
+            for entry in idx_hc.iter()? {
+                let entry =
+                    entry.map_err(|e: redb::StorageError| StoreError::Database(e.to_string()))?;
+                if entry.0.value().len() != 48 {
+                    found_legacy = true;
+                    break;
+                }
+            }
+            found_legacy
+        };
+        if needs_migration {
+            let replayed = self.rebuild_index_from_log()?;
+            tracing::info!(
+                replayed,
+                "migrated turn_by_height_creator index to the (height, creator, ordinal) key shape"
+            );
+        }
+        Ok(())
     }
 }
 
@@ -1037,6 +1123,87 @@ mod tests {
             assert_eq!(store.commit_cursor().unwrap(), 5);
             assert!(store.verify_index_agrees_with_log().unwrap().ok());
         }
+    }
+
+    /// THE SAME-TRANSACTION BURN WELD (docs/PERSISTENCE.md): a turn's commit
+    /// record and its forever-digest burns land in ONE redb transaction —
+    /// after an arbitrary crash, either both are durable or neither is. The
+    /// crash is modeled exactly as in `crash_recovery_is_consistent`: commits
+    /// that returned are durable; everything after the last returned commit
+    /// leaves no trace.
+    #[test]
+    fn burns_land_atomically_with_the_commit_record() {
+        use crate::tables::NS_TRUSTLINE_DIGEST;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("burnweld.redb");
+        let scope = [0x5c; 32];
+        let digest = [0xd1; 32];
+
+        {
+            let store = PersistentStore::open(&path).unwrap();
+            let mut rec = record(0, 0, vec![cell(1, 42)]);
+            rec.turn_hash[0] = 0xb1;
+            store
+                .commit_finalized_turn_with_burns(
+                    0,
+                    &rec,
+                    &[(NS_TRUSTLINE_DIGEST, scope, digest)],
+                )
+                .unwrap();
+            // Crash before any further write.
+            drop(store);
+        }
+
+        let store = PersistentStore::open(&path).unwrap();
+        // BOTH halves survived: the record…
+        assert_eq!(store.commit_cursor().unwrap(), 1);
+        assert!(store.commit_record_at(0).unwrap().is_some());
+        // …and the burn.
+        assert!(
+            store
+                .forever_digest_seen(NS_TRUSTLINE_DIGEST, &scope, &digest)
+                .unwrap(),
+            "the digest burned in the commit transaction survives the crash"
+        );
+
+        // Idempotent replay re-accepts the same turn without disturbing the burn.
+        let mut rec = record(0, 0, vec![cell(1, 42)]);
+        rec.turn_hash[0] = 0xb1;
+        assert_eq!(
+            store
+                .commit_finalized_turn_with_burns(0, &rec, &[(NS_TRUSTLINE_DIGEST, scope, digest)])
+                .unwrap(),
+            0
+        );
+        assert!(
+            store
+                .forever_digest_seen(NS_TRUSTLINE_DIGEST, &scope, &digest)
+                .unwrap()
+        );
+    }
+
+    /// Route-level turns commit several records at the SAME (height, creator)
+    /// pair (several service turns between two attested-height advances) —
+    /// the (height, creator, ordinal) key keeps every record indexed and the
+    /// audit invariant exact.
+    #[test]
+    fn same_height_creator_records_all_index() {
+        let store = PersistentStore::open_in_memory().unwrap();
+        for n in 0..3u64 {
+            let mut rec = record(n, 0, vec![]);
+            rec.height = 7; // SAME height…
+            rec.creator = [0x77; 32]; // …SAME creator
+            rec.turn_hash[1] = n as u8;
+            rec.receipt_hash[1] = n as u8;
+            store.commit_finalized_turn(n, &rec).unwrap();
+        }
+        let report = store.verify_index_agrees_with_log().unwrap();
+        assert!(report.ok(), "index disagrees: {report:?}");
+        let at_h = store.turns_at_height(7).unwrap();
+        assert_eq!(at_h.len(), 3, "all three same-(height,creator) turns index");
+        let by_creator = store.turns_by_creator(&[0x77; 32]).unwrap();
+        assert_eq!(by_creator.len(), 3);
     }
 
     /// Recovery overlay: the cell-by-id deltas committed ABOVE a checkpoint

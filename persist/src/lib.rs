@@ -1,72 +1,42 @@
-//! `dregg-persist`: Persistent storage for the dregg token system.
+//! `dregg-persist`: the node's ONE durable store (docs/PERSISTENCE.md).
 //!
-//! (Renamed from `dregg-store` to disambiguate from the user-facing
-//! `dregg-storage` programmable queues crate.)
+//! This crate provides the node's durable storage — the commit log + index,
+//! ledger checkpoints, blocklace blocks/meta, notes/nullifiers, attested
+//! roots, forever-digest sets, channel rosters, and config blobs — backed by
+//! `redb` (embedded ACID, WAL): every durable write is a transaction that
+//! either commits fully (fsync at the commit boundary) or not at all.
 //!
-//! This crate provides durable storage for token chains, federation state
-//! (revocation trees, attested roots), key management, and audit logs using
-//! `redb` as the embedded key-value store backend.
+//! The [`commit_log`] module is the recovery spine: each applied turn's
+//! durable record, the commit cursor advance, and every index entry
+//! (receipt-by-hash, turn-by-hash, turn-by-(height, creator, ordinal),
+//! cell-by-id) are written in ONE redb transaction, so recovery converges to
+//! a consistent checkpoint with no torn state, no lost finalized turn, and no
+//! double-apply. The index is rebuildable from — and provably agrees with —
+//! the log (`verify_index_agrees_with_log`). A turn that burns anti-replay
+//! digests can land them in the SAME transaction
+//! (`commit_finalized_turn_with_burns` — the same-transaction burn weld).
 //!
-//! # Design
+//! ## dregg1 residue, retired
 //!
-//! All state that was previously in-memory (in `dregg-commit`, `dregg-federation`,
-//! and `dregg-audit`) can be persisted and recovered across restarts. The store
-//! is designed to be crash-safe: `redb` uses write-ahead logging to ensure
-//! atomicity.
-//!
-//! The [`commit_log`] module adds the node's crash-consistent finalized-turn
-//! commit log + secondary index: each applied turn's durable record, the commit
-//! cursor advance, and every index entry (receipt-by-hash, turn-by-hash,
-//! turn-by-(height, creator), cell-by-id) are written in ONE redb transaction,
-//! so recovery converges to a consistent checkpoint with no torn state, no lost
-//! finalized turn, and no double-apply. The index is rebuildable from — and
-//! provably agrees with — the log (`verify_index_agrees_with_log`).
-//!
-//! ```text
-//! ┌─────────────────────────────────────────────────────────────┐
-//! │                     PersistentStore                           │
-//! │                                                              │
-//! │  ┌─────────────┐ ┌──────────────┐ ┌────────────────────┐   │
-//! │  │ Token Chains │ │  Federation  │ │    Key Management   │   │
-//! │  │             │ │  State       │ │                     │   │
-//! │  │ store/load  │ │ revocations  │ │  signing keys       │   │
-//! │  │ list        │ │ attested     │ │  (encrypted)        │   │
-//! │  │             │ │ roots        │ │  public keys        │   │
-//! │  └─────────────┘ └──────────────┘ └────────────────────┘   │
-//! │                                                              │
-//! │  ┌─────────────────────────────────────────────────────┐    │
-//! │  │                   Audit Log                          │    │
-//! │  │  append / retrieve / query by token                  │    │
-//! │  └─────────────────────────────────────────────────────┘    │
-//! │                                                              │
-//! │  ┌─────────────────────────────────────────────────────┐    │
-//! │  │                   Recovery                           │    │
-//! │  │  recover_federation_state() → RecoveredState         │    │
-//! │  └─────────────────────────────────────────────────────┘    │
-//! │                                                              │
-//! │                    redb (embedded KV)                         │
-//! └─────────────────────────────────────────────────────────────┘
-//! ```
-//!
-//! # Encryption
-//!
-//! Signing keys are encrypted at rest using ChaCha20-Poly1305. The AEAD key is
-//! derived from the master key via BLAKE3's KDF mode with domain-separated context.
-//! Public keys are stored in plaintext.
+//! The `tokens` (TokenChain/fold steps), `recovery`
+//! (`recover_federation_state`), `keys` (encrypted signing keys; the node
+//! keeps its key in `node.key`) and `audit` (standalone audit log) modules
+//! were dregg1-era residue with zero consumers outside this crate's own
+//! tests; they were deleted under the cutover-ledger discipline (verified
+//! zero external consumers by grep at deletion time). Their tables are no
+//! longer created; pre-existing tables in an old store file are simply
+//! ignored by redb.
 
-pub mod audit;
 pub mod blocklace_store;
+pub mod channel_rosters;
 pub mod checkpoint;
 pub mod commit_log;
 pub mod federation;
 pub mod forever_digests;
-pub mod keys;
 pub mod ledger_store;
 pub mod note_tree;
 pub mod poseidon2_note_tree;
-pub mod recovery;
 pub mod tables;
-pub mod tokens;
 
 #[cfg(test)]
 mod tests;
@@ -75,15 +45,12 @@ use std::path::Path;
 
 use redb::{Database, ReadableTable};
 
-pub use audit::StoredAuditEvent;
 pub use blocklace_store::BlocklaceMeta;
 pub use commit_log::{CommitRecord, IndexAuditReport};
 pub use federation::StoredAttestedRoot;
 pub use ledger_store::LedgerCheckpoint;
 pub use note_tree::{NoteTree, PersistentNullifierSet};
 pub use poseidon2_note_tree::Poseidon2NoteTree;
-pub use recovery::RecoveredState;
-pub use tokens::{StoredFoldStep, TokenChain};
 
 /// Errors that can occur during store operations.
 #[derive(Debug)]
@@ -169,6 +136,9 @@ impl PersistentStore {
         let db = Database::create(path).map_err(|e| StoreError::Database(e.to_string()))?;
         let store = Self { db };
         store.initialize_tables()?;
+        // One-time index-shape migration for stores written before the
+        // (height, creator, ordinal) key (no-op on fresh/migrated stores).
+        store.migrate_height_creator_index()?;
         Ok(store)
     }
 
@@ -189,17 +159,9 @@ impl PersistentStore {
     fn initialize_tables(&self) -> Result<()> {
         let write_txn = self.db.begin_write()?;
         {
-            // Token chain tables.
-            let _ = write_txn.open_table(tables::TOKEN_CHAINS)?;
             // Federation tables.
             let _ = write_txn.open_table(tables::REVOCATIONS)?;
             let _ = write_txn.open_table(tables::ATTESTED_ROOTS)?;
-            // Key management tables.
-            let _ = write_txn.open_table(tables::SIGNING_KEYS)?;
-            let _ = write_txn.open_table(tables::PUBLIC_KEYS)?;
-            // Audit log tables.
-            let _ = write_txn.open_table(tables::AUDIT_LOG)?;
-            let _ = write_txn.open_table(tables::AUDIT_TOKEN_INDEX)?;
             // Note tree tables.
             let _ = write_txn.open_table(tables::NOTE_COMMITMENTS)?;
             let _ = write_txn.open_table(tables::NULLIFIERS)?;
@@ -220,6 +182,9 @@ impl PersistentStore {
             let _ = write_txn.open_table(tables::IDX_CELL_BY_ID)?;
             // Forever-digest sets (restart-durable anti-replay carriers).
             let _ = write_txn.open_table(tables::FOREVER_DIGESTS)?;
+            // Durable channel rosters (member→seal-pk content; the cell holds
+            // only the commitment — docs/PERSISTENCE.md §3 roster caveat).
+            let _ = write_txn.open_table(tables::CHANNEL_ROSTERS)?;
             // Metadata tables.
             let _ = write_txn.open_table(tables::METADATA)?;
             let _ = write_txn.open_table(tables::METADATA_BYTES)?;

@@ -34,12 +34,14 @@ Its load-bearing core:
   anti-replay carriers — see §3.
 
 Verdict on the crate: **keep and extend**. The commit-log core is current and
-is the node's recovery spine. Three modules are dregg1-era residue with zero
+is the node's recovery spine. Four modules were dregg1-era residue with zero
 consumers outside the crate's own tests — `tokens.rs` (TokenChain/fold
 steps), `recovery.rs` (`recover_federation_state`), `keys.rs` (encrypted
-signing keys; the node keeps its key in `node.key`), and the standalone half
-of `audit.rs` — retirement candidates under the cutover-ledger discipline
-(verified-replacement-before-deletion), not deleted in this slice.
+signing keys; the node keeps its key in `node.key`), and `audit.rs` (the
+standalone audit log) — and have been **retired** under the cutover-ledger
+discipline (verified zero external consumers by grep at deletion time; their
+tables are no longer created, and a pre-existing table in an old store file is
+simply ignored by redb). The checkpoint pruner no longer touches an audit log.
 
 ## 2. The axis (the parameterization discipline, applied)
 
@@ -74,15 +76,25 @@ wearing an architecture costume.
 These are `prunable` by construction: the restart IS the prune, and the
 rebuild rule is proven faithful (trustlines) or fail-closed (court bonds).
 
-**The roster caveat (named, with its lane):** the cell holds only the
-roster's *commitment*, not its content. The node-held member→seal-pk map is
-verifiable against the cell but not derivable from it. Today each member's
-join/welcome flow re-supplies it; a node that restarts mid-life serves
-`RosterStale` until members re-post. The closure lane is a durable
-`channel_rosters` table (cell id → postcard roster, re-committed against the
-cell at load; a stale durable roster is discarded, fail-closed) — same shape
-as §4, deferred from this slice because the refusal semantics are already
-fail-closed, merely unavailable, where the digest sets below fail *open*.
+**The roster caveat (named; the durable carrier landed):** the cell holds
+only the roster's *commitment*, not its content. The node-held member→seal-pk
+map (and the epoch anchor) are verifiable against the cell but not derivable
+from it. The durable carrier is now in place: the `channel_rosters` table
+(`persist/src/channel_rosters.rs`, cell id → postcard `(anchor, members)`)
+is written in ONE committed transaction after every committed epoch step
+(open/join/remove/rekey — `channels_service::persist_roster`) and reloaded at
+boot (`ChannelRegistry::restore_rosters`), where each stored roster is
+**re-committed** against the recovered ledger's on-cell `member_root` before
+the room is rebuilt: a roster whose `roster_root` ≠ the cell's `member_root`
+(or whose cell is gone / not a channel cell) is discarded *and* durably
+removed, so a restart no longer serves `RosterStale` for a roster that still
+matches its cell, and a post-restart `RosterStale` means genuine divergence,
+never a mere restart. Epoch keys are node-minted secrets that are NOT
+persisted (a delivery property, not a soundness one — see §3 cache); a
+restored room rekeys to re-establish forward delivery, while membership
+operations and the SSE relay resume immediately. The roster bytes are stored
+opaquely (the node owns the `Roster` type via `dregg_sdk::channels`), keeping
+`dregg-persist` independent of the SDK.
 
 ### Node-local AND load-bearing — must be durable (`attested`)
 
@@ -114,16 +126,40 @@ Restart-shaped tests pin the property end to end
 `resolved_evidence_refused_across_restart`, plus the persist-level reopen
 test).
 
-Why not a row in the commit log? The burn is *caused* by a committed turn
-but is not a turn artifact: rebuild digests and court verdicts burn outside
-any single turn's receipt, and the refusal lookup is a point query, not a
-replay. The forever table rides the same store (same WAL, same fsync
-discipline) without bending the log's "one record per applied turn"
-invariant. The deeper weld — burning the digest in the SAME transaction as
-the turn's commit record, closing the crash window between turn-commit and
-digest-burn — is the named follow-on; the window today is post-commit,
-pre-ack, and a crash inside it loses only the burn of a turn whose response
-was never delivered.
+Why not always a row in the commit log? The burn is *caused* by a committed
+turn but is not always a turn artifact: rebuild digests and court verdicts
+burn outside any single turn's receipt, and the refusal lookup is a point
+query, not a replay. The forever table rides the same store (same WAL, same
+fsync discipline) without bending the log's "one record per applied turn"
+invariant.
+
+**The same-transaction burn weld** (`commit_finalized_turn_with_burns`,
+`persist/src/commit_log.rs`): for a burn that *is* an artifact of a turn this
+node finalizes itself — an **in-turn** site — the digest can land in the SAME
+redb transaction as that turn's `CommitRecord`. After an arbitrary crash,
+either both are durable or neither is: no crash can leave the turn durable
+without its burn, or the burn durable without its turn (the welded test
+`burns_land_atomically_with_the_commit_record` pins exactly this, with the
+idempotent-replay no-op). The commit-log index key gained a trailing ordinal
+(`(height, creator, ordinal)`) so several route-level turns can share a
+`(height, creator)` pair without colliding; a one-time boot migration
+(`migrate_height_creator_index`) rebuilds an old 40-byte index from the log.
+
+For an **out-of-turn** burn — the trustline draw/settle digests and court
+verdicts as the routes finalize them today — the carrier is **journal-first**:
+the digest is written durably (one committed transaction) *before* the
+in-memory insert is acknowledged (`record_digest_durable`, `execute_slash`
+step 6), and reloaded at boot. These route paths mutate the live ledger and
+burn the digest as separate committed transactions (the finalized
+`CommitRecord` for the route turn is written later, on the consensus path in
+`blocklace_sync`), so the burn is durable independent of — and ordered
+before — the acknowledgement. The remaining crash window is post-burn,
+pre-ack: a crash there loses nothing of the burn (it committed first); a crash
+*before* the burn loses a turn whose response was never delivered, and the
+client safely retries against a fresh digest. A durable-burn failure after the
+ledger moved cannot unwind the move, so it degrades — loudly, `tracing::error!`
+— to live-process-only refusal; an unreadable table at boot likewise names the
+narrowing instead of papering it.
 
 ### Cache — `prunable`/`retained(window)`, loss is priced
 
