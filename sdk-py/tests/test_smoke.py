@@ -213,6 +213,9 @@ class MockNode(BaseHTTPRequestHandler):
     reject_with = None
     proof_for = {}
     sse_events = []
+    organ_calls = []
+    relay_calls = []
+    last_drain_query = None
 
     def log_message(self, *args):
         pass
@@ -236,6 +239,25 @@ class MockNode(BaseHTTPRequestHandler):
             )
         elif self.path.startswith("/api/cell/"):
             self._json({"found": True, "balance": 1000, "nonce": 7})
+        elif self.path.startswith("/trustline/status/"):
+            cell = self.path.rsplit("/", 1)[-1]
+            self._json({"trustline": cell, "line": 1000, "drawn": 150,
+                        "remaining": 850, "escrow": 1000, "open": True})
+        elif self.path.startswith("/channels/status/"):
+            cell = self.path.rsplit("/", 1)[-1]
+            self._json({"channel": cell, "epoch": 2, "delegation_epoch": 2,
+                        "epochs_unified": True, "members": 2})
+        elif self.path == "/federation/roots":
+            self._json([{"height": 5, "merkle_root": "ab" * 32,
+                         "timestamp": 1, "signatures": 3}])
+        elif self.path == "/checkpoint/latest":
+            self._json({"height": 5, "epoch": 1, "qc_votes": 4,
+                        "ledger_state_root": "cd" * 32})
+        elif self.path == "/relay/status":
+            self._json({"operator_id": self.node_pubkey, "bond": 1000})
+        elif self.path.startswith("/relay/drain"):
+            MockNode.last_drain_query = self.path
+            self._json({"messages": [], "new_root": "00" * 32})
         elif self.path.startswith("/api/turn/") and self.path.endswith("/proof"):
             turn_hash = self.path.split("/")[3]
             if turn_hash in MockNode.proof_for:
@@ -254,7 +276,48 @@ class MockNode(BaseHTTPRequestHandler):
         else:
             self._json({"error": "not found"}, code=404)
 
+    def _read_body(self):
+        n = int(self.headers.get("content-length", "0"))
+        return self.rfile.read(n)
+
+    def do_DELETE(self):
+        if self.path == "/relay/unsubscribe":
+            body = json.loads(self._read_body() or b"{}")
+            MockNode.relay_calls.append(("unsubscribe", body))
+            self._json({"success": True})
+        else:
+            self._json({"error": "not found"}, code=404)
+
     def do_POST(self):
+        if self.path.startswith("/trustline/") or self.path.startswith("/channels/"):
+            body = json.loads(self._read_body() or b"{}")
+            MockNode.organ_calls.append((self.path, dict(self.headers), body))
+            # Echo a minimal organ response keyed by the route.
+            kind = self.path.rsplit("/", 1)[-1]
+            self._json({"route": self.path, "kind": kind, "echo": body,
+                        "trustline": body.get("trustline", "ab" * 32),
+                        "channel": body.get("channel", "cd" * 32),
+                        "epoch": 1, "turn_hash": "ef" * 32})
+            return
+        if self.path == "/api/faucet":
+            body = json.loads(self._read_body() or b"{}")
+            MockNode.organ_calls.append((self.path, dict(self.headers), body))
+            self._json({"success": True, "amount": body.get("amount", 0),
+                        "turn_hash": "11" * 32})
+            return
+        if self.path == "/relay/subscribe":
+            body = json.loads(self._read_body() or b"{}")
+            MockNode.relay_calls.append(("subscribe", body))
+            self._json({"owner": body.get("owner"), "capacity": 100,
+                        "min_deposit": 10, "subscription_fee_paid": 1,
+                        "relay_template_hosted_inbox_root": "00" * 32})
+            return
+        if self.path.startswith("/relay/send/"):
+            body = json.loads(self._read_body() or b"{}")
+            MockNode.relay_calls.append(("send", self.path, body))
+            self._json({"queue_root": "00" * 32, "position": 0,
+                        "relay_template_bytes_relayed_this_epoch": 1})
+            return
         if self.path == "/api/turns/submit-signed":
             n = int(self.headers.get("content-length", "0"))
             body = self.rfile.read(n)
@@ -295,6 +358,9 @@ def mock_node():
     MockNode.reject_with = None
     MockNode.proof_for = {}
     MockNode.sse_events = []
+    MockNode.organ_calls = []
+    MockNode.relay_calls = []
+    MockNode.last_drain_query = None
     server = ThreadingHTTPServer(("127.0.0.1", 0), MockNode)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -381,6 +447,111 @@ def test_subscribe_yields_receipts(mock_node):
     assert first.has_proof is False
     assert second.turn_hash == "dd" * 32
     assert second.has_proof is True
+
+
+# ─── organs: trustline / channels / mailbox / attested-query / faucet ───
+
+
+def test_trustline_routes_and_devnet_key(mock_node):
+    ident = dregg.Identity.create("issuer")
+    tl = ident.trustline(mock_node, devnet_key="op-secret")
+    opened = tl.open("aa" * 32, 1000, salt="s1")
+    assert opened["kind"] == "open"
+    assert opened["echo"]["holder"] == "aa" * 32
+    assert opened["echo"]["line"] == 1000
+    assert opened["echo"]["salt"] == "s1"
+
+    tl.draw(opened["trustline"], 250, digest="de" * 32)
+    tl.repay(opened["trustline"], 100)
+    pos = tl.status(opened["trustline"])
+    assert pos["drawn"] == 150 and pos["remaining"] == 850 and pos["open"] is True
+
+    # The operator credential rode every gated write (both header forms).
+    paths = [c[0] for c in MockNode.organ_calls]
+    assert "/trustline/open" in paths and "/trustline/draw" in paths
+    hdrs = MockNode.organ_calls[0][1]
+    assert hdrs.get("x-devnet-key") == "op-secret"
+    assert hdrs.get("authorization") == "Bearer op-secret"
+
+
+def test_channels_routes_and_member_specs(mock_node):
+    ident = dregg.Identity.create("admin")
+    ch = ident.channels(mock_node, devnet_key="op-secret")
+    g = ch.create(7, [{"cell": "aa" * 32, "seal_pk": "bb" * 32}])
+    assert g["echo"]["tag"] == 7
+    assert g["echo"]["members"][0] == {"cell": "aa" * 32, "seal_pk": "bb" * 32}
+
+    ch.join(g["channel"], {"cell": "cc" * 32, "seal_pk": b"\x02" * 32})
+    ch.remove(g["channel"], "cc" * 32)
+    ch.rekey(g["channel"])
+    ch.post(g["channel"], 2, "00" * 12, b"\xde\xad\xbe\xef")
+    st = ch.status(g["channel"])
+    assert st["epochs_unified"] is True
+
+    post_call = next(c for c in MockNode.organ_calls if c[0] == "/channels/post")
+    assert post_call[2]["ciphertext"] == "deadbeef"
+    assert post_call[2]["epoch"] == 2
+
+
+def test_channels_bad_member_spec_rejected(mock_node):
+    ident = dregg.Identity.create("admin2")
+    ch = ident.channels(mock_node, devnet_key="k")
+    with pytest.raises((TypeError, ValueError)):
+        ch.create(1, [{"cell": "aa" * 32}])  # missing seal_pk
+
+
+def test_faucet(mock_node):
+    ident = dregg.Identity.create("fauceteer")
+    res = dregg.faucet(mock_node, ident.cell_id, 2000, public_key=ident.public_key)
+    assert res["success"] is True and res["amount"] == 2000
+    call = next(c for c in MockNode.organ_calls if c[0] == "/api/faucet")
+    assert call[2]["recipient"] == ident.cell_id
+    assert call[2]["public_key"] == ident.public_key
+
+
+def test_attested_query_reads(mock_node):
+    aq = dregg.AttestedQuery(mock_node)
+    roots = aq.attested_roots()
+    assert roots[0]["signatures"] == 3
+    cp = aq.checkpoint()
+    assert cp["qc_votes"] == 4
+    assert aq.turn_proof("ab" * 32) is None  # 404 from the mock → None
+
+
+def test_mailbox_owner_signed_membership(mock_node):
+    ident = dregg.Identity.create("inbox-owner")
+    mb = ident.mailbox(mock_node)
+    assert mb.owner == ident.public_key
+
+    sub = mb.subscribe(capacity=50)
+    assert sub["owner"] == ident.public_key
+    # subscribe carried owner + a fresh nonce + a real signature.
+    kind, body = MockNode.relay_calls[0]
+    assert kind == "subscribe"
+    assert body["owner"] == ident.public_key
+    assert len(body["nonce"]) == 16 and len(body["signature"]) == 128
+
+    mb.send("99" * 32, b"\x01\x02\x03sealed", 100)
+    send = next(c for c in MockNode.relay_calls if c[0] == "send")
+    assert send[1] == "/relay/send/" + "99" * 32
+
+    mb.drain(25)
+    assert "max=25" in MockNode.last_drain_query
+    assert "signature=" in MockNode.last_drain_query
+
+    mb.unsubscribe()
+    assert any(c[0] == "unsubscribe" for c in MockNode.relay_calls)
+
+
+def test_mailbox_nonces_are_fresh(mock_node):
+    """Two subscribes from the same owner carry different nonces (so the relay
+    can't be replayed)."""
+    ident = dregg.Identity.create("fresh")
+    mb = ident.mailbox(mock_node)
+    mb.subscribe()
+    mb.subscribe()
+    nonces = [b["nonce"] for k, b in MockNode.relay_calls if k == "subscribe"]
+    assert len(nonces) == 2 and nonces[0] != nonces[1]
 
 
 # ─── kernel: this build embeds the verified Lean kernel ───

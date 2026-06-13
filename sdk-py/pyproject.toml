@@ -4,13 +4,28 @@ build-backend = "maturin"
 
 [project]
 name = "dregg"
-description = "Python SDK for the dregg federation: Identity → turn → sign → submit → Receipt"
+description = "Python SDK for the dregg federation: Identity → turn → sign → submit → Receipt (the verified Lean kernel embedded), with the organ nouns (trustline, channels, mailbox), attested-query reads, profiles, the receipt stream, and the cell-program constraint language"
+readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "AGPL-3.0-or-later" }
 dynamic = ["version"]
+keywords = [
+    "dregg",
+    "authorization",
+    "capability",
+    "trustline",
+    "channels",
+    "mailbox",
+    "stark",
+    "receipt",
+    "ed25519",
+    "blake3",
+]
 classifiers = [
     "Programming Language :: Rust",
     "Programming Language :: Python :: Implementation :: CPython",
+    "Typing :: Typed",
+    "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
 ]
 
 [project.urls]
@@ -25,6 +40,11 @@ bindings = "pyo3"
 # This crate lives inside the dregg workspace; maturin must resolve the
 # workspace root for path deps.
 manifest-path = "Cargo.toml"
+# Ship the type stub + the `py.typed` marker alongside the extension so the
+# wheel is fully typed (IDEs / mypy / pyright resolve `dregg.pyi`). These live
+# in `python/` next to the compiled `dregg.so` at the wheel root.
+python-source = "python"
+include = ["python/dregg.pyi", "python/py.typed"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -151,6 +151,70 @@ fn get_json(url: &str) -> Result<serde_json::Value, String> {
     resp.into_json().map_err(|e| format!("GET {url}: {e}"))
 }
 
+/// The devnet gate key (operator credential) → sent as both `X-Devnet-Key` and
+/// `Authorization: Bearer`. Mirrors the TS `NodeClient.devnetKey`: the
+/// signed-turn ingress and the operator-gated organ routes (trustline /
+/// channels) are protected behind it on the shared devnet. Resolved from the
+/// explicit argument, else `$DREGG_API_TOKEN`.
+fn resolve_devnet_key(explicit: Option<&str>) -> Option<String> {
+    explicit
+        .map(str::to_string)
+        .or_else(|| std::env::var("DREGG_API_TOKEN").ok())
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty())
+}
+
+fn apply_devnet_key(mut req: ureq::Request, key: Option<&str>) -> ureq::Request {
+    if let Some(k) = key {
+        req = req
+            .set("x-devnet-key", k)
+            .set("authorization", &format!("Bearer {k}"));
+    }
+    req
+}
+
+/// `GET {base}{path}` (devnet-keyed) → parsed JSON. The read used by the organ
+/// status routes + attested-query.
+fn http_get_json(base: &str, path: &str, key: Option<&str>) -> Result<serde_json::Value, String> {
+    let url = format!("{}{}", base.trim_end_matches('/'), path);
+    let req = apply_devnet_key(http_agent().get(&url), key);
+    match req.call() {
+        Ok(resp) => resp.into_json().map_err(|e| format!("GET {url}: {e}")),
+        Err(ureq::Error::Status(code, resp)) => {
+            let text = resp.into_string().unwrap_or_default();
+            Err(format!("GET {url}: HTTP {code}: {text}"))
+        }
+        Err(e) => Err(format!("GET {url}: {e}")),
+    }
+}
+
+/// `{method} {base}{path}` with a JSON body (devnet-keyed) → parsed JSON. The
+/// generic write used by the organ clients (mirrors TS `NodeClient.postJson`).
+fn http_send_json(
+    method: &str,
+    base: &str,
+    path: &str,
+    body: &serde_json::Value,
+    key: Option<&str>,
+) -> Result<serde_json::Value, String> {
+    let url = format!("{}{}", base.trim_end_matches('/'), path);
+    let req = apply_devnet_key(
+        http_agent()
+            .request(method, &url)
+            .set("content-type", "application/json"),
+        key,
+    );
+    let payload = serde_json::to_vec(body).map_err(|e| format!("encode body: {e}"))?;
+    match req.send_bytes(&payload) {
+        Ok(resp) => resp.into_json().map_err(|e| format!("{method} {url}: {e}")),
+        Err(ureq::Error::Status(code, resp)) => {
+            let text = resp.into_string().unwrap_or_default();
+            Err(format!("{method} {url}: HTTP {code}: {text}"))
+        }
+        Err(e) => Err(format!("{method} {url}: {e}")),
+    }
+}
+
 /// The node's executor federation id: `blake3(node operator pubkey)` on a
 /// solo/unconfigured node — the same derivation `federation_id_for_executor`
 /// uses (and the discord-bot's startup check asserts). Configured
@@ -176,18 +240,20 @@ fn fetch_cell_nonce(node_url: &str, cell_hex: &str) -> u64 {
         .unwrap_or(0)
 }
 
-fn post_signed_turn(node_url: &str, body: &[u8]) -> Result<serde_json::Value, String> {
+fn post_signed_turn(
+    node_url: &str,
+    body: &[u8],
+    key: Option<&str>,
+) -> Result<serde_json::Value, String> {
     let url = format!("{node_url}/api/turns/submit-signed");
-    let mut req = http_agent()
-        .post(&url)
-        .set("content-type", "application/octet-stream");
-    // The shared devnet protects the /api/turns/* aliases behind a bearer.
-    if let Ok(token) = std::env::var("DREGG_API_TOKEN") {
-        let token = token.trim().to_string();
-        if !token.is_empty() {
-            req = req.set("authorization", &format!("Bearer {token}"));
-        }
-    }
+    let req = apply_devnet_key(
+        http_agent()
+            .post(&url)
+            .set("content-type", "application/octet-stream"),
+        // The shared devnet protects the /api/turns/* ingress behind a bearer;
+        // fall back to $DREGG_API_TOKEN when no key was pinned on .turn().
+        resolve_devnet_key(key).as_deref(),
+    );
     match req.send_bytes(body) {
         Ok(resp) => resp.into_json().map_err(|e| format!("POST {url}: {e}")),
         Err(ureq::Error::Status(code, resp)) => {
@@ -280,11 +346,16 @@ impl Identity {
     /// `federation_id` (hex str or 32 bytes) pins the signing domain
     /// explicitly; when omitted, `.sign()` fetches the node's identity and
     /// derives the solo-node executor domain `blake3(node_pubkey)`.
-    #[pyo3(signature = (node_url, federation_id=None))]
+    ///
+    /// `devnet_key` is the operator credential for the gated ingress (sent as
+    /// `X-Devnet-Key` + `Authorization: Bearer`); when omitted, `.submit()`
+    /// falls back to `$DREGG_API_TOKEN`.
+    #[pyo3(signature = (node_url, federation_id=None, devnet_key=None))]
     fn turn(
         slf: &Bound<'_, Self>,
         node_url: &str,
         federation_id: Option<&Bound<'_, PyAny>>,
+        devnet_key: Option<&str>,
     ) -> PyResult<TurnBuilder> {
         let federation_id = federation_id
             .map(|f| parse_32(f, "federation_id"))
@@ -299,7 +370,39 @@ impl Identity {
             nonce: None,
             valid_until: None,
             federation_id,
+            devnet_key: devnet_key.map(str::to_string),
         })
+    }
+
+    /// The **trustline** organ (`docs/ORGANS.md` §1) bound to `node_url`,
+    /// acting as the issuer under this identity's operator credential. See
+    /// [`Trustline`].
+    #[pyo3(signature = (node_url, devnet_key=None))]
+    fn trustline(&self, node_url: &str, devnet_key: Option<&str>) -> Trustline {
+        Trustline {
+            node_url: node_url.trim_end_matches('/').to_string(),
+            devnet_key: devnet_key.map(str::to_string),
+        }
+    }
+
+    /// The **channels** organ (`docs/ORGANS.md` §4) bound to `node_url`. See
+    /// [`Channels`].
+    #[pyo3(signature = (node_url, devnet_key=None))]
+    fn channels(&self, node_url: &str, devnet_key: Option<&str>) -> Channels {
+        Channels {
+            node_url: node_url.trim_end_matches('/').to_string(),
+            devnet_key: devnet_key.map(str::to_string),
+        }
+    }
+
+    /// This identity's **mailbox** (`docs/ORGANS.md` §2) on the relay at
+    /// `relay_url`. Membership ops are Ed25519-signed by this identity. See
+    /// [`Mailbox`].
+    fn mailbox(slf: &Bound<'_, Self>, relay_url: &str) -> Mailbox {
+        Mailbox {
+            identity: slf.clone().unbind(),
+            base_url: relay_url.trim_end_matches('/').to_string(),
+        }
     }
 
     fn __repr__(&self) -> String {
@@ -328,6 +431,7 @@ struct TurnBuilder {
     nonce: Option<u64>,
     valid_until: Option<i64>,
     federation_id: Option<[u8; 32]>,
+    devnet_key: Option<String>,
 }
 
 impl TurnBuilder {
@@ -518,6 +622,7 @@ impl TurnBuilder {
         Ok(AuthorizedTurn {
             signed,
             node_url: self.node_url.clone(),
+            devnet_key: self.devnet_key.clone(),
         })
     }
 
@@ -539,6 +644,7 @@ impl TurnBuilder {
 struct AuthorizedTurn {
     signed: SignedTurn,
     node_url: String,
+    devnet_key: Option<String>,
 }
 
 #[pymethods]
@@ -577,8 +683,9 @@ impl AuthorizedTurn {
         let body = postcard::to_stdvec(&self.signed)
             .map_err(|e| err(format!("failed to encode signed turn: {e}")))?;
         let node_url = self.node_url.clone();
+        let key = self.devnet_key.clone();
         let response = py
-            .detach(|| post_signed_turn(&node_url, &body))
+            .detach(|| post_signed_turn(&node_url, &body, key.as_deref()))
             .map_err(err)?;
 
         let accepted = response
@@ -1123,6 +1230,671 @@ fn descriptor<'py>(
     Ok(d)
 }
 
+// ─── organs: the higher primitives (docs/ORGANS.md), as ergonomic HTTP faces ───
+//
+// Each organ is the Python face of a node service — the same routes the TS
+// SDK's organ clients drive. The node computes the per-cell factory
+// descriptors and seal fan-outs the wire layer does not carry; these clients
+// drive them. The enforcement tooth is the executor-installed cell program
+// either way (see each method's route). Operator-gated organs (trustline,
+// channels) carry a devnet key; the relay (mailbox) is owner-signed.
+
+/// **Trustline** — the bilateral line of credit (`docs/ORGANS.md` §1).
+///
+/// A line `issuer → holder` of N is an ATTENUATED CAPABILITY whose exercise
+/// debits a shared counter; the executor-installed cell program enforces
+/// `drawn ≤ ceiling` for life. The node operator IS the issuer — these routes
+/// are operator-gated (pass `devnet_key=` on `Identity.trustline()`).
+///
+/// ```python
+/// tl = ident.trustline("https://devnet.example", devnet_key="…")
+/// line = tl.open(holder_cell_hex, 1000)        # four-turn funded birth
+/// tl.draw(line["trustline"], 250)              # debit the shared counter
+/// tl.repay(line["trustline"], 100)             # restore the line
+/// tl.status(line["trustline"])                 # {line, drawn, remaining, escrow, open, …}
+/// tl.settle(line["trustline"]); tl.close(line["trustline"])
+/// ```
+#[pyclass(module = "dregg")]
+struct Trustline {
+    node_url: String,
+    devnet_key: Option<String>,
+}
+
+impl Trustline {
+    fn post<'py>(
+        &self,
+        py: Python<'py>,
+        path: &str,
+        body: serde_json::Value,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let base = self.node_url.clone();
+        let key = self.devnet_key.clone();
+        let v = py
+            .detach(|| http_send_json("POST", &base, path, &body, key.as_deref()))
+            .map_err(refused)?;
+        json_to_py(py, &v)
+    }
+}
+
+#[pymethods]
+impl Trustline {
+    /// Open a directional line `operator → holder` of `line`, escrowed in full
+    /// (`POST /trustline/open`; four-turn funded birth). `salt` disambiguates
+    /// multiple lines to the same holder.
+    #[pyo3(signature = (holder, line, salt=None))]
+    fn open<'py>(
+        &self,
+        py: Python<'py>,
+        holder: &Bound<'_, PyAny>,
+        line: u64,
+        salt: Option<&str>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let mut body = serde_json::json!({ "holder": hex::encode(parse_32(holder, "holder")?), "line": line });
+        if let Some(s) = salt {
+            body["salt"] = serde_json::Value::String(s.to_string());
+        }
+        self.post(py, "/trustline/open", body)
+    }
+
+    /// Draw `amount` against the line (`POST /trustline/draw`; one-shot per
+    /// digest — supply `digest=` for client-side replay protection).
+    #[pyo3(signature = (trustline, amount, digest=None))]
+    fn draw<'py>(
+        &self,
+        py: Python<'py>,
+        trustline: &Bound<'_, PyAny>,
+        amount: u64,
+        digest: Option<&str>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let mut body = serde_json::json!({ "trustline": hex::encode(parse_32(trustline, "trustline")?), "amount": amount });
+        if let Some(d) = digest {
+            body["digest"] = serde_json::Value::String(d.to_string());
+        }
+        self.post(py, "/trustline/draw", body)
+    }
+
+    /// Repay `amount`, restoring the line (`POST /trustline/repay`).
+    fn repay<'py>(&self, py: Python<'py>, trustline: &Bound<'_, PyAny>, amount: u64) -> PyResult<Bound<'py, PyAny>> {
+        let body = serde_json::json!({ "trustline": hex::encode(parse_32(trustline, "trustline")?), "amount": amount });
+        self.post(py, "/trustline/repay", body)
+    }
+
+    /// Settle outstanding draws to the holders (`POST /trustline/settle`).
+    fn settle<'py>(&self, py: Python<'py>, trustline: &Bound<'_, PyAny>) -> PyResult<Bound<'py, PyAny>> {
+        let body = serde_json::json!({ "trustline": hex::encode(parse_32(trustline, "trustline")?) });
+        self.post(py, "/trustline/settle", body)
+    }
+
+    /// Close the line: settle outstanding to holder, residual to issuer
+    /// (`POST /trustline/close`).
+    fn close<'py>(&self, py: Python<'py>, trustline: &Bound<'_, PyAny>) -> PyResult<Bound<'py, PyAny>> {
+        let body = serde_json::json!({ "trustline": hex::encode(parse_32(trustline, "trustline")?) });
+        self.post(py, "/trustline/close", body)
+    }
+
+    /// Live position (`GET /trustline/status/{cell}`):
+    /// `{line, drawn, settled, remaining, escrow, open, coordinator_*}`.
+    fn status<'py>(&self, py: Python<'py>, trustline: &Bound<'_, PyAny>) -> PyResult<Bound<'py, PyAny>> {
+        let cell = hex::encode(parse_32(trustline, "trustline")?);
+        let base = self.node_url.clone();
+        let key = self.devnet_key.clone();
+        let path = format!("/trustline/status/{cell}");
+        let v = py
+            .detach(|| http_get_json(&base, &path, key.as_deref()))
+            .map_err(err)?;
+        json_to_py(py, &v)
+    }
+
+    fn __repr__(&self) -> String {
+        format!("Trustline(node_url={:?})", self.node_url)
+    }
+}
+
+/// **Channels** — the group-key epoch lift (`docs/ORGANS.md` §4).
+///
+/// A group is a CELL: membership root, key epoch, and key commitment live
+/// on-cell. `remove(m)` darkens BOTH m's forward-read ability AND m's
+/// group-held capabilities in ONE atomic epoch step (the `epochs_unified`
+/// keystone). Message bodies never touch the chain — encrypt under the current
+/// epoch key client-side and `post()` only ciphertext. Operator-gated.
+///
+/// ```python
+/// ch = ident.channels("https://devnet.example", devnet_key="…")
+/// g = ch.create(7, [{"cell": alice_hex, "seal_pk": alice_seal_hex}])
+/// ch.join(g["channel"], {"cell": bob_hex, "seal_pk": bob_seal_hex})  # fresh fan_out
+/// ch.post(g["channel"], g["epoch"], nonce_hex, ciphertext_hex)        # ciphertext only
+/// ch.remove(g["channel"], bob_hex)                                    # bob darkened in ONE turn
+/// for m in ch.messages(g["channel"]): ...                             # SSE delivery
+/// ```
+#[pyclass(module = "dregg")]
+struct Channels {
+    node_url: String,
+    devnet_key: Option<String>,
+}
+
+/// Normalize a member spec (`{"cell": hex|bytes, "seal_pk": hex|bytes}`) to the
+/// wire JSON `{cell, seal_pk}`.
+fn member_json(m: &Bound<'_, PyAny>) -> PyResult<serde_json::Value> {
+    let dict = m
+        .cast::<PyDict>()
+        .map_err(|_| PyTypeError::new_err("member: expected a dict {cell, seal_pk}"))?;
+    let cell = dict
+        .get_item("cell")?
+        .ok_or_else(|| PyValueError::new_err("member: missing 'cell'"))?;
+    let seal = dict
+        .get_item("seal_pk")
+        .ok()
+        .flatten()
+        .or(dict.get_item("sealPk").ok().flatten())
+        .ok_or_else(|| PyValueError::new_err("member: missing 'seal_pk'"))?;
+    let cell_hex = hex::encode(parse_32(&cell, "member.cell")?);
+    let seal_hex = if let Ok(s) = seal.extract::<&str>() {
+        s.trim().to_string()
+    } else if let Ok(b) = seal.extract::<&[u8]>() {
+        hex::encode(b)
+    } else {
+        return Err(PyTypeError::new_err("member.seal_pk: expected hex str or bytes"));
+    };
+    Ok(serde_json::json!({ "cell": cell_hex, "seal_pk": seal_hex }))
+}
+
+impl Channels {
+    fn post<'py>(
+        &self,
+        py: Python<'py>,
+        path: &str,
+        body: serde_json::Value,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let base = self.node_url.clone();
+        let key = self.devnet_key.clone();
+        let v = py
+            .detach(|| http_send_json("POST", &base, path, &body, key.as_deref()))
+            .map_err(refused)?;
+        json_to_py(py, &v)
+    }
+}
+
+#[pymethods]
+impl Channels {
+    /// Birth the group at epoch 1 with `members` as founders (`POST
+    /// /channels/create`). `tag` (u64) names the group among the operator's
+    /// groups. Returns the first sealed key fan-out.
+    fn create<'py>(
+        &self,
+        py: Python<'py>,
+        tag: u64,
+        members: Vec<Bound<'_, PyAny>>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let members = members
+            .iter()
+            .map(member_json)
+            .collect::<PyResult<Vec<_>>>()?;
+        self.post(py, "/channels/create", serde_json::json!({ "tag": tag, "members": members }))
+    }
+
+    /// Add a member — one unified epoch step (`POST /channels/join`); returns
+    /// the fresh fan-out.
+    fn join<'py>(&self, py: Python<'py>, channel: &Bound<'_, PyAny>, member: &Bound<'_, PyAny>) -> PyResult<Bound<'py, PyAny>> {
+        let body = serde_json::json!({ "channel": hex::encode(parse_32(channel, "channel")?), "member": member_json(member)? });
+        self.post(py, "/channels/join", body)
+    }
+
+    /// Remove a member — one unified epoch step that darkens both their
+    /// forward-read ability and their group-held capabilities (`POST
+    /// /channels/remove`). The removed member is absent from the returned
+    /// fan-out.
+    fn remove<'py>(&self, py: Python<'py>, channel: &Bound<'_, PyAny>, member: &Bound<'_, PyAny>) -> PyResult<Bound<'py, PyAny>> {
+        let body = serde_json::json!({ "channel": hex::encode(parse_32(channel, "channel")?), "member": hex::encode(parse_32(member, "member")?) });
+        self.post(py, "/channels/remove", body)
+    }
+
+    /// Advance the epoch without a membership change (`POST /channels/rekey`;
+    /// a fresh key fan-out).
+    fn rekey<'py>(&self, py: Python<'py>, channel: &Bound<'_, PyAny>) -> PyResult<Bound<'py, PyAny>> {
+        let body = serde_json::json!({ "channel": hex::encode(parse_32(channel, "channel")?) });
+        self.post(py, "/channels/rekey", body)
+    }
+
+    /// Post a message body (`POST /channels/post`). Encrypt client-side under
+    /// the CURRENT epoch key, then pass only `nonce` + `ciphertext` (hex str or
+    /// bytes). The body never touches the chain.
+    #[pyo3(name = "post")]
+    fn post_message<'py>(
+        &self,
+        py: Python<'py>,
+        channel: &Bound<'_, PyAny>,
+        epoch: u64,
+        nonce: &Bound<'_, PyAny>,
+        ciphertext: &Bound<'_, PyAny>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let body = serde_json::json!({
+            "channel": hex::encode(parse_32(channel, "channel")?),
+            "epoch": epoch,
+            "nonce": hex_or_bytes(nonce, "nonce")?,
+            "ciphertext": hex_or_bytes(ciphertext, "ciphertext")?,
+        });
+        self.post(py, "/channels/post", body)
+    }
+
+    /// Live group state (`GET /channels/status/{cell}`): epoch, roster
+    /// commitment, and the `epochs_unified` invariant tooth.
+    fn status<'py>(&self, py: Python<'py>, channel: &Bound<'_, PyAny>) -> PyResult<Bound<'py, PyAny>> {
+        let cell = hex::encode(parse_32(channel, "channel")?);
+        let base = self.node_url.clone();
+        let key = self.devnet_key.clone();
+        let path = format!("/channels/status/{cell}");
+        let v = py
+            .detach(|| http_get_json(&base, &path, key.as_deref()))
+            .map_err(err)?;
+        json_to_py(py, &v)
+    }
+
+    /// Subscribe to the group's message stream (`GET /channels/messages/{cell}`,
+    /// SSE) as a blocking iterator of ciphertext-envelope dicts
+    /// (`{seq, epoch, nonce, ciphertext}`). Open each body with the epoch key
+    /// you hold from the fan-out. Reconnects with backoff + `Last-Event-ID`.
+    fn messages(&self, channel: &Bound<'_, PyAny>) -> PyResult<SseJsonStream> {
+        let cell = hex::encode(parse_32(channel, "channel")?);
+        Ok(SseJsonStream::open(
+            &self.node_url,
+            &format!("/channels/messages/{cell}"),
+        ))
+    }
+
+    fn __repr__(&self) -> String {
+        format!("Channels(node_url={:?})", self.node_url)
+    }
+}
+
+/// A blocking iterator over a node SSE route, yielding each event's `data:`
+/// JSON payload as a Python object. The generic twin of [`ReceiptStream`] (no
+/// `event:` name filter) used by the channels message stream. Reconnects with
+/// exponential backoff and `Last-Event-ID` resume.
+#[pyclass(unsendable, module = "dregg")]
+struct SseJsonStream {
+    url: String,
+    last_event_id: Option<String>,
+    reader: Option<Box<dyn Read + Send>>,
+    parser: SseParser,
+    pending: VecDeque<serde_json::Value>,
+    backoff_ms: u64,
+}
+
+impl SseJsonStream {
+    fn open(base: &str, path: &str) -> Self {
+        SseJsonStream {
+            url: format!("{}{}", base.trim_end_matches('/'), path),
+            last_event_id: None,
+            reader: None,
+            parser: SseParser::default(),
+            pending: VecDeque::new(),
+            backoff_ms: 500,
+        }
+    }
+
+    fn connect(&mut self) -> Result<(), String> {
+        let agent = ureq::AgentBuilder::new()
+            .timeout_connect(Duration::from_secs(10))
+            .timeout_read(Duration::from_secs(40))
+            .build();
+        let mut req = agent.get(&self.url).set("accept", "text/event-stream");
+        if let Some(id) = &self.last_event_id {
+            req = req.set("last-event-id", id);
+        }
+        let resp = req.call().map_err(|e| e.to_string())?;
+        self.reader = Some(Box::new(resp.into_reader()));
+        Ok(())
+    }
+}
+
+#[pymethods]
+impl SseJsonStream {
+    fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __next__(&mut self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        loop {
+            py.check_signals()?;
+            if let Some(value) = self.pending.pop_front() {
+                return Ok(json_to_py(py, &value)?.unbind());
+            }
+            if self.reader.is_none() {
+                if py.detach(|| self.connect()).is_err() {
+                    let backoff = self.backoff_ms;
+                    py.detach(|| std::thread::sleep(Duration::from_millis(backoff)));
+                    self.backoff_ms = (self.backoff_ms * 2).min(15_000);
+                    continue;
+                }
+            }
+            let mut buf = [0u8; 8192];
+            let reader = self.reader.as_mut().expect("connected above");
+            match py.detach(|| reader.read(&mut buf)) {
+                Ok(0) | Err(_) => {
+                    self.reader = None;
+                    let backoff = self.backoff_ms;
+                    py.detach(|| std::thread::sleep(Duration::from_millis(backoff)));
+                    self.backoff_ms = (self.backoff_ms * 2).min(15_000);
+                }
+                Ok(n) => {
+                    for event in self.parser.push(&buf[..n]) {
+                        if let Some(id) = &event.id {
+                            self.last_event_id = Some(id.clone());
+                        }
+                        if let Ok(value) = serde_json::from_str(&event.data) {
+                            self.pending.push_back(value);
+                        }
+                    }
+                    if !self.pending.is_empty() {
+                        self.backoff_ms = 500;
+                    }
+                }
+            }
+        }
+    }
+
+    fn __repr__(&self) -> String {
+        format!("SseJsonStream(url={:?})", self.url)
+    }
+}
+
+/// Accept a hex `str` or `bytes`, returning a hex string (no length pin — used
+/// for variable-length nonces/ciphertexts).
+fn hex_or_bytes(obj: &Bound<'_, PyAny>, what: &str) -> PyResult<String> {
+    if let Ok(s) = obj.extract::<&str>() {
+        return Ok(s.trim().to_string());
+    }
+    if let Ok(b) = obj.extract::<&[u8]>() {
+        return Ok(hex::encode(b));
+    }
+    Err(PyTypeError::new_err(format!("{what}: expected hex str or bytes")))
+}
+
+/// **Mailbox** — a hosted inbox over the relay (`docs/ORGANS.md` §2).
+///
+/// Store-and-forward: senders enqueue sealed bodies to your inbox; you drain
+/// them with a custody proof. The relay sees only ciphertext. Membership ops
+/// (`subscribe` / `unsubscribe` / `drain`) are Ed25519-signed by the inbox
+/// OWNER (this client signs them); `send` is open.
+///
+/// Honest scope: sealing (X25519 → ChaCha20-Poly1305) and re-running the
+/// dequeue Merkle verifier are NOT done here — bring already-sealed ciphertext
+/// to `send()`, and recompute each drained body's `content_hash` before
+/// trusting it.
+///
+/// ```python
+/// mb = ident.mailbox("http://relay.example:3100")
+/// mb.subscribe()                       # create your hosted inbox
+/// # … a sender elsewhere: other.send(my_pubkey_hex, sealed_ciphertext, 100) …
+/// out = mb.drain(50)                   # each carries a dequeue (custody) proof
+/// mb.unsubscribe()
+/// ```
+#[pyclass(unsendable, module = "dregg")]
+struct Mailbox {
+    identity: Py<Identity>,
+    base_url: String,
+}
+
+const RELAY_SUBSCRIBE_DOMAIN: &[u8] = b"dregg-relay-subscribe-v1";
+const RELAY_UNSUBSCRIBE_DOMAIN: &[u8] = b"dregg-relay-unsubscribe-v1";
+const RELAY_DRAIN_DOMAIN: &[u8] = b"dregg-relay-drain-v1";
+
+impl Mailbox {
+    fn owner_hex(&self, py: Python<'_>) -> String {
+        hex::encode(self.identity.borrow(py).clerk.public_key().0)
+    }
+
+    /// Sign `domain || owner_pk || nonce [|| extra]` with the owner key,
+    /// returning `(owner_hex, nonce_hex, signature_hex)`.
+    fn signed_tuple(&self, py: Python<'_>, domain: &[u8], extra: &[u8]) -> (String, String, String) {
+        let ident = self.identity.borrow(py);
+        let owner = ident.clerk.public_key().0;
+        let mut nonce = [0u8; 8];
+        getrandom_fill(&mut nonce);
+        let mut msg = Vec::with_capacity(domain.len() + 32 + 8 + extra.len());
+        msg.extend_from_slice(domain);
+        msg.extend_from_slice(&owner);
+        msg.extend_from_slice(&nonce);
+        msg.extend_from_slice(extra);
+        let sig = ident.clerk.sign_bytes(&msg);
+        (hex::encode(owner), hex::encode(nonce), hex::encode(sig.0))
+    }
+}
+
+#[pymethods]
+impl Mailbox {
+    /// The owner public key (hex) — the inbox id.
+    #[getter]
+    fn owner(&self, py: Python<'_>) -> String {
+        self.owner_hex(py)
+    }
+
+    /// `GET /relay/status` — the relay operator's identity + bond.
+    fn relay_status<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let base = self.base_url.clone();
+        let v = py
+            .detach(|| http_get_json(&base, "/relay/status", None))
+            .map_err(err)?;
+        json_to_py(py, &v)
+    }
+
+    /// `POST /relay/subscribe` — create this owner's hosted inbox (owner-signed
+    /// under `dregg-relay-subscribe-v1`).
+    #[pyo3(signature = (capacity=None, min_deposit=None))]
+    fn subscribe<'py>(
+        &self,
+        py: Python<'py>,
+        capacity: Option<u64>,
+        min_deposit: Option<u64>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let (owner, nonce, sig) = self.signed_tuple(py, RELAY_SUBSCRIBE_DOMAIN, &[]);
+        let mut body = serde_json::json!({ "owner": owner, "nonce": nonce, "signature": sig });
+        if let Some(c) = capacity {
+            body["capacity"] = serde_json::json!(c);
+        }
+        if let Some(d) = min_deposit {
+            body["min_deposit"] = serde_json::json!(d);
+        }
+        let base = self.base_url.clone();
+        let v = py
+            .detach(|| http_send_json("POST", &base, "/relay/subscribe", &body, None))
+            .map_err(refused)?;
+        json_to_py(py, &v)
+    }
+
+    /// `DELETE /relay/unsubscribe` — remove this owner's inbox (owner-signed
+    /// under `dregg-relay-unsubscribe-v1`).
+    fn unsubscribe<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let (owner, nonce, sig) = self.signed_tuple(py, RELAY_UNSUBSCRIBE_DOMAIN, &[]);
+        let body = serde_json::json!({ "owner": owner, "nonce": nonce, "signature": sig });
+        let base = self.base_url.clone();
+        let v = py
+            .detach(|| http_send_json("DELETE", &base, "/relay/unsubscribe", &body, None))
+            .map_err(refused)?;
+        json_to_py(py, &v)
+    }
+
+    /// `POST /relay/send/{dest}` — enqueue an ALREADY-SEALED `ciphertext`
+    /// (hex str or bytes) to `dest`'s inbox, paying `deposit`. Unauthenticated.
+    fn send<'py>(
+        &self,
+        py: Python<'py>,
+        dest: &Bound<'_, PyAny>,
+        ciphertext: &Bound<'_, PyAny>,
+        deposit: u64,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let dest_hex = hex::encode(parse_32(dest, "dest")?);
+        use base64::Engine;
+        let payload_b64 = base64::engine::general_purpose::STANDARD.encode(ciphertext_bytes(ciphertext)?);
+        let body = serde_json::json!({ "sender": self.owner_hex(py), "payload": payload_b64, "deposit": deposit });
+        let base = self.base_url.clone();
+        let path = format!("/relay/send/{dest_hex}");
+        let v = py
+            .detach(|| http_send_json("POST", &base, &path, &body, None))
+            .map_err(err)?;
+        json_to_py(py, &v)
+    }
+
+    /// `GET /relay/drain` — drain up to `max` messages (owner-signed under
+    /// `dregg-relay-drain-v1` over `owner || nonce || max_le(u64)`), each with
+    /// its full dequeue (custody) proof. Recompute each body's `content_hash`
+    /// before trusting it.
+    #[pyo3(signature = (max=100))]
+    fn drain<'py>(&self, py: Python<'py>, max: u64) -> PyResult<Bound<'py, PyAny>> {
+        let (owner, nonce, sig) = self.signed_tuple(py, RELAY_DRAIN_DOMAIN, &max.to_le_bytes());
+        let base = self.base_url.clone();
+        let path = format!("/relay/drain?owner={owner}&nonce={nonce}&max={max}&signature={sig}");
+        let v = py
+            .detach(|| http_get_json(&base, &path, None))
+            .map_err(err)?;
+        json_to_py(py, &v)
+    }
+
+    /// `GET /relay/inbox/{id}/status` — this inbox's queue depth + root.
+    fn inbox_status<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let owner = self.owner_hex(py);
+        let base = self.base_url.clone();
+        let path = format!("/relay/inbox/{owner}/status");
+        let v = py
+            .detach(|| http_get_json(&base, &path, None))
+            .map_err(err)?;
+        json_to_py(py, &v)
+    }
+
+    fn __repr__(&self, py: Python<'_>) -> String {
+        format!("Mailbox(owner={:?}, relay={:?})", self.owner_hex(py), self.base_url)
+    }
+}
+
+fn ciphertext_bytes(obj: &Bound<'_, PyAny>) -> PyResult<Vec<u8>> {
+    if let Ok(b) = obj.extract::<&[u8]>() {
+        return Ok(b.to_vec());
+    }
+    if let Ok(s) = obj.extract::<&str>() {
+        return hex::decode(s.trim())
+            .map_err(|e| PyValueError::new_err(format!("ciphertext: invalid hex: {e}")));
+    }
+    Err(PyTypeError::new_err("ciphertext: expected bytes or hex str"))
+}
+
+/// Minimal getrandom fill (the binding already pulls `rand` transitively via
+/// the SDK; use the OS source directly to avoid a new dep surface).
+fn getrandom_fill(buf: &mut [u8]) {
+    // `ureq`/`rustls` already pull `getrandom`; reuse it.
+    getrandom::getrandom(buf).expect("OS RNG unavailable");
+}
+
+/// **Attested query** — the light-client read surface (Noun 2's Python face).
+///
+/// No identity, no signing. Fetches the federation-attested state roots,
+/// finalized checkpoints, and a committed turn's full-turn STARK so a caller
+/// can hand them to a verifier or trust them under the federation's signature
+/// threshold.
+///
+/// Honest scope: verifying a STARK or a threshold signature is a Rust/Lean
+/// operation — this surfaces the artifacts to verify elsewhere, it does not
+/// return a checked verdict on its own. (The `signatures` / `qc_votes` count is
+/// the trust signal.)
+///
+/// ```python
+/// aq = dregg.AttestedQuery("https://devnet.example")
+/// aq.attested_roots()        # federation-signed state roots (+ signature count)
+/// aq.checkpoint()            # latest finalized checkpoint (+ qc votes)
+/// aq.turn_proof(turn_hash)   # full-turn STARK bytes (verify elsewhere) or None
+/// ```
+#[pyclass(module = "dregg")]
+struct AttestedQuery {
+    node_url: String,
+}
+
+#[pymethods]
+impl AttestedQuery {
+    #[new]
+    fn new(node_url: &str) -> Self {
+        AttestedQuery {
+            node_url: node_url.trim_end_matches('/').to_string(),
+        }
+    }
+
+    fn get<'py>(&self, py: Python<'py>, path: String) -> PyResult<Bound<'py, PyAny>> {
+        let base = self.node_url.clone();
+        let v = py
+            .detach(move || http_get_json(&base, &path, None))
+            .map_err(err)?;
+        json_to_py(py, &v)
+    }
+
+    /// `GET /federation/roots` — the federation-attested state roots.
+    fn attested_roots<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        self.get(py, "/federation/roots".to_string())
+    }
+
+    /// `GET /checkpoint/latest` — the latest finalized checkpoint.
+    fn checkpoint<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        self.get(py, "/checkpoint/latest".to_string())
+    }
+
+    /// `GET /checkpoint/{height}` — the finalized checkpoint at `height`.
+    fn checkpoint_at<'py>(&self, py: Python<'py>, height: u64) -> PyResult<Bound<'py, PyAny>> {
+        self.get(py, format!("/checkpoint/{height}"))
+    }
+
+    /// `GET /api/turn/{hash}/proof` — the full-turn STARK for a committed turn,
+    /// or `None` while the node's prove pool is still producing it. The proof
+    /// is BYTES — verify it with the Rust/Lean `verify_full_turn`, not here.
+    fn turn_proof<'py>(&self, py: Python<'py>, turn_hash: &str) -> PyResult<Option<Bound<'py, PyAny>>> {
+        let base = self.node_url.clone();
+        let url = format!("{}/api/turn/{}/proof", base.trim_end_matches('/'), turn_hash.trim());
+        let fetched = py.detach(move || match http_agent().get(&url).call() {
+            Ok(resp) => resp
+                .into_json::<serde_json::Value>()
+                .map(Some)
+                .map_err(|e| format!("GET {url}: {e}")),
+            Err(ureq::Error::Status(404, _)) => Ok(None),
+            Err(e) => Err(format!("GET {url}: {e}")),
+        });
+        match fetched.map_err(err)? {
+            Some(v) => Ok(Some(json_to_py(py, &v)?)),
+            None => Ok(None),
+        }
+    }
+
+    fn __repr__(&self) -> String {
+        format!("AttestedQuery(node_url={:?})", self.node_url)
+    }
+}
+
+/// Devnet faucet (`POST /api/faucet`): materialize a hosted cell and/or claim
+/// computrons (max 10000 per request). Pass `public_key=` to install a
+/// canonical hosted cell with a real owner key — REQUIRED before that cell can
+/// pass Ed25519 turn authorization.
+///
+/// ```python
+/// dregg.faucet(node_url, ident.cell_id, 2000, public_key=ident.public_key)
+/// ```
+#[pyfunction]
+#[pyo3(signature = (node_url, recipient, amount, public_key=None, devnet_key=None))]
+fn faucet<'py>(
+    py: Python<'py>,
+    node_url: &str,
+    recipient: &Bound<'_, PyAny>,
+    amount: u64,
+    public_key: Option<&Bound<'_, PyAny>>,
+    devnet_key: Option<&str>,
+) -> PyResult<Bound<'py, PyAny>> {
+    let recipient_hex = hex::encode(parse_32(recipient, "recipient")?);
+    let mut body = serde_json::json!({ "recipient": recipient_hex, "amount": amount });
+    if let Some(pk) = public_key {
+        body["public_key"] = serde_json::Value::String(hex::encode(parse_32(pk, "public_key")?));
+    }
+    let base = node_url.trim_end_matches('/').to_string();
+    let key = resolve_devnet_key(devnet_key);
+    let v = py
+        .detach(move || http_send_json("POST", &base, "/api/faucet", &body, key.as_deref()))
+        .map_err(refused)?;
+    json_to_py(py, &v)
+}
+
 // ─── kernel: which executor this module embeds (the verified Lean kernel, or not) ───
 
 /// The canonical mini-wire for the proof-of-execution probe: two cells
@@ -1199,7 +1971,13 @@ fn dregg(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<AuthorizedTurn>()?;
     m.add_class::<Receipt>()?;
     m.add_class::<ReceiptStream>()?;
+    m.add_class::<Trustline>()?;
+    m.add_class::<Channels>()?;
+    m.add_class::<Mailbox>()?;
+    m.add_class::<AttestedQuery>()?;
+    m.add_class::<SseJsonStream>()?;
     m.add_function(wrap_pyfunction!(subscribe, m)?)?;
+    m.add_function(wrap_pyfunction!(faucet, m)?)?;
     m.add_function(wrap_pyfunction!(explain, m)?)?;
     m.add_function(wrap_pyfunction!(list_profiles, m)?)?;
     m.add_function(wrap_pyfunction!(kernel, m)?)?;

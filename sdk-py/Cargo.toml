@@ -1,6 +1,8 @@
 [package]
 name = "dregg-sdk-py"
-version = "0.1.0"
+# Aligned with @dregg/sdk (sdk-ts) — the same SDK generation (two nouns +
+# the trustline/channels/mailbox organs + attested-query + the typed surface).
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.94.0"
 authors = ["Dregg Contributors"]
@@ -45,6 +47,9 @@ postcard = { version = "1", features = ["use-std"] }
 serde_json = "1"
 hex = "0.4"
 blake3 = "1"
+# Relay (mailbox organ) payload encoding + fresh signing nonces.
+base64 = "0.22"
+getrandom = "0.2"
 
 [workspace]
 

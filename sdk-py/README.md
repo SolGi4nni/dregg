@@ -13,6 +13,53 @@ receipt = (ident.turn("https://devnet.example")
 print(receipt.turn_hash, receipt.has_proof)
 ```
 
+An unauthorized act is inexpressible: nothing leaves `.sign()` until it is a
+real Ed25519-signed canonical `SignedTurn`, and the node ingress verifies it.
+The module is fully typed — it ships `dregg.pyi` + a `py.typed` marker, so
+IDEs, mypy, and pyright resolve the whole surface.
+
+## The organ nouns
+
+Above the two base nouns sit the **organs** (`docs/ORGANS.md`) — the higher
+primitives, each the ergonomic Python face of a node service. The node computes
+the per-cell factory descriptors and seal fan-outs the wire layer does not
+carry; these clients drive them. The enforcement tooth is the
+executor-installed cell program either way.
+
+```python
+# §1 Trustline — the bilateral line of credit (operator-gated).
+tl = issuer.trustline(node, devnet_key=KEY)
+line = tl.open(holder.cell_id, 1000)        # four-turn funded birth
+tl.draw(line["trustline"], 250)             # debit the shared counter
+tl.status(line["trustline"])                # {line, drawn, remaining, escrow, open, …}
+
+# §4 Channels — the group-key epoch lift (operator-gated).
+ch = issuer.channels(node, devnet_key=KEY)
+g = ch.create(7, [{"cell": alice.cell_id, "seal_pk": alice_seal_hex}])
+ch.remove(g["channel"], bob.cell_id)        # bob darkened in ONE epoch step
+for m in ch.messages(g["channel"]): ...     # SSE ciphertext envelopes
+
+# §2 Mailbox — a hosted inbox over the relay (owner-signed).
+mb = holder.mailbox("http://relay.example:3100")
+mb.subscribe()                              # create your inbox
+out = mb.drain(50)                          # each carries a dequeue (custody) proof
+
+# Light-client reads — no identity, no signing.
+aq = dregg.AttestedQuery(node)
+aq.checkpoint()                             # latest finalized checkpoint (+ qc votes)
+aq.turn_proof(turn_hash)                    # full-turn STARK bytes (verify elsewhere)
+
+# Devnet faucet — materialize + fund a hosted cell.
+dregg.faucet(node, ident.cell_id, 2000, public_key=ident.public_key)
+```
+
+**Honest scope.** Operator-gated organs (trustline, channels) carry the node
+operator's credential (`devnet_key=`, else `$DREGG_API_TOKEN`). Sealing
+(X25519 → ChaCha20-Poly1305), the per-group seal fan-out, re-running a dequeue
+Merkle verifier, and verifying a STARK/threshold signature are **not** done in
+this binding — it surfaces the artifacts to verify with the Rust/Lean path. See
+`examples/organs.py`.
+
 ## The kernel this module embeds
 
 The extension module links the **verified Lean kernel** (`metatheory/Dregg2`, via

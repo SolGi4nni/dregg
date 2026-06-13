@@ -176,10 +176,35 @@ The pre-refinement wasm-bound playground client (`DreggClient`,
 `DreggRuntime`, proof/Merkle/Datalog toys) — unchanged, for existing
 consumers.
 
+## Building from a fresh clone
+
+The package's core (`Identity` / turns / receipts / events / organs / program)
+is **pure TypeScript** — no runtime wasm dependency. But the legacy
+`@dregg/sdk/wasm` and `@dregg/sdk/browser` entry points, and the
+differential-test oracle, import the repo's own `dregg-wasm` build
+(`file:../wasm/pkg`, a dev/peer dependency). So a fresh clone must build that
+package first, or the `.d.ts` emit step of `npm run build` fails with
+`Cannot find module 'dregg-wasm'`:
+
+```bash
+# from the repo root — build the wasm package the SDK differentials against
+(cd wasm && wasm-pack build --target web --out-dir pkg)
+# then, in this package
+cd sdk-ts && npm ci && npm run build
+```
+
+In Docker, mount the **repo root** (not just `sdk-ts/`) so the `../wasm/pkg`
+path dependency resolves:
+
+```bash
+docker run --rm -v "$PWD":/repo -w /repo/sdk-ts node:22 \
+  bash -c "npm ci && npm run build && npm test"
+```
+
 ## Tests
 
 ```bash
-npm test   # build + node --test
+npm test   # build + node --test  (needs ../wasm/pkg — see above)
 ```
 
 - **Differential**: TS-built signed turns are byte-identical (postcard
