@@ -132,10 +132,11 @@ fn main() {
             index: 0,
             value: field_from_u64(0), // locked >= 0 (always true, but shows the pattern)
         },
-        // Client hash is immutable once set
-        StateConstraint::Immutable { index: 2 },
-        // Job hash is immutable once set
-        StateConstraint::Immutable { index: 4 },
+        // Client hash is immutable once set (write-once: permits the initial
+        // set-from-zero at lock, forbids any later change).
+        StateConstraint::WriteOnce { index: 2 },
+        // Job hash is immutable once set.
+        StateConstraint::WriteOnce { index: 4 },
     ]);
     escrow_cell.permissions = Permissions {
         send: AuthRequired::None,

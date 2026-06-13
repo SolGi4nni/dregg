@@ -786,6 +786,7 @@ fn tool_group(tool: &str) -> &'static str {
         | "dregg_make_sovereign"
         | "dregg_bilateral_action"
         | "dregg_debit_shared_resource"
+        | "dregg_extend_trustline"
         | "dregg_place_bid"
         | "dregg_captp_deliver" => "act",
 
@@ -861,6 +862,7 @@ fn tool_title(tool: &str) -> &'static str {
         "dregg_propose_membership" => "Propose Membership Change",
         "dregg_check_resource_budget" => "Check Resource Budget",
         "dregg_debit_shared_resource" => "Debit Shared Resource",
+        "dregg_extend_trustline" => "Extend Trustline (Line of Credit)",
         "dregg_list_auctions" => "List Auctions",
         "dregg_place_bid" => "Place Sealed Bid",
         "dregg_captp_deliver" => "CapTP Deliver",
@@ -1930,6 +1932,7 @@ fn tool_required_scope(tool: &str) -> &'static str {
         | "dregg_exercise_handoff_cert"
         | "dregg_sign_sovereign_witness"
         | "dregg_bilateral_action"
+        | "dregg_extend_trustline"
         | "dregg_register_name"
         | "dregg_publish_subscription"
         | "dregg_register_service" => "write",

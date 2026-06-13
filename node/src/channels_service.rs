@@ -1474,9 +1474,11 @@ mod tests {
         // discard is durable — a second restart sees no row, no re-alarm).
         {
             let mut s = state.write().await;
-            let mut cell = s.ledger.get(&channel).unwrap().clone();
-            cell.state.fields[CH_MEMBER_ROOT_SLOT as usize] = [0xEE; 32];
-            s.ledger.insert_cell(cell).unwrap();
+            s.ledger
+                .update_with(&channel, |cell| {
+                    cell.state.fields[CH_MEMBER_ROOT_SLOT as usize] = [0xEE; 32];
+                })
+                .unwrap();
 
             let mut fresh = ChannelRegistry::default();
             fresh.restore_rosters(&s.store, &s.ledger);
