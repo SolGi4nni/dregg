@@ -69,6 +69,16 @@ fn make_turn(agent: CellId, nonce: u64, action: Action) -> Turn {
     }
 }
 
+/// Submit a turn, threading the executor's per-agent receipt-chain head (P0-3
+/// self-binding). Each non-first turn from an agent must carry the prior
+/// receipt's hash; the executor is the source of truth for each agent's head.
+fn submit(executor: &TurnExecutor, ledger: &mut Ledger, mut turn: Turn) -> TurnResult {
+    if turn.previous_receipt_hash.is_none() {
+        turn.previous_receipt_hash = executor.get_last_receipt_hash(&turn.agent);
+    }
+    executor.execute(&turn, ledger)
+}
+
 fn main() {
     println!("=== Dregg Snapshot+Refresh Delegation Demo ===");
     println!("    E-style capability inheritance with eventual revocation");
@@ -138,7 +148,7 @@ fn main() {
     };
 
     let turn = make_turn(parent_id, 0, spawn);
-    let result = executor.execute(&turn, &mut ledger);
+    let result = submit(&executor, &mut ledger, turn);
     assert!(result.is_committed());
 
     let child = ledger.get(&child_id).unwrap();
@@ -196,7 +206,7 @@ fn main() {
     };
 
     let turn = make_turn(child_id, 0, child_write);
-    let result = executor.execute(&turn, &mut ledger);
+    let result = submit(&executor, &mut ledger, turn);
     assert!(result.is_committed());
     println!("  SUCCESS: Child wrote to Service A field[0]");
     println!();
@@ -236,7 +246,7 @@ fn main() {
     };
 
     let turn = make_turn(child_id, child_nonce, child_try_d);
-    let result = executor.execute(&turn, &mut ledger);
+    let result = submit(&executor, &mut ledger, turn);
     assert!(!result.is_committed());
     println!("  EXPECTED FAILURE: Child cannot use Service D (not in snapshot)");
     println!();
@@ -263,7 +273,7 @@ fn main() {
     };
 
     let turn = make_turn(child_id, child_nonce, refresh);
-    let result = executor.execute(&turn, &mut ledger);
+    let result = submit(&executor, &mut ledger, turn);
     assert!(result.is_committed());
 
     let child = ledger.get(&child_id).unwrap();
@@ -298,7 +308,7 @@ fn main() {
     };
 
     let turn = make_turn(child_id, child_nonce, child_use_d);
-    let result = executor.execute(&turn, &mut ledger);
+    let result = submit(&executor, &mut ledger, turn);
     assert!(result.is_committed());
     println!("  SUCCESS: Child can now use Service D after refresh");
     println!();
@@ -331,7 +341,7 @@ fn main() {
     };
 
     let turn = make_turn(parent_id, parent_nonce, revoke);
-    let result = executor.execute(&turn, &mut ledger);
+    let result = submit(&executor, &mut ledger, turn);
     assert!(result.is_committed());
 
     let parent = ledger.get(&parent_id).unwrap();
@@ -366,7 +376,7 @@ fn main() {
     };
 
     let turn = make_turn(child_id, child_nonce, child_try_a);
-    let result = executor.execute(&turn, &mut ledger);
+    let result = submit(&executor, &mut ledger, turn);
     assert!(!result.is_committed());
     println!("  EXPECTED FAILURE: Child cannot act after revocation");
     println!();

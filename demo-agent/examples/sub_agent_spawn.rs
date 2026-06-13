@@ -363,6 +363,13 @@ fn main() {
             turn_builder.add_action(action);
         }
 
+        // P0-3 receipt-chain self-binding: every turn after the parent's first
+        // must thread the prior receipt's hash. All sub-agent turns share the
+        // parent orchestrator cell, so they form one chain.
+        if let Some(prev) = receipts.last() {
+            turn_builder.set_previous_receipt_hash(prev.receipt_hash());
+        }
+
         let turn = turn_builder.build();
         let result = executor.execute(&turn, &mut ledger);
 
@@ -400,20 +407,15 @@ fn main() {
     println!("  The parent's receipt chain proves all sub-agent actions executed atomically.");
     println!();
 
-    // Verify the receipt chain structure
-    let chain_result = verify_receipt_chain(&receipts);
-    match chain_result {
+    // Verify the receipt chain. Because every sub-agent turn threads the prior
+    // receipt's hash (P0-3 self-binding), the receipts form one verifiable chain
+    // rooted at the parent orchestrator's genesis turn.
+    match verify_receipt_chain(&receipts) {
         Ok(()) => {
             println!("  Receipt chain valid: {} receipts linked", receipts.len());
         }
         Err(e) => {
-            // The receipts are from same agent (parent_cell_id) but the hash chain
-            // linking depends on the executor wiring previous_receipt_hash correctly.
-            // For this demo, we verify the structural properties manually.
-            println!(
-                "  Receipt chain structure: {} (expected for independent turns)",
-                e
-            );
+            panic!("Receipt chain verification failed: {}", e);
         }
     }
 

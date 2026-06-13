@@ -75,6 +75,16 @@ fn make_turn(agent: CellId, nonce: u64, action: Action) -> Turn {
     }
 }
 
+/// Submit a turn, threading the executor's per-agent receipt-chain head (P0-3
+/// self-binding). Each non-first turn from an agent must carry the prior
+/// receipt's hash; the executor is the source of truth for each agent's head.
+fn submit(executor: &TurnExecutor, ledger: &mut Ledger, mut turn: Turn) -> TurnResult {
+    if turn.previous_receipt_hash.is_none() {
+        turn.previous_receipt_hash = executor.get_last_receipt_hash(&turn.agent);
+    }
+    executor.execute(&turn, ledger)
+}
+
 /// Derive a deterministic worker identity from an index.
 fn worker_identity(index: usize) -> ([u8; 32], [u8; 32], CellId) {
     let mut pk = [0u8; 32];
@@ -164,7 +174,7 @@ fn main() {
 
         let nonce = ledger.get(&controller_id).unwrap().state.nonce();
         let turn = make_turn(controller_id, nonce, spawn);
-        let result = executor.execute(&turn, &mut ledger);
+        let result = submit(&executor, &mut ledger, turn);
         assert!(result.is_committed(), "Spawn worker {} failed", i);
 
         // Verify the child was created with delegation.
@@ -248,7 +258,7 @@ fn main() {
 
             let nonce = ledger.get(&worker_id).unwrap().state.nonce();
             let turn = make_turn(worker_id, nonce, write_action);
-            let result = executor.execute(&turn, &mut ledger);
+            let result = submit(&executor, &mut ledger, turn);
             assert!(
                 result.is_committed(),
                 "Worker {} turn {} failed (nonce={}, target={})",
@@ -312,7 +322,7 @@ fn main() {
     };
 
     let turn = make_turn(worker_0_id, worker_0_nonce, try_new_svc);
-    let result = executor.execute(&turn, &mut ledger);
+    let result = submit(&executor, &mut ledger, turn);
     assert!(
         !result.is_committed(),
         "Worker should NOT access new service before refresh"
@@ -351,7 +361,7 @@ fn main() {
         };
 
         let turn = make_turn(*worker_id, nonce, refresh);
-        let result = executor.execute(&turn, &mut ledger);
+        let result = submit(&executor, &mut ledger, turn);
         assert!(result.is_committed(), "Worker {} refresh failed", i);
     }
 
@@ -394,7 +404,7 @@ fn main() {
     };
 
     let turn = make_turn(worker_0_id, worker_0_nonce, use_new_svc);
-    let result = executor.execute(&turn, &mut ledger);
+    let result = submit(&executor, &mut ledger, turn);
     assert!(
         result.is_committed(),
         "Worker 0 should access new service after refresh"
@@ -438,7 +448,7 @@ fn main() {
     };
 
     let turn = make_turn(controller_id, controller_nonce, revoke);
-    let result = executor.execute(&turn, &mut ledger);
+    let result = submit(&executor, &mut ledger, turn);
     assert!(result.is_committed(), "Revocation should succeed");
 
     // Verify worker 7's delegation is cleared.
@@ -490,7 +500,7 @@ fn main() {
     };
 
     let turn = make_turn(compromised_worker, w7_nonce, w7_try);
-    let result = executor.execute(&turn, &mut ledger);
+    let result = submit(&executor, &mut ledger, turn);
     assert!(
         !result.is_committed(),
         "Revoked worker 7 should not be able to act"
@@ -518,7 +528,7 @@ fn main() {
     };
 
     let turn = make_turn(w3_id, w3_nonce, w3_action);
-    let result = executor.execute(&turn, &mut ledger);
+    let result = submit(&executor, &mut ledger, turn);
     assert!(result.is_committed(), "Worker 3 should still function");
     println!("  Worker 3 still acts normally: SUCCESS");
     println!();
@@ -638,7 +648,7 @@ fn main() {
     };
 
     let turn = make_turn(worker_0_id, w0_nonce, refresh_again);
-    let result = executor.execute(&turn, &mut ledger);
+    let result = submit(&executor, &mut ledger, turn);
     assert!(result.is_committed());
 
     let w0 = ledger.get(&worker_0_id).unwrap();

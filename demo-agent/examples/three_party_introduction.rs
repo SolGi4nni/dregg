@@ -15,7 +15,27 @@
 
 use dregg_cell::{AuthRequired, Cell, CellId, Ledger, Permissions};
 use dregg_turn::builder::ActionBuilder;
-use dregg_turn::{ComputronCosts, TurnBuilder, TurnExecutor, TurnResult};
+use dregg_turn::{ComputronCosts, Turn, TurnBuilder, TurnExecutor, TurnResult};
+use std::collections::HashMap;
+
+/// Submit a turn through the executor, threading the per-agent receipt-chain
+/// head (P0-3 self-binding). The executor requires each non-first turn from a
+/// given agent to carry the prior receipt's hash (`previous_receipt_hash`);
+/// genesis turns use `None`. This helper tracks each agent's head and sets it
+/// before execution, advancing it on commit.
+fn submit(
+    executor: &TurnExecutor,
+    ledger: &mut Ledger,
+    heads: &mut HashMap<CellId, [u8; 32]>,
+    mut turn: Turn,
+) -> TurnResult {
+    turn.previous_receipt_hash = heads.get(&turn.agent).copied();
+    let result = executor.execute(&turn, ledger);
+    if let TurnResult::Committed { receipt, .. } = &result {
+        heads.insert(turn.agent, receipt.receipt_hash());
+    }
+    result
+}
 
 /// Create a cell with open permissions and a given balance.
 fn make_open_cell(seed: u8, balance: i64) -> Cell {
@@ -115,6 +135,8 @@ fn main() {
     println!();
 
     let executor = TurnExecutor::new(ComputronCosts::zero());
+    // Per-agent receipt-chain heads (P0-3). Threaded by `submit`.
+    let mut heads: HashMap<CellId, [u8; 32]> = HashMap::new();
 
     // =========================================================================
     // STEP 2: Alice introduces Bob to Carol
@@ -130,7 +152,7 @@ fn main() {
     builder.add_action(action);
     let turn = builder.fee(0).build();
 
-    let result = executor.execute(&turn, &mut ledger);
+    let result = submit(&executor, &mut ledger, &mut heads, turn);
     match &result {
         TurnResult::Committed { receipt, .. } => {
             println!("  Turn committed successfully!");
@@ -176,7 +198,7 @@ fn main() {
     builder.add_action(action);
     let turn = builder.fee(0).build();
 
-    let result = executor.execute(&turn, &mut ledger);
+    let result = submit(&executor, &mut ledger, &mut heads, turn);
     match &result {
         TurnResult::Rejected { reason, .. } => {
             println!("  REJECTED (as expected): {}", reason);
@@ -212,7 +234,7 @@ fn main() {
             .build();
     builder.add_action(action);
     let turn = builder.fee(0).build();
-    let result = executor.execute(&turn, &mut ledger);
+    let result = submit(&executor, &mut ledger, &mut heads, turn);
     assert!(
         result.is_committed(),
         "Alice introducing Bob to Dave should work"
@@ -227,7 +249,7 @@ fn main() {
     builder.add_action(action);
     let turn = builder.fee(0).build();
 
-    let result = executor.execute(&turn, &mut ledger);
+    let result = submit(&executor, &mut ledger, &mut heads, turn);
     match &result {
         TurnResult::Committed { receipt, .. } => {
             println!("  Bob's transitive introduction succeeded!");
@@ -280,7 +302,7 @@ fn main() {
     builder.add_action(action);
     let turn = builder.fee(0).build();
 
-    let result = executor.execute(&turn, &mut ledger);
+    let result = submit(&executor, &mut ledger, &mut heads, turn);
     assert!(
         result.is_committed(),
         "attenuated introduction should succeed"
@@ -318,7 +340,7 @@ fn main() {
     builder.add_action(action);
     let turn = builder.fee(0).build();
 
-    let result = executor.execute(&turn, &mut ledger);
+    let result = submit(&executor, &mut ledger, &mut heads, turn);
     match &result {
         TurnResult::Rejected { reason, .. } => {
             println!("  REJECTED (as expected): {}", reason);

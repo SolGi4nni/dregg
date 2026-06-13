@@ -107,6 +107,22 @@ fn make_turn(agent: CellId, nonce: u64, effects: Vec<Effect>) -> dregg_turn::Tur
     }
 }
 
+/// Submit a single (non-pipeline) turn, threading the executor's per-agent
+/// receipt-chain head (P0-3 self-binding). Each non-first turn from an agent
+/// must carry the prior receipt's hash; the executor is the source of truth for
+/// each agent's head (the same head `execute_pipeline` auto-chains), so reading
+/// it here keeps direct turns and pipeline turns on one consistent chain.
+fn submit(
+    executor: &dregg_turn::TurnExecutor,
+    ledger: &mut Ledger,
+    mut turn: dregg_turn::Turn,
+) -> TurnResult {
+    if turn.previous_receipt_hash.is_none() {
+        turn.previous_receipt_hash = executor.get_last_receipt_hash(&turn.agent);
+    }
+    executor.execute(&turn, ledger)
+}
+
 fn main() {
     println!("=== Dregg AI Agent Coordination Network (8-Cell Demo) ===");
     println!("    Ocap-Secured Distributed AI Infrastructure");
@@ -200,7 +216,7 @@ fn main() {
             max_staleness: 3600, // 1 hour
         }],
     );
-    let result = executor.execute(&turn_spawn, &mut ledger);
+    let result = submit(&executor, &mut ledger, turn_spawn);
     assert!(result.is_committed(), "SpawnWithDelegation should succeed");
     println!("  SpawnWithDelegation: Developer -> AgentRuntime [COMMITTED]");
 
@@ -215,7 +231,7 @@ fn main() {
         .build();
     builder.add_action(action);
     let turn = builder.fee(0).build();
-    let result = executor.execute(&turn, &mut ledger);
+    let result = submit(&executor, &mut ledger, turn);
 
     match &result {
         TurnResult::Committed { receipt, .. } => {
@@ -268,7 +284,7 @@ fn main() {
     .build();
     builder.add_action(action);
     let turn = builder.fee(0).build();
-    let result = executor.execute(&turn, &mut ledger);
+    let result = submit(&executor, &mut ledger, turn);
 
     match &result {
         TurnResult::Committed { receipt, .. } => {
@@ -542,7 +558,7 @@ fn main() {
         .build();
     builder.add_action(action);
     let expensive_turn = builder.build();
-    let result = executor_with_budget.execute(&expensive_turn, &mut ledger);
+    let result = submit(&executor_with_budget, &mut ledger, expensive_turn);
     assert!(
         result.is_rejected(),
         "Turn exceeding budget must be rejected"
@@ -558,7 +574,7 @@ fn main() {
         .build();
     builder.add_action(action);
     let cheap_turn = builder.build();
-    let result = executor_with_budget.execute(&cheap_turn, &mut ledger);
+    let result = submit(&executor_with_budget, &mut ledger, cheap_turn);
     assert!(result.is_committed(), "Turn within budget must succeed");
     println!("  Executor with BudgetGate(ceiling=50): fee=30 turn COMMITTED");
     println!();
@@ -871,7 +887,7 @@ fn main() {
                 .build();
         builder.add_action(action);
         let turn = builder.build();
-        let result = audit_executor.execute(&turn, &mut ledger);
+        let result = submit(&audit_executor, &mut ledger, turn);
         match result {
             TurnResult::Committed {
                 receipt,
@@ -892,7 +908,9 @@ fn main() {
     }
     println!();
 
-    // Verify the receipt chain.
+    // Verify the receipt chain. Each audit turn threads the prior receipt's
+    // hash (P0-3 self-binding), so the five turns form one verifiable chain
+    // rooted at the agent's genesis turn on this executor.
     match verify_receipt_chain(&receipts) {
         Ok(()) => {
             println!(
@@ -901,10 +919,7 @@ fn main() {
             );
         }
         Err(e) => {
-            // The verify_receipt_chain requires previous_receipt_hash linking which
-            // the executor may not wire automatically. Check structural properties.
-            println!("  Receipt chain structural check: {e}");
-            println!("  (Individual receipts are valid; full linking requires executor wiring)");
+            panic!("Receipt chain verification failed: {e}");
         }
     }
 
