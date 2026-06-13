@@ -43,6 +43,7 @@ def lhConcrete : List Turn → ℤ := turnLogDigest
 /-- Field-binding `Auth` index (so endpoint `rights` are bound, not collapsed to `.length`). -/
 def authCode : Auth → ℤ
   | .read => 0 | .write => 1 | .grant => 2 | .call => 3 | .reply => 4 | .reset => 5 | .control => 6
+  | .notify => 7   -- async-signal authority; RESERVED code (no cap emits it yet ⇒ VK byte-identical)
 /-- **Field-binding** `Cap` encoder: tag + target + the WHOLE rights list. The OLD `capLeaf` reduced
 `endpoint t r => 5000 + t*10 + r.length`, dropping WHICH rights (only their COUNT) — fatal for an
 ATTENUATION effect, where the precise narrowed rights ARE the soundness content. -/

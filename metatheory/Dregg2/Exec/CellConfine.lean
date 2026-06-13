@@ -496,9 +496,10 @@ A real cap table where cell 0 holds an `endpoint 7 [read, write]` cap. The ceili
 (all 7 kinds) confines it; a ceiling missing the relevant authority would fail on the grant, so the
 bound has teeth. -/
 
-/-- The full authority enumeration — the most permissive ceiling, containing `control`. -/
+/-- The full authority enumeration — the most permissive ceiling, containing `control` (and now
+`notify`, the 8th IPC authority — so the ceiling stays "all kinds"). -/
 def fullAuthCeiling : List Auth :=
-  [Auth.read, Auth.write, Auth.grant, Auth.call, Auth.reply, Auth.reset, Auth.control]
+  [Auth.read, Auth.write, Auth.grant, Auth.call, Auth.reply, Auth.reset, Auth.control, Auth.notify]
 
 #guard (decide (Auth.control ∈ fullAuthCeiling))  --  true (the carry hypothesis holds)
 -- `[read]` is confined by the full ceiling; `[grant]`-only ceiling does NOT contain `control`:

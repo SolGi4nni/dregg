@@ -2331,7 +2331,7 @@ def capFacetMaskA : Cap → List Authority.Auth
   | .endpoint _ r    => r
   | .node _          => [Authority.Auth.read, Authority.Auth.write, Authority.Auth.grant,
                          Authority.Auth.call, Authority.Auth.reply, Authority.Auth.reset,
-                         Authority.Auth.control]
+                         Authority.Auth.control, Authority.Auth.notify]  -- every Auth; notify ⇒ full facet complete
 
 /-- **R4 — is `fa`'s required facet admitted by the held cap's mask?** The held cap is `heldCapTo`
 (the SAME `find? confersEdgeTo`-then-`getD null` lookup the handler's `exercisedCap` uses — so the
@@ -4299,7 +4299,7 @@ example : ¬ IsNonAmplifyingF (Cap.endpoint 9 [Auth.read, Auth.write]) (Cap.node
 #guard (requiredFacetA (.emitEventA 0 9 99 1) == Auth.write)   -- a state write demands `write`
 #guard (requiredFacetA (.delegate 0 1 7) == Auth.grant)        -- an authority grant demands `grant`
 #guard (capFacetMaskA (heldCapTo fmaA.kernel.caps 0 9) == [Auth.read, Auth.write])  -- endpoint 9's mask
-#guard (capFacetMaskA (heldCapTo fmaA.kernel.caps 0 7) == [Auth.read, Auth.write, Auth.grant, Auth.call, Auth.reply, Auth.reset, Auth.control])  -- node 7 = full
+#guard (capFacetMaskA (heldCapTo fmaA.kernel.caps 0 7) == [Auth.read, Auth.write, Auth.grant, Auth.call, Auth.reply, Auth.reset, Auth.control, Auth.notify])  -- node 7 = full (every Auth incl. notify)
 -- the [read,write] mask ADMITS a write-facet inner effect (gate passes; the inner emit then runs):
 #guard (innerFacetsAdmittedA fmaA 0 9 [.emitEventA 0 9 99 1])  --  true
 -- ...but REJECTS a grant-facet inner effect — `grant ∉ [read,write]` — so the WHOLE exercise is `none`

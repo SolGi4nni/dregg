@@ -484,6 +484,124 @@ admits strictly FEWER badges. -/
 
 end Witnesses
 
+/-! ## §5.5 — RE-BIND ONTO THE REAL `Dregg2.Authority.Auth` (Step-2: notify is a KERNEL authority).
+
+Step 1 (above) made the cap-algebra-on-async-signal a theorem firmament-locally — the badge-mask is the
+REAL `CapTPConcrete.facetAttenuation` (the Rust `is_facet_attenuation`, NOT a standalone copy) and the
+well-formedness is over the transcribed-seL4 `SeL4Abstract.Auth`. With `Auth.notify` now a first-class
+constructor of the REAL kernel authority lattice (`Authority/Positional.lean:38`), this section BINDS the
+notify authority into that lattice: the "may poke, may not message" cap is now EXPRESSIBLE as a real
+`Dregg2.Authority.Cap`, its non-amplification IS the real `Dregg2.Exec.attenuate_subset` (the
+constructor-agnostic attenuation, invariant under the new ctor), and the badge-mask sub-lattice rides
+the SAME orders. No firmament-local copy: the kernel `Auth.notify` and the real `attenuate`/`facetAttenuation`
+ARE the badge-mask discipline.
+
+The §4 `open Dregg2.Firmament.SeL4Abstract (Auth Cap capAuthConferred)` puts the SEL4 `Auth`/`Cap`/
+`capAuthConferred` in scope (the 12-ctor transcription), so here we FULLY QUALIFY the REAL kernel names
+(`Dregg2.Authority.Auth.notify`, `Dregg2.Authority.Cap.endpoint`, `Dregg2.Authority.capAuthConferred`,
+`Dregg2.Exec.attenuate`) to avoid the clash — every name below is the REAL kernel lattice. -/
+
+/-- **The "may poke, may not message" cap, on the REAL lattice.** A real `Cap.endpoint t [.notify]`
+confers EXACTLY `[Auth.notify]` (the `capAuthConferred` of an endpoint is its rights verbatim,
+`Positional.lean:68`) — the held authority to WAKE `t` and nothing else. This is the NEW expressivity
+`notify` adds to the real lattice: before `Auth.notify`, you could only hand out `write` (send) or
+nothing; now "may wake, may not send" is a real held cap. -/
+theorem notifyCap_confers_notify (t : Dregg2.Authority.Label) :
+    Dregg2.Authority.capAuthConferred (Dregg2.Authority.Cap.endpoint t [Dregg2.Authority.Auth.notify]) = [Dregg2.Authority.Auth.notify] := rfl
+
+/-- **A real notify cap does NOT confer the `write`-send authority** — `Auth.write ∉` what
+`Cap.endpoint t [.notify]` confers. The async wake is genuinely separate from the synchronous send ON
+THE REAL LATTICE: holding "may poke" does not grant "may message". (The kernel-level mirror of the
+firmament `notify_cap_confers_notify_not_syncsend`.) -/
+theorem notifyCap_not_write (t : Dregg2.Authority.Label) :
+    Dregg2.Authority.Auth.write ∉ Dregg2.Authority.capAuthConferred (Dregg2.Authority.Cap.endpoint t [Dregg2.Authority.Auth.notify]) := by
+  -- `capAuthConferred (.endpoint t r) = r` definitionally (independent of `t`), so the goal is the
+  -- CLOSED `.write ∉ [.notify]`; `show` exposes it for `decide` (which can't reduce under the binder `t`).
+  show Dregg2.Authority.Auth.write ∉ [Dregg2.Authority.Auth.notify]
+  decide
+
+/-- **A real notify-only cap confers NO connectivity edge** (the executor-edge tooth). `confersEdgeTo`
+(`AuthTurn.lean:34`, the SAME `.any` body the reconstructed `execGraph` reads) requires
+`rights.contains Auth.write` — so a `Cap.endpoint t [.notify]` does NOT confer an edge to `t`. This is
+the sharpest real-lattice statement of "may poke, may not message": at the executor's connectivity gate,
+a pure wake-right is INVISIBLE (it grants no Granovetter introduction), exactly as it should be — a wake
+is not a message. (Contrast: `Cap.endpoint t [.write]` DOES confer the edge.) -/
+theorem notifyCap_confers_no_edge (t : Dregg2.Authority.Label) :
+    Dregg2.Exec.confersEdgeTo t (Dregg2.Authority.Cap.endpoint t [Dregg2.Authority.Auth.notify]) = false := by
+  -- `confersEdgeTo` needs `node t` OR (`endpoint t r` ∧ `r.contains write`); `[.notify]` has neither
+  -- (the `t == t` reduces, the `.contains .write` is `false`). `simp` discharges it under the binder.
+  simp [Dregg2.Exec.confersEdgeTo]
+
+/-- …and the `write` cap DOES confer the edge — so the distinction is real, not vacuous: the SAME
+endpoint target, `[.write]` vs `[.notify]`, gives opposite connectivity verdicts. -/
+theorem writeCap_confers_edge (t : Dregg2.Authority.Label) :
+    Dregg2.Exec.confersEdgeTo t (Dregg2.Authority.Cap.endpoint t [Dregg2.Authority.Auth.write]) = true := by
+  simp [Dregg2.Exec.confersEdgeTo]
+
+/-- **NON-AMPLIFICATION on the REAL lattice (the keystone, re-bound).** Attenuating a real cap to keep
+ONLY `[.notify]` (drop send/grant/call/…) confers a SUBSET of the original authority — this IS the real
+`Dregg2.Exec.attenuate_subset`, which is constructor-agnostic (a `List.filter` on `keep`) and therefore
+INVARIANT under adding `Auth.notify`. So "hand out a notify-only cap" is provably non-amplifying by the
+EXISTING kernel theorem — no new proof, the firmament `signalAdmissible_attenuate_no_amplify` (the
+badge-mask leg) and this (the rights leg) are the two `granted ⊆ held` legs of one attenuation. -/
+theorem notify_attenuate_real_no_amplify (c : Dregg2.Authority.Cap) :
+    Dregg2.Authority.capAuthConferred (Dregg2.Exec.attenuate [Dregg2.Authority.Auth.notify] c)
+      ⊆ Dregg2.Authority.capAuthConferred c :=
+  Dregg2.Exec.attenuate_subset [Dregg2.Authority.Auth.notify] c
+
+/-- **Attenuating to `[.notify]` keeps the wake-right when held, drops everything else** (the positive
+direction, witnessed on a full cap): a `Cap.endpoint t [.write, .notify]` attenuated to keep `[.notify]`
+confers exactly `[.notify]` — the send-right is dropped, the wake-right retained. The "downgrade a
+send+wake cap to wake-only" move, on the real lattice. -/
+theorem notify_attenuate_keeps_wake_drops_send (t : Dregg2.Authority.Label) :
+    Dregg2.Authority.capAuthConferred (Dregg2.Exec.attenuate [Dregg2.Authority.Auth.notify] (Dregg2.Authority.Cap.endpoint t [Dregg2.Authority.Auth.write, Dregg2.Authority.Auth.notify]))
+      = [Dregg2.Authority.Auth.notify] := by
+  -- `attenuate keep (.endpoint t r) = .endpoint t (r.filter (keep.contains ·))` and `capAuthConferred`
+  -- returns the filtered rights — independent of `t`. `simp` reduces the filter; the closed result is
+  -- `[.notify]` (`.write` filtered out, `.notify` kept).
+  simp [Dregg2.Exec.attenuate, Dregg2.Authority.capAuthConferred]
+
+/-- **THE α-IMAGE BINDING — the firmament's `Notify` IS the real `notify`.** The transcribed-seL4
+`SeL4Abstract.Notify` authority α-projects to the real kernel `Auth.notify` (`SeL4Abstract.alpha`, the
+`Notify ↦ some .notify` arm). So a notification cap's `Notify` (the §4 well-formedness, over the 12-ctor
+seL4 `Auth`) and the real kernel `notify` authority are the SAME thing under the relabelling — the Step-1
+firmament well-formedness and this Step-2 kernel binding are two views of one authority, joined by α. -/
+theorem firmament_Notify_alpha_real_notify :
+    Dregg2.Firmament.SeL4Abstract.alpha .Notify = some Dregg2.Authority.Auth.notify := rfl
+
+/-- **A real notify cap (the badge-mask carrier) attenuates non-amplifyingly on BOTH legs** — the full
+re-binding, stated once. A `NotifyCap` over `target` whose rights ride `AuthReq` and whose payload-scope
+rides the badge-mask: narrowing it via `attenuateNotify` shrinks the admissible badge set
+(`signalAdmissible_attenuate_no_amplify`, the badge-mask `granted ⊆ held`), AND the conferred kernel
+authority of the corresponding real `Cap.endpoint target [.notify]` is bounded by `attenuate_subset` (the
+rights `granted ⊆ held`). The two legs are the SAME non-amplification law (`facetAttenuation` /
+`attenuate`), now on the kernel `Auth.notify`. -/
+theorem notify_real_binding_no_amplify
+    (cap : NotifyCap) (narrowerRights : AuthReq) (narrowerMask : Nat) (out : NotifyCap)
+    (hatten : cap.attenuateNotify narrowerRights narrowerMask = some out)
+    (badge : Nat) (hadm : out.signalAdmissible badge = true) :
+    -- badge-mask leg (the §3 keystone, firmament-local but over the REAL `facetAttenuation`):
+    cap.signalAdmissible badge = true
+    -- rights leg (the real kernel `attenuate_subset`, over `Auth.notify`):
+      ∧ Dregg2.Authority.capAuthConferred (Dregg2.Exec.attenuate [Dregg2.Authority.Auth.notify] (Dregg2.Authority.Cap.endpoint cap.target [Dregg2.Authority.Auth.notify]))
+          ⊆ Dregg2.Authority.capAuthConferred (Dregg2.Authority.Cap.endpoint cap.target [Dregg2.Authority.Auth.notify]) :=
+  ⟨signalAdmissible_attenuate_no_amplify cap narrowerRights narrowerMask out hatten badge hadm,
+   notify_attenuate_real_no_amplify (Dregg2.Authority.Cap.endpoint cap.target [Dregg2.Authority.Auth.notify])⟩
+
+/-! ### §5.5 teeth — the real-lattice notify distinctions BITE (`#guard`, both polarities). -/
+
+-- A real notify-only cap confers `notify`, NOT `write`:
+#guard (Dregg2.Authority.Auth.notify ∈ Dregg2.Authority.capAuthConferred (Dregg2.Authority.Cap.endpoint 9 [Dregg2.Authority.Auth.notify]) : Bool)
+#guard !(Dregg2.Authority.Auth.write ∈ Dregg2.Authority.capAuthConferred (Dregg2.Authority.Cap.endpoint 9 [Dregg2.Authority.Auth.notify]) : Bool)
+-- …and confers NO connectivity edge (a wake is not a message), while a write cap DOES:
+#guard !(Dregg2.Exec.confersEdgeTo 9 (Dregg2.Authority.Cap.endpoint 9 [Dregg2.Authority.Auth.notify]))
+#guard (Dregg2.Exec.confersEdgeTo 9 (Dregg2.Authority.Cap.endpoint 9 [Dregg2.Authority.Auth.write]))
+-- attenuate a send+wake cap to wake-only: keeps notify, drops write (the downgrade bites):
+#guard (Dregg2.Authority.capAuthConferred (Dregg2.Exec.attenuate [Dregg2.Authority.Auth.notify] (Dregg2.Authority.Cap.endpoint 9 [Dregg2.Authority.Auth.write, Dregg2.Authority.Auth.notify])) == [Dregg2.Authority.Auth.notify])
+#guard (Dregg2.Authority.capAuthConferred (Dregg2.Exec.attenuate [Dregg2.Authority.Auth.write] (Dregg2.Authority.Cap.endpoint 9 [Dregg2.Authority.Auth.write, Dregg2.Authority.Auth.notify])) == [Dregg2.Authority.Auth.write])
+-- the α-image binding: firmament `Notify` ↦ real `notify`:
+#guard (Dregg2.Firmament.SeL4Abstract.alpha .Notify == some Dregg2.Authority.Auth.notify)
+
 /-! ## §6 — Axiom hygiene. Every load-bearing theorem is checked kernel-clean (no `sorry`, no extra
 `axiom`, only the standard `propext`/`Classical.choice`/`Quot.sound`). -/
 
@@ -505,7 +623,16 @@ end Witnesses
   notificationCap_never_call,
   notificationCap_never_reply,
   notify_distinct_from_sync,
-  notify_cap_confers_notify_not_syncsend
+  notify_cap_confers_notify_not_syncsend,
+  -- §5.5 — the re-binding onto the REAL kernel `Dregg2.Authority.Auth`:
+  notifyCap_confers_notify,
+  notifyCap_not_write,
+  notifyCap_confers_no_edge,
+  writeCap_confers_edge,
+  notify_attenuate_real_no_amplify,
+  notify_attenuate_keeps_wake_drops_send,
+  firmament_Notify_alpha_real_notify,
+  notify_real_binding_no_amplify
 ]
 
 end Dregg2.Firmament.NotifyAuthority

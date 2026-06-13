@@ -423,17 +423,29 @@ holders with a non-empty slot, and reconstruct the total function as "listed slo
 (matching the differential's regime: only the listed holders carry caps). The caps codec is
 likewise TCB — cross-validated by the caps differential, not certified. -/
 
-/-! ### Auth tag ⇄ `Auth` (the 7-constructor enumeration). -/
+/-! ### Auth tag ⇄ `Auth` (the 8-constructor enumeration). -/
 
-/-- Encode an `Auth` to its wire tag (`0..6`), in `Auth`'s constructor order. -/
+/-- Encode an `Auth` to its wire tag (`0..7`), in `Auth`'s constructor order. `notify` (the
+async-signal authority, the 8th IPC auth) is the RESERVED tag `7` — it is unreachable from any
+deployed/test cap (no cap-construction site emits it yet), so every existing `Auth` keeps its
+`0..6` tag and the encoded bytes are byte-identical until a real notification cap is emitted (the
+coordinated cutover-settle, with the matching Rust marshaller — `docs/NOTIFY-STEP2-VK-CHECKLIST.md`). -/
 def authTag : Auth → Nat
   | .read => 0 | .write => 1 | .grant => 2 | .call => 3
-  | .reply => 4 | .reset => 5 | .control => 6
+  | .reply => 4 | .reset => 5 | .control => 6 | .notify => 7
 
-/-- Decode a wire tag back to an `Auth`; out-of-range ⇒ `none` (fail-closed). -/
+/-- Decode a wire tag back to an `Auth`; out-of-range ⇒ `none` (fail-closed). The `7 ⇒ some
+.notify` arm is the decode dual of the reserved `notify` tag (above). -/
 def authOfTag : Nat → Option Auth
   | 0 => some .read | 1 => some .write | 2 => some .grant | 3 => some .call
-  | 4 => some .reply | 5 => some .reset | 6 => some .control | _ => none
+  | 4 => some .reply | 5 => some .reset | 6 => some .control | 7 => some .notify | _ => none
+
+/-- **The wire codec round-trips** — `authOfTag (authTag a) = some a` for every `Auth`,
+INCLUDING the new `notify` (tag `7`). So the reserved tag is a faithful encoding: a `notify`
+authority that IS emitted decodes back to `notify`, never aliasing an existing auth. (Non-vacuity
+of the staging: the new arm is a real, distinct, decodable code, not a silent collision.) -/
+theorem authOfTag_authTag (a : Auth) : authOfTag (authTag a) = some a := by
+  cases a <;> rfl
 
 /-! ### Caps encoder. -/
 

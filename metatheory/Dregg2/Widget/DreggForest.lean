@@ -58,7 +58,7 @@ argument vector. Swap the forest and the labels follow — nothing is hard-coded
 /-- One `Auth` right, short. -/
 def authStr : Auth → String
   | .read => "read" | .write => "write" | .grant => "grant" | .call => "call"
-  | .reply => "reply" | .reset => "reset" | .control => "control"
+  | .reply => "reply" | .reset => "reset" | .control => "control" | .notify => "notify"
 
 /-- A `List Auth` as `[a, b, …]`. -/
 def authsStr (as : List Auth) : String :=

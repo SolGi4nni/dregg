@@ -51,7 +51,8 @@ genuine `granted.rights ≤ held.rights` over this lattice. -/
 /-- The complete finite enumeration of `Auth` — gives `Finset Auth` its `⊤` (= `univ`,
 the full authority) and hence the `OrderTop` the `Spec.Authority` discipline expects. -/
 instance : Fintype Auth where
-  elems := {Auth.read, Auth.write, Auth.grant, Auth.call, Auth.reply, Auth.reset, Auth.control}
+  elems := {Auth.read, Auth.write, Auth.grant, Auth.call, Auth.reply, Auth.reset, Auth.control,
+            Auth.notify}
   complete := by intro a; cases a <;> decide
 
 /-- **`ExecAuth`** — the executable rights lattice: a `Finset Auth`, ordered by `⊆` (`a ≤ b ↔

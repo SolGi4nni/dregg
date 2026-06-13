@@ -25,7 +25,10 @@ a *named, pinned, transcribed* one. A named assumption is a severe-problem-reduc
   **12** constructors: `Control | Receive | SyncSend | Notify | Reset | Grant | Call | Reply | Write
   | Read | DeleteDerived | AAuth arch_auth`. The full enum is transcribed faithfully in `Auth` below.
   This matters for §5's relabelling-faithfulness finding (seL4's authority vocabulary is RICHER than
-  dregg's): see `alpha` and `alpha_total_iff_used`.
+  dregg's): see `alpha` and `alpha_total_iff_used`. The one genuine IPC conflation that finding surfaced
+  (`Notify ↦ none`) is now CLOSED — dregg gained `Auth.notify` (`Authority/Positional.lean:38`), so α
+  is total on all 7 IPC authorities (`alpha_total_on_ipc`); the 4 remaining `none` arms are principled
+  projections (memory model / revocation registry / above-arch).
 
 ## SCOPE — the PURE (non-monadic) fragment ONLY (feasibility verdict = GO, scoped here).
 
@@ -431,23 +434,35 @@ bundle IS the SEL4-DERIVE-NONAMP-BRIDGE assumption — a named/pinned replacemen
   * `α       : SeL4Abstract.Auth → Option DAuth.Auth`— the authority relabelling (PARTIAL — see the
         faithfulness finding below).
 
-⚠ THE α-FAITHFULNESS FINDING (a real divergence, reported not hidden). The verdict's relabelling
-(`Receive↦read, SyncSend↦write, Grant↦grant, Call↦call, Reply↦reply, Reset↦reset, Control↦control`)
-is FAITHFUL and INJECTIVE on the 7 seL4 auth constructors it names — but seL4's `auth` is RICHER (12
-ctors): `Notify, Write, Read, DeleteDerived, AAuth` have NO dregg counterpart. So `α` CANNOT be made
-total on seL4's full authority vocabulary; it is total only on the USED subset. We encode this
-honestly: `alpha` returns `Option DAuth.Auth` (`none` exactly on the 5 un-mapped ctors), and
-`alpha_total_iff_used` proves α is defined ⟺ the auth is one of the used 7. This is the divergence
-the bridge must acknowledge — dregg's authority lattice is a 7-of-12 PROJECTION of seL4's. -/
+⚠ THE α-FAITHFULNESS FINDING (the divergence, narrowed by `notify`). The relabelling
+(`Receive↦read, SyncSend↦write, Notify↦notify, Grant↦grant, Call↦call, Reply↦reply, Reset↦reset,
+Control↦control`) is FAITHFUL and INJECTIVE on the 8 seL4 auth constructors it names — now TOTAL on all
+7 seL4 IPC authorities (`alpha_total_on_ipc`). The remaining 4 (`Write, Read, DeleteDerived, AAuth`)
+have no dregg cap-lattice image, but these are PRINCIPLED projections, not conflations: dregg factors
+memory access into the richer Blum-multiset `Crypto.MemoryChecking.Kind` model, revocation into the
+registry / `CNode.revoke` op, and operates above the arch layer (`docs/rebuild/AUTHORITY-DIVERGENCE-FINDING.md`).
+So `α` is total only on the USED subset; we encode this honestly: `alpha` returns `Option DAuth.Auth`
+(`none` exactly on the 4 principled-projection ctors), and `alpha_total_iff_used` proves α is defined ⟺
+the auth is one of the used 8. dregg's authority lattice is an 8-of-12 PROJECTION of seL4's, with the
+4 `none` arms each imaged outside the cap lattice (not ignored). The ONE genuine IPC conflation the
+transcription originally found — `Notify ↦ none` while the firmament models a distinct `Notification`
+object — is now CLOSED by `Auth.notify` (`alpha_Notify_is_notify`). -/
 
 /-- A dregg held-cap (`Dregg2.Authority.Cap` — `null`/`endpoint`/`node`), abbreviated to disambiguate
 from the transcribed seL4 `Cap` in scope. -/
 abbrev DCap := Dregg2.Authority.Cap
 
-/-- **`alpha` — the authority relabelling (PARTIAL).** Maps the 7 used seL4 auth ctors onto dregg's
-`Auth`; `none` on the 5 seL4-richer ctors (`Notify`/`Write`/`Read`/`DeleteDerived`/`AAuth`) that have
-no dregg image. Per the verdict: `Receive↦read, SyncSend↦write, Grant↦grant, Call↦call, Reply↦reply,
-Reset↦reset, Control↦control`. -/
+/-- **`alpha` — the authority relabelling (PARTIAL, now total on all 7 IPC authorities).** Maps the 8
+used seL4 auth ctors onto dregg's `Auth`; `none` on the 4 remaining seL4-richer ctors
+(`Write`/`Read`/`DeleteDerived`/`AAuth`) that are *principled* projections (memory access lives in
+dregg's Blum-multiset `Crypto.MemoryChecking.Kind` model, not the cap lattice; `DeleteDerived` is the
+revocation registry / `CNode.revoke` op; `AAuth` is above dregg's arch level — see
+`docs/rebuild/AUTHORITY-DIVERGENCE-FINDING.md`). Per the verdict: `Receive↦read, SyncSend↦write,
+Grant↦grant, Call↦call, Reply↦reply, Reset↦reset, Control↦control`, **and now `Notify↦notify`** — the
+one genuine IPC conflation the transcription found, closed (`Auth.notify` is the new dregg async-signal
+authority, `Authority/Positional.lean:38`; `Firmament/NotifyAuthority` proves its cap algebra). So α is
+now TOTAL on all 7 seL4 IPC authorities (`Receive, SyncSend, Notify, Reset, Grant, Call, Reply`), and
+the firmament's async `Notification` object is faithfully seL4-grounded rather than 6-of-7-projected. -/
 def alpha : Auth → Option Dregg2.Authority.Auth
   | .Receive       => some .read
   | .SyncSend      => some .write
@@ -456,22 +471,45 @@ def alpha : Auth → Option Dregg2.Authority.Auth
   | .Reply         => some .reply
   | .Reset         => some .reset
   | .Control       => some .control
-  | .Notify        => none   -- seL4-richer: dregg has no async-notify authority
-  | .Write         => none   -- seL4-richer
-  | .Read          => none   -- seL4-richer
-  | .DeleteDerived => none   -- seL4-richer
-  | .AAuth         => none   -- opaque arch authority — no dregg image
+  | .Notify        => some .notify   -- the closed conflation: dregg's async-signal authority (the 8th IPC auth)
+  | .Write         => none   -- principled projection: dregg memory-Write is `Crypto.MemoryChecking.Kind`
+  | .Read          => none   -- principled projection: dregg memory-Read is `Crypto.MemoryChecking.Kind`
+  | .DeleteDerived => none   -- principled projection: dregg revocation = registry / `CNode.revoke`
+  | .AAuth         => none   -- opaque arch authority — above dregg's arch level, no dregg image
 
-/-- The 7 seL4 auth ctors α is defined on (the USED subset, exactly dregg's vocabulary preimage). -/
+/-- The 8 seL4 auth ctors α is defined on (the USED subset, exactly dregg's vocabulary preimage —
+the 7 IPC authorities, now INCLUDING `Notify ↦ notify`). -/
 def usedAuth : List Auth :=
-  [.Receive, .SyncSend, .Grant, .Call, .Reply, .Reset, .Control]
+  [.Receive, .SyncSend, .Grant, .Call, .Reply, .Reset, .Control, .Notify]
 
 /-- **`alpha_total_iff_used` — the divergence, made precise.** `α` is defined (`isSome`) EXACTLY on
-`usedAuth` — i.e. seL4's `auth` is a 7-of-12 superset of dregg's relabelled vocabulary. So α is NOT
-total on seL4's full authority enum (the reported divergence), but IS total/faithful on the used
-subset. -/
+`usedAuth` — i.e. seL4's `auth` is an 8-of-12 superset of dregg's relabelled vocabulary, and the
+remaining 4 (`Write`/`Read`/`DeleteDerived`/`AAuth`) are the principled projections. α is total/faithful
+on the used subset (all 7 IPC authorities + `Control`); the 4 `none` arms are dregg's deliberate
+factoring (memory model / revocation registry / above-arch), not unexplained gaps. -/
 theorem alpha_total_iff_used (a : Auth) : (alpha a).isSome ↔ a ∈ usedAuth := by
   cases a <;> simp [alpha, usedAuth]
+
+/-- **`alpha_total_on_ipc` — α is now TOTAL on ALL 7 seL4 IPC authorities** (the grounding payoff
+`notify` delivers). Every IPC authority (`Receive, SyncSend, Notify, Reset, Grant, Call, Reply`) has a
+dregg image — in particular `Notify ↦ notify`, the one IPC ctor that was previously `none`. So the
+firmament's async `Notification` authority is faithfully grounded, not 6-of-7-projected. -/
+theorem alpha_total_on_ipc :
+    (alpha .Receive).isSome ∧ (alpha .SyncSend).isSome ∧ (alpha .Notify).isSome
+      ∧ (alpha .Reset).isSome ∧ (alpha .Grant).isSome ∧ (alpha .Call).isSome
+      ∧ (alpha .Reply).isSome := by
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_⟩ <;> rfl
+
+/-- **`alpha_Notify_is_notify` — the closed conflation, witnessed.** `Notify` maps to dregg's
+`notify` (NOT `none`, NOT `write`): the async-signal authority is a DISTINCT dregg image from the
+synchronous `SyncSend ↦ write`. This is the one genuine IPC conflation the transcription found, now a
+faithful relabelling. Non-vacuity: `Notify` and `SyncSend` have DISTINCT dregg images, so the split is
+real. -/
+theorem alpha_Notify_is_notify :
+    alpha .Notify = some .notify ∧ alpha .SyncSend = some .write
+      ∧ alpha .Notify ≠ alpha .SyncSend := by
+  refine ⟨rfl, rfl, ?_⟩
+  decide
 
 /-- **`alpha_injective_on_used` — α is INJECTIVE on the used subset.** Distinct used seL4 auths map to
 distinct dregg auths (so the relabelling loses no distinctions WITHIN the used vocabulary — the
@@ -571,6 +609,8 @@ so don't trip the guard; only `propext`/`Classical.choice`/`Quot.sound`). -/
 #assert_all_clean [
   seL4_derive_cap_non_amplifying,
   alpha_total_iff_used,
+  alpha_total_on_ipc,
+  alpha_Notify_is_notify,
   alpha_injective_on_used,
   alphaList_mono,
   dregg_executor_cap_authority_grounded_in_seL4

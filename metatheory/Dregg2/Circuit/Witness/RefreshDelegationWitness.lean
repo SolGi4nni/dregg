@@ -72,6 +72,7 @@ theorem satisfying_witness_proves_full_state
 /-- Field-binding `Auth` index (so endpoint `rights` are bound, not collapsed to `.length`). -/
 def authCode : Auth → ℤ
   | .read => 0 | .write => 1 | .grant => 2 | .call => 3 | .reply => 4 | .reset => 5 | .control => 6
+  | .notify => 7   -- async-signal authority; RESERVED code (no cap emits it yet ⇒ VK byte-identical)
 /-- **Field-binding** `Cap` encoder: tag + target + the WHOLE rights list (the OLD `capCode` reduced
 `endpoint t r => 11 + t*3 + r.length`, dropping WHICH rights for the LENGTH). -/
 def encCap : Cap → List ℤ

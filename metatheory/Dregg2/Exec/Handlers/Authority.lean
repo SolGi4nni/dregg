@@ -96,7 +96,7 @@ structure DelegateArgs where
 (`delegateA`/`introduceA`/`validateHandoffA`): `attenuate allAuths c = c` on the held cap's rights, so
 the delegation grants the held authority unchanged — STILL provably `⊆` held by
 `recKDelegateAtten_non_amplifying` (the inequality holds for ANY `keep`). -/
-def allAuths : List Auth := [.read, .write, .grant, .call, .reply, .reset, .control]
+def allAuths : List Auth := [.read, .write, .grant, .call, .reply, .reset, .control, .notify]
 
 /-- **The R-closing attenuated delegation step (the KEY FIX).** Route the delegation through
 `recKDelegateAtten` — the granted cap is an `attenuate keep`-narrowing of the delegator's held cap to

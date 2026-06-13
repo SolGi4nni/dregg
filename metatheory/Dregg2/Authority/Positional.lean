@@ -33,9 +33,30 @@ open Dregg2.Laws
 /-! ## The capability model (lift of l4v `cap` + `cap_auth_conferred`) -/
 
 /-- Authority kinds. Lift of l4v `auth` (the labels on policy edges:
-`Receive, SyncSend, Notify, Reset, Grant, Call, Reply, Control`). -/
+`Receive, SyncSend, Notify, Reset, Grant, Call, Reply, Control`).
+
+`notify` is the **async-notification SIGNAL authority** — the right to cause a WAKE on a
+target without read/synchronous-send/reply; the asynchronous dual of the synchronous endpoint
+`write` (l4v `SyncSend`). It is the 8th IPC authority, added to close the one genuine
+conflation the seL4 transcription found: `Notify` was the single l4v `auth` IPC constructor
+with no dregg image (`Firmament/SeL4Abstract.alpha`, `Notify ↦ none`), even though the
+firmament models the async `Notification` object distinctly from the synchronous `Endpoint`
+(`Firmament/SeL4Kernel.Notification`, the badge-OR accumulator). With `notify`, α is total on
+all 7 seL4 IPC authorities (`Receive, SyncSend, Notify, Reset, Grant, Call, Reply`) and a cap
+to a Notification can confer `notify` where a cap to an Endpoint confers `write` — matching
+seL4's `SyncSend` vs `Notify` split (`SeL4Abstract.lean:182`). The cap algebra on the
+async-signal authority (badge-mask sub-lattice, non-amplification, gate teeth) is the theorem
+`Dregg2.Firmament.NotifyAuthority`. STAGED-ADDITIVE: this is a new constructor unreachable from
+any existing cap-construction site, so every felt-encoder emits a byte-identical column for all
+deployed/test inputs — the VK is unchanged until a real notification cap is emitted (the
+coordinated cutover-settle batch, `docs/NOTIFY-STEP2-VK-CHECKLIST.md`). The attenuation algebra
+(`Exec.attenuate`/`capAuthConferred`/`authNarrowerOrEqual`) is constructor-agnostic, so every
+non-amplification proof is invariant under this addition. -/
 inductive Auth where
   | read | write | grant | call | reply | reset | control
+  /-- The async-notification SIGNAL authority (the 8th IPC auth; α-image of l4v `Notify`). The
+  right to WAKE a target — no read, no synchronous send, no reply. See the module docstring. -/
+  | notify
   deriving DecidableEq, Repr
 
 /-- Trust roots / labels. Lift of l4v `'a` (the agent-label type, ranged over by

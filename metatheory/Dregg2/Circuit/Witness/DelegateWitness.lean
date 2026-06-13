@@ -99,6 +99,7 @@ surface, so the produced numbers are REAL field values the Rust prover consumes.
 dropped). -/
 def authCode : Auth → ℤ
   | .read => 0 | .write => 1 | .grant => 2 | .call => 3 | .reply => 4 | .reset => 5 | .control => 6
+  | .notify => 7   -- async-signal authority; RESERVED code (no cap emits it yet ⇒ VK byte-identical)
 
 /-- **Field-binding** `Cap` encoder: a tag + target + the WHOLE `rights` list (length-prefixed). The OLD
 `capCode` collapsed `endpoint t r => 500 + t`, DROPPING `r` entirely (so an attenuation forgery on the

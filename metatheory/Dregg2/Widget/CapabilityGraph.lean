@@ -124,6 +124,7 @@ def authTag : Auth → String
   | .reply   => "reply"
   | .reset   => "reset"
   | .control => "control"
+  | .notify  => "notify"
 
 /-- A holder/target rights list rendered as a compact `read·write` string (`∅` when empty — the
 visible "no authority" a fully-attenuated child carries). -/

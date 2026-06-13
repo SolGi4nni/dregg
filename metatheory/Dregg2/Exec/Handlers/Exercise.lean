@@ -167,7 +167,8 @@ def capFacetMask (cap : Cap) : List Auth :=
   match cap with
   | .null            => []
   | .endpoint _ r    => r
-  | .node _          => [Auth.read, Auth.write, Auth.grant, Auth.call, Auth.reply, Auth.reset, Auth.control]
+  | .node _          => [Auth.read, Auth.write, Auth.grant, Auth.call, Auth.reply, Auth.reset,
+                         Auth.control, Auth.notify]  -- every Auth (privileged); notify ⇒ full facet stays complete
 
 /-- **R4 — is `facet` admitted under `cap`'s mask?** The single inner-effect gate: the facet the inner
 effect exercises must lie in the held cap's `allowed_effects`. A `read`-only cap REJECTS a `write`-facet
