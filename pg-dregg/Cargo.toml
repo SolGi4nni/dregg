@@ -1,0 +1,54 @@
+# pg-dregg — SKELETON (design proposal docs/PG-DREGG.md).
+#
+# This crate is a DESIGN SKELETON, not a built extension. It is deliberately
+# kept OUT of the workspace `members` list (see docs/PG-DREGG.md §5): a
+# `cargo-pgrx`-managed cdylib does not want to participate in
+# `cargo check --workspace`, and excluding it protects the shared `./target`
+# from pgrx's postgres-binding build during concurrent lanes / VK rotation.
+#
+# Build/test (NOT run from the proposal lane — invokes cargo-pgrx):
+#   cargo install cargo-pgrx --version 0.17.0
+#   cargo pgrx init --pg16 <download|existing>
+#   cargo pgrx test pg16
+#
+# Standalone workspace root: pg-dregg is intentionally NOT a member of the
+# parent workspace (the note above), so it declares its own empty `[workspace]`
+# to keep `cargo`/`cargo-pgrx` invocations inside this directory from resolving
+# against the parent root Cargo.toml.
+[workspace]
+
+[package]
+name = "pg-dregg"
+version = "0.1.0"
+edition = "2021"
+description = "dregg verified object-capability authorization as a PostgreSQL-native RLS/policy layer (pgrx extension). SKELETON."
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[features]
+default = ["pg16"]
+pg13 = ["pgrx/pg13", "pgrx-tests/pg13"]
+pg14 = ["pgrx/pg14", "pgrx-tests/pg14"]
+pg15 = ["pgrx/pg15", "pgrx-tests/pg15"]
+pg16 = ["pgrx/pg16", "pgrx-tests/pg16"]
+pg17 = ["pgrx/pg17", "pgrx-tests/pg17"]
+pg_test = []
+
+[dependencies]
+pgrx = "0.17"
+# The whole authorization core. Already circuit-free + offline:
+# `cargo tree -i dregg-circuit -p dregg-auth` is empty.
+dregg-auth = { path = "../dregg-auth" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+pgrx-tests = "0.17"
+
+[profile.dev]
+panic = "unwind"
+[profile.release]
+panic = "unwind"
+opt-level = 3
+lto = "thin"
