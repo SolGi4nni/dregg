@@ -288,3 +288,50 @@ class program:
     def descriptor(
         constraints: list["program.Constraint"],
     ) -> dict[str, Any]: ...
+
+# ─── dregg.deploy — DreggDL, the checkable deployment spec (CapDL for dregg) ───
+#
+# A thin binding over the REAL `dregg-deploy` pipeline (parse →
+# `Lowered::from_deployment` → `dregg_userspace_verify::analyze`). Author a
+# deployment (TOML, or JSON when the text starts with `{`) and `check` it for
+# the four static guarantees — conservation, non-amplification, well-formedness,
+# ring-balance — over the WHOLE declared authority layout before spending gas,
+# exactly like the `dregg-deploy check` CLI. Nothing is reimplemented in Python.
+
+class deploy:
+    @staticmethod
+    def check(text: str, ring: bool = False) -> dict[str, Any]:
+        """Parse DreggDL → lower to the real `CallForest` → run the static
+        assurance over the whole authority layout → return the verdict dict:
+
+            {
+              "pass": bool,
+              "assurance": {
+                "pass": bool,
+                "conservation":    {"pass": bool, "findings": [...]},
+                "no_amplification":{"pass": bool, "findings": [...]},
+                "wellformed":      {"pass": bool, "findings": [...]},
+                "ring_balance":    {"pass": bool, "findings": [...]},
+                "findings": [ {"guarantee", "message",
+                               "locus": {"node_path", "effect_index",
+                                         "asset", "display"}}, ... ],
+              },
+              "factories": [ {"ref": str, "factory_vk": hex}, ... ],
+              "cells":     [ {"name": str, "cell_id": hex}, ... ],
+              "turn_count": int,
+            }
+
+        `ring=True` also runs the ring-balance check. Raises `DreggError`
+        (naming the offending row) on a parse / lowering error."""
+
+    @staticmethod
+    def lower(text: str) -> dict[str, Any]:
+        """Run only the real `Lowered::from_deployment` lowering and return the
+        resolved artifact:
+
+            {"forest": {CallForest JSON}, "federation_id": hex,
+             "factories": [{"ref", "factory_vk"}],
+             "cells": [{"name", "cell_id"}]}
+
+        The `forest` is the ordered births → funds → grants the checker
+        consumes — the same lowering the SDK replays through its turn builders."""

@@ -40,6 +40,11 @@ dregg-types = { path = "../types" }
 # Direct dep for the kernel() report + the import-time Lean runtime init
 # (lean_available / shadow_record_kernel_step).
 dregg-lean-ffi = { path = "../dregg-lean-ffi" }
+# DreggDL: the REAL parse → lower → userspace-verify pipeline. The Python
+# `dregg.deploy` module is a thin binding over `dregg_deploy::{check,
+# Lowered::from_deployment}` — no lowering / no checker is reimplemented here.
+dregg-deploy = { path = "../dregg-deploy" }
+dregg-userspace-verify = { path = "../dregg-userspace-verify" }
 
 pyo3 = { version = "0.28", features = ["extension-module", "abi3-py310"] }
 ureq = { version = "2.12", features = ["json"] }

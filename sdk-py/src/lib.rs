@@ -1955,6 +1955,158 @@ fn kernel(py: Python<'_>) -> PyResult<Bound<'_, PyDict>> {
     Ok(d)
 }
 
+// ─── deploy: DreggDL, the checkable deployment spec (the REAL dregg-deploy) ───
+//
+// `dregg.deploy` is a thin binding over the `dregg-deploy` crate's REAL
+// pipeline: `parse_toml`/`parse_json` → `Lowered::from_deployment` (name
+// resolution + the ordered CallForest) → `dregg_userspace_verify::analyze`.
+// No lowering, no CallForest construction, and no userspace-verify check is
+// reimplemented in Python — these functions call the same `dregg_deploy`
+// functions the `dregg-deploy check` CLI runs, so a deployment audited from
+// Python is audited by the exact same code as from Rust.
+
+use dregg_userspace_verify::{Assurance, Finding, Verdict};
+
+/// Parse DreggDL surface text (TOML, or JSON when it starts with `{`/`[`) into
+/// the real `Deployment`, calling the crate's own `parse_toml`/`parse_json`.
+fn parse_deployment(text: &str) -> Result<dregg_deploy::Deployment, dregg_deploy::DeployError> {
+    // A leading `{` is unambiguously JSON (a TOML document never starts with a
+    // brace). Everything else is TOML — `[` opens a TOML table array, so it is
+    // NOT treated as a JSON array. This matches the `dregg-deploy` CLI default.
+    if text.trim_start().starts_with('{') {
+        return dregg_deploy::parse_json(text);
+    }
+    dregg_deploy::parse_toml(text)
+}
+
+/// Render a `Finding` as a Python dict: `{guarantee, locus, message}`.
+fn finding_to_py<'py>(py: Python<'py>, f: &Finding) -> PyResult<Bound<'py, PyDict>> {
+    let d = PyDict::new(py);
+    d.set_item("guarantee", &f.guarantee)?;
+    d.set_item("message", &f.message)?;
+    let locus = PyDict::new(py);
+    locus.set_item("node_path", f.locus.node_path.clone())?;
+    locus.set_item("effect_index", f.locus.effect_index)?;
+    locus.set_item("asset", f.locus.asset.clone())?;
+    locus.set_item("display", f.locus.to_string())?;
+    d.set_item("locus", locus)?;
+    Ok(d)
+}
+
+/// Render one `Verdict` (`Pass` | `Fail(findings)`) as a dict:
+/// `{pass: bool, findings: [..]}`.
+fn verdict_to_py<'py>(py: Python<'py>, v: &Verdict) -> PyResult<Bound<'py, PyDict>> {
+    let d = PyDict::new(py);
+    d.set_item("pass", v.is_pass())?;
+    let findings = PyList::empty(py);
+    for f in v.findings() {
+        findings.append(finding_to_py(py, f)?)?;
+    }
+    d.set_item("findings", findings)?;
+    Ok(d)
+}
+
+/// Render the four-check `Assurance` as a dict mirroring the Rust struct.
+fn assurance_to_py<'py>(py: Python<'py>, a: &Assurance) -> PyResult<Bound<'py, PyDict>> {
+    let d = PyDict::new(py);
+    d.set_item("pass", a.pass())?;
+    d.set_item("conservation", verdict_to_py(py, &a.conservation)?)?;
+    d.set_item("no_amplification", verdict_to_py(py, &a.no_amplification)?)?;
+    d.set_item("wellformed", verdict_to_py(py, &a.wellformed)?)?;
+    d.set_item("ring_balance", verdict_to_py(py, &a.ring_balance)?)?;
+    let all = PyList::empty(py);
+    for f in a.all_findings() {
+        all.append(finding_to_py(py, &f)?)?;
+    }
+    d.set_item("findings", all)?;
+    Ok(d)
+}
+
+/// **`dregg.deploy.check(text, ring=False)`** — the synthesis: parse DreggDL →
+/// lower to the real `CallForest` → run `dregg_userspace_verify::analyze` over
+/// the whole declared authority layout → return the `DeployVerdict` as a dict.
+///
+/// This is exactly what `dregg-deploy check <file>` runs. Returns:
+/// `{pass, assurance, factories, cells, turn_count}` where `assurance` carries
+/// the four located checks (conservation, non-amplification, well-formedness,
+/// ring-balance). On a parse / lowering error raises `DreggError` naming the
+/// offending row (e.g. an unknown factory ref, a duplicate cell name).
+///
+/// `ring=True` also runs the ring-balance check (a settlement ring declared as
+/// bare funding transfers must net to zero).
+#[pyfunction]
+#[pyo3(name = "check", signature = (text, ring=false))]
+fn deploy_check<'py>(py: Python<'py>, text: &str, ring: bool) -> PyResult<Bound<'py, PyDict>> {
+    let dep = parse_deployment(text).map_err(|e| err(e.to_string()))?;
+    let verdict = dregg_deploy::check_deployment(&dep, ring).map_err(|e| err(e.to_string()))?;
+
+    let d = PyDict::new(py);
+    d.set_item("pass", verdict.pass())?;
+    d.set_item("assurance", assurance_to_py(py, &verdict.assurance)?)?;
+    d.set_item("turn_count", verdict.turn_count)?;
+
+    let factories = PyList::empty(py);
+    for (name, vk) in &verdict.factories {
+        let row = PyDict::new(py);
+        row.set_item("ref", name)?;
+        row.set_item("factory_vk", vk)?;
+        factories.append(row)?;
+    }
+    d.set_item("factories", factories)?;
+
+    let cells = PyList::empty(py);
+    for (name, id) in &verdict.cells {
+        let row = PyDict::new(py);
+        row.set_item("name", name)?;
+        row.set_item("cell_id", id)?;
+        cells.append(row)?;
+    }
+    d.set_item("cells", cells)?;
+
+    Ok(d)
+}
+
+/// **`dregg.deploy.lower(text)`** — run only the real
+/// `Lowered::from_deployment` lowering (no check) and return the resolved
+/// artifact: `{forest, federation_id, factories, cells}`, where `forest` is the
+/// ordered `CallForest` (births → funds → grants) the checker consumes, as JSON.
+///
+/// This is `dregg-deploy lower <file>` — the same lowering the SDK replays
+/// through its own turn builders.
+#[pyfunction]
+#[pyo3(name = "lower")]
+fn deploy_lower<'py>(py: Python<'py>, text: &str) -> PyResult<Bound<'py, PyAny>> {
+    let dep = parse_deployment(text).map_err(|e| err(e.to_string()))?;
+    let lowered = dregg_deploy::Lowered::from_deployment(&dep).map_err(|e| err(e.to_string()))?;
+
+    let forest_json = serde_json::to_value(&lowered.forest)
+        .map_err(|e| err(format!("encode forest: {e}")))?;
+
+    let d = PyDict::new(py);
+    d.set_item("forest", json_to_py(py, &forest_json)?)?;
+    d.set_item("federation_id", hex::encode(lowered.federation_id.0))?;
+
+    let factories = PyList::empty(py);
+    for (name, vk) in &lowered.factory_vks {
+        let row = PyDict::new(py);
+        row.set_item("ref", name)?;
+        row.set_item("factory_vk", hex::encode(vk))?;
+        factories.append(row)?;
+    }
+    d.set_item("factories", factories)?;
+
+    let cells = PyList::empty(py);
+    for (name, id) in &lowered.cell_ids {
+        let row = PyDict::new(py);
+        row.set_item("name", name)?;
+        row.set_item("cell_id", hex::encode(id.0))?;
+        cells.append(row)?;
+    }
+    d.set_item("cells", cells)?;
+
+    Ok(d.into_any())
+}
+
 // ─── module ───
 
 #[pymodule]
@@ -2001,6 +2153,16 @@ fn dregg(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     py.import("sys")?
         .getattr("modules")?
         .set_item("dregg.program", &program)?;
+
+    // dregg.deploy — DreggDL, the checkable deployment spec (the REAL
+    // dregg-deploy parse → lower → userspace-verify pipeline).
+    let deploy = PyModule::new(py, "deploy")?;
+    deploy.add_function(wrap_pyfunction!(deploy_check, &deploy)?)?;
+    deploy.add_function(wrap_pyfunction!(deploy_lower, &deploy)?)?;
+    m.add_submodule(&deploy)?;
+    py.import("sys")?
+        .getattr("modules")?
+        .set_item("dregg.deploy", &deploy)?;
 
     Ok(())
 }

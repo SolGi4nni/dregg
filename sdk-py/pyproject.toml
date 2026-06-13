@@ -33,18 +33,16 @@ Homepage = "https://dregg.dev"
 Repository = "https://github.com/emberian/dregg"
 
 [tool.maturin]
-# The pyo3 [lib] name is already `dregg`; the wheel ships that single
-# extension module.
-module-name = "dregg"
+# Mixed Rust/Python layout: a `dregg` package (in `python/dregg/`) whose
+# `__init__.py` re-exports the compiled `dregg.dregg` extension submodule.
+# This keeps the typed stub (`__init__.pyi`) + `py.typed` marker shipping
+# inside the importable package.
+module-name = "dregg.dregg"
 bindings = "pyo3"
 # This crate lives inside the dregg workspace; maturin must resolve the
 # workspace root for path deps.
 manifest-path = "Cargo.toml"
-# Ship the type stub + the `py.typed` marker alongside the extension so the
-# wheel is fully typed (IDEs / mypy / pyright resolve `dregg.pyi`). These live
-# in `python/` next to the compiled `dregg.so` at the wheel root.
 python-source = "python"
-include = ["python/dregg.pyi", "python/py.typed"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

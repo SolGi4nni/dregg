@@ -60,6 +60,34 @@ Merkle verifier, and verifying a STARK/threshold signature are **not** done in
 this binding — it surfaces the artifacts to verify with the Rust/Lean path. See
 `examples/organs.py`.
 
+## DreggDL — the checkable deployment spec (`dregg.deploy`)
+
+Write a dregg capability layout **once**, declaratively (TOML / JSON), and
+`check` it for the four static guarantees — conservation, non-amplification,
+well-formedness, ring-balance — over the WHOLE declared authority layout BEFORE
+submitting, exactly like the Rust `dregg-deploy check` CLI:
+
+```python
+import dregg.deploy as deploy
+
+verdict = deploy.check(open("escrow.dregg.toml").read())
+if not verdict["pass"]:
+    for f in verdict["assurance"]["findings"]:
+        print(f"{f['guarantee']}: {f['message']} @ {f['locus']['display']}")
+# verdict = {pass, assurance{conservation, no_amplification, wellformed,
+#            ring_balance, findings}, factories[], cells[], turn_count}
+
+forest = deploy.lower(toml_text)   # the ordered CallForest the checker consumes
+```
+
+`dregg.deploy` is a **thin binding** over the REAL `dregg-deploy` crate: parse →
+`Lowered::from_deployment` (name resolution + the ordered `CallForest`) →
+`dregg_userspace_verify::analyze`. The lowering, the `CallForest` construction,
+and the checks are NOT reimplemented in Python — a deployment audited from
+Python is audited by the exact same code as `dregg-deploy check`. An
+over-granting deployment FAILs with the located amplification; an unknown row
+raises `DreggError` naming it.
+
 ## The kernel this module embeds
 
 The extension module links the **verified Lean kernel** (`metatheory/Dregg2`, via

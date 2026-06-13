@@ -137,6 +137,34 @@ return a checked verdict on its own.
 
 Runnable: `node examples/attested-query.mjs`.
 
+### DreggDL — the checkable deployment spec (`DeployChecker`)
+
+Write a dregg capability layout **once**, declaratively (TOML / JSON), and
+`check` it for the four static guarantees — conservation, non-amplification,
+well-formedness, ring-balance — over the WHOLE declared authority layout BEFORE
+submitting, exactly like the Rust `dregg-deploy check` CLI:
+
+```ts
+import init from "dregg-wasm";
+import { DeployChecker } from "@dregg/sdk";
+
+const deploy = new DeployChecker(await init());
+const v = deploy.check(toml);          // { pass, assurance, factories, cells, turn_count }
+if (!v.pass) {
+  for (const f of v.assurance.findings) {
+    console.error(`${f.guarantee}: ${f.message} @ ${f.locus.display}`);
+  }
+}
+const lowered = deploy.lower(toml);    // the ordered CallForest the checker consumes
+```
+
+`DeployChecker` is a **thin binding** over the REAL `dregg-deploy` crate
+(parse → `Lowered::from_deployment` → `dregg_userspace_verify::analyze`),
+reached through the `dregg-wasm` `deploy_check` / `deploy_lower` exports. The
+lowering and the checks are NOT reimplemented in TypeScript — a deployment
+audited from TS is audited by the exact same code as `dregg-deploy check`. An
+over-granting deployment FAILs with the located amplification.
+
 ## Surface
 
 | Export | Purpose |
@@ -153,6 +181,7 @@ Runnable: `node examples/attested-query.mjs`.
 | `ChannelsClient` | Organ §4 — `create` / `join` / `remove` / `rekey` / `post` / `status` / `messages` (`runtime.channels()`) |
 | `MailboxClient` | Organ §2 — `subscribe` / `send` / `drain` / `unsubscribe` over the relay (owner-signed) |
 | `AttestedQuery` | Light-client reads — `attestedRoots` / `checkpoint` / `turnProof` (no identity) |
+| `DeployChecker` | DreggDL — `check(text, ring?)` / `lower(text)` via the REAL `dregg-deploy` (parse → lower → userspace-verify), through `dregg-wasm` |
 
 ### Turn verbs
 

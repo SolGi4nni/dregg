@@ -716,3 +716,95 @@ export interface FederationBlock {
   /** Number of votes that finalized this block. */
   vote_count: number;
 }
+
+// ============================================================================
+// DreggDL — the checkable deployment spec (the REAL dregg-deploy verdict).
+// These map to the JSON `deploy_check` / `deploy_lower` return from dregg-wasm,
+// which is exactly `dregg_deploy::DeployVerdict` / `Lowered` re-serialized.
+// ============================================================================
+
+/** A location within the lowered `CallForest`, pointing at the construction
+ * site of a finding (`dregg_userspace_verify::Locus`). */
+export interface DeployLocus {
+  /** Index path from the forest root down the tree (`[2, 0, 1]`). */
+  node_path: number[];
+  /** Index of the offending effect within that node, if effect-specific. */
+  effect_index: number | null;
+  /** The asset column the finding concerns (hex asset id, or `"computron"`),
+   * if asset-specific. */
+  asset: string | null;
+  /** A pre-rendered human-readable form (e.g. `node 4 effect[0]`). */
+  display: string;
+}
+
+/** One failing finding: which guarantee, where, and why
+ * (`dregg_userspace_verify::Finding`). */
+export interface DeployFinding {
+  /** Which assurance guarantee (`"A"` non-amplification, `"B"` conservation,
+   * well-formedness, `"ring"`). */
+  guarantee: string;
+  /** Human-readable explanation of the violation. */
+  message: string;
+  /** Where in the forest the problem is. */
+  locus: DeployLocus;
+}
+
+/** One check's result (`dregg_userspace_verify::Verdict`): pass + its findings
+ * (empty on pass). */
+export interface DeployCheckVerdict {
+  pass: boolean;
+  findings: DeployFinding[];
+}
+
+/** The four-check static assurance over the lowered authority layout
+ * (`dregg_userspace_verify::Assurance`), plus all findings flattened. */
+export interface DeployAssurance {
+  /** `true` iff every check passed. */
+  pass: boolean;
+  /** Per-asset conservation of the funding transfers (guarantee B). */
+  conservation: DeployCheckVerdict;
+  /** Non-amplification of the `[[grant]]` delegation edges (guarantee A). */
+  no_amplification: DeployCheckVerdict;
+  /** Structural well-formedness of the forest. */
+  wellformed: DeployCheckVerdict;
+  /** Ring-balance (only meaningful when `check(text, ring=true)`). */
+  ring_balance: DeployCheckVerdict;
+  /** Every finding across all checks, flattened. */
+  findings: DeployFinding[];
+}
+
+/** A resolved `ref`/`name` → hex content-address / cell-id row. */
+export interface DeployNamedHex {
+  /** The symbolic `ref` (factory) or `name` (cell). */
+  name: string;
+  /** The resolved content-address (factory_vk) / CellId, 64-char hex. */
+  value: string;
+}
+
+/** The verdict of `DeployChecker.check` (`dregg_deploy::DeployVerdict`). */
+export interface DeployVerdict {
+  /** `true` iff every static check passed. */
+  pass: boolean;
+  /** The four static assurance checks over the lowered forest. */
+  assurance: DeployAssurance;
+  /** Resolved factory content-addresses (`ref` → `factory_vk` hex). */
+  factories: DeployNamedHex[];
+  /** Resolved cell ids (`name` → CellId hex). */
+  cells: DeployNamedHex[];
+  /** Number of root effect-groups in the lowered forest. */
+  turn_count: number;
+}
+
+/** The result of `DeployChecker.lower` (`dregg_deploy::Lowered`): the ordered
+ * `CallForest` (births → funds → grants) plus the resolved ids. `forest` is the
+ * raw `dregg_turn::CallForest` JSON the checker consumes. */
+export interface LoweredDeployment {
+  /** The ordered turn forest, as the raw `CallForest` JSON. */
+  forest: unknown;
+  /** The federation this deployment binds to, 64-char hex. */
+  federation_id: string;
+  /** Resolved factory content-addresses. */
+  factories: DeployNamedHex[];
+  /** Resolved cell ids. */
+  cells: DeployNamedHex[];
+}

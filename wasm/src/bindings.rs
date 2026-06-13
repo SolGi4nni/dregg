@@ -3336,3 +3336,171 @@ pub fn attempt_time_travel(handle: usize, target_height: u64) -> Result<JsValue,
         }
     })
 }
+
+// ============================================================================
+// DreggDL — the checkable deployment spec (the REAL dregg-deploy pipeline)
+// ============================================================================
+//
+// These two functions are a thin wasm face over the `dregg-deploy` crate's REAL
+// pipeline: parse DreggDL (TOML / JSON) → `Lowered::from_deployment` (name
+// resolution + the ordered CallForest) → `dregg_userspace_verify::analyze`.
+// The TS SDK's `deploy.check()` / `deploy.lower()` call straight into these, so
+// a deployment audited from TypeScript is audited by the EXACT same code as
+// `dregg-deploy check` — nothing about the lowering or the userspace-verify is
+// reimplemented in TypeScript.
+
+#[derive(Serialize)]
+struct DeployLocusJson {
+    node_path: Vec<usize>,
+    effect_index: Option<usize>,
+    asset: Option<String>,
+    display: String,
+}
+
+#[derive(Serialize)]
+struct DeployFindingJson {
+    guarantee: String,
+    message: String,
+    locus: DeployLocusJson,
+}
+
+#[derive(Serialize)]
+struct DeployVerdictJson {
+    pass: bool,
+    findings: Vec<DeployFindingJson>,
+}
+
+#[derive(Serialize)]
+struct DeployAssuranceJson {
+    pass: bool,
+    conservation: DeployVerdictJson,
+    no_amplification: DeployVerdictJson,
+    wellformed: DeployVerdictJson,
+    ring_balance: DeployVerdictJson,
+    findings: Vec<DeployFindingJson>,
+}
+
+#[derive(Serialize)]
+struct DeployNamedHexJson {
+    // `ref`/`name` and the resolved hex content-address / cell id.
+    name: String,
+    value: String,
+}
+
+#[derive(Serialize)]
+struct DeployCheckJson {
+    pass: bool,
+    assurance: DeployAssuranceJson,
+    factories: Vec<DeployNamedHexJson>,
+    cells: Vec<DeployNamedHexJson>,
+    turn_count: usize,
+}
+
+fn deploy_finding_json(f: &dregg_userspace_verify::Finding) -> DeployFindingJson {
+    DeployFindingJson {
+        guarantee: f.guarantee.clone(),
+        message: f.message.clone(),
+        locus: DeployLocusJson {
+            node_path: f.locus.node_path.clone(),
+            effect_index: f.locus.effect_index,
+            asset: f.locus.asset.clone(),
+            display: f.locus.to_string(),
+        },
+    }
+}
+
+fn deploy_verdict_json(v: &dregg_userspace_verify::Verdict) -> DeployVerdictJson {
+    DeployVerdictJson {
+        pass: v.is_pass(),
+        findings: v.findings().iter().map(deploy_finding_json).collect(),
+    }
+}
+
+/// Parse DreggDL surface text into the real `Deployment` (JSON when it starts
+/// with `{`, else TOML — matching the `dregg-deploy` CLI default).
+fn deploy_parse(text: &str) -> Result<dregg_deploy::Deployment, String> {
+    if text.trim_start().starts_with('{') {
+        dregg_deploy::parse_json(text).map_err(|e| e.to_string())
+    } else {
+        dregg_deploy::parse_toml(text).map_err(|e| e.to_string())
+    }
+}
+
+/// **`deploy_check(text, ring)`** — parse DreggDL → lower to the real
+/// `CallForest` → run `dregg_userspace_verify::analyze` over the whole declared
+/// authority layout → return the `DeployVerdict` as a JSON string
+/// (`{pass, assurance, factories, cells, turn_count}`).
+///
+/// This is exactly `dregg-deploy check`. On a parse / lowering error returns a
+/// `JsError` naming the offending row.
+#[wasm_bindgen]
+pub fn deploy_check(text: &str, ring: bool) -> Result<String, JsError> {
+    let dep = deploy_parse(text).map_err(|e| JsError::new(&e))?;
+    let verdict = dregg_deploy::check_deployment(&dep, ring).map_err(|e| JsError::new(&e.to_string()))?;
+    let a = &verdict.assurance;
+    let out = DeployCheckJson {
+        pass: verdict.pass(),
+        assurance: DeployAssuranceJson {
+            pass: a.pass(),
+            conservation: deploy_verdict_json(&a.conservation),
+            no_amplification: deploy_verdict_json(&a.no_amplification),
+            wellformed: deploy_verdict_json(&a.wellformed),
+            ring_balance: deploy_verdict_json(&a.ring_balance),
+            findings: a.all_findings().iter().map(deploy_finding_json).collect(),
+        },
+        factories: verdict
+            .factories
+            .iter()
+            .map(|(name, value)| DeployNamedHexJson { name: name.clone(), value: value.clone() })
+            .collect(),
+        cells: verdict
+            .cells
+            .iter()
+            .map(|(name, value)| DeployNamedHexJson { name: name.clone(), value: value.clone() })
+            .collect(),
+        turn_count: verdict.turn_count,
+    };
+    serde_json::to_string(&out).map_err(|e| JsError::new(&e.to_string()))
+}
+
+#[derive(Serialize)]
+struct DeployLowerJson {
+    forest: serde_json::Value,
+    federation_id: String,
+    factories: Vec<DeployNamedHexJson>,
+    cells: Vec<DeployNamedHexJson>,
+}
+
+/// **`deploy_lower(text)`** — run only the real `Lowered::from_deployment`
+/// lowering (no check) and return `{forest, federation_id, factories, cells}`
+/// as a JSON string, where `forest` is the ordered births → funds → grants
+/// `CallForest` the checker consumes. This is `dregg-deploy lower`.
+#[wasm_bindgen]
+pub fn deploy_lower(text: &str) -> Result<String, JsError> {
+    let dep = deploy_parse(text).map_err(|e| JsError::new(&e))?;
+    let lowered = dregg_deploy::Lowered::from_deployment(&dep).map_err(|e| JsError::new(&e.to_string()))?;
+    let forest = serde_json::to_value(&lowered.forest).map_err(|e| JsError::new(&e.to_string()))?;
+    let out = DeployLowerJson {
+        forest,
+        federation_id: hex_lower(&lowered.federation_id.0),
+        factories: lowered
+            .factory_vks
+            .iter()
+            .map(|(name, vk)| DeployNamedHexJson { name: name.clone(), value: hex_lower(vk) })
+            .collect(),
+        cells: lowered
+            .cell_ids
+            .iter()
+            .map(|(name, id)| DeployNamedHexJson { name: name.clone(), value: hex_lower(&id.0) })
+            .collect(),
+    };
+    serde_json::to_string(&out).map_err(|e| JsError::new(&e.to_string()))
+}
+
+fn hex_lower(b: &[u8; 32]) -> String {
+    let mut s = String::with_capacity(64);
+    for byte in b {
+        s.push_str(&format!("{byte:02x}"));
+    }
+    s
+}

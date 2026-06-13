@@ -133,6 +133,19 @@ export type { AttestedRoot, Checkpoint } from "./attested";
 // The cell-program constraint language.
 export * as program from "./program";
 
+// DreggDL — the checkable deployment spec (CapDL for dregg). A thin binding
+// over the REAL dregg-deploy lowering + userspace-verify, via dregg-wasm.
+export { DeployChecker } from "./deploy";
+export type {
+  DeployAssurance,
+  DeployCheckVerdict,
+  DeployFinding,
+  DeployLocus,
+  DeployNamedHex,
+  DeployVerdict,
+  LoweredDeployment,
+} from "./types";
+
 // Public wire types reachable from the authorized surface (constructing
 // these does not authorize anything; the sealed vocabulary incl.
 // unsignedAction lives at @dregg/sdk/raw).

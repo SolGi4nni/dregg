@@ -35,6 +35,13 @@ dregg-sdk = { path = "../sdk", default-features = false, features = ["no-lean-li
 # sdk pulls bulletproofs (via cell crypto) — already covered by the
 # clear_on_drop override below, but listing here for grep-ability.
 dregg-types = { path = "../types" }
+# DreggDL: the REAL parse → lower → userspace-verify pipeline, so the TS SDK's
+# `deploy.check()` calls the SAME checker the `dregg-deploy` CLI runs (not a
+# TS re-implementation). Both are pure logic over the dregg-turn types already
+# linked here (no Lean link of their own — they ride dregg-turn's no-lean-link
+# via feature unification in this standalone workspace), so they are wasm32-safe.
+dregg-userspace-verify = { path = "../dregg-userspace-verify" }
+dregg-deploy = { path = "../dregg-deploy" }
 # CapTP — needed to decode `HandoffCertificate` (carried by
 # `Authorization::CapTpDelivered`) for `create_captp_delivered_auth`. Pure
 # types + bs58 + postcard; wasm32-safe (already a transitive dep via dregg-turn).
