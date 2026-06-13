@@ -173,6 +173,7 @@ mod cell_state;
 mod effect;
 mod helpers;
 mod trace;
+pub mod trace_rotated;
 mod verify;
 
 // Per-action proof granularity: prove a single call-forest Action's effects
@@ -209,6 +210,12 @@ pub use trace::{
     EffectVmContext, RotCaveatEntry, SlotCaveatEntry, canonical_id_to_felts_4, encode_net_delta,
     extract_custom_proof_commitments, extract_net_delta, extract_slot_caveat_manifest,
     generate_effect_vm_trace, generate_effect_vm_trace_ext,
+};
+
+// ---- Re-export the LIVE rotated (R=24) trace generator (G1, staged-additive) ----
+pub use trace_rotated::{
+    RotatedBlockWitness, RotatedCaveatEntry, RotatedCaveatManifest,
+    generate_rotated_effect_vm_trace, transfer_caveat_manifest,
 };
 
 // ---- Re-export verify ----

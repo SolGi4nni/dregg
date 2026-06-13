@@ -89,6 +89,12 @@ no-lean-link = [
     "dregg-captp?/no-lean-link",
 ]
 dev = []
+# STAGED-ADDITIVE (G1): compile the rotated IR-v2 (R=24) turn-proof route beside the live
+# v1 path. OFF by default — the live v1 path stays the byte-identical default. Forwards to
+# `dregg-circuit/recursion` (which compiles `descriptor_ir2`, the rotated prover). Combined
+# with the runtime gate `DREGG_ROTATED_PROVER=1` (precedent: `DREGG_DESCRIPTOR_PROVER`); the
+# default keeps the v1 route. The flag-day cutover (default → rotated) is G2, a separate act.
+recursion = ["dregg-circuit/recursion"]
 # Enables `DelegationAuthority::Open`, which accepts any well-signed envelope
 # without an authority check. This is a footgun in production and is gated
 # behind a feature flag so that production builds cannot construct it at all.

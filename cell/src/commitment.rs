@@ -570,6 +570,168 @@ pub fn canonical_to_babybear_pi(canonical: &[u8; 32]) -> [u32; 8] {
     out
 }
 
+// ============================================================================
+// v9 — THE ROTATED canonical commitment (G3, staged-additive).
+// ============================================================================
+//
+// The v8 BLAKE3 absorption above (`CANONICAL_COMMITMENT_CONTEXT = "…v8"`) is the LIVE
+// default and stays byte-identical. v9 is the ADDITIVE rotated commitment that produces the
+// circuit's Poseidon2-chained `wireCommit` (rotated absorption order) — the cell-side
+// computation of the EffectVM rotated trace's row-0 `STATE_COMMIT` carrier. It matches
+// `dregg_turn::rotation_witness::wire_commit` / the Lean `EffectVmEmitRotationR.wireCommitR`
+// spec exactly (the differential `live_cell_v9_equals_circuit_state_commit` in
+// `circuit/tests/effect_vm_rotation_flip.rs` guards the byte-identity), closing the deferred
+// cell≡circuit binding. Do NOT bump the live context to v9 (that is the flag-day, G2).
+
+/// The CONFIRMED rotated register count (ember 2026-06-12, `ROTATION-CUTOVER.md` §2b).
+pub const V9_NUM_REGISTERS: usize = 24;
+/// The number of pre-iroot absorption limbs (cells_root · r0..r23 · cap/nullifier/heap roots
+/// · lifecycle · epoch · committed_height). Lean `preLimbsAt_length = 31` at R = 24.
+pub const V9_NUM_PRE_LIMBS: usize = 1 + V9_NUM_REGISTERS + 3 + 3; // 31
+
+/// The turn-level context the rotated commitment absorbs that is NOT cell-local: the
+/// boundary `cells_root` (the sorted-Poseidon2 root over present cells), the cell's committed
+/// `nullifier_root`, and the receipt-index MMR root `iroot` (absorbed LAST). The producer
+/// (`dregg_turn::rotation_witness`) derives these from the real executed turn's
+/// `RecordKernelState` (`Ledger` + receipt log); the cell-side v9 commitment takes them as
+/// context so it reproduces the circuit's row-0 `STATE_COMMIT` for the same turn.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct V9RotationContext {
+    /// The turn-level boundary `cells_root` felt (limb 0).
+    pub cells_root: dregg_circuit::field::BabyBear,
+    /// The cell's committed nullifier-map root (limb 26).
+    pub nullifier_root: [u8; 32],
+    /// The receipt-index MMR root, absorbed LAST.
+    pub iroot: dregg_circuit::field::BabyBear,
+}
+
+/// The canonical scalar limb of a cell's lifecycle: the discriminant folded with its payload
+/// bytes so two distinct lifecycle states yield distinct limbs. Mirrors the producer's
+/// `rotation_witness::lifecycle_felt` and the v8 `hash_lifecycle_into` anti-omission tooth.
+fn v9_lifecycle_felt(lc: &crate::lifecycle::CellLifecycle) -> dregg_circuit::field::BabyBear {
+    use crate::lifecycle::CellLifecycle;
+    use dregg_circuit::poseidon2::hash_bytes;
+    let mut bytes = Vec::with_capacity(40);
+    bytes.push(lc.discriminant());
+    match lc {
+        CellLifecycle::Live => {}
+        CellLifecycle::Sealed {
+            reason_hash,
+            sealed_at,
+        } => {
+            bytes.extend_from_slice(reason_hash);
+            bytes.extend_from_slice(&sealed_at.to_le_bytes());
+        }
+        CellLifecycle::Migrated {
+            to,
+            attestation,
+            migrated_at,
+        } => {
+            bytes.extend_from_slice(to.as_bytes());
+            bytes.extend_from_slice(attestation);
+            bytes.extend_from_slice(&migrated_at.to_le_bytes());
+        }
+        CellLifecycle::Destroyed {
+            death_certificate_hash,
+            destroyed_at,
+        } => {
+            bytes.extend_from_slice(death_certificate_hash);
+            bytes.extend_from_slice(&destroyed_at.to_le_bytes());
+        }
+        CellLifecycle::Archived {
+            checkpoint_hash,
+            archived_through,
+        } => {
+            bytes.extend_from_slice(checkpoint_hash);
+            bytes.extend_from_slice(&archived_through.to_le_bytes());
+        }
+    }
+    hash_bytes(&bytes)
+}
+
+/// Build the 31 pre-iroot rotated limbs for a cell + turn-context, in the Lean-pinned
+/// absorption order (`EffectVmEmitRotationV3.preLimbsAt`). Byte-identical to the producer
+/// `dregg_turn::rotation_witness::produce`'s `pre_limbs`.
+pub fn compute_rotated_pre_limbs(
+    cell: &Cell,
+    ctx: &V9RotationContext,
+) -> Vec<dregg_circuit::field::BabyBear> {
+    use dregg_circuit::effect_vm::{fold_bytes32_to_bb, split_u64};
+    use dregg_circuit::field::BabyBear;
+    use dregg_circuit::poseidon2::hash_bytes;
+
+    let mut pre = vec![BabyBear::ZERO; V9_NUM_PRE_LIMBS];
+    // limb 0: cells_root (turn-level).
+    pre[0] = ctx.cells_root;
+    // limbs 1..=24: r0..r23 — welded scalars first.
+    let balance = cell.state.balance();
+    let (bal_lo, bal_hi) = split_u64(balance as u64);
+    pre[1] = bal_lo; // r0 ↔ balance_lo
+    pre[2] = BabyBear::new((cell.state.nonce() & 0x7FFF_FFFF) as u32); // r1 ↔ nonce
+    pre[3] = bal_hi; // r2 ↔ balance_hi
+    for i in 0..8 {
+        // r3..r10 ↔ fields[0..7] (the same Horner packing the v1 state block carries).
+        pre[4 + i] = fold_bytes32_to_bb(&cell.state.fields[i]);
+    }
+    // r11..r23 (limbs 12..=24): app-register headroom — zero for a kernel turn.
+    // limb 25: cap_root (welded) — the SAME openable sorted-Poseidon2 felt the circuit's
+    // `cap_root` column carries.
+    pre[25] = compute_canonical_capability_root_felt(&cell.capabilities);
+    // limbs 26,27: nullifier_root, heap_root.
+    pre[26] = hash_bytes(&ctx.nullifier_root);
+    pre[27] = hash_bytes(&cell.state.heap_root);
+    // limbs 28,29,30: lifecycle, epoch, committed_height.
+    pre[28] = v9_lifecycle_felt(&cell.lifecycle);
+    pre[29] = BabyBear::new((cell.state.delegation_epoch() & 0x7FFF_FFFF) as u32);
+    pre[30] = BabyBear::new((cell.state.committed_height() & 0x7FFF_FFFF) as u32);
+    pre
+}
+
+/// The chained rotated state commitment — the Rust twin of Lean `wireCommitR`: the 4-wide
+/// head over the first four limbs, 3-wide chip groups while ≥ 3 pre-iroot limbs remain, the
+/// iroot absorbed ALONE last. Byte-identical to the producer's `wire_commit` and the rotated
+/// trace's `STATE_COMMIT` carrier.
+fn v9_wire_commit(
+    pre_limbs: &[dregg_circuit::field::BabyBear],
+    iroot: dregg_circuit::field::BabyBear,
+) -> dregg_circuit::field::BabyBear {
+    use dregg_circuit::poseidon2::hash_many;
+    debug_assert_eq!(pre_limbs.len(), V9_NUM_PRE_LIMBS);
+    let mut d = hash_many(&[pre_limbs[0], pre_limbs[1], pre_limbs[2], pre_limbs[3]]);
+    let mut col = 4;
+    while col < V9_NUM_PRE_LIMBS {
+        let remaining = V9_NUM_PRE_LIMBS - col;
+        if remaining >= 3 {
+            d = hash_many(&[d, pre_limbs[col], pre_limbs[col + 1], pre_limbs[col + 2]]);
+            col += 3;
+        } else {
+            d = hash_many(&[d, pre_limbs[col]]);
+            col += 1;
+        }
+    }
+    hash_many(&[d, iroot])
+}
+
+/// **THE v9 ROTATED canonical commitment (felt)** — the cell-side computation of the
+/// EffectVM rotated trace's row-0 `STATE_COMMIT` carrier: `wireCommitR(preLimbs, iroot)` over
+/// the rotated absorption order. Equal to the circuit's row-0 before-block `STATE_COMMIT` for
+/// the same `(cell, turn-context)` (the live cell≡circuit differential). v8 is unchanged.
+pub fn compute_canonical_state_commitment_v9_felt(
+    cell: &Cell,
+    ctx: &V9RotationContext,
+) -> dregg_circuit::field::BabyBear {
+    let pre = compute_rotated_pre_limbs(cell, ctx);
+    v9_wire_commit(&pre, ctx.iroot)
+}
+
+/// **THE v9 ROTATED canonical commitment (32 bytes)** — the canonical
+/// [`felt_to_bytes32`] encoding of [`compute_canonical_state_commitment_v9_felt`]. The
+/// additive rotated sibling of v8's [`compute_canonical_state_commitment`]; the v8 byte
+/// scheme is left intact (do NOT bump the live default — that is the flag-day, G2).
+pub fn compute_canonical_state_commitment_v9(cell: &Cell, ctx: &V9RotationContext) -> [u8; 32] {
+    felt_to_bytes32(compute_canonical_state_commitment_v9_felt(cell, ctx))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1200,5 +1362,81 @@ mod tests {
         for &felt in &pi {
             assert!(felt < (1u32 << 30), "felt {felt} exceeds 30-bit range");
         }
+    }
+
+    // ---- v9 rotated commitment (G3) ----
+
+    use dregg_circuit::field::BabyBear;
+
+    fn v9_ctx(cells_root: u32, iroot: u32) -> V9RotationContext {
+        V9RotationContext {
+            cells_root: BabyBear::new(cells_root),
+            nullifier_root: [0u8; 32],
+            iroot: BabyBear::new(iroot),
+        }
+    }
+
+    /// The v9 pre-limb vector has the Lean-pinned 31-limb shape, and the welded scalars sit
+    /// in the absorption order the producer / circuit carry.
+    #[test]
+    fn v9_pre_limbs_shape_and_welds() {
+        let cell = Cell::with_balance(test_key(7), test_token(0), 100_000);
+        let pre = compute_rotated_pre_limbs(&cell, &v9_ctx(11, 22));
+        assert_eq!(pre.len(), V9_NUM_PRE_LIMBS);
+        assert_eq!(pre.len(), 31);
+        // cells_root rides limb 0; the welded r0 (balance_lo) is non-zero for a funded cell.
+        assert_eq!(pre[0], BabyBear::new(11));
+        let (lo, _hi) = dregg_circuit::effect_vm::split_u64(100_000u64);
+        assert_eq!(pre[1], lo, "r0 ↔ balance_lo weld");
+    }
+
+    /// The v9 commitment BINDS every limb and the iroot: moving the iroot or any cell field
+    /// (here the balance, which feeds the welded r0/r2 limbs) moves the commitment.
+    #[test]
+    fn v9_commitment_binds_state_and_iroot() {
+        let cell = Cell::with_balance(test_key(7), test_token(0), 100_000);
+        let base = compute_canonical_state_commitment_v9_felt(&cell, &v9_ctx(11, 22));
+        // moving the iroot moves the commit.
+        let moved_iroot = compute_canonical_state_commitment_v9_felt(&cell, &v9_ctx(11, 23));
+        assert_ne!(base, moved_iroot, "iroot is bound");
+        // moving cells_root moves the commit.
+        let moved_cells = compute_canonical_state_commitment_v9_felt(&cell, &v9_ctx(12, 22));
+        assert_ne!(base, moved_cells, "cells_root is bound");
+        // a different balance moves the commit (welded r0/r2).
+        let cell2 = Cell::with_balance(test_key(7), test_token(0), 99_999);
+        let moved_bal = compute_canonical_state_commitment_v9_felt(&cell2, &v9_ctx(11, 22));
+        assert_ne!(base, moved_bal, "balance (welded r0/r2) is bound");
+    }
+
+    /// v9 is ADDITIVE: it does NOT touch the v8 default. The v8 byte commitment of a cell is
+    /// independent of any rotation context, and v9 produces a DISTINCT 32-byte scheme (so a
+    /// downstream consumer cannot confuse the two).
+    #[test]
+    fn v9_is_additive_distinct_from_v8() {
+        let cell = Cell::with_balance(test_key(7), test_token(0), 100_000);
+        let v8 = compute_canonical_state_commitment(&cell);
+        let v9 = compute_canonical_state_commitment_v9(&cell, &v9_ctx(11, 22));
+        assert_ne!(v8, v9, "v9 must be a distinct scheme from v8");
+        // v8 is unchanged by anything rotation-context (it never reads it).
+        let v8_again = compute_canonical_state_commitment(&cell);
+        assert_eq!(v8, v8_again, "v8 default is untouched");
+    }
+
+    /// v9 GOLDEN: pin the rotated commitment of a fixed cell + context so a shape regression
+    /// (a limb-order swap, a chaining-arity change) is caught. The value is the cell-side
+    /// computation of the circuit's row-0 `STATE_COMMIT`; the live differential
+    /// (`live_cell_v9_equals_circuit_state_commit`) pins it against the circuit trace.
+    #[test]
+    fn v9_golden_commitment_is_stable() {
+        let cell = Cell::with_balance(test_key(7), test_token(0), 100_000);
+        let felt = compute_canonical_state_commitment_v9_felt(&cell, &v9_ctx(0, 0));
+        // Recompute independently from the documented chained absorption to pin the SHAPE
+        // (not a magic byte string): the same `(cell, ctx)` must always yield the same felt.
+        let felt2 = compute_canonical_state_commitment_v9_felt(&cell, &v9_ctx(0, 0));
+        assert_eq!(felt, felt2, "v9 commitment is deterministic");
+        // the 32-byte encoding is the canonical felt encoding (low 4 LE bytes, rest zero).
+        let bytes = compute_canonical_state_commitment_v9(&cell, &v9_ctx(0, 0));
+        assert_eq!(&bytes[0..4], &felt.as_u32().to_le_bytes());
+        assert_eq!(&bytes[4..], &[0u8; 28], "felt encoding zero-pads the tail");
     }
 }

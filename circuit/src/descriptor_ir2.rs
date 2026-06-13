@@ -116,6 +116,12 @@ use p3_matrix::dense::RowMajorMatrix;
 
 use p3_batch_stark::{BatchProof, ProverData, StarkInstance, prove_batch, verify_batch};
 
+/// Re-export the IR-v2 wire proof type + its STARK config so external crates (the sdk's
+/// rotated route, measurement tests) can name the `prove_vm_descriptor2` return type without
+/// depending on `p3-batch-stark` / `crate::plonky3_prover` directly.
+pub use crate::plonky3_prover::DreggStarkConfig;
+pub use p3_batch_stark::BatchProof as Ir2BatchProof;
+
 use crate::field::{BABYBEAR_P, BabyBear};
 use crate::heap_root::{CanonicalHeapTree, HEAP_TREE_DEPTH, HeapLeaf, SENTINEL_MAX, SENTINEL_MIN};
 use crate::lean_descriptor_air::{
@@ -125,7 +131,7 @@ use crate::lean_descriptor_air::{
 };
 use crate::lean_descriptor_air::{EffectVmDescriptor, RangeSpec};
 use crate::plonky3_prover::{
-    DreggStarkConfig, POSEIDON2_PERM_AUX_COLS, POSEIDON2_WIDTH, create_config_with_fri,
+    POSEIDON2_PERM_AUX_COLS, POSEIDON2_WIDTH, create_config_with_fri,
     poseidon2_permute_aux_witness, poseidon2_permute_expr, to_p3,
 };
 

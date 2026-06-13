@@ -686,6 +686,105 @@ fn prove_effect_vm_with_cutover(
         .map_err(|e| SdkError::InvalidWitness(format!("effect-vm p3 proof failed: {e}")))
 }
 
+// ============================================================================
+// THE ROTATED IR-v2 ROUTE (G1, STAGED-ADDITIVE) — beside the live v1 path.
+// ============================================================================
+//
+// The live `prove_effect_vm_with_cutover` above proves the Effect-VM state transition over the
+// 186-column v1 trace through the IR-v1 descriptor interpreter (or the hand-AIR fallback) —
+// that is the DEFAULT and stays byte-identical. The route below is the rotated R=24 path: it
+// drives the LIVE rotated trace generator (`dregg_circuit::effect_vm::trace_rotated`) from the
+// real per-turn producer witnesses (`dregg_turn::rotation_witness`) and proves the 311-column
+// rotated trace + 38-PI vector through the IR-v2 batch prover (`descriptor_ir2`). It is OFF by
+// default — gated BOTH by the `recursion` feature (compiles `descriptor_ir2`) AND the runtime
+// flag `DREGG_ROTATED_PROVER=1` (precedent: `DREGG_DESCRIPTOR_PROVER`). The flag-day cutover
+// (default v1 → rotated, `EmitAllJson→v3Registry` live, NUM_REGISTERS 16→24, VK epoch) is G2.
+
+/// Is the rotated IR-v2 (R=24) route enabled at runtime? DEFAULT OFF (the live v1 path is the
+/// byte-identical default). `DREGG_ROTATED_PROVER=1` (or `true`/`on`) opts IN. The `recursion`
+/// feature must ALSO be compiled in for the route to exist.
+#[cfg(feature = "recursion")]
+pub fn rotated_prover_enabled() -> bool {
+    matches!(
+        std::env::var("DREGG_ROTATED_PROVER").as_deref(),
+        Ok("1") | Ok("true") | Ok("TRUE") | Ok("True") | Ok("on") | Ok("ON")
+    )
+}
+
+/// **`prove_effect_vm_rotated_ir2`** (G1, staged-additive) — prove ONE transfer-shaped turn
+/// through the rotated R=24 IR-v2 path: the LIVE rotated trace generator (fed the real
+/// per-turn producer witnesses) + the IR-v2 batch prover over `transferVmDescriptor2R24`.
+///
+/// * `initial_state` / `effects` — the v1 turn the rotated generator extends;
+/// * `before_w` / `after_w` — the per-turn producer witnesses
+///   (`dregg_turn::rotation_witness::produce(cell, ledger, nullifier_root, receipt_log)`) for
+///   the acting cell's before/after `RecordKernelState`.
+///
+/// Returns the IR-v2 batch proof (the rotated wire type — NOT an `EffectVmP3Proof`; this route
+/// is opt-in and additive, so it is NOT wired into the v1-typed composed `prove_full_turn`
+/// path until the G2 cutover bumps the wire). The proof self-verifies before return.
+///
+/// STAGED-ADDITIVE: nothing on the live wire path calls this. The descriptor JSON is the
+/// committed staged registry entry (`V3_STAGED_REGISTRY_TSV`); the four appended PIs are the
+/// rotated OLD/NEW commit · committed height · caveat commit the generator publishes.
+#[cfg(feature = "recursion")]
+pub fn prove_effect_vm_rotated_ir2(
+    initial_state: &CellState,
+    effects: &[VmEffectKind],
+    before_w: &dregg_turn::rotation_witness::RotationWitness,
+    after_w: &dregg_turn::rotation_witness::RotationWitness,
+) -> Result<
+    dregg_circuit::descriptor_ir2::Ir2BatchProof<
+        dregg_circuit::descriptor_ir2::DreggStarkConfig,
+    >,
+    SdkError,
+> {
+    use dregg_circuit::descriptor_ir2::{
+        MemBoundaryWitness, parse_vm_descriptor2, prove_vm_descriptor2,
+    };
+    use dregg_circuit::effect_vm::trace_rotated::{
+        RotatedBlockWitness, generate_rotated_effect_vm_trace, transfer_caveat_manifest,
+    };
+    use dregg_circuit::effect_vm_descriptors::V3_STAGED_REGISTRY_TSV;
+
+    // Resolve the committed rotated transfer descriptor.
+    let json = V3_STAGED_REGISTRY_TSV
+        .lines()
+        .find_map(|line| {
+            let mut it = line.splitn(3, '\t');
+            if it.next() == Some("transferVmDescriptor2R24") {
+                let _name = it.next();
+                it.next()
+            } else {
+                None
+            }
+        })
+        .ok_or_else(|| {
+            SdkError::InvalidWitness("transferVmDescriptor2R24 not in staged registry".into())
+        })?;
+    let desc = parse_vm_descriptor2(json)
+        .map_err(|e| SdkError::InvalidWitness(format!("rotated descriptor parse: {e}")))?;
+
+    // Bridge the producer witnesses into the pure-circuit generator inputs.
+    let bridge = |w: &dregg_turn::rotation_witness::RotationWitness| {
+        RotatedBlockWitness::new(w.pre_limbs.clone(), w.iroot)
+    };
+    let before = bridge(before_w)
+        .map_err(|e| SdkError::InvalidWitness(format!("rotated before-witness: {e}")))?;
+    let after = bridge(after_w)
+        .map_err(|e| SdkError::InvalidWitness(format!("rotated after-witness: {e}")))?;
+
+    // LIVE-generate the 311-column rotated trace + 38-PI vector.
+    let caveat = transfer_caveat_manifest();
+    let (trace, dpis) =
+        generate_rotated_effect_vm_trace(initial_state, effects, &before, &after, &caveat)
+            .map_err(|e| SdkError::InvalidWitness(format!("rotated trace generation: {e}")))?;
+
+    // Prove through the IR-v2 batch prover (self-verifies before return).
+    prove_vm_descriptor2(&desc, &trace, &dpis, &MemBoundaryWitness::default(), &[])
+        .map_err(|e| SdkError::InvalidWitness(format!("rotated IR-v2 proof: {e}")))
+}
+
 /// Verify an effect-vm sub-proof, SHAPE-DRIVEN — deliberately independent of
 /// `DREGG_DESCRIPTOR_PROVER` (the env var tunes the PROVER only; a peer must accept any
 /// sound proof regardless of its own environment). A proof produced by the descriptor
