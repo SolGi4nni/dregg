@@ -790,7 +790,7 @@ pub mod council {
     /// Decode a proposal cell's fields against its charter. Pure — callers
     /// fetch the 8 slots from any ledger view (a node query, a receipt's
     /// post-state witness, a light-client proof) and render.
-    pub fn inspect_council(charter: &CouncilCharter, fields: &[FieldElement; 8]) -> CouncilStatus {
+    pub fn inspect_council(charter: &CouncilCharter, fields: &[FieldElement; 16]) -> CouncilStatus {
         let to_u64 = |f: &FieldElement| {
             let mut b = [0u8; 8];
             b.copy_from_slice(&f[24..32]);
@@ -1360,7 +1360,7 @@ pub mod identity {
     /// Decode an identity cell's fields against its charter.
     pub fn inspect_identity(
         charter: &IdentityCharter,
-        fields: &[FieldElement; 8],
+        fields: &[FieldElement; 16],
     ) -> IdentityStatus {
         let to_u64 = |f: &FieldElement| {
             let mut b = [0u8; 8];
