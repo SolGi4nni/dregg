@@ -76,6 +76,12 @@ zeroize = { workspace = true }
 default = ["federation-client", "network", "captp"]
 federation-client = ["dep:reqwest"]
 network = ["dep:dregg-wire", "dep:tokio", "dep:futures-core"]
+# `embed-core`: the wire-free `DreggEngine` (executor + ledger + token + proof
+# core) WITHOUT the `network` stack (no tokio/quinn/dregg-wire). For embedded,
+# headless callers (e.g. starbridge-v2's native `World`) that want the real
+# engine but not the networking surface. `network` is a superset (it also
+# compiles the `embed::WireCodec`).
+embed-core = []
 captp = ["dep:dregg-captp", "dep:dregg-storage", "dep:chacha20poly1305"]
 # PLATFORM gate, OFF by default: only wasm32/zkvm builds set it. It compiles the legacy
 # Rust-producer path IN PLACE OF the verified Lean producer — a statement about the

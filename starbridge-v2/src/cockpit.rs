@@ -35,6 +35,8 @@ use crate::views::{pill, section_title, theme};
 use starbridge_v2::dynamics;
 use starbridge_v2::reflect::{self, Field, FieldValue, Inspectable, ObjectKind};
 use starbridge_v2::world::{self, CommitOutcome, World};
+// The four feature panels — wired in as tabs of the master interface.
+use starbridge_v2::{cipherclerk, debug, edit, replay};
 
 /// Which object the inspector is focused on.
 #[derive(Clone)]
@@ -44,8 +46,34 @@ pub enum Selection {
     Image,
 }
 
+/// Which workspace tab the right-hand pane presents. The master interface
+/// surfaces the composer alongside the four feature panels.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Tab {
+    Composer,
+    Debugger,
+    Replay,
+    Cipherclerk,
+    Editor,
+}
+
+impl Tab {
+    const ALL: [Tab; 5] = [Tab::Composer, Tab::Debugger, Tab::Replay, Tab::Cipherclerk, Tab::Editor];
+    fn label(self) -> &'static str {
+        match self {
+            Tab::Composer => "COMPOSER",
+            Tab::Debugger => "DEBUGGER",
+            Tab::Replay => "REPLAY",
+            Tab::Cipherclerk => "CIPHERCLERK",
+            Tab::Editor => "EDITOR",
+        }
+    }
+}
+
 /// The whole cockpit — owns the shared world + the current selection + a
-/// dynamics cursor for the activity feed.
+/// dynamics cursor for the activity feed, plus the four feature panels' UI
+/// state (the modules kept their renders gpui-free; the cockpit owns the state
+/// and maps the render-models onto gpui).
 pub struct Cockpit {
     world: Rc<RefCell<World>>,
     /// Stable, sorted list of cell ids (so the rail order is deterministic and
@@ -56,17 +84,73 @@ pub struct Cockpit {
     last_outcome: Option<String>,
     /// Three anchor cells for the demo verbs (treasury, service, user).
     anchors: [CellId; 3],
+    /// The active right-pane tab.
+    tab: Tab,
+
+    // --- DEBUGGER panel state ----------------------------------------------
+    /// The turn the debugger inspects (a demo transfer the operator can run);
+    /// re-executed faithfully via `debug::render` against the live world.
+    debug_turn: dregg_turn::turn::Turn,
+    /// The breakpoints the debugger evaluates over the turn's steps.
+    breakpoints: Vec<debug::Breakpoint>,
+
+    // --- REPLAY panel state ------------------------------------------------
+    /// The time-travel scrubber cursor (a step in `0..=history.len()`).
+    replay_cursor: usize,
+    /// An optional pinned what-if fork (the cockpit owns it; `replay::Fork`).
+    replay_fork: Option<replay::Fork>,
+
+    // --- CIPHERCLERK panel state -------------------------------------------
+    /// The HD-derived identity vault (real `AgentCipherclerk`s).
+    clerk: cipherclerk::Cipherclerk,
+
+    // --- EDITOR panel state ------------------------------------------------
+    /// The live-editor's authoring/validation/deploy state.
+    editor: edit::EditorState,
 }
 
 impl Cockpit {
     pub fn new(world: Rc<RefCell<World>>, anchors: [CellId; 3]) -> Self {
         let cells = sorted_cells(&world.borrow());
+
+        // Seed the debugger with a demo turn (treasury → user transfer) that
+        // the operator can step + explain against the live world.
+        let [treasury, _service, user] = anchors;
+        let debug_turn = world.borrow().turn(treasury, vec![world::transfer(treasury, user, 1_000)]);
+
+        // Seed the cipherclerk vault with two real HD-derived identities.
+        let mut clerk = cipherclerk::Cipherclerk::new();
+        clerk.add_identity(cipherclerk::Identity::from_byte("alice", "dregg/cockpit", 0x01));
+        clerk.add_identity(cipherclerk::Identity::from_byte("bob", "dregg/cockpit", 0x02));
+
+        // Seed the editor with a conserving demo forest already validated.
+        let mut editor = edit::EditorState::default();
+        editor.set_artifact("Transfer 250 treasury→user (1 root, conserving)");
+        {
+            let mut fb = edit::ForestBuilder::new();
+            fb.root(
+                edit::ActionBuilder::new(treasury)
+                    .effect(dregg_turn::action::Effect::Transfer { from: treasury, to: user, amount: 250 }),
+            );
+            editor.set_verdict(edit::validate(fb.forest()));
+        }
+
+        // Start the replay scrubber at the head of the live world's history.
+        let replay_cursor = world.borrow().recorded_turns().len();
+
         Self {
             world,
             cells,
             selection: Selection::Image,
             last_outcome: None,
             anchors,
+            tab: Tab::Composer,
+            debug_turn,
+            breakpoints: vec![debug::Breakpoint::OnRefusal, debug::Breakpoint::OnConservationBreak],
+            replay_cursor,
+            replay_fork: None,
+            clerk,
+            editor,
         }
     }
 
@@ -385,6 +469,165 @@ impl Cockpit {
         }
         col
     }
+
+    // --- the workspace tab bar + the four feature panels ---------------------
+
+    /// The tab strip that switches the right-pane workspace.
+    fn tab_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let mut row = div().flex().gap_1().p_2().border_b_1().border_color(theme::border());
+        for t in Tab::ALL {
+            let active = self.tab == t;
+            row = row.child(
+                div()
+                    .id(SharedString::from(format!("tab-{}", t.label())))
+                    .px_2()
+                    .py_1()
+                    .rounded_md()
+                    .bg(if active { theme::panel_hi() } else { theme::panel() })
+                    .text_xs()
+                    .text_color(if active { theme::accent() } else { theme::muted() })
+                    .cursor_pointer()
+                    .hover(|s| s.bg(theme::border()))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _ev, _w, cx| {
+                            this.tab = t;
+                            cx.notify();
+                        }),
+                    )
+                    .child(t.label()),
+            );
+        }
+        row
+    }
+
+    /// The active right-pane workspace panel.
+    fn workspace(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        match self.tab {
+            Tab::Composer => self.composer(cx).into_any_element(),
+            Tab::Debugger => self.debugger_panel().into_any_element(),
+            Tab::Replay => self.replay_panel().into_any_element(),
+            Tab::Cipherclerk => self.cipherclerk_panel().into_any_element(),
+            Tab::Editor => self.editor_panel().into_any_element(),
+        }
+    }
+
+    /// THE TURN DEBUGGER panel — maps `debug::render`'s gpui-free model onto
+    /// gpui elements (step list, conservation Σδ, the refusal explanation).
+    fn debugger_panel(&self) -> impl IntoElement {
+        let w = self.world.borrow();
+        let panel = debug::render(&w, &self.debug_turn, &self.breakpoints);
+
+        let mut col = div().flex().flex_col().gap_1().p_3().size_full();
+        col = col.child(section_title("DEBUGGER · step · inspect · explain").mb_1());
+        col = col.child(div().text_color(theme::text()).child(panel.title.clone()));
+        col = col.child(div().text_xs().text_color(theme::muted()).mb_2().child(panel.subtitle.clone()));
+
+        // The step list.
+        let mut steps = div().flex().flex_col().gap_0p5();
+        for s in &panel.steps {
+            let color = if !s.committed {
+                theme::bad()
+            } else if s.is_break {
+                theme::warn()
+            } else {
+                theme::text()
+            };
+            steps = steps.child(
+                div()
+                    .flex()
+                    .justify_between()
+                    .px_2()
+                    .child(div().text_xs().text_color(color).child(format!(
+                        "{} k{} {}",
+                        if s.is_break { "◆" } else { "·" },
+                        s.index,
+                        s.label
+                    )))
+                    .child(div().text_xs().text_color(theme::muted()).child(format!("Σδ={}", s.conservation_delta))),
+            );
+        }
+        col = col.child(steps);
+
+        // The refusal explanation (the prize) or the conserving commit line.
+        col = col.child(match &panel.refusal {
+            Some(r) => div()
+                .mt_2()
+                .p_2()
+                .rounded_md()
+                .bg(theme::panel())
+                .flex()
+                .flex_col()
+                .gap_0p5()
+                .child(div().text_xs().text_color(theme::bad()).child(format!("REFUSED · guard: {}", r.guard)))
+                .child(div().text_xs().text_color(theme::text()).child(r.headline.clone()))
+                .child(div().text_xs().text_color(theme::muted()).child(r.detail.clone())),
+            None => div()
+                .mt_2()
+                .p_2()
+                .rounded_md()
+                .bg(theme::panel())
+                .text_xs()
+                .text_color(theme::good())
+                .child(format!("COMMITS · final Σδ = {} (conserves)", panel.final_conservation_delta)),
+        });
+        col
+    }
+
+    /// THE REPLAY / TIME-TRAVEL panel — `replay::replay_panel` returns gpui
+    /// directly; the cockpit owns the cursor + any pinned fork and rebuilds the
+    /// model each frame from the live world's REAL history.
+    fn replay_panel(&self) -> impl IntoElement {
+        let w = self.world.borrow();
+        let history = w.recorded_turns();
+        let cursor = self.replay_cursor.min(history.len());
+        let model = replay::ReplayPanelModel::build(history, cursor, self.replay_fork.as_ref());
+        div()
+            .flex()
+            .flex_col()
+            .size_full()
+            .child(replay::replay_panel(&model))
+    }
+
+    /// THE CIPHERCLERK panel — maps `cipherclerk::render`'s reflective lists
+    /// onto the cockpit's shared inspector rows.
+    fn cipherclerk_panel(&self) -> impl IntoElement {
+        let panel = cipherclerk::render(&self.clerk);
+        let mut col = div().flex().flex_col().gap_1().p_3().size_full();
+        col = col.child(section_title("CIPHERCLERK · identities · tokens · delegations").mb_1());
+
+        col = col.child(div().text_xs().text_color(theme::muted()).mt_1().child("IDENTITIES"));
+        for ins in &panel.identities {
+            col = col.child(inspectable_row(ins));
+        }
+        col = col.child(div().text_xs().text_color(theme::muted()).mt_2().child("HELD TOKENS"));
+        if panel.tokens.is_empty() {
+            col = col.child(div().text_xs().text_color(theme::muted()).px_2().child("(none minted yet)"));
+        }
+        for ins in &panel.tokens {
+            col = col.child(inspectable_row(ins));
+        }
+        col = col.child(div().text_xs().text_color(theme::muted()).mt_2().child("DELEGATIONS"));
+        if panel.delegations.is_empty() {
+            col = col.child(div().text_xs().text_color(theme::muted()).px_2().child("(none recorded)"));
+        }
+        for ins in &panel.delegations {
+            col = col.child(inspectable_row(ins));
+        }
+        col
+    }
+
+    /// THE LIVE EDITOR panel — `edit::render_panel` is gpui-free text; the
+    /// cockpit presents it line-by-line.
+    fn editor_panel(&self) -> impl IntoElement {
+        let text = edit::render_panel(&self.editor);
+        let mut col = div().flex().flex_col().p_3().size_full();
+        col = col.child(section_title("LIVE EDITOR · author · validate · deploy").mb_1());
+        for line in text.lines() {
+            col = col.child(div().text_xs().text_color(theme::text()).font_family("monospace").child(line.to_string()));
+        }
+        col
+    }
 }
 
 impl Render for Cockpit {
@@ -433,8 +676,17 @@ impl Render for Cockpit {
                             .child(self.blocklace(cx)),
                     ),
             )
-            // Right: the composer (drive the executor).
-            .child(div().flex_1().h_full().child(self.composer(cx)))
+            // Right: the workspace — tab bar over the active feature panel
+            // (composer · debugger · replay · cipherclerk · editor).
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .h_full()
+                    .child(self.tab_bar(cx))
+                    .child(div().flex_1().overflow_hidden().child(self.workspace(cx))),
+            )
     }
 }
 
@@ -454,6 +706,31 @@ fn kind_badge(kind: ObjectKind) -> impl IntoElement {
         ObjectKind::Image => ("image", theme::warn()),
     };
     div().mb_2().child(pill(label, color))
+}
+
+/// A compact row for a reflected object (the cipherclerk panel's identity /
+/// token / delegation entries), showing its title, kind badge, and fields.
+fn inspectable_row(ins: &Inspectable) -> impl IntoElement {
+    let mut col = div()
+        .flex()
+        .flex_col()
+        .gap_0p5()
+        .px_2()
+        .py_1()
+        .rounded_md()
+        .bg(theme::panel())
+        .child(
+            div()
+                .flex()
+                .justify_between()
+                .child(div().text_xs().text_color(theme::text()).child(ins.title.clone()))
+                .child(kind_badge(ins.kind)),
+        )
+        .child(div().text_xs().text_color(theme::muted()).child(ins.subtitle.clone()));
+    for f in &ins.fields {
+        col = col.child(field_row(f));
+    }
+    col
 }
 
 fn field_row(f: &Field) -> impl IntoElement {

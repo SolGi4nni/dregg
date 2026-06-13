@@ -1,11 +1,12 @@
 //! The embedded verified world — the HEART of the master interface.
 //!
-//! `World` holds a LIVE LOCAL dregg state (a `dregg_cell::Ledger`) and runs
-//! REAL verified turns against the embedded executor
-//! (`dregg_turn::executor::TurnExecutor::execute`). It is NOT a client of a
-//! remote node: the verified semantics run IN THIS PROCESS. (The same
-//! `TurnExecutor` that the SWAP makes the federation's authoritative producer —
-//! see `sdk/src/embed.rs`'s `DreggEngine`, which wraps this same pair.)
+//! `World` wraps the REAL embedded engine — `dregg_sdk::embed::DreggEngine`
+//! (`sdk/src/embed.rs`), the SDK's no-I/O executor+ledger core that the SWAP
+//! makes the federation's authoritative producer — and runs REAL verified turns
+//! through it (`DreggEngine::execute_turn`, i.e. `TurnExecutor::execute` over a
+//! `dregg_cell::Ledger`). It is NOT a client of a remote node, and NOT a
+//! parallel re-implementation of that engine: the verified semantics run IN
+//! THIS PROCESS, through the SDK's own engine.
 //!
 //! This module is gpui-free and `cargo test`-able: it is the engine the visual
 //! layer renders, decoupled from any window. Every mutation flows through
@@ -32,14 +33,16 @@ use std::collections::HashMap;
 use dregg_cell::{
     AuthRequired, Cell, CellId, Ledger, Permissions,
 };
+use dregg_sdk::embed::{DreggEngine, EmbedError, EngineConfig};
 use dregg_turn::{
     action::{Action, Authorization, DelegationMode, Effect, Event},
     forest::CallForest,
-    turn::{Turn, TurnReceipt, TurnResult},
+    turn::{Turn, TurnReceipt},
     ComputronCosts, TurnExecutor,
 };
 
 use crate::dynamics::{Dynamics, WorldEvent};
+use crate::replay::History;
 
 /// The outcome of attempting to commit a turn against the embedded executor.
 pub enum CommitOutcome {
@@ -60,11 +63,34 @@ impl CommitOutcome {
     }
 }
 
-/// A live local dregg world: an embedded executor over a live ledger, plus the
-/// provenance log and the dynamics stream the views render.
+/// A live local dregg world: the REAL embedded engine
+/// ([`dregg_sdk::embed::DreggEngine`] — the executor+ledger core the SWAP makes
+/// the federation's authoritative producer) plus the provenance log, the
+/// dynamics stream the views render, and the canonical replayable [`History`].
 pub struct World {
-    ledger: Ledger,
-    executor: TurnExecutor,
+    /// The REAL embedded engine: `dregg_sdk::embed::DreggEngine` wraps the same
+    /// `TurnExecutor` over `dregg_cell::Ledger` pair this world runs every
+    /// transition through — not a parallel re-implementation, the SDK's engine.
+    engine: DreggEngine,
+    /// The canonical, replayable history (genesis installs + committed turns,
+    /// each carrying the post-state `Ledger::root` tooth). Maintained in
+    /// lock-step with `engine` so time-travel ([`crate::replay`]) drives off the
+    /// live world's REAL turn history, not a separately-recorded one.
+    ///
+    /// The recovery model ([`crate::replay`], `CrashRecovery.lean`) is a
+    /// deterministic re-execution tape: it carries its own recording ledger +
+    /// executor (`record_ledger`/`record_exec`), driven in lock-step with the
+    /// authoritative `engine` under the SAME pinned config, so every recorded
+    /// root tooth equals the live engine's post-state root — and replay can
+    /// reconstruct + verify any past step.
+    history: History,
+    /// The history recorder's ledger (parallel to the engine's, kept in
+    /// lock-step). NOT a second source of truth — the engine is authoritative;
+    /// this is the replay tape's substrate so the recorded roots are real.
+    record_ledger: Ledger,
+    /// The history recorder's executor (pinned to the same timestamp/costs as
+    /// the engine's), used only to re-derive the recorded receipts/roots.
+    record_exec: TurnExecutor,
     /// Append-only provenance: every committed receipt, in commit order. This
     /// IS the local blocklace / receipt chain the browser navigates.
     receipts: Vec<TurnReceipt>,
@@ -73,6 +99,10 @@ pub struct World {
     dynamics: Dynamics,
     /// Monotonic "height" — one per committed turn (the local chain index).
     height: u64,
+    /// The fixed wall-clock the engine + history share, so a recorded turn
+    /// re-derives bit-identically on replay (the debugger's re-execution and the
+    /// replayer's reconstruction must use the SAME timestamp the live engine did).
+    timestamp: i64,
 }
 
 impl Default for World {
@@ -82,26 +112,67 @@ impl Default for World {
 }
 
 impl World {
-    /// A fresh, empty world with a real executor (free metering, so the demo
-    /// world isn't gated on a fee economy).
+    /// A fresh, empty world with the real embedded engine (free metering, so the
+    /// demo world isn't gated on a fee economy).
     pub fn new() -> Self {
-        let mut executor = TurnExecutor::new(ComputronCosts::zero());
         // A real wall-clock so temporal preconditions behave; harmless for the
-        // demo flows that don't use them.
-        executor.set_timestamp(now_unix());
+        // demo flows that don't use them. PINNED for the world's life so the
+        // engine and the replay history stay bit-deterministic together.
+        let timestamp = now_unix();
+        let config = EngineConfig {
+            costs: ComputronCosts::zero(),
+            federation_id: [0u8; 32],
+            block_height: 0,
+            timestamp,
+            max_proof_age_secs: 0,
+        };
+        let history = History::new(timestamp);
+        let record_exec = history.fresh_executor();
         World {
-            ledger: Ledger::new(),
-            executor,
+            engine: DreggEngine::new(config),
+            history,
+            record_ledger: Ledger::new(),
+            record_exec,
             receipts: Vec::new(),
             dynamics: Dynamics::new(),
             height: 0,
+            timestamp,
         }
     }
 
     // --- read surface (what the reflective object model + views consume) ----
 
     pub fn ledger(&self) -> &Ledger {
-        &self.ledger
+        self.engine.ledger()
+    }
+
+    /// The canonical, replayable history of this world (genesis installs +
+    /// committed turns, each with its post-state `Ledger::root` tooth). The
+    /// time-travel panel ([`crate::replay`]) drives off THIS — the live world's
+    /// real turn history — rather than a separately re-recorded one.
+    pub fn recorded_turns(&self) -> &History {
+        &self.history
+    }
+
+    /// A fresh `TurnExecutor` configured IDENTICALLY to this world's live engine
+    /// (same zero-cost metering, same pinned wall-clock, same federation id, and
+    /// `agent`'s current receipt-chain head). The turn debugger
+    /// ([`crate::debug`]) re-executes prefixes against this so its replay cannot
+    /// drift from the live executor's configuration.
+    ///
+    /// (`TurnExecutor` is not `Clone` — it carries `Mutex`/`RefCell` side-tables
+    /// and a `Box<dyn ProofVerifier>` — so this hands back a fresh executor
+    /// matching the live config, sourced from `World` so the config lives in ONE
+    /// place and the debugger can't diverge from it.)
+    pub fn debug_executor(&self, agent: &CellId) -> TurnExecutor {
+        let mut exec = TurnExecutor::new(ComputronCosts::zero());
+        exec.set_timestamp(self.timestamp);
+        exec.set_block_height(self.engine.executor().block_height);
+        exec.set_local_federation_id(self.engine.executor().local_federation_id);
+        if let Some(head) = self.chain_head(agent) {
+            exec.set_last_receipt_hash(*agent, head);
+        }
+        exec
     }
 
     pub fn receipts(&self) -> &[TurnReceipt] {
@@ -117,14 +188,14 @@ impl World {
     }
 
     pub fn cell_count(&self) -> usize {
-        self.ledger.len()
+        self.engine.ledger().len()
     }
 
     /// A cryptographic commitment to the WHOLE image — the distribution axis.
     /// (BLAKE3 over the canonical postcard of every cell, sorted by id, folded
     /// with the height + receipt-chain head so the root advances with history.)
     pub fn state_root(&self) -> [u8; 32] {
-        let mut cells: Vec<(&CellId, &Cell)> = self.ledger.iter().collect();
+        let mut cells: Vec<(&CellId, &Cell)> = self.engine.ledger().iter().collect();
         cells.sort_by(|a, b| a.0.as_bytes().cmp(b.0.as_bytes()));
         let mut hasher = blake3::Hasher::new();
         hasher.update(b"starbridge-v2-image-root-v1");
@@ -145,7 +216,7 @@ impl World {
     /// The per-agent receipt-chain head the executor enforces — exposed so
     /// callers (and the composer) can construct chained turns.
     pub fn chain_head(&self, agent: &CellId) -> Option<[u8; 32]> {
-        self.executor.get_last_receipt_hash(agent)
+        self.engine.executor().get_last_receipt_hash(agent)
     }
 
     // --- genesis / cell creation (out-of-band, like a node's genesis block) -
@@ -155,16 +226,45 @@ impl World {
     /// dynamics event so the visual layer sees it appear. Returns its id.
     pub fn genesis_cell(&mut self, seed: u8, balance: i64) -> CellId {
         let cell = make_open_cell(seed, balance);
+        self.install_genesis(cell, balance)
+    }
+
+    /// The single genesis install path: inserts `cell` into the live engine's
+    /// ledger, records it in the replayable [`History`] (so the post-state root
+    /// tooth is captured), and emits the `CellBorn` dynamics. Returns the id.
+    fn install_genesis(&mut self, cell: Cell, balance: i64) -> CellId {
         let id = cell.id();
-        self.ledger
-            .insert_cell(cell)
+        // Install into the AUTHORITATIVE engine ledger.
+        self.engine
+            .ledger_mut()
+            .insert_cell(cell.clone())
             .expect("genesis insert is into a fresh slot");
+        // Mirror into the replay tape (its own ledger), capturing the root
+        // tooth. Same cell, same order → the recorded root equals the engine's.
+        self.history.record_genesis(&mut self.record_ledger, cell);
         self.dynamics.emit(WorldEvent::CellBorn {
             cell: id,
             balance,
             genesis: true,
         });
         id
+    }
+
+    /// Install the genesis cell for an identity at its REAL derived id.
+    ///
+    /// `public_key` + `token_id` are the exact pair `Cell::with_balance` (and
+    /// `AgentCipherclerk::cell_id`) derive the id over, so the installed cell's
+    /// id equals the identity's `cell_id`. The cell carries `open_permissions`
+    /// (single-custody operator authority). Returns the derived [`CellId`].
+    ///
+    /// This is the real home for "embody an identity": the cipherclerk panel
+    /// hands `World` the identity's `(public_key, token_id, balance)` and `World`
+    /// builds + installs the genesis cell (rather than the panel building the
+    /// `Cell` itself).
+    pub fn embody(&mut self, public_key: [u8; 32], token_id: [u8; 32], balance: i64) -> CellId {
+        let mut cell = Cell::with_balance(public_key, token_id, balance);
+        cell.permissions = open_permissions();
+        self.install_genesis(cell, balance)
     }
 
     /// Install a genesis cell that already HOLDS a capability reaching
@@ -182,32 +282,15 @@ impl World {
             .capabilities
             .grant(cap_target, AuthRequired::None)
             .expect("fresh c-list has a free slot");
-        let id = cell.id();
-        self.ledger
-            .insert_cell(cell)
-            .expect("genesis insert is into a fresh slot");
-        self.dynamics.emit(WorldEvent::CellBorn {
-            cell: id,
-            balance,
-            genesis: true,
-        });
+        let id = self.install_genesis(cell, balance);
         (id, slot)
     }
 
     /// Install a fully-specified cell (genesis path). For richer fixtures (a
     /// cell with a program, an issuer well carrying −supply, …).
     pub fn genesis_install(&mut self, cell: Cell) -> CellId {
-        let id = cell.id();
         let balance = cell.state.balance();
-        self.ledger
-            .insert_cell(cell)
-            .expect("genesis insert is into a fresh slot");
-        self.dynamics.emit(WorldEvent::CellBorn {
-            cell: id,
-            balance,
-            genesis: true,
-        });
-        id
+        self.install_genesis(cell, balance)
     }
 
     // --- THE COMMIT PATH (every real state transition goes through here) -----
@@ -219,21 +302,29 @@ impl World {
     /// head, advances the height, appends the receipt to the provenance log, and
     /// derives + emits the dynamics events for the transition.
     pub fn commit_turn(&mut self, mut turn: Turn) -> CommitOutcome {
-        // Thread the chain head the executor will check.
-        turn.previous_receipt_hash = self.executor.get_last_receipt_hash(&turn.agent);
+        // Thread the chain head the engine's executor will check.
+        turn.previous_receipt_hash = self.engine.executor().get_last_receipt_hash(&turn.agent);
 
         // Snapshot the pre-state balances of touched cells so we can describe
         // the flow in the dynamics stream.
         let touched = touched_cells(&turn);
         let pre: HashMap<CellId, i64> = touched
             .iter()
-            .filter_map(|id| self.ledger.get(id).map(|c| (*id, c.state.balance())))
+            .filter_map(|id| self.engine.ledger().get(id).map(|c| (*id, c.state.balance())))
             .collect();
 
-        match self.executor.execute(&turn, &mut self.ledger) {
-            TurnResult::Committed { receipt, .. } => {
-                self.executor
+        // Run the turn through the REAL embedded engine (the SDK's DreggEngine,
+        // which owns the executor+ledger borrow internally).
+        match self.engine.execute_turn(&turn) {
+            Ok(receipt) => {
+                // Advance the engine's per-agent chain head (DreggEngine's
+                // execute_turn does not rebind it; do it here as the live path).
+                self.engine
+                    .executor()
                     .set_last_receipt_hash(receipt.agent, receipt.receipt_hash());
+                // Mirror the commit onto the replay tape (re-executes against the
+                // recorder's own ledger/executor, capturing the post-state root).
+                self.history.record_commit(&self.record_exec, &mut self.record_ledger, turn.clone());
                 self.height += 1;
 
                 let mut events = Vec::new();
@@ -247,7 +338,7 @@ impl World {
                 });
                 // Derive per-effect dynamics from the post-state delta.
                 for id in &touched {
-                    if let Some(cell) = self.ledger.get(id) {
+                    if let Some(cell) = self.engine.ledger().get(id) {
                         let before = pre.get(id).copied().unwrap_or(0);
                         let after = cell.state.balance();
                         if before != after {
@@ -273,22 +364,21 @@ impl World {
                 self.receipts.push(receipt.clone());
                 CommitOutcome::Committed { receipt, events }
             }
-            TurnResult::Rejected { reason, at_action } => {
-                let reason = format!("{reason:?}");
+            Err(EmbedError::TurnRejected { reason, at_action }) => {
                 self.dynamics.emit(WorldEvent::TurnRejected {
                     agent: turn.agent,
                     reason: reason.clone(),
                 });
                 CommitOutcome::Rejected { reason, at_action }
             }
-            TurnResult::Expired => CommitOutcome::Rejected {
-                reason: "conditional turn expired".into(),
-                at_action: vec![],
-            },
-            TurnResult::Pending => CommitOutcome::Rejected {
-                reason: "conditional turn pending".into(),
-                at_action: vec![],
-            },
+            Err(other) => {
+                let reason = other.to_string();
+                self.dynamics.emit(WorldEvent::TurnRejected {
+                    agent: turn.agent,
+                    reason: reason.clone(),
+                });
+                CommitOutcome::Rejected { reason, at_action: vec![] }
+            }
         }
     }
 
@@ -303,7 +393,7 @@ impl World {
     }
 
     fn next_nonce(&self, agent: &CellId) -> u64 {
-        self.ledger.get(agent).map(|c| c.state.nonce()).unwrap_or(0)
+        self.engine.ledger().get(agent).map(|c| c.state.nonce()).unwrap_or(0)
     }
 }
 

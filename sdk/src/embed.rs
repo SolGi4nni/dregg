@@ -54,6 +54,8 @@ use dregg_cell::Ledger;
 use dregg_token::{Attenuation, AuthRequest, AuthToken, MacaroonToken};
 use dregg_turn::turn::TurnResult;
 use dregg_turn::{Turn, TurnReceipt};
+// `ProofVerifier` is only used by the wire-gated `WireCodec::process_message`.
+#[cfg(feature = "network")]
 use dregg_wire::server::ProofVerifier;
 
 use crate::error::SdkError;
@@ -677,17 +679,23 @@ impl DreggEngine {
 
 // =============================================================================
 // WireCodec — protocol message parsing without transport
+//
+// Wire-gated: needs `dregg-wire`. The `DreggEngine` core above is wire-free and
+// compiles under the lighter `embed-core` feature; the codec only under `network`.
 // =============================================================================
 
 /// No-I/O wire protocol codec.
 ///
 /// Provides encode/decode for the dregg wire protocol without any transport.
 /// The caller handles reading bytes from and writing bytes to their own I/O layer.
+#[cfg(feature = "network")]
 pub struct WireCodec;
 
 // Re-export the message type so embedders don't need the wire crate directly.
+#[cfg(feature = "network")]
 pub use dregg_wire::message::WireMessage;
 
+#[cfg(feature = "network")]
 impl WireCodec {
     /// Decode a wire protocol message from a raw payload (without length prefix).
     ///
@@ -844,6 +852,7 @@ mod tests {
         assert!(!engine2.ledger().is_empty());
     }
 
+    #[cfg(feature = "network")]
     #[test]
     fn wire_codec_roundtrip() {
         let msg = WireMessage::Ping {
@@ -857,6 +866,7 @@ mod tests {
         assert_eq!(decoded, msg);
     }
 
+    #[cfg(feature = "network")]
     #[test]
     fn process_hello_message() {
         let engine = DreggEngine::new(EngineConfig::for_testing());
@@ -874,6 +884,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "network")]
     #[test]
     fn process_ping_message() {
         let engine = DreggEngine::new(EngineConfig::for_testing());

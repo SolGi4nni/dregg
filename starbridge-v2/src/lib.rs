@@ -11,9 +11,17 @@
 //! the remote-node + `sel4-thin` paths.
 
 #[cfg(feature = "embedded-executor")]
+pub mod cipherclerk;
+#[cfg(feature = "embedded-executor")]
+pub mod debug;
+#[cfg(feature = "embedded-executor")]
 pub mod dynamics;
 #[cfg(feature = "embedded-executor")]
+pub mod edit;
+#[cfg(feature = "embedded-executor")]
 pub mod reflect;
+#[cfg(feature = "embedded-executor")]
+pub mod replay;
 #[cfg(feature = "embedded-executor")]
 pub mod world;
 

@@ -112,7 +112,11 @@ pub mod committed_turn;
 pub mod discharge;
 #[cfg(feature = "network")]
 pub mod discovery;
-#[cfg(feature = "network")]
+// `embed` houses the no-I/O `DreggEngine` (executor + ledger + token core,
+// wire-free) AND the `WireCodec` (which needs `dregg-wire`). The engine core
+// is available whenever `network` OR the lighter `embed-core` is on; the
+// `WireCodec` block inside is itself gated under `network`.
+#[cfg(any(feature = "network", feature = "embed-core"))]
 pub mod embed;
 pub mod error;
 #[cfg(all(feature = "federation-client", feature = "network"))]

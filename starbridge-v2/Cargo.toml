@@ -47,6 +47,12 @@ async-task = { git = "https://github.com/smol-rs/async-task.git", rev = "b4486cd
 # portable SCALAR path on aarch64 (the nightly portable-SIMD intrinsics it
 # would otherwise use were removed in current toolchains).
 pathfinder_simd = { path = "vendor/pathfinder_simd" }
+# `dregg-sdk` (embedded cipherclerk) drags the proof dep tree, which needs the
+# same `ark-serialize` `serde_with`-feature fork the MAIN workspace patches in
+# (root Cargo.toml §patch). Replicate it here so this standalone workspace
+# re-resolves the federation/intent transitive deps identically.
+ark-serialize = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
+ark-serialize-derive = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
 
 [package]
 name = "starbridge-v2"
@@ -78,7 +84,15 @@ native-full = ["embedded-executor", "gpui-ui"]
 # The embedded verified executor + live local world. Links libdregg_lean.a.
 # Headless-usable (the `World` engine + dynamics + reflection are gpui-free and
 # `cargo test`-able under just this feature).
-embedded-executor = ["dep:dregg-turn", "dep:dregg-cell", "dep:dregg-types"]
+#
+# `dregg-sdk` rides the SAME Lean link (it pulls dregg-lean-ffi unconditionally,
+# exactly as dregg-turn does) — so the cipherclerk panel surfaces the REAL
+# `dregg_sdk::AgentCipherclerk`, never a parallel toy. We take it
+# `default-features = false` to keep the heavy networking/captp (tokio/quinn,
+# async) deps out of this headless, `cargo test`-able build: the cipherclerk +
+# token surface we surface (identities, mint/attenuate/delegate, cell_id) is in
+# the SDK's un-gated core.
+embedded-executor = ["dep:dregg-turn", "dep:dregg-cell", "dep:dregg-types", "dep:dregg-sdk", "dep:dregg-token", "dep:dregg-userspace-verify"]
 
 # The gpui renderer. `runtime_shaders` is LOAD-BEARING on macOS: it makes gpui
 # compile its Metal shaders AT RUNTIME (via `MTLDevice::newLibraryWithSource`,
@@ -104,6 +118,20 @@ gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "fca2ccd4
 dregg-turn = { path = "../turn", optional = true }
 dregg-cell = { path = "../cell", optional = true }
 dregg-types = { path = "../types", optional = true }
+# The wallet-grade clerk itself (`dregg_sdk::AgentCipherclerk`) + the REAL
+# embedded engine (`dregg_sdk::embed::DreggEngine`, the executor+ledger+token
+# core our `World` wraps). `default-features = false` drops the SDK's
+# networking/captp stack (tokio/quinn/async); `embed-core` pulls the wire-free
+# engine core (the cipherclerk + macaroon-token + DreggEngine surface we use is
+# all in the SDK's always-compiled / embed-core core, NOT the network stack).
+dregg-sdk = { path = "../sdk", optional = true, default-features = false, features = ["embed-core"] }
+# The macaroon token vocabulary (`Attenuation` etc.) the clerk speaks — re-exported
+# by dregg-sdk, but we name it directly for the panel's caveat projection.
+dregg-token = { path = "../token", optional = true }
+# The static, userspace, pre-submission assurance toolkit (`analyze`) — the
+# REAL `check_conservation`/`check_no_amplification`/`check_wellformed` the live
+# editor's validate() rail delegates to (never a parallel re-expression).
+dregg-userspace-verify = { path = "../dregg-userspace-verify", optional = true }
 
 # --- wire contract (always available: remote-node + sel4-thin paths) --------
 serde = { version = "1", features = ["derive"] }
