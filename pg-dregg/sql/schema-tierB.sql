@@ -48,8 +48,13 @@ CREATE SCHEMA IF NOT EXISTS dregg;
 --                     function runs as (SECURITY DEFINER). NOTHING ELSE writes.
 --   * dregg_reader  — applications. SELECT only. RLS-gated by the M1 caps.
 -- A bare application connection is dregg_reader: it can never mutate state.
-CREATE ROLE dregg_kernel  NOLOGIN;   -- the verified writer (SECURITY DEFINER target)
-CREATE ROLE dregg_reader  NOLOGIN;   -- applications: reads only
+-- The kernel is the VERIFIED writer: it materializes verified-turn post-images
+-- wholesale, so it is BYPASSRLS (the read-side RLS gates APPLICATIONS, not the
+-- writer that produced the rows). In Tier C even the kernel's writes still pass
+-- the dregg_verify_turn CHECK (schema-tierC.sql) — the verifier gates writes,
+-- RLS gates reads.
+CREATE ROLE dregg_kernel  NOLOGIN BYPASSRLS;   -- the verified writer (SECURITY DEFINER target)
+CREATE ROLE dregg_reader  NOLOGIN;             -- applications: reads only
 
 -- ===========================================================================
 -- 1.  RECEIPTS / TURNS — the spine. A direct projection of CommitRecord.
@@ -66,6 +71,7 @@ CREATE TABLE dregg.turns (
     creator              bytea  NOT NULL,               -- CommitRecord.creator (agent CellId)
     receipt_hash         bytea  NOT NULL,               -- CommitRecord.receipt_hash
     ledger_root          bytea  NOT NULL,               -- CommitRecord.ledger_root (post-state commitment)
+    prev_root            bytea  NOT NULL,               -- the prior turn's ledger_root (the RootChain link)
     committed_at         timestamptz NOT NULL DEFAULT now()  -- wall-clock mirror time (NOT consensus time)
 );
 CREATE INDEX turns_by_height  ON dregg.turns (height);
@@ -136,11 +142,6 @@ CREATE TABLE dregg.capabilities (
     PRIMARY KEY (holder, slot)
 );
 CREATE INDEX caps_by_target ON dregg.capabilities (target);
--- The delegation graph as a view; WITH RECURSIVE over it gives reachability /
--- the no-amplification audit (a child's allowed_effects ⊆ its grantor's).
-CREATE VIEW dregg.cap_edges AS
-    SELECT holder AS src, target AS dst, slot, permissions, expires_at
-    FROM dregg.capabilities;
 
 -- ===========================================================================
 -- 4.  BLOCKLACE DAG (persist/src/blocklace_store.rs) — the consensus layer.
@@ -184,6 +185,34 @@ CREATE INDEX memory_by_domain ON dregg.memory (domain);
 -- `SELECT dregg_domain_root('caps', collection)` over the present cells — a
 -- derived view, matching boundary_root_derived. Equality of that derived root
 -- with the committed map root is the Lean-proved boundary reconciliation.
+
+-- ===========================================================================
+-- 5b. THE DREGG-DEVELOPER QUERY SURFACE — views over the Tier-B tables.
+-- ===========================================================================
+-- These are the views the `mirror::ddl::tier_b()` emitter ships (kept in step
+-- with this file by the `emitted_ddl_agrees_with_committed_sql_file` test in
+-- src/mirror.rs). Each is a plain SELECT, so it inherits the read-side RLS of
+-- the table it draws from: a reader sees only their admitted rows THROUGH the
+-- view too. See docs/QUICKSTART-dregg-dev.md for worked queries.
+
+-- The delegation graph; WITH RECURSIVE over it gives reachability / the
+-- no-amplification audit (a child's allowed_effects ⊆ its grantor's).
+CREATE OR REPLACE VIEW dregg.cap_edges AS
+    SELECT holder AS src, target AS dst, slot, permissions, expires_at
+    FROM dregg.capabilities;
+
+-- The ledger, hex-keyed and balance-first: the "show me the money" view.
+CREATE OR REPLACE VIEW dregg.cell_balances AS
+    SELECT encode(cell_id, 'hex') AS cell, balance, nonce, lifecycle, last_ordinal
+    FROM dregg.cells;
+
+-- The receipt/turn hash chain a light client walks: each row's prev_root is the
+-- prior row's ledger_root (the RootChain tooth, surfaced as SQL).
+CREATE OR REPLACE VIEW dregg.receipt_chain AS
+    SELECT ordinal, height, encode(creator, 'hex') AS creator,
+           encode(prev_root, 'hex') AS prev_root,
+           encode(ledger_root, 'hex') AS ledger_root, committed_at
+    FROM dregg.turns ORDER BY ordinal;
 
 -- ===========================================================================
 -- 6.  READ-SIDE RLS — every state table composes with the M1 cap layer.

@@ -45,6 +45,35 @@ against the application's plain postgres tables. The same `dga1_…` string a
 sub-agent carries to call a dregg tool is the string a postgres policy checks a
 `SELECT` against.
 
+### Two first-class perspectives, one substrate
+
+`pg-dregg` is designed to be first-class from **both** directions, and the same
+extension serves both:
+
+- **The postgres user's perspective.** Someone who lives in postgres: their
+  existing tables gain dregg's verified caps (RLS) + provenance, with zero dregg
+  infrastructure to learn beyond a token string. `CREATE EXTENSION`, set the
+  issuer key, write `CREATE POLICY … USING (dregg_admits(…))`, present an
+  attenuated token, watch the rows narrow. The capability discipline — provable
+  attenuation, offline delegation, per-credential revocation, explainable denial
+  — arrives without any of it leaking into their mental model beyond the policy
+  line. The 10-minute path is `pg-dregg/docs/QUICKSTART-pg-user.md`.
+
+- **The dregg developer's perspective.** Someone building on dregg: **postgres
+  is a native dregg surface.** "Your node IS your postgres" — state is queryable
+  SQL (`SELECT * FROM dregg.cells`), authorization is caps, the mirror is the
+  store. They reach for pg as naturally as for the SDK: the commit log projects
+  into queryable tables (cells / receipts / caps / the blocklace), the explorer
+  is "your capabilities, expressed as the rows you may `SELECT`", and SDKs query
+  through pg with the bearer token they already hold. The path is
+  `pg-dregg/docs/QUICKSTART-dregg-dev.md`.
+
+The first perspective is **Tier A** (caps as RLS, the M1 functions); the second
+is **Tiers B/C/D** (state as tables → writes through the verifier → the executor
+as a pg function). Circuit-free + offline is a property of **Tier A only**, not
+a ceiling: `pg-dregg` authorizes the executor/circuit for the tiers that need
+them (§8.1). Part II below is the second perspective in full.
+
 ### What hand-rolled SQL RLS structurally cannot express
 
 A SQL `USING` predicate is a boolean expression over the current row and

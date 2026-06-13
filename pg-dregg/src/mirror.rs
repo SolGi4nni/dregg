@@ -389,14 +389,28 @@ pub mod ddl {
         let mut s = String::new();
         s.push_str("CREATE SCHEMA IF NOT EXISTS dregg;\n");
         s.push_str("DO $$ BEGIN CREATE ROLE dregg_reader NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;\n");
-        s.push_str("DO $$ BEGIN CREATE ROLE dregg_kernel NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;\n");
+        // The kernel is the VERIFIED writer (the SECURITY DEFINER target in Tier
+        // C). The read-side RLS gates APPLICATIONS, not the writer that produced
+        // the post-image; the kernel writes verified-turn rows wholesale, so it
+        // is BYPASSRLS. In Tier C even the kernel's writes still pass the
+        // dregg_verify_turn CHECK (schema-tierC.sql) — RLS is the wrong tool to
+        // gate them; the verifier is. (If the role pre-exists without the
+        // attribute, ALTER lifts it.)
+        s.push_str("DO $$ BEGIN CREATE ROLE dregg_kernel NOLOGIN BYPASSRLS; EXCEPTION WHEN duplicate_object THEN ALTER ROLE dregg_kernel BYPASSRLS; END $$;\n");
         s.push_str(TURNS);
         s.push_str(CELLS);
         s.push_str(CAPS);
         s.push_str(MEMORY);
+        s.push_str(VIEWS);
         s.push_str(RLS);
         s
     }
+
+    /// The dregg-developer query surface: views that make the "your node IS your
+    /// postgres" story good. Each is a plain SELECT over the Tier-B tables, so it
+    /// inherits the read-side RLS of the tables it draws from. Emitted as part of
+    /// [`tier_b`]; mirrored in `sql/schema-tierB.sql` (anti-drift test below).
+    pub const VIEWS_SQL: &str = VIEWS;
 
     const TURNS: &str = r#"
 CREATE TABLE IF NOT EXISTS dregg.turns (
@@ -430,9 +444,6 @@ CREATE TABLE IF NOT EXISTS dregg.capabilities (
     last_ordinal bigint NOT NULL REFERENCES dregg.turns(ordinal),
     PRIMARY KEY (holder, slot));
 CREATE INDEX IF NOT EXISTS caps_by_target ON dregg.capabilities (target);
-CREATE OR REPLACE VIEW dregg.cap_edges AS
-    SELECT holder AS src, target AS dst, slot, permissions, expires_at
-    FROM dregg.capabilities;
 "#;
 
     const MEMORY: &str = r#"
@@ -441,6 +452,22 @@ CREATE TABLE IF NOT EXISTS dregg.memory (
     value bytea, last_ordinal bigint NOT NULL REFERENCES dregg.turns(ordinal),
     PRIMARY KEY (domain, collection, key));
 CREATE INDEX IF NOT EXISTS memory_by_domain ON dregg.memory (domain);
+"#;
+
+    // The dregg-developer query surface (docs/QUICKSTART-dregg-dev.md). Plain
+    // SELECTs over the Tier-B tables; each inherits the table's read-side RLS.
+    const VIEWS: &str = r#"
+CREATE OR REPLACE VIEW dregg.cap_edges AS
+    SELECT holder AS src, target AS dst, slot, permissions, expires_at
+    FROM dregg.capabilities;
+CREATE OR REPLACE VIEW dregg.cell_balances AS
+    SELECT encode(cell_id, 'hex') AS cell, balance, nonce, lifecycle, last_ordinal
+    FROM dregg.cells;
+CREATE OR REPLACE VIEW dregg.receipt_chain AS
+    SELECT ordinal, height, encode(creator, 'hex') AS creator,
+           encode(prev_root, 'hex') AS prev_root,
+           encode(ledger_root, 'hex') AS ledger_root, committed_at
+    FROM dregg.turns ORDER BY ordinal;
 "#;
 
     const RLS: &str = r#"
@@ -646,5 +673,65 @@ mod tests {
         assert!(sql.contains("dregg_admits('read'"));
         // The universal-memory table exists.
         assert!(sql.contains("dregg.memory"));
+        // The dregg-dev query-surface views are emitted.
+        assert!(sql.contains("CREATE OR REPLACE VIEW dregg.cell_balances"));
+        assert!(sql.contains("CREATE OR REPLACE VIEW dregg.cap_edges"));
+        assert!(sql.contains("CREATE OR REPLACE VIEW dregg.receipt_chain"));
+    }
+
+    /// ANTI-DRIFT: the committed `sql/schema-tierB.sql` and the Rust DDL emitter
+    /// (`ddl::tier_b()`) must AGREE — they describe the same tables, views, and
+    /// policies. The SQL file is the human-readable, fully-commented form; the
+    /// emitter is what the extension ships. This test pins them together so they
+    /// cannot silently diverge: every CREATE TABLE / CREATE VIEW / CREATE POLICY
+    /// the emitter produces must appear (whitespace- and modifier-normalized) in
+    /// the committed SQL file, and vice-versa for the load-bearing relations.
+    #[test]
+    fn emitted_ddl_agrees_with_committed_sql_file() {
+        let emitted = ddl::tier_b();
+        let file = include_str!("../sql/schema-tierB.sql");
+
+        // The relation/policy names the two MUST share. (Names, not full bodies:
+        // the file carries extra comments + the cell_history/blocks tables that
+        // are documented-as-future and not yet in the emitter; the emitter is the
+        // shippable subset. Names are the anti-drift contract.)
+        let shared = [
+            "CREATE TABLE", // turns
+            "dregg.turns",
+            "dregg.cells",
+            "dregg.capabilities",
+            "dregg.memory",
+            "dregg.cap_edges",
+            "dregg.cell_balances",
+            "dregg.receipt_chain",
+            "CREATE POLICY cells_read",
+            "CREATE POLICY turns_read",
+            "CREATE POLICY caps_read",
+            "CREATE POLICY memory_read",
+            "dregg_admits('read'",
+            "FORCE ROW LEVEL SECURITY",
+            "REVOKE INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA dregg FROM PUBLIC",
+        ];
+        for needle in shared {
+            assert!(
+                emitted.contains(needle),
+                "emitter is missing `{needle}` (drift vs schema-tierB.sql)"
+            );
+            assert!(
+                file.contains(needle),
+                "schema-tierB.sql is missing `{needle}` (drift vs ddl::tier_b())"
+            );
+        }
+
+        // Column-level agreement on the spine table the writer must fill: every
+        // column the emitter declares for dregg.cells must be named in the file.
+        for col in [
+            "cell_id", "mode", "balance", "nonce", "fields", "fields_json", "heap",
+            "program", "verification_key", "delegate", "lifecycle", "last_ordinal",
+            "cell_root",
+        ] {
+            assert!(file.contains(col), "schema-tierB.sql missing cells column `{col}`");
+            assert!(emitted.contains(col), "emitter missing cells column `{col}`");
+        }
     }
 }

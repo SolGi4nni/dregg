@@ -25,6 +25,7 @@
 
 pub mod authz;
 pub mod mirror;
+pub mod synth;
 
 // The PG_MODULE_MAGIC block + the `__pgrx_marker` the schema generator links
 // against MUST live at the crate ROOT (cargo-pgrx's pgrx_embed binary calls
@@ -158,6 +159,28 @@ mod pg {
     // The terse convenience wrapper — reads the session GUC + clock so RLS
     // policies stay readable. STABLE (reads now() and the GUC).
     // -----------------------------------------------------------------------
+
+    /// `dregg_install_schema() -> text`. Install the Tier-B store schema (the
+    /// `dregg.*` tables + the query-surface views + the read-side RLS + the
+    /// write-lockdown role model), generated from the same Rust that defines the
+    /// row types (`crate::mirror::ddl::tier_b`). Idempotent (`IF NOT EXISTS`), so
+    /// it is safe to re-run. This is the dregg-developer entry point
+    /// (`docs/QUICKSTART-dregg-dev.md` §2): one call stands up "postgres as the
+    /// dregg store". Returns a short summary of what it created.
+    ///
+    /// Must be run by a role that can `CREATE TABLE`/`CREATE ROLE` in the target
+    /// database (a DBA/migration role), NOT an application role.
+    #[pg_extern]
+    fn dregg_install_schema() -> String {
+        let ddl = crate::mirror::ddl::tier_b();
+        Spi::run(&ddl).expect("dregg_install_schema: Tier-B DDL failed");
+        let tables = ddl.matches("CREATE TABLE").count();
+        let views = ddl.matches("CREATE OR REPLACE VIEW").count();
+        let policies = ddl.matches("CREATE POLICY").count();
+        format!(
+            "dregg Tier-B store installed: {tables} tables, {views} views, {policies} RLS policies in schema dregg"
+        )
+    }
 
     /// `dregg_admits(action, resource) -> bool`. Reads `current_setting(
     /// 'dregg.token', true)` and `now()`; the ergonomic face for
@@ -430,6 +453,233 @@ mod pg {
                 Spi::get_one_with_args("SELECT dregg_cap_subject($1)", &[tok.as_str().into()])
                     .unwrap();
             assert_eq!(subj.as_deref(), Some("agent-1"));
+        }
+
+        // ===================================================================
+        // Tier B THROUGH real SQL: the mirror's DDL + synthetic-turn rows, an
+        // RLS-narrowing query, and the root-chain gate refusing a bad batch.
+        //
+        // This is the through-postgres twin of `examples/end_to_end.rs`: the
+        // SAME synthetic ledger story (crate::synth), the SAME emitted DDL
+        // (crate::mirror::ddl::tier_b), now installed in a real pg14 backend and
+        // queried under real Row Level Security.
+        // ===================================================================
+        use crate::mirror::{MirrorBatch, RootChain};
+        use crate::synth;
+
+        /// Install the Tier-B schema from the Rust emitter (the exact SQL the
+        /// extension ships), then load the synthetic committed turns as the
+        /// `dregg_kernel` writer would. Returns nothing; the tables are live.
+        fn install_tier_b_and_load_synth() {
+            // The schema: via the dregg_install_schema() extern the quickstart
+            // documents (which runs mirror::ddl::tier_b() — the same Rust that
+            // defines the rows).
+            let summary: String = Spi::get_one("SELECT dregg_install_schema()")
+                .unwrap()
+                .unwrap();
+            assert!(summary.contains("Tier-B store installed"));
+
+            // Load the synthetic story AS the kernel writer (the only role the
+            // lockdown lets write). We run the root-chain tooth first — a row is
+            // only written if its batch chained, mirroring Tier C's discipline.
+            let story = synth::ledger_story();
+            let mut chain = RootChain::resume(synth::GENESIS_ROOT, 0);
+            for b in &story {
+                chain.extend(b).expect("synthetic story must chain");
+                write_batch(b);
+            }
+        }
+
+        /// Render one accepted batch's rows as the writer's INSERTs and run them.
+        /// The writer runs as the privileged connection role (a BYPASSRLS
+        /// superuser in the harness) — exactly the trust position of the
+        /// `dregg_kernel` SECURITY-DEFINER writer the emitted role model defines:
+        /// it materializes verified-turn post-images wholesale, above the
+        /// read-side RLS that gates applications. (The real M2 writer ships the
+        /// MirrorBatch; here we inline it so the pg_test is node-free.)
+        fn write_batch(b: &MirrorBatch) {
+            let hx = |x: &[u8]| -> String { x.iter().map(|y| format!("{y:02x}")).collect() };
+            let t = &b.turn;
+            Spi::run(&format!(
+                "INSERT INTO dregg.turns(ordinal,height,block_id,block_executed_up_to,\
+                 turn_hash,creator,receipt_hash,ledger_root,prev_root) VALUES \
+                 ({},{},'\\x{}',{},'\\x{}','\\x{}','\\x{}','\\x{}','\\x{}')",
+                t.ordinal, t.height, hx(&t.block_id), t.block_executed_up_to,
+                hx(&t.turn_hash), hx(&t.creator), hx(&t.receipt_hash),
+                hx(&t.ledger_root), hx(&t.prev_root),
+            ))
+            .unwrap();
+            for c in &b.cells {
+                // Upsert: a later turn overwrites a cell's post-image.
+                Spi::run(&format!(
+                    "INSERT INTO dregg.cells(cell_id,mode,balance,nonce,fields,lifecycle,\
+                     last_ordinal,cell_root) VALUES \
+                     ('\\x{}','{}',{},{},'\\x','{}',{},'\\x{}') \
+                     ON CONFLICT (cell_id) DO UPDATE SET balance=EXCLUDED.balance,\
+                     nonce=EXCLUDED.nonce,last_ordinal=EXCLUDED.last_ordinal",
+                    hx(&c.cell_id), c.mode, c.balance, c.nonce, c.lifecycle,
+                    c.last_ordinal, hx(&c.cell_root),
+                ))
+                .unwrap();
+            }
+            for cap in &b.caps {
+                Spi::run(&format!(
+                    "INSERT INTO dregg.capabilities(holder,slot,target,permissions,\
+                     last_ordinal) VALUES ('\\x{}',{},'\\x{}','{}'::jsonb,{})",
+                    hx(&cap.holder), cap.slot, hx(&cap.target),
+                    cap.permissions_json, cap.last_ordinal,
+                ))
+                .unwrap();
+            }
+        }
+
+        /// A read-everything operator token and an ALICE-only attenuated token,
+        /// minted under the test root (the configured issuer key).
+        fn mirror_tokens(root: &RootKey) -> (String, String) {
+            let operator = root
+                .mint([
+                    Caveat::FirstParty(Pred::AttrEq { key: "action".into(), value: "read".into() }),
+                    Caveat::FirstParty(Pred::AttrPrefix { key: "resource".into(), prefix: "".into() }),
+                ])
+                .encode();
+            let alice_only = root
+                .mint([
+                    Caveat::FirstParty(Pred::AttrEq { key: "action".into(), value: "read".into() }),
+                    Caveat::FirstParty(Pred::AttrPrefix { key: "resource".into(), prefix: "".into() }),
+                ])
+                .attenuate([Caveat::FirstParty(Pred::AttrPrefix {
+                    key: "resource".into(),
+                    prefix: "a1".into(),
+                })])
+                .encode();
+            (operator, alice_only)
+        }
+
+        /// Count `dregg.cells` rows visible under a token, as the unprivileged
+        /// `dregg_reader` (so RLS actually filters; superusers BYPASS it).
+        fn cells_visible(tok: &str) -> i64 {
+            Spi::run(&format!("SET dregg.token = '{tok}'")).unwrap();
+            Spi::run("SET ROLE dregg_reader").unwrap();
+            let n = Spi::get_one::<i64>("SELECT count(*) FROM dregg.cells")
+                .unwrap()
+                .unwrap();
+            Spi::run("RESET ROLE").unwrap();
+            n
+        }
+
+        #[pg_test]
+        fn tier_b_mirror_rls_narrows_cell_visibility() {
+            let root = root();
+            assert_issuer(&root);
+            install_tier_b_and_load_synth();
+
+            // Sanity: as the kernel/owner (RLS still FORCEd, but the cells_read
+            // policy is TO dregg_reader; the writer sees its own rows only via a
+            // direct count as a privileged role). Confirm three distinct cells
+            // landed by counting AS the reader under a wide-open operator token.
+            let (operator, alice_only) = mirror_tokens(&root);
+
+            // Operator sees all three cells (TREASURY, ALICE, BOB).
+            let n_op = cells_visible(&operator);
+            assert_eq!(n_op, 3, "operator token should see all three mirror cells");
+
+            // The ALICE-only attenuated token sees a STRICT SUBSET — only ALICE's
+            // cell, whose id hex starts `a1`. The no-amplify property, through
+            // real Tier-B RLS on the mirror.
+            let n_alice = cells_visible(&alice_only);
+            assert_eq!(n_alice, 1, "attenuated token should see only ALICE's cell");
+            assert!(n_alice < n_op, "attenuation must strictly narrow mirror visibility");
+        }
+
+        #[pg_test]
+        fn tier_b_query_surface_views_resolve() {
+            let root = root();
+            assert_issuer(&root);
+            install_tier_b_and_load_synth();
+            let (operator, _) = mirror_tokens(&root);
+
+            // The dregg-developer query surface: the cell_balances view, the
+            // cap_edges delegation view, and the receipt_chain all resolve and
+            // are RLS-gated through the operator token.
+            Spi::run(&format!("SET dregg.token = '{operator}'")).unwrap();
+            Spi::run("SET ROLE dregg_reader").unwrap();
+
+            // Balance view: the richest cell is TREASURY at 999_500.
+            let top: i64 = Spi::get_one("SELECT max(balance) FROM dregg.cell_balances")
+                .unwrap()
+                .unwrap();
+            assert_eq!(top, 999_500, "TREASURY is the richest visible cell");
+
+            // The delegation edge ALICE→BOB is in cap_edges (holder gated; the
+            // operator can read it).
+            let edges: i64 = Spi::get_one("SELECT count(*) FROM dregg.cap_edges")
+                .unwrap()
+                .unwrap();
+            assert_eq!(edges, 1, "the grant turn's ALICE→BOB edge is queryable");
+
+            // The receipt chain is walkable in order; four turns landed.
+            let turns: i64 = Spi::get_one("SELECT count(*) FROM dregg.receipt_chain")
+                .unwrap()
+                .unwrap();
+            assert_eq!(turns, 4, "all four committed turns are in the receipt chain");
+            Spi::run("RESET ROLE").unwrap();
+        }
+
+        #[pg_test]
+        fn tier_b_apps_cannot_write_state() {
+            // The spine: applications (dregg_reader) get SELECT only — state
+            // mutates ONLY through verified turns. We assert the privilege
+            // lockdown declaratively via the catalog (has_table_privilege),
+            // which does not abort the SPI transaction the way triggering the
+            // ERROR would: the reader HAS select, and has NO insert/update/delete
+            // on any dregg state table. (The emitted DDL's REVOKE + the
+            // SELECT-only GRANT are what this verifies are in force.)
+            let root = root();
+            assert_issuer(&root);
+            install_tier_b_and_load_synth();
+
+            let can = |priv_: &str| -> bool {
+                Spi::get_one::<bool>(&format!(
+                    "SELECT has_table_privilege('dregg_reader', 'dregg.cells', '{priv_}')"
+                ))
+                .unwrap()
+                .unwrap()
+            };
+            assert!(can("SELECT"), "the reader must be able to SELECT state");
+            assert!(!can("INSERT"), "the reader must NOT be able to INSERT state");
+            assert!(!can("UPDATE"), "the reader must NOT be able to UPDATE state");
+            assert!(!can("DELETE"), "the reader must NOT be able to DELETE state");
+
+            // And the kernel writer DOES hold the write privileges (the only
+            // role that may materialize post-images).
+            let kernel = |priv_: &str| -> bool {
+                Spi::get_one::<bool>(&format!(
+                    "SELECT has_table_privilege('dregg_kernel', 'dregg.cells', '{priv_}')"
+                ))
+                .unwrap()
+                .unwrap()
+            };
+            assert!(kernel("INSERT"), "the kernel writer must hold INSERT");
+            assert!(kernel("UPDATE"), "the kernel writer must hold UPDATE");
+        }
+
+        #[pg_test]
+        fn root_chain_gate_refuses_a_tampered_batch() {
+            // The Tier-C anti-substitution tooth (the cheap structural half the
+            // even read-only mirror enforces), exercised in the backend process:
+            // the RootChain accepts the well-formed story and REFUSES a forged
+            // ord-2 batch whose prev_root was substituted, leaving the head put.
+            let story = synth::ledger_story();
+            let mut chain = RootChain::resume(synth::GENESIS_ROOT, 0);
+            chain.extend(&story[0]).unwrap();
+            chain.extend(&story[1]).unwrap();
+            let head_before = chain.head();
+            let err = chain.extend(&synth::tampered_batch_at_2()).unwrap_err();
+            assert!(
+                matches!(err, crate::mirror::ChainRefusal::RootMismatch { .. }),
+                "a tampered batch must be refused by the root-chain tooth"
+            );
+            assert_eq!(chain.head(), head_before, "a refused batch must not move the head");
         }
     }
 }

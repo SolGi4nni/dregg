@@ -9,6 +9,12 @@
 -- extension is installed); the machine-checked proofs of the same behaviour are
 -- the #[pg_test]s in src/lib.rs (run by `cargo pgrx test pg14`) and the
 -- postgres-independent core tests in src/authz.rs (run by `cargo test`).
+--
+-- TWO QUICKSTARTS walk these end-to-end:
+--   * docs/QUICKSTART-pg-user.md   — a plain table → cap-gated RLS in ~10 min.
+--   * docs/QUICKSTART-dregg-dev.md — postgres as the dregg store/query surface.
+-- and `cargo run --example end_to_end` runs the whole arc (mirror → root-chain →
+-- DDL → RLS-narrowing + anti-substitution + revocation) on synthetic turns.
 
 -- ---------------------------------------------------------------------------
 -- 0. Install + the trust root.
