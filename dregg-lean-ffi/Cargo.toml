@@ -79,6 +79,17 @@ name = "marshal_roundtrip"
 path = "src/marshal_roundtrip.rs"
 required-features = ["lean-lib"]
 
+# THE TRANSLATION-VALIDATION GATE (Klein CRITICAL-2, Rust half): asserts the hand-written
+# `marshal.rs` T8/T9 marshaller reproduces, BYTE-FOR-BYTE, the Lean-emitted golden corpus produced
+# by the PROVED encoders (`Dregg2.Exec.FFI.encodeWWire`/`encodeWStatusOut`, via
+# `metatheory/EmitMarshalGolden.lean`, committed at `goldens/marshal-golden.txt`). Unlike
+# `marshal_roundtrip` (which calls the LIVE Lean kernel and so must be a `lean-lib` bin), this
+# compares against the COMMITTED golden string and needs NO archive link — it runs in plain
+# `cargo test -p dregg-lean-ffi` on any target. `marshal.rs` is included via `#[path]`.
+[[test]]
+name = "marshal_conformance"
+path = "src/marshal_conformance.rs"
+
 [dependencies]
 # Reproduces circuit::air_descriptor::fingerprint (BLAKE3-derive-key) so the
 # decoded-Lean AIR can be fingerprint-bound to the Rust-native AIR.

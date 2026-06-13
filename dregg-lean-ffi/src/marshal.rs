@@ -1667,6 +1667,504 @@ pub fn all_action_arms_demo() -> Vec<WireAction> {
 }
 
 // ===================================================================
+// TRANSLATION-VALIDATION CORPUS (Klein CRITICAL-2, the Rust half).
+//
+// The functions below build, BY CONSTRUCTION, the SAME named cases the Lean
+// emitter `metatheory/EmitMarshalGolden.lean` prints through the PROVED encoder
+// `Dregg2.Exec.FFI.encodeWWire` / `encodeWStatusOut`. The conformance harness
+// (`marshal_conformance.rs`) joins these against the committed Lean golden
+// (`goldens/marshal-golden.txt`) on `<name>` and asserts:
+//   * every `marshal_turn_hosted(host,state,turn)` reproduces the Lean `IN` wire
+//     BYTE-FOR-BYTE (the T8 encoder = the proved Lean encoder), and
+//   * `unmarshal_result` DECODES every Lean `OUT` wire to the expected struct (T9).
+// Any drift — a case on one side only, or a single differing byte — fails loudly.
+//
+// These mirrors are NOT a second codec: they only choose the SHAPE of the inputs
+// (the `WireAuth`/`WireAction`/`WireState`/`WForest` VALUES); the bytes are produced
+// by the one hand-written `marshal.rs` encoder under test, then compared against the
+// PROVED Lean encoder's bytes. That comparison is the translation-validation step.
+// ===================================================================
+
+/// The 12-variant `allAuths` corpus (FFI.lean:1575), mirrored value-for-value: every
+/// `WireAuth` variant incl. the two nested `oneof` cases. Digests are small (`from_u64`)
+/// so the Lean `Nat`-digest and the Rust `[u8;32]`-digest produce IDENTICAL 64-hex.
+pub fn all_auths_demo() -> Vec<WireAuth> {
+    vec![
+        WireAuth::Signature {
+            pubkey: Digest::from_u64(7),
+            sig: 9,
+        },
+        WireAuth::Proof {
+            vk: Digest::from_u64(1),
+            proof: 2,
+            bound_action: 3,
+            bound_resource: 4,
+        },
+        WireAuth::Breadstuff { token: 42 },
+        WireAuth::Bearer {
+            deleg_msg: Digest::from_u64(5),
+            deleg_sig: 6,
+            stark: true,
+        },
+        WireAuth::Bearer {
+            deleg_msg: Digest::from_u64(5),
+            deleg_sig: 6,
+            stark: false,
+        },
+        WireAuth::Unchecked,
+        WireAuth::CapTpDelivered {
+            intro_msg: Digest::from_u64(1),
+            sender_msg: Digest::from_u64(2),
+            intro_sig: 3,
+            sender_sig: 4,
+        },
+        WireAuth::Custom {
+            kind_stmt: Digest::from_u64(8),
+            proof: 9,
+        },
+        WireAuth::Stealth {
+            one_time_pk: Digest::from_u64(11),
+            ephemeral_pk: Digest::from_u64(12),
+            sig: 13,
+        },
+        WireAuth::Token {
+            issuer_key: Digest::from_u64(14),
+            sig: 15,
+        },
+        WireAuth::OneOf {
+            candidates: vec![
+                WireAuth::Signature {
+                    pubkey: Digest::from_u64(7),
+                    sig: 9,
+                },
+                WireAuth::Token {
+                    issuer_key: Digest::from_u64(14),
+                    sig: 15,
+                },
+            ],
+            proof_index: 1,
+        },
+        WireAuth::OneOf {
+            candidates: vec![
+                WireAuth::OneOf {
+                    candidates: vec![WireAuth::Unchecked],
+                    proof_index: 0,
+                },
+                WireAuth::Breadstuff { token: 3 },
+            ],
+            proof_index: 1,
+        },
+    ]
+}
+
+/// Mirror of `EmitMarshalGolden.stateMinimal` — the minimal non-empty state.
+fn conf_state_minimal() -> WireState {
+    WireState {
+        cells: vec![(0, WireValue::Record(vec![("balance".into(), WireValue::Int(0))]))],
+        ..Default::default()
+    }
+}
+
+/// Mirror of `EmitMarshalGolden.stateDemo` (== `wide_demo_state`'s shape) — subsumes the
+/// old single hard-coded golden.
+fn conf_state_demo() -> WireState {
+    WireState {
+        cells: vec![
+            (
+                0,
+                WireValue::Record(vec![
+                    ("balance".into(), WireValue::Int(100)),
+                    ("nonce".into(), WireValue::Int(7)),
+                ]),
+            ),
+            (1, WireValue::Record(vec![("balance".into(), WireValue::Int(5))])),
+        ],
+        caps: vec![(9, vec![Cap::Node(0)])],
+        bal: vec![(0, 0, 100), (1, 0, 5)],
+        escrows: vec![WireEscrow {
+            id: 1,
+            creator: 0,
+            recipient: 1,
+            amount: 7,
+            resolved: false,
+            asset: 0,
+            bridge: false,
+            queue_dep: None,
+            queue_msg: None,
+        }],
+        nullifiers: vec![111],
+        commitments: vec![222],
+        queues: vec![WireQueue {
+            id: 1,
+            owner: 0,
+            capacity: 4,
+            buffer: vec![333, 444],
+        }],
+        swiss: vec![WireSwiss {
+            swiss: 5,
+            exporter: 0,
+            target: 1,
+            rights: vec![Auth::Read, Auth::Write],
+            refcount: 1,
+            cert: Some(99),
+        }],
+        revoked: vec![],
+        lifecycle: vec![],
+        death_cert: vec![],
+    }
+}
+
+/// Mirror of `EmitMarshalGolden.stateFull` — ALL 11 fields populated + multi-element,
+/// `Value` recursion (nested record + `dig`/`sym`, an escaped field name), signed
+/// negatives, a top-level `dig` cell, escrows with `some`/`none`, an empty-rights swiss row.
+fn conf_state_full() -> WireState {
+    WireState {
+        cells: vec![
+            (
+                0,
+                WireValue::Record(vec![
+                    ("balance".into(), WireValue::Int(-100)),
+                    ("nonce".into(), WireValue::Int(7)),
+                    (
+                        "meta".into(),
+                        WireValue::Record(vec![
+                            ("vk".into(), WireValue::Dig(255)),
+                            ("tag".into(), WireValue::Sym(9)),
+                        ]),
+                    ),
+                    // an escaped field name: a literal `"` and `\` inside the key.
+                    ("weird\"key\\x".into(), WireValue::Int(1)),
+                ]),
+            ),
+            (1, WireValue::Record(vec![("balance".into(), WireValue::Int(5))])),
+            (2, WireValue::Dig(0xABCDEF)),
+        ],
+        caps: vec![
+            (0, vec![Cap::Endpoint(1, vec![Auth::Read, Auth::Write]), Cap::Node(0)]),
+            (9, vec![Cap::Node(0), Cap::Null]),
+        ],
+        bal: vec![(0, 0, 100), (0, 1, -3), (1, 0, 5)],
+        escrows: vec![
+            WireEscrow {
+                id: 1,
+                creator: 0,
+                recipient: 1,
+                amount: 7,
+                resolved: false,
+                asset: 0,
+                bridge: false,
+                queue_dep: None,
+                queue_msg: None,
+            },
+            WireEscrow {
+                id: 2,
+                creator: 1,
+                recipient: 0,
+                amount: -4,
+                resolved: true,
+                asset: 2,
+                bridge: true,
+                queue_dep: Some(3),
+                queue_msg: Some(4),
+            },
+        ],
+        nullifiers: vec![111, 222],
+        commitments: vec![333],
+        queues: vec![WireQueue {
+            id: 1,
+            owner: 0,
+            capacity: 4,
+            buffer: vec![333, 444],
+        }],
+        swiss: vec![
+            WireSwiss {
+                swiss: 5,
+                exporter: 0,
+                target: 1,
+                rights: vec![Auth::Read, Auth::Write],
+                refcount: 1,
+                cert: Some(99),
+            },
+            WireSwiss {
+                swiss: 6,
+                exporter: 1,
+                target: 2,
+                rights: vec![],
+                refcount: 0,
+                cert: None,
+            },
+        ],
+        revoked: vec![7, 8],
+        lifecycle: vec![(0, 1), (2, 3)],
+        death_cert: vec![(2, 42)],
+    }
+}
+
+/// Mirror of `EmitMarshalGolden.hcPopulated` — a non-default host context.
+fn conf_host_populated() -> WireHostCtx {
+    WireHostCtx {
+        now: 12,
+        block_height: 0,
+        frozen: vec![3, 5, 9],
+        stored_head: 4,
+        budget: 777,
+    }
+}
+
+/// Mirror of `EmitMarshalGolden.turnOf` — wrap a root forest in the fixed envelope
+/// (`prev = 0xDEADBEEF`, block_height 0 = the deployed shape).
+fn conf_turn_of(root: WForest) -> WireTurn {
+    WireTurn {
+        agent: 0,
+        nonce: 7,
+        fee: 5,
+        valid_until: 1000,
+        block_height: 0,
+        prev_hash: Digest::from_u64(0xDEAD_BEEF),
+        root,
+    }
+}
+
+/// Mirror of `EmitMarshalGolden.turnBh` — a turn whose `block_height > 0`, so the OPTIONAL
+/// `,"block_height":N` envelope arm fires (the only encoder branch the `block_height = 0` cases skip).
+fn conf_turn_bh(root: WForest) -> WireTurn {
+    WireTurn {
+        agent: 1,
+        nonce: 2,
+        fee: -3,
+        valid_until: 9,
+        block_height: 42,
+        prev_hash: Digest::from_u64(0xDEAD_BEEF),
+        root,
+    }
+}
+
+/// Mirror of `EmitMarshalGolden.rootTier3` — a root carrying a tier-3 ("coordinated") caveat (the
+/// only `WireCaveat.tier` value the other structural cases omit).
+fn conf_root_tier3() -> WForest {
+    WForest {
+        auth: WireAuth::Unchecked,
+        caveats: vec![WireCaveat { tier: 3, cell: 2, asset: 1, min: -5 }],
+        action: WireAction::PipelinedSend { actor: 9 },
+        children: vec![],
+    }
+}
+
+/// Mirror of `EmitMarshalGolden.rootSig` — a leaf root carrying `a` + a monotone caveat.
+fn conf_root_sig(a: WireAuth) -> WForest {
+    WForest {
+        auth: a,
+        caveats: vec![WireCaveat {
+            tier: 0,
+            cell: 0,
+            asset: 0,
+            min: 0,
+        }],
+        action: WireAction::Balance {
+            actor: 0,
+            src: 0,
+            dst: 1,
+            amt: 30,
+            asset: 0,
+        },
+        children: vec![],
+    }
+}
+
+/// Mirror of `EmitMarshalGolden.forestDeep` — a depth-2 tree with delegation edges,
+/// caveats on multiple nodes, and a grandchild.
+fn conf_forest_deep() -> WForest {
+    WForest {
+        auth: WireAuth::Signature {
+            pubkey: Digest::from_u64(7),
+            sig: 7,
+        },
+        caveats: vec![
+            WireCaveat { tier: 0, cell: 0, asset: 0, min: 0 },
+            WireCaveat { tier: 2, cell: 1, asset: 0, min: 1 },
+        ],
+        action: WireAction::Emit { actor: 0, cell: 0, topic: 0, data: 0 },
+        children: vec![
+            WChild {
+                holder: 1,
+                keep: vec![Auth::Read],
+                parent_cap: Cap::Endpoint(1, vec![Auth::Read, Auth::Write]),
+                sub: WForest {
+                    auth: WireAuth::Token {
+                        issuer_key: Digest::from_u64(14),
+                        sig: 15,
+                    },
+                    caveats: vec![WireCaveat { tier: 1, cell: 1, asset: 0, min: 0 }],
+                    action: WireAction::Emit { actor: 1, cell: 1, topic: 0, data: 0 },
+                    children: vec![WChild {
+                        holder: 2,
+                        keep: vec![Auth::Read, Auth::Write],
+                        parent_cap: Cap::Node(0),
+                        sub: WForest {
+                            auth: WireAuth::Unchecked,
+                            caveats: vec![],
+                            action: WireAction::Revoke { holder: 0, t: 0 },
+                            children: vec![],
+                        },
+                    }],
+                },
+            },
+            WChild {
+                holder: 3,
+                keep: vec![],
+                parent_cap: Cap::Null,
+                sub: WForest {
+                    auth: WireAuth::Breadstuff { token: 42 },
+                    caveats: vec![],
+                    action: WireAction::MakeSovereign { actor: 3, cell: 3 },
+                    children: vec![],
+                },
+            },
+        ],
+    }
+}
+
+/// The full INPUT corpus as `(name, host, state, turn)` — the EXACT mirror of
+/// `EmitMarshalGolden.inputCorpus` (12 auth + 30 action + 5 structural cases). The
+/// conformance harness marshals each with `marshal_turn_hosted` and compares to the
+/// `IN <name>` golden line byte-for-byte.
+pub fn conformance_input_corpus() -> Vec<(String, WireHostCtx, WireState, WireTurn)> {
+    let mut v: Vec<(String, WireHostCtx, WireState, WireTurn)> = Vec::new();
+    // auth_<i>: every AuthW variant as a root credential over the minimal state.
+    for (i, a) in all_auths_demo().into_iter().enumerate() {
+        v.push((
+            format!("auth_{i}"),
+            WireHostCtx::diag(),
+            conf_state_minimal(),
+            conf_turn_of(conf_root_sig(a)),
+        ));
+    }
+    // action_<i>: every FullActionA arm as a root action under `.unchecked`.
+    for (i, act) in all_action_arms_demo().into_iter().enumerate() {
+        v.push((
+            format!("action_{i}"),
+            WireHostCtx::diag(),
+            conf_state_minimal(),
+            conf_turn_of(WForest {
+                auth: WireAuth::Unchecked,
+                caveats: vec![],
+                action: act,
+                children: vec![],
+            }),
+        ));
+    }
+    // the structural cases (deep forest, full state, demo, populated host).
+    v.push((
+        "forest_deep".into(),
+        WireHostCtx::diag(),
+        conf_state_minimal(),
+        conf_turn_of(conf_forest_deep()),
+    ));
+    v.push((
+        "state_full".into(),
+        WireHostCtx::diag(),
+        conf_state_full(),
+        conf_turn_of(conf_root_sig(WireAuth::Signature {
+            pubkey: Digest::from_u64(7),
+            sig: 7,
+        })),
+    ));
+    v.push((
+        "state_demo".into(),
+        WireHostCtx::diag(),
+        conf_state_demo(),
+        conf_turn_of(conf_root_sig(WireAuth::Signature {
+            pubkey: Digest::from_u64(7),
+            sig: 7,
+        })),
+    ));
+    v.push((
+        "host_populated".into(),
+        conf_host_populated(),
+        conf_state_full(),
+        conf_turn_of(conf_forest_deep()),
+    ));
+    v.push((
+        "full_combo".into(),
+        conf_host_populated(),
+        conf_state_full(),
+        conf_turn_of(conf_forest_deep()),
+    ));
+    // the optional `,"block_height":N` envelope arm (fires only when block_height > 0).
+    v.push((
+        "turn_blockheight".into(),
+        WireHostCtx::diag(),
+        conf_state_minimal(),
+        conf_turn_bh(conf_root_sig(WireAuth::Signature {
+            pubkey: Digest::from_u64(7),
+            sig: 7,
+        })),
+    ));
+    // a tier-3 ("coordinated") caveat.
+    v.push((
+        "caveat_tier3".into(),
+        WireHostCtx::diag(),
+        conf_state_minimal(),
+        conf_turn_of(conf_root_tier3()),
+    ));
+    v
+}
+
+/// One expected DECODE result for an `OUT <name>` golden wire: the structured
+/// `unmarshal_result` output the Rust T9 decoder must yield. Mirrors
+/// `EmitMarshalGolden.outputCorpus` (all three `TurnStatus` codes + the empty sentinel).
+pub struct ExpectedDecode {
+    pub name: &'static str,
+    pub committed: bool,
+    pub loglen: u64,
+    pub status: Option<TurnStatus>,
+    /// `true` when the wire is the empty-state sentinel (decode must ERR with
+    /// `MalformedWireSentinel` rather than yield a `TurnResult`).
+    pub is_sentinel: bool,
+}
+
+/// The expected decodes for the `OUT` golden lines (joined on `name`).
+pub fn conformance_output_expectations() -> Vec<ExpectedDecode> {
+    vec![
+        ExpectedDecode {
+            name: "out_committed",
+            committed: true,
+            loglen: 3,
+            status: Some(TurnStatus::BodyCommitted),
+            is_sentinel: false,
+        },
+        ExpectedDecode {
+            name: "out_prologue",
+            committed: false,
+            loglen: 0,
+            status: Some(TurnStatus::PrologueCommittedBodyFailed),
+            is_sentinel: false,
+        },
+        ExpectedDecode {
+            name: "out_rejected",
+            committed: false,
+            loglen: 0,
+            status: Some(TurnStatus::Rejected),
+            is_sentinel: false,
+        },
+        ExpectedDecode {
+            name: "out_sentinel",
+            committed: false,
+            loglen: 0,
+            status: Some(TurnStatus::Rejected),
+            is_sentinel: true,
+        },
+        ExpectedDecode {
+            name: "out_minimal_ok",
+            committed: true,
+            loglen: 1,
+            status: Some(TurnStatus::BodyCommitted),
+            is_sentinel: false,
+        },
+    ]
+}
+
+// ===================================================================
 // T9 DECODE — unmarshal_result(&str) -> Result<TurnResult, UnmarshalError>.
 // A STRICT recursive descent mirroring parseWWire/parseWState (fail-closed; the WHOLE
 // string must be consumed). Maps the empty-state sentinel to MalformedWireSentinel.
