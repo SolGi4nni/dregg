@@ -399,3 +399,17 @@ import './inspectors/cell-history.js';
 // same decoder behind `dregg polis council` and Discord /council-status),
 // with the charter terms read from the served program view / descriptor.
 import './inspectors/polis.js';
+
+// THE OPERATIONAL ORGANS (docs/ORGANS.md) — the live cell/agent surfaces that
+// landed with the node services + the @dregg/sdk organ clients:
+//   <dregg-trustline> §1 — the bilateral line of credit (GET /trustline/status)
+//   <dregg-channel>   §4 — the encrypted group + the epochs-unified keystone
+//                          (GET /channels/status)
+//   <dregg-mailbox>   §2 — a hosted inbox over the relay (GET /relay/inbox/*)
+//   <dregg-court>     §3 — the equivocation court bond/slash (GET /court/status)
+// Each reads its LIVE node-side status (via the remote runtime's nodeBase),
+// and degrades honestly to "node-only" / "unreachable" / "gated" off a node.
+import './inspectors/trustline.js';
+import './inspectors/channel.js';
+import './inspectors/mailbox.js';
+import './inspectors/court.js';

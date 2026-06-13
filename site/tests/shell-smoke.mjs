@@ -103,6 +103,31 @@ async function run() {
   const railStill = await page.$('#shl-stream');
   check('the rail persists around the place', !!railStill);
 
+  // ── 3b. the operational organs surface ────────────────────────────────────
+  // The rail carries an Organs group; the home view carries organ cards. The
+  // four organs (trustline / channel / mailbox / court) each have a registered
+  // inspector that reads the node-side status route — and degrades honestly to
+  // "node-only" when there is no connected node (the dead node here).
+  await page.evaluate(() => { window.location.hash = '#/home'; });
+  await page.waitForSelector('.shl-home__grid--organs', { timeout: 8000 });
+  const organCards = await page.$$('.shl-home__grid--organs .shl-card--organ');
+  check('home surfaces the four organs', organCards.length === 4, `cards=${organCards.length}`);
+  for (const tag of ['dregg-trustline', 'dregg-channel', 'dregg-mailbox', 'dregg-court']) {
+    const registered = await page.evaluate((t) => !!customElements.get(t), tag);
+    check(`organ inspector ${tag} is registered`, registered);
+  }
+  const railOrganBtns = await page.$$('#shl-places [data-organ]');
+  check('rail Organs group offers all four', railOrganBtns.length === 4, `btns=${railOrganBtns.length}`);
+
+  // Open the channel organ inspector by id (a dialog prompt supplies the id).
+  const fakeId = 'ab'.repeat(32);
+  page.once('dialog', (d) => d.accept(fakeId));
+  await page.click('#shl-places [data-organ="channel"]');
+  await page.waitForSelector('dregg-channel', { timeout: 8000 });
+  const channelText = await page.textContent('dregg-channel').catch(() => '');
+  check('channel inspector mounts and is honest off a node',
+    /node-only|unreachable|Connect a node|epochs/i.test(channelText || ''), (channelText || '').slice(0, 80));
+
   // ── 4. the command affordance ─────────────────────────────────────────────
   await page.keyboard.press('Control+k');
   await page.waitForSelector('.shl-palette:not([hidden])', { timeout: 5000 });

@@ -197,6 +197,16 @@ body:has(.shl) footer { display: none; }
 .shl-card__glyph { color: var(--accent-bright, var(--accent)); font-weight: 700; }
 .shl-card span:last-child { color: var(--fg-dim); line-height: 1.45; }
 .shl-card--tool { background: none; }
+.shl-home__sub { margin: calc(-1 * var(--s2)) 0 var(--s3); font-size: 0.74rem; color: var(--fg-dim); line-height: 1.45; }
+.shl-home__grid--organs { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
+.shl-card--organ {
+  font: inherit;
+  font-size: 0.78rem;
+  text-align: left;
+  cursor: pointer;
+  border-left: 2px solid var(--accent-bright, var(--accent));
+}
+.shl-card--organ strong { color: var(--fg); }
 
 /* place mount */
 .shl-place { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; }

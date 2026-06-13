@@ -552,6 +552,15 @@ export async function createRemoteRuntime({ signals, baseUrl }) {
     cursor,
     events,
 
+    // The node's HTTP base + a read helper, so the ORGAN inspectors
+    // (trustline / channels / mailbox / court) can read their LIVE status
+    // routes (/trustline/status/* /channels/status/* /relay/inbox/* /court/status/*)
+    // — those organs are node-side services with no per-cell signal here.
+    // Returns null on any failure (CORS / absent route / offline) so the
+    // inspector renders an honest "unreachable", never a fabricated state.
+    nodeBase: base || null,
+    nodeGet: (path) => getJSON(path),
+
     getCell,
     listCells,
     listReceipts,

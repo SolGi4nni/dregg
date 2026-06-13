@@ -49,6 +49,24 @@ function shortHex(s, n = 8) {
   return v.length > n * 2 + 1 ? `${v.slice(0, n)}…${v.slice(-4)}` : v;
 }
 
+/**
+ * The operational ORGANS (docs/ORGANS.md) — the live cell surfaces the node
+ * serves. Each is a dregg:// kind with a registered inspector that reads its
+ * node-side status route. The rail offers them as entry points: you supply
+ * the organ's id (the cell / strand / owner key) and the shell mounts the
+ * organ inspector on the shared inspect surface.
+ */
+const ORGANS = [
+  { kind: 'trustline', label: 'Trustlines', prompt: 'trustline cell id (hex)',
+    what: 'a bilateral line of credit — draws debit a shared counter (ORGANS §1)' },
+  { kind: 'channel', label: 'Channels', prompt: 'channel (group) cell id (hex)',
+    what: 'an encrypted group as a cell — the epochs-unified keystone (ORGANS §4)' },
+  { kind: 'mailbox', label: 'Mailboxes', prompt: 'inbox owner public key (hex)',
+    what: 'a hosted inbox over the relay, drained with a custody proof (ORGANS §2)' },
+  { kind: 'court', label: 'Court', prompt: 'strand public key (hex)',
+    what: 'the equivocation court — a bond admits, a proof slashes (ORGANS §3)' },
+];
+
 (async function main() {
   const ui = await whenDregg();
 
@@ -174,6 +192,9 @@ function shortHex(s, n = 8) {
       navRow(`#/place/${p.id}`, p.label, p.what, route.kind === 'place' && route.id === p.id)).join('');
     const toolRows = TOOLS.map((t) =>
       `<a class="shl-nav__row" href="${esc(t.href)}" title="${esc(t.what)}">${esc(t.label)} <span class="shl-nav__ext">↗</span></a>`).join('');
+    const organRows = ORGANS.map((o) =>
+      `<button type="button" class="shl-nav__row shl-nav__row--btn" data-organ="${esc(o.kind)}"
+               title="${esc(o.what)}">${esc(o.label)}</button>`).join('');
     railPlaces.innerHTML = `
       ${navRow('#/home', 'Home', 'your cells, your receipts, the places', route.kind === 'home')}
       <div class="shl-nav__group">Places</div>
@@ -182,11 +203,16 @@ function shortHex(s, n = 8) {
         <summary>Experiments</summary>
         ${expRows}
       </details>
+      <div class="shl-nav__group" title="The operational organs of your polis — the live cell surfaces the node serves.">Organs</div>
+      ${organRows}
       <div class="shl-nav__group">Tools</div>
       ${toolRows}
       <button type="button" class="shl-nav__row shl-nav__row--btn" data-act="palette"
               title="Jump anywhere (⌘K / ctrl-K)">Command palette <kbd>⌘K</kbd></button>`;
     railPlaces.querySelector('[data-act="palette"]')?.addEventListener('click', () => palette.open());
+    for (const btn of railPlaces.querySelectorAll('[data-organ]')) {
+      btn.addEventListener('click', () => openOrgan(btn.dataset.organ));
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -281,6 +307,22 @@ function shortHex(s, n = 8) {
     window.location.hash = `#/inspect/${encodeURIComponent(uri)}`;
   }
 
+  // Open an organ inspector by id. Organs are keyed by a cell/strand/owner
+  // hex id you supply; the shell mounts the registered organ inspector, which
+  // reads the live node-side status. (A profile's own cell is offered as the
+  // default for a trustline holder; otherwise prompt.)
+  function openOrgan(kind) {
+    const organ = ORGANS.find((o) => o.kind === kind);
+    if (!organ) return;
+    const id = (window.prompt(`Open ${organ.label} — ${organ.prompt}:`, '') || '').trim().toLowerCase();
+    if (!id) return;
+    if (!/^[0-9a-f]{64}$/.test(id)) {
+      ui.toast('expected a 64-char hex id', 'warn');
+      return;
+    }
+    goInspect(`dregg://${kind}/${id}`);
+  }
+
   function mountHome() {
     const placeCards = PLACES.map((p) => `
       <a class="shl-card" href="#/place/${p.id}">
@@ -301,17 +343,29 @@ function shortHex(s, n = 8) {
       : `<p class="shl-home__lede">You are browsing as a <strong>guest</strong> — every place is
            read-only until an identity exists in this browser.
            <button type="button" class="shl-btn" data-act="identity">Create identity</button></p>`;
+    const organCards = ORGANS.map((o) => `
+      <button type="button" class="shl-card shl-card--organ" data-organ="${esc(o.kind)}">
+        <strong>${esc(o.label)}</strong>
+        <span>${esc(o.what)}</span>
+      </button>`).join('');
     mount.innerHTML = `
       <div class="shl-home">
         ${identityBlock}
         <h2 class="shl-home__h">Places</h2>
         <div class="shl-home__grid">${placeCards}</div>
+        <h2 class="shl-home__h" title="The operational organs of your polis — live cell surfaces the node serves.">Organs</h2>
+        <p class="shl-home__sub">The cell/agent/receipt machinery your polis runs on. Open one by its
+          id to read its live node-side status.</p>
+        <div class="shl-home__grid shl-home__grid--organs">${organCards}</div>
         <h2 class="shl-home__h">Tools</h2>
         <div class="shl-home__grid shl-home__grid--tools">${toolCards}</div>
         <p class="shl-home__note">The receipt stream on the left is this node's commit feed;
           every entry is a receipt you can open. ⌘K jumps anywhere.</p>
       </div>`;
     mount.querySelector('[data-act="identity"]')?.addEventListener('click', () => showBoot('identity'));
+    for (const btn of mount.querySelectorAll('[data-organ]')) {
+      btn.addEventListener('click', () => openOrgan(btn.dataset.organ));
+    }
   }
 
   function mountPlace(id) {
@@ -402,6 +456,9 @@ function shortHex(s, n = 8) {
       }
       for (const t of TOOLS) {
         items.push({ label: t.label, hint: t.what, keywords: 'tool', run: () => { window.location.href = t.href; } });
+      }
+      for (const o of ORGANS) {
+        items.push({ label: `Open ${o.label}`, hint: o.what, keywords: `organ ${o.kind}`, run: () => openOrgan(o.kind) });
       }
       if (profile) {
         items.push({ label: 'Copy my cell id', hint: shortHex(profile.cellId), run: () => ui.copy(profile.cellId) });

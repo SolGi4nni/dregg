@@ -119,6 +119,56 @@ function ensureInspectorChrome() {
 .dregg-receipt__summary span { display: block; color: var(--fg-dim, #9aa0a6); font-size: 0.66rem; text-transform: uppercase; }
 .dregg-cell__summary strong,
 .dregg-receipt__summary strong { display: block; margin-top: 3px; color: var(--fg, #e8f0e8); font-size: 0.86rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The operational ORGANS (trustline / channel / mailbox / court) — a shared
+   card chrome so the polis shell + workbench render the live organ status with
+   one visual language. */
+.dregg-organ { display: grid; gap: 11px; }
+.dregg-organ__head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; border-bottom: 1px solid var(--line, #30363d); padding-bottom: 9px; }
+.dregg-organ__title { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; min-width: 0; }
+.dregg-organ__subtitle { color: var(--fg-dim, #9aa0a6); font-size: 0.76rem; margin-top: 3px; line-height: 1.4; max-width: 60ch; }
+.dregg-organ__badges { display: flex; flex-wrap: wrap; gap: 6px; flex-shrink: 0; }
+.dregg-organ__badge { border: 1px solid var(--line, #30363d); border-radius: 999px; padding: 2px 8px; color: var(--fg-dim, #9aa0a6); font-size: 0.66rem; text-transform: uppercase; white-space: nowrap; }
+.dregg-organ__badge--ok { border-color: #62c47a; color: #8ee6a2; }
+.dregg-organ__badge--warn { border-color: #c9a84c; color: #f2d06b; }
+.dregg-organ__loading { color: var(--fg-dim, #9aa0a6); font-size: 0.8rem; padding: 6px 0; }
+.dregg-organ__notice { border: 1px dashed var(--line, #30363d); border-radius: 5px; padding: 9px; color: var(--fg-dim, #9aa0a6); font-size: 0.78rem; line-height: 1.4; }
+.dregg-organ__grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+.dregg-organ__grid div { border: 1px solid var(--line, #30363d); border-radius: 4px; background: var(--bg-raised, #161b22); padding: 7px; min-width: 0; }
+.dregg-organ__grid span { display: block; color: var(--fg-dim, #9aa0a6); font-size: 0.64rem; text-transform: uppercase; letter-spacing: 0.03em; }
+.dregg-organ__grid strong { display: block; margin-top: 3px; color: var(--fg, #e8f0e8); font-size: 0.92rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dregg-organ__parties { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.dregg-organ__parties > div { display: flex; flex-direction: column; gap: 3px; border: 1px solid var(--line, #30363d); border-radius: 4px; background: var(--bg-raised, #161b22); padding: 7px; min-width: 0; }
+.dregg-organ__parties span { color: var(--fg-dim, #9aa0a6); font-size: 0.64rem; text-transform: uppercase; }
+.dregg-organ__roots { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.dregg-organ__roots > div { display: flex; flex-direction: column; gap: 3px; }
+.dregg-organ__roots span { color: var(--fg-dim, #9aa0a6); font-size: 0.64rem; text-transform: uppercase; }
+.dregg-organ__roots code { color: var(--fg-dim, #9aa0a6); font-size: 0.7rem; overflow: hidden; text-overflow: ellipsis; }
+.dregg-organ__section { border: 1px solid var(--line, #30363d); border-radius: 5px; background: var(--bg-raised, #161b22); padding: 9px; }
+.dregg-organ__section h4 { margin: 0 0 5px; color: var(--fg, #e8f0e8); font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.04em; }
+.dregg-organ__note { color: var(--fg-dim, #9aa0a6); font-size: 0.76rem; line-height: 1.45; margin: 0; }
+.dregg-organ__note code { color: var(--fg, #e8f0e8); }
+/* trustline credit bar */
+.dregg-organ__credit { display: grid; gap: 6px; }
+.dregg-organ__bar { height: 12px; border: 1px solid var(--line, #30363d); border-radius: 999px; background: var(--bg, #0d1117); overflow: hidden; }
+.dregg-organ__bar-fill { height: 100%; background: linear-gradient(90deg, #62c47a, #4a9bd4); border-radius: 999px; transition: width 0.2s; }
+.dregg-organ__bar-fill--hot { background: linear-gradient(90deg, #c9a84c, #d4685c); }
+.dregg-organ__credit-readout { display: flex; justify-content: space-between; gap: 10px; color: var(--fg-dim, #9aa0a6); font-size: 0.78rem; flex-wrap: wrap; }
+.dregg-organ__credit-readout strong { color: var(--fg, #e8f0e8); }
+/* channels epoch-unification keystone */
+.dregg-organ__keystone { display: flex; align-items: flex-start; gap: 10px; border: 1px solid; border-radius: 6px; padding: 10px; }
+.dregg-organ__keystone--ok { border-color: #62c47a; background: rgba(98,196,122,0.08); }
+.dregg-organ__keystone--bad { border-color: #d4685c; background: rgba(212,104,92,0.1); }
+.dregg-organ__keystone-mark { font-size: 1.2rem; line-height: 1; flex-shrink: 0; }
+.dregg-organ__keystone--ok .dregg-organ__keystone-mark { color: #8ee6a2; }
+.dregg-organ__keystone--bad .dregg-organ__keystone-mark { color: #f18b7d; }
+.dregg-organ__keystone strong { display: block; color: var(--fg, #e8f0e8); font-size: 0.82rem; }
+.dregg-organ__keystone span { display: block; margin-top: 3px; color: var(--fg-dim, #9aa0a6); font-size: 0.74rem; line-height: 1.4; }
+/* mailbox relay-base bar */
+.dregg-organ__relaybar { display: flex; align-items: center; gap: 6px; }
+.dregg-organ__relaybar > span { color: var(--fg-dim, #9aa0a6); font-size: 0.66rem; text-transform: uppercase; }
+.dregg-organ__relay-input { flex: 1 1 auto; min-width: 8rem; border: 1px solid var(--line, #30363d); border-radius: 4px; background: var(--bg, #0d1117); color: var(--fg, #e8f0e8); font: inherit; font-size: 0.74rem; padding: 4px 7px; }
+.dregg-organ__relay-go { border: 1px solid var(--line, #30363d); border-radius: 4px; background: var(--bg, #0d1117); color: var(--fg, #e8f0e8); font: inherit; font-size: 0.72rem; padding: 4px 9px; cursor: pointer; }
+.dregg-organ__relay-go:hover { border-color: var(--accent, #64c8ff); color: var(--accent-bright, #8fddff); }
 @media (max-width: 640px) {
   .dregg-cell__summary,
   .dregg-receipt__summary,
@@ -127,6 +177,8 @@ function ensureInspectorChrome() {
   .dregg-storage-pattern__head { flex-direction: column; }
   .dregg-inspector__row { grid-template-columns: 36px minmax(0, 1fr); }
   .dregg-inspector__row code { grid-column: 1 / -1; }
+  .dregg-organ__grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .dregg-organ__head { flex-direction: column; }
 }
 `;
   document.head.appendChild(style);

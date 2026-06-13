@@ -11,6 +11,22 @@
 
 import { parseRef, isRef } from './uri.js';
 
+/**
+ * The operational ORGANS (docs/ORGANS.md) — the live cell surfaces the node
+ * serves, each a dregg:// kind with a registered inspector that reads its
+ * node-side status route. The workbench offers them as palette entries.
+ */
+const ORGAN_KINDS = [
+  { kind: 'trustline', label: 'Trustline', prompt: 'trustline cell id (hex)',
+    what: 'bilateral line of credit — draws debit a shared counter (ORGANS §1)' },
+  { kind: 'channel', label: 'Channel', prompt: 'channel (group) cell id (hex)',
+    what: 'encrypted group as a cell — the epochs-unified keystone (ORGANS §4)' },
+  { kind: 'mailbox', label: 'Mailbox', prompt: 'inbox owner public key (hex)',
+    what: 'hosted inbox over the relay, drained with a custody proof (ORGANS §2)' },
+  { kind: 'court', label: 'Court', prompt: 'strand public key (hex)',
+    what: 'equivocation court — a bond admits, a proof slashes (ORGANS §3)' },
+];
+
 const STARBRIDGE_APP_IDS = [
   'nameservice',
   'identity',
@@ -881,6 +897,19 @@ function writeUrlState({ at, runtime }) {
       { group: 'Collections', label: 'Agent 0 capabilities', detail: 'Open capability list for first agent', priority: 6, run: () => setCurrentUri('dregg://capability-list/0') },
     ];
 
+    // The operational ORGANS (docs/ORGANS.md) — each reads its live node-side
+    // status route. Prompt for the organ id (cell / strand / owner key); the
+    // inspector degrades honestly to "node-only" off a connected node.
+    for (const organ of ORGAN_KINDS) {
+      items.push({
+        group: 'Organs',
+        label: `Open ${organ.label}`,
+        detail: organ.what,
+        priority: 6,
+        run: () => openOrgan(organ.kind),
+      });
+    }
+
     for (const snap of readSnapshots()) {
       items.push({
         group: 'Snapshots',
@@ -1725,6 +1754,21 @@ function writeUrlState({ at, runtime }) {
 
   // --------------------------------------------------------------------------
   // Current URI mutator. Single funnel: pane render + raw pane + URL sync.
+  // Open an organ inspector by id. Prompts for the organ's id (cell / strand /
+  // owner key); the registered organ inspector reads the live node-side status
+  // and degrades honestly to "node-only" off a connected node.
+  function openOrgan(kind) {
+    const organ = ORGAN_KINDS.find((o) => o.kind === kind);
+    if (!organ) return;
+    const id = (window.prompt(`Open ${organ.label} — ${organ.prompt}:`, '') || '').trim().toLowerCase();
+    if (!id) return;
+    if (!/^[0-9a-f]{64}$/.test(id)) {
+      consoleLog(`expected a 64-char hex id, got "${id}"`, 'err');
+      return;
+    }
+    setCurrentUri(`dregg://${kind}/${id}`);
+  }
+
   // --------------------------------------------------------------------------
   function setCurrentUri(uri) {
     currentUri = uri || null;
@@ -1984,6 +2028,12 @@ function writeUrlState({ at, runtime }) {
     } else if (parsed.kind === 'app') {
       const appMeta = appCatalog.get(parsed.id) || { id: parsed.id, page: `/starbridge-apps/${parsed.id}/pages/index.html` };
       setRawText(JSON.stringify(appMeta, null, 2));
+      return;
+    } else if (ORGAN_KINDS.some((o) => o.kind === parsed.kind)) {
+      // Organs are node-side services read by their own inspector (the live
+      // status route), not a runtime object signal — the raw pane has no JSON
+      // to mirror here. The inspector pane carries the live state.
+      setRawText(`${parsed.kind} is a live node-side organ — its status is in the inspector pane (read from /${parsed.kind}/status). No runtime object mirror for the raw view.`);
       return;
     }
     if (!sig) {

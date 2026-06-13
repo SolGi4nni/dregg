@@ -35,9 +35,9 @@ export const PLACES = [
   },
   {
     id: 'subscription',
-    label: 'Channels',
-    glyph: 'ch',
-    what: 'pub/sub topics with capability-gated publish and consume',
+    label: 'Subscriptions',
+    glyph: 'sub',
+    what: 'pub/sub topics with capability-gated publish and consume (the live encrypted-group organ is under Organs → Channels)',
     page: '/starbridge-apps/subscription/pages/index.html',
   },
 ];
