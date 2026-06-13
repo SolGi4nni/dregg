@@ -71,6 +71,11 @@ verification economy: unvalidated authoring needs one validation pass at landing
 - DKG ceremony / ECVRF / KERI export / OCapN netlayer / dregg-query / flash-well /
   trustline-parity+MLS / coverage-debts — each reports its own file list (sprint lanes,
   authored-possibly-unvalidated; logs named in their reports)
+⚠ DIRECTIVE LANDING (evening): sprint lanes are dying mid-flight with model-access
+errors (fable-5 suspended). The tree may hold PARTIAL writes from killed lanes —
+`git status` + the /tmp logs are the inventory; the lander validates each file set
+(or discards a fragment with a note). Nothing committed is partial.
+
 Convergence: round 7's catches FIXED (libc++ ead215c99, sdk-py eviction 72563c8a1);
 persvati target cleaned (312G free); ROUND 8 = full sweep AFTER this wave lands.
 
