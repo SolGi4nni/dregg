@@ -273,17 +273,78 @@ structure ProofBind where
   vk     : EmittedExpr
   deriving Repr
 
+/-! ### §2.5 — `WindowExpr`: a two-row arithmetic expression (the cumulative-sum primitive).
+
+The base `EmittedExpr` (`Dregg2.Exec.CircuitEmit`) reads ONE row (`Assignment`), so a `gate`
+body cannot express a cross-row relation like the aggregation AIR's running cumulative
+`next[cum] = local[cum] + next[contribution]`. `WindowExpr` adds the missing primitive: a
+polynomial over BOTH the current row (`loc c`) and the next row (`nxt c`). It is a strict
+generalization — `EmittedExpr.var c` is `WindowExpr.loc c`. The denotation reads the
+`VmRowEnv`'s `loc`/`nxt` slices exactly as the Rust `builder.when_transition()` arm does
+(`next[..]` / `local[..]`), so this is the faithful Lean twin of a windowed `assert_zero`. -/
+inductive WindowExpr where
+  /-- Current-row column `c`. -/
+  | loc   (c : Nat)
+  /-- Next-row column `c`. -/
+  | nxt   (c : Nat)
+  /-- A field constant. -/
+  | const (k : ℤ)
+  | add   (a b : WindowExpr)
+  | mul   (a b : WindowExpr)
+  deriving Repr
+
+/-- Evaluate a `WindowExpr` against a row window (`loc`/`nxt` assignments). -/
+def WindowExpr.eval (env : VmRowEnv) : WindowExpr → ℤ
+  | .loc c   => env.loc c
+  | .nxt c   => env.nxt c
+  | .const k => k
+  | .add a b => a.eval env + b.eval env
+  | .mul a b => a.eval env * b.eval env
+
+/-- Wire-render a `WindowExpr` (the Rust decoder mirrors this: `loc`/`nxt` carry a row tag, the
+arithmetic nodes reuse the `EmittedExpr` shape). -/
+def WindowExpr.toJson : WindowExpr → String
+  | .loc c   => "{\"t\":\"loc\",\"c\":" ++ toString c ++ "}"
+  | .nxt c   => "{\"t\":\"nxt\",\"c\":" ++ toString c ++ "}"
+  | .const k => "{\"t\":\"const\",\"v\":" ++ (if k < 0 then "-" ++ toString (-k) else toString k) ++ "}"
+  | .add l r => "{\"t\":\"add\",\"l\":" ++ l.toJson ++ ",\"r\":" ++ r.toJson ++ "}"
+  | .mul l r => "{\"t\":\"mul\",\"l\":" ++ l.toJson ++ ",\"r\":" ++ r.toJson ++ "}"
+
+/-- A windowed constraint: the polynomial `body` (over the current+next row) must vanish.
+`onTransition = true` ⇒ asserted only on the transition (every row but the last, the Rust
+`when_transition()` arm); `false` ⇒ asserted on every row (a row-local two-row gate that also
+fires on the last row, where `nxt` is the wrap row). The aggregation AIR's cumulative
+transitions are `onTransition = true`. -/
+structure WindowConstraint where
+  body         : WindowExpr
+  onTransition : Bool
+  deriving Repr
+
+/-- The windowed constraint holds on a row window. On `onTransition`, the body need only vanish
+when this is NOT the last row (`isLast = false`); otherwise it vanishes on every row. -/
+def WindowConstraint.holdsAt (env : VmRowEnv) (isLast : Bool) (w : WindowConstraint) : Prop :=
+  if w.onTransition then
+    isLast = false → w.body.eval env = 0
+  else
+    w.body.eval env = 0
+
+/-- Wire-render a `WindowConstraint`. -/
+def WindowConstraint.toJson (w : WindowConstraint) : String :=
+  "{\"t\":\"window_gate\",\"on_transition\":" ++ (if w.onTransition then "true" else "false") ++
+  ",\"body\":" ++ w.body.toJson ++ "}"
+
 /-- The v2 constraint: v1 embedded whole, plus the three new ROW-LOCAL kinds, the UNIVERSAL memory
-op (`umemOp`, additive: no shipped descriptor emits it until the rotation), and the accumulator /
-recursive-proof-binding op (`proofBind`, the Custom leg — additive, carried recursion-gated
-exactly like the rest of IR-v2). -/
+op (`umemOp`, additive: no shipped descriptor emits it until the rotation), the accumulator /
+recursive-proof-binding op (`proofBind`, the Custom leg), and the two-row `windowGate` (the
+aggregation-AIR cumulative-sum primitive — additive, carried exactly like the rest of IR-v2). -/
 inductive VmConstraint2 where
-  | base      (c : VmConstraint)
-  | lookup    (l : Lookup)
-  | memOp     (m : MemOp)
-  | mapOp     (m : MapOp)
-  | umemOp    (m : UMemOp)
-  | proofBind (m : ProofBind)
+  | base       (c : VmConstraint)
+  | lookup     (l : Lookup)
+  | memOp      (m : MemOp)
+  | mapOp      (m : MapOp)
+  | umemOp     (m : UMemOp)
+  | proofBind  (m : ProofBind)
+  | windowGate (w : WindowConstraint)
   deriving Repr
 
 /-- The v2 descriptor: name, main-trace width, PI count, the declared tables, the constraints,
@@ -460,12 +521,13 @@ content is the GLOBAL leg of `Satisfied2`/`Satisfied2U`/`Satisfied2Custom`, not 
 equation.) -/
 def VmConstraint2.holdsAt (hash : List ℤ → ℤ) (tf : TraceFamily) (env : VmRowEnv)
     (isFirst isLast : Bool) : VmConstraint2 → Prop
-  | .base c      => c.holdsVm env isFirst isLast
-  | .lookup l    => l.holdsAt tf env
-  | .memOp _     => True
-  | .mapOp m     => m.holdsAt hash env
-  | .umemOp _    => True
-  | .proofBind _ => True
+  | .base c       => c.holdsVm env isFirst isLast
+  | .lookup l     => l.holdsAt tf env
+  | .memOp _      => True
+  | .mapOp m      => m.holdsAt hash env
+  | .umemOp _     => True
+  | .proofBind _  => True
+  | .windowGate w => w.holdsAt env isLast
 
 /-- **The v2 denotation.** A multi-table witness satisfies a v2 descriptor (relative to the
 declared memory boundary: initial image `minit`, claimed final image `mfin`, declared address
@@ -1104,12 +1166,13 @@ def ProofBind.toJson (m : ProofBind) : String :=
 
 /-- Render one v2 constraint (the v1 forms reuse the v1 renderer byte-for-byte). -/
 def VmConstraint2.toJson : VmConstraint2 → String
-  | .base c      => c.toJson
-  | .lookup l    => l.toJson
-  | .memOp m     => m.toJson
-  | .mapOp m     => m.toJson
-  | .umemOp m    => m.toJson
-  | .proofBind m => m.toJson
+  | .base c       => c.toJson
+  | .lookup l     => l.toJson
+  | .memOp m      => m.toJson
+  | .mapOp m      => m.toJson
+  | .umemOp m     => m.toJson
+  | .proofBind m  => m.toJson
+  | .windowGate w => w.toJson
 
 /-- **`emitVmJson2`** — the canonical v2 wire string: versioned (`"ir":2`), tables declared,
 constraints in v2 grammar, v1 hash-site/range carriers preserved. -/
