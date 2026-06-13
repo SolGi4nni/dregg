@@ -11,9 +11,18 @@
 #      crates (wasm/, verifier/) exist to AVOID, so unifying it onto the main
 #      workspace would be a feature-unification footgun.
 #
-# Build via this manifest path (never at the repo root):
-#   cargo build --manifest-path starbridge-v2/Cargo.toml            # native-full (default)
-#   cargo build --manifest-path starbridge-v2/Cargo.toml --no-default-features --features sel4-thin
+# Build FROM INSIDE this directory (never at the repo root):
+#   cd starbridge-v2 && cargo build                                  # native-full (default)
+#   cd starbridge-v2 && cargo build --no-default-features --features sel4-thin
+#
+# `cd` IN FIRST — do NOT use `--manifest-path` from the repo root. `rust-toolchain.toml`
+# resolution is DIRECTORY-scoped: this crate pins the ROLLING `nightly` (see
+# rust-toolchain.toml — gpui needs `std::hint::cold_path`, stabilized after the
+# repo root's `nightly-2026-01-01`). Running `cargo --manifest-path starbridge-v2/...`
+# from the repo root picks up the ROOT's `nightly-2026-01-01` toolchain, which is
+# too old and fails to compile gpui's `profiler.rs` with E0658 (`cold_path` unstable).
+# If the rolling `nightly` is itself stale, `rustup update nightly` refreshes it
+# (this affects ONLY this crate — the root + every other lane pin a dated nightly).
 #
 # =============================================================================
 # TWO BUILDS, ONE CODEBASE  (mirrors the verifier/ `no-lean-link` pattern)

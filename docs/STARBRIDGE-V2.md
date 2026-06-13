@@ -46,8 +46,16 @@ builds selected by feature.
 ### `native-full` (default) — the master interface
 
 ```
-cargo build --manifest-path starbridge-v2/Cargo.toml
+cd starbridge-v2 && cargo build
 ```
+
+Build *from inside* `starbridge-v2/` — not `--manifest-path` from the repo root.
+`rust-toolchain.toml` is directory-scoped: this crate pins the rolling `nightly`
+because gpui needs `std::hint::cold_path`, which stabilized after the repo root's
+`nightly-2026-01-01`. Building from the root selects that older toolchain and
+fails to compile gpui with E0658 (`cold_path` unstable). If the rolling nightly
+is itself stale, `rustup update nightly` refreshes it — this affects only this
+standalone crate (the root + every other lane pin a dated nightly).
 
 The headline build. It **embeds the real verified executor** and runs a live
 local dregg world natively:
@@ -66,7 +74,7 @@ local dregg world natively:
 ### `sel4-thin` — the eventual seL4 component
 
 ```
-cargo build --manifest-path starbridge-v2/Cargo.toml --no-default-features --features sel4-thin
+cd starbridge-v2 && cargo build --no-default-features --features sel4-thin
 ```
 
 The Lean-free, gpui-free thin path for the eventual seL4 protection-domain
@@ -100,8 +108,11 @@ starbridge_v2 (lib, feature embedded-executor)
 
 starbridge-v2 (bin)
 ├── cockpit    — the gpui cockpit (feature gpui-ui): the comprehensive panels
-│               (cell world · inspector · blocklace · composer · dynamics),
-│               rendering `World` directly.
+│               (cell world · inspector · blocklace · composer · objects ·
+│               dynamics) plus the workspace tabs (composer · objects · debugger
+│               · replay · cipherclerk · editor), rendering `World` directly. The
+│               OBJECTS tab projects proofs / nullifiers / cell lifecycle through
+│               `reflect`.
 ├── views      — shared gpui palette/primitives.
 ├── client     — the wire-contract NodeClient (feature sel4-thin).
 └── model      — the node's JSON response types, mirrored (feature sel4-thin).
@@ -160,11 +171,14 @@ over EVERY dregg datum and EVERY action. The coverage is an honest burn-down:
 | receipts + the receipt chain (provenance) | **live** | `reflect::reflect_receipt`, blocklace panel |
 | the image commitment (`state_root`) | **live** | `reflect::reflect_image` |
 | the dynamics stream (transitions) | **live** | `dynamics`, the feed |
+| cell lifecycle (live / sealed / destroyed / migrated / archived) | **live** | OBJECTS panel lifecycle column, `lifecycle_badge` |
+| proofs + verification status (STARK) | **live** | `reflect::reflect_proof_status`, OBJECTS panel |
+| nullifiers / consumed one-time authorities | **live** | `reflect::reflect_nullifiers`, OBJECTS panel |
+| factories (deployed descriptors) | **live** | `reflect::reflect_factory`; deploy + birth path |
 | capability delegation *graph* (multi-hop layout) | designed-pending | edges present per-cell; a whole-graph view is next |
 | full delegation epochs / revocation channels | partial | epoch shown; channel view pending |
-| organs (trustline/channel/mailbox/court) state | designed-pending | mirrored types catalogued; panels pending |
-| intents / factories / obligations / nullifiers | designed-pending | node API mapped; panels pending |
-| proofs + verification status (STARK) | designed-pending | executor runs full semantics; proof-attach view pending |
+| organs (trustline/channel/mailbox/court) state | designed-pending | trustline/flashwell in embed-core; channel/mailbox need `captp` (network), surfaced as remote-path |
+| intents / obligations | designed-pending | node API mapped; panels pending |
 | profiles / identities, producer lean-vs-rust | partial (thin path) | surfaced in the thin client; native badge pending |
 | federations + sync state | designed-pending | `state_root` is the local half; peer view pending |
 
@@ -179,11 +193,24 @@ over EVERY dregg datum and EVERY action. The coverage is an honest burn-down:
 | set state field | **live** | `world::set_field` |
 | emit event | **live** | `world::emit_event` |
 | revoke capability | wired (helper) | `world::revoke_capability` |
-| seal / unseal / destroy / burn | designed-pending | `Effect` variants reachable via `World::turn` |
-| factory-birth | designed-pending | `Effect::CreateCellFromFactory` path |
-| the organ operations (open/draw/repay; create/join/remove; send/drain; evidence) | designed-pending | SDK organ surfaces catalogued |
-| compose+sign+submit (multi-action call forests) | partial | single-action turns live; multi-action composer next |
+| seal / unseal | **live** (runs the real executor) | `world::seal` / `world::unseal`, composer "seal a fresh cell" |
+| destroy (terminal retirement) | **live** | `world::destroy`, headless test |
+| burn (supply reduced, `was_burn` bound) | **live** | `world::burn`, composer "burn 1,000" |
+| factory-birth (`CreateCellFromFactory`) | **live** | `world::deploy_factory` + `world::create_cell_from_factory` |
+| compose multi-action call forests | **live** | `world::forest_turn` (atomic, one receipt), composer "compose multi-action" |
+| the organ operations (open/draw/repay; create/join/remove; send/drain; evidence) | designed-pending | trustline/flashwell organ surfaces in embed-core; channel/mailbox/court need `captp` (remote path) |
 | connect to federations | designed-pending | `NodeClient::Http` exists; native panel pending |
+
+> **Lifecycle finding — seal/destroy are recorded, the *verbs* enforce
+> terminality, but ordinary effects are not yet gated.** The verified executor
+> records the `Sealed` / `Destroyed` lifecycle, and the lifecycle verbs
+> themselves enforce their own invariants (unseal of a live cell rejects;
+> double-destroy rejects; over-burn rejects). But the executor's apply path does
+> not yet consult `CellLifecycle::accepts_effects()` before *non-lifecycle*
+> effects, so a sealed/destroyed cell does not currently freeze ordinary effects.
+> The cockpit surfaces the lifecycle state honestly (the OBJECTS lifecycle
+> column); wiring the effect-freeze gate is an executor lane, not the
+> interface's to fake.
 
 The "live" rows all run through the embedded verified executor with real
 receipts; the "designed-pending" rows are reachable through the same
@@ -196,21 +223,31 @@ The headless heart is fully `cargo test`-able under just `embedded-executor`
 (no gpui, no window):
 
 ```
-cargo test --manifest-path starbridge-v2/Cargo.toml --no-default-features --features embedded-executor --lib
+cd starbridge-v2 && cargo test --no-default-features --features embedded-executor --lib
 ```
 
-16 tests cover: transfer commits + conserves; **overspend rejected**; **over-grant
-rejected** (no-amplification); legitimate grant grows the ocap graph; createCell
-grows the ledger under conservation; setField writes state; emit-event commits;
-the receipt chain links across turns; the image commitment moves with history;
-the dynamics stream observes transitions; the reflective model projects cells,
-receipts, and the image; and the demo world boots with real provenance.
+67 tests (green) cover: transfer commits + conserves; **overspend rejected**;
+**over-grant rejected** (no-amplification); legitimate grant grows the ocap
+graph; createCell grows the ledger under conservation; setField writes state;
+emit-event commits; the receipt chain links across turns; the image commitment
+moves with history; the dynamics stream observes transitions; the reflective
+model projects cells, receipts, the image, **proof/STARK status, factories, and
+nullifiers**; the demo world boots with real provenance; **seal/unseal round-trip
+the lifecycle, destroy retires a cell terminally, burn reduces supply (and
+over-burn rejects), factory-birth installs a child through the registry (and an
+unregistered factory rejects), and a multi-action call-forest commits atomically
+(all-or-nothing)**.
 
 ## Status
 
 GREEN on the thesis "the master interface is real and growing": the embedded
 verified executor runs a live local world, the four axes are all live in the
-engine, the headless heart is tested green, both builds compile, the
-`sel4-thin` binary is confirmed Lean-free + Metal-free, and **the gpui window
-opens** (runtime shaders defeat the missing Metal Toolchain). The breadth of
-"comprehensive for ALL data & actions" is the active burn-down above.
+engine, the headless heart is tested green (67 tests), the native-full build
+compiles (gpui included — built from inside the crate on the rolling nightly),
+and the headless self-check boots the live image. The coverage matrix above has
+moved a full column to **live**: every kernel lifecycle verb (seal/unseal/
+destroy/burn), factory-birth, and multi-action call-forests now run through the
+embedded executor with real receipts, and the OBJECTS panel reflects proofs,
+nullifiers, and cell lifecycle. The remaining **designed-pending** rows (organ
+node-services behind `captp`, the multi-hop delegation graph view, intents/
+obligations panels, the live federation connect panel) are the active burn-down.

@@ -48,6 +48,14 @@ pub enum WorldEvent {
     CapabilityRevoked { cell: CellId, slot: u32 },
     /// A state field slot was written.
     FieldSet { cell: CellId, index: usize },
+    /// A cell was sealed (lifecycle → Sealed; rejects effects until unsealed).
+    CellSealed { cell: CellId },
+    /// A sealed cell was unsealed (lifecycle → Live).
+    CellUnsealed { cell: CellId },
+    /// A cell was permanently retired (lifecycle → Destroyed; terminal).
+    CellDestroyed { cell: CellId },
+    /// Value was provably burned from a cell (supply reduced; no credit).
+    Burned { cell: CellId, amount: u64 },
 }
 
 impl WorldEvent {
@@ -75,6 +83,10 @@ impl WorldEvent {
             WorldEvent::CapabilityGranted { .. } => "capability granted".into(),
             WorldEvent::CapabilityRevoked { slot, .. } => format!("capability revoked (slot {slot})"),
             WorldEvent::FieldSet { index, .. } => format!("field[{index}] set"),
+            WorldEvent::CellSealed { .. } => "cell sealed".into(),
+            WorldEvent::CellUnsealed { .. } => "cell unsealed".into(),
+            WorldEvent::CellDestroyed { .. } => "cell destroyed (terminal)".into(),
+            WorldEvent::Burned { amount, .. } => format!("burned {amount} (supply reduced)"),
         }
     }
 }

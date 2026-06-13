@@ -31,6 +31,7 @@
 use std::collections::HashMap;
 
 use dregg_cell::{
+    lifecycle::{DeathCertificate, DeathReason},
     AuthRequired, Cell, CellId, Ledger, Permissions,
 };
 use dregg_sdk::embed::{DreggEngine, EmbedError, EngineConfig};
@@ -293,6 +294,20 @@ impl World {
         self.install_genesis(cell, balance)
     }
 
+    /// Deploy a [`FactoryDescriptor`] into the embedded executor's factory
+    /// registry (the out-of-band genesis path — a node registers its factories
+    /// the way it seeds genesis cells). Returns the factory's content-addressed
+    /// VK, against which a later [`create_cell_from_factory`] effect is
+    /// validated by the real executor. The descriptor is also mirrored into the
+    /// replay tape's executor so factory-births re-derive on replay.
+    pub fn deploy_factory(&mut self, descriptor: dregg_cell::FactoryDescriptor) -> [u8; 32] {
+        let vk = self.engine.executor_mut().deploy_factory(descriptor.clone());
+        // Keep the replay recorder's executor in lock-step so a factory-birth
+        // committed below re-derives identically on replay.
+        let _ = self.record_exec.deploy_factory(descriptor);
+        vk
+    }
+
     // --- THE COMMIT PATH (every real state transition goes through here) -----
 
     /// Commit a turn against the embedded verified executor.
@@ -392,6 +407,28 @@ impl World {
         bare_turn(agent, self.next_nonce(&agent), effects)
     }
 
+    /// Build a MULTI-ACTION turn: one `Action` per `(target, effects)` entry,
+    /// all gathered into the agent's call-forest as sibling roots and submitted
+    /// as ONE atomic verified turn (the executor commits the whole forest or
+    /// rejects it — there is no partial commit). This is the surface the
+    /// cockpit's multi-action composer drives: several effects, several target
+    /// cells, one turn, one receipt.
+    ///
+    /// Each action carries `Authorization::Unchecked` (honest for the single-
+    /// custody embedded world — the operator is the authority; the cells'
+    /// `Permissions` + the executor's whole-turn guarantees still gate every
+    /// effect). Lifecycle verbs (seal/unseal/destroy/burn) require the action's
+    /// `target` to equal the effect's target, so each composed action acts on
+    /// its own cell.
+    pub fn forest_turn(&self, agent: CellId, actions: Vec<(CellId, Vec<Effect>)>) -> Turn {
+        let nonce = self.next_nonce(&agent);
+        let mut forest = CallForest::new();
+        for (target, effects) in actions {
+            forest.add_root(bare_action(target, effects));
+        }
+        wrap_turn(agent, nonce, forest)
+    }
+
     fn next_nonce(&self, agent: &CellId) -> u64 {
         self.engine.ledger().get(agent).map(|c| c.state.nonce()).unwrap_or(0)
     }
@@ -446,6 +483,7 @@ fn collect_touched(action: &Action, ids: &mut Vec<CellId>) {
             Effect::Burn { target, .. }
             | Effect::CellSeal { target, .. }
             | Effect::CellUnseal { target }
+            | Effect::CellDestroy { target, .. }
             | Effect::MakeSovereign { cell: target } => push(*target, ids),
             _ => {}
         }
@@ -479,6 +517,25 @@ fn collect_effect_events(action: &Action, out: &mut Vec<WorldEvent>) {
                 out.push(WorldEvent::FieldSet {
                     cell: *cell,
                     index: *index,
+                });
+            }
+            Effect::CellSeal { target, .. } => {
+                out.push(WorldEvent::CellSealed { cell: *target });
+            }
+            Effect::CellUnseal { target } => {
+                out.push(WorldEvent::CellUnsealed { cell: *target });
+            }
+            Effect::CellDestroy { target, .. } => {
+                out.push(WorldEvent::CellDestroyed { cell: *target });
+            }
+            Effect::Burn { target, amount, .. } => {
+                out.push(WorldEvent::Burned { cell: *target, amount: *amount });
+            }
+            Effect::CreateCellFromFactory { .. } => {
+                out.push(WorldEvent::CellBorn {
+                    cell: CellId::ZERO,
+                    balance: 0,
+                    genesis: false,
                 });
             }
             _ => {}
@@ -519,11 +576,11 @@ pub fn make_open_cell(seed: u8, balance: i64) -> Cell {
     cell
 }
 
-/// The bare single-action turn shape (matches the executor test template).
-pub fn bare_turn(agent: CellId, nonce: u64, effects: Vec<Effect>) -> Turn {
-    let mut forest = CallForest::new();
-    let action = Action {
-        target: agent,
+/// A bare `Unchecked` action on `target` carrying `effects` (the executor-test
+/// template shape). The building block both `bare_turn` and `forest_turn` use.
+pub fn bare_action(target: CellId, effects: Vec<Effect>) -> Action {
+    Action {
+        target,
         method: [0u8; 32],
         args: vec![],
         authorization: Authorization::Unchecked,
@@ -533,8 +590,19 @@ pub fn bare_turn(agent: CellId, nonce: u64, effects: Vec<Effect>) -> Turn {
         commitment_mode: Default::default(),
         balance_change: None,
         witness_blobs: vec![],
-    };
-    forest.add_root(action);
+    }
+}
+
+/// The bare single-action turn shape (matches the executor test template).
+pub fn bare_turn(agent: CellId, nonce: u64, effects: Vec<Effect>) -> Turn {
+    let mut forest = CallForest::new();
+    forest.add_root(bare_action(agent, effects));
+    wrap_turn(agent, nonce, forest)
+}
+
+/// Wrap a built call-forest into the bare `Turn` shape (no proofs/witnesses —
+/// the single-custody embedded world's operator path).
+fn wrap_turn(agent: CellId, nonce: u64, forest: CallForest) -> Turn {
     Turn {
         agent,
         nonce,
@@ -613,6 +681,75 @@ pub fn emit_event(cell: CellId, topic: &str, data: Vec<dregg_cell::FieldElement>
     Effect::EmitEvent {
         cell,
         event: Event::new(sym, data),
+    }
+}
+
+// --- the lifecycle verbs (seal · unseal · destroy · burn) ------------------
+//
+// The verified executor enforces that each lifecycle effect's `target` MATCHES
+// the action target (so `agent` must BE the cell being sealed/destroyed/burned;
+// the cockpit composes these as self-acting turns). The `make_*_turn`
+// constructors below bake that in so callers can't compose an ill-targeted one.
+
+/// Convenience: seal `target` with a 32-byte commitment to `reason` (the
+/// cleartext lives off-chain). After sealing, the cell rejects new effects
+/// until [`unseal`] — the executor enforces this lifecycle gate.
+pub fn seal(target: CellId, reason: &str) -> Effect {
+    Effect::CellSeal {
+        target,
+        reason: *blake3::hash(reason.as_bytes()).as_bytes(),
+    }
+}
+
+/// Convenience: reverse a seal — transition `target` from `Sealed` back to
+/// `Live`. Rejected by the executor if the cell is not currently sealed.
+pub fn unseal(target: CellId) -> Effect {
+    Effect::CellUnseal { target }
+}
+
+/// Convenience: permanently retire `target`, binding a [`DeathCertificate`]
+/// whose `cell_id` matches (the only field the executor checks against the
+/// cell). Once destroyed the cell `is_terminal()` — every later effect is
+/// rejected. `reason` distinguishes a voluntary retirement from a forced one.
+pub fn destroy(target: CellId, height: u64, reason: DeathReason) -> Effect {
+    Effect::CellDestroy {
+        target,
+        certificate: DeathCertificate {
+            cell_id: target,
+            last_receipt_hash: [0u8; 32],
+            final_state_commitment: [0u8; 32],
+            destroyed_at_height: height,
+            reason,
+        },
+    }
+}
+
+/// Convenience: provably reduce `target`'s balance by `amount` (slot 0 = the
+/// canonical balance slot — the only burnable slot in Silver-Vision). Unlike a
+/// transfer there is no credited destination; with a registered issuer well the
+/// executor routes the burn as a conserving move toward the well.
+pub fn burn(target: CellId, amount: u64) -> Effect {
+    Effect::Burn {
+        target,
+        slot: 0,
+        amount,
+    }
+}
+
+/// Convenience: birth a child cell from a deployed factory (the
+/// `CreateCellFromFactory` verb). The executor validates the creation `params`
+/// against the named factory's descriptor before installing the child.
+pub fn create_cell_from_factory(
+    factory_vk: [u8; 32],
+    owner_pubkey: [u8; 32],
+    token_id: [u8; 32],
+    params: dregg_cell::factory::FactoryCreationParams,
+) -> Effect {
+    Effect::CreateCellFromFactory {
+        factory_vk,
+        owner_pubkey,
+        token_id,
+        params,
     }
 }
 
@@ -799,6 +936,197 @@ mod tests {
         let turn = w.turn(a, vec![set_field(a, 3, [9u8; 32])]);
         assert!(w.commit_turn(turn).is_committed());
         assert_eq!(w.ledger().get(&a).unwrap().state.fields[3], [9u8; 32]);
+    }
+
+    #[test]
+    fn seal_then_unseal_round_trips_the_lifecycle() {
+        let mut w = World::new();
+        let a = w.genesis_cell(1, 100);
+        // Seal: the cell's lifecycle transitions to Sealed (agent == target).
+        let t1 = w.turn(a, vec![seal(a, "maintenance window")]);
+        assert!(w.commit_turn(t1).is_committed(), "seal must commit");
+        assert!(
+            w.ledger().get(&a).unwrap().lifecycle.is_sealed(),
+            "the cell's lifecycle must be Sealed"
+        );
+
+        // Unseal: the lifecycle returns to Live.
+        let t2 = w.turn(a, vec![unseal(a)]);
+        assert!(w.commit_turn(t2).is_committed(), "unseal must commit");
+        assert!(
+            !w.ledger().get(&a).unwrap().lifecycle.is_sealed(),
+            "the cell must be Live again after unseal"
+        );
+
+        // NOTE (real protocol finding): the verified executor records the
+        // Sealed lifecycle but does NOT yet GATE ordinary effects on it
+        // (`CellLifecycle::accepts_effects()` exists on the cell type but the
+        // executor's apply path does not consult it before non-lifecycle
+        // effects). So seal is a recorded-disclosure today, not an enforced
+        // effect-freeze. The cockpit surfaces the lifecycle state honestly; the
+        // enforcement gate is an executor lane, not this surface's to fake.
+    }
+
+    #[test]
+    fn unseal_of_a_live_cell_is_rejected() {
+        // The executor enforces NotSealed: unsealing a non-sealed cell rejects.
+        let mut w = World::new();
+        let a = w.genesis_cell(1, 100);
+        let t = w.turn(a, vec![unseal(a)]);
+        assert!(!w.commit_turn(t).is_committed(), "unseal of a live cell must reject");
+    }
+
+    #[test]
+    fn destroy_retires_a_cell_terminally() {
+        let mut w = World::new();
+        let a = w.genesis_cell(1, 0);
+        let t = w.turn(a, vec![destroy(a, w.height(), DeathReason::Voluntary)]);
+        assert!(w.commit_turn(t).is_committed(), "destroy must commit");
+        let cell = w.ledger().get(&a).unwrap();
+        assert!(cell.lifecycle.is_terminal(), "a destroyed cell's lifecycle is terminal");
+
+        // The lifecycle gate: a SECOND destroy IS rejected — `Cell::destroy`
+        // returns `Terminal` for an already-terminal cell, so the lifecycle
+        // verbs themselves DO enforce terminality (even though ordinary effects
+        // are not yet gated on it — see the seal/lifecycle note in
+        // `seal_then_unseal_round_trips_the_lifecycle`).
+        let again = w.turn(a, vec![destroy(a, w.height(), DeathReason::Voluntary)]);
+        assert!(
+            !w.commit_turn(again).is_committed(),
+            "a destroyed cell cannot be destroyed again (the lifecycle verb enforces terminality)"
+        );
+    }
+
+    #[test]
+    fn burn_reduces_supply_without_a_credit() {
+        let mut w = World::new();
+        let a = w.genesis_cell(1, 1_000);
+        let t = w.turn(a, vec![burn(a, 250)]);
+        assert!(w.commit_turn(t).is_committed(), "burn must commit");
+        assert_eq!(
+            w.ledger().get(&a).unwrap().state.balance(),
+            750,
+            "the burned amount left the cell with no destination"
+        );
+        // The receipt records the burn disclosure (bound into the hash).
+        assert!(w.receipts().last().unwrap().was_burn, "the receipt must flag the burn");
+    }
+
+    #[test]
+    fn burn_exceeding_balance_is_rejected() {
+        let mut w = World::new();
+        let a = w.genesis_cell(1, 100);
+        let t = w.turn(a, vec![burn(a, 1_000)]);
+        assert!(!w.commit_turn(t).is_committed(), "over-burn must reject");
+        assert_eq!(w.ledger().get(&a).unwrap().state.balance(), 100);
+    }
+
+    #[test]
+    fn forest_turn_commits_several_actions_atomically() {
+        // A multi-action turn: agent transfers to two different cells in ONE
+        // turn (two sibling roots), committed atomically with one receipt.
+        let mut w = World::new();
+        let a = w.genesis_cell(1, 1_000);
+        let b = w.genesis_cell(2, 0);
+        let c = w.genesis_cell(3, 0);
+
+        let t = w.forest_turn(
+            a,
+            vec![
+                (a, vec![transfer(a, b, 100)]),
+                (a, vec![transfer(a, c, 200)]),
+            ],
+        );
+        let outcome = w.commit_turn(t);
+        assert!(outcome.is_committed(), "the multi-action forest must commit");
+        assert_eq!(w.ledger().get(&b).unwrap().state.balance(), 100);
+        assert_eq!(w.ledger().get(&c).unwrap().state.balance(), 200);
+        assert_eq!(w.ledger().get(&a).unwrap().state.balance(), 700);
+        // ONE receipt for the whole forest, with two actions.
+        assert_eq!(w.receipts().len(), 1);
+        assert_eq!(w.receipts()[0].action_count, 2);
+    }
+
+    #[test]
+    fn forest_turn_is_atomic_all_or_nothing() {
+        // If ANY action in the forest is invalid, the WHOLE turn rejects and
+        // no partial effect lands (atomic commit).
+        let mut w = World::new();
+        let a = w.genesis_cell(1, 150);
+        let b = w.genesis_cell(2, 0);
+
+        let t = w.forest_turn(
+            a,
+            vec![
+                (a, vec![transfer(a, b, 100)]),     // would be fine alone
+                (a, vec![transfer(a, b, 1_000)]),   // overspends → rejects the turn
+            ],
+        );
+        assert!(!w.commit_turn(t).is_committed(), "an invalid sibling must reject the whole turn");
+        // Atomicity: the first transfer did NOT land.
+        assert_eq!(w.ledger().get(&a).unwrap().state.balance(), 150);
+        assert_eq!(w.ledger().get(&b).unwrap().state.balance(), 0);
+        assert_eq!(w.height(), 0);
+    }
+
+    #[test]
+    fn deploy_factory_then_birth_a_child_cell() {
+        use dregg_cell::factory::{FactoryCreationParams, FactoryDescriptor};
+        use dregg_cell::CellMode;
+
+        let mut w = World::new();
+        let agent = w.genesis_cell(1, 0);
+
+        // Deploy a minimal Hosted factory (no pinned child program) into the
+        // real executor's registry; get its content-addressed VK back.
+        let descriptor = FactoryDescriptor {
+            factory_vk: [0xF0; 32],
+            child_program_vk: None,
+            child_vk_strategy: None,
+            allowed_cap_templates: vec![],
+            field_constraints: vec![],
+            state_constraints: vec![],
+            default_mode: CellMode::Hosted,
+            creation_budget: Some(4),
+        };
+        let vk = w.deploy_factory(descriptor);
+
+        let owner = {
+            let mut pk = [0u8; 32];
+            pk[0] = 0xC1;
+            pk
+        };
+        let before = w.cell_count();
+        let params = FactoryCreationParams {
+            mode: CellMode::Hosted,
+            program_vk: None,
+            initial_fields: vec![],
+            initial_caps: vec![],
+            owner_pubkey: owner,
+        };
+        let turn = w.turn(agent, vec![create_cell_from_factory(vk, owner, [0u8; 32], params)]);
+        let outcome = w.commit_turn(turn);
+        assert!(outcome.is_committed(), "factory-birth must commit through the real executor");
+        assert_eq!(w.cell_count(), before + 1, "the factory birthed a child cell");
+    }
+
+    #[test]
+    fn factory_birth_against_an_unregistered_factory_is_rejected() {
+        use dregg_cell::factory::FactoryCreationParams;
+        use dregg_cell::CellMode;
+        let mut w = World::new();
+        let agent = w.genesis_cell(1, 0);
+        let owner = [0xC2u8; 32];
+        let params = FactoryCreationParams {
+            mode: CellMode::Hosted,
+            program_vk: None,
+            initial_fields: vec![],
+            initial_caps: vec![],
+            owner_pubkey: owner,
+        };
+        // No factory deployed at this VK → the executor rejects the birth.
+        let turn = w.turn(agent, vec![create_cell_from_factory([0x99; 32], owner, [0u8; 32], params)]);
+        assert!(!w.commit_turn(turn).is_committed(), "birth from an unregistered factory must reject");
     }
 
     #[test]

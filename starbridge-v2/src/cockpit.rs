@@ -51,6 +51,7 @@ pub enum Selection {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
     Composer,
+    Objects,
     Debugger,
     Replay,
     Cipherclerk,
@@ -58,10 +59,18 @@ pub enum Tab {
 }
 
 impl Tab {
-    const ALL: [Tab; 5] = [Tab::Composer, Tab::Debugger, Tab::Replay, Tab::Cipherclerk, Tab::Editor];
+    const ALL: [Tab; 6] = [
+        Tab::Composer,
+        Tab::Objects,
+        Tab::Debugger,
+        Tab::Replay,
+        Tab::Cipherclerk,
+        Tab::Editor,
+    ];
     fn label(self) -> &'static str {
         match self {
             Tab::Composer => "COMPOSER",
+            Tab::Objects => "OBJECTS",
             Tab::Debugger => "DEBUGGER",
             Tab::Replay => "REPLAY",
             Tab::Cipherclerk => "CIPHERCLERK",
@@ -210,6 +219,59 @@ impl Cockpit {
             let mut w = self.world.borrow_mut();
             // treasury holds no cap to user → no-amplification rejects this.
             let turn = w.turn(treasury, vec![world::grant_capability(treasury, treasury, user, 0)]);
+            w.commit_turn(turn)
+        };
+        self.note_outcome(outcome);
+        self.refresh_cells();
+        cx.notify();
+    }
+
+    /// Birth a fresh cell and SEAL it in one demo flow — shows the lifecycle
+    /// verb running through the real executor (seal must target the acting cell;
+    /// we genesis the cell, then seal it). Re-runnable: each press seals a new
+    /// fresh cell so the lifecycle column grows.
+    fn run_seal(&mut self, cx: &mut Context<Self>) {
+        let outcome = {
+            let mut w = self.world.borrow_mut();
+            let seed = (w.cell_count() as u8).wrapping_add(0x70);
+            let id = w.genesis_cell(seed, 0);
+            let turn = w.turn(id, vec![world::seal(id, "operator seal demo")]);
+            w.commit_turn(turn)
+        };
+        self.note_outcome(outcome);
+        self.refresh_cells();
+        cx.notify();
+    }
+
+    /// Burn value from the treasury — supply provably reduced, no credit. The
+    /// receipt's `was_burn` flag is bound into its hash (the cockpit's proof
+    /// view surfaces it).
+    fn run_burn(&mut self, cx: &mut Context<Self>) {
+        let [treasury, _service, _user] = self.anchors;
+        let outcome = {
+            let mut w = self.world.borrow_mut();
+            let turn = w.turn(treasury, vec![world::burn(treasury, 1_000)]);
+            w.commit_turn(turn)
+        };
+        self.note_outcome(outcome);
+        self.refresh_cells();
+        cx.notify();
+    }
+
+    /// Compose a MULTI-ACTION turn — treasury pays BOTH service and user in one
+    /// atomic verified turn (two sibling actions, one receipt). Demonstrates the
+    /// call-forest composer driving the real executor.
+    fn run_compose_multi(&mut self, cx: &mut Context<Self>) {
+        let [treasury, service, user] = self.anchors;
+        let outcome = {
+            let mut w = self.world.borrow_mut();
+            let turn = w.forest_turn(
+                treasury,
+                vec![
+                    (treasury, vec![world::transfer(treasury, service, 500)]),
+                    (treasury, vec![world::transfer(treasury, user, 750)]),
+                ],
+            );
             w.commit_turn(turn)
         };
         self.note_outcome(outcome);
@@ -428,8 +490,11 @@ impl Cockpit {
                  Watch the image, receipts, and dynamics update live.",
             ))
             .child(verb_button(cx, "transfer 1,000 → user", theme::good(), Cockpit::run_demo_transfer))
+            .child(verb_button(cx, "compose multi-action (pay service + user)", theme::good(), Cockpit::run_compose_multi))
             .child(verb_button(cx, "grant capability (service→user)", theme::accent(), Cockpit::run_demo_grant))
             .child(verb_button(cx, "create cell (conserves value)", theme::accent(), Cockpit::run_demo_create))
+            .child(verb_button(cx, "seal a fresh cell (lifecycle)", theme::accent(), Cockpit::run_seal))
+            .child(verb_button(cx, "burn 1,000 (supply reduced)", theme::warn(), Cockpit::run_burn))
             .child(verb_button(cx, "⚠ over-grant (watch it REJECT)", theme::warn(), Cockpit::run_over_grant))
             .child(self.outcome_banner())
     }
@@ -505,6 +570,7 @@ impl Cockpit {
     fn workspace(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
         match self.tab {
             Tab::Composer => self.composer(cx).into_any_element(),
+            Tab::Objects => self.objects_panel().into_any_element(),
             Tab::Debugger => self.debugger_panel().into_any_element(),
             Tab::Replay => self.replay_panel().into_any_element(),
             Tab::Cipherclerk => self.cipherclerk_panel().into_any_element(),
@@ -617,6 +683,48 @@ impl Cockpit {
         col
     }
 
+    /// THE OBJECTS panel — the reflective object views over the protocol
+    /// surface beyond cells/receipts: each committed turn's PROOF / STARK status,
+    /// the NULLIFIERS (consumed one-time authorities) it spent, and the
+    /// lifecycle of every cell (live / sealed / destroyed). All projected through
+    /// `reflect` from the live world — never a parallel schema.
+    fn objects_panel(&self) -> impl IntoElement {
+        let w = self.world.borrow();
+        let mut col = div().flex().flex_col().gap_1().p_3().size_full();
+        col = col.child(section_title("OBJECTS · proofs · nullifiers · lifecycle").mb_1());
+
+        // Lifecycle column: every cell's lifecycle state (the seal/destroy axis).
+        col = col.child(div().text_xs().text_color(theme::muted()).mt_1().child("CELL LIFECYCLE"));
+        for id in &self.cells {
+            if let Some(cell) = w.ledger().get(id) {
+                let (label, color) = lifecycle_badge(&cell.lifecycle);
+                col = col.child(
+                    div()
+                        .flex()
+                        .justify_between()
+                        .px_2()
+                        .py_0p5()
+                        .child(div().text_xs().text_color(theme::text()).child(format!("⬡ {}", reflect::short_hex(id.as_bytes()))))
+                        .child(div().text_xs().text_color(color).child(label)),
+                );
+            }
+        }
+
+        // Proof status + nullifiers for the most recent receipts.
+        col = col.child(div().text_xs().text_color(theme::muted()).mt_2().child("TURN PROOFS (most recent)"));
+        if w.receipts().is_empty() {
+            col = col.child(div().text_xs().text_color(theme::muted()).px_2().child("(no turns yet)"));
+        }
+        for r in w.receipts().iter().rev().take(6) {
+            let proof = reflect::reflect_proof_status(r);
+            col = col.child(inspectable_row(&proof));
+            for null in reflect::reflect_nullifiers(r) {
+                col = col.child(inspectable_row(&null));
+            }
+        }
+        col
+    }
+
     /// THE LIVE EDITOR panel — `edit::render_panel` is gpui-free text; the
     /// cockpit presents it line-by-line.
     fn editor_panel(&self) -> impl IntoElement {
@@ -704,8 +812,24 @@ fn kind_badge(kind: ObjectKind) -> impl IntoElement {
         ObjectKind::Receipt => ("receipt", theme::good()),
         ObjectKind::Capability => ("capability", theme::accent()),
         ObjectKind::Image => ("image", theme::warn()),
+        ObjectKind::Proof => ("proof", theme::good()),
+        ObjectKind::Factory => ("factory", theme::accent()),
+        ObjectKind::Nullifier => ("nullifier", theme::warn()),
     };
     div().mb_2().child(pill(label, color))
+}
+
+/// A short label + color for a cell's lifecycle state (the OBJECTS panel's
+/// lifecycle column). Matches the protocol's `CellLifecycle` variants.
+fn lifecycle_badge(lc: &dregg_cell::lifecycle::CellLifecycle) -> (&'static str, Hsla) {
+    use dregg_cell::lifecycle::CellLifecycle;
+    match lc {
+        CellLifecycle::Live => ("live", theme::good()),
+        CellLifecycle::Sealed { .. } => ("sealed", theme::warn()),
+        CellLifecycle::Destroyed { .. } => ("destroyed", theme::bad()),
+        CellLifecycle::Migrated { .. } => ("migrated", theme::muted()),
+        CellLifecycle::Archived { .. } => ("archived", theme::accent()),
+    }
 }
 
 /// A compact row for a reflected object (the cipherclerk panel's identity /
