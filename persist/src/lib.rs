@@ -36,6 +36,7 @@ pub mod forever_digests;
 pub mod ledger_store;
 pub mod note_tree;
 pub mod poseidon2_note_tree;
+pub mod snapshot;
 pub mod tables;
 
 #[cfg(test)]
@@ -50,6 +51,7 @@ pub use commit_log::{CommitRecord, IndexAuditReport};
 pub use federation::StoredAttestedRoot;
 pub use ledger_store::LedgerCheckpoint;
 pub use note_tree::{NoteTree, PersistentNullifierSet};
+pub use snapshot::{Snapshot, SnapshotHead};
 pub use poseidon2_note_tree::Poseidon2NoteTree;
 
 /// Errors that can occur during store operations.

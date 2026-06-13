@@ -35,7 +35,7 @@ use crate::{PersistentStore, Result, StoreError};
 ///
 /// This captures all data needed to reconstruct a `Ledger` (minus ephemeral
 /// runtime state like Merkle tree caches and witness subscribers).
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct LedgerCheckpoint {
     /// Block height at which this checkpoint was taken.
     pub height: u64,
@@ -117,6 +117,34 @@ impl PersistentStore {
         }
     }
 
+    /// Load the highest-height ledger checkpoint at-or-below `target`, with its
+    /// height. Used by snapshot shipping to pick the checkpoint base nearest a
+    /// joiner's requested floor. `None` if no checkpoint at-or-below `target`
+    /// exists.
+    pub fn latest_ledger_checkpoint_at_or_below(
+        &self,
+        target: u64,
+    ) -> Result<Option<(u64, LedgerCheckpoint)>> {
+        let read_txn = self.db.begin_read()?;
+        let table = read_txn.open_table(tables::LEDGER_CHECKPOINTS)?;
+        // Range [0, target] descending: the last (highest) entry is the base.
+        let mut best: Option<(u64, Vec<u8>)> = None;
+        for entry in table.range(0u64..=target)? {
+            let entry =
+                entry.map_err(|e: redb::StorageError| StoreError::Database(e.to_string()))?;
+            let h = entry.0.value();
+            // redb iterates ascending; keep overwriting → ends at the highest.
+            best = Some((h, entry.1.value().to_vec()));
+        }
+        match best {
+            Some((h, bytes)) => {
+                let snapshot: LedgerCheckpoint = postcard::from_bytes(&bytes)?;
+                Ok(Some((h, snapshot)))
+            }
+            None => Ok(None),
+        }
+    }
+
     /// Get the height of the latest ledger checkpoint, or 0 if none exists.
     pub fn latest_ledger_checkpoint_height(&self) -> Result<u64> {
         let read_txn = self.db.begin_read()?;
@@ -125,6 +153,64 @@ impl PersistentStore {
             .get(tables::META_LATEST_LEDGER_CHECKPOINT_HEIGHT)?
             .map(|g| g.value())
             .unwrap_or(0))
+    }
+
+    /// Store a pre-serialized [`LedgerCheckpoint`] (e.g. one received in a shipped
+    /// snapshot) at its own height, updating the latest-checkpoint-height
+    /// metadata. The counterpart to [`Self::checkpoint_ledger`] for a checkpoint
+    /// the node did not compute locally.
+    pub fn store_ledger_checkpoint_snapshot(&self, snapshot: &LedgerCheckpoint) -> Result<()> {
+        let serialized =
+            postcard::to_stdvec(snapshot).map_err(|e| StoreError::Serialization(e.to_string()))?;
+        let write_txn = self.db.begin_write()?;
+        {
+            let mut table = write_txn.open_table(tables::LEDGER_CHECKPOINTS)?;
+            table.insert(snapshot.height, serialized.as_slice())?;
+
+            let mut meta = write_txn.open_table(tables::METADATA)?;
+            let current_latest = meta
+                .get(tables::META_LATEST_LEDGER_CHECKPOINT_HEIGHT)?
+                .map(|g| g.value())
+                .unwrap_or(0);
+            if snapshot.height >= current_latest {
+                meta.insert(tables::META_LATEST_LEDGER_CHECKPOINT_HEIGHT, snapshot.height)?;
+            }
+        }
+        write_txn.commit()?;
+        Ok(())
+    }
+
+    /// Install a set of overlay cell post-states into the cell-by-id index (the
+    /// snapshot-apply path). Each cell is upserted under its id (last-writer-wins
+    /// by the overlay's own ordering — the overlay is already a last-writer-wins
+    /// projection). Used by [`PersistentStore::install_snapshot`] so a joiner's
+    /// `lookup_cell` / `cell_overlay_since` resolve the post-checkpoint deltas.
+    pub fn install_overlay_into_cell_index(&self, overlay: &[Cell]) -> Result<()> {
+        let write_txn = self.db.begin_write()?;
+        {
+            let mut idx_cell = write_txn.open_table(tables::IDX_CELL_BY_ID)?;
+            for cell in overlay {
+                let bytes = postcard::to_stdvec(cell)
+                    .map_err(|e| StoreError::Serialization(e.to_string()))?;
+                idx_cell.insert(&cell.id().0, bytes.as_slice())?;
+            }
+        }
+        write_txn.commit()?;
+        Ok(())
+    }
+
+    /// Load every cell currently in the cell-by-id index (the installed overlay
+    /// after a snapshot apply). Diagnostic / recovery helper.
+    pub fn installed_overlay_cells(&self) -> Result<Vec<Cell>> {
+        let read_txn = self.db.begin_read()?;
+        let table = read_txn.open_table(tables::IDX_CELL_BY_ID)?;
+        let mut out = Vec::new();
+        for entry in table.iter()? {
+            let entry =
+                entry.map_err(|e: redb::StorageError| StoreError::Database(e.to_string()))?;
+            out.push(postcard::from_bytes(entry.1.value())?);
+        }
+        Ok(out)
     }
 
     /// Remove old ledger checkpoints, keeping only the most recent `keep_last_n`.
@@ -191,6 +277,31 @@ fn ledger_to_checkpoint(ledger: &Ledger, height: u64) -> LedgerCheckpoint {
         sovereign_commitments,
         sovereign_registrations,
     }
+}
+
+/// Reconstruct a `Ledger` from a borrowed `LedgerCheckpoint` (the snapshot-apply
+/// path, which keeps the checkpoint to ship/verify). Same reconstruction as
+/// [`checkpoint_to_ledger`], by reference.
+pub(crate) fn checkpoint_to_ledger_snapshot(snapshot: &LedgerCheckpoint) -> Ledger {
+    let mut ledger = Ledger::new();
+    for cell in &snapshot.cells {
+        let _ = ledger.insert_cell(cell.clone());
+    }
+    for (id_bytes, commitment) in &snapshot.sovereign_commitments {
+        let cell_id = CellId(*id_bytes);
+        let _ = ledger.register_sovereign_cell(cell_id, *commitment);
+    }
+    for (id_bytes, registration) in &snapshot.sovereign_registrations {
+        let cell_id = CellId(*id_bytes);
+        let _ = ledger.register_sovereign_cell_with_vk(
+            cell_id,
+            registration.commitment,
+            registration.registered_at,
+            registration.ttl_blocks,
+            registration.verification_key_hash,
+        );
+    }
+    ledger
 }
 
 /// Reconstruct a `Ledger` from a `LedgerCheckpoint`.
