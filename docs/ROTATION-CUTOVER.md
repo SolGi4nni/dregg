@@ -119,13 +119,26 @@ DESCRIPTOR RESOLUTION and the caveat manifest. Now:
   (transfer keeps the two-domain reference manifest), proves the shared 311-col trace through
   the IR-v2 batch prover, and fails closed on empty / heterogeneous / non-cohort turns.
 
-**Cohort boundary (honest):** the rotated registry the Lean `v3Registry` emitted is the
-v2-graduated set; effects OUTSIDE it (`MakeSovereign`, `CreateCell`, `CreateCellFromFactory`,
-`SpawnWithDelegation`, `ReceiptArchive`, `CellUnseal`, `GrantCapability`, `RevokeCapability`,
-`EmitEvent`, `Custom`) have NO rotated descriptor — `rotated_descriptor_name_for_effect`
-returns `None`. Widening the cohort to them is a Lean-emission act (extend `v3Registry`), not
-a Rust act; until then the live-path rewrite (G2) must keep the v1 path reachable for those
-effects OR the regen must add them. This is the precise residue the flag-day must resolve.
+**Cohort boundary (honest) — WIDENED (STEP 1, 2026-06-13):** the rotated registry the Lean
+`v3Registry` emitted was the 26 v2-graduated members; STEP 1 widened it to **34** by lifting
+the 8 LIVE-path effects that had a graduated v1 wire descriptor through the SAME `rotateV3`:
+`GrantCapability` (the bare unattenuated cap-root grant — `grantCapVmDescriptor2R24`),
+`MakeSovereign`, `CreateCell`, `CreateCellFromFactory`, `SpawnWithDelegation`, `ReceiptArchive`,
+`CellUnseal`, `EmitEvent`. Each is graduable (`#guard`ed) so `rotV3_sound_v1` /
+`rotV3_binds_published` apply with no new proof; `rotated_descriptor_name` now resolves them;
+the TSV + SHA + the `n == 34` cover guard + the resolver-coverage tooth are re-pinned green.
+(STEP 1 also REPAIRED `EffectVmEmitEmitEvent.unify_emitEvent`, which had a stale `recKernel_ext`
+arity after `EmitEventSpec` gained the `heaps` frame clause — the descriptor was sound but its
+executor-connector proof leaked `sorryAx`; now axiom-clean and in the live `Dregg2` closure.)
+
+**THE RESIDUE (two effects, precise obstructions — NOT papered over):** `RevokeCapability`
+(selector 24) has NO graduated v1 descriptor at all (absent from `SELECTOR_DESCRIPTORS`; its
+cap-root advance is being reshaped by the cap-crown lanes — it stays on the monolithic hand-AIR),
+and `Custom` (selector 8) needs an accumulator/recursive proof-binding constraint kind the
+per-row descriptor IR does not have. `rotated_descriptor_name` fails closed (`None`) for both.
+The live-path rewrite (STEP 2) must keep a path for these two until a Lean-emission act adds
+them (a new constraint kind for Custom; a graduated descriptor for RevokeCapability post
+cap-crown). This is the precise residue the flag-day must resolve before v1 can fully die.
 
 ## §2b — Register count: MEASURED (16 vs 24 vs 32 — the always-paid vs metered economics)
 
@@ -284,13 +297,17 @@ Post-flip gauntlets (block the deploy, not the commit):
 
 1. ~~**The full-cohort regen at the rotated block** (§3 step 1-2) — the probe pins
    the SHAPE; the 26 per-effect descriptors still emit against the 186/14 layout.~~
-   **DONE (staged), this lane** — `EffectVmEmitRotationV3.lean::v3Registry` re-emits all
-   26 cohort members at the rotated R=24 block via the ONE parametric `rotateV3`; the
-   soundness keystones (`rotateV3_satisfiedVm_v1`, `rotV3_binds_published`) lift ONCE for
-   all 26, axiom-clean; Rust twin `rotation-v3-staged-registry.tsv` is sha-pinned and the
+   **DONE (staged), this lane + WIDENED to 34 (STEP 1, 2026-06-13)** —
+   `EffectVmEmitRotationV3.lean::v3Registry` re-emits all **34** cohort members at the rotated
+   R=24 block via the ONE parametric `rotateV3` (the 26 v2-graduated + the 8 LIVE-path effects
+   STEP 1 added: grantCap · makeSovereign · createCell · factory · spawn · receiptArchive ·
+   cellUnseal · emitEvent); the soundness keystones (`rotateV3_satisfiedVm_v1`,
+   `rotV3_binds_published`) lift ONCE for all 34, axiom-clean; Rust twin
+   `rotation-v3-staged-registry.tsv` is sha-pinned (`n == 34` cover guard) and the
    coverage/drift test walks every descriptor's absorption + chain + 4 PI pins. STAGED
-   beside v1/v2 (no VK bump, the live wire untouched). The FLIP (§3 steps 1-6) replaces the
-   v1 registry with this rotated one — still the main loop's act.
+   beside v1/v2 (no VK bump, the live wire untouched). RESIDUE: `RevokeCapability` (24) +
+   `Custom` (8) still have no rotated descriptor (precise obstructions, §2c). The FLIP
+   (§3 steps 1-6) replaces the v1 registry with this rotated one — still the main loop's act.
 2. **The balance/nonce register-name assignment** (§2 note) — ember decision.
 3. ~~**The cells_root producer**~~ **BUILT THIS LANE** (`turn/src/rotation_witness.rs::cells_root`):
    the turn-level boundary view over present cells (sorted-Poseidon2 root via

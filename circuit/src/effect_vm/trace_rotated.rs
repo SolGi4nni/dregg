@@ -326,8 +326,8 @@ fn fill_caveat(row: &mut [BabyBear], base: usize, m: &RotatedCaveatManifest) {
 
 /// Resolve the rotated registry descriptor NAME for one effect's v1 selector — the
 /// `*VmDescriptor2R24` member of `V3_STAGED_REGISTRY_TSV` whose rotated shape proves THIS
-/// effect. The cohort is the 26 graduated descriptors the Lean `EffectVmEmitRotationV3.
-/// v3Registry` emits (18 base + 8 per-slot `setField`); the trace the rotated generator emits
+/// effect. The cohort is the 34 graduated descriptors the Lean `EffectVmEmitRotationV3.
+/// v3Registry` emits (26 base + 8 per-slot `setField`); the trace the rotated generator emits
 /// is the SAME shape (311 cols + 38 PIs) for every member (the appendix is parametric, not
 /// per-effect — `rotateV3`), so this resolver picks WHICH per-effect constraint family the
 /// IR-v2 prover enforces on the shared trace.
@@ -337,12 +337,13 @@ fn fill_caveat(row: &mut [BabyBear], base: usize, m: &RotatedCaveatManifest) {
 /// (selector 2) routes to the per-slot descriptor by the field index via
 /// [`rotated_set_field_descriptor_name`].
 ///
-/// NOTE: the rotated cohort is the v3Registry's exact membership, which matches the v2
-/// graduated set. Selectors that are NOT in the v3Registry (e.g. `MakeSovereign`,
-/// `CreateCell`, `CreateCellFromFactory`, `SpawnWithDelegation`, `ReceiptArchive`,
-/// `CellUnseal`, `GrantCapability`, `RevokeCapability`, `EmitEvent`, `Custom`) return `None`
-/// — they were never emitted into the rotated registry, so a rotated proof of them does not
-/// exist (this is the honest cohort boundary; widening the cohort is a Lean-emission act).
+/// NOTE: the rotated cohort is the v3Registry's exact membership (34 members) — the 26
+/// v2-graduated descriptors PLUS the 8 LIVE-path effects the STEP 1 widening added
+/// (`GrantCapability`, `MakeSovereign`, `CreateCell`, `CreateCellFromFactory`,
+/// `SpawnWithDelegation`, `ReceiptArchive`, `CellUnseal`, `EmitEvent`). Only `RevokeCapability`
+/// (24) and `Custom` (8) still return `None` — they have no rotated descriptor yet (no
+/// graduated v1 descriptor / a missing recursive-binding constraint kind, respectively); these
+/// are the honest residue (widening to them is a Lean-emission act, not a Rust act).
 pub fn rotated_descriptor_name(selector: usize) -> Option<&'static str> {
     use super::columns::sel;
     Some(match selector {
@@ -363,6 +364,22 @@ pub fn rotated_descriptor_name(selector: usize) -> Option<&'static str> {
         s if s == sel::REVOKE_DELEGATION => "revokeVmDescriptor2R24",
         s if s == sel::INTRODUCE => "introduceVmDescriptor2R24",
         s if s == sel::ATTENUATE_CAPABILITY => "attenuateVmDescriptor2R24",
+        // The COHORT-WIDENING (STEP 1 / ROTATION-CUTOVER §2c): the eight LIVE-path effects the
+        // Lean `v3Registry` now emits rotated descriptors for via `rotateV3`. GrantCapability
+        // rides the BARE unattenuated cap-root grant template (`grantCapVmDescriptor2R24`),
+        // distinct from the ATTENUATE_CAPABILITY phase-B descriptor.
+        s if s == sel::GRANT_CAP => "grantCapVmDescriptor2R24",
+        s if s == sel::MAKE_SOVEREIGN => "makeSovereignVmDescriptor2R24",
+        s if s == sel::CREATE_CELL_FROM_FACTORY => "factoryVmDescriptor2R24",
+        s if s == sel::EMIT_EVENT => "emitEventVmDescriptor2R24",
+        s if s == sel::CREATE_CELL => "createCellVmDescriptor2R24",
+        s if s == sel::SPAWN_WITH_DELEGATION => "spawnVmDescriptor2R24",
+        s if s == sel::CELL_UNSEAL => "cellUnsealVmDescriptor2R24",
+        s if s == sel::RECEIPT_ARCHIVE => "receiptArchiveVmDescriptor2R24",
+        // HONEST RESIDUE — still NO rotated descriptor (precise obstructions, not papered over):
+        // sel::CUSTOM (8) needs an accumulator/recursive proof-binding constraint kind the
+        // per-row IR lacks; sel::REVOKE_CAPABILITY (24) has no graduated v1 descriptor (its
+        // cap-root advance is being reshaped by the cap-crown lanes). Both fail closed here.
         _ => return None,
     })
 }
@@ -430,7 +447,7 @@ mod tests {
     use crate::effect_vm_descriptors::V3_STAGED_REGISTRY_TSV;
     use std::collections::BTreeSet;
 
-    /// The rotated descriptor resolvers cover EXACTLY the registry's 26 cohort members:
+    /// The rotated descriptor resolvers cover EXACTLY the registry's 34 cohort members:
     /// every name the resolvers can return is in the registry, and every registry member is
     /// reachable from some effect. This is the cohort-completeness tooth — the rotated
     /// generator can prove every effect the rotated registry emitted a descriptor for, and
@@ -442,10 +459,10 @@ mod tests {
             .filter_map(|l| l.split('\t').next())
             .filter(|s| !s.is_empty())
             .collect();
-        assert_eq!(registry.len(), 26, "the rotated registry has 26 members");
+        assert_eq!(registry.len(), 34, "the rotated registry has 34 members");
 
-        // Every name the resolvers produce: the 17 selector-mapped base effects, the dynamic
-        // setField, and the 8 per-slot setFields.
+        // Every name the resolvers produce: the 17 selector-mapped base effects, the 8
+        // STEP-1-widened LIVE-path effects, the dynamic setField, and the 8 per-slot setFields.
         let mut reached: BTreeSet<&str> = BTreeSet::new();
         for &name in &[
             rotated_descriptor_name(super::super::columns::sel::TRANSFER).unwrap(),
@@ -465,6 +482,15 @@ mod tests {
             rotated_descriptor_name(super::super::columns::sel::REVOKE_DELEGATION).unwrap(),
             rotated_descriptor_name(super::super::columns::sel::INTRODUCE).unwrap(),
             rotated_descriptor_name(super::super::columns::sel::ATTENUATE_CAPABILITY).unwrap(),
+            // STEP-1 widened:
+            rotated_descriptor_name(super::super::columns::sel::GRANT_CAP).unwrap(),
+            rotated_descriptor_name(super::super::columns::sel::MAKE_SOVEREIGN).unwrap(),
+            rotated_descriptor_name(super::super::columns::sel::CREATE_CELL_FROM_FACTORY).unwrap(),
+            rotated_descriptor_name(super::super::columns::sel::EMIT_EVENT).unwrap(),
+            rotated_descriptor_name(super::super::columns::sel::CREATE_CELL).unwrap(),
+            rotated_descriptor_name(super::super::columns::sel::SPAWN_WITH_DELEGATION).unwrap(),
+            rotated_descriptor_name(super::super::columns::sel::CELL_UNSEAL).unwrap(),
+            rotated_descriptor_name(super::super::columns::sel::RECEIPT_ARCHIVE).unwrap(),
             rotated_set_field_descriptor_name(99), // dynamic
         ] {
             reached.insert(name);
@@ -472,25 +498,26 @@ mod tests {
         for i in 0..8 {
             reached.insert(rotated_set_field_descriptor_name(i));
         }
-        assert_eq!(reached.len(), 26, "the resolvers reach 26 distinct names");
+        assert_eq!(reached.len(), 34, "the resolvers reach 34 distinct names");
         assert_eq!(
             reached, registry,
             "the resolver names are EXACTLY the rotated registry's members"
         );
     }
 
-    /// A non-cohort effect (e.g. `MakeSovereign`, `CreateCell`, `EmitEvent`) resolves to
-    /// `None` — the resolver fails closed rather than naming a descriptor that does not exist.
+    /// The honest residue: `Custom` (8) and `RevokeCapability` (24) still resolve to `None` —
+    /// the resolver fails closed rather than naming a descriptor that does not exist. (The
+    /// other former non-cohort effects — MakeSovereign, CreateCell, ReceiptArchive, etc. — now
+    /// resolve to their STEP-1 rotated descriptors, covered by the test above.)
     #[test]
     fn non_cohort_effects_resolve_to_none() {
-        assert_eq!(rotated_descriptor_name_for_effect(&Effect::MakeSovereign), None);
         assert_eq!(rotated_descriptor_name_for_effect(&Effect::NoOp), None);
         assert_eq!(
-            rotated_descriptor_name(super::super::columns::sel::CREATE_CELL),
+            rotated_descriptor_name(super::super::columns::sel::CUSTOM),
             None
         );
         assert_eq!(
-            rotated_descriptor_name(super::super::columns::sel::RECEIPT_ARCHIVE),
+            rotated_descriptor_name(super::super::columns::sel::REVOKE_CAPABILITY),
             None
         );
     }

@@ -750,17 +750,20 @@ pub const V3_STAGED_CAVEAT_DESCRIPTORS: &[(&str, &str, &str)] = &[(
 )];
 
 /// THE FULL-COHORT REGEN at the rotated R=24 block (`ROTATION-CUTOVER.md` §5 item 1):
-/// all 26 cohort descriptors re-emitted past their v1 layout with the rotated
+/// all 34 cohort descriptors re-emitted past their v1 layout with the rotated
 /// BEFORE/AFTER blocks + the widened-caveat region (Lean `rotateV3` /
-/// `EffectVmEmitRotationV3.lean`; `v3Registry` is the source). The TSV is `key\tname\tjson`
-/// per line, sha-256 pinned by `v3_staged_registry_parses_matches_fingerprint_and_covers`.
+/// `EffectVmEmitRotationV3.lean`; `v3Registry` is the source) — the 26 v2-graduated members
+/// PLUS the 8 LIVE-path effects the STEP 1 widening added (grantCap · makeSovereign ·
+/// createCell · factory · spawn · receiptArchive · cellUnseal · emitEvent). The TSV is
+/// `key\tname\tjson` per line, sha-256 pinned by
+/// `v3_staged_registry_parses_matches_fingerprint_and_covers`.
 /// STAGED: a new constant, no VK bump, the live wire untouched. Each descriptor's
 /// `trace_width = EFFECT_VM_WIDTH (186) + APPENDIX_SPAN (125) = 311`; the rotated
 /// commitments ride four appended PI slots (rotated OLD/NEW commit · height · caveat commit).
 pub const V3_STAGED_REGISTRY_TSV: &str =
     include_str!("../descriptors/rotation-v3-staged-registry.tsv");
 pub const V3_STAGED_REGISTRY_FP: &str =
-    "1d94da6e28f1d4af27b3e897505e34453e861971a49b52bb79cc01ce045c4dcc";
+    "02984897593286817aaa14b72870d06b37e275270d63846f2a4a04e27f78b105";
 
 /// The rotated probe layout at register count `r` (the Rust twin of the Lean parametric
 /// layout `EffectVmEmitRotationR`: columns are FUNCTIONS of R; the chunking is 4-wide head,
@@ -1634,7 +1637,7 @@ mod tests {
                 "{key}: four appended PI pins (rotated OLD/NEW commit · height · caveat commit)"
             );
         }
-        assert_eq!(n, 26, "expected the full 26-member cohort");
+        assert_eq!(n, 34, "expected the full 34-member cohort (26 v2-graduated + 8 widened)");
     }
 
     /// The widened-entry codec teeth: round-trip + FAIL-CLOSED decode. A forged

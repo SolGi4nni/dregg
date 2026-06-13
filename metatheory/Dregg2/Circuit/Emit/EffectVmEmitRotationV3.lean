@@ -41,11 +41,19 @@ cohort member against the rotated 25+…-limb state block — as ONE parametric 
     WHOLE after block, both iroots, the published height, AND the WHOLE caveat manifest —
     under the ONE `Poseidon2SpongeCR` floor, via the parametric `wireCommitR_binds` /
     `caveatCommit_binds`. One theorem, 26 descriptors.
-  * **§5 the v3 registry** — `v3Registry`: all 26 `v2Registry` members rotated (the 17
-    graduated cohort + attenuate WITH its phase-B map ops/submask lookup + the dynamic
-    setField WITH its mem ops + the 8 per-slot setFields), keys suffixed `R24`. Driver:
-    `EmitRotationV3.lean` (the Rust staged twin is
+  * **§5 the v3 registry** — `v3Registry`: all 34 cohort members rotated. The 26 `v2Registry`
+    members (the 17 graduated cohort + attenuate WITH its phase-B map ops/submask lookup + the
+    dynamic setField WITH its mem ops + the 8 per-slot setFields) PLUS the 8 LIVE-path effects
+    the v2 graduation never covered but the v1 wire DID (STEP 1 / ROTATION-CUTOVER §2c cohort
+    widening): grantCap (the bare unattenuated cap-root grant), makeSovereign, createCell,
+    factory, spawn, receiptArchive, cellUnseal, emitEvent — each the graduated RUNTIME row
+    lifted through the SAME `rotateV3`, so the soundness keystones apply unchanged. Keys
+    suffixed `R24`. Driver: `EmitRotationV3.lean` (the Rust staged twin is
     `circuit/descriptors/rotation-v3-staged-registry.tsv`, sha-pinned).
+    HONEST RESIDUE: two LIVE selectors still have NO rotated descriptor — `RevokeCapability`
+    (24; its cap-root advance is being reshaped by the cap-crown lanes, no graduated v1
+    descriptor exists) and `Custom` (8; needs an accumulator/recursive proof-binding constraint
+    kind the per-row IR does not have). These are precise obstructions, not papered over.
 
 ## Honest boundary notes (do NOT over-read)
 
@@ -65,6 +73,16 @@ cohort member against the rotated 25+…-limb state block — as ONE parametric 
 `Poseidon2SpongeCR` hypothesis. No `sorry`, no `native_decide`.
 -/
 import Dregg2.Circuit.Emit.EffectVmEmitRotationCaveat
+-- The LIVE-PATH (non-v2-cohort) effects whose wire descriptors the flag-day must keep
+-- reachable once v1 dies (ROTATION-CUTOVER §2c cohort boundary). Each is the GRADUATED
+-- RUNTIME row (frozen-frame / passthrough + nonce-tick), lifted through the SAME `rotateV3`.
+import Dregg2.Circuit.Emit.EffectVmEmitMakeSovereign
+import Dregg2.Circuit.Emit.EffectVmEmitCreateCell
+import Dregg2.Circuit.Emit.EffectVmEmitCreateCellFromFactory
+import Dregg2.Circuit.Emit.EffectVmEmitSpawn
+import Dregg2.Circuit.Emit.EffectVmEmitReceiptArchive
+import Dregg2.Circuit.Emit.EffectVmEmitCellUnseal
+import Dregg2.Circuit.Emit.EffectVmEmitEmitEvent
 
 namespace Dregg2.Circuit.Emit.EffectVmEmitRotationV3
 
@@ -793,12 +811,31 @@ def v3Registry : List (String × EffectVmDescriptor2) :=
   , ("revokeVmDescriptor2R24", v3Of EffectVmEmitRevokeDelegation.revokeVmDescriptor)
   , ("introduceVmDescriptor2R24", v3Of EffectVmEmitIntroduce.introduceVmDescriptor)
   , ("attenuateVmDescriptor2R24", attenuateV3)
-  , ("setFieldDynVmDescriptor2R24", setFieldDynV3) ]
+  , ("setFieldDynVmDescriptor2R24", setFieldDynV3)
+    -- THE COHORT-WIDENING (ROTATION-CUTOVER §2c, STEP 1): the eight LIVE-path effects that
+    -- the v2 graduation never covered but the v1 wire DID — their graduated RUNTIME row
+    -- (frozen-frame / passthrough + nonce-tick) lifted through the SAME `rotateV3`, so the
+    -- soundness keystones (`rotV3_sound_v1`, `rotV3_binds_published`) apply to them with the
+    -- per-member graduability `#guard`s below and no new proof. Deleting v1 no longer bricks
+    -- them. GrantCapability rides the BARE attenuate template (`dregg-effectvm-attenuateA-v1`,
+    -- the UNATTENUATED cap-root grant — the v1 GRANT_CAP descriptor), distinct from the
+    -- ATTENUATE_CAPABILITY phase-B `attenuateV3`.
+  , ("grantCapVmDescriptor2R24", v3Of EffectVmEmitAttenuateA.attenuateVmDescriptor)
+  , ("makeSovereignVmDescriptor2R24",
+      v3Of EffectVmEmitMakeSovereign.makeSovereignRuntimeVmDescriptor)
+  , ("createCellVmDescriptor2R24", v3Of EffectVmEmitCreateCell.createCellActorVmDescriptor)
+  , ("factoryVmDescriptor2R24",
+      v3Of EffectVmEmitCreateCellFromFactory.factoryActorVmDescriptor)
+  , ("spawnVmDescriptor2R24", v3Of EffectVmEmitSpawn.spawnActorVmDescriptor)
+  , ("receiptArchiveVmDescriptor2R24",
+      v3Of EffectVmEmitReceiptArchive.receiptArchiveActorVmDescriptor)
+  , ("cellUnsealVmDescriptor2R24", v3Of EffectVmEmitCellUnseal.cellUnsealVmDescriptor)
+  , ("emitEventVmDescriptor2R24", v3Of EffectVmEmitEmitEvent.emitEventVmDescriptor) ]
   ++ (List.finRange 8).map fun slot =>
       (s!"setFieldVmDescriptor2-{slot.val}R24",
         v3Of (EffectVmEmitSetField.setFieldVmDescriptor slot))
 
-#guard v3Registry.length == 26
+#guard v3Registry.length == 34
 -- Every registry entry emits a versioned v2 wire string with the rotated width, the five
 -- EPOCH tables, and the four appended PI slots.
 #guard v3Registry.all fun (_, d) => (emitVmJson2 d).startsWith "{\"name\":\""
@@ -815,6 +852,16 @@ def v3Registry : List (String × EffectVmDescriptor2) :=
 #guard graduable (rotateV3 EffectVmEmitTransfer.transferVmDescriptor)
 #guard graduable (rotateV3 setFieldDynV1Face)
 #guard graduable (rotateV3 EffectVmEmitAttenuateA.attenuateVmDescriptor)
+-- The COHORT-WIDENING faces (STEP 1): each graduable, so `rotV3_sound_v1` /
+-- `rotV3_binds_published` apply to them with no new proof. (GrantCapability rides the
+-- attenuate template already guarded above.)
+#guard graduable (rotateV3 EffectVmEmitMakeSovereign.makeSovereignRuntimeVmDescriptor)
+#guard graduable (rotateV3 EffectVmEmitCreateCell.createCellActorVmDescriptor)
+#guard graduable (rotateV3 EffectVmEmitCreateCellFromFactory.factoryActorVmDescriptor)
+#guard graduable (rotateV3 EffectVmEmitSpawn.spawnActorVmDescriptor)
+#guard graduable (rotateV3 EffectVmEmitReceiptArchive.receiptArchiveActorVmDescriptor)
+#guard graduable (rotateV3 EffectVmEmitCellUnseal.cellUnsealVmDescriptor)
+#guard graduable (rotateV3 EffectVmEmitEmitEvent.emitEventVmDescriptor)
 -- The extras ride: attenuate carries its 3 phase-B constraints, setFieldDyn its 2 mem ops.
 #guard attenuateV3.constraints.length
         == (v3Of EffectVmEmitAttenuateA.attenuateVmDescriptor).constraints.length + 3

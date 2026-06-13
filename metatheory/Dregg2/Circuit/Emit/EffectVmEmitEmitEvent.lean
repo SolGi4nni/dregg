@@ -402,9 +402,9 @@ including the cell-nonce field. -/
 theorem unify_emitEvent (s s' : RecChainedState) (actor cell c : CellId) (topic data : Int)
     (hspec : EmitEventSpec s actor cell topic data s') :
     CellFreezeSpec (cellProjE s.kernel c) (cellProjE s'.kernel c) := by
-  obtain ⟨_, _, h1, h2, h3, h4, h5, h6, h7, h9, h10, h11, h12, h13, h14, h15, h16⟩ := hspec
-  have hk : s'.kernel = s.kernel := recKernel_ext h1 h2 h3 h4 h5 h6 h7 h9 h10 h11 h12 h13 h14 h15
-    h16
+  obtain ⟨_, _, h1, h2, h3, h4, h5, h6, h7, h10, h11, h12, h13, h14, h15, h17, h18, h19⟩ := hspec
+  have hk : s'.kernel = s.kernel :=
+    recKernel_ext h1 h2 h3 h4 h5 h6 h7 h10 h11 h12 h13 h14 h15 h17 h18 h19
   rw [hk]
   exact ⟨rfl, rfl, rfl, fun _ => rfl, rfl, rfl⟩
 
