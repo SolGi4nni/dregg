@@ -57,7 +57,23 @@ not durable across compaction; the log is the burn-down. Sweep it at every Conve
 - **Memory**: `~/.claude/projects/-Users-ember-dev-breadstuffs/memory/` —
   `project-refinement-epoch.md` is the live resume file; MEMORY.md is the index.
 
-## ⚑⚑⚑ CURRENT STATE (2026-06-13, head db046eaf2 — Opus, +20 commits; CUTOVER C1+C2 LANDED · C3 WALLED+SCOPED · REORIENTING TO THE DESKTOP-MESHING DEVNET)
+## ⚑⚑⚑ CURRENT STATE (2026-06-13 LATE — head `d4adcc765`, Opus 1M; the REFINEMENT BRAID — 5 commits banked, cutover at C4, notify FINISHED)
+
+ember's mode: **BRAIDS not waves** ([[feedback-braids-not-waves]]) — finish a cluster, immediately launch/integrate the obvious next; the main loop is a continuous launcher+integrator (commits agent drafts by file set); **proofs are subagent work**. A full 20-doc orientation pass is done (notify · pg-dregg · desktop-OS · seL4 · assurance-critique · cutover · starbridge).
+
+**LANDED this session (5 commits, all green + axiom-clean):**
+- `d51dc74df` **cross-cell imports** (`Authority/CrossCellImport.lean` — gap 6, "the deepest naturalness gap", DISSOLVED: an import cites a source receipt + the value its field held there; the crown `importValid_stable_under_source_advance` proves a past-snapshot import is I-CONFLUENT where a live read is not; tamper-evidence inherited from `Exec.Receipt.chain_tamper_evident`, HInj/HFresh stay named hyps) + **2 real integrator-wedge apps** (`Apps/{AgentOrchestrationBudget,EscrowDeskCouncil}.lean` — the six primitives buildr/builders/sig/simbi hand-roll, lamesauce refuted, teeth both polarities).
+- `d70046a88` + `bae653495` **CUTOVER C4**: the two recursion consumers + the FLOW-B SDK leg rewired onto the rotated leaf-wrap; the **bilateral aggregation AIR EMITTED FROM LEAN** (`Circuit/Emit/EffectVmEmitBilateralAgg.lean` + a NEW two-row `windowGate` IR-v2 primitive in `DescriptorIR2.lean`; soundness teeth `agg_rejects_turn_mismatch`/`agg_rejects_bad_agent_count`).
+- `3ffc3af0c` **cell-program language atoms** (`Exec/Program.lean`: `senderMemberOf` + `affineDeltaLe` + `balanceDeltaLe/Ge` — the apps-surfaced expressiveness; the flash-well `BalanceDeltaGte` twin now landed).
+- `d4adcc765` **NOTIFY STEP 2 FINISHED** (staged — VK **BYTE-IDENTICAL**, no cap emits `[.notify]` yet): the `Auth.notify` ctor (`Authority/Positional.lean`) + α total on all 7 seL4 IPC authorities + NotifyAuthority re-bound onto the real Auth (`notifyCap_confers_no_edge`) + the full ripple (rise-to-the-claim: found 2 "every Auth" sites the divergence-finding missed) + `Firmament/SeL4Composition.lean` (a dregg turn in a PD preserves BOTH the seL4 cap-space invariant AND dregg non-amp, same grantOk witness). The VK-touching tail (cap-leaf badge-mask + verifier re-pin) rides the cutover's ONE VK epoch — `docs/NOTIFY-STEP2-VK-CHECKLIST.md`.
+
+**LIVE BRAID (running):** cutover-tail relaunch (`a99329b58` — the bilateral Rust interpreter [decode `windowGate` + restructure the WR 49-felt schedule block + rewire `aggregate_bilateral_prover.rs`, retire `bilateral_aggregation_air.rs`] + node FLOW-B producer threading + the ~70 call-sites → C5 regen → **C7 delete v1 + grep-zero**; C5/C7 = the coordinated VK-epoch **SETTLE the main loop runs**, batching notify's felt-encoders) · apps-round-2 (rebuild weak toy apps on the new expressiveness).
+
+**HELD for the cutover-settle:** starbridge-v2 **A2 swarm surface** (`swarm.rs` — the notify async edge; blocked ONLY by the known **p3-recursion fork seam** — starbridge-v2 + sel4 are separate workspaces lacking the breadstuffs `[patch]`; fix = push the fork `72ffc56` + retarget revs + drop the local patch) · the notify VK-batch · the dead-pg-dregg-agent draft (pg-dregg M3 is post-flip anyway, but M2+Tier-C are LIVE on pg18).
+
+**THE l4v ROADMAP (post-cutover, `ASSURANCE-CRITIQUE.md` §5):** the Lean composition is strong (`deployed_system_secure` apex; unfoolability derives conservation). The distance to l4v-grade is the **binary bridge** — **Stage 0 = make the verified executor authoritative (invert `turn/src/lean_apply.rs:1143`, "no new mathematics")**; Stages 1-6 = spec→binary refinement / discharge `leaf_sound` / tie the apex to one turn / native UC / n>1 consensus (**S5-1** = the gossip-dissemination blocker, `docs/STAGE5-CONSENSUS-DEVAC.md`) / config-pin the crypto floor. seL4 step-4 is DONE (the verified executor runs a turn inside a booted PD).
+
+## ⚑⚑⚑ (SUPERSEDED ↑) CURRENT STATE (2026-06-13, head db046eaf2 — Opus, +20 commits; CUTOVER C1+C2 LANDED · C3 WALLED+SCOPED · REORIENTING TO THE DESKTOP-MESHING DEVNET)
 
 A long brave-fanout continuation (~18 commits, persvati-gauntlet-green incl. the v8→v9 cap-crown ripple).
 Landed: the Gerwin-Klein critique (`docs/ASSURANCE-CRITIQUE.md`) + **Klein CRITICAL-2 (wire codec) CLOSED both
