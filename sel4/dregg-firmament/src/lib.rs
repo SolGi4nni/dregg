@@ -44,6 +44,21 @@
 //!
 //! That is the fluid reach-out: first-class locally (the strong `n = 1`
 //! properties), seamless to the wire (the bounds simply relax as `n` rises).
+//!
+//! ## The semihost ([`EmulatedKernel`] + the [`microkit_facade`])
+//!
+//! `docs/DREGG-DESKTOP-OS.md §3` (the semihosted-seL4 KEYSTONE) makes the local
+//! leg *runnable on your mac/linux today*: the [`EmulatedKernel`] PROMOTES
+//! [`LocalBacking`]'s CNode slot-table with the three seL4 IPC primitives (a
+//! synchronous Endpoint, a badge-OR Notification, Untyped+Retype), and the
+//! [`microkit_facade`] ships the `sel4-microkit`-shaped API (a
+//! `#[protection_domain]`-style entry, [`Handler`], [`Channel`], [`MessageInfo`],
+//! [`memory_region_symbol!`]) the dregg PDs code against — std-backed (semihost)
+//! now, real seL4 later, **the same PD source on both**. It is a faithful
+//! `n = 1` firmament (a host thread's revoke IS synchronous; the cap checks are
+//! the genuine [`is_attenuation`]), with ONE honestly-labeled non-fidelity (v0
+//! host threads share one address space — see
+//! [`EmulatedKernel::ISOLATION_FIDELITY`]).
 
 use std::string::String;
 
@@ -51,11 +66,20 @@ pub mod local;
 pub mod distributed;
 pub mod surface;
 pub mod router;
+pub mod emulated_kernel;
+pub mod microkit_facade;
 
 pub use local::LocalBacking;
 pub use distributed::DistributedBacking;
 pub use surface::SurfaceBacking;
 pub use router::{FirmamentRouter, Router};
+pub use emulated_kernel::{
+    EmulatedKernel, IpcError, Message, ObjectId, ObjectType, ReplyToken, RetypeError,
+};
+pub use microkit_facade::{
+    Channel, ChannelSet, ChannelTable, ChannelWiring, EventLoop, Handler, MessageInfo,
+    NullHandler, ProtectionDomain, Region,
+};
 
 // Re-export the REAL dregg rights lattice and id so app code names the genuine
 // types, not a parallel model.
