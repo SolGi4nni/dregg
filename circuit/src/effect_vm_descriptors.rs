@@ -336,6 +336,15 @@ pub const DREGG_EFFECTVM_REVOKE_CAP_IR2_JSON: &str =
     include_str!("../descriptors/dregg-effectvm-revoke-cap-ir2.json");
 pub const DREGG_EFFECTVM_REVOKE_CAP_IR2_FP: &str =
     "21916d7c0f4884c8079f527771b1edd4243fd27fcc7e29565be83e72bc2198bb";
+// GRADUATED (Custom recursive-proof binding, sel 8): the runtime passthrough face graduated onto
+// IR-v2 PLUS the `proof_bind` op (`customProofBind`) that ties the row's `custom_proof_commitment`
+// to a VERIFYING external sub-proof of the recursion engine — the accumulator constraint the
+// per-row IR gained (`DescriptorIR2.ProofBind`). Lean source
+// `EffectVmEmitV2.customVmDescriptor2`. THE LAST rotation-cutover residue closed.
+pub const DREGG_EFFECTVM_CUSTOM_IR2_JSON: &str =
+    include_str!("../descriptors/dregg-effectvm-custom-ir2.json");
+pub const DREGG_EFFECTVM_CUSTOM_IR2_FP: &str =
+    "9dd4ab41d672ede0177f22684355b915d98a2b635dadac129275893ccd638aaf";
 pub const DREGG_EFFECTVM_SET_FIELD_DYN_IR2_JSON: &str =
     include_str!("../descriptors/dregg-effectvm-set-field-dyn-ir2.json");
 pub const DREGG_EFFECTVM_SET_FIELD_DYN_IR2_FP: &str =
@@ -642,6 +651,11 @@ pub const V2_DESCRIPTORS: &[(&str, &str, &str)] = &[
         DREGG_EFFECTVM_REVOKE_CAP_IR2_FP,
     ),
     (
+        "customVmDescriptor2",
+        DREGG_EFFECTVM_CUSTOM_IR2_JSON,
+        DREGG_EFFECTVM_CUSTOM_IR2_FP,
+    ),
+    (
         "setFieldDynVmDescriptor2",
         DREGG_EFFECTVM_SET_FIELD_DYN_IR2_JSON,
         DREGG_EFFECTVM_SET_FIELD_DYN_IR2_FP,
@@ -793,7 +807,7 @@ pub const V3_STAGED_CAVEAT_DESCRIPTORS: &[(&str, &str, &str)] = &[(
 pub const V3_STAGED_REGISTRY_TSV: &str =
     include_str!("../descriptors/rotation-v3-staged-registry.tsv");
 pub const V3_STAGED_REGISTRY_FP: &str =
-    "b17ffa0f6499196661eb2d8ef5db5154b02cb4daa3a5eaabecb52aa17c59bbbd";
+    "6dd02469b0dbb86e40f5bfaac85259b3d642ee78862939f93699fb35b499adb4";
 
 /// The rotated probe layout at register count `r` (the Rust twin of the Lean parametric
 /// layout `EffectVmEmitRotationR`: columns are FUNCTIONS of R; the chunking is 4-wide head,
@@ -1208,7 +1222,7 @@ mod tests {
     /// changes a descriptor (or a stale committed JSON) fails here.
     #[test]
     fn v2_descriptors_parse_and_match_fingerprint() {
-        assert_eq!(V2_DESCRIPTORS.len(), 27, "expected 27 IR-v2 descriptors");
+        assert_eq!(V2_DESCRIPTORS.len(), 28, "expected 28 IR-v2 descriptors");
         for (key, json, fp) in V2_DESCRIPTORS {
             // (a) fingerprint binding
             let got = sha256_hex(json.as_bytes());
@@ -1672,7 +1686,7 @@ mod tests {
                 "{key}: four appended PI pins (rotated OLD/NEW commit · height · caveat commit)"
             );
         }
-        assert_eq!(n, 35, "expected the full 35-member cohort (27 v2-graduated + 8 widened)");
+        assert_eq!(n, 36, "expected the full 36-member cohort (28 v2-graduated + 8 widened)");
     }
 
     /// The widened-entry codec teeth: round-trip + FAIL-CLOSED decode. A forged

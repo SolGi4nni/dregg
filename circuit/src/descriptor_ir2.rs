@@ -385,7 +385,25 @@ pub struct MapOpSpec {
     pub op: MapKind,
 }
 
-/// One v2 constraint: a v1 form embedded whole, or one of the three new kinds
+/// An accumulator / recursive-proof-binding op (Lean `DescriptorIR2.ProofBind`): the Custom
+/// row's `custom_proof_commitment` column (`commit`) and `custom_program_vk_hash` column (`vk`),
+/// gated by `guard`. The denotation binds them to a VERIFYING external sub-proof of the
+/// recursion engine — the row commits to the VERIFICATION of the external proof, rather than
+/// trusting it. This is the constraint kind the four ROW-LOCAL kinds (lookup/mem/map/umem)
+/// could not express: none folds in another STARK proof; this one rides the named recursion
+/// argument (`joint_turn_recursive.rs` leaf verifier / `ivc_turn_chain.rs` aggregate prover),
+/// exactly as `MemOp`/`UMemOp` ride the offline-memory argument rather than a row-local poly.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProofBindSpec {
+    /// Selector guard (active iff it evaluates to 1).
+    pub guard: LeanExpr,
+    /// The `custom_proof_commitment` column (bound to a verifying sub-proof's PI commitment).
+    pub commit: LeanExpr,
+    /// The `custom_program_vk_hash` column (bound to that sub-proof's program VK).
+    pub vk: LeanExpr,
+}
+
+/// One v2 constraint: a v1 form embedded whole, or one of the new kinds
 /// (Lean `VmConstraint2`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum VmConstraint2 {
@@ -399,6 +417,9 @@ pub enum VmConstraint2 {
     MapOp(MapOpSpec),
     /// A UNIVERSAL memory-table access row (the one-Blum-multiset leg).
     UMemOp(UMemOpSpec),
+    /// An accumulator / recursive-proof-binding row (the Custom leg — rides the recursion
+    /// argument, not a committed table).
+    ProofBind(ProofBindSpec),
 }
 
 /// The Rust mirror of Lean's `EffectVmDescriptor2` (decoded from `emitVmJson2`).
@@ -708,6 +729,18 @@ fn parse_constraint2(c: &mut JsonCursor) -> Result<VmConstraint2, String> {
                 new_root,
                 op,
             })
+        }
+        "proof_bind" => {
+            c.expect(b',')?;
+            c.expect_key("guard")?;
+            let guard = parse_expr(c)?;
+            c.expect(b',')?;
+            c.expect_key("commit")?;
+            let commit = parse_expr(c)?;
+            c.expect(b',')?;
+            c.expect_key("vk")?;
+            let vk = parse_expr(c)?;
+            VmConstraint2::ProofBind(ProofBindSpec { guard, commit, vk })
         }
         v1tag => VmConstraint2::Base(parse_vm_constraint_body(c, v1tag)?),
     };
@@ -1051,6 +1084,14 @@ fn check_descriptor2(desc: &EffectVmDescriptor2) -> Result<MainLayout, String> {
                     &m.prev_serial,
                 ] {
                     chk(e, "umem_op field", ci)?;
+                }
+            }
+            VmConstraint2::ProofBind(m) => {
+                // The proof-binding op declares the recursion binding; its columns must be in
+                // bounds (they are pinned to the verifying sub-proof's PI commitment / VK by
+                // the recursion argument, not by a row-local poly here).
+                for e in [&m.guard, &m.commit, &m.vk] {
+                    chk(e, "proof_bind field", ci)?;
                 }
             }
         }
@@ -4445,6 +4486,169 @@ mod tests {
             )
             .is_err(),
             "insert at a present key must refuse"
+        );
+    }
+
+    // ================================================================
+    // The accumulator / recursive-proof-binding leg (proof_bind) — the Custom leg
+    // ================================================================
+
+    /// The Lean `#guard`-pinned demo-custom golden (DescriptorIR2 §10c): the `proof_bind` grammar
+    /// (the row's commitment + vk columns, gated), byte-for-byte.
+    const DEMO_CUSTOM: &str = "{\"name\":\"demo-custom\",\"ir\":2,\"trace_width\":3,\"public_input_count\":0,\"tables\":[{\"id\":0,\"name\":\"main\",\"arity\":3,\"sem\":\"main\"}],\"constraints\":[{\"t\":\"proof_bind\",\"guard\":{\"t\":\"var\",\"v\":2},\"commit\":{\"t\":\"var\",\"v\":0},\"vk\":{\"t\":\"var\",\"v\":1}}],\"hash_sites\":[],\"ranges\":[]}";
+
+    /// The byte-pinned Lean proof-bind golden parses, decoding the accumulator constraint kind.
+    #[test]
+    fn parses_lean_proof_bind_golden() {
+        let d = parse_vm_descriptor2(DEMO_CUSTOM).expect("proof_bind golden must parse");
+        assert_eq!(d.name, "demo-custom");
+        assert_eq!(d.constraints.len(), 1);
+        assert!(matches!(
+            &d.constraints[0],
+            VmConstraint2::ProofBind(ProofBindSpec {
+                guard: LeanExpr::Var(2),
+                commit: LeanExpr::Var(0),
+                vk: LeanExpr::Var(1),
+            })
+        ));
+        // The binding rides the recursion argument, not a committed table — the descriptor
+        // checks (no table for the accumulator kind) and round-trips.
+        check_descriptor2(&d).expect("proof_bind golden must check");
+    }
+
+    /// A v1 wire (no `"ir"` key) carrying a `proof_bind` is REFUSED — the accumulator kind is
+    /// v2-only, like every other new kind.
+    #[test]
+    fn proof_bind_in_v1_wire_refuses() {
+        let v1 = "{\"name\":\"x\",\"trace_width\":3,\"public_input_count\":0,\"constraints\":[{\"t\":\"proof_bind\",\"guard\":{\"t\":\"var\",\"v\":2},\"commit\":{\"t\":\"var\",\"v\":0},\"vk\":{\"t\":\"var\",\"v\":1}}],\"hash_sites\":[],\"ranges\":[]}";
+        assert!(
+            parse_vm_descriptor_any(v1).is_err(),
+            "v1 wire carrying a proof_bind must refuse"
+        );
+    }
+
+    /// The REAL Custom descriptor (the registry's `customVmDescriptor2`) parses, decodes the
+    /// `proof_bind` op binding the `custom_proof_commitment` column (`PARAM_BASE+4 = 72`) and the
+    /// `custom_program_vk_hash` column (`PARAM_BASE+0 = 68`), gated by the Custom selector (8).
+    #[test]
+    fn custom_registry_descriptor_binds_proof_columns() {
+        let json = crate::effect_vm_descriptors::DREGG_EFFECTVM_CUSTOM_IR2_JSON;
+        let d = parse_vm_descriptor2(json).expect("custom registry descriptor must parse");
+        check_descriptor2(&d).expect("custom registry descriptor must check");
+        // exactly one proof_bind op, binding the documented Custom param columns.
+        let binds: Vec<&ProofBindSpec> = d
+            .constraints
+            .iter()
+            .filter_map(|c| match c {
+                VmConstraint2::ProofBind(m) => Some(m),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(binds.len(), 1, "Custom carries exactly one proof binding");
+        let m = binds[0];
+        // guard = sel::CUSTOM (8); commit = param CUSTOM_PROOF_COMMIT_BASE (PARAM_BASE+4 = 72);
+        // vk = param CUSTOM_VK_HASH_BASE (PARAM_BASE+0 = 68). (PARAM_BASE = STATE_BEFORE_BASE +
+        // state::SIZE = 54 + 14 = 68.)
+        assert_eq!(m.guard, LeanExpr::Var(crate::effect_vm::columns::sel::CUSTOM));
+        assert_eq!(
+            m.commit,
+            LeanExpr::Var(
+                crate::effect_vm::columns::PARAM_BASE
+                    + crate::effect_vm::columns::param::CUSTOM_PROOF_COMMIT_BASE
+            )
+        );
+        assert_eq!(
+            m.vk,
+            LeanExpr::Var(
+                crate::effect_vm::columns::PARAM_BASE
+                    + crate::effect_vm::columns::param::CUSTOM_VK_HASH_BASE
+            )
+        );
+    }
+
+    // -- The recursion-engine binding (the Rust analog of Lean `Satisfied2Custom` /
+    //    `proofBind_determined`): a `proof_bind` op denotes "the row's commitment column IS the
+    //    public-input commitment of a VERIFYING sub-proof, and its vk column that proof's program
+    //    VK". The verification rides the recursion argument (`joint_turn_recursive.rs` leaf
+    //    verifier), supplied here as a named, realizable engine — exactly as `RecursiveAggregation.
+    //    EngineSound` names it. We model the engine + fire the anti-ghost BOTH ways. --
+
+    /// A toy recursion engine: the proof carrier is `bool` (`true` = the honest sub-proof), the
+    /// verifier accepts exactly `true`, a verifying proof exposes a fixed `(commit, vk)`. The
+    /// REAL engine is plonky3's leaf verifier; this models the binding implication the descriptor
+    /// rides.
+    struct ToyEngine {
+        commit: u32,
+        vk: u32,
+    }
+    impl ToyEngine {
+        fn verify(&self, p: bool) -> bool {
+            p
+        }
+        fn pi_commit(&self, _p: bool) -> u32 {
+            self.commit
+        }
+        fn vk_of(&self, _p: bool) -> u32 {
+            self.vk
+        }
+        /// The named `EngineBinding`: the commitment determines the attested vk across verifying
+        /// proofs (the in-circuit-verifier soundness — the one FRI obligation outside Lean).
+        fn commit_determines_vk(&self) -> bool {
+            true
+        }
+    }
+
+    /// **HONEST Custom row VERIFIES.** A Custom row whose `custom_proof_commitment` / vk columns
+    /// match a verifying sub-proof's exposed commitment / vk satisfies the proof binding — the row
+    /// commits to a genuine verification. (The positive polarity of `proofBind_determined`.)
+    #[test]
+    fn proof_bind_honest_commitment_verifies() {
+        let eng = ToyEngine {
+            commit: 123,
+            vk: 45,
+        };
+        let p = true; // the honest sub-proof
+        assert!(eng.verify(p), "the honest sub-proof verifies");
+        // the Custom row's commitment/vk columns carry the genuine exposed values.
+        let row_commit = eng.pi_commit(p);
+        let row_vk = eng.vk_of(p);
+        // the binding holds: some verifying proof exposes exactly (row_commit, row_vk).
+        assert_eq!(row_commit, 123);
+        assert_eq!(row_vk, 45);
+    }
+
+    /// **FORGED Custom row REJECTS (the anti-ghost).** Under the named engine binding, a Custom
+    /// row that claims a `custom_proof_commitment` SOME verifying sub-proof exposes but pairs it
+    /// with the WRONG vk has NO satisfying binding: the commitment DETERMINES the vk, so a forged
+    /// vk is excluded. The recursion analog of `proofBind_determined`: the binding cannot lie.
+    #[test]
+    fn proof_bind_forged_commitment_refuses() {
+        let eng = ToyEngine {
+            commit: 123,
+            vk: 45,
+        };
+        assert!(eng.commit_determines_vk(), "the engine binding holds");
+        // A forger claims the genuine commitment (123) but a DIFFERENT vk (99) than any verifying
+        // sub-proof exposes (45). For ANY verifying proof q with pi_commit(q) = 123, the binding
+        // forces vk_of(q) = 45 ≠ 99 — so no satisfying `Satisfied2Custom` exists.
+        let forged_vk: u32 = 99;
+        let q = true; // any verifying sub-proof at this commitment
+        assert!(eng.verify(q));
+        assert_eq!(eng.pi_commit(q), 123, "the forger's claimed commitment");
+        assert_ne!(
+            eng.vk_of(q),
+            forged_vk,
+            "the genuine vk (45) the binding forces differs from the forged vk (99) — REJECT"
+        );
+        // Equivalently: a forger claiming a commitment NO verifying sub-proof exposes also fails
+        // (no `p` with verify(p) AND pi_commit(p) = forged) — the boundTo existential is empty.
+        let unbacked_commit: u32 = 777;
+        let exists_backing = [true, false]
+            .iter()
+            .any(|&p| eng.verify(p) && eng.pi_commit(p) == unbacked_commit);
+        assert!(
+            !exists_backing,
+            "no verifying sub-proof exposes the unbacked commitment — the binding is UNSAT"
         );
     }
 

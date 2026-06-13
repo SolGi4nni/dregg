@@ -88,6 +88,7 @@ import Dregg2.Circuit.Emit.EffectVmEmitIntroduce
 import Dregg2.Circuit.Emit.EffectVmEmitAttenuateA
 import Dregg2.Circuit.Emit.EffectVmEmitRevokeCapability
 import Dregg2.Circuit.Emit.EffectVmEmitSetField
+import Dregg2.Circuit.Emit.EffectVmEmitEmitEvent
 
 namespace Dregg2.Circuit.Emit.EffectVmEmitV2
 
@@ -892,6 +893,120 @@ theorem revokeV2_post_determined (hash : List ℤ → ℤ)
   have h := (revokeV2_removes hash minit mfin maddrs t hsat i hi hactive).2
   exact writesTo_functional hash hCR hclaim h
 
+/-! ## §7.6 — NEWLY EXPRESSIBLE I.c: the Custom cell-program recursive-proof binding (sel 8).
+
+`Custom` (effect selector 8) dispatches a cell program whose domain constraints are proven
+EXTERNALLY. The runtime row is a frozen-economic-block + nonce-tick PASSTHROUGH (byte-identical to
+emitEvent's shape — `circuit/src/effect_vm/air.rs` Group "Custom"), so the v1 FACE reuses the
+emitEvent passthrough/tick batch with the CUSTOM selector. What the v1 IR could NOT express is the
+BINDING of the row's `custom_proof_commitment` to the external proof: the v1 AIR only RECORDS the
+commitment in the public inputs and TRUSTS it (the Gap-5 hole — "the Effect VM circuit does NOT
+verify the external proof"). The v2 `proofBind` IS that binding: the row commits to a VERIFYING
+sub-proof of the named recursion engine whose public-input commitment EQUALS the row's commitment
+column and whose program VK equals the row's vk column. This is the FOUR-row-local-kinds gap the
+task names: none of lookup/mem/map/umem can fold in another STARK proof; `proofBind` does, by the
+SAME named-recursion boundary the aggregate prover already carries. -/
+
+/-- The Custom-row `custom_program_vk_hash` parameter column (`param.CUSTOM_VK_HASH_BASE = 0`;
+the low felt of the 4-felt program-VK identifier the row binds). -/
+def CUSTOM_VK : Nat := 0
+/-- The Custom-row `custom_proof_commitment` parameter column (`param.CUSTOM_PROOF_COMMIT_BASE =
+4`; the low felt of the 4-felt external-proof commitment the row binds). -/
+def CUSTOM_COMMIT : Nat := 4
+/-- The Custom effect's selector column (`columns::sel::CUSTOM = 8`). -/
+def SEL_CUSTOM : Nat := 8
+
+/-- The Custom v1 FACE: the emitEvent frozen-economic-block + nonce-tick passthrough batch (the
+SAME runtime row shape the Custom AIR pins) with the CUSTOM selector (8) instead of emitEvent's
+(25). State flows through unchanged; the nonce ticks like any non-NoOp effect. -/
+def customV1Face : EffectVmDescriptor :=
+  { name        := "dregg-effectvm-custom-v1"
+  , traceWidth  := EFFECT_VM_WIDTH
+  , piCount     := 34
+  , constraints := EffectVmEmitEmitEvent.emitTickRowGates
+                     ++ EffectVmEmitTransfer.transitionAll
+                     ++ EffectVmEmitTransfer.boundaryFirstPins
+                     ++ EffectVmEmitTransfer.boundaryLastPins
+                     ++ selectorGates SEL_CUSTOM
+  , hashSites   := []
+  , ranges      := [] }
+
+/-- The Custom row's proof-binding op: when the Custom selector fires, the row's
+`custom_proof_commitment` column (`param[CUSTOM_COMMIT]`) and `custom_program_vk_hash` column
+(`param[CUSTOM_VK]`) bind to a VERIFYING external sub-proof of the recursion engine. -/
+def customProofBind : Dregg2.Circuit.DescriptorIR2.ProofBind :=
+  { guard  := .var SEL_CUSTOM
+  , commit := .var (prmCol CUSTOM_COMMIT)
+  , vk     := .var (prmCol CUSTOM_VK) }
+
+/-- **`customVmDescriptor2`** — the graduated Custom descriptor PLUS the recursive-proof-binding
+leg: the runtime passthrough face graduated onto IR-v2, with the `proofBind` op that ties the
+row's commitment to a verifying external sub-proof (the accumulator constraint the per-row IR
+gained — `DescriptorIR2.ProofBind`). -/
+def customVmDescriptor2 : EffectVmDescriptor2 :=
+  { graduateV1 customV1Face with
+    constraints := (graduateV1 customV1Face).constraints ++ [.proofBind customProofBind] }
+
+/-- The Custom v1 face is graduable (so `graduateV1_sound`/`_complete`/`_faithful` apply to the
+passthrough leg). -/
+theorem custom_graduable : graduable customV1Face = true := by decide
+
+/-- The graduated Custom base declares no proof-binding ops (every graduated constraint is a
+`.base` or a `.lookup`). -/
+theorem proofBindsOf_graduateV1 (d : EffectVmDescriptor) :
+    proofBindsOf (graduateV1 d) = [] := by
+  unfold proofBindsOf
+  rw [List.filterMap_eq_nil_iff]
+  intro c hc
+  rcases constraints_graduateV1_shapes d c hc with ⟨c₀, rfl⟩ | ⟨l, rfl⟩ <;> rfl
+
+/-- The graduated Custom descriptor declares EXACTLY the one proof-binding op. -/
+theorem proofBindsOf_customVmDescriptor2 :
+    proofBindsOf customVmDescriptor2 = [customProofBind] := by
+  have hbase : proofBindsOf (graduateV1 customV1Face) = [] := proofBindsOf_graduateV1 customV1Face
+  unfold proofBindsOf at hbase ⊢
+  show ((graduateV1 customV1Face).constraints ++ [VmConstraint2.proofBind customProofBind]).filterMap
+      _ = _
+  rw [List.filterMap_append, hbase]
+  rfl
+
+/-- **`customV2_binds_proof` — cap-crown analog for Custom, the circuit leg.** On an active Custom
+row of a `Satisfied2Custom` witness: the row's `custom_proof_commitment` column IS the public-input
+commitment of a VERIFYING external sub-proof, and its `custom_program_vk_hash` column is that
+proof's program VK. The v1 IR could express NEITHER — it recorded the commitment and trusted it. -/
+theorem customV2_binds_proof (hash : List ℤ → ℤ)
+    (E : Dregg2.Circuit.DescriptorIR2.ProofEngine)
+    (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
+    (hsat : Satisfied2Custom hash E customVmDescriptor2 minit mfin maddrs t)
+    (i : Nat) (hi : i < t.rows.length)
+    (hactive : (envAt t i).loc (SEL_CUSTOM) = 1) :
+    E.boundTo ((envAt t i).loc (prmCol CUSTOM_COMMIT)) ((envAt t i).loc (prmCol CUSTOM_VK)) := by
+  have hm : customProofBind ∈ proofBindsOf customVmDescriptor2 := by
+    rw [proofBindsOf_customVmDescriptor2]; exact List.mem_cons_self
+  have := proofBind_bound hash E customVmDescriptor2 hsat hm i hi (by simpa [customProofBind] using hactive)
+  simpa [customProofBind] using this
+
+/-- **The bound commitment is DETERMINED (anti-forgery, the Custom anti-ghost).** Under the named
+engine binding, the program VK a Custom row attests is FORCED by its `custom_proof_commitment`: a
+forged row claiming a commitment that no verifying sub-proof exposes — or claiming the genuine
+commitment but a WRONG vk — cannot have a `Satisfied2Custom` witness. The recursion analog of
+`attenuateV2_held_determined`. -/
+theorem customV2_proof_determined (hash : List ℤ → ℤ)
+    (E : Dregg2.Circuit.DescriptorIR2.ProofEngine)
+    (hE : Dregg2.Circuit.DescriptorIR2.EngineBinding E)
+    (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
+    (hsat : Satisfied2Custom hash E customVmDescriptor2 minit mfin maddrs t)
+    (i : Nat) (hi : i < t.rows.length)
+    (hactive : (envAt t i).loc (SEL_CUSTOM) = 1)
+    (q : E.Proof) (hq : E.verify q = true)
+    (hqc : E.piCommit q = (envAt t i).loc (prmCol CUSTOM_COMMIT)) :
+    E.vkOf q = (envAt t i).loc (prmCol CUSTOM_VK) := by
+  have hm : customProofBind ∈ proofBindsOf customVmDescriptor2 := by
+    rw [proofBindsOf_customVmDescriptor2]; exact List.mem_cons_self
+  have := proofBind_determined hash E hE customVmDescriptor2 hsat hm i hi
+    (by simpa [customProofBind] using hactive) q hq (by simpa [customProofBind] using hqc)
+  simpa [customProofBind] using this
+
 /-! ## §8 — NEWLY EXPRESSIBLE II: SetField with a DYNAMIC slot index.
 
 ONE descriptor for all 8 slots: the field write is a `MemOp` at address `param[SLOT]` — the
@@ -1064,11 +1179,12 @@ def v2Registry : List (String × EffectVmDescriptor2) :=
   , ("introduceVmDescriptor2", introduceVmDescriptor2)
   , ("attenuateVmDescriptor2", attenuateVmDescriptor2)
   , ("revokeCapabilityVmDescriptor2", revokeCapabilityVmDescriptor2)
+  , ("customVmDescriptor2", customVmDescriptor2)
   , ("setFieldDynVmDescriptor2", setFieldDynVmDescriptor2) ]
   ++ (List.finRange 8).map fun slot =>
       (s!"setFieldVmDescriptor2-{slot.val}", setFieldVmDescriptor2 slot)
 
-#guard v2Registry.length == 27
+#guard v2Registry.length == 28
 
 -- The graduated transfer: 36 embedded v1 constraints + 4 chip lookups + 2 range lookups; the
 -- five EPOCH tables declared; NO legacy carriers (graduation means graduation).
@@ -1088,6 +1204,14 @@ def v2Registry : List (String × EffectVmDescriptor2) :=
 #guard graduable EffectVmEmitRevokeCapability.revokeCapabilityVmDescriptor
 -- The revoke descriptor declares exactly the 2 map ops (held-read + remove-write), no submask.
 #guard (mapOpsOf revokeCapabilityVmDescriptor2).length == 2
+-- The Custom v1 face is graduable, and the graduated descriptor carries EXACTLY one proof-binding
+-- op past its passthrough base (no mem/map/umem ops — Custom's only NEWLY-EXPRESSIBLE content is
+-- the recursive-proof binding).
+#guard graduable customV1Face
+#guard (proofBindsOf customVmDescriptor2).length == 1
+#guard (memOpsOf customVmDescriptor2).length == 0
+#guard (mapOpsOf customVmDescriptor2).length == 0
+#guard customVmDescriptor2.name == "dregg-effectvm-custom-v1"
 -- The dyn setField is mem-op shaped: 2 mem ops, no map ops.
 #guard (memOpsOf setFieldDynVmDescriptor2).length == 2
 #guard (mapOpsOf setFieldDynVmDescriptor2).length == 0
@@ -1119,6 +1243,11 @@ def v2Registry : List (String × EffectVmDescriptor2) :=
 #assert_axioms revokeV2_removes
 #assert_axioms revokeV2_held_determined
 #assert_axioms revokeV2_post_determined
+#assert_axioms custom_graduable
+#assert_axioms proofBindsOf_graduateV1
+#assert_axioms proofBindsOf_customVmDescriptor2
+#assert_axioms customV2_binds_proof
+#assert_axioms customV2_proof_determined
 #assert_axioms gSlotRange_holds_iff
 #assert_axioms setFieldDyn_memLog
 #assert_axioms setFieldDyn_readback_genuine

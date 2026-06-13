@@ -41,9 +41,10 @@ cohort member against the rotated 25+…-limb state block — as ONE parametric 
     WHOLE after block, both iroots, the published height, AND the WHOLE caveat manifest —
     under the ONE `Poseidon2SpongeCR` floor, via the parametric `wireCommitR_binds` /
     `caveatCommit_binds`. One theorem, 26 descriptors.
-  * **§5 the v3 registry** — `v3Registry`: all 35 cohort members rotated. The 27 `v2Registry`
+  * **§5 the v3 registry** — `v3Registry`: all 36 cohort members rotated. The 28 `v2Registry`
     members (the 17 graduated cohort + attenuate WITH its phase-B map ops/submask lookup + revoke
-    WITH its cap-crown map ops + the dynamic setField WITH its mem ops + the 8 per-slot setFields)
+    WITH its cap-crown map ops + CUSTOM WITH its recursive-proof-binding op + the dynamic setField
+    WITH its mem ops + the 8 per-slot setFields)
     PLUS the 8 LIVE-path effects
     the v2 graduation never covered but the v1 wire DID (STEP 1 / ROTATION-CUTOVER §2c cohort
     widening): grantCap (the bare unattenuated cap-root grant), makeSovereign, createCell,
@@ -51,11 +52,13 @@ cohort member against the rotated 25+…-limb state block — as ONE parametric 
     lifted through the SAME `rotateV3`, so the soundness keystones apply unchanged. Keys
     suffixed `R24`. Driver: `EmitRotationV3.lean` (the Rust staged twin is
     `circuit/descriptors/rotation-v3-staged-registry.tsv`, sha-pinned).
-    HONEST RESIDUE: ONE LIVE selector still has NO rotated descriptor — `Custom` (8; needs an
-    accumulator/recursive proof-binding constraint kind the per-row IR does not have). This is a
-    precise obstruction, not papered over. (`RevokeCapability` (24) GRADUATED via the cap-crown
-    `revokeCapabilityVmDescriptor2` — held-membership map-read + ZERO-value remove-write — and is
-    now rotated as `revokeCapabilityV3`.)
+    HONEST RESIDUE: **EMPTY** — every LIVE selector now has a rotated descriptor. `Custom` (8) was
+    the last; it GRADUATED via the new accumulator / recursive-proof-binding constraint kind
+    (`DescriptorIR2.ProofBind`): the rotated `customV3` carries the `proofBind` op that ties the
+    row's `custom_proof_commitment` to a VERIFYING external sub-proof of the named recursion engine
+    (the row commits to the verification, rather than trusting it). (`RevokeCapability` (24)
+    GRADUATED via the cap-crown `revokeCapabilityVmDescriptor2` — held-membership map-read +
+    ZERO-value remove-write — rotated as `revokeCapabilityV3`.)
 
 ## Honest boundary notes (do NOT over-read)
 
@@ -799,6 +802,13 @@ def revokeCapabilityV3 : EffectVmDescriptor2 :=
 def setFieldDynV3 : EffectVmDescriptor2 :=
   v3OfWith setFieldDynV1Face [.memOp fieldWriteOp, .memOp fieldReadbackOp]
 
+/-- The rotated CUSTOM (sel 8) WITH the recursive-proof-binding leg: the runtime passthrough face
+lifted through `rotateV3`, carrying the `proofBind` op (`customProofBind`) that ties the row's
+`custom_proof_commitment` to a verifying external sub-proof — the accumulator constraint the
+per-row IR gained. This is THE last rotation-cohort member: with it the HONEST RESIDUE is EMPTY. -/
+def customV3 : EffectVmDescriptor2 :=
+  v3OfWith customV1Face [.proofBind customProofBind]
+
 /-- **`v3Registry`** — the full 35-member cohort at the rotated block (the 27 v2-graduated members
 + the 8 STEP-1-widened; keys = the v2 keys suffixed `R24`; wire strings via `emitVmJson2`; driver
 `EmitRotationV3.lean`). -/
@@ -822,6 +832,7 @@ def v3Registry : List (String × EffectVmDescriptor2) :=
   , ("introduceVmDescriptor2R24", v3Of EffectVmEmitIntroduce.introduceVmDescriptor)
   , ("attenuateVmDescriptor2R24", attenuateV3)
   , ("revokeCapabilityVmDescriptor2R24", revokeCapabilityV3)
+  , ("customVmDescriptor2R24", customV3)
   , ("setFieldDynVmDescriptor2R24", setFieldDynV3)
     -- THE COHORT-WIDENING (ROTATION-CUTOVER §2c, STEP 1): the eight LIVE-path effects that
     -- the v2 graduation never covered but the v1 wire DID — their graduated RUNTIME row
@@ -846,7 +857,7 @@ def v3Registry : List (String × EffectVmDescriptor2) :=
       (s!"setFieldVmDescriptor2-{slot.val}R24",
         v3Of (EffectVmEmitSetField.setFieldVmDescriptor slot))
 
-#guard v3Registry.length == 35
+#guard v3Registry.length == 36
 -- Every registry entry emits a versioned v2 wire string with the rotated width, the five
 -- EPOCH tables, and the four appended PI slots.
 #guard v3Registry.all fun (_, d) => (emitVmJson2 d).startsWith "{\"name\":\""
@@ -884,6 +895,13 @@ def v3Registry : List (String × EffectVmDescriptor2) :=
 #guard (mapOpsOf setFieldDynV3).length == 0
 #guard (mapOpsOf attenuateV3).length == 2
 #guard (mapOpsOf revokeCapabilityV3).length == 2
+-- The rotated Custom carries EXACTLY its one proof-binding op past the rotated passthrough base
+-- (no mem/map ops — the recursive-proof binding is Custom's only NEWLY-EXPRESSIBLE leg).
+#guard customV3.constraints.length == (v3Of customV1Face).constraints.length + 1
+#guard (proofBindsOf customV3).length == 1
+#guard (memOpsOf customV3).length == 0
+#guard (mapOpsOf customV3).length == 0
+#guard graduable (rotateV3 customV1Face)
 
 /-! ### The extras' theorems, transported (the §7/§8 legs survive the rotation). -/
 
@@ -949,9 +967,37 @@ theorem attenuateV3_non_amp (hash : List ℤ → ℤ)
   obtain ⟨a, b, _, _, hab, hx, hy⟩ := (subsetTable_mem_iff MASK_BITS _ _).mp hlook'
   exact ⟨a, b, hx, hy, hab⟩
 
+/-- The rotated Custom declares EXACTLY the one proof-binding op (the rotated graduation
+contributes none; the extras add exactly `customProofBind`). -/
+theorem proofBindsOf_customV3 : proofBindsOf customV3 = [customProofBind] := by
+  have hbase : proofBindsOf (v3Of customV1Face) = [] := proofBindsOf_graduateV1 (rotateV3 customV1Face)
+  unfold proofBindsOf at hbase ⊢
+  show ((v3Of customV1Face).constraints ++ [VmConstraint2.proofBind customProofBind]).filterMap
+      _ = _
+  rw [List.filterMap_append, hbase]
+  rfl
+
+/-- **The rotated cap-crown analog for Custom** — `customV2_binds_proof`, transported: on an active
+Custom row of a `Satisfied2Custom` witness of the ROTATED Custom, the row's
+`custom_proof_commitment` is the public-input commitment of a VERIFYING external sub-proof and its
+`custom_program_vk_hash` is that proof's program VK. -/
+theorem customV3_binds_proof (hash : List ℤ → ℤ)
+    (E : Dregg2.Circuit.DescriptorIR2.ProofEngine)
+    (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
+    (hsat : Satisfied2Custom hash E customV3 minit mfin maddrs t)
+    (i : Nat) (hi : i < t.rows.length)
+    (hactive : (envAt t i).loc SEL_CUSTOM = 1) :
+    E.boundTo ((envAt t i).loc (prmCol CUSTOM_COMMIT)) ((envAt t i).loc (prmCol CUSTOM_VK)) := by
+  have hm : customProofBind ∈ proofBindsOf customV3 := by
+    rw [proofBindsOf_customV3]; exact List.mem_cons_self
+  have := proofBind_bound hash E customV3 hsat hm i hi (by simpa [customProofBind] using hactive)
+  simpa [customProofBind] using this
+
 #assert_axioms setFieldDynV3_memLog
 #assert_axioms setFieldDynV3_readback_genuine
 #assert_axioms attenuateV3_non_amp
+#assert_axioms proofBindsOf_customV3
+#assert_axioms customV3_binds_proof
 
 -- NON-VACUITY of the bound block, executable (Horner toy sponge): moving the heap-root limb
 -- (offset 27) or the iroot moves the chained commitment the appendix pins.

@@ -240,15 +240,50 @@ structure MapOp where
   op      : MapOpKind
   deriving Repr
 
-/-- The v2 constraint: v1 embedded whole, plus the three new kinds — and the UNIVERSAL memory
-op (`umemOp`, additive: no shipped descriptor emits it until the rotation; the wire and the
-interpreter carry it recursion-gated, exactly like the rest of IR-v2). -/
+/-! ### The accumulator / recursive-proof-binding op (`docs/EPOCH-DESIGN.md` — the Custom leg).
+
+The four `Lookup`/`MemOp`/`MapOp`/`UMemOp` kinds are all ROW-LOCAL: a lookup is a table
+membership, a mem/map/umem op is one entry in an offline-checking multiset. NONE can fold in
+another STARK proof. `Custom` (effect selector 8) dispatches a cell program whose domain
+constraints are proven EXTERNALLY: the row binds to that external sub-proof via its
+`custom_proof_commitment` (the params columns `circuit/src/effect_vm/columns.rs` calls
+`CUSTOM_PROOF_COMMIT_BASE`). Today the AIR only RECORDS that commitment in the public inputs and
+TRUSTS it (`circuit/src/effect_vm/air.rs` Gap-5: "the Effect VM circuit does NOT verify the
+external proof"). `ProofBind` closes that: the row commits to the VERIFICATION of the external
+proof — the bound sub-proof's public-input commitment must MATCH the row's commitment column
+(and its program VK the row's vk column), against a verifying sub-proof.
+
+This is the recursion/IVC boundary the rest of the stack already names (`Dregg2.Circuit.Recursive-
+Aggregation.EngineSound.recursive_sound`, `circuit/src/joint_turn_recursive.rs`'s leaf verifier,
+`ivc_turn_chain.rs`'s aggregate prover): an opaque `Proof` carrier + a `verify : Proof → Bool`,
+with the in-circuit-verifier soundness supplied as a NAMED, REALIZABLE hypothesis (the one FRI
+obligation outside Lean). `ProofBind.holdsAt` is `True` row-locally — exactly like `memOp`/`umemOp`
+— and the binding content is the SEPARATE `Satisfied2Custom` leg (§6c), whose keystone
+`proofBind_determined` is the anti-ghost: under the named engine binding, a row's commitment is
+the GENUINE commitment of a verifying sub-proof — a forged one no sub-proof attests is
+UNSATISFIABLE. -/
+
+/-- An accumulator / recursive-proof-binding op: the row's `custom_proof_commitment` column
+(`commit`) and `custom_program_vk_hash` column (`vk`), gated by `guard`. The denotation
+(§6c) binds them to a VERIFYING external sub-proof — the row commits to the verification of the
+external proof, rather than trusting it. -/
+structure ProofBind where
+  guard  : EmittedExpr
+  commit : EmittedExpr
+  vk     : EmittedExpr
+  deriving Repr
+
+/-- The v2 constraint: v1 embedded whole, plus the three new ROW-LOCAL kinds, the UNIVERSAL memory
+op (`umemOp`, additive: no shipped descriptor emits it until the rotation), and the accumulator /
+recursive-proof-binding op (`proofBind`, the Custom leg — additive, carried recursion-gated
+exactly like the rest of IR-v2). -/
 inductive VmConstraint2 where
-  | base   (c : VmConstraint)
-  | lookup (l : Lookup)
-  | memOp  (m : MemOp)
-  | mapOp  (m : MapOp)
-  | umemOp (m : UMemOp)
+  | base      (c : VmConstraint)
+  | lookup    (l : Lookup)
+  | memOp     (m : MemOp)
+  | mapOp     (m : MapOp)
+  | umemOp    (m : UMemOp)
+  | proofBind (m : ProofBind)
   deriving Repr
 
 /-- The v2 descriptor: name, main-trace width, PI count, the declared tables, the constraints,
@@ -420,15 +455,17 @@ def mapLog (d : EffectVmDescriptor2) (t : VmTrace) : Table :=
     (mapOpsOf d).filterMap fun m =>
       if m.guard.eval a = 1 then some (m.rowAt a) else none
 
-/-- Per-row meaning of one v2 constraint. (`memOp`/`umemOp` are `True` here: their content is
-the GLOBAL multiset legs of `Satisfied2`/`Satisfied2U`, not a row-local equation.) -/
+/-- Per-row meaning of one v2 constraint. (`memOp`/`umemOp`/`proofBind` are `True` here: their
+content is the GLOBAL leg of `Satisfied2`/`Satisfied2U`/`Satisfied2Custom`, not a row-local
+equation.) -/
 def VmConstraint2.holdsAt (hash : List ℤ → ℤ) (tf : TraceFamily) (env : VmRowEnv)
     (isFirst isLast : Bool) : VmConstraint2 → Prop
-  | .base c   => c.holdsVm env isFirst isLast
-  | .lookup l => l.holdsAt tf env
-  | .memOp _  => True
-  | .mapOp m  => m.holdsAt hash env
-  | .umemOp _ => True
+  | .base c      => c.holdsVm env isFirst isLast
+  | .lookup l    => l.holdsAt tf env
+  | .memOp _     => True
+  | .mapOp m     => m.holdsAt hash env
+  | .umemOp _    => True
+  | .proofBind _ => True
 
 /-- **The v2 denotation.** A multi-table witness satisfies a v2 descriptor (relative to the
 declared memory boundary: initial image `minit`, claimed final image `mfin`, declared address
@@ -632,7 +669,106 @@ theorem satisfied2U_nullifier_fresh (hash : List ℤ → ℤ) (d : EffectVmDescr
     exact (satisfied2U_umem_sound hash d h).1
   exact UniversalMemory.nullifier_fresh_sound hcons hread haddr hnone hio
 
-/-! ### The v1 embedding is FAITHFUL. -/
+/-! ## §6c — `Satisfied2Custom`: the accumulator / recursive-proof-binding denotation (the Custom leg).
+
+`Custom` (effect selector 8) dispatches a cell program whose domain constraints are proven
+EXTERNALLY. The row binds to that external sub-proof via its `custom_proof_commitment` column. The
+FOUR row-local kinds cannot fold in another STARK proof; this leg does — by NAMING the recursion
+engine exactly as `Dregg2.Circuit.RecursiveAggregation` does (an opaque `Proof` carrier + a
+`verify : Proof → Bool` + the in-circuit-verifier soundness as a realizable hypothesis), and
+requiring the row's commitment to be the GENUINE public-input commitment of a VERIFYING sub-proof.
+
+The shape MIRRORS the map-op story (`§4`): there, a row's `(root, key, value)` columns are an
+EXISTENTIAL opening of a proven sorted heap, FUNCTIONAL under the named CR floor
+(`opensTo_functional` — a forged value is excluded). Here, a row's `(commit, vk)` columns are an
+EXISTENTIAL binding to a verifying sub-proof, FUNCTIONAL under the named engine soundness
+(`proofBind_determined` — a forged commitment is excluded). The verification itself is the
+recursion boundary the stack already carries (`recursive_sound`); the row constraint COMMITS to
+it. -/
+
+/-- **The recursion engine** (the §4-analog of `hash`): an opaque sub-proof carrier `Proof`, the
+native verifier `verify`, the public-input COMMITMENT `piCommit` a proof exposes (the value the
+Custom row's `custom_proof_commitment` must match — the leaf wrap's bound PI digest in
+`circuit/src/joint_turn_recursive.rs`), and the program VK `vkOf` a proof attests (the
+`custom_program_vk_hash` it was proven against). We treat all four as OPAQUE — the whole point is
+the row never inspects a proof's internals; the binding is the public commitment alone. -/
+structure ProofEngine where
+  Proof    : Type
+  verify   : Proof → Bool
+  piCommit : Proof → ℤ
+  vkOf     : Proof → ℤ
+
+/-- `boundTo E commit vk` — some sub-proof VERIFIES under engine `E`, with public-input
+commitment `commit` and program VK `vk`. The existential the Custom row's columns must witness
+(the §4-analog of `opensTo`: "some heap behind root reads … "). -/
+def ProofEngine.boundTo (E : ProofEngine) (commit vk : ℤ) : Prop :=
+  ∃ p : E.Proof, E.verify p = true ∧ E.piCommit p = commit ∧ E.vkOf p = vk
+
+/-- **The named engine soundness — `EngineBinding` (the realizable boundary).** The recursion
+engine's in-circuit verifier is sound: the public-input commitment is COLLISION-FREE across
+VERIFYING proofs — two verifying sub-proofs exposing the same `piCommit` agree on their program VK
+(the wrap binds the program identity to the commitment digest). This is the EXACT shape of
+`RecursiveAggregation.EngineSound.recursive_sound` / the leaf-verifier's soundness — the one FRI
+obligation `DESIGN-recursion-aggregation-private-joint-turns.md` §H1 argues is bounded for
+plonky3's single fixed verifier AIR. It is a hypothesis the keystones TAKE (a `structure` field,
+never an axiom); §10c witnesses it non-vacuously BOTH ways. -/
+structure EngineBinding (E : ProofEngine) : Prop where
+  /-- The PI commitment determines the attested program VK across verifying proofs. -/
+  commit_determines_vk : ∀ p q : E.Proof, E.verify p = true → E.verify q = true →
+    E.piCommit p = E.piCommit q → E.vkOf p = E.vkOf q
+
+/-- The row's `(commit, vk)` denotation: when the guard fires, the columns are a genuine binding
+to a verifying sub-proof — the row COMMITS to the verification of the external proof. (The §4-analog
+of `MapOp.holdsAt`.) -/
+def ProofBind.boundAt (E : ProofEngine) (env : VmRowEnv) (m : ProofBind) : Prop :=
+  m.guard.eval env.loc = 1 → E.boundTo (m.commit.eval env.loc) (m.vk.eval env.loc)
+
+/-- The proof-binding ops a descriptor declares. -/
+def proofBindsOf (d : EffectVmDescriptor2) : List ProofBind :=
+  d.constraints.filterMap fun c => match c with | .proofBind m => some m | _ => none
+
+/-- **The custom-binding denotation** — `Satisfied2` PLUS the accumulator leg: every declared
+`proofBind` op binds its row's commitment/vk columns to a VERIFYING sub-proof of the named engine
+`E` (the §6b-analog: `Satisfied2U` adds the universal-memory leg; this adds the recursion leg). -/
+structure Satisfied2Custom (hash : List ℤ → ℤ) (E : ProofEngine) (d : EffectVmDescriptor2)
+    (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace) : Prop
+    extends Satisfied2 hash d minit mfin maddrs t where
+  proofBound : ∀ i < t.rows.length, ∀ m ∈ proofBindsOf d, m.boundAt E (envAt t i)
+
+/-- **`proofBind_bound` — the Custom row IS bound to a verifying sub-proof.** On an active
+proof-binding row of a `Satisfied2Custom` witness, there EXISTS a sub-proof that VERIFIES, whose
+public-input commitment EQUALS the row's `custom_proof_commitment` column and whose program VK
+equals the row's `custom_program_vk_hash` column. The row does not trust the commitment — it
+commits to a verification of it. -/
+theorem proofBind_bound (hash : List ℤ → ℤ) (E : ProofEngine) (d : EffectVmDescriptor2)
+    {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
+    (h : Satisfied2Custom hash E d minit mfin maddrs t)
+    {m : ProofBind} (hm : m ∈ proofBindsOf d)
+    (i : Nat) (hi : i < t.rows.length)
+    (hactive : m.guard.eval (envAt t i).loc = 1) :
+    E.boundTo (m.commit.eval (envAt t i).loc) (m.vk.eval (envAt t i).loc) :=
+  h.proofBound i hi m hm hactive
+
+/-- **`proofBind_determined` — THE ANTI-GHOST (forged commitment REJECTS).** Under the named
+engine binding, the program VK attested by a Custom row is DETERMINED by its commitment column: if
+the row's `custom_proof_commitment` is the commitment of SOME verifying sub-proof, then ANY
+verifying sub-proof exposing that same commitment attests the SAME program VK. A forged row that
+claims a `custom_proof_commitment` no verifying sub-proof exposes makes `boundAt` FALSE — its
+`Satisfied2Custom` cannot exist. (The recursion analog of `opensTo_functional`: the binding cannot
+lie.) -/
+theorem proofBind_determined (hash : List ℤ → ℤ) (E : ProofEngine) (hE : EngineBinding E)
+    (d : EffectVmDescriptor2)
+    {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
+    (h : Satisfied2Custom hash E d minit mfin maddrs t)
+    {m : ProofBind} (hm : m ∈ proofBindsOf d)
+    (i : Nat) (hi : i < t.rows.length)
+    (hactive : m.guard.eval (envAt t i).loc = 1)
+    (q : E.Proof) (hq : E.verify q = true)
+    (hqc : E.piCommit q = m.commit.eval (envAt t i).loc) :
+    E.vkOf q = m.vk.eval (envAt t i).loc := by
+  obtain ⟨p, hp, hpc, hpv⟩ := proofBind_bound hash E d h hm i hi hactive
+  have : E.vkOf q = E.vkOf p := hE.commit_determines_vk q p hq hp (by rw [hqc, hpc])
+  rw [this, hpv]
 
 /-- `filterMap` over embedded-v1 constraints yields nothing for any v2-only selector. -/
 theorem filterMap_base_none {α : Type} (f : VmConstraint2 → Option α)
@@ -960,13 +1096,20 @@ def UMemOp.toJson (m : UMemOp) : String :=
   ",\"prev_value\":" ++ m.prevValue.toJson ++
   ",\"prev_serial\":" ++ m.prevSerial.toJson ++ "}"
 
+/-- Render one proof-binding op (the accumulator / recursive-proof binding: the row's
+`custom_proof_commitment` + `custom_program_vk_hash` columns, gated). -/
+def ProofBind.toJson (m : ProofBind) : String :=
+  "{\"t\":\"proof_bind\",\"guard\":" ++ m.guard.toJson ++
+  ",\"commit\":" ++ m.commit.toJson ++ ",\"vk\":" ++ m.vk.toJson ++ "}"
+
 /-- Render one v2 constraint (the v1 forms reuse the v1 renderer byte-for-byte). -/
 def VmConstraint2.toJson : VmConstraint2 → String
-  | .base c   => c.toJson
-  | .lookup l => l.toJson
-  | .memOp m  => m.toJson
-  | .mapOp m  => m.toJson
-  | .umemOp m => m.toJson
+  | .base c      => c.toJson
+  | .lookup l    => l.toJson
+  | .memOp m     => m.toJson
+  | .mapOp m     => m.toJson
+  | .umemOp m    => m.toJson
+  | .proofBind m => m.toJson
 
 /-- **`emitVmJson2`** — the canonical v2 wire string: versioned (`"ir":2`), tables declared,
 constraints in v2 grammar, v1 hash-site/range carriers preserved. -/
@@ -1173,6 +1316,93 @@ example :
     (rop := ⟨.read, (.nullifiers, 9), none, none, 0⟩)
     rfl rfl rfl rfl
 
+/-! ### §10c — the PROOF-BINDING (Custom accumulator) demo: wire golden + non-vacuity + the
+keystone fired BOTH ways.
+
+`demoC` exercises the `proofBind` kind: one Custom row binding `custom_proof_commitment` (col 0) +
+`custom_program_vk_hash` (col 1) to a verifying sub-proof. The realizing engine is a TOY
+(`Bool`-carriered) recursion engine: a verifying proof exposes a FIXED commitment/vk, so the
+`Satisfied2Custom` witness is constructed CONCRETELY and `proofBind_determined` fires end-to-end
+(forged-commitment rejection witnessed). -/
+
+/-- The proof-binding demo descriptor: one Custom row binding (commit = col 0, vk = col 1), gated
+by the (toy) custom selector at col 2. -/
+def demoC : EffectVmDescriptor2 :=
+  { name := "demo-custom", traceWidth := 3, piCount := 0
+  , tables := [mainTableDef 3]
+  , constraints := [ .proofBind ⟨.var 2, .var 0, .var 1⟩ ]
+  , hashSites := [], ranges := [] }
+
+-- THE PROOF-BIND WIRE GOLDEN: the canonical JSON of the `proof_bind` grammar, byte-pinned (the
+-- Rust `descriptor_ir2.rs` decoder's `proof_bind` arm parses THIS string's grammar; mirrored as
+-- `DEMO_CUSTOM` in its tests).
+#guard emitVmJson2 demoC ==
+  "{\"name\":\"demo-custom\",\"ir\":2,\"trace_width\":3,\"public_input_count\":0,\"tables\":[{\"id\":0,\"name\":\"main\",\"arity\":3,\"sem\":\"main\"}],\"constraints\":[{\"t\":\"proof_bind\",\"guard\":{\"t\":\"var\",\"v\":2},\"commit\":{\"t\":\"var\",\"v\":0},\"vk\":{\"t\":\"var\",\"v\":1}}],\"hash_sites\":[],\"ranges\":[]}"
+
+/-- A TOY recursion engine: the proof carrier is `Bool` (`true` = the one honest sub-proof), the
+verifier accepts exactly `true`, and a verifying proof exposes commitment `123` / vk `45`. (The
+realizing instance only needs the structure + the binding implication; the REAL engine is
+plonky3's leaf verifier, named not modeled.) -/
+def demoEngine : ProofEngine :=
+  { Proof := Bool, verify := fun b => b, piCommit := fun _ => 123, vkOf := fun _ => 45 }
+
+-- The toy engine satisfies the named `EngineBinding` (its commitment trivially determines its vk).
+theorem demoEngine_binding : EngineBinding demoEngine :=
+  { commit_determines_vk := fun _ _ _ _ _ => rfl }
+
+/-- The proof-binding demo row: commit 123 (col 0), vk 45 (col 1), selector ON (col 2). -/
+def demoCRow : Assignment := fun i =>
+  if i = 0 then 123 else if i = 1 then 45 else if i = 2 then 1 else 0
+
+/-- The demo custom witness: one main row; no auxiliary tables (proof binding rides the named
+engine, not a committed table). -/
+def demoCTrace : VmTrace := { rows := [demoCRow], pub := zeroAsg, tf := fun _ => [] }
+
+/-- The demo `Satisfied2Custom` witness, fully constructed: the row constraint is global-content
+(row-locally `True`); the proof-binding leg supplies the honest sub-proof (`true`). -/
+theorem demoC_satisfied :
+    Satisfied2Custom (fun _ => 0) demoEngine demoC (fun _ => 0) (fun _ => ((0 : ℤ), 0)) []
+      demoCTrace := by
+  refine ⟨⟨?_, ?_, ?_, List.nodup_nil, ?_, ?_, ?_, ?_, ?_⟩, ?_⟩
+  · intro i hi c hc
+    simp only [demoC, List.mem_cons, List.not_mem_nil, or_false] at hc
+    subst hc; trivial
+  · intro i hi; trivial
+  · intro i hi r hr; simp [demoC] at hr
+  · intro op hop; rw [show memLog demoC demoCTrace = [] from rfl] at hop; cases hop
+  · rw [show memLog demoC demoCTrace = [] from rfl]; exact by decide
+  · rw [show memLog demoC demoCTrace = [] from rfl]; exact memCheck_nil _ _
+  · rfl
+  · rfl
+  · -- proofBound: the one declared proofBind op binds to the honest `true` sub-proof.
+    intro i hi m hm hactive
+    have hm' : m = ⟨.var 2, .var 0, .var 1⟩ := by
+      simpa [proofBindsOf, demoC] using hm
+    subst hm'
+    -- row 0 is the only row; commit col evaluates to 123, vk col to 45.
+    have hlen : demoCTrace.rows.length = 1 := rfl
+    have hi0 : i = 0 := by omega
+    subst hi0
+    exact ⟨true, rfl, rfl, rfl⟩
+
+-- THE ANTI-GHOST FIRED end-to-end on the demo: a forged sub-proof claiming the row's commitment
+-- (123) attests EXACTLY the row's vk (45) — a forgery exposing a DIFFERENT vk cannot verify at
+-- that commitment (the determinism the named `EngineBinding` supplies, AT the IR).
+example (q : Bool) (hq : demoEngine.verify q = true)
+    (hqc : demoEngine.piCommit q = (EmittedExpr.var 0).eval (envAt demoCTrace 0).loc) :
+    demoEngine.vkOf q = (EmittedExpr.var 1).eval (envAt demoCTrace 0).loc :=
+  proofBind_determined (fun _ => 0) demoEngine demoEngine_binding demoC demoC_satisfied
+    (m := ⟨.var 2, .var 0, .var 1⟩) (by simp [proofBindsOf, demoC])
+    0 (by decide) (by decide) q hq hqc
+
+-- NON-VACUITY of `EngineBinding`, BOTH polarities: the toy engine satisfies it (above), and a
+-- BROKEN engine that exposes the SAME commitment for vk 45 and vk 99 across verifying proofs
+-- FAILS it (the hypothesis has content — it is not `True`).
+def brokenEngine : ProofEngine :=
+  { Proof := Bool, verify := fun _ => true, piCommit := fun _ => 7
+  , vkOf := fun b => if b then 45 else 99 }
+#guard ¬ decide (brokenEngine.vkOf true = brokenEngine.vkOf false)
+
 #assert_axioms TableId.wireId_injective
 #assert_axioms domainCode_injective
 #assert_axioms optOf_roundtrip
@@ -1181,6 +1411,10 @@ example :
 #assert_axioms satisfied2U_boundary_root
 #assert_axioms satisfied2U_nullifier_fresh
 #assert_axioms demoU_satisfied
+#assert_axioms proofBind_bound
+#assert_axioms proofBind_determined
+#assert_axioms demoEngine_binding
+#assert_axioms demoC_satisfied
 #assert_axioms opensTo_functional
 #assert_axioms opensTo_some_excludes_none
 #assert_axioms writesTo_functional

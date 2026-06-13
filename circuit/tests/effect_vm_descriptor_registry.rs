@@ -25,8 +25,10 @@ use dregg_circuit::lean_descriptor_air::parse_vm_descriptor;
 fn every_registered_descriptor_parses() {
     // VERB LOCKSTEP: 47 → 25 (the 22 descriptors of the factory-dissolved
     // families died with their Effect variants); +1 for the cellunseal-v2
-    // graduation (the lifecycle Sealed→Live frozen-frame + tick row).
-    assert_eq!(ALL_DESCRIPTORS.len(), 26, "expected 26 unique descriptors");
+    // graduation (the lifecycle Sealed→Live frozen-frame + tick row); +1 for
+    // the revokecapability-v1 cap-crown face. (The in-crate test
+    // `effect_vm_descriptors::descriptor_registry_drift` pins the same 27.)
+    assert_eq!(ALL_DESCRIPTORS.len(), 27, "expected 27 unique descriptors");
     for (name, json, fp) in ALL_DESCRIPTORS {
         let by_name = descriptor_for_name(name).expect("name must resolve");
         assert_eq!(*json, by_name, "{name}: descriptor_for_name mismatch");
@@ -60,17 +62,18 @@ fn selector_lookup_drives_the_dispatcher() {
         parse_vm_descriptor(json)
             .unwrap_or_else(|e| panic!("selector {s} ({name}) failed to parse: {e}"));
     }
-    // VERB LOCKSTEP: 25 of the 29 live selectors carry a descriptor (NOOP /
-    // SET_FIELD / CUSTOM / REVOKE_CAPABILITY have no registry descriptor:
-    // SET_FIELD's Lean module is a per-slot family awaiting the dynamic-index
-    // gate; CUSTOM needs a recursive proof-binding constraint kind;
-    // REVOKE_CAPABILITY's cap-root advance is mid-reshape). GRANT_CAP and
-    // ATTENUATE_CAPABILITY share the `attenuateA` cap-move JSON, so the 25
-    // selector rows reference 24 distinct descriptor names.
-    assert_eq!(SELECTOR_DESCRIPTORS.len(), 25);
+    // VERB LOCKSTEP: 26 of the 29 live selectors carry a v1 registry descriptor
+    // (NOOP / SET_FIELD / CUSTOM have no LIVE-path v1 descriptor: SET_FIELD's Lean
+    // module is a per-slot family awaiting the dynamic-index gate; CUSTOM's live
+    // path is still v1-passthrough — its recursive-proof binding graduated on the
+    // IR-v2/v3 path (`customVmDescriptor2` / `customVmDescriptor2R24`), not this v1
+    // SELECTOR_DESCRIPTORS table). REVOKE_CAPABILITY (24) carries its cap-crown v1
+    // FACE. GRANT_CAP and ATTENUATE_CAPABILITY share the `attenuateA` cap-move JSON,
+    // so the 26 selector rows reference 25 distinct descriptor names.
+    assert_eq!(SELECTOR_DESCRIPTORS.len(), 26);
     let distinct_names: std::collections::BTreeSet<&str> =
         SELECTOR_DESCRIPTORS.iter().map(|(_, n, _, _)| *n).collect();
-    assert_eq!(distinct_names.len(), 24);
+    assert_eq!(distinct_names.len(), 25);
 
     // The transfer beachhead: selector 1 → the verified transfer descriptor.
     assert_eq!(
