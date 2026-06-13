@@ -29,6 +29,21 @@ hex = "0.4"
 blake3 = "1"
 postcard = { version = "1", features = ["alloc"] }
 
+[features]
+# PLATFORM gate, OFF by default (same polarity as the rest of the tree, see
+# docs/FEATURE-HYGIENE.md §Lean and docs/SEL4-EMBEDDING.md §2). The verifier's
+# only transitive reach to `libdregg_lean.a` is via {federation, captp, turn};
+# turning their `no-lean-link` on suppresses every Lean link directive, leaving a
+# pure reads-bytes→verify→exit binary with NO Lean runtime, NO libuv, NO POSIX IO
+# loop — the seL4 protection-domain build. The verify path itself never calls Lean
+# (it is plonky3 STARK + crypto only), so this is link-suppression, not a
+# guarantee downgrade for the verifier.
+no-lean-link = [
+    "dregg-federation/no-lean-link",
+    "dregg-captp/no-lean-link",
+    "dregg-turn/no-lean-link",
+]
+
 [dev-dependencies]
 dregg-circuit = { path = "../circuit" }
 dregg-cell = { path = "../cell" }

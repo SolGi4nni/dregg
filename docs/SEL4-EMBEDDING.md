@@ -150,16 +150,36 @@ assume tokio + POSIX sockets. On seL4:
 
 ### Weekend (a demo you can show)
 - **Boot a hello-world seL4 root task in Rust** on the seL4 Rust SDK
-  (`rust-sel4`), QEMU target. No dregg yet — prove the toolchain.
+  (`rust-sel4`), QEMU target. No dregg yet — prove the toolchain. *(Remaining:
+  needs the rust-sel4 toolchain, not present in the authoring env.)*
 - **Cross-compile the `dregg-verifier` crate** for the seL4 target. It is the
   best candidate: `verifier/src/lib.rs` is deliberately `default-features =
   false` (no tokio), "reads bytes from disk (or stdin), runs cryptographic
   verification, and exits." A `no_std`/musl build of the verifier as an seL4
   PD that checks a `BilateralBundle` from a fixed buffer is the realistic
   weekend win — it needs *no* Lean and *no* IO loop.
+  - **✅ ISOLATION VERDICT PROVEN (2026-06-13).** Caveat to the old text: a
+    *default* verifier build is **not** Lean-free — through `{dregg-captp,
+    dregg-federation, dregg-turn}` it transitively links `dregg-lean-ffi`
+    (libuv/GMP/C++). The fix is one feature line: `verifier/Cargo.toml` now has
+    a `no-lean-link` feature fanning out to those three. `cargo build -p
+    dregg-verifier --features no-lean-link` finishes clean at HEAD; the binary
+    links **only `libSystem`+`libiconv`**, has **zero** Lean/libuv/GMP symbols,
+    and is 14.4 MB vs 27.2 MB native. The audit also confirmed **no tokio / mio
+    / async / redb / net** anywhere in the verifier closure. See `sel4/README.md`.
+  - **Remaining:** the actual cross-build to `aarch64-sel4-microkit` (needs the
+    toolchain) and the `getrandom`-custom + `p3-maybe-rayon` serial-fallback
+    wiring for the bare target.
 - **Write the component manifest skeleton** (Microkit `.system` or CAmkES
   assembly) describing the five PDs from §1, even if only `verifier` is
   wired. This is the artifact, not running code.
+  - **✅ SCAFFOLDED (2026-06-13).** `sel4/dregg.system` is the five-PD Microkit
+    assembly (verifier · executor · persist · ingress · gossip) with the cap
+    partition as the trust boundary; `sel4/verifier-pd/` is the `#![no_std]`/
+    `#![no_main]` PD wrapping the real verify core; `sel4/Makefile` is the build
+    recipe (`make verify-isolation` runs on the host today); `sel4/RBG-TO-SEL4.md`
+    is the rbg-heritage → seL4-primitive mapping (the concrete first port =
+    `DirectoryFactory` → `seL4_Untyped_Retype`, additive, not blocked on §2).
 
 ### Quarter (a node that actually runs turns)
 - **Port the Lean runtime bottom-half** (§2): an IO-free, libuv-free `leanrt`
@@ -199,12 +219,32 @@ for the cell caps.
 ## 7. Honest blocker summary
 
 1. **The Lean runtime port (§2)** is the one true blocker — libuv-free,
-   IO-free `leanrt` + GMP on musl/seL4. Everything else is known seL4
-   ecosystem work.
+   IO-free `leanrt` + GMP on musl/seL4 — **for the `executor` PD**. It does
+   **not** block the `verifier` PD: the verify path never calls Lean, and the
+   `no-lean-link` build proves the verifier links Lean-free (§5, `sel4/`).
 2. **No verified FS today** — near-term is a raw-block redb backend, not a
    verified filesystem.
 3. **rbg is heritage, not a host** — there is no existing seL4 integration to
-   extend; this is greenfield against the seL4 Rust SDK.
+   extend; this is greenfield against the seL4 Rust SDK. The first concrete
+   port (`DirectoryFactory` → `seL4_Untyped_Retype`) is mapped in
+   `sel4/RBG-TO-SEL4.md` and is additive (not gated on §2).
 4. **Downgrade temptation** — `no-lean-link` makes the node *build* on seL4
    without Lean, but shipping the unverified Rust executor as authoritative is
-   a guarantee downgrade; it is bring-up scaffold only.
+   a guarantee downgrade; it is bring-up scaffold only. (For the **verifier**
+   specifically there is no such downgrade — it carries no executor authority,
+   so `no-lean-link` there is pure link-suppression, not a guarantee change.)
+
+## 8. Scaffold status (2026-06-13)
+
+The §5 weekend-win skeleton now exists under `sel4/`:
+
+| Item | Status |
+|------|--------|
+| Verifier-isolation verdict | **✅ proven** — clean `no-lean-link` build, zero Lean/libuv/GMP symbols, no tokio/mio/async/redb/net in closure |
+| `no-lean-link` wiring on `verifier/Cargo.toml` | **✅ added** (the one-line fix; fans out to federation/captp/turn) |
+| `sel4/dregg.system` (5-PD Microkit assembly) | **✅ scaffolded** (verifier wired; other 4 declared, ELFs blocked) |
+| `sel4/verifier-pd/` (`#![no_std]` PD crate) | **✅ scaffolded** (wraps real verify core; rust-sel4 entry gated on `target_os="sel4"`) |
+| Build recipe + rbg→seL4 mapping | **✅** `sel4/Makefile`, `sel4/RBG-TO-SEL4.md` |
+| Actual seL4 cross-build / boot | **remaining** — needs Microkit SDK + rust-sel4 toolchain (absent here) |
+| `executor` PD ELF | **remaining** — THE blocker (§2 Lean runtime port) |
+| `persist`/`ingress`/`gossip` PD ELFs | **remaining** — redb-over-block-cap (§3), lwIP (§4), quarter+ |

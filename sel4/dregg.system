@@ -1,0 +1,140 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  dregg.system — Microkit system description for the dregg node on seL4.
+
+  This is the §1 "decomposed system" assembly from docs/SEL4-EMBEDDING.md:
+  five protection domains whose seL4 capability partition IS the trust boundary
+  the node's crate-split already gestures at ("capabilities all the way down").
+
+  STATUS (2026-06-13): SCAFFOLD. Only `verifier` is a real, buildable PD today
+  (its crate is Lean-free / IO-free — see sel4/verifier-pd/ and the isolation
+  audit in docs/SEL4-EMBEDDING.md §2). The other four PDs are declared but
+  their ELF images do not yet exist: `executor` is blocked on the Lean-runtime
+  bottom-half port (THE blocker, §2); `persist`/`ingress`/`gossip` are blocked
+  on the redb-over-block-cap (§3) and lwIP (§4) ecosystem work.
+
+  Build with the seL4 Microkit SDK:  see sel4/Makefile and sel4/README.md.
+  This file is the reviewable ARTIFACT, not a booting image — no seL4 toolchain
+  runs in the authoring environment; the build recipe is documented, not run.
+
+  Target board placeholder: QEMU virt AArch64 (the standard rust-sel4 bring-up
+  target). Swap the microkit `board` argument (qemu_virt_aarch64) for real
+  hardware later — see sel4/Makefile.
+-->
+<system>
+
+    <!-- ════════════════════════════════════════════════════════════════════
+         Shared memory regions (the only cross-PD channels; seL4 caps to these
+         pages are the ONLY way two PDs touch the same bytes).
+         ════════════════════════════════════════════════════════════════════ -->
+
+    <!-- The buffer the verifier reads its BilateralBundle / proof bytes from.
+         In the weekend demo this is filled by the loader from a fixed image
+         section; in the full node `ingress` writes it. The verifier has it
+         READ-ONLY: it cannot mutate the bundle, mirroring the crate invariant
+         "no shared mutable state, no callbacks into a prover". -->
+    <memory_region name="proof_in"   size="0x100000" />   <!-- 1 MiB -->
+
+    <!-- The verifier's verdict page (exit-code + reason). Written by verifier,
+         read by whoever scheduled the verification. -->
+    <memory_region name="verdict_out" size="0x1000" />     <!-- 4 KiB -->
+
+    <!-- Turn ingress → executor handoff (declared for the full node; unused in
+         the weekend demo). -->
+    <memory_region name="turn_in"    size="0x100000" />
+    <!-- executor → persist commit-log handoff. -->
+    <memory_region name="commit_out" size="0x400000" />
+
+
+    <!-- ════════════════════════════════════════════════════════════════════
+         PD: verifier  — THE weekend win. Real, buildable, Lean-free, IO-free.
+         No prover authority: it holds caps to proof_in (R) + verdict_out (RW)
+         and NOTHING else. Cannot reach the storage device, the NIC, or call
+         back into a prover — the seL4-native form of dregg-verifier's
+         "completely separate OS process, no shared mutable state" guarantee.
+         ════════════════════════════════════════════════════════════════════ -->
+    <protection_domain name="verifier" priority="100" budget="1000" period="10000">
+        <program_image path="dregg-verifier-pd.elf" />
+        <map mr="proof_in"    vaddr="0x2_000_000" perms="r"  cached="true" setvar_vaddr="proof_in_vaddr" />
+        <map mr="verdict_out" vaddr="0x2_100_000" perms="rw" cached="true" setvar_vaddr="verdict_out_vaddr" />
+    </protection_domain>
+
+
+    <!-- ════════════════════════════════════════════════════════════════════
+         PD: executor — the verified kernel (compiled Lean). BLOCKED on §2 Lean
+         runtime port. Declared so the assembly is complete and reviewable; its
+         ELF is not yet produced. Holds NO device/NIC caps — pure compute.
+         ════════════════════════════════════════════════════════════════════ -->
+    <protection_domain name="executor" priority="120" budget="2000" period="10000">
+        <!-- BLOCKED: dregg-executor-pd.elf requires libdregg_lean.a linked
+             against an IO-free / libuv-free leanrt+gmp on musl/seL4 (§2). -->
+        <program_image path="dregg-executor-pd.elf" />
+        <map mr="turn_in"    vaddr="0x3_000_000" perms="r"  cached="true" setvar_vaddr="turn_in_vaddr" />
+        <map mr="commit_out" vaddr="0x3_100_000" perms="rw" cached="true" setvar_vaddr="commit_out_vaddr" />
+    </protection_domain>
+
+
+    <!-- ════════════════════════════════════════════════════════════════════
+         PD: persist — the SOLE holder of the storage-device cap (§3). redb over
+         a raw block cap (not a POSIX file). BLOCKED on the block-cap backend.
+         ════════════════════════════════════════════════════════════════════ -->
+    <protection_domain name="persist" priority="80" budget="1000" period="10000">
+        <program_image path="dregg-persist-pd.elf" />
+        <map mr="commit_out" vaddr="0x4_000_000" perms="r"  cached="true" setvar_vaddr="commit_out_vaddr" />
+        <!-- The storage device cap lives ONLY here. On real hardware this is an
+             <irq>/<map> of the block device's MMIO + IRQ. Placeholder until the
+             block-cap backend exists. -->
+        <!-- <map mr="block_dev_mmio" vaddr="0x4_100_000" perms="rw" cached="false" /> -->
+    </protection_domain>
+
+
+    <!-- ════════════════════════════════════════════════════════════════════
+         PD: ingress — network + turn de-envelope (§4). De-envelopes the
+         postcard SignedTurn and verifies the Ed25519 sig BEFORE the executor
+         ever sees it. BLOCKED on lwIP-on-seL4 + the NIC driver PD.
+         ════════════════════════════════════════════════════════════════════ -->
+    <protection_domain name="ingress" priority="90" budget="1000" period="10000">
+        <program_image path="dregg-ingress-pd.elf" />
+        <map mr="turn_in" vaddr="0x5_000_000" perms="rw" cached="true" setvar_vaddr="turn_in_vaddr" />
+        <!-- The NIC cap lives ONLY here (driver PD or direct device cap). -->
+    </protection_domain>
+
+
+    <!-- ════════════════════════════════════════════════════════════════════
+         PD: gossip — peer blocklace sync. Quarter+ milestone (single-node n=1
+         devnet image needs none of this; the single-machine principle).
+         ════════════════════════════════════════════════════════════════════ -->
+    <protection_domain name="gossip" priority="70" budget="1000" period="10000">
+        <program_image path="dregg-gossip-pd.elf" />
+    </protection_domain>
+
+
+    <!-- ════════════════════════════════════════════════════════════════════
+         Channels (Microkit notification + PPC edges between PDs). These are the
+         only control-flow edges; the seL4 cap layout forbids any other.
+         ════════════════════════════════════════════════════════════════════ -->
+
+    <!-- ingress signals the executor that a verified-signature turn is staged. -->
+    <channel>
+        <end pd="ingress"  id="1" />
+        <end pd="executor" id="1" />
+    </channel>
+
+    <!-- executor signals persist that a commit-log entry is ready. -->
+    <channel>
+        <end pd="executor" id="2" />
+        <end pd="persist"  id="1" />
+    </channel>
+
+    <!-- whoever-schedules → verifier: "a bundle is staged in proof_in".
+         For the weekend demo the loader pre-fills proof_in and the verifier
+         runs once at init; this channel is for the steady-state node where the
+         executor (or a test harness PD) requests verification. NOTE the
+         direction: the verifier NEVER calls OUT to a prover — it only signals
+         "verdict ready". This one-way edge IS the no-prover-callback property. -->
+    <channel>
+        <end pd="executor" id="3" />
+        <end pd="verifier" id="1" />
+    </channel>
+
+</system>

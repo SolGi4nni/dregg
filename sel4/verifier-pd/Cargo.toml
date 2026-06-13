@@ -1,0 +1,54 @@
+# dregg-verifier-pd — the dregg proof verifier as an seL4 Microkit protection
+# domain (PD). This is the §5 "weekend win" component: it wraps the Lean-free,
+# IO-free `dregg-verifier` core in a `#![no_std]`, no-main, Microkit entry point
+# that reads a BilateralBundle from a fixed shared page and writes a verdict.
+#
+# It is a STANDALONE crate (NOT a member of the repo-root workspace) because it
+# cross-compiles to the seL4 target (aarch64-sel4-microkit) with its own
+# panic/alloc/runtime story — pulling it into the host workspace would force the
+# whole workspace onto that target. The path-dep on ../../verifier reuses the
+# audited verify core unchanged.
+#
+# STATUS (2026-06-13): SCAFFOLD. The rust-sel4 / sel4-microkit crates and the
+# aarch64-sel4-microkit target are NOT present in the authoring environment, so
+# this crate is not built here. The dependency lines below are the documented,
+# reviewable wiring; `cargo +<sel4-toolchain> build --target ...` is the recipe
+# (see sel4/README.md and sel4/Makefile). The HOST half — proving the verifier
+# core links Lean-free — IS verified: `cargo build -p dregg-verifier --features
+# no-lean-link` finishes with libSystem+libiconv only, zero Lean/libuv symbols.
+
+[package]
+name = "dregg-verifier-pd"
+version = "0.1.0"
+edition = "2021"
+description = "dregg proof verifier as an seL4 Microkit protection domain"
+publish = false
+
+[[bin]]
+name = "dregg-verifier-pd"
+path = "src/main.rs"
+
+[dependencies]
+# THE reuse: the audited verify core. `default-features = false` + the
+# `no-lean-link` feature suppresses every libdregg_lean.a / libuv / GMP link
+# directive (proven on the host: the binary has zero Lean runtime symbols), so
+# the verify path is pure plonky3-STARK + crypto over bytes. This is the line
+# that makes a no-Lean, no-POSIX-IO PD possible.
+dregg-verifier = { path = "../../verifier", default-features = false, features = ["no-lean-link"] }
+
+# The seL4 Microkit Rust runtime: provides the `#[protection_domain]` entry
+# macro, the IPC/notification primitives, and a bare-metal allocator hookup.
+# Pinned to the seL4 Foundation's rust-sel4 tree. Commented until the toolchain
+# is wired so a stray host `cargo build` does not try to resolve the git dep.
+# sel4-microkit = { git = "https://github.com/seL4/rust-sel4", default-features = false }
+
+# A bump/linked-list global allocator for the PD's heap (the verify path uses
+# `alloc` — Vec<u32> public inputs, postcard bundles — but never libc malloc).
+# talc and linked_list_allocator are the usual rust-sel4 choices.
+# talc = { version = "4", default-features = false }
+
+[profile.release]
+panic = "abort"      # no unwinding in a PD; a failed verify aborts the PD
+opt-level = "s"
+lto = true
+codegen-units = 1
