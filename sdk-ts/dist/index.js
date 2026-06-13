@@ -21,10 +21,13 @@ var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: tru
 var index_exports = {};
 __export(index_exports, {
   AgentRuntime: () => AgentRuntime,
+  AttestedQuery: () => AttestedQuery,
   AuthorizedTurn: () => AuthorizedTurn,
+  ChannelsClient: () => ChannelsClient,
   EmptyTurnError: () => EmptyTurnError,
   Identity: () => Identity,
   MAIN_IDENTITY_PATH: () => MAIN_IDENTITY_PATH,
+  MailboxClient: () => MailboxClient,
   NodeClient: () => NodeClient,
   NodeError: () => NodeError,
   NodeEvents: () => NodeEvents,
@@ -33,9 +36,13 @@ __export(index_exports, {
   Receipt: () => Receipt,
   ReceiptFilter: () => ReceiptFilter,
   ReceiptStream: () => ReceiptStream,
+  RelayError: () => RelayError,
+  TrustlineClient: () => TrustlineClient,
   TurnBuilder: () => TurnBuilder,
   TurnProof: () => TurnProof,
   WrongTurnProofError: () => WrongTurnProofError,
+  base64Decode: () => base64Decode,
+  base64Encode: () => base64Encode,
   createSseParser: () => createSseParser,
   explainAction: () => explainAction,
   explainEffect: () => explainEffect,
@@ -1459,6 +1466,127 @@ var AuthorizedTurn = class {
   }
 };
 
+// src/trustline.ts
+function asHex(cell) {
+  return typeof cell === "string" ? cell : hexEncode(cell);
+}
+var TrustlineClient = class {
+  constructor(node) {
+    this.node = node;
+  }
+  /**
+   * Open a directional line `operator → holder` of `line`, escrowed in full
+   * (fullReserve). The node births the per-line cell, funds it, grants the
+   * holder + operator their capabilities, and opens it — four turns.
+   *
+   * `salt` disambiguates multiple lines to the same holder.
+   */
+  open(holder, line, salt) {
+    const body = { holder: asHex(holder), line: Number(line) };
+    if (salt !== void 0) body.salt = salt;
+    return this.node.postJson("/trustline/open", body);
+  }
+  /**
+   * Draw `amount` against the line (debits the shared counter). Supply a
+   * `digest` (hex) for client-side replay protection across retries; the
+   * node derives one otherwise. Draws are one-shot per digest.
+   */
+  draw(trustline, amount, digest) {
+    const body = { trustline: asHex(trustline), amount: Number(amount) };
+    if (digest !== void 0) body.digest = digest;
+    return this.node.postJson("/trustline/draw", body);
+  }
+  /** Repay `amount`, restoring the line (never resurrects a burned digest). */
+  repay(trustline, amount) {
+    return this.node.postJson("/trustline/repay", {
+      trustline: asHex(trustline),
+      amount: Number(amount)
+    });
+  }
+  /** Settle outstanding draws as ledger moves to the holders (epoch sweep). */
+  settle(trustline) {
+    return this.node.postJson("/trustline/settle", { trustline: asHex(trustline) });
+  }
+  /** Close the line: settle outstanding to the holder, residual to the issuer. */
+  close(trustline) {
+    return this.node.postJson("/trustline/close", { trustline: asHex(trustline) });
+  }
+  /** Live position: line / drawn / remaining / escrow / coordinator state. */
+  status(trustline) {
+    return this.node.getJson(`/trustline/status/${asHex(trustline)}`);
+  }
+};
+
+// src/channels.ts
+function asHex2(cell) {
+  return typeof cell === "string" ? cell : hexEncode(cell);
+}
+function memberJson(m) {
+  return { cell: asHex2(m.cell), seal_pk: typeof m.sealPk === "string" ? m.sealPk : hexEncode(m.sealPk) };
+}
+var ChannelsClient = class {
+  constructor(node) {
+    this.node = node;
+  }
+  /**
+   * Birth the group at epoch 1 with `members` as founders. `tag` (u64) names
+   * the group among the operator's groups. Returns the first fan-out.
+   */
+  create(tag, members) {
+    return this.node.postJson("/channels/create", {
+      tag: Number(tag),
+      members: members.map(memberJson)
+    });
+  }
+  /** Add a member — one unified epoch step; returns the fresh fan-out. */
+  join(channel, member) {
+    return this.node.postJson("/channels/join", {
+      channel: asHex2(channel),
+      member: memberJson(member)
+    });
+  }
+  /**
+   * Remove a member — one unified epoch step that darkens BOTH their
+   * forward-read ability and their group-held capabilities. The removed
+   * member is simply absent from the returned fan-out.
+   */
+  remove(channel, member) {
+    return this.node.postJson("/channels/remove", {
+      channel: asHex2(channel),
+      member: asHex2(member)
+    });
+  }
+  /** Advance the epoch without a membership change (a fresh key fan-out). */
+  rekey(channel) {
+    return this.node.postJson("/channels/rekey", { channel: asHex2(channel) });
+  }
+  /**
+   * Post a message body. Encrypt client-side under the CURRENT epoch key,
+   * then POST only `nonce` + `ciphertext` (hex). The body never touches the
+   * chain — only this transport relay does.
+   */
+  post(channel, epoch, nonce, ciphertext) {
+    return this.node.postJson("/channels/post", {
+      channel: asHex2(channel),
+      epoch: Number(epoch),
+      nonce: typeof nonce === "string" ? nonce : hexEncode(nonce),
+      ciphertext: typeof ciphertext === "string" ? ciphertext : hexEncode(ciphertext)
+    });
+  }
+  /** Live group state: epoch, roster commitment, the `epochs_unified` tooth. */
+  status(channel) {
+    return this.node.getJson(`/channels/status/${asHex2(channel)}`);
+  }
+  /**
+   * Subscribe to the group's message stream (`GET /channels/messages/{cell}`,
+   * SSE) as an async iterable of ciphertext envelopes. Open each body with
+   * the epoch key you hold from the fan-out.
+   */
+  async *messages(channel) {
+    yield* this.node.sseStream(`/channels/messages/${asHex2(channel)}`);
+  }
+};
+
 // src/client.ts
 var NodeError = class extends Error {
   constructor(message, status) {
@@ -1495,6 +1623,49 @@ var NodeClient = class {
       throw new NodeError(`HTTP ${resp.status} from ${path}: ${body.slice(0, 300)}`, resp.status);
     }
     return await resp.json();
+  }
+  /**
+   * `GET {path}` → parsed JSON. The generic read used by the organ clients
+   * (trustline / channels / attested-query); carries the devnet headers and
+   * timeout. Throws [`NodeError`] on a non-2xx.
+   */
+  getJson(path) {
+    return this.request(path);
+  }
+  /**
+   * `POST {path}` with a JSON body → parsed JSON. The generic write used by
+   * the organ clients. Throws [`NodeError`] on a non-2xx.
+   */
+  postJson(path, body) {
+    return this.request(path, {
+      method: "POST",
+      body: JSON.stringify(body),
+      headers: { "Content-Type": "application/json" }
+    });
+  }
+  /**
+   * Subscribe to a node SSE route as a one-shot async iterable of parsed
+   * `data:` JSON payloads (no reconnect — that lives in [`NodeEvents`] for
+   * the receipt stream). Used by the channels message stream.
+   */
+  async *sseStream(path) {
+    const resp = await fetch(this.baseUrl + path, {
+      headers: this.headers({ Accept: "text/event-stream" })
+    });
+    if (!resp.ok || !resp.body) {
+      const txt = resp.body ? await resp.text().catch(() => "") : "";
+      throw new NodeError(`HTTP ${resp.status} from ${path}: ${txt.slice(0, 300)}`, resp.status);
+    }
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    const parser = createSseParser();
+    for (; ; ) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      for (const evt of parser.feed(decoder.decode(value, { stream: true }))) {
+        if (evt.data) yield JSON.parse(evt.data);
+      }
+    }
   }
   /** `GET /api/node/identity` — the node operator's identity. */
   nodeIdentity() {
@@ -1638,6 +1809,20 @@ var NodeClient = class {
   events() {
     return new NodeEvents(this.baseUrl, { devnetKey: this.opts.devnetKey });
   }
+  /**
+   * The **trustline** organ (`docs/ORGANS.md` §1) over this node's
+   * operator-local trustline service. Operator-gated — pass a `devnetKey`.
+   */
+  trustline() {
+    return new TrustlineClient(this);
+  }
+  /**
+   * The **channels** organ (`docs/ORGANS.md` §4) over this node's channels
+   * service. Operator-gated — pass a `devnetKey`.
+   */
+  channels() {
+    return new ChannelsClient(this);
+  }
 };
 var AgentRuntime = class {
   constructor(identity, node, opts = {}) {
@@ -1665,6 +1850,14 @@ var AgentRuntime = class {
       throw new NodeError(`faucet refused: ${res.error ?? "unknown"}`);
     }
   }
+  /** The **trustline** organ on this runtime's node ([`NodeClient.trustline`]). */
+  trustline() {
+    return this.node.trustline();
+  }
+  /** The **channels** organ on this runtime's node ([`NodeClient.channels`]). */
+  channels() {
+    return this.node.channels();
+  }
   /** The agent cell's current nonce (0 for a never-seen cell). */
   async currentNonce() {
     try {
@@ -1687,6 +1880,174 @@ var AgentRuntime = class {
       throw new NodeError(`turn rejected: ${res.error ?? "unknown"} (turn ${hashHex})`);
     }
     return this.node.receiptForTurn(hashHex);
+  }
+};
+
+// src/mailbox.ts
+var SUBSCRIBE_DOMAIN = new TextEncoder().encode("dregg-relay-subscribe-v1");
+var UNSUBSCRIBE_DOMAIN = new TextEncoder().encode("dregg-relay-unsubscribe-v1");
+var DRAIN_DOMAIN = new TextEncoder().encode("dregg-relay-drain-v1");
+function base64Encode(bytes) {
+  if (typeof Buffer !== "undefined") return Buffer.from(bytes).toString("base64");
+  let bin = "";
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin);
+}
+function base64Decode(s) {
+  if (typeof Buffer !== "undefined") return Uint8Array.from(Buffer.from(s, "base64"));
+  const bin = atob(s);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+function concat(...parts) {
+  const total = parts.reduce((n, p) => n + p.length, 0);
+  const out = new Uint8Array(total);
+  let off = 0;
+  for (const p of parts) {
+    out.set(p, off);
+    off += p.length;
+  }
+  return out;
+}
+function freshNonce() {
+  const n = new Uint8Array(8);
+  globalThis.crypto.getRandomValues(n);
+  return n;
+}
+var RelayError = class extends Error {
+  constructor(message, status) {
+    super(message);
+    this.name = "RelayError";
+    this.status = status;
+  }
+};
+var MailboxClient = class {
+  constructor(relayBaseUrl, identity, opts = {}) {
+    this.baseUrl = relayBaseUrl.replace(/\/+$/, "");
+    this.identity = identity;
+    this.opts = opts;
+  }
+  /** The owner public key (hex) — the inbox id. */
+  get ownerHex() {
+    return this.identity.publicKeyHex;
+  }
+  async request(path, init = {}) {
+    const resp = await fetch(this.baseUrl + path, {
+      signal: AbortSignal.timeout(this.opts.timeoutMs ?? 15e3),
+      ...init
+    });
+    if (!resp.ok) {
+      const body = await resp.text().catch(() => "");
+      throw new RelayError(`HTTP ${resp.status} from ${path}: ${body.slice(0, 300)}`, resp.status);
+    }
+    return await resp.json();
+  }
+  /** `GET /relay/status` — the relay operator's identity + bond. */
+  status() {
+    return this.request("/relay/status");
+  }
+  /**
+   * `POST /relay/subscribe` — create this owner's hosted inbox. Signs
+   * `owner || nonce` under `dregg-relay-subscribe-v1`.
+   */
+  subscribe(capacity, minDeposit) {
+    const owner = this.identity.publicKey;
+    const nonce = freshNonce();
+    const sig = this.identity.signBytes(concat(SUBSCRIBE_DOMAIN, owner, nonce));
+    const body = {
+      owner: this.ownerHex,
+      nonce: hexEncode(nonce),
+      signature: hexEncode(sig)
+    };
+    if (capacity !== void 0) body.capacity = capacity;
+    if (minDeposit !== void 0) body.min_deposit = minDeposit;
+    return this.request("/relay/subscribe", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
+  }
+  /**
+   * `DELETE /relay/unsubscribe` — remove this owner's inbox. Signs
+   * `owner || nonce` under `dregg-relay-unsubscribe-v1`.
+   */
+  unsubscribe() {
+    const owner = this.identity.publicKey;
+    const nonce = freshNonce();
+    const sig = this.identity.signBytes(concat(UNSUBSCRIBE_DOMAIN, owner, nonce));
+    return this.request("/relay/unsubscribe", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ owner: this.ownerHex, nonce: hexEncode(nonce), signature: hexEncode(sig) })
+    });
+  }
+  /**
+   * `POST /relay/send/{dest}` — enqueue an ALREADY-SEALED `ciphertext` to
+   * `dest`'s inbox, paying `deposit`. Unauthenticated (the sender identity
+   * here only labels the message). Seal the body yourself first.
+   */
+  send(dest, ciphertext, deposit) {
+    const destHex = typeof dest === "string" ? dest : hexEncode(dest);
+    return this.request(`/relay/send/${destHex}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sender: this.ownerHex,
+        payload: base64Encode(ciphertext),
+        deposit
+      })
+    });
+  }
+  /**
+   * `GET /relay/drain` — drain up to `max` messages (default 100), each with
+   * its full dequeue proof. Signs `owner || nonce || max_le(u64)` under
+   * `dregg-relay-drain-v1`. Recompute each body's `content_hash` before
+   * trusting it.
+   */
+  drain(max = 100) {
+    const owner = this.identity.publicKey;
+    const nonce = freshNonce();
+    const sig = this.identity.signBytes(concat(DRAIN_DOMAIN, owner, nonce, u64le(max)));
+    const params = new URLSearchParams({
+      owner: this.ownerHex,
+      nonce: hexEncode(nonce),
+      max: String(max),
+      signature: hexEncode(sig)
+    });
+    return this.request(`/relay/drain?${params.toString()}`);
+  }
+  /** `GET /relay/inbox/{id}/status` — this inbox's queue depth + root. */
+  inboxStatus() {
+    return this.request(`/relay/inbox/${this.ownerHex}/status`);
+  }
+};
+
+// src/attested.ts
+var AttestedQuery = class {
+  constructor(node, opts = {}) {
+    this.node = typeof node === "string" ? new NodeClient(node, opts) : node;
+  }
+  /** `GET /federation/roots` — the federation-attested state roots. */
+  attestedRoots() {
+    return this.node.getJson("/federation/roots");
+  }
+  /** `GET /checkpoint/latest` — the latest finalized checkpoint. */
+  checkpoint() {
+    return this.node.getJson("/checkpoint/latest");
+  }
+  /** `GET /checkpoint/{height}` — the finalized checkpoint at `height`. */
+  checkpointAt(height) {
+    return this.node.getJson(`/checkpoint/${height}`);
+  }
+  /**
+   * The full-turn STARK for a committed turn (`GET /api/turn/{hash}/proof`),
+   * or `undefined` while the node's prove pool is still producing it. The
+   * proof is BYTES — verify it with the wasm/Rust `verify_full_turn`, not
+   * here.
+   */
+  turnProof(turnHashHex) {
+    return this.node.turnProof(turnHashHex);
   }
 };
 
@@ -1948,10 +2309,13 @@ var CellProgramBuilder = class {
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
   AgentRuntime,
+  AttestedQuery,
   AuthorizedTurn,
+  ChannelsClient,
   EmptyTurnError,
   Identity,
   MAIN_IDENTITY_PATH,
+  MailboxClient,
   NodeClient,
   NodeError,
   NodeEvents,
@@ -1960,9 +2324,13 @@ var CellProgramBuilder = class {
   Receipt,
   ReceiptFilter,
   ReceiptStream,
+  RelayError,
+  TrustlineClient,
   TurnBuilder,
   TurnProof,
   WrongTurnProofError,
+  base64Decode,
+  base64Encode,
   createSseParser,
   explainAction,
   explainEffect,

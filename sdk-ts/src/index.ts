@@ -29,6 +29,14 @@
  *   anyOf / not / implies composition) with content-addressed factory
  *   descriptors.
  *
+ * The **organ nouns** (`docs/ORGANS.md`) are the higher primitives, each the
+ * ergonomic TS face of a node service: [`TrustlineClient`] (§1, the bilateral
+ * line of credit), [`ChannelsClient`] (§4, the group-key epoch lift),
+ * [`MailboxClient`] (§2, a hosted inbox over the relay), and [`AttestedQuery`]
+ * (the light-client read surface). The node computes the factory descriptors
+ * and seal fan-outs the TS wire layer does not carry; these clients drive
+ * them — see each module's "Honest scope" for the node-side/client-side line.
+ *
  * ```ts
  * import { Identity, AgentRuntime, profiles } from "@dregg/sdk";
  *
@@ -77,6 +85,50 @@ export type { NodeEventsOptions } from "./events";
 
 // The clerk's faithful reading.
 export { explainAction, explainEffect, explainTurn, renderTurn } from "./explain";
+
+// ── The organ nouns (docs/ORGANS.md) ──────────────────────────────────────
+// Each is the ergonomic TS face of a node service. The node computes the
+// factory descriptors / seal fan-outs the TS wire layer does not carry;
+// these clients drive them. See each module's "Honest scope" for what stays
+// node-side vs. client-side.
+
+// §1 Trustline — the bilateral line of credit (open/draw/repay/settle/close).
+export { TrustlineClient } from "./trustline";
+export type {
+  TrustlineOpened,
+  TrustlineDraw,
+  TrustlineRepay,
+  TrustlineSettle,
+  TrustlineClose,
+  TrustlineStatus,
+} from "./trustline";
+
+// §4 Channels — the group-key epoch lift (create/join/remove/rekey/post).
+export { ChannelsClient } from "./channels";
+export type {
+  MemberSpec,
+  SealedEpochKey,
+  ChannelStep,
+  ChannelPosted,
+  ChannelStatus,
+  ChannelMessage,
+} from "./channels";
+
+// §2 Mailbox — a hosted inbox over the relay (subscribe/send/drain).
+export { MailboxClient, RelayError, base64Encode, base64Decode } from "./mailbox";
+export type {
+  RelayStatus,
+  SubscribeResult,
+  SendResult,
+  DrainedMessage,
+  DrainResult,
+  InboxStatus,
+  MailboxClientOptions,
+} from "./mailbox";
+
+// Attested query — the light-client read surface (Noun 2's TS face).
+export { AttestedQuery } from "./attested";
+export type { AttestedRoot, Checkpoint } from "./attested";
 
 // The cell-program constraint language.
 export * as program from "./program";

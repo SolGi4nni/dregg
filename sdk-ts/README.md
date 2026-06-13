@@ -56,6 +56,87 @@ if (proof) receipt.attachProof(proof);
 
 Runnable version: `node examples/devnet-walkthrough.mjs` (after `npm run build`).
 
+## The organ nouns
+
+Above the two base nouns sit the **organs** (`docs/ORGANS.md`) — the higher
+primitives. Each is the ergonomic TS face of a node service: the node computes
+the per-cell factory descriptors and seal fan-outs (Poseidon2 commitments,
+X25519 key schedules) that the TS wire layer does not carry, and these clients
+drive them. Every organ module documents an **Honest scope** for the
+node-side/client-side line.
+
+### Trustline — the bilateral line of credit (§1)
+
+A line `issuer → holder` of N is an *attenuated capability whose exercise
+debits a shared counter*; the executor-installed cell program enforces
+`drawn ≤ ceiling` for life. Operator-gated (the node operator is the issuer).
+
+```ts
+const tl = runtime.trustline();
+const line = await tl.open(holderCellHex, 1000n); // four-turn funded birth
+await tl.draw(line.trustline, 250n);              // debit the shared counter (one-shot digest)
+await tl.repay(line.trustline, 100n);             // restore the line
+const pos = await tl.status(line.trustline);      // { line, drawn, remaining, escrow, open }
+await tl.settle(line.trustline);                  // redeem outstanding to the holder
+```
+
+Runnable: `node examples/trustline.mjs`.
+
+### Channels — the group-key epoch lift (§4)
+
+A group is a cell; the membership root, key epoch, and key commitment live
+on-cell. `remove(m)` darkens **both** m's forward-read ability and their
+group-held capabilities in **one atomic epoch step** (the keystone — surfaced
+as the `epochs_unified` invariant). Message bodies never touch the chain:
+encrypt under the current epoch key client-side, post only ciphertext.
+
+```ts
+const ch = runtime.channels();
+const g = await ch.create(7, [{ cell: aliceHex, sealPk: aliceSealHex }]);
+await ch.join(g.channel, { cell: bobHex, sealPk: bobSealHex }); // → fresh sealed fan-out
+await ch.post(g.channel, g.epoch, nonceHex, ciphertextHex);     // body, ciphertext only
+await ch.remove(g.channel, bobHex);                             // bob darkened in ONE turn
+for await (const m of ch.messages(g.channel)) { /* SSE delivery */ }
+```
+
+Runnable: `node examples/channel.mjs`.
+
+### Mailbox — a hosted inbox over the relay (§2)
+
+A store-and-forward inbox on the network-facing relay (its own port, default
+`:3100`). Subscribe / drain are Ed25519-signed by the inbox owner (this client
+signs them — differentially checked against the Rust signing path); sending is
+open. The relay sees only ciphertext.
+
+```ts
+const mb = new MailboxClient("http://relay.example:3100", identity);
+await mb.subscribe();                     // create your hosted inbox
+// elsewhere: someone seals a body and POSTs it to your pubkey
+const { messages } = await mb.drain(50);  // each carries a dequeue (custody) proof
+```
+
+Honest scope: sealing/opening (X25519 → ChaCha20-Poly1305) and re-running the
+dequeue Merkle verifier are NOT done in pure TS — bring sealed ciphertext and
+verify custody proofs via `@dregg/sdk/wasm` or the Rust SDK.
+
+### Attested query — the light-client read surface (Noun 2's TS face)
+
+The read-only twin: no identity, no signing. Fetch the federation-attested
+state roots, finalized checkpoints, and a committed turn's full-turn STARK.
+
+```ts
+const aq = new AttestedQuery("https://devnet.dregg.fg-goose.online");
+const roots = await aq.attestedRoots();        // federation-signed roots (+ signature count)
+const cp = await aq.checkpoint();              // latest finalized checkpoint (+ qc votes)
+const proof = await aq.turnProof(turnHashHex); // full-turn STARK BYTES
+```
+
+Honest scope: verifying a STARK or a threshold signature is a Rust/wasm
+operation — pure TS surfaces the artifacts to verify elsewhere, it does not
+return a checked verdict on its own.
+
+Runnable: `node examples/attested-query.mjs`.
+
 ## Surface
 
 | Export | Purpose |
@@ -68,6 +149,10 @@ Runnable version: `node examples/devnet-walkthrough.mjs` (after `npm run build`)
 | `NodeEvents` / `ReceiptFilter` | `subscribe(filter)` → `AsyncIterable<Receipt>` (SSE, Last-Event-ID resume, reconnecting) |
 | `explainTurn` / `renderTurn` / `explainAction` / `explainEffect` | The clerk's faithful reading: total, `[sem <digest>]`-tagged (equal text ⇒ equal semantics) |
 | `program` | Cell-program atoms (`senderIs` / `senderInSlot` / `balanceGte` / `balanceLte` / `preimageGate`, `anyOf` / `not` / `implies`) + content-addressed factory descriptors |
+| `TrustlineClient` | Organ §1 — `open` / `draw` / `repay` / `settle` / `close` / `status` (`runtime.trustline()`) |
+| `ChannelsClient` | Organ §4 — `create` / `join` / `remove` / `rekey` / `post` / `status` / `messages` (`runtime.channels()`) |
+| `MailboxClient` | Organ §2 — `subscribe` / `send` / `drain` / `unsubscribe` over the relay (owner-signed) |
+| `AttestedQuery` | Light-client reads — `attestedRoots` / `checkpoint` / `turnProof` (no identity) |
 
 ### Turn verbs
 

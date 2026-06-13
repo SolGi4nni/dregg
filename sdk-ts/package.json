@@ -1,30 +1,33 @@
 {
   "name": "@dregg/sdk",
-  "version": "0.2.0",
-  "description": "TypeScript SDK for dregg — authorization-first turns, receipts, profiles, events, and the cell-program constraint language",
+  "version": "0.3.0",
+  "description": "TypeScript SDK for dregg — authorization-first turns, receipts, the organ nouns (trustline, channels, mailbox), attested-query light-client reads, profiles, events, and the cell-program constraint language",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
   "types": "dist/index.d.ts",
+  "sideEffects": false,
   "exports": {
     ".": {
+      "types": "./dist/index.d.ts",
       "import": "./dist/index.mjs",
-      "require": "./dist/index.js",
-      "types": "./dist/index.d.ts"
+      "require": "./dist/index.js"
     },
     "./raw": {
+      "types": "./dist/raw.d.ts",
       "import": "./dist/raw.mjs",
-      "require": "./dist/raw.js",
-      "types": "./dist/raw.d.ts"
+      "require": "./dist/raw.js"
     },
     "./wasm": {
+      "types": "./dist/wasm.d.ts",
       "import": "./dist/wasm.mjs",
-      "require": "./dist/wasm.js",
-      "types": "./dist/wasm.d.ts"
-    }
+      "require": "./dist/wasm.js"
+    },
+    "./package.json": "./package.json"
   },
   "files": [
     "dist",
-    "src"
+    "src",
+    "README.md"
   ],
   "scripts": {
     "build": "tsup src/index.ts src/raw.ts src/wasm.ts --format cjs,esm --dts --clean",
@@ -37,6 +40,9 @@
     "dregg",
     "authorization",
     "capability",
+    "trustline",
+    "channels",
+    "mailbox",
     "stark",
     "receipt",
     "ed25519",

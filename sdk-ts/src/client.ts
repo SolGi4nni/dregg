@@ -9,9 +9,11 @@
  */
 
 import { Identity } from "./identity";
-import { NodeEvents } from "./events";
+import { NodeEvents, createSseParser } from "./events";
 import { Receipt, TurnProof } from "./receipt";
 import { TurnBuilder } from "./turns";
+import { TrustlineClient } from "./trustline";
+import { ChannelsClient } from "./channels";
 import { blake3 } from "./internal/blake3";
 import { hexDecodeExact, hexEncode } from "./internal/bytes";
 import type { Turn } from "./internal/wire";
@@ -131,6 +133,52 @@ export class NodeClient {
       throw new NodeError(`HTTP ${resp.status} from ${path}: ${body.slice(0, 300)}`, resp.status);
     }
     return (await resp.json()) as T;
+  }
+
+  /**
+   * `GET {path}` → parsed JSON. The generic read used by the organ clients
+   * (trustline / channels / attested-query); carries the devnet headers and
+   * timeout. Throws [`NodeError`] on a non-2xx.
+   */
+  getJson<T>(path: string): Promise<T> {
+    return this.request<T>(path);
+  }
+
+  /**
+   * `POST {path}` with a JSON body → parsed JSON. The generic write used by
+   * the organ clients. Throws [`NodeError`] on a non-2xx.
+   */
+  postJson<T>(path: string, body: unknown): Promise<T> {
+    return this.request<T>(path, {
+      method: "POST",
+      body: JSON.stringify(body),
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  /**
+   * Subscribe to a node SSE route as a one-shot async iterable of parsed
+   * `data:` JSON payloads (no reconnect — that lives in [`NodeEvents`] for
+   * the receipt stream). Used by the channels message stream.
+   */
+  async *sseStream<T>(path: string): AsyncIterable<T> {
+    const resp = await fetch(this.baseUrl + path, {
+      headers: this.headers({ Accept: "text/event-stream" }),
+    });
+    if (!resp.ok || !resp.body) {
+      const txt = resp.body ? await resp.text().catch(() => "") : "";
+      throw new NodeError(`HTTP ${resp.status} from ${path}: ${txt.slice(0, 300)}`, resp.status);
+    }
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    const parser = createSseParser();
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      for (const evt of parser.feed(decoder.decode(value, { stream: true }))) {
+        if (evt.data) yield JSON.parse(evt.data) as T;
+      }
+    }
   }
 
   /** `GET /api/node/identity` — the node operator's identity. */
@@ -296,6 +344,22 @@ export class NodeClient {
   events(): NodeEvents {
     return new NodeEvents(this.baseUrl, { devnetKey: this.opts.devnetKey });
   }
+
+  /**
+   * The **trustline** organ (`docs/ORGANS.md` §1) over this node's
+   * operator-local trustline service. Operator-gated — pass a `devnetKey`.
+   */
+  trustline(): TrustlineClient {
+    return new TrustlineClient(this);
+  }
+
+  /**
+   * The **channels** organ (`docs/ORGANS.md` §4) over this node's channels
+   * service. Operator-gated — pass a `devnetKey`.
+   */
+  channels(): ChannelsClient {
+    return new ChannelsClient(this);
+  }
 }
 
 /**
@@ -338,6 +402,16 @@ export class AgentRuntime {
     if (!res.success) {
       throw new NodeError(`faucet refused: ${res.error ?? "unknown"}`);
     }
+  }
+
+  /** The **trustline** organ on this runtime's node ([`NodeClient.trustline`]). */
+  trustline(): TrustlineClient {
+    return this.node.trustline();
+  }
+
+  /** The **channels** organ on this runtime's node ([`NodeClient.channels`]). */
+  channels(): ChannelsClient {
+    return this.node.channels();
   }
 
   /** The agent cell's current nonce (0 for a never-seen cell). */
