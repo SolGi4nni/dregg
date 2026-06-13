@@ -130,7 +130,30 @@ each lane verified its own narrow suite; no full-suite re-runs):
   (rotated trace + e2e prove/verify + **cell≡circuit differential HOLDS** + anti-ghost) —
   STAGED-ADDITIVE, v1 byte-identical, **NO VK bump**. Rotated R=24 transfer = 144.1 KiB.
 
-### THE IRREVERSIBLE FLIP — HARD CORE BUILT (G1+G3, `15353932c`); the flip is NOW genuinely mechanical (2026-06-13)
+### ⚠⚠ THE FLIP IS NOT MECHANICAL — G1.5 live-path rewrite UNBUILT (cutover lane RED #2, 2026-06-13)
+SECOND refutation of "mechanical" from the code (the cutover lane STOPPED, zero edits, tree clean).
+G1+G3 (`15353932c`) proved the rotated TRANSFER SHAPE (a triangle with TEST-fed turn-context), NOT
+the live machinery. Three real blockers before any flip:
+- **G2 is a verifier/executor REWRITE, not a flag-flip.** Live `prove_full_turn`/`verify_full_turn`/
+  executor run IR-v1 186-col + a 204-PI reconstruction; rotated `prove_effect_vm_rotated_ir2` returns
+  an `Ir2BatchProof` with a 38-PI layout (different AIR family) that won't verify under any v1 verifier.
+  ~70 live call-sites on the v1 path. Flipping the default BRICKS verify_full_turn + executor + bilateral agg.
+- **G4 generator is transfer-ONLY** (`circuit/src/effect_vm/trace_rotated.rs:182` hardcodes the transfer
+  descriptor + caveat manifest) — the other 25 cohort effects have NO rotated generator.
+- **cell v9 is not a drop-in:** `compute_canonical_state_commitment_v9` needs turn-context
+  (cells_root/nullifier_root/iroot) the cell-local `Cell::state_commitment()`/`Ledger::hash_cell` DON'T
+  have; and v9 (Poseidon2 felt) doesn't cover the authority state v8 (BLAKE3) commits — a design problem
+  (rotated commitment must carry turn-context OR live at the turn layer, not cell-local).
+THE REAL REMAINING BUILD = **G1.5**: rewrite the live effect-VM sub-proof path (prover routing +
+`verify_effect_vm_proof_with_cutover` + executor `proof_verify.rs` PI reconstruction + producer-witness
+wiring) onto the rotated 38-PI shape; widen `generate_rotated_effect_vm_trace` to all 26 cohort members;
+resolve the cell-commitment-turn-context design. THEN regen/re-pin/VK-epoch/v1-delete is mechanical.
+(Good news: the "201-vs-204 PI tear" is ALREADY reconciled — producer+verifier both 204; HORIZONLOG item
+stale-closed.) v1 (IR-v1/186-col/v8) is the LIVE path, GREEN, deployable. STOP calling the flip mechanical
+until the live path routes through the rotated shape. Deploy of the rotated system waits for G1.5. ⚑ COMMISSIONED 2026-06-13 (ember: "do ALL the remaining impl, EVERY rewrite — the old path is ROT, I want it GONE; finish the implementation and close out the flip"): the FULL build is running (lane a589bf5) — resolve the commitment design, widen the generator to all 26 effects, rewrite the live proof/verify/executor path onto the rotated 38-PI shape, regen+VK epoch, DELETE v1/v2 entirely. End state = ONE path. The main loop drives it across relaunches until v1/v2 is gone and the tree is green.
+
+(historical: this section previously claimed "the flip is NOW genuinely mechanical (G1+G3)" — that was my
+over-relay of the engine lane's report; refuted by the cutover lane on three axes above.)
 ✅ UPDATE: G1+G3 are BUILT, staged-additive, fully green (`15353932c`). The LIVE rotated trace
 generator (`circuit/src/effect_vm/trace_rotated.rs`) + the cell v9 Poseidon2 commitment
 (`cell/src/commitment.rs::compute_canonical_state_commitment_v9`) exist; the LIVE cell≡circuit
