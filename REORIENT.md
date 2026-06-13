@@ -57,6 +57,23 @@ not durable across compaction; the log is the burn-down. Sweep it at every Conve
 - **Memory**: `~/.claude/projects/-Users-ember-dev-breadstuffs/memory/` —
   `project-refinement-epoch.md` is the live resume file; MEMORY.md is the index.
 
+## ⚑⚑⚑ THE FLIP IS GO + WAVE 2 (2026-06-13, head 2c37c50fc — ember's decisions)
+
+ember decided: (1) #93 = NOT close — AUTOMATE the assert_axioms verbosity (a Tactics lane);
+(2) ROTATION FLIP = EXECUTE NOW (the staging was done — R=24, both wire-shapes, regen
+byte-pinned); (3) next wave = ALL fronts incl. lean-side HORIZONLOG followups.
+RUNNING: THE FLIP (a1e5cf2 — owns circuit/ + metatheory/{Circuit,Exec} + turn/ producers;
+builds the deferred cells_root/iroot/lifecycle-epoch producers, regen-to-default, VK bump,
+v1→dormant-or-deleted; the cutover commit-train, docs/ROTATION-CUTOVER.md) · DreggDL/
+dregg-deploy (the checkable-deployment-spec synthesis) · persist snapshot-shipping ·
+demo receipt-chain modernization (pre-existing example rot, marketing-facing) ·
+assert_axioms ergonomics (the #93 transform). HELD until the flip lands (collide w/ its
+core): FlashWell Lean twin, private-participant Rust role, compute_marketplace multi-cell
+reputation bug, the circuit note-spend DSL self-inconsistency (all 3 pre-existing, triaged).
+Round 8 verdict: ZERO new regressions — all demo/preflight failures are pre-epoch rot.
+ALL 8 pug-worthiness lanes LANDED (assurance/privacy/seL4-CapDL/site/protocol/uverify/
+sdk-ts/apps; commits 91fbc97b8 1ee05da5c 10c60725d 2579afd70 2c37c50fc).
+
 ## ⚑⚑ PUG-WORTHINESS WAVE (2026-06-13, head b983458c7 — 8 lanes, ember's broad horizon)
 
 After the 13 full-burn lanes landed, ember opened the breadth horizon (make it pug-worthy:
