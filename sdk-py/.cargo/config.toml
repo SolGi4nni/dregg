@@ -1,0 +1,28 @@
+# sdk-py is a pyo3 cdylib: it links the VERIFIED Lean kernel in SHARED mode
+# (libleanshared from the elan toolchain) because the static runtime archives
+# cannot be linked into a shared object on ELF (libleanrt.a's mimalloc members
+# use local-exec TLS — R_X86_64_TPOFF32 vs `-shared`; Convergence round 7).
+#
+# DREGG_LEAN_LINK is an ENV VAR, not a cargo feature, precisely so it cannot
+# feature-unify onto the native crates (sdk-py is a standalone workspace, and
+# this file keeps the mode local to builds invoked from this directory —
+# cargo and maturin both pick it up). dregg-lean-ffi/build.rs reads it; see
+# `shared_link_mode` there. An env var already set in the shell wins.
+[env]
+DREGG_LEAN_LINK = "shared"
+
+# pyo3 `extension-module` resolves the CPython C-API (`Py_*`, `_Py_NoneStruct`,
+# …) from the host interpreter at load time, so those symbols must be left
+# UNDEFINED in the built `.so`/`.dylib`. On ELF (Linux) the linker permits
+# undefined symbols in a shared object by default — nothing to do. On Mach-O
+# (macOS) it does NOT: the cdylib link errors with "symbol(s) not found" unless
+# we pass `-undefined dynamic_lookup`. pyo3 no longer emits this itself (it was
+# removed to avoid masking real link errors), so — exactly as maturin's
+# generated config does — we set it here per-target. Without it, a plain
+# `cargo build` of this cdylib fails at the FINAL link (all the `_Py_*` symbols),
+# which is unrelated to the Lean kernel link.
+[target.aarch64-apple-darwin]
+rustflags = ["-C", "link-arg=-undefined", "-C", "link-arg=dynamic_lookup"]
+
+[target.x86_64-apple-darwin]
+rustflags = ["-C", "link-arg=-undefined", "-C", "link-arg=dynamic_lookup"]

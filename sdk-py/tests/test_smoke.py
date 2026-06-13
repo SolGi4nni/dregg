@@ -381,3 +381,17 @@ def test_subscribe_yields_receipts(mock_node):
     assert first.has_proof is False
     assert second.turn_hash == "dd" * 32
     assert second.has_proof is True
+
+
+# ─── kernel: this build embeds the verified Lean kernel ───
+
+
+def test_kernel_is_lean():
+    """The whole point of the shared link mode: the Python module runs the REAL
+    verified Lean kernel, not the Rust fallback. verified_step_ok is a live call
+    through the proved Exec.recKExec (transfer 5: 50/10 → 45/15)."""
+    k = dregg.kernel()
+    assert k["lean"] is True
+    assert k["producer"] == "lean"
+    assert k["verified_step_ok"] is True
+    assert '"ok":1' in k["verified_step_out"]

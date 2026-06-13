@@ -1123,10 +1123,77 @@ fn descriptor<'py>(
     Ok(d)
 }
 
+// ─── kernel: which executor this module embeds (the verified Lean kernel, or not) ───
+
+/// The canonical mini-wire for the proof-of-execution probe: two cells
+/// (1: balance 50, 2: balance 10), actor 1 transfers 5 from 1 to 2. The verified
+/// `Exec.recKExec` must accept (`"ok":1`) and move the balances to 45/15. The grammar is
+/// `Dregg2.Exec.FFI.parseInput`'s (the same wire the state differential drives).
+const KERNEL_PROBE_WIRE: &str = "{\"cells\":[[1,{\"rec\":[[\"balance\",{\"int\":50}]]}],\
+                                 [2,{\"rec\":[[\"balance\",{\"int\":10}]]}]],\
+                                 \"actor\":1,\"src\":1,\"dst\":2,\"amt\":5}";
+
+/// Report which kernel this extension module embeds — and PROVE it by running one
+/// verified transfer step through it.
+///
+/// Returns a dict:
+///   * `"lean"`            — the verified Lean kernel is linked and its runtime
+///                           initialized (this module links `libleanshared` +
+///                           `libdregg_lean.a`; False means the Rust fallback).
+///   * `"producer"`        — `"lean"` when the verified executor is the authoritative
+///                           state producer (the SWAP default; `DREGG_LEAN_PRODUCER=0`
+///                           opts out), else `"rust"`.
+///   * `"verified_step_ok"`  — a REAL call: one transfer driven through the PROVED
+///                           `Exec.recKExec` (`dregg_record_kernel_step`) accepted and
+///                           conserved balances. Not a link bit — the kernel executed.
+///   * `"verified_step_out"` — the raw output wire from that call (evidence).
+#[pyfunction]
+fn kernel(py: Python<'_>) -> PyResult<Bound<'_, PyDict>> {
+    let d = PyDict::new(py);
+    let lean = dregg_lean_ffi::lean_available();
+    d.set_item("lean", lean)?;
+    d.set_item(
+        "producer",
+        if lean && dregg_sdk::runtime::lean_producer_env_enabled() {
+            "lean"
+        } else {
+            "rust"
+        },
+    )?;
+    if lean {
+        match dregg_lean_ffi::shadow_record_kernel_step(KERNEL_PROBE_WIRE) {
+            Ok(out) => {
+                // Accept (`"ok":1`) AND the verified post-balances (45/15) — a kernel that
+                // answered but computed the wrong state must not read as ok.
+                let ok = out.contains("\"ok\":1")
+                    && out.contains("[\"balance\",{\"int\":45}]")
+                    && out.contains("[\"balance\",{\"int\":15}]");
+                d.set_item("verified_step_ok", ok)?;
+                d.set_item("verified_step_out", out)?;
+            }
+            Err(e) => {
+                d.set_item("verified_step_ok", false)?;
+                d.set_item("verified_step_out", format!("error: {e}"))?;
+            }
+        }
+    } else {
+        d.set_item("verified_step_ok", false)?;
+        d.set_item("verified_step_out", "lean kernel not linked (rust fallback)")?;
+    }
+    Ok(d)
+}
+
 // ─── module ───
 
 #[pymodule]
 fn dregg(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
+    // Embedded-cdylib Lean runtime init: perform the one-time C-embedding ritual
+    // (`lean_initialize_runtime_module` + the Dregg2 module initializers +
+    // `lean_io_mark_end_initialization`, via the ffi crate's `dregg_ffi_init` under a
+    // OnceLock) NOW, at `import dregg` on the importing thread — not lazily from
+    // whichever thread first touches a verified path. A build without the kernel (or a
+    // failed init) leaves the module importable; `kernel()` then reports the fallback.
+    let _ = dregg_lean_ffi::lean_available();
     m.add_class::<Identity>()?;
     m.add_class::<TurnBuilder>()?;
     m.add_class::<AuthorizedTurn>()?;
@@ -1135,6 +1202,7 @@ fn dregg(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(subscribe, m)?)?;
     m.add_function(wrap_pyfunction!(explain, m)?)?;
     m.add_function(wrap_pyfunction!(list_profiles, m)?)?;
+    m.add_function(wrap_pyfunction!(kernel, m)?)?;
     m.add("DreggError", py.get_type::<DreggError>())?;
     m.add("DreggRefused", py.get_type::<DreggRefused>())?;
 

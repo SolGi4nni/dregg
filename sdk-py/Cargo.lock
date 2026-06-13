@@ -1046,6 +1046,7 @@ dependencies = [
  "ark-serialize",
  "ark-std",
  "blake3",
+ "curve25519-dalek",
  "dregg-blocklace",
  "dregg-captp",
  "dregg-cell",
@@ -1060,6 +1061,7 @@ dependencies = [
  "postcard",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tracing",
 ]
 
@@ -1149,7 +1151,6 @@ dependencies = [
  "blake3",
  "curve25519-dalek",
  "dregg-bridge",
- "dregg-captp",
  "dregg-cell",
  "dregg-circuit",
  "dregg-commit",
@@ -1185,6 +1186,7 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "dregg-cell",
+ "dregg-lean-ffi",
  "dregg-sdk",
  "dregg-turn",
  "dregg-types",

@@ -6,8 +6,9 @@
 //     closure (Dregg2 modules + mathlib + batteries + aesop + Qq + … — ~8200 .o).
 //     The archive lives next to this build.rs; it was produced by compiling each
 //     module's `.c` (lake's `:c` facet) with `leanc -c` and archiving with `llvm-ar`.
-//   * the Lean runtime + stdlib in the elan toolchain `lib/lean` dir
-//     (leancpp/Init/Std/Lean/leanrt + gmp/uv/c++), discovered from the active toolchain.
+//   * the Lean runtime + stdlib in the elan toolchain `lib/lean` dir — STATIC by default
+//     (leancpp/Init/Std/Lean/leanrt + gmp/uv/c++), or SHARED (libleanshared + Lake_shared)
+//     when `DREGG_LEAN_LINK=shared` (the cdylib link mode, see `shared_link_mode`).
 //
 // Toolchain paths are discovered from `lake env` (LEAN_SYSROOT) with a fallback to the
 // pinned elan toolchain, so this stays robust to elan being on PATH.
@@ -228,8 +229,13 @@ fn build_dregg2_archive(meta: &Path, sysroot: &Path, archive: &Path, out_dir: &P
                     let Some((c, obj)) = jobs_ref.get(i) else {
                         break;
                     };
+                    // `-fPIC` so the spliced objects are position-independent: the SAME archive
+                    // then serves both link modes (static bins AND the `DREGG_LEAN_LINK=shared`
+                    // cdylib link, e.g. the sdk-py pyo3 module). No-op on macOS (PIC is the
+                    // default); on Linux it guards against a leanc default change (leanc
+                    // currently compiles PIC there too — Lean plugins are dlopen'd).
                     let status = Command::new("lake")
-                        .args(["env", "leanc", "-c", "-I"])
+                        .args(["env", "leanc", "-c", "-fPIC", "-I"])
                         .arg(&inc)
                         .arg(c)
                         .arg("-o")
@@ -269,8 +275,9 @@ fn build_dregg2_archive(meta: &Path, sysroot: &Path, archive: &Path, out_dir: &P
         println!(
             "cargo:warning=dregg-lean-ffi: base archive {} is ABSENT — it must hold the ~5600 \
              precompiled mathlib/batteries/aesop dependency objects, which are EXPENSIVE to \
-             regenerate. Seed it once via `dregg-lean-ffi/scripts/seed-dregg2-closure.sh` (a full \
-             `lake build` + leanc of the whole transitive `:c` closure), then rebuild. Building \
+             regenerate. Run `./scripts/bootstrap.sh` from the repo root: it checks the toolchain \
+             + mathlib pin, lake-builds the executor, seeds this archive once, and verifies the \
+             link (afterwards plain `cargo build` keeps it fresh automatically). Building \
              marshal-only for now.",
             archive.display()
         );
@@ -498,8 +505,10 @@ fn complete_initializer_closure(meta: &Path, sysroot: &Path, archive: &Path, out
                 Some((flat, cfile)) => {
                     let obj = dep_dir.join(format!("{flat}.o"));
                     if newer_than(cfile, &obj) {
+                        // `-fPIC` for the same shared-link-compatibility reason as the splice
+                        // compile above (one archive, both link modes).
                         let status = Command::new("lake")
-                            .args(["env", "leanc", "-c", "-I"])
+                            .args(["env", "leanc", "-c", "-fPIC", "-I"])
                             .arg(&inc)
                             .arg(cfile)
                             .arg("-o")
@@ -897,6 +906,40 @@ fn archive_exports(archive: &std::path::Path, symbol: &str) -> bool {
         .any(|l| l.trim_end().ends_with(&mach_o) || l.trim_end().ends_with(&elf))
 }
 
+/// Whether the SHARED link mode is selected (`DREGG_LEAN_LINK=shared`).
+///
+/// An ENV VAR, deliberately NOT a cargo feature: features UNIFY across a workspace
+/// dependency graph (a cdylib member asking for shared linkage would flip every native
+/// crate in the same build), while an env var stays local to the invoking build. The one
+/// consumer today is the standalone sdk-py workspace (a pyo3 cdylib), whose
+/// `.cargo/config.toml` `[env]` sets it.
+///
+/// WHY a cdylib cannot use the static mode on ELF: rustc BUNDLES `static=`-linked native
+/// libraries into the rlib, and `libleanrt.a`'s mimalloc objects (`static.c.o`:
+/// `mi_heap_default` & co.) use local-exec TLS — `R_X86_64_TPOFF32` relocations that the
+/// linker rejects under `-shared` (Convergence round 7). The Lean toolchain ships the
+/// whole runtime+stdlib built FOR shared use as `libleanshared.{so,dylib}` in
+/// `$LEAN_SYSROOT/lib/lean`; shared mode links that instead of the static
+/// {leancpp,Init,Std,Lean,leanrt,Lake,gmp,uv} set. Our spliced `libdregg_lean.a` is still
+/// linked statically in both modes — it holds ONLY Lean-compiled MODULE objects (Dregg2 +
+/// the mathlib/batteries/… dependency closure; never runtime members), all compiled
+/// `-fPIC`, so its symbols are disjoint from leanshared's.
+fn shared_link_mode() -> bool {
+    println!("cargo:rerun-if-env-changed=DREGG_LEAN_LINK");
+    match std::env::var("DREGG_LEAN_LINK") {
+        Ok(v) if v == "shared" => true,
+        Ok(v) if v.is_empty() || v == "static" => false,
+        Ok(v) => {
+            println!(
+                "cargo:warning=dregg-lean-ffi: unknown DREGG_LEAN_LINK={v:?} (expected \
+                 `shared` or `static`) — defaulting to the static link."
+            );
+            false
+        }
+        Err(_) => false,
+    }
+}
+
 fn main() {
     println!("cargo::rustc-check-cfg=cfg(lean_lib_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_handler_present)");
@@ -953,8 +996,11 @@ fn main() {
             Some(sysroot) => build_dregg2_archive(meta, sysroot, &lean_archive, &out_dir),
             None => println!(
                 "cargo:warning=dregg-lean-ffi: cannot resolve the Lean sysroot (no \
-                 DREGG_LEAN_SYSROOT and `lake env` failed) — skipping the archive refresh; the \
-                 existing archive (if any) is used as-is."
+                 DREGG_LEAN_SYSROOT and `lake env` failed in metatheory/) — skipping the archive \
+                 refresh; the existing archive (if any) is used as-is. The two common causes: \
+                 (1) elan/lake is not installed or not on PATH; (2) the mathlib LOCAL-PATH \
+                 dependency pinned in metatheory/lakefile.toml is missing on this machine. \
+                 `./scripts/bootstrap.sh` (repo root) checks both and teaches the exact fix."
             ),
         }
     } else {
@@ -966,9 +1012,12 @@ fn main() {
 
     if !lean_archive.exists() {
         println!(
-            "cargo:warning=dregg-lean-ffi: libdregg_lean.a absent — building marshal-only; \
-             lean_available() will be false. Build via scripts/seed-dregg2-closure.sh (one-time \
-             closure seed), after which `cargo build` keeps it fresh automatically."
+            "cargo:warning=dregg-lean-ffi: libdregg_lean.a absent — building MARSHAL-ONLY: \
+             lean_available() will be false and the node falls back to the UNVERIFIED Rust \
+             executor. To link the verified Lean kernel, run `./scripts/bootstrap.sh` from the \
+             repo root (one command: it checks elan + the mathlib pin, lake-builds the executor, \
+             seeds this archive once, and verifies the link). Afterwards plain `cargo build` \
+             keeps the archive fresh automatically."
         );
         return;
     }
@@ -981,7 +1030,8 @@ fn main() {
         println!(
             "cargo:warning=dregg-lean-ffi: libdregg_lean.a present but could not resolve the Lean \
              sysroot (no DREGG_LEAN_SYSROOT and `lake env` failed) — building marshal-only. \
-             Install elan + the project toolchain, or set DREGG_LEAN_SYSROOT to the toolchain root."
+             Install elan + the project toolchain (`./scripts/bootstrap.sh` checks everything \
+             and teaches the fix), or set DREGG_LEAN_SYSROOT to the toolchain root."
         );
         return;
     };
@@ -1121,21 +1171,60 @@ fn main() {
         "cargo:rustc-link-search=native={}",
         sysroot.join("lib").display()
     );
-    for name in [
-        "leancpp", "Init", "Std", "Lean", "leanrt", "Lake", "gmp", "uv",
-    ] {
-        println!("cargo:rustc-link-lib=static={name}");
-    }
-    if target_os == "macos" {
-        println!("cargo:rustc-link-lib=dylib=c++");
+    if shared_link_mode() {
+        // ── SHARED runtime link (`DREGG_LEAN_LINK=shared`, see `shared_link_mode`) ──
+        // The runtime+stdlib come from the toolchain's shared libraries instead of the
+        // static archives (whose leanrt/mimalloc members are illegal in a `-shared` ELF
+        // link). Link, in leanc's own order, every shared shell the sysroot ships:
+        //   * Init_shared / leanshared_1 / leanshared_2 — the symbol-partition shells
+        //     (real partitions on Windows; export-empty alongside the full libleanshared
+        //     on macOS, where nm shows the whole runtime in libleanshared itself). We
+        //     link whichever exist so the set is right on every platform.
+        //   * leanshared — the runtime + Init/Std/Lean + leancpp + gmp + uv.
+        //   * Lake_shared — Lake lives OUTSIDE leanshared, and the dependency closure
+        //     references it (importGraph → `initialize_Lake_Util_Casing`), mirroring the
+        //     `static=Lake` line of the static mode.
+        // No c++/gmp/uv directives: leanshared bundles gmp+uv and carries its own libc++
+        // dependency.
+        for name in [
+            "Init_shared",
+            "leanshared_1",
+            "leanshared_2",
+            "leanshared",
+            "Lake_shared",
+        ] {
+            let dylib = lean_lib.join(format!("lib{name}.dylib"));
+            let so = lean_lib.join(format!("lib{name}.so"));
+            if dylib.exists() || so.exists() {
+                println!("cargo:rustc-link-lib=dylib={name}");
+            }
+        }
+        // rpath so THIS crate's own bins/tests resolve libleanshared at run time.
+        // `rustc-link-arg` does NOT propagate through the `links` key (unlike the
+        // link-lib/link-search directives above), so downstream cdylibs — sdk-py — emit
+        // their own rpath from their own build.rs.
+        println!("cargo:rustc-link-arg=-Wl,-rpath,{}", lean_lib.display());
+        println!(
+            "cargo:rustc-link-arg=-Wl,-rpath,{}",
+            sysroot.join("lib").display()
+        );
     } else {
-        // Lean's Linux toolchain compiles its C++ (leancpp et al.) against the
-        // BUNDLED LLVM libc++ (`std::__1::` ABI), shipped as static archives in
-        // the sysroot's lib/ (already on the search path above). Linking the
-        // GNU libstdc++ instead leaves `std::__1::cout` & friends undefined —
-        // the first-ever Linux link of the full archive (Convergence round 6)
-        // caught exactly that. Order matters: c++ before c++abi.
-        println!("cargo:rustc-link-lib=static=c++");
-        println!("cargo:rustc-link-lib=static=c++abi");
+        for name in [
+            "leancpp", "Init", "Std", "Lean", "leanrt", "Lake", "gmp", "uv",
+        ] {
+            println!("cargo:rustc-link-lib=static={name}");
+        }
+        if target_os == "macos" {
+            println!("cargo:rustc-link-lib=dylib=c++");
+        } else {
+            // Lean's Linux toolchain compiles its C++ (leancpp et al.) against the
+            // BUNDLED LLVM libc++ (`std::__1::` ABI), shipped as static archives in
+            // the sysroot's lib/ (already on the search path above). Linking the
+            // GNU libstdc++ instead leaves `std::__1::cout` & friends undefined —
+            // the first-ever Linux link of the full archive (Convergence round 6)
+            // caught exactly that. Order matters: c++ before c++abi.
+            println!("cargo:rustc-link-lib=static=c++");
+            println!("cargo:rustc-link-lib=static=c++abi");
+        }
     }
 }

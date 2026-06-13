@@ -22,7 +22,9 @@ compile_c() {
   local obj="${base//\//_}.o"
   local out="$OBJDIR/$obj"
   if [ ! -f "$out" ] || [ "$c" -nt "$out" ]; then
-    (cd "$META" && lake env leanc -c -I "$INC" "$c" -o "$out") \
+    # -fPIC: the archive serves BOTH link modes (static bins and the
+    # DREGG_LEAN_LINK=shared cdylib link, e.g. sdk-py). No-op on macOS.
+    (cd "$META" && lake env leanc -c -fPIC -I "$INC" "$c" -o "$out") \
       || { echo "FAIL $c" >&2; return 1; }
   fi
 }

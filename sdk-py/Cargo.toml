@@ -19,17 +19,25 @@ crate-type = ["cdylib", "rlib"]
 # `network`/`captp`/`federation-client` features (tokio, quinn, dregg-wire,
 # dregg-captp, reqwest) — the Python binding does its own blocking HTTP via
 # ureq. The always-on modules we ride: cipherclerk, profiles, turns/raw,
-# receipt, program, explain. The Lean FFI archive link is UNCONDITIONAL on
-# native (polarity-inverted, docs/FEATURE-HYGIENE.md §Lean), so this extension
-# module links libdregg_lean.a like every other native consumer.
-# no-lean-link: a Python cdylib cannot embed the Lean archive on ELF
-# (mimalloc local-exec TLS, R_X86_64_TPOFF32 vs -shared — Convergence round 7).
-# Standalone workspace (root excludes sdk-py) so this gate never feature-unifies
-# onto the native crates — the same discipline as the wasm eviction (55318b702).
-dregg-sdk = { path = "../sdk", default-features = false, features = ["no-lean-link"] }
+# receipt, program, explain. The Lean FFI link is UNCONDITIONAL on native
+# (polarity-inverted, docs/FEATURE-HYGIENE.md §Lean) and this module gets the
+# REAL Lean kernel via the SHARED link mode: `.cargo/config.toml` sets
+# `DREGG_LEAN_LINK=shared` (an ENV var, not a feature — features unify, env
+# vars don't), under which dregg-lean-ffi links the toolchain's libleanshared
+# instead of the static runtime archives (whose mimalloc members carry
+# local-exec TLS, illegal under `-shared` on ELF — Convergence round 7; the
+# `no-lean-link` expedient that this replaces was REJECTED: the Python SDK
+# must not be forced onto the unverified Rust kernel).
+# Standalone workspace (root excludes sdk-py) so the link-mode choice never
+# leaks onto the native crates — the same discipline as the wasm eviction
+# (55318b702).
+dregg-sdk = { path = "../sdk", default-features = false }
 dregg-cell = { path = "../cell" }
-dregg-turn = { path = "../turn", features = ["no-lean-link"] }
+dregg-turn = { path = "../turn" }
 dregg-types = { path = "../types" }
+# Direct dep for the kernel() report + the import-time Lean runtime init
+# (lean_available / shadow_record_kernel_step).
+dregg-lean-ffi = { path = "../dregg-lean-ffi" }
 
 pyo3 = { version = "0.28", features = ["extension-module", "abi3-py310"] }
 ureq = { version = "2.12", features = ["json"] }
