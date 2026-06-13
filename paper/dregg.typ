@@ -1,12 +1,15 @@
 // =============================================================================
-// Dragon's Egg: A Distributed Object-Capability Runtime
-// with Zero-Knowledge Authorization and Proof-Carrying State
+// dregg: A Verified Distributed Object-Capability Substrate
 // =============================================================================
+// Paper of record. Compile: typst compile main.typ /tmp/paper.pdf
+//
+// Foundation sections (01–04) are rewritten to the current system and voice
+// (present tense, first principles, Lean-pinned). The remaining sections are
+// the rewrite burn-down tracked in _REWRITE-PLAN.md.
 
 #set document(
-  title: "Dragon's Egg:  Distributed Object-Capability Runtime with Zero-Knowledge Authorization and Proof-Carrying State",
+  title: "dregg: A Verified Distributed Object-Capability Substrate",
   author: ("Ember Arlynx"),
-  date: datetime(year: 2026, month: 5, day: 24),
 )
 
 #set page(
@@ -16,9 +19,8 @@
   header: context {
     if counter(page).get().first() > 1 [
       #set text(size: 9pt, fill: luma(100))
-      Dragon's Egg: Distributed Object-Capability Runtime
+      dregg: A Verified Distributed Object-Capability Substrate
       #h(1fr)
-      Draft -- May 2026
     ]
   },
 )
@@ -45,18 +47,21 @@
   width: 100%,
 )
 
+// A Lean declaration name, rendered as inline code (the citation form for a
+// mechanized claim; every such name is resolvable in metatheory/Dregg2/ and
+// `#assert_axioms`-pinned to the kernel triple).
+#let lean(name) = raw(name)
+
 // --- Title -------------------------------------------------------------------
 
 #align(center)[
-  #text(size: 16pt, weight: "bold")[
-    #text(size: 18pt)[Dragon's Egg]: A Distributed Object-Capability Run-\ time \
-    with Zero-Knowledge Authorization and Proof-\ Carrying State
-  ]
+  #text(size: 18pt, weight: "bold")[dregg]
+  #v(0.2em)
+  #text(size: 15pt, weight: "bold")[A Verified Distributed Object-Capability Substrate]
   #v(1em)
   #text(size: 11pt)[Ember Arlynx]
   #v(0.3em)
   #text(size: 10pt, fill: luma(80))[
-    Draft -- May 24, 2026 \
     `github.com/emberian/dregg`
   ]
 ]
@@ -67,23 +72,44 @@
 
 #heading(level: 1, numbering: none)[Abstract]
 
-We present Dragon's Egg, a *proof-carrying capability mesh*: a distributed object-capability runtime in which sovereign cells---isolated agents owning their own state---communicate via atomic message turns, delegate authority through attenuated capability chains, and attest both authorization and state transition algebraically. The kernel is an OCapN-lineage Capability Transport Protocol (CapTP) for cross-vat invocation, an Effect VM that batches per-turn effects into a single STARK over a real BabyBear AIR, federated BFT consensus over a blocklace DAG with constant-size BLS threshold attestation, cross-cell algebraic binding via canonical bilateral identifiers, programmable predicates declaring per-cell invariants, trustless intent matching with real threshold decryption, and federation-bypass via direct sovereign-cell `peer_exchange` for partition-tolerant operation.
+dregg is a distributed object-capability substrate whose proofs witness the
+protocol's correct evolution: a verifier holding one aggregate root learns that
+every state transition in the system's history was authorized, conservative,
+and correctly committed --- re-executing nothing and trusting no executor.
 
-Dragon's Egg exists as two coordinated artifacts. *`dregg2`* is a machine-checked Lean 4 development that is the *authoritative specification*: a verified turn executor over the full 56-effect vocabulary, a verified-by-construction circuit *emitted from* that executor (the "ONE-circuit" migration), and machine-checked distributed-protocol and CapTP theorems --- blocklace $tau$ finality (single anchor per wave, deterministic order driving the verified executor), strand feed-integrity and fork detection, CRDT-merge replica convergence, governed-membership safety, multi-cell joint-turn atomicity, cross-federation cell handoff, topology-parametrized revocation, CapTP handoff unforgeability, distributed-GC safety, swiss-number confinement, and signed-consent settlement. These modules are axiom-disciplined (`#assert_axioms`-clean: only `propext`, `Classical.choice`, `Quot.sound`; no `sorry` or `:= True`), each with a Rust `#guard` differential. *`dreggrs`* is the Rust heritage runtime (network stack, production provers, live node, CLI, extension, Discord bot, QUIC consensus); it is being *swapped* onto the verified executor on the commit path, with a Rust$arrow.l.r$Lean differential harness checking agreement. We are careful throughout: the proofs are *additive attestation* over the running system, several guarantees are gated on *named* cryptographic assumptions (signature unforgeability, commitment collision-resistance) stated as hypotheses, and the circuit-emission collapse and the full Lean$arrow.l.r$Rust swap are in flight rather than complete.
+The model is small. State lives in *cells*; a *turn* is the exercise of an
+attenuable, proof-carrying token over owned state, leaving a verifiable
+receipt. The kernel governs four substances, each under its own discipline of
+use --- value is linear ($Sigma delta = 0$, exactly), authority is produced
+under non-forgeability, evidence is monotone, state is guarded-mutable --- and
+its signature is eight verbs, each the structural rule of one substance's
+discipline. Minimality of the signature is a theorem, not an aesthetic.
 
-Cells are sovereign by default: the federation persists only a 32-byte state commitment per cell, never the cell's interior state. Authority is bearer-shaped (swiss numbers, handoff certificates) and faceted (EffectMask with monotonic narrowing); delegation is monotone (capability attenuation) and provable (the Capability Derivation Tree exists as proof structure, not kernel data structure). The runtime implements E-style distributed object semantics---promise pipelining via eventual references, three-party introduction, sealer/unsealer pairs for partition-tolerant offline transfer, and EROS-style factories for constrained cell creation with computable child verification keys.
+Authority is treated as _constructive knowledge_: to hold a capability is to be
+able to exhibit a witness that authorizes an act, never merely to assert it.
+The system is organized around the asymmetry that proof-checking is cheap and
+trusted while proof-search is undecidable and untrusted, and its central
+authority law is generative rather than monotone: authority genuinely grows ---
+introduction, sealer/unsealer amplification, minting --- but only through
+authorized, receipt-disclosed construction from connectivity already held.
 
-The substrate carries algebraic teeth at every layer. Per-turn STARKs over the Effect VM AIR --- now migrating to a single descriptor-driven trace *emitted from* the verified Lean executor (the ONE-circuit migration), so the constraints are derived from, not maintained beside, the executor semantics --- bind in-trace effects to a canonical turn hash, an effects-hash chain, an actor nonce, and a previous-receipt hash, giving algebraic answers to threats T1, T3, T5, T8, T11, and T15 of the executor-honesty audit. Per-cell proofs are joined into a single turn via shared public inputs (Stage 7-$gamma$.0); bilateral effects (`Transfer`, `GrantCapability`, `Introduce`) are joined across cells via canonical transfer/grant/intro identifiers $"transfer_id" = "Poseidon2"("domain" || "from" || "to" || "amount" || "ACTOR_NONCE")$ that any third party can recompute and cross-check (Stage 7-$gamma$.2 Phase 1, with the joint aggregation AIR designed as Phase 2). The federation type is unified: one canonical `Federation` subsumes the four prior disjoint concepts (`FederationCommittee`, `FederationMode`, opaque `federation_id`, the Morpheus simulator harness), with $"federation_id" = "BLAKE3"("committee_pubkeys" || "epoch")$ as a commitment to membership.
+Everything that constrains a turn is one predicate algebra appearing at four
+polarities (caveats on delegated power, programs on owned state, preconditions
+on turns, demands on the world), with two computed prices: a coordination dial
+(a confluence-stable guard runs coordination-free; one that is not provably so
+forces ordering) and a disclosure dial (committed, range-proved, and
+jointly-garbled evaluation; what the proof does not need, it does not see).
 
-A predicate substrate generalizes macaroon-lineage caveats into a 29-variant `StateConstraint` vocabulary (count produced by the drift-guarded ontology generator; fifteen locally evaluable, fourteen executor-context) (`WriteOnce`, `Monotonic`, `StrictMonotonic`, `AllowedTransitions`, `BoundDelta`, `AnyOf`, `TemporalPredicate`, `CapabilityUniqueness`, `RateLimitBySum`, ...) declared per-cell and evaluated by the executor as part of every state-modifying turn. Witness-attached predicates---those carrying a STARK or other proof against a commitment---unify under a single `WitnessedPredicate` shape with kind registry (`Dfa`, `Temporal`, `MerkleMembership`, `BlindedMembership`, `BridgePredicate`, `PedersenEquality`, `Custom { vk_hash }`) and three surface variants (`StateConstraint::Witnessed`, `Precondition::Witnessed`, `CapabilityCaveat::Witnessed`). A new authorization mode `Authorization::Custom { predicate, descriptor }` lets apps define multisig, DAO-quorum, time-locked, capability-conditional, or compute-attested authorization purely through the predicate registry, without kernel changes.
-
-A constraint DSL compiles a single `CircuitDescriptor` into 8 code-generation backends (Rust evaluator, AIR constraints, Datalog rules, Kimchi gates, compile-time STARK, Midnight/ZKIR v3, native Plonky3, SP1 guest programs) with composition operators (`compose_and`, `compose_or`, `compose_chain`, `compose_aggregate`). Three production provers---a custom BabyBear/FRI STARK, Plonky3's `p3-uni-stark`, and Kimchi/Pickles over the Pasta curve cycle---offer write-once-prove-anywhere semantics for the emitted constraints. The integration-complete Silver state is operational today, and the cross-cell distributed-semantics laws that Silver once delegated to the executor are now *machine-checked* in `dregg2` (consensus finality, strand integrity, CRDT convergence, membership safety, joint-turn atomicity, CapTP handoff/GC/settlement). The Golden Vision (full algebraic-constraint folded DAG of attestations) is approached through a generalized `plonky3_recursion_impl` substrate (the recursive verifier AIR is being lifted from the `P3MerklePoseidon2Air` placeholder) and through Kimchi/Pickles as a credible production-grade outer recursive layer; this folded mesh remains the north star, not a present-tense claim.
-
-Three new layers cap the substrate. Storage primitives---CapInbox, ProgrammableQueue, PubSubTopic, BlindedQueue, RelayOperator---are not new Effect variants but **cell-program patterns**: factory-declared compositions of slot caveats and bearer capabilities, enforced by the same executor loop as every other turn. DFA routing is a first-class userspace primitive (a `WitnessedPredicate { kind: Dfa }`) governing `RouteTarget::Userspace { kind, payload }` dispatch into governed namespaces, intent gossip topic filters, and CapTP pre/post filters. AppCipherclerk (a six-method handle) and EmbeddedExecutor + StarbridgeAppContext let apps run as pure userspace---no app-specific `Effect` variants, no `Authorization::Unchecked` placeholder turns, no $[0; 64]$ stub signatures.
-
-Cross-chain bridges convert Dregg STARKs into native external-chain proofs: EVM (Level 2 via SP1/Groth16, $tilde$200K gas), Mina (Level 2, native Pasta curves), and Midnight/Cardano (Level 1.5 optimistic with dispute, Level 2 ZKIR v3 designed). Federation-bypass `peer_exchange` enables direct sovereign-cell-to-sovereign-cell signed state transitions with optional STARK `transition_proof`, partition-tolerantly carrying value across an offline interval before being promoted to federation order on reconnect.
-
-The system is implemented in approximately 400k lines of Rust across $tilde$45 workspace crates, with thousands of tests, real STARK proof generation ($tilde$24 KiB proofs, sub-second generation on BabyBear4 extension field at 124-bit security), real Ed25519 and BLS12-381 cryptography, working multi-node QUIC consensus over a blocklace DAG, a browser extension cclerk, a full-citizen `dregg` CLI (cell/turn/cap/cipherclerk/federation/namespace/storage/directory/proof/route/register-federation/doctor), userspace apps via the AppCipherclerk pattern, a Discord bot, and a devnet deployment. Real Shamir-over-GF(256) + ChaCha20-Poly1305 threshold decryption (`federation::threshold_decrypt`) backs the trustless intent engine, wired into production via `node::state::trustless_intent_engine`---the prior cleartext `set_decrypted_intents` side-channel is replaced by real threshold combination.
+The semantics are a Lean 4 kernel that is also the deployed executor, reached
+by FFI from the node; the proof system is a STARK whose circuit is _emitted
+from_ that kernel rather than hand-authored. The assurance case is organized by
+guarantee --- authority, conservation, integrity, freshness, unfoolability, and
+a running-entry guarantee stating the first three over the exact function the
+node invokes --- with every keystone machine-pinned to the Lean kernel's three
+axioms plus an explicit eight-carrier cryptographic and liveness floor.
+Applications are factory-minted cells whose rules are predicate programs
+enforced by the same executor, so application contracts are inherited from
+kernel theorems rather than re-established per app.
 
 #v(1em)
 
@@ -93,25 +119,10 @@ The system is implemented in approximately 400k lines of Rust across $tilde$45 w
 #include "sections/02-model.typ"
 #include "sections/03-authorization.typ"
 #include "sections/04-proofs.typ"
-#include "sections/05-privacy.typ"
-#include "sections/06-fabric.typ"
-#include "sections/07-captp.typ"
-#include "sections/08-storage.typ"
-#include "sections/09-service-mesh.typ"
-#include "sections/10-intents.typ"
-#include "sections/11-delegation.typ"
-#include "sections/12-bridges.typ"
-#include "sections/13-economics.typ"
-#include "sections/14-agents.typ"
-#include "sections/15-implementation.typ"
-#include "sections/16-formal-verification.typ"
-#include "sections/17-comparison.typ"
-#include "sections/18-future.typ"
-#include "sections/19-conclusion.typ"
 
-// --- Appendices -------------------------------------------------------------
-
-#include "sections/appendix-a-garbled-poseidon2.typ"
+// The remaining sections (guard algebra, ordering/finality, realization,
+// assurance, related, limitations, conclusion, appendix) are the rewrite
+// burn-down in _REWRITE-PLAN.md; they are not yet in the build.
 
 // --- References --------------------------------------------------------------
 

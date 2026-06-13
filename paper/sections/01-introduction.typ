@@ -2,80 +2,141 @@
 // Section 1: Introduction
 // =============================================================================
 
-= Introduction
+#import "../defs.typ": lean
+= Introduction <sec-intro>
 
-Cross-domain authorization for autonomous agents presents a challenge that existing systems address incompletely. Consider an AI agent dispatched by Organization A to invoke a service hosted by Organization B. The agent must prove it is authorized---but without revealing Organization A's internal delegation structure, the identities of intermediate signatories, or what other capabilities the agent holds. Further: the *transition* the agent's invocation produces on B's ledger must be algebraically tied back to the authority A delegated, so that a third party reviewing the joint record weeks later can re-derive the entire chain without trusting either A or B's executor to have been honest.
+A distributed object-capability substrate has one hard problem: a party who was
+not present when a transition happened must be able to trust that it happened
+correctly. dregg answers it by making the proof witness the protocol's *correct
+evolution*. A verifier holding one aggregate root --- a new node, an auditor, a
+phone --- learns that every state transition in the system's history was
+authorized, conserved value exactly, and was committed faithfully, while
+re-executing nothing and trusting no executor. This is the requirement
+everything else is derived from, and we name its negation the thing the design
+rules out: a light client cannot be fooled by a server that ran the protocol
+wrong.
 
-Existing approaches each fail along a different axis:
+== The sentence
 
-- *UCAN/ZCAP-LD* @ucan provide delegation chains but require revealing the full chain to the verifier. Privacy is absent.
-- *Coconut credentials* @coconut offer selective disclosure of attributes but lack the delegation semantics needed for capability attenuation.
-- *Cap'n Proto RPC* provides promise pipelining and E-style messaging but operates within a single trust domain with no privacy, no proof of authorization, and no offline verification.
-- *Blockchain-based authorization* achieves transparency but requires chain liveness, incurs gas costs, and exposes all authorization state on-chain.
-- *seL4* @sel4 provides a rigorous Capability Derivation Tree with synchronous kernel-enforced revocation, but requires a single address space and cannot distribute across trust boundaries.
+The whole system is one sentence, given algebra:
 
-== The thesis: proof-carrying capability mesh
+#align(center)[
+  _A turn is the exercise of an attenuable, proof-carrying token over owned
+  state, leaving a verifiable receipt._
+]
 
-Dragon's Egg frames the answer as a single shape---a *proof-carrying capability mesh*. The kernel of the system is:
+State lives in *cells*. A *turn* exercises authority --- a *token* that may be
+*attenuated* on every axis and that carries a *proof* of its own legitimacy ---
+over *owned state*, and leaves *Q*, a receipt that commits to the result. The
+nouns are fixed in @sec-model; the authority logic in @sec-authority; the
+receipt and its aggregation in @sec-proofs.
 
-+ *OCapN-lineage Capability Transport Protocol* between sovereign cells (vats), with sturdy references, distributed garbage collection, three-party handoff, promise pipelining, and store-and-forward.
-+ *Effect VM execution* that batches per-turn effects into a single STARK over a real BabyBear AIR. The circuit is migrating from hand-written constraints to a single descriptor-driven AIR *emitted from the verified Lean executor* (see @sec-formal), so the trace is derived from --- not maintained beside --- the executor semantics.
-+ *STARK-attested transitions* whose public inputs bind the canonical turn hash, the effects-hash chain, the actor nonce, and the previous-receipt hash, giving algebraic answers to forge-effects, reorder-effects, skip-effects, replay-nonce, stale-proof, and forge-effects-hash threats.
-+ *Federated BFT consensus* over a blocklace DAG (Cordial Miners + Constitutional Consensus) attested by constant-size BLS threshold quorum certificates.
-+ *Cross-cell algebraic binding* via canonical bilateral identifiers $"transfer_id"$, $"grant_id"$, $"intro_id"$ derivable by any third party from the bilateral effect's surface inputs plus `ACTOR_NONCE`.
-+ *Programmable predicates*: a 29-variant `StateConstraint` vocabulary declared per-cell, unified with witness-attached predicates under a single `WitnessedPredicate` shape.
-+ *Trustless intent matching* with real threshold-encrypted intent pool (Shamir over GF(256) + ChaCha20-Poly1305).
-+ *Federation bypass via `peer_exchange`*: two sovereign cells can directly exchange signed (optionally STARK-attested) state transitions without ever touching consensus, then promote to federation order on reconnect.
+== The organizing asymmetry
 
-The thesis under this shape: any security invariant maintained synchronously by a kernel can be maintained asynchronously by a proof system, trading latency for distribution. The "kernel" in Dragon's Egg is not a process or a service but a *constraint family*---the AIR plus the predicate registry plus the canonical-message signing discipline. That constraint family is the thing every party trusts; everything else is replaceable.
+dregg treats authority as *constructive knowledge*. To hold a capability is to
+be able to exhibit a witness that authorizes an act --- never merely to assert
+it. This is the realizability reading of intuitionistic logic made operational,
+and it rests on one asymmetry:
 
-== Two codebases: `dregg2` (verified) and `dreggrs` (heritage)
+#align(center)[
+  _proof-checking is cheap and trusted; proof-search is undecidable and untrusted._
+]
 
-Dragon's Egg exists as two coordinated artifacts. *`dregg2`* is a machine-checked Lean 4
-development: the authoritative specification of the turn executor, the predicate vocabulary,
-the verified-by-construction circuit emission, and the distributed-protocol and CapTP
-guarantees. *`dreggrs`* is the Rust heritage runtime: the network stack, the production
-provers, the live node, the CLI, the extension, the Discord bot, and QUIC consensus. The
-direction of travel is *`dregg2` first*: the runtime is being swapped onto the verified
-executor on the commit path, and a Rust$arrow.l.r$Lean differential harness checks the two for
-agreement. The ontology this paper quotes (56 effects, 29 constraints) is generated from the
-Lean source and drift-guarded, so the specification and the prose cannot silently diverge.
-@sec-formal is the substance of the verification story.
+Every trust decision in the system is a *check*. Whoever wants to act bears the
+burden of producing a witness; whoever guards state only ever verifies. A
+capability is not a key in a lock --- it is a proof obligation one can
+discharge. The asymmetry places search at the untrusted edges (solvers, intent
+matchers, provers) and checking at the trusted core (the executor, the circuit,
+the light client). It is the same asymmetry that lets a STARK verifier accept a
+statement it could not have found: the prover does the work, the checker does
+the trusting.
 
-== Two visions, one runtime
+== What the kernel governs
 
-The codebase carries two coexisting visions, both honest. Since the May draft, the boundary
-between them has moved: the distributed-semantics guarantees that "Silver" once delegated to
-the executor's say-so are now *machine-checked theorems* in `dregg2` (@sec-formal) ---
-blocklace $tau$ finality, strand integrity, CRDT-merge convergence, membership safety,
-multi-cell entanglement, cell handoff, and the CapTP handoff/GC/settlement core. What remains
-"Silver" is the integration-completeness of the heritage runtime; what is now stronger than
-Silver is that the cross-cell laws are *proved*, not asserted.
+The kernel governs four *substances*, each with a discipline of use --- a law
+about how it may move through time --- and the kernel is the enforcement of
+those laws. Value is *linear*: per asset, the resource sum is exactly zero
+across a turn, so nothing is minted or burned outside an issuer's supply
+discipline. Authority is *produced under non-forgeability*: it grows, but only
+by authorized, receipt-disclosed construction from connectivity already held,
+and narrows freely along one edge. Evidence is *monotone*: once known, never
+unknown --- the nullifier and commitment ledgers only grow. State is
+*guarded-mutable*: it changes only under a predicate, only by its owner.
 
-The *Silver Vision* is the _integration-complete, pre-algebraic state_: every loop is closed, every primitive's caller actually calls it, but the single-cell algebra and the runtime's cross-cell glue are the executor's say-so where the Lean proofs do not yet reach. CapTP messages produce real Turns on the receiving cell's ledger; three-party handoff is constructible from the SDK; `FederationReceipt` is produced by the live node path, not just tests; `AttestedRoot` is bound to a blocklace `block_id` plus finality round; $"federation_id" = "BLAKE3"("committee_pubkeys" || "epoch")$ rather than a random 16-byte tag; the bridge `destination_federation` is enforced in AIR; apps run as pure userspace through `app-framework` with a real cclerk---no `[0u8; 64]` placeholder signatures, no `Authorization::Unchecked`, no app-specific `Effect` variants. Silver is what the runtime actually delivers today.
+The kernel's signature is *eight verbs*, each the structural rule of one
+substance's discipline. The assignment of (substance, polarity) to verbs is
+injective, so minimality is a theorem (#lean("VerbRegistry.minimality"),
+#lean("VerbRegistry.each_verb_irreplaceable")): drop any verb and the behavior
+it provides has no other provider. The verb roster is enumerable and lives in
+the generated verb catalog (`studio/verb-catalog.generated.json`), drift-checked
+against the verified registry; the paper cites it rather than re-asserting it.
 
-The *Golden Vision* is the _full distributed-semantics algebraic constraint_: a folded DAG of attestations where Bob's cap exercise depends causally on Alice's grant, which depended on Carol's introduction (different cells' chains), and the whole mesh up to "now" is provable as one statement. Today's per-cell receipt chain linearizes one cell's history; Stage 7-$gamma$.2 Phase 1 compresses one turn's bilateral view; the full Golden Vision is folded mesh. Phase 2 of $gamma$.2 introduces a joint aggregation AIR built atop a generalized `plonky3_recursion_impl` substrate (Lane Golden-Edge Block 1 lifts it past the `P3MerklePoseidon2Air` placeholder); Kimchi/Pickles is a credible production-grade outer recursive layer as an alternative path.
+== Constructive authority is generative
 
-The handoff between the two visions is structural: Silver produces real `WitnessedReceipt` chains whose scope-1 mode ships proof + public inputs and scope-2 mode optionally ships an inline witness bundle for replay-everything verification; Golden folds those chains into one statement.
+The easily-missed fact about object-capability authority is that it is
+*produced*, not merely spent. A model in which every step only narrows --- a
+monotone descent down a lattice --- forbids exactly the patterns that give
+capabilities their power: a holder introducing a third party (Granovetter), an
+unsealer combining with a sealed box to yield contents neither names alone, a
+mint creating fresh resource on an authorized gesture. dregg's central authority
+law is therefore generative *and* disciplined: authority grows, but every
+generative act is itself authorized by held knowledge and is receipt-disclosed,
+so it lands on the chain un-strippably. Miller's *only connectivity begets
+connectivity* is the one law (@sec-authority); it is an epistemic
+non-forgeability invariant, not a lattice descent.
 
-== Contributions
+== One constraint algebra, two computed prices
 
-Dragon's Egg's contributions span six architectural layers:
+Everything that constrains a turn --- a caveat on delegated power, a program on
+owned state, a precondition on a turn, a demand on the world --- is one algebra
+of decidable predicates over the proposed step. The same predicate the executor
+evaluates is compiled to the circuit obligation a proof discharges: an
+installable guard and a provable property are one mechanism. Two prices are
+*computed*, not assumed. The *coordination dial* classifies whether two
+concurrent turns merge without coordination: a confluence-stable guard runs
+coordination-free, one that is not provably so forces ordering, and the
+classifier prices the difference honestly rather than forbidding the expensive
+case. The *disclosure dial* governs how much a guard reveals while checking ---
+cleartext, committed, range-proved, jointly-garbled --- on the principle that
+what the proof does not need, it does not ask to see (the guard algebra).
 
-*Authorization and Privacy:* (1) proving monotonic attenuation of a bearer token chain in zero knowledge; (2) a distributed CDT that replaces kernel enforcement with cryptographic proof; (3) multi-modal authorization (`Signature`, `Proof`, `Breadstuff`, `Bearer`, `CapTpDelivered`, and the new `Authorization::Custom { predicate: WitnessedPredicate }` for app-defined modes); (4) a 29-variant `StateConstraint` predicate vocabulary unified with witness-attached predicates under `WitnessedPredicate` with kind registry (`Dfa`, `Temporal`, `MerkleMembership`, `BlindedMembership`, `BridgePredicate`, `PedersenEquality`, `Custom { vk_hash }`); (5) a 14-boundary vocabulary (BOUNDARIES.md) for cleartext-inside / commitment-inside / acceptance-inside / out-of-band populations.
+== The proofs are about the thing that runs
 
-*Distributed Object Runtime:* (6) E-style messaging semantics (promise pipelining, three-party introduction, sealer/unsealer) integrated with proof-carrying state; (7) `Authorization::CapTpDelivered` makes CapTP-delivered messages produce algebraically-bound Turns on the receiving ledger; (8) sovereign cells on a sovereignty spectrum with $"federation_id" = "BLAKE3"("committee_pubkeys" || "epoch")$; (9) EROS-style factories with computable child verification keys; (10) federation-bypass `peer_exchange` for direct sovereign-cell-to-sovereign-cell signed (optionally STARK-attested) state transitions.
+The semantics are a Lean 4 development that is *also the deployed executor*. The
+gated whole-forest step #lean("execFullForestG") is compiled, exported through
+FFI as `dregg_exec_full_forest_auth`, and invoked by the node on its production
+path; the running-entry guarantee is stated over exactly this function, so "the
+proofs are about the thing that runs" is a theorem
+(#lean("FullForestAuth.running_entry_sound")), not a deployment note. The proof
+system inherits the same discipline: the circuit is *emitted from* the kernel,
+not hand-authored beside it. Each kernel statement carries a descriptor from
+which both the executor reading and the circuit reading are obtained, with
+agreement theorems welding them (#lean("Argus.Receipt.argus_circuit_executor_receipts_agree")).
+One term has two provably-agreeing readings; no constraint is authored in Rust.
 
-*Unified Fabric:* (11) one canonical `Federation` type subsumes the four prior disjoint concepts; (12) `AttestedRoot` v3 binds $"federation_id"$ plus blocklace `block_id` plus finality round; (13) `KnownFederations` registry persisted at `<data-dir>/known_federations/<federation_id>.json` with `register-federation` CLI; (14) DFA routing as a first-class userspace primitive with `RouteTarget::Userspace { kind, payload }` dispatch and governance-bound atomic table swaps; (15) interest-based dissemination with subscription-filtered block propagation.
+== The assurance case is an artifact
 
-*Proof System:* (16) a backend-agnostic constraint DSL compiling to 8 targets from a single source; (17) a verified-by-construction Effect VM AIR *emitted from the verified Lean executor* (the ONE-circuit migration, @sec-formal), gated by a descriptor-vs-hand-AIR differential harness; (18) Stage 7-$gamma$.0 shared-PI bundle joining per-cell proofs of one turn; (19) Stage 7-$gamma$.2 Phase 1 bilateral cross-cell binding with off-AIR `dregg-verifier bilateral-pair` subcommand; (20) generalized `plonky3_recursion_impl` substrate lifted past `P3MerklePoseidon2Air` as the recursive verifier AIR; (21) Kimchi/Pickles as a credible production-grade alternative outer recursive layer.
+The system's guarantees are not a narrative but a Lean file
+(`metatheory/Dregg2/AssuranceCase.lean`) that states five guarantees ---
+authority, conservation, integrity, freshness, unfoolability --- plus a running
+entry that closes them over the deployed function, assembles under each the
+keystone DAG that discharges it, and `#assert_axioms`-pins every name: the build
+fails unless each theorem's full axiom set is exactly the kernel triple
+${"propext", "Classical.choice", "Quot.sound"}$. Everything rests on that triple
+plus an explicit floor of eight cryptographic and liveness carriers, entering as
+hypotheses rather than axioms (the assurance case). There is no trusted executor, no
+out-of-band "this was authorized" premise, and no field of the post-state left
+uncommitted.
 
-*Trustless Coordination:* (22) trustless intent engine wired into production (`node::state::trustless_intent_engine`) using real Shamir-over-GF(256) + ChaCha20-Poly1305 threshold decryption from `federation::threshold_decrypt`; (23) bond escrow with predicate-attested matching; (24) bridge with destination-federation algebraic binding in AIR (closes T6); (25) executor delegation spectrum from full sovereignty to delegated execution with challenge protocols.
+== Applications inherit theorems
 
-*Userspace + Storage:* (26) AppCipherclerk---a narrow six-method handle---plus EmbeddedExecutor and StarbridgeAppContext let apps run as pure userspace; (27) storage primitives become cell-program patterns: CapInbox is a monotonic-sequence WriteOnce-slot composition with `SenderAuthorized`; ProgrammableQueue lifts the legacy `QueueConstraint` vocabulary directly into `StateConstraint`; PubSubTopic, BlindedQueue, and RelayOperator follow the same pattern; (28) `FactoryDescriptor` + slot caveats + DSL = constructor transparency for every primitive.
-
-*Threat Model + Soundness Ledger:* (29) the executor-honesty audit (T1--T15) is a living artifact tracking which threats are closed at AIR level, which at canonical-message signing, which at verifier replay; T1/T3/T15 closed at single-cell + $gamma$.2 multi-cell; T5 closed at AIR via Stage 7-$gamma$.0; T6 closed by `federation_id` algebraic binding; T8 and T11 closed by verifier PI completeness; T9 (sovereign-witness teeth) Phase 1 designed (Lane Hardening).
-
-== Lineage
-
-The design draws from Mina Protocol's execution model (cells as zkApp accounts, turns as ZkappCommands, call forests), E's distributed object semantics (eventual sends, three-party handoff, sealer/unsealer pairs), seL4's capability derivation (recast as a proof structure for asynchronous distributed systems), EROS's factory pattern (constrained constructors with auditable verification keys), Stingray's bounded counters for BFT budget channels, the Blocklace's DAG-based ordering generalized via Cordial Miners and Constitutional Consensus, and the macaroon/biscuit lineage of caveat predicates (now widened into the `StateConstraint` vocabulary and unified with witness-attached predicates as `WitnessedPredicate`).
+Applications do not extend the kernel; they are cells. A *factory* publishes a
+descriptor --- a slot layout plus predicate constraints --- and the `create`
+verb mints cells from it; from that moment the executor enforces the program on
+every turn touching the cell. Recurring coordination shapes (escrow,
+obligations, queues, mailboxes, bridges, sealer/unsealer boxes) ship as verified
+factories whose safety keystones are kernel theorems, so an application's
+contract is *inherited* from the kernel rather than re-established per app.
+(the realization). The shape is uniform: value at stake lives in the minted
+cell's own balance column, so funding and settling are ordinary moves and
+conservation is the ordinary kernel law with no side tables.
