@@ -36,11 +36,30 @@ edition = "2021"
 publish = false
 description = "The local↔distributed cap-gradation bridge — one (target, rights) handle, two backings (seL4 syscall / real dregg turn), the fluid reach-out in code."
 
+[features]
+# `process-pd` selects the v1 PROCESS-backed PD substrate (the MMU-enforced
+# isolation upgrade, `docs/DREGG-DESKTOP-OS.md §3`): PDs become forked host
+# PROCESSES (so the host MMU enforces address-space separation — a PD cannot
+# read another PD's memory), shared regions become `shm_open`/`mmap` segments,
+# and a kernel-side epoch-tagged cap-handle validity table refuses raw-bytes cap
+# forgery. It is OFF by default so the fast `cargo test` keeps the v0 thread
+# backing (one address space, in-process, no fork) for quick iteration; the
+# real-isolation path is opt-in (`--features process-pd`) and Unix-only. This
+# EXTENDS the EmulatedKernel with a cfg-selected backing — it does NOT fork a
+# parallel mock; the v0 thread kernel stays the default.
+process-pd = ["dep:libc"]
+
 [dependencies]
 # The REAL dregg capability + attenuation semantics. Not reinvented.
 dregg-cell  = { path = "../../cell" }
 dregg-turn  = { path = "../../turn" }
 dregg-types = { path = "../../types" }
+
+# `libc` (fork / shm_open / mmap / socketpair / waitpid) backs the v1
+# process-backed PD substrate. Optional + pulled in ONLY under `process-pd`, so
+# the default thread-backed build gains no new dependency. It is ALREADY a
+# transitive dependency of the real dregg crates (no new lockfile surface).
+libc = { version = "0.2", optional = true }
 
 [dev-dependencies]
 # (tests live inline + in tests/)

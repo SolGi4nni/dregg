@@ -41,12 +41,20 @@
 //! [`memory_region_symbol!`]) gives a PD access ONLY to the regions/caps it was
 //! granted, so a PD coded against the facade cannot *accidentally* amplify; but
 //! a *malicious* PD is not contained the way seL4's MMU+CNode contain one. This
-//! is EXACTLY the gap UML's traced-thread → SKAS evolution faced. It is closed
-//! by the v1 **process-backed-PD upgrade** ([`isolation`](crate::emulated_kernel)
-//! notes below): `shm_open`/`mmap` regions + an opaque generation/epoch-tagged
-//! cap handle and a kernel-side validity table, so a PD cannot forge a cap by
-//! writing raw bytes. We do **not** claim that gap is solved at v0; see
-//! [`EmulatedKernel::ISOLATION_FIDELITY`].
+//! is EXACTLY the gap UML's traced-thread → SKAS evolution faced.
+//!
+//! **This gap is CLOSED by the v1 process-backed backing**
+//! ([`crate::process_kernel::ProcessKernel`], `--features process-pd`): PDs
+//! become forked PROCESSES (the host MMU enforces address-space separation, so a
+//! PD physically cannot read another PD's memory), shared regions become
+//! `shm_open`/`mmap` segments granted by name, and an epoch-tagged cap-handle
+//! validity table (the kernel's) refuses a cap forged from raw bytes — the
+//! cross-process CNode-unforgeability analogue. The v0 thread backing here stays
+//! the default for fast `cargo test` (one address space, no `fork`); the v1
+//! backing is the same PD source with the backing moved thread→process. We do
+//! **not** claim the gap is solved AT v0; this const states the v0 reality, and
+//! [`crate::process_kernel::ProcessKernel::ISOLATION_FIDELITY`] states what v1
+//! now enforces. See [`EmulatedKernel::ISOLATION_FIDELITY`].
 //!
 //! [`Channel`]: crate::microkit_facade::Channel
 //! [`memory_region_symbol!`]: crate::memory_region_symbol
@@ -224,13 +232,23 @@ impl EmulatedKernel {
     /// A short, honest statement of the ONE deliberate non-fidelity — the v0
     /// isolation gap — so it travels WITH the code, never laundered as solved.
     /// (`docs/DREGG-DESKTOP-OS.md §3`, the fidelity discipline.)
+    ///
+    /// This describes the v0 THREAD backing's reality. The gap is **closed by
+    /// the v1 process backing** ([`crate::process_kernel::ProcessKernel`],
+    /// `--features process-pd`), whose own
+    /// [`ISOLATION_FIDELITY`](crate::process_kernel::ProcessKernel::ISOLATION_FIDELITY)
+    /// states what is now MMU-enforced. v0 stays the default for fast tests; the
+    /// label here remains honest about v0 itself.
     pub const ISOLATION_FIDELITY: &'static str = "\
         v0 host threads share one address space: 'no ambient authority' is \
         by-construction-in-the-API (a PD sees only its granted caps/regions), \
         NOT MMU-enforced (a malicious thread could read another PD's memory by \
-        raw pointer — the host has no CHERI tag bits). Closed by the v1 \
-        process-backed-PD upgrade (shm_open/mmap + epoch-tagged cap-handle \
-        validity table). NOT laundered as solved.";
+        raw pointer — the host has no CHERI tag bits, so a cap could be forged \
+        by writing raw bytes). CLOSED by the v1 process-backed backing \
+        (ProcessKernel, --features process-pd): forked PROCESSES (MMU-enforced \
+        separation) + shm_open/mmap regions + a kernel-side epoch-tagged \
+        cap-handle validity table (raw-bytes forgery refused). v0 stays the \
+        default for fast cargo-test; NOT laundered as solved at v0.";
 
     /// A fresh, empty `n = 1` kernel.
     pub fn new() -> Self {

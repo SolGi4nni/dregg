@@ -56,9 +56,33 @@
 //! [`memory_region_symbol!`]) the dregg PDs code against — std-backed (semihost)
 //! now, real seL4 later, **the same PD source on both**. It is a faithful
 //! `n = 1` firmament (a host thread's revoke IS synchronous; the cap checks are
-//! the genuine [`is_attenuation`]), with ONE honestly-labeled non-fidelity (v0
-//! host threads share one address space — see
-//! [`EmulatedKernel::ISOLATION_FIDELITY`]).
+//! the genuine [`is_attenuation`]).
+//!
+//! ### Two backings, cfg-selected (the v0 isolation gap is CLOSED)
+//!
+//! The semihost has TWO cfg-selected backings under ONE facade:
+//!
+//! - **v0 — thread-backed** ([`EmulatedKernel`], the default): PDs are host
+//!   threads in one address space. Fast (no `fork`), ideal for `cargo test`. It
+//!   carries ONE honestly-labeled non-fidelity: "no ambient authority" is
+//!   by-construction-in-the-API, NOT MMU-enforced (a malicious thread could read
+//!   another PD's memory; raw RAM has no tag bits to stop cap forgery). See
+//!   [`EmulatedKernel::ISOLATION_FIDELITY`].
+//! - **v1 — process-backed** ([`process_kernel::ProcessKernel`], `--features
+//!   process-pd`, Unix): PDs are forked PROCESSES, so the host **MMU enforces**
+//!   address-space separation — a PD physically cannot read another PD's private
+//!   memory. Shared regions are `shm_open`/`mmap` segments granted by name; and
+//!   an epoch-tagged cap-handle **validity table** (the kernel's, the
+//!   cross-process CNode-unforgeability analogue) refuses a cap forged from raw
+//!   bytes. This **closes** the v0 gap; what remains trusted is stated honestly
+//!   (the table is the kernel's TCB; the MMU is the host OS's). See
+//!   [`process_kernel::ProcessKernel::ISOLATION_FIDELITY`].
+//!
+//! **The PD source is UNCHANGED across both** — only the backing moves
+//! thread→process. The boot test (m0-hello + the 2-PD notify slice) runs on
+//! both, and the v1 path adds the isolation tooth v0 lacked (a PD CANNOT read
+//! another PD's memory NOR forge a cap by writing raw bytes, while IPC still
+//! works). `docs/DREGG-DESKTOP-OS.md §3`.
 
 use std::string::String;
 
@@ -68,6 +92,17 @@ pub mod surface;
 pub mod router;
 pub mod emulated_kernel;
 pub mod microkit_facade;
+
+// The v1 PROCESS-backed PD substrate (the MMU-enforced isolation upgrade). It
+// is Unix-only and behind the `process-pd` feature: PDs become forked host
+// PROCESSES so the host MMU enforces address-space separation, shared regions
+// become `shm_open`/`mmap`, and a kernel-side epoch-tagged validity table
+// refuses raw-bytes cap forgery. This CLOSES the one honestly-labeled v0
+// non-fidelity ([`EmulatedKernel::ISOLATION_FIDELITY`]). It EXTENDS the
+// emulator with a cfg-selected backing — the v0 thread kernel stays the default
+// for fast `cargo test`; see `docs/DREGG-DESKTOP-OS.md §3`.
+#[cfg(all(feature = "process-pd", unix))]
+pub mod process_kernel;
 
 pub use local::LocalBacking;
 pub use distributed::DistributedBacking;
@@ -79,6 +114,15 @@ pub use emulated_kernel::{
 pub use microkit_facade::{
     Channel, ChannelSet, ChannelTable, ChannelWiring, EventLoop, Handler, MessageInfo,
     NullHandler, ProtectionDomain, Region,
+};
+
+// The v1 process-backed substrate's public surface (Unix + `process-pd` only):
+// the forking kernel, the unforgeable cap-handle + its validity table, the
+// `shm_open`/`mmap` region, and the PD-side client.
+#[cfg(all(feature = "process-pd", unix))]
+pub use process_kernel::{
+    CapError, CapHandle, CapObject, ForgeReason, KernelClient, KernelReply, KernelRequest,
+    ObjectKind, PdProcess, ProcessKernel, ShmRegion, SpawnError, ValidityTable,
 };
 
 // Re-export the REAL dregg rights lattice and id so app code names the genuine
