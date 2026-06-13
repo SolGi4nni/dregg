@@ -1,0 +1,49 @@
+# dregg-firmament — the cap-gradation bridge (the fluid reach-out, in CODE).
+#
+# This is a STANDALONE Cargo workspace, deliberately NOT a member of the
+# repo-root workspace and NOT a member of the sel4/dregg-pd Microkit workspace:
+#
+#   * It path-depends on the REAL dregg crates (`dregg-cell`, `dregg-turn`,
+#     `dregg-types`) so the cap-gradation bridge uses the GENUINE attenuation
+#     semantics (`is_attenuation`, `AuthRequired::is_narrower_or_equal`), the
+#     GENUINE `CapabilityRef`/`CapabilitySet`/`CellId`, and a GENUINE
+#     `TurnExecutor::execute` turn for the distributed leg. It never reinvents
+#     `granted ⊆ held`.
+#
+#   * It builds into its OWN target dir (`CARGO_TARGET_DIR` set by the runner,
+#     see ./run-test.sh), so it never touches the repo-root `./target` that a
+#     node lane owns. Path-depending on a member of another workspace from
+#     outside that workspace is fine: cargo resolves the depended crate within
+#     ITS own workspace and links it into THIS crate's local target.
+#
+# `docs/FIRMAMENT.md §3` ("The transparent local↔distributed capability
+# gradation" + "The fluid reach-out") DESIGNS this bridge; this crate is the
+# design turned into code: ONE `(target, rights)` handle an app invokes /
+# attenuates / delegates uniformly, with a router that dispatches a LOCAL
+# target to the seL4 kernel path and a DISTRIBUTED target to the
+# executor→net path. The `n = 1` collapse is the firmament's headline.
+
+# Empty [workspace] table → this crate is its OWN workspace root, NOT a member
+# of the repo-root workspace (whose ./target a node lane owns). It still
+# path-depends on the real dregg crates; cargo resolves those within the root
+# workspace and links them into THIS crate's local target.
+[workspace]
+
+[package]
+name = "dregg-firmament"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "The local↔distributed cap-gradation bridge — one (target, rights) handle, two backings (seL4 syscall / real dregg turn), the fluid reach-out in code."
+
+[dependencies]
+# The REAL dregg capability + attenuation semantics. Not reinvented.
+dregg-cell  = { path = "../../cell" }
+dregg-turn  = { path = "../../turn" }
+dregg-types = { path = "../../types" }
+
+[dev-dependencies]
+# (tests live inline + in tests/)
+
+[profile.release]
+opt-level = "s"

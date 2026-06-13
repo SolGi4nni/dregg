@@ -34,7 +34,7 @@ QEMU_AARCH64 := qemu-system-aarch64 -machine virt,virtualization=on -cpu cortex-
                 -m 2G -nographic
 QEMU_RISCV   := qemu-system-riscv64 -machine virt -m 2G -nographic
 
-.PHONY: all run run-m0 run-m1 run-m2 run-stark run-riscv build-aarch64 build-riscv \
+.PHONY: all run run-m0 run-m1 run-m2 run-stark run-net run-riscv build-aarch64 build-riscv \
         verify-isolation clean help
 
 help:
@@ -44,6 +44,8 @@ help:
 	@echo "  make run-m0       — boot the 'dregg robigalia v0' banner PD (M0)"
 	@echo "  make run-m1       — boot the verifier PD (M1)"
 	@echo "  make run-m2       — boot the rbg DirectoryCell PD (M2)"
+	@echo "  make run-stark    — boot the verifier-stark PD: real STARK on-device"
+	@echo "  make run-net      — boot the net-driver PD: probe a REAL virtio-net (M3 edge)"
 	@echo "  make run-riscv    — boot M0 on qemu_virt_riscv64 (M5)"
 
 all: build-aarch64
@@ -81,6 +83,23 @@ run-m2: build-aarch64
 # (BabyBear+BLAKE3+FRI) proved + verified on-device, with the anti-ghost tooth.
 run-stark: build-aarch64
 	$(call LINK_AND_RUN_AARCH64,dregg-verifier-stark-pd,mstark,dregg_verifier_stark)
+
+# M3: the firmament's network EDGE — the virtio-net driver PD probing a REAL
+# QEMU virtio-net-device on the mmio bus. The driver maps mmio slot 31 (base
+# 0xa000000 + 31*0x200 = 0xa003e00; region phys_addr 0xa003000 + OFFSET 0xe00),
+# reads the VirtIOHeader, confirms DeviceType::Network, and brings the device UP
+# (prints its MAC). The QEMU flags below are what make the slot non-empty — the
+# wall this clears was InvalidDeviceType(0) (an empty mmio slot).
+run-net: build-aarch64
+	mkdir -p $(BUILD)
+	cp $(PD_DIR)/target/aarch64-sel4-microkit/release/dregg-net-driver-pd.elf $(BUILD)/
+	$(MICROKIT) net-driver-only.system --search-path $(BUILD) --board $(BOARD) --config $(CONFIG) -o $(BUILD)/net-driver.img -r $(BUILD)/net-driver.report.txt
+	$(QEMU_AARCH64) \
+		-global virtio-mmio.force-legacy=false \
+		-netdev user,id=net0 \
+		-device virtio-net-device,netdev=net0,bus=virtio-mmio-bus.31 \
+		-device loader,file=$(BUILD)/net-driver.img,addr=0x70000000,cpu-num=0 \
+		-serial mon:stdio
 
 # ── M5: M0 on riscv64 ───────────────────────────────────────────────────────
 run-riscv: build-riscv

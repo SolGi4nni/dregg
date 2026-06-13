@@ -149,6 +149,47 @@ and not merely designed: a capability whose target lives on another machine is
 resolved across the wire the net-PD holds. With both ends present, the
 gradation is a measured axis, not a slogan.
 
+### The cap-gradation bridge in CODE (`sel4/dregg-firmament/`)
+
+The gradation above is not just a design — it is a runnable crate.
+`sel4/dregg-firmament/` is a standalone Rust crate (its own `target/`, NOT a
+member of the repo-root or Microkit workspaces) that turns this section into
+code, wired to the **real dregg capability semantics** (it path-depends on the
+genuine `dregg-cell` + `dregg-turn`, so it never reinvents `granted ⊆ held`):
+
+- **One unified handle.** `Capability { target, rights }` is the `(target,
+  rights)` pair. `Target` is `Local { slot }` (an seL4 CNode slot) or
+  `Distributed { cell }` (a real dregg `CellId`). `rights` is the REAL
+  `dregg_cell::AuthRequired` lattice — one rights model, two backings.
+- **One router, two backings.** `FirmamentRouter` owns a `LocalBacking` (the
+  seL4 syscall boundary: a CNode slot table where `mint` = `seL4_CNode_Mint`
+  with reduced rights, `revoke` = synchronous transitive `seL4_CNode_Revoke`,
+  `invoke` = `seL4_Call`) and a `DistributedBacking` (a **real**
+  `dregg_turn::TurnExecutor` over a **real** `dregg_cell::Ledger`). The app
+  calls `router.resolve(&handle)` / `router.attenuate_and_grant(...)`; the
+  router dispatches by the handle's target alone. The app cannot tell which
+  backing it holds.
+- **Real attenuation at both ends.** The LOCAL mint and the DISTRIBUTED
+  delegate BOTH gate on the genuine `granted ⊆ held`: locally via
+  `dregg_cell::is_attenuation` on the reduced-rights mint; distributedly via a
+  GENUINE `Effect::GrantCapability` turn through the executor (which rejects a
+  widening grant with `DelegationDenied`, byte-for-byte the deployed
+  semantics). A widening is refused identically at both backings.
+- **The `n = 1` collapse, concrete.** `Bounds` carries
+  `revocation_immediate` / `commit_synchronous` / `n`. At `n = 1` a distributed
+  resolution's bounds **collapse to the strong local ones** — a runtime witness
+  of §3's collapse table. As `n` rises the bounds relax (eventual revocation,
+  quorum commit) while the verbs stay identical.
+- **The acceptance test** (`tests/fluid_reach_out.rs`,
+  `one_handle_resolves_local_and_distributed`): a single backing-agnostic app
+  function `run_app` invokes + attenuates + delegates BOTH a local kernel
+  object AND a real dregg cell through ONE router, ONE handle type. It asserts
+  the local leg mints a live child slot, the distributed leg's
+  `GrantCapability` turn COMMITS and the recipient cell actually holds the
+  narrowed cap, and that at `n = 1` the two resolutions' bounds are identical.
+  The fluid reach-out, proven runnable (`cd sel4/dregg-firmament &&
+  ./run-test.sh` — 10 tests green, the real executor in the loop).
+
 ### The fluid reach-out — first-class local, seamless to distributed
 
 The firmament's product promise (ember, 2026-06-13): a **local Robigalia install
@@ -375,6 +416,27 @@ virtio-mmio phys_addr/DMA paddr setvars). A stripped TCP-echo / DHCP client PD
 over `sel4-shared-ring-buffer-smoltcp` is the minimal edge boot (§
 `sel4/dregg-pd/net/`).
 
+**The driver PD now PROBES a real virtio-net device on-device (M3 edge, the
+slot-alignment wall cleared).** `make run-net` (`sel4/net-driver-only.system`)
+boots the driver PD against a real QEMU `-device virtio-net-device` on the
+mmio bus. The wall was `InvalidDeviceType(0)` — an *empty* mmio slot — because
+the boot ran without the QEMU device flags; the mmio slot math was already
+right (`virtio_mmio` region `phys_addr=0xa003000` + the config `OFFSET=0xe00`
+lands on slot 31, where QEMU places a single virtio-mmio device). With the
+device present, the driver reads the `VirtIOHeader` and brings the NIC up;
+captured serial (`/tmp/sel4-net-driver-probe2.log`):
+
+```
+[net] virtio-mmio probe: version=Modern device_type=Network vendor=0x554d4551
+[net] virtio-net device UP — MAC [52, 54, 00, 12, 34, 56] — the firmament reached the wire
+```
+
+That is the firmament's edge touching the wire: `device_type=Network`, vendor
+`0x554d4551` ("QEMU"), the NIC up with its MAC. The remaining net wiring is the
+smoltcp **client** PD + the shared-ring assembly (a TCP echo over
+`sel4-shared-ring-buffer-smoltcp`), which turns "the NIC is up" into "a turn
+arrives over TCP" — the `n > 1` invocation path of the cap-gradation bridge.
+
 ---
 
 ## 7. The firmament status board
@@ -385,9 +447,9 @@ over `sel4-shared-ring-buffer-smoltcp` is the minimal edge boot (§
 | **executor-PD (heart)** | verified `execFullForestG` | ⛔ blocked — Lean ELF recompile + libuv excision + musl host (§6; exact plan banked) |
 | **verifier-PD STARK core (heart organ)** | real plonky3 STARK verify | ◐ no_std structural verify boots (M1); STARK-core port is mechanical std→core (§6) |
 | **persist-PD** | snapshot⊕overlay + root tooth | ◐ snapshot model lands in `persist/src/snapshot.rs`; PD = redb-over-block-cap (quarter) |
-| **net-PD (edge)** | virtio-net + smoltcp | ◐ driver cross-builds (proven); multi-PD assembly is the M3 wiring (§6) |
+| **net-PD (edge)** | virtio-net + smoltcp | ◐ driver PROBES a real virtio-net on-device — `device_type=Network`, NIC up (M3, `make run-net`); smoltcp client PD + ring assembly remains (§6) |
 | **app-PDs** | houyhnhnm apps | ◐ rbg DirectoryCell PD boots (M2); the cap contract (§5) is the firmament's enforcement target |
-| **cap fabric** | local↔distributed gradation | design (§3); becomes real when the net-PD edge + executor heart both boot |
+| **cap fabric** | local↔distributed gradation | ◐ **runnable bridge** in `sel4/dregg-firmament/`: one `(target, rights)` handle + router, real dregg attenuation (`granted ⊆ held`) at both ends, the `n = 1` collapse witnessed, 10 tests green incl. the real executor in the loop (§3) |
 | **checkpoint/restore** | seal/snapshot/unseal | design (§4) on real `snapshot.rs` + Lifecycle.lean; PD-checkpoint wiring is quarter+ |
 
 **The firmament has a heart and an edge** when *either* the executor-PD boots

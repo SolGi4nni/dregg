@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  M3 driver-only boot — the firmament's network edge, probing a REAL
+  virtio-net-device (docs/FIRMAMENT.md §3, §6). This is net.system with the
+  smoltcp client PD removed so the driver PD can be booted standalone to PROVE
+  it probes a real device: it maps the virtio-mmio slot QEMU places a single
+  `-device virtio-net-device` into (slot 31 of the qemu_virt_aarch64 mmio bus:
+  base 0xa000000 + 31*0x200 = 0xa003e00; the region phys_addr 0xa003000 + the
+  config OFFSET 0xe00 lands exactly there), reads the VirtIOHeader, and must
+  see DeviceType::Network rather than the InvalidDeviceType(0) of an empty slot.
+
+  Boot (Makefile `run-net`):
+    qemu-system-aarch64 -machine virt,virtualization=on ... \
+      -global virtio-mmio.force-legacy=false \
+      -netdev user,id=net0 -device virtio-net-device,netdev=net0,bus=virtio-mmio-bus.31
+
+  The driver's own ring-buffer DMA regions are kept; without a client PD it
+  brings the device up and acks the first IRQ — the edge's first real probe.
+-->
+<system>
+    <memory_region name="virtio_mmio" size="0x1000" phys_addr="0xa003000" />
+
+    <memory_region name="virtio_net_driver_dma" size="0x200_000" page_size="0x200_000" />
+    <memory_region name="virtio_net_client_dma" size="0x200_000" page_size="0x200_000" />
+
+    <memory_region name="virtio_net_rx_free" size="0x200_000" page_size="0x200_000"/>
+    <memory_region name="virtio_net_rx_used" size="0x200_000" page_size="0x200_000"/>
+    <memory_region name="virtio_net_tx_free" size="0x200_000" page_size="0x200_000"/>
+    <memory_region name="virtio_net_tx_used" size="0x200_000" page_size="0x200_000"/>
+
+    <protection_domain name="dregg_net_driver" priority="4" stack_size="0x10_000">
+        <program_image path="dregg-net-driver-pd.elf" />
+
+        <map mr="virtio_mmio" vaddr="0x6_000_000_000" perms="rw" cached="false" setvar_vaddr="virtio_net_mmio_vaddr" />
+
+        <map mr="virtio_net_driver_dma" vaddr="0x7_000_000_000" perms="rw" cached="true" setvar_vaddr="virtio_net_driver_dma_vaddr" />
+        <setvar symbol="virtio_net_driver_dma_paddr" region_paddr="virtio_net_driver_dma" />
+
+        <map mr="virtio_net_client_dma" vaddr="0x1_000_000_000" perms="rw" cached="true" setvar_vaddr="virtio_net_client_dma_vaddr" />
+
+        <map mr="virtio_net_rx_free" vaddr="0x2_000_000_000" perms="rw" cached="true" setvar_vaddr="virtio_net_rx_free" />
+        <map mr="virtio_net_rx_used" vaddr="0x2_001_000_000" perms="rw" cached="true" setvar_vaddr="virtio_net_rx_used" />
+        <map mr="virtio_net_tx_free" vaddr="0x2_002_000_000" perms="rw" cached="true" setvar_vaddr="virtio_net_tx_free" />
+        <map mr="virtio_net_tx_used" vaddr="0x2_003_000_000" perms="rw" cached="true" setvar_vaddr="virtio_net_tx_used" />
+
+        <irq irq="79" id="0" />
+    </protection_domain>
+</system>

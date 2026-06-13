@@ -17,7 +17,7 @@ use virtio_drivers::{
     },
 };
 
-use sel4_microkit::{memory_region_symbol, protection_domain, var};
+use sel4_microkit::{debug_println, memory_region_symbol, protection_domain, var};
 use sel4_microkit_driver_adapters::net::driver::HandlerImpl;
 use sel4_shared_memory::SharedMemoryRef;
 use sel4_shared_ring_buffer::{RingBuffers, roles::Use};
@@ -49,8 +49,25 @@ fn init() -> HandlerImpl<DeviceWrapper<HalImpl, MmioTransport<'static>>> {
         .unwrap();
         let transport =
             unsafe { MmioTransport::new(header, config::VIRTIO_NET_MMIO_SIZE) }.unwrap();
+        // The edge's first real probe (docs/FIRMAMENT.md §6, M3): we read the
+        // virtio-mmio header at the slot QEMU placed `-device
+        // virtio-net-device` into and confirm it is a NETWORK device — the
+        // wall here used to be InvalidDeviceType(0) (an empty slot).
+        debug_println!(
+            "[net] virtio-mmio probe: version={:?} device_type={:?} vendor={:#x}",
+            transport.version(),
+            transport.device_type(),
+            transport.vendor_id(),
+        );
         assert_eq!(transport.device_type(), DeviceType::Network);
-        VirtIONet::<HalImpl, MmioTransport, NET_QUEUE_SIZE>::new(transport, NET_BUFFER_LEN).unwrap()
+        let dev =
+            VirtIONet::<HalImpl, MmioTransport, NET_QUEUE_SIZE>::new(transport, NET_BUFFER_LEN)
+                .unwrap();
+        debug_println!(
+            "[net] virtio-net device UP — MAC {:02x?} — the firmament reached the wire",
+            dev.mac_address()
+        );
+        dev
     };
 
     let client_region = unsafe {
