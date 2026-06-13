@@ -1,23 +1,8 @@
-//! The shell's gpui views.
+//! The cockpit's shared gpui primitives — palette + small render helpers.
 //!
-//! Layout mirrors the web Starbridge shell (`site/src/starbridge/index.html`):
-//! a persistent left rail (identity · places · your cells · receipt stream ·
-//! node connection) and a main mount that swaps between places. Here the
-//! three core views are:
-//!
-//!   * [`cell_list::CellList`] — the rail's "your cells" + the cell browser.
-//!   * [`receipt_inspector::ReceiptInspector`] — the receipt stream + a
-//!     drill-in inspector for one receipt's proof/finality.
-//!   * [`turn_composer::TurnComposer`] — build a turn (actions + effects)
-//!     and drive it through the node (the "drive turns through the organs"
-//!     surface, scaffolded to the thin-client effect set).
-//!
-//! Each is a real gpui component (`Render`) holding a real data model from
-//! [`crate::model`], bound to a [`crate::client::NodeClient`].
-
-pub mod cell_list;
-pub mod receipt_inspector;
-pub mod turn_composer;
+//! The comprehensive master-interface views live in [`crate::cockpit`]
+//! (rendering the EMBEDDED `World` directly). This module keeps only the
+//! palette/pill/section-title primitives the cockpit consumes.
 
 use gpui::{div, Hsla, IntoElement, ParentElement, Styled};
 
@@ -60,8 +45,9 @@ pub mod theme {
     }
 }
 
-/// A small section header used across the rail and panels.
-pub fn section_title(text: impl Into<String>) -> impl IntoElement {
+/// A small section header used across the rail and panels. Returns a `Div` so
+/// callers can keep styling it (`.mb_1()` etc.).
+pub fn section_title(text: impl Into<String>) -> gpui::Div {
     div()
         .text_xs()
         .text_color(theme::muted())

@@ -1,247 +1,216 @@
-# Starbridge v2 — the native (gpui) dregg shell
+# Starbridge v2 — the dregg master interface
 
-*Design + scaffold doc. Status: scaffolded crate + this design. Cites the tree
-as of 2026-06-13. The honest scope split (what runs vs what is a full app's
-work) is §6.*
+Starbridge v2 is dregg's master interface: a fully native, live, visual
+environment for a verified object-capability operating system. It embeds the
+real verified executor and runs a live local dregg world in-process — a single
+image you can see, inspect, and drive, where every action is a verified turn.
 
-## 0. What this is
+This document explains it from first principles, present tense.
 
-Starbridge v2 is a **native ocap shell** for dregg, built on **gpui** (Zed's
-GPU-accelerated Rust UI framework). It is the desktop sibling of the web
-Starbridge shell (`site/src/starbridge/index.html`): the one persistent frame
-you boot into that shows who you are, your cells, the node's receipt stream,
-and lets you drive turns. The native version exists because the end state is an
-**seL4 component** — a dregg shell that renders to a framebuffer capability and
-talks to the node protection domain over an seL4 channel (`docs/SEL4-EMBEDDING.md`).
-A browser shell cannot be that; a `no_std`-trending native Rust GUI can.
+## The thesis: surpassing Smalltalk
 
-It is a **client**. It speaks the dregg node's HTTP+SSE wire contract
-(`node/src/api.rs` routes, `node/src/events.rs` SSE stream). It does **not**
-link the executor or the verified Lean archive (`libdregg_lean.a`). The
-verified semantics run in the node it connects to; the shell renders that
-node's state and composes turns to send it.
+Smalltalk gave us the *live image*: one persistent world where everything is a
+live, inspectable, modifiable object, and the tools are themselves objects in
+that same world. Starbridge v2 keeps that — every cell, capability, receipt, and
+the image itself is a live `Inspectable` object behind one uniform interface —
+and surpasses it on the four axes Smalltalk's image lacked, each made visible
+and live in the cockpit:
 
-## 1. The crate is a STANDALONE workspace
+1. **ocap security.** Objects are capability-secured cells; there is no ambient
+   authority. Every action is gated by a held capability and by the target
+   cell's permissions. The cockpit shows the capability graph as first-class,
+   and an over-grant is *rejected by the real executor* — the no-amplification
+   guarantee fires in front of you.
+2. **formal verification.** Messages are verified turns carrying guarantees
+   (value conservation, no capability amplification, receipt-chain integrity).
+   The same verified executor that the federation runs as its authoritative
+   state producer runs *here, in this process*. A turn that would violate a
+   guarantee does not commit.
+3. **provenance.** Every committed turn leaves a `TurnReceipt`. The receipt chain
+   is a first-class, navigable causal history — the local blocklace — that you
+   browse and time-travel through.
+4. **distribution.** The image is a cryptographically-committed verified state
+   (`state_root()`), one of a federation of sovereign images. The cockpit
+   presents the image's commitment and (as the federation lane lands) its place
+   among peers.
 
-`starbridge-v2/Cargo.toml` declares its own `[workspace]` and is **excluded**
-from the main `/Cargo.toml` members — the same posture as `wasm/` and
-`sdk-py/`, and for the same reason. gpui drags a very heavy native dependency
-tree: a windowing/event-loop layer, GPU backends (Metal on macOS, Vulkan/wgpu
-elsewhere), font shaping (cosmic-text/harfbuzz), `objc`/`core-foundation` on
-macOS. Pulling that into the main workspace would:
+The bumper-sticker: *a live image where every object is capability-secured,
+every message is a verified turn, every turn leaves a receipt, and the whole
+image is a cryptographic commitment among sovereigns.*
 
-- balloon every `cargo check --workspace` (the cost the `wasm` eviction commit
-  `55318b702` and the root Cargo.toml comments are explicitly fighting), and
-- risk feature-unification onto the Lean-linked crates — exactly the footgun
-  the root Cargo.toml documents around `no-lean-link`.
+## Two builds, one codebase
 
-So Starbridge v2 builds via its own manifest path, never feature-unifying onto
-the protocol crates:
+Starbridge v2 mirrors the `verifier/` `no-lean-link` pattern: one codebase, two
+builds selected by feature.
 
-```
-cargo build  --manifest-path starbridge-v2/Cargo.toml
-cargo run    --manifest-path starbridge-v2/Cargo.toml -- http://127.0.0.1:8080
-```
-
-gpui is pinned to a zed commit (`rev = fca2ccd…`) because the crate is
-published from the zed monorepo, not crates.io.
-
-### Build state (honest)
-
-**All Rust compiles** — our crate AND the entire gpui dependency tree (62
-crates: gpui, font-kit, the `objc2`/`block2`/AppKit stack, reqwest, etc.). The
-build stops at exactly one non-Rust step: `gpui_macos`'s `build.rs` compiles
-Metal shaders (`shaders.metal`) and the host's **Metal Toolchain component is
-not installed** (`cannot execute tool 'metal' … use: xcodebuild
--downloadComponent MetalToolchain`). On this machine that download is itself
-blocked by a damaged Xcode `DVTDownloads` framework — a pre-existing host
-provisioning problem, not a defect in this crate. Zero errors are attributed to
-`starbridge-v2`. A runnable hello-window is one `xcodebuild -downloadComponent
-MetalToolchain` (on a healthy Xcode) away.
-
-Getting the gpui-from-git tree to compile under this repo required three
-mechanical fixes, all documented at their site:
-
-1. **`[patch.crates-io]` for `async-process` / `async-task`** (Cargo.toml) —
-   gpui's `util` crate calls `smol::process::Child::adopt_raw_pid`, which exists
-   only in zed's forked `async-process`. Consumers of gpui-from-git must
-   replicate the relevant subset of zed's root `[patch]` table.
-2. **Vendored `pathfinder_simd`** (`vendor/pathfinder_simd/`) — the upstream
-   0.5.6 sets a `pf_rustc_nightly` cfg that selects an aarch64 SIMD module using
-   portable-SIMD intrinsics that churn across nightlies. The vendor's `build.rs`
-   simply doesn't set that cfg, forcing the portable scalar path (a perf trade,
-   correct either way).
-3. **A local `rust-toolchain.toml` pinning the rolling `nightly`** — gpui at
-   this rev uses `std::hint::cold_path` (stabilized in nightly after the repo's
-   `nightly-2026-01-01` pin). This crate is a standalone workspace, so the
-   override touches no protocol crate.
-
-### Why mirror the wire types instead of linking `dregg-sdk`
-
-`dregg-sdk` on native links `dregg-lean-ffi` **unconditionally** (it is THE
-SWAP producer path; see `sdk/Cargo.toml` lines 18–24). Linking the SDK would
-chain the gpui build to the Lean archive build — a heavy, slow coupling that a
-*rendering shell* does not need. The shell's contract with the node is a
-**protocol** (JSON over HTTP/SSE), not a code dependency. So `src/model/`
-hand-mirrors the node's response structs (`api::StatusResponse`,
-`CellListEntry`, `CellDetailResponse`, `ReceiptInfo`, `FederationInfo`,
-`SubmitTurnRequest`/`TurnActionSpec`/`TurnEffectSpec`, and `events::ReceiptEvent`).
-When local-custody turn *signing* lands (build-out lane), the SDK's
-turn-builder surface can be linked behind a feature — but the read/inspect/SSE
-shell never needs it.
-
-> Single-sourcing the wire contract (a shared `dregg-wire-types` crate the node
-> and this shell both depend on) is the right eventual move; the hand-mirror is
-> the honest scaffold until then. The invariant is noted in `src/model/mod.rs`.
-
-## 2. Architecture — a native ocap shell
+### `native-full` (default) — the master interface
 
 ```
-┌──────────────────────────────────────────────────────────────────────┐
-│ Starbridge (root view, src/main.rs)                                    │
-│ ┌──────────────┐  ┌──────────────────────┐  ┌───────────────────────┐ │
-│ │ rail header  │  │ ReceiptInspector     │  │ TurnComposer          │ │
-│ │  node status │  │  receipt stream (SSE)│  │  build actions/effects│ │
-│ │  lean/rust   │  │  + per-receipt proof │  │  → SubmitTurnRequest  │ │
-│ │  producer    │  │    /finality inspect │  │  → node.submit_turn() │ │
-│ │ ┌──────────┐ │  └──────────────────────┘  └───────────────────────┘ │
-│ │ │ CellList │ │                                                       │
-│ │ │ your     │ │           NodeClient (src/client.rs)                  │
-│ │ │ cells    │ │      Mock (fixtures)  |  Http { base_url }            │
-│ │ └──────────┘ │              │                  │                     │
-│ └──────────────┘              ▼                  ▼                     │
-│                       in-process data     a real dregg node           │
-│                                            (api.rs + SSE)              │
-└──────────────────────────────────────────────────────────────────────┘
+cargo build --manifest-path starbridge-v2/Cargo.toml
 ```
 
-The layout mirrors the web shell: a **left rail** (identity/node + your cells)
-and a **main split** (the receipt inspector + the turn composer). Each core
-view is a real gpui `Render` component holding a real data model from
-`src/model/`, bound to a `NodeClient`. The views never know whether they are
-backed by the mock or a live node — both return the same model types.
+The headline build. It **embeds the real verified executor** and runs a live
+local dregg world natively:
 
-### The three core views
+- The engine is `dregg_turn::executor::TurnExecutor` over a `dregg_cell::Ledger`
+  — the exact pair the SDK's `DreggEngine` (`sdk/src/embed.rs`) wraps and that
+  THE SWAP makes the federation's authoritative producer. Turns run *locally,
+  in-process*; nothing is phoned to a remote node.
+- This links the verified Lean archive (`libdregg_lean.a`, multi-MB). That is
+  completely fine for a native desktop application — it is the very thing the
+  `no-lean-link` crates exist to *avoid*, and exactly what the master interface
+  *wants*.
+- It renders with gpui (Zed's GPU UI framework). The whole cockpit is the
+  visual layer over the embedded world.
 
-| View | File | Mirrors | Drives |
-|---|---|---|---|
-| **CellList** | `src/views/cell_list.rs` | web rail "your cells" + `/api/cells` | the cell browser; signed balances (issuer wells carry −supply), nonce, cap count, program/delegate badges |
-| **ReceiptInspector** | `src/views/receipt_inspector.rs` | web "receipt stream" (SSE) + workbench receipt inspector | the receipt list + per-receipt proof/finality/witness drill-in |
-| **TurnComposer** | `src/views/turn_composer.rs` | the "drive turns through the organs" surface | builds a `SubmitTurnRequest` (thin-client effects) + submits via `node.submit_turn()` |
+### `sel4-thin` — the eventual seL4 component
 
-### The node client
+```
+cargo build --manifest-path starbridge-v2/Cargo.toml --no-default-features --features sel4-thin
+```
 
-`NodeClient` (`src/client.rs`) is one enum with two backends:
+The Lean-free, gpui-free thin path for the eventual seL4 protection-domain
+component (see `docs/SEL4-EMBEDDING.md`, owned by a separate lane). It compiles
+*without* the embedded executor and *without* the heavy native UI stack: it
+speaks the node's HTTP+SSE wire contract (`src/client.rs` + `src/model.rs`)
+against a remote node. The built binary links **zero** Lean symbols and **zero**
+Metal/gpui — a clean reads-bytes → verify shape.
 
-- **`Mock`** — in-process fixtures (`client::mock`) so the shell renders a
-  populated window with no running node. This is the scaffold's default.
-- **`Http { base_url }`** — blocking JSON reads against the real routes
-  (`/status`, `/api/cells`, `/api/receipts`, `/api/federations`,
-  `/api/blocklace/blocks`) and a `POST /turn/submit`.
+The `NodeClient::{Mock,Http}` wire surface is the seed of a native
+remote-federation panel too (a designed-pending lane): the master interface can
+*additionally* connect to remote nodes/federations, but its headline capability
+is the embedded local world.
 
-Both yield `src/model` types, so wiring a live node is "pass a URL", not a
-view rewrite.
+## Architecture
 
-## 3. Driving turns through the organs
+The headless heart is gpui-free and `cargo test`-able; the visual layer renders
+it. The split:
 
-The brief calls for driving turns "through the organs (trustline / channel /
-mailbox)". The scaffold lands the **thin-client effect set** — the
-JSON-friendly `TurnEffectSpec` the node already accepts on `/turn/submit`
-(`SetField` / `Transfer` / `EmitEvent` / `IncrementNonce`). This is enough to
-prove the composition → wire → submit loop end to end against a node.
+```
+starbridge_v2 (lib, feature embedded-executor)
+├── world      — World: the embedded executor + live ledger + provenance log.
+│               THE COMMIT PATH (`World::commit_turn`) runs the REAL executor.
+├── dynamics   — Dynamics: an append-only observation stream of state
+│               transitions (cell born, cap granted, turn committed, balance
+│               flowed) the visual layer renders. Decoupled from gpui.
+└── reflect    — the reflective object model: cell / receipt / image projected
+                into one uniform `Inspectable` (typed Field tree) every view
+                consumes. Reads the live protocol types — never a parallel wire
+                schema — so it cannot drift from what the executor holds.
 
-The richer organ flows (trustline open/extend/settle, channel epoch lifts,
-mailbox crank) ride the node's **typed signed-envelope** path (`/turns/submit`)
-and the SDK's organ builders (`sdk/src/{trustline,channels,mailbox}.rs`). The
-composer is structured so an organ flow is "another composer tab + another
-request builder", not a rewrite — but each needs local-custody signing (§5) to
-author the envelope, which is the gating build-out lane.
+starbridge-v2 (bin)
+├── cockpit    — the gpui cockpit (feature gpui-ui): the comprehensive panels
+│               (cell world · inspector · blocklace · composer · dynamics),
+│               rendering `World` directly.
+├── views      — shared gpui palette/primitives.
+├── client     — the wire-contract NodeClient (feature sel4-thin).
+└── model      — the node's JSON response types, mirrored (feature sel4-thin).
+```
 
-## 4. The receipt + proof inspector
+### The commit path is the whole story
 
-The ReceiptInspector renders each committed turn's summary (chain index, turn
-hash, finality, effect kinds, touched cells) and a drill-in face showing the
-proof state: `has_proof`, finality, witness count. This is the honest surface
-of the SWAP — a node running the legacy Rust producer is *visibly* not running
-the verified semantics (the rail header shows `lean producer` green vs `rust
-producer` amber), and a receipt without an attached STARK shows `pending` not
-`proven`. The full proof artifact view (rendering a `FullTurnProof` /
-`AttestedHistory` light-client verdict) is a build-out lane that links the
-`dregg-lightclient` verifier.
+Every state transition flows through `World::commit_turn(turn)`, which:
 
-## 5. The seL4-component end state
+1. threads the per-agent receipt-chain head the executor enforces,
+2. runs `TurnExecutor::execute(&turn, &mut ledger)` — the real verified
+   semantics,
+3. on commit: records the new chain head, advances the height, appends the
+   `TurnReceipt` to the provenance log, and emits the dynamics events for the
+   transition,
+4. on rejection: surfaces the executor's reason (this is a *feature* — it is the
+   ocap/verification guarantees firing).
 
-The far target (per `docs/SEL4-EMBEDDING.md`): Starbridge v2 is an seL4
-**protection domain** that renders to a **framebuffer capability** and talks to
-the node PD over an **seL4 channel** instead of HTTP. The capability discipline
-is the point — the shell PD holds only the caps it needs (the framebuffer, the
-node channel, input), and cannot touch the node's storage or executor.
+A rejection is not an error path to hide; it is the cockpit's most important
+teaching moment. The "⚠ over-grant" verb exists precisely to make you watch the
+no-amplification guarantee reject an illegitimate capability grant.
 
-What that requires of this crate:
+## The window (the Metal path)
 
-1. **A framebuffer backend for gpui.** gpui abstracts its platform behind a
-   renderer + windowing layer (Metal/wgpu today). An seL4 deployment needs a
-   gpui backend that targets a raw framebuffer cap (a software or Vulkan-on-seL4
-   rasterizer) and an input source over the seL4 channel rather than a desktop
-   event loop. This is the hard, specialist line item — analogous to (and
-   independent of) the Lean-runtime port that `SEL4-EMBEDDING.md` §2 names as
-   the node-side blocker.
-2. **A channel transport for `NodeClient`.** The `Http` backend becomes a
-   `Channel { ipc cap }` backend speaking the same request/response contract
-   over an seL4 endpoint instead of TCP. Because `NodeClient` is already a
-   backend enum returning model types, this is an additive variant.
+gpui renders through Metal on macOS. By default its `gpui_macos` backend
+compiles its shaders **at build time** with `xcrun metal` — which needs the
+offline *Metal Toolchain* component. On a host whose Metal Toolchain download is
+blocked or damaged (`xcodebuild -downloadComponent MetalToolchain` failing on a
+broken `DVTDownloads.framework`), that build step fails and no window can open.
 
-Neither is in the scaffold; both are named lanes below.
+Starbridge v2 sidesteps this entirely by enabling gpui's **`runtime_shaders`**
+feature (`gpui_platform/runtime_shaders`, wired through this crate's `gpui-ui`
+feature). With it, the backend ships the `.metal` *source* and compiles it **at
+runtime** via the system Metal framework (`MTLDevice::newLibraryWithSource`) —
+no offline toolchain involved. This is the difference between a window that
+opens and a build that fails, and it is load-bearing on exactly the kind of host
+the prior scaffold stalled on. The window opens; the embedded `Metal.framework`
+device is live; runtime shader compilation succeeds.
 
-## 6. Honest scope — scaffolded vs a full app's work
+A `--headless` flag runs the embedded world's self-check (cells, provenance
+chain, dynamics) with no window — CI-friendly, and the graceful fallback on a
+host with no display.
 
-**Scaffolded (real gpui, real dregg wire types, builds + runs):**
+## Comprehensive coverage — all data & all actions
 
-- A standalone gpui crate that opens a window and lays out the shell (rail +
-  main split) mirroring the web Starbridge model.
-- Three real `Render` views (CellList, ReceiptInspector, TurnComposer) bound to
-  real wire-contract data models.
-- A `NodeClient` with a mock backend (populated fixtures) and an HTTP backend
-  wired to the real node routes.
-- A turn-composition → wire-request → submit loop over the thin-client effect
-  set.
-- Honest SWAP surfacing (lean vs rust producer; proven vs pending receipts).
+The master interface is, by design and increasingly by implementation, a cover
+over EVERY dregg datum and EVERY action. The coverage is an honest burn-down:
 
-**A full app's work (NOT in the scaffold — the build-out lanes):**
+### Data
 
-- **Live SSE receipt stream.** The inspector shows a *snapshot*
-  (`/api/receipts`); the live `/api/events/stream` push (driven on gpui's async
-  executor, feeding `cx.notify()`) is not wired. The mock/HTTP read methods are
-  blocking; live reads should move to `cx.spawn` + gpui's `BackgroundExecutor`.
-- **Local-custody turn signing.** The composer submits via the node operator's
-  cipherclerk (`/turn/submit`). Authoring *signed envelopes* (the `/turns/submit`
-  path, and every organ flow) needs the SDK's signing surface linked behind a
-  feature + a local keystore — the gating lane for the organ flows.
-- **The organ flows themselves** (trustline / channel / mailbox composer tabs).
-- **The full proof artifact view** (`FullTurnProof` / `AttestedHistory`
-  light-client verdict rendering, linking `dregg-lightclient`).
-- **Cell selection wiring across views** (select a cell in CellList → scope the
-  inspector + composer to it).
-- **Interaction** (buttons/inputs are rendered; gpui action handlers and text
-  input fields for editing the composed turn are not yet wired — the composer
-  edits via code today).
-- **The seL4 backends** (framebuffer renderer + channel transport, §5).
+| Datum | Status | Where |
+| --- | --- | --- |
+| cells (id/balance/nonce/caps/program/delegate/mode/lifecycle/epoch) | **live** | `reflect::reflect_cell` |
+| cell state fields (16 slots) | **live** | inspector `state[i]` rows |
+| capabilities + the ocap edges | **live** | `CapEdge` fields per cap |
+| receipts + the receipt chain (provenance) | **live** | `reflect::reflect_receipt`, blocklace panel |
+| the image commitment (`state_root`) | **live** | `reflect::reflect_image` |
+| the dynamics stream (transitions) | **live** | `dynamics`, the feed |
+| capability delegation *graph* (multi-hop layout) | designed-pending | edges present per-cell; a whole-graph view is next |
+| full delegation epochs / revocation channels | partial | epoch shown; channel view pending |
+| organs (trustline/channel/mailbox/court) state | designed-pending | mirrored types catalogued; panels pending |
+| intents / factories / obligations / nullifiers | designed-pending | node API mapped; panels pending |
+| proofs + verification status (STARK) | designed-pending | executor runs full semantics; proof-attach view pending |
+| profiles / identities, producer lean-vs-rust | partial (thin path) | surfaced in the thin client; native badge pending |
+| federations + sync state | designed-pending | `state_root` is the local half; peer view pending |
 
-## 7. Build-out lanes (HORIZONLOG)
+### Actions (verbs)
 
-1. **Live node connection** — move reads to gpui's async executor; wire the
-   `/api/events/stream` SSE push into the ReceiptInspector with `cx.notify()`.
-2. **Local-custody signing** — link the SDK turn-builder behind a feature + a
-   keystore; author signed envelopes for `/turns/submit`.
-3. **Organ flows** — trustline / channel / mailbox composer tabs on the typed
-   signed-envelope path (gated on lane 2).
-4. **Proof inspector** — render `FullTurnProof` / light-client verdicts
-   (`dregg-lightclient`).
-5. **Interaction** — gpui action handlers, text inputs for editing the
-   composed turn, cell-selection scoping across views, ⌘K command palette
-   (mirroring the web shell).
-6. **seL4 framebuffer backend** — a gpui renderer targeting a framebuffer cap.
-7. **seL4 channel transport** — a `NodeClient::Channel` backend over an seL4
-   endpoint (additive variant).
-8. **Single-source the wire types** — replace `src/model/` hand-mirrors with a
-   shared `dregg-wire-types` crate depended on by both node and shell.
+| Verb | Status | Where |
+| --- | --- | --- |
+| transfer | **live** (runs the real executor) | `world::transfer`, composer |
+| grant capability | **live** | `world::grant_capability`, composer |
+| over-grant (rejected) | **live** (guarantee fires) | composer "⚠ over-grant" |
+| createCell (conservation-enforced) | **live** | `world::create_cell` |
+| set state field | **live** | `world::set_field` |
+| emit event | **live** | `world::emit_event` |
+| revoke capability | wired (helper) | `world::revoke_capability` |
+| seal / unseal / destroy / burn | designed-pending | `Effect` variants reachable via `World::turn` |
+| factory-birth | designed-pending | `Effect::CreateCellFromFactory` path |
+| the organ operations (open/draw/repay; create/join/remove; send/drain; evidence) | designed-pending | SDK organ surfaces catalogued |
+| compose+sign+submit (multi-action call forests) | partial | single-action turns live; multi-action composer next |
+| connect to federations | designed-pending | `NodeClient::Http` exists; native panel pending |
+
+The "live" rows all run through the embedded verified executor with real
+receipts; the "designed-pending" rows are reachable through the same
+`World::turn` / `commit_turn` path (every `Effect` variant is constructible) and
+are a UI/affordance burn-down, not a semantics gap.
+
+## Tests
+
+The headless heart is fully `cargo test`-able under just `embedded-executor`
+(no gpui, no window):
+
+```
+cargo test --manifest-path starbridge-v2/Cargo.toml --no-default-features --features embedded-executor --lib
+```
+
+16 tests cover: transfer commits + conserves; **overspend rejected**; **over-grant
+rejected** (no-amplification); legitimate grant grows the ocap graph; createCell
+grows the ledger under conservation; setField writes state; emit-event commits;
+the receipt chain links across turns; the image commitment moves with history;
+the dynamics stream observes transitions; the reflective model projects cells,
+receipts, and the image; and the demo world boots with real provenance.
+
+## Status
+
+GREEN on the thesis "the master interface is real and growing": the embedded
+verified executor runs a live local world, the four axes are all live in the
+engine, the headless heart is tested green, both builds compile, the
+`sel4-thin` binary is confirmed Lean-free + Metal-free, and **the gpui window
+opens** (runtime shaders defeat the missing Metal Toolchain). The breadth of
+"comprehensive for ALL data & actions" is the active burn-down above.

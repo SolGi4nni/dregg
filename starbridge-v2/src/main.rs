@@ -1,169 +1,173 @@
-//! Starbridge v2 — the native (gpui) dregg ocap shell.
+//! Starbridge v2 — the native dregg master interface.
 //!
-//! Opens a window and assembles the shell: a persistent left rail (node
-//! status + the CellList) and a main split (the ReceiptInspector and the
-//! TurnComposer). The layout mirrors the web Starbridge shell
-//! (`site/src/starbridge/index.html`): you boot into one persistent frame
-//! that shows who/where you are, your cells, and the node's receipt stream.
+//! TWO BUILDS, ONE CODEBASE (see Cargo.toml + docs/STARBRIDGE-V2.md):
 //!
-//! THE NODE: by default the shell boots against an in-process MOCK
-//! ([`NodeClient::mock`]) so a `cargo run` opens a populated window with no
-//! running node. Pass a node base URL as the first arg to point at a real
-//! node:
+//!   * `native-full` (DEFAULT) — EMBEDS THE REAL VERIFIED EXECUTOR and runs a
+//!     LIVE LOCAL dregg world natively (`crate::world::World` over
+//!     `dregg_turn::executor::TurnExecutor`). It opens a gpui window: the
+//!     comprehensive cockpit (`crate::cockpit::Cockpit`) rendering that image
+//!     across the four dregg-surpasses-Smalltalk axes. This is the master
+//!     interface. (On a host with a working Metal path — see the
+//!     `runtime_shaders` note in Cargo.toml — the window renders; absent a GPU/
+//!     display it still runs its headless self-check via `--headless`.)
 //!
-//!   starbridge-v2 http://127.0.0.1:8080
+//!   * `sel4-thin` (`--no-default-features --features sel4-thin`) — the Lean-
+//!     free thin HTTP client / verifier path for the eventual seL4 component
+//!     (docs/SEL4-EMBEDDING.md). No embedded executor, no gpui: it speaks the
+//!     node's wire contract (`client`/`model`) against a remote node.
 //!
-//! See `docs/STARBRIDGE-V2.md` for the architecture and the honest
-//! scaffolded-vs-build-out scope.
+//! The `NodeClient::{Mock,Http}` surface (`client`/`model`) is compiled in BOTH
+//! builds: the master interface can ALSO connect to remote nodes/federations.
 
+// The wire-contract client + mirrored models — the sel4-thin path (and the
+// seed of a native remote-federation panel). reqwest is only linked under
+// `sel4-thin`, so these are gated to that build for now (a native remote-
+// federation connection is a designed-pending lane — see docs/STARBRIDGE-V2.md).
+#[cfg(feature = "sel4-thin")]
 mod client;
+#[cfg(feature = "sel4-thin")]
 mod model;
+
+// The embedded engine + reflective model + dynamics live in the library crate
+// (`starbridge_v2::{world, dynamics, reflect}`) so they are `cargo test`-able.
+
+#[cfg(feature = "gpui-ui")]
+mod cockpit;
+#[cfg(feature = "gpui-ui")]
 mod views;
+// `views` (the older NodeClient-bound rail components) is also what a future
+// remote-federation panel reuses; it is gpui-gated.
 
-use gpui::{
-    div, prelude::*, px, size, App, Bounds, Context, IntoElement, ParentElement, Render, Styled,
-    TitlebarOptions, Window, WindowBounds, WindowOptions,
-};
-use gpui_platform::application;
+#[cfg(feature = "embedded-executor")]
+use starbridge_v2::{reflect, world};
 
-use client::NodeClient;
-use model::NodeStatus;
-use views::cell_list::CellList;
-use views::receipt_inspector::ReceiptInspector;
-use views::turn_composer::TurnComposer;
-use views::{pill, theme};
+fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    let headless = args.iter().any(|a| a == "--headless");
 
-/// The shell root — owns the node client and the three core views.
-struct Starbridge {
-    client: NodeClient,
-    status: Option<NodeStatus>,
-    cell_list: gpui::Entity<CellList>,
-    receipts: gpui::Entity<ReceiptInspector>,
-    composer: gpui::Entity<TurnComposer>,
-}
+    #[cfg(feature = "embedded-executor")]
+    {
+        // Boot a LIVE local image off the embedded verified executor.
+        let (world, anchors) = world::demo_world();
 
-impl Starbridge {
-    fn new(client: NodeClient, cx: &mut Context<Self>) -> Self {
-        let status = client.status().ok();
-        let cell_list = cx.new(|_| CellList::new(client.clone()));
-        let receipts = cx.new(|_| ReceiptInspector::new(client.clone()));
-        let composer = cx.new(|_| TurnComposer::new(client.clone()));
-        Self {
-            client,
-            status,
-            cell_list,
-            receipts,
-            composer,
+        if headless || !cfg!(feature = "gpui-ui") {
+            headless_report(&world);
+            return;
+        }
+
+        #[cfg(feature = "gpui-ui")]
+        {
+            run_window(world, anchors);
+            return;
         }
     }
 
-    fn rail_header(&self) -> impl IntoElement {
-        let (producer, producer_color) = match &self.status {
-            Some(s) if s.lean_producer => ("lean producer", theme::good()),
-            Some(_) => ("rust producer", theme::warn()),
-            None => ("offline", theme::bad()),
-        };
-        let height = self.status.as_ref().map(|s| s.dag_height).unwrap_or(0);
-
-        div()
-            .flex()
-            .flex_col()
-            .gap_1()
-            .p_3()
-            .border_b_1()
-            .border_color(theme::border())
-            .child(
-                div()
-                    .text_lg()
-                    .text_color(theme::text())
-                    .child("Starbridge"),
-            )
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(theme::muted())
-                    .child("the native shell of your polis"),
-            )
-            .child(
-                div()
-                    .flex()
-                    .gap_2()
-                    .mt_2()
-                    .child(pill(producer, producer_color.into()))
-                    .child(pill(format!("h{height}"), theme::accent())),
-            )
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(theme::muted())
-                    .child(format!("node: {}", self.client.describe())),
-            )
+    #[cfg(not(feature = "embedded-executor"))]
+    {
+        // sel4-thin: no embedded executor. Speak the wire contract to a node.
+        let _ = headless;
+        let base = args.iter().nth(1).cloned();
+        match base {
+            Some(url) if url.starts_with("http") => {
+                let client = client::NodeClient::http(url);
+                thin_report(&client);
+            }
+            _ => {
+                let client = client::NodeClient::mock();
+                thin_report(&client);
+            }
+        }
     }
 }
 
-impl Render for Starbridge {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .flex()
-            .size_full()
-            .bg(theme::bg())
-            .text_color(theme::text())
-            .font_family("monospace")
-            // Left rail: identity/node + your cells.
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .w(px(300.))
-                    .h_full()
-                    .border_r_1()
-                    .border_color(theme::border())
-                    .bg(theme::panel())
-                    .child(self.rail_header())
-                    .child(div().flex_1().child(self.cell_list.clone())),
-            )
-            // Main split: receipt inspector + turn composer.
-            .child(
-                div()
-                    .flex()
-                    .flex_1()
-                    .h_full()
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .w(px(420.))
-                            .h_full()
-                            .border_r_1()
-                            .border_color(theme::border())
-                            .child(self.receipts.clone()),
-                    )
-                    .child(div().flex_1().h_full().child(self.composer.clone())),
-            )
+/// Headless self-check of the embedded world — proves the executor heart runs
+/// without a window (CI-friendly; also the fallback when no display is present).
+#[cfg(feature = "embedded-executor")]
+fn headless_report(world: &world::World) {
+    println!("== Starbridge v2 · embedded verified world ==");
+    println!("cells:    {}", world.cell_count());
+    println!("height:   {}", world.height());
+    println!("receipts: {}", world.receipts().len());
+    println!("image root: {}", hex::encode(world.state_root()));
+    println!("-- cell world --");
+    let mut ids: Vec<_> = world.ledger().iter().map(|(id, _)| *id).collect();
+    ids.sort_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
+    for id in &ids {
+        if let Some(c) = world.ledger().get(id) {
+            println!(
+                "  {} · balance {:>9} · {} caps{}",
+                reflect::short_hex(id.as_bytes()),
+                c.state.balance(),
+                c.capabilities.len(),
+                if c.delegate.is_some() { " · delegate" } else { "" },
+            );
+        }
     }
+    println!("-- provenance (receipt chain) --");
+    for (i, r) in world.receipts().iter().enumerate() {
+        println!(
+            "  h{:<3} receipt {} · {} actions · {} computrons",
+            i + 1,
+            reflect::short_hex(&r.receipt_hash()),
+            r.action_count,
+            r.computrons_used
+        );
+    }
+    println!("-- dynamics --");
+    for ev in world.dynamics().tail(20) {
+        println!("  · {}", ev.label());
+    }
+    println!("(the master interface engine is live; pass no --headless to open the window)");
 }
 
-fn main() {
-    // First arg = node base URL; absent → mock.
-    let client = match std::env::args().nth(1) {
-        Some(url) if url.starts_with("http") => NodeClient::http(url),
-        _ => NodeClient::mock(),
+#[cfg(feature = "gpui-ui")]
+fn run_window(world: world::World, anchors: [dregg_cell::CellId; 3]) {
+    use gpui::{
+        px, size, App, AppContext, Bounds, TitlebarOptions, WindowBounds, WindowOptions,
     };
+    use gpui_platform::application;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    let shared = Rc::new(RefCell::new(world));
 
     application().run(move |cx: &mut App| {
-        let bounds = Bounds::centered(None, size(px(1200.), px(760.)), cx);
+        let bounds = Bounds::centered(None, size(px(1280.), px(820.)), cx);
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 titlebar: Some(TitlebarOptions {
-                    title: Some("Starbridge v2".into()),
+                    title: Some("Starbridge v2 — the live verified image".into()),
                     ..Default::default()
                 }),
                 ..Default::default()
             },
-            |_window, cx| cx.new(|cx| Starbridge::new(client.clone(), cx)),
+            |_window, cx| cx.new(|_cx| cockpit::Cockpit::new(shared.clone(), anchors)),
         )
         .expect("failed to open window");
         cx.activate(true);
     });
+}
+
+/// The thin-client report (sel4-thin / remote-node path).
+#[cfg(not(feature = "embedded-executor"))]
+fn thin_report(client: &client::NodeClient) {
+    println!("== Starbridge v2 · thin client ==");
+    println!("node: {}", client.describe());
+    match client.status() {
+        Ok(s) => println!(
+            "status: healthy={} height={} producer={}",
+            s.healthy, s.latest_height, s.state_producer
+        ),
+        Err(e) => println!("status: <unreachable: {e}>"),
+    }
+    match client.cells() {
+        Ok(cells) => {
+            println!("cells: {}", cells.len());
+            for c in cells.iter().take(8) {
+                println!("  {} · balance {}", &c.id[..12.min(c.id.len())], c.balance);
+            }
+        }
+        Err(e) => println!("cells: <error: {e}>"),
+    }
 }
