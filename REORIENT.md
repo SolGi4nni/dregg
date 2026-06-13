@@ -57,7 +57,7 @@ not durable across compaction; the log is the burn-down. Sweep it at every Conve
 - **Memory**: `~/.claude/projects/-Users-ember-dev-breadstuffs/memory/` —
   `project-refinement-epoch.md` is the live resume file; MEMORY.md is the index.
 
-## ⚑⚑⚑ CURRENT STATE (2026-06-13, head 3f188ef60 — Opus, +18 commits; THE CUTOVER IS DECIDED + RELAUNCHED)
+## ⚑⚑⚑ CURRENT STATE (2026-06-13, head db046eaf2 — Opus, +20 commits; CUTOVER C1+C2 LANDED · C3 WALLED+SCOPED · REORIENTING TO THE DESKTOP-MESHING DEVNET)
 
 A long brave-fanout continuation (~18 commits, persvati-gauntlet-green incl. the v8→v9 cap-crown ripple).
 Landed: the Gerwin-Klein critique (`docs/ASSURANCE-CRITIQUE.md`) + **Klein CRITICAL-2 (wire codec) CLOSED both
@@ -70,21 +70,29 @@ RESIDUE IS EMPTY** (all ~36 effects rotate); **the verified Lean executor RUNS a
 the seL4 root-task-with-std substrate); an n=3 consensus slice runs the ordering rule (frontier = gossip
 dissemination, `docs/STAGE5-CONSENSUS-DEVAC.md`); pg-dregg PgSink + starbridge cipherclerk/⌘K-palette.
 
-⚑⚑ THE CUTOVER (the live work, ember-DECIDED 2026-06-13). The residue is EMPTY; the blocker is ARCHITECTURE
-(confirmed at the type level): the rotated v9 commitment is a TURN-LAYER object (`rotation_witness::produce`
-needs full Cell + Ledger `cells_root` + receipt-log `iroot`), but the SDK `FullTurnWitness` holds only
-`circuit::CellState`. EMBER DECISIONS: (1) **MOVE effect-vm PROVING to the executor/node** (prove where the
-Ledger is; the SDK becomes a thin submit/verify client); (2) **PROVER-FREE rotated VERIFY** (split
-`verify_vm_descriptor2` from the prover so wasm/no-lean-link verifier builds compile it without p3-batch-stark).
-NB `EffectVmP3Proof` ≡ `Ir2BatchProof` (same `BatchProof` wire) — only the PI vector (38 vs 204) + the verify-AIR
-change. PLAN (the finisher's sequence): (a) rewrite executor `turn/src/executor/proof_verify.rs::
-verify_and_commit_proof` (+ `verify_sovereign_witness_stark`) to build `rotation_witness::produce` from its Ledger
-+ verify via `verify_vm_descriptor2` — the SELF-CONTAINED prereq; (b) move proving out of the SDK; (c) the
-prover-free verify split; (d) reroute ~70 call-sites + un-gate; (e) regen + VK epoch; (f) DELETE v1
-(`effect_vm_p3_full_air.rs`, `effect_vm/air.rs` `EffectVmAir`, `EffectVmP3Proof`, `generate_effect_vm_trace`,
-`CutoverFallback`). USE persvati for cargo (the local `./target` lock fights). The finisher is RELAUNCHED with
-these decisions; relaunch across passes to v1-deleted-green. (This directly advances Klein CRITICAL-1 — executor
-authority.)
+⚑⚑ THE CUTOVER — C1+C2 LANDED (`0db2e44e8`), C3 IS A REAL WALL (the recursion knot), and its closure lane is RUNNING.
+The rotated path is PROVEN end-to-end (all 36 effects rotate; residue EMPTY) and the sovereign matched pair is
+live-green with the MEASURED win (350.5 KiB → 120.4 KiB, −65.6%, verify 3.4×). **C1** = sovereign FLOW-A produce+verify
+rotated (`cipherclerk::prove_sovereign_turn_rotated` ↔ `executor::verify_and_commit_proof_rotated`, hand-AIR retired
+on that path; new default-on `recursion` feature, wasm `not(recursion)` keeps v1). **C2** = prover-free verify split
+(`verifier` feature on dregg-circuit compiles `verify_vm_descriptor2` without the prove_batch/DFT link). **C3 = THE
+HARD WALL** (NOT a disempowerment — confirmed by reading the code): the live full-turn proof and the recursion layer
+are ONE KNOT. `prove_full_turn` mints the `EffectVmP3Proof` that THREE LIVE recursive surfaces re-prove as the v1
+186-col statement — `circuit/src/ivc_turn_chain.rs:507` (lightclient WholeChainProof, in-circuit *uni*-STARK leaf-wrap),
+`circuit/src/joint_turn_aggregation.rs:67/94` (aggregation AIR on `EffectVmAir::new` directly), `turn/src/
+aggregate_bilateral_prover.rs` (node bilateral bundle). There is **no in-circuit verifier / leaf-wrap for the rotated
+MULTI-TABLE `BatchProof`** in the recursion fork, so the live proof can't rotate and v1 can't be deleted while they
+stand. THE DECISION (ember's): (a) build the batch-proof recursion wrap · (b) re-architect the whole-history recursion
+· (c) freeze a v1 leaf for the recursion layer while the live single-turn path rotates (double-mint). **DECISION-ENABLER
+RUNNING:** background workflow `wong1ps3v` (`c3-batchproof-recursion-scope`) — three readers (recursion-fork in-circuit
+primitives · what `verify_batch` actually checks · the three consumers' minimal needs) → a tractability verdict
+(bounded-build vs fork-surgery) + a/b/c recommendation. Read its result before making the call. (Advances Klein CRITICAL-1.)
+
+⚑ THE REORIENTATION (2026-06-13): the desktop-meshing devnet does NOT need v1 deleted to ship — it runs on the live
+path (v1 proofs are fine for a devnet) and flips to rotated the instant the knot releases. So: point attention at the
+devnet (firmament `Target::Surface` + starbridge-v2 + the seL4 step-4 substrate, lane `ae3d052e` running), and let the
+C3 scope verdict decide whether v1 dies BEFORE or AFTER first deploy. Only build the (c) double-mint if we want
+rotated-live proofs before the (a) wrap lands. pg-dregg is now pg18-native (`db046eaf2`).
 
 DONE-BUT-DEFERRED: pg-dregg LIVE pg17 confirm-run (code green, blocked on the local lock); the warnings-import
 sweep (protocol-tests/tests/teasting unused imports); the cap-crown `EmitCapRoot` doc note + the Phase-D 4-ary-leg
