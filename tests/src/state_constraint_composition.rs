@@ -12,23 +12,18 @@
 //! require pieces of the caveat-correctness lane to land carry an
 //! `#[ignore = "..."]` with unblock label.
 
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
 
 use dregg_cell::predicate::{
-    PredicateInput, WitnessedPredicate, WitnessedPredicateError, WitnessedPredicateKind,
-    WitnessedPredicateRegistry, WitnessedPredicateVerifier,
-};
-use dregg_cell::program::{
-    SimpleStateConstraint, TransitionMeta, WitnessBlobView, WitnessBundle, WitnessKindTag,
+    PredicateInput, WitnessedPredicate, WitnessedPredicateError, WitnessedPredicateKind, WitnessedPredicateVerifier,
 };
 use dregg_cell::{
-    AuthRequired, Cell, CellId, CellProgram, CellState, EvalContext, InputRef, Ledger, Permissions,
-    ProgramError, StateConstraint, field_from_u64,
+    AuthRequired, Cell, CellId, CellProgram, CellState, Permissions, field_from_u64,
 };
 use dregg_turn::action::{
     Action, Authorization, CommitmentMode, DelegationMode, WitnessBlob, symbol,
 };
-use dregg_turn::{CallForest, ComputronCosts, Effect, Turn, TurnBuilder, TurnExecutor, TurnResult};
+use dregg_turn::{CallForest, Effect, Turn};
 
 fn state_with(field_values: &[(usize, u64)]) -> CellState {
     let mut s = CellState::default();

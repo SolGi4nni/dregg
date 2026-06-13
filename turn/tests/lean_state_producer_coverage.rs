@@ -350,9 +350,16 @@ fn revoke_of_non_delegated_child_rejected_by_rust_surfaced_not_replayed() {
     // verified revoke guard is `True` (revocation is unconditional in the kernel). The replay's
     // OWN edge gate (`lean_apply::apply_state_ops`) mirrors the Rust pre-state check, so NO field
     // moves on the reconstituted side either — no fabricated epoch bump, no cleared snapshot; the
-    // reconstituted ledger equals the Rust rollback (roots agree). If the commit bits diverge
-    // (Lean committed, Rust rolled back), the producer path surfaces it as a CoveredDivergence
-    // and KEEPS the Rust state — surfaced loudly, never silently committed.
+    // reconstituted ledger equals the pre-state (roots agree on the STATE).
+    //
+    // THE AUTHORITY INVERSION (Stage 0): on this covered turn the VERIFIED Lean verdict is
+    // AUTHORITATIVE. If the verified commit bit DIVERGES from Rust (Lean's unconditional revoke
+    // commits where Rust rejected), the producer path surfaces it as `LeanAuthoritative
+    // { rust_agreed: false }` — the LEAN verdict is committed (Rust does NOT win). Because the
+    // replay performed no field mutation, the authoritative post-state still equals the pre-state,
+    // so the committed root is the pre-state root either way — but the COMMIT BIT and the surfaced
+    // finding are now driven by Lean, not Rust. (This is exactly the inversion's tooth: a covered
+    // disagreement resolves to Lean, never to the buggy Rust path.)
     use dregg_turn::lean_apply::{ProducerOutcome, produce_via_lean};
 
     let mut a = make_open_cell(1, 100);
@@ -364,6 +371,7 @@ fn revoke_of_non_delegated_child_rejected_by_rust_surfaced_not_replayed() {
     let mut pre = Ledger::new();
     pre.insert_cell(a).unwrap();
     pre.insert_cell(b).unwrap();
+    let pre_root = pre.root();
 
     let turn = single_effect_turn(a_id, a_id, 0, Effect::RevokeDelegation { child: b_id });
 
@@ -376,7 +384,7 @@ fn revoke_of_non_delegated_child_rejected_by_rust_surfaced_not_replayed() {
 
     // The reconstituted side never fabricates the mutation, whatever the verified commit bit says.
     let host = ShadowHostCtx::diag();
-    let (mut lean_ledger, _lean_committed) =
+    let (mut lean_ledger, lean_committed) =
         execute_via_lean(&turn, &pre, &host).expect("producer path must run");
     assert_eq!(
         lean_ledger.get(&a_id).unwrap().state.delegation_epoch(),
@@ -391,37 +399,45 @@ fn revoke_of_non_delegated_child_rejected_by_rust_surfaced_not_replayed() {
     ledgers_agree(&mut rust_ledger, &mut lean_ledger, &[a_id, b_id])
         .expect("a rejected revoke leaves both ledgers at the (rolled-back) pre-state");
 
-    // Producer mode: whatever the verified commit bit, the COMMITTED ledger must be the Rust
-    // (rolled-back) state, and a commit-bit divergence must surface as CoveredDivergence.
+    // Producer mode (THE AUTHORITY INVERSION): the COMMITTED ledger is the AUTHORITATIVE (Lean)
+    // post-state. For this turn the replay mutated nothing, so the authoritative state == pre-state
+    // regardless of the commit bit — the committed root must be the pre-state root, and the OUTCOME
+    // is `LeanAuthoritative` (never the removed Rust-wins `CoveredDivergence`).
     let executor2 = TurnExecutor::new(ComputronCosts::zero());
     let mut ledger = pre.clone();
     let (result, outcome) = produce_via_lean(&executor2, &turn, &mut ledger);
-    assert!(
-        !result.is_committed(),
-        "producer-mode result must match the Rust rejection"
-    );
     assert_eq!(
         ledger.root(),
-        rust_ledger.root(),
-        "the committed ledger must be the Rust rollback, never a fabricated revoke"
+        pre_root,
+        "the committed ledger must be the (unchanged) pre-state — no fabricated revoke either way"
     );
     match outcome {
-        // The verified gate also rejected → full agreement on the rollback.
-        ProducerOutcome::LeanProduced {
-            committed: false,
-            agree: true,
+        ProducerOutcome::LeanAuthoritative {
+            committed,
+            rust_agreed,
+            rust_committed,
             ..
-        } => {}
-        // The characterized residual: the kernel's unconditional revoke committed where Rust
-        // rejected — surfaced as a divergence, Rust state kept.
-        ProducerOutcome::CoveredDivergence {
-            lean_committed: true,
-            rust_committed: false,
-            ..
-        } => {}
+        } => {
+            // The authoritative commit bit is LEAN's; the result reflects it.
+            assert_eq!(
+                committed, lean_committed,
+                "the authoritative outcome must carry the verified Lean commit bit"
+            );
+            assert_eq!(
+                result.is_committed(),
+                lean_committed,
+                "the producer-mode TurnResult must follow the AUTHORITATIVE (Lean) verdict, not Rust"
+            );
+            assert!(!rust_committed, "Rust rejected this revoke");
+            // rust_agreed is false exactly when Lean committed where Rust rejected (the residual).
+            assert_eq!(
+                rust_agreed, !lean_committed,
+                "rust_agreed must be the (commit-bit) agreement between the verified verdict and Rust"
+            );
+        }
         other => panic!(
-            "a rejected revoke must either agree on the rollback or surface the commit-bit \
-             residual as CoveredDivergence, got {other:?}"
+            "a covered revoke must resolve to the AUTHORITATIVE Lean verdict (LeanAuthoritative), \
+             got {other:?}"
         ),
     }
 }
@@ -920,9 +936,9 @@ fn forest_is_root_agreeing_covers_transfer_not_refusal() {
     );
 }
 
-/// On a COVERED (root-agreeing) Transfer turn, `produce_via_lean` actually makes the verified Lean
-/// executor the PRODUCER: the post-state ledger it leaves behind is the Lean-reconstituted one, the
-/// outcome is `LeanProduced { agree: true }`, and the committed root equals BOTH producers' root.
+/// On a COVERED (root-agreeing) Transfer turn, `produce_via_lean` makes the verified Lean executor
+/// AUTHORITATIVE: the post-state ledger it leaves behind is the Lean-reconstituted one, the outcome
+/// is `LeanAuthoritative { rust_agreed: true }`, and the committed root equals BOTH producers' root.
 #[test]
 fn produce_via_lean_installs_verified_state_on_covered_transfer() {
     if skip_no_lean() {
@@ -964,22 +980,22 @@ fn produce_via_lean_installs_verified_state_on_covered_transfer() {
     assert!(result.is_committed(), "producer-mode Transfer commits");
 
     match outcome {
-        ProducerOutcome::LeanProduced {
-            agree,
+        ProducerOutcome::LeanAuthoritative {
+            rust_agreed,
             lean_root,
             rust_root,
             ..
         } => {
             assert!(
-                agree,
-                "covered Transfer must agree (Lean root == Rust root)"
+                rust_agreed,
+                "covered Transfer: the demoted Rust reference must agree (Lean root == Rust root)"
             );
             assert_eq!(
                 lean_root, rust_root,
-                "the two producers' roots must be equal"
+                "the authoritative Lean root and the reference Rust root must be equal"
             );
         }
-        other => panic!("covered Transfer must produce LeanProduced, got {other:?}"),
+        other => panic!("covered Transfer must produce LeanAuthoritative, got {other:?}"),
     }
 
     // The COMMITTED ledger is the Lean-produced one — and it equals the Rust post-state (the swap).
@@ -1050,6 +1066,117 @@ fn produce_via_lean_falls_back_on_root_gap_refusal() {
         expected_root,
         "root-gap turn must commit the Rust post-state"
     );
+}
+
+/// THE AUTHORITY INVERSION's TOOTH (Stage 0 / CRITICAL-1). On a COVERED turn where the verified
+/// Lean executor and the demoted Rust reference genuinely DISAGREE, `produce_via_lean` resolves to
+/// the LEAN verdict — the Lean post-state is what is committed and the returned `TurnResult` follows
+/// the Lean commit bit — NOT a fallback to Rust.
+///
+/// The disagreement is REAL, not simulated by a fault injector: a RevokeDelegation of a
+/// NON-delegated child is a covered (root-agreeing) turn on which the two producers genuinely split
+/// — the legacy Rust executor REJECTS it (`DelegationDenied`: the pre-state `child.delegate ==
+/// Some(parent)` edge is absent), while the verified kernel's revoke guard is unconditional, so it
+/// COMMITS. The old (pre-inversion) code kept the RUST rejection on this split (the differential
+/// that "the buggy executor wins"); the inversion makes the verified COMMIT authoritative.
+///
+/// We assert the inversion's tooth precisely:
+///   * the OUTCOME is `LeanAuthoritative { rust_agreed: false }` — a surfaced RUST BUG, never the
+///     removed Rust-wins `CoveredDivergence`;
+///   * the producer-mode `TurnResult` follows the LEAN commit bit (committed), not Rust's reject;
+///   * the COMMITTED ledger is the AUTHORITATIVE (Lean) post-state, and the committed receipt's
+///     `post_state_hash` equals that installed root (the receipt attests what was actually
+///     committed, not the Rust reference's root).
+#[test]
+fn covered_disagreement_resolves_to_lean_not_rust() {
+    if skip_no_lean() {
+        return;
+    }
+    use dregg_turn::lean_apply::{ProducerOutcome, produce_via_lean};
+
+    // A non-delegated child: Rust rejects the revoke, the verified kernel commits it (unconditional
+    // revoke guard) — a genuine covered Lean↔Rust split.
+    let mut a = make_open_cell(1, 100);
+    let a_id = a.id();
+    let b = make_open_cell(2, 5);
+    let b_id = b.id();
+    a.state.set_delegation_epoch(3);
+    let mut pre = Ledger::new();
+    pre.insert_cell(a).unwrap();
+    pre.insert_cell(b).unwrap();
+
+    // This shape IS in the swap-safe covered set (so the inversion is authoritative, not fenced).
+    let turn = single_effect_turn(a_id, a_id, 0, Effect::RevokeDelegation { child: b_id });
+    assert!(
+        lean_shadow::forest_is_root_agreeing(&turn),
+        "RevokeDelegation is a covered (root-agreeing) effect — the inversion must be authoritative"
+    );
+
+    // Confirm the two producers genuinely DISAGREE on the commit bit (Rust rejects, Lean commits).
+    let ref_executor = TurnExecutor::new(ComputronCosts::zero());
+    let mut rust_only = pre.clone();
+    let rust_committed = ref_executor.execute(&turn, &mut rust_only).is_committed();
+    assert!(
+        !rust_committed,
+        "the Rust reference must REJECT a revoke of a non-delegated child (the buggy split)"
+    );
+    let host = ShadowHostCtx::diag();
+    let (lean_only, lean_committed) =
+        execute_via_lean(&turn, &pre, &host).expect("the verified producer must run on a covered turn");
+    assert!(
+        lean_committed,
+        "the verified kernel COMMITS the unconditional revoke — the genuine disagreement this tooth needs"
+    );
+    let lean_root = lean_only.root();
+
+    // THE INVERSION: drive the live commit-path helper; the verified verdict must WIN.
+    let executor = TurnExecutor::new(ComputronCosts::zero());
+    let mut ledger = pre.clone();
+    let (result, outcome) = produce_via_lean(&executor, &turn, &mut ledger);
+
+    match outcome {
+        ProducerOutcome::LeanAuthoritative {
+            committed,
+            rust_agreed,
+            rust_committed: rc,
+            ..
+        } => {
+            assert!(
+                committed,
+                "the authoritative verdict is the verified Lean COMMIT (not the Rust reject)"
+            );
+            assert!(
+                !rust_agreed,
+                "this is a genuine disagreement — it must surface as a Rust bug (rust_agreed=false)"
+            );
+            assert!(!rc, "the demoted Rust reference rejected");
+        }
+        other => panic!(
+            "a covered disagreement MUST resolve to the authoritative Lean verdict \
+             (LeanAuthoritative), never a Rust-wins fallback — got {other:?}"
+        ),
+    }
+
+    // The committed TurnResult follows LEAN (committed), not the Rust reject.
+    assert!(
+        result.is_committed(),
+        "the producer-mode result must follow the AUTHORITATIVE Lean COMMIT, NOT the Rust reject"
+    );
+
+    // The committed ledger is the AUTHORITATIVE (Lean) post-state, and the receipt attests THAT root.
+    assert_eq!(
+        ledger.root(),
+        lean_root,
+        "the committed ledger must be the verified-producer (Lean) post-state, never the Rust one"
+    );
+    if let dregg_turn::TurnResult::Committed { receipt, .. } = &result {
+        assert_eq!(
+            receipt.post_state_hash, lean_root,
+            "the committed receipt's post_state_hash must attest the installed (Lean) root"
+        );
+    } else {
+        unreachable!("asserted committed above");
+    }
 }
 
 // =====================================================================================

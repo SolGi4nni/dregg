@@ -19,10 +19,8 @@ use dregg_cell::predicate::{
     NonMembershipNeighborProof, PredicateInput, WitnessedPredicate, WitnessedPredicateError,
     WitnessedPredicateKind, WitnessedPredicateRegistry, WitnessedPredicateVerifier,
 };
-use dregg_cell::program::{TransitionMeta, WitnessBlobView, WitnessBundle, WitnessKindTag};
 use dregg_cell::{
-    CellProgram, CellState, EvalContext, InputRef, MerkleMembershipProof, Nullifier, ProgramError,
-    StateConstraint,
+    InputRef, MerkleMembershipProof, Nullifier,
 };
 
 // ---------------------------------------------------------------------------

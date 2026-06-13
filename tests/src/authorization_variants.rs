@@ -13,18 +13,17 @@
 //! marked `#[ignore]` until the surface helpers exist in
 //! `tests/src/main.rs`'s helper module.
 
-use std::sync::Arc;
 
 use dregg_cell::predicate::{
-    InputRef as PredInputRef, PredicateInput, WitnessedPredicate, WitnessedPredicateError,
-    WitnessedPredicateKind, WitnessedPredicateRegistry, WitnessedPredicateVerifier,
+    PredicateInput, WitnessedPredicate, WitnessedPredicateError,
+    WitnessedPredicateKind, WitnessedPredicateVerifier,
 };
 use dregg_cell::{AuthRequired, Cell, CellId, Ledger, Permissions};
 use dregg_turn::action::{
-    Action, Authorization, BearerCapProof, CommitmentMode, DelegationMode, DelegationProofData,
+    Action, Authorization, CommitmentMode, DelegationMode,
     WitnessBlob, symbol,
 };
-use dregg_turn::{CallForest, ComputronCosts, Effect, Turn, TurnBuilder, TurnError, TurnExecutor};
+use dregg_turn::{Effect, Turn, TurnBuilder};
 
 // ---------------------------------------------------------------------------
 // Helpers

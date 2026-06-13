@@ -50,6 +50,13 @@ pub enum CommandId {
     ShellCycleLayout,
     /// Minimize the focused surface (cap-gated).
     ShellMinimizeFocused,
+    /// SHARE the focused window with another app — an ATTENUATING (read-only
+    /// mirror) hand-off through a REAL `GrantCapability` turn. Commits.
+    ShellShareFocused,
+    /// Attempt to OVER-SHARE the focused window (hand out WIDER authority than
+    /// held) — the no-amplification guarantee firing at the desktop: REJECTED by
+    /// the real executor. The window-manager analogue of the ⚠ over-grant verb.
+    ShellOverShareFocused,
 
     // --- replay / time-travel scrubber ---
     ReplayStepBack,
@@ -89,7 +96,7 @@ impl CommandId {
             | ReplayForkHere | ReplayClearFork => Category::Replay,
             ClerkMint | ClerkAttenuate | ClerkDelegate | ClerkDischarge => Category::Clerk,
             ShellOpenSelected | ShellFocusFront | ShellCloseFocused | ShellCycleLayout
-            | ShellMinimizeFocused => Category::Shell,
+            | ShellMinimizeFocused | ShellShareFocused | ShellOverShareFocused => Category::Shell,
             DebugRetargetSelected => Category::Debug,
             SelectImage => Category::Inspect,
             Dismiss => Category::Palette,
@@ -119,6 +126,8 @@ impl CommandId {
             ShellCloseFocused => "Shell: close the focused surface (cap-gated)",
             ShellCycleLayout => "Shell: cycle layout (float · tile · stack)",
             ShellMinimizeFocused => "Shell: minimize the focused surface",
+            ShellShareFocused => "Shell: share the focused window (read-only mirror)",
+            ShellOverShareFocused => "Shell: ⚠ over-share the focused window (watch it REJECT)",
             ReplayStepBack => "Replay: step back one turn",
             ReplayStepForward => "Replay: step forward one turn",
             ReplayToGenesis => "Replay: jump to genesis",
@@ -159,6 +168,8 @@ impl CommandId {
             ShellCloseFocused => "close window surface dismiss",
             ShellCycleLayout => "tile float stack arrange layout compositor",
             ShellMinimizeFocused => "minimize collapse hide window surface",
+            ShellShareFocused => "share window surface delegate grant attenuate mirror hand-off",
+            ShellOverShareFocused => "over-share amplify widen reject window surface no-amplification grant",
             ReplayStepBack => "rewind previous undo back",
             ReplayStepForward => "advance next redo forward",
             ReplayToGenesis => "start beginning empty zero",
@@ -231,7 +242,7 @@ pub fn all_commands() -> Vec<Command> {
         ClerkMint, ClerkAttenuate, ClerkDelegate, ClerkDischarge,
         // the cap-first shell / compositor
         ShellOpenSelected, ShellFocusFront, ShellCloseFocused, ShellCycleLayout,
-        ShellMinimizeFocused,
+        ShellMinimizeFocused, ShellShareFocused, ShellOverShareFocused,
         // navigation
         GoComposer, GoObjects, GoDebugger, GoReplay, GoCipherclerk, GoEditor, GoShell,
         // replay
@@ -505,14 +516,19 @@ mod tests {
             CommandId::ShellCloseFocused,
             CommandId::ShellCycleLayout,
             CommandId::ShellMinimizeFocused,
+            CommandId::ShellShareFocused,
+            CommandId::ShellOverShareFocused,
         ] {
             assert!(ids.contains(&must), "{must:?} must be registered");
             assert_eq!(must.category(), Category::Shell);
         }
-        // Found by concept: "tile" → cycle-layout; "open window" → open-surface.
+        // Found by concept: "tile" → cycle-layout; "open window" → open-surface;
+        // "delegate"/"amplify" → the real-executor window-share + its rejection.
         assert!(search(&reg, "tile").iter().any(|h| h.command.id == CommandId::ShellCycleLayout));
         assert!(search(&reg, "window").iter().any(|h| h.command.id == CommandId::ShellOpenSelected));
         assert!(search(&reg, "compositor").iter().any(|h| h.command.id == CommandId::GoShell));
+        assert!(search(&reg, "delegate").iter().any(|h| h.command.id == CommandId::ShellShareFocused));
+        assert!(search(&reg, "amplify").iter().any(|h| h.command.id == CommandId::ShellOverShareFocused));
     }
 
     #[test]

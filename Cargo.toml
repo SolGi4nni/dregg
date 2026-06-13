@@ -34,6 +34,16 @@ repository = "https://github.com/emberian/dregg"
 ark-serialize = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
 ark-serialize-derive = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
 
+# C3 native-batch leaf-wrap WIP: build the LOCAL plonky3-recursion fork checkout instead of
+# the pinned git rev, so the new `verify_p3_native_batch_proof_circuit` /
+# `RecursionInput::NativeBatchStark` entry compiles. Revert to the git rev (bump the rev in
+# [workspace.dependencies]) once the fork change is committed + pushed.
+[patch."https://github.com/emberian/plonky3-recursion"]
+p3-recursion = { path = "../plonky3-recursion/recursion" }
+p3-circuit = { path = "../plonky3-recursion/circuit" }
+p3-circuit-prover = { path = "../plonky3-recursion/circuit-prover" }
+p3-poseidon2-circuit-air = { path = "../plonky3-recursion/poseidon2-circuit-air" }
+
 [workspace.dependencies]
 ## Local
 dregg-macaroon = { path = "macaroon", default-features = false }

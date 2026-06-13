@@ -173,6 +173,7 @@ pub mod recursive {
             match prev {
                 RecursionInput::UniStark { proof, .. } => f(&proof.opening_proof),
                 RecursionInput::BatchStark { proof, .. } => f(&proof.proof.opening_proof),
+                RecursionInput::NativeBatchStark { proof, .. } => f(&proof.opening_proof),
             }
         }
 
@@ -281,6 +282,43 @@ pub mod recursive {
 
         DreggRecursionConfig {
             config: Arc::new(config),
+            fri_verifier_params,
+        }
+    }
+
+    /// Create a recursion config whose IN-CIRCUIT FRI VERIFIER params match a
+    /// caller-specified `(log_blowup, query_pow_bits)` — for verifying an INNER proof
+    /// that was minted under a DIFFERENT FRI engine than the recursion config's own.
+    ///
+    /// The recursion PROVER side (the `StarkConfig` PCS that re-proves the verifier
+    /// circuit, i.e. the leaf-wrap's OUTPUT) is unchanged from
+    /// [`create_recursion_config`] (log_blowup=3, 38 queries) — only the
+    /// [`FriVerifierParams`] (which drive the in-circuit FRI verification of the inner
+    /// proof) are retargeted. `num_queries` and FRI folding arity are read from the
+    /// inner proof structure in-circuit, so only `log_blowup` / `log_final_poly_len` /
+    /// `commit_pow` / `query_pow` need matching here.
+    ///
+    /// This is the SIDESTEP seam (C3 PART 2a): the dregg IR-v2 descriptor batch
+    /// (`ir2_config`: log_blowup=6, 19 queries, 16 query-PoW) is verified in-circuit by
+    /// a recursion verifier whose `FriVerifierParams` are `(6, 0, 0, 16, Poseidon2)`,
+    /// while the leaf-wrap emits a standard recursion-config (log_blowup=3) proof.
+    pub fn create_recursion_config_for_inner_fri(
+        inner_log_blowup: usize,
+        inner_log_final_poly_len: usize,
+        inner_commit_pow_bits: usize,
+        inner_query_pow_bits: usize,
+    ) -> DreggRecursionConfig {
+        let base = create_recursion_config();
+        use p3_circuit::ops::PermConfig;
+        let fri_verifier_params = FriVerifierParams::with_mmcs(
+            inner_log_blowup,
+            inner_log_final_poly_len,
+            inner_commit_pow_bits,
+            inner_query_pow_bits,
+            PermConfig::poseidon2(Poseidon2Config::BABY_BEAR_D4_W16),
+        );
+        DreggRecursionConfig {
+            config: base.config,
             fri_verifier_params,
         }
     }

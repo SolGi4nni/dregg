@@ -529,6 +529,84 @@ impl Cockpit {
         self.with_cap(id, |shell, cap| shell.set_minimized(cap, true), cx, "minimize");
     }
 
+    /// SHARE the focused window with another app — an ATTENUATING (read-only
+    /// mirror) hand-off through a REAL `Effect::GrantCapability` turn on the
+    /// firmament executor. Commits; the recipient's narrowed window cap is filed
+    /// in the vault (so its shared window is drivable), demonstrating "a window =
+    /// a firmament cap" delegated through the real executor — granted ⊆ held.
+    fn shell_share_focused(&mut self, cx: &mut Context<Self>) {
+        let Some(id) = self.shell.focused() else {
+            self.last_outcome = Some("shell: nothing focused to share".to_string());
+            cx.notify();
+            return;
+        };
+        let Some(cap) = self.surface_caps.get(&id).cloned() else {
+            self.last_outcome = Some("shell: no held cap for the focused surface".to_string());
+            cx.notify();
+            return;
+        };
+        // Hand a READ-ONLY mirror (Signature ⊆ the held rights) to a peer app.
+        match self.shell.share(&cap, /*peer app*/ 0x5EED, dregg_cell::AuthRequired::Signature) {
+            Ok(shared) => {
+                self.surface_caps.insert(shared.surface(), shared);
+                self.last_outcome = Some(
+                    "shell: shared a read-only window mirror (real GrantCapability turn committed)"
+                        .to_string(),
+                );
+            }
+            Err(e) => {
+                self.last_outcome = Some(format!("shell: share REFUSED — {}", shell_err(&e)));
+            }
+        }
+        self.tab = Tab::Shell;
+        cx.notify();
+    }
+
+    /// ⚠ Attempt to OVER-SHARE the focused window — the no-amplification
+    /// guarantee firing at the desktop. We first share a read-only mirror to a
+    /// peer (commits), then have THAT peer try to re-share its window with WIDER
+    /// authority than it holds; the REAL executor REJECTS the widening
+    /// (`DelegationDenied`). This is the window-manager analogue of the composer's
+    /// ⚠ over-grant verb — a refusal the operator can watch.
+    fn shell_overshare_focused(&mut self, cx: &mut Context<Self>) {
+        let Some(id) = self.shell.focused() else {
+            self.last_outcome = Some("shell: nothing focused to over-share".to_string());
+            cx.notify();
+            return;
+        };
+        let Some(cap) = self.surface_caps.get(&id).cloned() else {
+            self.last_outcome = Some("shell: no held cap for the focused surface".to_string());
+            cx.notify();
+            return;
+        };
+        // Step 1: legitimately hand a peer a read-only mirror (commits).
+        let mirror = match self.shell.share(&cap, /*peer*/ 0xA11CE, dregg_cell::AuthRequired::Signature) {
+            Ok(m) => m,
+            Err(e) => {
+                self.last_outcome = Some(format!("shell: setup share failed — {}", shell_err(&e)));
+                cx.notify();
+                return;
+            }
+        };
+        self.surface_caps.insert(mirror.surface(), mirror.clone());
+        // Step 2: that read-only-mirror peer tries to OVER-SHARE (Signature →
+        // Either is WIDER). The real executor REJECTS it — watch it fire.
+        match self.shell.share(&mirror, /*victim*/ 0xBAD, dregg_cell::AuthRequired::Either) {
+            Ok(_) => {
+                self.last_outcome =
+                    Some("shell: over-share UNEXPECTEDLY committed (should have rejected!)".to_string());
+            }
+            Err(e) => {
+                self.last_outcome = Some(format!(
+                    "shell: ⚠ over-share REJECTED by the real executor — {} (no-amplification on glass)",
+                    shell_err(&e)
+                ));
+            }
+        }
+        self.tab = Tab::Shell;
+        cx.notify();
+    }
+
     /// Cycle the compositor layout (float → tile → stack). A shell-global op (it
     /// rearranges the whole scene), so it is not surface-cap-scoped.
     fn shell_cycle_layout(&mut self, cx: &mut Context<Self>) {
@@ -593,6 +671,8 @@ impl Cockpit {
             CommandId::ShellCloseFocused => self.shell_close_focused(cx),
             CommandId::ShellCycleLayout => self.shell_cycle_layout(cx),
             CommandId::ShellMinimizeFocused => self.shell_minimize_focused(cx),
+            CommandId::ShellShareFocused => self.shell_share_focused(cx),
+            CommandId::ShellOverShareFocused => self.shell_overshare_focused(cx),
 
             CommandId::ReplayStepBack => self.replay_step_back(cx),
             CommandId::ReplayStepForward => self.replay_step_forward(cx),
@@ -1028,6 +1108,8 @@ impl Cockpit {
                 .child(shell_button(cx, "open selected as surface", theme::good(), Cockpit::shell_open_selected))
                 .child(shell_button(cx, "focus front", theme::accent(), Cockpit::shell_focus_front))
                 .child(shell_button(cx, "minimize focused", theme::accent(), Cockpit::shell_minimize_focused))
+                .child(shell_button(cx, "share (read-only mirror)", theme::good(), Cockpit::shell_share_focused))
+                .child(shell_button(cx, "⚠ over-share (watch it REJECT)", theme::warn(), Cockpit::shell_overshare_focused))
                 .child(shell_button(cx, "close focused", theme::warn(), Cockpit::shell_close_focused))
                 .child(shell_button(cx, "cycle layout", theme::accent(), Cockpit::shell_cycle_layout)),
         );
@@ -1626,6 +1708,7 @@ fn shell_err(e: &starbridge_v2::shell::ShellError) -> String {
         ShellError::Unauthorized => "no valid capability presented (no ambient authority)".to_string(),
         ShellError::NoSuchSurface(id) => format!("surface {} does not exist", id.as_u64()),
         ShellError::ConsoleProtected => "the system console is the trusted root (cannot close)".to_string(),
+        ShellError::ShareDenied(why) => format!("widening share refused by the executor: {why}"),
     }
 }
 

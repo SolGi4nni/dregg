@@ -2,22 +2,36 @@
 //!
 //! The desktop-OS pillar: every dregg CELL can be opened as its own SURFACE (a
 //! window) in the shell. A surface is not a free-floating widget — it is OWNED
-//! via an unforgeable [`SurfaceCapability`], and only the cap-holder may render
-//! or drive it. This is the ocap discipline the rest of dregg runs, applied to
-//! the *window manager itself*: there is no ambient authority to raise, move,
-//! focus, or close a window — you must present the capability that authorizes
-//! it.
+//! via a [`SurfaceCapability`], and only the cap-holder may render or drive it.
+//! This is the ocap discipline the rest of dregg runs, applied to the *window
+//! manager itself*: there is no ambient authority to raise, move, focus, or
+//! close a window — you must present the capability that authorizes it.
+//!
+//! **The capability is the REAL `dregg_firmament` capability** (`docs/
+//! DREGG-DESKTOP-OS.md` §1, §7): a window IS a
+//! [`Capability`](dregg_firmament::Capability) over a
+//! [`Target::Surface(cell)`](dregg_firmament::Target::Surface). Holding /
+//! attenuating / delegating / revoking a window is exactly holding /
+//! attenuating / delegating / revoking that cap, through the SAME
+//! `granted ⊆ held` ([`is_attenuation`](dregg_firmament::is_attenuation)) gate
+//! and the SAME real [`dregg_turn::TurnExecutor`] as every other dregg cap. We
+//! do NOT keep a parallel bearer-secret model — window authority rides the
+//! firmament fabric the local and distributed backings already proved. (§7 "the
+//! one latent divergence to close": the secret model is GONE.)
 //!
 //! A surface is backed by a REAL cell (`CellId`) viewed through the embedded
 //! [`World`](crate::world::World): its title, its trusted-path identity label,
 //! and its body all read the live ledger — there are NO mock surfaces. When a
-//! turn changes the cell, the surface re-reads and reflects it.
+//! turn changes the cell, the surface re-reads and reflects it. (Authority is
+//! the firmament cap over the surface's *backing* cell; identity is shell-drawn
+//! from the live world — two distinct ledgers, two distinct roles.)
 //!
 //! This module is gpui-free and `cargo test`-able. The shell ([`crate::shell`])
-//! owns the surfaces + the z-order + the capability registry; the cockpit maps
-//! the shell's composed scene onto gpui.
+//! owns the surfaces + the z-order + the firmament surface-fabric the caps are
+//! checked against; the cockpit maps the shell's composed scene onto gpui.
 
 use dregg_cell::CellId;
+use dregg_firmament::{Capability, Rights, Target};
 
 /// A monotonic surface handle (stable across the surface's life; the shell
 /// assigns these in open order). Distinct from the backing `CellId` so the same
@@ -32,24 +46,36 @@ impl SurfaceId {
     }
 }
 
-/// An UNFORGEABLE token that confers ownership of a surface. The shell mints one
-/// when a surface opens and hands it to the opener; every window op
-/// (focus/raise/move/resize/close/minimize) requires presenting the matching
-/// cap. A cap carries:
-///   * the `surface` it authorizes (so a cap for one surface can't drive
-///     another — no cap confusion), and
-///   * a `secret` the shell drew at mint time (so a cap cannot be FORGED by
-///     guessing the surface id: an attacker who knows a `SurfaceId` still cannot
-///     fabricate its cap without the secret).
+/// A token that confers authority over a surface — **a REAL `dregg_firmament`
+/// capability over the surface's backing cell**, paired with the [`SurfaceId`]
+/// (the window handle) it authorizes.
 ///
-/// This is the window-manager analogue of the executor's no-amplification rule:
-/// authority over a surface is exactly the set of held `SurfaceCapability`s, and
-/// it can only be obtained by being *granted* one (the shell never reveals a
-/// surface's secret), never by naming the surface.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+/// This is NOT a bearer secret (the parallel model is gone, §7). The
+/// load-bearing half is [`Self::authority`]: a
+/// [`Capability`](dregg_firmament::Capability) whose target is
+/// `Surface(backing_cell)` and whose `rights` are on the REAL
+/// [`AuthRequired`](dregg_firmament::AuthRequired) lattice. The shell
+/// authenticates a presented cap by resolving it through the firmament's
+/// [`SurfaceBacking`](dregg_firmament::SurfaceBacking) — the `granted ⊆ held`
+/// ([`is_attenuation`](dregg_firmament::is_attenuation)) gate — so:
+///   * the cap names exactly one surface AND its `authority` must target that
+///     surface's backing cell (no cap confusion — a cap for one window can't
+///     drive another, and a cap targeting the wrong cell is refused), and
+///   * authority is exactly the firmament cap's rights `⊆` the rights the
+///     surface's owner-grant holds — it can be obtained only by being *granted*
+///     (the shell installs the owner-grant + hands back the cap; an attenuated
+///     copy obtained via [`crate::shell::Shell::share`] narrows it through a
+///     REAL `Effect::GrantCapability` turn), never by naming the surface.
+///
+/// This is the window-manager realization of the executor's no-amplification
+/// rule: it IS the executor's rule, on glass — the SAME gate the local and
+/// distributed firmament backings use, with no special-casing.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SurfaceCapability {
     surface: SurfaceId,
-    secret: u64,
+    /// The REAL firmament capability — `target = Surface(backing_cell)`, rights
+    /// on the genuine `AuthRequired` lattice. The window's authority IS this.
+    authority: Capability,
 }
 
 impl SurfaceCapability {
@@ -58,18 +84,35 @@ impl SurfaceCapability {
         self.surface
     }
 
-    /// Construct a capability from its parts. CRATE-PRIVATE: only the shell (the
-    /// trusted authority that draws the secret + tracks issuance) mints these,
-    /// so a cap cannot be forged from outside. The pair is the unforgeable
-    /// witness the shell checks.
-    pub(crate) fn new(surface: SurfaceId, secret: u64) -> Self {
-        SurfaceCapability { surface, secret }
+    /// The REAL firmament capability this token carries (target =
+    /// `Surface(backing_cell)`, rights on the `AuthRequired` lattice). This is
+    /// the load-bearing authority the shell checks via `granted ⊆ held`.
+    pub fn authority(&self) -> &Capability {
+        &self.authority
     }
 
-    /// The secret half — crate-private, used only by the shell to authenticate a
-    /// presented cap against the one it minted. Never exposed beyond the shell.
-    pub(crate) fn secret(&self) -> u64 {
-        self.secret
+    /// The backing cell this cap's authority targets, if it is a `Surface`
+    /// target (it always is for a shell-minted cap). Used by the shell to bind
+    /// the presented cap to the right surface (anti-confusion) before the
+    /// `is_attenuation` check.
+    pub fn backing_cell(&self) -> Option<CellId> {
+        match self.authority.target {
+            Target::Surface { cell } => Some(cell),
+            _ => None,
+        }
+    }
+
+    /// The rights this cap carries over its backing surface cell.
+    pub fn rights(&self) -> &Rights {
+        &self.authority.rights
+    }
+
+    /// Construct from a [`SurfaceId`] + the REAL firmament cap over its backing
+    /// cell. CRATE-PRIVATE: only the shell (which seeds the surface-fabric cell +
+    /// installs the owner-grant) mints these, so a cap that the firmament's
+    /// `granted ⊆ held` gate will admit cannot be forged from outside.
+    pub(crate) fn new(surface: SurfaceId, authority: Capability) -> Self {
+        SurfaceCapability { surface, authority }
     }
 }
 
@@ -242,12 +285,35 @@ mod tests {
     }
 
     #[test]
-    fn a_capability_names_exactly_one_surface() {
-        let cap = SurfaceCapability::new(SurfaceId(7), 0xABCD);
+    fn a_capability_carries_a_real_firmament_cap_over_its_backing_cell() {
+        // The token's authority is a REAL firmament cap over a Surface(cell)
+        // target on the genuine AuthRequired lattice — NOT a bearer secret.
+        fn cid(b: u8) -> CellId {
+            let mut k = [0u8; 32];
+            k[0] = b;
+            CellId::derive_raw(&k, &[0u8; 32])
+        }
+        let backing = cid(0x2A);
+        let cap = SurfaceCapability::new(
+            SurfaceId(7),
+            Capability::surface(backing, dregg_firmament::AuthRequired::Either),
+        );
         assert_eq!(cap.surface(), SurfaceId(7));
-        // Two caps for the same surface but different secrets are distinct
-        // tokens (the secret is load-bearing — a forged-id guess is not enough).
-        let other = SurfaceCapability::new(SurfaceId(7), 0x1234);
-        assert_ne!(cap, other);
+        // The authority targets the backing surface cell (anti cap-confusion).
+        assert_eq!(cap.backing_cell(), Some(backing));
+        assert!(cap.authority().target.is_surface());
+        assert_eq!(cap.rights(), &dregg_firmament::AuthRequired::Either);
+
+        // The cap narrows by the REAL is_attenuation lattice (a writable window
+        // → a read-only mirror), exactly like the firmament's local/distributed
+        // caps — and refuses to widen (a mirror can't promote itself).
+        let mirror = cap
+            .authority()
+            .attenuate(dregg_firmament::AuthRequired::Signature)
+            .expect("Either -> Signature is a genuine narrowing");
+        assert_eq!(mirror.rights, dregg_firmament::AuthRequired::Signature);
+        assert_eq!(mirror.target, cap.authority().target); // same window, narrowed
+        let mirror_only = Capability::surface(backing, dregg_firmament::AuthRequired::Signature);
+        assert!(mirror_only.attenuate(dregg_firmament::AuthRequired::Either).is_none());
     }
 }

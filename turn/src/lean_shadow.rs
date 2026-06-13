@@ -457,8 +457,11 @@ pub fn producer_root_agreeing_effects() -> &'static [&'static str] {
         // the cap-graph `removeEdge`, whose lossy wire echo must not leak into `cap_root`).
         // RESIDUAL (characterized): the verified guard is `True` (revocation is unconditional)
         // while Rust rejects a revoke of a non-delegated child — for such a turn the commit bits
-        // differ and the differential's `CoveredDivergence` keeps the Rust state (surfaced, never
-        // a silent commit; the replay's edge gate leaves every field at its pre-state).
+        // differ. Under THE AUTHORITY INVERSION (Stage 0) the verified Lean verdict is
+        // AUTHORITATIVE: the disagreement surfaces as a Rust bug (`LeanAuthoritative
+        // { rust_agreed: false }`) and the LEAN verdict is committed (Rust does NOT win). The
+        // replay's edge gate leaves every field at its pre-state, so the authoritative post-state
+        // still equals the pre-state — only the commit bit / finding is Lean-driven.
         "RevokeDelegation",
         // §SIDE-TABLE holding-store families — the off-cell-merkle-root escrow/obligation effects.
         // `apply_create_escrow`/`apply_create_obligation` debit ONE cell's `balance` (which the `bal`
@@ -793,8 +796,9 @@ fn effect_is_mappable(eff: &Effect, id_map: &HashMap<CellId, u64>) -> bool {
         // turn-driven replay (`lean_apply::apply_cap_ops`), so the cap_root agrees. RESIDUAL: the
         // verified gate is the edge-existence leg only — Rust ALSO requires introducer↦recipient
         // access + monotone-attenuation + target consent. For a turn where those diverge the
-        // commit bits differ and the differential's `CoveredDivergence` keeps the Rust state (safe,
-        // surfaced, never a silent commit).
+        // commit bits differ; under THE AUTHORITY INVERSION (Stage 0) the verified Lean verdict is
+        // AUTHORITATIVE and the disagreement surfaces as a Rust bug (`LeanAuthoritative
+        // { rust_agreed: false }`), the LEAN verdict committed (Rust does NOT win).
         Effect::Introduce {
             introducer,
             recipient,

@@ -12,8 +12,6 @@
 //! retired** — flag the failure and update the test as the lane lands.
 
 use crate::Invariant;
-use dregg_cell::program::{CustomDescriptor, DeltaRelation, ReadSet};
-use dregg_cell::{CellId, CellProgram, CellState, InputRef, StateConstraint, WitnessedPredicate};
 use proptest::prelude::*;
 
 pub struct SentinelVariantsReject;

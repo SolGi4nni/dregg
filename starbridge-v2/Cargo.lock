@@ -2250,6 +2250,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "dregg-firmament"
+version = "0.1.0"
+dependencies = [
+ "dregg-cell",
+ "dregg-turn",
+ "dregg-types",
+]
+
+[[package]]
 name = "dregg-hints"
 version = "0.0.5"
 dependencies = [
@@ -7461,6 +7470,7 @@ dependencies = [
  "anyhow",
  "blake3",
  "dregg-cell",
+ "dregg-firmament",
  "dregg-sdk",
  "dregg-token",
  "dregg-turn",

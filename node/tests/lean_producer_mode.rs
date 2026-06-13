@@ -8,12 +8,12 @@
 //!
 //! Here we drive the SAME helper the node commit site calls, on a representative turn (a Transfer),
 //! and assert:
-//!   1. the verified producer ran (`ProducerOutcome::LeanProduced`),
-//!   2. the COMMITTED ledger (the one `produce_via_lean` installs) equals what the Rust differential
+//!   1. the verified producer is AUTHORITATIVE (`ProducerOutcome::LeanAuthoritative`),
+//!   2. the COMMITTED ledger (the one `produce_via_lean` installs) equals what the Rust reference
 //!      independently produces — same balances/nonces/state-fields AND `.root()`, and
-//!   3. the outcome reports `agree == true` (the runtime differential found no divergence).
+//!   3. the outcome reports `rust_agreed == true` (the demoted reference found no Rust bug).
 //!
-//! A divergence here is a REAL finding, surfaced by the assertions — never papered over. The test
+//! A surfaced Rust bug here is a REAL finding (the Lean verdict is what was committed) — never
 //! gates on the linked Lean archive (`lean_available()`); when it is absent the test self-skips (it
 //! cannot run the verified producer). No `#[ignore]`, no weakened asserts.
 
@@ -161,46 +161,35 @@ fn run_producer_mode(pre: Ledger, turn: Turn, expected_committed: bool, ids: &[C
     let (_rust_result_inner, outcome) = lean_apply::produce_via_lean(&executor, &turn, &mut ledger);
 
     match outcome {
-        ProducerOutcome::LeanProduced {
+        ProducerOutcome::LeanAuthoritative {
             committed,
-            agree,
+            rust_agreed,
             lean_root,
             rust_root,
             rust_committed,
         } => {
             assert_eq!(
                 committed, expected_committed,
-                "verified Lean producer commit bit did not match expectation"
+                "verified Lean producer (AUTHORITATIVE) commit bit did not match expectation"
             );
             assert_eq!(
                 rust_committed, expected_committed,
-                "Rust differential commit bit did not match expectation"
+                "Rust reference commit bit did not match expectation"
             );
             assert!(
-                agree,
-                "PRODUCER DIVERGENCE: verified Lean producer disagrees with the Rust differential \
-                 (lean_root={lean_root:?} rust_root={rust_root:?}) — a real soundness finding"
+                rust_agreed,
+                "RUST BUG SURFACED: the demoted Rust reference disagrees with the AUTHORITATIVE \
+                 verified Lean verdict (lean_root={lean_root:?} rust_root={rust_root:?}) — the \
+                 Lean verdict was committed; Rust did not override it"
             );
-            // The installed (committed) ledger must equal the independent Rust reference.
+            // The installed (committed) ledger must equal the independent Rust reference (they
+            // agree on this turn, so the authoritative Lean state == the Rust reference state).
             assert_ledgers_agree(&mut ledger, &mut rust_ledger, ids);
         }
         ProducerOutcome::Fallback { reason } => {
             panic!(
                 "turn was NOT eligible for the verified producer (outside the swap-safe covered \
                  set): {reason}; cannot run the node producer-mode test on a covered effect"
-            );
-        }
-        ProducerOutcome::CoveredDivergence {
-            lean_committed,
-            rust_committed,
-            lean_root,
-            rust_root,
-        } => {
-            panic!(
-                "COVERED-SET DIVERGENCE: a turn classified swap-safe diverged at runtime \
-                 (lean_committed={lean_committed} rust_committed={rust_committed} \
-                 lean_root={lean_root:?} rust_root={rust_root:?}) — a real soundness finding \
-                 (coverage misclassification)"
             );
         }
     }

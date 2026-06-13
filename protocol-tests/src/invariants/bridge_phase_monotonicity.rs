@@ -18,7 +18,7 @@
 
 use crate::Invariant;
 use dregg_cell::note_bridge::{
-    BridgePhase, BridgePhaseLog, BridgeReceiptEnvelope, compute_bridge_id,
+    BridgePhase, BridgeReceiptEnvelope,
 };
 use proptest::prelude::*;
 

@@ -130,24 +130,28 @@ pub fn execute_via_producer(
     }
 
     let agent = turn.agent;
-    let (rust_result, outcome) = dregg_turn::lean_apply::produce_via_lean(executor, turn, ledger);
+    let (result, outcome) = dregg_turn::lean_apply::produce_via_lean(executor, turn, ledger);
     match &outcome {
-        dregg_turn::lean_apply::ProducerOutcome::LeanProduced {
+        dregg_turn::lean_apply::ProducerOutcome::LeanAuthoritative {
             committed,
-            agree,
+            rust_agreed,
             lean_root,
             rust_root,
             rust_committed,
         } => {
-            if *agree {
+            if *rust_agreed {
                 info!(
                     target: "dregg::lean_shadow::producer",
                     agent = ?agent,
                     committed = *committed,
-                    "THE SWAP producer mode: verified Lean executor PRODUCED the committed \
-                     state; Rust differential AGREES"
+                    "THE SWAP producer mode: verified Lean executor is AUTHORITATIVE for this \
+                     covered turn (its post-state is committed); Rust reference AGREES"
                 );
             } else {
+                // THE AUTHORITY INVERSION's tooth: on a covered turn a Lean↔Rust disagreement is,
+                // by definition, the Rust path being WRONG (Rust is the artifact dregg2 replaces
+                // because it is buggy). The verified Lean verdict was committed; this surfaces the
+                // Rust bug as a finding — it is NOT a fallback to Rust.
                 error!(
                     target: "dregg::lean_shadow::producer",
                     agent = ?agent,
@@ -155,9 +159,10 @@ pub fn execute_via_producer(
                     rust_committed = *rust_committed,
                     lean_root = %dregg_types::hex_encode(lean_root),
                     rust_root = %dregg_types::hex_encode(rust_root),
-                    "THE SWAP producer DIVERGENCE: verified Lean producer and Rust differential \
-                     disagree on the committed state — REAL soundness finding (Lean output \
-                     committed; investigate)"
+                    "THE SWAP authority inversion: verified Lean executor (AUTHORITATIVE) and the \
+                     demoted Rust reference DISAGREE on a covered turn — the Rust path is BUGGY \
+                     (REAL finding). The verified Lean verdict was committed; Rust was NOT \
+                     allowed to override it"
                 );
             }
         }
@@ -166,30 +171,13 @@ pub fn execute_via_producer(
                 target: "dregg::lean_shadow::producer",
                 agent = ?agent,
                 reason = %reason,
-                "THE SWAP producer mode: turn outside the swap-safe covered set — fell back to \
-                 the Rust producer for this turn (no silent divergence)"
-            );
-        }
-        dregg_turn::lean_apply::ProducerOutcome::CoveredDivergence {
-            lean_committed,
-            rust_committed,
-            lean_root,
-            rust_root,
-        } => {
-            error!(
-                target: "dregg::lean_shadow::producer",
-                agent = ?agent,
-                lean_committed = *lean_committed,
-                rust_committed = *rust_committed,
-                lean_root = %dregg_types::hex_encode(lean_root),
-                rust_root = %dregg_types::hex_encode(rust_root),
-                "THE SWAP producer COVERED-SET DIVERGENCE: a turn classified swap-safe diverged \
-                 — REAL soundness finding (coverage misclassification). Kept the Rust post-state \
-                 (chain-consistent); did NOT commit the divergent Lean state"
+                "THE SWAP producer mode: turn outside the swap-safe covered set — FENCED onto the \
+                 legacy Rust path for this turn (explicit, surfaced; the named burning-down \
+                 partition, not a silent Rust-authoritative default)"
             );
         }
     }
-    rust_result
+    result
 }
 
 /// Build a fresh executor configured for turn submission (height = attested + 1).

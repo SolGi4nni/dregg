@@ -101,7 +101,7 @@ native-full = ["embedded-executor", "gpui-ui"]
 # async) deps out of this headless, `cargo test`-able build: the cipherclerk +
 # token surface we surface (identities, mint/attenuate/delegate, cell_id) is in
 # the SDK's un-gated core.
-embedded-executor = ["dep:dregg-turn", "dep:dregg-cell", "dep:dregg-types", "dep:dregg-sdk", "dep:dregg-token", "dep:dregg-userspace-verify"]
+embedded-executor = ["dep:dregg-turn", "dep:dregg-cell", "dep:dregg-types", "dep:dregg-sdk", "dep:dregg-token", "dep:dregg-userspace-verify", "dep:dregg-firmament"]
 
 # The gpui renderer. `runtime_shaders` is LOAD-BEARING on macOS: it makes gpui
 # compile its Metal shaders AT RUNTIME (via `MTLDevice::newLibraryWithSource`,
@@ -141,6 +141,16 @@ dregg-token = { path = "../token", optional = true }
 # REAL `check_conservation`/`check_no_amplification`/`check_wellformed` the live
 # editor's validate() rail delegates to (never a parallel re-expression).
 dregg-userspace-verify = { path = "../dregg-userspace-verify", optional = true }
+# THE FIRMAMENT cap-gradation bridge (sel4/dregg-firmament): the REAL
+# `Capability{ target: Surface(cell), rights }` + `SurfaceBacking` (a genuine
+# dregg_cell::Ledger + dregg_turn::TurnExecutor) the cap-first shell rides — so a
+# window IS a firmament surface cap, checked through the SAME `granted ⊆ held`
+# gate and delegated through the SAME real executor as every other dregg cap
+# (docs/DREGG-DESKTOP-OS.md §7 — the one latent divergence, closed). Path-dep
+# from this standalone workspace into firmament's standalone workspace is fine:
+# cargo resolves firmament + the real dregg crates it depends on and links them
+# here. Gated on `embedded-executor` (the gpui-free surface/shell test path).
+dregg-firmament = { path = "../sel4/dregg-firmament", optional = true }
 
 # --- wire contract (always available: remote-node + sel4-thin paths) --------
 serde = { version = "1", features = ["derive"] }

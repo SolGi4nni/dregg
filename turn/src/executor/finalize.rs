@@ -983,4 +983,124 @@ impl TurnExecutor {
             Self::collect_derivation_records_tree(child, timestamp, records, slot_counter);
         }
     }
+
+    /// Re-stamp a (Rust-reference) committed receipt's `post_state_hash` to the AUTHORITATIVE
+    /// installed (Lean) root and re-sign it, for the Stage-0 authority-inversion commit branch when
+    /// the Rust reference ALSO committed. On the covered set the roots agree (the differential
+    /// teeth), so this is a no-op re-stamp + re-sign; the override only ever fires on a surfaced Rust
+    /// root-bug, where the receipt MUST attest the state actually committed (the Lean root), not the
+    /// Rust reference's. Re-signs so `executor_signature` still binds the (possibly re-stamped) hash.
+    pub fn restamp_committed_receipt(
+        &self,
+        mut receipt: TurnReceipt,
+        authoritative_post_root: [u8; 32],
+    ) -> TurnReceipt {
+        receipt.post_state_hash = authoritative_post_root;
+        receipt.executor_signature = None;
+        receipt.executor_signature = self.maybe_sign_receipt(&receipt);
+        receipt
+    }
+
+    /// Build the AUTHORITATIVE `Committed` `TurnResult` for the Stage-0 authority-inversion path
+    /// when the VERIFIED Lean executor COMMITTED a turn the demoted Rust reference REJECTED (a Rust
+    /// false-reject bug). The Lean post-state is already installed; this synthesizes the receipt that
+    /// attests it, since there is no Rust receipt to carry.
+    ///
+    /// The receipt is built the same self-contained way as the proof-carrying early-commit path
+    /// (`execute.rs`): `effects_hash`/`action_count` from the turn's call forest, a metering-proxy
+    /// `computrons_used`, `pre_state_hash`/`post_state_hash` pinned to the pre/authoritative roots,
+    /// signed if a key is configured, and a fee-aware (conservation-closed) ledger delta. It does NOT
+    /// re-run the effect loop — the verified executor already adjudicated the transition; this is the
+    /// honest attestation of its authoritative verdict.
+    ///
+    /// `pre_root` is the pre-state root (for `pre_state_hash`); `post_root` is the installed Lean
+    /// post-state root.
+    pub fn build_producer_committed_result(
+        &self,
+        turn: &Turn,
+        pre_root: [u8; 32],
+        post_root: [u8; 32],
+    ) -> TurnResult {
+        let pre_state_hash = pre_root;
+        let turn_hash = turn.hash();
+        let forest_hash = turn.call_forest.compute_hash();
+
+        // effects_hash / action_count from the turn body (mirrors the proof-carrying commit path:
+        // the canonical BLAKE3 fold over per-effect hashes the proof verifier keys to).
+        let mut effect_hashes: Vec<[u8; 32]> = Vec::new();
+        fn collect_effect_hashes(tree: &crate::forest::CallTree, out: &mut Vec<[u8; 32]>) {
+            for effect in &tree.action.effects {
+                out.push(crate::action::Effect::hash(effect));
+            }
+            for child in &tree.children {
+                collect_effect_hashes(child, out);
+            }
+        }
+        for root in &turn.call_forest.roots {
+            collect_effect_hashes(root, &mut effect_hashes);
+        }
+        let effects_hash = self.compute_effects_hash(&effect_hashes);
+        let action_count = turn.call_forest.action_count();
+        let computrons_used = self.costs.effect_base.saturating_mul(action_count as u64);
+
+        let mut receipt = TurnReceipt {
+            turn_hash,
+            forest_hash,
+            pre_state_hash,
+            post_state_hash: post_root,
+            timestamp: self.current_timestamp,
+            effects_hash,
+            computrons_used,
+            action_count,
+            previous_receipt_hash: turn.previous_receipt_hash,
+            agent: turn.agent,
+            federation_id: self.local_federation_id,
+            routing_directives: vec![],
+            introduction_exports: vec![],
+            derivation_records: vec![],
+            emitted_events: vec![],
+            executor_signature: None,
+            finality: crate::turn::Finality::Final,
+            was_encrypted: false,
+            was_burn: Self::forest_carries_burn(&turn.call_forest),
+            consumed_capabilities: self.take_consumed_cap_witnesses(),
+        };
+        receipt.executor_signature = self.maybe_sign_receipt(&receipt);
+
+        // Fee-aware, conservation-closed delta (mirrors the proof-carrying path): the agent's fee
+        // debit + nonce bump, with the fee distributed to proposer/treasury/fee-well so the delta
+        // sums to zero.
+        let mut delta = LedgerDelta::new();
+        let mut agent_delta = dregg_cell::CellStateDelta::empty();
+        agent_delta.balance_change = -(turn.fee as i64);
+        agent_delta.nonce_increment = true;
+        delta.updated.push((turn.agent, agent_delta));
+
+        let mut fee_delivered: u64 = 0;
+        if let Some(proposer_id) = &self.proposer_cell {
+            let mut d = dregg_cell::CellStateDelta::empty();
+            d.balance_change = (turn.fee / 2) as i64;
+            fee_delivered += turn.fee / 2;
+            delta.updated.push((*proposer_id, d));
+        }
+        if let Some(treasury_id) = &self.treasury_cell {
+            let mut d = dregg_cell::CellStateDelta::empty();
+            d.balance_change = (turn.fee * 3 / 10) as i64;
+            fee_delivered += turn.fee * 3 / 10;
+            delta.updated.push((*treasury_id, d));
+        }
+        if let Some(well_id) = &self.fee_well_cell {
+            let mut d = dregg_cell::CellStateDelta::empty();
+            d.balance_change = (turn.fee - fee_delivered) as i64;
+            delta.updated.push((*well_id, d));
+        }
+
+        self.record_receipt_hash(turn.agent, receipt.receipt_hash());
+
+        TurnResult::Committed {
+            ledger_delta: delta,
+            receipt,
+            computrons_used,
+        }
+    }
 }

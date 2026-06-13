@@ -1022,13 +1022,21 @@ pub fn execute_via_lean(
 /// producer-mode commit.
 #[derive(Debug, Clone)]
 pub enum ProducerOutcome {
-    /// The VERIFIED Lean executor PRODUCED the committed state (it was installed into `ledger`).
-    /// `committed` is the Lean commit bit; `lean_root` / `rust_root` are the two producers'
-    /// post-state roots and `agree` is whether the commit bits AND roots matched. A `false` `agree`
-    /// is a REAL runtime differential finding — surfaced by the caller, never papered over.
-    LeanProduced {
+    /// THE AUTHORITY INVERSION (Stage 0 / CRITICAL-1). On the COVERED (root-agreeing) set the
+    /// VERIFIED Lean executor is AUTHORITATIVE: its post-state and its commit VERDICT are installed
+    /// UNCONDITIONALLY into `ledger`, and the legacy Rust `TurnExecutor` is demoted to a checked
+    /// REFERENCE. `committed` is the AUTHORITATIVE (Lean) commit bit — the one the returned
+    /// `TurnResult` and `ledger` reflect. `lean_root` is the authoritative post-state root;
+    /// `rust_root` / `rust_committed` are the demoted reference's outputs.
+    ///
+    /// `rust_agreed` is whether the Rust reference reproduced the verified verdict (commit bit AND
+    /// root). A `false` `rust_agreed` is a REAL Rust BUG surfaced as a finding — it does NOT change
+    /// what was committed (Lean still won). The Rust executor is the artifact dregg2 exists to
+    /// REPLACE because it is buggy; on the covered path a Lean↔Rust disagreement is, by definition,
+    /// the Rust path being wrong, NEVER a reason to override the verified producer.
+    LeanAuthoritative {
         committed: bool,
-        agree: bool,
+        rust_agreed: bool,
         lean_root: [u8; 32],
         rust_root: [u8; 32],
         rust_committed: bool,
@@ -1038,77 +1046,84 @@ pub enum ProducerOutcome {
     /// Lean-reconstituted root provably diverges from Rust). Producer mode fell back to the Rust
     /// producer for THIS turn; `ledger` already carries the Rust post-state. `reason` says why the
     /// verified producer was skipped (so the fallback is never silent).
+    ///
+    /// This is the explicitly-FENCED uncovered boundary. Until the covered set is total (Stage 2's
+    /// "empty the partition"), these shapes ride the legacy Rust path — a labeled, surfaced gap, not
+    /// a silent Rust-authoritative-everywhere default.
     Fallback { reason: ExtractError },
-    /// The turn WAS in the covered (root-agreeing) set, the verified producer ran, but its
-    /// post-state UNEXPECTEDLY diverged from the Rust differential. This is a REAL soundness finding
-    /// (the swap-safe coverage classification was wrong for this turn). We do NOT commit the
-    /// divergent Lean state — `ledger` carries the RUST post-state (the conservative choice that
-    /// keeps the node consistent with the rest of the chain) — and surface the divergence loudly.
-    CoveredDivergence {
-        lean_committed: bool,
-        rust_committed: bool,
-        lean_root: [u8; 32],
-        rust_root: [u8; 32],
-    },
 }
 
 impl ProducerOutcome {
-    /// `true` iff the verified producer ran AND its post-state diverged from the Rust differential
-    /// (either an installed divergence — should not happen on the covered path — or a covered-set
-    /// divergence that triggered the conservative Rust fallback).
-    pub fn diverged(&self) -> bool {
+    /// `true` iff the verified producer ran on the covered path AND the demoted Rust reference
+    /// DISAGREED with the authoritative (Lean) verdict — i.e. a surfaced Rust BUG. Committed state
+    /// is unaffected (Lean is authoritative); this only reports the differential finding.
+    pub fn rust_bug_surfaced(&self) -> bool {
         matches!(
             self,
-            ProducerOutcome::LeanProduced { agree: false, .. }
-                | ProducerOutcome::CoveredDivergence { .. }
+            ProducerOutcome::LeanAuthoritative {
+                rust_agreed: false,
+                ..
+            }
         )
     }
 }
 
-/// PRODUCER MODE (THE SWAP authority inversion). Make the VERIFIED Lean executor the authoritative
-/// state PRODUCER for one finalized turn while keeping the receipt/proving machinery on the Rust
-/// path, and run the Rust `TurnExecutor` as a demoted DIFFERENTIAL cross-check.
+/// PRODUCER MODE — THE AUTHORITY INVERSION (Stage 0 / CRITICAL-1). On the COVERED set the VERIFIED
+/// Lean executor is the AUTHORITATIVE state producer AND verdict, installed UNCONDITIONALLY; the
+/// legacy Rust `TurnExecutor` is demoted to a checked REFERENCE that is verified AGAINST, never an
+/// override.
 ///
-/// Mechanics — both producers run, on a SHARED admission decision:
+/// # Why "unconditional" is the whole point
+///
+/// The earlier shape ran both producers and installed the Lean post-state ONLY when its root matched
+/// the Rust executor's — a DIFFERENTIAL, not a refinement. A verified producer that commits only
+/// when it agrees with the *buggy* executor cannot tighten a wrong Rust accept that yields the same
+/// root, cannot override a Rust reject, and is not the reason to trust the transition. Stage 0
+/// inverts the authority: on a covered turn the Lean verdict (commit bit + post-state) is what gets
+/// committed, and a Lean↔Rust disagreement is — by definition, since Rust is the artifact dregg2
+/// replaces *because it is buggy* — a surfaced RUST BUG, not a fallback to Rust.
+///
+/// # Mechanics
 ///   1. Build the host admission ctx from `executor` (clock / freeze-set / chain-head / budget) —
-///      the SAME ctx the Rust executor would build, so neither producer sees a different admission.
-///   2. VERIFIED PRODUCER: drive the turn through the Lean FFI, reconstitute the post-state ledger.
-///   3. RUST PRODUCER/RECEIPT: run `executor.execute(turn, ledger)` — this both mutates `ledger`
-///      (producing the Rust post-state) AND yields the `TurnResult` (receipt / events) the caller
-///      still needs. We snapshot the Rust post-state root for the differential.
-///   4. INSTALL the verified post-state: overwrite `ledger` with the Lean-produced ledger, so the
-///      COMMITTED state (and its merkle root) is the verified executor's output, not Rust's.
-///   5. Return the Rust `TurnResult` (so receipt-chain append / proving / root attestation are
-///      unchanged) AND a [`ProducerOutcome`] carrying the differential.
+///      the SAME ctx the Rust reference uses, so the comparison is meaningful.
+///   2. AUTHORITATIVE PRODUCER: drive the turn through the Lean FFI from the CURRENT pre-state
+///      (before Rust mutates `ledger`); reconstitute the post-state ledger + the verified commit bit.
+///   3. REFERENCE: run `executor.execute(turn, ledger)` — it mutates `ledger` to the Rust
+///      post-state AND yields a `TurnResult` (receipt/events substrate). We snapshot the Rust root
+///      and commit bit as the demoted cross-check.
+///   4. INSTALL THE AUTHORITATIVE VERDICT — UNCONDITIONALLY on the covered path:
+///        * Lean COMMITTED → `*ledger = lean_ledger`; the returned `TurnResult` is a `Committed`
+///          whose receipt's `post_state_hash` is the AUTHORITATIVE (Lean) root. When Rust also
+///          committed we reuse its receipt (re-stamping the post-state hash to Lean's root, which
+///          equals it on agreement and overrides it on a Rust bug). When Rust REJECTED but Lean
+///          committed, we still commit Lean and surface the Rust bug.
+///        * Lean REJECTED → leave `ledger` at the pre-state (a verified rejection is NO state edit)
+///          and return `Rejected`. When Rust had COMMITTED, that Rust accept is OVERRIDDEN by the
+///          verified veto ([`TurnError::LeanShadowVeto`]) and the surfaced bug is the Rust accept.
 ///
-/// COVERAGE GATE (THE SWAP, default-on). The verified producer INSTALLS its post-state only for a
-/// turn in the COVERED set — [`lean_shadow::forest_is_root_agreeing`], i.e. marshallable AND every
-/// effect is in the swap-safe `producer_root_agreeing_effects` set, where the Lean-reconstituted
-/// `.root()` provably EQUALS Rust's (pinned by the `lean_state_producer_*` differentials). A turn
-/// touching ANY characterized root-GAP effect (Refusal / ReceiptArchive / escrow-settle / …) or
-/// any unmappable effect falls back to the Rust producer with [`ProducerOutcome::Fallback`] and a
-/// precise reason — so the live commit path NEVER installs a Lean root known to disagree with the
-/// rest of the chain. This is what makes the default-on flip safe: "Lean produces, Rust verifies,
-/// they agree" is a genuine runtime INVARIANT on the covered path, not a divergence committed anyway.
+/// # Coverage boundary (be precise; fail-closed off it)
 ///
-/// On a covered turn whose Lean post-state UNEXPECTEDLY diverges from the Rust differential
-/// (a misclassification — should never happen given the differential teeth), we do NOT commit the
-/// divergent Lean state: `ledger` keeps the RUST post-state (the conservative, chain-consistent
-/// choice) and [`ProducerOutcome::CoveredDivergence`] is returned for the caller to surface loudly.
+/// "Covered" = [`lean_shadow::forest_is_root_agreeing`]: marshallable AND every effect is in the
+/// swap-safe `producer_root_agreeing_effects` set, where the Lean-reconstituted `.root()` provably
+/// equals Rust's (pinned by the `lean_state_producer_*` differentials). For ANY uncovered shape — a
+/// characterized root-GAP effect (Refusal / ReceiptArchive / …) or an unmappable effect — we do NOT
+/// silently let Rust be authoritative-everywhere: we take the legacy Rust path but FENCE it with an
+/// explicit, surfaced [`ProducerOutcome::Fallback`] naming the precise reason. That uncovered set is
+/// the named, burning-down partition (Stage 2), not a hidden Rust default.
 pub fn produce_via_lean(
     executor: &TurnExecutor,
     turn: &Turn,
     ledger: &mut Ledger,
 ) -> (TurnResult, ProducerOutcome) {
-    // COVERAGE GATE: install the verified post-state ONLY for the root-agreeing (swap-safe) set. A
-    // turn that is unmappable OR touches a characterized root-gap effect falls back to the Rust
-    // producer entirely (it mutates `ledger` and yields the receipt as today), with a precise reason
-    // — never a silent commit of a divergent Lean root.
+    // COVERAGE GATE: the verified producer is AUTHORITATIVE only for the root-agreeing (swap-safe)
+    // set. A turn that is unmappable OR touches a characterized root-gap effect is FENCED on the
+    // legacy Rust path — surfaced as a `Fallback` with a precise reason, never a silent commit of a
+    // Lean root known to disagree with the rest of the chain (and never a silent Rust-everywhere).
     if !lean_shadow::forest_is_root_agreeing(turn) {
         let result = executor.execute(turn, ledger);
         let reason = if lean_shadow::forest_is_marshallable(turn) {
             // Marshallable but NOT root-agreeing ⇒ a characterized root-GAP effect. Name the first
-            // offending kind so the fallback is honest about WHICH gap blocked the producer.
+            // offending kind so the fence is honest about WHICH gap blocked the producer.
             ExtractError::RootGap {
                 kind: lean_shadow::first_root_gap_kind(turn).unwrap_or("unknown"),
             }
@@ -1120,55 +1135,113 @@ pub fn produce_via_lean(
 
     let host = executor.build_shadow_host_ctx(turn, ledger);
 
-    // VERIFIED PRODUCER: drive the turn through the Lean FFI and reconstitute the post-state from
-    // the CURRENT pre-state (before the Rust executor mutates `ledger`).
+    // AUTHORITATIVE PRODUCER: drive the turn through the Lean FFI and reconstitute the post-state
+    // from the CURRENT pre-state (before the Rust reference mutates `ledger`).
     let lean = match execute_via_lean(turn, ledger, &host) {
-        Ok(pair) => Some(pair),
-        // A reconstitution error (e.g. a marshaller gap the eligibility gate did not catch) is a
-        // real finding, but we must still commit SOME state — fall back to the Rust producer.
+        Ok(pair) => pair,
+        // A reconstitution error (e.g. a marshaller gap the eligibility gate did not catch) means we
+        // have no authoritative verdict to install — FENCE this turn onto the Rust path and surface
+        // the error, rather than committing an unverified Rust root as if it were covered.
         Err(e) => {
             let result = executor.execute(turn, ledger);
             return (result, ProducerOutcome::Fallback { reason: e });
         }
     };
-    let (mut lean_ledger, lean_committed) = lean.unwrap();
+    let (mut lean_ledger, lean_committed) = lean;
     let lean_root = lean_ledger.root();
 
-    // RUST PRODUCER + RECEIPT: run the Rust executor in place — it mutates `ledger` to the Rust
-    // post-state and yields the `TurnResult` (receipt/events) the commit path still consumes.
+    // PRE-STATE SNAPSHOT: capture the pre-state (and its root) BEFORE the Rust reference mutates
+    // `ledger`, so the authority-inversion's REJECT branch can restore EXACTLY the pre-state a
+    // verified rejection mandates (a verified reject = no state edit), and the synthesized
+    // authoritative receipt can pin the correct `pre_state_hash`. Mirrors the strict-veto snapshot
+    // in `executor::execute_with_shadow` — the cost is one clone on the covered path.
+    let pre_root = ledger.root();
+    let pre_snapshot = ledger.clone();
+
+    // REFERENCE: run the Rust executor in place — it mutates `ledger` to the Rust post-state and
+    // yields the `TurnResult` (receipt/events) that is the commit-path substrate. This is the
+    // DEMOTED cross-check, not the authority.
     let rust_result = executor.execute(turn, ledger);
     let rust_committed = matches!(rust_result, TurnResult::Committed { .. });
     let rust_root = ledger.root();
+    let rust_agreed = lean_committed == rust_committed && lean_root == rust_root;
 
-    let agree = lean_committed == rust_committed && lean_root == rust_root;
+    let outcome = ProducerOutcome::LeanAuthoritative {
+        committed: lean_committed,
+        rust_agreed,
+        lean_root,
+        rust_root,
+        rust_committed,
+    };
 
-    if agree {
-        // INSTALL THE VERIFIED POST-STATE: on the covered (root-agreeing) path the Lean root EQUALS
-        // the Rust root, so the COMMITTED ledger is now the verified executor's output — the SWAP.
-        // On a Lean rejection the reconstituted ledger equals the pre-state, matching a no-commit.
+    if lean_committed {
+        // INSTALL THE VERIFIED POST-STATE UNCONDITIONALLY — the authoritative verdict is COMMIT.
         *ledger = lean_ledger;
-        (
-            rust_result,
-            ProducerOutcome::LeanProduced {
-                committed: lean_committed,
-                agree: true,
-                lean_root,
-                rust_root,
-                rust_committed,
-            },
-        )
+        // Build the authoritative `TurnResult`. The receipt MUST attest the installed (Lean) root,
+        // so we re-stamp `post_state_hash` to `lean_root` (equal to the Rust root on agreement; the
+        // authoritative override on a surfaced Rust bug). When Rust REJECTED, there is no Rust
+        // receipt to carry — the verified COMMIT overrides the Rust reject — so we synthesize the
+        // authoritative receipt from the turn + installed ledger.
+        let result =
+            authoritative_committed_result(turn, pre_root, lean_root, executor, rust_result);
+        (result, outcome)
     } else {
-        // COVERED-SET DIVERGENCE: a turn the coverage classification deemed swap-safe nevertheless
-        // diverged. This is a real soundness finding. Do NOT commit the divergent Lean state — keep
-        // the Rust post-state already in `ledger` (chain-consistent) and surface the divergence.
-        (
-            rust_result,
-            ProducerOutcome::CoveredDivergence {
-                lean_committed,
-                rust_committed,
-                lean_root,
-                rust_root,
+        // The authoritative verdict is REJECT: a verified rejection is NO state edit. The Rust
+        // reference already mutated `ledger` to its (possibly committed) post-state; restore the
+        // exact pre-state the verified rejection mandates.
+        *ledger = pre_snapshot;
+        let result = match rust_result {
+            // Rust agreed (also rejected): carry its rejection reason unchanged.
+            r @ TurnResult::Rejected { .. } => r,
+            // Rust ACCEPTED where the verified kernel REJECTED — the verified veto overrides the
+            // buggy Rust accept (the kernel can only TIGHTEN; never launder a wrong accept).
+            _ => TurnResult::Rejected {
+                reason: crate::error::TurnError::LeanShadowVeto,
+                at_action: vec![],
             },
-        )
+        };
+        (result, outcome)
+    }
+}
+
+/// Build the AUTHORITATIVE `Committed` `TurnResult` for the inversion's commit branch: the verified
+/// Lean executor committed, `ledger` now holds the installed Lean post-state, and `lean_root` is its
+/// authoritative root.
+///
+///   * `rust_result == Committed{..}` (Rust agreed, or disagreed only on the root): reuse the Rust
+///     receipt/delta — it is the correct receipt substrate — but RE-STAMP its `post_state_hash` to
+///     the authoritative `lean_root` so the receipt attests the state actually committed. On
+///     agreement this is a no-op; on a surfaced Rust root-bug it is the authoritative override.
+///   * `rust_result` is a reject/expired/pending (Rust DISAGREED on the commit bit): there is no
+///     Rust receipt — the verified COMMIT overrides the buggy Rust non-commit — so synthesize the
+///     receipt from the turn + the pre-state root via the executor's receipt builder, with
+///     `post_state_hash = lean_root`.
+fn authoritative_committed_result(
+    turn: &Turn,
+    pre_root: [u8; 32],
+    lean_root: [u8; 32],
+    executor: &TurnExecutor,
+    rust_result: TurnResult,
+) -> TurnResult {
+    match rust_result {
+        TurnResult::Committed {
+            ledger_delta,
+            receipt,
+            computrons_used,
+        } => {
+            // Re-stamp `post_state_hash` to the authoritative installed (Lean) root and re-sign.
+            // (`restamp_committed_receipt` lives on the executor so it can re-sign with the
+            // executor's key; equal to Rust's root on agreement, the override on a surfaced bug.)
+            let receipt = executor.restamp_committed_receipt(receipt, lean_root);
+            TurnResult::Committed {
+                ledger_delta,
+                receipt,
+                computrons_used,
+            }
+        }
+        _ => {
+            // Rust did not commit; build the authoritative receipt for the verified commit.
+            executor.build_producer_committed_result(turn, pre_root, lean_root)
+        }
     }
 }

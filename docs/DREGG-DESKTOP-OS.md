@@ -480,7 +480,11 @@ riscv64 already boots M0/M5 (the arch-agnostic PDs port by retarget).
   already-sDDF-shaped driver/client pair the migration spine generalizes.**
 - **starbridge-v2** — a gpui-based master interface that EMBEDS the real verified
   executor (cipherclerk + a Cmd-K palette + debugger/replay/objects). Its
-  `surface.rs` already has `SurfaceId` + an unforgeable `SurfaceCapability`; its
+  `surface.rs`/`shell.rs` cap-first window manager runs on the REAL
+  `dregg_firmament` surface cap (`SurfaceCapability` IS a
+  `Capability{ Surface(cell), rights }` over a real `SurfaceBacking`; every
+  window op resolves through `granted ⊆ held`, and a widening window-share is
+  rejected by the real executor — the divergence below is CLOSED); its
   `dynamics.rs` already emits a `WorldEvent` stream with `since(cursor)`; its
   `world.rs` embeds a real `World` over a real `TurnExecutor`. **It IS the n=1
   robigalia root-OS desktop on mac today.**
@@ -499,17 +503,33 @@ riscv64 already boots M0/M5 (the arch-agnostic PDs port by retarget).
   compositor (R1/R2) and the eventual seL4-native compositor target's gpui face;
   its cipherclerk/palette is the SAK trust anchor (§5).
 
-### The one latent divergence to close (a WELD target, not a wall)
+### The latent divergence is CLOSED — one surface-cap model
 
-starbridge-v2's existing `SurfaceCapability` is currently a *parallel model* — a
-local per-surface secret in `surface.rs`, NOT the real `dregg_firmament`
-`Capability`. Left alone it would launder vacuity (two surface-cap models
-coexisting). It must be **rebased** onto the real
-`Capability{target:Surface(cell), rights}` so it rides `granted ⊆ held` and the
-real `EffectMask` facet, not a bearer secret. This is *exactly* the kind of
-disconnected-capability-that-already-exists the WELD method targets: connect it,
-don't let two surface-cap models coexist. (This rebase is the natural R1
-starbridge-v2 work, gated on R0 being green.)
+starbridge-v2's `SurfaceCapability` IS the real `dregg_firmament`
+`Capability{ target: Surface(cell), rights }` (`starbridge-v2/src/surface.rs`).
+There is no parallel bearer-secret model: the shell
+(`starbridge-v2/src/shell.rs`) owns a real `dregg_firmament::SurfaceBacking` (a
+genuine `dregg_cell::Ledger` + `dregg_turn::TurnExecutor`), and **every window
+op — focus / raise / move / resize / minimize / close / share — authenticates
+by resolving the presented cap through the firmament's `granted ⊆ held`
+(`is_attenuation`) gate** (`Shell::authorize` → `SurfaceBacking::invoke`), not a
+secret match. Window authority is exactly holding the real `Capability` over the
+surface's backing cell; attenuating/delegating/revoking the window is
+attenuating/delegating/revoking that cap.
+
+A window-**share** (`Shell::share`) is a GENUINE `Effect::GrantCapability` turn
+through the real executor, so a **WIDENING share is REJECTED** with
+`DelegationDenied` at the window-manager layer — the no-amplification guarantee
+firing at the desktop (test:
+`shell::tests::a_narrowing_window_share_commits_and_a_widening_share_rejects`,
+mirroring the firmament's own `real_executor_rejects_widening_surface_share`).
+The cockpit surfaces this as a teaching moment (the `⚠ over-share` verb / the
+`Shell: over-share` palette command), exactly as the composer's `⚠ over-grant`
+does for transfers. The surface module's discipline is preserved: NO mock
+surfaces, and the trusted-path identity label is the shell's, drawn from the
+live world ledger (the §5 T2 property), never the surface's self-description —
+authority is the firmament cap-graph, identity is the live world; two ledgers,
+two distinct roles. This was the natural R1 starbridge-v2 weld, landed on R0.
 
 ---
 

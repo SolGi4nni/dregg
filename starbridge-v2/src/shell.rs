@@ -1,19 +1,42 @@
 //! The shell — a cap-first window manager + compositor over real cells.
 //!
 //! This is the native desktop-OS pillar of the master interface. The [`Shell`]
-//! owns a set of [`Surface`]s, the z-order stack, the focus, and the registry of
-//! issued [`SurfaceCapability`]s. It is a CAP-FIRST window manager: every window
-//! op — focus, raise, move, resize, minimize, close — is GATED by the surface's
-//! capability. There is no ambient authority over a window; you drive a surface
-//! only by presenting the cap the shell minted when it opened.
+//! owns a set of [`Surface`]s, the z-order stack, the focus, and the
+//! **firmament surface-fabric** the window caps are checked against. It is a
+//! CAP-FIRST window manager: every window op — focus, raise, move, resize,
+//! minimize, close, share — is GATED by the surface's capability. There is no
+//! ambient authority over a window; you drive a surface only by presenting the
+//! cap the shell minted when it opened.
+//!
+//! **The authority is the REAL `dregg_firmament` capability** (`docs/
+//! DREGG-DESKTOP-OS.md` §7 — the one latent divergence, closed). The shell owns
+//! a [`SurfaceBacking`](dregg_firmament::SurfaceBacking): a real
+//! [`dregg_cell::Ledger`] + [`dregg_turn::TurnExecutor`]. When a surface opens,
+//! the shell seeds a fresh *backing surface-cell* + an *owner holder* in that
+//! fabric and installs the owner's original grant over the backing cell; the
+//! returned [`SurfaceCapability`] carries the REAL
+//! [`Capability`](dregg_firmament::Capability) `target = Surface(backing_cell)`.
+//! Every op authenticates by RESOLVING that cap through the firmament's
+//! `granted ⊆ held` ([`is_attenuation`](dregg_firmament::is_attenuation)) gate —
+//! the SAME gate the local (`seL4_CNode_Mint`) and distributed (`recKDelegate
+//! Atten`) backings use, no special-casing. A window-SHARE
+//! ([`Shell::share`]) runs a GENUINE `Effect::GrantCapability` turn, so a
+//! WIDENING share is REJECTED by the real executor — the no-amplification
+//! guarantee firing at the desktop. There is NO bearer-secret model.
 //!
 //! Each surface is a view of a REAL cell in the embedded [`World`](crate::world)
-//! (apps-as-cells). The shell reads the live ledger to:
+//! (apps-as-cells). The shell reads the live world ledger to:
 //!   * derive each surface's TRUSTED-PATH identity label (the owning cell's real
 //!     id + lifecycle) — anti-spoof chrome the shell draws, not the surface, so
 //!     a surface cannot impersonate another cell, and
 //!   * compose a [`Scene`]: the ordered, gpui-free description of what to paint
 //!     (back-to-front), which the cockpit maps onto a gpui scene.
+//!
+//! Two ledgers, two distinct roles: the firmament fabric holds the AUTHORITY
+//! cap-graph (what the cap gate checks); the embedded world holds the rendered
+//! CONTENT + identity (what `compose` reads). The viewed cell (identity) and the
+//! backing surface-cell (authority) are kept distinct — exactly as a surface and
+//! its cap are distinct objects.
 //!
 //! The compositor framing: the cockpit is ONE privileged [`SurfaceKind::Console`]
 //! surface; the other surfaces are cap-confined cell views, tiled/floated/
@@ -25,6 +48,7 @@
 
 use dregg_cell::lifecycle::CellLifecycle;
 use dregg_cell::CellId;
+use dregg_firmament::{AuthRequired, Capability, ResolveError, SurfaceBacking};
 
 use crate::surface::{Rect, Surface, SurfaceCapability, SurfaceId, SurfaceKind};
 use crate::world::World;
@@ -35,15 +59,23 @@ use crate::world::World;
 /// op was denied.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ShellError {
-    /// The presented capability does not authenticate against any live surface
-    /// (wrong secret, or a surface that no longer exists). The op is refused:
-    /// authority over a surface is exactly its un-forgeable cap.
+    /// The presented capability does not authenticate: it names no live surface,
+    /// its authority targets the wrong backing cell (cap confusion), or the
+    /// firmament's `granted ⊆ held` gate refused the requested rights. The op is
+    /// refused — authority over a surface is exactly the REAL firmament cap it
+    /// carries, checked through [`SurfaceBacking::invoke`].
     Unauthorized,
     /// The named surface does not exist (already closed, or never opened).
     NoSuchSurface(SurfaceId),
     /// A protected op on the console surface (the console can't be closed — it
     /// is the trusted root; closing it would orphan the whole shell).
     ConsoleProtected,
+    /// A window-SHARE was REJECTED by the REAL executor — a WIDENING share (a
+    /// surface trying to hand out MORE authority over the glass than it holds)
+    /// is refused by the genuine `Effect::GrantCapability` attenuation gate
+    /// (`DelegationDenied`). This is the no-amplification guarantee firing at the
+    /// window-manager layer; carries the executor's reason for the operator log.
+    ShareDenied(String),
 }
 
 /// How the shell lays out surfaces. The compositor supports three classic
@@ -124,26 +156,53 @@ impl Scene {
     }
 }
 
+/// The per-surface authority binding in the firmament fabric: the backing
+/// surface-cell whose cap the window IS, and the owner holder whose c-list the
+/// `granted ⊆ held` gate checks a presented cap against. Mints monotonically so
+/// every surface gets a fresh, non-confusable backing cell + owner.
+#[derive(Clone, Copy, Debug)]
+struct SurfaceAuthority {
+    /// The firmament cell that backs this surface — the cell a window cap's
+    /// `Surface(cell)` target names. (Distinct from the surface's *viewed* cell,
+    /// which is the identity anchor read from the live world ledger.)
+    backing_cell: CellId,
+    /// The owner holder whose installed grant over `backing_cell` the firmament's
+    /// `invoke` checks a presented cap against (the surface's "owner" identity in
+    /// the fabric — the cockpit acts as it).
+    owner: CellId,
+}
+
 /// The cap-first window manager. Owns the surfaces, the z-order, the focus, the
-/// layout, and the capability registry (the secrets it minted).
+/// layout, and the REAL firmament surface-fabric the window caps ride.
 pub struct Shell {
     surfaces: Vec<Surface>,
-    /// The capability registry: surface id → the secret the shell minted for it.
-    /// A presented cap authenticates iff its `(surface, secret)` matches an entry
-    /// here. The shell NEVER reveals these — a cap is obtained only by holding
-    /// one the shell granted (open returns it), never by naming a surface.
-    secrets: Vec<(SurfaceId, u64)>,
+    /// The REAL firmament surface-fabric: a `dregg_cell::Ledger` +
+    /// `dregg_turn::TurnExecutor`. Every window cap is a
+    /// `Capability{ Surface(backing_cell), rights }` resolved against THIS via
+    /// the genuine `granted ⊆ held` gate; a window-SHARE is a genuine
+    /// `Effect::GrantCapability` turn through its executor. The bearer-secret
+    /// model is GONE (§7).
+    fabric: SurfaceBacking,
+    /// The per-surface authority registry: surface id → its backing cell + owner
+    /// in the fabric. A presented cap authenticates iff its `surface` is here AND
+    /// its authority targets that surface's `backing_cell` AND the firmament
+    /// `invoke(owner, backing_cell, cap.rights)` succeeds. (Replaces the secret
+    /// table — authority is now the real cap, not a guessable token.)
+    authorities: Vec<(SurfaceId, SurfaceAuthority)>,
     /// The focused surface, if any.
     focus: Option<SurfaceId>,
     /// The current compositor layout.
     layout: Layout,
     /// Monotonic surface-id allocator.
     next_id: u64,
-    /// A simple deterministic counter mixed into minted secrets (so two surfaces
-    /// opened in a session get distinct caps without an RNG dependency; the
-    /// secret is an unforgeability barrier within this process, not a
-    /// cryptographic key).
-    secret_seq: u64,
+    /// A deterministic seed counter mixed into each surface's fresh backing-cell
+    /// + owner derivation (so two surfaces opened in a session get distinct,
+    /// non-confusable backing cells without an RNG dependency).
+    cell_seq: u8,
+    /// Recipient apps seeded in the fabric for window-SHARES, keyed by a caller
+    /// app id → its fabric cell. Seeded once so re-sharing to the same app reuses
+    /// its cell (the firmament ledger inserts a cell exactly once).
+    recipients: Vec<(u64, CellId)>,
     /// The shell's logical work-area size (for tile/stack arrangement).
     area: Rect,
 }
@@ -155,15 +214,18 @@ impl Default for Shell {
 }
 
 impl Shell {
-    /// A fresh shell with no surfaces, floating layout, and a default work area.
+    /// A fresh shell with no surfaces, floating layout, a default work area, and
+    /// an empty single-machine (`n = 1`) firmament surface-fabric.
     pub fn new() -> Self {
         Shell {
             surfaces: Vec::new(),
-            secrets: Vec::new(),
+            fabric: SurfaceBacking::new(),
+            authorities: Vec::new(),
             focus: None,
             layout: Layout::Float,
             next_id: 1,
-            secret_seq: 0x9E37_79B9_7F4A_7C15, // a fixed odd seed (Weyl-ish)
+            cell_seq: 0,
+            recipients: Vec::new(),
             area: Rect::new(0.0, 0.0, 1280.0, 760.0),
         }
     }
@@ -198,10 +260,14 @@ impl Shell {
         self.open_surface(SurfaceKind::CellView, cell, title.into(), rect)
     }
 
-    /// The single surface-creation path: allocate an id, mint a fresh secret +
-    /// its capability, install the surface at the top of the z-order, focus it,
-    /// and hand back the cap. (Crate-internal — `open_console`/`open_cell_view`
-    /// are the public doors.)
+    /// The single surface-creation path: allocate an id, seed a fresh backing
+    /// surface-cell + owner in the REAL firmament fabric, install the owner's
+    /// original (full-rights) grant over the backing cell, mint the REAL
+    /// `Capability{ Surface(backing_cell), rights }` the opener now holds,
+    /// install the surface at the top of the z-order, focus it, and hand back
+    /// the cap. (Crate-internal — `open_console`/`open_cell_view` are the public
+    /// doors.) Authority over the window is now exactly this firmament cap; the
+    /// shell holds NO secret.
     fn open_surface(
         &mut self,
         kind: SurfaceKind,
@@ -211,19 +277,35 @@ impl Shell {
     ) -> SurfaceCapability {
         let id = SurfaceId(self.next_id);
         self.next_id += 1;
-        let secret = self.mint_secret();
+
+        // Seed this surface's authority in the firmament fabric: a fresh backing
+        // surface-cell + an owner holder, both at distinct deterministic seeds so
+        // surfaces are never confusable. The owner is granted the FULL (widest,
+        // `None`) authority over the backing cell — the original window cap, from
+        // which any share is a strict narrowing through the real executor.
+        let backing_seed = self.next_cell_seed();
+        let backing_cell = self.fabric.seed_surface(backing_seed);
+        let owner_seed = self.next_cell_seed();
+        let owner = self.fabric.seed_surface(owner_seed);
+        let full = AuthRequired::None;
+        self.fabric.install(owner, backing_cell, full.clone());
+
         let z = self.top_z() + 1;
         let surface = Surface::new(id, kind, cell, title, rect, z);
         self.surfaces.push(surface);
-        self.secrets.push((id, secret));
+        self.authorities
+            .push((id, SurfaceAuthority { backing_cell, owner }));
         self.focus = Some(id);
-        SurfaceCapability::new(id, secret)
+
+        // The opener holds the REAL firmament cap over the backing surface-cell.
+        SurfaceCapability::new(id, Capability::surface(backing_cell, full))
     }
 
     /// Close the surface the capability authorizes. Refuses if the cap doesn't
     /// authenticate, or if it names the console (the trusted root is protected).
-    /// On success the surface + its secret are dropped (the cap becomes dead),
-    /// and focus moves to the new front-most surface.
+    /// On success the surface + its firmament authority binding are dropped (the
+    /// cap becomes dead — its backing-cell/owner are no longer registered, so it
+    /// stops resolving), and focus moves to the new front-most surface.
     pub fn close(&mut self, cap: &SurfaceCapability) -> Result<(), ShellError> {
         let id = self.authorize(cap)?;
         if let Some(s) = self.get(id) {
@@ -232,7 +314,10 @@ impl Shell {
             }
         }
         self.surfaces.retain(|s| s.id() != id);
-        self.secrets.retain(|(sid, _)| *sid != id);
+        // Drop the surface's firmament authority binding — the cap is now dead
+        // (no registered backing cell/owner ⇒ `invoke` has nothing to satisfy,
+        // so the cap stops authenticating: a closed window's authority is gone).
+        self.authorities.retain(|(sid, _)| *sid != id);
         if self.focus == Some(id) {
             self.focus = self.front_id();
         }
@@ -329,6 +414,81 @@ impl Shell {
         Ok(())
     }
 
+    /// SHARE the capability's window with another app — hand it an ATTENUATED
+    /// surface cap through a GENUINE `Effect::GrantCapability` turn on the real
+    /// executor. The presented `cap` is authenticated first (you can only share a
+    /// window you hold); then the surface owner delegates `narrower` rights over
+    /// the SAME backing cell to the recipient app (seeded once in the fabric,
+    /// keyed by `recipient_app`).
+    ///
+    /// **A WIDENING share is REJECTED** — `narrower` must be `⊆` the rights the
+    /// presented cap holds, else the real executor refuses it
+    /// ([`ShellError::ShareDenied`], the `DelegationDenied` surfaced). This is
+    /// the no-amplification guarantee firing at the window-manager layer: a
+    /// surface cannot hand out more authority over the glass than it carries —
+    /// byte-for-byte the executor's deployed attenuation semantics, mirroring the
+    /// firmament's own `real_executor_rejects_widening_surface_share`.
+    ///
+    /// On success the shared window becomes a NEW surface (a fresh
+    /// [`SurfaceId`]) over the SAME backing authority cell, owned in the fabric
+    /// by the recipient at the narrowed rights; the returned
+    /// [`SurfaceCapability`] is the recipient's handle to it. A NARROWING share
+    /// COMMITS; a widening one is refused and changes nothing.
+    pub fn share(
+        &mut self,
+        cap: &SurfaceCapability,
+        recipient_app: u64,
+        narrower: AuthRequired,
+    ) -> Result<SurfaceCapability, ShellError> {
+        // You can only share a window you actually hold (cap-gated like every op).
+        let id = self.authorize(cap)?;
+        let auth = self
+            .authorities
+            .iter()
+            .find(|(sid, _)| *sid == id)
+            .map(|(_, a)| *a)
+            .ok_or(ShellError::Unauthorized)?;
+
+        // Resolve (seed once) the recipient app's cell in the fabric.
+        let recipient = self.recipient_cell(recipient_app);
+
+        // The REAL delegating turn: owner --GrantCapability(narrower)--> recipient.
+        // The executor enforces `granted ⊆ held`; a WIDENING share is rejected
+        // here (DelegationDenied), and nothing is granted.
+        self.fabric
+            .delegate(auth.owner, recipient, auth.backing_cell, narrower.clone())
+            .map_err(|e| match e {
+                ResolveError::BackingRejected(why) => ShellError::ShareDenied(why),
+                ResolveError::Unauthorized(why) => ShellError::ShareDenied(why),
+                ResolveError::TargetNotFound => {
+                    ShellError::ShareDenied("share target not found in the fabric".to_string())
+                }
+            })?;
+
+        // The share landed: register a NEW surface (over the SAME backing cell,
+        // owned by the recipient) and hand back the recipient's narrowed cap.
+        let new_id = SurfaceId(self.next_id);
+        self.next_id += 1;
+        let view_cell = self.get(id).map(|s| s.cell()).unwrap_or(auth.backing_cell);
+        let kind = SurfaceKind::CellView; // a shared window is a cap-confined view
+        let z = self.top_z() + 1;
+        let n = self.surfaces.iter().filter(|s| !s.is_console()).count() as f32;
+        let rect = Rect::new(100.0 + n * 28.0, 100.0 + n * 28.0, 420.0, 300.0);
+        let surface = Surface::new(new_id, kind, view_cell, format!("shared s{}", id.as_u64()), rect, z);
+        self.surfaces.push(surface);
+        self.authorities.push((
+            new_id,
+            SurfaceAuthority {
+                backing_cell: auth.backing_cell,
+                owner: recipient,
+            },
+        ));
+        Ok(SurfaceCapability::new(
+            new_id,
+            Capability::surface(auth.backing_cell, narrower),
+        ))
+    }
+
     // --- layout (a shell-global op; not surface-scoped) ----------------------
 
     /// Set the compositor layout (float/tile/stack). This is a shell-wide op the
@@ -371,7 +531,8 @@ impl Shell {
     }
 
     /// Whether the capability still authenticates (its surface is live + the
-    /// secret matches). Lets a holder check liveness without performing an op.
+    /// firmament `granted ⊆ held` gate admits it). Lets a holder check liveness
+    /// without performing an op.
     pub fn validates(&self, cap: &SurfaceCapability) -> bool {
         self.authorize(cap).is_ok()
     }
@@ -437,20 +598,39 @@ impl Shell {
 
     // --- internals -----------------------------------------------------------
 
-    /// Authenticate a presented capability: it must name a live surface AND
-    /// carry the secret the shell minted for it. Returns the authorized surface
-    /// id, or [`ShellError::Unauthorized`]. THIS is the ocap check at the heart
-    /// of the cap-first window manager — every op routes through it.
+    /// Authenticate a presented capability through the REAL firmament gate. The
+    /// cap must (1) name a live surface, (2) carry an authority whose
+    /// `Surface(cell)` target IS that surface's registered backing cell (no cap
+    /// confusion — a cap for another window, or one targeting the wrong cell, is
+    /// refused), and (3) RESOLVE through the firmament's
+    /// [`SurfaceBacking::invoke`] — the genuine `granted ⊆ held`
+    /// ([`dregg_firmament::is_attenuation`]) check against the surface owner's
+    /// installed grant. Returns the authorized surface id, or
+    /// [`ShellError::Unauthorized`]. THIS is the ocap check at the heart of the
+    /// cap-first window manager — every op routes through it, and it is now the
+    /// SAME gate every other firmament cap uses, not a secret match.
     fn authorize(&self, cap: &SurfaceCapability) -> Result<SurfaceId, ShellError> {
-        let ok = self
-            .secrets
+        // (1) the surface must be live + registered.
+        let auth = self
+            .authorities
             .iter()
-            .any(|(sid, secret)| *sid == cap.surface() && *secret == cap.secret());
-        if ok {
-            Ok(cap.surface())
-        } else {
-            Err(ShellError::Unauthorized)
+            .find(|(sid, _)| *sid == cap.surface())
+            .map(|(_, a)| a)
+            .ok_or(ShellError::Unauthorized)?;
+        // (2) anti cap-confusion: the cap's authority must target THIS surface's
+        // backing cell (a cap minted for another window is refused here).
+        if cap.backing_cell() != Some(auth.backing_cell) {
+            return Err(ShellError::Unauthorized);
         }
+        // (3) the REAL `granted ⊆ held` resolution: invoke the owner's grant over
+        // the backing cell at the presented rights. A cap whose rights exceed the
+        // owner-grant (or a fabricated cap the fabric never granted) is refused by
+        // the genuine is_attenuation gate — exactly the no-amplification rule the
+        // local/distributed backings enforce.
+        self.fabric
+            .invoke(auth.owner, auth.backing_cell, cap.rights())
+            .map_err(|_| ShellError::Unauthorized)?;
+        Ok(cap.surface())
     }
 
     /// Derive a surface's trusted-path identity from the LIVE ledger (anti-spoof
@@ -539,15 +719,28 @@ impl Shell {
         out
     }
 
-    fn mint_secret(&mut self) -> u64 {
-        // Advance a deterministic odd-step counter and scramble it. Distinct per
-        // surface within the session; the unforgeability barrier is that this is
-        // never revealed, only handed back inside the minted cap.
-        self.secret_seq = self
-            .secret_seq
-            .wrapping_mul(0xD1B5_4A32_D192_ED03)
-            .wrapping_add(0x9E37_79B9_7F4A_7C15);
-        self.secret_seq ^ (self.next_id.wrapping_mul(0xA24B_AED4_963E_E407))
+    /// Advance the deterministic seed counter for a fresh firmament backing /
+    /// owner cell (each surface consumes two: its backing cell + its owner). The
+    /// distinct seeds keep surface cells non-confusable within the session; the
+    /// real unforgeability barrier is the firmament's `granted ⊆ held` gate, not
+    /// a hidden token.
+    fn next_cell_seed(&mut self) -> u8 {
+        let s = self.cell_seq;
+        self.cell_seq = self.cell_seq.wrapping_add(1);
+        s
+    }
+
+    /// Resolve a recipient app id to its fabric cell, seeding it ONCE (the
+    /// firmament ledger inserts a cell exactly once, so re-sharing to the same
+    /// app reuses its existing cell rather than re-seeding).
+    fn recipient_cell(&mut self, recipient_app: u64) -> CellId {
+        if let Some((_, c)) = self.recipients.iter().find(|(k, _)| *k == recipient_app) {
+            return *c;
+        }
+        let seed = self.next_cell_seed();
+        let cell = self.fabric.seed_surface(seed);
+        self.recipients.push((recipient_app, cell));
+        cell
     }
 
     fn top_z(&self) -> u32 {
@@ -616,19 +809,98 @@ mod tests {
 
     #[test]
     fn a_forged_capability_is_refused_every_op() {
-        // The ocap heart: an op presented with a cap the shell never minted is
-        // refused. Knowing the SurfaceId is NOT enough — the secret is required.
+        // The ocap heart: an op presented with a cap the firmament never granted
+        // is refused by the REAL `granted ⊆ held` gate. Naming the SurfaceId is
+        // NOT enough — the cap's authority must target the surface's actual
+        // backing cell AND resolve against the owner's installed grant.
+        use dregg_firmament::{AuthRequired, Capability, CellId as FCellId, Target};
         let (mut shell, _world, anchors, _console) = shell_with_console();
         let real = shell.open_cell_view(anchors[1], "Service");
-        // Forge a cap for the SAME surface id but a guessed secret.
-        let forged = SurfaceCapability::new(real.surface(), real.secret().wrapping_add(1));
+
+        // Forge a cap for the SAME surface id but an authority over a DIFFERENT
+        // (attacker-chosen) backing cell — anti cap-confusion refuses it (the
+        // cap's Surface(cell) target ≠ the surface's registered backing cell).
+        let ghost_cell = {
+            let mut k = [0u8; 32];
+            k[0] = 0xEE;
+            FCellId::derive_raw(&k, &[0u8; 32])
+        };
+        let forged = SurfaceCapability::new(
+            real.surface(),
+            Capability::surface(ghost_cell, AuthRequired::None),
+        );
         assert!(!shell.validates(&forged));
         assert_eq!(shell.focus(&forged), Err(ShellError::Unauthorized));
         assert_eq!(shell.move_by(&forged, 10.0, 10.0), Err(ShellError::Unauthorized));
         assert_eq!(shell.close(&forged), Err(ShellError::Unauthorized));
+
         // A cap for a surface that doesn't exist is likewise refused.
-        let nobody = SurfaceCapability::new(SurfaceId(9999), 0xDEAD);
+        let nobody = SurfaceCapability::new(
+            SurfaceId(9999),
+            Capability::surface(ghost_cell, AuthRequired::None),
+        );
         assert_eq!(shell.focus(&nobody), Err(ShellError::Unauthorized));
+
+        // A non-surface authority (e.g. a Local target) over the right surface id
+        // is also refused — it carries no backing surface cell to bind.
+        let mislabeled =
+            SurfaceCapability::new(real.surface(), Capability::local(0, AuthRequired::None));
+        assert!(matches!(mislabeled.authority().target, Target::Local { .. }));
+        assert_eq!(shell.focus(&mislabeled), Err(ShellError::Unauthorized));
+
+        // The REAL cap still works — the gate refuses forgeries, not the holder.
+        assert!(shell.validates(&real));
+    }
+
+    #[test]
+    fn a_narrowing_window_share_commits_and_a_widening_share_rejects() {
+        // THE no-amplification guarantee firing at the desktop. A window-SHARE is
+        // a REAL `Effect::GrantCapability` turn on the firmament executor; it
+        // commits iff attenuating and is REJECTED (DelegationDenied) when
+        // widening — mirroring the firmament's own
+        // `real_executor_rejects_widening_surface_share`, now at the
+        // window-manager layer.
+        use dregg_firmament::AuthRequired;
+        let (mut shell, _world, anchors, _console) = shell_with_console();
+
+        // App A opens a window — it holds the FULL (widest, None) surface cap.
+        let a = shell.open_cell_view(anchors[1], "Service");
+        assert_eq!(a.rights(), &AuthRequired::None);
+
+        // A shares a READ-ONLY MIRROR (None -> Signature, a strict narrowing)
+        // with app B. This COMMITS through the real executor; B gets a real,
+        // narrowed window cap, and the share opened B a new surface.
+        let b = shell
+            .share(&a, /*recipient app*/ 0xB, AuthRequired::Signature)
+            .expect("a narrowing window-share COMMITS through the real executor");
+        assert_eq!(b.rights(), &AuthRequired::Signature);
+        // B's cap is a REAL firmament surface cap over the SAME backing cell as A.
+        assert_eq!(b.backing_cell(), a.backing_cell());
+        assert!(b.authority().target.is_surface());
+        // B's window actually authenticates (B holds the narrowed authority).
+        assert!(shell.validates(&b));
+
+        // Now B (a read-only mirror, Signature) tries to WIDEN the share —
+        // handing app C a fully-writable (Either) cap it does NOT hold. The REAL
+        // executor REJECTS it (DelegationDenied), surfaced as ShareDenied, and C
+        // gets NOTHING.
+        let widened = shell.share(&b, /*recipient app*/ 0xC, AuthRequired::Either);
+        assert!(
+            matches!(widened, Err(ShellError::ShareDenied(_))),
+            "a WIDENING window-share must be REJECTED by the real executor, got {widened:?}"
+        );
+
+        // The refusal changed nothing: no new surface was registered for C, and
+        // B's own window still works (the rejection is local to the bad share).
+        assert!(shell.validates(&b));
+
+        // And B CAN still share what it legitimately holds: an equal-or-narrower
+        // share (Signature -> Signature) COMMITS.
+        let c_ok = shell
+            .share(&b, 0xC, AuthRequired::Signature)
+            .expect("an attenuating re-share COMMITS");
+        assert_eq!(c_ok.rights(), &AuthRequired::Signature);
+        assert!(shell.validates(&c_ok));
     }
 
     #[test]

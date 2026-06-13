@@ -6,9 +6,8 @@
 //!   3. Executor verifies the proof and updates commitment (no re-execution)
 
 use dregg_cell::{Cell, CellId, CellMode, Ledger};
-use dregg_circuit::CellState as VmCellState;
 use dregg_sdk::AgentCipherclerk;
-use dregg_turn::{ComputronCosts, Effect, TurnExecutor, TurnResult};
+use dregg_turn::TurnExecutor;
 
 /// Create a sovereign cell in a ledger and return the cell + ledger.
 ///
@@ -25,17 +24,23 @@ fn setup_sovereign_cell(balance: u64) -> (AgentCipherclerk, CellId, Ledger) {
     cell.mode = CellMode::Sovereign;
     let cell_id = cell.id();
 
-    // Compute the initial 4-felt Poseidon2 commitment (matches what CellState::compute_commitment_4
-    // puts into PI[OLD_COMMIT_BASE..+4] during trace generation, and what commitment_to_4bb reads
-    // back from the ledger during verification). Fixes GitHub #99 / stage2-canonical-vs-poseidon-mismatch.
-    let vm_state = VmCellState::new(balance, cell.state.nonce() as u32);
-    let commit_4bb = VmCellState::compute_commitment_4(
-        vm_state.balance,
-        vm_state.nonce,
-        &vm_state.fields,
-        vm_state.capability_root,
-    );
-    let commitment = TurnExecutor::commitment_4bb_to_bytes(commit_4bb);
+    // THE ROTATION (cutover C1): the proof-carrying sovereign path now mints the
+    // rotated R=24 `Ir2BatchProof` and carries the v9 felt commitment. Register the
+    // sovereign cell with the SAME v9 commitment the matched producer
+    // (`execute_sovereign_turn_with_proof`) derives for the before-state: a single-cell
+    // `cells_root` over this cell, the empty nullifier root, and an `iroot` MMR over the
+    // (empty) receipt chain. The executor verifier reads this back as OLD_COMMIT (PI 34).
+    let nullifier_root = [0u8; 32];
+    let mut ctx_ledger = Ledger::new();
+    let _ = ctx_ledger.insert_cell(cell.clone());
+    let cells_root = dregg_turn::rotation_witness::cells_root(&ctx_ledger);
+    let iroot = dregg_turn::rotation_witness::iroot(&[]); // empty receipt chain
+    let v9_ctx = dregg_cell::commitment::V9RotationContext {
+        cells_root,
+        nullifier_root,
+        iroot,
+    };
+    let commitment = dregg_cell::commitment::compute_canonical_state_commitment_v9(&cell, &v9_ctx);
 
     // Store the cell state in the cclerk.
     let mut cclerk = cclerk;
