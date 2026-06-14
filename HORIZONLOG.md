@@ -342,12 +342,34 @@ ALL LANDED (a7734efcc / a49448d09 / 152e6b3a5). Remaining lanes:)*
   ⌘K nav commands wired into the cockpit. (Fixed a pre-existing latent over-grant in
   `swarm_world()` exposed by the unblock — the test helper granted coord a cap to a worker it
   did not hold; now seeds both mandate caps at genesis.)
-- **organ OPERATING verbs** (open/draw/repay/settle/close) — the LIVE STATE is reflected
-  (above); the verbs themselves ride `dregg_sdk::trustline::Trustline`/`flashwell::FlashWell`
-  which drive through an `AgentRuntime` (not the embed `DreggEngine` the `World` wraps). To
-  DRIVE organ ops from the cockpit (not just reflect them), bridge `World` → an
-  `AgentRuntime`-shaped surface over the same ledger, OR have `World` expose the four-turn
-  factory-lifecycle helpers directly. (No dregg-core change needed — both organs are embed-core.)
+- **organ OPERATING verbs** (open/draw/repay/settle/close) — LANDED (`organ_ops::OrganDriver`,
+  11 tests). The cockpit now DRIVES trustline + flash-well organs as REAL turns through the
+  embedded executor (not just reflects them): each verb shapes the protocol effect sequence and
+  commits it via `World::commit_turn`, with the REAL `dregg_cell::blueprint` per-organ program
+  installed on the organ cell (via `World::set_cell_program`) so the executor's per-cell predicate
+  gate (`execute_tree.rs`) enforces the invariant IN-PROTOCOL — an over-line draw is refused by
+  the `FieldLteField(drawn ≤ ceiling)` tooth, a fee-evading flash-well borrow by the
+  `StrictMonotonic(ratchet)` tooth, a touch on a closed organ by the lifecycle table (all
+  asserted refused, not faked). The embedded single-custody collapse: the organ cell is born
+  open-permissions, its own pubkey is its `SenderIs{owner}` governance root, and the operator-root
+  installs the adopt-grant well-cap on the borrower — the SDK's `Trustline`/`FlashWell` dance
+  collapsed to the single image (no dregg-core change — both organs are embed-core). Carried
+  residue: the `AgentRuntime`-shaped bridge to the SDK handles themselves is NOT built (the verbs
+  re-shape the SAME effect sequences against `World`'s `DreggEngine` rather than driving
+  `dregg_sdk::trustline::Trustline` directly — one model, two surfaces, kept in step by sharing
+  the blueprint program + slot constants).
+- **N9 STINGRAY CEILING WELD** — LANDED (`swarm_budget::StingraySwarmBudget` + `Swarm::
+  attach_stingray_budget`, 13 tests). The swarm's shared budget is now a REAL
+  `dregg_coord::StingrayCounter` (the single-image shared pool: `n=1`, `f=0`, the one slice
+  ceiling IS the pool `B`), wired the way the SDK's `runtime::set_budget_gate` attaches a
+  `BudgetSlice`: every dispatch draw-checks its DECLARED fee against the pool BEFORE its turn runs
+  (fail-closed `SwarmError::PoolExhausted` on a breach — the counter's gate, not a summation),
+  and settles the ACTUAL metered cost after. The conservation invariant `total_drawn() == Σ metered
+  across members` is the counter's own accounting (PROVABLE, not best-effort), bounded by `B`; the
+  aggregate strip reflects the counter (`total_spent`), and the pool exposes the identical
+  `BudgetSlice` the executor's `set_budget_gate` would attach (one model, two surfaces). This is
+  the depth lift over N1's per-member FLOOR meter — simbi's "UI counter vs verified conservation
+  bound" gap closed.
 - **native federation/remote-node panel** (NodeClient::Http exists; reqwest gated to sel4-thin for now); the channel/mailbox/court organs become LIVE reflections once this connects a node.
 - **live node connection** — move reads to gpui's async executor; wire `/api/events/stream` SSE into ReceiptInspector with `cx.notify()` (snapshot today).
 - **seL4 framebuffer backend** — a gpui renderer targeting a framebuffer cap (SEL4-EMBEDDING end state) + **seL4 channel transport** (a `NodeClient::Channel` over an seL4 endpoint, same contract over IPC not TCP).
@@ -362,6 +384,32 @@ Build-out lanes:)*
 - **live-capture hooks** — a node trace-export mode emitting `BlocklaceCapture`/`ReceiptStrandCapture`/`WalCapture` from the running node (the on-disk/wire types are already exact, so an export endpoint is a thin dump). → node.
 - **Studio/Workbench visualization binding** — render the `AnalysisReport` (DAG w/ equivocation fork, finality bar, receipt link graph, WAL replay overlay) in the Starbridge/starbridge-v2 shell (report is already JSON-serializable).
 - **gossip capture provenance** — the network source is `Observed`-only (gossip = liveness); a signed dissemination-receipt would graduate some eclipse signals to `Verified`.
+
+## Overnight 2026-06-14 — wide-safe wave seams (named follow-ups; the work itself is committed green)
+
+*(While the cutover flip is HELD for ember, the night ran a 5-lane wide-safe braid. Each lane named an
+honest scope-limit; closure levers below. The flip — C5/C7 + #103 graduation + the notify VK epoch +
+the devnet redeploy — remains the one held item, one-command-ready per §EXEC.3, awaiting ember at the
+redeploy point-of-no-return.)*
+
+- **in-browser / over-wire recursion-verify** (web-forward, `2dcede9b3`): `WholeChainProof.root` is an
+  `Rc`-backed `RecursionOutput` with NO serde, so the in-tab whole-history recursion-verify (and the
+  pg-dregg S1 proof-gate) is placeholdered behind a versioned envelope. Closure = fork-side
+  (plonky3-recursion) recursion-proof serialization (the same follow-up `ivc_turn_chain` already names).
+  → plonky3-recursion fork. SHARED by web-forward + pg-dregg S1.
+- **browser-extension at-rest key** (`8a8ab52ba`): the MV3 front door keeps the key in
+  `chrome.storage.local` for the demo; production at-rest hardening (BIP39+PBKDF2+AES-256-GCM, auto-lock)
+  is the shape the sibling wasm cipherclerk already ships. The property PROVEN is the trusted-path
+  mediation (key never reaches the page), not at-rest encryption. → sdk-ts/extension.
+- **ADOS narration R1 join** (`eeb5655f2`): the narration-vs-truth panel correlates at the FEED level
+  (`Correlation::FeedLevelOnly`); claim-to-a-SPECIFIC-turn needs the tool-call→effect compiler (R1). The
+  divergence panel ships now; the compiler is the deeper join. → starbridge-v2 + the R1 compiler.
+- **persist history-below-checkpoint** (`9f031f7e8`): after `compact_below`, `identity_export`
+  (`commit_records_from(0)`) returns only survivors — pre-checkpoint EVENT history is no longer locally
+  reconstructable (an archival node simply does not compact). Finalized-STATE correctness is untouched
+  (the checkpoint ⊕ overlay is exact). → node/identity_export (a feature-scope decision, not a bug).
+- **cli hermetic preflight** (`9427a18e5`): `config_path()` now honors `DREGG_HOME`; restore the hermetic
+  `cli_config_init` preflight check that this unblocks. → preflight/cli.
 
 ## Decisions pending (ember)
 
