@@ -84,6 +84,7 @@ pub use dregg_types::FederationId;
 pub mod gc;
 pub mod handoff;
 pub mod netlayer;
+pub mod ocapn;
 pub mod pipeline;
 pub mod session;
 pub mod store_forward;
@@ -102,6 +103,10 @@ pub use netlayer::{
     InProcessFabric, InProcessNetlayer, NetConnection, NetSession, Netlayer, NetlayerError,
     PeerId, RelayAddr, RelayNetlayer,
     ocapn_uri::{OcapnLocation, OcapnSturdyRef, OcapnUriError},
+};
+pub use ocapn::{
+    session::{AbortReason, OcapnSessionError, StartSession},
+    syrup::{self, SyrupError, Value as SyrupValue},
 };
 pub use session::CapSession;
 pub use store_forward::{
