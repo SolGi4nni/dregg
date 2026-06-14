@@ -28,6 +28,7 @@ pub mod authz;
 pub mod jsonpath;
 pub mod mirror;
 pub mod synth;
+pub mod workflow;
 
 // The PG_MODULE_MAGIC block + the `__pgrx_marker` the schema generator links
 // against MUST live at the crate ROOT (cargo-pgrx's pgrx_embed binary calls

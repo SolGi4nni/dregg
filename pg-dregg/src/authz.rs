@@ -535,6 +535,26 @@ fn is_revoked(id: &str) -> bool {
     revoked().lock().unwrap().contains(id)
 }
 
+/// A process-wide serialization guard for tests that mutate the global authz
+/// state (the issuer key, the verified-credential LRU, the revocation set). The
+/// decision core is deliberately process-global — exactly as it is in a postgres
+/// backend process — so ANY test that sets the issuer key or clears a cache must
+/// own that state for its body, or a parallel test in the same binary will see a
+/// foreign key/cache and fail. Every such test (here AND in sibling modules like
+/// [`crate::workflow`]) acquires this one guard via [`test_serial_lock`], so
+/// they serialize against each other across module boundaries (a module-local
+/// guard would only serialize a single module's tests). A poisoned lock from a
+/// prior panic is fine to reuse; we recover it.
+#[cfg(test)]
+static TEST_SERIAL: Mutex<()> = Mutex::new(());
+
+/// Acquire the shared [`TEST_SERIAL`] guard — hold it for the body of any test
+/// that touches global authz state. See [`TEST_SERIAL`].
+#[cfg(test)]
+pub(crate) fn test_serial_lock() -> std::sync::MutexGuard<'static, ()> {
+    TEST_SERIAL.lock().unwrap_or_else(|p| p.into_inner())
+}
+
 /// Public wrapper for the pgrx `dregg_cap_not_revoked` extern, which checks
 /// whether a credential's stable id is in the revocation registry without
 /// routing through the full `decide` path (so it does not require the issuer
@@ -818,12 +838,11 @@ mod tests {
 
     /// The decision core uses process-global state (issuer key, LRU, revocation
     /// set) — exactly as it will in a postgres backend process. The tests share
-    /// that process, so they SERIALIZE on this guard: each test owns the global
-    /// state for its body. (A poisoned lock from a prior panic is fine to reuse;
-    /// we recover it.)
-    static SERIAL: Mutex<()> = Mutex::new(());
+    /// that process, so they SERIALIZE on the SHARED [`super::TEST_SERIAL`] guard
+    /// (shared so sibling modules' tests — e.g. `crate::workflow` — serialize
+    /// against these too): each test owns the global state for its body.
     fn lock() -> std::sync::MutexGuard<'static, ()> {
-        SERIAL.lock().unwrap_or_else(|p| p.into_inner())
+        super::test_serial_lock()
     }
 
     /// A fixed seed → deterministic root, so the issuer key is stable per test.
