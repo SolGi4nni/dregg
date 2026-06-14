@@ -8,23 +8,21 @@ name: starbridge-v2 native installers
 # gpui `runtime_shaders` Metal note this relies on.
 #
 # ─────────────────────────────────────────────────────────────────────────────
-# FIRST-RUN PRECONDITION (honest blocker — read before merging):
+# PLONKY3-RECURSION FORK (resolved — branch is pushed):
 #
 # `native-full` pulls `embedded-executor`, which pulls `dregg-circuit` (via
 # dregg-turn/dregg-sdk). That circuit references the recursion-fork-only
-# `RecursionInput::NativeBatchStark` variant, which the PINNED git rev
-# (c14b5fc0) does NOT carry. starbridge-v2/Cargo.toml therefore [patch]es the
-# four `p3-*` crates at a LOCAL fork checkout (`../../plonky3-recursion/…`, i.e.
-# a sibling of the repo root). For CI to satisfy that patch, the fork commit
-# carrying `NativeBatchStark` MUST be reachable on the public fork remote
-# (github.com/emberian/plonky3-recursion). As of authoring, that WIP lives only
-# on a LOCAL branch (`update-plonky3-rev`, tip 72ffc56) and is NOT pushed —
-# so the FIRST CI run will fail at the fork-checkout step below with a clear
-# message until the WIP is pushed. The honest fix (do this once, then this
-# workflow goes green): push the fork branch carrying `NativeBatchStark`, then
-# set FORK_REF below (and ideally bump both Cargo.toml [patch] blocks from the
-# local path to that git rev). NO non-fatal fallback is added — a missing fork
-# commit fails the build loudly (the green-or-bust rule).
+# `RecursionInput::NativeBatchStark` variant, which the upstream pinned rev
+# (c14b5fc0) does not carry. starbridge-v2/Cargo.toml therefore [patch]es the
+# four `p3-*` crates at a local fork checkout (`../../plonky3-recursion/…`, i.e.
+# a sibling of the repo root). The CI reconstruction step below clones the fork
+# at FORK_REF into that sibling path so Cargo resolves the [patch] identically.
+#
+# FORK STATUS: `update-plonky3-rev` (tip 72ffc56, carrying NativeBatchStark) is
+# PUSHED to https://github.com/emberian/plonky3-recursion — this workflow is
+# ready to go green. The next step after this CI is stable: bump the Cargo.toml
+# [patch] blocks from the local path to a pinned git rev + drop the reconstruction
+# step (the fork-cutover-settle).
 # ─────────────────────────────────────────────────────────────────────────────
 
 on:
