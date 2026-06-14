@@ -180,6 +180,59 @@ non-cohort behavior). Everything else is verified-ordinary engineering. A PARTIA
 circuit/sdk/turn/node = exit 0, "Finished `dev` profile") pending ember's call on blocker #2. Once decided,
 the full cutover is a single coherent lane (items 1→3→2→4→delete), each persvati-green.
 
+⚑ FIX-ROUND-2 (2026-06-14, deepest independent re-trace; one SCOPE-CORRECTION + one DECISION-REFRAME +
+the recommendation INVERTED). Re-verified the four legs at HEAD, then traced two things the prior C7 entries
+did NOT pin down — the result MATERIALLY enlarges item #3's scope and REVERSES the recommended ember answer:
+
+  (A) SCOPE-CORRECTION — item #3 (recursion/aggregation) is NOT "drop a dead leaf"; it is a MANDATORY-leaf
+      cutover across FIVE files. `proof_forest.rs::ForestNode.proof` IS `EffectVmP3Proof` (v1) — its only leaf
+      (`circuit/src/proof_forest.rs:280`); `joint_turn_aggregation.rs::DescriptorParticipant.proof` IS
+      `EffectVmP3Proof` (v1, `:130`) with `rotated: Option<RotatedParticipantLeg>` only ADDITIVE (`:143`; the
+      in-file comment `:138` states the rotated leg "becomes mandatory" only "once present everywhere" — i.e.
+      NOT YET). Same v1-leaf posture in `ivc_turn_chain.rs` (3 `EffectVmP3Proof` refs) + `joint_turn_recursive.rs`
+      + `recursive_witness_bundle.rs`. So deleting `EffectVmP3Proof`/`generate_effect_vm_trace` FORCES, FIRST:
+      make the rotated leg mandatory in all five, drop the v1 field, then fix every host-admission read
+      (`joint_turn_aggregation.rs:130/139/192` "v1-leg-only constructor" no longer compiles). EXEC.3 point (c)
+      flags this ("the recursion knots … their v1 cores delete only at C7") but the bucket-A manifest UNDER-COUNTS
+      it as mechanical. This is a soundness-bearing recursion cutover lane in its own right — NOT a delete.
+
+  (B) DECISION-REFRAME + RECOMMENDATION INVERTED. The prior entry recommended ember pick "commit-unproven"
+      (route the non-cohort shapes — heterogeneous multi-cohort · non-synthetic-field cells · NoOp-only — to
+      proof-pending/skipped) as "the smallest change, within the tolerated-degradation envelope." On re-trace
+      that is the WRONG close and I withdraw the recommendation: commit-unproven WEAKENS the
+      all-finalized-turns-carry-a-proof guarantee (ARGUS light-client unfoolability, the north star) for a
+      WHOLE CLASS of REAL live turns — heterogeneous turns are ordinary (the SDK projector `convert_effects_to_vm`
+      emits e.g. Transfer+SetField from a single call_forest; `sdk/src/cipherclerk.rs:5491-5527`), so this is not
+      a degenerate corner but a standing production hole. Shipping it is precisely the regression the HARDSWAP
+      mandate's #1 rule forbids ("NEVER SHIP RED … a broken HARDSWAP betrays the whole system"). The HONEST close
+      PRESERVES the guarantee: make the rotated path TOTAL before deleting v1 — which means BUILDING (b1) rotated
+      heterogeneous/multi-cohort proving (the rotated AIR is structurally ONE-descriptor-per-proof,
+      `trace_rotated.rs:507` "EXACTLY the registry's 36 cohort members"; a mixed turn has NO rotated
+      representation today) + (b2) a non-synthetic-field rotated witness (lift the
+      `turn_proving.rs:353-357/445-448` `cell_is_synthetic_shaped`/`cell_matches_v1_prestate` gate) + (b3) confirm
+      NoOp-only is unreachable on the finalized path (the SDK projector yields ≥1 cohort effect for any real
+      actor turn — only the EXECUTOR-side bridge `effect_vm_bridge.rs:557` injects NoOp on an empty per-cell
+      projection, a DIFFERENT projector not on the FullTurnProof path; CONFIRM, then it is a non-issue). (b1) is
+      genuine unbuilt circuit work; it does NOT fit one verified-green phase.
+
+  THE DECISION, SHARPENED: it is NOT "what should the non-cohort fallback do" (that framing presumes weakening).
+  It is: **C7 = delete v1 ⇒ EITHER (Path-PRESERVE) build rotated coverage for heterogeneous + non-synthetic
+  turns AND make the 5-file recursion stack's rotated leg mandatory FIRST (a multi-lane, multi-week
+  circuit+recursion campaign, no crypto primitive, no further decision once chosen) — keeps the north-star
+  guarantee intact; OR (Path-WEAKEN) ember explicitly accepts that heterogeneous / non-synthetic-field finalized
+  turns commit WITHOUT a per-turn proof (proof-pending → skipped), shrinking the all-turns-carry-a-proof
+  guarantee to the rotated-cohort-homogeneous-synthetic-cell subset — the smaller code change but a REAL
+  north-star regression.** My recommendation (reversed from fix-round-1): **Path-PRESERVE.** The HARDSWAP ethos
+  is l4v / green-or-bust; trading away the light-client's per-turn proof for a class of ordinary turns to make a
+  delete land is the kind of "quick fix = debt hole" ember forbids. Path-WEAKEN is offered only because it is
+  genuinely ember's north-star to spend or keep — it is not a deputy default, and it must be a DELIBERATE,
+  documented narrowing of the ARGUS claim, not a silent side effect of a deletion.
+
+  HELD GREEN (unchanged): tree UNTOUCHED at HEAD; baseline `pbuild hardswap` of circuit/sdk/turn/node under
+  `--features dregg-circuit/recursion` = exit 0, "Finished `dev` profile" (re-run this round). grep-zero NOT met
+  in recursion (correct — v1 stays live across legs #1-#4 above). No fake-green via cosmetic rename (would
+  launder grep-zero while the v1 prover stays the live prover for heterogeneous/non-synthetic/recursion turns).
+
 ## THE ROTATION FLIP — the irreversible tail (ember-COMMISSIONED, a4c7368ae; touches cell/+live registry+executor PI)
 
 *(The genuinely-new long pole — staged producers + rotated trace builder + cell≡circuit
