@@ -11,6 +11,37 @@ reason.)*
 Last sweep: 2026-06-13 (flagged-items burndown — removed ~14 landed/struck items,
 deduped the DreggDL/sel4/snapshot landings into git history, kept live tails).
 
+## ⚑ IN-FLIGHT LANES (2026-06-14 — land each by file set off its report; main loop commits)
+
+- **faucet finisher** (`a5b40d5104f7b0d2f`, node/). The S5 faucet-hardening WIP (node/src/api.rs +
+  blocklace_sync.rs — deterministic cross-node provisioning + attested-root widened to the whole cell,
+  domain v1→v2; it caught a SILENT soundness hole: submitter minted a canonical dest cell while peers
+  stubbed, hidden because the old root hashed only cell.state) is uncommitted. 2/3 new tests pass; the
+  3rd (`finalized_transfer_to_fresh_dest_is_uniform_across_nodes`) FAILED `BudgetExceeded{limit:0,used:100}`.
+  DIAGNOSIS (main loop): the executor uses `turn.fee` as the per-turn computron budget
+  (`turn/src/executor/execute.rs:905`); the test helper `signed_transfer_turn` builds with `fee:0`; the
+  real faucet already sizes `fee = executor.estimate_cost(&turn)` (`node/src/api.rs:6165-6167`). FIX = size
+  the fee in the helper + the sender-debit assertion subtracts the (uniformly-burned) fee. Commit the WHOLE
+  faucet lane (api.rs + blocklace_sync.rs) when all 3 are green on persvati. (NB: the fee=computron-budget
+  identity is the metering model — worth remembering.)
+- **pg-dregg FLAGSHIP** (`ad8f798a121759f93`, pg-dregg/ + docs/PG-DREGG-VS-DBOS.md). ember: pg-dregg is a
+  FLAGSHIP, market it as "DBOS but way more powerful." Deliverables: the horizontally-integrated verified
+  durable-workflow demo (ties the disintegrated starbridge-apps together — crash-survival + receipted steps
+  + attenuated caps + conservation, on the REAL mirror/drainer/chain-gate) · criterion benchmarks (NUMBERS)
+  · a load generator · fuzz/proptest the MirrorBatch serde + RootChain anti-substitution + authz · the
+  VS-DBOS positioning doc. Owns pg-dregg/ (incl its Cargo.toml); NOT the root Cargo.toml/lock.
+- **sdk pg-native** (`a7be8a860d4a8d2e9`, sdk-py/ + sdk-ts/). A `dregg.pg` module binding the REAL pg-dregg
+  SQL surface (submit-verified-turn via submit_queue, free-SQL read projections, dregg_federation_health,
+  dev-mint, outbox tail) — sdk-py primary, sdk-ts mirror + a PG-DREGG-SDK quickstart.
+- **desktop / servo-forward BUILD** (`a9292683a030d5e07`, NEW standalone crate `starbridge-web-surface/` +
+  docs/desktop-os-research/). Turns the (deep, consolidated) desktop-os-research corpus into a compiling
+  tested cap-confined web-surface skeleton: SurfaceCapability = `Capability{Target::Surface(cell),rights}`,
+  a `WebSurfaceDelegate` trait shaped like libservo's `WebViewDelegate` (the embedder impl IS the cap gate)
+  with a CapGatedDelegate + MockSurface + a documented LIBSERVO SEAM, plus the `dregg://` web-of-cells fetch
+  demo (fetch = verified cross-cell turn returning attested content; trusted-path chrome from the ledger).
+  libservo itself deferred (heavy dep). Will REPORT any missing firmament `Target::Surface` variant for the
+  main loop to wire. Main loop adds the workspace member at integration.
+
 ## Rides THE ROTATION (dies at or lands with the one VK epoch — do not do separately)
 
 - sbox_registers→0 descriptor metadata (chip uses inline x⁷; named in 0b05afc1a) — flip at the closing-ceremony regen.
