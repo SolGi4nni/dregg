@@ -973,6 +973,194 @@ fn rotated_effect_vm_vk_hash(effects: &[VmEffectKind]) -> Result<[u8; 32], SdkEr
     Ok(*blake3::hash(json.as_bytes()).as_bytes())
 }
 
+// ============================================================================
+// PATH-PRESERVE — the N-leg cohort-run chain (heterogeneous-turn rotation).
+//
+// `docs/PATH-PRESERVE.md` §2/§3/§5. A heterogeneous turn (one actor doing >1
+// distinct cohort effect) cannot prove as ONE rotated leg — the rotated prover
+// proves exactly ONE cohort descriptor per call (`descriptor_ir2.rs:3832`) and
+// fails closed on a heterogeneous slice (`prove_effect_vm_rotated_ir2_with_caveat`,
+// :873-883). PATH-PRESERVE splits the turn into MAXIMAL homogeneous cohort-runs,
+// proves each as its OWN rotated leg, threads the per-run pre/post state, and the
+// verifier chains them (leg_k.OLD == leg_{k-1}.NEW). This is Rust composition over
+// already-Lean-emitted per-cohort legs — NO new descriptor/AIR/constraint (LAW #1).
+// ============================================================================
+
+/// Split a VmEffect sequence into maximal runs where every effect in a run resolves to the SAME
+/// rotated cohort descriptor (`rotated_descriptor_name_for_effect`, `trace_rotated.rs:464`).
+///
+/// A homogeneous turn yields exactly ONE run (so the chained path is byte-identical to today's
+/// single rotated leg for the existing fleet — the §7 Phase-1 additive guarantee). A
+/// `[Transfer, SetField, Transfer]` turn yields THREE runs (`0..1, 1..2, 2..3` — Transfer and
+/// SetField are different cohorts; consecutive same-cohort effects coalesce). A `SetField`
+/// family run coalesces only when the per-slot descriptor name matches (`setFieldVmDescriptor2-0R24`
+/// vs `-1R24` are DISTINCT cohorts and so split — each per-slot descriptor is its own AIR).
+///
+/// `None`-resolving effects (NoOp / non-cohort) terminate a run and form their own singleton run
+/// of "no cohort"; the chained prover rejects such a turn (it cannot rotate a non-cohort effect),
+/// matching the per-run rotated prover's fail-closed contract. Returns the runs in chain order.
+pub fn split_into_cohort_runs(effects: &[VmEffectKind]) -> Vec<core::ops::Range<usize>> {
+    use dregg_circuit::effect_vm::trace_rotated::rotated_descriptor_name_for_effect;
+    let mut runs: Vec<core::ops::Range<usize>> = Vec::new();
+    let mut start = 0usize;
+    // The descriptor name of the run currently being accumulated. `None` is a sentinel for
+    // "no run open yet"; a non-cohort effect resolves to its own `Option<&str>` value (also
+    // `None`), so we track "is a run open" separately via `start < i` is insufficient — use a
+    // dedicated current-name slot that distinguishes "unset" from "cohort = None".
+    let mut current: Option<Option<&'static str>> = None;
+    for (i, e) in effects.iter().enumerate() {
+        let name = rotated_descriptor_name_for_effect(e);
+        match current {
+            None => {
+                current = Some(name);
+                start = i;
+            }
+            Some(cur) if cur == name => { /* extend the open run */ }
+            Some(_) => {
+                runs.push(start..i);
+                current = Some(name);
+                start = i;
+            }
+        }
+    }
+    if current.is_some() && start < effects.len() {
+        runs.push(start..effects.len());
+    }
+    runs
+}
+
+/// Read the post-state `CellState` off the v1 trace's last REAL effect row's `STATE_AFTER` columns
+/// — the generator's OWN emitted state block (NOT a hand-replay of effect semantics; the same
+/// `STATE_AFTER` cols the rotated weld copies, `trace_rotated.rs:299-307`). `n_effects` is the
+/// number of real effect rows (rows `0..n_effects`; padding follows). Used to thread the synthetic
+/// interior boundary states the executor never materialized.
+#[cfg(feature = "recursion")]
+fn cell_state_after_run(
+    trace: &[Vec<BabyBear>],
+    n_effects: usize,
+    seed_for_unchanged: &CellState,
+) -> CellState {
+    use dregg_circuit::effect_vm::columns::{STATE_AFTER_BASE, state};
+    // An empty run (no real effect rows) leaves the state unchanged — return the seed.
+    if n_effects == 0 || trace.is_empty() {
+        return seed_for_unchanged.clone();
+    }
+    let last_real = (n_effects - 1).min(trace.len() - 1);
+    let row = &trace[last_real];
+    // BabyBear is `BabyBear(pub u32)` in canonical form `[0, p-1]` (`field.rs:29`), so `.0` is
+    // the canonical integer — the inverse of the `split_u64` / `BabyBear::new(nonce)` the
+    // generator wrote into these columns.
+    let lo = row[STATE_AFTER_BASE + state::BALANCE_LO].0 as u64;
+    let hi = row[STATE_AFTER_BASE + state::BALANCE_HI].0 as u64;
+    // `split_u64`: lo = low 30 bits, hi = val >> 30 (`effect_vm/helpers.rs:13`).
+    let balance = lo | (hi << 30);
+    let nonce = row[STATE_AFTER_BASE + state::NONCE].0;
+    let mut fields = [BabyBear::ZERO; 8];
+    for (i, f) in fields.iter_mut().enumerate() {
+        *f = row[STATE_AFTER_BASE + state::FIELD_BASE + i];
+    }
+    let capability_root = row[STATE_AFTER_BASE + state::CAP_ROOT];
+    let reserved = row[STATE_AFTER_BASE + state::RESERVED].0;
+    let sealed_field_mask = reserved & 0xFF;
+    let mode_flag = reserved >> 8;
+    let mut s = CellState {
+        balance,
+        nonce,
+        fields,
+        capability_root,
+        state_commitment: BabyBear::ZERO,
+        sealed_field_mask,
+        mode_flag,
+    };
+    s.refresh_commitment();
+    s
+}
+
+/// The chained ROTATED prover (PATH-PRESERVE §2.3). Proves a heterogeneous turn as N
+/// `"effect-vm-rotated"` legs — one per maximal homogeneous cohort-run — threading the per-run
+/// pre/post state so the verifier (the step-4 collect + chain-check in `verify_full_turn_bound`)
+/// can chain them.
+///
+/// The single producer witnesses (`rot.before` / `rot.after`) are REUSED across runs: their
+/// witness-carried limbs (cells_root, iroot, lifecycle, epoch, r11..r23) are turn-invariant
+/// (`rotation_witness.rs:46-49`), so the before-block of EVERY run and the after-block of every
+/// INTERIOR run use `rot.before`; only the final run's after-block uses `rot.after`. The changing
+/// per-run scalars (balance/nonce/fields/cap_root) ride the welds, which `fill_block`
+/// (`trace_rotated.rs:294-307`) overrides per-row from each run's own v1 sub-trace — so the
+/// interior chain closes by construction: `leg_k.NEW` and `leg_{k+1}.OLD` are both
+/// `wireCommitR(rot.before carried-limbs, s_{k+1} welds)` (the SAME object).
+///
+/// Returns the legs in chain order. Each leg is the EXACT shape the single-leg path attaches: a
+/// postcard `Ir2BatchProof`, the rotated PI vector, the cohort vk_hash. A homogeneous turn yields
+/// ONE leg, byte-identical to the single-leg path.
+///
+/// Fails closed (`InvalidWitness`) if any run is non-cohort (a NoOp / non-graduated effect) — the
+/// per-run rotated prover cannot rotate it; such a turn keeps the v1 leg upstream.
+#[cfg(feature = "recursion")]
+fn prove_cohort_run_chain(
+    initial_state: &CellState,
+    effects: &[VmEffectKind],
+    rot: &RotationTurnWitness,
+) -> Result<Vec<AttachedSubProof>, SdkError> {
+    let runs = split_into_cohort_runs(effects);
+    if runs.is_empty() {
+        return Err(SdkError::InvalidWitness(
+            "chained rotated prover: empty turn (no cohort runs)".into(),
+        ));
+    }
+    let n_runs = runs.len();
+    let mut legs: Vec<AttachedSubProof> = Vec::with_capacity(n_runs);
+    let mut s_k = initial_state.clone();
+    for (k, run) in runs.iter().enumerate() {
+        let run_effects = &effects[run.clone()];
+        // Per-run caveat manifest (transfer-shaped single transfer → the two-domain reference
+        // manifest, matching `RotationTurnWitness::for_effects` / the single-leg path).
+        let caveat = match run_effects {
+            [VmEffectKind::Transfer { .. }] => {
+                dregg_circuit::effect_vm::trace_rotated::transfer_caveat_manifest()
+            }
+            _ => dregg_circuit::effect_vm::trace_rotated::empty_caveat_manifest(),
+        };
+        // before-block witness = real before-cell's producer (ALL runs); after-block witness =
+        // before-cell's for interior runs, the real after-cell's for the final run.
+        let is_final = k + 1 == n_runs;
+        let after_w = if is_final { &rot.after } else { &rot.before };
+        let proof = prove_effect_vm_rotated_ir2_with_caveat(
+            &s_k,
+            run_effects,
+            &rot.before,
+            after_w,
+            &caveat,
+        )?;
+        // Re-derive this run's rotated PI vector (the prover self-verified it; we need the felts
+        // for the composed PI + the leg's `sub_public_inputs`). Build a throwaway per-run witness
+        // so we reuse the single-leg PI re-derivation helper.
+        let run_rot = RotationTurnWitness {
+            before: rot.before.clone(),
+            after: after_w.clone(),
+            caveat,
+        };
+        let rot_pi = rotated_effect_pi_for(&s_k, run_effects, &run_rot)?;
+        let proof_bytes = postcard::to_allocvec(&proof).map_err(|e| {
+            SdkError::InvalidWitness(format!(
+                "chained rotated proof serialize failed (run {k}): {e}"
+            ))
+        })?;
+        legs.push(AttachedSubProof {
+            label: "effect-vm-rotated".into(),
+            proof_bytes,
+            sub_public_inputs: rot_pi,
+            vk_hash: rotated_effect_vm_vk_hash(run_effects)?,
+        });
+        // Thread s_k → s_{k+1} off the generator's own STATE_AFTER columns (no hand-replay).
+        if !is_final {
+            let (v1_trace, _v1_pi) = generate_effect_vm_trace(&s_k, run_effects);
+            s_k = cell_state_after_run(&v1_trace, run_effects.len(), &s_k);
+        }
+    }
+    Ok(legs)
+}
+
 /// Verify an effect-vm sub-proof, SHAPE-DRIVEN — deliberately independent of
 /// `DREGG_DESCRIPTOR_PROVER` (the env var tunes the PROVER only; a peer must accept any
 /// sound proof regardless of its own environment). A proof produced by the descriptor
@@ -1148,41 +1336,31 @@ pub fn prove_full_turn(witness: &FullTurnWitness) -> Result<FullTurnProof, SdkEr
     // at their v1 offsets — plus the 4 appended rotated commit/height/caveat pins at 34..37).
     // The v1 `"effect-vm"` leg is the byte-identical default when no rotation witness is present.
     components.has_state_transition = true;
+    // PATH-PRESERVE §2/§3: the rotated leg is now N legs — one per maximal homogeneous cohort-run
+    // (`split_into_cohort_runs`). A HOMOGENEOUS turn yields exactly ONE run, so this is
+    // byte-identical to the prior single rotated leg for the existing fleet (the §7 additive
+    // guarantee). A heterogeneous turn (only reachable when a caller explicitly threads a rotation
+    // witness for it — the live node's cohort gate still returns `None`, so the live path is
+    // unchanged) emits N chained legs `prove_cohort_run_chain` built, threading per-run pre/post
+    // state. The collected PI vectors flow to the conservation leg (Σ net_delta) + the `is_none`
+    // v1 guard.
     #[cfg(feature = "recursion")]
-    let rotated_effect_pi: Option<Vec<BabyBear>> = if let Some(rot) = &witness.rotation {
-        let proof = prove_effect_vm_rotated_ir2_with_caveat(
-            &witness.initial_cell_state,
-            &witness.effects,
-            &rot.before,
-            &rot.after,
-            &rot.caveat,
-        )?;
-        // Re-derive the rotated PI vector (the prover's self-verify already bound it; we need
-        // the felts for the composed PI + the sub-proof's `sub_public_inputs`).
-        let rot_pi = rotated_effect_pi_for(&witness.initial_cell_state, &witness.effects, rot)?;
-        let proof_bytes = postcard::to_allocvec(&proof).map_err(|e| {
-            SdkError::InvalidWitness(format!("rotated effect-vm proof serialize failed: {e}"))
-        })?;
-        all_public_inputs.extend_from_slice(&rot_pi);
-        sub_proofs.push(AttachedSubProof {
-            label: "effect-vm-rotated".into(),
-            proof_bytes,
-            sub_public_inputs: rot_pi.clone(),
-            // Wall A.1: the rotated leg carries the ROTATED cohort descriptor's vk_hash (the
-            // blake3 fingerprint of its committed registry JSON), NOT the v1 descriptor. This
-            // is now LOAD-BEARING: `verify_effect_vm_rotated_with_cutover` re-derives the same
-            // fingerprint from the (uniquely) accepting cohort descriptor and rejects a
-            // tampered vk_hash. Removes the last v1-descriptor reference on the rotated path.
-            vk_hash: rotated_effect_vm_vk_hash(&witness.effects)?,
-        });
-        Some(rot_pi)
+    let rotated_effect_pis: Option<Vec<Vec<BabyBear>>> = if let Some(rot) = &witness.rotation {
+        let legs = prove_cohort_run_chain(&witness.initial_cell_state, &witness.effects, rot)?;
+        let mut leg_pis: Vec<Vec<BabyBear>> = Vec::with_capacity(legs.len());
+        for leg in legs {
+            all_public_inputs.extend_from_slice(&leg.sub_public_inputs);
+            leg_pis.push(leg.sub_public_inputs.clone());
+            sub_proofs.push(leg);
+        }
+        Some(leg_pis)
     } else {
         None
     };
     #[cfg(not(feature = "recursion"))]
-    let rotated_effect_pi: Option<Vec<BabyBear>> = None;
+    let rotated_effect_pis: Option<Vec<Vec<BabyBear>>> = None;
 
-    if rotated_effect_pi.is_none() {
+    if rotated_effect_pis.is_none() {
         // The v1 leg: `v1_effect` is `Some` exactly when the rotated leg was NOT taken.
         let (effect_trace, effect_pi) = v1_effect
             .as_ref()
@@ -1283,28 +1461,39 @@ pub fn prove_full_turn(witness: &FullTurnWitness) -> Result<FullTurnProof, SdkEr
     // We record the component flag but the actual conservation binding is via PI check.
     if let Some(cons_witness) = &witness.conservation {
         // Verify that the Effect VM's net_delta matches the expected conservation.
-        // Wall A.2: read net_delta from whichever effect-vm leg was actually proven. The
-        // rotated PI carries NET_DELTA_MAG(16)/NET_DELTA_SIGN(17) at their v1 offsets (both
-        // < V1_PI_COUNT=34, the carried v1 prefix), so the rotated path reads from `rotated_effect_pi`
-        // with ZERO v1 dependency; the v1 path reads from the v1 `effect_pi`.
-        let conservation_pi: &[BabyBear] = match (rotated_effect_pi.as_ref(), v1_effect.as_ref()) {
-            (Some(rot_pi), _) => rot_pi,
-            (None, Some((_, v1_pi))) => v1_pi,
+        // Wall A.2 + PATH-PRESERVE §2.4: read net_delta from whichever effect-vm leg(s) were
+        // actually proven. The rotated PI carries NET_DELTA_MAG(16)/NET_DELTA_SIGN(17) at their
+        // v1 offsets (both < V1_PI_COUNT=34, the carried v1 prefix). On the rotated path the turn
+        // may carry N chained legs (one per cohort-run); each leg's `generate_effect_vm_trace`
+        // accumulates ONLY its own run's effects' delta (`trace.rs:506`), so the turn-level
+        // conservation is Σ_k net_delta(leg_k). A homogeneous turn (1 leg) sums to that single
+        // leg — byte-identical to the prior single-leg read. The v1 path reads the one v1 PI.
+        let actual_net_delta: i64 = match (rotated_effect_pis.as_ref(), v1_effect.as_ref()) {
+            (Some(leg_pis), _) => {
+                let mut sum: i64 = 0;
+                for pi in leg_pis {
+                    let mag = pi[effect_vm::pi::NET_DELTA_MAG].0 as i64;
+                    let sign = pi[effect_vm::pi::NET_DELTA_SIGN].0;
+                    sum += if sign == 1 { -mag } else { mag };
+                }
+                sum
+            }
+            (None, Some((_, v1_pi))) => {
+                let mag = v1_pi[effect_vm::pi::NET_DELTA_MAG].0 as i64;
+                let sign = v1_pi[effect_vm::pi::NET_DELTA_SIGN].0;
+                if sign == 1 { -mag } else { mag }
+            }
             (None, None) => {
                 return Err(SdkError::InvalidWitness(
                     "conservation: no effect-vm PI available (neither rotated nor v1)".into(),
                 ));
             }
         };
-        let (effect_delta_mag, effect_delta_sign) =
-            effect_vm::encode_net_delta(cons_witness.expected_net_delta);
-        let actual_mag = conservation_pi[effect_vm::pi::NET_DELTA_MAG];
-        let actual_sign = conservation_pi[effect_vm::pi::NET_DELTA_SIGN];
 
-        if actual_mag != effect_delta_mag || actual_sign != effect_delta_sign {
+        if actual_net_delta != cons_witness.expected_net_delta {
             return Err(SdkError::InvalidWitness(format!(
-                "conservation mismatch: effect VM net_delta ({:?},{:?}) != expected ({:?},{:?})",
-                actual_mag, actual_sign, effect_delta_mag, effect_delta_sign
+                "conservation mismatch: effect VM net_delta {} != expected {} (chain-summed)",
+                actual_net_delta, cons_witness.expected_net_delta
             )));
         }
         components.has_conservation = true;
@@ -1679,35 +1868,56 @@ pub fn verify_full_turn_bound(
         })?;
     }
 
-    // 4. Check Effect VM public input bindings (old/new commitment). The effect-vm leg is
+    // 4. Check Effect VM public input bindings (old/new commitment). Each effect-vm leg is
     //    EITHER the v1 `"effect-vm"` (204-PI) or the rotated `"effect-vm-rotated"` (38-PI).
     //    The rotated 38-PI is the v1 prefix `[0..34)` + 4 appended pins, so OLD_COMMIT(0) /
     //    NEW_COMMIT(4) / TURN_HASH(25) / EFFECTS_HASH(8) / NET_DELTA(16-17) all carry the SAME
     //    values at the SAME offsets — the cross-bindings below read those unchanged. Only
     //    offsets >= 34 (e.g. NOTESPEND_NULLIFIER at 198) are absent from the rotated leg.
-    let effect_sub = proof
+    //
+    //    PATH-PRESERVE §3: a heterogeneous turn carries N chained rotated legs (one per cohort
+    //    run, in `sub_proofs` order = chain order s0→s1→…→sN). COLLECT all effect-vm legs, then
+    //    CHAIN-CHECK: first.OLD == expected_old, last.NEW == expected_new, and adjacency
+    //    leg_k.OLD == leg_{k-1}.NEW. Each leg is already cryptographically re-verified in step 3.
+    //    A single-leg turn (N=1, the existing fleet) collapses to EXACTLY the prior two endpoint
+    //    checks (no adjacency window) — byte-identical behavior.
+    let effect_legs: Vec<&AttachedSubProof> = proof
         .composed
         .sub_proofs
         .iter()
-        .find(|sp| sp.label == "effect-vm" || sp.label == "effect-vm-rotated")
-        .ok_or(FullTurnVerifyError::MissingComponent("effect-vm".into()))?;
+        .filter(|sp| sp.label == "effect-vm" || sp.label == "effect-vm-rotated")
+        .collect();
+    if effect_legs.is_empty() {
+        return Err(FullTurnVerifyError::MissingComponent("effect-vm".into()));
+    }
+    // `effect_sub` = the FIRST leg: steps 6/6b bind the authorization to the turn's PRE-state
+    // (this leg's OLD_COMMIT) and to the turn's effects (this leg's EFFECTS_HASH). Auth-gated
+    // turns are single-leg on the live path (the cohort gate keeps heterogeneous cap turns on
+    // v1), so the first leg IS the whole turn there.
+    let effect_sub = effect_legs[0];
+
+    // Every leg must carry at least the v1 prefix it publishes at: the rotated leg >= V1_PI_COUNT
+    // (34); the v1 leg the full ACTIVE_BASE_COUNT. The cross-bindings only read offsets < 34.
+    for leg in &effect_legs {
+        let leg_is_rotated = leg.label == "effect-vm-rotated";
+        let min_pi = if leg_is_rotated {
+            dregg_circuit::effect_vm::trace_rotated::V1_PI_COUNT
+        } else {
+            effect_vm::pi::ACTIVE_BASE_COUNT
+        };
+        if leg.sub_public_inputs.len() < min_pi {
+            return Err(FullTurnVerifyError::MalformedPublicInputs(
+                "effect VM PI too short".into(),
+            ));
+        }
+    }
     let effect_is_rotated = effect_sub.label == "effect-vm-rotated";
 
-    // The rotated leg carries the v1 prefix (>= V1_PI_COUNT = 34 felts); the v1 leg carries the
-    // full 204. The cross-bindings only read offsets < 34, so 34 is the binding floor for both.
-    let min_pi = if effect_is_rotated {
-        dregg_circuit::effect_vm::trace_rotated::V1_PI_COUNT
-    } else {
-        effect_vm::pi::ACTIVE_BASE_COUNT
-    };
-    if effect_sub.sub_public_inputs.len() < min_pi {
-        return Err(FullTurnVerifyError::MalformedPublicInputs(
-            "effect VM PI too short".into(),
-        ));
-    }
-
-    let proof_old_commit = effect_sub.sub_public_inputs[effect_vm::pi::OLD_COMMIT];
-    let proof_new_commit = effect_sub.sub_public_inputs[effect_vm::pi::NEW_COMMIT];
+    // Endpoints: the chain's first OLD and last NEW pin the turn's pre/post commitments.
+    let first_leg = effect_legs[0];
+    let last_leg = effect_legs[effect_legs.len() - 1];
+    let proof_old_commit = first_leg.sub_public_inputs[effect_vm::pi::OLD_COMMIT];
+    let proof_new_commit = last_leg.sub_public_inputs[effect_vm::pi::NEW_COMMIT];
 
     if proof_old_commit != expected_old_commit {
         return Err(FullTurnVerifyError::CommitmentMismatch {
@@ -1722,6 +1932,20 @@ pub fn verify_full_turn_bound(
             expected: expected_new_commit,
             got: proof_new_commit,
         });
+    }
+
+    // Adjacency: each leg's OLD must equal the previous leg's NEW — the chain closes with no gap
+    // and no splice. A tampered / dropped middle leg breaks this (anti-ghost at the chain layer).
+    for w in effect_legs.windows(2) {
+        let prev_new = w[0].sub_public_inputs[effect_vm::pi::NEW_COMMIT];
+        let this_old = w[1].sub_public_inputs[effect_vm::pi::OLD_COMMIT];
+        if this_old != prev_new {
+            return Err(FullTurnVerifyError::CommitmentMismatch {
+                which: "chain_adjacency",
+                expected: prev_new,
+                got: this_old,
+            });
+        }
     }
 
     // 5. Cross-proof PI consistency: authorization state_root == membership root.
@@ -1929,17 +2153,33 @@ pub fn verify_full_turn_bound(
         //    single-spend turn whose row-0 nullifier IS PI[38], faithfully the v1 binding. A
         //    NON-note-spend rotated leg carries the 38-PI prefix with NO nullifier slot, so there
         //    is nothing to cross-check (treated as the ZERO sentinel — no spend, no binding).
-        let effect_nullifier = if effect_is_rotated {
+        // PATH-PRESERVE §3.5: the nullifier rides whichever leg carries the (single) NoteSpend, not
+        // necessarily leg-0. The single-spend invariant holds across the chain
+        // (`trace_rotated.rs:264-275` + the cap-less builder gate) — at most ONE leg is a note-spend
+        // leg. Scan the chain for it: the rotated note-spend leg (39-PI, `ROT_NULLIFIER_PI_COUNT`)
+        // or the v1 leg's `NOTESPEND_NULLIFIER` slot. N=1 collapses to exactly the prior read.
+        let effect_nullifier = {
             use dregg_circuit::effect_vm::trace_rotated::{ROT_NULLIFIER_PI, ROT_NULLIFIER_PI_COUNT};
-            if effect_sub.sub_public_inputs.len() >= ROT_NULLIFIER_PI_COUNT {
-                effect_sub.sub_public_inputs[ROT_NULLIFIER_PI]
-            } else {
-                // 38-PI rotated leg: not a note-spend, no nullifier published → no cross-check.
-                BabyBear::ZERO
+            let mut nullifier = BabyBear::ZERO;
+            for leg in &effect_legs {
+                let leg_nullifier = if leg.label == "effect-vm-rotated" {
+                    if leg.sub_public_inputs.len() >= ROT_NULLIFIER_PI_COUNT {
+                        leg.sub_public_inputs[ROT_NULLIFIER_PI]
+                    } else {
+                        // 38-PI rotated leg: not a note-spend, no nullifier published.
+                        BabyBear::ZERO
+                    }
+                } else {
+                    leg.sub_public_inputs[effect_vm::pi::NOTESPEND_NULLIFIER]
+                };
+                if leg_nullifier != BabyBear::ZERO {
+                    nullifier = leg_nullifier;
+                    break;
+                }
             }
-        } else {
-            effect_sub.sub_public_inputs[effect_vm::pi::NOTESPEND_NULLIFIER]
+            nullifier
         };
+        let _ = effect_is_rotated; // (single-leg shape is now folded into the per-leg scan above)
         if effect_nullifier != BabyBear::ZERO {
             let revoc_sub = proof
                 .composed
@@ -3170,6 +3410,395 @@ mod tests {
         assert!(
             res.is_err(),
             "SOUNDNESS: a forged membership root MUST be rejected by the audited p3 verifier"
+        );
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // PATH-PRESERVE — Phase 0 (run-splitter + Shape-3 confirmation, pure/fast)
+    // ════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn split_homogeneous_turn_is_one_run() {
+        // A homogeneous turn (every effect the same cohort) is ONE run — so the chained path is
+        // byte-identical to the single rotated leg for the existing fleet.
+        let effects = vec![
+            VmEffect::Transfer { amount: 10, direction: 1 },
+            VmEffect::Transfer { amount: 20, direction: 1 },
+            VmEffect::Transfer { amount: 5, direction: 0 },
+        ];
+        let runs = split_into_cohort_runs(&effects);
+        assert_eq!(runs, vec![0..3], "consecutive same-cohort effects coalesce into one run");
+    }
+
+    #[test]
+    fn split_heterogeneous_turn_yields_runs() {
+        // Transfer and SetField are DIFFERENT cohorts ⇒ three runs (no coalescing across cohorts).
+        let effects = vec![
+            VmEffect::Transfer { amount: 10, direction: 1 },
+            VmEffect::SetField { field_idx: 0, value: BabyBear::new(7) },
+            VmEffect::Transfer { amount: 5, direction: 0 },
+        ];
+        let runs = split_into_cohort_runs(&effects);
+        assert_eq!(runs, vec![0..1, 1..2, 2..3]);
+    }
+
+    #[test]
+    fn split_coalesces_then_breaks() {
+        // Two Transfers coalesce, then a SetField opens a new run.
+        let effects = vec![
+            VmEffect::Transfer { amount: 1, direction: 1 },
+            VmEffect::Transfer { amount: 2, direction: 1 },
+            VmEffect::SetField { field_idx: 1, value: BabyBear::new(3) },
+            VmEffect::SetField { field_idx: 1, value: BabyBear::new(4) },
+        ];
+        let runs = split_into_cohort_runs(&effects);
+        // Same field index ⇒ same per-slot descriptor ⇒ the two SetFields coalesce.
+        assert_eq!(runs, vec![0..2, 2..4]);
+    }
+
+    #[test]
+    fn split_distinct_setfield_slots_are_distinct_cohorts() {
+        // `setFieldVmDescriptor2-0R24` vs `-1R24` are distinct AIRs ⇒ distinct cohorts ⇒ split.
+        let effects = vec![
+            VmEffect::SetField { field_idx: 0, value: BabyBear::new(3) },
+            VmEffect::SetField { field_idx: 1, value: BabyBear::new(4) },
+        ];
+        let runs = split_into_cohort_runs(&effects);
+        assert_eq!(runs, vec![0..1, 1..2]);
+    }
+
+    #[test]
+    fn split_empty_turn_is_no_runs() {
+        let runs = split_into_cohort_runs(&[]);
+        assert!(runs.is_empty(), "an empty turn has no cohort runs");
+    }
+
+    /// PATH-PRESERVE Phase 0 / Shape 3 CONFIRMATION (the CORRECTED §1 finding): a NoOp-only /
+    /// empty projection is NOT provable on EITHER leg — the v1 generator ASSERTS non-empty
+    /// (`trace.rs:383` `assert!(!effects.is_empty(), "Need at least one effect")`), so an empty
+    /// `vm_effects` reaching `prove_and_verify_finalized_turn*` (`turn_proving.rs:526`) would
+    /// PANIC today — a PRE-EXISTING condition PATH-PRESERVE neither introduces nor fixes. The
+    /// rotated cohort gate ALSO refuses an empty slice (`split_into_cohort_runs(&[])` is empty, and
+    /// the chained prover fails closed on zero runs). So Shape 3 must be UNREACHABLE on the live
+    /// finalized path (the node only proves turns with ≥1 actor-affecting effect); this is the
+    /// documented invariant. No NoOp rotated descriptor is built — that would be a NEW Lean
+    /// descriptor (out of scope; an ember decision per §8) and is contingent on Shape 3 being
+    /// reachable, which the v1 panic shows it is NOT (an empty projection never reached the prover
+    /// without crashing, so the live path cannot be feeding it empty slices).
+    #[test]
+    fn shape3_empty_projection_is_not_provable_on_either_leg() {
+        // The v1 generator asserts non-empty: an empty projection PANICS (pre-existing). Silence
+        // the panic hook for the duration so the expected panic does not spam the test log.
+        let prev_hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {}));
+        let r = std::panic::catch_unwind(|| {
+            let initial = CellState::new(1234, 7);
+            let _ = generate_effect_vm_trace(&initial, &[]);
+        });
+        std::panic::set_hook(prev_hook);
+        assert!(
+            r.is_err(),
+            "Phase-0: the v1 generator must ASSERT non-empty (an empty projection cannot prove); \
+             if this stops panicking, re-evaluate the Shape-3 invariant"
+        );
+        // The rotated path agrees there is nothing to rotate: zero cohort runs.
+        assert!(
+            split_into_cohort_runs(&[]).is_empty(),
+            "an empty turn yields zero cohort runs (the chained prover fails closed on it)"
+        );
+        // And the chained prover fails closed (not panics) on an empty turn — its own guard.
+        #[cfg(feature = "recursion")]
+        {
+            let initial = CellState::new(1234, 7);
+            let rot = RotationTurnWitness {
+                before: dregg_turn::rotation_witness::produce(
+                    &dregg_cell::Cell::with_balance([0xE0; 32], [0u8; 32], 1234),
+                    &dregg_cell::Ledger::new(),
+                    &[0u8; 32],
+                    &[[0x11u8; 32]],
+                ),
+                after: dregg_turn::rotation_witness::produce(
+                    &dregg_cell::Cell::with_balance([0xE0; 32], [0u8; 32], 1234),
+                    &dregg_cell::Ledger::new(),
+                    &[0u8; 32],
+                    &[[0x11u8; 32]],
+                ),
+                caveat: dregg_circuit::effect_vm::trace_rotated::empty_caveat_manifest(),
+            };
+            let res = prove_cohort_run_chain(&initial, &[], &rot);
+            assert!(res.is_err(), "the chained prover must fail closed on an empty turn");
+        }
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // PATH-PRESERVE — Phase 1 (the chained N-leg prover + chain verifier; SLOW)
+    //
+    // Gated on `recursion` (the rotated IR-v2 path). These prove real STARKs.
+    // Run with: cargo nextest run -p dregg-sdk path_preserve_chain --features recursion
+    // ════════════════════════════════════════════════════════════════════════
+
+    /// Build the per-turn rotation witnesses for a turn over a real before/after cell — the SAME
+    /// construction the node's `rotation_witness_for_self_sovereign` uses, but inlined here so the
+    /// SDK test does not depend on the node crate. The before/after cells are the real
+    /// `RecordKernelState` the producer reads; the per-run welds carry the changing scalars.
+    #[cfg(feature = "recursion")]
+    fn rotation_witness_for_cells(
+        before_cell: &dregg_cell::Cell,
+        after_cell: &dregg_cell::Cell,
+        receipt_hashes: &[[u8; 32]],
+    ) -> RotationTurnWitness {
+        use dregg_turn::rotation_witness as rw;
+        let mut ctx_ledger = dregg_cell::Ledger::new();
+        let _ = ctx_ledger.insert_cell(before_cell.clone());
+        let nullifier_root = [0u8; 32];
+        let before_w = rw::produce(before_cell, &ctx_ledger, &nullifier_root, receipt_hashes);
+        let after_w = rw::produce(after_cell, &ctx_ledger, &nullifier_root, receipt_hashes);
+        // The caveat is recomputed per-run inside the chained prover; the manifest stored here is
+        // only the single-leg default and is unused by `prove_cohort_run_chain`.
+        RotationTurnWitness {
+            before: before_w,
+            after: after_w,
+            caveat: dregg_circuit::effect_vm::trace_rotated::empty_caveat_manifest(),
+        }
+    }
+
+    /// THE LOAD-BEARING DIFFERENTIAL (§6.1): a heterogeneous turn `[Transfer, SetField, Transfer]`
+    /// on a real cell proves as a chain of N rotated legs whose endpoints + interior boundaries
+    /// agree with the MONOLITHIC v1 reference transition, and whose Σ net_delta equals the
+    /// monolithic net_delta. Then the full chained proof VERIFIES against the real pre/post
+    /// commitments.
+    #[cfg(feature = "recursion")]
+    #[test]
+    fn path_preserve_chain_equals_monolithic_and_verifies() {
+        // A real (synthetic-shaped) actor cell with a balance. Heterogeneous: debit, set field,
+        // credit — three cohort runs.
+        let pre_balance: i64 = 1_000;
+        let before_cell = dregg_cell::Cell::with_balance([0xA1; 32], [0u8; 32], pre_balance);
+        let effects = vec![
+            VmEffect::Transfer { amount: 100, direction: 1 }, // -100, nonce+1
+            VmEffect::SetField { field_idx: 0, value: BabyBear::new(7) }, // field, nonce+1
+            VmEffect::Transfer { amount: 30, direction: 0 }, // +30, nonce+1
+        ];
+
+        let initial = CellState::new(pre_balance as u64, 0);
+
+        // The MONOLITHIC v1 reference: one trace over ALL effects from the real pre-state.
+        let (_mono_trace, mono_pi) = generate_effect_vm_trace(&initial, &effects);
+        let mono_old = mono_pi[effect_vm::pi::OLD_COMMIT];
+        let mono_new = mono_pi[effect_vm::pi::NEW_COMMIT];
+        let mono_mag = mono_pi[effect_vm::pi::NET_DELTA_MAG].0 as i64;
+        let mono_sign = mono_pi[effect_vm::pi::NET_DELTA_SIGN].0;
+        let mono_net = if mono_sign == 1 { -mono_mag } else { mono_mag };
+        // Sanity: net = -100 + 30 = -70.
+        assert_eq!(mono_net, -70);
+
+        // The real after-cell: balance 1000 - 100 + 30 = 930, field[0] set, nonce 3.
+        let mut after_cell = before_cell.clone();
+        after_cell.state.set_balance(930);
+        after_cell.state.fields[0] = {
+            // field_element_to_bb's inverse is not needed here — set the cell field to the same
+            // 32-byte encoding the SetField projects. The SetField value is BabyBear::new(7);
+            // the cell stores a [u8;32]. For OLD/NEW agreement we only need the EFFECT-VM
+            // commitment to match, which is driven by the welds from the v1 trace, not the cell's
+            // raw field bytes — so the after-cell's field bytes need only be SOME non-zero marker
+            // for the producer's authority/heap views. Use the canonical little-endian of 7.
+            let mut b = [0u8; 32];
+            b[0] = 7;
+            b
+        };
+
+        let rot = rotation_witness_for_cells(&before_cell, &after_cell, &[[0x11u8; 32]]);
+
+        // Build the chained legs directly (the prover the composed path uses).
+        let legs = prove_cohort_run_chain(&initial, &effects, &rot)
+            .expect("heterogeneous turn must prove as a chain of rotated legs");
+        assert_eq!(legs.len(), 3, "three cohort runs ⇒ three rotated legs");
+        for leg in &legs {
+            assert_eq!(leg.label, "effect-vm-rotated");
+        }
+
+        // ENDPOINTS agree with the monolithic transition.
+        let first_old = legs[0].sub_public_inputs[effect_vm::pi::OLD_COMMIT];
+        let last_new = legs[2].sub_public_inputs[effect_vm::pi::NEW_COMMIT];
+        assert_eq!(first_old, mono_old, "chain start OLD == monolithic OLD");
+        assert_eq!(last_new, mono_new, "chain end NEW == monolithic NEW");
+
+        // INTERIOR chain closes: leg_k.NEW == leg_{k+1}.OLD.
+        for w in legs.windows(2) {
+            assert_eq!(
+                w[0].sub_public_inputs[effect_vm::pi::NEW_COMMIT],
+                w[1].sub_public_inputs[effect_vm::pi::OLD_COMMIT],
+                "interior chain boundary must close"
+            );
+        }
+
+        // Σ net_delta across the chain == monolithic net_delta.
+        let mut chain_net: i64 = 0;
+        for leg in &legs {
+            let mag = leg.sub_public_inputs[effect_vm::pi::NET_DELTA_MAG].0 as i64;
+            let sign = leg.sub_public_inputs[effect_vm::pi::NET_DELTA_SIGN].0;
+            chain_net += if sign == 1 { -mag } else { mag };
+        }
+        assert_eq!(chain_net, mono_net, "Σ net_delta(legs) == monolithic net_delta");
+
+        // The FULL composed chained proof proves + verifies against the real pre/post commitments.
+        let proof = prove_turn_self_sovereign_rotated(&initial, &effects, [0x5A; 32], Some(rot))
+            .expect("chained composed proof must generate");
+        let labels: Vec<&str> = proof
+            .composed
+            .sub_proofs
+            .iter()
+            .map(|sp| sp.label.as_str())
+            .collect();
+        assert_eq!(
+            labels.iter().filter(|l| **l == "effect-vm-rotated").count(),
+            3,
+            "the composed proof carries THREE rotated legs; labels = {labels:?}"
+        );
+        assert!(
+            !labels.contains(&"effect-vm"),
+            "no v1 leg on the chained path; labels = {labels:?}"
+        );
+        verify_full_turn(&proof, mono_old, mono_new)
+            .expect("the chained heterogeneous proof must verify against the chain endpoints");
+    }
+
+    /// ANTI-GHOST (§6.2): a tampered MIDDLE-leg commitment breaks the chain — `verify_full_turn`
+    /// rejects (either the leg's own re-verification fails because PI desyncs from proof, OR the
+    /// adjacency chain-check fires). Either rejection path is the soundness tooth.
+    #[cfg(feature = "recursion")]
+    #[test]
+    fn path_preserve_tampered_middle_leg_is_rejected() {
+        let before_cell = dregg_cell::Cell::with_balance([0xA2; 32], [0u8; 32], 1_000);
+        let effects = vec![
+            VmEffect::Transfer { amount: 100, direction: 1 },
+            VmEffect::SetField { field_idx: 0, value: BabyBear::new(7) },
+            VmEffect::Transfer { amount: 30, direction: 0 },
+        ];
+        let initial = CellState::new(1_000, 0);
+        let (_mt, mono_pi) = generate_effect_vm_trace(&initial, &effects);
+        let mono_old = mono_pi[effect_vm::pi::OLD_COMMIT];
+        let mono_new = mono_pi[effect_vm::pi::NEW_COMMIT];
+
+        let mut after_cell = before_cell.clone();
+        after_cell.state.set_balance(930);
+        after_cell.state.fields[0] = {
+            let mut b = [0u8; 32];
+            b[0] = 7;
+            b
+        };
+        let rot = rotation_witness_for_cells(&before_cell, &after_cell, &[[0x11u8; 32]]);
+
+        let mut proof =
+            prove_turn_self_sovereign_rotated(&initial, &effects, [0x5A; 32], Some(rot))
+                .expect("chained composed proof must generate");
+        // Honest proof verifies.
+        verify_full_turn(&proof, mono_old, mono_new).expect("honest chained proof verifies");
+
+        // TAMPER the middle leg's NEW_COMMIT PI (off by one felt) — the chain no longer closes.
+        let rotated_idx: Vec<usize> = proof
+            .composed
+            .sub_proofs
+            .iter()
+            .enumerate()
+            .filter(|(_, sp)| sp.label == "effect-vm-rotated")
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(rotated_idx.len(), 3);
+        let mid = rotated_idx[1];
+        proof.composed.sub_proofs[mid].sub_public_inputs[effect_vm::pi::NEW_COMMIT] =
+            proof.composed.sub_proofs[mid].sub_public_inputs[effect_vm::pi::NEW_COMMIT]
+                + BabyBear::new(1);
+
+        let res = verify_full_turn(&proof, mono_old, mono_new);
+        assert!(
+            res.is_err(),
+            "SOUNDNESS: a tampered middle-leg commitment MUST be rejected (chain break / leg \
+             re-verify), got Ok"
+        );
+    }
+
+    /// CONSERVATION across the chain (§6.4): a turn whose runs have OPPOSING deltas (outgoing then
+    /// incoming Transfer) sums to the net; the conservation leg checks Σ. A homogeneous run can't
+    /// expose this (a single Transfer cohort coalesces), so we interpose a SetField to force two
+    /// Transfer runs with opposite signs.
+    #[cfg(feature = "recursion")]
+    #[test]
+    fn path_preserve_conservation_sums_across_the_chain() {
+        let before_cell = dregg_cell::Cell::with_balance([0xA3; 32], [0u8; 32], 1_000);
+        let effects = vec![
+            VmEffect::Transfer { amount: 100, direction: 1 }, // -100
+            VmEffect::SetField { field_idx: 0, value: BabyBear::new(7) },
+            VmEffect::Transfer { amount: 100, direction: 0 }, // +100  ⇒ net 0
+        ];
+        let initial = CellState::new(1_000, 0);
+        let (_mt, mono_pi) = generate_effect_vm_trace(&initial, &effects);
+        let mono_old = mono_pi[effect_vm::pi::OLD_COMMIT];
+        let mono_new = mono_pi[effect_vm::pi::NEW_COMMIT];
+
+        // After: balance back to 1000, field set, nonce 3.
+        let mut after_cell = before_cell.clone();
+        after_cell.state.fields[0] = {
+            let mut b = [0u8; 32];
+            b[0] = 7;
+            b
+        };
+        let rot = rotation_witness_for_cells(&before_cell, &after_cell, &[[0x11u8; 32]]);
+
+        // Compose WITH a conservation witness of the correct net (0). The prover's conservation
+        // block sums Σ net_delta across the legs and must equal 0.
+        let witness = FullTurnWitness {
+            initial_cell_state: initial.clone(),
+            effects: effects.clone(),
+            authorization: None,
+            membership: None,
+            conservation: Some(ConservationWitness { expected_net_delta: 0 }),
+            non_revocation: None,
+            cap_membership: None,
+            turn_hash: [0x5A; 32],
+            rotation: Some(rot),
+        };
+        let proof = prove_full_turn(&witness)
+            .expect("chained proof with a correct Σ-net=0 conservation witness must generate");
+        assert!(proof.components.has_conservation);
+        verify_full_turn(&proof, mono_old, mono_new)
+            .expect("the conserving chained proof must verify");
+    }
+
+    /// CONSERVATION anti-ghost: a WRONG expected net (the prover claims +5 when Σ = 0) is rejected
+    /// at prove time by the chain-summed conservation check.
+    #[cfg(feature = "recursion")]
+    #[test]
+    fn path_preserve_conservation_wrong_net_is_rejected() {
+        let before_cell = dregg_cell::Cell::with_balance([0xA4; 32], [0u8; 32], 1_000);
+        let effects = vec![
+            VmEffect::Transfer { amount: 100, direction: 1 },
+            VmEffect::SetField { field_idx: 0, value: BabyBear::new(7) },
+            VmEffect::Transfer { amount: 100, direction: 0 },
+        ];
+        let initial = CellState::new(1_000, 0);
+        let mut after_cell = before_cell.clone();
+        after_cell.state.fields[0] = {
+            let mut b = [0u8; 32];
+            b[0] = 7;
+            b
+        };
+        let rot = rotation_witness_for_cells(&before_cell, &after_cell, &[[0x11u8; 32]]);
+        let witness = FullTurnWitness {
+            initial_cell_state: initial,
+            effects,
+            authorization: None,
+            membership: None,
+            conservation: Some(ConservationWitness { expected_net_delta: 5 }), // WRONG
+            non_revocation: None,
+            cap_membership: None,
+            turn_hash: [0x5A; 32],
+            rotation: Some(rot),
+        };
+        let res = prove_full_turn(&witness);
+        assert!(
+            res.is_err(),
+            "SOUNDNESS: a wrong chain-summed conservation net MUST be rejected at prove time"
         );
     }
 }
