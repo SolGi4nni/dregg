@@ -16,15 +16,19 @@ deduped the DreggDL/sel4/snapshot landings into git history, kept live tails).
 **THE HARDSWAP — the VK EPOCH LANDED GREEN.** Rotated IR-v2 R=24 is now the DEFAULT registry,
 v1 fallbacks retired, the −65.6% proof-size prize is LIVE (commits `6011fc77f` walls → `0802b305b`
 live-path → `d33d02107` pre-VK gauntlet → `5b3772873` VK epoch #183). The tree is GREEN + COHERENT
-(no half-deletion). **C7 grep-zero is BLOCKED — and that is the open ember-decision:** the deputy's
-deep re-trace (commits `7a8409572`/`fd478564c`/`5e71c24c2`/`afe4e0606`, see `docs/V1-DELETION-MANIFEST.md`
-buckets E/F/G) found that the v1 OLD-PROVER symbols can't be deleted yet because (E) `generate_effect_vm_trace`
-is the SHARED generator the rotated leg is BUILT ON (NOT v1 — never delete it), (F) `EffectVmP3Proof` is
-the recursion LEAF type in 5 files (needs a mandatory-rotated-leaf cutover first), (G) heterogeneous-turn
-coverage. The workflow `wf_9a7d5e77-b48` was INTERRUPTED by ember while looping on this. **POST-COMPACTION
-TODO: `cv`-dig that workflow run (claurdvoyant) to recover the exact decision it isolated, then DECIDE:
-do the multi-week bucket-F/G soundness-bearing cutover for full grep-zero, OR accept rotated-default +
-v1-dead-but-present (the prize is already live).** Do NOT auto-run bucket F/G — it IS the decision.
+(no half-deletion). **C7 grep-zero is gated on a BUILD, and the gating decision is ✅ DECIDED (ember,
+2026-06-14): PATH-PRESERVE.** The deputy's deep re-trace (commits `7a8409572`/`fd478564c`/`5e71c24c2`/
+`afe4e0606`, see `docs/V1-DELETION-MANIFEST.md` buckets E/F/G) found the v1 OLD-PROVER symbols can't be
+deleted yet because (E) `generate_effect_vm_trace` is the SHARED generator the rotated leg is BUILT ON
+(NOT v1 — never delete it), (F) `EffectVmP3Proof` is the recursion LEAF type in 5 files (mandatory-
+rotated-leaf cutover first), (G) heterogeneous/non-synthetic finalized-turn coverage. ember settled G the
+only dregg-coherent way — *"build path-preserve for SURE; any other decision wouldn't be dregg"* — so the
+WEAKEN option (commit those turns proof-pending) is OFF the table. The C7 lane is now: **BUILD chained
+multi-cohort + non-synthetic rotated proving so EVERY finalized turn stays proven (ARGUS unfoolability
+intact), THEN bucket-F leaf cutover, THEN the bucket-A/C delete.** Staged persvati-green plan =
+`docs/PATH-PRESERVE.md`. Each phase lands green; a half-landed prover-without-verifier is RED (forbidden).
+(The interrupted `wf_9a7d5e77-b48` was looping on exactly this G decision — now resolved; `cv`-dug the
+substantive thread, the decision is made.)
 
 **RUNNING through compaction (the deos dev-spike the HARDSWAP was blocking, now unblocked):**
 - verified-deos Lean crown (`ae0a1e43`, `metatheory/Dregg2/Deos/`) — the 4 theorems from `docs/deos/DEOS.md`

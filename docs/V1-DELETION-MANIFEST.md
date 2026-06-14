@@ -143,11 +143,12 @@ bucket-A/C delete fan-out can run and reach grep-zero (minus Bucket E) green. F 
 soundness-CORE, multi-phase, and need their own verified-green landings BEFORE any deletion. Doing the
 deletion first ships RED.
 
-**The standing decision (ember's north star).** Bucket G is the fork: PRESERVE (build chained
-heterogeneous proving — keeps every finalized turn proven, ARGUS light-client unfoolability intact;
-a multi-lane circuit+verifier campaign, no crypto primitive, no further decision once chosen) vs
-WEAKEN (explicitly accept that heterogeneous/non-synthetic finalized turns commit proof-pending — a
-smaller code change but a real, deliberate narrowing of the ARGUS per-turn-proof claim). Recommendation:
-PRESERVE. This is the one item the deletion is gated on; it is ember's to spend or keep, never a silent
-side effect of the delete. (Gated on: the VK epoch landed green — v3Registry default + re-pin + #103
-+ notify + reseed — which it is.)
+**✅ DECIDED 2026-06-14 (ember): PRESERVE.** Bucket G is no longer a fork — ember settled it the only
+dregg-coherent way: *"we need to build path-preserve for SURE. any other decision wouldn't be dregg."*
+So C7 is gated on BUILDING chained heterogeneous + non-synthetic rotated proving (keeps every finalized
+turn proven, ARGUS light-client unfoolability intact) — a multi-lane circuit+verifier campaign, no crypto
+primitive, no further decision. WEAKEN (commit heterogeneous/non-synthetic turns proof-pending) is
+rejected: it would silently narrow the per-turn-proof claim the whole system exists to make. The build
+lane = `docs/PATH-PRESERVE.md` (the staged, persvati-green plan). The original framing, for the record:
+PRESERVE keeps the guarantee, WEAKEN was the smaller code change but a real north-star regression.
+(Gated on: the VK epoch landed green — v3Registry default + re-pin + #103 + notify + reseed — which it is.)
