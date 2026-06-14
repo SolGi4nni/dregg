@@ -147,9 +147,12 @@ flip:)*
   SIBLING hand-AIRs `CrossSideExistenceAir` + `BundleTreeFoldAir` in the same file (they do NOT read
   `effect_vm::pi`); their Lean-emission lane ✅ LANDED (`92b41acce` — both emitted axiom-clean, found
   PURE not recursion; the hand-AIRs are now layout-of-record, deletable at C7). The remaining grep-zero
-  walls are now just (C) + (D), and (b) the rotated note-spend/capability NULLIFIER-in-PI gate (the LAST
-  real flip gate — a lane is IN FLIGHT closing it; until it lands, v1 `generate_effect_vm_trace` cannot
-  be deleted because note-spend/capability turns fall back to v1).** Original (A) plan, for the record: **(A) the BILATERAL rotated outer AIR** — DECISION =
+  walls are now just (C) + (D), and (b) ✅ NOTE-SPEND now ROTATES (`cc1e1399c` — rotated nullifier at
+  PI[38], 39-PI, + the single-spend per-row double-spend GUARD, a model-found bug: the rotated pin was
+  first-row-only while the v1 D5 gate is per-row). The LAST flip sub-gate is the CAPABILITY FLOW-B arm
+  (`prove_and_verify_finalized_turn_capability` still v1; needs `full_turn_pre_cell` threaded to bind the
+  REAL authority digest r23 — NOT a zero-pk stub; a finisher lane is IN FLIGHT). C7's
+  `generate_effect_vm_trace` deletion is unblocked for note-spend, still blocked by the capability arm.** Original (A) plan, for the record: **(A) the BILATERAL rotated outer AIR** — DECISION =
   BUILD, emit from Lean (law #1). `bilateral_aggregation_air.rs::BilateralAggregationAir` is a plain
   hand-authored `StarkAir` reading `wr.public_inputs[..ACTIVE_BASE_COUNT]` and the bilateral-schedule
   PI offsets (`effect_vm::pi::{TURN_HASH_BASE 25..IS_AGENT_CELL 73}`). It does NOT ingest an
