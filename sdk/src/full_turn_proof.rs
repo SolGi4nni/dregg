@@ -1382,11 +1382,17 @@ pub fn verify_full_turn(
 /// published `pi[1]` differs from the genuinely-bracketed item is UNSAT, so the
 /// felt is NOT a free wire. The prover sets `revoc_pi = vec![root, item_hash]`
 /// with `item_hash` the spent nullifier; this verifier (step 8) then enforces
-/// `revoc_pi[QUERIED_ITEM] == effect_pi[pi::NOTESPEND_NULLIFIER]` for any turn
-/// that genuinely spends a note (non-zero nullifier slot). A non-revocation
-/// proof proving freshness for a DIFFERENT item is rejected with
+/// `revoc_pi[QUERIED_ITEM] == effect_pi[<nullifier slot>]` for any turn that
+/// genuinely spends a note (non-zero nullifier slot). The nullifier slot is
+/// leg-dependent: the v1 leg publishes it at `pi::NOTESPEND_NULLIFIER` (offset
+/// 198, the per-row D5 binding); the rotated leg publishes it at rotated PI slot
+/// `ROT_NULLIFIER_PI` (38), the C4 fifth-pin weld
+/// (`EffectVmEmitRotationV3.noteSpendV3`) — present iff the rotated leg carries a
+/// 39-element PI (a single-spend note-spend turn). A non-revocation proof proving
+/// freshness for a DIFFERENT item is rejected with
 /// [`FullTurnVerifyError::NullifierMismatch`]. Together (a)+(b): freshness is
-/// against THE canonical accumulator AND for THIS turn's nullifier. The test
+/// against THE canonical accumulator AND for THIS turn's nullifier — on BOTH legs
+/// (the rotated note-spend leg no longer refuses; C4 closed). The test
 /// `freshness_binding_b_rejects_wrong_item` pins the anti-forgery property and
 /// `revocation_item_pi_exposed_binding_b_closed` guards that the circuit keeps
 /// exposing the item PI.
@@ -1798,22 +1804,31 @@ pub fn verify_full_turn_bound(
     //    Together (a)+(b): freshness is against THE canonical accumulator AND
     //    for THIS turn's nullifier — the full no-double-spend property.
     if proof.components.has_non_revocation && proof.components.has_state_transition {
-        // BOUNDARY (named): the rotated leg's 38-PI does NOT carry NOTESPEND_NULLIFIER (offset
-        // 198 > the rotated 38-PI). A note-spending turn therefore must NOT route through the
-        // rotated effect-vm leg until the rotated note-spend descriptor exposes the nullifier
-        // in its PI. The rotated cohort prover (`prove_effect_vm_rotated_ir2_with_caveat`)
-        // produces the transfer/grant/&c shapes; note-spend-with-freshness stays on the v1 leg.
-        // Refuse rather than silently skip the binding (would weaken no-double-spend).
-        if effect_is_rotated {
-            return Err(FullTurnVerifyError::MalformedPublicInputs(
-                "rotated effect-vm leg cannot carry a no-double-spend freshness binding \
-                 (NOTESPEND_NULLIFIER absent from the rotated 38-PI); a note-spending turn must \
-                 use the v1 effect-vm leg until the rotated note-spend descriptor exposes the \
-                 nullifier"
-                    .into(),
-            ));
-        }
-        let effect_nullifier = effect_sub.sub_public_inputs[effect_vm::pi::NOTESPEND_NULLIFIER];
+        // The published spent nullifier — read at the leg-appropriate PI offset. THE C4 CLOSE:
+        // the rotated note-spend leg now EXPOSES the nullifier (it no longer refuses).
+        //
+        //  * v1 leg (204-PI): the D5 cross-binding lives at `NOTESPEND_NULLIFIER` (offset 198),
+        //    pinned PER-ROW in the hand-AIR to every spend row's folded `param0`.
+        //  * rotated leg: the C4 weld (`EffectVmEmitRotationV3.noteSpendV3`) appends a FIFTH PI
+        //    pin binding the spend row's folded `param0` to rotated PI slot 38
+        //    (`ROT_NULLIFIER_PI`) on the FIRST row, so a note-spend rotated leg carries a
+        //    39-element PI (`ROT_NULLIFIER_PI_COUNT`). The rotated generator emits the fifth slot
+        //    ONLY for a single-spend NoteSpend turn (a multi-spend turn fails closed and stays on
+        //    v1, where a second distinct nullifier is UNSAT) — so a 39-PI rotated leg is a
+        //    single-spend turn whose row-0 nullifier IS PI[38], faithfully the v1 binding. A
+        //    NON-note-spend rotated leg carries the 38-PI prefix with NO nullifier slot, so there
+        //    is nothing to cross-check (treated as the ZERO sentinel — no spend, no binding).
+        let effect_nullifier = if effect_is_rotated {
+            use dregg_circuit::effect_vm::trace_rotated::{ROT_NULLIFIER_PI, ROT_NULLIFIER_PI_COUNT};
+            if effect_sub.sub_public_inputs.len() >= ROT_NULLIFIER_PI_COUNT {
+                effect_sub.sub_public_inputs[ROT_NULLIFIER_PI]
+            } else {
+                // 38-PI rotated leg: not a note-spend, no nullifier published → no cross-check.
+                BabyBear::ZERO
+            }
+        } else {
+            effect_sub.sub_public_inputs[effect_vm::pi::NOTESPEND_NULLIFIER]
+        };
         if effect_nullifier != BabyBear::ZERO {
             let revoc_sub = proof
                 .composed

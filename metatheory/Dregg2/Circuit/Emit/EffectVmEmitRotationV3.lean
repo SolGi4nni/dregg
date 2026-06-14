@@ -809,6 +809,143 @@ per-row IR gained. This is THE last rotation-cohort member: with it the HONEST R
 def customV3 : EffectVmDescriptor2 :=
   v3OfWith customV1Face [.proofBind customProofBind]
 
+/-! ### The note-spend nullifier PI weld (the C4 last-flip-gate close).
+
+The v1 hand-AIR (`circuit/src/effect_vm/air.rs`, D5) carries a per-row GATED cross-binding
+`s_notespend · (param0 − PI[NOTESPEND_NULLIFIER])` (offset 198): the spend row's folded
+nullifier (`param::NULLIFIER = param0`, column `prmCol 0`) MUST equal the published
+`PI[198]` — the weld that forbids the EffectVM from spending a different nullifier than the
+one the SCHEMA_NOTE_SPEND binding proof certified (the off-AIR verifier reconstructs PI[198]
+from the binding proof's `fields[0]` and `verify_full_turn` step 8 cross-checks the
+non-revocation proof's queried item == PI[198]).
+
+That cross-binding tooth lives ONLY in the v1 hand-AIR — `noteSpendVmDescriptor` (the Lean
+per-effect descriptor) does NOT bind the nullifier to any PI (its `piCount = 34` is the v1
+prefix only). So when the rotated leg retires the hand-AIR, the rotated 38-PI omits the
+nullifier and a note-spending turn with a freshness binding CANNOT rotate (it falls back to
+v1 — the documented C4 boundary, `verify_full_turn` step 8 REFUSES the rotated leg).
+
+`noteSpendV3` CLOSES that gate: it appends a FIFTH PI pin past the four rotated commit pins
+(`rotateV3` produces `piCount = 34 + 4 = 38`), binding the spend row's `param0` (the folded
+nullifier) to the new rotated PI slot 38 on the FIRST row. The note-spend turn lays the spend
+on row 0 (`generate_effect_vm_trace`'s `Effect::NoteSpend` arm + the trace generator's
+`row[PARAM_BASE + param::NULLIFIER]` write are on row 0; `boundaryFirstPins` pins the first
+row), so the first-row pin is the rotated analog of the v1 per-row gate. The SOUNDNESS TOOTH
+(`noteSpendV3_rejects_nullifier_tamper`): a row whose `param0` differs from the published
+PI[38] FAILS the pin and is UNSAT — exactly the v1 `rejects_swap` adversarial test, now at the
+rotated boundary. The Rust `verify_full_turn` step 8 reads PI[38] of the rotated leg instead
+of refusing, so the no-double-spend cross-check (`queried_item == nullifier`) fires on the
+rotated note-spend turn. -/
+
+/-- The rotated nullifier-PI slot: the FIRST slot past the four rotated commit pins
+(`rotateV3` appends OLD/NEW commit · height · caveat commit at `piCount..piCount+3`). For the
+note-spend cohort member this is `34 + 4 = 38`. -/
+def ROT_NULLIFIER_PI : Nat := 38
+
+/-- The folded-nullifier parameter column (`param::NULLIFIER = param0`, `prmCol 0`) — the
+spend row's single folded `fold_bytes32_to_bb(nullifier)` felt the v1 hand-AIR cross-binds. -/
+def NULLIFIER_PARAM_COL : Nat := prmCol 0
+
+/-- **`rotateV3WithNullifierPin`** — `rotateV3` PLUS the fifth appended PI pin welding the
+spend row's folded nullifier (`prmCol 0`) to the rotated PI slot `ROT_NULLIFIER_PI = 38` on
+the FIRST row. Every v1 column, constraint, hash site, and the four rotated commit pins are
+UNTOUCHED (so `rotateV3`'s keystones — `rotateV3_satisfiedVm_v1`, `rotV3_binds_published`,
+`graduable_rotateV3` — all compose verbatim; this only ADDS one PI pin + one PI slot). -/
+def rotateV3WithNullifierPin (d : EffectVmDescriptor) : EffectVmDescriptor :=
+  let r := rotateV3 d
+  { r with
+    piCount     := r.piCount + 1
+    constraints := r.constraints ++ [.piBinding .first NULLIFIER_PARAM_COL ROT_NULLIFIER_PI] }
+
+/-- **`noteSpendV3`** — the rotated note-spend WITH the nullifier PI weld: the graduated
+`rotateV3WithNullifierPin noteSpendVmDescriptor`. `piCount = 39` (the 38-PI rotated prefix +
+the appended nullifier slot). THIS is the descriptor that lets a note-spending turn rotate:
+its PI[38] carries the spend row's folded nullifier, cross-checkable against the freshness
+proof's queried item. -/
+def noteSpendV3 : EffectVmDescriptor2 :=
+  graduateV1 (rotateV3WithNullifierPin EffectVmEmitNoteSpend.noteSpendVmDescriptor)
+
+/-- The appended pin is the only constraint past `rotateV3`'s, and it targets the new slot. -/
+theorem rotateV3WithNullifierPin_constraints (d : EffectVmDescriptor) :
+    (rotateV3WithNullifierPin d).constraints
+      = (rotateV3 d).constraints
+        ++ [.piBinding .first NULLIFIER_PARAM_COL ROT_NULLIFIER_PI] := rfl
+
+/-- The nullifier pin does NOT disturb graduation: the hash sites and ranges are `rotateV3`'s
+verbatim (the pin is a CONSTRAINT, and `graduable` reads only sites/ranges). -/
+theorem graduable_rotateV3WithNullifierPin {d : EffectVmDescriptor}
+    (h : graduable d = true) : graduable (rotateV3WithNullifierPin d) = true := by
+  have hr := graduable_rotateV3 h
+  unfold rotateV3WithNullifierPin
+  unfold graduable at hr ⊢
+  -- `rotateV3WithNullifierPin` shares `rotateV3 d`'s hashSites + ranges exactly.
+  simpa using hr
+
+/-- **The nullifier weld holds on a satisfying first row**: a row satisfying `noteSpendV3`
+carries the spend row's folded nullifier (`prmCol 0`) EQUAL to the published rotated PI[38].
+This is the rotated re-statement of the v1 D5 cross-binding (`param0 == PI[NOTESPEND_NULLIFIER]`),
+now a first-row pin of the rotated descriptor. -/
+theorem noteSpendV3_pins_nullifier (hash : List ℤ → ℤ)
+    (env : VmRowEnv) (isLast : Bool)
+    (h : satisfiedVm hash (rotateV3WithNullifierPin
+      EffectVmEmitNoteSpend.noteSpendVmDescriptor) env true isLast) :
+    env.loc NULLIFIER_PARAM_COL = env.pub ROT_NULLIFIER_PI := by
+  have hpin := h.1 (.piBinding .first NULLIFIER_PARAM_COL ROT_NULLIFIER_PI)
+    (by rw [rotateV3WithNullifierPin_constraints]; exact List.mem_append_right _ List.mem_cons_self)
+  simpa only [VmConstraint.holdsVm] using hpin rfl
+
+/-- **ANTI-GHOST (nullifier tamper ⇒ UNSAT)** — the C4 soundness tooth. A first row whose
+folded nullifier `param0` does NOT equal the published rotated PI[38] does NOT satisfy
+`noteSpendV3`: the appended pin REJECTS it. This is the rotated boundary's analog of the v1
+`test_notespend_nullifier_cross_binding_rejects_swap` ("prove N, spend M" ⇒ STARK rejects):
+the rotated leg can no longer publish a nullifier different from the one the spend row carries,
+so the off-row freshness cross-check (`verify_full_turn` step 8) binds THIS turn's nullifier. -/
+theorem noteSpendV3_rejects_nullifier_tamper (hash : List ℤ → ℤ)
+    (env : VmRowEnv) (isLast : Bool)
+    (htamper : env.loc NULLIFIER_PARAM_COL ≠ env.pub ROT_NULLIFIER_PI) :
+    ¬ satisfiedVm hash (rotateV3WithNullifierPin
+      EffectVmEmitNoteSpend.noteSpendVmDescriptor) env true isLast :=
+  fun h => htamper (noteSpendV3_pins_nullifier hash env isLast h)
+
+/-- The v1 denotation still survives the added pin (the per-effect noteSpend faithfulness /
+anti-ghost theorems compose through, exactly as for bare `rotateV3`). -/
+theorem noteSpendV3_satisfiedVm_v1 (hash : List ℤ → ℤ)
+    (env : VmRowEnv) (isFirst isLast : Bool)
+    (h : satisfiedVm hash (rotateV3WithNullifierPin
+      EffectVmEmitNoteSpend.noteSpendVmDescriptor) env isFirst isLast) :
+    satisfiedVm hash EffectVmEmitNoteSpend.noteSpendVmDescriptor env isFirst isLast := by
+  apply rotateV3_satisfiedVm_v1 hash EffectVmEmitNoteSpend.noteSpendVmDescriptor env isFirst isLast
+  -- `rotateV3WithNullifierPin` = `rotateV3` with one extra constraint + the same sites; a
+  -- satisfier of the former satisfies the latter (constraints are a superset, sites identical).
+  obtain ⟨hc, hsites, hr⟩ := h
+  refine ⟨fun c hc' => hc c ?_, hsites, hr⟩
+  rw [rotateV3WithNullifierPin_constraints]
+  exact List.mem_append_left _ hc'
+
+#assert_axioms graduable_rotateV3WithNullifierPin
+#assert_axioms noteSpendV3_pins_nullifier
+#assert_axioms noteSpendV3_rejects_nullifier_tamper
+#assert_axioms noteSpendV3_satisfiedVm_v1
+
+-- The nullifier pin lands at PI slot 38 (one past the four rotated commit pins 34..37) and
+-- the rotated note-spend publishes 39 PIs.
+#guard ROT_NULLIFIER_PI == 34 + 4
+#guard NULLIFIER_PARAM_COL == 68          -- PARAM_BASE (54+14) + param::NULLIFIER (0)
+#guard noteSpendV3.piCount == 39
+#guard (rotateV3WithNullifierPin EffectVmEmitNoteSpend.noteSpendVmDescriptor).piCount == 39
+-- Graduation survives the appended pin.
+#guard graduable (rotateV3WithNullifierPin EffectVmEmitNoteSpend.noteSpendVmDescriptor)
+-- The rotated commit pins are UNDISTURBED at 34..37 (the fifth pin is strictly appended);
+-- `noteSpendV3` carries the four rotated commit pins PLUS exactly one more PI pin.
+#guard noteSpendV3.constraints.length == (v3Of EffectVmEmitNoteSpend.noteSpendVmDescriptor).constraints.length + 1
+-- BOTH POLARITIES of the soundness tooth, executable on the toy environment: a row whose
+-- param0 equals PI[38] PASSES the pin; a tampered one FAILS it. (`decEnv` toy: param col 68
+-- carries `n`, PI 38 carries `p`.)
+#guard (let env : VmRowEnv := ⟨fun c => if c == 68 then 5 else 0, fun _ => 0, fun k => if k == 38 then 5 else 0⟩;
+        decide (env.loc NULLIFIER_PARAM_COL = env.pub ROT_NULLIFIER_PI))   -- match ⇒ pin holds
+#guard (let env : VmRowEnv := ⟨fun c => if c == 68 then 5 else 0, fun _ => 0, fun k => if k == 38 then 9 else 0⟩;
+        decide (env.loc NULLIFIER_PARAM_COL ≠ env.pub ROT_NULLIFIER_PI))   -- mismatch ⇒ pin REJECTS
+
 /-- **`v3Registry`** — the full 35-member cohort at the rotated block (the 27 v2-graduated members
 + the 8 STEP-1-widened; keys = the v2 keys suffixed `R24`; wire strings via `emitVmJson2`; driver
 `EmitRotationV3.lean`). -/
@@ -816,7 +953,7 @@ def v3Registry : List (String × EffectVmDescriptor2) :=
   [ ("transferVmDescriptor2R24", v3Of EffectVmEmitTransfer.transferVmDescriptor)
   , ("burnVmDescriptor2R24", v3Of EffectVmEmitBurn.burnVmDescriptor)
   , ("mintVmDescriptor2R24", v3Of EffectVmEmitMint.mintVmDescriptor)
-  , ("noteSpendVmDescriptor2R24", v3Of EffectVmEmitNoteSpend.noteSpendVmDescriptor)
+  , ("noteSpendVmDescriptor2R24", noteSpendV3)
   , ("noteCreateVmDescriptor2R24", v3Of EffectVmEmitNoteCreate.noteCreateVmDescriptor)
   , ("cellSealVmDescriptor2R24", v3Of EffectVmEmitCellSeal.cellSealVmDescriptor)
   , ("cellDestroyVmDescriptor2R24", v3Of EffectVmEmitCellDestroy.cellDestroyVmDescriptor)

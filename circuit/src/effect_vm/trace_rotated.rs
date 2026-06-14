@@ -98,6 +98,13 @@ pub const CAVEAT_BASE: usize = V1_WIDTH + 2 * B_SPAN; // 272
 pub const V1_PI_COUNT: usize = 34;
 /// The rotated public-input count (34 v1 + 4 appended).
 pub const ROT_PI_COUNT: usize = 38;
+/// The rotated NOTE-SPEND public-input count (the 38-PI rotated prefix + the appended
+/// nullifier slot at index 38 — `EffectVmEmitRotationV3.noteSpendV3`, the C4 last-flip-gate
+/// close). Only the note-spend cohort member carries this fifth pin.
+pub const ROT_NULLIFIER_PI_COUNT: usize = 39;
+/// The rotated PI slot carrying the spend row's folded nullifier (the C4 weld). Equals
+/// `ROT_PI_COUNT` — the first slot past the four rotated commit pins.
+pub const ROT_NULLIFIER_PI: usize = ROT_PI_COUNT;
 
 // ============================================================================
 // Generator inputs (producer-witness shaped, dependency-free).
@@ -229,6 +236,47 @@ pub fn generate_rotated_effect_vm_trace(
     dpis.push(last[AFTER_BASE + B_COMMITTED_HEIGHT]); // PI 36: committed height (col 259)
     dpis.push(last[CAVEAT_BASE + C_SPAN - 1]); // PI 37: caveat commit (col 310)
     debug_assert_eq!(dpis.len(), ROT_PI_COUNT);
+
+    // THE C4 LAST-FLIP-GATE (note-spend nullifier weld): a NoteSpend turn rotates against the
+    // `noteSpendVmDescriptor2R24` descriptor, which carries a FIFTH appended PI pin
+    // (`EffectVmEmitRotationV3.noteSpendV3`) welding the spend row's folded nullifier
+    // (`param::NULLIFIER = param0`, col `PARAM_BASE + 0`) to rotated PI slot 38 on the FIRST
+    // row — the rotated analog of the v1 hand-AIR D5 cross-binding (offset 198). The note-spend
+    // spend is laid on row 0 (`generate_effect_vm_trace`'s `Effect::NoteSpend` arm), so the pin
+    // reads `r0[PARAM_BASE + param::NULLIFIER]`. We append it ONLY for a NoteSpend lead effect,
+    // matching the descriptor's 39-PI shape (the prover asserts `pis.len() == piCount`); the
+    // other 35 cohort members keep the 38-PI vector. This lets a note-spending turn rotate:
+    // `verify_full_turn` step 8 reads PI[38] instead of refusing the rotated leg.
+    if matches!(effects.first(), Some(Effect::NoteSpend { .. })) {
+        use super::columns::{PARAM_BASE, param};
+
+        // SINGLE-SPEND INVARIANT (the soundness tooth must survive rotation). The v1 hand-AIR
+        // gate is PER-ROW (`s_notespend·(param0 − PI[NOTESPEND_NULLIFIER])` on EVERY spend row)
+        // AND v1 surfaces ONE nullifier into the single PI slot — so a turn with two DISTINCT
+        // nullifiers is UNSAT on v1 (`trace.rs` D5: "multi-distinct-nullifier proofs need PI
+        // extension — deferred"). The rotated weld is a FIRST-row pin against the SAME single PI
+        // slot (PI[38]), cross-checked by `verify_full_turn` step 8 against the one freshness
+        // proof. A second NoteSpend on a NON-first row would be UNPINNED by the rotated
+        // descriptor and ESCAPE the freshness check — a double-spend the v1 leg forbids. So the
+        // rotated note-spend leg accepts exactly ONE spend row (v1's single-nullifier shape); a
+        // multi-NoteSpend turn fails closed here and falls back to the v1 leg. Without this the
+        // rotation would WEAKEN no-double-spend (a regressed tooth), not preserve it.
+        let spend_count = effects
+            .iter()
+            .filter(|e| matches!(e, Effect::NoteSpend { .. }))
+            .count();
+        if spend_count != 1 {
+            return Err(format!(
+                "rotated note-spend leg supports exactly one spend row (the single-nullifier \
+                 freshness shape), got {spend_count}; a multi-NoteSpend turn must use the v1 leg \
+                 (where a second distinct nullifier is UNSAT). Rotating it would leave the \
+                 non-first spend unpinned and ESCAPE the no-double-spend freshness check."
+            ));
+        }
+
+        dpis.push(r0[PARAM_BASE + param::NULLIFIER]); // PI 38: the spend row's folded nullifier
+        debug_assert_eq!(dpis.len(), ROT_NULLIFIER_PI_COUNT);
+    }
 
     Ok((trace, dpis))
 }

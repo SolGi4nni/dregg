@@ -239,6 +239,81 @@ pub fn rotation_witness_for_self_sovereign(
     receipt_hashes: &[[u8; 32]],
     effects: &[dregg_turn::Effect],
 ) -> Option<dregg_sdk::RotationTurnWitness> {
+    rotation_witness_for_self_sovereign_impl(
+        pre_balance,
+        pre_nonce,
+        before_cell,
+        after_cell,
+        receipt_hashes,
+        effects,
+    )
+}
+
+/// Build the rotation witness for a CAP-LESS finalized turn whose actor cell the node does NOT
+/// hand us directly (the FRESHNESS / freshness-bearing arms — `prove_and_verify_finalized_turn_*`
+/// receive only `(agent, pre_balance, pre_nonce)`, not the `Cell`). Synthesize the cap-less
+/// self-sovereign actor cell from those scalars (the SAME synthetic pre-state the v1 leg proves
+/// over: `CellState::new(pre_balance, pre_nonce)` — empty c-list ⇒ empty cap root, zero fields)
+/// and route it through [`rotation_witness_for_self_sovereign_impl`]. The synthetic cell carries
+/// the actor's real `CellId` (`Cell::remote_stub_with_id_and_balance`), so the single-cell
+/// `cells_root` matches; its welded scalars (balance/nonce/fields/cap_root) are OVERRIDDEN per-row
+/// from the v1 sub-trace by `trace_rotated::fill_block`, so the after-state (the spend's balance
+/// credit + nonce tick) flows from the v1 trace itself — no hand-replay of the executor. The same
+/// cell is before AND after: the turn-INVARIANT limbs (`cells_root`/map roots/lifecycle/epoch/
+/// authority digest) are identical for a single-cell cap-less self-spend; the per-row welds carry
+/// the rest. Returns `None` (⇒ the caller keeps the v1 leg) iff the synthetic-shape / cohort gate
+/// rejects — e.g. the turn is not a single rotated-cohort member.
+///
+/// Used to CLOSE the C4 note-spend boundary: with the rotated note-spend descriptor exposing the
+/// nullifier at PI[38] (`EffectVmEmitRotationV3.noteSpendV3`), a single-spend NoteSpend turn now
+/// proves ROTATED and `verify_full_turn` step 8 reads the nullifier from the rotated leg.
+fn rotation_witness_for_cap_less_turn(
+    agent: &CellId,
+    pre_balance: u64,
+    pre_nonce: u64,
+    effects: &[dregg_turn::Effect],
+    receipt_hashes: &[[u8; 32]],
+) -> Option<dregg_sdk::RotationTurnWitness> {
+    // SINGLE-SPEND GATE (mirrors `trace_rotated::generate_rotated_effect_vm_trace`): the rotated
+    // note-spend leg faithfully covers exactly ONE spend row (the first-row nullifier pin + the
+    // single freshness slot). A turn with >1 NoteSpend must NOT commit to the rotated path — the
+    // rotated trace generator would refuse it (no second nullifier pin ⇒ the 2nd spend escapes
+    // the freshness check). Returning `None` here keeps the v1 leg (where a 2nd distinct
+    // nullifier is UNSAT), rather than committing to a rotated prove that errors. (For a non-spend
+    // cohort turn this count is 0 ≠ 1, so the cohort gate below decides; only an exactly-one-spend
+    // note-spend turn passes both this and the cohort gate.)
+    let spend_count = effects
+        .iter()
+        .filter(|e| matches!(e, dregg_turn::Effect::NoteSpend { .. }))
+        .count();
+    if spend_count > 1 {
+        return None;
+    }
+
+    // The cap-less synthetic actor cell — the SAME pre-state shape `CellState::new` builds. Carry
+    // the actor's real id so `cells_root` matches; set the runtime nonce; balance from the scalar.
+    let mut cell = dregg_cell::Cell::remote_stub_with_id_and_balance(*agent, pre_balance as i64);
+    cell.state.set_nonce(pre_nonce);
+    // before == after: per-row welds (fill_block) carry the spend's post-state from the v1 trace;
+    // the turn-invariant limbs are identical for a single-cell cap-less self-spend.
+    rotation_witness_for_self_sovereign_impl(
+        pre_balance,
+        pre_nonce,
+        &cell,
+        &cell,
+        receipt_hashes,
+        effects,
+    )
+}
+
+fn rotation_witness_for_self_sovereign_impl(
+    pre_balance: u64,
+    pre_nonce: u64,
+    before_cell: &dregg_cell::Cell,
+    after_cell: &dregg_cell::Cell,
+    receipt_hashes: &[[u8; 32]],
+    effects: &[dregg_turn::Effect],
+) -> Option<dregg_sdk::RotationTurnWitness> {
     use dregg_turn::rotation_witness as rw;
 
     // SELF-VALIDATING GATE: the self-sovereign leg proves over the cap-less
@@ -482,6 +557,17 @@ pub fn prove_and_verify_finalized_turn_freshness(
     let (_trace, pi) = generate_effect_vm_trace(&initial_vm_state, &vm_effects);
     let new_commit = pi[dregg_circuit::effect_vm::pi::NEW_COMMIT];
 
+    // FLOW-B ROTATION (C4 close): a single-spend NoteSpend turn now ROTATES — the rotated
+    // note-spend descriptor (`noteSpendVmDescriptor2R24`) exposes the spent nullifier at PI[38]
+    // (`EffectVmEmitRotationV3.noteSpendV3`), so the rotated leg carries the no-double-spend
+    // binding `verify_full_turn` step 8 reads. Build the rotation witness from the cap-less
+    // synthetic actor cell (the SAME pre-state the v1 leg proves over); the builder's
+    // synthetic-shape/cohort gate returns `None` (⇒ keep the v1 leg) for any turn it cannot
+    // faithfully rotate (e.g. a multi-spend turn, which the rotated generator also refuses —
+    // the single-nullifier freshness shape stays the invariant on BOTH legs).
+    let rotation =
+        rotation_witness_for_cap_less_turn(agent, pre_balance, pre_nonce, effects, &[turn_hash]);
+
     // Compose the full-turn proof WITH the non-revocation leg.
     let witness = FullTurnWitness {
         initial_cell_state: initial_vm_state,
@@ -492,7 +578,7 @@ pub fn prove_and_verify_finalized_turn_freshness(
         non_revocation: Some(NonRevocationWitness { tree, item_hash }),
         cap_membership: None,
         turn_hash,
-        rotation: None,
+        rotation,
     };
     let proof = prove_full_turn(&witness).map_err(FullTurnProvingError::Prove)?;
 
@@ -1033,6 +1119,83 @@ mod tests {
             ),
             Err(other) => panic!("expected Verify(NullifierMismatch), got {other:?}"),
         }
+    }
+
+    /// C4 CLOSE — a single-spend NoteSpend turn now proves ROTATED: the freshness path
+    /// threads the cap-less rotation witness internally, so the composed proof carries the
+    /// `"effect-vm-rotated"` leg (NOT the v1 `"effect-vm"`). The rotated note-spend descriptor
+    /// (`noteSpendVmDescriptor2R24`) exposes the spent nullifier at PI[38], so `verify_full_turn`
+    /// step 8 reads it from the rotated leg — the no-double-spend binding survives the rotation
+    /// (the wrong-item / wrong-root teeth above run THROUGH this rotated path). This is the
+    /// evidence that note-spend turns no longer fall back to v1 (unblocking C7).
+    #[test]
+    fn flow_b_note_spend_proves_rotated() {
+        let alice = CellId::from_bytes([0xA1; 32]);
+        let nf = [0x77u8; 32];
+        let previously: Vec<[u8; 32]> = (1..=6u8).map(|i| [i; 32]).collect();
+        assert!(!previously.contains(&nf));
+
+        let effects = vec![note_spend_effect(nf, 500)];
+        let proven = prove_and_verify_finalized_turn_freshness(
+            &alice,
+            1000,
+            0,
+            &effects,
+            [0xA7u8; 32],
+            &nf,
+            &previously,
+        )
+        .expect("a single-spend note-spend turn must prove + bound-verify (now ROTATED)");
+
+        let labels: Vec<&str> = proven
+            .proof
+            .composed
+            .sub_proofs
+            .iter()
+            .map(|sp| sp.label.as_str())
+            .collect();
+        assert!(
+            labels.contains(&"effect-vm-rotated"),
+            "the note-spend turn must prove through the ROTATED descriptor (C4 close); \
+             sub-proofs = {labels:?}"
+        );
+        assert!(
+            !labels.contains(&"effect-vm"),
+            "the v1 effect-vm leg must NOT be present on the rotated note-spend turn; \
+             sub-proofs = {labels:?}"
+        );
+        assert!(proven.proof.components.has_non_revocation);
+    }
+
+    /// SOUNDNESS — the single-spend invariant survives the rotation. A turn with MORE THAN ONE
+    /// NoteSpend must NOT commit to the rotated path: the rotated note-spend descriptor's
+    /// first-row pin + the single freshness slot only faithfully cover ONE spend, so a second
+    /// spend would be UNPINNED and ESCAPE the no-double-spend freshness check. The cap-less
+    /// rotation-witness builder returns `None` for such a turn (the v1 leg runs instead, where the
+    /// per-row D5 gate forces a single shared nullifier — a second DISTINCT nullifier is UNSAT). A
+    /// single-spend turn, by contrast, DOES yield a rotation witness. This is the gate that keeps
+    /// the rotation from silently weakening no-double-spend.
+    #[test]
+    fn cap_less_rotation_witness_refuses_multi_spend() {
+        let alice = CellId::from_bytes([0xA1; 32]);
+        let n1 = [0x81u8; 32];
+        let n2 = [0x82u8; 32];
+        let receipts = [[0x88u8; 32]];
+
+        // TWO NoteSpends ⇒ no rotation witness (keeps the v1 leg; the rotated leg can't cover it).
+        let multi = vec![note_spend_effect(n1, 300), note_spend_effect(n2, 200)];
+        assert!(
+            rotation_witness_for_cap_less_turn(&alice, 1000, 0, &multi, &receipts).is_none(),
+            "a multi-spend turn must NOT yield a rotation witness (the rotated note-spend leg \
+             covers exactly one spend; a 2nd would escape the freshness check)"
+        );
+
+        // ONE NoteSpend ⇒ a rotation witness IS produced (the C4-closed single-spend shape).
+        let single = vec![note_spend_effect(n1, 300)];
+        assert!(
+            rotation_witness_for_cap_less_turn(&alice, 1000, 0, &single, &receipts).is_some(),
+            "a single-spend note-spend turn must yield a rotation witness (it rotates)"
+        );
     }
 
     /// A spend whose nullifier is ALREADY in the canonical set (a double-spend)

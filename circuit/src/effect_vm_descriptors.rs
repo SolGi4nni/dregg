@@ -807,7 +807,7 @@ pub const V3_STAGED_CAVEAT_DESCRIPTORS: &[(&str, &str, &str)] = &[(
 pub const V3_STAGED_REGISTRY_TSV: &str =
     include_str!("../descriptors/rotation-v3-staged-registry.tsv");
 pub const V3_STAGED_REGISTRY_FP: &str =
-    "6dd02469b0dbb86e40f5bfaac85259b3d642ee78862939f93699fb35b499adb4";
+    "535ce9173d70fc39c1b83f28035e4506db376770944361ee4104cb271b189773";
 
 /// The rotated probe layout at register count `r` (the Rust twin of the Lean parametric
 /// layout `EffectVmEmitRotationR`: columns are FUNCTIONS of R; the chunking is 4-wide head,
@@ -1662,14 +1662,18 @@ mod tests {
                  caveat chain→CAVEAT_COMMIT"
             );
 
-            // The four appended PI pins live at the descriptor's OWN piCount..piCount+3,
+            // The four rotated commit pins always sit at the v1 prefix count (34..=37),
             // bound to: first-row before state_commit, last-row after state_commit,
-            // last-row after committed_height, last-row caveat commit.
-            let pi_base = d.public_input_count - 4;
+            // last-row after committed_height, last-row caveat commit. (The pins do NOT
+            // ride `public_input_count - 4`: note-spend appends a FIFTH nullifier pin past
+            // them, so the commit-pin base is the FIXED v1 prefix `V1_PI_COUNT = 34`.)
+            const V1_PI_COUNT: usize = 34;
+            let pi_base = V1_PI_COUNT;
             let mut pins: Vec<(usize, usize)> = Vec::new(); // (col, pi_index)
             for c in &d.constraints {
                 if let VmConstraint2::Base(VmConstraint::PiBinding { col, pi_index, .. }) = c {
-                    if *pi_index >= pi_base {
+                    // only the rotated appendix pins (>= the v1 prefix); the four commit pins.
+                    if (pi_base..pi_base + 4).contains(pi_index) {
                         pins.push((*col, *pi_index));
                     }
                 }
@@ -1685,6 +1689,46 @@ mod tests {
                 ],
                 "{key}: four appended PI pins (rotated OLD/NEW commit · height · caveat commit)"
             );
+
+            // THE C4 LAST-FLIP-GATE: the rotated NOTE-SPEND carries a FIFTH appended PI pin
+            // (`EffectVmEmitRotationV3.noteSpendV3`) welding the spend row's folded nullifier
+            // (`param::NULLIFIER = param0`, col `PARAM_BASE + 0`) to rotated PI slot 38 on the
+            // FIRST row — the rotated analog of the v1 hand-AIR D5 cross-binding (offset 198),
+            // so a note-spending turn can rotate (`verify_full_turn` step 8 reads PI[38]). Every
+            // OTHER cohort member has EXACTLY the four commit pins and 38 PIs.
+            use crate::effect_vm::columns::{PARAM_BASE, param};
+            let nullifier_pins: Vec<(usize, usize)> = d
+                .constraints
+                .iter()
+                .filter_map(|c| match c {
+                    VmConstraint2::Base(VmConstraint::PiBinding { col, pi_index, .. })
+                        if *pi_index >= pi_base + 4 =>
+                    {
+                        Some((*col, *pi_index))
+                    }
+                    _ => None,
+                })
+                .collect();
+            if key == "noteSpendVmDescriptor2R24" {
+                assert_eq!(
+                    d.public_input_count, 39,
+                    "noteSpend: rotated 38-PI + the appended nullifier slot"
+                );
+                assert_eq!(
+                    nullifier_pins,
+                    vec![(PARAM_BASE + param::NULLIFIER, pi_base + 4)],
+                    "noteSpend: the fifth pin welds the folded nullifier (param0) to PI[38]"
+                );
+            } else {
+                assert_eq!(
+                    d.public_input_count, 38,
+                    "{key}: non-note-spend cohort carries the rotated 38-PI"
+                );
+                assert!(
+                    nullifier_pins.is_empty(),
+                    "{key}: only note-spend carries the fifth nullifier pin"
+                );
+            }
         }
         assert_eq!(n, 36, "expected the full 36-member cohort (28 v2-graduated + 8 widened)");
     }

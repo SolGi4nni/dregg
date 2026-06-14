@@ -395,3 +395,130 @@ fn rotated_burn_cohort_member_proves_verifies_with_authority_commitment() {
         total as f64 / 1024.0
     );
 }
+
+/// THE C4 LAST-FLIP-GATE (end-to-end, in-circuit): a real ROTATED note-spend turn proves +
+/// verifies through the `noteSpendVmDescriptor2R24` descriptor (the FIFTH appended PI pin,
+/// `EffectVmEmitRotationV3.noteSpendV3`), the rotated PI vector is 39 elements with the spent
+/// nullifier at PI[38] = the spend row's folded `param0`, AND the SOUNDNESS TOOTH bites: a turn
+/// that publishes a DIFFERENT nullifier in PI[38] than the one the spend row carries (or tampers
+/// the nullifier column) is UNSAT. This is the rotated re-statement of the v1 hand-AIR D5
+/// cross-binding (`s_notespend·(param0 − PI[NOTESPEND_NULLIFIER])`, offset 198) — now a first-row
+/// pin of the rotated descriptor, so a note-spending turn rotates and `verify_full_turn` step 8
+/// reads PI[38]. With the in-circuit pin proven UNSAT under tamper, the off-AIR no-double-spend
+/// cross-check binds THIS turn's nullifier (the node `spend_freshness_for_wrong_item_is_rejected`
+/// drives the off-AIR half through the rotated leg).
+#[test]
+fn rotated_note_spend_pins_nullifier_and_refuses_tamper() {
+    use dregg_circuit::effect_vm::columns::{PARAM_BASE, param};
+
+    // The note-spend cohort member's rotated descriptor — 39 PIs (38 prefix + the nullifier pin).
+    let spend = Effect::NoteSpend {
+        nullifier: BabyBear::new(0xBEEF),
+        value: 500,
+    };
+    let name = rotated_descriptor_name_for_effect(&spend).expect("NoteSpend is a cohort member");
+    assert_eq!(name, "noteSpendVmDescriptor2R24");
+    let json = V3_STAGED_REGISTRY_TSV
+        .lines()
+        .find_map(|l| {
+            let mut it = l.splitn(3, '\t');
+            if it.next() == Some(name) {
+                let _ = it.next();
+                it.next()
+            } else {
+                None
+            }
+        })
+        .expect("noteSpendVmDescriptor2R24 in the staged registry");
+    let desc = parse_vm_descriptor2(json).expect("rotated note-spend descriptor parses");
+    assert_eq!(desc.trace_width, ROT_WIDTH, "rotated width 311");
+    assert_eq!(
+        desc.public_input_count, 39,
+        "the rotated note-spend carries 38 prefix PIs + the appended nullifier slot"
+    );
+
+    // A real note-spend turn: the EffectVM credits balance by `value` (the shielding convention),
+    // so before = balance, after = balance + value; nonce ticks by one.
+    let before_balance: i64 = 90_000;
+    let value: u64 = 500;
+    let st = CellState::new(before_balance as u64, 0);
+    let effects = vec![spend];
+
+    let mut ledger = Ledger::new();
+    let before_cell = producer_cell(before_balance, 0);
+    let after_cell = producer_cell(before_balance + value as i64, 1);
+    ledger.insert_cell(after_cell.clone()).unwrap();
+    let nullifier_root = [0u8; 32];
+    let receipt_log: Vec<[u8; 32]> = vec![[7u8; 32]];
+
+    let before_w = rw::produce(&before_cell, &ledger, &nullifier_root, &receipt_log);
+    let after_w = rw::produce(&after_cell, &ledger, &nullifier_root, &receipt_log);
+
+    let caveat = empty_caveat_manifest();
+    let (trace, dpis) = generate_rotated_effect_vm_trace(
+        &st,
+        &effects,
+        &bridge(&before_w),
+        &bridge(&after_w),
+        &caveat,
+    )
+    .expect("live rotated generator must produce a note-spend trace + 39 PIs");
+    assert_eq!(trace[0].len(), ROT_WIDTH, "311-col rotated trace");
+
+    // THE FIFTH PI: 39 elements, and PI[38] == the row-0 spend's folded nullifier (param0).
+    assert_eq!(dpis.len(), 39, "note-spend rotated PI is 39 (the nullifier slot appended)");
+    let r0 = &trace[0];
+    assert_eq!(
+        dpis[38],
+        r0[PARAM_BASE + param::NULLIFIER],
+        "PI 38 = the spend row's folded nullifier (param0)"
+    );
+    // The four commit pins are undisturbed below it.
+    assert_eq!(dpis[34], r0[BEFORE_BASE + B_STATE_COMMIT], "PI 34 = rotated OLD commit");
+
+    let mem_boundary = MemBoundaryWitness::default();
+    let map_heaps: Vec<Vec<dregg_circuit::heap_root::HeapLeaf>> = vec![];
+
+    // PROVE + VERIFY the whole rotated note-spend end-to-end.
+    let proof = prove_vm_descriptor2(&desc, &trace, &dpis, &mem_boundary, &map_heaps)
+        .expect("rotated note-spend must prove end-to-end");
+    verify_vm_descriptor2(&desc, &proof, &dpis)
+        .expect("rotated note-spend proof must verify independently");
+    let total = postcard::to_allocvec(&proof).expect("postcard").len();
+    eprintln!(
+        "ROTATED NOTE-SPEND (R=24, 39-PI, LIVE-GENERATED): proof {total} B (~{:.1} KiB) — \
+         PROVED + VERIFIED; the nullifier is pinned at PI[38]",
+        total as f64 / 1024.0
+    );
+
+    // -- THE SOUNDNESS TOOTH (anti-ghost): a published nullifier ≠ the spend row's param0 is
+    //    UNSAT. This is the rotated boundary's analog of the v1 `rejects_swap` test. --
+    let refused = |t: &Vec<Vec<BabyBear>>, p: &Vec<BabyBear>| -> bool {
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            prove_vm_descriptor2(&desc, t, p, &mem_boundary, &map_heaps)
+        }));
+        match r {
+            Err(_) => true,
+            Ok(res) => res.is_err(),
+        }
+    };
+    // (a) publish a DIFFERENT nullifier in PI[38] than the spend row carries ("prove N, spend M").
+    {
+        let mut p = dpis.clone();
+        p[38] = p[38] + BabyBear::ONE;
+        assert!(
+            refused(&trace, &p),
+            "a published PI[38] differing from the spend row's nullifier MUST be UNSAT \
+             (the no-double-spend pin)"
+        );
+    }
+    // (b) tamper the nullifier COLUMN (param0) so it no longer matches the (honest) PI[38].
+    {
+        let mut t = trace.clone();
+        t[0][PARAM_BASE + param::NULLIFIER] = t[0][PARAM_BASE + param::NULLIFIER] + BabyBear::ONE;
+        assert!(
+            refused(&t, &dpis),
+            "tampering the spend row's nullifier column away from PI[38] MUST be UNSAT"
+        );
+    }
+}
