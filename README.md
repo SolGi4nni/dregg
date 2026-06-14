@@ -35,6 +35,7 @@ the kernel · **deos** the desktop.)
 | **Site · Studio · Playground · Explorer** | <https://dregg.fg-goose.online> |
 | **Hands-on in 15 minutes** | [QUICKSTART.md](QUICKSTART.md) |
 | **The exact guarantees + assumptions** | [docs/ASSURANCE.md](docs/ASSURANCE.md) · [`AssuranceCase.lean`](metatheory/Dregg2/AssuranceCase.lean) |
+| **Community** | [Discord](https://discord.gg/eSTsv7DWcR) |
 
 ---
 
@@ -284,7 +285,7 @@ verified Lean executor is what the node runs, and the live devnet executes it.
 The named opens above are open, and there has been no independent audit. **Do
 not use for anything security-critical.**
 
-- [Site / Docs / Studio / Explorer](https://dregg.fg-goose.online) · [Live devnet](https://devnet.dregg.fg-goose.online) · [Pages mirror](https://emberian.github.io/dregg)
+- [Site / Docs / Studio / Explorer](https://dregg.fg-goose.online) · [Live devnet](https://devnet.dregg.fg-goose.online) · [Discord](https://discord.gg/eSTsv7DWcR) · [Pages mirror](https://emberian.github.io/dregg)
 
 ## License
 
