@@ -38,6 +38,8 @@ mod storage_service;
 mod strand_admission_gate;
 mod trustline_service;
 mod pg_mirror;
+#[cfg(feature = "pg-mirror-live")]
+mod submit_queue_drainer;
 mod turn_proving;
 mod ws;
 
@@ -864,6 +866,17 @@ async fn run_node(
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .expect("failed to bind HTTP listener");
+
+    // pg-dregg §11.4 (M3): spawn the submit-queue drainer — the READ side of the
+    // write loop, symmetric to the pg_mirror WRITE side. OFF by default; it
+    // connects ONLY when the `pg-mirror-live` feature is built AND
+    // DREGG_PG_MIRROR_URL is set (returns None otherwise, so node behaviour is
+    // byte-identical when unset). It tails dregg.submit_queue, runs each queued
+    // signed turn through the real verified executor, and walks the row's status
+    // pending → executed | refused. Shares the same NodeState handle as the HTTP
+    // server (like the prove pool); the task ends when the runtime shuts down.
+    #[cfg(feature = "pg-mirror-live")]
+    let _submit_drainer = submit_queue_drainer::spawn(node_state.clone());
 
     // P2 Fix 8: Graceful shutdown on Ctrl-C.
     axum::serve(listener, app)
