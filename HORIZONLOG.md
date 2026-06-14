@@ -52,6 +52,80 @@ surface/`, 20/0) · sdk pg-native (sdk-py 71/4-skip + sdk-ts 74/0). Open residua
 - HEAP-KEYED CAVEATS executor runtime discharge (named premise `HeapCaveatRuntimeDischarge`; template = `verify_slot_caveat_manifest`; semantics welded via `tagHeapAtom`→`HeapAtom.lift`→`evalHeap`) — ROTATION-CUTOVER §5 item 9; at the flag-day the staged 29-felt manifest replaces the live 25-felt slot manifest in the regenerated PI region. (Wire shape STAGED; live v1 manifest untouched.)
 - PI v3 rateBound/challengeWindow: carried-only (producer copies context into PI 202/203; verifier pins ZERO sentinels, proof_verify.rs:269-270). Enforcement arrives with optimistic-proving/dispute (#169) which owns these slots — nothing further pre-#169.
 
+### ⚑⚑ C7 PRE-DELETION BLOCKER — four LIVE v1 deps survive the VK epoch in recursion builds (2026-06-14, C7 attempt)
+
+**C7's gating premise is UNMET.** The manifest (`docs/V1-DELETION-MANIFEST.md`) + the PRE-FLIP GATE
+framed C7 as "the VK epoch landed green ⇒ a mechanical delete fan-out." Against the CODE at HEAD
+(`5b3772873`) that is false: the VK epoch (#182/#183) migrated the DEFAULT compose+prove path to
+rotated, but the three walls (A/B/C) + the wasm-decision did NOT cover FOUR live v1 dependencies that
+remain in **recursion-enabled** builds — so grep-zero (`generate_effect_vm_trace · EffectVmAir ·
+EffectVmP3Air · EffectVmP3Proof · prove_effect_vm_p3 · CutoverFallback · EFFECT_VM_WIDTH`) is
+PROVABLY-UNREACHABLE-in-recursion until these close, and a PARTIAL cutover ships RED (forbidden).
+Items 2/3/4 are ordinary engineering (NO crypto primitive); item 1's keystone (a rotated FRI-free
+revalidation primitive) is blocked at the PROVING-LIBRARY BOUNDARY (`p3-batch-stark`'s interaction-
+aware constraint checker is `pub(crate)`+debug-only — see item 1). Together they are a multi-system
+cutover, NOT a delete. The tree is GREEN + UNTOUCHED (baseline `pbuild hardswap` of
+circuit/sdk/turn/node = exit 0; no edits made). The four, file:line'd:
+
+1. **`bespoke_air_accepts` = the LIVE F-DOS-1 inline witness-revalidation, v1-AIR, no rotated twin.**
+   `circuit/src/effect_vm_p3_full_air.rs:2451` checks `EffectVmAir::eval_constraints` FRI-free
+   (sub-ms). LIVE callers: `node/src/api.rs:~2470` (HTTP commit path, `http_project_effects`→
+   `generate_effect_vm_trace`→`bespoke_air_accepts`), `node/src/prove_pool.rs:22`,
+   `sdk/src/full_turn_proof.rs:2391` (`revalidate_turn_self_sovereign`). `descriptor_ir2` exposes NO
+   FRI-free `accepts` (only `prove_*`/`verify_*`). ** DEEPER THAN A WRAPPER (verified 2026-06-14):**
+   a naive `p3_air::check_all_constraints(Ir2Air, ..)` does NOT compile — `Ir2Air::eval` needs
+   `InteractionBuilder` (the LogUp `bus.lookup_key`, `descriptor_ir2.rs:~76`) which the plain debug
+   builder lacks; and the only interaction-aware FRI-free checker, `p3-batch-stark::check_constraints`
+   (`~/.cargo/git/checkouts/plonky3-*/82cfad7/batch-stark/src/check_constraints.rs:37`), is
+   `pub(crate)` + `#[cfg(debug_assertions)]` — NOT exported. So the rotated revalidation primitive is a
+   PROVING-LIBRARY-BOUNDARY dependency (this item is the true long pole). CLOSURE OPTIONS: (a) upstream
+   a `pub` interaction-aware constraint-check in the `Plonky3@82cfad7` fork (or our recursion fork) and
+   call it; (b) reimplement the LogUp permutation-trace assembly + multiset check inside dregg-circuit
+   (substantial — reproduces `check_constraints`); or (c) accept that rotated revalidation runs the
+   real `prove_vm_descriptor2`+`verify` (loses the sub-ms F-DOS-1 budget = a commit-path perf
+   regression). PLUS the node commit path must assemble the rotated trace from real before/after
+   `RotationWitness` (`dregg_cell::Cell` pre/post — today it re-derives a v1 trace from pre-state with
+   NO cells).
+2. **node `rotation: None` runtime FALLBACK still runs the v1 leg under recursion.**
+   `node/src/turn_proving.rs:358/385` (`rotation_witness_for_self_sovereign_impl` returns `None` for
+   non-synthetic-shaped cells / non-cohort / heterogeneous / no-op / non-graduated turns) →
+   `prove_full_turn` then runs the v1 `generate_effect_vm_trace`+`prove_effect_vm_with_cutover` leg
+   (`sdk/src/full_turn_proof.rs:1124-1131,1185-1201`). Plus `prove_and_verify_finalized_turn`
+   (`turn_proving.rs:526`) calls `generate_effect_vm_trace` UNCONDITIONALLY for `new_commit`. CLOSURE:
+   make the recursion build rotated-ONLY — non-cohort turns FAIL-CLOSED (proof skipped + loud log),
+   not silent-v1. ⚠ behavior change: must confirm the rotated cohort
+   (`trace_rotated::rotated_descriptor_name_for_effect`, 26 effects + per-field SetField; NoOp/
+   heterogeneous fail-closed) covers every live turn shape, else this regresses live-turn proving.
+3. **aggregation/forest/IVC proof TYPE is still `EffectVmP3Proof` (v1 leg co-resident).**
+   `circuit/src/proof_forest.rs:243,280` + `joint_turn_aggregation.rs:130,197,213`
+   (`DescriptorParticipant.proof: EffectVmP3Proof` + `Option<RotatedParticipantLeg>`) +
+   `ivc_turn_chain.rs`. `EffectVmP3Proof = BatchProof<DreggStarkConfig>` and
+   `Ir2BatchProof = BatchProof` are the SAME type, so this is mostly an alias cutover, BUT the v1
+   `proof` field must be DROPPED and the `rotated` leg made MANDATORY (the unfinished C4 step the
+   structs' own docs name: `joint_turn_aggregation.rs:138`).
+4. **wasm in-browser prover is v1 + recursion is ON in the wasm graph.** `wasm/src/runtime.rs:710`
+   (`generate_effect_vm_trace`+`EffectVmAir`+`stark::prove`) + `wasm/src/bindings_lightclient.rs:389`
+   + the `BilateralAggregationAir` bundle (`wasm/src/bindings.rs`). wasm pulls circuit's DEFAULT
+   features (= `recursion`, via observability/bridge/lightclient — see the `[patch]` note in
+   `wasm/Cargo.toml`), so this is a RECURSION build and these unconditional refs block grep-zero
+   there too. Option-A (ember-decided): migrate to `prove_effect_vm_rotated_ir2` (compiles in the
+   wasm graph already) by synthesizing before/after `Cell::with_balance` + rotation witnesses for the
+   demo inspector path. The brief's "`not(recursion)` wasm v1 FLOOR" residual is only coherent if the
+   wasm prover gains a `#[cfg(feature="recursion")]` rotated branch (shipped wasm has recursion ON);
+   a bare `not(recursion)` fence would DELETE the in-browser prover (a degradation — not acceptable).
+
+SEQUENCING (each persvati-green): (1a) the additive `ir2_descriptor_accepts` checker + test [keystone,
+zero-risk] → (3) the `EffectVmP3Proof`→`Ir2BatchProof` alias + drop-v1-leg in aggregation → (1b)+(2)
+node commit-path rotation-witness assembly + rotated-only fail-closed → (4) wasm Option-A → then the
+mechanical DELETE of bucket A (`effect_vm_p3_full_air.rs`, `effect_vm/air.rs` v1 surface,
+`effect_vm_p3_air.rs` is actually `EffectVmShapeAir` used by `recursive_witness_bundle.rs` — KEEP or
+re-home) + bucket-C harnesses + grep-zero verify. NOTE the manifest mislabels: "`EffectVmP3Air`
+shape-mirror in effect_vm_p3_air.rs" is really `EffectVmShapeAir` (a recursion shape-probe, LIVE in
+`recursive_witness_bundle.rs:237/360/412/420`), and bucket-A's `effect_vm_p3_full_air.rs` hosts the
+LIVE `bespoke_air_accepts` + the `EffectVmP3Proof` alias — so it is NOT a clean delete. The ember-
+decision: expand C7 to perform this four-part live-path cutover (a flip-scale phase), or land it as
+the sequenced follow-on above.
+
 ## THE ROTATION FLIP — the irreversible tail (ember-COMMISSIONED, a4c7368ae; touches cell/+live registry+executor PI)
 
 *(The genuinely-new long pole — staged producers + rotated trace builder + cell≡circuit
