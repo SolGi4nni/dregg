@@ -39,7 +39,7 @@ mod views;
 // remote-federation panel reuses; it is gpui-gated.
 
 #[cfg(feature = "embedded-executor")]
-use starbridge_v2::{reflect, world};
+use starbridge_v2::{demo, reflect, world};
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -52,7 +52,13 @@ fn main() {
 
         if headless || !cfg!(feature = "gpui-ui") {
             headless_report(&world);
-            return;
+            // THE FOUR-SURFACE KILLER DEMO (N5) — the pug-handoff evaluation
+            // artifact: mint → agent turn → notify handoff → the dual refusal, all
+            // through the REAL embedded executor. Prints the four frames + both
+            // refusals (each citing the executor's reason) and EXITS NON-ZERO if the
+            // headline contract does not hold (a regression) — CI-friendly.
+            let code = headless_killer_demo();
+            std::process::exit(code);
         }
 
         #[cfg(feature = "gpui-ui")]
@@ -118,6 +124,38 @@ fn headless_report(world: &world::World) {
         println!("  · {}", ev.label());
     }
     println!("(the master interface engine is live; pass no --headless to open the window)");
+    println!();
+}
+
+/// Run the FOUR-SURFACE KILLER DEMO (N5) as the `--headless` self-check and print
+/// its report. Returns the process exit code: `0` iff the headline contract holds
+/// (the four frames committed, the handoff produced two distinct receipts, BOTH
+/// refusals fired fail-closed), `1` otherwise (a regression — the substrate's
+/// guarantees did not fire). This is the single runnable story a stranger / CI runs.
+#[cfg(feature = "embedded-executor")]
+fn headless_killer_demo() -> i32 {
+    let mut d = demo::HeadlineDemo::boot();
+    match d.run_headless() {
+        Ok(_) => {
+            print!("{}", demo::render_headless_report(&d));
+            if d.contract_holds() {
+                0
+            } else {
+                // The script ran but the contract is not satisfied (e.g. a missing
+                // frame) — still a regression.
+                eprintln!("FAIL: the killer-demo contract did not hold.");
+                1
+            }
+        }
+        Err(e) => {
+            // A SETUP failure (a real regression in the substrate — NOT one of the
+            // in-script refusals, which are the point). Print what we captured + the
+            // failure, and exit non-zero so CI catches it.
+            print!("{}", demo::render_headless_report(&d));
+            eprintln!("FAIL: the killer demo could not complete — {}", e.label());
+            1
+        }
+    }
 }
 
 #[cfg(feature = "gpui-ui")]

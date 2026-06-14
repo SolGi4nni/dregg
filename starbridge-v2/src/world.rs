@@ -408,6 +408,33 @@ impl World {
         slot
     }
 
+    /// Open `cell`'s [`Permissions`] to the single-custody operator set
+    /// (`open_permissions`, gating nothing) via the GENESIS PATH — the minter/owner
+    /// endowing a cell it owns, exactly as [`genesis_grant_cap`] installs an
+    /// owner-grant or [`set_cell_program`] seeds a program. Used by the headline demo
+    /// ([`crate::demo`]) after a factory-birth: a factory-born child carries the
+    /// factory's default permissions (which require a signature to send FROM it), so
+    /// the minter opens its freshly-minted budget cell's permissions the way a node
+    /// seeds a genesis cell's authority. Mirrored into the replay tape's ledger so the
+    /// recorded roots stay in lock-step. Returns `true` if the cell existed.
+    ///
+    /// This installs AUTHORITY (a permissions set) on a cell the caller owns; it does
+    /// not move value or commit a turn — the trusted root's prerogative over its own
+    /// cell, NOT a bypass of the executor (a later spend FROM the cell still runs
+    /// through the real executor; this only sets what that executor gates against).
+    pub fn genesis_open_permissions(&mut self, cell: &CellId) -> bool {
+        let existed = if let Some(c) = self.engine.ledger_mut().get_mut(cell) {
+            c.permissions = open_permissions();
+            true
+        } else {
+            false
+        };
+        if let Some(c) = self.record_ledger.get_mut(cell) {
+            c.permissions = open_permissions();
+        }
+        existed
+    }
+
     /// Deploy a [`FactoryDescriptor`] into the embedded executor's factory
     /// registry (the out-of-band genesis path — a node registers its factories
     /// the way it seeds genesis cells). Returns the factory's content-addressed

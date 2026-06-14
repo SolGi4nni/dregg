@@ -45,6 +45,9 @@ use starbridge_v2::buffer::{BufferCell, BufferView};
 use starbridge_v2::terminal::{Command, TerminalCell, TerminalView};
 // The A2 SWARM surface — multi-agent cap-coordinated swarm with notify edges.
 use starbridge_v2::swarm::{Swarm, SwarmView};
+// The four-surface KILLER DEMO (N5) — the pug-handoff evaluation artifact, driven
+// live in the SWARM tab (mint → agent turn → notify handoff → the dual refusal).
+use starbridge_v2::demo::HeadlineDemo;
 
 /// Which object the inspector is focused on.
 #[derive(Clone)]
@@ -215,6 +218,19 @@ pub struct Cockpit {
     /// service and user are the "workers" it orchestrates via emit-event.
     swarm: Swarm,
 
+    // --- the four-surface KILLER DEMO (N5) — the pug-handoff artifact --------
+    /// The headline killer demo, driven live in the SWARM tab one frame per button
+    /// press (mint → agent turn → notify handoff → the DUAL REFUSAL). It owns its
+    /// OWN metered verified world (so the budget meter accrues real computrons and
+    /// the Stingray ceiling can bite), separate from the cockpit's free-play world —
+    /// the demo is a self-contained scripted scenario the operator drives to the
+    /// climax. The four frames + both refusals are the single runnable end-to-end
+    /// story a stranger runs to judge whether the substrate is real and usable.
+    killer_demo: HeadlineDemo,
+    /// The render lines the killer demo has emitted so far (one per advanced frame),
+    /// shown in the SWARM-tab demo strip. Newest appended last.
+    killer_demo_lines: Vec<String>,
+
     // --- the ⌘K COMMAND PALETTE --------------------------------------------
     /// The command palette over EVERY action (open with ⌘K). The cockpit feeds
     /// it keystrokes and dispatches its selected `CommandId` through the same
@@ -344,6 +360,8 @@ impl Cockpit {
             editor_buffer_cap,
             terminal,
             swarm,
+            killer_demo: HeadlineDemo::boot(),
+            killer_demo_lines: Vec::new(),
             palette: CommandPalette::new(),
             focus,
         }
@@ -692,6 +710,81 @@ impl Cockpit {
             Err(e) => format!("swarm: REFUSED — {}", e.label()),
         });
         self.refresh_cells();
+        self.tab = Tab::Swarm;
+        cx.notify();
+    }
+
+    // --- the four-surface KILLER DEMO (N5) live driver ----------------------
+
+    /// **Advance the killer demo by ONE frame** — the SWARM-tab "next frame" button.
+    /// Each press runs the next step of the headline script (mint → agent turn →
+    /// notify → drain → over-grant REFUSAL → over-spend REFUSAL) through the demo's
+    /// OWN embedded verified world, appending the frame's render line to the strip.
+    /// When the script is complete, the button reports it (and the operator can
+    /// reset to replay).
+    fn killer_demo_advance(&mut self, cx: &mut Context<Self>) {
+        if self.killer_demo.is_complete() {
+            self.last_outcome =
+                Some("killer demo: the script is complete — reset to replay it.".to_string());
+        } else if let Some(line) = self.killer_demo.advance() {
+            self.killer_demo_lines.push(line.clone());
+            // The trimmed first line of the frame, for the outcome banner.
+            let banner = line.lines().next().unwrap_or(&line).trim().to_string();
+            self.last_outcome = Some(format!("killer demo: {banner}"));
+        }
+        self.tab = Tab::Swarm;
+        cx.notify();
+    }
+
+    /// **Run the WHOLE killer demo at once** — the SWARM-tab "run all" button. Drives
+    /// the full four-frame + dual-refusal script and reports the verdict (the
+    /// `--headless` self-check, in the cockpit). Captures every frame line into the
+    /// strip so the operator can read the four frames + both refusals.
+    fn killer_demo_run_all(&mut self, cx: &mut Context<Self>) {
+        // Reset to a fresh world so "run all" is a clean replay from frame 0.
+        self.killer_demo.reset();
+        self.killer_demo_lines.clear();
+        while let Some(line) = self.killer_demo.advance() {
+            self.killer_demo_lines.push(line);
+            if self.killer_demo.is_complete() {
+                break;
+            }
+        }
+        self.last_outcome = Some(if self.killer_demo.contract_holds() {
+            "killer demo ✓ — four frames committed, two distinct handoff receipts, \
+             BOTH refusals fired fail-closed. (pg step 5 deferred.)"
+                .to_string()
+        } else {
+            "killer demo ✗ — the headline contract did NOT hold (a regression).".to_string()
+        });
+        self.tab = Tab::Swarm;
+        cx.notify();
+    }
+
+    /// **The pixel-layer OVER-SHARE refusal** — the SWARM-tab "⚠ over-share at the
+    /// glass" button: the THIRD register of the same no-amplification law. Opens the
+    /// demo's minted budget cell as a cap-confined surface (in the cockpit's live
+    /// shell), shares it READ-ONLY, then tries to promote it to WRITABLE — the real
+    /// executor REJECTS the widening (`DelegationDenied`), surfaced as `⚠ over-share`
+    /// at the PIXEL layer. Requires the demo to have MINTED its token cell (frame 1).
+    fn killer_demo_over_share(&mut self, cx: &mut Context<Self>) {
+        let result = self.killer_demo.refuse_over_share(&mut self.shell);
+        let line = match result {
+            Ok(reason) => format!("killer demo: {reason}"),
+            Err(why) => format!("killer demo: over-share path — {why}"),
+        };
+        self.killer_demo_lines.push(line.clone());
+        self.last_outcome = Some(line);
+        self.tab = Tab::Swarm;
+        cx.notify();
+    }
+
+    /// **Reset the killer demo** to a fresh world at frame 0 (the SWARM-tab "reset"
+    /// button) so the operator can replay the script from the start.
+    fn killer_demo_reset(&mut self, cx: &mut Context<Self>) {
+        self.killer_demo.reset();
+        self.killer_demo_lines.clear();
+        self.last_outcome = Some("killer demo: reset to frame 0 — ready to replay.".to_string());
         self.tab = Tab::Swarm;
         cx.notify();
     }
@@ -1156,6 +1249,11 @@ impl Cockpit {
             CommandId::SwarmCoordinatorTransferAndWake => {
                 self.swarm_coordinator_transfer_and_wake(cx)
             }
+
+            CommandId::KillerDemoAdvance => self.killer_demo_advance(cx),
+            CommandId::KillerDemoRunAll => self.killer_demo_run_all(cx),
+            CommandId::KillerDemoOverShare => self.killer_demo_over_share(cx),
+            CommandId::KillerDemoReset => self.killer_demo_reset(cx),
 
             CommandId::ShellOpenSelected => self.shell_open_selected(cx),
             CommandId::ShellFocusFront => self.shell_focus_front(cx),
@@ -2087,6 +2185,76 @@ impl Cockpit {
                 .child(verb_button(cx, "worker-a DRAIN inbox (own ack turn)", theme::good(), Cockpit::swarm_worker_a_drain))
                 .child(verb_button(cx, "coordinator: transfer + wake (one seam)", theme::warn(), Cockpit::swarm_coordinator_transfer_and_wake)),
         );
+
+        // ── THE FOUR-SURFACE KILLER DEMO (N5) — the pug-handoff artifact ──────
+        col = col.child(
+            section_title("⚑ the killer demo (N5) · the pug-handoff evaluation artifact").mt_3(),
+        );
+        col = col.child(div().text_xs().text_color(theme::muted()).child(
+            "ONE end-to-end story, every step a real receipted turn: (1) MINT a token \
+             cell via factory-birth · (2) AGENT A acts in-mandate (a budget spend) · \
+             (3) A NOTIFIES B who drains it in its OWN turn (two distinct receipts) · \
+             (4) the DUAL REFUSAL — an over-grant AND an over-spend, BOTH fail-closed \
+             through the real executor. (pg step 5 deferred.)",
+        ));
+        // Demo state header: where the script is + the verified budget meter.
+        {
+            let cursor = self.killer_demo.cursor();
+            let total = HeadlineDemo::TOTAL_STEPS;
+            let next = self.killer_demo.next_step_label();
+            let mut hdr = div().flex().flex_wrap().gap_1().items_center().mt_1();
+            hdr = hdr.child(pill(format!("frame {cursor}/{total}"), theme::accent()));
+            if let Some(label) = next {
+                hdr = hdr.child(pill(format!("next: {label}"), theme::warn()));
+            } else {
+                hdr = hdr.child(pill("script complete", theme::good()));
+            }
+            if let Some(v) = self.killer_demo.swarm().stingray_view() {
+                hdr = hdr.child(pill(
+                    format!("budget {}/{} computrons", v.total_drawn, v.ceiling),
+                    if v.exhausted { theme::bad() } else { theme::good() },
+                ));
+            }
+            col = col.child(hdr);
+        }
+        // The driver buttons.
+        col = col.child(
+            div()
+                .flex()
+                .flex_wrap()
+                .gap_1()
+                .mt_1()
+                .child(verb_button(cx, "▶ next frame", theme::accent(), Cockpit::killer_demo_advance))
+                .child(verb_button(cx, "⏩ run all (the self-check)", theme::good(), Cockpit::killer_demo_run_all))
+                .child(verb_button(cx, "⚠ over-share at the glass (pixel-layer refusal)", theme::warn(), Cockpit::killer_demo_over_share))
+                .child(verb_button(cx, "↺ reset demo", theme::muted(), Cockpit::killer_demo_reset)),
+        );
+        // The captured frame strip (the four frames + both refusals, as run).
+        if self.killer_demo_lines.is_empty() {
+            col = col.child(div().text_xs().text_color(theme::muted()).mt_1().child(
+                "press ▶ to run the first frame, or ⏩ to drive the whole script at once.",
+            ));
+        } else {
+            let mut strip = div().flex().flex_col().gap_0p5().mt_1();
+            for line in &self.killer_demo_lines {
+                // A refusal line (carries "REFUSED") is colored as the teaching
+                // moment; a commit line is neutral. The executor's reason (the
+                // second line, indented) is muted.
+                let is_refusal = line.contains("REFUSED");
+                let color = if is_refusal { theme::warn() } else { theme::text() };
+                for (i, sub) in line.lines().enumerate() {
+                    let c = if i == 0 { color } else { theme::muted() };
+                    strip = strip.child(
+                        div()
+                            .text_xs()
+                            .px_2()
+                            .text_color(c)
+                            .child(sub.trim_end().to_string()),
+                    );
+                }
+            }
+            col = col.child(strip);
+        }
 
         // Activity feed: recent swarm actions (newest-first).
         col = col.child(section_title("activity feed (executor receipts · notify edges)").mt_2());

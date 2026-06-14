@@ -38,6 +38,8 @@ pub mod coordination;
 #[cfg(feature = "embedded-executor")]
 pub mod debug;
 #[cfg(feature = "embedded-executor")]
+pub mod demo;
+#[cfg(feature = "embedded-executor")]
 pub mod dynamics;
 #[cfg(feature = "embedded-executor")]
 pub mod edit;
@@ -83,6 +85,8 @@ pub use compositor::{
 };
 #[cfg(feature = "embedded-executor")]
 pub use coordination::{MandateArrow, NotifyArrow, SwarmGraph, SwarmNode};
+#[cfg(feature = "embedded-executor")]
+pub use demo::{render_headless_report, DemoError, DemoFrame, HeadlineDemo};
 #[cfg(feature = "embedded-executor")]
 pub use graph::{GraphEdge, GraphLayer, GraphNode, OcapGraph};
 #[cfg(feature = "embedded-executor")]

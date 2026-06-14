@@ -124,6 +124,20 @@ pub enum CommandId {
     /// Coordinator transfers 500 to worker-b AND wakes worker-a, in one turn.
     SwarmCoordinatorTransferAndWake,
 
+    // --- the four-surface KILLER DEMO (N5) — the pug-handoff artifact ---
+    /// Advance the killer demo by ONE frame (mint → agent turn → notify → drain →
+    /// the dual refusal). Drives the headline script one receipted step at a time.
+    KillerDemoAdvance,
+    /// Run the WHOLE killer demo at once (the four frames + the dual refusal) and
+    /// report the verdict — the `--headless` self-check, in the cockpit.
+    KillerDemoRunAll,
+    /// The pixel-layer over-share refusal — open the minted budget cell as a
+    /// surface, share read-only, then watch the writable over-share REJECT at the
+    /// glass (the no-amplification law in its third register).
+    KillerDemoOverShare,
+    /// Reset the killer demo to a fresh world at frame 0 (replay the script).
+    KillerDemoReset,
+
     // --- the palette itself ---
     Dismiss,
 }
@@ -141,7 +155,8 @@ impl CommandId {
             | GoProofs => Category::Navigate,
             BufferType | BufferCommit | BufferReadOnlyWrite | TerminalRunInMandate
             | TerminalRunOutOfMandate
-            | SwarmCoordinatorEmitA | SwarmWorkerADrain | SwarmCoordinatorTransferAndWake => {
+            | SwarmCoordinatorEmitA | SwarmWorkerADrain | SwarmCoordinatorTransferAndWake
+            | KillerDemoAdvance | KillerDemoRunAll | KillerDemoOverShare | KillerDemoReset => {
                 Category::Ide
             }
             ReplayStepBack | ReplayStepForward | ReplayToGenesis | ReplayToHead
@@ -190,6 +205,10 @@ impl CommandId {
             SwarmCoordinatorTransferAndWake => {
                 "Swarm: coordinator transfers + wakes worker-a (one seam, two effects)"
             }
+            KillerDemoAdvance => "Killer demo: ▶ advance one frame (mint → agent → notify → refusal)",
+            KillerDemoRunAll => "Killer demo: ⏩ run the whole script (the four-surface self-check)",
+            KillerDemoOverShare => "Killer demo: ⚠ over-share the budget window (pixel-layer REFUSE)",
+            KillerDemoReset => "Killer demo: ↺ reset to frame 0 (replay)",
             BufferType => "Buffer: type a line (in-memory — goes dirty)",
             BufferCommit => "Buffer: commit the edit (cap-gated verified turn)",
             BufferReadOnlyWrite => "Buffer: ⚠ write a read-only mirror (watch it REFUSE)",
@@ -256,6 +275,16 @@ impl CommandId {
             SwarmCoordinatorTransferAndWake => {
                 "transfer value emit notify multi-effect turn swarm coordinator worker"
             }
+            KillerDemoAdvance => {
+                "killer demo headline mint factory agent notify handoff refusal four-surface pug evaluation step frame advance"
+            }
+            KillerDemoRunAll => {
+                "killer demo headline self-check run all four-surface dual refusal over-grant over-spend stingray pug artifact verdict"
+            }
+            KillerDemoOverShare => {
+                "over-share pixel glass surface window refuse no-amplification delegation-denied killer demo writable promote"
+            }
+            KillerDemoReset => "killer demo reset replay restart frame zero fresh world",
             BufferType => "edit type insert text buffer dirty",
             BufferCommit => "save commit buffer write digest turn cap-gated revision",
             BufferReadOnlyWrite => "read-only refuse attenuate mirror no-amplify buffer write guard",
@@ -353,6 +382,8 @@ pub fn all_commands() -> Vec<Command> {
         TerminalRunInMandate, TerminalRunOutOfMandate,
         // the A2 SWARM surface (multi-agent cap-coordination + notify-edge inbox)
         SwarmCoordinatorEmitA, SwarmWorkerADrain, SwarmCoordinatorTransferAndWake,
+        // the four-surface KILLER DEMO (N5) — the pug-handoff artifact
+        KillerDemoRunAll, KillerDemoAdvance, KillerDemoOverShare, KillerDemoReset,
         // navigation
         GoComposer, GoObjects, GoDebugger, GoReplay, GoCipherclerk, GoEditor, GoShell,
         GoAgent, GoBuffer, GoTerminal, GoSwarm, GoGraph, GoOrgans, GoProofs,
@@ -608,6 +639,30 @@ mod tests {
         assert!(!ids.contains(&CommandId::Dismiss));
         // The registry is non-trivial (and now includes the shell surface + swarm A2).
         assert!(reg.len() >= 34, "registry should cover the whole action surface");
+    }
+
+    #[test]
+    fn the_killer_demo_commands_are_registered_and_findable() {
+        // The four-surface killer demo (N5) is reachable through the ⌘K palette like
+        // every other action (no parallel path): its commands are registered and
+        // found by their concepts. The same dispatch the SWARM-tab buttons call.
+        let reg = all_commands();
+        let ids: std::collections::HashSet<CommandId> = reg.iter().map(|c| c.id).collect();
+        for must in [
+            CommandId::KillerDemoAdvance,
+            CommandId::KillerDemoRunAll,
+            CommandId::KillerDemoOverShare,
+            CommandId::KillerDemoReset,
+        ] {
+            assert!(ids.contains(&must), "{must:?} must be registered");
+        }
+        // Found by concept: "killer demo" → run-all; "over-share" → the pixel-layer
+        // refusal; "mint" → the advance (frame 1 mints); "four-surface" → the demo.
+        assert!(search(&reg, "killer demo").iter().any(|h| h.command.id == CommandId::KillerDemoRunAll));
+        assert!(search(&reg, "over-share").iter().any(|h| h.command.id == CommandId::KillerDemoOverShare));
+        assert!(search(&reg, "four-surface").iter().any(|h| {
+            matches!(h.command.id, CommandId::KillerDemoRunAll | CommandId::KillerDemoAdvance)
+        }));
     }
 
     #[test]
