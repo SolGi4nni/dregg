@@ -1,15 +1,75 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Heavy / slow test segregation
+# ─────────────────────────────────────────────────────────────────────────────
+# The default gauntlet must stay FAST. A handful of recursion / IVC / fold /
+# proptest suites legitimately run for *minutes* in debug — they dominate the
+# wall-clock of `cargo nextest run`. They are excluded from the default/ci
+# profiles' `default-filter` and run on demand via `--profile heavy`
+# (preferably `--profile heavy --release`, see [profile.heavy] below).
+#
+# These are NOT disabled — they are *segregated*. The split is by NEXTEST
+# CONFIG ONLY (no source edits): every heavy test lives in a crate that is
+# under active rewrite, so its `.rs` must not be touched here.
+#
+# The heavy set (name · crate · ~debug duration in the reference gauntlet):
+#   binary descriptor_leaf_recursion              circuit  ~28.5s  (1 test)
+#   binary effect_vm_descriptor_cutover_harness   circuit  ~43.1s  (13 tests)
+#   binary rotation_batchstark_leaf_smoke         circuit  ~342.4s (2 tests, both >60s each)
+#   binary proptest_invariants                    turn     ~288.9s (5 tests, all >60s each)
+#   test   k_fold_turn_chain_proves_and_verifies            circuit (lib, >60s)
+#   test   two_step_inductive_core_proves_and_verifies      circuit (lib, >60s)
+#   test   three_cell_joint_turn_recursive_proves_and_verifies  circuit (lib, >60s)
+#   test   foreign_circuit_root_is_refused_by_vk_pin        circuit (lib, >60s; shares the fold setup)
+# The four circuit-LIB tests are excluded by name (their binary, dregg-circuit's
+# lib, holds ~960 other fast tests we keep). The four integration suites above
+# are excluded whole-binary. Binary/test names are unique workspace-wide.
+#
+# Already-`#[ignore]`'d minute-scale tests (not listed here because nextest skips
+# them by default anyway): proof_economics.rs::t3_ivc_root_k2 / t3_ivc_root_k3.
+
+# Reusable heavy-filterset fragment is inlined into each profile's
+# `default-filter` below (nextest has no filterset aliases in 0.9.x config).
+
+# ── Standing kimchi/preflight quarantine (pre-existing) ──────────────────────
+# These were already excluded from default/ci: currently failing / timeout
+# kimchi-backend diagnostics + the preflight meta-suites. Kept verbatim.
+
 [profile.default]
 # Default runs should execute backend coverage that is passing on the 24-core
-# test host. Keep only the currently failing/timeout diagnostics quarantined.
-default-filter = 'not (test(~test_kimchi_arithmetic_predicate_mul_passes) or test(~test_kimchi_arithmetic_predicate_neq_passes) or test(~test_kimchi_arithmetic_predicate_eq_passes) or test(~test_kimchi_arithmetic_predicate_gte_passes) or test(~test_kimchi_native_non_membership_max_ancestors) or test(~test_kimchi_native_non_membership_multi_ancestor) or test(~test_kimchi_native_non_membership_single_element) or test(~test_kimchi_native_non_membership_verifier_rejects_wrong_count) or test(~test_kimchi_native_non_membership_verifier_rejects_wrong_root) or test(~test_kimchi_native_non_membership_verifier_check) or test(~test_kimchi_native_non_membership_verifier_rejects_wrong_element) or test(~test_kimchi_native_derivation_prove_verify) or test(~test_kimchi_native_derivation_with_equal_check) or test(~test_kimchi_native_derivation_with_gte_check) or test(~test_kimchi_native_fold_multiple_removals_prove_verify) or test(~test_kimchi_native_fold_single_removal_prove_verify) or test(~test_p0_2_derivation_honest_still_verifies) or test(~test_kimchi_presentation_issuer_membership_valid) or test(~test_kimchi_presentation_revealed_facts_valid) or test(~test_kimchi_presentation_token_expiry_valid) or test(~test_section5_assertion_rejects_mismatch) or test(~preflight_apps) or test(~preflight_effect_vm) or test(~preflight_proofs) or test(~preflight_turns) or test(~preflight_cli) or test(~preflight_demo_agent) or test(~preflight_golden_master))'
-slow-timeout = { period = "30s", terminate-after = 3 }
+# test host. Keep only the currently failing/timeout diagnostics quarantined,
+# AND segregate the minute-scale recursion/IVC/fold/proptest suites (run them
+# with `--profile heavy`). The heavy clause is the trailing `or binary(...) /
+# or test(...)` group.
+default-filter = 'not (test(~test_kimchi_arithmetic_predicate_mul_passes) or test(~test_kimchi_arithmetic_predicate_neq_passes) or test(~test_kimchi_arithmetic_predicate_eq_passes) or test(~test_kimchi_arithmetic_predicate_gte_passes) or test(~test_kimchi_native_non_membership_max_ancestors) or test(~test_kimchi_native_non_membership_multi_ancestor) or test(~test_kimchi_native_non_membership_single_element) or test(~test_kimchi_native_non_membership_verifier_rejects_wrong_count) or test(~test_kimchi_native_non_membership_verifier_rejects_wrong_root) or test(~test_kimchi_native_non_membership_verifier_check) or test(~test_kimchi_native_non_membership_verifier_rejects_wrong_element) or test(~test_kimchi_native_derivation_prove_verify) or test(~test_kimchi_native_derivation_with_equal_check) or test(~test_kimchi_native_derivation_with_gte_check) or test(~test_kimchi_native_fold_multiple_removals_prove_verify) or test(~test_kimchi_native_fold_single_removal_prove_verify) or test(~test_p0_2_derivation_honest_still_verifies) or test(~test_kimchi_presentation_issuer_membership_valid) or test(~test_kimchi_presentation_revealed_facts_valid) or test(~test_kimchi_presentation_token_expiry_valid) or test(~test_section5_assertion_rejects_mismatch) or test(~preflight_apps) or test(~preflight_effect_vm) or test(~preflight_proofs) or test(~preflight_turns) or test(~preflight_cli) or test(~preflight_demo_agent) or test(~preflight_golden_master) or binary(descriptor_leaf_recursion) or binary(effect_vm_descriptor_cutover_harness) or binary(rotation_batchstark_leaf_smoke) or binary(proptest_invariants) or test(~k_fold_turn_chain_proves_and_verifies) or test(~two_step_inductive_core_proves_and_verifies) or test(~three_cell_joint_turn_recursive_proves_and_verifies) or test(~foreign_circuit_root_is_refused_by_vk_pin))'
+# With the heavies gone, default tests are well under a minute. Flag stragglers
+# at 45s; keep a generous kill backstop (45s × 4 = 180s) so legitimately-chunky
+# integration tests are not falsely terminated.
+slow-timeout = { period = "45s", terminate-after = 4 }
 
 [profile.full]
-# Run everything, be patient. Use: cargo nextest run --profile full
+# Run EVERYTHING (heavies included, no default-filter), be patient.
+# Use: cargo nextest run --profile full   (consider --release for the folds)
 slow-timeout = { period = "60s", terminate-after = 10 }
 
 [profile.ci]
-# CI keeps the same passing-backend coverage as default, but fail-fast.
-default-filter = 'not (test(~test_kimchi_arithmetic_predicate_mul_passes) or test(~test_kimchi_arithmetic_predicate_neq_passes) or test(~test_kimchi_arithmetic_predicate_eq_passes) or test(~test_kimchi_arithmetic_predicate_gte_passes) or test(~test_kimchi_native_non_membership_max_ancestors) or test(~test_kimchi_native_non_membership_multi_ancestor) or test(~test_kimchi_native_non_membership_single_element) or test(~test_kimchi_native_non_membership_verifier_rejects_wrong_count) or test(~test_kimchi_native_non_membership_verifier_rejects_wrong_root) or test(~test_kimchi_native_non_membership_verifier_check) or test(~test_kimchi_native_non_membership_verifier_rejects_wrong_element) or test(~test_kimchi_native_derivation_prove_verify) or test(~test_kimchi_native_derivation_with_equal_check) or test(~test_kimchi_native_derivation_with_gte_check) or test(~test_kimchi_native_fold_multiple_removals_prove_verify) or test(~test_kimchi_native_fold_single_removal_prove_verify) or test(~test_p0_2_derivation_honest_still_verifies) or test(~test_kimchi_presentation_issuer_membership_valid) or test(~test_kimchi_presentation_revealed_facts_valid) or test(~test_kimchi_presentation_token_expiry_valid) or test(~test_section5_assertion_rejects_mismatch) or test(~preflight_apps) or test(~preflight_effect_vm) or test(~preflight_proofs) or test(~preflight_turns) or test(~preflight_cli) or test(~preflight_demo_agent) or test(~preflight_golden_master))'
+# CI keeps the same passing-backend coverage as default (heavies segregated),
+# but fail-fast. Mirror of profile.default's filter.
+default-filter = 'not (test(~test_kimchi_arithmetic_predicate_mul_passes) or test(~test_kimchi_arithmetic_predicate_neq_passes) or test(~test_kimchi_arithmetic_predicate_eq_passes) or test(~test_kimchi_arithmetic_predicate_gte_passes) or test(~test_kimchi_native_non_membership_max_ancestors) or test(~test_kimchi_native_non_membership_multi_ancestor) or test(~test_kimchi_native_non_membership_single_element) or test(~test_kimchi_native_non_membership_verifier_rejects_wrong_count) or test(~test_kimchi_native_non_membership_verifier_rejects_wrong_root) or test(~test_kimchi_native_non_membership_verifier_check) or test(~test_kimchi_native_non_membership_verifier_rejects_wrong_element) or test(~test_kimchi_native_derivation_prove_verify) or test(~test_kimchi_native_derivation_with_equal_check) or test(~test_kimchi_native_derivation_with_gte_check) or test(~test_kimchi_native_fold_multiple_removals_prove_verify) or test(~test_kimchi_native_fold_single_removal_prove_verify) or test(~test_p0_2_derivation_honest_still_verifies) or test(~test_kimchi_presentation_issuer_membership_valid) or test(~test_kimchi_presentation_revealed_facts_valid) or test(~test_kimchi_presentation_token_expiry_valid) or test(~test_section5_assertion_rejects_mismatch) or test(~preflight_apps) or test(~preflight_effect_vm) or test(~preflight_proofs) or test(~preflight_turns) or test(~preflight_cli) or test(~preflight_demo_agent) or test(~preflight_golden_master) or binary(descriptor_leaf_recursion) or binary(effect_vm_descriptor_cutover_harness) or binary(rotation_batchstark_leaf_smoke) or binary(proptest_invariants) or test(~k_fold_turn_chain_proves_and_verifies) or test(~two_step_inductive_core_proves_and_verifies) or test(~three_cell_joint_turn_recursive_proves_and_verifies) or test(~foreign_circuit_root_is_refused_by_vk_pin))'
 slow-timeout = { period = "60s", terminate-after = 2 }
 fail-fast = true
+
+[profile.heavy]
+# The on-demand slow suite: ONLY the minute-scale recursion / IVC / fold /
+# proptest tests that the default/ci profiles segregate out. Inverse of the
+# heavy clause above.
+#   cargo nextest run --profile heavy            (debug: minutes)
+#   cargo nextest run --profile heavy --release  (RECOMMENDED — debug is the
+#                                                 dominant slowness here)
+# The kimchi/preflight quarantine still applies (don't resurrect known-failing
+# diagnostics); we just flip the heavy set from excluded to *included-only*.
+default-filter = '(binary(descriptor_leaf_recursion) or binary(effect_vm_descriptor_cutover_harness) or binary(rotation_batchstark_leaf_smoke) or binary(proptest_invariants) or test(~k_fold_turn_chain_proves_and_verifies) or test(~two_step_inductive_core_proves_and_verifies) or test(~three_cell_joint_turn_recursive_proves_and_verifies) or test(~foreign_circuit_root_is_refused_by_vk_pin)) and not (test(~test_kimchi_arithmetic_predicate_mul_passes) or test(~test_kimchi_arithmetic_predicate_neq_passes) or test(~test_kimchi_arithmetic_predicate_eq_passes) or test(~test_kimchi_arithmetic_predicate_gte_passes) or test(~test_kimchi_native_non_membership_max_ancestors) or test(~test_kimchi_native_non_membership_multi_ancestor) or test(~test_kimchi_native_non_membership_single_element) or test(~test_kimchi_native_non_membership_verifier_rejects_wrong_count) or test(~test_kimchi_native_non_membership_verifier_rejects_wrong_root) or test(~test_kimchi_native_non_membership_verifier_check) or test(~test_kimchi_native_non_membership_verifier_rejects_wrong_element) or test(~test_kimchi_native_derivation_prove_verify) or test(~test_kimchi_native_derivation_with_equal_check) or test(~test_kimchi_native_derivation_with_gte_check) or test(~test_kimchi_native_fold_multiple_removals_prove_verify) or test(~test_kimchi_native_fold_single_removal_prove_verify) or test(~test_p0_2_derivation_honest_still_verifies) or test(~test_kimchi_presentation_issuer_membership_valid) or test(~test_kimchi_presentation_revealed_facts_valid) or test(~test_kimchi_presentation_token_expiry_valid) or test(~test_section5_assertion_rejects_mismatch))'
+# These run for minutes; warn late, never auto-terminate.
+slow-timeout = { period = "120s" }
+# The folds are CPU-bound and memory-heavy; bound parallelism so they don't
+# thrash. Override on the host with `-j` if you have the cores to spare.
+test-threads = 4

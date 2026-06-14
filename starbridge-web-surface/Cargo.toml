@@ -75,6 +75,17 @@ dregg-cell = { path = "../cell" }
 # built from these — never a bespoke attestation.
 dregg-types = { path = "../types" }
 
+# The REAL turn `Effect` enum — the genuine thing the `TurnExecutor` runs (the
+# same `dregg_turn::Effect` `dregg-firmament`'s surface backing drives). The
+# cell-affordances layer (`src/affordance.rs`) carries a real `Effect` as each
+# affordance's effect-TEMPLATE — the htmx-on-crack "button" IS the verified turn
+# the executor would fire, never a stub. We name the GENUINE effect, not a
+# parallel one. (This is already linked transitively via `dregg-firmament`; we
+# name it directly so the template is the real type. NB: the rotation HARDSWAP is
+# rewriting `turn/` — this is the boundary the crate touches it at; see
+# `src/affordance.rs` `## What is real vs. the seam`.)
+dregg-turn = { path = "../turn" }
+
 # Content-addressing (the `content_hash = blake3(bytes)` half of the attested
 # resource) + the receipt-leaf commitment. The SAME `blake3 = "1"` the cell /
 # types crates already pull in (the receipt-tree hash family in

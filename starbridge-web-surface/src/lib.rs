@@ -34,6 +34,43 @@
 //! lineage), never the fetched content — dregg's structural answer to
 //! browser-chrome phishing.
 //!
+//! ## 3. Rehydratable surfaces ([`rehydrate`])
+//!
+//! `docs/desktop-os-research/REHYDRATABLE-SURFACES.md`: a dregg "screenshot" is the
+//! present render-output of a certified compositor over a witness-graph; what it
+//! actually embeds is a **sturdyref behind a membrane**; "opening" it is the
+//! **membrane-negotiated, per-viewer reacquisition** of the witnessed state it was
+//! always a certified projection of. This module ships the three load-bearing
+//! pieces on the SAME real cap + attestation primitives:
+//!
+//! - the [`Rehydration`] liveness-type **DERIVED** from a context's
+//!   witnessed-vs-ambient interaction log (a confinement readout, not a hand-set
+//!   field): `ReplayedDeterministic` == "everything this context did went through
+//!   the membrane";
+//! - the [`Membrane`] enforcer — re-derives the per-viewer [`Projection`] = (held
+//!   authority) ∧ (the graph's permitted projections) and **composes attenuation
+//!   across reacquisition hops (A→B→C)** through the REAL `is_attenuation`, refusing
+//!   any amplifying reshare;
+//! - the [`Sturdyref`] + [`rehydrate`] — the persistable cap-handle and the
+//!   membrane-negotiated reacquisition, with the fetch wired to the existing
+//!   `dregg://` attested-fetch path (fetch = verified turn returning attested
+//!   content).
+//!
+//! ## 4. Cell affordances — htmx on crack + the frustum-snapshot ([`affordance`])
+//!
+//! `docs/deos/DEOS.md`: the deos interaction model. A cell declares named, typed
+//! **affordances** ([`CellAffordance`]) — effect-TEMPLATES, the analogue of htmx's
+//! `hx-post="/x"` — and an interaction is a **capability-gated verified turn**: the
+//! "button" is a real [`dregg_turn::Effect`], and *who may press it* is decided by
+//! held caps through the SAME real `is_attenuation` gate. Rendering is the
+//! per-viewer [`AffordanceSurface::project_for`] (progressive enhancement becomes
+//! progressive **attenuation**); firing is the anti-ghost [`AffordanceSurface::fire`]
+//! (an unauthorized fire is REFUSED in-band). The **frustum-snapshot**
+//! ([`AffordanceSnapshot`]) is tiny — a [`Sturdyref`] + the culling boundary — and
+//! [`rehydrate_affordances`] re-expands it PER-VIEWER through the EXISTING
+//! [`Membrane`], carrying the derived [`Rehydration`] liveness-type: the
+//! dregg-only novelty made real.
+//!
 //! ## What is real vs. the seam
 //!
 //! - **Real (the cap discipline + attestation):** the `Capability{
@@ -51,7 +88,9 @@
 //!   `Effect`-bearing executor turn (the `ServedResourceCell` template) is the
 //!   named follow-up, reported in the BUILD STATUS note.
 
+pub mod affordance;
 pub mod delegate;
+pub mod rehydrate;
 pub mod web_of_cells;
 
 // Re-export the REAL dregg cap types so downstream code names the genuine model,
@@ -59,7 +98,7 @@ pub mod web_of_cells;
 // the real `AuthRequired` lattice; its identity is the real `CellId`.
 pub use dregg_cell::{is_attenuation, AuthRequired};
 pub use dregg_firmament::{Capability, SurfaceBacking, Target};
-pub use dregg_types::CellId;
+pub use dregg_types::{AttestedRoot, CellId};
 
 pub use delegate::{
     CapGatedDelegate, MockSurface, NavigationDecision, PermissionDecision, PermissionKind,
@@ -68,3 +107,26 @@ pub use delegate::{
 pub use web_of_cells::{
     AttestedResource, DreggUri, FetchError, OriginChrome, WebOfCells,
 };
+pub use rehydrate::{
+    rehydrate, Interaction, InteractionLog, Membrane, Projection, Rehydration, RehydrateError,
+    Sturdyref,
+};
+pub use affordance::{
+    rehydrate_affordances, AffordanceIntent, AffordanceRehydrateError, AffordanceSnapshot,
+    AffordanceSurface, CellAffordance, EffectSummary, FireError, SurfaceBoundary,
+};
+// Re-export the REAL turn `Effect` so downstream code (and the demo) names the
+// genuine effect the executor runs as an affordance's template — not a parallel one.
+pub use dregg_turn::Effect;
+
+/// The genuine `dregg_turn` / `dregg_cell` payload types an affordance's effect-
+/// template is built from — re-exported so an external consumer (the demo, an app)
+/// can construct a REAL [`Effect`] without naming the (mid-HARDSWAP) upstream crates
+/// directly. These are the genuine types, not parallel stubs: a `SetField` carries
+/// a real `FieldElement` ([u8; 32]); an `EmitEvent` carries a real
+/// [`dregg_turn::Event`]; a `GrantCapability` carries a real
+/// [`dregg_cell::CapabilityRef`].
+pub mod dregg_turn_reexport {
+    pub use dregg_cell::CapabilityRef;
+    pub use dregg_turn::Event;
+}
