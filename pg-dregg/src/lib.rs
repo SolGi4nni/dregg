@@ -730,6 +730,95 @@ mod pg {
     }
 
     // -----------------------------------------------------------------------
+    // DEV-ONLY mint ergonomics + issuer-status discoverability
+    // (docs/PG-DREGG-DX.md §4 S3, docs/FRONTIER-ROADMAP.md N19).
+    //
+    // `dregg_dev_mint` kills the on-ramp's first friction — hand-writing a `Pred`
+    // JSON array — by composing the common (actions, resource-prefix, subject,
+    // expiry) shape for the newcomer. It is DEV ONLY and explicitly labeled so.
+    // CRITICALLY, it does NOT bypass the issuer-key discipline: it routes through
+    // the SAME `authz::dev_mint` → `authz::mint_token` path as `dregg_mint`, so
+    // with NO `dregg.issuer_privkey` it ERRORS LOUDLY (never silently mints a
+    // token). The PRODUCTION posture — mint out-of-database, private key never in
+    // pg — stays the default; this is the single-tenant/dev convenience only.
+    //
+    // `dregg_issuer_status` makes the silent fail-closed mode ("no issuer key ⇒
+    // everything denies") DISCOVERABLE: it reports whether a verify key is set
+    // (and its id), whether dev minting is enabled, and the loud warning when the
+    // verify key is absent.
+    // -----------------------------------------------------------------------
+
+    /// `dregg_dev_mint(subject text, actions text[], resource_prefix text, ttl
+    /// interval) -> text`. **DEV ONLY.** Compose the common capability shape — an
+    /// allowed-action set (`actions`) confined to a `resource_prefix`, expiring
+    /// `ttl` from now, naming `subject` — and mint it as a `dga1_…` token, so a
+    /// newcomer never hand-writes `Pred` JSON. The composed caveats are exactly
+    /// `action ∈ actions` (an `AnyOf` of equalities, or a single `AttrEq`) AND
+    /// `resource` has `resource_prefix` (the canonical `examples/mint.rs` shape);
+    /// `subject` + the `NotAfter` expiry are added by the shared mint path. The
+    /// resulting token is admitted by `dregg_cap_admits` / a `dregg_admits` RLS
+    /// policy with no further wiring.
+    ///
+    /// **Issuer-key discipline is intact.** This is `SECURITY DEFINER` so it can
+    /// read the SUPERUSER-only `dregg.issuer_privkey`, and the DBA grants EXECUTE
+    /// to the issuing dev role — but with NO mint key configured it RAISES (the
+    /// same fail-closed error `dregg_mint` raises). It NEVER returns a
+    /// silently-minted token. The production recommendation (mint out-of-database;
+    /// the private key never enters postgres) is unchanged — `dregg_dev_mint` only
+    /// spares the JSON for the dev/single-tenant on-ramp.
+    ///
+    /// Empty `actions` mints an `AnyOf([])` token that admits NO action (a
+    /// deliberately-useless token, fail-closed — never wide-open). An empty
+    /// `resource_prefix` is the unrestricted-resource case the caller opts into.
+    /// A negative/zero `ttl` mints an already-expired token (denied immediately).
+    #[pg_extern(security_definer)]
+    fn dregg_dev_mint(
+        subject: &str,
+        actions: pgrx::Array<&str>,
+        resource_prefix: &str,
+        ttl: pgrx::datum::Interval,
+    ) -> String {
+        sync_mint_key();
+        // Collect the action set (skip SQL NULL array elements).
+        let actions: Vec<String> = actions
+            .iter()
+            .flatten()
+            .map(|s| s.to_string())
+            .collect();
+        // Resolve the absolute expiry epoch with postgres's own interval
+        // arithmetic (correct for months/days/DST), keeping the unix-seconds
+        // clock contract dregg_admits reads. `now() + ttl`, as bigint seconds.
+        let until: i64 = Spi::get_one_with_args(
+            "SELECT extract(epoch from now() + $1)::bigint",
+            &[ttl.into()],
+        )
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| pgrx::error!("dregg_dev_mint: could not resolve ttl to an expiry"));
+        authz::dev_mint(subject, &actions, resource_prefix, until)
+            .unwrap_or_else(|e| pgrx::error!("dregg_dev_mint (DEV ONLY): {e}"))
+    }
+
+    /// `dregg_issuer_status() -> text`. Report the database's dregg key
+    /// configuration in one human-readable line — so the silent fail-closed mode
+    /// ("no issuer key ⇒ every `dregg_cap_admits` denies ⇒ all cap-gated rows
+    /// vanish") is DISCOVERABLE, not a mystery. It states whether the issuer
+    /// PUBLIC (verify) key is configured (and its id), whether dev minting is
+    /// enabled (a `dregg.issuer_privkey` is set), and — when the verify key is
+    /// absent — a LOUD warning naming the failure. It also flags a dev-mint key
+    /// that MISMATCHES the verify key (tokens it mints would not verify here).
+    ///
+    /// The private key is NEVER reported (only whether it is present and its
+    /// public half, for a match-check). Run it first when "everything denies":
+    /// `SELECT dregg_issuer_status();`.
+    #[pg_extern(stable)]
+    fn dregg_issuer_status() -> String {
+        sync_issuer_key();
+        sync_mint_key();
+        authz::issuer_status_text()
+    }
+
+    // -----------------------------------------------------------------------
     // Opt-in revocation check (docs/PG-DREGG.md §3.4, tier 2).
     //
     // The default revocation is bounded-staleness via TTL (short `NotAfter`).
@@ -2524,6 +2613,188 @@ mod pg {
             .unwrap();
             assert_eq!(inverted, 0, "an inverted window attests nothing");
         }
+
+        // ===================================================================
+        // dregg_dev_mint + dregg_issuer_status (FRONTIER-ROADMAP N19)
+        // ===================================================================
+
+        /// The DEV mint composes the common shape and produces a token that
+        /// `dregg_cap_admits` / `dregg_cap_explain` accept — through real SQL, with
+        /// the `ttl interval` resolved by postgres's own clock. The privkey GUC is
+        /// configured by the harness (the dev posture; production mints
+        /// out-of-database).
+        #[pg_test]
+        fn dev_mint_produces_a_token_the_admit_path_accepts() {
+            // Mint via SQL: read+write under "org/42/", subject alice, ttl 1 hour.
+            let tok: String = Spi::get_one(
+                "SELECT dregg_dev_mint('alice', ARRAY['read','write'], 'org/42/', interval '1 hour')",
+            )
+            .unwrap()
+            .expect("dregg_dev_mint returns a token when the mint key is configured");
+            assert!(tok.starts_with("dga1"), "a dga1_… credential string: {tok}");
+
+            // It verifies under the SAME issuer the harness configured, and is
+            // admitted for both actions under the prefix, at the current clock.
+            let admits = |action: &str, resource: &str| -> bool {
+                Spi::get_one_with_args(
+                    "SELECT dregg_cap_admits($1, $2, $3, extract(epoch from now())::bigint)",
+                    &[tok.as_str().into(), action.into(), resource.into()],
+                )
+                .unwrap()
+                .unwrap()
+            };
+            assert!(admits("read", "org/42/public/doc1"), "read admitted under prefix");
+            assert!(admits("write", "org/42/public/doc1"), "write admitted under prefix");
+            // An action not in the set, and a resource outside the prefix: denied.
+            assert!(!admits("delete", "org/42/public/doc1"), "delete is not in the action set");
+            assert!(!admits("read", "org/99/other/doc1"), "outside the resource prefix");
+
+            // The subject is embedded + recovered; explain says allowed.
+            let subj: Option<String> = Spi::get_one_with_args(
+                "SELECT dregg_cap_subject($1)",
+                &[tok.as_str().into()],
+            )
+            .unwrap();
+            assert_eq!(subj.as_deref(), Some("alice"));
+            let why: String = Spi::get_one_with_args(
+                "SELECT dregg_cap_explain($1, 'read', 'org/42/public/doc1', extract(epoch from now())::bigint)",
+                &[tok.as_str().into()],
+            )
+            .unwrap()
+            .unwrap();
+            assert_eq!(why, "allowed", "dregg_cap_explain confirms the dev-minted token: {why}");
+
+            // A single-action dev-mint uses a bare AttrEq and still admits.
+            let one: String = Spi::get_one(
+                "SELECT dregg_dev_mint('bob', ARRAY['read'], '', interval '1 hour')",
+            )
+            .unwrap()
+            .unwrap();
+            let one_admits: bool = Spi::get_one_with_args(
+                "SELECT dregg_cap_admits($1, 'read', 'anything', extract(epoch from now())::bigint)",
+                &[one.as_str().into()],
+            )
+            .unwrap()
+            .unwrap();
+            assert!(one_admits, "empty prefix admits any resource for the listed action");
+        }
+
+        /// The dev-minted token narrows row visibility through a real RLS-gated
+        /// table — the same no-amplify thesis as `rls_gated_table_narrows_row_
+        /// visibility`, but with the token minted IN-SQL via `dregg_dev_mint` (the
+        /// on-ramp's first friction removed) then attenuated.
+        #[pg_test]
+        fn dev_mint_token_narrows_rows_through_rls() {
+            Spi::run(
+                "CREATE TABLE dm_docs (id text primary key);
+                 INSERT INTO dm_docs VALUES
+                   ('org/42/public/doc1'),
+                   ('org/42/public/doc2'),
+                   ('org/42/private/doc9'),
+                   ('org/99/public/doc1');
+                 ALTER TABLE dm_docs ENABLE ROW LEVEL SECURITY;
+                 ALTER TABLE dm_docs FORCE ROW LEVEL SECURITY;
+                 CREATE POLICY cap_read ON dm_docs FOR SELECT
+                   USING (dregg_admits('read', id::text));
+                 CREATE ROLE dm_reader NOLOGIN;
+                 GRANT SELECT ON dm_docs TO dm_reader;",
+            )
+            .unwrap();
+
+            // Dev-mint a read token under org/42/ (1h ttl so now() does not expire it).
+            let root_tok: String = Spi::get_one(
+                "SELECT dregg_dev_mint('alice', ARRAY['read'], 'org/42/', interval '1 hour')",
+            )
+            .unwrap()
+            .unwrap();
+            // Attenuate it (the holder's right) to org/42/public/ only.
+            let narrowed: String = Spi::get_one_with_args(
+                "SELECT dregg_attenuate($1, '[{\"AttrPrefix\":{\"key\":\"resource\",\"prefix\":\"org/42/public/\"}}]'::jsonb)",
+                &[root_tok.as_str().into()],
+            )
+            .unwrap()
+            .unwrap();
+
+            let count_under = |tok: &str| -> i64 {
+                Spi::run(&format!("SET dregg.token = '{tok}'")).unwrap();
+                Spi::run("SET ROLE dm_reader").unwrap();
+                let n = Spi::get_one::<i64>("SELECT count(*) FROM dm_docs").unwrap().unwrap();
+                Spi::run("RESET ROLE").unwrap();
+                n
+            };
+            // Root dev-minted token: the three org/42 rows (not org/99).
+            assert_eq!(count_under(&root_tok), 3, "dev-minted org/42 token sees 3 rows");
+            // Narrowed: only the two public rows — a strict subset.
+            assert_eq!(count_under(&narrowed), 2, "attenuated token sees only org/42/public");
+        }
+
+        /// **The issuer-key discipline is intact.** With NO mint key configured,
+        /// `dregg_dev_mint` RAISES — it does NOT silently mint a token. We clear
+        /// the privkey GUC for this connection (SET on a `Suset` GUC is allowed in
+        /// the test's superuser session) and assert the dev mint errors.
+        #[pg_test]
+        fn dev_mint_without_a_key_raises_not_silently_mints() {
+            // Clear the mint key for this session, then attempt to dev-mint.
+            Spi::run("SET dregg.issuer_privkey = ''").unwrap();
+            let result = std::panic::catch_unwind(|| {
+                Spi::get_one::<String>(
+                    "SELECT dregg_dev_mint('alice', ARRAY['read'], 'org/42/', interval '1 hour')",
+                )
+            });
+            assert!(
+                result.is_err(),
+                "dregg_dev_mint MUST raise (not return a token) when no mint key is configured"
+            );
+            // Restore the GUC for any subsequent statements in this backend.
+            Spi::run(&format!(
+                "SET dregg.issuer_privkey = '{}'",
+                "0707070707070707070707070707070707070707070707070707070707070707"
+            ))
+            .unwrap();
+        }
+
+        /// `dregg_issuer_status` reports the configured verify key id and that dev
+        /// minting is enabled+matching (the harness configures both keys from the
+        /// same seed). The LOUD verify-key-ABSENT path ("everything denies") is
+        /// proven in the postgres-free core test
+        /// (`authz::tests::issuer_status_reports_the_loud_no_key_mode`) — it cannot
+        /// be exercised in-session here because `dregg.issuer_pubkey` is a `Sighup`
+        /// GUC that a session is (correctly) forbidden to `SET` (a session must not
+        /// repoint the verify key). Here we confirm the SQL surface reports the
+        /// live verify-key state AND that toggling the SUPERUSER-settable mint key
+        /// (`Suset`) flips the dev-minting line — both observable through real SQL.
+        #[pg_test]
+        fn issuer_status_reports_the_configured_keys() {
+            let status: String = Spi::get_one("SELECT dregg_issuer_status()").unwrap().unwrap();
+            // The verify key is configured (the harness sets it) → reports its id.
+            assert!(status.contains("CONFIGURED"), "verify key reported configured: {status}");
+            assert!(
+                status.contains("ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c"),
+                "the verify key id is named: {status}"
+            );
+            // Dev minting is enabled (privkey configured) and MATCHES the verify key.
+            assert!(status.contains("ENABLED"), "dev minting reported enabled: {status}");
+            assert!(status.contains("MATCHES"), "matching keys flagged: {status}");
+
+            // The mint key IS session-settable (`Suset`, superuser): clear it and
+            // the status flips to "DISABLED" (the production posture — verify in
+            // pg, no private key present). This is the discoverable dev-minting
+            // state on the SQL surface.
+            Spi::run("SET dregg.issuer_privkey = ''").unwrap();
+            let no_mint: String = Spi::get_one("SELECT dregg_issuer_status()").unwrap().unwrap();
+            assert!(
+                no_mint.contains("DISABLED"),
+                "with no mint key, dev minting reads disabled: {no_mint}"
+            );
+            // The verify key is still configured, so admits still work — the loud
+            // "EVERYTHING DENIES" only fires when the VERIFY key is absent.
+            assert!(no_mint.contains("CONFIGURED"), "verify key still set: {no_mint}");
+            // Restore the mint key for subsequent statements in this backend.
+            Spi::run(
+                "SET dregg.issuer_privkey = '0707070707070707070707070707070707070707070707070707070707070707'",
+            )
+            .unwrap();
+        }
     }
 }
 
@@ -2538,9 +2809,19 @@ pub mod pg_test {
     /// the GUC is `Sighup` (a session must not be able to point verification at
     /// a key it controls). All #[pg_test]s mint under the fixed seed
     /// `RootKey::from_seed([7u8; 32])`; this is that root's public key.
+    ///
+    /// The PRIVATE key (seed `[7u8;32]` = `07`×32 hex) is ALSO configured here so
+    /// the dev-mint pg_tests (`dregg_dev_mint`) can exercise the full mint path
+    /// against the managed server. In PRODUCTION the private key is NOT placed in
+    /// postgres (mint out-of-database) — this is the dev posture the dev-mint
+    /// on-ramp is explicitly scoped to. The no-key-fails-loudly behavior is
+    /// proven in the postgres-free core test
+    /// (`authz::tests::dev_mint_fails_loudly_without_a_mint_key`) and reasserted
+    /// here by clearing the GUC within a test.
     pub fn postgresql_conf_options() -> Vec<&'static str> {
         vec![
             "dregg.issuer_pubkey = 'ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c'",
+            "dregg.issuer_privkey = '0707070707070707070707070707070707070707070707070707070707070707'",
         ]
     }
 }

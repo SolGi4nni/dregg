@@ -311,12 +311,24 @@ gesture (binding "the operator clicked" to a turn premise) lands with the compos
 work (C2).*
 
 **N19 — In-SQL dev minting + issuer-status discoverability** *(pg-dregg; standalone
-workspace, dev path only)*
-Add `dregg_dev_mint(subject, actions[], resource_prefix, ttl)` composing the common
-caveat shape so a newcomer never hand-writes `Pred` JSON, plus a loud
+workspace, dev path only)* — **LANDED**
+`dregg_dev_mint(subject, actions text[], resource_prefix text, ttl interval)` composes
+the common caveat shape (action-`AnyOf`/`AttrEq` + resource-prefix + the shared
+`NotAfter`) so a newcomer never hand-writes `Pred` JSON, plus a loud
 `dregg_issuer_status()` so the "no key ⇒ everything denies" failure mode is
-**discoverable**, not silent. Production mint-out-of-database (the private key never
-enters the DB) stays the default. *Kills the on-ramp's first friction.*
+**discoverable**, not silent. The issuer-key discipline is intact: `dregg_dev_mint`
+routes through the SAME `mint_token` path, so with no `dregg.issuer_privkey` it RAISES
+(never a silent token); production mint-out-of-database (the private key never enters
+the DB) stays the default. *Kills the on-ramp's first friction.*
+*Built:* the postgres-free core (`pg-dregg/src/authz.rs`: `dev_mint` /
+`dev_mint_caveats_json` / `issuer_status_text`) + the `dregg_dev_mint` (`SECURITY
+DEFINER`) and `dregg_issuer_status` (`STABLE`) externs (`src/lib.rs`). Tested through
+real SQL against live pg18 (`cargo pgrx test pg18` = 88/88; the four `dev_mint_*` /
+`issuer_status_*` pg_tests) + interactively on pg18:28818 (no-key ⇒ loud RAISE;
+verify-key-only ⇒ "dev minting DISABLED — Production posture"; enabled ⇒ a `dga1_…`
+token the admit path accepts that narrows an RLS table 3→2 under attenuation). Docs:
+`pg-dregg/docs/QUICKSTART-dregg-dev.md` §7b + the "rows vanished?" diagnostic in
+`QUICKSTART-pg-user.md`.
 
 **N20 — The integrator-wedge apps as runnable demos** *(metatheory additive-Lean +
 SDK; the lamesauce refutation)*

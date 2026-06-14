@@ -47,6 +47,12 @@ SELECT pg_reload_conf();
 A malformed or absent key makes **every** `dregg_cap_admits` return FALSE
 (fail-closed). Nothing is open by default.
 
+> **"All my rows vanished?"** Run `SELECT dregg_issuer_status();`. It reports
+> whether the verify key is configured (and its id), or the loud
+> `NOT CONFIGURED ⚠ EVERYTHING DENIES` — so the fail-closed mode is discoverable,
+> not a silent mystery. (It also reports whether *dev* minting is enabled; see the
+> dev on-ramp at the end of `QUICKSTART-dregg-dev.md`.)
+
 ---
 
 ## 1. Gate a plain table with a capability policy

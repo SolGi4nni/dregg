@@ -233,6 +233,180 @@ pub fn attenuate_token(token: &str, caveats_json: &str) -> Result<String, String
 }
 
 // ============================================================================
+// The dev-mint convenience shape (docs/PG-DREGG-DX.md §4 S3, FRONTIER-ROADMAP N19)
+// ============================================================================
+//
+// The first-ten-minutes friction is "hand-write a `Pred` JSON array to mint a
+// token". `dev_mint` composes the ONE caveat shape that covers the common case —
+// an allowed-action set + a resource prefix + an expiry — so a newcomer never
+// touches the `Pred` algebra by hand. It is a DEV-ONLY convenience and routes
+// through the SAME `mint_token` path: it does NOT have its own minting code, does
+// NOT bypass the issuer-key discipline, and inherits `mint_token`'s fail-closed
+// "no mint key configured" error verbatim (the production posture — private key
+// never in the DB — is unchanged; this just spares the JSON).
+//
+// The shape it composes, matching the canonical `examples/mint.rs`:
+//   * action: `AttrEq{key:"action", value:a}` for ONE action,
+//             `AnyOf([AttrEq{action=a} …])` for several (fail-closed: `AnyOf([])`
+//             admits nothing, so an EMPTY actions list mints a token that admits
+//             no action at all — deliberately useless rather than wide-open);
+//   * resource: `AttrPrefix{key:"resource", prefix}` (an empty prefix is the
+//             unrestricted-resource case, which the caller opts into explicitly);
+//   * subject + `NotAfter{until}` are added by `mint_token` (not here).
+//
+// The `action`/`resource` attribute keys are exactly the ones `decide` binds into
+// the verify `Context` (action=…, resource=…), so a token minted here is admitted
+// by `dregg_cap_admits(token, action, resource, now)` / a `dregg_admits` RLS
+// policy with no further wiring — the round-trip the pg_test asserts.
+
+/// Compose the dev-mint caveat JSON (the action-set + resource-prefix shape) as a
+/// `Pred`-array JSON string suitable for [`mint_token`]. Pure — needs no key, so
+/// it is unit-testable on its own. An empty `actions` slice yields an `AnyOf([])`
+/// action atom, which admits NOTHING (fail-closed: a dev-mint with no actions is
+/// useless, never wide-open). The returned JSON is exactly the serde encoding of
+/// `Vec<Pred>` that [`parse_caveats`] round-trips, so the two cannot drift.
+pub fn dev_mint_caveats_json(actions: &[String], resource_prefix: &str) -> String {
+    let action_pred = if actions.len() == 1 {
+        Pred::AttrEq {
+            key: "action".into(),
+            value: actions[0].clone(),
+        }
+    } else {
+        // 0 actions ⇒ AnyOf([]) ⇒ admits nothing (fail-closed).
+        // 2+ actions ⇒ AnyOf of the per-action equalities.
+        Pred::AnyOf(
+            actions
+                .iter()
+                .map(|a| Pred::AttrEq {
+                    key: "action".into(),
+                    value: a.clone(),
+                })
+                .collect(),
+        )
+    };
+    let resource_pred = Pred::AttrPrefix {
+        key: "resource".into(),
+        prefix: resource_prefix.to_string(),
+    };
+    // serde-encode the Vec<Pred> the same way parse_caveats decodes it.
+    serde_json::to_string(&vec![action_pred, resource_pred])
+        .expect("Pred serializes to JSON")
+}
+
+/// Dev-only convenience mint: compose the common (actions, resource-prefix,
+/// subject, expiry) caveat shape and issue it THROUGH [`mint_token`]. Returns the
+/// encoded `dga1_…` token, or `Err` with the SAME fail-closed message
+/// `mint_token` raises when no mint key is configured ("no mint key configured
+/// (dregg.issuer_privkey not set)") — i.e. **no key ⇒ a loud error, never a
+/// silently-minted token**. This is the dev on-ramp (docs/PG-DREGG-DX.md §4 S3);
+/// the production recommendation (mint out-of-database, private key never in pg)
+/// is unchanged because this shares `mint_token`'s discipline rather than
+/// re-implementing minting.
+pub fn dev_mint(
+    subject: &str,
+    actions: &[String],
+    resource_prefix: &str,
+    until: i64,
+) -> Result<String, String> {
+    let caveats_json = dev_mint_caveats_json(actions, resource_prefix);
+    // Route through mint_token: it requires the mint key (fail-closed on absence),
+    // prepends the subject caveat, and appends the NotAfter{until} expiry.
+    mint_token(subject, &caveats_json, until)
+}
+
+// ============================================================================
+// Issuer status (the loud "everything denies" discoverability surface)
+// ============================================================================
+//
+// The silent failure mode pg-dregg most wants to make discoverable: NO issuer
+// PUBLIC key configured ⇒ every `dregg_cap_admits` denies (fail-closed). A
+// newcomer sees "all my rows vanished" with no hint why. `issuer_status` reports
+// the configuration plainly — is a verify key set (and its id), is a mint key set
+// (dev minting enabled), and the LOUD warning when the verify key is absent.
+
+/// A plain snapshot of the process-local key configuration, for the status
+/// surface. `verify_key_hex` is the configured issuer PUBLIC key (publishable);
+/// `mint_key_configured` says whether the SUPERUSER-only private seed is present
+/// (dev minting enabled) WITHOUT exposing it.
+pub struct IssuerStatus {
+    /// The configured issuer PUBLIC (verify) key as hex, or `None` (⇒ everything
+    /// denies, fail-closed).
+    pub verify_key_hex: Option<String>,
+    /// Whether a mint (private) key is configured — dev minting is enabled. The
+    /// key itself is NEVER reported (it is the superuser-only secret).
+    pub mint_key_configured: bool,
+    /// The PUBLIC key derived from the configured mint key, when present — so an
+    /// operator can confirm the dev mint key MATCHES the configured verify key
+    /// (a mismatch would mint tokens this database cannot verify). `None` when no
+    /// mint key is set.
+    pub mint_public_hex: Option<String>,
+}
+
+/// Read the current key configuration (the verify key, whether a mint key is set,
+/// and the mint key's public half for a match-check). Touches only process-local
+/// state already populated from the GUCs by the pgrx layer.
+pub fn issuer_status() -> IssuerStatus {
+    let verify_key_hex = issuer_pk().map(|pk| pk.to_hex());
+    let mint = mint_key();
+    IssuerStatus {
+        verify_key_hex,
+        mint_key_configured: mint.is_some(),
+        mint_public_hex: mint.map(|k| k.public().to_hex()),
+    }
+}
+
+/// Render [`issuer_status`] as a single human-readable line for the SQL
+/// `dregg_issuer_status()` surface. The verify-key-absent case is LOUD (it names
+/// the exact failure: "everything denies"), so the silent fail-closed mode is
+/// discoverable. The mint-key line states dev-minting on/off and flags a
+/// key MISMATCH (a dev mint key whose public half is not the configured verify
+/// key) — tokens minted under it would not verify here.
+pub fn issuer_status_text() -> String {
+    let s = issuer_status();
+    let mut out = String::new();
+    match &s.verify_key_hex {
+        Some(pk) => {
+            out.push_str(&format!(
+                "issuer verify key: CONFIGURED (id {pk}) — dregg_cap_admits verifies against it."
+            ));
+        }
+        None => {
+            out.push_str(
+                "issuer verify key: NOT CONFIGURED \u{26a0}  EVERYTHING DENIES. \
+                 Set `dregg.issuer_pubkey` (64 hex chars, the publishable root key) in \
+                 postgresql.conf or per-database, then SIGHUP/reload — until then every \
+                 dregg_cap_admits / dregg_admits returns FALSE (fail-closed), so all \
+                 cap-gated rows vanish.",
+            );
+        }
+    }
+    out.push_str("  |  ");
+    match (&s.mint_key_configured, &s.mint_public_hex, &s.verify_key_hex) {
+        (false, _, _) => out.push_str(
+            "dev minting (dregg_dev_mint / dregg_mint): DISABLED (no `dregg.issuer_privkey`). \
+             Production posture — mint tokens out-of-database; the private key never enters pg.",
+        ),
+        (true, Some(mp), Some(vk)) if mp == vk => out.push_str(
+            "dev minting (dregg_dev_mint / dregg_mint): ENABLED, mint key MATCHES the verify key \
+             (tokens it mints verify here). DEV ONLY — production mints out-of-database.",
+        ),
+        (true, Some(mp), Some(vk)) => out.push_str(&format!(
+            "dev minting: ENABLED but the mint key MISMATCHES the verify key \u{26a0}  mint pubkey \
+             {mp} \u{2260} verify key {vk} — tokens minted here will NOT verify against the \
+             configured issuer. Align `dregg.issuer_privkey` with `dregg.issuer_pubkey`."
+        )),
+        (true, Some(mp), None) => out.push_str(&format!(
+            "dev minting: ENABLED (mint pubkey {mp}) but NO verify key is set \u{26a0}  tokens it \
+             mints cannot be verified here until `dregg.issuer_pubkey` is configured to match."
+        )),
+        (true, None, _) => out.push_str(
+            "dev minting: ENABLED (mint key present).",
+        ),
+    }
+    out
+}
+
+// ============================================================================
 // The verified-credential LRU (MANDATORY in M1)
 // ============================================================================
 //
@@ -932,6 +1106,114 @@ mod tests {
         // No mint key configured → error.
         clear_mint_key();
         assert!(mint_token("alice", caveats_json, 5000).is_err());
+    }
+
+    #[test]
+    fn dev_mint_composes_the_common_shape_and_round_trips() {
+        let _g = lock();
+        let root = root();
+        install(&root);
+        set_mint_key_seed(root.secret_bytes());
+
+        // Multi-action dev-mint: read+write under "org/42/", subject alice, until 5000.
+        let tok = dev_mint(
+            "alice",
+            &["read".to_string(), "write".to_string()],
+            "org/42/",
+            5000,
+        )
+        .expect("dev_mint must succeed when the mint key is configured");
+
+        // The composed token is admitted by the SAME (action, resource, now)
+        // contract dregg_cap_admits binds — both actions, under the prefix.
+        assert!(decide(&tok, "read", "org/42/public/doc1", 1000).allowed());
+        assert!(decide(&tok, "write", "org/42/public/doc1", 1000).allowed());
+        // An action NOT in the set is denied (AnyOf is exactly the listed set).
+        assert!(!decide(&tok, "delete", "org/42/public/doc1", 1000).allowed());
+        // Outside the resource prefix: denied.
+        assert!(!decide(&tok, "read", "org/99/public/doc1", 1000).allowed());
+        // Past the NotAfter (until=5000): denied.
+        assert!(!decide(&tok, "read", "org/42/public/doc1", 9000).allowed());
+        // The subject is embedded + recovered (the dregg_cap_subject convention).
+        assert_eq!(subject(&tok).as_deref(), Some("alice"));
+
+        // Single-action dev-mint uses a bare AttrEq (not AnyOf) — still admitted.
+        let one = dev_mint("bob", &["read".to_string()], "", 5000)
+            .expect("single-action dev_mint must succeed");
+        // Empty prefix ⇒ any resource admitted (the caller opted into that).
+        assert!(decide(&one, "read", "anything/at/all", 1000).allowed());
+        assert!(!decide(&one, "write", "anything/at/all", 1000).allowed());
+
+        // EMPTY actions ⇒ AnyOf([]) ⇒ admits NOTHING (fail-closed, never wide-open).
+        let none = dev_mint("carol", &[], "org/42/", 5000)
+            .expect("dev_mint with no actions still mints (a useless token)");
+        assert!(!decide(&none, "read", "org/42/public/doc1", 1000).allowed());
+        assert!(!decide(&none, "write", "org/42/public/doc1", 1000).allowed());
+
+        // The composed JSON is exactly what parse_caveats round-trips (no drift).
+        let json = dev_mint_caveats_json(&["read".to_string(), "write".to_string()], "org/42/");
+        assert!(parse_caveats(&json).is_ok());
+    }
+
+    #[test]
+    fn dev_mint_fails_loudly_without_a_mint_key() {
+        let _g = lock();
+        let root = root();
+        install(&root);
+        // Crucially: NO mint key. dev_mint must NOT silently mint — it must fail
+        // with the SAME fail-closed error mint_token raises (the issuer-key
+        // discipline is intact; dev_mint does not bypass it).
+        clear_mint_key();
+        let err = dev_mint("alice", &["read".to_string()], "org/42/", 5000)
+            .expect_err("dev_mint MUST fail loudly when no mint key is configured");
+        assert!(
+            err.contains("no mint key configured"),
+            "the error must name the missing mint key, got: {err}"
+        );
+    }
+
+    #[test]
+    fn issuer_status_reports_the_loud_no_key_mode() {
+        let _g = lock();
+        let root = root();
+
+        // No verify key, no mint key ⇒ the LOUD "everything denies" + dev minting
+        // disabled. This is the discoverability the status surface exists for.
+        clear_issuer_pubkey();
+        clear_mint_key();
+        let s = issuer_status();
+        assert!(s.verify_key_hex.is_none());
+        assert!(!s.mint_key_configured);
+        let text = issuer_status_text();
+        assert!(text.contains("NOT CONFIGURED"), "no-key status must be loud: {text}");
+        assert!(text.contains("EVERYTHING DENIES"), "must name the failure mode: {text}");
+        assert!(text.contains("DISABLED"), "dev minting must read disabled: {text}");
+
+        // Configure the verify key only (the production posture: verify in pg,
+        // mint out-of-database). Status reports the key id + minting still off.
+        set_issuer_pubkey(root.public());
+        let s = issuer_status();
+        assert_eq!(s.verify_key_hex.as_deref(), Some(root.public().to_hex().as_str()));
+        assert!(!s.mint_key_configured);
+        let text = issuer_status_text();
+        assert!(text.contains("CONFIGURED"), "verify-key-set status: {text}");
+        assert!(text.contains(&root.public().to_hex()), "must report the key id: {text}");
+
+        // Now enable dev minting with a MATCHING key — status confirms the match.
+        set_mint_key_seed(root.secret_bytes());
+        let s = issuer_status();
+        assert!(s.mint_key_configured);
+        assert_eq!(s.mint_public_hex.as_deref(), Some(root.public().to_hex().as_str()));
+        let text = issuer_status_text();
+        assert!(text.contains("ENABLED"), "dev minting enabled: {text}");
+        assert!(text.contains("MATCHES"), "matching keys flagged: {text}");
+
+        // A MISMATCHED mint key (different seed) is flagged loudly — tokens it
+        // mints would not verify against the configured issuer.
+        let other = RootKey::from_seed([9u8; 32]);
+        set_mint_key_seed(other.secret_bytes());
+        let text = issuer_status_text();
+        assert!(text.contains("MISMATCH"), "mismatched keys must be flagged: {text}");
     }
 
     #[test]

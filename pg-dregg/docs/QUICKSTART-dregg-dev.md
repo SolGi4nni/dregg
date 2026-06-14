@@ -166,6 +166,58 @@ the bearer token they already hold; no separate authorization surface.
 
 ---
 
+## 7b. Get a token without leaving SQL — the DEV mint on-ramp
+
+The first-ten-minutes friction is "go run a Rust binary to get a token"
+(`cargo run --example mint …`, which holds the issuer secret out-of-band). For a
+**dev / single-tenant** deployment, `dregg_dev_mint` composes the common
+capability shape so you never hand-write `Pred` JSON:
+
+```sql
+-- DEV ONLY. Needs dregg.issuer_privkey set (the SUPERUSER-only seed GUC).
+-- Compose: action ∈ {read,write}, confined to resource prefix 'org/42/',
+-- expiring 1 hour from now, naming subject 'alice'. Returns a dga1_… token.
+SELECT dregg_dev_mint('alice', ARRAY['read','write'], 'org/42/', interval '1 hour');
+```
+
+The composed caveats are exactly `action ∈ actions` (an `AnyOf` of equalities, or
+a single `AttrEq`) AND `resource` has the prefix; the subject + a `NotAfter`
+expiry are added by the shared mint path. The token verifies and is admitted by
+`dregg_cap_admits` / a `dregg_admits` RLS policy with **no** further wiring:
+
+```sql
+SELECT dregg_cap_admits(:'tok', 'read',  'org/42/public/doc1', extract(epoch from now())::bigint);  -- t
+SELECT dregg_cap_admits(:'tok', 'delete','org/42/public/doc1', extract(epoch from now())::bigint);  -- f (not in the action set)
+SELECT dregg_cap_explain(:'tok', 'read',  'org/42/public/doc1', extract(epoch from now())::bigint);  -- 'allowed'
+```
+
+**The issuer-key discipline is intact — this is NOT a back door.** `dregg_dev_mint`
+routes through the *same* mint path as `dregg_mint`; with **no** `dregg.issuer_privkey`
+configured it RAISES (`no mint key configured …`) — it **never** returns a
+silently-minted token. The **production** recommendation is unchanged: mint
+out-of-database, the private key **never** enters postgres (`cargo run --example
+mint …`, or your own signer). `dregg_dev_mint` is the labeled dev/single-tenant
+convenience only.
+
+Confused about why minting (or everything) is failing? `dregg_issuer_status()`
+tells you plainly:
+
+```sql
+SELECT dregg_issuer_status();
+-- verify key CONFIGURED (id …) + "dev minting: ENABLED, mint key MATCHES …", or
+-- verify key "NOT CONFIGURED ⚠ EVERYTHING DENIES" (the fail-closed mode, named), or
+-- "dev minting: DISABLED (no dregg.issuer_privkey)" (the production posture), or
+-- a "mint key MISMATCHES the verify key ⚠" warning (tokens it mints won't verify here).
+```
+
+(Proven through real SQL: `dev_mint_produces_a_token_the_admit_path_accepts`,
+`dev_mint_token_narrows_rows_through_rls`,
+`dev_mint_without_a_key_raises_not_silently_mints`,
+`issuer_status_reports_the_configured_keys`, `cargo pgrx test pg18`; and the
+postgres-free core in `authz::tests::dev_mint_*` / `issuer_status_*`.)
+
+---
+
 ## 8. Submit a verified turn FROM postgres (the write path)
 
 The bidirectional half: a pg-user submits a SIGNED turn from postgres, gated to
@@ -174,8 +226,10 @@ exactly the agents their capability authorizes. Install the outbox, then submit.
 ```sql
 SELECT dregg_install_write_outbox();   -- dregg.submit_queue + the submit_gate RLS
 
--- present a token that admits `submit` on your agent (minted with the issuer
--- secret out of band: cargo run --example mint -- --action submit --prefix <hex>)
+-- present a token that admits `submit` on your agent — minted out-of-band with
+-- the issuer secret (cargo run --example mint -- --action submit --prefix <hex>),
+-- or, in a dev/single-tenant deployment, via dregg_dev_mint (§7b):
+--   SELECT dregg_dev_mint('my-agent', ARRAY['submit'], '<agent-hex>', interval '5 min');
 SELECT set_config('dregg.token', 'dga1_…', true);
 SET ROLE dregg_reader;                 -- so the submit_gate policy bites
 SELECT dregg_submit_turn(:signed_turn_bytes, :agent_id_bytes);  -- returns a uuid

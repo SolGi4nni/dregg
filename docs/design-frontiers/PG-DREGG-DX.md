@@ -276,19 +276,37 @@ one transaction that `UPDATE`s an app table and mutates a `dregg.cells` balance,
 proven atomic by a kill-between-statements test. The `tier-d` cargo feature already
 declares the path (`tier-d = ["tier-c"]`).
 
-### S3 — In-SQL minting for dev/single-tenant *(on-ramp friction killer)*
+### S3 — In-SQL minting for dev/single-tenant *(on-ramp friction killer)* — **LANDED**
 
-Today minting needs the issuer secret out-of-band (`examples/mint.rs`; `dregg_mint`
-is a dev-only `SECURITY DEFINER` extern reading the superuser-only
-`dregg.issuer_privkey` GUC). The first-ten-minutes friction is "go run a Rust binary
-to get a token." Build the **dev-mode mint ergonomics**: a `dregg_dev_mint(subject,
-actions text[], resource_prefix text, ttl interval)` convenience wrapper that
-composes the common caveat shape (action-`AnyOf` + resource-prefix + `NotAfter`) so a
-newcomer never hand-writes `Pred` JSON, plus a loud `dregg_issuer_status()` that
-reports whether a key is configured and whether minting is enabled — so the failure
-mode "no issuer key ⇒ everything denies" is *discoverable*, not silent. The
-production recommendation (mint out-of-database, never place the private key in
-postgres) stays the default; this is explicitly the single-tenant/dev on-ramp.
+Today's out-of-band minting (`examples/mint.rs`; `dregg_mint`, a dev-only
+`SECURITY DEFINER` extern reading the superuser-only `dregg.issuer_privkey` GUC)
+imposes a first-ten-minutes friction: "go run a Rust binary to get a token." The
+**dev-mode mint ergonomics** remove it: `dregg_dev_mint(subject, actions text[],
+resource_prefix text, ttl interval)` composes the common caveat shape (action-`AnyOf`
+or a single `AttrEq` + resource-prefix + the shared `NotAfter`) so a newcomer never
+hand-writes `Pred` JSON, and a loud `dregg_issuer_status()` reports whether a verify
+key is configured (and its id), whether dev minting is enabled, and — when the verify
+key is absent — the named `EVERYTHING DENIES` fail-closed mode, so it is *discoverable*,
+not silent. The production recommendation (mint out-of-database, never place the
+private key in postgres) **stays the default**: `dregg_dev_mint` routes through the
+*same* `authz::dev_mint → authz::mint_token` path as `dregg_mint`, so with no
+`dregg.issuer_privkey` it RAISES (never a silently-minted token) — it does NOT bypass
+the issuer-key discipline.
+
+**Built:** `pg-dregg/src/authz.rs` (the postgres-free core: `dev_mint`,
+`dev_mint_caveats_json`, `issuer_status` / `issuer_status_text`, `cargo test`-proven)
++ the `dregg_dev_mint` (`SECURITY DEFINER`, `ttl` resolved by postgres's own clock)
+and `dregg_issuer_status` (`STABLE`) `#[pg_extern]`s in `src/lib.rs`. Tested through
+real SQL against the live pg18 (`dev_mint_produces_a_token_the_admit_path_accepts`,
+`dev_mint_token_narrows_rows_through_rls`,
+`dev_mint_without_a_key_raises_not_silently_mints`,
+`issuer_status_reports_the_configured_keys`; `cargo pgrx test pg18` = 88/88 green),
+and exercised interactively on the running pg18:28818 (the no-key path errors loudly;
+the verify-key-only status names the key id + "dev minting DISABLED — Production
+posture"; the enabled path mints a `dga1_…` token `dregg_cap_admits`/`dregg_cap_explain`
+accept and that narrows an RLS-gated table 3→2 under attenuation). The on-ramp doc is
+`docs/QUICKSTART-dregg-dev.md` §7b; the "all my rows vanished?" diagnostic is wired
+into `docs/QUICKSTART-pg-user.md`.
 
 ### S4 — The cap-gated query cookbook (the explorer-as-capabilities surface) *(LANDED)*
 
@@ -418,11 +436,13 @@ problem to drive to closure, not a wall.
   carries no per-turn proof — this is a deliberate, documented boundary, not a bug,
   but a consumer who wants "this row is proof-attested" must walk the IVC range, not
   read a column.
-- **Minting needs the issuer secret out-of-band.** The on-ramp's first friction:
-  `dregg_mint` is a dev-only `SECURITY DEFINER` helper, and the production path mints
-  outside postgres entirely (the private key should never enter the database). →
-  **S3** makes the dev/single-tenant path ergonomic and the "no key ⇒ deny"
-  failure mode discoverable.
+- **Minting the issuer secret out-of-band — the on-ramp's first friction — is
+  CLOSED for dev/single-tenant (S3, landed).** `dregg_dev_mint` composes the common
+  capability shape in SQL (no hand-written `Pred` JSON) and `dregg_issuer_status`
+  makes the "no key ⇒ everything denies" mode discoverable. The discipline is intact:
+  `dregg_dev_mint` shares `mint_token`'s path, so no `dregg.issuer_privkey` ⇒ a loud
+  RAISE, never a silent token; the **production** path still mints outside postgres
+  entirely (the private key never enters the database) and remains the default.
 - **The predicate algebra is namespace+time, not arithmetic.** `balance >= 500` is not
   expressible as a caveat today (only attribute/prefix/temporal/boolean). This is the
   "lamesauce" critique at the pg surface. → **S5**, in lockstep with the metatheory
