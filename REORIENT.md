@@ -1,6 +1,6 @@
 # REORIENT — read this first after any context loss
 
-*(maintained for session continuity; update at every major landing. Last: 2026-06-14 — flip in progress + overnight wide-safe wave)*
+*(maintained for session continuity; update at every major landing. Last: 2026-06-14 — flip NOT-yet-ready (walls A/B/C + the wasm-prover decision) + overnight wide-safe wave)*
 
 ## What this project is, in one breath
 
@@ -57,26 +57,45 @@ not durable across compaction; the log is the burn-down. Sweep it at every Conve
 - **Memory**: `~/.claude/projects/-Users-ember-dev-breadstuffs/memory/` —
   `project-refinement-epoch.md` is the live resume file; MEMORY.md is the index.
 
-## ⚑⚑⚑ CURRENT STATE (2026-06-14 — head `6fb9e8087`, Opus 1M; THE FLIP IS IN PROGRESS + ~16 overnight wide-safe commits)
+## ⚑⚑⚑ CURRENT STATE (2026-06-14 — head `6fb9e8087`, Opus 1M; THE FLIP IS NOT YET READY (walls A/B/C + the wasm-prover decision) + ~16 overnight wide-safe commits)
 
-**THE ROTATION (FLOW-B) CAMPAIGN IS COMPLETE + FLIP-SAFE.** Every cohort effect rotates, source-coherent,
-axiom-clean. The model has STOPPED finding flip-blocking gates — the burn-down before C5 is CLOSED. The
-night closed the last sub-gates: NOTE-SPEND (`cc1e1399c` — rotated nullifier at PI[38] + a model-found
-single-spend double-spend guard), CAPABILITY (`f967f39b0` — real-Cell authority digest r23, the over-grant
-tooth survives rotation), SETFIELD+BRIDGEMINT (`e9d6e357e` — 3 model-found descriptor mismodels enforced-
-fixed), and SOURCE-COHERENCE (`05fe8a500` — the per-effect SetField/Mint SOURCE descriptors reconciled to
-runtime, rotated tick-faces proved `:= rfl` EQUAL to source, JSON byte-identical so the live wire is
-UNTOUCHED). `setFieldDynV3` is proven STRUCTURALLY UNREACHABLE (coherence-only, not a flip-blocker).
+**THE ROTATION DESCRIPTORS ARE CORRECT + GREEN — the magnesium PROOF work is DONE.** Every cohort effect's
+rotated descriptor rotates, source-coherent, axiom-clean (lake `Dregg2` 3922 jobs axiom-clean; the
+`effect_vm_rotation_flip` flip test 4/4). The model has STOPPED finding flip-blocking *descriptor* gates.
+The night closed the last sub-descriptors: NOTE-SPEND (`cc1e1399c` — rotated nullifier at PI[38] + a
+model-found single-spend double-spend guard), CAPABILITY (`f967f39b0` — real-Cell authority digest r23, the
+over-grant tooth survives rotation), SETFIELD+BRIDGEMINT (`e9d6e357e` — 3 model-found descriptor mismodels
+enforced-fixed), and SOURCE-COHERENCE (`05fe8a500` — the per-effect SetField/Mint SOURCE descriptors
+reconciled to runtime, rotated tick-faces proved `:= rfl` EQUAL to source, JSON byte-identical so the live
+wire is UNTOUCHED). `setFieldDynV3` is proven STRUCTURALLY UNREACHABLE (coherence-only, not a flip-blocker).
 
-**THE FLIP IS IN PROGRESS.** A flip-executor agent is running **C5/C7** — the ONE coordinated VK epoch:
-the v3Registry→default regen + re-pin + FFI reseed (C5), the #103 sovereign-path graduation (ember-DECIDED
-shape (i): graduate `cipherclerk.execute_sovereign_turn_with_proof` + `proof_verify.rs` off the bespoke
-`EffectVmAir` onto the rotated `Ir2BatchProof`, retiring the legacy cap arm), the notify Step-2 VK-batch
-(`docs/NOTIFY-CASCADE.md` felt-encoders folded into the SAME bump), then **C7 = DELETE v1** (`effect_vm_
-p3_full_air.rs`, `effect_vm/air.rs`, the 186-col `generate_effect_vm_trace`, `ACTIVE_BASE_COUNT`,
-`CutoverFallback`, `lean_descriptor_air.rs` v1) + grep-zero per ROTATION-CUTOVER §EXEC. **The persvati
-workspace gauntlet + the held push (~30 commits) + the devnet redeploy are HELD for ember at the redeploy
-point-of-no-return** (the redeploy is ember's act — fresh genesis).
+**THE FLIP IS NOT YET READY** (the flip-executor's honest inventory — the flip was ATTEMPTED and correctly
+NOT TAKEN: the staged tree is GREEN, NO edits were made). The rotation descriptors being correct+green is
+the magnesium PROOF being complete; it is NOT the LIVE-PATH cutover. The earlier "flip-safe, all gates
+closed" was an OVER-CLAIM (rise-to-meet-the-claim correction) — §EXEC.3's "WHAT'S STILL GATED" was the
+accurate read, and it is UNMET. Three walls + an architecture decision gate even C5-(1):
+- **WALL A** — `prove_full_turn` (`sdk/src/full_turn_proof.rs:1042`) calls `generate_effect_vm_trace` (the
+  v1 186-col AIR) UNCONDITIONALLY; the rotated leg is an ADDED sub-proof under `witness.rotation.is_some()`,
+  and `CutoverFallback` (`:568`) is the live routing. FIX: make the rotated PI the composed-PI / VK-hash
+  source so the v1 backbone can go; retire `CutoverFallback`.
+- **WALL B** — `verify_aggregated_bundle` (`turn/src/aggregate_bilateral_prover.rs:185`) reads
+  `wr.public_inputs[..ACTIVE_BASE_COUNT]` (the v1 PI slice). FIX: carry the 49-felt schedule block in the
+  witnessed receipt so the bilateral verify stops reading `effect_vm::pi`.
+- **WALL C** — the FLOW-B note-spend freshness arm (`node/src/blocklace_sync.rs:2667`, the
+  `(None,Some(nullifier))` arm) calls `prove_and_verify_finalized_turn_freshness` with NO rotation. The
+  descriptor is READY (`rotateV3WithNullifierPin`); the gap is the live node wiring + composed-PI binding.
+  FIX: thread the rotated nullifier descriptor into that call site.
+- **THE WASM-PROVER DECISION (ember's call)** — v1 is the `#[cfg(not(feature="recursion"))]` wasm
+  verify+PROVE path; `wasm/src/runtime.rs:710` calls `generate_effect_vm_trace` directly (the in-browser
+  prover uses v1, because the IR-v2 prover pulls p3-recursion/DFT crates that don't fit wasm). So C7
+  grep-zero (deleting v1) is PROVABLY IMPOSSIBLE while wasm proves in-browser on v1 (134 live refs to
+  `generate_effect_vm_trace`, 108 to `EffectVmAir`). DECISION: either wasm gains a wasm-fittable rotated
+  prover, OR v1 stays a `not(recursion)` floor and "grep-zero" is redefined to "grep-zero in
+  recursion-enabled builds."
+
+These four are the REAL gate before C5 can open. A flip-executor agent inventoried (did NOT cut). **The
+persvati workspace gauntlet + the held push (~30 commits) + the devnet redeploy remain HELD for ember at the
+redeploy point-of-no-return** (the redeploy is ember's act — fresh genesis), behind the four above.
 
 **S5 CLOSED (`ed35b23b2`):** the running node now COMMITS a turn through the ordering rule at n≥2 — finality
 fires cross-node (`three_node_ordering_rule.rs` green under `REQUIRE_FINALITY=1`; n=3 CONVERGED `latest_height
@@ -96,8 +115,9 @@ caps-as-rows-explorer/submit-queue-drainer/dev-mint (`407537e63`/`eaef6a214`/`92
 features (`4bef409bb`) · the embedded-Servo + distributed-Servo + mixed-OS DESIGN corpus (`261bdf7ed`/
 `b7ff641bc`/`0fc7912f7`/`2f3f47ad4`/`15fc03fb6`).
 
-**MILESTONE STATUS:** silver / magnesium / gold **STRONG** (magnesium goes **LIVE at the flip** — the
-graduated path is the default). diamond **IN PROGRESS** — the named gap is the **l4v BINARY BRIDGE** (two
+**MILESTONE STATUS:** silver / magnesium / gold **STRONG** (magnesium is **PROOF-complete** — descriptors
+correct+green; the LIVE path is GATED on walls A/B/C + the wasm-prover decision before the graduated path
+becomes the default). diamond **IN PROGRESS** — the named gap is the **l4v BINARY BRIDGE** (two
 obligations: translation-validation of `dregg-lean-ffi/src/marshal.rs` as a THEOREM `marshal_turn_hosted =
 encodeWWire ∘ lift`, the codec-in-TCB seam; + the Lean→C/`.a` link correspondence that the linked
 `libdregg_lean.a` IS the `@[export]`ed Lean. Stage 0 = invert `turn/src/lean_apply.rs:~1143` to make Lean

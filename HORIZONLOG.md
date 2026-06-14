@@ -35,6 +35,41 @@ differential — is DONE and GREEN beside v1, no VK bump. Two MORE staged-additi
 2026-06-13 (Opus, G3-authority + G4-cohort); what remains is the deliberate live-path rewrite +
 flip:)*
 
+### ⚑⚑ THE PRE-FLIP GATE — the REAL gate before the VK epoch (flip-executor inventory, 2026-06-14)
+
+The flip was ATTEMPTED and correctly NOT TAKEN: the rotation DESCRIPTORS are all correct+green (lake
+`Dregg2` 3922 jobs axiom-clean; `effect_vm_rotation_flip` 4/4 — the magnesium PROOF is DONE), but the
+LIVE-PATH cutover is NOT. The earlier "flip-safe, all gates closed" was an OVER-CLAIM (rise-to-meet-the-
+claim correction); §EXEC.3's "WHAT'S STILL GATED" was accurate and is UNMET. The staged tree is GREEN, NO
+edits were made. Three walls + an architecture decision gate even C5-(1) and MUST close before the VK epoch:
+
+- **WALL A — the composed-PI / VK-hash source.** `prove_full_turn` (`sdk/src/full_turn_proof.rs:1042`)
+  calls `generate_effect_vm_trace` (v1, 186-col) UNCONDITIONALLY; the rotated leg is an ADDED sub-proof
+  under `witness.rotation.is_some()`, and `CutoverFallback` (`full_turn_proof.rs:568`) is the live routing.
+  CLOSURE: make the rotated PI the composed-PI / VK-hash source so the v1 backbone can go; retire
+  `CutoverFallback`.
+- **WALL B — the bilateral verify stops reading `effect_vm::pi`.** `verify_aggregated_bundle`
+  (`turn/src/aggregate_bilateral_prover.rs:185`) reads `wr.public_inputs[..ACTIVE_BASE_COUNT]` (the v1 PI
+  slice). CLOSURE: carry the 49-felt schedule block in the witnessed receipt so the bilateral verify no
+  longer reads the v1 PI.
+- **WALL C — the FLOW-B note-spend freshness arm threads the rotated nullifier descriptor.** The
+  `(None,Some(nullifier))` arm (`node/src/blocklace_sync.rs:2667`) calls
+  `prove_and_verify_finalized_turn_freshness` with NO rotation. The descriptor is READY
+  (`rotateV3WithNullifierPin`); the gap is the live node wiring + composed-PI binding. CLOSURE: thread the
+  rotated nullifier descriptor into that call site.
+- **THE WASM-PROVER ember-DECISION (gates C7 grep-zero).** v1 is the `#[cfg(not(feature="recursion"))]`
+  wasm verify+PROVE path; `wasm/src/runtime.rs:710` calls `generate_effect_vm_trace` directly (the
+  in-browser prover uses v1 because the IR-v2 prover pulls p3-recursion/DFT crates that don't fit wasm). C7
+  grep-zero (deleting v1) is PROVABLY IMPOSSIBLE while wasm proves in-browser on v1 (134 live refs to
+  `generate_effect_vm_trace`, 108 to `EffectVmAir`). DECISION: either wasm gains a wasm-fittable rotated
+  prover, OR v1 stays a `not(recursion)` floor and "grep-zero" is redefined to "grep-zero in
+  recursion-enabled builds." ember's call — it is a precondition of the deletion arm, not a follow-up.
+
+Only after these four does C5 (the v3Registry→default regen + re-pin + FFI reseed) become the safe, one
+irreversible VK-epoch act. (The ✅ wall-A / wall-B `DONE` entries further below are the C4-era bilateral
+*interpreter* + node self-sovereign threading — necessary parts, NOT the same as these four backbone walls;
+the backbone v1 path is still UNCONDITIONAL per WALL A above.)
+
 - ✅ DONE (staged-additive, green): **G3 AUTHORITY-DIGEST DESIGN** — the v9 rotated commitment now
   binds the FULL authority state (not a subset). `cell/src/commitment.rs::compute_authority_digest_felt`
   folds permissions/VK/delegate/delegation/program/mode/token_id + visibility/commitments/proved/
@@ -158,9 +193,12 @@ flip:)*
   of a buggy source; FULL library 3927-job axiom-clean; JSON byte-identical so the live wire is UNTOUCHED). The
   dynamic `setFieldDynV3` is proven STRUCTURALLY UNREACHABLE (a `field_idx≥8` SetField panics in v1 trace-gen before
   any rotated prove) → coherence-only, NOT a flip-blocker; the node v1-fallback predicate is REMOVED. **The model
-  has STOPPED finding flip-blocking gates — the burn-down before C5 is CLOSED, and the flip (C5/C7 + the #103
-  sovereign graduation + the notify Step-2 VK-batch) is READY as the main-loop's ONE coordinated VK-epoch act,
-  HELD for ember at the redeploy point-of-no-return.** Sole non-blocking residue: the unreachable
+  has STOPPED finding flip-blocking DESCRIPTOR gates (the magnesium PROOF is done); the LIVE-PATH cutover is NOT
+  ready — see the ⚑⚑ PRE-FLIP GATE at the top of this section: walls A (backbone `prove_full_turn` still calls
+  v1 unconditionally + `CutoverFallback` live), B (`verify_aggregated_bundle` reads the v1 PI slice), C (the
+  note-spend freshness arm has NO rotation) + the wasm-prover ember-decision MUST close before the VK epoch.
+  The "flip-safe, all gates closed" framing here was an OVER-CLAIM (corrected 2026-06-14).** The flip remains
+  HELD for ember at the redeploy point-of-no-return, behind those four. Sole non-blocking residue: the unreachable
   `setFieldDynVmDescriptor2` slot-column (`SLOT:=1` vs runtime field_index@param0) — a separate `EffectVmEmitV2`
   coherence lane.** Original (A) plan, for the record: **(A) the BILATERAL rotated outer AIR** — DECISION =
   BUILD, emit from Lean (law #1). `bilateral_aggregation_air.rs::BilateralAggregationAir` is a plain

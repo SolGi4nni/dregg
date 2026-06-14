@@ -1,6 +1,7 @@
 # NEXT-WAVE — the ready-to-fire forward work (each item: the lever + why it's held)
 
-*(Capture doc, 2026-06-14. THE FLIP is in progress; the overnight wide-safe wave is banked.
+*(Capture doc, 2026-06-14. THE FLIP is NOT yet ready — walls A/B/C + the wasm-prover decision gate the VK
+epoch (item A); the overnight wide-safe wave is banked.
 This file holds the work that is READY to launch but was deliberately held — so nothing good
 is lost at compaction. It is NOT a status board (that is `REORIENT.md`) and NOT the named-
 follow-up burn-down (that is `HORIZONLOG.md`, which carries the fine-grained seams). Each item
@@ -10,28 +11,59 @@ sit unscheduled.)*
 
 ---
 
-## A. THE FLIP completion + the held push (the one held milestone)
+## A. THE FLIP — the pre-flip walls, THEN the VK epoch + the held push (the one held milestone)
 
-**What.** Finish the cutover flag-day: C5 (the v3Registry→default regen + re-pin ~58 artifacts/11
-drift-guards + FFI reseed via `dregg-lean-ffi/scripts/rebuild-dregg2-closure.sh`), the #103 sovereign-
-path graduation (ember-DECIDED shape (i): cut `cipherclerk.execute_sovereign_turn_with_proof` +
-`turn/src/executor/proof_verify.rs::verify_and_commit_proof` off the bespoke `EffectVmAir` onto the
-rotated `Ir2BatchProof`, retiring the `air.rs:1365-1374` legacy cap arm so in-circuit non-amplification
-holds EVERYWHERE), the notify Step-2 VK-batch (`docs/NOTIFY-CASCADE.md` + `docs/NOTIFY-STEP2-VK-CHECKLIST.md`
+**Status (2026-06-14).** The rotation DESCRIPTORS are correct+green (lake `Dregg2` 3922 jobs axiom-clean;
+`effect_vm_rotation_flip` 4/4 — the magnesium PROOF is DONE). The LIVE-PATH cutover is NOT yet ready: a
+flip-executor agent inventoried the tree and correctly did NOT cut (staged tree green, no edits). The
+earlier "flip-safe, all gates closed" was an OVER-CLAIM. THREE walls + an architecture decision are the REAL
+pre-flip work and gate even C5-(1).
+
+**What — the pre-flip walls (must close first).**
+1. **WALL A — the composed-PI / VK-hash source.** `prove_full_turn` (`sdk/src/full_turn_proof.rs:1042`)
+   calls `generate_effect_vm_trace` (v1, 186-col) UNCONDITIONALLY; the rotated leg is an ADDED sub-proof
+   under `witness.rotation.is_some()`, and `CutoverFallback` (`full_turn_proof.rs:568`) is the live routing.
+   **Closure:** make the rotated PI the composed-PI / VK-hash source so the v1 backbone can go; retire
+   `CutoverFallback`.
+2. **WALL B — the bilateral verify stops reading the v1 PI.** `verify_aggregated_bundle`
+   (`turn/src/aggregate_bilateral_prover.rs:185`) reads `wr.public_inputs[..ACTIVE_BASE_COUNT]` (the v1 PI
+   slice). **Closure:** carry the 49-felt schedule block in the witnessed receipt so the bilateral verify
+   stops reading `effect_vm::pi`.
+3. **WALL C — the FLOW-B note-spend freshness arm threads the rotated nullifier descriptor.** The
+   `(None,Some(nullifier))` arm (`node/src/blocklace_sync.rs:2667`) calls
+   `prove_and_verify_finalized_turn_freshness` with NO rotation. The descriptor is READY
+   (`rotateV3WithNullifierPin`); the gap is the live node wiring + composed-PI binding. **Closure:** thread
+   the rotated nullifier descriptor into that call site.
+4. **THE WASM-PROVER ember-DECISION (gates C7 grep-zero).** v1 is the `#[cfg(not(feature="recursion"))]`
+   wasm verify+PROVE path; `wasm/src/runtime.rs:710` calls `generate_effect_vm_trace` directly (the
+   in-browser prover uses v1 because the IR-v2 prover pulls p3-recursion/DFT crates that don't fit wasm). C7
+   grep-zero (deleting v1) is PROVABLY IMPOSSIBLE while wasm proves in-browser on v1 (134 live refs to
+   `generate_effect_vm_trace`, 108 to `EffectVmAir`). **DECISION (ember's):** either wasm gains a
+   wasm-fittable rotated prover, OR v1 stays a `not(recursion)` floor and "grep-zero" is redefined to
+   "grep-zero in recursion-enabled builds."
+
+**What — then the VK epoch (after the walls close).** C5 (the v3Registry→default regen + re-pin ~58
+artifacts/11 drift-guards + FFI reseed via `dregg-lean-ffi/scripts/rebuild-dregg2-closure.sh`), the #103
+sovereign-path graduation (ember-DECIDED shape (i): cut `cipherclerk.execute_sovereign_turn_with_proof` +
+`turn/src/executor/proof_verify.rs::verify_and_commit_proof` off the bespoke `EffectVmAir` onto the rotated
+`Ir2BatchProof`, retiring the `air.rs:1365-1374` legacy cap arm so in-circuit non-amplification holds
+EVERYWHERE), the notify Step-2 VK-batch (`docs/NOTIFY-CASCADE.md` + `docs/NOTIFY-STEP2-VK-CHECKLIST.md`
 felt-encoders folded into the SAME VK bump), then C7 = DELETE v1 (`effect_vm_p3_full_air.rs`,
 `effect_vm/air.rs`, the 186-col `generate_effect_vm_trace`, `ACTIVE_BASE_COUNT`, `CutoverFallback`,
-`lean_descriptor_air.rs` v1) + grep-zero per `docs/ROTATION-CUTOVER.md` §EXEC grep_zero_checklist. End
-state = ONE proof path.
+`lean_descriptor_air.rs` v1) + grep-zero per `docs/ROTATION-CUTOVER.md` §EXEC grep_zero_checklist (subject
+to the wasm-prover decision above). End state = ONE proof path.
 
-**Closure lever.** A flip-executor agent is running C5/C7 (the main loop drives it across relaunches).
-Then the **persvati workspace gauntlet** (the full cross-crate validation: sdk e2e + node + producer +
-circuit harness, 24 cores) on the converged tree, then the **held push (~30 commits)**, then the
+**Closure lever.** Close walls A/B/C + take the wasm-prover decision FIRST (the flip-executor inventory
+file:line'd them; the main loop drives the lanes across relaunches). Only then does C5/C7 become the safe
+one VK-epoch act. Then the **persvati workspace gauntlet** (the full cross-crate validation: sdk e2e + node +
+producer + circuit harness, 24 cores) on the converged tree, then the **held push (~30 commits)**, then the
 **devnet redeploy** (`deploy/aws/update.sh`, fresh genesis — graviton i-0540e3a, EIP 34.224.208.52).
 
-**Why held.** The VK epoch is the one irreversible, coordinated act (it bumps the verifying key + cell
-commitment + descriptor SHA registry together). The **redeploy is ember's act** — it is the point-of-no-
-return for the live devnet (fresh genesis discards the current chain). Everything is one-command-ready
-per ROTATION-CUTOVER §EXEC.3; we wait for ember at the redeploy boundary.
+**Why held.** The walls are the unmet live-path work; the VK epoch is the one irreversible, coordinated act
+after them (it bumps the verifying key + cell commitment + descriptor SHA registry together). The
+**redeploy is ember's act** — the point-of-no-return for the live devnet (fresh genesis discards the current
+chain). HORIZONLOG's ⚑⚑ PRE-FLIP GATE carries the same four; ROTATION-CUTOVER §EXEC.3 is the regen recipe
+that runs once the walls close.
 
 ---
 
