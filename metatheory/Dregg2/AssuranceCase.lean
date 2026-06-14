@@ -391,10 +391,13 @@ projection (`uproj`, every kernel field + the receipt log) of the post-state `s'
 CONCATENATED per-node Blum traces over the projection of the pre-state `s`. So "a receipt binds the
 WHOLE post-state" holds over the ENTIRE turn, not just one verb. The per-step coverage hypothesis
 `hcov` is the explicitly-named seam (each committing node is a memory program — DISCHARGEABLE on the
-covered verb arms via `ForestMemoryProgram.eachStepMemProg_of_all_setField`, non-vacuously). The
-composition is `ForestMemoryProgram.execFullForestG_is_memory_program`: the per-verb keystones folded
-along the gated linear lowering (`execFullTurnG`) and lifted to the tree
-(`execFullForestG_eq_execFullTurnG`) by `List.foldl_append`. -/
+covered verb arms via `ForestMemoryProgram.eachStepMemProg_of_all_covered`, NOW covering BOTH the
+field-write arm (`setFieldA`/gwrite) AND the headline value-transfer arm (`balanceA`/move — the live
+`recCexecAsset` ledger move), non-vacuously). The composition is
+`ForestMemoryProgram.execFullForestG_is_memory_program`: the per-verb keystones folded along the
+gated linear lowering (`execFullTurnG`) and lifted to the tree (`execFullForestG_eq_execFullTurnG`) by
+`List.foldl_append`. The fully-DISCHARGED sibling that carries NO `hcov` (deriving it from the
+syntactic covered-language condition) is `integrity_guarantee_whole_turn_covered` below. -/
 theorem integrity_guarantee_whole_turn
     {Digest Proof Request Stmt Wit CellId Rights Ctx Gateway Bytes Tag : Type}
     [DecidableEq CellId] [SemilatticeInf Rights] [OrderTop Rights] [DecidableLE Rights]
@@ -414,6 +417,48 @@ theorem integrity_guarantee_whole_turn
   Dregg2.Exec.ForestMemoryProgram.execFullForestG_is_memory_program C s s' f hcov h
 
 #assert_axioms integrity_guarantee_whole_turn
+
+/-- **`integrity_guarantee_whole_turn_covered` (THE SEAM CLOSED — `hcov` DERIVED, not carried).**
+The whole-turn integrity binding with the per-step coverage seam DISCHARGED from a syntactic
+covered-language condition, so the apex DERIVES the memory-program property instead of taking it as a
+hypothesis. For a committed gated forest `execFullForestG s f = some s'` whose every pre-order node is
+a COVERED verb — a field write (`setFieldA`/gwrite) OR a value transfer (`balanceA`/the live
+`recCexecAsset` per-asset ledger move) — the WHOLE TURN is a memory program: `uproj C s'` is the fold
+of the concatenated per-node Blum traces over `uproj C s`. The earlier `integrity_guarantee_whole_turn`
+carried `hcov : EachStepMemProg …` as the named seam; HERE that seam is gone — `hcov` is replaced by
+the decidable structural condition `∀ p ∈ lowerForestG f, IsCoveredPair p`, and
+`ForestMemoryProgram.eachStepMemProg_of_all_covered` proves the memory-program coverage from it
+(per-verb keystones: gwrite for the field write, the NEW `moveAsset_is_memory_program` for the
+transfer). Non-vacuous: `forest_of_covered_is_memory_program` is a concrete forest language (field
+writes + transfers) over which "a receipt binds the WHOLE post-state" holds with no out-of-band
+premise — closing the MEDIUM-8 residual for the headline value-transfer arm. -/
+theorem integrity_guarantee_whole_turn_covered
+    {Digest Proof Request Stmt Wit CellId Rights Ctx Gateway Bytes Tag : Type}
+    [DecidableEq CellId] [SemilatticeInf Rights] [OrderTop Rights] [DecidableLE Rights]
+    [Dregg2.Laws.Verifiable Stmt Wit]
+    [DecidableEq Tag] [Dregg2.Authority.CaveatChain.MacKernel
+      (Dregg2.Authority.CaveatChain.Key Tag) Bytes Tag]
+    [Dregg2.Exec.FullForestAuth.AuthPortal
+      (Dregg2.Exec.FullForestAuth.Authorization Digest Proof) Ctx]
+    (C : Dregg2.Exec.UniversalBridge.UCodec) (s s' : RecChainedState)
+    (f : Dregg2.Exec.FullForestAuth.FullForestG (Digest := Digest) (Proof := Proof)
+      (Request := Request) (Stmt := Stmt) (Wit := Wit) (CellId := CellId) (Rights := Rights)
+      (Ctx := Ctx) (Gateway := Gateway) (Bytes := Bytes) (Tag := Tag))
+    (hcovered : ∀ p ∈ Dregg2.Exec.FullForestAuth.lowerForestG f,
+      Dregg2.Exec.ForestMemoryProgram.IsCoveredPair (Digest := Digest) (Proof := Proof)
+        (Request := Request) (Stmt := Stmt) (Wit := Wit) (CellId := CellId) (Rights := Rights)
+        (Ctx := Ctx) (Gateway := Gateway) (Bytes := Bytes) (Tag := Tag) p)
+    (h : Dregg2.Exec.FullForestAuth.execFullForestG s f = some s') :
+    Dregg2.Exec.ForestMemoryProgram.MemProgTrans C s s' :=
+  Dregg2.Exec.ForestMemoryProgram.forest_of_covered_is_memory_program C s s' f hcovered h
+
+#assert_axioms integrity_guarantee_whole_turn_covered
+-- the NEW per-asset MOVE keystone the discharge rests on (the live `.balanceA` arm = `recCexecAsset`),
+-- and the WIDENED coverage discharge (gwrite ∨ move) that removes the bare `EachStepMemProg` seam:
+#assert_axioms Dregg2.Exec.ForestMemoryProgram.moveAsset_is_memory_program
+#assert_axioms Dregg2.Exec.ForestMemoryProgram.balanceA_step_memprog
+#assert_axioms Dregg2.Exec.ForestMemoryProgram.eachStepMemProg_of_all_covered
+#assert_axioms Dregg2.Exec.ForestMemoryProgram.forest_of_covered_is_memory_program
 
 #assert_axioms integrity_guarantee
 -- the underlying keystones, re-pinned under Integrity:
@@ -770,7 +815,10 @@ statement about ONE committed turn, no longer a conjunction over independent sub
     `(s, f, s')`), so the receipt binds the WHOLE post-state field-by-field across the ENTIRE turn —
     NOT just one verb (the MEDIUM-8 whole-turn composition). The per-step coverage hypothesis `hcov`
     (each committing node is a memory program) is the explicitly-named seam; it is DISCHARGEABLE on
-    the covered verb arms (`eachStepMemProg_of_all_setField` — non-vacuously).
+    the covered verb arms (`eachStepMemProg_of_all_covered` — now BOTH the field-write `setFieldA`
+    arm AND the headline value-transfer `balanceA` arm, the live `recCexecAsset` ledger move,
+    non-vacuously). The fully-discharged covered-language apex carrying NO `hcov` is
+    `integrity_guarantee_whole_turn_covered`.
   * **D — FRESHNESS:** the committed noteSpend's nullifier was fresh, is now spent, and a replay of
     the SAME nullifier fails closed (`noteSpendStmt_no_double_spend`/`_inserts`/`_then_reject`).
   * **E — UNFOOLABILITY:** a light client checking ONLY `verify agg.root` learns the WHOLE history

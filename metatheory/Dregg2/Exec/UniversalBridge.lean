@@ -239,6 +239,19 @@ def moveTrace (C : UCodec) (s : RecChainedState) (t : Turn) : List UOp :=
       (((s.kernel.cell t.dst).field balanceField).map C.val),
     writeOp (.receipt s.log.length) (some (C.receipt t)) none ]
 
+/-- The trace of a committed `recCexecAsset` (the chained conserving PER-ASSET move — THE move
+verb on the `bal` ledger plane, which is the arm `execFullA` ACTUALLY routes `balanceA` to):
+the paired debit/credit writes on the `.balA` plane of asset `a` + the receipt append. This is
+the per-asset analogue of `moveTrace`: where `moveTrace` writes the named `balance` FIELD
+(`recCexec` / `recKExec`), this writes the genuine multi-asset `bal c a` ledger cell
+(`recCexecAsset` / `recKExecAsset` / `recTransferBal`), the column the deployed executor moves.
+The `.balA` plane carries `prevVal = some (k.bal · a)` truthfully (the ledger is total — every
+cell/asset has a value, never `none`), so both writes claim the pre-state ledger value. -/
+def moveAssetTrace (C : UCodec) (s : RecChainedState) (t : Turn) (a : AssetId) : List UOp :=
+  [ writeOp (.balA t.src a) (some (s.kernel.bal t.src a - t.amt)) (some (s.kernel.bal t.src a)),
+    writeOp (.balA t.dst a) (some (s.kernel.bal t.dst a + t.amt)) (some (s.kernel.bal t.dst a)),
+    writeOp (.receipt s.log.length) (some (C.receipt t)) none ]
+
 /-- The trace of a committed `createCellStep` (THE create verb): the atomic multi-address
 bundle birth — existence bit + initial balance field + receipt. The arity separation
 (`VerbCompression.create_birth_not_single_write`) is the trace LENGTH (3 writes), not a gap.
@@ -257,6 +270,11 @@ theorem gwriteTrace_disciplined (C : UCodec) (s : RecChainedState) (f : FieldNam
 
 theorem moveTrace_disciplined (C : UCodec) (s : RecChainedState) (t : Turn) :
     Disciplined (moveTrace C s t) :=
+  ⟨⟨Nat.zero_lt_succ 0, fun h => nomatch h⟩, ⟨Nat.zero_lt_succ 1, fun h => nomatch h⟩,
+   ⟨Nat.zero_lt_succ 2, fun h => nomatch h⟩, trivial⟩
+
+theorem moveAssetTrace_disciplined (C : UCodec) (s : RecChainedState) (t : Turn) (a : AssetId) :
+    Disciplined (moveAssetTrace C s t a) :=
   ⟨⟨Nat.zero_lt_succ 0, fun h => nomatch h⟩, ⟨Nat.zero_lt_succ 1, fun h => nomatch h⟩,
    ⟨Nat.zero_lt_succ 2, fun h => nomatch h⟩, trivial⟩
 
@@ -1049,6 +1067,7 @@ end NonVacuity
 #assert_axioms uproj
 #assert_axioms gwriteTrace_disciplined
 #assert_axioms moveTrace_disciplined
+#assert_axioms moveAssetTrace_disciplined
 #assert_axioms createTrace_disciplined
 #assert_axioms gwrite_is_memory_program
 #assert_axioms move_is_memory_program
