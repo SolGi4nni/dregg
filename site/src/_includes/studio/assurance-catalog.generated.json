@@ -55,8 +55,8 @@
   "coverage": {
     "guarantees_with_apex": 6,
     "guarantees_with_pins": 6,
-    "total_pins": 92,
-    "total_keystones": 29
+    "total_pins": 103,
+    "total_keystones": 31
   },
   "guarantees": [
     {
@@ -203,6 +203,7 @@
       ],
       "pins": [
         "integrity_guarantee_memory_program",
+        "integrity_guarantee_whole_turn",
         "integrity_guarantee",
         "Dregg2.Circuit.Argus.Receipt.argus_commits_to_one_receipt",
         "Dregg2.Circuit.Argus.Receipt.argus_circuit_executor_receipts_agree",
@@ -296,7 +297,15 @@
         },
         {
           "name": "Distributed.HistoryAggregation.wellformed_attests_whole_history",
-          "summary": "the IVC fold model: the seam tooth `new_root[i] = old_root[i+1]` pins the whole history; `root_tooth_pins_state` is the CR recovery (a light client seeing only roots learns state continuity)."
+          "summary": "the IVC fold model: the seam tooth `new_root[i] = old_root[i+1]` pins the whole history."
+        },
+        {
+          "name": "Distributed.HistoryAggregation.root_tooth_pins_kernel",
+          "summary": "the STRENGTHENED CR recovery: a light client seeing only the matching roots learns the adjacent KERNELS coincide (state-equality, not merely commitment-equality), via `recStateCommit_binds_kernel` under the standard Poseidon CR set + the preserved `AccountsWF` invariant. This is what `root_tooth_pins_state` (commitment-equality only) could not deliver — the CRITICAL-3 fix."
+        },
+        {
+          "name": "Circuit.RecursiveAggregation.conserves_from_verification",
+          "summary": "THE CONSERVATION-OVER-HISTORY CLOSURE: conservation across the whole history follows from `verify agg.root` ALONE (the verified `ChainBound` tooth ⇒ kernel continuity ⇒ conservation), with NO prover-supplied `StateChained` hypothesis. The one `RecChainedState` component the §8 root does not bind is the receipt LOG; it blocks the full `Run` (which `attested_history_is_run` still takes `StateChained` for), never conservation — the exact, named residual."
         },
         {
           "name": "Circuit.Argus.Aggregate.argus_strand_light_client",
@@ -313,9 +322,19 @@
         "Dregg2.Distributed.HistoryAggregation.wellformed_attests_whole_history",
         "Dregg2.Distributed.HistoryAggregation.root_tooth_pins_state",
         "Dregg2.Distributed.HistoryAggregation.tooth_rejects_broken_order",
+        "Dregg2.Distributed.HistoryAggregation.root_tooth_pins_kernel",
+        "Dregg2.Distributed.HistoryAggregation.kernelChained_conserves",
+        "Dregg2.Distributed.HistoryAggregation.verified_history_conserves",
+        "Dregg2.Circuit.RecursiveAggregation.conserves_from_verification",
         "Dregg2.Circuit.Argus.Aggregate.argus_strand_light_client",
         "Dregg2.Circuit.Argus.Aggregate.argus_strand_conserves",
-        "Dregg2.Circuit.Argus.Aggregate.tampered_argus_strand_rejected"
+        "Dregg2.Circuit.Argus.Aggregate.tampered_argus_strand_rejected",
+        "Dregg2.Crypto.LightClientUC.unfoolable_of_floor",
+        "Dregg2.Crypto.LightClientUC.fooling_breaks_floor",
+        "Dregg2.Crypto.LightClientUC.unfoolable_iff_not_foolable",
+        "Dregg2.Crypto.LightClientUC.SimAccepts",
+        "Dregg2.Crypto.LightClientUC.Reference.refUnfoolable",
+        "Dregg2.Crypto.LightClientUC.Reference.refFoolingBreaksFloor"
       ],
       "summary": "a light client verifying a Q-chain learns A–D for the WHOLE"
     },

@@ -14,6 +14,7 @@
 import { navigateTo } from '../playground.js';
 import { deepLinkBanner } from '../studio-embed.js';
 import { Compositor, Layout } from '../compositor.js';
+import { getProvingClient } from '../proving-client.js';
 
 export function initWebSurface(wasm) {
   const container = document.getElementById('section-web-surface');
@@ -71,18 +72,53 @@ export function initWebSurface(wasm) {
     <div id="ws-banner" style="margin-top:10px;"></div>
     <div id="ws-log" style="margin-top:8px;font:12px ui-monospace,monospace;background:#161b22;border:1px solid #2d3540;border-radius:6px;padding:8px;max-height:200px;overflow:auto;"></div>
 
-    <div style="margin-top:12px;">
-      <button class="btn" id="ws-verify" ${wasm ? '' : 'disabled'}>🔎 Verify a whole history yourself (light client, in-tab)</button>
-      <span id="ws-verify-out" style="margin-left:8px;font:12px ui-monospace,monospace;color:#8795a1;"></span>
-      <div style="margin-top:4px;font-size:11px;color:var(--text-muted,#8795a1);">
+    <div style="margin-top:12px;border-top:1px solid #2d3540;padding-top:12px;">
+      <div style="font:13px ui-monospace,monospace;color:#cfd8e3;margin-bottom:6px;">
+        Verify the whole history <b>yourself</b> — the anti-pale-ghost tooth, in this tab
+      </div>
+      <div class="controls-row" style="gap:8px;flex-wrap:wrap;">
+        <button class="btn" id="ws-verify" ${wasm ? '' : 'disabled'}>🔎 Fold + verify a whole history (in-tab)</button>
+        <button class="btn" id="ws-verify-cancel" style="display:none;">✕ Cancel</button>
+        <span id="ws-verify-spin" style="display:none;align-items:center;gap:6px;font:12px ui-monospace,monospace;color:#7795f8;">
+          <span class="ws-spinner" style="display:inline-block;width:12px;height:12px;border:2px solid #2d3540;border-top-color:#7795f8;border-radius:50%;animation:ws-spin 0.8s linear infinite;"></span>
+          proving… <span style="color:#7e8a99;">(off the main thread — the page stays responsive)</span>
+        </span>
+      </div>
+      <span id="ws-verify-out" style="display:block;margin-top:6px;font:12px ui-monospace,monospace;color:#8795a1;"></span>
+      <div style="margin-top:6px;font-size:11px;color:var(--text-muted,#8795a1);">
         Folds a small real turn-chain into ONE recursive aggregate and light-verifies it
-        re-witnessing nothing — the anti-pale-ghost tooth, running in wasm. ⚠ Recursive STARK
-        proving in the browser is SLOW (this can take a couple of MINUTES and will block the
-        tab); it proves the pipeline runs in-tab. (Verifying a pre-produced devnet proof would
-        be instant — that path needs a fork-side serialization of the recursion proof, a named
-        follow-up; see N12.)
+        re-witnessing nothing — running in wasm in a <b>Web Worker</b>, so the prove no longer
+        freezes the tab (drive the surface demo above while it runs). ⚠ Recursive STARK proving
+        is still SLOW (a couple of minutes of single-core wasm) — a Worker fixes
+        <em>responsiveness</em>, not latency.
+      </div>
+
+      <div style="margin-top:12px;padding-top:10px;border-top:1px dashed #2d3540;">
+        <div style="font:12px ui-monospace,monospace;color:#cfd8e3;margin-bottom:6px;">
+          The trust anchor is <b>YOUR config</b>, not the artifact
+        </div>
+        <div style="font-size:11px;color:var(--text-muted,#8795a1);margin-bottom:8px;">
+          A light client verifies an aggregate against a VK anchor it holds from
+          genesis/checkpoint <b>configuration</b> — <em>never</em> read off the proof under
+          verification. Mint your config anchor, then verify against it (it attests). Tamper
+          one byte of the anchor and verify again: the engine <b>REFUSES</b> with
+          <code>VkFingerprintMismatch</code> — you did not trust the server, you CHECKED it.
+        </div>
+        <div class="controls-row" style="gap:8px;flex-wrap:wrap;">
+          <button class="btn" id="ws-anchor-mint" ${wasm ? '' : 'disabled'}>① Mint my config anchor</button>
+          <input id="ws-anchor-hex" type="text" spellcheck="false" placeholder="config VK anchor (64 hex) — paste or mint" style="flex:1;min-width:260px;background:#161b22;color:#cfd8e3;border:1px solid #2d3540;border-radius:4px;padding:4px 8px;font:11px ui-monospace,monospace;" />
+        </div>
+        <div class="controls-row" style="gap:8px;flex-wrap:wrap;margin-top:6px;">
+          <button class="btn" id="ws-verify-anchor" ${wasm ? '' : 'disabled'}>② Verify against MY anchor</button>
+          <button class="btn" id="ws-tamper-anchor" ${wasm ? '' : 'disabled'}>✎ Tamper one byte</button>
+        </div>
+        <span id="ws-anchor-out" style="display:block;margin-top:6px;font:12px ui-monospace,monospace;color:#8795a1;"></span>
       </div>
     </div>
+
+    <style>
+      @keyframes ws-spin { to { transform: rotate(360deg); } }
+    </style>
   `;
 
   if (!wasm) return;
@@ -244,35 +280,132 @@ export function initWebSurface(wasm) {
   resetBtn.addEventListener('click', () => { reset(); });
   layoutSel.addEventListener('change', applyLayout);
 
-  // The light-client button (N12): fold a small real chain IN THE TAB and
-  // light-verify it, re-witnessing nothing — the anti-pale-ghost tooth. Recursive
-  // proving is heavy, so this runs a tiny k=2 chain; it may take a moment.
-  container.querySelector('#ws-verify').addEventListener('click', () => {
-    const out = container.querySelector('#ws-verify-out');
+  // --- the light client, OFF the main thread (WEB-FORWARD §a) ---------------
+  // The fold + light-verify is ~minutes of single-core wasm FRI work. It runs in
+  // a Web Worker via `ProvingClient`, so the page stays responsive (you can drive
+  // the surface demo above while it proves). The worker holds its OWN wasm
+  // instance; cancel = terminate the worker.
+  const provingClient = getProvingClient();
+  const verifyBtn = container.querySelector('#ws-verify');
+  const verifyCancel = container.querySelector('#ws-verify-cancel');
+  const verifySpin = container.querySelector('#ws-verify-spin');
+  const verifyOut = container.querySelector('#ws-verify-out');
+  const anchorMintBtn = container.querySelector('#ws-anchor-mint');
+  const anchorHexInput = container.querySelector('#ws-anchor-hex');
+  const verifyAnchorBtn = container.querySelector('#ws-verify-anchor');
+  const tamperAnchorBtn = container.querySelector('#ws-tamper-anchor');
+  const anchorOut = container.querySelector('#ws-anchor-out');
+
+  // Which buttons drive a heavy prove (disabled together while one runs).
+  const heavyButtons = [verifyBtn, anchorMintBtn, verifyAnchorBtn];
+
+  function provingActive(active) {
+    heavyButtons.forEach((b) => { if (b) b.disabled = active; });
+    verifyCancel.style.display = active ? '' : 'none';
+    verifySpin.style.display = active ? 'flex' : 'none';
+  }
+
+  // Run a heavy proving call with the shared responsive scaffolding: spinner on,
+  // buttons disabled, cancel wired, errors surfaced. `fn` returns a Promise of the
+  // binding view.
+  async function runProving(fn, onResult, statusEl) {
     if (typeof wasm.light_client_demo !== 'function') {
-      out.textContent = 'light client (verify_history-in-wasm) ships in the recursion-enabled wasm build — see N12.';
-      out.style.color = '#f6993f';
+      statusEl.textContent = 'the light client ships in the recursion-enabled wasm build — see N12.';
+      statusEl.style.color = '#f6993f';
       return;
     }
-    out.textContent = 'folding + verifying a real chain in the tab (recursive proving — a moment)…';
-    out.style.color = '#7795f8';
-    // Defer so the "working…" message paints before the (synchronous, heavy) prove.
-    setTimeout(() => {
-      try {
-        const t0 = performance.now();
-        const v = wasm.light_client_demo(2, 100n); // k=2 (the chain-binding needs ≥2 turns)
-        const ms = Math.round(performance.now() - t0);
+    provingActive(true);
+    const t0 = performance.now();
+    try {
+      const v = await fn();
+      const ms = Math.round(performance.now() - t0);
+      onResult(v, ms);
+    } catch (e) {
+      const m = String(e && e.message ? e.message : e);
+      statusEl.textContent = m === 'cancelled' ? 'cancelled — the worker was terminated.' : `failed: ${m}`;
+      statusEl.style.color = m === 'cancelled' ? '#f6993f' : '#e3342f';
+    } finally {
+      provingActive(false);
+    }
+  }
+
+  // ① fold + light-verify (self-anchored) — the original tooth, now off-thread.
+  verifyBtn.addEventListener('click', () => {
+    verifyOut.textContent = 'folding + light-verifying a real chain in a Web Worker…';
+    verifyOut.style.color = '#7795f8';
+    runProving(
+      () => provingClient.lightClientDemo(2, 100n), // k=2 (the chain-binding needs ≥2 turns)
+      (v, ms) => {
         if (v && v.attested) {
-          out.innerHTML = `<span style="color:#38c172;">AttestedHistory ✓</span> — ${v.num_turns} turns, genesis→final folded, re-witnessed nothing (${ms} ms). <span style="color:#7e8a99;">${v.named_floor}</span>`;
+          verifyOut.innerHTML = `<span style="color:#38c172;">AttestedHistory ✓</span> — ${v.num_turns} turns, genesis→final folded, re-witnessed nothing (${ms} ms, off the main thread). <span style="color:#7e8a99;">${v.named_floor}</span>`;
         } else {
-          out.textContent = `not attested: ${v && v.named_floor ? v.named_floor : 'unknown'}`;
-          out.style.color = '#e3342f';
+          verifyOut.textContent = `not attested: ${v && v.named_floor ? v.named_floor : 'unknown'}`;
+          verifyOut.style.color = '#e3342f';
         }
-      } catch (e) {
-        out.textContent = `verify failed: ${e.message || e}`;
-        out.style.color = '#e3342f';
-      }
-    }, 30);
+      },
+      verifyOut,
+    );
+  });
+
+  verifyCancel.addEventListener('click', () => {
+    provingClient.cancel('cancelled');
+    provingActive(false);
+  });
+
+  // ① (config anchor) mint the anchor a genesis/checkpoint config would distribute.
+  anchorMintBtn.addEventListener('click', () => {
+    anchorOut.textContent = 'minting your config anchor (a real fold of the window shape)…';
+    anchorOut.style.color = '#7795f8';
+    runProving(
+      () => provingClient.genesisVkAnchor(2, 100n),
+      (hex, ms) => {
+        anchorHexInput.value = hex;
+        anchorOut.innerHTML = `config anchor minted (${ms} ms): <span style="color:#cfd8e3;">${hex.slice(0, 16)}…${hex.slice(-8)}</span> — this is the value your config ships, held SEPARATELY from any proof.`;
+        anchorOut.style.color = '#8795a1';
+      },
+      anchorOut,
+    );
+  });
+
+  // ✎ tamper one byte of the anchor (so verify ② then REFUSES — the tooth).
+  tamperAnchorBtn.addEventListener('click', () => {
+    const hex = (anchorHexInput.value || '').trim();
+    if (hex.length !== 64) {
+      anchorOut.textContent = 'mint or paste a 64-hex anchor first, then tamper it.';
+      anchorOut.style.color = '#f6993f';
+      return;
+    }
+    // Flip the low bit of the first nibble — a one-character change.
+    const first = parseInt(hex[0], 16);
+    const flipped = (first ^ 0x1).toString(16);
+    anchorHexInput.value = flipped + hex.slice(1);
+    anchorOut.innerHTML = `tampered the first nibble (<code>${hex[0]}</code> → <code>${flipped}</code>). Now verify against it — the engine must REFUSE.`;
+    anchorOut.style.color = '#f6993f';
+  });
+
+  // ② verify a freshly-folded history against the anchor in the box (YOUR config).
+  verifyAnchorBtn.addEventListener('click', () => {
+    const hex = (anchorHexInput.value || '').trim();
+    if (hex.length !== 64) {
+      anchorOut.textContent = 'mint or paste a 64-hex config anchor first.';
+      anchorOut.style.color = '#f6993f';
+      return;
+    }
+    anchorOut.textContent = 'folding a real chain, then verifying it against YOUR anchor (config, not artifact)…';
+    anchorOut.style.color = '#7795f8';
+    runProving(
+      () => provingClient.verifyHistoryAgainstAnchor(2, 100n, hex),
+      (v, ms) => {
+        if (v && v.attested) {
+          anchorOut.innerHTML = `<span style="color:#38c172;">AttestedHistory ✓ against YOUR config anchor</span> — ${v.num_turns} turns, ${ms} ms. <span style="color:#7e8a99;">${v.named_floor}</span>`;
+        } else {
+          // The REFUSAL is the headline — the from-scratch-prover / wrong-anchor tooth.
+          anchorOut.innerHTML = `<span style="color:#f6993f;">REFUSED ⛔ — no attestation granted.</span> <span style="color:#7e8a99;">${v && v.named_floor ? v.named_floor : 'unknown'}</span>`;
+          anchorOut.style.color = '#f6993f';
+        }
+      },
+      anchorOut,
+    );
   });
 
   // Boot into the first state so the panes are visible immediately.

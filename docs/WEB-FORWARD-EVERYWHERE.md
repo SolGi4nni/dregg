@@ -61,20 +61,23 @@ tab)."* It is dispatched via `setTimeout(..., 30)` purely so the "working…" me
 paints before the synchronous, blocking prove — i.e. it runs on the **main
 thread** and freezes the page for the duration.
 
-**The next slice.** Move proving into a dedicated **Web Worker**: a
-`prove-worker.js` that `import`s the wasm module, owns the heavy
-`light_client_demo` / `prove_*` calls, and talks to the page over `postMessage`
-(request `{kind, args}` → response `{ok, view}` / `{err}`), with a small
-`ProvingClient` promise-wrapper on the page side. The worker holds its OWN wasm
-instance and linear memory (workers cannot share a `WebAssembly.Module` instance,
-only structured-cloned bytes / `SharedArrayBuffer`), so the page stays responsive,
-a spinner animates, and the prove is cancellable (terminate the worker). This is a
-pure-frontend + build change: the wasm-bindgen output already targets the worker
-context; the only new surface is the message protocol and a `{ type: "module" }`
-worker entry. The `web-surface.js` verify path swaps its inline `setTimeout` for
-`await provingClient.lightClientDemo(2, 100n)`.
+**What is shipped (the Worker — DONE).** Proving runs in a dedicated **Web
+Worker**: `site/playground/prove-worker.js` is a `{ type: "module" }` worker that
+`import`s the wasm-bindgen module (`../pkg/dregg_wasm.js`), inits its OWN wasm
+instance + linear memory, and owns the heavy `light_client_demo` /
+`verify_history_against_anchor` / `genesis_vk_anchor` / `prove_*` calls behind a
+whitelisted `postMessage` protocol (request `{id, kind, args}` → response
+`{id, ok, view}` / `{id, ok:false, err}`, with a one-shot `{ready}` after init).
+The page side is `site/playground/proving-client.js` — a `ProvingClient`
+promise-wrapper that spawns the worker, correlates responses by `id`, exposes typed
+methods (`lightClientDemo`, `verifyHistoryAgainstAnchor`, …), and `cancel()`s by
+terminating the worker (killing the running FRI fold + its wasm memory) and
+respawning a fresh instance for the next call. `web-surface.js`'s verify path now
+does `await provingClient.lightClientDemo(2, 100n)` with a spinner + a Cancel
+button: the page stays responsive (the surface demo above is drivable while it
+proves), the prove is a *background* cost, and the work is cancellable.
 
-**The honest gap (with the lever).** A Web Worker fixes *responsiveness*, not
+**The honest gap (with the lever).** The Worker fixes *responsiveness*, not
 *latency*: a recursive STARK fold is still ~minutes of single-core wasm work, and
 wasm has no SIMD/threads guarantee across browsers. The real latency levers are
 two, both named elsewhere: (1) the **proving-modality dial** (`docs/FRONTIER-ROADMAP.md`;
@@ -103,32 +106,50 @@ chain and light-verifies it end-to-end in wasm32, SELF-ANCHORING (the VK
 fingerprint is minted from the locally produced fold — exactly how an honest setup
 mints the anchor it distributes). The anti-pale-ghost tooth runs in-tab today.
 
-**The next slice.** Wire the **EXTERNAL-aggregate** path: a tab verifies a history
-*someone else produced* (a node, a relayer) against a CONFIG-pinned anchor, with no
-local proving. The entry point exists as a typed stub — `verify_devnet_history(proof_len,
-vk_anchor_len)` — whose JS signature is already the production one. The slice is the
-serialization underneath it: a **versioned envelope** carrying (i) the recursion
-root proof bytes, (ii) the carried public commitments
-(`genesis/final/num_turns/chain_digest`), and (iii) a format version + the expected
-`RecursionVk` fingerprint as a SEPARATE field (the client compares it to its own
-configured anchor; it is never trusted FROM the envelope). The node's
-`lightclient/src/bin/whole_history_demo.rs` is the producer side; the envelope is
-serialized there, fetched by `BrowserNodeClient`, and `verify_devnet_history`
-deserializes + calls `verify_history`.
+**What is shipped (the config-not-artifact tooth + the versioned envelope).** Two
+in-tab teeth now make "the anchor is YOUR config, not the artifact" tactile, both
+running the REAL `verify_history`:
 
-**The honest gap (with the lever).** The blocker is precise and already documented
-in `bindings_lightclient.rs`: `WholeChainProof.root` is a `RecursionOutput<SC>`
-wrapping an `Rc<CircuitProverData>` — an **in-memory** proof object with NO
-serde/byte encoding, so it cannot cross the wasm/network boundary today. The
+- `genesis_vk_anchor(k, step)` + `verify_history_against_anchor(k, step, anchor_hex)`
+  (`wasm/src/bindings_lightclient.rs`): the first mints the root-circuit `RecursionVk`
+  fingerprint a genesis/checkpoint config distributes (a function of the window
+  SHAPE, not the history's content — the load-bearing anchor property); the second
+  folds a real chain and runs `dregg_lightclient::verify_history` against the
+  CALLER-SUPPLIED anchor — NOT self-anchored from `agg.root_vk_fingerprint()`. A
+  correct config anchor attests; a TAMPERED anchor is REFUSED with the genuine
+  `VkFingerprintMismatch` (NO attestation). The playground wires a "mint my anchor →
+  verify → tamper one byte → verify (REFUSED)" flow.
+- `verify_devnet_history(envelope_json, config_anchor_hex)` over a versioned
+  `ExternalHistoryEnvelope { version, vk_fingerprint_hex, proof_bytes_b64,
+  genesis/final/chain_digest/num_turns }`: the EXTERNAL-aggregate transport shape. It
+  parses + version-pins the envelope, takes the client's anchor as a SEPARATE
+  argument, and runs the **anchor-discipline check** — the envelope's claimed
+  fingerprint is compared to the configured anchor and REFUSED on mismatch, never
+  trusted FROM the envelope.
+
+The node's `lightclient/src/bin/whole_history_demo.rs` is the producer side; the
+envelope is serialized there, fetched by `BrowserNodeClient`, and
+`verify_devnet_history` deserializes it — once the one missing field can be filled.
+
+**The honest gap (with the lever).** The envelope, the version pin, and the
+anchor-discipline check are all shipped; the ONE remaining seam is precise and
+narrowed to a single envelope field — `proof_bytes_b64` is EMPTY because
+`WholeChainProof.root` is a `RecursionOutput<SC>` wrapping an `Rc<CircuitProverData>`
+(an **in-memory** proof object with NO serde/byte encoding — confirmed at
+`plonky3-recursion/recursion/src/recursion.rs`: `RecursionOutput<SC>(pub
+BatchStarkProof<SC>, pub Rc<CircuitProverData<SC>>)`). So the cryptographic
+recursion-verify step cannot yet run over the wire, and `verify_devnet_history`
+reports that seam honestly (the anchor discipline above is REAL; the byte-verify is
+the one blocked step) rather than faking it — the project law (never launder a
+missing path as present). **This is a CIRCUIT/FORK seam, not a wasm-lane one**: the
 closure lever is a **fork-side serialization of the recursion proof** (the same
-follow-up the `circuit/src/ivc_turn_chain.rs` module docs name), after which the
-envelope is a thin `(version, vk_fingerprint, proof_bytes, public_commitments)`
-postcard struct. This is also coupled to the two named recursion-floor follow-ups
+follow-up the `circuit/src/ivc_turn_chain.rs` module docs name), after which
+`proof_bytes_b64` is populated and `verify_devnet_history` calls `verify_history`
+over the wire. It is also coupled to the two named recursion-floor follow-ups
 (thread `table_public_inputs` up the tree so leaf identity is host-checked in-band);
-the serialization and the in-band-PI fix share the fork lever. Until it lands, the
-runnable in-tab tooth is `light_client_demo` (fold + verify, no transport), and
-`verify_devnet_history` reports the obstacle rather than pretending a byte path
-exists — the project law (never launder a missing path as present).
+the serialization and the in-band-PI fix share the fork lever. The runnable in-tab
+teeth meanwhile are `light_client_demo` and `verify_history_against_anchor` (real
+`verify_history`, proof present locally).
 
 ---
 
