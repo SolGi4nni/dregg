@@ -29,6 +29,22 @@
 # workspace and links them into THIS crate's local target.
 [workspace]
 
+# THE FORK SEAM (replicated from the breadstuffs-root `Cargo.toml`). Because this
+# crate is its OWN workspace root, the repo-root `[patch]` does NOT apply here —
+# so the transitive `dregg-circuit` (via `dregg-turn`) would resolve `p3-recursion`
+# from the PINNED git rev, which lacks the `RecursionInput::NativeBatchStark`
+# variant `dregg-circuit` now calls (the C3 native-batch leaf-wrap WIP). Without
+# this block the build fails with `no variant named NativeBatchStark found for
+# enum p3_recursion::RecursionInput`. We point the patch at the SAME local fork
+# checkout the root does (`/Users/ember/dev/plonky3-recursion`), adjusted for this
+# crate's depth (`../../../` = dregg-firmament → sel4 → breadstuffs → dev). Keep in
+# sync with the root block; both revert to the git rev once the fork is pushed.
+[patch."https://github.com/emberian/plonky3-recursion"]
+p3-recursion = { path = "../../../plonky3-recursion/recursion" }
+p3-circuit = { path = "../../../plonky3-recursion/circuit" }
+p3-circuit-prover = { path = "../../../plonky3-recursion/circuit-prover" }
+p3-poseidon2-circuit-air = { path = "../../../plonky3-recursion/poseidon2-circuit-air" }
+
 [package]
 name = "dregg-firmament"
 version = "0.1.0"

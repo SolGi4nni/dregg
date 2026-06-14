@@ -147,6 +147,11 @@ impl DistributedBacking {
         narrower: Rights,
     ) -> Result<(), ResolveError> {
         let nonce = self.ledger.get(&granter).expect("granter exists").state.nonce();
+        // Chain into the REAL receipt chain: `None` for the granter's first turn,
+        // the prior receipt's hash thereafter (the executor enforces this per-agent
+        // as `ReceiptChainMismatch`). Threading it lets a cell delegate MORE THAN
+        // ONCE through one backing without a spurious replay rejection.
+        let previous_receipt_hash = self.executor.get_last_receipt_hash(&granter);
         let cap = CapabilityRef {
             target,
             slot: 0, // rewritten by the executor on grant
@@ -177,7 +182,7 @@ impl DistributedBacking {
             fee: 0,
             memo: None,
             valid_until: None,
-            previous_receipt_hash: None,
+            previous_receipt_hash,
             depends_on: vec![],
             conservation_proof: None,
             sovereign_witnesses: HashMap::new(),

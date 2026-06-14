@@ -170,7 +170,6 @@ impl SurfaceBacking {
         surface: CellId,
         narrower: Rights,
     ) -> Result<(), ResolveError> {
-        let nonce = self.ledger.get(&granter).expect("granter exists").state.nonce();
         let cap = CapabilityRef {
             target: surface,
             slot: 0, // rewritten by the executor on grant
@@ -180,13 +179,44 @@ impl SurfaceBacking {
             allowed_effects: None,
             stored_epoch: None,
         };
+        self.run_grant_turn(
+            granter,
+            Effect::GrantCapability { from: granter, to: recipient, cap },
+            "surface grant",
+        )
+    }
+
+    /// Build + execute a one-effect turn from `agent` through the REAL executor,
+    /// correctly chained into the deployed receipt chain.
+    ///
+    /// The executor enforces a per-agent receipt chain (`ReceiptChainMismatch`):
+    /// the FIRST turn from an agent carries `previous_receipt_hash: None`, and
+    /// each SUBSEQUENT turn must carry the prior receipt's hash. A window manager
+    /// issues MANY surface turns (present / embed / grant-input / revoke in one
+    /// session), so the verbs MUST chain — we read the executor's tracked last
+    /// hash ([`TurnExecutor::get_last_receipt_hash`]) and the cell's fresh nonce
+    /// (the executor bumps it on each commit) so consecutive verbs from the same
+    /// agent are accepted, not rejected as a replay. Returns `Ok(())` on a
+    /// committed turn; `Err(BackingRejected)` if the executor refused (a widening
+    /// grant/embed, missing connectivity, denied consent — byte-for-byte the
+    /// deployed semantics).
+    fn run_grant_turn(
+        &mut self,
+        agent: CellId,
+        effect: Effect,
+        what: &str,
+    ) -> Result<(), ResolveError> {
+        let nonce = self.ledger.get(&agent).expect("agent exists").state.nonce();
+        // Chain into the real receipt chain: None for the agent's first turn, the
+        // prior receipt's hash thereafter (the executor tracks it per-agent).
+        let previous_receipt_hash = self.executor.get_last_receipt_hash(&agent);
         let action = Action {
-            target: granter,
+            target: agent,
             method: [0u8; 32],
             args: vec![],
             authorization: Authorization::Unchecked,
             preconditions: Default::default(),
-            effects: vec![Effect::GrantCapability { from: granter, to: recipient, cap }],
+            effects: vec![effect],
             may_delegate: DelegationMode::None,
             commitment_mode: Default::default(),
             balance_change: None,
@@ -195,13 +225,13 @@ impl SurfaceBacking {
         let mut forest = CallForest::new();
         forest.add_root(action);
         let turn = Turn {
-            agent: granter,
+            agent,
             nonce,
             call_forest: forest,
             fee: 0,
             memo: None,
             valid_until: None,
-            previous_receipt_hash: None,
+            previous_receipt_hash,
             depends_on: vec![],
             conservation_proof: None,
             sovereign_witnesses: HashMap::new(),
@@ -218,10 +248,160 @@ impl SurfaceBacking {
         match result {
             r if r.is_committed() => Ok(()),
             TurnResult::Rejected { reason, .. } => Err(ResolveError::BackingRejected(format!(
-                "executor refused surface grant: {:?}",
-                reason
+                "executor refused {}: {:?}",
+                what, reason
             ))),
             other => Err(ResolveError::BackingRejected(format!("unexpected: {:?}", other))),
+        }
+    }
+
+    // ── THE FIVE CAP-CONFINED SURFACE VERBS (`docs/DREGG-DESKTOP-OS.md §5`) ──
+    //
+    // `create-surface` / `present` / `embed` / `grant-input` / `revoke`. Every
+    // one routes through the SAME real executor + the SAME `is_attenuation`
+    // (`granted ⊆ held`) gate as every other dregg cap — the compositor
+    // multiplexes capabilities, it never mints authority. `embed` is authorized
+    // by the REAL `Effect::Introduce` discipline (connectivity + holds-target +
+    // non-amplifying + consent — the four premises `apply_introduce` checks in
+    // `turn/src/executor/apply.rs`), so a surface-tree edge is exactly dregg's
+    // three-party introduction, NOT a parallel handshake.
+
+    /// **CREATE-SURFACE** — birth a new surface cell and hand `owner` the window.
+    ///
+    /// `docs/DREGG-DESKTOP-OS.md §5`: "authorized by a surface-factory cap; the
+    /// factory CONTRACT bounds what surface/input rights the cell may ever hold."
+    /// This is the powerbox handing an app a fresh window: it seeds the surface
+    /// cell (the View — its state is what the compositor renders) and grants
+    /// `owner` an ORIGINAL cap over it at `rights` (the Viewport the parent
+    /// holds). The compositor multiplexes caps; it does not invent authority, so
+    /// the grant is the same original-grant shape every backing uses. Returns the
+    /// new surface's [`CellId`] (its ViewRef — already unforgeable,
+    /// content-addressed).
+    pub fn create_surface(&mut self, owner: CellId, seed: u8, rights: Rights) -> CellId {
+        let surface = self.seed_surface(seed);
+        self.install(owner, surface, rights);
+        surface
+    }
+
+    /// **PRESENT** — `holder` draws into its `surface` (paints a frame).
+    ///
+    /// `docs/DREGG-DESKTOP-OS.md §5`: "requires a write-cap on the surface." A
+    /// present is a turn that resolves the surface cap against real cell-state
+    /// requiring DRAW authority (`required ⊆ held`, the REAL
+    /// [`dregg_cell::is_attenuation`]): an app holding only a read-only mirror is
+    /// refused exactly as the kernel refuses a write on a read-only frame. The
+    /// caller passes the authority the draw requires (`required`); at `n = 1` the
+    /// present is synchronous (the pixel lands the instant it returns). Returns a
+    /// [`Resolution`] carrying the `n`-parametrized bounds.
+    ///
+    /// (The compositor-PD's SCENE gate — T1 non-overlap / T2 label-binding / T3
+    /// focus — is enforced separately in [`crate::compositor_pd`]; THIS verb is
+    /// the cap-authority half: does the presenter even hold draw-rights over the
+    /// surface? Both must pass for a frame to composite.)
+    pub fn present(
+        &self,
+        holder: CellId,
+        surface: CellId,
+        required: &Rights,
+    ) -> Result<Resolution, ResolveError> {
+        // PRESENT is exactly an invoke that requires draw authority over the
+        // surface cap — the read-only-mirror refusal falls out of the real
+        // `is_attenuation` direction with no special-casing.
+        self.invoke(holder, surface, required)
+    }
+
+    /// **EMBED** — make a surface-tree edge from `recipient` to a `child_surface`,
+    /// authorized by the REAL three-party introduction.
+    ///
+    /// `docs/DREGG-DESKTOP-OS.md §5`: "a surface-tree edge authorized ONLY by
+    /// `Spec.Authority.Introduce` — Fuchsia's non-clonable token handshake IS
+    /// dregg's introduce; the surface tree is decoupled from the cell-ownership
+    /// tree." This runs a GENUINE [`Effect::Introduce`] turn through the real
+    /// executor, so the edge is gated by the FOUR premises `apply_introduce`
+    /// checks (`turn/src/executor/apply.rs`):
+    ///
+    /// 1. **connectivity** — the `introducer` (the parent window manager) holds a
+    ///    cap to the `recipient` (`has_access`);
+    /// 2. **holds-target** — the `introducer` holds a cap over the
+    ///    `child_surface`;
+    /// 3. **non-amplification** — the embedded `rights` are `⊆` the introducer's
+    ///    own over the child (`is_attenuation`); a WIDENING embed is REJECTED;
+    /// 4. **consent** — the `child_surface` cell allows delegation
+    ///    (`delegate != Impossible`).
+    ///
+    /// On success the `recipient` gains an (expiry-stamped) Viewport cap over the
+    /// child surface — the compositor can now composite the child inside the
+    /// parent's frame. Returns `Ok(())` on a committed embed; `Err(BackingRejected)`
+    /// if the executor refused (missing connectivity, a widening grant, or denied
+    /// consent) — byte-for-byte the deployed introduction semantics.
+    pub fn embed(
+        &mut self,
+        introducer: CellId,
+        recipient: CellId,
+        child_surface: CellId,
+        rights: Rights,
+    ) -> Result<(), ResolveError> {
+        self.run_grant_turn(
+            introducer,
+            Effect::Introduce {
+                introducer,
+                recipient,
+                target: child_surface,
+                permissions: rights,
+            },
+            "surface embed (Introduce)",
+        )
+    }
+
+    /// **GRANT-INPUT** — hand `recipient` a (narrowed) input-receive facet over a
+    /// `surface`, run as a GENUINE grant turn.
+    ///
+    /// `docs/DREGG-DESKTOP-OS.md §5`: "the explicit attenuable cap Wayland leaves
+    /// as an ungoverned 'privileged client' bit — in dregg a global screenshot
+    /// cap simply does NOT exist unless minted." Focus IS a capability: the
+    /// compositor grants a short-lived input-receive cap to exactly one surface;
+    /// this verb is that grant, run through the real executor's `granted ⊆ held`
+    /// gate (the SAME `Effect::GrantCapability` as [`Self::delegate`]). A WIDENING
+    /// input grant — handing out more authority over the surface than you hold —
+    /// is REJECTED by the executor (`DelegationDenied`). Returns `Ok(())` on a
+    /// committed (attenuating) grant; `Err(BackingRejected)` otherwise.
+    ///
+    /// (`grant_input` is `delegate` named for the input facet; they share the
+    /// real grant path so input-routing rides the identical attenuation law as
+    /// every surface delegation — only the caller's INTENT differs.)
+    pub fn grant_input(
+        &mut self,
+        granter: CellId,
+        recipient: CellId,
+        surface: CellId,
+        narrower: Rights,
+    ) -> Result<(), ResolveError> {
+        self.delegate(granter, recipient, surface, narrower)
+    }
+
+    /// **REVOKE** — drop `holder`'s cap over the `surface`; the glass goes dark.
+    ///
+    /// `docs/DREGG-DESKTOP-OS.md §5`: "drops the surface cap; n=1 immediate via
+    /// seL4_CNode_Revoke." At `n = 1` (compositor + apps on one box) this is
+    /// SYNCHRONOUS — the surface cap is dead the instant `revoke` returns, with
+    /// no in-flight window (a subsequent [`Self::present`] / [`Self::invoke`]
+    /// finds nothing held and is refused, so the window cannot paint even one
+    /// more frame). This is the surface analog of the local
+    /// [`crate::LocalBacking::revoke`]'s synchronous-transitive removal; here it
+    /// removes the holder's surface cap from real cell-state. Returns `true` iff
+    /// a live surface cap was removed.
+    ///
+    /// At `n > 1` (a remote window) revocation is the group-key epoch lift
+    /// (eventual — the [`crate::Bounds::distributed`] relax); this `n = 1` path
+    /// is the collapsed limit where the dark-on-revoke is immediate.
+    pub fn revoke(&mut self, holder: CellId, surface: CellId) -> bool {
+        let cell = match self.ledger.get_mut(&holder) {
+            Some(c) => c,
+            None => return false,
+        };
+        match cell.capabilities.lookup_by_target(&surface).map(|c| c.slot) {
+            Some(slot) => cell.capabilities.revoke(slot),
+            None => false,
         }
     }
 
@@ -291,5 +471,160 @@ mod tests {
         let r = fab.delegate(app, other, window, AuthRequired::None);
         assert!(r.is_err());
         assert!(!fab.holds_cap(other, window));
+    }
+
+    // ── THE FIVE VERBS (create-surface / present / embed / grant-input / revoke)
+
+    #[test]
+    fn create_surface_hands_the_owner_a_window_cap() {
+        // CREATE-SURFACE: the powerbox births a surface cell and grants the owner
+        // a window cap over it — the owner now holds the Viewport.
+        let mut fab = SurfaceBacking::new();
+        let app = fab.seed_surface(0);
+        let window = fab.create_surface(app, 9, AuthRequired::None);
+        assert!(fab.holds_cap(app, window), "owner must hold the new window cap");
+        assert_eq!(fab.rights_held(app, window), Some(AuthRequired::None));
+    }
+
+    #[test]
+    fn present_requires_draw_rights_read_only_mirror_refused() {
+        // PRESENT: drawing into a surface requires draw authority; an app holding
+        // only a read-only mirror (a NARROWER authority than the draw requires)
+        // is refused by the real `is_attenuation` direction.
+        let mut fab = SurfaceBacking::new();
+        let app = fab.seed_surface(0);
+        let window = fab.seed_surface(2);
+
+        // Holds a writable (Either) cap: a present requiring Either succeeds, and
+        // requiring a narrower Signature (⊆ Either) also succeeds.
+        fab.install(app, window, AuthRequired::Either);
+        assert!(fab.present(app, window, &AuthRequired::Either).is_ok());
+        assert!(fab.present(app, window, &AuthRequired::Signature).is_ok());
+
+        // Holds only a read-only mirror (Signature): a present requiring the
+        // BROADER None authority exceeds the held cap — REFUSED (the read-only
+        // mirror cannot draw).
+        let mirror = fab.seed_surface(3);
+        fab.install(app, mirror, AuthRequired::Signature);
+        assert!(
+            fab.present(app, mirror, &AuthRequired::None).is_err(),
+            "a read-only mirror must NOT be able to draw"
+        );
+
+        // PRESENT carries the n=1 strong bounds (synchronous — the pixel lands at
+        // once).
+        let res = fab.present(app, window, &AuthRequired::Either).unwrap();
+        assert_eq!(res.bounds, Bounds::LOCAL);
+    }
+
+    #[test]
+    fn embed_via_real_introduce_commits_then_widening_rejected() {
+        // EMBED: a surface-tree edge authorized by the REAL three-party
+        // introduction. The window-manager (introducer) embeds a child surface
+        // into a recipient app, gated by the four `apply_introduce` premises.
+        let mut fab = SurfaceBacking::new();
+        let wm = fab.seed_surface(0); // the window-manager (introducer)
+        let app = fab.seed_surface(1); // the recipient (the framed app)
+        let child = fab.seed_surface(2); // the child surface to embed
+
+        // Premise 1 (connectivity): the wm holds a cap to the recipient app.
+        fab.install(wm, app, AuthRequired::None);
+        // Premise 2 (holds-target): the wm holds a writable cap over the child.
+        fab.install(wm, child, AuthRequired::Either);
+
+        // A NARROWING embed (Either -> Signature, a read-only child view) COMMITS
+        // through the real Introduce — the recipient gains the Viewport.
+        assert!(
+            fab.embed(wm, app, child, AuthRequired::Signature).is_ok(),
+            "an attenuating embed must commit via the real Introduce"
+        );
+        assert!(fab.holds_cap(app, child), "the recipient must hold the embedded child cap");
+        assert_eq!(fab.rights_held(app, child), Some(AuthRequired::Signature));
+
+        // A WIDENING embed (the wm holds only Signature over child2, tries to
+        // embed None) is REJECTED by the executor (Introduction amplification
+        // denied) — premise 3 fires.
+        let child2 = fab.seed_surface(3);
+        let app2 = fab.seed_surface(4);
+        fab.install(wm, app2, AuthRequired::None); // connectivity to app2
+        fab.install(wm, child2, AuthRequired::Signature); // wm holds only Signature
+        let r = fab.embed(wm, app2, child2, AuthRequired::None);
+        assert!(r.is_err(), "a widening embed must be REJECTED by the real Introduce");
+        assert!(!fab.holds_cap(app2, child2), "the recipient gets nothing on a refused embed");
+    }
+
+    #[test]
+    fn embed_without_connectivity_is_refused() {
+        // EMBED premise 1 (connectivity): an introducer with NO cap to the
+        // recipient cannot embed — `apply_introduce` refuses ("introducer has no
+        // capability to recipient").
+        let mut fab = SurfaceBacking::new();
+        let wm = fab.seed_surface(0);
+        let stranger = fab.seed_surface(1);
+        let child = fab.seed_surface(2);
+
+        // The wm holds the child but has NO cap to the stranger.
+        fab.install(wm, child, AuthRequired::Either);
+        let r = fab.embed(wm, stranger, child, AuthRequired::Signature);
+        assert!(r.is_err(), "no connectivity to the recipient ⇒ embed refused");
+        assert!(!fab.holds_cap(stranger, child));
+    }
+
+    #[test]
+    fn grant_input_attenuates_and_rejects_widening() {
+        // GRANT-INPUT: focus is a capability; granting an input-receive facet
+        // rides the SAME `granted ⊆ held` gate. A narrowing grant commits; a
+        // widening one is rejected.
+        let mut fab = SurfaceBacking::new();
+        let compositor = fab.seed_surface(0);
+        let focused = fab.seed_surface(1);
+        let surface = fab.seed_surface(2);
+
+        // The compositor holds a writable (Either) cap over the surface.
+        fab.install(compositor, surface, AuthRequired::Either);
+
+        // Granting a narrowed input facet (Either -> Signature) COMMITS.
+        assert!(
+            fab.grant_input(compositor, focused, surface, AuthRequired::Signature)
+                .is_ok(),
+            "an attenuating input grant must commit"
+        );
+        assert!(fab.holds_cap(focused, surface));
+
+        // A WIDENING input grant (the compositor holds only Signature over a
+        // second surface, tries to grant None) is REJECTED.
+        let surface2 = fab.seed_surface(3);
+        let other = fab.seed_surface(4);
+        fab.install(compositor, surface2, AuthRequired::Signature);
+        let r = fab.grant_input(compositor, other, surface2, AuthRequired::None);
+        assert!(r.is_err(), "a widening input grant must be REJECTED");
+        assert!(!fab.holds_cap(other, surface2));
+    }
+
+    #[test]
+    fn revoke_darkens_the_glass_synchronously_at_n1() {
+        // REVOKE: dropping the surface cap is synchronous at n=1 — the window
+        // goes dark the instant revoke returns, and a subsequent present finds
+        // nothing held (the window cannot paint even one more frame).
+        let mut fab = SurfaceBacking::new();
+        let app = fab.seed_surface(0);
+        let window = fab.create_surface(app, 9, AuthRequired::Either);
+
+        // Before revoke: the app can present.
+        assert!(fab.present(app, window, &AuthRequired::Either).is_ok());
+
+        // Revoke the window cap — returns having ALREADY removed it (synchronous).
+        assert!(fab.revoke(app, window), "revoke removes the live surface cap");
+        assert!(!fab.holds_cap(app, window), "the cap is dead the instant revoke returns");
+
+        // After revoke: the present is refused — the glass is dark, no in-flight
+        // frame (the n=1 immediacy: TargetNotFound, the cap is simply gone).
+        assert!(
+            fab.present(app, window, &AuthRequired::Either).is_err(),
+            "a revoked window cannot paint even one more frame at n=1"
+        );
+
+        // Revoking an absent cap is a no-op false.
+        assert!(!fab.revoke(app, window), "revoking an already-dead cap is a no-op");
     }
 }

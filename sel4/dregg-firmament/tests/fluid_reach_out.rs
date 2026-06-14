@@ -350,3 +350,86 @@ fn surface_n_equals_one_collapse() {
     assert!(!rres.bounds.revocation_immediate);
     assert!(!rres.bounds.commit_synchronous);
 }
+
+// ===========================================================================
+// THE FIVE-VERB WINDOW LIFECYCLE — `docs/DREGG-DESKTOP-OS.md §5`: a window's
+// whole life is `create-surface → present → embed → grant-input → revoke`,
+// each routed through the REAL executor + the SAME `granted ⊆ held` gate, with
+// `embed` authorized by the REAL three-party Introduce. One green test against
+// the deployed executor proves the five cap-confined verbs are real and
+// load-bearing — the surface op-set the R0 keystone promised, before pixels.
+// ===========================================================================
+
+#[test]
+fn surface_five_verb_window_lifecycle_through_the_real_executor() {
+    let mut fab = SurfaceBacking::new(); // n = 1
+
+    // The actors: a window-manager (the L6 shell), an app it frames, and a
+    // second app a child surface is embedded into.
+    let wm = fab.seed_surface(0);
+    let app = fab.seed_surface(1);
+    let framed = fab.seed_surface(2);
+
+    // ── CREATE-SURFACE: the powerbox births a window and hands the app the
+    //    Viewport (a writable surface cap). ──
+    let window = fab.create_surface(app, 10, AuthRequired::Either);
+    assert!(fab.holds_cap(app, window), "create-surface hands the app the window");
+
+    // ── PRESENT: the app draws into its own window — synchronous at n=1. ──
+    let res = fab
+        .present(app, window, &AuthRequired::Either)
+        .expect("the app holds draw rights — present commits");
+    assert_eq!(res.bounds, Bounds::LOCAL, "present is synchronous at n=1");
+
+    // ── EMBED: the window-manager embeds the app's window as a child surface of
+    //    a `framed` app, via the REAL Introduce. Premises: the wm holds caps to
+    //    both the framed app (connectivity) and the window (holds-target). ──
+    fab.install(wm, framed, AuthRequired::None); // connectivity to the framed app
+    fab.install(wm, window, AuthRequired::Either); // the wm holds the window
+    fab.embed(wm, framed, window, AuthRequired::Signature)
+        .expect("an attenuating embed commits via the real Introduce");
+    assert!(
+        fab.holds_cap(framed, window),
+        "embed gave the framed app a (read-only) Viewport over the child window"
+    );
+    assert_eq!(fab.rights_held(framed, window), Some(AuthRequired::Signature));
+
+    // ── GRANT-INPUT: the wm grants the app a narrowed input-receive facet over
+    //    the window (focus is a capability) — rides `granted ⊆ held`. ──
+    let other = fab.seed_surface(3);
+    fab.grant_input(wm, other, window, AuthRequired::Signature)
+        .expect("an attenuating input grant commits");
+    assert!(fab.holds_cap(other, window), "grant-input handed the input facet");
+
+    // ── REVOKE: the app's window cap is dropped; the glass goes dark instantly
+    //    (n=1), and a subsequent present finds nothing held. ──
+    assert!(fab.revoke(app, window), "revoke removes the app's window cap");
+    assert!(
+        fab.present(app, window, &AuthRequired::Either).is_err(),
+        "a revoked window cannot paint even one more frame at n=1"
+    );
+
+    // The whole lifecycle ran through the deployed executor + the real
+    // `is_attenuation` gate — a window IS a dregg cell's surface capability.
+}
+
+#[test]
+fn surface_embed_widening_rejected_by_real_introduce() {
+    // The anti-amplification tooth at the embed edge: an introducer holding only
+    // a read-only mirror of a child CANNOT embed it with wider rights — the real
+    // Introduce refuses (amplification denied), byte-for-byte the deployed
+    // semantics. Mirrors `real_executor_rejects_amplifying_delegate` for the
+    // surface-tree edge.
+    let mut fab = SurfaceBacking::new();
+    let wm = fab.seed_surface(0);
+    let app = fab.seed_surface(1);
+    let child = fab.seed_surface(2);
+
+    fab.install(wm, app, AuthRequired::None); // connectivity
+    fab.install(wm, child, AuthRequired::Signature); // wm holds only a read-only mirror
+
+    // Embedding the child with WIDER (None) rights than the wm holds is REJECTED.
+    let r = fab.embed(wm, app, child, AuthRequired::None);
+    assert!(r.is_err(), "a widening embed must be rejected by the real Introduce");
+    assert!(!fab.holds_cap(app, child), "the recipient gets nothing on a refused embed");
+}
