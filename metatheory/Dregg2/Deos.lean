@@ -65,6 +65,13 @@ import Dregg2.Deos.Affordance
 import Dregg2.Deos.FogOfWar     -- per-viewer visibility NON-INTERFERENCE (the CDDC-beating headline)
 import Dregg2.Deos.Compositor   -- the compositing ALGEBRA: damage is exact, paint is order-free
 import Dregg2.Deos.Rerender     -- re-rendering a component is FUNCTORIAL (the rerender square)
+-- The CAP ∧ STATE conjunction (2026-06-14, the language uplift): the deos affordance gate was CAP-ONLY
+-- (fireGate: required⊆held) and the cell-program gate STATE-ONLY (RecordProgram.admitsCtx) — they never
+-- composed. A GatedAffordance pairs the REAL cap-gate with the REAL state-gate and fireGated commits IFF
+-- BOTH bite (fireGated_iff); the four cross-polarity teeth prove neither alone suffices (caps-OK-but-
+-- stale and ready-but-unheld both refuse), the htmx tooth (fireGated_reactive) proves the SAME viewer's
+-- button reacts to STATE, and projectGatedFor lifts the membrane-negotiated frustum to STATE-awareness.
+import Dregg2.Deos.GatedAffordance
 
 namespace Dregg2.Deos
 

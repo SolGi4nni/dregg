@@ -588,6 +588,48 @@ single linear `Cases` ladder.
 | 11.1 `SlotRange` (bridge) | N copied `MemberOf` constraints, one per approval slot | one `forAllSlots` over the approval window |
 | 11.2 `ObservedFieldEquals` **(LANDED)** | constitution params copied at birth, frozen | "my threshold IS constitution v3's, at height H" — live, amendable, verified |
 | 11.3 `AnyOfBound` | a linear `Cases` ladder; witnessed conditions can't disjoin | "release if timeout OR credential-proof" as one gate |
+| 11.5 `GatedAffordance` **(LANDED)** | a button's visibility is cap-ONLY (`is_attenuation`); its state precondition lives in out-of-band app glue | "approve fires only if you HOLD the approver cap AND the proposal is PENDING" — caps ∧ live-state as ONE gate; the same viewer's button reacts to state |
+
+### 11.5 Affordance-gating predicates — caps AND live state as one gate — **LANDED**
+
+**The disease.** A deos affordance (`starbridge-web-surface/src/affordance.rs`
+`CellAffordance`) gates *firing* on `is_attenuation` — `required ⊆ held`,
+CAP-ONLY. Whether the button may fire *right now in this state* (the proposal is
+`PENDING`, the deadline hasn't passed, the viewer hasn't already voted) is a
+SEPARATE question the cell program (`RecordProgram.admitsCtx`) answers — and the
+two never composed. A real app's "approve" button is BOTH: held authority AND a
+live-state predicate over the same interaction. That conjunction had no home, so
+app authors smuggled the state half into out-of-band glue (the exact "screaming
+toy" shape).
+
+**The design — `GatedAffordance` (the conjunction, proven).** A `GatedAffordance`
+pairs the REAL cap-gate (`Deos.Affordance.fireGate`, the `is_attenuation` order
+the cap crown proves) with a REAL state condition (`RecordProgram`, the cell
+program the executor already enforces), threaded with the same `TurnCtx` the
+context atoms read. `fireGated` commits IFF BOTH bite. **No new mathematics**: the
+cap gate is the existing affordance gate; the state gate is the existing
+`admitsCtx`; the rung is their `&&`. **Lean (LANDED):**
+`Dregg2/Deos/GatedAffordance.lean` — keystone `fireGated_iff` (`isSome ↔ (required
+⊆ held) ∧ admitsCtx`), the four cross-polarity teeth proving NEITHER gate alone
+suffices (`fireGated_cap_fail_refuses` / `fireGated_state_fail_refuses` /
+`fireGated_needs_both`), the htmx tooth `fireGated_reactive` (the SAME viewer's
+button lights/darkens as the cell transitions), and the state-aware per-viewer
+projection `projectGatedFor` (`projectGatedFor_monotone` — progressive
+attenuation survives the state gate; `projectGatedFor_all_fireable` — no
+offered-but-refused buttons). All `#assert_all_clean`, `#guard` non-vacuity in all
+four cap×state quadrants. **Cost (§8):** the MAX of the two gates' classes — the
+cap gate is free/i-confluent (a single-turn context predicate); the state gate
+inherits its own constraints' classes (a monotone-status guard is free, a balance
+ceiling is the ordering pole), exactly as if the `RecordProgram` were enforced
+standalone. The conjunction adds no coordination beyond its parts. **Rust-mirror
+(for the convergence):** a `GatedAffordance { affordance, state_cond, method }`
+beside `CellAffordance` (`starbridge-web-surface/src/affordance.rs:90`) whose
+`fire` runs the existing `authorized_for` (`affordance.rs:131`) AND THEN the
+existing `evaluate_constraint_full` over the touched cell's `(old, new)` —
+refusing with a new `FireError::StateConditionUnmet` (`affordance.rs:239`) unless
+BOTH pass; plus a `project_gated_for` beside `project_for` (`affordance.rs:291`)
+filtering on both. `cell/src/program.rs` needs NO change (the gate CALLS the
+evaluator the executor already owns — LAW #1).
 
 The throughline is the §8 honesty contract: every rung is pinned to its
 confluence class, so an author reaching for `ObservedFieldEquals` knows it is
