@@ -204,10 +204,13 @@ impl std::error::Error for FullTurnProvingError {}
 /// FLOW-B ROTATION: when the caller threads the per-turn rotation producer witnesses
 /// (built by [`rotation_witness_for_self_sovereign`] from the REAL before/after cells +
 /// ledger), the effect-vm leg proves through the LEAN-emitted rotated descriptor — the live
-/// node turn proves ROTATED. The witness is built only when the actor cell is representable by
-/// the cap-less `CellState::new` pre-state (the self-validating gate in the builder), so the
-/// rotated block's welded scalars agree with the v1 sub-trace by construction; otherwise the
-/// caller passes `None` and the byte-identical v1 leg runs.
+/// node turn proves ROTATED. PATH-PRESERVE §4 (the non-synthetic-cell lift): the prover seeds
+/// `initial_vm_state` from the REAL cell (decoded from the rotation witness's welded limbs via
+/// [`dregg_sdk::RotationTurnWitness::before_cell_state`]), so a FIELD-BEARING / cap-holding cell
+/// rotates too — the v1-prefix OLD_COMMIT and the rotated OLD_COMMIT are the same real-cell object
+/// by construction. The witness is built whenever the cell is representable (the lifted gate:
+/// balance/nonce match the captured pre-state); otherwise the caller passes `None` and the
+/// byte-identical v1 leg runs.
 ///
 /// `pre_balance` / `pre_nonce` are the actor cell's state captured **before**
 /// the executor mutated the ledger (the pre-state the proof's `old_commit`
@@ -218,14 +221,14 @@ impl std::error::Error for FullTurnProvingError {}
 /// fails or — critically — if the freshly generated proof does not verify
 /// against the expected commitments (the verify→accept leg).
 /// Build the per-turn ROTATION producer witnesses for the self-sovereign FLOW-B path from the
-/// REAL before/after actor cells + a turn-context ledger snapshot. Returns `Some` only when the
-/// before-cell is representable by the cap-less `CellState::new(pre_balance, pre_nonce)`
-/// pre-state the self-sovereign leg proves over — i.e. the rotated block's welded scalars
-/// (`r0↔balance_lo · r1↔nonce · r2↔balance_hi · r3..r10↔fields · cap_root`) agree with the v1
-/// sub-trace by construction. A cell carrying non-zero fields or a non-empty c-list does NOT
-/// match that synthetic pre-state, so the rotated leg would bind a different OLD_COMMIT than the
-/// v1 leg attests — we return `None` and let the byte-identical v1 leg run rather than emit a
-/// proof whose two legs disagree.
+/// REAL before/after actor cells + a turn-context ledger snapshot. PATH-PRESERVE §4 (the lift):
+/// returns `Some` whenever the cell is REPRESENTABLE — balance/nonce match the node's captured
+/// `(pre_balance, pre_nonce)`. The rotated block's welded scalars
+/// (`r0↔balance_lo · r1↔nonce · r2↔balance_hi · r3..r10↔fields[0..8] · cap_root`) are filled from
+/// the REAL cell, and the prover now seeds `initial_vm_state` from that same witness (so the
+/// v1-prefix OLD_COMMIT equals the rotated OLD_COMMIT for a field-bearing / cap-holding cell too).
+/// A balance/nonce that disagrees with the captured scalars means an inconsistent pre-state
+/// capture (would mis-pin OLD_COMMIT) — return `None` and let the byte-identical v1 leg run.
 ///
 /// The non-spend self-sovereign turn carries no note, so the nullifier root is the empty root
 /// on both blocks (mirrors the C1 sovereign path). `cells_root` rides a single-cell ledger
@@ -343,19 +346,22 @@ fn rotation_witness_for_self_sovereign_impl(
 ) -> Option<dregg_sdk::RotationTurnWitness> {
     use dregg_turn::rotation_witness as rw;
 
-    // SELF-VALIDATING GATE: the self-sovereign leg proves over the cap-less
-    // `CellState::new(pre_balance, pre_nonce)` synthetic pre-state (zero fields, empty c-list
-    // root). The rotated block's welded scalars (`r0↔balance_lo · r1↔nonce · r2↔balance_hi ·
-    // r3..r10↔fields[0..8] · cap_root`) are derived from the REAL before-cell, so they agree
-    // with that synthetic state IFF the cell is representable by it: balance/nonce match, all
-    // fields are zero, and the c-list is empty. Any divergence ⇒ the rotated OLD_COMMIT would
-    // disagree with the v1 leg ⇒ return `None` (the byte-identical v1 leg runs instead).
-    let cell_is_synthetic_shaped = before_cell.state.balance() == pre_balance as i64
-        && before_cell.state.nonce() == pre_nonce
-        && before_cell.state.fields.iter().all(|f| *f == [0u8; 32])
-        && dregg_cell::compute_canonical_capability_root_felt(&before_cell.capabilities)
-            == dregg_circuit::cap_root::empty_capability_root();
-    if !cell_is_synthetic_shaped {
+    // REPRESENTABILITY GATE (PATH-PRESERVE §4.1 — the non-synthetic-cell lift). The prover entry
+    // now seeds `initial_vm_state` from THIS witness's before-block (`RotationTurnWitness::
+    // before_cell_state`), decoded from the welded limbs the rotated leg uses — so the v1-prefix
+    // OLD_COMMIT and the rotated OLD_COMMIT are the SAME object regardless of whether the cell
+    // carries non-zero fields or a non-empty c-list (the welds copy `fold_bytes32_to_bb(fields)` +
+    // the canonical cap root; the authority residue + fields[8..16] ride the witness-carried r23).
+    // The gate therefore stops being "is this cell PRISTINE (zero fields, empty c-list)?" and
+    // becomes "can the Effect-VM `CellState` losslessly hold this cell, AND does the node's captured
+    // (pre_balance, pre_nonce) match the cell?" — the only cross-input the prover entry takes
+    // separately from the witness. A balance/nonce that disagrees with the captured scalars means
+    // the node's pre-state capture is inconsistent (would mis-pin OLD_COMMIT), so refuse → the
+    // byte-identical v1 leg runs. Field-bearing / cap-holding ordinary cells now PASS (they no
+    // longer fall to v1), which is the whole point of the lift.
+    let cell_is_representable =
+        before_cell.state.balance() == pre_balance as i64 && before_cell.state.nonce() == pre_nonce;
+    if !cell_is_representable {
         return None;
     }
 
@@ -399,10 +405,12 @@ fn rotation_witness_for_self_sovereign_impl(
 /// Build the per-turn ROTATION producer witnesses for the CAPABILITY-GATED FLOW-B path from the
 /// REAL before/after actor cells + the canonical pre-state `capability_root` the cap-membership
 /// leg binds. This is the AUTHORITY analog of [`rotation_witness_for_self_sovereign_impl`]: a
-/// capability-gated turn's v1 leg proves over `CellState::with_capability_root(pre_balance,
-/// pre_nonce, pre_capability_root)` (the real cap root, zero fields), so the rotated block's welded
-/// scalars (`r0↔balance_lo · r1↔nonce · r2↔balance_hi · r3..r10↔fields · cap_root`) agree with that
-/// pre-state IFF the cell is representable by it.
+/// capability-gated turn's rotated leg proves over an `initial_vm_state` the prover now seeds from
+/// the REAL cell (PATH-PRESERVE §4 — decoded from this witness's welded limbs via
+/// [`dregg_sdk::RotationTurnWitness::before_cell_state`], real cap root + real fields[0..8]), so a
+/// FIELD-BEARING cap-holding cell rotates too — the welded scalars
+/// (`r0↔balance_lo · r1↔nonce · r2↔balance_hi · r3..r10↔fields[0..8] · cap_root`) and the v1-prefix
+/// OLD_COMMIT are the same real-cell object by construction.
 ///
 /// CRITICAL (the brief's core requirement — do NOT launder a zero-pk stub): the rotated AUTHORITY
 /// DIGEST limb `r23 = compute_authority_digest_felt(before_cell)` is WITNESS-CARRIED (it is NOT
@@ -414,17 +422,14 @@ fn rotation_witness_for_self_sovereign_impl(
 /// holds in its ledger at the turn's pre-state. We take it directly (the call site passes
 /// `full_turn_pre_cell`), never synthesize it.
 ///
-/// SELF-VALIDATING GATE (returns `None` ⇒ graceful v1 fallback, same discipline as the note-spend
-/// cap-less gate): the welded limbs of the rotated leg are OVERRIDDEN per-row from the v1 capability
-/// state block (zero fields, `cap_root = pre_capability_root`), so the rotated OLD_COMMIT pins agree
-/// with the v1 leg ONLY when the real cell's welded scalars match that block —
-/// `balance == pre_balance`, `nonce == pre_nonce`, every field zero (the cap leg's
-/// `with_capability_root` zeroes fields), and the cell's CANONICAL capability root equals
-/// `pre_capability_root` (the value the membership leg + the welded `cap_root` column bind). Any
-/// divergence ⇒ the rotated and v1 legs would attest different commitments ⇒ `None` and the
-/// byte-identical v1 leg runs. (Unlike the self-sovereign gate this does NOT require an EMPTY cap
-/// root — a capability-gated turn's whole point is a NON-empty c-list; it requires the cell's real
-/// root to MATCH the canonical pre-state root the node captured.)
+/// REPRESENTABILITY GATE (PATH-PRESERVE §4.1; returns `None` ⇒ graceful v1 fallback): admits the
+/// cell when `balance == pre_balance`, `nonce == pre_nonce`, AND the cell's CANONICAL capability
+/// root equals `pre_capability_root` (the value the cap-membership leg's `CapRootMismatch` tooth
+/// binds AND the seeded EffectVm row's `cap_root` column carries — they must coincide so the
+/// membership leg opens the SAME tree the state-transition leg attests over). The lift DROPS the
+/// former zero-FIELDS demand — a field-bearing cap-holding cell now rotates (its real fields[0..8]
+/// flow through the seeded `initial_vm_state`; fields[8..16] + the authority residue ride the
+/// witness-carried r23). Any divergence ⇒ `None` and the byte-identical v1 cap leg runs.
 fn rotation_witness_for_capability_turn(
     pre_balance: u64,
     pre_nonce: u64,
@@ -436,15 +441,24 @@ fn rotation_witness_for_capability_turn(
 ) -> Option<dregg_sdk::RotationTurnWitness> {
     use dregg_turn::rotation_witness as rw;
 
-    // SELF-VALIDATING GATE: the welded scalars must match the v1 capability pre-state
-    // (`with_capability_root` ⇒ real balance/nonce, ZERO fields, cap_root = pre_capability_root).
-    // The authority digest r23 (witness-carried, NOT welded) then binds the REAL cell's authority
-    // residue into the rotated commit pins — the faithful binding a synthetic stub cannot provide.
+    // REPRESENTABILITY GATE (PATH-PRESERVE §4.1 — the non-synthetic-cell lift, capability path).
+    // The prover entry seeds `initial_vm_state` from THIS witness's before-block
+    // (`RotationTurnWitness::before_cell_state`), so the v1-prefix OLD_COMMIT and the rotated
+    // OLD_COMMIT are the SAME object even when the cell carries non-zero fields (the welds copy the
+    // real `fold_bytes32_to_bb(fields)`; fields[8..16] + the authority residue ride the
+    // witness-carried r23). So we DROP the zero-fields requirement. We KEEP balance/nonce matching
+    // the node's captured (pre_balance, pre_nonce) — the prover entry's separate cross-input — and,
+    // crucially, KEEP `cell_cap_root == pre_capability_root`: the cap-membership leg binds
+    // `pre_capability_root` (its `CapRootMismatch` tooth) and the seeded EffectVm row's `cap_root`
+    // column now equals `cell_cap_root`, so the two must coincide for the membership leg to open the
+    // SAME tree the state-transition leg attests over. Any divergence ⇒ refuse → the byte-identical
+    // v1 cap leg runs. (Unlike the self-sovereign gate this never required an EMPTY cap root — a
+    // cap-gated turn's whole point is a non-empty c-list; the lift only removes the zero-FIELDS
+    // demand, so field-bearing cap-holding cells now rotate.)
     let cell_cap_root =
         dregg_cell::compute_canonical_capability_root_felt(&before_cell.capabilities);
     let cell_matches_v1_prestate = before_cell.state.balance() == pre_balance as i64
         && before_cell.state.nonce() == pre_nonce
-        && before_cell.state.fields.iter().all(|f| *f == [0u8; 32])
         && cell_cap_root == pre_capability_root;
     if !cell_matches_v1_prestate {
         return None;
@@ -513,12 +527,24 @@ pub fn prove_and_verify_finalized_turn(
 
     // 2. Build the actor cell's pre-execution Effect-VM state. The old
     //    commitment the proof binds to is this state's commitment.
-    //    `CellState::new` seeds `cap_root` with the EMPTY c-list root (cap
-    //    Phase A) — the real canonical capability root for the cap-less actor
-    //    cells this self-sovereign agent path serves. (A cell that holds
-    //    capabilities is proven via the sdk's sovereign path, which seeds the
-    //    real root through `CellState::with_capability_root`.)
-    let initial_vm_state = CellState::new(pre_balance, pre_nonce as u32);
+    //
+    //    PATH-PRESERVE §4 (the non-synthetic-cell lift): when a rotation witness is threaded, the
+    //    rotated leg's OLD_COMMIT is the v1 prefix `generate_effect_vm_trace` emits from THIS
+    //    `initial_vm_state` (the rotated welds then override `r0..r10`/`cap_root` from that same v1
+    //    state block — `trace_rotated.rs:294-307`). So `initial_vm_state` must carry the REAL cell's
+    //    balance/nonce/fields[0..8]/cap_root, NOT a synthetic zero-field `CellState::new`, else a
+    //    field-bearing / cap-holding cell's rotated OLD_COMMIT would attest a fictional zero-field
+    //    cell that a light client re-deriving from the real cell could never reproduce (an ARGUS
+    //    regression). We seed it from `rotation.before_cell_state()`, decoded from the SAME welded
+    //    limbs the rotated leg uses, so the agreement is by construction (§4.2). Without a rotation
+    //    witness (the byte-identical v1 fallback / `not(recursion)`), `CellState::new` seeds the
+    //    cap-less zero-field synthetic state the v1 self-sovereign leg has always proven over.
+    let initial_vm_state = match &rotation {
+        Some(rot) => rot
+            .before_cell_state()
+            .map_err(FullTurnProvingError::Prove)?,
+        None => CellState::new(pre_balance, pre_nonce as u32),
+    };
     let old_commit = initial_vm_state.state_commitment;
 
     // 3. Derive the proven post-state commitment from the AIR boundary public
@@ -814,9 +840,25 @@ pub fn prove_and_verify_finalized_turn_capability(
 
     // Effect-VM pre-state, seeded with the REAL canonical capability root (cap
     // Phase A) — the same root the membership leg opens against.
+    //
+    // PATH-PRESERVE §4 (the non-synthetic-cell lift): with a rotation witness threaded the rotated
+    // leg's OLD_COMMIT is the v1 prefix emitted from THIS `initial_vm_state`, so it must carry the
+    // REAL cell's fields[0..8] (not the zero fields `with_capability_root` seeds) for a field-bearing
+    // cap-holding cell's rotated OLD_COMMIT to faithfully represent it. We seed from
+    // `rotation.before_cell_state()` (decoded from the same welded limbs the rotated leg uses) so the
+    // agreement holds by construction; that decode carries the real cap_root too, which the gate
+    // already pinned to `pre_capability_root` (so the membership leg still opens the SAME tree the
+    // EffectVm row's `cap_root` column binds). Without a rotation witness the byte-identical
+    // `with_capability_root` (zero fields, real cap root) v1 cap leg runs.
     let vm_effects = AgentCipherclerk::convert_effects_to_vm(agent, effects);
-    let initial_vm_state =
-        CellState::with_capability_root(pre_balance, pre_nonce as u32, pre_capability_root);
+    let initial_vm_state = match &rotation {
+        Some(rot) => rot
+            .before_cell_state()
+            .map_err(FullTurnProvingError::Prove)?,
+        None => {
+            CellState::with_capability_root(pre_balance, pre_nonce as u32, pre_capability_root)
+        }
+    };
     let old_commit = initial_vm_state.state_commitment;
     let (_trace, pi) = generate_effect_vm_trace(&initial_vm_state, &vm_effects);
     let new_commit = pi[dregg_circuit::effect_vm::pi::NEW_COMMIT];
@@ -1048,39 +1090,146 @@ mod tests {
         );
     }
 
-    /// FLOW-B FALLBACK: a cell the synthetic cap-less pre-state cannot represent (here: a
-    /// non-zero field) does NOT yield a rotation witness — the builder returns `None` and the
-    /// caller keeps the v1 leg. This is the self-validating gate refusing to mint a proof whose
-    /// two legs would bind different commitments.
+    /// FLOW-B NON-SYNTHETIC CELL PROVES ROTATED (PATH-PRESERVE §4 — the lift). This test was the
+    /// INVERSE before Phase 3: a field-bearing cell used to fall back to v1 (`rotation.is_none()`)
+    /// because the synthetic `CellState::new` pre-state could not represent it. Phase 3 seeds
+    /// `initial_vm_state` from the REAL cell (decoded from the rotation witness's welded limbs, the
+    /// SAME felts the rotated leg welds), so the v1-prefix OLD_COMMIT and the rotated OLD_COMMIT are
+    /// the same object — and a field-bearing cell now yields a rotation witness whose composed proof
+    /// VERIFIES rotated against the real cell's commitment.
     #[test]
-    fn flow_b_non_synthetic_cell_falls_back_to_v1() {
-        let alice = CellId::from_bytes([0xA1; 32]);
+    fn flow_b_non_synthetic_cell_proves_rotated() {
         let bob = CellId::from_bytes([0xB2; 32]);
         let pre_balance: u64 = 1_000;
+        let pre_nonce: u64 = 0;
 
+        // A REAL field-bearing cell: non-zero `fields[0]` (the shape the OLD gate refused). In the
+        // live node path the agent id IS the cell's id, so the effect's `from` + the proving `agent`
+        // are `before_cell.id()`.
         let mut before_cell =
-            dregg_cell::Cell::with_balance(alice.0, [0u8; 32], pre_balance as i64);
-        // A non-zero field ⇒ not representable by `CellState::new` ⇒ the gate must refuse.
-        before_cell.state.fields[0] = [0x07u8; 32];
-        let after_cell = before_cell.clone();
+            dregg_cell::Cell::with_balance([0xA1; 32], [0u8; 32], pre_balance as i64);
+        before_cell.state.set_field(0, [0x07u8; 32]);
+        let alice = before_cell.id();
+        // The transfer debits alice's balance by the amount (+ the runtime nonce tick).
+        let amount: u64 = 100;
+        let mut after_cell = before_cell.clone();
+        after_cell.state.set_balance((pre_balance - amount) as i64);
 
         let effects = vec![dregg_turn::Effect::Transfer {
             from: alice,
             to: bob,
-            amount: 10,
+            amount,
+        }];
+        let turn_hash = [0x6Bu8; 32];
+        let receipt_hashes = [[0x11u8; 32]];
+
+        // The lifted REPRESENTABILITY gate must now ADMIT the field-bearing cell.
+        let rotation = rotation_witness_for_self_sovereign(
+            pre_balance,
+            pre_nonce,
+            &before_cell,
+            &after_cell,
+            &receipt_hashes,
+            &effects,
+        );
+        assert!(
+            rotation.is_some(),
+            "PATH-PRESERVE §4: a field-bearing cell must now yield a rotation witness (lifted gate)"
+        );
+
+        // Prove the finalized turn ROTATED + gate acceptance (the live commit-path call). The
+        // verify→accept leg pins OLD/NEW to the real (field-bearing) cell's commitment.
+        let proven = prove_and_verify_finalized_turn(
+            &alice,
+            pre_balance,
+            pre_nonce,
+            &effects,
+            turn_hash,
+            rotation,
+        )
+        .expect("the rotated NON-SYNTHETIC self-sovereign turn must prove + verify");
+
+        // It must carry the ROTATED leg (not the v1 `"effect-vm"`).
+        let labels: Vec<&str> = proven
+            .proof
+            .composed
+            .sub_proofs
+            .iter()
+            .map(|sp| sp.label.as_str())
+            .collect();
+        assert!(
+            labels.contains(&"effect-vm-rotated"),
+            "the non-synthetic node turn must prove through the rotated descriptor; sub-proofs = {labels:?}"
+        );
+        assert!(
+            !labels.contains(&"effect-vm"),
+            "the v1 effect-vm leg must NOT be present on the rotated non-synthetic turn; sub-proofs = {labels:?}"
+        );
+
+        // Independent re-verification against the carried commitments (a light client's path):
+        // OLD_COMMIT is the REAL field-bearing cell's commitment, reproducible from the real cell.
+        dregg_sdk::verify_full_turn(&proven.proof, proven.old_commit, proven.new_commit)
+            .expect("the non-synthetic rotated proof must re-verify against the real-cell commitments");
+    }
+
+    /// ANTI-GHOST (PATH-PRESERVE §4): the non-synthetic rotated turn's commitments are LOAD-BEARING
+    /// — forging the post-state commitment (the proven NEW_COMMIT off by one felt) is REJECTED, so a
+    /// field-bearing cell's rotated proof cannot attest a fictional post-state. This is the §6.2
+    /// tooth specialized to the lifted (non-synthetic) path.
+    #[test]
+    fn flow_b_non_synthetic_forged_post_state_is_rejected() {
+        let bob = CellId::from_bytes([0xB2; 32]);
+        let pre_balance: u64 = 1_000;
+        let pre_nonce: u64 = 0;
+
+        let mut before_cell =
+            dregg_cell::Cell::with_balance([0xA1; 32], [0u8; 32], pre_balance as i64);
+        before_cell.state.set_field(0, [0x07u8; 32]);
+        let alice = before_cell.id();
+        let amount: u64 = 100;
+        let mut after_cell = before_cell.clone();
+        after_cell.state.set_balance((pre_balance - amount) as i64);
+
+        let effects = vec![dregg_turn::Effect::Transfer {
+            from: alice,
+            to: bob,
+            amount,
         }];
         let rotation = rotation_witness_for_self_sovereign(
             pre_balance,
-            0,
+            pre_nonce,
             &before_cell,
             &after_cell,
             &[[0x11u8; 32]],
             &effects,
-        );
+        )
+        .expect("field-bearing cell yields a rotation witness (lifted gate)");
+
+        let proven = prove_and_verify_finalized_turn(
+            &alice,
+            pre_balance,
+            pre_nonce,
+            &effects,
+            [0x6Cu8; 32],
+            Some(rotation),
+        )
+        .expect("honest non-synthetic rotated turn must prove");
+
+        // Forge the post-state commitment the verifier is asked to accept.
+        let forged_new_commit = proven.new_commit + BabyBear::new(1);
+        assert_ne!(forged_new_commit, proven.new_commit);
+        let result =
+            dregg_sdk::verify_full_turn(&proven.proof, proven.old_commit, forged_new_commit);
         assert!(
-            rotation.is_none(),
-            "a field-bearing cell must NOT yield a rotation witness (fall back to v1)"
+            result.is_err(),
+            "ANTI-GHOST: a forged post-state commitment on the non-synthetic rotated leg MUST be rejected"
         );
+        match result.unwrap_err() {
+            FullTurnVerifyError::CommitmentMismatch { which, .. } => {
+                assert_eq!(which, "new_commitment");
+            }
+            other => panic!("expected new_commitment mismatch, got {other:?}"),
+        }
     }
 
     // ──────────────────────────────────────────────────────────────────────

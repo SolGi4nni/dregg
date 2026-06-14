@@ -220,6 +220,61 @@ impl RotationTurnWitness {
             caveat,
         }
     }
+
+    /// PATH-PRESERVE §4 (the non-synthetic-cell lift): reconstruct the Effect-VM `CellState`
+    /// that seeds `initial_vm_state` from THIS witness's BEFORE-block producer limbs, so the v1
+    /// prefix the rotated generator emits (`generate_effect_vm_trace(initial_state, …)`, whose
+    /// `pi[OLD_COMMIT]` the verifier pins to `expected_old_commit`) and the rotated leg's welded
+    /// scalars (`fill_block` overrides `r0..r10`/`cap_root` from THAT v1 state block,
+    /// `trace_rotated.rs:294-307`) are derived from the SAME felts — so OLD_COMMIT agrees with
+    /// the real (field-bearing / cap-holding) cell BY CONSTRUCTION (§4.2).
+    ///
+    /// The welded limbs are read straight off `before.pre_limbs` in the Lean-pinned order
+    /// (`rotation_witness.rs:260-290`): `r0 = pre_limbs[1]` (balance_lo) · `r1 = pre_limbs[2]`
+    /// (nonce) · `r2 = pre_limbs[3]` (balance_hi) · `r3..r10 = pre_limbs[4..12]` (fields[0..8],
+    /// already `fold_bytes32_to_bb`'d — copied verbatim, the same value the v1 state block
+    /// carries) · `cap_root = pre_limbs[B_CAP_ROOT]` (the canonical openable root). The
+    /// authority-bearing residue (permissions/VK/delegate/program/mode + fields[8..16]) rides
+    /// the witness-carried authority digest `r23` in the rotated commit — it is NOT part of the
+    /// v1-prefix `compute_commitment` (which hashes only balance/nonce/fields[0..8]/cap_root), so
+    /// the EffectVm `CellState` losslessly holds everything OLD_COMMIT binds. `sealed_field_mask`
+    /// / `mode_flag` do not enter `compute_commitment` either; left at 0 (their only trace home is
+    /// the v1 `RESERVED` column, which OLD_COMMIT does not absorb and the rotated weld carries via
+    /// r23).
+    pub fn before_cell_state(&self) -> Result<CellState, SdkError> {
+        use dregg_circuit::effect_vm::trace_rotated::B_CAP_ROOT;
+        let pre = &self.before.pre_limbs;
+        // The before-block must carry the full pre-iroot limb vector (the rotated generator
+        // requires it too). Guard so a malformed witness is a loud `InvalidWitness`, not a panic.
+        if pre.len() <= B_CAP_ROOT {
+            return Err(SdkError::InvalidWitness(format!(
+                "rotation before-witness has {} pre-limbs, need > {B_CAP_ROOT} to seed \
+                 initial_vm_state",
+                pre.len()
+            )));
+        }
+        // balance: invert `split_u64` (lo = low 30 bits, hi = val >> 30) on the welded limbs.
+        let lo = pre[1].0 as u64;
+        let hi = pre[3].0 as u64;
+        let balance = lo | (hi << 30);
+        let nonce = pre[2].0;
+        let mut fields = [BabyBear::ZERO; 8];
+        for (i, f) in fields.iter_mut().enumerate() {
+            *f = pre[4 + i]; // r3..r10 — the already-folded field felts, verbatim.
+        }
+        let capability_root = pre[B_CAP_ROOT];
+        let mut s = CellState {
+            balance,
+            nonce,
+            fields,
+            capability_root,
+            state_commitment: BabyBear::ZERO,
+            sealed_field_mask: 0,
+            mode_flag: 0,
+        };
+        s.refresh_commitment();
+        Ok(s)
+    }
 }
 
 /// Authorization witness for the derivation sub-proof.
