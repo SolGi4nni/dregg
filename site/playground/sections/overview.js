@@ -57,6 +57,17 @@ export function initOverview() {
     </div>
 
     <div class="overview-capabilities">
+      <div class="overview-cap overview-cap--feature" data-nav="web-surface" style="grid-column:1/-1;border-color:var(--accent);background:var(--accent-soft);">
+        <div class="overview-cap__title">Web Surface — the killer demo <span style="font-size:0.7em;color:var(--accent-bright);">two tabs, one surface, the share that refuses</span></div>
+        <div class="overview-cap__desc">
+          A browser window IS a <code>Capability{ target: Surface(cell), rights }</code> rendered to a
+          <code>&lt;canvas&gt;</code>. Alice opens her cell as a pane; shares it <strong>read-only</strong>
+          with Bob (a real <code>GrantCapability</code> turn); an onward <strong>writable</strong> share is
+          <strong>REJECTED</strong> with the <code>⚠ over-share</code> banner (no-amplification at the pixel
+          layer); revoke darks the frame (n=1); then <strong>verify the whole history yourself</strong> in the
+          tab. The copy-paste web evaluation artifact — <a href="#web-surface" style="color:var(--accent-bright);text-decoration:underline;">open it &#8594;</a>
+        </div>
+      </div>
       <div class="overview-cap" data-nav="tokens">
         <div class="overview-cap__title">Tokens</div>
         <div class="overview-cap__desc">Mint root macaroons, attenuate with caveats, verify against policy. HMAC-based, constant-time.</div>
