@@ -59,6 +59,7 @@
 //!   *whether the turn may fire at all* is the real `is_attenuation`, in-band.
 
 use dregg_cell::is_attenuation;
+use dregg_cell::state::CellState;
 use dregg_cell::AuthRequired;
 use dregg_turn::Effect;
 use dregg_types::CellId;
@@ -138,6 +139,291 @@ impl CellAffordance {
     /// effect — it is a readout of the genuine template, not a substitute for it.
     pub fn effect_summary(&self) -> EffectSummary {
         EffectSummary::of(&self.effect_template)
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// The TEMPORAL / TRANSITION rung — the Rust mirror of `Dregg2.Deos.Reactive`.
+//
+// LAW #1: the Lean (`metatheory/Dregg2/Deos/Reactive.lean`) is authoritative;
+// this is its faithful Rust twin. `GatedAffordance` (the `app-framework` sibling
+// lane) gates a SINGLE state snapshot via a `state_cond` cell-program. This rung
+// gates the SHAPE of the `old → new` TRANSITION (a relational `link` reading BOTH
+// records — "the tally went up by exactly one", which a property of `new` alone
+// can NEVER witness) PLUS an inclusive `[open_height, close_height]` deadline
+// WINDOW over the turn height. The membrane (`projectMembrane`) divides a surface
+// by BOTH the cap dimension AND a per-viewer witness-graph disclosure bit.
+// ════════════════════════════════════════════════════════════════════════════
+
+/// A decidable predicate on a SINGLE record — the `pre`/`post` endpoints of a
+/// transition gate. The Rust twin of the Lean `Value → Bool`. (E.g. "the cell's
+/// status slot is PENDING".)
+pub type RecordPredicate = Box<dyn Fn(&CellState) -> bool>;
+
+/// A decidable predicate on a TRANSITION `(old, new)` — reads BOTH records. The
+/// atom of reactivity and the Rust twin of the Lean `TransitionPred`
+/// (`Value → Value → Bool`): unlike a single-state predicate, a
+/// `TransitionPredicate` can require `new[count] == old[count] + 1` — the
+/// relational pre→new bridge the existing single-state `state_cond`
+/// (`GatedAffordance`) cannot express by construction.
+pub type TransitionPredicate = Box<dyn Fn(&CellState, &CellState) -> bool>;
+
+/// **`TransitionGate`** — a transition gate as three decidable predicates (the
+/// Rust twin of the Lean `TransitionGate`): `pre` (the cell must START in a
+/// qualifying state — e.g. status = PENDING), `post` (it must LAND in a
+/// qualifying state), and `link` (the relational pre→new bridge — the part that
+/// reads BOTH records, e.g. "the tally went up by exactly one"). The `link` is
+/// what makes this a TRANSITION gate and not two single-state gates: it cannot be
+/// witnessed by either endpoint alone — the half a single-state gate
+/// (`admitsCtx … old new` read as "is `new` ok") can be fooled by.
+pub struct TransitionGate {
+    /// The OLD record must satisfy this (the cell starts in a qualifying state).
+    pub pre: RecordPredicate,
+    /// The NEW record must satisfy this (the cell lands in a qualifying state).
+    pub post: RecordPredicate,
+    /// The relational pre→new bridge — reads BOTH records (e.g.
+    /// `new[count] == old[count] + 1`). The reactivity core: a property of `new`
+    /// alone can never witness it.
+    pub link: TransitionPredicate,
+}
+
+impl std::fmt::Debug for TransitionGate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // The predicates are closures (not `Debug`); name the gate's shape, not
+        // its (opaque) function pointers.
+        f.debug_struct("TransitionGate")
+            .field("pre", &"<RecordPredicate>")
+            .field("post", &"<RecordPredicate>")
+            .field("link", &"<TransitionPredicate>")
+            .finish()
+    }
+}
+
+impl TransitionGate {
+    /// Assemble a transition gate from its three predicates.
+    pub fn new(pre: RecordPredicate, post: RecordPredicate, link: TransitionPredicate) -> Self {
+        TransitionGate { pre, post, link }
+    }
+
+    /// **`transition_ok(old, new)`** — the transition gate fires:
+    /// `pre(old) && post(new) && link(old, new)`. THE predicate that says "this
+    /// `old → new` transition is the one this button reacts to" (the Rust twin of
+    /// the Lean `transitionOK`). The conjunction is what makes a property of `new`
+    /// alone insufficient: the `link` reaches back into `old`.
+    pub fn transition_ok(&self, old: &CellState, new: &CellState) -> bool {
+        (self.pre)(old) && (self.post)(new) && (self.link)(old, new)
+    }
+}
+
+/// The turn-evaluation context the reactive window reads — the Rust twin of the
+/// executor's `EvalContext`, carrying the `height` the Lean `inWindow` gates on.
+/// (The standalone crate does not link the executor's full `EvalContext`; this is
+/// the minimal faithful carrier — the reactive layer reads only `height`.)
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct EvalContext {
+    /// The turn height (the executor's `EvalContext::height` / `block_height`).
+    pub height: u64,
+}
+
+impl EvalContext {
+    /// A context at turn `height`.
+    pub fn at_height(height: u64) -> Self {
+        EvalContext { height }
+    }
+}
+
+/// **`ReactiveAffordance`** — the deos element that reacts in THREE dimensions:
+/// WHO (the cap-gate, in the carried [`CellAffordance`]), WHAT TRANSITION (the
+/// [`TransitionGate`]), and WHEN (an inclusive height window
+/// `[open_height, close_height]` over the turn height). The Rust twin of the Lean
+/// `ReactiveAffordance`. The window is two-sided (a genuine `[open, close]` voting
+/// window with an auto-closing deadline). The "vote" button is
+/// `{ affordance: vote(requires ballot cap), gate: pending→pending ∧ tally+1,
+/// open_height, close_height }`.
+///
+/// NOT new cryptography and NOT a new state machine: the cap-gate is the EXISTING
+/// [`CellAffordance::authorized_for`] (`is_attenuation`, the proven lattice); a
+/// committed fire rides the SAME [`AffordanceSurface::fire`] path (so the leg-4
+/// attested-root binding is identical). What is NEW is the GATE SHAPE — the
+/// relational `link` + the two-sided window, decidable conjunctions layered ON
+/// TOP, never a new lattice.
+pub struct ReactiveAffordance {
+    /// The cap-gated effect-template (the REAL effect + its `required_rights`).
+    pub affordance: CellAffordance,
+    /// The transition gate (`pre`/`post`/`link`) the `(old, new)` must satisfy.
+    pub gate: TransitionGate,
+    /// The inclusive window OPEN height — the fire is refused before this height.
+    pub open_height: u64,
+    /// The inclusive window CLOSE height (the deadline) — the fire is refused
+    /// after this height.
+    pub close_height: u64,
+}
+
+impl std::fmt::Debug for ReactiveAffordance {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ReactiveAffordance")
+            .field("affordance", &self.affordance)
+            .field("gate", &self.gate)
+            .field("open_height", &self.open_height)
+            .field("close_height", &self.close_height)
+            .finish()
+    }
+}
+
+impl ReactiveAffordance {
+    /// Assemble a reactive affordance: a cap-gated `affordance`, the transition
+    /// `gate`, and the inclusive `[open_height, close_height]` window.
+    pub fn new(
+        affordance: CellAffordance,
+        gate: TransitionGate,
+        open_height: u64,
+        close_height: u64,
+    ) -> Self {
+        ReactiveAffordance {
+            affordance,
+            gate,
+            open_height,
+            close_height,
+        }
+    }
+
+    /// **`in_window(ctx)`** — the turn height lies in the inclusive window
+    /// `[open_height, close_height]` (the Rust twin of the Lean `inWindow`).
+    /// Before `open_height` the button has not yet opened; after `close_height` it
+    /// has auto-closed (the deadline passed).
+    pub fn in_window(&self, ctx: &EvalContext) -> bool {
+        self.open_height <= ctx.height && ctx.height <= self.close_height
+    }
+
+    /// **`reactive_ok(held, ctx, old, new)`** — the THREE-WAY gate as one bool:
+    /// the cap-gate AND the transition-gate AND the window-gate (the Rust twin of
+    /// the Lean `reactiveOK`). THE predicate that says "this button may fire RIGHT
+    /// NOW, for this viewer, on THIS transition, at THIS height". Drop ANY one
+    /// gate and it is `false`.
+    pub fn reactive_ok(
+        &self,
+        held: &SurfaceCapability,
+        ctx: &EvalContext,
+        old: &CellState,
+        new: &CellState,
+    ) -> bool {
+        self.affordance.authorized_for(held)
+            && self.gate.transition_ok(old, new)
+            && self.in_window(ctx)
+    }
+
+    /// **`fire`** the reactive affordance for an actor holding `held`, at turn
+    /// `ctx.height`, against the transition `(old, new)`. The Rust twin of the
+    /// Lean `fireReactive` and the keystone `fireReactive_iff`: it commits — via
+    /// the SAME [`AffordanceSurface::fire`] path, producing the genuine
+    /// [`AffordanceIntent`] carrying the REAL effect — IFF ALL THREE gates pass:
+    ///
+    ///   1. the cap-gate ([`CellAffordance::authorized_for`] = `is_attenuation`),
+    ///   2. THEN the transition-gate (`pre(old) && post(new) && link(old, new)`),
+    ///   3. THEN the inclusive window (`open_height <= height <= close_height`).
+    ///
+    /// The refusal is precise and IN-BAND (never a silent run, never a forged
+    /// surface):
+    ///
+    ///   * [`FireError::Unauthorized`] — the cap tooth (the actor lacks the
+    ///     rights), the twin of `fireReactive_cap_fail_refuses`;
+    ///   * [`FireError::TransitionUnmet`] — the transition tooth (this `old → new`
+    ///     is not the one the button reacts to), the twin of
+    ///     `fireReactive_transition_fail_refuses` /
+    ///     `fireReactive_wrong_old_refuses` — a fully-authorized actor inside the
+    ///     window is refused if the SAME `new` was reached from a `old` that
+    ///     breaks the relational `link`;
+    ///   * [`FireError::OutsideWindow`] — the deadline tooth (the height is
+    ///     outside `[open, close]`), the twin of
+    ///     `fireReactive_window_fail_refuses` / `fireReactive_after_deadline_refuses`.
+    ///
+    /// The gate order matches the Lean (`fireGate` then `transitionOK` then
+    /// `inWindow`); the first failing gate names the refusal.
+    pub fn fire(
+        &self,
+        actor: CellId,
+        held: &SurfaceCapability,
+        ctx: &EvalContext,
+        old: &CellState,
+        new: &CellState,
+    ) -> Result<AffordanceIntent, FireError> {
+        // (1) the cap tooth — the REAL `is_attenuation`, exactly as the
+        //     non-reactive `AffordanceSurface::fire` runs it.
+        if !self.affordance.authorized_for(held) {
+            return Err(FireError::Unauthorized {
+                affordance: self.affordance.name.clone(),
+                required: self.affordance.required_rights.clone(),
+            });
+        }
+        // (2) the transition tooth — `pre(old) && post(new) && link(old, new)`.
+        //     A property of `new` alone is NOT enough: the `link` checks the
+        //     SHAPE of the transition (the anti-"a good-looking new state is
+        //     enough" pin).
+        if !self.gate.transition_ok(old, new) {
+            return Err(FireError::TransitionUnmet {
+                affordance: self.affordance.name.clone(),
+            });
+        }
+        // (3) the deadline tooth — the inclusive `[open, close]` window.
+        if !self.in_window(ctx) {
+            return Err(FireError::OutsideWindow {
+                affordance: self.affordance.name.clone(),
+                open: self.open_height,
+                close: self.close_height,
+                height: ctx.height,
+            });
+        }
+        // All three gates passed: the SAME intent the non-reactive fire mints
+        // (the leg-4 root-binding rides this exact path).
+        Ok(AffordanceIntent {
+            surface_cell: actor,
+            affordance: self.affordance.name.clone(),
+            actor,
+            effect: self.affordance.effect_template.clone(),
+        })
+    }
+}
+
+/// **`Viewer`** — a membrane viewer (the Rust twin of the Lean `Viewer`): the
+/// rights `held` (the cap dimension — the REAL `is_attenuation` gate input) PLUS a
+/// `permits` predicate (the witness-graph projection — which affordance NAMES this
+/// viewer's frustum authorizes them to SEE, a disclosure/clearance bit decided
+/// OUTSIDE the fire-cap). Two viewers can share `held` but differ in `permits` —
+/// the membrane divides them.
+pub struct Viewer {
+    /// The rights this viewer holds (the cap dimension).
+    pub held: SurfaceCapability,
+    /// The witness-graph projection: which affordance NAMES this viewer's frustum
+    /// authorizes them to see (the disclosure dimension, independent of the
+    /// fire-cap). The Lean keys on `Nat`; here affordance identity is the
+    /// `String` name.
+    pub permits: Box<dyn Fn(&str) -> bool>,
+}
+
+impl std::fmt::Debug for Viewer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Viewer")
+            .field("held", &self.held)
+            .field("permits", &"<Fn(&str) -> bool>")
+            .finish()
+    }
+}
+
+impl Viewer {
+    /// A viewer holding `held` whose witness-graph projection is `permits`.
+    pub fn new(held: SurfaceCapability, permits: Box<dyn Fn(&str) -> bool>) -> Self {
+        Viewer { held, permits }
+    }
+
+    /// **`membrane_shows(aff)`** — the membrane projects affordance `aff` to this
+    /// viewer IFF the viewer's caps authorize the fire
+    /// (`aff.authorized_for(held)`, the REAL `is_attenuation`) AND the viewer's
+    /// witness-graph permits the affordance's name (`permits(aff.name)`). The Rust
+    /// twin of the Lean `membraneShows`: the per-viewer frustum surface as a
+    /// conjunction of AUTHORITY and PROJECTION — the two dimensions the membrane
+    /// negotiates.
+    pub fn membrane_shows(&self, aff: &CellAffordance) -> bool {
+        aff.authorized_for(&self.held) && (self.permits)(&aff.name)
     }
 }
 
@@ -248,6 +534,34 @@ pub enum FireError {
         /// The authority it required (which the actor did not hold).
         required: AuthRequired,
     },
+    /// The actor HOLDS the rights and the height is in the window, but the
+    /// `old → new` TRANSITION is not the one this button reacts to (`pre(old)`,
+    /// `post(new)`, or the relational `link(old, new)` failed) — the **transition
+    /// tooth**, the twin of Lean `fireReactive_transition_fail_refuses` /
+    /// `fireReactive_wrong_old_refuses`. The half a single-state cap-gate can never
+    /// express: the SAME `new` reached from a `old` that breaks the `link` is
+    /// REFUSED even with full caps, an open window, and a `new` satisfying `post`.
+    /// The SHAPE of the transition is checked, not just the destination.
+    TransitionUnmet {
+        /// The affordance whose transition gate was not met.
+        affordance: String,
+    },
+    /// The actor HOLDS the rights and the transition qualifies, but the turn
+    /// `height` is OUTSIDE the inclusive `[open, close]` window — the **deadline
+    /// tooth**, the twin of Lean `fireReactive_window_fail_refuses` /
+    /// `fireReactive_after_deadline_refuses`. Past `close` (or before `open`) a
+    /// fully-authorized, perfectly-qualifying transition auto-refuses: the surface
+    /// reacts to the CLOCK, not just the state.
+    OutsideWindow {
+        /// The affordance whose window was missed.
+        affordance: String,
+        /// The window's inclusive OPEN height.
+        open: u64,
+        /// The window's inclusive CLOSE height (the deadline).
+        close: u64,
+        /// The turn height that fell outside `[open, close]`.
+        height: u64,
+    },
 }
 
 impl AffordanceSurface {
@@ -296,11 +610,49 @@ impl AffordanceSurface {
             .collect()
     }
 
-    /// Convenience: project through a [`Membrane`] (the viewer's held authority is
-    /// the membrane's [`Membrane::held`]). The membrane is the crate's existing
-    /// enforcer; an affordance surface uses the SAME held-authority it carries.
+    /// Convenience: project through a [`Membrane`] by its CAP dimension alone (the
+    /// viewer's held authority is the membrane's [`Membrane::held`]). The
+    /// [`Membrane`] carries only the cap ceiling, so this is the cap-only frustum;
+    /// for the FULL per-viewer membrane — caps AND the witness-graph disclosure bit
+    /// — use [`AffordanceSurface::project_membrane`] with a [`Viewer`].
     pub fn project_for_membrane(&self, membrane: &Membrane) -> Vec<CellAffordance> {
         self.project_for(membrane.held())
+    }
+
+    /// **The per-viewer MEMBRANE projection** — the disclosure-aware frustum, the
+    /// Rust twin of the Lean `projectMembrane`. Return ONLY the affordances the
+    /// `viewer`'s membrane SHOWS: those for which BOTH the cap-gate
+    /// ([`CellAffordance::authorized_for`] = `is_attenuation`) AND the viewer's
+    /// witness-graph projection ([`Viewer::permits`] on the affordance NAME) pass —
+    /// i.e. [`Viewer::membrane_shows`].
+    ///
+    /// This is the fix to the cap-only [`AffordanceSurface::project_for`] /
+    /// [`AffordanceSurface::project_for_membrane`] stub: those divide a surface by
+    /// CAPS alone, so two viewers at EQUAL authority see the SAME set. The membrane
+    /// divides BEYOND caps — two viewers with the SAME `held` but DIFFERENT
+    /// `permits` get DISTINCT surfaces (the keystone `membrane_two_viewers_distinct`
+    /// the cap-only stub refutes). The order is preserved (declaration order), so
+    /// the projection is a stable sub-list.
+    pub fn project_membrane(&self, viewer: &Viewer) -> Vec<CellAffordance> {
+        self.affordances
+            .iter()
+            .filter(|a| viewer.membrane_shows(a))
+            .cloned()
+            .collect()
+    }
+
+    /// The names a `viewer` is shown through the MEMBRANE (sorted) — the
+    /// per-viewer, disclosure-aware affordance set, the thing two
+    /// EQUAL-authority-but-different-`permits` viewers DIVERGE on (the cap-only
+    /// [`AffordanceSurface::visible_names`] cannot tell them apart).
+    pub fn membrane_names(&self, viewer: &Viewer) -> Vec<String> {
+        let mut names: Vec<String> = self
+            .project_membrane(viewer)
+            .into_iter()
+            .map(|a| a.name)
+            .collect();
+        names.sort();
+        names
     }
 
     /// The names a viewer is authorized to see (sorted) — the per-viewer affordance
@@ -1019,5 +1371,382 @@ mod tests {
             surface.get("x").unwrap().effect_summary(),
             EffectSummary::SetField { cell: doc, index: 0 }
         );
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // The TEMPORAL / TRANSITION rung — the Rust mirror of the Lean
+    // `Dregg2.Deos.Reactive` §4/§6/§7 teeth (both polarities, the vote/resolve
+    // worked example from the Lean §8 `#guard`s).
+    // ════════════════════════════════════════════════════════════════════════
+
+    use dregg_cell::state::CellState;
+
+    /// A field-element from a small u64 (big-endian last 8 bytes) — matches the
+    /// cell crate's `field_to_u64` lift and the `app-framework` sibling lane.
+    fn fe(n: u64) -> [u8; 32] {
+        let mut b = [0u8; 32];
+        b[24..32].copy_from_slice(&n.to_be_bytes());
+        b
+    }
+
+    const STATUS_SLOT: usize = 0;
+    const TALLY_SLOT: usize = 1;
+    const PENDING: u64 = 1;
+    const RESOLVED: u64 = 2;
+    const QUORUM: u64 = 3;
+
+    /// A council-cell state with the given status + tally (the `old`/`new` records
+    /// the transition gate reads BOTH of).
+    fn council(status: u64, tally: u64) -> CellState {
+        let mut s = CellState::new(0);
+        s.set_field(STATUS_SLOT, fe(status));
+        s.set_field(TALLY_SLOT, fe(tally));
+        s
+    }
+
+    /// Read a u64 slot off a `CellState` (the Rust twin of the Lean
+    /// `Value.scalar`) — `None` if absent. Used by the relational `link`s.
+    fn slot_u64(s: &CellState, slot: usize) -> Option<u64> {
+        s.get_field(slot).map(|f| {
+            let mut last8 = [0u8; 8];
+            last8.copy_from_slice(&f[24..32]);
+            u64::from_be_bytes(last8)
+        })
+    }
+
+    /// A predicate "status slot == `want`".
+    fn status_is(want: u64) -> RecordPredicate {
+        Box::new(move |s: &CellState| slot_u64(s, STATUS_SLOT) == Some(want))
+    }
+
+    /// The VOTE gate: PENDING → PENDING AND the tally went up by EXACTLY ONE (a
+    /// ballot added) — the relational `link` reading BOTH records (the half a
+    /// single-state gate cannot witness).
+    fn vote_gate() -> TransitionGate {
+        TransitionGate::new(
+            status_is(PENDING),
+            status_is(PENDING),
+            Box::new(|old: &CellState, new: &CellState| {
+                match (slot_u64(old, TALLY_SLOT), slot_u64(new, TALLY_SLOT)) {
+                    (Some(a), Some(b)) => b == a + 1,
+                    _ => false,
+                }
+            }),
+        )
+    }
+
+    /// The RESOLVE gate: PENDING → RESOLVED AND the tally CROSSED quorum on this
+    /// transition (`old < QUORUM <= new`) — the crossing, not the level.
+    fn resolve_gate() -> TransitionGate {
+        TransitionGate::new(
+            status_is(PENDING),
+            status_is(RESOLVED),
+            Box::new(|old: &CellState, new: &CellState| {
+                match (slot_u64(old, TALLY_SLOT), slot_u64(new, TALLY_SLOT)) {
+                    (Some(a), Some(b)) => a < QUORUM && QUORUM <= b,
+                    _ => false,
+                }
+            }),
+        )
+    }
+
+    /// The "vote" reactive button: the ballot cap (`Either`) AND the add-a-ballot
+    /// transition AND inside `[10, 20]`.
+    fn vote_btn(cell: CellId) -> ReactiveAffordance {
+        ReactiveAffordance::new(
+            CellAffordance::new("vote", AuthRequired::Either, set_field(cell, TALLY_SLOT)),
+            vote_gate(),
+            10,
+            20,
+        )
+    }
+
+    /// The "resolve" reactive button: the chair cap (root / `None`) AND the
+    /// quorum-crossing transition AND inside `[10, 30]`.
+    fn resolve_btn(cell: CellId) -> ReactiveAffordance {
+        ReactiveAffordance::new(
+            CellAffordance::new("resolve", AuthRequired::None, set_field(cell, STATUS_SLOT)),
+            resolve_gate(),
+            10,
+            30,
+        )
+    }
+
+    // member holds Either (the ballot cap); chair holds None (root); observer
+    // holds Signature (neither).
+    fn member_held() -> SurfaceCapability {
+        SurfaceCapability::root(cid(20), AuthRequired::Either)
+    }
+    fn chair_held() -> SurfaceCapability {
+        SurfaceCapability::root(cid(21), AuthRequired::None)
+    }
+    fn observer_held() -> SurfaceCapability {
+        SurfaceCapability::root(cid(22), AuthRequired::Signature)
+    }
+
+    #[test]
+    fn reactive_all_three_gates_pass_fires_carrying_the_real_effect() {
+        // The POSITIVE corner (twin of `fireReactive_all_pass` +
+        // `fireReactive_carries_real_effect`): member, ballot-added (tally 0→1),
+        // PENDING→PENDING, inside the window ⇒ FIRES with the REAL effect.
+        let doc = cid(30);
+        let btn = vote_btn(doc);
+        let ctx = EvalContext::at_height(15);
+        let intent = btn
+            .fire(cid(50), &member_held(), &ctx, &council(PENDING, 0), &council(PENDING, 1))
+            .expect("the qualifying transition inside the window fires");
+        assert_eq!(intent.actor, cid(50));
+        assert_eq!(intent.affordance, "vote");
+        // The committed fire carries the REAL effect (the leg-4 binding rides the
+        // SAME path) — a genuine SetField, not a stub.
+        assert_eq!(
+            intent.effect_summary(),
+            EffectSummary::SetField { cell: doc, index: TALLY_SLOT }
+        );
+        assert!(matches!(intent.effect, Effect::SetField { .. }));
+    }
+
+    #[test]
+    fn reactive_transition_tooth_wrong_old_refuses() {
+        // THE TRANSITION TOOTH (twin of `fireReactive_wrong_old_refuses`): the
+        // SAME `new` (PENDING, a valid tally) reached from a WRONG `old` that
+        // breaks the relational `link` REFUSES — EVEN with full caps, an open
+        // window, and a `new` satisfying `post`. A single-state gate would PASS
+        // (the destination looks fine); the SHAPE of the transition is checked.
+        let doc = cid(31);
+        let btn = vote_btn(doc);
+        let ctx = EvalContext::at_height(15); // inside [10, 20]
+
+        // (a) NO ballot added (tally 1→1): the link `new == old + 1` fails.
+        let refused = btn.fire(cid(50), &member_held(), &ctx, &council(PENDING, 1), &council(PENDING, 1));
+        assert_eq!(
+            refused.unwrap_err(),
+            FireError::TransitionUnmet { affordance: "vote".to_string() }
+        );
+
+        // (b) ballot jumped by TWO (tally 0→2): same `new`-status, wrong shape.
+        assert_eq!(
+            btn.fire(cid(50), &member_held(), &ctx, &council(PENDING, 0), &council(PENDING, 2))
+                .unwrap_err(),
+            FireError::TransitionUnmet { affordance: "vote".to_string() }
+        );
+
+        // CONTRAST: the SAME `new` (PENDING, tally 1) from the RIGHT `old`
+        // (tally 0) FIRES — so the refusal above is SOLELY the broken link, not
+        // the destination.
+        assert!(btn
+            .fire(cid(50), &member_held(), &ctx, &council(PENDING, 0), &council(PENDING, 1))
+            .is_ok());
+    }
+
+    #[test]
+    fn reactive_deadline_tooth_outside_window_refuses_both_sides() {
+        // THE DEADLINE TOOTH (twin of `fireReactive_after_deadline_refuses` +
+        // `fireReactive_window_fail_refuses`): a fully-authorized,
+        // perfectly-qualifying transition is REFUSED past `close` (and before
+        // `open`). The surface reacts to the CLOCK.
+        let doc = cid(32);
+        let btn = vote_btn(doc); // window [10, 20]
+        let old = council(PENDING, 0);
+        let new = council(PENDING, 1); // a perfect add-a-ballot transition
+
+        // After the deadline (height 25 > close 20) ⇒ OutsideWindow.
+        let after = btn.fire(cid(50), &member_held(), &EvalContext::at_height(25), &old, &new);
+        assert_eq!(
+            after.unwrap_err(),
+            FireError::OutsideWindow {
+                affordance: "vote".to_string(),
+                open: 10,
+                close: 20,
+                height: 25,
+            }
+        );
+
+        // Before it opens (height 5 < open 10) ⇒ OutsideWindow too.
+        assert_eq!(
+            btn.fire(cid(50), &member_held(), &EvalContext::at_height(5), &old, &new)
+                .unwrap_err(),
+            FireError::OutsideWindow {
+                affordance: "vote".to_string(),
+                open: 10,
+                close: 20,
+                height: 5,
+            }
+        );
+    }
+
+    #[test]
+    fn reactive_temporal_htmx_tooth_same_move_lit_inside_dark_outside() {
+        // THE TEMPORAL HTMX TOOTH (twin of `fireReactive_window_reactive`): the
+        // SAME member's SAME ballot is LIT at height 15 (inside) and DARK at 25
+        // (after) — the verdict decided by TIME, holding the move fixed.
+        let doc = cid(33);
+        let btn = vote_btn(doc);
+        let old = council(PENDING, 0);
+        let new = council(PENDING, 1);
+
+        assert!(btn
+            .fire(cid(50), &member_held(), &EvalContext::at_height(15), &old, &new)
+            .is_ok());
+        assert!(btn
+            .fire(cid(50), &member_held(), &EvalContext::at_height(25), &old, &new)
+            .is_err());
+    }
+
+    #[test]
+    fn reactive_cap_tooth_only_the_ballot_holder_may_vote() {
+        // THE CAP TOOTH (twin of `fireReactive_cap_fail_refuses`): an observer (no
+        // ballot cap) is REFUSED on a perfect transition inside the window — the
+        // cap-gate is the REAL `is_attenuation`, checked FIRST.
+        let doc = cid(34);
+        let btn = vote_btn(doc);
+        let refused = btn.fire(
+            cid(50),
+            &observer_held(),
+            &EvalContext::at_height(15),
+            &council(PENDING, 0),
+            &council(PENDING, 1),
+        );
+        assert!(matches!(
+            refused.unwrap_err(),
+            FireError::Unauthorized { affordance, .. } if affordance == "vote"
+        ));
+    }
+
+    #[test]
+    fn reactive_resolve_fires_only_on_the_quorum_crossing_transition() {
+        // RESOLVE fires ONLY on the quorum-REACHED transition (the §8 resolve
+        // corners): chair, tally 2→3 crossing quorum, PENDING→RESOLVED, inside the
+        // window ⇒ FIRES; a non-crossing (already ≥ quorum) REFUSES; a member
+        // (no chair cap) cannot resolve even on the crossing.
+        let doc = cid(35);
+        let btn = resolve_btn(doc); // window [10, 30]
+        let ctx = EvalContext::at_height(22);
+
+        // (✓) chair, quorum crossed (2→3), PENDING→RESOLVED ⇒ FIRES.
+        assert!(btn
+            .fire(cid(60), &chair_held(), &ctx, &council(PENDING, 2), &council(RESOLVED, 3))
+            .is_ok());
+
+        // (✗) chair, but the link fails (old already ≥ quorum: 3→3, no crossing).
+        assert_eq!(
+            btn.fire(cid(60), &chair_held(), &ctx, &council(PENDING, 3), &council(RESOLVED, 3))
+                .unwrap_err(),
+            FireError::TransitionUnmet { affordance: "resolve".to_string() }
+        );
+
+        // (✗) member (no root cap) cannot resolve even on the crossing ⇒ cap tooth.
+        assert!(matches!(
+            btn.fire(cid(61), &member_held(), &ctx, &council(PENDING, 2), &council(RESOLVED, 3)),
+            Err(FireError::Unauthorized { .. })
+        ));
+    }
+
+    #[test]
+    fn reactive_ok_agrees_with_fire_on_every_corner() {
+        // `reactive_ok` is the three-way conjunction `fire` gates on (twin of
+        // `fireReactive_iff` / `reactiveOK_iff`): it is `true` EXACTLY when `fire`
+        // commits. Cross-check the predicate against the verb on each corner.
+        let doc = cid(36);
+        let btn = vote_btn(doc);
+        let good_old = council(PENDING, 0);
+        let good_new = council(PENDING, 1);
+        let bad_new = council(PENDING, 2); // breaks the +1 link
+
+        let cases = [
+            (member_held(), 15, &good_old, &good_new, true), // all pass
+            (member_held(), 15, &good_old, &bad_new, false), // transition fails
+            (member_held(), 25, &good_old, &good_new, false), // window fails
+            (observer_held(), 15, &good_old, &good_new, false), // cap fails
+        ];
+        for (held, h, old, new, want) in cases {
+            let ctx = EvalContext::at_height(h);
+            assert_eq!(btn.reactive_ok(&held, &ctx, old, new), want);
+            // the verb agrees with the predicate, both polarities.
+            assert_eq!(btn.fire(cid(50), &held, &ctx, old, new).is_ok(), want);
+        }
+    }
+
+    // ── The MEMBRANE keystone: two viewers at EQUAL authority, DIFFERENT
+    //    witness-graph projection, see DISTINCT surfaces. ──
+
+    /// A secret-ballot "view tally" affordance anyone with `Signature` may fire —
+    /// IF their frustum permits it.
+    fn tally_view(doc: CellId) -> CellAffordance {
+        CellAffordance::new("tally", AuthRequired::Signature, emit_event(doc))
+    }
+
+    #[test]
+    fn membrane_two_viewers_at_equal_authority_see_distinct_surfaces() {
+        // THE MEMBRANE KEYSTONE (twin of `membrane_two_viewers_distinct`): two
+        // viewers with the SAME caps (both `Signature`, both clear the cap-gate)
+        // but DIFFERENT `permits` — one frustum SHOWS the tally, the other does
+        // NOT — get DISTINCT surfaces. The membrane divides BEYOND caps. This is
+        // the keystone the cap-only `project_for` stub REFUTES (it would show both
+        // the SAME set).
+        let doc = cid(37);
+        let aff = tally_view(doc);
+        let surface = AffordanceSurface::new(doc).declare(tally_view(doc));
+
+        let trustee = Viewer::new(
+            SurfaceCapability::root(cid(40), AuthRequired::Signature),
+            Box::new(|name: &str| name == "tally"),
+        );
+        let guest = Viewer::new(
+            SurfaceCapability::root(cid(41), AuthRequired::Signature),
+            Box::new(|_| false),
+        );
+
+        // EQUAL authority: both viewers' caps authorize the fire (the cap-only
+        // gate cannot tell them apart).
+        assert!(aff.authorized_for(&trustee.held));
+        assert!(aff.authorized_for(&guest.held));
+        assert_eq!(
+            aff.authorized_for(&trustee.held),
+            aff.authorized_for(&guest.held)
+        );
+
+        // … yet the membrane DIVIDES them: the trustee's frustum SHOWS it, the
+        // guest's does NOT.
+        assert!(trustee.membrane_shows(&aff));
+        assert!(!guest.membrane_shows(&aff));
+
+        // The projection bears it out: the trustee sees the tally button, the
+        // guest sees NOTHING — distinct surfaces over the SAME cap-authority.
+        assert_eq!(surface.membrane_names(&trustee), vec!["tally".to_string()]);
+        assert!(surface.membrane_names(&guest).is_empty());
+        assert_ne!(
+            surface.membrane_names(&trustee),
+            surface.membrane_names(&guest)
+        );
+    }
+
+    #[test]
+    fn membrane_still_respects_the_cap_dimension() {
+        // The membrane is a CONJUNCTION: a viewer whose `permits` says yes but
+        // whose CAPS fall short still sees nothing (the cap dimension survives the
+        // second dimension). An observer at `Signature` permitting an `admin`
+        // (req `None` / root) affordance is NOT shown it.
+        let doc = cid(38);
+        let admin = CellAffordance::new("admin", AuthRequired::None, grant_cap(doc, cid(99)));
+        let surface = AffordanceSurface::new(doc)
+            .declare(CellAffordance::new("admin", AuthRequired::None, grant_cap(doc, cid(99))));
+
+        // permits EVERYTHING, but holds only Signature (lacks root).
+        let eager_but_weak = Viewer::new(
+            SurfaceCapability::root(cid(42), AuthRequired::Signature),
+            Box::new(|_| true),
+        );
+        assert!(!admin.authorized_for(&eager_but_weak.held)); // cap-gate fails
+        assert!(!eager_but_weak.membrane_shows(&admin)); // so the membrane hides it
+        assert!(surface.membrane_names(&eager_but_weak).is_empty());
+
+        // The root holder permitting it IS shown it (both dimensions pass).
+        let root_trustee = Viewer::new(
+            SurfaceCapability::root(cid(43), AuthRequired::None),
+            Box::new(|name: &str| name == "admin"),
+        );
+        assert!(root_trustee.membrane_shows(&admin));
+        assert_eq!(surface.membrane_names(&root_trustee), vec!["admin".to_string()]);
     }
 }

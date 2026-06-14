@@ -156,7 +156,8 @@ pub use rehydrate::{
 };
 pub use affordance::{
     rehydrate_affordances, AffordanceIntent, AffordanceRehydrateError, AffordanceSnapshot,
-    AffordanceSurface, CellAffordance, EffectSummary, FireError, SurfaceBoundary,
+    AffordanceSurface, CellAffordance, EffectSummary, EvalContext, FireError, ReactiveAffordance,
+    RecordPredicate, SurfaceBoundary, TransitionGate, TransitionPredicate, Viewer,
 };
 pub use game::{
     demo_skirmish, demo_world, game_cell, play_match, side_rights, AgentPlayer, AgentPolicy, Board,
