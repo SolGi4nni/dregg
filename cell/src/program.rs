@@ -748,6 +748,91 @@ pub enum SimpleStateConstraint {
         threshold: u32,
         set_commitment_slot: u8,
     },
+
+    // ─── Turn-context atoms (apps gaps 3/4) — the Lean twins that
+    //     LANDED axiom-clean in `metatheory/Dregg2/Exec/Program.lean`
+    //     (`senderMemberOf` / `balanceDeltaLe` / `balanceDeltaGe`), their
+    //     Rust evaluator arms APPENDED here. APPEND-ONLY: postcard encodes
+    //     by variant index, so prior serialized programs / factory VKs /
+    //     content addresses are byte-identical. ───
+    /// **Sender membership (multi-admin actor binding):** the turn's
+    /// sender (the acting cell's public key, from `EvalContext::sender`)
+    /// must be one of `members`. The CLEAN form of the
+    /// `AnyOf[SenderIs{a}, SenderIs{b}, …]` idiom a multi-admin board
+    /// needs — one atom instead of a hand-enumerated disjunction that an
+    /// N-member board would have to widen by hand each time a member
+    /// joins. Composing it under `AnyOf` with an `Immutable{slot}` guard
+    /// gives the multi-admin per-slot binding
+    /// (`AnyOf[Immutable{slot}, SenderMemberOf{board}]`: the slot flips
+    /// only in a turn sent by SOMEONE on the board), the natural
+    /// generalization of the single-key `SenderIs` polis tooth.
+    ///
+    /// Fail-closed: a missing sender (system turn / no context) surfaces
+    /// `MissingContextField { field: "sender" }`, not a pass; a sender
+    /// not on the board is `ConstraintViolated`. COST (§8): FREE /
+    /// i-confluent — a predicate over the single turn's own context with
+    /// no cross-turn invariant (exactly the `SenderIs` classification).
+    ///
+    /// Lean twin: `SimpleConstraint.senderMemberOf` +
+    /// `evalSimpleCtx_senderMemberOf_iff`
+    /// (`metatheory/Dregg2/Exec/Program.lean`). Lives in
+    /// `SimpleStateConstraint` so it composes under `AnyOf`/`Not`.
+    /// APPEND-ONLY (postcard variant indices).
+    SenderMemberOf {
+        members: Vec<[u8; 32]>,
+    },
+    /// **Per-turn balance rate ceiling:** the cell's per-turn change in
+    /// its OWN sealed kernel balance is at most `max` —
+    /// `new.balance − old.balance <= max` (the delta twin of the absolute
+    /// [`Self::BalanceLte`]). The pre-turn balance is the executor's
+    /// `old_state` (`CellState::balance` BEFORE the effect applied), the
+    /// already-plumbed `balanceBefore`; the post is `new_state`. A
+    /// withdrawal-rate / spend-cap gate ("this cell may not GAIN more
+    /// than `max` per turn"); paired with [`Self::BalanceDeltaGte`] it
+    /// bounds per-turn movement in both directions. `max` is SIGNED
+    /// (mirrors the Lean `Int` bound): `max < 0` requires the cell to
+    /// LOSE at least `−max` each turn.
+    ///
+    /// Fail-closed: an absent pre-state (no `old_state`, e.g. a legacy
+    /// init-only evaluation on a nonzero-nonce cell) surfaces
+    /// `TransitionCheckRequiresOldState` (a rate gate cannot be satisfied
+    /// without both endpoints). COST (§8): the BOUNDED / ordering pole —
+    /// a rate-bound on a DECREMENTABLE quantity (the balance) is the
+    /// `bounded_resource_not_iconfluent` case the moment concurrent
+    /// debits exist; single-cell serial execution makes it safe today
+    /// (n=1 collapses the bound), n>1 forces ordering on the cell. NOT
+    /// i-confluent.
+    ///
+    /// Lean twin: `SimpleConstraint.balanceDeltaLe` +
+    /// `evalSimpleCtx_balanceDeltaLe_iff`
+    /// (`metatheory/Dregg2/Exec/Program.lean`). Lives in
+    /// `SimpleStateConstraint` so it composes under `AnyOf`/`Not`.
+    /// APPEND-ONLY (postcard variant indices).
+    BalanceDeltaLte {
+        max: i64,
+    },
+    /// **Per-turn balance rate floor:** the cell's per-turn change in its
+    /// OWN sealed kernel balance is at least `min` —
+    /// `new.balance − old.balance >= min` (the delta twin of the absolute
+    /// [`Self::BalanceGte`]). Reads `old_state.balance()` (pre) and
+    /// `new_state.balance()` (post). The lower-bound rate gate ("may not
+    /// LOSE more than `−min` per turn" when `min < 0`; "must GAIN at
+    /// least `min`" when `min > 0`). `min` is SIGNED (mirrors the Lean
+    /// `Int` bound).
+    ///
+    /// Fail-closed: an absent pre-state surfaces
+    /// `TransitionCheckRequiresOldState`. COST (§8): the BOUNDED /
+    /// ordering pole, same as [`Self::BalanceDeltaLte`] — i-confluent
+    /// only under the single serializer (n=1). NOT i-confluent.
+    ///
+    /// Lean twin: `SimpleConstraint.balanceDeltaGe` +
+    /// `evalSimpleCtx_balanceDeltaGe_iff`
+    /// (`metatheory/Dregg2/Exec/Program.lean`). Lives in
+    /// `SimpleStateConstraint` so it composes under `AnyOf`/`Not`.
+    /// APPEND-ONLY (postcard variant indices).
+    BalanceDeltaGte {
+        min: i64,
+    },
 }
 
 impl SimpleStateConstraint {
@@ -1225,6 +1310,55 @@ pub enum StateConstraint {
         threshold: u32,
         set_commitment_slot: u8,
     },
+
+    // ─── Turn-context atoms (apps gaps 3/4) — top-level twins of the
+    //     `SimpleStateConstraint` context atoms + the StateConstraint-only
+    //     `AffineDeltaLe`. APPEND-ONLY: postcard variant indices of all
+    //     prior variants are preserved (factory VKs / content addresses
+    //     byte-identical, CELL-PROGRAM-LANGUAGE §2). ───
+    /// The turn's sender must be one of `members`. Top-level twin of
+    /// [`SimpleStateConstraint::SenderMemberOf`] (ONE evaluator arm, the
+    /// `SenderIs`/`BalanceGte` precedent). APPEND-ONLY.
+    SenderMemberOf { members: Vec<[u8; 32]> },
+
+    /// The cell's per-turn balance change is `<= max`. Top-level twin of
+    /// [`SimpleStateConstraint::BalanceDeltaLte`] (ONE evaluator arm).
+    /// APPEND-ONLY.
+    BalanceDeltaLte { max: i64 },
+
+    /// The cell's per-turn balance change is `>= min`. Top-level twin of
+    /// [`SimpleStateConstraint::BalanceDeltaGte`] (ONE evaluator arm).
+    /// APPEND-ONLY.
+    BalanceDeltaGte { min: i64 },
+
+    /// **Multi-field delta gate:** `Σ kᵢ·(new[fᵢ] − old[fᵢ]) <= c` over
+    /// named slots (`terms : Vec<(i64 coefficient, u8 slot)>`). The genuine
+    /// multi-field rate gate the single-field [`Self::DeltaBounded`] /
+    /// [`StateConstraint::FieldDelta`] cannot express: a treasury cell with
+    /// two spend slots `out_a`, `out_b` bounds the COMBINED outflow per turn
+    /// (`[(1, out_a), (1, out_b)] <= budget` over the deltas), or a weighted
+    /// basket `2·Δprice − Δindex <= k`. Distinct from the post-state-only
+    /// [`Self::AffineLe`] (a band on the new state) and from
+    /// [`StateConstraint::SumEqualsAcross`] (an intra-cell conservation
+    /// equation): this is a one-sided affine inequality on the DIFFERENCES.
+    /// Maps to a PLONK linear gate over the `(old, new)` wire pair.
+    ///
+    /// Fail-closed: an absent pre-state (no `old_state`) surfaces
+    /// `TransitionCheckRequiresOldState` (the delta is not evaluable
+    /// without both sides); a bad slot index is `InvalidFieldIndex`. COST
+    /// (§8): the BOUNDED / ordering pole — a bound on per-turn CHANGE of
+    /// (generally decrementable) quantities is the
+    /// `bounded_resource_not_iconfluent` case under concurrent writers;
+    /// single-cell serial execution keeps it safe today (n=1), n>1 forces
+    /// ordering. NOT i-confluent.
+    ///
+    /// Lean twin: `StateConstraint.affineDeltaLe` +
+    /// `evalConstraint_affineDeltaLe_iff`
+    /// (`metatheory/Dregg2/Exec/Program.lean`). A `StateConstraint`-only
+    /// atom (it reads BOTH sides, so it does not lift into the
+    /// post-state-local `SimpleStateConstraint` fragment), exactly as in
+    /// Lean. APPEND-ONLY.
+    AffineDeltaLe { terms: Vec<(i64, u8)>, c: i64 },
 }
 
 /// Error from evaluating a cell program.
@@ -2835,6 +2969,86 @@ fn evaluate_constraint_full(
             Ok(())
         }
 
+        // ─── Turn-context atoms (apps gaps 3/4): the Lean twins
+        //     `senderMemberOf` / `balanceDeltaLe` / `balanceDeltaGe` /
+        //     `affineDeltaLe`. Each mirrors its admit-characterization in
+        //     `metatheory/Dregg2/Exec/Program.lean`. ───
+        StateConstraint::SenderMemberOf { members } => {
+            // Mirrors `evalSimpleCtx_senderMemberOf_iff`: admits IFF the
+            // context carries a sender AND that sender ∈ members. No sender
+            // (system turn / no context) ⇒ MissingContextField (fail-closed);
+            // a sender off the board ⇒ ConstraintViolated.
+            let ctx = ctx.ok_or(ProgramError::MissingContextField { field: "sender" })?;
+            let sender = ctx
+                .sender
+                .as_ref()
+                .ok_or(ProgramError::MissingContextField { field: "sender" })?;
+            if !members.contains(sender) {
+                return violated(
+                    constraint,
+                    "turn sender is not a member of the bound id-set (SenderMemberOf)".into(),
+                );
+            }
+            Ok(())
+        }
+
+        StateConstraint::BalanceDeltaLte { max } => {
+            // Mirrors `evalSimpleCtx_balanceDeltaLe_iff`: admits IFF BOTH the
+            // pre- and post-turn sealed balances are present AND
+            // `new.balance − old.balance <= max`. The pre-turn balance is the
+            // executor's `old_state` (the already-plumbed `balanceBefore`); an
+            // absent pre-state fails closed (a rate gate needs both endpoints).
+            // Balances are SIGNED i64 (THE EPOCH §5); the delta is computed in
+            // i128 to avoid overflow, and `max` (signed) is compared in i128.
+            let old = old_state.ok_or(ProgramError::TransitionCheckRequiresOldState {
+                constraint: constraint.clone(),
+                index: 0,
+            })?;
+            let delta = new_state.balance() as i128 - old.balance() as i128;
+            if delta > (*max as i128) {
+                return violated(
+                    constraint,
+                    format!("per-turn balance change {delta} > allowed maximum {max}"),
+                );
+            }
+            Ok(())
+        }
+
+        StateConstraint::BalanceDeltaGte { min } => {
+            // Mirrors `evalSimpleCtx_balanceDeltaGe_iff`: admits IFF BOTH the
+            // pre- and post-turn sealed balances are present AND
+            // `new.balance − old.balance >= min`. Absent pre-state ⇒ fail-closed.
+            let old = old_state.ok_or(ProgramError::TransitionCheckRequiresOldState {
+                constraint: constraint.clone(),
+                index: 0,
+            })?;
+            let delta = new_state.balance() as i128 - old.balance() as i128;
+            if delta < (*min as i128) {
+                return violated(
+                    constraint,
+                    format!("per-turn balance change {delta} < required minimum {min}"),
+                );
+            }
+            Ok(())
+        }
+
+        StateConstraint::AffineDeltaLe { terms, c } => {
+            // Mirrors `evalConstraint_affineDeltaLe_iff`: admits IFF every
+            // term-slot reads on BOTH old and new AND
+            // `Σ kᵢ·(new[fᵢ] − old[fᵢ]) <= c`. Absent pre-state (no old_state)
+            // ⇒ the delta is not evaluable ⇒ fail-closed; a bad slot index ⇒
+            // InvalidFieldIndex (inside `affine_delta_sum`).
+            let old = old_state.ok_or(ProgramError::TransitionCheckRequiresOldState {
+                constraint: constraint.clone(),
+                index: 0,
+            })?;
+            let sum = affine_delta_sum(terms, old, new_state)?;
+            if sum > (*c as i128) {
+                return violated(constraint, format!("affine delta sum {sum} > {c}"));
+            }
+            Ok(())
+        }
+
         // ─── Heap-keyed atom (THE ROTATION's app-state lane) ───
         StateConstraint::HeapField { key, atom } => {
             evaluate_heap_atom(constraint, *key, atom, new_state, old_state)
@@ -3193,6 +3407,15 @@ fn lift_simple(s: &SimpleStateConstraint) -> StateConstraint {
             threshold: *threshold,
             set_commitment_slot: *set_commitment_slot,
         },
+        SimpleStateConstraint::SenderMemberOf { members } => StateConstraint::SenderMemberOf {
+            members: members.clone(),
+        },
+        SimpleStateConstraint::BalanceDeltaLte { max } => {
+            StateConstraint::BalanceDeltaLte { max: *max }
+        }
+        SimpleStateConstraint::BalanceDeltaGte { min } => {
+            StateConstraint::BalanceDeltaGte { min: *min }
+        }
     }
 }
 
@@ -3312,6 +3535,25 @@ fn affine_sum(terms: &[(i64, u8)], state: &CellState) -> Result<i128, ProgramErr
         let i = check_index(*idx)?;
         let x = field_to_u64(&state.fields[i]) as i128;
         sum += (*k as i128) * x;
+    }
+    Ok(sum)
+}
+
+/// `Σ kᵢ·(new[fᵢ] − old[fᵢ])` over named slots — the affine combination of the per-field
+/// DELTAS across the `(old, new)` transition (big-endian u64 lifted to i128 on each side).
+/// Fail-closed on a bad slot index. Mirrors Lean `Exec.affineDeltaSum` (the reader behind
+/// `affineDeltaLe`): the genuine multi-field rate gate the single-field `DeltaBounded` /
+/// `FieldDelta` cannot express.
+fn affine_delta_sum(
+    terms: &[(i64, u8)],
+    old_state: &CellState,
+    new_state: &CellState,
+) -> Result<i128, ProgramError> {
+    let mut sum: i128 = 0;
+    for (k, idx) in terms {
+        let i = check_index(*idx)?;
+        let delta = field_delta_i128(&old_state.fields[i], &new_state.fields[i]);
+        sum += (*k as i128) * delta;
     }
     Ok(sum)
 }
@@ -3647,6 +3889,18 @@ pub enum StateConstraintView {
         threshold: u32,
         set_commitment_slot: u8,
     },
+    /// Turn sender must be one of the bound public keys (each 64-hex) —
+    /// the multi-admin actor binding (apps gap 3).
+    SenderMemberOf { members: Vec<String> },
+    /// The cell's per-turn balance change must be `<= max` (signed; apps
+    /// gap 4 rate ceiling).
+    BalanceDeltaLte { max: i64 },
+    /// The cell's per-turn balance change must be `>= min` (signed; apps
+    /// gap 4 rate floor).
+    BalanceDeltaGte { min: i64 },
+    /// `Σ kᵢ·(new[slotᵢ] − old[slotᵢ]) <= c` — multi-field delta gate;
+    /// `terms` are `(coefficient, slot)` pairs (apps gap 2).
+    AffineDeltaLe { terms: Vec<(i64, u8)>, c: i64 },
 }
 
 /// [`HeapAtom`] view, nested inside [`StateConstraintView::HeapField`].
@@ -4083,6 +4337,19 @@ impl StateConstraint {
                 threshold: *threshold,
                 set_commitment_slot: *set_commitment_slot,
             },
+            StateConstraint::SenderMemberOf { members } => StateConstraintView::SenderMemberOf {
+                members: members.iter().map(|m| view_hex(m)).collect(),
+            },
+            StateConstraint::BalanceDeltaLte { max } => {
+                StateConstraintView::BalanceDeltaLte { max: *max }
+            }
+            StateConstraint::BalanceDeltaGte { min } => {
+                StateConstraintView::BalanceDeltaGte { min: *min }
+            }
+            StateConstraint::AffineDeltaLe { terms, c } => StateConstraintView::AffineDeltaLe {
+                terms: terms.clone(),
+                c: *c,
+            },
         }
     }
 }
@@ -4183,6 +4450,17 @@ impl SimpleStateConstraint {
                 threshold: *threshold,
                 set_commitment_slot: *set_commitment_slot,
             },
+            SimpleStateConstraint::SenderMemberOf { members } => {
+                StateConstraintView::SenderMemberOf {
+                    members: members.iter().map(|m| view_hex(m)).collect(),
+                }
+            }
+            SimpleStateConstraint::BalanceDeltaLte { max } => {
+                StateConstraintView::BalanceDeltaLte { max: *max }
+            }
+            SimpleStateConstraint::BalanceDeltaGte { min } => {
+                StateConstraintView::BalanceDeltaGte { min: *min }
+            }
         }
     }
 }
@@ -5735,6 +6013,149 @@ mod tests {
         assert!(floor.evaluate(&funded, None, None).is_err());
     }
 
+    /// Apps gap 3 — the multi-admin actor binding. `SenderMemberOf` is the
+    /// clean form of `AnyOf[SenderIs{a}, SenderIs{b}, …]`. Mirrors the Lean
+    /// keystone `evalSimpleCtx_senderMemberOf_iff`: admits IFF a sender is in
+    /// context AND on the board; off-board or no-context fail closed.
+    #[test]
+    fn sender_member_of_binds_multi_admin() {
+        let alice = [0x11u8; 32];
+        let bob = [0x22u8; 32];
+        let mallory = [0x99u8; 32];
+        let board = CellProgram::Predicate(vec![StateConstraint::SenderMemberOf {
+            members: vec![alice, bob],
+        }]);
+        let st = CellState::new(0);
+        // A board member is admitted.
+        assert!(board
+            .evaluate(&st, None, Some(&ctx_sender(alice, 0)))
+            .is_ok());
+        assert!(board.evaluate(&st, None, Some(&ctx_sender(bob, 0))).is_ok());
+        // A non-member is rejected (ConstraintViolated, not a pass).
+        assert!(matches!(
+            board.evaluate(&st, None, Some(&ctx_sender(mallory, 0))),
+            Err(ProgramError::ConstraintViolated { .. })
+        ));
+        // No sender in context ⇒ MissingContextField (fail-closed).
+        assert!(matches!(
+            board.evaluate(&st, None, Some(&ctx_at(7))),
+            Err(ProgramError::MissingContextField { field: "sender" })
+        ));
+        // No context at all ⇒ MissingContextField.
+        assert!(matches!(
+            board.evaluate(&st, None, None),
+            Err(ProgramError::MissingContextField { field: "sender" })
+        ));
+
+        // The multi-admin per-slot binding: slot 0 flips only for a board
+        // member, but ANY sender may leave it alone (the council ceremony
+        // stays open). `AnyOf[Immutable{0}, SenderMemberOf{board}]`.
+        let bound = CellProgram::Predicate(vec![StateConstraint::AnyOf {
+            variants: vec![
+                SimpleStateConstraint::Immutable { index: 0 },
+                SimpleStateConstraint::SenderMemberOf {
+                    members: vec![alice, bob],
+                },
+            ],
+        }]);
+        let mut old = CellState::new(0);
+        old.fields[0] = field_from_u64(5);
+        let mut flipped = old.clone();
+        flipped.fields[0] = field_from_u64(6);
+        // Mallory leaving the slot ALONE is admitted (Immutable branch).
+        assert!(bound
+            .evaluate(&old, Some(&old), Some(&ctx_sender(mallory, 0)))
+            .is_ok());
+        // Mallory FLIPPING the slot is rejected (neither branch passes).
+        assert!(bound
+            .evaluate(&flipped, Some(&old), Some(&ctx_sender(mallory, 0)))
+            .is_err());
+        // Alice (a member) flipping the slot is admitted (member branch).
+        assert!(bound
+            .evaluate(&flipped, Some(&old), Some(&ctx_sender(alice, 0)))
+            .is_ok());
+    }
+
+    /// Apps gap 4 — the per-turn balance RATE gates. `BalanceDeltaLte` /
+    /// `BalanceDeltaGte` bound `new.balance − old.balance` (the pre-balance is
+    /// the executor's `old_state`). Mirrors the Lean keystones
+    /// `evalSimpleCtx_balanceDeltaLe_iff` / `_balanceDeltaGe_iff`. SIGNED
+    /// bounds (a negative `max` forces a loss). Fail-closed without a pre-state.
+    #[test]
+    fn balance_delta_atoms_bound_the_rate() {
+        // Ceiling: may gain at most 10 per turn.
+        let ceil = CellProgram::Predicate(vec![StateConstraint::BalanceDeltaLte { max: 10 }]);
+        let mut old = CellState::new(0);
+        old.set_balance(100);
+        let mut up5 = old.clone();
+        up5.set_balance(105); // +5 ≤ 10 → admit
+        assert!(ceil.evaluate(&up5, Some(&old), None).is_ok());
+        let mut up20 = old.clone();
+        up20.set_balance(120); // +20 > 10 → reject
+        assert!(matches!(
+            ceil.evaluate(&up20, Some(&old), None),
+            Err(ProgramError::ConstraintViolated { .. })
+        ));
+        // A drain (negative delta) trivially satisfies a positive ceiling.
+        let mut down = old.clone();
+        down.set_balance(50); // −50 ≤ 10 → admit
+        assert!(ceil.evaluate(&down, Some(&old), None).is_ok());
+
+        // Floor: may LOSE at most 30 per turn (delta ≥ −30).
+        let floor = CellProgram::Predicate(vec![StateConstraint::BalanceDeltaGte { min: -30 }]);
+        let mut lose20 = old.clone();
+        lose20.set_balance(80); // −20 ≥ −30 → admit
+        assert!(floor.evaluate(&lose20, Some(&old), None).is_ok());
+        let mut lose40 = old.clone();
+        lose40.set_balance(60); // −40 < −30 → reject
+        assert!(matches!(
+            floor.evaluate(&lose40, Some(&old), None),
+            Err(ProgramError::ConstraintViolated { .. })
+        ));
+
+        // Fail-closed: a rate gate without a pre-state (no old_state) cannot be
+        // satisfied — TransitionCheckRequiresOldState (both endpoints needed).
+        assert!(matches!(
+            ceil.evaluate(&up5, None, None),
+            Err(ProgramError::TransitionCheckRequiresOldState { .. })
+        ));
+    }
+
+    /// Apps gap 2 — the multi-field delta gate. `AffineDeltaLe` bounds
+    /// `Σ kᵢ·(new[fᵢ] − old[fᵢ]) ≤ c` (a treasury's COMBINED per-turn
+    /// outflow across two spend slots). Mirrors the Lean keystone
+    /// `evalConstraint_affineDeltaLe_iff`. Fail-closed without a pre-state.
+    #[test]
+    fn affine_delta_le_bounds_combined_outflow() {
+        // out_a (slot 1) + out_b (slot 2) may grow by at most 50 per turn.
+        let budget = CellProgram::Predicate(vec![StateConstraint::AffineDeltaLe {
+            terms: vec![(1, 1), (1, 2)],
+            c: 50,
+        }]);
+        let mut old = CellState::new(0);
+        old.fields[1] = field_from_u64(10);
+        old.fields[2] = field_from_u64(20);
+        // Δout_a=15, Δout_b=20 ⇒ sum 35 ≤ 50 → admit.
+        let mut within = old.clone();
+        within.fields[1] = field_from_u64(25);
+        within.fields[2] = field_from_u64(40);
+        assert!(budget.evaluate(&within, Some(&old), None).is_ok());
+        // Δout_a=30, Δout_b=30 ⇒ sum 60 > 50 → reject (combined cap, even
+        // though neither single slot is obviously out of bounds).
+        let mut over = old.clone();
+        over.fields[1] = field_from_u64(40);
+        over.fields[2] = field_from_u64(50);
+        assert!(matches!(
+            budget.evaluate(&over, Some(&old), None),
+            Err(ProgramError::ConstraintViolated { .. })
+        ));
+        // Fail-closed without a pre-state.
+        assert!(matches!(
+            budget.evaluate(&within, None, None),
+            Err(ProgramError::TransitionCheckRequiresOldState { .. })
+        ));
+    }
+
     /// Blueprint gap 1: the committed-value knowledge gate under a state
     /// guard — `state == RELEASED ⇒ PreimageGate` — now expressible
     /// because `PreimageGate` is a `SimpleStateConstraint`.
@@ -6123,6 +6544,21 @@ mod tests {
                 },
                 "CountGe",
             ),
+            (
+                StateConstraint::SenderMemberOf {
+                    members: vec![[1u8; 32], [2u8; 32]],
+                },
+                "SenderMemberOf",
+            ),
+            (StateConstraint::BalanceDeltaLte { max: 10 }, "BalanceDeltaLte"),
+            (StateConstraint::BalanceDeltaGte { min: -5 }, "BalanceDeltaGte"),
+            (
+                StateConstraint::AffineDeltaLe {
+                    terms: vec![(1, 1), (1, 2)],
+                    c: 50,
+                },
+                "AffineDeltaLe",
+            ),
         ];
 
         // COVERAGE TOOTH: this match must name every variant exactly once.
@@ -6175,7 +6611,11 @@ mod tests {
                 | StateConstraint::KeyRotationGate { .. }
                 | StateConstraint::HeapField { .. }
                 | StateConstraint::DelegationEpochEquals { .. }
-                | StateConstraint::CountGe { .. } => {}
+                | StateConstraint::CountGe { .. }
+                | StateConstraint::SenderMemberOf { .. }
+                | StateConstraint::BalanceDeltaLte { .. }
+                | StateConstraint::BalanceDeltaGte { .. }
+                | StateConstraint::AffineDeltaLe { .. } => {}
             }
         }
 
@@ -6330,7 +6770,10 @@ mod tests {
                 | SimpleStateConstraint::PreimageGate { .. }
                 | SimpleStateConstraint::HeapField { .. }
                 | SimpleStateConstraint::DelegationEpochEquals { .. }
-                | SimpleStateConstraint::CountGe { .. } => {}
+                | SimpleStateConstraint::CountGe { .. }
+                | SimpleStateConstraint::SenderMemberOf { .. }
+                | SimpleStateConstraint::BalanceDeltaLte { .. }
+                | SimpleStateConstraint::BalanceDeltaGte { .. } => {}
             }
             let json = serde_json::to_value(sc.to_view()).expect("simple view serializes");
             assert_eq!(

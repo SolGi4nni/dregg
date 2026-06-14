@@ -234,6 +234,13 @@ fn state_constraint_executor_coverage(c: &StateConstraint) -> bool {
         StateConstraint::SenderInSlot { .. } => true,
         StateConstraint::BalanceGte { .. } => true,
         StateConstraint::BalanceLte { .. } => true,
+
+        // The deos language-uplift atoms — executor-enforced through the scalar
+        // evaluator (same class as BalanceGte/SenderIs), per the cell/program.rs twins.
+        StateConstraint::SenderMemberOf { .. } => true,
+        StateConstraint::BalanceDeltaLte { .. } => true,
+        StateConstraint::BalanceDeltaGte { .. } => true,
+        StateConstraint::AffineDeltaLe { .. } => true,
     }
 }
 

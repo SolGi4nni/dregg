@@ -362,7 +362,17 @@ pub fn project_slot_caveat_manifest(
             // CountGe opens a witness-exhibited set against a slot
             // commitment — witness-side enforcement (the scalar evaluator
             // + the unique Cleartext blob), no SlotCaveat AIR projection.
-            | dregg_cell::StateConstraint::CountGe { .. } => None,
+            | dregg_cell::StateConstraint::CountGe { .. }
+            // Predicate / balance-delta atoms (SenderMemberOf membership;
+            // BalanceDeltaLte/Gte + AffineDeltaLe over the sealed signed
+            // balance) bind no state-column register slot — executor-enforced
+            // by the scalar evaluator, no SlotCaveat AIR projection in this
+            // wave (deferred like the AffineLe/AffineEq / BalanceGte/Lte atoms
+            // above).
+            | dregg_cell::StateConstraint::SenderMemberOf { .. }
+            | dregg_cell::StateConstraint::BalanceDeltaLte { .. }
+            | dregg_cell::StateConstraint::BalanceDeltaGte { .. }
+            | dregg_cell::StateConstraint::AffineDeltaLe { .. } => None,
         };
         if let Some(e) = entry {
             entries[count] = e;
