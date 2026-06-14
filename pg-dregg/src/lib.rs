@@ -341,8 +341,27 @@ mod pg {
     /// mutate; it is a read-only attestation of the replicated stream's integrity.
     #[pg_extern]
     fn dregg_revalidate_replicated_chain() -> String {
+        let links = read_replicated_chain_links();
+        match revalidate_replicated_turns(&links) {
+            Ok(head) => format!(
+                "ok: {} turns re-validated, head={}",
+                links.len(),
+                head.map(|h| h.iter().map(|b| format!("{b:02x}")).collect::<String>())
+                    .unwrap_or_else(|| "<empty>".to_string())
+            ),
+            Err(e) => format!("REFUSED: {e}"),
+        }
+    }
+
+    /// Read the replicated `dregg.turns` as `(ordinal, prev_root, ledger_root)`
+    /// chain links, ordered by ordinal — the minimal projection the §15
+    /// anti-substitution tooth re-validates. A malformed root in the stream is
+    /// recorded as an impossible link (a `0xFF…` prev that cannot chain) so the
+    /// sweep fails closed rather than silently skipping it. Shared by
+    /// [`dregg_revalidate_replicated_chain`] and the conflict-triggered
+    /// [`dregg_federation_health`] so both re-validate the IDENTICAL link set.
+    fn read_replicated_chain_links() -> Vec<crate::mirror::ChainLink> {
         use crate::mirror::ChainLink;
-        // Read the replicated chain links, ordered by ordinal.
         let mut links: Vec<ChainLink> = Vec::new();
         let _ = Spi::connect(|client| {
             let rows = client.select(
@@ -379,23 +398,114 @@ mod pg {
             }
             Ok::<(), pgrx::spi::Error>(())
         });
+        links
+    }
 
-        // Pin genesis from the first link's prev_root (a subscriber bootstrapped
-        // from a consistent base inherits the publisher's genesis; the all-zero
-        // default matches a fresh chain). The count is what we actually have, so we
-        // do not impose an external expectation here — the per-link chaining is the
-        // tooth; a truncation check needs a published height the subscriber trusts
-        // separately, which a deployment supplies out of band.
+    /// Run the §15 anti-substitution tooth over the read replicated links. Pins
+    /// genesis from the first link's `prev_root` (a subscriber bootstrapped from a
+    /// consistent base inherits the publisher's genesis; the all-zero default
+    /// matches a fresh chain). No external count expectation is imposed here — the
+    /// per-link chaining is the tooth; a truncation check needs a published height
+    /// the subscriber trusts separately, supplied out of band by a deployment.
+    fn revalidate_replicated_turns(
+        links: &[crate::mirror::ChainLink],
+    ) -> Result<Option<[u8; 32]>, crate::mirror::ChainRefusal> {
         let genesis = links.first().map(|l| l.prev_root).unwrap_or([0u8; 32]);
-        match crate::mirror::revalidate_replicated_chain(genesis, &links, None) {
-            Ok(head) => format!(
-                "ok: {} turns re-validated, head={}",
-                links.len(),
-                head.map(|h| h.iter().map(|b| format!("{b:02x}")).collect::<String>())
-                    .unwrap_or_else(|| "<empty>".to_string())
-            ),
-            Err(e) => format!("REFUSED: {e}"),
-        }
+        crate::mirror::revalidate_replicated_chain(genesis, links, None)
+    }
+
+    /// Read the REAL pg18 apply-conflict counters from `dregg.replication_conflicts`
+    /// (`docs/PG-DREGG-PG18.md` §10) into a [`crate::mirror::ConflictReport`] — one
+    /// [`crate::mirror::SubscriptionConflicts`] per subscription, the seven `confl_*`
+    /// columns + the view's summed `conflicts_total`. Empty on a publisher (no
+    /// subscriptions). This is what makes the alarm read the genuine pg18 counters,
+    /// not a stub. A malformed/absent count coalesces to 0 (a NULL counter is "no
+    /// conflict seen yet", not an error).
+    fn read_replication_conflicts() -> crate::mirror::ConflictReport {
+        use crate::mirror::{ConflictReport, SubscriptionConflicts};
+        let mut subscriptions: Vec<SubscriptionConflicts> = Vec::new();
+        let _ = Spi::connect(|client| {
+            // Select the seven confl_* counters + the view's conflicts_total,
+            // coalescing NULLs (a counter with no activity yet) to 0. `subname` is
+            // cast to text: the real view sources it from `pg_subscription.subname`
+            // (type `name`), which pgrx's `get::<String>` does NOT decode — the cast
+            // makes the read robust whether the source is `name` or `text`.
+            let rows = client.select(
+                "SELECT subname::text, \
+                        coalesce(confl_insert_exists,0), \
+                        coalesce(confl_update_origin_differs,0), \
+                        coalesce(confl_update_exists,0), \
+                        coalesce(confl_update_missing,0), \
+                        coalesce(confl_delete_origin_differs,0), \
+                        coalesce(confl_delete_missing,0), \
+                        coalesce(confl_multiple_unique_conflicts,0), \
+                        coalesce(conflicts_total,0) \
+                 FROM dregg.replication_conflicts ORDER BY subname",
+                None,
+                &[],
+            )?;
+            for row in rows {
+                let subname: String = row.get::<String>(1)?.unwrap_or_default();
+                let g = |i: usize| -> i64 { row.get::<i64>(i).ok().flatten().unwrap_or(0) };
+                subscriptions.push(SubscriptionConflicts {
+                    subname,
+                    insert_exists: g(2),
+                    update_origin_differs: g(3),
+                    update_exists: g(4),
+                    update_missing: g(5),
+                    delete_origin_differs: g(6),
+                    delete_missing: g(7),
+                    multiple_unique_conflicts: g(8),
+                    total: g(9),
+                });
+            }
+            Ok::<(), pgrx::spi::Error>(())
+        });
+        ConflictReport { subscriptions }
+    }
+
+    /// `dregg_federation_health() -> text`. The SUBSCRIBER-side federation health
+    /// check (`docs/PG-DREGG.md` §15, `docs/PG-DREGG-PG18.md` §10) — where the pg18
+    /// apply-conflict counters DRIVE the chain re-validation. This is the wiring
+    /// that makes the `dregg.replication_conflicts` alarm USEFUL rather than merely
+    /// observable: it reads the real `confl_*` counters AND, when they fire, TRIGGERS
+    /// `dregg_revalidate_replicated_chain`'s anti-substitution tooth over the
+    /// replicated `dregg.turns`.
+    ///
+    /// The dregg federation model is SINGLE-WRITER FAN-OUT: the publisher is the
+    /// only writer; a subscriber re-validates the replicated turn chain rather than
+    /// accept local writes. So an apply conflict (a row it already holds, a missing
+    /// update/delete target, a divergent origin) is BY CONSTRUCTION an anomaly — the
+    /// stream is not the clean verified-turn feed the model assumes. The two checks
+    /// COMPOSE on two layers, and pg detects each: the conflict counters catch an
+    /// apply-level divergence pg saw while applying the stream; the chain tooth
+    /// catches a substituted ROOT (turn N's `ledger_root` ≠ turn N+1's `prev_root`).
+    /// A non-zero `conflicts_total` is exactly the trigger to stop trusting the
+    /// replicated turns and re-run the tooth over them.
+    ///
+    /// Returns one of:
+    ///   * `'ok: federation healthy — N subscription(s), 0 apply conflicts'`
+    ///     (no conflict; the triggered tooth is not run — it is the triggered check);
+    ///   * `'ALARM (K apply conflict(s)) but chain re-validates: head=…'`
+    ///     (pg saw apply conflicts but the turn chain still re-validates — an anomaly
+    ///     to chase: a conflicting writer or a botched bootstrap);
+    ///   * `'CRITICAL (K apply conflict(s)) AND chain REFUSED: …'`
+    ///     (apply conflicts AND a chain the tooth rejects — do NOT trust this replica).
+    ///
+    /// Run as a role that can read `dregg.replication_conflicts` and `dregg.turns`
+    /// (the kernel/operator). Read-only: it never mutates; it is an attestation of
+    /// the replicated stream's apply-and-chain integrity.
+    #[pg_extern]
+    fn dregg_federation_health() -> String {
+        let report = read_replication_conflicts();
+        // THE COMPOSITION: the conflict alarm DRIVES the chain re-validation. The
+        // closure is the trigger target — it is invoked by `federation_health` ONLY
+        // when the alarm fires (a clear report skips the then-unnecessary tooth).
+        let verdict = crate::mirror::federation_health(&report, || {
+            let links = read_replicated_chain_links();
+            revalidate_replicated_turns(&links)
+        });
+        verdict.summary()
     }
 
     /// `dregg_attest_range(proof bytea, vk_anchor bytea, lo bigint, hi bigint)
@@ -2427,6 +2537,104 @@ mod pg {
             )
             .unwrap();
             assert_eq!(total, Some(0), "conflicts_total sums the seven pg18 confl_* counters");
+        }
+
+        /// §15 federation health — the pg18 conflict counters DRIVE re-validation,
+        /// composing the apply-divergence alarm with the chain tooth (the wiring
+        /// this lane adds). Three SQL-level assertions, all against the live store:
+        ///
+        ///   1. CLEAN: on a node with no apply conflict, `dregg_federation_health()`
+        ///      reads the REAL `dregg.replication_conflicts` view and returns the
+        ///      healthy verdict — and does NOT need the chain tooth.
+        ///   2. CONFLICT ⇒ TRIGGER ⇒ chain intact: when a conflict counter is
+        ///      non-zero, the alarm fires AND the re-validation triggers over the real
+        ///      `dregg.turns`; with a faithful chain the verdict is the "ALARM but
+        ///      chain re-validates" composition.
+        ///   3. CONFLICT ⇒ TRIGGER ⇒ chain broken: with the same conflict AND a
+        ///      tampered turn, the triggered tooth REFUSES ⇒ the CRITICAL do-not-trust
+        ///      verdict — proving the conflict alarm really pulls the chain check, not
+        ///      just reports a number.
+        ///
+        /// The genuine pg18 `confl_*` counter read is proven by the resolves-test
+        /// above + the live multi-DB harness (`sql/federation-conflict-live.sql`,
+        /// which stands up a real subscription + a real apply conflict). Here we drive
+        /// the COMPOSITION through real SQL by pointing the health read at a fixture
+        /// view of the SAME shape (`subname` + the seven `confl_*` + `conflicts_total`)
+        /// carrying a non-zero count — so the extern's read → alarm → trigger → tooth
+        /// path is exercised end-to-end on the live engine, deterministically.
+        #[pg_test]
+        fn federation_health_conflict_alarm_triggers_the_chain_tooth() {
+            let root = root();
+            assert_issuer(&root);
+            // A real, gate-built 4-turn hash chain in dregg.turns (what replication
+            // would carry), plus the real federation publication + conflicts view.
+            install_tier_c_and_submit_story();
+            let _fed: String = Spi::get_one("SELECT dregg_install_federation()").unwrap().unwrap();
+            Spi::run("SET ROLE dregg_kernel").unwrap();
+
+            // (1) CLEAN: the real dregg.replication_conflicts view is empty on this
+            // single node ⇒ healthy, and the chain tooth is NOT the load-bearing part.
+            let healthy: String =
+                Spi::get_one("SELECT dregg_federation_health()").unwrap().unwrap();
+            assert!(
+                healthy.starts_with("ok: federation healthy") && healthy.contains("0 apply conflicts"),
+                "a node with no apply conflict is healthy: {healthy}"
+            );
+
+            // Now drive the COMPOSITION. The health extern reads dregg.replication_conflicts;
+            // replace it (same column shape) with a fixture carrying a NON-ZERO conflict
+            // so the alarm fires deterministically — the genuine pg18 confl_* read is
+            // covered separately (the resolves-test + the live multi-DB harness).
+            Spi::run("RESET ROLE").unwrap();
+            // DROP+CREATE (a REPLACE cannot change a column type, and the real view's
+            // `subname` is type `name` from pg_subscription); the fixture matches the
+            // column types (`subname name`, the seven counters + total `bigint`).
+            Spi::run("DROP VIEW dregg.replication_conflicts").unwrap();
+            Spi::run(
+                "CREATE VIEW dregg.replication_conflicts AS \
+                 SELECT 'dregg_tail'::name AS subname, \
+                        1::bigint AS confl_insert_exists, \
+                        0::bigint AS confl_update_origin_differs, \
+                        0::bigint AS confl_update_exists, \
+                        2::bigint AS confl_update_missing, \
+                        0::bigint AS confl_delete_origin_differs, \
+                        0::bigint AS confl_delete_missing, \
+                        0::bigint AS confl_multiple_unique_conflicts, \
+                        3::bigint AS conflicts_total, \
+                        now() AS stats_reset",
+            )
+            .expect("fixture conflicts view (same shape) installs");
+            Spi::run("GRANT SELECT ON dregg.replication_conflicts TO dregg_kernel").unwrap();
+            Spi::run("SET ROLE dregg_kernel").unwrap();
+
+            // (2) CONFLICT ⇒ TRIGGER ⇒ chain intact. The alarm fires (conflicts_total=3)
+            // AND the re-validation triggers over the real, faithful dregg.turns ⇒ the
+            // "ALARM but chain re-validates" composition.
+            let alarmed: String =
+                Spi::get_one("SELECT dregg_federation_health()").unwrap().unwrap();
+            assert!(
+                alarmed.starts_with("ALARM (3 apply conflict(s))") && alarmed.contains("chain re-validates"),
+                "a non-zero conflict fires the alarm AND triggers re-validation (chain intact): {alarmed}"
+            );
+
+            // (3) CONFLICT ⇒ TRIGGER ⇒ chain broken. Tamper ord-2's prev_root so the
+            // triggered tooth REFUSES ⇒ the CRITICAL do-not-trust verdict. This is the
+            // proof the alarm PULLS the chain check: same conflict, but now the chain is
+            // broken and the composed verdict escalates.
+            Spi::run("RESET ROLE").unwrap();
+            Spi::run(
+                "UPDATE dregg.turns SET prev_root = '\\x9999999999999999999999999999999999999999999999999999999999999999' \
+                 WHERE ordinal = 2",
+            )
+            .unwrap();
+            Spi::run("SET ROLE dregg_kernel").unwrap();
+            let critical: String =
+                Spi::get_one("SELECT dregg_federation_health()").unwrap().unwrap();
+            assert!(
+                critical.starts_with("CRITICAL (3 apply conflict(s))") && critical.contains("chain REFUSED"),
+                "a conflict AND a tampered chain ⇒ the CRITICAL do-not-trust verdict: {critical}"
+            );
+            Spi::run("RESET ROLE").unwrap();
         }
 
         /// pg18 COPY ON_ERROR bulk-load of the OAuth→role bind map

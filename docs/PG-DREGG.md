@@ -1531,7 +1531,18 @@ ran, surfaced as the `dregg_revalidate_replicated_chain()` extern; it returns th
 re-validated head, or **refuses** a substituted / reordered / gapped / truncated
 stream — caught *on the subscriber side, locally, with no call back to the
 publisher* (`subscriber_catches_a_substituted_replicated_turn`,
-`subscriber_revalidates_the_synthetic_story_after_replication`). Operational
+`subscriber_revalidates_the_synthetic_story_after_replication`); and
+**`federation_health()`** — the composition that makes the pg18 apply-conflict
+alarm DRIVE that re-validation: it reads the real `dregg.replication_conflicts`
+`confl_*` counters and, when `conflicts_total > 0` (an apply-level divergence pg
+detected), TRIGGERS `revalidate_replicated_chain`, returning a verdict that
+escalates `Clear → ConflictsButChainIntact → ConflictsAndChainBroken`. The two
+checks compose on two layers — the counters catch an apply divergence, the tooth
+catches a substituted root — and a non-zero conflict count is exactly the trigger
+to re-run the tooth (surfaced as the `dregg_federation_health()` extern; the
+postgres-free composition tests in `src/mirror.rs`, the live
+`federation_health_conflict_alarm_triggers_the_chain_tooth`, and the
+genuine-counter harness `scripts/federation-conflict-live.sh`). Operational
 (emitted as a runbook, `federation_subscriber()` / the
 `dregg_federation_subscriber_runbook(conninfo)` extern): (c) the
 `pg_createsubscriber` bootstrap + the `CREATE SUBSCRIPTION … WITH (failover =

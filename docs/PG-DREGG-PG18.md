@@ -38,7 +38,7 @@ means the opposite on every axis:
 | **verified-only writes** | a state row exists ONLY as the post-image of a verified turn, applied atomically through ONE door — and the applicator reports the (typed) delta | **`MERGE … RETURNING WITH (OLD/NEW)` (18)**, a `BEFORE INSERT` re-validating trigger | §7 |
 | **postgres re-validates** | the database engine — not a trusted writer — refuses a tampered/reordered/forged batch | the chain re-validator `dregg_verify_turn`, run inside the gate trigger | §7 |
 | **integrity floor** | the page integrity every higher guarantee assumes is on by default, and made legible | **data checksums by `initdb` default (18)** surfaced as `dregg.integrity_status` | §11 |
-| **federation that re-validates** | a subscriber tails the verified-turn feed and is told when the stream diverged | logical replication + **pg18 `confl_*` conflict counters** as a `conflicts_total` alarm | §10 |
+| **federation that re-validates** | a subscriber tails the verified-turn feed, is told when the stream diverged, and the alarm DRIVES a chain re-check | logical replication + **pg18 `confl_*` conflict counters** as a `conflicts_total` alarm that triggers `revalidate_replicated_chain` | §10 |
 | **pg-native authz** | a connecting role is bound to its dregg capability by postgres, and rows are gated by it | login event trigger (17) + **OAuth (18)** + RLS cap policies; `uuidv7()` (18) queue keys; **`COPY … ON_ERROR` (18)** bulk onboarding | §6, §12 |
 
 The dregg side stays honest: the *authorization decision* and the *chain
@@ -577,16 +577,34 @@ pg18 newly **counts those conflicts per subscription**, in
 `confl_multiple_unique_conflicts`). `dregg.replication_conflicts` surfaces them as
 a mirror-facing alarm, joining `pg_subscription` for the subscription name and
 summing the seven kinds into a single `conflicts_total` — so a non-zero value is
-an immediate *"the replicated feed diverged — investigate"* signal. It
-**composes** with the chain-tooth re-validation, on two different layers: the
-tooth catches a substituted *root* (turn N's `ledger_root` ≠ turn N+1's
-`prev_root`); the conflict counters catch an apply-level divergence postgres
-itself detected during replication. The view is empty on a publisher (no
-subscriptions) and populated on a subscriber. It is a thin SELECT over the stats
-view (no row data). *Proven by*
+an immediate *"the replicated feed diverged — investigate"* signal.
+
+**The alarm is WIRED, not merely observable: a non-zero count DRIVES the chain
+re-validation.** The subscriber-side `dregg_federation_health()` extern reads the
+real `confl_*` counters into a `ConflictReport` and — when `conflicts_total > 0` —
+TRIGGERS `revalidate_replicated_chain` over the replicated `dregg.turns`,
+returning a composed verdict. The two halves SIT ON DIFFERENT LAYERS, and pg
+detects each: the conflict counters catch an apply-level divergence postgres saw
+*while applying* the stream; the chain tooth catches a substituted *root* (turn
+N's `ledger_root` ≠ turn N+1's `prev_root`). A non-zero `conflicts_total` is
+exactly the trigger to stop trusting the replicated turns and re-run the tooth
+over them — so the alarm composes with the chain re-validation *in code*, not just
+in prose. The verdict is one of: `ok: federation healthy …` (no conflict; the
+triggered tooth is not run — it is the *triggered* check), `ALARM (K apply
+conflict(s)) but chain re-validates: head=…` (an anomaly to chase, but the turn
+chain is intact), or `CRITICAL (K apply conflict(s)) AND chain REFUSED: …`
+(apply conflicts AND a chain the tooth rejects — do **not** trust this replica).
+The view is empty on a publisher (no subscriptions) and populated on a
+subscriber. It is a thin SELECT over the stats view (no row data). *Proven by*
 `pg18_replication_conflicts_view_resolves_with_the_total_alarm` (live pg18: the
 view resolves and binds the pg18 `confl_*` columns; the `conflicts_total` alarm
-sums them).
+sums them), `federation_health_conflict_alarm_triggers_the_chain_tooth` (live
+pg18: a non-zero conflict fires the alarm AND triggers the chain re-validation —
+intact ⇒ ALARM, tampered ⇒ CRITICAL), the postgres-free composition tests in
+`src/mirror.rs` (the alarm ⇒ trigger ⇒ verdict logic, `cargo test`), and the
+genuine-counter live harness `scripts/federation-conflict-live.sh` (a real
+subscription + a real apply conflict bumps `pg_stat_subscription_stats.confl_*`,
+and `dregg_federation_health()` alarms off the real counter).
 
 (The subscriber bootstrap itself stays a `pg_createsubscriber` runbook —
 `dregg_federation_subscriber_runbook` — and the subscription is created `WITH
@@ -743,7 +761,7 @@ extension declares.
 | **asynchronous I/O (AIO)** | **18** | rich reads (faster large scans) | §8, transparent + the `dregg.mirror_io_stats` view over `pg_stat_io` |
 | **`pg_aios` in-flight view** | **18** | rich reads (AIO engaged-or-not signal) | §8, `dregg.mirror_aio_inflight` |
 | **data checksums by `initdb` default** | **18** | integrity floor (page integrity the roots assume) | §11, `dregg.integrity_status` (the `data_checksums` GUC) |
-| **logical-replication `confl_*` counters** | **18** | federation hardening (apply-divergence alarm) | §10, `dregg.replication_conflicts` over `pg_stat_subscription_stats` |
+| **logical-replication `confl_*` counters** | **18** | federation hardening (apply-divergence alarm that DRIVES chain re-validation) | §10, `dregg.replication_conflicts` over `pg_stat_subscription_stats`; wired by `dregg_federation_health()` |
 | **`COPY … ON_ERROR ignore` / `REJECT_LIMIT` / `LOG_VERBOSITY silent`** | **18** | pg-native authz (bulk identity onboarding, skip-bad-rows) | §12, `dregg.role_identity_load` + `dregg.promote_role_identity_load` + the `dregg_load_role_identity_sql` template |
 | `BEFORE INSERT` re-validating trigger | core | verified-only writes (the one door) | §7, `dregg.apply_verified_turn` |
 | `FORCE ROW LEVEL SECURITY` + cap policies | core | read gate + write gate | §6/§7, the RLS |

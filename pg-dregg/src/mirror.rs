@@ -579,6 +579,256 @@ pub fn revalidate_replicated_chain(
 }
 
 // ============================================================================
+// 4c. Federation: the pg18 conflict counters DRIVE re-validation (compose).
+// ============================================================================
+//
+// docs/PG-DREGG.md §15 + docs/PG-DREGG-PG18.md §10. The `dregg.replication_conflicts`
+// view sums pg18's seven per-subscription `confl_*` counters into a
+// `conflicts_total` alarm. The dregg federation model is SINGLE-WRITER FAN-OUT:
+// the publisher is the only writer, subscribers RE-VALIDATE the replicated turn
+// chain rather than accept local writes — so an apply conflict (a row the
+// subscriber already holds, a missing update/delete target, a divergent origin)
+// is, BY CONSTRUCTION, an ANOMALY: it means the stream is not the clean
+// verified-turn feed the model assumes.
+//
+// The two halves SIT ON DIFFERENT LAYERS, and pg detects each:
+//   * the CHAIN TOOTH (`revalidate_replicated_chain`) catches a substituted ROOT
+//     (turn N's `ledger_root` ≠ turn N+1's `prev_root`) — a *structural* divergence
+//     on the replicated `turns` rows;
+//   * the CONFLICT COUNTERS catch an *apply-level* divergence pg itself detected
+//     while applying the stream (before the rows even reach a shape the tooth reads).
+//
+// They COMPOSE: a non-zero `conflicts_total` is the signal that pg saw the feed
+// diverge at apply time, and that is exactly when a subscriber should NOT trust
+// its `dregg.turns` and MUST re-run the anti-substitution tooth over them. So the
+// conflict alarm is not just a number to watch — it is the TRIGGER for the chain
+// re-validation. This module is the pure, `cargo test`-provable half of that
+// composition: the conflict report, the alarm/trigger decision, and the combined
+// verdict. `lib.rs`'s `dregg_federation_health()` extern reads the REAL pg18
+// `dregg.replication_conflicts` counters into a [`ConflictReport`], and — when the
+// alarm fires — reads `dregg.turns` and runs [`revalidate_replicated_chain`],
+// returning the [`FederationHealth`] this module composes.
+
+/// One subscription's pg18 apply-conflict counters — the per-subscription row of
+/// `dregg.replication_conflicts` (`docs/PG-DREGG-PG18.md` §10), the SQL-crossable
+/// projection of `pg_stat_subscription_stats`'s seven `confl_*` columns. The
+/// `total` is their sum (the view's `conflicts_total`), carried so a consumer does
+/// not re-sum. A non-zero `total` on ANY subscription is a federation anomaly.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SubscriptionConflicts {
+    /// The subscription name (`pg_subscription.subname`).
+    pub subname: String,
+    /// `confl_insert_exists` — an INSERT hit a row the subscriber already holds.
+    pub insert_exists: i64,
+    /// `confl_update_origin_differs` — an UPDATE target was last written by a
+    /// different origin (a divergent writer — impossible in single-writer fan-out).
+    pub update_origin_differs: i64,
+    /// `confl_update_exists` — an UPDATE would collide with an existing row.
+    pub update_exists: i64,
+    /// `confl_update_missing` — an UPDATE's target row is absent (a gap in apply).
+    pub update_missing: i64,
+    /// `confl_delete_origin_differs` — a DELETE target was last written elsewhere.
+    pub delete_origin_differs: i64,
+    /// `confl_delete_missing` — a DELETE's target row is absent.
+    pub delete_missing: i64,
+    /// `confl_multiple_unique_conflicts` — a row violated several unique keys.
+    pub multiple_unique_conflicts: i64,
+    /// The view's `conflicts_total` — the sum of the seven kinds above.
+    pub total: i64,
+}
+
+impl SubscriptionConflicts {
+    /// Re-derive the total from the seven kinds (a self-check that the carried
+    /// `total` matches the view's sum — a defensive cross-check, fail-loud if the
+    /// view ever drifted from the seven columns it claims to sum).
+    pub fn recomputed_total(&self) -> i64 {
+        self.insert_exists
+            + self.update_origin_differs
+            + self.update_exists
+            + self.update_missing
+            + self.delete_origin_differs
+            + self.delete_missing
+            + self.multiple_unique_conflicts
+    }
+
+    /// `true` iff this subscription has any apply conflict — the per-subscription
+    /// alarm bit.
+    pub fn conflicted(&self) -> bool {
+        self.total > 0
+    }
+}
+
+/// The whole subscriber's federation conflict report — every subscription's
+/// `dregg.replication_conflicts` row. Empty on a publisher (no subscriptions) or a
+/// single node; populated on a subscriber. The aggregate [`Self::conflicts_total`]
+/// is the mirror-facing alarm: non-zero ⇒ pg detected an apply-level divergence in
+/// the replicated feed, which (in single-writer fan-out) means the stream is not
+/// the clean verified-turn feed — investigate, AND re-validate the chain.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ConflictReport {
+    pub subscriptions: Vec<SubscriptionConflicts>,
+}
+
+impl ConflictReport {
+    /// The aggregate alarm value — the sum of every subscription's
+    /// `conflicts_total`. Zero when no subscription has seen an apply conflict.
+    pub fn conflicts_total(&self) -> i64 {
+        self.subscriptions.iter().map(|s| s.total).sum()
+    }
+
+    /// `true` iff ANY subscription has a non-zero conflict count — the headline
+    /// alarm bit. This is the TRIGGER condition for chain re-validation: pg saw the
+    /// feed diverge at apply time, so the subscriber must not trust its replicated
+    /// `dregg.turns` and re-runs the anti-substitution tooth over them.
+    pub fn alarm(&self) -> bool {
+        self.conflicts_total() > 0
+    }
+
+    /// The subscriptions that are actually conflicted (the offenders), for the
+    /// alarm message — so the report names *which* subscription diverged.
+    pub fn conflicted(&self) -> impl Iterator<Item = &SubscriptionConflicts> {
+        self.subscriptions.iter().filter(|s| s.conflicted())
+    }
+
+    /// A terse human-readable alarm line: `clear (N subscriptions)` when no conflict,
+    /// or `ALARM: <total> apply conflicts across [sub=k, …]` naming the offenders.
+    pub fn alarm_line(&self) -> String {
+        if !self.alarm() {
+            return format!(
+                "clear: {} subscription(s), 0 apply conflicts",
+                self.subscriptions.len()
+            );
+        }
+        let mut offenders: Vec<String> = self
+            .conflicted()
+            .map(|s| format!("{}={}", s.subname, s.total))
+            .collect();
+        offenders.sort();
+        format!(
+            "ALARM: {} apply conflict(s) on the replicated feed [{}] — \
+             the stream diverged at apply time; re-validating the chain",
+            self.conflicts_total(),
+            offenders.join(", ")
+        )
+    }
+}
+
+/// The composed subscriber-side federation health verdict (`docs/PG-DREGG.md`
+/// §15): the pg18 apply-conflict alarm AND — when it fires — the chain
+/// re-validation it TRIGGERS. This is the realization of "the conflict counters
+/// COMPOSE with the chain-tooth re-validation": the counters catch an apply-level
+/// divergence, and that divergence is exactly what makes the subscriber re-run the
+/// anti-substitution tooth over its replicated `dregg.turns`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FederationHealth {
+    /// No subscription reported an apply conflict. The feed is, at the apply layer,
+    /// the clean single-writer fan-out the model assumes. (The chain tooth is NOT
+    /// re-run here on the alarm path — it is the *triggered* check; a deployment may
+    /// still run `revalidate_replicated_chain` on its own periodic schedule, which
+    /// this verdict does not preclude.) Carries the subscription count for context.
+    Clear { subscriptions: usize },
+    /// pg detected apply conflicts (`conflicts_total > 0`) AND the triggered chain
+    /// re-validation then PASSED: the replicated `dregg.turns` still chains from
+    /// genesis to `head`. The apply divergence did not (yet) corrupt the turn chain
+    /// the subscriber re-validates — but it IS an anomaly the operator must chase
+    /// (a conflicting writer, a botched bootstrap), so the alarm still fires.
+    ConflictsButChainIntact {
+        conflicts_total: i64,
+        alarm: String,
+        head: Option<[u8; 32]>,
+    },
+    /// pg detected apply conflicts AND the triggered chain re-validation REFUSED:
+    /// the replicated turn chain does not re-validate locally. This is the severe
+    /// case — the apply-level divergence the counters saw coincides with a chain the
+    /// tooth rejects (a substituted / reordered / gapped turn). The subscriber must
+    /// NOT trust its mirror. Carries both the alarm and the refusal reason.
+    ConflictsAndChainBroken {
+        conflicts_total: i64,
+        alarm: String,
+        refusal: ChainRefusal,
+    },
+}
+
+impl FederationHealth {
+    /// `true` iff the operator must act — any non-clear verdict (the alarm fired,
+    /// whether or not the chain itself still re-validated).
+    pub fn needs_attention(&self) -> bool {
+        !matches!(self, FederationHealth::Clear { .. })
+    }
+
+    /// `true` iff the replicated mirror is NOT safe to trust — apply conflicts AND a
+    /// chain the tooth refuses. The hardest signal: stop serving from this replica.
+    pub fn chain_broken(&self) -> bool {
+        matches!(self, FederationHealth::ConflictsAndChainBroken { .. })
+    }
+
+    /// A one-line operator-facing summary of the composed verdict.
+    pub fn summary(&self) -> String {
+        match self {
+            FederationHealth::Clear { subscriptions } => {
+                format!("ok: federation healthy — {subscriptions} subscription(s), 0 apply conflicts")
+            }
+            FederationHealth::ConflictsButChainIntact { conflicts_total, head, .. } => format!(
+                "ALARM ({conflicts_total} apply conflict(s)) but chain re-validates: head={}",
+                head.map(|h| hex(&h)).unwrap_or_else(|| "<empty>".to_string())
+            ),
+            FederationHealth::ConflictsAndChainBroken { conflicts_total, refusal, .. } => format!(
+                "CRITICAL ({conflicts_total} apply conflict(s)) AND chain REFUSED: {refusal}"
+            ),
+        }
+    }
+}
+
+/// Compose the federation health verdict from a [`ConflictReport`] and a
+/// re-validation closure (`docs/PG-DREGG.md` §15) — the PURE composition the
+/// `dregg_federation_health()` extern realizes over live pg.
+///
+/// This is the load-bearing wiring: the pg18 apply-conflict counters DRIVE the
+/// chain re-validation. If the report is clear (no apply conflict), the feed is —
+/// at the apply layer — the clean single-writer fan-out the model assumes, and we
+/// return [`FederationHealth::Clear`] WITHOUT running the (then-unnecessary) tooth.
+/// If the alarm fires (`conflicts_total > 0`), pg saw the feed diverge at apply
+/// time, so we TRIGGER `revalidate` (the subscriber's `revalidate_replicated_chain`
+/// over its replicated `dregg.turns`) and fold its verdict into the result: the
+/// chain either still re-validates (anomaly to chase, but the turn chain is intact)
+/// or it does not (the severe, do-not-trust case).
+///
+/// `revalidate` is a closure so this stays postgres-free and `cargo test`-provable:
+/// the extern passes a closure that reads `dregg.turns` and calls
+/// `revalidate_replicated_chain`; a test passes a closure that returns a canned
+/// chain verdict. The TRIGGER LOGIC — alarm ⇒ re-validate, clear ⇒ skip — lives
+/// HERE, proven once, the same in the extern and the test.
+pub fn federation_health(
+    report: &ConflictReport,
+    revalidate: impl FnOnce() -> Result<Option<[u8; 32]>, ChainRefusal>,
+) -> FederationHealth {
+    if !report.alarm() {
+        // No apply conflict ⇒ the feed is clean at the apply layer; the chain tooth
+        // is the *triggered* check, so it is not run on this path. (A deployment may
+        // still sweep on its own schedule.)
+        return FederationHealth::Clear {
+            subscriptions: report.subscriptions.len(),
+        };
+    }
+    // The alarm fired: pg detected an apply-level divergence. The subscriber must
+    // not trust its replicated turns — re-run the anti-substitution tooth NOW.
+    let conflicts_total = report.conflicts_total();
+    let alarm = report.alarm_line();
+    match revalidate() {
+        Ok(head) => FederationHealth::ConflictsButChainIntact {
+            conflicts_total,
+            alarm,
+            head,
+        },
+        Err(refusal) => FederationHealth::ConflictsAndChainBroken {
+            conflicts_total,
+            alarm,
+            refusal,
+        },
+    }
+}
+
+// ============================================================================
 // 5. DDL emission — the schema generated from the same Rust that defines rows.
 // ============================================================================
 //
@@ -819,6 +1069,14 @@ CREATE OR REPLACE VIEW dregg.replication_conflicts AS
            ss.stats_reset
     FROM pg_stat_subscription_stats ss
     JOIN pg_subscription s ON s.oid = ss.subid;
+-- The conflict alarm is an OPERATOR/KERNEL surface: the subscriber-side federation
+-- health check (`dregg_federation_health`) reads it as the kernel role to compose
+-- the apply-conflict alarm with the chain re-validation. The Tier-B GRANT-ALL ran
+-- before this view existed (the publication installs separately), so grant it
+-- explicitly here — exactly like the Tier-C views need TIER_C_GRANTS. It is a thin
+-- stats view (no dregg row data; it reads pg_stat_subscription_stats), so the
+-- kernel + reader may select it without an RLS concern.
+GRANT SELECT ON dregg.replication_conflicts TO dregg_kernel, dregg_reader;
 "#;
 
     const FED_SUBSCRIBER_TEMPLATE: &str = r#"
@@ -1798,6 +2056,15 @@ mod tests {
         assert!(sql.contains("pg_stat_subscription_stats"));
         assert!(sql.contains("confl_insert_exists"));
         assert!(sql.contains("conflicts_total"));
+        // The conflict view MUST be granted to the kernel — `dregg_federation_health`
+        // reads it as the kernel/operator role to compose the alarm with the chain
+        // re-validation. The Tier-B GRANT-ALL ran before this view existed (the
+        // publication installs separately), so the grant is explicit here.
+        assert!(
+            sql.contains("GRANT SELECT ON dregg.replication_conflicts TO dregg_kernel"),
+            "the conflict alarm view must be readable by the kernel role that runs \
+             dregg_federation_health"
+        );
         // The subscriber runbook substitutes the publisher conninfo + names the
         // re-validation sweep (re-validate, do not trust).
         let sub = ddl::federation_subscriber("host=pub dbname=dregg");
@@ -2137,5 +2404,161 @@ mod tests {
             assert!(file.contains(col), "schema-tierB.sql missing cells column `{col}`");
             assert!(emitted.contains(col), "emitter missing cells column `{col}`");
         }
+    }
+
+    // ========================================================================
+    // §15 federation: the pg18 conflict counters DRIVE re-validation (compose).
+    // ========================================================================
+
+    fn sub(name: &str, kinds: [i64; 7]) -> SubscriptionConflicts {
+        SubscriptionConflicts {
+            subname: name.into(),
+            insert_exists: kinds[0],
+            update_origin_differs: kinds[1],
+            update_exists: kinds[2],
+            update_missing: kinds[3],
+            delete_origin_differs: kinds[4],
+            delete_missing: kinds[5],
+            multiple_unique_conflicts: kinds[6],
+            total: kinds.iter().sum(),
+        }
+    }
+
+    #[test]
+    fn conflict_total_sums_the_seven_kinds_and_self_checks() {
+        // The carried `total` must equal the sum of the seven confl_* columns —
+        // the view's conflicts_total IS that sum, and the row self-checks it.
+        let s = sub("dregg_tail", [1, 0, 2, 0, 0, 3, 1]);
+        assert_eq!(s.total, 7);
+        assert_eq!(s.recomputed_total(), 7, "the total re-derives from the seven kinds");
+        assert!(s.conflicted());
+
+        let clean = sub("clean_tail", [0, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(clean.total, 0);
+        assert!(!clean.conflicted());
+    }
+
+    #[test]
+    fn empty_report_is_clear_and_skips_the_tooth() {
+        // A publisher / single node has no subscriptions ⇒ no alarm, and the
+        // triggered chain re-validation is NOT run (it is the *triggered* check).
+        let report = ConflictReport::default();
+        assert!(!report.alarm());
+        assert_eq!(report.conflicts_total(), 0);
+
+        // The closure MUST NOT be called on the clear path — assert it via a flag.
+        let mut ran = false;
+        let verdict = federation_health(&report, || {
+            ran = true;
+            Ok(Some(root(9)))
+        });
+        assert!(!ran, "no apply conflict ⇒ the chain tooth is NOT triggered");
+        assert!(matches!(verdict, FederationHealth::Clear { subscriptions: 0 }));
+        assert!(!verdict.needs_attention());
+        assert!(!verdict.chain_broken());
+    }
+
+    #[test]
+    fn a_clean_subscription_is_clear() {
+        // A subscriber WITH a subscription but ZERO conflicts is still clear — the
+        // alarm is on conflicts, not on the mere existence of a subscription.
+        let report = ConflictReport {
+            subscriptions: vec![sub("dregg_tail", [0; 7])],
+        };
+        assert!(!report.alarm());
+        let mut ran = false;
+        let verdict = federation_health(&report, || {
+            ran = true;
+            Ok(None)
+        });
+        assert!(!ran, "a clean subscription does not trigger re-validation");
+        assert!(matches!(verdict, FederationHealth::Clear { subscriptions: 1 }));
+        assert!(report.alarm_line().starts_with("clear:"));
+    }
+
+    #[test]
+    fn a_conflict_triggers_revalidation_chain_intact() {
+        // THE COMPOSITION (happy-anomaly path): a non-zero conflict count fires the
+        // alarm AND triggers the chain re-validation; here the chain still
+        // re-validates, so the verdict is ConflictsButChainIntact — an anomaly to
+        // chase, but the turn chain the subscriber re-validates is intact.
+        let report = ConflictReport {
+            subscriptions: vec![sub("dregg_tail", [0, 0, 0, 1, 0, 0, 0])], // one update_missing
+        };
+        assert!(report.alarm());
+        assert_eq!(report.conflicts_total(), 1);
+
+        let mut ran = false;
+        let verdict = federation_health(&report, || {
+            ran = true;
+            Ok(Some(root(42))) // the tooth re-validated to this head
+        });
+        assert!(ran, "the alarm MUST trigger the chain re-validation");
+        match verdict {
+            FederationHealth::ConflictsButChainIntact { conflicts_total, head, alarm } => {
+                assert_eq!(conflicts_total, 1);
+                assert_eq!(head, Some(root(42)));
+                assert!(alarm.contains("dregg_tail=1"), "the alarm names the offender: {alarm}");
+                assert!(alarm.contains("re-validating"), "the alarm states it triggers re-validation");
+            }
+            other => panic!("expected ConflictsButChainIntact, got {other:?}"),
+        }
+        // needs_attention is true (an anomaly), but chain_broken is false.
+        let verdict2 = federation_health(&report, || Ok(Some(root(42))));
+        assert!(verdict2.needs_attention());
+        assert!(!verdict2.chain_broken());
+    }
+
+    #[test]
+    fn a_conflict_with_a_broken_chain_is_the_critical_case() {
+        // THE COMPOSITION (severe path): the conflict alarm fires AND the triggered
+        // chain re-validation REFUSES — the apply-level divergence coincides with a
+        // turn chain the tooth rejects. The subscriber must NOT trust its mirror.
+        let report = ConflictReport {
+            subscriptions: vec![
+                sub("dregg_tail", [0, 0, 0, 0, 0, 1, 0]),  // a delete_missing
+                sub("dregg_tail2", [2, 0, 0, 0, 0, 0, 0]), // and inserts on a 2nd sub
+            ],
+        };
+        assert!(report.alarm());
+        assert_eq!(report.conflicts_total(), 3, "summed across both subscriptions");
+
+        let refusal = ChainRefusal::RootMismatch { head: root(1), prev: root(9) };
+        let verdict = federation_health(&report, || Err(refusal.clone()));
+        match verdict {
+            FederationHealth::ConflictsAndChainBroken { conflicts_total, alarm, refusal: r } => {
+                assert_eq!(conflicts_total, 3);
+                assert_eq!(r, refusal);
+                // The alarm names BOTH offenders, sorted.
+                assert!(alarm.contains("dregg_tail=1"), "names offender 1: {alarm}");
+                assert!(alarm.contains("dregg_tail2=2"), "names offender 2: {alarm}");
+            }
+            other => panic!("expected ConflictsAndChainBroken, got {other:?}"),
+        }
+        let verdict2 = federation_health(&report, || Err(refusal.clone()));
+        assert!(verdict2.needs_attention());
+        assert!(verdict2.chain_broken(), "this is the do-not-trust signal");
+        assert!(verdict2.summary().contains("CRITICAL"));
+    }
+
+    #[test]
+    fn alarm_aggregates_across_subscriptions() {
+        // The headline alarm is the SUM across subscriptions; a clean one and a
+        // conflicted one together still alarm (on the conflicted one).
+        let report = ConflictReport {
+            subscriptions: vec![
+                sub("clean", [0; 7]),
+                sub("dirty", [5, 0, 0, 0, 0, 0, 0]),
+            ],
+        };
+        assert!(report.alarm());
+        assert_eq!(report.conflicts_total(), 5);
+        // Only the dirty one is named as an offender.
+        let line = report.alarm_line();
+        assert!(line.contains("dirty=5"));
+        assert!(!line.contains("clean="), "a clean subscription is not an offender: {line}");
+        // The conflicted() iterator yields exactly the dirty one.
+        let offenders: Vec<&str> = report.conflicted().map(|s| s.subname.as_str()).collect();
+        assert_eq!(offenders, vec!["dirty"]);
     }
 }
