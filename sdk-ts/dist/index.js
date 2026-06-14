@@ -1,7 +1,9 @@
 "use strict";
+var __create = Object.create;
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
+var __getProtoOf = Object.getPrototypeOf;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
 var __export = (target, all) => {
   for (var name in all)
@@ -15,6 +17,14 @@ var __copyProps = (to, from, except, desc) => {
   }
   return to;
 };
+var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
+  // If the importer is in node compatibility mode or this is not an ESM
+  // file that has been converted to a CommonJS file using a Babel-
+  // compatible transform (i.e. "__esModule" has not been set), then set
+  // "default" to the CommonJS "module.exports" for node compatibility.
+  isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
+  mod
+));
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
 // src/index.ts
@@ -234,52 +244,18 @@ var Blake3Hasher = class _Blake3Hasher {
 };
 
 // src/internal/ed25519.ts
-var import_node_crypto = require("crypto");
-var PKCS8_PREFIX = Uint8Array.from([
-  48,
-  46,
-  2,
-  1,
-  0,
-  48,
-  5,
-  6,
-  3,
-  43,
-  101,
-  112,
-  4,
-  34,
-  4,
-  32
-]);
-var SPKI_PREFIX = Uint8Array.from([
-  48,
-  42,
-  48,
-  5,
-  6,
-  3,
-  43,
-  101,
-  112,
-  3,
-  33,
-  0
-]);
-function privateKeyFromSeed(seed32) {
-  if (seed32.length !== 32) throw new Error("ed25519 seed must be 32 bytes");
-  const der = Buffer.concat([PKCS8_PREFIX, seed32]);
-  return (0, import_node_crypto.createPrivateKey)({ key: der, format: "der", type: "pkcs8" });
+var ed = __toESM(require("@noble/ed25519"));
+var import_sha512 = require("@noble/hashes/sha512");
+if (!ed.etc.sha512Sync) {
+  ed.etc.sha512Sync = (...messages) => (0, import_sha512.sha512)(ed.etc.concatBytes(...messages));
 }
 function ed25519PublicKey(seed32) {
-  const priv = privateKeyFromSeed(seed32);
-  const spki = (0, import_node_crypto.createPublicKey)(priv).export({ format: "der", type: "spki" });
-  return new Uint8Array(spki.subarray(spki.length - 32));
+  if (seed32.length !== 32) throw new Error("ed25519 seed must be 32 bytes");
+  return ed.getPublicKey(seed32);
 }
 function ed25519Sign(seed32, message) {
-  const priv = privateKeyFromSeed(seed32);
-  return new Uint8Array((0, import_node_crypto.sign)(null, message, priv));
+  if (seed32.length !== 32) throw new Error("ed25519 seed must be 32 bytes");
+  return ed.sign(message, seed32);
 }
 
 // src/internal/bytes.ts
@@ -768,7 +744,7 @@ __export(profiles_exports, {
   setActive: () => setActive
 });
 var import_node_fs = require("fs");
-var import_node_crypto2 = require("crypto");
+var import_node_crypto = require("crypto");
 var import_node_path = require("path");
 var PROFILE_ENV = "DREGG_PROFILE";
 var ProfileError = class extends Error {
@@ -829,7 +805,7 @@ function create(name) {
   if ((0, import_node_fs.existsSync)(path)) {
     throw new ProfileError("already_exists", `profile ${JSON.stringify(name)} already exists`);
   }
-  const seed = new Uint8Array((0, import_node_crypto2.randomBytes)(64));
+  const seed = new Uint8Array((0, import_node_crypto.randomBytes)(64));
   const identity = Identity.fromSeed(seed);
   const createdAt = Math.floor(Date.now() / 1e3);
   const record = {

@@ -66,6 +66,16 @@ dregg-observability = { path = "../observability", default-features = false }
 # Token crate without biscuit (biscuit-auth has complex deps)
 dregg-token = { path = "../token", default-features = false, features = ["macaroon", "rand-deps"] }
 
+# THE LIGHT CLIENT IN THE TAB (N12). `dregg-lightclient::verify_history` folds a
+# whole finalized history into ONE succinct recursive aggregate and verifies it
+# re-witnessing nothing — the anti-pale-ghost tooth, carried to the browser. It
+# pulls `dregg-circuit` (recursion — already unified ON in this graph via
+# observability/bridge; the STEP-0 `[patch]` above supplies the fork's
+# `NativeBatchStark` variant) + `dregg-blocklace` (wasm-safe: blake3 + ed25519 +
+# postcard + types, no tokio). `recursion` is in its default set, so a plain dep
+# carries the light client.
+dregg-lightclient = { path = "../lightclient" }
+
 blake3 = "1"
 bs58 = "0.5"
 postcard = { version = "1", features = ["alloc"] }
@@ -106,3 +116,21 @@ features = ["Performance", "Window"]
 [patch.crates-io]
 ark-serialize = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
 ark-serialize-derive = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
+
+# THE FORK SEAM (STEP 0). This standalone workspace pulls `dregg-circuit` with its
+# DEFAULT features via `dregg-observability`/`dregg-bridge` (both depend on it without
+# `default-features = false`), so feature-unification turns on `recursion` on the single
+# circuit instance in this graph — which compiles `circuit/src/plonky3_recursion_impl.rs`
+# + `ivc_turn_chain.rs`, both of which reference `RecursionInput::NativeBatchStark`. The
+# pinned git rev `c14b5fc0` of the recursion fork does NOT have that variant; only the
+# local sibling checkout (`../../plonky3-recursion`, head `72ffc56`) does. Patch sections
+# don't cross workspace boundaries, so the root Cargo.toml's identical `[patch]` does not
+# reach here — it must be replicated. Paths are one level deeper than the root's (this
+# manifest lives in `wasm/`, the root's in the repo root). REVERT to the git rev (bump the
+# rev in the root's `[workspace.dependencies]` + here) once the fork change `72ffc56` is
+# pushed — exactly the "push the fork + drop the local patch" step in REORIENT.md.
+[patch."https://github.com/emberian/plonky3-recursion"]
+p3-recursion = { path = "../../plonky3-recursion/recursion" }
+p3-circuit = { path = "../../plonky3-recursion/circuit" }
+p3-circuit-prover = { path = "../../plonky3-recursion/circuit-prover" }
+p3-poseidon2-circuit-air = { path = "../../plonky3-recursion/poseidon2-circuit-air" }

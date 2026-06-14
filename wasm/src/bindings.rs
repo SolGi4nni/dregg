@@ -25,7 +25,7 @@ thread_local! {
     static RUNTIMES: RefCell<Vec<Option<DreggRuntime>>> = const { RefCell::new(Vec::new()) };
 }
 
-fn with_runtime<F, R>(handle: usize, f: F) -> Result<R, JsError>
+pub(crate) fn with_runtime<F, R>(handle: usize, f: F) -> Result<R, JsError>
 where
     F: FnOnce(&mut DreggRuntime) -> Result<R, String>,
 {
@@ -39,7 +39,7 @@ where
     })
 }
 
-fn with_runtime_ref<F, R>(handle: usize, f: F) -> Result<R, JsError>
+pub(crate) fn with_runtime_ref<F, R>(handle: usize, f: F) -> Result<R, JsError>
 where
     F: FnOnce(&DreggRuntime) -> Result<R, String>,
 {

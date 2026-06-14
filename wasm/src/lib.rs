@@ -21,6 +21,17 @@ use dregg_token::AuthToken;
 pub mod bindings;
 pub mod privacy;
 pub mod runtime;
+// The web surface (N10): a browser window IS a dregg cell's surface capability.
+// `surface` mirrors `sel4/dregg-firmament/src/surface.rs` over the live
+// `DreggRuntime` ledger+executor; `bindings_surface` exposes the
+// `#[wasm_bindgen]` entry points the browser compositor calls.
+pub mod surface;
+pub mod bindings_surface;
+// The light client in the tab (N12): fold a whole finalized history into ONE
+// succinct recursive aggregate and verify it re-witnessing nothing — the
+// anti-pale-ghost tooth carried to the browser. Wraps
+// `dregg-lightclient::verify_history`.
+pub mod bindings_lightclient;
 
 // ============================================================================
 // Token operations (Macaroon backend)

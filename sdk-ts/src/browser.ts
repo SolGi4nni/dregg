@@ -1,27 +1,54 @@
 /**
- * `@dregg/sdk/browser` — the browser-safe, fetch-only organ surface.
+ * `@dregg/sdk/browser` — the FULL browser acting + reading surface.
  *
- * The full `@dregg/sdk` entry statically imports `node:crypto` (Ed25519
- * signing in `internal/ed25519`) and `fs`/`path` (the `profiles` store), so a
- * browser ESM loader cannot parse it. This entry carries ONLY the part that
- * is pure `fetch`: a faithful `BrowserNodeClient` (the same HTTP contract —
- * devnet headers, JSON + SSE) and the node-backed organ clients
- * ([`TrustlineClient`], [`ChannelsClient`]) constructed against it. The dregg
- * playground imports this entry to drive the organs in the browser.
+ * The `sdk-browser-ed25519-webcrypto` follow-up is DONE
+ * (`docs/design-frontiers/WEB-FORWARD.md §8 S5`): `internal/ed25519` now backs
+ * `Identity` with `@noble/ed25519` (the audited reference impl, byte-identical to
+ * the old `node:crypto` path — the golden key-derivation vector pins it), so the
+ * SDK no longer statically imports `node:crypto`. The `profiles` store (the only
+ * remaining `fs`/`path` user) is NOT re-exported here; everything else — the
+ * two-noun front door `Identity → .turn() → .sign() → .submit() → Receipt`, the
+ * `NodeClient` (pure `fetch` + SSE), the `AgentRuntime`, the `Receipt` noun, and
+ * the organ clients — bundles for the browser unchanged.
  *
- * `BrowserNodeClient` is byte-for-byte the same wire behaviour as the main
- * `NodeClient.getJson` / `.postJson` / `.sseStream` (it is the exact same
- * request shape the organ clients call); it simply omits the signing-bound
- * methods (`.turn()`, faucet-signed flows) that need node crypto. For those,
- * and for `Identity` / `MailboxClient` / `AttestedQuery` STARK verification,
- * use the wasm path (`pkg/dregg_wasm`) or the Node entry `@dregg/sdk`.
+ * So a `.turn()` from a tab against the devnet is now a REAL signed turn:
  *
- * A named follow-up (`sdk-browser-ed25519-webcrypto`) would back `Identity`
- * with WebCrypto/@noble ed25519 and let the full acting surface bundle too.
+ * ```ts
+ * import { Identity, AgentRuntime } from "@dregg/sdk/browser";
+ * const id = Identity.generate();                       // WebCrypto getRandomValues
+ * const rt = new AgentRuntime(id, "https://devnet.dregg.fg-goose.online");
+ * const signed = await rt.turn().transfer(targetHex, 100n).sign();
+ * console.log(signed.explain());                        // anti-blind-signing reading
+ * const receipt = await signed.submit();                // a real ed25519-signed turn
+ * ```
+ *
+ * Authorization stays INESCAPABLE: there is no `Unchecked` constructor on this
+ * surface (it lives behind `@dregg/sdk/raw`, the sealed escape hatch); the
+ * authorization field is private to the `.sign()` flow and is always a real
+ * Ed25519 signature by the time anything is submitted (#166).
+ *
+ * `BrowserNodeClient` remains as a fetch-only, signing-free client (the operands
+ * the organ clients duck-type); it is byte-for-byte the same wire behaviour as
+ * `NodeClient.getJson` / `.postJson` / `.sseStream`. STARK verification + the in-
+ * tab world still come from the wasm path (`pkg/dregg_wasm`).
  */
 
 import { TrustlineClient } from "./trustline";
 import { ChannelsClient } from "./channels";
+
+// THE FULL ACTING SURFACE (the two-noun front door) — browser-safe now that
+// `internal/ed25519` is @noble-backed. Re-exported so a tab gets `Identity →
+// .turn() → .sign() → .submit() → Receipt` from `@dregg/sdk/browser`.
+export { Identity } from "./identity";
+export { NodeClient, AgentRuntime, NodeError as NodeClientError } from "./client";
+export type { NodeClientOptions } from "./client";
+export { TurnBuilder, AuthorizedTurn, EmptyTurnError } from "./turns";
+export { Receipt, TurnProof } from "./receipt";
+export { NodeEvents } from "./events";
+export type { ReceiptFilter } from "./events";
+// The wire vocabulary as TYPES only — the value-level `Authorization::Unchecked`
+// constructor stays sealed in `@dregg/sdk/raw`, never reachable from this surface.
+export type { Action, AuthRequired, CapabilityRef, CellId, Effect, Turn } from "./internal/wire";
 
 // Re-export the organ clients (type-only deps on NodeClient → browser-clean).
 export { TrustlineClient } from "./trustline";

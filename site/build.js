@@ -627,7 +627,7 @@ function build() {
     const browserSrc = path.join(sdkSrcDir, 'browser.mjs');
     if (fs.existsSync(browserSrc)) {
       fs.copyFileSync(browserSrc, path.join(sdkDstDir, 'browser.mjs'));
-      console.log('  Copy: pkg/@dregg/sdk/browser.mjs (fetch-only organ surface for the playground)');
+      console.log('  Copy: pkg/@dregg/sdk/browser.mjs (the full browser acting surface — Identity/.turn()/.sign()/.submit(), @noble-backed)');
     } else {
       console.log('  Warning: sdk-ts/dist/browser.mjs missing — the playground Organs section will show "SDK bundle not served" (run `cd sdk-ts && npm run build` then rebuild browser.mjs with --no-splitting --platform browser).');
     }
