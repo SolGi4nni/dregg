@@ -142,7 +142,11 @@ flip:)*
 - ✅ RESIDUE RESOLVED: the rotated registry has all **36** cohort members incl.
   `revokeCapabilityVmDescriptor2R24` (graduated by cap-crown) + `customVmDescriptor2R24` — no v1-only
   descriptor remains (`cut -f1 rotation-v3-staged-registry.tsv | wc -l` = 36).
-- ⏳ REMAINING to grep-zero (the precise walls): **(A) the BILATERAL rotated outer AIR** — DECISION =
+- ⏳ REMAINING to grep-zero. **UPDATE 2026-06-13: walls (A) + (B) are now ✅ DONE + committed
+  (`b0baf026c`) — see the wall-A / wall-B `✅ DONE` entries below. (A)'s only residual is the two
+  SIBLING hand-AIRs `CrossSideExistenceAir` + `BundleTreeFoldAir` in the same file (they do NOT read
+  `effect_vm::pi`); a Lean-emission lane for them is now IN FLIGHT. The remaining grep-zero walls are
+  now just (C) + (D).** Original (A) plan, for the record: **(A) the BILATERAL rotated outer AIR** — DECISION =
   BUILD, emit from Lean (law #1). `bilateral_aggregation_air.rs::BilateralAggregationAir` is a plain
   hand-authored `StarkAir` reading `wr.public_inputs[..ACTIVE_BASE_COUNT]` and the bilateral-schedule
   PI offsets (`effect_vm::pi::{TURN_HASH_BASE 25..IS_AGENT_CELL 73}`). It does NOT ingest an
