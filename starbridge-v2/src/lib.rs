@@ -34,6 +34,8 @@ pub mod cipherclerk;
 #[cfg(feature = "embedded-executor")]
 pub mod compositor;
 #[cfg(feature = "embedded-executor")]
+pub mod coordination;
+#[cfg(feature = "embedded-executor")]
 pub mod debug;
 #[cfg(feature = "embedded-executor")]
 pub mod dynamics;
@@ -41,6 +43,8 @@ pub mod dynamics;
 pub mod edit;
 #[cfg(feature = "embedded-executor")]
 pub mod graph;
+#[cfg(feature = "embedded-executor")]
+pub mod narration;
 #[cfg(feature = "embedded-executor")]
 pub mod organs;
 #[cfg(feature = "embedded-executor")]
@@ -74,7 +78,13 @@ pub use compositor::{
     RegionId,
 };
 #[cfg(feature = "embedded-executor")]
+pub use coordination::{MandateArrow, NotifyArrow, SwarmGraph, SwarmNode};
+#[cfg(feature = "embedded-executor")]
 pub use graph::{GraphEdge, GraphLayer, GraphNode, OcapGraph};
+#[cfg(feature = "embedded-executor")]
+pub use narration::{
+    ClaimPosture, ClaimedAction, Correlation, Divergence, NarrationPanel, NarrationRow,
+};
 #[cfg(feature = "embedded-executor")]
 pub use organs::{
     FlashWellReflection, OrganKind, OrganReach, OrganSurvey, RemoteOrgan, TrustlineReflection,
@@ -87,7 +97,10 @@ pub use scene::{
     VerifiedScene, PRESENT_DIGEST_SLOT, SURFACE_FACTORY_VK,
 };
 #[cfg(feature = "embedded-executor")]
-pub use swarm::{NotifyEdge, Swarm, SwarmError, SwarmMember, SwarmView};
+pub use swarm::{
+    BudgetMeter, NotifyEdge, Swarm, SwarmBudget, SwarmError, SwarmMember, SwarmMemberView,
+    SwarmView,
+};
 #[cfg(feature = "embedded-executor")]
 pub use terminal::{Command, CommandError, OutputLine, TerminalCell, TerminalView};
 #[cfg(feature = "embedded-executor")]

@@ -104,6 +104,14 @@ pub struct World {
     /// re-derives bit-identically on replay (the debugger's re-execution and the
     /// replayer's reconstruction must use the SAME timestamp the live engine did).
     timestamp: i64,
+    /// The fee stamped onto every turn built by [`World::turn`] /
+    /// [`World::forest_turn`]. `0` for [`World::new`] (free metering — the demo
+    /// path). For a METERED world ([`World::with_costs`]) the executor rejects a
+    /// turn whose `computrons_used` exceeds its `fee`, so a metered world stamps a
+    /// fee that covers the per-turn cost (the agent pays it — conservation-real).
+    /// This is what lets the SWARM BUDGET METER (N1) observe non-zero metered spend
+    /// on committed turns without every turn being rejected for under-fee.
+    turn_fee: u64,
 }
 
 impl Default for World {
@@ -116,18 +124,31 @@ impl World {
     /// A fresh, empty world with the real embedded engine (free metering, so the
     /// demo world isn't gated on a fee economy).
     pub fn new() -> Self {
+        Self::with_costs(ComputronCosts::zero())
+    }
+
+    /// A fresh, empty world with the real embedded engine metering at `costs`.
+    ///
+    /// [`World::new`] pins `ComputronCosts::zero()` so the demo flows aren't gated
+    /// on a fee economy. The SWARM BUDGET METER (N1) needs a world where committed
+    /// turns actually accrue metered computrons, so a member's `spent` GROWS and a
+    /// ceiling can bite — that is what this constructor is for. The metering is the
+    /// REAL executor's (`ComputronCosts` is the production cost model the federation
+    /// producer configures), just non-zero; the swarm budget then sums the genuine
+    /// `receipt.computrons_used`, never a re-derived estimate.
+    pub fn with_costs(costs: ComputronCosts) -> Self {
         // A real wall-clock so temporal preconditions behave; harmless for the
         // demo flows that don't use them. PINNED for the world's life so the
         // engine and the replay history stay bit-deterministic together.
         let timestamp = now_unix();
         let config = EngineConfig {
-            costs: ComputronCosts::zero(),
+            costs: costs.clone(),
             federation_id: [0u8; 32],
             block_height: 0,
             timestamp,
             max_proof_age_secs: 0,
         };
-        let history = History::new(timestamp);
+        let history = History::with_costs(timestamp, costs.clone());
         let record_exec = history.fresh_executor();
         World {
             engine: DreggEngine::new(config),
@@ -138,7 +159,18 @@ impl World {
             dynamics: Dynamics::new(),
             height: 0,
             timestamp,
+            turn_fee: 0,
         }
+    }
+
+    /// Set the fee stamped onto every turn built by [`World::turn`] /
+    /// [`World::forest_turn`]. In a METERED world ([`World::with_costs`]) this must
+    /// cover the per-turn `computrons_used` or the executor rejects the turn for
+    /// under-fee; the agent pays it from its balance (conservation-real). Returns
+    /// `self` for builder-style construction. The default is `0` (free metering).
+    pub fn with_turn_fee(mut self, fee: u64) -> Self {
+        self.turn_fee = fee;
+        self
     }
 
     // --- read surface (what the reflective object model + views consume) ----
@@ -475,7 +507,9 @@ impl World {
     /// OPERATOR is the authority. The cells' `Permissions` still gate every
     /// effect; an effect a cell forbids is rejected regardless of auth.)
     pub fn turn(&self, agent: CellId, effects: Vec<Effect>) -> Turn {
-        bare_turn(agent, self.next_nonce(&agent), effects)
+        let mut t = bare_turn(agent, self.next_nonce(&agent), effects);
+        t.fee = self.turn_fee;
+        t
     }
 
     /// Build a MULTI-ACTION turn: one `Action` per `(target, effects)` entry,
@@ -497,7 +531,9 @@ impl World {
         for (target, effects) in actions {
             forest.add_root(bare_action(target, effects));
         }
-        wrap_turn(agent, nonce, forest)
+        let mut t = wrap_turn(agent, nonce, forest);
+        t.fee = self.turn_fee;
+        t
     }
 
     fn next_nonce(&self, agent: &CellId) -> u64 {

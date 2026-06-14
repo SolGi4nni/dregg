@@ -127,23 +127,36 @@ pub struct History {
     /// The fixed executor timestamp used for every recorded turn, so replay is
     /// bit-deterministic (a recorded receipt re-derives identically).
     timestamp: i64,
+    /// The computron cost model the recording executor meters at — pinned to the
+    /// live [`World`](crate::world::World)'s engine costs so a recorded turn
+    /// re-derives bit-identically on replay (zero for `World::new`, the production
+    /// model for `World::with_costs`).
+    costs: ComputronCosts,
 }
 
 impl History {
     /// A fresh, empty history. `timestamp` is the wall-clock the recording
     /// executor used; replay reuses it so receipts re-derive identically.
+    /// Free-metered (matches `World::new`).
     pub fn new(timestamp: i64) -> Self {
-        let mut roots = Vec::new();
-        roots.push(Ledger::new().root()); // root after 0 steps (the empty ledger)
-        History { steps: Vec::new(), roots, timestamp }
+        Self::with_costs(timestamp, ComputronCosts::zero())
     }
 
-    /// The recording executor: a free-metered executor pinned to the history's
-    /// fixed timestamp (matches `World::new`'s zero-cost embedded executor).
-    /// Public so a live [`World`](crate::world::World) can stand up the recorder
-    /// substrate it drives this history against, in lock-step with its engine.
+    /// A fresh, empty history whose recording executor meters at `costs` — pinned
+    /// to the live engine's cost model so replay re-derives identically when the
+    /// world is metered ([`World::with_costs`], the swarm-budget substrate).
+    pub fn with_costs(timestamp: i64, costs: ComputronCosts) -> Self {
+        let mut roots = Vec::new();
+        roots.push(Ledger::new().root()); // root after 0 steps (the empty ledger)
+        History { steps: Vec::new(), roots, timestamp, costs }
+    }
+
+    /// The recording executor: an executor metering at the history's pinned costs
+    /// and timestamp (matches the live [`World`](crate::world::World)'s engine).
+    /// Public so a live `World` can stand up the recorder substrate it drives this
+    /// history against, in lock-step with its engine.
     pub fn fresh_executor(&self) -> TurnExecutor {
-        let mut e = TurnExecutor::new(ComputronCosts::zero());
+        let mut e = TurnExecutor::new(self.costs.clone());
         e.set_timestamp(self.timestamp);
         e
     }

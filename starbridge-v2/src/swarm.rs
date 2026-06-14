@@ -133,6 +133,83 @@ impl NotifyEdge {
     }
 }
 
+/// THE PER-MEMBER BUDGET METER — the conserved-spend face of the swarm (N1 /
+/// `docs/ADOS-DEEPENING.md` §3.3, `docs/AGENT-SWARM-UX.md` §5).
+///
+/// `spent` is the RUNNING SUM of the metered computrons across every committed
+/// action the member took through [`Swarm::run`] / [`Swarm::run_atomic`] /
+/// [`Swarm::drain_notify`] — the same `computrons` already carried on each
+/// [`SwarmActionOutcome`], not a re-derived estimate. `ceiling` is an OPTIONAL
+/// metered-computron cap: when set, [`Swarm::run`] REFUSES a dispatch that would
+/// push `spent` past it BEFORE the turn runs (fail-closed — the
+/// [`SwarmError::BudgetExhausted`] guarantee firing at the seam, the swarm-layer
+/// twin of the conservation refusal).
+///
+/// This is the FLOOR model (a plain conserved counter the swarm owns). The depth
+/// lift to a real `dregg_coord::StingrayCounter` shared budget (so "the swarm
+/// spent at most B" is *provable* across N members) is the named N9 weld; the
+/// floor here is exact for the single-image swarm.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BudgetMeter {
+    /// The running sum of metered computrons this member has spent on committed
+    /// actions (monotonically non-decreasing; a refused action spends nothing).
+    pub spent: u64,
+    /// An optional metered-computron ceiling. `None` = unbounded (no budget gate);
+    /// `Some(c)` = [`Swarm::run`] refuses a dispatch whose post-spend would exceed
+    /// `c` (fail-closed, before the turn runs).
+    pub ceiling: Option<u64>,
+}
+
+impl BudgetMeter {
+    /// The headroom remaining under the ceiling (`ceiling - spent`, saturating at
+    /// 0), or `None` if the member is unbounded.
+    pub fn headroom(&self) -> Option<u64> {
+        self.ceiling.map(|c| c.saturating_sub(self.spent))
+    }
+
+    /// Whether spending `cost` more computrons would BREACH the ceiling (strictly
+    /// exceed it). An unbounded meter never breaches. A `cost` that lands the
+    /// member EXACTLY on the ceiling is admitted (the ceiling is the inclusive
+    /// bound the member may reach but not pass).
+    pub fn would_breach(&self, cost: u64) -> bool {
+        match self.ceiling {
+            Some(c) => self.spent.saturating_add(cost) > c,
+            None => false,
+        }
+    }
+
+    /// Whether the member is at or over its ceiling already (no further bounded
+    /// spend is possible) — the "amber → red" boundary the panel colors.
+    pub fn is_exhausted(&self) -> bool {
+        match self.ceiling {
+            Some(c) => self.spent >= c,
+            None => false,
+        }
+    }
+}
+
+/// THE SWARM-AGGREGATE BUDGET — the conserved-spend strip across all members
+/// (`docs/AGENT-SWARM-UX.md` §4.5). `total_spent` is the sum of every member's
+/// metered spend; `total_ceiling` is the sum of the SET ceilings (members with no
+/// ceiling contribute nothing to it — `bounded_members` counts how many are
+/// gated); `headroom` is `total_ceiling - total_spent` saturating at 0.
+///
+/// The aggregate is the answer to "could this swarm have cost more than I
+/// allowed?" — over the bounded members it is a hard, conserved bound (the floor
+/// model; the N9 Stingray weld makes it a single shared pool).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SwarmBudget {
+    /// The sum of metered computrons spent across ALL members.
+    pub total_spent: u64,
+    /// The sum of the SET ceilings (unbounded members contribute nothing).
+    pub total_ceiling: u64,
+    /// `total_ceiling - total_spent`, saturating at 0 (headroom over the bounded
+    /// members; meaningful only against `bounded_members`).
+    pub headroom: u64,
+    /// How many members carry a ceiling (the bounded subset the aggregate bounds).
+    pub bounded_members: usize,
+}
+
 /// One member of a swarm — an agent cell with a mandate, a surface binding, and
 /// an inbox of pending notifications from peers. Each member is a cap-confined
 /// `Surface` cell: its actions are cap-gated by its mandate (same as
@@ -167,6 +244,11 @@ pub struct SwarmMember {
     pub backed: bool,
     /// The member's live balance (resources its loop holds).
     pub balance: i64,
+    /// THE BUDGET METER — the running metered-computron spend + an optional
+    /// ceiling. [`Swarm::run`] refuses a dispatch that would breach the ceiling
+    /// BEFORE it runs (fail-closed). `spent` grows by each committed action's
+    /// metered computrons.
+    pub budget: BudgetMeter,
 }
 
 impl SwarmMember {
@@ -182,6 +264,7 @@ impl SwarmMember {
             action_count: 0,
             backed: false,
             balance: 0,
+            budget: BudgetMeter::default(),
         }
     }
 
@@ -208,6 +291,19 @@ pub enum SwarmError {
     ExecutorRejected { member: CellId, reason: String },
     /// No member with the given `CellId` exists in this swarm.
     UnknownMember { agent: CellId },
+    /// THE BUDGET CEILING FIRING — the member has a metered-computron ceiling and
+    /// this dispatch is refused BEFORE it runs (fail-closed, no turn committed) to
+    /// keep its `spent` from breaching the `ceiling`. The swarm-layer answer to the
+    /// runaway-spend fear: a provable bound on the metered cost, enforced AT the
+    /// seam rather than reconciled after. `would_be` is the spend the dispatch
+    /// would push the member to if it ran (the prospective sum). Note the bound is
+    /// over COMPUTRONS, not dollars (`docs/ADOS-DEEPENING.md` §3.3 carries that gap).
+    BudgetExhausted {
+        member: CellId,
+        spent: u64,
+        ceiling: u64,
+        would_be: u64,
+    },
 }
 
 impl SwarmError {
@@ -230,6 +326,15 @@ impl SwarmError {
             SwarmError::UnknownMember { agent } => format!(
                 "REFUSED — no member {} in this swarm",
                 crate::reflect::short_hex(agent.as_bytes()),
+            ),
+            SwarmError::BudgetExhausted {
+                member,
+                spent,
+                ceiling,
+                would_be,
+            } => format!(
+                "REFUSED — member {} budget exhausted (spent {spent} + this would reach {would_be} > ceiling {ceiling})",
+                crate::reflect::short_hex(member.as_bytes()),
             ),
         }
     }
@@ -343,6 +448,9 @@ impl Swarm {
     ///   2. Confirm the backing cell is live; fail with `Unbacked` otherwise.
     ///   3. **CAP-GATE** — confirm the acting cell holds authority reaching the
     ///      effect target (same `has_access` check as `TerminalCell::run`).
+    ///   3b. **BUDGET GATE** — if the member has spent its metered-computron
+    ///      ceiling, REFUSE here (fail-closed, before the executor runs — no turn
+    ///      commits, no height advance; [`SwarmError::BudgetExhausted`]).
     ///   4. Run the turn through the REAL executor via `World::commit_turn`.
     ///   5. On commit, scan the turn's new `EventEmitted` dynamics for inter-
     ///      member events; deposit `NotifyEdge`s in the recipients' inboxes.
@@ -381,6 +489,39 @@ impl Swarm {
                     }
                 }
             }
+        }
+
+        // (3b) BUDGET GATE — fail-closed BEFORE the turn runs. A member that has
+        //      already spent its metered-computron ceiling cannot dispatch again:
+        //      we refuse here, before `commit_turn`, so NO turn commits and the
+        //      height does not advance (the swarm-layer twin of the conservation
+        //      refusal — `docs/ADOS-DEEPENING.md` §3.3). The bound is on the
+        //      executor's metered `computrons_used` (summed into `spent`), the
+        //      genuine cost, not a re-derived estimate. (The ceiling is over
+        //      COMPUTRONS, not dollars — §3.3 names that as the carried gap; the
+        //      `dregg_coord::StingrayCounter` shared-pool lift is the named N9 weld.)
+        if self.members[idx].budget.is_exhausted() {
+            let b = self.members[idx].budget;
+            let ceiling = b.ceiling.unwrap_or(0);
+            let ao = SwarmActionOutcome {
+                member: agent,
+                committed: false,
+                receipt_hash: None,
+                height: None,
+                computrons: 0,
+                notify_edges: Vec::new(),
+                summary: format!(
+                    "BUDGET EXHAUSTED — spent {} ≥ ceiling {ceiling} (dispatch refused, no commit)",
+                    b.spent
+                ),
+            };
+            self.action_log.push(ao);
+            return Err(SwarmError::BudgetExhausted {
+                member: agent,
+                spent: b.spent,
+                ceiling,
+                would_be: b.spent, // already at/over — no further bounded spend
+            });
         }
 
         // (4) Run through the REAL executor.
@@ -440,9 +581,11 @@ impl Swarm {
                 // Summarize the action's effects from the dynamics.
                 let summary = summarize_events(new_events);
 
-                // (6) Update acting member's counters.
+                // (6) Update acting member's counters + grow the budget meter by
+                //     the metered computrons (the running conserved spend).
                 let m = &mut self.members[idx];
                 m.action_count += 1;
+                m.budget.spent = m.budget.spent.saturating_add(computrons);
                 if let Some(c) = world.ledger().get(&agent) {
                     m.balance = c.state.balance();
                 }
@@ -578,6 +721,33 @@ impl Swarm {
             }
         }
 
+        // (3b) BUDGET GATE — fail-closed before the bundle runs (same discipline
+        //      as `run`): a coordinator at its metered-computron ceiling cannot
+        //      dispatch an atomic bundle either. No turn commits, no height advance.
+        if self.members[idx].budget.is_exhausted() {
+            let b = self.members[idx].budget;
+            let ceiling = b.ceiling.unwrap_or(0);
+            let ao = SwarmActionOutcome {
+                member: agent,
+                committed: false,
+                receipt_hash: None,
+                height: None,
+                computrons: 0,
+                notify_edges: Vec::new(),
+                summary: format!(
+                    "ATOMIC bundle REFUSED — budget exhausted (spent {} ≥ ceiling {ceiling})",
+                    b.spent
+                ),
+            };
+            self.action_log.push(ao);
+            return Err(SwarmError::BudgetExhausted {
+                member: agent,
+                spent: b.spent,
+                ceiling,
+                would_be: b.spent,
+            });
+        }
+
         // (4) Build + commit ONE atomic forest turn through the REAL executor.
         let dyn_cursor_before = world.dynamics().cursor();
         let turn = world.forest_turn(agent, actions);
@@ -627,9 +797,11 @@ impl Swarm {
 
                 let summary = format!("ATOMIC bundle · {}", summarize_events(new_events));
 
-                // (6) Refresh the coordinator's counters.
+                // (6) Refresh the coordinator's counters + grow its budget meter by
+                //     the bundle's metered computrons (one receipt, one spend).
                 let m = &mut self.members[idx];
                 m.action_count += 1;
+                m.budget.spent = m.budget.spent.saturating_add(computrons);
                 if let Some(c) = world.ledger().get(&agent) {
                     m.balance = c.state.balance();
                 }
@@ -721,6 +893,8 @@ impl Swarm {
                 self.members[idx].inbox[pos].drained = true;
                 self.members[idx].inbox[pos].drain_receipt = Some(drain_receipt);
                 self.members[idx].action_count += 1;
+                self.members[idx].budget.spent =
+                    self.members[idx].budget.spent.saturating_add(computrons);
                 if let Some(c) = world.ledger().get(&agent) {
                     self.members[idx].balance = c.state.balance();
                 }
@@ -767,6 +941,61 @@ impl Swarm {
     pub fn total_pending(&self) -> usize {
         self.members.iter().map(|m| m.pending_notify_count()).sum()
     }
+
+    // ── THE BUDGET METER (N1) ────────────────────────────────────────────────
+
+    /// **Set (or clear) a member's metered-computron ceiling.** `Some(c)` gates
+    /// the member: once its `spent` reaches `c`, [`Swarm::run`] /
+    /// [`Swarm::run_atomic`] refuse the next dispatch fail-closed
+    /// ([`SwarmError::BudgetExhausted`], no turn committed). `None` removes the
+    /// gate (unbounded). Returns `false` if the agent is not a member. Setting the
+    /// ceiling does NOT reset `spent` — it is the operator declaring the cap on the
+    /// already-running conserved spend.
+    pub fn set_ceiling(&mut self, agent: &CellId, ceiling: Option<u64>) -> bool {
+        match self.index.get(agent) {
+            Some(&idx) => {
+                self.members[idx].budget.ceiling = ceiling;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// A member's live budget meter (its running metered spend + ceiling), or
+    /// `None` if the agent is not a member.
+    pub fn member_budget(&self, agent: &CellId) -> Option<BudgetMeter> {
+        self.index.get(agent).map(|&idx| self.members[idx].budget)
+    }
+
+    /// **THE SWARM-AGGREGATE BUDGET** — the conserved spend across all members:
+    /// the sum of every member's metered spend, the sum of the SET ceilings, the
+    /// headroom over the bounded members, and how many members are bounded. This
+    /// is the aggregate meter strip — "could the swarm have cost more than I
+    /// allowed?" answered over the bounded subset (a hard conserved bound; the
+    /// `dregg_coord::StingrayCounter` single-pool lift is the named N9 weld).
+    pub fn swarm_budget(&self) -> SwarmBudget {
+        let total_spent: u64 = self
+            .members
+            .iter()
+            .map(|m| m.budget.spent)
+            .fold(0u64, |a, s| a.saturating_add(s));
+        let total_ceiling: u64 = self
+            .members
+            .iter()
+            .filter_map(|m| m.budget.ceiling)
+            .fold(0u64, |a, c| a.saturating_add(c));
+        let bounded_members = self
+            .members
+            .iter()
+            .filter(|m| m.budget.ceiling.is_some())
+            .count();
+        SwarmBudget {
+            total_spent,
+            total_ceiling,
+            headroom: total_ceiling.saturating_sub(total_spent),
+            bounded_members,
+        }
+    }
 }
 
 /// THE SWARM VIEW — the gpui-free render model the cockpit maps onto the SWARM
@@ -782,6 +1011,9 @@ pub struct SwarmView {
     pub total_pending: usize,
     /// The swarm's aggregate committed action count.
     pub total_actions: usize,
+    /// THE AGGREGATE BUDGET STRIP — total spent / total ceiling / headroom across
+    /// the bounded members (`docs/AGENT-SWARM-UX.md` §4.5).
+    pub budget: SwarmBudget,
 }
 
 /// One member's summary in the SWARM tab panel.
@@ -796,6 +1028,10 @@ pub struct SwarmMemberView {
     pub pending_notify: usize,
     /// The inbox (pending-first, then drained) — the most recent 8 entries.
     pub inbox: Vec<NotifyEdge>,
+    /// THE BUDGET METER — the member's running metered spend (`budget.spent`)
+    /// against its optional `budget.ceiling`. The panel draws this as a bar; it
+    /// goes amber as `spent` nears the ceiling and red+REFUSED at exhaustion.
+    pub budget: BudgetMeter,
 }
 
 /// One entry in the swarm activity feed.
@@ -834,12 +1070,14 @@ impl SwarmView {
                     action_count: m.action_count,
                     pending_notify: m.pending_notify_count(),
                     inbox,
+                    budget: m.budget,
                 }
             })
             .collect();
 
         let total_pending = swarm.total_pending();
         let total_actions: usize = members.iter().map(|m| m.action_count).sum();
+        let budget = swarm.swarm_budget();
 
         let activity: Vec<SwarmActivityEntry> = swarm
             .action_log()
@@ -875,6 +1113,7 @@ impl SwarmView {
             activity,
             total_pending,
             total_actions,
+            budget,
         }
     }
 }
@@ -1296,5 +1535,247 @@ mod tests {
         swarm.drain_notify(&mut world, worker_a).expect("second drain");
         let m = swarm.members().iter().find(|m| m.agent == worker_a).unwrap();
         assert_eq!(m.pending_notify_count(), 0, "inbox fully drained");
+    }
+
+    // ── N1: THE SWARM BUDGET METER (against the REAL metered executor) ───────
+    //
+    // The budget meter sums the executor's GENUINE `receipt.computrons_used`. For
+    // that to be non-zero (a non-vacuous tooth) the world must meter non-zero
+    // costs — so these fixtures use a METERED world (`World::with_costs` +
+    // `with_turn_fee`), where committed turns accrue real computrons and the agent
+    // pays a real fee. The metering is the production executor's, just non-zero.
+
+    use dregg_turn::ComputronCosts;
+
+    /// A metered swarm: a coordinator holding a big balance + caps to both
+    /// workers, over a world that meters `default_costs()` and stamps a fee that
+    /// covers a per-turn cost. The coordinator's metered actions grow its `spent`.
+    fn metered_swarm_world() -> (World, Swarm, CellId, CellId, CellId) {
+        // A real metered world: production cost model, a per-turn fee that covers
+        // any single dispatch's cost (the agent pays it from its balance).
+        let mut world = World::with_costs(ComputronCosts::default_costs()).with_turn_fee(1_000);
+        let worker_a = world.genesis_cell(0xA0, 5_000);
+        let worker_b = world.genesis_cell(0xB0, 5_000);
+        // The coordinator holds a large balance (it pays the per-turn fee on every
+        // dispatch) and original caps to both workers (installed at genesis).
+        let mut coord_cell = crate::world::make_open_cell(0xC0, 100_000_000);
+        coord_cell
+            .capabilities
+            .grant(worker_a, dregg_cell::AuthRequired::None)
+            .expect("free slot for worker_a cap");
+        coord_cell
+            .capabilities
+            .grant(worker_b, dregg_cell::AuthRequired::None)
+            .expect("free slot for worker_b cap");
+        let coord = world.genesis_install(coord_cell);
+        let swarm = Swarm::new(
+            &world,
+            [(coord, "coordinator"), (worker_a, "worker-a"), (worker_b, "worker-b")],
+        );
+        (world, swarm, coord, worker_a, worker_b)
+    }
+
+    #[test]
+    fn the_metered_world_actually_meters_nonzero_computrons() {
+        // PRECONDITION for the budget tests being non-vacuous: a committed action
+        // in the metered world has a NON-ZERO metered cost (so `spent` can grow and
+        // a ceiling can bite). The exact figure is the executor's real metered cost
+        // under `default_costs()` (action_base + effect_base + transfer + the
+        // turn's other metered legs) — we assert it is non-zero and STABLE (the
+        // same dispatch meters the same cost), not a hard-coded constant (that
+        // would couple the test to executor cost internals).
+        let (mut world, mut swarm, coord, worker_a, _) = metered_swarm_world();
+        let o1 = swarm
+            .run(&mut world, coord, vec![transfer(coord, worker_a, 100)])
+            .expect("transfer commits in the metered world");
+        assert!(o1.committed);
+        assert!(o1.computrons > 0, "the metered world meters a non-zero cost");
+        // The same dispatch meters the same cost (determinism — the meter is a real
+        // accounting of the production cost model, not noise).
+        let o2 = swarm
+            .run(&mut world, coord, vec![transfer(coord, worker_a, 100)])
+            .expect("second transfer commits");
+        assert_eq!(o1.computrons, o2.computrons, "metering is deterministic per dispatch");
+    }
+
+    #[test]
+    fn under_ceiling_an_action_commits_and_spent_grows_by_the_metered_computrons() {
+        // POLARITY 1 (under-ceiling COMMITS): a member below its ceiling dispatches
+        // a real turn; it commits AND its `spent` grows by EXACTLY the executor's
+        // metered computrons (the genuine cost, not a re-derived estimate).
+        let (mut world, mut swarm, coord, worker_a, _) = metered_swarm_world();
+        // A generous ceiling — the dispatch is well under it.
+        assert!(swarm.set_ceiling(&coord, Some(10_000)));
+        assert_eq!(swarm.member_budget(&coord).unwrap().spent, 0);
+        let h0 = world.height();
+
+        let o1 = swarm
+            .run(&mut world, coord, vec![transfer(coord, worker_a, 200)])
+            .expect("under-ceiling dispatch must commit");
+        assert!(o1.committed);
+        assert_eq!(world.height(), h0 + 1, "a real turn committed");
+        // `spent` grew by EXACTLY the metered computrons of that turn.
+        assert_eq!(
+            swarm.member_budget(&coord).unwrap().spent,
+            o1.computrons,
+            "spent grows by the metered computrons"
+        );
+        assert!(o1.computrons > 0, "the metered cost is non-zero (non-vacuous)");
+
+        // A second dispatch accumulates: spent == sum of the two metered costs.
+        let o2 = swarm
+            .run(&mut world, coord, vec![transfer(coord, worker_a, 200)])
+            .expect("second under-ceiling dispatch must commit");
+        assert_eq!(
+            swarm.member_budget(&coord).unwrap().spent,
+            o1.computrons + o2.computrons,
+            "spent is the running sum of metered computrons"
+        );
+        // Headroom shrank by the same amount.
+        assert_eq!(
+            swarm.member_budget(&coord).unwrap().headroom(),
+            Some(10_000 - (o1.computrons + o2.computrons)),
+        );
+    }
+
+    #[test]
+    fn a_dispatch_that_would_breach_the_ceiling_is_refused_with_no_height_advance() {
+        // POLARITY 2 (breach REFUSED, no commit): once a member has spent up to its
+        // ceiling, the NEXT dispatch is refused fail-closed — BudgetExhausted, and
+        // the height does NOT advance (no turn committed). This is the runaway
+        // refused AT the seam, not reconciled after.
+        let (mut world, mut swarm, coord, worker_a, _) = metered_swarm_world();
+        // First, run one real action to learn its metered cost, then set the
+        // ceiling EXACTLY at that spend so the member is now exhausted.
+        let o1 = swarm
+            .run(&mut world, coord, vec![transfer(coord, worker_a, 100)])
+            .expect("first dispatch commits");
+        let spent_after_one = swarm.member_budget(&coord).unwrap().spent;
+        assert_eq!(spent_after_one, o1.computrons);
+        // Set the ceiling at the current spend: the member is now AT its ceiling.
+        assert!(swarm.set_ceiling(&coord, Some(spent_after_one)));
+        assert!(swarm.member_budget(&coord).unwrap().is_exhausted());
+
+        let h_before = world.height();
+        let log_len_before = swarm.action_log().len();
+        let r = swarm.run(&mut world, coord, vec![transfer(coord, worker_a, 100)]);
+        // The dispatch is refused with the budget error.
+        match r {
+            Err(SwarmError::BudgetExhausted { member, spent, ceiling, .. }) => {
+                assert_eq!(member, coord);
+                assert_eq!(spent, spent_after_one);
+                assert_eq!(ceiling, spent_after_one);
+            }
+            other => panic!("expected BudgetExhausted, got {other:?}"),
+        }
+        // FAIL-CLOSED: no turn committed — the height did not advance.
+        assert_eq!(world.height(), h_before, "no height advance on a budget breach");
+        // The spend did NOT change (the refused dispatch metered nothing).
+        assert_eq!(swarm.member_budget(&coord).unwrap().spent, spent_after_one);
+        // The refusal is RECORDED in the action log (a record, not a silent drop).
+        assert_eq!(swarm.action_log().len(), log_len_before + 1);
+        let last = swarm.action_log().last().unwrap();
+        assert!(!last.committed);
+        assert!(last.summary.contains("BUDGET EXHAUSTED"));
+    }
+
+    #[test]
+    fn an_unbounded_member_is_never_budget_refused() {
+        // A member with no ceiling (the default) is never budget-gated — it spends
+        // freely (the gate is opt-in per member).
+        let (mut world, mut swarm, coord, worker_a, _) = metered_swarm_world();
+        assert!(swarm.member_budget(&coord).unwrap().ceiling.is_none());
+        // Many dispatches, none refused for budget.
+        for _ in 0..5 {
+            swarm
+                .run(&mut world, coord, vec![transfer(coord, worker_a, 10)])
+                .expect("an unbounded member is never budget-refused");
+        }
+        assert!(swarm.member_budget(&coord).unwrap().spent > 0);
+        assert!(!swarm.member_budget(&coord).unwrap().is_exhausted());
+    }
+
+    #[test]
+    fn the_aggregate_swarm_budget_sums_spends_and_ceilings_correctly() {
+        // THE AGGREGATE: total_spent = Σ member spent; total_ceiling = Σ SET
+        // ceilings (unbounded members contribute nothing); headroom = ceiling −
+        // spent; bounded_members counts the gated subset.
+        let (mut world, mut swarm, coord, worker_a, worker_b) = metered_swarm_world();
+        // Give worker_a a cap to worker_b so it too can act on a peer (for a
+        // second spender). worker_a is born with no outbound cap, so it can only
+        // act on ITSELF — a self SetField is metered and in-mandate.
+        // Bound the coordinator and worker_a; leave worker_b unbounded.
+        assert!(swarm.set_ceiling(&coord, Some(5_000)));
+        assert!(swarm.set_ceiling(&worker_a, Some(5_000)));
+        let _ = worker_b;
+
+        // Coordinator spends (a transfer to worker_a).
+        let oc = swarm
+            .run(&mut world, coord, vec![transfer(coord, worker_a, 100)])
+            .expect("coord dispatch commits");
+        // worker_a spends on ITSELF (a self SetField — always in-mandate, metered).
+        let ow = swarm
+            .run(&mut world, worker_a, vec![crate::world::set_field(worker_a, 3, [1u8; 32])])
+            .expect("worker_a self-action commits");
+
+        let agg = swarm.swarm_budget();
+        assert_eq!(agg.bounded_members, 2, "coord + worker_a are bounded");
+        assert_eq!(agg.total_ceiling, 10_000, "Σ set ceilings = 5_000 + 5_000");
+        assert_eq!(
+            agg.total_spent,
+            oc.computrons + ow.computrons,
+            "total_spent is the sum of every member's metered spend"
+        );
+        assert_eq!(agg.headroom, 10_000 - (oc.computrons + ow.computrons));
+
+        // The SwarmView surfaces the same aggregate + per-member meter.
+        let view = SwarmView::build(&swarm, &world);
+        assert_eq!(view.budget, agg, "the view's aggregate matches the swarm's");
+        let coord_view = view.members.iter().find(|m| m.agent == coord).unwrap();
+        assert_eq!(coord_view.budget.spent, oc.computrons);
+        assert_eq!(coord_view.budget.ceiling, Some(5_000));
+    }
+
+    #[test]
+    fn budget_meter_arithmetic_is_correct_both_polarities() {
+        // The pure meter arithmetic (the UI pre-check helpers): an unbounded meter
+        // never breaches; a bounded one breaches strictly past the ceiling, admits
+        // landing EXACTLY on it, and reports headroom + exhaustion correctly.
+        let unbounded = BudgetMeter { spent: 1_000, ceiling: None };
+        assert!(!unbounded.would_breach(u64::MAX), "unbounded never breaches");
+        assert_eq!(unbounded.headroom(), None);
+        assert!(!unbounded.is_exhausted());
+
+        let bounded = BudgetMeter { spent: 80, ceiling: Some(100) };
+        assert_eq!(bounded.headroom(), Some(20));
+        assert!(!bounded.is_exhausted(), "80 < 100");
+        assert!(!bounded.would_breach(20), "lands exactly on the ceiling — admitted");
+        assert!(bounded.would_breach(21), "strictly past the ceiling — breaches");
+
+        let at_ceiling = BudgetMeter { spent: 100, ceiling: Some(100) };
+        assert!(at_ceiling.is_exhausted(), "spent == ceiling is exhausted");
+        assert_eq!(at_ceiling.headroom(), Some(0));
+        assert!(at_ceiling.would_breach(1));
+    }
+
+    #[test]
+    fn the_budget_gate_holds_for_atomic_bundles_too() {
+        // The atomic-bundle path (`run_atomic`) honors the SAME budget gate: a
+        // coordinator at its ceiling cannot dispatch a bundle either (fail-closed).
+        let (mut world, mut swarm, coord, worker_a, worker_b) = metered_swarm_world();
+        let o1 = swarm
+            .run(&mut world, coord, vec![transfer(coord, worker_a, 100)])
+            .expect("first dispatch commits");
+        let spent = swarm.member_budget(&coord).unwrap().spent;
+        assert_eq!(spent, o1.computrons);
+        assert!(swarm.set_ceiling(&coord, Some(spent))); // now exhausted
+        let h_before = world.height();
+        let r = swarm.run_atomic(
+            &mut world,
+            coord,
+            vec![(coord, vec![transfer(coord, worker_b, 1)])],
+        );
+        assert!(matches!(r, Err(SwarmError::BudgetExhausted { .. })), "{r:?}");
+        assert_eq!(world.height(), h_before, "no atomic turn committed on a breach");
     }
 }
