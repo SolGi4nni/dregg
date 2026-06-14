@@ -117,6 +117,23 @@ dregg-auth = { path = "../dregg-auth" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
+[dev-dependencies]
+# criterion backs the throughput/latency benches (`cargo bench`). It is a
+# dev-dep only — it never touches the extension build or the postgres-free core.
+criterion = "0.5"
+# proptest backs the property/fuzz tests (`tests/proptest_*.rs`): the MirrorBatch
+# serde round-trip, the RootChain anti-substitution discipline, and authz.
+proptest = "1"
+
+# The marketable throughput/latency numbers (docs/PG-DREGG-VS-DBOS.md): the
+# verified-write submit-decision path, the MirrorBatch chain-gate apply, the
+# free-SQL read projection (the RLS filter), the RootChain anti-substitution
+# tooth, and the MirrorBatch serde decode. `harness = false` so criterion owns
+# `fn main`. All over the postgres-free cores, so it runs with plain `cargo bench`.
+[[bench]]
+name = "pg_dregg_bench"
+harness = false
+
 [profile.dev]
 panic = "unwind"
 [profile.release]
