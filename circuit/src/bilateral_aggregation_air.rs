@@ -965,6 +965,122 @@ pub fn verify_aggregation_v2(
     crate::descriptor_ir2::verify_vm_descriptor2(&desc, proof, outer_pi)
 }
 
+// ---------------------------------------------------------------------------
+// Lean-emitted descriptors (law #1) for the two bilateral-aggregation LEGS:
+// the CROSS-SIDE EXISTENCE (CG-5) and BUNDLE-TREE FOLD AIRs. These retire the
+// hand-authored `CrossSideExistenceAir`/`BundleTreeFoldAir` `StarkAir` impls on
+// the live path (the hand-AIRs remain only as the layout-of-record + trace
+// builders + tests until the C7 deletion). Each is a PROVED `EffectVmDescriptor2`
+// (`Dregg2/Circuit/Emit/EffectVmEmit{CrossSide,BundleFold}.lean`).
+// ---------------------------------------------------------------------------
+
+/// The byte-pinned Lean emission of the cross-side-existence descriptor
+/// (`emitVmJson2 crossSideDescriptor`). Width 8, no public inputs, a single Poseidon2 chip table:
+/// the fingerprint `edge_fp = Poseidon2(edge_id)` is now a REAL in-circuit chip lookup (the
+/// hand-AIR never constrained it), the balance prefix-sum is the `windowGate` two-row primitive,
+/// and `balance[last] == 0` is the missing-peer boundary. Re-emit via
+/// `lake env lean --run EmitBilateralLegs.lean`; the shape is pinned by
+/// `cross_side_descriptor_parses_with_lean_pinned_shape`.
+#[cfg(any(feature = "recursion", feature = "verifier"))]
+pub const CROSS_SIDE_EXISTENCE_DESCRIPTOR_JSON: &str =
+    include_str!("../descriptors/dregg-cross-side-existence-v2.json");
+
+/// The cross-side descriptor's wire identity (matches `crossSideDescriptor.name`).
+pub const CROSS_SIDE_EXISTENCE_DESCRIPTOR_NAME: &str = "dregg-cross-side-existence-v2";
+
+/// Parse the byte-pinned Lean cross-side descriptor. Fail-closed on parse error (the pinned bytes
+/// are the Lean golden; a divergence is a hard refusal).
+#[cfg(any(feature = "recursion", feature = "verifier"))]
+pub fn cross_side_existence_descriptor() -> crate::descriptor_ir2::EffectVmDescriptor2 {
+    crate::descriptor_ir2::parse_vm_descriptor2(CROSS_SIDE_EXISTENCE_DESCRIPTOR_JSON)
+        .expect("pinned cross-side-existence descriptor JSON must parse (Lean golden)")
+}
+
+/// The byte-pinned Lean emission of the bundle-tree-fold descriptor
+/// (`emitVmJson2 bundleFoldDescriptor`). Width 3, public inputs `[initial, final]`, a single
+/// Poseidon2 chip table: the compress `acc_out = Poseidon2(acc_in, digest)` is now a REAL
+/// in-circuit chip lookup (RETIRING the hand-AIR's named residual that left the row-internal
+/// Poseidon relation to the verifier's chain recompute), with chain continuity as the `windowGate`
+/// primitive and the first/last accumulator pins as `pi_binding`s. Re-emit via
+/// `lake env lean --run EmitBilateralLegs.lean`; shape pinned by
+/// `bundle_fold_descriptor_parses_with_lean_pinned_shape`.
+#[cfg(any(feature = "recursion", feature = "verifier"))]
+pub const BUNDLE_TREE_FOLD_DESCRIPTOR_JSON: &str =
+    include_str!("../descriptors/dregg-bundle-tree-fold-v2.json");
+
+/// The bundle-fold descriptor's wire identity (matches `bundleFoldDescriptor.name`).
+pub const BUNDLE_TREE_FOLD_DESCRIPTOR_NAME: &str = "dregg-bundle-tree-fold-v2";
+
+/// Parse the byte-pinned Lean bundle-fold descriptor. Fail-closed on parse error.
+#[cfg(any(feature = "recursion", feature = "verifier"))]
+pub fn bundle_tree_fold_descriptor() -> crate::descriptor_ir2::EffectVmDescriptor2 {
+    crate::descriptor_ir2::parse_vm_descriptor2(BUNDLE_TREE_FOLD_DESCRIPTOR_JSON)
+        .expect("pinned bundle-tree-fold descriptor JSON must parse (Lean golden)")
+}
+
+/// Prove the cross-side-existence balance through the Lean-emitted descriptor (law #1): the 9-col
+/// `build_cross_side_trace_v2` output satisfies `cross_side_existence_descriptor()` against the
+/// `[commit_seed, edge_commit]` PI, via the multi-table batch STARK (the Poseidon2 chip table
+/// commits both the fingerprints AND the rolling edge-sequence commitment). No Rust-authored
+/// constraint semantics: every gate + the balance/commit `windowGate`s + the two chip lookups come
+/// from the verified Lean module. The `pi` binds the proven trace to the canonical edge sequence
+/// (the IR-v2 analog of the hand-AIR's `recompute_trace_commitment`).
+#[cfg(feature = "recursion")]
+pub fn prove_cross_side_existence_v2(
+    trace: &[Vec<BabyBear>],
+    pi: &[BabyBear],
+) -> Result<crate::descriptor_ir2::Ir2BatchProof<crate::descriptor_ir2::DreggStarkConfig>, String> {
+    let desc = cross_side_existence_descriptor();
+    crate::descriptor_ir2::prove_vm_descriptor2(
+        &desc,
+        trace,
+        pi,
+        &crate::descriptor_ir2::MemBoundaryWitness::default(),
+        &[],
+    )
+}
+
+/// Verify a cross-side-existence proof against the Lean descriptor + the `[commit_seed,
+/// edge_commit]` PI. Prover-free.
+#[cfg(any(feature = "recursion", feature = "verifier"))]
+pub fn verify_cross_side_existence_v2(
+    proof: &crate::descriptor_ir2::Ir2BatchProof<crate::descriptor_ir2::DreggStarkConfig>,
+    pi: &[BabyBear],
+) -> Result<(), String> {
+    let desc = cross_side_existence_descriptor();
+    crate::descriptor_ir2::verify_vm_descriptor2(&desc, proof, pi)
+}
+
+/// Prove the bundle-tree fold through the Lean-emitted descriptor (law #1): the 3-col
+/// `build_tree_fold_trace` output satisfies `bundle_tree_fold_descriptor()` against the
+/// `[initial, final]` PI, via the multi-table batch STARK (the chip table commits the compress
+/// chain). No Rust-authored constraint semantics.
+#[cfg(feature = "recursion")]
+pub fn prove_tree_fold_v2(
+    trace: &[Vec<BabyBear>],
+    pi: &[BabyBear],
+) -> Result<crate::descriptor_ir2::Ir2BatchProof<crate::descriptor_ir2::DreggStarkConfig>, String> {
+    let desc = bundle_tree_fold_descriptor();
+    crate::descriptor_ir2::prove_vm_descriptor2(
+        &desc,
+        trace,
+        pi,
+        &crate::descriptor_ir2::MemBoundaryWitness::default(),
+        &[],
+    )
+}
+
+/// Verify a bundle-tree-fold proof against the Lean descriptor + the `[initial, final]` PI.
+/// Prover-free.
+#[cfg(any(feature = "recursion", feature = "verifier"))]
+pub fn verify_tree_fold_v2(
+    proof: &crate::descriptor_ir2::Ir2BatchProof<crate::descriptor_ir2::DreggStarkConfig>,
+    pi: &[BabyBear],
+) -> Result<(), String> {
+    let desc = bundle_tree_fold_descriptor();
+    crate::descriptor_ir2::verify_vm_descriptor2(&desc, proof, pi)
+}
+
 // ===========================================================================
 // CG-5 IN-CIRCUIT — cross-side existence as an algebraic balance AIR
 // ===========================================================================
@@ -1254,6 +1370,102 @@ pub fn build_cross_side_trace(half_edges: &[CrossSideHalfEdge]) -> Vec<Vec<BabyB
     trace
 }
 
+// ---------------------------------------------------------------------------
+// The DECOUPLED v2 cross-side trace (the LEAN-emitted descriptor layout, law #1).
+//
+// Adds the edge-sequence COMMITMENT columns the IR-v2 binding needs (see
+// `EffectVmEmitCrossSide.lean` §"The trace↔proof binding"): a rolling
+// `commit[i] = Poseidon2(commit_in[i], edge_fp[i])` whose final value is a public
+// input the off-AIR verifier re-derives from the canonical Turn edges. The
+// fingerprint AND the commitment are REAL chip lookups (the hand-AIR constrained
+// neither in-circuit; it bound the whole trace via `recompute_trace_commitment`).
+// ---------------------------------------------------------------------------
+
+/// CG-5 v2 trace column: canonical 4-felt edge id (`Cse.EDGE_ID_BASE`).
+pub const CSE2_EDGE_ID_BASE: usize = 0;
+/// CG-5 v2 trace column: Poseidon2 fingerprint of the edge id.
+pub const CSE2_EDGE_FP_COL: usize = CSE2_EDGE_ID_BASE + 4;
+/// CG-5 v2 trace column: edge direction sign (+1 / -1).
+pub const CSE2_SIGN_COL: usize = CSE2_EDGE_FP_COL + 1;
+/// CG-5 v2 trace column: 1 for a real half-edge, 0 for padding.
+pub const CSE2_PRESENT_COL: usize = CSE2_SIGN_COL + 1;
+/// CG-5 v2 trace column: running balance prefix sum.
+pub const CSE2_BALANCE_COL: usize = CSE2_PRESENT_COL + 1;
+/// CG-5 v2 trace column: rolling edge-sequence commitment BEFORE this row (= prev `commit`).
+pub const CSE2_COMMIT_IN_COL: usize = CSE2_BALANCE_COL + 1;
+/// CG-5 v2 trace column: rolling edge-sequence commitment AFTER absorbing this row's fingerprint.
+pub const CSE2_COMMIT_COL: usize = CSE2_COMMIT_IN_COL + 1;
+/// CG-5 v2 total trace width (mirrors `Cse.WIDTH = 10`).
+pub const CSE2_WIDTH: usize = CSE2_COMMIT_COL + 1;
+
+/// CG-5 v2 public input: the commitment seed (`commit_in[0]`, fixed at 0).
+pub const CSE2_PI_COMMIT_SEED: usize = 0;
+/// CG-5 v2 public input: the final edge-sequence commitment (`commit[last]`).
+pub const CSE2_PI_EDGE_COMMIT: usize = 1;
+/// CG-5 v2 public input count (mirrors `Cse.PI_COUNT = 2`).
+pub const CSE2_PI_COUNT: usize = 2;
+
+/// Build the DECOUPLED v2 cross-side trace (width [`CSE2_WIDTH`] = 9) from an ordered list of
+/// half-edge rows, returning `(trace, public_inputs)`. The rolling commitment
+/// `commit[i] = Poseidon2(commit_in[i], edge_fp[i])` (seed 0) binds the ORDERED edge-fingerprint
+/// sequence; its final value is `pi[CSE2_PI_EDGE_COMMIT]`. Padding rows carry the GENUINE
+/// `edge_fp = Poseidon2(0,0,0,0)` and continue the commitment chain (so both chip lookups hold on
+/// every row), with `present = sign = 0` so the balance is untouched. The off-AIR verifier
+/// re-derives the identical `(trace, pi)` from the canonical Turn edges.
+pub fn build_cross_side_trace_v2(
+    half_edges: &[CrossSideHalfEdge],
+) -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
+    let n_active = half_edges.len();
+    let n_padded = n_active.max(2).next_power_of_two();
+    let mut trace: Vec<Vec<BabyBear>> = Vec::with_capacity(n_padded);
+
+    let mut balance = BabyBear::ZERO;
+    let mut commit = BabyBear::ZERO; // the seed (== pi[CSE2_PI_COMMIT_SEED]).
+
+    for he in half_edges {
+        let fp = CrossSideExistenceAir::edge_fingerprint(&he.edge_id);
+        let sign = if he.outgoing {
+            BabyBear::ONE
+        } else {
+            BabyBear::ZERO - BabyBear::ONE
+        };
+        balance = balance + sign * fp;
+        let commit_in = commit;
+        let commit_out = crate::poseidon2::hash_2_to_1(commit_in, fp);
+        commit = commit_out;
+        let mut row = vec![BabyBear::ZERO; CSE2_WIDTH];
+        for i in 0..4 {
+            row[CSE2_EDGE_ID_BASE + i] = he.edge_id[i];
+        }
+        row[CSE2_EDGE_FP_COL] = fp;
+        row[CSE2_SIGN_COL] = sign;
+        row[CSE2_PRESENT_COL] = BabyBear::ONE;
+        row[CSE2_BALANCE_COL] = balance;
+        row[CSE2_COMMIT_IN_COL] = commit_in;
+        row[CSE2_COMMIT_COL] = commit_out;
+        trace.push(row);
+    }
+
+    // Padding: present=0, sign=0, balance carries forward; the fingerprint of the all-zero edge id
+    // and the commitment chain continue (so both chip lookups hold on padding rows too).
+    while trace.len() < n_padded {
+        let edge_id = [BabyBear::ZERO; 4];
+        let fp = CrossSideExistenceAir::edge_fingerprint(&edge_id);
+        let commit_in = commit;
+        let commit_out = crate::poseidon2::hash_2_to_1(commit_in, fp);
+        commit = commit_out;
+        let mut row = vec![BabyBear::ZERO; CSE2_WIDTH];
+        row[CSE2_EDGE_FP_COL] = fp;
+        row[CSE2_BALANCE_COL] = balance;
+        row[CSE2_COMMIT_IN_COL] = commit_in;
+        row[CSE2_COMMIT_COL] = commit_out;
+        trace.push(row);
+    }
+
+    let pi = vec![BabyBear::ZERO, commit];
+    (trace, pi)
+}
+
 // ===========================================================================
 // PROOF-OF-PROOFS / TREE FOLD — BundleTreeFoldAir
 // ===========================================================================
@@ -1498,6 +1710,136 @@ mod tests {
             .filter(|c| matches!(c, VmConstraint2::WindowGate(_)))
             .count();
         assert_eq!(window_gates, 2, "exactly the two cumulative-sum window gates");
+    }
+
+    /// The cross-side-existence (CG-5) descriptor parses with the Lean-pinned shape
+    /// (`EffectVmEmitCrossSide.lean` `#guard`s): width 10, 2 PI (commit seed + edge commitment),
+    /// ONE Poseidon2 chip table, 11 constraints, EXACTLY two window gates (balance + commit
+    /// continuity) + two chip lookups (the arity-4 fingerprint + the arity-2 commitment), name
+    /// `dregg-cross-side-existence-v2`. Law-#1 tooth: the Rust CG-5 leg reads ONLY this descriptor.
+    #[cfg(any(feature = "recursion", feature = "verifier"))]
+    #[test]
+    fn cross_side_descriptor_parses_with_lean_pinned_shape() {
+        use crate::descriptor_ir2::{TableSem, VmConstraint2};
+        let d = cross_side_existence_descriptor();
+        assert_eq!(d.name, CROSS_SIDE_EXISTENCE_DESCRIPTOR_NAME);
+        assert_eq!(d.trace_width, CSE2_WIDTH);
+        assert_eq!(d.trace_width, 10);
+        assert_eq!(d.public_input_count, CSE2_PI_COUNT);
+        assert_eq!(d.public_input_count, 2, "commit seed + edge-sequence commitment");
+        assert_eq!(d.tables.len(), 1, "one declared table");
+        assert!(
+            matches!(d.tables[0].sem, TableSem::Poseidon2Chip),
+            "the fingerprint + commitment ride a real Poseidon2 chip table"
+        );
+        assert_eq!(d.constraints.len(), 11, "the Lean #guard pins 11 constraints");
+        let window_gates = d
+            .constraints
+            .iter()
+            .filter(|c| matches!(c, VmConstraint2::WindowGate(_)))
+            .count();
+        assert_eq!(window_gates, 2, "the balance + commitment-continuity window gates");
+        let chip_lookups = d
+            .constraints
+            .iter()
+            .filter(|c| matches!(c, VmConstraint2::Lookup(_)))
+            .count();
+        assert_eq!(chip_lookups, 2, "the fingerprint + commitment chip lookups");
+    }
+
+    /// The bundle-tree-fold descriptor parses with the Lean-pinned shape
+    /// (`EffectVmEmitBundleFold.lean` `#guard`s): width 3, 2 PI, ONE Poseidon2 chip table, 4
+    /// constraints, EXACTLY one window gate + one (arity-2) chip lookup, name
+    /// `dregg-bundle-tree-fold-v2`. The chip lookup is the in-circuit compress that RETIRES the
+    /// hand-AIR's verifier-side residual.
+    #[cfg(any(feature = "recursion", feature = "verifier"))]
+    #[test]
+    fn bundle_fold_descriptor_parses_with_lean_pinned_shape() {
+        use crate::descriptor_ir2::{TableSem, VmConstraint2};
+        let d = bundle_tree_fold_descriptor();
+        assert_eq!(d.name, BUNDLE_TREE_FOLD_DESCRIPTOR_NAME);
+        assert_eq!(d.trace_width, FOLD_WIDTH);
+        assert_eq!(d.trace_width, 3);
+        assert_eq!(d.public_input_count, FOLD_PI_COUNT);
+        assert_eq!(d.public_input_count, 2);
+        assert_eq!(d.tables.len(), 1, "one declared table");
+        assert!(
+            matches!(d.tables[0].sem, TableSem::Poseidon2Chip),
+            "the compress rides a real Poseidon2 chip table"
+        );
+        assert_eq!(d.constraints.len(), 4, "the Lean #guard pins 4 constraints");
+        let window_gates = d
+            .constraints
+            .iter()
+            .filter(|c| matches!(c, VmConstraint2::WindowGate(_)))
+            .count();
+        assert_eq!(window_gates, 1, "the single chain-continuity window gate");
+        let chip_lookups = d
+            .constraints
+            .iter()
+            .filter(|c| matches!(c, VmConstraint2::Lookup(_)))
+            .count();
+        assert_eq!(chip_lookups, 1, "the single compress chip lookup");
+    }
+
+    /// END-TO-END (law #1): the cross-side balance trace proves + verifies through the LEAN
+    /// descriptor batch prover, and a TAMPERED edge-commitment PI does NOT verify (the
+    /// edge-sequence binding that replaces the hand-AIR's `recompute_trace_commitment`). The
+    /// missing-peer rejection is a property of the (unsatisfiable) unbalanced trace — the
+    /// turn-side `prove_cross_side_existence` pre-flights the balance and returns `Err` BEFORE
+    /// proving (the debug batch prover panics on an unsatisfiable trace), so we assert the
+    /// nonzero-balance property here and leave the UNSAT rejection to the Lean tooth
+    /// `cse_rejects_unbalanced` + the pre-flight.
+    #[cfg(feature = "recursion")]
+    #[test]
+    fn cross_side_descriptor_proves_balanced_rejects_missing_peer() {
+        // Balanced: one edge, both halves present (+fp and -fp cancel).
+        let (balanced, pi) = build_cross_side_trace_v2(&[he(1000, true), he(1000, false)]);
+        assert_eq!(balanced.last().unwrap()[CSE2_BALANCE_COL], BabyBear::ZERO);
+        let proof = prove_cross_side_existence_v2(&balanced, &pi)
+            .expect("balanced cross-side trace must prove through the descriptor");
+        verify_cross_side_existence_v2(&proof, &pi)
+            .expect("balanced cross-side descriptor proof must verify");
+
+        // Tampered edge-commitment PI: the `commit[last] == pi[edge_commit]` boundary fails, so the
+        // same proof no longer verifies — this is the binding to the canonical edge sequence.
+        let mut bad_pi = pi.clone();
+        bad_pi[CSE2_PI_EDGE_COMMIT] = bad_pi[CSE2_PI_EDGE_COMMIT] + BabyBear::ONE;
+        assert!(
+            verify_cross_side_existence_v2(&proof, &bad_pi).is_err(),
+            "tampered edge-commitment PI must reject (the edge-sequence binding)"
+        );
+
+        // Missing peer: the balance is nonzero — the turn-side pre-flight rejects this before
+        // proving (the debug batch prover panics on an unsatisfiable trace). The `balance[last] ==
+        // 0` boundary is the in-circuit detector, proved UNSAT by
+        // `EffectVmEmitCrossSide.cse_rejects_unbalanced`.
+        let (unbalanced, _upi) =
+            build_cross_side_trace_v2(&[he(1000, true), he(2000, true), he(2000, false)]);
+        assert_ne!(
+            unbalanced.last().unwrap()[CSE2_BALANCE_COL],
+            BabyBear::ZERO,
+            "a missing-peer edge leaves a nonzero balance the boundary rejects"
+        );
+    }
+
+    /// END-TO-END (law #1): the tree-fold trace proves + verifies through the LEAN descriptor batch
+    /// prover, and a tampered final-accumulator PI does NOT verify (the `pi_binding` boundary). The
+    /// compress is a REAL chip lookup, strictly stronger than the hand-AIR.
+    #[cfg(feature = "recursion")]
+    #[test]
+    fn tree_fold_descriptor_proves_rejects_tampered_final() {
+        let (trace, pi) = build_tree_fold_trace(&[BabyBear::new(111), BabyBear::new(222)]);
+        let proof =
+            prove_tree_fold_v2(&trace, &pi).expect("tree fold must prove through the descriptor");
+        verify_tree_fold_v2(&proof, &pi).expect("tree fold descriptor proof must verify");
+
+        let mut bad_pi = pi.clone();
+        bad_pi[FOLD_PI_FINAL] = bad_pi[FOLD_PI_FINAL] + BabyBear::ONE;
+        assert!(
+            verify_tree_fold_v2(&proof, &bad_pi).is_err(),
+            "tampered final accumulator must reject"
+        );
     }
 
     /// The decoupled `sched` block re-bases the v1 bilateral-schedule PI window `[25, 74)` to 0.

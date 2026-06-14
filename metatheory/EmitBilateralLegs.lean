@@ -1,0 +1,20 @@
+/-
+# EmitBilateralLegs — emit the two bilateral-aggregation LEG descriptors (the CROSS-SIDE
+EXISTENCE and BUNDLE-TREE FOLD AIRs, now under law #1) as byte-exact JSON.
+
+Prints two TSV lines from the verified emissions
+(`Dregg2/Circuit/Emit/EffectVmEmitCrossSide.lean`, `Dregg2/Circuit/Emit/EffectVmEmitBundleFold.lean`),
+the byte source of `circuit/descriptors/dregg-cross-side-existence-v2.json` and
+`circuit/descriptors/dregg-bundle-tree-fold-v2.json`. SCRATCH executable: run with
+`lake env lean --run EmitBilateralLegs.lean`.
+-/
+import Dregg2.Circuit.Emit.EffectVmEmitCrossSide
+import Dregg2.Circuit.Emit.EffectVmEmitBundleFold
+
+open Dregg2.Circuit.DescriptorIR2 (emitVmJson2)
+open Dregg2.Circuit.Emit.EffectVmEmitCrossSide (crossSideDescriptor)
+open Dregg2.Circuit.Emit.EffectVmEmitBundleFold (bundleFoldDescriptor)
+
+def main : IO Unit := do
+  IO.println s!"crossSideDescriptor\t{crossSideDescriptor.name}\t{emitVmJson2 crossSideDescriptor}"
+  IO.println s!"bundleFoldDescriptor\t{bundleFoldDescriptor.name}\t{emitVmJson2 bundleFoldDescriptor}"

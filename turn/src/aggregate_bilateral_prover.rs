@@ -24,16 +24,21 @@ use crate::bilateral_schedule::{BilateralCounts, BilateralRoots, ExpectedBilater
 use crate::error::TurnError;
 use crate::turn::Turn;
 use crate::witnessed_receipt::WitnessedReceipt;
-// CG-5 cross-side-existence + tree-fold types (custom-STARK, available in every build).
-use dregg_circuit::bilateral_aggregation_air::{
-    BundleTreeFoldAir, CrossSideExistenceAir, CrossSideHalfEdge, FOLD_PI_COUNT,
-    build_cross_side_trace, build_tree_fold_trace,
-};
-// The DECOUPLED descriptor aggregation surface (LEAN-emitted; the `recursion`/`verifier` path).
+// CG-5 cross-side-existence + tree-fold TRACE BUILDERS (the layout-of-record; available in every
+// build). The constraint SEMANTICS now ride the Lean-emitted descriptors (law #1), not the
+// hand-`StarkAir` impls — proved/verified through the batch prover on the `recursion`/`verifier`
+// path below; the hand-AIR `CrossSideExistenceAir`/`BundleTreeFoldAir` types are retired off the
+// live path (kept only for their layout constants + trace builders + tests until the C7 deletion).
+// The DECOUPLED descriptor aggregation + leg prove/verify surfaces + the trace builders the legs
+// use (LEAN-emitted, law #1). Gated on `recursion` exactly like `verify_aggregated_bundle` —
+// `dregg-turn` forwards `recursion = ["dregg-circuit/recursion"]` (which carries the prover-free
+// batch verifier too), and the wasm `not(recursion)` build gets the error stubs.
 #[cfg(feature = "recursion")]
 use dregg_circuit::bilateral_aggregation_air::{
-    AggregationInnerRowV2, AggregationOuterPi, agg, build_aggregation_trace_v2,
-    outer_pi_v2, prove_aggregation_v2, schedule_block_from_inner_pi, sched, verify_aggregation_v2,
+    AggregationInnerRowV2, AggregationOuterPi, CrossSideHalfEdge, FOLD_PI_COUNT, agg,
+    build_aggregation_trace_v2, build_tree_fold_trace, outer_pi_v2, prove_aggregation_v2,
+    prove_cross_side_existence_v2, prove_tree_fold_v2, schedule_block_from_inner_pi, sched,
+    verify_aggregation_v2, verify_cross_side_existence_v2, verify_tree_fold_v2,
 };
 #[cfg(feature = "recursion")]
 use dregg_circuit::descriptor_ir2::{DreggStarkConfig, Ir2BatchProof};
@@ -655,9 +660,10 @@ pub fn verify_aggregated_bundle(bundle: &AggregatedBundle) -> Result<(), TurnErr
 /// salt folded in, so each pair balances independently.
 ///
 /// This is the single source of truth shared by the CG-5 prover and verifier:
-/// the verifier rebuilds the *exact* multiset and requires the proof-bound
-/// trace to match it, which (together with the in-AIR balance==0 boundary)
-/// closes the missing-peer attack algebraically.
+/// the verifier rebuilds the *exact* multiset and the canonical (trace, pi), and the edge-sequence
+/// commitment PI binds the proof to it (together with the in-AIR balance==0 boundary), closing the
+/// missing-peer attack algebraically.
+#[cfg(feature = "recursion")]
 fn canonical_half_edges(
     turn: &Turn,
     covered: &std::collections::HashSet<CellId>,
@@ -745,36 +751,61 @@ fn canonical_half_edges(
 }
 
 /// Prove the in-circuit CG-5 cross-side existence property for a bundle's
-/// `(turn, participating_cells)`. Returns a STARK proof over the
-/// `CrossSideExistenceAir` balance trace. Fails if the bundle is incomplete
-/// (a half-edge's peer is missing) — in that case the balance is nonzero and
-/// the boundary constraint is unprovable/unverifiable.
+/// `(turn, participating_cells)`. Routes through the LEAN-EMITTED descriptor (law #1): the 8-col
+/// balance trace satisfies `cross_side_existence_descriptor()` against an empty PI, via the
+/// multi-table batch STARK (the Poseidon2 chip table commits the edge fingerprints, which the
+/// hand-AIR never constrained in-circuit). Fails if the bundle is incomplete (a half-edge's peer
+/// is missing) — the balance is then nonzero and the `balance[last] == 0` boundary is unprovable.
+///
+/// The `not(recursion)` build has no batch prover, so it returns an error (the only such consumer
+/// is the optional wasm bilateral demo, which handles it gracefully).
+#[cfg(not(feature = "recursion"))]
+pub fn prove_cross_side_existence(
+    _turn: &Turn,
+    _participating_cells: &[CellId],
+) -> Result<CrossSideExistenceProof, TurnError> {
+    Err(TurnError::InvalidExecutionProof(
+        "cross_side_existence: the descriptor batch prover requires the `recursion` feature \
+         (the CG-5 AIR is emitted from Lean; wasm/no-lean-link verifies but does not prove it)"
+            .into(),
+    ))
+}
+
+#[cfg(feature = "recursion")]
 pub fn prove_cross_side_existence(
     turn: &Turn,
     participating_cells: &[CellId],
 ) -> Result<CrossSideExistenceProof, TurnError> {
+    use dregg_circuit::bilateral_aggregation_air::{
+        CSE2_BALANCE_COL, build_cross_side_trace_v2,
+    };
     let covered: std::collections::HashSet<CellId> = participating_cells.iter().cloned().collect();
     let half_edges = canonical_half_edges(turn, &covered);
-    let trace = build_cross_side_trace(&half_edges);
+    let (trace, pi) = build_cross_side_trace_v2(&half_edges);
 
     // Pre-flight: a nonzero final balance means a missing peer; surface a
     // clean error rather than an opaque prove failure.
-    use dregg_circuit::bilateral_aggregation_air::CSE_BALANCE_COL;
     if let Some(last) = trace.last() {
-        if last[CSE_BALANCE_COL] != BabyBear::ZERO {
+        if last[CSE2_BALANCE_COL] != BabyBear::ZERO {
             return Err(TurnError::InvalidExecutionProof(
                 "cross_side_existence: bundle does not balance (missing peer for some edge)".into(),
             ));
         }
     }
 
-    let proof =
-        dregg_circuit::stark::try_prove(&CrossSideExistenceAir, &trace, &[]).map_err(|e| {
-            TurnError::InvalidExecutionProof(format!(
-                "cross_side_existence: balance STARK proving failed: {e}"
-            ))
-        })?;
-    let proof_bytes = dregg_circuit::stark::proof_to_bytes(&proof);
+    // LEAN-emitted descriptor prove (law #1): no Rust-authored constraint semantics. The `pi`
+    // binds the proven trace to the canonical edge sequence (the IR-v2 trace↔proof binding); the
+    // returned `Ir2BatchProof` is postcard-serialised, exactly as the main aggregation leg does.
+    let proof = prove_cross_side_existence_v2(&trace, &pi).map_err(|e| {
+        TurnError::InvalidExecutionProof(format!(
+            "cross_side_existence: descriptor batch proving failed: {e}"
+        ))
+    })?;
+    let proof_bytes = postcard::to_allocvec(&proof).map_err(|e| {
+        TurnError::InvalidExecutionProof(format!(
+            "cross_side_existence: serialising the balance proof failed: {e}"
+        ))
+    })?;
     let trace_u32: Vec<Vec<u32>> = trace
         .iter()
         .map(|row| row.iter().map(|x| x.as_u32()).collect())
@@ -787,60 +818,63 @@ pub fn prove_cross_side_existence(
 
 /// Verify a CG-5 cross-side existence proof against the canonical Turn. This:
 ///   1. Re-derives the exact canonical half-edge multiset from the Turn +
-///      covered cells (the schedule binding — prevents forged edge rows).
-///   2. Verifies the balance STARK (FRI + the balance==0 boundary) without
-///      re-executing the trace.
-///   3. Binds the shipped trace to the proof (commitment equality) and
-///      confirms it equals the canonical-multiset trace, so the algebraic
-///      balance argument operated on exactly the schedule-derived edges.
+///      covered cells (the schedule binding — prevents forged edge rows), and the canonical 8-col
+///      balance trace it produces.
+///   2. Verifies the descriptor batch proof (FRI low-degree testing + the balance prefix-sum
+///      `windowGate` + the `balance == 0` boundary + the fingerprint chip lookup) prover-free,
+///      without re-executing the trace.
+///   3. Requires the shipped trace to EQUAL the canonical-multiset trace, so the algebraic balance
+///      argument operated on exactly the schedule-derived edges (closing forged-edge-row attacks).
+///
+/// The `not(recursion)`/`not(verifier)` build has no batch verifier, so it rejects.
+#[cfg(not(feature = "recursion"))]
+pub fn verify_cross_side_existence(
+    _proof: &CrossSideExistenceProof,
+    _turn: &Turn,
+    _participating_cells: &[CellId],
+) -> Result<(), TurnError> {
+    Err(TurnError::InvalidExecutionProof(
+        "cross_side_existence: the descriptor batch verifier requires the `recursion`/`verifier` \
+         feature (the CG-5 AIR is emitted from Lean)"
+            .into(),
+    ))
+}
+
+#[cfg(feature = "recursion")]
 pub fn verify_cross_side_existence(
     proof: &CrossSideExistenceProof,
     turn: &Turn,
     participating_cells: &[CellId],
 ) -> Result<(), TurnError> {
+    use dregg_circuit::bilateral_aggregation_air::build_cross_side_trace_v2;
     let covered: std::collections::HashSet<CellId> = participating_cells.iter().cloned().collect();
     let half_edges = canonical_half_edges(turn, &covered);
-    let expected_trace = build_cross_side_trace(&half_edges);
+    // Re-derive the canonical (trace, pi) from the Turn. `expected_pi[CSE2_PI_EDGE_COMMIT]` is the
+    // rolling commitment over the canonical edge sequence; verifying the proof against it is what
+    // BINDS the proof to those exact edges (a fabricated edge set yields a different commitment).
+    let (expected_trace, expected_pi) = build_cross_side_trace_v2(&half_edges);
 
-    // Decode + verify the STARK proof standalone.
-    let stark_proof = dregg_circuit::stark::proof_from_bytes(&proof.proof_bytes).map_err(|e| {
+    // Decode + verify the descriptor batch proof standalone (law #1) against the canonical PI.
+    let batch_proof: Ir2BatchProof<DreggStarkConfig> = postcard::from_bytes(&proof.proof_bytes)
+        .map_err(|e| {
+            TurnError::InvalidExecutionProof(format!(
+                "cross_side_existence: failed to decode balance batch proof: {e}"
+            ))
+        })?;
+    verify_cross_side_existence_v2(&batch_proof, &expected_pi).map_err(|e| {
         TurnError::InvalidExecutionProof(format!(
-            "cross_side_existence: failed to decode proof: {e}"
-        ))
-    })?;
-    if stark_proof.air_name != CrossSideExistenceAir::AIR_NAME {
-        return Err(TurnError::InvalidExecutionProof(format!(
-            "cross_side_existence: proof AIR name mismatch: {}",
-            stark_proof.air_name
-        )));
-    }
-    dregg_circuit::stark::verify(&CrossSideExistenceAir, &stark_proof, &[]).map_err(|e| {
-        TurnError::InvalidExecutionProof(format!(
-            "cross_side_existence: balance STARK verification failed: {e}"
+            "cross_side_existence: balance descriptor verification failed: {e}"
         ))
     })?;
 
-    // Bind shipped trace to the proof, then require it to be the canonical
-    // schedule-derived trace. This closes forged-edge-row attacks: a prover
-    // cannot present a *different* (e.g. self-cancelling fabricated) edge set
-    // than the one the Turn predicts.
+    // Belt-and-suspenders: require the shipped trace to be the canonical Turn-derived trace (the
+    // same redundant cross-check the main aggregation does). The edge-commitment PI above is the
+    // load-bearing cryptographic binding; this pins every column for a clean error on any drift.
     let trace_bb: Vec<Vec<BabyBear>> = proof
         .trace
         .iter()
         .map(|row| row.iter().map(|&v| BabyBear::new_canonical(v)).collect())
         .collect();
-    let recomputed =
-        dregg_circuit::stark::recompute_trace_commitment(&CrossSideExistenceAir, &trace_bb)
-            .ok_or_else(|| {
-                TurnError::InvalidExecutionProof(
-                    "cross_side_existence: shipped trace is structurally invalid".into(),
-                )
-            })?;
-    if recomputed != stark_proof.trace_commitment {
-        return Err(TurnError::InvalidExecutionProof(
-            "cross_side_existence: shipped trace does not match proof commitment".into(),
-        ));
-    }
     if trace_bb != expected_trace {
         return Err(TurnError::InvalidExecutionProof(
             "cross_side_existence: proof-bound trace does not match canonical schedule edges"
@@ -886,6 +920,7 @@ impl AggregatedTree {
 /// Digest a child bundle into a single field element: Poseidon2 over its
 /// outer PI vector. Binds the entire bundle summary (turn hash, effects hash,
 /// agent, n_cells, consistent flag) into one chain element.
+#[cfg(feature = "recursion")]
 fn bundle_digest(bundle: &AggregatedBundle) -> BabyBear {
     let pi_bb: Vec<BabyBear> = bundle
         .outer_pi
@@ -898,8 +933,22 @@ fn bundle_digest(bundle: &AggregatedBundle) -> BabyBear {
 /// Tree-fold N child `AggregatedBundle`s into a single outer attestation.
 /// Each child is verified classically (so the tree never attests an invalid
 /// child), reduced to a digest, and folded via a Poseidon2 hash chain proven
-/// by `BundleTreeFoldAir`. The result verifies in O(1) in the number of
-/// children for the fold step itself.
+/// by the LEAN-EMITTED `bundle_tree_fold_descriptor` (law #1). The result verifies in O(1) in the
+/// number of children for the fold step itself.
+///
+/// The `not(recursion)` build has no batch prover, so it returns an error.
+#[cfg(not(feature = "recursion"))]
+pub fn prove_aggregated_tree(
+    _children: Vec<AggregatedBundle>,
+) -> Result<AggregatedTree, TurnError> {
+    Err(TurnError::InvalidExecutionProof(
+        "aggregate_tree: the descriptor batch prover requires the `recursion` feature \
+         (the bundle-tree-fold AIR is emitted from Lean)"
+            .into(),
+    ))
+}
+
+#[cfg(feature = "recursion")]
 pub fn prove_aggregated_tree(children: Vec<AggregatedBundle>) -> Result<AggregatedTree, TurnError> {
     if children.is_empty() {
         return Err(TurnError::InvalidExecutionProof(
@@ -916,14 +965,21 @@ pub fn prove_aggregated_tree(children: Vec<AggregatedBundle>) -> Result<Aggregat
     }
 
     let digests: Vec<BabyBear> = children.iter().map(bundle_digest).collect();
+    // The fold trace + `[initial, final]` PI. The `final` accumulator commits the WHOLE digest
+    // chain (each `acc_out = Poseidon2(acc_in, digest)` via the descriptor's compress chip lookup),
+    // so the PI binds the proven trace to exactly these children's digests.
     let (trace, pi) = build_tree_fold_trace(&digests);
 
-    let proof = dregg_circuit::stark::try_prove(&BundleTreeFoldAir, &trace, &pi).map_err(|e| {
+    let proof = prove_tree_fold_v2(&trace, &pi).map_err(|e| {
         TurnError::InvalidExecutionProof(format!(
-            "aggregate_tree: outer fold STARK proving failed: {e}"
+            "aggregate_tree: outer fold descriptor proving failed: {e}"
         ))
     })?;
-    let outer_proof_bytes = dregg_circuit::stark::proof_to_bytes(&proof);
+    let outer_proof_bytes = postcard::to_allocvec(&proof).map_err(|e| {
+        TurnError::InvalidExecutionProof(format!(
+            "aggregate_tree: serialising the fold proof failed: {e}"
+        ))
+    })?;
     let outer_trace: Vec<Vec<u32>> = trace
         .iter()
         .map(|row| row.iter().map(|x| x.as_u32()).collect())
@@ -943,7 +999,19 @@ pub fn prove_aggregated_tree(children: Vec<AggregatedBundle>) -> Result<Aggregat
 ///   2. Recompute each child digest and require it to match `child_digests`.
 ///   3. Recompute the fold trace + public inputs from the digests and require
 ///      the outer PI to match (binds the final accumulator to the children).
-///   4. Verify the outer fold STARK standalone and bind the shipped trace.
+///   4. Verify the outer fold descriptor proof standalone against the digest-derived PI.
+///
+/// The `not(recursion)`/`not(verifier)` build has no batch verifier, so it rejects.
+#[cfg(not(feature = "recursion"))]
+pub fn verify_aggregated_tree(_tree: &AggregatedTree) -> Result<(), TurnError> {
+    Err(TurnError::InvalidExecutionProof(
+        "aggregate_tree: the descriptor batch verifier requires the `recursion`/`verifier` \
+         feature (the bundle-tree-fold AIR is emitted from Lean)"
+            .into(),
+    ))
+}
+
+#[cfg(feature = "recursion")]
 pub fn verify_aggregated_tree(tree: &AggregatedTree) -> Result<(), TurnError> {
     if tree.children.is_empty() {
         return Err(TurnError::InvalidExecutionProof(
@@ -982,7 +1050,9 @@ pub fn verify_aggregated_tree(tree: &AggregatedTree) -> Result<(), TurnError> {
         digests.push(d);
     }
 
-    // Step 3: recompute the expected fold trace + PI from the digests.
+    // Step 3: recompute the expected fold trace + PI from the digests. The `final` accumulator PI
+    // is the load-bearing binding: it commits the whole chain over OUR recomputed digests, so a
+    // proof over different digests cannot verify against it.
     let (expected_trace, expected_pi) = build_tree_fold_trace(&digests);
     let expected_pi_u32: Vec<u32> = expected_pi.iter().map(|x| x.as_u32()).collect();
     if expected_pi_u32 != tree.outer_pi {
@@ -992,48 +1062,31 @@ pub fn verify_aggregated_tree(tree: &AggregatedTree) -> Result<(), TurnError> {
         )));
     }
 
-    // Step 4: verify the outer fold STARK + bind the shipped trace.
+    // Step 4: verify the outer fold descriptor proof against the digest-derived PI (law #1).
     let outer_pi_bb: Vec<BabyBear> = tree
         .outer_pi
         .iter()
         .map(|&v| BabyBear::new_canonical(v))
         .collect();
-    let proof = dregg_circuit::stark::proof_from_bytes(&tree.outer_proof_bytes).map_err(|e| {
+    let proof: Ir2BatchProof<DreggStarkConfig> = postcard::from_bytes(&tree.outer_proof_bytes)
+        .map_err(|e| {
+            TurnError::InvalidExecutionProof(format!(
+                "aggregate_tree: failed to decode outer fold batch proof: {e}"
+            ))
+        })?;
+    verify_tree_fold_v2(&proof, &outer_pi_bb).map_err(|e| {
         TurnError::InvalidExecutionProof(format!(
-            "aggregate_tree: failed to decode outer fold proof: {e}"
-        ))
-    })?;
-    if proof.air_name != BundleTreeFoldAir::AIR_NAME {
-        return Err(TurnError::InvalidExecutionProof(format!(
-            "aggregate_tree: proof AIR name mismatch: {}",
-            proof.air_name
-        )));
-    }
-    dregg_circuit::stark::verify(&BundleTreeFoldAir, &proof, &outer_pi_bb).map_err(|e| {
-        TurnError::InvalidExecutionProof(format!(
-            "aggregate_tree: outer fold STARK verification failed: {e}"
+            "aggregate_tree: outer fold descriptor verification failed: {e}"
         ))
     })?;
 
+    // Belt-and-suspenders: the shipped trace must be the canonical digest-derived trace (the final
+    // PI above is the cryptographic binding; this pins every column for a clean error on drift).
     let trace_bb: Vec<Vec<BabyBear>> = tree
         .outer_trace
         .iter()
         .map(|row| row.iter().map(|&v| BabyBear::new_canonical(v)).collect())
         .collect();
-    let recomputed =
-        dregg_circuit::stark::recompute_trace_commitment(&BundleTreeFoldAir, &trace_bb)
-            .ok_or_else(|| {
-                TurnError::InvalidExecutionProof(
-                    "aggregate_tree: shipped outer_trace is structurally invalid".into(),
-                )
-            })?;
-    if recomputed != proof.trace_commitment {
-        return Err(TurnError::InvalidExecutionProof(
-            "aggregate_tree: shipped outer_trace does not match proof commitment".into(),
-        ));
-    }
-    // The shipped trace must be the canonical digest-derived trace, so the
-    // chain the proof attests is exactly the one over our recomputed digests.
     if trace_bb != expected_trace {
         return Err(TurnError::InvalidExecutionProof(
             "aggregate_tree: proof-bound trace does not match digest-derived fold trace".into(),
