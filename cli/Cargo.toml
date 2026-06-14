@@ -34,5 +34,11 @@ getrandom = { workspace = true }
 hex = "0.4"
 zeroize = { workspace = true }
 
+[dev-dependencies]
+# Unique throwaway roots for the hermetic `DREGG_HOME` config test, so it
+# never touches the operator's real `~/.dregg` (mirrors the preflight
+# `cli_config_init` check, which redirects `config init` the same way).
+tempfile = { workspace = true }
+
 [lints]
 workspace = true

@@ -170,3 +170,88 @@ pub fn set_value(key: &str, value: &str) -> Result<(), Box<dyn std::error::Error
     std::fs::write(&path, toml_str)?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The hermetic-root contract that the preflight `cli_config_init` check
+    /// (preflight/src/checks/cli.rs) relies on: when `DREGG_HOME` is set,
+    /// `config_path()` resolves to `$DREGG_HOME/config.toml` and `config init`
+    /// (`Config::write_default` on that path) writes THERE — never into the
+    /// operator's real `~/.dregg`. The empty-`DREGG_HOME` case must fall back
+    /// to `~/.dregg/config.toml`.
+    ///
+    /// All `DREGG_HOME` mutation lives in this single test because the env var
+    /// is process-global; splitting it would race the other test threads. We
+    /// snapshot and restore the variable so the suite leaves no residue.
+    #[test]
+    fn dregg_home_redirects_config_init_hermetically() {
+        let saved = std::env::var_os("DREGG_HOME");
+        // SAFETY: edition-2024 marks env mutation `unsafe`; this is the only
+        // test touching `DREGG_HOME`, and it restores the prior value below.
+        let restore = || unsafe {
+            match &saved {
+                Some(v) => std::env::set_var("DREGG_HOME", v),
+                None => std::env::remove_var("DREGG_HOME"),
+            }
+        };
+
+        // What the real `~/.dregg/config.toml` resolves to — the path the
+        // hermetic redirect must NOT collide with.
+        let real_home_cfg = dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(".dregg")
+            .join("config.toml");
+
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let expected = tmp.path().join("config.toml");
+
+        // SAFETY: see above.
+        unsafe {
+            std::env::set_var("DREGG_HOME", tmp.path());
+        }
+
+        // 1. The redirect: config_path() points into the temp root, not ~/.dregg.
+        let resolved = config_path();
+        assert_eq!(
+            resolved, expected,
+            "DREGG_HOME must redirect config_path() to $DREGG_HOME/config.toml"
+        );
+        assert_ne!(
+            resolved, real_home_cfg,
+            "the hermetic redirect must NOT resolve to the operator's real ~/.dregg/config.toml"
+        );
+
+        // 2. `dregg config init` (write_default on that path) lands in the temp
+        //    root and produces a config the loader round-trips.
+        assert!(
+            !expected.exists(),
+            "temp config must not pre-exist (tempdir is fresh)"
+        );
+        Config::write_default(&resolved).expect("write_default into DREGG_HOME");
+        assert!(
+            expected.exists(),
+            "config init must write $DREGG_HOME/config.toml at {}",
+            expected.display()
+        );
+        let loaded = Config::load(Some(resolved.to_str().unwrap()));
+        assert_eq!(loaded.node.url, default_node_url());
+        assert_eq!(loaded.output.format, default_format());
+
+        // 3. The empty-DREGG_HOME guard: a blank override is ignored, falling
+        //    back to ~/.dregg (so an empty env var can't hijack the root).
+        // SAFETY: see above.
+        unsafe {
+            std::env::set_var("DREGG_HOME", "");
+        }
+        assert_eq!(
+            config_path(),
+            real_home_cfg,
+            "empty DREGG_HOME must fall back to ~/.dregg/config.toml"
+        );
+
+        restore();
+        // tmp's Drop removes the throwaway root, leaving no on-disk residue.
+    }
+}
