@@ -30,19 +30,31 @@ intact), THEN bucket-F leaf cutover, THEN the bucket-A/C delete.** Staged persva
 (The interrupted `wf_9a7d5e77-b48` was looping on exactly this G decision — now resolved; `cv`-dug the
 substantive thread, the decision is made.)
 
-**RUNNING through compaction (the deos dev-spike the HARDSWAP was blocking, now unblocked):**
-- verified-deos Lean crown (`ae0a1e43`, `metatheory/Dregg2/Deos/`) — the 4 theorems from `docs/deos/DEOS.md`
-  §verified-deos: surface-as-cap · membrane non-amp · rehydration-confinement=liveness-type · affordance-soundness.
-- fog-of-war webgame (`a28ee021`, `starbridge-web-surface`) — the deos exemplar where fog-of-war IS the membrane.
+**LANDED 2026-06-14 (all green + committed):**
+- verified-deos Lean crown WIDENED to 7 modules / 56 axiom-clean keystones (`482ba8db1`): `FogOfWar.noninterference`
+  + `Rerender.snapshot_roundtrip` depend on NO axioms (the frustum-cull IS info-flow non-interference; snapshots
+  re-expand losslessly per-viewer). lake `Dregg2` green (3930 jobs).
+- fog-of-war webgame (`starbridge-web-surface`, own workspace, 78+4 green) — fog IS the membrane + the HONESTY
+  CLOSURE: the no-peek `vk_hash` is now a REAL `canonical_predicate_vk` + registered `FogVisionVerifier` (the same
+  registry `authorize.rs` dispatches through) + ed25519 proof (keystone `no_peek_for_real_only_the_secret_holder_can_prove_vision`).
+- app-framework deos-EVOLUTION (`c55444e71`, 83+7 green) — cell-affordance surfaces in the bones + the dispatch
+  seam CLOSED (`fire_through_executor` → real `EmbeddedExecutor` turn → executor's `TurnReceipt`).
+- pg-dregg drainer daemon + Tier-D spike (verdict **D-SIDECAR**; 120 pg18 + 104 core + 21 proptest green).
+- PATH-PRESERVE DECIDED + the staged plan (`867b41fcb`, `docs/PATH-PRESERVE.md`).
+- the prior deos STEEL + dev-ex (rehydration stack · DEOS/DEOS-APPS docs · AGENTS.md · nextest split).
 
-**LANDED this tail (committed):** the deos STEEL + dev-ex — `starbridge-web-surface` rehydration stack
-(Sturdyref/Membrane/derived Rehydration liveness-type) + cell-affordance htmx-on-crack layer (49 tests) ·
-`docs/deos/{DEOS,DEOS-APPS}.md` (the brand robigalia/dregg/deos + the app-framework EVOLUTION plan +
-the fog-of-war webgame) · `AGENTS.md` + `docs/TESTING.md` + the nextest fast/heavy split + the sg/ast-grep guide.
+**NOW — empowered-doer wave (2026-06-14, ember "power through preserve + the cutover; the doers weren't big enough"):**
+(1) PATH-PRESERVE Phase-1 build = the CUTOVER thrust (chained N-leg rotated proving, `sdk`/`turn`/`node`) · (2) bigger-vision
+webgame (own workspace) · (3) bigger-vision app-framework (the deos-app composition). Each disjoint-tree, green-or-bust,
+don't-git (main loop reviews + commits).
 
-**HELD (post-decision / post-compaction):** the app-framework deos-EVOLUTION (NOT a rebuild — it's a real
-13.6K-line axum framework; elevate register-ctx→affordances, webgen→affordance-surfaces, persistence→pg-dregg,
-+ rehydration; `docs/deos/DEOS-APPS.md`) · bucket F/G (the ember-decision above) · sdk-ts/dist Docker rebuild.
+**HELD / NAMED (post-cutover unless noted):** sdk-ts/dist Docker rebuild · **devnet upgrade = EMBER's act, fresh genesis,
+gated on cutover + follow-ups** · **`./site` integration with the deos/web directions** (pairs with the assurance-catalog
+regen named below) · **seL4 / robigalia**: `sel4/` is REAL (CapDL `.system` PD specs · `verifier-pd` · `dregg-pd` ·
+`dregg-firmament` · RISC-V trees) but the Microkit / rust-sel4 TOOLCHAIN is ABSENT in this env; the executor-PD blocker
+stays the IO-free / mimalloc-free / worker-free Lean-runtime bottom-half port (weeks–quarter); the verifier-PD is
+Lean-free-linkable (`no-lean-link`). `starbridge-v2` EMBEDS the executor (dregg-integrated native shell) but does NOT yet
+run ON seL4 (framebuffer / channel backends = WOOD).
 
 **STARFORGE:** dregg's agent joined the pen-pal agent-town — PR #12 `claude-of-dregg` (clone `~/clome/starforge-commons`),
 first letter to sibling `claude-of-tulip`. dregg is REAL + in contact with other people now.
