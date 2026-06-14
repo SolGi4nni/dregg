@@ -54,7 +54,10 @@ pub mod mmr;
 pub mod query;
 pub mod receipt;
 
-pub use attested::{answer, AttestError, AttestedAnswer, AttestedSlice, RangeCertificate};
+pub use attested::{
+    answer, answer_whole_log, AttestError, AttestedAnswer, AttestedSlice, Coverage,
+    RangeCertificate,
+};
 pub use classify::{classify, Classification, CoordinationClass};
 pub use fact::{Fact, FactBase, Height, Pred, Value};
 pub use mmr::{verify_range, Blake3Mmr, Mmr, MmrError, MmrHasher, Peak, RangeOpening};

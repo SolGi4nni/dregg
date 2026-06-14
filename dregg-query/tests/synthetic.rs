@@ -362,6 +362,95 @@ fn attested_answer_end_to_end() {
     back.verify(&Blake3Mmr, &trusted_root).unwrap();
 }
 
+// ------------------------------------------------ Q2: coverage (whole-log vs range)
+//
+// The certificate proves the slice is EXACTLY positions [lo, hi] of the
+// genuine log; coverage names how far that range-completeness reaches relative
+// to the WHOLE log. A monotone query's unqualified "provably omitted nothing"
+// is sound ONLY when the certified slice is the whole prefix [0, head] — and
+// `verify` enforces that, so a sub-range answer cannot pose as whole-log.
+
+/// Witness TRUE: a whole-log answer over the full prefix [0, head=5] verifies
+/// (the default `answer` makes the honest `Range` claim; `answer_whole_log`
+/// upgrades it to the unqualified whole-log claim, which holds here).
+#[test]
+fn coverage_whole_log_over_full_prefix_verifies() {
+    let receipts = chain();
+    let trusted_root = mmr_of(&receipts).root();
+    let slice = attested_slice(&receipts, 0, 5);
+
+    let ans = answer_whole_log(slice, big_transfers_to_bob()).unwrap();
+    assert_eq!(ans.coverage, Coverage::WholeLog);
+    assert!(ans.classification.is_monotone());
+    ans.verify(&Blake3Mmr, &trusted_root).unwrap();
+
+    // a clipping hi (>= head) still counts as whole-log — the certificate
+    // pins the head at len-1 regardless of the over-large hi.
+    let slice = attested_slice(&receipts, 0, 100);
+    let ans = answer_whole_log(slice, big_transfers_to_bob()).unwrap();
+    ans.verify(&Blake3Mmr, &trusted_root).unwrap();
+}
+
+/// Witness FALSE: a sub-range slice (lo != 0) that CLAIMS whole-log coverage is
+/// rejected — its prefix [0, lo) is silently dropped, so "omitted nothing" is a
+/// lie the certificate refutes (the slice is provably NOT the whole prefix).
+#[test]
+fn coverage_whole_log_over_non_prefix_rejected() {
+    let receipts = chain();
+    let trusted_root = mmr_of(&receipts).root();
+
+    // The honest Range answer over [2, 5] verifies — it claims only its range.
+    let slice = attested_slice(&receipts, 2, 5);
+    let honest = answer(slice, big_transfers_to_bob()).unwrap();
+    assert_eq!(honest.coverage, Coverage::Range);
+    honest.verify(&Blake3Mmr, &trusted_root).unwrap();
+
+    // The SAME slice re-labeled whole-log is rejected: lo = 2 != 0.
+    let mut lying = honest;
+    lying.coverage = Coverage::WholeLog;
+    assert!(matches!(
+        lying.verify(&Blake3Mmr, &trusted_root),
+        Err(AttestError::CoverageNotWholeLog { lo: 2, len: 6, head: 5, .. })
+    ));
+}
+
+/// Witness FALSE: a prefix slice that stops SHORT of the head and claims
+/// whole-log coverage is rejected — the tail [hi+1, head] is dropped. This is
+/// the omission a monotone query is most tempted to hide: the freshest rows.
+#[test]
+fn coverage_whole_log_short_of_head_rejected() {
+    let receipts = chain();
+    let trusted_root = mmr_of(&receipts).root();
+
+    // [0, 3] is a genuine prefix but the log head is position 5.
+    let slice = attested_slice(&receipts, 0, 3);
+    let mut ans = answer(slice, big_transfers_to_bob()).unwrap();
+    // honest Range claim verifies...
+    ans.verify(&Blake3Mmr, &trusted_root).unwrap();
+    // ...but the whole-log claim does not (hi = 3 < head = 5).
+    ans.coverage = Coverage::WholeLog;
+    assert!(matches!(
+        ans.verify(&Blake3Mmr, &trusted_root),
+        Err(AttestError::CoverageNotWholeLog { lo: 0, hi: 3, len: 6, head: 5 })
+    ));
+}
+
+/// Coverage rides the wire form: a whole-log answer round-trips through serde
+/// and still verifies; re-labeling it on the wire is caught on re-verification.
+#[test]
+fn coverage_survives_serde_and_is_checked() {
+    let receipts = chain();
+    let trusted_root = mmr_of(&receipts).root();
+    let slice = attested_slice(&receipts, 0, 5);
+    let ans = answer_whole_log(slice, big_transfers_to_bob()).unwrap();
+
+    let json = serde_json::to_string(&ans).unwrap();
+    assert!(json.contains("whole_log"));
+    let back: AttestedAnswer = serde_json::from_str(&json).unwrap();
+    assert_eq!(back.coverage, Coverage::WholeLog);
+    back.verify(&Blake3Mmr, &trusted_root).unwrap();
+}
+
 /// A server that hides the revocation receipt (the one that retracts the
 /// finalized-dependent row) cannot produce a verifying certificate for the
 /// full range — the omission breaks the count against the root-pinned length.
