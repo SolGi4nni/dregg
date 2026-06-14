@@ -373,22 +373,25 @@ fn rotation_witness_for_self_sovereign_impl(
     // The non-spend self-sovereign turn spends no note → the empty nullifier root.
     let nullifier_root = [0u8; 32];
 
-    // COHORT GATE: the rotated effect-vm prover (`prove_effect_vm_rotated_ir2_with_caveat`) fails
-    // CLOSED on an empty / non-cohort / heterogeneous turn, and `prove_full_turn` propagates that
-    // (there is no silent v1 fallback once a rotation witness is present). So only return `Some`
-    // when EVERY vm-effect resolves to the SAME rotated R=24 cohort descriptor — otherwise the
-    // caller passes `None` and the v1 leg runs. This keeps live-turn proving robust across every
-    // effect shape (no-ops, non-graduated effects) while the cohort proves rotated.
+    // COHORT GATE (PATH-PRESERVE §1/§4 Shape-1 cutover): the rotated effect-vm prover
+    // (`prove_effect_vm_rotated_ir2_with_caveat`) proves exactly ONE cohort descriptor per call and
+    // fails CLOSED on an empty / non-cohort effect, and `prove_full_turn` now routes EVERY rotation
+    // witness through `prove_cohort_run_chain` (the N-leg chain). So the gate no longer demands a
+    // HOMOGENEOUS turn — a HETEROGENEOUS turn (one actor doing >1 distinct cohort effect, e.g.
+    // Transfer + SetField) is split by `split_into_cohort_runs` into maximal homogeneous cohort-runs,
+    // each proven as its OWN rotated leg, and the verifier chains them (leg_k.OLD == leg_{k-1}.NEW).
+    // The gate now only requires that EVERY vm-effect resolves to SOME rotated R=24 cohort descriptor
+    // (a non-cohort effect — NoOp / non-graduated — would make a run's per-run rotated prove FAIL
+    // closed, so such turns keep the byte-identical v1 leg), AND that the projection is NON-EMPTY
+    // (Shape 3: an empty actor projection is a no-op transition the rotated path cannot prove —
+    // `convert_effects_to_vm` injects no NoOp, so this is the only empty-guard). A HOMOGENEOUS turn
+    // yields ONE run, byte-identical to the prior single rotated leg for the existing fleet.
     let vm_effects = AgentCipherclerk::convert_effects_to_vm(&before_cell.id(), effects);
-    let lead_name = vm_effects
-        .first()
-        .and_then(dregg_circuit::effect_vm::trace_rotated::rotated_descriptor_name_for_effect);
-    let cohort_ok = lead_name.is_some()
+    let all_cohort = !vm_effects.is_empty()
         && vm_effects.iter().all(|e| {
-            dregg_circuit::effect_vm::trace_rotated::rotated_descriptor_name_for_effect(e)
-                == lead_name
+            dregg_circuit::effect_vm::trace_rotated::rotated_descriptor_name_for_effect(e).is_some()
         });
-    if !cohort_ok {
+    if !all_cohort {
         return None;
     }
 
@@ -475,20 +478,22 @@ fn rotation_witness_for_capability_turn(
     // tooth).
     let nullifier_root = [0u8; 32];
 
-    // COHORT GATE (identical to the self-sovereign builder): only return `Some` when EVERY vm-effect
-    // resolves to the SAME rotated R=24 cohort descriptor; otherwise the caller passes `None` and
-    // the v1 leg runs. The rotated prover fails closed on a non-cohort / heterogeneous turn, so this
-    // keeps live capability-turn proving robust.
+    // COHORT GATE (PATH-PRESERVE §1/§4 Shape-1 cutover — identical to the self-sovereign builder):
+    // `prove_full_turn` routes EVERY rotation witness through the N-leg chain (`prove_cohort_run_chain`),
+    // so a HETEROGENEOUS cap-gated turn (the actor doing >1 distinct cohort effect under one consumed
+    // capability) is split into maximal homogeneous cohort-runs, each proven as its OWN rotated leg,
+    // and the verifier chains them. The cap-membership leg + its root/leaf teeth are UNCHANGED and run
+    // ALONGSIDE the chained effect legs. So the gate no longer demands homogeneity — it only requires
+    // that EVERY vm-effect resolves to SOME rotated R=24 cohort descriptor (a non-cohort effect would
+    // make a run's per-run rotated prove FAIL closed ⇒ keep the v1 cap leg) AND that the projection is
+    // NON-EMPTY (the cross-cell-SetField case projects to an empty actor transition, a no-op the
+    // rotated path cannot prove ⇒ v1). A HOMOGENEOUS cap turn yields ONE run, byte-identical to before.
     let vm_effects = AgentCipherclerk::convert_effects_to_vm(&before_cell.id(), effects);
-    let lead_name = vm_effects
-        .first()
-        .and_then(dregg_circuit::effect_vm::trace_rotated::rotated_descriptor_name_for_effect);
-    let cohort_ok = lead_name.is_some()
+    let all_cohort = !vm_effects.is_empty()
         && vm_effects.iter().all(|e| {
-            dregg_circuit::effect_vm::trace_rotated::rotated_descriptor_name_for_effect(e)
-                == lead_name
+            dregg_circuit::effect_vm::trace_rotated::rotated_descriptor_name_for_effect(e).is_some()
         });
-    if !cohort_ok {
+    if !all_cohort {
         return None;
     }
 
@@ -1229,6 +1234,215 @@ mod tests {
                 assert_eq!(which, "new_commitment");
             }
             other => panic!("expected new_commitment mismatch, got {other:?}"),
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // PATH-PRESERVE Phase 4 — HETEROGENEOUS turns rotate as an N-leg chain
+    // ──────────────────────────────────────────────────────────────────────
+
+    /// PATH-PRESERVE §1/§4 (Shape-1, the live cutover): a HETEROGENEOUS turn — one actor doing >1
+    /// distinct cohort effect (Transfer THEN SetField on its own cell) — now proves ROTATED as a
+    /// CHAIN of legs instead of falling to the v1 effect-vm leg. The lifted cohort gate
+    /// (`rotation_witness_for_self_sovereign`) admits it (every vm-effect resolves to SOME rotated
+    /// cohort), `prove_full_turn` routes it through `prove_cohort_run_chain` (splitting into the
+    /// maximal homogeneous runs `[Transfer] | [SetField]`, threading the interior boundary state),
+    /// and the chained verifier checks endpoints + adjacency. Asserts: the composed proof carries
+    /// >= 2 `"effect-vm-rotated"` legs and ZERO `"effect-vm"` (v1) legs, and the verify->accept gate
+    /// passes against the real-cell commitments. This is the live-path evidence the heterogeneous
+    /// shape no longer takes the v1 fallback (unblocking C7).
+    #[test]
+    fn flow_b_heterogeneous_turn_proves_rotated_chain() {
+        let bob = CellId::from_bytes([0xB2; 32]);
+        let pre_balance: u64 = 1_000;
+        let pre_nonce: u64 = 0;
+
+        // The REAL actor cell (the agent id IS the cell id on the live path).
+        let before_cell = dregg_cell::Cell::with_balance([0xA1; 32], [0u8; 32], pre_balance as i64);
+        let alice = before_cell.id();
+        // The after-cell only feeds the turn-INVARIANT limbs (cells_root/lifecycle/epoch/r23) of the
+        // final run's after-block — the per-run welds carry the changing balance/nonce/fields — so a
+        // clone of the before-cell (same single-cell invariant view) is the faithful after-block.
+        let after_cell = before_cell.clone();
+
+        // HETEROGENEOUS: an outgoing Transfer (cohort `transferVmDescriptor2R24`) THEN a SetField on
+        // the actor's OWN cell (cohort `setFieldVmDescriptor2-0R24`). The actor's Effect-VM
+        // projection is `[Transfer{dir:1}, SetField{slot:0}]` — two DISTINCT cohorts ⇒ two runs.
+        let effects = vec![
+            dregg_turn::Effect::Transfer {
+                from: alice,
+                to: bob,
+                amount: 100,
+            },
+            dregg_turn::Effect::SetField {
+                cell: alice,
+                index: 0,
+                value: [0x09u8; 32],
+            },
+        ];
+        let turn_hash = [0x7Au8; 32];
+        let receipt_hashes = [[0x11u8; 32]];
+
+        // Sanity: the projection really IS heterogeneous (two distinct cohort descriptors).
+        let vm_effects = AgentCipherclerk::convert_effects_to_vm(&alice, &effects);
+        assert_eq!(
+            vm_effects.len(),
+            2,
+            "Transfer + self-SetField must project to a 2-effect actor transition"
+        );
+        let names: Vec<Option<&str>> = vm_effects
+            .iter()
+            .map(dregg_circuit::effect_vm::trace_rotated::rotated_descriptor_name_for_effect)
+            .collect();
+        assert!(
+            names[0].is_some() && names[1].is_some() && names[0] != names[1],
+            "the two effects must resolve to DISTINCT rotated cohort descriptors, got {names:?}"
+        );
+
+        // The LIFTED gate must now ADMIT this heterogeneous turn (the old gate returned None).
+        let rotation = rotation_witness_for_self_sovereign(
+            pre_balance,
+            pre_nonce,
+            &before_cell,
+            &after_cell,
+            &receipt_hashes,
+            &effects,
+        );
+        assert!(
+            rotation.is_some(),
+            "PATH-PRESERVE §1: a heterogeneous all-cohort turn must now yield a rotation witness \
+             (the lifted cohort gate)"
+        );
+
+        // Prove the finalized turn ROTATED (the live commit-path call) + gate acceptance.
+        let proven = prove_and_verify_finalized_turn(
+            &alice,
+            pre_balance,
+            pre_nonce,
+            &effects,
+            turn_hash,
+            rotation,
+        )
+        .expect("the heterogeneous turn must prove as an N-leg rotated chain + verify");
+
+        // The composed proof must carry >= 2 ROTATED legs (one per cohort-run) and NO v1 leg.
+        let labels: Vec<&str> = proven
+            .proof
+            .composed
+            .sub_proofs
+            .iter()
+            .map(|sp| sp.label.as_str())
+            .collect();
+        let rotated_legs = labels.iter().filter(|l| **l == "effect-vm-rotated").count();
+        assert!(
+            rotated_legs >= 2,
+            "a heterogeneous turn must carry >= 2 chained rotated legs (one per cohort-run); \
+             sub-proofs = {labels:?}"
+        );
+        assert!(
+            !labels.contains(&"effect-vm"),
+            "ZERO v1 effect-vm legs on the heterogeneous rotated chain; sub-proofs = {labels:?}"
+        );
+
+        // Independent re-verification against the carried commitments (a light client's chain-check):
+        // first.OLD == old_commit, last.NEW == new_commit, interior adjacency closes.
+        dregg_sdk::verify_full_turn(&proven.proof, proven.old_commit, proven.new_commit)
+            .expect("the chained heterogeneous proof must re-verify against the real-cell commitments");
+    }
+
+    /// PATH-PRESERVE §6.2 ANTI-GHOST (the chain): a TAMPERED interior chain leg is REJECTED. We
+    /// prove the same heterogeneous Transfer+SetField chain, then corrupt the FIRST leg's published
+    /// NEW_COMMIT PI (off by one felt). Two independent teeth catch it and either rejection is the
+    /// anti-ghost (§6.2: "a tamper that desyncs PI from proof fails there first — assert either
+    /// rejection path"):
+    ///   * step 3 (per-leg crypto re-verify): the rotated leg is selector-bound to its PIs, so a PI
+    ///     that no longer matches the committed trace verifies under NO cohort descriptor
+    ///     (`SubProofInvalid`) — the leg itself is UNSAT against the forged PI;
+    ///   * step 4 (chain adjacency): even if a leg's PI/proof stayed self-consistent, the broken
+    ///     NEW would fail `leg_1.OLD == leg_0.NEW` (`CommitmentMismatch{chain_adjacency}`).
+    /// So a spliced/forged middle state cannot launder a fictional intermediate transition onto the
+    /// rotated chain.
+    #[test]
+    fn flow_b_heterogeneous_chain_tampered_leg_is_rejected() {
+        let bob = CellId::from_bytes([0xB2; 32]);
+        let pre_balance: u64 = 1_000;
+        let pre_nonce: u64 = 0;
+
+        let before_cell = dregg_cell::Cell::with_balance([0xA1; 32], [0u8; 32], pre_balance as i64);
+        let alice = before_cell.id();
+        let after_cell = before_cell.clone();
+
+        let effects = vec![
+            dregg_turn::Effect::Transfer {
+                from: alice,
+                to: bob,
+                amount: 100,
+            },
+            dregg_turn::Effect::SetField {
+                cell: alice,
+                index: 0,
+                value: [0x09u8; 32],
+            },
+        ];
+        let rotation = rotation_witness_for_self_sovereign(
+            pre_balance,
+            pre_nonce,
+            &before_cell,
+            &after_cell,
+            &[[0x11u8; 32]],
+            &effects,
+        )
+        .expect("heterogeneous all-cohort turn yields a rotation witness");
+
+        let mut proven = prove_and_verify_finalized_turn(
+            &alice,
+            pre_balance,
+            pre_nonce,
+            &effects,
+            [0x7Bu8; 32],
+            Some(rotation),
+        )
+        .expect("honest heterogeneous chain must prove");
+
+        // Locate the chain's FIRST rotated leg and corrupt its NEW_COMMIT PI (offset 4) by one felt.
+        // Adjacency (leg_1.OLD == leg_0.NEW) then breaks.
+        let new_commit_off = dregg_circuit::effect_vm::pi::NEW_COMMIT;
+        let first_rotated = proven
+            .proof
+            .composed
+            .sub_proofs
+            .iter_mut()
+            .find(|sp| sp.label == "effect-vm-rotated")
+            .expect("the heterogeneous proof carries a rotated leg");
+        first_rotated.sub_public_inputs[new_commit_off] += BabyBear::new(1);
+
+        // The chained verifier rejects: the corrupted leg is UNSAT against its forged PI (step 3)
+        // OR — if it stayed self-consistent — its broken NEW fails chain adjacency (step 4). Either
+        // is the anti-ghost: the chain does not close on a fictional intermediate state.
+        let result =
+            dregg_sdk::verify_full_turn(&proven.proof, proven.old_commit, proven.new_commit);
+        match result {
+            Err(FullTurnVerifyError::SubProofInvalid { index, label, .. }) => {
+                assert_eq!(index, 0, "the tampered first leg is the rejected sub-proof");
+                assert_eq!(
+                    label, "effect-vm-rotated",
+                    "the rejected leg is the corrupted rotated chain leg"
+                );
+            }
+            Err(FullTurnVerifyError::CommitmentMismatch { which, .. }) => {
+                assert!(
+                    which == "chain_adjacency" || which == "new_commitment",
+                    "a tampered first-leg NEW must fail adjacency (or the endpoint), got which={which}"
+                );
+            }
+            Ok(()) => panic!(
+                "ANTI-GHOST (chain): a tampered interior leg NEW_COMMIT was ACCEPTED — the rotated \
+                 chain laundered a fictional intermediate state!"
+            ),
+            Err(other) => panic!(
+                "expected SubProofInvalid (step-3 crypto) or CommitmentMismatch (step-4 chain), \
+                 got {other:?}"
+            ),
         }
     }
 
