@@ -145,8 +145,36 @@ pub fn analyze(capture: &WalCapture) -> AnalysisReport {
             .unwrap_or(0);
         report.summarize("replay_turns", replay.len());
         report.summarize("recovery_resumes_block_hwm", resume_from);
+
+        // Per-record replay detail: the EXACT turns recovery would re-apply, with
+        // their ordinal / height / block anchor / creator / post-state root, plus
+        // the cells each would re-touch. This is the actionable replay overlay —
+        // an operator can see precisely what restart re-executes idempotently.
+        let replay_cells: usize = replay.iter().map(|r| r.touched_cells.len()).sum();
+        report.summarize("replay_touched_cells", replay_cells);
+        report.push(Finding::observed(
+            Severity::Notice,
+            "wal.replay_overlay",
+            format!(
+                "REPLAY OVERLAY — recovery re-applies {} turn(s) at ordinal >= \
+                 {cursor} (idempotently): {}; re-touching {replay_cells} cell-\
+                 snapshot(s). The first replay turn anchors block {} (creator {}); \
+                 recovery resumes block processing from block-hwm {resume_from}.",
+                replay.len(),
+                replay_overlay_detail(replay),
+                replay
+                    .first()
+                    .map(|r| short_hex(&r.block_id))
+                    .unwrap_or_else(|| "—".into()),
+                replay
+                    .first()
+                    .map(|r| short_hex(&r.creator))
+                    .unwrap_or_else(|| "—".into()),
+            ),
+        ));
     } else {
         report.summarize("replay_turns", 0);
+        report.summarize("replay_touched_cells", 0);
     }
     if let Some(last) = records.last() {
         report.summarize("latest_height", last.height);
@@ -209,5 +237,69 @@ pub fn analyze(capture: &WalCapture) -> AnalysisReport {
         ));
     }
 
+    // ── RECOVERY OVERLAY: the ledger_root convergence trail ───────────────────
+    // Each record binds the canonical ledger root AFTER its turn — the chain of
+    // roots is the convergence trail recovery asserts (replay must reach the same
+    // root). We surface the trail and flag a STAGNANT root: a record that touched
+    // cells yet left the ledger root unchanged from its predecessor is a real
+    // anomaly (a mutation that did not move the authenticated state — a torn
+    // commit or a root not recomputed over the write).
+    let mut root_stalls = 0usize;
+    for w in records.windows(2) {
+        if w[1].ledger_root == w[0].ledger_root && !w[1].touched_cells.is_empty() {
+            root_stalls += 1;
+            report.push(Finding::verified(
+                Severity::Critical,
+                "dregg_persist::commit_log (ledger_root convergence trail)",
+                "wal.root_stall",
+                format!(
+                    "commit ordinal {} touched {} cell(s) yet left the ledger root \
+                     UNCHANGED ({}) — a mutation that did not advance the \
+                     authenticated state; the convergence trail recovery replays \
+                     against would not reproduce the write",
+                    w[1].ordinal,
+                    w[1].touched_cells.len(),
+                    short_hex(&w[1].ledger_root),
+                ),
+            ));
+        }
+    }
+    let distinct_roots = {
+        let mut s = std::collections::HashSet::new();
+        for r in records {
+            s.insert(r.ledger_root);
+        }
+        s.len()
+    };
+    report.summarize("distinct_ledger_roots", distinct_roots);
+    if root_stalls == 0 {
+        report.push(Finding::verified(
+            Severity::Info,
+            "dregg_persist::commit_log (ledger_root convergence trail)",
+            "wal.root_trail_coherent",
+            format!(
+                "the ledger-root convergence trail is coherent: {distinct_roots} \
+                 distinct root(s) across {len} record(s); every cell-touching turn \
+                 advanced the authenticated root (no stagnant-root mutation) — \
+                 recovery replay can reproduce this exact trail"
+            ),
+        ));
+    }
+
     report
+}
+
+/// Render a compact `[ordinal h=<height> b=<hwm>]` list of the replay set (capped
+/// so a large batch stays readable) for the recovery-overlay finding.
+fn replay_overlay_detail(replay: &[CommitRecord]) -> String {
+    const CAP: usize = 8;
+    let mut parts: Vec<String> = replay
+        .iter()
+        .take(CAP)
+        .map(|r| format!("[#{} h={} b={}]", r.ordinal, r.height, r.block_executed_up_to))
+        .collect();
+    if replay.len() > CAP {
+        parts.push(format!("…(+{} more)", replay.len() - CAP));
+    }
+    parts.join(" ")
 }

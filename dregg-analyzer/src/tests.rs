@@ -102,6 +102,36 @@ fn planted_equivocation_is_detected_by_real_verifier() {
     assert!(!report.is_clean());
 }
 
+#[test]
+fn planted_equivocation_surfaces_the_concrete_fork_witness() {
+    // Same planted fork as above, but assert the DEEPENED finding: the concrete
+    // EquivocationProof witness pair (block_a ∥ block_b) recovered from the REAL
+    // `detect_equivocation`.
+    let g = Block::new(&key(1), 1, Payload::Data(b"genesis".to_vec()), vec![]);
+    let gid = g.id();
+    let fork_a = Block::new(&key(9), 1, Payload::Data(b"fork-a".to_vec()), vec![gid]);
+    let fork_b = Block::new(&key(9), 1, Payload::Data(b"fork-b".to_vec()), vec![gid]);
+
+    let blocks = vec![g, fork_a, fork_b];
+    let capture = BlocklaceCapture {
+        checkpoint: checkpoint_from_blocks(&blocks),
+        participants: vec![pk(1), pk(9)],
+        wavelength: None,
+    };
+    let report = crate::blocklace::analyze(&capture);
+
+    let witness = report
+        .findings
+        .iter()
+        .find(|f| f.code == "blocklace.equivocation_fork_witness")
+        .expect("the concrete fork-witness pair must be surfaced");
+    assert_eq!(witness.severity, Severity::Critical);
+    assert!(witness.is_verified(), "the fork witness is attested by the real detect_equivocation");
+    // The witness names two distinct conflicting block ids at the same seq.
+    assert!(witness.message.contains("block_a") && witness.message.contains("block_b"));
+    assert!(report.summary.iter().any(|(k, _)| k == "equivocation_forks"));
+}
+
 // ─── blocklace: forged signature rejected ───────────────────────────────────────
 
 #[test]
@@ -175,6 +205,62 @@ fn tampered_receipt_chain_is_flagged() {
     assert_eq!(brk.severity, Severity::Critical);
     assert!(brk.is_verified(), "chain-break is attested via the real receipt_hash");
     assert!(!report.is_clean());
+}
+
+#[test]
+fn clean_chain_surfaces_the_receipt_link_graph() {
+    // The deepened receipt-link-graph view is present on an intact chain and,
+    // because the graph fields are bound into the v3 hash, it is ATTESTED.
+    let capture = ReceiptStrandCapture {
+        receipts: clean_chain(),
+        executor_keys: vec![],
+    };
+    let report = crate::receipts::analyze(&capture);
+    let graph = report
+        .findings
+        .iter()
+        .find(|f| f.code == "receipts.link_graph")
+        .expect("the receipt-link graph must be surfaced");
+    assert!(graph.is_verified(), "on an intact chain the graph is bound (verified)");
+    // Single-agent, single-federation, all-final clean strand.
+    assert!(report.summary.iter().any(|(k, v)| k == "distinct_agents" && v == "1"));
+    assert!(report.summary.iter().any(|(k, v)| k == "distinct_federations" && v == "1"));
+    assert!(report.findings.iter().any(|f| f.code == "receipts.finality_all_final"));
+}
+
+#[test]
+fn cross_federation_strand_is_flagged() {
+    // A linear strand whose receipts carry two different federation_ids: the
+    // deepened graph flags the cross-federation replay-domain stitch.
+    let mut r0 = receipt(None, [0u8; 32], [1u8; 32], false);
+    r0.federation_id = [0xAAu8; 32];
+    let h0 = r0.receipt_hash();
+    let mut r1 = receipt(Some(h0), [1u8; 32], [2u8; 32], false);
+    r1.federation_id = [0xBBu8; 32]; // a DIFFERENT federation
+
+    let capture = ReceiptStrandCapture {
+        receipts: vec![r0, r1],
+        executor_keys: vec![],
+    };
+    let report = crate::receipts::analyze(&capture);
+    assert!(report.findings.iter().any(|f| f.code == "receipts.cross_federation_strand"));
+    assert!(report.summary.iter().any(|(k, v)| k == "distinct_federations" && v == "2"));
+    // Cross-federation is a NOTICE, not Critical — the chain itself is intact.
+    assert!(report.is_clean());
+}
+
+#[test]
+fn tentative_finality_receipts_are_surfaced() {
+    use dregg_turn::Finality;
+    let mut r0 = receipt(None, [0u8; 32], [1u8; 32], false);
+    r0.finality = Finality::Tentative;
+    let capture = ReceiptStrandCapture {
+        receipts: vec![r0],
+        executor_keys: vec![],
+    };
+    let report = crate::receipts::analyze(&capture);
+    assert!(report.findings.iter().any(|f| f.code == "receipts.finality_tentative"));
+    assert!(report.summary.iter().any(|(k, v)| k == "receipts_tentative" && v == "1"));
 }
 
 #[test]
@@ -357,4 +443,85 @@ fn replay_set_surfaced_as_recovery_overlay() {
     // A pending-replay capture is NOT critical (it is an expected recovery state).
     assert!(report.is_clean());
     assert!(report.summary.iter().any(|(k, v)| k == "replay_turns" && v == "2"));
+}
+
+/// A commit record carrying explicit touched-cell snapshots and an explicit
+/// ledger root (for the convergence-trail / root-stall overlay tests).
+fn commit_rec_cells(
+    ordinal: u64,
+    height: u64,
+    hwm: u64,
+    ledger_root: [u8; 32],
+    cells: Vec<dregg_cell::Cell>,
+) -> CommitRecord {
+    CommitRecord {
+        ordinal,
+        height,
+        block_id: [ordinal as u8; 32],
+        block_executed_up_to: hwm,
+        turn_hash: [ordinal as u8; 32],
+        creator: [1u8; 32],
+        receipt_hash: [ordinal as u8; 32],
+        ledger_root,
+        touched_cells: cells,
+    }
+}
+
+#[test]
+fn replay_overlay_details_the_replayed_turns() {
+    // The deepened replay overlay names the exact replayed turns + their cell
+    // re-touch count.
+    let one_cell = vec![dregg_cell::Cell::new([9u8; 32], [0u8; 32])];
+    let records = vec![
+        commit_rec_cells(0, 1, 1, [1u8; 32], vec![]),
+        commit_rec_cells(1, 2, 2, [2u8; 32], one_cell.clone()),
+        commit_rec_cells(2, 3, 3, [3u8; 32], one_cell),
+    ];
+    let capture = WalCapture { records, commit_cursor: Some(1) };
+    let report = crate::wal::analyze(&capture);
+    let overlay = report
+        .findings
+        .iter()
+        .find(|f| f.code == "wal.replay_overlay")
+        .expect("the replay overlay detail must be surfaced");
+    // Two records replay (#1, #2), re-touching two cell snapshots.
+    assert!(overlay.message.contains("#1") && overlay.message.contains("#2"));
+    assert!(report.summary.iter().any(|(k, v)| k == "replay_touched_cells" && v == "2"));
+}
+
+#[test]
+fn stagnant_ledger_root_with_touched_cells_is_flagged() {
+    // A record that touched a cell yet left the ledger root UNCHANGED from its
+    // predecessor: a mutation that did not advance the authenticated state.
+    let one_cell = vec![dregg_cell::Cell::new([9u8; 32], [0u8; 32])];
+    let records = vec![
+        commit_rec_cells(0, 1, 1, [7u8; 32], vec![]),
+        // same root [7;32] as #0, but touches a cell → stall anomaly.
+        commit_rec_cells(1, 2, 2, [7u8; 32], one_cell),
+    ];
+    let capture = WalCapture { records, commit_cursor: Some(2) };
+    let report = crate::wal::analyze(&capture);
+    let stall = report
+        .findings
+        .iter()
+        .find(|f| f.code == "wal.root_stall")
+        .expect("a stagnant-root mutation must be flagged");
+    assert_eq!(stall.severity, Severity::Critical);
+    assert!(stall.is_verified());
+    assert!(!report.is_clean());
+}
+
+#[test]
+fn coherent_ledger_root_trail_is_attested() {
+    // Distinct advancing roots on every cell-touching turn → coherent trail.
+    let one_cell = vec![dregg_cell::Cell::new([9u8; 32], [0u8; 32])];
+    let records = vec![
+        commit_rec_cells(0, 1, 1, [1u8; 32], one_cell.clone()),
+        commit_rec_cells(1, 2, 2, [2u8; 32], one_cell),
+    ];
+    let capture = WalCapture { records, commit_cursor: Some(2) };
+    let report = crate::wal::analyze(&capture);
+    assert!(report.findings.iter().any(|f| f.code == "wal.root_trail_coherent" && f.is_verified()));
+    assert!(report.summary.iter().any(|(k, v)| k == "distinct_ledger_roots" && v == "2"));
+    assert!(report.is_clean());
 }

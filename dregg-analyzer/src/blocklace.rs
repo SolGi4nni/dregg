@@ -144,16 +144,23 @@ pub fn analyze(capture: &BlocklaceCapture) -> AnalysisReport {
     // The authenticating loader populated `equivocators` via the real
     // incomparability check. (If the loader rejected the whole capture above we
     // re-derive from the trusted loader so we can still report the fork.)
-    let equivocators: HashSet<[u8; 32]> = match &lace {
-        Some(l) => l.equivocators().clone(),
-        None => Blocklace::from_checkpoint_trusted(
+    // When the authenticating loader admitted the capture we probe its lace for
+    // the fork witness; when it rejected (a forged sig) we fall back to the
+    // trusted loader purely to still ATTRIBUTE the fork. Keep that fallback lace
+    // alive so the fork-witness probe below has something to detect against.
+    let trusted_fallback: Option<Blocklace> = if lace.is_none() {
+        Blocklace::from_checkpoint_trusted(
             &capture.checkpoint,
             SigningKey::from_bytes(&[7u8; 32]),
             threshold,
         )
-        .map(|l| l.equivocators().clone())
-        .unwrap_or_default(),
+        .ok()
+    } else {
+        None
     };
+    let lace_for_forks: Option<&Blocklace> = lace.as_ref().or(trusted_fallback.as_ref());
+    let equivocators: HashSet<[u8; 32]> =
+        lace_for_forks.map(|l| l.equivocators().clone()).unwrap_or_default();
     report.summarize("equivocators_detected", equivocators.len());
     if equivocators.is_empty() {
         report.push(Finding::verified(
@@ -179,7 +186,41 @@ pub fn analyze(capture: &BlocklaceCapture) -> AnalysisReport {
                     forks.len()
                 ),
             ));
+
+            // ── ATTEST: the concrete FORK WITNESS (the EquivocationProof pair) ──
+            // Re-run the REAL `detect_equivocation` to extract the authentic
+            // incomparable witness pair (block_a ∥ block_b) the protocol would
+            // present as slashable evidence — not a reconstruction. We probe each
+            // of this creator's blocks against the loaded lace; the first that
+            // yields a proof names the two conflicting block ids + their seqs.
+            if let Some(lace) = lace_for_forks {
+                if let Some(proof) = fork_witness(lace, &forks) {
+                    report.push(Finding::verified(
+                        Severity::Critical,
+                        "dregg_blocklace::finality::Blocklace::detect_equivocation",
+                        "blocklace.equivocation_fork_witness",
+                        format!(
+                            "  fork witness for {}: block_a=(id {}, seq {}) ∥ \
+                             block_b=(id {}, seq {}) are causally incomparable \
+                             (neither is in the other's causal past) — this pair IS \
+                             the slashable equivocation proof",
+                            short_hex(&proof.creator),
+                            short_hex(&proof.block_a.id().0),
+                            proof.block_a.seq,
+                            short_hex(&proof.block_b.id().0),
+                            proof.block_b.seq,
+                        ),
+                    ));
+                }
+            }
         }
+        report.summarize(
+            "equivocation_forks",
+            equivocators
+                .iter()
+                .map(|c| raw.iter().filter(|b| &b.creator == c).count())
+                .sum::<usize>(),
+        );
     }
 
     // ── ATTEST: finality / total order via the real `tau` ─────────────────────
@@ -247,6 +288,20 @@ pub fn analyze(capture: &BlocklaceCapture) -> AnalysisReport {
     }
 
     report
+}
+
+/// Recover the authentic equivocation witness pair for a creator by re-running
+/// the REAL [`Blocklace::detect_equivocation`] over that creator's blocks. The
+/// loader retains both fork blocks as attributable evidence, so probing any one
+/// against the lace yields the `EquivocationProof { block_a ∥ block_b }` the
+/// protocol would slash on. Returns the first conflicting pair found.
+fn fork_witness(
+    lace: &Blocklace,
+    creator_blocks: &[&Block],
+) -> Option<dregg_blocklace::finality::EquivocationProof> {
+    creator_blocks
+        .iter()
+        .find_map(|&b| lace.detect_equivocation(b))
 }
 
 /// A block whose payload carries no turn/data (an `Ack`-only heartbeat) is not a
