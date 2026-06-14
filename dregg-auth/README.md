@@ -105,30 +105,63 @@ attenuate further) — transmit it like the capability it is. Bindings
 `ed25519-dalek`, `blake3`, `postcard`, `base64`, `serde`, `getrandom`. The
 credential core touches no cell, turn, node, or circuit code.
 
-## The agent-grant surface (`Root`/`Grant`/`Token`, CLI, MCP gate)
+## The agent-grant surface (`policy`, CLI, verifying middleware)
 
-The crate also ships the agent-pointed wedge over the biscuit/Datalog token
-layer: `Grant::new("ci-bot").tools(["read"]).until(t)` issued by a `Root`,
-verified by `verify_offline`, with the `dregg-auth` CLI (`init`/`grant`/
-`verify`/`attenuate`/`gate`) and the `mcp::OfflineGate` middleware for tool
-calls. Same guarantees at the rim — offline, public-key-only, no-amplify —
-expressed as Datalog checks rather than the proven caveat algebra.
+The product wedge — the `dregg-auth` CLI, the grant builder, and the verifying
+middleware — rides the **proven** credential core directly (`dregg_auth::policy`).
+The token a grant issues *is* a machine-checked [`Credential`] (the `dga1_…`
+form); the decision the gate makes *is* `Credential::verify`. So the headline
+claim — *prove your agent cannot exceed the grant* — holds on the path a
+stranger actually touches.
+
+```rust
+use dregg_auth::policy::{Grant, Policy, Verifier, Call};
+
+let polis = Policy::generate();                       // keep the secret; publish the public key
+let token = polis.issue(
+    Grant::to("ci-bot").tools(["read", "pr-create"]).until(1_900_000_000),
+).unwrap().encode();                                  // a proven `dga1_…` bearer token
+
+// A gateway holding ONLY the public key admits/denies each tool call, offline:
+let gate = Verifier::new(polis.public_key_hex());
+assert!( gate.admit(&token, &Call::tool("read").at(1_800_000_000)).admitted());
+assert!(!gate.admit(&token, &Call::tool("delete-repo").at(1_800_000_000)).admitted());
+```
+
+A grant `Grant::to("ci-bot").tools(["read","pr-create"]).until(t)` compiles to
+three first-party caveats on the root block: `subject == "ci-bot"` (the agent
+identity, pinned as a *checked* fact the `Verifier` binds from the token
+itself), `tool ∈ {read, pr-create}` (the allowlist as the fail-closed
+disjunction `AnyOf`), and `clock ≤ t` (the expiry, downward-closed). Narrowing
+appends a confining block — dropped reach is gone for good (the proven
+`attenuate_narrows`). Every decision is the fail-closed meet of all caveats, and
+a denial names the violated caveat.
 
 ```console
-$ dregg-auth grant ci-bot --tools read,pr-create --until +7d
-eb2_CoYBCh0...
-$ dregg-auth verify eb2_CoYBCh0... --tool delete-repo
-denied: tool `delete-repo` (action `use`) is outside this grant, or the grant has expired
+$ dregg-auth init
+$ dregg-auth grant ci-bot --tools read,pr-create --until friday
+dga1_QdTp6HNgZxrvii5Ftf6m_x2nlQ...
+$ dregg-auth verify dga1_QdTp... --tool delete-repo
+refused: block 0 requires any of (attribute `tool` = `read`; attribute `tool` = `pr-create`)
+$ dregg-auth gate dga1_QdTp... --tool pr-create --args repo=acme/widgets
+ALLOW subject=ci-bot tool=pr-create [repo=acme/widgets] :: allowed
 ```
+
+`--until` / `--at` accept a unix timestamp, a relative offset (`+7d`/`+24h`/
+`+90m`/`+2w`), or a friendly day name (`friday`, `tomorrow`, `eod`, `eow`),
+resolved against the wall clock at issue. `explain <token>` prints the grant's
+terms block by block (the cold-reader audit).
+
+The first-cut Datalog surface (`Root`/`Grant`/`Token`, the `eb2_` biscuit path,
+and the `mcp::OfflineGate` gate built on it) remains in the library for
+back-compat; the `policy` surface above is the product, and it is the proven
+one.
 
 ## Honest residuals
 
-- **Rate limiting is advisory** in the grant surface: verification is
-  stateless and offline, so it cannot count requests; the rate rides into the
-  token as metadata for a stateful gate to enforce.
+- **Rate limiting is advisory**: verification is stateless and offline, so it
+  cannot count requests. The grant surface records the intent (rate metadata)
+  for a stateful gate to enforce; the `policy` surface is over tools + time.
 - **Revocation** is expiry-shaped here: short windows + re-issue. (Third-party
   caveats give online revocation when you want it: a gateway that stops
   discharging has revoked.)
-- **The biscuit surface and the credential core are two codecs** (`eb2_` /
-  `dga1_`). The credential core is the proven one; the grant surface remains
-  for the CLI/MCP wedge until it is re-based on the core.

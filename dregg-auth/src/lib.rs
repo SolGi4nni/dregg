@@ -11,49 +11,46 @@
 //! agents (MCP, sub-agents, CI bots) that are handed unscoped API keys today.
 //! dregg-auth is the aspirin: scoped agent access as a one-liner.
 //!
-//! ## The 30-second shape
-//! ```no_run
-//! use dregg_auth::{Root, Grant, Request};
+//! ## The 30-second shape (the product surface: [`policy`])
+//! ```
+//! use dregg_auth::policy::{Grant, Policy, Verifier, Call};
 //!
-//! // A root authority (the issuer). Keep the private half; publish the public half.
-//! let root = Root::generate();
+//! // A root authority. Keep the secret seed; publish the public key.
+//! let polis = Policy::generate();
 //!
-//! // Grant an agent read + pr-create, expiring at a unix timestamp.
-//! let grant = Grant::new("ci-bot")
-//!     .tool("read")
-//!     .tool("pr-create")
-//!     .until(1_900_000_000);
-//! let token = root.issue(&grant).unwrap();
-//! let encoded = token.encode().unwrap(); // printable, base64, `eb2_...`
+//! // Grant an agent read + pr-create, expiring at a clock reading. The token
+//! // IS a machine-checked credential (the `dga1_…` form).
+//! let token = polis.issue(
+//!     Grant::to("ci-bot").tools(["read", "pr-create"]).until(1_900_000_000),
+//! ).unwrap().encode();
 //!
-//! // ...hand `encoded` + `root.public_key_hex()` to the gateway. Verify OFFLINE:
-//! let decision = dregg_auth::verify_offline(
-//!     &encoded,
-//!     &root.public_key_hex(),
-//!     &Request::tool("read").at(1_800_000_000),
-//! );
-//! assert!(decision.allowed());
+//! // A gateway holding ONLY the public key admits/denies each call, OFFLINE.
+//! let gate = Verifier::new(polis.public_key_hex());
+//! assert!( gate.admit(&token, &Call::tool("read").at(1_800_000_000)).admitted());
+//! assert!(!gate.admit(&token, &Call::tool("delete-repo").at(1_800_000_000)).admitted());
 //! ```
 //!
 //! ## What L1 deliberately is NOT
-//! No node. No wallet. No blockchain. No ontology. The *runtime* path is pure
-//! and offline — verification touches no network, no node, no circuit. The
-//! direct deps are `dregg-token` (biscuit path) + `biscuit-auth`. (One honest
-//! residual: `dregg-token` transitively pulls `dregg-commit → dregg-circuit` at
-//! *compile* time today — a token-crate edge that wants feature-gating; none of
-//! it runs. See the README residuals.) The adoption quotient stands at runtime:
-//! the polis is PULL, never TOLL.
+//! No node. No wallet. No blockchain. No ontology. The whole path is pure and
+//! offline — issuance and verification touch no network, no node, no circuit,
+//! at compile time *or* runtime (`cargo tree -i dregg-circuit -p dregg-auth`
+//! shows no path). The adoption quotient stands: the polis is PULL, never TOLL.
 //!
-//! ## The proven credential core
+//! ## The proven credential core ([`credential`]) and the product ([`policy`])
 //! The [`credential`] module is the standalone token scheme whose semantics
 //! are the machine-checked ones in `metatheory/Dregg2/` — an ed25519 caveat
 //! chain ([`credential::Credential`]) with the proven caveat algebra
 //! ([`credential::Pred`]), third-party discharge with the macaroon binding
 //! discipline ([`credential::Discharge`]), a versioned postcard/base64url
 //! wire form (`dga1_…`), and `explain()` everywhere. Each type's doc comment
-//! names its Lean counterpart. Start there for new integrations; the
-//! `Root`/[`Grant`]/[`Token`] surface below is the biscuit/Datalog wedge the
-//! CLI and MCP gate ride on.
+//! names its Lean counterpart.
+//!
+//! The [`policy`] module is the productized grant + verifying-middleware shape
+//! *on that proven core*: [`policy::Policy`] issues, [`policy::Grant`] is the
+//! `grant <agent> --tools … --until …` vocabulary, and [`policy::Verifier`] is
+//! the offline middleware a gateway runs in front of an agent — the path the
+//! CLI rides. The first-cut `Root`/[`Grant`]/[`Token`] surface below (the
+//! `eb2_` biscuit/Datalog wedge, with the [`mcp`] gate) remains for back-compat.
 
 use biscuit_auth::{Algorithm, KeyPair, PrivateKey, PublicKey};
 use dregg_token::{AuthRequest, AuthToken, BiscuitToken, TokenError};
@@ -61,6 +58,7 @@ use dregg_token::{AuthRequest, AuthToken, BiscuitToken, TokenError};
 pub mod credential;
 mod grant;
 pub mod mcp;
+pub mod policy;
 
 pub use grant::{Grant, Rate};
 

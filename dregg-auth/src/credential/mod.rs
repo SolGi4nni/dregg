@@ -73,6 +73,18 @@ pub use chain::{Credential, Discharge, GatewayKey, KeyError, PublicKey, Refusal,
 pub use pred::{Pred, Unbound};
 pub use wire::{CREDENTIAL_PREFIX, DISCHARGE_PREFIX, WireError};
 
+/// Lowercase hex of a 32-byte key (public helper for product surfaces that
+/// persist root seeds / public keys as hex — e.g. [`crate::policy`]).
+pub fn hex_pub(bytes: &[u8; 32]) -> String {
+    hex(bytes)
+}
+
+/// Parse exactly 32 bytes of hex (public helper for product surfaces — e.g.
+/// [`crate::policy::Policy::from_secret_hex`]). Errors on any non-64-hex input.
+pub fn unhex32_pub(s: &str) -> Result<[u8; 32], KeyError> {
+    unhex32(s)
+}
+
 /// Lowercase hex of arbitrary bytes (display / explain helper — no dep).
 pub(crate) fn hex(bytes: &[u8]) -> String {
     let mut s = String::with_capacity(bytes.len() * 2);

@@ -2,23 +2,35 @@
 //!
 //!   dregg-auth init                       generate + store a root key
 //!   dregg-auth pubkey                     print the root public key (publishable)
-//!   dregg-auth grant <subject> \
+//!   dregg-auth grant <agent> \
 //!       --tools read,pr-create \
-//!       --until +7d [--rate 30/h]         emit a scoped token
-//!   dregg-auth verify <token> --tool pr-create [--args ...] [--pubkey HEX]
+//!       --until friday                    emit a scoped token (printed to stdout)
+//!   dregg-auth verify <token> --tool pr-create [--at WHEN] [--pubkey HEX]
 //!                                         exit 0 (allow) / 1 (deny) + a reason
-//!   dregg-auth attenuate <token> --tools read [--until +1d]
-//!                                         emit a narrowed token
+//!   dregg-auth attenuate <token> --tools read [--until +1d] [--pubkey HEX]
+//!                                         emit a narrowed token (never amplifies)
+//!   dregg-auth gate <token> --tool <name> [--args k=v,...] [--pubkey HEX]
+//!                                         middleware profile: decide + a receipt
+//!   dregg-auth explain <token> [--pubkey HEX]
+//!                                         print the grant's terms, block by block
 //!
-//! L1 is standalone: no node, no wallet, no network. `verify` needs only a
-//! public key (defaults to the local root's, or pass `--pubkey`).
+//! Every command rides the **proven** credential core (`dregg_auth::policy`):
+//! the token a `grant` issues IS a machine-checked credential (the `dga1_…`
+//! form), the decision a `verify`/`gate` makes IS `Credential::verify`. L1 is
+//! standalone: no node, no wallet, no network. `verify` needs only a public
+//! key (defaults to the local root's, or pass `--pubkey`).
+//!
+//! `--until` / `--at` accept an absolute clock (unix seconds), a relative
+//! offset (`+7d`, `+24h`, `+90m`, `+2w`), or a friendly **named day**
+//! (`friday`, `tomorrow`, `eod`, `eow`) — resolved against the wall clock at
+//! the moment of issue.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use dregg_auth::{AuthError, Grant, Rate, Request, Token, mcp, verify_offline};
+use dregg_auth::policy::{Call, Grant, Policy, Verifier};
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -35,7 +47,8 @@ fn main() -> ExitCode {
         "grant" => cmd_grant(rest),
         "verify" => return cmd_verify(rest),
         "attenuate" => cmd_attenuate(rest),
-        "gate" => cmd_gate(rest),
+        "gate" => return cmd_gate(rest),
+        "explain" => cmd_explain(rest),
         "help" | "-h" | "--help" => {
             usage();
             Ok(())
@@ -64,21 +77,21 @@ fn cmd_init() -> Result<(), CliError> {
             path.display()
         )));
     }
-    let root = dregg_auth::Root::generate();
+    let polis = Policy::generate();
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| CliError::Io(e.to_string()))?;
     }
-    std::fs::write(&path, root.private_key_hex()).map_err(|e| CliError::Io(e.to_string()))?;
+    std::fs::write(&path, polis.secret_hex()).map_err(|e| CliError::Io(e.to_string()))?;
     restrict_permissions(&path);
     println!("root key written to {}", path.display());
     println!("public key (publish this):");
-    println!("{}", root.public_key_hex());
+    println!("{}", polis.public_key_hex());
     Ok(())
 }
 
 fn cmd_pubkey() -> Result<(), CliError> {
-    let root = load_root()?;
-    println!("{}", root.public_key_hex());
+    let polis = load_policy()?;
+    println!("{}", polis.public_key_hex());
     Ok(())
 }
 
@@ -86,7 +99,7 @@ fn cmd_grant(args: &[String]) -> Result<(), CliError> {
     let (positional, flags) = parse(args);
     let subject = positional
         .first()
-        .ok_or_else(|| CliError::Usage("grant requires a <subject>".into()))?;
+        .ok_or_else(|| CliError::Usage("grant requires an <agent>".into()))?;
 
     let tools = flag_list(&flags, "tools");
     if tools.is_empty() {
@@ -96,29 +109,23 @@ fn cmd_grant(args: &[String]) -> Result<(), CliError> {
         ));
     }
 
-    let mut grant = Grant::new(subject).tools(tools);
+    let mut grant = Grant::to(subject).tools(tools);
     if let Some(until) = flags.get("until") {
-        grant = grant.until(parse_until(until)?);
-    }
-    if let Some(rate) = flags.get("rate") {
-        grant = grant.rate(Rate::parse(rate)?);
-    }
-    if let Some(actions) = flags.get("actions") {
-        grant = grant.with_actions(actions);
+        grant = grant.until(parse_when(until)?);
     }
 
-    let root = load_root()?;
-    let token = root.issue(&grant)?;
-    println!("{}", token.encode()?);
+    let polis = load_policy()?;
+    let token = polis.issue(grant).map_err(CliError::Policy)?;
+    println!("{}", token.encode());
     Ok(())
 }
 
 fn cmd_verify(args: &[String]) -> ExitCode {
     match do_verify(args) {
-        Ok(decision) => {
+        Ok(verdict) => {
             // Human reason to stderr; exit code carries allow/deny for scripts.
-            eprintln!("{}", decision.reason());
-            if decision.allowed() {
+            eprintln!("{}", verdict.reason());
+            if verdict.admitted() {
                 ExitCode::SUCCESS
             } else {
                 ExitCode::FAILURE
@@ -131,7 +138,7 @@ fn cmd_verify(args: &[String]) -> ExitCode {
     }
 }
 
-fn do_verify(args: &[String]) -> Result<dregg_auth::Decision, CliError> {
+fn do_verify(args: &[String]) -> Result<dregg_auth::policy::Verdict, CliError> {
     let (positional, flags) = parse(args);
     let token = positional
         .first()
@@ -140,24 +147,22 @@ fn do_verify(args: &[String]) -> Result<dregg_auth::Decision, CliError> {
         .get("tool")
         .ok_or_else(|| CliError::Usage("verify requires --tool <name>".into()))?;
 
-    let pubkey = match flags.get("pubkey") {
-        Some(pk) => pk.clone(),
-        None => load_root()?.public_key_hex(),
-    };
-
-    let mut request = Request::tool(tool);
-    if let Some(action) = flags.get("action") {
-        request = request.action(action);
-    }
-    if let Some(now) = flags.get("at") {
-        request = request.at(parse_until(now)?);
-    }
-    let arglist = flag_list(&flags, "args");
-    if !arglist.is_empty() {
-        request = request.with_args(arglist);
+    let pubkey = pubkey_or_local(&flags)?;
+    let mut call = Call::tool(tool);
+    // Default to "now" so a token without an explicit --at is checked against
+    // the wall clock; pass --at WHEN for a deterministic offline check.
+    call = call.at(match flags.get("at") {
+        Some(at) => parse_when(at)?,
+        None => now_secs(),
+    });
+    for pair in flag_list(&flags, "args") {
+        if let Some((k, v)) = pair.split_once('=') {
+            call = call.arg(k, v);
+        }
     }
 
-    Ok(verify_offline(token, &pubkey, &request))
+    let gate = Verifier::new(pubkey);
+    Ok(gate.admit(token, &call))
 }
 
 fn cmd_attenuate(args: &[String]) -> Result<(), CliError> {
@@ -166,30 +171,44 @@ fn cmd_attenuate(args: &[String]) -> Result<(), CliError> {
         .first()
         .ok_or_else(|| CliError::Usage("attenuate requires a <token>".into()))?;
 
-    let pubkey = match flags.get("pubkey") {
-        Some(pk) => pk.clone(),
-        None => load_root()?.public_key_hex(),
-    };
-    let token = Token::parse(encoded, &pubkey)?;
+    // The proven narrowing rides the GrantToken; reconstruct it from the wire
+    // (structural validation — narrowing does not need a verifier key, the
+    // bearer-tail discipline keeps it sound, and the result re-verifies under
+    // the original root). --pubkey is accepted but unused here.
+    let _ = &flags;
+    let token = dregg_auth::policy::GrantToken::decode(encoded)
+        .map_err(|e| CliError::Other(format!("cannot parse token: {e}")))?;
 
-    // The narrowing grant: subject is irrelevant for attenuation (it only
-    // tightens tools/expiry), so use a placeholder subject.
-    let mut narrow = Grant::new("_");
     let tools = flag_list(&flags, "tools");
-    if !tools.is_empty() {
-        narrow = narrow.tools(tools);
-    }
-    if let Some(until) = flags.get("until") {
-        narrow = narrow.until(parse_until(until)?);
-    }
-
-    let narrowed = token.attenuate(&narrow)?;
-    println!("{}", narrowed.encode()?);
+    let tools_opt: Option<&[String]> = if tools.is_empty() { None } else { Some(&tools) };
+    let until_opt = match flags.get("until") {
+        Some(u) => Some(parse_when(u)?),
+        None => None,
+    };
+    let narrowed = Grant::attenuate_token(token, tools_opt, until_opt).map_err(CliError::Policy)?;
+    println!("{}", narrowed.encode());
     Ok(())
 }
 
-/// `gate` — demo the MCP gateway profile: verify a call and print the receipt.
-fn cmd_gate(args: &[String]) -> Result<(), CliError> {
+/// `gate` — the middleware profile: verify a call and print the audit receipt.
+fn cmd_gate(args: &[String]) -> ExitCode {
+    match do_gate(args) {
+        Ok((line, admitted)) => {
+            println!("{line}");
+            if admitted {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::FAILURE
+            }
+        }
+        Err(e) => {
+            eprintln!("dregg-auth: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn do_gate(args: &[String]) -> Result<(String, bool), CliError> {
     let (positional, flags) = parse(args);
     let encoded = positional
         .first()
@@ -197,30 +216,42 @@ fn cmd_gate(args: &[String]) -> Result<(), CliError> {
     let tool = flags
         .get("tool")
         .ok_or_else(|| CliError::Usage("gate requires --tool <name>".into()))?;
-    let pubkey = match flags.get("pubkey") {
-        Some(pk) => pk.clone(),
-        None => load_root()?.public_key_hex(),
-    };
+    let pubkey = pubkey_or_local(&flags)?;
 
-    let mut call = mcp::ToolCall::new(tool);
+    let mut call = Call::tool(tool);
+    call = call.at(match flags.get("at") {
+        Some(at) => parse_when(at)?,
+        None => now_secs(),
+    });
     for pair in flag_list(&flags, "args") {
         if let Some((k, v)) = pair.split_once('=') {
             call = call.arg(k, v);
         }
     }
-    if let Some(at) = flags.get("at") {
-        call = call.at(parse_until(at)?);
-    }
 
-    let gate = mcp::OfflineGate::new(pubkey);
-    use mcp::ToolGate;
-    let gated = gate.admit(encoded, &call);
-    println!("{}", gated.receipt.line());
-    if gated.admitted() {
-        Ok(())
+    let gate = Verifier::new(pubkey);
+    let verdict = gate.admit(encoded, &call);
+    let line = if flags.contains_key("json") {
+        verdict.receipt.json()
     } else {
-        Err(CliError::Denied)
-    }
+        verdict.receipt.line()
+    };
+    Ok((line, verdict.admitted()))
+}
+
+/// `explain` — print the grant's terms, block by block (the cold-reader audit).
+fn cmd_explain(args: &[String]) -> Result<(), CliError> {
+    let (positional, flags) = parse(args);
+    let encoded = positional
+        .first()
+        .ok_or_else(|| CliError::Usage("explain requires a <token>".into()))?;
+    // explain reads structure only — no key needed; but recover the subject for
+    // the header if the token carries one.
+    let token = dregg_auth::policy::GrantToken::decode(encoded)
+        .map_err(|e| CliError::Other(format!("cannot parse token: {e}")))?;
+    let _ = &flags; // explain ignores --pubkey; structural read only.
+    println!("{}", token.explain());
+    Ok(())
 }
 
 // =============================================================================
@@ -235,7 +266,7 @@ fn key_path() -> PathBuf {
     PathBuf::from(home).join(".dregg-auth").join("root.key")
 }
 
-fn load_root() -> Result<dregg_auth::Root, CliError> {
+fn load_policy() -> Result<Policy, CliError> {
     let path = key_path();
     let hex = std::fs::read_to_string(&path).map_err(|_| {
         CliError::Other(format!(
@@ -243,7 +274,15 @@ fn load_root() -> Result<dregg_auth::Root, CliError> {
             path.display()
         ))
     })?;
-    Ok(dregg_auth::Root::from_private_hex(&hex)?)
+    Policy::from_secret_hex(&hex).map_err(CliError::Policy)
+}
+
+/// The verifier public key: `--pubkey HEX` if given, else the local root's.
+fn pubkey_or_local(flags: &HashMap<String, String>) -> Result<String, CliError> {
+    match flags.get("pubkey") {
+        Some(pk) => Ok(pk.clone()),
+        None => Ok(load_policy()?.public_key_hex()),
+    }
 }
 
 #[cfg(unix)]
@@ -295,38 +334,105 @@ fn flag_list(flags: &HashMap<String, String>, key: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// Parse an `--until` value: an absolute unix timestamp, or a relative offset
-/// `+<n><unit>` where unit is s/m/h/d (e.g. `+7d`, `+24h`, `+90m`).
-fn parse_until(s: &str) -> Result<i64, CliError> {
+fn now_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+const DAY: u64 = 86_400;
+
+/// Parse a `--until` / `--at` value into an absolute clock (unix seconds):
+///
+/// * an absolute unix timestamp (`1900000000`);
+/// * a relative offset `+<n><unit>` where unit ∈ s/m/h/d/w (`+7d`, `+90m`);
+/// * a friendly **named day**, resolved against the wall clock at issue:
+///   `today`/`eod` (end of today), `tomorrow`, `eow` (end of this week, Sun),
+///   or a weekday name (`mon`…`sun` / `monday`…`sunday`, the *next* such day,
+///   end-of-day). The product's headline `--until friday` lands here.
+fn parse_when(s: &str) -> Result<u64, CliError> {
     let s = s.trim();
+    // Relative offset.
     if let Some(rel) = s.strip_prefix('+') {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0);
         let (num, unit) =
             rel.split_at(rel.find(|c: char| !c.is_ascii_digit()).unwrap_or(rel.len()));
-        let n: i64 = num
+        let n: u64 = num
             .parse()
             .map_err(|_| CliError::Usage(format!("bad duration `{s}` (want e.g. +7d)")))?;
         let secs = match unit {
             "s" | "" => n,
             "m" => n * 60,
             "h" => n * 3600,
-            "d" => n * 86400,
-            "w" => n * 604800,
+            "d" => n * DAY,
+            "w" => n * 7 * DAY,
             other => {
                 return Err(CliError::Usage(format!(
                     "unknown duration unit `{other}` (use s/m/h/d/w)"
                 )));
             }
         };
-        return Ok(now + secs);
+        return Ok(now_secs() + secs);
     }
-    s.parse::<i64>().map_err(|_| {
+    // Named day.
+    if let Some(at) = parse_named_day(s) {
+        return Ok(at);
+    }
+    // Absolute timestamp.
+    s.parse::<u64>().map_err(|_| {
         CliError::Usage(format!(
-            "`{s}` is not a unix timestamp or +<n><unit> offset"
+            "`{s}` is not a unix timestamp, a +<n><unit> offset, or a day name (friday, tomorrow, eod, eow)"
         ))
+    })
+}
+
+/// End-of-day (23:59:59 UTC) of the day `days_ahead` from today, as unix secs.
+fn end_of_day_in(days_ahead: u64) -> u64 {
+    let now = now_secs();
+    let start_of_today = now - (now % DAY);
+    start_of_today + (days_ahead + 1) * DAY - 1
+}
+
+/// Resolve a friendly day name to an end-of-day unix timestamp, or `None` if it
+/// is not a recognized day name. Weekday names resolve to the *next* such day
+/// (today counts if it matches), end of that day.
+fn parse_named_day(s: &str) -> Option<u64> {
+    let lower = s.to_ascii_lowercase();
+    match lower.as_str() {
+        "today" | "eod" => return Some(end_of_day_in(0)),
+        "tomorrow" => return Some(end_of_day_in(1)),
+        "eow" => {
+            // End of week = upcoming Sunday (inclusive of today if Sunday).
+            let dow = day_of_week(now_secs()); // 0=Thu epoch-based; map below
+            let days_to_sun = (6 + 7 - dow) % 7; // Sunday index 6 in our Mon..Sun
+            return Some(end_of_day_in(days_to_sun as u64));
+        }
+        _ => {}
+    }
+    let target = weekday_index(&lower)?;
+    let dow = day_of_week(now_secs());
+    let days_ahead = (target + 7 - dow) % 7; // 0 if today matches
+    Some(end_of_day_in(days_ahead as u64))
+}
+
+/// Day-of-week with Monday=0 … Sunday=6. (Unix epoch 1970-01-01 was a
+/// Thursday, index 3.)
+fn day_of_week(unix_secs: u64) -> u32 {
+    let days = unix_secs / DAY;
+    ((days + 3) % 7) as u32
+}
+
+/// Map a weekday name (full or 3-letter) to Monday=0 … Sunday=6.
+fn weekday_index(name: &str) -> Option<u32> {
+    Some(match name {
+        "mon" | "monday" => 0,
+        "tue" | "tues" | "tuesday" => 1,
+        "wed" | "weds" | "wednesday" => 2,
+        "thu" | "thur" | "thurs" | "thursday" => 3,
+        "fri" | "friday" => 4,
+        "sat" | "saturday" => 5,
+        "sun" | "sunday" => 6,
+        _ => return None,
     })
 }
 
@@ -338,14 +444,7 @@ enum CliError {
     Usage(String),
     Io(String),
     Other(String),
-    Auth(AuthError),
-    Denied,
-}
-
-impl From<AuthError> for CliError {
-    fn from(e: AuthError) -> Self {
-        CliError::Auth(e)
-    }
+    Policy(dregg_auth::policy::PolicyError),
 }
 
 impl std::fmt::Display for CliError {
@@ -354,28 +453,30 @@ impl std::fmt::Display for CliError {
             CliError::Usage(s) => write!(f, "{s}\n\n(run `dregg-auth help`)"),
             CliError::Io(s) => write!(f, "io error: {s}"),
             CliError::Other(s) => write!(f, "{s}"),
-            CliError::Auth(e) => write!(f, "{e}"),
-            CliError::Denied => write!(f, "denied"),
+            CliError::Policy(e) => write!(f, "{e}"),
         }
     }
 }
 
 fn usage() {
     eprintln!(
-        r#"dregg-auth — scoped, offline-verifiable agent permissions
+        r#"dregg-auth — scoped, offline-verifiable agent permissions (proven core)
 
   init                                 generate + store a root key (~/.dregg-auth/root.key)
   pubkey                               print the root public key (publish this)
-  grant <subject> --tools a,b \
-        [--until +7d] [--rate 30/h]    emit a scoped token (printed to stdout)
+  grant <agent> --tools a,b \
+        [--until friday]               emit a scoped token (printed to stdout)
   verify <token> --tool <name> \
-        [--args k=v,...] [--pubkey HEX]  exit 0=allow / 1=deny, reason on stderr
+        [--at WHEN] [--pubkey HEX]     exit 0=allow / 1=deny, reason on stderr
   attenuate <token> --tools a \
         [--until +1d] [--pubkey HEX]   emit a narrowed token (never amplifies)
   gate <token> --tool <name> \
-        [--args k=v,...]               MCP gateway profile: decide + print a receipt
+        [--args k=v,...] [--json]      middleware profile: decide + print a receipt
+  explain <token>                      print the grant's terms, block by block
 
-The guarantee: prove your agent cannot exceed the grant. Verification is OFFLINE
-— it needs only a public key. No node, no wallet, no blockchain."#
+WHEN = a unix timestamp, a +<n><unit> offset (+7d/+24h/+90m/+2w), or a day name
+(friday, tomorrow, eod, eow). The token a `grant` issues is a machine-checked
+credential; verification is OFFLINE — it needs only a public key. No node, no
+wallet, no blockchain."#
     );
 }
