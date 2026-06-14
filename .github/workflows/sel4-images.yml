@@ -1,0 +1,280 @@
+name: seL4 bootable images (Robigalia v0)
+
+# Packs the REAL bootable seL4 Microkit images for the dregg Robigalia v0 demo:
+# the M0/M1/M2/M-STARK protection-domain images (aarch64) + M5 (riscv64). Each
+# `.img` is a microkit-linked, QEMU-bootable seL4 image — the "you can actually
+# run this" proof. See sel4/README.md (the boot ladder, docs/SEL4-EMBEDDING.md
+# §5) for the toolchain + build steps this mirrors.
+#
+# WHY macOS arm64: the documented happy path (sel4/setup.sh + sel4/README.md) is
+# NATIVE macOS Apple Silicon — setup.sh fetches the seL4 Foundation's native
+# `microkit-sdk-2.2.0-macos-aarch64.tar.gz` and brew-installs qemu/lld/dtc.
+# GitHub's `macos-14` runner is Apple Silicon (arm64) with Homebrew + rustup
+# preinstalled, so `./setup.sh && make build-*` reproduces from a clean checkout
+# exactly as on a dev box. No Docker, no Linux SDK divergence.
+#
+# GREEN OR BUST: every build/link step fails the job loudly. There is no
+# last-good-image fallback — a broken PD or a microkit link failure fails CI.
+
+on:
+  # NOTE: no `paths:` filter on push — a `paths` filter applies to TAG pushes
+  # too, which would path-gate releases (a sel4-v* tag whose commit didn't touch
+  # sel4/** would be skipped). Releases must always fire, so push is unfiltered;
+  # the PR `paths` filter below keeps PR noise down (no release path there).
+  push:
+    branches: [main]
+    tags:
+      - 'sel4-v*'
+  pull_request:
+    paths:
+      - 'sel4/**'
+      - '.github/workflows/sel4-images.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write   # attach .img assets to a release on a sel4-v* tag
+
+concurrency:
+  group: sel4-images-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Mirror sel4/setup.sh + sel4/Makefile so the workflow and a dev box agree.
+  MICROKIT_VERSION: "2.2.0"
+  RUST_NIGHTLY: "nightly-2026-04-04"
+  CONFIG: "debug"
+  SDK_ROOT: "${{ github.workspace }}/sel4-sdk"
+
+jobs:
+  build-images:
+    name: Build + boot-smoke seL4 images
+    # macos-14 == Apple Silicon (arm64); matches the macos-aarch64 Microkit SDK.
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      # rustup ships on the macOS runner; setup.sh installs the pinned nightly +
+      # rust-src for -Z build-std. Install it explicitly first so the pinned
+      # dregg-pd/rust-toolchain.toml resolves without a mid-build download.
+      - name: Install pinned Rust nightly (+ rust-src)
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_NIGHTLY" --profile minimal --component rust-src
+          rustup run "$RUST_NIGHTLY" rustc --version
+
+      - name: Cache the Microkit SDK + vendored rust-sel4
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.SDK_ROOT }}
+          # Keyed on the SDK + rust-sel4 pins in setup.sh; bump by editing those.
+          key: sel4-sdk-${{ env.MICROKIT_VERSION }}-rustsel4-efef73cc-macos-arm64
+
+      - name: Cache the PD cargo build (cross target dirs)
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            sel4/dregg-pd/target
+            sel4/dregg-pd/target-riscv
+          key: sel4-pd-cargo-${{ runner.os }}-${{ hashFiles('sel4/dregg-pd/Cargo.lock') }}
+          restore-keys: |
+            sel4-pd-cargo-${{ runner.os }}-
+
+      # setup.sh: brew deps (qemu aarch64+riscv64, lld, dtc, cmake, ninja) +
+      # fetch + unpack the native macos-aarch64 Microkit SDK to $SDK_ROOT +
+      # vendor rust-sel4 at the pinned rev. Idempotent; honors $SDK_ROOT.
+      - name: setup.sh — Microkit SDK + brew deps + rust-sel4 vendor
+        working-directory: sel4
+        run: ./setup.sh
+
+      - name: Resolve MICROKIT_SDK path
+        run: |
+          set -euo pipefail
+          SDK_DIR="$SDK_ROOT/microkit-sdk-$MICROKIT_VERSION"
+          test -x "$SDK_DIR/bin/microkit" || { echo "microkit tool missing at $SDK_DIR"; exit 1; }
+          echo "MICROKIT_SDK=$SDK_DIR" >> "$GITHUB_ENV"
+          echo "MICROKIT=$SDK_DIR/bin/microkit" >> "$GITHUB_ENV"
+
+      # ── Cross-build the PD ELFs ─────────────────────────────────────────────
+      # Build-only (no boot): the Makefile's `build-aarch64` / `build-riscv*`
+      # targets compile the ELFs; the image LINK + (optional) boot we do
+      # explicitly below so QEMU never blocks the runner.
+      - name: Build aarch64 PD ELFs (M0/M1/M2/M-STARK + net driver)
+        working-directory: sel4
+        run: make build-aarch64
+
+      - name: Build riscv64 M0 ELF (M5)
+        working-directory: sel4
+        run: make build-riscv
+
+      # M5-full: the verifier-stark + rbg-dir hearts for riscv64 (own target-riscv
+      # dir). Non-fatal-skip is NOT used; this is a first-class artifact, but it is
+      # only built on tags / dispatch to keep PR runs fast. (Still GREEN OR BUST
+      # when it runs.)
+      - name: Build riscv64 hearts (M-STARK + rbg-dir)
+        if: startsWith(github.ref, 'refs/tags/sel4-v') || github.event_name == 'workflow_dispatch'
+        working-directory: sel4
+        run: make build-riscv-full
+
+      # ── Link the bootable Microkit images ───────────────────────────────────
+      # Replicates sel4/Makefile's LINK_AND_RUN_AARCH64 link step (the `microkit`
+      # invocation) for each PD, WITHOUT the trailing blocking QEMU. Output: one
+      # `.img` + `.report.txt` per rung under sel4/build/, exactly the artifacts a
+      # `make run-*` would boot.
+      - name: Link aarch64 images (M0/M1/M2/M-STARK)
+        working-directory: sel4
+        run: |
+          set -euo pipefail
+          mkdir -p build
+          BOARD=qemu_virt_aarch64
+          REL="dregg-pd/target/aarch64-sel4-microkit/release"
+
+          # $1 = elf basename, $2 = pd xml name, $3 = image basename
+          link_pd() {
+            local elf="$1" pdname="$2" img="$3"
+            cp "$REL/${elf}.elf" "build/${elf}.elf"
+            printf '<?xml version="1.0" encoding="UTF-8"?>\n<system>\n  <protection_domain name="%s" priority="100" stack_size="0x10000">\n    <program_image path="%s.elf" />\n  </protection_domain>\n</system>\n' \
+              "$pdname" "$elf" > "build/${img}.system"
+            "$MICROKIT" "build/${img}.system" \
+              --search-path build --board "$BOARD" --config "$CONFIG" \
+              -o "build/${img}.img" -r "build/${img}.report.txt"
+            test -s "build/${img}.img" || { echo "empty image build/${img}.img"; exit 1; }
+            echo "linked build/${img}.img ($(wc -c < "build/${img}.img") bytes)"
+          }
+
+          link_pd dregg-m0-hello            dregg_m0             m0-aarch64
+          link_pd dregg-verifier-pd         dregg_verifier       m1-aarch64
+          link_pd dregg-rbg-dir             dregg_rbg_dir        m2-aarch64
+          link_pd dregg-verifier-stark-pd   dregg_verifier_stark mstark-aarch64
+
+      - name: Link riscv64 image (M5 — M0)
+        working-directory: sel4
+        run: |
+          set -euo pipefail
+          mkdir -p build
+          REL="dregg-pd/target/riscv64imac-sel4-microkit/release"
+          cp "$REL/dregg-m0-hello.elf" build/dregg-m0-hello-riscv.elf
+          printf '<?xml version="1.0" encoding="UTF-8"?>\n<system>\n  <protection_domain name="dregg_m0" priority="100" stack_size="0x10000">\n    <program_image path="dregg-m0-hello-riscv.elf" />\n  </protection_domain>\n</system>\n' \
+            > build/m0-riscv.system
+          "$MICROKIT" build/m0-riscv.system \
+            --search-path build --board qemu_virt_riscv64 --config "$CONFIG" \
+            -o build/m0-riscv.img -r build/m0-riscv.report.txt
+          test -s build/m0-riscv.img || { echo "empty riscv image"; exit 1; }
+          echo "linked build/m0-riscv.img ($(wc -c < build/m0-riscv.img) bytes)"
+
+      # ── Boot-smoke each image headless in QEMU (timeout-bounded) ─────────────
+      # The boot is the proof. We boot each image under the SAME QEMU machine the
+      # Makefile uses, with serial to a file and a hard timeout (QEMU never exits
+      # on its own — there is no init shutdown), then assert the rung's banner
+      # appears in the serial log. A missing banner FAILS the job (the image did
+      # not boot). brew installs `coreutils` for `gtimeout`; we fall back to a
+      # background-kill if absent.
+      - name: Install coreutils (gtimeout) for bounded QEMU boots
+        run: brew list coreutils >/dev/null 2>&1 || brew install coreutils
+
+      - name: Boot-smoke aarch64 images (assert each rung's banner)
+        working-directory: sel4
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/sel4-boot
+
+          # Boot one image for N seconds, capture serial, assert a regex appears.
+          # QEMU_AARCH64 mirrors the Makefile: virt,virtualization=on cortex-a53.
+          boot_assert() {
+            local img="$1" expect="$2" log="/tmp/sel4-boot/$(basename "$img" .img).log"
+            echo "::group::boot $(basename "$img") — expect /$expect/"
+            gtimeout 60s qemu-system-aarch64 \
+              -machine virt,virtualization=on -cpu cortex-a53 -m 2G -nographic \
+              -device loader,file="$img",addr=0x70000000,cpu-num=0 \
+              -serial "file:$log" >/dev/null 2>&1 || true
+            echo "--- serial ($log) ---"
+            cat "$log" || true
+            echo "::endgroup::"
+            if ! grep -Eq "$expect" "$log"; then
+              echo "BOOT-SMOKE FAILED: /$expect/ not found in $(basename "$img")'s serial"
+              exit 1
+            fi
+            echo "BOOT-SMOKE OK: $(basename "$img")"
+          }
+
+          # Banners are the actual booted-PD serial lines (verbatim from the PD
+          # sources: m0-hello/verifier/rbg-dir/verifier-stark src/main.rs):
+          #   M0    — "dregg robigalia v0" (the banner box)
+          #   M1    — "[m1] dregg verifier PD booted"
+          #   M2    — "[m2] rbg DirectoryCell PD booted"
+          #   MSTARK— "[stark] ... booted" then "verify(good proof) -> ACCEPT"
+          boot_assert build/m0-aarch64.img     'dregg robigalia v0'
+          boot_assert build/m1-aarch64.img     '\[m1\] dregg verifier PD booted'
+          boot_assert build/m2-aarch64.img     '\[m2\] rbg DirectoryCell PD booted'
+          boot_assert build/mstark-aarch64.img '\[stark\].*booted|verify\(good proof\) -> ACCEPT'
+
+      - name: Boot-smoke riscv64 image (M5)
+        working-directory: sel4
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/sel4-boot
+          log=/tmp/sel4-boot/m0-riscv.log
+          echo "::group::boot m0-riscv.img — expect /dregg robigalia v0/"
+          gtimeout 60s qemu-system-riscv64 \
+            -machine virt -m 2G -nographic \
+            -kernel build/m0-riscv.img \
+            -serial "file:$log" >/dev/null 2>&1 || true
+          echo "--- serial ($log) ---"
+          cat "$log" || true
+          echo "::endgroup::"
+          if ! grep -Eq 'dregg robigalia v0' "$log"; then
+            echo "BOOT-SMOKE FAILED: M5 riscv64 did not print the banner"
+            exit 1
+          fi
+          echo "BOOT-SMOKE OK: m0-riscv.img"
+
+      # ── Stage + upload artifacts ────────────────────────────────────────────
+      - name: Stage image bundle
+        working-directory: sel4
+        run: |
+          set -euo pipefail
+          OUT=images
+          mkdir -p "$OUT"
+          cp build/*.img "$OUT"/
+          cp build/*.report.txt "$OUT"/ 2>/dev/null || true
+          cp /tmp/sel4-boot/*.log "$OUT"/ 2>/dev/null || true
+          # A manifest pinning the toolchain so a downloaded image is reproducible.
+          cat > "$OUT/MANIFEST.txt" <<EOF
+          dregg Robigalia v0 — seL4 Microkit bootable images
+          commit:         ${{ github.sha }}
+          microkit SDK:   $MICROKIT_VERSION (native macos-aarch64)
+          rust nightly:   $RUST_NIGHTLY
+          rust-sel4 rev:  efef73cc0bbebc8dd477dde5073d10b1fcfbc608
+          config:         $CONFIG
+          boards:         qemu_virt_aarch64, qemu_virt_riscv64
+
+          Boot a given image (see sel4/README.md):
+            aarch64:  qemu-system-aarch64 -machine virt,virtualization=on -cpu cortex-a53 \\
+                        -m 2G -nographic -serial mon:stdio \\
+                        -device loader,file=<img>,addr=0x70000000,cpu-num=0
+            riscv64:  qemu-system-riscv64 -machine virt -m 2G -nographic -serial mon:stdio \\
+                        -kernel m0-riscv.img
+            (ctrl-a x to exit a QEMU run.)
+          EOF
+          ls -la "$OUT"
+
+      - name: Upload seL4 image artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: sel4-images-${{ github.sha }}
+          path: sel4/images/
+          if-no-files-found: error
+          retention-days: 30
+
+      # ── Release attach (only on a sel4-v* tag) ──────────────────────────────
+      - name: Attach images to the release
+        if: startsWith(github.ref, 'refs/tags/sel4-v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            sel4/images/*.img
+            sel4/images/MANIFEST.txt
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
