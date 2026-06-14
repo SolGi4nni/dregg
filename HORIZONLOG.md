@@ -410,6 +410,23 @@ redeploy point-of-no-return.)*
   (the checkpoint ⊕ overlay is exact). → node/identity_export (a feature-scope decision, not a bug).
 - **cli hermetic preflight** (`9427a18e5`): `config_path()` now honors `DREGG_HOME`; restore the hermetic
   `cli_config_init` preflight check that this unblocks. → preflight/cli.
+- **N5 killer-demo deferred step-5** (starbridge-v2, `1535f46a7`): the four-surface headline demo proves
+  frames 1-4 (mint / agent turn / notify handoff / dual refusal) as REAL receipted turns + exits 0 on the
+  headline contract; the demo's **step 5 = the pg-dregg Tier-B SQL mirror read** is NOT wired (it needs a
+  live pg mirror outside the starbridge-v2 crate — the N2/pg lane). Closure = stand the pg mirror, add the
+  SQL read-back frame. → starbridge-v2 + pg-dregg (the outbox/mirror lane), post-flip. NOT blocking.
+- **N13 over-wire byte-verify** (web-forward, `6fb9e8087`): the web-surface killer-demo page is now verified
+  e2e (20-check Playwright over the 5-step state machine via the real wasm bindings — the over-share is the
+  genuine executor `DelegationDenied`, not a banner) + discoverable. The remaining **over-wire byte-verify**
+  (a fetched whole-history proof verified in-tab) is the SAME `WholeChainProof` serde seam already named
+  above — closes when the fork-side recursion-proof serialization lands. → SHARED with the recursion-verify
+  seam. NOT a separate item.
+- **assurance-catalog drift** (the assurance lane, UNCOMMITTED at HEAD): the assurance lane's in-tree edits
+  to `metatheory/Dregg2/AssuranceCase.lean` (+ `Exec/ForestMemoryProgram.lean`, `Exec/UniversalBridge.lean`,
+  `Cargo.lock`) change the assurance source-of-truth, so the generated catalog
+  `site/src/_includes/studio/assurance-catalog.generated.json` is STALE until regenerated. Closure = after the
+  assurance lane commits, re-run the catalog generator (the studio build step) so the site reflects the new
+  AssuranceCase. → site, AFTER the assurance lane lands. (One-step, mechanical; tracked so it isn't lost.)
 
 ## Decisions pending (ember)
 

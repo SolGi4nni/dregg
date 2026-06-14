@@ -1,6 +1,6 @@
 # REORIENT — read this first after any context loss
 
-*(maintained for session continuity; update at every major landing. Last: 2026-06-12 ~14:20)*
+*(maintained for session continuity; update at every major landing. Last: 2026-06-14 — flip in progress + overnight wide-safe wave)*
 
 ## What this project is, in one breath
 
@@ -57,7 +57,54 @@ not durable across compaction; the log is the burn-down. Sweep it at every Conve
 - **Memory**: `~/.claude/projects/-Users-ember-dev-breadstuffs/memory/` —
   `project-refinement-epoch.md` is the live resume file; MEMORY.md is the index.
 
-## ⚑⚑⚑ CURRENT STATE (2026-06-13 LATE — head `d4adcc765`, Opus 1M; the REFINEMENT BRAID — 5 commits banked, cutover at C4, notify FINISHED)
+## ⚑⚑⚑ CURRENT STATE (2026-06-14 — head `6fb9e8087`, Opus 1M; THE FLIP IS IN PROGRESS + ~16 overnight wide-safe commits)
+
+**THE ROTATION (FLOW-B) CAMPAIGN IS COMPLETE + FLIP-SAFE.** Every cohort effect rotates, source-coherent,
+axiom-clean. The model has STOPPED finding flip-blocking gates — the burn-down before C5 is CLOSED. The
+night closed the last sub-gates: NOTE-SPEND (`cc1e1399c` — rotated nullifier at PI[38] + a model-found
+single-spend double-spend guard), CAPABILITY (`f967f39b0` — real-Cell authority digest r23, the over-grant
+tooth survives rotation), SETFIELD+BRIDGEMINT (`e9d6e357e` — 3 model-found descriptor mismodels enforced-
+fixed), and SOURCE-COHERENCE (`05fe8a500` — the per-effect SetField/Mint SOURCE descriptors reconciled to
+runtime, rotated tick-faces proved `:= rfl` EQUAL to source, JSON byte-identical so the live wire is
+UNTOUCHED). `setFieldDynV3` is proven STRUCTURALLY UNREACHABLE (coherence-only, not a flip-blocker).
+
+**THE FLIP IS IN PROGRESS.** A flip-executor agent is running **C5/C7** — the ONE coordinated VK epoch:
+the v3Registry→default regen + re-pin + FFI reseed (C5), the #103 sovereign-path graduation (ember-DECIDED
+shape (i): graduate `cipherclerk.execute_sovereign_turn_with_proof` + `proof_verify.rs` off the bespoke
+`EffectVmAir` onto the rotated `Ir2BatchProof`, retiring the legacy cap arm), the notify Step-2 VK-batch
+(`docs/NOTIFY-CASCADE.md` felt-encoders folded into the SAME bump), then **C7 = DELETE v1** (`effect_vm_
+p3_full_air.rs`, `effect_vm/air.rs`, the 186-col `generate_effect_vm_trace`, `ACTIVE_BASE_COUNT`,
+`CutoverFallback`, `lean_descriptor_air.rs` v1) + grep-zero per ROTATION-CUTOVER §EXEC. **The persvati
+workspace gauntlet + the held push (~30 commits) + the devnet redeploy are HELD for ember at the redeploy
+point-of-no-return** (the redeploy is ember's act — fresh genesis).
+
+**S5 CLOSED (`ed35b23b2`):** the running node now COMMITS a turn through the ordering rule at n≥2 — finality
+fires cross-node (`three_node_ordering_rule.rs` green under `REQUIRE_FINALITY=1`; n=3 CONVERGED `latest_height
+1 1 1`). Four measured defects closed (Dandelion stem misroute · chain-not-round DAG · half-duplex gossip
+connections [the root cause] · finalized-turn double-apply). This is the distributed thesis, RUNNING. A
+faucet/finalized-execution production-hardening pass is the named follow-up (lane running; devnet-correct
+today, NOT blocking).
+
+**~16 OVERNIGHT WIDE-SAFE COMMITS** (while the flip is held, a 5-lane braid — each green by file set, each
+naming its honest scope-limit in HORIZONLOG): cli `DREGG_HOME` hermetic config + preflight (`9427a18e5`/
+`f9f93c43d`) · web-forward browser face + Worker-proving + browser-EXTENSION front door + N13 killer-demo
+page (`95fe7cc61`/`2dcede9b3`/`8a8ab52ba`/`6fb9e8087`) · ADOS cockpit swarm-budget/narration-vs-truth/
+coordination-graph + the four-surface N5 killer demo (`eeb5655f2`/`1535f46a7`) · the browser-extension &
+ADOS panels · persist `compact_below` bounded WAL (`9f031f7e8`) · two apps (supply-chain-provenance
+`a2998d519` single-custody-as-conservation; starbridge-swarm-orchestration `f8aec4aba`) · pg-dregg cookbook/
+caps-as-rows-explorer/submit-queue-drainer/dev-mint (`407537e63`/`eaef6a214`/`929060662`) · pg18 native
+features (`4bef409bb`) · the embedded-Servo + distributed-Servo + mixed-OS DESIGN corpus (`261bdf7ed`/
+`b7ff641bc`/`0fc7912f7`/`2f3f47ad4`/`15fc03fb6`).
+
+**MILESTONE STATUS:** silver / magnesium / gold **STRONG** (magnesium goes **LIVE at the flip** — the
+graduated path is the default). diamond **IN PROGRESS** — the named gap is the **l4v BINARY BRIDGE** (two
+obligations: translation-validation of `dregg-lean-ffi/src/marshal.rs` as a THEOREM `marshal_turn_hosted =
+encodeWWire ∘ lift`, the codec-in-TCB seam; + the Lean→C/`.a` link correspondence that the linked
+`libdregg_lean.a` IS the `@[export]`ed Lean. Stage 0 = invert `turn/src/lean_apply.rs:~1143` to make Lean
+authoritative, "no new mathematics"). devnet-golden **CLOSE** — the node commits at n>1; the redeploy is
+held for ember. The forward work is captured in **`docs/NEXT-WAVE.md`** (ready-to-fire, each with its lever).
+
+## ⚑⚑⚑ (SUPERSEDED ↑) CURRENT STATE (2026-06-13 LATE — head `d4adcc765`, Opus 1M; the REFINEMENT BRAID — 5 commits banked, cutover at C4, notify FINISHED)
 
 ember's mode: **BRAIDS not waves** ([[feedback-braids-not-waves]]) — finish a cluster, immediately launch/integrate the obvious next; the main loop is a continuous launcher+integrator (commits agent drafts by file set); **proofs are subagent work**. A full 20-doc orientation pass is done (notify · pg-dregg · desktop-OS · seL4 · assurance-critique · cutover · starbridge).
 
