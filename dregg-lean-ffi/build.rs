@@ -1130,6 +1130,20 @@ fn main() {
     // its `dregg_ffi_init_st` symbol propagates with the C bridges; purely additive (the
     // default `dregg_ffi_init` path is unchanged). `.cpp` ⇒ cc drives the C++ compiler.
     shim.file("src/lean_init_st.cpp");
+    // SHARED link mode (the cdylib path, `DREGG_LEAN_LINK=shared`): `libleanshared`
+    // exports the C-ABI `lean_initialize_runtime_module` but HIDES the individual
+    // `lean::initialize_*` C++ symbols `dregg_ffi_init_st` calls. Supplying them from
+    // a static `libleanrt.a` copy creates a fatal SPLIT-BRAIN runtime (two copies of
+    // the runtime's global state — the in-backend SIGSEGV). So under shared linkage
+    // the ST init MUST route through the single exported runtime: `DREGG_LEAN_SHARED`
+    // makes `lean_init_st.cpp` call `lean_initialize_runtime_module` (one runtime
+    // copy). NOTE: that exported init pulls libuv, so the shared-mode `dregg_ffi_init_st`
+    // is NOT libuv-thread-free — the libuv-free property holds only on the STATIC link
+    // (the host probe + the standalone node). See `docs/EMBEDDABLE-LEAN-RUNTIME.md` §5.
+    let shared = shared_link_mode();
+    if shared {
+        shim.define("DREGG_LEAN_SHARED", None);
+    }
     if handler_present {
         shim.define("DREGG_HANDLER_TURN", None);
     }
@@ -1179,7 +1193,7 @@ fn main() {
         "cargo:rustc-link-search=native={}",
         sysroot.join("lib").display()
     );
-    if shared_link_mode() {
+    if shared {
         // ── SHARED runtime link (`DREGG_LEAN_LINK=shared`, see `shared_link_mode`) ──
         // The runtime+stdlib come from the toolchain's shared libraries instead of the
         // static archives (whose leanrt/mimalloc members are illegal in a `-shared` ELF
