@@ -47,15 +47,16 @@ The bring-up runs as protection domains on the seL4 microkernel under emulation,
 on a native toolchain. A minimal domain prints its banner; a verifier domain
 takes a proof bundle in and emits a verdict, rejecting a tampered bundle; and a
 directory-cell domain --- versioned content-addressed storage with a membership
-list and a factory slot constraint --- runs the userspace heritage layer on the
-microkernel. The same domains retarget to a second instruction-set architecture.
+list and a factory slot constraint --- runs the Robigalia userspace heritage layer
+on the microkernel. The same domains retarget to a second instruction-set
+architecture.
 
 The load-bearing boot is the *on-device prover*. A verifier domain runs a real
-STARK --- the same BabyBear / FRI / Poseidon-style construction of @sec-proofs,
-carried from the host into a `no_std` environment byte-for-byte --- proving a
-small arithmetization, verifying it on the device, round-tripping its wire form,
-and showing the anti-tamper teeth: a tampered proof and a wrong public input both
-reject. The prover is deterministic (Fiat--Shamir, no entropy source), so the
+STARK --- the BabyBear / FRI construction of @sec-proofs with BLAKE3 Merkle
+commitments and a Fiat--Shamir transcript, carried from the host into a `no_std`
+environment byte-for-byte --- proving a small arithmetization, verifying it on the
+device, round-tripping its wire form, and showing the anti-tamper teeth: a tampered
+proof and a wrong public input both reject. The prover is deterministic (Fiat--Shamir, no entropy source), so the
 domain needs no randomness, no Lean, and no operating-system services. This is the
 firmament's verified heart organ standing on the microkernel: real proof
 generation and checking, isolated by seL4 capabilities.

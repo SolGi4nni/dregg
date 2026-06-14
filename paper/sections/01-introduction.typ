@@ -16,6 +16,16 @@ everything else is derived from, and we name its negation the thing the design
 rules out: a light client cannot be fooled by a server that ran the protocol
 wrong.
 
+Concretely, every finalized turn carries a per-turn proof, and that proof is built
+to be unfoolable along three axes at once: it is *non-malleable* (it binds every
+guarantee-relevant field of the transition, so it cannot be re-pointed at a
+different state or receipt), it *omits no precondition* (authority, availability,
+freshness, and non-amplification are in-circuit conjuncts, not side conditions a
+prover may skip), and it *refines the protocol* (the property it attests is the
+kernel's own semantics, not a lossy re-encoding). A history that verifies but never
+happened --- the *pale ghost* --- would need a proof with none of these holes, and
+the circuit is constructed so that no such proof exists (@sec-proof-arch).
+
 == The sentence
 
 The whole system is one sentence, given algebra:

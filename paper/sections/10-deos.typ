@@ -95,19 +95,22 @@ lossy thumbnail: it re-expands faithfully and under attenuation
 The cost of "live *or* replayed" cannot be negotiated away --- if the original
 contexts are gone, replay fidelity is bounded by how deterministically the witness
 graph captured the scene's nondeterminism --- so the membrane *types* every
-reacquisition: live, replayed-deterministic, or reconstructed-approximate. The
-type is not a label of good intent; it is a *proven confinement readout*. The
-crown theorem is that the replayed-deterministic case is *exactly* the confined
-fragment: for a non-live context, it classifies as replayed-deterministic if and
-only if every interaction it made was a witnessed, attested turn
-(#lean("Deos.replayedDeterministic_iff_confined")). A context whose
-nondeterminism all flowed through attested turns can be replayed deterministically
-by construction (#lean("Deos.replayedDeterministic_replays"), riding the
-receipt-chain tamper-evidence of @sec-proofs); one that reached outside the
-membrane is intrinsically approximate, because the thing that made it
-nondeterministic was never witnessed. The system cannot lie about which kind of
-true an opened image is handing you, because the answer is computed from what was
-attested.
+reacquisition with one of three values: ${"Live", "ReplayedDeterministic",
+"ReconstructedApproximate"}$. The type is not a label of good intent; it is a
+*proven confinement readout*, computed from what the witness graph actually
+attested. The crown theorem is that #emph[ReplayedDeterministic] is *exactly* the
+confined fragment: for a non-live context, it classifies as ReplayedDeterministic
+if and only if every interaction it made was a witnessed, attested turn
+(#lean("Deos.replayedDeterministic_iff_confined")). A context whose nondeterminism
+all flowed through attested turns can be replayed deterministically by construction
+(#lean("Deos.replayedDeterministic_replays"), riding the receipt-chain
+tamper-evidence of @sec-proofs); a context that reached for nondeterminism *outside*
+the membrane --- an unwitnessed clock, an ambient random draw, an un-attested
+external call --- is intrinsically #emph[ReconstructedApproximate], because the
+very thing that made it nondeterministic was never captured. So the liveness type
+is a readout of confinement, not a claim of honesty: the system cannot misreport
+which kind of true an opened image hands a viewer, because the classification is
+derived from the attested record rather than asserted over it.
 
 The Lean development is kernel-clean throughout: each of these is an existing
 kernel proof --- attenuation, the admission gate, the receipt chain, projection

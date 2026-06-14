@@ -48,10 +48,10 @@ adding exactly one capability of the verified substrate to the database.
       before-insert trigger re-validates the chain tooth --- turn $N$'s post-root is
       turn $N{+}1$'s pre-root, ordinals dense --- so a reordered, gapped, or
       substituted batch is refused by the database engine itself],
-    [embeddable executor], [a database function executes a turn in-backend through
-      the verified entry, producing the receipt and updating state in one
-      transaction --- the database *is* the kernel, with turn and application data
-      sharing one atomic commit],
+    [embeddable executor], [a database function runs a turn in-backend through the
+      verified entry, writing the receipt and the post-state in one transaction ---
+      the database *is* the kernel, with turn and application data sharing one
+      atomic commit; the verified step runs in the live backend],
   ),
   caption: [The pg-dregg tiers. Each is a point at which the verified substrate
     enters the database; the lower tiers are circuit-free and offline.],
@@ -71,28 +71,39 @@ checked.
 == The embeddable executor (Tier-D)
 
 The deepest tier embeds the verified executor itself: a database function takes a
-turn envelope and runs it in-backend through the compiled Lean entry of
-@sec-realization, producing the receipt and the post-state in the same database
-transaction as the application's own writes. The runtime it embeds is the
-single-threaded, fork-safe configuration of the Lean runtime --- a private
-allocator, lazy task management, a no-input-output initialization --- linked only
-when the tier is enabled, so the default build never sees it. This is where the
-kernel's theorems land directly in the data path: conservation, non-amplification
-of delegated capabilities (#lean("Spec.gen_conferral_is_attenuation")), nullifier
-uniqueness, and authenticated state-root evolution hold of the rows because the
-function that wrote them is the verified executor, and the post-state is verified
-by construction rather than re-checked. The one characterized hazard is the
-interaction between the database engine's error-unwinding and a Lean runtime
-mid-stack --- the same shape of runtime-boundary care as the seL4 port
-(@sec-sel4) --- and the de-risked alternative runs the executor in a co-located
-sidecar reached over a local socket, with the in-backend form gated behind a spike.
+turn, runs it in-backend through the compiled Lean entry of @sec-realization, and
+writes the receipt and the post-state in the same database transaction as the
+application's own writes. The runtime it embeds is the single-threaded, fork-safe
+configuration of the Lean runtime --- a private allocator, lazy task management, a
+no-input-output initialization --- linked only when the tier is enabled, so the
+default build never sees it. This tier *runs*: in a live backend the executor
+initializes after the engine forks its worker, executes #lean("execFullForestG"),
+and commits a conserving transfer whose post-balances the executor itself
+attests --- not a marshalled fold but the real verified step inside the data path.
+The runtime-boundary concern the seL4 port also faces (@sec-sel4) --- a Lean
+runtime mid-stack under the engine's error-unwinding --- is resolved here by the
+single-threaded, post-fork, libuv-free initialization: the executing turn spawns no
+worker thread, so nothing crosses the fork.
+
+This is where the kernel's theorems land directly in the data path: conservation,
+non-amplification of delegated capabilities
+(#lean("Spec.gen_conferral_is_attenuation")), nullifier uniqueness, and
+authenticated state-root evolution hold of the rows because the function that wrote
+them is the verified executor, and the post-state is verified by construction
+rather than re-checked. One seam remains and is named: the extension does not yet
+link the turn codec, so the in-backend producer reconstructs a conserving turn
+rather than decoding the submitter's signed envelope into a forest in the backend
+--- the executor's verdict and post-state are authoritative, but full in-backend
+*decoding* of an arbitrary submitted turn is the open edge (@sec-limitations).
 
 == Scope
 
-pg-dregg is a mirror and a light-client verifier backend for the database, not a
-full node: the authorization and mirror tiers are circuit-free and live, the
-verified-store chain tooth is live, the range proof-attestation and the in-backend
-executor are the named horizons, and federation across databases is structural ---
-a subscriber replicates the publisher's turns and re-runs the chain tooth locally,
+pg-dregg is a mirror, a verified-write gate, and an embedded light-client backend
+for the database, not a full node: the authorization and mirror tiers are
+circuit-free and live, the verified-store chain tooth is live, and the embeddable
+executor runs the verified step in-backend. The named horizons are the range
+proof-attestation (pending its proof serialization) and full in-backend decoding of
+an arbitrary submitted turn. Federation across databases is structural --- a
+subscriber replicates the publisher's turns and re-runs the chain tooth locally,
 refusing a tampered or reordered stream. @sec-limitations states the in-progress
-tiers as checkable facts.
+edges as checkable facts.

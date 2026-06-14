@@ -26,6 +26,27 @@ names --- the *pale ghost*, a history that verifies but never happened --- and
 the whole circuit architecture is derived from ruling it out, not from matching
 whatever the executor's host implementation happened to compute.
 
+Unfoolability decomposes into three properties the per-turn proof must have
+jointly, and each is a discharged obligation rather than a hope:
+
+- *non-malleable* --- the proof binds every guarantee-relevant field of the
+  transition, so it cannot be re-pointed at a different pre-state, post-state,
+  receipt log, or system root. The state-commitment binding below is exactly this
+  property made a fact of the arithmetized field
+  (#lean("RotationLayout.rotatedCommit_binds")).
+- *omits no precondition* --- authority, availability (freshness against the
+  nullifier set), freshness, and non-amplification are *in-circuit conjuncts*, not
+  side conditions the prover may quietly skip. A verifying proof exists only if
+  every one of them held; an amplifying grant or a replayed spend forces the
+  binding predicate false (#lean("EffectsAuthority.amplifying_grant_rejected"),
+  #lean("noteSpendStmt_replay_rejected")). A forgotten precondition is the
+  classic way a verified system is fooled, so the circuit makes forgetting one
+  unrepresentable.
+- *refines the protocol* --- the property the proof attests is the kernel's own
+  semantics, derived from the unfoolability requirement, never a lossy
+  re-encoding a host implementation happened to produce. The two readings of one
+  descriptor (below) are what make this a theorem rather than a discipline.
+
 Concretely, ARGUS is the two-readings discipline of @sec-proofs carried to every
 effect. Each kernel statement is a descriptor; the executor reading (`interp`)
 and the circuit reading (`compile`) are obtained from the *same* descriptor, and
@@ -105,23 +126,35 @@ run's post-commitment equal to the next run's pre-commitment. A homogeneous turn
 is one run, byte-identical to the single-leg case; the chain only generalizes it.
 
 The composition is verifier-side arithmetic over the existing Lean-emitted
-descriptors --- it authors no new constraint (the @sec-proofs law). The per-leg
-binding each cohort descriptor already proves
-(#lean("EffectVmEmitRotationV3.rotV3_binds_published")) pins each leg's pre/post;
-the verifier adds the adjacency check (a chain break is a typed rejection), pins
-each leg's effect span by re-deriving the cohort split, and sums the per-leg net
-deltas to the turn's declared total, so conservation rides the chain. The result
-is the @sec-proofs light-client guarantee made *robust to the proof system's own
-evolution*: the aggregate a light client checks
+descriptors --- it authors no new constraint (the @sec-proofs law). This is the
+load-bearing soundness point, so it is worth stating exactly why it is clean: each
+cohort-run is homogeneous and therefore proves through one of the rotated cohort
+descriptors already emitted from Lean, whose per-leg binding pins that leg's
+pre- and post-state (#lean("EffectVmEmitRotationV3.rotV3_binds_published")); the
+split is a pure fold over the descriptor resolver; and the only new verifier
+obligation is *equality of two already-proven public inputs* --- one leg's
+post-commitment against the next leg's pre-commitment --- a chain break being a
+typed rejection. The verifier also pins each leg's effect span by re-deriving the
+cohort split from the turn's effects (so a prover cannot substitute a
+different-but-chaining effect multiset) and sums the per-leg net deltas to the
+turn's declared total, so conservation rides the chain. Comparing independently
+proven public inputs introduces no new statement about what a transition *means*,
+which is why the composition needs Lean only for review --- confirming each
+per-cohort theorem binds first-row-pre and last-row-post, which a multi-row run
+already satisfies --- and not a new emitted circuit.
+
+The result is the @sec-proofs light-client guarantee made *robust to the proof
+system's own evolution*: the aggregate a light client checks
 (#lean("RecursiveAggregation.light_client_verifies_whole_history")) folds the
-rotated, chained legs, and no finalized turn falls back to an unverified path on
+rotated, chained legs, so no finalized turn need fall back to an unverified path on
 account of its shape.
 
 #emph[Scope.] The rotated cohort covers the live-path effects; two effect kinds
 whose circuits require constructions the current per-row arithmetization does not
 express (a capability-revocation circuit under active reshaping, and a custom
 recursive-binding effect) resolve fail-closed to the monolithic path rather than
-to a rotated descriptor, and total rotated coverage of heterogeneous turns on the
-live path is the in-progress edge --- the chaining mechanism and its per-leg
-binding are proven, the live cutover of every heterogeneous shape is staged.
-@sec-limitations states this as a checkable fact, not a roadmap.
+to a rotated descriptor. The chaining mechanism and its per-leg binding are proven,
+and the chained path is staged additively beside the monolithic legacy path --- the
+fail-closed floor that keeps every shape provable --- with the live cutover of
+every heterogeneous shape, and the consequent retirement of the legacy path, the
+in-progress edge. @sec-limitations states this as a checkable fact, not a roadmap.

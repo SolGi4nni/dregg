@@ -117,3 +117,23 @@ SDK (`sdk/`) is client-local --- turn-building, attenuation, and proof generatio
 run on the user's device, and witness data stays there. Search lives at this
 edge, where @sec-intro places it: solvers, intent matchers, and provers produce
 witnesses; the kernel only ever checks them.
+
+== One model, projected
+
+This userspace service is one realization of the model, not its boundary. The
+remainder of the paper develops the substrate the model deploys onto and the
+discipline that keeps it sound. First, the proof architecture (@sec-proof-arch):
+how the light-client guarantee of @sec-proofs stays honest while the
+arithmetization itself evolves --- the circuit witnesses correct evolution, its
+shape rotates under proof, and every finalized turn stays provable across shapes.
+Then the *firmament* (@sec-firmament): the capability of @sec-authority is one
+abstraction across a distance parameter, a local microkernel object and a
+distributed cell being the same attenuable reference, whose single-machine limit is
+the strong case rather than a degraded subset. The firmament has three concrete
+faces, each a projection of the one model rather than a new layer: a desktop, where
+a window is a capability and a rendered scene a per-viewer projection
+(@sec-deos); a capability-secure microkernel, where seL4's capability graph
+isolates the protection domains and dregg's mediates the cells inside them
+(@sec-sel4); and a database, where reads are SQL and writes are verified turns
+(@sec-pg). The assurance case (@sec-assurance) then states every guarantee these
+rest on, pinned to the kernel.

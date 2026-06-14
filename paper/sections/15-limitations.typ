@@ -61,12 +61,16 @@ heterogeneous shape is staged beside the legacy path. Two effect kinds whose
 circuits the current per-row arithmetization does not express resolve fail-closed
 to the monolithic path rather than to a rotated descriptor.
 
-*deos's compositor and pg-dregg's deepest tier are realization frontiers.* The
+*deos's compositor and pg-dregg's open edges are realization frontiers.* The
 deos surface, affordance, membrane, and rehydration theorems are kernel-clean and
 the rehydration and affordance stack ships; the certified compositor as a
 sole-framebuffer protection domain is the frontier piece (@sec-sel4). In pg-dregg
 (@sec-pg) the authorization and mirror tiers and the verified-store chain tooth
-are live and circuit-free; the range proof-attestation (pending proof
-serialization) and the in-backend executor (gated on a runtime-boundary spike)
-are the named horizons. Each is stated as a present-tense fact a reader can
-check, with the live floor and the frontier marked.
+are live and circuit-free, and the embeddable executor runs the verified step
+in-backend (it initializes post-fork and commits a conserving, executor-attested
+turn); the named edges are the range proof-attestation (pending proof
+serialization) and full in-backend *decoding* of an arbitrary submitted turn (the
+extension does not yet link the turn codec, so the in-backend producer
+reconstructs a conserving turn rather than decoding the submitter's envelope ---
+the executor's verdict remains authoritative). Each is stated as a present-tense
+fact a reader can check, with the live floor and the frontier marked.
