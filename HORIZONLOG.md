@@ -126,6 +126,60 @@ LIVE `bespoke_air_accepts` + the `EffectVmP3Proof` alias — so it is NOT a clea
 decision: expand C7 to perform this four-part live-path cutover (a flip-scale phase), or land it as
 the sequenced follow-on above.
 
+⚑ SHARPENED (2026-06-14, C7 fix-round-1 — independent re-trace at greater depth; the two stoppers REFINED,
+one of them DOWNGRADED OUT OF "crypto-primitive" territory):
+
+- **Blocker #1 (item 1 keystone) is NOT a crypto-primitive dependency after all — it is an OPTIMIZATION we
+  can simply drop.** Re-traced the F-DOS-1 contract end-to-end (`node/tests/f_dos_1_request_path_liveness.rs`
+  §"the soundness bar"): the load-bearing invariant is "NO STARK proving under the `state.write()` lock," NOT
+  "a sub-ms FRI-free revalidation." The sync `bespoke_air_accepts` is a DEFENSE-IN-DEPTH witness cross-check
+  layered ON TOP of the executor, which already validated+committed the turn FIRST (`api.rs:2739`
+  `execute_via_producer` → `match TurnResult::Committed`). So the keystone resolves with ZERO new crypto and
+  ZERO commit-ack perf change: (a) DROP the sync `revalidate_http_witness`/`bespoke_air_accepts` call on the
+  commit path (the executor is the authority; the witness check added nothing the executor didn't), and
+  (b) make the async prove pool (`prove_pool::run_job`, today `EffectVmAir`+`stark::try_prove`) prove the
+  ROTATED `Ir2BatchProof` instead — which is exactly the rotation's purpose, run async OFF the lock just like
+  today's v1 async prove. The earlier "needs a `pub` `p3-batch-stark::check_constraints` / LogUp reimpl"
+  framing is MOOT (verified: the emberian local fork `../plonky3-recursion` does NOT vendor `batch-stark` —
+  it is upstream `Plonky3@82cfad7`; and even an export would not recover the sub-ms budget since LogUp
+  permutation-trace assembly dominates — so the FRI-free-rotated-checker avenue was a dead end anyway, but
+  it is also UNNEEDED). Item 1 is therefore ordinary (if cross-file) engineering.
+- **Blocker #2 (item 2) is the ONE genuine ember-decision, and it is NARROW + precisely bounded.** The
+  rotated R=24 cohort covers EVERY live single-effect selector (`trace_rotated.rs:438` "every LIVE selector
+  resolves; NoOp + unknown fail closed" — verified by reading the full match). So `rotation_witness_for_self_
+  sovereign` (`turn_proving.rs:353-387`) returns `None` — and `prove_full_turn` runs the v1 leg
+  (`full_turn_proof.rs:1124-1131,1185-1202`) — for EXACTLY three live shapes, all reachable on the node's
+  finalized-turn proving path (`blocklace_sync.rs:2643/2702`): (i) NoOp/IncrementNonce-only turns,
+  (ii) **HETEROGENEOUS multi-cohort turns** (the `cohort_ok` all-same-descriptor gate fails), and
+  (iii) **non-synthetic-shaped cells** (the `cell_is_synthetic_shaped` gate fails: any non-zero field or
+  non-empty c-list). Rotated proving for (ii)+(iii) is NOT built (heterogeneous-batch rotated proving +
+  non-synthetic-cell rotated witnesses are new capability). THE DECISION ember owns: when a recursion-build
+  node finalizes a turn of shape (i)/(ii)/(iii), should it **commit UNPROVEN** (proof-pending→skipped — note
+  this is ALREADY a tolerated state: `prove_pool::run_job:201` "receipt stays committed-but-unattested" when
+  the async prover fails), or should heterogeneous/non-synthetic turns be **REFUSED**, or must rotated
+  proving be BUILT for (ii)+(iii) before the flip? This changes production proving-COVERAGE semantics
+  (today every such turn carries a v1 proof), so it is an ember scope-call, not a deputy default. Once
+  decided, item 2 collapses to: replace the v1 leg in `full_turn_proof.rs:1185-1202` with the decided
+  behavior (commit-unproven = drop the leg + Tentative; refuse = error; build-rotated = new prover), gate any
+  residual v1 to `#[cfg(not(feature="recursion"))]`.
+- **Item 3** (`EffectVmP3Proof` field on `DescriptorParticipant`) is the C4 drop-v1-leg: `EffectVmP3Proof`
+  and `Ir2BatchProof` are the SAME `BatchProof<DreggStarkConfig>` (verified: `effect_vm_p3_full_air.rs:77`
+  ≡ `descriptor_ir2.rs:144`), so the TYPE is a free rename — but a HONEST close drops the v1 `proof` field
+  (minted by the v1 prover, read by host admission, `joint_turn_aggregation.rs:130/139`) and makes `rotated`
+  mandatory; a bare type-rename that leaves the v1-prover-minted proof in place would LAUNDER grep-zero
+  (forbidden). Rides item 1's async-rotated cutover (then the participant's proof IS rotated).
+- **Item 4 (wasm)** is independent of #1/#2 and lands as ember's PRE-DECIDED `#[cfg(not(feature="recursion"))]`
+  floor + a `#[cfg(feature="recursion")]` rotated branch (the in-browser prover must synthesize before/after
+  `Cell` + rotation witnesses for the demo inspector). It does NOT block native-recursion grep-zero — but
+  native grep-zero is NOT reachable until #1+#2+#3 land, because the v1 SYMBOLS stay live in those legs.
+
+NET: the phase deliverable (grep-zero in recursion) is gated on ONE genuine ember-decision (blocker #2's
+non-cohort behavior). Everything else is verified-ordinary engineering. A PARTIAL cutover (any subset of
+1/2/3/4) leaves grep>0 in recursion AND ships RED (the v1 prover would be half-disconnected) — the mandate's
+#1 forbidden outcome — so the tree is held GREEN + UNTOUCHED at HEAD (baseline `pbuild hardswap` of
+circuit/sdk/turn/node = exit 0, "Finished `dev` profile") pending ember's call on blocker #2. Once decided,
+the full cutover is a single coherent lane (items 1→3→2→4→delete), each persvati-green.
+
 ## THE ROTATION FLIP — the irreversible tail (ember-COMMISSIONED, a4c7368ae; touches cell/+live registry+executor PI)
 
 *(The genuinely-new long pole — staged producers + rotated trace builder + cell≡circuit
