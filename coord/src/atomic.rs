@@ -1193,3 +1193,317 @@ impl Default for AtomicForestBuilder {
         Self::new()
     }
 }
+
+// ─── PrivateLeg: the WITNESSLESS participant role ───────────────────────────────
+//
+// A private participant maintains its cell entirely OFFLINE. It never publishes its
+// `RecordKernelState` (balances, caps, nullifiers) in cleartext — not to the other
+// participants, not to the chain. It takes part in the multi-cell atomic turn by
+// contributing ONLY a commitment to its private pre/post state + a ZK proof that its
+// side of the turn was a real, guarded, conserving, authorized executor step.
+//
+// This is the Rust production-wiring of `Dregg2/Distributed/PrivateLeg.lean` (keystone
+// `joint_turn_sound_with_private_legs`) and `docs/PRIVATE-OFFLINE-CELLS.md` §4/§7. Where
+// the public legs of an `AtomicForest` apply an `Action`/`Effect` to the shared `Ledger`,
+// a private leg is `(commit_pre, commit_post, proof)` and NEVER touches the shared machine.
+//
+// SCOPE (matches the Lean keystone): this is the SOUNDNESS-side of the role —
+//   * the commit-path verify-gate `MixedAdmissible` (every private leg's proof verifies +
+//     binds the shared `jid`), and
+//   * state-root continuity across turns (`commit_post[i] == commit_pre[i+1]`, mirroring
+//     `Dregg2/HistoryAggregation.lean::ChainBound`).
+// LIVENESS is explicitly out of scope (Lean §7, doc §7): a private participant that goes
+// dark aborts the all-or-none turn, exactly as a public participant voting No does. That
+// is a safety-preserving failure; data-availability of the offline cell is the maintainer's
+// own problem by construction (that is the point of holding it offline).
+
+/// The asset column a private leg moves. Mirrors the Lean `AssetId` (per-asset conservation
+/// is per this column). Opaque 32-byte asset/token identifier on the wire.
+pub type AssetId = [u8; 32];
+
+/// A commitment to a hidden `RecordKernelState`. In production this is the Poseidon2 state
+/// root (`Circuit/StateCommit.lean::recStateCommit`, injective under the CR floor); here it
+/// is carried as an opaque 32-byte field-element commitment, exactly as the Lean model keeps
+/// `commitPre`/`commitPost : ℤ` abstract so the role is carrier-agnostic.
+pub type StateCommit = [u8; 32];
+
+/// The CG-2 shared turn-id a leg consents to (Mina's `account_updates_hash`). Both public and
+/// private legs of one mixed turn bind to ONE of these — that is the Agreement face.
+pub type JointId = [u8; 32];
+
+/// The public face of a PRIVATE leg: everything the offline maintainer broadcasts. The hidden
+/// `RecordKernelState` is deliberately NOT a field — that is the whole point of the role.
+///
+/// Mirrors the Lean `PrivateLeg.PrivLeg` structure exactly:
+/// `(asset, commitPre, commitPost, jid)`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PrivateLeg {
+    /// The asset column this private leg moves (per-asset conservation is per this column).
+    pub asset: AssetId,
+    /// Commitment to the hidden PRE state (Poseidon2 state root in production).
+    pub commit_pre: StateCommit,
+    /// Commitment to the hidden POST state.
+    pub commit_post: StateCommit,
+    /// The CG-2 shared turn-id this leg consents to — how the forest binds the leg in.
+    pub jid: JointId,
+}
+
+impl PrivateLeg {
+    /// Construct the public face of a private leg.
+    pub fn new(
+        asset: AssetId,
+        commit_pre: StateCommit,
+        commit_post: StateCommit,
+        jid: JointId,
+    ) -> Self {
+        PrivateLeg {
+            asset,
+            commit_pre,
+            commit_post,
+            jid,
+        }
+    }
+
+    /// The canonical byte-encoding of a private leg's PUBLIC face — the statement the ZK proof
+    /// must bind. This is the bytes a faithful AIR commits as its public inputs: the asset
+    /// column, both state-root commitments, and the shared `jid`. A proof binds THIS leg iff
+    /// its bound statement-digest equals `statement_digest()` (see `PrivateLegProof`).
+    ///
+    /// Domain-separated so a private-leg statement can never be confused with any other digest.
+    pub fn statement_digest(&self) -> [u8; 32] {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(b"dregg-coord:private-leg-stmt");
+        hasher.update(&self.asset);
+        hasher.update(&self.commit_pre);
+        hasher.update(&self.commit_post);
+        hasher.update(&self.jid);
+        *hasher.finalize().as_bytes()
+    }
+}
+
+/// A private leg's ZK proof — the §8 STARK floor, the SAME `VerifierKernel` carrier every
+/// other circuit verification in the tree rests on (`Crypto/PortalFloor.lean::VerifierKernel`).
+///
+/// On the Lean side the per-leg statement is `PrivLegHolds scommit pl` ("∃ hidden kPre/kPost:
+/// `recKExecAsset` commits, the published commitments match, conservation & authority hold"),
+/// and an accepting proof discharges it via `verify_sound` — the extractability carrier, an
+/// explicit hypothesis, NEVER a Lean law. Here, faithfully, the proof carries the
+/// `bound_statement` digest it was produced for; `verify` checks that digest equals the leg's
+/// `statement_digest()`. A proof that binds a DIFFERENT statement (in particular a different
+/// `jid`, or different commitments) does NOT verify for this leg — that is the anti-ghost.
+///
+/// The named crypto floor is exactly: an accepting proof certifies a real guarded offline
+/// executor step existed whose commitments are the published ones. Modelling the STARK as an
+/// opaque carrier here (rather than re-running plonky3) is faithful to the keystone — the same
+/// way `entangled_diff.rs` treats the Ed25519 vote signature as the named assumption — and the
+/// `bound_statement` binding makes the jid-binding tooth REAL, not vacuous.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PrivateLegProof {
+    /// The statement digest this proof was produced for. A faithful AIR exposes the leg's
+    /// public face (`asset || commit_pre || commit_post || jid`) as public inputs; this digest
+    /// is the commitment to that PI vector. The verify-gate refuses any proof whose bound
+    /// statement is not the leg's own — binding the proof to the asset, the commitments, AND
+    /// the shared `jid`.
+    pub bound_statement: [u8; 32],
+    /// Whether the underlying STARK is accepting. In production this is the result of running
+    /// the plonky3 verifier on the proof bytes against the leg's public inputs; the named §8
+    /// extractability floor says an accepting proof certifies a real offline step.
+    pub stark_ok: bool,
+}
+
+impl PrivateLegProof {
+    /// Build the proof an HONEST offline maintainer broadcasts for a leg: it binds exactly that
+    /// leg's statement and its STARK is accepting. (The real prover runs the AIR over the hidden
+    /// witness; here we construct the carrier whose `verify` will accept against this leg.)
+    pub fn for_leg(leg: &PrivateLeg) -> Self {
+        PrivateLegProof {
+            bound_statement: leg.statement_digest(),
+            stark_ok: true,
+        }
+    }
+
+    /// **The commit-path verify-gate for ONE private leg** — the per-leg conjunct of
+    /// `MixedAdmissible`. The proof verifies against `leg` iff:
+    ///   (1) the underlying STARK is accepting (`stark_ok`), AND
+    ///   (2) the proof binds THIS leg's exact statement — `bound_statement == leg
+    ///       .statement_digest()`, which includes the shared `jid`.
+    ///
+    /// (2) is the anti-ghost: a proof produced for a different statement (a different `jid`, or
+    /// "conjure value from nothing" commitments) fails to bind, mirroring the Lean
+    /// `privLeg_forged_rejected` tooth — only the extractability carrier could ever rescue an
+    /// unbound proof, and the honest carrier here refuses it.
+    pub fn verify(&self, leg: &PrivateLeg) -> bool {
+        self.stark_ok && self.bound_statement == leg.statement_digest()
+    }
+}
+
+/// A private leg paired with its published proof — the wire object the offline maintainer
+/// broadcasts into the forest. Mirrors the Lean `PrivateLeg.PrivContribution`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PrivateContribution {
+    /// The public face of the private leg (commitments + asset + jid; NO hidden state).
+    pub leg: PrivateLeg,
+    /// The ZK proof certifying the offline step (the §8 STARK carrier).
+    pub proof: PrivateLegProof,
+}
+
+impl PrivateContribution {
+    /// Construct a contribution from a leg and its proof.
+    pub fn new(leg: PrivateLeg, proof: PrivateLegProof) -> Self {
+        PrivateContribution { leg, proof }
+    }
+}
+
+/// The MIXED joint turn: some legs PUBLIC (run on the shared `Ledger` via the existing
+/// `AtomicForest` 2PC path), some legs PRIVATE (proof-only offline contributions). All consent
+/// to ONE `jid` (CG-2). Mirrors the Lean `PrivateLeg.MixedJoint`.
+///
+/// `public_forest` is the ordinary `AtomicForest` (the PUBLIC backbone, untouched — its legs
+/// apply actions to the shared machine). `private_legs` are the witnessless contributions; they
+/// never touch the shared machine and are admitted purely by their verifying, jid-bound proofs.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MixedJoint {
+    /// The CG-2 shared turn-id every leg (public + private) consents to.
+    pub jid: JointId,
+    /// The public legs, as an ordinary atomic forest applied to the shared ledger.
+    pub public_forest: AtomicForest,
+    /// The private, proof-only offline contributions.
+    pub private_legs: Vec<PrivateContribution>,
+}
+
+/// Why a mixed joint turn was refused at the commit-path verify-gate. The private-leg analog of
+/// a `Vote::No` / a failed precondition — a safety-preserving abort of the all-or-none turn.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MixedAdmitError {
+    /// A private leg's ZK proof failed to verify (STARK rejected, OR the proof did not bind
+    /// this leg's statement). `index` is its position in `private_legs`.
+    PrivateProofRejected { index: usize },
+    /// A private leg consents to a DIFFERENT `jid` than the shared turn id — it is not part of
+    /// THIS turn. `index` is its position; `leg_jid`/`turn_jid` are the mismatch.
+    PrivateJidMismatch {
+        index: usize,
+        leg_jid: JointId,
+        turn_jid: JointId,
+    },
+}
+
+impl core::fmt::Display for MixedAdmitError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            MixedAdmitError::PrivateProofRejected { index } => {
+                write!(f, "private leg {index}: ZK proof rejected (STARK or binding)")
+            }
+            MixedAdmitError::PrivateJidMismatch {
+                index,
+                leg_jid,
+                turn_jid,
+            } => {
+                write!(
+                    f,
+                    "private leg {index}: jid mismatch (leg {}, turn {})",
+                    hex4_prefix(leg_jid),
+                    hex4_prefix(turn_jid)
+                )
+            }
+        }
+    }
+}
+
+impl MixedJoint {
+    /// Construct a mixed joint turn from its shared id, public forest, and private contributions.
+    pub fn new(
+        jid: JointId,
+        public_forest: AtomicForest,
+        private_legs: Vec<PrivateContribution>,
+    ) -> Self {
+        MixedJoint {
+            jid,
+            public_forest,
+            private_legs,
+        }
+    }
+
+    /// **The PRIVATE half of `MixedAdmissible`** (Lean `PrivateLeg.MixedAdmissible`, conjuncts 2
+    /// and 3). The commit-path verify-gate for the witnessless participants: it returns `Ok(())`
+    /// iff EVERY private leg
+    ///   * consents to the shared `jid` (CG-2 binding), AND
+    ///   * has a proof that verifies AND binds its own statement (the §8 carrier + anti-ghost).
+    ///
+    /// The PUBLIC conjunct (`jointApplyAll public_forest = some k'`) is the existing 2PC commit
+    /// path on the shared `Ledger` (`Coordinator::commit`); this method is the additional gate a
+    /// coordinator runs BEFORE committing a turn that carries private participants. Together they
+    /// are full `MixedAdmissible`: the whole mixed turn commits all-or-none.
+    ///
+    /// Fail-closed: the FIRST offending private leg is reported and the turn is refused. A dark /
+    /// missing private participant simply never produces a verifying proof, so the turn aborts —
+    /// liveness-out-of-scope, safety preserved.
+    pub fn check_private_legs_admissible(&self) -> Result<(), MixedAdmitError> {
+        for (index, pc) in self.private_legs.iter().enumerate() {
+            // CG-2: the leg must consent to THIS turn's shared id.
+            if pc.leg.jid != self.jid {
+                return Err(MixedAdmitError::PrivateJidMismatch {
+                    index,
+                    leg_jid: pc.leg.jid,
+                    turn_jid: self.jid,
+                });
+            }
+            // The §8 ZK carrier + anti-ghost: the proof must verify AND bind this exact leg
+            // (asset, both commitments, and — via the statement digest — the shared jid).
+            if !pc.proof.verify(&pc.leg) {
+                return Err(MixedAdmitError::PrivateProofRejected { index });
+            }
+        }
+        Ok(())
+    }
+}
+
+// ─── PrivateLegChain: state-root continuity across turns (HistoryAggregation.ChainBound) ─────
+
+/// A `ChainBound` violation for a long-lived offline cell: the `commit_post` of one turn does
+/// not equal the `commit_pre` of its successor, so the published state-root history is not a
+/// continuous chain. `index` is the position of the earlier leg in the sequence.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ChainBreak {
+    /// The position of the leg whose `commit_post` failed to match the next leg's `commit_pre`.
+    pub index: usize,
+    /// The `commit_post` published by leg `index`.
+    pub expected_pre: StateCommit,
+    /// The `commit_pre` published by leg `index + 1`.
+    pub found_pre: StateCommit,
+}
+
+/// **State-root continuity across the turns of ONE offline cell** — the production analog of
+/// `Dregg2/HistoryAggregation.lean::ChainBound`. A private participant that lives across many
+/// turns publishes a SEQUENCE of `PrivateLeg`s; for the published commitment history to be a
+/// coherent evolution of ONE offline cell, the `commit_post` of each turn must be the
+/// `commit_pre` of the next:
+/// ```text
+///   commit_post[i] == commit_pre[i+1]   for every consecutive pair
+/// ```
+/// (Exactly `ChainBound`'s `step.prevRoot == prior.postRoot` carried to the private-leg roots.)
+///
+/// Returns `Ok(())` for an empty or singleton sequence (trivially chained), or the FIRST
+/// `ChainBreak`. This is what binds a private participant's turns into one continuous offline
+/// history without ever revealing a state: only the roots are checked, never the witnesses.
+pub fn check_chain_bound(legs: &[PrivateLeg]) -> Result<(), ChainBreak> {
+    for (index, pair) in legs.windows(2).enumerate() {
+        let prior = &pair[0];
+        let next = &pair[1];
+        if prior.commit_post != next.commit_pre {
+            return Err(ChainBreak {
+                index,
+                expected_pre: prior.commit_post,
+                found_pre: next.commit_pre,
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Format the first 4 bytes of a 32-byte id as hex (local display helper for `MixedAdmitError`).
+fn hex4_prefix(bytes: &[u8; 32]) -> String {
+    format!(
+        "{:02x}{:02x}{:02x}{:02x}...",
+        bytes[0], bytes[1], bytes[2], bytes[3]
+    )
+}

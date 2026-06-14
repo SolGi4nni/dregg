@@ -75,6 +75,13 @@ pub mod shared_budget;
 #[cfg(test)]
 mod tests;
 
+// The witnessless-participant turn role: the commit-path verify-gate (`MixedJoint`'s
+// `check_private_legs_admissible`) + state-root continuity (`check_chain_bound`), the Rust
+// production-wiring of `Dregg2/Distributed/PrivateLeg.lean` (keystone
+// `joint_turn_sound_with_private_legs`) and `docs/PRIVATE-OFFLINE-CELLS.md`.
+#[cfg(test)]
+mod private_leg;
+
 // Differential: the verified Lean `Dregg2/Distributed/EntangledJoint.lean` model (N-cell atomic
 // coordinated turn) ⟺ the real `atomic` 2PC + the `shared_budget` non-overspend gate.
 #[cfg(test)]
@@ -88,8 +95,9 @@ mod coord_diff;
 
 // Re-exports for convenience.
 pub use atomic::{
-    AbortMessage, AtomicForest, CommitMessage, Coordinator, CoordinatorState, Decision,
-    Participant, ProposeMessage, Vote,
+    AbortMessage, AssetId, AtomicForest, ChainBreak, CommitMessage, Coordinator, CoordinatorState,
+    Decision, JointId, MixedAdmitError, MixedJoint, Participant, PrivateContribution, PrivateLeg,
+    PrivateLegProof, ProposeMessage, StateCommit, Vote, check_chain_bound,
 };
 pub use budget::{
     BudgetError, BudgetSlice, FastUnlockManager, StingrayCounter, UnlockCertificate, UnlockRequest,
