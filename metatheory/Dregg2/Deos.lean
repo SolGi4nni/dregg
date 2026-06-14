@@ -72,6 +72,13 @@ import Dregg2.Deos.Rerender     -- re-rendering a component is FUNCTORIAL (the r
 -- stale and ready-but-unheld both refuse), the htmx tooth (fireGated_reactive) proves the SAME viewer's
 -- button reacts to STATE, and projectGatedFor lifts the membrane-negotiated frustum to STATE-awareness.
 import Dregg2.Deos.GatedAffordance
+-- The TEMPORAL/REACTIVE rung (2026-06-14, the language uplift): beyond GatedAffordance's single-state
+-- gate — TransitionGate (the `link` reads BOTH old+new, so a property of `new` alone can never witness
+-- it), deadline/window gates (past `close` an authorized transition auto-refuses), and
+-- membrane-as-predicate — two viewers at EQUAL cap-authority but different witness-graph permits project
+-- DISTINCT surfaces (`membrane_two_viewers_distinct`: the per-viewer frustum divides by projection, not
+-- just caps). 16 keystones #assert_all_clean.
+import Dregg2.Deos.Reactive
 
 namespace Dregg2.Deos
 
