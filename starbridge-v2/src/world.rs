@@ -233,6 +233,17 @@ impl World {
         self.height
     }
 
+    /// The fee stamped onto every turn this world builds (`0` for the free-
+    /// metering demo world; non-zero for a [`World::with_costs`] world). This is
+    /// the turn's DECLARED computron budget — the executor rejects a turn whose
+    /// metered `computrons_used` exceeds it — so it is a conservative upper bound
+    /// on a dispatch's cost, usable as the fail-closed pre-check amount for a
+    /// shared budget gate (the SDK's `set_budget_gate` gates on exactly this
+    /// declared fee, before the turn runs).
+    pub fn turn_fee(&self) -> u64 {
+        self.turn_fee
+    }
+
     pub fn cell_count(&self) -> usize {
         self.engine.ledger().len()
     }

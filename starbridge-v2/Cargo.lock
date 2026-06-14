@@ -2171,6 +2171,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "dregg-coord"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "dregg-blocklace",
+ "dregg-cell",
+ "dregg-lean-ffi",
+ "dregg-turn",
+ "dregg-types",
+ "ed25519-dalek",
+ "serde",
+]
+
+[[package]]
 name = "dregg-dfa"
 version = "0.1.0"
 dependencies = [
@@ -7465,6 +7479,7 @@ dependencies = [
  "anyhow",
  "blake3",
  "dregg-cell",
+ "dregg-coord",
  "dregg-firmament",
  "dregg-sdk",
  "dregg-token",

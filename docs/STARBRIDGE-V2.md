@@ -121,6 +121,13 @@ starbridge_v2 (lib, feature embedded-executor)
 │               flash-well positions are decoded from the embedded ledger's state
 │               slots (embed-core, LIVE); channel/mailbox/court are surfaced
 │               honestly as remote-path (need `captp`). gpui-free, testable.
+├── organ_ops  — OrganDriver: the organ OPERATING verbs (open / draw / repay /
+│               settle / close) — DRIVES trustline + flash-well organs as REAL
+│               turns through the embedded executor (not just reflects them). The
+│               REAL `dregg_cell::blueprint` per-organ program is installed on the
+│               cell, so an invariant-violating op (over-line draw · fee-evading
+│               borrow · touch on a closed organ) is refused IN-PROTOCOL by the
+│               executor's predicate gate, not faked. gpui-free, testable.
 ├── proofs     — ProofBoard: the proof-attach + STARK verification-status view.
 │               Each committed turn's tier (verified-by-construction / executor-
 │               signed / STARK-attached) + the honest route to the next tier.
@@ -128,7 +135,14 @@ starbridge_v2 (lib, feature embedded-executor)
 ├── swarm      — Swarm: the A2 multi-agent coordinator. Async notify edge
 │               (EmitEvent→NotifyEdge→drain) + atomic multi-effect bundles
 │               (`run_atomic`, all-or-nothing) + per-member cap-confined surfaces
-│               (`bind_surface`, each pane a real firmament cap). gpui-free.
+│               (`bind_surface`, each pane a real firmament cap) + the verified
+│               shared budget (`attach_stingray_budget`, below). gpui-free.
+├── swarm_budget — StingraySwarmBudget: the swarm's VERIFIED shared budget — a real
+│               `dregg_coord::StingrayCounter` (the single-image shared pool) wired
+│               the way the SDK's `runtime::set_budget_gate` attaches a BudgetSlice.
+│               Every dispatch draws against the ONE pool; a draw past the ceiling
+│               is refused by the counter's gate (not a summation), and total_drawn
+│               CONSERVES (== Σ metered across members), PROVABLY ≤ B. gpui-free.
 └── agent      — AgentActivity/AgentSurface: one agent loop's provable activity
                 (mandate · cap-gated turns + receipts · authorization boundary).
 

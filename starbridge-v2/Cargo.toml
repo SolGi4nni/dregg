@@ -120,7 +120,7 @@ native-full = ["embedded-executor", "gpui-ui"]
 # async) deps out of this headless, `cargo test`-able build: the cipherclerk +
 # token surface we surface (identities, mint/attenuate/delegate, cell_id) is in
 # the SDK's un-gated core.
-embedded-executor = ["dep:dregg-turn", "dep:dregg-cell", "dep:dregg-types", "dep:dregg-sdk", "dep:dregg-token", "dep:dregg-userspace-verify", "dep:dregg-firmament"]
+embedded-executor = ["dep:dregg-turn", "dep:dregg-cell", "dep:dregg-types", "dep:dregg-sdk", "dep:dregg-coord", "dep:dregg-token", "dep:dregg-userspace-verify", "dep:dregg-firmament"]
 
 # The gpui renderer. `runtime_shaders` is LOAD-BEARING on macOS: it makes gpui
 # compile its Metal shaders AT RUNTIME (via `MTLDevice::newLibraryWithSource`,
@@ -153,6 +153,13 @@ dregg-types = { path = "../types", optional = true }
 # engine core (the cipherclerk + macaroon-token + DreggEngine surface we use is
 # all in the SDK's always-compiled / embed-core core, NOT the network stack).
 dregg-sdk = { path = "../sdk", optional = true, default-features = false, features = ["embed-core"] }
+# THE VERIFIED SHARED-BUDGET PRIMITIVE — `dregg_coord::StingrayCounter` (the
+# bounded conserved counter, `coord/src/budget.rs`). The swarm's N9 shared budget
+# IS this counter (the conservation bound "the swarm spent at most B"); the over-
+# draw is refused by its gate, never faked. A clean, wire-free dep (coord pulls
+# only dregg-cell + blake3 + ed25519 + serde — no networking; its platform
+# feature is off by default).
+dregg-coord = { path = "../coord", optional = true }
 # The macaroon token vocabulary (`Attenuation` etc.) the clerk speaks — re-exported
 # by dregg-sdk, but we name it directly for the panel's caveat projection.
 dregg-token = { path = "../token", optional = true }

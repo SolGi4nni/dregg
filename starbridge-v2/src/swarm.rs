@@ -83,6 +83,7 @@ use std::collections::HashMap;
 use dregg_cell::CellId;
 
 use crate::dynamics::WorldEvent;
+use crate::swarm_budget::{StingrayBudgetView, StingraySwarmBudget};
 use crate::world::{self, CommitOutcome, World};
 
 /// One pending notification in a swarm member's inbox: a wake signal deposited
@@ -304,6 +305,21 @@ pub enum SwarmError {
         ceiling: u64,
         would_be: u64,
     },
+    /// THE STINGRAY SHARED-POOL CEILING FIRING (N9) — a verified shared budget
+    /// ([`StingraySwarmBudget`]) is attached and this dispatch's draw would breach
+    /// the pool. Unlike [`Self::BudgetExhausted`] (the per-member FLOOR model),
+    /// this is the real [`dregg_coord::StingrayCounter`]'s gate refusing the draw:
+    /// the bound "the swarm spent at most B" is the primitive's, PROVABLE across N
+    /// members, not a summation. Fail-closed (no turn commits; the counter is
+    /// unmoved). `drawn` is the pool's conserved total before the refused draw,
+    /// `ceiling` the pool bound `B`, `would_be` the total the draw would have
+    /// reached.
+    PoolExhausted {
+        member: CellId,
+        drawn: u64,
+        ceiling: u64,
+        would_be: u64,
+    },
 }
 
 impl SwarmError {
@@ -334,6 +350,15 @@ impl SwarmError {
                 would_be,
             } => format!(
                 "REFUSED — member {} budget exhausted (spent {spent} + this would reach {would_be} > ceiling {ceiling})",
+                crate::reflect::short_hex(member.as_bytes()),
+            ),
+            SwarmError::PoolExhausted {
+                member,
+                drawn,
+                ceiling,
+                would_be,
+            } => format!(
+                "REFUSED — member {} would breach the SHARED POOL (drawn {drawn} + this would reach {would_be} > ceiling {ceiling}); the verified conservation bound bit",
                 crate::reflect::short_hex(member.as_bytes()),
             ),
         }
@@ -378,6 +403,13 @@ pub struct Swarm {
     index: HashMap<CellId, usize>,
     /// Append-only action log (most-recent-last). Feeds the activity feed.
     action_log: Vec<SwarmActionOutcome>,
+    /// THE STINGRAY SHARED BUDGET (N9) — when attached, every dispatch draws
+    /// against this ONE verified shared pool BEFORE its turn runs, and a draw
+    /// past the pool ceiling is REFUSED by the counter's gate ([`SwarmError::
+    /// PoolExhausted`]). `None` = no shared pool (the per-member floor meter is
+    /// the only gate). The depth lift from N1's floor summation to a verified
+    /// conservation bound: "the swarm spent at most B", PROVABLE across N members.
+    stingray: Option<StingraySwarmBudget>,
 }
 
 impl Swarm {
@@ -388,6 +420,7 @@ impl Swarm {
             members: Vec::new(),
             index: HashMap::new(),
             action_log: Vec::new(),
+            stingray: None,
         };
         for (cell, name) in members {
             swarm.add_member(world, cell, name);
@@ -524,6 +557,39 @@ impl Swarm {
             });
         }
 
+        // (3c) STINGRAY SHARED-POOL GATE (N9) — if a verified shared budget is
+        //      attached, DRAW-CHECK the dispatch against the ONE pool BEFORE it
+        //      runs. The prospective draw is the turn's DECLARED fee (the conserva-
+        //      tive upper bound the executor would reject the turn for exceeding —
+        //      exactly what the SDK's `set_budget_gate` checks pre-execution). If
+        //      that draw would breach the pool ceiling, REFUSE here (fail-closed,
+        //      no commit, the counter UNMOVED). This is the real
+        //      `StingrayCounter` gate firing — "the swarm spent at most B" is the
+        //      primitive's bound, not a summation.
+        if let Some(would_be) = self.stingray_would_breach(world.turn_fee()) {
+            let pool = self.stingray.as_ref().expect("would_breach saw a pool");
+            let drawn = pool.total_drawn();
+            let ceiling = pool.ceiling();
+            let ao = SwarmActionOutcome {
+                member: agent,
+                committed: false,
+                receipt_hash: None,
+                height: None,
+                computrons: 0,
+                notify_edges: Vec::new(),
+                summary: format!(
+                    "SHARED POOL EXHAUSTED — draw would reach {would_be} > ceiling {ceiling} (dispatch refused, no commit)"
+                ),
+            };
+            self.action_log.push(ao);
+            return Err(SwarmError::PoolExhausted {
+                member: agent,
+                drawn,
+                ceiling,
+                would_be,
+            });
+        }
+
         // (4) Run through the REAL executor.
         let dyn_cursor_before = world.dynamics().cursor();
         let turn = world.turn(agent, effects);
@@ -590,6 +656,12 @@ impl Swarm {
                     m.balance = c.state.balance();
                 }
                 m.backed = true;
+
+                // (6b) STINGRAY CONSERVATION STEP — draw the ACTUAL metered cost
+                //      against the shared pool under the receipt-hash digest. After
+                //      this, the pool's `total_drawn` reflects exactly the committed
+                //      spend (conservation: == Σ drawn metered costs across members).
+                self.stingray_settle(computrons, receipt_hash);
 
                 let ao = SwarmActionOutcome {
                     member: agent,
@@ -748,6 +820,34 @@ impl Swarm {
             });
         }
 
+        // (3c) STINGRAY SHARED-POOL GATE (N9) — the atomic bundle honors the SAME
+        //      verified shared-pool gate as `run`: draw-check the bundle's DECLARED
+        //      fee against the ONE pool before it runs; refuse fail-closed on a
+        //      breach (no commit, the counter unmoved).
+        if let Some(would_be) = self.stingray_would_breach(world.turn_fee()) {
+            let pool = self.stingray.as_ref().expect("would_breach saw a pool");
+            let drawn = pool.total_drawn();
+            let ceiling = pool.ceiling();
+            let ao = SwarmActionOutcome {
+                member: agent,
+                committed: false,
+                receipt_hash: None,
+                height: None,
+                computrons: 0,
+                notify_edges: Vec::new(),
+                summary: format!(
+                    "ATOMIC bundle REFUSED — shared pool would reach {would_be} > ceiling {ceiling}"
+                ),
+            };
+            self.action_log.push(ao);
+            return Err(SwarmError::PoolExhausted {
+                member: agent,
+                drawn,
+                ceiling,
+                would_be,
+            });
+        }
+
         // (4) Build + commit ONE atomic forest turn through the REAL executor.
         let dyn_cursor_before = world.dynamics().cursor();
         let turn = world.forest_turn(agent, actions);
@@ -806,6 +906,10 @@ impl Swarm {
                     m.balance = c.state.balance();
                 }
                 m.backed = true;
+
+                // (6b) STINGRAY CONSERVATION STEP — draw the bundle's ACTUAL metered
+                //      cost against the shared pool (one receipt, one draw).
+                self.stingray_settle(computrons, receipt_hash);
 
                 let ao = SwarmActionOutcome {
                     member: agent,
@@ -994,6 +1098,70 @@ impl Swarm {
             total_ceiling,
             headroom: total_ceiling.saturating_sub(total_spent),
             bounded_members,
+        }
+    }
+
+    // ── N9: THE STINGRAY SHARED BUDGET (the verified conservation bound) ──────
+
+    /// **ATTACH A VERIFIED SHARED BUDGET POOL of `ceiling` computrons** — wire a
+    /// real [`dregg_coord::StingrayCounter`] as the swarm's shared budget, owned
+    /// by `agent` (the coordinator whose budget the pool slices). This is the N9
+    /// weld: it REPLACES N1's floor summation with a verified conservation bound.
+    /// After attaching, every [`Swarm::run`] / [`Swarm::run_atomic`] dispatch
+    /// DRAWS against the ONE shared pool — a draw past `ceiling` is refused by the
+    /// counter's gate ([`SwarmError::PoolExhausted`], fail-closed, no commit), and
+    /// `total_drawn` CONSERVES (== Σ drawn metered costs across all members).
+    ///
+    /// This mirrors the SDK's `runtime.rs::set_budget_gate`: there a `BudgetSlice`
+    /// gates each turn at the executor; here the swarm's shared pool gates each
+    /// member dispatch at the seam (and exposes the IDENTICAL slice via
+    /// [`StingraySwarmBudget::sdk_slice`], so the two are never divergent models).
+    pub fn attach_stingray_budget(&mut self, agent: CellId, ceiling: u64) {
+        self.stingray = Some(StingraySwarmBudget::open(agent, ceiling));
+    }
+
+    /// The attached verified shared budget pool, if any (read-only — the counter
+    /// is the authority; this never bypasses its gate).
+    pub fn stingray_budget(&self) -> Option<&StingraySwarmBudget> {
+        self.stingray.as_ref()
+    }
+
+    /// The aggregate strip for the attached Stingray pool — the verified twin of
+    /// [`Swarm::swarm_budget`], reflecting the SHARED counter (its `total_drawn` /
+    /// `ceiling` / `remaining`) rather than a per-member summation. `None` if no
+    /// pool is attached.
+    pub fn stingray_view(&self) -> Option<StingrayBudgetView> {
+        self.stingray.as_ref().map(StingrayBudgetView::of)
+    }
+
+    /// PRE-CHECK the shared pool against a member's *prospective* dispatch cost:
+    /// returns `Some(would_be)` (the total the draw would reach) iff a pool is
+    /// attached AND drawing `cost` would breach it — i.e. the dispatch must be
+    /// refused. `None` means either no pool or the draw fits. Used internally by
+    /// [`Swarm::run`] / [`Swarm::run_atomic`] BEFORE the turn runs (fail-closed).
+    fn stingray_would_breach(&self, cost: u64) -> Option<u64> {
+        let pool = self.stingray.as_ref()?;
+        if pool.would_overspend(cost) {
+            Some(pool.total_drawn().saturating_add(cost))
+        } else {
+            None
+        }
+    }
+
+    /// SETTLE a committed dispatch's draw against the shared pool (if attached):
+    /// draw the turn's ACTUAL metered `computrons` under the receipt-hash digest
+    /// (one-shot, content-addressed — the trustline draw gate's anti-replay leg).
+    /// This is the conservation step: after it, `total_drawn` reflects exactly the
+    /// committed spend. A breach here is defended against (it cannot normally fire
+    /// because [`Self::stingray_would_breach`] pre-checked the prospective cost
+    /// against the same pool, and the metered world is deterministic), but if it
+    /// did, the draw is simply not recorded (the turn already committed; the pool
+    /// stays conservative — it never over-counts).
+    fn stingray_settle(&mut self, computrons: u64, receipt_hash: [u8; 32]) {
+        if let Some(pool) = self.stingray.as_mut() {
+            // The draw is the genuine metered cost. A fresh receipt hash is a
+            // perfect one-shot digest (every committed turn has a distinct one).
+            let _ = pool.draw(computrons, receipt_hash);
         }
     }
 }
@@ -1777,5 +1945,178 @@ mod tests {
         );
         assert!(matches!(r, Err(SwarmError::BudgetExhausted { .. })), "{r:?}");
         assert_eq!(world.height(), h_before, "no atomic turn committed on a breach");
+    }
+
+    // ── N9: THE STINGRAY CEILING WELD (the verified shared budget) ───────────
+    //
+    // The depth lift over N1: the swarm's budget is a REAL
+    // `dregg_coord::StingrayCounter` shared pool. The conservation invariant
+    // makes "the swarm spent at most B" PROVABLE (drawn == Σ metered across
+    // members); a draw past the ceiling is REFUSED by the counter's gate (not
+    // faked); the aggregate meter reflects the counter.
+
+    #[test]
+    fn the_stingray_pool_conserves_drawn_equals_sum_of_metered_across_members() {
+        // THE CONSERVATION TOOTH: with a shared Stingray pool attached, every
+        // committed dispatch draws its metered cost against the ONE pool, so the
+        // pool's total_drawn == Σ (each member's committed metered computrons).
+        let (mut world, mut swarm, coord, worker_a, worker_b) = metered_swarm_world();
+        // Attach a generous shared pool owned by the coordinator.
+        swarm.attach_stingray_budget(coord, 1_000_000);
+        assert_eq!(swarm.stingray_budget().unwrap().total_drawn(), 0);
+
+        // Coordinator transfers to worker_a (a metered turn).
+        let oc1 = swarm
+            .run(&mut world, coord, vec![transfer(coord, worker_a, 100)])
+            .expect("coord dispatch 1 commits");
+        // Coordinator transfers to worker_b.
+        let oc2 = swarm
+            .run(&mut world, coord, vec![transfer(coord, worker_b, 100)])
+            .expect("coord dispatch 2 commits");
+        // worker_a acts on itself (a metered self SetField — always in-mandate).
+        let ow = swarm
+            .run(&mut world, worker_a, vec![crate::world::set_field(worker_a, 3, [1u8; 32])])
+            .expect("worker_a self-action commits");
+
+        // CONSERVATION: the shared pool's conserved total is EXACTLY the sum of
+        // the three committed metered costs — across THREE members, ONE pool.
+        let drawn = swarm.stingray_budget().unwrap().total_drawn();
+        assert_eq!(
+            drawn,
+            oc1.computrons + oc2.computrons + ow.computrons,
+            "the pool conserves: total_drawn == Σ metered across members"
+        );
+        assert!(drawn > 0, "the metered draws are non-zero (non-vacuous)");
+        // The remaining headroom shrank by exactly the drawn sum.
+        assert_eq!(
+            swarm.stingray_budget().unwrap().remaining(),
+            1_000_000 - drawn,
+        );
+    }
+
+    #[test]
+    fn a_draw_past_the_shared_ceiling_is_refused_by_the_gate_not_faked() {
+        // THE OVER-DRAW REFUSAL: tighten the shared pool to exactly the cost of one
+        // dispatch, so the next dispatch's draw would breach B and is REFUSED by
+        // the counter's gate (PoolExhausted) — fail-closed, no turn commits, the
+        // counter UNMOVED.
+        //
+        // The gate is the SDK's `set_budget_gate` shape: it draw-checks the turn's
+        // DECLARED fee (the conservative upper bound the executor would reject the
+        // turn for exceeding) before execution, and SETTLES the actual metered cost
+        // after. So a pool of ceiling == one declared fee admits ONE dispatch (its
+        // declared fee fits), then refuses the next (the remaining headroom — the
+        // ceiling minus the first dispatch's metered draw — is now below a full
+        // declared fee).
+        let (mut world, mut swarm, coord, worker_a, _) = metered_swarm_world();
+        let fee = world.turn_fee();
+        assert!(fee > 0, "the metered world stamps a real per-turn fee");
+        // A pool whose ceiling is EXACTLY one declared fee.
+        swarm.attach_stingray_budget(coord, fee);
+        // Dispatch 1: its declared fee (== ceiling) fits; it commits and the pool
+        // settles the ACTUAL metered cost (< the declared fee).
+        let o1 = swarm
+            .run(&mut world, coord, vec![transfer(coord, worker_a, 100)])
+            .expect("the first dispatch (declared fee == ceiling) commits");
+        assert!(o1.computrons > 0, "non-vacuous metered draw");
+        assert!(o1.computrons <= fee, "the metered cost is within the declared fee");
+        assert_eq!(
+            swarm.stingray_budget().unwrap().total_drawn(),
+            o1.computrons,
+            "the pool drew the ACTUAL metered cost (the conservation step)"
+        );
+
+        // Dispatch 2: the remaining headroom (fee − metered) is below a full
+        // declared fee, so the pre-check REFUSES it — the verified gate firing.
+        let h_before = world.height();
+        let drawn_before = swarm.stingray_budget().unwrap().total_drawn();
+        let log_before = swarm.action_log().len();
+        let r = swarm.run(&mut world, coord, vec![transfer(coord, worker_a, 100)]);
+        match r {
+            Err(SwarmError::PoolExhausted { member, drawn, ceiling, would_be }) => {
+                assert_eq!(member, coord);
+                assert_eq!(drawn, drawn_before, "the pool's conserved total before the refusal");
+                assert_eq!(ceiling, fee, "the pool ceiling B");
+                assert!(would_be > ceiling, "the draw would have breached B (drawn + declared fee > B)");
+            }
+            other => panic!("expected PoolExhausted, got {other:?}"),
+        }
+        // FAIL-CLOSED: no turn committed, the counter UNMOVED (the gate held).
+        assert_eq!(world.height(), h_before, "no height advance on a shared-pool breach");
+        assert_eq!(
+            swarm.stingray_budget().unwrap().total_drawn(),
+            drawn_before,
+            "the refused draw moved nothing — the counter is unmoved"
+        );
+        // The refusal is RECORDED (a record, not a silent drop).
+        assert_eq!(swarm.action_log().len(), log_before + 1);
+        assert!(swarm.action_log().last().unwrap().summary.contains("SHARED POOL EXHAUSTED"));
+    }
+
+    #[test]
+    fn the_aggregate_meter_reflects_the_stingray_counter() {
+        // THE AGGREGATE REFLECTS THE COUNTER: the Stingray view's total_drawn IS
+        // the counter's total_spent (the verified conservation figure), not a
+        // re-summed estimate; ceiling/remaining track the pool.
+        let (mut world, mut swarm, coord, worker_a, _) = metered_swarm_world();
+        swarm.attach_stingray_budget(coord, 50_000);
+        let o = swarm
+            .run(&mut world, coord, vec![transfer(coord, worker_a, 100)])
+            .expect("dispatch commits");
+
+        let view = swarm.stingray_view().expect("a pool is attached");
+        assert_eq!(view.total_drawn, o.computrons, "the view reads the counter's total_spent");
+        assert_eq!(view.ceiling, 50_000);
+        assert_eq!(view.remaining, 50_000 - o.computrons);
+        assert!(!view.exhausted);
+        // The view's total_drawn IS the underlying counter's total_spent.
+        assert_eq!(
+            view.total_drawn,
+            swarm.stingray_budget().unwrap().counter().total_spent(),
+            "the aggregate reflects the counter, never a re-summation"
+        );
+        // And the pool exposes the SDK-shaped slice (the seam to set_budget_gate).
+        let slice = swarm.stingray_budget().unwrap().sdk_slice().expect("the slice exists");
+        assert_eq!(slice.spent, o.computrons, "the SDK slice's spent matches the pool");
+    }
+
+    #[test]
+    fn the_stingray_gate_holds_for_atomic_bundles_too() {
+        // The atomic-bundle path draws against the SAME shared pool and honors the
+        // SAME declared-fee gate: a bundle whose declared fee would breach the pool
+        // is refused. A pool of one declared fee admits one dispatch, then refuses.
+        let (mut world, mut swarm, coord, worker_a, worker_b) = metered_swarm_world();
+        let fee = world.turn_fee();
+        swarm.attach_stingray_budget(coord, fee);
+        // One dispatch fits (declared fee == ceiling) and settles the metered cost.
+        swarm
+            .run(&mut world, coord, vec![transfer(coord, worker_a, 100)])
+            .expect("the first dispatch fits and commits");
+        // The remaining headroom is now below a full declared fee.
+        assert!(swarm.stingray_budget().unwrap().remaining() < fee);
+        let h_before = world.height();
+        let r = swarm.run_atomic(
+            &mut world,
+            coord,
+            vec![(coord, vec![transfer(coord, worker_b, 1)])],
+        );
+        assert!(matches!(r, Err(SwarmError::PoolExhausted { .. })), "{r:?}");
+        assert_eq!(world.height(), h_before, "no atomic turn committed on a shared-pool breach");
+    }
+
+    #[test]
+    fn an_unattached_swarm_has_no_stingray_pool_and_is_never_pool_refused() {
+        // Without an attached pool, the Stingray gate is inert (the floor meter is
+        // the only gate) — dispatches are never PoolExhausted.
+        let (mut world, mut swarm, coord, worker_a, _) = metered_swarm_world();
+        assert!(swarm.stingray_budget().is_none());
+        assert!(swarm.stingray_view().is_none());
+        for _ in 0..4 {
+            let r = swarm.run(&mut world, coord, vec![transfer(coord, worker_a, 10)]);
+            assert!(
+                !matches!(r, Err(SwarmError::PoolExhausted { .. })),
+                "no pool attached — never PoolExhausted"
+            );
+        }
     }
 }

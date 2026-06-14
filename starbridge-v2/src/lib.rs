@@ -62,7 +62,11 @@ pub mod shell;
 #[cfg(feature = "embedded-executor")]
 pub mod surface;
 #[cfg(feature = "embedded-executor")]
+pub mod organ_ops;
+#[cfg(feature = "embedded-executor")]
 pub mod swarm;
+#[cfg(feature = "embedded-executor")]
+pub mod swarm_budget;
 #[cfg(feature = "embedded-executor")]
 pub mod terminal;
 #[cfg(feature = "embedded-executor")]
@@ -97,9 +101,15 @@ pub use scene::{
     VerifiedScene, PRESENT_DIGEST_SLOT, SURFACE_FACTORY_VK,
 };
 #[cfg(feature = "embedded-executor")]
+pub use organ_ops::{OrganDriver, OrganOp, OrganOpError, OrganOpOutcome};
+#[cfg(feature = "embedded-executor")]
 pub use swarm::{
     BudgetMeter, NotifyEdge, Swarm, SwarmBudget, SwarmError, SwarmMember, SwarmMemberView,
     SwarmView,
+};
+#[cfg(feature = "embedded-executor")]
+pub use swarm_budget::{
+    StingrayBudgetView, StingrayDrawError, StingraySwarmBudget, SWARM_POOL_SILO,
 };
 #[cfg(feature = "embedded-executor")]
 pub use terminal::{Command, CommandError, OutputLine, TerminalCell, TerminalView};
