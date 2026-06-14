@@ -7113,6 +7113,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "starbridge-supply-chain-provenance"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "dregg-app-framework",
+ "dregg-cell",
+ "dregg-coord",
+ "dregg-turn",
+ "dregg-types",
+ "dregg-userspace-verify",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "starbridge-swarm-orchestration"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "dregg-app-framework",
+ "dregg-cell",
+ "dregg-coord",
+ "dregg-turn",
+ "dregg-types",
+ "dregg-userspace-verify",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "starbridge-tool-access-delegation"
 version = "0.1.0"
 dependencies = [
