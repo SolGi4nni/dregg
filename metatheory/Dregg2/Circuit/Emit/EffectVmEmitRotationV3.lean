@@ -979,10 +979,17 @@ field-write / balance-credit gate reads `prmCol 1` (the runtime's NEW_VALUE / va
 OTHER gate, transition, boundary pin, hash site, and range tooth is the per-effect descriptor's
 verbatim, so `rotateV3`'s parametric keystones (`rotV3_sound_v1`, `rotV3_binds_published`,
 `graduable_rotateV3`) compose unchanged (the graduable side conditions read only the unchanged
-sites/ranges). The per-effect FREEZE/param0 faithfulness theorems (in the un-owned
-`EffectVmEmitSetField` / `EffectVmEmitMint`) are UNTOUCHED — they describe their own descriptors;
-the rotated registry entries route through these corrected variants. The descriptor NAME is kept
-(`dregg-effectvm-setfield-v1` / `dregg-effectvm-mint-v1`), exactly as the v1 reconciles kept it.
+sites/ranges).
+
+POST-RECONCILE (the source-coherence follow-up): the per-effect `EffectVmEmitSetField` /
+`EffectVmEmitMint` SOURCE descriptors have SINCE been corrected to match the runtime themselves
+(the SAME three fixes: nonce tick, value/credit at `param1`, setField gated by `sel::SET_FIELD = 2`;
+their faithfulness theorems re-proved against the ticked/param1 behaviour, both polarities, on the
+active-row premise `IsSetFieldRow` / `IsMintRow` — exactly burn's shape). So these tick-faced
+constraint lists now COINCIDE with their source descriptors' (`setFieldTickFace_eq_source` below);
+the rebuild is retained so the rotated registry JSON + the `V3_STAGED_REGISTRY_FP` pin are unchanged,
+but it is no longer a BYPASS of a buggy source — source and rotated leg agree. The descriptor NAME is
+kept (`dregg-effectvm-setfield-v1` / `dregg-effectvm-mint-v1`), exactly as the v1 reconciles kept it.
 
 SOUNDNESS TOOTH (do NOT just make it SAT): the tick gate is ENFORCED — a row whose nonce delta is
 NOT the tick (`after_nonce ≠ before_nonce + 1` on a non-NoOp row) FAILS the gate and is UNSAT
@@ -997,26 +1004,21 @@ BridgeMint) — NOT `param0` (FIELD_INDEX / MINT_HASH). The v1 hand-AIR (`air.rs
 def RUNTIME_VALUE_PARAM : Nat := 1
 
 /-- The runtime's SetField SELECTOR column: `sel::SET_FIELD = 2` (the trace generator writes
-`row[2] = 1` on the active setField row, `effect_selector` → `trace.rs`). This is the CORRECT
-selector column — the per-effect `EffectVmEmitSetField.SEL_SET_FIELD = 54` is a pre-existing bug
-(column 54 is `state_before.balance_lo = sbCol BALANCE_LO`, NOT a selector), so the corrected
-write gate gates by THIS column, never the per-effect constant. -/
+`row[2] = 1` on the active setField row, `effect_selector` → `trace.rs`). The per-effect
+`EffectVmEmitSetField.SEL_SET_FIELD` has SINCE been reconciled to this same value (the source
+descriptor was corrected in the cutover — the earlier `54` was `sbCol BALANCE_LO`, NOT a selector).
+The corrected write gate gates by THIS column. -/
 def SEL_SET_FIELD_COL : Nat := 2
 
--- The runtime selector column is `sel::SET_FIELD = 2`, distinct from `sbCol BALANCE_LO = 54`
--- (the column the buggy per-effect `EffectVmEmitSetField.SEL_SET_FIELD` actually names).
+-- The runtime selector column is `sel::SET_FIELD = 2`, distinct from `sbCol BALANCE_LO = 54`.
+-- POST-RECONCILE: the per-effect `EffectVmEmitSetField.SEL_SET_FIELD` now AGREES (= 2), and the
+-- per-effect value column `VALUE` now reads `param1` (the runtime NEW_VALUE), matching the
+-- corrections below — so the rotated tick-face and the source descriptor now COINCIDE (see
+-- `setFieldTickFace_eq_source`).
 #guard SEL_SET_FIELD_COL == 2
 #guard SEL_SET_FIELD_COL ≠ sbCol state.BALANCE_LO
-#guard EffectVmEmitSetField.SEL_SET_FIELD == sbCol state.BALANCE_LO  -- the bug, pinned
-
-/-- The nonce-FREEZE gate body the two stragglers carry (`EffectVmEmitSetField.gNonceFreeze` and
-`EffectVmEmitMint.gNonceFix` are BOTH this): `after_nonce − before_nonce`. -/
-def gNonceFreezeBody : EmittedExpr :=
-  EffectVmEmitTransfer.eSub (EffectVmEmitTransfer.eSA state.NONCE)
-    (EffectVmEmitTransfer.eSB state.NONCE)
-
-theorem setField_gNonceFreeze_eq : EffectVmEmitSetField.gNonceFreeze = gNonceFreezeBody := rfl
-theorem mint_gNonceFix_eq : EffectVmEmitMint.gNonceFix = gNonceFreezeBody := rfl
+#guard EffectVmEmitSetField.SEL_SET_FIELD == SEL_SET_FIELD_COL   -- source reconciled (was the 54 bug)
+#guard EffectVmEmitSetField.VALUE == RUNTIME_VALUE_PARAM         -- source value column reconciled to param1
 
 /-! #### The TICK-faced + param1-corrected SetField (per slot). -/
 
@@ -1065,6 +1067,16 @@ def setFieldTickFace (slot : Fin 8) : EffectVmDescriptor :=
 constraint swap, so this is the constant `transferHashSites`-graduability — `rfl`. -/
 theorem graduable_setFieldTickFace (slot : Fin 8) :
     graduable (setFieldTickFace slot) = true := rfl
+
+/-- **SOURCE-COHERENCE: the tick-face now COINCIDES with the (reconciled) source descriptor.** After
+the per-effect `EffectVmEmitSetField` source was corrected (nonce tick, value at `param1`, gated by
+`sel::SET_FIELD = 2`), its `setFieldRowGates` IS this section's `setFieldRowGatesTick` (gate-for-gate
+definitionally — `gFieldWriteP1 = gFieldWrite`, both `.mul (.var 2) (·_after − param1)`; the tick gate
+is the same `EffectVmEmitTransfer.gNonce`), so the tick-faced descriptor equals the source descriptor.
+The rotated registry routing through `setFieldV3` is therefore NOT a bypass of a buggy source — they
+are the same circuit. -/
+theorem setFieldTickFace_eq_source (slot : Fin 8) :
+    setFieldTickFace slot = EffectVmEmitSetField.setFieldVmDescriptor slot := rfl
 
 /-- **`setFieldV3 slot`** — the rotated tick-faced setField (the registry member). -/
 def setFieldV3 (slot : Fin 8) : EffectVmDescriptor2 := v3Of (setFieldTickFace slot)
@@ -1158,6 +1170,13 @@ def mintTickFace : EffectVmDescriptor :=
 /-- The tick-faced mint shares the per-effect descriptor's sites + ranges, so it is graduable. -/
 theorem graduable_mintTickFace : graduable mintTickFace = true := rfl
 
+/-- **SOURCE-COHERENCE: the mint tick-face now COINCIDES with the (reconciled) source descriptor.**
+After the per-effect `EffectVmEmitMint` source was corrected (nonce tick, credit at `param1`), its
+`mintRowGates` IS this section's `mintRowGatesTick` (definitionally — `gBalLoCreditP1 = gBalLoCredit`,
+both crediting `param1`; the tick gate is the same `EffectVmEmitTransfer.gNonce`), so the tick-faced
+BridgeMint equals the source descriptor. The registry routing through `mintV3` is the same circuit. -/
+theorem mintTickFace_eq_source : mintTickFace = EffectVmEmitMint.mintVmDescriptor := rfl
+
 /-- **`mintV3`** — the rotated tick-faced BridgeMint (the `mintVmDescriptor2R24` registry member). -/
 def mintV3 : EffectVmDescriptor2 := v3Of mintTickFace
 
@@ -1210,11 +1229,13 @@ theorem mintP1_rejects_wrong_credit (hash : List ℤ → ℤ) (env : VmRowEnv) (
   fun h => hwrong (mintV3_pins_credit hash env isFirst isLast h)
 
 #assert_axioms graduable_setFieldTickFace
+#assert_axioms setFieldTickFace_eq_source
 #assert_axioms setFieldV3_pins_nonce_tick
 #assert_axioms setFieldTick_rejects_wrong_nonce_delta
 #assert_axioms setFieldV3_pins_value
 #assert_axioms setFieldP1_rejects_wrong_value
 #assert_axioms graduable_mintTickFace
+#assert_axioms mintTickFace_eq_source
 #assert_axioms mintV3_pins_nonce_tick
 #assert_axioms mintTick_rejects_wrong_nonce_delta
 #assert_axioms mintV3_pins_credit

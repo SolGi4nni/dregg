@@ -90,7 +90,8 @@ gates of `mintVmDescriptor` (a constraint-list segment), on a mint row decoded b
 the per-cell credit/freeze factors through `mintVm_faithful` (`mintRowGates ⟺ MintRowIntent`) +
 `intent_to_cellSpec`, NEITHER of which reads the sites. So the runnable per-cell soundness depends ONLY on
 the gates (the sites bind the COMMITMENT — §1/§4 of the generic module — not the per-cell spec). -/
-theorem mintGates_give_cellSpec (env : VmRowEnv) (pre post : CellState) (amt : ℤ)
+theorem mintGates_give_cellSpec (env : VmRowEnv) (hrow : IsMintRow env)
+    (pre post : CellState) (amt : ℤ)
     (henc : RowEncodes env pre amt post)
     (hgates : ∀ c ∈ mintVmDescriptor.constraints, c.holdsVm env true true) :
     CellMintSpec pre amt post := by
@@ -102,7 +103,7 @@ theorem mintGates_give_cellSpec (env : VmRowEnv) (pre post : CellState) (amt : �
     simp only [List.mem_append]
     exact Or.inl (Or.inl (Or.inl hc))
   have hrowgates' := mintRowGates_flag_indep env true true hrowgates
-  exact intent_to_cellSpec env pre post amt henc ((mintVm_faithful env).mp hrowgates')
+  exact intent_to_cellSpec env pre post amt henc ((mintVm_faithful env hrow).mp hrowgates')
 
 /-! ## §3 — THE RUNNABLE FULL-STATE INSTANCE. -/
 
@@ -129,7 +130,7 @@ def mintRunnableSpec (amt : ℤ) (preRoots : SysRoots) : RunnableFullStateSpec C
   decodeFull    := by
     intro env pre post postRoots hrow hdec hgates
     obtain ⟨henc, hroots⟩ := hdec
-    exact ⟨mintGates_give_cellSpec env pre post amt henc (mintWide_constraints_eq ▸ hgates), hroots⟩
+    exact ⟨mintGates_give_cellSpec env hrow pre post amt henc (mintWide_constraints_eq ▸ hgates), hroots⟩
 
 /-- **`mint_runnable_full_sound` — THE DELIVERABLE (full-state on the RUNNABLE descriptor).** A row
 satisfying `mintVmDescriptorWide` — the WIDE descriptor the prover RUNS (`satisfiedVm`, first/last active) —
@@ -205,20 +206,21 @@ concrete `(pre, post)` `CellState` pair and confirm the full clause's `CellMintS
 def goodMintPre : CellState :=
   { balLo := 100, balHi := 0, nonce := 5, fields := fun _ => 0, capRoot := 0, reserved := 0, commit := 0 }
 
-/-- The post-state `goodMintRow` encodes: bal_lo 130, nonce 5 (mint freezes the nonce), frame frozen. -/
+/-- The post-state `goodMintRow` encodes: bal_lo 130, nonce 6 (the runtime TICK 5 → 6), frame frozen. -/
 def goodMintPost : CellState :=
-  { balLo := 130, balHi := 0, nonce := 5, fields := fun _ => 0, capRoot := 0, reserved := 0, commit := 0 }
+  { balLo := 130, balHi := 0, nonce := 6, fields := fun _ => 0, capRoot := 0, reserved := 0, commit := 0 }
 
 /-- A frozen reference sub-block (the empty `system_roots`, since mint touches no side-table). -/
 def goodMintPreRoots : SysRoots := emptySystemRoots
 
 /-- **`goodMint_realizes` — NON-VACUITY (witness TRUE).** The mint `fullClause` is INHABITED by a real
-mint: `goodMintPost` is the genuine credit image of `goodMintPre` (`100 → 130`, frame frozen incl. the
-nonce — mint ticks NOTHING) and the roots are frozen. So the framework's `fullClause` is NOT `True` for
-mint — it is a meaningful 17-field predicate a real mint satisfies. -/
+mint: `goodMintPost` is the genuine credit image of `goodMintPre` (`100 → 130`, the nonce TICKED
+`5 → 6` matching the runtime, the frame frozen) and the roots are frozen. So the framework's
+`fullClause` is NOT `True` for mint — it is a meaningful 17-field predicate a real mint satisfies. -/
 theorem goodMint_realizes :
     (mintRunnableSpec 30 goodMintPreRoots).fullClause goodMintPre goodMintPost goodMintPreRoots :=
-  ⟨⟨by norm_num [goodMintPre, goodMintPost], rfl, rfl, fun _ => rfl, rfl, rfl⟩, rfl⟩
+  ⟨⟨by norm_num [goodMintPre, goodMintPost], rfl, by norm_num [goodMintPre, goodMintPost],
+    fun _ => rfl, rfl, rfl⟩, rfl⟩
 
 /-- **`mintFullClause_not_trivial` — the clause is REFUTABLE (witness FALSE).** A post-state whose
 `bal_lo` is NOT the credit (`goodMintPre.balLo = 100`, demanding `130`, but a forged `999`) FAILS

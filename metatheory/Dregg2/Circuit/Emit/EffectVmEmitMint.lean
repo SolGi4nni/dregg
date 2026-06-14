@@ -11,9 +11,10 @@ receipt, and freezes the 16 non-`bal` kernel fields. Its validation `execMintA_i
 module emits the SAME effect onto the EffectVM row and welds the two.
 
 The EffectVM block carries the conserved balance as the `bal_lo` limb. A mint is a `bal_lo` COLUMN
-CREDIT: post-`bal_lo` = pre PLUS `amount`, the rest of the block frozen, the post-state bound into
-`state_commit` via the GROUP-4 hash chain. `mintVmDescriptor` emits exactly that (credit gate
-`new_bal_lo - old_bal_lo - amount = 0`, the rest frozen).
+CREDIT: post-`bal_lo` = pre PLUS `value_lo` (`param1`), the sequence nonce TICKED (`+1`, the runtime
+non-NoOp invariant), the economic frame frozen, the post-state bound into `state_commit` via the
+GROUP-4 hash chain. `mintVmDescriptor` emits exactly that (credit gate `new_bal_lo - old_bal_lo -
+param1 = 0`, the nonce-tick gate, the frame frozen).
 
 ## What is PROVED
 
@@ -31,8 +32,14 @@ CREDIT: post-`bal_lo` = pre PLUS `amount`, the rest of the block frozen, the pos
     disclosing log receipt = the turn layer, cited.
   * The `(cell, asset)` index + the `mintAdmit` authority/non-negativity/liveness GUARD have no row
     column; they live in universe-A's spec (cited).
-  * NONCE: the descriptor FREEZES the nonce column; universe-A's mint ticks NO nonce — MATCHES (no
-    divergence, unlike transfer).
+  * NONCE: the descriptor TICKS the on-trace sequence nonce (`after = before + 1`, the runtime
+    `new_state.nonce += 1` on every non-NoOp row — like burn/transfer); universe-A's `recCMintAsset`
+    FREEZES the ledger nonce. The §7 connector reconciles this exactly as burn (`CellMintSpecFrozenNonce`
+    + `exec_nonce_is_frozen_not_ticked`), the net being the turn prologue's single tick. (RECONCILED
+    with the runtime in the cutover — the earlier descriptor wrongly froze the nonce + read the credit
+    from `param0`.)
+  * CREDIT COLUMN: the runtime credits `param1 = value_lo` (`air.rs` `bm_val_lo = p1`), not `param0`
+    (= MINT_HASH); the descriptor reads `param1`.
   * `state.RESERVED` not absorbed by any hash-site (inherited transfer-keystone finding).
 
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}. Poseidon2 CR = NAMED hypothesis. No sorry /
@@ -47,7 +54,7 @@ namespace Dregg2.Circuit.Emit.EffectVmEmitMint
 open Dregg2.Circuit
 open Dregg2.Circuit.Emit.EffectVmEmit
 open Dregg2.Circuit.Emit.EffectVmEmitTransfer
-  (eSB eSA ePrm eSub transitionAll boundaryFirstPins boundaryLastPins
+  (eSB eSA ePrm eSub gNonce eSelNoop transitionAll boundaryFirstPins boundaryLastPins
    transferHashSites boundaryLast_pins)
 open Dregg2.Circuit.Emit.EffectVmEmitTransferSound
   (CellState absorbedCols)
@@ -60,23 +67,40 @@ open Dregg2.Circuit.Spec.SupplyCreation
 set_option linter.unusedVariables false
 set_option autoImplicit false
 
-/-! ## §0 — Selector for the mint effect row. -/
+/-! ## §0 — Selector + value column for the BridgeMint effect row.
+
+RECONCILED WITH THE RUNTIME (`circuit/src/effect_vm/{trace,air}.rs`, the cutover model-found seam).
+The runtime's `Effect::BridgeMint { mint_hash, value_lo, .. }` writes `param0 = mint_hash`,
+`param1 = value_lo`, CREDITS `new_bal_lo = old_bal_lo + value_lo (= p1)`, GATES by `s_bridgemint`
+(`sel::BRIDGE_MINT = 40`), and TICKS the nonce (`new_state.nonce += 1`). The earlier descriptor read
+the credit from `param.AMOUNT = param0` (the runtime's MINT_HASH), froze the nonce, and named the
+selector `4`. The credit→param1 and nonce-tick are corrected here (the selector constant is
+descriptive only — it appears in no gate, only the row predicate + witness — and is set to the
+runtime value too). The rotated BridgeMint registry leg (`mintV3`) carries the same corrections
+(`EffectVmEmitRotationV3.mintTickFace`). -/
 
 namespace selM
-/-- The `mintA` effect selector column. -/
-def MINT : Nat := 4
+/-- The `BridgeMint` effect selector column (runtime `sel::BRIDGE_MINT = 40`). The earlier `4` was a
+descriptive mismodel; it appears in no gate (only `IsMintRow` + the witness), so this is a
+non-load-bearing reconcile. -/
+def MINT : Nat := 40
 end selM
 
 def eSelMint : EmittedExpr := .var selM.MINT
 
-/-! ## §1 — The mint row gates (credit on bal_lo, frame freeze). -/
+/-- The runtime value column for the credit: `param1` (value_lo) — `air.rs` `bm_val_lo = p1`. NOT
+`param.AMOUNT = param0` (the runtime's MINT_HASH). (Runtime `param::NEW_VALUE = 1`; the param
+namespace carries only `AMOUNT`/`DIRECTION`, so this is a LOCAL constant naming the value column.) -/
+def VALUE_LO : Nat := 1
 
-/-- Balance-lo CREDIT body: `new_bal_lo - old_bal_lo - amount` (so `new = old + amount`). -/
+/-! ## §1 — The mint row gates (credit on bal_lo at `param1`, nonce TICK, frame freeze). -/
+
+/-- Balance-lo CREDIT body reading the RUNTIME value column `param1` (value_lo):
+`new_bal_lo - old_bal_lo - param1` (so `new = old + value_lo`). -/
 def gBalLoCredit : EmittedExpr :=
-  .add (eSub (eSA state.BALANCE_LO) (eSB state.BALANCE_LO)) (.mul (.const (-1)) (ePrm param.AMOUNT))
+  .add (eSub (eSA state.BALANCE_LO) (eSB state.BALANCE_LO)) (.mul (.const (-1)) (ePrm VALUE_LO))
 
 def gBalHiFix : EmittedExpr := eSub (eSA state.BALANCE_HI) (eSB state.BALANCE_HI)
-def gNonceFix : EmittedExpr := eSub (eSA state.NONCE) (eSB state.NONCE)
 def gCapFix : EmittedExpr := eSub (eSA state.CAP_ROOT) (eSB state.CAP_ROOT)
 def gResFix : EmittedExpr := eSub (eSA state.RESERVED) (eSB state.RESERVED)
 def gFieldFix (i : Nat) : EmittedExpr := eSub (eSA (state.FIELD_BASE + i)) (eSB (state.FIELD_BASE + i))
@@ -84,9 +108,10 @@ def gFieldFix (i : Nat) : EmittedExpr := eSub (eSA (state.FIELD_BASE + i)) (eSB 
 def gFieldFixAll : List VmConstraint :=
   (List.range 8).map (fun i => VmConstraint.gate (gFieldFix i))
 
-/-- The mint-specialized per-row gates (balance credit + frame freeze). -/
+/-- The BridgeMint-specialized per-row gates: balance credit (at `param1`), nonce TICK (the
+transfer/noteSpend `gNonce` gate), frame freeze. -/
 def mintRowGates : List VmConstraint :=
-  [ .gate gBalLoCredit, .gate gBalHiFix, .gate gNonceFix, .gate gCapFix, .gate gResFix ]
+  [ .gate gBalLoCredit, .gate gBalHiFix, .gate gNonce, .gate gCapFix, .gate gResFix ]
   ++ gFieldFixAll
 
 /-! ## §2 — The emitted MINT descriptor. -/
@@ -105,36 +130,45 @@ def mintVmDescriptor : EffectVmDescriptor :=
 
 /-! ## §3 — The MINT ROW INTENT. -/
 
-/-- **`MintRowIntent env`** — `bal_lo` rises by `amount`, the rest of the block fixed. -/
+/-- **`MintRowIntent env`** — on an active BridgeMint row: `bal_lo` rises by `param1` (value_lo), the
+nonce TICKS (`after = before + 1`, the runtime `new_state.nonce += 1`), the rest of the block frozen.
+(Like burn — its economic twin — the runtime ticks the on-trace sequence nonce on every non-NoOp row;
+the executor's frozen ledger nonce is reconciled at the §7 connector.) -/
 def MintRowIntent (env : VmRowEnv) : Prop :=
-  env.loc (saCol state.BALANCE_LO) = env.loc (sbCol state.BALANCE_LO) + env.loc (prmCol param.AMOUNT)
+  env.loc (saCol state.BALANCE_LO) = env.loc (sbCol state.BALANCE_LO) + env.loc (prmCol VALUE_LO)
   ∧ env.loc (saCol state.BALANCE_HI) = env.loc (sbCol state.BALANCE_HI)
-  ∧ env.loc (saCol state.NONCE) = env.loc (sbCol state.NONCE)
+  ∧ env.loc (saCol state.NONCE) = env.loc (sbCol state.NONCE) + 1
   ∧ env.loc (saCol state.CAP_ROOT) = env.loc (sbCol state.CAP_ROOT)
   ∧ env.loc (saCol state.RESERVED) = env.loc (sbCol state.RESERVED)
   ∧ (∀ i < 8, env.loc (saCol (state.FIELD_BASE + i)) = env.loc (sbCol (state.FIELD_BASE + i)))
 
+/-- The row is a BridgeMint row: `s_bridge_mint = 1`, `s_noop = 0`. The `s_noop = 0` clause is what
+the nonce-tick gate factors on (a BridgeMint row is non-NoOp, so the nonce ticks). -/
 def IsMintRow (env : VmRowEnv) : Prop :=
   env.loc selM.MINT = 1 ∧ env.loc sel.NOOP = 0
 
-/-! ## §4 — FAITHFULNESS. -/
+/-! ## §4 — FAITHFULNESS (on an active BridgeMint row, as burn). -/
 
-/-- **`mintVm_faithful`.** On a mint row the emitted gates hold IFF the mint intent holds. -/
-theorem mintVm_faithful (env : VmRowEnv) :
+/-- **`mintVm_faithful`.** On a BridgeMint row the emitted gates hold IFF the mint intent holds. The
+`IsMintRow` premise (`s_noop = 0`) resolves the tick gate to `after_nonce = before_nonce + 1`,
+exactly as `burnVm_faithful`. -/
+theorem mintVm_faithful (env : VmRowEnv) (hrow : IsMintRow env) :
     (∀ c ∈ mintRowGates, c.holdsVm env false false) ↔ MintRowIntent env := by
+  obtain ⟨_hsM, hsN⟩ := hrow
   unfold mintRowGates gFieldFixAll MintRowIntent
   constructor
   · intro h
     have hLo := h (.gate gBalLoCredit) (by simp)
     have hHi := h (.gate gBalHiFix) (by simp)
-    have hNon := h (.gate gNonceFix) (by simp)
+    have hNon := h (.gate gNonce) (by simp)
     have hCap := h (.gate gCapFix) (by simp)
     have hRes := h (.gate gResFix) (by simp)
     have hFld : ∀ i, i < 8 → VmConstraint.holdsVm env false false (.gate (gFieldFix i)) := by
       intro i hi; apply h
       simp only [List.mem_append, List.mem_map, List.mem_range]; exact Or.inr ⟨i, hi, rfl⟩
-    simp only [VmConstraint.holdsVm, gBalLoCredit, gBalHiFix, gNonceFix, gCapFix, gResFix,
-      eSA, eSB, ePrm, eSub, EmittedExpr.eval] at hLo hHi hNon hCap hRes
+    simp only [VmConstraint.holdsVm, gBalLoCredit, gBalHiFix, gNonce, gCapFix, gResFix,
+      eSA, eSB, ePrm, eSub, eSelNoop, EmittedExpr.eval] at hLo hHi hNon hCap hRes
+    rw [hsN] at hNon
     refine ⟨by linarith [hLo], by linarith [hHi], by linarith [hNon], by linarith [hCap],
       by linarith [hRes], ?_⟩
     intro i hi
@@ -148,28 +182,41 @@ theorem mintVm_faithful (env : VmRowEnv) :
     · simp only [VmConstraint.holdsVm, gBalLoCredit, eSA, eSB, ePrm, eSub, EmittedExpr.eval]
       rw [hLo]; ring
     · simp only [VmConstraint.holdsVm, gBalHiFix, eSA, eSB, eSub, EmittedExpr.eval]; rw [hHi]; ring
-    · simp only [VmConstraint.holdsVm, gNonceFix, eSA, eSB, eSub, EmittedExpr.eval]; rw [hNon]; ring
+    · simp only [VmConstraint.holdsVm, gNonce, eSA, eSB, eSub, eSelNoop, EmittedExpr.eval]
+      rw [hsN, hNon]; ring
     · simp only [VmConstraint.holdsVm, gCapFix, eSA, eSB, eSub, EmittedExpr.eval]; rw [hCap]; ring
     · simp only [VmConstraint.holdsVm, gResFix, eSA, eSB, eSub, EmittedExpr.eval]; rw [hRes]; ring
     · simp only [VmConstraint.holdsVm, gFieldFix, eSA, eSB, eSub, EmittedExpr.eval]
       rw [hFld i hi]; ring
 
-/-- **Anti-ghost (balance tamper).** A mint row whose post-`bal_lo` is NOT `old + amount` fails the
-`gBalLoCredit` gate (UNSAT). -/
+/-- **Anti-ghost (balance tamper).** A BridgeMint row whose post-`bal_lo` is NOT `old + value_lo`
+(`param1`) fails the `gBalLoCredit` gate (UNSAT). -/
 theorem mintVm_rejects_wrong_balance (env : VmRowEnv)
     (hwrong : env.loc (saCol state.BALANCE_LO)
-      ≠ env.loc (sbCol state.BALANCE_LO) + env.loc (prmCol param.AMOUNT)) :
+      ≠ env.loc (sbCol state.BALANCE_LO) + env.loc (prmCol VALUE_LO)) :
     ¬ (VmConstraint.gate gBalLoCredit).holdsVm env false false := by
   simp only [VmConstraint.holdsVm, gBalLoCredit, eSA, eSB, ePrm, eSub, EmittedExpr.eval]
   intro h; apply hwrong; linarith [h]
 
+/-- **Anti-ghost (wrong nonce delta).** On a BridgeMint row a forged nonce delta
+(`after_nonce ≠ before_nonce + 1` — e.g. the passthrough the FREEZE descriptor wrongly accepted)
+fails the tick gate (`gNonce`) and is UNSAT. -/
+theorem mintVm_rejects_wrong_nonce_delta (env : VmRowEnv) (hrow : IsMintRow env)
+    (hwrong : env.loc (saCol state.NONCE) ≠ env.loc (sbCol state.NONCE) + 1) :
+    ¬ (VmConstraint.gate gNonce).holdsVm env false false := by
+  simp only [VmConstraint.holdsVm, gNonce, eSA, eSB, eSub, eSelNoop, EmittedExpr.eval]
+  rw [hrow.2]; intro h; apply hwrong; linarith [h]
+
 /-! ## §5 — `CellMintSpec` + `RowEncodes` → structured per-cell soundness. -/
 
-/-- The per-cell mint spec: balLo rises by `amt`, the whole rest of the block frozen. -/
+/-- The per-cell mint spec (EffectVM-row image): balLo rises by `amt` (the runtime `value_lo` at
+`param1`), the on-trace sequence nonce TICKS (`post.nonce = pre.nonce + 1`, the runtime
+`new_state.nonce += 1`), the whole rest of the block frozen. Like burn, the runtime row ticks the
+sequence nonce; the executor's frozen ledger nonce is the §7 connector's reconcile. -/
 def CellMintSpec (pre : CellState) (amt : ℤ) (post : CellState) : Prop :=
   post.balLo = pre.balLo + amt
   ∧ post.balHi = pre.balHi
-  ∧ post.nonce = pre.nonce
+  ∧ post.nonce = pre.nonce + 1
   ∧ (∀ i : Fin 8, post.fields i = pre.fields i)
   ∧ post.capRoot = pre.capRoot
   ∧ post.reserved = pre.reserved
@@ -182,7 +229,7 @@ def RowEncodes (env : VmRowEnv) (pre : CellState) (amt : ℤ) (post : CellState)
   ∧ env.loc (sbCol state.CAP_ROOT) = pre.capRoot
   ∧ env.loc (sbCol state.RESERVED) = pre.reserved
   ∧ env.loc (sbCol state.STATE_COMMIT) = pre.commit
-  ∧ env.loc (prmCol param.AMOUNT) = amt
+  ∧ env.loc (prmCol VALUE_LO) = amt
   ∧ env.loc (saCol state.BALANCE_LO) = post.balLo
   ∧ env.loc (saCol state.BALANCE_HI) = post.balHi
   ∧ env.loc (saCol state.NONCE) = post.nonce
@@ -200,7 +247,7 @@ theorem intent_to_cellSpec (env : VmRowEnv) (pre post : CellState) (amt : ℤ)
           hsaLo, hsaHi, hsaN, hsaF, hsaCap, hsaRes, hsaC, hOld, hNew⟩ := henc
   obtain ⟨hbal, hbhi, hnon, hcap, hres, hfld⟩ := hint
   refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩
-  · have : post.balLo = pre.balLo + env.loc (prmCol param.AMOUNT) := by
+  · have : post.balLo = pre.balLo + env.loc (prmCol VALUE_LO) := by
       rw [← hsaLo, ← hsbLo]; exact hbal
     rw [this, hpAmt]
   · rw [← hsaHi, ← hsbHi]; exact hbhi
@@ -222,7 +269,7 @@ theorem mintRowGates_flag_indep (env : VmRowEnv) (b1 b2 : Bool)
 
 /-- **`mintDescriptor_full_sound`.** Satisfying the WHOLE descriptor under `RowEncodes` forces the
 structured per-cell `CellMintSpec` AND publishes `post.commit = PI[NEW_COMMIT]`. -/
-theorem mintDescriptor_full_sound (hash : List ℤ → ℤ) (env : VmRowEnv)
+theorem mintDescriptor_full_sound (hash : List ℤ → ℤ) (env : VmRowEnv) (hrow : IsMintRow env)
     (pre post : CellState) (amt : ℤ)
     (henc : RowEncodes env pre amt post)
     (hsat : satisfiedVm hash mintVmDescriptor env true true) :
@@ -233,7 +280,7 @@ theorem mintDescriptor_full_sound (hash : List ℤ → ℤ) (env : VmRowEnv)
     unfold mintVmDescriptor; simp only [List.mem_append]
     exact Or.inl (Or.inl (Or.inl hc))
   have hgates' := mintRowGates_flag_indep env true true hgates
-  have hint := (mintVm_faithful env).mp hgates'
+  have hint := (mintVm_faithful env hrow).mp hgates'
   refine ⟨intent_to_cellSpec env pre post amt henc hint, ?_⟩
   have hlast : ∀ c ∈ boundaryLastPins, c.holdsVm env false true := by
     intro c hc
@@ -276,27 +323,47 @@ def cellProjA (k : RecordKernelState) (c : CellId) (a : AssetId) : CellState whe
   reserved := 0
   commit   := 0
 
-/-- **`unify_mint` — THE UNIFICATION (the recipient leg).** A committed universe-A mint
-(`MintASpec`, W1: the issuer-move), projected onto the RECIPIENT's `(cell, a)` entry under
-`cellProjA`, satisfies `CellMintSpec` EXACTLY: the recipient's `bal cell a` rises by `amt`; frame
-`0 = 0`. So `CellMintSpec` IS `recCMintAsset`'s per-entry effect at the recipient. The WELL leg —
-the issuer's row falling by the same `amt`, which is what makes the sum exact — is
-`unify_mint_well` below. -/
+/-! ### The ONE genuine divergence (mirroring burn + the transfer keystone): the EffectVM row TICKS
+the runtime nonce; universe-A's mint FREEZES the ledger-entry nonce.
+
+`CellMintSpec` demands `post.nonce = pre.nonce + 1` (the runtime per-cell sequence counter the
+EffectVM row increments on every non-NoOp effect, matching the validated hand-AIR's `s_bridgemint`
+row + the global nonce gate). Universe-A's `recCMintAsset` touches ONLY the `bal` ledger — the
+projected entry's nonce is `0` before AND after (`cellProjA` sets it to `0`). So the executor's
+per-entry image is the nonce-FREEZE variant. We unify against THAT and name the gap exactly, as
+`EffectVmEmitBurn` does (`exec_nonce_is_frozen_not_ticked`). -/
+
+/-- The executor's genuine per-entry image: `CellMintSpec` with the nonce-TICK replaced by
+nonce-FREEZE. Every other clause (balLo credit, balHi/fields/capRoot/reserved freeze) is identical. -/
+def CellMintSpecFrozenNonce (pre : CellState) (amt : ℤ) (post : CellState) : Prop :=
+  post.balLo = pre.balLo + amt
+  ∧ post.balHi = pre.balHi
+  ∧ post.nonce = pre.nonce          -- FROZEN (executor ledger image) — the row spec demands `+ 1`
+  ∧ (∀ i : Fin 8, post.fields i = pre.fields i)
+  ∧ post.capRoot = pre.capRoot
+  ∧ post.reserved = pre.reserved
+
+/-- **`unify_mint` — THE UNIFICATION (the recipient leg, frozen-nonce variant).** A committed
+universe-A mint (`MintASpec`, W1: the issuer-move), projected onto the RECIPIENT's `(cell, a)` entry
+under `cellProjA`, satisfies `CellMintSpecFrozenNonce` EXACTLY: the recipient's `bal cell a` rises by
+`amt`; frame `0 = 0`. So the executor's per-entry effect IS the keystone's frozen-nonce spec at the
+recipient, NOT a fourth spec. The WELL leg — the issuer's row falling by the same `amt`, which is
+what makes the sum exact — is `unify_mint_well` below. -/
 theorem unify_mint (s s' : RecChainedState) (actor cell : CellId) (a : AssetId) (amt : ℤ)
     (hspec : MintASpec s actor cell a amt s') :
-    CellMintSpec (cellProjA s.kernel cell a) amt (cellProjA s'.kernel cell a) := by
+    CellMintSpecFrozenNonce (cellProjA s.kernel cell a) amt (cellProjA s'.kernel cell a) := by
   refine ⟨?_, rfl, rfl, fun _ => rfl, rfl, rfl⟩
   show s'.kernel.bal cell a = s.kernel.bal cell a + amt
   rw [hspec.2.1]
   exact (recTransferBal_mint_correct s.kernel.bal cell a amt hspec.1.2.2.2.2).2.1
 
 /-- **`unify_mint_well` — THE WELL LEG (W1).** The SAME committed mint, projected onto the ISSUER's
-well `(a, a)`, satisfies `CellMintSpec` with the NEGATED amount: the well falls by exactly `amt`
-(the negative-capable well carries −supply). Recipient `+amt` (above) and well `−amt` (here) are
-the two rows of ONE issuer-move — their sum is the exact-conservation content at row level. -/
+well `(a, a)`, satisfies the frozen-nonce spec with the NEGATED amount: the well falls by exactly
+`amt` (the negative-capable well carries −supply). Recipient `+amt` (above) and well `−amt` (here)
+are the two rows of ONE issuer-move — their sum is the exact-conservation content at row level. -/
 theorem unify_mint_well (s s' : RecChainedState) (actor cell : CellId) (a : AssetId) (amt : ℤ)
     (hspec : MintASpec s actor cell a amt s') :
-    CellMintSpec (cellProjA s.kernel a a) (-amt) (cellProjA s'.kernel a a) := by
+    CellMintSpecFrozenNonce (cellProjA s.kernel a a) (-amt) (cellProjA s'.kernel a a) := by
   refine ⟨?_, rfl, rfl, fun _ => rfl, rfl, rfl⟩
   show s'.kernel.bal a a = s.kernel.bal a a + (-amt)
   rw [hspec.2.1]
@@ -306,76 +373,97 @@ theorem unify_mint_well (s s' : RecChainedState) (actor cell : CellId) (a : Asse
 /-- **`unify_mint_exec` — same, against the executor.** -/
 theorem unify_mint_exec (s s' : RecChainedState) (actor cell : CellId) (a : AssetId) (amt : ℤ)
     (h : recCMintAsset s actor cell a amt = some s') :
-    CellMintSpec (cellProjA s.kernel cell a) amt (cellProjA s'.kernel cell a) :=
+    CellMintSpecFrozenNonce (cellProjA s.kernel cell a) amt (cellProjA s'.kernel cell a) :=
   unify_mint s s' actor cell a amt ((recCMintAsset_iff_spec s actor cell a amt s').mp h)
 
 /-- **`unify_mint_well_exec` — the well leg, against the executor.** -/
 theorem unify_mint_well_exec (s s' : RecChainedState) (actor cell : CellId) (a : AssetId) (amt : ℤ)
     (h : recCMintAsset s actor cell a amt = some s') :
-    CellMintSpec (cellProjA s.kernel a a) (-amt) (cellProjA s'.kernel a a) :=
+    CellMintSpecFrozenNonce (cellProjA s.kernel a a) (-amt) (cellProjA s'.kernel a a) :=
   unify_mint_well s s' actor cell a amt ((recCMintAsset_iff_spec s actor cell a amt s').mp h)
 
-/-- **`descriptor_agrees_with_executor` — per-cell circuit⟺executor agreement.** The descriptor's
-pinned post-state agrees with the executor's minted-entry post-state on EVERY clause (the conserved
-credit + the frozen frame). No divergence — the nonce-freeze matches (mint ticks nothing). -/
+/-- **`exec_nonce_is_frozen_not_ticked` — the nonce-tick gap, named precisely.** The executor's
+projected minted-entry nonce is FROZEN (`0 = 0`), whereas the EffectVM row's `CellMintSpec` TICKS it
+(`pre.nonce + 1`). The two agree on the minted entry iff `0 = 0 + 1`, which is FALSE — so the gap is
+pinned to exactly the nonce column (the EffectVM-row nonce being a runtime sequence counter, NOT the
+universe-A ledger nonce), exactly as burn reports it. -/
+theorem exec_nonce_is_frozen_not_ticked (s s' : RecChainedState) (actor cell : CellId) (a : AssetId)
+    (amt : ℤ) (h : recCMintAsset s actor cell a amt = some s') :
+    (cellProjA s'.kernel cell a).nonce = (cellProjA s.kernel cell a).nonce :=
+  (unify_mint_exec s s' actor cell a amt h).2.2.1
+
+/-- **`descriptor_agrees_with_executor` — per-cell circuit⟺executor agreement (modulo the nonce-tick
+gap).** The descriptor's pinned post-state agrees with the executor's minted-entry post-state on EVERY
+conserved/frame clause (the credit + the frozen balHi/fields/capRoot/reserved). The ONE divergence is
+the nonce (descriptor ticks the runtime counter; executor freezes the ledger entry —
+`exec_nonce_is_frozen_not_ticked`), reported not papered, exactly as burn. -/
 theorem descriptor_agrees_with_executor
-    (hash : List ℤ → ℤ) (env : VmRowEnv)
+    (hash : List ℤ → ℤ) (env : VmRowEnv) (hrow : IsMintRow env)
     (s s' : RecChainedState) (actor cell : CellId) (a : AssetId) (amt : ℤ) (post : CellState)
     (henc : RowEncodes env (cellProjA s.kernel cell a) amt post)
     (hsat : satisfiedVm hash mintVmDescriptor env true true)
     (hexec : recCMintAsset s actor cell a amt = some s') :
     post.balLo = (cellProjA s'.kernel cell a).balLo
     ∧ post.balHi = (cellProjA s'.kernel cell a).balHi
-    ∧ post.nonce = (cellProjA s'.kernel cell a).nonce
     ∧ (∀ i, post.fields i = (cellProjA s'.kernel cell a).fields i)
     ∧ post.capRoot = (cellProjA s'.kernel cell a).capRoot
     ∧ post.reserved = (cellProjA s'.kernel cell a).reserved := by
-  obtain ⟨hcirc, _⟩ := mintDescriptor_full_sound hash env (cellProjA s.kernel cell a) post amt henc hsat
-  obtain ⟨hcLo, hcHi, hcN, hcF, hcCap, hcRes⟩ := hcirc
-  obtain ⟨heLo, heHi, heN, heF, heCap, heRes⟩ := unify_mint_exec s s' actor cell a amt hexec
-  refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩
+  obtain ⟨hcirc, _⟩ :=
+    mintDescriptor_full_sound hash env hrow (cellProjA s.kernel cell a) post amt henc hsat
+  obtain ⟨hcLo, hcHi, _hcN, hcF, hcCap, hcRes⟩ := hcirc
+  obtain ⟨heLo, heHi, _heN, heF, heCap, heRes⟩ := unify_mint_exec s s' actor cell a amt hexec
+  refine ⟨?_, ?_, ?_, ?_, ?_⟩
   · rw [hcLo, heLo]
   · rw [hcHi, heHi]
-  · rw [hcN, heN]
   · intro i; rw [hcF i, heF i]
   · rw [hcCap, heCap]
   · rw [hcRes, heRes]
 
 /-! ## §8 — NON-VACUITY. -/
 
-/-- A concrete mint row: `bal_lo 100 → 130`, `amount = 30`, frame fixed, nonce 5 → 5 (frozen). -/
+/-- A concrete BridgeMint row: selector `sel::BRIDGE_MINT = 40`, `bal_lo 100 → 130`, `value_lo = 30`
+at `param1`, frame fixed, nonce 5 → 6 (TICK). -/
 def goodMintRow : VmRowEnv where
   loc := fun v =>
     if v = selM.MINT then 1
     else if v = sbCol state.BALANCE_LO then 100
     else if v = saCol state.BALANCE_LO then 130
     else if v = sbCol state.NONCE then 5
-    else if v = saCol state.NONCE then 5
-    else if v = prmCol param.AMOUNT then 30
+    else if v = saCol state.NONCE then 6
+    else if v = prmCol VALUE_LO then 30
     else 0
   nxt := fun _ => 0
   pub := fun _ => 0
 
-/-- **NON-VACUITY (witness TRUE).** `goodMintRow` REALIZES the mint intent (`100 → 130 = 100 + 30`). -/
+/-- `goodMintRow` is a genuine BridgeMint row (`s_bridge_mint = 1`, `s_noop = 0`). -/
+theorem goodMintRow_isMintRow : IsMintRow goodMintRow := by
+  unfold IsMintRow goodMintRow
+  refine ⟨by norm_num [selM.MINT], ?_⟩
+  -- s_noop = 0: col 0 (NOOP) is not the selector (40), nor any of the named columns.
+  norm_num [sel.NOOP, selM.MINT, sbCol, saCol, prmCol, STATE_BEFORE_BASE, STATE_AFTER_BASE,
+    PARAM_BASE, NUM_EFFECTS, STATE_SIZE, NUM_PARAMS, state.BALANCE_LO, state.NONCE, VALUE_LO]
+
+/-- **NON-VACUITY (witness TRUE).** `goodMintRow` REALIZES the mint intent: `bal_lo 100 → 130 =
+100 + 30` (`value_lo` at `param1`), nonce ticks `5 → 6`, frame frozen. -/
 theorem goodMintRow_realizes_intent : MintRowIntent goodMintRow := by
   unfold MintRowIntent goodMintRow
   simp only [sbCol, saCol, prmCol, selM.MINT, STATE_BEFORE_BASE, STATE_AFTER_BASE, PARAM_BASE,
     NUM_EFFECTS, STATE_SIZE, NUM_PARAMS, state.BALANCE_LO, state.BALANCE_HI, state.NONCE,
-    state.CAP_ROOT, state.RESERVED, state.FIELD_BASE, param.AMOUNT]
-  refine ⟨by norm_num, rfl, rfl, rfl, rfl, ?_⟩
+    state.CAP_ROOT, state.RESERVED, state.FIELD_BASE, VALUE_LO]
+  refine ⟨by norm_num, rfl, by norm_num, rfl, rfl, ?_⟩
   intro i hi
-  have e1 : (76 + (3 + i) = 4) = False := by simp; omega
+  have e1 : (76 + (3 + i) = 40) = False := by simp; omega
   have e2 : (76 + (3 + i) = 54) = False := by simp; omega
   have e3 : (76 + (3 + i) = 76) = False := by simp
   have e4 : (76 + (3 + i) = 56) = False := by simp; omega
   have e5 : (76 + (3 + i) = 78) = False := by simp; omega
-  have e6 : (76 + (3 + i) = 68) = False := by simp; omega
-  have f1 : (54 + (3 + i) = 4) = False := by simp; omega
+  have e6 : (76 + (3 + i) = 69) = False := by simp; omega
+  have f1 : (54 + (3 + i) = 40) = False := by simp; omega
   have f2 : (54 + (3 + i) = 54) = False := by simp
   have f3 : (54 + (3 + i) = 76) = False := by simp; omega
   have f4 : (54 + (3 + i) = 56) = False := by simp; omega
   have f5 : (54 + (3 + i) = 78) = False := by simp; omega
-  have f6 : (54 + (3 + i) = 68) = False := by simp; omega
+  have f6 : (54 + (3 + i) = 69) = False := by simp; omega
   simp only [e1, e2, e3, e4, e5, e6, f1, f2, f3, f4, f5, f6, if_false]
 
 /-- A FORGED mint row: `goodMintRow` with post-`bal_lo` tampered to `999 ≠ 130`. -/
@@ -390,7 +478,7 @@ theorem badMintRow_rejected : ¬ (VmConstraint.gate gBalLoCredit).holdsVm badMin
   apply mintVm_rejects_wrong_balance
   simp only [badMintRow, goodMintRow, sbCol, saCol, prmCol, selM.MINT, STATE_BEFORE_BASE,
     STATE_AFTER_BASE, PARAM_BASE, NUM_EFFECTS, STATE_SIZE, NUM_PARAMS, state.BALANCE_LO,
-    state.NONCE, param.AMOUNT]
+    state.NONCE, VALUE_LO]
   norm_num
 
 /-! ## §8½ — THE CLASS-A CAPSTONE (per-cell, the transfer bar exactly).
@@ -411,11 +499,12 @@ turn property (cited, not papered), not a per-cell gap. -/
 
 /-- **`mintDescriptor_classA` — the per-cell class-A capstone.** Satisfying the runnable descriptor under
 `RowEncodes`, for the minted `(cell, asset)` entry of a committed `recCMintAsset`, forces: (a) the FULL
-per-cell `CellMintSpec` (bal_lo credited by `amt`, the WHOLE frame frozen); (b) the post-state published
-as `PI[NEW_COMMIT]`; and (c) AGREEMENT with the executor's per-cell post-state on every clause. The
-anti-ghost (`mintDescriptor_commit_binds_state`) covers all 13 absorbed columns. This is the transfer
-class-A bar, per cell. -/
-theorem mintDescriptor_classA (hash : List ℤ → ℤ) (env : VmRowEnv)
+per-cell `CellMintSpec` (bal_lo credited by `amt`, nonce TICKED, the frame frozen); (b) the post-state
+published as `PI[NEW_COMMIT]`; and (c) AGREEMENT with the executor's per-cell post-state on every
+conserved/frame clause (the ONE nonce-tick divergence is `exec_nonce_is_frozen_not_ticked`, named).
+The anti-ghost (`mintDescriptor_commit_binds_state`) covers all 13 absorbed columns. This is the
+transfer/burn class-A bar, per cell. -/
+theorem mintDescriptor_classA (hash : List ℤ → ℤ) (env : VmRowEnv) (hrow : IsMintRow env)
     (s s' : RecChainedState) (actor cell : CellId) (a : AssetId) (amt : ℤ) (post : CellState)
     (henc : RowEncodes env (cellProjA s.kernel cell a) amt post)
     (hsat : satisfiedVm hash mintVmDescriptor env true true)
@@ -424,14 +513,14 @@ theorem mintDescriptor_classA (hash : List ℤ → ℤ) (env : VmRowEnv)
     ∧ post.commit = env.pub pi.NEW_COMMIT
     ∧ post.balLo = (cellProjA s'.kernel cell a).balLo
     ∧ post.balHi = (cellProjA s'.kernel cell a).balHi
-    ∧ post.nonce = (cellProjA s'.kernel cell a).nonce
     ∧ (∀ i, post.fields i = (cellProjA s'.kernel cell a).fields i)
     ∧ post.capRoot = (cellProjA s'.kernel cell a).capRoot
     ∧ post.reserved = (cellProjA s'.kernel cell a).reserved := by
-  obtain ⟨hspec, hcommit⟩ := mintDescriptor_full_sound hash env (cellProjA s.kernel cell a) post amt henc hsat
-  obtain ⟨hLo, hHi, hN, hF, hCap, hRes⟩ :=
-    descriptor_agrees_with_executor hash env s s' actor cell a amt post henc hsat hexec
-  exact ⟨hspec, hcommit, hLo, hHi, hN, hF, hCap, hRes⟩
+  obtain ⟨hspec, hcommit⟩ :=
+    mintDescriptor_full_sound hash env hrow (cellProjA s.kernel cell a) post amt henc hsat
+  obtain ⟨hLo, hHi, hF, hCap, hRes⟩ :=
+    descriptor_agrees_with_executor hash env hrow s s' actor cell a amt post henc hsat hexec
+  exact ⟨hspec, hcommit, hLo, hHi, hF, hCap, hRes⟩
 
 /-! ## §9 — Axiom-hygiene tripwires. -/
 
@@ -440,9 +529,15 @@ theorem mintDescriptor_classA (hash : List ℤ → ℤ) (env : VmRowEnv)
 #guard mintVmDescriptor.constraints.length == 13 + 14 + 4 + 3
 #guard mintVmDescriptor.hashSites.length == 4
 #guard mintVmDescriptor.traceWidth == 186
+-- The credit reads `param1` (the runtime value_lo), not `param0` (= `param.AMOUNT`, the MINT_HASH);
+-- the selector is the runtime `sel::BRIDGE_MINT = 40`.
+#guard VALUE_LO == 1
+#guard VALUE_LO ≠ param.AMOUNT
+#guard selM.MINT == 40
 
 #assert_axioms mintVm_faithful
 #assert_axioms mintVm_rejects_wrong_balance
+#assert_axioms mintVm_rejects_wrong_nonce_delta
 #assert_axioms intent_to_cellSpec
 #assert_axioms mintRowGates_flag_indep
 #assert_axioms mintDescriptor_full_sound
@@ -451,7 +546,9 @@ theorem mintDescriptor_classA (hash : List ℤ → ℤ) (env : VmRowEnv)
 #assert_axioms unify_mint_well
 #assert_axioms unify_mint_exec
 #assert_axioms unify_mint_well_exec
+#assert_axioms exec_nonce_is_frozen_not_ticked
 #assert_axioms descriptor_agrees_with_executor
+#assert_axioms goodMintRow_isMintRow
 #assert_axioms goodMintRow_realizes_intent
 #assert_axioms badMintRow_rejected
 

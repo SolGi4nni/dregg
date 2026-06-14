@@ -81,7 +81,7 @@ open Dregg2.Exec.Admission (commitPrologue)
 -- The class-A mint/burn runnable descriptors + their per-cell full-state soundness (§M targets). Opened
 -- WITHOUT their `RowEncodes`/`CellState`/`cellProjA` (those collide with the transfer-keystone names
 -- already open above); those are named with their full path at use sites.
-open Dregg2.Circuit.Emit.EffectVmEmitMint (mintVmDescriptor mintDescriptor_full_sound)
+open Dregg2.Circuit.Emit.EffectVmEmitMint (mintVmDescriptor mintDescriptor_full_sound IsMintRow)
 open Dregg2.Circuit.Emit.EffectVmEmitBurn (burnVmDescriptor burnDescriptor_full_sound IsBurnRow)
 
 /-! ## §1 — The placeholder descriptor for terms whose circuit is not (yet) emitted.
@@ -394,36 +394,40 @@ Suppose, for the Argus mint term `mintStmt actor cell amt`:
 
 Then the circuit's pinned post-state `post` AGREES with the executor's post-cell projection
 `cellProj k' cell` on the conserved balance (credited by `amt`) AND the WHOLE frame (balHi, the 8
-fields, cap_root, reserved each frozen) AND the nonce — mint has NO divergence (both the descriptor and
-`recKMint` freeze the cell nonce, `EffectVmEmitMint` §BOUNDARY). So the circuit the prover runs for mint pins
-the per-cell state the IR term's executor produces. -/
+fields, cap_root, reserved each frozen); and the per-effect nonce is RECONCILED exactly as burn —
+`NonceReconciled` bundles the two facts (the reconciled descriptor TICKS the cell nonce on the active
+BridgeMint row, matching the runtime `new_state.nonce += 1`; `recKMint` FREEZES the ledger nonce,
+`EffectVmEmitMint` §7), with the turn prologue's single tick as the net
+(`mint_compile_sound_nonce_is_turn_tick`). So the circuit the prover runs for mint pins the per-cell
+state the IR term's executor produces, and the nonce ticks once PER TURN (in the prologue), not per
+effect. (The earlier statement claimed mint FREEZES the row nonce — that was the source mismodel,
+now corrected to the runtime tick.) -/
 theorem mint_compile_sound
-    (hash : List ℤ → ℤ) (env : VmRowEnv)
+    (hash : List ℤ → ℤ) (env : VmRowEnv) (hrow : IsMintRow env)
     (k k' : RecordKernelState) (actor cell : CellId) (amt : ℤ) (post : CellState)
     (henc : Dregg2.Circuit.Emit.EffectVmEmitMint.RowEncodes env (cellProj k cell) amt post)
     (hsat : satisfiedVm hash (compileE .mint) env true true)
     (hexec : interp (mintStmt actor cell amt) k = some k') :
-    post.balLo = (cellProj k' cell).balLo
-    ∧ post.balHi = (cellProj k' cell).balHi
-    ∧ (∀ i, post.fields i = (cellProj k' cell).fields i)
-    ∧ post.capRoot = (cellProj k' cell).capRoot
-    ∧ post.reserved = (cellProj k' cell).reserved
-    -- mint MATCHES on the nonce (no transfer-style divergence): both freeze the cell nonce.
-    ∧ post.nonce = (cellProj k' cell).nonce := by
+    ( post.balLo = (cellProj k' cell).balLo
+      ∧ post.balHi = (cellProj k' cell).balHi
+      ∧ (∀ i, post.fields i = (cellProj k' cell).fields i)
+      ∧ post.capRoot = (cellProj k' cell).capRoot
+      ∧ post.reserved = (cellProj k' cell).reserved )
+    -- … and the per-effect nonce is RECONCILED (NOT a divergence): descriptor ticks, executor freezes,
+    --   net = the turn's single prologue tick (`Argus.Nonce.perEffect_nonce_reconciles_to_turn`).
+    ∧ NonceReconciled (cellProj k cell).nonce post.nonce (cellProj k' cell).nonce := by
   -- circuit side: `compileE .mint` IS `mintVmDescriptor`, so the audited soundness forces `CellMintSpec`.
   rw [compile_mintStmt] at hsat
-  obtain ⟨hcLo, hcHi, hcN, hcF, hcCap, hcRes⟩ := (mintDescriptor_full_sound hash env (cellProj k cell)
-    post amt henc hsat).1
+  obtain ⟨hcLo, hcHi, hcN, hcF, hcCap, hcRes⟩ :=
+    (mintDescriptor_full_sound hash env hrow (cellProj k cell) post amt henc hsat).1
   -- executor side: the cornerstone turns the IR term's `interp` into the verified `recKMint`.
   rw [interp_mintStmt_eq_recKMint] at hexec
   have heLo := recKMint_proj_balLo hexec
   have heN := recKMint_proj_nonce hexec
-  -- the frozen-frame clauses agree because BOTH `cellProj k cell` and `cellProj k' cell` project the
-  -- non-balance limbs to `0` (definitional `rfl`), so `hc_ : post.X = (cellProj k cell).X` chains to
-  -- `(cellProj k' cell).X` by `rfl`.
-  refine ⟨?_, hcHi.trans rfl, fun i => (hcF i).trans rfl, hcCap.trans rfl, hcRes.trans rfl, ?_⟩
+  -- frozen frame: both projections send the non-balance limbs to `0`, so each `hc_` chains by `rfl`. The
+  -- descriptor tick `hcN` + executor freeze `heN` ARE `NonceReconciled`'s two clauses.
+  refine ⟨⟨?_, hcHi.trans rfl, fun i => (hcF i).trans rfl, hcCap.trans rfl, hcRes.trans rfl⟩, hcN, heN⟩
   · rw [hcLo, heLo]                       -- balLo: pre + amt (circuit) = pre + amt (executor)
-  · rw [hcN, heN]                         -- nonce: post = pre.nonce (freeze) = (cellProj k' cell).nonce
 
 /-- **`burn_compile_sound` — the welded soundness (burn slice).**
 
@@ -467,6 +471,31 @@ theorem burn_compile_sound
 
 #assert_axioms mint_compile_sound
 #assert_axioms burn_compile_sound
+
+/-- **`mint_compile_sound_nonce_is_turn_tick` — the close, applied to mint.** The `NonceReconciled` that
+`mint_compile_sound` yields, composed with a turn prologue over the minted cell (read as the turn's agent),
+gives the whole-turn ONE-tick law: the body freezes (zero contribution), the prologue ticks once, and the
+descriptor's per-effect post nonce EQUALS that single prologue tick. So mint's row `+1` is the turn's one
+tick — the nonce-tick divergence is CLOSED, identically to burn and transfer. -/
+theorem mint_compile_sound_nonce_is_turn_tick
+    (hash : List ℤ → ℤ) (env : VmRowEnv) (hrow : IsMintRow env)
+    (k k' : RecordKernelState) (actor cell : CellId) (amt : ℤ) (post : CellState)
+    (henc : Dregg2.Circuit.Emit.EffectVmEmitMint.RowEncodes env (cellProj k cell) amt post)
+    (hsat : satisfiedVm hash (compileE .mint) env true true)
+    (hexec : interp (mintStmt actor cell amt) k = some k')
+    (s : Dregg2.Exec.RecChainedState) (fee : Int)
+    (hpre  : (cellProj k cell).nonce  = nonceOf (s.kernel.cell cell))
+    (hexecAgent : (cellProj k' cell).nonce = nonceOf (s.kernel.cell cell)) :
+    nonceOf ((commitPrologue s cell fee).kernel.cell cell) = nonceOf (s.kernel.cell cell) + 1
+    ∧ post.nonce = nonceOf ((commitPrologue s cell fee).kernel.cell cell)
+    ∧ post.nonce = (cellProj k' cell).nonce + 1 := by
+  have hr : NonceReconciled (cellProj k cell).nonce post.nonce (cellProj k' cell).nonce :=
+    (mint_compile_sound hash env hrow k k' actor cell amt post henc hsat hexec).2
+  obtain ⟨_hzero, htick, hmatch, hresid⟩ :=
+    perEffect_nonce_reconciles_to_turn hr s cell fee hexecAgent hpre
+  exact ⟨htick, hmatch, hresid⟩
+
+#assert_axioms mint_compile_sound_nonce_is_turn_tick
 
 /-- **`burn_compile_sound_nonce_is_turn_tick` — the close, applied to burn.** The `NonceReconciled` that
 `burn_compile_sound` yields, composed with a turn prologue over the burned cell (read as the turn's agent),

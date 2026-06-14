@@ -17,11 +17,13 @@ column frozen, the WHOLE post-block bound under Poseidon2 CR, connected to the v
 
 ## The descriptor (the per-field write, parameterized by the written slot)
 
-`setFieldVmDescriptor slot` (`slot : Fin 8`): the per-row gates write `fields[slot]_after =
-param.VALUE` (the written value rides the `param.AMOUNT` column, here named `VALUE`, the SAME role
-transfer's amount column plays), and FREEZE every other state-block column — `bal_lo`, `bal_hi`,
-`nonce`, `cap_root`, `reserved`, and the OTHER seven field columns. So the descriptor pins the WHOLE
-per-cell post-block: one field moved to the written value, the rest literally frozen.
+`setFieldVmDescriptor slot` (`slot : Fin 8`): the per-row gates write `fields[slot]_after = param1`
+(the runtime NEW_VALUE column, SELECTOR-GATED by `sel::SET_FIELD = 2`), TICK the per-cell sequence
+nonce (`after = before + 1`, the runtime `new_state.nonce += 1` — like burn/transfer), and FREEZE the
+rest of the state-block — `bal_lo`, `bal_hi`, `cap_root`, `reserved`, and the OTHER seven field
+columns. So the descriptor pins the WHOLE per-cell post-block: one field moved to the written value,
+the sequence nonce ticked, the economic frame frozen. (RECONCILED with the runtime in the cutover —
+the earlier descriptor read the value from `param0`, froze the nonce, and named the selector col 54.)
 
 ## What is bound (class A) vs the boundary (named)
 
@@ -56,7 +58,7 @@ namespace Dregg2.Circuit.Emit.EffectVmEmitSetField
 open Dregg2.Circuit
 open Dregg2.Circuit.Emit.EffectVmEmit
 open Dregg2.Circuit.Emit.EffectVmEmitTransfer
-  (eSB eSA eSub ePrm gBalHi gNonce gCapPass gResPass gFieldPass
+  (eSB eSA eSub ePrm eSelNoop gBalHi gNonce gCapPass gResPass gFieldPass
    transferHashSites)
 open Dregg2.Circuit.Emit.EffectVmEmitTransferSound
   (CellState absorbedCols absorbed_determined_by_commit)
@@ -72,43 +74,65 @@ open Dregg2.Circuit.Spec.CellStateField (SetFieldSpec SetFieldGuard setFieldCell
 set_option linter.unusedVariables false
 set_option autoImplicit false
 
-/-! ## §0 — the `setField` selector + the value-carrier param column. -/
+/-! ## §0 — the `setField` selector + the value-carrier param column.
 
-/-- The `setField` selector column index (runtime `sel::SET_FIELD`). A LOCAL constant. -/
-def SEL_SET_FIELD : Nat := 54
+RECONCILED WITH THE RUNTIME (`circuit/src/effect_vm/{trace,air}.rs`, the cutover model-found seam).
+The runtime's `Effect::SetField { field_idx, value }` writes `param0 = field_index`,
+`param1 = new_value`, GATES every field constraint by `s_setfield` (`sel::SET_FIELD = 2`), and TICKS
+the per-cell sequence nonce (`new_state.nonce += 1`) on the active row. The earlier descriptor froze
+the nonce, read the value from `param.AMOUNT = param0` (the runtime's FIELD_INDEX), and left the write
+gate UNGATED with `SEL_SET_FIELD = 54` (col 54 = `sbCol BALANCE_LO`, NOT a selector). All three are
+corrected here so the SOURCE descriptor matches the runtime (the rotated registry's `setFieldV3`
+carries the same corrections — `EffectVmEmitRotationV3.setFieldTickFace`). -/
 
-/-- The written value rides the `param.AMOUNT` column (the same carrier role transfer's amount has).
-We name it `VALUE` for clarity: `fields[slot]_after = param.VALUE`. -/
-def VALUE : Nat := param.AMOUNT
+/-- The `setField` selector column index (runtime `sel::SET_FIELD = 2`). The earlier `54` was a bug
+(column 54 is `sbCol state.BALANCE_LO`, not a selector); the runtime trace generator writes
+`row[2] = 1` on the active setField row (`effect_selector`). -/
+def SEL_SET_FIELD : Nat := 2
+
+/-- The written value rides the runtime NEW_VALUE param column `param1` (`air.rs` `new_value = p1`).
+The earlier `param.AMOUNT = param0` was the runtime's FIELD_INDEX column, not the value. (Runtime
+`param::NEW_VALUE = 1`; the param namespace carries only `AMOUNT`/`DIRECTION`, so this is a LOCAL
+constant naming the runtime's value column directly.) -/
+def VALUE : Nat := 1
 
 /-- The row is a setField row: `s_set_field = 1`, `s_noop = 0`. -/
 def IsSetFieldRow (env : VmRowEnv) : Prop :=
   env.loc SEL_SET_FIELD = 1 ∧ env.loc sel.NOOP = 0
 
-/-! ## §1 — the per-row gates: write `fields[slot]`, freeze every other column.
+/-! ## §1 — the per-row gates: write `fields[slot]` (selector-gated, param1), tick the nonce, freeze
+the rest.
 
-`slot : Fin 8` is the written field slot. The write gate `gFieldWrite slot` forces
-`fields[slot]_after = param.VALUE`. The other seven field columns + bal/nonce/cap/reserved are
-FROZEN (passthrough). The nonce here is FROZEN (a field write does not tick the on-trace seq-nonce;
-the runtime metadata bump is the `incrementNonce` row, distinct). -/
+`slot : Fin 8` is the written field slot. The write gate `gFieldWrite slot`, SELECTOR-GATED by
+`s_set_field`, forces `fields[slot]_after = param1` (the runtime NEW_VALUE). The other seven field
+columns + bal/cap/reserved are FROZEN (passthrough). The nonce TICKS (`after = before + 1` on the
+active row), matching the runtime's `new_state.nonce += 1` — the transfer/noteSpend nonce gate body.
 
-/-- The field-`slot` WRITE gate: `fields[slot]_after − param.VALUE = 0`. -/
+The write gate's `s_set_field` factor is LOAD-BEARING for multi-row traces: the field write PERSISTS
+into the after-state, so a trailing NoOp pad row carries `fields[slot]_after = (written value)` while
+its `param1 = 0` — an UNGATED write gate would fire `written_value − 0 ≠ 0` and the honest 64-row
+trace would be UNSAT. With the `s_set_field` factor the gate VANISHES on NoOp rows and binds only the
+active row (`air.rs` gates every setField constraint by `s_setfield`). The freeze/tick gates degenerate
+naturally on NoOp (`after − before = 0`, and the tick gate's `−(1 − s_noop)` term vanishes when
+`s_noop = 1`), so only the write gate needs the factor. -/
+
+/-- The field-`slot` WRITE gate, SELECTOR-GATED by `s_set_field` (`sel::SET_FIELD = 2`):
+`s_set_field · (fields[slot]_after − param1) = 0` — the runtime's gated NEW_VALUE write. -/
 def gFieldWrite (slot : Fin 8) : EmittedExpr :=
-  eSub (eSA (state.FIELD_BASE + slot.val)) (ePrm VALUE)
+  .mul (.var SEL_SET_FIELD) (eSub (eSA (state.FIELD_BASE + slot.val)) (ePrm VALUE))
 
 /-- Balance-lo FREEZE body. -/
 def gBalLoFreeze : EmittedExpr := eSub (eSA state.BALANCE_LO) (eSB state.BALANCE_LO)
-
-/-- Nonce FREEZE body (a field write does NOT tick the on-trace seq-nonce). -/
-def gNonceFreeze : EmittedExpr := eSub (eSA state.NONCE) (eSB state.NONCE)
 
 /-- The seven OTHER field-passthrough gates (every field column except `slot`). -/
 def gOtherFieldsAll (slot : Fin 8) : List VmConstraint :=
   ((List.range 8).filter (· ≠ slot.val)).map (fun i => VmConstraint.gate (gFieldPass i))
 
-/-- The per-row gates: write `fields[slot]`, freeze the rest of the block. -/
+/-- The per-row gates: write `fields[slot]` (selector-gated, value at `param1`), TICK the nonce
+(`gNonce` = the transfer/noteSpend `(after − before) − (1 − s_noop)` gate), freeze the rest of the
+block. -/
 def setFieldRowGates (slot : Fin 8) : List VmConstraint :=
-  [ .gate (gFieldWrite slot), .gate gBalLoFreeze, .gate gBalHi, .gate gNonceFreeze
+  [ .gate (gFieldWrite slot), .gate gBalLoFreeze, .gate gBalHi, .gate gNonce
   , .gate gCapPass, .gate gResPass ] ++ gOtherFieldsAll slot
 
 /-! ## §2 — the emitted descriptor (slot-parameterized, keystone hash sites + PI pins). -/
@@ -126,31 +150,46 @@ def setFieldVmDescriptor (slot : Fin 8) : EffectVmDescriptor :=
   , hashSites := transferHashSites
   , ranges := [ ⟨saCol state.BALANCE_LO, 30⟩, ⟨saCol state.BALANCE_HI, 30⟩ ] }
 
-/-! ## §3 — the ROW INTENT: write `fields[slot]` to the value, freeze everything else. -/
+/-! ## §3 — the ROW INTENT: write `fields[slot]` to the value, TICK the nonce, freeze the rest.
 
-/-- **`SetFieldRowIntent slot env`** — the field-`slot` write: `fields[slot]_after = param.VALUE`;
-every OTHER state-block column FROZEN (bal limbs, nonce, cap_root, reserved, the other 7 fields). -/
+`SetFieldRowIntent` is the per-row transition on an ACTIVE setField row (`s_set_field = 1`,
+`s_noop = 0` — the `IsSetFieldRow` premise the faithfulness theorem carries). On that row the
+gated write gate degenerates to `fields[slot]_after = param1` and the tick gate to
+`after_nonce = before_nonce + 1`. (Off the active row — e.g. a NoOp pad — the gates degenerate
+differently: the write gate vanishes and the tick gate freezes; faithfulness on a pad row is the
+trivial passthrough, not this intent.) -/
+
+/-- **`SetFieldRowIntent slot env`** — the field-`slot` write on an active setField row:
+`fields[slot]_after = param1` (the runtime NEW_VALUE); the nonce TICKS
+(`after_nonce = before_nonce + 1`, the runtime `new_state.nonce += 1`); every OTHER state-block
+column FROZEN (bal limbs, cap_root, reserved, the other 7 fields). -/
 def SetFieldRowIntent (slot : Fin 8) (env : VmRowEnv) : Prop :=
   env.loc (saCol (state.FIELD_BASE + slot.val)) = env.loc (prmCol VALUE)
   ∧ env.loc (saCol state.BALANCE_LO) = env.loc (sbCol state.BALANCE_LO)
   ∧ env.loc (saCol state.BALANCE_HI) = env.loc (sbCol state.BALANCE_HI)
-  ∧ env.loc (saCol state.NONCE) = env.loc (sbCol state.NONCE)
+  ∧ env.loc (saCol state.NONCE) = env.loc (sbCol state.NONCE) + 1
   ∧ env.loc (saCol state.CAP_ROOT) = env.loc (sbCol state.CAP_ROOT)
   ∧ env.loc (saCol state.RESERVED) = env.loc (sbCol state.RESERVED)
   ∧ (∀ i < 8, i ≠ slot.val →
       env.loc (saCol (state.FIELD_BASE + i)) = env.loc (sbCol (state.FIELD_BASE + i)))
 
-/-! ## §4 — FAITHFULNESS: the emitted per-row gates ⟺ the field-write intent. -/
+/-! ## §4 — FAITHFULNESS: on an active setField row the emitted gates ⟺ the field-write intent.
 
-theorem setFieldVm_faithful (slot : Fin 8) (env : VmRowEnv) :
+The `IsSetFieldRow` premise (`s_set_field = 1`, `s_noop = 0`) is the runtime's active-row condition:
+every runtime setField AIR constraint is `s_setfield · (…)`, so the descriptor binds the transition
+EXACTLY on the active row. With it the gated write gate becomes `field_after = param1` and the tick
+gate becomes `after_nonce = before_nonce + 1`. -/
+
+theorem setFieldVm_faithful (slot : Fin 8) (env : VmRowEnv) (hrow : IsSetFieldRow env) :
     (∀ c ∈ setFieldRowGates slot, c.holdsVm env false false) ↔ SetFieldRowIntent slot env := by
+  obtain ⟨hsel, hnoop⟩ := hrow
   unfold setFieldRowGates gOtherFieldsAll SetFieldRowIntent
   constructor
   · intro h
     have hWr  := h (.gate (gFieldWrite slot)) (by simp)
     have hLo  := h (.gate gBalLoFreeze) (by simp)
     have hHi  := h (.gate gBalHi) (by simp)
-    have hNon := h (.gate gNonceFreeze) (by simp)
+    have hNon := h (.gate gNonce) (by simp)
     have hCap := h (.gate gCapPass) (by simp)
     have hRes := h (.gate gResPass) (by simp)
     have hFld : ∀ i, i < 8 → i ≠ slot.val →
@@ -160,8 +199,10 @@ theorem setFieldVm_faithful (slot : Fin 8) (env : VmRowEnv) :
       simp only [List.mem_append, List.mem_map, List.mem_filter, List.mem_range,
         decide_eq_true_eq]
       exact Or.inr ⟨i, ⟨hi, hne⟩, rfl⟩
-    simp only [VmConstraint.holdsVm, gFieldWrite, gBalLoFreeze, gBalHi, gNonceFreeze, gCapPass,
+    simp only [VmConstraint.holdsVm, gFieldWrite, gBalLoFreeze, gBalHi, gNonce, eSelNoop, gCapPass,
       gResPass, eSA, eSB, ePrm, eSub, EmittedExpr.eval] at hWr hLo hHi hNon hCap hRes
+    rw [hsel] at hWr
+    rw [hnoop] at hNon
     refine ⟨by linarith [hWr], by linarith [hLo], by linarith [hHi], by linarith [hNon],
       by linarith [hCap], by linarith [hRes], ?_⟩
     intro i hi hne
@@ -173,29 +214,47 @@ theorem setFieldVm_faithful (slot : Fin 8) (env : VmRowEnv) :
       List.mem_filter, List.mem_range, decide_eq_true_eq] at hc
     rcases hc with (rfl | rfl | rfl | rfl | rfl | rfl) | ⟨i, ⟨hi, hne⟩, rfl⟩
     · simp only [VmConstraint.holdsVm, gFieldWrite, eSA, ePrm, eSub, EmittedExpr.eval]
-      rw [hWr]; ring
+      rw [hsel, hWr]; ring
     · simp only [VmConstraint.holdsVm, gBalLoFreeze, eSA, eSB, eSub, EmittedExpr.eval]; rw [hLo]; ring
     · simp only [VmConstraint.holdsVm, gBalHi, eSA, eSB, eSub, EmittedExpr.eval]; rw [hHi]; ring
-    · simp only [VmConstraint.holdsVm, gNonceFreeze, eSA, eSB, eSub, EmittedExpr.eval]; rw [hNon]; ring
+    · simp only [VmConstraint.holdsVm, gNonce, eSelNoop, eSA, eSB, eSub, EmittedExpr.eval]
+      rw [hnoop, hNon]; ring
     · simp only [VmConstraint.holdsVm, gCapPass, eSA, eSB, eSub, EmittedExpr.eval]; rw [hCap]; ring
     · simp only [VmConstraint.holdsVm, gResPass, eSA, eSB, eSub, EmittedExpr.eval]; rw [hRes]; ring
     · simp only [VmConstraint.holdsVm, gFieldPass, eSA, eSB, eSub, EmittedExpr.eval]
       rw [hFld i hi hne]; ring
 
-/-! ## §5 — ANTI-GHOST (gate level): a wrong write / moved bystander column is rejected. -/
+/-! ## §5 — ANTI-GHOST (gate level): a wrong write / wrong nonce delta / moved bystander is rejected.
 
-theorem setFieldVm_rejects_wrong_output (slot : Fin 8) (env : VmRowEnv)
+The write/nonce teeth carry the `IsSetFieldRow` premise (the active row, `s_set_field = 1`,
+`s_noop = 0`): on it the gated write gate forces `field_after = param1` and the tick gate forces
+`after_nonce = before_nonce + 1`, so a forged value / wrong nonce delta is UNSAT. (Off the active
+row the gates degenerate — the runtime binds the transition only on the active row.) The balance
+freeze gate needs no premise (it degenerates to `after = before` regardless). -/
+
+theorem setFieldVm_rejects_wrong_output (slot : Fin 8) (env : VmRowEnv) (hrow : IsSetFieldRow env)
     (hwrong : ¬ SetFieldRowIntent slot env) :
     ¬ (∀ c ∈ setFieldRowGates slot, c.holdsVm env false false) :=
-  fun h => hwrong ((setFieldVm_faithful slot env).mp h)
+  fun h => hwrong ((setFieldVm_faithful slot env hrow).mp h)
 
-/-- **Anti-ghost (wrong written value).** A row whose `fields[slot]_after ≠ VALUE` fails the write
-gate — the written slot cannot carry anything but the bound value. -/
-theorem setFieldVm_rejects_wrong_value (slot : Fin 8) (env : VmRowEnv)
+/-- **Anti-ghost (wrong written value).** On an active setField row a row whose
+`fields[slot]_after ≠ param1` fails the SELECTOR-GATED write gate — the written slot cannot carry
+anything but the bound NEW_VALUE. (The `s_set_field = 1` factor is what makes the gate bite; off the
+active row it vanishes, exactly as the runtime gates the write by `s_setfield`.) -/
+theorem setFieldVm_rejects_wrong_value (slot : Fin 8) (env : VmRowEnv) (hrow : IsSetFieldRow env)
     (hwrong : env.loc (saCol (state.FIELD_BASE + slot.val)) ≠ env.loc (prmCol VALUE)) :
     ¬ (VmConstraint.gate (gFieldWrite slot)).holdsVm env false false := by
   simp only [VmConstraint.holdsVm, gFieldWrite, eSA, ePrm, eSub, EmittedExpr.eval]
-  intro h; apply hwrong; linarith
+  rw [hrow.1]; intro h; apply hwrong; linarith
+
+/-- **Anti-ghost (wrong nonce delta).** On an active setField row a row whose nonce delta is NOT the
+tick (`after_nonce ≠ before_nonce + 1`) fails the tick gate (`gNonce`) — a forged passthrough
+(`after = before`, the value the FREEZE descriptor wrongly accepted) is now UNSAT. -/
+theorem setFieldVm_rejects_wrong_nonce_delta (slot : Fin 8) (env : VmRowEnv) (hrow : IsSetFieldRow env)
+    (hwrong : env.loc (saCol state.NONCE) ≠ env.loc (sbCol state.NONCE) + 1) :
+    ¬ (VmConstraint.gate gNonce).holdsVm env false false := by
+  simp only [VmConstraint.holdsVm, gNonce, eSelNoop, eSA, eSB, eSub, EmittedExpr.eval]
+  rw [hrow.2]; intro h; apply hwrong; linarith
 
 /-- **Anti-ghost (balance moved).** A field write that silently moves `bal_lo` fails the freeze gate. -/
 theorem setFieldVm_rejects_moved_balance (slot : Fin 8) (env : VmRowEnv)
@@ -243,12 +302,13 @@ def RowEncodesSF (slot : Fin 8) (env : VmRowEnv) (pre post : CellState) : Prop :
   ∧ env.pub pi.NEW_COMMIT = post.commit
 
 /-- **`CellSetFieldSpec slot pre v post`** — the per-cell FULL-state field-write spec: `fields[slot]`
-written to `v`, every other field + bal/nonce/cap/reserved FROZEN. -/
+written to `v`, the on-trace sequence nonce TICKED (`post.nonce = pre.nonce + 1`, the runtime
+`new_state.nonce += 1`), every other field + bal/cap/reserved FROZEN. -/
 def CellSetFieldSpec (slot : Fin 8) (pre : CellState) (v : ℤ) (post : CellState) : Prop :=
   post.fields slot = v
   ∧ post.balLo = pre.balLo
   ∧ post.balHi = pre.balHi
-  ∧ post.nonce = pre.nonce
+  ∧ post.nonce = pre.nonce + 1
   ∧ post.capRoot = pre.capRoot
   ∧ post.reserved = pre.reserved
   ∧ (∀ i : Fin 8, i ≠ slot → post.fields i = pre.fields i)
@@ -273,7 +333,7 @@ theorem intent_to_cellSpec (slot : Fin 8) (env : VmRowEnv) (pre post : CellState
 /-! ## §8 — the full descriptor soundness + the commitment binding. -/
 
 theorem setFieldDescriptor_full_sound (slot : Fin 8) (hash : List ℤ → ℤ) (env : VmRowEnv)
-    (pre post : CellState)
+    (pre post : CellState) (hrow : IsSetFieldRow env)
     (henc : RowEncodesSF slot env pre post)
     (hsat : satisfiedVm hash (setFieldVmDescriptor slot) env true true) :
     CellSetFieldSpec slot pre (env.loc (prmCol VALUE)) post := by
@@ -289,7 +349,7 @@ theorem setFieldDescriptor_full_sound (slot : Fin 8) (hash : List ℤ → ℤ) (
       List.mem_filter, List.mem_range, decide_eq_true_eq] at hc
     rcases hc with (rfl | rfl | rfl | rfl | rfl | rfl) | ⟨i, _, rfl⟩ <;>
       simpa only [VmConstraint.holdsVm] using hh
-  exact intent_to_cellSpec slot env pre post henc ((setFieldVm_faithful slot env).mp hgates)
+  exact intent_to_cellSpec slot env pre post henc ((setFieldVm_faithful slot env hrow).mp hgates)
 
 theorem setFieldDescriptor_commit_binds_state (slot : Fin 8) (hash : List ℤ → ℤ)
     (hCR : Poseidon2SpongeCR hash) (e₁ e₂ : VmRowEnv)
@@ -380,6 +440,7 @@ legs (`setField_guard_is_offrow` / `setField_log_is_offrow`). This is the transf
 shape, per cell. -/
 theorem setFieldDescriptor_classA (slot : Fin 8) (hash : List ℤ → ℤ) (env : VmRowEnv)
     (s s' : RecChainedState) (actor cell : CellId) (v : Int) (post : CellState)
+    (hrow : IsSetFieldRow env)
     (henc : RowEncodesSF slot env (cellProjF s.kernel cell slot) post)
     (hval : env.loc (prmCol VALUE) = v)
     (hsat : satisfiedVm hash (setFieldVmDescriptor slot) env true true)
@@ -387,7 +448,7 @@ theorem setFieldDescriptor_classA (slot : Fin 8) (hash : List ℤ → ℤ) (env 
     CellSetFieldSpec slot (cellProjF s.kernel cell slot) v post
     ∧ post.fields slot = (cellProjF s'.kernel cell slot).fields slot
     ∧ post.balLo = (cellProjF s'.kernel cell slot).balLo := by
-  have hspec := setFieldDescriptor_full_sound slot hash env (cellProjF s.kernel cell slot) post henc hsat
+  have hspec := setFieldDescriptor_full_sound slot hash env (cellProjF s.kernel cell slot) post hrow henc hsat
   rw [hval] at hspec
   obtain ⟨heVal, heBal⟩ := unify_setField_exec s s' actor cell slot v hexec
   refine ⟨hspec, ?_, ?_⟩
@@ -398,38 +459,52 @@ theorem setFieldDescriptor_classA (slot : Fin 8) (hash : List ℤ → ℤ) (env 
 
 /-! ## §10 — NON-VACUITY (concrete literal-column witnesses).
 
-The witness row branches on the LITERAL column indices (`saCol (FIELD_BASE+0)=79`, `prmCol VALUE=68`,
-`sbCol/saCol BALANCE_LO=54/76`, `NONCE=56/78`), pinned by `#guard`s for anti-drift. So the realization
-+ rejection proofs reduce by `decide`. -/
+The witness row branches on the LITERAL column indices (`SEL_SET_FIELD=2`, `saCol (FIELD_BASE+0)=79`,
+`prmCol VALUE=69`, `sbCol/saCol BALANCE_LO=54/76`, `NONCE=56/78`), pinned by `#guard`s for anti-drift.
+So the realization + rejection proofs reduce by `decide`. The row is ACTIVE (`s_set_field = 1` at col
+2, `s_noop = 0` at col 0), the value rides `param1` (col 69), and the nonce TICKS (56→78: 5 → 6). -/
 
-/-- A concrete setField row (slot 0): `fields[0] 0 → 7` (the written VALUE `7`), the rest frozen
-(bal_lo 100 → 100, nonce 5 → 5). Literal columns (`#guard`-pinned below): 54=SEL_SET_FIELD,
-79=saCol field0, 68=prmCol VALUE, 54=sbCol bal_lo, 76=saCol bal_lo, 56=sbCol nonce, 78=saCol nonce. -/
+/-- A concrete ACTIVE setField row (slot 0): `s_set_field = 1`, `fields[0] 0 → 7` (the written value
+at `param1`), the nonce TICKED (5 → 6), the economic frame frozen (bal_lo 100 → 100). Literal columns
+(`#guard`-pinned below): 2=SEL_SET_FIELD, 79=saCol field0, 69=prmCol VALUE (=param1), 54=sbCol bal_lo,
+76=saCol bal_lo, 56=sbCol nonce, 78=saCol nonce. -/
 def goodSFRow : VmRowEnv where
   loc := fun w =>
-    if w = 79 then 7        -- saCol field0 (the written slot)
-    else if w = 68 then 7   -- prmCol VALUE (the written value carrier)
+    if w = 2 then 1         -- SEL_SET_FIELD (the active-row selector; sel.NOOP = col 0 stays 0)
+    else if w = 79 then 7   -- saCol field0 (the written slot)
+    else if w = 69 then 7   -- prmCol VALUE = param1 (the runtime NEW_VALUE carrier)
     else if w = 54 then 100 -- sbCol bal_lo
     else if w = 76 then 100 -- saCol bal_lo
     else if w = 56 then 5   -- sbCol nonce
-    else if w = 78 then 5   -- saCol nonce
+    else if w = 78 then 6   -- saCol nonce (TICKED: before + 1)
     else 0
   nxt := fun _ => 0
   pub := fun _ => 0
 
 -- The witness columns ARE the symbolic carriers (anti-drift).
+#guard SEL_SET_FIELD == 2
 #guard saCol (state.FIELD_BASE + (0 : Fin 8).val) == 79
-#guard prmCol VALUE == 68
+#guard prmCol VALUE == 69
 #guard sbCol state.BALANCE_LO == 54
 #guard saCol state.BALANCE_LO == 76
 #guard sbCol state.NONCE == 56
 #guard saCol state.NONCE == 78
 
-/-- **NON-VACUITY (witness TRUE).** `goodSFRow` REALIZES the field-write intent (`fields[0] := 7`,
-the rest frozen). -/
+/-- The witness IS an active setField row (`s_set_field = 1`, `s_noop = 0`). -/
+theorem goodSFRow_isRow : IsSetFieldRow goodSFRow := by
+  constructor
+  · show goodSFRow.loc SEL_SET_FIELD = 1
+    have : SEL_SET_FIELD = 2 := by decide
+    rw [this]; decide
+  · show goodSFRow.loc sel.NOOP = 0
+    have : sel.NOOP = 0 := by decide
+    rw [this]; decide
+
+/-- **NON-VACUITY (witness TRUE).** `goodSFRow` REALIZES the field-write intent (`fields[0] := 7` at
+`param1`, the nonce TICKED 5 → 6, the rest frozen). -/
 theorem goodSFRow_realizes_intent : SetFieldRowIntent 0 goodSFRow := by
   have hF0 : saCol (state.FIELD_BASE + (0 : Fin 8).val) = 79 := by decide
-  have hV  : prmCol VALUE = 68 := by decide
+  have hV  : prmCol VALUE = 69 := by decide
   have hsbL : sbCol state.BALANCE_LO = 54 := by decide
   have hsaL : saCol state.BALANCE_LO = 76 := by decide
   have hsbH : sbCol state.BALANCE_HI = 55 := by decide
@@ -447,7 +522,7 @@ theorem goodSFRow_realizes_intent : SetFieldRowIntent 0 goodSFRow := by
     rw [hsaL, hsbL]; decide
   · show goodSFRow.loc (saCol state.BALANCE_HI) = goodSFRow.loc (sbCol state.BALANCE_HI)
     rw [hsaH, hsbH]; decide
-  · show goodSFRow.loc (saCol state.NONCE) = goodSFRow.loc (sbCol state.NONCE)
+  · show goodSFRow.loc (saCol state.NONCE) = goodSFRow.loc (sbCol state.NONCE) + 1
     rw [hsaN, hsbN]; decide
   · show goodSFRow.loc (saCol state.CAP_ROOT) = goodSFRow.loc (sbCol state.CAP_ROOT)
     rw [hsaC, hsbC]; decide
@@ -464,19 +539,21 @@ theorem goodSFRow_realizes_intent : SetFieldRowIntent 0 goodSFRow := by
     rw [hsa, hsb]
     show goodSFRow.loc (79 + i) = goodSFRow.loc (57 + i)
     simp only [goodSFRow]
+    have a0 : (79 + i = 2) = False := eq_false (by omega)
     have a1 : (79 + i = 79) = False := eq_false (by omega)
-    have a2 : (79 + i = 68) = False := eq_false (by omega)
+    have a2 : (79 + i = 69) = False := eq_false (by omega)
     have a3 : (79 + i = 54) = False := eq_false (by omega)
     have a4 : (79 + i = 76) = False := eq_false (by omega)
     have a5 : (79 + i = 56) = False := eq_false (by omega)
     have a6 : (79 + i = 78) = False := eq_false (by omega)
+    have b0 : (57 + i = 2) = False := eq_false (by omega)
     have b1 : (57 + i = 79) = False := eq_false (by omega)
-    have b2 : (57 + i = 68) = False := eq_false (by omega)
+    have b2 : (57 + i = 69) = False := eq_false (by omega)
     have b3 : (57 + i = 54) = False := eq_false (by omega)
     have b4 : (57 + i = 76) = False := eq_false (by omega)
     have b5 : (57 + i = 56) = False := eq_false (by omega)
     have b6 : (57 + i = 78) = False := eq_false (by omega)
-    simp only [a1, a2, a3, a4, a5, a6, b1, b2, b3, b4, b5, b6, if_false]
+    simp only [a0, a1, a2, a3, a4, a5, a6, b0, b1, b2, b3, b4, b5, b6, if_false]
 
 /-- A FORGED setField row: `goodSFRow` with the written `fields[0]` (col 79) overwritten to
 `999 ≠ VALUE`. -/
@@ -485,14 +562,26 @@ def badSFRow : VmRowEnv where
   nxt := goodSFRow.nxt
   pub := goodSFRow.pub
 
+/-- `badSFRow` is still an ACTIVE setField row (col 2 untouched; only col 79 forged). -/
+theorem badSFRow_isRow : IsSetFieldRow badSFRow := by
+  constructor
+  · show badSFRow.loc SEL_SET_FIELD = 1
+    have h2 : SEL_SET_FIELD = 2 := by decide
+    show (if (SEL_SET_FIELD : Nat) = 79 then (999 : ℤ) else goodSFRow.loc SEL_SET_FIELD) = 1
+    rw [h2]; exact goodSFRow_isRow.1
+  · show badSFRow.loc sel.NOOP = 0
+    have h0 : sel.NOOP = 0 := by decide
+    show (if (sel.NOOP : Nat) = 79 then (999 : ℤ) else goodSFRow.loc sel.NOOP) = 0
+    rw [h0]; exact goodSFRow_isRow.2
+
 /-- **NON-VACUITY (witness FALSE / concrete anti-ghost).** `badSFRow`'s written `fields[0]` is forged
-(`999 ≠ 7`), so the write gate REJECTS it. -/
+(`999 ≠ 7`), so the SELECTOR-GATED write gate (on the active row) REJECTS it. -/
 theorem badSFRow_rejected : ¬ (VmConstraint.gate (gFieldWrite 0)).holdsVm badSFRow false false := by
-  apply setFieldVm_rejects_wrong_value
+  apply setFieldVm_rejects_wrong_value 0 badSFRow badSFRow_isRow
   have hF0 : saCol (state.FIELD_BASE + (0 : Fin 8).val) = 79 := by decide
-  have hV  : prmCol VALUE = 68 := by decide
+  have hV  : prmCol VALUE = 69 := by decide
   rw [hF0, hV]
-  show badSFRow.loc 79 ≠ badSFRow.loc 68
+  show badSFRow.loc 79 ≠ badSFRow.loc 69
   decide
 
 /-! ## §11 — Axiom-hygiene tripwires + layout pins. -/
@@ -500,11 +589,15 @@ theorem badSFRow_rejected : ¬ (VmConstraint.gate (gFieldWrite 0)).holdsVm badSF
 #guard (setFieldVmDescriptor 0).constraints.length == 6 + 7
 #guard (setFieldVmDescriptor 0).hashSites.length == 4
 #guard (setFieldVmDescriptor 0).traceWidth == 186
-#guard VALUE == param.AMOUNT
+-- The value rides `param1` (the runtime NEW_VALUE), not `param0` (= `param.AMOUNT`, the FIELD_INDEX).
+#guard VALUE == 1
+#guard VALUE ≠ param.AMOUNT
+#guard SEL_SET_FIELD == 2
 
 #assert_axioms setFieldVm_faithful
 #assert_axioms setFieldVm_rejects_wrong_output
 #assert_axioms setFieldVm_rejects_wrong_value
+#assert_axioms setFieldVm_rejects_wrong_nonce_delta
 #assert_axioms setFieldVm_rejects_moved_balance
 #assert_axioms setFieldVm_commit_binds_block
 #assert_axioms intent_to_cellSpec
@@ -515,7 +608,9 @@ theorem badSFRow_rejected : ¬ (VmConstraint.gate (gFieldWrite 0)).holdsVm badSF
 #assert_axioms setField_guard_is_offrow
 #assert_axioms setField_log_is_offrow
 #assert_axioms setFieldDescriptor_classA
+#assert_axioms goodSFRow_isRow
 #assert_axioms goodSFRow_realizes_intent
+#assert_axioms badSFRow_isRow
 #assert_axioms badSFRow_rejected
 
 end Dregg2.Circuit.Emit.EffectVmEmitSetField

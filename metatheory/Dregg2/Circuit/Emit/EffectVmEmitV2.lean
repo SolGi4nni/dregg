@@ -640,12 +640,16 @@ theorem burnV2_full_sound (hash : List ℤ → ℤ)
   rw [hone] at h
   exact EffectVmEmitBurn.burnDescriptor_full_sound hash _ hrow pre post amt henc h
 
-/-- **The economic family, re-anchored (mint).** `mintDescriptor_full_sound` against v2. -/
+/-- **The economic family, re-anchored (mint).** `mintDescriptor_full_sound` against v2. Carries the
+`IsMintRow` premise (the active BridgeMint row, `s_bridge_mint = 1`, `s_noop = 0`) the reconciled
+source now requires — exactly as `burnV2_full_sound` carries `IsBurnRow` (the runtime gates + ticks on
+the active row). -/
 theorem mintV2_full_sound (hash : List ℤ → ℤ)
     (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
     (hchip : ChipTableSound hash (t.tf .poseidon2))
     (hrange : t.tf .range = rangeRows BAL_LIMB_BITS)
     (hone : t.rows.length = 1)
+    (hrow : EffectVmEmitMint.IsMintRow (envAt t 0))
     (pre post : EffectVmEmitTransferSound.CellState) (amt : ℤ)
     (henc : EffectVmEmitMint.RowEncodes (envAt t 0) pre amt post)
     (hsat : Satisfied2 hash mintVmDescriptor2 minit mfin maddrs t) :
@@ -654,7 +658,7 @@ theorem mintV2_full_sound (hash : List ℤ → ℤ)
   have h := graduateV1_sound hash EffectVmEmitMint.mintVmDescriptor
     minit mfin maddrs t hchip hrange (by decide) hsat 0 (by rw [hone]; exact Nat.one_pos)
   rw [hone] at h
-  exact EffectVmEmitMint.mintDescriptor_full_sound hash _ pre post amt henc h
+  exact EffectVmEmitMint.mintDescriptor_full_sound hash _ hrow pre post amt henc h
 
 /-! ## §7 — NEWLY EXPRESSIBLE I: the Attenuate cap-crown phase-B circuit leg.
 
