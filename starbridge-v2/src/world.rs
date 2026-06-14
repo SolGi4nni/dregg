@@ -538,6 +538,26 @@ fn collect_effect_events(action: &Action, out: &mut Vec<WorldEvent>) {
                     genesis: false,
                 });
             }
+            // THE NOTIFY EDGE: an EmitEvent is the sender's committed receipt
+            // that the swarm coordinator reads to wake the recipient's next turn.
+            // The recipient drains it in its OWN future turn (async, not joint).
+            Effect::EmitEvent { cell, event, .. } => {
+                // The topic hash is the event's 32-byte symbol (Blake3 of the
+                // topic string, as hashed by `emit_event()`).
+                let topic_hash = event.topic;
+                let data_len = event.data.len() * 32; // each FieldElement is 32 B
+                // `action.target` is the cell acting (the sender); `cell` is the
+                // cell the event is emitted ON (the notify recipient). When the
+                // sender emits to itself, sender == cell (a self-notification,
+                // valid and useful for checkpointing). The swarm coordinator uses
+                // this distinction to route the wake signal to `cell`'s inbox.
+                out.push(WorldEvent::EventEmitted {
+                    sender: action.target,
+                    cell: *cell,
+                    topic_hash,
+                    data_len,
+                });
+            }
             _ => {}
         }
     }

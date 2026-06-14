@@ -41,6 +41,12 @@ pub enum CommandId {
     GoAgent,
     GoBuffer,
     GoTerminal,
+    /// Navigate to the GRAPH tab (the whole-graph ocap delegation layout).
+    GoGraph,
+    /// Navigate to the ORGANS tab (live organ cell-state: trustline/flash-well).
+    GoOrgans,
+    /// Navigate to the PROOFS tab (proof-attach + STARK verification status).
+    GoProofs,
 
     // --- the A1 IDE DEVELOPER surfaces (editor buffer + terminal) ---
     /// Type a line into the editor buffer (free, in-memory — the doc goes dirty).
@@ -105,6 +111,19 @@ pub enum CommandId {
     // --- inspector / selection ---
     SelectImage,
 
+    // --- the A2 SWARM (multi-agent cap-coordination + notify-edge inbox) ---
+    /// Navigate to the SWARM tab (the multi-agent activity surface).
+    GoSwarm,
+    /// Coordinator emits a task/go event targeting worker-a. This is a
+    /// cap-gated turn that deposits a NotifyEdge in worker-a's inbox
+    /// (async, not a joint turn — the recipient drains in its OWN future turn).
+    SwarmCoordinatorEmitA,
+    /// Worker-a drains its pending notification. This is worker-a's own
+    /// separate ack turn — independent receipt, different height, async model.
+    SwarmWorkerADrain,
+    /// Coordinator transfers 500 to worker-b AND wakes worker-a, in one turn.
+    SwarmCoordinatorTransferAndWake,
+
     // --- the palette itself ---
     Dismiss,
 }
@@ -118,9 +137,13 @@ impl CommandId {
                 Category::Verb
             }
             GoComposer | GoObjects | GoDebugger | GoReplay | GoCipherclerk | GoEditor
-            | GoShell | GoAgent | GoBuffer | GoTerminal => Category::Navigate,
+            | GoShell | GoAgent | GoBuffer | GoTerminal | GoSwarm | GoGraph | GoOrgans
+            | GoProofs => Category::Navigate,
             BufferType | BufferCommit | BufferReadOnlyWrite | TerminalRunInMandate
-            | TerminalRunOutOfMandate => Category::Ide,
+            | TerminalRunOutOfMandate
+            | SwarmCoordinatorEmitA | SwarmWorkerADrain | SwarmCoordinatorTransferAndWake => {
+                Category::Ide
+            }
             ReplayStepBack | ReplayStepForward | ReplayToGenesis | ReplayToHead
             | ReplayForkHere | ReplayClearFork => Category::Replay,
             ClerkMint | ClerkAttenuate | ClerkDelegate | ClerkDischarge => Category::Clerk,
@@ -154,6 +177,19 @@ impl CommandId {
             GoAgent => "Go to Agent (a loop's provable activity)",
             GoBuffer => "Go to Editor buffer (a text buffer as a Surface cell)",
             GoTerminal => "Go to Terminal (a command surface · the ADOS seam)",
+            GoSwarm => "Go to Swarm (multi-agent cap-coordination · notify-edge inbox)",
+            GoGraph => "Go to Graph (ocap delegation · multi-hop layout)",
+            GoOrgans => "Go to Organs (live trustline · flash-well cell-state)",
+            GoProofs => "Go to Proofs (attach + STARK verification status)",
+            SwarmCoordinatorEmitA => {
+                "Swarm: coordinator emits task/go → worker-a (notify edge, async)"
+            }
+            SwarmWorkerADrain => {
+                "Swarm: worker-a drains inbox (own ack turn — async, not joint)"
+            }
+            SwarmCoordinatorTransferAndWake => {
+                "Swarm: coordinator transfers + wakes worker-a (one seam, two effects)"
+            }
             BufferType => "Buffer: type a line (in-memory — goes dirty)",
             BufferCommit => "Buffer: commit the edit (cap-gated verified turn)",
             BufferReadOnlyWrite => "Buffer: ⚠ write a read-only mirror (watch it REFUSE)",
@@ -207,6 +243,19 @@ impl CommandId {
             GoAgent => "agent loop swarm activity mandate receipt grounded ados integrator",
             GoBuffer => "editor buffer text file write edit document ide code scratch",
             GoTerminal => "terminal command shell console bash run ide tool-call ados seam",
+            GoSwarm => "swarm multi-agent coordinator worker notify inbox wake coordination ados a2",
+            GoGraph => "graph ocap delegation capability edge multi-hop reach blast-radius layout depth",
+            GoOrgans => "organ trustline flashwell flash-well credit line channel mailbox court live cell-state",
+            GoProofs => "proof stark verify attach tier verification signed by-construction light-client",
+            SwarmCoordinatorEmitA => {
+                "emit event notify wake inbox async turn receipt seam swarm coordinator worker"
+            }
+            SwarmWorkerADrain => {
+                "drain inbox notify ack acknowledge async turn independent receipt swarm worker"
+            }
+            SwarmCoordinatorTransferAndWake => {
+                "transfer value emit notify multi-effect turn swarm coordinator worker"
+            }
             BufferType => "edit type insert text buffer dirty",
             BufferCommit => "save commit buffer write digest turn cap-gated revision",
             BufferReadOnlyWrite => "read-only refuse attenuate mirror no-amplify buffer write guard",
@@ -302,9 +351,11 @@ pub fn all_commands() -> Vec<Command> {
         // the A1 IDE developer surfaces (editor buffer + terminal)
         BufferType, BufferCommit, BufferReadOnlyWrite,
         TerminalRunInMandate, TerminalRunOutOfMandate,
+        // the A2 SWARM surface (multi-agent cap-coordination + notify-edge inbox)
+        SwarmCoordinatorEmitA, SwarmWorkerADrain, SwarmCoordinatorTransferAndWake,
         // navigation
         GoComposer, GoObjects, GoDebugger, GoReplay, GoCipherclerk, GoEditor, GoShell,
-        GoAgent, GoBuffer, GoTerminal,
+        GoAgent, GoBuffer, GoTerminal, GoSwarm, GoGraph, GoOrgans, GoProofs,
         // replay
         ReplayStepBack, ReplayStepForward, ReplayToGenesis, ReplayToHead,
         ReplayForkHere, ReplayClearFork,
@@ -555,8 +606,8 @@ mod tests {
         }
         // Dismiss is intentionally NOT a row (Esc handles it).
         assert!(!ids.contains(&CommandId::Dismiss));
-        // The registry is non-trivial (and now includes the shell surface).
-        assert!(reg.len() >= 30, "registry should cover the whole action surface");
+        // The registry is non-trivial (and now includes the shell surface + swarm A2).
+        assert!(reg.len() >= 34, "registry should cover the whole action surface");
     }
 
     #[test]
@@ -622,6 +673,40 @@ mod tests {
         assert!(search(&reg, "read-only").iter().any(|h| h.command.id == CommandId::BufferReadOnlyWrite));
         assert!(search(&reg, "mandate").iter().any(|h| h.command.id == CommandId::TerminalRunInMandate
             || h.command.id == CommandId::TerminalRunOutOfMandate));
+    }
+
+    #[test]
+    fn the_swarm_commands_are_registered_and_findable() {
+        // The A2 swarm surface commands are registered in the palette and
+        // categorized correctly (Navigate for GoSwarm, Ide for swarm actions).
+        let reg = all_commands();
+        let ids: std::collections::HashSet<CommandId> = reg.iter().map(|c| c.id).collect();
+        assert!(ids.contains(&CommandId::GoSwarm), "GoSwarm must be registered");
+        assert_eq!(CommandId::GoSwarm.category(), Category::Navigate);
+        for op in [
+            CommandId::SwarmCoordinatorEmitA,
+            CommandId::SwarmWorkerADrain,
+            CommandId::SwarmCoordinatorTransferAndWake,
+        ] {
+            assert!(ids.contains(&op), "{op:?} must be registered");
+            assert_eq!(op.category(), Category::Ide);
+        }
+        // Findable by concept — "swarm", "notify", "emit", "drain".
+        assert!(
+            search(&reg, "swarm").iter().any(|h| h.command.id == CommandId::GoSwarm),
+            "GoSwarm findable via 'swarm'"
+        );
+        assert!(
+            search(&reg, "emit notify").iter().any(|h| {
+                h.command.id == CommandId::SwarmCoordinatorEmitA
+                    || h.command.id == CommandId::SwarmCoordinatorTransferAndWake
+            }),
+            "emit/notify commands findable"
+        );
+        assert!(
+            search(&reg, "drain").iter().any(|h| h.command.id == CommandId::SwarmWorkerADrain),
+            "SwarmWorkerADrain findable via 'drain'"
+        );
     }
 
     #[test]

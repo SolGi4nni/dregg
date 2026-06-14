@@ -56,6 +56,23 @@ pub enum WorldEvent {
     CellDestroyed { cell: CellId },
     /// Value was provably burned from a cell (supply reduced; no credit).
     Burned { cell: CellId, amount: u64 },
+    /// An event was emitted by `sender` targeting `cell` (the async notify
+    /// edge). This is the SENDER's committed turn record; the RECIPIENT
+    /// cell drains it in its OWN separate future turn — NOT a synchronous
+    /// joint turn. This is the A2 tool-call seam: an agent's `EmitEvent`
+    /// action is the one receipted seam-record the swarm coordinator reads
+    /// to wake the recipient, without coupling the two loops.
+    EventEmitted {
+        /// The cell that committed the `EmitEvent` effect (the sender).
+        sender: CellId,
+        /// The cell the event is addressed to (the intended recipient /
+        /// notify target). Its inbox gains a pending `NotifyEdge`.
+        cell: CellId,
+        /// The topic hash (Blake3 of the topic string, as the executor sees it).
+        topic_hash: [u8; 32],
+        /// The data payload length (bytes), for the activity feed label.
+        data_len: usize,
+    },
 }
 
 impl WorldEvent {
@@ -87,6 +104,11 @@ impl WorldEvent {
             WorldEvent::CellUnsealed { .. } => "cell unsealed".into(),
             WorldEvent::CellDestroyed { .. } => "cell destroyed (terminal)".into(),
             WorldEvent::Burned { amount, .. } => format!("burned {amount} (supply reduced)"),
+            WorldEvent::EventEmitted { sender, cell, data_len, .. } => format!(
+                "event emitted: {} → {} ({data_len}B) [notify edge]",
+                crate::reflect::short_hex(sender.as_bytes()),
+                crate::reflect::short_hex(cell.as_bytes()),
+            ),
         }
     }
 }

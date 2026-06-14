@@ -63,6 +63,25 @@ pathfinder_simd = { path = "vendor/pathfinder_simd" }
 ark-serialize = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
 ark-serialize-derive = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
 
+# THE PLONKY3-RECURSION FORK PATCH — load-bearing for the `embedded-executor`
+# feature. `dregg-circuit` (pulled transitively via dregg-turn/dregg-sdk)
+# references the recursion-fork-only `NativeBatchStark` variant + the
+# `verify_p3_native_batch_proof_circuit` entry, which the PINNED git rev
+# (rev c14b5fc0 in the root [workspace.dependencies]) does NOT carry — that
+# WIP lives only in the LOCAL fork checkout. This standalone workspace does NOT
+# inherit the breadstuffs root Cargo.toml's `[patch."…/plonky3-recursion"]`, so
+# without replicating it here the embedded executor fails to compile at the
+# `NativeBatchStark` reference. We point the four fork crates at the SAME local
+# fork checkout the root does (`../plonky3-recursion`, relative to the repo root
+# = `../../plonky3-recursion` from here). When the fork change is committed +
+# pushed and the root bumps the git rev, this block + the root's are dropped
+# together (the cutover-settle does that properly via a fork push).
+[patch."https://github.com/emberian/plonky3-recursion"]
+p3-recursion = { path = "../../plonky3-recursion/recursion" }
+p3-circuit = { path = "../../plonky3-recursion/circuit" }
+p3-circuit-prover = { path = "../../plonky3-recursion/circuit-prover" }
+p3-poseidon2-circuit-air = { path = "../../plonky3-recursion/poseidon2-circuit-air" }
+
 [package]
 name = "starbridge-v2"
 version = "0.1.0"

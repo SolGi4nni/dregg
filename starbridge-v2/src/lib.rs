@@ -15,6 +15,12 @@
 //!     loop's provable activity (held mandate · cap-gated turns · receipts ·
 //!     authorization), rendered as a cap-gated surface cell.
 //!
+//!   * [`swarm`] — the SWARM COORDINATOR (A2 tool-call seam): N agent cells
+//!     coordinating as confined Surface cells, with the notify-edge inbox
+//!     threading async wakes (`EmitEvent` → `NotifyEdge` → drain turn) between
+//!     them. Every action is cap-gated + receipted; the notify edge is async
+//!     (the recipient drains in its OWN future turn, not a joint turn).
+//!
 //! The `native-full` binary (`src/main.rs`) wires these into the gpui cockpit.
 //! The wire-contract client (`client`/`model`) lives in the binary crate for
 //! the remote-node + `sel4-thin` paths.
@@ -34,7 +40,13 @@ pub mod dynamics;
 #[cfg(feature = "embedded-executor")]
 pub mod edit;
 #[cfg(feature = "embedded-executor")]
+pub mod graph;
+#[cfg(feature = "embedded-executor")]
+pub mod organs;
+#[cfg(feature = "embedded-executor")]
 pub mod palette;
+#[cfg(feature = "embedded-executor")]
+pub mod proofs;
 #[cfg(feature = "embedded-executor")]
 pub mod reflect;
 #[cfg(feature = "embedded-executor")]
@@ -43,6 +55,8 @@ pub mod replay;
 pub mod shell;
 #[cfg(feature = "embedded-executor")]
 pub mod surface;
+#[cfg(feature = "embedded-executor")]
+pub mod swarm;
 #[cfg(feature = "embedded-executor")]
 pub mod terminal;
 #[cfg(feature = "embedded-executor")]
@@ -57,6 +71,16 @@ pub use compositor::{
     label_of, CompositedSurface, Compositor, CompositorScene, FrameCommit, Present, PresentError,
     RegionId,
 };
+#[cfg(feature = "embedded-executor")]
+pub use graph::{GraphEdge, GraphLayer, GraphNode, OcapGraph};
+#[cfg(feature = "embedded-executor")]
+pub use organs::{
+    FlashWellReflection, OrganKind, OrganReach, OrganSurvey, RemoteOrgan, TrustlineReflection,
+};
+#[cfg(feature = "embedded-executor")]
+pub use proofs::{AttachStatus, ProofBoard, ProofEntry, VerificationTier};
+#[cfg(feature = "embedded-executor")]
+pub use swarm::{NotifyEdge, Swarm, SwarmError, SwarmMember, SwarmView};
 #[cfg(feature = "embedded-executor")]
 pub use terminal::{Command, CommandError, OutputLine, TerminalCell, TerminalView};
 #[cfg(feature = "embedded-executor")]

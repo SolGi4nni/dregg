@@ -43,6 +43,8 @@ use starbridge_v2::{cipherclerk, debug, edit, replay};
 // The A1 DEVELOPER content surfaces — the IDE's editor + terminal panes.
 use starbridge_v2::buffer::{BufferCell, BufferView};
 use starbridge_v2::terminal::{Command, TerminalCell, TerminalView};
+// The A2 SWARM surface — multi-agent cap-coordinated swarm with notify edges.
+use starbridge_v2::swarm::{Swarm, SwarmView};
 
 /// Which object the inspector is focused on.
 #[derive(Clone)]
@@ -70,12 +72,33 @@ pub enum Tab {
     Replay,
     Cipherclerk,
     Editor,
+    /// The A2 SWARM tab — multi-agent cap-coordinated activity surface.
+    /// N agent panes as confined Surface cells, coordinating via the
+    /// notify-edge inbox (EmitEvent → NotifyEdge → async drain turn).
+    Swarm,
+    /// The ORGANS tab — reflects each dregg organ's live cell-state (trustline /
+    /// flash-well live in embed-core; channel / mailbox / court surfaced honestly
+    /// as remote-path). See [`starbridge_v2::organs`].
+    Organs,
+    /// The GRAPH tab — the whole-graph ocap delegation layout (the View tree IS
+    /// the ocap graph): nodes = cells, edges = capability grants, with multi-hop
+    /// reachability + a layered delegation-depth layout. See
+    /// [`starbridge_v2::graph`].
+    Graph,
+    /// The PROOFS tab — the proof-attach + STARK verification-status board: each
+    /// committed turn's verification tier + the attach/verify route. See
+    /// [`starbridge_v2::proofs`].
+    Proofs,
 }
 
 impl Tab {
-    const ALL: [Tab; 10] = [
+    const ALL: [Tab; 14] = [
         Tab::Shell,
         Tab::Agent,
+        Tab::Swarm,
+        Tab::Graph,
+        Tab::Organs,
+        Tab::Proofs,
         Tab::Buffer,
         Tab::Terminal,
         Tab::Composer,
@@ -89,6 +112,10 @@ impl Tab {
         match self {
             Tab::Shell => "SHELL",
             Tab::Agent => "AGENT",
+            Tab::Swarm => "SWARM",
+            Tab::Graph => "GRAPH",
+            Tab::Organs => "ORGANS",
+            Tab::Proofs => "PROOFS",
             Tab::Buffer => "BUFFER",
             Tab::Terminal => "TERMINAL",
             Tab::Composer => "COMPOSER",
@@ -181,6 +208,13 @@ pub struct Cockpit {
     /// of the ADOS A0 tool-call seam; the IDE's terminal pane.
     terminal: TerminalCell,
 
+    // --- the A2 SWARM surface (multi-agent cap-coordination) ----------------
+    /// The swarm coordinator: N agent cells coordinating as confined Surface
+    /// cells with the notify-edge inbox (EmitEvent → NotifyEdge → drain turn).
+    /// The treasury is the "coordinator" (holds caps to both service + user);
+    /// service and user are the "workers" it orchestrates via emit-event.
+    swarm: Swarm,
+
     // --- the ⌘K COMMAND PALETTE --------------------------------------------
     /// The command palette over EVERY action (open with ⌘K). The cockpit feeds
     /// it keystrokes and dispatches its selected `CommandId` through the same
@@ -270,6 +304,23 @@ impl Cockpit {
         surface_caps.insert(terminal_surface, term_cap);
         let terminal = TerminalCell::new(terminal_surface, service, "service-term");
 
+        // The A2 SWARM: service IS the coordinator (born holding a cap to user
+        // in demo_world — its live mandate). User is worker-a (reachable from
+        // service). Treasury is worker-b (NOT reachable from service, so the
+        // swarm panel's cap-gate REFUSES any action targeting it — illustrating
+        // the confined boundary). The swarm reads the real cap-graph.
+        let swarm = {
+            let w = world.borrow();
+            Swarm::new(
+                &w,
+                [
+                    (service, "coordinator"),
+                    (user, "worker-a"),
+                    (treasury, "worker-b (unreachable — the confinement boundary)"),
+                ],
+            )
+        };
+
         Self {
             world,
             cells,
@@ -292,6 +343,7 @@ impl Cockpit {
             editor_buffer,
             editor_buffer_cap,
             terminal,
+            swarm,
             palette: CommandPalette::new(),
             focus,
         }
@@ -566,6 +618,81 @@ impl Cockpit {
             Err(e) => format!("terminal: ⚠ command REFUSED — {} (cap-gate, BEFORE any turn)", e.explain()),
         });
         self.tab = Tab::Terminal;
+        cx.notify();
+    }
+
+    // --- the A2 SWARM surface ops (notify-edge-routed cap-coordination) ------
+
+    /// Swarm action: coordinator EMITS a notify event targeting worker-a.
+    /// This is the grounded seam: the emit is a cap-gated turn; the
+    /// `NotifyEdge` lands in worker-a's inbox (async, NOT a joint turn).
+    /// Swarm layout: service = coordinator (cap to user), user = worker-a.
+    fn swarm_coordinator_emit_a(&mut self, cx: &mut Context<Self>) {
+        let [_treasury, coord, worker_a] = self.anchors; // service=coord, user=worker-a
+        let outcome = {
+            let mut w = self.world.borrow_mut();
+            self.swarm.run(&mut w, coord, vec![world::emit_event(worker_a, "task/go", vec![])])
+        };
+        self.last_outcome = Some(match &outcome {
+            Ok(ao) => format!(
+                "swarm: coordinator emitted task/go → worker-a (receipt {}) — {} notify edge(s) deposited",
+                ao.receipt_hash.map(|h| reflect::short_hex(&h)).unwrap_or_default(),
+                ao.notify_edges.len(),
+            ),
+            Err(e) => format!("swarm: REFUSED — {}", e.label()),
+        });
+        self.refresh_cells();
+        self.tab = Tab::Swarm;
+        cx.notify();
+    }
+
+    /// Swarm action: worker-a DRAINS its pending notification (its own async ack turn).
+    /// This is a wholly independent turn from the coordinator's emit — different
+    /// receipt, different height, different provenance. The async model at work.
+    fn swarm_worker_a_drain(&mut self, cx: &mut Context<Self>) {
+        let [_treasury, _coord, worker_a] = self.anchors; // user=worker-a
+        let outcome = {
+            let mut w = self.world.borrow_mut();
+            self.swarm.drain_notify(&mut w, worker_a)
+        };
+        self.last_outcome = Some(match outcome {
+            Ok(receipt) => format!(
+                "swarm: worker-a DRAINED its notify inbox (ack receipt {}) — async, separate from sender's turn",
+                reflect::short_hex(&receipt),
+            ),
+            Err(e) => format!("swarm: drain REFUSED — {}", e.label()),
+        });
+        self.refresh_cells();
+        self.tab = Tab::Swarm;
+        cx.notify();
+    }
+
+    /// Swarm action: coordinator (service) sends value to worker-a (user) AND emits
+    /// a wake to worker-a, in ONE multi-effect turn. One seam, two effects, real receipt.
+    /// (worker-b = treasury = unreachable from service; transfer to treasury would REFUSE.)
+    fn swarm_coordinator_transfer_and_wake(&mut self, cx: &mut Context<Self>) {
+        let [_treasury, coord, worker_a] = self.anchors; // service=coord, user=worker-a
+        let outcome = {
+            let mut w = self.world.borrow_mut();
+            self.swarm.run(
+                &mut w,
+                coord,
+                vec![
+                    world::transfer(coord, worker_a, 500),
+                    world::emit_event(worker_a, "task/done", vec![]),
+                ],
+            )
+        };
+        self.last_outcome = Some(match &outcome {
+            Ok(ao) => format!(
+                "swarm: coordinator transferred 500 + woke worker-a (receipt {}) — {} notify edge(s)",
+                ao.receipt_hash.map(|h| reflect::short_hex(&h)).unwrap_or_default(),
+                ao.notify_edges.len(),
+            ),
+            Err(e) => format!("swarm: REFUSED — {}", e.label()),
+        });
+        self.refresh_cells();
+        self.tab = Tab::Swarm;
         cx.notify();
     }
 
@@ -869,6 +996,9 @@ impl Cockpit {
             cx.notify();
             return;
         };
+        // Compute the frame digest BEFORE borrowing the world (the digest
+        // counter is `&mut self`; the present below holds an immutable borrow).
+        let digest = self.next_frame_digest();
         // Find ANOTHER surface's region to overpaint (a genuinely-distinct attack
         // — a real second surface's region, not a malformed one).
         let w = self.world.borrow();
@@ -886,7 +1016,6 @@ impl Cockpit {
             cx.notify();
             return;
         };
-        let digest = self.next_frame_digest();
         match self.shell.present(&cap, &w, vec![victim_region], true, digest) {
             Ok(_) => {
                 self.last_outcome = Some(
@@ -909,6 +1038,9 @@ impl Cockpit {
     /// asserts input focus to steal the keystroke — the T3 input-routing tooth
     /// REFUSES it (input routes only to the focus holder).
     fn shell_input_steal(&mut self, cx: &mut Context<Self>) {
+        // Compute the frame digest BEFORE borrowing the world (the digest counter
+        // is `&mut self`; the present below holds an immutable borrow of it).
+        let digest = self.next_frame_digest();
         // Find a non-focused, non-console surface to play the thief.
         let w = self.world.borrow();
         let thief = self
@@ -931,7 +1063,6 @@ impl Cockpit {
             return;
         };
         let region = thief.region();
-        let digest = self.next_frame_digest();
         match self.shell.present(&cap, &w, vec![region], /*claims_focus*/ true, digest) {
             Ok(_) => {
                 self.last_outcome = Some(
@@ -1009,12 +1140,22 @@ impl Cockpit {
             CommandId::GoAgent => self.set_tab(Tab::Agent, cx),
             CommandId::GoBuffer => self.set_tab(Tab::Buffer, cx),
             CommandId::GoTerminal => self.set_tab(Tab::Terminal, cx),
+            CommandId::GoSwarm => self.set_tab(Tab::Swarm, cx),
+            CommandId::GoGraph => self.set_tab(Tab::Graph, cx),
+            CommandId::GoOrgans => self.set_tab(Tab::Organs, cx),
+            CommandId::GoProofs => self.set_tab(Tab::Proofs, cx),
 
             CommandId::BufferType => self.buffer_type_demo(cx),
             CommandId::BufferCommit => self.buffer_commit(cx),
             CommandId::BufferReadOnlyWrite => self.buffer_readonly_write_demo(cx),
             CommandId::TerminalRunInMandate => self.terminal_run_in_mandate(cx),
             CommandId::TerminalRunOutOfMandate => self.terminal_run_out_of_mandate(cx),
+
+            CommandId::SwarmCoordinatorEmitA => self.swarm_coordinator_emit_a(cx),
+            CommandId::SwarmWorkerADrain => self.swarm_worker_a_drain(cx),
+            CommandId::SwarmCoordinatorTransferAndWake => {
+                self.swarm_coordinator_transfer_and_wake(cx)
+            }
 
             CommandId::ShellOpenSelected => self.shell_open_selected(cx),
             CommandId::ShellFocusFront => self.shell_focus_front(cx),
@@ -1418,6 +1559,10 @@ impl Cockpit {
         match self.tab {
             Tab::Shell => self.shell_panel(cx).into_any_element(),
             Tab::Agent => self.agent_panel().into_any_element(),
+            Tab::Swarm => self.swarm_panel(cx).into_any_element(),
+            Tab::Graph => self.graph_panel().into_any_element(),
+            Tab::Organs => self.organs_panel().into_any_element(),
+            Tab::Proofs => self.proofs_panel().into_any_element(),
             Tab::Buffer => self.buffer_panel(cx).into_any_element(),
             Tab::Terminal => self.terminal_panel(cx).into_any_element(),
             Tab::Composer => self.composer(cx).into_any_element(),
@@ -1832,6 +1977,180 @@ impl Cockpit {
         col
     }
 
+    /// THE A2 SWARM PANEL — multi-agent cap-coordination surface.
+    ///
+    /// Renders the [`SwarmView`]: each member's mandate + action count + inbox,
+    /// the inter-member notify-edge activity feed, and the demo action row
+    /// (emit a wake / drain the inbox / transfer-and-wake in one turn).
+    ///
+    /// The point: you watch the EXECUTOR's receipts for each member's committed
+    /// turns, and the INBOX accumulates pending wakes from peers' emits — all
+    /// on-ledger truth, never a self-report. The async model (send ≠ receive)
+    /// is visible: the coordinator's emit receipt and worker-a's drain receipt
+    /// are DIFFERENT turns with DIFFERENT heights.
+    fn swarm_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let w = self.world.borrow();
+        let view = SwarmView::build(&self.swarm, &w);
+        drop(w);
+
+        let mut col = div().flex().flex_col().gap_2().p_3().size_full();
+        col = col.child(section_title("SWARM (A2) · multi-agent cap-coordination · notify-edge inbox").mb_1());
+        col = col.child(div().text_xs().text_color(theme::muted()).child(
+            "N agent cells coordinating as confined Surface cells. Every action is a cap-gated, \
+             receipted turn at the ONE seam. An EmitEvent deposits a NotifyEdge in the \
+             recipient's inbox; the recipient drains it in its OWN separate future turn \
+             (async — not a joint turn). You watch the executor's truth, never a self-report.",
+        ));
+
+        // Header: swarm stats.
+        col = col.child(
+            div()
+                .flex()
+                .flex_wrap()
+                .gap_1()
+                .items_center()
+                .child(pill(format!("{} members", view.members.len()), theme::accent()))
+                .child(pill(format!("{} total actions", view.total_actions), theme::good()))
+                .child(pill(
+                    format!("{} pending wakes", view.total_pending),
+                    if view.total_pending > 0 { theme::warn() } else { theme::muted() },
+                )),
+        );
+
+        // Members: one row per member.
+        col = col.child(section_title("members (cap-confined, mandate-gated)").mt_2());
+        let mut members_col = div().flex().flex_col().gap_1();
+        for m in &view.members {
+            let backed_color = if m.backed { theme::good() } else { theme::bad() };
+            let inbox_color = if m.pending_notify > 0 { theme::warn() } else { theme::muted() };
+            members_col = members_col.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_0p5()
+                    .px_2()
+                    .py_1()
+                    .rounded_md()
+                    .bg(theme::panel())
+                    .child(
+                        div()
+                            .flex()
+                            .gap_1()
+                            .items_center()
+                            .child(pill(m.name.clone(), theme::accent()))
+                            .child(pill(m.short.clone(), theme::muted()))
+                            .child(pill(if m.backed { "live" } else { "UNBACKED" }, backed_color))
+                            .child(pill(format!("bal {}", m.balance), theme::text()))
+                            .child(pill(format!("{} actions", m.action_count), theme::good()))
+                            .child(pill(
+                                format!("{} pending", m.pending_notify),
+                                inbox_color,
+                            )),
+                    )
+                    .when(!m.inbox.is_empty(), |d| {
+                        let mut inbox_div = div().flex().flex_col().gap_0p5().mt_1();
+                        for n in &m.inbox {
+                            let (mark, color) = if n.drained {
+                                ("✓", theme::muted())
+                            } else {
+                                ("⚡", theme::warn())
+                            };
+                            inbox_div = inbox_div.child(
+                                div()
+                                    .flex()
+                                    .gap_1()
+                                    .items_center()
+                                    .text_xs()
+                                    .px_2()
+                                    .child(div().text_color(color).child(mark))
+                                    .child(
+                                        div()
+                                            .text_color(if n.drained { theme::muted() } else { theme::text() })
+                                            .child(n.label()),
+                                    ),
+                            );
+                        }
+                        d.child(inbox_div)
+                    }),
+            );
+        }
+        col = col.child(members_col);
+
+        // Action row: the demo verbs.
+        col = col.child(section_title("demo actions (the A2 seam)").mt_2());
+        col = col.child(
+            div()
+                .flex()
+                .flex_wrap()
+                .gap_1()
+                .child(verb_button(cx, "coordinator emit task/go → worker-a", theme::accent(), Cockpit::swarm_coordinator_emit_a))
+                .child(verb_button(cx, "worker-a DRAIN inbox (own ack turn)", theme::good(), Cockpit::swarm_worker_a_drain))
+                .child(verb_button(cx, "coordinator: transfer + wake (one seam)", theme::warn(), Cockpit::swarm_coordinator_transfer_and_wake)),
+        );
+
+        // Activity feed: recent swarm actions (newest-first).
+        col = col.child(section_title("activity feed (executor receipts · notify edges)").mt_2());
+        if view.activity.is_empty() {
+            col = col.child(div().text_xs().text_color(theme::muted()).child(
+                "no swarm actions yet — use the buttons above to run the first turns.",
+            ));
+        } else {
+            let mut feed = div().flex().flex_col().gap_0p5();
+            for entry in &view.activity {
+                let (mark, mark_color) = if entry.committed {
+                    ("✓", theme::good())
+                } else {
+                    ("✗", theme::bad())
+                };
+                let height_label = entry.height.map(|h| format!("h{h}")).unwrap_or_else(|| "—".to_string());
+                let receipt_label = entry.receipt_short.as_deref().unwrap_or("—");
+                feed = feed.child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_0p5()
+                        .px_2()
+                        .py_0p5()
+                        .rounded_sm()
+                        .bg(theme::panel())
+                        .child(
+                            div()
+                                .flex()
+                                .gap_2()
+                                .items_center()
+                                .child(div().text_xs().text_color(mark_color).child(mark))
+                                .child(div().text_xs().text_color(theme::muted()).child(height_label))
+                                .child(div().text_xs().text_color(theme::accent()).child(entry.member_short.clone()))
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(if entry.committed { theme::text() } else { theme::bad() })
+                                        .child(entry.summary.clone()),
+                                )
+                                .when(entry.committed, |d| {
+                                    d.child(pill(receipt_label.to_string(), theme::good()))
+                                }),
+                        )
+                        .when(!entry.notify_edges.is_empty(), |d| {
+                            let mut edges_div = div().flex().flex_col().gap_0p5().px_2();
+                            for edge_label in &entry.notify_edges {
+                                edges_div = edges_div.child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(theme::warn())
+                                        .child(format!("  ⚡ {edge_label}")),
+                                );
+                            }
+                            d.child(edges_div)
+                        }),
+                );
+            }
+            col = col.child(feed);
+        }
+
+        col
+    }
+
     /// THE TURN DEBUGGER panel — maps `debug::render`'s gpui-free model onto
     /// gpui elements (step list, conservation Σδ, the refusal explanation).
     fn debugger_panel(&self) -> impl IntoElement {
@@ -2020,6 +2339,189 @@ impl Cockpit {
             col = col.child(inspectable_row(&proof));
             for null in reflect::reflect_nullifiers(r) {
                 col = col.child(inspectable_row(&null));
+            }
+        }
+        col
+    }
+
+    /// THE GRAPH panel — the whole-graph ocap delegation layout. Renders the
+    /// capability graph as nodes (cells, with in/out degree) + edges (grants,
+    /// with rights), and — rooted on the first source cell — the LAYERED
+    /// multi-hop delegation depth (root at depth 0, its grantees at depth 1, …)
+    /// plus each source's transitive blast radius. The View tree IS the ocap
+    /// graph (`starbridge_v2::graph`).
+    fn graph_panel(&self) -> impl IntoElement {
+        let w = self.world.borrow();
+        let g = starbridge_v2::graph::OcapGraph::build(&w);
+        let mut col = div().flex().flex_col().gap_1().p_3().size_full();
+        col = col.child(section_title("GRAPH · ocap delegation (multi-hop)").mb_1());
+        col = col.child(
+            div().text_xs().text_color(theme::muted()).child(format!(
+                "{} cells · {} capability edges",
+                g.node_count(),
+                g.edge_count()
+            )),
+        );
+
+        // The EDGES — the literal ocap graph (holder ──rights──▶ target).
+        col = col.child(div().text_xs().text_color(theme::muted()).mt_2().child("CAPABILITY EDGES"));
+        if g.edge_count() == 0 {
+            col = col.child(div().text_xs().text_color(theme::muted()).px_2().child("(no capability edges yet)"));
+        }
+        for e in g.edges().iter().take(24) {
+            let deleg = if e.is_delegated() { " · delegated" } else { "" };
+            let facet = if e.faceted { " · faceted" } else { "" };
+            col = col.child(
+                div()
+                    .flex()
+                    .justify_between()
+                    .px_2()
+                    .py_0p5()
+                    .child(
+                        div().text_xs().text_color(theme::text()).child(format!(
+                            "⬡ {} ──▶ {}",
+                            reflect::short_hex(e.holder.as_bytes()),
+                            reflect::short_hex(e.target.as_bytes()),
+                        )),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(theme::accent())
+                            .child(format!("[{}]{deleg}{facet}", e.rights_label())),
+                    ),
+            );
+        }
+
+        // The LAYERED multi-hop layout, rooted on each source cell (no inbound
+        // edge — the authority origins), with the transitive blast radius.
+        col = col.child(div().text_xs().text_color(theme::muted()).mt_2().child("MULTI-HOP LAYOUT (by delegation depth)"));
+        let roots = g.source_roots();
+        if roots.is_empty() {
+            col = col.child(div().text_xs().text_color(theme::muted()).px_2().child("(no source root — the graph may be cyclic)"));
+        }
+        for root in roots.iter().take(4) {
+            let reach = g.reach_count(root);
+            col = col.child(
+                div().text_xs().text_color(theme::good()).px_2().mt_1().child(format!(
+                    "root {} · reaches {} cell(s) transitively{}",
+                    reflect::short_hex(root.as_bytes()),
+                    reach,
+                    if g.has_cycle_from(root) { " · ⟳ cyclic" } else { "" },
+                )),
+            );
+            for layer in g.layered_from(root) {
+                if layer.cells.is_empty() {
+                    continue;
+                }
+                let cells: Vec<String> = layer
+                    .cells
+                    .iter()
+                    .map(|c| reflect::short_hex(c.as_bytes()))
+                    .collect();
+                col = col.child(
+                    div().text_xs().text_color(theme::text()).px_3().child(format!(
+                        "depth {}: {}",
+                        layer.depth,
+                        cells.join(", ")
+                    )),
+                );
+            }
+        }
+        col
+    }
+
+    /// THE ORGANS panel — reflects each dregg organ's live cell-state. Trustline
+    /// and flash-well organs are LIVE (embed-core: their enforcement is the cell's
+    /// executor-installed program, fully readable from the embedded ledger);
+    /// channel / mailbox / court are surfaced HONESTLY as remote-path (behind
+    /// captp). See [`starbridge_v2::organs`].
+    fn organs_panel(&self) -> impl IntoElement {
+        let w = self.world.borrow();
+        let survey = starbridge_v2::organs::OrganSurvey::build(&w);
+        let mut col = div().flex().flex_col().gap_1().p_3().size_full();
+        col = col.child(section_title("ORGANS · live organ cell-state").mb_1());
+        col = col.child(
+            div().text_xs().text_color(theme::muted()).child(format!(
+                "{} live organ(s) (embed-core) · {} remote-path",
+                survey.live_count(),
+                survey.remote.len()
+            )),
+        );
+
+        // LIVE trustline organs.
+        col = col.child(div().text_xs().text_color(theme::muted()).mt_2().child("TRUSTLINES (live)"));
+        if survey.trustlines.is_empty() {
+            col = col.child(div().text_xs().text_color(theme::muted()).px_2().child("(no trustline organ in the world)"));
+        }
+        for t in &survey.trustlines {
+            col = col.child(
+                div().flex().flex_col().px_2().py_0p5()
+                    .child(div().text_xs().text_color(theme::text()).child(format!("⬡ {} (trustline)", t.short)))
+                    .child(div().text_xs().text_color(theme::accent()).child(t.summary())),
+            );
+        }
+
+        // LIVE flash-well organs.
+        col = col.child(div().text_xs().text_color(theme::muted()).mt_2().child("FLASH WELLS (live)"));
+        if survey.flash_wells.is_empty() {
+            col = col.child(div().text_xs().text_color(theme::muted()).px_2().child("(no flash-well organ in the world)"));
+        }
+        for f in &survey.flash_wells {
+            col = col.child(
+                div().flex().flex_col().px_2().py_0p5()
+                    .child(div().text_xs().text_color(theme::text()).child(format!("⬡ {} (flash well)", f.short)))
+                    .child(div().text_xs().text_color(theme::accent()).child(f.summary())),
+            );
+        }
+
+        // REMOTE-PATH organs (honest — kind + seam + route, not faked state).
+        col = col.child(div().text_xs().text_color(theme::muted()).mt_2().child("REMOTE-PATH ORGANS (need a connected node)"));
+        for o in &survey.remote {
+            col = col.child(
+                div().flex().flex_col().px_2().py_0p5()
+                    .child(div().text_xs().text_color(theme::warn()).child(format!("⬡ {} — remote-path", o.kind)))
+                    .child(div().text_xs().text_color(theme::muted()).child(o.seam.to_string())),
+            );
+        }
+        col
+    }
+
+    /// THE PROOFS panel — the proof-attach + STARK verification-status board.
+    /// Each committed turn's verification tier (verified-by-construction /
+    /// executor-signed / STARK-attached) + the honest route to the next tier.
+    /// See [`starbridge_v2::proofs`].
+    fn proofs_panel(&self) -> impl IntoElement {
+        let w = self.world.borrow();
+        let board = starbridge_v2::proofs::ProofBoard::build(&w, 16);
+        let mut col = div().flex().flex_col().gap_1().p_3().size_full();
+        col = col.child(section_title("PROOFS · attach + STARK verification status").mb_1());
+        col = col.child(
+            div().text_xs().text_color(theme::muted()).child(format!(
+                "{} verified-by-construction · {} signed · {} STARK-attached",
+                board.by_construction, board.signed, board.stark_attached
+            )),
+        );
+        if board.is_empty() {
+            col = col.child(div().text_xs().text_color(theme::muted()).px_2().mt_1().child("(no committed turns yet)"));
+        }
+        for e in &board.entries {
+            let tier_color = match e.tier {
+                starbridge_v2::proofs::VerificationTier::StarkAttached => theme::good(),
+                starbridge_v2::proofs::VerificationTier::ExecutorSigned => theme::accent(),
+                starbridge_v2::proofs::VerificationTier::VerifiedByConstruction => theme::text(),
+            };
+            col = col.child(
+                div().flex().flex_col().px_2().py_0p5()
+                    .child(
+                        div().flex().justify_between()
+                            .child(div().text_xs().text_color(theme::text()).child(format!("h{} · {}", e.height, e.receipt_short)))
+                            .child(div().text_xs().text_color(tier_color).child(e.tier.label())),
+                    )
+                    .child(div().text_xs().text_color(theme::muted()).child(e.summary())),
+            );
+            if let Some(route) = e.upgrade_route() {
+                col = col.child(div().text_xs().text_color(theme::muted()).px_3().child(format!("→ next: {route}")));
             }
         }
         col

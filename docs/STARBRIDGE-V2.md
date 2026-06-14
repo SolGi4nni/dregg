@@ -108,21 +108,43 @@ starbridge_v2 (lib, feature embedded-executor)
 ├── surface    — Surface + SurfaceCapability: a cap-confined cell view
 │               (apps-as-cells). A surface is OWNED via an unforgeable cap and
 │               re-reads the live ledger — no mock surfaces. gpui-free, testable.
-└── shell      — Shell: the cap-first window manager + compositor. Every window
-                op (focus/raise/move/resize/minimize/close) is GATED by the
-                surface's cap; `compose(world)` builds the Scene (z-ordered paint
-                list) with shell-drawn anti-spoof identity chrome. gpui-free.
+├── shell      — Shell: the cap-first window manager + compositor. Every window
+│               op (focus/raise/move/resize/minimize/close) is GATED by the
+│               surface's cap; `compose(world)` builds the Scene (z-ordered paint
+│               list) with shell-drawn anti-spoof identity chrome. gpui-free.
+├── graph      — OcapGraph: the whole-graph ocap delegation layout. Nodes =
+│               cells, edges = capability grants; MULTI-HOP reachability (the BFS
+│               transitive closure — a cell's blast radius) + a layered
+│               delegation-depth layout rooted on any cell. The View tree IS the
+│               ocap graph. gpui-free, testable.
+├── organs     — OrganSurvey: reflects each organ's LIVE cell-state. Trustline +
+│               flash-well positions are decoded from the embedded ledger's state
+│               slots (embed-core, LIVE); channel/mailbox/court are surfaced
+│               honestly as remote-path (need `captp`). gpui-free, testable.
+├── proofs     — ProofBoard: the proof-attach + STARK verification-status view.
+│               Each committed turn's tier (verified-by-construction / executor-
+│               signed / STARK-attached) + the honest route to the next tier.
+│               gpui-free, testable.
+├── swarm      — Swarm: the A2 multi-agent coordinator. Async notify edge
+│               (EmitEvent→NotifyEdge→drain) + atomic multi-effect bundles
+│               (`run_atomic`, all-or-nothing) + per-member cap-confined surfaces
+│               (`bind_surface`, each pane a real firmament cap). gpui-free.
+└── agent      — AgentActivity/AgentSurface: one agent loop's provable activity
+                (mandate · cap-gated turns + receipts · authorization boundary).
 
 starbridge-v2 (bin)
 ├── cockpit    — the gpui cockpit (feature gpui-ui): the comprehensive panels
 │               (cell world · inspector · blocklace · composer · objects ·
-│               dynamics) plus the workspace tabs (SHELL · composer · objects ·
+│               dynamics) plus the workspace tabs (SHELL · agent · swarm · GRAPH ·
+│               ORGANS · PROOFS · buffer · terminal · composer · objects ·
 │               debugger · replay · cipherclerk · editor), rendering `World`
 │               directly. The SHELL tab renders the cap-first compositor scene
 │               (surfaces over real cells); the OBJECTS tab projects proofs /
-│               nullifiers / cell lifecycle through `reflect`. A ⌘K COMMAND
-│               PALETTE (`palette`) overlays the whole cockpit: one
-│               fuzzy-searchable surface over EVERY action.
+│               nullifiers / cell lifecycle through `reflect`; the GRAPH tab draws
+│               the ocap delegation graph (multi-hop); the ORGANS tab reflects
+│               live organ cell-state; the PROOFS tab shows the verification-tier
+│               board. A ⌘K COMMAND PALETTE (`palette`) overlays the whole
+│               cockpit: one fuzzy-searchable surface over EVERY action.
 └── palette    — the ⌘K command registry + fuzzy matcher + selection model
                 (gpui-free, testable). Every cockpit action is one `CommandId`;
                 the cockpit dispatches a selected command through the SAME
@@ -263,12 +285,13 @@ over EVERY dregg datum and EVERY action. The coverage is an honest burn-down:
 | the image commitment (`state_root`) | **live** | `reflect::reflect_image` |
 | the dynamics stream (transitions) | **live** | `dynamics`, the feed |
 | cell lifecycle (live / sealed / destroyed / migrated / archived) | **live** | OBJECTS panel lifecycle column, `lifecycle_badge` |
-| proofs + verification status (STARK) | **live** | `reflect::reflect_proof_status`, OBJECTS panel |
+| proofs + verification status (STARK) | **live** | `reflect::reflect_proof_status`, OBJECTS panel; the proof-attach + tier board (`proofs::ProofBoard`, PROOFS panel) |
 | nullifiers / consumed one-time authorities | **live** | `reflect::reflect_nullifiers`, OBJECTS panel |
 | factories (deployed descriptors) | **live** | `reflect::reflect_factory`; deploy + birth path |
-| capability delegation *graph* (multi-hop layout) | designed-pending | edges present per-cell; a whole-graph view is next |
-| full delegation epochs / revocation channels | partial | epoch shown; channel view pending |
-| organs (trustline/channel/mailbox/court) state | designed-pending | trustline/flashwell in embed-core; channel/mailbox need `captp` (network), surfaced as remote-path |
+| capability delegation *graph* (multi-hop layout) | **live** | `graph::OcapGraph` (nodes/edges + multi-hop reachability + layered delegation-depth layout), GRAPH panel |
+| full delegation epochs / revocation channels | partial | epoch shown (per-cell + on graph edges via `stored_epoch`); channel view pending |
+| organs (trustline/flash-well) live cell-state | **live** (embed-core) | `organs::OrganSurvey` (trustline + flash-well positions decoded from live state), ORGANS panel |
+| organs (channel/mailbox/court) state | designed-pending | need `captp` (network); surfaced honestly as remote-path (kind · seam · route) in `organs::remote_path_organs`, ORGANS panel |
 | intents / obligations | designed-pending | node API mapped; panels pending |
 | profiles / identities, producer lean-vs-rust | partial (thin path) | surfaced in the thin client; native badge pending |
 | federations + sync state | designed-pending | `state_root` is the local half; peer view pending |
@@ -289,9 +312,12 @@ over EVERY dregg datum and EVERY action. The coverage is an honest burn-down:
 | burn (supply reduced, `was_burn` bound) | **live** | `world::burn`, composer "burn 1,000" |
 | factory-birth (`CreateCellFromFactory`) | **live** | `world::deploy_factory` + `world::create_cell_from_factory` |
 | compose multi-action call forests | **live** | `world::forest_turn` (atomic, one receipt), composer "compose multi-action" |
+| swarm: async notify edge (EmitEvent → NotifyEdge → drain) | **live** | `swarm::Swarm::run` / `drain_notify`, SWARM tab |
+| swarm: atomic multi-effect turn (coordinator bundles N actions, all-or-nothing) | **live** | `swarm::Swarm::run_atomic` (one receipt for the bundle, bounded by the coordinator's mandate) |
+| swarm: per-member cap-confined surface (each pane a real firmament `SurfaceCapability`) | **live** | `swarm::Swarm::bind_surface` (the shell gates every window op on the member's cap) |
 | shell window ops (open surface · focus/raise · move/resize · minimize · close), all cap-gated | **live** (the cap guarantee fires) | `shell::Shell`, SHELL tab |
 | compositor layout (float · tile · stack) | **live** | `shell::Layout`, SHELL tab "cycle layout" |
-| the organ operations (open/draw/repay; create/join/remove; send/drain; evidence) | designed-pending | trustline/flashwell organ surfaces in embed-core; channel/mailbox/court need `captp` (remote path) |
+| the organ operations (open/draw/repay; create/join/remove; send/drain; evidence) | designed-pending | trustline/flash-well live *state* reflected (ORGANS panel); the operating verbs ride the SDK's `AgentRuntime` (trustline/flashwell in embed-core); channel/mailbox/court need `captp` (remote path) |
 | connect to federations | designed-pending | `NodeClient::Http` exists; native panel pending |
 
 > **Lifecycle finding — seal/destroy are recorded, the *verbs* enforce
