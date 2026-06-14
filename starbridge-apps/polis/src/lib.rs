@@ -113,8 +113,8 @@
 
 use dregg_cell::factory::{CapTarget, CapTemplate, ChildVkStrategy, FactoryDescriptor};
 use dregg_cell::permissions::AuthRequired;
-use dregg_cell::program::{CellProgram, SimpleStateConstraint, StateConstraint, field_from_u64};
-use dregg_cell::state::{FIELD_ZERO, FieldElement};
+use dregg_cell::program::{field_from_u64, CellProgram, SimpleStateConstraint, StateConstraint};
+use dregg_cell::state::{FieldElement, FIELD_ZERO};
 use dregg_cell::{CellId, CellMode};
 
 /// Lifecycle state-code slot — slot 0 in every polis cell family.
@@ -1305,9 +1305,7 @@ pub mod identity {
 
     /// The `CellProgram` installed on the identity cell.
     pub fn identity_cell_program(charter: &IdentityCharter) -> Result<CellProgram, PolisError> {
-        Ok(CellProgram::Predicate(identity_state_constraints(
-            charter,
-        )?))
+        Ok(CellProgram::Predicate(identity_state_constraints(charter)?))
     }
 
     /// **The identity factory (per-charter, content-addressed).** Births
@@ -1916,7 +1914,9 @@ mod identity_tests {
     use super::identity::*;
     use super::*;
     use dregg_cell::preconditions::EvalContext;
-    use dregg_cell::program::{ProgramError, TransitionMeta, WitnessBlobView, WitnessBundle, WitnessKindTag};
+    use dregg_cell::program::{
+        ProgramError, TransitionMeta, WitnessBlobView, WitnessBundle, WitnessKindTag,
+    };
     use dregg_cell::state::CellState;
 
     fn devices_2of2() -> CouncilCharter {
@@ -1975,6 +1975,7 @@ mod identity_tests {
             &WitnessBundle {
                 blobs: &blobs,
                 registry: None,
+                finalized_roots: None,
             },
         )
     }

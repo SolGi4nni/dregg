@@ -15,13 +15,12 @@
 use std::collections::HashMap;
 
 use dregg_cell::predicate::{
-    PredicateInput, WitnessedPredicate, WitnessedPredicateError, WitnessedPredicateKind, WitnessedPredicateVerifier,
+    PredicateInput, WitnessedPredicate, WitnessedPredicateError, WitnessedPredicateKind,
+    WitnessedPredicateVerifier,
 };
-use dregg_cell::{
-    AuthRequired, Cell, CellId, CellProgram, CellState, Permissions, field_from_u64,
-};
+use dregg_cell::{field_from_u64, AuthRequired, Cell, CellId, CellProgram, CellState, Permissions};
 use dregg_turn::action::{
-    Action, Authorization, CommitmentMode, DelegationMode, WitnessBlob, symbol,
+    symbol, Action, Authorization, CommitmentMode, DelegationMode, WitnessBlob,
 };
 use dregg_turn::{CallForest, Effect, Turn};
 
@@ -161,7 +160,11 @@ fn make_open_programmed_cell(seed: u8, balance: u64, program: CellProgram) -> Ce
     let mut public_key = [0u8; 32];
     public_key[0] = seed;
     public_key[31] = seed.wrapping_mul(7);
-    let mut cell = Cell::with_balance(public_key, [0u8; 32], i64::try_from(balance).expect("balance fits i64"));
+    let mut cell = Cell::with_balance(
+        public_key,
+        [0u8; 32],
+        i64::try_from(balance).expect("balance fits i64"),
+    );
     cell.permissions = Permissions {
         send: AuthRequired::None,
         receive: AuthRequired::None,
@@ -331,25 +334,21 @@ fn any_of_inside_predicate_vec_works_as_or_inside_and() {
         },
     ]);
     // Holds: slot0=1, slot1=2.
-    assert!(
-        p.evaluate(&state_with(&[(0, 1), (1, 2)]), None, None)
-            .is_ok()
-    );
+    assert!(p
+        .evaluate(&state_with(&[(0, 1), (1, 2)]), None, None)
+        .is_ok());
     // Holds: slot0=1, slot1=3.
-    assert!(
-        p.evaluate(&state_with(&[(0, 1), (1, 3)]), None, None)
-            .is_ok()
-    );
+    assert!(p
+        .evaluate(&state_with(&[(0, 1), (1, 3)]), None, None)
+        .is_ok());
     // Fails outer: slot0=2.
-    assert!(
-        p.evaluate(&state_with(&[(0, 2), (1, 2)]), None, None)
-            .is_err()
-    );
+    assert!(p
+        .evaluate(&state_with(&[(0, 2), (1, 2)]), None, None)
+        .is_err());
     // Fails AnyOf branch: slot0=1, slot1=4.
-    assert!(
-        p.evaluate(&state_with(&[(0, 1), (1, 4)]), None, None)
-            .is_err()
-    );
+    assert!(p
+        .evaluate(&state_with(&[(0, 1), (1, 4)]), None, None)
+        .is_err());
 }
 
 // ===========================================================================
@@ -543,6 +542,7 @@ fn caveat_snapshot_plus_fresh_witness_composition() {
     let witnesses = WitnessBundle {
         blobs: &blobs,
         registry: Some(&registry),
+        finalized_roots: None,
     };
     let program = CellProgram::Predicate(vec![
         StateConstraint::FieldEquals {
@@ -573,6 +573,7 @@ fn caveat_snapshot_plus_fresh_witness_composition() {
     let stale_witnesses = WitnessBundle {
         blobs: &stale_blobs,
         registry: Some(&registry),
+        finalized_roots: None,
     };
     assert!(
         program

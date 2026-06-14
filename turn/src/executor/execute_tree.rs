@@ -811,6 +811,10 @@ impl TurnExecutor {
         let witnesses = dregg_cell::program::WitnessBundle {
             blobs: &witness_views,
             registry: self.witnessed_registry.as_ref(),
+            // No peer-cell finalized-root authority is wired into this executor
+            // path yet, so `ObservedFieldEquals` fails closed (the additive
+            // `None` default per `WitnessBundle`'s contract).
+            finalized_roots: None,
         };
 
         // Walk every cell whose program might fire on this action: the

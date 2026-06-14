@@ -19,9 +19,7 @@ use dregg_cell::predicate::{
     NonMembershipNeighborProof, PredicateInput, WitnessedPredicate, WitnessedPredicateError,
     WitnessedPredicateKind, WitnessedPredicateRegistry, WitnessedPredicateVerifier,
 };
-use dregg_cell::{
-    InputRef, MerkleMembershipProof, Nullifier,
-};
+use dregg_cell::{InputRef, MerkleMembershipProof, Nullifier};
 
 // ---------------------------------------------------------------------------
 // Helpers / shared concerns
@@ -589,6 +587,7 @@ fn dfa_predicate_with_valid_proof_accepts_through_executor() {
     let witnesses = WitnessBundle {
         blobs: &blobs,
         registry: Some(&registry),
+        finalized_roots: None,
     };
     let program = CellProgram::Predicate(vec![StateConstraint::Witnessed {
         wp: WitnessedPredicate::dfa([1u8; 32], InputRef::Sender, 0),
@@ -990,6 +989,7 @@ fn signing_message_input_ref_rejects_in_slot_caveat_context() {
     let witnesses = WitnessBundle {
         blobs: &blobs,
         registry: Some(&registry),
+        finalized_roots: None,
     };
     let program = CellProgram::Predicate(vec![StateConstraint::Witnessed {
         wp: WitnessedPredicate::custom(vk_hash, commitment, InputRef::SigningMessage, 0),

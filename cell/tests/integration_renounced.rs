@@ -25,13 +25,13 @@
 use std::sync::Arc;
 
 use dregg_cell::{
-    CellProgram, CellState, StateConstraint,
     preconditions::EvalContext,
     predicate::{
         CredentialSetMembershipVerifier, NeighborAdjacencyVerifier, NonMembershipNeighborProof,
         NonMembershipProofV2, SortedNeighborNonMembershipVerifier, WitnessedPredicateRegistry,
     },
     program::{RenouncedSet, TransitionMeta, WitnessBlobView, WitnessBundle, WitnessKindTag},
+    CellProgram, CellState, StateConstraint,
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -77,6 +77,7 @@ fn eval_with_registry(
     let bundle = WitnessBundle {
         blobs: &blobs,
         registry: Some(registry),
+        finalized_roots: None,
     };
     let state = CellState::new(0);
     let ctx = ctx_with_sender(sender);
@@ -323,6 +324,7 @@ fn renounced_no_ctx_returns_missing_context_field() {
     let bundle = WitnessBundle {
         blobs: &blobs,
         registry: Some(&registry),
+        finalized_roots: None,
     };
     let state = CellState::new(0);
     let program = renounced_blinded(commitment);
@@ -352,6 +354,7 @@ fn renounced_ctx_without_sender_returns_missing_context_field() {
     let bundle = WitnessBundle {
         blobs: &blobs,
         registry: Some(&registry),
+        finalized_roots: None,
     };
     let state = CellState::new(0);
     let bare_ctx = EvalContext::default(); // sender: None
@@ -391,6 +394,7 @@ fn renounced_no_registry_returns_sentinel() {
     let bundle = WitnessBundle {
         blobs: &blobs,
         registry: None,
+        finalized_roots: None,
     };
     let state = CellState::new(0);
     let ctx = ctx_with_sender(candidate);
@@ -435,6 +439,7 @@ fn renounced_public_root_reads_commitment_from_slot() {
     let bundle = WitnessBundle {
         blobs: &blobs,
         registry: Some(&registry),
+        finalized_roots: None,
     };
     // State: slot 2 holds the set root.
     let mut state = CellState::new(0);
@@ -476,6 +481,7 @@ fn renounced_public_root_wrong_commitment_rejected() {
     let bundle = WitnessBundle {
         blobs: &blobs,
         registry: Some(&registry),
+        finalized_roots: None,
     };
     let mut state = CellState::new(0);
     state.fields[2] = real_commitment; // cell holds the real root

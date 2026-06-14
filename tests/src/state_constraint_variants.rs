@@ -28,12 +28,12 @@
 use std::sync::Arc;
 
 use dregg_cell::predicate::{
-    PredicateInput, WitnessedPredicateError, WitnessedPredicateKind,
-    WitnessedPredicateRegistry, WitnessedPredicateVerifier,
+    PredicateInput, WitnessedPredicateError, WitnessedPredicateKind, WitnessedPredicateRegistry,
+    WitnessedPredicateVerifier,
 };
 use dregg_cell::{
-    CellProgram, CellState, EvalContext, FieldElement,
-    ProgramError, StateConstraint, field_from_u64,
+    field_from_u64, CellProgram, CellState, EvalContext, FieldElement, ProgramError,
+    StateConstraint,
 };
 
 // ---------------------------------------------------------------------------
@@ -745,6 +745,7 @@ fn sender_authorized_blinded_set_with_valid_witness_accepts() {
     let witnesses = WitnessBundle {
         blobs: &blobs,
         registry: Some(&registry),
+        finalized_roots: None,
     };
     let ctx = EvalContext {
         sender: Some(sender),
@@ -785,6 +786,7 @@ fn sender_authorized_blinded_set_with_tampered_witness_rejects() {
     let witnesses = WitnessBundle {
         blobs: &blobs,
         registry: Some(&registry),
+        finalized_roots: None,
     };
     let ctx = EvalContext {
         sender: Some(sender),
@@ -909,6 +911,7 @@ fn rate_limit_accepts_count_witness_when_ctx_count_unset() {
     let witnesses = WitnessBundle {
         blobs: &blobs,
         registry: None,
+        finalized_roots: None,
     };
     let ctx = EvalContext {
         sender: Some([1u8; 32]),
@@ -951,6 +954,7 @@ fn rate_limit_ignores_self_attested_count_witness_when_ctx_count_unset() {
     let witnesses = WitnessBundle {
         blobs: &blobs,
         registry: None,
+        finalized_roots: None,
     };
     let ctx = EvalContext {
         sender: Some([1u8; 32]),
@@ -982,6 +986,7 @@ fn rate_limit_executor_honors_counter() {
     let witnesses = WitnessBundle {
         blobs: &blobs,
         registry: None,
+        finalized_roots: None,
     };
     let ctx = EvalContext {
         sender: Some([1u8; 32]),
@@ -1280,6 +1285,7 @@ fn temporal_predicate_accepts_with_valid_witness() {
     let witnesses = WitnessBundle {
         blobs: &blobs,
         registry: Some(&registry),
+        finalized_roots: None,
     };
 
     let result = p.evaluate_full(
@@ -1316,6 +1322,7 @@ fn temporal_predicate_rejects_with_tampered_witness() {
     let witnesses = WitnessBundle {
         blobs: &blobs,
         registry: Some(&registry),
+        finalized_roots: None,
     };
 
     let err = p
@@ -1486,6 +1493,7 @@ fn witnessed_dfa_with_valid_proof_accepts() {
     let witnesses = WitnessBundle {
         blobs: &blobs,
         registry: Some(&registry),
+        finalized_roots: None,
     };
     let new = CellState::default();
     let ctx = EvalContext {
@@ -1522,6 +1530,7 @@ fn witnessed_dfa_with_tampered_proof_rejects() {
     let witnesses = WitnessBundle {
         blobs: &blobs,
         registry: Some(&registry),
+        finalized_roots: None,
     };
     let new = CellState::default();
     let ctx = EvalContext {
@@ -1566,6 +1575,7 @@ fn witnessed_unknown_kind_rejects() {
     let witnesses = WitnessBundle {
         blobs: &blobs,
         registry: Some(&registry),
+        finalized_roots: None,
     };
     let new = CellState::default();
     let ctx = EvalContext {
@@ -1633,6 +1643,7 @@ fn custom_accepts_when_registered_verifier_resolves() {
     let witnesses = WitnessBundle {
         blobs: &blobs,
         registry: Some(&registry),
+        finalized_roots: None,
     };
     let new = state_raw_with(&[(0, expected_slot)]);
 
@@ -1717,8 +1728,8 @@ fn renounced_accepts_when_sender_not_in_set() {
     };
     use dregg_circuit::poseidon2::hash_2_to_1;
     use dregg_turn::executor::membership_verifier::{
-        NeighborAdjStep, adjacency_commitment_bytes, adjacency_leaf_felt, prove_neighbor_adjacency,
-        registry_with_real_verifiers,
+        adjacency_commitment_bytes, adjacency_leaf_felt, prove_neighbor_adjacency,
+        registry_with_real_verifiers, NeighborAdjStep,
     };
 
     let candidate = [0x05u8; 32];
@@ -1771,6 +1782,7 @@ fn renounced_accepts_when_sender_not_in_set() {
     let bundle = WitnessBundle {
         blobs: &blobs,
         registry: Some(&registry),
+        finalized_roots: None,
     };
     let p = single_predicate(StateConstraint::Renounced {
         set: RenouncedSet::BlindedSet { commitment },
@@ -1810,6 +1822,7 @@ fn renounced_rejects_when_sender_in_set() {
     let bundle = WitnessBundle {
         blobs: &blobs,
         registry: Some(&registry),
+        finalized_roots: None,
     };
     let p = single_predicate(StateConstraint::Renounced {
         set: RenouncedSet::BlindedSet { commitment },
@@ -1888,6 +1901,7 @@ fn sender_authorized_credential_set_accepts_with_valid_presentation() {
     let witnesses = WitnessBundle {
         blobs: &blobs,
         registry: Some(&registry),
+        finalized_roots: None,
     };
     let ctx = EvalContext {
         sender: Some(sender),

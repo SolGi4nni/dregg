@@ -222,6 +222,12 @@ fn state_constraint_executor_coverage(c: &StateConstraint) -> bool {
         StateConstraint::CapabilityUniqueness { .. } => false, // evaluator is a no-op (#143)
         StateConstraint::TemporalPredicate { .. } => false, // needs witness registry
         StateConstraint::BoundDelta { .. } => false,     // cross-cell, not wired in embedded
+        // The deos §11.2 cross-cell observed-field read: enforced against the
+        // supplied finalized roots in cell/, but the embedded executor wires no
+        // FinalizedRootAuthority yet, so it fails closed (a REJECT is
+        // demonstrable, an ACCEPT is not). See HORIZONLOG: wire the authority
+        // through the executor so ObservedFieldEquals becomes covered.
+        StateConstraint::ObservedFieldEquals { .. } => false,
         StateConstraint::Witnessed { .. } => false,      // needs witness registry
         StateConstraint::Renounced { .. } => false,      // needs witness registry
         StateConstraint::Custom { .. } => false,         // needs ir/descriptor verifier
@@ -252,13 +258,14 @@ const NOT_YET_COVERED_CONSTRAINTS: &[&str] = &[
     "CapabilityUniqueness",
     "TemporalPredicate",
     "BoundDelta",
+    "ObservedFieldEquals",
     "Witnessed",
     "Renounced",
     "Custom",
 ];
 
 /// Ratchet for StateConstraint executor-enforcement coverage — may only shrink.
-const MAX_UNCOVERED_CONSTRAINTS: usize = 9;
+const MAX_UNCOVERED_CONSTRAINTS: usize = 10;
 
 #[test]
 fn state_constraint_coverage_ratchet_only_shrinks() {

@@ -372,7 +372,14 @@ pub fn project_slot_caveat_manifest(
             | dregg_cell::StateConstraint::SenderMemberOf { .. }
             | dregg_cell::StateConstraint::BalanceDeltaLte { .. }
             | dregg_cell::StateConstraint::BalanceDeltaGte { .. }
-            | dregg_cell::StateConstraint::AffineDeltaLe { .. } => None,
+            | dregg_cell::StateConstraint::AffineDeltaLe { .. }
+            // Cross-cell observed-root tie (`local[i] == peer[j]` at the peer's
+            // finalized root): reads ANOTHER cell's state, not a register slot
+            // in this cell's AIR — witness/executor-enforced against the
+            // supplied finalized roots (fails closed when absent), no SlotCaveat
+            // AIR projection in this wave (deferred like the other cross-cell
+            // relational atoms above).
+            | dregg_cell::StateConstraint::ObservedFieldEquals { .. } => None,
         };
         if let Some(e) = entry {
             entries[count] = e;

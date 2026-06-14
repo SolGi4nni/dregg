@@ -36,12 +36,10 @@
 use std::sync::Arc;
 
 use dregg_cell::predicate::{
-    PredicateInput, WitnessedPredicateError, WitnessedPredicateKind,
-    WitnessedPredicateRegistry, WitnessedPredicateVerifier,
+    PredicateInput, WitnessedPredicateError, WitnessedPredicateKind, WitnessedPredicateRegistry,
+    WitnessedPredicateVerifier,
 };
-use dregg_cell::{
-    CellState, EvalContext, field_from_u64,
-};
+use dregg_cell::{field_from_u64, CellState, EvalContext};
 
 // ---------------------------------------------------------------------------
 // helpers
@@ -648,8 +646,8 @@ fn cases_with_compound_transition_guards() {
 /// still accepts.
 #[test]
 fn sentinel_variant_inside_long_conjunction_collapses_program() {
-    use dregg_cell::InputRef;
     use dregg_cell::predicate::WitnessedPredicate;
+    use dregg_cell::InputRef;
 
     let constraints = vec![
         StateConstraint::FieldEquals {
@@ -709,6 +707,7 @@ fn sentinel_variant_inside_long_conjunction_accepts_when_witness_verifies() {
     let witnesses = WitnessBundle {
         blobs: &blobs,
         registry: Some(&registry),
+        finalized_roots: None,
     };
 
     let result = program.evaluate_full(
@@ -755,6 +754,7 @@ fn all_locally_dispatchable_state_constraint_variants_declared_and_satisfied() {
     let witnesses = WitnessBundle {
         blobs: &blobs,
         registry: Some(&registry),
+        finalized_roots: None,
     };
     let program = CellProgram::Predicate(vec![
         StateConstraint::FieldEquals {
@@ -922,11 +922,9 @@ fn write_once_inside_long_conjunction_still_fires() {
 fn predicate_with_empty_constraint_list_accepts_everything() {
     let program = CellProgram::Predicate(vec![]);
     assert!(program.evaluate(&CellState::default(), None, None).is_ok());
-    assert!(
-        program
-            .evaluate(&state_with(&[(0, 999)]), None, None)
-            .is_ok()
-    );
+    assert!(program
+        .evaluate(&state_with(&[(0, 999)]), None, None)
+        .is_ok());
 }
 
 // ===========================================================================

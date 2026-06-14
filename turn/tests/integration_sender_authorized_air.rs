@@ -21,12 +21,12 @@ use dregg_cell::program::{
     WitnessKindTag,
 };
 use dregg_cell::state::CellState;
-use dregg_circuit::BabyBear;
 use dregg_circuit::dsl::membership::create_test_witness;
 use dregg_circuit::poseidon2;
+use dregg_circuit::BabyBear;
 use dregg_turn::executor::membership_verifier::{
-    MerkleMembershipStarkVerifier, authorized_set_root_bytes, authorized_set_root_felt,
-    prove_sender_membership, registry_with_real_sender_membership,
+    authorized_set_root_bytes, authorized_set_root_felt, prove_sender_membership,
+    registry_with_real_sender_membership, MerkleMembershipStarkVerifier,
 };
 
 fn compress(bytes: &[u8; 32]) -> BabyBear {
@@ -142,6 +142,7 @@ fn sender_authorized_constraint_accepts_member() {
     let bundle = WitnessBundle {
         blobs: &blobs,
         registry: Some(&registry),
+        finalized_roots: None,
     };
 
     // The cell publishes the root in slot 4.
@@ -181,6 +182,7 @@ fn sender_authorized_constraint_rejects_non_member() {
     let bundle = WitnessBundle {
         blobs: &blobs,
         registry: Some(&registry),
+        finalized_roots: None,
     };
 
     let mut state = CellState::new(0);
