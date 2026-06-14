@@ -32,6 +32,27 @@ pub const STATIC_CHECKABLE: &[(&str, &str)] = &[
         "A settlement ring's legs close a cycle and net every participant to \
          zero per asset. Decidable over the leg list.",
     ),
+    (
+        "escrow conservation (app: escrow-market)",
+        "released + refunded == escrowed over the escrow cell's value slots — \
+         the FLASHWELL AffineEq the executor enforces at settle, restated over \
+         the forest's SetField writes. Exact when the forest writes the escrow, \
+         else supply the prior-committed amount.",
+    ),
+    (
+        "provenance chain (app: agent-provenance)",
+        "The committed entry digests form exactly the honest blake3 hash chain \
+         entry_i = blake3(prev ‖ claim_i) of the published claims (verify_chain, \
+         byte-identical to the app). A tampered / reordered / dropped entry is \
+         detectable from the artifact + claims.",
+    ),
+    (
+        "bounty lifecycle (app: bounty-board)",
+        "The STATE writes across the forest are a strictly-increasing walk of a \
+         known ladder (OPEN→CLAIMED→SUBMITTED→PAID) — the StrictMonotonic caveat. \
+         No re-entry (double-claim), no rewind (re-open). Decidable over the \
+         ordered writes (+ optional prior committed state).",
+    ),
 ];
 
 /// What is **dynamic** — needs the live executor / state / proof, and is
@@ -78,6 +99,19 @@ pub const DYNAMIC_ONLY: &[(&str, &str)] = &[
         "A bridged note's value conservation is a portable-proof property \
          across federations, not a within-forest sum — not netted by \
          check_conservation.",
+    ),
+    (
+        "app checks — the LIVE prior-cell state",
+        "The app-level checks (escrow conservation, bounty lifecycle, \
+         provenance chain) decide the invariant over the forest's INTENDED \
+         writes. When the invariant spans turns (a settle that conserves the \
+         escrow a prior turn bound; a lifecycle advance from the committed \
+         state; a provenance append onto an existing chain), the prior value \
+         lives on the live cell. The checks accept it as an explicit argument \
+         (prior_escrowed / prior_state / prior_committed) — pass the committed \
+         state to close the cross-turn relation; with neither an in-forest \
+         write nor a prior, the check reports the unresolved slot rather than \
+         passing vacuously.",
     ),
 ];
 

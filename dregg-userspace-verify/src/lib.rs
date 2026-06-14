@@ -65,7 +65,9 @@ use dregg_cell::CapabilityRef;
 use dregg_turn::action::{Authorization, Effect};
 use dregg_turn::{CallForest, CallTree};
 
+pub mod app;
 pub mod boundary;
+pub mod ffi;
 
 #[cfg(test)]
 mod tests;
@@ -222,8 +224,9 @@ fn hex32(b: &[u8; 32]) -> String {
 // ─── walking the forest with loci ──────────────────────────────────────────
 
 /// Visit every node in the forest, calling `f(path, node)` where `path` is
-/// the index-path from the forest down to `node` (pre-order DFS).
-fn walk<'a>(forest: &'a CallForest, mut f: impl FnMut(&[usize], &'a CallTree)) {
+/// the index-path from the forest down to `node` (pre-order DFS — the order the
+/// executor applies the actions).
+pub(crate) fn walk<'a>(forest: &'a CallForest, mut f: impl FnMut(&[usize], &'a CallTree)) {
     fn rec<'a>(path: &mut Vec<usize>, node: &'a CallTree, f: &mut impl FnMut(&[usize], &'a CallTree)) {
         f(path, node);
         for (i, child) in node.children.iter().enumerate() {

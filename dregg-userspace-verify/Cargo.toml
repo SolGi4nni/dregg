@@ -9,6 +9,13 @@ homepage.workspace = true
 repository.workspace = true
 description = "Userspace 'lint your turn before you spend gas' toolkit: static assurance checks (conservation, non-amplification, well-formedness, ring-balance) over a constructed-but-not-yet-submitted CallForest"
 
+[lib]
+# `rlib` for in-tree Rust callers (the SDK's `analyze()` sugar, this crate's
+# tests, the `dregg-uverify` bin); `cdylib` for the C-ABI `uverify_analyze`
+# the TS/Py (and any other) FFI bindings load. The toolkit is pure + Lean-free,
+# so the cdylib is a thin JSON→JSON shim (see `src/ffi.rs`) with no link churn.
+crate-type = ["rlib", "cdylib"]
+
 [dependencies]
 # The artifact under analysis IS the SDK's emitted turn shape: dregg_turn::{CallForest,
 # CallTree, Action, Effect}. We read it, never execute it (no executor, no circuit).
@@ -17,6 +24,9 @@ dregg-cell = { path = "../cell" }
 dregg-types = { path = "../types" }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
+# The agent-provenance app's hash chain is blake3; the app-level provenance
+# check re-derives it byte-for-byte (kept in lock-step with the app, `blake3 = "1"`).
+blake3 = "1"
 
 [lints]
 workspace = true
