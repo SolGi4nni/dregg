@@ -92,9 +92,10 @@ edits were made. Three walls + an architecture decision gate even C5-(1) and MUS
   wasm verify+PROVE path; `wasm/src/runtime.rs:710` calls `generate_effect_vm_trace` directly (the
   in-browser prover uses v1 because the IR-v2 prover pulls p3-recursion/DFT crates that don't fit wasm). C7
   grep-zero (deleting v1) is PROVABLY IMPOSSIBLE while wasm proves in-browser on v1 (134 live refs to
-  `generate_effect_vm_trace`, 108 to `EffectVmAir`). DECISION: either wasm gains a wasm-fittable rotated
-  prover, OR v1 stays a `not(recursion)` floor and "grep-zero" is redefined to "grep-zero in
-  recursion-enabled builds." ember's call — it is a precondition of the deletion arm, not a follow-up.
+  `generate_effect_vm_trace`, 108 to `EffectVmAir`). **DECIDED (ember, 2026-06-14): Option A** — build a
+  wasm-fittable rotated prover (replace the p3-recursion/DFT deps for the in-browser path) so wasm proves on
+  rotated TOO → v1 dies EVERYWHERE, true grep-zero, web keeps in-browser proving. A FRONTIER build added to
+  the pre-C7 work (the DFT/recursion-in-wasm problem is real) — C7 deletion waits on it, not a follow-up.
 
 Only after these four does C5 (the v3Registry→default regen + re-pin + FFI reseed) become the safe, one
 irreversible VK-epoch act. (The ✅ wall-A / wall-B `DONE` entries further below are the C4-era bilateral
