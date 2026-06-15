@@ -136,6 +136,19 @@ import Dregg2.Deos.FlowRefine
 -- transclusion_stable_under_source_advance (THE UNBREAKABLE LINK — the quote never rots =
 -- importedEq_stable_under_source_advance, the I-confluence). 10 keystones #assert_all_clean.
 import Dregg2.Deos.Transclusion
+-- TRANSCLUSION COMPOSES TRANSITIVELY (2026-06-14, the deep Xanadu intertwingularity): a quote of a
+-- quote of a quote stays provenance-faithful and unbreakable END-TO-END. Two `Transclusion` legs welded
+-- at one field (`ChainLink`: A quotes the very field B used for its quote of C). Three intertwingularity
+-- properties, each a COMPOSITION of landed single-transclusion facts: transclusion_chain_provenance_
+-- faithful (a quote-of-a-quote resolves to the ORIGINAL author's committed bytes through B = transclusion_
+-- provenance_faithful ∘ the weld ∘ bc-validity; the forged-middle tooth refuses a lying intermediary), the
+-- keystone transclusion_chain_stable (THE TRANSITIVE UNBREAKABLE LINK — the chain never rots when ANY
+-- source advances, inner/middle/both = importedEq_stable_under_source_advance composed across both legs),
+-- and transclusion_chain_no_amplify (an N-hop quote chain confers ⊆ the FIRST holder = Membrane.reshareN_
+-- attenuates lifted). Non-vacuity: a concrete THREE-CELL chain resolves to C's `7` through B and survives
+-- both sources advancing; a forged middle (B claiming C's title was `99`) is refused. 12 keystones
+-- #assert_all_clean.
+import Dregg2.Deos.TransclusionChain
 
 namespace Dregg2.Deos
 
