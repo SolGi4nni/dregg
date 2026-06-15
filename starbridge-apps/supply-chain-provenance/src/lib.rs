@@ -89,10 +89,11 @@
 #![forbid(unsafe_code)]
 
 use dregg_app_framework::{
-    Action, AppCipherclerk, AuthRequired, CapTarget, CapTemplate, CellId, CellMode, CellProgram,
-    ChildVkStrategy, ConstantsModule, Effect, Event, FactoryDescriptor, FieldElement,
-    InspectorDescriptor, StarbridgeAppContext, StateConstraint, canonical_program_vk, field_from_u64,
-    hex_encode_32, symbol,
+    Action, AppCipherclerk, AuthRequired, CapTarget, CapTemplate, CapabilityRef, CellAffordance,
+    CellId, CellMode, CellProgram, ChildVkStrategy, ConstantsModule, DeosApp, DeosCell, Effect,
+    EmbeddedExecutor, Event, FactoryDescriptor, FieldElement, FireError, FireExecuteError,
+    GatedAffordance, InspectorDescriptor, StarbridgeAppContext, StateConstraint, TurnReceipt,
+    canonical_program_vk, field_from_u64, hex_encode_32, symbol,
 };
 use dregg_cell::program::SimpleStateConstraint;
 use dregg_cell::state::STATE_SLOTS;
@@ -370,26 +371,36 @@ pub fn factory_descriptors() -> Vec<FactoryDescriptor> {
 // Turn builders — MINT / HANDOFF / (the forged-handoff adversary).
 // =============================================================================
 
-/// **MINT** — the manufacturer mints the item by binding the FIRST custodian into
-/// `CUSTODIAN`, advancing `EPOCH` to 1 (so the mint turn itself satisfies
-/// `StrictMonotonic(EPOCH)`, 0 -> 1), appending the genesis custody link
-/// `link_0 = link_hash(GENESIS_PREV, event(genesis -> first, 1))`, advancing
-/// `HEAD` to 1, and pointing `TIP` at the genesis link.
-///
-/// The mint is the actor-bound register's INCEPTION: the manufacturer (the first
-/// custodian) signs the turn, and the written `CUSTODIAN` equals the signer, so
-/// `SenderInSlot(CUSTODIAN)` holds (the `Immutable` disjunct's inception path also
-/// admits the first write from zero). After the mint there is EXACTLY ONE
-/// custodian — the manufacturer.
-pub fn build_mint_action(
-    cipherclerk: &AppCipherclerk,
-    item: CellId,
-    first_custodian: &str,
-) -> Action {
-    let first = identity_field(first_custodian);
+/// **MINT effects** (by-identity) — the multi-effect body of a mint turn binding
+/// `first_custodian`'s identity scalar into `CUSTODIAN`, advancing `EPOCH` 0 -> 1
+/// (satisfying `StrictMonotonic(EPOCH)`), appending the genesis custody link `link_0`,
+/// advancing `HEAD` 0 -> 1, pointing `TIP` at the genesis link, and emitting
+/// `item-minted`. The CONCEPTUAL mint (the chain commits the `first_custodian`
+/// identity); [`build_mint_action`] signs it. For the EXECUTABLE mint through the real
+/// executor, use [`mint_effects_signed`] — the actor-bound `SenderInSlot(CUSTODIAN)`
+/// caveat requires the on-cell `CUSTODIAN` to equal the SIGNER's identity (a pubkey),
+/// so an executed mint binds the signer, not a name-hash.
+pub fn mint_effects(item: CellId, first_custodian: &str) -> Vec<Effect> {
+    mint_effects_for(item, identity_field(first_custodian))
+}
+
+/// **MINT effects** (signed) — the EXECUTABLE mint: bind the SIGNER's own identity
+/// scalar ([`signer_identity`]) into `CUSTODIAN`. The minter (the first custodian)
+/// signs the genesis turn and writes its OWN identity into the baton, so the
+/// actor-bound `AnyOf[Immutable, SenderInSlot]` caveat ADMITS (`SenderInSlot` holds:
+/// sender == the written `CUSTODIAN`) — the inception of the actor-bound register. This
+/// is the turn [`fire_mint`] submits; the genesis chain link commits the signer as the
+/// first custodian.
+pub fn mint_effects_signed(cipherclerk: &AppCipherclerk, item: CellId) -> Vec<Effect> {
+    mint_effects_for(item, signer_identity(cipherclerk))
+}
+
+/// The shared mint-effects body for a `first` custodian identity scalar (the on-cell
+/// `CUSTODIAN` value AND the genesis chain event's incoming custodian).
+fn mint_effects_for(item: CellId, first: FieldElement) -> Vec<Effect> {
     let event = custody_event(&GENESIS_PREV, &first, 1);
     let link = link_hash(&GENESIS_PREV, &event);
-    let effects = vec![
+    vec![
         Effect::SetField {
             cell: item,
             index: CUSTODIAN_SLOT as usize,
@@ -425,8 +436,26 @@ pub fn build_mint_action(
             cell: item,
             event: Event::new(symbol("item-minted"), vec![first, link]),
         },
-    ];
-    cipherclerk.make_action(item, "mint_item", effects)
+    ]
+}
+
+/// **MINT** — the manufacturer mints the item by binding the FIRST custodian into
+/// `CUSTODIAN`, advancing `EPOCH` to 1 (so the mint turn itself satisfies
+/// `StrictMonotonic(EPOCH)`, 0 -> 1), appending the genesis custody link
+/// `link_0 = link_hash(GENESIS_PREV, event(genesis -> first, 1))`, advancing
+/// `HEAD` to 1, and pointing `TIP` at the genesis link.
+///
+/// The mint is the actor-bound register's INCEPTION: the manufacturer (the first
+/// custodian) signs the turn, and the written `CUSTODIAN` equals the signer, so
+/// `SenderInSlot(CUSTODIAN)` holds (the `Immutable` disjunct's inception path also
+/// admits the first write from zero). After the mint there is EXACTLY ONE
+/// custodian — the manufacturer. Signs [`mint_effects`].
+pub fn build_mint_action(
+    cipherclerk: &AppCipherclerk,
+    item: CellId,
+    first_custodian: &str,
+) -> Action {
+    cipherclerk.make_action(item, "mint_item", mint_effects(item, first_custodian))
 }
 
 /// **HANDOFF** — the incoming custodian accepts custody. It rewrites `CUSTODIAN`
@@ -456,11 +485,36 @@ pub fn build_handoff_action(
     new_epoch: u64,
     i: usize,
 ) -> Action {
+    cipherclerk.make_action(
+        item,
+        "handoff_custody",
+        handoff_effects(item, from, to, prev, new_epoch, i),
+    )
+}
+
+/// **HANDOFF effects** — the multi-effect body of a handoff turn: advance `CUSTODIAN`
+/// to the incoming holder (the actor-bound register), strictly advance `EPOCH`
+/// (no-replay), append the custody-receipt link at `link_slot(i)` (`WriteOnce`),
+/// advance `HEAD` (append-only), point `TIP` at the new link, and emit
+/// `custody-handoff`. The CONCEPTUAL handoff (by-identity, the chain commits the `to`
+/// label); [`build_handoff_action`] signs it. The EXECUTABLE handoff the deos
+/// `accept_custody` affordance submits is [`accept_custody_effects`] — it binds the
+/// SIGNER's identity into `CUSTODIAN` (so the actor-bound `SenderInSlot` admits), and
+/// [`fire_accept_custody`] is the cap∧state-gated path that submits it.
+#[allow(clippy::too_many_arguments)]
+pub fn handoff_effects(
+    item: CellId,
+    from: &str,
+    to: &str,
+    prev: &FieldElement,
+    new_epoch: u64,
+    i: usize,
+) -> Vec<Effect> {
     let from_id = identity_field(from);
     let to_id = identity_field(to);
     let event = custody_event(&from_id, &to_id, new_epoch);
     let link = link_hash(prev, &event);
-    let effects = vec![
+    vec![
         // the custody register advances to the incoming holder (actor-bound).
         Effect::SetField {
             cell: item,
@@ -498,8 +552,7 @@ pub fn build_handoff_action(
                 vec![from_id, to_id, field_from_u64(new_epoch), link],
             ),
         },
-    ];
-    cipherclerk.make_action(item, "handoff_custody", effects)
+    ]
 }
 
 /// **FORGED HANDOFF (the adversary)** — a party claims custody it does not hold.
@@ -532,6 +585,398 @@ pub fn build_forged_handoff_action(
 }
 
 // =============================================================================
+// The deos-native surface — the ITEM as a composed `DeosApp`.
+// =============================================================================
+//
+// `docs/deos/APPS-DEOS-INTEGRATION-CENSUS.md` (Tier-1 #1, the reference port): the
+// supply-chain ITEM, re-expressed as a composed deos app and PROMOTED into `src/`
+// (it lived in `tests/reexpress_deos_app.rs`). The same operations are ONE
+// [`DeosApp`] (`item_app` below); the framework wires the rest — per-viewer
+// projection, web-of-cells publish (the ITEM cell IS a `dregg://` sturdyref), the
+// rehydratable frustum-snapshot, the generated `<dregg-affordance-surface>`
+// component, and the manifest — none of which the old bones had.
+//
+// **The seam is closed** — a TWO-TEMPO fire. The two state-mutating operations
+// (`accept_custody`, `mint_item`) are [`GatedAffordance`]s carrying a live-state
+// PRECONDITION ([`minted_precondition`] / [`premint_precondition`]); the FULL custody
+// program ([`item_program`] = [`custody_constraints`]) is INSTALLED on the seeded item
+// cell ([`seed_item`]) and RE-ENFORCED by the executor on every touching turn:
+//
+//   1. the deos PRECONDITION gate (the cap-gate `is_attenuation` AND the live-state
+//      precondition `CellProgram::evaluate`) decides the button's verdict IN-BAND —
+//      nothing submitted on a miss (anti-ghost; the htmx reactivity rides this);
+//   2. [`fire_accept_custody`] / [`fire_mint`] then submit the FULL multi-effect
+//      handoff/mint turn ([`accept_custody_effects`] / [`mint_effects_signed`]), and the
+//      executor RE-ENFORCES the full custody program — so the actor-bound
+//      `AnyOf[Immutable, SenderInSlot]` (the baton accepts only the SIGNER), the
+//      `StrictMonotonic(epoch)` (a stale/replayed handoff), the `WriteOnce(links)` (a
+//      link overwrite), and the `Monotonic(head)` (a rewind) are all REAL executor
+//      refusals in the SUBMISSION path — the half the floor's `program.evaluate`-only
+//      tests never exercised through a real signed turn (see `tests/deos_seam.rs`).
+//
+// Both gates are the genuine ones (`is_attenuation` + `CellProgram::evaluate`). The
+// executable handoff/mint binds the SIGNER's identity into `CUSTODIAN` (so
+// `SenderInSlot` admits — the incoming holder takes the baton for itself).
+// `grant_custody` carries the REAL [`Effect::GrantCapability`] (the `derive_no_amplify`
+// cap handoff) as a cap-only affordance.
+
+/// The supply-chain rights tiers, ON THE REAL ATTENUATION LATTICE — these ARE the
+/// roles the floor crate's cap-graph enforces (one custody-cap holder at a time):
+///
+///   - a VERIFIER (the public / a regulator) holds [`AuthRequired::Signature`] — the
+///     narrow read tier: it can `view_provenance` (read + re-derive the custody
+///     chain) and nothing else;
+///   - a CUSTODIAN (a warehouse / carrier currently holding the item) holds
+///     [`AuthRequired::Either`] — it can `accept_custody` (a handoff) AND view;
+///   - the MANUFACTURER / OWNER holds [`AuthRequired::None`]/root — it can `mint_item`
+///     and `grant_custody` (hand the item's custody cap FORWARD, narrowed) on top of
+///     everything a custodian can do.
+///
+/// So `Signature ⊂ Either ⊂ None` IS the verifier ⊂ custodian ⊂ manufacturer ladder.
+pub const VERIFIER_RIGHTS: AuthRequired = AuthRequired::Signature;
+/// The custodian rights tier (sig-or-proof — accept custody + view). See [`VERIFIER_RIGHTS`].
+pub const CUSTODIAN_RIGHTS: AuthRequired = AuthRequired::Either;
+/// The manufacturer/owner rights tier (root — mint, grant the custody cap, +all). See [`VERIFIER_RIGHTS`].
+pub const MANUFACTURER_RIGHTS: AuthRequired = AuthRequired::None;
+
+/// The permissions an item's custody capability carries (a `SelfCell` cap a
+/// custodian holds; handed forward NARROWED, never widened — the Lean
+/// `derive_no_amplify`). Matches the factory's `allowed_cap_templates` ceiling.
+pub const CUSTODY_CAP_PERMISSIONS: AuthRequired = AuthRequired::Signature;
+
+/// **`grant_custody` effect** — the manufacturer's real cap handoff: an
+/// [`Effect::GrantCapability`] of the item's custody cap to the next custodian, at
+/// the SAME (`Signature`) permissions — narrowed, never widened (the Lean
+/// `derive_no_amplify`). This is the deos affordance's effect-template for
+/// `grant_custody`, NOT a scaffold stand-in.
+pub fn grant_custody_effect(item: CellId, next_custodian: CellId) -> Effect {
+    Effect::GrantCapability {
+        from: item,
+        to: next_custodian,
+        cap: CapabilityRef {
+            target: item,
+            slot: CUSTODIAN_SLOT as u32,
+            permissions: CUSTODY_CAP_PERMISSIONS,
+            breadstuff: None,
+            expires_at: None,
+            allowed_effects: None,
+            stored_epoch: None,
+        },
+    }
+}
+
+/// **The supply-chain ITEM as a composed [`DeosApp`]** — the whole interaction
+/// surface, on the deos bones. The item cell is the agent's OWN cell
+/// (`cipherclerk.cell_id()`) so fires execute against the seeded embedded ledger.
+///
+/// Four operations on the ITEM cell, on the verifier ⊂ custodian ⊂ manufacturer
+/// rights ladder:
+///
+///   - `view_provenance` — a cap-only affordance (a VERIFIER reads + re-derives the
+///     chain): `Signature`, an `EmitEvent`;
+///   - `accept_custody` — a [`GatedAffordance`] (a CUSTODIAN advances the baton):
+///     `Either`, a live-state PRECONDITION (the item is minted); the real fire
+///     ([`fire_accept_custody`]) submits the FULL handoff, re-enforced by the executor's
+///     installed custody program (the actor-bound + strict-mono + write-once + monotonic
+///     caveats BITE on the produced transition);
+///   - `mint_item` — a [`GatedAffordance`] (the MANUFACTURER inaugurates the sole
+///     custodian): `None`/root, a live-state PRECONDITION (the item is NOT yet minted);
+///     the real fire ([`fire_mint`]) submits the FULL mint, re-enforced by the executor;
+///   - `grant_custody` — a cap-only affordance carrying the REAL
+///     [`Effect::GrantCapability`] (the `derive_no_amplify` cap handoff): `None`/root.
+///
+/// The item cell is published into the web-of-cells at the verifier tier (a regulator
+/// on another federation reacquires the item's provenance across the membrane) and is
+/// discoverable under `supply-chain` / `provenance`.
+///
+/// Seed the cell's program + genesis state with [`seed_item`] (or fire `mint_item`) so
+/// the gated fires have a live state and the executor re-enforces the caveats.
+pub fn item_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) -> DeosApp {
+    let item = cipherclerk.cell_id();
+    // The signer's identity scalar — the 32-byte public key the executor reads as a
+    // turn's `sender` (`Authorization::Signature(pk, _)`). The `accept_custody` fire
+    // writes the FIRING signer's identity into the `CUSTODIAN` baton (see
+    // [`accept_custody_effects`]), so the actor-bound `AnyOf[Immutable, SenderInSlot]`
+    // caveat admits (`SenderInSlot` holds: the incoming holder takes the baton FOR
+    // ITSELF) — and REFUSES any turn that writes a custodian OTHER than the signer (the
+    // anti-impersonation baton keystone). The affordance's effect-template carries the
+    // APP signer as a surface representative; the actual fire rebinds to the firer.
+    let signer = signer_identity(cipherclerk);
+
+    // `accept_custody` — a CUSTODIAN advances the baton to ITSELF (the incoming holder
+    // signs and takes custody). The GatedAffordance carries the DECISIVE effect (the
+    // `CUSTODIAN` register write) as its surface representative AND a live-state
+    // PRECONDITION ([`minted_precondition`]: the item is minted) — so the button is dark
+    // before the mint and lit after (the htmx tooth) and the cap∧state gate decides its
+    // verdict in-band. The actual fire ([`fire_accept_custody`]) submits the FULL
+    // multi-effect handoff ([`accept_custody_effects`]: register + epoch + WriteOnce link
+    // + head + tip), which the executor re-enforces the FULL custody program on — so the
+    // actor-bound `AnyOf[Immutable, SenderInSlot]` caveat BITES: a flip to a non-signer
+    // is REFUSED.
+    let accept = GatedAffordance::new(
+        CellAffordance::new(
+            "accept_custody",
+            CUSTODIAN_RIGHTS,
+            Effect::SetField {
+                cell: item,
+                index: CUSTODIAN_SLOT as usize,
+                value: signer,
+            },
+        ),
+        minted_precondition(),
+    );
+    // `mint_item` — the MANUFACTURER inaugurates the sole custodian. The decisive
+    // effect advances `EPOCH` 0 -> 1 (the genesis custodian/link/head/tip are the full
+    // `mint_effects` turn); gated on the PRE-MINT precondition ([`premint_precondition`]:
+    // the item is not yet minted, `EPOCH == 0`). The executor re-enforces the installed
+    // custody program (so `StrictMonotonic(EPOCH)` bites — a second mint is refused).
+    let mint = GatedAffordance::new(
+        CellAffordance::new(
+            "mint_item",
+            MANUFACTURER_RIGHTS,
+            Effect::SetField {
+                cell: item,
+                index: EPOCH_SLOT as usize,
+                value: field_from_u64(1),
+            },
+        ),
+        premint_precondition(),
+    );
+    // `grant_custody` — the manufacturer hands the custody cap forward NARROWED. A
+    // real `Effect::GrantCapability`, cap-only (the cap-graph half — no state mutation).
+    let grant = CellAffordance::new(
+        "grant_custody",
+        MANUFACTURER_RIGHTS,
+        grant_custody_effect(item, CellId::from_bytes([0xAA; 32])),
+    );
+    // `view_provenance` — a verifier reads + re-derives. Cap-only.
+    let view = CellAffordance::new(
+        "view_provenance",
+        VERIFIER_RIGHTS,
+        Effect::EmitEvent {
+            cell: item,
+            event: Event::new(symbol("provenance-read"), vec![]),
+        },
+    );
+
+    DeosApp::builder("supply-chain-provenance", cipherclerk.clone(), executor.clone())
+        .discoverable(vec!["supply-chain".into(), "provenance".into()])
+        .cell(
+            DeosCell::new(item, "item")
+                .affordance(view)
+                .gated(accept)
+                .gated(mint)
+                .affordance(grant)
+                .publish(VERIFIER_RIGHTS),
+        )
+        .build()
+}
+
+/// The signer's **identity scalar** — the 32-byte public key the executor reads as a
+/// turn's `sender` (from `Authorization::Signature(pk, _)`). This is what
+/// `SenderInSlot(CUSTODIAN)` compares the baton against, so an `accept_custody` fire
+/// writes THIS into `CUSTODIAN` and the actor-bound caveat admits the signer's own
+/// handoff (the incoming holder IS the signer).
+pub fn signer_identity(cipherclerk: &AppCipherclerk) -> FieldElement {
+    cipherclerk.public_key().0
+}
+
+/// The `accept_custody` **live-state precondition** — the item must be MINTED
+/// (`EPOCH >= 1`). A real [`CellProgram`] read against the cell's current state (the
+/// `(state, state)` precondition read), so a handoff button is DARK before the mint
+/// and LIT after it (the htmx tooth). This gates "may `accept_custody` fire now"; the
+/// custody INVARIANT (the actor-bound register etc.) is the installed [`item_program`]
+/// the executor re-enforces on the produced transition.
+pub fn minted_precondition() -> CellProgram {
+    CellProgram::Predicate(vec![StateConstraint::FieldGte {
+        index: EPOCH_SLOT,
+        value: field_from_u64(1),
+    }])
+}
+
+/// The `mint_item` **live-state precondition** — the item must NOT yet be minted
+/// (`EPOCH == 0`). So the `mint_item` button is LIT only on a fresh item and goes DARK
+/// the instant it is minted (the htmx tooth). The executor's installed
+/// `StrictMonotonic(EPOCH)` is the second guard (a re-mint is a real refusal).
+pub fn premint_precondition() -> CellProgram {
+    CellProgram::Predicate(vec![StateConstraint::FieldEquals {
+        index: EPOCH_SLOT,
+        value: field_from_u64(0),
+    }])
+}
+
+/// **Seed the ITEM cell** so the gated fires have live state + the caveats bite:
+/// install the full custody [`item_program`] on the seeded item cell (so the executor
+/// re-enforces it on every touching turn), then mint the genesis state (bind the
+/// first custodian, advance `EPOCH` to 1, append the genesis link, advance `HEAD`,
+/// point `TIP`) directly into the embedded ledger.
+///
+/// After seeding, the item is at epoch 1 with `first_custodian` holding the baton — a
+/// real `(old, new)` baseline against which `accept_custody` advances. Returns the
+/// genesis link digest (the chain tip) so a caller can walk the chain.
+pub fn seed_item(executor: &EmbeddedExecutor, first_custodian: &str) -> FieldElement {
+    let item = executor.cell_id();
+    executor.install_program(item, item_program());
+    let first = identity_field(first_custodian);
+    let event = custody_event(&GENESIS_PREV, &first, 1);
+    let link = link_hash(&GENESIS_PREV, &event);
+    executor.with_ledger_mut(|ledger| {
+        if let Some(cell) = ledger.get_mut(&item) {
+            cell.state.set_field(CUSTODIAN_SLOT as usize, first);
+            cell.state.set_field(EPOCH_SLOT as usize, field_from_u64(1));
+            cell.state.set_field(link_slot(0), link);
+            cell.state.set_field(HEAD_SLOT as usize, field_from_u64(1));
+            cell.state.set_field(TIP_SLOT as usize, link);
+        }
+    });
+    link
+}
+
+/// **`accept_custody` effects** — the signer-aware multi-effect handoff body: write
+/// `CUSTODIAN := the signer's own identity` (so the actor-bound `SenderInSlot` admits —
+/// the incoming holder takes the baton FOR ITSELF), strictly advance `EPOCH`
+/// (no-replay), append the custody-receipt link (`WriteOnce`), advance `HEAD`, and
+/// point `TIP`. This is the ONE coherent transition the full custody program admits —
+/// every clause holds together: `AnyOf[Immutable, SenderInSlot]` (the signer takes the
+/// baton), `StrictMonotonic(EPOCH)`, `WriteOnce(link)`, `Monotonic(HEAD)`. The deos
+/// `accept_custody` gated affordance is the cap∧state PRECONDITION face; THIS is the
+/// turn [`fire_accept_custody`] submits.
+pub fn accept_custody_effects(
+    cipherclerk: &AppCipherclerk,
+    item: CellId,
+    from: &FieldElement,
+    prev: &FieldElement,
+    new_epoch: u64,
+    i: usize,
+) -> Vec<Effect> {
+    let to = signer_identity(cipherclerk); // the incoming holder IS the signer
+    let event = custody_event(from, &to, new_epoch);
+    let link = link_hash(prev, &event);
+    vec![
+        Effect::SetField { cell: item, index: CUSTODIAN_SLOT as usize, value: to },
+        Effect::SetField {
+            cell: item,
+            index: EPOCH_SLOT as usize,
+            value: field_from_u64(new_epoch),
+        },
+        Effect::SetField { cell: item, index: link_slot(i), value: link },
+        Effect::SetField {
+            cell: item,
+            index: HEAD_SLOT as usize,
+            value: field_from_u64((i + 1) as u64),
+        },
+        Effect::SetField { cell: item, index: TIP_SLOT as usize, value: link },
+        Effect::EmitEvent {
+            cell: item,
+            event: Event::new(symbol("custody-handoff"), vec![*from, to, field_from_u64(new_epoch), link]),
+        },
+    ]
+}
+
+/// **Fire `accept_custody`** — the deos cap∧state PRECONDITION gate (anti-ghost,
+/// in-band), then the FULL multi-effect handoff turn the executor re-enforces the
+/// custody program on. The two-tempo bridge: the gated affordance decides the button's
+/// verdict (cap ⊇ Either AND the item is minted) WITHOUT touching the executor; on both
+/// passing, the complete chain-advancing turn ([`accept_custody_effects`]) is submitted,
+/// and the executor's re-enforcement of [`item_program`] is the SECOND, verified gate
+/// (the actor-bound + strict-mono + write-once + monotonic caveats all bite on the
+/// produced transition). Anti-ghost both ways: a precondition miss never submits; a
+/// program violation is a real executor refusal.
+///
+/// The chain is read from the cell's live state (current `EPOCH` ⇒ the next epoch,
+/// current `HEAD` ⇒ the next link index, current `TIP` ⇒ the link predecessor), so the
+/// caller threads nothing. Use [`seed_item`] first.
+pub fn fire_accept_custody(
+    app: &DeosApp,
+    held: &AuthRequired,
+    cipherclerk: &AppCipherclerk,
+    executor: &EmbeddedExecutor,
+) -> Result<TurnReceipt, FireExecuteError> {
+    let cell = &app.cells()[0];
+    let item = cell.cell();
+    // Tooth 1+2: the deos cap∧state PRECONDITION gate, in-band, nothing submitted on a
+    // miss. (The cap-gate AND the live-state precondition the gated affordance carries.)
+    if !cell
+        .gated_fireable_names(held, executor)
+        .iter()
+        .any(|n| n == "accept_custody")
+    {
+        // Distinguish the cap miss from the state miss for a precise refusal.
+        let ga = cell
+            .gated_surface()
+            .get("accept_custody")
+            .expect("accept_custody is a gated affordance");
+        let state = executor.cell_state(item).ok_or_else(|| {
+            FireExecuteError::Gate(FireError::StateConditionUnmet {
+                affordance: "accept_custody".into(),
+                reason: "cell has no live state (fail-closed)".into(),
+            })
+        })?;
+        return Err(FireExecuteError::Gate(
+            ga.fire(item, held, &state, &state).unwrap_err(),
+        ));
+    }
+    // The chain cursor, read from live state.
+    let state = executor.cell_state(item).expect("checked above");
+    let epoch = field_to_u64(&state.fields[EPOCH_SLOT as usize]);
+    let head = field_to_u64(&state.fields[HEAD_SLOT as usize]) as usize;
+    let prev = state.fields[TIP_SLOT as usize];
+    let from = state.fields[CUSTODIAN_SLOT as usize];
+    // Submit the FULL multi-effect handoff turn — the executor re-enforces the program.
+    let effects = accept_custody_effects(cipherclerk, item, &from, &prev, epoch + 1, head);
+    let action = cipherclerk.make_action(item, "accept_custody", effects);
+    executor
+        .submit_action(cipherclerk, action)
+        .map_err(FireExecuteError::Executor)
+}
+
+/// **Fire `mint_item`** — the deos cap∧state PRECONDITION gate (cap ⊇ root AND the item
+/// is NOT yet minted), then the FULL multi-effect mint turn ([`mint_effects`]). Like
+/// [`fire_accept_custody`], the gated affordance decides the button in-band and the
+/// executor's program re-enforcement (`StrictMonotonic(EPOCH)` 0 -> 1) is the verified
+/// second gate. Install the program first (the executor re-enforces it); do NOT seed
+/// the genesis state (mint is what binds it).
+pub fn fire_mint(
+    app: &DeosApp,
+    held: &AuthRequired,
+    cipherclerk: &AppCipherclerk,
+    executor: &EmbeddedExecutor,
+) -> Result<TurnReceipt, FireExecuteError> {
+    let cell = &app.cells()[0];
+    let item = cell.cell();
+    if !cell
+        .gated_fireable_names(held, executor)
+        .iter()
+        .any(|n| n == "mint_item")
+    {
+        let ga = cell.gated_surface().get("mint_item").expect("mint_item is gated");
+        let state = executor.cell_state(item).ok_or_else(|| {
+            FireExecuteError::Gate(FireError::StateConditionUnmet {
+                affordance: "mint_item".into(),
+                reason: "cell has no live state (fail-closed)".into(),
+            })
+        })?;
+        return Err(FireExecuteError::Gate(
+            ga.fire(item, held, &state, &state).unwrap_err(),
+        ));
+    }
+    // The EXECUTABLE mint binds the SIGNER's identity into CUSTODIAN (so the actor-bound
+    // caveat admits the inception — the minter signs and takes the baton).
+    let action = cipherclerk.make_action(item, "mint_item", mint_effects_signed(cipherclerk, item));
+    executor
+        .submit_action(cipherclerk, action)
+        .map_err(FireExecuteError::Executor)
+}
+
+/// Read a `u64` from the last 8 big-endian bytes of a field element (the inverse of
+/// [`field_from_u64`] for the epoch/head counters the custody chain stores).
+fn field_to_u64(f: &FieldElement) -> u64 {
+    let mut b = [0u8; 8];
+    b.copy_from_slice(&f[24..32]);
+    u64::from_be_bytes(b)
+}
+
+// =============================================================================
 // StarbridgeAppContext mount.
 // =============================================================================
 
@@ -549,7 +994,18 @@ pub fn web_constants() -> ConstantsModule {
         .topic("HANDOFF", "custody-handoff")
 }
 
-/// Register the supply-chain-provenance starbridge-app on a shared context.
+/// **Register the supply-chain-provenance starbridge-app** on a shared context —
+/// the FLOOR (the executor-truth layer: the factory descriptor whose
+/// `state_constraints` ARE the custody policy, installed on every born item cell) AND
+/// the deos-native composition surface (the [`DeosApp`], folded into the context's
+/// affordance registry — so the same `register(ctx)` mounts BOTH).
+///
+/// The factory + inspector are where SOUNDNESS lives (a forged handoff is a real
+/// executor refusal on the born cell). The deos surface is the composition skin:
+/// per-viewer projection, the cap∧state gated fires, the `dregg://` publish, the
+/// rehydratable snapshot, the generated component, the manifest. [`register_deos`]
+/// folds the surface; this returns the factory VK (the floor's identity) as before so
+/// the floor's callers are unchanged.
 pub fn register(ctx: &StarbridgeAppContext) -> [u8; 32] {
     let factory_vk = ctx.register_factory(item_factory_descriptor());
 
@@ -574,7 +1030,27 @@ pub fn register(ctx: &StarbridgeAppContext) -> [u8; 32] {
         }),
     });
 
+    // Mount the deos-native composition surface (the `DeosApp`) on the SAME context.
+    register_deos(ctx);
+
     factory_vk
+}
+
+/// **Mount the deos-native surface** ([`item_app`]) on a shared context: build the
+/// composed [`DeosApp`] from the context's cipherclerk + executor, seed the item
+/// cell's program + genesis state (so the gated fires bite), and fold the app into the
+/// context's affordance registry ([`DeosApp::register`]). Returns the live [`DeosApp`]
+/// (so a host can also [`DeosApp::mount`] its axum router / [`DeosApp::publish_all`]
+/// into the web-of-cells). This is the PROMOTION the census Tier-1 #1 asks for: the
+/// deos surface now ships from `src/`, not from a side-proof in `tests/`.
+pub fn register_deos(ctx: &StarbridgeAppContext) -> DeosApp {
+    let app = item_app(ctx.cipherclerk(), ctx.executor());
+    // Seed the item cell so the gated `accept_custody` / `mint_item` fires have a live
+    // `(old, new)` and the full custody program (installed here) is re-enforced by the
+    // executor on every touching turn.
+    seed_item(ctx.executor(), "manufacturer");
+    app.register(ctx);
+    app
 }
 
 #[cfg(test)]
