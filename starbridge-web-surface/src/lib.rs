@@ -132,6 +132,7 @@ pub mod affordance;
 pub mod delegate;
 pub mod game;
 pub mod rehydrate;
+pub mod transclusion;
 pub mod vision_predicate;
 pub mod web_of_cells;
 pub mod world;
@@ -158,6 +159,14 @@ pub use affordance::{
     rehydrate_affordances, AffordanceIntent, AffordanceRehydrateError, AffordanceSnapshot,
     AffordanceSurface, CellAffordance, EffectSummary, EvalContext, FireError, ReactiveAffordance,
     RecordPredicate, SurfaceBoundary, TransitionGate, TransitionPredicate, Viewer,
+};
+// Transclusion — Xanadu that shipped: a `dregg://` finalized read NAMED as Ted
+// Nelson's transcluded quote, with preserved provenance ([`Provenance`], verified
+// via the real attestation chain), per-viewer confinement (through the real
+// [`Membrane`]), and the two-way link ([`Backlinks`] — the witness-graph rendered as
+// "who transcludes me"). Mirrors `Dregg2.Deos.Transclusion`.
+pub use transclusion::{
+    Backlinks, Observer, Provenance, TranscludedField, TransclusionAffordance, TransclusionError,
 };
 pub use game::{
     demo_skirmish, demo_world, game_cell, play_match, side_rights, AgentPlayer, AgentPolicy, Board,

@@ -112,6 +112,17 @@ import Dregg2.Deos.WorkflowBridge
 -- not built): right-skew ⟹ "does flow/caveat-policy A refine B" is DECIDABLE via Pradic's Büchi-game
 -- characterization — the ARGUS "refines" bar gets a decision procedure. 18 keystones #assert_all_clean.
 import Dregg2.Deos.FlowAlgebra
+-- TRANSCLUSION (2026-06-14, "Xanadu that shipped"): Ted Nelson's transclusion — include-by-reference
+-- with preserved provenance + unbreakable links + per-viewer confinement — made HONEST. A transclusion
+-- IS a verified cross-cell observation: `Transclusion := Authority.ImportBinding.ImportedEq`, a peer
+-- cell's finalized field cited at an immutable receipt. The four Xanadu properties, each a REUSE of an
+-- existing kernel theorem: transclusion_is_observed_finalized_read (the bridge = ImportedEq.admits_iff),
+-- transclusion_provenance_faithful (the quote equals its source, a forge cannot be cited =
+-- importedEq_binds_provenanced_value + importedEq_lying_import_rejected), transclusion_no_amplify (a
+-- quote is a READ, per-viewer through the membrane = Membrane.reshareN_attenuates), and the crown
+-- transclusion_stable_under_source_advance (THE UNBREAKABLE LINK — the quote never rots =
+-- importedEq_stable_under_source_advance, the I-confluence). 10 keystones #assert_all_clean.
+import Dregg2.Deos.Transclusion
 
 namespace Dregg2.Deos
 
