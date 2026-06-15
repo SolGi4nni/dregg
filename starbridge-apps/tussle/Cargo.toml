@@ -1,0 +1,32 @@
+[package]
+name = "starbridge-tussle"
+version = "0.1.0"
+edition = "2024"
+description = "Starbridge userspace app — TUSSLE, a Toribash-style verified joint-combat demo. Two FIGURES (each a dregg cell) set their N JOINTS (sym slots) by SEALING a joint-state vector in a COMMIT phase (fog-of-war: the opponent's move is unreadable before reveal), both REVEAL, then a DETERMINISTIC resolution runs as a 2-PARTY JOINT TURN — the contact score deltas fold as a ring of legs through the VERIFIED per-asset executor (dregg-intent::verified_settle::settle_ring_verified, the Rust mirror of the Lean Ring.settleRing). A figure's JOINTS are set in a 2-party JOINT TURN. The joint-state-is-one-of-the-enum tooth is the typed sym atom SymMemberOf (dregg-cell CellProgram / the Lean Pred.symMemberOf, metatheory/Dregg2/Exec/PredAlgebra.lean)."
+
+# The primitives this app COMPOSES (no toy combat engine):
+#   - the SEALED COMMIT — BLAKE3(figure || joint-vector || nonce), the same
+#     commit-reveal construction the sealed-auction app uses (fog-of-war:
+#     a sealed commitment hides the move and binds the player to exactly one).
+#   - the JOINT-STATE-IS-AN-ENUM gate — `CellProgram::Predicate([SymMemberOf])`,
+#     evaluated by the REAL `CellProgram::evaluate` (the same gate the executor
+#     runs every turn); the Rust image of the Lean `Pred.symMemberOf`
+#     (`metatheory/Dregg2/Exec/PredAlgebra.lean`): a joint slot's value is one
+#     of the JointState enum cases.
+#   - the 2-PARTY JOINT TURN — the contact score deltas are a balanced ring of
+#     legs folded through `dregg-intent::verified_settle::settle_ring_verified`
+#     (the verified per-asset executor — atomic + conserving + linked to the
+#     REAL Lean FFI export leg-by-leg). The figures' score cells are the ledger
+#     accounts; the contact resolution is a deterministic function over the
+#     revealed joint vectors, emitted as ring legs.
+#   - FIGURES are cells (`dregg-cell::CellState`); JOINT STATES are sym slots
+#     (`field_from_u64(enum_case)` written into a slot, read by the sym atom).
+
+[dependencies]
+dregg-intent = { path = "../../intent" }
+dregg-cell = { path = "../../cell", default-features = false }
+
+blake3 = "1"
+
+[lints]
+workspace = true
