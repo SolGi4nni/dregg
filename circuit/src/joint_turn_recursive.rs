@@ -94,7 +94,7 @@ use crate::joint_turn_aggregation::{
 use crate::plonky3_recursion_impl::recursive::{
     DreggRecursionConfig, RecursionCompatibleProof, RecursionVk, create_recursion_backend,
     prove_inner_for_air_with_config, recursion_vk_fingerprint, verify_inner_for_air_with_config,
-    verify_recursive_batch_proof,
+    verify_recursive_batch_proof_with_config,
 };
 
 const D: usize = 4;
@@ -421,9 +421,16 @@ pub fn verify_joint_turn_recursive(
     )
     .map_err(|reason| JointAggError::ClaimedPublicsUnattested { reason })?;
 
-    // (3) The root.
-    verify_recursive_batch_proof(&proof.root.0)
-        .map_err(|reason| JointAggError::AggregationProofInvalid { reason })
+    // (3) The root. The root batch proof is produced by `aggregate_tree` at the rotated
+    // leaf-wrap config (`ir2_leaf_wrap_config`, log_blowup 6 / 19 queries — the SAME FRI engine
+    // the whole rotated tree runs at), NOT the default `create_recursion_config` (log_blowup 3 /
+    // 38 queries). It MUST be verified under that same config, else FRI reconstruction expects
+    // the wrong query count (`QueryProofCountMismatch { expected: 38, got: 19 }`).
+    verify_recursive_batch_proof_with_config(
+        &proof.root.0,
+        &crate::ivc_turn_chain::ir2_leaf_wrap_config(),
+    )
+    .map_err(|reason| JointAggError::AggregationProofInvalid { reason })
 }
 
 // ============================================================================

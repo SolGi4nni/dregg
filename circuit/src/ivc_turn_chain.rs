@@ -167,7 +167,7 @@ use crate::field::BabyBear;
 use crate::joint_turn_aggregation::{DescriptorParticipant, verify_descriptor_participant};
 use crate::plonky3_recursion_impl::recursive::{
     DreggRecursionConfig, RecursionCompatibleProof, create_recursion_backend,
-    recursion_vk_fingerprint, verify_recursive_batch_proof,
+    recursion_vk_fingerprint, verify_recursive_batch_proof_with_config,
 };
 use crate::poseidon2::hash_4_to_1;
 
@@ -939,8 +939,12 @@ pub fn verify_turn_chain_recursive(
     )
     .map_err(|reason| TurnChainError::ClaimedPublicsUnattested { reason })?;
 
-    // (3) The root.
-    verify_recursive_batch_proof(&proof.root.0)
+    // (3) The root. The root batch proof is produced by `aggregate_tree` at the rotated
+    // leaf-wrap config (`ir2_leaf_wrap_config`, log_blowup 6 / 19 queries — the SAME FRI engine
+    // the whole rotated tree runs at), NOT the default `create_recursion_config` (log_blowup 3 /
+    // 38 queries). It MUST be verified under that same config, else FRI reconstruction expects
+    // the wrong query count (`QueryProofCountMismatch { expected: 38, got: 19 }`).
+    verify_recursive_batch_proof_with_config(&proof.root.0, &ir2_leaf_wrap_config())
         .map_err(|reason| TurnChainError::RecursionFailed { reason })
 }
 
