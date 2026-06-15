@@ -34,8 +34,20 @@ QEMU_AARCH64 := qemu-system-aarch64 -machine virt,virtualization=on -cpu cortex-
                 -m 2G -nographic
 QEMU_RISCV   := qemu-system-riscv64 -machine virt -m 2G -nographic
 
+# The GRAPHICAL boot reuses the same EL2 `virt` machine but DROPS -nographic and
+# adds a display device. We keep the kernel/vCPU flags but build the QEMU line
+# explicitly (so the serial stays on stdio for boot diagnostics alongside the
+# window). `-device ramfb` is the simplest display on `virt`: a RAM framebuffer
+# the compositor-fb PD configures over fw_cfg + scans out.
+QEMU_AARCH64_GRAPHICAL := qemu-system-aarch64 -machine virt,virtualization=on \
+                -cpu cortex-a53 -m 2G -device ramfb
+# macOS display backend. On Linux swap `cocoa,show-cursor=on` for `gtk` (or
+# `sdl`); everything else is identical.
+QEMU_DISPLAY ?= cocoa,show-cursor=on
+
 .PHONY: all run run-m0 run-m1 run-m2 run-stark run-net run-assembly run-riscv \
-        build-aarch64 build-assembly build-riscv verify-isolation clean help
+        build-aarch64 build-assembly build-riscv build-graphical run-graphical \
+        run-graphical-headless verify-isolation clean help
 
 help:
 	@echo "dregg Robigalia v0 seL4 image:"
@@ -47,6 +59,8 @@ help:
 	@echo "  make run-stark    — boot the verifier-stark PD: real STARK on-device"
 	@echo "  make run-net      — boot the net-driver PD: probe a REAL virtio-net (M3 edge)"
 	@echo "  make run-assembly — boot the 5-PD FIRMAMENT (verifier+executor+persist+net+app)"
+	@echo "  make run-graphical— boot the compositor-fb PD: REAL ramfb pixels in a QEMU window"
+	@echo "  make run-graphical-headless — same image, -display none, serial-proves ramfb config"
 	@echo "  make run-riscv    — boot M0 on qemu_virt_riscv64 (M5)"
 
 all: build-aarch64
@@ -149,6 +163,36 @@ run-assembly: build-assembly
 		-netdev user,id=net0 \
 		-device virtio-net-device,netdev=net0,bus=virtio-mmio-bus.31 \
 		-device loader,file=$(BUILD)/dregg.img,addr=0x70000000,cpu-num=0 \
+		-serial mon:stdio
+
+# ── THE GRAPHICAL BOOT (dregg-graphical.system) ─────────────────────────────
+# The compositor-fb PD drives a REAL framebuffer visible in a QEMU window: it is
+# the SOLE holder of the fw_cfg engine MMIO cap (phys 0x9020000) + a 2 MiB DMA
+# framebuffer region (its guest-PHYSICAL base handed to ramfb via region_paddr),
+# configures QEMU's `ramfb` display over fw_cfg, and writes a deos splash (test
+# pattern + banner) into the framebuffer (docs/desktop-os-research/
+# GRAPHICAL-SEL4-BOOT.md). The bytes->glass path on seL4, end to end.
+build-graphical:
+	cd $(PD_DIR) && cargo build $(CARGO_FLAGS) -p dregg-compositor-fb-pd
+	mkdir -p $(BUILD)
+	cp $(PD_DIR)/target/aarch64-sel4-microkit/release/dregg-compositor-fb-pd.elf $(BUILD)/
+	$(MICROKIT) dregg-graphical.system --search-path $(BUILD) --board $(BOARD) --config $(CONFIG) -o $(BUILD)/dregg-graphical.img -r $(BUILD)/dregg-graphical.report.txt
+
+# THE VISIBLE WINDOW — run this for ember: a real QEMU window scanning out the
+# PD's pixels. Serial stays on stdio so the boot diagnostics print alongside.
+run-graphical: build-graphical
+	$(QEMU_AARCH64_GRAPHICAL) \
+		-display $(QEMU_DISPLAY) \
+		-device loader,file=$(BUILD)/dregg-graphical.img,addr=0x70000000,cpu-num=0 \
+		-serial mon:stdio
+
+# Window-less proof (CI / background): the SAME image with -display none. The PD
+# still configures ramfb + draws; its serial output proves resolution, fb phys
+# addr, the etc/ramfb selector, and bytes written — verifiable with no window.
+run-graphical-headless: build-graphical
+	$(QEMU_AARCH64_GRAPHICAL) \
+		-display none \
+		-device loader,file=$(BUILD)/dregg-graphical.img,addr=0x70000000,cpu-num=0 \
 		-serial mon:stdio
 
 # ── M5: M0 on riscv64 ───────────────────────────────────────────────────────

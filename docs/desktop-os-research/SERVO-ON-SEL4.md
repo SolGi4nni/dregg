@@ -64,8 +64,14 @@ order of a week or two**, *dominated by the one genuinely new piece — the
 multi-thread personality on `sel4-musl`* (real OS engineering, no in-tree
 precedent), with `mozjs`-for-seL4, the directory `font_list` backend, the
 `CLOCK_MONOTONIC` wire, and the ramfb framebuffer each days-scale against existing
-templates. The thread personality is the largest single uncertainty and the honest
-place to widen the estimate — but it is a *named week of OS work*, not a quarter.
+templates. **The ramfb framebuffer half is now BUILT**: a confined seL4 PD
+configures QEMU's `ramfb` over `fw_cfg` and scans out a real framebuffer it solely
+holds — the bytes->glass mechanism, proven end to end
+([GRAPHICAL-SEL4-BOOT.md](GRAPHICAL-SEL4-BOOT.md), `make run-graphical`). What
+remains for *this* doc's Stage B is feeding that framebuffer the SWGL `RgbaFrame`
+instead of a static splash (that doc's §4 rung 1). The thread personality is the
+largest single uncertainty and the honest place to widen the estimate — but it is
+a *named week of OS work*, not a quarter.
 
 One-line bottom line: *SWGL is "unaccelerated but real" on the host today (green);
 the real-`WebView` wiring is written against the genuine API; the only Stage-A wall

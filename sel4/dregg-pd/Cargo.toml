@@ -19,7 +19,7 @@
 
 [workspace]
 resolver = "2"
-members = ["m0-hello", "verifier", "rbg-dir", "verifier-stark", "net", "net-client", "executor-stub", "persist-stub"]
+members = ["m0-hello", "verifier", "rbg-dir", "verifier-stark", "net", "net-client", "executor-stub", "persist-stub", "compositor-fb"]
 
 [workspace.dependencies]
 # The seL4 Microkit Rust runtime (rust-sel4). Pinned to the commit that matches

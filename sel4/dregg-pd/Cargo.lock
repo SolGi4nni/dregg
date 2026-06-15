@@ -286,6 +286,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "dregg-compositor-fb-pd"
+version = "0.1.0"
+dependencies = [
+ "sel4-microkit",
+]
+
+[[package]]
 name = "dregg-executor-stub-pd"
 version = "0.1.0"
 dependencies = [

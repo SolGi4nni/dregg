@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  dregg-graphical.system — THE GRAPHICAL BOOT. A real seL4 Microkit image whose
+  single protection domain (the compositor-fb PD) drives a REAL framebuffer that
+  appears in a QEMU window: the bytes->glass path on seL4, end to end, at the
+  simplest honest scope (docs/desktop-os-research/GRAPHICAL-SEL4-BOOT.md).
+
+  The headless firmament (dregg.system, `make run-assembly`) boots with NO
+  display device; its compositor "framebuffer" is a 256-byte host-test authority
+  witness (compositor_pd.rs, FRAMEBUFFER_TILES=256), not pixels. THIS assembly
+  closes the output side: one PD that
+    1. SOLELY holds QEMU's fw_cfg engine MMIO cap (a DEVICE region pinned to phys
+       0x9020000 on the `virt` machine — the same "one device cap, one PD"
+       discipline net-driver-only.system gives the virtio-mmio slot),
+    2. holds a 2 MiB DMA framebuffer region whose guest-PHYSICAL base it learns
+       via the `region_paddr` setvar (exactly as the net PD learns
+       `virtio_net_driver_dma_paddr`; fw_cfg's DMA engine + ramfb scanout
+       dereference guest-physical, so the address handed to ramfb is the phys
+       base, not the PD vaddr), and
+    3. configures QEMU's `ramfb` standalone display device over fw_cfg and writes
+       a deos splash (test pattern + a legible banner) into the framebuffer.
+
+  Boot (sel4/Makefile):
+    make build-graphical  — cross-build the PD ELF + link this image.
+    make run-graphical    — boot WITH a visible window:
+        qemu-system-aarch64 -machine virt,virtualization=on -cpu cortex-a53 -m 2G \
+          -device ramfb -display cocoa,show-cursor=on -serial mon:stdio \
+          -device loader,file=build/dregg-graphical.img,addr=0x70000000,cpu-num=0
+    make run-graphical-headless — same image, `-display none`, to PROVE over
+        serial that the PD configured ramfb + drew the frame (window-less CI).
+
+  Single-PD by design: the simplest bootable graphical image. The path to the
+  5-PD firmament-WITH-display (compositor-fb as a sixth seat alongside
+  verifier/executor/persist/net/app) is named in GRAPHICAL-SEL4-BOOT.md
+  §"Staging" — it adds this same PD + its two regions to dregg.system. Board:
+  qemu_virt_aarch64.
+-->
+<system>
+
+    <!-- The framebuffer DMA region: 2 MiB, huge-page-backed so `region_paddr`
+         is a single 2 MiB-aligned physically-contiguous run (a scanned-out
+         framebuffer MUST be contiguous in guest-physical space). The PD draws
+         into it (vaddr) and hands its PHYS base to ramfb. 640x480x4 = 1.18 MiB
+         fits inside; the last 4 KiB is the PD's fw_cfg DMA scratch. -->
+    <memory_region name="fb_dma" size="0x200_000" page_size="0x200_000" />
+
+    <!-- QEMU's fw_cfg engine MMIO window — a DEVICE region pinned to where the
+         `virt` machine places fw_cfg (qemu hw/arm/virt.c: 0x9020000, size 0x18;
+         we map a 4 KiB page covering it). Uncached: it is device memory. SOLE
+         holder = this PD (the device-cap trust boundary). -->
+    <memory_region name="fwcfg_mmio" size="0x1000" phys_addr="0x9020000" />
+
+    <!-- ════════════════════════════════════════════════════════════════════
+         PD: compositor-fb — the GRAPHICAL EDGE. Holds the fw_cfg device cap +
+         the framebuffer DMA region and NOTHING else (no NIC, no other PD's
+         memory). Configures ramfb + draws the deos splash; the QEMU window
+         scans out its pixels.
+         ════════════════════════════════════════════════════════════════════ -->
+    <protection_domain name="compositor_fb" priority="100" stack_size="0x10000">
+        <program_image path="dregg-compositor-fb-pd.elf" />
+
+        <!-- the framebuffer: mapped RW (the PD draws into it), cached (it is RAM
+             the PD writes a lot), with BOTH its vaddr and its guest-phys addr
+             exposed to the PD (the phys addr is what ramfb scans out). -->
+        <map mr="fb_dma" vaddr="0x2_000_000" perms="rw" cached="true" setvar_vaddr="fb_dma_vaddr" />
+        <setvar symbol="fb_dma_paddr" region_paddr="fb_dma" />
+
+        <!-- the fw_cfg MMIO window: mapped RW, UNCACHED (device memory). -->
+        <map mr="fwcfg_mmio" vaddr="0x6_000_000_000" perms="rw" cached="false" setvar_vaddr="fwcfg_mmio_vaddr" />
+    </protection_domain>
+
+</system>

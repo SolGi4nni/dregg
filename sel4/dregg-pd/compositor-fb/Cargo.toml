@@ -1,0 +1,34 @@
+# compositor-fb — THE GRAPHICAL EDGE: a real seL4 PD that drives a REAL
+# framebuffer visible in a QEMU window.
+#
+# This is the bytes->glass rung of docs/desktop-os-research/GRAPHICAL-SEL4-BOOT.md.
+# Modelled on the net-driver PD's device-driving pattern (sel4/dregg-pd/net):
+# it is the SOLE holder of a device-MMIO cap (QEMU's fw_cfg engine at phys
+# 0x9020000 on the `virt` machine) + a DMA-capable framebuffer region whose
+# PHYSICAL address it learns via the Microkit `region_paddr` setvar (exactly as
+# the net PD learns `virtio_net_driver_dma_paddr`). It configures QEMU's `ramfb`
+# display device over fw_cfg (geometry + XRGB8888 + the framebuffer phys addr),
+# then writes a deos splash (test pattern + a legible "deos · robigalia v0"
+# banner) directly into the mapped framebuffer — pixels the QEMU window scans out.
+#
+# No app logic, no widget toolkit, no placement policy — the minimal
+# framebuffer multiplexer of compositor_pd.rs's L5, here driving a real panel.
+# Dependency-free beyond the rust-sel4 runtime (the firmament's minimal dep
+# discipline): the RGBA frame + glyphs + the fw_cfg/ramfb protocol are all
+# hand-rolled in this crate, no external image/font crate.
+
+[package]
+name = "dregg-compositor-fb-pd"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "dregg-compositor-fb-pd"
+path = "src/main.rs"
+
+[dependencies]
+# `alloc` to stay consistent with the workspace's feature-unified build of
+# sel4-microkit (the firmament assembly enables it). This PD declares a heap but
+# draws into a statically-mapped framebuffer region — no alloc on the draw path.
+sel4-microkit = { workspace = true, features = ["alloc"] }
