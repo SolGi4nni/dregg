@@ -1,0 +1,71 @@
+# identity.overgrant.dregg.toml — the OVER-GRANTING identity deployment.
+# DreggDL's no-amplification gate REFUSES this before any turn.
+#
+# The widening: `holder` was handed a READ-ONLY verify cap over `issuer`. It then
+# re-delegates to `forger` a GRANT_CAPABILITY cap over the SAME issuer —
+# delegation authority it does not hold (a credential holder minting the power to
+# authorize new issuers). That re-delegation AMPLIFIES the read-only cap it holds.
+# `dregg-deploy apply` returns Refused and names the exact offending edge:
+#   holder → forger over issuer, facet {GrantCapability} vs the held read-only {EmitEvent}.
+
+[federation]
+id   = "auto"
+node = "in-process"
+
+[[factory]]
+ref             = "issuer-factory"
+default_mode    = "sovereign"
+creation_budget = 100000
+factory_vk      = "0x737461726272696467652d6964656e746974792d6973737565722d6661637421"
+
+  [[factory.allowed_cap_template]]
+  permissions  = "signature"
+  target       = "self"
+  attenuatable = true
+
+[[cell]]
+name    = "issuer"
+factory = "issuer-factory"
+mode    = "sovereign"
+
+[[cell]]
+name    = "issuer-admin"
+factory = "issuer-factory"
+
+[[cell]]
+name    = "sub-issuer"
+factory = "issuer-factory"
+
+[[cell]]
+name    = "holder"
+factory = "issuer-factory"
+
+[[cell]]
+name    = "forger"
+factory = "issuer-factory"
+
+# issuer-admin → sub-issuer: the held issue cap (same as the valid spec).
+[[grant]]
+from        = "issuer-admin"
+to          = "sub-issuer"
+permissions = "signature"
+target      = "issuer"
+facet       = "state_writer | grant_capability"
+
+# sub-issuer → holder: a NARROWED read-only verify cap — fine, an attenuation.
+[[grant]]
+from        = "sub-issuer"
+to          = "holder"
+permissions = "signature"
+target      = "issuer"
+facet       = "read-only"
+
+# THE OVER-GRANT: holder (holds ONLY read-only) re-delegates a GRANT_CAPABILITY
+# cap over `issuer` to `forger`. That is WIDER than read-only — an in-forest
+# capability AMPLIFICATION (a verifier minting delegation authority). REFUSED.
+[[grant]]
+from        = "holder"
+to          = "forger"
+permissions = "signature"
+target      = "issuer"
+facet       = "grant_capability"

@@ -63,9 +63,14 @@ pub struct Factory {
     /// `CellMode` of cells this factory produces: `"hosted"` | `"sovereign"`.
     #[serde(default = "default_mode")]
     pub default_mode: String,
-    /// The factory's own program VK (32-byte hex). Defaults to a hash of
-    /// `ref` so a deployment is self-contained without a deployed circuit;
-    /// override when binding to a real factory circuit.
+    /// The factory's on-chain VK (32-byte hex) — the identity the born cell's
+    /// `CreateCellFromFactory` effect names. Set this to a REAL app's published
+    /// factory VK (e.g. `starbridge-escrow-market`'s `ESCROW_FACTORY_VK`) to make
+    /// the deployment instantiate that exact factory; the `b3:`/`0x`/`vk:`/`tok:`
+    /// tags are accepted and stripped. When ABSENT, the lowering derives a
+    /// self-contained VK from the descriptor (a deployment that stands alone
+    /// without a published circuit). Either way the spec is checkable end-to-end;
+    /// pinning it is what binds the deploy to the real on-chain factory.
     #[serde(default)]
     pub factory_vk: Option<String>,
     /// The program VK installed on children (32-byte hex), or absent.
@@ -186,9 +191,28 @@ pub struct Grant {
     /// c-list slot the granted cap occupies (default 0).
     #[serde(default)]
     pub slot: u32,
-    /// Optional facet mask restricting the effect types this cap permits
-    /// (`None`/absent = unrestricted). A subset facet is the attenuation
-    /// `dregg-userspace-verify` checks along delegation edges.
+    /// The capability's effect FACET, restricting which effect KINDS this cap
+    /// permits — the human-friendly surface for the `allowed_effects` mask.
+    /// Accepts, in order of preference:
+    ///
+    /// * a named facet — `"read-only"` · `"transfer-only"` · `"state-writer"` ·
+    ///   `"admin"` · `"delegator"` · `"all"` (alias `"unrestricted"`);
+    /// * a `|`/`+`/`,`-joined list of effect-kind names — `"transfer|emit_event"`,
+    ///   `"set_field+emit_event"`, etc. (the `dregg_cell::facet::EFFECT_*` kinds:
+    ///   `transfer`, `set_field`, `emit_event`, `grant_capability`,
+    ///   `revoke_capability`, `create_cell`, `set_permissions`,
+    ///   `set_verification_key`, … — see [`crate::facet::EFFECT_KIND_NAMES`]);
+    /// * a raw mask — decimal `"6"` or hex `"0x6"`.
+    ///
+    /// A subset facet is the attenuation `dregg-userspace-verify` checks along
+    /// delegation edges. `None`/absent = unrestricted (top). When BOTH `facet`
+    /// and `allowed_effects` are given, `facet` is the canonical surface — but the
+    /// lowering errors if they DISAGREE, so the surface is unambiguous.
+    #[serde(default)]
+    pub facet: Option<String>,
+    /// The raw facet mask (the low-level form of [`Grant::facet`]).
+    /// `None`/absent = unrestricted. Prefer `facet` for readability; this stays
+    /// for round-trip stability and machine-generated specs.
     #[serde(default)]
     pub allowed_effects: Option<u32>,
 }

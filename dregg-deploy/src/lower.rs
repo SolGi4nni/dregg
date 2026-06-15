@@ -54,6 +54,18 @@ pub enum LowerError {
         kind: String,
         slot: u8,
     },
+    #[error(transparent)]
+    Facet(#[from] crate::facet::FacetParseError),
+    #[error(
+        "grant[{index}] sets BOTH `facet = \"{facet}\"` and `allowed_effects = {allowed_effects}`, \
+         and they DISAGREE (facet ⇒ {facet_mask}). Set only one, or make them equal."
+    )]
+    FacetConflict {
+        index: usize,
+        facet: String,
+        facet_mask: u32,
+        allowed_effects: u32,
+    },
 }
 
 /// The lowered deployment: the forest the checker consumes, plus the resolved
@@ -71,6 +83,30 @@ pub struct Lowered {
     pub factory_vks: BTreeMap<String, [u8; 32]>,
     /// Resolved cell ids (`name` -> `CellId`).
     pub cell_ids: BTreeMap<String, CellId>,
+}
+
+impl Lowered {
+    /// Reverse-resolve a `CellId` back to the spec NAME that minted it (for
+    /// diagnostics that want to say `operator`, not `a1b2c3…`). Falls back to
+    /// `None` for a raw-hex id that never had a name.
+    pub fn name_of_cell(&self, id: &CellId) -> Option<&str> {
+        self.cell_ids
+            .iter()
+            .find(|(_, v)| *v == id)
+            .map(|(k, _)| k.as_str())
+    }
+
+    /// A short, human label for a `CellId`: its spec name if known, else an
+    /// 8-hex prefix of the id (so a finding always names *something* legible).
+    pub fn label_cell(&self, id: &CellId) -> String {
+        match self.name_of_cell(id) {
+            Some(n) => n.to_string(),
+            None => {
+                let h: String = id.0.iter().take(4).map(|b| format!("{b:02x}")).collect();
+                format!("0x{h}…")
+            }
+        }
+    }
 }
 
 // ─── hex helpers ─────────────────────────────────────────────────────────────
@@ -163,6 +199,38 @@ fn parse_auth(site: &str, s: &str) -> Result<AuthRequired, LowerError> {
     }
 }
 
+/// Resolve a `[[grant]]`'s effect facet to the `allowed_effects` mask the
+/// `CapabilityRef` carries, reconciling the friendly `facet` surface with the
+/// raw `allowed_effects` field:
+///   * neither set ⇒ `None` (unrestricted, top);
+///   * only `allowed_effects` ⇒ that raw mask;
+///   * only `facet` ⇒ the parsed facet (`"all"` ⇒ `None`);
+///   * BOTH set ⇒ they must AGREE (else [`LowerError::FacetConflict`]); `facet`
+///     is the canonical surface, the raw field is the round-trip echo.
+fn resolve_grant_facet(i: usize, grant: &Grant) -> Result<Option<u32>, LowerError> {
+    let site = format!("grant[{i}].facet");
+    match (&grant.facet, grant.allowed_effects) {
+        (None, ae) => Ok(ae),
+        (Some(f), None) => Ok(crate::facet::facet_to_allowed_effects(&site, f)?),
+        (Some(f), Some(ae)) => {
+            let from_facet = crate::facet::facet_to_allowed_effects(&site, f)?;
+            // Compare as the resolved Option<mask>; `"all"`⇒None must match a
+            // raw `allowed_effects` only if that raw is also the top reading.
+            // We treat the raw field's intent literally: they agree iff equal.
+            if from_facet == Some(ae) || (from_facet.is_none() && ae == dregg_cell::EFFECT_ALL) {
+                Ok(from_facet)
+            } else {
+                Err(LowerError::FacetConflict {
+                    index: i,
+                    facet: f.clone(),
+                    facet_mask: from_facet.unwrap_or(dregg_cell::EFFECT_ALL),
+                    allowed_effects: ae,
+                })
+            }
+        }
+    }
+}
+
 /// Lift a big-endian u64 into a 32-byte field element (last 8 bytes), matching
 /// the `StateConstraint` / executor field encoding.
 fn u64_to_field(v: u64) -> FieldElement {
@@ -233,7 +301,15 @@ impl Lowered {
                 return Err(LowerError::DuplicateFactory(f.r#ref.clone()));
             }
             let desc = build_descriptor(f)?;
-            let vk = desc.hash();
+            // The ON-CHAIN factory VK the born cell's `CreateCellFromFactory`
+            // effect names: when the spec PINS `factory_vk` (binding to a real,
+            // published factory like an app's `*_FACTORY_VK`), that pinned value
+            // IS the identity — so the deploy instantiates that exact factory.
+            // Absent a pin, the self-contained descriptor hash is the identity.
+            let vk = match &f.factory_vk {
+                Some(s) => parse_hex32(&format!("factory `{}`.factory_vk", f.r#ref), s)?,
+                None => desc.hash(),
+            };
             factory_vks.insert(f.r#ref.clone(), vk);
             factory_descs.insert(f.r#ref.clone(), desc);
         }
@@ -353,13 +429,14 @@ impl Lowered {
                 Some(0) | None => None,
                 Some(h) => Some(h),
             };
+            let allowed_effects = resolve_grant_facet(i, grant)?;
             let cap = CapabilityRef {
                 target,
                 slot: grant.slot,
                 permissions,
                 breadstuff: None,
                 expires_at,
-                allowed_effects: grant.allowed_effects,
+                allowed_effects,
                 stored_epoch: None,
             };
             let effect = Effect::GrantCapability { from, to, cap };

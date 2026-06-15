@@ -34,17 +34,28 @@
 //! ## What the receipt chain here IS and is NOT
 //!
 //! The chain this module computes is the **shape** — the deterministic
-//! `previous_receipt_hash` links between the turns, plus a *projected* receipt
-//! hash per turn (a function of the turn's own content). It is **not** an
-//! executor receipt: it carries no post-state commitment, no executor
-//! signature, no `computrons_used` — those are produced by the live executor at
-//! submit time and verified against the proof (see
-//! `dregg_userspace_verify::boundary`). What the projection gives an operator
-//! is the causal skeleton: *which* turn chains to *which*, computed off the
-//! artifact alone, so the submitted chain can be checked link-for-link against
-//! this plan. A mismatch between the projected chain and the executor's
-//! returned receipts is a deviation an auditor can see without trusting the
-//! node.
+//! `previous_receipt_hash` links between the turns, plus a [`ProjectedReceipt`]
+//! per turn. The projection is split HONESTLY into two halves:
+//!
+//!   * the **artifact-known** half (turn hash, forest hash, effects hash, agent,
+//!     federation, action count, the chain link) — plain values, computed off
+//!     the turn alone at plan time;
+//!   * the **executor-filled** half (pre/post-state commitments, computrons,
+//!     timestamp, executor signature) — typed [`DeferredField::Deferred`] until
+//!     the live submit fills them. These are **not zeroed-and-pretended**: a
+//!     reader cannot mistake a planned receipt for a live one with an all-zero
+//!     post-state (the maturation-ledger Theme-3 disposition).
+//!
+//! The `chain_link_hash` the next turn points at is still a pure function of the
+//! artifact (the unknown fields enter the *digest* as their zero placeholders, as
+//! a chain SHAPE must), so the plan is a self-consistent receipt chain at plan
+//! time. What the projection gives an operator is the causal skeleton: *which*
+//! turn chains to *which*, computed off the artifact alone, so the submitted
+//! chain can be checked link-for-link against this plan. A mismatch between the
+//! projected chain and the executor's returned receipts is a deviation an auditor
+//! can see without trusting the node. When the turns are actually submitted, the
+//! SDK swaps each `DeferredField::Deferred` to `Filled(..)` from the executor's
+//! response — the plan becomes a live receipt chain in place.
 
 use dregg_turn::turn::{Turn, TurnReceipt};
 use dregg_turn::CallForest;
@@ -53,6 +64,112 @@ use dregg_types::CellId;
 use crate::lower::{Lowered, LowerError};
 use crate::schema::Deployment;
 use dregg_userspace_verify::Assurance;
+
+/// A receipt field whose value is **knowable only at submit time**, from the
+/// live executor — NOT at plan time off the artifact. This is the honest type
+/// for the deploy receipt's dynamic half: the planner cannot compute a
+/// post-state commitment / a computron count / a wall-clock timestamp / an
+/// executor signature without RUNNING the turn, so rather than silently writing
+/// a zero (which reads as "the post-state is all-zeros"), the [`ProjectedReceipt`]
+/// carries these as `Deferred` and the operator (or the SDK) fills them from the
+/// executor's response when the turn is actually submitted.
+///
+/// `Deferred` is the plan-time state; `Filled(v)` is what the submit path swaps
+/// in. The receipt-chain SHAPE (`previous_receipt_hash` links) does not depend on
+/// these — it is computed off the artifact-only fields — so the plan is a
+/// self-consistent chain whether or not the deferred fields are filled yet.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DeferredField<T> {
+    /// Not yet knowable at plan time — the live executor fills it at submit.
+    Deferred,
+    /// Filled in from the executor's receipt at submit time.
+    Filled(T),
+}
+
+impl<T> DeferredField<T> {
+    /// `true` while the field is still deferred (the plan-time state).
+    pub fn is_deferred(&self) -> bool {
+        matches!(self, DeferredField::Deferred)
+    }
+    /// The filled value, if the submit path has supplied it.
+    pub fn filled(&self) -> Option<&T> {
+        match self {
+            DeferredField::Deferred => None,
+            DeferredField::Filled(v) => Some(v),
+        }
+    }
+}
+
+/// The **projected receipt** for a planned turn: the receipt fields split
+/// HONESTLY into the two halves the deploy boundary distinguishes
+/// (`dregg_userspace_verify::boundary`):
+///
+///   * the **artifact-known** half — computable off the turn alone at plan time
+///     (turn hash, forest hash, effects hash, agent, federation, action count,
+///     the `previous_receipt_hash` chain link). These are plain values.
+///   * the **executor-filled** half — knowable ONLY by running the turn against
+///     live state ([`DeferredField::Deferred`] until submit): the pre/post-state
+///     commitments, the computrons charged, the wall-clock timestamp, the
+///     executor's signature, and the finality. These are NOT zeroed-and-pretended;
+///     they are typed as deferred so the shape can't be mistaken for a live
+///     receipt.
+///
+/// This replaces the prior "build a `TurnReceipt` with the dynamic fields zeroed"
+/// projection with one that *says* which fields are deferred. The
+/// `chain_link_hash` is the same deterministic chain-shape digest the next turn
+/// points at (it is a function of the artifact-known fields + the zeroed dynamic
+/// placeholders, as the chain shape must be), so the receipt chain is unchanged;
+/// what changes is that the shape is now legible.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProjectedReceipt {
+    // ── artifact-known (plan-time) ──
+    /// The turn's content hash (`Turn::hash`).
+    pub turn_hash: [u8; 32],
+    /// The single-root call-forest hash.
+    pub forest_hash: [u8; 32],
+    /// The deterministic digest over every effect in the turn.
+    pub effects_hash: [u8; 32],
+    /// The agent (target cell) this turn runs as.
+    pub agent: CellId,
+    /// The federation the deployment binds to.
+    pub federation_id: [u8; 32],
+    /// The number of actions in the turn.
+    pub action_count: usize,
+    /// The chain link: the prior turn's `chain_link_hash` (`None` for the first).
+    pub previous_receipt_hash: Option<[u8; 32]>,
+    /// The chain-shape digest the NEXT turn's `previous_receipt_hash` points at —
+    /// the same value [`PlannedTurn::projected_receipt_hash`] exposes. A function
+    /// of the artifact (the dynamic fields enter as their zero placeholders, as a
+    /// chain SHAPE must), so the plan is a self-consistent chain at plan time.
+    pub chain_link_hash: [u8; 32],
+
+    // ── executor-filled (deferred to submit) ──
+    /// The committed PRE-state hash — filled by the executor at submit.
+    pub pre_state_hash: DeferredField<[u8; 32]>,
+    /// The committed POST-state hash — filled by the executor at submit. This is
+    /// the field whose silent zero the maturation ledger flagged
+    /// (`apply.rs` Theme 3); it is now explicitly `Deferred`.
+    pub post_state_hash: DeferredField<[u8; 32]>,
+    /// The computrons the executor charged — filled at submit.
+    pub computrons_used: DeferredField<u64>,
+    /// The wall-clock timestamp the executor stamped — filled at submit.
+    pub timestamp: DeferredField<i64>,
+    /// The executor's signature over the real receipt hash — filled at submit.
+    pub executor_signature: DeferredField<Vec<u8>>,
+}
+
+impl ProjectedReceipt {
+    /// `true` iff every executor-filled field is still `Deferred` — the
+    /// plan-time state (no live executor has run this turn yet). A submitted plan
+    /// flips these to `Filled` from the executor's response.
+    pub fn is_fully_deferred(&self) -> bool {
+        self.pre_state_hash.is_deferred()
+            && self.post_state_hash.is_deferred()
+            && self.computrons_used.is_deferred()
+            && self.timestamp.is_deferred()
+            && self.executor_signature.is_deferred()
+    }
+}
 
 /// Errors from [`plan_apply`].
 #[derive(Debug, thiserror::Error)]
@@ -98,8 +215,17 @@ pub struct PlannedTurn {
     /// against the projected (artifact-only) fields. The next turn's
     /// `previous_receipt_hash` is set to exactly this value, so the plan is a
     /// self-consistent receipt chain. NOT an executor receipt (no post-state
-    /// commitment) — the chain *shape*, checkable off the artifact.
+    /// commitment) — the chain *shape*, checkable off the artifact. (Equal to
+    /// `projected_receipt.chain_link_hash`.)
     pub projected_receipt_hash: [u8; 32],
+    /// The HONEST projected receipt SHAPE: the artifact-known fields as plain
+    /// values, the executor-filled fields (post-state commitment, computrons,
+    /// timestamp, signature) typed [`DeferredField::Deferred`] — not silently
+    /// zeroed. The submit path swaps the deferred fields to `Filled` from the
+    /// executor's response; the chain link does not depend on them. This is the
+    /// maturation-ledger Theme-3 disposition: the planned receipt no longer reads
+    /// as a live receipt with an all-zero post-state.
+    pub projected_receipt: ProjectedReceipt,
 }
 
 /// The applied deployment: the ordered, receipt-chained turn sequence that a
@@ -142,6 +268,18 @@ impl AppliedPlan {
             prev = Some(pt.projected_receipt_hash);
         }
         true
+    }
+
+    /// `true` iff EVERY turn's projected receipt is still fully deferred — the
+    /// honest plan-time state: no live executor has run any turn, so the
+    /// post-state commitments / computrons / timestamps / signatures are
+    /// [`DeferredField::Deferred`], not zeroed. A submitted plan flips these to
+    /// `Filled` from the executor's responses. This is the witness that the
+    /// planned chain is a SHAPE, not a forged live receipt chain.
+    pub fn receipts_are_planned_shape(&self) -> bool {
+        self.turns
+            .iter()
+            .all(|pt| pt.projected_receipt.is_fully_deferred())
     }
 }
 
@@ -188,6 +326,27 @@ pub fn plan_apply(dep: &Deployment, as_ring: bool) -> Result<AppliedPlan, ApplyE
 pub fn plan_apply_toml(text: &str, as_ring: bool) -> Result<AppliedPlan, crate::DeployError> {
     let dep = crate::parse_toml(text)?;
     Ok(plan_apply(&dep, as_ring)?)
+}
+
+/// Build the [`AppliedPlan`] from an already-lowered deployment **without the
+/// static gate** — the per-root turn sequence + receipt-chain shape only. The
+/// `assurance` is computed (non-ring) and attached but is NOT enforced.
+///
+/// This is the constructor for callers that want to run the **behavioral**
+/// refinement gate ([`crate::refines_upgrade`] / [`crate::refines_intent`]) over
+/// a deployment whose STATIC gate verdict they handle separately — e.g. to show
+/// both gates' verdicts on the same over-granting spec. It does NOT bypass
+/// safety: nothing is submitted, and the attached `assurance` records the (here
+/// possibly failing) static verdict for inspection. Prefer [`plan_apply`] when
+/// you want the gate to refuse a failing spec up front.
+pub fn plan_from_lowered(lowered: &Lowered) -> AppliedPlan {
+    let assurance = dregg_userspace_verify::analyze(&lowered.forest, false);
+    let turns = build_turn_sequence(lowered);
+    AppliedPlan {
+        federation_id: lowered.federation_id,
+        assurance,
+        turns,
+    }
 }
 
 /// Split the lowered single-turn-wide forest into one [`Turn`] per root and
@@ -237,7 +396,8 @@ fn build_turn_sequence(lowered: &Lowered) -> Vec<PlannedTurn> {
         };
 
         let turn_hash = turn.hash();
-        let projected_receipt_hash = project_receipt_hash(&turn, agent, fed, prev_receipt);
+        let projected_receipt = project_receipt(&turn, agent, fed, prev_receipt);
+        let projected_receipt_hash = projected_receipt.chain_link_hash;
 
         out.push(PlannedTurn {
             turn,
@@ -245,6 +405,7 @@ fn build_turn_sequence(lowered: &Lowered) -> Vec<PlannedTurn> {
             agent,
             turn_hash,
             projected_receipt_hash,
+            projected_receipt,
         });
         prev_receipt = Some(projected_receipt_hash);
     }
@@ -256,25 +417,37 @@ fn prev_turn_hash(out: &[PlannedTurn]) -> Option<[u8; 32]> {
     out.last().map(|pt| pt.turn_hash)
 }
 
-/// Project the receipt hash for a planned turn off the artifact alone: build a
-/// [`TurnReceipt`] with the fields knowable without execution (turn hash,
-/// forest hash, effects hash, agent, federation, the chain link) and ZEROED
-/// dynamic fields (pre/post-state commitments, computrons, timestamp), then
-/// take its `receipt_hash`. The result is a deterministic function of the turn,
-/// so the next turn can chain to it and the plan is self-consistent.
+/// Project the [`ProjectedReceipt`] for a planned turn off the artifact alone.
 ///
-/// The honest boundary: a zeroed `post_state_hash` means this is the chain
-/// SHAPE, not the executor's receipt — the executor fills the real state
-/// commitment in at submit time. See module docs + `boundary`.
-fn project_receipt_hash(
+/// The artifact-known half (turn hash, forest hash, effects hash, agent,
+/// federation, action count, the chain link) is computed directly. The
+/// executor-filled half (pre/post-state commitments, computrons, timestamp,
+/// executor signature) is typed [`DeferredField::Deferred`] — it is knowable
+/// only by running the turn against live state at submit time.
+///
+/// The `chain_link_hash` IS the deterministic chain-shape digest the next turn
+/// points at: it is the `receipt_hash` of a `TurnReceipt` whose dynamic fields
+/// take their ZERO placeholders (a chain SHAPE must be a pure function of the
+/// artifact, so the unknown fields enter as zero), and whose artifact fields are
+/// the real ones. So the link is unchanged from the prior projection — but the
+/// shape is no longer a `TurnReceipt` masquerading as live; the zero only enters
+/// the *link digest*, never a field a reader could mistake for a real commitment.
+///
+/// The honest boundary: see module docs + `dregg_userspace_verify::boundary`.
+fn project_receipt(
     turn: &Turn,
     agent: CellId,
     federation_id: [u8; 32],
     previous_receipt_hash: Option<[u8; 32]>,
-) -> [u8; 32] {
+) -> ProjectedReceipt {
     let forest_hash = turn.call_forest.compute_hash();
     let effects_hash = effects_hash(&turn.call_forest);
-    let receipt = TurnReceipt {
+    let action_count = turn.call_forest.action_count();
+    // The chain-shape digest: the artifact fields are real, the dynamic fields
+    // are their zero placeholders (a chain SHAPE is a pure function of the
+    // artifact — the executor's real receipt rehashes with the live fields and
+    // is checked link-for-link against THIS shape at submit).
+    let chain_link_hash = TurnReceipt {
         turn_hash: turn.hash(),
         forest_hash,
         pre_state_hash: [0u8; 32],
@@ -282,7 +455,7 @@ fn project_receipt_hash(
         timestamp: 0,
         effects_hash,
         computrons_used: 0,
-        action_count: turn.call_forest.action_count(),
+        action_count,
         previous_receipt_hash,
         agent,
         federation_id,
@@ -295,8 +468,25 @@ fn project_receipt_hash(
         was_encrypted: false,
         was_burn: false,
         consumed_capabilities: Vec::new(),
-    };
-    receipt.receipt_hash()
+    }
+    .receipt_hash();
+
+    ProjectedReceipt {
+        turn_hash: turn.hash(),
+        forest_hash,
+        effects_hash,
+        agent,
+        federation_id,
+        action_count,
+        previous_receipt_hash,
+        chain_link_hash,
+        // The executor-filled half: deferred until the live submit, NOT zeroed.
+        pre_state_hash: DeferredField::Deferred,
+        post_state_hash: DeferredField::Deferred,
+        computrons_used: DeferredField::Deferred,
+        timestamp: DeferredField::Deferred,
+        executor_signature: DeferredField::Deferred,
+    }
 }
 
 /// A deterministic digest of every effect in the forest (the artifact-only

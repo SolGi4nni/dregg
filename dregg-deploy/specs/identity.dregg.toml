@@ -1,0 +1,77 @@
+# identity.dregg.toml — DreggDL deployment for the `starbridge-identity` app.
+#
+# An identity ISSUER is a factory-born sovereign cell whose program enforces the
+# credential-issuance policy (write-once schema commitment, monotonic-sequence
+# issuance counter, monotonic revocation root, SenderAuthorized issuer set). This
+# spec describes the DEPLOYMENT: the issuer factory (pinned to the app's published
+# `ISSUER_FACTORY_VK`), an issuer-admin (root), a delegated sub-issuer, and a
+# credential holder, with the cap-grant graph (admin ⊃ sub-issuer ⊃ holder,
+# attenuating).
+#
+# Run:  dregg-deploy check specs/identity.dregg.toml
+#       dregg-deploy apply specs/identity.dregg.toml
+
+[federation]
+id   = "auto"
+node = "in-process"
+
+# The identity-issuer factory, pinned to the published ISSUER_FACTORY_VK (the
+# ASCII bytes `starbridge-identity-issuer-fact!`). Custody-cap ceiling: a SelfCell
+# signature cap, attenuatable.
+[[factory]]
+ref             = "issuer-factory"
+default_mode    = "sovereign"
+creation_budget = 100000
+factory_vk      = "0x737461726272696467652d6964656e746974792d6973737565722d6661637421"
+
+  [[factory.allowed_cap_template]]
+  permissions  = "signature"
+  target       = "self"
+  attenuatable = true
+
+# The ISSUER cell (the credential authority), born sovereign.
+[[cell]]
+name    = "issuer"
+factory = "issuer-factory"
+mode    = "sovereign"
+
+# The ISSUER-ADMIN agent — the root authority over the issuer (manages the
+# authorized-issuer set, can grant issuance authority forward).
+[[cell]]
+name    = "issuer-admin"
+factory = "issuer-factory"
+
+# A delegated SUB-ISSUER agent — authorized by the admin to ISSUE credentials
+# (advance the issuance counter, write the revocation root).
+[[cell]]
+name    = "sub-issuer"
+factory = "issuer-factory"
+
+# A credential HOLDER / VERIFIER — reads the schema + revocation root to verify a
+# credential (read-only).
+[[cell]]
+name    = "holder"
+factory = "issuer-factory"
+
+# ── The cap-grant graph (admin ⊃ sub-issuer ⊃ holder ladder).
+
+# issuer-admin → sub-issuer: an issue-credentials cap over `issuer` — write the
+# issuance/revocation slots + announce (state_writer | grant_capability, so the
+# sub-issuer can issue AND further delegate within its grant). What the admin
+# holds, handed to a delegated issuer.
+[[grant]]
+from        = "issuer-admin"
+to          = "sub-issuer"
+permissions = "signature"
+target      = "issuer"
+facet       = "state_writer | grant_capability"
+
+# sub-issuer → holder: a NARROWED read-only facet over `issuer` (the holder only
+# reads schema + revocation to verify). read-only ⊆ the sub-issuer's facet — an
+# attenuation.
+[[grant]]
+from        = "sub-issuer"
+to          = "holder"
+permissions = "signature"
+target      = "issuer"
+facet       = "read-only"

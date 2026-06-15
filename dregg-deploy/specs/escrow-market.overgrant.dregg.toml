@@ -1,0 +1,76 @@
+# escrow-market.overgrant.dregg.toml — the OVER-GRANTING escrow deployment.
+# DreggDL's no-amplification gate REFUSES this before any turn.
+#
+# The widening: `arbiter` was handed a READ-ONLY observe cap over `deal`. It then
+# re-delegates to `colluder` a TRANSFER cap over the SAME deal — value-moving
+# authority it does not hold (an arbiter that could drain the escrow). That
+# re-delegation AMPLIFIES the read-only cap it was handed.
+# `dregg-deploy apply` returns Refused and names the exact offending edge:
+#   arbiter → colluder over deal, facet {Transfer} vs the held read-only {EmitEvent}.
+
+[federation]
+id   = "auto"
+node = "in-process"
+
+[[factory]]
+ref             = "escrow-factory"
+default_mode    = "sovereign"
+creation_budget = 1000000
+factory_vk      = "0x737461726272696467652d657363726f772d6d61726b65742d666163746f7279"
+
+  [[factory.allowed_cap_template]]
+  permissions  = "signature"
+  target       = "self"
+  attenuatable = true
+
+[[cell]]
+name    = "deal"
+factory = "escrow-factory"
+mode    = "sovereign"
+
+[[cell]]
+name    = "seller"
+factory = "escrow-factory"
+
+[[cell]]
+name    = "buyer"
+factory = "escrow-factory"
+
+[[cell]]
+name    = "arbiter"
+factory = "escrow-factory"
+
+[[cell]]
+name    = "colluder"
+factory = "escrow-factory"
+
+[[fund]]
+from   = "buyer"
+to     = "deal"
+amount = 5000
+
+# seller → buyer: the held fund cap (same as the valid spec).
+[[grant]]
+from        = "seller"
+to          = "buyer"
+permissions = "signature"
+target      = "deal"
+facet       = "state_writer | transfer"
+
+# buyer → arbiter: a NARROWED read-only observe cap — fine, an attenuation.
+[[grant]]
+from        = "buyer"
+to          = "arbiter"
+permissions = "signature"
+target      = "deal"
+facet       = "read-only"
+
+# THE OVER-GRANT: arbiter (holds ONLY read-only) re-delegates a TRANSFER cap over
+# `deal` to `colluder`. That is WIDER than the read-only cap arbiter holds — an
+# in-forest capability AMPLIFICATION (an observer minting a value-mover). REFUSED.
+[[grant]]
+from        = "arbiter"
+to          = "colluder"
+permissions = "signature"
+target      = "deal"
+facet       = "transfer-only"

@@ -265,6 +265,30 @@ fn unsafe_widening_upgrade_is_rejected_with_the_divergence_named() {
 }
 
 #[test]
+fn the_divergence_finding_names_the_widening_effect_in_words() {
+    // The enriched refinement diagnostic: the rejected widening is named as a
+    // CONCRETE effect (a GrantCapability over a target with a human facet), not
+    // just an opaque letter — the "surface the diverging letter well" deliverable.
+    let base = plan_apply_toml(BASE, false).unwrap();
+    let widened = plan_apply_toml(WIDENED, false).unwrap();
+    let v = refines_upgrade(&widened, &base);
+    let f = &v.findings()[0];
+    let label = f
+        .diverging_effect_label
+        .as_deref()
+        .expect("the divergence is resolved to a concrete effect");
+    // It is the extra grant: a GrantCapability effect, with a facet description.
+    assert!(label.contains("GrantCapability"), "names the effect kind: {label}");
+    assert!(label.contains("facet"), "describes the cap facet: {label}");
+    // The human message embeds the same concrete description.
+    assert!(
+        f.message.contains("GrantCapability"),
+        "the message names the widening effect: {}",
+        f.message
+    );
+}
+
+#[test]
 fn the_two_checks_are_independent_widening_passes_safety_but_fails_refinement() {
     // The honest-boundary claim of the module, as an executable test: the
     // no-amplification (SAFETY) check and the safe-upgrade (REFINEMENT) check

@@ -1,0 +1,80 @@
+# escrow-market.dregg.toml — DreggDL deployment for the
+# `starbridge-escrow-market` app.
+#
+# An escrow cell is a factory-born sovereign cell running the escrow state
+# machine (LISTED → FUNDED → SETTLED) under write-once / affine-conservation
+# caveats. This spec describes the DEPLOYMENT: the escrow factory (pinned to the
+# app's published `ESCROW_FACTORY_VK`), a seller + buyer + arbiter agent, the
+# funding transfer (the buyer funds the escrow — conservation B is checked), and
+# the cap-grant graph (seller ⊃ buyer ⊃ arbiter, attenuating).
+#
+# Run:  dregg-deploy check specs/escrow-market.dregg.toml
+#       dregg-deploy apply specs/escrow-market.dregg.toml
+
+[federation]
+id   = "auto"
+node = "in-process"
+
+# The escrow factory, pinned to the app's published ESCROW_FACTORY_VK (the ASCII
+# bytes `starbridge-escrow-market-factory`). The custody-cap ceiling is a SelfCell
+# signature cap, attenuatable.
+[[factory]]
+ref             = "escrow-factory"
+default_mode    = "sovereign"
+creation_budget = 1000000
+factory_vk      = "0x737461726272696467652d657363726f772d6d61726b65742d666163746f7279"
+
+  [[factory.allowed_cap_template]]
+  permissions  = "signature"
+  target       = "self"
+  attenuatable = true
+
+# The escrow cell (the deal), born sovereign.
+[[cell]]
+name    = "deal"
+factory = "escrow-factory"
+mode    = "sovereign"
+
+# The SELLER agent — opens the listing (root of the deal's authority).
+[[cell]]
+name    = "seller"
+factory = "escrow-factory"
+
+# The BUYER agent — funds the escrow.
+[[cell]]
+name    = "buyer"
+factory = "escrow-factory"
+
+# An ARBITER agent — observes the deal (read-only) to adjudicate disputes.
+[[cell]]
+name    = "arbiter"
+factory = "escrow-factory"
+
+# The buyer funds the escrow: value moves buyer → deal. Conservation (guarantee
+# B) is checked over this transfer — it self-nets, so a funded escrow conserves.
+[[fund]]
+from   = "buyer"
+to     = "deal"
+amount = 5000
+
+# ── The cap-grant graph (seller ⊃ buyer ⊃ arbiter ladder).
+
+# seller → buyer: a fund-the-deal cap over `deal` — write the escrow state slots
+# and move value (state_writer | transfer). What the seller holds, handed to the
+# buyer so it can FUND.
+[[grant]]
+from        = "seller"
+to          = "buyer"
+permissions = "signature"
+target      = "deal"
+facet       = "state_writer | transfer"
+
+# buyer → arbiter: a NARROWED read-only facet over `deal` (the arbiter only
+# observes the deal state to adjudicate). read-only ⊆ state_writer|transfer — an
+# attenuation.
+[[grant]]
+from        = "buyer"
+to          = "arbiter"
+permissions = "signature"
+target      = "deal"
+facet       = "read-only"

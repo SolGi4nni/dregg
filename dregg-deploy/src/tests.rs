@@ -281,6 +281,184 @@ fn json_surface_parses() {
     assert_eq!(dep_toml, dep_json, "TOML and JSON surfaces agree");
 }
 
+// ─── expressiveness: named facets + pinned on-chain factory VK ───────────────
+
+#[test]
+fn named_facet_lowers_to_the_same_mask_as_the_raw_value() {
+    // A grant written with the friendly `facet = "transfer-only"` and one written
+    // with the raw `allowed_effects = 2` lower to the IDENTICAL capability.
+    let with_name = r#"
+[federation]
+id = "auto"
+[[factory]]
+ref = "f"
+[[cell]]
+name = "a"
+factory = "f"
+[[cell]]
+name = "b"
+factory = "f"
+[[grant]]
+from = "a"
+to   = "b"
+target = "a"
+facet = "transfer-only"
+"#;
+    let with_raw = with_name.replace("facet = \"transfer-only\"", "allowed_effects = 2");
+    let la = Lowered::from_deployment(&parse_toml(with_name).unwrap()).unwrap();
+    let lr = Lowered::from_deployment(&parse_toml(&with_raw).unwrap()).unwrap();
+    // The grant effect's cap.allowed_effects must agree (both == Some(2)).
+    let cap_of = |l: &Lowered| -> Option<u32> {
+        for root in &l.forest.roots {
+            for eff in root.all_effects() {
+                if let dregg_turn::action::Effect::GrantCapability { cap, .. } = eff {
+                    return cap.allowed_effects;
+                }
+            }
+        }
+        None
+    };
+    assert_eq!(cap_of(&la), Some(2), "named transfer-only ⇒ mask 2");
+    assert_eq!(cap_of(&la), cap_of(&lr), "named and raw facet agree");
+}
+
+#[test]
+fn conflicting_facet_and_allowed_effects_is_rejected() {
+    // Setting BOTH `facet` and `allowed_effects` to DISAGREEING values is an
+    // error (the surface must be unambiguous).
+    let dl = r#"
+[federation]
+id = "auto"
+[[factory]]
+ref = "f"
+[[cell]]
+name = "a"
+factory = "f"
+[[cell]]
+name = "b"
+factory = "f"
+[[grant]]
+from = "a"
+to   = "b"
+target = "a"
+facet = "transfer-only"
+allowed_effects = 1
+"#;
+    let err = check(dl, false).unwrap_err();
+    assert!(format!("{err}").contains("DISAGREE"), "the conflict is named: {err}");
+}
+
+#[test]
+fn pinned_factory_vk_is_the_birth_effect_identity() {
+    // When a [[factory]] pins `factory_vk`, the born cell's CreateCellFromFactory
+    // effect names THAT vk (so the deploy instantiates the real on-chain factory),
+    // not the self-contained descriptor hash.
+    let pinned = "0x".to_string() + &"ab".repeat(32);
+    let dl = format!(
+        r#"
+[federation]
+id = "auto"
+[[factory]]
+ref = "f"
+factory_vk = "{pinned}"
+[[cell]]
+name = "a"
+factory = "f"
+"#
+    );
+    let l = Lowered::from_deployment(&parse_toml(&dl).unwrap()).unwrap();
+    let mut found = None;
+    for root in &l.forest.roots {
+        for eff in root.all_effects() {
+            if let dregg_turn::action::Effect::CreateCellFromFactory { factory_vk, .. } = eff {
+                found = Some(*factory_vk);
+            }
+        }
+    }
+    assert_eq!(found, Some([0xabu8; 32]), "the birth effect uses the PINNED factory vk");
+}
+
+// ─── the app-deploy specs: ACCEPT the correct one, REFUSE the over-grant ──────
+
+macro_rules! app_spec_pair {
+    ($name:ident, $accept:literal, $overgrant:literal) => {
+        #[test]
+        fn $name() {
+            // The correct app-deploy spec passes the gate (no-amp ✓, conserves ✓).
+            let accept = include_str!($accept);
+            let v = check(accept, false).expect("accept spec parses + lowers");
+            assert!(
+                v.pass(),
+                "the correct app-deploy spec must PASS; findings: {:?}",
+                v.assurance.all_findings()
+            );
+            // The over-granting sibling is REFUSED by apply, before any turn, on
+            // non-amplification, with the offending grant located.
+            let og = include_str!($overgrant);
+            let err = plan_apply_toml(og, false)
+                .expect_err("the over-grant spec must be REFUSED by the gate");
+            let crate::DeployError::Apply(ApplyError::Refused { assurance }) = err else {
+                panic!("expected a Refused gate failure, got: {err}");
+            };
+            assert!(
+                !assurance.no_amplification.is_pass(),
+                "the over-grant is refused on non-amplification"
+            );
+            // The enriched diagnostic names the over-granting edge by spec name.
+            let lowered = Lowered::from_deployment(&parse_toml(og).unwrap()).unwrap();
+            let diag = crate::explain_assurance(&lowered, &assurance);
+            assert!(!diag.is_clean(), "there is a located finding");
+            let joined = diag.lines().join("\n");
+            assert!(
+                joined.contains("OVER-GRANT") && joined.contains("WIDENS"),
+                "the diagnostic names the over-grant + the widening:\n{joined}"
+            );
+        }
+    };
+}
+
+app_spec_pair!(
+    app_supply_chain_provenance_accept_and_overgrant,
+    "../specs/supply-chain-provenance.dregg.toml",
+    "../specs/supply-chain-provenance.overgrant.dregg.toml"
+);
+app_spec_pair!(
+    app_escrow_market_accept_and_overgrant,
+    "../specs/escrow-market.dregg.toml",
+    "../specs/escrow-market.overgrant.dregg.toml"
+);
+app_spec_pair!(
+    app_identity_accept_and_overgrant,
+    "../specs/identity.dregg.toml",
+    "../specs/identity.overgrant.dregg.toml"
+);
+
+// ─── the receipt SHAPE is honest: dynamic fields deferred, not zeroed ─────────
+
+#[test]
+fn projected_receipt_dynamic_fields_are_deferred_not_zeroed() {
+    use crate::apply::DeferredField;
+    let plan = plan_apply_toml(ESCROW, false).unwrap();
+    assert!(
+        plan.receipts_are_planned_shape(),
+        "at plan time every executor-filled field is Deferred"
+    );
+    for pt in &plan.turns {
+        let r = &pt.projected_receipt;
+        // The executor-filled half is Deferred (NOT a silent zero).
+        assert_eq!(r.post_state_hash, DeferredField::Deferred);
+        assert_eq!(r.pre_state_hash, DeferredField::Deferred);
+        assert_eq!(r.computrons_used, DeferredField::Deferred);
+        assert_eq!(r.timestamp, DeferredField::Deferred);
+        assert_eq!(r.executor_signature, DeferredField::Deferred);
+        // The artifact-known half is the real value (and the chain link matches
+        // the legacy projected_receipt_hash).
+        assert_eq!(r.turn_hash, pt.turn_hash);
+        assert_eq!(r.chain_link_hash, pt.projected_receipt_hash);
+        assert_eq!(r.agent, pt.agent);
+    }
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 //  apply: lower → per-root turn sequence + receipt-chain shape, GATED by the
 //  static check.

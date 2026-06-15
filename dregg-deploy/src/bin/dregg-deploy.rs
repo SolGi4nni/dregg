@@ -19,7 +19,9 @@
 
 use std::process::ExitCode;
 
-use dregg_deploy::{check, parse_toml, plan_apply, serialize_toml, ApplyError, Lowered};
+use dregg_deploy::{
+    check, explain_assurance, parse_toml, plan_apply, serialize_toml, ApplyError, Lowered,
+};
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -98,7 +100,7 @@ fn run_check(args: &[String]) -> ExitCode {
             }
         }
     } else {
-        print_human(&verdict);
+        print_human(&verdict, &text);
     }
 
     if verdict.pass() {
@@ -108,7 +110,7 @@ fn run_check(args: &[String]) -> ExitCode {
     }
 }
 
-fn print_human(v: &dregg_deploy::DeployVerdict) {
+fn print_human(v: &dregg_deploy::DeployVerdict, text: &str) {
     println!("dregg-deploy: resolved deployment");
     println!("  federation turns (effect-groups): {}", v.turn_count);
     if !v.factories.is_empty() {
@@ -142,6 +144,22 @@ fn print_human(v: &dregg_deploy::DeployVerdict) {
     line("   well-formedness   (structural shape)              ", &a.wellformed);
     line("   ring balance                                      ", &a.ring_balance);
     println!();
+    // On a FAIL, print the ENRICHED diagnostics: a no-amplification finding named
+    // by spec name + human facet + the parent cap it exceeded (not a hex prefix).
+    if !v.pass() {
+        if let Ok(dep) = parse_toml(text) {
+            if let Ok(lowered) = Lowered::from_deployment(&dep) {
+                let diag = explain_assurance(&lowered, &a);
+                if !diag.is_clean() {
+                    println!("why (named):");
+                    for l in diag.lines() {
+                        println!("  • {l}");
+                    }
+                    println!();
+                }
+            }
+        }
+    }
     if v.pass() {
         println!(
             "VERDICT: PASS (static). The whole declared cap layout conserves and \
@@ -180,8 +198,21 @@ fn run_apply(args: &[String]) -> ExitCode {
                 "REFUSED: the static pre-submission check rejected this deployment — \
                  NO turn sequence emitted (you'd pay gas to be rejected). Findings:"
             );
-            for f in assurance.all_findings() {
-                eprintln!("  @ {}  —  {}", f.locus, f.message);
+            // Enriched diagnostics: re-lower so a no-amplification finding names
+            // the over-granting edge by spec name + human facet, not a hex prefix
+            // + `Some(17)`. (Re-lowering cannot fail — plan_apply already lowered.)
+            match Lowered::from_deployment(&dep) {
+                Ok(lowered) => {
+                    let diag = explain_assurance(&lowered, &assurance);
+                    for line in diag.lines() {
+                        eprintln!("  • {line}");
+                    }
+                }
+                Err(_) => {
+                    for f in assurance.all_findings() {
+                        eprintln!("  @ {}  —  {}", f.locus, f.message);
+                    }
+                }
             }
             return ExitCode::from(1);
         }

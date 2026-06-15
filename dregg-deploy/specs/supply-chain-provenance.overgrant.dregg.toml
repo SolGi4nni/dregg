@@ -1,0 +1,78 @@
+# supply-chain-provenance.overgrant.dregg.toml — the DELIBERATELY OVER-GRANTING
+# variant of the supply-chain deployment. DreggDL's no-amplification gate REFUSES
+# this before any turn is built — the "the gate catches the over-grant before it
+# ships" half of the story.
+#
+# The widening: `verifier` was handed a READ-ONLY custody cap (emit_event only).
+# It then re-delegates to `rogue-custodian` a STATE-WRITER cap over the SAME item
+# — write authority it does not hold. That re-delegation AMPLIFIES the read-only
+# cap it was handed. `dregg-deploy apply` returns Refused and names the exact
+# offending edge:  verifier → rogue-custodian over item, facet {SetField,
+# EmitEvent} vs the held facet read-only {EmitEvent}.
+#
+# Run:  dregg-deploy apply specs/supply-chain-provenance.overgrant.dregg.toml
+#       → REFUSED (exit 1), no turn sequence emitted.
+
+[federation]
+id   = "auto"
+node = "in-process"
+
+[[factory]]
+ref             = "item-factory"
+default_mode    = "sovereign"
+creation_budget = 1000000
+factory_vk      = "0x737461726272696467652d737570706c79636861696e2d6974656d2d66616374"
+
+  [[factory.allowed_cap_template]]
+  permissions  = "signature"
+  target       = "self"
+  attenuatable = true
+
+[[cell]]
+name    = "item"
+factory = "item-factory"
+mode    = "sovereign"
+
+[[cell]]
+name    = "manufacturer"
+factory = "item-factory"
+
+[[cell]]
+name    = "custodian"
+factory = "item-factory"
+
+[[cell]]
+name    = "verifier"
+factory = "item-factory"
+
+[[cell]]
+name    = "rogue-custodian"
+factory = "item-factory"
+
+# manufacturer → custodian: the held state-writer|transfer custody cap (same as
+# the valid spec).
+[[grant]]
+from        = "manufacturer"
+to          = "custodian"
+permissions = "signature"
+target      = "item"
+facet       = "state_writer | transfer"
+
+# custodian → verifier: a NARROWED read-only facet — fine, an attenuation.
+[[grant]]
+from        = "custodian"
+to          = "verifier"
+permissions = "signature"
+target      = "item"
+facet       = "read-only"
+
+# THE OVER-GRANT: verifier (holds ONLY read-only) re-delegates a STATE-WRITER cap
+# over `item` to a fresh custodian. That is WIDER than the read-only cap verifier
+# holds — an in-forest capability AMPLIFICATION. The gate REFUSES the whole
+# deployment here.
+[[grant]]
+from        = "verifier"
+to          = "rogue-custodian"
+permissions = "signature"
+target      = "item"
+facet       = "state-writer"

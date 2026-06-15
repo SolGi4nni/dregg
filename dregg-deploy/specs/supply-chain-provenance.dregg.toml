@@ -1,0 +1,86 @@
+# supply-chain-provenance.dregg.toml — DreggDL deployment for the
+# `starbridge-supply-chain-provenance` app.
+#
+# An ITEM is a factory-born sovereign cell whose installed program IS the custody
+# policy (actor-bound baton + strict-mono epoch + write-once links). This spec
+# describes the DEPLOYMENT authority layout: the item factory (pinned to the
+# app's PUBLISHED factory VK so the birth instantiates the REAL factory), the
+# manufacturer + custodian + verifier agent cells, and the custody-cap GRANT
+# graph — the manufacturer⊃custodian⊃verifier ladder, handed forward NARROWED.
+#
+# Run:  dregg-deploy check  specs/supply-chain-provenance.dregg.toml
+#       dregg-deploy apply  specs/supply-chain-provenance.dregg.toml
+# Or via the example:  cargo run -p dregg-deploy --example app_deploy
+#
+# The grant graph attenuates (manufacturer → custodian → verifier, each NARROWER
+# than the last), so the static no-amplification gate PASSES — DreggDL ships this.
+# Its over-granting sibling (`supply-chain-provenance.overgrant.dregg.toml`) is
+# REFUSED before any turn.
+
+[federation]
+id   = "auto"
+node = "in-process"
+
+# The supply-chain ITEM factory. `factory_vk` is PINNED to the app's published
+# `ITEM_FACTORY_VK` (the ASCII bytes `starbridge-supplychain-item-fact`), so the
+# born item's CreateCellFromFactory effect names the REAL on-chain factory. The
+# `allowed_cap_template` is the custody-cap ceiling: a SelfCell signature cap,
+# attenuatable (handed forward narrowed).
+[[factory]]
+ref             = "item-factory"
+default_mode    = "sovereign"
+creation_budget = 1000000
+factory_vk      = "0x737461726272696467652d737570706c79636861696e2d6974656d2d66616374"
+
+  [[factory.allowed_cap_template]]
+  permissions  = "signature"
+  target       = "self"
+  attenuatable = true
+
+# The ITEM cell, born sovereign from the item factory.
+[[cell]]
+name    = "item"
+factory = "item-factory"
+mode    = "sovereign"
+
+# The MANUFACTURER agent — the root holder (mints, grants custody forward).
+[[cell]]
+name    = "manufacturer"
+factory = "item-factory"
+
+# The first CUSTODIAN agent (a warehouse / carrier holding the item).
+[[cell]]
+name    = "custodian"
+factory = "item-factory"
+
+# A VERIFIER agent (a regulator / the public — reads the provenance chain).
+[[cell]]
+name    = "verifier"
+factory = "item-factory"
+
+# ── The custody-cap GRANT graph (the manufacturer ⊃ custodian ⊃ verifier ladder).
+#
+# Reading these [[grant]] rows IS reading the whole custody authority layout —
+# the CapDL property. Each grant is NARROWER than the one above it, so the chain
+# attenuates and the no-amplification gate passes.
+
+# manufacturer → custodian: a custody cap over `item` permitting the handoff
+# operations a custodian needs (advance the register + append the chain link +
+# announce). A `state-writer | transfer` facet — write the custody slots, move
+# the item. This is what the manufacturer holds, handed forward.
+[[grant]]
+from        = "manufacturer"
+to          = "custodian"
+permissions = "signature"
+target      = "item"
+facet       = "state_writer | transfer"
+
+# custodian → verifier: a NARROWED, read-only facet over `item` (the verifier
+# only reads + re-derives the chain — `emit_event`). A strict attenuation of the
+# custodian's state-writer cap (read-only ⊆ state-writer): an ATTENUATION.
+[[grant]]
+from        = "custodian"
+to          = "verifier"
+permissions = "signature"
+target      = "item"
+facet       = "read-only"

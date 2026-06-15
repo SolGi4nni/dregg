@@ -72,6 +72,7 @@ use dregg_turn::action::Effect;
 use dregg_turn::{CallForest, CallTree};
 
 use crate::apply::AppliedPlan;
+use crate::facet::describe_allowed_effects;
 
 // ════════════════════════════════════════════════════════════════════════════
 //  §1 — The σ-free `Proc` + `decideRefines` mirror (FlowRefine.lean §1, §4).
@@ -422,6 +423,13 @@ pub struct RefineFinding {
     /// The effect-letter the refining side could fire but the target could not
     /// match (the witness of non-refinement), if one was isolated.
     pub diverging_letter: Option<u64>,
+    /// A HUMAN label for the diverging letter: the actual effect whose firing
+    /// `B` could not match, resolved by scanning the refining side's effects for
+    /// the one whose [`effect_letter`] equals `diverging_letter`. E.g.
+    /// `"GrantCapability deal → bank over deal (facet unrestricted (all effect
+    /// kinds))"`. `None` if the letter could not be resolved to a concrete
+    /// effect (it is still pinned numerically in `diverging_letter`).
+    pub diverging_effect_label: Option<String>,
 }
 
 /// The verdict of a refinement check: `Refines` (the relation holds) or
@@ -484,6 +492,63 @@ fn diverging_letter(a: &Proc, b: &Proc) -> Option<u64> {
     None
 }
 
+/// A human label for a single deploy effect — the inverse intent of
+/// [`effect_letter`] for diagnostics. Names the KIND and the
+/// capability/value SHAPE the way an operator reads it, using the friendly facet
+/// describer for a `GrantCapability`. (`effect_letter` is a hash and not
+/// invertible; this is applied to the CONCRETE effect once the scan has matched
+/// the letter — see [`describe_diverging_effect`].)
+pub fn describe_effect(eff: &Effect) -> String {
+    match eff {
+        Effect::GrantCapability { from, to, cap } => format!(
+            "GrantCapability {} → {} over {} (facet {})",
+            short(&from.0),
+            short(&to.0),
+            short(&cap.target.0),
+            describe_allowed_effects(cap.allowed_effects),
+        ),
+        Effect::Transfer { from, to, amount } => {
+            format!("Transfer {} → {} amount {amount}", short(&from.0), short(&to.0))
+        }
+        Effect::CreateCellFromFactory { factory_vk, .. } => {
+            format!("CreateCellFromFactory from factory {}", short(factory_vk))
+        }
+        Effect::SetField { cell, index, .. } => {
+            format!("SetField cell {} slot {index}", short(&cell.0))
+        }
+        Effect::RevokeCapability { .. } => "RevokeCapability".to_string(),
+        Effect::AttenuateCapability { .. } => "AttenuateCapability".to_string(),
+        other => format!("{other:?}")
+            .split(['{', ' '])
+            .next()
+            .unwrap_or("effect")
+            .to_string(),
+    }
+}
+
+fn short(b: &[u8; 32]) -> String {
+    let h: String = b.iter().take(4).map(|x| format!("{x:02x}")).collect();
+    format!("0x{h}…")
+}
+
+/// Resolve a diverging LETTER to the concrete effect (and its human label) by
+/// scanning a plan's effects for the one whose [`effect_letter`] equals it. The
+/// diverging letter is, by construction, a letter the REFINING side (`A`) can
+/// fire — so we scan `A`'s plan. Returns the first matching effect's
+/// [`describe_effect`]. Used to put a HUMAN name on the refinement divergence.
+pub fn describe_diverging_effect(plan: &AppliedPlan, letter: u64) -> Option<String> {
+    for pt in &plan.turns {
+        for root in &pt.turn.call_forest.roots {
+            for eff in root.all_effects() {
+                if effect_letter(eff) == letter {
+                    return Some(describe_effect(eff));
+                }
+            }
+        }
+    }
+    None
+}
+
 /// **safe-upgrade**: does the NEW plan refine the RUNNING (old) plan? `new ≤ᶠ
 /// old` — the new deployment introduces NO behavior the old one lacked. A
 /// widening (a new effect / wider capability) is rejected with the divergence
@@ -499,22 +564,33 @@ pub fn refines_upgrade(new_plan: &AppliedPlan, old_plan: &AppliedPlan) -> Refine
         RefineVerdict::Refines
     } else {
         let witness = diverging_letter(&new_flow, &old_flow);
+        // Resolve the diverging letter to the CONCRETE effect of the new plan
+        // (the refining side), for a human label of WHAT widened.
+        let label = witness.and_then(|l| describe_diverging_effect(new_plan, l));
         RefineVerdict::Diverges(vec![RefineFinding {
             check: "safe-upgrade".to_string(),
-            message: match witness {
-                Some(l) => format!(
-                    "the new deployment WIDENS the running one: at the diverging step it \
-                     fires an effect (letter {l:#018x}) the running deployment cannot match \
-                     from that point — a new reachable effect/capability, not a narrowing. \
-                     The upgrade is NOT a refinement of what is running (new ⋠ old)."
+            message: match (&witness, &label) {
+                (Some(_), Some(desc)) => format!(
+                    "the new deployment WIDENS the running one: at the diverging step it fires \
+                     `{desc}` — an effect the running deployment cannot match from that point (a \
+                     new reachable effect/capability, not a narrowing). The upgrade is NOT a \
+                     refinement of what is running (new ⋠ old). Drop or narrow that effect to roll \
+                     forward safely."
                 ),
-                None => "the new deployment does not refine the running one in the online \
+                (Some(l), None) => format!(
+                    "the new deployment WIDENS the running one: at the diverging step it fires an \
+                     effect (letter {l:#018x}) the running deployment cannot match from that point \
+                     — a new reachable effect/capability, not a narrowing. The upgrade is NOT a \
+                     refinement of what is running (new ⋠ old)."
+                ),
+                (None, _) => "the new deployment does not refine the running one in the online \
                      simulation order (new ⋠ old): some effect-sequence the new plan can \
                      perform is not matchable by the running plan. The upgrade introduces \
                      behavior the running deployment did not authorize."
                     .to_string(),
             },
             diverging_letter: witness,
+            diverging_effect_label: label,
         }])
     }
 }
@@ -532,15 +608,26 @@ pub fn refines_intent(plan: &AppliedPlan, intent: &FlowSpec) -> RefineVerdict {
     let trace = trace_of(&lowered);
     match intent.allows_trace(&trace) {
         Ok(()) => RefineVerdict::Refines,
-        Err(l) => RefineVerdict::Diverges(vec![RefineFinding {
-            check: "intent-conformance".to_string(),
-            message: format!(
-                "the lowered deployment does MORE than the declared intent: it fires an \
-                 effect (letter {l:#018x}) the intent did not authorize. The lowering \
-                 exceeds its stated envelope (lowered ⋠ intent)."
-            ),
-            diverging_letter: Some(l),
-        }]),
+        Err(l) => {
+            let label = describe_diverging_effect(plan, l);
+            RefineVerdict::Diverges(vec![RefineFinding {
+                check: "intent-conformance".to_string(),
+                message: match &label {
+                    Some(desc) => format!(
+                        "the lowered deployment does MORE than the declared intent: it fires \
+                         `{desc}` — an effect the intent did not authorize. The lowering exceeds \
+                         its stated envelope (lowered ⋠ intent)."
+                    ),
+                    None => format!(
+                        "the lowered deployment does MORE than the declared intent: it fires an \
+                         effect (letter {l:#018x}) the intent did not authorize. The lowering \
+                         exceeds its stated envelope (lowered ⋠ intent)."
+                    ),
+                },
+                diverging_letter: Some(l),
+                diverging_effect_label: label,
+            }])
+        }
     }
 }
 
