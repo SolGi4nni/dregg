@@ -52,6 +52,28 @@ pub fn lean_producer_env_enabled() -> bool {
     }
 }
 
+/// Build the `TurnExecutor` every [`AgentRuntime`] runs on, with the **real**
+/// witnessed-predicate verifiers installed (not the fail-closed defaults).
+///
+/// This is the one behavioral default that makes `SenderAuthorized { PublicRoot }`
+/// (and the other STARK-backed witnessed predicates whose backend lives in
+/// `dregg-cell`/`dregg-circuit`) ENFORCE FOR REAL on the honest fire path: a
+/// turn whose sender carries a genuine Poseidon2 Merkle-membership proof against
+/// the authorized-set root is ACCEPTED, and a non-member's turn is rejected at
+/// the STARK level — rather than every `SenderAuthorized` turn failing closed
+/// because the default registry's `MerkleMembership` slot is a reject-everything
+/// stub.
+///
+/// `registry_with_real_verifiers` rides `dregg-turn`'s existing `dregg-circuit`
+/// dependency (the verifier links it), so this adds no new heavy dep to the SDK.
+/// A host that needs fail-closed `SenderAuthorized` (e.g. a negative regression)
+/// can opt out via `AgentRuntime::set_witnessed_registry(empty())`.
+fn executor_with_real_verifiers() -> TurnExecutor {
+    let mut e = TurnExecutor::new(ComputronCosts::default_costs());
+    e.set_witnessed_registry(dregg_turn::executor::registry_with_real_verifiers());
+    e
+}
+
 /// The default method a [`SubAgent`] is scoped to when no explicit set is
 /// given: the `execute` verb its `execute()` path submits.
 pub const DEFAULT_SUBAGENT_METHOD: &str = "execute";
@@ -239,7 +261,7 @@ impl AgentRuntime {
             .insert_cell(agent_cell)
             .expect("fresh ledger, no conflict");
 
-        let executor = TurnExecutor::new(ComputronCosts::default_costs());
+        let executor = executor_with_real_verifiers();
         {
             let w = cipherclerk.read().unwrap_or_else(|e| e.into_inner());
             if let Some(head) = w.receipt_head() {
@@ -271,7 +293,7 @@ impl AgentRuntime {
             .read()
             .unwrap_or_else(|e| e.into_inner())
             .cell_id(domain);
-        let executor = TurnExecutor::new(ComputronCosts::default_costs());
+        let executor = executor_with_real_verifiers();
 
         AgentRuntime {
             cipherclerk,
@@ -355,6 +377,23 @@ impl AgentRuntime {
     /// [`crate::identity`]) read it here.
     pub fn block_height(&self) -> u64 {
         self.executor.block_height
+    }
+
+    /// Replace this runtime's executor's witnessed-predicate registry.
+    ///
+    /// `AgentRuntime` defaults (via [`executor_with_real_verifiers`]) to the
+    /// REAL STARK-backed registry, so `SenderAuthorized { PublicRoot }` and the
+    /// other `dregg-circuit`-backed witnessed predicates enforce for real. Call
+    /// this to install a different registry — e.g.
+    /// `dregg_cell::WitnessedPredicateRegistry::empty()` for a negative test that
+    /// wants fail-closed `SenderAuthorized`, or
+    /// `dregg_turn::executor::registry_with_real_verifiers_full(..)` to add the
+    /// host-context-dependent kinds (Dfa / Temporal / BlindedSet issuer-root).
+    pub fn set_witnessed_registry(
+        &mut self,
+        registry: dregg_cell::WitnessedPredicateRegistry,
+    ) {
+        self.executor.set_witnessed_registry(registry);
     }
 
     /// Deploy a [`FactoryDescriptor`] into this runtime's executor.
@@ -1125,7 +1164,7 @@ impl SubAgent {
         effects: Vec<Effect>,
     ) -> Result<TurnReceipt, SdkError> {
         let executor = {
-            let mut e = TurnExecutor::new(ComputronCosts::default_costs());
+            let mut e = executor_with_real_verifiers();
             // Run under the runtime's federation id so the token verifier's
             // AuthRequest (which binds `app_id = hex(federation_id)`) and the
             // receipt-chain domain separation match the parent runtime. The
