@@ -103,6 +103,75 @@ impl TurnExecutor {
         }
     }
 
+    /// Build the host [`dregg_cell::predicate::FinalizedRootAuthority`] backing
+    /// the §11.2 cross-cell verified-observation atom
+    /// ([`dregg_cell::StateConstraint::ObservedFieldEquals`]) for this action.
+    ///
+    /// The embedded executor's finalized view of a peer cell is its CURRENT
+    /// committed state in the shared ledger (turns commit synchronously, so a
+    /// peer cell's present ledger state IS its finalized state — the
+    /// `monotone_terminal` already-committed fact the atom may read for free).
+    /// For every `ObservedFieldEquals { source_cell, source_field, at_root }`
+    /// named by any program on a cell this action touches, we bind the peer's
+    /// GENUINE finalized commitment (`Cell::state_commitment`) to its
+    /// `source_field` value. The cell-side evaluator then admits IFF the
+    /// program's declared `at_root` matches that genuine commitment AND
+    /// `new[local_field]` equals the bound value:
+    ///   - a forged `at_root` (not the peer's real commitment) has no binding
+    ///     ⇒ rejects (the anti-forge tooth, exactly as the empty-table
+    ///     `StaticFinalizedRootAuthority` rejects an unrecognized root);
+    ///   - a `source_cell` absent from the ledger contributes no binding
+    ///     ⇒ rejects;
+    ///   - a genuine read whose local field diverges from the peer's finalized
+    ///     value ⇒ rejects (the mismatch tooth, in the evaluator).
+    ///
+    /// Returns an empty authority (rejects every `ObservedFieldEquals`) when no
+    /// touched program names the atom — same fail-closed posture as the prior
+    /// `finalized_roots: None`, but now an ACCEPT is reachable for genuine reads.
+    fn build_finalized_root_authority(
+        to_check: &[CellId],
+        ledger: &Ledger,
+    ) -> dregg_cell::predicate::StaticFinalizedRootAuthority {
+        let mut authority = dregg_cell::predicate::StaticFinalizedRootAuthority::new();
+        for cell_id in to_check {
+            let Some(cell) = ledger.get(cell_id) else {
+                continue;
+            };
+            let constraints: &[dregg_cell::StateConstraint] = match &cell.program {
+                dregg_cell::CellProgram::Predicate(constraints) => constraints,
+                dregg_cell::CellProgram::Cases(_)
+                | dregg_cell::CellProgram::Circuit { .. }
+                | dregg_cell::CellProgram::None => continue,
+            };
+            for constraint in constraints {
+                let dregg_cell::StateConstraint::ObservedFieldEquals {
+                    source_cell,
+                    source_field,
+                    ..
+                } = constraint
+                else {
+                    continue;
+                };
+                // The peer's genuine finalized root + field value, read from
+                // the ledger's current committed view.
+                let Some(peer) = ledger.get(&CellId::from_bytes(*source_cell)) else {
+                    continue;
+                };
+                let idx = *source_field as usize;
+                if idx >= peer.state.fields.len() {
+                    continue;
+                }
+                authority = authority.authorize(
+                    *source_cell,
+                    peer.state_commitment(),
+                    *source_field,
+                    peer.state.fields[idx],
+                );
+            }
+        }
+        authority
+    }
+
     fn validate_bound_delta_program(
         &self,
         cell_id: &CellId,
@@ -808,14 +877,6 @@ impl TurnExecutor {
                 bytes: &wb.bytes,
             })
             .collect();
-        let witnesses = dregg_cell::program::WitnessBundle {
-            blobs: &witness_views,
-            registry: self.witnessed_registry.as_ref(),
-            // No peer-cell finalized-root authority is wired into this executor
-            // path yet, so `ObservedFieldEquals` fails closed (the additive
-            // `None` default per `WitnessBundle`'s contract).
-            finalized_roots: None,
-        };
 
         // Walk every cell whose program might fire on this action: the
         // target cell + any cell named in old_cell_states (the snapshot
@@ -826,6 +887,22 @@ impl TurnExecutor {
         if !to_check.contains(&action.target) {
             to_check.push(action.target);
         }
+
+        // The host finalized-root authority for the §11.2 cross-cell
+        // verified-observation atom (`StateConstraint::ObservedFieldEquals`):
+        // the embedded executor's view of each referenced peer cell's GENUINE
+        // finalized commitment + field value, read from the shared ledger. A
+        // genuine read now ACCEPTS (the value matches the peer's finalized
+        // field); a forged `at_root` / absent peer / diverging local field
+        // still REJECTS. The authority owns a snapshot, so it holds no `ledger`
+        // borrow — `&observed_authority` lives only for the evaluation loop
+        // below.
+        let observed_authority = Self::build_finalized_root_authority(&to_check, ledger);
+        let witnesses = dregg_cell::program::WitnessBundle {
+            blobs: &witness_views,
+            registry: self.witnessed_registry.as_ref(),
+            finalized_roots: Some(&observed_authority),
+        };
 
         for cell_id in &to_check {
             let Some(touched_cell) = ledger.get(cell_id) else {

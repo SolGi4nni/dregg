@@ -18,7 +18,7 @@
 //! executor has no BlindedSet verifier wired).
 
 use dregg_app_framework::{AgentCipherclerk, AppCipherclerk, EmbeddedExecutor};
-use dregg_cell::program::SimpleStateConstraint;
+use dregg_cell::program::{CollPred, ElemPredAtom, SimpleStateConstraint};
 use dregg_cell::{CellProgram, StateConstraint, field_from_u64};
 use dregg_turn::action::{Effect, WitnessBlob, WitnessKind};
 
@@ -929,5 +929,193 @@ fn balance_lte_accept_and_reject() {
     assert!(
         err.is_err(),
         "BalanceLte did not reject a balance above the allowed maximum"
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 24. ObservedFieldEquals — the §11.2 cross-cell verified-observation atom,
+//     now reachable to ACCEPT through the embedded executor's real
+//     `FinalizedRootAuthority` (built from its committed view of the peer
+//     cell's finalized state in the shared ledger).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Build a SetField action on the agent's own cell and attach a `MerklePath`
+/// witness blob at index 0 — the Merkle-open proof the `ObservedFieldEquals`
+/// evaluator requires at `proof_witness_index`. Re-signs so the signature
+/// covers the blob.
+fn set_field_with_merkle_open(
+    ex: &EmbeddedExecutor,
+    cc: &AppCipherclerk,
+    index: usize,
+    value: [u8; 32],
+) -> dregg_turn::action::Action {
+    let mut action = set_field(ex, cc, index, value);
+    action.witness_blobs = vec![WitnessBlob {
+        kind: WitnessKind::MerklePath,
+        bytes: vec![0u8; 1],
+    }];
+    cc.sign_action(action)
+}
+
+/// `ObservedFieldEquals { local_field: 0, source_cell: <peer>, source_field: 1,
+/// at_root: <peer's finalized commitment>, proof_witness_index: 0 }`: slot[0]
+/// MUST equal the peer cell's finalized `source_field` value.
+///
+/// The embedded executor builds a real `FinalizedRootAuthority` from its
+/// committed view of the peer cell in the shared ledger (the peer's genuine
+/// `state_commitment()` opens `source_field` to its current field value). So:
+///   - Accept: set slot[0] = the peer's finalized value (42) → the binding is
+///     genuine and the local field agrees, the turn COMMITS.
+///   - Reject: set slot[0] = a divergent value (99) while the peer's finalized
+///     value is still 42 → the mismatch tooth REJECTS on the commit path.
+///
+/// Both checked through `EmbeddedExecutor::submit_action` (the executor commit
+/// path), so the §11.2 atom is now executor-enforced for an ACCEPT, not only a
+/// fail-closed REJECT.
+#[test]
+fn observed_field_equals_accept_and_reject() {
+    let (ex, cc) = fresh(25);
+
+    // The peer (oracle) cell: a distinct cipherclerk's cell, inserted into the
+    // SAME embedded ledger, with its finalized `source_field` (slot 1) set to
+    // 42. Its genuine `state_commitment()` is what the executor's authority
+    // binds — no forged root can satisfy the atom.
+    let peer_pk = [0x11u8; 32];
+    let peer_token = *blake3::hash(b"oracle").as_bytes();
+    let finalized_price = field_from_u64(42);
+    let mut peer = dregg_cell::Cell::with_balance(peer_pk, peer_token, 1_000_000);
+    peer.state.set_field(1, finalized_price);
+    let peer_id = peer.id();
+    ex.ensure_cell(peer).expect("insert peer (oracle) cell");
+
+    // Read the peer's GENUINE finalized commitment back out of the committed
+    // ledger — this is exactly the `at_root` the executor's authority will
+    // confirm for `source_cell` at submit time.
+    let peer_root = ex.with_ledger_mut(|ledger| {
+        ledger
+            .get(&peer_id)
+            .expect("peer cell present after ensure_cell")
+            .state_commitment()
+    });
+
+    // The market cell program: local slot[0] MUST equal the oracle's finalized
+    // price (slot 1) at the oracle's finalized commitment.
+    ex.install_program(
+        ex.cell_id(),
+        CellProgram::Predicate(vec![StateConstraint::ObservedFieldEquals {
+            local_field: 0,
+            source_cell: *peer_id.as_bytes(),
+            source_field: 1,
+            at_root: peer_root,
+            proof_witness_index: 0,
+        }]),
+    );
+
+    // ACCEPT: set slot[0] = 42, exactly the oracle's finalized price. The
+    // executor's authority confirms the genuine root + binds the value, and the
+    // local field agrees → the turn COMMITS.
+    let ok = ex.submit_action(
+        &cc,
+        set_field_with_merkle_open(&ex, &cc, 0, finalized_price),
+    );
+    assert!(
+        ok.is_ok(),
+        "ObservedFieldEquals accept (slot[0] == peer's finalized field) failed: {ok:?}"
+    );
+
+    // REJECT (the mismatch tooth): set slot[0] = 99 while the peer's finalized
+    // value is still 42 — the binding is real, the turn cannot diverge its
+    // local field from the observed finalized value.
+    let err = ex.submit_action(
+        &cc,
+        set_field_with_merkle_open(&ex, &cc, 0, field_from_u64(99)),
+    );
+    assert!(
+        err.is_err(),
+        "ObservedFieldEquals did not reject a local field diverging from the peer's finalized value"
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 25. CollectionAggregate — the named-collection aggregate gate (the
+//     heap/layout rung), enforced through the executor commit path against
+//     the cell's own `(collection_id, key)` heap collection.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Seed a single-field-per-element collection (`stride = 1`) under
+/// `collection_id` into the agent cell's heap: element `i`'s anchor/value
+/// lives at heap key `(collection_id, i)`. Re-seals `heap_root` (via
+/// `set_heap`) so the commitment stays consistent.
+fn seed_collection(ex: &EmbeddedExecutor, collection_id: u32, values: &[[u8; 32]]) {
+    let cell = ex.cell_id();
+    ex.with_ledger_mut(|ledger| {
+        let c = ledger
+            .get_mut(&cell)
+            .expect("agent cell present in embedded ledger");
+        for (i, v) in values.iter().enumerate() {
+            c.state.set_heap(collection_id, i as u32, *v);
+        }
+    });
+}
+
+/// `CollectionAggregate { collection_id: 7, stride: 1, fuel: 4,
+/// pred: CountSatGe { m: 2, p: FieldGte { offset: 0, value: 100 } } }`: at
+/// least two elements of collection 7 must have value >= 100.
+///
+/// The collection lives in the cell's OWN heap (`heap_map`), read end-to-end
+/// by `collection_id` on the commit path. A SetField turn touches the cell, so
+/// the program re-evaluates the aggregate against the seeded heap:
+///   - Accept: seed [150, 200, 50] → two elements >= 100, the CountSatGe
+///     statistic is met → the submitted turn COMMITS.
+///   - Reject: re-seed element 1 down to 50 → only one element >= 100, the
+///     statistic fails → the submitted turn is REJECTED on commit.
+///
+/// Both checked through `EmbeddedExecutor::submit_action` (the executor commit
+/// path), with the collection read out of `heap_map` on each side.
+#[test]
+fn collection_aggregate_accept_and_reject() {
+    let (ex, cc) = fresh(26);
+    let collection_id = 7u32;
+
+    ex.install_program(
+        ex.cell_id(),
+        CellProgram::Predicate(vec![StateConstraint::CollectionAggregate {
+            collection_id,
+            stride: 1,
+            fuel: 4,
+            pred: CollPred::CountSatGe {
+                m: 2,
+                p: ElemPredAtom::FieldGte {
+                    offset: 0,
+                    value: field_from_u64(100),
+                },
+            },
+        }]),
+    );
+
+    // ACCEPT: two of the three elements (150, 200) clear the >= 100 floor, so
+    // CountSatGe { m: 2 } is met and the SetField turn COMMITS.
+    seed_collection(
+        &ex,
+        collection_id,
+        &[field_from_u64(150), field_from_u64(200), field_from_u64(50)],
+    );
+    let ok = ex.submit_action(&cc, set_field(&ex, &cc, 0, field_from_u64(1)));
+    assert!(
+        ok.is_ok(),
+        "CollectionAggregate accept (2 elements >= 100) failed: {ok:?}"
+    );
+
+    // REJECT: drop element 1 to 50 — now only one element (150) clears the
+    // floor, the CountSatGe { m: 2 } statistic fails, and the turn is REJECTED.
+    seed_collection(
+        &ex,
+        collection_id,
+        &[field_from_u64(150), field_from_u64(50), field_from_u64(50)],
+    );
+    let err = ex.submit_action(&cc, set_field(&ex, &cc, 0, field_from_u64(2)));
+    assert!(
+        err.is_err(),
+        "CollectionAggregate did not reject a collection failing the CountSatGe statistic"
     );
 }
