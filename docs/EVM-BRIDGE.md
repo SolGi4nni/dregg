@@ -388,9 +388,19 @@ What this validated, and the findings that matter:
   journalDigest)` calldata is produced by `encode_seal`; the journal slicing
   decodes the verified turn's public inputs correctly in-contract.
 
-- **Run the wrap on real hardware.** The STARK→Groth16 wrap is CPU/RAM-heavy; do
-  it on a 24-core box (persvati), not a laptop. With Poseidon2 the guest is far
-  lighter than the BLAKE3 attempt.
+- **Run the wrap on real hardware — and know the cost is real.** The
+  STARK→Groth16 wrap is CPU/RAM-heavy; do it on a 24-core box (persvati), not a
+  laptop. Poseidon2 made the guest *tractable* (the BLAKE3 attempt ran >200
+  CPU-min unfinished); but even so, the measured base zkVM prove of the guest —
+  which verifies a ~123 KiB batch STARK in-circuit — runs ~tens of minutes on 24
+  cores (the dev-mode 5 s figure is the non-cryptographic loop, NOT the real
+  prove). This is the honest, fundamental cost of (B): you are proving a whole
+  RISC-V *execution* of a STARK verifier (millions of cycles — each Poseidon2
+  permutation and FRI-query Merkle check is hundreds of instructions), not just
+  its arithmetic. It is the strongest practical argument for (A)/(C): a circuit
+  that encodes only the verifier's math is 10-100× cheaper to prove. (B) is the
+  easiest to *ship* (vetted contracts, no bespoke crypto); (C) is the answer when
+  proving cost matters at volume.
 
 The honest residual (same boundary, now inside a running loop): the guest verifies
 a single turn-descriptor proof, not yet the full `WholeChainProof` recursion root

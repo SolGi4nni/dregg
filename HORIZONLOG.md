@@ -11,6 +11,83 @@ reason.)*
 Last sweep: 2026-06-13 (flagged-items burndown — removed ~14 landed/struck items,
 deduped the DreggDL/sel4/snapshot landings into git history, kept live tails).
 
+## FIRMAMENT KEYSTONE — LANDED: the 5-PD assembly BOOTS the verified turn through the REAL executor seat (2026-06-15)
+
+The `executor` seat of the 5-PD firmament (`sel4/dregg.system`) is a REAL Microkit PD
+(`sel4/dregg-pd/executor-microkit-pd/`) embedding the verified `dregg_exec_full_forest_auth`
+(= `execFullForestG` + admission, proved in `metatheory/`) + the ELF Lean runtime + real GMP + the real
+crypto floor + the seL4 musl, and **the WHOLE 5-PD Microkit image now BOOTS in qemu-system-aarch64 with
+that verified turn running `status:2 ok:1`** — ZERO faults across all five PDs. `make -C sel4
+run-assembly-real` reproduces it end-to-end; verbatim serial in
+`executor-microkit-pd/microkit-patch/assembly-boot-evidence.log`. The executor inits the embedded Lean
+runtime, runs the verified turn (nonce 7→8, 30-unit transfer cell-0 100→70 / cell-1 5→35, nullifier 111
++ commitment 222), writes the 313-byte receipt to `commit_out` (RW), signals persist (ch2) + verifier
+(ch3); persist reads the receipt back (`commit_out[0]='{'`) + gets commit-ready; verifier-stark proves
++verifies a real STARK; net brings virtio-net UP; the rbg app runs. The cap partition is enforced LIVE:
+the executor holds `turn_in` READ-ONLY (a boot write to it faults — that was the last wall, fixed by
+running the boot self-demo from the compiled-in wire, writing only `commit_out`).
+
+THE WALL THAT FELL (the prior `-ffunction-sections` / "285-MiB text irreducible" diagnosis was the WRONG
+lever — the text size was never the blocker): the on-device CapDL initialiser panicked **`OutOfSlots`**
+because the **microkit TOOL hard-codes 4 KiB pages for every PD program-image segment**
+(`tool/microkit/src/capdl/builder.rs`: `let page_size = PageSize::Small;`), so the ~300-MiB executor image
+became ~83,000 frame caps and blew `ROOT_CNODE_SIZE_BITS`. FIX (the right, general one — a no-op for
+small PDs): a one-function tool patch maps image segments with 2 MiB `PageSize::Large` where alignment
+permits (the PD already links `-z max-page-size=0x200000`, so its segments are 2 MiB-aligned) → ~170 Large
+frames + small tails, **2,322 total objects, 91 MiB initial task** (was 84,241 objects / ~340 MiB). The
+patch + prebuilt tool + boot evidence are in `executor-microkit-pd/microkit-patch/` (built against the
+microkit **2.2.0 tag** — `seL4/rust-sel4 cf43f5d` — to match the SDK's bundled `initialiser.elf`; a
+`2.2.0-dev`-commit build pins `au-ts/rust-sel4 33cb1325`, an incompatible rkyv spec schema the SDK
+initialiser can't read). The patch is upstreamable (map image segments with the largest aligned page).
+INSTALL: `cp executor-microkit-pd/microkit-patch/microkit-2.2.0-patched $MICROKIT_SDK/bin/microkit`.
+
+Residual (small, not blocking the keystone): the embedded turn is the demo `wideDemoInput`, not yet a
+net-delivered live turn (the live `notified`-path read of `turn_in` is wired + correct, just unfed in
+QEMU since net only brings the NIC up here — a real ingress→turn_in→executor delivery is the next strand).
+Named: firmament keystone LANDED, 2026-06-15.
+
+## EVM BRIDGE — the STARK→SNARK wrap keystone: zkVM path BUILT, Plonky3-native BN254 terminal is the cost-optimization endgame (named 2026-06-15)
+
+The EVM-bridge architecture + a running PoC landed (`docs/EVM-BRIDGE.md`, `/tmp/dregg-evm-e2e/`,
+`/tmp/dregg-evm-wrap-poc/`, plus the green calldata codec in `bridge/src/ethereum.rs`). The keystone is
+the wrap: dregg proves with Plonky3/BabyBear/FRI (post-quantum but gas-prohibitive on EVM), so dregg's
+aggregate is recompressed into a BN254 Groth16 a ~270k-gas Solidity verifier checks. THREE rungs
+(`docs/EVM-BRIDGE.md` §2.4): (B) **re-host dregg's own verifier in a RISC0 zkVM, settle their audited
+Groth16** — VALIDATED this session: the full production `dregg-circuit --features verifier`
+(`verify_vm_descriptor2`, the IR-v2 **Poseidon2** batch STARK + all of Plonky3) cross-compiles to
+`riscv32im-risc0-zkvm-elf` via `embed_methods` (auto getrandom-custom + lower-atomic); the real
+`RiscZeroGroth16Verifier` + `DreggBridgeVault.sol` compile under foundry, control IDs version-matched.
+(A) bespoke gnark Poseidon2-FRI verifier circuit (cheaper to prove, new audit surface). (C) the endgame.
+
+CLOSURE LANES: (1) finish the (B) loop — host generates the IR-v2 proof (`prove_vm_descriptor2`), zkVM
+wraps to Groth16, `forge script DriveBridge` verifies on anvil + drives attest/lock/unlock/intent (the
+plumbing is built; the Poseidon2 guest+host compile on persvati; run the wrap on a 24-core box). (2) swap
+the guest's leaf-proof verify for the full `WholeChainProof` root (`verify_history`) — one-line, heavier.
+(3) **THE COST ENDGAME — a Plonky3-native BN254 terminal** (§4.2/§2.4-C): make dregg's own recursion
+(`emberian/plonky3-recursion`, the `WholeChainProof` fold) terminate in a BN254 Groth16 proof instead of
+another BabyBear STARK — no RISC-V overhead, no separate FRI-verifier circuit. **STEP 1 BUILT + GREEN
+(2026-06-15, `/Users/ember/dev/plonky3-bn254-wrap`, commit `e80f499`):** `OuterStarkConfig` — a Plonky3
+`StarkConfig` whose FRI commitments + Fiat-Shamir transcript live in the BN254 scalar field
+(Poseidon2-BN254 width-3 Merkle + `MultiField32Challenger`), from raw Plonky3 primitives pinned to dregg's
+exact rev (82cfad73). A BabyBear AIR proves AND verifies through it (4 tests green — re-verified
+`cargo test --release` 2026-06-15 — incl. the production HorizenLabs `RC3` constants
+`production_constants_load_from_zkhash` + the `outer_config_carries_dregg_four_publics` interface tooth).
+Keystone: `src/hasher.rs::MultiFieldPoseidon2Hasher`, the cross-field leaf
+hasher (absorb BabyBear→pack into BN254→squeeze one Bn254 digest) that upstream Plonky3 does NOT ship and
+SP1 carries by hand. KEY FINDING de-risked: `p3-bn254` (Poseidon2Bn254 + HorizenLabs params) AND
+`MultiField32Challenger` (the transition primitive, `GrindingChallenger Witness=BabyBear`) ALREADY EXIST
+in dregg's pinned upstream Plonky3 — the "no plonkish SNARK wrapper" gap is narrower than feared.
+REMAINING (the two sharp edges, in that repo's README): **Step 2** — emit `OuterStarkConfig` from the
+recursion fork's terminal layer (its Poseidon2 op-table + FRI private-data are BabyBear-w16-wired; the
+smaller lift is a thin re-prove of the last BabyBear STARK under the outer config, mirroring SP1's
+separate "shrink" layer). **Step 3** — the gnark Groth16 circuit (`/Users/ember/dev/dregg-gnark-wrap`,
+sibling lane started this session) verifying an `OuterStarkConfig` proof with NATIVE BN254 Poseidon2 (no
+nonnative hash emulation; the audit obligation is bit-for-bit constant/packing/FRI-param parity across the
+Rust/Go seam). SHIP (B), BUILD (C). KEY FINDING (B): do NOT wrap the experimental `circuit/src/stark.rs`
+(BLAKE3 Merkle, no zkVM accelerator — the
+guest ran >200 CPU-min unfinished); use the production Poseidon2 path (field-native, ~10x lighter in
+zkVM). Named: EVM bridge, 2026-06-15.
+
 ## DREGG-LEAN-FFI ARCHIVE IS A SHARED MUTABLE FILE — concurrent-feature-set build race (named 2026-06-15)
 
 `dregg-lean-ffi/build.rs:966` writes the GIT-TRACKED `dregg-lean-ffi/libdregg_lean.a` (the canonical
@@ -55,19 +132,25 @@ giving at best ~62-bit security. (Confirmed: all 6 j=0 sextic twists are catastr
 factors 83/81/59-bit; best base-field a≠0 gives a 124-bit-prime × 124-bit-cofactor split = 62-bit.)
 **The curve MUST be defined directly over F_{p^8}, not descend to a subfield.**
 
-**THE FIX IS IN HAND (a real prime-order curve over the corrected field):** SEA over F_{p^8} is ~5 s/curve
-in PARI/GP. Over `F_p[z]/(z^8−11)`, **`y^2 = x^3 + (z+2)·x + (z^3+8)` has PRIME order**
+**✅ LANDED (both bugs fixed; field + prime-order curve + 248-bit bigint scalars real, green).**
+`babybear8.rs` is now the simple field `F_p[z]/(z^8−11)` in the **power basis** (`self.0[i] = coeff of z^i`;
+`z^8=11` reduction; 8×8 Gauss inverse) — verified irreducible in PARI and `is_a_field_no_zero_divisors`
+(2000-elt sweep + the old `A=y−x^2=z−z^4` zero-divisor now INVERTIBLE) + `frobenius_order_eight` pass.
+The curve `y^2 = x^3 + (z+2)x + (z^3+8)` over F_{p^8} has **PRIME order**
 `N = 269903886087112502248563194479599378757044855200285447932848137338699712099` (248-bit, **cofactor
-h=1**, exactly 124-bit Pollard-rho security). In the code's basis: `z+2 → 2·[1] + 1·[y]`;
-`z^3+8 → 8·[1] + 1·[x·y]` (since `z^3=z^2·z=x·y`). **Closure steps:** (1) fix `babybear8.rs` to
-`z^8−11` (re-derive `mul`/`inverse`/`square`, or keep the tower with a correct top non-residue);
-(2) set `CURVE_A=z+2`, `CURVE_B=z^3+8` (a≠0 now — `double()` already carries the `+a` term, good);
-(3) `GENERATOR` = random point × cofactor (h=1 ⇒ any non-identity point generates); `ORDER=N`;
-(4) rewrite `scalar_*_mod` to full 248-bit bigint mod `N` (today single-limb u32). The AIR
-(`schnorr_air.rs`, now a real `s·G+e·pk==R` check) + `schnorr_sig.rs` are curve-agnostic — only the
-constants + bigint scalar arithmetic change. NOT reachable in this lane (a ~248-bit field/curve rebuild
-+ new scalar bigint is its own work); the groundwork (bug proofs, the obstruction theorem, the exact
-prime-order params) is DONE here.
+h=1**) — re-verified `isprime(N)` + `ellcard(E)==N` + cofactor==1 (PARI, parisize 800M). In the power
+basis: `CURVE_A=z+2=[2,1,0,…]`, `CURVE_B=z^3+8=[8,0,0,1,0,…]`, `ORDER` = N's 8 LE-u32 limbs
+`[3630237283,2285651324,1488992648,1932759141,1148232707,1275750001,2335120239,10011291]`.
+`GENERATOR`: x=1 (RHS `z^3+z+11` is a QR), y=`[417687251,1863107357,177749990,1036295843,398021929,
+450362472,1199411012,113045356]`; `generator_has_order_n` (N·G=O), `generator_cofactor_is_one`
+((N-1)·G=−G, no small mult =O), `scalar_mul_respects_order` ((N+5)·G=5·G) all green. `scalar_*_mod`
+rewritten to full bigint mod N (left-to-right double-and-add `mul_mod`, bit-fold `reduce_mod_n`; no
+single-limb path). AIR: `SCALAR_BITS 128→256`, `TRACE_HEIGHT 512→1024`, `challenge` field
+`[BabyBear;8]→Scalar`, bit scan 31→32 bits/limb; `recompute_challenge` + the test helper now delegate
+to the now-`pub` `schnorr_sig::compute_challenge_from_elements` (one canonical `e`). 42 schnorr tests +
+19 babybear8 green; `// SECURITY:`/placeholder markers removed. **The privacy-layer DL soundness
+foundation is real.** (Curve params + field/order proofs landed; the in-circuit Schnorr AIR remains an
+executable model — STARK-backend wiring of this AIR is separate, unchanged-scope work.)
 
 ## ⚑ SEMIHOST EXECUTOR-PD LANDED (2026-06-14 — the cockpit on the sel4 PD world)
 
@@ -1001,6 +1084,30 @@ redeploy point-of-no-return.)*
   `site/src/_includes/studio/assurance-catalog.generated.json` is STALE until regenerated. Closure = after the
   assurance lane commits, re-run the catalog generator (the studio build step) so the site reflects the new
   AssuranceCase. → site, AFTER the assurance lane lands. (One-step, mechanical; tracked so it isn't lost.)
+- **signed-turn producer admit (LANDED, not a follow-up)**: the default-on Lean producer
+  (`DREGG_LEAN_PRODUCER`) now ADMITS a genuine `Authorization::Signature` turn (the N=4 testnet's remote
+  signed-submission path). Root cause was two width mismatches under the `Crypto.Reference` portal
+  (`verify stmt proof = stmt == proof`): (1) the `Signature` arm mapped to a 256-bit R-half statement vs a
+  u64 proof that could never echo; (2) the wire `prev` crossed as a full-256 digest while the host
+  `stored_head` crossed as low-64, so the ChainHead leg rejected EVERY non-genesis turn. FIX:
+  `turn::lean_shadow::sig_echo_wire` recomputes the executor's real `verify_strict` (target pubkey ·
+  federation/nonce/position-bound message · full 64-byte sig) and folds the verdict into a self-echoing
+  low-64 `(statement, proof)` pair (genuine ⇒ echo ⇒ admit; forged/tampered/cross-fed ⇒ non-echo ⇒ veto);
+  `prev_hash` now uses the same low-64 projection as `stored_head`. Lean teeth `signature_teeth_same_wire`
+  (+ `#guard`s, `#assert_axioms` kernel-clean). Green: `DREGG_LEAN_PRODUCER=1` node
+  `remote_signed_envelope_e2e_*` + `three_node_full_mode_runs_the_ordering_rule` PASS; `dregg-turn` 555
+  pass; `lake build` green. (Recorded as the durable note; the commit is the record.)
+- **bearer/token producer-admit parity for REAL data (the sibling latent gap)**: the bearer/token WHO-leg
+  fix (`c35153ce5`) folds the full sig/discharge chain so a FORGED credential ⇒ veto (sound), and its teeth
+  use synthetic `.bearer 7 7`/`.token 9 9` (echoing). But on a REAL bearer/token turn the wire still carries
+  `deleg_msg`/`issuer_key` as a full-256 digest vs a low-64 `deleg_sig`/`sig` — so a GENUINE bearer/token
+  turn would NOT echo under `Crypto.Reference` and the authoritative producer would VETO it (the same
+  width-mismatch class the Signature fix just closed). LATENT because no test drives a real bearer/token turn
+  through `DREGG_LEAN_PRODUCER=1` (the divergence corpus is all `Unchecked`). Closure = give bearer/token the
+  `sig_echo_wire` treatment (recompute the real ed25519/biscuit verdict in the marshaller, emit a low-64
+  self-echoing pair) + an e2e producer test that submits a genuine bearer/token turn and asserts ADMIT. →
+  turn/lean_shadow, when a bearer/token turn rides the verified producer. (Not in the Signature-arm brief;
+  named so it isn't lost.)
 
 ## Decisions pending (ember)
 

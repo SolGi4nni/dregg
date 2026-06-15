@@ -134,18 +134,23 @@ notification (channel id 1). **It holds the seat but stores nothing** — its ow
 doc-comment says so: "the real persist-PD is the durable store: commit log,
 checkpoints, snapshot⊕overlay + root tooth … until [the block-cap backend] lands
 this seat holds the persist place." So the *missing organ* is the persist PD's
-durable verified commit log + chain gate. That organ is now written, transport-free
-(`no_std` + `alloc`), so the same code runs in the host witness **and** (via
-`#[path]` include) inside the persist PD once the block-cap backend lands under it.
+durable verified commit log + chain gate. That organ is now written three ways that
+share one gate: (a) the chain-gate discipline `no_std`+`alloc` over a `BTreeMap`
+stand-in (`commit_store.rs`, rides INSIDE the persist PD via `#[path]`); (b) a
+**REAL durable store** in `redb` ACID tables over a block-device `StorageBackend`
+(`redb_store.rs`) — this makes "durable" *real* (a commit survives process death,
+fsync at commit), not a map; and (c) the **app-hosting economy** on top
+(`hosting.rs`) — pay-to-host as a conserving value turn, fee-lapse → eviction.
 
 ### 2.2 The files (the increment)
 
 ```
 sel4/persist-hosttest/
   Cargo.toml              # standalone crate (empty [workspace]) — own target dir, swarm-safe;
-                          #   no deps (pure [u8;32]/u64/BTreeMap), portable into the no_std PD
-  src/commit_store.rs     # THE PERSIST-PD ORGAN — the durable verified commit-log + chain gate,
-                          #   no_std+alloc, REUSING the pg-dregg discipline verbatim:
+                          #   deps: redb (the SAME ACID store persist/ uses) + tempfile (dev, the
+                          #   real on-disk region the durability test reopens). Does NOT touch ./target.
+  src/commit_store.rs     # THE GATE DISCIPLINE — the chain gate, no_std+alloc over a BTreeMap stand-in,
+                          #   REUSING the pg-dregg discipline verbatim (rides INSIDE the persist PD):
                           #     - verify_chain_step  == pg-dregg/src/mirror.rs:477 (the anti-subst tooth)
                           #     - ChainRefusal        == pg-dregg/src/mirror.rs:356 (fail-closed)
                           #     - CommitRecord        == persist/src/commit_log.rs:82 (+ explicit prev_root,
@@ -154,12 +159,54 @@ sel4/persist-hosttest/
                           #     - commit_verified_turn== the commit_finalized_turn_with_burns ONE-TXN
                           #                              discipline (torn-state guard · idempotent replay ·
                           #                              append-then-index-then-cursor-LAST)
-  src/main.rs             # the host witness: drives the executor→persist→read spine end-to-end +
+  src/redb_store.rs       # THE REAL DURABLE STORE — the SAME CommitRecord + the SAME chain gate, but
+                          #   committed into real redb ACID tables (COMMIT_LOG, the two by-hash indices,
+                          #   the metadata cursor + head) in ONE write txn over a StorageBackend. The
+                          #   RegionBackend impls redb's block-device trait (len/read/set_len/sync_data/
+                          #   write); on the host it is file-backed (REAL cross-process durability), and
+                          #   the on-device persist PD swaps in a BlockCapBackend over the seL4 block cap
+                          #   — the SAME five ops, the durable-store logic UNCHANGED. (8 #[test]s.)
+  src/hosting.rs          # THE APP-HOSTING ECONOMY — pay coin to be hosted = a VERIFIED VALUE TURN:
+                          #   an app (a cell with durable hosted state) pays a hosting fee to the host
+                          #   cell per period (a conserving Transfer, app→host, committed through the
+                          #   durable spine). A fee that lapses EVICTS the app (a verified, durable turn
+                          #   dropping the hosting), fail-closed. Σ value invariant. (6 #[test]s.)
+  src/main.rs             # the original pure chain-gate witness: the executor→persist→read spine +
                           #   all four anti-substitution teeth, as a binary AND 7 #[test]s
+  src/durable_main.rs     # the durable + hosting witness binary: PART A drives the spine over REAL redb
+                          #   with a persist-PD restart (drop + reopen the file → no turn lost); PART B
+                          #   drives the hosting economy (pay-to-host conserving turns + an eviction).
+  src/lib.rs              # exposes commit_store / redb_store / hosting so the binaries + tests share them
 ```
 
 The crate is **standalone** (its own `target/`, not a member of `sel4/dregg-pd`'s
-workspace) — swarm-safe, and it does **not** touch the root `./target`.
+workspace) — swarm-safe, and it does **not** touch the root `./target`. **21 tests
+pass** (`cargo test --release`: 14 lib + 7 binary; `test result: ok` on every
+binary).
+
+### 2.2a The durable store is REAL redb — and that is WHY it ports to seL4 unchanged
+
+The advance over a `BTreeMap`: `redb_store.rs` is the persist PD's durable store in
+real `redb` — the **same ACID store `persist/src/commit_log.rs` uses on a node**.
+The chain gate, the `CommitRecord`, the one-transaction torn-state/idempotent
+discipline are byte-for-byte `commit_store`'s (a refusal is the same `ChainRefusal`,
+the head does not move on a refusal); the *only* new thing is that the commit lands
+in a real redb write transaction whose `commit()` is the fsync boundary. So "durable"
+is now real: the witness `commits_survive_drop_and_reopen_over_the_same_bytes`
+commits two turns, **drops the store + backend**, reopens over the same file bytes,
+and the head + cursor + log rows + by-hash indices all recover and the chain
+self-checks — the durability the brief asked for, demonstrated.
+
+The seam that makes this port to seL4 with the gate **unchanged**: redb stores
+through a [`redb::StorageBackend`] — a trait of exactly five ops (`len` ·
+`read(offset,len)` · `set_len` · `sync_data(eventual)` · `write(offset,data)`),
+which is *precisely a raw block device's interface*. `RegionBackend` is that impl
+over a fixed byte region; on the host it is file-backed (real durability), and **the
+on-device persist PD's backend (`BlockCapBackend`, the named rung §3.3) is one
+`StorageBackend` impl whose five ops go through the seL4 block cap it solely holds —
+and the entire durable-store logic above it is unchanged.** That is the honest shape
+of the remaining work: not a new store, a block-cap `StorageBackend` under the store
+that already runs.
 
 ### 2.3 What it proves (run-verified, green)
 
@@ -243,10 +290,21 @@ host-test green, the on-device selftest-ELF run is the macOS checkpoint).
 
 ### 3.1 PROTOTYPE (runnable, green here)
 
-- **The persist-PD durable commit log + chain gate** — `sel4/persist-hosttest/`,
-  `cargo run`/`cargo test` green (§2.3). The executor→persist→read spine and all four
-  anti-substitution teeth run on this box. It is `no_std`+`alloc`, ready to ride
-  inside the persist PD by a `#[path]` include.
+- **The persist-PD chain-gate discipline** — `sel4/persist-hosttest/src/commit_store.rs`,
+  green (§2.3). The executor→persist→read spine and all four anti-substitution teeth
+  run on this box. It is `no_std`+`alloc`, ready to ride inside the persist PD by a
+  `#[path]` include.
+- **The REAL durable store in `redb`** — `redb_store.rs`, green. The SAME chain gate
+  + `CommitRecord` + one-transaction discipline, but committed into real `redb` ACID
+  tables over a block-device `StorageBackend`. Durability is *real*: a commit
+  survives the store being **dropped + reopened** over the same file bytes (the
+  `commits_survive_drop_and_reopen_over_the_same_bytes` tooth), the head/cursor/log/
+  indices all recover, and the chain self-checks. This is the `BTreeMap`→durable
+  promotion the brief asked for.
+- **The app-hosting economy** — `hosting.rs`, green. Pay coin to be hosted is a
+  conserving value turn (a `Transfer`, app→host, committed through the durable
+  spine); a lapsed fee EVICTS (a verified, durable turn dropping the hosting),
+  fail-closed; Σ value is invariant across every charge. (See §6.)
 
 ### 3.2 BOOTS (real on-device, independently)
 
@@ -262,11 +320,26 @@ host-test green, the on-device selftest-ELF run is the macOS checkpoint).
 
 ### 3.3 DESIGN (mapped, not yet built)
 
-- **The redb-over-block-cap backend under the persist PD** (`docs/SEL4-EMBEDDING.md`
-  §3): swap the host witness's `BTreeMap` for `redb` over the raw block cap the
-  persist PD solely holds, with the snapshot⊕overlay + root tooth
-  (`persist/src/snapshot.rs`). The *gate logic* is done (§2); this is the *storage
-  transport* — the `commit()` fsync boundary becomes the durable one.
+- **The `BlockCapBackend` — one `redb::StorageBackend` over the seL4 block cap** (the
+  precise remaining rung, refined down from "the redb backend"). The redb durable
+  store itself is now **host-green** (§2.2a, §3.1) — what is left is *one trait impl*:
+  `RegionBackend`'s five ops (`len`/`read`/`set_len`/`sync_data`/`write`) become block
+  reads/writes/flush over the raw block cap the persist PD solely holds (plus the
+  snapshot⊕overlay + root tooth, `persist/src/snapshot.rs`). The durable-store logic
+  above it — the chain gate, the one-transaction commit — is byte-for-byte unchanged.
+  This is a *bounded* port (a device-driver trait impl), not the open-ended fog: the
+  store that rides on it already runs.
+- **The executor→persist commit-record transport** over `commit_out`. Today the seat
+  reads a sentinel byte; the real path writes the serialized `CommitRecord` into
+  `commit_out` and signals channel id 1, and the persist PD runs
+  `commit_verified_turn` before the turn returns (the `n=1` synchronous-commit
+  property, `docs/FIRMAMENT.md` §3). The record *shape* and the *gate* are fixed; the
+  serialization + the shared-region framing are the work.
+- **The submit-queue / ingress enqueue** (`docs/PG-DREGG.md` §11.4 on seL4): a
+  confined component enqueues a signed turn over the net/ingress→executor `turn_in`
+  edge; the executor PD is the gate (it may refuse), exactly as the
+  `node/src/submit_queue_drainer.rs` drainer is on a node. The enqueue-not-execute
+  shape is the seL4-native outbox.
 - **The executor→persist commit-record transport** over `commit_out`. Today the seat
   reads a sentinel byte; the real path writes the serialized `CommitRecord` into
   `commit_out` and signals channel id 1, and the persist PD runs
@@ -294,8 +367,11 @@ host-test green, the on-device selftest-ELF run is the macOS checkpoint).
   the *runtime* port is the executor PD's, and it BOOTS.
 
 The crisp verdict: **the spine's discipline is a green prototype + the writer organ
-boots; the durable store organ is host-witnessed and `no_std`-ready; the wall is the
-in-qemu PD-pair commit (the macOS user-mode-qemu gap), not the semantics.**
+boots; the durable store is now REAL `redb` (host-green — a commit survives
+drop+reopen), with one block-cap `StorageBackend` impl the only on-device rung; the
+app-hosting economy (pay-to-host + eviction as conserving, fail-closed verified
+turns) is host-green on top; the wall is the in-qemu PD-pair commit (the macOS
+user-mode-qemu gap), not the semantics.**
 
 ---
 
@@ -311,7 +387,8 @@ marked, so the deos spine is located honestly among the rest
 | R0 | the verified turn runs inside a real seL4 PD | **BOOTS** (`status:2 ok:1`) | the writer organ the spine depends on |
 | R1 | the crypto floor real for hashes + STARK verify + the live proof-carrying-turn admission | **host-test green, ELF links clean**; on-device selftest-ELF run = the macOS checkpoint (3 EC primitives stay fail-closed) | the pattern THIS doc follows |
 | **R2** | **the persist-PD durable commit log + chain gate — the deos spine (reads-free/writes-verified/durable)** | **host-test GREEN (this work)**; in-qemu PD-pair commit = the wall | **← THIS DOC + `sel4/persist-hosttest/`** |
-| R3 | the redb-over-block-cap storage backend under the persist PD (snapshot⊕overlay + root tooth) | DESIGN (`docs/SEL4-EMBEDDING.md` §3) | the durable transport under R2's gate |
+| **R3** | **the durable store in real `redb` over a block-device `StorageBackend` (durable: commit survives drop+reopen)** | **host-GREEN (this work, `redb_store.rs`)**; the on-device `BlockCapBackend` (one trait impl) = the named rung | **← the durable transport, now REAL redb; only the block-cap `StorageBackend` impl remains** |
+| **R8** | **the app-hosting economy — pay coin to be hosted = a verified value turn; fee-lapse → eviction** | **host-GREEN (this work, `hosting.rs` + `Dregg2/Apps/HostingLease.lean`)** | **← the deos charge: conserving, fail-closed, the lease as a time+budget caveat** |
 | R4 | the principled elaborator import-trim (so the elaborator is never pulled into the executor's module closure, vs no-op'd at init) | NAMED WALL (`docs/EMBEDDABLE-LEAN-RUNTIME.md` §4 item 2) | a productionization gate on R0 |
 | R5 | the decomposed 5-PD Microkit assembly (cap-partition trust boundary), vs the booting root-task-with-std | DESIGN/seat (`sel4/dregg.system` is the shape; the executor boots as a root task) | the assembly the persist organ folds into |
 | R6 | the virtio-net / smoltcp tail — the net PD as the sole NIC cap, the distributed/federation edge confined | partial (a real virtio NIC is brought up; the full stack is the tail) | the ingress/submit transport for §3.3 |
@@ -332,15 +409,111 @@ PD-pair commit as the one named wall.
 | | Was | Now |
 |---|---|---|
 | "pg-dregg inside seL4" | read as "port Postgres into seL4" (heavy; the `PG-DREGG-ON-SEL4.md` VMM ladder) | **the persist-PD IS the commit log of the seL4 deos foundation** — the executor PD writes verified turns, the persist PD durably stores them, reads are free; the *discipline* crosses, not the C program |
-| the persist PD | a SEAT that holds the place but stores nothing | its **durable verified commit log + chain gate** is written (`no_std`, the missing organ) and **host-witnessed GREEN**, reusing `mirror::verify_chain_step` verbatim |
-| the spine's two organs | — | the **executor PD BOOTS** (writer); the **persist organ is host-green** (store); the wall is the in-qemu PD-pair commit (the macOS user-mode-qemu gap), not the semantics |
+| the persist PD | a SEAT that holds the place but stores nothing | its **durable verified commit log + chain gate** is written and **host-GREEN in real `redb`** (`redb_store.rs`) — a commit **survives drop+reopen** over the same bytes; the only on-device rung is one block-cap `StorageBackend` impl |
+| the spine's organs | — | the **executor PD BOOTS** (writer); the **persist store is host-green in real redb** (durable); the **app-hosting economy is host-green on top** (pay-to-host + eviction, conserving, fail-closed); the wall is the in-qemu PD-pair commit (the macOS user-mode-qemu gap), not the semantics |
 
 The deos foundation is the discipline — reads-free, writes-verified, durable —
 realized by the executor-PD / persist-PD pair. The persist PD runs byte-for-byte the
 pg-dregg chain gate, so the seL4 store and the pg `dregg.turns` are the same store
-with two faces. The writer boots; the store organ is green; the one wall is named,
-with its lever, and it is the same macOS user-mode-qemu checkpoint the crypto floor
-already lives behind.
+with two faces; and that store is now real `redb` whose `commit()` is the fsync
+boundary, so "durable" is demonstrated, not promised. On top of it the deos OS
+**charges coin to host apps** — a verified value turn — and evicts a lapsed app
+fail-closed. The writer boots; the store is green and durable; the economy is green;
+the one wall is named, with its lever, and it is the same macOS user-mode-qemu
+checkpoint the crypto floor already lives behind.
 
-*( ◕‿◕ ) the spine holds: a verified turn commits durably, a read returns it, and
-every non-chaining turn is refused — in a PD pair, no Postgres required.*
+---
+
+## 6. The app-hosting economy — pay coin to be hosted is a verified value turn
+
+ember: *"deos/sel4 needs pg-dregg to host apps — and maybe charge coin for
+hosting."* The deos OS hosts apps; hosting them costs coin. That charge is **not a
+side-ledger** — it is a verified value turn through the very spine §1–§3 built, so a
+hosting payment is durable, ordered, conserving, and self-checking like every other
+turn. Built + green: `sel4/persist-hosttest/src/hosting.rs` (the runtime, over the
+real durable store) + `metatheory/Dregg2/Apps/HostingLease.lean` (the proof).
+
+### 6.1 The model
+
+An **app is a cell with durable hosted state in the persist-PD** (its rows live in
+the same commit log as everything else — the deos spine). Per **hosting period** the
+app **pays a fee in coin to the host cell**: a real value move — the `turn`-crate
+`Effect::Transfer { from, to, amount }` (conservative linearity,
+`turn/src/action.rs:819`) — coin LEAVES the app cell and ARRIVES at the host cell, Σ
+value unchanged. It commits as a verified turn through the durable store (the chain
+gate admits it; the log records it). When the fee **lapses** (the app's prepaid
+balance cannot cover the period's fee) the host **EVICTS** the app: a verified turn
+drops the app's durable hosting, fail-closed — *non-payment cannot buy free
+hosting*. A paid app's state persists. Each charge and each eviction is a durable row.
+
+### 6.2 The hosting lease — a cap with a TIME + BUDGET caveat over the durable slot
+
+The lease is exactly that: a capability to occupy a durable hosting slot, bounded by
+a **budget** (the prepaid balance) and a **time window** (the paid-through period).
+`Dregg2/Apps/HostingLease.lean` proves it as a four-caveat `RecordProgram` charge
+gate (each a `StateConstraint`, each a both-polarity theorem, `#assert_all_clean`):
+
+| caveat | atom | what it enforces | tooth |
+|---|---|---|---|
+| **provenance** | `senderInField host` | only the recorded host may collect the fee | `impostor_charge_rejected` |
+| **the BUDGET** | `balanceGe leaseFee` | the app's balance must cover the fee — *an unfunded app's charge is UNSAT, the eviction trigger* | `lapsed_app_charge_rejected` |
+| **the FEE FLOOR** | `balanceDeltaGe (−leaseFee)` | the host may not debit more than the agreed fee | `over_charge_rejected` |
+| **the TIME window** | `strictMono period` | the billing period strictly advances — no double-bill | `replayed_period_rejected` |
+
+and the gate is non-vacuous — the honest charge (host-signed, app funded, exact-fee
+debit, next period) COMMITS (`honest_charge_admits`). The lapsed-fee tooth is the
+load-bearing one: a charge against an app that cannot pay is *unsatisfiable*, so the
+runtime takes the eviction branch — the lease's budget caveat **forces** eviction
+when the budget is gone.
+
+### 6.3 What the Rust realization proves (green, over REAL durability)
+
+`hosting.rs`'s six `#[test]`s run over the real `redb` durable store:
+
+- **`a_hosting_charge_is_a_conserving_transfer`** — a fee charge debits the app,
+  credits the host, and Σ value is unchanged (a `Transfer`, not a mint).
+- **`a_lapsed_app_is_evicted_a_paid_app_persists`** — the eviction tooth: a funded
+  app pays every period and stays hosted; an app whose balance runs dry is EVICTED
+  (fail-closed) the first period it cannot pay.
+- **`eviction_is_a_durable_ordered_verified_turn`** — the eviction is a committed row
+  in the durable log (the `Evict` tag, the app as creator) and the chain self-checks
+  across it.
+- **`value_conserved_across_a_full_hosting_run`** — Σ value equals the genesis supply
+  after *every* charge across a multi-app, multi-period run (hosting charges coin,
+  never forges it).
+- **`top_up_cannot_overdraft_the_funder`** — funding a lease cannot forge value (no
+  overdraft).
+- **`hosting_survives_a_persist_pd_restart`** — the whole hosting history survives a
+  persist-PD restart (drop + reopen the durable store over the same bytes).
+
+So the deos OS's "charge coin to host apps" is a verified value turn on the durable
+spine: conserving, fail-closed on non-payment, durable, and self-checking — the
+economy is the spine, not a bolt-on.
+
+---
+
+## 7. The honest frontier — the doc's two answers, and which path this took
+
+The brief's two paths, stated plainly so the frontier is not blurred:
+
+- **Full Postgres-in-libvmm** (`docs/PG-DREGG-ON-SEL4.md`): run the literal 1.5-M-line
+  pg18 C program as a confined VMM-guest PD (a Linux guest under libvmm). This is the
+  *other* surface — a real SQL query engine confined in seL4 — and it stays a DESIGN
+  ladder (paths 3a/3b/3c there). It is heavy, and it is not what "host apps + charge
+  coin" needs.
+- **The persist-PD-as-postgres path** (THIS doc): the persist PD's `redb` commit log
+  IS the `dregg.turns` of the deos OS; the executor PD is its writer; reads are free;
+  hosting is a verified value turn on it. This is the path taken — and it is now
+  **host-green with real durability + a working economy**, with one bounded on-device
+  rung (the block-cap `StorageBackend`) and the in-qemu PD-pair commit as the named
+  wall. No Postgres is required to host apps and charge for hosting; the *discipline*
+  is what the deos OS runs.
+
+Both surfaces share one spine (reads-free / writes-verified / durable); this doc
+realized the spine natively in the PD pair and built the hosting economy on it,
+because that is what "deos/sel4 needs pg-dregg to host apps" actually asks for.
+
+*( ◕‿◕ ) the spine holds: a verified turn commits durably (in real redb), a read
+returns it, every non-chaining turn is refused — and hosting an app costs coin (a
+conserving value turn), a lapsed fee evicts, fail-closed. In a PD pair, no Postgres
+required.*
