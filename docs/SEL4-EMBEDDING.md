@@ -3,8 +3,14 @@
 *Design + scoping doc. Status: the Robigalia v0 demo now BOOTS — M0/M1/M2 run
 Rust protection domains on the seL4 microkernel under `qemu-system-aarch64`, and
 M5 boots M0 under `qemu-system-riscv64`, on a native-macOS toolchain (Microkit
-SDK 2.2.0 + rust-sel4). See `sel4/README.md` + `sel4/setup.sh`. Cites the actual
-tree as of 2026-06-13.*
+SDK 2.2.0 + rust-sel4). **The `executor` PD (the §2 subject) now BOOTS too:** the
+verified turn runs inside a real protection domain (`status:2 ok:1`, live-verified),
+so the libuv-free/IO-free Lean runtime port §2 scopes is **done** — §2/§5/§7/§8's
+"one true blocker / weeks-to-a-quarter" framing is superseded, and the remaining
+executor-PD work is productionization (crypto-floor curves · elaborator trim ·
+Microkit fold), not a runtime port. The measured proof + the honest remainder live
+in [`docs/EMBEDDABLE-LEAN-RUNTIME.md`](EMBEDDABLE-LEAN-RUNTIME.md). See
+`sel4/README.md` + `sel4/setup.sh`. Cites the tree as of 2026-06-15.*
 
 ## 0. Where we are today
 
@@ -57,10 +63,14 @@ Two framings of the deployment unit, both worth keeping:
    completely separate OS process with no shared memory, no shared mutable
    state, and no callbacks into a prover" — `verifier/src/lib.rs`).
 
-## 2. THE blocker: the Lean runtime in an seL4 userland
+## 2. The Lean runtime in an seL4 userland — the port, now DONE
 
-This is the load-bearing honesty of the whole doc. The verified executor is
-not portable Rust — it is **compiled Lean linked into the node**:
+This was scoped as the load-bearing blocker of the whole doc; it is now
+**resolved** — the `executor` PD boots and runs a verified turn (see the banner +
+[`docs/EMBEDDABLE-LEAN-RUNTIME.md`](EMBEDDABLE-LEAN-RUNTIME.md) for the measured
+proof). The analysis below is the excision map that got it done — read it as the
+*method*, not an open risk. The verified executor is not portable Rust — it is
+**compiled Lean linked into the node**:
 
 - `node/Cargo.toml` depends on `dregg-lean-ffi` unconditionally on native
   ("Lean is UNCONDITIONAL on native … the shadow/gate executor, the F-4
@@ -91,9 +101,12 @@ not need it. The Lean we call is **pure**: `dregg_exec_full_forest_auth_str`
 takes bytes, returns bytes, performs no IO. The work is to produce a
 **libuv-free, IO-free build of the Lean runtime** (the `leanrt` core + GMP,
 no `libleanshared` IO surface) so that `libdregg_lean.a` links against a
-freestanding-enough runtime. That is a genuine port of Lean's runtime
-bottom-half, not a config flag — call it weeks-to-a-quarter of specialist
-work, and it is the single highest-risk line item in this whole roadmap.
+freestanding-enough runtime. That was a genuine port of Lean's runtime
+bottom-half, not a config flag — once scoped as weeks-to-a-quarter of specialist
+work and the highest-risk line item in this roadmap. **It is done:** the
+build-time excision below was executed and the executor PD boots a verified turn
+([`docs/EMBEDDABLE-LEAN-RUNTIME.md`](EMBEDDABLE-LEAN-RUNTIME.md) §4). What remains
+for that PD is productionization, not runtime work — see §7/§8.
 
 **The excision map (probed directly, `leanrt` v4.30.0).** The wall is two
 compounding facts, now made precise:
@@ -221,8 +234,9 @@ assume tokio + POSIX sockets. On seL4:
 
 ### Quarter (a node that actually runs turns)
 - **Port the Lean runtime bottom-half** (§2): an IO-free, libuv-free `leanrt`
-  + GMP build so `libdregg_lean.a` links on the seL4/musl target. *This is the
-  critical path and the schedule risk.*
+  + GMP build so `libdregg_lean.a` links on the seL4/musl target. *Done — the
+  executor PD boots a verified turn ([`docs/EMBEDDABLE-LEAN-RUNTIME.md`](EMBEDDABLE-LEAN-RUNTIME.md)).
+  The remaining executor-PD work is productionization (§7), no longer a runtime port.*
 - **`std`-on-seL4 for the node** via the seL4 Rust SDK's musl substrate;
   replace tokio-full with the SDK's async or a single-threaded executor.
 - **`redb` over a raw block cap** in the `persist` PD (§3).
@@ -256,10 +270,17 @@ for the cell caps.
 
 ## 7. Honest blocker summary
 
-1. **The Lean runtime port (§2)** is the one true blocker — libuv-free,
-   IO-free `leanrt` + GMP on musl/seL4 — **for the `executor` PD**. It does
-   **not** block the `verifier` PD: the verify path never calls Lean, and the
-   `no-lean-link` build proves the verifier links Lean-free (§5, `sel4/`).
+1. **The Lean runtime port (§2) is DONE** — the libuv-free, IO-free `leanrt` +
+   GMP ELF runtime is built and the `executor` PD boots a verified turn inside a
+   real protection domain ([`docs/EMBEDDABLE-LEAN-RUNTIME.md`](EMBEDDABLE-LEAN-RUNTIME.md),
+   live-verified). What remains for the `executor` PD is **productionization, not a
+   port**: wire the 3 still-fail-closed elliptic-curve primitives (ed25519 ·
+   Pedersen · AEAD) into the crypto-floor (Poseidon2/BLAKE3/FRI/STARK-verify are
+   already real), make the init-time elaborator cut principled (sound today, but
+   stubbed), and fold the booting root-task into the decomposed 5-PD Microkit
+   assembly with the cap-partition trust boundary — weeks. (None of this ever
+   blocked the `verifier` PD: the verify path never calls Lean; the `no-lean-link`
+   build links it Lean-free.)
 2. **No verified FS today** — near-term is a raw-block redb backend, not a
    verified filesystem.
 3. **rbg is heritage, not a host** — there is no existing seL4 integration to
@@ -293,6 +314,6 @@ image tool and the prebuilt seL4 kernel ELFs run natively, and rust-sel4's
 | **M4** — dregg TUI light client | **✅** `dregg-tui/` builds + runs on the host (the face; reaches the node over M3) |
 | **M5** — riscv64 | **✅ boots** — M0 on `qemu_virt_riscv64` (OpenSBI → seL4 → userspace → dregg PD) |
 | Verifier-isolation verdict | **✅ proven** — `no-lean-link` build, zero Lean/libuv/GMP symbols |
-| `sel4/dregg.system` (5-PD node assembly) | **✅ scaffolded** (the steady-state node shape; `executor` blocked on §2) |
-| `executor` PD ELF | **remaining** — THE blocker (§2 Lean runtime port); v0 leads with verifier + rbg userspace |
+| `sel4/dregg.system` (5-PD node assembly) | **✅ scaffolded** (the steady-state node shape; folding the booting `executor` root-task into it is the productionization step) |
+| **`executor` PD** | **✅ boots a verified turn** (root-task-with-std; `status:2 ok:1` live-verified inside the PD, [`docs/EMBEDDABLE-LEAN-RUNTIME.md`](EMBEDDABLE-LEAN-RUNTIME.md)). Remaining = productionization: crypto-floor curves · principled elaborator trim · fold into the 5-PD Microkit assembly (§7). |
 | `persist`/`ingress`/`gossip` PD ELFs | **remaining** — redb-over-block-cap (§3), the M3 net system (§4), quarter+ |

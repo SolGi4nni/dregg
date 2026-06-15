@@ -44,7 +44,7 @@ Serial logs from the real boots are captured under `/tmp/sel4-boot-*.log`.
 | `setup.sh`            | Idempotent native-macOS toolchain: brew deps + Microkit SDK (native macos-aarch64 build) + pinned nightly + vendored rust-sel4. |
 | `Makefile`            | `make run` / `make run-m0/m1/m2` / `make run-riscv` — build the PD ELFs, link the Microkit image, boot in QEMU. |
 | `dregg-pd/`           | The PD workspace (standalone — NOT a repo-root member; cross-compiles to `aarch64-sel4-microkit`). Members: `m0-hello` (M0), `verifier` (M1, structural), `rbg-dir` (M2), `verifier-stark` (M-STARK, **real STARK**), `net` (M3 driver). Target specs in `dregg-pd/targets/`. |
-| `dregg.system`        | The full five-PD node assembly (verifier · executor · persist · ingress · gossip). The single-PD demos above use minimal generated `.system` files; this is the steady-state node shape. Only `verifier` is buildable today; `executor` is blocked on the Lean runtime port (§2). |
+| `dregg.system`        | The full five-PD node assembly (verifier · executor · persist · ingress · gossip). The single-PD demos above use minimal generated `.system` files; this is the steady-state node shape. The `executor` now boots a verified turn as a root-task (`docs/EMBEDDABLE-LEAN-RUNTIME.md`); folding that booting executor into this assembly (replacing the placeholder seat) is the productionization step. |
 | `verifier-pd/`        | The original committed verifier-PD scaffold; the booting form now lives in `dregg-pd/verifier/`. |
 | `RBG-TO-SEL4.md`      | The rbg-heritage → real-seL4-primitive mapping (DirectoryFactory → `seL4_Untyped_Retype`, etc.) — realized in M2. |
 
@@ -93,13 +93,13 @@ Serial logs from the real boots are captured under `/tmp/sel4-boot-*.log`.
   (2) a smoltcp DHCP/echo **client** PD over `sel4-shared-ring-buffer-smoltcp`
   + `sel4-async-network`; (3) the 2-PD `.system` assembly (`sel4/net.system`,
   scaffolded) + the channel wiring. Serial: `/tmp/sel4-boot-net-driver.log`.
-- **The `executor` PD** — blocked on THE blocker: an IO-free / libuv-free
-  `leanrt` + GMP build so `libdregg_lean.a` links on the seL4 target
-  (`docs/SEL4-EMBEDDING.md` §2, `docs/FIRMAMENT.md` §6 — the exact excision plan
-  is banked: ELF-recompile the Lean closure under `leanc`, stub the 10
-  libuv-coupled `leanrt` objects + their two init functions, GMP-for-ELF or a
-  fixnum shim, host on `sel4-musl`). v0 leads with the verifier-stark heart
-  organ + rbg userspace, not the full Lean executor.
+- **The `executor` PD** — **boots a verified turn** as a root-task-with-std
+  (`status:2 ok:1` live-verified inside the PD; the IO-free/libuv-free `leanrt` +
+  GMP ELF runtime is built — `docs/EMBEDDABLE-LEAN-RUNTIME.md`, `docs/SEL4-EMBEDDING.md`
+  §2, `docs/FIRMAMENT.md` §6). What remains is *productionization, not the runtime
+  port*: wire the 3 still-fail-closed curve primitives (ed25519 · Pedersen · AEAD)
+  into the crypto-floor, make the init-time elaborator cut principled, and fold the
+  booting root-task into the 5-PD Microkit assembly (replacing the placeholder seat).
 
 ## The verifier-isolation verdict (verified on the host)
 

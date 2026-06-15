@@ -116,10 +116,12 @@ output side.
   real-page render (`render_url_to_frame`) is gated behind `libservo`, behind the multi-GB
   mozjs/SpiderMonkey build. MATURE: wire glow over swgl + clear the mozjs build. (~M/L)
   (the cap-gated `WebViewDelegate` IS written; this is the last mile to real page pixels)
-- **The seL4 executor-PD seat does no verified compute** — `sel4/dregg-pd/executor-stub/src/main.rs`:
-  holds caps, writes `0xE0`, returns — no `execFullForestG`. MATURE: cross-compile the Lean
-  runtime to `aarch64-sel4-microkit` + wire `dregg-lean-ffi`. (~L) (the embeddable-runtime
-  spike already refuted the "blocker" — see EMBEDDABLE-LEAN-RUNTIME.md)
+- **The seL4 executor-PD *seat* in the 5-PD assembly is still a stub** — `sel4/dregg-pd/executor-stub/src/main.rs`:
+  holds caps, writes `0xE0`, returns — no `execFullForestG`. But the verified executor itself
+  **already boots a real turn** as a standalone root-task (`status:2 ok:1`, live-verified — see
+  EMBEDDABLE-LEAN-RUNTIME.md / SEL4-EMBEDDING.md §2). MATURE: fold that booting root-task executor
+  into the Microkit assembly to replace this stub seat (+ wire the 3 fail-closed crypto-floor
+  curves). (~M — productionization, not a runtime port)
 - **The persist-PD writes nothing durable** — `sel4/dregg-pd/persist-stub/src/main.rs`: reads
   the sentinel, acks, does nothing. MATURE: `redb` over a block cap. (~M)
 - **The compositor framebuffer is a 256-byte authority witness** —

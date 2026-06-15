@@ -25,7 +25,7 @@ seL4 construct:
    firmament runs every app turn *through* this PD: a turn arrives, the
    executor decodes it, runs the verified `decode → step → encode`, and emits
    a receipt. Nothing reaches durable state except through a turn this PD
-   accepted. (Status: this PD is the one true blocker — §6, §7.)
+   accepted. (Status: this PD now **boots and runs a verified turn** — §6, §7 + [`docs/EMBEDDABLE-LEAN-RUNTIME.md`](EMBEDDABLE-LEAN-RUNTIME.md); what remains is productionization, not the runtime port.)
 
 3. **The capability fabric** — the unification of two capability graphs under
    one interface. seL4 caps isolate the PDs (which PD may touch which page,
@@ -345,11 +345,13 @@ The firmament needs a **heart** (a PD that runs real verified compute) and an
 **edge** (a PD that reaches the network, making the `n > 1` end of the
 gradation real). Their status:
 
-### The executor-PD (the true heart) — the blocker, precisely characterized
+### The executor-PD (the true heart) — boots a verified turn; the port is DONE
 
-The executor-PD embeds the Lean-compiled `execFullForestG`. It cannot be built
-for the bare `aarch64-sel4-microkit` target today, for two compounding reasons
-established by direct probe of the toolchain (`leanrt` v4.30.0):
+The executor-PD embeds the Lean-compiled `execFullForestG`. It now **boots and
+runs a verified turn inside a real seL4 protection domain** (`status:2 ok:1`,
+live-verified — [`docs/EMBEDDABLE-LEAN-RUNTIME.md`](EMBEDDABLE-LEAN-RUNTIME.md) §4).
+Getting there cleared two compounding obstacles, established by direct probe of the
+toolchain (`leanrt` v4.30.0) and then executed as the excision below:
 
 1. **Object format.** The compiled Lean closure (`libdregg_lean.a`, ~8200
    objects) and the Lean runtime archives (`libleanrt.a` etc.) are **Mach-O
@@ -387,12 +389,13 @@ established by direct probe of the toolchain (`leanrt` v4.30.0):
   with `leanc --target aarch64-unknown-linux-musl`, link under the shim with
   the libuv objects excised.
 
-This is the genuine weeks-to-a-quarter port the roadmap names, now reduced to a
-concrete checklist: *(1) ELF-recompile the Lean closure under leanc;
-(2) excise the 10 libuv objects + stub their two init functions;
-(3) GMP for ELF (or fixnum-only shim); (4) host on `sel4-musl` + a root-task
-runtime.* When it lands, the executor-PD boots and runs ONE real turn,
-printing the receipt over serial — the firmament's first heartbeat.
+That checklist — *(1) ELF-recompile the Lean closure under leanc; (2) excise the
+10 libuv objects + stub their two init functions; (3) GMP for ELF; (4) host on
+`sel4-musl` + a root-task runtime* — **is done**, and the executor-PD boots and
+runs a real turn, printing the receipt over serial: the firmament's first
+heartbeat. What remains is productionization (crypto-floor curves · principled
+elaborator trim · fold the root-task into the 5-PD Microkit assembly), not the
+runtime port — see [`docs/EMBEDDABLE-LEAN-RUNTIME.md`](EMBEDDABLE-LEAN-RUNTIME.md) §4.
 
 ### The verifier-PD STARK core (the bankable heart organ)
 
@@ -444,7 +447,7 @@ arrives over TCP" — the `n > 1` invocation path of the cap-gradation bridge.
 | Firmament organ | What it is | Status |
 |-----------------|------------|--------|
 | **seL4 root + monitor** | TCB, CapDL init, Microkit monitor | ✅ boots (M0/M2 on aarch64, M5 on riscv64) |
-| **executor-PD (heart)** | verified `execFullForestG` | ⛔ blocked — Lean ELF recompile + libuv excision + musl host (§6; exact plan banked) |
+| **executor-PD (heart)** | verified `execFullForestG` | ✅ boots a verified turn (`status:2 ok:1`, root-task; §6, `docs/EMBEDDABLE-LEAN-RUNTIME.md`). Remaining: productionization (crypto-floor curves · elaborator trim · Microkit fold) |
 | **verifier-PD STARK core (heart organ)** | real plonky3 STARK verify | ◐ no_std structural verify boots (M1); STARK-core port is mechanical std→core (§6) |
 | **persist-PD** | snapshot⊕overlay + root tooth | ◐ snapshot model lands in `persist/src/snapshot.rs`; PD = redb-over-block-cap (quarter) |
 | **net-PD (edge)** | virtio-net + smoltcp | ◐ driver PROBES a real virtio-net on-device — `device_type=Network`, NIC up (M3, `make run-net`); smoltcp client PD + ring assembly remains (§6) |
@@ -452,35 +455,33 @@ arrives over TCP" — the `n > 1` invocation path of the cap-gradation bridge.
 | **cap fabric** | local↔distributed gradation | ◐ **runnable bridge** in `sel4/dregg-firmament/`: one `(target, rights)` handle + router, real dregg attenuation (`granted ⊆ held`) at both ends, the `n = 1` collapse witnessed, 10 tests green incl. the real executor in the loop (§3) |
 | **checkpoint/restore** | seal/snapshot/unseal | design (§4) on real `snapshot.rs` + Lifecycle.lean; PD-checkpoint wiring is quarter+ |
 
-**The firmament has a heart and an edge** when *either* the executor-PD boots
-(the true heart) *or* the verifier-PD runs a real STARK check (the heart
-organ), **and** the net-PD reaches the network (the edge). The bankable
-near-term firmament is: **verifier-PD (real STARK) + net-PD (real TCP)** — a
-substrate that does real proof-checking and reaches the distributed end of the
-cap gradation, while the executor-PD's exact wall is characterized and its
-excision plan is banked for the quarter port.
+**The firmament has a heart and an edge.** The true heart — the executor-PD —
+**boots and runs a verified turn** (`status:2 ok:1`); the verifier-PD runs a real
+STARK check as the complementary heart organ; the net-PD reaches the network (the
+edge). What remains is productionization of the executor-PD (crypto-floor curves ·
+elaborator trim · fold into the 5-PD Microkit assembly) and the smoltcp client PD
+for full TCP — weeks, not the open-ended runtime fog the roadmap once feared.
 
 ---
 
 ## 8. Decisions for the project lead
 
-1. **Heart sequencing.** The executor-PD is a weeks-to-a-quarter port (§6). Do
-   we (a) fund the full Lean-ELF-on-musl port now, or (b) ship the firmament
-   v0 with the **verifier-PD real STARK core** as the heart organ + the net-PD
-   edge, and queue the executor-PD as the headline quarter milestone? The
-   STARK-core path needs no Lean and is mechanical.
+1. **Heart sequencing — RESOLVED (both).** The executor-PD port landed *and* the
+   verifier-PD STARK core ships as the complementary heart organ: the executor-PD
+   boots a verified turn today (§6), and the STARK-core path (no Lean, mechanical)
+   is the second heart. The remaining executor-PD work is productionization, not
+   the port.
 
-2. **GMP strategy.** Full GMP recompiled for ELF (portable, heavy) vs. a
-   **fixnum-only shim** that stubs the `mpz` bignum path. The executor's
-   verified arithmetic — does any turn ever exceed 63-bit fixnums? If not, the
-   shim deletes a whole C dependency. (Needs a check of the kernel's numeric
-   ranges.)
+2. **GMP strategy — RESOLVED.** Real GMP 6.3.0 is cross-built for aarch64-musl and
+   linked into the booting executor-PD (`docs/EMBEDDABLE-LEAN-RUNTIME.md` §4); no
+   fixnum-shim was needed. (The shim remains a possible size optimization, not a
+   blocker.)
 
-3. **Executor-PD runtime shape.** `sel4-musl` + `root-task-with-std` is
-   *experimental* in rust-sel4 and root-task-only (not Microkit). Do we host
-   the executor-PD as a root task (simpler, weaker isolation) or invest in a
-   Microkit-PD musl substrate (the steady-state firmament shape in
-   `dregg.system`)?
+3. **Executor-PD runtime shape — RESOLVED for v0, productionization step named.**
+   The booting executor-PD is a `sel4-musl` + `root-task-with-std` (simpler, weaker
+   internal isolation). Folding it into a Microkit-PD with the cap-partition trust
+   boundary (the steady-state `dregg.system` shape) is the named productionization
+   step (§6, §7).
 
 4. **The `n = 1` collapse as the security model — DECIDED (ember, 2026-06-13):
    BOTH.** The single-machine firmament is VITAL and must be **fully first-class**
