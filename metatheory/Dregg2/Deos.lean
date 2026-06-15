@@ -79,6 +79,20 @@ import Dregg2.Deos.GatedAffordance
 -- DISTINCT surfaces (`membrane_two_viewers_distinct`: the per-viewer frustum divides by projection, not
 -- just caps). 16 keystones #assert_all_clean.
 import Dregg2.Deos.Reactive
+-- The THREE OPEN CONTINENTS sharpened (2026-06-14, `desktop-os-research/FRUSTUM-REPLAY-MEMBRANE.md`):
+-- advances the crown past its three named-but-waved residuals. C1 — the replay DERIVATION: replay
+-- DETERMINISM (the fold is a function of the witnessed trace) is DISTINCT from the crown's tamper-
+-- evidence payoff and needs NO §8 oracle — it is FORCED by `confined` (every step reads only the
+-- witness; `confined_replay_deterministic` + `replay_extensional_in_witness`; `.ambient` is the typed
+-- floor, `ambient_trace_unconfined`). C2 — the membrane-NEGOTIATION semantics ("the unspecified
+-- continent"): the negotiated projection IS the meet `held ⊓ ask` (= `attenuate`), and the two
+-- compositional FAILURE MODES are theorems — the confused-deputy (`deputy_confers_no_unheld_target`:
+-- `attenuate` preserves the target, so a requester cannot retarget G's cap) and attenuation-drift
+-- (`drift_cannot_recover_dropped_authority`: path-independence on top of `reshareN_attenuates`'s value
+-- bound). C3 — the dregg4 forward: the single-machine n=1 atomicity collapse
+-- (`single_machine_commit_needs_no_binding` = `family_atomicity` at `ι := Unit` — commit ⇔ the one
+-- cell's success, NO CG-5 binding; the cross-cell cut is the price of n≥2). 8 keystones #assert_all_clean.
+import Dregg2.Deos.ReplayMembrane
 
 namespace Dregg2.Deos
 
