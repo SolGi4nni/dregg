@@ -7,20 +7,29 @@
 //!   dregg-deploy apply <file.dregg.toml>     GATE on the check, then emit the per-root
 //!                                            turn sequence + receipt-chain shape
 //!   dregg-deploy apply --json <file>         emit the planned turn sequence as JSON
+//!   dregg-deploy refine <old> <new>          BEHAVIORAL safe-upgrade gate: does NEW
+//!                                            refine the running OLD (new ≤ᶠ old)?
+//!   dregg-deploy refine --intent <i> <plan>  intent-conformance: does PLAN refine the
+//!                                            declared intent flow (lowered ≤ᶠ intent)?
+//!   dregg-deploy refine --json …             emit the refinement verdict as JSON
 //!   dregg-deploy lower <file.dregg.toml>     emit the lowered CallForest as JSON
 //!                                            (feed it to `dregg-uverify`)
 //!   dregg-deploy fmt   <file.dregg.toml>     round-trip: parse and re-serialize canonical TOML
 //! ```
 //!
-//! `check`/`apply` exit 0 on a passing assurance, 1 on findings / a refused
-//! deployment, 2 on input/parse error — so they compose into CI / pre-submit
-//! hooks. `apply` is the gate: it refuses to emit a turn sequence for a
-//! non-conserving / amplifying spec.
+//! `check`/`apply`/`refine` exit 0 on a passing verdict, 1 on findings / a
+//! refused deployment / a non-refining upgrade, 2 on input/parse error — so they
+//! compose into CI / pre-submit hooks. `apply` is the static gate (refuses a
+//! non-conserving / amplifying spec); `refine` is the BEHAVIORAL gate (refuses a
+//! widening upgrade, or a lowering that exceeds its declared intent) — a
+//! DIFFERENT property neither subsumes the other (see `dregg_deploy::refine`).
 
 use std::process::ExitCode;
 
 use dregg_deploy::{
-    ApplyError, Lowered, check, explain_assurance, parse_toml, plan_apply, serialize_toml,
+    AppliedPlan, ApplyError, FlowSpec, IntentEffect, Lowered, RefineVerdict, check,
+    explain_assurance, parse_toml, plan_apply, plan_apply_toml, plan_from_lowered, refines_intent,
+    refines_upgrade, serialize_toml,
 };
 
 fn main() -> ExitCode {
@@ -30,6 +39,7 @@ fn main() -> ExitCode {
     match cmd {
         Some("check") => run_check(&args[1..]),
         Some("apply") => run_apply(&args[1..]),
+        Some("refine") => run_refine(&args[1..]),
         Some("lower") => run_lower(&args[1..]),
         Some("fmt") => run_fmt(&args[1..]),
         Some("-h") | Some("--help") | None => {
@@ -52,11 +62,18 @@ fn print_help() {
                parse → lower → run the static assurance over the whole authority layout\n  \
            dregg-deploy apply [--ring] [--json] <file.dregg.toml>\n      \
                GATE on the static check, then emit the per-root turn sequence + receipt chain\n  \
+           dregg-deploy refine [--json] <old.dregg.toml> <new.dregg.toml>\n      \
+               BEHAVIORAL safe-upgrade gate: is NEW a refinement of the running OLD (new ≤ᶠ old)?\n      \
+               A widening (a new effect / wider capability) is REFUSED with the divergence named.\n  \
+           dregg-deploy refine --intent [--json] <intent.dregg.toml> <plan.dregg.toml>\n      \
+               intent-conformance: does PLAN refine the declared intent flow (lowered ≤ᶠ intent)?\n      \
+               The intent's effect-set is the authorized envelope; a lowering that does MORE is REFUSED.\n  \
            dregg-deploy lower <file.dregg.toml>\n      \
                emit the lowered dregg_turn::CallForest as JSON (pipe to dregg-uverify)\n  \
            dregg-deploy fmt   <file.dregg.toml>\n      \
                round-trip: parse and re-emit canonical TOML\n\n\
-         EXIT (check/apply): 0 = Pass, 1 = findings / refused, 2 = input/parse error."
+         EXIT (check/apply/refine): 0 = Pass/Refines, 1 = findings / refused / non-refining, \
+         2 = input/parse error."
     );
 }
 
@@ -281,6 +298,222 @@ fn print_apply(plan: &dregg_deploy::AppliedPlan) {
          is the SHAPE — the executor fills the real state commitments, signatures, \
          and computrons at submit time."
     );
+}
+
+/// Build an [`AppliedPlan`] from a DreggDL file for the refinement gate.
+///
+/// Prefers the GATED constructor ([`plan_apply_toml`]): a deployment that
+/// conserves + does not amplify yields a plan straight off. If the static gate
+/// REFUSES the spec (it is non-conserving / amplifying), we still build the plan
+/// leniently ([`plan_from_lowered`]) so the *behavioral* refinement question can
+/// be answered — and we NOTE the failing static verdict on stderr, because the
+/// two gates are independent (a spec can fail safety yet be a legitimate side of
+/// the refinement comparison). Only a genuine lower/parse error is fatal here.
+fn build_plan_for_refine(path: &str, label: &str) -> Result<AppliedPlan, ExitCode> {
+    let text = std::fs::read_to_string(path).map_err(|e| {
+        eprintln!("error reading {label} `{path}`: {e}");
+        ExitCode::from(2)
+    })?;
+    match plan_apply_toml(&text, false) {
+        Ok(plan) => Ok(plan),
+        Err(dregg_deploy::DeployError::Apply(ApplyError::Refused { .. })) => {
+            // The static gate refused this side. The behavioral refinement check
+            // is orthogonal, so lower leniently and proceed — but say so.
+            let dep = parse_toml(&text).map_err(|e| {
+                eprintln!("error parsing {label} `{path}`: {e}");
+                ExitCode::from(2)
+            })?;
+            let lowered = Lowered::from_deployment(&dep).map_err(|e| {
+                eprintln!("error lowering {label} `{path}`: {e}");
+                ExitCode::from(2)
+            })?;
+            eprintln!(
+                "NOTE: {label} `{path}` does NOT pass the static no-amplification/conservation \
+                 gate; the BEHAVIORAL refinement check below is independent of that and is \
+                 computed over the lowered flow regardless. (Run `dregg-deploy check {path}` for \
+                 the static findings.)"
+            );
+            Ok(plan_from_lowered(&lowered))
+        }
+        Err(e) => {
+            eprintln!("error in {label} `{path}`: {e}");
+            Err(ExitCode::from(2))
+        }
+    }
+}
+
+/// `refine`: the BEHAVIORAL gate, in two modes — default `refine <old> <new>`
+/// is safe-upgrade (decides `new ≤ᶠ old`), and `--intent` `refine --intent
+/// <intent> <plan>` is intent-conformance (decides `lowered(plan) ≤ᶠ
+/// intent(intent-file's effect-set)`).
+///
+/// Exit 0 iff the refinement holds, 1 on a divergence (with the reason), 2 on
+/// input/parse error.
+fn run_refine(args: &[String]) -> ExitCode {
+    let as_json = args.iter().any(|a| a == "--json");
+    let as_intent = args.iter().any(|a| a == "--intent");
+    let positionals: Vec<&String> = args.iter().filter(|a| !a.starts_with("--")).collect();
+    if positionals.len() != 2 {
+        eprintln!(
+            "error: `refine` needs exactly two files.\n  \
+             safe-upgrade:        dregg-deploy refine [--json] <old.dregg.toml> <new.dregg.toml>\n  \
+             intent-conformance:  dregg-deploy refine --intent [--json] <intent.dregg.toml> \
+             <plan.dregg.toml>"
+        );
+        return ExitCode::from(2);
+    }
+
+    if as_intent {
+        // refine --intent <intent-file> <plan-file>: does the plan's lowered flow
+        // refine the intent declared by the intent-file's effect-set?
+        let intent_plan = match build_plan_for_refine(positionals[0], "intent") {
+            Ok(p) => p,
+            Err(c) => return c,
+        };
+        let plan = match build_plan_for_refine(positionals[1], "plan") {
+            Ok(p) => p,
+            Err(c) => return c,
+        };
+        // The intent is the menu of effect-shapes the intent-file authorizes: its
+        // own effect-set (`from_plan_envelope`). Equivalently, every concrete
+        // effect of the intent file wrapped as `IntentEffect::Exact`.
+        let mut intents: Vec<IntentEffect> = Vec::new();
+        for pt in &intent_plan.turns {
+            for root in &pt.turn.call_forest.roots {
+                for eff in root.all_effects() {
+                    intents.push(IntentEffect::Exact(eff.clone()));
+                }
+            }
+        }
+        let intent = FlowSpec::from_intent(&intents);
+        let verdict = refines_intent(&plan, &intent);
+        report_refine(
+            &verdict,
+            as_json,
+            "intent-conformance",
+            &format!(
+                "PLAN `{}` ≤ᶠ INTENT `{}`",
+                positionals[1], positionals[0]
+            ),
+            "the lowered deployment stays within the declared intent envelope (it fires only \
+             effects the intent authorized)",
+            "the lowered deployment EXCEEDS its declared intent — it fires an effect the intent \
+             did not authorize",
+        )
+    } else {
+        // refine <old> <new>: does NEW refine the running OLD (new ≤ᶠ old)?
+        let old_plan = match build_plan_for_refine(positionals[0], "old") {
+            Ok(p) => p,
+            Err(c) => return c,
+        };
+        let new_plan = match build_plan_for_refine(positionals[1], "new") {
+            Ok(p) => p,
+            Err(c) => return c,
+        };
+        let verdict = refines_upgrade(&new_plan, &old_plan);
+        report_refine(
+            &verdict,
+            as_json,
+            "safe-upgrade",
+            &format!(
+                "NEW `{}` ≤ᶠ OLD `{}`",
+                positionals[1], positionals[0]
+            ),
+            "the new deployment only NARROWS (or matches) the running one — every effect it can \
+             perform, the running deployment already could; safe to roll forward",
+            "the new deployment WIDENS the running one — it introduces behavior the running \
+             deployment never authorized; NOT safe to roll forward as-is",
+        )
+    }
+}
+
+/// Render a [`RefineVerdict`] (human or JSON) and map it to an exit code:
+/// 0 on `Refines`, 1 on `Diverges`.
+fn report_refine(
+    verdict: &RefineVerdict,
+    as_json: bool,
+    check_name: &str,
+    relation: &str,
+    pass_summary: &str,
+    fail_summary: &str,
+) -> ExitCode {
+    if as_json {
+        // A self-describing JSON object: the verdict, the relation decided, and
+        // the located findings (each finding's fields are public on RefineFinding).
+        let findings: Vec<serde_json::Value> = verdict
+            .findings()
+            .iter()
+            .map(|f| {
+                serde_json::json!({
+                    "check": f.check,
+                    "message": f.message,
+                    "diverging_letter": f.diverging_letter.map(|l| format!("{l:#018x}")),
+                    "diverging_effect": f.diverging_effect_label,
+                })
+            })
+            .collect();
+        let obj = serde_json::json!({
+            "check": check_name,
+            "relation": relation,
+            "refines": verdict.is_refine(),
+            "verdict": if verdict.is_refine() { "Refines" } else { "Diverges" },
+            "findings": findings,
+        });
+        match serde_json::to_string_pretty(&obj) {
+            Ok(j) => println!("{j}"),
+            Err(e) => {
+                eprintln!("error serializing refinement verdict: {e}");
+                return ExitCode::from(2);
+            }
+        }
+    } else {
+        println!("dregg-deploy refine — behavioral {check_name} gate (online simulation order ≤ᶠ)");
+        println!("  deciding:  {relation}");
+        println!();
+        if verdict.is_refine() {
+            println!("  [REFINES]  {pass_summary}.");
+            println!();
+            println!(
+                "VERDICT: REFINES. {}. NOTE: this is the BEHAVIORAL relation only; it is \
+                 independent of the static no-amplification/conservation gate (`dregg-deploy \
+                 check`) and of the live executor's holding/balance/freshness checks.",
+                cap_first(pass_summary)
+            );
+        } else {
+            println!("  [REFUSED]  {fail_summary}.");
+            for f in verdict.findings() {
+                println!();
+                println!("  divergence ({}):", f.check);
+                println!("    {}", f.message);
+                if let Some(label) = &f.diverging_effect_label {
+                    println!("    diverging effect:  {label}");
+                }
+                if let Some(l) = f.diverging_letter {
+                    println!("    diverging letter:  {l:#018x}");
+                }
+            }
+            println!();
+            println!(
+                "VERDICT: REFUSED — {}. Drop or narrow the diverging effect above to make the \
+                 relation hold.",
+                fail_summary
+            );
+        }
+    }
+    if verdict.is_refine() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::from(1)
+    }
+}
+
+/// Capitalize the first letter of a summary for the VERDICT sentence.
+fn cap_first(s: &str) -> String {
+    let mut c = s.chars();
+    match c.next() {
+        Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+        None => String::new(),
+    }
 }
 
 fn run_lower(args: &[String]) -> ExitCode {

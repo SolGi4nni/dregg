@@ -32,6 +32,7 @@ import { initInboxes } from './sections/inboxes.js';
 import { initBatchExecutor } from './sections/batch-executor.js';
 import { initNameservice } from './sections/nameservice.js';
 import { initDelegationV2 } from './sections/delegation-v2.js';
+import { initTransclusion } from './sections/transclusion.js';
 import { initWebSurface } from './sections/web-surface.js';
 
 // Studio inspector embedding (STARBRIDGE-PLAN §4.9 Tier 2). Starts the shared
@@ -155,7 +156,7 @@ const PLAYGROUND_SCENARIOS = [
     lede: 'Mostly self-contained application demos that compose the lower-level primitives.',
     starbridgeHref: '/starbridge/?at=dregg://app/nameservice',
     starbridgeLabel: 'Open app demo in Starbridge',
-    sections: ['web-surface', 'gallery', 'federation', 'marketplace', 'nameservice', 'delegation-v2'],
+    sections: ['transclusion', 'web-surface', 'gallery', 'federation', 'marketplace', 'nameservice', 'delegation-v2'],
   },
   {
     id: 'proving',
@@ -407,6 +408,7 @@ async function main() {
   initBatchExecutor(wasmExports);
   initNameservice(wasmExports);
   initDelegationV2(wasmExports);
+  initTransclusion(wasmExports);
   initWebSurface(wasmExports);
 
   // Initial state render

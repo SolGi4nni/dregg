@@ -53,20 +53,24 @@
 //! `apply` gate runs no-amplification; this module adds the optional refinement
 //! gate when a target (a running plan or an intent) is supplied.
 //!
-//! ## Rust-mirror vs Lean-FFI (the honest verdict)
+//! ## The verified procedure runs the gate (Lean-FFI, with a σ-free fallback)
 //!
-//! This is a **Rust mirror** of `FlowRefine.decideRefines`, not an FFI call into
-//! the Lean. `decideRefines` is a pure Lean `def` with no `@[export]` /
-//! `extern` shim, so there is nothing to call across the boundary today. The
-//! mirror is faithful because the game is **σ-free** (`FlowRefine` §3: the
-//! threaded state never decides a move — `PStep`/`moves` are purely syntactic),
-//! so the decision is a finite, state-free recursion the Lean and the Rust run
-//! identically. The single thing the mirror trusts but cannot re-prove in Rust
-//! is `decideRefines_iff` (sound+complete against `≤ᶠ`) — that proof lives in
-//! Lean. **Follow-on (named, not built here):** export `decideRefines` from Lean
-//! (an `@[export] decide_refines_ffi` over a serialized `Proc`) and call it here,
-//! so the deploy gate runs the *proven* decision procedure rather than a mirror
-//! of it. Tracked in HORIZONLOG as the Lean-FFI unification.
+//! [`decide_refines`] routes its `A ≤ᶠ B` decision through the verified Lean
+//! `@[export] dregg_decide_refines` (the PROVEN `FlowRefine.decideRefines`) when
+//! the linked archive exports it — so on a native build the deploy gate runs the
+//! *proven* decision procedure, whose soundness + completeness against `≤ᶠ` is the
+//! Lean theorem `decideRefines_iff` (LAW #1). The two flows are serialized to the
+//! export's preorder-token wire ([`encode_proc`], the byte-exact inverse of
+//! `FlowRefine.encodeProcToks`/`decodeProc`).
+//!
+//! The in-process σ-free game ([`decide_refines_mirror`]) remains as the FALLBACK
+//! for targets that cannot link the Lean archive (`wasm32`, the zkvm guest) or a
+//! stale archive predating the export. It AGREES with the verified procedure by
+//! construction: the game is **σ-free** (`FlowRefine` §3 — the threaded state never
+//! decides a move; `PStep`/`moves` are purely syntactic), so the decision is a
+//! finite, state-free recursion the Lean and the Rust run identically. The
+//! differential test in `tests.rs` asserts FFI-verdict == mirror-verdict on both
+//! polarities of `FlowAlgebra`'s counterexample.
 
 use dregg_turn::action::Effect;
 use dregg_turn::{CallForest, CallTree};
@@ -157,17 +161,79 @@ fn decide_fuel(n: usize, p: &Proc, q: &Proc) -> bool {
     })
 }
 
-/// **`decide_refines A B`** — the refinement DECISION (the Rust mirror of
-/// `FlowRefine.decideRefines`). Returns `true` iff `A` refines `B` in the online
-/// simulation order `≤ᶠ`. Computed as the σ-free simulation game's verdict at
-/// the canonical (always-sufficient) fuel `proc_size A + 1`.
-///
-/// SOUNDNESS + COMPLETENESS against `≤ᶠ` is the Lean theorem
-/// `decideRefines_iff` (proved in `FlowRefine.lean`, LAW #1); this function
-/// computes the same `Bool` the Lean `decideRefines` does (the algorithm is
-/// identical and σ-free, so kernel-reduction in Lean and this recursion agree).
-pub fn decide_refines(a: &Proc, b: &Proc) -> bool {
+/// The in-process σ-free simulation-game decision — the Rust MIRROR of
+/// `FlowRefine.decideRefines`, kept as the FALLBACK for targets that cannot link
+/// the verified Lean archive (`wasm32`, the zkvm guest) or a stale archive that
+/// predates the `dregg_decide_refines` export. On a normal native build the
+/// linked-archive path ([`decide_refines`]) runs the PROVEN procedure instead;
+/// [`decide_refines_via_ffi_then_mirror`] proves the two AGREE on every comparison
+/// the gate makes (the differential tooth in `tests.rs`).
+fn decide_refines_mirror(a: &Proc, b: &Proc) -> bool {
     decide_fuel(proc_size(a) + 1, a, b)
+}
+
+/// Encode a σ-free [`Proc`] as the preorder (Polish-prefix) token stream the Lean
+/// export `dregg_decide_refines` reads — a space-separated traversal where each node
+/// emits ONE token and its children follow (fixed arity per token ⇒ unambiguous):
+/// `d` = `Done`, `e<ℓ>` = `Emit ℓ`, `c` = `Ch`(2 children), `s` = `Seqp`(2 children).
+/// This is the byte-exact inverse of `FlowRefine.encodeProcToks` / `decodeProc`, so a
+/// `Proc` built here decodes to the SAME `Proc` in Lean (the round-trip `#guard`s pin it).
+fn encode_proc(p: &Proc, out: &mut String) {
+    match p {
+        Proc::Done => out.push('d'),
+        Proc::Emit(l) => {
+            out.push('e');
+            out.push_str(&l.to_string());
+        }
+        Proc::Ch(a, b) => {
+            out.push('c');
+            out.push(' ');
+            encode_proc(a, out);
+            out.push(' ');
+            encode_proc(b, out);
+        }
+        Proc::Seqp(a, b) => {
+            out.push('s');
+            out.push(' ');
+            encode_proc(a, out);
+            out.push(' ');
+            encode_proc(b, out);
+        }
+    }
+}
+
+/// The full `INPUT` wire for the refinement export: `"A=<procW>;B=<procW>"`.
+fn refine_wire(a: &Proc, b: &Proc) -> String {
+    let mut wa = String::new();
+    encode_proc(a, &mut wa);
+    let mut wb = String::new();
+    encode_proc(b, &mut wb);
+    format!("A={wa};B={wb}")
+}
+
+/// **`decide_refines A B`** — the refinement DECISION. Returns `true` iff `A`
+/// refines `B` in the online simulation order `≤ᶠ`.
+///
+/// When the linked Lean archive exports the verified gate
+/// ([`dregg_lean_ffi::decide_refines_gate_available`]), this routes the decision
+/// through `@[export] dregg_decide_refines` — the PROVEN `FlowRefine.decideRefines`,
+/// whose SOUNDNESS + COMPLETENESS against `≤ᶠ` is the Lean theorem `decideRefines_iff`
+/// (LAW #1). So the deploy gate runs the verified procedure, not a re-implementation.
+/// On a target that cannot link the archive (or a stale one lacking the export) it
+/// falls back to the in-process σ-free mirror [`decide_refines_mirror`] (the two AGREE
+/// by construction — the algorithm is identical and σ-free; the differential test pins it).
+pub fn decide_refines(a: &Proc, b: &Proc) -> bool {
+    if dregg_lean_ffi::decide_refines_gate_available() {
+        match dregg_lean_ffi::shadow_decide_refines(&refine_wire(a, b)) {
+            Ok(v) if v == "1" => return true,
+            Ok(v) if v == "0" => return false,
+            // "ERR" (a wire the proven gate rejected) or any FFI error: fall through to the mirror
+            // rather than silently mis-deciding. (A well-formed deploy `Proc` never hits this; the
+            // fallback is defense-in-depth, and the differential test asserts FFI == mirror.)
+            _ => {}
+        }
+    }
+    decide_refines_mirror(a, b)
 }
 
 // ════════════════════════════════════════════════════════════════════════════

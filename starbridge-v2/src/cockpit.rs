@@ -4139,6 +4139,106 @@ impl Cockpit {
             }
         }
 
+        // ── THE DREGGVERSE DOCUMENT (Nelson's EDL made honest — the rich span
+        //    model welded in from `deos-web-cells`) ──
+        //
+        // Where the transclusion above is ONE whole-field quote, this is a MULTI-SPAN
+        // document: OWN content interleaved with byte-RANGE quotes of peer cells,
+        // resolved PER-VIEWER through the REAL membrane. A span the viewer's projected
+        // fetch-allowlist cannot reach renders DARKENED — its provenance survives (the
+        // citation), its bytes withheld (never forged). The model is built gpui-free in
+        // `starbridge_v2::web_cells` (so the composed text + the darkened span + the
+        // surviving provenance are `cargo test`-proven); this maps it onto gpui.
+        if let Some(doc) = &browser.document {
+            col = col.child(section_title(doc.title.clone()).mt_2().mb_1());
+
+            // The per-viewer summary pills: the document's shape + how much of it THIS
+            // viewer can read (a darkened span ⇒ "not fully readable for you").
+            col = col.child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .gap_1()
+                    .child(pill(
+                        format!("{} spans", doc.span_count),
+                        theme::accent(),
+                    ))
+                    .child(pill(
+                        format!("{} verified quotes", doc.quote_count),
+                        theme::good(),
+                    ))
+                    .child(pill(
+                        if doc.darkened_count == 0 {
+                            "fully readable".to_string()
+                        } else {
+                            format!("{} darkened (per-viewer)", doc.darkened_count)
+                        },
+                        if doc.full { theme::good() } else { theme::warn() },
+                    )),
+            );
+
+            // The composed text THIS viewer sees (OWN + reachable quotes; a darkened
+            // span contributes nothing — the honest per-viewer render).
+            col = col.child(
+                div()
+                    .mt_1()
+                    .px_2()
+                    .py_0p5()
+                    .rounded_md()
+                    .bg(theme::panel())
+                    .text_xs()
+                    .text_color(theme::text())
+                    .child(format!("\u{201C}{}\u{201D}", doc.composed_text)),
+            );
+
+            // The EDL, span by span — OWN content, a verified quote (with its cited
+            // byte range + provenance), or a DARKENED span (citation kept, bytes
+            // withheld). Each row is styled by kind so the docuverse skeleton is
+            // visible: the reader sees WHICH spans exist + where they are quoted from,
+            // even the one they cannot read.
+            for span in &doc.spans {
+                let row = match span.kind {
+                    starbridge_v2::web_cells::DocumentSpanKind::Own => div()
+                        .text_xs()
+                        .text_color(theme::text())
+                        .child(format!("own · \u{201C}{}\u{201D}", span.text)),
+                    starbridge_v2::web_cells::DocumentSpanKind::Quote => div()
+                        .text_xs()
+                        .text_color(theme::good())
+                        .child(format!(
+                            "quote {} · \u{201C}{}\u{201D} · from {} · commitment {} · receipt {}",
+                            span.range.as_deref().unwrap_or("?"),
+                            span.text,
+                            span.source.as_deref().unwrap_or("?"),
+                            span.content_commitment.as_deref().unwrap_or("?"),
+                            span.provenance_receipt.as_deref().unwrap_or("?"),
+                        )),
+                    starbridge_v2::web_cells::DocumentSpanKind::Darkened => div()
+                        .text_xs()
+                        .text_color(theme::muted())
+                        .child(format!(
+                            "darkened {} · [you lack authority to read this span] · cites {} · commitment {} · receipt {}",
+                            span.range.as_deref().unwrap_or("?"),
+                            span.source.as_deref().unwrap_or("?"),
+                            span.content_commitment.as_deref().unwrap_or("?"),
+                            span.provenance_receipt.as_deref().unwrap_or("?"),
+                        )),
+                };
+                col = col.child(row.mt_0p5().px_2());
+            }
+
+            // The per-viewer authority note — WHY some spans darken (the real membrane
+            // fetch-allowlist meet, never a forgery).
+            col = col.child(
+                div()
+                    .mt_1()
+                    .px_2()
+                    .text_xs()
+                    .text_color(theme::muted())
+                    .child(doc.viewer_note.clone()),
+            );
+        }
+
         // ── THE SERVO NEXT LAYER (named honestly in the panel) ──
         col = col.child(
             div()

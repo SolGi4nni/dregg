@@ -1550,6 +1550,8 @@ dependencies = [
 name = "dregg-turn"
 version = "0.1.0"
 dependencies = [
+ "ark-ff",
+ "ark-serialize",
  "blake3",
  "chacha20poly1305",
  "curve25519-dalek",
@@ -1558,6 +1560,7 @@ dependencies = [
  "dregg-circuit",
  "dregg-commit",
  "dregg-dsl-runtime",
+ "dregg-hints",
  "dregg-lean-ffi",
  "dregg-token",
  "dregg-types",

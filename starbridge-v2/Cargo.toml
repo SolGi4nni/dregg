@@ -131,7 +131,7 @@ live-node = ["dep:reqwest"]
 # async) deps out of this headless, `cargo test`-able build: the cipherclerk +
 # token surface we surface (identities, mint/attenuate/delegate, cell_id) is in
 # the SDK's un-gated core.
-embedded-executor = ["dep:dregg-turn", "dep:dregg-cell", "dep:dregg-types", "dep:dregg-sdk", "dep:dregg-coord", "dep:dregg-token", "dep:dregg-userspace-verify", "dep:dregg-firmament", "dep:starbridge-web-surface"]
+embedded-executor = ["dep:dregg-turn", "dep:dregg-cell", "dep:dregg-types", "dep:dregg-sdk", "dep:dregg-coord", "dep:dregg-token", "dep:dregg-userspace-verify", "dep:dregg-firmament", "dep:starbridge-web-surface", "dep:deos-web-cells"]
 
 # The gpui renderer. `runtime_shaders` is LOAD-BEARING on macOS: it makes gpui
 # compile its Metal shaders AT RUNTIME (via `MTLDevice::newLibraryWithSource`,
@@ -275,6 +275,20 @@ dregg-firmament = { path = "../sel4/dregg-firmament", optional = true }
 # only model is closed here). Gated on `embedded-executor` (the gpui-free,
 # `cargo test`-able surface).
 starbridge-web-surface = { path = "../starbridge-web-surface", optional = true }
+# THE DREGGVERSE-DOCUMENT crate — Xanadu's EDL made honest on the verified
+# substrate: a `DreggverseDocument` is an ordered list of `Span`s (OWN content
+# interleaved with TRANSCLUDED byte-ranges of peer cells), resolved PER-VIEWER
+# through the REAL `Membrane` (`DreggverseDocument::resolve_for`) — a span the
+# viewer's projected fetch-allowlist cannot reach DARKENS (its provenance
+# survives, its bytes withheld; never forged). It is a thin layer over the SAME
+# `starbridge-web-surface` (`TranscludedField`/`Membrane`/`SurfaceCapability`)
+# this crate already pulls — so its `DreggUri`/`WebOfCells`/`Provenance` ARE our
+# web-surface's (cargo resolves IDENTICAL instances: same path-dep, same
+# plonky3-recursion `[patch]`). The web-of-cells browser panel
+# (`src/web_cells.rs`) renders a multi-span document beside the whole-field
+# transclusion — the rich EDL span model welded into the cockpit's docuverse.
+# Gated on `embedded-executor` (the gpui-free, `cargo test`-able surface).
+deos-web-cells = { path = "../deos-web-cells", optional = true }
 
 # --- wire contract (always available: remote-node + sel4-thin paths) --------
 serde = { version = "1", features = ["derive"] }

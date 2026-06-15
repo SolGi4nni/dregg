@@ -19,6 +19,12 @@ dregg-cell = { path = "../cell" }
 dregg-types = { path = "../types" }
 # The checker: a lowered DreggDL forest is exactly what `analyze()` consumes.
 dregg-userspace-verify = { path = "../dregg-userspace-verify" }
+# The verified Lean flow-refinement decision (`@[export] dregg_decide_refines` over the PROVED
+# `FlowRefine.decideRefines`): the refine gate (`src/refine.rs`) routes its `A ≤ᶠ B` decision through
+# this FFI when the archive exports it, so the deploy gate runs the proven procedure (not a Rust
+# mirror). Marshal-only on targets that cannot link libdregg_lean.a (the FFI crate's own platform gate
+# handles that); the gate then falls back to the in-process σ-free mirror.
+dregg-lean-ffi = { path = "../dregg-lean-ffi" }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 toml = "0.8"

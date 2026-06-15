@@ -33,12 +33,18 @@
 //!
 //! # The adjudicator reads the CELL, not the disputant
 //!
-//! Per `CustodyReceipt.lean` §7.5: the verdict is a pure function of the inbox's own
-//! authenticated, MONOTONE root (the `CapInbox`/`MerkleQueue` head root, which only ever
-//! advances) plus a refund bit — never the disputant's claim. A malicious disputant
-//! cannot manufacture a conviction by lying about the outcome, and an honest disputant
-//! need not be believed. [`adjudicate_from_inbox`] is the realizable decision procedure
-//! the dispute path runs against the inbox cell's root.
+//! Per `CustodyReceipt.lean` §7.5: the verdict is a pure function of the inbox cell's own
+//! authenticated state — a sticky DELIVERY-WITNESS bit ("was THIS box, by its
+//! `content_hash`, dequeued toward the recipient?") plus a refund bit — never the
+//! disputant's claim. A malicious disputant cannot manufacture a conviction by lying about
+//! the outcome, and an honest disputant need not be believed. [`adjudicate_from_inbox`] is
+//! the realizable decision procedure the dispute path runs against the inbox cell.
+//!
+//! The witness bit (not root equality) is what makes the verdict robust to OVERSHOOT /
+//! prefix-reorg: an inbox whose `MerkleQueue` head root advanced PAST the promised
+//! `new_root` (a later box, a reorg, a late block) STILL acquits a relay that delivered,
+//! because delivery is a sticky content-addressed fact, not "the live root equals a past
+//! promise". See [`InboxState`] for why bare `root == new_root` silently dropped this.
 
 use dregg_types::{PublicKey, Signature, SigningKey, sign};
 use serde::{Deserialize, Serialize};
@@ -278,48 +284,103 @@ impl EvidenceOfDrop {
 // =============================================================================
 
 /// **`InboxState`** — exactly what the adjudication path READS to establish the true
-/// custody outcome: the inbox's authenticated, MONOTONE root (the `CapInbox` /
-/// [`crate::store_forward`] queue head root, which only ever advances) at the dispute
-/// height, plus `refund_recorded` — the bit set by the relay's authenticated refund move
-/// (the accept-OR-refund-by other half). The disputant's claim is NOT here. Mirrors
-/// `Dregg2.Exec.Custody.InboxState`.
+/// custody outcome. Two authenticated bits PLUS the live root:
+///
+///   * `delivered_witness` — **the DELIVERY-WITNESS bit: "was THIS box delivered?"** Set by
+///     the inbox cell when the box bound by the receipt (its `content_hash`) leaves the
+///     queue toward the recipient — concretely, a [`crate::store_forward`] / `MerkleQueue`
+///     dequeue whose `entry.content_hash == receipt.content_hash`. This is the realizable,
+///     content-address-HONEST signal of delivery, and it is **STICKY**: once the box has been
+///     delivered the cell records it permanently, so no later root movement un-witnesses it.
+///   * `refund_recorded`  — the relay recorded a refund before the deadline (the
+///     accept-OR-refund-by other half), an authenticated cell event.
+///   * `root`             — the inbox's authenticated MONOTONE root at the dispute height
+///     (the `CapInbox` / queue head root, which only ever advances). Carried for the
+///     `Delivered { root }` outcome and for diagnostics — the verdict reads the WITNESS bit,
+///     never bare root equality (see below).
+///
+/// Mirrors `Dregg2.Exec.Custody.InboxState` field-for-field.
+///
+/// # Why the witness bit and NOT root equality (the overshoot/reorg fidelity gap, CLOSED)
+///
+/// The earlier realization derived delivery from `root == new_root`. That is more honest than
+/// the Lean `Nat` `>=` for an opaque content-address — but it SILENTLY DROPS the
+/// overshoot/prefix-reorg robustness the Lean model proves: an inbox whose authenticated root
+/// advanced PAST the promised `new_root` (a later box enqueued/dequeued, a reorg, a late
+/// block) no longer EQUALS `new_root`, so it read as [`CustodyOutcome::Dropped`] — a FALSE
+/// conviction of a relay that actually delivered, the exact OPPOSITE of the Lean verdict
+/// (`overshoot_acquits`, `monotone_root_no_erased_delivery` / `sticky_witness_no_erased_delivery`).
+/// The explicit sticky witness bit is the fix: it answers "was this box delivered?" (a fact
+/// that stays true once set), not "does the live root equal a past promise?" (a fact that any
+/// subsequent activity breaks). With it, Lean and this adjudicator AGREE on overshoot — neither
+/// false-convicts a delivered relay. Construct the bit content-address-honestly from the actual
+/// delivery event via [`Self::from_dequeue`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InboxState {
-    /// The inbox's authenticated root at the dispute height. MONOTONE: once it reaches a
-    /// value it never retreats (the cursor discipline of the FIFO inbox).
-    pub root: [u8; 32],
+    /// THE DELIVERY-WITNESS bit: the cell recorded that THIS box (`receipt.content_hash`) was
+    /// delivered to the recipient (dequeued from the inbox). STICKY: never retracted once set.
+    pub delivered_witness: bool,
     /// The relay recorded a refund before the deadline (an authenticated cell event).
     pub refund_recorded: bool,
+    /// The inbox's authenticated root at the dispute height. MONOTONE: once it reaches a
+    /// value it never retreats (the cursor discipline of the FIFO inbox). Carried for the
+    /// `Delivered { root }` outcome; the verdict reads `delivered_witness`, not this.
+    pub root: [u8; 32],
 }
 
 impl InboxState {
-    /// **`root_reached`** — the inbox's authenticated root has reached (or, by monotonicity,
-    /// passed) the `promised` root. Once delivery advances the root to `new_root`,
-    /// subsequent activity only pushes it FURTHER, so a later root that still EQUALS the
-    /// promise witnesses delivery; an unrelated advance that never equals the promise does
-    /// not. Because roots are opaque content-addresses (not ordered), "reached" is
-    /// equality with the promised root OR a recorded witness that this exact transition
-    /// occurred. We model the authenticated cell as exposing the promised root directly:
-    /// the queue's delivery event sets `root == new_root`. Mirrors `rootReached` (with the
-    /// content-address equality reading of the monotone cursor).
-    pub fn root_reached(&self, promised: &[u8; 32]) -> bool {
-        self.root == *promised
+    /// **The content-address-HONEST witness constructor.** Build the inbox state the
+    /// adjudicator reads from the AUTHENTICATED delivery evidence: the set of dequeue events
+    /// the inbox emitted (each carrying the `content_hash` of the box it removed from the
+    /// queue head — see [`crate::store_forward`] / the storage `DequeueProof`), the live
+    /// inbox `root`, and whether a refund was recorded. The witness bit is set IFF some
+    /// dequeue carried THIS receipt's `content_hash` — i.e. the box bound by the receipt
+    /// actually left the queue toward the recipient. This is sticky and ORDER-FREE: it holds
+    /// regardless of how the root subsequently moved (overshoot/reorg robust), exactly as the
+    /// Lean `deliveredOf` reads the witness bit and not root equality.
+    ///
+    /// `delivered_content_hashes` is the cell's authenticated record of "boxes that left this
+    /// inbox toward the recipient" (the `content_hash` field of each `DequeueProof.entry`). An
+    /// honest inbox accumulates it append-only; the membership test is therefore the sticky
+    /// witness.
+    pub fn from_dequeue(
+        receipt: &CustodyReceipt,
+        delivered_content_hashes: &[[u8; 32]],
+        root: [u8; 32],
+        refund_recorded: bool,
+    ) -> Self {
+        let delivered_witness = delivered_content_hashes.contains(&receipt.content_hash);
+        Self {
+            delivered_witness,
+            refund_recorded,
+            root,
+        }
+    }
+
+    /// **`delivered_of`** — the realizable delivery-witness bit READ from the cell: was THIS
+    /// box delivered? The single source of truth the verdict consults. Mirrors the Lean
+    /// `deliveredOf`. Order-free and sticky — the content-address-honest replacement for the
+    /// brittle `root == new_root` equality (which the overshoot case broke). The `_receipt`
+    /// argument is the box identity the bit is recorded against (set by [`Self::from_dequeue`]
+    /// keyed on `receipt.content_hash`); the stored bit already pertains to this receipt.
+    pub fn delivered_of(&self, _receipt: &CustodyReceipt) -> bool {
+        self.delivered_witness
     }
 
     /// **`true_outcome_from_inbox`** — the custody outcome DERIVED from this authenticated
     /// inbox state for `receipt`. NOT the disputant's claim: a verified fact read off the
     /// cell. Mirrors `trueOutcomeFromInbox`:
     ///
-    ///   * authenticated root reached the promised `new_root` → `Delivered { new_root }`
-    ///     (HONEST);
+    ///   * the DELIVERY-WITNESS bit is set for this box → `Delivered { root }` (the box left
+    ///     the queue toward the recipient; STICKY, so this survives any later root movement,
+    ///     including overshoot) (HONEST);
     ///   * else if a refund was recorded → `Refunded` (HONEST);
-    ///   * else → `Dropped` (the deadline passed, the root never reached the promise, no
-    ///     refund — established WITHOUT trusting anyone's word).
+    ///   * else → `Dropped` (the deadline passed, the box was never delivered, no refund —
+    ///     established WITHOUT trusting anyone's word, and WITHOUT the brittle root equality
+    ///     that broke on overshoot).
     pub fn true_outcome(&self, receipt: &CustodyReceipt) -> CustodyOutcome {
-        if self.root_reached(&receipt.new_root) {
-            CustodyOutcome::Delivered {
-                root: receipt.new_root,
-            }
+        if self.delivered_of(receipt) {
+            CustodyOutcome::Delivered { root: self.root }
         } else if self.refund_recorded {
             CustodyOutcome::Refunded
         } else {
@@ -374,6 +435,24 @@ mod tests {
             500,     // accept_by
         );
         (r, sk)
+    }
+
+    /// A DELIVERED inbox built content-address-honestly: the receipt's box `content_hash` is
+    /// among the dequeued (delivered) hashes, so [`InboxState::from_dequeue`] sets the witness
+    /// bit. `root` is the live head root (may equal `new_root`, or OVERSHOOT it).
+    fn delivered_inbox(receipt: &CustodyReceipt, root: [u8; 32]) -> InboxState {
+        InboxState::from_dequeue(receipt, &[receipt.content_hash], root, false)
+    }
+
+    /// A DROPPED inbox: NO dequeue carried the receipt's box `content_hash` (witness unset),
+    /// no refund. `root` short of the promise (or anywhere — the verdict reads the witness).
+    fn dropped_inbox(receipt: &CustodyReceipt, root: [u8; 32]) -> InboxState {
+        InboxState::from_dequeue(receipt, &[], root, false)
+    }
+
+    /// A REFUNDED inbox: box not delivered, but a refund WAS recorded.
+    fn refunded_inbox(receipt: &CustodyReceipt, root: [u8; 32]) -> InboxState {
+        InboxState::from_dequeue(receipt, &[], root, true)
     }
 
     // ── §3 KEYSTONE (a): an accepted-and-dropped relay is CONVICTABLE ──────────────
@@ -525,65 +604,58 @@ mod tests {
     // ── §7.5 the REALIZABLE adjudicator: verdict from the inbox cell, claim inert ───
 
     #[test]
-    fn conviction_from_inbox_when_root_short() {
-        // Mirrors `conviction_iff_root_short` (slash direction) + the §7.5(d) #guard
-        // `adjudicateFromInbox (evidenceOfDrop demoReceipt) droppedInbox == true`: the
-        // authenticated root FELL SHORT of the promise and no refund ⇒ the realizable
-        // adjudicator SLASHES — established from the cell, NOT the disputant.
+    fn conviction_from_inbox_when_not_delivered() {
+        // Mirrors `conviction_iff_not_delivered` (slash direction) + the §7.5(d) #guard
+        // `adjudicateFromInbox (evidenceOfDrop demoReceipt) droppedInbox == true`: the box
+        // was NOT delivered (witness unset) and no refund ⇒ the realizable adjudicator
+        // SLASHES — established from the cell, NOT the disputant.
         let (r, _sk) = demo_receipt();
         let new_root = r.new_root;
         let evidence = EvidenceOfDrop::from_receipt(r);
-        // Dropped inbox: root is the OLD root (never advanced to the promise), no refund.
-        let dropped_inbox = InboxState {
-            root: h(0x64), // old_root != new_root
-            refund_recorded: false,
-        };
+        // Dropped inbox: no dequeue carried the box (witness false), root short, no refund.
+        let dropped = dropped_inbox(&evidence.receipt, h(0x64));
+        assert!(!dropped.delivered_of(&evidence.receipt));
         assert_eq!(
-            dropped_inbox.true_outcome(&evidence.receipt),
+            dropped.true_outcome(&evidence.receipt),
             CustodyOutcome::Dropped
         );
         assert!(
-            adjudicate_from_inbox(&evidence, &dropped_inbox),
-            "a genuine drop (root short, no refund) convicts from the cell"
+            adjudicate_from_inbox(&evidence, &dropped),
+            "a genuine drop (not delivered, no refund) convicts from the cell"
         );
         // Sanity: the promised root differs from the dropped root.
-        assert_ne!(new_root, dropped_inbox.root);
+        assert_ne!(new_root, dropped.root);
     }
 
     #[test]
     fn acquit_from_inbox_when_delivered_or_refunded() {
         // Mirrors `honest_relay_not_slashable_from_inbox` + the §7.5(d) acquit #guards: if
-        // the authenticated root reached the promise (delivered) OR a refund was recorded,
-        // the realizable adjudicator ACQUITS for ANY evidence, regardless of the claim.
+        // the box was delivered (witness set) OR a refund was recorded, the realizable
+        // adjudicator ACQUITS for ANY evidence, regardless of the claim.
         let (r, _sk) = demo_receipt();
         let new_root = r.new_root;
         let evidence = EvidenceOfDrop::from_receipt(r);
 
-        // Delivered inbox: root reached the promise.
-        let delivered_inbox = InboxState {
-            root: new_root,
-            refund_recorded: false,
-        };
+        // Delivered inbox: the box's content_hash was dequeued (witness set); root at promise.
+        let delivered = delivered_inbox(&evidence.receipt, new_root);
+        assert!(delivered.delivered_of(&evidence.receipt));
         assert!(matches!(
-            delivered_inbox.true_outcome(&evidence.receipt),
+            delivered.true_outcome(&evidence.receipt),
             CustodyOutcome::Delivered { .. }
         ));
         assert!(
-            !adjudicate_from_inbox(&evidence, &delivered_inbox),
+            !adjudicate_from_inbox(&evidence, &delivered),
             "delivery witnessed in the cell ⇒ acquit even on the drop-claim"
         );
 
-        // Refunded inbox: root short, but refund recorded.
-        let refunded_inbox = InboxState {
-            root: h(0x64),
-            refund_recorded: true,
-        };
+        // Refunded inbox: box not delivered, but refund recorded.
+        let refunded = refunded_inbox(&evidence.receipt, h(0x64));
         assert_eq!(
-            refunded_inbox.true_outcome(&evidence.receipt),
+            refunded.true_outcome(&evidence.receipt),
             CustodyOutcome::Refunded
         );
         assert!(
-            !adjudicate_from_inbox(&evidence, &refunded_inbox),
+            !adjudicate_from_inbox(&evidence, &refunded),
             "a recorded refund ⇒ acquit (accept-or-refund-by half, read off the cell)"
         );
     }
@@ -594,10 +666,7 @@ mod tests {
         // disputant's claimed_outcome AT ALL — two evidences with the same receipt + height
         // but arbitrarily different claims adjudicate identically against the same inbox.
         let (r, _sk) = demo_receipt();
-        let dropped_inbox = InboxState {
-            root: h(0x64),
-            refund_recorded: false,
-        };
+        let dropped = dropped_inbox(&r, h(0x64));
         let claim_drop = EvidenceOfDrop {
             receipt: r.clone(),
             claimed_outcome: CustodyOutcome::Dropped,
@@ -614,9 +683,9 @@ mod tests {
             at_height: 500,
         };
         // All three adjudicate identically against the genuine-drop inbox (all convict).
-        let v1 = adjudicate_from_inbox(&claim_drop, &dropped_inbox);
-        let v2 = adjudicate_from_inbox(&claim_delivered, &dropped_inbox);
-        let v3 = adjudicate_from_inbox(&claim_refunded, &dropped_inbox);
+        let v1 = adjudicate_from_inbox(&claim_drop, &dropped);
+        let v2 = adjudicate_from_inbox(&claim_delivered, &dropped);
+        let v3 = adjudicate_from_inbox(&claim_refunded, &dropped);
         assert_eq!(v1, v2);
         assert_eq!(v2, v3);
         assert!(v1, "the cell shows a drop ⇒ all convict regardless of the claim");
@@ -633,12 +702,9 @@ mod tests {
             ..r
         };
         let evidence = EvidenceOfDrop::from_receipt(forged);
-        let dropped_inbox = InboxState {
-            root: h(0x64),
-            refund_recorded: false,
-        };
+        let dropped = dropped_inbox(&evidence.receipt, h(0x64));
         assert!(
-            !adjudicate_from_inbox(&evidence, &dropped_inbox),
+            !adjudicate_from_inbox(&evidence, &dropped),
             "not well-formed ⇒ acquit regardless of the cell"
         );
     }
@@ -660,11 +726,8 @@ mod tests {
             500,
         );
         assert!(receipt.sig_verifies());
-        // 2. Recipient comes online; the inbox root advances to the promised root.
-        let inbox = InboxState {
-            root: promised_root,
-            refund_recorded: false,
-        };
+        // 2. Recipient comes online; the box is dequeued — the witness bit is set, root at promise.
+        let inbox = delivered_inbox(&receipt, promised_root);
         // 3. Even if SOMEONE files a drop dispute, the cell shows delivery ⇒ acquit.
         let dispute = EvidenceOfDrop::from_receipt(receipt);
         assert!(
@@ -689,16 +752,121 @@ mod tests {
             promised_root,
             500,
         );
-        // Deadline passed; inbox never advanced (the relay withheld), no refund.
-        let inbox = InboxState {
-            root: h(0x64),
-            refund_recorded: false,
-        };
+        // Deadline passed; box never dequeued (the relay withheld), no refund.
+        let inbox = dropped_inbox(&receipt, h(0x64));
         let dispute = EvidenceOfDrop::from_receipt(receipt);
         assert!(dispute.well_formed());
         assert!(
             adjudicate_from_inbox(&dispute, &inbox),
             "accepted-then-withheld: the relay is provably at fault"
+        );
+    }
+
+    // ── §7.5(c) THE OVERSHOOT/REORG TOOTH: the gap this change closes ──────────────
+
+    #[test]
+    fn overshoot_does_not_convict_a_delivered_relay() {
+        // THE MISSING TEST (the fidelity gap, now a tooth): a relay that DELIVERED and whose
+        // inbox root then GREW PAST the promised new_root (a later message / reorg / late
+        // block) is NOT convictable. Under the old strict `root == new_root` realization this
+        // FALSE-CONVICTED (the live root no longer equals the promise ⇒ read as Dropped); the
+        // sticky delivery-witness bit fixes it. Mirrors the Lean `overshoot_acquits` +
+        // `#guard adjudicateFromInbox (evidenceOfDrop demoReceipt) overshotInbox == false`.
+        let (r, _sk) = demo_receipt();
+        let new_root = r.new_root; // h(0x8E)
+        let overshot_root = h(0x99); // a DIFFERENT root: later activity advanced past the promise
+        assert_ne!(
+            overshot_root, new_root,
+            "the overshoot root must differ from the promise (that's the whole point)"
+        );
+
+        // The box WAS delivered (its content_hash is among the dequeued), but the live root
+        // overshot the promise. Built content-address-honestly via from_dequeue.
+        let overshot = delivered_inbox(&r, overshot_root);
+        assert!(
+            overshot.delivered_of(&r),
+            "the box was dequeued ⇒ the witness bit holds regardless of the live root"
+        );
+        // The realizable outcome is Delivered (to the live, overshot root), NOT Dropped.
+        assert!(matches!(
+            overshot.true_outcome(&r),
+            CustodyOutcome::Delivered { .. }
+        ));
+
+        let evidence = EvidenceOfDrop::from_receipt(r);
+        assert!(
+            evidence.well_formed(),
+            "the dispute is well-formed (own signature + deadline) — so only the cell saves the relay"
+        );
+        assert!(
+            !adjudicate_from_inbox(&evidence, &overshot),
+            "OVERSHOOT MUST ACQUIT: a delivered relay is not convicted when the root grew past the promise"
+        );
+
+        // The CONTRAST that pins the bug being fixed: the OLD strict-equality predicate
+        // (root == new_root) would have read this overshoot inbox as NOT delivered (and hence
+        // convicted), because the live root no longer equals the promise. The witness bit does
+        // not — this asserts the precise divergence the fix removes.
+        assert_ne!(
+            overshot.root, new_root,
+            "bare equality FAILS on overshoot (root != new_root)…"
+        );
+        assert!(
+            !adjudicate_from_inbox(&evidence, &overshot),
+            "…yet the witness-bit adjudicator ACQUITS — the false conviction is gone"
+        );
+    }
+
+    #[test]
+    fn overshoot_still_convicts_a_genuine_drop() {
+        // THE DUAL POLARITY (so the fix is not vacuously always-acquit): if the root grew by
+        // UNRELATED activity but THIS box was never delivered (witness unset) and no refund,
+        // the relay is STILL convicted. Overshoot robustness must not become a drop loophole.
+        // Mirrors the Lean `drop_conviction_survives_root_growth`.
+        let (r, _sk) = demo_receipt();
+        let grown_unrelated_root = h(0x99); // root advanced — but NOT by delivering this box
+        // No dequeue carried THIS box's content_hash ⇒ witness unset; no refund.
+        let still_dropped = dropped_inbox(&r, grown_unrelated_root);
+        assert!(
+            !still_dropped.delivered_of(&r),
+            "unrelated root growth does NOT witness THIS box's delivery"
+        );
+        assert_eq!(
+            still_dropped.true_outcome(&r),
+            CustodyOutcome::Dropped,
+            "not delivered + no refund ⇒ Dropped, even though the root moved"
+        );
+        let evidence = EvidenceOfDrop::from_receipt(r);
+        assert!(
+            adjudicate_from_inbox(&evidence, &still_dropped),
+            "a genuine drop stays convictable even as the root grows (no escape via unrelated activity)"
+        );
+    }
+
+    #[test]
+    fn from_dequeue_witness_is_content_addressed() {
+        // The witness bit is keyed on the BOX's content_hash, order-free: a dequeue of a
+        // DIFFERENT box does not witness THIS receipt's delivery (no cross-box false acquit),
+        // while a dequeue carrying this box's hash does — regardless of the live root.
+        let (r, _sk) = demo_receipt();
+        let other_box = h(0x77); // some other box that was delivered
+
+        // Only the other box was dequeued ⇒ THIS receipt's witness is unset ⇒ convictable.
+        let not_ours = InboxState::from_dequeue(&r, &[other_box], h(0x12), false);
+        assert!(!not_ours.delivered_of(&r));
+        let evidence = EvidenceOfDrop::from_receipt(r.clone());
+        assert!(
+            adjudicate_from_inbox(&evidence, &not_ours),
+            "another box's delivery must NOT acquit this relay (content-addressed witness)"
+        );
+
+        // Our box AND others were dequeued ⇒ witness set ⇒ acquitted, root irrelevant.
+        let ours_among_many =
+            InboxState::from_dequeue(&r, &[other_box, r.content_hash, h(0x55)], h(0x12), false);
+        assert!(ours_among_many.delivered_of(&r));
+        assert!(
+            !adjudicate_from_inbox(&evidence, &ours_among_many),
+            "this box's delivery (anywhere in the dequeued set) acquits, regardless of the live root"
         );
     }
 }

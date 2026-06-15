@@ -199,6 +199,11 @@ fn build_dregg2_archive(meta: &Path, sysroot: &Path, archive: &Path, out_dir: &P
         "Dregg2.Distributed.FinalityGate",
         "Dregg2.Distributed.StrandAdmission",
         "Dregg2.Exec.DistributedExports",
+        // The verified FLOW-REFINEMENT DECISION export (`dregg_decide_refines`) lives in
+        // `Dregg2.Deos.FlowRefine`, also OUTSIDE the FFI import closure. Build it so its `.c` IR is
+        // emitted and the `dregg_decide_refines` symbol is spliced in — the deploy gate
+        // (`dregg-deploy/src/refine.rs`) calls it to run the PROVEN `decideRefines` instead of a mirror.
+        "Dregg2.Deos.FlowRefine",
     ];
     let lake_status = Command::new("lake")
         .arg("build")
@@ -1013,6 +1018,7 @@ fn main() {
     println!("cargo::rustc-check-cfg=cfg(dregg_finalize_gate_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_strand_admit_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_distributed_exports_present)");
+    println!("cargo::rustc-check-cfg=cfg(dregg_decide_refines_present)");
 
     // ── PLATFORM GATE (polarity inversion, docs/FEATURE-HYGIENE.md §Lean): the link is
     // UNCONDITIONAL on native; the ONE opt-out is the `no-lean-link` platform feature, set
@@ -1204,6 +1210,24 @@ fn main() {
         );
     }
 
+    // The verified FLOW-REFINEMENT DECISION export (`dregg_decide_refines`) lives in
+    // `Dregg2.Deos.FlowRefine`, also OUTSIDE the FFI module's import closure. Same splice/probe
+    // discipline: once the module is `lake build`-t (it is in `lake_targets` above) its object is
+    // spliced in (the self-linking closure follows the C shim's `initialize_…_FlowRefine` ref) and
+    // the symbol appears; until then the `dregg_decide_refines_str` bridge is compiled out and
+    // `dregg-deploy/src/refine.rs` falls back to its in-process σ-free mirror of `decideRefines`.
+    let decide_refines_present = archive_exports(&build_archive, "dregg_decide_refines");
+    if decide_refines_present {
+        println!("cargo:rustc-cfg=dregg_decide_refines_present");
+    } else {
+        println!(
+            "cargo:warning=dregg-lean-ffi: libdregg_lean.a lacks `dregg_decide_refines` — \
+             the verified flow-refinement decision bridge is compiled out (dregg-deploy's refine \
+             gate falls back to its in-process mirror). Rebuild the archive (it splices \
+             Dregg2.Deos.FlowRefine) to run the PROVEN decideRefines at the deploy gate."
+        );
+    }
+
     // Compile the C init shim (it uses the `static inline` runtime helpers from
     // <lean/lean.h>, which have no linkable symbol and so must be used from C).
     //
@@ -1249,6 +1273,9 @@ fn main() {
     }
     if distributed_exports_present {
         shim.define("DREGG_DISTRIBUTED_EXPORTS", None);
+    }
+    if decide_refines_present {
+        shim.define("DREGG_DECIDE_REFINES", None);
     }
     // We drive the link with `rustc-link-lib` / `rustc-link-search` directives, NOT
     // `rustc-link-arg`. WHY: with the package's `links = "dregg_lean"` key, build-script

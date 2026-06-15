@@ -1637,6 +1637,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "deos-web-cells"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "dregg-types",
+ "starbridge-web-surface",
+]
+
+[[package]]
 name = "der"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2009,6 +2018,7 @@ dependencies = [
  "console",
  "dialoguer",
  "dirs",
+ "dregg-deploy",
  "ed25519-dalek",
  "getrandom 0.3.4",
  "hex",
@@ -2121,6 +2131,7 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "dregg-cell",
+ "dregg-lean-ffi",
  "dregg-turn",
  "dregg-types",
  "dregg-userspace-verify",
@@ -7391,6 +7402,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "blake3",
+ "deos-web-cells",
  "dregg-cell",
  "dregg-coord",
  "dregg-firmament",

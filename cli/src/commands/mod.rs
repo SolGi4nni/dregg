@@ -3,6 +3,7 @@ pub mod cap;
 pub mod cell;
 pub mod cipherclerk;
 pub mod demo;
+pub mod deploy;
 pub mod directory;
 pub mod doctor;
 pub mod federation;

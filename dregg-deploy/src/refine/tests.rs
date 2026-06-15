@@ -433,3 +433,141 @@ fn intent_trace_decision_agrees_with_the_decide_refines_game() {
         );
     }
 }
+
+// ════════════════════════════════════════════════════════════════════════════
+//  §F — THE FFI DIFFERENTIAL: the verified `@[export] dregg_decide_refines`
+//        agrees with the Lean `#guard`/`decideRefines_iff` AND with the
+//        in-process mirror, on BOTH polarities.
+//
+//  This is the load-bearing tooth of the Lean-FFI swap: `decide_refines` now
+//  routes through the PROVEN `FlowRefine.decideRefines` (via the Lean archive),
+//  and these tests pin that the wire round-trips and the verdict matches the
+//  Lean proof on the refining (the half) AND non-refining (the right-skew) case.
+//  When the archive is not linked the FFI is `decide_refines_gate_available()` ==
+//  false and we assert the documented fallback instead (so the test is never
+//  vacuously green — it checks the real path on native, the fallback elsewhere).
+// ════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn ffi_decide_refines_agrees_with_lean_both_polarities() {
+    let early = early_ex();
+    let late = late_ex();
+
+    if !dregg_lean_ffi::decide_refines_gate_available() {
+        // The archive lacks the export (wasm/zkvm/stale): the gate MUST still
+        // decide correctly via the σ-free mirror. Assert the fallback path here
+        // so this test exercises something real on every target.
+        assert!(
+            decide_refines(&early, &late),
+            "fallback: the half holds (early ≤ᶠ late)"
+        );
+        assert!(
+            !decide_refines(&late, &early),
+            "fallback: the right-skew fails (late ⋠ early)"
+        );
+        return;
+    }
+
+    // THE HALF (refining): early ≤ᶠ late ⟹ the verified export returns "1".
+    // Mirrors FlowRefine `#guard dregg_decide_refines (A=early;B=late) == "1"`.
+    let wire_half = super::refine_wire(&early, &late);
+    assert_eq!(
+        dregg_lean_ffi::shadow_decide_refines(&wire_half).unwrap(),
+        "1",
+        "the PROVEN dregg_decide_refines agrees with decideRefines_half (early ≤ᶠ late)"
+    );
+
+    // THE RIGHT-SKEW (non-refining): late ⋠ early ⟹ the verified export returns "0".
+    // Mirrors FlowRefine `#guard dregg_decide_refines (A=late;B=early) == "0"`.
+    let wire_skew = super::refine_wire(&late, &early);
+    assert_eq!(
+        dregg_lean_ffi::shadow_decide_refines(&wire_skew).unwrap(),
+        "0",
+        "the PROVEN dregg_decide_refines agrees with decideRefines_rightskew (late ⋠ early)"
+    );
+
+    // The high-level gate (which routes through the FFI) returns the same verdicts.
+    assert!(decide_refines(&early, &late), "gate via FFI: the half holds");
+    assert!(
+        !decide_refines(&late, &early),
+        "gate via FFI: the right-skew fails"
+    );
+
+    // THE DIFFERENTIAL: the verified FFI verdict EQUALS the in-process σ-free
+    // mirror, on both polarities (and a few more shapes) — they decide identically
+    // because the game is σ-free (FlowRefine §3). This is the agreement tooth.
+    let cases: &[(Proc, Proc)] = &[
+        (early.clone(), late.clone()),
+        (late.clone(), early.clone()),
+        (early.clone(), early.clone()),
+        (Proc::Emit(1), Proc::Emit(2)),
+        (Proc::Emit(1), ch(Proc::Emit(1), Proc::Emit(2))),
+        (ch(Proc::Emit(1), Proc::Emit(2)), Proc::Emit(1)),
+    ];
+    for (a, b) in cases {
+        let ffi = dregg_lean_ffi::shadow_decide_refines(&super::refine_wire(a, b)).unwrap();
+        let ffi_bool = ffi == "1";
+        let mirror = super::decide_refines_mirror(a, b);
+        assert_eq!(
+            ffi_bool, mirror,
+            "FFI verdict ({ffi}) must equal the σ-free mirror for {a:?} ≤ᶠ {b:?}"
+        );
+    }
+}
+
+#[test]
+fn ffi_fail_closed_on_malformed_wire() {
+    if !dregg_lean_ffi::decide_refines_gate_available() {
+        return; // nothing to drive across the boundary without the export
+    }
+    // A malformed wire is fail-closed to "ERR" (mirrors the FlowRefine `#guard`s).
+    assert_eq!(
+        dregg_lean_ffi::shadow_decide_refines("not a wire").unwrap(),
+        "ERR",
+        "a non-wire is rejected by the verified gate (fail-closed)"
+    );
+    assert_eq!(
+        dregg_lean_ffi::shadow_decide_refines("A=e1;B=e2 e3").unwrap(),
+        "ERR",
+        "a leftover token on the B side is rejected (fail-closed)"
+    );
+}
+
+#[test]
+fn ffi_decides_a_real_deploy_widening_as_non_refinement() {
+    // The end-to-end tooth: a real lowered deploy flow (BASE) vs its WIDENING,
+    // decided through the verified FFI, is a NON-refinement — exactly what the
+    // safe-upgrade gate must reject. (When the archive is absent, the gate's
+    // mirror decides it; either way `refines_upgrade` is the public path.)
+    let base = plan_apply_toml(BASE, false).unwrap();
+    let widened = plan_apply_toml(WIDENED, false).unwrap();
+    let new_flow = flow_of_plan(&widened);
+    let old_flow = flow_of_plan(&base);
+
+    // widened ⋠ base: the verified decision (or its faithful mirror) rejects it.
+    assert!(
+        !decide_refines(&new_flow, &old_flow),
+        "the widening is NOT a refinement of the running deployment"
+    );
+    // …and the reflexive direction holds (base ≤ᶠ base) — a sanity both-polarity pin.
+    assert!(
+        decide_refines(&old_flow, &old_flow),
+        "a deployment refines itself (reflexive)"
+    );
+
+    if dregg_lean_ffi::decide_refines_gate_available() {
+        // Pin that it is genuinely the FFI returning these verdicts on the deploy wire.
+        assert_eq!(
+            dregg_lean_ffi::shadow_decide_refines(&super::refine_wire(&new_flow, &old_flow))
+                .unwrap(),
+            "0",
+            "verified FFI: widened ⋠ base"
+        );
+        assert_eq!(
+            dregg_lean_ffi::shadow_decide_refines(&super::refine_wire(&old_flow, &old_flow))
+                .unwrap(),
+            "1",
+            "verified FFI: base ≤ᶠ base"
+        );
+    }
+}

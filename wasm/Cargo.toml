@@ -84,6 +84,23 @@ dregg-token = { path = "../token", default-features = false, features = ["macaro
 # carries the light client.
 dregg-lightclient = { path = "../lightclient" }
 
+# TRANSCLUSION IN THE TAB — Xanadu made honest, carried to the browser. The REAL
+# `dregg://` finalized read NAMED as Ted Nelson's transcluded quote
+# (`starbridge_web_surface::transclusion::TranscludedField::include` + the
+# `WebOfCells` resolve/render path + the SNAPSHOT/LIVE dial). `bindings_transclusion`
+# exposes the `#[wasm_bindgen]` entry the playground's `transclusion.js` drives:
+# transclude a span → amend the source → the quote updates live → attempt a forge →
+# it REFUSES with `FetchError::ContentHashMismatch`.
+#
+# This is the resolve/render path ONLY — it pulls `dregg-firmament` (whose deps are
+# JUST `dregg-cell`/`dregg-turn`/`dregg-types`, all already in this graph; the
+# `process-pd` libc backing is off), NOT the circuit prover or the recursion path
+# (those ride `dregg-lightclient` above, untouched). `default-features = false` drops
+# the cockpit `stream`/`futures-core` edge, which the pure resolve path never needs.
+# The single `dregg-turn` instance unifies `no-lean-link` (this graph's pin) across
+# firmament's plain dep — the same already-proven wasm executor `web-surface.js` runs.
+starbridge-web-surface = { path = "../starbridge-web-surface", default-features = false }
+
 blake3 = "1"
 bs58 = "0.5"
 base64 = "0.22"

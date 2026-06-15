@@ -402,12 +402,24 @@ disputant's word?** A `claimedOutcome` is an assertion; if the adjudicator belie
 disputant could slash an honest relay (and an honest disputant could never convict a lying relay).
 
 This section closes that. The adjudicator does NOT consult the disputant's claim; it reads the
-inbox cell's OWN authenticated state — the same monotone root cursor `Exec.CapInbox` proves only
-ever advances (`inbox_fifo`: `head` is `monotonic`, never retreats). The receipt promised the inbox
-root would reach `newRoot`; the authenticated root either reached it (delivery is WITNESSED in the
-cell) or it did not (a drop). The verdict becomes a FUNCTION of the cell, removing the disputant
-from the trust path entirely. This is the realizable adjudicator `POST /relay/dispute` actually
-runs against the inbox cell's root — the prose claim of §2/§4, now a theorem.
+inbox cell's OWN authenticated state — specifically a sticky DELIVERY-WITNESS bit ("was THIS box,
+bound by `receipt.contentHash`, delivered?"). The verdict becomes a FUNCTION of the cell, removing
+the disputant from the trust path entirely. This is the realizable adjudicator `POST /relay/dispute`
+actually runs against the inbox cell — the prose claim of §2/§4, now a theorem.
+
+WHY A WITNESS BIT, NOT ROOT EQUALITY (the overshoot/reorg fidelity gap, closed). The inbox root is a
+MONOTONE cursor `Exec.CapInbox` proves only ever advances (`inbox_fifo`: `head` is `monotonic`).
+In this idealized model a `Root` is a `Nat`, so "delivery witnessed" is `root ≥ newRoot` — and a
+later root that OVERSHOT the promise (a reorg, a late block, a LATER message) still witnesses THIS
+delivery. But the REALIZABLE inbox root is an opaque content-address with NO order: the only
+realizable analogue of `≥` is exact equality `root = newRoot`, which DROPS the overshoot case — an
+inbox whose root advanced past the promise no longer equals it and would FALSELY read as `dropped`,
+convicting a relay that delivered. So the cell exposes an explicit, sticky, content-address-honest
+witness bit (set when the box's `contentHash` is dequeued toward the recipient — a `DequeueProof`),
+and the verdict reads THAT. `deliveredWitness_from_root_overshoot`/`overshoot_acquits` reconcile the
+two: in the idealized model the witness equals the monotone-root reading `root ≥ newRoot` (overshoot
+included), and the realizable Rust adjudicator (`captp/src/custody.rs`) mirrors the witness bit
+field-for-field, so Lean and Rust AGREE on overshoot — neither false-convicts a delivered relay.
 
 The tie to the identity-execution-cursor: because the inbox root is MONOTONE (the `CapInbox`
 `head`/Merkle root only advances — `inbox_fifo`), a delivery once witnessed CANNOT be erased by a
@@ -416,36 +428,73 @@ later state advance or a store-and-forward prefix reorg. Delivery is permanent; 
 -/
 
 /-- **`InboxState`** — exactly what the adjudication cell READS to establish the true custody
-outcome: the inbox's authenticated, MONOTONE root (the `CapInbox` `head` / Merkle root, which
-`inbox_fifo` proves only ever advances) at the dispute height, plus `refundRecorded` — the bit set
-by the relay's authenticated refund move (the `accept-OR-refund-by` other half). The disputant's
-`claimedOutcome` is NOT here: the adjudicator does not read it. -/
+outcome. Two authenticated bits PLUS the live root:
+
+  * `deliveredWitness` — **the DELIVERY-WITNESS bit: "was THIS box delivered?"** Set by the inbox
+    cell when the box bound by the receipt (its `contentHash`) leaves the queue toward the recipient
+    — concretely, a `MerkleQueue` dequeue whose `entry.content_hash = receipt.contentHash`. This is
+    the realizable, content-address-HONEST signal of delivery, and it is **STICKY**: once the box
+    has been delivered, the cell records it permanently, so no later root movement can un-witness it.
+  * `refundRecorded`  — the relay recorded a refund before the deadline (the `accept-OR-refund-by`
+    other half), an authenticated cell event.
+  * `root`           — the inbox's authenticated MONOTONE root at the dispute height (`CapInbox.head`
+    / Merkle root, which `inbox_fifo` proves only ever advances). Carried so the realizable model can
+    DERIVE the witness in the idealized Nat-root setting (`deliveredOf` below) and so the
+    monotone-cursor reasoning is exhibited; but the verdict reads the witness bit, never bare root
+    equality (which the §7.5(c) overshoot tooth shows is WRONG — see `deliveredWitness_sticky`).
+
+The disputant's `claimedOutcome` is NOT here: the adjudicator does not read it.
+
+WHY THE WITNESS BIT AND NOT ROOT-EQUALITY. In the idealized model a `Root` is a `Nat` and "reached"
+is `≥`, so delivery-then-further-activity (`root ≥ newRoot`) still witnesses delivery. But the
+REALIZABLE inbox root is an opaque content-address ([u8;32]) with NO order: the only realizable
+analogue of `≥` is exact equality `root = newRoot`, and that DROPS the overshoot/reorg case — an
+inbox whose root advanced PAST the promised `newRoot` (a later box enqueued/dequeued) no longer
+equals it and would read as `dropped`, FALSELY convicting a relay that delivered. The explicit
+sticky witness bit is the fix that makes the Lean model and the Rust adjudicator (`custody.rs`)
+AGREE on content-addresses: both read "was this box delivered?", not "does the live root equal a
+past promise?". -/
 structure InboxState where
-  /-- The inbox's authenticated root at the dispute height (`CapInbox.head`/Merkle root). MONOTONE:
-      once it reaches a value it never retreats (the cursor discipline of `inbox_fifo`). -/
-  root           : Root
+  /-- THE DELIVERY-WITNESS bit: the cell recorded that THIS box (`receipt.contentHash`) was delivered
+      to the recipient (dequeued from the inbox). STICKY: never retracted once set. -/
+  deliveredWitness : Bool
   /-- The relay recorded a refund before the deadline (an authenticated cell event). -/
-  refundRecorded : Bool
+  refundRecorded   : Bool
+  /-- The inbox's authenticated root at the dispute height (`CapInbox.head`/Merkle root). MONOTONE:
+      once it reaches a value it never retreats (the cursor discipline of `inbox_fifo`). Carried for
+      the idealized-model derivation `deliveredOf`; the verdict reads `deliveredWitness`, not this. -/
+  root             : Root
   deriving DecidableEq, Repr, Inhabited
 
 /-- **`rootReached inbox promised`** — the inbox's authenticated root has reached (or passed) the
-`promised` root. Because the root is a monotone cursor, "reached or passed" is the right notion:
-once delivery advances the root to `newRoot`, subsequent inbox activity only pushes it FURTHER, so a
-later root `≥ newRoot` still witnesses that THIS delivery happened. (A drop leaves the root short of
-`newRoot` forever, since nothing else advances it to that promise.) -/
+`promised` root. In the IDEALIZED Nat-root model "reached or passed" is `≥`: once delivery advances
+the root to `newRoot`, subsequent inbox activity only pushes it FURTHER, so a later root `≥ newRoot`
+still witnesses that THIS delivery happened. This is the lens through which the realizable
+`deliveredWitness` bit is DERIVED in the idealized setting (`deliveredOf`); it is NOT itself the
+realizable predicate, because a content-address root has no `≥` (see `InboxState`). -/
 def rootReached (inbox : InboxState) (promised : Root) : Bool :=
   decide (inbox.root ≥ promised)
+
+/-- **`deliveredOf r inbox`** — the realizable delivery-witness bit, READ from the cell. This is the
+single source of truth the verdict consults. In a faithful realizable inbox it is set exactly when
+the box bound by `r` (its `contentHash`) was dequeued toward the recipient; the idealized model below
+exhibits it as `inbox.deliveredWitness`, and `deliveredWitness_from_root_overshoot` shows it agrees
+with the monotone-root reading on the overshoot case (where bare equality would FAIL). -/
+def deliveredOf (_r : CustodyReceipt) (inbox : InboxState) : Bool :=
+  inbox.deliveredWitness
 
 /-- **`trueOutcomeFromInbox r inbox`** — the custody outcome DERIVED from the authenticated inbox
 state for receipt `r`. NOT the disputant's claim: a verified fact read off the cell.
 
-  * if the authenticated root reached the promised `newRoot` → `delivered inbox.root` (the box was
-    appended; the cursor witnesses it). HONEST.
+  * if the DELIVERY-WITNESS bit is set for this box → `delivered inbox.root` (the box left the queue
+    toward the recipient; the cell witnesses it — STICKY, so this survives any later root movement).
+    HONEST.
   * else if the relay recorded a refund → `refunded`. HONEST.
-  * else → `dropped`: the deadline passed, the root never reached the promise, and no refund was
-    recorded. DISHONEST — and established WITHOUT trusting anyone's word. -/
+  * else → `dropped`: the deadline passed, the box was never delivered, and no refund was recorded.
+    DISHONEST — and established WITHOUT trusting anyone's word, and WITHOUT the brittle root-equality
+    that broke on overshoot. -/
 def trueOutcomeFromInbox (r : CustodyReceipt) (inbox : InboxState) : CustodyOutcome :=
-  if rootReached inbox r.newRoot then .delivered inbox.root
+  if deliveredOf r inbox then .delivered inbox.root
   else if inbox.refundRecorded then .refunded
   else .dropped
 
@@ -455,53 +504,99 @@ no disputant claim is consulted. (`adjudicate e (trueOutcomeFromInbox e.receipt 
 def adjudicateFromInbox (e : EvidenceOfDrop) (inbox : InboxState) : Bool :=
   adjudicate e (trueOutcomeFromInbox e.receipt inbox)
 
-/-- **`root_short_is_dropped`** — if the authenticated root did NOT reach the promise and no refund
-was recorded, the derived outcome is `dropped`. (The cell-read drop predicate.) -/
-theorem root_short_is_dropped (r : CustodyReceipt) (inbox : InboxState)
-    (hshort : rootReached inbox r.newRoot = false) (hnorefund : inbox.refundRecorded = false) :
+/-- **`not_delivered_is_dropped`** — if the DELIVERY-WITNESS bit is NOT set and no refund was
+recorded, the derived outcome is `dropped`. (The cell-read drop predicate, on the witness bit — no
+brittle root equality.) -/
+theorem not_delivered_is_dropped (r : CustodyReceipt) (inbox : InboxState)
+    (hshort : deliveredOf r inbox = false) (hnorefund : inbox.refundRecorded = false) :
     trueOutcomeFromInbox r inbox = .dropped := by
   simp [trueOutcomeFromInbox, hshort, hnorefund]
 
-/-- **`root_reached_is_honest`** — if the authenticated root reached the promised `newRoot`, the
-derived outcome is HONEST (`outcomeHonest` — a `delivered` to the cell's root, which is ≥ the
-promise; the relay effected the promised transition). The cell-read delivery predicate. Note the
-relay is honest for delivering to `inbox.root` (the live root) precisely because the root reached
-the promise; the §3 `outcomeHonest`'s exact-root check is the special case `inbox.root = newRoot`,
-and the monotone-cursor reading generalizes it to `inbox.root ≥ newRoot` (delivery then further
-activity). -/
-theorem root_reached_is_honest (r : CustodyReceipt) (inbox : InboxState)
-    (hreached : rootReached inbox r.newRoot = true) (hat : inbox.root = r.newRoot) :
+/-- **`delivered_is_honest`** — if the DELIVERY-WITNESS bit is set, the derived outcome is HONEST
+(`outcomeHonest` — a `delivered` to the cell's live root). The cell-read delivery predicate. The
+relay is honest for delivering to `inbox.root` (the live root, which by the monotone cursor is the
+promise or beyond) precisely because the box was witnessed delivered; the §3 `outcomeHonest`'s
+exact-root check is the special case `inbox.root = newRoot`, and the witness-bit reading generalizes
+it to the realizable "this box left the queue" (delivery, then arbitrary further activity — incl.
+overshoot). -/
+theorem delivered_is_honest (r : CustodyReceipt) (inbox : InboxState)
+    (hwitness : deliveredOf r inbox = true) (hat : inbox.root = r.newRoot) :
     outcomeHonest r (trueOutcomeFromInbox r inbox) = true := by
-  simp [trueOutcomeFromInbox, hreached, outcomeHonest, hat]
+  simp [trueOutcomeFromInbox, hwitness, outcomeHonest, hat]
 
-/-! ### §7.5(a) — THE GAP-CLOSING KEYSTONE: conviction iff the authenticated root fell short. -/
+/-! ### §7.5(a′) — THE RECONCILIATION: the witness bit AGREES with the monotone-root reading,
+INCLUDING the overshoot case where bare root-equality fails. This is the precise theorem that ties
+the idealized Nat-root model to the realizable content-address adjudicator (`custody.rs`). -/
 
-/-- **`conviction_iff_root_short` (the realizable-adjudicator keystone).**
+/-- **`deliveredOf`** is `inbox.deliveredWitness` by definition — the verdict reads the explicit,
+sticky, content-address-honest witness bit, NOT root equality. (Stated as a lemma so the reconciliation
+theorems can rewrite with it.) -/
+theorem deliveredOf_eq_witness (r : CustodyReceipt) (inbox : InboxState) :
+    deliveredOf r inbox = inbox.deliveredWitness := rfl
+
+/-- **`deliveredWitness_from_root_overshoot` (THE OVERSHOOT RECONCILIATION).**
+
+In a faithful realizable inbox the witness bit is set exactly when the box was delivered, which (in
+the idealized Nat-root model) is exactly when the monotone root REACHED OR PASSED the promise —
+`rootReached`, i.e. `root ≥ newRoot`, NOT `root = newRoot`. So if the cell faithfully derives its
+witness from the monotone root (`inbox.deliveredWitness = rootReached inbox r.newRoot`), then a root
+that OVERSHOT the promise (`root > newRoot`, the reorg / late-block / later-message case) STILL reads
+as delivered. This is the exact case the brittle Rust `root == new_root` equality DROPPED — here it
+holds, because the witness bit tracks `≥`, not `=`. The realizable Rust adjudicator gets the same
+robustness by setting its witness bit from a dequeue of the box (a `DequeueProof` whose
+`entry.content_hash = receipt.content_hash`), which is likewise sticky and order-free. -/
+theorem deliveredWitness_from_root_overshoot (r : CustodyReceipt) (inbox : InboxState)
+    (hfaithful : inbox.deliveredWitness = rootReached inbox r.newRoot)
+    (hovershoot : inbox.root > r.newRoot) :
+    deliveredOf r inbox = true := by
+  rw [deliveredOf_eq_witness, hfaithful]
+  unfold rootReached
+  exact decide_eq_true (Nat.le_of_lt hovershoot)
+
+/-- **`overshoot_acquits` (the gap, CLOSED, as a verdict).** A relay whose box was delivered and
+whose inbox root then OVERSHOT the promise (later activity) is ACQUITTED by the realizable adjudicator
+— for any evidence, regardless of the disputant's claim. This is the precise FALSE-CONVICTION the
+strict-equality realization produced (`root != new_root ⇒ dropped`); the witness bit removes it. -/
+theorem overshoot_acquits (e : EvidenceOfDrop) (inbox : InboxState)
+    (hfaithful : inbox.deliveredWitness = rootReached inbox e.receipt.newRoot)
+    (hovershoot : inbox.root > e.receipt.newRoot) :
+    adjudicateFromInbox e inbox = false := by
+  have hwit : deliveredOf e.receipt inbox = true :=
+    deliveredWitness_from_root_overshoot e.receipt inbox hfaithful hovershoot
+  unfold adjudicateFromInbox adjudicate trueOutcomeFromInbox
+  rw [if_pos hwit]; simp
+
+/-! ### §7.5(a) — THE GAP-CLOSING KEYSTONE: conviction iff the box was NOT delivered (witness bit). -/
+
+/-- **`conviction_iff_not_delivered` (the realizable-adjudicator keystone).**
 
 For a well-formed dispute (`wellFormed e` — the relay's own signature + the deadline passed), the
-adjudicator's verdict computed FROM THE INBOX CELL is `slash` IFF the inbox's authenticated root did
-NOT reach the promised `newRoot` AND no refund was recorded. The conviction is a pure FUNCTION of
-the authenticated cell state: the relay is slashed exactly when the cell shows the promise unmet.
-Neither the relay nor the disputant can move this verdict — it reads only the monotone root and the
-refund bit, both authenticated. This is the prose claim of §2/§4 ("decided on the VERIFIED true
-outcome, as established by the inbox cell's authenticated state") discharged as a theorem. -/
-theorem conviction_iff_root_short (e : EvidenceOfDrop) (inbox : InboxState)
+adjudicator's verdict computed FROM THE INBOX CELL is `slash` IFF the inbox's DELIVERY-WITNESS bit
+is NOT set for this box AND no refund was recorded. The conviction is a pure FUNCTION of the
+authenticated cell state: the relay is slashed exactly when the cell shows the box was neither
+delivered nor refunded. Neither the relay nor the disputant can move this verdict — it reads only the
+sticky witness bit and the refund bit, both authenticated. Reading the witness bit (not root
+equality) is what makes this robust to overshoot/reorg: an inbox whose root advanced PAST the promise
+is NOT convicted, because the box was witnessed delivered (see `overshoot_acquits`). This is the
+prose claim of §2/§4 ("decided on the VERIFIED true outcome, as established by the inbox cell's
+authenticated state") discharged as a theorem. -/
+theorem conviction_iff_not_delivered (e : EvidenceOfDrop) (inbox : InboxState)
     (hwf : wellFormed e = true) :
     adjudicateFromInbox e inbox = true
-      ↔ (rootReached inbox e.receipt.newRoot = false ∧ inbox.refundRecorded = false) := by
+      ↔ (deliveredOf e.receipt inbox = false ∧ inbox.refundRecorded = false) := by
   unfold adjudicateFromInbox adjudicate
   rw [hwf, Bool.true_and]
   unfold trueOutcomeFromInbox
   constructor
-  · -- slash ⇒ the derived outcome is `dropped`, which forces root-short ∧ no-refund.
+  · -- slash ⇒ the derived outcome is `dropped`, which forces not-delivered ∧ no-refund.
     intro hslash
-    by_cases hr : rootReached inbox e.receipt.newRoot = true
+    by_cases hr : deliveredOf e.receipt inbox = true
     · rw [if_pos hr] at hslash; exact absurd hslash (by simp)
     · rw [Bool.not_eq_true] at hr
       by_cases hf : inbox.refundRecorded = true
       · rw [if_neg (by simp [hr]), if_pos hf] at hslash; exact absurd hslash (by simp)
       · rw [Bool.not_eq_true] at hf; exact ⟨hr, hf⟩
-  · -- root-short ∧ no-refund ⇒ derived outcome is `dropped` ⇒ slash.
+  · -- not-delivered ∧ no-refund ⇒ derived outcome is `dropped` ⇒ slash.
     rintro ⟨hr, hf⟩
     rw [if_neg (by simp [hr]), if_neg (by simp [hf])]
     decide
@@ -525,78 +620,85 @@ theorem disputant_claim_irrelevant (r : CustodyReceipt) (h : Height) (inbox : In
 
 /-- **`honest_relay_not_slashable_from_inbox` (the no-false-conviction half, REALIZED).**
 
-If the inbox's authenticated root reached the promised `newRoot` (the relay DELIVERED — witnessed in
+If the inbox's DELIVERY-WITNESS bit is set (the relay DELIVERED — the box left the queue, witnessed in
 the cell) OR a refund was recorded (the relay REFUNDED), then the realizable adjudicator ACQUITS, for
 ANY evidence whatsoever — regardless of what the disputant claims, regardless of the dispute height.
 An honest relay is safe because the cell's authenticated state acquits it; the disputant's
 fabricated `dropped` claim is powerless. This is `honest_relay_not_slashable` with the oracle
 REPLACED by the actual inbox-cell read — the gap is closed. -/
 theorem honest_relay_not_slashable_from_inbox (e : EvidenceOfDrop) (inbox : InboxState)
-    (hhonest : rootReached inbox e.receipt.newRoot = true ∨ inbox.refundRecorded = true) :
+    (hhonest : deliveredOf e.receipt inbox = true ∨ inbox.refundRecorded = true) :
     adjudicateFromInbox e inbox = false := by
   unfold adjudicateFromInbox adjudicate trueOutcomeFromInbox
   rcases hhonest with hr | hf
   · -- delivered: derived outcome is `delivered _`, not `dropped` ⇒ acquit.
     rw [if_pos hr]; simp
   · -- refunded (or delivered): in either case not `dropped` ⇒ acquit.
-    by_cases hr : rootReached inbox e.receipt.newRoot = true
+    by_cases hr : deliveredOf e.receipt inbox = true
     · rw [if_pos hr]; simp
     · rw [Bool.not_eq_true] at hr; rw [if_neg (by simp [hr]), if_pos hf]; simp
 
-/-! ### §7.5(c) — the MONOTONE-CURSOR tooth: a witnessed delivery cannot be erased (prefix-reorg
-robustness, the identity-execution-cursor tie). -/
+/-! ### §7.5(c) — the STICKY-WITNESS tooth: a witnessed delivery cannot be erased (prefix-reorg
+robustness, the identity-execution-cursor tie). The witness bit is STICKY (never retracted), which is
+the realizable, content-address-honest form of the monotone-cursor guarantee — it survives ANY root
+movement, including the OVERSHOOT that broke the bare root-equality realization. -/
 
-/-- **`monotone_root_no_erased_delivery` (the delay-tolerance / prefix-reorg tooth).**
+/-- **`sticky_witness_no_erased_delivery` (the delay-tolerance / prefix-reorg tooth).**
 
-The inbox root is a MONOTONE cursor (`CapInbox.inbox_fifo`: `head` never retreats). So once the
-authenticated root reaches the promised `newRoot` (delivery witnessed), ANY later authenticated root
-— which can only be `≥` the current one — STILL witnesses delivery (`rootReached` stays `true`), and
-the relay STILL acquits. Concretely: a store-and-forward prefix reorg, a late-arriving block, or any
-subsequent inbox activity that advances the root cannot RETROACTIVELY convict a relay that already
-delivered. Delivery is permanent because the cursor is append-only — the exactly-once /
-identity-execution-cursor guarantee, at the custody-accountability altitude. -/
-theorem monotone_root_no_erased_delivery (e : EvidenceOfDrop) (inbox inbox' : InboxState)
-    (hreached : rootReached inbox e.receipt.newRoot = true)
-    (hmono : inbox.root ≤ inbox'.root) :
-    rootReached inbox' e.receipt.newRoot = true ∧ adjudicateFromInbox e inbox' = false := by
-  have hr' : rootReached inbox' e.receipt.newRoot = true := by
-    unfold rootReached at hreached ⊢
-    rw [decide_eq_true_eq] at hreached ⊢
-    exact le_trans hreached hmono
+The DELIVERY-WITNESS bit is STICKY: once the cell records the box as delivered it never retracts that
+(`inbox.deliveredWitness = true → inbox'.deliveredWitness = true` for any successor cell state). This
+is the realizable form of the `CapInbox.inbox_fifo` monotone-cursor guarantee — delivery is an
+append-only, irreversible fact. So once the box is witnessed delivered, ANY later cell state STILL
+witnesses delivery and the relay STILL acquits. Concretely: a store-and-forward prefix reorg, a
+late-arriving block, a LATER message advancing the root PAST the promise (`overshoot`), or any
+subsequent inbox activity cannot RETROACTIVELY convict a relay that already delivered. This is the
+property the strict `root == new_root` realization SILENTLY DROPPED; the sticky witness bit restores
+it on real content-address roots. -/
+theorem sticky_witness_no_erased_delivery (e : EvidenceOfDrop) (inbox inbox' : InboxState)
+    (hwitness : deliveredOf e.receipt inbox = true)
+    (hsticky : inbox.deliveredWitness = true → inbox'.deliveredWitness = true) :
+    deliveredOf e.receipt inbox' = true ∧ adjudicateFromInbox e inbox' = false := by
+  have hr' : deliveredOf e.receipt inbox' = true := by
+    rw [deliveredOf_eq_witness] at hwitness ⊢
+    exact hsticky hwitness
   exact ⟨hr', honest_relay_not_slashable_from_inbox e inbox' (Or.inl hr')⟩
 
 /-- **`drop_conviction_survives_root_growth`** — the DUAL: a genuine drop stays convictable even as
-the inbox root grows, SO LONG AS it never reaches the promise. If the authenticated root is short of
-`newRoot` and no refund was recorded, then for any later root that is STILL short (the box was never
-delivered), a well-formed dispute STILL convicts. A relay cannot escape conviction by unrelated inbox
-activity that advances the root but never to ITS promised transition. -/
+the inbox root grows, SO LONG AS the box is STILL not delivered. If the witness bit is unset and no
+refund was recorded, then for any later cell state in which the box is STILL un-delivered, a
+well-formed dispute STILL convicts. A relay cannot escape conviction by unrelated inbox activity that
+advances the root but never delivers ITS box. -/
 theorem drop_conviction_survives_root_growth (e : EvidenceOfDrop) (inbox' : InboxState)
     (hwf : wellFormed e = true)
-    (hstillshort : rootReached inbox' e.receipt.newRoot = false)
+    (hstillnotdelivered : deliveredOf e.receipt inbox' = false)
     (hnorefund : inbox'.refundRecorded = false) :
     adjudicateFromInbox e inbox' = true :=
-  (conviction_iff_root_short e inbox' hwf).mpr ⟨hstillshort, hnorefund⟩
+  (conviction_iff_not_delivered e inbox' hwf).mpr ⟨hstillnotdelivered, hnorefund⟩
 
 /-! ### §7.5(d) — NON-VACUITY for the realizable adjudicator (accepts a real drop, acquits a real
 delivery, and the claim is provably inert). -/
 
-/-- An inbox whose authenticated root reached the promise (delivery witnessed): root 142 ≥ 142. -/
-def deliveredInbox : InboxState := { root := 142, refundRecorded := false }
-/-- An inbox whose root FELL SHORT and no refund recorded (a genuine drop): root 100 < 142. -/
-def droppedInbox : InboxState := { root := 100, refundRecorded := false }
-/-- An inbox where the relay REFUNDED (root short, but refund recorded): honest. -/
-def refundedInbox : InboxState := { root := 100, refundRecorded := true }
-/-- An inbox whose root advanced PAST the promise by later activity (143 > 142): delivery still
-witnessed (monotone cursor — the reorg/late-block case). -/
-def overshotInbox : InboxState := { root := 143, refundRecorded := false }
+-- The demo inboxes set `deliveredWitness` FAITHFULLY to the monotone-root reading
+-- (`deliveredWitness = rootReached`, i.e. `root ≥ newRoot = 142`), then the verdict reads the
+-- witness bit. The overshoot inbox is the load-bearing one: root 143 > 142, witness STILL true.
+/-- An inbox whose box was delivered (witness set), root exactly at the promise: root 142 = 142. -/
+def deliveredInbox : InboxState := { deliveredWitness := true, refundRecorded := false, root := 142 }
+/-- An inbox whose box was NOT delivered, no refund (a genuine drop): witness false, root short 100. -/
+def droppedInbox : InboxState := { deliveredWitness := false, refundRecorded := false, root := 100 }
+/-- An inbox where the relay REFUNDED (not delivered, but refund recorded): honest. -/
+def refundedInbox : InboxState := { deliveredWitness := false, refundRecorded := true, root := 100 }
+/-- THE OVERSHOOT inbox: the box WAS delivered (witness true) and the root then advanced PAST the
+promise by later activity (143 > 142). The strict `root == new_root` realization read this as DROPPED
+(a FALSE conviction); the sticky witness bit reads it as DELIVERED. The reorg/late-block case. -/
+def overshotInbox : InboxState := { deliveredWitness := true, refundRecorded := false, root := 143 }
 
--- ACCEPT (cell-derived conviction): the authenticated root fell short, no refund ⇒ the realizable
+-- ACCEPT (cell-derived conviction): the box was NOT delivered, no refund ⇒ the realizable
 -- adjudicator SLASHES — established from the inbox cell, NOT from the disputant's claim.
 #guard adjudicateFromInbox (evidenceOfDrop demoReceipt) droppedInbox == true
 #guard trueOutcomeFromInbox demoReceipt droppedInbox == CustodyOutcome.dropped
 
--- ACQUIT (cell-derived delivery): the authenticated root reached the promise ⇒ acquit, EVEN on the
--- disputant's drop-claim. The honest relay is safe against the cell.
+-- ACQUIT (cell-derived delivery): the witness bit is set ⇒ acquit, EVEN on the disputant's
+-- drop-claim. The honest relay is safe against the cell.
 #guard adjudicateFromInbox (evidenceOfDrop demoReceipt) deliveredInbox == false
 #guard trueOutcomeFromInbox demoReceipt deliveredInbox == CustodyOutcome.delivered 142
 
@@ -604,11 +706,19 @@ def overshotInbox : InboxState := { root := 143, refundRecorded := false }
 -- the cell).
 #guard adjudicateFromInbox (evidenceOfDrop demoReceipt) refundedInbox == false
 
--- ACQUIT (monotone cursor — the prefix-reorg tooth): the root OVERSHOT the promise (143 > 142);
--- delivery is STILL witnessed (the cursor only advances) ⇒ acquit. A late block / reorg cannot
--- un-deliver.
+-- ACQUIT (THE OVERSHOOT / prefix-reorg tooth — THE GAP CLOSED): the root OVERSHOT the promise
+-- (143 > 142) but the box was witnessed delivered ⇒ acquit. A late block / reorg / later message
+-- cannot un-deliver. This is the EXACT case the strict-equality realization FALSE-CONVICTED; the
+-- witness bit fixes it, and `deliveredWitness` here faithfully equals the monotone-root reading.
+#guard overshotInbox.deliveredWitness == rootReached overshotInbox demoReceipt.newRoot
 #guard adjudicateFromInbox (evidenceOfDrop demoReceipt) overshotInbox == false
 #guard rootReached overshotInbox demoReceipt.newRoot == true
+#guard deliveredOf demoReceipt overshotInbox == true
+-- And the CONTRAST that pins the bug: bare root-EQUALITY (the old realization) would read overshoot
+-- as NOT-reached (143 ≠ 142) and thus convict; the witness bit does not. This `#guard` exhibits the
+-- precise divergence the fix removes.
+#guard (decide (overshotInbox.root = demoReceipt.newRoot)) == false  -- equality FAILS on overshoot…
+#guard adjudicateFromInbox (evidenceOfDrop demoReceipt) overshotInbox == false  -- …yet the relay is acquitted.
 
 -- THE CLAIM IS INERT: the SAME receipt + height adjudicates identically whether the disputant claims
 -- `dropped`, `delivered 999`, or `refunded` — the verdict reads the cell, not the claim. Against a
@@ -637,13 +747,18 @@ def overshotInbox : InboxState := { root := 143, refundRecorded := false }
 #assert_axioms conviction_drives_slash
 #assert_axioms no_conviction_no_silent_slash
 -- §7.5 — the realizable adjudicator: the true outcome is DERIVED from the inbox's authenticated
--- monotone root, closing the "trust the disputant's claim" oracle gap.
-#assert_axioms root_short_is_dropped
-#assert_axioms root_reached_is_honest
-#assert_axioms conviction_iff_root_short
+-- DELIVERY-WITNESS bit (not brittle root equality), closing the "trust the disputant's claim" oracle
+-- gap AND the overshoot/reorg false-conviction the strict-equality realization dropped.
+#assert_axioms not_delivered_is_dropped
+#assert_axioms delivered_is_honest
+#assert_axioms conviction_iff_not_delivered
 #assert_axioms disputant_claim_irrelevant
 #assert_axioms honest_relay_not_slashable_from_inbox
-#assert_axioms monotone_root_no_erased_delivery
+#assert_axioms sticky_witness_no_erased_delivery
 #assert_axioms drop_conviction_survives_root_growth
+-- The OVERSHOOT reconciliation: the witness bit agrees with the monotone-root reading on the
+-- overshoot case (root > newRoot) where bare equality fails ⇒ the relay is acquitted, not convicted.
+#assert_axioms deliveredWitness_from_root_overshoot
+#assert_axioms overshoot_acquits
 
 end Dregg2.Exec.Custody

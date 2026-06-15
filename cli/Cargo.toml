@@ -48,6 +48,11 @@ ed25519-dalek = { version = "2", features = ["std"] }
 getrandom = { workspace = true }
 hex = "0.4"
 zeroize = { workspace = true }
+# DreggDL: the checkable deployment spec (`dregg deploy check|apply`). The parser,
+# lowering, and the four static assurance checks live ONCE in this crate; the CLI
+# is a thin binding that surfaces them under the primary `dregg` binary so a
+# stranger discovers them without a second tool.
+dregg-deploy = { path = "../dregg-deploy" }
 
 [dev-dependencies]
 # Unique throwaway roots for the hermetic `DREGG_HOME` config test, so it

@@ -13,7 +13,8 @@ no-amplification **safety** check.
 
 This document records what that check is, the two questions it answers, and the
 honest boundaries: the static-safety vs behavioral-refinement distinction, and
-the Rust-mirror vs Lean-FFI implementation verdict.
+how the gate runs the **verified** procedure (the Lean `@[export]`, with a σ-free
+in-process fallback for non-linking targets).
 
 ## 1. The deployment IS a flow
 
@@ -120,26 +121,36 @@ operator (or a redeploy pipeline) consults. Like the static audit, it is an audi
 artifact, **not** a trust boundary: it certifies a relation between *artifacts*,
 and says nothing the executor does not separately enforce about live state.
 
-## 5. Implementation: the Rust mirror, and the linear-flow decision
+## 5. Implementation: the verified procedure, and the linear-flow decision
 
-The decision engine in `refine.rs` is a **Rust mirror** of
-`FlowRefine.decideRefines`:
+`refine.rs::decide_refines` routes its `A ≤ᶠ B` decision through the **verified
+Lean procedure** when the linked archive exports it
+(`dregg_lean_ffi::decide_refines_gate_available()`): the two flows are serialized
+to the export's preorder-token wire and the verdict is read off
+`@[export] dregg_decide_refines` — the PROVEN `FlowRefine.decideRefines`. So on a
+native build the deploy gate runs the decision procedure whose soundness +
+completeness against `≤ᶠ` is `decideRefines_iff` (LAW #1), not a re-implementation.
+
+The σ-free fragment the deploy side ever builds:
 
 - `Proc` — the σ-free process (`Done` / `Emit ℓ` / `Ch` / `Seqp`), the
   `Proc`-only projection `FlowRefine.PStep` / `moves` operate on.
-- `moves`, `decide_fuel`, `decide_refines` — exact mirrors of
-  `FlowRefine.moves` / `decideFuel` / `decideRefines`, including the canonical
-  fuel `proc_size A + 1` (always sufficient — every move strictly shrinks the
-  simulated side, `pstep_decreases`).
+- `encode_proc` — the byte-exact inverse of `FlowRefine.encodeProcToks` /
+  `decodeProc` (a preorder token stream: `d` done · `e<ℓ>` emit · `c` ch ·
+  `s` seqp). A `Proc` built here decodes to the SAME `Proc` in Lean (the codec
+  round-trip `#guard`s pin it).
 
-The mirror is faithful because the game is **σ-free**: the Lean kernel-reduction
-of `decideRefines` and this Rust recursion compute the same `Bool` (the
-algorithm is identical and state-free). The mirror's tests
-(`mirror_agrees_with_flowrefine_*`) rebuild `FlowAlgebra`'s headline
-counterexample (`early = (P⋆R)⊔(Q⋆R)`, `late = (P⊔Q)⋆R`) in Rust and assert the
-**same verdicts** the Lean `#guard`s pin — the half holds, the right-skew fails,
-both polarities — so the mirror is checked against the exact example the Lean
-proof distinguishes.
+**The in-process fallback.** `decide_refines_mirror` (`moves` / `decide_fuel` /
+`decide_refines_mirror`, exact mirrors of `FlowRefine.moves` / `decideFuel` /
+`decideRefines` at the canonical fuel `proc_size A + 1`) decides the same game in
+Rust, for targets that cannot link the Lean archive (`wasm32`, the zkvm guest) or
+a stale archive predating the export. It AGREES with the verified procedure by
+construction: the game is **σ-free** (`FlowRefine` §3 — the state never decides a
+move), so the Lean kernel-reduction and this Rust recursion compute the same
+`Bool`. The differential test `ffi_decide_refines_agrees_with_lean_both_polarities`
+asserts FFI-verdict == mirror-verdict on `FlowAlgebra`'s headline counterexample
+(`early = (P⋆R)⊔(Q⋆R)`, `late = (P⊔Q)⋆R`) — the half holds, the right-skew fails,
+**both polarities** — the exact verdicts the Lean `#guard`s pin.
 
 **The linear-flow shortcut for intent-conformance.** The repeat-menu `μ`,
 materialized to depth `n`, is exponential in the alphabet size — running the game
@@ -159,35 +170,48 @@ the fast trace-check and the actual `decide_refines` game run on the
 *materialized* `μ` agree, on an allowing intent (refines) and a missing-letter
 intent (does not).
 
-## 6. Rust-mirror vs Lean-FFI — the verdict
+## 6. The Lean-FFI boundary — the gate runs the proven procedure
 
-This is a **Rust mirror**, not an FFI call into the Lean. `decideRefines` is a
-pure Lean `def` with **no `@[export]` / `extern` shim**, so there is nothing to
-call across the boundary today (verified: no `decideRefines` / `decide_refines`
-export anywhere in the tree outside `FlowRefine.lean`). The single thing the
-mirror trusts but does not re-prove in Rust is `decideRefines_iff` — soundness +
-completeness against `≤ᶠ` — which lives in Lean.
+The gate calls the verified procedure across the same Lean-FFI seam the rest of
+the dregg2/Rust bridge uses (`FinalityGate.dregg_blocklace_finalize`,
+`dregg_record_kernel_step`, …):
 
-**Follow-on (named, not built here):** export `decideRefines` from Lean (an
-`@[export] decide_refines_ffi` over a serialized `Proc`) and call it from the
-deploy gate, so the gate runs the *proven* decision procedure rather than a
-mirror of it. This is the same Lean-FFI seam the rest of the dregg2/Rust bridge
-uses; tracked as the **Lean-FFI unification** follow-on. Until then, the mirror
-is the engine, checked against `FlowRefine`'s own `#guard`s.
+- **Lean:** `FlowRefine.decideRefinesGate` is the `String → String` body, exposed
+  as `@[export dregg_decide_refines]`. It decodes the `"A=<procW>;B=<procW>"`
+  wire, runs `decideRefines`, and returns `"1"` (A ≤ᶠ B) / `"0"` (A ⋠ B) /
+  `"ERR"` (fail-closed). The export **carries the proof**:
+  `gate_one_iff_sim` (`"1"` ⟺ `A ≤ᶠ B`) and `gate_zero_iff_not_sim`
+  (`"0"` ⟺ `¬ A ≤ᶠ B`) — so gating the deploy on a `"1"` is gating it on the
+  verified refinement relation, by construction (not "agreement-checked").
+- **Bridge:** `dregg-lean-ffi` adds the `dregg_decide_refines_str` C shim and
+  `shadow_decide_refines` / `decide_refines_gate_available`; `build.rs` splices
+  `Dregg2.Deos.FlowRefine` into the archive and probes the symbol.
+- **Caller:** `refine.rs::decide_refines` routes through `shadow_decide_refines`
+  when the gate is available, falling back to the σ-free mirror otherwise.
+
+The one fact Rust trusts but does not re-prove is `decideRefines_iff` (soundness +
+completeness against `≤ᶠ`) — which lives in Lean and now decides the live gate.
 
 ## Where it lives
 
 - [`dregg-deploy/src/refine.rs`](../dregg-deploy/src/refine.rs) — the module:
-  the `Proc` + `decide_refines` mirror (§1, §4 of `FlowRefine`), the
-  deploy→flow mapping (`flow_of_plan` / `flow_of_forest`), the intent `FlowSpec`
-  (the repeat-menu + the linear-flow `allows_trace` decision), and the two gates
-  `refines_upgrade` / `refines_intent` with located `RefineFinding`s.
+  the `Proc` + `encode_proc` wire + FFI-routed `decide_refines` (with the σ-free
+  `decide_refines_mirror` fallback), the deploy→flow mapping (`flow_of_plan` /
+  `flow_of_forest`), the intent `FlowSpec` (the repeat-menu + the linear-flow
+  `allows_trace` decision), and the two gates `refines_upgrade` /
+  `refines_intent` with located `RefineFinding`s.
 - [`dregg-deploy/src/refine/tests.rs`](../dregg-deploy/src/refine/tests.rs) — the
-  mirror-agreement tests (both polarities of the `FlowAlgebra` counterexample),
-  the deliverable (safe narrowing accepted, unsafe widening rejected with the
-  divergence named), the safety-vs-refinement independence pin, and the
-  intent-conformance + trace-equivalence tests.
+  FFI differential (the verified export agrees with the Lean `#guard`s AND the
+  mirror, both polarities), the mirror-agreement tests, the deliverable (safe
+  narrowing accepted, unsafe widening rejected with the divergence named), the
+  safety-vs-refinement independence pin, and the intent-conformance +
+  trace-equivalence tests.
+- The bridge: [`dregg-lean-ffi`](../dregg-lean-ffi) — `shadow_decide_refines` /
+  `decide_refines_gate_available` (`src/lib.rs`), the `dregg_decide_refines_str`
+  C shim (`src/lean_init.c`), and the `Dregg2.Deos.FlowRefine` splice + probe
+  (`build.rs`).
 - Upstream: [`metatheory/Dregg2/Deos/FlowRefine.lean`](../metatheory/Dregg2/Deos/FlowRefine.lean)
-  (`decideRefines`, sound + complete) and
+  (`decideRefines`, sound + complete; `@[export dregg_decide_refines]` +
+  `gate_one_iff_sim` / `gate_zero_iff_not_sim`) and
   [`metatheory/docs/FLOW-COMPOSITION-ALGEBRA.md`](../metatheory/docs/FLOW-COMPOSITION-ALGEBRA.md)
   (the right-skew that makes refinement decidable).

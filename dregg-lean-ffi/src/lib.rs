@@ -112,6 +112,31 @@ pub fn shadow_blocklace_finalize(wire: &str) -> Result<String, String> {
     lean_blocklace_finalize(wire)
 }
 
+/// Whether the linked archive exports the verified flow-refinement decision gate
+/// (`dregg_decide_refines`, the C-ABI entry over the PROVED `decideRefines`). When false, the deploy
+/// gate (`dregg-deploy::refine`) falls back to its in-process σ-free mirror. Distinct from
+/// [`lean_available`] (the executor exports): a stale archive can have the executor but lack this gate.
+pub fn decide_refines_gate_available() -> bool {
+    ffi::decide_refines_present() && lean_init_once().is_ok()
+}
+
+/// Run the verified FLOW-REFINEMENT DECISION `@[export] dregg_decide_refines` (the PROVED
+/// `Dregg2.Deos.FlowRefine.decideRefines`, sound+complete for the online-simulation refinement order
+/// `≤ᶠ` per `decideRefines_iff`) over a wire-encoded pair of σ-free `Proc`s.
+///
+/// The input/output wire is the canonical grammar the export reads:
+///   * in:  `"A=<preorder-tokens>;B=<preorder-tokens>"` (each `Proc` as a space-separated preorder
+///     token stream: `d` done · `e<n>` emit ℓ · `c` ch(2) · `s` seqp(2)).
+///   * out: `"1"` (A ≤ᶠ B) · `"0"` (A ⋠ B) · `"ERR"` (fail-closed on a malformed wire).
+///
+/// `dregg-deploy/src/refine.rs` routes its safe-upgrade / intent-conformance decision through this
+/// entry when [`decide_refines_gate_available`], so the deploy gate runs the verified procedure
+/// rather than a Rust mirror of it. Requires the archive to export the gate; returns `Err` otherwise.
+pub fn shadow_decide_refines(wire: &str) -> Result<String, String> {
+    ensure_lean_init()?;
+    lean_decide_refines(wire)
+}
+
 /// Parse a shadow output wire into a [`ShadowVerdict`], surfacing marshal/parse errors.
 pub fn decode_shadow_verdict(output: &str) -> Result<ShadowVerdict, String> {
     match marshal::unmarshal_result(output) {
@@ -209,6 +234,12 @@ mod ffi {
         ) -> usize;
         #[cfg(dregg_finalize_gate_present)]
         fn dregg_blocklace_finalize_str(
+            in_utf8: *const c_char,
+            out: *mut c_char,
+            out_cap: usize,
+        ) -> usize;
+        #[cfg(dregg_decide_refines_present)]
+        fn dregg_decide_refines_str(
             in_utf8: *const c_char,
             out: *mut c_char,
             out_cap: usize,
@@ -328,6 +359,26 @@ mod ffi {
                 .into(),
         )
     }
+
+    #[cfg(dregg_decide_refines_present)]
+    pub fn decide_refines_present() -> bool {
+        true
+    }
+
+    #[cfg(not(dregg_decide_refines_present))]
+    pub fn decide_refines_present() -> bool {
+        false
+    }
+
+    #[cfg(dregg_decide_refines_present)]
+    pub fn lean_decide_refines(wire: &str) -> Result<String, String> {
+        lean_string_bridge(wire, dregg_decide_refines_str, "dregg_decide_refines_str")
+    }
+
+    #[cfg(not(dregg_decide_refines_present))]
+    pub fn lean_decide_refines(_wire: &str) -> Result<String, String> {
+        Err("dregg_decide_refines not exported by the linked archive (rebuild to enable)".into())
+    }
 }
 
 #[cfg(not(lean_lib_present))]
@@ -357,6 +408,14 @@ mod ffi {
     }
 
     pub fn lean_blocklace_finalize(_wire: &str) -> Result<String, String> {
+        Err("Lean static lib not linked".into())
+    }
+
+    pub fn decide_refines_present() -> bool {
+        false
+    }
+
+    pub fn lean_decide_refines(_wire: &str) -> Result<String, String> {
         Err("Lean static lib not linked".into())
     }
 }
@@ -408,4 +467,8 @@ fn lean_handler_turn(wire: &str) -> Result<String, String> {
 
 fn lean_blocklace_finalize(wire: &str) -> Result<String, String> {
     ffi::lean_blocklace_finalize(wire)
+}
+
+fn lean_decide_refines(wire: &str) -> Result<String, String> {
+    ffi::lean_decide_refines(wire)
 }

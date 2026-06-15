@@ -92,6 +92,109 @@
     </p>
   </section>
 
+  <!-- ==================== TRANSCLUSION ==================== -->
+  <section class="section section--compact" id="transclusion">
+    <span class="section__label">Xanadu that shipped</span>
+    <h2 class="section__title">Transclusion: the honest quote, proven</h2>
+    <p style="color: var(--fg-dim); margin-bottom: var(--s4);">
+      Ted Nelson's Xanadu named <strong>transclusion</strong>: include a piece of one document
+      inside another <em>by reference</em>, so the quote keeps its identity and its provenance —
+      the same bytes, the same source, visibly cited, never copied-and-cut, joined by two-way
+      links that do not break. Xanadu could never make it honest, because in an ambient-authority
+      world a "transcluded" quote is just a copy: nothing forces it to equal the source, nothing
+      stops it rotting when the source moves, nothing bounds what authority it confers. deos ships
+      transclusion — and the four things Nelson wanted are exactly four kernel theorems, each a
+      <em>naming</em> of the verified cross-cell import (<code>ImportedEq</code>), no new
+      machinery. A transclusion <em>is</em> the same verified observation a rehydrated screenshot
+      is, named for the docuverse.
+    </p>
+    <figure class="catalog-embed" data-catalog="transclusion">
+      <table class="catalog-table">
+        <thead>
+          <tr><th>What Xanadu wanted</th><th>What dregg provides</th><th>The Lean theorem</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>A quote that <strong>equals its source</strong></td>
+            <td>The verified cross-cell finalized read — the local field <em>is</em> the value a peer cell committed at the cited receipt; a forged value can't even be cited.</td>
+            <td><code>transclusion_provenance_faithful</code><br><code>transclusion_forge_refused</code></td>
+          </tr>
+          <tr>
+            <td><strong>Visible provenance</strong></td>
+            <td>The cited receipt + content commitment, drawn from the ledger, not the content. A transclusion admits iff the post-state carries the cited source value.</td>
+            <td><code>transclusion_is_observed_finalized_read</code></td>
+          </tr>
+          <tr>
+            <td><strong>Per-viewer confinement</strong> (a quote is not a key)</td>
+            <td>The membrane projection — a quote is a <em>read</em>, surfaced per-viewer; any reshare chain confers a subset of the held authority, and naming an unheld authority can't conjure it.</td>
+            <td><code>transclusion_no_amplify</code><br><code>transclusion_grants_no_unheld_authority</code></td>
+          </tr>
+          <tr>
+            <td>The <strong>unbreakable link</strong> (the quote never rots)</td>
+            <td>The I-confluent import — the citation pins an immutable past receipt, so the reading never changes as the source advances; staleness is faithful-but-visible, never a silent dangling pointer.</td>
+            <td><code>transclusion_stable_under_source_advance</code><br><code>stale_import_is_still_valid</code></td>
+          </tr>
+        </tbody>
+      </table>
+      <figcaption>The four Xanadu properties as kernel theorems, in
+      <code>Dregg2/Deos/Transclusion.lean</code> — each riding an existing
+      <code>Authority.CrossCellImport</code> / <code>Authority.ImportBinding</code> /
+      <code>Deos.Membrane</code> theorem. Every keystone is <code>#assert_all_clean</code>
+      (kernel-clean: only <code>propext</code> / <code>Classical.choice</code> /
+      <code>Quot.sound</code>), and each non-vacuity witness fires both polarities — the truthful
+      quote <em>admits</em> (<code>quote_is_faithful</code>), the forged one <em>cannot be cited</em>
+      (<code>forge_cannot_be_cited</code>), the quote <em>survives the source advancing</em>
+      (<code>quote_survives_source_advance</code>).</figcaption>
+    </figure>
+    <p style="color: var(--fg-dim); margin-top: var(--s4);">
+      The realization is the <code>dregg://</code> attested fetch:
+      <code>TranscludedField::include(web, source)</code> resolves the reference, the bytes it
+      returns are content-addressed (<code>content_hash == blake3(bytes)</code>) and carry a
+      receipt + a quorum-signed <code>AttestedRoot</code>, and
+      <code>TranscludedField::project_for</code> is the real <code>Membrane::project</code> — the
+      Lean is the spec; the Rust mirrors the named theorems. The <em>other</em> direction of
+      Nelson's link is honest too: a <strong>backlink</strong> ("cell X is quoted by observer O, at
+      receipt R, of value V") is the witness graph read the other way — a verifiable claim, not a
+      hand-kept index that can drift.
+    </p>
+
+    <h3 style="font-family: var(--font-display); color: var(--chalk); margin-top: var(--s5); margin-bottom: var(--s3);">
+      The document model: an EDL of spans
+    </h3>
+    <p style="color: var(--fg-dim);">
+      A transclusion is the unit a <em>document</em> is composed from. In
+      <code>deos-web-cells</code>, a dreggverse document is not a file — it is an <strong>EDL</strong>
+      (an edit-decision-list): an ordered <code>Vec&lt;Span&gt;</code> where each span is either the
+      author's <code>Own</code> content or a <code>Transcluded</code> span of another cell
+      (<code>dregg://&lt;cell&gt;</code>, byte range <code>r</code>). The EDL <em>is</em> the
+      document — change the EDL, you re-author; change a <em>source</em>, the quoted span re-resolves
+      to the source's new finalized value (the unbreakable link), every other span untouched.
+      <code>DreggverseDocument::resolve</code> runs the real verified read per transcluded span and
+      composes them edge-to-edge with per-span provenance; <code>resolve_for</code> runs it through a
+      viewer's membrane, <strong>darkening</strong> (never forging) the spans a weaker viewer cannot
+      read — the span's citation survives, its bytes are withheld. So a weaker reader sees the
+      document's <em>shape</em> (which spans exist, cited) without the bytes it has no authority to
+      read. It is a bibliography that renders.
+    </p>
+
+    <h3 style="font-family: var(--font-display); color: var(--chalk); margin-top: var(--s5); margin-bottom: var(--s3);">
+      DreggDL is a different language — and so is "DSL"
+    </h3>
+    <p style="color: var(--fg-dim);">
+      One disambiguation, because the word is overloaded. <strong>DreggDL</strong> is dregg's
+      declarative <em>deployment</em> language: a capability <em>layout</em> (TOML/JSON) — factory
+      births, funding transfers, capability grants — lowered to the exact
+      <code>CallForest</code> the SDKs instantiate and checked, whole, for over-grant before any gas.
+      It is <em>not</em> the document model (the EDL above describes a docuverse document, not a
+      deployment), and it is <em>not</em> either thing this site elsewhere calls a "DSL": not the
+      <em>circuit-DSL</em> (the constraint-system builder the prover compiles), and not the
+      <em>predicate-language</em> (the cell-program caveat grammar a turn's guard is written in).
+      Three distinct languages: DreggDL <em>lays out capabilities to deploy</em>, the predicate-language
+      <em>constrains what a turn may do</em>, the circuit-DSL <em>builds the proof system</em>. The
+      EDL is a fourth, smaller thing entirely — the ordered list of spans a document is made of.
+    </p>
+  </section>
+
   <!-- ==================== THE MEMBRANE AS A SETTINGS PAGE ==================== -->
   <section class="section section--compact" id="membrane">
     <span class="section__label">Why it is adoptable</span>
@@ -173,6 +276,10 @@
       <div class="link-card">
         <span class="link-card__title">Affordance soundness</span>
         <span class="link-card__desc">An affordance interaction is a verified turn: an agent can only fire affordances its capabilities authorize (the gate on the affordance's effect-template), and the post-state surface binds the attested root.</span>
+      </div>
+      <div class="link-card">
+        <span class="link-card__title">Transclusion fidelity</span>
+        <span class="link-card__desc">A quote equals its source provably (<code>transclusion_provenance_faithful</code>), a forge can't be cited (<code>transclusion_forge_refused</code>), it grants no authority over the source (<code>transclusion_no_amplify</code>), and it never rots as the source advances (<code>transclusion_stable_under_source_advance</code>). Xanadu's four wishes, each a naming of the verified cross-cell import.</span>
       </div>
     </div>
   </section>

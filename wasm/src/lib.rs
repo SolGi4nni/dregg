@@ -32,6 +32,14 @@ pub mod bindings_surface;
 // anti-pale-ghost tooth carried to the browser. Wraps
 // `dregg-lightclient::verify_history`.
 pub mod bindings_lightclient;
+// Transclusion in the tab: Xanadu made honest. The REAL `dregg://` finalized read
+// NAMED as Ted Nelson's transcluded quote
+// (`starbridge_web_surface::transclusion::TranscludedField::include` + the
+// `WebOfCells` resolve/render path). The browser transcludes a span, amends the
+// source (the quote updates live), and attempts a forge (it REFUSES with
+// `ContentHashMismatch`). Only the resolve/render path reaches wasm — never the
+// circuit prover or the recursion path.
+pub mod bindings_transclusion;
 
 // ============================================================================
 // Token operations (Macaroon backend)

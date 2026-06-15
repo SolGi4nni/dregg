@@ -92,7 +92,7 @@ pub mod schema;
 
 pub use apply::{
     AppliedPlan, ApplyError, DeferredField, PlannedTurn, ProjectedReceipt, plan_apply,
-    plan_apply_toml,
+    plan_apply_toml, plan_from_lowered,
 };
 pub use diagnose::{DeployDiagnostics, explain_assurance, explain_finding};
 pub use facet::{describe_allowed_effects, describe_facet, facet_to_allowed_effects, parse_facet};

@@ -1949,6 +1949,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ac6b926516df9c60bfa16e107b21086399f8285a44ca9711344b9e553c5146e2"
 
 [[package]]
+name = "deos-web-cells"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "dregg-types",
+ "starbridge-web-surface",
+]
+
+[[package]]
 name = "der"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7719,6 +7728,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "blake3",
+ "deos-web-cells",
  "dregg-cell",
  "dregg-coord",
  "dregg-firmament",

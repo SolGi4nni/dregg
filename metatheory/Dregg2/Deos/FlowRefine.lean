@@ -426,7 +426,213 @@ theorem decideRefines_rightskew : decideRefines lateEx earlyEx = false := by
   rw [← Bool.not_eq_true, decideRefines_iff]
   exact flow_choice_right_skewed
 
-/-! ## §6 — Axiom hygiene. -/
+/-! ## §7 — THE `@[export]` BOUNDARY: `dregg_decide_refines` (the deploy gate runs the PROVED procedure).
+
+`dregg-deploy/src/refine.rs` decides its safe-upgrade / intent-conformance gates by `A ≤ᶠ B` — exactly
+`decideRefines`. Until now it ran a *Rust mirror* of `decideRefines` (faithful, but a re-implementation
+the Rust cannot re-prove). This section exposes `decideRefines` itself as a C-ABI `String → String`
+entry the linked Lean archive runs, so the deploy gate computes its verdict FROM the proven procedure —
+the same `@[export]`-bridge discipline as `FinalityGate.dregg_blocklace_finalize` / `dregg_tau_order`.
+
+The wire is a PREORDER (Polish-prefix) token stream of the σ-free `Proc` — the fragment the deploy
+side ever builds (`done` / `emit` / `ch` / `seqp`; `wr` never appears in a lowered deploy flow, and
+even if it did it would project to its `emit ℓ` since `moves (wr ℓ _ _) = moves (emit ℓ)`). Each node
+emits ONE space-separated token, its children following in order (fixed arity per token ⇒ unambiguous):
+
+    PTOK  := "d"            -- done            (arity 0)
+           | "e" Nat        -- emit ℓ          (arity 0)
+           | "c"            -- ch  a b         (arity 2: a then b follow)
+           | "s"            -- seqp a b        (arity 2: a then b follow)
+    PROCW := PTOK (" " PTOK)*          -- the preorder traversal
+    INPUT := "A=" PROCW ";B=" PROCW   -- the two flows to compare
+    OUTPUT:= "1" | "0" | "ERR"        -- A ≤ᶠ B  |  A ⋠ B  |  malformed wire (fail-closed)
+
+`decideRefines` is σ-free and `decideFuel` is structurally recursive in its fuel, so the gate's body
+is KERNEL-reducible — the §7 `#guard`s evaluate it with `decide`/`#guard` (no `native_decide`). -/
+
+/-- Parse a `Nat` strictly: the body must be non-empty ASCII digits. Fail-closed. (A local copy of the
+`FinalityGate` codec helper — `FlowRefine` imports only `FlowAlgebra`, so the wire codec is
+self-contained.) -/
+def parseNat? (s : String) : Option Nat :=
+  if s.isEmpty then none else
+    if s.all (fun c => c.isDigit) then s.toNat? else none
+
+/-- Strip a required `prefix` from `s`, returning the remainder, or `none` if absent. (Local copy; see
+`parseNat?`.) -/
+def stripReq? (pfx s : String) : Option String :=
+  if s.startsWith pfx then some (String.ofList (s.toList.drop pfx.length)) else none
+
+/-- Encode a σ-free `Proc` as its preorder token list (the `PROCW` body, pre-`intercalate`). `wr`
+folds to its `emit ℓ` token (state-free: `moves` treats them identically), so the codec covers the
+whole `Proc` even though deploy flows only ever use `done`/`emit`/`ch`/`seqp`. -/
+def encodeProcToks : Proc → List String
+  | .done       => ["d"]
+  | .emit ℓ     => ["e" ++ toString ℓ]
+  | .wr ℓ _ _   => ["e" ++ toString ℓ]        -- σ-free: same move-set as `emit ℓ`
+  | .ch p q     => "c" :: (encodeProcToks p ++ encodeProcToks q)
+  | .seqp p r   => "s" :: (encodeProcToks p ++ encodeProcToks r)
+
+/-- **`encodeProc`** — the `PROCW` wire form (space-joined preorder tokens). -/
+def encodeProc (p : Proc) : String := String.intercalate " " (encodeProcToks p)
+
+-- `Proc` (decidable) equality — needed for the codec's `decode ∘ encode = id` `#guard`s (which compare
+-- `Option Proc` / `Option (Proc × Proc)` via `==`). Derivable: every payload (`Letter = Nat`,
+-- `FieldName = String`, `Int`) has both. `deriving instance` takes no doc comment, hence this `--`.
+deriving instance DecidableEq, BEq for Proc
+
+/-- Parse ONE `Proc` off the front of a token list, returning it paired with the UNCONSUMED tail.
+Structurally recursive in an explicit `fuel : Nat` (seeded to the token-list length by `decodeProc`,
+always sufficient: each node consumes ≥ 1 token so the parse depth is ≤ the token count) ⇒ kernel
+reducible (the `#guard`s `decide`-evaluate it; no `native_decide`). Fail-closed: out of fuel, a
+malformed token, or a `c`/`s` whose children run off the end all yield `none`. -/
+def parseProcFuel : Nat → List String → Option (Proc × List String)
+  | 0, _ => none
+  | _ + 1, [] => none
+  | fuel + 1, t :: rest =>
+    if t == "d" then some (.done, rest)
+    else if t.startsWith "e" then
+      match parseNat? (String.ofList (t.toList.drop 1)) with
+      | some n => some (.emit n, rest)
+      | none   => none
+    else if t == "c" then
+      match parseProcFuel fuel rest with
+      | some (a, rest₁) =>
+        match parseProcFuel fuel rest₁ with
+        | some (b, rest₂) => some (.ch a b, rest₂)
+        | none => none
+      | none => none
+    else if t == "s" then
+      match parseProcFuel fuel rest with
+      | some (a, rest₁) =>
+        match parseProcFuel fuel rest₁ with
+        | some (b, rest₂) => some (.seqp a b, rest₂)
+        | none => none
+      | none => none
+    else none
+
+/-- **`decodeProc`** — parse a `PROCW` body into a `Proc`. Fail-closed: the token stream must parse to
+EXACTLY one `Proc` with NO leftover tokens (a trailing token is a malformed wire). Fuel = token count
+(always sufficient — every `Proc` node consumes at least its own token). -/
+def decodeProc (s : String) : Option Proc :=
+  let toks := s.splitOn " "
+  match parseProcFuel toks.length toks with
+  | some (p, []) => some p
+  | _ => none
+
+/-- **`decodeRefineWire`** — parse the full `INPUT` grammar into the pair `(A, B)` to compare.
+Fail-closed on any deviation (missing `A=`/`;B=`, a malformed sub-`Proc`, or leftover tokens). -/
+def decodeRefineWire (s : String) : Option (Proc × Proc) := do
+  let body ← stripReq? "A=" s
+  match body.splitOn ";B=" with
+  | [aS, bS] => do
+      let a ← decodeProc aS
+      let b ← decodeProc bS
+      pure (a, b)
+  | _ => none
+
+/-- **`decideRefinesGate`** — THE GATE BODY. Decode the wire `(A, B)`, run the PROVED `decideRefines`,
+and return `"1"` (refines) / `"0"` (does not) / `"ERR"` (fail-closed on a malformed wire). This is
+EXACTLY the decision procedure §4, exposed as the `String → String` the linked Lean archive runs at
+the deploy gate. -/
+def decideRefinesGate (s : String) : String :=
+  match decodeRefineWire s with
+  | some (a, b) => if decideRefines a b then "1" else "0"
+  | none => "ERR"
+
+/-- **THE EXPORT.** `@[export dregg_decide_refines]` — the C-ABI entry `dregg-deploy`'s FFI bridge
+(`dregg-lean-ffi`) calls. Same `String → String` shape as `dregg_blocklace_finalize` (the C shim
+wraps it): the deploy gate passes the two wire-encoded flows and reads back the verified verdict. -/
+@[export dregg_decide_refines]
+def dregg_decide_refines (s : String) : String := decideRefinesGate s
+
+/-! ### §7a — THE EXPORT CARRIES THE PROOF: gating on `dregg_decide_refines` IS gating on `≤ᶠ`.
+
+The two soundness teeth — the export's `"1"` IS the proven `decideRefines = true` (hence `A ≤ᶠ B`),
+and its `"0"` IS `decideRefines = false` (hence `A ⋠ B`). So the deploy gate, gated on a `"1"` from
+this export, is gated on the verified refinement relation BY CONSTRUCTION (not "agreement-checked"). -/
+
+/-- **`gate_one_iff_decideRefines`.** For any wire decoding to `(A, B)`, the gate returns `"1"` IFF the
+PROVED `decideRefines A B = true`. The string verdict IS the decision procedure's verdict. -/
+theorem gate_one_iff_decideRefines (s : String) (a b : Proc)
+    (h : decodeRefineWire s = some (a, b)) :
+    decideRefinesGate s = "1" ↔ decideRefines a b = true := by
+  unfold decideRefinesGate
+  rw [h]
+  by_cases hd : decideRefines a b = true <;> simp [hd]
+
+/-- **`gate_one_iff_sim` (the soundness crown).** For any wire decoding to `(A, B)`, the gate returns
+`"1"` IFF `A ≤ᶠ B` — the verified online-simulation refinement order. Composing
+`gate_one_iff_decideRefines` with the spec `decideRefines_iff`: the deploy gate admitting an upgrade
+(`"1"`) ⟺ the new flow genuinely refines the running one. The live deploy gate is gated on the
+VERIFIED relation, by construction. -/
+theorem gate_one_iff_sim (s : String) (a b : Proc)
+    (h : decodeRefineWire s = some (a, b)) :
+    decideRefinesGate s = "1" ↔ a ≤ᶠ b :=
+  (gate_one_iff_decideRefines s a b h).trans (decideRefines_iff a b)
+
+/-- **`gate_zero_iff_not_sim` (the no-fail-open tooth).** For any wire decoding to `(A, B)`, the gate
+returns `"0"` IFF `¬ (A ≤ᶠ B)` — a non-refinement is REJECTED. So the gate never reports `"1"` for an
+upgrade that widens behavior (the dual of `gate_one_iff_sim`). -/
+theorem gate_zero_iff_not_sim (s : String) (a b : Proc)
+    (h : decodeRefineWire s = some (a, b)) :
+    decideRefinesGate s = "0" ↔ ¬ (a ≤ᶠ b) := by
+  unfold decideRefinesGate
+  rw [h, ← decideRefines_iff]
+  by_cases hd : decideRefines a b = true <;> simp [hd]
+
+/-- **`gate_deterministic`.** The gate is a deterministic function of the wire — two calls on the same
+wire return the same string (so the Rust differential's FFI verdict is reproducible). -/
+theorem gate_deterministic (s : String) (o₁ o₂ : String)
+    (h₁ : decideRefinesGate s = o₁) (h₂ : decideRefinesGate s = o₂) : o₁ = o₂ := by
+  rw [← h₁, ← h₂]
+
+/-! ### §7b — WIRE ROUND-TRIP + NON-VACUITY `#guard`s (the export reproduces §5, on the wire).
+
+The codec round-trips the σ-free `Proc` (`decode ∘ encode = id`), and the EXPORT reproduces the §5
+non-vacuity facts THROUGH the wire: the half is admitted (`"1"`), the right-skew is rejected (`"0"`),
+reflexivity holds, distinct letters do not refine, and a malformed wire is fail-closed (`"ERR"`).
+Kernel-evaluated (`decideRefines` is σ-free + fuel-structural), so these are `#guard`s, not
+`native_decide` — a false `#guard` is a build error. -/
+
+-- The σ-free PROJECTIONS of the counterexample (the `R`-write replaced by its `emit 0` shadow — the
+-- exact fragment a lowered deploy flow lives in: `done`/`emit`/`ch`/`seqp`, no `wr`). The codec is
+-- σ-free, so it round-trips EXACTLY on this fragment; `decideRefines` gives the SAME verdict on these
+-- as on `earlyEx`/`lateEx` (same move-graph — that is the point of §3 σ-uniformity), witnessed below.
+def earlyProj : Proc := (Pf ⋆ᶠ Flow.fire 0) ⊔ᶠ (Qf ⋆ᶠ Flow.fire 0)
+def lateProj  : Proc := (Pf ⊔ᶠ Qf) ⋆ᶠ Flow.fire 0
+
+-- the codec round-trips EXACTLY on the σ-free fragment (Rust-encoder ⟷ Lean-decoder grammar agree).
+#guard decodeProc (encodeProc earlyProj) == some earlyProj
+#guard decodeProc (encodeProc lateProj) == some lateProj
+#guard decodeProc (encodeProc Proc.done) == some Proc.done
+#guard decodeProc (encodeProc (Flow.fire 7)) == some (Flow.fire 7)
+-- the full INPUT wire round-trips to the pair `(earlyProj, lateProj)`.
+#guard decodeRefineWire ("A=" ++ encodeProc earlyProj ++ ";B=" ++ encodeProc lateProj)
+        == some (earlyProj, lateProj)
+-- the gate agrees on the projection (σ-uniformity): the half still holds through the wire on the proj.
+#guard dregg_decide_refines ("A=" ++ encodeProc earlyProj ++ ";B=" ++ encodeProc lateProj) == "1"
+#guard dregg_decide_refines ("A=" ++ encodeProc lateProj ++ ";B=" ++ encodeProc earlyProj) == "0"
+
+-- THE HALF, through the export: early ≤ᶠ late ⟹ the gate says "1" (agrees with `decideRefines_half`).
+#guard dregg_decide_refines ("A=" ++ encodeProc earlyEx ++ ";B=" ++ encodeProc lateEx) == "1"
+-- THE RIGHT-SKEW, through the export: late ⋠ early ⟹ the gate says "0" (agrees with `decideRefines_rightskew`).
+#guard dregg_decide_refines ("A=" ++ encodeProc lateEx ++ ";B=" ++ encodeProc earlyEx) == "0"
+-- reflexive: a flow refines itself ⟹ "1".
+#guard dregg_decide_refines ("A=" ++ encodeProc earlyEx ++ ";B=" ++ encodeProc earlyEx) == "1"
+-- distinct single letters: `fire 1 ⋠ fire 2` ⟹ "0".
+#guard dregg_decide_refines ("A=" ++ encodeProc (Flow.fire 1) ++ ";B=" ++ encodeProc (Flow.fire 2)) == "0"
+-- a strict narrowing: `fire 1 ≤ᶠ (fire 1 ⊔ fire 2)` ⟹ "1" (the choice offers the 1-move).
+#guard dregg_decide_refines
+        ("A=" ++ encodeProc (Flow.fire 1) ++ ";B=" ++ encodeProc (Flow.fire 1 ⊔ᶠ Flow.fire 2)) == "1"
+-- the no-widening direction: `(fire 1 ⊔ fire 2) ⋠ fire 1` ⟹ "0".
+#guard dregg_decide_refines
+        ("A=" ++ encodeProc (Flow.fire 1 ⊔ᶠ Flow.fire 2) ++ ";B=" ++ encodeProc (Flow.fire 1)) == "0"
+-- a malformed wire is FAIL-CLOSED to the ERR sentinel (the deploy gate treats ERR as "do not admit").
+#guard dregg_decide_refines "not a wire" == "ERR"
+#guard dregg_decide_refines "A=e1;B=e2 e3" == "ERR"   -- leftover token on the B side
+#guard dregg_decide_refines "A=c e1;B=e2" == "ERR"     -- `c` missing its second child
+
+/-! ## §8 — Axiom hygiene. -/
 
 #assert_all_clean [
   pstep_decreases,
@@ -446,7 +652,11 @@ theorem decideRefines_rightskew : decideRefines lateEx earlyEx = false := by
   decideRefines_dupSim_iff,
   decideRefines_iff,
   decideRefines_half,
-  decideRefines_rightskew
+  decideRefines_rightskew,
+  gate_one_iff_decideRefines,
+  gate_one_iff_sim,
+  gate_zero_iff_not_sim,
+  gate_deterministic
 ]
 
 end Dregg2.Deos.FlowRefine

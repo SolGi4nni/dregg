@@ -68,12 +68,23 @@
 use starbridge_web_surface as web_aff;
 use web_aff::{
     AffordanceSurface as WebAffordanceSurface, AttestedResource, AuthRequired, CellAffordance,
-    DreggUri, Effect, InteractionLog, OriginChrome, Rehydration, SurfaceCapability, WebOfCells,
+    DreggUri, Effect, InteractionLog, Membrane, OriginChrome, Rehydration, SurfaceCapability,
+    WebOfCells,
 };
 // The REAL verified transclusion — "Xanadu that shipped": a transclusion IS a
 // verified cross-cell finalized read (content→commitment→receipt→receipt-stream
 // root→quorum). We USE it, never reinvent the provenance.
 use web_aff::transclusion::{TranscludedField, TransclusionError};
+
+// THE DREGGVERSE DOCUMENT — Xanadu's EDL made honest: an ordered list of `Span`s
+// (OWN content interleaved with byte-RANGE transclusions of peer cells), resolved
+// PER-VIEWER through the REAL `Membrane`. `deos_web_cells`'s `DreggUri`/`WebOfCells`/
+// `Provenance` ARE this module's `starbridge_web_surface` ones (cargo resolves
+// IDENTICAL crate instances — same path-dep, same plonky3-recursion `[patch]`), so a
+// `Span::transclude_range` over the SAME `web` the browser already built renders here
+// with no parallel fetch, no parallel attestation. We render the rich EDL span model
+// the cockpit's whole-field `Transclusion` could not.
+use deos_web_cells::{DreggverseDocument, RenderedSpan, Span, SpanRange};
 
 use dregg_cell::CellId;
 
@@ -223,6 +234,106 @@ impl SemiReinteractiveTransclusion {
     }
 }
 
+/// One **rendered span** of a dreggverse document, projected to the panel — the
+/// gpui-free row the cockpit renders for a single EDL [`Span`].
+///
+/// Each row is a real read of [`deos_web_cells::RenderedSpan`] (the resolved output of
+/// [`DreggverseDocument::resolve_for`] through the viewer's [`Membrane`]): OWN content
+/// renders its bytes verbatim; a reachable transcluded span renders the source's
+/// VERIFIED cited-range bytes + its receipt-pinned provenance; a span the viewer cannot
+/// read renders DARKENED — its provenance survives (the citation), its bytes withheld
+/// (never forged, never substituted). Nothing here is hand-set — every field is drawn
+/// from the genuine resolved span.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DocumentSpanRow {
+    /// The span kind, one of `own` / `quote` / `darkened` — what the reader sees.
+    pub kind: DocumentSpanKind,
+    /// The span's contributed TEXT: OWN content, the verified cited-range bytes, or
+    /// (for a darkened span) the empty string (the viewer gets NO source bytes it
+    /// lacks authority to read). UTF-8-lossy of the real `RenderedSpan::bytes()`.
+    pub text: String,
+    /// For a QUOTE or DARKENED span: the source `dregg://<cell>` it cites (the EEL
+    /// anchor — "jump to source"). `None` for OWN content (no foreign source).
+    pub source: Option<String>,
+    /// For a QUOTE or DARKENED span: the cited byte range of the source (the EDL's
+    /// "range r"), as `start..end` (or `start..` for whole). `None` for OWN content.
+    pub range: Option<String>,
+    /// For a QUOTE or DARKENED span: the receipt-pinned provenance — the source's
+    /// content commitment (short-hex), so the quote is datable + recomputable. Drawn
+    /// from the REAL [`deos_web_cells::Provenance`]. `None` for OWN content.
+    pub content_commitment: Option<String>,
+    /// For a QUOTE or DARKENED span: the cited receipt-stream leaf (short-hex) — the
+    /// immutable past the citation is pinned to. `None` for OWN content.
+    pub provenance_receipt: Option<String>,
+}
+
+/// What kind of rendered span a [`DocumentSpanRow`] is — the discriminant the panel
+/// styles on (own content / a verified quote / a per-viewer darkened span).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DocumentSpanKind {
+    /// The author's OWN content — bytes that belong to THIS document, no foreign
+    /// provenance.
+    Own,
+    /// A verified transcluded span — the source's cited-range bytes, with provenance.
+    Quote,
+    /// A span the viewer's projection could not reach — DARKENED: provenance kept,
+    /// bytes withheld (never forged).
+    Darkened,
+}
+
+impl DocumentSpanKind {
+    /// The one-word badge the panel shows for this span kind.
+    pub fn badge(&self) -> &'static str {
+        match self {
+            DocumentSpanKind::Own => "own",
+            DocumentSpanKind::Quote => "quote",
+            DocumentSpanKind::Darkened => "darkened",
+        }
+    }
+}
+
+/// THE DREGGVERSE-DOCUMENT VIEW — a multi-span Xanadu document (Nelson's EDL made
+/// honest) resolved PER-VIEWER, projected to the panel.
+///
+/// This is the rich EDL span model the cockpit's whole-field [`Transclusion`] could
+/// not express: a document is an ordered list of [`Span`]s — OWN content interleaved
+/// with byte-RANGE transclusions of peer cells — and it is resolved THROUGH the
+/// viewer's [`Membrane`] by the REAL [`DreggverseDocument::resolve_for`]. A span the
+/// viewer's projected fetch-allowlist cannot reach DARKENS (its provenance survives,
+/// its bytes withheld). Everything load-bearing is the genuine machinery: the per-span
+/// quote is the REAL verified cross-cell finalized read; the per-viewer darkening is
+/// the REAL membrane projection meet ([`SurfaceCapability::may_fetch`]); the document
+/// rides the SAME `web` [`WebOfCells`] the browser already built (no parallel fetch).
+///
+/// The view is built gpui-free (so it is `cargo test`-able — a test asserts the
+/// composed text + the darkened span + the surviving provenance are real); the cockpit
+/// renders exactly these rows.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DreggverseDocumentView {
+    /// The document's title (a short label for the panel section).
+    pub title: String,
+    /// The rendered spans, in document order — the panel renders these edge-to-edge.
+    pub spans: Vec<DocumentSpanRow>,
+    /// The **composed text** the viewer sees — every span's contribution concatenated
+    /// in document order (OWN content + each reachable quote's cited bytes; a darkened
+    /// span contributes NOTHING). The honest per-viewer render. Drawn from the REAL
+    /// [`deos_web_cells::RenderedDocument::composed_text`].
+    pub composed_text: String,
+    /// How many spans the EDL has in total (the document's full shape).
+    pub span_count: usize,
+    /// How many spans rendered as QUOTES the viewer COULD read (verified, present).
+    pub quote_count: usize,
+    /// How many spans were DARKENED for this viewer (could not read — bytes withheld).
+    /// `0` for a full-authority render; positive for a weaker viewer whose projection
+    /// withheld at least one span.
+    pub darkened_count: usize,
+    /// Whether the document rendered FULLY for this viewer (no spans darkened).
+    pub full: bool,
+    /// The viewer's authority note — a one-line readout of WHY some spans may be
+    /// darkened (the per-viewer fetch-allowlist the membrane projected).
+    pub viewer_note: String,
+}
+
 /// THE WEB-OF-CELLS BROWSER MODEL — the whole `dregg://` docuverse as the cockpit
 /// browses it, built fresh from the live [`World`]. The numbers + addresses +
 /// attestations it shows are the running image's actual cells.
@@ -254,6 +365,12 @@ pub struct WebCellsBrowser {
     /// ONE Ted-Nelson transclusion (the host cell including the source cell's
     /// finalized field with provenance), if at least two cells exist.
     pub transclusion: Option<Transclusion>,
+    /// A MULTI-SPAN dreggverse document (Nelson's EDL made honest), resolved
+    /// PER-VIEWER through the real membrane — OWN content + byte-range quotes of peer
+    /// cells, with any unreachable span DARKENED for this viewer. The rich EDL span
+    /// model the whole-field [`Transclusion`] above could not express. `None` only if
+    /// the web has too few cells to compose a multi-source document.
+    pub document: Option<DreggverseDocumentView>,
 }
 
 impl WebCellsBrowser {
@@ -376,6 +493,15 @@ impl WebCellsBrowser {
         // quote could not be opened.
         let transclusion = build_transclusion(&web, opened, &published);
 
+        // A MULTI-SPAN dreggverse document (Nelson's EDL made honest), resolved
+        // PER-VIEWER (the viewer = the cockpit's principal at `viewer_rights`)
+        // through the REAL `DreggverseDocument::resolve_for`: OWN content + byte-range
+        // quotes of two peer cells, with the span the viewer's projected
+        // fetch-allowlist cannot reach DARKENED. This rides the SAME `web` the browser
+        // already built (no parallel fetch); it is the rich EDL span model the
+        // whole-field `transclusion` above cannot express.
+        let document = build_document(&mut web, &published, viewer, &viewer_rights);
+
         WebCellsBrowser {
             viewer,
             viewer_tier: format!("{viewer_rights:?}"),
@@ -385,6 +511,7 @@ impl WebCellsBrowser {
             affordances_declared,
             rehydration_badge,
             transclusion,
+            document,
         }
     }
 
@@ -734,6 +861,184 @@ fn build_transclusion(
     }
 }
 
+/// The stable per-viewer fetch-allowlist origin of a transcluded span's source cell —
+/// the SAME origin grammar [`DreggverseDocument::resolve_for`] checks the viewer's
+/// projected fetch-allowlist against (`deos_web_cells`'s `span_origin` for a raw-cell
+/// span: the bundle-asset origin shape with a stable `(document)` asset name). We name
+/// it through the crate's PUBLIC [`deos_web_cells::WebBundle::asset_origin`] so the
+/// allowlist we hand the viewer membrane is the GENUINE one `resolve_for` meets — never
+/// a parallel key.
+fn doc_span_origin(cell: CellId) -> String {
+    deos_web_cells::WebBundle::asset_origin(cell, "(document)")
+}
+
+/// Build a MULTI-SPAN dreggverse document (Nelson's EDL made honest), resolved
+/// PER-VIEWER through the REAL [`Membrane`], and project it to gpui-free panel rows.
+///
+/// This is the WELD: the rich EDL span model `deos-web-cells` ships
+/// ([`DreggverseDocument`]) rendered in the cockpit's web-of-cells browser. It rides the
+/// SAME `web` [`WebOfCells`] the browser already built (no parallel fetch, no parallel
+/// attestation): we publish two NEW raw source cells into it (a PUBLIC paragraph and a
+/// RESTRICTED paragraph), author a document that quotes BYTE RANGES of both interleaved
+/// with the viewer's OWN content, then resolve it for the cockpit's viewer through
+/// [`DreggverseDocument::resolve_for`].
+///
+/// The teeth, all REAL (no faked anything):
+///
+/// - **OWN bytes** — the document's own authored spans render verbatim (the author's,
+///   under the document's own authority);
+/// - **a verified peer quote** — the PUBLIC span is the REAL verified cross-cell
+///   finalized read of the public source's cited byte range, carrying its
+///   receipt-pinned provenance (a forged/absent/un-finalized source would be REFUSED);
+/// - **a per-viewer DARKENED span** — the RESTRICTED span's origin is NOT in the
+///   viewer's projected fetch-allowlist, so the REAL [`SurfaceCapability::may_fetch`]
+///   meet withholds it: it renders darkened (its provenance survives — the citation —,
+///   its bytes withheld; never forged, never substituted).
+///
+/// The `lineage` the document's spans are served under (one publisher's docuverse)
+/// permits BOTH origins; the VIEWER membrane (the cockpit principal at `viewer_rights`)
+/// is scoped to ONLY the public origin — so the meet darkens the restricted span. This
+/// mirrors the `deos-web-cells` proven recipe
+/// (`a_weaker_viewer_sees_darkened_spans_not_the_source_values`), against the live
+/// browser's web. Returns `None` only if the web is too small to anchor the document's
+/// publisher cell (no opened cells at all).
+fn build_document(
+    web: &mut WebOfCells,
+    published: &[(CellId, DreggUri, AttestedResource, OriginChrome)],
+    viewer: CellId,
+    viewer_rights: &AuthRequired,
+) -> Option<DreggverseDocumentView> {
+    // The document needs a publisher anchor cell (any live cell of the image — the
+    // lineage's backing surface). With no cells at all there is no docuverse to author.
+    let publisher = published.first().map(|(c, ..)| *c)?;
+
+    // (1) Publish two NEW raw source cells into the SAME web the browser built — a
+    //     PUBLIC paragraph and a RESTRICTED paragraph. `publish` seeds a real surface
+    //     cell committing the bytes (a genuine finalized read source). We pick seeds
+    //     well clear of the per-cell page seeds (those are `0..ledger_cells.len()` as
+    //     u8) so these document sources do not collide.
+    let public_body: &[u8] = b"the PUBLIC paragraph anyone may read";
+    let secret_body: &[u8] = b"the RESTRICTED paragraph - authority-gated";
+    let public_src = web.publish(0xD0, public_body, "dregg://doc/public");
+    let secret_src = web.publish(0xD1, secret_body, "dregg://doc/restricted");
+
+    let public_origin = doc_span_origin(public_src.cell);
+    let secret_origin = doc_span_origin(secret_src.cell);
+
+    // (2) Author the EDL: OWN intro, a BYTE RANGE of the public source, OWN connective,
+    //     a BYTE RANGE of the restricted source. The ranges quote a SPAN of each source
+    //     (Nelson's "characters start..end of cell X"), not the whole — the rich span
+    //     model. `"the PUBLIC paragraph anyone may read"` → bytes 4..20 = "PUBLIC paragraph".
+    let public_quote = SpanRange::new(4, 20); // "PUBLIC paragraph"
+    let secret_quote = SpanRange::new(4, 24); // "RESTRICTED paragraph"
+    let doc = DreggverseDocument::from_spans(vec![
+        Span::own(b"This document quotes ".to_vec()),
+        Span::transclude_range(public_src.clone(), public_quote),
+        Span::own(b" and a darkened ".to_vec()),
+        Span::transclude_range(secret_src.clone(), secret_quote),
+        Span::own(b".".to_vec()),
+    ]);
+
+    // (3) The source-side lineage the spans are served under (one publisher's
+    //     docuverse): backed by the publisher cell, `Either` authority, fetch-allowlist
+    //     permitting BOTH span origins. A full-authority viewer would reach both.
+    let lineage = SurfaceCapability::scoped(
+        publisher,
+        AuthRequired::Either,
+        [public_origin.clone(), secret_origin.clone()],
+        [],
+    );
+
+    // (4) The VIEWER membrane — the cockpit's principal at its actual `viewer_rights`,
+    //     scoped to ONLY the public span's origin. The restricted span's origin is
+    //     absent from the viewer's fetch-allowlist, so the REAL membrane meet
+    //     (`project` ∧ `may_fetch`) withholds it → it darkens. The rights still meet the
+    //     `Either` lineage (Signature/Either/None all attenuate Either), so darkening is
+    //     driven by the fetch-allowlist (the genuine `load_web_resource` gate), exactly
+    //     as a confined viewer's reach is.
+    let viewer_membrane = Membrane::new(SurfaceCapability::scoped(
+        viewer,
+        viewer_rights.clone(),
+        [public_origin.clone()],
+        [],
+    ));
+
+    // (5) RESOLVE PER-VIEWER through the REAL `resolve_for`. A structural failure
+    //     (a vanished source) is honestly surfaced as no document rather than a faked
+    //     render; the expected "viewer lacks authority" case is a DARKENED span, not an
+    //     error (the whole point).
+    let rendered = doc
+        .resolve_for(web, &viewer_membrane, &lineage)
+        .ok()?;
+
+    // (6) Project the resolved spans to gpui-free rows — every field a real read of the
+    //     genuine `RenderedSpan` (OWN bytes / verified quote bytes + provenance /
+    //     darkened with surviving provenance, no bytes).
+    let spans: Vec<DocumentSpanRow> = rendered
+        .spans()
+        .iter()
+        .map(|s| match s {
+            RenderedSpan::Own(bytes) => DocumentSpanRow {
+                kind: DocumentSpanKind::Own,
+                text: String::from_utf8_lossy(bytes).into_owned(),
+                source: None,
+                range: None,
+                content_commitment: None,
+                provenance_receipt: None,
+            },
+            RenderedSpan::Transcluded { bytes, provenance, range, .. } => DocumentSpanRow {
+                kind: DocumentSpanKind::Quote,
+                text: String::from_utf8_lossy(bytes).into_owned(),
+                source: Some(provenance.source.to_uri_string()),
+                range: Some(render_range(range)),
+                content_commitment: Some(reflect::short_hex(&provenance.content_hash)),
+                provenance_receipt: Some(reflect::short_hex(&provenance.receipt_hash)),
+            },
+            RenderedSpan::Darkened { provenance, range, .. } => DocumentSpanRow {
+                // A darkened span yields NO source bytes (the viewer gets none it lacks
+                // authority to read) — but its provenance + citation survive.
+                kind: DocumentSpanKind::Darkened,
+                text: String::new(),
+                source: Some(provenance.source.to_uri_string()),
+                range: Some(render_range(range)),
+                content_commitment: Some(reflect::short_hex(&provenance.content_hash)),
+                provenance_receipt: Some(reflect::short_hex(&provenance.receipt_hash)),
+            },
+        })
+        .collect();
+
+    let quote_count = spans
+        .iter()
+        .filter(|r| r.kind == DocumentSpanKind::Quote)
+        .count();
+
+    Some(DreggverseDocumentView {
+        title: "A dreggverse document (Nelson's EDL, made honest)".to_string(),
+        composed_text: rendered.composed_text().unwrap_or_default(),
+        span_count: rendered.spans().len(),
+        quote_count,
+        darkened_count: rendered.darkened_count(),
+        full: rendered.is_full(),
+        viewer_note: format!(
+            "viewer {} ({viewer_rights:?}) — fetch-allowlist permits the public source's \
+             origin but NOT the restricted one, so the restricted span darkens \
+             (provenance kept, bytes withheld; the REAL membrane meet, never a forgery)",
+            reflect::short_hex(&viewer.0)
+        ),
+        spans,
+    })
+}
+
+/// Render a [`SpanRange`] as the EDL's `start..end` (or `start..` when the range runs to
+/// the end of the source) — the cited byte range a quote/darkened span shows.
+fn render_range(range: &SpanRange) -> String {
+    if range.end == usize::MAX {
+        format!("{}..", range.start)
+    } else {
+        format!("{}..{}", range.start, range.end)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1075,5 +1380,154 @@ mod tests {
             WebCellsBrowser::fire_transcluded_affordance(&mut world, &still_read_only, "view").is_err(),
             "a read-only quote (refused upgrade) fires nothing"
         );
+    }
+
+    // ── THE WELD: the rich EDL span model (deos-web-cells' DreggverseDocument)
+    //    rendered in the cockpit's web-of-cells browser. A multi-span document with
+    //    OWN bytes + a verified peer quote + a per-viewer DARKENED span. ──
+
+    #[test]
+    fn the_browser_renders_a_multi_span_dreggverse_document() {
+        // The cockpit browses the live image; the browser now composes a multi-span
+        // dreggverse document (Nelson's EDL made honest) over the SAME web it built.
+        let (world, anchors) = demo_world();
+        let viewer = anchors[2]; // the user anchor — the cockpit's principal
+        let browser = WebCellsBrowser::build(&world, viewer, editor_rights(), None);
+
+        let doc = browser
+            .document
+            .expect("the live image has cells → a dreggverse document composes");
+
+        // The EDL has FIVE spans (OWN intro, public quote, OWN connective, restricted
+        // quote, OWN outro) — the rich span model the whole-field transclusion cannot
+        // express.
+        assert_eq!(doc.span_count, 5, "the EDL composes five spans");
+        assert_eq!(doc.spans.len(), 5);
+
+        // SPAN 0 + 2 + 4: OWN content, rendered verbatim (no foreign provenance).
+        assert_eq!(doc.spans[0].kind, DocumentSpanKind::Own);
+        assert_eq!(doc.spans[0].text, "This document quotes ");
+        assert!(doc.spans[0].source.is_none(), "OWN content has no foreign source");
+        assert_eq!(doc.spans[2].kind, DocumentSpanKind::Own);
+        assert_eq!(doc.spans[2].text, " and a darkened ");
+        assert_eq!(doc.spans[4].kind, DocumentSpanKind::Own);
+        assert_eq!(doc.spans[4].text, ".");
+
+        // SPAN 1: a VERIFIED PEER QUOTE — the public source's cited BYTE RANGE (4..20 =
+        // "PUBLIC paragraph"), with real receipt-pinned provenance. This is the
+        // genuine verified cross-cell finalized read (a forged source could not open).
+        let quote = &doc.spans[1];
+        assert_eq!(quote.kind, DocumentSpanKind::Quote, "span 1 is a verified quote");
+        assert_eq!(quote.text, "PUBLIC paragraph", "the cited byte range of the public source");
+        assert_eq!(quote.range.as_deref(), Some("4..20"), "the quote shows its cited byte range");
+        assert!(
+            quote.source.as_deref().map(|s| s.starts_with("dregg://")).unwrap_or(false),
+            "the quote cites a dregg:// source"
+        );
+        assert!(
+            quote.content_commitment.as_deref().map(|c| c.len() >= 4).unwrap_or(false),
+            "the quote carries a real content commitment (datable provenance)"
+        );
+        assert!(
+            quote.provenance_receipt.as_deref().map(|r| r.len() >= 4).unwrap_or(false),
+            "the quote carries a real cited receipt"
+        );
+
+        // SPAN 3: a per-viewer DARKENED span — the restricted source's origin is not in
+        // the viewer's fetch-allowlist, so the REAL membrane meet withholds it.
+        let dark = &doc.spans[3];
+        assert_eq!(dark.kind, DocumentSpanKind::Darkened, "span 3 darkens for this viewer");
+
+        // BOTH POLARITIES of `full` exercised here (non-vacuous): the document is NOT
+        // full (a span darkened) AND it has a genuine quote that DID render (quote_count
+        // ≥ 1) — so darkening is selective, not a blanket failure.
+        assert!(!doc.full, "a darkened span ⇒ the document is not fully readable for this viewer");
+        assert_eq!(doc.darkened_count, 1, "exactly the restricted span is darkened");
+        assert_eq!(doc.quote_count, 1, "the public span DID resolve as a real quote");
+
+        // THE COMPOSED TEXT the viewer sees: OWN content + the public quote, but
+        // NOTHING for the darkened span. The honest per-viewer render.
+        assert_eq!(
+            doc.composed_text,
+            "This document quotes PUBLIC paragraph and a darkened .",
+            "the composed text carries OWN + the public quote, nothing for the darkened span"
+        );
+    }
+
+    #[test]
+    fn a_darkened_span_withholds_the_bytes_but_keeps_the_citation_anti_forgery() {
+        // THE ANTI-FORGERY TOOTH (negative polarity): the viewer NEVER sees the
+        // restricted source's value (not the bytes, not a substituted forgery) — but the
+        // darkened span STILL carries its provenance (the citation survives).
+        let (world, anchors) = demo_world();
+        let viewer = anchors[2];
+        let browser = WebCellsBrowser::build(&world, viewer, editor_rights(), None);
+        let doc = browser.document.expect("a dreggverse document composes");
+
+        let dark = &doc.spans[3];
+        assert_eq!(dark.kind, DocumentSpanKind::Darkened);
+        // A darkened span yields NO source bytes (the viewer gets none it lacks
+        // authority to read).
+        assert_eq!(dark.text, "", "a darkened span yields NO source bytes");
+        // The restricted source's value NEVER appears anywhere in the composed text —
+        // not withheld-then-leaked, not forged.
+        assert!(
+            !doc.composed_text.contains("RESTRICTED"),
+            "the viewer never sees the restricted value it lacks authority to read"
+        );
+        // …BUT the citation survives: the darkened span keeps its provenance (source +
+        // commitment + receipt) — the docuverse skeleton stays visible, only the bytes
+        // withheld. This is the both-polarity tooth: present (citation) vs. absent (bytes).
+        assert!(dark.source.is_some(), "the darkened span still cites its source");
+        assert!(
+            dark.content_commitment.as_deref().map(|c| c.len() >= 4).unwrap_or(false),
+            "the darkened span keeps its content commitment (provenance survives)"
+        );
+        assert!(
+            dark.provenance_receipt.as_deref().map(|r| r.len() >= 4).unwrap_or(false),
+            "the darkened span keeps its cited receipt"
+        );
+        assert_eq!(dark.range.as_deref(), Some("4..24"), "the darkened span keeps its cited byte range");
+    }
+
+    #[test]
+    fn a_full_authority_viewer_reaches_every_span_no_darkening() {
+        // THE OTHER POLARITY of the darkening: prove the darkening is SELECTIVE (driven
+        // by the viewer's fetch-allowlist), not unconditional. We resolve the SAME
+        // document for a FULL-authority viewer (wildcard fetch) directly against
+        // `deos-web-cells` — every span reaches; nothing darkens. (The cockpit's browser
+        // scopes its viewer to the public origin on purpose, to SHOW a darkened span;
+        // here we confirm the mechanism, not a constant.)
+        let mut web = WebOfCells::new(3);
+        let publisher = web.publish(0xE0, b"anchor", "dregg://doc/anchor").cell;
+        let public_src = web.publish(0xD0, b"the PUBLIC paragraph anyone may read", "dregg://doc/public");
+        let secret_src = web.publish(0xD1, b"the RESTRICTED paragraph", "dregg://doc/restricted");
+
+        let public_origin = doc_span_origin(public_src.cell);
+        let secret_origin = doc_span_origin(secret_src.cell);
+
+        let lineage = SurfaceCapability::scoped(
+            publisher,
+            AuthRequired::Either,
+            [public_origin.clone(), secret_origin.clone()],
+            [],
+        );
+        let doc = DreggverseDocument::from_spans(vec![
+            Span::own(b"This document quotes ".to_vec()),
+            Span::transclude_range(public_src.clone(), SpanRange::new(4, 20)),
+            Span::own(b" and ".to_vec()),
+            Span::transclude_range(secret_src.clone(), SpanRange::new(4, 14)),
+        ]);
+
+        // A FULL-authority viewer: wildcard fetch (root), Either rights — reaches BOTH.
+        let full_viewer = Membrane::new(SurfaceCapability::root(publisher, AuthRequired::Either));
+        let rendered = doc
+            .resolve_for(&web, &full_viewer, &lineage)
+            .expect("the full-authority viewer resolves");
+        assert!(rendered.is_full(), "the full-authority viewer darkens NOTHING");
+        assert_eq!(rendered.darkened_count(), 0);
+        // Both quotes are present (the selective-vs-blanket distinction: same document,
+        // a wider viewer reaches the span the cockpit's scoped viewer could not).
+        assert_eq!(rendered.composed_text().unwrap(), "This document quotes PUBLIC paragraph and RESTRICTED");
     }
 }

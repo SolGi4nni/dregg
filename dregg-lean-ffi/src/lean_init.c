@@ -108,6 +108,22 @@ extern lean_object *dregg_coord_causal_order(lean_object *input);
 extern lean_object *dregg_coord_shared_budget(lean_object *input);
 #endif
 
+/* The @[export]ed Lean `String -> String` VERIFIED FLOW-REFINEMENT DECISION GATE
+ * (`Dregg2.Deos.FlowRefine.decideRefinesGate`): decodes a wire-encoded pair of σ-free `Proc`s
+ * (`"A=<preorder-tokens>;B=<preorder-tokens>"`), runs the PROVED `decideRefines` (sound+complete for
+ * the online-simulation refinement order `≤ᶠ`, per `decideRefines_iff`), and returns `"1"` (A ≤ᶠ B) /
+ * `"0"` (A ⋠ B) / `"ERR"` (fail-closed on a malformed wire). `dregg-deploy/src/refine.rs` calls this
+ * at the safe-upgrade / intent-conformance gate so it runs the verified procedure, not a mirror.
+ *
+ * GATED on DREGG_DECIDE_REFINES: this export lives in a module OUTSIDE the FFI module's import
+ * closure, so (a) build.rs probes the archive and only `#define`s DREGG_DECIDE_REFINES when the symbol
+ * is present, and (b) `dregg_ffi_init` must ALSO run the module's own initializer. When absent the
+ * bridge is compiled out and the deploy gate falls back to its in-process σ-free mirror. */
+#ifdef DREGG_DECIDE_REFINES
+extern lean_object *initialize_Dregg2_Dregg2_Deos_FlowRefine(uint8_t builtin);
+extern lean_object *dregg_decide_refines(lean_object *input);
+#endif
+
 /* Returns 0 on success, 1 if module initialization reported an IO error. */
 int dregg_ffi_init(void) {
     lean_initialize_runtime_module();
@@ -154,6 +170,18 @@ int dregg_ffi_init(void) {
         return 1;
     }
     lean_dec_ref(dres);
+#endif
+#ifdef DREGG_DECIDE_REFINES
+    /* The flow-refinement module is also OUTSIDE the FFI closure; initialize it explicitly so
+     * `dregg_decide_refines` is callable. Its dependency closure (Deos.FlowAlgebra) is
+     * re-entrant-safe under Lean's init guards. */
+    lean_object *rres = initialize_Dregg2_Dregg2_Deos_FlowRefine(1);
+    if (!lean_io_result_is_ok(rres)) {
+        lean_io_result_show_error(rres);
+        lean_dec_ref(rres);
+        return 1;
+    }
+    lean_dec_ref(rres);
 #endif
     lean_io_mark_end_initialization();
     return 0;
@@ -334,6 +362,28 @@ size_t dregg_strand_admit_str(const char *in_utf8, char *out, size_t out_cap) {
     return full;
 }
 #endif /* DREGG_STRAND_ADMIT */
+
+/* dregg_decide_refines_str — the C string bridge over the Lean `String -> String` VERIFIED
+ * FLOW-REFINEMENT DECISION GATE export. Identical marshalling discipline as the bridges above; it
+ * drives `dregg_decide_refines`, whose input wire is `"A=<preorder-tokens>;B=<preorder-tokens>"` (a
+ * pair of σ-free `Proc`s) and whose output is `"1"` (A ≤ᶠ B) / `"0"` (A ⋠ B) / `"ERR"` (fail-closed on
+ * a malformed wire). Same return contract (full byte length; (size_t)-1 only on an unusable buffer). */
+#ifdef DREGG_DECIDE_REFINES
+size_t dregg_decide_refines_str(const char *in_utf8, char *out, size_t out_cap) {
+    if (out == 0 || out_cap == 0) {
+        return (size_t)-1;
+    }
+    lean_object *in_obj = lean_mk_string(in_utf8);
+    lean_object *res = dregg_decide_refines(in_obj);
+    const char *cstr = lean_string_cstr(res);
+    size_t full = strlen(cstr);
+    size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);
+    memcpy(out, cstr, copy);
+    out[copy] = '\0';
+    lean_dec_ref(res);
+    return full;
+}
+#endif /* DREGG_DECIDE_REFINES */
 
 /* dregg_captp_validate_handoff_str / dregg_captp_process_drop_str / dregg_captp_pipeline_resolve_str
  * / dregg_coord_2pc_decide_str / dregg_coord_causal_order_str / dregg_coord_shared_budget_str — the

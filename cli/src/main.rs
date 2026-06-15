@@ -12,8 +12,8 @@ use clap::{Parser, Subcommand};
 use clap_complete::Shell;
 
 use commands::{
-    bounty, cap, cell, cipherclerk, demo, directory, doctor, federation, id, name, namespace, node,
-    polis, proof, route, storage, turn, voting,
+    bounty, cap, cell, cipherclerk, demo, deploy, directory, doctor, federation, id, name,
+    namespace, node, polis, proof, route, storage, turn, voting,
 };
 
 /// Dragon's Egg -- sovereign cell-based compute substrate.
@@ -158,6 +158,19 @@ enum Commands {
         command: cap::CapCommand,
     },
 
+    /// DreggDL — check / apply a declarative deployment spec (a checkable
+    /// capability layout, audited off one file before any gas).
+    ///
+    /// `dregg deploy check <spec.dregg.toml>` runs the four static assurance
+    /// checks (conservation, non-amplification, well-formedness) over the WHOLE
+    /// declared authority layout; `dregg deploy apply` then emits the gated
+    /// per-root turn sequence. An over-grant is refused (exit 2) with the exact
+    /// offending edge named.
+    Deploy {
+        #[command(subcommand)]
+        command: deploy::DeployCommand,
+    },
+
     /// Cipherclerk operations (balance, transfer, delegate).
     Cipherclerk {
         #[command(subcommand)]
@@ -280,6 +293,7 @@ async fn main() {
             faucet,
         } => demo::run(&cfg, &ctx, name, passphrase, faucet).await,
         Commands::Cap { command } => cap::run(command, &cfg, &ctx).await,
+        Commands::Deploy { command } => deploy::run(command, &cfg, &ctx).await,
         Commands::Cipherclerk { command } => cipherclerk::run(command, &cfg, &ctx).await,
         Commands::Node { command } => node::run(command, &cfg, &ctx).await,
         Commands::Federation { command } => federation::run(command, &cfg, &ctx).await,
