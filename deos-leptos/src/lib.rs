@@ -103,6 +103,16 @@ pub mod server;
 /// and the view shows the NEW committed value at the NEW provenance height (the live
 /// update). The runnable demo of the proven `Dregg2.Deos.Transclusion` primitive.
 pub mod transclusion_demo;
+/// The EEL — Ted Nelson's **parallel source view**, made runnable. Renders a multi-span
+/// [`deos_web_cells::DreggverseDocument`] in one column and, BESIDE each transcluded
+/// span, its SOURCE cell with the quoted byte range highlighted + a working
+/// `#eel-src-N` jump-to-source anchor — built on [`deos_web_cells::RenderedSpan::source_link`]
+/// + the genuine [`deos_web_cells::DreggverseDocument::resolve_for`] per-viewer membrane
+/// meet. A DARKENED span (the viewer lacks authority) still shows its citation ("you may
+/// not read this, but here is what it cites" — bytes withheld, never forged), and the
+/// reactive [`parallel_source_view::ParallelSourceView`] re-resolves on a source amend so
+/// the highlight tracks the source LIVE (the unbreakable link, in the parallel view).
+pub mod parallel_source_view;
 
 use starbridge_web_surface::{
     AffordanceSurface, AuthRequired, CellAffordance, EvalContext, ReactiveAffordance,

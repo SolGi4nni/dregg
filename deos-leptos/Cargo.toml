@@ -74,6 +74,19 @@ description = "The Leptos runtime as the deos cell-affordance web surface: cell 
 # call into these, not a reimplementation.
 starbridge-web-surface = { path = "../starbridge-web-surface" }
 
+# THE DREGGVERSE DOCUMENT — Ted Nelson's *actual* document model (an EDL of OWN +
+# transcluded spans), made honest on the verified substrate. The
+# `parallel_source_view` module (the EEL) is built ENTIRELY on this crate's STABLE
+# API: `DreggverseDocument`/`Span`/`SpanRange`, `RenderedDocument`/`RenderedSpan`
+# (`source_link()` is the per-span jump-to-source anchor the parallel view consumes),
+# `resolve`/`resolve_for` (the per-viewer membrane meet that DARKENS a span the viewer
+# cannot read), and the re-exported `WebOfCells`/`Membrane`/`SurfaceCapability`/
+# `TranscludedField`/`Provenance`/`WebBundle`. We edit none of it — this is the thin
+# Leptos UX layer (the side-by-side render + the live re-resolve) over the genuine
+# document machinery. It is its own workspace root (like `starbridge-web-surface`), so
+# cargo resolves the shared real dregg crates into this crate's local target.
+deos-web-cells = { path = "../deos-web-cells" }
+
 # The REAL cell types we touch directly: `CellState` (the signal payload — the
 # council cell's status/tally slots the TransitionGate reads BOTH of) and the
 # `AuthRequired` lattice. Named directly so the cell-state-as-signal is the genuine
@@ -126,3 +139,15 @@ path = "src/main.rs"
 [[bin]]
 name = "transclusion_demo"
 path = "src/bin/transclusion_demo.rs"
+
+# The EEL / PARALLEL-SOURCE-VIEW demo — Ted Nelson's parallel source view, made
+# runnable. `cargo run --bin parallel_source_view` resolves a multi-span
+# `deos_web_cells::DreggverseDocument` and renders the two-column EEL: the document in
+# one column, and BESIDE each transcluded span its SOURCE cell with the quoted byte
+# range highlighted + a working `#eel-src-N` jump-to-source anchor. It shows the
+# DARKENED-span case (a weaker viewer: "you may not read this, but here is what it
+# cites" — citation preserved, bytes withheld) AND the live update (amend a source →
+# the highlighted range tracks the new committed value, the provenance height advances).
+[[bin]]
+name = "parallel_source_view"
+path = "src/bin/parallel_source_view.rs"

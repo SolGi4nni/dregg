@@ -1029,11 +1029,21 @@ dependencies = [
 name = "deos-leptos"
 version = "0.1.0"
 dependencies = [
+ "deos-web-cells",
  "dregg-cell",
  "dregg-sdk",
  "dregg-turn",
  "dregg-types",
  "leptos",
+ "starbridge-web-surface",
+]
+
+[[package]]
+name = "deos-web-cells"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "dregg-types",
  "starbridge-web-surface",
 ]
 
