@@ -287,6 +287,7 @@ impl Evaluator {
     /// Returns pairs of (substitution, body_fact_indices).
     ///
     /// This is the non-indexed version, kept for backward compatibility with tests.
+    #[allow(dead_code)] // backward-compat shim mirroring find_all_substitutions_indexed
     fn find_all_substitutions(rule: &Rule, facts: &[Fact]) -> Vec<(Substitution, Vec<usize>)> {
         let pred_index = Self::build_predicate_index(facts);
         Self::find_all_substitutions_indexed(rule, facts, &pred_index)

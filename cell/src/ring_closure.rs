@@ -316,7 +316,7 @@ impl RingClosureAttestation {
                     &self.transfer_ids,
                     &self.leg_pis,
                 );
-                if &self.closure_proof[..] != &expected[..] {
+                if self.closure_proof[..] != expected[..] {
                     return Err(RingClosureError::ClosureCommitmentMismatch {
                         expected,
                         actual: self.closure_proof.clone(),

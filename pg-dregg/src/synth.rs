@@ -225,7 +225,13 @@ pub fn ledger_story() -> Vec<MirrorBatch> {
 /// (as if an attacker reordered / forged it). The [`RootChain`](crate::mirror::RootChain)
 /// tooth must REFUSE it — that is the anti-substitution demonstration.
 pub fn tampered_batch_at_2() -> MirrorBatch {
-    let mut b = make_batch(2, [0x99u8; 32], ALICE, vec![cell(ALICE, 999_999, 1, 2)], vec![]);
+    let mut b = make_batch(
+        2,
+        [0x99u8; 32],
+        ALICE,
+        vec![cell(ALICE, 999_999, 1, 2)],
+        vec![],
+    );
     // also flip the ordinal-stamp on a row to show check_ordinals (uncomment to
     // exercise the Malformed path); here we keep the RootMismatch path clean.
     b.turn.prev_root = [0x99u8; 32];
@@ -272,16 +278,18 @@ mod tests {
         let head_before = chain.head();
         let err = chain.extend(&tampered_batch_at_2()).unwrap_err();
         assert!(matches!(err, ChainRefusal::RootMismatch { .. }));
-        assert_eq!(chain.head(), head_before, "a tampered batch cannot move the head");
+        assert_eq!(
+            chain.head(),
+            head_before,
+            "a tampered batch cannot move the head"
+        );
     }
 
     #[test]
     fn cell_ids_are_prefix_distinct_for_rls() {
         // The RLS-narrowing story relies on the hex cell ids being prefix-
         // distinct: a token attenuated to prefix "a1" must admit ALICE only.
-        let hx = |id: [u8; 32]| -> String {
-            id.iter().map(|b| format!("{b:02x}")).collect()
-        };
+        let hx = |id: [u8; 32]| -> String { id.iter().map(|b| format!("{b:02x}")).collect() };
         assert!(hx(ALICE).starts_with("a1"));
         assert!(hx(BOB).starts_with("b0"));
         assert!(hx(TREASURY).starts_with("c0"));

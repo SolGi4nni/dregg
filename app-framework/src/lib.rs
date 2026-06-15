@@ -81,9 +81,8 @@ pub mod webgen;
 /// during the migration. New code should reach for `cipherclerk`.
 #[doc(hidden)]
 pub mod cclerk {
-    //! Legacy module: forwards to `cipherclerk` and re-exports
-    //! `AppCipherclerk` (renamed to `AppCipherclerk`) so pre-rename callers
-    //! keep building. New code should reach for `cipherclerk`.
+    // Legacy module: forwards to `cipherclerk` and re-exports `AppCipherclerk` so
+    // pre-rename callers keep building. New code should reach for `cipherclerk`.
     pub use crate::cipherclerk::AppCipherclerk;
     pub use crate::cipherclerk::*;
 }
@@ -123,10 +122,8 @@ pub use server::{AppConfig, AppServer, ErrorResponse, api_error};
 /// Short alias for [`AppCipherclerk`].
 pub use cipherclerk::AppCipherclerk as AppCClerk;
 
-/// Legacy alias for [`AppCipherclerk`].
-///
-/// Preserved while downstream apps migrate to the new name. New code
-/// should reach for [`AppCipherclerk`] (or the short [`AppCClerk`]).
+// Legacy alias for `AppCipherclerk`, preserved while downstream apps migrate to
+// the new name. New code should reach for `AppCipherclerk` (or the short `AppCClerk`).
 // pub use cipherclerk::AppCipherclerk as AppCipherclerk; // already re-exported above
 
 // Re-export common action / effect types so apps build effects through
@@ -151,7 +148,7 @@ pub use dregg_sdk::{
     decode_witnessed_receipt_artifact_hex, encode_witnessed_receipt_artifact,
 };
 
-/// Legacy alias for [`AgentCipherclerk`], re-exported from the SDK.
+// Legacy alias for `AgentCipherclerk`, re-exported from the SDK.
 // pub use dregg_sdk::AgentCipherclerk as AgentCipherclerk; // already re-exported above
 
 // Re-export dispute framework types for apps implementing optimistic settlement.

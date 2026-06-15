@@ -10,18 +10,20 @@
 /// Total trace width.
 /// Layout: 54 selector columns (29 live + 25 retired-pinned-zero) + 14 state_before
 /// + 8 params + 14 state_after + 96 aux = 186.
-/// (aux[8..10] = state commitment intermediates;
-///  aux[11] = cumulative custom-effect count (sum-check, Stage 1);
-///  aux[12..20] = old_reserved bit-decomposition for sealing honesty (Stage 2)
-///  + mode_flag bit at aux[20];
-///  aux[21..22] = retired ResizeQueue sign/mag slots (always zero since the
-///  queue family dissolved; compacted in the descriptor-regeneration lane);
-///  aux[23..28] = sovereign-witness key-commit + sequence;
-///  aux[28..36] = federation-id + owner-cell-id binding (γ.2 #131/#132);
-///  aux[36..96] = W9-RANGECHECK 30+30 bit decomposition of new_balance_lo/hi,
-///  enforced UNCONDITIONALLY on every row via booleanity + recomposition —
-///  a wrapped debit `old - amount` mod p lands outside [0, 2^30) and cannot be
-///  bit-decomposed, so the STARK rejects it IN-circuit.)
+///
+/// The aux block decomposes as:
+///   `aux[8..10]` = state commitment intermediates;
+///   `aux[11]` = cumulative custom-effect count (sum-check, Stage 1);
+///   `aux[12..20]` = old_reserved bit-decomposition for sealing honesty (Stage 2),
+///   plus mode_flag bit at `aux[20]`;
+///   `aux[21..22]` = retired ResizeQueue sign/mag slots (always zero since the
+///   queue family dissolved; compacted in the descriptor-regeneration lane);
+///   `aux[23..28]` = sovereign-witness key-commit + sequence;
+///   `aux[28..36]` = federation-id + owner-cell-id binding (γ.2 #131/#132);
+///   `aux[36..96]` = W9-RANGECHECK 30+30 bit decomposition of new_balance_lo/hi,
+///   enforced UNCONDITIONALLY on every row via booleanity + recomposition —
+///   a wrapped debit `old - amount` mod p lands outside [0, 2^30) and cannot be
+///   bit-decomposed, so the STARK rejects it IN-circuit.
 ///
 /// NB: aux[2..5] are reserved on row 0 for delta_mag / delta_sign /
 /// effects_hash_4[0..1] boundary writes. Per-effect witnesses must avoid

@@ -154,7 +154,10 @@ impl CapHandle {
         let mut e = [0u8; 8];
         s.copy_from_slice(&b[..8]);
         e.copy_from_slice(&b[8..]);
-        CapHandle { slot: u64::from_le_bytes(s), epoch: u64::from_le_bytes(e) }
+        CapHandle {
+            slot: u64::from_le_bytes(s),
+            epoch: u64::from_le_bytes(e),
+        }
     }
 }
 
@@ -287,7 +290,14 @@ impl ValidityTable {
         self.next_slot += 1;
         let epoch = self.epoch_hwm.get(&slot).map(|e| e + 1).unwrap_or(0);
         self.epoch_hwm.insert(slot, epoch);
-        self.entries.insert(slot, CapObject { epoch, kind, rights });
+        self.entries.insert(
+            slot,
+            CapObject {
+                epoch,
+                kind,
+                rights,
+            },
+        );
         CapHandle { slot, epoch }
     }
 
@@ -311,10 +321,16 @@ impl ValidityTable {
     /// the table is the sole arbiter.
     pub fn validate(&self, h: CapHandle) -> Result<&CapObject, CapError> {
         match self.entries.get(&h.slot) {
-            None => Err(CapError::Forged { presented: h, reason: ForgeReason::NoSuchSlot }),
+            None => Err(CapError::Forged {
+                presented: h,
+                reason: ForgeReason::NoSuchSlot,
+            }),
             Some(obj) if obj.epoch != h.epoch => Err(CapError::Forged {
                 presented: h,
-                reason: ForgeReason::StaleEpoch { current: obj.epoch, presented: h.epoch },
+                reason: ForgeReason::StaleEpoch {
+                    current: obj.epoch,
+                    presented: h.epoch,
+                },
             }),
             Some(obj) => Ok(obj),
         }
@@ -411,7 +427,12 @@ impl ShmRegion {
                 libc::shm_unlink(cname.as_ptr());
                 return Err(e);
             }
-            Ok(ShmRegion { name, ptr: ptr as *mut u8, len, owns_unlink: true })
+            Ok(ShmRegion {
+                name,
+                ptr: ptr as *mut u8,
+                len,
+                owns_unlink: true,
+            })
         }
     }
 
@@ -438,7 +459,12 @@ impl ShmRegion {
             if ptr == libc::MAP_FAILED {
                 return Err(io::Error::last_os_error());
             }
-            Ok(ShmRegion { name: name.to_string(), ptr: ptr as *mut u8, len, owns_unlink: false })
+            Ok(ShmRegion {
+                name: name.to_string(),
+                ptr: ptr as *mut u8,
+                len,
+                owns_unlink: false,
+            })
         }
     }
 
@@ -662,9 +688,15 @@ impl KernelRequest {
                 let badge = u64::from_le_bytes(rest.get(16..24)?.try_into().ok()?);
                 Some(KernelRequest::Signal { notif: h, badge })
             }
-            1 => Some(KernelRequest::Wait { notif: take16(rest)? }),
-            2 => Some(KernelRequest::Validate { handle: take16(rest)? }),
-            3 => Some(KernelRequest::RegionInfo { region: take16(rest)? }),
+            1 => Some(KernelRequest::Wait {
+                notif: take16(rest)?,
+            }),
+            2 => Some(KernelRequest::Validate {
+                handle: take16(rest)?,
+            }),
+            3 => Some(KernelRequest::RegionInfo {
+                region: take16(rest)?,
+            }),
             _ => None,
         }
     }
@@ -699,7 +731,9 @@ impl KernelReply {
         let (&tag, rest) = b.split_first()?;
         match tag {
             0 => Some(KernelReply::Ok),
-            1 => Some(KernelReply::Badge(u64::from_le_bytes(rest.get(..8)?.try_into().ok()?))),
+            1 => Some(KernelReply::Badge(u64::from_le_bytes(
+                rest.get(..8)?.try_into().ok()?,
+            ))),
             2 => {
                 let kind = match std::str::from_utf8(rest).ok()? {
                     "notification" => "notification",
@@ -817,7 +851,13 @@ impl ProcessKernel {
         let region = ShmRegion::create(len)?;
         let name = region.name().to_string();
         let mut st = self.state.lock().unwrap();
-        let h = st.table.mint(ObjectKind::Region { shm_name: name, len }, rights);
+        let h = st.table.mint(
+            ObjectKind::Region {
+                shm_name: name,
+                len,
+            },
+            rights,
+        );
         st.regions.insert(h.slot, region);
         Ok(h)
     }
@@ -860,7 +900,10 @@ impl ProcessKernel {
         let mut st = self.state.lock().unwrap();
         let obj = st.table.validate(h)?;
         if !matches!(obj.kind, ObjectKind::Notification) {
-            return Err(CapError::WrongKind { expected: "notification", got: kind_tag(&obj.kind) });
+            return Err(CapError::WrongKind {
+                expected: "notification",
+                got: kind_tag(&obj.kind),
+            });
         }
         *st.notif_badges.entry(h.slot).or_insert(0) |= badge;
         Ok(())
@@ -873,7 +916,10 @@ impl ProcessKernel {
         let mut st = self.state.lock().unwrap();
         let obj = st.table.validate(h)?;
         if !matches!(obj.kind, ObjectKind::Notification) {
-            return Err(CapError::WrongKind { expected: "notification", got: kind_tag(&obj.kind) });
+            return Err(CapError::WrongKind {
+                expected: "notification",
+                got: kind_tag(&obj.kind),
+            });
         }
         let b = st.notif_badges.get(&h.slot).copied().unwrap_or(0);
         st.notif_badges.insert(h.slot, 0);
@@ -888,7 +934,10 @@ impl ProcessKernel {
         let obj = st.table.validate(h)?;
         match &obj.kind {
             ObjectKind::Region { shm_name, len } => Ok((shm_name.clone(), *len)),
-            other => Err(CapError::WrongKind { expected: "region", got: kind_tag(other) }),
+            other => Err(CapError::WrongKind {
+                expected: "region",
+                got: kind_tag(other),
+            }),
         }
     }
 
@@ -904,7 +953,10 @@ impl ProcessKernel {
         let _obj = st.table.validate(h)?;
         match st.regions.get(&h.slot) {
             Some(region) => Ok(region.with_mut(f)),
-            None => Err(CapError::Forged { presented: h, reason: ForgeReason::NoSuchSlot }),
+            None => Err(CapError::Forged {
+                presented: h,
+                reason: ForgeReason::NoSuchSlot,
+            }),
         }
     }
 
@@ -914,7 +966,10 @@ impl ProcessKernel {
         let _obj = st.table.validate(h)?;
         match st.regions.get(&h.slot) {
             Some(region) => Ok(region.read()),
-            None => Err(CapError::Forged { presented: h, reason: ForgeReason::NoSuchSlot }),
+            None => Err(CapError::Forged {
+                presented: h,
+                reason: ForgeReason::NoSuchSlot,
+            }),
         }
     }
 
@@ -1019,7 +1074,9 @@ pub struct KernelClient {
 impl KernelClient {
     /// Wrap a control socket (the fd the child inherited from the kernel).
     pub fn new(sock: UnixStream) -> Self {
-        KernelClient { sock: Mutex::new(sock) }
+        KernelClient {
+            sock: Mutex::new(sock),
+        }
     }
 
     /// Adopt a raw inherited fd (the child's end of the `socketpair`) as the
@@ -1173,9 +1230,7 @@ impl ProcessKernel {
     {
         // socketpair(AF_UNIX, SOCK_STREAM) — the bidirectional control channel.
         let mut fds = [0 as RawFd; 2];
-        let rc = unsafe {
-            libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, fds.as_mut_ptr())
-        };
+        let rc = unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, fds.as_mut_ptr()) };
         if rc != 0 {
             return Err(SpawnError::SocketPair(io::Error::last_os_error()));
         }
@@ -1232,18 +1287,30 @@ mod tests {
         assert!(t.validate(real).is_ok());
 
         // A fabricated handle (a slot the table never minted) is refused.
-        let forged = CapHandle { slot: 9999, epoch: 0 };
+        let forged = CapHandle {
+            slot: 9999,
+            epoch: 0,
+        };
         assert!(matches!(
             t.validate(forged),
-            Err(CapError::Forged { reason: ForgeReason::NoSuchSlot, .. })
+            Err(CapError::Forged {
+                reason: ForgeReason::NoSuchSlot,
+                ..
+            })
         ));
 
         // A handle for a REAL slot but the WRONG epoch (a stale/guessed epoch)
         // is refused — the use-after-reuse guard.
-        let stale = CapHandle { slot: real.slot, epoch: real.epoch + 7 };
+        let stale = CapHandle {
+            slot: real.slot,
+            epoch: real.epoch + 7,
+        };
         assert!(matches!(
             t.validate(stale),
-            Err(CapError::Forged { reason: ForgeReason::StaleEpoch { .. }, .. })
+            Err(CapError::Forged {
+                reason: ForgeReason::StaleEpoch { .. },
+                ..
+            })
         ));
     }
 
@@ -1256,7 +1323,10 @@ mod tests {
         assert!(t.revoke(h.slot));
         assert!(matches!(
             t.validate(h),
-            Err(CapError::Forged { reason: ForgeReason::NoSuchSlot, .. })
+            Err(CapError::Forged {
+                reason: ForgeReason::NoSuchSlot,
+                ..
+            })
         ));
         // (Epoch high-water persists, so a future reuse of the slot would bump
         // the epoch, refusing this stale handle by StaleEpoch rather than
@@ -1296,7 +1366,10 @@ mod tests {
 
     #[test]
     fn cap_handle_bytes_round_trip() {
-        let h = CapHandle { slot: 0xDEAD_BEEF, epoch: 0x1234 };
+        let h = CapHandle {
+            slot: 0xDEAD_BEEF,
+            epoch: 0x1234,
+        };
         assert_eq!(CapHandle::from_bytes(h.to_bytes()), h);
     }
 
@@ -1305,10 +1378,19 @@ mod tests {
     #[test]
     fn request_reply_codecs_round_trip() {
         let reqs = [
-            KernelRequest::Signal { notif: CapHandle { slot: 1, epoch: 0 }, badge: 0x20 },
-            KernelRequest::Wait { notif: CapHandle { slot: 2, epoch: 1 } },
-            KernelRequest::Validate { handle: CapHandle { slot: 3, epoch: 2 } },
-            KernelRequest::RegionInfo { region: CapHandle { slot: 4, epoch: 3 } },
+            KernelRequest::Signal {
+                notif: CapHandle { slot: 1, epoch: 0 },
+                badge: 0x20,
+            },
+            KernelRequest::Wait {
+                notif: CapHandle { slot: 2, epoch: 1 },
+            },
+            KernelRequest::Validate {
+                handle: CapHandle { slot: 3, epoch: 2 },
+            },
+            KernelRequest::RegionInfo {
+                region: CapHandle { slot: 4, epoch: 3 },
+            },
         ];
         for r in reqs {
             assert_eq!(KernelRequest::decode(&r.encode()), Some(r));
@@ -1316,8 +1398,13 @@ mod tests {
         let reps = [
             KernelReply::Ok,
             KernelReply::Badge(0x20),
-            KernelReply::Valid { kind: "notification" },
-            KernelReply::Region { name: "/df123".into(), len: 8 },
+            KernelReply::Valid {
+                kind: "notification",
+            },
+            KernelReply::Region {
+                name: "/df123".into(),
+                len: 8,
+            },
             KernelReply::Forged,
             KernelReply::WrongKind,
             KernelReply::Unauthorized,
@@ -1338,7 +1425,10 @@ mod tests {
         assert_eq!(k.poll_notification(n).unwrap(), 0);
 
         // A forged handle is refused at the kernel signal path.
-        let forged = CapHandle { slot: 4242, epoch: 0 };
+        let forged = CapHandle {
+            slot: 4242,
+            epoch: 0,
+        };
         assert!(matches!(k.signal(forged, 1), Err(CapError::Forged { .. })));
     }
 }

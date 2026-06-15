@@ -454,7 +454,7 @@ impl<'a> NameResolver<'a> {
                 }
             }
             // Confidence based on vote weight.
-            let confidence = (proposed.vote_weight as f64 / 1000.0).min(0.95).max(0.5);
+            let confidence = (proposed.vote_weight as f64 / 1000.0).clamp(0.5, 0.95);
             return Ok(ResolvedName {
                 target: proposed.target,
                 provenance: NameProvenance::FederationDirectory {

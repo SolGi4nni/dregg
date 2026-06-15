@@ -186,6 +186,10 @@ const MAX_NAME_LEN: usize = 256;
 /// Maximum number of entries in a single directory cell.
 const DEFAULT_MAX_ENTRIES: usize = 10_000;
 /// Maximum number of tags per entry.
+#[allow(
+    dead_code,
+    reason = "config bound for entry tagging; enforced once tag mutation lands"
+)]
 const MAX_TAGS_PER_ENTRY: usize = 16;
 
 /// A capability-secure directory cell.
@@ -593,6 +597,10 @@ pub struct MatchPattern {
 /// at the relevant block height bounds the audience.
 pub struct ScopedIntentPool {
     /// The directory cell this pool is bound to.
+    #[allow(
+        dead_code,
+        reason = "identity binding: records which directory cell scopes this pool"
+    )]
     directory_cell_id: CellId,
     /// The gossip topic for scoped propagation.
     gossip_topic: GossipTopic,

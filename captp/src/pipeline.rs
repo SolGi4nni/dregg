@@ -679,12 +679,10 @@ impl CrossFedPipelineBridge {
         }
 
         // Otherwise, ensure it exists in the peer registry.
-        if !registry.promises.contains_key(&promise_id) {
+        if let std::collections::hash_map::Entry::Vacant(e) = registry.promises.entry(promise_id) {
             // Implicitly create the promise — the remote knows about a promise
             // we don't track yet (it was created on their side).
-            registry
-                .promises
-                .insert(promise_id, PipelinePromiseState::Pending);
+            e.insert(PipelinePromiseState::Pending);
             registry.queued.insert(promise_id, Vec::new());
         }
 

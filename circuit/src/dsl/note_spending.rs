@@ -40,6 +40,10 @@ pub const NULLIFIER_INTERMEDIATE: usize = 17;
 // Re-export witness types from circuit crate
 // ============================================================================
 
+// Re-exports the legacy hand-written AIR alongside the witness/helper types so the
+// DSL module stays a drop-in replacement surface; `NoteSpendingAir` itself is
+// deprecated in favor of `prove_note_spend_dsl`/`verify_note_spend_dsl`.
+#[allow(deprecated)]
 pub use crate::note_spending_air::{
     NoteSpendingAir, NoteSpendingWitness as NoteSpendingWitnessType, create_test_witness,
     key_to_field_elements, test_spending_key,
@@ -54,16 +58,16 @@ pub use crate::note_spending_air::{
 /// This is the DSL equivalent of `NoteSpendingAir`. Constraints:
 /// - C1: is_merkle is binary
 /// - C2: Commitment hash binding (gated by 1-is_merkle):
-///        commitment == hash_fact(owner, [value, asset_type, creation_nonce, randomness])
+///   commitment == hash_fact(owner, [value, asset_type, creation_nonce, randomness])
 /// - C3: Nullifier intermediate (gated by 1-is_merkle):
-///        intermediate == hash_fact(commitment, [key[0], key[1], key[2], key[3]])
+///   intermediate == hash_fact(commitment, [key[0], key[1], key[2], key[3]])
 /// - C4: Nullifier final (gated by 1-is_merkle):
-///        nullifier == hash_fact(intermediate, [key[4], key[5], key[6], key[7]])
+///   nullifier == hash_fact(intermediate, [key[4], key[5], key[6], key[7]])
 /// - C5: Position validity (degree 4): pos*(pos-1)*(pos-2)*(pos-3) == 0
 /// - C6: Merkle hash binding (gated by is_merkle):
-///        parent == hash_4_to_1(children arranged by position)
-///        Expressed as: is_merkle * (hash_4_to_1([current, sib0, sib1, sib2] by position) - parent) == 0
-///        Simplified: We use the Hash constraint variant on Merkle rows.
+///   parent == hash_4_to_1(children arranged by position)
+///   Expressed as: is_merkle * (hash_4_to_1([current, sib0, sib1, sib2] by position) - parent) == 0
+///   Simplified: We use the Hash constraint variant on Merkle rows.
 /// - C7: Chain continuity: next[CURRENT] == local[PARENT] (Merkle chain)
 ///
 /// Boundary constraints:

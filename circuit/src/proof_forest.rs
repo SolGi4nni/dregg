@@ -27,8 +27,6 @@
 
 #[cfg(not(feature = "recursion"))]
 use crate::effect_vm::EffectVmAir;
-use crate::effect_vm::pi;
-use crate::field::BabyBear;
 #[cfg(not(feature = "recursion"))]
 use crate::stark::{self, StarkProof};
 

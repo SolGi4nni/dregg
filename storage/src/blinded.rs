@@ -537,6 +537,10 @@ pub mod crypto {
 /// Generate a Merkle proof (sibling commitments) for a leaf at the given
 /// position. Returns dual-form sibling commitments; verifiers select the
 /// form appropriate to context (BLAKE3 here; Poseidon2 in-circuit).
+#[allow(
+    dead_code,
+    reason = "proof-generation helper exercised by the consumption-proof tests"
+)]
 pub(crate) fn generate_merkle_proof(
     leaves: &[BlindedItemCommitment],
     position: usize,
@@ -553,7 +557,11 @@ pub(crate) fn generate_merkle_proof(
     let mut idx = position;
 
     while layer.len() > 1 {
-        let sibling_idx = if idx % 2 == 0 { idx + 1 } else { idx - 1 };
+        let sibling_idx = if idx.is_multiple_of(2) {
+            idx + 1
+        } else {
+            idx - 1
+        };
         proof.push(layer[sibling_idx]);
 
         // Compute next layer (BLAKE3 form for path, Poseidon2 for circuit).
@@ -602,7 +610,7 @@ fn verify_merkle_proof_blake3(
 
     for sibling in proof {
         let mut hasher = blake3::Hasher::new();
-        if idx % 2 == 0 {
+        if idx.is_multiple_of(2) {
             hasher.update(&current);
             hasher.update(sibling);
         } else {

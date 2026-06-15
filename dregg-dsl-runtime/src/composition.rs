@@ -179,7 +179,7 @@ impl StarkAir for ComposedDslCircuit {
 
     fn air_name(&self) -> &'static str {
         // Intern a composed name
-        let name = format!("dregg-composed-{}-v1", &self.descriptor.circuit.name);
+        let name = format!("dregg-composed-{}-v1", self.descriptor.circuit.name);
         crate::circuit::intern_air_name(&name)
     }
 

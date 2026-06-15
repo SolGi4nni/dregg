@@ -366,7 +366,10 @@ impl ReceiptStream {
         } else {
             // A gap (skipped a dense entry) or a deeper rewind — a stream defect /
             // injection. The node's chain is dense + monotone; nothing else is valid.
-            Err(IngestError::OutOfOrder { expected, got: chain_index })
+            Err(IngestError::OutOfOrder {
+                expected,
+                got: chain_index,
+            })
         }
     }
 
@@ -645,9 +648,19 @@ mod tests {
         s.ingest(frame(0, 0)).unwrap();
         // A GAP: chain_index 2 when 1 was expected → OutOfOrder, nothing delivered.
         let gap = s.ingest(frame(2, 2));
-        assert_eq!(gap, Err(IngestError::OutOfOrder { expected: 1, got: 2 }));
+        assert_eq!(
+            gap,
+            Err(IngestError::OutOfOrder {
+                expected: 1,
+                got: 2
+            })
+        );
         assert_eq!(s.len(), 1, "the gapped receipt was NOT delivered");
-        assert_eq!(s.resume_cursor(), Cursor::delivered_through(0), "cursor un-advanced");
+        assert_eq!(
+            s.resume_cursor(),
+            Cursor::delivered_through(0),
+            "cursor un-advanced"
+        );
         // The correct next index still flows after the rejection.
         assert_eq!(s.ingest(frame(1, 1)).unwrap(), Admitted::New);
 
@@ -655,7 +668,13 @@ mod tests {
         // OutOfOrder too. Deliver up to 2, then replay 0.
         s.ingest(frame(2, 2)).unwrap();
         let rewind = s.ingest(frame(0, 0));
-        assert_eq!(rewind, Err(IngestError::OutOfOrder { expected: 3, got: 0 }));
+        assert_eq!(
+            rewind,
+            Err(IngestError::OutOfOrder {
+                expected: 3,
+                got: 0
+            })
+        );
     }
 
     #[test]
@@ -669,15 +688,22 @@ mod tests {
         let honest_hash = encode_hex(&receipt(99).receipt_hash());
         let forged = ReceiptEnvelope::new(
             1,
-            honest_hash,            // claims to be receipt(99)...
+            honest_hash, // claims to be receipt(99)...
             1881,
             vec![],
             vec![],
-            receipt(7),             // ...but the BODY is receipt(7). Mismatch.
+            receipt(7), // ...but the BODY is receipt(7). Mismatch.
         );
-        assert_eq!(s.ingest(forged), Err(IngestError::Forged { chain_index: 1 }));
+        assert_eq!(
+            s.ingest(forged),
+            Err(IngestError::Forged { chain_index: 1 })
+        );
         assert_eq!(s.len(), 1, "the forged receipt was NOT delivered");
-        assert_eq!(s.resume_cursor(), Cursor::delivered_through(0), "cursor un-advanced");
+        assert_eq!(
+            s.resume_cursor(),
+            Cursor::delivered_through(0),
+            "cursor un-advanced"
+        );
 
         // The forge-check fires REGARDLESS of position (even at a would-be-valid
         // index): a surface never reflects an unverified body. The honest receipt(1)
@@ -701,7 +727,10 @@ mod tests {
     fn a_malformed_hash_is_rejected() {
         let mut s = ReceiptStream::new(64);
         let env = ReceiptEnvelope::new(0, "not-hex".into(), 1880, vec![], vec![], receipt(0));
-        assert_eq!(s.ingest(env), Err(IngestError::MalformedHash { chain_index: 0 }));
+        assert_eq!(
+            s.ingest(env),
+            Err(IngestError::MalformedHash { chain_index: 0 })
+        );
         assert!(s.is_empty());
     }
 
@@ -749,7 +778,10 @@ mod tests {
         let bound = s.delivered_stream_root();
         let mut root = AttestedRoot::new_legacy([0u8; 32], 4, 0, vec![], None, 0);
         root.receipt_stream_root = Some(bound);
-        assert!(s.verify_against(&root), "the delivered stream matches the attested root");
+        assert!(
+            s.verify_against(&root),
+            "the delivered stream matches the attested root"
+        );
 
         // A root binding a DIFFERENT stream (one extra receipt) does NOT verify.
         let mut s2 = ReceiptStream::new(64);
@@ -759,11 +791,17 @@ mod tests {
         let other = s2.delivered_stream_root();
         let mut root_other = AttestedRoot::new_legacy([0u8; 32], 5, 0, vec![], None, 0);
         root_other.receipt_stream_root = Some(other);
-        assert!(!s.verify_against(&root_other), "a divergent stream is rejected by the root");
+        assert!(
+            !s.verify_against(&root_other),
+            "a divergent stream is rejected by the root"
+        );
 
         // A v3-legacy root (no receipt_stream_root) never verifies (fail-closed).
         let legacy = AttestedRoot::new_legacy([0u8; 32], 4, 0, vec![], None, 0);
-        assert!(!s.verify_against(&legacy), "a v3 root without the binding fails closed");
+        assert!(
+            !s.verify_against(&legacy),
+            "a v3 root without the binding fails closed"
+        );
     }
 
     // ── The async `Stream` edge yields verified receipts in order. ──

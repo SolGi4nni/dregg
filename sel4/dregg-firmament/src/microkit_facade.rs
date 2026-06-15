@@ -130,7 +130,9 @@ pub struct ChannelTable {
 impl ChannelTable {
     /// An empty channel table.
     pub fn new() -> Self {
-        ChannelTable { wiring: BTreeMap::new() }
+        ChannelTable {
+            wiring: BTreeMap::new(),
+        }
     }
 
     /// Wire channel `index` to its kernel objects.
@@ -166,7 +168,11 @@ impl Channel {
     /// real Microkit a `Channel::new(index)` is a bare index. The boot harness
     /// hands each PD its kernel-bound channels.)
     pub fn bound(index: usize, kernel: EmulatedKernel, table: Arc<ChannelTable>) -> Self {
-        Channel { index, kernel, table }
+        Channel {
+            index,
+            kernel,
+            table,
+        }
     }
 
     /// The channel index (mirrors `sel4_microkit::Channel::index`).
@@ -190,11 +196,20 @@ impl Channel {
     /// `Channel::pp_call`. Blocks until the server PD replies, returning the
     /// reply tag. (Requires the channel to be a PP channel — wired with an
     /// endpoint.) `payload` is the inline message bytes the call carries.
-    pub fn pp_call(&self, msg_info: MessageInfo, payload: &[u8]) -> Result<(MessageInfo, Vec<u8>), IpcError> {
+    pub fn pp_call(
+        &self,
+        msg_info: MessageInfo,
+        payload: &[u8],
+    ) -> Result<(MessageInfo, Vec<u8>), IpcError> {
         let w = self.table.get(self.index).ok_or(IpcError::NoSuchObject)?;
         let ep = w.endpoint.ok_or(IpcError::NoSuchObject)?;
-        let reply = self.kernel.call(ep, Message::new(msg_info.label(), payload.to_vec()))?;
-        Ok((MessageInfo::new(reply.label, reply.bytes.len()), reply.bytes))
+        let reply = self
+            .kernel
+            .call(ep, Message::new(msg_info.label(), payload.to_vec()))?;
+        Ok((
+            MessageInfo::new(reply.label, reply.bytes.len()),
+            reply.bytes,
+        ))
     }
 
     /// `seL4_IRQHandler_Ack` — the host has no real IRQ line, so this is a
@@ -219,7 +234,13 @@ pub trait Handler {
     /// A protected-procedure call arrived on `channel`; return the reply tag.
     /// The default panics, as on real Microkit. `payload` is the call's inline
     /// bytes; write the reply into `reply_out` and return its tag.
-    fn protected(&mut self, channel: usize, msg_info: MessageInfo, payload: &[u8], reply_out: &mut Vec<u8>) -> MessageInfo {
+    fn protected(
+        &mut self,
+        channel: usize,
+        msg_info: MessageInfo,
+        payload: &[u8],
+        reply_out: &mut Vec<u8>,
+    ) -> MessageInfo {
         let _ = (channel, msg_info, payload, reply_out);
         panic!("unexpected protected procedure call from channel {channel}");
     }
@@ -252,7 +273,10 @@ pub struct EventLoop {
 impl EventLoop {
     /// Build an event loop that waits on the given channel notifications.
     pub fn new(kernel: EmulatedKernel, notifications: Vec<ObjectId>) -> Self {
-        EventLoop { kernel, notifications }
+        EventLoop {
+            kernel,
+            notifications,
+        }
     }
 
     /// Run ONE dispatch step: block until any awaited notification fires, then
@@ -406,7 +430,13 @@ mod tests {
         let k = EmulatedKernel::new();
         let notif = k.create_notification();
         let mut table = ChannelTable::new();
-        table.wire(2, ChannelWiring { notification: notif, endpoint: None });
+        table.wire(
+            2,
+            ChannelWiring {
+                notification: notif,
+                endpoint: None,
+            },
+        );
         let table = Arc::new(table);
 
         let ch = Channel::bound(2, k.clone(), table);
@@ -429,7 +459,13 @@ mod tests {
         let k = EmulatedKernel::new();
         let ep = k.create_endpoint();
         let mut table = ChannelTable::new();
-        table.wire(3, ChannelWiring { notification: k.create_notification(), endpoint: Some(ep) });
+        table.wire(
+            3,
+            ChannelWiring {
+                notification: k.create_notification(),
+                endpoint: Some(ep),
+            },
+        );
         let table = Arc::new(table);
 
         let k_srv = k.clone();
@@ -437,7 +473,9 @@ mod tests {
             let (msg, token) = k_srv.recv(ep).unwrap();
             let mut reply = msg.bytes.clone();
             reply[0] = reply[0].wrapping_mul(2);
-            k_srv.reply(token, Message::new(msg.label + 1, reply)).unwrap();
+            k_srv
+                .reply(token, Message::new(msg.label + 1, reply))
+                .unwrap();
         });
 
         let ch = Channel::bound(3, k.clone(), table);

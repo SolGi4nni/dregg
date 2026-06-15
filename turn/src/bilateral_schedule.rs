@@ -664,21 +664,26 @@ pub fn project_into_pi(pi: &mut [BabyBear], counts: &BilateralCounts, roots: &Bi
     pi[p::INTRO_AS_RECIPIENT_COUNT] = BabyBear::new(counts.intro_as_recipient);
     pi[p::INTRO_AS_TARGET_COUNT] = BabyBear::new(counts.intro_as_target);
 
-    for i in 0..4 {
-        pi[p::OUTGOING_TRANSFER_ROOT_BASE + i] = roots.outgoing_transfer[i];
-        pi[p::INCOMING_TRANSFER_ROOT_BASE + i] = roots.incoming_transfer[i];
-        pi[p::OUTGOING_GRANT_ROOT_BASE + i] = roots.outgoing_grant[i];
-        pi[p::INCOMING_GRANT_ROOT_BASE + i] = roots.incoming_grant[i];
-        pi[p::INTRO_AS_INTRODUCER_ROOT_BASE + i] = roots.intro_as_introducer[i];
-        pi[p::INTRO_AS_RECIPIENT_ROOT_BASE + i] = roots.intro_as_recipient[i];
-        pi[p::INTRO_AS_TARGET_ROOT_BASE + i] = roots.intro_as_target[i];
-    }
+    pi[p::OUTGOING_TRANSFER_ROOT_BASE..p::OUTGOING_TRANSFER_ROOT_BASE + 4]
+        .copy_from_slice(&roots.outgoing_transfer);
+    pi[p::INCOMING_TRANSFER_ROOT_BASE..p::INCOMING_TRANSFER_ROOT_BASE + 4]
+        .copy_from_slice(&roots.incoming_transfer);
+    pi[p::OUTGOING_GRANT_ROOT_BASE..p::OUTGOING_GRANT_ROOT_BASE + 4]
+        .copy_from_slice(&roots.outgoing_grant);
+    pi[p::INCOMING_GRANT_ROOT_BASE..p::INCOMING_GRANT_ROOT_BASE + 4]
+        .copy_from_slice(&roots.incoming_grant);
+    pi[p::INTRO_AS_INTRODUCER_ROOT_BASE..p::INTRO_AS_INTRODUCER_ROOT_BASE + 4]
+        .copy_from_slice(&roots.intro_as_introducer);
+    pi[p::INTRO_AS_RECIPIENT_ROOT_BASE..p::INTRO_AS_RECIPIENT_ROOT_BASE + 4]
+        .copy_from_slice(&roots.intro_as_recipient);
+    pi[p::INTRO_AS_TARGET_ROOT_BASE..p::INTRO_AS_TARGET_ROOT_BASE + 4]
+        .copy_from_slice(&roots.intro_as_target);
 
     // γ.2 unilateral binding (1-arity sibling).
     pi[p::UNILATERAL_ATTESTATIONS_COUNT] = BabyBear::new(counts.unilateral_attestations);
-    for i in 0..p::UNILATERAL_ATTESTATIONS_ROOT_LEN {
-        pi[p::UNILATERAL_ATTESTATIONS_ROOT_BASE + i] = roots.unilateral_attestations[i];
-    }
+    pi[p::UNILATERAL_ATTESTATIONS_ROOT_BASE
+        ..p::UNILATERAL_ATTESTATIONS_ROOT_BASE + p::UNILATERAL_ATTESTATIONS_ROOT_LEN]
+        .copy_from_slice(&roots.unilateral_attestations);
 }
 
 /// Extract the γ.2 bilateral counts + roots from a PI vector.
@@ -739,16 +744,15 @@ pub fn schedule_block_for_cell(
     // pins the same turn hash, so the schedule block stays consistent with the inner proof).
     let (turn_hash, effects_hash, actor_nonce, prev_receipt_hash) =
         crate::executor::TurnExecutor::compute_turn_identity_pi(turn);
-    for i in 0..sched::TURN_HASH_LEN {
-        block[sched::TURN_HASH_BASE + i] = turn_hash[i];
-    }
-    for i in 0..sched::EFFECTS_HASH_GLOBAL_LEN {
-        block[sched::EFFECTS_HASH_GLOBAL_BASE + i] = effects_hash[i];
-    }
+    block[sched::TURN_HASH_BASE..sched::TURN_HASH_BASE + sched::TURN_HASH_LEN]
+        .copy_from_slice(&turn_hash);
+    block[sched::EFFECTS_HASH_GLOBAL_BASE
+        ..sched::EFFECTS_HASH_GLOBAL_BASE + sched::EFFECTS_HASH_GLOBAL_LEN]
+        .copy_from_slice(&effects_hash);
     block[sched::ACTOR_NONCE] = BabyBear::new((actor_nonce & 0x7FFF_FFFF) as u32);
-    for i in 0..sched::PREVIOUS_RECEIPT_HASH_LEN {
-        block[sched::PREVIOUS_RECEIPT_HASH_BASE + i] = prev_receipt_hash[i];
-    }
+    block[sched::PREVIOUS_RECEIPT_HASH_BASE
+        ..sched::PREVIOUS_RECEIPT_HASH_BASE + sched::PREVIOUS_RECEIPT_HASH_LEN]
+        .copy_from_slice(&prev_receipt_hash);
 
     // Per-cell bilateral counts + accumulator roots from the canonical schedule.
     let schedule = ExpectedBilateral::from_turn(turn);
@@ -817,7 +821,9 @@ pub fn pi_from_schedule_block(
         pi[SCHEDULE_PI_BASE + i] = *v;
     }
     // SCHEDULE_PI_BASE + sched::WIDTH must land inside the v1 PI base region.
-    debug_assert!(SCHEDULE_PI_BASE + sched::WIDTH <= p::ACTIVE_BASE_COUNT);
+    const {
+        assert!(SCHEDULE_PI_BASE + sched::WIDTH <= p::ACTIVE_BASE_COUNT);
+    }
     pi
 }
 

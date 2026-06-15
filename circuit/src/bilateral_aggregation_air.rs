@@ -322,19 +322,17 @@ impl AggregationOuterPi {
     /// Project to the flat outer-PI vector consumed by the AIR.
     pub fn to_vec(&self) -> Vec<BabyBear> {
         let mut pi = vec![BabyBear::ZERO; OUTER_BASE_COUNT];
-        for i in 0..OUTER_TURN_HASH_LEN {
-            pi[OUTER_TURN_HASH_BASE + i] = self.turn_hash[i];
-        }
-        for i in 0..OUTER_EFFECTS_HASH_GLOBAL_LEN {
-            pi[OUTER_EFFECTS_HASH_GLOBAL_BASE + i] = self.effects_hash_global[i];
-        }
+        pi[OUTER_TURN_HASH_BASE..OUTER_TURN_HASH_BASE + OUTER_TURN_HASH_LEN]
+            .copy_from_slice(&self.turn_hash[..OUTER_TURN_HASH_LEN]);
+        pi[OUTER_EFFECTS_HASH_GLOBAL_BASE
+            ..OUTER_EFFECTS_HASH_GLOBAL_BASE + OUTER_EFFECTS_HASH_GLOBAL_LEN]
+            .copy_from_slice(&self.effects_hash_global[..OUTER_EFFECTS_HASH_GLOBAL_LEN]);
         pi[OUTER_ACTOR_NONCE] = self.actor_nonce;
-        for i in 0..OUTER_PREVIOUS_RECEIPT_HASH_LEN {
-            pi[OUTER_PREVIOUS_RECEIPT_HASH_BASE + i] = self.previous_receipt_hash[i];
-        }
-        for i in 0..OUTER_AGENT_CELL_ID_LEN {
-            pi[OUTER_AGENT_CELL_ID_BASE + i] = self.agent_cell_id[i];
-        }
+        pi[OUTER_PREVIOUS_RECEIPT_HASH_BASE
+            ..OUTER_PREVIOUS_RECEIPT_HASH_BASE + OUTER_PREVIOUS_RECEIPT_HASH_LEN]
+            .copy_from_slice(&self.previous_receipt_hash[..OUTER_PREVIOUS_RECEIPT_HASH_LEN]);
+        pi[OUTER_AGENT_CELL_ID_BASE..OUTER_AGENT_CELL_ID_BASE + OUTER_AGENT_CELL_ID_LEN]
+            .copy_from_slice(&self.agent_cell_id[..OUTER_AGENT_CELL_ID_LEN]);
         pi[OUTER_N_CELLS] = BabyBear::new(self.n_cells);
         pi[OUTER_BILATERAL_CONSISTENT] = self.bilateral_consistent;
         pi
@@ -371,9 +369,8 @@ pub fn build_aggregation_trace_v2(rows: &[AggregationInnerRowV2]) -> Vec<Vec<Bab
         for (j, &v) in row.schedule.iter().enumerate() {
             t[agg::sch_col(j)] = v;
         }
-        for k in 0..7 {
-            t[agg::EXPECTED_COUNTS_BASE + k] = row.expected_counts[k];
-        }
+        t[agg::EXPECTED_COUNTS_BASE..agg::EXPECTED_COUNTS_BASE + 7]
+            .copy_from_slice(&row.expected_counts);
         for k in 0..7 {
             for off in 0..4 {
                 t[agg::EXPECTED_ROOTS_BASE + k * 4 + off] = row.expected_roots[k][off];
@@ -831,9 +828,7 @@ pub fn build_cross_side_trace(half_edges: &[CrossSideHalfEdge]) -> Vec<Vec<BabyB
         };
         balance = balance + sign * fp;
         let mut row = vec![BabyBear::ZERO; CSE_WIDTH];
-        for i in 0..4 {
-            row[CSE_EDGE_ID_BASE + i] = he.edge_id[i];
-        }
+        row[CSE_EDGE_ID_BASE..CSE_EDGE_ID_BASE + 4].copy_from_slice(&he.edge_id);
         row[CSE_EDGE_FP_COL] = fp;
         row[CSE_SIGN_COL] = sign;
         row[CSE_PRESENT_COL] = BabyBear::ONE;
@@ -915,9 +910,7 @@ pub fn build_cross_side_trace_v2(
         let commit_out = crate::poseidon2::hash_2_to_1(commit_in, fp);
         commit = commit_out;
         let mut row = vec![BabyBear::ZERO; CSE2_WIDTH];
-        for i in 0..4 {
-            row[CSE2_EDGE_ID_BASE + i] = he.edge_id[i];
-        }
+        row[CSE2_EDGE_ID_BASE..CSE2_EDGE_ID_BASE + 4].copy_from_slice(&he.edge_id);
         row[CSE2_EDGE_FP_COL] = fp;
         row[CSE2_SIGN_COL] = sign;
         row[CSE2_PRESENT_COL] = BabyBear::ONE;

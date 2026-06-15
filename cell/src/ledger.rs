@@ -501,7 +501,7 @@ impl Ledger {
                 modified_ids.push(from_id);
                 modified_ids.push(to_id);
             }
-            modified_ids.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+            modified_ids.sort_unstable_by_key(|a| a.0);
             modified_ids.dedup();
 
             // Update each modified leaf incrementally.
@@ -807,7 +807,7 @@ impl Ledger {
 
         // Collect and sort all cells by CellId bytes for deterministic ordering.
         let mut sorted_cells: Vec<(&CellId, &Cell)> = self.cells.iter().collect();
-        sorted_cells.sort_by(|a, b| a.0.0.cmp(&b.0.0));
+        sorted_cells.sort_by_key(|a| a.0.0);
 
         // Build leaf_positions map and leaf hashes.
         self.leaf_positions.clear();

@@ -266,7 +266,10 @@ mod tests {
         let live = VersionedTransclusion::live(&uri);
         assert!(snap.pinning().is_snapshot());
         assert!(live.pinning().is_live());
-        let pinned_height = snap.pinning().pinned_height().expect("snapshot has a pinned height");
+        let pinned_height = snap
+            .pinning()
+            .pinned_height()
+            .expect("snapshot has a pinned height");
 
         // Read both at v0 — they agree (same current value).
         let snap_r0 = snap.read(&web).expect("snapshot reads v0");
@@ -283,7 +286,10 @@ mod tests {
         // now finalizes a new value at a new height).
         let v1 = b"constitution: quorum threshold = 5";
         let new_height = web.amend(&uri, v1).expect("amend resolves");
-        assert!(new_height > pinned_height, "the source advanced past the pin");
+        assert!(
+            new_height > pinned_height,
+            "the source advanced past the pin"
+        );
 
         // THE SNAPSHOT IS STABLE — it STILL shows v0 (the pinned past value), with the
         // SAME cited receipt. The quote did not rot; it reports the immutable past.
@@ -320,7 +326,10 @@ mod tests {
 
         // Both still verify (the dial changes the value, never the faithfulness).
         assert!(snap_r1.verify().is_ok(), "the pinned snapshot re-verifies");
-        assert!(live_r1.verify().is_ok(), "the live read verifies the current value");
+        assert!(
+            live_r1.verify().is_ok(),
+            "the live read verifies the current value"
+        );
     }
 
     // (1b) The snapshot survives MANY source advances — it is I-confluent against
@@ -341,7 +350,10 @@ mod tests {
         }
         // …while a live quote of the same ref now sees v4.
         let live = VersionedTransclusion::live(&uri);
-        assert_eq!(live.read(&web).expect("live reads").displayed_bytes(), b"v4");
+        assert_eq!(
+            live.read(&web).expect("live reads").displayed_bytes(),
+            b"v4"
+        );
     }
 
     // (2) THE PINNED SNAPSHOT NEEDS NO RE-FETCH — its value is available even from a
@@ -355,12 +367,17 @@ mod tests {
         // The pinned quote is directly available (no web needed).
         let pinned = snap.pinned().expect("a snapshot caches its pinned quote");
         assert_eq!(pinned.quoted_bytes(), b"pinned bytes");
-        assert!(pinned.verify().is_ok(), "the pinned quote re-verifies on its own");
+        assert!(
+            pinned.verify().is_ok(),
+            "the pinned quote re-verifies on its own"
+        );
 
         // Reading against a DIFFERENT, empty web still yields the pinned value (the
         // snapshot does not re-resolve — it reports its captured immutable past).
         let empty = WebOfCells::new(3);
-        let r = snap.read(&empty).expect("snapshot reads against an empty web");
+        let r = snap
+            .read(&empty)
+            .expect("snapshot reads against an empty web");
         assert_eq!(r.displayed_bytes(), b"pinned bytes");
         assert!(r.pinning.is_snapshot());
     }
@@ -392,11 +409,15 @@ mod tests {
         if let Some(field) = snap.pinned.as_mut() {
             field.resource.content_bytes = b"FORGED snapshot bytes".to_vec();
         }
-        let r = snap.read(&web2).expect("read still returns the (tampered) cached field");
+        let r = snap
+            .read(&web2)
+            .expect("read still returns the (tampered) cached field");
         assert!(
             matches!(
                 r.verify(),
-                Err(TransclusionError::ProvenanceUnverified(FetchError::ContentHashMismatch))
+                Err(TransclusionError::ProvenanceUnverified(
+                    FetchError::ContentHashMismatch
+                ))
             ),
             "a tampered snapshot fails the genuine content→commitment chain on re-verify"
         );

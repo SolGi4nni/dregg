@@ -14,12 +14,6 @@ use dregg_cell::{CapabilityRef, CellId, NoteCommitment, Nullifier, Preconditions
 use dregg_cell::{ValueCommitment, ValueCommitmentBytes};
 use serde::{Deserialize, Serialize};
 
-/// How much of the turn an action's signer commits to.
-///
-/// This controls what goes into the signing message:
-/// - `Full`: signs over the entire turn hash (maximum binding, current default)
-/// - `Partial`: signs over only this action's content + its position in the forest,
-///   allowing composability where signers don't need to see other actions.
 /// Serde helper for `[u8; 64]` (Ed25519 signatures — serde doesn't support arrays > 32).
 /// Moved here verbatim from the dissolved `escrow` module (the wire encoding is unchanged).
 pub mod serde_sig64 {

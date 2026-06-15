@@ -183,7 +183,10 @@ pub struct Message {
 impl Message {
     /// A message with a label and a byte payload.
     pub fn new(label: u64, bytes: impl Into<Vec<u8>>) -> Self {
-        Message { label, bytes: bytes.into() }
+        Message {
+            label,
+            bytes: bytes.into(),
+        }
     }
 }
 
@@ -327,7 +330,14 @@ impl EmulatedKernel {
     pub fn create_untyped(&self, capacity: usize, permits: ObjectType) -> ObjectId {
         let mut st = self.state.lock().unwrap();
         let id = st.alloc_id();
-        st.untypeds.insert(id, Untyped { capacity, consumed: 0, permits });
+        st.untypeds.insert(
+            id,
+            Untyped {
+                capacity,
+                consumed: 0,
+                permits,
+            },
+        );
         ObjectId(id)
     }
 
@@ -345,9 +355,15 @@ impl EmulatedKernel {
     /// CNode slot 0 / a zeroed frame region) and returns its [`ObjectId`].
     pub fn retype(&self, untyped: ObjectId, ty: ObjectType) -> Result<ObjectId, RetypeError> {
         let mut st = self.state.lock().unwrap();
-        let u = st.untypeds.get(&untyped.0).ok_or(RetypeError::NoSuchUntyped)?;
+        let u = st
+            .untypeds
+            .get(&untyped.0)
+            .ok_or(RetypeError::NoSuchUntyped)?;
         if ty != u.permits {
-            return Err(RetypeError::WrongType { permitted: u.permits, requested: ty });
+            return Err(RetypeError::WrongType {
+                permitted: u.permits,
+                requested: ty,
+            });
         }
         let need = ty.size_bytes();
         if u.consumed + need > u.capacity {
@@ -376,7 +392,8 @@ impl EmulatedKernel {
                 st.regions.insert(id, Vec::new());
             }
             ObjectType::Frame => {
-                st.regions.insert(id, vec![0u8; ObjectType::Frame.size_bytes()]);
+                st.regions
+                    .insert(id, vec![0u8; ObjectType::Frame.size_bytes()]);
             }
         }
         Ok(ObjectId(id))
@@ -405,7 +422,10 @@ impl EmulatedKernel {
     /// seL4. The badge carries the scope/membership/fault discriminator.
     pub fn signal(&self, notif: ObjectId, badge: u64) -> Result<(), IpcError> {
         let mut st = self.state.lock().unwrap();
-        let n = st.notifications.get_mut(&notif.0).ok_or(IpcError::NoSuchObject)?;
+        let n = st
+            .notifications
+            .get_mut(&notif.0)
+            .ok_or(IpcError::NoSuchObject)?;
         n.badge |= badge;
         // Wake the blocked Wait so it re-checks its (now non-zero) condition.
         drop(st);
@@ -421,7 +441,10 @@ impl EmulatedKernel {
     pub fn wait(&self, notif: ObjectId) -> Result<u64, IpcError> {
         let mut st = self.state.lock().unwrap();
         loop {
-            let n = st.notifications.get_mut(&notif.0).ok_or(IpcError::NoSuchObject)?;
+            let n = st
+                .notifications
+                .get_mut(&notif.0)
+                .ok_or(IpcError::NoSuchObject)?;
             if n.badge != 0 {
                 let badge = n.badge;
                 n.badge = 0; // read-and-clear (seL4_Wait resets the object)
@@ -439,7 +462,10 @@ impl EmulatedKernel {
     /// is pumped from the same thread. Returns `0` if no signal is pending.
     pub fn poll_notification(&self, notif: ObjectId) -> Result<u64, IpcError> {
         let mut st = self.state.lock().unwrap();
-        let n = st.notifications.get_mut(&notif.0).ok_or(IpcError::NoSuchObject)?;
+        let n = st
+            .notifications
+            .get_mut(&notif.0)
+            .ok_or(IpcError::NoSuchObject)?;
         let badge = n.badge;
         n.badge = 0;
         Ok(badge)
@@ -483,16 +509,22 @@ impl EmulatedKernel {
             {
                 st = self.cvar.wait(st).unwrap();
             }
-            let ep = st.endpoints.get_mut(&endpoint.0).ok_or(IpcError::NoSuchObject)?;
+            let ep = st
+                .endpoints
+                .get_mut(&endpoint.0)
+                .ok_or(IpcError::NoSuchObject)?;
             ep.call_gen += 1;
             my_gen = ep.call_gen;
             ep.pending_call = Some(msg);
         }
         self.cvar.notify_all(); // wake a blocked recv
-        // Block until OUR reply is parked.
+                                // Block until OUR reply is parked.
         let mut st = self.state.lock().unwrap();
         loop {
-            let ep = st.endpoints.get_mut(&endpoint.0).ok_or(IpcError::NoSuchObject)?;
+            let ep = st
+                .endpoints
+                .get_mut(&endpoint.0)
+                .ok_or(IpcError::NoSuchObject)?;
             if ep.reply_gen == my_gen {
                 if let Some(reply) = ep.pending_reply.take() {
                     return Ok(reply);
@@ -509,9 +541,15 @@ impl EmulatedKernel {
     pub fn recv(&self, endpoint: ObjectId) -> Result<(Message, ReplyToken), IpcError> {
         let mut st = self.state.lock().unwrap();
         loop {
-            let ep = st.endpoints.get_mut(&endpoint.0).ok_or(IpcError::NoSuchObject)?;
+            let ep = st
+                .endpoints
+                .get_mut(&endpoint.0)
+                .ok_or(IpcError::NoSuchObject)?;
             if let Some(msg) = ep.pending_call.take() {
-                let token = ReplyToken { endpoint, call_gen: ep.call_gen };
+                let token = ReplyToken {
+                    endpoint,
+                    call_gen: ep.call_gen,
+                };
                 // Wake any other caller waiting for the rendezvous to free up.
                 drop(st);
                 self.cvar.notify_all();
@@ -525,7 +563,10 @@ impl EmulatedKernel {
     /// [`ReplyToken`] and wake it. Completes the rendezvous.
     pub fn reply(&self, token: ReplyToken, reply: Message) -> Result<(), IpcError> {
         let mut st = self.state.lock().unwrap();
-        let ep = st.endpoints.get_mut(&token.endpoint.0).ok_or(IpcError::NoSuchObject)?;
+        let ep = st
+            .endpoints
+            .get_mut(&token.endpoint.0)
+            .ok_or(IpcError::NoSuchObject)?;
         ep.pending_reply = Some(reply);
         ep.reply_gen = token.call_gen;
         drop(st);
@@ -543,11 +584,7 @@ impl EmulatedKernel {
     /// realize that exactly via [`Self::call`] + [`Self::recv`] on two threads,
     /// or collapse it to this inline form for a simple boot test.) It is still a
     /// *synchronous* call — the caller does not proceed until `serve` returns.
-    pub fn call_served_by(
-        &self,
-        msg: Message,
-        serve: impl FnOnce(Message) -> Message,
-    ) -> Message {
+    pub fn call_served_by(&self, msg: Message, serve: impl FnOnce(Message) -> Message) -> Message {
         serve(msg)
     }
 
@@ -581,12 +618,19 @@ impl EmulatedKernel {
         f: impl FnOnce(&mut [u8]) -> T,
     ) -> Option<T> {
         let mut st = self.state.lock().unwrap();
-        st.regions.get_mut(&region.0).map(|buf| f(buf.as_mut_slice()))
+        st.regions
+            .get_mut(&region.0)
+            .map(|buf| f(buf.as_mut_slice()))
     }
 
     /// The length of a shared region, if it exists.
     pub fn region_len(&self, region: ObjectId) -> Option<usize> {
-        self.state.lock().unwrap().regions.get(&region.0).map(|b| b.len())
+        self.state
+            .lock()
+            .unwrap()
+            .regions
+            .get(&region.0)
+            .map(|b| b.len())
     }
 }
 
@@ -681,7 +725,9 @@ mod tests {
         let k = EmulatedKernel::new();
         let root = k.install("endpoint:ctrl", AuthRequired::Either);
         // Mint narrower (Either -> Signature) succeeds; amplify refused.
-        let child = k.mint(root, AuthRequired::Signature).expect("narrowing mint");
+        let child = k
+            .mint(root, AuthRequired::Signature)
+            .expect("narrowing mint");
         assert_eq!(k.rights_at(child), Some(AuthRequired::Signature));
         assert!(k.mint(child, AuthRequired::Either).is_none());
         // Revoke the root kills the subtree synchronously.

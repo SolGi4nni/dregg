@@ -35,7 +35,7 @@ use std::time::{Duration, Instant};
 
 use dregg_auth::credential::{Caveat, Pred, RootKey};
 use pg_dregg::authz;
-use pg_dregg::mirror::{CellRow, MemCell, MirrorBatch, RootChain, TurnRow, Domain};
+use pg_dregg::mirror::{CellRow, Domain, MemCell, MirrorBatch, RootChain, TurnRow};
 
 fn hx(b: &[u8]) -> String {
     b.iter().map(|x| format!("{x:02x}")).collect()
@@ -133,7 +133,11 @@ fn main() {
                 i += 2;
             }
             "--agents" => {
-                n_agents = args.get(i + 1).and_then(|s| s.parse().ok()).unwrap_or(4).max(2);
+                n_agents = args
+                    .get(i + 1)
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(4)
+                    .max(2);
                 i += 2;
             }
             "--latency" => {
@@ -147,7 +151,10 @@ fn main() {
         }
     }
 
-    println!("pg-dregg loadgen — sustained verified-turn throughput{}", if latency { " + per-turn latency" } else { "" });
+    println!(
+        "pg-dregg loadgen — sustained verified-turn throughput{}",
+        if latency { " + per-turn latency" } else { "" }
+    );
     println!("  duration: {secs}s   agents: {n_agents}   (each turn: authz submit-gate + RootChain + apply)");
 
     // ---- trust root + per-agent attenuated tokens -----------------------
@@ -165,8 +172,14 @@ fn main() {
     for &a in &agents {
         let tok = issuer
             .mint([
-                Caveat::FirstParty(Pred::AttrEq { key: "action".into(), value: "submit".into() }),
-                Caveat::FirstParty(Pred::AttrPrefix { key: "resource".into(), prefix: "".into() }),
+                Caveat::FirstParty(Pred::AttrEq {
+                    key: "action".into(),
+                    value: "submit".into(),
+                }),
+                Caveat::FirstParty(Pred::AttrPrefix {
+                    key: "resource".into(),
+                    prefix: "".into(),
+                }),
                 Caveat::FirstParty(Pred::NotAfter { at: 1_000_000 }),
             ])
             .encode();
@@ -175,7 +188,8 @@ fn main() {
 
     // ---- durable engine state -------------------------------------------
     let mut chain = RootChain::resume(GENESIS_ROOT, 0);
-    let mut balances: std::collections::HashMap<[u8; 32], (i64, u64)> = std::collections::HashMap::new();
+    let mut balances: std::collections::HashMap<[u8; 32], (i64, u64)> =
+        std::collections::HashMap::new();
     let mut durable_log_len: u64 = 0;
 
     // Genesis: fund agent 0 with the whole float so transfers always conserve.
@@ -207,7 +221,11 @@ fn main() {
     // time the WHOLE spine of a turn (the three gates + apply); the timer overhead
     // is negligible against a ~µs verified turn. Reserved generously to avoid
     // reallocation skewing the tail.
-    let mut samples: Vec<u64> = if latency { Vec::with_capacity(2_000_000) } else { Vec::new() };
+    let mut samples: Vec<u64> = if latency {
+        Vec::with_capacity(2_000_000)
+    } else {
+        Vec::new()
+    };
 
     // We rotate which agent sends; the receiver is the next agent round-robin. The
     // sender always holds the float (it received it last round), so a unit
@@ -245,7 +263,12 @@ fn main() {
             ];
             let post = fold_root(prev, ordinal, &cells);
             let memory = vec![mem(from, from_bal - amount), mem(to, to_bal + amount)];
-            let batch = match MirrorBatch::from_parts(turn_row(ordinal, prev, post, from), cells, vec![], memory) {
+            let batch = match MirrorBatch::from_parts(
+                turn_row(ordinal, prev, post, from),
+                cells,
+                vec![],
+                memory,
+            ) {
                 Ok(b) => b,
                 Err(_) => {
                     refused += 1;
@@ -289,8 +312,10 @@ fn main() {
     println!("  durable log rows:         {durable_log_len}");
     println!("  elapsed:                  {:.3}s", elapsed.as_secs_f64());
     println!("  \x1b[1msustained rate:           {rate:.0} verified turns/sec\x1b[0m");
-    println!("  conservation:             Σ balances = {total}  (== float {float})  {}",
-        if total == float { "✓" } else { "✗ BROKEN" });
+    println!(
+        "  conservation:             Σ balances = {total}  (== float {float})  {}",
+        if total == float { "✓" } else { "✗ BROKEN" }
+    );
     assert_eq!(total, float, "load must conserve value end-to-end");
     let _ = sender_idx;
 
@@ -310,7 +335,10 @@ fn main() {
         println!("  p90:                      {:.3} µs", us(pct(90.0)));
         println!("  p99:                      {:.3} µs", us(pct(99.0)));
         println!("  p99.9:                    {:.3} µs", us(pct(99.9)));
-        println!("  max:                      {:.3} µs", us(*samples.last().unwrap()));
+        println!(
+            "  max:                      {:.3} µs",
+            us(*samples.last().unwrap())
+        );
     }
 
     println!("\n  (postgres-free core rate — the verification cost per turn. The live-pg");

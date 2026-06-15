@@ -128,22 +128,16 @@ pub struct GarbledEvaluationProof {
 pub fn garbling_hash(left: &WireLabel, right: &WireLabel, gate_index: u32) -> WireLabel {
     let mut state = Poseidon2State::new();
     // Load left label into state[0..8]
-    for i in 0..8 {
-        state.state[i] = left[i];
-    }
+    state.state[..8].copy_from_slice(&left[..]);
     // Load right label into state[8..15] (only 7 slots available before WIDTH=16)
-    for i in 0..7 {
-        state.state[8 + i] = right[i];
-    }
+    state.state[8..15].copy_from_slice(&right[..7]);
     // Encode gate_index and remaining right label element in the last position
     state.state[15] = BabyBear::new(gate_index) + right[7];
 
     state.permute();
 
     let mut output = [BabyBear::ZERO; 8];
-    for i in 0..8 {
-        output[i] = state.state[i];
-    }
+    output.copy_from_slice(&state.state[..8]);
     output
 }
 

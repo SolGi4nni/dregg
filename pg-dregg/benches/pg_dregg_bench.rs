@@ -69,10 +69,19 @@ fn fixture_token() -> String {
     issuer
         .mint([
             Caveat::FirstParty(Pred::AnyOf(vec![
-                Pred::AttrEq { key: "action".into(), value: "submit".into() },
-                Pred::AttrEq { key: "action".into(), value: "read".into() },
+                Pred::AttrEq {
+                    key: "action".into(),
+                    value: "submit".into(),
+                },
+                Pred::AttrEq {
+                    key: "action".into(),
+                    value: "read".into(),
+                },
             ])),
-            Caveat::FirstParty(Pred::AttrPrefix { key: "resource".into(), prefix: "".into() }),
+            Caveat::FirstParty(Pred::AttrPrefix {
+                key: "resource".into(),
+                prefix: "".into(),
+            }),
             Caveat::FirstParty(Pred::NotAfter { at: 1_000_000 }),
         ])
         .encode()
@@ -94,7 +103,9 @@ fn bench_submit_decision(c: &mut Criterion) {
     g.bench_function("cold_full_chain_verify", |b| {
         b.iter(|| {
             authz::lru_clear();
-            black_box(authz::decide(black_box(&token), "submit", black_box(&resource), now).allowed())
+            black_box(
+                authz::decide(black_box(&token), "submit", black_box(&resource), now).allowed(),
+            )
         })
     });
 
@@ -104,7 +115,11 @@ fn bench_submit_decision(c: &mut Criterion) {
     authz::lru_clear();
     let _ = authz::decide(&token, "submit", &resource, now); // warm the LRU
     g.bench_function("hot_lru_reeval", |b| {
-        b.iter(|| black_box(authz::decide(black_box(&token), "submit", black_box(&resource), now).allowed()))
+        b.iter(|| {
+            black_box(
+                authz::decide(black_box(&token), "submit", black_box(&resource), now).allowed(),
+            )
+        })
     });
 
     g.finish();
@@ -279,8 +294,14 @@ fn workflow_tokens(agents: &[[u8; 32]]) -> MapTokens {
     for &a in agents {
         let tok = issuer
             .mint([
-                Caveat::FirstParty(Pred::AttrEq { key: "action".into(), value: "submit".into() }),
-                Caveat::FirstParty(Pred::AttrPrefix { key: "resource".into(), prefix: "".into() }),
+                Caveat::FirstParty(Pred::AttrEq {
+                    key: "action".into(),
+                    value: "submit".into(),
+                }),
+                Caveat::FirstParty(Pred::AttrPrefix {
+                    key: "resource".into(),
+                    prefix: "".into(),
+                }),
                 Caveat::FirstParty(Pred::NotAfter { at: 1_000_000 }),
             ])
             .encode();
@@ -529,8 +550,14 @@ fn bench_drain_spine(c: &mut Criterion) {
     authz::set_issuer_pubkey(issuer.public());
     let submit_token = issuer
         .mint([
-            Caveat::FirstParty(Pred::AttrEq { key: "action".into(), value: "submit".into() }),
-            Caveat::FirstParty(Pred::AttrPrefix { key: "resource".into(), prefix: "".into() }),
+            Caveat::FirstParty(Pred::AttrEq {
+                key: "action".into(),
+                value: "submit".into(),
+            }),
+            Caveat::FirstParty(Pred::AttrPrefix {
+                key: "resource".into(),
+                prefix: "".into(),
+            }),
             Caveat::FirstParty(Pred::NotAfter { at: 1_000_000 }),
         ])
         .encode();
@@ -573,8 +600,8 @@ fn bench_drain_spine(c: &mut Criterion) {
                 authz::revoked_clear();
                 // A fresh drainer with the deterministic stand-in producer, funded
                 // float, unit 1 — the SAME shape `dregg_drain_once` resumes.
-                let mut drainer = Drainer::new(FoldProducer::new(source, 1_000_000_000, 1))
-                    .with_clock(1_000);
+                let mut drainer =
+                    Drainer::new(FoldProducer::new(source, 1_000_000_000, 1)).with_clock(1_000);
                 let mut executed = 0u64;
                 for intent in &intents {
                     if drainer.drain(black_box(intent)).is_executed() {

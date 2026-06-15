@@ -164,7 +164,7 @@ pub fn compute_recursive_vk_hash() -> [u8; 32] {
     // followed by length-prefixed rev string.
     let mut ps = Vec::new();
     ps.push(0u8);
-    ps.extend_from_slice(&(RECURSION_P3_REV.as_bytes().len() as u64).to_le_bytes());
+    ps.extend_from_slice(&(RECURSION_P3_REV.len() as u64).to_le_bytes());
     ps.extend_from_slice(RECURSION_P3_REV.as_bytes());
     hasher.update(&(ps.len() as u64).to_le_bytes());
     hasher.update(&ps);

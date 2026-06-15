@@ -387,10 +387,9 @@ impl AdmissionRegistry {
             q = q,
         );
 
-        match dregg_lean_ffi::verified_admits(&wire) {
-            Ok(b) => Some(b), // the verified verdict (ERR ⇒ fail-closed false inside verified_admits).
-            Err(_) => None,   // archive lacks the export ⇒ fall back to the Rust gate.
-        }
+        // Ok ⇒ the verified verdict (ERR ⇒ fail-closed false inside verified_admits).
+        // Err ⇒ archive lacks the export ⇒ fall back to the Rust gate.
+        dregg_lean_ffi::verified_admits(&wire).ok()
     }
 
     /// **SLASH** `strand`'s bond on a valid equivocation proof: remove all of its bonds (burning the

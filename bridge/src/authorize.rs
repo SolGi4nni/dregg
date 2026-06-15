@@ -424,6 +424,7 @@ fn action_short_to_canonical(s: &str) -> String {
     note = "Self-asserted budget/revocation facts are not trustworthy. Use Merkle membership proofs."
 )]
 #[doc(hidden)]
+#[allow(dead_code)] // Deprecated reference path, retained for the Merkle-proof migration's contrast.
 pub(crate) fn budget_revocation_facts(request: &AuthRequest) -> Vec<TraceFact> {
     let mut facts = Vec::new();
 

@@ -504,7 +504,7 @@ impl Offense {
 /// agreement [`compute_qual`]'s docs require the ceremony lane to supply.
 ///
 /// Verification discipline: [`CeremonyView::record`] VERIFIES the signature
-/// + author binding before accepting anything, so an unauthenticated or
+/// and author binding before accepting anything, so an unauthenticated or
 /// cross-signed message can never enter the view (and therefore never enter
 /// a root the cell pins).
 #[derive(Clone, Debug)]

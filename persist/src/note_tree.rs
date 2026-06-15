@@ -176,7 +176,7 @@ impl PersistentNullifierSet {
 
     /// Rebuild from a list of nullifiers (for recovery from persistence).
     pub fn from_nullifiers(mut nullifiers: Vec<Nullifier>) -> Self {
-        nullifiers.sort_by(|a, b| a.0.cmp(&b.0));
+        nullifiers.sort_by_key(|a| a.0);
         Self { nullifiers }
     }
 

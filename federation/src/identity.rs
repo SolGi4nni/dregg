@@ -44,7 +44,7 @@ pub fn derive_federation_id_with_epoch(
     committee_epoch: u64,
 ) -> [u8; 32] {
     let mut sorted: Vec<&PublicKey> = committee_pubkeys.iter().collect();
-    sorted.sort_by(|a, b| a.0.cmp(&b.0));
+    sorted.sort_by_key(|a| a.0);
 
     let mut hasher = blake3::Hasher::new_derive_key(FEDERATION_ID_DOMAIN);
     hasher.update(&(sorted.len() as u64).to_le_bytes());

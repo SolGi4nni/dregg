@@ -198,7 +198,10 @@ fn main() {
     authz::set_issuer_pubkey(issuer.public());
     authz::lru_clear();
     authz::revoked_clear();
-    println!("  issuer (the dregg.issuer_pubkey trust root): {}…", &issuer.public().to_hex()[..16]);
+    println!(
+        "  issuer (the dregg.issuer_pubkey trust root): {}…",
+        &issuer.public().to_hex()[..16]
+    );
 
     // A capability admitting submit/read on ANY resource, ATTENUATED to the
     // party's own cell prefix (granted ⊆ held — no amplification). The same shape
@@ -214,10 +217,19 @@ fn main() {
         issuer
             .mint([
                 Caveat::FirstParty(Pred::AnyOf(vec![
-                    Pred::AttrEq { key: "action".into(), value: "submit".into() },
-                    Pred::AttrEq { key: "action".into(), value: "read".into() },
+                    Pred::AttrEq {
+                        key: "action".into(),
+                        value: "submit".into(),
+                    },
+                    Pred::AttrEq {
+                        key: "action".into(),
+                        value: "read".into(),
+                    },
                 ])),
-                Caveat::FirstParty(Pred::AttrPrefix { key: "resource".into(), prefix: "".into() }),
+                Caveat::FirstParty(Pred::AttrPrefix {
+                    key: "resource".into(),
+                    prefix: "".into(),
+                }),
             ])
             .attenuate([Caveat::FirstParty(Pred::AttrPrefix {
                 key: "resource".into(),
@@ -228,8 +240,10 @@ fn main() {
 
     // Mint each party's token ONCE; this map is the single source of truth for the
     // bind, the cap-id revocation key, and the post-recovery rebind.
-    let party_tokens: std::collections::BTreeMap<[u8; 32], String> =
-        [BANK, MERCHANT, ALICE, BOB].into_iter().map(|p| (p, mint_token(p))).collect();
+    let party_tokens: std::collections::BTreeMap<[u8; 32], String> = [BANK, MERCHANT, ALICE, BOB]
+        .into_iter()
+        .map(|p| (p, mint_token(p)))
+        .collect();
 
     let mut tokens = MapTokens::new();
     for (&p, tok) in &party_tokens {
@@ -245,9 +259,14 @@ fn main() {
     // subscription revokes precisely this id.
     let bob_tok = party_tokens[&BOB].clone();
     let bob_cap_id = authz::cap_id(&bob_tok).expect("bob's token decodes to a stable cap id");
-    println!("  BOB's subscription capability id (the dregg_revoke key): {}…", &bob_cap_id[..16]);
-    note("a subscription is not a boolean column an app checks — it is the capability the \
-          recurring charge turn must present. Cancel = revoke that capability.");
+    println!(
+        "  BOB's subscription capability id (the dregg_revoke key): {}…",
+        &bob_cap_id[..16]
+    );
+    note(
+        "a subscription is not a boolean column an app checks — it is the capability the \
+          recurring charge turn must present. Cancel = revoke that capability.",
+    );
 
     // =======================================================================
     // 1. FUND THE SUBSCRIBERS — the settlement bank funds Alice and Bob.
@@ -269,7 +288,9 @@ fn main() {
                 .set(BANK, 990_000, 2)
                 .set(BOB, 5_000, 0),
         );
-    engine.run_durable(&funding, &mut durable).expect("the funding turns commit");
+    engine
+        .run_durable(&funding, &mut durable)
+        .expect("the funding turns commit");
     for p in [BANK, ALICE, BOB] {
         println!("    {:<9} balance = {}", name_of(p), engine.balance(p));
     }
@@ -288,16 +309,30 @@ fn main() {
     let total_before = engine.total_value();
     for sub in [ALICE, BOB] {
         let step = book.charge_step(sub, MERCHANT, "cycle1 charge");
-        engine.submit(&step).unwrap_or_else(|e| panic!("cycle 1 must charge {}: {e}", name_of(sub)));
+        engine
+            .submit(&step)
+            .unwrap_or_else(|e| panic!("cycle 1 must charge {}: {e}", name_of(sub)));
         durable.append(engine.log().last().unwrap()).unwrap();
         book.commit_charge(sub, MERCHANT);
     }
-    println!("    ALICE balance = {}   MERCHANT balance = {}", engine.balance(ALICE), engine.balance(MERCHANT));
+    println!(
+        "    ALICE balance = {}   MERCHANT balance = {}",
+        engine.balance(ALICE),
+        engine.balance(MERCHANT)
+    );
     println!("    BOB   balance = {}", engine.balance(BOB));
     assert_eq!(engine.balance(ALICE), 4_000, "alice charged once");
     assert_eq!(engine.balance(BOB), 4_000, "bob charged once");
-    assert_eq!(engine.balance(MERCHANT), 2_000, "merchant collected both charges");
-    assert_eq!(engine.total_value(), total_before, "a charge MOVES value, never creates it (Σ conserved)");
+    assert_eq!(
+        engine.balance(MERCHANT),
+        2_000,
+        "merchant collected both charges"
+    );
+    assert_eq!(
+        engine.total_value(),
+        total_before,
+        "a charge MOVES value, never creates it (Σ conserved)"
+    );
     println!("→ each charge is a verified turn: the merchant was paid {PRICE}×2, the subscribers debited, Σ value unchanged.");
 
     // =======================================================================
@@ -310,7 +345,10 @@ fn main() {
     // revocation registry on EVERY call, including warm-LRU calls, so the effect is
     // immediate on the next turn (no polling, no TTL).
     authz::revoke(&bob_cap_id);
-    println!("  BOB pressed cancel ⇒ dregg_revoke(BOB's capability id {}…)", &bob_cap_id[..12]);
+    println!(
+        "  BOB pressed cancel ⇒ dregg_revoke(BOB's capability id {}…)",
+        &bob_cap_id[..12]
+    );
 
     // The merchant now tries to run cycle 2: charge ALICE (still active) and BOB
     // (cancelled). ALICE's charge commits; BOB's is REFUSED by the AUTHZ gate.
@@ -324,7 +362,10 @@ fn main() {
         Ok(_) => {
             durable.append(engine.log().last().unwrap()).unwrap();
             book.commit_charge(ALICE, MERCHANT);
-            println!("    ✓ ALICE charged (subscription active)   → balance {}", engine.balance(ALICE));
+            println!(
+                "    ✓ ALICE charged (subscription active)   → balance {}",
+                engine.balance(ALICE)
+            );
         }
         Err(e) => panic!("ALICE's active subscription must still bill: {e}"),
     }
@@ -337,15 +378,26 @@ fn main() {
         Ok(_) => panic!("SECURITY FAILURE: a CANCELLED subscriber was charged"),
         Err(StepError::Unauthorized { actor, reason }) => {
             assert_eq!(actor, BOB);
-            assert_eq!(reason, "revoked", "the refusal reason must name the revocation");
+            assert_eq!(
+                reason, "revoked",
+                "the refusal reason must name the revocation"
+            );
             println!("    ✗ BOB REFUSED — reason: \"{reason}\" (the capability was revoked; the charge cannot pass the AUTHZ gate)");
         }
         Err(other) => panic!("expected an Unauthorized/revoked refusal, got {other}"),
     }
     // The refused charge moved NOTHING: Bob's balance and the merchant's are
     // exactly what they were before the cancelled attempt.
-    assert_eq!(engine.balance(BOB), 4_000, "a refused charge does not debit the cancelled subscriber");
-    assert_eq!(engine.balance(MERCHANT), 3_000, "the merchant collected ONLY Alice's cycle-2 charge");
+    assert_eq!(
+        engine.balance(BOB),
+        4_000,
+        "a refused charge does not debit the cancelled subscriber"
+    );
+    assert_eq!(
+        engine.balance(MERCHANT),
+        3_000,
+        "the merchant collected ONLY Alice's cycle-2 charge"
+    );
     println!("→ a cancelled subscription CANNOT be charged: the revocation is consulted on the very next turn, fail-closed.");
     note("vs a conventional biller: 'is the subscription active?' is application code issuing an UPDATE — \
           a bug/stale-cache/replayed-job can charge a cancelled card. Here it is a verified gate the turn cannot pass.");
@@ -400,7 +452,10 @@ fn main() {
     // from dregg.revoked). The capability never changed — only the revocation
     // registry did — so the very next charge commits again.
     authz::unrevoke(&bob_cap_id);
-    println!("  BOB re-subscribed ⇒ dregg_unrevoke({}…)", &bob_cap_id[..12]);
+    println!(
+        "  BOB re-subscribed ⇒ dregg_unrevoke({}…)",
+        &bob_cap_id[..12]
+    );
     // Bob's book entry is still at (4_000, the nonce committed in cycle 1) — the
     // refused cycle-2 attempt never advanced it — so the re-subscribe charge
     // chains correctly off his last good state.
@@ -409,11 +464,18 @@ fn main() {
         Ok(_) => {
             durable.append(engine.log().last().unwrap()).unwrap();
             book.commit_charge(BOB, MERCHANT);
-            println!("    ✓ BOB charged again (re-subscribed)   → balance {}", engine.balance(BOB));
+            println!(
+                "    ✓ BOB charged again (re-subscribed)   → balance {}",
+                engine.balance(BOB)
+            );
         }
         Err(e) => panic!("a re-subscribed customer must bill again: {e}"),
     }
-    assert_eq!(engine.balance(BOB), 3_000, "bob billed once more after re-subscribing");
+    assert_eq!(
+        engine.balance(BOB),
+        3_000,
+        "bob billed once more after re-subscribing"
+    );
     println!("→ re-subscription is instant too: the capability was never reissued; lifting the revocation restored billing on the next turn.");
 
     // =======================================================================
@@ -424,8 +486,13 @@ fn main() {
     let head_before = engine.head().unwrap();
     let merchant_before = engine.balance(MERCHANT);
     drop(engine); // the in-memory chain head + balances are GONE
-    println!("  the billing process died after {turns_before} verified turns. In-memory state: LOST.");
-    println!("  what survived: the durable sink ({} rows = dregg.commit_log).", durable.len());
+    println!(
+        "  the billing process died after {turns_before} verified turns. In-memory state: LOST."
+    );
+    println!(
+        "  what survived: the durable sink ({} rows = dregg.commit_log).",
+        durable.len()
+    );
 
     // Recover: rebuild from the durable sink, re-validating every persisted charge
     // on the way up (a restored billing ledger is self-checking). Rebind the SAME
@@ -447,9 +514,21 @@ fn main() {
         engine.next_ordinal(),
         &hx(&engine.head().unwrap())[..12]
     );
-    assert_eq!(engine.turn_count(), turns_before, "every committed charge survived the crash");
-    assert_eq!(engine.head(), Some(head_before), "the head root was restored exactly");
-    assert_eq!(engine.balance(MERCHANT), merchant_before, "the merchant's collected total restored exactly");
+    assert_eq!(
+        engine.turn_count(),
+        turns_before,
+        "every committed charge survived the crash"
+    );
+    assert_eq!(
+        engine.head(),
+        Some(head_before),
+        "the head root was restored exactly"
+    );
+    assert_eq!(
+        engine.balance(MERCHANT),
+        merchant_before,
+        "the merchant's collected total restored exactly"
+    );
     println!("→ recovery is exactly-once: no charge lost, no charge double-applied — the crash is invisible to the books.");
 
     // =======================================================================
@@ -463,8 +542,15 @@ fn main() {
         total += b;
         println!("    {:<9} balance = {}", name_of(p), b);
     }
-    assert_eq!(total, 1_000_000, "TOTAL VALUE CONSERVED across genesis→fund→charges→cancel→re-subscribe");
-    assert_eq!(engine.total_value(), 1_000_000, "the free-SQL aggregate agrees: Σ balances = the genesis float");
+    assert_eq!(
+        total, 1_000_000,
+        "TOTAL VALUE CONSERVED across genesis→fund→charges→cancel→re-subscribe"
+    );
+    assert_eq!(
+        engine.total_value(),
+        1_000_000,
+        "the free-SQL aggregate agrees: Σ balances = the genesis float"
+    );
     // The merchant collected exactly the AUTHORIZED charges: ALICE ×2 (cycle 1 +
     // cycle 2) + BOB ×2 (cycle 1 + re-subscribe). Bob's cycle-2 charge was REFUSED
     // (cancelled), so it was never billed. 2 + 2 = 4 charges × PRICE.
@@ -484,15 +570,23 @@ fn main() {
     rule("7. provenance — every charge names its subscriber (the audit trail)");
     for (ordinal, creator, _receipt) in engine.provenance() {
         // Only the charge turns (subscriber-acted) and funding turns appear.
-        println!("  ord {:>2}  charged/acted by = {}", ordinal, name_of(creator));
+        println!(
+            "  ord {:>2}  charged/acted by = {}",
+            ordinal,
+            name_of(creator)
+        );
     }
-    println!("→ every verified charge is attributable to the subscriber whose capability authorized it.");
+    println!(
+        "→ every verified charge is attributable to the subscriber whose capability authorized it."
+    );
 
     // =======================================================================
     // DONE.
     // =======================================================================
     rule("DONE — the integrated revocation story, all green");
-    println!("\x1b[1m\x1b[32m✓ a recurring subscription-billing settlement ran through pg-dregg:\x1b[0m");
+    println!(
+        "\x1b[1m\x1b[32m✓ a recurring subscription-billing settlement ran through pg-dregg:\x1b[0m"
+    );
     println!("    • each charge a \x1b[1mverified, conserving turn\x1b[0m (Σδ = 0; the merchant cannot be over- or under-paid);");
     println!("    • a subscription IS a \x1b[1mcapability\x1b[0m — cancelling it is \x1b[1mdregg_revoke\x1b[0m;");
     println!("    • a \x1b[1mcancelled subscriber's next charge was REFUSED\x1b[0m instantly (revocation consulted on the very next turn);");

@@ -166,7 +166,9 @@ impl RangeAttestation {
     /// The human-readable reason, for the explain/audit surface.
     pub fn reason(&self) -> String {
         match self {
-            RangeAttestation::Attested { lo, hi, num_turns, .. } => {
+            RangeAttestation::Attested {
+                lo, hi, num_turns, ..
+            } => {
                 format!("attested: turns [{lo}, {hi}] ({num_turns} turns) proof-verified")
             }
             RangeAttestation::Refused(r) => r.clone(),
@@ -527,11 +529,11 @@ mod tests {
     /// happen to be refused".
     fn good_transport(num_turns: u64) -> Vec<u8> {
         SerializedWholeChainProof::new(
-            vec![0xa1, 0xa2, 0xa3],           // non-empty root-proof blob (stub never decodes it)
-            vec![0xb1, 0xb2],                 // non-empty binding-proof blob
-            [1u8; 32],                        // genesis_root hint
-            [9u8; 32],                        // final_root hint
-            [5u8; 32],                        // chain_digest hint
+            vec![0xa1, 0xa2, 0xa3], // non-empty root-proof blob (stub never decodes it)
+            vec![0xb1, 0xb2],       // non-empty binding-proof blob
+            [1u8; 32],              // genesis_root hint
+            [9u8; 32],              // final_root hint
+            [5u8; 32],              // chain_digest hint
             num_turns,
         )
         .to_bytes()
@@ -596,8 +598,14 @@ mod tests {
         // claimed window wider than the proof covers is refused. (We drive
         // check_window directly since the stub never reaches it; the wired build
         // reaches it after a real verify.)
-        assert!(RangeAttestation::check_window(0, 9, 10).is_ok(), "10 turns covers [0,9]");
-        assert!(RangeAttestation::check_window(0, 10, 10).is_err(), "[0,10] is 11 turns > 10");
+        assert!(
+            RangeAttestation::check_window(0, 9, 10).is_ok(),
+            "10 turns covers [0,9]"
+        );
+        assert!(
+            RangeAttestation::check_window(0, 10, 10).is_err(),
+            "[0,10] is 11 turns > 10"
+        );
         assert!(
             RangeAttestation::check_window(0, 1000, 100).is_err(),
             "a proof for 100 turns cannot attest a 1001-turn window"
@@ -666,14 +674,19 @@ mod tests {
         assert!(SerializedWholeChainProof::from_bytes(&[]).is_err());
         // Garbage that is not a valid postcard transport ⇒ refused (named).
         let e = SerializedWholeChainProof::from_bytes(&[0xff, 0xff, 0xff, 0xff]).unwrap_err();
-        assert!(e.contains("does not decode") || e.contains("transport"), "{e}");
+        assert!(
+            e.contains("does not decode") || e.contains("transport"),
+            "{e}"
+        );
         // A transport with an EMPTY root proof component ⇒ refused (a half-proof is
         // never silently accepted).
-        let empty_root = SerializedWholeChainProof::new(vec![], vec![1], [0; 32], [0; 32], [0; 32], 1);
+        let empty_root =
+            SerializedWholeChainProof::new(vec![], vec![1], [0; 32], [0; 32], [0; 32], 1);
         let e = SerializedWholeChainProof::from_bytes(&empty_root.to_bytes()).unwrap_err();
         assert!(e.contains("empty root proof"), "{e}");
         // ... and an empty binding proof component ⇒ refused.
-        let empty_bind = SerializedWholeChainProof::new(vec![1], vec![], [0; 32], [0; 32], [0; 32], 1);
+        let empty_bind =
+            SerializedWholeChainProof::new(vec![1], vec![], [0; 32], [0; 32], [0; 32], 1);
         let e = SerializedWholeChainProof::from_bytes(&empty_bind.to_bytes()).unwrap_err();
         assert!(e.contains("empty binding proof"), "{e}");
     }

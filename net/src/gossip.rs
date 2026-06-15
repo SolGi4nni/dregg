@@ -233,7 +233,10 @@ pub struct GossipNetwork {
     /// Ed25519 signing key for envelope authentication (asymmetric).
     /// Each node signs with its own key; receivers verify with the sender's public key.
     signing_key: Arc<SigningKey>,
-    /// Maximum concurrent gossip connections.
+    /// Maximum concurrent gossip connections. Enforced on accept via a value
+    /// captured into the accept task (see `with_max_connections`); retained on
+    /// the struct as the canonical config record.
+    #[allow(dead_code)]
     max_connections: usize,
     /// Registry of known peer public keys for signature verification.
     /// Maps NodeId -> PublicKey. Populated from federation configuration.

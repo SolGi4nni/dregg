@@ -406,8 +406,8 @@ impl LedgerJournal {
                 // Note/event entries don't modify ledger state directly.
                 // On rollback these are simply discarded — the note layer only
                 // processes them after a successful commit.
-                JournalEntry::NoteSpend { .. }
-                | JournalEntry::NoteCreate { .. }
+                JournalEntry::NoteSpend
+                | JournalEntry::NoteCreate
                 | JournalEntry::EventEmitted { .. } => {}
             }
         }

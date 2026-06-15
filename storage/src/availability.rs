@@ -83,11 +83,9 @@ impl AvailabilityManifest {
     /// manifest so the encoder used by [`reconstruct`] matches the one that
     /// produced the chunks.
     pub fn expansion_factor(&self) -> usize {
-        if self.n_data == 0 {
-            2
-        } else {
-            (self.n_total / self.n_data).max(2)
-        }
+        self.n_total
+            .checked_div(self.n_data)
+            .map_or(2, |q| q.max(2))
     }
 }
 

@@ -481,7 +481,7 @@ impl StarkAir for TemporalPredicateAir {
         cs.push(local[col::STEP_PLUS_ONE] - local[col::STEP_INDEX] - BabyBear::ONE);
 
         // Transition constraints
-        let transitions = vec![
+        let transitions = [
             next[col::ACCUMULATOR] - local[col::ACC_PLUS_ONE],
             next[col::STEP_INDEX] - local[col::STEP_PLUS_ONE],
             next[col::THRESHOLD] - local[col::THRESHOLD],

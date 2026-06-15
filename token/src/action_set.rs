@@ -107,7 +107,7 @@ impl ActionSet {
     /// The names are hashed and the resulting set is sorted and deduplicated.
     pub fn new(names: &[&str]) -> Self {
         let mut actions: Vec<ActionId> = names.iter().map(|n| ActionId::from_name(n)).collect();
-        actions.sort_by(|a, b| a.0.cmp(&b.0));
+        actions.sort_by_key(|a| a.0);
         actions.dedup();
         Self { actions }
     }
@@ -115,7 +115,7 @@ impl ActionSet {
     /// Create an ActionSet from pre-computed ActionIds.
     pub fn from_ids(ids: &[ActionId]) -> Self {
         let mut actions = ids.to_vec();
-        actions.sort_by(|a, b| a.0.cmp(&b.0));
+        actions.sort_by_key(|a| a.0);
         actions.dedup();
         Self { actions }
     }

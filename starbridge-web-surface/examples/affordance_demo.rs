@@ -158,10 +158,25 @@ fn main() {
     }
     say!("    → each affordance is an effect-TEMPLATE: a REAL dregg_turn::Effect (the");
     say!("      turn the executor would run), cap-gated by the REAL is_attenuation.\n");
-    check!(surface.all_names() == vec!["admin", "comment", "edit", "view"], "the surface declares all four affordances");
+    check!(
+        surface.all_names() == vec!["admin", "comment", "edit", "view"],
+        "the surface declares all four affordances"
+    );
     // The effect-templates are genuine effects (not stubs).
-    check!(matches!(surface.get("edit").unwrap().effect_template, Effect::SetField { .. }), "edit fires a real SetField");
-    check!(matches!(surface.get("admin").unwrap().effect_template, Effect::GrantCapability { .. }), "admin fires a real GrantCapability");
+    check!(
+        matches!(
+            surface.get("edit").unwrap().effect_template,
+            Effect::SetField { .. }
+        ),
+        "edit fires a real SetField"
+    );
+    check!(
+        matches!(
+            surface.get("admin").unwrap().effect_template,
+            Effect::GrantCapability { .. }
+        ),
+        "admin fires a real GrantCapability"
+    );
 
     // ── (ii) two agents project_for → DIFFERENT affordance sets. ──────────────
     say!("(ii) two agents project_for the SAME surface → DIFFERENT affordance sets (progressive ATTENUATION)\n");
@@ -175,21 +190,56 @@ fn main() {
     let editor_sees = surface.project_for(&editor_held);
     let admin_sees = surface.project_for(&admin_held);
 
-    say!("    VIEWER (holds Signature): sees {:?}", names(&viewer_sees));
-    say!("    EDITOR (holds Either)   : sees {:?}", names(&editor_sees));
-    say!("    ADMIN  (holds None/root): sees {:?}", names(&admin_sees));
+    say!(
+        "    VIEWER (holds Signature): sees {:?}",
+        names(&viewer_sees)
+    );
+    say!(
+        "    EDITOR (holds Either)   : sees {:?}",
+        names(&editor_sees)
+    );
+    say!(
+        "    ADMIN  (holds None/root): sees {:?}",
+        names(&admin_sees)
+    );
     say!(
         "    → SAME surface, DIFFERENT affordance sets: viewer {} editor\n",
-        if names(&viewer_sees) != names(&editor_sees) { "≠" } else { "==(BUG)" }
+        if names(&viewer_sees) != names(&editor_sees) {
+            "≠"
+        } else {
+            "==(BUG)"
+        }
     );
 
-    check!(names(&viewer_sees) == vec!["view"], "viewer sees only {view}");
-    check!(names(&editor_sees) == vec!["comment", "edit", "view"], "editor sees {view, comment, edit}");
-    check!(names(&admin_sees) == vec!["admin", "comment", "edit", "view"], "admin sees all four");
-    check!(names(&viewer_sees) != names(&editor_sees), "the two viewers genuinely diverge");
+    check!(
+        names(&viewer_sees) == vec!["view"],
+        "viewer sees only {view}"
+    );
+    check!(
+        names(&editor_sees) == vec!["comment", "edit", "view"],
+        "editor sees {view, comment, edit}"
+    );
+    check!(
+        names(&admin_sees) == vec!["admin", "comment", "edit", "view"],
+        "admin sees all four"
+    );
+    check!(
+        names(&viewer_sees) != names(&editor_sees),
+        "the two viewers genuinely diverge"
+    );
     // progressive attenuation is MONOTONE: viewer ⊂ editor ⊂ admin.
-    check!(names(&viewer_sees).iter().all(|n| names(&editor_sees).contains(n)), "viewer's set ⊂ editor's");
-    check!(names(&editor_sees).iter().all(|n| names(&admin_sees).contains(n)), "editor's set ⊂ admin's");
+    check!(
+        names(&viewer_sees)
+            .iter()
+            .all(|n| names(&editor_sees).contains(n)),
+        "viewer's set ⊂ editor's"
+    );
+    check!(
+        names(&editor_sees)
+            .iter()
+            .all(|n| names(&admin_sees).contains(n)),
+        "editor's set ⊂ admin's"
+    );
 
     // ── (iii) a frustum-snapshot → rehydrate per-viewer to the live surface. ──
     say!("(iii) a frustum-snapshot (tiny — a sturdyref + the boundary) rehydrates PER-VIEWER\n");
@@ -203,21 +253,36 @@ fn main() {
 
     // The publisher's authority lineage (root over the doc cell) + the sturdyref.
     let lineage = SurfaceCapability::root(doc, AuthRequired::None);
-    let sturdyref = Sturdyref::new(uri, lineage, confined_log, /* sources_reachable */ false);
+    let sturdyref = Sturdyref::new(
+        uri,
+        lineage,
+        confined_log,
+        /* sources_reachable */ false,
+    );
 
     // THE SNAPSHOT: tiny by construction — a sturdyref + the culling boundary
     // (cell + affordance NAMES), NOT the effect-templates, NOT any projection.
     let snapshot = AffordanceSnapshot::take(&surface, sturdyref);
     say!("    snapshot embeds        : a Sturdyref (the cap-handle) + the culling boundary");
-    say!("    sturdyref ref          : {}", snapshot.sturdyref.uri.to_uri_string());
-    say!("    boundary (the frustum) : {} affordance names {:?}",
+    say!(
+        "    sturdyref ref          : {}",
+        snapshot.sturdyref.uri.to_uri_string()
+    );
+    say!(
+        "    boundary (the frustum) : {} affordance names {:?}",
         snapshot.boundary_extent(),
         snapshot.boundary.affordance_names
     );
     say!("    → the snapshot carries NO effect-templates and NO viewer projection:");
     say!("      it is tiny; the surface re-expands per-viewer at rehydration.\n");
-    check!(snapshot.boundary_extent() == 4, "the boundary names all four affordances");
-    check!(snapshot.boundary.affordance_names == surface.all_names(), "the boundary is the surface's names");
+    check!(
+        snapshot.boundary_extent() == 4,
+        "the boundary names all four affordances"
+    );
+    check!(
+        snapshot.boundary.affordance_names == surface.all_names(),
+        "the boundary is the surface's names"
+    );
 
     // Each agent rehydrates the SAME snapshot through its OWN membrane → the
     // per-viewer live affordance surface + the liveness-type.
@@ -229,23 +294,54 @@ fn main() {
     let (editor_live_aff, editor_liveness) =
         rehydrate_affordances(&snapshot, &surface, &editor_m, &web).expect("editor rehydrates");
 
-    say!("    VIEWER rehydrates      : live affordances {:?}", names(&viewer_live_aff));
-    say!("      liveness-type        : {:?}  ({})", viewer_liveness, viewer_liveness.badge());
-    say!("    EDITOR rehydrates      : live affordances {:?}", names(&editor_live_aff));
+    say!(
+        "    VIEWER rehydrates      : live affordances {:?}",
+        names(&viewer_live_aff)
+    );
+    say!(
+        "      liveness-type        : {:?}  ({})",
+        viewer_liveness,
+        viewer_liveness.badge()
+    );
+    say!(
+        "    EDITOR rehydrates      : live affordances {:?}",
+        names(&editor_live_aff)
+    );
     say!("      liveness-type        : {:?}", editor_liveness);
     say!(
         "    → ONE snapshot, TWO different live interactive surfaces (the frustum-cull made real).\n"
     );
 
-    check!(names(&viewer_live_aff) == vec!["view"], "viewer's re-expanded surface is {view}");
-    check!(names(&editor_live_aff) == vec!["comment", "edit", "view"], "editor's re-expanded surface is {view, comment, edit}");
-    check!(names(&viewer_live_aff) != names(&editor_live_aff), "the re-expansions diverge per-viewer");
+    check!(
+        names(&viewer_live_aff) == vec!["view"],
+        "viewer's re-expanded surface is {view}"
+    );
+    check!(
+        names(&editor_live_aff) == vec!["comment", "edit", "view"],
+        "editor's re-expanded surface is {view, comment, edit}"
+    );
+    check!(
+        names(&viewer_live_aff) != names(&editor_live_aff),
+        "the re-expansions diverge per-viewer"
+    );
     // the round-trip equals the direct projection.
-    check!(names(&viewer_live_aff) == surface.visible_names(&viewer_held), "snapshot→rehydrate round-trips the viewer's set");
-    check!(names(&editor_live_aff) == surface.visible_names(&editor_held), "snapshot→rehydrate round-trips the editor's set");
+    check!(
+        names(&viewer_live_aff) == surface.visible_names(&viewer_held),
+        "snapshot→rehydrate round-trips the viewer's set"
+    );
+    check!(
+        names(&editor_live_aff) == surface.visible_names(&editor_held),
+        "snapshot→rehydrate round-trips the editor's set"
+    );
     // the liveness-type carries through (confined source → ReplayedDeterministic).
-    check!(viewer_liveness == Rehydration::ReplayedDeterministic, "the confined source replays deterministically");
-    check!(viewer_liveness.is_faithful(), "the carried liveness-type is faithful-by-construction");
+    check!(
+        viewer_liveness == Rehydration::ReplayedDeterministic,
+        "the confined source replays deterministically"
+    );
+    check!(
+        viewer_liveness.is_faithful(),
+        "the carried liveness-type is faithful-by-construction"
+    );
 
     // ── (iv) firing: authorized → a verified-turn intent; unauthorized → REFUSED. ─
     say!("(iv) firing an affordance — authorized yields a verified-turn intent; unauthorized is REFUSED\n");
@@ -256,19 +352,39 @@ fn main() {
         .expect("editor fires edit (authorized)");
     say!("    EDITOR fires `edit`    : ADMITTED → verified-turn intent");
     say!("      actor                : the editor cell");
-    say!("      effect (the turn)    : {:?}", edit_intent.effect_summary());
+    say!(
+        "      effect (the turn)    : {:?}",
+        edit_intent.effect_summary()
+    );
     say!("      → a REAL dregg_turn::Effect, ready to hand to the TurnExecutor (the seam).");
-    check!(matches!(edit_intent.effect, Effect::SetField { .. }), "firing edit yields a real SetField turn");
-    check!(edit_intent.effect_summary() == EffectSummary::SetField { cell: doc, index: 1 }, "the intent carries the doc's edit effect");
+    check!(
+        matches!(edit_intent.effect, Effect::SetField { .. }),
+        "firing edit yields a real SetField turn"
+    );
+    check!(
+        edit_intent.effect_summary()
+            == EffectSummary::SetField {
+                cell: doc,
+                index: 1
+            },
+        "the intent carries the doc's edit effect"
+    );
 
     // The VIEWER tries to fire `admin` (req None / root) — REFUSED (anti-ghost).
     let refused = surface.fire("admin", cid(20), &viewer_held);
-    say!("    VIEWER fires `admin`   : {}",
+    say!(
+        "    VIEWER fires `admin`   : {}",
         match &refused {
             Err(FireError::Unauthorized { required, .. }) =>
                 format!("REFUSED (Unauthorized — needs rights={required:?}, viewer lacks them) ✓"),
-            Err(e) => { ok = false; format!("WRONG ERROR: {e:?}") }
-            Ok(_) => { ok = false; "WRONGLY ADMITTED (anti-ghost tooth FAILED)".to_string() }
+            Err(e) => {
+                ok = false;
+                format!("WRONG ERROR: {e:?}")
+            }
+            Ok(_) => {
+                ok = false;
+                "WRONGLY ADMITTED (anti-ghost tooth FAILED)".to_string()
+            }
         }
     );
     say!("      → the anti-ghost tooth: an unauthorized fire is refused by the SAME");
@@ -278,8 +394,13 @@ fn main() {
         "the viewer's admin fire is refused (Unauthorized)"
     );
     // The viewer CAN fire what it holds (`view`) — yielding the real EmitEvent turn.
-    let view_intent = surface.fire("view", cid(20), &viewer_held).expect("viewer fires view");
-    check!(matches!(view_intent.effect, Effect::EmitEvent { .. }), "the viewer's authorized view fire yields a real EmitEvent turn");
+    let view_intent = surface
+        .fire("view", cid(20), &viewer_held)
+        .expect("viewer fires view");
+    check!(
+        matches!(view_intent.effect, Effect::EmitEvent { .. }),
+        "the viewer's authorized view fire yields a real EmitEvent turn"
+    );
 
     // ── (v) bonus — confinement before relation: an unattested scene yields NO surface. ─
     say!("(v) bonus — confinement before relation: an UNATTESTED scene re-expands to NOTHING (any caps)\n");
@@ -296,10 +417,18 @@ fn main() {
     let dead_snapshot = AffordanceSnapshot::take(&dead_surface, dead_ref);
     let full = Membrane::new(SurfaceCapability::root(cid(41), AuthRequired::None)); // full authority
     let unattested = rehydrate_affordances(&dead_snapshot, &dead_surface, &full, &web2);
-    say!("    full-authority viewer on a dead/unattested snapshot → {}",
-        if unattested.is_err() { "NO interactive surface (the fetch did not verify) ✓" } else { "RE-EXPANDED (BUG)" }
+    say!(
+        "    full-authority viewer on a dead/unattested snapshot → {}",
+        if unattested.is_err() {
+            "NO interactive surface (the fetch did not verify) ✓"
+        } else {
+            "RE-EXPANDED (BUG)"
+        }
     );
-    check!(unattested.is_err(), "an unattested scene must yield NO interactive surface even with full caps");
+    check!(
+        unattested.is_err(),
+        "an unattested scene must yield NO interactive surface even with full caps"
+    );
 
     if ok {
         say!("\nOK — cell affordances run on the real dregg cap + attestation + membrane primitives:");

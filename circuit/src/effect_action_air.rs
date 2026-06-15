@@ -88,6 +88,7 @@ pub enum AlgebraicConstraint {
     ///   2. new_balance_hi + amount_hi - borrow            == old_balance_hi
     ///   3. borrow * (borrow - 1) == 0   (boolean borrow bit)
     ///   4. was_burn_flag == 1
+    ///
     /// The borrow witness lives in an aux column threaded through every
     /// row (kept constant for FRI continuity).
     Burn,

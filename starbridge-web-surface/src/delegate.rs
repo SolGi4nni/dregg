@@ -391,8 +391,7 @@ impl WebSurfaceDelegate for CapGatedDelegate {
         } else {
             ResourceDecision::Intercept {
                 reason: format!("dregg: blocked by capability — fetch to {origin} not permitted"),
-                body: format!("dregg: blocked by capability (fetch to {origin})")
-                    .into_bytes(),
+                body: format!("dregg: blocked by capability (fetch to {origin})").into_bytes(),
             }
         }
     }
@@ -401,7 +400,9 @@ impl WebSurfaceDelegate for CapGatedDelegate {
         if surface.may_navigate(origin) {
             NavigationDecision::Allow
         } else {
-            NavigationDecision::Deny { origin: origin.to_string() }
+            NavigationDecision::Deny {
+                origin: origin.to_string(),
+            }
         }
     }
 
@@ -509,7 +510,11 @@ impl<D: WebSurfaceDelegate> MockSurface<D> {
     /// Open a (mock) `WebView` for `surface`, gated by `delegate`. The real
     /// `WebViewBuilder::new(&servo).delegate(..).build()` lands here.
     pub fn open(surface: SurfaceCapability, delegate: D) -> Self {
-        MockSurface { surface, current_url: None, delegate }
+        MockSurface {
+            surface,
+            current_url: None,
+            delegate,
+        }
     }
 
     /// Drive a navigation. The (mock) engine asks the delegate first
@@ -620,7 +625,12 @@ mod tests {
         let _ = wv.navigate("https://example.com", "https://example.com/home");
 
         let d = wv.navigate("https://evil.com", "https://evil.com/phish");
-        assert_eq!(d, NavigationDecision::Deny { origin: "https://evil.com".into() });
+        assert_eq!(
+            d,
+            NavigationDecision::Deny {
+                origin: "https://evil.com".into()
+            }
+        );
         // The refused navigation did NOT change the committed URL.
         assert_eq!(wv.current_url.as_deref(), Some("https://example.com/home"));
     }
@@ -703,7 +713,10 @@ mod tests {
             None,
             BTreeSet::new(),
         );
-        assert!(refused.is_none(), "a child asking to reach a new origin must be refused");
+        assert!(
+            refused.is_none(),
+            "a child asking to reach a new origin must be refused"
+        );
     }
 
     #[test]
@@ -715,23 +728,16 @@ mod tests {
         let parent_wv = MockSurface::open(parent, CapGatedDelegate::new());
 
         // Signature -> None is a WIDENING; refused.
-        let refused = parent_wv.open_auxiliary(
-            cid(8),
-            AuthRequired::None,
-            None,
-            None,
-            BTreeSet::new(),
+        let refused =
+            parent_wv.open_auxiliary(cid(8), AuthRequired::None, None, None, BTreeSet::new());
+        assert!(
+            refused.is_none(),
+            "a child widening window rights must be refused"
         );
-        assert!(refused.is_none(), "a child widening window rights must be refused");
 
         // Signature -> Signature (equal) is fine.
-        let ok = parent_wv.open_auxiliary(
-            cid(9),
-            AuthRequired::Signature,
-            None,
-            None,
-            BTreeSet::new(),
-        );
+        let ok =
+            parent_wv.open_auxiliary(cid(9), AuthRequired::Signature, None, None, BTreeSet::new());
         assert!(ok.is_some(), "an equal/narrowing child must be minted");
     }
 
@@ -747,14 +753,23 @@ mod tests {
         );
         let wv = MockSurface::open(parent.clone(), CapGatedDelegate::new());
 
-        assert_eq!(wv.request_permission(PermissionKind::Geolocation), PermissionDecision::Allow);
-        assert_eq!(wv.request_permission(PermissionKind::Camera), PermissionDecision::Deny);
+        assert_eq!(
+            wv.request_permission(PermissionKind::Geolocation),
+            PermissionDecision::Allow
+        );
+        assert_eq!(
+            wv.request_permission(PermissionKind::Camera),
+            PermissionDecision::Deny
+        );
 
         // A child cannot gain Camera (parent lacks it).
         let mut want = BTreeSet::new();
         want.insert(PermissionKind::Camera);
         let refused = parent.attenuate_child(cid(11), AuthRequired::Either, None, None, want);
-        assert!(refused.is_none(), "a child cannot gain a permission its parent lacks");
+        assert!(
+            refused.is_none(),
+            "a child cannot gain a permission its parent lacks"
+        );
 
         // A child CAN inherit Geolocation (⊆ parent's).
         let mut want_geo = BTreeSet::new();
@@ -795,6 +810,9 @@ mod tests {
         let surface = SurfaceCapability::root(cell, AuthRequired::Either);
         assert!(surface.window.target.is_surface());
         assert_eq!(surface.cell(), Some(cell));
-        assert_eq!(surface.window, Capability::surface(cell, AuthRequired::Either));
+        assert_eq!(
+            surface.window,
+            Capability::surface(cell, AuthRequired::Either)
+        );
     }
 }

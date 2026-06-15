@@ -651,12 +651,7 @@ impl Board {
     /// The cap is bound to the board cell. A player projects the board THROUGH this
     /// cap; the membrane's `is_attenuation` + `may_fetch` then decide every tile.
     pub fn vision_cap_for(&self, side: Side) -> SurfaceCapability {
-        SurfaceCapability::scoped(
-            self.cell,
-            side_rights(side),
-            self.frustum_for(side),
-            [],
-        )
+        SurfaceCapability::scoped(self.cell, side_rights(side), self.frustum_for(side), [])
     }
 
     /// The board's **vision lineage** — the publisher's authority the board surface
@@ -827,11 +822,7 @@ impl Board {
             }
             let event = Event {
                 topic: event_topic(b"dregg-fogwar-objective-captured-v1"),
-                data: vec![
-                    pack_coord(obj.at),
-                    side_tag_field(side),
-                    pack_u32(self.ply),
-                ],
+                data: vec![pack_coord(obj.at), side_tag_field(side), pack_u32(self.ply)],
             };
             surface = surface.declare(CellAffordance::new(
                 capture_name(&obj.name),
@@ -985,7 +976,10 @@ impl Board {
 
     /// How many objectives `side` currently holds (its score on the objective axis).
     pub fn objectives_held(&self, side: Side) -> usize {
-        self.objectives.iter().filter(|o| o.held_by == Some(side)).count()
+        self.objectives
+            .iter()
+            .filter(|o| o.held_by == Some(side))
+            .count()
     }
 
     /// The objective sitting at `coord`, if any (ground truth).
@@ -1015,17 +1009,38 @@ impl Board {
 
         if commanders_in_play {
             match (blue_has_cmd, red_has_cmd) {
-                (false, true) => return Some(GameOver { winner: Side::Red, reason: WinReason::Decapitation }),
-                (true, false) => return Some(GameOver { winner: Side::Blue, reason: WinReason::Decapitation }),
-                (false, false) => return Some(GameOver { winner: Side::Blue, reason: WinReason::Decapitation }), // both gone: caller-defined; Blue by default
+                (false, true) => {
+                    return Some(GameOver {
+                        winner: Side::Red,
+                        reason: WinReason::Decapitation,
+                    })
+                }
+                (true, false) => {
+                    return Some(GameOver {
+                        winner: Side::Blue,
+                        reason: WinReason::Decapitation,
+                    })
+                }
+                (false, false) => {
+                    return Some(GameOver {
+                        winner: Side::Blue,
+                        reason: WinReason::Decapitation,
+                    })
+                } // both gone: caller-defined; Blue by default
                 (true, true) => {}
             }
         }
         if blue_units == 0 && red_units > 0 {
-            return Some(GameOver { winner: Side::Red, reason: WinReason::Annihilation });
+            return Some(GameOver {
+                winner: Side::Red,
+                reason: WinReason::Annihilation,
+            });
         }
         if red_units == 0 && blue_units > 0 {
-            return Some(GameOver { winner: Side::Blue, reason: WinReason::Annihilation });
+            return Some(GameOver {
+                winner: Side::Blue,
+                reason: WinReason::Annihilation,
+            });
         }
         // (2) domination: strictly more than half the objectives.
         let total = self.objectives.len();
@@ -1033,10 +1048,16 @@ impl Board {
             let blue_obj = self.objectives_held(Side::Blue);
             let red_obj = self.objectives_held(Side::Red);
             if blue_obj * 2 > total {
-                return Some(GameOver { winner: Side::Blue, reason: WinReason::Domination });
+                return Some(GameOver {
+                    winner: Side::Blue,
+                    reason: WinReason::Domination,
+                });
             }
             if red_obj * 2 > total {
-                return Some(GameOver { winner: Side::Red, reason: WinReason::Domination });
+                return Some(GameOver {
+                    winner: Side::Red,
+                    reason: WinReason::Domination,
+                });
             }
         }
         None
@@ -1347,7 +1368,11 @@ impl AgentPlayer {
     /// An agent playing `side` from cell `cell`, with the [`AgentPolicy::Aggressive`]
     /// default (the historical behaviour).
     pub fn new(side: Side, cell: CellId) -> Self {
-        AgentPlayer { side, cell, policy: AgentPolicy::Aggressive }
+        AgentPlayer {
+            side,
+            cell,
+            policy: AgentPolicy::Aggressive,
+        }
     }
 
     /// An agent with an explicit [`AgentPolicy`] (a personality).
@@ -1419,7 +1444,9 @@ impl AgentPlayer {
         // Otherwise rank by policy.
         let chosen = match self.policy {
             AgentPolicy::Aggressive => self.rank_toward_enemies(&candidates, &visible_enemies),
-            AgentPolicy::Objective => self.rank_toward_objectives(board, &candidates, &visible_enemies),
+            AgentPolicy::Objective => {
+                self.rank_toward_objectives(board, &candidates, &visible_enemies)
+            }
             AgentPolicy::Scout => self.rank_by_revealed_fog(board, &candidates),
         };
         let pick = chosen.unwrap_or(&candidates[0]);
@@ -1439,7 +1466,11 @@ impl AgentPlayer {
             .iter()
             .filter_map(|c| dest_of_move(&c.name).map(|d| (c, d)))
             .min_by_key(|(_, d)| {
-                visible_enemies.iter().map(|e| d.chebyshev(*e)).min().unwrap_or(u8::MAX)
+                visible_enemies
+                    .iter()
+                    .map(|e| d.chebyshev(*e))
+                    .min()
+                    .unwrap_or(u8::MAX)
             })
             .map(|(c, _)| c)
     }
@@ -1465,7 +1496,13 @@ impl AgentPlayer {
         candidates
             .iter()
             .filter_map(|c| dest_of_move(&c.name).map(|d| (c, d)))
-            .min_by_key(|(_, d)| targets.iter().map(|t| d.chebyshev(*t)).min().unwrap_or(u8::MAX))
+            .min_by_key(|(_, d)| {
+                targets
+                    .iter()
+                    .map(|t| d.chebyshev(*t))
+                    .min()
+                    .unwrap_or(u8::MAX)
+            })
             .map(|(c, _)| c)
     }
 
@@ -1476,20 +1513,18 @@ impl AgentPlayer {
         board: &Board,
         candidates: &'a [CellAffordance],
     ) -> Option<&'a CellAffordance> {
-        candidates
-            .iter()
-            .max_by_key(|c| {
-                let mut probe = board.clone();
-                // Apply the move on the probe by relocating the unit whose move this is.
-                if let Some(dest) = dest_of_move(&c.name) {
-                    if let Some(idx) = unit_index_of_move(board, self.side, &c.name) {
-                        if let Some(u) = probe.units.get_mut(idx) {
-                            u.at = dest;
-                        }
+        candidates.iter().max_by_key(|c| {
+            let mut probe = board.clone();
+            // Apply the move on the probe by relocating the unit whose move this is.
+            if let Some(dest) = dest_of_move(&c.name) {
+                if let Some(idx) = unit_index_of_move(board, self.side, &c.name) {
+                    if let Some(u) = probe.units.get_mut(idx) {
+                        u.at = dest;
                     }
                 }
-                probe.frustum_for(self.side).len()
-            })
+            }
+            probe.frustum_for(self.side).len()
+        })
     }
 }
 
@@ -1808,7 +1843,11 @@ pub fn play_match(
         }
     }
     let game_over = board.outcome();
-    MatchResult { board, game_over, log }
+    MatchResult {
+        board,
+        game_over,
+        log,
+    }
 }
 
 #[cfg(test)]
@@ -1922,7 +1961,10 @@ mod tests {
         let red_coords: BTreeSet<Coord> = red.visible_coords().into_iter().collect();
 
         // Genuinely different views.
-        assert_ne!(blue_coords, red_coords, "the two players see different tiles");
+        assert_ne!(
+            blue_coords, red_coords,
+            "the two players see different tiles"
+        );
         // At the opening the frustums are disjoint (no shared visibility).
         assert!(
             blue_coords.is_disjoint(&red_coords),
@@ -1932,8 +1974,14 @@ mod tests {
         // other's.
         assert!(blue.visible_enemies().is_empty());
         assert!(red.visible_enemies().is_empty());
-        assert_eq!(blue.unit_at(Coord::new(0, 0)).map(|u| u.side), Some(Side::Blue));
-        assert_eq!(red.unit_at(Coord::new(4, 4)).map(|u| u.side), Some(Side::Red));
+        assert_eq!(
+            blue.unit_at(Coord::new(0, 0)).map(|u| u.side),
+            Some(Side::Blue)
+        );
+        assert_eq!(
+            red.unit_at(Coord::new(4, 4)).map(|u| u.side),
+            Some(Side::Red)
+        );
     }
 
     #[test]
@@ -1970,11 +2018,7 @@ mod tests {
         // (3,4) is revealed; Chebyshev((3,3),(4,4)) = 1 → R-scout at (4,4) revealed.
         board.units[0].at = Coord::new(3, 3);
         let blue_view = board.project_for(Side::Blue, Rehydration::Live);
-        let seen: Vec<Side> = blue_view
-            .visible_enemies()
-            .iter()
-            .map(|u| u.side)
-            .collect();
+        let seen: Vec<Side> = blue_view.visible_enemies().iter().map(|u| u.side).collect();
         assert!(
             !seen.is_empty(),
             "after marching into range, Blue MUST see at least one Red unit (saw {:?}; after_first={:?})",
@@ -1982,7 +2026,10 @@ mod tests {
             after_first
         );
         assert!(
-            blue_view.visible_enemies().iter().all(|u| u.side == Side::Red),
+            blue_view
+                .visible_enemies()
+                .iter()
+                .all(|u| u.side == Side::Red),
             "the revealed units are the enemy"
         );
         // And the enemy tile is now rehydratable by Blue VIA its own frustum (the
@@ -2035,7 +2082,9 @@ mod tests {
         // Firing the (undeclared) move is NoSuchAffordance.
         let blue = board.vision_cap_for(Side::Blue);
         assert_eq!(
-            surface.fire(&too_far, game_cell(0xB1, 1), &blue).unwrap_err(),
+            surface
+                .fire(&too_far, game_cell(0xB1, 1), &blue)
+                .unwrap_err(),
             FireError::NoSuchAffordance
         );
     }
@@ -2050,7 +2099,10 @@ mod tests {
         let board = small_board();
         let blue_surface = board.move_surface_for(Side::Blue);
         let a_blue_move = move_name("B-scout", Coord::new(2, 2));
-        assert!(blue_surface.get(&a_blue_move).is_some(), "it is a real Blue move");
+        assert!(
+            blue_surface.get(&a_blue_move).is_some(),
+            "it is a real Blue move"
+        );
 
         // Red presents ITS authority to fire Blue's move → REFUSED.
         let red_cap = board.vision_cap_for(Side::Red);
@@ -2080,10 +2132,14 @@ mod tests {
         let surface = board.move_surface_for(Side::Blue);
         let blue = board.vision_cap_for(Side::Blue);
         let mv = move_name("B-scout", Coord::new(2, 2));
-        let intent = surface.fire(&mv, game_cell(0xB1, 1), &blue).expect("authorized");
+        let intent = surface
+            .fire(&mv, game_cell(0xB1, 1), &blue)
+            .expect("authorized");
 
         assert_eq!(board.turn, Side::Blue);
-        let outcome = board.apply_move(&intent, Side::Blue).expect("legal move applies");
+        let outcome = board
+            .apply_move(&intent, Side::Blue)
+            .expect("legal move applies");
         assert_eq!(
             outcome,
             MoveOutcome::Moved {
@@ -2130,8 +2186,12 @@ mod tests {
         let blue = board.vision_cap_for(Side::Blue);
         // Blue captures by moving onto (2,3).
         let cap = move_name("B-scout", Coord::new(2, 3));
-        let intent = surface.fire(&cap, game_cell(0xB1, 1), &blue).expect("authorized");
-        let outcome = board.apply_move(&intent, Side::Blue).expect("capture is legal");
+        let intent = surface
+            .fire(&cap, game_cell(0xB1, 1), &blue)
+            .expect("authorized");
+        let outcome = board
+            .apply_move(&intent, Side::Blue)
+            .expect("capture is legal");
         assert_eq!(
             outcome,
             MoveOutcome::Captured {
@@ -2168,7 +2228,10 @@ mod tests {
         // succeeds under the game rules (it is legal AND was authorized).
         let mut b2 = board.clone();
         let outcome = b2.apply_move(&intent, Side::Blue);
-        assert!(outcome.is_ok(), "the agent's fired move is legal: {outcome:?}");
+        assert!(
+            outcome.is_ok(),
+            "the agent's fired move is legal: {outcome:?}"
+        );
     }
 
     #[test]
@@ -2215,7 +2278,9 @@ mod tests {
         // (movement 1 ≥ distance 1) → it should fire the capturing move.
         let intent = agent.choose_move(&board).expect("the agent has a move");
         let mut b2 = board.clone();
-        let outcome = b2.apply_move(&intent, Side::Blue).expect("the move applies");
+        let outcome = b2
+            .apply_move(&intent, Side::Blue)
+            .expect("the move applies");
         assert!(
             matches!(outcome, MoveOutcome::Captured { .. }),
             "the agent took the available capture: {outcome:?}"
@@ -2243,15 +2308,24 @@ mod tests {
         );
         // The snapshot's lineage is BLUE's identity (a spectator gated to Blue's
         // view). Its window rights are Blue's Custom identity.
-        assert_eq!(snap.sturdyref.lineage.window.rights, side_rights(Side::Blue));
+        assert_eq!(
+            snap.sturdyref.lineage.window.rights,
+            side_rights(Side::Blue)
+        );
         // The boundary names exactly Blue's legal moves (the frustum extent of the
         // spectator's view) — and contains NO Red moves (anti-peek in the snapshot).
         assert!(
-            snap.boundary.affordance_names.iter().all(|n| !n.contains("R-")),
+            snap.boundary
+                .affordance_names
+                .iter()
+                .all(|n| !n.contains("R-")),
             "the Blue spectator's snapshot names no Red moves"
         );
         assert!(
-            snap.boundary.affordance_names.iter().any(|n| n.contains("B-")),
+            snap.boundary
+                .affordance_names
+                .iter()
+                .any(|n| n.contains("B-")),
             "the Blue spectator's snapshot names Blue's moves"
         );
         // The snapshot is tiny (a sturdyref + the boundary), not the board state.
@@ -2268,7 +2342,10 @@ mod tests {
         assert_eq!(board.units.len(), 4);
         // The board cell is fetchable in the web-of-cells.
         let (resource, _chrome) = web.fetch(&board_uri).expect("the board cell is published");
-        assert!(resource.verify().is_ok(), "the board cell's attestation verifies");
+        assert!(
+            resource.verify().is_ok(),
+            "the board cell's attestation verifies"
+        );
     }
 
     // ── Anti-toy: the fog is the REAL lattice, not a flag. ──
@@ -2304,7 +2381,9 @@ mod tests {
         let blue_prog = VisionDeck::keypair_for(Side::Blue).program();
         assert_eq!(
             blue,
-            AuthRequired::Custom { vk_hash: canonical_predicate_vk(&blue_prog.canonical_bytes()) },
+            AuthRequired::Custom {
+                vk_hash: canonical_predicate_vk(&blue_prog.canonical_bytes())
+            },
             "side_rights carries the REAL canonical_predicate_vk, re-derivable by a validator"
         );
     }
@@ -2324,7 +2403,9 @@ mod tests {
         // Blue proves Blue's own vision → Ok (it holds the secret, the registry
         // verifies the genuine Ed25519 proof).
         assert!(
-            board.prove_vision(&blue_deck, Side::Blue, Side::Blue, &msg).is_ok(),
+            board
+                .prove_vision(&blue_deck, Side::Blue, Side::Blue, &msg)
+                .is_ok(),
             "Blue can PROVE its own vision (holds the secret)"
         );
 
@@ -2379,7 +2460,9 @@ mod tests {
         // But the SAME proof verifies for BLUE's program (the honest path) — a
         // referee/light-client confirms Blue's claimed look with only public data.
         assert!(
-            referee.verify_presented_proof(Side::Blue, &msg, &blue_proof).is_ok(),
+            referee
+                .verify_presented_proof(Side::Blue, &msg, &blue_proof)
+                .is_ok(),
             "a genuine Blue proof verifies for Blue's vision program"
         );
     }
@@ -2416,11 +2499,17 @@ mod tests {
         let referee = VisionDeck::referee();
         let bmsg = board.vision_signing_message(Side::Blue, Coord::new(0, 0));
         let rmsg = board.vision_signing_message(Side::Red, Coord::new(4, 4));
-        assert!(board.prove_vision(&referee, Side::Blue, Side::Blue, &bmsg).is_ok());
-        assert!(board.prove_vision(&referee, Side::Red, Side::Red, &rmsg).is_ok());
+        assert!(board
+            .prove_vision(&referee, Side::Blue, Side::Blue, &bmsg)
+            .is_ok());
+        assert!(board
+            .prove_vision(&referee, Side::Red, Side::Red, &rmsg)
+            .is_ok());
         // And the referee can also prove the cross — because it holds both secrets
         // (it is the engine, not a player). A PLAYER deck cannot (tested above).
-        assert!(board.prove_vision(&referee, Side::Blue, Side::Red, &rmsg).is_ok());
+        assert!(board
+            .prove_vision(&referee, Side::Blue, Side::Red, &rmsg)
+            .is_ok());
     }
 
     #[test]
@@ -2435,7 +2524,10 @@ mod tests {
         assert!(!blue_cap.may_fetch(&Coord::new(4, 4).origin()));
         // The frustum is a finite allowlist (not the wildcard) — fog is concrete
         // confinement, not "see everything".
-        assert!(blue_cap.fetch_allow.is_some(), "the vision frustum is a concrete allowlist");
+        assert!(
+            blue_cap.fetch_allow.is_some(),
+            "the vision frustum is a concrete allowlist"
+        );
     }
 
     // ════════════════════════════════════════════════════════════════════════════
@@ -2456,7 +2548,12 @@ mod tests {
             5,
             5,
             game_cell(0xB0, 50),
-            vec![Unit::of_kind(Side::Blue, UnitKind::Scout, Coord::new(0, 0), 1)],
+            vec![Unit::of_kind(
+                Side::Blue,
+                UnitKind::Scout,
+                Coord::new(0, 0),
+                1,
+            )],
             terrain,
             vec![],
         );
@@ -2471,8 +2568,14 @@ mod tests {
         assert!(board.has_line_of_sight(Coord::new(0, 0), Coord::new(3, 0), 3));
         // The frustum reflects it: (0,3) is fogged, (3,0) is lit.
         let frustum = board.frustum_for(Side::Blue);
-        assert!(!frustum.contains(&Coord::new(0, 3).origin()), "occluded tile is fogged");
-        assert!(frustum.contains(&Coord::new(3, 0).origin()), "unoccluded tile is lit");
+        assert!(
+            !frustum.contains(&Coord::new(0, 3).origin()),
+            "occluded tile is fogged"
+        );
+        assert!(
+            frustum.contains(&Coord::new(3, 0).origin()),
+            "unoccluded tile is lit"
+        );
     }
 
     #[test]
@@ -2488,7 +2591,10 @@ mod tests {
         // of_kind wires the profile onto the unit and gives distinct names per seed.
         let s1 = Unit::of_kind(Side::Blue, UnitKind::Soldier, Coord::new(0, 0), 1);
         let s2 = Unit::of_kind(Side::Blue, UnitKind::Soldier, Coord::new(0, 1), 2);
-        assert_ne!(s1.name, s2.name, "two soldiers get distinct call-signs (unique moves)");
+        assert_ne!(
+            s1.name, s2.name,
+            "two soldiers get distinct call-signs (unique moves)"
+        );
         assert_eq!(s1.vision, 1);
     }
 
@@ -2502,20 +2608,32 @@ mod tests {
             5,
             5,
             game_cell(0xB0, 51),
-            vec![Unit::of_kind(Side::Blue, UnitKind::Scout, Coord::new(0, 0), 1)],
+            vec![Unit::of_kind(
+                Side::Blue,
+                UnitKind::Scout,
+                Coord::new(0, 0),
+                1,
+            )],
             terrain,
             vec![],
         );
         let unit = &board.units[0];
-        assert_eq!(board.check_move(unit, Coord::new(1, 1)), Err(IllegalMove::Impassable));
+        assert_eq!(
+            board.check_move(unit, Coord::new(1, 1)),
+            Err(IllegalMove::Impassable)
+        );
         // The move onto the mountain is not declared on the affordance surface.
         let surface = board.move_surface_for(Side::Blue);
         assert!(
-            surface.get(&move_name(&unit.name, Coord::new(1, 1))).is_none(),
+            surface
+                .get(&move_name(&unit.name, Coord::new(1, 1)))
+                .is_none(),
             "a move onto impassable terrain is never declared"
         );
         // An open adjacent tile IS a legal declared move.
-        assert!(surface.get(&move_name(&unit.name, Coord::new(0, 1))).is_some());
+        assert!(surface
+            .get(&move_name(&unit.name, Coord::new(0, 1)))
+            .is_some());
     }
 
     // ── Objectives: capturing a control point is a cap-gated EmitEvent turn. ──
@@ -2531,7 +2649,12 @@ mod tests {
             5,
             5,
             board_cell,
-            vec![Unit::of_kind(Side::Blue, UnitKind::Soldier, Coord::new(0, 0), 1)],
+            vec![Unit::of_kind(
+                Side::Blue,
+                UnitKind::Soldier,
+                Coord::new(0, 0),
+                1,
+            )],
             vec![],
             vec![objective],
         );
@@ -2539,14 +2662,19 @@ mod tests {
         let surface = board.move_surface_for(Side::Blue);
         let blue = board.vision_cap_for(Side::Blue);
         let name = move_name(&board.units[0].name, Coord::new(0, 1));
-        let intent = surface.fire(&name, board.units[0].id, &blue).expect("authorized");
+        let intent = surface
+            .fire(&name, board.units[0].id, &blue)
+            .expect("authorized");
         let outcome = board.apply_move(&intent, Side::Blue).expect("legal");
         assert!(
             matches!(&outcome, MoveOutcome::Moved { took_objective: Some(n), .. } if n == "central"),
             "landing on the control point captured it: {outcome:?}"
         );
         assert_eq!(board.objectives_held(Side::Blue), 1);
-        assert_eq!(board.objective_at(Coord::new(0, 1)).unwrap().held_by, Some(Side::Blue));
+        assert_eq!(
+            board.objective_at(Coord::new(0, 1)).unwrap().held_by,
+            Some(Side::Blue)
+        );
 
         // The capture affordance: a real EmitEvent, cap-gated, only when held≠ours...
         // (it is already ours now, so re-build a board where Blue stands on a neutral
@@ -2556,14 +2684,24 @@ mod tests {
             5,
             5,
             game_cell(0xB0, 53),
-            vec![Unit::of_kind(Side::Blue, UnitKind::Soldier, Coord::new(0, 0), 1)],
+            vec![Unit::of_kind(
+                Side::Blue,
+                UnitKind::Soldier,
+                Coord::new(0, 0),
+                1,
+            )],
             vec![],
             vec![obj2],
         );
         let cap_surface = board2.capture_surface_for(Side::Blue);
         let cap_name = "capture:north";
-        let aff = cap_surface.get(cap_name).expect("a capture affordance is declared");
-        assert!(matches!(aff.effect_template, Effect::EmitEvent { .. }), "capture fires a real EmitEvent");
+        let aff = cap_surface
+            .get(cap_name)
+            .expect("a capture affordance is declared");
+        assert!(
+            matches!(aff.effect_template, Effect::EmitEvent { .. }),
+            "capture fires a real EmitEvent"
+        );
         // Red cannot fire Blue's capture (incomparable identity) — anti-cheat is free.
         let red_cap = board2.vision_cap_for(Side::Red);
         assert!(
@@ -2575,7 +2713,9 @@ mod tests {
         );
         // Blue CAN (authorized) — yielding a real EmitEvent turn.
         let blue_cap = board2.vision_cap_for(Side::Blue);
-        let cap_intent = cap_surface.fire(cap_name, game_cell(0xB1, 1), &blue_cap).expect("Blue authorized");
+        let cap_intent = cap_surface
+            .fire(cap_name, game_cell(0xB1, 1), &blue_cap)
+            .expect("Blue authorized");
         assert!(matches!(cap_intent.effect, Effect::EmitEvent { .. }));
     }
 
@@ -2603,13 +2743,23 @@ mod tests {
         let blue = board.vision_cap_for(Side::Blue);
         // Blue's soldier (index 0) captures the Red Commander at (2,3).
         let name = move_name(&board.units[0].name, Coord::new(2, 3));
-        let intent = surface.fire(&name, board.units[0].id, &blue).expect("authorized");
-        let outcome = board.apply_move(&intent, Side::Blue).expect("capture legal");
-        assert!(outcome.is_decapitation(), "the capture took the enemy Commander: {outcome:?}");
+        let intent = surface
+            .fire(&name, board.units[0].id, &blue)
+            .expect("authorized");
+        let outcome = board
+            .apply_move(&intent, Side::Blue)
+            .expect("capture legal");
+        assert!(
+            outcome.is_decapitation(),
+            "the capture took the enemy Commander: {outcome:?}"
+        );
         // The game is now decided: Blue wins by decapitation.
         assert_eq!(
             board.outcome(),
-            Some(GameOver { winner: Side::Blue, reason: WinReason::Decapitation })
+            Some(GameOver {
+                winner: Side::Blue,
+                reason: WinReason::Decapitation
+            })
         );
     }
 
@@ -2647,7 +2797,10 @@ mod tests {
         assert_eq!(board.objectives_held(Side::Blue), 2);
         assert_eq!(
             board.outcome(),
-            Some(GameOver { winner: Side::Blue, reason: WinReason::Domination })
+            Some(GameOver {
+                winner: Side::Blue,
+                reason: WinReason::Domination
+            })
         );
     }
 
@@ -2660,16 +2813,26 @@ mod tests {
         // can fire a move outside its caps. We assert both fire a LEGAL authorized move
         // and that the objective agent (with an objective to chase) heads toward it.
         let board = demo_world();
-        let aggressive = AgentPlayer::with_policy(Side::Blue, game_cell(0xA1, 0), AgentPolicy::Aggressive);
-        let objective = AgentPlayer::with_policy(Side::Blue, game_cell(0xA2, 0), AgentPolicy::Objective);
+        let aggressive =
+            AgentPlayer::with_policy(Side::Blue, game_cell(0xA1, 0), AgentPolicy::Aggressive);
+        let objective =
+            AgentPlayer::with_policy(Side::Blue, game_cell(0xA2, 0), AgentPolicy::Objective);
         let scout = AgentPlayer::with_policy(Side::Blue, game_cell(0xA3, 0), AgentPolicy::Scout);
 
         for agent in [&aggressive, &objective, &scout] {
-            let intent = agent.choose_move(&board).expect("every policy finds a legal authorized move");
-            assert!(matches!(intent.effect, Effect::SetField { .. }), "a real move turn");
+            let intent = agent
+                .choose_move(&board)
+                .expect("every policy finds a legal authorized move");
+            assert!(
+                matches!(intent.effect, Effect::SetField { .. }),
+                "a real move turn"
+            );
             // The move it fired is legal on a clone (it was authorized AND legal).
             let mut probe = board.clone();
-            assert!(probe.apply_move(&intent, Side::Blue).is_ok(), "the agent's move is legal");
+            assert!(
+                probe.apply_move(&intent, Side::Blue).is_ok(),
+                "the agent's move is legal"
+            );
         }
         // An agent CANNOT fire on the opponent's turn (no more privileged than a human).
         let mut red_turn = board.clone();
@@ -2687,7 +2850,8 @@ mod tests {
         // The match terminates with a winner (decapitation / domination / annihilation)
         // within the ply budget.
         let board = demo_world();
-        let blue = AgentPlayer::with_policy(Side::Blue, game_cell(0xA1, 0), AgentPolicy::Aggressive);
+        let blue =
+            AgentPlayer::with_policy(Side::Blue, game_cell(0xA1, 0), AgentPolicy::Aggressive);
         let red = AgentPlayer::with_policy(Side::Red, game_cell(0xA2, 0), AgentPolicy::Objective);
         let result = play_match(board, &blue, &red, 600);
 
@@ -2715,16 +2879,27 @@ mod tests {
                 // The loser has no commander.
                 let loser = go.winner.opponent();
                 assert!(
-                    !result.board.units_of(loser).iter().any(|u| u.is_commander()),
+                    !result
+                        .board
+                        .units_of(loser)
+                        .iter()
+                        .any(|u| u.is_commander()),
                     "decapitation: the loser's commander is gone"
                 );
             }
             WinReason::Domination => {
                 let total = result.board.objectives.len();
-                assert!(result.board.objectives_held(go.winner) * 2 > total, "domination majority");
+                assert!(
+                    result.board.objectives_held(go.winner) * 2 > total,
+                    "domination majority"
+                );
             }
             WinReason::Annihilation => {
-                assert_eq!(result.board.units_of(go.winner.opponent()).len(), 0, "annihilation");
+                assert_eq!(
+                    result.board.units_of(go.winner.opponent()).len(),
+                    0,
+                    "annihilation"
+                );
             }
         }
     }

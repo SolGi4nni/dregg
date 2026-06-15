@@ -80,7 +80,7 @@ rustup run "$RUST_NIGHTLY" rustc --version
 
 # ── 5. Vendor rust-sel4 at the pinned rev (offline rebuilds + target specs) ──
 if [ ! -d "$SDK_ROOT/rust-sel4/.git" ]; then
-    say "cloning rust-sel4 @ $RUST_SEL4_REV…"
+    say "cloning rust-sel4 @ ${RUST_SEL4_REV}..."
     git clone --quiet https://github.com/seL4/rust-sel4 "$SDK_ROOT/rust-sel4"
     git -C "$SDK_ROOT/rust-sel4" checkout --quiet "$RUST_SEL4_REV"
 else

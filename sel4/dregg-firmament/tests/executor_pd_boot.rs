@@ -46,7 +46,9 @@ use std::time::Duration;
 
 use dregg_cell::{is_attenuation, AuthRequired};
 use dregg_firmament::emulated_kernel::EmulatedKernel;
-use dregg_firmament::executor_pd::{ExecutorPd, TurnRunner, LABEL_RUN_TURN, LABEL_TURN_COMMITTED, LABEL_TURN_REJECTED};
+use dregg_firmament::executor_pd::{
+    ExecutorPd, TurnRunner, LABEL_RUN_TURN, LABEL_TURN_COMMITTED, LABEL_TURN_REJECTED,
+};
 use dregg_firmament::microkit_facade::{Channel, ChannelTable, ChannelWiring, MessageInfo};
 
 /// The unit of meaning over the wire for THIS test: `[held, granted]` decoded
@@ -69,7 +71,10 @@ fn auth_of(b: u8) -> AuthRequired {
 impl TurnRunner for AttenuationRunner {
     fn run_turn_bytes(&mut self, turn_bytes: &[u8]) -> Result<Vec<u8>, String> {
         if turn_bytes.len() != 2 {
-            return Err(format!("malformed turn: expected 2 bytes, got {}", turn_bytes.len()));
+            return Err(format!(
+                "malformed turn: expected 2 bytes, got {}",
+                turn_bytes.len()
+            ));
         }
         let held = auth_of(turn_bytes[0]);
         let granted = auth_of(turn_bytes[1]);
@@ -161,7 +166,10 @@ fn app_pd_stages_turn_executor_pd_commits_receipt_round_trips() {
     let mut app_table = ChannelTable::new();
     app_table.wire(
         RUN_CHANNEL,
-        ChannelWiring { notification: kernel.create_notification(), endpoint: Some(run_ep) },
+        ChannelWiring {
+            notification: kernel.create_notification(),
+            endpoint: Some(run_ep),
+        },
     );
     let app_table = Arc::new(app_table);
 
@@ -187,7 +195,10 @@ fn app_pd_stages_turn_executor_pd_commits_receipt_round_trips() {
     // ── APP-PD: stage an ATTENUATING turn (held=Either, granted=Signature — a
     //    genuine narrowing). It COMMITS; the receipt is in commit_out. ──
     let r1 = submit(&[2, 1]);
-    assert_eq!(r1, LABEL_TURN_COMMITTED, "an attenuating turn COMMITS through the heart");
+    assert_eq!(
+        r1, LABEL_TURN_COMMITTED,
+        "an attenuating turn COMMITS through the heart"
+    );
     // The receipt round-tripped back through commit_out (the app-PD reads it
     // LOCK-FREE — the server is now parked in the next recv holding the executor
     // lock, so we must NOT take that lock here).
@@ -200,9 +211,15 @@ fn app_pd_stages_turn_executor_pd_commits_receipt_round_trips() {
     // ── APP-PD: stage an AMPLIFYING turn (held=Signature, granted=Either — a
     //    WIDENING). It is REJECTED; commit_out holds the reason; no state advanced. ──
     let r2 = submit(&[1, 2]);
-    assert_eq!(r2, LABEL_TURN_REJECTED, "a widening turn is REJECTED at the heart (the gate fires)");
+    assert_eq!(
+        r2, LABEL_TURN_REJECTED,
+        "a widening turn is REJECTED at the heart (the gate fires)"
+    );
     let reason = String::from_utf8(read_commit_out(&kernel)).unwrap();
-    assert!(reason.contains("non-attenuating"), "the reason names the widening: {reason}");
+    assert!(
+        reason.contains("non-attenuating"),
+        "the reason names the widening: {reason}"
+    );
 
     // ── Join the server (both calls served). ──
     server.join().expect("executor-PD served both staged turns");
@@ -212,7 +229,11 @@ fn app_pd_stages_turn_executor_pd_commits_receipt_round_trips() {
     //    returned, so taking the executor lock here is contention-free. ──
     let e = executor.lock().unwrap();
     assert_eq!(e.committed_count(), 1, "one attenuating turn committed");
-    assert_eq!(e.rejected_count(), 1, "one widening turn was rejected (the gate fired)");
+    assert_eq!(
+        e.rejected_count(),
+        1,
+        "one widening turn was rejected (the gate fired)"
+    );
 
     // The honest fidelity label travels with the code (it runs the GENUINE turn
     // semantics over the GENUINE EmulatedKernel IPC; it is NOT the real-seL4 PD).

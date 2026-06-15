@@ -32,6 +32,7 @@
 //!      - last row `new_root == final_root` (public input);
 //!      - running digest `acc_out = hash_4_to_1([acc_in, old_root, new_root, idx])`,
 //!        first row `acc_in == 0`, last row `acc_out == chain_digest` (public).
+//!
 //!    A trace whose turns are reordered, or that drops/inserts a turn, breaks
 //!    continuity and is UNSAT — that is the load-bearing rejection.
 //!
@@ -190,7 +191,7 @@ fn to_p3(v: BabyBear) -> P3BabyBear {
 ///
 /// **Bucket-F (PATH-PRESERVE Phase 5a):** the `participant` carries the MANDATORY ROTATED leg —
 /// the per-cell whole-turn rotated multi-table `Ir2BatchProof` (the [`RotatedParticipantLeg`])
-/// + its 38-PI vector. Host admission is [`verify_descriptor_participant`] (the rotated proof
+/// plus its 38-PI vector. Host admission is [`verify_descriptor_participant`] (the rotated proof
 /// verified standalone + selector-bound). The chain roots are read from the ROTATED commitments
 /// (PI 34/35); the in-circuit leaf is the rotated batch re-proven via
 /// [`prove_descriptor_leaf_rotated_with_config`]. The legacy v1 `base_trace` (the 186-column

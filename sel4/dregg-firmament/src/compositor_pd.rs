@@ -97,7 +97,8 @@ pub fn label_of(owner: &CellId, source_state_root: u64) -> u128 {
             .wrapping_mul(0x1_0000_0000_0000_0000u128.wrapping_add(1))
             .wrapping_add(u64::from_le_bytes(w) as u128);
     }
-    acc.wrapping_mul(1_000_003).wrapping_add(source_state_root as u128)
+    acc.wrapping_mul(1_000_003)
+        .wrapping_add(source_state_root as u128)
 }
 
 /// One surface in the compositor's scene graph — the §5 per-surface tuple
@@ -322,7 +323,9 @@ impl Scene {
         // T3 scene: at-most-one focus flag (an ambiguous scene rejects every
         // present, the Lean double-focus tooth).
         if !self.t3_focus_exclusive() {
-            return Err(Refusal::DoubleFocus { focus_count: self.focus_count() });
+            return Err(Refusal::DoubleFocus {
+                focus_count: self.focus_count(),
+            });
         }
         // T1: non-overlap / granted ⊆ held.
         if !self.t1_non_overlap(presenter, &p.target) {
@@ -339,7 +342,9 @@ impl Scene {
         }
         // T3 input: input routes only to the focus holder.
         if !self.t3_input_routed(presenter, p.claims_focus) {
-            return Err(Refusal::InputMisroute { focus_holder: self.focus_holder() });
+            return Err(Refusal::InputMisroute {
+                focus_holder: self.focus_holder(),
+            });
         }
         // A present genuinely advances the frame (the Lean `new ≠ old` leg).
         if p.new_digest == current {
@@ -427,7 +432,13 @@ pub fn decode_present(b: &[u8]) -> Option<(CellId, Present)> {
     }
     Some((
         presenter,
-        Present { target, source_state_root, declared_label, claims_focus, new_digest },
+        Present {
+            target,
+            source_state_root,
+            declared_label,
+            claims_focus,
+            new_digest,
+        },
     ))
 }
 
@@ -537,7 +548,9 @@ impl CompositorPd {
     /// region `r`; `0` means never composited (so an overpaint that never
     /// committed leaves the victim's region's byte unchanged).
     pub fn framebuffer_snapshot(&self) -> Vec<u8> {
-        self.kernel.region_read(self.framebuffer).unwrap_or_default()
+        self.kernel
+            .region_read(self.framebuffer)
+            .unwrap_or_default()
     }
 
     /// **PRESENT — the cap-gated frame advance + composite.** An app-PD submits a
@@ -574,7 +587,12 @@ impl CompositorPd {
             .expect("compositor holds its framebuffer region");
 
         // Advance the presenter's surface frame digest + source-root in the scene.
-        if let Some(s) = self.scene.surfaces.iter_mut().find(|s| &s.owner == presenter) {
+        if let Some(s) = self
+            .scene
+            .surfaces
+            .iter_mut()
+            .find(|s| &s.owner == presenter)
+        {
             s.content_digest = p.new_digest;
             s.source_state_root = p.source_state_root;
         }
@@ -600,11 +618,17 @@ impl CompositorPd {
     ///
     /// A malformed frame is replied REFUSED (fail-closed) — a garbage call from
     /// an app never advances the frame.
-    pub fn serve_present(&mut self, endpoint: ObjectId) -> Result<Result<FrameCommit, Refusal>, crate::IpcError> {
+    pub fn serve_present(
+        &mut self,
+        endpoint: ObjectId,
+    ) -> Result<Result<FrameCommit, Refusal>, crate::IpcError> {
         let (msg, token) = self.kernel.recv(endpoint)?;
         let verdict = self.dispatch_present_message(&msg);
         let reply = match &verdict {
-            Ok(commit) => Message::new(LABEL_PRESENT_OK, (commit.digest & 0xFF).to_le_bytes().to_vec()),
+            Ok(commit) => Message::new(
+                LABEL_PRESENT_OK,
+                (commit.digest & 0xFF).to_le_bytes().to_vec(),
+            ),
             Err(refusal) => {
                 Message::new(LABEL_PRESENT_REFUSED, vec![refusal_discriminant(refusal)])
             }
@@ -623,10 +647,13 @@ impl CompositorPd {
     pub fn serve_present_inline(&mut self, call: Message) -> Message {
         let verdict = self.dispatch_present_message(&call);
         match verdict {
-            Ok(commit) => {
-                Message::new(LABEL_PRESENT_OK, (commit.digest & 0xFF).to_le_bytes().to_vec())
+            Ok(commit) => Message::new(
+                LABEL_PRESENT_OK,
+                (commit.digest & 0xFF).to_le_bytes().to_vec(),
+            ),
+            Err(refusal) => {
+                Message::new(LABEL_PRESENT_REFUSED, vec![refusal_discriminant(&refusal)])
             }
-            Err(refusal) => Message::new(LABEL_PRESENT_REFUSED, vec![refusal_discriminant(&refusal)]),
         }
     }
 
@@ -652,7 +679,9 @@ impl CompositorPd {
     pub fn route_input(&self, claimed: &CellId) -> Result<CellId, Refusal> {
         match self.scene.focus_holder() {
             Some(holder) if &holder == claimed => Ok(holder),
-            holder => Err(Refusal::InputMisroute { focus_holder: holder }),
+            holder => Err(Refusal::InputMisroute {
+                focus_holder: holder,
+            }),
         }
     }
 
@@ -735,16 +764,34 @@ mod tests {
     fn label_of_binds_owner_and_root_injectively() {
         let a = cell_seed(1);
         let b = cell_seed(2);
-        assert_ne!(label_of(&a, 500), label_of(&b, 500), "owner changes the label");
-        assert_ne!(label_of(&a, 500), label_of(&a, 600), "root changes the label");
-        assert_eq!(label_of(&a, 500), label_of(&a, 500), "the binding is a function");
+        assert_ne!(
+            label_of(&a, 500),
+            label_of(&b, 500),
+            "owner changes the label"
+        );
+        assert_ne!(
+            label_of(&a, 500),
+            label_of(&a, 600),
+            "root changes the label"
+        );
+        assert_eq!(
+            label_of(&a, 500),
+            label_of(&a, 500),
+            "the binding is a function"
+        );
     }
 
     #[test]
     fn t1_owner_paints_its_region_but_a_foreigner_cannot() {
         let (scene, wallet, browser, _) = demo_scene();
-        assert!(scene.t1_non_overlap(&wallet, &[10]), "wallet owns region 10");
-        assert!(scene.t1_non_overlap(&wallet, &[10, 11]), "wallet owns both its regions");
+        assert!(
+            scene.t1_non_overlap(&wallet, &[10]),
+            "wallet owns region 10"
+        );
+        assert!(
+            scene.t1_non_overlap(&wallet, &[10, 11]),
+            "wallet owns both its regions"
+        );
         assert!(
             !scene.t1_non_overlap(&browser, &[10]),
             "the browser overpainting the wallet's region 10 is refused (T1)"
@@ -759,7 +806,10 @@ mod tests {
     fn t2_genuine_label_binds_and_a_spoof_is_refused() {
         let (scene, wallet, browser, _) = demo_scene();
         let wallet_label = label_of(&wallet, 500);
-        assert!(scene.t2_label_bound(&wallet, 500, wallet_label), "wallet's genuine label binds");
+        assert!(
+            scene.t2_label_bound(&wallet, 500, wallet_label),
+            "wallet's genuine label binds"
+        );
         assert!(
             !scene.t2_label_bound(&browser, 600, wallet_label),
             "the browser declaring the wallet's label fails (T2 spoof)"
@@ -769,15 +819,24 @@ mod tests {
     #[test]
     fn t3_at_most_one_focus_and_input_routes_only_there() {
         let (scene, wallet, browser, _) = demo_scene();
-        assert!(scene.t3_focus_exclusive(), "the honest scene has at-most-one focus");
+        assert!(
+            scene.t3_focus_exclusive(),
+            "the honest scene has at-most-one focus"
+        );
         assert_eq!(scene.focus_count(), 1, "exactly one focus holder");
         assert_eq!(scene.focus_holder(), Some(wallet), "the wallet holds focus");
-        assert!(scene.t3_input_routed(&wallet, true), "the focus holder may assert focus");
+        assert!(
+            scene.t3_input_routed(&wallet, true),
+            "the focus holder may assert focus"
+        );
         assert!(
             !scene.t3_input_routed(&browser, true),
             "the non-focused browser asserting focus mis-routes (T3)"
         );
-        assert!(scene.t3_input_routed(&browser, false), "a non-input present is fine");
+        assert!(
+            scene.t3_input_routed(&browser, false),
+            "a non-input present is fine"
+        );
     }
 
     #[test]
@@ -786,11 +845,28 @@ mod tests {
         let browser = cell_seed(2);
         let scene = Scene {
             surfaces: vec![
-                Surface { owner: wallet, regions: vec![10], content_digest: 1, source_state_root: 500, z_layer: 0, focus_flag: true },
-                Surface { owner: browser, regions: vec![20], content_digest: 2, source_state_root: 600, z_layer: 0, focus_flag: true },
+                Surface {
+                    owner: wallet,
+                    regions: vec![10],
+                    content_digest: 1,
+                    source_state_root: 500,
+                    z_layer: 0,
+                    focus_flag: true,
+                },
+                Surface {
+                    owner: browser,
+                    regions: vec![20],
+                    content_digest: 2,
+                    source_state_root: 600,
+                    z_layer: 0,
+                    focus_flag: true,
+                },
             ],
         };
-        assert!(!scene.t3_focus_exclusive(), "two focus flags ⇒ not exclusive");
+        assert!(
+            !scene.t3_focus_exclusive(),
+            "two focus flags ⇒ not exclusive"
+        );
         assert_eq!(scene.focus_count(), 2);
         let honest = Present {
             target: vec![10],
@@ -800,7 +876,10 @@ mod tests {
             new_digest: 4242,
         };
         assert!(
-            matches!(scene.scene_admit(&wallet, &honest), Err(Refusal::DoubleFocus { .. })),
+            matches!(
+                scene.scene_admit(&wallet, &honest),
+                Err(Refusal::DoubleFocus { .. })
+            ),
             "an ambiguous-input scene rejects every present (T3)"
         );
     }
@@ -824,6 +903,9 @@ mod tests {
 
     #[test]
     fn malformed_present_frame_decodes_to_none() {
-        assert!(decode_present(&[0u8; 10]).is_none(), "a short frame is rejected");
+        assert!(
+            decode_present(&[0u8; 10]).is_none(),
+            "a short frame is rejected"
+        );
     }
 }

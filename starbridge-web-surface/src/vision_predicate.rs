@@ -440,7 +440,10 @@ mod tests {
         assert_eq!(prog.vk_hash(), canonical_predicate_vk(&bytes));
         // The bytes are the genuine domain-tagged program (not opaque garbage).
         assert!(bytes.starts_with(VISION_PROGRAM_DOMAIN));
-        assert_eq!(&bytes[VISION_PROGRAM_DOMAIN.len()..], &blue_keys().public_key_bytes());
+        assert_eq!(
+            &bytes[VISION_PROGRAM_DOMAIN.len()..],
+            &blue_keys().public_key_bytes()
+        );
     }
 
     #[test]
@@ -496,7 +499,10 @@ mod tests {
             &[],
         );
         assert!(
-            matches!(red_attempt, Err(WitnessProducerError::ProducerFailed { .. })),
+            matches!(
+                red_attempt,
+                Err(WitnessProducerError::ProducerFailed { .. })
+            ),
             "Red's producer refuses to mint a proof for Blue's vision key"
         );
         //  (b) and even a proof Red signs with ITS OWN key fails Blue's verifier
@@ -644,7 +650,9 @@ mod tests {
         let verifier = FogVisionVerifier::for_program(&prog);
         assert_eq!(
             verifier.kind(),
-            WitnessedPredicateKind::Custom { vk_hash: prog.vk_hash() }
+            WitnessedPredicateKind::Custom {
+                vk_hash: prog.vk_hash()
+            }
         );
         // And the producer registers under the same hash (so produce/verify pair up).
         let producer = FogVisionProducer::new(red_keys());

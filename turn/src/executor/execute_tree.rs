@@ -682,9 +682,9 @@ impl TurnExecutor {
         }
         // Always include the target cell (even if its state is None
         // pre-effects — i.e. the action creates it).
-        if !old_cell_states.contains_key(&action.target) {
+        if let std::collections::hash_map::Entry::Vacant(e) = old_cell_states.entry(action.target) {
             if let Some(c) = ledger.get(&action.target) {
-                old_cell_states.insert(action.target, c.state.clone());
+                e.insert(c.state.clone());
             }
         }
         // Back-compat alias for code below that still references the

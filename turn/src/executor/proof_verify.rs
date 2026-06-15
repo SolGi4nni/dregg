@@ -138,7 +138,7 @@ impl TurnExecutor {
         let cell_committed_height = cell.state.committed_height();
         let initial_vm_state =
             dregg_circuit::CellState::with_capability_root(pre_balance, pre_nonce, cap_root);
-        let vm_effects = convert_turn_effects_to_vm(cell_id, turn, ledger);
+        let vm_effects = convert_turn_effects_to_vm(cell_id, turn);
 
         // 4. Resolve the cohort descriptor by the turn's lead effect (the SAME resolver
         //    the producer used). A non-cohort effect fails closed.
@@ -273,7 +273,7 @@ impl TurnExecutor {
 
         // 5. Compute effects hash using the circuit's Poseidon2-based hash
         // (Stage 1 widened to 4 felts).
-        let vm_effects = convert_turn_effects_to_vm(cell_id, turn, ledger);
+        let vm_effects = convert_turn_effects_to_vm(cell_id, turn);
         let effects_hash_4 = effect_vm::compute_effects_hash_4(&vm_effects);
 
         // 6. Compute balance delta from effects.
@@ -923,11 +923,13 @@ impl TurnExecutor {
             let mut th = [BabyBear::ZERO; 4];
             let mut eg = [BabyBear::ZERO; 4];
             let mut pr = [BabyBear::ZERO; 4];
-            for i in 0..4 {
-                th[i] = p0[pi::TURN_HASH_BASE + i];
-                eg[i] = p0[pi::EFFECTS_HASH_GLOBAL_BASE + i];
-                pr[i] = p0[pi::PREVIOUS_RECEIPT_HASH_BASE + i];
-            }
+            th.copy_from_slice(&p0[pi::TURN_HASH_BASE..(pi::TURN_HASH_BASE + 4)]);
+            eg.copy_from_slice(
+                &p0[pi::EFFECTS_HASH_GLOBAL_BASE..(pi::EFFECTS_HASH_GLOBAL_BASE + 4)],
+            );
+            pr.copy_from_slice(
+                &p0[pi::PREVIOUS_RECEIPT_HASH_BASE..(pi::PREVIOUS_RECEIPT_HASH_BASE + 4)],
+            );
             (th, eg, p0[pi::ACTOR_NONCE], pr)
         };
 
@@ -2148,9 +2150,9 @@ impl TurnExecutor {
         if let Some(w) = witness {
             // Witness path: the witness carries the cell_state including pubkey.
             let key_commit = Self::pubkey_to_witness_key_commit(w.cell_state.public_key());
-            for i in 0..pi::SOVEREIGN_WITNESS_KEY_COMMIT_LEN {
-                public_inputs[pi::SOVEREIGN_WITNESS_KEY_COMMIT_BASE + i] = key_commit[i];
-            }
+            public_inputs[pi::SOVEREIGN_WITNESS_KEY_COMMIT_BASE
+                ..(pi::SOVEREIGN_WITNESS_KEY_COMMIT_BASE + pi::SOVEREIGN_WITNESS_KEY_COMMIT_LEN)]
+                .copy_from_slice(&key_commit[..pi::SOVEREIGN_WITNESS_KEY_COMMIT_LEN]);
             public_inputs[pi::SOVEREIGN_WITNESS_SEQUENCE] =
                 BabyBear::new((w.sequence & 0x7FFF_FFFF) as u32);
             public_inputs[pi::IS_SOVEREIGN_CELL] = BabyBear::ONE;
@@ -2161,10 +2163,12 @@ impl TurnExecutor {
             // follow-up); the off-AIR verifier loop recursively verifies.
             if let Some(proof_bytes) = &w.transition_proof {
                 let proof_commit = Self::transition_proof_commitment(proof_bytes);
-                for i in 0..pi::SOVEREIGN_TRANSITION_PROOF_COMMITMENT_LEN {
-                    public_inputs[pi::SOVEREIGN_TRANSITION_PROOF_COMMITMENT_BASE + i] =
-                        proof_commit[i];
-                }
+                public_inputs[pi::SOVEREIGN_TRANSITION_PROOF_COMMITMENT_BASE
+                    ..(pi::SOVEREIGN_TRANSITION_PROOF_COMMITMENT_BASE
+                        + pi::SOVEREIGN_TRANSITION_PROOF_COMMITMENT_LEN)]
+                    .copy_from_slice(
+                        &proof_commit[..pi::SOVEREIGN_TRANSITION_PROOF_COMMITMENT_LEN],
+                    );
                 public_inputs[pi::HAS_TRANSITION_PROOF] = BabyBear::ONE;
             }
         } else if let Some(_proof_bytes) = execution_proof_bytes {
@@ -2176,9 +2180,10 @@ impl TurnExecutor {
             if let Some(reg) = ledger.get_sovereign_registration(cell_id) {
                 if let Some(pk) = reg.owner_public_key {
                     let key_commit = Self::pubkey_to_witness_key_commit(&pk);
-                    for i in 0..pi::SOVEREIGN_WITNESS_KEY_COMMIT_LEN {
-                        public_inputs[pi::SOVEREIGN_WITNESS_KEY_COMMIT_BASE + i] = key_commit[i];
-                    }
+                    public_inputs[pi::SOVEREIGN_WITNESS_KEY_COMMIT_BASE
+                        ..(pi::SOVEREIGN_WITNESS_KEY_COMMIT_BASE
+                            + pi::SOVEREIGN_WITNESS_KEY_COMMIT_LEN)]
+                        .copy_from_slice(&key_commit[..pi::SOVEREIGN_WITNESS_KEY_COMMIT_LEN]);
                 }
             }
             public_inputs[pi::SOVEREIGN_WITNESS_SEQUENCE] = BabyBear::new(
@@ -2298,11 +2303,6 @@ impl TurnExecutor {
             previous_receipt_hash_4,
         )
     }
-
-    /// Convert turn-level effects from the call forest into circuit-level Effect VM effects.
-    ///
-    /// Walks the call forest DFS and converts each effect targeting `cell_id` into the
-    /// corresponding `effect_vm::Effect`. Effects not targeting this cell are skipped.
 
     /// Compute the balance delta (magnitude, sign) from the turn's effects for a cell.
     ///

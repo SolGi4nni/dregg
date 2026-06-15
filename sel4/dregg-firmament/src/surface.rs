@@ -131,7 +131,10 @@ impl SurfaceBacking {
         surface: CellId,
         rights: &Rights,
     ) -> Result<Resolution, ResolveError> {
-        let cell = self.ledger.get(&holder).ok_or(ResolveError::TargetNotFound)?;
+        let cell = self
+            .ledger
+            .get(&holder)
+            .ok_or(ResolveError::TargetNotFound)?;
         let held = cell
             .capabilities
             .lookup_by_target(&surface)
@@ -181,7 +184,11 @@ impl SurfaceBacking {
         };
         self.run_grant_turn(
             granter,
-            Effect::GrantCapability { from: granter, to: recipient, cap },
+            Effect::GrantCapability {
+                from: granter,
+                to: recipient,
+                cap,
+            },
             "surface grant",
         )
     }
@@ -251,7 +258,10 @@ impl SurfaceBacking {
                 "executor refused {}: {:?}",
                 what, reason
             ))),
-            other => Err(ResolveError::BackingRejected(format!("unexpected: {:?}", other))),
+            other => Err(ResolveError::BackingRejected(format!(
+                "unexpected: {:?}",
+                other
+            ))),
         }
     }
 
@@ -417,9 +427,11 @@ impl SurfaceBacking {
 
     /// The rights `recipient` holds over the `surface`, if any.
     pub fn rights_held(&self, recipient: CellId, surface: CellId) -> Option<Rights> {
-        self.ledger
-            .get(&recipient)
-            .and_then(|c| c.capabilities.lookup_by_target(&surface).map(|r| r.permissions.clone()))
+        self.ledger.get(&recipient).and_then(|c| {
+            c.capabilities
+                .lookup_by_target(&surface)
+                .map(|r| r.permissions.clone())
+        })
     }
 }
 
@@ -482,7 +494,10 @@ mod tests {
         let mut fab = SurfaceBacking::new();
         let app = fab.seed_surface(0);
         let window = fab.create_surface(app, 9, AuthRequired::None);
-        assert!(fab.holds_cap(app, window), "owner must hold the new window cap");
+        assert!(
+            fab.holds_cap(app, window),
+            "owner must hold the new window cap"
+        );
         assert_eq!(fab.rights_held(app, window), Some(AuthRequired::None));
     }
 
@@ -538,7 +553,10 @@ mod tests {
             fab.embed(wm, app, child, AuthRequired::Signature).is_ok(),
             "an attenuating embed must commit via the real Introduce"
         );
-        assert!(fab.holds_cap(app, child), "the recipient must hold the embedded child cap");
+        assert!(
+            fab.holds_cap(app, child),
+            "the recipient must hold the embedded child cap"
+        );
         assert_eq!(fab.rights_held(app, child), Some(AuthRequired::Signature));
 
         // A WIDENING embed (the wm holds only Signature over child2, tries to
@@ -549,8 +567,14 @@ mod tests {
         fab.install(wm, app2, AuthRequired::None); // connectivity to app2
         fab.install(wm, child2, AuthRequired::Signature); // wm holds only Signature
         let r = fab.embed(wm, app2, child2, AuthRequired::None);
-        assert!(r.is_err(), "a widening embed must be REJECTED by the real Introduce");
-        assert!(!fab.holds_cap(app2, child2), "the recipient gets nothing on a refused embed");
+        assert!(
+            r.is_err(),
+            "a widening embed must be REJECTED by the real Introduce"
+        );
+        assert!(
+            !fab.holds_cap(app2, child2),
+            "the recipient gets nothing on a refused embed"
+        );
     }
 
     #[test]
@@ -566,7 +590,10 @@ mod tests {
         // The wm holds the child but has NO cap to the stranger.
         fab.install(wm, child, AuthRequired::Either);
         let r = fab.embed(wm, stranger, child, AuthRequired::Signature);
-        assert!(r.is_err(), "no connectivity to the recipient ⇒ embed refused");
+        assert!(
+            r.is_err(),
+            "no connectivity to the recipient ⇒ embed refused"
+        );
         assert!(!fab.holds_cap(stranger, child));
     }
 
@@ -614,8 +641,14 @@ mod tests {
         assert!(fab.present(app, window, &AuthRequired::Either).is_ok());
 
         // Revoke the window cap — returns having ALREADY removed it (synchronous).
-        assert!(fab.revoke(app, window), "revoke removes the live surface cap");
-        assert!(!fab.holds_cap(app, window), "the cap is dead the instant revoke returns");
+        assert!(
+            fab.revoke(app, window),
+            "revoke removes the live surface cap"
+        );
+        assert!(
+            !fab.holds_cap(app, window),
+            "the cap is dead the instant revoke returns"
+        );
 
         // After revoke: the present is refused — the glass is dark, no in-flight
         // frame (the n=1 immediacy: TargetNotFound, the cap is simply gone).
@@ -625,6 +658,9 @@ mod tests {
         );
 
         // Revoking an absent cap is a no-op false.
-        assert!(!fab.revoke(app, window), "revoking an already-dead cap is a no-op");
+        assert!(
+            !fab.revoke(app, window),
+            "revoking an already-dead cap is a no-op"
+        );
     }
 }

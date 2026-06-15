@@ -133,7 +133,7 @@ fn emit_federation_tour(em: &Emitter) {
     // Add a third member, simulating a committee rotation.
     let (_sk_c, pk_c) = generate_keypair();
     let mut sorted = vec![pk_a, pk_b, pk_c];
-    sorted.sort_by(|a, b| a.0.cmp(&b.0));
+    sorted.sort_by_key(|a| a.0);
     let fed_after = Federation::verifier_only(sorted, 1, 2);
     let fed_id_after = fed_after.id_bytes();
 

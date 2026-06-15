@@ -11,10 +11,10 @@
 //! - `Hash` constraint for commitment = hash(owner, value, asset_type, nonce, randomness)
 //! - `Hash` constraint for nullifier = hash(commitment, key[0..7], nonce)
 //!   (Note: the `Hash` constraint uses `hash_fact` which takes a "predicate" + terms.
-//!    We designate `commitment` as the predicate and the remaining 9 values as terms.)
+//!   We designate `commitment` as the predicate and the remaining 9 values as terms.)
 //! - `ConditionalNonzero` gated by `is_merkle` to enforce Merkle hash binding
 //!   (structural enforcement; the actual Poseidon2-based Merkle hash is enforced
-//!    via a `Hash` constraint on the parent computation)
+//!   via a `Hash` constraint on the parent computation)
 //! - `PiBinding` for public inputs [nullifier, merkle_root, value, asset_type]
 //! - `Binary` for the `is_merkle` flag
 //!
@@ -54,11 +54,11 @@ pub const NULLIFIER_INTERMEDIATE: usize = 17;
 /// Encodes the core constraints of the note spending AIR using DSL primitives:
 /// - C1: `is_merkle` is binary
 /// - C2: Commitment hash binding:
-///        commitment == hash_fact(owner, [value, asset_type, creation_nonce, randomness])
+///   commitment == hash_fact(owner, [value, asset_type, creation_nonce, randomness])
 /// - C3: Nullifier intermediate:
-///        intermediate == hash_fact(commitment, [key[0], key[1], key[2], key[3]])
+///   intermediate == hash_fact(commitment, [key[0], key[1], key[2], key[3]])
 /// - C4: Nullifier final:
-///        nullifier == hash_fact(intermediate, [key[4], key[5], key[6], key[7]])
+///   nullifier == hash_fact(intermediate, [key[4], key[5], key[6], key[7]])
 ///
 /// Boundary constraints bind the commitment row's nullifier/value/asset_type to
 /// their respective public inputs, and the last row's `current` to the Merkle root.
@@ -309,9 +309,8 @@ pub fn generate_commitment_row_trace() -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
     row0[col::ASSET_TYPE] = asset_type;
     row0[col::CREATION_NONCE] = creation_nonce;
     row0[col::COMMITMENT] = commitment;
-    for j in 0..SPENDING_KEY_LIMBS {
-        row0[col::SPENDING_KEY_START + j] = key[j];
-    }
+    row0[col::SPENDING_KEY_START..col::SPENDING_KEY_START + SPENDING_KEY_LIMBS]
+        .copy_from_slice(&key[..SPENDING_KEY_LIMBS]);
     row0[col::NULLIFIER] = nullifier;
     row0[col::RANDOMNESS] = randomness;
     row0[col::IS_MERKLE] = BabyBear::ZERO;

@@ -100,7 +100,11 @@ fn main() {
     let member3_key = agent_key("member-3");
 
     // Compute the federation root for the STARK path (algebraic binding).
-    // This uses MerkleStarkAir: parent = current + sib0 + sib1 + sib2 + position
+    // This uses MerkleStarkAir: parent = current + sib0 + sib1 + sib2 + position.
+    // DEMO ONLY: MerkleStarkAir is deprecated (linear hash binding, not collision-
+    // resistant); the shippable path is dsl::descriptors::merkle_poseidon2_circuit().
+    // Retained here as the simplest illustrative STARK leg for the agent walkthrough.
+    #[allow(deprecated)]
     use dregg_circuit::stark::{self, MerkleStarkAir, generate_merkle_trace, proof_to_bytes};
 
     let leaf_hash_bb = bytes_to_babybear(&issuer_key);
@@ -280,6 +284,7 @@ fn main() {
 
     // Step B: Generate the REAL STARK proof for issuer membership
     // This proves cryptographically that the issuer's key is in the federation tree
+    #[allow(deprecated)] // DEMO ONLY — see the MerkleStarkAir note at its import above.
     let stark_air = MerkleStarkAir;
     let stark_proof = stark::prove(&stark_air, &stark_trace, &stark_public_inputs);
     let proof_bytes = proof_to_bytes(&stark_proof);

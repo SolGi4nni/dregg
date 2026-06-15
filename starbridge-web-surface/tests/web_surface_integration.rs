@@ -30,7 +30,10 @@ fn a_web_surface_is_a_real_firmament_surface_capability() {
     // `Capability{ target: Surface(cell), rights }` — the genuine handle.
     let cell = cid(1);
     let surface = SurfaceCapability::root(cell, AuthRequired::Either);
-    assert_eq!(surface.window, Capability::surface(cell, AuthRequired::Either));
+    assert_eq!(
+        surface.window,
+        Capability::surface(cell, AuthRequired::Either)
+    );
     assert!(matches!(surface.window.target, Target::Surface { .. }));
 }
 
@@ -54,7 +57,9 @@ fn navigation_the_caps_allow_succeeds_and_one_they_dont_is_refused() {
     // DENY — and the committed URL is unchanged (no spoofable chrome update).
     assert_eq!(
         wv.navigate("https://evil.com", "https://evil.com/x"),
-        NavigationDecision::Deny { origin: "https://evil.com".into() }
+        NavigationDecision::Deny {
+            origin: "https://evil.com".into()
+        }
     );
     assert_eq!(wv.current_url.as_deref(), Some("https://example.com/a"));
 }
@@ -81,7 +86,10 @@ fn an_attenuated_cap_narrows_what_a_sub_surface_can_fetch() {
         )
         .expect("a narrowing child is minted");
 
-    assert!(matches!(child_wv.fetch("https://a.example.com"), ResourceDecision::Continue));
+    assert!(matches!(
+        child_wv.fetch("https://a.example.com"),
+        ResourceDecision::Continue
+    ));
     assert!(matches!(
         child_wv.fetch("https://b.example.com"),
         ResourceDecision::Intercept { .. }

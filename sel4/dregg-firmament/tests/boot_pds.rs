@@ -25,11 +25,11 @@
 use std::sync::Arc;
 
 use dregg_firmament::emulated_kernel::EmulatedKernel;
-use dregg_firmament::microkit_facade::{
-    Channel, ChannelSet, ChannelTable, ChannelWiring, EventLoop, Handler, MessageInfo,
-    NullHandler, ProtectionDomain, Region,
-};
 use dregg_firmament::memory_region_symbol;
+use dregg_firmament::microkit_facade::{
+    Channel, ChannelSet, ChannelTable, ChannelWiring, EventLoop, Handler, MessageInfo, NullHandler,
+    ProtectionDomain, Region,
+};
 
 // ===========================================================================
 // PD #1 — m0-hello. The SAME body as sel4/dregg-pd/m0-hello/src/main.rs: it
@@ -87,10 +87,13 @@ impl Handler for WakeRecorder {
         // PD-B woke. Record (a) a liveness sentinel and (b) which channel fired,
         // into the shared region — the SAME `with_mut` (`thread: &mut [u8]`)
         // access a real PD makes on its mapped region.
-        println!("[pd-b] notified on channels {:?} — the wake fired", channels);
+        println!(
+            "[pd-b] notified on channels {:?} — the wake fired",
+            channels
+        );
         self.witness.with_mut(|buf| {
             buf[0] = 0xB0; // 'B' woke
-            // The low byte of the badge = the channel index bit PD-A signalled.
+                           // The low byte of the badge = the channel index bit PD-A signalled.
             buf[1] = (channels.bits() & 0xFF) as u8;
         });
     }
@@ -119,7 +122,10 @@ fn boot_two_pd_notify_slice() {
     let mut pd_a_table = ChannelTable::new();
     pd_a_table.wire(
         NOTIFY_CHANNEL,
-        ChannelWiring { notification: notif, endpoint: None },
+        ChannelWiring {
+            notification: notif,
+            endpoint: None,
+        },
     );
     let pd_a_table = Arc::new(pd_a_table);
 

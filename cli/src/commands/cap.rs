@@ -119,7 +119,7 @@ async fn export(
     ctx.info("Share this URI to grant access. Recipient uses:");
     eprintln!(
         "  {}",
-        console::style(format!("dregg cap enliven \"{}\"", &uri)).dim()
+        console::style(format!("dregg cap enliven \"{uri}\"")).dim()
     );
     ctx.info("  (Note: full cryptographic bearer export uses SDK BearerCapProof generation.)");
 

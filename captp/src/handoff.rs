@@ -462,11 +462,8 @@ fn verified_non_amplifying(
         effect_mask_field(held_eff),
         effect_mask_field(granted_eff),
     );
-    match dregg_lean_ffi::verified_handoff_non_amplifying(&wire) {
-        Ok(verdict) => Some(verdict),
-        // FFI / wire error ⇒ fall back to the Rust lattice (never break the live handoff path).
-        Err(_) => None,
-    }
+    // FFI / wire error ⇒ fall back to the Rust lattice (never break the live handoff path).
+    dregg_lean_ffi::verified_handoff_non_amplifying(&wire).ok()
 }
 
 /// Stub under the `no-lean-link` platform gate (wasm32/zkvm): the verified gate is unavailable, so the Rust lattice

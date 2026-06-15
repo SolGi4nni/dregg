@@ -521,6 +521,7 @@ fn rebuild_capabilities(
 ///   * `Grant`     → `grant_ref(cap)`            (apply_grant_capability's faithful install)
 ///   * `Introduce` → `grant_with_expiry(target, permissions, expires_at)`
 ///   * `Attenuate` → `attenuate_in_place(slot, …)`
+///
 /// Ops replay in forest order (slot assignment is order-sensitive) and against the WORKING c-list
 /// (so two grants onto the same holder land at consecutive slots, as the executor assigns them).
 ///
@@ -544,7 +545,7 @@ fn apply_cap_ops(
         if touched.insert(holder) {
             // Establish the holder's working cell: prefer an already-produced cell (so balance/
             // nonce/fields the verified executor produced survive), else the template cell.
-            if !out_cells.contains_key(&holder) {
+            if let std::collections::hash_map::Entry::Vacant(e) = out_cells.entry(holder) {
                 let cell = template
                     .get(&holder)
                     .cloned()
@@ -552,7 +553,7 @@ fn apply_cap_ops(
                         nat: u64::MAX,
                         cell: holder,
                     })?;
-                out_cells.insert(holder, cell);
+                e.insert(cell);
             }
             // Reset the working c-list to the EXACT pre-state (the template carries the real
             // pre-state caps; the wire-edge rebuild above may have lossily overwritten it).
@@ -637,7 +638,7 @@ fn apply_state_ops(
     for op in state_ops {
         for cell_id in op.touched() {
             if touched.insert(cell_id) {
-                if !out_cells.contains_key(&cell_id) {
+                if let std::collections::hash_map::Entry::Vacant(e) = out_cells.entry(cell_id) {
                     let cell =
                         template
                             .get(&cell_id)
@@ -646,7 +647,7 @@ fn apply_state_ops(
                                 nat: u64::MAX,
                                 cell: cell_id,
                             })?;
-                    out_cells.insert(cell_id, cell);
+                    e.insert(cell);
                 }
                 let template_caps = template
                     .get(&cell_id)

@@ -45,3 +45,4 @@ libdregg_lean.a*
 /target-swaplane
 /site/pkg
 /sdk-ts/dist
+sel4/dregg-pd/executor-microkit-pd/microkit-patch/microkit-2.2.0-patched

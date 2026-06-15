@@ -63,7 +63,7 @@ pub enum OpResult {
     /// Dequeue succeeded.
     Dequeued {
         entry: QueueEntry,
-        proof: DequeueProof,
+        proof: Box<DequeueProof>,
     },
     /// Root assertion passed.
     Asserted,
@@ -201,7 +201,10 @@ impl QueueTransaction {
                     let queue = queues.get_mut(queue_id).unwrap();
                     match queue.dequeue() {
                         Ok((entry, proof)) => {
-                            results.push(OpResult::Dequeued { entry, proof });
+                            results.push(OpResult::Dequeued {
+                                entry,
+                                proof: Box::new(proof),
+                            });
                         }
                         Err(e) => {
                             self.rollback(queues, &snapshots);

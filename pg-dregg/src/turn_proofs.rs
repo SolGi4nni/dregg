@@ -231,7 +231,10 @@ impl core::fmt::Display for ProduceProofError {
                 hex(found_prev_root),
                 hex(expected_prev_root)
             ),
-            ProduceProofError::NotFromWatermark { watermark, window_lo } => write!(
+            ProduceProofError::NotFromWatermark {
+                watermark,
+                window_lo,
+            } => write!(
                 f,
                 "window starts at {window_lo} but the producer watermark is {watermark} \
                  (the producer only extends from its watermark; a gap/overlap is refused)"
@@ -486,12 +489,24 @@ mod tests {
         let err = p
             .produce(&window(2, 6))
             .expect_err("an overlapping window is refused");
-        assert!(matches!(err, ProduceProofError::NotFromWatermark { watermark: 4, window_lo: 2 }));
+        assert!(matches!(
+            err,
+            ProduceProofError::NotFromWatermark {
+                watermark: 4,
+                window_lo: 2
+            }
+        ));
         // And a gap (starts at 6, watermark is 4) is refused too.
         let err = p
             .produce(&window(6, 9))
             .expect_err("a gapped window is refused");
-        assert!(matches!(err, ProduceProofError::NotFromWatermark { watermark: 4, window_lo: 6 }));
+        assert!(matches!(
+            err,
+            ProduceProofError::NotFromWatermark {
+                watermark: 4,
+                window_lo: 6
+            }
+        ));
         // Fail-closed: the watermark never moved on a refusal.
         assert_eq!(p.watermark(), 4);
     }
@@ -501,12 +516,22 @@ mod tests {
         let mut p = TurnProofProducer::new(StandInFolder, VK);
         // Zero turns.
         let err = p.produce(&[]).expect_err("empty window refused");
-        assert!(matches!(err, ProduceProofError::WindowTooSmall { count: 0, .. }));
+        assert!(matches!(
+            err,
+            ProduceProofError::WindowTooSmall { count: 0, .. }
+        ));
         // One turn (a chain fold needs >= 2).
         let one = window(0, 0);
         let err = p.produce(&one).expect_err("single-turn window refused");
-        assert!(matches!(err, ProduceProofError::WindowTooSmall { count: 1, .. }));
-        assert_eq!(p.watermark(), 0, "a refused fold never advances the watermark");
+        assert!(matches!(
+            err,
+            ProduceProofError::WindowTooSmall { count: 1, .. }
+        ));
+        assert_eq!(
+            p.watermark(),
+            0,
+            "a refused fold never advances the watermark"
+        );
     }
 
     #[test]
@@ -516,8 +541,13 @@ mod tests {
         // the supplied turns) — the producer refuses to fold it.
         let mut turns = window(0, 4);
         turns[2].prev_root = [0xde; 32]; // breaks turn 1's ledger == turn 2's prev
-        let err = p.produce(&turns).expect_err("a non-contiguous window is refused");
-        assert!(matches!(err, ProduceProofError::NonContiguous { index: 2, .. }));
+        let err = p
+            .produce(&turns)
+            .expect_err("a non-contiguous window is refused");
+        assert!(matches!(
+            err,
+            ProduceProofError::NonContiguous { index: 2, .. }
+        ));
         assert_eq!(p.watermark(), 0);
     }
 
@@ -532,8 +562,16 @@ mod tests {
         assert_eq!((row.lo, row.hi), (10, 14));
         assert_eq!(p.watermark(), 15);
         // A window that does not start at the resumed watermark is refused.
-        let err = p.produce(&window(0, 4)).expect_err("pre-watermark window refused");
-        assert!(matches!(err, ProduceProofError::NotFromWatermark { watermark: 15, window_lo: 0 }));
+        let err = p
+            .produce(&window(0, 4))
+            .expect_err("pre-watermark window refused");
+        assert!(matches!(
+            err,
+            ProduceProofError::NotFromWatermark {
+                watermark: 15,
+                window_lo: 0
+            }
+        ));
     }
 
     /// A FOLDER that lies about the window it folded (claims wider coverage than the
@@ -569,8 +607,14 @@ mod tests {
             .produce(&window(0, 4))
             .expect_err("a folder claiming wider coverage than the window is refused");
         assert!(matches!(err, ProduceProofError::FoldFailed { .. }));
-        let ProduceProofError::FoldFailed { reason } = err else { unreachable!() };
+        let ProduceProofError::FoldFailed { reason } = err else {
+            unreachable!()
+        };
         assert!(reason.contains("num_turns=1000"), "{reason}");
-        assert_eq!(p.watermark(), 0, "the fabricated row never advanced the watermark");
+        assert_eq!(
+            p.watermark(),
+            0,
+            "the fabricated row never advanced the watermark"
+        );
     }
 }

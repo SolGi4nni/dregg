@@ -26,7 +26,7 @@
 //! - C1: `valid` must equal 1 (all chains must verify)
 //! - C2: `valid` is binary (0 or 1)
 //! - C3: `digit` range check: digit*(digit-1)*...*(digit-15) == 0
-//!        (degree 16 is too high, so we use degree-4 sub-products)
+//!   (degree 16 is too high, so we use degree-4 sub-products)
 //!
 //! ## Public Inputs (9 elements)
 //!

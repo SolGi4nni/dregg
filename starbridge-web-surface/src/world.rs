@@ -48,7 +48,7 @@
 
 use crate::delegate::SurfaceCapability;
 use crate::game::{side_rights, Board, Coord, Objective, Side};
-use crate::rehydrate::{Interaction, InteractionLog, Membrane, Rehydration, RehydrateError};
+use crate::rehydrate::{Interaction, InteractionLog, Membrane, RehydrateError, Rehydration};
 use crate::web_of_cells::{DreggUri, WebOfCells};
 use dregg_cell::AuthRequired;
 use dregg_types::CellId;
@@ -143,12 +143,18 @@ impl GameWorld {
 
     /// The published ref of `side`'s player cell.
     pub fn player_uri(&self, side: Side) -> Option<&DreggUri> {
-        self.player_uris.iter().find(|(s, _)| *s == side).map(|(_, u)| u)
+        self.player_uris
+            .iter()
+            .find(|(s, _)| *s == side)
+            .map(|(_, u)| u)
     }
 
     /// The published ref of the objective named `name`.
     pub fn objective_uri(&self, name: &str) -> Option<&DreggUri> {
-        self.objective_uris.iter().find(|(n, _)| n == name).map(|(_, u)| u)
+        self.objective_uris
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, u)| u)
     }
 
     /// The number of cells this world publishes (board + 2 players + N objectives) —
@@ -332,7 +338,10 @@ impl<'w> MembraneNegotiation<'w> {
     /// objective tiles; its identity is a distinct "spectator" `Custom` gate so it
     /// is incomparable to either side's vision (it cannot be widened into a side
     /// view). Any holder may extend this (it leaks nothing hidden).
-    pub fn propose_objectives_only(&self, granter: Side) -> Result<SpectatorGrant, NegotiationError> {
+    pub fn propose_objectives_only(
+        &self,
+        granter: Side,
+    ) -> Result<SpectatorGrant, NegotiationError> {
         let objective_origins: std::collections::BTreeSet<String> = self
             .world
             .board
@@ -358,7 +367,10 @@ impl<'w> MembraneNegotiation<'w> {
     /// while the game is live is refused ([`NegotiationError::GameStillLive`]),
     /// because a full-board view mid-game leaks the fog. After the game, a full view
     /// hides nothing, so the grant confers the world's root authority over the board.
-    pub fn propose_full_post_game(&self, granter: Side) -> Result<SpectatorGrant, NegotiationError> {
+    pub fn propose_full_post_game(
+        &self,
+        granter: Side,
+    ) -> Result<SpectatorGrant, NegotiationError> {
         if self.world.board.outcome().is_none() {
             return Err(NegotiationError::GameStillLive);
         }
@@ -500,7 +512,13 @@ impl SpectatorSession {
             .units
             .iter()
             .filter(|u| u.side == side)
-            .any(|u| self.visible.contains(&u.at) && matches!(self.scope, SpectatorScope::OneSide(_) | SpectatorScope::FullPostGame))
+            .any(|u| {
+                self.visible.contains(&u.at)
+                    && matches!(
+                        self.scope,
+                        SpectatorScope::OneSide(_) | SpectatorScope::FullPostGame
+                    )
+            })
     }
 }
 
@@ -539,7 +557,9 @@ pub fn witnessed_log_for(web: &WebOfCells, world: &GameWorld) -> InteractionLog 
 /// outside the membrane). The honest "this is a reconstruction, not the live scene".
 pub fn ambient_log() -> InteractionLog {
     let mut log = InteractionLog::new();
-    log.record(Interaction::ambient("a raw, un-witnessed timing/agent choice"));
+    log.record(Interaction::ambient(
+        "a raw, un-witnessed timing/agent choice",
+    ));
     log
 }
 
@@ -574,7 +594,7 @@ pub fn objective(name: &str, at: Coord, seed: u8) -> Objective {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::game::{demo_world, AgentPlayer, AgentPolicy, play_match, Side};
+    use crate::game::{demo_world, play_match, AgentPlayer, AgentPolicy, Side};
 
     fn world() -> (Lobby, usize) {
         let mut lobby = Lobby::new(3);
@@ -592,7 +612,10 @@ mod tests {
         assert_eq!(w.cell_count(), 6);
         // The board cell is fetchable + attested in the web-of-cells.
         let (res, _chrome) = lobby.web.fetch(&w.board_uri).expect("board cell published");
-        assert!(res.verify().is_ok(), "the board cell's attestation verifies");
+        assert!(
+            res.verify().is_ok(),
+            "the board cell's attestation verifies"
+        );
         // Each player cell + objective cell is fetchable too.
         for (_s, uri) in &w.player_uris {
             assert!(lobby.web.fetch(uri).is_ok(), "player cell published");
@@ -661,14 +684,22 @@ mod tests {
         let (lobby, idx) = world();
         let w = &lobby.worlds[idx];
         let neg = MembraneNegotiation::for_world(w);
-        let grant = neg.propose_objectives_only(Side::Blue).expect("anyone may grant a scoreboard");
+        let grant = neg
+            .propose_objectives_only(Side::Blue)
+            .expect("anyone may grant a scoreboard");
         let log = witnessed_log_for(&lobby.web, w);
         let session = SpectatorSession::open(w, &grant, &log, true);
         // The session sees the objective tiles...
         assert_eq!(session.visible.len(), w.board.objectives.len());
         // ...and reveals NO units of either side.
-        assert!(!session.reveals_unit_of(w, Side::Blue), "scoreboard leaks no Blue units");
-        assert!(!session.reveals_unit_of(w, Side::Red), "scoreboard leaks no Red units");
+        assert!(
+            !session.reveals_unit_of(w, Side::Blue),
+            "scoreboard leaks no Blue units"
+        );
+        assert!(
+            !session.reveals_unit_of(w, Side::Red),
+            "scoreboard leaks no Red units"
+        );
         // The scoreboard identity is incomparable to a side's vision (cannot widen).
         assert!(
             !dregg_cell::is_attenuation(&grant.cap.window.rights, &side_rights(Side::Blue)),
@@ -728,7 +759,9 @@ mod tests {
         let w = &lobby.worlds[idx];
         let neg = MembraneNegotiation::for_world(w);
         let blue_held = player_authority(w, Side::Blue);
-        let grant = neg.propose_one_side(Side::Blue, &blue_held, Side::Blue).unwrap();
+        let grant = neg
+            .propose_one_side(Side::Blue, &blue_held, Side::Blue)
+            .unwrap();
 
         // B re-shares a strictly NARROWER reach to C (a subset of the frustum).
         let mut narrow = std::collections::BTreeSet::new();
@@ -741,19 +774,28 @@ mod tests {
             narrow.clone(),
             [],
         );
-        let downstream = neg.reshare(&grant, narrower).expect("a narrower reshare is admitted");
+        let downstream = neg
+            .reshare(&grant, narrower)
+            .expect("a narrower reshare is admitted");
         // C's reach is ⊆ B's reach.
-        assert!(downstream.cap.fetch_allow.as_ref().unwrap().is_subset(
-            grant.cap.fetch_allow.as_ref().unwrap()
-        ));
+        assert!(downstream
+            .cap
+            .fetch_allow
+            .as_ref()
+            .unwrap()
+            .is_subset(grant.cap.fetch_allow.as_ref().unwrap()));
 
         // An amplifying reshare (a WIDER frustum than B held — a tile B cannot see) →
         // refused.
         let mut wider = grant.cap.fetch_allow.clone().unwrap_or_default();
         wider.insert("dregg://tile-99-99".to_string()); // a tile outside B's reach
-        let amplifying = SurfaceCapability::scoped(w.board.cell, side_rights(Side::Blue), wider, []);
+        let amplifying =
+            SurfaceCapability::scoped(w.board.cell, side_rights(Side::Blue), wider, []);
         assert!(
-            matches!(neg.reshare(&grant, amplifying), Err(NegotiationError::ReshareWouldAmplify)),
+            matches!(
+                neg.reshare(&grant, amplifying),
+                Err(NegotiationError::ReshareWouldAmplify)
+            ),
             "an amplifying reshare is refused by the real Membrane::reshare"
         );
     }
@@ -766,7 +808,9 @@ mod tests {
         let w = &lobby.worlds[idx];
         let neg = MembraneNegotiation::for_world(w);
         let blue_held = player_authority(w, Side::Blue);
-        let grant = neg.propose_one_side(Side::Blue, &blue_held, Side::Blue).unwrap();
+        let grant = neg
+            .propose_one_side(Side::Blue, &blue_held, Side::Blue)
+            .unwrap();
 
         // A fully-witnessed log, sources gone → ReplayedDeterministic.
         let witnessed = witnessed_log_for(&lobby.web, w);
@@ -791,12 +835,17 @@ mod tests {
         let w = &lobby.worlds[idx];
         let neg = MembraneNegotiation::for_world(w);
         let blue_held = player_authority(w, Side::Blue);
-        let grant = neg.propose_one_side(Side::Blue, &blue_held, Side::Blue).unwrap();
+        let grant = neg
+            .propose_one_side(Side::Blue, &blue_held, Side::Blue)
+            .unwrap();
         let log = witnessed_log_for(&lobby.web, w);
         let session = SpectatorSession::open(w, &grant, &log, true);
         // The spectator sees a strict sub-board (fog applies).
         let area = w.board.rows as usize * w.board.cols as usize;
-        assert!(session.visible.len() < area, "the Blue spectator's view is fogged");
+        assert!(
+            session.visible.len() < area,
+            "the Blue spectator's view is fogged"
+        );
         // It does not reveal Red units that are outside Blue's frustum. (At least one
         // Red unit must be hidden at the opening.)
         let hidden_red = w
@@ -805,6 +854,9 @@ mod tests {
             .iter()
             .filter(|u| u.side == Side::Red)
             .any(|u| !session.visible.contains(&u.at));
-        assert!(hidden_red, "at least one Red unit is hidden from the Blue spectator");
+        assert!(
+            hidden_red,
+            "at least one Red unit is hidden from the Blue spectator"
+        );
     }
 }

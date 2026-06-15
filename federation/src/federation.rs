@@ -130,7 +130,7 @@ impl Federation {
         local_seat: Option<LocalSeat>,
     ) -> Self {
         let mut sorted = members;
-        sorted.sort_by(|a, b| a.0.cmp(&b.0));
+        sorted.sort_by_key(|a| a.0);
         let id_bytes = derive_federation_id_with_epoch(&sorted, epoch);
         let id = FederationId(id_bytes);
         // Reindex local_seat against the sorted members if present so the
@@ -250,7 +250,7 @@ impl Federation {
         new_threshold: u32,
     ) {
         let mut sorted = new_members;
-        sorted.sort_by(|a, b| a.0.cmp(&b.0));
+        sorted.sort_by_key(|a| a.0);
         self.members = sorted;
         self.epoch = new_epoch;
         self.threshold = new_threshold;

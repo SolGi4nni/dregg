@@ -825,12 +825,9 @@ impl<S> ActionBuilder<S> {
         self
     }
 
-    #[allow(clippy::too_many_arguments)]
     // §3.7 — Obligations -------------------------------------------------------
 
     // §3.8 — Escrow ------------------------------------------------------------
-    #[allow(clippy::too_many_arguments)]
-    #[allow(clippy::too_many_arguments)]
 
     // §3.9 — Events ------------------------------------------------------------
 

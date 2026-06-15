@@ -47,7 +47,7 @@ use dregg_circuit::field::BabyBear;
 use dregg_turn::bilateral_schedule::ExpectedBilateral;
 use dregg_turn::{
     Action, Authorization, CallForest, CommitmentMode, DelegationMode, Effect,
-    SovereignCellWitness, Turn, TurnReceipt, WitnessedReceipt,
+    SovereignCellWitness, Turn, TurnReceipt,
 };
 use dregg_types::FederationId;
 use dregg_verifier::{BilateralBundle, BilateralEntry, fabricate_witnessed_receipt};

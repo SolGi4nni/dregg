@@ -81,7 +81,14 @@
 //! (which re-derives the root from the full receipt-hash list — adequate for
 //! an in-process integration test, but weaker than the production wire path
 //! which would carry only the Merkle proof, not the full list).
+//!
+//! Gated on `not(feature = "recursion")`: this test drives the v1 hand-AIR
+//! (`EffectVmAir`), which `dregg_circuit` exports only on the v1 floor (the
+//! recursion build replaces it with the rotated batch-STARK path). With the
+//! default `recursion` feature on, the symbol is absent, so the whole test
+//! compiles only on the v1 floor — matching `dregg_circuit`'s own gating.
 
+#![cfg(not(feature = "recursion"))]
 #![allow(clippy::too_many_arguments)]
 
 use std::collections::HashMap;

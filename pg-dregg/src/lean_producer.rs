@@ -152,10 +152,7 @@ impl LeanProducer {
                 ),
                 (
                     WIRE_DST,
-                    WireValue::Record(vec![(
-                        "balance".into(),
-                        WireValue::Int(dst_bal as i128),
-                    )]),
+                    WireValue::Record(vec![("balance".into(), WireValue::Int(dst_bal as i128))]),
                 ),
             ],
             bal: vec![
@@ -312,7 +309,8 @@ impl Producer for LeanProducer {
 
         // Advance the producer's own bookkeeping to the executor-verified post-state
         // so the next produced turn's wire pre-state is consistent.
-        self.balances.insert(self.source, (new_src_bal, new_src_nonce));
+        self.balances
+            .insert(self.source, (new_src_bal, new_src_nonce));
         self.balances.insert(intent.agent, (new_dst_bal, 0));
         Ok(batch)
     }
@@ -379,8 +377,14 @@ mod tests {
         let turn = p.wire_turn(0);
         let wire = marshal_turn(&pre, &turn).expect("synthesized turn marshals");
         // The transfer arm + the conserving src/dst balances are present in the wire.
-        assert!(wire.contains("\"bal\":[0,0,1,1,0]"), "the transfer arm: {wire}");
-        assert!(wire.contains("[0,0,1000]"), "the source pre-balance: {wire}");
+        assert!(
+            wire.contains("\"bal\":[0,0,1,1,0]"),
+            "the transfer arm: {wire}"
+        );
+        assert!(
+            wire.contains("[0,0,1000]"),
+            "the source pre-balance: {wire}"
+        );
         assert!(!wire.contains('\u{0}'), "no interior NUL");
     }
 
@@ -401,7 +405,11 @@ mod tests {
         let (_g, issuer) = fresh_issuer();
         let tok = submit_token(&issuer);
         let mut p = LeanProducer::new(SOURCE, 1_000, 1);
-        let out = p.produce(&intent(1, agent(0x20), &tok), 0, crate::workflow::GENESIS_ROOT);
+        let out = p.produce(
+            &intent(1, agent(0x20), &tok),
+            0,
+            crate::workflow::GENESIS_ROOT,
+        );
         let err = out.expect_err("no runtime ⇒ produce must fail closed");
         assert!(
             err.contains("embeddable Lean runtime is unavailable"),
@@ -448,18 +456,34 @@ mod tests {
 
         // ONE produce → the REAL executor runs the 30-unit transfer in-backend.
         let batch = p
-            .produce(&intent(1, agent(0x20), &tok), 0, crate::workflow::GENESIS_ROOT)
+            .produce(
+                &intent(1, agent(0x20), &tok),
+                0,
+                crate::workflow::GENESIS_ROOT,
+            )
             .expect("the verified executor commits a conserving transfer");
 
         // The post-image carries the executor-VERIFIED post-balances: source
         // 1000→970, agent 0→30 (the conserved 30-unit move).
-        assert_eq!(p.balance(SOURCE), 970, "source debited by the verified executor");
-        assert_eq!(p.balance(agent(0x20)), 30, "agent credited by the verified executor");
+        assert_eq!(
+            p.balance(SOURCE),
+            970,
+            "source debited by the verified executor"
+        );
+        assert_eq!(
+            p.balance(agent(0x20)),
+            30,
+            "agent credited by the verified executor"
+        );
         // The batch is well-formed + attributes the turn to the acting agent.
         assert_eq!(batch.turn.creator, agent(0x20));
         assert_eq!(batch.turn.ordinal, 0);
         let src_cell = batch.cells.iter().find(|c| c.cell_id == SOURCE).unwrap();
-        let dst_cell = batch.cells.iter().find(|c| c.cell_id == agent(0x20)).unwrap();
+        let dst_cell = batch
+            .cells
+            .iter()
+            .find(|c| c.cell_id == agent(0x20))
+            .unwrap();
         assert_eq!(src_cell.balance, 970);
         assert_eq!(dst_cell.balance, 30);
     }
@@ -480,7 +504,11 @@ mod tests {
         // conservation-respecting refusal path is real on the live producer.
         let mut p = LeanProducer::new(SOURCE, 10, 30);
         let err = p
-            .produce(&intent(1, agent(0x20), &tok), 0, crate::workflow::GENESIS_ROOT)
+            .produce(
+                &intent(1, agent(0x20), &tok),
+                0,
+                crate::workflow::GENESIS_ROOT,
+            )
             .expect_err("an overspend is refused");
         assert!(err.contains("float exhausted"), "{err}");
     }

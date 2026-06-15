@@ -86,12 +86,12 @@
 
 use std::string::String;
 
-pub mod local;
 pub mod distributed;
-pub mod surface;
-pub mod router;
 pub mod emulated_kernel;
+pub mod local;
 pub mod microkit_facade;
+pub mod router;
+pub mod surface;
 
 // The COMPOSITOR-PD — the minimal framebuffer/input multiplexer on the
 // EmulatedKernel (`docs/DREGG-DESKTOP-OS.md §2 L5` + `§6 R3 Stage D`, native-now
@@ -130,26 +130,26 @@ pub mod executor_pd;
 #[cfg(all(feature = "process-pd", unix))]
 pub mod process_kernel;
 
-pub use local::LocalBacking;
-pub use distributed::DistributedBacking;
-pub use surface::SurfaceBacking;
-pub use router::{FirmamentRouter, Router};
-pub use emulated_kernel::{
-    EmulatedKernel, IpcError, Message, ObjectId, ObjectType, ReplyToken, RetypeError,
-};
-pub use microkit_facade::{
-    Channel, ChannelSet, ChannelTable, ChannelWiring, EventLoop, Handler, MessageInfo,
-    NullHandler, ProtectionDomain, Region,
-};
 pub use compositor_pd::{
     cell_seed, decode_present, encode_present, label_of, CompositorPd, FrameCommit, Present,
     Refusal, RegionId, Scene, Surface, FRAMEBUFFER_TILES, LABEL_PRESENT, LABEL_PRESENT_OK,
     LABEL_PRESENT_REFUSED,
 };
+pub use distributed::DistributedBacking;
+pub use emulated_kernel::{
+    EmulatedKernel, IpcError, Message, ObjectId, ObjectType, ReplyToken, RetypeError,
+};
 pub use executor_pd::{
     stage_turn_into, ExecutorPd, ServedTurn, TurnRunner, LABEL_RUN_TURN, LABEL_TURN_COMMITTED,
     LABEL_TURN_REJECTED,
 };
+pub use local::LocalBacking;
+pub use microkit_facade::{
+    Channel, ChannelSet, ChannelTable, ChannelWiring, EventLoop, Handler, MessageInfo, NullHandler,
+    ProtectionDomain, Region,
+};
+pub use router::{FirmamentRouter, Router};
+pub use surface::SurfaceBacking;
 
 // The v1 process-backed substrate's public surface (Unix + `process-pd` only):
 // the forking kernel, the unforgeable cap-handle + its validity table, the
@@ -255,12 +255,18 @@ pub struct Capability {
 impl Capability {
     /// Mint a handle to a LOCAL kernel object (a CNode slot) with `rights`.
     pub fn local(slot: u32, rights: Rights) -> Self {
-        Capability { target: Target::local(slot), rights }
+        Capability {
+            target: Target::local(slot),
+            rights,
+        }
     }
 
     /// Mint a handle to a DISTRIBUTED dregg cell with `rights`.
     pub fn distributed(cell: CellId, rights: Rights) -> Self {
-        Capability { target: Target::distributed(cell), rights }
+        Capability {
+            target: Target::distributed(cell),
+            rights,
+        }
     }
 
     /// Mint a handle to a SURFACE (a window backed by a dregg cell) with
@@ -270,7 +276,10 @@ impl Capability {
     /// no special-casing (the surface target rides the generic backing-agnostic
     /// machinery).
     pub fn surface(cell: CellId, rights: Rights) -> Self {
-        Capability { target: Target::surface(cell), rights }
+        Capability {
+            target: Target::surface(cell),
+            rights,
+        }
     }
 
     /// Attenuate this handle's rights to `narrower` — backing-agnostic.
@@ -288,7 +297,10 @@ impl Capability {
         if !is_attenuation(&self.rights, &narrower) {
             return None;
         }
-        Some(Capability { target: self.target.clone(), rights: narrower })
+        Some(Capability {
+            target: self.target.clone(),
+            rights: narrower,
+        })
     }
 }
 
@@ -312,7 +324,11 @@ pub struct Bounds {
 impl Bounds {
     /// The strong `n = 1` bounds: immediate revocation, synchronous commit —
     /// the firmament's headline guarantees for a local deployment.
-    pub const LOCAL: Bounds = Bounds { revocation_immediate: true, commit_synchronous: true, n: 1 };
+    pub const LOCAL: Bounds = Bounds {
+        revocation_immediate: true,
+        commit_synchronous: true,
+        n: 1,
+    };
 
     /// The relaxed `n > 1` bounds: eventual revocation, quorum commit — what a
     /// distributed target over the net-PD edge gets once it reaches the wire.
@@ -322,7 +338,11 @@ impl Bounds {
             // to the strong local bounds — the `n = 1` collapse, exactly.
             Bounds::LOCAL
         } else {
-            Bounds { revocation_immediate: false, commit_synchronous: false, n }
+            Bounds {
+                revocation_immediate: false,
+                commit_synchronous: false,
+                n,
+            }
         }
     }
 }

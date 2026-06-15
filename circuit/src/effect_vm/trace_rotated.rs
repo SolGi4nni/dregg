@@ -293,9 +293,7 @@ pub fn generate_rotated_effect_vm_trace(
 /// the producer's `wire_commit`, and the Lean `wireCommitR`.
 fn fill_block(row: &mut [BabyBear], base: usize, state_base: usize, w: &RotatedBlockWitness) {
     // witness-carried limbs from the producer (turn-invariant).
-    for i in 0..NUM_PRE_LIMBS {
-        row[base + i] = w.pre_limbs[i];
-    }
+    row[base..base + NUM_PRE_LIMBS].copy_from_slice(&w.pre_limbs[..NUM_PRE_LIMBS]);
     // welded limbs OVERRIDE from this row's own v1 state block (per-row truth) —
     // `EffectVmEmitRotationV3.weldsAt`.
     row[base + 1] = row[state_base + state::BALANCE_LO]; // r0

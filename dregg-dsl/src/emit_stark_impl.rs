@@ -1,14 +1,21 @@
-/// Code generator: compile-time IR evaluation to concrete `impl StarkAir` blocks.
-///
-/// This module evaluates the IR at macro expansion time to compute:
-/// - Column indices (trace layout)
-/// - Trace width
-/// - Constraint degree
-/// - Boundary constraint structure
-///
-/// It then emits a STRUCT + TRAIT IMPL with all values baked in as constants,
-/// rather than a runtime descriptor. The generated code implements
-/// `dregg_circuit::stark::StarkAir` directly.
+//! Code generator: compile-time IR evaluation to concrete `impl StarkAir` blocks.
+//!
+//! This module evaluates the IR at macro expansion time to compute:
+//! - Column indices (trace layout)
+//! - Trace width
+//! - Constraint degree
+//! - Boundary constraint structure
+//!
+//! It then emits a STRUCT + TRAIT IMPL with all values baked in as constants,
+//! rather than a runtime descriptor. The generated code implements
+//! `dregg_circuit::stark::StarkAir` directly.
+//!
+//! The layout structs carry the full column bookkeeping (aux columns, per-param
+//! widths, range-check/inverse/selector witness columns); not all of it is read
+//! on every emission path yet, so a module-level `dead_code` allow keeps the
+//! complete layout surface without per-field churn.
+#![allow(dead_code)]
+
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
@@ -282,7 +289,7 @@ fn emit_constraint_body(ir: &ConstraintIr, layout: &TraceLayout) -> TokenStream 
 
     // Compose: result = sum_i(alpha^i * c_i)
     let n = constraint_exprs.len();
-    let composed = if n == 1 {
+    if n == 1 {
         let c = &constraint_exprs[0];
         quote! {
             let c0 = #c;
@@ -302,9 +309,7 @@ fn emit_constraint_body(ir: &ConstraintIr, layout: &TraceLayout) -> TokenStream 
         }
         stmts.push(quote! { result });
         quote! { #(#stmts)* }
-    };
-
-    composed
+    }
 }
 
 fn emit_constraints_from_statements(
@@ -589,8 +594,7 @@ fn emit_boundary_body(ir: &ConstraintIr, layout: &TraceLayout) -> TokenStream {
         } else {
             // Skip Set/ByteArray32 for now (only bind u64 params).
             let is_bindable = ir.params.iter().any(|ip| {
-                ip.name.to_string() == p.name
-                    && matches!(ip.ty, ParamType::U64 | ParamType::UserDefined(_))
+                ip.name == p.name && matches!(ip.ty, ParamType::U64 | ParamType::UserDefined(_))
             });
             if is_bindable {
                 let col = p.start_col;

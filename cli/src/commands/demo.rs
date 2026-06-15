@@ -169,7 +169,7 @@ pub async fn run(
         .and_then(|f| f.get(name::REVOKED_SLOT))
         .and_then(|v| v.as_str())
         .unwrap_or("");
-    if !revoked_slot.is_empty() && revoked_slot.trim_start_matches('0') != "" {
+    if !revoked_slot.is_empty() && !revoked_slot.trim_start_matches('0').is_empty() {
         let clear = post_json(
             &cfg,
             "/api/turns/submit",

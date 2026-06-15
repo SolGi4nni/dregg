@@ -158,7 +158,7 @@ pub struct CompiledArith {
 /// Compile an expression into a flat sequence of operations.
 pub fn compile_expression(expr: &ArithExpr, num_inputs: usize) -> CompiledArith {
     let mut ops = Vec::new();
-    let result_slot = compile_recursive(expr, &mut ops, num_inputs);
+    let result_slot = compile_recursive(expr, &mut ops);
     CompiledArith {
         ops,
         num_inputs,
@@ -166,7 +166,7 @@ pub fn compile_expression(expr: &ArithExpr, num_inputs: usize) -> CompiledArith 
     }
 }
 
-fn compile_recursive(expr: &ArithExpr, ops: &mut Vec<CompiledOp>, num_inputs: usize) -> usize {
+fn compile_recursive(expr: &ArithExpr, ops: &mut Vec<CompiledOp>) -> usize {
     match expr {
         ArithExpr::Var(i) => {
             let slot = ops.len();
@@ -179,22 +179,22 @@ fn compile_recursive(expr: &ArithExpr, ops: &mut Vec<CompiledOp>, num_inputs: us
             slot
         }
         ArithExpr::Add(a, b) => {
-            let sa = compile_recursive(a, ops, num_inputs);
-            let sb = compile_recursive(b, ops, num_inputs);
+            let sa = compile_recursive(a, ops);
+            let sb = compile_recursive(b, ops);
             let slot = ops.len();
             ops.push(CompiledOp::Add(sa, sb));
             slot
         }
         ArithExpr::Sub(a, b) => {
-            let sa = compile_recursive(a, ops, num_inputs);
-            let sb = compile_recursive(b, ops, num_inputs);
+            let sa = compile_recursive(a, ops);
+            let sb = compile_recursive(b, ops);
             let slot = ops.len();
             ops.push(CompiledOp::Sub(sa, sb));
             slot
         }
         ArithExpr::Mul(a, b) => {
-            let sa = compile_recursive(a, ops, num_inputs);
-            let sb = compile_recursive(b, ops, num_inputs);
+            let sa = compile_recursive(a, ops);
+            let sb = compile_recursive(b, ops);
             let slot = ops.len();
             ops.push(CompiledOp::Mul(sa, sb));
             slot
@@ -215,21 +215,21 @@ fn compile_recursive(expr: &ArithExpr, ops: &mut Vec<CompiledOp>, num_inputs: us
             slot
         }
         ArithExpr::Abs(a) => {
-            let sa = compile_recursive(a, ops, num_inputs);
+            let sa = compile_recursive(a, ops);
             let slot = ops.len();
             ops.push(CompiledOp::Abs(sa));
             slot
         }
         ArithExpr::DivFloor(a, b) => {
-            let sa = compile_recursive(a, ops, num_inputs);
-            let sb = compile_recursive(b, ops, num_inputs);
+            let sa = compile_recursive(a, ops);
+            let sb = compile_recursive(b, ops);
             let slot = ops.len();
             ops.push(CompiledOp::DivFloor(sa, sb));
             slot
         }
         ArithExpr::Mod(a, b) => {
-            let sa = compile_recursive(a, ops, num_inputs);
-            let sb = compile_recursive(b, ops, num_inputs);
+            let sa = compile_recursive(a, ops);
+            let sb = compile_recursive(b, ops);
             let slot = ops.len();
             ops.push(CompiledOp::Mod(sa, sb));
             slot

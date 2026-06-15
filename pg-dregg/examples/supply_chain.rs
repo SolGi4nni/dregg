@@ -163,44 +163,59 @@ fn name_of(id: [u8; 32]) -> &'static str {
 
 fn purchase_order_workflow() -> Workflow {
     Workflow::new("four-party purchase order")
-        .then(Step::new("genesis: TREASURY funded to 1_000_000", TREASURY).set(TREASURY, 1_000_000, 0))
+        .then(
+            Step::new("genesis: TREASURY funded to 1_000_000", TREASURY)
+                .set(TREASURY, 1_000_000, 0),
+        )
         .then(
             Step::new("fund buyer: TREASURY → BUYER 10_000", TREASURY)
                 .set(TREASURY, 990_000, 1)
                 .set(BUYER, 10_000, 0),
         )
         .then(
-            Step::new("place order: BUYER escrows 6_000 into the ORDER cell", BUYER)
-                .set(BUYER, 4_000, 1)
-                .set(ORDER, 6_000, 0),
+            Step::new(
+                "place order: BUYER escrows 6_000 into the ORDER cell",
+                BUYER,
+            )
+            .set(BUYER, 4_000, 1)
+            .set(ORDER, 6_000, 0),
         )
         .then(
-            Step::new("accept order: SUPPLIER grants BUYER a delivery capability", SUPPLIER)
-                .set(SUPPLIER, 0, 1)
-                .grant(CapRow {
-                    holder: BUYER,
-                    slot: 0,
-                    target: SUPPLIER,
-                    permissions_json: "{\"deliver\":\"delegated\"}".into(),
-                    breadstuff: None,
-                    expires_at: Some(10_000),
-                    // ATTENUATION, exploded as the no-amplify audit surface: the
-                    // delegated effect set is {deliver} — a strict subset of the
-                    // supplier's authority.
-                    allowed_effects_json: Some("[\"deliver\"]".into()),
-                    stored_epoch: Some(0),
-                    last_ordinal: 3,
-                }),
+            Step::new(
+                "accept order: SUPPLIER grants BUYER a delivery capability",
+                SUPPLIER,
+            )
+            .set(SUPPLIER, 0, 1)
+            .grant(CapRow {
+                holder: BUYER,
+                slot: 0,
+                target: SUPPLIER,
+                permissions_json: "{\"deliver\":\"delegated\"}".into(),
+                breadstuff: None,
+                expires_at: Some(10_000),
+                // ATTENUATION, exploded as the no-amplify audit surface: the
+                // delegated effect set is {deliver} — a strict subset of the
+                // supplier's authority.
+                allowed_effects_json: Some("[\"deliver\"]".into()),
+                stored_epoch: Some(0),
+                last_ordinal: 3,
+            }),
         )
         .then(
-            Step::new("ship + pay: ORDER → SUPPLIER 5_000, ORDER → SHIPPER 1_000", BUYER)
-                .set(ORDER, 0, 1)
-                .set(SUPPLIER, 5_000, 2)
-                .set(SHIPPER, 1_000, 0),
+            Step::new(
+                "ship + pay: ORDER → SUPPLIER 5_000, ORDER → SHIPPER 1_000",
+                BUYER,
+            )
+            .set(ORDER, 0, 1)
+            .set(SUPPLIER, 5_000, 2)
+            .set(SHIPPER, 1_000, 0),
         )
         .then(
-            Step::new("close order: BUYER closes the PO (organ-style nonce bump)", BUYER)
-                .set(BUYER, 4_000, 2),
+            Step::new(
+                "close order: BUYER closes the PO (organ-style nonce bump)",
+                BUYER,
+            )
+            .set(BUYER, 4_000, 2),
         )
 }
 
@@ -223,7 +238,10 @@ fn main() {
     authz::set_issuer_pubkey(issuer.public());
     authz::lru_clear();
     authz::revoked_clear();
-    println!("  issuer (the dregg.issuer_pubkey trust root): {}…", &issuer.public().to_hex()[..16]);
+    println!(
+        "  issuer (the dregg.issuer_pubkey trust root): {}…",
+        &issuer.public().to_hex()[..16]
+    );
 
     // The engine's token store — the API's TokenStore (actor → bearer token),
     // the durable-runtime equivalent of the backend's `dregg.token` session GUC.
@@ -234,12 +252,18 @@ fn main() {
     // agent's hex prefix, so the agent can submit ONLY turns for its own cell.
     let mint_agent = |agent: [u8; 32], actions: &[&str]| -> String {
         let action_pred = if actions.len() == 1 {
-            Pred::AttrEq { key: "action".into(), value: actions[0].into() }
+            Pred::AttrEq {
+                key: "action".into(),
+                value: actions[0].into(),
+            }
         } else {
             Pred::AnyOf(
                 actions
                     .iter()
-                    .map(|a| Pred::AttrEq { key: "action".into(), value: (*a).into() })
+                    .map(|a| Pred::AttrEq {
+                        key: "action".into(),
+                        value: (*a).into(),
+                    })
                     .collect(),
             )
         };
@@ -247,7 +271,10 @@ fn main() {
             // wide grant: the actions on ANY resource …
             .mint([
                 Caveat::FirstParty(action_pred),
-                Caveat::FirstParty(Pred::AttrPrefix { key: "resource".into(), prefix: "".into() }),
+                Caveat::FirstParty(Pred::AttrPrefix {
+                    key: "resource".into(),
+                    prefix: "".into(),
+                }),
             ])
             // … ATTENUATED to the agent's own cell prefix (granted ⊆ held).
             .attenuate([Caveat::FirstParty(Pred::AttrPrefix {
@@ -274,8 +301,10 @@ fn main() {
             &hx(&agent)[..2]
         );
     }
-    dbos("DBOS roles are postgres GRANTs — central DDL; here each agent holds a \
-          bearer capability it could sub-delegate offline, provably narrowing.");
+    dbos(
+        "DBOS roles are postgres GRANTs — central DDL; here each agent holds a \
+          bearer capability it could sub-delegate offline, provably narrowing.",
+    );
 
     // The buyer additionally holds an order-scoped grant (it opened the PO), so
     // its token admits both its own cell AND the ORDER cell. We express "either
@@ -294,13 +323,27 @@ fn main() {
     let can = |agent: [u8; 32]| authz::decide(&buyer_tok, "submit", &hx(&agent), CLOCK).allowed();
     println!("  BUYER may submit for BUYER cell?    {}", can(BUYER));
     println!("  BUYER may submit for ORDER cell?    {}", can(ORDER));
-    println!("  BUYER may submit for SHIPPER cell?  {}  ← refused (outside the grant)", can(SHIPPER));
-    println!("  BUYER may submit for TREASURY cell? {}  ← refused (cannot mint money)", can(TREASURY));
-    assert!(can(BUYER) && can(ORDER), "buyer must act on its own + the order cell");
-    assert!(!can(SHIPPER) && !can(TREASURY), "buyer must NOT act outside its grant (no amplification)");
+    println!(
+        "  BUYER may submit for SHIPPER cell?  {}  ← refused (outside the grant)",
+        can(SHIPPER)
+    );
+    println!(
+        "  BUYER may submit for TREASURY cell? {}  ← refused (cannot mint money)",
+        can(TREASURY)
+    );
+    assert!(
+        can(BUYER) && can(ORDER),
+        "buyer must act on its own + the order cell"
+    );
+    assert!(
+        !can(SHIPPER) && !can(TREASURY),
+        "buyer must NOT act outside its grant (no amplification)"
+    );
     println!("→ the capability is the gate: the BUYER cannot forge a TREASURY mint or pay itself as the SHIPPER.");
-    dbos("a DBOS step is ordinary code that can issue ANY UPDATE; an SQL-injection or \
-          bug in it is a total authorization bypass. Here the capability bounds it.");
+    dbos(
+        "a DBOS step is ordinary code that can issue ANY UPDATE; an SQL-injection or \
+          bug in it is a total authorization bypass. Here the capability bounds it.",
+    );
 
     // =======================================================================
     // 1–3. RUN THE WORKFLOW UP TO THE CRASH POINT — via the API, checkpointing
@@ -351,18 +394,34 @@ fn main() {
     for c in [TREASURY, BUYER, SUPPLIER, ORDER] {
         println!("    {:<9} balance = {}", name_of(c), engine.balance(c));
     }
-    assert_eq!(engine.balance(ORDER), 6_000, "the PO escrow holds 6_000 at the crash point");
-    assert_eq!(engine.caps().len(), 1, "the supplier's delivery cap edge is recorded");
+    assert_eq!(
+        engine.balance(ORDER),
+        6_000,
+        "the PO escrow holds 6_000 at the crash point"
+    );
+    assert_eq!(
+        engine.caps().len(),
+        1,
+        "the supplier's delivery cap edge is recorded"
+    );
 
     // =======================================================================
     // ✸ THE CRASH ✸  — drop the engine; keep ONLY the external durable sink.
     // =======================================================================
     rule("✸ SIMULATED CRASH — the engine dies mid-workflow ✸");
     drop(engine); // the in-memory chain head + balances are GONE
-    println!("  the engine process died after step {}. In-memory chain + balances: LOST.", crash_after - 1);
-    println!("  what survived: the external durable sink ({} rows in dregg.commit_log).", durable.len());
-    dbos("this is exactly the DBOS value proposition — survive a crash, resume from the \
-          durable log. pg-dregg matches it, AND the log is a verified hash-chain.");
+    println!(
+        "  the engine process died after step {}. In-memory chain + balances: LOST.",
+        crash_after - 1
+    );
+    println!(
+        "  what survived: the external durable sink ({} rows in dregg.commit_log).",
+        durable.len()
+    );
+    dbos(
+        "this is exactly the DBOS value proposition — survive a crash, resume from the \
+          durable log. pg-dregg matches it, AND the log is a verified hash-chain.",
+    );
 
     // =======================================================================
     // 4. RECOVER — rebuild from the durable sink; the chain RE-VALIDATES.
@@ -390,9 +449,21 @@ fn main() {
         &hx(&engine.head().unwrap())[..12]
     );
     // The recovered read state is exactly what it was — exactly-once, nothing lost.
-    assert_eq!(engine.balance(ORDER), 6_000, "recovery restored the PO escrow exactly");
-    assert_eq!(engine.balance(BUYER), 4_000, "recovery restored the buyer balance exactly");
-    assert_eq!(engine.caps().len(), 1, "recovery restored the delegation edge");
+    assert_eq!(
+        engine.balance(ORDER),
+        6_000,
+        "recovery restored the PO escrow exactly"
+    );
+    assert_eq!(
+        engine.balance(BUYER),
+        4_000,
+        "recovery restored the buyer balance exactly"
+    );
+    assert_eq!(
+        engine.caps().len(),
+        1,
+        "recovery restored the delegation edge"
+    );
     println!("→ recovery is exactly-once: balances + cap edges restored, the chain refuses any re-apply of a committed turn.");
 
     // A replay of an ALREADY-committed turn is refused (idempotent recovery): the
@@ -402,9 +473,16 @@ fn main() {
     {
         let replay = &workflow.steps[2]; // "place order", already committed as ordinal 2
         let prev = GENESIS_ROOT;
-        let cells: Vec<_> = replay.cells.iter().map(|&(id, b, n)| cell_row(id, b, n)).collect();
+        let cells: Vec<_> = replay
+            .cells
+            .iter()
+            .map(|&(id, b, n)| cell_row(id, b, n))
+            .collect();
         let post = FoldProjector.ledger_root(prev, 2, &cells);
-        let mem: Vec<_> = cells.iter().map(|c| balance_reg(c.cell_id, c.balance)).collect();
+        let mem: Vec<_> = cells
+            .iter()
+            .map(|c| balance_reg(c.cell_id, c.balance))
+            .collect();
         let stale = MirrorBatch::from_parts(
             turn_row(2, prev, post, BUYER),
             cells,
@@ -432,8 +510,15 @@ fn main() {
     // runs — and each finished turn is checkpointed back to the same sink.
     match engine.resume_durable(&workflow, &mut durable) {
         Ok(out) => {
-            assert_eq!(out.skipped, crash_after, "the committed prefix is skipped, never re-applied");
-            assert_eq!(out.committed, workflow.len() - crash_after, "only the tail runs");
+            assert_eq!(
+                out.skipped, crash_after,
+                "the committed prefix is skipped, never re-applied"
+            );
+            assert_eq!(
+                out.committed,
+                workflow.len() - crash_after,
+                "only the tail runs"
+            );
             for i in crash_after..workflow.len() {
                 let root = engine.log()[i].turn.ledger_root;
                 println!(
@@ -464,12 +549,21 @@ fn main() {
     assert_eq!(engine.balance(SUPPLIER), 5_000, "supplier paid 5_000");
     assert_eq!(engine.balance(SHIPPER), 1_000, "shipper paid 1_000");
     assert_eq!(engine.balance(ORDER), 0, "the escrow is fully released");
-    assert_eq!(total, 1_000_000, "TOTAL VALUE CONSERVED end-to-end across genesis→fund→escrow→ship→pay");
-    assert_eq!(engine.total_value(), 1_000_000, "the free-SQL aggregate agrees: Σ balances = genesis total");
+    assert_eq!(
+        total, 1_000_000,
+        "TOTAL VALUE CONSERVED end-to-end across genesis→fund→escrow→ship→pay"
+    );
+    assert_eq!(
+        engine.total_value(),
+        1_000_000,
+        "the free-SQL aggregate agrees: Σ balances = genesis total"
+    );
     println!("  Σ balances across ALL cells = {total}  (== the genesis 1_000_000)");
     println!("→ value was CONSERVED end-to-end: no turn created or destroyed value, escrow netted to zero.");
-    dbos("a DBOS workflow has no notion of conservation — a step can credit without \
-          debiting. pg-dregg's transition function makes Σδ = 0 a checkable property.");
+    dbos(
+        "a DBOS workflow has no notion of conservation — a step can credit without \
+          debiting. pg-dregg's transition function makes Σδ = 0 a checkable property.",
+    );
 
     // =======================================================================
     // 7. PROVENANCE — who did what (every turn names its acting agent).
@@ -497,9 +591,17 @@ fn main() {
     let next = engine.next_ordinal();
     let forged_cells = vec![cell_row(SHIPPER, 999_999, 9)]; // "pay myself a fortune"
     let forged_post = FoldProjector.ledger_root([0x99; 32], next, &forged_cells);
-    let forged_mem: Vec<_> = forged_cells.iter().map(|c| balance_reg(c.cell_id, c.balance)).collect();
+    let forged_mem: Vec<_> = forged_cells
+        .iter()
+        .map(|c| balance_reg(c.cell_id, c.balance))
+        .collect();
     let forged = MirrorBatch::from_parts(
-        turn_row(next, [0x99; 32] /* substituted prev_root */, forged_post, SHIPPER),
+        turn_row(
+            next,
+            [0x99; 32], /* substituted prev_root */
+            forged_post,
+            SHIPPER,
+        ),
         forged_cells,
         vec![],
         forged_mem,
@@ -510,8 +612,16 @@ fn main() {
         Ok(()) => panic!("SECURITY FAILURE: a forged, non-chaining write entered the store"),
         Err(e) => println!("  the engine REFUSED the forged write (no chaining turn): {e}"),
     }
-    assert_eq!(engine.head(), Some(head), "a refused write must not move the head");
-    assert_eq!(engine.balance(SHIPPER), 1_000, "the shipper's balance is unchanged by the forgery attempt");
+    assert_eq!(
+        engine.head(),
+        Some(head),
+        "a refused write must not move the head"
+    );
+    assert_eq!(
+        engine.balance(SHIPPER),
+        1_000,
+        "the shipper's balance is unchanged by the forgery attempt"
+    );
     println!("→ the bare-UPDATE money-printing bug that DBOS would happily execute is REFUSED here: no verified turn, no state change.");
 
     // =======================================================================
@@ -523,7 +633,11 @@ fn main() {
     //     is the *triggered* check; a clean apply layer means it need not run).
     let clean = ConflictReport::default();
     let verdict = federation_health(&clean, || {
-        pg_dregg::mirror::revalidate_replicated_chain(GENESIS_ROOT, &links, Some(links.len() as u64))
+        pg_dregg::mirror::revalidate_replicated_chain(
+            GENESIS_ROOT,
+            &links,
+            Some(links.len() as u64),
+        )
     });
     println!("  clean feed:        {}", verdict.summary());
 
@@ -543,11 +657,18 @@ fn main() {
         }],
     };
     let verdict = federation_health(&conflicted, || {
-        pg_dregg::mirror::revalidate_replicated_chain(GENESIS_ROOT, &links, Some(links.len() as u64))
+        pg_dregg::mirror::revalidate_replicated_chain(
+            GENESIS_ROOT,
+            &links,
+            Some(links.len() as u64),
+        )
     });
     println!("  conflict alarm:    {}", verdict.summary());
     assert!(verdict.needs_attention(), "a conflict must raise the alarm");
-    assert!(!verdict.chain_broken(), "the intact chain must still re-validate under the alarm");
+    assert!(
+        !verdict.chain_broken(),
+        "the intact chain must still re-validate under the alarm"
+    );
 
     // (c) A TAMPERED replicated stream (a substituted root) under a conflict is
     //     the CRITICAL, do-not-trust verdict.
@@ -556,25 +677,43 @@ fn main() {
         tampered_links[2].prev_root = [0x99u8; 32]; // substitute a root mid-stream
     }
     let verdict = federation_health(&conflicted, || {
-        pg_dregg::mirror::revalidate_replicated_chain(GENESIS_ROOT, &tampered_links, Some(tampered_links.len() as u64))
+        pg_dregg::mirror::revalidate_replicated_chain(
+            GENESIS_ROOT,
+            &tampered_links,
+            Some(tampered_links.len() as u64),
+        )
     });
     println!("  tampered stream:   {}", verdict.summary());
-    assert!(verdict.chain_broken(), "a substituted replicated root must produce the CRITICAL verdict");
+    assert!(
+        verdict.chain_broken(),
+        "a substituted replicated root must produce the CRITICAL verdict"
+    );
     println!("→ a subscriber RE-VALIDATES, it does not trust: a tampered replicated turn is caught locally, with no call back to the publisher.");
-    dbos("DBOS has logical replication too — but a subscriber trusts the stream. \
-          Here the subscriber re-runs the anti-substitution tooth on the replicated rows.");
+    dbos(
+        "DBOS has logical replication too — but a subscriber trusts the stream. \
+          Here the subscriber re-runs the anti-substitution tooth on the replicated rows.",
+    );
 
     // =======================================================================
     // 10. OBSERVABILITY — the one-shot operator snapshot (engine.stats()).
     // =======================================================================
     rule("10. observability — the verified-store counters (engine.stats)");
     let s = engine.stats();
-    println!("  turns={}  next_ordinal={}  cells={}  cap_edges={}", s.turns, s.next_ordinal, s.cells, s.cap_edges);
-    println!("  total_value={}  head={}…  last_creator={}",
+    println!(
+        "  turns={}  next_ordinal={}  cells={}  cap_edges={}",
+        s.turns, s.next_ordinal, s.cells, s.cap_edges
+    );
+    println!(
+        "  total_value={}  head={}…  last_creator={}",
         s.total_value,
         &hx(&s.head.unwrap())[..12],
-        s.last_creator.map(name_of).unwrap_or("-"));
-    assert_eq!(s.turns, durable.len() as u64, "stats agree with the durable sink");
+        s.last_creator.map(name_of).unwrap_or("-")
+    );
+    assert_eq!(
+        s.turns,
+        durable.len() as u64,
+        "stats agree with the durable sink"
+    );
     assert_eq!(s.total_value, 1_000_000, "the conservation counter holds");
     println!("→ a /status endpoint or operator dashboard reads exactly these (each field is a one-line dregg.* query).");
 
@@ -585,7 +724,9 @@ fn main() {
     println!("\x1b[1m\x1b[32m✓ a four-party purchase-order workflow ran to completion through pg-dregg:\x1b[0m");
     println!("    • expressed on the \x1b[1mreusable pg_dregg::workflow API\x1b[0m (Workflow / Step / run_durable / resume_durable);");
     println!("    • each step a \x1b[1mverified, receipted turn\x1b[0m (provable who-did-what);");
-    println!("    • each agent bounded by an \x1b[1mattenuated capability\x1b[0m (no amplification);");
+    println!(
+        "    • each agent bounded by an \x1b[1mattenuated capability\x1b[0m (no amplification);"
+    );
     println!("    • each turn \x1b[1mcheckpointed to an external durable sink\x1b[0m (the DurableLog seam = dregg.commit_log);");
     println!("    • the workflow \x1b[1msurvived a crash\x1b[0m and resumed exactly-once from that sink;");
     println!("    • \x1b[1mvalue was conserved\x1b[0m end-to-end (escrow netted to zero);");
@@ -603,12 +744,24 @@ fn buyer_multi_token(issuer: &RootKey) -> String {
     issuer
         .mint([
             Caveat::FirstParty(Pred::AnyOf(vec![
-                Pred::AttrEq { key: "action".into(), value: "submit".into() },
-                Pred::AttrEq { key: "action".into(), value: "read".into() },
+                Pred::AttrEq {
+                    key: "action".into(),
+                    value: "submit".into(),
+                },
+                Pred::AttrEq {
+                    key: "action".into(),
+                    value: "read".into(),
+                },
             ])),
             Caveat::FirstParty(Pred::AnyOf(vec![
-                Pred::AttrPrefix { key: "resource".into(), prefix: "b0".into() },
-                Pred::AttrPrefix { key: "resource".into(), prefix: "0d".into() },
+                Pred::AttrPrefix {
+                    key: "resource".into(),
+                    prefix: "b0".into(),
+                },
+                Pred::AttrPrefix {
+                    key: "resource".into(),
+                    prefix: "0d".into(),
+                },
             ])),
         ])
         .encode()

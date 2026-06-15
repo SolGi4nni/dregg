@@ -354,7 +354,9 @@ impl core::fmt::Display for StepError {
                 write!(f, "unauthorized for {}: {reason}", hex6(actor))
             }
             StepError::Chain(c) => write!(f, "chain refused: {c}"),
-            StepError::Durability(m) => write!(f, "durability fault (turn admitted, persist failed): {m}"),
+            StepError::Durability(m) => {
+                write!(f, "durability fault (turn admitted, persist failed): {m}")
+            }
         }
     }
 }
@@ -852,13 +854,8 @@ impl<T: TokenStore, P: Projector> WorkflowEngine<T, P> {
             // to the external durable sink. A store failure AFTER the in-process
             // apply is a durability fault the caller must see (the engine state and
             // the durable store have diverged by one turn until it is resolved).
-            let batch = self
-                .log
-                .last()
-                .expect("submit pushed the admitted batch");
-            durable
-                .append(batch)
-                .map_err(StepError::Durability)?;
+            let batch = self.log.last().expect("submit pushed the admitted batch");
+            durable.append(batch).map_err(StepError::Durability)?;
             committed += 1;
         }
         Ok(RunOutcome {
@@ -1032,10 +1029,19 @@ mod tests {
         issuer
             .mint([
                 Caveat::FirstParty(Pred::AnyOf(vec![
-                    Pred::AttrEq { key: "action".into(), value: "submit".into() },
-                    Pred::AttrEq { key: "action".into(), value: "read".into() },
+                    Pred::AttrEq {
+                        key: "action".into(),
+                        value: "submit".into(),
+                    },
+                    Pred::AttrEq {
+                        key: "action".into(),
+                        value: "read".into(),
+                    },
                 ])),
-                Caveat::FirstParty(Pred::AttrPrefix { key: "resource".into(), prefix: "".into() }),
+                Caveat::FirstParty(Pred::AttrPrefix {
+                    key: "resource".into(),
+                    prefix: "".into(),
+                }),
             ])
             .attenuate([Caveat::FirstParty(Pred::AttrPrefix {
                 key: "resource".into(),
@@ -1105,7 +1111,11 @@ mod tests {
         let agents = [TREASURY, ALICE];
         let wf = Workflow::new("4-step")
             .then(Step::new("genesis", TREASURY).set(TREASURY, 1000, 0))
-            .then(Step::new("fund alice", TREASURY).set(TREASURY, 600, 1).set(ALICE, 400, 0))
+            .then(
+                Step::new("fund alice", TREASURY)
+                    .set(TREASURY, 600, 1)
+                    .set(ALICE, 400, 0),
+            )
             .then(Step::new("alice spends", ALICE).set(ALICE, 250, 1))
             .then(Step::new("alice spends more", ALICE).set(ALICE, 100, 2));
 
@@ -1127,10 +1137,17 @@ mod tests {
 
         // Resume the SAME workflow: steps 0,1 are skipped, 2,3 are submitted.
         let out = engine.resume(&wf).expect("the tail finishes");
-        assert_eq!(out.skipped, 2, "the committed prefix is skipped, never re-applied");
+        assert_eq!(
+            out.skipped, 2,
+            "the committed prefix is skipped, never re-applied"
+        );
         assert_eq!(out.committed, 2, "only the uncommitted tail runs");
         assert_eq!(engine.turn_count(), 4);
-        assert_eq!(engine.balance(ALICE), 100, "exactly-once: the spends applied once each");
+        assert_eq!(
+            engine.balance(ALICE),
+            100,
+            "exactly-once: the spends applied once each"
+        );
     }
 
     #[test]
@@ -1147,7 +1164,10 @@ mod tests {
         // step; the engine builds ordinal 2 for it, so the *post-image* would be
         // wrong, but the load-bearing point is that resume() never re-runs it:
         let out = engine.resume(&wf).expect("resume is a no-op");
-        assert_eq!(out.committed, 0, "nothing to do: the whole workflow is durable");
+        assert_eq!(
+            out.committed, 0,
+            "nothing to do: the whole workflow is durable"
+        );
         assert_eq!(out.skipped, 2);
         assert_eq!(engine.turn_count(), 2, "no double-apply");
     }
@@ -1159,14 +1179,26 @@ mod tests {
         // genesis mints 1000; every later step is a redistribution that conserves.
         let wf = Workflow::new("conserving")
             .then(Step::new("genesis", TREASURY).set(TREASURY, 1000, 0))
-            .then(Step::new("t->a 400", TREASURY).set(TREASURY, 600, 1).set(ALICE, 400, 0))
-            .then(Step::new("a->b 150", ALICE).set(ALICE, 250, 1).set(BOB, 150, 0));
+            .then(
+                Step::new("t->a 400", TREASURY)
+                    .set(TREASURY, 600, 1)
+                    .set(ALICE, 400, 0),
+            )
+            .then(
+                Step::new("a->b 150", ALICE)
+                    .set(ALICE, 250, 1)
+                    .set(BOB, 150, 0),
+            );
         let mut engine = WorkflowEngine::new(tokens_for(&issuer, &agents));
         engine.run(&wf).expect("runs");
         assert_eq!(engine.balance(TREASURY), 600);
         assert_eq!(engine.balance(ALICE), 250);
         assert_eq!(engine.balance(BOB), 150);
-        assert_eq!(engine.total_value(), 1000, "Σ balances == genesis (value conserved)");
+        assert_eq!(
+            engine.total_value(),
+            1000,
+            "Σ balances == genesis (value conserved)"
+        );
     }
 
     #[test]
@@ -1224,7 +1256,10 @@ mod tests {
         // A forged batch with a substituted prev_root (did NOT chain onto head).
         let forged_cells = vec![cell_row(BOB, 999_999, 9)];
         let forged_post = FoldProjector.ledger_root([0x99; 32], 1, &forged_cells);
-        let forged_mem: Vec<MemCell> = forged_cells.iter().map(|c| balance_reg(c.cell_id, c.balance)).collect();
+        let forged_mem: Vec<MemCell> = forged_cells
+            .iter()
+            .map(|c| balance_reg(c.cell_id, c.balance))
+            .collect();
         let forged = MirrorBatch::from_parts(
             turn_row(1, [0x99; 32], forged_post, BOB),
             forged_cells,
@@ -1234,7 +1269,10 @@ mod tests {
         .unwrap();
         // The chain refuses it; the head does not move.
         let mut chain = RootChain::resume(head, 1);
-        assert!(chain.extend(&forged).is_err(), "a non-chaining forged write is refused");
+        assert!(
+            chain.extend(&forged).is_err(),
+            "a non-chaining forged write is refused"
+        );
         assert_eq!(engine.balance(BOB), 0, "the forgery did not materialize");
     }
 
@@ -1251,9 +1289,17 @@ mod tests {
         let mut engine = WorkflowEngine::new(tokens);
         let err = engine.run(&wf).unwrap_err();
         assert!(matches!(err, StepError::Unauthorized { actor, .. } if actor == BOB));
-        assert_eq!(engine.turn_count(), 1, "exactly the steps before the refusal are durable");
+        assert_eq!(
+            engine.turn_count(),
+            1,
+            "exactly the steps before the refusal are durable"
+        );
         assert_eq!(engine.balance(ALICE), 10);
-        assert_eq!(engine.next_ordinal(), 1, "the head sits at the clean prefix");
+        assert_eq!(
+            engine.next_ordinal(),
+            1,
+            "the head sits at the clean prefix"
+        );
     }
 
     #[test]
@@ -1290,19 +1336,26 @@ mod tests {
         let agents = [TREASURY, ALICE, BOB];
         let wf = Workflow::new("stats")
             .then(Step::new("genesis", TREASURY).set(TREASURY, 1000, 0))
-            .then(Step::new("t->a", TREASURY).set(TREASURY, 600, 1).set(ALICE, 400, 0))
             .then(
-                Step::new("a->b + cap", ALICE).set(ALICE, 250, 1).set(BOB, 150, 0).grant(CapRow {
-                    holder: BOB,
-                    slot: 0,
-                    target: ALICE,
-                    permissions_json: "{}".into(),
-                    breadstuff: None,
-                    expires_at: None,
-                    allowed_effects_json: Some("[\"x\"]".into()),
-                    stored_epoch: Some(0),
-                    last_ordinal: 0,
-                }),
+                Step::new("t->a", TREASURY)
+                    .set(TREASURY, 600, 1)
+                    .set(ALICE, 400, 0),
+            )
+            .then(
+                Step::new("a->b + cap", ALICE)
+                    .set(ALICE, 250, 1)
+                    .set(BOB, 150, 0)
+                    .grant(CapRow {
+                        holder: BOB,
+                        slot: 0,
+                        target: ALICE,
+                        permissions_json: "{}".into(),
+                        breadstuff: None,
+                        expires_at: None,
+                        allowed_effects_json: Some("[\"x\"]".into()),
+                        stored_epoch: Some(0),
+                        last_ordinal: 0,
+                    }),
             );
         let mut engine = WorkflowEngine::new(tokens_for(&issuer, &agents));
         engine.run(&wf).expect("runs");
@@ -1322,7 +1375,11 @@ mod tests {
         let agents = [TREASURY, ALICE];
         let wf = Workflow::new("durable")
             .then(Step::new("genesis", TREASURY).set(TREASURY, 1000, 0))
-            .then(Step::new("fund", TREASURY).set(TREASURY, 700, 1).set(ALICE, 300, 0))
+            .then(
+                Step::new("fund", TREASURY)
+                    .set(TREASURY, 700, 1)
+                    .set(ALICE, 300, 0),
+            )
             .then(Step::new("spend", ALICE).set(ALICE, 120, 1))
             .then(Step::new("spend more", ALICE).set(ALICE, 50, 2));
 
@@ -1335,9 +1392,15 @@ mod tests {
                 name: wf.name.clone(),
                 steps: wf.steps[..2].to_vec(),
             };
-            let out = engine.run_durable(&prefix, &mut durable).expect("first two checkpoint");
+            let out = engine
+                .run_durable(&prefix, &mut durable)
+                .expect("first two checkpoint");
             assert_eq!(out.committed, 2);
-            assert_eq!(durable.len(), 2, "each committed turn was checkpointed to the sink");
+            assert_eq!(
+                durable.len(),
+                2,
+                "each committed turn was checkpointed to the sink"
+            );
             // engine dropped here — only `durable` survives.
         }
 
@@ -1348,10 +1411,16 @@ mod tests {
         assert_eq!(engine.next_ordinal(), 2, "resumed at the sink's head");
         assert_eq!(engine.balance(ALICE), 300, "recovered balances exactly");
 
-        let out = engine.resume_durable(&wf, &mut durable).expect("the tail checkpoints");
+        let out = engine
+            .resume_durable(&wf, &mut durable)
+            .expect("the tail checkpoints");
         assert_eq!(out.skipped, 2);
         assert_eq!(out.committed, 2);
-        assert_eq!(durable.len(), 4, "the whole workflow is now durable in the sink");
+        assert_eq!(
+            durable.len(),
+            4,
+            "the whole workflow is now durable in the sink"
+        );
         assert_eq!(engine.balance(ALICE), 50, "exactly-once end-to-end");
     }
 
@@ -1393,6 +1462,10 @@ mod tests {
         let wf = Workflow::new("d").then(Step::new("s0", ALICE).set(ALICE, 10, 0));
         let err = engine.run_durable(&wf, &mut AppendFails).unwrap_err();
         assert!(matches!(err, StepError::Durability(m) if m == "disk full"));
-        assert_eq!(engine.turn_count(), 1, "the turn WAS admitted in-process before the persist failed");
+        assert_eq!(
+            engine.turn_count(),
+            1,
+            "the turn WAS admitted in-process before the persist failed"
+        );
     }
 }

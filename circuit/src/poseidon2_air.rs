@@ -98,13 +98,11 @@ impl StarkAir for Poseidon2Air {
         alpha: BabyBear,
     ) -> BabyBear {
         let mut input_state = [BabyBear::ZERO; WIDTH];
-        for i in 0..WIDTH.min(local.len()) {
-            input_state[i] = local[i];
-        }
+        let in_len = WIDTH.min(local.len());
+        input_state[..in_len].copy_from_slice(&local[..in_len]);
         let mut claimed_output = [BabyBear::ZERO; WIDTH];
-        for i in 0..WIDTH.min(local.len().saturating_sub(WIDTH)) {
-            claimed_output[i] = local[WIDTH + i];
-        }
+        let out_len = WIDTH.min(local.len().saturating_sub(WIDTH));
+        claimed_output[..out_len].copy_from_slice(&local[WIDTH..WIDTH + out_len]);
 
         // Compute the REAL Poseidon2 permutation.
         let mut ps = Poseidon2State::from_elements(&input_state);
@@ -261,13 +259,11 @@ impl StarkAir for MerklePoseidon2Air {
         // This AIR uses 8-column state (MERKLE_POSEIDON2_WIDTH = 10 = 8 state + 2 metadata).
         // Pad to full WIDTH for compute_round compatibility.
         let mut local_state = [BabyBear::ZERO; WIDTH];
-        for i in 0..8.min(local.len()) {
-            local_state[i] = local[i];
-        }
+        let local_len = 8.min(local.len());
+        local_state[..local_len].copy_from_slice(&local[..local_len]);
         let mut next_state = [BabyBear::ZERO; WIDTH];
-        for i in 0..8.min(next.len()) {
-            next_state[i] = next[i];
-        }
+        let next_len = 8.min(next.len());
+        next_state[..next_len].copy_from_slice(&next[..next_len]);
         let local_level = local[8];
         let local_row_idx = local[9];
         let next_level = next[8];

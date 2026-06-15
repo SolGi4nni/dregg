@@ -157,6 +157,8 @@ fn confine_ip_range(allowed_prefix: u64, request_prefix: u64) {
 
 /// Direction of a transfer: 0 = incoming, 1 = outgoing.
 /// Using u64 discriminant since the DSL match arms work with user-defined enums.
+// DSL surface: modeled transfer direction; variants are only constructed in #[cfg(test)] arms.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TransferDirection {
     Incoming,

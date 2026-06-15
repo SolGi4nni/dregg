@@ -327,10 +327,10 @@ pub fn verify_range<H: MmrHasher>(
         if p.height >= 64 {
             return Err(MmrError::BadFrontier);
         }
-        if let Some(ph) = prev {
-            if p.height >= ph {
-                return Err(MmrError::BadFrontier);
-            }
+        if let Some(ph) = prev
+            && p.height >= ph
+        {
+            return Err(MmrError::BadFrontier);
         }
         prev = Some(p.height);
         len += 1u64 << p.height;

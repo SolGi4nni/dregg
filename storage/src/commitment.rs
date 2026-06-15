@@ -874,10 +874,18 @@ mod tests {
 // `cargo test ... -- --nocapture`, then paste the new values here AND
 // document the cause in the commit message.
 
+#[allow(
+    dead_code,
+    reason = "stability vector for the poseidon2_commitments_are_stable known-input test"
+)]
 const STABLE_BLINDED_ITEM_BLAKE3: [u8; 32] = [
     86, 145, 129, 99, 44, 189, 254, 109, 128, 221, 85, 236, 60, 141, 65, 162, 118, 156, 199, 215,
     161, 241, 152, 238, 116, 86, 134, 78, 220, 232, 30, 117,
 ];
+#[allow(
+    dead_code,
+    reason = "stability vector for the poseidon2_commitments_are_stable known-input test"
+)]
 const STABLE_BLINDED_ITEM_POSEIDON2: [u32; 4] =
     [1_763_016_687, 164_998_847, 1_721_525_161, 930_110_908];
 

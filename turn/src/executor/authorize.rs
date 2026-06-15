@@ -1434,6 +1434,9 @@ impl TurnExecutor {
                         path.to_vec(),
                     ));
                 }
+                // Reachable only under `not(feature = "recursion")`; the recursion
+                // cfg above diverges, so this tail is unreachable in that build.
+                #[allow(unreachable_code)]
                 Ok(())
             }
         }
@@ -1655,14 +1658,15 @@ impl TurnExecutor {
     }
 
     fn token_auth_request(&self, action: &Action) -> dregg_token::AuthRequest {
-        let mut req = dregg_token::AuthRequest::default();
-        req.action = Some(hex::encode(action.method));
-        req.service = Some(hex::encode(action.target.as_bytes()));
-        req.app_id = Some(hex::encode(self.local_federation_id));
         // Deterministic, consensus-bound "now": the block height. Temporal
         // caveats reference this, never wall-clock.
-        req.now = Some(self.block_height as i64);
-        req
+        dregg_token::AuthRequest {
+            action: Some(hex::encode(action.method)),
+            service: Some(hex::encode(action.target.as_bytes())),
+            app_id: Some(hex::encode(self.local_federation_id)),
+            now: Some(self.block_height as i64),
+            ..Default::default()
+        }
     }
 
     /// Verify a first-class [`Authorization::Token`] biscuit / macaroon

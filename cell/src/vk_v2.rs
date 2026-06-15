@@ -197,13 +197,12 @@ pub struct VkComponents<'a> {
 /// # Boundary contract
 ///
 /// - Cleartext-inside:  VK author (knows all four components) +
-///                      validators (re-execute the program bytes
-///                      against the AIR + verifier identified by the
-///                      remaining three).
+///   validators (re-execute the program bytes against the AIR + verifier
+///   identified by the remaining three).
 /// - Commitment-inside: receipt observers (see vk_hash_v2 + acceptance
-///                      bit only).
+///   bit only).
 /// - Acceptance-inside: post-recursion validators (proof + verifying
-///                      key only).
+///   key only).
 /// - Out-of-band:       everyone else.
 ///
 /// Enforced by: BLAKE3 keyed-hash domain separation under

@@ -87,6 +87,7 @@ use serde::{Deserialize, Serialize};
 /// - Commitment-inside: receipt observers.
 /// - Acceptance-inside: post-recursion validators.
 /// - Out-of-band:       everyone else.
+///
 /// Enforced by: BLAKE3 keyed-hash binding canonical bytes to vk_hash.
 /// Failure mode if violated: validator's re-execution disagrees with
 /// the executor's acceptance bit; soundness failure.
@@ -1359,7 +1360,7 @@ impl WitnessedPredicateVerifier for StubVerifier {
         #[cfg(not(any(test, feature = "test-stubs")))]
         {
             let _ = proof_bytes;
-            return Err(WitnessedPredicateError::Rejected {
+            Err(WitnessedPredicateError::Rejected {
                 kind_name: self.name,
                 reason: "StubVerifier is fail-closed in non-test builds: \
                          it never accepts a proof unless the crate is \
@@ -1367,7 +1368,7 @@ impl WitnessedPredicateVerifier for StubVerifier {
                          feature. A real verifier for this kind must be \
                          installed via `register_builtin`."
                     .into(),
-            });
+            })
         }
 
         // Test-only accept path: non-empty proof bytes pass, empty ones are

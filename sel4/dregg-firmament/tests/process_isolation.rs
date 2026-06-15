@@ -30,9 +30,7 @@
 use std::io::Write;
 
 use dregg_cell::AuthRequired;
-use dregg_firmament::process_kernel::{
-    CapHandle, KernelReply, ProcessKernel,
-};
+use dregg_firmament::process_kernel::{CapHandle, KernelReply, ProcessKernel};
 
 // ===========================================================================
 // PD #1 — m0-hello, on the PROCESS backing. The SAME banner-printing body as
@@ -62,7 +60,10 @@ fn boot_m0_hello_on_the_process_kernel() {
         .expect("fork m0-hello PD");
 
     let code = pd.join().expect("join m0-hello");
-    assert_eq!(code, 0, "m0-hello PROCESS must boot, print, and exit cleanly");
+    assert_eq!(
+        code, 0,
+        "m0-hello PROCESS must boot, print, and exit cleanly"
+    );
 }
 
 // ===========================================================================
@@ -151,12 +152,8 @@ fn boot_two_pd_notify_slice_on_processes() {
     let k_b = kernel.clone();
     let mut a_sock = pd_a.kernel_sock.try_clone().expect("clone A sock");
     let mut b_sock = pd_b.kernel_sock.try_clone().expect("clone B sock");
-    let serve_a = std::thread::spawn(move || {
-        while k_a.serve_one(&mut a_sock).unwrap_or(false) {}
-    });
-    let serve_b = std::thread::spawn(move || {
-        while k_b.serve_one(&mut b_sock).unwrap_or(false) {}
-    });
+    let serve_a = std::thread::spawn(move || while k_a.serve_one(&mut a_sock).unwrap_or(false) {});
+    let serve_b = std::thread::spawn(move || while k_b.serve_one(&mut b_sock).unwrap_or(false) {});
 
     // Join the PD processes.
     let a_code = wait_pid(pd_a.pid);
@@ -173,7 +170,10 @@ fn boot_two_pd_notify_slice_on_processes() {
     // crossed from PD-A's process to PD-B's process through the kernel, and that
     // the cross-process shm grant works.
     let w = kernel.region_read(witness).expect("read witness region");
-    assert_eq!(w[0], 0xB0, "PD-B's notified body must have run (process backing)");
+    assert_eq!(
+        w[0], 0xB0,
+        "PD-B's notified body must have run (process backing)"
+    );
     assert_eq!(
         w[1],
         (NOTIFY_BADGE & 0xFF) as u8,
@@ -264,7 +264,9 @@ fn pd_cannot_read_another_pds_private_memory() {
     // observed SECRET.
     let attacker = kernel
         .spawn_pd(vec![mbox], |client, granted| {
-            let mbox = client.map_region(granted[0]).expect("attacker maps mailbox");
+            let mbox = client
+                .map_region(granted[0])
+                .expect("attacker maps mailbox");
             // Wait for the victim to publish its private address.
             let mut spins = 0u64;
             let addr = loop {
@@ -315,7 +317,10 @@ fn pd_cannot_read_another_pds_private_memory() {
     sa.join().unwrap();
 
     assert_eq!(v_code, 0, "victim PD ran cleanly");
-    assert_eq!(a_code, 0, "attacker PD ran cleanly (its forbidden read was contained)");
+    assert_eq!(
+        a_code, 0,
+        "attacker PD ran cleanly (its forbidden read was contained)"
+    );
 
     // THE TOOTH: the attacker did NOT observe the victim's secret. Cross-PD
     // private-memory read is impossible under the process backing's MMU
@@ -353,7 +358,10 @@ fn pd_cannot_forge_a_cap_by_writing_raw_bytes() {
             // 1) A cap forged from RAW BYTES — a slot the PD never received. The
             //    PD can fabricate any (slot, epoch) it likes; the kernel's table
             //    is the sole arbiter and refuses it.
-            let forged = CapHandle { slot: 0xFFFF_FFFF, epoch: 0 };
+            let forged = CapHandle {
+                slot: 0xFFFF_FFFF,
+                epoch: 0,
+            };
             match client.validate(forged) {
                 Ok(KernelReply::Forged) => println!("[pd] forged handle REFUSED (good)"),
                 other => {
@@ -373,7 +381,10 @@ fn pd_cannot_forge_a_cap_by_writing_raw_bytes() {
 
             // 2) A STALE handle: the right slot but a fabricated wrong epoch.
             //    Refused as a stale/forged handle (use-after-reuse guard).
-            let stale = CapHandle { slot: genuine.slot, epoch: genuine.epoch.wrapping_add(99) };
+            let stale = CapHandle {
+                slot: genuine.slot,
+                epoch: genuine.epoch.wrapping_add(99),
+            };
             match client.validate(stale) {
                 Ok(KernelReply::Forged) => println!("[pd] stale-epoch handle REFUSED (good)"),
                 other => {

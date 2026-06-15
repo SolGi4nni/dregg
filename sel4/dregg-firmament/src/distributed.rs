@@ -108,7 +108,10 @@ impl DistributedBacking {
         target: CellId,
         rights: &Rights,
     ) -> Result<Resolution, ResolveError> {
-        let cell = self.ledger.get(&holder).ok_or(ResolveError::TargetNotFound)?;
+        let cell = self
+            .ledger
+            .get(&holder)
+            .ok_or(ResolveError::TargetNotFound)?;
         let held = cell
             .capabilities
             .lookup_by_target(&target)
@@ -146,7 +149,12 @@ impl DistributedBacking {
         target: CellId,
         narrower: Rights,
     ) -> Result<(), ResolveError> {
-        let nonce = self.ledger.get(&granter).expect("granter exists").state.nonce();
+        let nonce = self
+            .ledger
+            .get(&granter)
+            .expect("granter exists")
+            .state
+            .nonce();
         // Chain into the REAL receipt chain: `None` for the granter's first turn,
         // the prior receipt's hash thereafter (the executor enforces this per-agent
         // as `ReceiptChainMismatch`). Threading it lets a cell delegate MORE THAN
@@ -167,7 +175,11 @@ impl DistributedBacking {
             args: vec![],
             authorization: Authorization::Unchecked,
             preconditions: Default::default(),
-            effects: vec![Effect::GrantCapability { from: granter, to: recipient, cap }],
+            effects: vec![Effect::GrantCapability {
+                from: granter,
+                to: recipient,
+                cap,
+            }],
             may_delegate: DelegationMode::None,
             commitment_mode: Default::default(),
             balance_change: None,
@@ -202,7 +214,10 @@ impl DistributedBacking {
                 "executor refused grant: {:?}",
                 reason
             ))),
-            other => Err(ResolveError::BackingRejected(format!("unexpected: {:?}", other))),
+            other => Err(ResolveError::BackingRejected(format!(
+                "unexpected: {:?}",
+                other
+            ))),
         }
     }
 
@@ -217,9 +232,11 @@ impl DistributedBacking {
 
     /// The rights `recipient` holds over `target`, if any.
     pub fn rights_held(&self, recipient: CellId, target: CellId) -> Option<Rights> {
-        self.ledger
-            .get(&recipient)
-            .and_then(|c| c.capabilities.lookup_by_target(&target).map(|r| r.permissions.clone()))
+        self.ledger.get(&recipient).and_then(|c| {
+            c.capabilities
+                .lookup_by_target(&target)
+                .map(|r| r.permissions.clone())
+        })
     }
 }
 

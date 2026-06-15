@@ -330,8 +330,14 @@ mod tests {
     #[test]
     fn empty_allof_admits_empty_anyof_refuses() {
         // The fail-closed corners, in the emitted path itself.
-        assert_eq!(pred_to_jsonpath(&Pred::AllOf(vec![])).unwrap(), "$ ? (true)");
-        assert_eq!(pred_to_jsonpath(&Pred::AnyOf(vec![])).unwrap(), "$ ? (false)");
+        assert_eq!(
+            pred_to_jsonpath(&Pred::AllOf(vec![])).unwrap(),
+            "$ ? (true)"
+        );
+        assert_eq!(
+            pred_to_jsonpath(&Pred::AnyOf(vec![])).unwrap(),
+            "$ ? (false)"
+        );
     }
 
     #[test]
@@ -613,8 +619,12 @@ mod tests {
                     v.chars().take(take).collect()
                 },
             },
-            4 => Pred::NotBefore { at: rng.below(4000) },
-            5 => Pred::NotAfter { at: rng.below(4000) },
+            4 => Pred::NotBefore {
+                at: rng.below(4000),
+            },
+            5 => Pred::NotAfter {
+                at: rng.below(4000),
+            },
             6 => Pred::Within {
                 not_before: rng.below(2000),
                 not_after: 2000 + rng.below(2000),
@@ -627,7 +637,11 @@ mod tests {
                 // bias toward including the empty-AnyOf (fail-closed) corner
                 let n = rng.below(4);
                 if n == 0 || rng.below(8) == 0 {
-                    Pred::AnyOf((0..n).map(|_| gen_pred(rng, depth.saturating_sub(1))).collect())
+                    Pred::AnyOf(
+                        (0..n)
+                            .map(|_| gen_pred(rng, depth.saturating_sub(1)))
+                            .collect(),
+                    )
                 } else {
                     Pred::Not(Box::new(gen_pred(rng, depth - 1)))
                 }
@@ -657,7 +671,10 @@ mod tests {
             let p = gen_pred(&mut rng, 4);
             // The whole first-party algebra compiles (always Some today).
             let path = pred_to_jsonpath(&p);
-            assert!(path.is_some(), "generated first-party Pred must compile: {p:?}");
+            assert!(
+                path.is_some(),
+                "generated first-party Pred must compile: {p:?}"
+            );
             assert!(pred_to_jsonpath_strict(&p).is_some());
             // On a handful of fully-bound rows, jsonpath admit == Pred::eval.
             for _ in 0..4 {
@@ -670,11 +687,17 @@ mod tests {
                 let lax = jsonpath_admits(&p, &row, false);
                 let strict = jsonpath_admits(&p, &row, true);
                 assert_eq!(eval, lax, "lax jsonpath != eval\n  pred={p:?}\n  row={row}");
-                assert_eq!(eval, strict, "strict jsonpath != eval\n  pred={p:?}\n  row={row}");
+                assert_eq!(
+                    eval, strict,
+                    "strict jsonpath != eval\n  pred={p:?}\n  row={row}"
+                );
                 checked += 1;
             }
         }
-        assert!(checked >= 8000, "the generative harness must exercise thousands of cases");
+        assert!(
+            checked >= 8000,
+            "the generative harness must exercise thousands of cases"
+        );
     }
 
     #[test]
@@ -703,9 +726,8 @@ mod tests {
             json!({"action":"read","resource":"org/42/private/doc9","clock":1}),
             json!({"action":"read","resource":"org/99/x","clock":1}),
         ];
-        let admits = |p: &Pred| -> Vec<bool> {
-            rows.iter().map(|r| jsonpath_admits(p, r, false)).collect()
-        };
+        let admits =
+            |p: &Pred| -> Vec<bool> { rows.iter().map(|r| jsonpath_admits(p, r, false)).collect() };
         let pa = admits(&parent);
         let ch = admits(&child);
         // child ⇒ parent for every row (no amplification).

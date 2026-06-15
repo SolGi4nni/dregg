@@ -141,10 +141,12 @@ impl TurnExecutor {
     /// 5. Meters computrons at each step.
     /// 6. If any action fails: replays journal in reverse to roll back ALL effects.
     /// 7. If successful: produces a TurnReceipt with Merkle hashes.
+    ///
     /// TRUST-CRITICAL: This function is the sole entry point for all ledger state mutations.
     /// If compromised: arbitrary state changes bypass authorization, preconditions, and fee metering.
     /// The federation's replicated execution ensures all members execute identically; divergence
     /// triggers consensus failure and halts the federation.
+    ///
     /// Future: once Effect VM covers all effect types, every turn will carry a STARK proof,
     /// making this function a thin verify-and-commit wrapper (trustless).
     pub fn execute(&self, turn: &Turn, ledger: &mut Ledger) -> TurnResult {
@@ -204,14 +206,15 @@ impl TurnExecutor {
     /// non-shadow path is identical and the seam is exercised by the differential harness).
     ///
     ///   * `block_height` — the chain clock (`self.block_height`);
-    ///   * `frozen`       — the cells frozen for migration (`self.cell_migrations`), the subset of
-    ///                      the turn's referenced cells that are frozen (a frozen agent / write-set
-    ///                      cell is what the verified `admissible` frozen leg rejects);
-    ///   * `stored_head`  — the agent's stored receipt-chain head (`self.get_last_receipt_hash`),
-    ///                      `None` = genesis; the verified ChainHead leg checks the turn's claimed
-    ///                      `prev` against it;
-    ///   * `budget`       — the Stingray silo budget slice (`self.budget_gate.remaining()`), the
-    ///                      verified Budget leg's `fee ≤ budget` bound.
+    ///   * `frozen` — the cells frozen for migration (`self.cell_migrations`), the subset of
+    ///     the turn's referenced cells that are frozen (a frozen agent / write-set
+    ///     cell is what the verified `admissible` frozen leg rejects);
+    ///   * `stored_head` — the agent's stored receipt-chain head (`self.get_last_receipt_hash`),
+    ///     `None` = genesis; the verified ChainHead leg checks the turn's claimed
+    ///     `prev` against it;
+    ///   * `budget` — the Stingray silo budget slice (`self.budget_gate.remaining()`), the
+    ///     verified Budget leg's `fee ≤ budget` bound.
+    ///
     /// Build the NODE-fed shadow admission context from this executor's own state. Public so the
     /// node's PRODUCER MODE (`lean_apply::produce_via_lean`) can drive the verified Lean executor
     /// with EXACTLY the same admission context the Rust executor uses — the two producers must see

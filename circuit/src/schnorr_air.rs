@@ -374,9 +374,7 @@ fn write_point_to_row(row: &mut [BabyBear], start_col: usize, point: &CurvePoint
 }
 
 fn write_bb8_to_row(row: &mut [BabyBear], start_col: usize, val: &BabyBear8) {
-    for i in 0..8 {
-        row[start_col + i] = val.0[i];
-    }
+    row[start_col..start_col + 8].copy_from_slice(&val.0);
 }
 
 fn bb8_from_row(row: &[BabyBear], start_col: usize) -> BabyBear8 {

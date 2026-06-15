@@ -594,7 +594,7 @@ impl WitnessedProofVerifier {
                 (i.id, matcher_bytes, i.expiry)
             })
             .collect();
-        entries.sort_by(|a, b| a.0.cmp(&b.0));
+        entries.sort_by_key(|a| a.0);
 
         let mut hasher = blake3::Hasher::new_derive_key("dregg-trustless-batch-binding-v2");
         hasher.update(&(entries.len() as u64).to_le_bytes());
@@ -1204,7 +1204,7 @@ impl TrustlessIntentEngine {
                 .current_batch
                 .decrypt_shares
                 .get(&ct.ciphertext_id())
-                .ok_or_else(|| EngineError::InsufficientDecryptionShares {
+                .ok_or(EngineError::InsufficientDecryptionShares {
                     have: 0,
                     need: self.decrypt_threshold,
                 })?;

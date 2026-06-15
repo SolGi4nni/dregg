@@ -2,14 +2,7 @@
 //! struct, and the `StarkAir::eval_constraints` body that pins every row
 //! to its selector-gated effect semantics.
 
-use crate::field::BabyBear;
-use crate::poseidon2::{hash_2_to_1, hash_4_to_1};
-use crate::stark::{BoundaryConstraint, StarkAir};
-
-use super::{
-    AUX_BASE, BAL_LIMB_BITS, EFFECT_VM_WIDTH, NUM_EFFECTS, PARAM_BASE, STATE_AFTER_BASE,
-    STATE_BEFORE_BASE, aux_off, param, pi, sel, state,
-};
+use super::{EFFECT_VM_WIDTH, NUM_EFFECTS, pi};
 
 /// The Effect VM AIR's shape descriptor (VK v2; see
 /// `circuit::air_descriptor`). Captures the externally visible shape

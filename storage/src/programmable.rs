@@ -600,27 +600,27 @@ fn validate_enqueue_constraints(
                 not_before,
                 not_after,
             } => {
-                if let Some(nb) = not_before {
-                    if context.current_height < *nb {
-                        return Err(ProgramError::ConstraintViolation {
-                            constraint: "TemporalGate".to_string(),
-                            detail: format!(
-                                "current height {} before not_before {}",
-                                context.current_height, nb
-                            ),
-                        });
-                    }
+                if let Some(nb) = not_before
+                    && context.current_height < *nb
+                {
+                    return Err(ProgramError::ConstraintViolation {
+                        constraint: "TemporalGate".to_string(),
+                        detail: format!(
+                            "current height {} before not_before {}",
+                            context.current_height, nb
+                        ),
+                    });
                 }
-                if let Some(na) = not_after {
-                    if context.current_height > *na {
-                        return Err(ProgramError::ConstraintViolation {
-                            constraint: "TemporalGate".to_string(),
-                            detail: format!(
-                                "current height {} after not_after {}",
-                                context.current_height, na
-                            ),
-                        });
-                    }
+                if let Some(na) = not_after
+                    && context.current_height > *na
+                {
+                    return Err(ProgramError::ConstraintViolation {
+                        constraint: "TemporalGate".to_string(),
+                        detail: format!(
+                            "current height {} after not_after {}",
+                            context.current_height, na
+                        ),
+                    });
                 }
             }
             QueueConstraint::PreimageGate { .. } => {
@@ -666,25 +666,25 @@ fn validate_dequeue_constraints(
                 not_before,
                 not_after,
             } => {
-                if let Some(nb) = not_before {
-                    if context.current_height < *nb {
-                        return Err(ProgramError::DequeueRejected {
-                            reason: format!(
-                                "current height {} before not_before {}",
-                                context.current_height, nb
-                            ),
-                        });
-                    }
+                if let Some(nb) = not_before
+                    && context.current_height < *nb
+                {
+                    return Err(ProgramError::DequeueRejected {
+                        reason: format!(
+                            "current height {} before not_before {}",
+                            context.current_height, nb
+                        ),
+                    });
                 }
-                if let Some(na) = not_after {
-                    if context.current_height > *na {
-                        return Err(ProgramError::DequeueRejected {
-                            reason: format!(
-                                "current height {} after not_after {}",
-                                context.current_height, na
-                            ),
-                        });
-                    }
+                if let Some(na) = not_after
+                    && context.current_height > *na
+                {
+                    return Err(ProgramError::DequeueRejected {
+                        reason: format!(
+                            "current height {} after not_after {}",
+                            context.current_height, na
+                        ),
+                    });
                 }
             }
             // Other constraints are enqueue-time; skip during dequeue.

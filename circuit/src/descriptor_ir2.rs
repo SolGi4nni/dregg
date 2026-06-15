@@ -3322,7 +3322,7 @@ fn build_traces(
                 let leaf_digest = |a: BabyBear, b: BabyBear| perm_aux(hash2_state_c(a, b)).1;
                 let absorb2_tuple = |a: BabyBear, b: BabyBear, d: BabyBear| -> Vec<u32> {
                     let mut t = vec![2u32, a.as_u32(), b.as_u32()];
-                    t.extend(std::iter::repeat(0u32).take(CHIP_RATE - 2));
+                    t.extend(std::iter::repeat_n(0u32, CHIP_RATE - 2));
                     t.push(d.as_u32());
                     t
                 };
@@ -3483,7 +3483,7 @@ fn build_traces(
             let leaf_digest = |a: BabyBear, b: BabyBear| perm_aux(hash2_state_c(a, b)).1;
             let absorb2_tuple = |a: BabyBear, b: BabyBear, d: BabyBear| -> Vec<u32> {
                 let mut t = vec![2u32, a.as_u32(), b.as_u32()];
-                t.extend(std::iter::repeat(0u32).take(CHIP_RATE - 2));
+                t.extend(std::iter::repeat_n(0u32, CHIP_RATE - 2));
                 t.push(d.as_u32());
                 t
             };
@@ -3585,9 +3585,7 @@ fn build_traces(
             row.push(BabyBear::new((*mult % (BABYBEAR_P as u64)) as u32));
             row.push(BabyBear::ZERO); // is_fact
             let mut st = [BabyBear::ZERO; POSEIDON2_WIDTH];
-            for i in 0..4 {
-                st[i] = row[CHIP_IN0 + i];
-            }
+            st[..4].copy_from_slice(&row[CHIP_IN0..CHIP_IN0 + 4]);
             st[4] = row[CHIP_ARITY];
             let (aux, _digest) = perm_aux(st);
             row.extend(aux);
@@ -3681,9 +3679,10 @@ fn instance_airs(
 /// The IR-v2 FRI configuration: `log_blowup = 6, 19 queries, 16 PoW bits` — the
 /// MEASURED size-optimal point at security parity with the v1 `create_config`
 /// (conjectured capacity-bound: `19 × 6 + 16 = 130` bits, identical to v1's
-/// `38 × 3 + 16`; proven/Johnson: `19 × 3 + 16 = 73`, identical to v1's `38 × 1.5
-/// + 16`). The full measured grid lives in `tests/effect_vm_ir2_size_measure.rs::
-/// ir2_fri_grid` and `docs/PROOF-ECONOMICS.md` §2c. The shape of the trade, in brief:
+/// `38 × 3 + 16`; proven/Johnson: `19 × 3 + 16 = 73`, identical to v1's
+/// `38 × 1.5 + 16`). The full measured grid lives in
+/// `tests/effect_vm_ir2_size_measure.rs::ir2_fri_grid` and
+/// `docs/PROOF-ECONOMICS.md` §2c. The shape of the trade, in brief:
 /// queries dominate IR-v2 proof size (the tables are 2³–2⁸ rows, so the prover-side
 /// LDE cost of high blowup is milliseconds), so RAISING blowup and CUTTING queries
 /// shrinks the wire — transfer: 194.1 KiB at (3, 38) → 120.4 KiB at (6, 19) — while
@@ -3743,14 +3742,14 @@ where
     }
 
     let presence = Presence::of(desc, &layout);
-    if !presence.memory && !(mem_boundary.addrs.is_empty() && mem_boundary.init_vals.is_empty()) {
+    if !(presence.memory || mem_boundary.addrs.is_empty() && mem_boundary.init_vals.is_empty()) {
         return Err(
             "descriptor declares no mem ops but a memory boundary witness was supplied \
              (the memory tables are not committed for this descriptor)"
                 .to_string(),
         );
     }
-    if !(presence.map_ops || presence.map_absent) && !map_heaps.is_empty() {
+    if !(presence.map_ops || presence.map_absent || map_heaps.is_empty()) {
         return Err(
             "descriptor declares no map ops but witness heaps were supplied \
              (the map-ops/map-absent tables are not committed for this descriptor)"
@@ -4054,6 +4053,9 @@ where
 /// Exposed so the IVC leaf-wrap (`ivc_turn_chain.rs`) can assemble a BatchStark leaf
 /// from a rotated `Ir2BatchProof` without re-deriving the private presence/layout
 /// machinery. `CommonData` is re-exported as [`Ir2CommonData`].
+// IR-v2 leaf-wrap surface: the deployed-config convenience sibling of
+// `ir2_airs_and_common_for_config`; kept as the non-generic entry the leaf-wrap binds to.
+#[allow(dead_code)]
 #[cfg(any(feature = "recursion", feature = "verifier"))]
 pub(crate) fn ir2_airs_and_common(
     desc: &EffectVmDescriptor2,
@@ -4086,6 +4088,8 @@ pub(crate) fn ir2_airs_and_common(
 }
 
 /// The IR-v2 batch proof's symbolic common data type (re-exported for the leaf-wrap).
+// IR-v2 leaf-wrap surface: the named CommonData alias the leaf-wrap binds to.
+#[allow(dead_code)]
 #[cfg(any(feature = "recursion", feature = "verifier"))]
 pub(crate) type Ir2CommonData = p3_batch_stark::CommonData<DreggStarkConfig>;
 

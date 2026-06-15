@@ -254,7 +254,7 @@ pub mod descriptor_ir2;
 /// Recursive (Golden Vision) compression bridge for `dregg_turn::WitnessedReceipt`
 /// scope-2 replay. See the module docs for the Silver→Golden mapping and
 /// the VK v2 layered encoding of the recursive VK hash.
-#[cfg(feature = "recursion")]
+// The module's own inner `#![cfg(feature = "recursion")]` provides the gate.
 pub mod recursive_witness_bundle;
 
 /// Stage 7-γ.2 Phase 2 joint bilateral aggregation AIR. Consumes N per-cell
@@ -284,10 +284,10 @@ pub mod effect_vm_p3_full_air;
 pub mod membership_adjacency_air;
 
 pub mod backends;
-#[cfg(feature = "recursion")]
+// `ivc_turn_chain`'s inner `#![cfg(feature = "recursion")]` provides the gate.
 pub mod ivc_turn_chain;
 pub mod joint_turn_aggregation;
-#[cfg(feature = "recursion")]
+// `joint_turn_recursive`'s inner `#![cfg(feature = "recursion")]` provides the gate.
 pub mod joint_turn_recursive;
 pub mod proof_forest;
 pub mod proof_tier;

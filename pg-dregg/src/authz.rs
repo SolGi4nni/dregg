@@ -30,10 +30,12 @@ use dregg_auth::credential::{Caveat, Context, Credential, Pred, PublicKey, Refus
 /// Parse a hex string into a 32-byte array (shared between key types).
 fn unhex32(s: &str) -> Option<[u8; 32]> {
     let s = s.trim();
-    if s.len() != 64 { return None; }
+    if s.len() != 64 {
+        return None;
+    }
     let mut out = [0u8; 32];
     for (i, b) in out.iter_mut().enumerate() {
-        *b = u8::from_str_radix(&s[i*2..i*2+2], 16).ok()?;
+        *b = u8::from_str_radix(&s[i * 2..i * 2 + 2], 16).ok()?;
     }
     Some(out)
 }
@@ -182,8 +184,8 @@ fn mint_key() -> Option<RootKey> {
 /// the SQL surface (a third-party discharge path through SQL is out of scope per
 /// docs/PG-DREGG.md §5).
 pub fn parse_caveats(caveats_json: &str) -> Result<Vec<Caveat>, String> {
-    let arr: Vec<serde_json::Value> =
-        serde_json::from_str(caveats_json).map_err(|e| format!("caveats is not a JSON array: {e}"))?;
+    let arr: Vec<serde_json::Value> = serde_json::from_str(caveats_json)
+        .map_err(|e| format!("caveats is not a JSON array: {e}"))?;
     arr.into_iter()
         .map(|v| {
             serde_json::from_value::<Pred>(v.clone())
@@ -201,16 +203,20 @@ pub fn parse_caveats(caveats_json: &str) -> Result<Vec<Caveat>, String> {
 /// in block 0 (the `dregg_cap_subject` convention). `until` is the `NotAfter`
 /// clock bound (unix seconds, matching the deployment's clock contract).
 pub fn mint_token(subject: &str, caveats_json: &str, until: i64) -> Result<String, String> {
-    let key = mint_key().ok_or_else(|| "no mint key configured (dregg.issuer_privkey not set)".to_string())?;
+    let key = mint_key()
+        .ok_or_else(|| "no mint key configured (dregg.issuer_privkey not set)".to_string())?;
     let Ok(until_u64) = u64::try_from(until) else {
         return Err("until is negative; use a unix-second timestamp".to_string());
     };
     let mut caveats = parse_caveats(caveats_json)?;
     // Prepend the subject caveat (block 0 by convention).
-    caveats.insert(0, Caveat::FirstParty(Pred::AttrEq {
-        key: "subject".into(),
-        value: subject.to_string(),
-    }));
+    caveats.insert(
+        0,
+        Caveat::FirstParty(Pred::AttrEq {
+            key: "subject".into(),
+            value: subject.to_string(),
+        }),
+    );
     // Append the NotAfter expiry.
     caveats.push(Caveat::FirstParty(Pred::NotAfter { at: until_u64 }));
     Ok(key.mint(caveats).encode())
@@ -226,8 +232,7 @@ pub fn mint_token(subject: &str, caveats_json: &str, until: i64) -> Result<Strin
 /// the TOKEN HOLDER, not the issuer. Any caller who can decode the token can
 /// narrow it further.
 pub fn attenuate_token(token: &str, caveats_json: &str) -> Result<String, String> {
-    let cred = Credential::decode(token)
-        .map_err(|e| format!("token does not decode: {e}"))?;
+    let cred = Credential::decode(token).map_err(|e| format!("token does not decode: {e}"))?;
     let caveats = parse_caveats(caveats_json)?;
     Ok(cred.attenuate(caveats).encode())
 }
@@ -289,8 +294,7 @@ pub fn dev_mint_caveats_json(actions: &[String], resource_prefix: &str) -> Strin
         prefix: resource_prefix.to_string(),
     };
     // serde-encode the Vec<Pred> the same way parse_caveats decodes it.
-    serde_json::to_string(&vec![action_pred, resource_pred])
-        .expect("Pred serializes to JSON")
+    serde_json::to_string(&vec![action_pred, resource_pred]).expect("Pred serializes to JSON")
 }
 
 /// Dev-only convenience mint: compose the common (actions, resource-prefix,
@@ -381,7 +385,11 @@ pub fn issuer_status_text() -> String {
         }
     }
     out.push_str("  |  ");
-    match (&s.mint_key_configured, &s.mint_public_hex, &s.verify_key_hex) {
+    match (
+        &s.mint_key_configured,
+        &s.mint_public_hex,
+        &s.verify_key_hex,
+    ) {
         (false, _, _) => out.push_str(
             "dev minting (dregg_dev_mint / dregg_mint): DISABLED (no `dregg.issuer_privkey`). \
              Production posture — mint tokens out-of-database; the private key never enters pg.",
@@ -399,9 +407,7 @@ pub fn issuer_status_text() -> String {
             "dev minting: ENABLED (mint pubkey {mp}) but NO verify key is set \u{26a0}  tokens it \
              mints cannot be verified here until `dregg.issuer_pubkey` is configured to match."
         )),
-        (true, None, _) => out.push_str(
-            "dev minting: ENABLED (mint key present).",
-        ),
+        (true, None, _) => out.push_str("dev minting: ENABLED (mint key present)."),
     }
     out
 }
@@ -1061,14 +1067,32 @@ mod tests {
         // parse_caveats, and the parsed Pred must eval the same as the original.
         use serde_json::json;
         let cases: &[(&str, serde_json::Value)] = &[
-            ("AttrEq",    json!({"AttrEq":    {"key":"action","value":"read"}})),
-            ("AttrPrefix",json!({"AttrPrefix":{"key":"resource","prefix":"org/"}})),
-            ("NotAfter",  json!({"NotAfter":  {"at":2000}})),
+            (
+                "AttrEq",
+                json!({"AttrEq":    {"key":"action","value":"read"}}),
+            ),
+            (
+                "AttrPrefix",
+                json!({"AttrPrefix":{"key":"resource","prefix":"org/"}}),
+            ),
+            ("NotAfter", json!({"NotAfter":  {"at":2000}})),
             ("NotBefore", json!({"NotBefore": {"at":100}})),
-            ("Within",    json!({"Within":    {"not_before":100,"not_after":2000}})),
-            ("AllOf",     json!({"AllOf":     [{"AttrEq":{"key":"action","value":"read"}}]})),
-            ("AnyOf",     json!({"AnyOf":     [{"AttrEq":{"key":"action","value":"read"}}]})),
-            ("Not",       json!({"Not":       {"AttrEq":{"key":"action","value":"write"}}})),
+            (
+                "Within",
+                json!({"Within":    {"not_before":100,"not_after":2000}}),
+            ),
+            (
+                "AllOf",
+                json!({"AllOf":     [{"AttrEq":{"key":"action","value":"read"}}]}),
+            ),
+            (
+                "AnyOf",
+                json!({"AnyOf":     [{"AttrEq":{"key":"action","value":"read"}}]}),
+            ),
+            (
+                "Not",
+                json!({"Not":       {"AttrEq":{"key":"action","value":"write"}}}),
+            ),
         ];
         for (name, v) in cases {
             let arr = serde_json::to_string(&serde_json::json!([v])).unwrap();
@@ -1212,25 +1236,43 @@ mod tests {
         assert!(s.verify_key_hex.is_none());
         assert!(!s.mint_key_configured);
         let text = issuer_status_text();
-        assert!(text.contains("NOT CONFIGURED"), "no-key status must be loud: {text}");
-        assert!(text.contains("EVERYTHING DENIES"), "must name the failure mode: {text}");
-        assert!(text.contains("DISABLED"), "dev minting must read disabled: {text}");
+        assert!(
+            text.contains("NOT CONFIGURED"),
+            "no-key status must be loud: {text}"
+        );
+        assert!(
+            text.contains("EVERYTHING DENIES"),
+            "must name the failure mode: {text}"
+        );
+        assert!(
+            text.contains("DISABLED"),
+            "dev minting must read disabled: {text}"
+        );
 
         // Configure the verify key only (the production posture: verify in pg,
         // mint out-of-database). Status reports the key id + minting still off.
         set_issuer_pubkey(root.public());
         let s = issuer_status();
-        assert_eq!(s.verify_key_hex.as_deref(), Some(root.public().to_hex().as_str()));
+        assert_eq!(
+            s.verify_key_hex.as_deref(),
+            Some(root.public().to_hex().as_str())
+        );
         assert!(!s.mint_key_configured);
         let text = issuer_status_text();
         assert!(text.contains("CONFIGURED"), "verify-key-set status: {text}");
-        assert!(text.contains(&root.public().to_hex()), "must report the key id: {text}");
+        assert!(
+            text.contains(&root.public().to_hex()),
+            "must report the key id: {text}"
+        );
 
         // Now enable dev minting with a MATCHING key — status confirms the match.
         set_mint_key_seed(root.secret_bytes());
         let s = issuer_status();
         assert!(s.mint_key_configured);
-        assert_eq!(s.mint_public_hex.as_deref(), Some(root.public().to_hex().as_str()));
+        assert_eq!(
+            s.mint_public_hex.as_deref(),
+            Some(root.public().to_hex().as_str())
+        );
         let text = issuer_status_text();
         assert!(text.contains("ENABLED"), "dev minting enabled: {text}");
         assert!(text.contains("MATCHES"), "matching keys flagged: {text}");
@@ -1240,7 +1282,10 @@ mod tests {
         let other = RootKey::from_seed([9u8; 32]);
         set_mint_key_seed(other.secret_bytes());
         let text = issuer_status_text();
-        assert!(text.contains("MISMATCH"), "mismatched keys must be flagged: {text}");
+        assert!(
+            text.contains("MISMATCH"),
+            "mismatched keys must be flagged: {text}"
+        );
     }
 
     #[test]

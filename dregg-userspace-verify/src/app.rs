@@ -46,8 +46,8 @@
 
 use std::collections::BTreeMap;
 
+use dregg_turn::CallForest;
 use dregg_turn::action::Effect;
-use dregg_turn::{CallForest, CallTree};
 use dregg_types::CellId;
 
 use crate::{Finding, Locus, Verdict, walk};

@@ -42,9 +42,7 @@
 //! root → quorum-signed AttestedRoot) is the genuine shape either way.
 
 use dregg_cell::{AuthRequired, Cell, Ledger, Permissions};
-use dregg_types::{
-    merkle_root_of_receipt_hashes, AttestedRoot, CellId, PublicKey, Signature,
-};
+use dregg_types::{merkle_root_of_receipt_hashes, AttestedRoot, CellId, PublicKey, Signature};
 
 /// A parsed `dregg://<cell>` link — a sturdy ref into a cell.
 ///
@@ -209,8 +207,15 @@ impl OriginChrome {
         for b in self.cell.0.iter().take(4) {
             hex.push_str(&format!("{b:02x}"));
         }
-        let url = self.committed_url.as_deref().unwrap_or("(no committed url)");
-        let fin = if self.finalized { "finalized" } else { "UNATTESTED" };
+        let url = self
+            .committed_url
+            .as_deref()
+            .unwrap_or("(no committed url)");
+        let fin = if self.finalized {
+            "finalized"
+        } else {
+            "UNATTESTED"
+        };
         format!("dregg://{hex}… · {url} · rights={:?} · {fin}", self.rights)
     }
 }
@@ -352,7 +357,10 @@ impl WebOfCells {
         // hash (slot 0) and bump the nonce, so the serve-receipt for the new content
         // is a distinct receipt leaf (a genuine state advance, not a silent overwrite).
         {
-            let cell = self.ledger.get_mut(&uri.cell).ok_or(FetchError::OriginNotFound)?;
+            let cell = self
+                .ledger
+                .get_mut(&uri.cell)
+                .ok_or(FetchError::OriginNotFound)?;
             cell.state.set_field(CONTENT_COMMITMENT_SLOT, new_hash);
             cell.state.increment_nonce();
         }
@@ -376,7 +384,10 @@ impl WebOfCells {
     pub fn fetch(&self, uri: &DreggUri) -> Result<(AttestedResource, OriginChrome), FetchError> {
         // [2]-[3] resolve the locator: read the origin cell out of the real
         // ledger (the local analogue of dialing the node + enlivening the swiss).
-        let cell = self.ledger.get(&uri.cell).ok_or(FetchError::OriginNotFound)?;
+        let cell = self
+            .ledger
+            .get(&uri.cell)
+            .ok_or(FetchError::OriginNotFound)?;
 
         // The committed content commitment (slot 0). An empty (all-zero) slot = no
         // content committed.
@@ -541,11 +552,16 @@ mod tests {
         // The content is content-addressed.
         assert_eq!(resource.content_hash, *blake3::hash(body).as_bytes());
         // The full client-side verification passes (the genuine chain).
-        assert!(resource.verify().is_ok(), "the attestation chain must verify");
+        assert!(
+            resource.verify().is_ok(),
+            "the attestation chain must verify"
+        );
         // The attestation carries the v4 receipt-stream binding (issue #80).
         assert!(resource.attested_root.is_v4_receipt_complete());
         // And it binds EXACTLY the served receipt set (the REAL reconstruction).
-        assert!(resource.attested_root.verify_receipt_stream(&resource.receipt_set));
+        assert!(resource
+            .attested_root
+            .verify_receipt_stream(&resource.receipt_set));
 
         // The trusted chrome is drawn from the ledger.
         assert_eq!(chrome.cell, uri.cell);
@@ -578,9 +594,15 @@ mod tests {
         // The SAME dregg:// ref now resolves to the NEW finalized value (the
         // unbreakable link: same citation, advanced source).
         let (r1, c1) = web.fetch(&uri).expect("v1 fetch (same ref)");
-        assert_eq!(r1.content_bytes, v1, "the quote now shows the amended value");
+        assert_eq!(
+            r1.content_bytes, v1,
+            "the quote now shows the amended value"
+        );
         assert_ne!(r1.content_hash, r0.content_hash, "a new content commitment");
-        assert!(r1.verify().is_ok(), "v1 attestation still verifies (recomputable)");
+        assert!(
+            r1.verify().is_ok(),
+            "v1 attestation still verifies (recomputable)"
+        );
         assert!(c1.finalized);
         // The serve-receipt advanced (nonce bumped) — a DISTINCT cited receipt, so a
         // holder of the v0 quote can SEE the source moved (no silent live read).
@@ -622,7 +644,10 @@ mod tests {
         // Forge the root binding to a different receipt set.
         resource.attested_root.receipt_stream_root =
             Some(merkle_root_of_receipt_hashes(&[[0x42u8; 32]]));
-        assert_eq!(resource.verify(), Err(FetchError::ReceiptStreamRootMismatch));
+        assert_eq!(
+            resource.verify(),
+            Err(FetchError::ReceiptStreamRootMismatch)
+        );
     }
 
     #[test]
@@ -640,7 +665,10 @@ mod tests {
                 entry.1 = b"different bytes the origin never committed".to_vec();
             }
         }
-        assert_eq!(web.fetch(&uri), Err(FetchError::ContentDoesNotMatchCommitment));
+        assert_eq!(
+            web.fetch(&uri),
+            Err(FetchError::ContentDoesNotMatchCommitment)
+        );
     }
 
     #[test]

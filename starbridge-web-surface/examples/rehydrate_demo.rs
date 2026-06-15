@@ -31,8 +31,8 @@
 use std::collections::BTreeSet;
 
 use starbridge_web_surface::{
-    rehydrate, AttestedRoot, AuthRequired, CellId, DreggUri, InteractionLog, Membrane, Rehydration,
-    RehydrateError, SurfaceCapability, Sturdyref, WebOfCells,
+    rehydrate, AttestedRoot, AuthRequired, CellId, DreggUri, InteractionLog, Membrane,
+    RehydrateError, Rehydration, Sturdyref, SurfaceCapability, WebOfCells,
 };
 
 fn cid(b: u8) -> CellId {
@@ -103,9 +103,17 @@ fn main() {
 
     // The sturdyref: handed to someone cold, it re-establishes the connection. The
     // sources are GONE (sessions ended) → it will replay/reconstruct, not reconnect.
-    let sturdyref = Sturdyref::new(uri, lineage.clone(), confined_log, /* sources_reachable */ false);
+    let sturdyref = Sturdyref::new(
+        uri,
+        lineage.clone(),
+        confined_log,
+        /* sources_reachable */ false,
+    );
 
-    say!("    published link        : {}", sturdyref.uri.to_uri_string());
+    say!(
+        "    published link        : {}",
+        sturdyref.uri.to_uri_string()
+    );
     say!(
         "    lineage permits       : {{a, b}} under rights={:?}",
         sturdyref.lineage.window.rights
@@ -146,22 +154,49 @@ fn main() {
     let pb = rehydrate(&sturdyref, &bob, &web).expect("bob rehydrates");
 
     say!("    ALICE (holds {{a}}):");
-    say!("      may fetch a.example.com? {}", pa.surface.may_fetch("https://a.example.com"));
-    say!("      may fetch b.example.com? {}  (NOT in her caps)", pa.surface.may_fetch("https://b.example.com"));
+    say!(
+        "      may fetch a.example.com? {}",
+        pa.surface.may_fetch("https://a.example.com")
+    );
+    say!(
+        "      may fetch b.example.com? {}  (NOT in her caps)",
+        pa.surface.may_fetch("https://b.example.com")
+    );
     say!("      origin badge          : {}", pa.chrome.badge());
     say!("      liveness              : {:?}", pa.liveness);
     say!("    BOB   (holds {{b}}):");
-    say!("      may fetch a.example.com? {}  (NOT in his caps)", pb.surface.may_fetch("https://a.example.com"));
-    say!("      may fetch b.example.com? {}", pb.surface.may_fetch("https://b.example.com"));
+    say!(
+        "      may fetch a.example.com? {}  (NOT in his caps)",
+        pb.surface.may_fetch("https://a.example.com")
+    );
+    say!(
+        "      may fetch b.example.com? {}",
+        pb.surface.may_fetch("https://b.example.com")
+    );
     say!(
         "    → SAME sturdyref, DIFFERENT projections: {}\n",
         pa.surface != pb.surface
     );
 
-    check!(pa.surface != pb.surface, "two different-cap viewers must get different projections");
-    check!(pa.surface.may_fetch("https://a.example.com") && !pa.surface.may_fetch("https://b.example.com"), "alice's frustum is {a}");
-    check!(pb.surface.may_fetch("https://b.example.com") && !pb.surface.may_fetch("https://a.example.com"), "bob's frustum is {b}");
-    check!(pa.surface.cell() == Some(sturdyref.uri.cell) && pb.surface.cell() == Some(sturdyref.uri.cell), "both projections are bound to the SAME origin cell");
+    check!(
+        pa.surface != pb.surface,
+        "two different-cap viewers must get different projections"
+    );
+    check!(
+        pa.surface.may_fetch("https://a.example.com")
+            && !pa.surface.may_fetch("https://b.example.com"),
+        "alice's frustum is {a}"
+    );
+    check!(
+        pb.surface.may_fetch("https://b.example.com")
+            && !pb.surface.may_fetch("https://a.example.com"),
+        "bob's frustum is {b}"
+    );
+    check!(
+        pa.surface.cell() == Some(sturdyref.uri.cell)
+            && pb.surface.cell() == Some(sturdyref.uri.cell),
+        "both projections are bound to the SAME origin cell"
+    );
 
     // ── (iii) a reshare A→B→C that tries to AMPLIFY is REFUSED. ───────────────
     say!("(iii) a reshare chain A→B→C — an amplifying reshare is REFUSED (the is_attenuation tooth)\n");
@@ -209,18 +244,29 @@ fn main() {
             }
         }
     );
-    check!(amplify == Err(RehydrateError::Amplification), "B→C amplification must be refused");
+    check!(
+        amplify == Err(RehydrateError::Amplification),
+        "B→C amplification must be refused"
+    );
 
     // B→C narrowing further to {} is admitted (attenuation always may narrow).
     let c_membrane = b_membrane
-        .reshare(SurfaceCapability::scoped(cid(33), AuthRequired::Either, origins(&[]), []))
+        .reshare(SurfaceCapability::scoped(
+            cid(33),
+            AuthRequired::Either,
+            origins(&[]),
+            [],
+        ))
         .expect("B→C (narrow to {}) is admitted");
     say!("    B→C  narrow to {{}}                        → ADMITTED");
     say!(
         "    → C may fetch a.example.com? {} (narrowed to nothing by the chain)\n",
         c_membrane.held().may_fetch("https://a.example.com")
     );
-    check!(!c_membrane.held().may_fetch("https://a.example.com"), "the narrowed chain leaves C with nothing");
+    check!(
+        !c_membrane.held().may_fetch("https://a.example.com"),
+        "the narrowed chain leaves C with nothing"
+    );
 
     // ── (iv) the liveness-type reads out confinement on both polarities. ──────
     say!("(iv) the liveness-type reads out CONFINEMENT (derived from witnessed-vs-ambient)\n");
@@ -238,7 +284,10 @@ fn main() {
         confined_liveness
     );
     say!("      → {}", confined_liveness.badge());
-    check!(confined_liveness == Rehydration::ReplayedDeterministic, "a confined context derives ReplayedDeterministic");
+    check!(
+        confined_liveness == Rehydration::ReplayedDeterministic,
+        "a confined context derives ReplayedDeterministic"
+    );
 
     // A LEAKY context: one interaction reached outside the membrane (ambient).
     let mut leaky = InteractionLog::new();
@@ -252,8 +301,14 @@ fn main() {
         leaky_liveness
     );
     say!("      → {}", leaky_liveness.badge());
-    check!(leaky_liveness == Rehydration::ReconstructedApproximate, "a context that touched ambient state derives ReconstructedApproximate");
-    check!(!leaky_liveness.is_faithful(), "the reconstructed liveness is the honest 'not the same' signal");
+    check!(
+        leaky_liveness == Rehydration::ReconstructedApproximate,
+        "a context that touched ambient state derives ReconstructedApproximate"
+    );
+    check!(
+        !leaky_liveness.is_faithful(),
+        "the reconstructed liveness is the honest 'not the same' signal"
+    );
 
     say!(
         "\n    → ReplayedDeterministic == \"everything this context did went through the membrane\";"
@@ -278,7 +333,10 @@ fn main() {
     let full = Membrane::new(SurfaceCapability::root(cid(41), AuthRequired::None));
     let unverified = rehydrate(&dead_ref, &full, &web2);
     say!("    full-authority viewer on a dead/unverified ref → {unverified:?}");
-    check!(matches!(unverified, Err(RehydrateError::Fetch(_))), "an unverified scene must yield NO projection even with full caps");
+    check!(
+        matches!(unverified, Err(RehydrateError::Fetch(_))),
+        "an unverified scene must yield NO projection even with full caps"
+    );
 
     if ok {
         say!("\nOK — rehydratable surfaces run on the real dregg cap + attestation primitives:");

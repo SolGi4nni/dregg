@@ -728,9 +728,8 @@ pub fn generate_derivation_trace_dsl(
 
     // Head (derived fact)
     row[col::HEAD_PRED] = witness.derived_predicate;
-    for i in 0..MAX_HEAD_TERMS {
-        row[col::HEAD_TERM_START + i] = witness.derived_terms[i];
-    }
+    row[col::HEAD_TERM_START..col::HEAD_TERM_START + MAX_HEAD_TERMS]
+        .copy_from_slice(&witness.derived_terms[..MAX_HEAD_TERMS]);
     row[col::DERIVED_HASH] = derived_hash;
 
     // Substitution values

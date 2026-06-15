@@ -326,6 +326,9 @@ impl SortedRevocationTree {
     }
 
     /// Check if a leaf hash is in the tree.
+    // The binary-search membership accessor companion to `prove_membership`/`root`
+    // on the sorted tree; part of the tree's read surface, not yet called.
+    #[allow(dead_code)]
     fn contains(&self, leaf_hash: &[u8; 32]) -> bool {
         self.leaves.binary_search(leaf_hash).is_ok()
     }

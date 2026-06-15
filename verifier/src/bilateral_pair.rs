@@ -263,11 +263,10 @@ pub fn fabricate_witnessed_receipt_with_schedule(
     let mut pi_bb = vec![BabyBear::ZERO; p::ACTIVE_BASE_COUNT];
     // Populate turn-identity slots (shared across all per-cell proofs of one turn).
     let (th, eg, _, prev) = dregg_turn::executor::TurnExecutor::compute_turn_identity_pi(turn);
-    for i in 0..4 {
-        pi_bb[p::TURN_HASH_BASE + i] = th[i];
-        pi_bb[p::EFFECTS_HASH_GLOBAL_BASE + i] = eg[i];
-        pi_bb[p::PREVIOUS_RECEIPT_HASH_BASE + i] = prev[i];
-    }
+    pi_bb[p::TURN_HASH_BASE..p::TURN_HASH_BASE + 4].copy_from_slice(&th[..4]);
+    pi_bb[p::EFFECTS_HASH_GLOBAL_BASE..p::EFFECTS_HASH_GLOBAL_BASE + 4].copy_from_slice(&eg[..4]);
+    pi_bb[p::PREVIOUS_RECEIPT_HASH_BASE..p::PREVIOUS_RECEIPT_HASH_BASE + 4]
+        .copy_from_slice(&prev[..4]);
     pi_bb[p::ACTOR_NONCE] = BabyBear::new((turn.nonce & 0x7FFF_FFFF) as u32);
     project_into_pi(&mut pi_bb, &counts, &roots);
     pi_bb[p::IS_AGENT_CELL] = if cell_id == &turn.agent {

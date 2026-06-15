@@ -147,13 +147,11 @@ impl ResolvedChain {
         }
         // The deepest source's genuine attestation chain must still hold (the bytes
         // displayed are the source's committed bytes, recomputably).
-        self.final_field
-            .verify()
-            .map_err(|e| ChainError::Link {
-                index: self.provenance.hops.len().saturating_sub(1),
-                source: self.provenance.source().source.clone(),
-                error: TransclusionError::ProvenanceUnverified(e),
-            })
+        self.final_field.verify().map_err(|e| ChainError::Link {
+            index: self.provenance.hops.len().saturating_sub(1),
+            source: self.provenance.source().source.clone(),
+            error: TransclusionError::ProvenanceUnverified(e),
+        })
     }
 
     /// The chain's depth (number of links).
@@ -285,9 +283,21 @@ mod tests {
     /// source (content committed in real cell state, 3-of-3 quorum attested).
     fn three_docs() -> (WebOfCells, DreggUri, DreggUri, DreggUri) {
         let mut web = WebOfCells::new(3);
-        let a = web.publish(11, b"<h1>document A (the outer quote)</h1>", "dregg://doc-a");
-        let b = web.publish(12, b"<h1>document B (the middle quote)</h1>", "dregg://doc-b");
-        let c = web.publish(13, b"<h1>document C (the deepest source)</h1>", "dregg://doc-c");
+        let a = web.publish(
+            11,
+            b"<h1>document A (the outer quote)</h1>",
+            "dregg://doc-a",
+        );
+        let b = web.publish(
+            12,
+            b"<h1>document B (the middle quote)</h1>",
+            "dregg://doc-b",
+        );
+        let c = web.publish(
+            13,
+            b"<h1>document C (the deepest source)</h1>",
+            "dregg://doc-c",
+        );
         (web, a, b, c)
     }
 
@@ -304,7 +314,9 @@ mod tests {
             .then(c.clone());
         assert_eq!(chain.depth(), 3);
 
-        let resolved = chain.resolve(&web).expect("a 3-hop chain of real sources resolves");
+        let resolved = chain
+            .resolve(&web)
+            .expect("a 3-hop chain of real sources resolves");
 
         // The displayed value is the DEEPEST source's (C's) committed bytes — the
         // quote of a quote of a quote shows the bottom of the stack.
@@ -316,8 +328,16 @@ mod tests {
         // The composed provenance is the FULL trail: one citation per hop, head→tail.
         let prov = &resolved.provenance;
         assert_eq!(prov.depth(), 3, "three links, three citations");
-        assert_eq!(prov.outermost().source, a, "head of the trail = the outer quote A");
-        assert_eq!(prov.source().source, c, "tail of the trail = the deepest source C");
+        assert_eq!(
+            prov.outermost().source,
+            a,
+            "head of the trail = the outer quote A"
+        );
+        assert_eq!(
+            prov.source().source,
+            c,
+            "tail of the trail = the deepest source C"
+        );
         // The middle citation is B.
         assert_eq!(prov.hops[1].source, b);
 
@@ -336,7 +356,10 @@ mod tests {
 
         // And the whole chain re-verifies (the composed anti-forge tooth, recomputable
         // by a holder at any later time).
-        assert!(resolved.verify().is_ok(), "the resolved chain re-verifies end-to-end");
+        assert!(
+            resolved.verify().is_ok(),
+            "the resolved chain re-verifies end-to-end"
+        );
     }
 
     // (2) THE COMPOSED ANTI-FORGE TOOTH — a forged/absent link ANYWHERE refuses the
@@ -347,10 +370,16 @@ mod tests {
         let absent = dead_uri(250); // never published — a dangling link.
 
         // Broken link in the MIDDLE: A → (absent) → B.
-        let chain = TransclusionChain::new([a.clone()]).then(absent.clone()).then(b);
+        let chain = TransclusionChain::new([a.clone()])
+            .then(absent.clone())
+            .then(b);
         let r = chain.resolve(&web);
         match r {
-            Err(ChainError::Link { index, source, error }) => {
+            Err(ChainError::Link {
+                index,
+                source,
+                error,
+            }) => {
                 assert_eq!(index, 1, "the broken link is the middle hop (index 1)");
                 assert_eq!(source, absent, "it names the absent ref");
                 // The genuine one-hop refusal: an absent source does not resolve to a
@@ -376,7 +405,11 @@ mod tests {
     #[test]
     fn a_forged_link_fails_the_composed_reverify() {
         let (web, a, b, c) = three_docs();
-        let mut resolved = TransclusionChain::new([a]).then(b).then(c).resolve(&web).expect("resolves");
+        let mut resolved = TransclusionChain::new([a])
+            .then(b)
+            .then(c)
+            .resolve(&web)
+            .expect("resolves");
 
         // Forge the DEEPEST link: tamper the displayed bytes so they no longer match
         // the committed content hash. The composed verify() re-runs the genuine
@@ -410,15 +443,27 @@ mod tests {
     #[test]
     fn a_one_hop_chain_is_a_plain_transclusion() {
         let (web, a, ..) = three_docs();
-        let resolved = TransclusionChain::new([a.clone()]).resolve(&web).expect("one-hop resolves");
+        let resolved = TransclusionChain::new([a.clone()])
+            .resolve(&web)
+            .expect("one-hop resolves");
         assert_eq!(resolved.depth(), 1);
-        assert_eq!(resolved.displayed_bytes(), b"<h1>document A (the outer quote)</h1>");
+        assert_eq!(
+            resolved.displayed_bytes(),
+            b"<h1>document A (the outer quote)</h1>"
+        );
         assert_eq!(resolved.provenance.source().source, a);
-        assert_eq!(resolved.provenance.outermost().source, a, "head == tail for one hop");
+        assert_eq!(
+            resolved.provenance.outermost().source,
+            a,
+            "head == tail for one hop"
+        );
 
         // It equals what the bare one-hop primitive yields (same value, same citation).
         let one_hop = TranscludedField::include(&web, &a).expect("one-hop include");
         assert_eq!(resolved.displayed_bytes(), one_hop.quoted_bytes());
-        assert_eq!(resolved.provenance.source().receipt_hash, one_hop.cite().receipt_hash);
+        assert_eq!(
+            resolved.provenance.source().receipt_hash,
+            one_hop.cite().receipt_hash
+        );
     }
 }

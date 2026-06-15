@@ -440,7 +440,12 @@ impl RootChain {
         // The pure step gate is the single source of truth for the chain
         // discipline (also lifted into SQL as the Tier-C `dregg_verify_turn`
         // extension function — see [`verify_chain_step`]). Run it, then advance.
-        verify_chain_step(self.head, self.next_ordinal, batch.turn.prev_root, batch.turn.ordinal)?;
+        verify_chain_step(
+            self.head,
+            self.next_ordinal,
+            batch.turn.prev_root,
+            batch.turn.ordinal,
+        )?;
         // Accept: advance.
         self.head = Some(batch.turn.ledger_root);
         self.next_ordinal += 1;
@@ -488,7 +493,10 @@ pub fn verify_chain_step(
     }
     if let Some(head) = head {
         if prev_root != head {
-            return Err(ChainRefusal::RootMismatch { head, prev: prev_root });
+            return Err(ChainRefusal::RootMismatch {
+                head,
+                prev: prev_root,
+            });
         }
     }
     Ok(())
@@ -766,13 +774,24 @@ impl FederationHealth {
     pub fn summary(&self) -> String {
         match self {
             FederationHealth::Clear { subscriptions } => {
-                format!("ok: federation healthy — {subscriptions} subscription(s), 0 apply conflicts")
+                format!(
+                    "ok: federation healthy — {subscriptions} subscription(s), 0 apply conflicts"
+                )
             }
-            FederationHealth::ConflictsButChainIntact { conflicts_total, head, .. } => format!(
+            FederationHealth::ConflictsButChainIntact {
+                conflicts_total,
+                head,
+                ..
+            } => format!(
                 "ALARM ({conflicts_total} apply conflict(s)) but chain re-validates: head={}",
-                head.map(|h| hex(&h)).unwrap_or_else(|| "<empty>".to_string())
+                head.map(|h| hex(&h))
+                    .unwrap_or_else(|| "<empty>".to_string())
             ),
-            FederationHealth::ConflictsAndChainBroken { conflicts_total, refusal, .. } => format!(
+            FederationHealth::ConflictsAndChainBroken {
+                conflicts_total,
+                refusal,
+                ..
+            } => format!(
                 "CRITICAL ({conflicts_total} apply conflict(s)) AND chain REFUSED: {refusal}"
             ),
         }
@@ -1999,10 +2018,22 @@ mod tests {
         chain.extend(&batch(0, g, root(1))).unwrap();
         // Skipping to ordinal 2 (gap) is refused.
         let gap = chain.extend(&batch(2, root(1), root(3))).unwrap_err();
-        assert!(matches!(gap, ChainRefusal::OrdinalGap { expected: 1, got: 2 }));
+        assert!(matches!(
+            gap,
+            ChainRefusal::OrdinalGap {
+                expected: 1,
+                got: 2
+            }
+        ));
         // Replaying ordinal 0 is refused.
         let replay = chain.extend(&batch(0, g, root(1))).unwrap_err();
-        assert!(matches!(replay, ChainRefusal::OrdinalGap { expected: 1, got: 0 }));
+        assert!(matches!(
+            replay,
+            ChainRefusal::OrdinalGap {
+                expected: 1,
+                got: 0
+            }
+        ));
     }
 
     #[test]
@@ -2016,7 +2047,11 @@ mod tests {
         let err = chain.extend(&b).unwrap_err();
         assert!(matches!(err, ChainRefusal::Malformed(_)));
         // The chain is UNCHANGED — a malformed batch never advances the head.
-        assert_eq!(chain.head(), Some(g), "a malformed genesis batch is rejected");
+        assert_eq!(
+            chain.head(),
+            Some(g),
+            "a malformed genesis batch is rejected"
+        );
         assert_eq!(chain.next_ordinal(), 0);
     }
 
@@ -2062,7 +2097,10 @@ mod tests {
             cell_root: root(10),
         };
         let b = MirrorBatch::from_parts(t, vec![cell.clone()], vec![], vec![]).unwrap();
-        assert_eq!(b.cells[0].last_ordinal, 7, "from_parts stamps the turn ordinal");
+        assert_eq!(
+            b.cells[0].last_ordinal, 7,
+            "from_parts stamps the turn ordinal"
+        );
         assert!(b.check_ordinals().is_ok());
 
         // And the assembled batch chains exactly like a hand-built one.
@@ -2100,7 +2138,10 @@ mod tests {
         // Genesis at the wrong ordinal is a gap.
         assert!(matches!(
             verify_chain_step(None, 0, root(9), 1),
-            Err(ChainRefusal::OrdinalGap { expected: 0, got: 1 })
+            Err(ChainRefusal::OrdinalGap {
+                expected: 0,
+                got: 1
+            })
         ));
         // Non-genesis: prev_root must equal head.
         assert!(verify_chain_step(Some(root(1)), 1, root(1), 1).is_ok());
@@ -2111,20 +2152,31 @@ mod tests {
         // Wrong ordinal even with the right root is a gap.
         assert!(matches!(
             verify_chain_step(Some(root(1)), 1, root(1), 2),
-            Err(ChainRefusal::OrdinalGap { expected: 1, got: 2 })
+            Err(ChainRefusal::OrdinalGap {
+                expected: 1,
+                got: 2
+            })
         ));
 
         // It agrees with RootChain::extend on the whole synthetic-style chain:
         // every accepted extend corresponds to an Ok step at the same head.
         let g = root(0);
         let mut chain = RootChain::resume(g, 0);
-        for (ord, prev, post) in [(0, g, root(1)), (1, root(1), root(2)), (2, root(2), root(3))] {
+        for (ord, prev, post) in [
+            (0, g, root(1)),
+            (1, root(1), root(2)),
+            (2, root(2), root(3)),
+        ] {
             let head = chain.head();
             let next = chain.next_ordinal();
             // The standalone gate and extend must agree.
             let step = verify_chain_step(head, next, prev, ord);
             let res = chain.extend(&batch(ord, prev, post));
-            assert_eq!(step.is_ok(), res.is_ok(), "the gate and extend must agree at ord {ord}");
+            assert_eq!(
+                step.is_ok(),
+                res.is_ok(),
+                "the gate and extend must agree at ord {ord}"
+            );
         }
     }
 
@@ -2133,7 +2185,11 @@ mod tests {
     // ----------------------------------------------------------------------
 
     fn link(ordinal: u64, prev: [u8; 32], post: [u8; 32]) -> ChainLink {
-        ChainLink { ordinal, prev_root: prev, ledger_root: post }
+        ChainLink {
+            ordinal,
+            prev_root: prev,
+            ledger_root: post,
+        }
     }
 
     #[test]
@@ -2148,14 +2204,24 @@ mod tests {
             link(2, root(2), root(3)),
         ];
         let head = revalidate_replicated_chain(g, &links, Some(3)).unwrap();
-        assert_eq!(head, Some(root(3)), "the re-validated head is the last post-root");
+        assert_eq!(
+            head,
+            Some(root(3)),
+            "the re-validated head is the last post-root"
+        );
 
         // It agrees with what RootChain::extend would accept, batch for batch.
         let mut chain = RootChain::resume(g, 0);
         for l in &links {
-            assert!(chain.extend(&batch(l.ordinal, l.prev_root, l.ledger_root)).is_ok());
+            assert!(chain
+                .extend(&batch(l.ordinal, l.prev_root, l.ledger_root))
+                .is_ok());
         }
-        assert_eq!(chain.head(), head, "subscriber sweep == publisher chain head");
+        assert_eq!(
+            chain.head(),
+            head,
+            "subscriber sweep == publisher chain head"
+        );
     }
 
     #[test]
@@ -2178,7 +2244,10 @@ mod tests {
         let gapped = [link(0, g, root(1)), link(2, root(1), root(3))];
         assert!(matches!(
             revalidate_replicated_chain(g, &gapped, None).unwrap_err(),
-            ChainRefusal::OrdinalGap { expected: 1, got: 2 }
+            ChainRefusal::OrdinalGap {
+                expected: 1,
+                got: 2
+            }
         ));
         // A truncation (count mismatch) is caught when the expected count is known.
         let truncated = [link(0, g, root(1))];
@@ -2248,7 +2317,10 @@ mod tests {
         assert!(load.contains("dregg.promote_role_identity_load()"));
         // A reject_limit of 0 omits the cap (tolerate any number of bad rows).
         let load0 = ddl::load_role_identity_sql("/srv/idp/roles.csv", 0);
-        assert!(!load0.contains("REJECT_LIMIT"), "reject_limit 0 omits the cap");
+        assert!(
+            !load0.contains("REJECT_LIMIT"),
+            "reject_limit 0 omits the cap"
+        );
     }
 
     // ----------------------------------------------------------------------
@@ -2292,9 +2364,9 @@ mod tests {
                 // gap/replay; whose prev_root is usually-right (the head),
                 // sometimes substituted; occasionally with a smuggled row ordinal.
                 let ord = match rng.next() % 4 {
-                    0 => next_before.wrapping_add(rng.next() % 3), // gap
+                    0 => next_before.wrapping_add(rng.next() % 3),   // gap
                     1 => next_before.saturating_sub(rng.next() % 2), // replay-ish
-                    _ => next_before,                              // correct
+                    _ => next_before,                                // correct
                 };
                 let prev = if rng.next() % 3 == 0 {
                     root((rng.next() % 251) as u8) // substituted
@@ -2304,14 +2376,15 @@ mod tests {
                 let post = root((rng.next() % 251) as u8);
                 let mut b = batch(ord, prev, post);
                 if rng.next() % 9 == 0 {
-                    b.cells[0].last_ordinal = ord.wrapping_add(1 + rng.next() % 5); // smuggle
+                    b.cells[0].last_ordinal = ord.wrapping_add(1 + rng.next() % 5);
+                    // smuggle
                 }
 
                 // (1) the standalone gate's verdict (it does NOT see the smuggle,
                 // which check_ordinals catches first; so predict accordingly).
                 let smuggled = b.check_ordinals().is_err();
-                let gate_ok = !smuggled
-                    && verify_chain_step(head_before, next_before, prev, ord).is_ok();
+                let gate_ok =
+                    !smuggled && verify_chain_step(head_before, next_before, prev, ord).is_ok();
 
                 let res = chain.extend(&b);
                 assert_eq!(
@@ -2324,11 +2397,23 @@ mod tests {
                 if res.is_ok() {
                     // (3) accepted ⇒ head advanced to post, next incremented.
                     assert_eq!(chain.head(), Some(post), "accepted batch advances the head");
-                    assert_eq!(chain.next_ordinal(), next_before + 1, "next ordinal increments");
+                    assert_eq!(
+                        chain.next_ordinal(),
+                        next_before + 1,
+                        "next ordinal increments"
+                    );
                 } else {
                     // (2) refused ⇒ chain UNCHANGED.
-                    assert_eq!(chain.head(), head_before, "a refused batch must not move the head");
-                    assert_eq!(chain.next_ordinal(), next_before, "a refused batch must not move next");
+                    assert_eq!(
+                        chain.head(),
+                        head_before,
+                        "a refused batch must not move the head"
+                    );
+                    assert_eq!(
+                        chain.next_ordinal(),
+                        next_before,
+                        "a refused batch must not move next"
+                    );
                 }
             }
         }
@@ -2342,7 +2427,15 @@ mod tests {
         let arr = v.as_array().expect("cells_json is an array");
         assert_eq!(arr.len(), 1);
         let c = &arr[0];
-        for key in ["cell_id", "mode", "balance", "nonce", "fields", "lifecycle", "cell_root"] {
+        for key in [
+            "cell_id",
+            "mode",
+            "balance",
+            "nonce",
+            "fields",
+            "lifecycle",
+            "cell_root",
+        ] {
             assert!(c.get(key).is_some(), "cells_json element missing `{key}`");
         }
         // cell_id / cell_root / fields are hex strings (the trigger `decode`s them).
@@ -2405,7 +2498,10 @@ mod tests {
         assert!(sql.contains("CREATE TABLE IF NOT EXISTS dregg.turn_proofs"));
         // The §10.2 columns: (lo, hi, genesis_root, final_root, proof bytea, vk).
         for col in ["lo", "hi", "genesis_root", "final_root", "proof", "vk"] {
-            assert!(sql.contains(col), "turn_proofs is missing the `{col}` column");
+            assert!(
+                sql.contains(col),
+                "turn_proofs is missing the `{col}` column"
+            );
         }
         // A window is keyed + never inverted; the producer extends a dense prefix.
         assert!(sql.contains("PRIMARY KEY (lo, hi)"));
@@ -2414,7 +2510,8 @@ mod tests {
         // PUBLIC gets nothing; reader + kernel may SELECT so the SRF can join it.
         assert!(sql.contains("REVOKE ALL ON dregg.turn_proofs FROM PUBLIC"));
         assert!(sql.contains("GRANT SELECT ON dregg.turn_proofs TO dregg_reader, dregg_kernel"));
-        assert!(sql.contains("GRANT INSERT, SELECT, UPDATE, DELETE ON dregg.turn_proofs TO dregg_kernel"));
+        assert!(sql
+            .contains("GRANT INSERT, SELECT, UPDATE, DELETE ON dregg.turn_proofs TO dregg_kernel"));
     }
 
     #[test]
@@ -2422,7 +2519,9 @@ mod tests {
         let sql = ddl::tier_b();
         // The spine: apps read, only the kernel writes. The DDL must REVOKE
         // writes from PUBLIC and grant them only to dregg_kernel.
-        assert!(sql.contains("REVOKE INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA dregg FROM PUBLIC"));
+        assert!(
+            sql.contains("REVOKE INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA dregg FROM PUBLIC")
+        );
         assert!(sql.contains("GRANT SELECT ON ALL TABLES IN SCHEMA dregg TO dregg_reader"));
         assert!(sql.contains("FORCE ROW LEVEL SECURITY"));
         // Every state table is RLS-gated by the Tier A cap layer.
@@ -2438,8 +2537,14 @@ mod tests {
         assert!(sql.contains("CREATE OR REPLACE VIEW dregg.cell_fields"));
         assert!(sql.contains("JSON_TABLE"));
         // The pg17 builtin C collation + stored generated columns (canonical state).
-        assert!(sql.contains("pg_c_utf8"), "builtin C collation on the canonical hex column");
-        assert!(sql.contains("GENERATED ALWAYS AS"), "stored generated columns");
+        assert!(
+            sql.contains("pg_c_utf8"),
+            "builtin C collation on the canonical hex column"
+        );
+        assert!(
+            sql.contains("GENERATED ALWAYS AS"),
+            "stored generated columns"
+        );
         assert!(sql.contains("cell_hex"));
         assert!(sql.contains("balance_field"));
         assert!(sql.contains("CREATE OR REPLACE VIEW dregg.canonical_cells"));
@@ -2448,8 +2553,10 @@ mod tests {
         assert!(sql.contains("merge_action()"));
         // The pg18 leverage wired in this pass.
         // RETURNING WITH (OLD/NEW) explicit alias on the applicator (both forms).
-        assert!(sql.contains("RETURNING WITH (OLD AS o, NEW AS n)"),
-            "merge_cell uses the pg18 explicit old/new alias");
+        assert!(
+            sql.contains("RETURNING WITH (OLD AS o, NEW AS n)"),
+            "merge_cell uses the pg18 explicit old/new alias"
+        );
         // The typed-delta twin applicator (action, balance_delta, nonce_delta).
         assert!(sql.contains("CREATE OR REPLACE FUNCTION dregg.merge_cell_delta"));
         assert!(sql.contains("OUT balance_delta bigint, OUT nonce_delta bigint"));
@@ -2490,7 +2597,9 @@ mod tests {
         // tested code path that turns a pg role — e.g. an OAuth-authenticated one —
         // into a dregg capability) + its PUBLIC lockdown + the introspection view.
         assert!(sql.contains("CREATE OR REPLACE FUNCTION dregg.bind_role"));
-        assert!(sql.contains("REVOKE ALL ON FUNCTION dregg.bind_role(text, bytea, text) FROM PUBLIC"));
+        assert!(
+            sql.contains("REVOKE ALL ON FUNCTION dregg.bind_role(text, bytea, text) FROM PUBLIC")
+        );
         assert!(sql.contains("CREATE OR REPLACE VIEW dregg.role_bindings"));
         // The introspection view exposes token PRESENCE, never the token itself.
         assert!(sql.contains("(default_token IS NOT NULL)         AS has_token"));
@@ -2599,15 +2708,15 @@ mod tests {
             "dregg.merge_cell",
             "merge_action()",
             // pg18 leverage wired in this pass — pinned so emitter ↔ file cannot drift.
-            "dregg.merge_cell_delta",           // the typed (action, Δbalance, Δnonce) applicator
+            "dregg.merge_cell_delta", // the typed (action, Δbalance, Δnonce) applicator
             "RETURNING WITH (OLD AS o, NEW AS n)", // the explicit pg18 old/new alias form
-            "cells_by_mode_balance",            // the B-tree skip-scan composite index
-            "security_invoker = true",          // pg15 RLS-through-views, declared
-            "dregg.mirror_io_stats",            // the pg18 AIO (pg_stat_io) observability view
+            "cells_by_mode_balance",  // the B-tree skip-scan composite index
+            "security_invoker = true", // pg15 RLS-through-views, declared
+            "dregg.mirror_io_stats",  // the pg18 AIO (pg_stat_io) observability view
             "pg_stat_io",
-            "dregg.mirror_aio_inflight",        // the pg18 pg_aios in-flight view
+            "dregg.mirror_aio_inflight", // the pg18 pg_aios in-flight view
             "pg_aios",
-            "dregg.integrity_status",           // the pg18 data-checksum integrity floor view
+            "dregg.integrity_status", // the pg18 data-checksum integrity floor view
             "current_setting('data_checksums')",
             "CREATE POLICY cells_read",
             "CREATE POLICY turns_read",
@@ -2631,12 +2740,28 @@ mod tests {
         // Column-level agreement on the spine table the writer must fill: every
         // column the emitter declares for dregg.cells must be named in the file.
         for col in [
-            "cell_id", "mode", "balance", "nonce", "fields", "fields_json", "heap",
-            "program", "verification_key", "delegate", "lifecycle", "last_ordinal",
+            "cell_id",
+            "mode",
+            "balance",
+            "nonce",
+            "fields",
+            "fields_json",
+            "heap",
+            "program",
+            "verification_key",
+            "delegate",
+            "lifecycle",
+            "last_ordinal",
             "cell_root",
         ] {
-            assert!(file.contains(col), "schema-tierB.sql missing cells column `{col}`");
-            assert!(emitted.contains(col), "emitter missing cells column `{col}`");
+            assert!(
+                file.contains(col),
+                "schema-tierB.sql missing cells column `{col}`"
+            );
+            assert!(
+                emitted.contains(col),
+                "emitter missing cells column `{col}`"
+            );
         }
     }
 
@@ -2664,7 +2789,11 @@ mod tests {
         // the view's conflicts_total IS that sum, and the row self-checks it.
         let s = sub("dregg_tail", [1, 0, 2, 0, 0, 3, 1]);
         assert_eq!(s.total, 7);
-        assert_eq!(s.recomputed_total(), 7, "the total re-derives from the seven kinds");
+        assert_eq!(
+            s.recomputed_total(),
+            7,
+            "the total re-derives from the seven kinds"
+        );
         assert!(s.conflicted());
 
         let clean = sub("clean_tail", [0, 0, 0, 0, 0, 0, 0]);
@@ -2687,7 +2816,10 @@ mod tests {
             Ok(Some(root(9)))
         });
         assert!(!ran, "no apply conflict ⇒ the chain tooth is NOT triggered");
-        assert!(matches!(verdict, FederationHealth::Clear { subscriptions: 0 }));
+        assert!(matches!(
+            verdict,
+            FederationHealth::Clear { subscriptions: 0 }
+        ));
         assert!(!verdict.needs_attention());
         assert!(!verdict.chain_broken());
     }
@@ -2706,7 +2838,10 @@ mod tests {
             Ok(None)
         });
         assert!(!ran, "a clean subscription does not trigger re-validation");
-        assert!(matches!(verdict, FederationHealth::Clear { subscriptions: 1 }));
+        assert!(matches!(
+            verdict,
+            FederationHealth::Clear { subscriptions: 1 }
+        ));
         assert!(report.alarm_line().starts_with("clear:"));
     }
 
@@ -2729,11 +2864,21 @@ mod tests {
         });
         assert!(ran, "the alarm MUST trigger the chain re-validation");
         match verdict {
-            FederationHealth::ConflictsButChainIntact { conflicts_total, head, alarm } => {
+            FederationHealth::ConflictsButChainIntact {
+                conflicts_total,
+                head,
+                alarm,
+            } => {
                 assert_eq!(conflicts_total, 1);
                 assert_eq!(head, Some(root(42)));
-                assert!(alarm.contains("dregg_tail=1"), "the alarm names the offender: {alarm}");
-                assert!(alarm.contains("re-validating"), "the alarm states it triggers re-validation");
+                assert!(
+                    alarm.contains("dregg_tail=1"),
+                    "the alarm names the offender: {alarm}"
+                );
+                assert!(
+                    alarm.contains("re-validating"),
+                    "the alarm states it triggers re-validation"
+                );
             }
             other => panic!("expected ConflictsButChainIntact, got {other:?}"),
         }
@@ -2750,17 +2895,28 @@ mod tests {
         // turn chain the tooth rejects. The subscriber must NOT trust its mirror.
         let report = ConflictReport {
             subscriptions: vec![
-                sub("dregg_tail", [0, 0, 0, 0, 0, 1, 0]),  // a delete_missing
+                sub("dregg_tail", [0, 0, 0, 0, 0, 1, 0]), // a delete_missing
                 sub("dregg_tail2", [2, 0, 0, 0, 0, 0, 0]), // and inserts on a 2nd sub
             ],
         };
         assert!(report.alarm());
-        assert_eq!(report.conflicts_total(), 3, "summed across both subscriptions");
+        assert_eq!(
+            report.conflicts_total(),
+            3,
+            "summed across both subscriptions"
+        );
 
-        let refusal = ChainRefusal::RootMismatch { head: root(1), prev: root(9) };
+        let refusal = ChainRefusal::RootMismatch {
+            head: root(1),
+            prev: root(9),
+        };
         let verdict = federation_health(&report, || Err(refusal.clone()));
         match verdict {
-            FederationHealth::ConflictsAndChainBroken { conflicts_total, alarm, refusal: r } => {
+            FederationHealth::ConflictsAndChainBroken {
+                conflicts_total,
+                alarm,
+                refusal: r,
+            } => {
                 assert_eq!(conflicts_total, 3);
                 assert_eq!(r, refusal);
                 // The alarm names BOTH offenders, sorted.
@@ -2780,17 +2936,17 @@ mod tests {
         // The headline alarm is the SUM across subscriptions; a clean one and a
         // conflicted one together still alarm (on the conflicted one).
         let report = ConflictReport {
-            subscriptions: vec![
-                sub("clean", [0; 7]),
-                sub("dirty", [5, 0, 0, 0, 0, 0, 0]),
-            ],
+            subscriptions: vec![sub("clean", [0; 7]), sub("dirty", [5, 0, 0, 0, 0, 0, 0])],
         };
         assert!(report.alarm());
         assert_eq!(report.conflicts_total(), 5);
         // Only the dirty one is named as an offender.
         let line = report.alarm_line();
         assert!(line.contains("dirty=5"));
-        assert!(!line.contains("clean="), "a clean subscription is not an offender: {line}");
+        assert!(
+            !line.contains("clean="),
+            "a clean subscription is not an offender: {line}"
+        );
         // The conflicted() iterator yields exactly the dirty one.
         let offenders: Vec<&str> = report.conflicted().map(|s| s.subname.as_str()).collect();
         assert_eq!(offenders, vec!["dirty"]);

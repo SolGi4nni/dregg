@@ -1009,6 +1009,10 @@ pub struct AgentCipherclerk {
 /// and consumed by both `execute_sovereign_turn_with_proof` (which keeps only
 /// the turn) and `emit_witnessed_receipt` (which lifts the trace + PI into a
 /// [`WitnessedReceipt`]).
+// Several fields (trace, public_inputs, new_commitment, pre_state_commitment) are
+// read only by the WitnessedReceipt-lifting path, which is feature-gated; under the
+// recursion-unified build they carry replay material that isn't re-read in-process.
+#[allow(dead_code)]
 struct ProvenSovereignTurn {
     /// The proof-carrying turn, with `execution_proof` populated.
     turn: Turn,
@@ -4918,7 +4922,7 @@ impl AgentCipherclerk {
         #[cfg(feature = "recursion")]
         {
             let proven = self.prove_sovereign_turn_rotated(cell_id, effects, fee)?;
-            return Ok(proven.turn);
+            Ok(proven.turn)
         }
         #[cfg(not(feature = "recursion"))]
         {
@@ -5428,6 +5432,7 @@ impl AgentCipherclerk {
     /// Extract transfer parameters from effects for proof generation.
     ///
     /// Returns (amount, direction) where direction=1 for outgoing, 0 for incoming.
+    #[allow(dead_code)] // Used by the v1 (non-recursion) sovereign-prove path's effect validation.
     fn extract_transfer_params(
         cell_id: &CellId,
         effects: &[Effect],

@@ -50,11 +50,11 @@
 //! 6. C17: OR gate (gated by op_or): composed_result + and_intermediate - 1 == 0
 //! 7. C18: NOT gate (gated by op_not): composed_result + sub_result_0 - 1 == 0
 //! 8. C19: Threshold gate (gated by op_threshold):
-//!          composed_result == threshold_pass where threshold_pass == 1 iff sum >= K
-//!          Encoded: composed_result == and_intermediate (prover sets and_intermediate=1
-//!          iff sum_count >= threshold_k)
+//!    composed_result == threshold_pass where threshold_pass == 1 iff sum >= K
+//!    Encoded: composed_result == and_intermediate (prover sets and_intermediate=1
+//!    iff sum_count >= threshold_k)
 //! 9. C20: Custom gate tree (gated by op_custom):
-//!          composed_result == gate_output
+//!    composed_result == gate_output
 //! 10. C21: gate_output is binary
 //! 11. C22-C29: sub_proof_commitment[i] == expected_commitment[i] (PI-bound)
 //! 12. C30: Boundary: composed_result == pi[0] (must be 1)
@@ -746,10 +746,10 @@ pub fn generate_compound_trace_full(
     row[SUM_COUNT] = sum_count;
 
     // Sub-proof commitments (both actual and expected are the same for honest prover).
-    for i in 0..MAX_SUB_PREDICATES {
-        row[SUB_PROOF_COMMITMENT_START + i] = proof_commitments[i];
-        row[EXPECTED_COMMITMENT_START + i] = proof_commitments[i];
-    }
+    row[SUB_PROOF_COMMITMENT_START..SUB_PROOF_COMMITMENT_START + MAX_SUB_PREDICATES]
+        .copy_from_slice(&proof_commitments[..MAX_SUB_PREDICATES]);
+    row[EXPECTED_COMMITMENT_START..EXPECTED_COMMITMENT_START + MAX_SUB_PREDICATES]
+        .copy_from_slice(&proof_commitments[..MAX_SUB_PREDICATES]);
 
     // Custom gate tree columns.
     row[GATE_A_VAL] = gate_a;
@@ -765,9 +765,9 @@ pub fn generate_compound_trace_full(
     public_inputs[pi::COMPOSED_RESULT_EXPECTED] = BabyBear::ONE;
     public_inputs[pi::TREE_HASH] = tree_hash;
     public_inputs[pi::THRESHOLD_K] = threshold_k;
-    for i in 0..MAX_SUB_PREDICATES {
-        public_inputs[pi::EXPECTED_COMMITMENT_START + i] = proof_commitments[i];
-    }
+    public_inputs
+        [pi::EXPECTED_COMMITMENT_START..pi::EXPECTED_COMMITMENT_START + MAX_SUB_PREDICATES]
+        .copy_from_slice(&proof_commitments[..MAX_SUB_PREDICATES]);
 
     (trace, public_inputs)
 }

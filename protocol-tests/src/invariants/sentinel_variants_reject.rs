@@ -13,11 +13,6 @@
 
 use crate::Invariant;
 
-use dregg_cell::{
-    CellId, CellProgram, CellState, StateConstraint,
-    predicate::{InputRef, WitnessedPredicate},
-    program::{CustomDescriptor, DeltaRelation, ReadSet},
-};
 use proptest::prelude::*;
 
 pub struct SentinelVariantsReject;

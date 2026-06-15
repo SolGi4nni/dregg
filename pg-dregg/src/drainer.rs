@@ -377,7 +377,11 @@ impl DrainCounters {
     pub fn summary(&self) -> String {
         format!(
             "drained={} refused={} (unauth={} produce={} conflict={}) lag={}",
-            self.drained, self.refused, self.unauthorized, self.produce_refused, self.conflict,
+            self.drained,
+            self.refused,
+            self.unauthorized,
+            self.produce_refused,
+            self.conflict,
             self.lag
         )
     }
@@ -800,7 +804,10 @@ mod tests {
         let out = d.drain(&intent(1, agent(0x20), &tok));
         assert!(matches!(
             out,
-            DrainOutcome::Refused { gate: Gate::Submit, .. }
+            DrainOutcome::Refused {
+                gate: Gate::Submit,
+                ..
+            }
         ));
         assert_eq!(out.reason(), Some("revoked"));
         assert_eq!(d.next_ordinal(), 0, "a revoked intent never executes");
@@ -926,7 +933,9 @@ mod tests {
             Ok(self.durable)
         }
         fn pending(&mut self, limit: usize) -> Result<Vec<SubmitIntent>, String> {
-            Ok((0..limit).filter_map(|_| self.pending.pop_front()).collect())
+            Ok((0..limit)
+                .filter_map(|_| self.pending.pop_front())
+                .collect())
         }
         fn pending_depth(&self) -> Result<u64, String> {
             Ok(self.pending.len() as u64)
@@ -951,7 +960,10 @@ mod tests {
     /// the source and sink as separate borrows (the realistic two-object shape:
     /// the live worker's source is `dregg.submit_queue` reads and its sink is the
     /// apply+resolve, distinct SQL).
-    struct MemSinkProxy<'a>(&'a mut Vec<(SubmitIntent, DrainOutcome)>, &'a mut Vec<MirrorBatch>);
+    struct MemSinkProxy<'a>(
+        &'a mut Vec<(SubmitIntent, DrainOutcome)>,
+        &'a mut Vec<MirrorBatch>,
+    );
     impl OutcomeSink for MemSinkProxy<'_> {
         fn resolve(
             &mut self,
@@ -974,7 +986,9 @@ mod tests {
         // A queue + a separate sink (the realistic two-object shape).
         let mut source = MemQueue::default();
         for k in 0..10u8 {
-            source.pending.push_back(intent(k, agent(0x20 + (k % 4)), &tok));
+            source
+                .pending
+                .push_back(intent(k, agent(0x20 + (k % 4)), &tok));
         }
         let mut resolved: Vec<(SubmitIntent, DrainOutcome)> = Vec::new();
         let mut mirrored: Vec<MirrorBatch> = Vec::new();
@@ -1002,7 +1016,10 @@ mod tests {
         assert_eq!(d.next_ordinal(), 10);
         // The mirrored batches form a chain (each prev_root = the prior ledger_root).
         for w in mirrored.windows(2) {
-            assert_eq!(w[1].turn.prev_root, w[0].turn.ledger_root, "mirrored chain links");
+            assert_eq!(
+                w[1].turn.prev_root, w[0].turn.ledger_root,
+                "mirrored chain links"
+            );
         }
     }
 
@@ -1028,7 +1045,10 @@ mod tests {
         let report = d.poll_once(&mut source, &mut sink, 8).expect("poll ok");
         assert_eq!(report.executed, 1);
         assert_eq!(mirrored[0].turn.ordinal, 7);
-        assert_eq!(mirrored[0].turn.prev_root, head, "chains onto the durable head");
+        assert_eq!(
+            mirrored[0].turn.prev_root, head,
+            "chains onto the durable head"
+        );
         assert_eq!(d.next_ordinal(), 8);
     }
 

@@ -67,6 +67,8 @@ fn service_scope(allowed_services: &std::collections::HashSet<u64>, requested: u
 
 // --- Phase 2: Effects with mutation ---
 
+// DSL surface: modeled transfer direction; variants are only constructed in #[cfg(test)] arms.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Direction {
     Outgoing,

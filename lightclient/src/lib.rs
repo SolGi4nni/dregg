@@ -224,7 +224,7 @@ impl FinalityCert {
     pub fn distinct_signers(&self) -> usize {
         let mut seen: Vec<&[u8; 32]> = Vec::with_capacity(self.signers.len());
         for s in &self.signers {
-            if !seen.iter().any(|t| *t == s) {
+            if !seen.contains(&s) {
                 seen.push(s);
             }
         }

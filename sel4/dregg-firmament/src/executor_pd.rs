@@ -372,12 +372,14 @@ impl<R: TurnRunner> ExecutorPd<R> {
         let (msg, token) = self.kernel.recv(endpoint)?;
         let served = self.dispatch_turn_message(&msg);
         let reply = match &served {
-            ServedTurn::Committed { receipt } => {
-                Message::new(LABEL_TURN_COMMITTED, (receipt.len() as u32).to_le_bytes().to_vec())
-            }
-            ServedTurn::Rejected { reason } => {
-                Message::new(LABEL_TURN_REJECTED, (reason.len() as u32).to_le_bytes().to_vec())
-            }
+            ServedTurn::Committed { receipt } => Message::new(
+                LABEL_TURN_COMMITTED,
+                (receipt.len() as u32).to_le_bytes().to_vec(),
+            ),
+            ServedTurn::Rejected { reason } => Message::new(
+                LABEL_TURN_REJECTED,
+                (reason.len() as u32).to_le_bytes().to_vec(),
+            ),
         };
         self.kernel.reply(token, reply)?;
         Ok(served)
@@ -392,12 +394,14 @@ impl<R: TurnRunner> ExecutorPd<R> {
     pub fn serve_turn_inline(&mut self, call: Message) -> Message {
         let served = self.dispatch_turn_message(&call);
         match served {
-            ServedTurn::Committed { receipt } => {
-                Message::new(LABEL_TURN_COMMITTED, (receipt.len() as u32).to_le_bytes().to_vec())
-            }
-            ServedTurn::Rejected { reason } => {
-                Message::new(LABEL_TURN_REJECTED, (reason.len() as u32).to_le_bytes().to_vec())
-            }
+            ServedTurn::Committed { receipt } => Message::new(
+                LABEL_TURN_COMMITTED,
+                (receipt.len() as u32).to_le_bytes().to_vec(),
+            ),
+            ServedTurn::Rejected { reason } => Message::new(
+                LABEL_TURN_REJECTED,
+                (reason.len() as u32).to_le_bytes().to_vec(),
+            ),
         }
     }
 
@@ -429,7 +433,11 @@ impl<R: TurnRunner> ExecutorPd<R> {
 /// real app-PD writes its mapped `turn_in` view. (On real seL4 the app-PD's
 /// `turn_in` write needs no handle to the executor at all; the kernel handle here
 /// is the host's stand-in for the implicit shared mapping.)
-pub fn stage_turn_into(kernel: &EmulatedKernel, turn_in: ObjectId, turn_bytes: &[u8]) -> Option<usize> {
+pub fn stage_turn_into(
+    kernel: &EmulatedKernel,
+    turn_in: ObjectId,
+    turn_bytes: &[u8],
+) -> Option<usize> {
     let need = 4 + turn_bytes.len();
     if need > kernel.region_len(turn_in)? {
         return None;
@@ -485,7 +493,10 @@ mod tests {
     impl TurnRunner for AttenuationRunner {
         fn run_turn_bytes(&mut self, turn_bytes: &[u8]) -> Result<Vec<u8>, String> {
             if turn_bytes.len() != 2 {
-                return Err(format!("malformed turn: expected 2 bytes, got {}", turn_bytes.len()));
+                return Err(format!(
+                    "malformed turn: expected 2 bytes, got {}",
+                    turn_bytes.len()
+                ));
             }
             let held = auth_of(turn_bytes[0]);
             let granted = auth_of(turn_bytes[1]);
@@ -504,7 +515,12 @@ mod tests {
     }
 
     fn boot() -> ExecutorPd<AttenuationRunner> {
-        ExecutorPd::boot(EmulatedKernel::new(), AttenuationRunner { committed: 0 }, 4096, 4096)
+        ExecutorPd::boot(
+            EmulatedKernel::new(),
+            AttenuationRunner { committed: 0 },
+            4096,
+            4096,
+        )
     }
 
     #[test]
@@ -514,10 +530,19 @@ mod tests {
         // genuine narrowing. The app-PD writes turn_in, then signals the executor.
         assert!(exec.stage_turn(&[2, 1]).is_some(), "the turn fits turn_in");
         let served = exec.step_staged_turn();
-        assert!(served.is_committed(), "an attenuating turn COMMITS through the heart");
+        assert!(
+            served.is_committed(),
+            "an attenuating turn COMMITS through the heart"
+        );
         // The receipt round-trips through commit_out (the app-PD reads it back).
-        let receipt = exec.commit_out_read().expect("commit_out holds the receipt");
-        assert_eq!(receipt, vec![2, 1, 0xCC], "the committed receipt is in commit_out");
+        let receipt = exec
+            .commit_out_read()
+            .expect("commit_out holds the receipt");
+        assert_eq!(
+            receipt,
+            vec![2, 1, 0xCC],
+            "the committed receipt is in commit_out"
+        );
         assert_eq!(exec.committed_count(), 1);
         assert_eq!(exec.rejected_count(), 0);
     }
@@ -530,10 +555,16 @@ mod tests {
         // not a receipt; no state advanced (fail-closed).
         assert!(exec.stage_turn(&[1, 2]).is_some());
         let served = exec.step_staged_turn();
-        assert!(!served.is_committed(), "a widening turn is REJECTED (the gate fires)");
+        assert!(
+            !served.is_committed(),
+            "a widening turn is REJECTED (the gate fires)"
+        );
         let reason = exec.commit_out_read().expect("commit_out holds the reason");
         let reason = String::from_utf8(reason).unwrap();
-        assert!(reason.contains("non-attenuating"), "the reason names the widening: {reason}");
+        assert!(
+            reason.contains("non-attenuating"),
+            "the reason names the widening: {reason}"
+        );
         assert_eq!(exec.committed_count(), 0);
         assert_eq!(exec.rejected_count(), 1);
     }
@@ -543,12 +574,19 @@ mod tests {
         let mut exec = boot();
         exec.stage_turn(&[2, 1]).unwrap(); // attenuating
         let reply = exec.serve_turn_inline(Message::new(LABEL_RUN_TURN, vec![]));
-        assert_eq!(reply.label, LABEL_TURN_COMMITTED, "the reply tag is COMMITTED");
+        assert_eq!(
+            reply.label, LABEL_TURN_COMMITTED,
+            "the reply tag is COMMITTED"
+        );
         // The reply payload is the receipt byte length; the app-PD reads exactly
         // that many bytes back out of commit_out.
         let declared = u32::from_le_bytes(reply.bytes[..4].try_into().unwrap()) as usize;
         let receipt = exec.commit_out_read().unwrap();
-        assert_eq!(receipt.len(), declared, "the reply length matches the commit_out receipt");
+        assert_eq!(
+            receipt.len(),
+            declared,
+            "the reply length matches the commit_out receipt"
+        );
     }
 
     #[test]
@@ -556,7 +594,10 @@ mod tests {
         let mut exec = boot();
         exec.stage_turn(&[1, 2]).unwrap(); // amplifying
         let reply = exec.serve_turn_inline(Message::new(LABEL_RUN_TURN, vec![]));
-        assert_eq!(reply.label, LABEL_TURN_REJECTED, "the reply tag is REJECTED (fail-closed)");
+        assert_eq!(
+            reply.label, LABEL_TURN_REJECTED,
+            "the reply tag is REJECTED (fail-closed)"
+        );
     }
 
     #[test]
@@ -577,16 +618,31 @@ mod tests {
         // executor serves only the run-turn protected procedure.
         let reply = exec.serve_turn_inline(Message::new(0xDEAD, vec![]));
         assert_eq!(reply.label, LABEL_TURN_REJECTED);
-        assert_eq!(exec.committed_count(), 0, "the wrong verb committed nothing");
+        assert_eq!(
+            exec.committed_count(),
+            0,
+            "the wrong verb committed nothing"
+        );
     }
 
     #[test]
     fn over_large_turn_does_not_fit_the_stage() {
         // turn_in is finite; an over-large turn is refused AT THE STAGE (the
         // executor's R-region is bounded — never truncated/overrun).
-        let exec = ExecutorPd::boot(EmulatedKernel::new(), AttenuationRunner { committed: 0 }, 16, 64);
+        let exec = ExecutorPd::boot(
+            EmulatedKernel::new(),
+            AttenuationRunner { committed: 0 },
+            16,
+            64,
+        );
         // 16-byte region holds 4 (len) + 12 payload; a 20-byte turn does not fit.
-        assert!(exec.stage_turn(&[0u8; 20]).is_none(), "an over-large turn is refused at the stage");
-        assert!(exec.stage_turn(&[0u8; 12]).is_some(), "a turn that fits is staged");
+        assert!(
+            exec.stage_turn(&[0u8; 20]).is_none(),
+            "an over-large turn is refused at the stage"
+        );
+        assert!(
+            exec.stage_turn(&[0u8; 12]).is_some(),
+            "a turn that fits is staged"
+        );
     }
 }

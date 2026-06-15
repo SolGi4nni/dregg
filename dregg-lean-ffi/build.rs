@@ -830,6 +830,7 @@ fn archive_has_dregg2(archive: &Path) -> bool {
 /// which prefixes each symbol line with the member location. The prefix format differs by platform:
 ///   * macOS/llvm-nm: `<archive>:<member.o>: <addr> T <sym>`
 ///   * GNU/binutils:  `<archive>[<member.o>]: <addr> T <sym>`
+///
 /// We extract the member by taking the basename of the path segment ending in `.o`, so the splice can
 /// purge stale project objects regardless of how they were named when the base archive was seeded.
 fn members_defining_project_initializers(archive: &Path) -> std::collections::HashSet<String> {

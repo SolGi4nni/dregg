@@ -686,7 +686,7 @@ impl BlocklaceEnvelope {
     /// Returns `None` if the payload doesn't start with the magic bytes or
     /// cannot be deserialized.
     pub fn from_payload(payload: &[u8]) -> Option<Self> {
-        if payload.len() < 4 || &payload[..4] != &Self::MAGIC {
+        if payload.len() < 4 || payload[..4] != Self::MAGIC {
             // Quick check: raw postcard doesn't have the magic as a prefix,
             // but the serialized struct does (it's the first field).
             // Try deserializing anyway.

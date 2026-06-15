@@ -258,21 +258,21 @@ pub fn garbled_circuit_descriptor() -> CircuitDescriptor {
 /// - C1-C4: circuit_commitment[0..3] == pi[0..3] (PiBinding)
 /// - C5-C8: output_label_hash[0..3] == pi[4..7] (PiBinding)
 /// - C9-C16: Decryption correctness (gated on NOT is_padding):
-///     (1 - is_padding) * (output_label[i] - table_entry[i] + hash_output[i]) == 0
+///   (1 - is_padding) * (output_label[i] - table_entry[i] + hash_output[i]) == 0
 /// - C17-C20: Binary constraints on gate type selectors
 /// - C21: Binary constraint on chain_flag
 /// - C22: Binary constraint on is_padding
 /// - C23: Gate type exclusivity (gated on NOT is_padding):
-///     (1 - is_padding) * (is_and + is_or + is_xor + is_not - 1) == 0
+///   (1 - is_padding) * (is_and + is_or + is_xor + is_not - 1) == 0
 /// - C24-C31: Wire chaining transition (gated on chain_flag AND NOT is_padding):
-///     chain_flag * (1 - is_padding) * (next[left_label_i] - local[output_label_i]) == 0
-///     NOTE: This is degree 3 so we express it as chain_flag * inner where inner has degree 1.
+///   chain_flag * (1 - is_padding) * (next[left_label_i] - local[output_label_i]) == 0
+///   NOTE: This is degree 3 so we express it as chain_flag * inner where inner has degree 1.
 /// - C32: Topological ordering transition (gated on NOT is_padding):
-///     (1 - is_padding) * (local[gate_index_delta] - (next[gate_index] - local[gate_index])) == 0
-///     Simplified: gate_index_delta is prover-supplied and must equal the actual delta.
-///     Boundary: gate_index_delta >= 0 is enforced by requiring it fits in a small range
-///     (we use a range-check-style: delta * (delta - 1) ... is impractical for large ranges,
-///      so we use the fact that BabyBear values < p/2 are "positive").
+///   (1 - is_padding) * (local[gate_index_delta] - (next[gate_index] - local[gate_index])) == 0
+///   Simplified: gate_index_delta is prover-supplied and must equal the actual delta.
+///   Boundary: gate_index_delta >= 0 is enforced by requiring it fits in a small range
+///   (we use a range-check-style: delta * (delta - 1) ... is impractical for large ranges,
+///   so we use the fact that BabyBear values < p/2 are "positive").
 pub fn garbled_extended_circuit_descriptor() -> CircuitDescriptor {
     let mut constraints = Vec::new();
 

@@ -150,9 +150,12 @@ impl Router for FirmamentRouter {
                 // seL4_CNode_Mint with reduced rights — the backing ENFORCES
                 // the narrowing too (defense in depth: the handle pre-checked,
                 // the kernel re-checks).
-                let child = self.local.mint(*slot, narrowed.rights.clone()).ok_or_else(|| {
-                    ResolveError::BackingRejected("seL4_CNode_Mint refused (amplifying)".into())
-                })?;
+                let child = self
+                    .local
+                    .mint(*slot, narrowed.rights.clone())
+                    .ok_or_else(|| {
+                        ResolveError::BackingRejected("seL4_CNode_Mint refused (amplifying)".into())
+                    })?;
                 // The delegated handle points at the new child slot.
                 Ok(Capability::local(child, narrowed.rights))
             }

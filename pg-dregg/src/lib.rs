@@ -97,7 +97,7 @@ mod pg {
               dregg.issuer_privkey only for dev/single-tenant deployments. A malformed or \
               absent key makes dregg_mint return an error (fail-closed).",
             &ISSUER_PRIVKEY,
-            GucContext::Suset,   // superuser-set only
+            GucContext::Suset, // superuser-set only
             GucFlags::NO_SHOW_ALL,
         );
     }
@@ -770,9 +770,9 @@ mod pg {
                 };
                 crate::attest::attest_range(&req).reason()
             }
-            None => format!(
-                "REFUSED: no whole-chain proof covers [{lo}, {hi}] in dregg.turn_proofs"
-            ),
+            None => {
+                format!("REFUSED: no whole-chain proof covers [{lo}, {hi}] in dregg.turn_proofs")
+            }
         }
     }
 
@@ -945,7 +945,9 @@ mod pg {
                         .expect("an executed drain stashed its batch")
                         .clone();
                     match apply_batch_through_commit_log(&batch) {
-                        Ok(()) => resolve_queue_row(&intent.id, "executed", Some(receipt_hash), None),
+                        Ok(()) => {
+                            resolve_queue_row(&intent.id, "executed", Some(receipt_hash), None)
+                        }
                         Err(e) => {
                             // The engine refused the apply (a live chain conflict a
                             // concurrent drainer caused). Record it as a chain
@@ -971,8 +973,12 @@ mod pg {
         let lag = pending_depth();
         format!(
             "drained={} refused={} (unauth={} produce={} conflict={}) remaining_lag={}",
-            counters.drained, counters.refused, counters.unauthorized,
-            counters.produce_refused, counters.conflict, lag,
+            counters.drained,
+            counters.refused,
+            counters.unauthorized,
+            counters.produce_refused,
+            counters.conflict,
+            lag,
         )
     }
 
@@ -984,12 +990,11 @@ mod pg {
     /// can read `dregg.submit_queue` + `dregg.turns` (the kernel/operator).
     #[pg_extern]
     fn dregg_drain_stats() -> String {
-        let executed: i64 = Spi::get_one(
-            "SELECT count(*) FROM dregg.submit_queue WHERE status = 'executed'",
-        )
-        .ok()
-        .flatten()
-        .unwrap_or(0);
+        let executed: i64 =
+            Spi::get_one("SELECT count(*) FROM dregg.submit_queue WHERE status = 'executed'")
+                .ok()
+                .flatten()
+                .unwrap_or(0);
         let refused: i64 =
             Spi::get_one("SELECT count(*) FROM dregg.submit_queue WHERE status = 'refused'")
                 .ok()
@@ -1146,19 +1151,36 @@ mod pg {
             "INSERT INTO dregg.commit_log(ordinal,height,block_id,block_executed_up_to,\
              turn_hash,creator,receipt_hash,ledger_root,prev_root,cells) VALUES \
              ({},{},'\\x{}',{},'\\x{}','\\x{}','\\x{}','\\x{}','\\x{}','{}'::jsonb)",
-            t.ordinal, t.height, hx(&t.block_id), t.block_executed_up_to,
-            hx(&t.turn_hash), hx(&t.creator), hx(&t.receipt_hash),
-            hx(&t.ledger_root), hx(&t.prev_root), cells_json,
+            t.ordinal,
+            t.height,
+            hx(&t.block_id),
+            t.block_executed_up_to,
+            hx(&t.turn_hash),
+            hx(&t.creator),
+            hx(&t.receipt_hash),
+            hx(&t.ledger_root),
+            hx(&t.prev_root),
+            cells_json,
         ))
         .map_err(|e| e.to_string())
     }
 
     /// Resolve a `dregg.submit_queue` row to its terminal status, stamping the
     /// receipt hash (on `executed`) or the error (on `refused`) and `resolved_at`.
-    fn resolve_queue_row(id: &[u8; 16], status: &str, receipt: Option<&[u8; 32]>, error: Option<&str>) {
+    fn resolve_queue_row(
+        id: &[u8; 16],
+        status: &str,
+        receipt: Option<&[u8; 32]>,
+        error: Option<&str>,
+    ) {
         let id_hex: String = id.iter().map(|b| format!("{b:02x}")).collect();
         let receipt_sql = receipt
-            .map(|r| format!("'\\x{}'::bytea", r.iter().map(|b| format!("{b:02x}")).collect::<String>()))
+            .map(|r| {
+                format!(
+                    "'\\x{}'::bytea",
+                    r.iter().map(|b| format!("{b:02x}")).collect::<String>()
+                )
+            })
             .unwrap_or_else(|| "NULL".to_string());
         let error_sql = error
             .map(|e| format!("'{}'", e.replace('\'', "''")))
@@ -1202,19 +1224,18 @@ mod pg {
     #[pg_extern(stable, parallel_safe, strict)]
     fn dregg_verify_turn(prev_root: &[u8], ledger_root: &[u8], ordinal: i64) -> bool {
         let _ = ledger_root; // recorded by the trigger; the chain gate is on prev_root/ordinal
-        // Read the current head + next-expected ordinal from dregg.turns.
-        // No rows ⇒ genesis (head = None, next = 0).
+                             // Read the current head + next-expected ordinal from dregg.turns.
+                             // No rows ⇒ genesis (head = None, next = 0).
         let head_hex: Option<String> = Spi::get_one(
             "SELECT encode(ledger_root, 'hex') FROM dregg.turns ORDER BY ordinal DESC LIMIT 1",
         )
         .ok()
         .flatten();
-        let next_ordinal: i64 = Spi::get_one(
-            "SELECT coalesce(max(ordinal) + 1, 0) FROM dregg.turns",
-        )
-        .ok()
-        .flatten()
-        .unwrap_or(0);
+        let next_ordinal: i64 =
+            Spi::get_one("SELECT coalesce(max(ordinal) + 1, 0) FROM dregg.turns")
+                .ok()
+                .flatten()
+                .unwrap_or(0);
 
         let head: Option<[u8; 32]> = head_hex.and_then(|h| decode_root_hex(&h));
         let Some(prev) = slice_to_root(prev_root) else {
@@ -1249,11 +1270,9 @@ mod pg {
     #[pg_extern(stable, parallel_safe)]
     fn dregg_admits(action: &str, resource: &str) -> bool {
         // current_setting('dregg.token', true) — missing-ok ⇒ NULL ⇒ deny.
-        let token: Option<String> = Spi::get_one_with_args(
-            "SELECT current_setting('dregg.token', true)",
-            &[],
-        )
-        .unwrap_or(None);
+        let token: Option<String> =
+            Spi::get_one_with_args("SELECT current_setting('dregg.token', true)", &[])
+                .unwrap_or(None);
         let Some(token) = token else { return false };
         // unix seconds: extract(epoch from now())::bigint
         let now: i64 = Spi::get_one("SELECT extract(epoch from now())::bigint")
@@ -1289,10 +1308,8 @@ mod pg {
     #[pg_extern(security_definer)]
     fn dregg_mint(subject: &str, caveats: pgrx::JsonB, until: i64) -> String {
         sync_mint_key();
-        let json = serde_json::to_string(&caveats.0)
-            .unwrap_or_else(|_| "[]".to_string());
-        authz::mint_token(subject, &json, until)
-            .unwrap_or_else(|e| pgrx::error!("dregg_mint: {e}"))
+        let json = serde_json::to_string(&caveats.0).unwrap_or_else(|_| "[]".to_string());
+        authz::mint_token(subject, &json, until).unwrap_or_else(|e| pgrx::error!("dregg_mint: {e}"))
     }
 
     /// `dregg_attenuate(token, caveats) -> text`. Narrow an existing credential
@@ -1304,8 +1321,7 @@ mod pg {
     /// IMMUTABLE + PARALLEL SAFE: no issuer key needed; the holder may attenuate.
     #[pg_extern(immutable, parallel_safe, strict)]
     fn dregg_attenuate(token: &str, caveats: pgrx::JsonB) -> String {
-        let json = serde_json::to_string(&caveats.0)
-            .unwrap_or_else(|_| "[]".to_string());
+        let json = serde_json::to_string(&caveats.0).unwrap_or_else(|_| "[]".to_string());
         authz::attenuate_token(token, &json)
             .unwrap_or_else(|e| pgrx::error!("dregg_attenuate: {e}"))
     }
@@ -1361,11 +1377,7 @@ mod pg {
     ) -> String {
         sync_mint_key();
         // Collect the action set (skip SQL NULL array elements).
-        let actions: Vec<String> = actions
-            .iter()
-            .flatten()
-            .map(|s| s.to_string())
-            .collect();
+        let actions: Vec<String> = actions.iter().flatten().map(|s| s.to_string()).collect();
         // Resolve the absolute expiry epoch with postgres's own interval
         // arithmetic (correct for months/days/DST), keeping the unix-seconds
         // clock contract dregg_admits reads. `now() + ttl`, as bigint seconds.
@@ -1609,11 +1621,29 @@ mod pg {
 
             // The post-image carries the executor-VERIFIED post-balances (source
             // 1000→970, agent 0→30) — the executor genuinely decided, in-backend.
-            assert_eq!(producer.balance(source), 970, "source debited by the in-backend executor");
-            assert_eq!(producer.balance(agent), 30, "agent credited by the in-backend executor");
-            assert_eq!(batch.turn.creator, agent, "the turn is attributed to the acting agent");
-            let dst = batch.cells.iter().find(|c| c.cell_id == agent).expect("agent post-image");
-            assert_eq!(dst.balance, 30, "the agent's verified post-balance is mirrored");
+            assert_eq!(
+                producer.balance(source),
+                970,
+                "source debited by the in-backend executor"
+            );
+            assert_eq!(
+                producer.balance(agent),
+                30,
+                "agent credited by the in-backend executor"
+            );
+            assert_eq!(
+                batch.turn.creator, agent,
+                "the turn is attributed to the acting agent"
+            );
+            let dst = batch
+                .cells
+                .iter()
+                .find(|c| c.cell_id == agent)
+                .expect("agent post-image");
+            assert_eq!(
+                dst.balance, 30,
+                "the agent's verified post-balance is mirrored"
+            );
         }
 
         /// TIER-D, the **full SQL write path** through the in-backend executor.
@@ -1649,7 +1679,11 @@ mod pg {
             // A pg-user enqueues ONE authorized turn FOR ALICE (the submit_gate RLS
             // bites as the unprivileged reader; the row captures its submit_token).
             let alice_hex: String = synth::ALICE.iter().map(|b| format!("{b:02x}")).collect();
-            Spi::run(&format!("SET dregg.token = '{}'", submit_token(&root, "a1"))).unwrap();
+            Spi::run(&format!(
+                "SET dregg.token = '{}'",
+                submit_token(&root, "a1")
+            ))
+            .unwrap();
             Spi::run("SET ROLE dregg_reader").unwrap();
             let _: Option<pgrx::Uuid> = Spi::get_one(&format!(
                 "SELECT dregg_submit_turn('\\xabcd'::bytea, '\\x{alice_hex}'::bytea)"
@@ -1660,33 +1694,49 @@ mod pg {
             // The kernel drains it: PRODUCE runs the REAL execFullForestG in-backend,
             // CHAIN admits it onto the head, and the commit_log gate materializes it.
             Spi::run("SET ROLE dregg_kernel").unwrap();
-            let report: String = Spi::get_one("SELECT dregg_drain_once(16)").unwrap().unwrap();
+            let report: String = Spi::get_one("SELECT dregg_drain_once(16)")
+                .unwrap()
+                .unwrap();
             Spi::run("RESET ROLE").unwrap();
             assert!(
                 report.contains("drained=1"),
                 "the executor-produced turn drained (NOT fail-closed at produce): {report}"
             );
-            assert!(report.contains("remaining_lag=0"), "the queue emptied: {report}");
+            assert!(
+                report.contains("remaining_lag=0"),
+                "the queue emptied: {report}"
+            );
 
             // The verified-turn receipt LANDED: one row in dregg.turns (the real
             // execFullForestG post-image, admitted through the Tier-C commit_log
             // chain gate), and the queue row resolved 'executed' with a receipt.
-            let turns: i64 = Spi::get_one("SELECT count(*) FROM dregg.turns").unwrap().unwrap();
-            assert_eq!(turns, 1, "the executor's verified turn committed to the store");
+            let turns: i64 = Spi::get_one("SELECT count(*) FROM dregg.turns")
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                turns, 1,
+                "the executor's verified turn committed to the store"
+            );
             let executed: i64 = Spi::get_one(
                 "SELECT count(*) FROM dregg.submit_queue \
                  WHERE status='executed' AND receipt_hash IS NOT NULL",
             )
             .unwrap()
             .unwrap();
-            assert_eq!(executed, 1, "the queue row resolved executed with the executor's receipt");
+            assert_eq!(
+                executed, 1,
+                "the queue row resolved executed with the executor's receipt"
+            );
             // ALICE's post-image is materialized (the executor credited her cell).
             let alice_rows: i64 = Spi::get_one(&format!(
                 "SELECT count(*) FROM dregg.cells WHERE cell_id = '\\x{alice_hex}'::bytea"
             ))
             .unwrap()
             .unwrap();
-            assert_eq!(alice_rows, 1, "ALICE's executor-verified post-image is in dregg.cells");
+            assert_eq!(
+                alice_rows, 1,
+                "ALICE's executor-verified post-image is in dregg.cells"
+            );
         }
 
         #[pg_test]
@@ -1794,7 +1844,10 @@ mod pg {
             let n_narrow = count_under(&mk(Some("org/42/public/")));
             assert_eq!(n_root, 3, "root token should see the three org/42 rows");
             assert_eq!(n_narrow, 2, "narrowed token should see only org/42/public");
-            assert!(n_narrow < n_root, "attenuation must strictly narrow visibility");
+            assert!(
+                n_narrow < n_root,
+                "attenuation must strictly narrow visibility"
+            );
         }
 
         #[pg_test]
@@ -1836,7 +1889,11 @@ mod pg {
                 Spi::run("RESET ROLE").unwrap();
                 n
             };
-            assert_eq!(count("before"), 2, "token admits both rows before revocation");
+            assert_eq!(
+                count("before"),
+                2,
+                "token admits both rows before revocation"
+            );
 
             // Revoke the EXACT presented credential (as the privileged owner).
             Spi::run_with_args("SELECT dregg_revoke($1)", &[tok.as_str().into()]).unwrap();
@@ -1934,9 +1991,15 @@ mod pg {
                 "INSERT INTO dregg.turns(ordinal,height,block_id,block_executed_up_to,\
                  turn_hash,creator,receipt_hash,ledger_root,prev_root) VALUES \
                  ({},{},'\\x{}',{},'\\x{}','\\x{}','\\x{}','\\x{}','\\x{}')",
-                t.ordinal, t.height, hx(&t.block_id), t.block_executed_up_to,
-                hx(&t.turn_hash), hx(&t.creator), hx(&t.receipt_hash),
-                hx(&t.ledger_root), hx(&t.prev_root),
+                t.ordinal,
+                t.height,
+                hx(&t.block_id),
+                t.block_executed_up_to,
+                hx(&t.turn_hash),
+                hx(&t.creator),
+                hx(&t.receipt_hash),
+                hx(&t.ledger_root),
+                hx(&t.prev_root),
             ))
             .unwrap();
             for c in &b.cells {
@@ -1956,8 +2019,14 @@ mod pg {
                 let action: Option<String> = Spi::get_one(&format!(
                     "SELECT dregg.merge_cell('\\x{}'::bytea,'{}',{},{},'\\x'::bytea,{},\
                      '{}',{},'\\x{}'::bytea)",
-                    hx(&c.cell_id), c.mode, c.balance, c.nonce, fj, c.lifecycle,
-                    c.last_ordinal, hx(&c.cell_root),
+                    hx(&c.cell_id),
+                    c.mode,
+                    c.balance,
+                    c.nonce,
+                    fj,
+                    c.lifecycle,
+                    c.last_ordinal,
+                    hx(&c.cell_root),
                 ))
                 .unwrap();
                 // pg18 dregg.merge_cell returns '<ACTION> <DELTA>' (e.g.
@@ -1984,8 +2053,13 @@ mod pg {
                     "INSERT INTO dregg.capabilities(holder,slot,target,permissions,\
                      allowed_effects,expires_at,last_ordinal) \
                      VALUES ('\\x{}',{},'\\x{}','{}'::jsonb,{},{},{})",
-                    hx(&cap.holder), cap.slot, hx(&cap.target),
-                    cap.permissions_json, eff, exp, cap.last_ordinal,
+                    hx(&cap.holder),
+                    cap.slot,
+                    hx(&cap.target),
+                    cap.permissions_json,
+                    eff,
+                    exp,
+                    cap.last_ordinal,
                 ))
                 .unwrap();
             }
@@ -1996,14 +2070,26 @@ mod pg {
         fn mirror_tokens(root: &RootKey) -> (String, String) {
             let operator = root
                 .mint([
-                    Caveat::FirstParty(Pred::AttrEq { key: "action".into(), value: "read".into() }),
-                    Caveat::FirstParty(Pred::AttrPrefix { key: "resource".into(), prefix: "".into() }),
+                    Caveat::FirstParty(Pred::AttrEq {
+                        key: "action".into(),
+                        value: "read".into(),
+                    }),
+                    Caveat::FirstParty(Pred::AttrPrefix {
+                        key: "resource".into(),
+                        prefix: "".into(),
+                    }),
                 ])
                 .encode();
             let alice_only = root
                 .mint([
-                    Caveat::FirstParty(Pred::AttrEq { key: "action".into(), value: "read".into() }),
-                    Caveat::FirstParty(Pred::AttrPrefix { key: "resource".into(), prefix: "".into() }),
+                    Caveat::FirstParty(Pred::AttrEq {
+                        key: "action".into(),
+                        value: "read".into(),
+                    }),
+                    Caveat::FirstParty(Pred::AttrPrefix {
+                        key: "resource".into(),
+                        prefix: "".into(),
+                    }),
                 ])
                 .attenuate([Caveat::FirstParty(Pred::AttrPrefix {
                     key: "resource".into(),
@@ -2046,7 +2132,10 @@ mod pg {
             // real Tier-B RLS on the mirror.
             let n_alice = cells_visible(&alice_only);
             assert_eq!(n_alice, 1, "attenuated token should see only ALICE's cell");
-            assert!(n_alice < n_op, "attenuation must strictly narrow mirror visibility");
+            assert!(
+                n_alice < n_op,
+                "attenuation must strictly narrow mirror visibility"
+            );
         }
 
         #[pg_test]
@@ -2079,7 +2168,10 @@ mod pg {
             let turns: i64 = Spi::get_one("SELECT count(*) FROM dregg.receipt_chain")
                 .unwrap()
                 .unwrap();
-            assert_eq!(turns, 4, "all four committed turns are in the receipt chain");
+            assert_eq!(
+                turns, 4,
+                "all four committed turns are in the receipt chain"
+            );
             Spi::run("RESET ROLE").unwrap();
         }
 
@@ -2104,9 +2196,18 @@ mod pg {
                 .unwrap()
             };
             assert!(can("SELECT"), "the reader must be able to SELECT state");
-            assert!(!can("INSERT"), "the reader must NOT be able to INSERT state");
-            assert!(!can("UPDATE"), "the reader must NOT be able to UPDATE state");
-            assert!(!can("DELETE"), "the reader must NOT be able to DELETE state");
+            assert!(
+                !can("INSERT"),
+                "the reader must NOT be able to INSERT state"
+            );
+            assert!(
+                !can("UPDATE"),
+                "the reader must NOT be able to UPDATE state"
+            );
+            assert!(
+                !can("DELETE"),
+                "the reader must NOT be able to DELETE state"
+            );
 
             // And the kernel writer DOES hold the write privileges (the only
             // role that may materialize post-images).
@@ -2141,45 +2242,59 @@ mod pg {
             // not the ord-1 insert's nonce=0 — a later turn overwrote in place,
             // and there is exactly ONE ALICE row (no duplicate from re-insert).
             // (Aggregates so the scalar read always yields a row.)
-            let alice_hex: String =
-                crate::synth::ALICE.iter().map(|b| format!("{b:02x}")).collect();
+            let alice_hex: String = crate::synth::ALICE
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect();
             let alice_nonce: i64 = Spi::get_one(&format!(
                 "SELECT coalesce(max(nonce), -1) FROM dregg.cells \
                  WHERE cell_id = '\\x{alice_hex}'::bytea"
             ))
             .unwrap()
             .unwrap();
-            assert_eq!(alice_nonce, 2, "MERGE update arm: ALICE's latest post-image wins");
+            assert_eq!(
+                alice_nonce, 2,
+                "MERGE update arm: ALICE's latest post-image wins"
+            );
             let alice_rows: i64 = Spi::get_one(&format!(
                 "SELECT count(*) FROM dregg.cells WHERE cell_id = '\\x{alice_hex}'::bytea"
             ))
             .unwrap()
             .unwrap();
-            assert_eq!(alice_rows, 1, "MERGE keeps exactly one row per cell (no dup insert)");
+            assert_eq!(
+                alice_rows, 1,
+                "MERGE keeps exactly one row per cell (no dup insert)"
+            );
 
             // JSON_TABLE view cell_fields: the decoded balance/nonce slots come
             // out of fields_json as typed columns. TREASURY's row shows 999_500.
-            let treasury_bal: i64 = Spi::get_one(
-                "SELECT coalesce(max(balance), -1) FROM dregg.cell_fields",
-            )
-            .unwrap()
-            .unwrap();
-            assert_eq!(treasury_bal, 999_500, "cell_fields JSON_TABLE projects the balance slot");
+            let treasury_bal: i64 =
+                Spi::get_one("SELECT coalesce(max(balance), -1) FROM dregg.cell_fields")
+                    .unwrap()
+                    .unwrap();
+            assert_eq!(
+                treasury_bal, 999_500,
+                "cell_fields JSON_TABLE projects the balance slot"
+            );
 
             // JSON_TABLE view cap_attenuations: the grant turn's allowed_effects
             // array `["transfer"]` is exploded into one effect row for ALICE→BOB.
-            let n_effects: i64 = Spi::get_one(
-                "SELECT count(*) FROM dregg.cap_attenuations",
-            )
-            .unwrap()
-            .unwrap();
-            assert_eq!(n_effects, 1, "exactly one attenuated effect across the story");
+            let n_effects: i64 = Spi::get_one("SELECT count(*) FROM dregg.cap_attenuations")
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                n_effects, 1,
+                "exactly one attenuated effect across the story"
+            );
             let effect: Option<String> = Spi::get_one::<String>(
                 "SELECT string_agg(effect, ',') FROM dregg.cap_attenuations",
             )
             .unwrap();
-            assert_eq!(effect.as_deref(), Some("transfer"),
-                "cap_attenuations JSON_TABLE explodes the allowed_effects array");
+            assert_eq!(
+                effect.as_deref(),
+                Some("transfer"),
+                "cap_attenuations JSON_TABLE explodes the allowed_effects array"
+            );
             Spi::run("RESET ROLE").unwrap();
         }
 
@@ -2197,8 +2312,9 @@ mod pg {
         fn pg18_merge_returning_delta_virtual_columns_and_uuidv7() {
             let root = root();
             assert_issuer(&root);
-            let summary: String =
-                Spi::get_one("SELECT dregg_install_schema()").unwrap().unwrap();
+            let summary: String = Spi::get_one("SELECT dregg_install_schema()")
+                .unwrap()
+                .unwrap();
             assert!(summary.contains("Tier-B store installed"));
             Spi::run("SET ROLE dregg_kernel").unwrap(); // BYPASSRLS writer
 
@@ -2219,7 +2335,10 @@ mod pg {
             ))
             .unwrap()
             .unwrap();
-            assert_eq!(ins, "INSERT +1000000", "pg18 RETURNING new-old delta on the INSERT arm");
+            assert_eq!(
+                ins, "INSERT +1000000",
+                "pg18 RETURNING new-old delta on the INSERT arm"
+            );
 
             // (1b) UPDATE arm: re-merge the same cell down to 999_500. pg18 reads
             // old.balance = 1_000_000 in the same statement ⇒ delta = -500.
@@ -2229,7 +2348,10 @@ mod pg {
             ))
             .unwrap()
             .unwrap();
-            assert_eq!(upd, "UPDATE -500", "pg18 RETURNING new-old delta on the UPDATE arm");
+            assert_eq!(
+                upd, "UPDATE -500",
+                "pg18 RETURNING new-old delta on the UPDATE arm"
+            );
 
             // (2) VIRTUAL generated columns: cell_root_hex / balance_field are
             // read-time projections equal to their canonical source, with no
@@ -2241,7 +2363,10 @@ mod pg {
             ))
             .unwrap()
             .unwrap();
-            assert_eq!(consistent, 1, "VIRTUAL generated columns equal their canonical source on read");
+            assert_eq!(
+                consistent, 1,
+                "VIRTUAL generated columns equal their canonical source on read"
+            );
             // pg_attribute records cell_root_hex / balance_field as virtual
             // (attgenerated='v') and cell_hex as stored ('s') — the pg18 kinds.
             let kinds: Option<String> = Spi::get_one(
@@ -2260,13 +2385,17 @@ mod pg {
 
             // (3) uuidv7(): the submit_queue id default is the temporally-sortable
             // v7 (version nibble 7), so two rows inserted in order sort by id.
-            let o: String = Spi::get_one("SELECT dregg_install_write_outbox()").unwrap().unwrap();
+            let o: String = Spi::get_one("SELECT dregg_install_write_outbox()")
+                .unwrap()
+                .unwrap();
             assert!(o.contains("write outbox installed"));
-            let ver: Option<i32> = Spi::get_one(
-                "SELECT get_byte(uuid_send(uuidv7()), 6) >> 4",
-            )
-            .unwrap();
-            assert_eq!(ver, Some(7), "uuidv7() mints a version-7 (temporally sortable) uuid");
+            let ver: Option<i32> =
+                Spi::get_one("SELECT get_byte(uuid_send(uuidv7()), 6) >> 4").unwrap();
+            assert_eq!(
+                ver,
+                Some(7),
+                "uuidv7() mints a version-7 (temporally sortable) uuid"
+            );
         }
 
         // ===================================================================
@@ -2286,15 +2415,27 @@ mod pg {
             // read on org/42/ until clock 2000, the canonical M1 caveat shape.
             let tok = root
                 .mint([
-                    Caveat::FirstParty(Pred::AttrEq { key: "action".into(), value: "read".into() }),
-                    Caveat::FirstParty(Pred::AttrPrefix { key: "resource".into(), prefix: "org/42/".into() }),
+                    Caveat::FirstParty(Pred::AttrEq {
+                        key: "action".into(),
+                        value: "read".into(),
+                    }),
+                    Caveat::FirstParty(Pred::AttrPrefix {
+                        key: "resource".into(),
+                        prefix: "org/42/".into(),
+                    }),
                     Caveat::FirstParty(Pred::NotAfter { at: 2000 }),
                 ])
                 .encode();
             // The matching Pred (the algebra the caveat chain encodes), as JSON.
             let pred_json = serde_json::to_string(&Pred::AllOf(vec![
-                Pred::AttrEq { key: "action".into(), value: "read".into() },
-                Pred::AttrPrefix { key: "resource".into(), prefix: "org/42/".into() },
+                Pred::AttrEq {
+                    key: "action".into(),
+                    value: "read".into(),
+                },
+                Pred::AttrPrefix {
+                    key: "resource".into(),
+                    prefix: "org/42/".into(),
+                },
                 Pred::NotAfter { at: 2000 },
             ]))
             .unwrap();
@@ -2306,7 +2447,10 @@ mod pg {
             )
             .unwrap();
             let path = path.expect("a first-party Pred compiles to a jsonpath");
-            assert!(path.starts_with("$ ? ("), "the path is a filter expression: {path}");
+            assert!(
+                path.starts_with("$ ? ("),
+                "the path is a filter expression: {path}"
+            );
 
             // A matrix of rows: the chain-verified `dregg_cap_admits` verdict and
             // the `dregg_pred_matches` (jsonpath) verdict must be EQUAL on each.
@@ -2340,14 +2484,20 @@ mod pg {
             let bad_path: Option<String> =
                 Spi::get_one_with_args("SELECT dregg_pred_jsonpath($1)", &["not json".into()])
                     .unwrap();
-            assert!(bad_path.is_none(), "a non-Pred string yields NULL (fail-closed)");
+            assert!(
+                bad_path.is_none(),
+                "a non-Pred string yields NULL (fail-closed)"
+            );
             let bad_match: bool = Spi::get_one_with_args(
                 "SELECT dregg_pred_matches($1, '{}'::jsonb)",
                 &["not json".into()],
             )
             .unwrap()
             .unwrap();
-            assert!(!bad_match, "an unparseable predicate matches nothing (fail-closed)");
+            assert!(
+                !bad_match,
+                "an unparseable predicate matches nothing (fail-closed)"
+            );
         }
 
         #[pg_test]
@@ -2381,7 +2531,10 @@ mod pg {
             .unwrap()
             .unwrap();
             Spi::run("RESET ROLE").unwrap();
-            assert_eq!(matched, 1, "exactly one cell (TREASURY, c0…) matches the c0 prefix predicate");
+            assert_eq!(
+                matched, 1,
+                "exactly one cell (TREASURY, c0…) matches the c0 prefix predicate"
+            );
         }
 
         // ===================================================================
@@ -2401,14 +2554,22 @@ mod pg {
             // funded TREASURY; the transfer touched TREASURY + ALICE. So ordinal 0
             // has 1 effect row and ordinal 1 has 2.
             Spi::run("SET ROLE dregg_kernel").unwrap();
-            let ord0: i64 = Spi::get_one("SELECT count(*) FROM dregg.turn_effects WHERE ordinal = 0")
-                .unwrap()
-                .unwrap();
-            let ord1: i64 = Spi::get_one("SELECT count(*) FROM dregg.turn_effects WHERE ordinal = 1")
-                .unwrap()
-                .unwrap();
-            assert_eq!(ord0, 1, "genesis turn has one touched-cell effect row (TREASURY)");
-            assert!(ord1 >= 2, "the transfer turn touched at least TREASURY + ALICE");
+            let ord0: i64 =
+                Spi::get_one("SELECT count(*) FROM dregg.turn_effects WHERE ordinal = 0")
+                    .unwrap()
+                    .unwrap();
+            let ord1: i64 =
+                Spi::get_one("SELECT count(*) FROM dregg.turn_effects WHERE ordinal = 1")
+                    .unwrap()
+                    .unwrap();
+            assert_eq!(
+                ord0, 1,
+                "genesis turn has one touched-cell effect row (TREASURY)"
+            );
+            assert!(
+                ord1 >= 2,
+                "the transfer turn touched at least TREASURY + ALICE"
+            );
 
             // canonical_cells: the builtin-C-collation byte-order. The first row by
             // cell_hex is ALICE (a1…) before TREASURY (c0…) — deterministic,
@@ -2430,7 +2591,10 @@ mod pg {
             )
             .unwrap()
             .unwrap();
-            assert_eq!(hexes_consistent, 0, "generated hex columns equal the canonical bytea's hex");
+            assert_eq!(
+                hexes_consistent, 0,
+                "generated hex columns equal the canonical bytea's hex"
+            );
             Spi::run("RESET ROLE").unwrap();
         }
 
@@ -2452,7 +2616,9 @@ mod pg {
             let root = root();
             assert_issuer(&root);
             install_tier_b_and_load_synth();
-            let o: String = Spi::get_one("SELECT dregg_install_login_binding()").unwrap().unwrap();
+            let o: String = Spi::get_one("SELECT dregg_install_login_binding()")
+                .unwrap()
+                .unwrap();
             assert!(o.contains("login binding installed"));
 
             // Map a role to an ALICE-only token (read on a1*). The event trigger
@@ -2461,8 +2627,14 @@ mod pg {
             // observable consequence the trigger exists to produce.
             let alice_tok = root
                 .mint([
-                    Caveat::FirstParty(Pred::AttrEq { key: "action".into(), value: "read".into() }),
-                    Caveat::FirstParty(Pred::AttrPrefix { key: "resource".into(), prefix: "a1".into() }),
+                    Caveat::FirstParty(Pred::AttrEq {
+                        key: "action".into(),
+                        value: "read".into(),
+                    }),
+                    Caveat::FirstParty(Pred::AttrPrefix {
+                        key: "resource".into(),
+                        prefix: "a1".into(),
+                    }),
                 ])
                 .encode();
             let alice_hex: String = synth::ALICE.iter().map(|b| format!("{b:02x}")).collect();
@@ -2480,16 +2652,24 @@ mod pg {
                 "SELECT default_token FROM dregg.role_identity WHERE pg_role = 'dregg_reader'",
             )
             .unwrap();
-            assert!(bound.is_some(), "the role's identity row carries its bound token");
+            assert!(
+                bound.is_some(),
+                "the role's identity row carries its bound token"
+            );
 
             // Apply the trigger's effect (set the session token from the row) and
             // confirm the RLS then narrows: as dregg_reader, only ALICE's cell is
             // visible — the same outcome a login-bound connection gets.
             Spi::run(&format!("SET dregg.token = '{}'", bound.unwrap())).unwrap();
             Spi::run("SET ROLE dregg_reader").unwrap();
-            let visible: i64 = Spi::get_one("SELECT count(*) FROM dregg.cells").unwrap().unwrap();
+            let visible: i64 = Spi::get_one("SELECT count(*) FROM dregg.cells")
+                .unwrap()
+                .unwrap();
             Spi::run("RESET ROLE").unwrap();
-            assert_eq!(visible, 1, "the login-bound token narrows the reader to ALICE's cell only");
+            assert_eq!(
+                visible, 1,
+                "the login-bound token narrows the reader to ALICE's cell only"
+            );
         }
 
         #[pg_test]
@@ -2508,7 +2688,11 @@ mod pg {
                 matches!(err, crate::mirror::ChainRefusal::RootMismatch { .. }),
                 "a tampered batch must be refused by the root-chain tooth"
             );
-            assert_eq!(chain.head(), head_before, "a refused batch must not move the head");
+            assert_eq!(
+                chain.head(),
+                head_before,
+                "a refused batch must not move the head"
+            );
         }
 
         // ===================================================================
@@ -2533,9 +2717,16 @@ mod pg {
                 "INSERT INTO dregg.commit_log(ordinal,height,block_id,block_executed_up_to,\
                  turn_hash,creator,receipt_hash,ledger_root,prev_root,cells) VALUES \
                  ({},{},'\\x{}',{},'\\x{}','\\x{}','\\x{}','\\x{}','\\x{}','{}'::jsonb)",
-                t.ordinal, t.height, hx(&t.block_id), t.block_executed_up_to,
-                hx(&t.turn_hash), hx(&t.creator), hx(&t.receipt_hash),
-                hx(&t.ledger_root), hx(&t.prev_root), cells_json,
+                t.ordinal,
+                t.height,
+                hx(&t.block_id),
+                t.block_executed_up_to,
+                hx(&t.turn_hash),
+                hx(&t.creator),
+                hx(&t.receipt_hash),
+                hx(&t.ledger_root),
+                hx(&t.prev_root),
+                cells_json,
             ))
         }
 
@@ -2545,16 +2736,21 @@ mod pg {
         /// `dregg_verify_turn` (chain re-validation) → record turn →
         /// MERGE-materialize cells.
         fn install_tier_c_and_submit_story() -> Vec<MirrorBatch> {
-            let summary: String =
-                Spi::get_one("SELECT dregg_install_schema()").unwrap().unwrap();
+            let summary: String = Spi::get_one("SELECT dregg_install_schema()")
+                .unwrap()
+                .unwrap();
             assert!(summary.contains("Tier-B store installed"));
-            let c_summary: String =
-                Spi::get_one("SELECT dregg_install_tier_c()").unwrap().unwrap();
+            let c_summary: String = Spi::get_one("SELECT dregg_install_tier_c()")
+                .unwrap()
+                .unwrap();
             assert!(c_summary.contains("Tier-C verified-store gate installed"));
             let story = synth::ledger_story();
             for b in &story {
                 submit_through_commit_log(b).unwrap_or_else(|e| {
-                    panic!("the gate refused a well-formed turn {}: {e}", b.turn.ordinal)
+                    panic!(
+                        "the gate refused a well-formed turn {}: {e}",
+                        b.turn.ordinal
+                    )
                 });
             }
             story
@@ -2574,18 +2770,33 @@ mod pg {
             // is 2 (from ord 3): the MERGE update arm won, exactly as the mirror
             // path materializes. State exists ONLY because a verified turn produced
             // it through the gate.
-            let turns: i64 = Spi::get_one("SELECT count(*) FROM dregg.turns").unwrap().unwrap();
-            assert_eq!(turns, 4, "all four verified turns recorded through the gate");
-            let cells: i64 = Spi::get_one("SELECT count(*) FROM dregg.cells").unwrap().unwrap();
-            assert_eq!(cells, 3, "three distinct cells materialized (TREASURY/ALICE/BOB)");
-            let alice_hex: String =
-                crate::synth::ALICE.iter().map(|b| format!("{b:02x}")).collect();
+            let turns: i64 = Spi::get_one("SELECT count(*) FROM dregg.turns")
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                turns, 4,
+                "all four verified turns recorded through the gate"
+            );
+            let cells: i64 = Spi::get_one("SELECT count(*) FROM dregg.cells")
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                cells, 3,
+                "three distinct cells materialized (TREASURY/ALICE/BOB)"
+            );
+            let alice_hex: String = crate::synth::ALICE
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect();
             let alice_nonce: i64 = Spi::get_one(&format!(
                 "SELECT max(nonce) FROM dregg.cells WHERE cell_id = '\\x{alice_hex}'::bytea"
             ))
             .unwrap()
             .unwrap();
-            assert_eq!(alice_nonce, 2, "the gate materialized ALICE's latest post-image (MERGE)");
+            assert_eq!(
+                alice_nonce, 2,
+                "the gate materialized ALICE's latest post-image (MERGE)"
+            );
 
             // The receipt chain the gate built is a walkable hash chain: each row's
             // prev_root is the prior row's ledger_root (the light-client tooth).
@@ -2596,7 +2807,10 @@ mod pg {
             )
             .unwrap()
             .unwrap();
-            assert_eq!(breaks, 0, "the gate-built turns table is an unbroken hash chain");
+            assert_eq!(
+                breaks, 0,
+                "the gate-built turns table is an unbroken hash chain"
+            );
         }
 
         /// THE anti-substitution proof, through the database engine: after the
@@ -2605,7 +2819,9 @@ mod pg {
         /// `dregg_verify_turn` — the INSERT RAISEs the exact anti-substitution
         /// error, so no forged state can enter. `#[pg_test(error = …)]` asserts
         /// the precise message: the gate, not a trusted writer, refuses.
-        #[pg_test(error = "dregg: turn 4 does not chain onto the head root — refused (anti-substitution)")]
+        #[pg_test(
+            error = "dregg: turn 4 does not chain onto the head root — refused (anti-substitution)"
+        )]
         fn tier_c_gate_refuses_a_tampered_batch_by_raising() {
             let root = root();
             assert_issuer(&root);
@@ -2631,8 +2847,14 @@ mod pg {
         /// (e.g. "a1" for ALICE), minted under the test root.
         fn submit_token(root: &RootKey, prefix: &str) -> String {
             root.mint([
-                Caveat::FirstParty(Pred::AttrEq { key: "action".into(), value: "submit".into() }),
-                Caveat::FirstParty(Pred::AttrPrefix { key: "resource".into(), prefix: prefix.into() }),
+                Caveat::FirstParty(Pred::AttrEq {
+                    key: "action".into(),
+                    value: "submit".into(),
+                }),
+                Caveat::FirstParty(Pred::AttrPrefix {
+                    key: "resource".into(),
+                    prefix: prefix.into(),
+                }),
             ])
             .encode()
         }
@@ -2641,24 +2863,33 @@ mod pg {
         fn write_path_submit_turn_enqueues_under_an_authorized_token() {
             let root = root();
             assert_issuer(&root);
-            let summary: String =
-                Spi::get_one("SELECT dregg_install_schema()").unwrap().unwrap();
+            let summary: String = Spi::get_one("SELECT dregg_install_schema()")
+                .unwrap()
+                .unwrap();
             assert!(summary.contains("Tier-B store installed"));
-            let o_summary: String =
-                Spi::get_one("SELECT dregg_install_write_outbox()").unwrap().unwrap();
+            let o_summary: String = Spi::get_one("SELECT dregg_install_write_outbox()")
+                .unwrap()
+                .unwrap();
             assert!(o_summary.contains("write outbox installed"));
 
             let alice_hex: String = synth::ALICE.iter().map(|b| format!("{b:02x}")).collect();
             // Present an ALICE-submit token and enqueue a turn FOR ALICE as the
             // unprivileged dregg_reader (so the submit_gate RLS policy bites).
-            Spi::run(&format!("SET dregg.token = '{}'", submit_token(&root, "a1"))).unwrap();
+            Spi::run(&format!(
+                "SET dregg.token = '{}'",
+                submit_token(&root, "a1")
+            ))
+            .unwrap();
             Spi::run("SET ROLE dregg_reader").unwrap();
             let id: Option<pgrx::Uuid> = Spi::get_one(&format!(
                 "SELECT dregg_submit_turn('\\xdeadbeef'::bytea, '\\x{alice_hex}'::bytea)"
             ))
             .unwrap();
             Spi::run("RESET ROLE").unwrap();
-            assert!(id.is_some(), "an authorized submit must enqueue and return an id");
+            assert!(
+                id.is_some(),
+                "an authorized submit must enqueue and return an id"
+            );
 
             // The row landed as 'pending' for ALICE (the node will drain it).
             let pending: i64 = Spi::get_one(&format!(
@@ -2667,7 +2898,10 @@ mod pg {
             ))
             .unwrap()
             .unwrap();
-            assert_eq!(pending, 1, "the authorized turn is queued pending for the node");
+            assert_eq!(
+                pending, 1,
+                "the authorized turn is queued pending for the node"
+            );
         }
 
         #[pg_test(error = "new row violates row-level security policy for table \"submit_queue\"")]
@@ -2682,7 +2916,11 @@ mod pg {
             // BOB. The submit_gate WITH CHECK (dregg_admits('submit', bob_hex))
             // is FALSE under an a1-prefixed token, so RLS refuses the INSERT — a
             // role cannot submit a turn its capability does not authorize.
-            Spi::run(&format!("SET dregg.token = '{}'", submit_token(&root, "a1"))).unwrap();
+            Spi::run(&format!(
+                "SET dregg.token = '{}'",
+                submit_token(&root, "a1")
+            ))
+            .unwrap();
             Spi::run("SET ROLE dregg_reader").unwrap();
             // This RAISEs the RLS violation, which is the test's expected ERROR.
             let _: Option<pgrx::Uuid> = Spi::get_one(&format!(
@@ -2736,10 +2974,15 @@ mod pg {
             // Drain them all in one poll, as the kernel (BYPASSRLS, the only role
             // the schema GRANTs the drain reads/writes to).
             Spi::run("SET ROLE dregg_kernel").unwrap();
-            let report: String = Spi::get_one("SELECT dregg_drain_once(16)").unwrap().unwrap();
+            let report: String = Spi::get_one("SELECT dregg_drain_once(16)")
+                .unwrap()
+                .unwrap();
             Spi::run("RESET ROLE").unwrap();
             assert!(report.contains("drained=5"), "all five drained: {report}");
-            assert!(report.contains("remaining_lag=0"), "queue emptied: {report}");
+            assert!(
+                report.contains("remaining_lag=0"),
+                "queue emptied: {report}"
+            );
 
             // Every queue row resolved to 'executed' with a receipt + resolved_at.
             let executed: i64 = Spi::get_one(
@@ -2753,7 +2996,9 @@ mod pg {
             // The drained turns materialized state: five verified turns recorded,
             // and the turns table is an unbroken hash chain (the commit_log gate
             // re-validated each on the way in).
-            let turns: i64 = Spi::get_one("SELECT count(*) FROM dregg.turns").unwrap().unwrap();
+            let turns: i64 = Spi::get_one("SELECT count(*) FROM dregg.turns")
+                .unwrap()
+                .unwrap();
             assert_eq!(turns, 5, "five verified turns landed in the store");
             let breaks: i64 = Spi::get_one(
                 "SELECT count(*) FROM dregg.turns t \
@@ -2775,8 +3020,14 @@ mod pg {
 
             // dregg_drain_stats reflects the resolved store.
             let stats: String = Spi::get_one("SELECT dregg_drain_stats()").unwrap().unwrap();
-            assert!(stats.contains("executed=5"), "stats sees the executed rows: {stats}");
-            assert!(stats.contains("lag=0"), "stats sees an empty queue: {stats}");
+            assert!(
+                stats.contains("executed=5"),
+                "stats sees the executed rows: {stats}"
+            );
+            assert!(
+                stats.contains("lag=0"),
+                "stats sees an empty queue: {stats}"
+            );
         }
 
         #[pg_test]
@@ -2807,10 +3058,18 @@ mod pg {
             // Drain: the submit re-check catches the revocation and REFUSES the
             // intent — it never executes, never touches state.
             Spi::run("SET ROLE dregg_kernel").unwrap();
-            let report: String = Spi::get_one("SELECT dregg_drain_once(16)").unwrap().unwrap();
+            let report: String = Spi::get_one("SELECT dregg_drain_once(16)")
+                .unwrap()
+                .unwrap();
             Spi::run("RESET ROLE").unwrap();
-            assert!(report.contains("drained=0"), "the revoked intent did not execute: {report}");
-            assert!(report.contains("unauth=1"), "it was refused at the submit gate: {report}");
+            assert!(
+                report.contains("drained=0"),
+                "the revoked intent did not execute: {report}"
+            );
+            assert!(
+                report.contains("unauth=1"),
+                "it was refused at the submit gate: {report}"
+            );
 
             // The queue row resolved 'refused' with the revocation reason; no turn landed.
             let refused: i64 = Spi::get_one(
@@ -2819,8 +3078,13 @@ mod pg {
             .unwrap()
             .unwrap();
             assert_eq!(refused, 1, "the row resolved refused (revoked)");
-            let turns: i64 = Spi::get_one("SELECT count(*) FROM dregg.turns").unwrap().unwrap();
-            assert_eq!(turns, 0, "no verified turn was produced from a revoked intent");
+            let turns: i64 = Spi::get_one("SELECT count(*) FROM dregg.turns")
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                turns, 0,
+                "no verified turn was produced from a revoked intent"
+            );
         }
 
         // ===================================================================
@@ -2919,15 +3183,24 @@ mod pg {
             )
             .unwrap()
             .unwrap();
-            assert_eq!(non_invoker, 0, "every dev-view must be security_invoker=true");
+            assert_eq!(
+                non_invoker, 0,
+                "every dev-view must be security_invoker=true"
+            );
 
             // (b) the narrowing bites THROUGH the view. Grant the reader SELECT on
             // the view, present an ALICE-only token, and count cell_balances rows as
             // the unprivileged reader: only ALICE's cell (a1…) is visible.
             let alice_only = root
                 .mint([
-                    Caveat::FirstParty(Pred::AttrEq { key: "action".into(), value: "read".into() }),
-                    Caveat::FirstParty(Pred::AttrPrefix { key: "resource".into(), prefix: "a1".into() }),
+                    Caveat::FirstParty(Pred::AttrEq {
+                        key: "action".into(),
+                        value: "read".into(),
+                    }),
+                    Caveat::FirstParty(Pred::AttrPrefix {
+                        key: "resource".into(),
+                        prefix: "a1".into(),
+                    }),
                 ])
                 .encode();
             Spi::run(&format!("SET dregg.token = '{alice_only}'")).unwrap();
@@ -2952,8 +3225,9 @@ mod pg {
         fn pg18_merge_cell_delta_typed_and_conservation_off_the_applicator() {
             let root = root();
             assert_issuer(&root);
-            let summary: String =
-                Spi::get_one("SELECT dregg_install_schema()").unwrap().unwrap();
+            let summary: String = Spi::get_one("SELECT dregg_install_schema()")
+                .unwrap()
+                .unwrap();
             assert!(summary.contains("Tier-B store installed"));
             Spi::run("SET ROLE dregg_kernel").unwrap();
             Spi::run(
@@ -2974,7 +3248,10 @@ mod pg {
             ))
             .unwrap()
             .unwrap();
-            assert_eq!(ins, "INSERT 5000 0", "INSERT arm: balance_delta is the full amount, no pre-image nonce");
+            assert_eq!(
+                ins, "INSERT 5000 0",
+                "INSERT arm: balance_delta is the full amount, no pre-image nonce"
+            );
             // UPDATE arm on the same cell: signed balance delta (−500) + nonce delta (+1).
             let upd = Spi::get_one::<String>(&format!(
                 "SELECT action||' '||balance_delta||' '||nonce_delta \
@@ -2983,7 +3260,10 @@ mod pg {
             ))
             .unwrap()
             .unwrap();
-            assert_eq!(upd, "UPDATE -500 1", "UPDATE arm: signed balance + nonce deltas from the pre-image");
+            assert_eq!(
+                upd, "UPDATE -500 1",
+                "UPDATE arm: signed balance + nonce deltas from the pre-image"
+            );
 
             // CONSERVATION off the applicator: a transfer TREASURY→ALICE→BOB whose
             // per-cell balance deltas (read from the pre-image by the pg18 RETURNING
@@ -2991,7 +3271,8 @@ mod pg {
             // the reported balance deltas. (Seed first so the deltas below are the
             // transfer's, not the funding's.)
             for (id, bal) in [("c0", 1_000_000_i64), ("a1", 0), ("b0", 0)] {
-                let full = format!("{id}00000000000000000000000000000000000000000000000000000000000000");
+                let full =
+                    format!("{id}00000000000000000000000000000000000000000000000000000000000000");
                 Spi::run(&format!(
                     "SELECT dregg.merge_cell('\\x{full}'::bytea,'Hosted',{bal},0,'\\x'::bytea,\
                      '{{\"balance\":{bal},\"nonce\":0}}'::jsonb,'Active',0,'\\x{full}'::bytea)"
@@ -3000,14 +3281,11 @@ mod pg {
             }
             // The transfer: TREASURY 1_000_000→999_500 (−500), ALICE 0→400 (+400),
             // BOB 0→100 (+100). Σδ = 0.
-            let transfer = [
-                ("c0", 999_500_i64, 1u64),
-                ("a1", 400, 1),
-                ("b0", 100, 1),
-            ];
+            let transfer = [("c0", 999_500_i64, 1u64), ("a1", 400, 1), ("b0", 100, 1)];
             let mut sum: i64 = 0;
             for (id, bal, nonce) in transfer {
-                let full = format!("{id}00000000000000000000000000000000000000000000000000000000000000");
+                let full =
+                    format!("{id}00000000000000000000000000000000000000000000000000000000000000");
                 let d: i64 = Spi::get_one(&format!(
                     "SELECT balance_delta FROM dregg.merge_cell_delta('\\x{full}'::bytea,'Hosted',{bal},{nonce},\
                      '\\x'::bytea,'{{\"balance\":{bal},\"nonce\":{nonce}}}'::jsonb,'Active',0,'\\x{full}'::bytea)"
@@ -3017,7 +3295,10 @@ mod pg {
                 sum += d;
             }
             Spi::run("RESET ROLE").unwrap();
-            assert_eq!(sum, 0, "conservation: the per-cell balance deltas the applicator reported sum to zero");
+            assert_eq!(
+                sum, 0,
+                "conservation: the per-cell balance deltas the applicator reported sum to zero"
+            );
         }
 
         /// pg18 `uuidv7()` key as an AUDIT SIGNAL (docs/PG-DREGG-PG18.md §6, wired):
@@ -3031,7 +3312,9 @@ mod pg {
             let root = root();
             assert_issuer(&root);
             Spi::get_one::<String>("SELECT dregg_install_schema()").unwrap();
-            let o: String = Spi::get_one("SELECT dregg_install_write_outbox()").unwrap().unwrap();
+            let o: String = Spi::get_one("SELECT dregg_install_write_outbox()")
+                .unwrap()
+                .unwrap();
             assert!(o.contains("write outbox installed"));
 
             // Enqueue two rows as the table owner (the harness superuser) so the
@@ -3055,7 +3338,10 @@ mod pg {
             )
             .unwrap()
             .unwrap();
-            assert_eq!(bad, 0, "every queue key is a v7 whose embedded time matches submitted_at");
+            assert_eq!(
+                bad, 0,
+                "every queue key is a v7 whose embedded time matches submitted_at"
+            );
 
             // The audit view yields rows in key (arrival) order: the first row's
             // enqueued_at is <= the last row's.
@@ -3082,13 +3368,21 @@ mod pg {
             let root = root();
             assert_issuer(&root);
             install_tier_b_and_load_synth();
-            let o: String = Spi::get_one("SELECT dregg_install_login_binding()").unwrap().unwrap();
+            let o: String = Spi::get_one("SELECT dregg_install_login_binding()")
+                .unwrap()
+                .unwrap();
             assert!(o.contains("login binding installed"));
 
             let alice_tok = root
                 .mint([
-                    Caveat::FirstParty(Pred::AttrEq { key: "action".into(), value: "read".into() }),
-                    Caveat::FirstParty(Pred::AttrPrefix { key: "resource".into(), prefix: "a1".into() }),
+                    Caveat::FirstParty(Pred::AttrEq {
+                        key: "action".into(),
+                        value: "read".into(),
+                    }),
+                    Caveat::FirstParty(Pred::AttrPrefix {
+                        key: "resource".into(),
+                        prefix: "a1".into(),
+                    }),
                 ])
                 .encode();
             let alice_hex: String = synth::ALICE.iter().map(|b| format!("{b:02x}")).collect();
@@ -3127,7 +3421,10 @@ mod pg {
             )
             .unwrap()
             .unwrap();
-            assert_eq!(leaks_token, 0, "the introspection view must not expose the token text");
+            assert_eq!(
+                leaks_token, 0,
+                "the introspection view must not expose the token text"
+            );
             Spi::run("RESET ROLE").unwrap();
 
             // Apply the login hook's effect (set the session token from the bound
@@ -3139,9 +3436,14 @@ mod pg {
             .unwrap();
             Spi::run(&format!("SET dregg.token = '{}'", installed.unwrap())).unwrap();
             Spi::run("SET ROLE dregg_reader").unwrap();
-            let visible: i64 = Spi::get_one("SELECT count(*) FROM dregg.cells").unwrap().unwrap();
+            let visible: i64 = Spi::get_one("SELECT count(*) FROM dregg.cells")
+                .unwrap()
+                .unwrap();
             Spi::run("RESET ROLE").unwrap();
-            assert_eq!(visible, 1, "the OAuth-bound role's capability narrows RLS to ALICE's cell");
+            assert_eq!(
+                visible, 1,
+                "the OAuth-bound role's capability narrows RLS to ALICE's cell"
+            );
         }
 
         /// pg18 AIO observability (docs/PG-DREGG-PG18.md §8, wired): the
@@ -3156,15 +3458,19 @@ mod pg {
             install_tier_b_and_load_synth();
             Spi::run("SET ROLE dregg_kernel").unwrap();
             // Drive some relation reads against the mirror so pg_stat_io has counts.
-            let _scan: i64 = Spi::get_one("SELECT count(*) FROM dregg.cells").unwrap().unwrap();
+            let _scan: i64 = Spi::get_one("SELECT count(*) FROM dregg.cells")
+                .unwrap()
+                .unwrap();
 
             // The view resolves and has at least one relation/normal row.
-            let rows: i64 = Spi::get_one(
-                "SELECT count(*) FROM dregg.mirror_io_stats WHERE context = 'normal'",
-            )
-            .unwrap()
-            .unwrap();
-            assert!(rows >= 1, "mirror_io_stats reports the normal relation I/O context");
+            let rows: i64 =
+                Spi::get_one("SELECT count(*) FROM dregg.mirror_io_stats WHERE context = 'normal'")
+                    .unwrap()
+                    .unwrap();
+            assert!(
+                rows >= 1,
+                "mirror_io_stats reports the normal relation I/O context"
+            );
 
             // Where a cache_hit_ratio is reported it is a valid fraction in [0,1].
             let bad_ratio: i64 = Spi::get_one(
@@ -3207,7 +3513,10 @@ mod pg {
             )
             .map(|(a, b)| (a.unwrap_or(false), b.unwrap_or_default()))
             .unwrap();
-            assert!(enabled, "dregg.integrity_status reports checksums_enabled = true");
+            assert!(
+                enabled,
+                "dregg.integrity_status reports checksums_enabled = true"
+            );
             assert_eq!(dc_view, "on", "the view's data_checksums matches the GUC");
         }
 
@@ -3227,10 +3536,16 @@ mod pg {
             // The operator reads it as such; the pgrx test session is the bootstrap
             // superuser, so we do NOT drop to dregg_kernel here. Drive a scan first
             // so AIO has had work, then the view resolves (>= 0 rows on pg18).
-            let _scan: i64 = Spi::get_one("SELECT count(*) FROM dregg.cells").unwrap().unwrap();
-            let inflight: i64 =
-                Spi::get_one("SELECT count(*) FROM dregg.mirror_aio_inflight").unwrap().unwrap();
-            assert!(inflight >= 0, "dregg.mirror_aio_inflight resolves over pg18 pg_aios");
+            let _scan: i64 = Spi::get_one("SELECT count(*) FROM dregg.cells")
+                .unwrap()
+                .unwrap();
+            let inflight: i64 = Spi::get_one("SELECT count(*) FROM dregg.mirror_aio_inflight")
+                .unwrap()
+                .unwrap();
+            assert!(
+                inflight >= 0,
+                "dregg.mirror_aio_inflight resolves over pg18 pg_aios"
+            );
         }
 
         /// pg18 logical-replication CONFLICT observability (docs/PG-DREGG-PG18.md
@@ -3246,20 +3561,30 @@ mod pg {
             let root = root();
             assert_issuer(&root);
             install_tier_c_and_submit_story();
-            let _fed: String = Spi::get_one("SELECT dregg_install_federation()").unwrap().unwrap();
+            let _fed: String = Spi::get_one("SELECT dregg_install_federation()")
+                .unwrap()
+                .unwrap();
 
             // No subscriptions here ⇒ zero rows, but the view RESOLVES (the pg18
             // confl_* columns exist and conflicts_total computes over them).
-            let rows: i64 =
-                Spi::get_one("SELECT count(*) FROM dregg.replication_conflicts").unwrap().unwrap();
-            assert_eq!(rows, 0, "no subscriptions on this node ⇒ empty (but resolvable) view");
+            let rows: i64 = Spi::get_one("SELECT count(*) FROM dregg.replication_conflicts")
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                rows, 0,
+                "no subscriptions on this node ⇒ empty (but resolvable) view"
+            );
             // The alarm column is bound (selecting it does not error on a fresh
             // pg18). `sum` over zero rows is numeric ⇒ cast to bigint to read it.
             let total: Option<i64> = Spi::get_one(
                 "SELECT coalesce(sum(conflicts_total), 0)::bigint FROM dregg.replication_conflicts",
             )
             .unwrap();
-            assert_eq!(total, Some(0), "conflicts_total sums the seven pg18 confl_* counters");
+            assert_eq!(
+                total,
+                Some(0),
+                "conflicts_total sums the seven pg18 confl_* counters"
+            );
         }
 
         /// §15 federation health — the pg18 conflict counters DRIVE re-validation,
@@ -3292,15 +3617,19 @@ mod pg {
             // A real, gate-built 4-turn hash chain in dregg.turns (what replication
             // would carry), plus the real federation publication + conflicts view.
             install_tier_c_and_submit_story();
-            let _fed: String = Spi::get_one("SELECT dregg_install_federation()").unwrap().unwrap();
+            let _fed: String = Spi::get_one("SELECT dregg_install_federation()")
+                .unwrap()
+                .unwrap();
             Spi::run("SET ROLE dregg_kernel").unwrap();
 
             // (1) CLEAN: the real dregg.replication_conflicts view is empty on this
             // single node ⇒ healthy, and the chain tooth is NOT the load-bearing part.
-            let healthy: String =
-                Spi::get_one("SELECT dregg_federation_health()").unwrap().unwrap();
+            let healthy: String = Spi::get_one("SELECT dregg_federation_health()")
+                .unwrap()
+                .unwrap();
             assert!(
-                healthy.starts_with("ok: federation healthy") && healthy.contains("0 apply conflicts"),
+                healthy.starts_with("ok: federation healthy")
+                    && healthy.contains("0 apply conflicts"),
                 "a node with no apply conflict is healthy: {healthy}"
             );
 
@@ -3333,8 +3662,9 @@ mod pg {
             // (2) CONFLICT ⇒ TRIGGER ⇒ chain intact. The alarm fires (conflicts_total=3)
             // AND the re-validation triggers over the real, faithful dregg.turns ⇒ the
             // "ALARM but chain re-validates" composition.
-            let alarmed: String =
-                Spi::get_one("SELECT dregg_federation_health()").unwrap().unwrap();
+            let alarmed: String = Spi::get_one("SELECT dregg_federation_health()")
+                .unwrap()
+                .unwrap();
             assert!(
                 alarmed.starts_with("ALARM (3 apply conflict(s))") && alarmed.contains("chain re-validates"),
                 "a non-zero conflict fires the alarm AND triggers re-validation (chain intact): {alarmed}"
@@ -3351,10 +3681,12 @@ mod pg {
             )
             .unwrap();
             Spi::run("SET ROLE dregg_kernel").unwrap();
-            let critical: String =
-                Spi::get_one("SELECT dregg_federation_health()").unwrap().unwrap();
+            let critical: String = Spi::get_one("SELECT dregg_federation_health()")
+                .unwrap()
+                .unwrap();
             assert!(
-                critical.starts_with("CRITICAL (3 apply conflict(s))") && critical.contains("chain REFUSED"),
+                critical.starts_with("CRITICAL (3 apply conflict(s))")
+                    && critical.contains("chain REFUSED"),
                 "a conflict AND a tampered chain ⇒ the CRITICAL do-not-trust verdict: {critical}"
             );
             Spi::run("RESET ROLE").unwrap();
@@ -3374,8 +3706,9 @@ mod pg {
             assert_issuer(&root);
             install_tier_b_and_load_synth();
             // The login-binding DDL ships role_identity_load + promote_role_identity_load.
-            let lb: String =
-                Spi::get_one("SELECT dregg_install_login_binding()").unwrap().unwrap();
+            let lb: String = Spi::get_one("SELECT dregg_install_login_binding()")
+                .unwrap()
+                .unwrap();
             assert!(lb.contains("login binding installed"));
             // COPY FROM PROGRAM needs pg_execute_server_program (a privileged
             // bootstrap/DBA action — exactly who runs a bulk onboarding load), so we
@@ -3394,8 +3727,13 @@ mod pg {
                  WITH (FORMAT csv, ON_ERROR ignore, LOG_VERBOSITY silent)",
             )
             .expect("pg18 COPY ON_ERROR ignore must parse + run");
-            let good: i64 = Spi::get_one("SELECT count(*) FROM on_err_probe").unwrap().unwrap();
-            assert_eq!(good, 2, "pg18 ON_ERROR ignore landed the 2 good rows, skipped the bad one");
+            let good: i64 = Spi::get_one("SELECT count(*) FROM on_err_probe")
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                good, 2,
+                "pg18 ON_ERROR ignore landed the 2 good rows, skipped the bad one"
+            );
 
             // Now the REAL bind-map path: stage two role rows (one with a bad hex
             // agent), promote, and assert only the valid one reached the seam.
@@ -3406,26 +3744,33 @@ mod pg {
                  ('bad_role', 'ZZNOTHEX', NULL)",
             ))
             .unwrap();
-            let (promoted, skipped): (i64, i64) = Spi::get_two(
-                "SELECT promoted, skipped FROM dregg.promote_role_identity_load()",
-            )
-            .map(|(p, s)| (p.unwrap_or(-1), s.unwrap_or(-1)))
-            .unwrap();
-            assert_eq!(promoted, 1, "the valid staged binding is promoted through bind_role");
-            assert_eq!(skipped, 1, "the bad-hex staged row is skipped, never written unchecked");
+            let (promoted, skipped): (i64, i64) =
+                Spi::get_two("SELECT promoted, skipped FROM dregg.promote_role_identity_load()")
+                    .map(|(p, s)| (p.unwrap_or(-1), s.unwrap_or(-1)))
+                    .unwrap();
+            assert_eq!(
+                promoted, 1,
+                "the valid staged binding is promoted through bind_role"
+            );
+            assert_eq!(
+                skipped, 1,
+                "the bad-hex staged row is skipped, never written unchecked"
+            );
             // The promoted binding is now in role_identity (via the audited seam).
             let bound: i64 = Spi::get_one(
                 "SELECT count(*) FROM dregg.role_identity WHERE pg_role = 'alice_role'",
             )
             .unwrap()
             .unwrap();
-            assert_eq!(bound, 1, "the bulk-loaded role reached role_identity via dregg.bind_role");
+            assert_eq!(
+                bound, 1,
+                "the bulk-loaded role reached role_identity via dregg.bind_role"
+            );
             // The bad row never created a binding.
-            let unbound: i64 = Spi::get_one(
-                "SELECT count(*) FROM dregg.role_identity WHERE pg_role = 'bad_role'",
-            )
-            .unwrap()
-            .unwrap();
+            let unbound: i64 =
+                Spi::get_one("SELECT count(*) FROM dregg.role_identity WHERE pg_role = 'bad_role'")
+                    .unwrap()
+                    .unwrap();
             assert_eq!(unbound, 0, "the malformed staged row created no binding");
         }
 
@@ -3445,21 +3790,23 @@ mod pg {
             install_tier_c_and_submit_story();
 
             // The publisher installs the publication over the state tables.
-            let fed: String = Spi::get_one("SELECT dregg_install_federation()").unwrap().unwrap();
+            let fed: String = Spi::get_one("SELECT dregg_install_federation()")
+                .unwrap()
+                .unwrap();
             assert!(fed.contains("federation publication installed"));
-            let pubs: i64 = Spi::get_one(
-                "SELECT count(*) FROM pg_publication WHERE pubname = 'dregg_mirror'",
-            )
-            .unwrap()
-            .unwrap();
+            let pubs: i64 =
+                Spi::get_one("SELECT count(*) FROM pg_publication WHERE pubname = 'dregg_mirror'")
+                    .unwrap()
+                    .unwrap();
             assert_eq!(pubs, 1, "CREATE PUBLICATION dregg_mirror landed");
 
             // The subscriber-side sweep re-validates the (here, local) turns chain:
             // it walks dregg.turns through the SAME anti-substitution tooth and
             // reports ok with the head — a subscriber re-validates locally.
             Spi::run("SET ROLE dregg_kernel").unwrap();
-            let verdict: String =
-                Spi::get_one("SELECT dregg_revalidate_replicated_chain()").unwrap().unwrap();
+            let verdict: String = Spi::get_one("SELECT dregg_revalidate_replicated_chain()")
+                .unwrap()
+                .unwrap();
             assert!(
                 verdict.starts_with("ok:") && verdict.contains("4 turns"),
                 "the faithfully-replicated chain re-validates: {verdict}"
@@ -3473,8 +3820,9 @@ mod pg {
                  WHERE ordinal = 2",
             )
             .unwrap();
-            let refused: String =
-                Spi::get_one("SELECT dregg_revalidate_replicated_chain()").unwrap().unwrap();
+            let refused: String = Spi::get_one("SELECT dregg_revalidate_replicated_chain()")
+                .unwrap()
+                .unwrap();
             assert!(
                 refused.starts_with("REFUSED:"),
                 "a tampered replicated chain must be refused by the subscriber sweep: {refused}"
@@ -3483,11 +3831,10 @@ mod pg {
 
             // The subscriber runbook substitutes the publisher conninfo + names the
             // re-validation sweep (it is an operational procedure, returned as text).
-            let runbook: String = Spi::get_one(
-                "SELECT dregg_federation_subscriber_runbook('host=pub dbname=dregg')",
-            )
-            .unwrap()
-            .unwrap();
+            let runbook: String =
+                Spi::get_one("SELECT dregg_federation_subscriber_runbook('host=pub dbname=dregg')")
+                    .unwrap()
+                    .unwrap();
             assert!(runbook.contains("pg_createsubscriber"));
             assert!(runbook.contains("host=pub dbname=dregg"));
             assert!(runbook.contains("dregg_revalidate_replicated_chain"));
@@ -3533,7 +3880,10 @@ mod pg {
             ))
             .unwrap()
             .unwrap();
-            assert_eq!(attested, 0, "the unwired proof gate attests NOTHING even on a valid transport (fail-closed)");
+            assert_eq!(
+                attested, 0,
+                "the unwired proof gate attests NOTHING even on a valid transport (fail-closed)"
+            );
 
             let why: String = Spi::get_one(&format!(
                 "SELECT dregg_attest_explain('\\x{good_hex}'::bytea, '\\x{vk}'::bytea, 0, 3)"
@@ -3552,7 +3902,10 @@ mod pg {
             ))
             .unwrap()
             .unwrap();
-            assert_eq!(garbage, 0, "garbage proof bytes attest nothing (fail-closed at decode)");
+            assert_eq!(
+                garbage, 0,
+                "garbage proof bytes attest nothing (fail-closed at decode)"
+            );
             let why_g: String = Spi::get_one(&format!(
                 "SELECT dregg_attest_explain('\\xdeadbeef'::bytea, '\\x{vk}'::bytea, 0, 3)"
             ))
@@ -3564,12 +3917,14 @@ mod pg {
             );
 
             // (C) A bad VK anchor (wrong length) is refused, not panicked.
-            let bad_vk: String = Spi::get_one(
-                "SELECT dregg_attest_explain('\\xde'::bytea, '\\x00'::bytea, 0, 1)",
-            )
-            .unwrap()
-            .unwrap();
-            assert!(bad_vk.contains("32 bytes"), "a malformed VK anchor fails closed: {bad_vk}");
+            let bad_vk: String =
+                Spi::get_one("SELECT dregg_attest_explain('\\xde'::bytea, '\\x00'::bytea, 0, 1)")
+                    .unwrap()
+                    .unwrap();
+            assert!(
+                bad_vk.contains("32 bytes"),
+                "a malformed VK anchor fails closed: {bad_vk}"
+            );
 
             // (D) An inverted/empty window is refused too (zero rows).
             let inverted: i64 = Spi::get_one(&format!(
@@ -3590,8 +3945,7 @@ mod pg {
             let root = root();
             assert_issuer(&root);
             install_tier_c_and_submit_story(); // dregg.turns has 4 turns
-            Spi::run(&crate::mirror::ddl::turn_proofs())
-                .expect("install dregg.turn_proofs");
+            Spi::run(&crate::mirror::ddl::turn_proofs()).expect("install dregg.turn_proofs");
 
             // A producer-shaped proof row covering [0,3] (the S1 transport bytes +
             // the 32-byte VK anchor), written as the kernel would.
@@ -3615,12 +3969,13 @@ mod pg {
             // The window gate FINDS the covering proof (so it does not refuse at
             // lookup) but STILL attests nothing with the verifier unwired — the
             // explain names the settle item, NOT "no proof covers".
-            let attested: i64 = Spi::get_one(
-                "SELECT count(*) FROM dregg_attest_window(0, 3)",
-            )
-            .unwrap()
-            .unwrap();
-            assert_eq!(attested, 0, "the unwired window gate attests nothing (fail-closed)");
+            let attested: i64 = Spi::get_one("SELECT count(*) FROM dregg_attest_window(0, 3)")
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                attested, 0,
+                "the unwired window gate attests nothing (fail-closed)"
+            );
             let why: String = Spi::get_one("SELECT dregg_attest_window_explain(0, 3)")
                 .unwrap()
                 .unwrap();
@@ -3631,18 +3986,16 @@ mod pg {
 
             // A window with NO covering proof row (ordinals beyond the only row) is
             // refused at lookup — the explain says so.
-            let why_missing: String =
-                Spi::get_one("SELECT dregg_attest_window_explain(10, 20)")
-                    .unwrap()
-                    .unwrap();
+            let why_missing: String = Spi::get_one("SELECT dregg_attest_window_explain(10, 20)")
+                .unwrap()
+                .unwrap();
             assert!(
                 why_missing.contains("no whole-chain proof covers"),
                 "a window with no covering proof row is refused at lookup: {why_missing}"
             );
-            let none: i64 =
-                Spi::get_one("SELECT count(*) FROM dregg_attest_window(10, 20)")
-                    .unwrap()
-                    .unwrap();
+            let none: i64 = Spi::get_one("SELECT count(*) FROM dregg_attest_window(10, 20)")
+                .unwrap()
+                .unwrap();
             assert_eq!(none, 0, "no covering proof ⇒ zero rows");
         }
 
@@ -3675,18 +4028,28 @@ mod pg {
                 .unwrap()
                 .unwrap()
             };
-            assert!(admits("read", "org/42/public/doc1"), "read admitted under prefix");
-            assert!(admits("write", "org/42/public/doc1"), "write admitted under prefix");
+            assert!(
+                admits("read", "org/42/public/doc1"),
+                "read admitted under prefix"
+            );
+            assert!(
+                admits("write", "org/42/public/doc1"),
+                "write admitted under prefix"
+            );
             // An action not in the set, and a resource outside the prefix: denied.
-            assert!(!admits("delete", "org/42/public/doc1"), "delete is not in the action set");
-            assert!(!admits("read", "org/99/other/doc1"), "outside the resource prefix");
+            assert!(
+                !admits("delete", "org/42/public/doc1"),
+                "delete is not in the action set"
+            );
+            assert!(
+                !admits("read", "org/99/other/doc1"),
+                "outside the resource prefix"
+            );
 
             // The subject is embedded + recovered; explain says allowed.
-            let subj: Option<String> = Spi::get_one_with_args(
-                "SELECT dregg_cap_subject($1)",
-                &[tok.as_str().into()],
-            )
-            .unwrap();
+            let subj: Option<String> =
+                Spi::get_one_with_args("SELECT dregg_cap_subject($1)", &[tok.as_str().into()])
+                    .unwrap();
             assert_eq!(subj.as_deref(), Some("alice"));
             let why: String = Spi::get_one_with_args(
                 "SELECT dregg_cap_explain($1, 'read', 'org/42/public/doc1', extract(epoch from now())::bigint)",
@@ -3694,21 +4057,26 @@ mod pg {
             )
             .unwrap()
             .unwrap();
-            assert_eq!(why, "allowed", "dregg_cap_explain confirms the dev-minted token: {why}");
+            assert_eq!(
+                why, "allowed",
+                "dregg_cap_explain confirms the dev-minted token: {why}"
+            );
 
             // A single-action dev-mint uses a bare AttrEq and still admits.
-            let one: String = Spi::get_one(
-                "SELECT dregg_dev_mint('bob', ARRAY['read'], '', interval '1 hour')",
-            )
-            .unwrap()
-            .unwrap();
+            let one: String =
+                Spi::get_one("SELECT dregg_dev_mint('bob', ARRAY['read'], '', interval '1 hour')")
+                    .unwrap()
+                    .unwrap();
             let one_admits: bool = Spi::get_one_with_args(
                 "SELECT dregg_cap_admits($1, 'read', 'anything', extract(epoch from now())::bigint)",
                 &[one.as_str().into()],
             )
             .unwrap()
             .unwrap();
-            assert!(one_admits, "empty prefix admits any resource for the listed action");
+            assert!(
+                one_admits,
+                "empty prefix admits any resource for the listed action"
+            );
         }
 
         /// The dev-minted token narrows row visibility through a real RLS-gated
@@ -3750,14 +4118,24 @@ mod pg {
             let count_under = |tok: &str| -> i64 {
                 Spi::run(&format!("SET dregg.token = '{tok}'")).unwrap();
                 Spi::run("SET ROLE dm_reader").unwrap();
-                let n = Spi::get_one::<i64>("SELECT count(*) FROM dm_docs").unwrap().unwrap();
+                let n = Spi::get_one::<i64>("SELECT count(*) FROM dm_docs")
+                    .unwrap()
+                    .unwrap();
                 Spi::run("RESET ROLE").unwrap();
                 n
             };
             // Root dev-minted token: the three org/42 rows (not org/99).
-            assert_eq!(count_under(&root_tok), 3, "dev-minted org/42 token sees 3 rows");
+            assert_eq!(
+                count_under(&root_tok),
+                3,
+                "dev-minted org/42 token sees 3 rows"
+            );
             // Narrowed: only the two public rows — a strict subset.
-            assert_eq!(count_under(&narrowed), 2, "attenuated token sees only org/42/public");
+            assert_eq!(
+                count_under(&narrowed),
+                2,
+                "attenuated token sees only org/42/public"
+            );
         }
 
         /// **The issuer-key discipline is intact.** With NO mint key configured,
@@ -3797,30 +4175,46 @@ mod pg {
         /// (`Suset`) flips the dev-minting line — both observable through real SQL.
         #[pg_test]
         fn issuer_status_reports_the_configured_keys() {
-            let status: String = Spi::get_one("SELECT dregg_issuer_status()").unwrap().unwrap();
+            let status: String = Spi::get_one("SELECT dregg_issuer_status()")
+                .unwrap()
+                .unwrap();
             // The verify key is configured (the harness sets it) → reports its id.
-            assert!(status.contains("CONFIGURED"), "verify key reported configured: {status}");
+            assert!(
+                status.contains("CONFIGURED"),
+                "verify key reported configured: {status}"
+            );
             assert!(
                 status.contains("ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c"),
                 "the verify key id is named: {status}"
             );
             // Dev minting is enabled (privkey configured) and MATCHES the verify key.
-            assert!(status.contains("ENABLED"), "dev minting reported enabled: {status}");
-            assert!(status.contains("MATCHES"), "matching keys flagged: {status}");
+            assert!(
+                status.contains("ENABLED"),
+                "dev minting reported enabled: {status}"
+            );
+            assert!(
+                status.contains("MATCHES"),
+                "matching keys flagged: {status}"
+            );
 
             // The mint key IS session-settable (`Suset`, superuser): clear it and
             // the status flips to "DISABLED" (the production posture — verify in
             // pg, no private key present). This is the discoverable dev-minting
             // state on the SQL surface.
             Spi::run("SET dregg.issuer_privkey = ''").unwrap();
-            let no_mint: String = Spi::get_one("SELECT dregg_issuer_status()").unwrap().unwrap();
+            let no_mint: String = Spi::get_one("SELECT dregg_issuer_status()")
+                .unwrap()
+                .unwrap();
             assert!(
                 no_mint.contains("DISABLED"),
                 "with no mint key, dev minting reads disabled: {no_mint}"
             );
             // The verify key is still configured, so admits still work — the loud
             // "EVERYTHING DENIES" only fires when the VERIFY key is absent.
-            assert!(no_mint.contains("CONFIGURED"), "verify key still set: {no_mint}");
+            assert!(
+                no_mint.contains("CONFIGURED"),
+                "verify key still set: {no_mint}"
+            );
             // Restore the mint key for subsequent statements in this backend.
             Spi::run(
                 "SET dregg.issuer_privkey = '0707070707070707070707070707070707070707070707070707070707070707'",
@@ -3883,21 +4277,26 @@ mod pg {
             // (`write_path_rls_refuses_submitting_for_an_unauthorized_agent`); here we
             // assert the SAME predicate that gate uses, non-abortingly, then enqueue
             // only the ALICE turn the policy admits.
-            Spi::run(&format!("SET dregg.token = '{}'", submit_token(&root, "a1"))).unwrap();
+            Spi::run(&format!(
+                "SET dregg.token = '{}'",
+                submit_token(&root, "a1")
+            ))
+            .unwrap();
             Spi::run("SET ROLE dregg_reader").unwrap();
             // The exact predicate the submit_gate WITH CHECK evaluates: ALICE admitted,
             // BOB refused — the bearer capability narrows what this role may write.
-            let admits_alice: bool = Spi::get_one(&format!(
-                "SELECT dregg_admits('submit', '{alice_hex}')"
-            ))
-            .unwrap()
-            .unwrap();
-            let admits_bob: bool = Spi::get_one(&format!(
-                "SELECT dregg_admits('submit', '{bob_hex}')"
-            ))
-            .unwrap()
-            .unwrap();
-            assert!(admits_alice, "the ALICE capability admits submitting for ALICE's cell");
+            let admits_alice: bool =
+                Spi::get_one(&format!("SELECT dregg_admits('submit', '{alice_hex}')"))
+                    .unwrap()
+                    .unwrap();
+            let admits_bob: bool =
+                Spi::get_one(&format!("SELECT dregg_admits('submit', '{bob_hex}')"))
+                    .unwrap()
+                    .unwrap();
+            assert!(
+                admits_alice,
+                "the ALICE capability admits submitting for ALICE's cell"
+            );
             assert!(
                 !admits_bob,
                 "the ALICE capability does NOT admit submitting for BOB's cell — the RLS write gate refuses it"
@@ -3908,7 +4307,10 @@ mod pg {
                 "SELECT dregg_submit_turn('\\xabcd'::bytea, '\\x{alice_hex}'::bytea)"
             ))
             .unwrap();
-            assert!(ok_id.is_some(), "an authorized submit (ALICE token, ALICE turn) enqueues");
+            assert!(
+                ok_id.is_some(),
+                "an authorized submit (ALICE token, ALICE turn) enqueues"
+            );
             Spi::run("RESET ROLE").unwrap();
 
             let pending: i64 = Spi::get_one(&format!(
@@ -3917,13 +4319,19 @@ mod pg {
             ))
             .unwrap()
             .unwrap();
-            assert_eq!(pending, 1, "exactly one authorized ALICE turn stands pending");
+            assert_eq!(
+                pending, 1,
+                "exactly one authorized ALICE turn stands pending"
+            );
             let bob_queued: i64 = Spi::get_one(&format!(
                 "SELECT count(*) FROM dregg.submit_queue WHERE agent = '\\x{bob_hex}'::bytea"
             ))
             .unwrap()
             .unwrap();
-            assert_eq!(bob_queued, 0, "no BOB intent exists — the capability never admitted it");
+            assert_eq!(
+                bob_queued, 0,
+                "no BOB intent exists — the capability never admitted it"
+            );
 
             // ---- (2) THE EXECUTOR PRODUCES AN ATTESTED RECEIPT, IN-BACKEND. ----
             // The kernel drains: PRODUCE runs the verified executor (the stand-in by
@@ -3931,29 +4339,48 @@ mod pg {
             // `tier-d`), CHAIN admits the receipt onto the head, and the Tier-C
             // commit_log gate materializes it — one verified turn becomes one row.
             Spi::run("SET ROLE dregg_kernel").unwrap();
-            let report: String = Spi::get_one("SELECT dregg_drain_once(16)").unwrap().unwrap();
+            let report: String = Spi::get_one("SELECT dregg_drain_once(16)")
+                .unwrap()
+                .unwrap();
             Spi::run("RESET ROLE").unwrap();
-            assert!(report.contains("drained=1"), "the queued turn drained to a receipt: {report}");
-            assert!(report.contains("remaining_lag=0"), "the queue emptied: {report}");
+            assert!(
+                report.contains("drained=1"),
+                "the queued turn drained to a receipt: {report}"
+            );
+            assert!(
+                report.contains("remaining_lag=0"),
+                "the queue emptied: {report}"
+            );
 
             // ---- (3) VERIFIED TURNS AS ROWS — the receipt is a queryable row. ----
             // The receipt landed as one row in dregg.turns, with a receipt_hash and
             // the chaining roots; the queue row resolved 'executed' carrying it.
-            let turns: i64 = Spi::get_one("SELECT count(*) FROM dregg.turns").unwrap().unwrap();
-            assert_eq!(turns, 1, "the executor's verified receipt is a row in dregg.turns");
+            let turns: i64 = Spi::get_one("SELECT count(*) FROM dregg.turns")
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                turns, 1,
+                "the executor's verified receipt is a row in dregg.turns"
+            );
             let receipted: i64 = Spi::get_one(
                 "SELECT count(*) FROM dregg.turns WHERE receipt_hash IS NOT NULL AND ledger_root IS NOT NULL",
             )
             .unwrap()
             .unwrap();
-            assert_eq!(receipted, 1, "the turn row carries the attested receipt + post-state root");
+            assert_eq!(
+                receipted, 1,
+                "the turn row carries the attested receipt + post-state root"
+            );
             let executed: i64 = Spi::get_one(
                 "SELECT count(*) FROM dregg.submit_queue \
                  WHERE status='executed' AND receipt_hash IS NOT NULL",
             )
             .unwrap()
             .unwrap();
-            assert_eq!(executed, 1, "the queue row resolved executed, bound to the receipt");
+            assert_eq!(
+                executed, 1,
+                "the queue row resolved executed, bound to the receipt"
+            );
 
             // The chain is unbroken (genesis ord 0 has no predecessor; any later turn
             // chains onto its parent's ledger_root — the spine invariant on the rows).
@@ -3973,7 +4400,10 @@ mod pg {
             ))
             .unwrap()
             .unwrap();
-            assert_eq!(alice_rows, 1, "ALICE's executor-produced post-image is in dregg.cells");
+            assert_eq!(
+                alice_rows, 1,
+                "ALICE's executor-produced post-image is in dregg.cells"
+            );
 
             // ---- (3b) CAPS-AS-RLS on the READ side — the same capability narrows. ----
             // A reader presenting the ALICE-scoped READ token sees ALICE's cell through
@@ -3990,14 +4420,21 @@ mod pg {
 
             let read_tok = root
                 .mint([
-                    Caveat::FirstParty(Pred::AttrEq { key: "action".into(), value: "read".into() }),
-                    Caveat::FirstParty(Pred::AttrPrefix { key: "resource".into(), prefix: "a1".into() }),
+                    Caveat::FirstParty(Pred::AttrEq {
+                        key: "action".into(),
+                        value: "read".into(),
+                    }),
+                    Caveat::FirstParty(Pred::AttrPrefix {
+                        key: "resource".into(),
+                        prefix: "a1".into(),
+                    }),
                 ])
                 .encode();
             Spi::run(&format!("SET dregg.token = '{read_tok}'")).unwrap();
             Spi::run("SET ROLE dregg_reader").unwrap();
-            let visible: i64 =
-                Spi::get_one("SELECT count(*) FROM dregg.cells").unwrap().unwrap();
+            let visible: i64 = Spi::get_one("SELECT count(*) FROM dregg.cells")
+                .unwrap()
+                .unwrap();
             let sees_alice: i64 = Spi::get_one(&format!(
                 "SELECT count(*) FROM dregg.cells WHERE cell_id = '\\x{alice_hex}'::bytea"
             ))
@@ -4010,8 +4447,14 @@ mod pg {
             .unwrap();
             Spi::run("RESET ROLE").unwrap();
             assert_eq!(sees_alice, 1, "the ALICE-scoped reader sees ALICE's cell");
-            assert_eq!(sees_bob, 0, "the ALICE-scoped reader does NOT see BOB's cell (RLS narrows the read)");
-            assert_eq!(visible, 1, "the reader's whole view is exactly the cells its capability admits");
+            assert_eq!(
+                sees_bob, 0,
+                "the ALICE-scoped reader does NOT see BOB's cell (RLS narrows the read)"
+            );
+            assert_eq!(
+                visible, 1,
+                "the reader's whole view is exactly the cells its capability admits"
+            );
 
             // ---- (4) THE SPINE — no bare-write door exists for an app. ----
             // The integrated guarantee: the reader role has NO write grant on the

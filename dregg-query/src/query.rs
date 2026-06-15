@@ -155,10 +155,10 @@ pub fn validate(q: &Query) -> Result<(), QueryError> {
     }
     for f in &q.filters {
         for t in [&f.lhs, &f.rhs] {
-            if let Term::Var(v) = t {
-                if !positive.contains(v.as_str()) {
-                    return Err(QueryError::Unsafe(v.clone()));
-                }
+            if let Term::Var(v) = t
+                && !positive.contains(v.as_str())
+            {
+                return Err(QueryError::Unsafe(v.clone()));
             }
         }
     }

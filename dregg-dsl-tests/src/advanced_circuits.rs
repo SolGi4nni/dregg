@@ -1384,9 +1384,8 @@ pub mod multi_asset {
         }
 
         // Global columns
-        for a in 0..NUM_ASSETS {
-            row[ASSET_TYPE_START + a] = asset_types[a];
-        }
+        row[ASSET_TYPE_START..ASSET_TYPE_START + NUM_ASSETS]
+            .copy_from_slice(&asset_types[..NUM_ASSETS]);
         row[GLOBAL_NONCE] = global_nonce;
 
         let tx_hash = hash_fact(

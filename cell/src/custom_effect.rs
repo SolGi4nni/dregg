@@ -47,11 +47,12 @@
 //! Per `BOUNDARIES.md §5.2`:
 //!
 //! - Cleartext-inside:  VK author (writes the canonical bytes) +
-//!                      validators (re-execute the bytes pre-recursion).
+//!   validators (re-execute the bytes pre-recursion).
 //! - Commitment-inside: receipt observers (see vk_hash + acceptance bit).
 //! - Acceptance-inside: post-recursion validators (proof + verifying key).
 //! - Out-of-band:       everyone outside the validator + observer
-//!                      populations.
+//!   populations.
+//!
 //! Enforced by: BLAKE3 keyed-hash binding canonical bytes to vk_hash;
 //! the executor refuses registrations whose canonical bytes don't
 //! match the registration key.

@@ -57,9 +57,7 @@ use dregg_circuit::dsl::revocation::{
     DslRevocationTree, non_revocation_circuit_descriptor, prove_non_revocation_p3,
     verify_non_revocation_p3,
 };
-use dregg_circuit::effect_vm::columns::sel;
 use dregg_circuit::effect_vm::{self, CellState, Effect as VmEffectKind, generate_effect_vm_trace};
-use dregg_circuit::effect_vm_descriptors::descriptor_for_selector;
 // The v1 hand-AIR EffectVM proof type + prover/verifier. The `effect_vm_p3_full_air` module is
 // `#[cfg(not(feature = "recursion"))]` in `dregg-circuit` (v1 floor only), and every use-site here
 // (`prove_effect_vm_with_cutover`, `verify_effect_vm_proof_with_cutover`, the `"effect-vm"` verify
@@ -70,9 +68,6 @@ use dregg_circuit::effect_vm_p3_full_air::{
     EffectVmP3Proof, prove_effect_vm_p3, verify_effect_vm_p3,
 };
 use dregg_circuit::field::BabyBear;
-use dregg_circuit::lean_descriptor_air::{
-    parse_vm_descriptor, prove_vm_descriptor, verify_vm_descriptor,
-};
 use dregg_circuit::merkle_air::{
     MembershipP3Proof, membership_public_inputs, prove_membership_p3, verify_membership_p3,
 };

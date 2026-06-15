@@ -31,14 +31,15 @@
 //!       full-post-game), an over-broad grant is refused, a re-share chain (A→B→C)
 //!       attenuates, and the spectator view is liveness-typed + fog-respecting.
 
-use starbridge_web_surface::{
-    game::{side_rights, VisionDeck, VisionGateError},
-    is_attenuation, AgentPolicy, AgentPlayer, Board, Coord, Effect, FireError, Lobby,
-    MembraneNegotiation, NegotiationError, Rehydration, Side, SpectatorSession, UnitKind, WinReason,
-};
 use starbridge_web_surface::game::{demo_world, play_match};
 use starbridge_web_surface::world::{
     ambient_log, player_authority, spectator_cell, witnessed_log_for,
+};
+use starbridge_web_surface::{
+    game::{side_rights, VisionDeck, VisionGateError},
+    is_attenuation, AgentPlayer, AgentPolicy, Board, Coord, Effect, FireError, Lobby,
+    MembraneNegotiation, NegotiationError, Rehydration, Side, SpectatorSession, UnitKind,
+    WinReason,
 };
 
 /// First 8 bytes of a hash as hex.
@@ -61,7 +62,11 @@ fn render_truth(board: &Board) -> String {
                     UnitKind::Sensor => 'e',
                     UnitKind::Commander => 'k',
                 };
-                if u.side == Side::Blue { g.to_ascii_uppercase() } else { g }
+                if u.side == Side::Blue {
+                    g.to_ascii_uppercase()
+                } else {
+                    g
+                }
             } else if board.objective_at(c).is_some() {
                 '*' // a control point
             } else {
@@ -86,7 +91,11 @@ fn render_view(board: &Board, side: Side) -> String {
             let ch = if view.can_see(c) {
                 match view.unit_at(c) {
                     Some(u) => {
-                        if u.side == Side::Blue { 'B' } else { 'R' }
+                        if u.side == Side::Blue {
+                            'B'
+                        } else {
+                            'R'
+                        }
                     }
                     None => board.terrain_at(c).glyph(),
                 }
@@ -144,12 +153,18 @@ fn main() {
     );
 
     // Show line-of-sight occlusion concretely.
-    let scout = board.units.iter().find(|u| u.side == Side::Blue && u.kind == UnitKind::Scout).unwrap();
+    let scout = board
+        .units
+        .iter()
+        .find(|u| u.side == Side::Blue && u.kind == UnitKind::Scout)
+        .unwrap();
     let blue_frustum = board.frustum_for(Side::Blue);
     let lit = blue_frustum.len();
     say!(
         "\n    Blue's Scout at {:?} (vision {}) lights {} tiles — far fewer than a clear",
-        scout.at, scout.vision, lit
+        scout.at,
+        scout.vision,
+        lit
     );
     say!("    disc would, because the forest blocks sight past it (occlusion is real).");
     // Find a tile in range but occluded (behind the forest belt) to prove it.
@@ -173,7 +188,10 @@ fn main() {
             break;
         }
     }
-    check!(proved_occlusion, "a tile in range is occluded by terrain (line-of-sight is real)");
+    check!(
+        proved_occlusion,
+        "a tile in range is occluded by terrain (line-of-sight is real)"
+    );
     say!("");
 
     // ── (2) fog = per-viewer projection; the no-peek keystone carries. ─────────
@@ -192,33 +210,57 @@ fn main() {
         red_view.fogged
     );
     say!("      DIFFERENT projections. At the opening neither army can see the other.");
-    check!(blue_view.fogged > 0 && red_view.fogged > 0, "both players have fog");
-    check!(blue_view.visible_coords() != red_view.visible_coords(), "the views diverge");
+    check!(
+        blue_view.fogged > 0 && red_view.fogged > 0,
+        "both players have fog"
+    );
+    check!(
+        blue_view.visible_coords() != red_view.visible_coords(),
+        "the views diverge"
+    );
 
     // The no-peek keystone (carried from the base game): Blue cannot rehydrate a
     // Red-gated tile, and cannot even PROVE Red's vision.
-    let red_cmd = board.units.iter().find(|u| u.side == Side::Red && u.kind == UnitKind::Commander).unwrap();
+    let red_cmd = board
+        .units
+        .iter()
+        .find(|u| u.side == Side::Red && u.kind == UnitKind::Commander)
+        .unwrap();
     let blue_peek = board.can_rehydrate_tile(Side::Blue, Side::Red, red_cmd.at);
     say!(
         "\n    no-peek KEYSTONE: Blue rehydrate Red's Commander tile {:?} → {}",
         red_cmd.at,
-        if blue_peek { "RE-EXPANDED (BUG!)".to_string() } else { "REFUSED ✓".to_string() }
+        if blue_peek {
+            "RE-EXPANDED (BUG!)".to_string()
+        } else {
+            "REFUSED ✓".to_string()
+        }
     );
-    check!(!blue_peek, "no-peek: Blue cannot rehydrate a Red-gated tile");
+    check!(
+        !blue_peek,
+        "no-peek: Blue cannot rehydrate a Red-gated tile"
+    );
     let blue_deck = VisionDeck::for_player(Side::Blue);
     let enemy_msg = board.vision_signing_message(Side::Blue, red_cmd.at);
     let proves_red = board.prove_vision(&blue_deck, Side::Blue, Side::Red, &enemy_msg);
     say!(
         "    no-peek FOR REAL : Blue PROVE Red's vision → {}",
         match &proves_red {
-            Err(VisionGateError::NoSecretForSide { .. }) => "REFUSED (no secret — unprovable) ✓".to_string(),
-            _ => { ok = false; "PROVED (BUG!)".to_string() }
+            Err(VisionGateError::NoSecretForSide { .. }) =>
+                "REFUSED (no secret — unprovable) ✓".to_string(),
+            _ => {
+                ok = false;
+                "PROVED (BUG!)".to_string()
+            }
         }
     );
     say!(
         "      (is_attenuation(Blue,Red) = {}; vk(Blue) = {}…)",
         is_attenuation(&side_rights(Side::Blue), &side_rights(Side::Red)),
-        match side_rights(Side::Blue) { dregg_cell::AuthRequired::Custom { vk_hash } => hex8(&vk_hash), _ => "??".into() }
+        match side_rights(Side::Blue) {
+            dregg_cell::AuthRequired::Custom { vk_hash } => hex8(&vk_hash),
+            _ => "??".into(),
+        }
     );
     check!(
         matches!(proves_red, Err(VisionGateError::NoSecretForSide { .. })),
@@ -232,21 +274,45 @@ fn main() {
     let mv_surface = board.move_surface_for(Side::Blue);
     let blue_cap = board.vision_cap_for(Side::Blue);
     let red_cap = board.vision_cap_for(Side::Red);
-    let a_move = mv_surface.all_names().into_iter().find(|n| n.contains("scout")).expect("a scout move");
-    let mover = board.units.iter().find(|u| a_move.contains(&u.name)).unwrap().id;
-    let intent = mv_surface.fire(&a_move, mover, &blue_cap).expect("Blue's own move is authorized");
+    let a_move = mv_surface
+        .all_names()
+        .into_iter()
+        .find(|n| n.contains("scout"))
+        .expect("a scout move");
+    let mover = board
+        .units
+        .iter()
+        .find(|u| a_move.contains(&u.name))
+        .unwrap()
+        .id;
+    let intent = mv_surface
+        .fire(&a_move, mover, &blue_cap)
+        .expect("Blue's own move is authorized");
     say!("    Blue fires `{a_move}`");
-    say!("      → {:?}  (a REAL SetField turn the executor would run)", intent.effect_summary());
-    check!(matches!(intent.effect, Effect::SetField { .. }), "a move fires a real SetField");
+    say!(
+        "      → {:?}  (a REAL SetField turn the executor would run)",
+        intent.effect_summary()
+    );
+    check!(
+        matches!(intent.effect, Effect::SetField { .. }),
+        "a move fires a real SetField"
+    );
     let refused = mv_surface.fire(&a_move, board.units[5].id, &red_cap);
     say!(
         "    Red fires the SAME move → {}",
         match &refused {
-            Err(FireError::Unauthorized { .. }) => "REFUSED (Unauthorized — incomparable identity) ✓".to_string(),
-            _ => { ok = false; "ADMITTED (anti-cheat FAILED)".to_string() }
+            Err(FireError::Unauthorized { .. }) =>
+                "REFUSED (Unauthorized — incomparable identity) ✓".to_string(),
+            _ => {
+                ok = false;
+                "ADMITTED (anti-cheat FAILED)".to_string()
+            }
         }
     );
-    check!(matches!(refused, Err(FireError::Unauthorized { .. })), "Red firing Blue's move is refused");
+    check!(
+        matches!(refused, Err(FireError::Unauthorized { .. })),
+        "Red firing Blue's move is refused"
+    );
 
     // An objective-capture is a real EmitEvent turn (set up a unit on an objective).
     {
@@ -256,19 +322,31 @@ fn main() {
             5,
             5,
             starbridge_web_surface::game_cell(0xB0, 99),
-            vec![starbridge_web_surface::Unit::of_kind(Side::Blue, UnitKind::Soldier, Coord::new(0, 0), 1)],
+            vec![starbridge_web_surface::Unit::of_kind(
+                Side::Blue,
+                UnitKind::Soldier,
+                Coord::new(0, 0),
+                1,
+            )],
             vec![],
             vec![obj],
         );
         let cap_surface = cap_board.capture_surface_for(Side::Blue);
         let cap_intent = cap_surface
-            .fire("capture:demo-point", cap_board.units[0].id, &cap_board.vision_cap_for(Side::Blue))
+            .fire(
+                "capture:demo-point",
+                cap_board.units[0].id,
+                &cap_board.vision_cap_for(Side::Blue),
+            )
             .expect("Blue captures the point it stands on");
         say!(
             "    Blue claims an objective it stands on → {:?}  (a REAL EmitEvent turn)",
             cap_intent.effect_summary()
         );
-        check!(matches!(cap_intent.effect, Effect::EmitEvent { .. }), "a capture fires a real EmitEvent");
+        check!(
+            matches!(cap_intent.effect, Effect::EmitEvent { .. }),
+            "a capture fires a real EmitEvent"
+        );
     }
     say!("      → two different real effect kinds (SetField, EmitEvent), both cap-gated.");
     say!("");
@@ -278,17 +356,33 @@ fn main() {
     let mut lobby = Lobby::new(3);
     let _a = lobby.host("alpha", demo_world());
     let _b = lobby.host("bravo", demo_world());
-    say!("    hosted {} worlds in one lobby (a federation).", lobby.world_count());
+    say!(
+        "    hosted {} worlds in one lobby (a federation).",
+        lobby.world_count()
+    );
     let alpha = lobby.world("alpha").unwrap();
     say!(
         "    world 'alpha' publishes {} cells (board + 2 players + 3 objectives):",
         alpha.cell_count()
     );
-    let (board_res, board_chrome) = lobby.web.fetch(&alpha.board_uri).expect("the board cell is published");
+    let (board_res, board_chrome) = lobby
+        .web
+        .fetch(&alpha.board_uri)
+        .expect("the board cell is published");
     say!("      board cell : {}", board_chrome.badge());
-    say!("      verifies   : {}", if board_res.verify().is_ok() { "✓ attested" } else { "✗" });
+    say!(
+        "      verifies   : {}",
+        if board_res.verify().is_ok() {
+            "✓ attested"
+        } else {
+            "✗"
+        }
+    );
     check!(alpha.cell_count() == 6, "the world publishes 6 cells");
-    check!(board_res.verify().is_ok(), "the world's board cell is attested");
+    check!(
+        board_res.verify().is_ok(),
+        "the world's board cell is attested"
+    );
     // Distinct worlds → distinct cells (federated addressing, no collision).
     check!(
         lobby.worlds[0].board_uri != lobby.worlds[1].board_uri,
@@ -300,13 +394,17 @@ fn main() {
 
     // ── (5) agents-as-players — a FULL match to a decision, all through the gate. ─
     say!("(5) AGENTS-AS-PLAYERS — two AIs play a FULL match to a win condition\n");
-    let blue_agent = AgentPlayer::with_policy(Side::Blue, spectator_cell(1), AgentPolicy::Aggressive);
+    let blue_agent =
+        AgentPlayer::with_policy(Side::Blue, spectator_cell(1), AgentPolicy::Aggressive);
     let red_agent = AgentPlayer::with_policy(Side::Red, spectator_cell(2), AgentPolicy::Objective);
     say!("    Blue = Aggressive (hunt the enemy), Red = Objective (contest the map).");
     say!("    every move is fired through the cap-gated affordance surface — NEITHER");
     say!("    agent can cheat (no ambient authority, no out-of-band move).\n");
     let result = play_match(demo_world(), &blue_agent, &red_agent, 600);
-    say!("    the match played {} plies; final ground truth:", result.board.ply);
+    say!(
+        "    the match played {} plies; final ground truth:",
+        result.board.ply
+    );
     for line in render_truth(&result.board).lines() {
         say!("        {line}");
     }
@@ -317,16 +415,28 @@ fn main() {
                 WinReason::Domination => "DOMINATION (held a majority of objectives)",
                 WinReason::Annihilation => "ANNIHILATION (wiped out the enemy)",
             };
-            say!("\n    → {} WINS by {} (objectives: Blue {} / Red {}).",
-                go.winner.label(), reason,
+            say!(
+                "\n    → {} WINS by {} (objectives: Blue {} / Red {}).",
+                go.winner.label(),
+                reason,
                 result.board.objectives_held(Side::Blue),
-                result.board.objectives_held(Side::Red));
+                result.board.objectives_held(Side::Red)
+            );
         }
         None => say!("\n    → a draw (the ply budget was reached)."),
     }
-    say!("    the match log is {} fired affordances — each a real verified turn.", result.log.len());
-    check!(result.game_over.is_some(), "the agent match reached a decision");
-    check!(!result.log.is_empty(), "the match produced a real fired-affordance log");
+    say!(
+        "    the match log is {} fired affordances — each a real verified turn.",
+        result.log.len()
+    );
+    check!(
+        result.game_over.is_some(),
+        "the agent match reached a decision"
+    );
+    check!(
+        !result.log.is_empty(),
+        "the match produced a real fired-affordance log"
+    );
     say!("    → THIS is the agentic desktop: AI players whose action space IS their");
     say!("      attenuated cap set. A smarter brain does not get a bigger cage.");
     say!("");
@@ -340,15 +450,27 @@ fn main() {
     // (a) A player grants a view of ITS OWN side (allowed); a view of the ENEMY
     //     side is REFUSED (you can't add someone to a team you're not on).
     let own = neg.propose_one_side(Side::Blue, &blue_held, Side::Blue);
-    say!("    Blue grants a spectator a view of BLUE's side → {}",
-        if own.is_ok() { "GRANTED ✓".to_string() } else { format!("{own:?}") });
+    say!(
+        "    Blue grants a spectator a view of BLUE's side → {}",
+        if own.is_ok() {
+            "GRANTED ✓".to_string()
+        } else {
+            format!("{own:?}")
+        }
+    );
     let enemy = neg.propose_one_side(Side::Blue, &blue_held, Side::Red);
-    say!("    Blue grants a view of RED's side → {}",
+    say!(
+        "    Blue grants a view of RED's side → {}",
         match &enemy {
             Err(NegotiationError::GranterLacksAuthority { .. }) =>
-                "REFUSED (Blue lacks Red's authority — the no-peek, at the grant layer) ✓".to_string(),
-            _ => { ok = false; "GRANTED (BUG — Blue leaked Red's view!)".to_string() }
-        });
+                "REFUSED (Blue lacks Red's authority — the no-peek, at the grant layer) ✓"
+                    .to_string(),
+            _ => {
+                ok = false;
+                "GRANTED (BUG — Blue leaked Red's view!)".to_string()
+            }
+        }
+    );
     check!(own.is_ok(), "a player can grant a view of its own side");
     check!(
         matches!(enemy, Err(NegotiationError::GranterLacksAuthority { .. })),
@@ -366,20 +488,36 @@ fn main() {
     say!("      sources gone, witnessed  → {:?}", replayed.liveness);
     say!("      sources gone, ambient    → {:?}", recon.liveness);
     check!(live.liveness == Rehydration::Live, "reachable → Live");
-    check!(replayed.liveness == Rehydration::ReplayedDeterministic, "witnessed → ReplayedDeterministic");
-    check!(recon.liveness == Rehydration::ReconstructedApproximate, "ambient → ReconstructedApproximate");
+    check!(
+        replayed.liveness == Rehydration::ReplayedDeterministic,
+        "witnessed → ReplayedDeterministic"
+    );
+    check!(
+        recon.liveness == Rehydration::ReconstructedApproximate,
+        "ambient → ReconstructedApproximate"
+    );
     say!("    → the system CANNOT lie about whether you watch the live match or a replay.");
 
     // (c) A scoreboard (objectives-only) grant leaks no unit positions.
-    let scoreboard = neg.propose_objectives_only(Side::Blue).expect("anyone may grant a scoreboard");
+    let scoreboard = neg
+        .propose_objectives_only(Side::Blue)
+        .expect("anyone may grant a scoreboard");
     let sb_session = SpectatorSession::open(world, &scoreboard, &witnessed, true);
     say!("\n    a SCOREBOARD grant (objectives-only) reveals control points but NO units:");
-    say!("      visible tiles: {} (the objective tiles)", sb_session.visible.len());
-    say!("      leaks Blue units: {}; leaks Red units: {}",
+    say!(
+        "      visible tiles: {} (the objective tiles)",
+        sb_session.visible.len()
+    );
+    say!(
+        "      leaks Blue units: {}; leaks Red units: {}",
         sb_session.reveals_unit_of(world, Side::Blue),
-        sb_session.reveals_unit_of(world, Side::Red));
-    check!(!sb_session.reveals_unit_of(world, Side::Blue) && !sb_session.reveals_unit_of(world, Side::Red),
-        "the scoreboard scope leaks no unit positions");
+        sb_session.reveals_unit_of(world, Side::Red)
+    );
+    check!(
+        !sb_session.reveals_unit_of(world, Side::Blue)
+            && !sb_session.reveals_unit_of(world, Side::Red),
+        "the scoreboard scope leaks no unit positions"
+    );
 
     // (d) A re-share chain (A→B→C) attenuates; an amplifying reshare is refused.
     let mut narrow = std::collections::BTreeSet::new();
@@ -387,33 +525,63 @@ fn main() {
         narrow.insert(first.clone());
     }
     let narrower = starbridge_web_surface::SurfaceCapability::scoped(
-        world.board.cell, side_rights(Side::Blue), narrow, [],
+        world.board.cell,
+        side_rights(Side::Blue),
+        narrow,
+        [],
     );
     let reshared = neg.reshare(&grant, narrower);
-    say!("\n    re-share A→B→C: B forwards a NARROWER view to C → {}",
-        if reshared.is_ok() { "ADMITTED ✓".to_string() } else { format!("{reshared:?}") });
+    say!(
+        "\n    re-share A→B→C: B forwards a NARROWER view to C → {}",
+        if reshared.is_ok() {
+            "ADMITTED ✓".to_string()
+        } else {
+            format!("{reshared:?}")
+        }
+    );
     let mut wider = grant.cap.fetch_allow.clone().unwrap_or_default();
     wider.insert("dregg://tile-99-99".to_string());
     let amplifying = starbridge_web_surface::SurfaceCapability::scoped(
-        world.board.cell, side_rights(Side::Blue), wider, [],
+        world.board.cell,
+        side_rights(Side::Blue),
+        wider,
+        [],
     );
     let amp = neg.reshare(&grant, amplifying);
-    say!("    re-share A→B→C: B forwards a WIDER view than it holds → {}",
+    say!(
+        "    re-share A→B→C: B forwards a WIDER view than it holds → {}",
         match &amp {
-            Err(NegotiationError::ReshareWouldAmplify) => "REFUSED (amplification — the anti-ghost tooth) ✓".to_string(),
-            _ => { ok = false; "ADMITTED (BUG — the chain amplified!)".to_string() }
-        });
+            Err(NegotiationError::ReshareWouldAmplify) =>
+                "REFUSED (amplification — the anti-ghost tooth) ✓".to_string(),
+            _ => {
+                ok = false;
+                "ADMITTED (BUG — the chain amplified!)".to_string()
+            }
+        }
+    );
     check!(reshared.is_ok(), "a narrower reshare is admitted");
-    check!(matches!(amp, Err(NegotiationError::ReshareWouldAmplify)), "an amplifying reshare is refused");
+    check!(
+        matches!(amp, Err(NegotiationError::ReshareWouldAmplify)),
+        "an amplifying reshare is refused"
+    );
 
     // (e) A full-board grant is refused while the game is live (post-game only).
     let full_live = neg.propose_full_post_game(Side::Blue);
-    say!("\n    a FULL-board grant while the game is LIVE → {}",
+    say!(
+        "\n    a FULL-board grant while the game is LIVE → {}",
         match &full_live {
-            Err(NegotiationError::GameStillLive) => "REFUSED (would leak the fog — make-public-needs-no-secrets) ✓".to_string(),
-            _ => { ok = false; "GRANTED (BUG!)".to_string() }
-        });
-    check!(matches!(full_live, Err(NegotiationError::GameStillLive)), "a full grant is refused mid-game");
+            Err(NegotiationError::GameStillLive) =>
+                "REFUSED (would leak the fog — make-public-needs-no-secrets) ✓".to_string(),
+            _ => {
+                ok = false;
+                "GRANTED (BUG!)".to_string()
+            }
+        }
+    );
+    check!(
+        matches!(full_live, Err(NegotiationError::GameStillLive)),
+        "a full grant is refused mid-game"
+    );
     say!("    → every membrane primitive has a boring, familiar home on a settings page:");
     say!("      teams=cap groups · roles=the attenuation lattice · visibility=scope ·");
     say!("      fork-policy=re-share rules · member-mgmt=grant/revoke. Familiar UX,");

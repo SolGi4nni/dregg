@@ -233,11 +233,10 @@ impl BridgeActionAir {
 
         // Row 0: the full typed binding.
         let mut row0 = vec![BabyBear::ZERO; BRIDGE_ACTION_WIDTH];
-        for i in 0..HASH_LIMBS {
-            row0[col::NULLIFIER_START + i] = n[i];
-            row0[col::RECIPIENT_START + i] = r[i];
-            row0[col::DESTINATION_FEDERATION_START + i] = d[i];
-        }
+        row0[col::NULLIFIER_START..col::NULLIFIER_START + HASH_LIMBS].copy_from_slice(&n);
+        row0[col::RECIPIENT_START..col::RECIPIENT_START + HASH_LIMBS].copy_from_slice(&r);
+        row0[col::DESTINATION_FEDERATION_START..col::DESTINATION_FEDERATION_START + HASH_LIMBS]
+            .copy_from_slice(&d);
         row0[col::AMOUNT_LO] = lo;
         row0[col::AMOUNT_HI] = hi;
 

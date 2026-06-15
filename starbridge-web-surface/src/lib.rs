@@ -168,22 +168,20 @@ pub use dregg_cell::{is_attenuation, AuthRequired};
 pub use dregg_firmament::{Capability, SurfaceBacking, Target};
 pub use dregg_types::{AttestedRoot, CellId};
 
-pub use delegate::{
-    CapGatedDelegate, MockSurface, NavigationDecision, PermissionDecision, PermissionKind,
-    ResourceDecision, SurfaceCapability, WebSurfaceDelegate,
-};
-pub use web_of_cells::{
-    AttestedResource, DreggUri, FetchError, OriginChrome, WebOfCells,
-};
-pub use rehydrate::{
-    rehydrate, Interaction, InteractionLog, Membrane, Projection, Rehydration, RehydrateError,
-    Sturdyref,
-};
 pub use affordance::{
     rehydrate_affordances, AffordanceIntent, AffordanceRehydrateError, AffordanceSnapshot,
     AffordanceSurface, CellAffordance, EffectSummary, EvalContext, FireError, ReactiveAffordance,
     RecordPredicate, SurfaceBoundary, TransitionGate, TransitionPredicate, Viewer,
 };
+pub use delegate::{
+    CapGatedDelegate, MockSurface, NavigationDecision, PermissionDecision, PermissionKind,
+    ResourceDecision, SurfaceCapability, WebSurfaceDelegate,
+};
+pub use rehydrate::{
+    rehydrate, Interaction, InteractionLog, Membrane, Projection, RehydrateError, Rehydration,
+    Sturdyref,
+};
+pub use web_of_cells::{AttestedResource, DreggUri, FetchError, OriginChrome, WebOfCells};
 // Transclusion — Xanadu that shipped: a `dregg://` finalized read NAMED as Ted
 // Nelson's transcluded quote, with preserved provenance ([`Provenance`], verified
 // via the real attestation chain), per-viewer confinement (through the real
@@ -197,21 +195,17 @@ pub use transclusion::{
 // to the deepest source's committed value; a forged/absent link anywhere refuses (the
 // anti-forge tooth COMPOSES). Realizes the Lean `transclusion_provenance_faithful` +
 // `transclusion_forge_refused`, composed across hops.
-pub use transclusion_chain::{
-    ChainError, ChainProvenance, ResolvedChain, TransclusionChain,
-};
+pub use transclusion_chain::{ChainError, ChainProvenance, ResolvedChain, TransclusionChain};
 // Versioned transclusion — the SNAPSHOT/LIVE dial. A snapshot pins a specific version
 // (I-confluent: stable as the source advances — the Lean
 // `transclusion_stable_under_source_advance`); a live quote re-resolves to the current
 // finalized value on each read. Both carry provenance; a forge is refused in either mode.
-pub use transclusion_version::{
-    Pinning, VersionedRead, VersionedTransclusion,
-};
 pub use game::{
     demo_skirmish, demo_world, game_cell, play_match, side_rights, AgentPlayer, AgentPolicy, Board,
     Coord, GameOver, IllegalMove, MatchResult, MatchStep, MoveOutcome, Objective, PlayerView, Side,
     Terrain, TileView, Unit, UnitKind, WinReason,
 };
+pub use transclusion_version::{Pinning, VersionedRead, VersionedTransclusion};
 pub use world::{
     GameWorld, Lobby, MembraneNegotiation, NegotiationError, SpectatorGrant, SpectatorScope,
     SpectatorSession,
@@ -224,11 +218,11 @@ pub use world::{
 // [`Cursor`], and yields [`StreamedReceipt`]s (the `WorldEvent`-shaped item). The
 // async `Stream` edge ([`ReceiptStreamPoll`], `stream` feature) is what the
 // cockpit's gpui executor `.await`s.
+#[cfg(feature = "stream")]
+pub use receipt_stream::ReceiptStreamPoll;
 pub use receipt_stream::{
     Admitted, Cursor, IngestError, ReceiptEnvelope, ReceiptStream, StreamedReceipt,
 };
-#[cfg(feature = "stream")]
-pub use receipt_stream::ReceiptStreamPoll;
 pub use vision_predicate::{
     register_vision_verifier, verify_vision_proof, FogVisionProducer, FogVisionVerifier,
     VisionKeypair, VisionProgram,

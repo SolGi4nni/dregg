@@ -358,10 +358,10 @@ pub fn witness_replay_is_genuine(turn_hashes: &[[u8; 32]]) -> bool {
 /// ROOT here; the canonical fold prove→verify (with its full tamper-rejection teeth)
 /// lives in `circuit/tests/ivc_turn_chain_rotated.rs`. This module name is the pointer.
 pub mod stark_chain_snapshot {
-    //! See the parent module doc: the chain variant gates on a `WholeChainProof`
-    //! (`verify_turn_chain_recursive`) instead of a single `Ir2BatchProof`
-    //! (`verify_vm_descriptor2`) — the same snapshot-carries-proof /
-    //! rehydrate-verifies-proof weld, at the K-turn light-client ROOT.
+    // See the parent module doc: the chain variant gates on a `WholeChainProof`
+    // (`verify_turn_chain_recursive`) instead of a single `Ir2BatchProof`
+    // (`verify_vm_descriptor2`) — the same snapshot-carries-proof /
+    // rehydrate-verifies-proof weld, at the K-turn light-client ROOT.
     pub use dregg_circuit::ivc_turn_chain::{WholeChainProof, verify_turn_chain_recursive};
 }
 

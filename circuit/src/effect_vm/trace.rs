@@ -95,8 +95,10 @@ pub fn generate_effect_vm_trace(
     // backwards-compat with the dozens of tests that pass a non-zero
     // initial nonce to CellState::new and rely on the row-0 boundary
     // (state_before.nonce == PI[ACTOR_NONCE]) holding.
-    let mut ctx = EffectVmContext::default();
-    ctx.actor_nonce = initial_state.nonce as u64;
+    let ctx = EffectVmContext {
+        actor_nonce: initial_state.nonce as u64,
+        ..Default::default()
+    };
     generate_effect_vm_trace_ext(initial_state, effects, ctx)
 }
 
@@ -233,9 +235,7 @@ impl SlotCaveatEntry {
         debug_assert!(out.len() >= pi::SLOT_CAVEAT_ENTRY_SIZE);
         out[0] = BabyBear::new(self.type_tag);
         out[1] = BabyBear::new(self.slot_index as u32);
-        for i in 0..4 {
-            out[2 + i] = self.params[i];
-        }
+        out[2..6].copy_from_slice(&self.params);
     }
 }
 
@@ -289,9 +289,7 @@ impl RotCaveatEntry {
         out[0] = BabyBear::new(self.type_tag);
         out[1] = BabyBear::new(self.domain_tag);
         out[2] = self.key;
-        for i in 0..4 {
-            out[3 + i] = self.params[i];
-        }
+        out[3..7].copy_from_slice(&self.params);
     }
 
     /// Decode an entry from its 7-felt packing — FAIL CLOSED:
@@ -300,6 +298,7 @@ impl RotCaveatEntry {
     ///   * a registers-domain key outside the rotated register file
     ///     (`>= caveat::R`, the CONFIRMED R=24) REFUSES;
     ///   * a heap-domain key is any felt (heap keys are felts — the point).
+    ///
     /// The zero entry (`type_tag == 0`) decodes as "no caveat" with no
     /// further checks (the all-zero padding rows).
     pub fn from_felts(f: &[BabyBear]) -> Result<Self, String> {
@@ -1107,18 +1106,15 @@ pub fn generate_effect_vm_trace_ext(
         &current_state.fields,
         current_state.capability_root,
     );
-    for i in 0..pi::OLD_COMMIT_LEN {
-        public_inputs[pi::OLD_COMMIT_BASE + i] = old_commit_4[i];
-    }
-    for i in 0..pi::NEW_COMMIT_LEN {
-        public_inputs[pi::NEW_COMMIT_BASE + i] = new_commit_4[i];
-    }
+    public_inputs[pi::OLD_COMMIT_BASE..pi::OLD_COMMIT_BASE + pi::OLD_COMMIT_LEN]
+        .copy_from_slice(&old_commit_4[..pi::OLD_COMMIT_LEN]);
+    public_inputs[pi::NEW_COMMIT_BASE..pi::NEW_COMMIT_BASE + pi::NEW_COMMIT_LEN]
+        .copy_from_slice(&new_commit_4[..pi::NEW_COMMIT_LEN]);
 
     // ---- Effects hash (4 felts) ----
     let effects_hash_4 = compute_effects_hash_4(effects);
-    for i in 0..pi::EFFECTS_HASH_LEN {
-        public_inputs[pi::EFFECTS_HASH_BASE + i] = effects_hash_4[i];
-    }
+    public_inputs[pi::EFFECTS_HASH_BASE..pi::EFFECTS_HASH_BASE + pi::EFFECTS_HASH_LEN]
+        .copy_from_slice(&effects_hash_4[..pi::EFFECTS_HASH_LEN]);
     // Suppress unused-variable warning for the legacy 2-felt form.
     let _ = (effects_hash_lo, effects_hash_hi);
 
@@ -1141,9 +1137,9 @@ pub fn generate_effect_vm_trace_ext(
     public_inputs[pi::CUSTOM_EFFECT_COUNT] = BabyBear::new(custom_count as u32);
     // RETIRED slot (VERB-LOCKSTEP): ValidateHandoff is gone; the approved-
     // handoffs root stays the context-supplied sentinel until the PI compaction.
-    for i in 0..pi::APPROVED_HANDOFFS_LEN {
-        public_inputs[pi::APPROVED_HANDOFFS_BASE + i] = context.approved_handoffs_root[i];
-    }
+    public_inputs
+        [pi::APPROVED_HANDOFFS_BASE..pi::APPROVED_HANDOFFS_BASE + pi::APPROVED_HANDOFFS_LEN]
+        .copy_from_slice(&context.approved_handoffs_root[..pi::APPROVED_HANDOFFS_LEN]);
 
     // ---- Stage 7-γ.0a turn-identity bindings ----
     // These four fields are *shared across all per-cell proofs of one turn*.
@@ -1151,16 +1147,15 @@ pub fn generate_effect_vm_trace_ext(
     // the bundle; per-proof binding to the canonical Turn::hash and
     // call_forest projection is executor-trusted at γ.0 and becomes
     // algebraic at γ.1.
-    for i in 0..pi::TURN_HASH_LEN {
-        public_inputs[pi::TURN_HASH_BASE + i] = context.turn_hash[i];
-    }
-    for i in 0..pi::EFFECTS_HASH_GLOBAL_LEN {
-        public_inputs[pi::EFFECTS_HASH_GLOBAL_BASE + i] = context.effects_hash_global[i];
-    }
+    public_inputs[pi::TURN_HASH_BASE..pi::TURN_HASH_BASE + pi::TURN_HASH_LEN]
+        .copy_from_slice(&context.turn_hash[..pi::TURN_HASH_LEN]);
+    public_inputs
+        [pi::EFFECTS_HASH_GLOBAL_BASE..pi::EFFECTS_HASH_GLOBAL_BASE + pi::EFFECTS_HASH_GLOBAL_LEN]
+        .copy_from_slice(&context.effects_hash_global[..pi::EFFECTS_HASH_GLOBAL_LEN]);
     public_inputs[pi::ACTOR_NONCE] = BabyBear::new((context.actor_nonce & 0x7FFF_FFFF) as u32);
-    for i in 0..pi::PREVIOUS_RECEIPT_HASH_LEN {
-        public_inputs[pi::PREVIOUS_RECEIPT_HASH_BASE + i] = context.previous_receipt_hash[i];
-    }
+    public_inputs[pi::PREVIOUS_RECEIPT_HASH_BASE
+        ..pi::PREVIOUS_RECEIPT_HASH_BASE + pi::PREVIOUS_RECEIPT_HASH_LEN]
+        .copy_from_slice(&context.previous_receipt_hash[..pi::PREVIOUS_RECEIPT_HASH_LEN]);
 
     // ---- Sovereign-witness teeth (SOVEREIGN-WITNESS-AIR-DESIGN.md) ----
     //
@@ -1173,10 +1168,11 @@ pub fn generate_effect_vm_trace_ext(
     // Phase 2: PI additionally carries the inner transition_proof's
     // VK hash + 4-felt commitment + a presence flag. The off-AIR
     // verifier reads these and recursively verifies the inner STARK.
-    for i in 0..pi::SOVEREIGN_WITNESS_KEY_COMMIT_LEN {
-        public_inputs[pi::SOVEREIGN_WITNESS_KEY_COMMIT_BASE + i] =
-            context.sovereign_witness_key_commit[i];
-    }
+    public_inputs[pi::SOVEREIGN_WITNESS_KEY_COMMIT_BASE
+        ..pi::SOVEREIGN_WITNESS_KEY_COMMIT_BASE + pi::SOVEREIGN_WITNESS_KEY_COMMIT_LEN]
+        .copy_from_slice(
+            &context.sovereign_witness_key_commit[..pi::SOVEREIGN_WITNESS_KEY_COMMIT_LEN],
+        );
     public_inputs[pi::SOVEREIGN_WITNESS_SEQUENCE] =
         BabyBear::new((context.sovereign_witness_sequence & 0x7FFF_FFFF) as u32);
     public_inputs[pi::IS_SOVEREIGN_CELL] = if context.is_sovereign_cell {
@@ -1184,14 +1180,19 @@ pub fn generate_effect_vm_trace_ext(
     } else {
         BabyBear::ZERO
     };
-    for i in 0..pi::SOVEREIGN_TRANSITION_PROOF_VK_HASH_LEN {
-        public_inputs[pi::SOVEREIGN_TRANSITION_PROOF_VK_HASH_BASE + i] =
-            context.sovereign_transition_proof_vk_hash[i];
-    }
-    for i in 0..pi::SOVEREIGN_TRANSITION_PROOF_COMMITMENT_LEN {
-        public_inputs[pi::SOVEREIGN_TRANSITION_PROOF_COMMITMENT_BASE + i] =
-            context.sovereign_transition_proof_commitment[i];
-    }
+    public_inputs[pi::SOVEREIGN_TRANSITION_PROOF_VK_HASH_BASE
+        ..pi::SOVEREIGN_TRANSITION_PROOF_VK_HASH_BASE + pi::SOVEREIGN_TRANSITION_PROOF_VK_HASH_LEN]
+        .copy_from_slice(
+            &context.sovereign_transition_proof_vk_hash
+                [..pi::SOVEREIGN_TRANSITION_PROOF_VK_HASH_LEN],
+        );
+    public_inputs[pi::SOVEREIGN_TRANSITION_PROOF_COMMITMENT_BASE
+        ..pi::SOVEREIGN_TRANSITION_PROOF_COMMITMENT_BASE
+            + pi::SOVEREIGN_TRANSITION_PROOF_COMMITMENT_LEN]
+        .copy_from_slice(
+            &context.sovereign_transition_proof_commitment
+                [..pi::SOVEREIGN_TRANSITION_PROOF_COMMITMENT_LEN],
+        );
     public_inputs[pi::HAS_TRANSITION_PROOF] = if context.has_transition_proof {
         BabyBear::ONE
     } else {
@@ -1226,9 +1227,9 @@ pub fn generate_effect_vm_trace_ext(
         m
     };
     let mint_limbs = u64_to_4_limbs_16(mint_sum);
-    for i in 0..pi::BRIDGE_MINT_VALUE_LIMBS_LEN {
-        public_inputs[pi::BRIDGE_MINT_VALUE_LIMBS_BASE + i] = mint_limbs[i];
-    }
+    public_inputs[pi::BRIDGE_MINT_VALUE_LIMBS_BASE
+        ..pi::BRIDGE_MINT_VALUE_LIMBS_BASE + pi::BRIDGE_MINT_VALUE_LIMBS_LEN]
+        .copy_from_slice(&mint_limbs[..pi::BRIDGE_MINT_VALUE_LIMBS_LEN]);
     // RETIRED slots (VERB-LOCKSTEP): BridgeLock / CreateEscrow no longer exist,
     // so their limb slots are pinned to the zero sentinel (PI layout unchanged
     // until the descriptor-regeneration lane compacts it).
@@ -1280,12 +1281,12 @@ pub fn generate_effect_vm_trace_ext(
     }
     public_inputs[pi::EMIT_EVENT_COUNT] = BabyBear::new(emit_event_count);
     if let (Some(t), Some(p)) = (first_emit_topic, first_emit_payload) {
-        for i in 0..pi::EMIT_EVENT_TOPIC_HASH_LEN {
-            public_inputs[pi::EMIT_EVENT_TOPIC_HASH_BASE + i] = t[i];
-        }
-        for i in 0..pi::EMIT_EVENT_PAYLOAD_HASH_LEN {
-            public_inputs[pi::EMIT_EVENT_PAYLOAD_HASH_BASE + i] = p[i];
-        }
+        public_inputs[pi::EMIT_EVENT_TOPIC_HASH_BASE
+            ..pi::EMIT_EVENT_TOPIC_HASH_BASE + pi::EMIT_EVENT_TOPIC_HASH_LEN]
+            .copy_from_slice(&t[..pi::EMIT_EVENT_TOPIC_HASH_LEN]);
+        public_inputs[pi::EMIT_EVENT_PAYLOAD_HASH_BASE
+            ..pi::EMIT_EVENT_PAYLOAD_HASH_BASE + pi::EMIT_EVENT_PAYLOAD_HASH_LEN]
+            .copy_from_slice(&p[..pi::EMIT_EVENT_PAYLOAD_HASH_LEN]);
     }
 
     // ---- D5: NoteSpend nullifier cross-binding (approach A) ----
@@ -1356,12 +1357,10 @@ pub fn generate_effect_vm_trace_ext(
     // the trusted federation id + owner cell id and rejects any disagreement.
     let fed_id_4 = canonical_id_to_felts_4(&context.federation_id);
     let owner_id_4 = canonical_id_to_felts_4(&context.owner_cell_id);
-    for i in 0..pi::FEDERATION_ID_LEN {
-        public_inputs[pi::FEDERATION_ID_BASE + i] = fed_id_4[i];
-    }
-    for i in 0..pi::OWNER_CELL_ID_LEN {
-        public_inputs[pi::OWNER_CELL_ID_BASE + i] = owner_id_4[i];
-    }
+    public_inputs[pi::FEDERATION_ID_BASE..pi::FEDERATION_ID_BASE + pi::FEDERATION_ID_LEN]
+        .copy_from_slice(&fed_id_4[..pi::FEDERATION_ID_LEN]);
+    public_inputs[pi::OWNER_CELL_ID_BASE..pi::OWNER_CELL_ID_BASE + pi::OWNER_CELL_ID_LEN]
+        .copy_from_slice(&owner_id_4[..pi::OWNER_CELL_ID_LEN]);
 
     // ---- Slot-caveat manifest (Cav-Codex Block 3) ----
     //
@@ -1397,12 +1396,8 @@ pub fn generate_effect_vm_trace_ext(
     // ---- Custom proof entries (PI layout v3: 8 vk + 4 commit per entry) ----
     for (i, (vk_hash, proof_commit)) in custom_entries.iter().enumerate() {
         let base = pi::CUSTOM_PROOFS_BASE + i * pi::CUSTOM_ENTRY_SIZE;
-        for j in 0..8 {
-            public_inputs[base + j] = vk_hash[j];
-        }
-        for j in 0..4 {
-            public_inputs[base + 8 + j] = proof_commit[j];
-        }
+        public_inputs[base..base + 8].copy_from_slice(&vk_hash[..]);
+        public_inputs[base + 8..base + 12].copy_from_slice(&proof_commit[..]);
     }
 
     assert_eq!(public_inputs.len(), pi_len);

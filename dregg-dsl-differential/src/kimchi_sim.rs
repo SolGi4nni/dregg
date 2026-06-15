@@ -162,8 +162,8 @@ fn check_range_burst(
     let mut acc: u128 = 0;
     for i in 0..64 {
         let bit = ((diff >> i) & 1) as i128;
-        // boolean constraint: -1*bit + 1*(bit*bit) = bit^2 - bit
-        let poly = -1 * bit + 1 * (bit * bit);
+        // boolean constraint: bit^2 - bit (zero iff bit ∈ {0,1})
+        let poly = -bit + (bit * bit);
         if poly != 0 {
             return Ok(false);
         }

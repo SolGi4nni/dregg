@@ -43,7 +43,11 @@ fn install() {
 // satisfies any caveat would make "child ⊆ parent" trivially true).
 
 fn arb_action() -> impl Strategy<Value = String> {
-    prop_oneof![Just("read".to_string()), Just("write".to_string()), Just("submit".to_string())]
+    prop_oneof![
+        Just("read".to_string()),
+        Just("write".to_string()),
+        Just("submit".to_string())
+    ]
 }
 
 fn arb_resource() -> impl Strategy<Value = String> {
@@ -61,7 +65,10 @@ fn arb_resource() -> impl Strategy<Value = String> {
 /// fail-closed corners) is exercised.
 fn arb_pred() -> impl Strategy<Value = Pred> {
     let leaf = prop_oneof![
-        arb_action().prop_map(|a| Pred::AttrEq { key: "action".into(), value: a }),
+        arb_action().prop_map(|a| Pred::AttrEq {
+            key: "action".into(),
+            value: a
+        }),
         prop_oneof![
             Just("org/42/".to_string()),
             Just("org/".to_string()),
@@ -69,7 +76,10 @@ fn arb_pred() -> impl Strategy<Value = Pred> {
             Just("a1".to_string()),
             Just("".to_string()),
         ]
-        .prop_map(|p| Pred::AttrPrefix { key: "resource".into(), prefix: p }),
+        .prop_map(|p| Pred::AttrPrefix {
+            key: "resource".into(),
+            prefix: p
+        }),
         (0u64..3000).prop_map(|at| Pred::NotAfter { at }),
         (0u64..3000).prop_map(|at| Pred::NotBefore { at }),
         Just(Pred::True),
@@ -245,8 +255,14 @@ fn concrete_revocation_sanity() {
     let root = issuer();
     let tok = root
         .mint([
-            Caveat::FirstParty(Pred::AttrEq { key: "action".into(), value: "read".into() }),
-            Caveat::FirstParty(Pred::AttrPrefix { key: "resource".into(), prefix: "".into() }),
+            Caveat::FirstParty(Pred::AttrEq {
+                key: "action".into(),
+                value: "read".into(),
+            }),
+            Caveat::FirstParty(Pred::AttrPrefix {
+                key: "resource".into(),
+                prefix: "".into(),
+            }),
         ])
         .encode();
     // It admits a read on any resource.

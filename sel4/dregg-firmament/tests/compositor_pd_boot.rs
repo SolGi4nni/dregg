@@ -129,7 +129,10 @@ fn two_pds_composite_overpaint_refused_input_routed() {
     let mut app_table = ChannelTable::new();
     app_table.wire(
         PRESENT_CHANNEL,
-        ChannelWiring { notification: kernel.create_notification(), endpoint: Some(present_ep) },
+        ChannelWiring {
+            notification: kernel.create_notification(),
+            endpoint: Some(present_ep),
+        },
     );
     let app_table = Arc::new(app_table);
 
@@ -154,7 +157,10 @@ fn two_pds_composite_overpaint_refused_input_routed() {
         new_digest: 0xA1, // the wallet's frame
     };
     let r1 = submit(&wallet, &wallet_honest);
-    assert_eq!(r1, LABEL_PRESENT_OK, "the wallet's honest present must COMMIT");
+    assert_eq!(
+        r1, LABEL_PRESENT_OK,
+        "the wallet's honest present must COMMIT"
+    );
 
     // ── PD-BROWSER: the HONEST present — paints its OWN region 20, genuine
     //    label, no focus. COMMITS (two app-PDs composite side-by-side). ──
@@ -166,7 +172,10 @@ fn two_pds_composite_overpaint_refused_input_routed() {
         new_digest: 0xB2, // the browser's frame
     };
     let r2 = submit(&browser, &browser_honest);
-    assert_eq!(r2, LABEL_PRESENT_OK, "the browser's honest present must COMMIT");
+    assert_eq!(
+        r2, LABEL_PRESENT_OK,
+        "the browser's honest present must COMMIT"
+    );
 
     // ── PD-BROWSER: the OVERPAINT — targets region 10, which the WALLET owns
     //    (T1 violation). REFUSED at the framebuffer; the wallet's tile is
@@ -194,7 +203,10 @@ fn two_pds_composite_overpaint_refused_input_routed() {
         new_digest: 0xA3,
     };
     let r4 = submit(&wallet, &wallet_second);
-    assert_eq!(r4, LABEL_PRESENT_OK, "the wallet's second present must COMMIT");
+    assert_eq!(
+        r4, LABEL_PRESENT_OK,
+        "the wallet's second present must COMMIT"
+    );
 
     // ── Join the server (all four calls served). ──
     server.join().expect("compositor-PD served all presents");
@@ -205,23 +217,45 @@ fn two_pds_composite_overpaint_refused_input_routed() {
 
     // Tile 10 = the WALLET's first frame (0xA1) — the honest present composited.
     // Crucially it is NOT 0xEE: the browser's overpaint NEVER reached the pixel.
-    assert_eq!(fb[10], 0xA1, "tile 10 holds the WALLET's frame — the overpaint never composited");
-    assert_ne!(fb[10], 0xEE, "the attacker's pixel must NOT be at the wallet's tile 10");
+    assert_eq!(
+        fb[10], 0xA1,
+        "tile 10 holds the WALLET's frame — the overpaint never composited"
+    );
+    assert_ne!(
+        fb[10], 0xEE,
+        "the attacker's pixel must NOT be at the wallet's tile 10"
+    );
     // Tile 20 = the BROWSER's frame (0xB2) — its own region composited.
-    assert_eq!(fb[20], 0xB2, "tile 20 holds the BROWSER's frame (its own region)");
+    assert_eq!(
+        fb[20], 0xB2,
+        "tile 20 holds the BROWSER's frame (its own region)"
+    );
     // Tile 11 = the WALLET's second frame (0xA3).
     assert_eq!(fb[11], 0xA3, "tile 11 holds the wallet's second frame");
 
     // ── THE FRAME LOG: exactly the THREE committed presents (the refusal logged
     //    NOTHING — fail-closed). ──
-    assert_eq!(comp.frames().len(), 3, "three presents COMMITTED; the overpaint logged nothing");
-    assert_eq!(comp.present_count(&wallet), 2, "the wallet committed two presents");
-    assert_eq!(comp.present_count(&browser), 1, "the browser committed one (its honest present)");
+    assert_eq!(
+        comp.frames().len(),
+        3,
+        "three presents COMMITTED; the overpaint logged nothing"
+    );
+    assert_eq!(
+        comp.present_count(&wallet),
+        2,
+        "the wallet committed two presents"
+    );
+    assert_eq!(
+        comp.present_count(&browser),
+        1,
+        "the browser committed one (its honest present)"
+    );
 
     // ── THE T3 INPUT GATE: input routes to the FOCUSED wallet; the browser
     //    stealing it is REFUSED. ──
     assert_eq!(
-        comp.route_input(&wallet).expect("input routes to the focus holder"),
+        comp.route_input(&wallet)
+            .expect("input routes to the focus holder"),
         wallet,
         "input is delivered to the focused wallet"
     );
@@ -272,7 +306,10 @@ fn inline_present_gate_commit_and_every_tooth() {
         },
     );
     let reply = comp.serve_present_inline(Message::new(LABEL_PRESENT, honest));
-    assert_eq!(reply.label, LABEL_PRESENT_OK, "honest present commits (inline)");
+    assert_eq!(
+        reply.label, LABEL_PRESENT_OK,
+        "honest present commits (inline)"
+    );
     assert_eq!(comp.framebuffer_snapshot()[10], 0xA1, "tile 10 composited");
 
     // T1 OVERPAINT: the browser targets the wallet's region 10 — REFUSED.
@@ -288,8 +325,15 @@ fn inline_present_gate_commit_and_every_tooth() {
     );
     let reply = comp.serve_present_inline(Message::new(LABEL_PRESENT, overpaint));
     assert_eq!(reply.label, LABEL_PRESENT_REFUSED, "overpaint refused (T1)");
-    assert_eq!(reply.bytes[0], 1, "the refusal discriminant is T1 Overpaint");
-    assert_eq!(comp.framebuffer_snapshot()[10], 0xA1, "tile 10 UNCHANGED by the refused overpaint");
+    assert_eq!(
+        reply.bytes[0], 1,
+        "the refusal discriminant is T1 Overpaint"
+    );
+    assert_eq!(
+        comp.framebuffer_snapshot()[10],
+        0xA1,
+        "tile 10 UNCHANGED by the refused overpaint"
+    );
 
     // T2 LABEL-SPOOF: the browser paints its own region 20 but DECLARES the
     // wallet's label — REFUSED.
@@ -304,8 +348,14 @@ fn inline_present_gate_commit_and_every_tooth() {
         },
     );
     let reply = comp.serve_present_inline(Message::new(LABEL_PRESENT, spoof));
-    assert_eq!(reply.label, LABEL_PRESENT_REFUSED, "label-spoof refused (T2)");
-    assert_eq!(reply.bytes[0], 2, "the refusal discriminant is T2 LabelSpoof");
+    assert_eq!(
+        reply.label, LABEL_PRESENT_REFUSED,
+        "label-spoof refused (T2)"
+    );
+    assert_eq!(
+        reply.bytes[0], 2,
+        "the refusal discriminant is T2 LabelSpoof"
+    );
 
     // T3 INPUT-MISROUTE: the non-focused browser asserts focus to steal a
     // keystroke — REFUSED.
@@ -320,15 +370,35 @@ fn inline_present_gate_commit_and_every_tooth() {
         },
     );
     let reply = comp.serve_present_inline(Message::new(LABEL_PRESENT, steal));
-    assert_eq!(reply.label, LABEL_PRESENT_REFUSED, "input-misroute refused (T3)");
-    assert_eq!(reply.bytes[0], 3, "the refusal discriminant is T3 InputMisroute");
+    assert_eq!(
+        reply.label, LABEL_PRESENT_REFUSED,
+        "input-misroute refused (T3)"
+    );
+    assert_eq!(
+        reply.bytes[0], 3,
+        "the refusal discriminant is T3 InputMisroute"
+    );
 
     // T3 DOUBLE-FOCUS: against an ambiguous two-focus scene, every present is
     // refused (the scene itself routes input ambiguously).
     comp.set_scene(Scene {
         surfaces: vec![
-            Surface { owner: wallet, regions: vec![10], content_digest: 0xA1, source_state_root: 500, z_layer: 0, focus_flag: true },
-            Surface { owner: browser, regions: vec![20], content_digest: 0xB2, source_state_root: 600, z_layer: 0, focus_flag: true },
+            Surface {
+                owner: wallet,
+                regions: vec![10],
+                content_digest: 0xA1,
+                source_state_root: 500,
+                z_layer: 0,
+                focus_flag: true,
+            },
+            Surface {
+                owner: browser,
+                regions: vec![20],
+                content_digest: 0xB2,
+                source_state_root: 600,
+                z_layer: 0,
+                focus_flag: true,
+            },
         ],
     });
     let honest_again = encode_present(
@@ -342,9 +412,19 @@ fn inline_present_gate_commit_and_every_tooth() {
         },
     );
     let reply = comp.serve_present_inline(Message::new(LABEL_PRESENT, honest_again));
-    assert_eq!(reply.label, LABEL_PRESENT_REFUSED, "double-focus scene refuses every present (T3)");
-    assert_eq!(reply.bytes[0], 4, "the refusal discriminant is T3 DoubleFocus");
+    assert_eq!(
+        reply.label, LABEL_PRESENT_REFUSED,
+        "double-focus scene refuses every present (T3)"
+    );
+    assert_eq!(
+        reply.bytes[0], 4,
+        "the refusal discriminant is T3 DoubleFocus"
+    );
 
     // Only the ONE honest present committed; every tooth bit.
-    assert_eq!(comp.frames().len(), 1, "only the honest present logged a frame");
+    assert_eq!(
+        comp.frames().len(),
+        1,
+        "only the honest present logged a frame"
+    );
 }

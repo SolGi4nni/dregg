@@ -49,5 +49,17 @@ postcard = { version = "1", features = ["use-std"] }
 serde = { workspace = true }
 curve25519-dalek = { version = "4", features = ["alloc"] }
 
+[features]
+# `recursion` is in the DEFAULT set (matching `dregg-circuit`/`dregg-sdk`/`dregg-turn`/`dregg-verifier`,
+# all of which default to it) and forwards to `dregg-circuit/recursion`, so this crate's own
+# `#[cfg(feature = "recursion")]` gates ALIGN with the circuit's recursion state. Without this
+# forward, a bare `cfg(feature = "recursion")` here is ALWAYS false (the crate has no such feature)
+# while `dregg-circuit/recursion` is unified ON by the sdk/turn deps — so the v1-hand-AIR test
+# modules (gated `not(recursion)` — silver_vision_graph_e2e + silver_vision_multi_fed_graph_e2e)
+# would never compile out yet `EffectVmAir` would be absent. Under `recursion` (default) they
+# compile out and the rotated stack is the live one. Mirrors the `tests/` crate's feature forward.
+default = ["recursion"]
+recursion = ["dregg-circuit/recursion"]
+
 [lints]
 workspace = true

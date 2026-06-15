@@ -67,7 +67,7 @@
 //! guarantee statements and the fork follow-up each one names):
 //!
 //!   1. **VK pin** — the root's verifier-key fingerprint
-//!     ([`RecursionVk`]) must equal a caller-held trust anchor;
+//!      ([`RecursionVk`]) must equal a caller-held trust anchor;
 //!   2. **claimed-publics attestation** — the carried `shared_turn_id` /
 //!      `bundle_digest` must verify as the public inputs of the carried
 //!      binding proof (Fiat–Shamir binds them);

@@ -356,12 +356,12 @@ fn compose_tagged_union(
 
     let dead_key: Vec<StateId> = vec![DEAD_STATE; n];
     state_map.insert(dead_key.clone(), DEAD_STATE);
-    transitions.extend(std::iter::repeat(DEAD_STATE).take(256));
+    transitions.extend(std::iter::repeat_n(DEAD_STATE, 256));
 
     let start_key: Vec<StateId> = items.iter().map(|r| r.dfa.start).collect();
     let start_id: StateId = 1;
     state_map.insert(start_key.clone(), start_id);
-    transitions.extend(std::iter::repeat(DEAD_STATE).take(256));
+    transitions.extend(std::iter::repeat_n(DEAD_STATE, 256));
     if let Some(idx) = winning_component(items, &start_key) {
         accepting.insert(start_id);
         accept_map.insert(start_id, items[idx].target.clone());
@@ -401,7 +401,7 @@ fn compose_tagged_union(
                 let id = next_id;
                 next_id += 1;
                 state_map.insert(next_key.clone(), id);
-                transitions.extend(std::iter::repeat(DEAD_STATE).take(256));
+                transitions.extend(std::iter::repeat_n(DEAD_STATE, 256));
                 if let Some(idx) = winning_component(items, &next_key) {
                     accepting.insert(id);
                     accept_map.insert(id, items[idx].target.clone());
@@ -651,7 +651,7 @@ fn hex_short(b: &[u8; 32]) -> String {
     for byte in &b[..4] {
         s.push_str(&format!("{byte:02x}"));
     }
-    s.push_str("…");
+    s.push('…');
     s
 }
 

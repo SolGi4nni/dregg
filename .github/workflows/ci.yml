@@ -68,9 +68,25 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: rustsec/audit-check@v2
+      - uses: dtolnay/rust-toolchain@master
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          toolchain: stable
+      # Run `cargo audit` directly rather than via `rustsec/audit-check@v2`.
+      # The action's `ignore` input is not reliably applied (it reported an
+      # empty ignore set in its own JSON, so the assessed transitive advisories
+      # fell through and red-failed the lane). `cargo audit` reads the
+      # ASSESSED-and-documented ignore list straight from /audit.toml
+      # (the single source of truth — chain + reachability reason + the upstream
+      # bump that retires each id), and by default surfaces informational
+      # advisories (unmaintained / yanked) as non-fatal warnings, exactly the
+      # policy audit.toml documents. Drop a line from audit.toml the moment its
+      # upstream ships a graph-compatible patched release.
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+      # `cargo audit` auto-reads `audit.toml` from the working directory (repo
+      # root), applying its `[advisories].ignore` list. No flag needed.
+      - name: cargo audit (reads ./audit.toml)
+        run: cargo audit
 
   lean-marshal-gate:
     name: Lean marshal gate

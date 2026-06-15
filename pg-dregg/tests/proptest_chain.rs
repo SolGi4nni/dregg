@@ -7,8 +7,8 @@
 //! Run: `cargo test --test proptest_chain`
 
 use pg_dregg::mirror::{
-    revalidate_replicated_chain, verify_chain_step, CellRow, ChainLink, ChainRefusal, MemCell,
-    MirrorBatch, RootChain, TurnRow, Domain,
+    revalidate_replicated_chain, verify_chain_step, CellRow, ChainLink, ChainRefusal, Domain,
+    MemCell, MirrorBatch, RootChain, TurnRow,
 };
 use proptest::prelude::*;
 

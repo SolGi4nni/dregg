@@ -58,7 +58,10 @@ pub struct LocalBacking {
 impl LocalBacking {
     /// A fresh, empty CNode.
     pub fn new() -> Self {
-        LocalBacking { slots: BTreeMap::new(), next_slot: 0 }
+        LocalBacking {
+            slots: BTreeMap::new(),
+            next_slot: 0,
+        }
     }
 
     /// Install an ORIGINAL capability over a kernel object at the next free
@@ -67,7 +70,14 @@ impl LocalBacking {
     pub fn install(&mut self, object: impl Into<String>, rights: Rights) -> u32 {
         let slot = self.next_slot;
         self.next_slot += 1;
-        self.slots.insert(slot, Slot { rights, object: object.into(), minted_from: None });
+        self.slots.insert(
+            slot,
+            Slot {
+                rights,
+                object: object.into(),
+                minted_from: None,
+            },
+        );
         slot
     }
 
@@ -91,7 +101,10 @@ impl LocalBacking {
         Ok(Resolution {
             backing: Backing::LocalKernel,
             bounds: Bounds::LOCAL,
-            note: format!("seL4_Call slot={} object={} rights={:?}", slot, s.object, s.rights),
+            note: format!(
+                "seL4_Call slot={} object={} rights={:?}",
+                slot, s.object, s.rights
+            ),
         })
     }
 
@@ -113,7 +126,11 @@ impl LocalBacking {
         self.next_slot += 1;
         self.slots.insert(
             slot,
-            Slot { rights: narrower, object, minted_from: Some(parent) },
+            Slot {
+                rights: narrower,
+                object,
+                minted_from: Some(parent),
+            },
         );
         Some(slot)
     }
@@ -169,7 +186,9 @@ mod tests {
         let root = cnode.install("endpoint:ctrl", AuthRequired::Either);
 
         // Mint a narrower child — succeeds (Either -> Signature).
-        let child = cnode.mint(root, AuthRequired::Signature).expect("narrowing mint");
+        let child = cnode
+            .mint(root, AuthRequired::Signature)
+            .expect("narrowing mint");
         assert_eq!(cnode.rights_at(child), Some(AuthRequired::Signature));
 
         // Mint a WIDER child off the narrowed one — refused (the `granted ⊆

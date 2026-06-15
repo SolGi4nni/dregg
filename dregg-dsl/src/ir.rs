@@ -1,9 +1,11 @@
-/// Intermediate representation for dregg constraints.
-///
-/// The IR captures the semantic content of a constraint function:
-/// its name, typed parameters, and a list of statements. Each backend
-/// (Rust evaluator, AIR descriptor, Datalog, Kimchi) consumes this IR to emit
-/// its target code.
+//! Intermediate representation for dregg constraints.
+//!
+//! The IR captures the semantic content of a constraint function:
+//! its name, typed parameters, and a list of statements. Each backend
+//! (Rust evaluator, AIR descriptor, Datalog, Kimchi) consumes this IR to emit
+//! its target code. Not every backend reads every field/variant yet, so the
+//! complete IR surface is retained behind a module-level `dead_code` allow.
+#![allow(dead_code)]
 
 /// A single constraint function parsed from a `#[dregg_caveat]` or `#[dregg_effect]` annotation.
 pub struct ConstraintIr {

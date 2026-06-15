@@ -28,19 +28,13 @@
 use std::sync::Arc;
 
 use dregg_cell::predicate::{
-    InputRef, PredicateInput, WitnessedPredicate, WitnessedPredicateError, WitnessedPredicateKind,
-    WitnessedPredicateRegistry, WitnessedPredicateVerifier,
-};
-use dregg_cell::program::{
-    AuthorizedSet, CustomDescriptor, DeltaRelation, HashKind, ReadSet, SimpleStateConstraint,
-    TransitionCase, TransitionGuard, TransitionMeta, WitnessBlobView, WitnessBundle,
-    WitnessKindTag,
+    PredicateInput, WitnessedPredicateError, WitnessedPredicateKind, WitnessedPredicateRegistry,
+    WitnessedPredicateVerifier,
 };
 use dregg_cell::{
-    CellProgram, CellState, EFFECT_SET_FIELD, EvalContext, FIELD_ZERO, FieldElement, ProgramError,
-    StateConstraint, field_from_u64,
+    CellProgram, CellState, EvalContext, FieldElement, ProgramError, StateConstraint,
+    field_from_u64,
 };
-use dregg_turn::action::symbol;
 
 // ---------------------------------------------------------------------------
 // helpers

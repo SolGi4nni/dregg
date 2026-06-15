@@ -35,7 +35,10 @@ fn hx(b: &[u8]) -> String {
 }
 
 fn rule(title: &str) {
-    println!("\n\x1b[1m── {title} {}\x1b[0m", "─".repeat(60usize.saturating_sub(title.len())));
+    println!(
+        "\n\x1b[1m── {title} {}\x1b[0m",
+        "─".repeat(60usize.saturating_sub(title.len()))
+    );
 }
 
 fn main() {
@@ -46,7 +49,10 @@ fn main() {
     // =======================================================================
     rule("1. mirror ← synthetic committed turns");
     let story: Vec<MirrorBatch> = synth::ledger_story();
-    println!("the node committed {} turns; the mirror replays them:", story.len());
+    println!(
+        "the node committed {} turns; the mirror replays them:",
+        story.len()
+    );
 
     let mut chain = RootChain::resume(GENESIS_ROOT, 0);
     for b in &story {
@@ -61,15 +67,14 @@ fn main() {
             (_, 1) => "grant: ALICE delegates a capability to BOB (slot 0)".to_string(),
             _ => "organ op: ALICE seals a field (nonce bump)".to_string(),
         };
-        println!(
-            "  ord {}  root {}…  {}",
-            b.turn.ordinal,
-            &post[..12],
-            what
-        );
+        println!("  ord {}  root {}…  {}", b.turn.ordinal, &post[..12], what);
     }
     assert_eq!(chain.next_ordinal(), 4, "all four turns must chain");
-    println!("→ all {} turns CHAINED; head root {}…", story.len(), &hx(&chain.head().unwrap())[..12]);
+    println!(
+        "→ all {} turns CHAINED; head root {}…",
+        story.len(),
+        &hx(&chain.head().unwrap())[..12]
+    );
 
     // Conservation across the transfer (a property the explorer can re-check in
     // SQL: SELECT sum(balance) over the touched cells).
@@ -93,7 +98,11 @@ fn main() {
         Ok(()) => panic!("SECURITY FAILURE: a tampered batch was accepted"),
         Err(e) => println!("  the mirror REFUSED the forged ord-2 batch: {e}"),
     }
-    assert_eq!(chain2.head(), head_before, "a refused batch must not move the head");
+    assert_eq!(
+        chain2.head(),
+        head_before,
+        "a refused batch must not move the head"
+    );
     println!("→ the chain head did NOT move; forged state cannot enter the mirror");
 
     // =======================================================================
@@ -139,14 +148,23 @@ fn main() {
     // dregg.issuer_pubkey GUC; here we install it directly).
     let issuer = RootKey::from_seed([7u8; 32]);
     authz::set_issuer_pubkey(issuer.public());
-    println!("  issuer key installed: {}…", &issuer.public().to_hex()[..12]);
+    println!(
+        "  issuer key installed: {}…",
+        &issuer.public().to_hex()[..12]
+    );
 
     // A read capability over ANY cell (the operator's token): action=read,
     // resource prefix "" (every cell-id hex).
     let operator = issuer
         .mint([
-            Caveat::FirstParty(Pred::AttrEq { key: "action".into(), value: "read".into() }),
-            Caveat::FirstParty(Pred::AttrPrefix { key: "resource".into(), prefix: "".into() }),
+            Caveat::FirstParty(Pred::AttrEq {
+                key: "action".into(),
+                value: "read".into(),
+            }),
+            Caveat::FirstParty(Pred::AttrPrefix {
+                key: "resource".into(),
+                prefix: "".into(),
+            }),
         ])
         .encode();
 
@@ -154,8 +172,14 @@ fn main() {
     // the hex prefix of ALICE's cell-id). This is what a delegated reader holds.
     let alice_only = issuer
         .mint([
-            Caveat::FirstParty(Pred::AttrEq { key: "action".into(), value: "read".into() }),
-            Caveat::FirstParty(Pred::AttrPrefix { key: "resource".into(), prefix: "".into() }),
+            Caveat::FirstParty(Pred::AttrEq {
+                key: "action".into(),
+                value: "read".into(),
+            }),
+            Caveat::FirstParty(Pred::AttrPrefix {
+                key: "resource".into(),
+                prefix: "".into(),
+            }),
         ])
         .attenuate([Caveat::FirstParty(Pred::AttrPrefix {
             key: "resource".into(),
@@ -178,17 +202,30 @@ fn main() {
 
     let op_sees = visible(&operator);
     let alice_sees = visible(&alice_only);
-    println!("  operator token   → SELECT FROM dregg.cells sees: {:?}", op_sees);
-    println!("  alice-only token → SELECT FROM dregg.cells sees: {:?}", alice_sees);
+    println!(
+        "  operator token   → SELECT FROM dregg.cells sees: {:?}",
+        op_sees
+    );
+    println!(
+        "  alice-only token → SELECT FROM dregg.cells sees: {:?}",
+        alice_sees
+    );
 
     assert_eq!(op_sees.len(), 3, "the operator sees all three cells");
-    assert_eq!(alice_sees, vec!["ALICE"], "the attenuated token sees ONLY ALICE");
+    assert_eq!(
+        alice_sees,
+        vec!["ALICE"],
+        "the attenuated token sees ONLY ALICE"
+    );
     // The no-amplify property, observed through the RLS decision: the child's
     // visible set is a STRICT subset of the parent's.
     for s in &alice_sees {
         assert!(op_sees.contains(s), "child saw a row the parent could not");
     }
-    assert!(alice_sees.len() < op_sees.len(), "attenuation must strictly narrow");
+    assert!(
+        alice_sees.len() < op_sees.len(),
+        "attenuation must strictly narrow"
+    );
     println!(
         "→ attenuation NARROWED the visible rows {} → {} (strict subset; no amplification)",
         op_sees.len(),
@@ -202,7 +239,11 @@ fn main() {
     authz::revoke(&id);
     let after = visible(&operator);
     assert!(after.is_empty(), "a revoked token must see zero rows");
-    println!("  revoked the operator credential ({}…); it now sees: {:?}", &id[..12], after);
+    println!(
+        "  revoked the operator credential ({}…); it now sees: {:?}",
+        &id[..12],
+        after
+    );
     println!("→ revocation is INSTANT — the next SELECT returns zero rows");
     authz::unrevoke(&id);
 

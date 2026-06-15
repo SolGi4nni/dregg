@@ -281,7 +281,7 @@ impl FlashWell {
         let fee = field_to_u64(cell.state.fields[FW_FEE_SLOT as usize]);
         let ratchet = field_to_u64(cell.state.fields[FW_RATCHET_SLOT as usize]);
         let state = field_to_u64(cell.state.fields[FW_STATE_SLOT as usize]);
-        let rung = if fee == 0 { 0 } else { ratchet / fee };
+        let rung = ratchet.checked_div(fee).unwrap_or(0);
         let top_rung = self.terms.max_draws as u64 + 1;
         Ok(FlashWellStatus {
             principal,

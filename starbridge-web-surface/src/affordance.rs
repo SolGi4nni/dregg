@@ -65,7 +65,7 @@ use dregg_turn::Effect;
 use dregg_types::CellId;
 
 use crate::delegate::SurfaceCapability;
-use crate::rehydrate::{rehydrate, Membrane, Rehydration, RehydrateError, Sturdyref};
+use crate::rehydrate::{rehydrate, Membrane, RehydrateError, Rehydration, Sturdyref};
 use crate::web_of_cells::WebOfCells;
 
 /// A single **cell affordance** — the htmx-on-crack element.
@@ -433,15 +433,34 @@ impl Viewer {
 /// equality-friendly projection a test or a UI can compare.)
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EffectSummary {
-    SetField { cell: CellId, index: usize },
-    Transfer { from: CellId, to: CellId, amount: u64 },
-    GrantCapability { from: CellId, to: CellId },
-    RevokeCapability { cell: CellId, slot: u32 },
-    EmitEvent { cell: CellId },
-    IncrementNonce { cell: CellId },
+    SetField {
+        cell: CellId,
+        index: usize,
+    },
+    Transfer {
+        from: CellId,
+        to: CellId,
+        amount: u64,
+    },
+    GrantCapability {
+        from: CellId,
+        to: CellId,
+    },
+    RevokeCapability {
+        cell: CellId,
+        slot: u32,
+    },
+    EmitEvent {
+        cell: CellId,
+    },
+    IncrementNonce {
+        cell: CellId,
+    },
     /// Any other real `Effect` variant, tagged by its name (still the genuine
     /// effect — only the *summary* is coarse).
-    Other { tag: &'static str },
+    Other {
+        tag: &'static str,
+    },
 }
 
 impl EffectSummary {
@@ -658,11 +677,7 @@ impl AffordanceSurface {
     /// The names a viewer is authorized to see (sorted) — the per-viewer affordance
     /// set, the thing two different-cap viewers DIVERGE on.
     pub fn visible_names(&self, held: &SurfaceCapability) -> Vec<String> {
-        let mut names: Vec<String> = self
-            .project_for(held)
-            .into_iter()
-            .map(|a| a.name)
-            .collect();
+        let mut names: Vec<String> = self.project_for(held).into_iter().map(|a| a.name).collect();
         names.sort();
         names
     }
@@ -991,7 +1006,10 @@ mod tests {
         let edit = CellAffordance::new("edit", AuthRequired::Either, set_field(doc, 3));
         assert_eq!(
             edit.effect_summary(),
-            EffectSummary::SetField { cell: doc, index: 3 }
+            EffectSummary::SetField {
+                cell: doc,
+                index: 3
+            }
         );
         // And it really is the `Effect` type (matchable as the genuine enum).
         assert!(matches!(edit.effect_template, Effect::SetField { .. }));
@@ -1039,7 +1057,11 @@ mod tests {
         assert_eq!(viewer_set, vec!["view".to_string()]);
         assert_eq!(
             editor_set,
-            vec!["comment".to_string(), "edit".to_string(), "view".to_string()]
+            vec![
+                "comment".to_string(),
+                "edit".to_string(),
+                "view".to_string()
+            ]
         );
         assert_eq!(
             admin_set,
@@ -1074,7 +1096,10 @@ mod tests {
         assert!(!proj.iter().any(|a| a.name == "admin"));
         // every authorized affordance IS present (view, comment, edit).
         for name in ["view", "comment", "edit"] {
-            assert!(proj.iter().any(|a| a.name == name), "{name} must be visible to editor");
+            assert!(
+                proj.iter().any(|a| a.name == name),
+                "{name} must be visible to editor"
+            );
         }
     }
 
@@ -1092,7 +1117,10 @@ mod tests {
         assert_eq!(intent.surface_cell, doc);
         assert_eq!(intent.affordance, "view");
         // The intent carries the REAL effect the executor would run.
-        assert_eq!(intent.effect_summary(), EffectSummary::EmitEvent { cell: doc });
+        assert_eq!(
+            intent.effect_summary(),
+            EffectSummary::EmitEvent { cell: doc }
+        );
         assert!(matches!(intent.effect, Effect::EmitEvent { .. }));
     }
 
@@ -1122,7 +1150,10 @@ mod tests {
             .expect("admin holder fires admin");
         assert_eq!(
             admin_intent.effect_summary(),
-            EffectSummary::GrantCapability { from: doc, to: cid(99) }
+            EffectSummary::GrantCapability {
+                from: doc,
+                to: cid(99)
+            }
         );
     }
 
@@ -1130,7 +1161,9 @@ mod tests {
     fn firing_a_missing_affordance_is_no_such_affordance() {
         let surface = doc_surface(cid(6));
         assert_eq!(
-            surface.fire("nonexistent", cid(50), &admin_held()).unwrap_err(),
+            surface
+                .fire("nonexistent", cid(50), &admin_held())
+                .unwrap_err(),
             FireError::NoSuchAffordance
         );
     }
@@ -1186,16 +1219,12 @@ mod tests {
         // The frustum-snapshot embeds a Sturdyref + the culling boundary (cell +
         // affordance NAMES), NOT the effect-templates. Its extent grows with the
         // name count, never the effect payloads — it is tiny by construction.
-        let (_web, surface, snapshot) = snapshot_of_doc(
-            10,
-            AuthRequired::None,
-            InteractionLog::new(),
-            false,
-        );
+        let (_web, surface, snapshot) =
+            snapshot_of_doc(10, AuthRequired::None, InteractionLog::new(), false);
         // The boundary names exactly the surface's affordances (sorted).
         assert_eq!(snapshot.boundary.affordance_names, surface.all_names());
         assert_eq!(snapshot.boundary_extent(), 4); // view/comment/edit/admin
-        // It carries the sturdyref (the cap-handle), bound to the surface cell.
+                                                   // It carries the sturdyref (the cap-handle), bound to the surface cell.
         assert_eq!(snapshot.sturdyref.uri.cell, surface.cell);
         assert_eq!(snapshot.boundary.cell, surface.cell);
         // Crucially the snapshot does NOT carry the effect-templates: the boundary
@@ -1210,8 +1239,7 @@ mod tests {
         let witness = a_real_witness();
         let mut log = InteractionLog::new();
         log.record_attested_fetch(DreggUri::new(cid(60)), witness);
-        let (web, surface, snapshot) =
-            snapshot_of_doc(11, AuthRequired::None, log, false);
+        let (web, surface, snapshot) = snapshot_of_doc(11, AuthRequired::None, log, false);
 
         let viewer = Membrane::new(viewer_held());
         let editor = Membrane::new(editor_held());
@@ -1236,7 +1264,11 @@ mod tests {
         assert_eq!(viewer_names, vec!["view".to_string()]);
         assert_eq!(
             editor_names,
-            vec!["comment".to_string(), "edit".to_string(), "view".to_string()]
+            vec![
+                "comment".to_string(),
+                "edit".to_string(),
+                "view".to_string()
+            ]
         );
         assert_ne!(viewer_names, editor_names);
 
@@ -1260,8 +1292,7 @@ mod tests {
         // Confined: every interaction witnessed → ReplayedDeterministic.
         let mut confined = InteractionLog::new();
         confined.record_attested_fetch(DreggUri::new(cid(61)), witness.clone());
-        let (web1, surface1, snap1) =
-            snapshot_of_doc(12, AuthRequired::None, confined, false);
+        let (web1, surface1, snap1) = snapshot_of_doc(12, AuthRequired::None, confined, false);
         let (_aff, live1) =
             rehydrate_affordances(&snap1, &surface1, &Membrane::new(admin_held()), &web1)
                 .expect("rehydrates");
@@ -1272,8 +1303,7 @@ mod tests {
         let mut leaky = InteractionLog::new();
         leaky.record_attested_fetch(DreggUri::new(cid(62)), witness);
         leaky.record_ambient("raw fetch outside the membrane");
-        let (web2, surface2, snap2) =
-            snapshot_of_doc(13, AuthRequired::None, leaky, false);
+        let (web2, surface2, snap2) = snapshot_of_doc(13, AuthRequired::None, leaky, false);
         let (_aff2, live2) =
             rehydrate_affordances(&snap2, &surface2, &Membrane::new(admin_held()), &web2)
                 .expect("rehydrates");
@@ -1309,7 +1339,12 @@ mod tests {
         let admin = Membrane::new(admin_held());
         let result = rehydrate_affordances(&snapshot, &surface, &admin, &web);
         assert!(
-            matches!(result, Err(AffordanceRehydrateError::Rehydrate(RehydrateError::Fetch(_)))),
+            matches!(
+                result,
+                Err(AffordanceRehydrateError::Rehydrate(RehydrateError::Fetch(
+                    _
+                )))
+            ),
             "an unattested scene must yield NO interactive surface even with full caps"
         );
     }
@@ -1318,16 +1353,19 @@ mod tests {
     fn rehydrating_against_the_wrong_surface_is_a_boundary_mismatch() {
         // You cannot rehydrate a snapshot against a DIFFERENT surface than its
         // frustum bounded — the boundary cell cross-check refuses it.
-        let (web, _surface, snapshot) = snapshot_of_doc(
-            15,
-            AuthRequired::None,
-            InteractionLog::new(),
-            false,
-        );
+        let (web, _surface, snapshot) =
+            snapshot_of_doc(15, AuthRequired::None, InteractionLog::new(), false);
         let other_surface = doc_surface(cid(81)); // a different cell
-        let result =
-            rehydrate_affordances(&snapshot, &other_surface, &Membrane::new(admin_held()), &web);
-        assert_eq!(result.unwrap_err(), AffordanceRehydrateError::BoundaryMismatch);
+        let result = rehydrate_affordances(
+            &snapshot,
+            &other_surface,
+            &Membrane::new(admin_held()),
+            &web,
+        );
+        assert_eq!(
+            result.unwrap_err(),
+            AffordanceRehydrateError::BoundaryMismatch
+        );
     }
 
     // ── Anti-toy seam check: the effect-templates ARE real effects across the
@@ -1345,15 +1383,27 @@ mod tests {
         );
         assert_eq!(
             surface.get("edit").unwrap().effect_summary(),
-            EffectSummary::SetField { cell: doc, index: 1 }
+            EffectSummary::SetField {
+                cell: doc,
+                index: 1
+            }
         );
         assert_eq!(
             surface.get("admin").unwrap().effect_summary(),
-            EffectSummary::GrantCapability { from: doc, to: cid(99) }
+            EffectSummary::GrantCapability {
+                from: doc,
+                to: cid(99)
+            }
         );
         // And each is matchable as the genuine enum (not a parallel stub type).
-        assert!(matches!(surface.get("edit").unwrap().effect_template, Effect::SetField { .. }));
-        assert!(matches!(surface.get("admin").unwrap().effect_template, Effect::GrantCapability { .. }));
+        assert!(matches!(
+            surface.get("edit").unwrap().effect_template,
+            Effect::SetField { .. }
+        ));
+        assert!(matches!(
+            surface.get("admin").unwrap().effect_template,
+            Effect::GrantCapability { .. }
+        ));
     }
 
     #[test]
@@ -1362,14 +1412,28 @@ mod tests {
         // unique within a surface.
         let doc = cid(91);
         let surface = AffordanceSurface::new(doc)
-            .declare(CellAffordance::new("x", AuthRequired::None, emit_event(doc)))
-            .declare(CellAffordance::new("x", AuthRequired::Signature, set_field(doc, 0)));
+            .declare(CellAffordance::new(
+                "x",
+                AuthRequired::None,
+                emit_event(doc),
+            ))
+            .declare(CellAffordance::new(
+                "x",
+                AuthRequired::Signature,
+                set_field(doc, 0),
+            ));
         assert_eq!(surface.affordances.len(), 1);
         // The SECOND declaration won.
-        assert_eq!(surface.get("x").unwrap().required_rights, AuthRequired::Signature);
+        assert_eq!(
+            surface.get("x").unwrap().required_rights,
+            AuthRequired::Signature
+        );
         assert_eq!(
             surface.get("x").unwrap().effect_summary(),
-            EffectSummary::SetField { cell: doc, index: 0 }
+            EffectSummary::SetField {
+                cell: doc,
+                index: 0
+            }
         );
     }
 
@@ -1493,7 +1557,13 @@ mod tests {
         let btn = vote_btn(doc);
         let ctx = EvalContext::at_height(15);
         let intent = btn
-            .fire(cid(50), &member_held(), &ctx, &council(PENDING, 0), &council(PENDING, 1))
+            .fire(
+                cid(50),
+                &member_held(),
+                &ctx,
+                &council(PENDING, 0),
+                &council(PENDING, 1),
+            )
             .expect("the qualifying transition inside the window fires");
         assert_eq!(intent.actor, cid(50));
         assert_eq!(intent.affordance, "vote");
@@ -1501,7 +1571,10 @@ mod tests {
         // SAME path) — a genuine SetField, not a stub.
         assert_eq!(
             intent.effect_summary(),
-            EffectSummary::SetField { cell: doc, index: TALLY_SLOT }
+            EffectSummary::SetField {
+                cell: doc,
+                index: TALLY_SLOT
+            }
         );
         assert!(matches!(intent.effect, Effect::SetField { .. }));
     }
@@ -1518,24 +1591,46 @@ mod tests {
         let ctx = EvalContext::at_height(15); // inside [10, 20]
 
         // (a) NO ballot added (tally 1→1): the link `new == old + 1` fails.
-        let refused = btn.fire(cid(50), &member_held(), &ctx, &council(PENDING, 1), &council(PENDING, 1));
+        let refused = btn.fire(
+            cid(50),
+            &member_held(),
+            &ctx,
+            &council(PENDING, 1),
+            &council(PENDING, 1),
+        );
         assert_eq!(
             refused.unwrap_err(),
-            FireError::TransitionUnmet { affordance: "vote".to_string() }
+            FireError::TransitionUnmet {
+                affordance: "vote".to_string()
+            }
         );
 
         // (b) ballot jumped by TWO (tally 0→2): same `new`-status, wrong shape.
         assert_eq!(
-            btn.fire(cid(50), &member_held(), &ctx, &council(PENDING, 0), &council(PENDING, 2))
-                .unwrap_err(),
-            FireError::TransitionUnmet { affordance: "vote".to_string() }
+            btn.fire(
+                cid(50),
+                &member_held(),
+                &ctx,
+                &council(PENDING, 0),
+                &council(PENDING, 2)
+            )
+            .unwrap_err(),
+            FireError::TransitionUnmet {
+                affordance: "vote".to_string()
+            }
         );
 
         // CONTRAST: the SAME `new` (PENDING, tally 1) from the RIGHT `old`
         // (tally 0) FIRES — so the refusal above is SOLELY the broken link, not
         // the destination.
         assert!(btn
-            .fire(cid(50), &member_held(), &ctx, &council(PENDING, 0), &council(PENDING, 1))
+            .fire(
+                cid(50),
+                &member_held(),
+                &ctx,
+                &council(PENDING, 0),
+                &council(PENDING, 1)
+            )
             .is_ok());
     }
 
@@ -1551,7 +1646,13 @@ mod tests {
         let new = council(PENDING, 1); // a perfect add-a-ballot transition
 
         // After the deadline (height 25 > close 20) ⇒ OutsideWindow.
-        let after = btn.fire(cid(50), &member_held(), &EvalContext::at_height(25), &old, &new);
+        let after = btn.fire(
+            cid(50),
+            &member_held(),
+            &EvalContext::at_height(25),
+            &old,
+            &new,
+        );
         assert_eq!(
             after.unwrap_err(),
             FireError::OutsideWindow {
@@ -1564,8 +1665,14 @@ mod tests {
 
         // Before it opens (height 5 < open 10) ⇒ OutsideWindow too.
         assert_eq!(
-            btn.fire(cid(50), &member_held(), &EvalContext::at_height(5), &old, &new)
-                .unwrap_err(),
+            btn.fire(
+                cid(50),
+                &member_held(),
+                &EvalContext::at_height(5),
+                &old,
+                &new
+            )
+            .unwrap_err(),
             FireError::OutsideWindow {
                 affordance: "vote".to_string(),
                 open: 10,
@@ -1586,10 +1693,22 @@ mod tests {
         let new = council(PENDING, 1);
 
         assert!(btn
-            .fire(cid(50), &member_held(), &EvalContext::at_height(15), &old, &new)
+            .fire(
+                cid(50),
+                &member_held(),
+                &EvalContext::at_height(15),
+                &old,
+                &new
+            )
             .is_ok());
         assert!(btn
-            .fire(cid(50), &member_held(), &EvalContext::at_height(25), &old, &new)
+            .fire(
+                cid(50),
+                &member_held(),
+                &EvalContext::at_height(25),
+                &old,
+                &new
+            )
             .is_err());
     }
 
@@ -1625,19 +1744,39 @@ mod tests {
 
         // (✓) chair, quorum crossed (2→3), PENDING→RESOLVED ⇒ FIRES.
         assert!(btn
-            .fire(cid(60), &chair_held(), &ctx, &council(PENDING, 2), &council(RESOLVED, 3))
+            .fire(
+                cid(60),
+                &chair_held(),
+                &ctx,
+                &council(PENDING, 2),
+                &council(RESOLVED, 3)
+            )
             .is_ok());
 
         // (✗) chair, but the link fails (old already ≥ quorum: 3→3, no crossing).
         assert_eq!(
-            btn.fire(cid(60), &chair_held(), &ctx, &council(PENDING, 3), &council(RESOLVED, 3))
-                .unwrap_err(),
-            FireError::TransitionUnmet { affordance: "resolve".to_string() }
+            btn.fire(
+                cid(60),
+                &chair_held(),
+                &ctx,
+                &council(PENDING, 3),
+                &council(RESOLVED, 3)
+            )
+            .unwrap_err(),
+            FireError::TransitionUnmet {
+                affordance: "resolve".to_string()
+            }
         );
 
         // (✗) member (no root cap) cannot resolve even on the crossing ⇒ cap tooth.
         assert!(matches!(
-            btn.fire(cid(61), &member_held(), &ctx, &council(PENDING, 2), &council(RESOLVED, 3)),
+            btn.fire(
+                cid(61),
+                &member_held(),
+                &ctx,
+                &council(PENDING, 2),
+                &council(RESOLVED, 3)
+            ),
             Err(FireError::Unauthorized { .. })
         ));
     }
@@ -1729,8 +1868,11 @@ mod tests {
         // (req `None` / root) affordance is NOT shown it.
         let doc = cid(38);
         let admin = CellAffordance::new("admin", AuthRequired::None, grant_cap(doc, cid(99)));
-        let surface = AffordanceSurface::new(doc)
-            .declare(CellAffordance::new("admin", AuthRequired::None, grant_cap(doc, cid(99))));
+        let surface = AffordanceSurface::new(doc).declare(CellAffordance::new(
+            "admin",
+            AuthRequired::None,
+            grant_cap(doc, cid(99)),
+        ));
 
         // permits EVERYTHING, but holds only Signature (lacks root).
         let eager_but_weak = Viewer::new(
@@ -1747,6 +1889,9 @@ mod tests {
             Box::new(|name: &str| name == "admin"),
         );
         assert!(root_trustee.membrane_shows(&admin));
-        assert_eq!(surface.membrane_names(&root_trustee), vec!["admin".to_string()]);
+        assert_eq!(
+            surface.membrane_names(&root_trustee),
+            vec!["admin".to_string()]
+        );
     }
 }

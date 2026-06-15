@@ -64,19 +64,28 @@ fn main() {
 
     // action caveat: AttrEq for one action, AnyOf(AttrEq…) for several.
     let action_pred = if actions.len() == 1 {
-        Pred::AttrEq { key: "action".into(), value: actions[0].clone() }
+        Pred::AttrEq {
+            key: "action".into(),
+            value: actions[0].clone(),
+        }
     } else {
         Pred::AnyOf(
             actions
                 .iter()
-                .map(|a| Pred::AttrEq { key: "action".into(), value: a.clone() })
+                .map(|a| Pred::AttrEq {
+                    key: "action".into(),
+                    value: a.clone(),
+                })
                 .collect(),
         )
     };
 
     let mut caveats = vec![
         Caveat::FirstParty(action_pred),
-        Caveat::FirstParty(Pred::AttrPrefix { key: "resource".into(), prefix: prefix.clone() }),
+        Caveat::FirstParty(Pred::AttrPrefix {
+            key: "resource".into(),
+            prefix: prefix.clone(),
+        }),
     ];
     if let Some(at) = not_after {
         caveats.push(Caveat::FirstParty(Pred::NotAfter { at }));
@@ -84,9 +93,16 @@ fn main() {
 
     let token = root.mint(caveats).encode();
 
-    eprintln!("issuer pubkey (set dregg.issuer_pubkey to this): {}", root.public().to_hex());
-    eprintln!("caveats: action ∈ {actions:?}, resource prefix = {prefix:?}{}",
-        not_after.map(|a| format!(", not_after = {a}")).unwrap_or_default());
+    eprintln!(
+        "issuer pubkey (set dregg.issuer_pubkey to this): {}",
+        root.public().to_hex()
+    );
+    eprintln!(
+        "caveats: action ∈ {actions:?}, resource prefix = {prefix:?}{}",
+        not_after
+            .map(|a| format!(", not_after = {a}"))
+            .unwrap_or_default()
+    );
     // The token on stdout alone, so `TOK=$(cargo run -q --example mint …)` works.
     println!("{token}");
 }

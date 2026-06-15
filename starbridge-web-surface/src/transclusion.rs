@@ -128,7 +128,10 @@ impl TranscludedField {
     /// (`NotFinalized`) if the read is not quorum-finalized. On success the field's
     /// displayed bytes ARE the source's committed bytes, with the citation that dates
     /// them.
-    pub fn include(web: &WebOfCells, source: &DreggUri) -> Result<TranscludedField, TransclusionError> {
+    pub fn include(
+        web: &WebOfCells,
+        source: &DreggUri,
+    ) -> Result<TranscludedField, TransclusionError> {
         // (1) THE FINALIZED READ — the real verified cross-cell observation.
         let (resource, chrome) = web.fetch(source).map_err(TransclusionError::Fetch)?;
         // (2) PROVENANCE FAITHFUL — run the genuine verification chain. A forged or
@@ -340,7 +343,10 @@ mod tests {
         assert_eq!(quote.quoted_bytes(), body);
         // it carries the provenance citation: the source ref + a finalized flag:
         assert_eq!(quote.cite().source, uri);
-        assert!(quote.cite().finalized, "a published+attested source is finalized");
+        assert!(
+            quote.cite().finalized,
+            "a published+attested source is finalized"
+        );
         // and the content commitment is the content address of the quoted bytes:
         assert_eq!(quote.cite().content_hash, quote.resource.content_hash);
     }
@@ -444,7 +450,11 @@ mod tests {
         // "Who observes me?" — exactly the three observers, each carrying the cited
         // receipt + content commitment (a verifiable backlink, not a bare pointer):
         let observers = links.observers_of(uri.cell);
-        assert_eq!(observers.len(), 3, "three distinct observers transclude the source");
+        assert_eq!(
+            observers.len(),
+            3,
+            "three distinct observers transclude the source"
+        );
         let names: Vec<CellId> = observers.iter().map(|o| o.observer).collect();
         assert!(names.contains(&obs_a) && names.contains(&obs_b) && names.contains(&obs_c));
         // each backlink cites the receipt the observation was pinned to:

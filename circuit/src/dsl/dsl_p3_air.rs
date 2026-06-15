@@ -206,8 +206,13 @@ fn hash_count(dsl: &DslCircuit) -> usize {
 #[derive(Clone, Debug)]
 struct InteriorBoundary {
     row: usize,
+    // Carried for the interior-boundary constraint emission; currently only the
+    // boundary count drives the aux-column width (`interior_aux_cols`).
+    #[allow(dead_code)]
     col: usize,
+    #[allow(dead_code)]
     pi_index: Option<usize>,
+    #[allow(dead_code)]
     fixed: BabyBear,
 }
 

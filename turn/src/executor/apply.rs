@@ -1113,9 +1113,7 @@ impl TurnExecutor {
     // and record for the obligation registry.
 
     // Escrow effects: conditional settlement with timeout refund.
-    #[allow(clippy::too_many_arguments)]
     // Committed escrow effects: privacy-preserving conditional settlement.
-    #[allow(clippy::too_many_arguments)]
 
     // ExerciseViaCapability: one-step evaluation map.
     // Look up cap_slot in actor's c-list, verify permissions, execute

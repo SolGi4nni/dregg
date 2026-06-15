@@ -1128,6 +1128,7 @@ impl BridgePresentationBuilder {
 
     /// Build the circuit-level presentation witness from the authorization trace.
     /// Uses linear algebraic binding for the issuer membership (legacy path).
+    #[allow(dead_code)] // Legacy linear-binding path, retained alongside the Merkle-membership presenter.
     fn build_circuit_witness(
         &self,
         trace: &AuthorizationTrace,
@@ -3115,8 +3116,10 @@ pub fn prove_predicate_program(
     let compiled = compile_predicate(program)?;
 
     // Build the private state from the provided values.
-    let mut private_state = PrivateState::default();
-    private_state.values = private_values.clone();
+    let private_state = PrivateState {
+        values: private_values.clone(),
+        ..PrivateState::default()
+    };
 
     // Generate the proof.
     let proof = prove_program(&compiled, &private_state, state_root)?;

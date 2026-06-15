@@ -48,6 +48,7 @@ use crate::vk_v2::{ProvingSystemId, VerifierFingerprint, VkComponents, canonical
 /// - Commitment-inside: receipt observers (see vk_hash but not program).
 /// - Acceptance-inside: post-recursion validators (acceptance bit only).
 /// - Out-of-band:       everyone else.
+///
 /// Enforced by: BLAKE3 keyed-hash binding canonical bytes to vk_hash.
 /// Failure mode if violated: re-execution disagrees with executor's
 /// claimed acceptance bit; soundness failure.

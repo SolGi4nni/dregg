@@ -155,7 +155,9 @@ impl QueueSource for DemoQueue {
         Ok(None) // a fresh demo store starts at genesis
     }
     fn pending(&mut self, limit: usize) -> Result<Vec<SubmitIntent>, String> {
-        Ok((0..limit).filter_map(|_| self.pending.pop_front()).collect())
+        Ok((0..limit)
+            .filter_map(|_| self.pending.pop_front())
+            .collect())
     }
     fn pending_depth(&self) -> Result<u64, String> {
         Ok(self.pending.len() as u64)
@@ -245,7 +247,9 @@ fn parse_args() -> Args {
                 i += 2;
             }
             other => {
-                eprintln!("unknown arg: {other} (use --poll-ms --batch --rate --secs --refuse-every)");
+                eprintln!(
+                    "unknown arg: {other} (use --poll-ms --batch --rate --secs --refuse-every)"
+                );
                 i += 1;
             }
         }
@@ -274,8 +278,7 @@ fn main() {
     let mut queue = DemoQueue::new(args.rate, args.refuse_every);
     // The verified-executor seam: a real node plugs in the Lean executor here
     // (the Tier-D / sidecar producer); this demo uses the conserving stand-in.
-    let mut drainer =
-        Drainer::new(FoldProducer::new(SOURCE, 1_000_000_000, 1)).with_clock(CLOCK);
+    let mut drainer = Drainer::new(FoldProducer::new(SOURCE, 1_000_000_000, 1)).with_clock(CLOCK);
     drainer
         .resume_from(&queue)
         .expect("resume from the durable head");
@@ -332,13 +335,20 @@ fn main() {
     println!("\n── drainerd stopped ────────────────────────────────────────");
     println!("  uptime:            {:.2}s", elapsed.as_secs_f64());
     println!("  verified turns:    {} drained", c.drained);
-    println!("  refused:           {} (unauth={} produce={} conflict={})",
-        c.refused, c.unauthorized, c.produce_refused, c.conflict);
+    println!(
+        "  refused:           {} (unauth={} produce={} conflict={})",
+        c.refused, c.unauthorized, c.produce_refused, c.conflict
+    );
     println!("  mirrored batches:  {}", queue.mirrored);
-    println!("  resolved rows:     executed={} refused={}", queue.resolved_executed, queue.resolved_refused);
-    println!("  final chain head:  ordinal {} ({})",
+    println!(
+        "  resolved rows:     executed={} refused={}",
+        queue.resolved_executed, queue.resolved_refused
+    );
+    println!(
+        "  final chain head:  ordinal {} ({})",
         drainer.next_ordinal(),
-        drainer.head().map(hx).unwrap_or_else(|| "<genesis>".into()));
+        drainer.head().map(hx).unwrap_or_else(|| "<genesis>".into())
+    );
     let rate = c.drained as f64 / elapsed.as_secs_f64().max(1e-9);
     println!("  sustained drain:   {rate:.0} verified turns/sec");
 
@@ -347,7 +357,10 @@ fn main() {
         c.drained, queue.resolved_executed,
         "every drained turn must have resolved its queue row to executed"
     );
-    assert_eq!(c.drained, queue.mirrored, "every drained turn mirrored its post-image");
+    assert_eq!(
+        c.drained, queue.mirrored,
+        "every drained turn mirrored its post-image"
+    );
     assert_eq!(
         c.resolved(),
         queue.resolved_executed + queue.resolved_refused,
@@ -357,8 +370,14 @@ fn main() {
     let p = drainer.producer();
     let agents_total: i64 = (0..4u8).map(|t| p.balance(agent_id(0x20 + t))).sum();
     let total = p.balance(SOURCE) + agents_total;
-    println!("  conservation:      Σ balances = {total}  (== float 1000000000)  {}",
-        if total == 1_000_000_000 { "✓" } else { "✗ BROKEN" });
+    println!(
+        "  conservation:      Σ balances = {total}  (== float 1000000000)  {}",
+        if total == 1_000_000_000 {
+            "✓"
+        } else {
+            "✗ BROKEN"
+        }
+    );
     assert_eq!(total, 1_000_000_000, "drained stream must conserve value");
 
     println!("\n  (postgres-free demo of the worker loop. The live daemon runs the SAME loop");
@@ -368,7 +387,11 @@ fn main() {
 /// One poll cycle, split into the source-read then sink-write phases (so a real
 /// `&mut queue` plays both roles without aliasing) — the demo analog of the live
 /// worker's "read pending rows, drain, UPDATE outcomes" transaction.
-fn poll_cycle(drainer: &mut Drainer<FoldProducer>, queue: &mut DemoQueue, batch: usize) -> PollReport {
+fn poll_cycle(
+    drainer: &mut Drainer<FoldProducer>,
+    queue: &mut DemoQueue,
+    batch: usize,
+) -> PollReport {
     let pending = queue.pending(batch).unwrap_or_default();
     let mut report = PollReport::default();
     for intent in &pending {

@@ -55,16 +55,28 @@ fn main() {
 
     // A navigation the caps ALLOW.
     let d = webview.navigate("https://example.com", "https://example.com/home");
-    println!("navigate example.com -> {d:?}; committed_url={:?}", webview.current_url);
+    println!(
+        "navigate example.com -> {d:?}; committed_url={:?}",
+        webview.current_url
+    );
 
     // A navigation the caps DON'T allow (a phishing redirect).
     let d = webview.navigate("https://evil.com", "https://evil.com/phish");
-    println!("navigate evil.com   -> {d:?}; committed_url UNCHANGED={:?}", webview.current_url);
+    println!(
+        "navigate evil.com   -> {d:?}; committed_url UNCHANGED={:?}",
+        webview.current_url
+    );
     assert!(matches!(d, NavigationDecision::Deny { .. }));
 
     // A subresource fetch the caps allow, and one they don't.
-    println!("fetch cdn.example.com -> continue? {}", webview.fetch("https://cdn.example.com").is_continue());
-    println!("fetch tracker.ads     -> continue? {}", webview.fetch("https://tracker.ads").is_continue());
+    println!(
+        "fetch cdn.example.com -> continue? {}",
+        webview.fetch("https://cdn.example.com").is_continue()
+    );
+    println!(
+        "fetch tracker.ads     -> continue? {}",
+        webview.fetch("https://tracker.ads").is_continue()
+    );
 
     // Open an attenuated child (an iframe/popup) restricted to ONLY example.com —
     // the no-amplification keystone.
@@ -78,8 +90,14 @@ fn main() {
         )
         .expect("a narrowing child is minted");
     println!("\nopened attenuated child (iframe/popup):");
-    println!("  child fetch example.com     -> continue? {}", child.fetch("https://example.com").is_continue());
-    println!("  child fetch cdn.example.com -> continue? {} (NARROWED away)", child.fetch("https://cdn.example.com").is_continue());
+    println!(
+        "  child fetch example.com     -> continue? {}",
+        child.fetch("https://example.com").is_continue()
+    );
+    println!(
+        "  child fetch cdn.example.com -> continue? {} (NARROWED away)",
+        child.fetch("https://cdn.example.com").is_continue()
+    );
 
     // A child that tries to AMPLIFY (reach a new origin) is refused at the boundary.
     let refused = webview.open_auxiliary(
@@ -89,7 +107,10 @@ fn main() {
         None,
         BTreeSet::new(),
     );
-    println!("child requesting evil.com (amplify) -> minted? {}", refused.is_some());
+    println!(
+        "child requesting evil.com (amplify) -> minted? {}",
+        refused.is_some()
+    );
     assert!(refused.is_none());
 
     println!("\n== Facet: the dregg:// web of cells (a link is a cap, a fetch is a verified attested read) ==\n");
@@ -113,19 +134,28 @@ fn main() {
             std::process::exit(1);
         }
     }
-    println!("  v4 receipt-complete? {}", resource.attested_root.is_v4_receipt_complete());
+    println!(
+        "  v4 receipt-complete? {}",
+        resource.attested_root.is_v4_receipt_complete()
+    );
     println!("  content_hash = {:02x?}…", &resource.content_hash[..6]);
 
     // The trusted-path origin chrome — drawn from the LEDGER, never the page.
     println!("\ntrusted-path origin badge (shell-drawn, page cannot reach it):");
     println!("  {}", chrome.badge());
-    assert!(!chrome.badge().contains("yourbank.com"), "the page's phishing string must NOT appear in the chrome");
+    assert!(
+        !chrome.badge().contains("yourbank.com"),
+        "the page's phishing string must NOT appear in the chrome"
+    );
     println!("  (the page body's 'https://yourbank.com' string does NOT appear in the badge)");
 
     // Show tampering is caught: a lying node hands back different bytes.
     let mut tampered = resource.clone();
     tampered.content_bytes = b"injected content".to_vec();
-    println!("\ntampered-bytes verify -> {:?} (rejected; page never renders)", tampered.verify());
+    println!(
+        "\ntampered-bytes verify -> {:?} (rejected; page never renders)",
+        tampered.verify()
+    );
 
     println!("\nOK — both facets run on the real dregg cap + attestation primitives.");
 }

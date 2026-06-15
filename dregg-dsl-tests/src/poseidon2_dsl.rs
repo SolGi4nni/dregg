@@ -174,16 +174,12 @@ pub fn generate_poseidon2_trace(input: &[BabyBear; 8]) -> (Vec<Vec<BabyBear>>, V
 
     // Compute full permutation
     let mut full_input = [BabyBear::ZERO; WIDTH];
-    for i in 0..8 {
-        full_input[i] = input[i];
-    }
+    full_input[..8].copy_from_slice(&input[..8]);
     let mut ps = Poseidon2State::from_elements(&full_input);
     ps.permute();
     let output: [BabyBear; 8] = {
         let mut out = [BabyBear::ZERO; 8];
-        for i in 0..8 {
-            out[i] = ps.state[i];
-        }
+        out.copy_from_slice(&ps.state[..8]);
         out
     };
 
@@ -193,12 +189,8 @@ pub fn generate_poseidon2_trace(input: &[BabyBear; 8]) -> (Vec<Vec<BabyBear>>, V
 
     // Build trace row
     let mut row = vec![BabyBear::ZERO; POSEIDON2_DSL_WIDTH];
-    for i in 0..8 {
-        row[INPUT_START + i] = input[i];
-    }
-    for i in 0..8 {
-        row[OUTPUT_START + i] = output[i];
-    }
+    row[INPUT_START..INPUT_START + 8].copy_from_slice(&input[..8]);
+    row[OUTPUT_START..OUTPUT_START + 8].copy_from_slice(&output[..8]);
     row[INTERMEDIATE_H1] = h1;
     row[INTERMEDIATE_H2] = h2;
 

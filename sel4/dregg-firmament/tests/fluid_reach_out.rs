@@ -53,7 +53,7 @@ fn one_handle_resolves_local_and_distributed() {
     let app_cell = dist.seed_cell(0); // the app's own cell (the holder)
     let remote_cell = dist.seed_cell(2); // the cell the cap targets
     let recipient_cell = dist.seed_cell(1); // who we delegate to
-    // The firmament granted the app a cap over the remote cell.
+                                            // The firmament granted the app a cap over the remote cell.
     dist.install(app_cell, remote_cell, AuthRequired::Either);
 
     let mut router = FirmamentRouter::new(local, dist).with_holder(app_cell);
@@ -62,7 +62,10 @@ fn one_handle_resolves_local_and_distributed() {
 
     // (a) The LOCAL handle: target is a CNode slot.
     let local_cap = Capability::local(local_slot, AuthRequired::Either);
-    assert_eq!(FirmamentRouter::backing_of(&local_cap), Backing::LocalKernel);
+    assert_eq!(
+        FirmamentRouter::backing_of(&local_cap),
+        Backing::LocalKernel
+    );
 
     let (local_res, local_deleg) =
         run_app(&mut router, &local_cap, Recipient::LocalChild).expect("local app run");
@@ -87,21 +90,22 @@ fn one_handle_resolves_local_and_distributed() {
         Backing::DistributedTurn
     );
 
-    let (dist_res, dist_deleg) =
-        run_app(&mut router, &dist_cap, Recipient::DistributedCell(recipient_cell))
-            .expect("distributed app run");
+    let (dist_res, dist_deleg) = run_app(
+        &mut router,
+        &dist_cap,
+        Recipient::DistributedCell(recipient_cell),
+    )
+    .expect("distributed app run");
 
     // It resolved via a REAL TURN. At n=1 the bounds COLLAPSE to the strong
     // local ones — the fluid reach-out's headline: first-class locally.
     assert_eq!(dist_res.backing, Backing::DistributedTurn);
     assert_eq!(dist_res.bounds, Bounds::LOCAL); // n = 1 collapse
-    // The delegated handle points at the same cell with narrowed rights, and
-    // the recipient cell ACTUALLY HOLDS it (a real committed GrantCapability
-    // turn through the executor — the real `granted ⊆ held`).
+                                                // The delegated handle points at the same cell with narrowed rights, and
+                                                // the recipient cell ACTUALLY HOLDS it (a real committed GrantCapability
+                                                // turn through the executor — the real `granted ⊆ held`).
     assert_eq!(dist_deleg.rights, AuthRequired::Signature);
-    assert!(router
-        .distributed
-        .holds_cap(recipient_cell, remote_cell));
+    assert!(router.distributed.holds_cap(recipient_cell, remote_cell));
     assert_eq!(
         router.distributed.rights_held(recipient_cell, remote_cell),
         Some(AuthRequired::Signature)
@@ -140,7 +144,7 @@ fn bounds_relax_when_the_target_is_far() {
     assert_eq!(res.bounds.n, 5);
     assert!(!res.bounds.revocation_immediate); // eventual — the epoch lift must propagate
     assert!(!res.bounds.commit_synchronous); // quorum-gated finality
-    // But the app still just called `router.resolve(&handle)` — no seam.
+                                             // But the app still just called `router.resolve(&handle)` — no seam.
 }
 
 #[test]
@@ -244,7 +248,7 @@ fn surface_delegate_through_real_executor_and_widening_rejected() {
     let app_cell = surfaces.seed_surface(0); // the app holding the window
     let window = surfaces.seed_surface(2); // the surface (window) cell
     let other_app = surfaces.seed_surface(1); // who we share the window with
-    // The compositor granted the app a WRITABLE (Either) surface cap.
+                                              // The compositor granted the app a WRITABLE (Either) surface cap.
     surfaces.install(app_cell, window, AuthRequired::Either);
 
     let mut router = FirmamentRouter::new(local, dist)
@@ -373,7 +377,10 @@ fn surface_five_verb_window_lifecycle_through_the_real_executor() {
     // ── CREATE-SURFACE: the powerbox births a window and hands the app the
     //    Viewport (a writable surface cap). ──
     let window = fab.create_surface(app, 10, AuthRequired::Either);
-    assert!(fab.holds_cap(app, window), "create-surface hands the app the window");
+    assert!(
+        fab.holds_cap(app, window),
+        "create-surface hands the app the window"
+    );
 
     // ── PRESENT: the app draws into its own window — synchronous at n=1. ──
     let res = fab
@@ -392,18 +399,27 @@ fn surface_five_verb_window_lifecycle_through_the_real_executor() {
         fab.holds_cap(framed, window),
         "embed gave the framed app a (read-only) Viewport over the child window"
     );
-    assert_eq!(fab.rights_held(framed, window), Some(AuthRequired::Signature));
+    assert_eq!(
+        fab.rights_held(framed, window),
+        Some(AuthRequired::Signature)
+    );
 
     // ── GRANT-INPUT: the wm grants the app a narrowed input-receive facet over
     //    the window (focus is a capability) — rides `granted ⊆ held`. ──
     let other = fab.seed_surface(3);
     fab.grant_input(wm, other, window, AuthRequired::Signature)
         .expect("an attenuating input grant commits");
-    assert!(fab.holds_cap(other, window), "grant-input handed the input facet");
+    assert!(
+        fab.holds_cap(other, window),
+        "grant-input handed the input facet"
+    );
 
     // ── REVOKE: the app's window cap is dropped; the glass goes dark instantly
     //    (n=1), and a subsequent present finds nothing held. ──
-    assert!(fab.revoke(app, window), "revoke removes the app's window cap");
+    assert!(
+        fab.revoke(app, window),
+        "revoke removes the app's window cap"
+    );
     assert!(
         fab.present(app, window, &AuthRequired::Either).is_err(),
         "a revoked window cannot paint even one more frame at n=1"
@@ -430,6 +446,12 @@ fn surface_embed_widening_rejected_by_real_introduce() {
 
     // Embedding the child with WIDER (None) rights than the wm holds is REJECTED.
     let r = fab.embed(wm, app, child, AuthRequired::None);
-    assert!(r.is_err(), "a widening embed must be rejected by the real Introduce");
-    assert!(!fab.holds_cap(app, child), "the recipient gets nothing on a refused embed");
+    assert!(
+        r.is_err(),
+        "a widening embed must be rejected by the real Introduce"
+    );
+    assert!(
+        !fab.holds_cap(app, child),
+        "the recipient gets nothing on a refused embed"
+    );
 }

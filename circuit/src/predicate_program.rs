@@ -1692,11 +1692,7 @@ fn verify_compound_range_proof(
     let mut expected_commitments_vec: Vec<BabyBear> = Vec::with_capacity(sub_predicates.len());
     for spec in sub_predicates {
         match spec {
-            WitnessSpec::Range {
-                attribute,
-                threshold: _,
-                ..
-            } => {
+            WitnessSpec::Range { attribute, .. } => {
                 let commitment = expected_commitments
                     .get(attribute)
                     .copied()

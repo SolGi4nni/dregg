@@ -1,0 +1,65 @@
+# cargo-audit / rustsec advisory policy for the dregg workspace.
+#
+# Read by `cargo audit` (and therefore by the `rustsec/audit-check@v2` CI job).
+# Each ignored advisory below is an ASSESSED, currently-unactionable transitive
+# advisory: the vulnerable crate is pulled in by a third-party dependency whose
+# upstream has not yet released a graph-compatible patched version, and the
+# advisory is not reachable in the way our usage exercises the crate. None is a
+# blanket suppression — every entry carries the chain + the reason, and the
+# entry is removed the moment the upstream bump lands (bump the dep, drop the
+# line). First-party code introduces no advisories; the seam is entirely the
+# Arkworks ZK stack, the Serenity Discord client, and the (excluded) pg-dregg
+# Postgres path captured in the shared lockfile.
+
+[advisories]
+ignore = [
+    # ── Arkworks ZK stack (ark-relations → ark-crypto-primitives / ark-poly-
+    #    commit → dregg-hints) pins the pre-0.3 tracing-subscriber. ────────────
+    # RUSTSEC-2025-0055 — tracing-subscriber 0.2.25: ANSI-escape sequences in a
+    # logged value can be injected into terminal output. Reachable only if
+    # UNTRUSTED data is formatted through ark-relations' `tracing` spans; the
+    # dregg crates feed ark-relations only their own constraint-system metadata,
+    # never attacker-controlled strings. Patched in >=0.3.20, which Arkworks
+    # 0.5.x does not yet depend on. Remove when ark-relations bumps.
+    "RUSTSEC-2025-0055",
+
+    # ── Serenity 0.12.5 (Discord bot) → tokio-tungstenite 0.21 → rustls 0.22 →
+    #    rustls-webpki 0.102.8. The discord-bot connects only to Discord's own
+    #    TLS endpoint (a trusted, pinned-CA server), so the webpki cert-path
+    #    advisories below — all DoS / path-building on ATTACKER-supplied cert
+    #    chains — are not reachable: there is no untrusted-server leg. Patched in
+    #    rustls-webpki >=0.103.x, which Serenity 0.12.x does not yet pull. Remove
+    #    when serenity bumps its rustls. ────────────────────────────────────────
+    "RUSTSEC-2026-0104",  # rustls-webpki: DoS via crafted certificate chain
+    "RUSTSEC-2026-0099",  # rustls-webpki: cert path-building advisory
+    "RUSTSEC-2026-0098",  # rustls-webpki: cert path-building advisory
+    "RUSTSEC-2026-0049",  # rustls-webpki: name-constraint check (priv-esc class)
+
+    # ── pg-dregg's Postgres client path, captured in the shared lockfile. ──────
+    # pg-dregg is EXCLUDED from the workspace (root Cargo.toml `exclude`), so
+    # these crates are LOCKED but NOT built by the audited workspace graph
+    # (`cargo tree -i` finds no active reverse path). All three advisories below
+    # require a connection to an UNTRUSTED or MITM Postgres server; pg-dregg
+    # connects only to its own managed, trusted local Postgres. Patched in
+    # postgres-protocol >=0.6.12 / tokio-postgres >=0.7.18, which the locked
+    # transitive graph does not yet permit. Remove on the next lock refresh that
+    # pulls the patched line.
+    "RUSTSEC-2026-0179",  # postgres-protocol: unbounded SCRAM iteration DoS
+    "RUSTSEC-2026-0180",  # postgres-protocol: SCRAM/auth DoS (companion)
+    "RUSTSEC-2026-0178",  # tokio-postgres: DoS (companion to the above)
+
+    # ── rsa 0.9.10 — RUSTSEC-2023-0071 (Marvin timing side-channel in PKCS#1
+    #    decryption). NO patched release exists upstream (`patched: []`), so it
+    #    cannot be bumped away. rsa is lockfile-only here (no active reverse
+    #    path) and the dregg crypto floor uses ed25519 / Pedersen / AEAD, not
+    #    RSA decryption, so the timing oracle is not exercised. Tracked upstream;
+    #    remove when rsa ships a constant-time fix.
+    "RUSTSEC-2023-0071",
+]
+
+# Informational advisories (unmaintained / yanked / unsound) are surfaced as
+# warnings, not hard failures, and are all transitive (atomic-polyfill, bincode,
+# derivative, instant, number_prefix, paste, proc-macro-error2, rustls-pemfile,
+# aes — each from a third-party dep). They do not fail the lane; we leave them
+# visible as a standing nudge to upgrade as upstreams move, rather than
+# suppressing the signal.

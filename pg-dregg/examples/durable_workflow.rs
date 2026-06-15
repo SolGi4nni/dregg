@@ -94,7 +94,10 @@ fn hx(b: &[u8]) -> String {
 }
 
 fn rule(title: &str) {
-    println!("\n\x1b[1m── {title} {}\x1b[0m", "─".repeat(58usize.saturating_sub(title.len())));
+    println!(
+        "\n\x1b[1m── {title} {}\x1b[0m",
+        "─".repeat(58usize.saturating_sub(title.len()))
+    );
 }
 
 /// Mint a bearer token admitting `submit`+`read`, attenuated to `who`'s OWN cell
@@ -105,10 +108,19 @@ fn mint_own_cell(issuer: &RootKey, who: [u8; 32]) -> String {
     issuer
         .mint([
             Caveat::FirstParty(Pred::AnyOf(vec![
-                Pred::AttrEq { key: "action".into(), value: "submit".into() },
-                Pred::AttrEq { key: "action".into(), value: "read".into() },
+                Pred::AttrEq {
+                    key: "action".into(),
+                    value: "submit".into(),
+                },
+                Pred::AttrEq {
+                    key: "action".into(),
+                    value: "read".into(),
+                },
             ])),
-            Caveat::FirstParty(Pred::AttrPrefix { key: "resource".into(), prefix: "".into() }),
+            Caveat::FirstParty(Pred::AttrPrefix {
+                key: "resource".into(),
+                prefix: "".into(),
+            }),
         ])
         .attenuate([Caveat::FirstParty(Pred::AttrPrefix {
             key: "resource".into(),
@@ -126,10 +138,10 @@ fn tokens_for(issuer: &RootKey, who: &[[u8; 32]]) -> MapTokens {
 }
 
 fn main() {
+    println!("\x1b[1mpg-dregg — a durable workflow whose every step is a VERIFIED turn\x1b[0m");
     println!(
-        "\x1b[1mpg-dregg — a durable workflow whose every step is a VERIFIED turn\x1b[0m"
+        "(DBOS-shaped durable execution; each step admitted only by the verified-write spine)"
     );
-    println!("(DBOS-shaped durable execution; each step admitted only by the verified-write spine)");
 
     // The database trust root: a fixed issuer key (in postgres this is the
     // `dregg.issuer_pubkey` GUC; here we install it directly, then clear caches).
@@ -137,7 +149,10 @@ fn main() {
     authz::set_issuer_pubkey(issuer.public());
     authz::lru_clear();
     authz::revoked_clear();
-    println!("  issuer (trust root) installed: {}…", &issuer.public().to_hex()[..12]);
+    println!(
+        "  issuer (trust root) installed: {}…",
+        &issuer.public().to_hex()[..12]
+    );
 
     // The four parties hold tokens scoped to their own cells. The four-step
     // workflow: treasury genesis-mints, funds Alice, Alice spends, Alice spends
@@ -149,8 +164,12 @@ fn main() {
             Step::new("fund: treasury → alice 400", TREASURY)
                 .set(TREASURY, 600, 1)
                 .set(ALICE, 400, 0),
-            Step::new("alice spends 150 → bob", ALICE).set(ALICE, 250, 1).set(BOB, 150, 0),
-            Step::new("alice spends 100 → bob", ALICE).set(ALICE, 150, 2).set(BOB, 250, 1),
+            Step::new("alice spends 150 → bob", ALICE)
+                .set(ALICE, 250, 1)
+                .set(BOB, 150, 0),
+            Step::new("alice spends 100 → bob", ALICE)
+                .set(ALICE, 150, 2)
+                .set(BOB, 250, 1),
         ]
     };
     let workflow = pg_dregg::workflow::Workflow {
@@ -173,8 +192,16 @@ fn main() {
         .expect("the whole workflow runs through the spine");
     assert_eq!(out.committed, 4, "all four steps committed");
     assert_eq!(out.skipped, 0, "a fresh run skips nothing");
-    assert_eq!(durable.len(), 4, "each verified turn was checkpointed to the durable log");
-    println!("  committed {} verified turns; {} checkpointed to the durable log", out.committed, durable.len());
+    assert_eq!(
+        durable.len(),
+        4,
+        "each verified turn was checkpointed to the durable log"
+    );
+    println!(
+        "  committed {} verified turns; {} checkpointed to the durable log",
+        out.committed,
+        durable.len()
+    );
     // Reads are FREE SQL over the materialized mirror (no verification at read).
     println!(
         "  free-SQL reads over the mirror: treasury={} alice={} bob={}  Σ={}",
@@ -233,9 +260,19 @@ fn main() {
     println!("  (b) bob with alice's foreign token: REFUSED ({err_foreign})");
 
     // A refused step moves NOTHING on the live engine — head unchanged, no leak.
-    assert_eq!(engine.head(), head_before, "a refused step does not move the chain head");
-    assert_eq!(engine.turn_count(), turns_before, "a refused step logs no turn");
-    println!("  → head unmoved, no turn logged: no state exists except as an AUTHORIZED verified turn");
+    assert_eq!(
+        engine.head(),
+        head_before,
+        "a refused step does not move the chain head"
+    );
+    assert_eq!(
+        engine.turn_count(),
+        turns_before,
+        "a refused step logs no turn"
+    );
+    println!(
+        "  → head unmoved, no turn logged: no state exists except as an AUTHORIZED verified turn"
+    );
 
     // =======================================================================
     // 3. SIMULATED CRASH — drop the engine; only the durable log survives.
@@ -260,7 +297,11 @@ fn main() {
         head_at_crash = engine.head().expect("a head exists after two turns");
         // engine dropped HERE — the in-process state is gone; `crashed_log` remains.
     }
-    assert_eq!(crashed_log.len(), 2, "exactly the committed prefix is durable");
+    assert_eq!(
+        crashed_log.len(),
+        2,
+        "exactly the committed prefix is durable"
+    );
     println!(
         "  crashed after 2 turns; durable log holds {} turns, head {}…",
         crashed_log.len(),
@@ -278,8 +319,16 @@ fn main() {
     let mut recovered =
         recover_from_durable(tokens_for(&issuer, &agents), FoldProjector, &crashed_log)
             .expect("the durable chain re-validates on recovery");
-    assert_eq!(recovered.next_ordinal(), 2, "resumed at the durable head ordinal");
-    assert_eq!(recovered.head(), Some(head_at_crash), "the head is restored exactly");
+    assert_eq!(
+        recovered.next_ordinal(),
+        2,
+        "resumed at the durable head ordinal"
+    );
+    assert_eq!(
+        recovered.head(),
+        Some(head_at_crash),
+        "the head is restored exactly"
+    );
     assert_eq!(
         recovered.balance(ALICE),
         alice_balance_at_crash,
@@ -303,13 +352,31 @@ fn main() {
     let out = recovered
         .resume_durable(&workflow, &mut crashed_log)
         .expect("the uncommitted tail finishes");
-    assert_eq!(out.skipped, 2, "the two committed steps are skipped, never re-applied");
-    assert_eq!(out.committed, 2, "only the uncommitted tail (steps 2,3) runs");
-    assert_eq!(recovered.turn_count(), 4, "four turns total — no double-apply");
+    assert_eq!(
+        out.skipped, 2,
+        "the two committed steps are skipped, never re-applied"
+    );
+    assert_eq!(
+        out.committed, 2,
+        "only the uncommitted tail (steps 2,3) runs"
+    );
+    assert_eq!(
+        recovered.turn_count(),
+        4,
+        "four turns total — no double-apply"
+    );
     assert_eq!(crashed_log.len(), 4, "the whole workflow is now durable");
     // The end state matches the uninterrupted run EXACTLY — recovery is transparent.
-    assert_eq!(recovered.balance(ALICE), engine.balance(ALICE), "alice's end balance matches the uninterrupted run");
-    assert_eq!(recovered.balance(BOB), engine.balance(BOB), "bob's end balance matches the uninterrupted run");
+    assert_eq!(
+        recovered.balance(ALICE),
+        engine.balance(ALICE),
+        "alice's end balance matches the uninterrupted run"
+    );
+    assert_eq!(
+        recovered.balance(BOB),
+        engine.balance(BOB),
+        "bob's end balance matches the uninterrupted run"
+    );
     println!(
         "  resumed: skipped {} committed, ran {} tail → final alice={} bob={} (== the uninterrupted run)",
         out.skipped,
@@ -325,8 +392,16 @@ fn main() {
     // Value conservation is a property of the verified turn's transition, not a
     // discipline a step can violate: a credit without a debit is not a
     // representable turn. The free-SQL aggregate over the mirror is the witness.
-    assert_eq!(recovered.total_value(), 1000, "Σ balances across the mirror == the genesis total");
-    assert_eq!(engine.total_value(), 1000, "and so does the uninterrupted run");
+    assert_eq!(
+        recovered.total_value(),
+        1000,
+        "Σ balances across the mirror == the genesis total"
+    );
+    assert_eq!(
+        engine.total_value(),
+        1000,
+        "and so does the uninterrupted run"
+    );
     println!(
         "  Σ balances = {} (== genesis 1000) — conserved across the crash + recovery + resume",
         recovered.total_value()

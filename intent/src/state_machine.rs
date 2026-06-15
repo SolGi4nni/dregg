@@ -83,19 +83,16 @@ impl IntentLifecycleState {
     /// has been written by something other than the canonical
     /// transition path.
     pub fn from_slot_value(bytes: &[u8; 32]) -> Option<Self> {
-        for st in [
+        [
             Self::Pending,
             Self::Matched,
             Self::Sealed,
             Self::Fulfilled,
             Self::Settled,
             Self::Expired,
-        ] {
-            if st.as_slot_value() == *bytes {
-                return Some(st);
-            }
-        }
-        None
+        ]
+        .into_iter()
+        .find(|st| st.as_slot_value() == *bytes)
     }
 
     /// Whether this is a terminal state (no further transitions).

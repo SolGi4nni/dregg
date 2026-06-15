@@ -3,7 +3,7 @@
 //! This module owns the (intentionally lossy) projection of a `Turn` into the
 //! sequence of VM effects that the Effect VM AIR consumes for STARK proving.
 
-use dregg_cell::{CellId, Ledger};
+use dregg_cell::CellId;
 
 use crate::action::Effect;
 use crate::forest::CallTree;
@@ -12,12 +12,10 @@ use crate::turn::Turn;
 pub(super) fn convert_turn_effects_to_vm(
     cell_id: &CellId,
     turn: &Turn,
-    ledger: &Ledger,
 ) -> Vec<dregg_circuit::effect_vm::Effect> {
     fn collect_effects(
         tree: &CallTree,
         cell_id: &CellId,
-        ledger: &Ledger,
         vm_effects: &mut Vec<dregg_circuit::effect_vm::Effect>,
     ) {
         use dregg_circuit::effect_vm::Effect as VmEffect;
@@ -538,7 +536,7 @@ pub(super) fn convert_turn_effects_to_vm(
             }
         }
         for child in &tree.children {
-            collect_effects(child, cell_id, ledger, vm_effects);
+            collect_effects(child, cell_id, vm_effects);
         }
     }
 
@@ -549,7 +547,7 @@ pub(super) fn convert_turn_effects_to_vm(
 
     let mut vm_effects = Vec::new();
     for root in &turn.call_forest.roots {
-        collect_effects(root, cell_id, ledger, &mut vm_effects);
+        collect_effects(root, cell_id, &mut vm_effects);
     }
 
     // Must have at least one effect for the VM.

@@ -232,7 +232,9 @@ impl InteractionLog {
     /// An empty log (a context that has made no external interaction yet —
     /// vacuously confined).
     pub fn new() -> Self {
-        InteractionLog { interactions: Vec::new() }
+        InteractionLog {
+            interactions: Vec::new(),
+        }
     }
 
     /// Record an interaction (the context reached out; the graph notes whether it
@@ -263,7 +265,10 @@ impl InteractionLog {
     /// context escaped the membrane. Zero == fully confined. (A scalar confinement
     /// readout for diagnostics; `all_witnessed() == (ambient_count() == 0)`.)
     pub fn ambient_count(&self) -> usize {
-        self.interactions.iter().filter(|i| !i.is_witnessed()).count()
+        self.interactions
+            .iter()
+            .filter(|i| !i.is_witnessed())
+            .count()
     }
 
     /// The total number of recorded interactions.
@@ -327,7 +332,12 @@ impl Sturdyref {
         witness_log: InteractionLog,
         sources_reachable: bool,
     ) -> Self {
-        Sturdyref { uri, lineage, witness_log, sources_reachable }
+        Sturdyref {
+            uri,
+            lineage,
+            witness_log,
+            sources_reachable,
+        }
     }
 
     /// The liveness-type this sturdyref would rehydrate as, DERIVED from its
@@ -448,7 +458,10 @@ impl Membrane {
     /// `is_attenuation` of BOTH inputs, and the result's sets are subsets of BOTH
     /// inputs' sets, so the projection can never exceed either the held authority or
     /// the lineage.
-    pub fn project(&self, lineage: &SurfaceCapability) -> Result<SurfaceCapability, RehydrateError> {
+    pub fn project(
+        &self,
+        lineage: &SurfaceCapability,
+    ) -> Result<SurfaceCapability, RehydrateError> {
         // (1) Window rights: the meet under the REAL lattice. The narrower of the
         //     two is the one that is an attenuation of the other; if neither
         //     attenuates the other they are incomparable and there is no projection
@@ -477,7 +490,10 @@ impl Membrane {
                 permissions,
             },
             None => SurfaceCapability {
-                window: dregg_firmament::Capability { target: self.held.window.target.clone(), rights: rights.clone() },
+                window: dregg_firmament::Capability {
+                    target: self.held.window.target.clone(),
+                    rights: rights.clone(),
+                },
                 fetch_allow,
                 navigate_allow,
                 permissions,
@@ -571,7 +587,12 @@ pub fn rehydrate(
     // (3) the liveness-type, DERIVED from the source context's witness-log.
     let liveness = sturdyref.liveness();
 
-    Ok(Projection { surface, resource, chrome, liveness })
+    Ok(Projection {
+        surface,
+        resource,
+        chrome,
+        liveness,
+    })
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -630,8 +651,8 @@ fn intersect_allow(
 /// - both concrete: the usual `child ⊆ parent`.
 fn allow_is_subset(parent: &Option<BTreeSet<String>>, child: &Option<BTreeSet<String>>) -> bool {
     match (parent, child) {
-        (None, _) => true,            // wildcard parent admits anything.
-        (Some(_), None) => false,     // concrete parent does NOT admit a wildcard child.
+        (None, _) => true,        // wildcard parent admits anything.
+        (Some(_), None) => false, // concrete parent does NOT admit a wildcard child.
         (Some(p), Some(c)) => c.is_subset(p),
     }
 }
@@ -749,7 +770,10 @@ mod tests {
         let bogus = AttestedRoot::new_legacy([0u8; 32], 0, 0, vec![], None, 1); // v3, no quorum
         assert!(!bogus.is_v4_receipt_complete());
         let i = Interaction::attested_fetch(DreggUri::new(cid(43)), bogus);
-        assert!(!i.is_witnessed(), "an attestation that doesn't hold is not a witness");
+        assert!(
+            !i.is_witnessed(),
+            "an attestation that doesn't hold is not a witness"
+        );
 
         let mut log = InteractionLog::new();
         log.record(i);
@@ -839,8 +863,14 @@ mod tests {
         assert!(p.surface.may_fetch("https://a.example.com"));
         assert!(!p.surface.may_fetch("https://other.example.com"));
         // The meet attenuates BOTH inputs (the proven-lattice property).
-        assert!(is_attenuation(&viewer.held().window.rights, &p.surface.window.rights));
-        assert!(is_attenuation(&lineage.window.rights, &p.surface.window.rights));
+        assert!(is_attenuation(
+            &viewer.held().window.rights,
+            &p.surface.window.rights
+        ));
+        assert!(is_attenuation(
+            &lineage.window.rights,
+            &p.surface.window.rights
+        ));
     }
 
     #[test]
@@ -849,8 +879,7 @@ mod tests {
         // Proof — neither attenuates the other), there is no projection both admit:
         // the membrane refuses (Amplification), no surface is minted.
         let lineage = SurfaceCapability::root(cid(70), AuthRequired::Signature);
-        let (web, sturdyref) =
-            published_sturdyref(70, lineage, InteractionLog::new(), false);
+        let (web, sturdyref) = published_sturdyref(70, lineage, InteractionLog::new(), false);
         let viewer = Membrane::new(SurfaceCapability::root(cid(71), AuthRequired::Proof));
 
         assert_eq!(
@@ -954,8 +983,7 @@ mod tests {
             origins(&["https://a.example.com", "https://b.example.com"]),
             [],
         );
-        let (web, sturdyref) =
-            published_sturdyref(100, lineage, InteractionLog::new(), false);
+        let (web, sturdyref) = published_sturdyref(100, lineage, InteractionLog::new(), false);
 
         let a = Membrane::new(SurfaceCapability::scoped(
             cid(101),
@@ -1018,7 +1046,9 @@ mod tests {
         let viewer = Membrane::new(SurfaceCapability::root(cid(131), AuthRequired::None)); // full
         assert_eq!(
             rehydrate(&sturdyref, &viewer, &web),
-            Err(RehydrateError::Fetch(FetchError::ContentDoesNotMatchCommitment))
+            Err(RehydrateError::Fetch(
+                FetchError::ContentDoesNotMatchCommitment
+            ))
         );
     }
 
@@ -1050,8 +1080,7 @@ mod tests {
     #[test]
     fn the_projection_is_a_real_firmament_surface_cap() {
         let lineage = SurfaceCapability::root(cid(150), AuthRequired::Either);
-        let (web, sturdyref) =
-            published_sturdyref(150, lineage, InteractionLog::new(), false);
+        let (web, sturdyref) = published_sturdyref(150, lineage, InteractionLog::new(), false);
         let viewer = Membrane::new(SurfaceCapability::root(cid(151), AuthRequired::Either));
         let p = rehydrate(&sturdyref, &viewer, &web).expect("rehydrates");
         // The projection's surface IS a firmament Capability with a Surface target.

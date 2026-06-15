@@ -317,7 +317,7 @@ impl PeerScoreboard {
             .filter(|a| anchors.contains(a) && !self.is_graylisted(a))
             .copied()
             .collect();
-        anchor_candidates.sort_by(|a, b| addr_sort_key(a).cmp(&addr_sort_key(b)));
+        anchor_candidates.sort_by_key(|a| addr_sort_key(a));
         for a in anchor_candidates {
             if chosen.len() == eager_degree {
                 break;

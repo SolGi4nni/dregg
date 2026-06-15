@@ -181,10 +181,7 @@ pub enum Precondition {
 
 /// Deprecated alias retained during the surface-collapse transition.
 /// Prefer [`Precondition`].
-#[deprecated(
-    since = "next",
-    note = "renamed to `Precondition` as the canonical clause name"
-)]
+#[deprecated(note = "renamed to `Precondition` as the canonical clause name")]
 pub type PreconditionClause = Precondition;
 
 impl Precondition {

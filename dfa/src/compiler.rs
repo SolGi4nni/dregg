@@ -301,7 +301,7 @@ impl Nfa {
         let dead_set = BTreeSet::new();
         dfa_states.push(dead_set.clone());
         state_map.insert(dead_set, DEAD_STATE);
-        transitions.extend(std::iter::repeat(DEAD_STATE).take(256));
+        transitions.extend(std::iter::repeat_n(DEAD_STATE, 256));
 
         // Start state.
         let start_set = {
@@ -315,7 +315,7 @@ impl Nfa {
         if start_set.contains(&self.accept) {
             accepting.insert(start_id);
         }
-        transitions.extend(std::iter::repeat(DEAD_STATE).take(256));
+        transitions.extend(std::iter::repeat_n(DEAD_STATE, 256));
 
         let mut worklist = VecDeque::new();
         worklist.push_back(start_id);
@@ -344,7 +344,7 @@ impl Nfa {
                     }
                     state_map.insert(next_closure.clone(), new_id);
                     dfa_states.push(next_closure);
-                    transitions.extend(std::iter::repeat(DEAD_STATE).take(256));
+                    transitions.extend(std::iter::repeat_n(DEAD_STATE, 256));
                     worklist.push_back(new_id);
                     transitions[(dfa_state_id as usize) * 256 + (b as usize)] = new_id;
                 }
@@ -623,12 +623,12 @@ pub fn dfa_intersection(a: &Dfa, b: &Dfa) -> Dfa {
 
     // Dead state.
     state_map.insert((DEAD_STATE, DEAD_STATE), DEAD_STATE);
-    transitions.extend(std::iter::repeat(DEAD_STATE).take(256));
+    transitions.extend(std::iter::repeat_n(DEAD_STATE, 256));
 
     let start_pair = (a.start, b.start);
     let start_id: StateId = 1;
     state_map.insert(start_pair, start_id);
-    transitions.extend(std::iter::repeat(DEAD_STATE).take(256));
+    transitions.extend(std::iter::repeat_n(DEAD_STATE, 256));
     if a.accepting.contains(&a.start) && b.accepting.contains(&b.start) {
         accepting.insert(start_id);
     }
@@ -662,7 +662,7 @@ pub fn dfa_intersection(a: &Dfa, b: &Dfa) -> Dfa {
                     let id = next_id;
                     next_id += 1;
                     state_map.insert(pair, id);
-                    transitions.extend(std::iter::repeat(DEAD_STATE).take(256));
+                    transitions.extend(std::iter::repeat_n(DEAD_STATE, 256));
                     if a.accepting.contains(&na) && b.accepting.contains(&nb) {
                         accepting.insert(id);
                     }

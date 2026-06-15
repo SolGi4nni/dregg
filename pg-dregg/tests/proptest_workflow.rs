@@ -52,8 +52,14 @@ fn install() -> RootKey {
 fn own_cell_token(issuer: &RootKey, a: [u8; 32]) -> String {
     issuer
         .mint([
-            Caveat::FirstParty(Pred::AttrEq { key: "action".into(), value: "submit".into() }),
-            Caveat::FirstParty(Pred::AttrPrefix { key: "resource".into(), prefix: hx(&a)[..2].to_string() }),
+            Caveat::FirstParty(Pred::AttrEq {
+                key: "action".into(),
+                value: "submit".into(),
+            }),
+            Caveat::FirstParty(Pred::AttrPrefix {
+                key: "resource".into(),
+                prefix: hx(&a)[..2].to_string(),
+            }),
         ])
         .encode()
 }
@@ -103,7 +109,9 @@ fn conserving_workflow(float: i64, moves: &[u8], agents: &[[u8; 32]]) -> Workflo
 /// balances + the turn count — the ORACLE the crash-recovery path must match.
 fn run_to_completion(wf: &Workflow, issuer: &RootKey, agents: &[[u8; 32]]) -> (Vec<i64>, usize) {
     let mut engine = WorkflowEngine::new(tokens_for(issuer, agents)).with_clock(1_000);
-    engine.run(wf).expect("a conserving authorized workflow must run clean");
+    engine
+        .run(wf)
+        .expect("a conserving authorized workflow must run clean");
     let bals = agents.iter().map(|&a| engine.balance(a)).collect();
     (bals, engine.turn_count())
 }

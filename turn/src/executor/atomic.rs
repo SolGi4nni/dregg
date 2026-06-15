@@ -517,12 +517,10 @@ impl TurnExecutor {
             let mut public_inputs: Vec<BabyBear> = (0..min_pi_count)
                 .map(|i| BabyBear::new_canonical(proof.public_inputs[i]))
                 .collect();
-            for i in 0..pi::OLD_COMMIT_LEN {
-                public_inputs[pi::OLD_COMMIT_BASE + i] = old_commit_4[i];
-            }
-            for i in 0..pi::NEW_COMMIT_LEN {
-                public_inputs[pi::NEW_COMMIT_BASE + i] = new_commit_4[i];
-            }
+            public_inputs[pi::OLD_COMMIT_BASE..(pi::OLD_COMMIT_BASE + pi::OLD_COMMIT_LEN)]
+                .copy_from_slice(&old_commit_4[..pi::OLD_COMMIT_LEN]);
+            public_inputs[pi::NEW_COMMIT_BASE..(pi::NEW_COMMIT_BASE + pi::NEW_COMMIT_LEN)]
+                .copy_from_slice(&new_commit_4[..pi::NEW_COMMIT_LEN]);
 
             // Append custom proof entries from the proof's PIs.
             let custom_count_val = public_inputs[pi::CUSTOM_EFFECT_COUNT].0 as usize;
@@ -831,12 +829,10 @@ impl TurnExecutor {
             let mut public_inputs: Vec<BabyBear> = (0..min_pi_count)
                 .map(|i| BabyBear::new_canonical(proof.public_inputs[i]))
                 .collect();
-            for i in 0..pi::OLD_COMMIT_LEN {
-                public_inputs[pi::OLD_COMMIT_BASE + i] = old_commit_4[i];
-            }
-            for i in 0..pi::NEW_COMMIT_LEN {
-                public_inputs[pi::NEW_COMMIT_BASE + i] = new_commit_4[i];
-            }
+            public_inputs[pi::OLD_COMMIT_BASE..(pi::OLD_COMMIT_BASE + pi::OLD_COMMIT_LEN)]
+                .copy_from_slice(&old_commit_4[..pi::OLD_COMMIT_LEN]);
+            public_inputs[pi::NEW_COMMIT_BASE..(pi::NEW_COMMIT_BASE + pi::NEW_COMMIT_LEN)]
+                .copy_from_slice(&new_commit_4[..pi::NEW_COMMIT_LEN]);
 
             // Append custom proof entries from the proof's PIs.
             let custom_count_val = public_inputs[pi::CUSTOM_EFFECT_COUNT].0 as usize;

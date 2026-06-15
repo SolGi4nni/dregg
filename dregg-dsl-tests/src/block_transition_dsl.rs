@@ -46,8 +46,8 @@ use dregg_dsl_runtime::circuit::{
 /// - First row: event_index == 0
 /// - Last row: new_root == pi[1] (post_state_root)
 ///   (Note: for simplicity, we bind the LAST row's new_root to pi[1]. In the hand-written
-///    AIR, the boundary is on the last *real* event row. For traces where num_events equals
-///    the padded length, these are equivalent.)
+///   AIR, the boundary is on the last *real* event row. For traces where num_events equals
+///   the padded length, these are equivalent.)
 pub fn block_transition_circuit_descriptor() -> CircuitDescriptor {
     let mut constraints = Vec::new();
 

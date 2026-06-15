@@ -110,10 +110,11 @@ fn make_chain(
     // The rotated trace welds balance/nonce from the v1 sub-trace, which BUMPS the nonce by 1 per
     // Transfer row — turn i's after-state is `(balance - step, nonce + 1)`. Advance BOTH balance
     // and nonce per turn so the rotated state-commit roots link (`old_root[i+1] == new_root[i]`).
-    let mut nonce = start_nonce;
     let mut genesis = BabyBear::ZERO;
     let mut final_root = BabyBear::ZERO;
     for i in 0..k {
+        // turn i's nonce is start_nonce + i (the v1 sub-trace bumps the nonce by 1 per Transfer row).
+        let nonce = start_nonce + i as u32;
         let (turn, old_root, new_root) = make_turn(balance, nonce, step);
         if i == 0 {
             genesis = old_root;
@@ -126,7 +127,6 @@ fn make_chain(
         final_root = new_root;
         turns.push(turn);
         balance -= step;
-        nonce += 1; // the v1 sub-trace bumps the nonce by 1 per Transfer row.
     }
     (turns, genesis, final_root)
 }

@@ -29,7 +29,7 @@
 //! binding of the opened `cap_root` to the producer's authenticated cell-root is the sdk
 //! authority-binding (`full_turn_proof.rs`), cited not duplicated here.
 
-use crate::lean_descriptor_air::{EffectVmDescriptor, LeanExpr, VmConstraint, parse_vm_descriptor};
+use crate::lean_descriptor_air::{EffectVmDescriptor, parse_vm_descriptor};
 
 /// The byte-exact verified-Lean JSON for the openable-`capability_root` descriptor.
 pub const CAPRESHAPE_V1_JSON: &str =

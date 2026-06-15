@@ -575,8 +575,8 @@ impl TurnExecutor {
                 | JournalEntry::SetCommittedHeight { .. } => {}
                 // Note/obligation/event/escrow entries don't affect the ledger delta directly.
                 // Obligation/escrow/nullifier insertion entries are rollback-only bookkeeping.
-                JournalEntry::NoteSpend { .. }
-                | JournalEntry::NoteCreate { .. }
+                JournalEntry::NoteSpend
+                | JournalEntry::NoteCreate
                 | JournalEntry::EventEmitted { .. }
                 | JournalEntry::BridgedNullifierInserted { .. }
                 | JournalEntry::NoteNullifierInserted { .. } => {}
@@ -743,6 +743,10 @@ impl TurnExecutor {
     }
 
     /// Derive a synthetic CellId for a seal pair's sealer or unsealer capability.
+    // Canonical seal-capability-id derivation; kept as the authoritative reference
+    // the coverage tests (`cap_hygiene_r7_b2`, `coverage_misc_effects`) replicate and
+    // check against, even though no in-crate call site currently invokes it.
+    #[allow(dead_code)]
     pub(super) fn seal_capability_id(pair_id: &[u8; 32], is_sealer: bool) -> CellId {
         let mut hasher = blake3::Hasher::new_derive_key("dregg-seal capability-id v1");
         hasher.update(pair_id);
