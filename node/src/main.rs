@@ -153,6 +153,18 @@ enum Command {
         #[arg(long, default_value = "120000")]
         idle_heartbeat_ms: u64,
 
+        /// Minimum interval in milliseconds between THIS node's blocks on the
+        /// multi-party (n>1) round-driven path — the quiescent-on-demand rate
+        /// cap. The node emits at most one block per this interval: turns are
+        /// batched within the window and each consensus wave is closed across a
+        /// few interval-spaced rounds (slower finality is the accepted tradeoff
+        /// for a quiet DAG). Independent of --block-cadence-ms (which is only the
+        /// CHECK interval) and of turn submission. Also configurable via the
+        /// DREGG_MIN_BLOCK_INTERVAL_MS env var (the env var wins when set).
+        /// Default 5000 (≤ one block / 5s, per the devnet quiescence bound).
+        #[arg(long, default_value = "5000")]
+        min_block_interval_ms: u64,
+
         /// Enable the faucet endpoint (POST /api/faucet).
         /// Only suitable for devnets. Allows anyone to request computrons from the
         /// genesis faucet cell.
@@ -372,6 +384,7 @@ async fn main() {
             blocklace_wave_timeout_ms,
             block_cadence_ms,
             idle_heartbeat_ms,
+            min_block_interval_ms,
             enable_faucet,
             federation_mode,
             consensus,
@@ -395,6 +408,7 @@ async fn main() {
                 blocklace_wave_timeout_ms,
                 block_cadence_ms,
                 idle_heartbeat_ms,
+                min_block_interval_ms,
                 enable_faucet,
                 &federation_mode,
                 &consensus,
@@ -471,6 +485,7 @@ async fn run_node(
     blocklace_wave_timeout_ms: u64,
     block_cadence_ms: u64,
     idle_heartbeat_ms: u64,
+    min_block_interval_ms: u64,
     enable_faucet: bool,
     federation_mode_str: &str,
     consensus_engine: &str,
@@ -796,6 +811,12 @@ async fn run_node(
                 .ok()
                 .and_then(|v| v.trim().parse::<u64>().ok())
                 .unwrap_or(idle_heartbeat_ms);
+            // Min-block-interval rate cap: env var wins over the CLI flag, same
+            // retune-a-deployed-unit pattern as DREGG_IDLE_HEARTBEAT_MS above.
+            let min_block_interval_ms = std::env::var("DREGG_MIN_BLOCK_INTERVAL_MS")
+                .ok()
+                .and_then(|v| v.trim().parse::<u64>().ok())
+                .unwrap_or(min_block_interval_ms);
             let blocklace_handle = blocklace_sync::run_blocklace_sync(
                 sync_state,
                 gossip_port_copy,
@@ -804,6 +825,7 @@ async fn run_node(
                 blocklace_wave_timeout_ms,
                 block_cadence_ms,
                 idle_heartbeat_ms,
+                min_block_interval_ms,
             )
             .await;
             if let Some(handle) = blocklace_handle {

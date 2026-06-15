@@ -1055,6 +1055,7 @@ pub async fn run_blocklace_sync(
     constitution_timeout_ms: u64,
     block_cadence_ms: u64,
     idle_heartbeat_ms: u64,
+    min_block_interval_ms: u64,
 ) -> Option<BlocklaceHandle> {
     // Blocklace tuning params (from CLI --blocklace-* or safe defaults in main).
     // This is the core of making blocklace easy to configure/enable/disable/tune
@@ -1434,6 +1435,7 @@ pub async fn run_blocklace_sync(
             handle.clone(),
             block_cadence_ms,
             idle_heartbeat_ms,
+            min_block_interval_ms,
         );
     } else {
         info!(
@@ -1908,6 +1910,13 @@ pub(crate) enum CadenceAction {
     /// A peer's non-Ack block landed since the last tick: answer with one
     /// `Payload::Ack` block (Cordial-Miners reactive attestation).
     ReactiveAck,
+    /// An unclosed wave carries a turn this node still has to help finalize:
+    /// advance one round (a minimal `Payload::Ack` attestation) to drive the
+    /// wave toward super-ratification. The WAKE/CLOSE step on the round-driven
+    /// (n>1) path: a turn entered the DAG at some round, and the cluster must
+    /// advance through the wave boundary for `tau` to super-ratify it, even
+    /// after the one-shot reactive-ack has been spent.
+    AdvanceWave,
     /// Nothing pending and the node produced no block for a full idle window:
     /// one low-frequency heartbeat block so liveness/finality probes advance.
     IdleHeartbeat,
@@ -1919,6 +1928,11 @@ pub(crate) enum CadenceAction {
 /// MUTATION-DRIVEN: a block is produced only for pending turns, a pending
 /// reactive ack, or an expired idle-heartbeat window (`idle_heartbeat_ms == 0`
 /// disables the idle heartbeat entirely).
+///
+/// This is the SOLO (n=1) decision (no rounds, no waves: `tau` finalizes every
+/// block trivially in sequence). The round-driven (n>1) path uses
+/// [`round_cadence_decision`], which adds the wave-open WAKE/CLOSE step and the
+/// min-block-interval rate cap.
 pub(crate) fn cadence_decision(
     queued_turns: usize,
     ack_pending: bool,
@@ -1934,6 +1948,106 @@ pub(crate) fn cadence_decision(
     } else {
         CadenceAction::Nothing
     }
+}
+
+/// Decide the cadence action for ONE round-driven (n>1) check tick.
+///
+/// This is the QUIESCENT-ON-DEMAND core of the n>1 finality path. The old
+/// round-driven tick advanced a round EVERY tick (carrying a queued turn or an
+/// empty `Payload::Ack`), so `--block-cadence-ms` was effectively the BLOCK
+/// rate: 1000ms → one block/s of empty-DAG spam; 5000ms → the cluster never
+/// woke and a faucet turn never finalized (the observed live deadlock). This
+/// decision instead advances a round ONLY when there is genuinely something to
+/// finalize, and never faster than `min_block_interval`:
+///
+///  * `queued_turns > 0` ⇒ [`CadenceAction::DrainTurns`] — carry a real turn.
+///  * a peer's fresh non-Ack block landed (`ack_pending`) ⇒
+///    [`CadenceAction::ReactiveAck`] — the WAKE: a peer's turn means a wave
+///    needs closing, so advance the round to attest it.
+///  * an unclosed wave carries an unfinalized turn (`wave_open`) ⇒
+///    [`CadenceAction::AdvanceWave`] — keep advancing rounds across the wave
+///    boundary until `tau` super-ratifies (one reactive-ack is not enough: a
+///    turn at round `r` needs the cluster to reach the wave's last round).
+///  * otherwise, only the idle-heartbeat liveness floor remains (the DAG is
+///    fully finalized: nothing to block about).
+///
+/// RATE CAP: if this node produced a block less than `min_block_interval` ago,
+/// every advance-producing action is held to [`CadenceAction::Nothing`] for
+/// this tick — so even under sustained load the node emits ≤ one block per
+/// `min_block_interval`. The cap CANNOT deadlock finality: the wake conditions
+/// (`queued_turns` / `ack_pending` / `wave_open`) are DAG/queue STATE, not
+/// edge-triggered events, so they persist across the hold; once the interval
+/// elapses the held round is produced and the wave closes — just over a few
+/// `min_block_interval`-spaced rounds (slower finality is the accepted
+/// tradeoff). The idle heartbeat is exempt from the cap (it is already a
+/// low-frequency floor governed by `idle_heartbeat_ms ≫ min_block_interval`).
+pub(crate) fn round_cadence_decision(
+    queued_turns: usize,
+    ack_pending: bool,
+    wave_open: bool,
+    since_last_block: Duration,
+    min_block_interval: Duration,
+    idle_for: Duration,
+    idle_heartbeat_ms: u64,
+) -> CadenceAction {
+    // The work this tick WANTS to do, ignoring the rate cap. Priority: drain a
+    // real turn, else attest a freshly-arrived peer turn, else keep closing an
+    // already-open wave.
+    let wants_advance = if queued_turns > 0 {
+        Some(CadenceAction::DrainTurns)
+    } else if ack_pending {
+        Some(CadenceAction::ReactiveAck)
+    } else if wave_open {
+        Some(CadenceAction::AdvanceWave)
+    } else {
+        None
+    };
+
+    if let Some(action) = wants_advance {
+        // RATE CAP: hold the advance if we produced a block too recently. The
+        // wake condition persists (DAG/queue state), so the very next tick after
+        // the interval elapses will advance — no lost liveness, just paced.
+        if since_last_block < min_block_interval {
+            CadenceAction::Nothing
+        } else {
+            action
+        }
+    } else if idle_heartbeat_ms > 0 && idle_for >= Duration::from_millis(idle_heartbeat_ms) {
+        // Fully finalized DAG: only the low-frequency liveness floor remains.
+        CadenceAction::IdleHeartbeat
+    } else {
+        // Nothing to finalize and the DAG is quiet → produce NO block.
+        CadenceAction::Nothing
+    }
+}
+
+/// Whether the DAG carries an UNCLOSED wave that this node should help finalize:
+/// is there any turn-bearing (non-`Ack`) block in the lace whose id `tau` has
+/// NOT yet finalized+executed (it is not in the identity `cursor`)?
+///
+/// This is the quiescence boundary for the round-driven path. A turn block lands
+/// at some round `r` (wave `(r-1)/wavelength`); for `tau` to super-ratify and
+/// finalize it, the cluster must advance through the wave's last round and a
+/// later wave-leader must be ratified — several rounds of (possibly `Ack`-only)
+/// wave-closing blocks after the turn arrives. While such a turn sits
+/// unfinalized, the node must keep advancing rounds (`AdvanceWave`); once every
+/// non-`Ack` block in the lace has executed, the DAG has nothing left to block
+/// about and goes quiet (`Ack` heartbeats alone never reopen a wave: acking an
+/// ack is the terminating case).
+///
+/// Cheap (one pass over the in-RAM lace, an O(1) cursor membership test per
+/// block — both already O(history)-resident) and PURE in its inputs, so the
+/// no-empty-block-spam + wake-on-pending properties are exercised by
+/// [`round_cadence_decision`] without a running node; this only supplies the
+/// `wave_open` boolean it consumes.
+async fn wave_open(handle: &BlocklaceHandle) -> bool {
+    let cursor = handle.cursor.read().await;
+    let lace = handle.lace.read().await;
+    lace.iter().any(|(id, block)| {
+        // A non-`Ack` block (turn / membership / checkpoint / data) that `tau`
+        // has not yet finalized is unfinalized work: a wave is open for it.
+        block.payload != Payload::Ack && !cursor.is_executed(id)
+    })
 }
 
 /// Spawn the block-production cadence task.
@@ -1958,11 +2072,18 @@ pub(crate) fn cadence_decision(
 /// (`BlocklaceHandle::submit_turn`), so turns commit promptly regardless of
 /// the check interval. Disabled when `check_ms == 0` (purely quiescent:
 /// blocks only on turn submission).
+///
+/// `min_block_interval_ms` is the QUIESCENT-ON-DEMAND rate cap on the n>1
+/// round-driven path: this node emits at most one block per `min_block_interval_ms`
+/// (default 5000), batching turns within the window and closing each wave across
+/// a few interval-spaced rounds. It does not gate the solo (n=1) path (which is
+/// already mutation-driven) nor turn submission.
 fn spawn_block_cadence(
     state: NodeState,
     handle: BlocklaceHandle,
     check_ms: u64,
     idle_heartbeat_ms: u64,
+    min_block_interval_ms: u64,
 ) {
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(Duration::from_millis(check_ms));
@@ -1973,7 +2094,9 @@ fn spawn_block_cadence(
         info!(
             check_ms,
             idle_heartbeat_ms,
-            "block production cadence active (round-disciplined at n>1; mutation-driven at n=1)"
+            min_block_interval_ms,
+            "block production cadence active (quiescent-on-demand round-disciplined at n>1; \
+             mutation-driven at n=1)"
         );
 
         // CONNECTIVITY GATE (multi-party bootstrap): before producing the FIRST
@@ -2018,18 +2141,21 @@ fn spawn_block_cadence(
 
             // The committee size decides the production discipline. At n>1 the
             // Cordial-Miners ordering rule needs the ROUND-SYNCHRONOUS DAG shape,
-            // so production is ROUND-DRIVEN (advance one round per tick when a
-            // supermajority of the current round is present, carrying any queued
-            // turn). At n=1 (solo, scales-to-zero) tau trivially finalizes every
-            // block in sequence, so we keep the MUTATION-DRIVEN cadence (no
-            // empty-block spam while idle). See `produce_round_block`.
+            // so production is ROUND-DRIVEN — but QUIESCENT-ON-DEMAND: advance a
+            // round only when there is something to finalize (a queued turn, a
+            // peer's fresh turn, or an open wave still closing), never an empty
+            // round per tick, and never faster than `min_block_interval_ms`. At
+            // n=1 (solo, scales-to-zero) tau trivially finalizes every block in
+            // sequence, so we keep the MUTATION-DRIVEN cadence (no empty-block
+            // spam while idle). See `cadence_tick_round_driven` / `produce_round_block`.
             let n_participants = {
                 let c = handle.constitution.read().await;
                 c.current.participant_count()
             };
 
             if n_participants > 1 {
-                cadence_tick_round_driven(&state, &handle).await;
+                cadence_tick_round_driven(&state, &handle, idle_heartbeat_ms, min_block_interval_ms)
+                    .await;
             } else {
                 cadence_tick_solo(&state, &handle, idle_heartbeat_ms).await;
             }
@@ -2037,27 +2163,83 @@ fn spawn_block_cadence(
     });
 }
 
-/// ROUND-DRIVEN production tick (the n>1 finality path). Every tick attempts to
-/// advance the local creator by ONE round (gated on a supermajority of the
-/// current round being present, [`plan_round_block`]); the produced block
-/// carries the next queued turn if any, else a `Payload::Ack` heartbeat. Because
-/// `produce_round_block` is supermajority-gated, a node can never outrun the
-/// slowest honest member by more than one round — the cluster paces together and
-/// fills each round with a supermajority of creators, so waves super-ratify and
-/// `tau` finalizes cross-node. This is intentionally NON-quiescent: DAG-BFT
-/// liveness requires rounds to keep advancing, which is exactly what feeds tau.
-async fn cadence_tick_round_driven(state: &NodeState, handle: &BlocklaceHandle) {
-    // Take at most ONE staged turn/membership payload to carry as this round's
-    // block; the rest stay staged (one payload per round keeps the DAG
-    // round-synchronous and drains the backlog at the round cadence). When none
-    // is staged we still advance the round with a `Payload::Ack` heartbeat — the
-    // DAG must keep advancing rounds for waves to close and tau to finalize.
-    let (payload, carried_turn) = {
-        let mut q = handle.pending_payloads.write().await;
-        match q.pop_front() {
+/// ROUND-DRIVEN production tick (the n>1 finality path), QUIESCENT-ON-DEMAND.
+///
+/// The old tick advanced the local creator by one round EVERY check tick (carrying
+/// a queued turn or an empty `Payload::Ack`), so `--block-cadence-ms` was in
+/// effect the BLOCK rate: 1000ms spammed one empty block/s, and 5000ms DEADLOCKED
+/// (rounds stalled so a faucet turn never finalized). The fix: advance a round
+/// ONLY when [`round_cadence_decision`] says there is something to finalize, and
+/// never faster than `min_block_interval`:
+///
+///  * `DrainTurns` — a turn is staged: carry it (genesis or one round forward).
+///  * `ReactiveAck` — a peer's fresh non-`Ack` block arrived (the WAKE): advance
+///    a round to attest it, which is how a faucet turn wakes the cluster
+///    (submitter makes the turn block → peers see it → they advance → the wave
+///    fills at supermajority → `tau` finalizes → all go quiet).
+///  * `AdvanceWave` — a turn already in the DAG is not yet finalized
+///    ([`wave_open`]): keep advancing rounds across the wave boundary until `tau`
+///    super-ratifies it (one reactive-ack is not enough — a turn at round `r`
+///    needs the cluster to reach the wave's last round).
+///  * `IdleHeartbeat` — the DAG is fully finalized but the idle window expired:
+///    one low-frequency liveness-floor block (genesis/attestation) so probes and
+///    post-GST attestation exchange still advance, then quiet again.
+///  * `Nothing` — nothing to finalize (or the rate cap is holding an advance):
+///    produce NO block. The DAG goes quiet; rounds stop advancing.
+///
+/// `produce_round_block` is still supermajority-gated ([`plan_round_block`]), so a
+/// node can never outrun the slowest honest member by more than one round; the
+/// cluster paces together and fills each round with a supermajority of creators,
+/// so waves super-ratify and `tau` finalizes cross-node — now only while there is
+/// a turn in flight.
+async fn cadence_tick_round_driven(
+    state: &NodeState,
+    handle: &BlocklaceHandle,
+    idle_heartbeat_ms: u64,
+    min_block_interval_ms: u64,
+) {
+    // Quiescence inputs (all DAG/queue STATE, so they persist across a held tick —
+    // the rate cap can pace an advance but never lose it).
+    let queued_turns = handle.pending_payloads.read().await.len();
+    let ack_pending = handle
+        .ack_pending
+        .load(std::sync::atomic::Ordering::Relaxed);
+    let wave_is_open = wave_open(handle).await;
+    let since_last_block = handle.last_produced.read().await.elapsed();
+    let idle_for = since_last_block;
+
+    let action = round_cadence_decision(
+        queued_turns,
+        ack_pending,
+        wave_is_open,
+        since_last_block,
+        Duration::from_millis(min_block_interval_ms),
+        idle_for,
+        idle_heartbeat_ms,
+    );
+
+    // QUIESCENCE: nothing to finalize (or the rate cap is holding) → produce NO
+    // block this tick. Rounds stop advancing; the DAG goes quiet. We still
+    // announce our frontier below so a lagging peer can catch up cheaply.
+    if action == CadenceAction::Nothing {
+        handle.send_frontier().await;
+        return;
+    }
+
+    // We are advancing this round. For `DrainTurns` carry the next staged
+    // turn/membership payload; for every other advancing action carry a minimal
+    // `Payload::Ack` attestation (the wave-closing/wake step). One payload per
+    // round keeps the DAG round-synchronous and drains the backlog at the round
+    // cadence.
+    let (payload, carried_turn) = if action == CadenceAction::DrainTurns {
+        match handle.pending_payloads.write().await.pop_front() {
             Some(p) => (p, true),
+            // Raced empty (a concurrent drain): fall back to an attestation so
+            // the wake/close still advances the round.
             None => (Payload::Ack, false),
         }
+    } else {
+        (Payload::Ack, false)
     };
 
     let advanced = handle.produce_round_block(state, payload.clone()).await;
@@ -2065,7 +2247,9 @@ async fn cadence_tick_round_driven(state: &NodeState, handle: &BlocklaceHandle) 
         Some(_) => {
             // A peer's freshly-received non-Ack block has now been attested by our
             // round advance — clear the reactive-ack flag (the round block IS the
-            // attestation; acks no longer beget separate ack blocks).
+            // attestation; acks no longer beget separate ack blocks). The open
+            // wave (if any) is what carries finalization forward from here, via
+            // `wave_open` on the next ticks.
             handle
                 .ack_pending
                 .store(false, std::sync::atomic::Ordering::Relaxed);
@@ -2135,6 +2319,13 @@ async fn cadence_tick_solo(state: &NodeState, handle: &BlocklaceHandle, idle_hea
                 idle_heartbeat_ms,
                 "cadence: produced idle heartbeat block (no mutations for a full idle window)"
             );
+        }
+        // The solo decision (`cadence_decision`) never opens a wave (n=1 has no
+        // rounds; `tau` finalizes every block in sequence), so `AdvanceWave` is
+        // unreachable here — treat it as the closest solo equivalent (a heartbeat
+        // attestation) rather than panicking, so the type stays total.
+        CadenceAction::AdvanceWave => {
+            handle.submit_heartbeat(state).await;
         }
         CadenceAction::Nothing => {}
     }
@@ -3444,6 +3635,230 @@ mod tests {
             cadence_decision(0, false, Duration::from_millis(500_000), 120_000),
             CadenceAction::IdleHeartbeat
         );
+    }
+
+    // ── Round-driven (n>1) cadence: QUIESCENT-ON-DEMAND + the ≥5s rate cap ──
+    //
+    // These pin the consensus-liveness properties of `round_cadence_decision`
+    // WITHOUT a running node: (1) an idle, fully-finalized DAG produces no block
+    // (no empty-round spam — the 1000ms→1block/s failure); (2) a queued turn, a
+    // peer's fresh turn, or an open wave each WAKE the round (the 5000ms→deadlock
+    // failure, where a faucet turn never finalized); (3) the min-block-interval
+    // caps THIS node to ≤ one block per window but NEVER drops an advance (the
+    // wake condition persists, so the held round fires the next eligible tick and
+    // the wave still closes — slower, not never).
+
+    const MIN_IVL: Duration = Duration::from_millis(5_000);
+    const RECENT: Duration = Duration::from_millis(1_000); // < MIN_IVL: cap holds
+    const ELAPSED: Duration = Duration::from_millis(6_000); // ≥ MIN_IVL: cap clear
+
+    /// THE quiescence pin: idle (no queued turn, no ack owed, NO open wave) and
+    /// inside the idle window ⇒ NO block. Rounds stop advancing; the DAG goes
+    /// quiet. This is the fix for the round-driven path emitting an empty round
+    /// every check tick (1000ms → 1 block/s of empty-DAG spam at n>1).
+    #[test]
+    fn round_idle_with_no_open_wave_produces_no_block() {
+        assert_eq!(
+            round_cadence_decision(
+                0,
+                false,
+                false,
+                ELAPSED,
+                MIN_IVL,
+                Duration::from_millis(2_000),
+                120_000,
+            ),
+            CadenceAction::Nothing,
+            "idle + finalized DAG must produce NO round (quiescence)"
+        );
+        // Even with the rate cap clear, an empty DAG stays quiet.
+        assert_eq!(
+            round_cadence_decision(0, false, false, ELAPSED, MIN_IVL, ELAPSED, 0),
+            CadenceAction::Nothing
+        );
+    }
+
+    /// A queued turn WAKES the round (DrainTurns) — and takes priority over the
+    /// reactive ack and the wave-close, as long as the rate cap is clear.
+    #[test]
+    fn round_queued_turn_drains_when_cap_clear() {
+        assert_eq!(
+            round_cadence_decision(2, false, false, ELAPSED, MIN_IVL, ELAPSED, 120_000),
+            CadenceAction::DrainTurns
+        );
+        assert_eq!(
+            round_cadence_decision(1, true, true, ELAPSED, MIN_IVL, ELAPSED, 120_000),
+            CadenceAction::DrainTurns,
+            "a queued turn outranks both ack_pending and wave_open"
+        );
+    }
+
+    /// A peer's fresh non-Ack block (ack_pending) WAKES the round with a reactive
+    /// ack — this is how a faucet turn wakes the cluster (submitter posts the turn
+    /// block, peers see it, peers advance their rounds to attest it).
+    #[test]
+    fn round_peer_turn_wakes_reactive_ack() {
+        assert_eq!(
+            round_cadence_decision(0, true, false, ELAPSED, MIN_IVL, ELAPSED, 120_000),
+            CadenceAction::ReactiveAck
+        );
+        // ack_pending outranks a still-open wave (attest the fresh block first).
+        assert_eq!(
+            round_cadence_decision(0, true, true, ELAPSED, MIN_IVL, ELAPSED, 120_000),
+            CadenceAction::ReactiveAck
+        );
+    }
+
+    /// An open wave (a turn in the DAG that `tau` has not yet finalized) keeps the
+    /// round advancing across the wave boundary until super-ratification — even
+    /// after the one-shot reactive-ack is spent. This is the anti-deadlock tooth:
+    /// the cluster must keep closing the wave, not stall after a single attestation.
+    #[test]
+    fn round_open_wave_keeps_advancing() {
+        assert_eq!(
+            round_cadence_decision(0, false, true, ELAPSED, MIN_IVL, ELAPSED, 120_000),
+            CadenceAction::AdvanceWave
+        );
+        // Open wave wins even when the idle window has expired (finalization
+        // beats the idle heartbeat — close the live turn, do not just heartbeat).
+        assert_eq!(
+            round_cadence_decision(
+                0,
+                false,
+                true,
+                ELAPSED,
+                MIN_IVL,
+                Duration::from_secs(86_400),
+                120_000,
+            ),
+            CadenceAction::AdvanceWave
+        );
+    }
+
+    /// THE rate-cap pin: while the node produced a block < min_block_interval ago,
+    /// every advance-producing decision is HELD to Nothing — so even under
+    /// sustained turn load the node emits ≤ one block per window (ember's ≤1
+    /// block/5s bound). Applies uniformly to DrainTurns / ReactiveAck / AdvanceWave.
+    #[test]
+    fn round_rate_cap_holds_advance_within_min_interval() {
+        for (q, ack, wave) in [(3, false, false), (0, true, false), (0, false, true)] {
+            assert_eq!(
+                round_cadence_decision(q, ack, wave, RECENT, MIN_IVL, RECENT, 120_000),
+                CadenceAction::Nothing,
+                "advance (q={q} ack={ack} wave={wave}) must be HELD within the rate cap"
+            );
+        }
+    }
+
+    /// The cap holds but NEVER drops the advance: the wake condition is DAG/queue
+    /// state, so as soon as the interval elapses the held advance fires. (This is
+    /// why the cap cannot deadlock finality — it paces, it does not lose work.)
+    #[test]
+    fn round_rate_cap_releases_held_advance_after_interval() {
+        // A queued turn HELD at t=1s since the last block (cap not yet cleared)…
+        assert_eq!(
+            round_cadence_decision(1, false, true, RECENT, MIN_IVL, RECENT, 120_000),
+            CadenceAction::Nothing,
+            "advance held while inside the rate-cap window"
+        );
+        // …released at exactly the interval boundary, SAME persisted wake state
+        // (the queued turn never went away — the cap paces, it does not drop work).
+        assert_eq!(
+            round_cadence_decision(1, false, true, MIN_IVL, MIN_IVL, MIN_IVL, 120_000),
+            CadenceAction::DrainTurns
+        );
+        // And an open wave that was held closes once the interval clears.
+        assert_eq!(
+            round_cadence_decision(0, false, true, RECENT, MIN_IVL, RECENT, 120_000),
+            CadenceAction::Nothing
+        );
+        assert_eq!(
+            round_cadence_decision(0, false, true, ELAPSED, MIN_IVL, ELAPSED, 120_000),
+            CadenceAction::AdvanceWave
+        );
+    }
+
+    /// The idle heartbeat is EXEMPT from the min-interval cap (it is already a
+    /// low-frequency floor, idle_heartbeat_ms ≫ min_block_interval): a fully
+    /// finalized DAG past the idle window heartbeats even if the last block was
+    /// recent. Disabling the heartbeat (0) keeps it quiet.
+    #[test]
+    fn round_idle_heartbeat_is_exempt_from_rate_cap() {
+        assert_eq!(
+            round_cadence_decision(0, false, false, RECENT, MIN_IVL, Duration::from_secs(200), 120_000),
+            CadenceAction::IdleHeartbeat
+        );
+        assert_eq!(
+            round_cadence_decision(0, false, false, RECENT, MIN_IVL, Duration::from_secs(200), 0),
+            CadenceAction::Nothing,
+            "idle_heartbeat_ms == 0 disables the liveness floor"
+        );
+    }
+
+    /// END-TO-END (pure model): a turn enters the DAG, and under the ≥5s rate cap
+    /// the round-driven decision keeps advancing — one block per window — until
+    /// the wave closes, THEN goes quiet. This is the finality-preserved property
+    /// at the decision layer: the rate cap slows finality but the turn DOES
+    /// finalize (no deadlock), and after closure the DAG produces NO further block.
+    #[test]
+    fn round_turn_finalizes_under_rate_cap_then_quiesces() {
+        // Model: a turn lands at round r; the cluster must advance K wave-closing
+        // rounds for `tau` to super-ratify it. Each produced block resets the
+        // "since last block" clock; the check tick is faster than the cap, so most
+        // ticks are HELD and exactly one block is produced per min-interval window.
+        let check = Duration::from_millis(1_000);
+        let rounds_to_close: u32 = 5; // r → wave boundary + ratifying wave
+        let mut rounds_done: u32 = 0;
+        let mut since_last = MIN_IVL; // first tick is eligible
+        let mut ticks = 0u32;
+        let mut produced_total = 0u32;
+
+        // The wave is open until we have produced `rounds_to_close` advancing
+        // blocks; one queued turn carried by the first, attestations after.
+        while rounds_done < rounds_to_close {
+            ticks += 1;
+            assert!(ticks < 1_000, "must finalize in bounded ticks (no deadlock)");
+            let queued = if rounds_done == 0 { 1 } else { 0 };
+            let wave_open = true; // turn not yet finalized
+            let action = round_cadence_decision(
+                queued, false, wave_open, since_last, MIN_IVL, since_last, 120_000,
+            );
+            match action {
+                CadenceAction::Nothing => {
+                    since_last += check; // cap holding; clock advances toward release
+                }
+                CadenceAction::DrainTurns | CadenceAction::AdvanceWave => {
+                    // RATE-CAP INVARIANT: never produce within the cap window.
+                    assert!(
+                        since_last >= MIN_IVL,
+                        "produced a block within the rate cap (since_last={since_last:?})"
+                    );
+                    rounds_done += 1;
+                    produced_total += 1;
+                    since_last = check; // just produced; clock restarts
+                }
+                other => panic!("unexpected wave-closing action {other:?}"),
+            }
+        }
+
+        // The turn FINALIZED: every wave-closing round was produced…
+        assert_eq!(produced_total, rounds_to_close, "the wave closed");
+        // …across at least (rounds-1) full rate-cap windows of holding ticks
+        // (slower finality, the accepted tradeoff — not a deadlock).
+        assert!(
+            ticks > rounds_to_close,
+            "the rate cap spaced the wave-closing rounds out over time"
+        );
+
+        // QUIESCENCE AFTER CLOSURE: with the wave now closed (wave_open=false) and
+        // nothing queued, the next ticks produce NO block — the DAG is quiet.
+        for _ in 0..10 {
+            assert_eq!(
+                round_cadence_decision(0, false, false, ELAPSED, MIN_IVL, Duration::from_millis(0), 120_000),
+                CadenceAction::Nothing,
+                "after the wave closed the DAG must go quiet (no empty-round spam)"
+            );
+        }
     }
 
     #[test]
