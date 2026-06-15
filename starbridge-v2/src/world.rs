@@ -140,7 +140,21 @@ impl World {
         // A real wall-clock so temporal preconditions behave; harmless for the
         // demo flows that don't use them. PINNED for the world's life so the
         // engine and the replay history stay bit-deterministic together.
-        let timestamp = now_unix();
+        Self::with_costs_and_timestamp(costs, now_unix())
+    }
+
+    /// A fresh, empty world metering at `costs` with the wall-clock PINNED to
+    /// `timestamp` (rather than `now_unix()`).
+    ///
+    /// The timestamp is folded into every `TurnReceipt` (`receipt_hash` binds it),
+    /// so two worlds that must produce BYTE-IDENTICAL receipts for the same turns
+    /// — e.g. the direct executor and the semihosted executor-PD
+    /// ([`SemihostCockpit`]) in a determinism/equivalence test — must share it.
+    /// This is the "houyhnhnm clock as a recorded, replayable input" the semihost
+    /// makes natural (`docs/DREGG-DESKTOP-OS.md §3`): construction-time determinism,
+    /// not the host wall-clock. [`World::with_costs`] pins `now_unix()`; this lets
+    /// a caller pin any instant.
+    pub fn with_costs_and_timestamp(costs: ComputronCosts, timestamp: i64) -> Self {
         let config = EngineConfig {
             costs: costs.clone(),
             federation_id: [0u8; 32],
@@ -161,6 +175,13 @@ impl World {
             timestamp,
             turn_fee: 0,
         }
+    }
+
+    /// The wall-clock this world pinned at construction (folded into every
+    /// receipt). Exposed so a second world can be pinned to the SAME instant for a
+    /// byte-for-byte equivalence check (e.g. direct vs. semihost executor-PD).
+    pub fn timestamp(&self) -> i64 {
+        self.timestamp
     }
 
     /// Set the fee stamped onto every turn built by [`World::turn`] /
@@ -956,6 +977,223 @@ pub fn demo_world() -> (World, [CellId; 3]) {
     (w, [treasury, service, user])
 }
 
+// ===========================================================================
+// THE SEMIHOSTED COCKPIT — the executor-PD running UNDERNEATH, over the
+// EmulatedKernel (`docs/SEMIHOST-COCKPIT.md`; `docs/FIRMAMENT.md §2` L3;
+// `docs/DREGG-DESKTOP-OS.md §3` the KEYSTONE payoff).
+//
+// `World::commit_turn` runs a turn through the embedded verified executor
+// DIRECTLY in-process. `SemihostCockpit` runs the SAME turn through the SAME
+// verified executor, but DISPATCHED THROUGH THE SEMIHOST executor-PD: the turn
+// is staged into the PD's `turn_in` region, the cockpit (an app-PD) signals the
+// executor-PD over an `EmulatedKernel` Endpoint (the `ingress→executor` edge),
+// the executor-PD reads `turn_in`, runs the cockpit's REAL `World` commit path,
+// writes the `TurnReceipt` into `commit_out`, and replies — and the cockpit
+// reads the receipt back out of `commit_out`. This proves the sel4 PD world is
+// running underneath: the SAME `World` semantics, now reached through the
+// firmament's `turn_in → step → commit_out` cap partition over the n=1
+// microkernel — the SAME code path a real seL4 boot would take (only the launch
+// mechanism, an in-process server vs. a real PD, differs).
+// ===========================================================================
+
+/// The cockpit's `World` driven as the executor-PD's [`TurnRunner`] — the
+/// verified semantics behind the Endpoint.
+///
+/// It OWNS the real [`World`] (the embedded `DreggEngine` + the provenance log +
+/// the dynamics + the replayable history) and, on a staged turn, decodes the
+/// postcard [`Turn`] and runs it through the FULL real [`World::commit_turn`]
+/// path (chain-head threading, history recording, dynamics emission, receipt
+/// append — NOT a bypass). On commit it returns the postcard-encoded
+/// [`TurnReceipt`] for the executor-PD to write into `commit_out`; on a rejected
+/// turn it returns the reason (the ocap/verification guarantee firing,
+/// fail-closed). A malformed/undecodable stage is a rejection too.
+pub struct WorldRunner {
+    world: World,
+}
+
+impl WorldRunner {
+    /// Wrap a `World` as the executor-PD's turn runner.
+    pub fn new(world: World) -> Self {
+        WorldRunner { world }
+    }
+
+    /// Read access to the hosted world (for the harness / the cockpit to inspect
+    /// the post-state the executor-PD advanced — the ledger, receipts, height).
+    pub fn world(&self) -> &World {
+        &self.world
+    }
+
+    /// Mutable access to the hosted world (e.g. to seed genesis cells before
+    /// turns flow through the PD wire — the out-of-band genesis path, exactly as
+    /// for a directly-driven `World`).
+    pub fn world_mut(&mut self) -> &mut World {
+        &mut self.world
+    }
+}
+
+impl dregg_firmament::TurnRunner for WorldRunner {
+    fn run_turn_bytes(&mut self, turn_bytes: &[u8]) -> Result<Vec<u8>, String> {
+        // Decode the staged turn (the wire carries a postcard `Turn`, exactly as
+        // `DreggEngine::execute_turn_bytes` and the node ingress decode it).
+        let turn: Turn = postcard::from_bytes(turn_bytes)
+            .map_err(|e| format!("turn decode failed: {e}"))?;
+        // Run it through the FULL real cockpit commit path — chain-head threading,
+        // history, dynamics, receipt append. NOT a bypass: the semihost path runs
+        // the IDENTICAL `World` logic, just reached through the PD wire.
+        match self.world.commit_turn(turn) {
+            CommitOutcome::Committed { receipt, .. } => postcard::to_stdvec(&receipt)
+                .map_err(|e| format!("receipt encode failed: {e}")),
+            CommitOutcome::Rejected { reason, .. } => Err(reason),
+        }
+    }
+}
+
+/// THE SEMIHOSTED COCKPIT — the cockpit's `World` hosted inside the firmament's
+/// [`ExecutorPd`](dregg_firmament::ExecutorPd) on the semihost
+/// [`EmulatedKernel`](dregg_firmament::EmulatedKernel).
+///
+/// This is "the sel4 PD world running underneath" made concrete and runnable: a
+/// turn the cockpit issues flows app-PD → `turn_in` → executor-PD (over the n=1
+/// microkernel's Endpoint) → the verified `World` → `commit_out` → receipt. The
+/// SAME `World` semantics, reached through the firmament cap partition — the
+/// SAME code path a real seL4 executor-PD boot would take.
+pub struct SemihostCockpit {
+    /// The executor-PD hosting the cockpit's `World` (the verified heart), over a
+    /// fresh n=1 [`EmulatedKernel`](dregg_firmament::EmulatedKernel).
+    executor: dregg_firmament::ExecutorPd<WorldRunner>,
+    /// The run-turn Endpoint the cockpit (app-PD) `pp_call`s to signal a staged
+    /// turn (the `ingress→executor` edge — channel 1 in the real assembly).
+    run_endpoint: dregg_firmament::emulated_kernel::ObjectId,
+    /// The shared kernel (so the cockpit can build a `Channel` to the executor;
+    /// kept for the cross-PD path / future multi-PD wiring).
+    kernel: dregg_firmament::emulated_kernel::EmulatedKernel,
+}
+
+impl SemihostCockpit {
+    /// Boot the semihosted cockpit: a fresh n=1 [`EmulatedKernel`], an
+    /// [`ExecutorPd`](dregg_firmament::ExecutorPd) hosting `world` (the cockpit's
+    /// real verified `World`), and the run-turn Endpoint the cockpit signals. The
+    /// `turn_in`/`commit_out` regions are sized for a real turn + receipt (the
+    /// executor-stub's `0x100000`/`0x400000`).
+    pub fn boot(world: World) -> Self {
+        let kernel = dregg_firmament::emulated_kernel::EmulatedKernel::new();
+        let run_endpoint = kernel.create_endpoint();
+        let executor = dregg_firmament::ExecutorPd::boot(
+            kernel.clone(),
+            WorldRunner::new(world),
+            0x100000, // turn_in : 1 MiB (the executor-stub's turn_in size)
+            0x400000, // commit_out: 4 MiB (the executor-stub's commit_out size)
+        );
+        SemihostCockpit { executor, run_endpoint, kernel }
+    }
+
+    /// The hosted world (read-only) — for the cockpit / harness to inspect the
+    /// post-state the executor-PD advanced (ledger, receipts, height, dynamics).
+    pub fn world(&self) -> &World {
+        self.executor.runner().world()
+    }
+
+    /// Seed the hosted world out-of-band (the genesis path) — e.g. install the
+    /// cells a turn will act on, BEFORE turns flow through the PD wire. This is
+    /// the firmament minting genesis cells at boot, exactly as for a
+    /// directly-driven `World`; it does not move value or run a turn.
+    pub fn with_world_mut<T>(&mut self, f: impl FnOnce(&mut World) -> T) -> T {
+        f(self.executor.runner_mut().world_mut())
+    }
+
+    /// **COMMIT A TURN THROUGH THE SEMIHOST executor-PD.**
+    ///
+    /// The cockpit (app-PD) stages the postcard turn into the executor-PD's
+    /// `turn_in` region, then drives the executor-PD's protected-procedure body
+    /// (`turn_in → step → commit_out`) — reading `turn_in`, running the cockpit's
+    /// REAL `World` commit path, writing the receipt/reason into `commit_out`. The
+    /// cockpit then reads the receipt back out of `commit_out` and decodes it.
+    ///
+    /// Returns the real [`TurnReceipt`] on commit (decoded from `commit_out` — it
+    /// genuinely round-tripped through the PD wire), or the rejection reason (the
+    /// ocap/verification guarantee firing, fail-closed). This is the SAME outcome
+    /// `World::commit_turn` produces in-process — but reached through the
+    /// firmament's executor-PD over the n=1 microkernel.
+    ///
+    /// (The inline drive runs the executor-PD's body on the calling thread — the
+    /// `EmulatedKernel::call_served_by` single-thread collapse of the rendezvous.
+    /// The two-thread Endpoint form — a real PD's `protected` body on its own
+    /// thread — is exercised by the firmament's `executor_pd_boot` test; the
+    /// cockpit uses the inline drive so a turn commits deterministically with no
+    /// thread timing.)
+    pub fn commit_turn_via_semihost(&mut self, turn: Turn) -> CommitOutcome {
+        // Encode + STAGE the turn into the executor-PD's turn_in region (the
+        // app-PD's turn_in write before it signals the heart).
+        let turn_bytes = match postcard::to_stdvec(&turn) {
+            Ok(b) => b,
+            Err(e) => {
+                return CommitOutcome::Rejected {
+                    reason: format!("turn encode failed: {e}"),
+                    at_action: vec![],
+                }
+            }
+        };
+        if self.executor.stage_turn(&turn_bytes).is_none() {
+            return CommitOutcome::Rejected {
+                reason: format!(
+                    "turn ({} bytes) does not fit the executor-PD turn_in region",
+                    turn_bytes.len()
+                ),
+                at_action: vec![],
+            };
+        }
+        // DRIVE the executor-PD's protected-procedure body (read turn_in + step +
+        // write commit_out). This is the heart running the turn over the
+        // EmulatedKernel; on the cross-PD path this is a `serve_turn` off the
+        // Endpoint, here the inline single-thread collapse.
+        let served = self.executor.step_staged_turn();
+        match served {
+            dregg_firmament::ServedTurn::Committed { .. } => {
+                // Read the receipt back out of commit_out and decode it — proving
+                // it genuinely round-tripped through the PD wire (not returned
+                // in-band). This is the app-PD's commit_out read.
+                let receipt_bytes = match self.executor.commit_out_read() {
+                    Some(b) => b,
+                    None => {
+                        return CommitOutcome::Rejected {
+                            reason: "executor-PD committed but commit_out was empty".into(),
+                            at_action: vec![],
+                        }
+                    }
+                };
+                match postcard::from_bytes::<TurnReceipt>(&receipt_bytes) {
+                    // `events` is empty here ON PURPOSE: the dynamics events were
+                    // emitted into the HOSTED world's dynamics stream by the
+                    // runner's real `commit_turn` (read them via
+                    // `self.world().dynamics()`), not re-marshalled across the PD
+                    // wire — the wire carries the RECEIPT (the executor-PD's
+                    // commit_out), the dynamics live with the world the heart owns.
+                    Ok(receipt) => CommitOutcome::Committed { receipt, events: Vec::new() },
+                    Err(e) => CommitOutcome::Rejected {
+                        reason: format!("receipt decode from commit_out failed: {e}"),
+                        at_action: vec![],
+                    },
+                }
+            }
+            dregg_firmament::ServedTurn::Rejected { reason } => {
+                CommitOutcome::Rejected { reason, at_action: vec![] }
+            }
+        }
+    }
+
+    /// The run-turn Endpoint id (for the cross-PD `serve_turn` path / future
+    /// multi-PD wiring) — the executor's PP channel.
+    pub fn run_endpoint(&self) -> dregg_firmament::emulated_kernel::ObjectId {
+        self.run_endpoint
+    }
+
+    /// The shared n=1 kernel (for building a `Channel` to the executor on the
+    /// cross-PD path).
+    pub fn kernel(&self) -> &dregg_firmament::emulated_kernel::EmulatedKernel {
+        &self.kernel
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1308,5 +1546,119 @@ mod tests {
         let _ = treasury;
         // The ocap grant landed (service reaches user).
         assert!(w.ledger().get(&service).unwrap().capabilities.has_access(&user));
+    }
+
+    // ── THE SEMIHOSTED COCKPIT — a turn flowing through the executor-PD over the
+    //    EmulatedKernel (the sel4 PD world running underneath) ──────────────────
+
+    #[test]
+    fn cockpit_turn_flows_through_the_semihost_executor_pd() {
+        // Boot the semihosted cockpit: the cockpit's REAL `World` hosted inside
+        // the firmament's executor-PD over a fresh n=1 EmulatedKernel.
+        let mut w = World::new();
+        let a = w.genesis_cell(1, 1_000);
+        let b = w.genesis_cell(2, 0);
+        let mut cockpit = SemihostCockpit::boot(w);
+
+        // The agent's first-turn shape: build the transfer turn against the hosted
+        // world (so the nonce/fee match the executor-PD's ledger). We build it via
+        // the hosted world's typed constructor, then dispatch THROUGH the PD wire.
+        let turn = cockpit.world().turn(a, vec![transfer(a, b, 250)]);
+
+        // COMMIT IT THROUGH THE SEMIHOST executor-PD: staged into turn_in →
+        // signalled → run through the verified `World` → receipt written to
+        // commit_out → read back + decoded. The sel4 PD path, end to end.
+        let outcome = cockpit.commit_turn_via_semihost(turn);
+        assert!(outcome.is_committed(), "the cockpit turn committed THROUGH the semihost executor-PD");
+
+        // The receipt genuinely round-tripped through commit_out (decoded from the
+        // PD's RW region, not returned in-band).
+        let receipt = match outcome {
+            CommitOutcome::Committed { receipt, .. } => receipt,
+            CommitOutcome::Rejected { reason, .. } => panic!("unexpected reject: {reason}"),
+        };
+        assert_eq!(receipt.action_count, 1, "the receipt the executor-PD wrote describes the turn");
+
+        // THE POST-STATE: the executor-PD advanced the hosted world's ledger — the
+        // transfer landed (250 moved a→b), conservation held, the chain advanced.
+        let world = cockpit.world();
+        assert_eq!(world.ledger().get(&a).unwrap().state.balance(), 750);
+        assert_eq!(world.ledger().get(&b).unwrap().state.balance(), 250);
+        assert_eq!(world.height(), 1, "the heart advanced the height");
+        assert_eq!(world.receipts().len(), 1, "the receipt was appended (full World path ran)");
+        assert!(world.chain_head(&a).is_some(), "the per-agent chain head advanced through the PD");
+    }
+
+    #[test]
+    fn semihost_executor_pd_rejects_an_overspend_fail_closed() {
+        // The ocap/verification guarantee fires AT THE HEART, through the PD wire:
+        // an overspend is rejected and no state advances (fail-closed). The cockpit
+        // reads the reason back, exactly as it would a receipt.
+        let mut w = World::new();
+        let a = w.genesis_cell(1, 100);
+        let b = w.genesis_cell(2, 0);
+        let mut cockpit = SemihostCockpit::boot(w);
+
+        let turn = cockpit.world().turn(a, vec![transfer(a, b, 1_000)]); // overspend
+        let outcome = cockpit.commit_turn_via_semihost(turn);
+        assert!(!outcome.is_committed(), "an overspend is REJECTED at the heart (through the PD wire)");
+
+        // No state advanced — the ledger the executor-PD holds is unchanged.
+        let world = cockpit.world();
+        assert_eq!(world.ledger().get(&a).unwrap().state.balance(), 100);
+        assert_eq!(world.ledger().get(&b).unwrap().state.balance(), 0);
+        assert_eq!(world.height(), 0, "no turn committed");
+        assert_eq!(world.receipts().len(), 0);
+    }
+
+    #[test]
+    fn semihost_path_matches_the_direct_path_byte_for_byte() {
+        // THE EQUIVALENCE: the SAME turn yields the SAME receipt whether run
+        // DIRECTLY in-process (`World::commit_turn`) or THROUGH the semihost
+        // executor-PD (`SemihostCockpit::commit_turn_via_semihost`). The PD wire is
+        // a faithful conduit for the verified semantics, not a re-implementation.
+        //
+        // Both worlds are pinned to the SAME timestamp (the receipt folds it), so
+        // the byte-for-byte claim is DETERMINISTIC — it tests the semantics, not a
+        // wall-clock coincidence (the houyhnhnm-clock determinism, §3).
+        const PINNED_TS: i64 = 1_700_000_000;
+        let mk = || {
+            let mut w = World::with_costs_and_timestamp(ComputronCosts::zero(), PINNED_TS);
+            let a = w.genesis_cell(1, 1_000);
+            let b = w.genesis_cell(2, 0);
+            (w, a, b)
+        };
+
+        // Direct path.
+        let (mut direct, a, b) = mk();
+        let t_direct = direct.turn(a, vec![transfer(a, b, 250)]);
+        let direct_receipt = match direct.commit_turn(t_direct) {
+            CommitOutcome::Committed { receipt, .. } => receipt,
+            CommitOutcome::Rejected { reason, .. } => panic!("direct reject: {reason}"),
+        };
+
+        // Semihost path (a fresh, identically-seeded world).
+        let (semi_world, a2, b2) = mk();
+        assert_eq!(a, a2, "deterministic genesis ids");
+        let mut cockpit = SemihostCockpit::boot(semi_world);
+        let t_semi = cockpit.world().turn(a2, vec![transfer(a2, b2, 250)]);
+        let semi_receipt = match cockpit.commit_turn_via_semihost(t_semi) {
+            CommitOutcome::Committed { receipt, .. } => receipt,
+            CommitOutcome::Rejected { reason, .. } => panic!("semihost reject: {reason}"),
+        };
+
+        // The receipt hashes match — the heart over the EmulatedKernel produced
+        // the BYTE-IDENTICAL verified receipt the direct executor did.
+        assert_eq!(
+            direct_receipt.receipt_hash(),
+            semi_receipt.receipt_hash(),
+            "the semihost executor-PD produces the SAME verified receipt as the direct path"
+        );
+        // And the post-state ledgers agree.
+        assert_eq!(
+            direct.state_root(),
+            cockpit.world().state_root(),
+            "the semihost path advances the SAME image the direct path does"
+        );
     }
 }

@@ -164,7 +164,21 @@ dregg-types = { path = "../types", optional = true }
 # networking/captp stack (tokio/quinn/async); `embed-core` pulls the wire-free
 # engine core (the cipherclerk + macaroon-token + DreggEngine surface we use is
 # all in the SDK's always-compiled / embed-core core, NOT the network stack).
-dregg-sdk = { path = "../sdk", optional = true, default-features = false, features = ["embed-core"] }
+#
+# `recursion` is LOAD-BEARING here (the C7 GREP-ZERO drive): `dregg-circuit`'s
+# default features include `recursion` (circuit/Cargo.toml), and `dregg-turn`
+# (this crate's dep, default-features-on) forwards `recursion = ["dregg-circuit/
+# recursion"]` — so cargo feature-unifies `dregg-circuit` with `recursion` ON
+# across this workspace. Under `recursion`, `dregg-circuit::effect_vm_p3_full_air`
+# is `#[cfg(not(feature = "recursion"))]`-DELETED (the v1 hand-AIR is retired);
+# `dregg-sdk`'s `use` of it (`sdk/src/full_turn_proof.rs`) is itself
+# `not(recursion)`-fenced, so sdk MUST also see `recursion` ON or its fence
+# misaligns with the recursion-on circuit (E0432: cannot find
+# `effect_vm_p3_full_air`). We enable `recursion` on the SDK to keep the fences
+# aligned — `embed-core` (wire-free engine) and `recursion` (rotated IR-v2
+# verify) coexist; this pulls NO networking. Without it the embedded build fails
+# to compile against the post-C7 circuit.
+dregg-sdk = { path = "../sdk", optional = true, default-features = false, features = ["embed-core", "recursion"] }
 # THE VERIFIED SHARED-BUDGET PRIMITIVE — `dregg_coord::StingrayCounter` (the
 # bounded conserved counter, `coord/src/budget.rs`). The swarm's N9 shared budget
 # IS this counter (the conservation bound "the swarm spent at most B"); the over-

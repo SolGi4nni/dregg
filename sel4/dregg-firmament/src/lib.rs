@@ -104,6 +104,21 @@ pub mod microkit_facade;
 // `is_attenuation` (`granted ⊆ held`) lattice, never reinvented.
 pub mod compositor_pd;
 
+// The EXECUTOR-PD — the firmament HEART on the semihost (`docs/FIRMAMENT.md §2`
+// L3, `docs/DREGG-DESKTOP-OS.md §3` the KEYSTONE payoff: "the verified
+// executor-PD hosts on the host's ordinary Lean runtime NOW"). It is the
+// Endpoint SERVER for staged turns: an app-PD stages a turn into `turn_in`,
+// signals the executor over its PP channel, and the executor runs it through a
+// `TurnRunner` (on the semihost the cockpit's REAL `dregg_sdk::embed::DreggEngine`
+// — the verified `TurnExecutor` over a `dregg_cell::Ledger`), writes the receipt
+// into `commit_out`, and replies. It holds NO device cap — pure compute over
+// bytes (the executor's exact `§2` cap partition: turn_in R, commit_out RW). It
+// rides the EXISTING `EmulatedKernel` IPC (Endpoint recv/reply + regions), the
+// SAME primitives the compositor-PD uses; NO executor logic of its own. This is
+// the executor-stub seat's verified-turn path RUNNING (the real-seL4 PD idles it
+// until the Lean ELF runtime links — WALL step 4, NOT a blocker on the semihost).
+pub mod executor_pd;
+
 // The v1 PROCESS-backed PD substrate (the MMU-enforced isolation upgrade). It
 // is Unix-only and behind the `process-pd` feature: PDs become forked host
 // PROCESSES so the host MMU enforces address-space separation, shared regions
@@ -130,6 +145,10 @@ pub use compositor_pd::{
     cell_seed, decode_present, encode_present, label_of, CompositorPd, FrameCommit, Present,
     Refusal, RegionId, Scene, Surface, FRAMEBUFFER_TILES, LABEL_PRESENT, LABEL_PRESENT_OK,
     LABEL_PRESENT_REFUSED,
+};
+pub use executor_pd::{
+    stage_turn_into, ExecutorPd, ServedTurn, TurnRunner, LABEL_RUN_TURN, LABEL_TURN_COMMITTED,
+    LABEL_TURN_REJECTED,
 };
 
 // The v1 process-backed substrate's public surface (Unix + `process-pd` only):
