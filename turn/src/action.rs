@@ -675,20 +675,32 @@ impl Authorization {
     }
 }
 
-/// Delegation mode for child cells. Currently only `None` is enforced;
-/// `ParentsOwn` and `Inherit` are planned but not yet implemented in the executor.
-/// Use three-party introduction (Effect::Introduce) for explicit capability delegation.
+/// Delegation mode for a child action that targets a cell *other* than its
+/// parent's target.
+///
+/// Implemented modes: `None` (no cross-cell delegation) and `SnapshotRefresh`
+/// (frozen point-in-time inheritance of an ancestor's capabilities, walked via
+/// the `cell.delegate` chain). `ParentsOwn` and `Inherit` are TYPED but NOT
+/// implemented: a child that targets a different cell under either mode is
+/// rejected FAIL-CLOSED with [`crate::error::TurnError::DelegationModeUnimplemented`]
+/// — a distinct error so callers never confuse "this mode is a no-op" with a
+/// real authority denial. For explicit cross-cell capability transfer use
+/// `Effect::Introduce` (three-party introduction), a bearer capability, or
+/// `SnapshotRefresh`.
+///
+/// Note: a same-cell child needs no delegation at all and executes regardless
+/// of this mode (the child acts under its own authority over the shared target).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DelegationMode {
-    /// Children cannot use parent's capabilities.
+    /// Children cannot use the parent's capabilities to reach a different cell.
     None,
-    /// Children can use capabilities that the parent owns.
-    /// NOTE: Not yet differentiated from `None` in capability-chain walking.
-    /// The executor rejects missing capabilities identically for all modes.
+    /// (Typed, NOT implemented.) Intent: children may use capabilities the
+    /// parent owns. A cross-cell child under this mode is rejected fail-closed
+    /// with `TurnError::DelegationModeUnimplemented`.
     ParentsOwn,
-    /// Children inherit parent's delegation mode transitively.
-    /// NOTE: Not yet differentiated from `None` in capability-chain walking.
-    /// The executor rejects missing capabilities identically for all modes.
+    /// (Typed, NOT implemented.) Intent: children inherit the parent's delegation
+    /// mode transitively. A cross-cell child under this mode is rejected
+    /// fail-closed with `TurnError::DelegationModeUnimplemented`.
     Inherit,
     /// Snapshot+refresh: child inherits parent's capabilities as a point-in-time
     /// snapshot. Child can act using the snapshot offline. Refresh to pick up new

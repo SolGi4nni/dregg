@@ -592,6 +592,22 @@ pub struct TurnExecutor {
     /// `public` half via X25519 DH; the `secret` half is the long-term
     /// unsealer.
     pub turn_decryption_keypair: Option<([u8; 32], [u8; 32])>,
+    /// When set, the encrypted-turn admission path
+    /// ([`Self::execute_encrypted_turn`] / [`Self::apply_encrypted_turn`])
+    /// requires the envelope's `TurnValidityProof` to verify
+    /// ([`crate::encrypted::EncryptedTurn::verify_stark`]) BEFORE the turn is
+    /// decrypted and ordered — closing the fee-DoS hole where an unproven
+    /// encrypted blob consumes an ordering slot.
+    ///
+    /// FAIL-CLOSED when on: because the validity-proof *producer* is not yet
+    /// wired (every envelope ships `proof_bytes = vec![]`), enabling this flag
+    /// currently rejects ALL encrypted turns via `InvalidValidityProof`. It is
+    /// therefore OFF by default (additive: the existing decrypt round-trips and
+    /// SDK callers, which build placeholder proofs, keep working). A node that
+    /// wants to refuse unproven encrypted submissions sets this; once a real
+    /// prover lands, `verify_stark` checks the proof instead of emptiness and
+    /// this becomes the always-on production gate.
+    pub require_validity_proof: bool,
     /// Optional 32-byte Ed25519 signing key seed used to populate
     /// `TurnReceipt::executor_signature` on every committed receipt.
     ///
@@ -688,6 +704,7 @@ impl TurnExecutor {
             last_receipt_hash: Mutex::new(HashMap::new()),
             executor_signing_key: None,
             turn_decryption_keypair: None,
+            require_validity_proof: false,
             witnessed_registry: Some(dregg_cell::WitnessedPredicateRegistry::default_builtins()),
             custom_effect_registry: None,
             consumed_cap_witnesses: Mutex::new(Vec::new()),
@@ -728,6 +745,7 @@ impl TurnExecutor {
             last_receipt_hash: Mutex::new(HashMap::new()),
             executor_signing_key: None,
             turn_decryption_keypair: None,
+            require_validity_proof: false,
             witnessed_registry: Some(dregg_cell::WitnessedPredicateRegistry::default_builtins()),
             custom_effect_registry: None,
             consumed_cap_witnesses: Mutex::new(Vec::new()),
@@ -764,6 +782,7 @@ impl TurnExecutor {
             last_receipt_hash: Mutex::new(HashMap::new()),
             executor_signing_key: None,
             turn_decryption_keypair: None,
+            require_validity_proof: false,
             witnessed_registry: Some(dregg_cell::WitnessedPredicateRegistry::default_builtins()),
             custom_effect_registry: None,
             consumed_cap_witnesses: Mutex::new(Vec::new()),
@@ -823,6 +842,23 @@ impl TurnExecutor {
     pub fn set_turn_decryption_secret(&mut self, secret: [u8; 32]) {
         let public = x25519_dalek::PublicKey::from(&x25519_dalek::StaticSecret::from(secret));
         self.turn_decryption_keypair = Some((secret, *public.as_bytes()));
+    }
+
+    /// Require that encrypted-turn submissions carry a verifiable
+    /// `TurnValidityProof` before being decrypted/ordered (see
+    /// [`Self::require_validity_proof`]). FAIL-CLOSED while the validity-proof
+    /// producer is unwired: turning this on rejects every encrypted turn (empty
+    /// `proof_bytes`) via `InvalidValidityProof`, which is the correct stance
+    /// for a node that must not let unproven encrypted blobs consume ordering
+    /// slots. Builder form.
+    pub fn with_require_validity_proof(mut self, require: bool) -> Self {
+        self.require_validity_proof = require;
+        self
+    }
+
+    /// Set [`Self::require_validity_proof`] after construction.
+    pub fn set_require_validity_proof(&mut self, require: bool) {
+        self.require_validity_proof = require;
     }
 
     /// Cav-Codex Block 2: equip the executor with a witnessed-predicate
@@ -892,6 +928,21 @@ impl TurnExecutor {
                 },
                 at_action: vec![],
             };
+        }
+
+        // 1b. Validity-proof (STARK) gate, when required. Closes the fee-DoS
+        //     hole: an unproven encrypted blob must not be decrypted/ordered.
+        //     FAIL-CLOSED while the producer is unwired (verify_stark rejects
+        //     empty proof_bytes). OFF by default — see `require_validity_proof`.
+        if self.require_validity_proof {
+            if let Err(e) = encrypted.verify_stark() {
+                return TurnResult::Rejected {
+                    reason: TurnError::InvalidEffect {
+                        reason: format!("encrypted turn validity proof invalid: {:?}", e),
+                    },
+                    at_action: vec![],
+                };
+            }
         }
 
         // 2. Decrypt with the executor's X25519 secret.
@@ -1005,6 +1056,17 @@ impl TurnExecutor {
             .map_err(|e| TurnError::InvalidEffect {
                 reason: format!("encrypted turn metadata invalid: {:?}", e),
             })?;
+
+        // 1b. Validity-proof (STARK) gate, when required (see
+        //     `execute_encrypted_turn` for the rationale; fail-closed fee-DoS
+        //     gate, OFF by default).
+        if self.require_validity_proof {
+            encrypted
+                .verify_stark()
+                .map_err(|e| TurnError::InvalidEffect {
+                    reason: format!("encrypted turn validity proof invalid: {:?}", e),
+                })?;
+        }
 
         // 2. Recompute the public key from the secret and decrypt.
         let public = {

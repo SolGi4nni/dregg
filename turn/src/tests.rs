@@ -1015,6 +1015,254 @@ fn test_delegation_none_blocks_child() {
 }
 
 // =============================================================================
+// Test: Delegation mode — ParentsOwn/Inherit fail CLOSED (distinct error) for a
+// cross-cell child. The whole point of the closure: a caller can tell
+// "this mode is a no-op" (DelegationModeUnimplemented) apart from a real
+// authority denial (DelegationDenied / CapabilityNotHeld).
+// =============================================================================
+
+#[test]
+fn test_delegation_parents_own_cross_cell_fails_closed_distinctly() {
+    // Same setup as test_delegation_none_blocks_child, but the parent requests
+    // DelegationMode::ParentsOwn. The agent HOLDS caps to both targets, so the
+    // denial is NOT a capability problem — it is purely that ParentsOwn is typed
+    // but unimplemented. The error MUST be DelegationModeUnimplemented, not the
+    // indistinguishable DelegationDenied/CapabilityNotHeld.
+    let mut ledger = Ledger::new();
+    let (agent, _) = make_open_cell(41, 5000);
+    let (target1, _) = make_open_cell(42, 0);
+    let (target2, _) = make_open_cell(43, 0);
+    let agent_id = agent.id();
+    let target1_id = target1.id();
+    let target2_id = target2.id();
+
+    let mut agent_with_caps = agent;
+    agent_with_caps
+        .capabilities
+        .grant(target1_id, AuthRequired::None);
+    agent_with_caps
+        .capabilities
+        .grant(target2_id, AuthRequired::None);
+
+    ledger.insert_cell(agent_with_caps).unwrap();
+    ledger.insert_cell(target1).unwrap();
+    ledger.insert_cell(target2).unwrap();
+
+    let executor = zero_cost_executor();
+
+    let mut builder = TurnBuilder::new(agent_id, 0);
+    {
+        let child =
+            ActionBuilder::new_unchecked_for_tests(target2_id, "child_different_target", agent_id)
+                .effect_set_field(target2_id, 0, [42u8; 32])
+                .build();
+        let (parent, children) =
+            ActionBuilder::new_unchecked_for_tests(target1_id, "parent", agent_id)
+                .delegation(DelegationMode::ParentsOwn)
+                .add_child(child)
+                .build_with_children();
+        builder.add_action_with_children(parent, children);
+    }
+    let turn = builder.fee(500).build();
+
+    let result = executor.execute(&turn, &mut ledger);
+    assert!(result.is_rejected());
+
+    let (error, _) = result.unwrap_rejected();
+    match error {
+        TurnError::DelegationModeUnimplemented {
+            mode,
+            parent,
+            child_target,
+        } => {
+            assert_eq!(mode, DelegationMode::ParentsOwn);
+            assert_eq!(parent, target1_id);
+            assert_eq!(child_target, target2_id);
+        }
+        other => panic!("expected DelegationModeUnimplemented, got {other:?}"),
+    }
+
+    // Tooth: the new error must NOT collapse to the legacy DelegationDenied —
+    // that indistinguishability is exactly the hole this closure removes.
+    assert!(
+        !matches!(error, TurnError::DelegationDenied { .. }),
+        "ParentsOwn cross-cell denial must be distinct from DelegationDenied"
+    );
+}
+
+#[test]
+fn test_delegation_inherit_cross_cell_fails_closed_distinctly() {
+    // Same shape, Inherit mode.
+    let mut ledger = Ledger::new();
+    let (agent, _) = make_open_cell(44, 5000);
+    let (target1, _) = make_open_cell(45, 0);
+    let (target2, _) = make_open_cell(46, 0);
+    let agent_id = agent.id();
+    let target1_id = target1.id();
+    let target2_id = target2.id();
+
+    let mut agent_with_caps = agent;
+    agent_with_caps
+        .capabilities
+        .grant(target1_id, AuthRequired::None);
+    agent_with_caps
+        .capabilities
+        .grant(target2_id, AuthRequired::None);
+
+    ledger.insert_cell(agent_with_caps).unwrap();
+    ledger.insert_cell(target1).unwrap();
+    ledger.insert_cell(target2).unwrap();
+
+    let executor = zero_cost_executor();
+
+    let mut builder = TurnBuilder::new(agent_id, 0);
+    {
+        let child =
+            ActionBuilder::new_unchecked_for_tests(target2_id, "child_different_target", agent_id)
+                .effect_set_field(target2_id, 0, [42u8; 32])
+                .build();
+        let (parent, children) =
+            ActionBuilder::new_unchecked_for_tests(target1_id, "parent", agent_id)
+                .delegation(DelegationMode::Inherit)
+                .add_child(child)
+                .build_with_children();
+        builder.add_action_with_children(parent, children);
+    }
+    let turn = builder.fee(500).build();
+
+    let result = executor.execute(&turn, &mut ledger);
+    assert!(result.is_rejected());
+
+    let (error, _) = result.unwrap_rejected();
+    match error {
+        TurnError::DelegationModeUnimplemented { mode, .. } => {
+            assert_eq!(mode, DelegationMode::Inherit);
+        }
+        other => panic!("expected DelegationModeUnimplemented, got {other:?}"),
+    }
+}
+
+// =============================================================================
+// Test: Refusal witness-index binding — an out-of-range proof_witness_index
+// is REJECTED (a fabricated/empty non-action witness must not be admitted),
+// while an in-range index commits. (Closes the `let _ = proof_witness_index`
+// hole in apply_refusal.)
+// =============================================================================
+
+/// Build a single-`Effect::Refusal` turn on the agent itself, with the given
+/// witness-blob count and refusal `proof_witness_index`.
+fn refusal_turn(
+    agent: CellId,
+    proof_witness_index: u32,
+    num_witness_blobs: usize,
+) -> crate::turn::Turn {
+    use crate::action::{RefusalReason, WitnessBlob, WitnessKind};
+    let action = Action {
+        target: agent,
+        method: symbol("attest_non_action"),
+        args: vec![],
+        authorization: Authorization::Unchecked,
+        preconditions: dregg_cell::Preconditions::default(),
+        effects: vec![Effect::Refusal {
+            cell: agent,
+            offered_action_commitment: [7u8; 32],
+            refusal_reason: RefusalReason::Declined,
+            proof_witness_index,
+        }],
+        may_delegate: DelegationMode::None,
+        commitment_mode: CommitmentMode::Full,
+        balance_change: None,
+        witness_blobs: (0..num_witness_blobs)
+            .map(|_| WitnessBlob::new(WitnessKind::Cleartext, vec![0xAB; 8]))
+            .collect(),
+    };
+    let mut builder = TurnBuilder::new(agent, 0);
+    builder.add_action(action);
+    builder.fee(0).build()
+}
+
+#[test]
+fn test_refusal_out_of_range_witness_index_rejected() {
+    let mut ledger = Ledger::new();
+    let (agent, _) = make_open_cell(61, 5000);
+    let agent_id = agent.id();
+    ledger.insert_cell(agent).unwrap();
+    let executor = zero_cost_executor();
+
+    // Index 0 but ZERO witness blobs — the refusal points at a witness that
+    // does not exist. MUST be rejected fail-closed.
+    let turn = refusal_turn(agent_id, 0, 0);
+    let result = executor.execute(&turn, &mut ledger);
+    assert!(
+        result.is_rejected(),
+        "refusal with out-of-range witness index must be rejected, got {result:?}"
+    );
+    let (error, _) = result.unwrap_rejected();
+    match error {
+        TurnError::InvalidWitnessIndex {
+            cell,
+            index,
+            available,
+        } => {
+            assert_eq!(cell, agent_id);
+            assert_eq!(index, 0);
+            assert_eq!(available, 0);
+        }
+        other => panic!("expected InvalidWitnessIndex, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_refusal_index_past_end_rejected() {
+    let mut ledger = Ledger::new();
+    let (agent, _) = make_open_cell(62, 5000);
+    let agent_id = agent.id();
+    ledger.insert_cell(agent).unwrap();
+    let executor = zero_cost_executor();
+
+    // One witness blob present, but the refusal references index 5 (past end).
+    let turn = refusal_turn(agent_id, 5, 1);
+    let result = executor.execute(&turn, &mut ledger);
+    assert!(result.is_rejected());
+    let (error, _) = result.unwrap_rejected();
+    assert!(
+        matches!(
+            error,
+            TurnError::InvalidWitnessIndex {
+                index: 5,
+                available: 1,
+                ..
+            }
+        ),
+        "expected InvalidWitnessIndex{{index:5, available:1}}, got {error:?}"
+    );
+}
+
+#[test]
+fn test_refusal_in_range_witness_index_commits() {
+    let mut ledger = Ledger::new();
+    let (agent, _) = make_open_cell(63, 5000);
+    let agent_id = agent.id();
+    let nonce_before = ledger
+        .get(&agent_id)
+        .map(|c| c.state.nonce())
+        .unwrap_or(0);
+    ledger.insert_cell(agent).unwrap();
+    let executor = zero_cost_executor();
+
+    // Index 0 with one witness blob present — resolves, must commit.
+    let turn = refusal_turn(agent_id, 0, 1);
+    let result = executor.execute(&turn, &mut ledger);
+    assert!(
+        result.is_committed(),
+        "refusal with a valid in-range witness index must commit, got {result:?}"
+    );
+    // The refusal bumped the target nonce (apply_refusal §2).
+    let agent_after = ledger.get(&agent_id).unwrap();
+    assert!(agent_after.state.nonce() > nonce_before);
+}
+
+// =============================================================================
 // Test: Capability isolation — no capability to target cell
 // =============================================================================
 
@@ -9316,6 +9564,49 @@ mod privacy_wiring {
                 "execute_encrypted_turn must set receipt.was_encrypted=true"
             );
         }
+    }
+
+    /// P3 fee-DoS gate: when the executor requires validity proofs, an
+    /// EncryptedTurn carrying an (always-empty, producer-unwired) validity proof
+    /// is rejected BEFORE decryption, surfacing InvalidValidityProof. With the
+    /// gate OFF (default, asserted by `encrypted_turn_decrypts_to_original`) the
+    /// same envelope is admitted — so the closure is additive.
+    #[test]
+    fn encrypted_turn_requires_validity_proof_when_gated() {
+        let mut ledger = Ledger::new();
+        let (agent, _) = make_open_cell(31, 1_000_000);
+        let agent_id = agent.id();
+        ledger.insert_cell(agent).unwrap();
+
+        let decrypt_secret = [0x5Cu8; 32];
+        let mut executor = TurnExecutor::new(ComputronCosts::default());
+        executor.set_turn_decryption_secret(decrypt_secret);
+        executor.set_require_validity_proof(true); // turn the fee-DoS gate ON
+        let executor_pub = executor.turn_decryption_public().unwrap();
+
+        let mut builder = TurnBuilder::new(agent_id, 0);
+        {
+            let action = ActionBuilder::new(agent_id, "noop", agent_id)
+                .signed_by([0u8; 64])
+                .build();
+            builder.add_action(action);
+        }
+        let turn = builder.fee(500).build();
+        let encrypted = build_consistent_encrypted_turn(&turn, agent_id, &executor_pub);
+        // Sanity: the envelope's proof is empty (no producer wired).
+        assert!(encrypted.validity_proof.proof_bytes.is_empty());
+
+        let result = executor.execute_encrypted_turn(&encrypted, &mut ledger);
+        assert!(
+            result.is_rejected(),
+            "gated executor must reject an unproven encrypted turn, got {result:?}"
+        );
+        let (err, _) = result.unwrap_rejected();
+        let msg = format!("{err:?}");
+        assert!(
+            msg.contains("validity proof") && msg.contains("InvalidValidityProof"),
+            "expected an InvalidValidityProof rejection, got: {msg}"
+        );
     }
 
     /// Adversarial: an EncryptedTurn whose ciphertext is tampered with

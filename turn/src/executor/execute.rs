@@ -913,9 +913,13 @@ impl TurnExecutor {
                 root_tree,
                 ledger,
                 &turn.agent,
-                // Top-level: agent owns all its capabilities. This value propagates
-                // through Inherit and gates child cross-cell targeting (line ~738),
-                // but chain-walking (ParentsOwn vs None) is not yet implemented.
+                // Top-level: the turn agent is the root authority and owns its own
+                // capabilities. `ParentsOwn` here is the ROOT marker — it is only ever
+                // consulted by the root frame, where reaching the "no capability" arm
+                // means the agent genuinely lacks a cap to a non-self target
+                // (CapabilityNotHeld). It is NOT delegation: cross-cell child delegation
+                // is gated separately (None/ParentsOwn→fail-closed, SnapshotRefresh
+                // implemented) in execute_tree.
                 DelegationMode::ParentsOwn,
                 &mut computrons_used,
                 turn.fee,

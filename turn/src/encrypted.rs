@@ -312,6 +312,45 @@ impl EncryptedTurn {
         Ok(())
     }
 
+    /// Verify the carried STARK *validity* proof (nonce-freshness + fee-sufficiency
+    /// without revealing content), the part `verify_metadata` deliberately skips.
+    ///
+    /// FAIL-CLOSED GATE. The validity-proof *production* side is not yet wired:
+    /// every `EncryptedTurn` in the tree is built with `proof_bytes = vec![]`
+    /// (no prover fills it). Without a real proof, admitting an encrypted blob
+    /// into ordering lets a non-paying / replayed submission consume an ordering
+    /// slot before decryption — a fee-DoS. Until a real `TurnValidityProof`
+    /// verifier (the circuit + public-input AIR) is connected here, this method
+    /// REJECTS any envelope whose `proof_bytes` is empty, surfacing the otherwise
+    /// dead `InvalidValidityProof`. When the prover lands, the empty-check is
+    /// replaced by the actual STARK verify against `public_inputs`.
+    ///
+    /// This is intentionally SEPARATE from `verify_metadata` (whose contract —
+    /// "does not verify the STARK" — existing decrypt round-trips depend on) and
+    /// is only invoked on the admission path when the executor is configured to
+    /// require validity proofs (`TurnExecutor::require_validity_proof`).
+    pub fn verify_stark(&self) -> Result<(), EncryptedTurnError> {
+        if self.validity_proof.proof_bytes.is_empty() {
+            return Err(EncryptedTurnError::InvalidValidityProof(
+                "encrypted turn carries an empty validity proof (no STARK to verify); \
+                 the validity-proof producer is not wired, so an unproven encrypted \
+                 turn is rejected fail-closed to prevent fee-DoS on the ordering path"
+                    .to_string(),
+            ));
+        }
+        // A real `TurnValidityProof` STARK verifier is not yet connected (no
+        // production prover emits `proof_bytes`). Once it is, verify the bytes
+        // against `self.validity_proof.public_inputs` here and map a failure to
+        // `InvalidValidityProof`. Reaching this point today is unreachable in
+        // practice (proof_bytes is always empty by construction); a non-empty
+        // proof is conservatively rejected as unverifiable rather than admitted.
+        Err(EncryptedTurnError::InvalidValidityProof(
+            "encrypted turn carries a non-empty validity proof but no verifier is \
+             wired to check it; rejected rather than admitted unverified"
+                .to_string(),
+        ))
+    }
+
     /// Check if this encrypted turn might conflict with another.
     ///
     /// Uses the Bloom filter conflict sets. False positives are possible
@@ -502,5 +541,43 @@ mod tests {
         assert!(t1.may_conflict_with(&t2));
         let ordering = order_encrypted_turns(&[t1, t2]);
         assert_eq!(ordering.buckets.len(), 2);
+    }
+
+    // ── P3: validity-proof (STARK) fail-closed gate ──────────────────────────
+
+    #[test]
+    fn verify_stark_rejects_empty_proof_bytes() {
+        // The fee-DoS tooth: an envelope with no validity proof (the only kind
+        // the tree currently produces — proof_bytes is always empty) MUST be
+        // rejected by verify_stark via InvalidValidityProof.
+        let et = dummy_encrypted_turn(1, &[10, 20, 30]);
+        assert!(et.validity_proof.proof_bytes.is_empty());
+        match et.verify_stark() {
+            Err(EncryptedTurnError::InvalidValidityProof(_)) => {}
+            other => panic!("expected InvalidValidityProof, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn verify_stark_is_separate_from_metadata() {
+        // The gate must NOT be folded into verify_metadata: an empty-proof
+        // envelope still passes metadata (existing decrypt round-trips depend on
+        // this contract) but fails the explicit STARK gate. This is what keeps
+        // the closure additive.
+        let et = dummy_encrypted_turn(1, &[10, 20, 30]);
+        assert_eq!(et.verify_metadata(), Ok(()));
+        assert!(et.verify_stark().is_err());
+    }
+
+    #[test]
+    fn verify_stark_rejects_unverifiable_nonempty_proof() {
+        // A non-empty proof with no verifier wired is conservatively rejected
+        // (never admitted unverified).
+        let mut et = dummy_encrypted_turn(1, &[10, 20, 30]);
+        et.validity_proof.proof_bytes = vec![0xDE, 0xAD, 0xBE, 0xEF];
+        match et.verify_stark() {
+            Err(EncryptedTurnError::InvalidValidityProof(_)) => {}
+            other => panic!("expected InvalidValidityProof, got {other:?}"),
+        }
     }
 }

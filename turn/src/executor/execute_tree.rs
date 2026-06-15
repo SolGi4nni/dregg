@@ -453,21 +453,22 @@ impl TurnExecutor {
             // Check delegation mode: if parent_delegation is None, child actions cannot
             // use the parent's capabilities to reach non-parent cells.
             if !has_capability {
-                // TODO: DelegationMode::ParentsOwn and Inherit are not yet implemented.
-                // Currently all modes fall through to direct capability check.
+                // `parent_delegation` is the mode CONFERRED ON this node by its
+                // caller. Only two callers exist (see execute.rs / the recursive
+                // call below): the forest root is invoked with `ParentsOwn`
+                // meaning "the turn agent is the root authority and owns its own
+                // capabilities"; children are invoked with the collapsed mode
+                // (None or SnapshotRefresh) — ParentsOwn/Inherit never reach a
+                // child here, because the cross-cell child gate below rejects
+                // them first. So a `ParentsOwn`/`Inherit` arrival here is the
+                // ROOT trying to act on a cell the agent does not hold a cap for:
+                // a genuine CapabilityNotHeld, NOT an unimplemented-mode case.
+                // (The unimplemented-mode signal is raised at the child gate.)
                 // Use Effect::Introduce for explicit capability transfer between cells.
                 match parent_delegation {
-                    DelegationMode::None => {
-                        return Err((
-                            TurnError::CapabilityNotHeld {
-                                actor: *parent_cell,
-                                target: action.target,
-                            },
-                            path,
-                        ));
-                    }
-                    DelegationMode::ParentsOwn | DelegationMode::Inherit => {
-                        // ParentsOwn and Inherit are deprecated; behave like None.
+                    DelegationMode::None
+                    | DelegationMode::ParentsOwn
+                    | DelegationMode::Inherit => {
                         return Err((
                             TurnError::CapabilityNotHeld {
                                 actor: *parent_cell,
@@ -704,6 +705,38 @@ impl TurnExecutor {
             .effects
             .iter()
             .partition(|e| !e.is_permission_effect());
+
+        // ── Per-action Refusal witness-binding pass ──────────────────────────
+        // `Effect::Refusal` (the categorical non-action attestation,
+        // CROSS-CELL-CATEGORICAL-ANALYSIS.md §3.3) carries a
+        // `proof_witness_index` into `action.witness_blobs`. `apply_refusal`
+        // runs per-effect and does NOT have the action in scope, so the index
+        // must be resolved HERE, where `action.witness_blobs` is available. An
+        // out-of-range index means the carried "evidence of non-action" points
+        // at a witness that does not exist — a fabricated/empty witness — and is
+        // rejected fail-closed BEFORE any effect mutates the ledger. (The
+        // *content* of the witness is the app's verifier's concern via the
+        // WitnessedPredicateRegistry; the executor enforces presence so a
+        // downstream verifier can always re-fetch and re-execute it.)
+        for effect in &action.effects {
+            if let Effect::Refusal {
+                cell,
+                proof_witness_index,
+                ..
+            } = effect
+            {
+                if (*proof_witness_index as usize) >= action.witness_blobs.len() {
+                    return Err((
+                        TurnError::InvalidWitnessIndex {
+                            cell: *cell,
+                            index: *proof_witness_index,
+                            available: action.witness_blobs.len(),
+                        },
+                        path,
+                    ));
+                }
+            }
+        }
 
         // Apply effects, tracking which cells have fields set (for proved_state).
         let is_proof_auth = matches!(&action.authorization, Authorization::Proof { .. });
@@ -1025,29 +1058,60 @@ impl TurnExecutor {
         // Recurse into children.
         // NOTE: This resolution determines whether children can target *different* cells.
         // DelegationMode::None prevents cross-cell targeting (enforced below).
-        // ParentsOwn and Inherit are deprecated — they behave identically to None.
+        // ParentsOwn and Inherit confer no capability in the executor: they are
+        // FAIL-CLOSED at the cross-cell boundary with a distinct error (see the
+        // gate below), so a caller can tell "this mode is not implemented" apart
+        // from "you forgot to set a delegation mode" (None). The recursion mode
+        // for the deprecated variants is None — they hand the child nothing — so
+        // any deeper cross-cell attempt is denied identically.
         // Use Effect::Introduce or SnapshotRefresh for explicit capability delegation.
         let child_delegation = match action.may_delegate {
             DelegationMode::None => DelegationMode::None,
-            DelegationMode::ParentsOwn => DelegationMode::None, // deprecated: same as None
-            DelegationMode::Inherit => DelegationMode::None,    // deprecated: same as None
+            DelegationMode::ParentsOwn => DelegationMode::None, // confers nothing — see gate below
+            DelegationMode::Inherit => DelegationMode::None,    // confers nothing — see gate below
             DelegationMode::SnapshotRefresh => DelegationMode::SnapshotRefresh,
         };
 
         for (child_idx, child) in tree.children.iter().enumerate() {
-            // Check delegation permission: None means children must target same cell as parent.
-            if child_delegation == DelegationMode::None && child.action.target != action.target {
-                return Err((
-                    TurnError::DelegationDenied {
-                        parent: action.target,
-                        child_target: child.action.target,
-                    },
-                    {
-                        let mut p = path.clone();
-                        p.push(child_idx);
-                        p
-                    },
-                ));
+            // Check delegation permission for a child targeting a *different* cell.
+            // SnapshotRefresh is the only implemented cross-cell mode; it is handled
+            // inside the child's own execute_tree (chain-walk + frozen snapshot).
+            // None denies cross-cell (DelegationDenied). ParentsOwn/Inherit are typed
+            // but unimplemented: deny with a DISTINCT DelegationModeUnimplemented so
+            // the caller is not left guessing whether the parent lacked authority or
+            // the mode itself is a no-op. A same-cell child needs no delegation and
+            // passes regardless of mode.
+            if child.action.target != action.target {
+                match action.may_delegate {
+                    DelegationMode::SnapshotRefresh => { /* handled in child execute_tree */ }
+                    DelegationMode::None => {
+                        return Err((
+                            TurnError::DelegationDenied {
+                                parent: action.target,
+                                child_target: child.action.target,
+                            },
+                            {
+                                let mut p = path.clone();
+                                p.push(child_idx);
+                                p
+                            },
+                        ));
+                    }
+                    DelegationMode::ParentsOwn | DelegationMode::Inherit => {
+                        return Err((
+                            TurnError::DelegationModeUnimplemented {
+                                mode: action.may_delegate,
+                                parent: action.target,
+                                child_target: child.action.target,
+                            },
+                            {
+                                let mut p = path.clone();
+                                p.push(child_idx);
+                                p
+                            },
+                        ));
+                    }
+                }
             }
 
             let mut child_path = path.clone();

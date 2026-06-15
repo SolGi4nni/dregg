@@ -47,13 +47,40 @@ pub enum TurnError {
     BudgetExceeded { limit: u64, used: u64 },
 
     /// A child action tried to use delegation but the parent disallowed it.
+    /// (`DelegationMode::None` — the parent confers no cross-cell authority.)
     DelegationDenied {
+        parent: CellId,
+        child_target: CellId,
+    },
+
+    /// A child action requested a delegation mode that is *typed but not yet
+    /// implemented* in the executor (`DelegationMode::ParentsOwn` /
+    /// `DelegationMode::Inherit`) while targeting a cell other than its parent.
+    ///
+    /// This is FAIL-CLOSED and deliberately DISTINCT from
+    /// [`TurnError::DelegationDenied`] and [`TurnError::CapabilityNotHeld`]: it
+    /// tells the caller the denial is because the requested mode confers nothing
+    /// (a no-op), not because authority was actually evaluated and found wanting.
+    /// The implemented cross-cell delegation paths are `DelegationMode::SnapshotRefresh`
+    /// and `Effect::Introduce` / bearer capabilities.
+    DelegationModeUnimplemented {
+        mode: crate::action::DelegationMode,
         parent: CellId,
         child_target: CellId,
     },
 
     /// State field index out of bounds.
     InvalidFieldIndex { cell: CellId, index: usize },
+
+    /// A `Effect::Refusal`'s `proof_witness_index` does not resolve to a witness
+    /// blob carried by the action. The non-action attestation MUST point at a
+    /// real witness so a downstream verifier can re-execute the refusal check;
+    /// an out-of-range (fabricated/empty) index is rejected fail-closed.
+    InvalidWitnessIndex {
+        cell: CellId,
+        index: u32,
+        available: usize,
+    },
 
     /// A cell that was supposed to be created already exists.
     CellAlreadyExists { id: CellId },
@@ -456,8 +483,31 @@ impl core::fmt::Display for TurnError {
                     "delegation denied: parent {parent} does not delegate to child targeting {child_target}"
                 )
             }
+            TurnError::DelegationModeUnimplemented {
+                mode,
+                parent,
+                child_target,
+            } => {
+                write!(
+                    f,
+                    "delegation mode {mode:?} is typed but not implemented: parent {parent} \
+                     cannot delegate to child targeting {child_target} via this mode \
+                     (use SnapshotRefresh or Effect::Introduce)"
+                )
+            }
             TurnError::InvalidFieldIndex { cell, index } => {
                 write!(f, "invalid field index {index} for cell {cell}")
+            }
+            TurnError::InvalidWitnessIndex {
+                cell,
+                index,
+                available,
+            } => {
+                write!(
+                    f,
+                    "refusal on cell {cell} references witness index {index} but the action \
+                     carries only {available} witness blob(s)"
+                )
             }
             TurnError::CellAlreadyExists { id } => {
                 write!(f, "cell already exists: {id}")

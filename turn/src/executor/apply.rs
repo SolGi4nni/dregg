@@ -1828,15 +1828,17 @@ impl TurnExecutor {
             )?;
         }
         // Witness presence check. The app supplies the actual
-        // verifier through the WitnessedPredicateRegistry; here
-        // we only confirm the index resolves.
-        // NOTE: the action is in scope only at the higher
-        // execute_action level. apply_effect doesn't get the
-        // action — but the per-action witness binding pass
-        // covers this when the executor wires per-action
-        // witness lookup. For the per-effect apply pass, the
-        // structural integrity is that the witness index is in
-        // u32 range (already typed) and the cell exists.
+        // verifier through the WitnessedPredicateRegistry; the
+        // executor only confirms the index RESOLVES to a real
+        // witness blob carried by the action.
+        //
+        // That resolution happens in the per-action witness-binding
+        // pass in `execute_tree` (right after effect partitioning):
+        // it has `action.witness_blobs` in scope, which this per-effect
+        // apply path does not, and rejects an out-of-range index with
+        // `TurnError::InvalidWitnessIndex` BEFORE any effect is applied.
+        // So by the time we reach here the index is guaranteed in-range;
+        // we do not re-thread the blobs through every apply_* arm.
         let _ = proof_witness_index;
         let c = ledger
             .get_mut(cell)

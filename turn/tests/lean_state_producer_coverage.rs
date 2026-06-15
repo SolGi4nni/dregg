@@ -106,6 +106,37 @@ fn single_effect_turn(agent: CellId, target: CellId, nonce: u64, effect: Effect)
     }
 }
 
+/// A single-`Effect::Refusal` turn that carries ONE witness blob, so the
+/// refusal's `proof_witness_index: 0` resolves. The executor enforces that a
+/// refusal's non-action witness exists (`TurnError::InvalidWitnessIndex`);
+/// these state-producer GAP tests exercise the field[4] audit-commitment
+/// divergence, not witness binding, so they must carry a real witness rather
+/// than rely on the (now-rejected) empty-witness placeholder.
+fn single_refusal_turn(
+    agent: CellId,
+    cell: CellId,
+    nonce: u64,
+    offered_action_commitment: [u8; 32],
+    refusal_reason: RefusalReason,
+) -> Turn {
+    use dregg_turn::action::{WitnessBlob, WitnessKind};
+    let mut turn = single_effect_turn(
+        agent,
+        cell,
+        nonce,
+        Effect::Refusal {
+            cell,
+            offered_action_commitment,
+            refusal_reason,
+            proof_witness_index: 0,
+        },
+    );
+    // Attach the witness the refusal points at (index 0).
+    turn.call_forest.roots[0].action.witness_blobs =
+        vec![WitnessBlob::new(WitnessKind::Cleartext, vec![0xAB; 8])];
+    turn
+}
+
 /// Compare two ledgers on balance + nonce + the 8 state fields + cap_root + `.root()`.
 fn ledgers_agree(rust: &mut Ledger, lean: &mut Ledger, ids: &[CellId]) -> Result<(), String> {
     for id in ids {
@@ -779,17 +810,7 @@ fn refusal_is_an_audit_field_swap_gap() {
     // commitment, so the audit field (a cell commitment field) diverges → root diverges. Pinned as
     // a gap (the audit-field commitment scheme is not carried on the wire).
     let (pre, a_id) = one_open_cell();
-    let turn = single_effect_turn(
-        a_id,
-        a_id,
-        0,
-        Effect::Refusal {
-            cell: a_id,
-            offered_action_commitment: [3u8; 32],
-            refusal_reason: RefusalReason::Declined,
-            proof_witness_index: 0,
-        },
-    );
+    let turn = single_refusal_turn(a_id, a_id, 0, [3u8; 32], RefusalReason::Declined);
     match diff(pre, turn, &[a_id]) {
         Ok(()) => {
             // If Rust and Lean happen to agree on field[4] this is genuinely a round-trip; promote
@@ -914,17 +935,7 @@ fn forest_is_root_agreeing_covers_transfer_not_refusal() {
     // wire-carried and not turn-replayable — apply.rs derives field[4] from a hash scheme the
     // reconstitution does not reproduce); SetPermissions/MakeSovereign/the lifecycle pair are now
     // CLOSED (see their *_closed tests above), so the gap exemplar here must be a real one.
-    let refusal = single_effect_turn(
-        a_id,
-        a_id,
-        0,
-        Effect::Refusal {
-            cell: a_id,
-            offered_action_commitment: [3u8; 32],
-            refusal_reason: RefusalReason::Declined,
-            proof_witness_index: 0,
-        },
-    );
+    let refusal = single_refusal_turn(a_id, a_id, 0, [3u8; 32], RefusalReason::Declined);
     assert!(
         !lean_shadow::forest_is_root_agreeing(&refusal),
         "a Refusal turn touches a root-gap effect — must NOT be covered"
@@ -1024,17 +1035,7 @@ fn produce_via_lean_falls_back_on_root_gap_refusal() {
     let mut pre = Ledger::new();
     pre.insert_cell(a).unwrap();
 
-    let turn = single_effect_turn(
-        a_id,
-        a_id,
-        0,
-        Effect::Refusal {
-            cell: a_id,
-            offered_action_commitment: [3u8; 32],
-            refusal_reason: RefusalReason::Declined,
-            proof_witness_index: 0,
-        },
-    );
+    let turn = single_refusal_turn(a_id, a_id, 0, [3u8; 32], RefusalReason::Declined);
 
     // Expected Rust post-state.
     let executor = TurnExecutor::new(ComputronCosts::zero());
