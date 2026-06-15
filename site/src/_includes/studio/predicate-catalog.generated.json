@@ -99,9 +99,9 @@
       "semantics": "Conjunction — match if every child matches."
     }
   ],
-  "constraint_count": 51,
+  "constraint_count": 57,
   "coverage": {
-    "constraints_in_view": 51,
+    "constraints_in_view": 57,
     "locally_evaluable": 15,
     "simple": 22,
     "missing_from_view": [],
@@ -953,6 +953,112 @@
         }
       ],
       "semantics": "**Cross-cell verified observation** (`docs/CELL-PROGRAM-LANGUAGE.md` §11.2): `new[local_field]` must equal the value `source_field` held by the PEER cell `source_cell` at the FINALIZED state-commitment root `at_root`.",
+      "in_view": true,
+      "locally_evaluable": false,
+      "simple": false
+    },
+    {
+      "name": "CollectionAggregate",
+      "fields": [
+        {
+          "name": "collection_id",
+          "type": "u32"
+        },
+        {
+          "name": "stride",
+          "type": "u32"
+        },
+        {
+          "name": "fuel",
+          "type": "u32"
+        },
+        {
+          "name": "pred",
+          "type": "CollPred"
+        }
+      ],
+      "semantics": "**Aggregate-over-a-collection gate** (`docs/CELL-PROGRAM-LANGUAGE.md` gaps 7/11.1 — the heap/layout rung, the documented \"lamesauce\" N≤3 fixed-slot cap *lifted*).",
+      "in_view": true,
+      "locally_evaluable": false,
+      "simple": false
+    },
+    {
+      "name": "AnyOfBound",
+      "fields": [
+        {
+          "name": "branches",
+          "type": "Vec<BoundBranch>"
+        }
+      ],
+      "semantics": "**Witnessed branches under disjunction** (`docs/CELL-PROGRAM-LANGUAGE.md` §11.3 — the `AnyOfBound` rung) — admits IFF SOME `branches` element admits.",
+      "in_view": true,
+      "locally_evaluable": false,
+      "simple": false
+    },
+    {
+      "name": "SymEq",
+      "fields": [
+        {
+          "name": "index",
+          "type": "u8"
+        },
+        {
+          "name": "sym",
+          "type": "u64"
+        }
+      ],
+      "semantics": "**`SymEq`** — `field_to_u64(new[index]) == sym`: the field's interned identity (the u64 lane) equals `sym`.",
+      "in_view": true,
+      "locally_evaluable": false,
+      "simple": false
+    },
+    {
+      "name": "SymMemberOf",
+      "fields": [
+        {
+          "name": "index",
+          "type": "u8"
+        },
+        {
+          "name": "set",
+          "type": "Vec<u64>"
+        }
+      ],
+      "semantics": "**`SymMemberOf`** — `field_to_u64(new[index]) ∈ set`: enum membership by the symbol lane (\"`status ∈ {Draft, Active, Frozen}`\").",
+      "in_view": true,
+      "locally_evaluable": false,
+      "simple": false
+    },
+    {
+      "name": "DigEq",
+      "fields": [
+        {
+          "name": "index",
+          "type": "u8"
+        },
+        {
+          "name": "digest",
+          "type": "Field"
+        }
+      ],
+      "semantics": "**`DigEq`** — `new[index] == digest` as a FULL 32-byte field: the field's digest / cell-reference equals `digest`.",
+      "in_view": true,
+      "locally_evaluable": false,
+      "simple": false
+    },
+    {
+      "name": "DigFieldEq",
+      "fields": [
+        {
+          "name": "left_index",
+          "type": "u8"
+        },
+        {
+          "name": "right_index",
+          "type": "u8"
+        }
+      ],
+      "semantics": "**`DigFieldEq`** — `new[left_index] == new[right_index]` as FULL 32-byte fields: two digest slots are equal.",
       "in_view": true,
       "locally_evaluable": false,
       "simple": false
