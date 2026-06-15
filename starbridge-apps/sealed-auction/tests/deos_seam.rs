@@ -26,14 +26,14 @@
 //! genuine. No parallel model.
 
 use dregg_app_framework::{
-    AgentCipherclerk, AppCipherclerk, AuthRequired, EmbeddedExecutor, Effect, FireExecuteError,
+    AgentCipherclerk, AppCipherclerk, AuthRequired, Effect, EmbeddedExecutor, FireExecuteError,
     StarbridgeAppContext, field_from_u64,
 };
 
 use starbridge_sealed_auction::{
-    Bid, PHASE_COMMIT, PHASE_REVEAL, PHASE_RESOLVED, PHASE_SLOT, SELLER_SLOT, WINNER_SLOT,
+    Bid, PHASE_COMMIT, PHASE_RESOLVED, PHASE_REVEAL, PHASE_SLOT, SELLER_SLOT, WINNER_SLOT,
     auction_app, auction_program, commit_bid_effects, commit_slot, fire_close_commit,
-    fire_commit_bid, fire_reveal_bid, fire_resolve, register_deos, seed_auction,
+    fire_commit_bid, fire_resolve, fire_reveal_bid, register_deos, seed_auction,
 };
 
 fn agent() -> (AppCipherclerk, EmbeddedExecutor) {
@@ -54,17 +54,22 @@ fn seeding_installs_the_auction_program_and_commit_phase() {
     // The seeded auction cell carries the canonical auction program (the Cases shape with
     // the WriteOnce commit board + StrictMonotonic(PHASE) lifecycle), installed so the
     // executor re-enforces it.
-    let installed = executor.with_ledger_mut(|ledger| {
-        ledger.get(&cclerk.cell_id()).map(|c| c.program.clone())
-    });
+    let installed =
+        executor.with_ledger_mut(|ledger| ledger.get(&cclerk.cell_id()).map(|c| c.program.clone()));
     assert_eq!(
         installed,
         Some(auction_program()),
         "the seeded auction cell carries the auction program (the seam's enforcement layer)"
     );
     // ...and the seeded state is in COMMIT with a bound seller.
-    let state = executor.cell_state(cclerk.cell_id()).expect("seeded cell exists");
-    assert_eq!(state.fields[PHASE_SLOT], field_from_u64(PHASE_COMMIT), "PHASE seeded to COMMIT");
+    let state = executor
+        .cell_state(cclerk.cell_id())
+        .expect("seeded cell exists");
+    assert_eq!(
+        state.fields[PHASE_SLOT],
+        field_from_u64(PHASE_COMMIT),
+        "PHASE seeded to COMMIT"
+    );
     assert_ne!(state.fields[SELLER_SLOT], [0u8; 32], "the seller is bound");
 }
 
@@ -84,7 +89,10 @@ fn a_bidder_commits_a_sealed_bid_through_the_gated_fire_a_real_verified_turn() {
     let bid = Bid::new(10, 50, 8);
     let receipt = fire_commit_bid(&app, &AuthRequired::Either, bid.seal(), &cclerk, &executor)
         .expect("a bidder seals a bid (caps ∧ state ∧ WriteOnce board all pass)");
-    assert_ne!(receipt.turn_hash, [0u8; 32], "a real verified turn through the executor");
+    assert_ne!(
+        receipt.turn_hash, [0u8; 32],
+        "a real verified turn through the executor"
+    );
 
     // The seal landed on the first commit slot.
     let state = executor.cell_state(cclerk.cell_id()).unwrap();
@@ -99,8 +107,16 @@ fn a_bidder_commits_a_sealed_bid_through_the_gated_fire_a_real_verified_turn() {
     fire_commit_bid(&app, &AuthRequired::Either, bid2.seal(), &cclerk, &executor)
         .expect("a second bidder seals into the next free slot");
     let state = executor.cell_state(cclerk.cell_id()).unwrap();
-    assert_eq!(state.fields[commit_slot(1)], bid2.seal(), "the second seal landed on the next free slot");
-    assert_eq!(state.fields[commit_slot(0)], bid.seal(), "the first seal is untouched (frozen)");
+    assert_eq!(
+        state.fields[commit_slot(1)],
+        bid2.seal(),
+        "the second seal landed on the next free slot"
+    );
+    assert_eq!(
+        state.fields[commit_slot(0)],
+        bid.seal(),
+        "the first seal is untouched (frozen)"
+    );
 }
 
 // =============================================================================
@@ -118,10 +134,22 @@ fn the_lit_button_set_tracks_the_phase_the_htmx_tooth() {
     // (their COMMIT precondition holds); `reveal_bid` + `resolve` are DARK (their REVEAL
     // precondition fails). The htmx tooth off live state.
     let lit_commit = cell.gated_fireable_names(&AuthRequired::None, &executor);
-    assert!(lit_commit.contains(&"commit_bid".to_string()), "COMMIT: commit_bid lights");
-    assert!(lit_commit.contains(&"close_commit".to_string()), "COMMIT: close_commit lights");
-    assert!(!lit_commit.contains(&"reveal_bid".to_string()), "COMMIT: reveal_bid dark");
-    assert!(!lit_commit.contains(&"resolve".to_string()), "COMMIT: resolve dark");
+    assert!(
+        lit_commit.contains(&"commit_bid".to_string()),
+        "COMMIT: commit_bid lights"
+    );
+    assert!(
+        lit_commit.contains(&"close_commit".to_string()),
+        "COMMIT: close_commit lights"
+    );
+    assert!(
+        !lit_commit.contains(&"reveal_bid".to_string()),
+        "COMMIT: reveal_bid dark"
+    );
+    assert!(
+        !lit_commit.contains(&"resolve".to_string()),
+        "COMMIT: resolve dark"
+    );
 
     // Close the commit phase (a real turn) — the cell transitions to REVEAL.
     fire_close_commit(&app, &AuthRequired::None, &cclerk, &executor)
@@ -131,10 +159,22 @@ fn the_lit_button_set_tracks_the_phase_the_htmx_tooth() {
     // `reveal_bid`/`resolve` LIGHT (REVEAL precondition holds). Same cell, DIFFERENT
     // button-set — because the cell transitioned. The htmx tooth.
     let lit_reveal = cell.gated_fireable_names(&AuthRequired::None, &executor);
-    assert!(!lit_reveal.contains(&"commit_bid".to_string()), "REVEAL: commit_bid darkens (the htmx tooth)");
-    assert!(!lit_reveal.contains(&"close_commit".to_string()), "REVEAL: close_commit darkens");
-    assert!(lit_reveal.contains(&"reveal_bid".to_string()), "REVEAL: reveal_bid lights (the htmx tooth)");
-    assert!(lit_reveal.contains(&"resolve".to_string()), "REVEAL: resolve lights");
+    assert!(
+        !lit_reveal.contains(&"commit_bid".to_string()),
+        "REVEAL: commit_bid darkens (the htmx tooth)"
+    );
+    assert!(
+        !lit_reveal.contains(&"close_commit".to_string()),
+        "REVEAL: close_commit darkens"
+    );
+    assert!(
+        lit_reveal.contains(&"reveal_bid".to_string()),
+        "REVEAL: reveal_bid lights (the htmx tooth)"
+    );
+    assert!(
+        lit_reveal.contains(&"resolve".to_string()),
+        "REVEAL: resolve lights"
+    );
 }
 
 // =============================================================================
@@ -173,7 +213,11 @@ fn an_observer_cannot_fire_resolve_the_cap_tooth_bites_in_band() {
     );
     // The phase did NOT advance — the refused fire committed nothing (anti-ghost).
     let s = executor.cell_state(cclerk.cell_id()).unwrap();
-    assert_eq!(s.fields[PHASE_SLOT], field_from_u64(PHASE_REVEAL), "still REVEAL — resolve never fired");
+    assert_eq!(
+        s.fields[PHASE_SLOT],
+        field_from_u64(PHASE_REVEAL),
+        "still REVEAL — resolve never fired"
+    );
 }
 
 // =============================================================================
@@ -203,7 +247,10 @@ fn the_executor_re_enforces_overwriting_a_committed_bid_is_refused_writeonce() {
     let overwrite = commit_bid_effects(cell, commit_slot(0), &switched.seal());
     let action = cclerk.make_action(cell, "commit_bid", overwrite);
     let refused = executor.submit_action(&cclerk, action);
-    assert!(refused.is_err(), "overwriting a committed sealed bid must be refused by the executor");
+    assert!(
+        refused.is_err(),
+        "overwriting a committed sealed bid must be refused by the executor"
+    );
     let msg = format!("{:?}", refused.unwrap_err()).to_lowercase();
     assert!(
         msg.contains("writeonce") || msg.contains("write-once") || msg.contains("program"),
@@ -250,7 +297,10 @@ fn the_executor_re_enforces_a_phase_rewind_is_refused_strictmonotonic() {
     assert!(refused.is_err(), "rewinding the phase must be refused");
     let msg = format!("{:?}", refused.unwrap_err()).to_lowercase();
     assert!(
-        msg.contains("strictmonotonic") || msg.contains("strict") || msg.contains("monotonic") || msg.contains("program"),
+        msg.contains("strictmonotonic")
+            || msg.contains("strict")
+            || msg.contains("monotonic")
+            || msg.contains("program"),
         "the executor refuses on the StrictMonotonic(PHASE) caveat, got: {msg}"
     );
 
@@ -262,7 +312,10 @@ fn the_executor_re_enforces_a_phase_rewind_is_refused_strictmonotonic() {
     }];
     let action = cclerk.make_action(cell, "resolve", stall);
     let refused = executor.submit_action(&cclerk, action);
-    assert!(refused.is_err(), "a no-advance phase must be refused (StrictMonotonic is strict)");
+    assert!(
+        refused.is_err(),
+        "a no-advance phase must be refused (StrictMonotonic is strict)"
+    );
 
     // The phase did NOT change (anti-ghost).
     let after = executor.cell_state(cell).unwrap();
@@ -273,12 +326,27 @@ fn the_executor_re_enforces_a_phase_rewind_is_refused_strictmonotonic() {
     );
 
     // And the HONEST resolve (REVEAL → RESOLVED) DOES commit through the same path.
-    let r = fire_resolve(&app, &AuthRequired::None, field_from_u64(11), 50, &cclerk, &executor)
-        .expect("the honest resolve commits");
+    let r = fire_resolve(
+        &app,
+        &AuthRequired::None,
+        field_from_u64(11),
+        50,
+        &cclerk,
+        &executor,
+    )
+    .expect("the honest resolve commits");
     assert_ne!(r.turn_hash, [0u8; 32], "a real verified resolve turn");
     let after = executor.cell_state(cell).unwrap();
-    assert_eq!(after.fields[PHASE_SLOT], field_from_u64(PHASE_RESOLVED), "the sale RESOLVED");
-    assert_eq!(after.fields[WINNER_SLOT], field_from_u64(11), "the winner is announced");
+    assert_eq!(
+        after.fields[PHASE_SLOT],
+        field_from_u64(PHASE_RESOLVED),
+        "the sale RESOLVED"
+    );
+    assert_eq!(
+        after.fields[WINNER_SLOT],
+        field_from_u64(11),
+        "the winner is announced"
+    );
 }
 
 // =============================================================================
@@ -294,25 +362,64 @@ fn the_honest_lifecycle_runs_through_the_gated_fires() {
     // COMMIT (a BIDDER, Either): seal two bids.
     let bid_a = Bid::new(10, 30, 7);
     let bid_b = Bid::new(11, 50, 8);
-    fire_commit_bid(&app, &AuthRequired::Either, bid_a.seal(), &cclerk, &executor).expect("A commits");
-    fire_commit_bid(&app, &AuthRequired::Either, bid_b.seal(), &cclerk, &executor).expect("B commits");
+    fire_commit_bid(
+        &app,
+        &AuthRequired::Either,
+        bid_a.seal(),
+        &cclerk,
+        &executor,
+    )
+    .expect("A commits");
+    fire_commit_bid(
+        &app,
+        &AuthRequired::Either,
+        bid_b.seal(),
+        &cclerk,
+        &executor,
+    )
+    .expect("B commits");
 
     // CLOSE (the AUCTIONEER, None): seal the commit phase.
     fire_close_commit(&app, &AuthRequired::None, &cclerk, &executor).expect("close commits");
 
     // REVEAL (a BIDDER, Either): open the bids.
-    fire_reveal_bid(&app, &AuthRequired::Either, field_from_u64(10), 30, &cclerk, &executor)
-        .expect("A reveals");
-    fire_reveal_bid(&app, &AuthRequired::Either, field_from_u64(11), 50, &cclerk, &executor)
-        .expect("B reveals");
+    fire_reveal_bid(
+        &app,
+        &AuthRequired::Either,
+        field_from_u64(10),
+        30,
+        &cclerk,
+        &executor,
+    )
+    .expect("A reveals");
+    fire_reveal_bid(
+        &app,
+        &AuthRequired::Either,
+        field_from_u64(11),
+        50,
+        &cclerk,
+        &executor,
+    )
+    .expect("B reveals");
 
     // RESOLVE (the AUCTIONEER, None): announce B as the winner with the top bid.
-    let r = fire_resolve(&app, &AuthRequired::None, field_from_u64(11), 50, &cclerk, &executor)
-        .expect("resolve commits");
+    let r = fire_resolve(
+        &app,
+        &AuthRequired::None,
+        field_from_u64(11),
+        50,
+        &cclerk,
+        &executor,
+    )
+    .expect("resolve commits");
     assert_ne!(r.turn_hash, [0u8; 32], "a real verified resolve turn");
 
     let s = executor.cell_state(cclerk.cell_id()).unwrap();
-    assert_eq!(s.fields[PHASE_SLOT], field_from_u64(PHASE_RESOLVED), "RESOLVED");
+    assert_eq!(
+        s.fields[PHASE_SLOT],
+        field_from_u64(PHASE_RESOLVED),
+        "RESOLVED"
+    );
     assert_eq!(s.fields[WINNER_SLOT], field_from_u64(11), "B won");
 }
 
@@ -331,7 +438,11 @@ fn register_deos_mounts_the_seeded_surface_into_the_context() {
     // SHIPPED one and the gated fires are live.
     let app = register_deos(&ctx);
     assert_eq!(app.name(), "sealed-auction");
-    assert_eq!(ctx.affordance_registry().len(), 1, "the deos surface is registered");
+    assert_eq!(
+        ctx.affordance_registry().len(),
+        1,
+        "the deos surface is registered"
+    );
 
     // The seeded auction is in COMMIT, so a bidder can seal a bid through the mounted surface
     // immediately (the seam is closed + live).
@@ -340,5 +451,9 @@ fn register_deos_mounts_the_seeded_surface_into_the_context() {
         .expect("the mounted, seeded surface seals a bid (the promotion is live)");
     assert_ne!(receipt.turn_hash, [0u8; 32]);
     let s = executor.cell_state(cclerk.cell_id()).unwrap();
-    assert_eq!(s.fields[commit_slot(0)], bid.seal(), "the sealed bid committed through the mounted surface");
+    assert_eq!(
+        s.fields[commit_slot(0)],
+        bid.seal(),
+        "the sealed bid committed through the mounted surface"
+    );
 }

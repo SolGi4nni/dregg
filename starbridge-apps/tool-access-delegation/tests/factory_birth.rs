@@ -36,7 +36,11 @@ fn make_cipherclerk() -> AppCipherclerk {
 
 /// Deploy the TAD factory and birth a mandate cell from it through the
 /// executor. Returns the born cell's id.
-fn birth_mandate_cell(exec: &EmbeddedExecutor, cclerk: &AppCipherclerk, token_tag: &[u8]) -> CellId {
+fn birth_mandate_cell(
+    exec: &EmbeddedExecutor,
+    cclerk: &AppCipherclerk,
+    token_tag: &[u8],
+) -> CellId {
     exec.deploy_factory(tad_factory_descriptor());
 
     let agent = cclerk.cell_id();
@@ -56,7 +60,8 @@ fn birth_mandate_cell(exec: &EmbeddedExecutor, cclerk: &AppCipherclerk, token_ta
         owner_pubkey: owner,
     };
     let birth = cclerk.create_from_factory(TAD_FACTORY_VK, owner, token, params);
-    exec.submit_turn(&birth).expect("mandate-cell birth commits");
+    exec.submit_turn(&birth)
+        .expect("mandate-cell birth commits");
 
     let born = CellId::derive_raw(&owner, &token);
     exec.with_ledger_mut(|ledger| {
@@ -94,8 +99,9 @@ fn factory_born_mandate_meters_the_grant_and_refuses_over_rate() {
     )
     .expect("grant must commit on the factory-born cell");
 
-    let rate = exec
-        .with_ledger_mut(|ledger| ledger.get(&mandate).unwrap().state.fields[RATE_LIMIT_SLOT as usize]);
+    let rate = exec.with_ledger_mut(|ledger| {
+        ledger.get(&mandate).unwrap().state.fields[RATE_LIMIT_SLOT as usize]
+    });
     assert_eq!(rate, field_from_u64(3), "the grant must bind the ceiling");
 
     // ACCEPT: the three granted invocations (counter 0→1→2→3).
@@ -121,8 +127,9 @@ fn factory_born_mandate_meters_the_grant_and_refuses_over_rate() {
     );
 
     // ...and the metered counter survives the refused overrun.
-    let calls = exec
-        .with_ledger_mut(|ledger| ledger.get(&mandate).unwrap().state.fields[CALLS_MADE_SLOT as usize]);
+    let calls = exec.with_ledger_mut(|ledger| {
+        ledger.get(&mandate).unwrap().state.fields[CALLS_MADE_SLOT as usize]
+    });
     assert_eq!(calls, field_from_u64(3));
 }
 

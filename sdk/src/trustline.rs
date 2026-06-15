@@ -46,17 +46,17 @@
 use std::collections::BTreeSet;
 
 use dregg_cell::blueprint::{
-    STATE_OPEN, TL_CEILING_SLOT, TL_COLLATERAL_SLOT, TL_DIGEST_SLOT, TL_DRAWN_SLOT,
-    TL_HOLDER_SLOT, TL_ISSUER_SLOT, TL_SETTLED_SLOT, TL_STATE_CLOSED, TL_STATE_SLOT,
-    TrustlineCollateral, TrustlineTerms, trustline_factory_descriptor_collateral,
+    STATE_OPEN, TL_CEILING_SLOT, TL_COLLATERAL_SLOT, TL_DIGEST_SLOT, TL_DRAWN_SLOT, TL_HOLDER_SLOT,
+    TL_ISSUER_SLOT, TL_SETTLED_SLOT, TL_STATE_CLOSED, TL_STATE_SLOT, TrustlineCollateral,
+    TrustlineTerms, trustline_factory_descriptor_collateral,
 };
 use dregg_cell::factory::{FactoryCreationParams, FactoryDescriptor};
 use dregg_cell::program::field_from_u64;
 use dregg_cell::state::FieldElement;
 use dregg_cell::{CapabilityRef, CellId, CellMode};
+use dregg_turn::Effect;
 use dregg_turn::action::{Event, symbol};
 use dregg_turn::turn::TurnReceipt;
-use dregg_turn::Effect;
 
 use crate::error::SdkError;
 use crate::factories::ADOPT_TURN_FEE;
@@ -211,11 +211,7 @@ pub fn plan_trustline_collateral(
         cell: cell_id,
         event: Event::new(
             symbol("trustline-opened"),
-            vec![
-                field_from_u64(line),
-                *issuer.as_bytes(),
-                *holder.as_bytes(),
-            ],
+            vec![field_from_u64(line), *issuer.as_bytes(), *holder.as_bytes()],
         ),
     });
     Ok(TrustlinePlan {
@@ -308,7 +304,13 @@ impl Trustline {
             .public_key()
             .0;
         let plan = plan_trustline_collateral(
-            line, issuer, holder, owner_pubkey, token_id, issuer, collateral,
+            line,
+            issuer,
+            holder,
+            owner_pubkey,
+            token_id,
+            issuer,
+            collateral,
         )
         .map_err(|e| SdkError::Rejected(format!("trustline terms refused: {e}")))?;
         runtime.deploy_factory(plan.descriptor.clone());
@@ -792,7 +794,8 @@ mod tests {
         let err = tl.draw(&runtime, digest(1), 10).unwrap_err();
         assert!(matches!(err, SdkError::Rejected(_)));
         // …but a fresh digest draws fine on the restored line.
-        tl.draw(&runtime, digest(2), LINE).expect("redraw full line");
+        tl.draw(&runtime, digest(2), LINE)
+            .expect("redraw full line");
 
         // Over-repay is refused (over_repay_refused).
         let tl2 = &tl;
@@ -908,8 +911,14 @@ mod tests {
         // `repay(10)` lowered `drawn` 30 → 20, so the post-repay drawn (and the
         // amount settled to the holder at close) is 20 — settled marches to the
         // LIVE drawn, not the gross pre-repay draw.
-        assert_eq!(status.settled, 20, "settled marched to (post-repay) drawn at close");
-        assert_eq!(status.drawn, 20, "repay lowered drawn to the outstanding 20");
+        assert_eq!(
+            status.settled, 20,
+            "settled marched to (post-repay) drawn at close"
+        );
+        assert_eq!(
+            status.drawn, 20,
+            "repay lowered drawn to the outstanding 20"
+        );
 
         // INERT: the program has no row out of CLOSED — every later touch
         // refuses, including a draw, a repay, and even a transfer INTO it.
@@ -923,7 +932,10 @@ mod tests {
                 value: field_from_u64(31),
             }],
         );
-        assert!(matches!(res, Err(SdkError::Turn(_))), "closed line is inert: {res:?}");
+        assert!(
+            matches!(res, Err(SdkError::Turn(_))),
+            "closed line is inert: {res:?}"
+        );
         let res = runtime.execute(vec![Effect::Transfer {
             from: issuer,
             to: tl.cell,
@@ -946,8 +958,11 @@ mod tests {
         let cclerk = AgentCipherclerk::new();
         let issuer_pk = cclerk.public_key().0;
         let runtime = AgentRuntime::new_simple(cclerk, "trustline-purecredit-test");
-        let holder_cell =
-            dregg_cell::Cell::with_balance(issuer_pk, *blake3::hash(b"pc-holder").as_bytes(), 100_000);
+        let holder_cell = dregg_cell::Cell::with_balance(
+            issuer_pk,
+            *blake3::hash(b"pc-holder").as_bytes(),
+            100_000,
+        );
         let holder = holder_cell.id();
         {
             let mut ledger = runtime.ledger().lock().unwrap();
@@ -959,7 +974,13 @@ mod tests {
                 assert_eq!(cell.id(), issuer);
                 ledger.insert_cell(cell).unwrap();
             }
-            assert!(ledger.get_mut(&issuer).unwrap().state.credit_balance(FUNDING));
+            assert!(
+                ledger
+                    .get_mut(&issuer)
+                    .unwrap()
+                    .state
+                    .credit_balance(FUNDING)
+            );
         }
         (runtime, holder)
     }
@@ -981,7 +1002,11 @@ mod tests {
         .expect("pureCredit open");
 
         // NOTHING escrowed: no hard backing (the issuer's consented risk).
-        assert_eq!(balance(&runtime, tl.cell), 0, "pureCredit escrow column is zero");
+        assert_eq!(
+            balance(&runtime, tl.cell),
+            0,
+            "pureCredit escrow column is zero"
+        );
         // The issuer paid only fees (adopt fee + per-turn fees), never the
         // line. The two collateral points share the EXACT same four-turn fee
         // schedule — the only hard-value difference is whether the line is
@@ -1015,7 +1040,11 @@ mod tests {
         let s = tl.status(&runtime).unwrap();
         assert_eq!(s.drawn, 30);
         assert_eq!(s.escrow, 0, "draw moved no hard value into/out of the cell");
-        assert_eq!(balance(&runtime, holder), holder_before, "holder hard column unmoved");
+        assert_eq!(
+            balance(&runtime, holder),
+            holder_before,
+            "holder hard column unmoved"
+        );
 
         // The line bound bites identically at this point of the axis.
         let err = tl.draw(&runtime, digest(2), LINE).unwrap_err();
@@ -1029,7 +1058,10 @@ mod tests {
                 value: field_from_u64(0),
             }],
         );
-        assert!(matches!(res, Err(SdkError::Turn(_))), "mode immutable: {res:?}");
+        assert!(
+            matches!(res, Err(SdkError::Turn(_))),
+            "mode immutable: {res:?}"
+        );
     }
 
     #[test]
@@ -1083,7 +1115,8 @@ mod tests {
         let err = tl.draw(&runtime, digest(1), 5).unwrap_err();
         assert!(matches!(err, SdkError::Rejected(_)));
         // …but fresh credit flows again.
-        tl.draw(&runtime, digest(3), 5).expect("fresh post-settle draw");
+        tl.draw(&runtime, digest(3), 5)
+            .expect("fresh post-settle draw");
         // Nothing further outstanding after a clean settle → no-op.
         tl.repay(&runtime, 5).expect("repay back to clean");
         assert_eq!(tl.settle(&runtime).unwrap(), 0);

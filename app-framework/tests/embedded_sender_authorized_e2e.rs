@@ -36,8 +36,8 @@
 //!            are both derived from that one tree so they are mutually consistent.
 
 use dregg_app_framework::{
-    AgentCipherclerk, AppCipherclerk, AuthorizedSet, CellProgram, EmbeddedExecutor, StateConstraint,
-    field_from_u64,
+    AgentCipherclerk, AppCipherclerk, AuthorizedSet, CellProgram, EmbeddedExecutor,
+    StateConstraint, field_from_u64,
 };
 use dregg_turn::action::{WitnessBlob, WitnessKind};
 use dregg_turn::executor::{single_member_authorized_root, single_member_membership_proof};
@@ -55,7 +55,11 @@ fn make_cclerk(fed: u8) -> AppCipherclerk {
 
 /// Install `SenderAuthorized { PublicRoot { AUTH_ROOT_SLOT } }` on `cell_id`'s
 /// program and seed `AUTH_ROOT_SLOT` with the single-member root for `member_pk`.
-fn arm_sender_gate(exec: &EmbeddedExecutor, cell_id: dregg_app_framework::CellId, member_pk: [u8; 32]) {
+fn arm_sender_gate(
+    exec: &EmbeddedExecutor,
+    cell_id: dregg_app_framework::CellId,
+    member_pk: [u8; 32],
+) {
     let root = single_member_authorized_root(&member_pk);
     exec.with_ledger_mut(|ledger| {
         if let Some(cell) = ledger.get_mut(&cell_id) {
@@ -111,12 +115,19 @@ fn embedded_authorized_member_accepts() {
     let receipt = exec
         .submit_action(&cclerk, action)
         .expect("authorized member's genuine membership STARK must be ACCEPTED end-to-end");
-    assert_ne!(receipt.turn_hash, [0u8; 32], "committed turn has a real hash");
+    assert_ne!(
+        receipt.turn_hash, [0u8; 32],
+        "committed turn has a real hash"
+    );
 
     // The state change landed: FREE_SLOT now holds 1.
     let after = exec
         .with_ledger_mut(|l| l.get(&cclerk.cell_id()).unwrap().state.fields[FREE_SLOT as usize]);
-    assert_eq!(after, field_from_u64(1), "the accepted turn mutated the slot");
+    assert_eq!(
+        after,
+        field_from_u64(1),
+        "the accepted turn mutated the slot"
+    );
 }
 
 /// REJECT: a DIFFERENT agent (not the set member) acts on its own cell, whose
@@ -147,7 +158,10 @@ fn embedded_non_member_rejected_at_stark_level() {
         .expect_err("a non-member must be REFUSED even presenting the member's valid proof");
     let msg = format!("{err}").to_lowercase();
     assert!(
-        msg.contains("member") || msg.contains("sender") || msg.contains("program") || msg.contains("witness"),
+        msg.contains("member")
+            || msg.contains("sender")
+            || msg.contains("program")
+            || msg.contains("witness"),
         "refusal must cite the sender-membership gate, got: {msg}"
     );
 
@@ -176,9 +190,9 @@ fn empty_registry_fails_closed_even_for_member() {
     let proof = single_member_membership_proof(&member_pk);
     let action = witnessed_setfield(&cclerk, 1, proof);
 
-    let err = exec
-        .submit_action(&cclerk, action)
-        .expect_err("with an empty registry, SenderAuthorized must fail closed even for the member");
+    let err = exec.submit_action(&cclerk, action).expect_err(
+        "with an empty registry, SenderAuthorized must fail closed even for the member",
+    );
     let _ = err; // any rejection suffices; the point is it does NOT commit.
 
     let after = exec

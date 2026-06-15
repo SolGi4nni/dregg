@@ -537,7 +537,10 @@ fn channel_rosters_roundtrip_and_survive_reopen() {
     loaded.sort();
     assert_eq!(
         loaded,
-        vec![(channel_a, roster_a2.clone()), (channel_b, roster_b.clone())]
+        vec![
+            (channel_a, roster_a2.clone()),
+            (channel_b, roster_b.clone())
+        ]
     );
 
     // A stale roster's discard is durable.

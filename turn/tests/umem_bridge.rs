@@ -305,7 +305,10 @@ fn umem_witness_set_heap_field_round_trip() {
                 }
         })
         .expect("heap field write present in umem trace");
-    assert_eq!(write.prev_val, None, "fresh heap key was absent before the write");
+    assert_eq!(
+        write.prev_val, None,
+        "fresh heap key was absent before the write"
+    );
     assert_eq!(write.val, Some(UVal::Bytes32(value)));
 }
 
@@ -474,7 +477,10 @@ fn umem_witness_three_verb_turn_round_trip() {
         ],
     );
     let result = executor.execute(&turn, &mut ledger);
-    assert!(result.is_committed(), "three-verb turn must commit: {result:?}");
+    assert!(
+        result.is_committed(),
+        "three-verb turn must commit: {result:?}"
+    );
 
     let w = take_witness(&executor);
     assert_bridge_square(&w);

@@ -22,8 +22,8 @@
 use std::process::ExitCode;
 
 use dregg_deploy::{
-    explain_assurance, parse_toml, plan_apply, refines_intent, refines_upgrade, AppliedPlan,
-    ApplyError, FlowSpec, Lowered,
+    AppliedPlan, ApplyError, FlowSpec, Lowered, explain_assurance, parse_toml, plan_apply,
+    refines_intent, refines_upgrade,
 };
 
 /// One app: its name + the two crate-local spec files.
@@ -73,7 +73,10 @@ fn main() -> ExitCode {
 }
 
 fn run_app(a: &AppSpecs) -> bool {
-    println!("── {} ──────────────────────────────────────────────", a.app);
+    println!(
+        "── {} ──────────────────────────────────────────────",
+        a.app
+    );
 
     // (1) The CORRECT deploy spec: must be ACCEPTED (no-amp ✓, conserves ✓), and
     //     lower to its per-root turn sequence.
@@ -170,7 +173,9 @@ fn run_app(a: &AppSpecs) -> bool {
                 true
             } else {
                 let f = &v.findings()[0];
-                println!("  REFINE  ✓  redeploy-widening also caught by FlowRefine (overgrant ⋠ running):");
+                println!(
+                    "  REFINE  ✓  redeploy-widening also caught by FlowRefine (overgrant ⋠ running):"
+                );
                 println!("            {}", f.message);
                 true
             }

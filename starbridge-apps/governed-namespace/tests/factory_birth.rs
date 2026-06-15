@@ -109,7 +109,10 @@ fn factory_born_namespace_accepts_constitution_and_refuses_threshold_rebind() {
             .map(|c| !c.program.is_none())
             .unwrap_or(false)
     });
-    assert!(has_program, "factory-born namespace must carry a CellProgram");
+    assert!(
+        has_program,
+        "factory-born namespace must carry a CellProgram"
+    );
 
     // ACCEPT: the constitution binds committee + threshold with the first turn.
     exec.submit_action(&cclerk, constitute_action(&cclerk, ns, b"committee-v0", 2))

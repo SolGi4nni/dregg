@@ -78,18 +78,18 @@ pub mod beacon;
 #[cfg(test)]
 mod bls_quorum_diff;
 pub mod checkpoint;
-/// The adjudication court (ORGANS §5, CONSENSUS-FLEX §7 items 1–2): the witness-first
-/// equivocation court — the `validEquivocation` predicate atom over the blocklace's wire
-/// evidence value, the evidence→slash pipe into [`admission::AdmissionRegistry::slash`]
-/// (no-double-resolve via burned evidence digests), and the beacon-seeded council
-/// selection for the non-certifiable residue.
-pub mod court;
 /// Differential: the verified Lean `Dregg2.Distributed.CheckpointPrune` model ⟺ this crate's real
 /// checkpoint-prune arc (the `RetentionPolicy::would_prune` predicate transcribed from
 /// `node/src/config.rs`, the prune/recover keyset reconstruction, and the `Checkpoint::verify`
 /// attestation gate driven through genuine Ed25519-signed QCs). Test-only.
 #[cfg(test)]
 mod checkpoint_prune_diff;
+/// The adjudication court (ORGANS §5, CONSENSUS-FLEX §7 items 1–2): the witness-first
+/// equivocation court — the `validEquivocation` predicate atom over the blocklace's wire
+/// evidence value, the evidence→slash pipe into [`admission::AdmissionRegistry::slash`]
+/// (no-double-resolve via burned evidence digests), and the beacon-seeded council
+/// selection for the non-certifiable residue.
+pub mod court;
 pub mod cross_fed_bundle;
 /// Distributed key generation (Feldman/JF-DKG) + proactive resharing for the
 /// beacon committee — the upgrade `beacon`'s NOTES §1 names: share issuance
@@ -140,13 +140,13 @@ pub mod vrf;
 pub use admission::{
     AdmissionRegistry, Bond, EquivocationEvidence, StrandId as AdmissionStrandId, Vouch,
 };
-pub use court::{
-    CourtRefusal, CourtVerdict, EquivocationCourt, EquivocationEvidenceVerifier,
-    equivocation_predicate_vk, register_equivocation_court, seed_council,
-};
 pub use checkpoint::{
     Checkpoint, CheckpointError, DEFAULT_CHECKPOINT_INTERVAL, create_checkpoint,
     finalize_checkpoint, is_checkpoint_height, verify_checkpoint,
+};
+pub use court::{
+    CourtRefusal, CourtVerdict, EquivocationCourt, EquivocationEvidenceVerifier,
+    equivocation_predicate_vk, register_equivocation_court, seed_council,
 };
 // The unified `Federation` type (FEDERATION-UNIFICATION-DESIGN.md §2).
 // Frees the bare name `Federation` for the canonical attestation context;
@@ -188,15 +188,15 @@ pub use transport::{
     FederationEnvelope, FederationTransport, LocalTransport, NetworkConsensusNode,
     TcpFederationTransport, TransportError,
 };
-pub use vrf::{
-    SortitionThreshold, SortitionTicket, VrfError, VrfProof, VrfPublicKey, VrfSecretKey,
-    sortition_select, verify_sortition,
-};
 pub use types::{
     AttestedRoot, ConsensusMessage, LightClientProof, NodeIdentity, PublicKey, QuorumCertificate,
     RevocationBlock, RevocationEvent, RevocationProof, Signature, SigningKey, Token,
     ViewChangeMessage, Vote, generate_keypair, sign, verify, verify_attested_root_with_committee,
     verify_via_receipt_chain,
+};
+pub use vrf::{
+    SortitionThreshold, SortitionTicket, VrfError, VrfProof, VrfPublicKey, VrfSecretKey,
+    sortition_select, verify_sortition,
 };
 
 // =============================================================================
@@ -285,7 +285,11 @@ mod threshold_tests {
                 "federation and blocklace quorum diverge at n={n}"
             );
             if n >= 1 {
-                assert_eq!(quorum_threshold(n), n - fault_tolerance(n), "q = n - f at n={n}");
+                assert_eq!(
+                    quorum_threshold(n),
+                    n - fault_tolerance(n),
+                    "q = n - f at n={n}"
+                );
                 assert!(
                     2 * quorum_threshold(n) - n > fault_tolerance(n),
                     "unconditional quorum intersection at n={n}"

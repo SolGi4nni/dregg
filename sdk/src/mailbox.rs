@@ -58,8 +58,8 @@ use serde::{Deserialize, Serialize};
 
 use dregg_captp::FederationId;
 use dregg_captp::store_forward::{self, BlocklaceEnvelope};
-use dregg_cell::state::FieldElement;
 use dregg_cell::CellId;
+use dregg_cell::state::FieldElement;
 use dregg_storage::queue::{
     DequeueProof, QueueEntry, verify_dequeue_proof, verify_dequeue_proof_against,
 };
@@ -506,9 +506,9 @@ impl<'rt, T: MailboxTransport> MailboxCrank<'rt, T> {
                             Some(turn_receipt.as_turn_receipt().receipt_hash());
                         CrankDisposition::Executed
                     }
-                    Err(e) => CrankDisposition::Refused(RefusalReason::SubmitRejected(
-                        e.to_string(),
-                    )),
+                    Err(e) => {
+                        CrankDisposition::Refused(RefusalReason::SubmitRejected(e.to_string()))
+                    }
                 }
             })();
 
@@ -833,12 +833,7 @@ mod tests {
     /// e2e exercises the full factory-birth path; these unit tests focus the
     /// crank's gate chain.)
     fn install_inbox(runtime: &AgentRuntime, root: FieldElement) -> CellId {
-        let owner_pk = runtime
-            .cipherclerk()
-            .read()
-            .unwrap()
-            .public_key()
-            .0;
+        let owner_pk = runtime.cipherclerk().read().unwrap().public_key().0;
         let token = *blake3::hash(b"mailbox-test-inbox").as_bytes();
         let mut inbox = Cell::with_balance(owner_pk, token, 10_000);
         inbox.state.fields[SENDER_SET_ROOT_SLOT] = root;
@@ -1101,9 +1096,8 @@ mod tests {
             method: "execute".into(),
             effects: vec![],
         };
-        let seal = |i: &MailboxTurnIntent| {
-            seal_intent(i, FederationId(a_pk), &b_public, &a_secret, 0)
-        };
+        let seal =
+            |i: &MailboxTurnIntent| seal_intent(i, FederationId(a_pk), &b_public, &a_secret, 0);
 
         // Tampered post-root → fails the structural verifier.
         let runtime = test_runtime("bad-proof");
@@ -1127,10 +1121,7 @@ mod tests {
         // and the break in the chain refuses everything after it too.
         let runtime2 = test_runtime("replay-proof");
         let inbox2 = install_inbox(&runtime2, sender_set_commitment(&set));
-        let batch = deliver_all(vec![
-            (a_pk, seal(&intent(2))),
-            (a_pk, seal(&intent(3))),
-        ]);
+        let batch = deliver_all(vec![(a_pk, seal(&intent(2))), (a_pk, seal(&intent(3)))]);
         let replayed = batch[0].clone();
         let genuine_second = batch[1].clone();
         let transport2 = MemTransport {
@@ -1146,7 +1137,10 @@ mod tests {
         ));
         // The genuine second message DOES chain on the (unadvanced) tracked
         // root, so it still verifies after the refused replay.
-        assert!(crank2.receipts()[2].proof_ok, "chain resumes on the true successor");
+        assert!(
+            crank2.receipts()[2].proof_ok,
+            "chain resumes on the true successor"
+        );
     }
 
     #[test]

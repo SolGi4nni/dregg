@@ -305,9 +305,18 @@ mod tests {
                 threshold: 1000
             }
         );
-        assert_eq!(parse_predicate("score>5").unwrap().predicate_type, PredicateType::Gt);
-        assert_eq!(parse_predicate("rank<3").unwrap().predicate_type, PredicateType::Lt);
-        assert_eq!(parse_predicate("tier!=0").unwrap().predicate_type, PredicateType::Neq);
+        assert_eq!(
+            parse_predicate("score>5").unwrap().predicate_type,
+            PredicateType::Gt
+        );
+        assert_eq!(
+            parse_predicate("rank<3").unwrap().predicate_type,
+            PredicateType::Lt
+        );
+        assert_eq!(
+            parse_predicate("tier!=0").unwrap().predicate_type,
+            PredicateType::Neq
+        );
     }
 
     #[test]
@@ -320,8 +329,14 @@ mod tests {
 
     #[test]
     fn rejects_malformed_predicates() {
-        assert_eq!(parse_predicate("age").unwrap_err(), PredicateParseError::NoComparator);
-        assert_eq!(parse_predicate(">=18").unwrap_err(), PredicateParseError::EmptyAttribute);
+        assert_eq!(
+            parse_predicate("age").unwrap_err(),
+            PredicateParseError::NoComparator
+        );
+        assert_eq!(
+            parse_predicate(">=18").unwrap_err(),
+            PredicateParseError::EmptyAttribute
+        );
         assert!(matches!(
             parse_predicate("age>=abc").unwrap_err(),
             PredicateParseError::BadThreshold(_)
@@ -387,7 +402,10 @@ mod tests {
         // NOT a fabricated proof. This is the soundness tooth.
         let seed = [0xCDu8; 32];
         let r = generate_predicate_proof(&seed, "age>=18", r#"{"age": 16}"#);
-        assert!(matches!(r, Err(ProofError::Sdk(_))), "a false predicate must be unprovable, got {r:?}");
+        assert!(
+            matches!(r, Err(ProofError::Sdk(_))),
+            "a false predicate must be unprovable, got {r:?}"
+        );
     }
 
     #[test]

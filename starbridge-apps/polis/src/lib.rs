@@ -113,8 +113,8 @@
 
 use dregg_cell::factory::{CapTarget, CapTemplate, ChildVkStrategy, FactoryDescriptor};
 use dregg_cell::permissions::AuthRequired;
-use dregg_cell::program::{field_from_u64, CellProgram, SimpleStateConstraint, StateConstraint};
-use dregg_cell::state::{FieldElement, FIELD_ZERO};
+use dregg_cell::program::{CellProgram, SimpleStateConstraint, StateConstraint, field_from_u64};
+use dregg_cell::state::{FIELD_ZERO, FieldElement};
 use dregg_cell::{CellId, CellMode};
 
 /// Lifecycle state-code slot — slot 0 in every polis cell family.

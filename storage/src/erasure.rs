@@ -184,7 +184,8 @@ impl ErasureEncoder {
 
         if let Ok(rs) = reed_solomon_erasure::ReedSolomon::<RsField>::new(n_data, n_parity) {
             // encode() needs &mut [shard]; operate on slices of all_shards.
-            let mut refs: Vec<&mut [u8]> = all_shards.iter_mut().map(|v| v.as_mut_slice()).collect();
+            let mut refs: Vec<&mut [u8]> =
+                all_shards.iter_mut().map(|v| v.as_mut_slice()).collect();
             // If encoding fails (it shouldn't, the shapes are validated), the
             // parity shards stay zero — reconstruction still works from the
             // data shards, which are untouched.

@@ -312,10 +312,9 @@ impl AbortReason {
 /// Pull the fields out of a record with the expected symbol label.
 fn expect_record<'a>(v: &'a Value, label: &'static str) -> Result<&'a [Value], OcapnSessionError> {
     match v {
-        Value::Record {
-            label: l,
-            fields,
-        } if matches!(l.as_ref(), Value::Symbol(s) if s == label) => Ok(fields),
+        Value::Record { label: l, fields } if matches!(l.as_ref(), Value::Symbol(s) if s == label) => {
+            Ok(fields)
+        }
         _ => Err(OcapnSessionError::NotRecord { expected: label }),
     }
 }
@@ -359,7 +358,12 @@ mod tests {
         let loc = OcapnLocation::new(bs58::encode([0xab; 32]).into_string(), "tcpip")
             .with_param("host", "example-node")
             .with_param("port", "30022");
-        let ss = StartSession::new(CAPTP_VERSION, fake_pubkey(), loc.to_uri_string(), fake_sig());
+        let ss = StartSession::new(
+            CAPTP_VERSION,
+            fake_pubkey(),
+            loc.to_uri_string(),
+            fake_sig(),
+        );
 
         let bytes = ss.encode();
         let back = StartSession::decode(&bytes).unwrap();
@@ -408,7 +412,10 @@ mod tests {
         let bytes = a.encode();
         assert_eq!(AbortReason::decode(&bytes).unwrap(), a);
         // Exact shape.
-        assert_eq!(a.to_syrup(), Value::record(OP_ABORT, [Value::string("peer misbehaved")]));
+        assert_eq!(
+            a.to_syrup(),
+            Value::record(OP_ABORT, [Value::string("peer misbehaved")])
+        );
     }
 
     #[test]
@@ -475,7 +482,12 @@ mod tests {
         let fabric = InProcessFabric::new();
         let me = fabric.join([0xa1; 32]);
         let loc = me.self_location();
-        let ss = StartSession::new(CAPTP_VERSION, fake_pubkey(), loc.to_uri_string(), fake_sig());
+        let ss = StartSession::new(
+            CAPTP_VERSION,
+            fake_pubkey(),
+            loc.to_uri_string(),
+            fake_sig(),
+        );
         let back = StartSession::decode(&ss.encode()).unwrap();
         assert_eq!(
             OcapnLocation::parse(&back.acceptable_location).unwrap(),

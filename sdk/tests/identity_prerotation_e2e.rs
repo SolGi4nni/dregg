@@ -19,7 +19,7 @@
 use dregg_cell::{CellId, field_from_u64};
 use dregg_sdk::factories::ADOPT_TURN_FEE;
 use dregg_sdk::identity::{
-    CURRENT_KEYS_COMMIT_SLOT, COUNCIL_COMMIT_SLOT, IdentityCharter, IdentityState,
+    COUNCIL_COMMIT_SLOT, CURRENT_KEYS_COMMIT_SLOT, IdentityCharter, IdentityState,
     LAST_ROTATED_AT_SLOT, NEXT_KEYS_DIGEST_SLOT, STATE_ACTIVE, STATE_SLOT, create_identity,
     genesis_effects, inspect_identity, key_set_commitment, next_keys_digest, rotate_effects,
 };
@@ -138,7 +138,10 @@ fn live_identity(
 #[test]
 fn genesis_installs_the_first_precommitment() {
     let (runtime, cell, charter, g0, g1) = live_identity("identity-genesis");
-    assert_eq!(slot_of(&runtime, cell, STATE_SLOT), field_from_u64(STATE_ACTIVE));
+    assert_eq!(
+        slot_of(&runtime, cell, STATE_SLOT),
+        field_from_u64(STATE_ACTIVE)
+    );
     assert_eq!(
         slot_of(&runtime, cell, CURRENT_KEYS_COMMIT_SLOT),
         key_set_commitment(&g0)
@@ -203,8 +206,7 @@ fn forged_key_set_refused() {
     let (runtime, cell, _charter, _g0, _g1) = live_identity("identity-forged");
     let thief_keys: Vec<[u8; 32]> = vec![[0xEE; 32]];
     assert_program_violation(
-        runtime
-            .rotate_identity(cell, &thief_keys, next_keys_digest(&[0x99; 32])),
+        runtime.rotate_identity(cell, &thief_keys, next_keys_digest(&[0x99; 32])),
         "rotation presenting a non-committed key set",
     );
 }
@@ -250,8 +252,7 @@ fn cooling_blocks_preimage_holding_rotation() {
     // Inside the window (1_000 + 50 > 1_049): refused WITH the preimage.
     runtime.set_block_height(1_049);
     assert_program_violation(
-        runtime
-            .rotate_identity(cell, &g2, next_keys_digest(&key_set_commitment(&g3))),
+        runtime.rotate_identity(cell, &g2, next_keys_digest(&key_set_commitment(&g3))),
         "preimage-holding rotation inside the cooling window",
     );
 
@@ -318,8 +319,7 @@ fn commitment_stream_reconstructs_key_history() {
     // A stale generation (G1, already exposed) can never re-rotate.
     runtime.set_block_height(1_200);
     assert_program_violation(
-        runtime
-            .rotate_identity(cell, &g1, next_keys_digest(&[0x99; 32])),
+        runtime.rotate_identity(cell, &g1, next_keys_digest(&[0x99; 32])),
         "replaying an exposed (stale) key generation",
     );
 }

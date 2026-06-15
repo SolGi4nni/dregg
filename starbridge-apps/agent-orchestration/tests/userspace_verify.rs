@@ -38,8 +38,26 @@ fn the_honest_orchestration_plan_passes_userspace_verify() {
     let plan = forest(vec![
         build_open_board_action(&c, board, "lead-pk", 1000),
         build_worker_step_action(&c, board, WorkerSlot::A, Tool::Search, 0, 250, 2, "search"),
-        build_worker_step_action(&c, board, WorkerSlot::A, Tool::Summarize, 250, 200, 3, "summarize"),
-        build_worker_step_action(&c, board, WorkerSlot::B, Tool::Read, 0, 150, 4, "fact-check"),
+        build_worker_step_action(
+            &c,
+            board,
+            WorkerSlot::A,
+            Tool::Summarize,
+            250,
+            200,
+            3,
+            "summarize",
+        ),
+        build_worker_step_action(
+            &c,
+            board,
+            WorkerSlot::B,
+            Tool::Read,
+            0,
+            150,
+            4,
+            "fact-check",
+        ),
     ]);
 
     let assurance = analyze(&plan, false);
@@ -48,7 +66,10 @@ fn the_honest_orchestration_plan_passes_userspace_verify() {
         "the honest orchestration plan must pass every static check; findings: {:?}",
         assurance.all_findings()
     );
-    assert!(assurance.conservation.is_pass(), "no value moves ⇒ conserves");
+    assert!(
+        assurance.conservation.is_pass(),
+        "no value moves ⇒ conserves"
+    );
     assert!(
         assurance.no_amplification.is_pass(),
         "no grants ⇒ no amplification"

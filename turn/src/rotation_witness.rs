@@ -421,11 +421,17 @@ mod tests {
     /// (here the heap_root limb at offset 27) or the iroot moves the commitment.
     #[test]
     fn wire_commit_binds_limbs_and_iroot() {
-        let limbs: Vec<BabyBear> = (0..NUM_PRE_LIMBS).map(|i| BabyBear::new(300 + i as u32)).collect();
+        let limbs: Vec<BabyBear> = (0..NUM_PRE_LIMBS)
+            .map(|i| BabyBear::new(300 + i as u32))
+            .collect();
         let c = wire_commit(&limbs, BabyBear::new(7));
         let mut moved = limbs.clone();
         moved[27] = BabyBear::new(999);
-        assert_ne!(c, wire_commit(&moved, BabyBear::new(7)), "heap_root limb is bound");
+        assert_ne!(
+            c,
+            wire_commit(&moved, BabyBear::new(7)),
+            "heap_root limb is bound"
+        );
         assert_ne!(c, wire_commit(&limbs, BabyBear::new(8)), "iroot is bound");
     }
 

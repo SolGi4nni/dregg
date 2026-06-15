@@ -44,7 +44,7 @@ use dregg_cell::program::{
     TransitionMeta, WitnessBlobView, WitnessBundle, WitnessKindTag,
 };
 use dregg_cell::{
-    FIELD_ZERO, field_from_u64, CellProgram, CellState, EvalContext, StateConstraint,
+    CellProgram, CellState, EvalContext, FIELD_ZERO, StateConstraint, field_from_u64,
 };
 
 // ---------------------------------------------------------------------------
@@ -652,8 +652,8 @@ fn cases_with_compound_transition_guards() {
 /// still accepts.
 #[test]
 fn sentinel_variant_inside_long_conjunction_collapses_program() {
-    use dregg_cell::predicate::WitnessedPredicate;
     use dregg_cell::InputRef;
+    use dregg_cell::predicate::WitnessedPredicate;
 
     let constraints = vec![
         StateConstraint::FieldEquals {
@@ -928,9 +928,11 @@ fn write_once_inside_long_conjunction_still_fires() {
 fn predicate_with_empty_constraint_list_accepts_everything() {
     let program = CellProgram::Predicate(vec![]);
     assert!(program.evaluate(&CellState::default(), None, None).is_ok());
-    assert!(program
-        .evaluate(&state_with(&[(0, 999)]), None, None)
-        .is_ok());
+    assert!(
+        program
+            .evaluate(&state_with(&[(0, 999)]), None, None)
+            .is_ok()
+    );
 }
 
 // ===========================================================================

@@ -125,12 +125,20 @@ pub enum MmrError {
     BadFrontier,
     #[error("frontier does not bag to the committed root")]
     RootMismatch,
-    #[error("answer count {got} != committed in-range count {want} (positions are dense; omission breaks the count)")]
+    #[error(
+        "answer count {got} != committed in-range count {want} (positions are dense; omission breaks the count)"
+    )]
     CountMismatch { got: usize, want: usize },
-    #[error("slot {slot}: opening path does not recompute its peak (wrong value, wrong position, or wrong path)")]
+    #[error(
+        "slot {slot}: opening path does not recompute its peak (wrong value, wrong position, or wrong path)"
+    )]
     SlotMismatch { slot: usize },
     #[error("slot {slot}: path length {got} != covering peak height {want}")]
-    PathLength { slot: usize, got: usize, want: usize },
+    PathLength {
+        slot: usize,
+        got: usize,
+        want: usize,
+    },
     #[error("malformed opening: {0} paths for {1} values")]
     PathCount(usize, usize),
 }

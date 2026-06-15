@@ -205,7 +205,10 @@ impl PersistentStore {
                 .map(|g| g.value())
                 .unwrap_or(0);
             if snapshot.height >= current_latest {
-                meta.insert(tables::META_LATEST_LEDGER_CHECKPOINT_HEIGHT, snapshot.height)?;
+                meta.insert(
+                    tables::META_LATEST_LEDGER_CHECKPOINT_HEIGHT,
+                    snapshot.height,
+                )?;
             }
         }
         write_txn.commit()?;

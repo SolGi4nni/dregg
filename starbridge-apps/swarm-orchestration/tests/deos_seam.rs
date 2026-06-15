@@ -73,16 +73,17 @@ fn seeding_installs_the_full_swarm_program_on_the_board_cell() {
     // The seeded board cell carries `coordinator_program()` — the FULL swarm policy
     // (AffineLe budget + WriteOnce lead/budget + Monotonic meters + StrictMonotonic epoch),
     // installed so the executor re-enforces it on every touching turn.
-    let installed = executor.with_ledger_mut(|ledger| {
-        ledger.get(&cclerk.cell_id()).map(|c| c.program.clone())
-    });
+    let installed =
+        executor.with_ledger_mut(|ledger| ledger.get(&cclerk.cell_id()).map(|c| c.program.clone()));
     assert_eq!(
         installed,
         Some(coordinator_program()),
         "the seeded board cell carries the full swarm program (the seam's enforcement layer)"
     );
     // ...and the seeded genesis state is open at epoch 1, lead pinned, budget 1000.
-    let state = executor.cell_state(cclerk.cell_id()).expect("seeded cell exists");
+    let state = executor
+        .cell_state(cclerk.cell_id())
+        .expect("seeded cell exists");
     assert_eq!(state.fields[EPOCH_SLOT as usize], field_from_u64(1));
     assert_eq!(state.fields[BUDGET_SLOT as usize], field_from_u64(1000));
     assert_eq!(state.fields[LEAD_SLOT as usize], identity_field("lead"));
@@ -104,14 +105,34 @@ fn the_lead_dispatches_through_the_gated_fire_a_real_verified_turn() {
     // advances worker-A's meter by 300, bumps the epoch 1 -> 2, and wakes the worker. The
     // executor RE-ENFORCES the full swarm program: `AffineLe(300 + 0 <= 1000)` holds. A real
     // verified turn — the executor's OWN receipt.
-    let receipt = fire_dispatch(&app, &AuthRequired::None, &cclerk, &executor, Worker::A, worker, 300, "index")
-        .expect("the lead dispatches (caps ∧ state ∧ budget gate all pass)");
-    assert_ne!(receipt.turn_hash, [0u8; 32], "a real verified turn through the executor");
+    let receipt = fire_dispatch(
+        &app,
+        &AuthRequired::None,
+        &cclerk,
+        &executor,
+        Worker::A,
+        worker,
+        300,
+        "index",
+    )
+    .expect("the lead dispatches (caps ∧ state ∧ budget gate all pass)");
+    assert_ne!(
+        receipt.turn_hash, [0u8; 32],
+        "a real verified turn through the executor"
+    );
 
     // The meter + epoch advanced (the dispatch committed).
     let state = executor.cell_state(cclerk.cell_id()).unwrap();
-    assert_eq!(state.fields[SPENT_A_SLOT as usize], field_from_u64(300), "the meter advanced");
-    assert_eq!(state.fields[EPOCH_SLOT as usize], field_from_u64(2), "the epoch advanced 1 -> 2");
+    assert_eq!(
+        state.fields[SPENT_A_SLOT as usize],
+        field_from_u64(300),
+        "the meter advanced"
+    );
+    assert_eq!(
+        state.fields[EPOCH_SLOT as usize],
+        field_from_u64(2),
+        "the epoch advanced 1 -> 2"
+    );
 }
 
 #[test]
@@ -123,7 +144,16 @@ fn a_worker_cannot_dispatch_the_cap_tooth_bites_in_band() {
     // A WORKER (Either) firing `dispatch` (requires None/root): the CAP tooth refuses IN-BAND
     // — `is_attenuation(Either, None)` is false. Nothing is submitted (anti-ghost), so the wake
     // target is never reached. A worker cannot self-dispatch budget; only the lead dispatches.
-    let refused = fire_dispatch(&app, &AuthRequired::Either, &cclerk, &executor, Worker::A, CellId::from_bytes([0x9a; 32]), 1, "t");
+    let refused = fire_dispatch(
+        &app,
+        &AuthRequired::Either,
+        &cclerk,
+        &executor,
+        Worker::A,
+        CellId::from_bytes([0x9a; 32]),
+        1,
+        "t",
+    );
     assert!(
         matches!(
             refused,
@@ -147,7 +177,16 @@ fn dispatch_is_dark_before_the_board_opens_the_state_tooth_bites_in_band() {
     executor.install_program(cclerk.cell_id(), coordinator_program());
 
     // Refused IN-BAND at the state tooth before submission, so the wake target is never reached.
-    let refused = fire_dispatch(&app, &AuthRequired::None, &cclerk, &executor, Worker::A, CellId::from_bytes([0x9a; 32]), 1, "t");
+    let refused = fire_dispatch(
+        &app,
+        &AuthRequired::None,
+        &cclerk,
+        &executor,
+        Worker::A,
+        CellId::from_bytes([0x9a; 32]),
+        1,
+        "t",
+    );
     assert!(
         matches!(
             refused,
@@ -173,8 +212,17 @@ fn the_executor_re_enforces_an_over_budget_dispatch_is_refused() {
     let worker = birth_worker(&executor, &cclerk, b"worker");
 
     // First, an honest dispatch to B of 500 (epoch 1 -> 2) — admitted (0 + 500 <= 1000).
-    let honest = fire_dispatch(&board_app(&cclerk, &executor), &AuthRequired::None, &cclerk, &executor, Worker::B, worker, 500, "b-task")
-        .expect("the first 500-to-B dispatch fits the budget");
+    let honest = fire_dispatch(
+        &board_app(&cclerk, &executor),
+        &AuthRequired::None,
+        &cclerk,
+        &executor,
+        Worker::B,
+        worker,
+        500,
+        "b-task",
+    )
+    .expect("the first 500-to-B dispatch fits the budget");
     assert_ne!(honest.turn_hash, [0u8; 32]);
 
     // Now a dispatch to A of 600 (epoch 2 -> 3) would make spent_a + spent_b = 600 + 500 =
@@ -183,10 +231,16 @@ fn the_executor_re_enforces_an_over_budget_dispatch_is_refused() {
     let over = dispatch_effects(board, Worker::A, worker, 600, 3, 600, "a-task");
     let action = cclerk.make_action(board, "dispatch", over);
     let refused = executor.submit_action(&cclerk, action);
-    assert!(refused.is_err(), "an over-budget dispatch (1100 > 1000) must be refused by the executor");
+    assert!(
+        refused.is_err(),
+        "an over-budget dispatch (1100 > 1000) must be refused by the executor"
+    );
     let msg = format!("{:?}", refused.unwrap_err()).to_lowercase();
     assert!(
-        msg.contains("affine") || msg.contains("program") || msg.contains("budget") || msg.contains("constraint"),
+        msg.contains("affine")
+            || msg.contains("program")
+            || msg.contains("budget")
+            || msg.contains("constraint"),
         "the executor refuses on the AffineLe budget gate, got: {msg}"
     );
 
@@ -213,16 +267,26 @@ fn the_executor_re_enforces_a_replayed_epoch_is_refused() {
     let stale = dispatch_effects(board, Worker::A, worker, 100, 1, 100, "a-task");
     let action = cclerk.make_action(board, "dispatch", stale);
     let refused = executor.submit_action(&cclerk, action);
-    assert!(refused.is_err(), "a replayed (non-advancing) epoch dispatch must be refused");
+    assert!(
+        refused.is_err(),
+        "a replayed (non-advancing) epoch dispatch must be refused"
+    );
     let msg = format!("{:?}", refused.unwrap_err()).to_lowercase();
     assert!(
-        msg.contains("strictmonotonic") || msg.contains("strictly") || msg.contains("program") || msg.contains("field[4]"),
+        msg.contains("strictmonotonic")
+            || msg.contains("strictly")
+            || msg.contains("program")
+            || msg.contains("field[4]"),
         "the executor refuses on the StrictMonotonic(EPOCH) caveat, got: {msg}"
     );
 
     // The meter did NOT move (anti-ghost — the whole turn aborts on the refused caveat).
     let after = executor.cell_state(board).unwrap();
-    assert_eq!(after.fields[SPENT_A_SLOT as usize], field_from_u64(0), "the refused replay committed nothing");
+    assert_eq!(
+        after.fields[SPENT_A_SLOT as usize],
+        field_from_u64(0),
+        "the refused replay committed nothing"
+    );
 }
 
 #[test]
@@ -236,15 +300,27 @@ fn the_executor_re_enforces_a_meter_rollback_is_refused() {
     let _ = seed_board(&executor, "lead", 1000);
     let worker = birth_worker(&executor, &cclerk, b"worker");
 
-    fire_dispatch(&app, &AuthRequired::None, &cclerk, &executor, Worker::A, worker, 400, "a-task")
-        .expect("the first 400-to-A dispatch commits (meter 0 -> 400)");
+    fire_dispatch(
+        &app,
+        &AuthRequired::None,
+        &cclerk,
+        &executor,
+        Worker::A,
+        worker,
+        400,
+        "a-task",
+    )
+    .expect("the first 400-to-A dispatch commits (meter 0 -> 400)");
 
     let board = cclerk.cell_id();
     // A rollback: meter := 100 (< the committed 400) while epoch advances 2 -> 3.
     let rollback = dispatch_effects(board, Worker::A, worker, 100, 3, 100, "a-task");
     let action = cclerk.make_action(board, "dispatch", rollback);
     let refused = executor.submit_action(&cclerk, action);
-    assert!(refused.is_err(), "rolling a worker meter back to forge head-room must be refused");
+    assert!(
+        refused.is_err(),
+        "rolling a worker meter back to forge head-room must be refused"
+    );
     let msg = format!("{:?}", refused.unwrap_err()).to_lowercase();
     assert!(
         msg.contains("monotonic") || msg.contains("program") || msg.contains("field[2]"),
@@ -253,7 +329,11 @@ fn the_executor_re_enforces_a_meter_rollback_is_refused() {
 
     // The meter still holds the committed 400 (anti-ghost).
     let after = executor.cell_state(board).unwrap();
-    assert_eq!(after.fields[SPENT_A_SLOT as usize], field_from_u64(400), "the refused rollback committed nothing");
+    assert_eq!(
+        after.fields[SPENT_A_SLOT as usize],
+        field_from_u64(400),
+        "the refused rollback committed nothing"
+    );
     // Reference SPENT_B so the import is live (worker-B's meter is the other AffineLe column).
     assert_eq!(after.fields[SPENT_B_SLOT as usize], field_from_u64(0));
 }
@@ -272,7 +352,11 @@ fn the_lead_opens_the_board_through_the_gated_fire_then_the_button_goes_dark() {
     // Before the open, the LEAD (root) sees `open_board` LIT (pre-open precondition EPOCH ==
     // 0 holds) and `dispatch` DARK (opened precondition EPOCH >= 1 fails). The htmx tooth.
     let lit_before = app.cells()[0].gated_fireable_names(&AuthRequired::None, &executor);
-    assert_eq!(lit_before, vec!["open_board".to_string()], "pre-open: only open_board lights");
+    assert_eq!(
+        lit_before,
+        vec!["open_board".to_string()],
+        "pre-open: only open_board lights"
+    );
 
     // The lead opens the board — the FULL open turn pins lead + budget, advances epoch 0 -> 1.
     let receipt = fire_open_board(&app, &AuthRequired::None, &cclerk, &executor, "lead", 1000)
@@ -282,7 +366,10 @@ fn the_lead_opens_the_board_through_the_gated_fire_then_the_button_goes_dark() {
     // After the open, `open_board` goes DARK (pre-open precondition now fails) and `dispatch`
     // LIGHTS (opened precondition now holds). Same viewer, same caps, DIFFERENT button-set.
     let lit_after = app.cells()[0].gated_fireable_names(&AuthRequired::None, &executor);
-    assert!(lit_after.contains(&"dispatch".to_string()), "post-open: dispatch lights");
+    assert!(
+        lit_after.contains(&"dispatch".to_string()),
+        "post-open: dispatch lights"
+    );
     assert!(
         !lit_after.contains(&"open_board".to_string()),
         "post-open: open_board darkens (the htmx tooth)"
@@ -330,12 +417,25 @@ fn register_deos_mounts_the_seeded_surface_into_the_context() {
     // one (the census promotion) and the gated fires are live.
     let app = register_deos(&ctx);
     assert_eq!(app.name(), "swarm-orchestration");
-    assert_eq!(ctx.affordance_registry().len(), 1, "the deos surface is registered");
+    assert_eq!(
+        ctx.affordance_registry().len(),
+        1,
+        "the deos surface is registered"
+    );
 
     // The seeded board is open, so the lead can dispatch through the mounted surface
     // immediately (the seam is closed and live).
     let worker = birth_worker(&executor, &cclerk, b"worker");
-    let receipt = fire_dispatch(&app, &AuthRequired::None, &cclerk, &executor, Worker::A, worker, 100, "task")
-        .expect("the mounted, seeded surface dispatches (the promotion is live)");
+    let receipt = fire_dispatch(
+        &app,
+        &AuthRequired::None,
+        &cclerk,
+        &executor,
+        Worker::A,
+        worker,
+        100,
+        "task",
+    )
+    .expect("the mounted, seeded surface dispatches (the promotion is live)");
     assert_ne!(receipt.turn_hash, [0u8; 32]);
 }

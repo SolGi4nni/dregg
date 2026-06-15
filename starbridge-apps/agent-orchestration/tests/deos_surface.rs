@@ -15,9 +15,8 @@ use dregg_app_framework::{
     field_from_u64,
 };
 use starbridge_agent_orchestration::{
-    coordinator_program,
-    deos::{orchestration_app, AUDITOR_RIGHTS, COORDINATOR_RIGHTS, WORKER_RIGHTS},
-    BUDGET_SLOT, EPOCH_SLOT, SPENT_A_SLOT,
+    BUDGET_SLOT, EPOCH_SLOT, SPENT_A_SLOT, coordinator_program,
+    deos::{AUDITOR_RIGHTS, COORDINATOR_RIGHTS, WORKER_RIGHTS, orchestration_app},
 };
 
 fn agent() -> (AppCipherclerk, EmbeddedExecutor) {
@@ -78,15 +77,23 @@ async fn the_three_roles_see_different_cap_only_surfaces() {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
-        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
         serde_json::from_slice::<serde_json::Value>(&bytes).unwrap()["visible"].clone()
     }
 
     // An AUDITOR (Signature) sees only `view_audit` (the narrow read tier).
-    assert_eq!(visible(&router, "signature").await, serde_json::json!(["view_audit"]));
+    assert_eq!(
+        visible(&router, "signature").await,
+        serde_json::json!(["view_audit"])
+    );
     // A WORKER (Either) sees the same cap-only set — `worker_step` is GATED (lights on the gated
     // surface against live state, not the cap-only projection).
-    assert_eq!(visible(&router, "either").await, serde_json::json!(["view_audit"]));
+    assert_eq!(
+        visible(&router, "either").await,
+        serde_json::json!(["view_audit"])
+    );
     // The COORDINATOR (root/None) additionally sees `delegate_mandate` (the cap-graph delegation).
     assert_eq!(
         visible(&router, "root").await,
@@ -112,7 +119,8 @@ fn worker_step_lights_only_when_the_board_is_open() {
 
     // BEFORE open: a worker's gated set is empty (the board is not open — state-gate dark).
     assert!(
-        cell.gated_fireable_names(&worker_held, &executor).is_empty(),
+        cell.gated_fireable_names(&worker_held, &executor)
+            .is_empty(),
         "worker_step is DARK before the board opens (htmx tooth)"
     );
 
@@ -220,8 +228,14 @@ async fn only_the_coordinator_can_delegate_a_mandate_a_real_turn() {
     // `delegate_mandate` are REFUSED at the cap gate (403) BEFORE anything reaches the executor —
     // only a holder of the full `None` authority may delegate. The cap gate is the genuine
     // `is_attenuation` (`None` ⊄ Either/Signature).
-    assert_eq!(fire(&router, "delegate_mandate", "either").await, StatusCode::FORBIDDEN);
-    assert_eq!(fire(&router, "delegate_mandate", "signature").await, StatusCode::FORBIDDEN);
+    assert_eq!(
+        fire(&router, "delegate_mandate", "either").await,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        fire(&router, "delegate_mandate", "signature").await,
+        StatusCode::FORBIDDEN
+    );
 
     // The COORDINATOR (root) CLEARS the cap gate (not 403) — it is cap-authorized to delegate.
     let coord_status = fire(&router, "delegate_mandate", "root").await;
@@ -251,7 +265,9 @@ async fn the_manifest_names_the_whole_surface_and_the_durable_posture() {
         .oneshot(Request::get("/manifest").body(Body::empty()).unwrap())
         .await
         .unwrap();
-    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let manifest: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
 
     assert_eq!(manifest["app"], "agent-orchestration");
@@ -277,8 +293,10 @@ async fn the_manifest_names_the_whole_surface_and_the_durable_posture() {
     // The GATED worker_step names its state-gate (the board-open condition) — the htmx half VISIBLE.
     let gated = cell["gatedAffordances"].as_array().unwrap();
     assert!(
-        gated.iter().any(|g| g["name"] == "worker_step"
-            && g["stateGate"].as_str().unwrap().contains("slot[")),
+        gated
+            .iter()
+            .any(|g| g["name"] == "worker_step"
+                && g["stateGate"].as_str().unwrap().contains("slot[")),
         "the manifest names worker_step's state-gate (the board-open condition): {gated:?}"
     );
 }
@@ -315,11 +333,17 @@ async fn the_gated_surface_is_served_over_http() {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
-        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         v["fireable"]
             .as_array()
-            .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|x| x.as_str().map(String::from))
+                    .collect()
+            })
             .unwrap_or_default()
     }
 
@@ -354,12 +378,16 @@ async fn the_gated_surface_is_served_over_http() {
 
     // AFTER open: a worker (Either) lights worker_step over HTTP.
     assert!(
-        gated_fireable(&router, "either").await.contains(&"worker_step".to_string()),
+        gated_fireable(&router, "either")
+            .await
+            .contains(&"worker_step".to_string()),
         "an open board LIGHTS worker_step over HTTP for a worker"
     );
     // An auditor (Signature) does NOT (caps too narrow) — the cap tooth on the projection.
     assert!(
-        !gated_fireable(&router, "signature").await.contains(&"worker_step".to_string()),
+        !gated_fireable(&router, "signature")
+            .await
+            .contains(&"worker_step".to_string()),
         "an auditor's caps are too narrow to light worker_step"
     );
     // An auditor firing worker_step over HTTP is 403 (the cap tooth, anti-ghost).
@@ -382,8 +410,8 @@ async fn the_gated_surface_is_served_over_http() {
 
 #[test]
 fn the_same_worker_step_button_advances_across_a_multi_step_run() {
-    use starbridge_agent_orchestration::deos::fire_worker_step;
     use starbridge_agent_orchestration::WorkerSlot;
+    use starbridge_agent_orchestration::deos::fire_worker_step;
 
     let (cclerk, executor) = agent();
     let app = orchestration_app(&cclerk, &executor);
@@ -422,6 +450,13 @@ fn the_same_worker_step_button_advances_across_a_multi_step_run() {
     // The budget tooth still bites: a fire that would breach the swarm budget (450 + 600 > 1000)
     // is REFUSED in-band by the executor's AffineLe gate — nothing commits.
     let over = fire_worker_step(cell, &worker_held, WorkerSlot::A, 600, &cclerk, &executor);
-    assert!(over.is_err(), "an over-budget gated fire is refused by the AffineLe gate");
-    assert_eq!(spent_a(&executor, board), 450, "the refused fire moved nothing (fail-closed)");
+    assert!(
+        over.is_err(),
+        "an over-budget gated fire is refused by the AffineLe gate"
+    );
+    assert_eq!(
+        spent_a(&executor, board),
+        450,
+        "the refused fire moved nothing (fail-closed)"
+    );
 }

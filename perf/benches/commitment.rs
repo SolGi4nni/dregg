@@ -31,8 +31,7 @@ fn bench_commitment(c: &mut Criterion) {
 
     group.bench_function("canonical_v9_rotated", |b| {
         b.iter(|| {
-            let commit =
-                compute_canonical_state_commitment_v9(black_box(&cell), black_box(&ctx));
+            let commit = compute_canonical_state_commitment_v9(black_box(&cell), black_box(&ctx));
             black_box(commit);
         });
     });

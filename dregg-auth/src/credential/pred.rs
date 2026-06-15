@@ -200,8 +200,5 @@ impl Pred {
 }
 
 fn explain_list(ps: &[Pred]) -> String {
-    ps.iter()
-        .map(Pred::explain)
-        .collect::<Vec<_>>()
-        .join("; ")
+    ps.iter().map(Pred::explain).collect::<Vec<_>>().join("; ")
 }

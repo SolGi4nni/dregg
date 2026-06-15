@@ -22,16 +22,17 @@
 //! node turn is the named dispatch seam (`deos_surface.rs` §"the seam").
 
 use serenity::all::{
-    ButtonStyle, CommandDataOptionValue, CommandInteraction, CommandOptionType, ComponentInteraction,
-    Context, CreateActionRow, CreateButton, CreateCommand, CreateCommandOption,
-    CreateInteractionResponse, CreateInteractionResponseMessage, EditInteractionResponse,
+    ButtonStyle, CommandDataOptionValue, CommandInteraction, CommandOptionType,
+    ComponentInteraction, Context, CreateActionRow, CreateButton, CreateCommand,
+    CreateCommandOption, CreateInteractionResponse, CreateInteractionResponseMessage,
+    EditInteractionResponse,
 };
 
 use dregg_types::CellId;
 
 use crate::BotState;
 use crate::deos_surface::{
-    render_transclusion, DeosCellSurface, DiscordCapTier, TranscludedSurface, WhatLinksHere,
+    DeosCellSurface, DiscordCapTier, TranscludedSurface, WhatLinksHere, render_transclusion,
 };
 use crate::embeds;
 
@@ -168,7 +169,11 @@ async fn handle_council(ctx: &Context, command: &CommandInteraction, state: &Bot
     embed = embed
         .field(
             "dregg:// link",
-            format!("`{}`\n{} cell(s) transclude this", threshold_field.uri_string(), backlinks),
+            format!(
+                "`{}`\n{} cell(s) transclude this",
+                threshold_field.uri_string(),
+                backlinks
+            ),
             false,
         )
         .footer(serenity::all::CreateEmbedFooter::new(format!(
@@ -229,11 +234,7 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, s
                 ))
                 .field("Affordance", format!("`{}`", intent.affordance), true)
                 .field("Effect", format!("`{}`", effect_kind_of(&intent)), true)
-                .field(
-                    "Actor",
-                    format!("`{}`", short_cell(&intent.actor)),
-                    true,
-                )
+                .field("Actor", format!("`{}`", short_cell(&intent.actor)), true)
                 .field(
                     "Dispatch seam",
                     "The intent carries the real effect; handing it to the live node executor \
@@ -272,10 +273,12 @@ fn sub_string_opt(command: &CommandInteraction, name: &str) -> Option<String> {
         CommandDataOptionValue::SubCommand(o) => o,
         _ => return None,
     };
-    opts.iter().find(|o| o.name == name).and_then(|o| match &o.value {
-        CommandDataOptionValue::String(s) => Some(s.clone()),
-        _ => None,
-    })
+    opts.iter()
+        .find(|o| o.name == name)
+        .and_then(|o| match &o.value {
+            CommandDataOptionValue::String(s) => Some(s.clone()),
+            _ => None,
+        })
 }
 
 /// Build Discord button rows (max 5 per row) from the projected affordance set.
@@ -313,15 +316,21 @@ fn fire_error_msg(e: &starbridge_web_surface::affordance::FireError) -> String {
     use starbridge_web_surface::affordance::FireError;
     match e {
         FireError::NoSuchAffordance => "no such affordance on this surface".to_string(),
-        FireError::Unauthorized { affordance, required } => format!(
+        FireError::Unauthorized {
+            affordance,
+            required,
+        } => format!(
             "unauthorized: `{affordance}` requires {required:?} which this viewer does not hold"
         ),
         FireError::TransitionUnmet { affordance } => {
             format!("the `{affordance}` transition gate was not met")
         }
-        FireError::OutsideWindow { affordance, open, close, height } => format!(
-            "`{affordance}` is outside its window [{open}, {close}] (height {height})"
-        ),
+        FireError::OutsideWindow {
+            affordance,
+            open,
+            close,
+            height,
+        } => format!("`{affordance}` is outside its window [{open}, {close}] (height {height})"),
     }
 }
 

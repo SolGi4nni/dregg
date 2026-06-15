@@ -117,7 +117,10 @@ fn late_submission_after_call_closes_is_rejected() {
     let (mut gallery, _a, _b, _c) = three_artist_gallery();
     gallery.close_submissions();
     let late = Submission::new(13, 5, 5);
-    assert_eq!(gallery.submit(late.seal()), Err(GalleryError::NotSubmissionPhase));
+    assert_eq!(
+        gallery.submit(late.seal()),
+        Err(GalleryError::NotSubmissionPhase)
+    );
 }
 
 #[test]

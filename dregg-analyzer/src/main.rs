@@ -20,8 +20,8 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 
 use dregg_analyzer::findings::{Attestation, Severity};
-use dregg_analyzer::{blocklace, forest, network, receipts, wal};
 use dregg_analyzer::{AnalysisReport, Capture, TraceAnalyzer};
+use dregg_analyzer::{blocklace, forest, network, receipts, wal};
 
 #[derive(Parser)]
 #[command(
@@ -96,11 +96,7 @@ fn run(cli: &Cli) -> Result<AnalysisReport, String> {
     };
 
     let bytes = std::fs::read(file).map_err(|e| format!("reading {}: {e}", file.display()))?;
-    let use_postcard = cli.postcard
-        || file
-            .extension()
-            .map(|e| e != "json")
-            .unwrap_or(true);
+    let use_postcard = cli.postcard || file.extension().map(|e| e != "json").unwrap_or(true);
 
     if is_auto {
         let capture: Capture = decode(&bytes, use_postcard)?;

@@ -1877,8 +1877,7 @@ pub(crate) fn plan_round_block(
     }
 
     // The cohort at our current round: distinct creators + the block ids.
-    let mut cohort_creators: std::collections::HashSet<[u8; 32]> =
-        std::collections::HashSet::new();
+    let mut cohort_creators: std::collections::HashSet<[u8; 32]> = std::collections::HashSet::new();
     let mut cohort_blocks: Vec<BlockId> = Vec::new();
     for (id, block) in lace.iter() {
         if round_of.get(id).copied() == Some(my_max_round) {
@@ -2154,8 +2153,13 @@ fn spawn_block_cadence(
             };
 
             if n_participants > 1 {
-                cadence_tick_round_driven(&state, &handle, idle_heartbeat_ms, min_block_interval_ms)
-                    .await;
+                cadence_tick_round_driven(
+                    &state,
+                    &handle,
+                    idle_heartbeat_ms,
+                    min_block_interval_ms,
+                )
+                .await;
             } else {
                 cadence_tick_solo(&state, &handle, idle_heartbeat_ms).await;
             }
@@ -2304,7 +2308,10 @@ async fn cadence_tick_solo(state: &NodeState, handle: &BlocklaceHandle, idle_hea
                     }
                 }
             }
-            debug!(turns = n, "cadence: produced turn block(s) from consensus queue");
+            debug!(
+                turns = n,
+                "cadence: produced turn block(s) from consensus queue"
+            );
         }
         CadenceAction::ReactiveAck => {
             handle
@@ -3785,11 +3792,27 @@ mod tests {
     #[test]
     fn round_idle_heartbeat_is_exempt_from_rate_cap() {
         assert_eq!(
-            round_cadence_decision(0, false, false, RECENT, MIN_IVL, Duration::from_secs(200), 120_000),
+            round_cadence_decision(
+                0,
+                false,
+                false,
+                RECENT,
+                MIN_IVL,
+                Duration::from_secs(200),
+                120_000
+            ),
             CadenceAction::IdleHeartbeat
         );
         assert_eq!(
-            round_cadence_decision(0, false, false, RECENT, MIN_IVL, Duration::from_secs(200), 0),
+            round_cadence_decision(
+                0,
+                false,
+                false,
+                RECENT,
+                MIN_IVL,
+                Duration::from_secs(200),
+                0
+            ),
             CadenceAction::Nothing,
             "idle_heartbeat_ms == 0 disables the liveness floor"
         );
@@ -3817,7 +3840,10 @@ mod tests {
         // blocks; one queued turn carried by the first, attestations after.
         while rounds_done < rounds_to_close {
             ticks += 1;
-            assert!(ticks < 1_000, "must finalize in bounded ticks (no deadlock)");
+            assert!(
+                ticks < 1_000,
+                "must finalize in bounded ticks (no deadlock)"
+            );
             let queued = if rounds_done == 0 { 1 } else { 0 };
             let wave_open = true; // turn not yet finalized
             let action = round_cadence_decision(
@@ -3854,7 +3880,15 @@ mod tests {
         // nothing queued, the next ticks produce NO block — the DAG is quiet.
         for _ in 0..10 {
             assert_eq!(
-                round_cadence_decision(0, false, false, ELAPSED, MIN_IVL, Duration::from_millis(0), 120_000),
+                round_cadence_decision(
+                    0,
+                    false,
+                    false,
+                    ELAPSED,
+                    MIN_IVL,
+                    Duration::from_millis(0),
+                    120_000
+                ),
                 CadenceAction::Nothing,
                 "after the wave closed the DAG must go quiet (no empty-round spam)"
             );
@@ -4157,7 +4191,9 @@ mod tests {
     fn node_genesis_ledger(sender_pk: [u8; 32], balance: i64) -> dregg_cell::Ledger {
         let mut ledger = dregg_cell::Ledger::new();
         ledger
-            .insert_cell(dregg_cell::Cell::with_balance(sender_pk, [0u8; 32], balance))
+            .insert_cell(dregg_cell::Cell::with_balance(
+                sender_pk, [0u8; 32], balance,
+            ))
             .expect("genesis sender cell");
         ledger
     }
@@ -4192,11 +4228,9 @@ mod tests {
     #[test]
     fn finalized_transfer_to_fresh_dest_is_uniform_across_nodes() {
         const N: usize = 3;
-        let sender_cclerk =
-            dregg_sdk::AgentCipherclerk::from_key_bytes(zeroize::Zeroizing::new(*blake3::hash(
-                b"finalized-uniform:sender",
-            )
-            .as_bytes()));
+        let sender_cclerk = dregg_sdk::AgentCipherclerk::from_key_bytes(zeroize::Zeroizing::new(
+            *blake3::hash(b"finalized-uniform:sender").as_bytes(),
+        ));
         let sender_pk = sender_cclerk.public_key().0;
         let sender = dregg_cell::CellId::derive_raw(&sender_pk, &[0u8; 32]);
         // A fresh destination NO node has seen (not derived from any local cell).

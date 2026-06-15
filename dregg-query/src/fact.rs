@@ -171,8 +171,7 @@ impl Fact {
     }
 
     pub fn well_formed(&self) -> bool {
-        self.args.len() == self.pred.arity()
-            && matches!(self.args.last(), Some(Value::Nat(_)))
+        self.args.len() == self.pred.arity() && matches!(self.args.last(), Some(Value::Nat(_)))
     }
 
     /// The height stamp (last argument).

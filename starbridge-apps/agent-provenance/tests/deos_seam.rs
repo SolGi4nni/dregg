@@ -57,16 +57,19 @@ fn seeding_installs_the_provenance_program_and_genesis_state() {
 
     // The seeded log cell carries the provenance program (Monotonic(HEAD) + WriteOnce
     // entries), installed so the executor re-enforces it (the seam's enforcement layer).
-    let installed = executor.with_ledger_mut(|ledger| {
-        ledger.get(&cclerk.cell_id()).map(|c| c.program.clone())
-    });
+    let installed =
+        executor.with_ledger_mut(|ledger| ledger.get(&cclerk.cell_id()).map(|c| c.program.clone()));
     assert_eq!(
         installed,
         Some(provenance_cell_program()),
         "the seeded log cell carries the provenance program (the seam's enforcement layer)"
     );
     // ...and the seeded state is the genesis entry with HEAD == 1.
-    assert_eq!(head_of(&executor, cclerk.cell_id()), 1, "genesis seeded HEAD == 1");
+    assert_eq!(
+        head_of(&executor, cclerk.cell_id()),
+        1,
+        "genesis seeded HEAD == 1"
+    );
 }
 
 // =============================================================================
@@ -87,11 +90,18 @@ fn a_recorder_appends_through_the_gated_fire_a_real_verified_turn() {
     let claim = claim_digest(b"the agent's first attested output");
     let receipt = fire_append_entry(&app, &AuthRequired::Either, &cclerk, &executor, &claim)
         .expect("a recorder appends (caps ∧ state ∧ monotonic head ∧ write-once all pass)");
-    assert_ne!(receipt.turn_hash, [0u8; 32], "a real verified turn through the executor");
+    assert_ne!(
+        receipt.turn_hash, [0u8; 32],
+        "a real verified turn through the executor"
+    );
 
     // The cursor advanced (the entry committed) and entry-slot 1 now carries the new link.
     let state = executor.cell_state(cclerk.cell_id()).unwrap();
-    assert_eq!(state.fields[HEAD_SLOT], field_from_u64(2), "append advanced HEAD 1 -> 2");
+    assert_eq!(
+        state.fields[HEAD_SLOT],
+        field_from_u64(2),
+        "append advanced HEAD 1 -> 2"
+    );
     let genesis_digest = state.fields[entry_slot(0)];
     assert_eq!(
         state.fields[entry_slot(1)],
@@ -116,12 +126,19 @@ fn a_verifier_below_the_recorder_tier_cannot_append_the_cap_tooth_bites_in_band(
     let claim = claim_digest(b"unauthorized append attempt");
     let refused = fire_append_entry(&app, &AuthRequired::Signature, &cclerk, &executor, &claim);
     assert!(
-        matches!(refused, Err(FireExecuteError::Gate(FireError::Unauthorized { .. }))),
+        matches!(
+            refused,
+            Err(FireExecuteError::Gate(FireError::Unauthorized { .. }))
+        ),
         "a verifier's append is refused at the cap tooth in-band, got {refused:?}"
     );
 
     // The cursor did NOT move (anti-ghost — nothing committed).
-    assert_eq!(head_of(&executor, cclerk.cell_id()), 1, "the refused append committed nothing");
+    assert_eq!(
+        head_of(&executor, cclerk.cell_id()),
+        1,
+        "the refused append committed nothing"
+    );
 }
 
 // =============================================================================
@@ -149,7 +166,10 @@ fn the_executor_re_enforces_a_rewound_head_is_refused() {
     }];
     let action = cclerk.make_action(cell, "append_provenance", rewind);
     let refused = executor.submit_action(&cclerk, action);
-    assert!(refused.is_err(), "rewinding the HEAD cursor must be refused by the executor");
+    assert!(
+        refused.is_err(),
+        "rewinding the HEAD cursor must be refused by the executor"
+    );
     let msg = format!("{:?}", refused.unwrap_err()).to_lowercase();
     assert!(
         msg.contains("monotonic") || msg.contains("program") || msg.contains("field[2]"),
@@ -180,7 +200,10 @@ fn the_executor_re_enforces_a_sealed_entry_overwrite_is_refused() {
     // The genesis link committed at seeding.
     let sealed = executor.cell_state(cell).unwrap().fields[entry_slot(0)];
     let genesis_expected = link_hash(&GENESIS_PREV, &claim_digest(b"genesis"));
-    assert_eq!(sealed, genesis_expected, "entry 0 carries the seeded genesis link");
+    assert_eq!(
+        sealed, genesis_expected,
+        "entry 0 carries the seeded genesis link"
+    );
 
     // Overwrite the sealed entry with a forged value → WriteOnce refuses.
     let forged = claim_digest(b"forged-overwrite");
@@ -191,7 +214,10 @@ fn the_executor_re_enforces_a_sealed_entry_overwrite_is_refused() {
     }];
     let action = cclerk.make_action(cell, "tamper", overwrite);
     let refused = executor.submit_action(&cclerk, action);
-    assert!(refused.is_err(), "overwriting a sealed entry must be refused");
+    assert!(
+        refused.is_err(),
+        "overwriting a sealed entry must be refused"
+    );
     let msg = format!("{:?}", refused.unwrap_err()).to_lowercase();
     assert!(
         msg.contains("writeonce") || msg.contains("write-once") || msg.contains("program"),
@@ -200,7 +226,10 @@ fn the_executor_re_enforces_a_sealed_entry_overwrite_is_refused() {
 
     // The sealed entry is UNCHANGED after the rejected tamper (anti-ghost + tamper-evidence).
     let still = executor.cell_state(cell).unwrap().fields[entry_slot(0)];
-    assert_eq!(still, sealed, "the committed genesis entry survives the rejected tamper");
+    assert_eq!(
+        still, sealed,
+        "the committed genesis entry survives the rejected tamper"
+    );
 }
 
 // =============================================================================
@@ -219,7 +248,11 @@ fn register_deos_mounts_the_seeded_surface_into_the_context() {
     // one (the census promotion) and the gated fire is live.
     let app = starbridge_agent_provenance::register_deos(&ctx);
     assert_eq!(app.name(), "agent-provenance");
-    assert_eq!(ctx.affordance_registry().len(), 1, "the deos surface is registered");
+    assert_eq!(
+        ctx.affordance_registry().len(),
+        1,
+        "the deos surface is registered"
+    );
 
     // The seeded log is initialized (HEAD == 1), so a recorder can append through the
     // mounted surface immediately (the seam is closed + live).
@@ -230,6 +263,13 @@ fn register_deos_mounts_the_seeded_surface_into_the_context() {
 
     // The TIP moved (a real chain link committed on append).
     let state = executor.cell_state(cclerk.cell_id()).unwrap();
-    assert_ne!(state.fields[TIP_SLOT], [0u8; 32], "the append pointed TIP at the new link");
-    assert_eq!(state.fields[HEAD_SLOT], field_from_u64(2), "HEAD advanced 1 -> 2");
+    assert_ne!(
+        state.fields[TIP_SLOT], [0u8; 32],
+        "the append pointed TIP at the new link"
+    );
+    assert_eq!(
+        state.fields[HEAD_SLOT],
+        field_from_u64(2),
+        "HEAD advanced 1 -> 2"
+    );
 }

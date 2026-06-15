@@ -18,9 +18,9 @@ use dregg_app_framework::{
 };
 use dregg_cell::FactoryCreationParams;
 use starbridge_escrow_market::{
-    CEILING_SLOT, DELIVERY_HASH_SLOT, ESCROWED_SLOT, ESCROW_FACTORY_VK, RELEASED_SLOT, STATE_SLOT,
-    STATE_SETTLED, build_fund_action, build_list_action, build_settle_action, build_ship_action,
-    escrow_child_program_vk, escrow_factory_descriptor, sealed_delivery_digest,
+    CEILING_SLOT, DELIVERY_HASH_SLOT, ESCROW_FACTORY_VK, ESCROWED_SLOT, RELEASED_SLOT,
+    STATE_SETTLED, STATE_SLOT, build_fund_action, build_list_action, build_settle_action,
+    build_ship_action, escrow_child_program_vk, escrow_factory_descriptor, sealed_delivery_digest,
 };
 
 fn make_cipherclerk() -> AppCipherclerk {
@@ -70,14 +70,23 @@ fn factory_born_escrow_runs_the_whole_deal() {
     let escrow = birth_escrow_cell(&exec, &cclerk, b"order-acme-1");
 
     let has_program = exec.with_ledger_mut(|ledger| {
-        ledger.get(&escrow).map(|c| !c.program.is_none()).unwrap_or(false)
+        ledger
+            .get(&escrow)
+            .map(|c| !c.program.is_none())
+            .unwrap_or(false)
     });
     assert!(has_program, "factory-born escrow must carry a CellProgram");
 
-    exec.submit_action(&cclerk, build_list_action(&cclerk, escrow, "acme-corp", 1000))
-        .expect("list must commit");
-    exec.submit_action(&cclerk, build_fund_action(&cclerk, escrow, "buyer-bob", 800))
-        .expect("fund within the ceiling must commit");
+    exec.submit_action(
+        &cclerk,
+        build_list_action(&cclerk, escrow, "acme-corp", 1000),
+    )
+    .expect("list must commit");
+    exec.submit_action(
+        &cclerk,
+        build_fund_action(&cclerk, escrow, "buyer-bob", 800),
+    )
+    .expect("fund within the ceiling must commit");
 
     let (ceiling, escrowed) = exec.with_ledger_mut(|ledger| {
         let c = ledger.get(&escrow).unwrap();
@@ -102,8 +111,16 @@ fn factory_born_escrow_runs_the_whole_deal() {
             c.state.fields[RELEASED_SLOT as usize],
         )
     });
-    assert_eq!(state, field_from_u64(STATE_SETTLED), "the deal must end SETTLED");
-    assert_eq!(released, field_from_u64(800), "the seller must receive the escrow");
+    assert_eq!(
+        state,
+        field_from_u64(STATE_SETTLED),
+        "the deal must end SETTLED"
+    );
+    assert_eq!(
+        released,
+        field_from_u64(800),
+        "the seller must receive the escrow"
+    );
 }
 
 /// TRUSTLINE tooth: funding 1500 against a 1000 ceiling is REFUSED by the
@@ -114,11 +131,17 @@ fn factory_born_escrow_refuses_funding_over_ceiling() {
     let exec = EmbeddedExecutor::new(&cclerk, "default");
     let escrow = birth_escrow_cell(&exec, &cclerk, b"order-acme-2");
 
-    exec.submit_action(&cclerk, build_list_action(&cclerk, escrow, "acme-corp", 1000))
-        .expect("list must commit");
+    exec.submit_action(
+        &cclerk,
+        build_list_action(&cclerk, escrow, "acme-corp", 1000),
+    )
+    .expect("list must commit");
 
     let err = exec
-        .submit_action(&cclerk, build_fund_action(&cclerk, escrow, "buyer-bob", 1500))
+        .submit_action(
+            &cclerk,
+            build_fund_action(&cclerk, escrow, "buyer-bob", 1500),
+        )
         .expect_err("funding over the ceiling must be refused — the TRUSTLINE tooth");
     let msg = format!("{err}").to_lowercase();
     assert!(
@@ -136,10 +159,16 @@ fn factory_born_escrow_refuses_minting_tampering_and_double_settle() {
     let exec = EmbeddedExecutor::new(&cclerk, "default");
     let escrow = birth_escrow_cell(&exec, &cclerk, b"order-acme-3");
 
-    exec.submit_action(&cclerk, build_list_action(&cclerk, escrow, "acme-corp", 1000))
-        .expect("list commits");
-    exec.submit_action(&cclerk, build_fund_action(&cclerk, escrow, "buyer-bob", 800))
-        .expect("fund commits");
+    exec.submit_action(
+        &cclerk,
+        build_list_action(&cclerk, escrow, "acme-corp", 1000),
+    )
+    .expect("list commits");
+    exec.submit_action(
+        &cclerk,
+        build_fund_action(&cclerk, escrow, "buyer-bob", 800),
+    )
+    .expect("fund commits");
     let delivery = sealed_delivery_digest(b"real-goods");
     exec.submit_action(&cclerk, build_ship_action(&cclerk, escrow, &delivery))
         .expect("ship commits");

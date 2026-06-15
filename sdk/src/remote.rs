@@ -175,7 +175,10 @@ impl RemoteRuntime {
             .await
             .map_err(|e| SdkError::Wire(format!("GET {path}: {e}")))?;
         if !resp.status().is_success() {
-            return Err(SdkError::Wire(format!("GET {path}: HTTP {}", resp.status())));
+            return Err(SdkError::Wire(format!(
+                "GET {path}: HTTP {}",
+                resp.status()
+            )));
         }
         resp.json::<T>()
             .await
@@ -196,7 +199,10 @@ impl RemoteRuntime {
     }
 
     async fn discover_federation_id(&self) -> Result<[u8; 32], SdkError> {
-        if let Ok(feds) = self.get_json::<Vec<FederationInfoLite>>("/api/federations").await {
+        if let Ok(feds) = self
+            .get_json::<Vec<FederationInfoLite>>("/api/federations")
+            .await
+        {
             if let Some(local) = feds
                 .iter()
                 .find(|f| f.is_local && f.member_count > 0 && f.committee_epoch > 0)
@@ -490,9 +496,7 @@ impl RemoteAuthorizedTurn<'_> {
             let resp = self.runtime.submit_envelope(&turn).await?;
             if resp.accepted {
                 return Ok(RemoteReceipt {
-                    turn_hash: resp
-                        .turn_hash
-                        .unwrap_or_else(|| hex_encode(&turn.hash())),
+                    turn_hash: resp.turn_hash.unwrap_or_else(|| hex_encode(&turn.hash())),
                 });
             }
             last_error = resp
@@ -546,10 +550,7 @@ mod tests {
     fn offline_runtime() -> RemoteRuntime {
         let clerk = AgentCipherclerk::new();
         let runtime = RemoteRuntime::connect("http://127.0.0.1:0/", clerk);
-        runtime
-            .federation_id
-            .set(TEST_FED)
-            .expect("fresh OnceLock");
+        runtime.federation_id.set(TEST_FED).expect("fresh OnceLock");
         runtime
     }
 
@@ -562,8 +563,7 @@ mod tests {
         // the runtime must act as exactly that cell or every submit refuses.
         let runtime = offline_runtime();
         let default_token_id = *blake3::hash(b"default").as_bytes();
-        let expected =
-            CellId::derive_raw(&runtime.cipherclerk.public_key().0, &default_token_id);
+        let expected = CellId::derive_raw(&runtime.cipherclerk.public_key().0, &default_token_id);
         assert_eq!(runtime.cell_id(), expected);
     }
 
@@ -630,8 +630,14 @@ mod tests {
     fn builder_on_retargets_acting_cell() {
         let runtime = offline_runtime();
         let target = CellId([5u8; 32]);
-        let authorized = poll_ready(runtime.turn().on(target).transfer(CellId([6u8; 32]), 1).sign())
-            .expect("sign");
+        let authorized = poll_ready(
+            runtime
+                .turn()
+                .on(target)
+                .transfer(CellId([6u8; 32]), 1)
+                .sign(),
+        )
+        .expect("sign");
         assert_eq!(authorized.action().target, target);
         match &authorized.action().effects[0] {
             Effect::Transfer { from, .. } => assert_eq!(*from, target, "acting cell is the target"),
@@ -649,7 +655,10 @@ mod tests {
         let action = authorized.action();
 
         let Authorization::Signature(r, s) = &action.authorization else {
-            panic!("expected Authorization::Signature, got {:?}", action.authorization);
+            panic!(
+                "expected Authorization::Signature, got {:?}",
+                action.authorization
+            );
         };
         let mut sig = [0u8; 64];
         sig[..32].copy_from_slice(r);
@@ -735,7 +744,9 @@ mod tests {
         let mut tampered = signed.clone();
         tampered.turn.fee += 1;
         assert!(
-            !tampered.signer.verify(&tampered.turn.hash(), &tampered.signature),
+            !tampered
+                .signer
+                .verify(&tampered.turn.hash(), &tampered.signature),
             "tampered envelope must refuse"
         );
     }
@@ -747,7 +758,10 @@ mod tests {
             poll_ready(runtime.turn().transfer(CellId([9u8; 32]), 5).sign()).expect("sign");
         authorized.submitted = true;
         let err = poll_ready(authorized.submit()).expect_err("second submit must refuse");
-        assert!(err.to_string().contains("one-shot"), "unexpected error: {err}");
+        assert!(
+            err.to_string().contains("one-shot"),
+            "unexpected error: {err}"
+        );
     }
 
     // ─── wire plumbing ───

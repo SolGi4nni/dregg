@@ -1,8 +1,8 @@
 use dregg_circuit::cap_root::fold_bytes32;
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::heap_root::{
-    compute_heap_root as compute_heap_root_felt, empty_heap_root as empty_heap_root_felt,
-    heap_addr, HeapLeaf,
+    HeapLeaf, compute_heap_root as compute_heap_root_felt, empty_heap_root as empty_heap_root_felt,
+    heap_addr,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -889,15 +889,7 @@ mod signed_balance_tests {
     /// The biased encoding is order-preserving and round-trips.
     #[test]
     fn biased_encoding_order_preserving_roundtrip() {
-        let samples = [
-            i64::MIN,
-            -1_085_000,
-            -1,
-            0,
-            1,
-            50_000,
-            i64::MAX,
-        ];
+        let samples = [i64::MIN, -1_085_000, -1, 0, 1, 50_000, i64::MAX];
         for w in samples.windows(2) {
             assert!(
                 balance_biased(w[0]) < balance_biased(w[1]),
@@ -924,11 +916,17 @@ mod signed_balance_tests {
     fn sign_discipline_by_verb() {
         let mut ordinary = CellState::new(10);
         assert!(ordinary.debit_balance(10), "exact spend-to-zero is fine");
-        assert!(!ordinary.debit_balance(1), "ordinary cells may not go negative");
+        assert!(
+            !ordinary.debit_balance(1),
+            "ordinary cells may not go negative"
+        );
         assert_eq!(ordinary.balance(), 0);
 
         let mut well = CellState::new(0);
-        assert!(well.well_debit_balance(1_085_000), "the well carries −supply");
+        assert!(
+            well.well_debit_balance(1_085_000),
+            "the well carries −supply"
+        );
         assert_eq!(well.balance(), -1_085_000);
         // burn returns supply: an ordinary CREDIT moves the well toward zero.
         assert!(well.credit_balance(85_000));
@@ -943,7 +941,10 @@ mod signed_balance_tests {
         assert!(!s.apply_balance_change(-6), "ordinary refuses below zero");
         assert!(s.apply_balance_change(-5));
         assert_eq!(s.balance(), 0);
-        assert!(s.apply_balance_change_well(-7), "well variant may go negative");
+        assert!(
+            s.apply_balance_change_well(-7),
+            "well variant may go negative"
+        );
         assert_eq!(s.balance(), -7);
         // credit on a negative balance is an ORDINARY change (delta ≥ 0).
         assert!(s.apply_balance_change(3));

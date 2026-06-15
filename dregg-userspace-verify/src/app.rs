@@ -87,7 +87,12 @@ impl EscrowSchema {
     /// The canonical escrow-market schema for an escrow `cell`
     /// (`escrow-market`: escrowed=5, released=7, refunded=8).
     pub fn escrow_market(cell: CellId) -> Self {
-        EscrowSchema { cell, escrowed_slot: 5, released_slot: 7, refunded_slot: 8 }
+        EscrowSchema {
+            cell,
+            escrowed_slot: 5,
+            released_slot: 7,
+            refunded_slot: 8,
+        }
     }
 }
 
@@ -158,7 +163,8 @@ pub fn check_escrow_conservation(
                 let verb = if payout > e as i128 { "mints" } else { "burns" };
                 findings.push(Finding {
                     guarantee: "escrow (conservation)".to_string(),
-                    locus: Locus::node(vec![]).at_asset(format!("escrow:{}", short_cell(&schema.cell))),
+                    locus: Locus::node(vec![])
+                        .at_asset(format!("escrow:{}", short_cell(&schema.cell))),
                     message: format!(
                         "escrow settlement does not conserve: released ({r}) + refunded ({rf}) \
                          = {payout} ≠ escrowed ({e}) — the split {verb} value (the FLASHWELL \
@@ -174,7 +180,8 @@ pub fn check_escrow_conservation(
             if escrowed.is_none() {
                 findings.push(Finding {
                     guarantee: "escrow (conservation)".to_string(),
-                    locus: Locus::node(vec![]).at_asset(format!("escrow:{}", short_cell(&schema.cell))),
+                    locus: Locus::node(vec![])
+                        .at_asset(format!("escrow:{}", short_cell(&schema.cell))),
                     message: format!(
                         "cannot check escrow conservation: the escrowed amount (slot {}) is \
                          neither written in this forest nor supplied as a prior-committed value. \
@@ -211,13 +218,21 @@ impl LifecycleSchema {
     /// The canonical bounty-board lifecycle for a bounty `cell`
     /// (`bounty-board`: state slot 4; OPEN=1→CLAIMED=2→SUBMITTED=3→PAID=4).
     pub fn bounty_board(cell: CellId) -> Self {
-        LifecycleSchema { cell, state_slot: 4, ladder: vec![1, 2, 3, 4] }
+        LifecycleSchema {
+            cell,
+            state_slot: 4,
+            ladder: vec![1, 2, 3, 4],
+        }
     }
 
     /// The canonical escrow-market lifecycle for an escrow `cell`
     /// (`escrow-market`: state slot 9; LISTED=1→FUNDED=2→SHIPPED=3→SETTLED=4).
     pub fn escrow_market(cell: CellId) -> Self {
-        LifecycleSchema { cell, state_slot: 9, ladder: vec![1, 2, 3, 4] }
+        LifecycleSchema {
+            cell,
+            state_slot: 9,
+            ladder: vec![1, 2, 3, 4],
+        }
     }
 }
 
@@ -360,7 +375,10 @@ pub struct ProvenanceSchema {
 impl ProvenanceSchema {
     /// The canonical agent-provenance schema for a log `cell` (`entry_base = 4`).
     pub fn agent_provenance(cell: CellId) -> Self {
-        ProvenanceSchema { cell, entry_base: 4 }
+        ProvenanceSchema {
+            cell,
+            entry_base: 4,
+        }
     }
 }
 
@@ -448,7 +466,9 @@ pub fn check_provenance_chain_in_forest(
             .iter()
             .zip(honest.iter())
             .position(|(c, h)| c != h);
-        let where_ = first_bad.map(|i| i.to_string()).unwrap_or_else(|| "?".into());
+        let where_ = first_bad
+            .map(|i| i.to_string())
+            .unwrap_or_else(|| "?".into());
         findings.push(Finding {
             guarantee: "provenance (chain)".to_string(),
             locus: Locus::node(vec![]).at_asset(format!("prov:{}", short_cell(&schema.cell))),
@@ -513,7 +533,12 @@ fn last_field_writes(forest: &CallForest, cell: CellId) -> BTreeMap<usize, (Vec<
     let mut out: BTreeMap<usize, (Vec<usize>, [u8; 32])> = BTreeMap::new();
     walk(forest, |path, node| {
         for eff in &node.action.effects {
-            if let Effect::SetField { cell: c, index, value } = eff {
+            if let Effect::SetField {
+                cell: c,
+                index,
+                value,
+            } = eff
+            {
                 if *c == cell {
                     out.insert(*index, (path.to_vec(), *value));
                 }
@@ -533,7 +558,12 @@ fn ordered_field_writes(
     let mut out = Vec::new();
     walk(forest, |path, node| {
         for eff in &node.action.effects {
-            if let Effect::SetField { cell: c, index, value } = eff {
+            if let Effect::SetField {
+                cell: c,
+                index,
+                value,
+            } = eff
+            {
                 if *c == cell && *index == slot {
                     out.push((path.to_vec(), decode_u64_field(value), *value));
                 }

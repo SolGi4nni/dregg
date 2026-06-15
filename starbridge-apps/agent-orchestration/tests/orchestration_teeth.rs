@@ -16,9 +16,9 @@ use dregg_app_framework::{
 };
 use dregg_cell::FactoryCreationParams;
 use starbridge_agent_orchestration::{
-    AuditError, Mandate, OrchestrationEngine, OrchestrationError, OrchestrationLog, Tool, WorkStep,
-    WorkerSlot, audit_run, coordinator_child_program_vk, orchestration_factory_descriptor, recover,
-    ORCHESTRATION_FACTORY_VK,
+    AuditError, Mandate, ORCHESTRATION_FACTORY_VK, OrchestrationEngine, OrchestrationError,
+    OrchestrationLog, Tool, WorkStep, WorkerSlot, audit_run, coordinator_child_program_vk,
+    orchestration_factory_descriptor, recover,
 };
 
 /// Build a born coordinator board cell driven by `cclerk`/`exec`, returning its CellId. Mirrors the
@@ -79,7 +79,9 @@ fn honest_orchestration_runs_and_audits_clean() {
     {
         let mut engine =
             OrchestrationEngine::new(&cclerk, &exec, board, coord.clone(), a.clone(), b.clone());
-        let committed = engine.run("lead", &plan, &mut log).expect("the run commits");
+        let committed = engine
+            .run("lead", &plan, &mut log)
+            .expect("the run commits");
         assert_eq!(committed, 3, "all three steps committed");
         open_receipt = engine.open_receipt().cloned().expect("open receipt");
         assert_eq!(engine.spent(WorkerSlot::A), 450);
@@ -108,12 +110,24 @@ fn over_tool_worker_step_is_refused_in_the_fire_path() {
 
     // worker-B reaches for `write` — a tool NOT in its mandate (read only). REFUSED before submission.
     let over = WorkStep::new(WorkerSlot::B, Tool::Write, 10, "exfiltrate");
-    let err = engine.step(&over, &mut log).expect_err("over-tool step must be refused");
+    let err = engine
+        .step(&over, &mut log)
+        .expect_err("over-tool step must be refused");
     assert!(
-        matches!(err, OrchestrationError::OutOfMandate { worker: WorkerSlot::B, tool: Tool::Write, .. }),
+        matches!(
+            err,
+            OrchestrationError::OutOfMandate {
+                worker: WorkerSlot::B,
+                tool: Tool::Write,
+                ..
+            }
+        ),
         "expected OutOfMandate(write), got {err:?}"
     );
-    assert!(log.is_empty(), "a refused step checkpoints nothing — fail-closed");
+    assert!(
+        log.is_empty(),
+        "a refused step checkpoints nothing — fail-closed"
+    );
 }
 
 #[test]
@@ -129,13 +143,25 @@ fn over_subbudget_worker_step_is_refused() {
 
     // worker-B has a 300 sub-budget. Spend 200 (fits), then 200 more would breach 300.
     engine
-        .step(&WorkStep::new(WorkerSlot::B, Tool::Read, 200, "read-1"), &mut log)
+        .step(
+            &WorkStep::new(WorkerSlot::B, Tool::Read, 200, "read-1"),
+            &mut log,
+        )
         .expect("first read fits the sub-budget");
     let err = engine
-        .step(&WorkStep::new(WorkerSlot::B, Tool::Read, 200, "read-2"), &mut log)
+        .step(
+            &WorkStep::new(WorkerSlot::B, Tool::Read, 200, "read-2"),
+            &mut log,
+        )
         .expect_err("over-sub-budget step must be refused");
     assert!(
-        matches!(err, OrchestrationError::OutOfMandate { worker: WorkerSlot::B, .. }),
+        matches!(
+            err,
+            OrchestrationError::OutOfMandate {
+                worker: WorkerSlot::B,
+                ..
+            }
+        ),
         "expected OutOfMandate(budget), got {err:?}"
     );
     assert_eq!(log.len(), 1, "only the in-budget step checkpointed");
@@ -163,18 +189,28 @@ fn executor_affine_gate_refuses_an_over_swarm_budget_step() {
 
     // worker-A spends 400 (within its 500 sub-budget AND the 500 swarm budget).
     engine
-        .step(&WorkStep::new(WorkerSlot::A, Tool::Search, 400, "a-search"), &mut log)
+        .step(
+            &WorkStep::new(WorkerSlot::A, Tool::Search, 400, "a-search"),
+            &mut log,
+        )
         .expect("A's 400 fits both budgets");
     // worker-B spends 200: within ITS 500 sub-budget (off-ledger pre-check passes), but 400+200=600 >
     // 500 swarm budget — the executor's AffineLe gate REFUSES it on commit.
     let err = engine
-        .step(&WorkStep::new(WorkerSlot::B, Tool::Read, 200, "b-read"), &mut log)
+        .step(
+            &WorkStep::new(WorkerSlot::B, Tool::Read, 200, "b-read"),
+            &mut log,
+        )
         .expect_err("the affine swarm-budget gate must refuse");
     assert!(
         matches!(err, OrchestrationError::Refused(_)),
         "expected an executor Refused (AffineLe gate), got {err:?}"
     );
-    assert_eq!(log.len(), 1, "the refused step checkpointed nothing — fail-closed");
+    assert_eq!(
+        log.len(),
+        1,
+        "the refused step checkpointed nothing — fail-closed"
+    );
 }
 
 #[test]
@@ -235,7 +271,12 @@ fn audit_catches_an_amplified_mandate() {
     let err = audit_run(&open_receipt, &log, &coord, &amplified, &b)
         .expect_err("an amplified mandate must be caught");
     assert!(
-        matches!(err, AuditError::AmplifiedMandate { worker: WorkerSlot::A }),
+        matches!(
+            err,
+            AuditError::AmplifiedMandate {
+                worker: WorkerSlot::A
+            }
+        ),
         "expected AmplifiedMandate(A), got {err:?}"
     );
 }
@@ -279,10 +320,17 @@ fn crash_recover_resume_is_exactly_once() {
             OrchestrationEngine::new(&cclerk, &exec, board, coord.clone(), a.clone(), b.clone());
         engine.resume_state(recovered, open_receipt.clone());
         let (skipped, committed) = engine.resume(&plan, &mut log).expect("the tail finishes");
-        assert_eq!(skipped, 2, "the committed prefix is skipped, never re-applied");
+        assert_eq!(
+            skipped, 2,
+            "the committed prefix is skipped, never re-applied"
+        );
         assert_eq!(committed, 2, "only the uncommitted tail runs");
     }
-    assert_eq!(log.len(), 4, "four turns total — no double-apply (exactly-once)");
+    assert_eq!(
+        log.len(),
+        4,
+        "four turns total — no double-apply (exactly-once)"
+    );
 
     // The whole run audits clean.
     let ok = audit_run(&open_receipt, &log, &coord, &a, &b).expect("the resumed run audits");
@@ -305,15 +353,15 @@ fn recover_refuses_a_tampered_log_closed() {
     let mut log = OrchestrationLog::new();
     let open_receipt;
     {
-        let mut engine =
-            OrchestrationEngine::new(&cclerk, &exec, board, coord, a, b);
+        let mut engine = OrchestrationEngine::new(&cclerk, &exec, board, coord, a, b);
         engine.run("lead", &plan, &mut log).expect("runs");
         open_receipt = engine.open_receipt().cloned().unwrap();
     }
     // Substitute a persisted receipt's previous hash — the chain no longer links.
     let mut tampered = log.clone();
     tampered.entries[1].receipt.previous_receipt_hash = Some([0x99u8; 32]);
-    let err = recover(&open_receipt, &tampered).expect_err("recovery of a tampered log must refuse");
+    let err =
+        recover(&open_receipt, &tampered).expect_err("recovery of a tampered log must refuse");
     assert!(
         matches!(err, AuditError::ChainBroken(_)),
         "expected ChainBroken on recovery, got {err:?}"

@@ -31,8 +31,8 @@ use dregg_app_framework::{
 use dregg_cell::FactoryCreationParams;
 use starbridge_swarm_orchestration::{
     BUDGET_SLOT, EPOCH_SLOT, SPENT_A_SLOT, SPENT_B_SLOT, SWARM_FACTORY_VK, Worker,
-    build_dispatch_action, build_drain_action, build_open_board_action, coordinator_child_program_vk,
-    dispatch_within_budget, identity_field, swarm_factory_descriptor,
+    build_dispatch_action, build_drain_action, build_open_board_action,
+    coordinator_child_program_vk, dispatch_within_budget, identity_field, swarm_factory_descriptor,
 };
 
 fn make_cipherclerk() -> AppCipherclerk {
@@ -105,7 +105,8 @@ fn birth_board_cell(exec: &EmbeddedExecutor, cclerk: &AppCipherclerk, token_tag:
         owner_pubkey: owner,
     };
     let birth = cclerk.create_from_factory(SWARM_FACTORY_VK, owner, token, params);
-    exec.submit_turn(&birth).expect("dispatch-board birth commits");
+    exec.submit_turn(&birth)
+        .expect("dispatch-board birth commits");
 
     let board = CellId::derive_raw(&owner, &token);
     exec.with_ledger_mut(|ledger| {
@@ -140,12 +141,18 @@ fn factory_born_swarm_dispatches_notifies_drains_and_conserves() {
             .map(|c| !c.program.is_none())
             .unwrap_or(false)
     });
-    assert!(has_program, "factory-born coordinator must carry the swarm CellProgram");
+    assert!(
+        has_program,
+        "factory-born coordinator must carry the swarm CellProgram"
+    );
 
     // ACCEPT: open the board — pin LEAD + BUDGET, meters + epoch at 0.
     let budget = 1000u64;
-    exec.submit_action(&cclerk, build_open_board_action(&cclerk, board, "lead-pk", budget))
-        .expect("open_board must commit");
+    exec.submit_action(
+        &cclerk,
+        build_open_board_action(&cclerk, board, "lead-pk", budget),
+    )
+    .expect("open_board must commit");
     let (lead, budget_slot, epoch) = exec.with_ledger_mut(|ledger| {
         let c = ledger.get(&board).unwrap();
         (
@@ -154,9 +161,17 @@ fn factory_born_swarm_dispatches_notifies_drains_and_conserves() {
             c.state.fields[EPOCH_SLOT as usize],
         )
     });
-    assert_eq!(lead, identity_field("lead-pk"), "the lead identity is pinned");
+    assert_eq!(
+        lead,
+        identity_field("lead-pk"),
+        "the lead identity is pinned"
+    );
     assert_eq!(budget_slot, field_from_u64(budget), "the mandate is pinned");
-    assert_eq!(epoch, field_from_u64(1), "the board opens at epoch 1 (the open turn advanced 0 -> 1)");
+    assert_eq!(
+        epoch,
+        field_from_u64(1),
+        "the board opens at epoch 1 (the open turn advanced 0 -> 1)"
+    );
 
     // ACCEPT: dispatch a sub-task to worker-A (cost 600, epoch 0 -> 1), waking worker-A.
     let cost_a = 600u64;
@@ -167,17 +182,33 @@ fn factory_born_swarm_dispatches_notifies_drains_and_conserves() {
     let outcome = exec
         .submit_action(
             &cclerk,
-            build_dispatch_action(&cclerk, board, Worker::A, worker_a, 0, cost_a, 2, "index-the-docs"),
+            build_dispatch_action(
+                &cclerk,
+                board,
+                Worker::A,
+                worker_a,
+                0,
+                cost_a,
+                2,
+                "index-the-docs",
+            ),
         )
         .expect("dispatch to worker-A must commit");
     let dispatch_receipt = outcome.receipt_hash();
     // The dispatch is a real committed turn — the board's meter + epoch advanced.
     let (spent_a, epoch) = exec.with_ledger_mut(|ledger| {
         let c = ledger.get(&board).unwrap();
-        (c.state.fields[SPENT_A_SLOT as usize], c.state.fields[EPOCH_SLOT as usize])
+        (
+            c.state.fields[SPENT_A_SLOT as usize],
+            c.state.fields[EPOCH_SLOT as usize],
+        )
     });
     assert_eq!(spent_a, field_from_u64(cost_a), "worker-A's meter advanced");
-    assert_eq!(epoch, field_from_u64(2), "the dispatch advanced the epoch 1 -> 2 (no replay)");
+    assert_eq!(
+        epoch,
+        field_from_u64(2),
+        "the dispatch advanced the epoch 1 -> 2 (no replay)"
+    );
 
     // THE ASYNC NOTIFY EDGE: worker-A DRAINS the wake in its OWN separate turn.
     // The drain is a wholly independent turn by the WORKER — its own receipt —
@@ -192,20 +223,37 @@ fn factory_born_swarm_dispatches_notifies_drains_and_conserves() {
     // The dispatch receipt and the drain receipt are DISTINCT — two independent
     // on-ledger records, no shared parent, no synchrony.
     assert_ne!(
-        drain_outcome.receipt_hash(), dispatch_receipt,
+        drain_outcome.receipt_hash(),
+        dispatch_receipt,
         "the dispatch and the drain are INDEPENDENT turns (two distinct receipt hashes)"
     );
     // The worker's ack landed in its own cell.
     let ack = exec.with_ledger_mut(|ledger| ledger.get(&worker_a).unwrap().state.fields[2]);
-    assert_eq!(ack, dispatch_digest("index-the-docs"), "the worker acked the dispatch");
+    assert_eq!(
+        ack,
+        dispatch_digest("index-the-docs"),
+        "the worker acked the dispatch"
+    );
 
     // ACCEPT: dispatch a sub-task to worker-B (cost 300, epoch 1 -> 2). The
     // budget is still respected: spent_a(600) + spent_b(300) = 900 <= 1000.
     let cost_b = 300u64;
-    assert!(dispatch_within_budget(0, cost_b, cost_a, budget), "B's dispatch fits the budget");
+    assert!(
+        dispatch_within_budget(0, cost_b, cost_a, budget),
+        "B's dispatch fits the budget"
+    );
     exec.submit_action(
         &cclerk,
-        build_dispatch_action(&cclerk, board, Worker::B, worker_b, 0, cost_b, 3, "summarize"),
+        build_dispatch_action(
+            &cclerk,
+            board,
+            Worker::B,
+            worker_b,
+            0,
+            cost_b,
+            3,
+            "summarize",
+        ),
     )
     .expect("dispatch to worker-B must commit");
 
@@ -243,8 +291,11 @@ fn factory_born_swarm_refuses_a_budget_breach() {
     let worker_b = birth_worker_cell(&exec, &cclerk, b"swarm-2-worker-b");
 
     let budget = 1000u64;
-    exec.submit_action(&cclerk, build_open_board_action(&cclerk, board, "lead-pk", budget))
-        .expect("open_board commits");
+    exec.submit_action(
+        &cclerk,
+        build_open_board_action(&cclerk, board, "lead-pk", budget),
+    )
+    .expect("open_board commits");
 
     // Spend 700 on worker-A (within budget).
     exec.submit_action(
@@ -287,7 +338,10 @@ fn factory_born_swarm_refuses_a_budget_breach() {
         )
     });
     assert_eq!(spent_a, 700, "worker-A's honest spend survives");
-    assert_eq!(spent_b, 0, "worker-B's meter never advanced (the breach was refused)");
+    assert_eq!(
+        spent_b, 0,
+        "worker-B's meter never advanced (the breach was refused)"
+    );
     assert!(spent_a + spent_b <= budget, "the budget is still conserved");
 }
 
@@ -301,8 +355,11 @@ fn factory_born_swarm_refuses_a_replayed_dispatch() {
     let board = birth_board_cell(&exec, &cclerk, b"swarm-3");
     let worker_a = birth_worker_cell(&exec, &cclerk, b"swarm-3-worker-a");
 
-    exec.submit_action(&cclerk, build_open_board_action(&cclerk, board, "lead-pk", 1000))
-        .expect("open_board commits");
+    exec.submit_action(
+        &cclerk,
+        build_open_board_action(&cclerk, board, "lead-pk", 1000),
+    )
+    .expect("open_board commits");
     // First dispatch: epoch 1 -> 2.
     exec.submit_action(
         &cclerk,
@@ -322,7 +379,11 @@ fn factory_born_swarm_refuses_a_replayed_dispatch() {
         "the refusal must cite StrictMonotonic on the epoch, got: {msg}"
     );
     // Fail-closed: the board's epoch + meter did not advance (the replay committed nothing).
-    assert_eq!(board_slot_u64(&exec, board, EPOCH_SLOT), 2, "the epoch stayed at 2 — replay refused");
+    assert_eq!(
+        board_slot_u64(&exec, board, EPOCH_SLOT),
+        2,
+        "the epoch stayed at 2 — replay refused"
+    );
     assert_eq!(
         board_slot_u64(&exec, board, SPENT_A_SLOT),
         100,
@@ -341,8 +402,11 @@ fn factory_born_swarm_refuses_widening_the_mandate_or_capturing_the_lead() {
     let exec = EmbeddedExecutor::new(&cclerk, "default");
     let board = birth_board_cell(&exec, &cclerk, b"swarm-4");
 
-    exec.submit_action(&cclerk, build_open_board_action(&cclerk, board, "lead-pk", 1000))
-        .expect("open_board commits");
+    exec.submit_action(
+        &cclerk,
+        build_open_board_action(&cclerk, board, "lead-pk", 1000),
+    )
+    .expect("open_board commits");
 
     // REFUSE: widen the budget mandate 1000 -> 100000 (Immutable).
     let widen = cclerk.make_action(
@@ -359,7 +423,10 @@ fn factory_born_swarm_refuses_widening_the_mandate_or_capturing_the_lead() {
         .expect_err("widening the mandate must be REFUSED by WriteOnce — the MANDATE TOOTH");
     let msg = format!("{err}").to_lowercase();
     assert!(
-        msg.contains("write") || msg.contains("once") || msg.contains("program") || msg.contains("constraint"),
+        msg.contains("write")
+            || msg.contains("once")
+            || msg.contains("program")
+            || msg.contains("constraint"),
         "the refusal must cite WriteOnce on the budget, got: {msg}"
     );
 
@@ -378,17 +445,27 @@ fn factory_born_swarm_refuses_widening_the_mandate_or_capturing_the_lead() {
         .expect_err("capturing the lead must be REFUSED by WriteOnce");
     let msg = format!("{err}").to_lowercase();
     assert!(
-        msg.contains("write") || msg.contains("once") || msg.contains("program") || msg.contains("constraint"),
+        msg.contains("write")
+            || msg.contains("once")
+            || msg.contains("program")
+            || msg.contains("constraint"),
         "the refusal must cite WriteOnce on the lead, got: {msg}"
     );
 
     // The mandate + lead survive both attacks.
     let (budget, lead) = exec.with_ledger_mut(|ledger| {
         let c = ledger.get(&board).unwrap();
-        (field_value(c.state.fields[BUDGET_SLOT as usize]), c.state.fields[0])
+        (
+            field_value(c.state.fields[BUDGET_SLOT as usize]),
+            c.state.fields[0],
+        )
     });
     assert_eq!(budget, 1000, "the mandate survives the widening attempt");
-    assert_eq!(lead, identity_field("lead-pk"), "the lead survives the capture attempt");
+    assert_eq!(
+        lead,
+        identity_field("lead-pk"),
+        "the lead survives the capture attempt"
+    );
 }
 
 /// THE OVER-GRANT TOOTH (the capability-graph half of no-amplification): a
@@ -449,9 +526,16 @@ fn factory_born_swarm_refuses_a_worker_reaching_a_non_mandated_cell() {
         "the refusal must cite the authorization / capability gate, got: {msg}"
     );
     // Fail-closed: no value moved — the treasury is untouched (the real proof).
-    let treasury_bal =
-        exec.with_ledger_mut(|ledger| ledger.get(&treasury).map(|c| c.state.balance()).unwrap_or(0));
-    assert_eq!(treasury_bal, 5_000, "the treasury is untouched (fail-closed)");
+    let treasury_bal = exec.with_ledger_mut(|ledger| {
+        ledger
+            .get(&treasury)
+            .map(|c| c.state.balance())
+            .unwrap_or(0)
+    });
+    assert_eq!(
+        treasury_bal, 5_000,
+        "the treasury is untouched (fail-closed)"
+    );
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────

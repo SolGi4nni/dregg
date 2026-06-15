@@ -103,7 +103,11 @@ fn defining_image(addr: *const c_void) -> Option<String> {
         if dladdr(addr, &mut info) == 0 || info.dli_fname.is_null() {
             return None;
         }
-        Some(CStr::from_ptr(info.dli_fname).to_string_lossy().into_owned())
+        Some(
+            CStr::from_ptr(info.dli_fname)
+                .to_string_lossy()
+                .into_owned(),
+        )
     }
 }
 
@@ -139,7 +143,9 @@ fn embeddable_runtime_probe() {
     // `mi_malloc` is a defined text symbol in the linked image (proven by `nm`
     // in the doc); here we just assert the resolution above held, which already
     // distinguishes "mimalloc present privately" from "mimalloc interposes malloc".
-    println!("[PROP-1] ✓ global allocator is the host libc; mimalloc is Lean-private (no interposition)");
+    println!(
+        "[PROP-1] ✓ global allocator is the host libc; mimalloc is Lean-private (no interposition)"
+    );
 
     // ── PROP-2: single-threaded — measure thread count across init + a turn ──
     // CRITICAL: this test drives ONLY the single-threaded init path
@@ -148,7 +154,10 @@ fn embeddable_runtime_probe() {
     // `dregg_ffi_init` DOES spawn it — measured as +1 thread — which is exactly the
     // blocker this path removes.) We must NOT touch `lean_available()` here.
     let t_before_init = live_thread_count();
-    assert!(t_before_init > 0, "mach task_threads must report a positive thread count");
+    assert!(
+        t_before_init > 0,
+        "mach task_threads must report a positive thread count"
+    );
     println!("[PROP-2] threads BEFORE init:                {t_before_init}");
 
     // Force the once-per-process Lean runtime init — SINGLE-THREADED flavor.

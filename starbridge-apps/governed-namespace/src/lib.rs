@@ -164,9 +164,8 @@ use dregg_app_framework::{
     CellAffordance, CellId, CellMode, CellProgram, ChildVkStrategy, ConstantsModule, DeosApp,
     DeosCell, Effect, EmbeddedExecutor, Event, FactoryDescriptor, FieldElement, FireError,
     FireExecuteError, GatedAffordance, InputRef, InspectorDescriptor, StarbridgeAppContext,
-    StateConstraint,
-    TransitionCase, TransitionGuard, TurnReceipt, WitnessedPredicate, WitnessedPredicateKind,
-    field_from_bytes, field_from_u64, hex_encode_32, symbol,
+    StateConstraint, TransitionCase, TransitionGuard, TurnReceipt, WitnessedPredicate,
+    WitnessedPredicateKind, field_from_bytes, field_from_u64, hex_encode_32, symbol,
 };
 use dregg_dfa::{GovernedRouter, KindRegistry, RouteTable, RouteTableBuilder, RouteTarget, Router};
 use dregg_turn::action::WitnessBlob;

@@ -818,9 +818,15 @@ mod revoke_tombstone_tests {
 
         assert!(caps.revoke(s1), "revoke finds and removes s1");
         // Logical c-list: s1 gone, s2 present.
-        assert!(caps.lookup(s1).is_none(), "revoked slot is logically absent");
+        assert!(
+            caps.lookup(s1).is_none(),
+            "revoked slot is logically absent"
+        );
         assert!(caps.lookup(s2).is_some(), "other slot survives");
-        assert!(!caps.has_access(&cid(1)), "revoked target no longer accessible");
+        assert!(
+            !caps.has_access(&cid(1)),
+            "revoked target no longer accessible"
+        );
         assert!(caps.has_access(&cid(2)), "other target still accessible");
         // The slot is tombstoned.
         assert_eq!(
@@ -854,7 +860,10 @@ mod revoke_tombstone_tests {
         // Rollback re-inserts the cap; the tombstone must clear so the root
         // returns EXACTLY to the pre-revoke value.
         caps.restore(cap);
-        assert!(caps.lookup(s).is_some(), "restored cap is back in the c-list");
+        assert!(
+            caps.lookup(s).is_some(),
+            "restored cap is back in the c-list"
+        );
         assert_eq!(
             caps.tombstoned_slots().count(),
             0,

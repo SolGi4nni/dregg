@@ -59,8 +59,8 @@
 //! walls, and exits 0 iff every prove→verify and every must-reject landed as designed.
 
 use dregg_app_framework::stark_rehydrate::{
-    mint_transfer_leg, verify_stark_leg, verify_stark_proof_against, StarkRehydrateError,
-    StarkSnapshot, TransferTurn, PI_NEW_COMMIT, PI_OLD_COMMIT,
+    PI_NEW_COMMIT, PI_OLD_COMMIT, StarkRehydrateError, StarkSnapshot, TransferTurn,
+    mint_transfer_leg, verify_stark_leg, verify_stark_proof_against,
 };
 use dregg_app_framework::{
     AffordanceSpec, AgentCipherclerk, AppCipherclerk, AppSpec, AuthRequired, CellSpec,
@@ -113,11 +113,20 @@ fn producer_cell(balance: i64, nonce: u64) -> Cell {
 /// Mint a real rotated transfer leg debiting `amount` from `(balance, nonce)` — genuine
 /// before/after cells, a genuine self-verifying `Ir2BatchProof`. The leg's PI 35 is the
 /// Poseidon2 commitment of the resulting `(balance - amount, nonce)` post-state.
-fn mint_leg(balance: u64, nonce: u32, amount: u64) -> dregg_app_framework::stark_rehydrate::RotatedParticipantLeg {
+fn mint_leg(
+    balance: u64,
+    nonce: u32,
+    amount: u64,
+) -> dregg_app_framework::stark_rehydrate::RotatedParticipantLeg {
     let before = producer_cell(balance as i64, nonce as u64);
     let after = producer_cell((balance as i64) - (amount as i64), nonce as u64);
-    let turn = TransferTurn { balance, nonce, amount };
-    mint_transfer_leg(&turn, &before, &after).expect("the rotated transfer leg mints + self-verifies")
+    let turn = TransferTurn {
+        balance,
+        nonce,
+        amount,
+    };
+    mint_transfer_leg(&turn, &before, &after)
+        .expect("the rotated transfer leg mints + self-verifies")
 }
 
 fn main() {
@@ -129,14 +138,19 @@ fn main() {
     let gallery = app.cells()[0].clone();
     let actor = cclerk.cell_id();
 
-    println!("== {} — frustum-culling the semantic graph with a REAL STARK ==\n", app.name());
+    println!(
+        "== {} — frustum-culling the semantic graph with a REAL STARK ==\n",
+        app.name()
+    );
     println!(
         "  the claim under test: a DARKENED per-viewer snapshot carries a STARK of ONLY the\n  \
          darkened endpoint — the weaker viewer provably CANNOT prove the fuller view.\n"
     );
 
     // ── 1) A real committed turn supplies the surface state ─────────────────────
-    println!("(1) a real verified turn through the embedded executor (the surface state is its output):");
+    println!(
+        "(1) a real verified turn through the embedded executor (the surface state is its output):"
+    );
     let receipt = executor
         .submit_action(&cclerk, cclerk.make_self_action("open-gallery", vec![]))
         .expect("the executor commits the turn");
@@ -158,7 +172,9 @@ fn main() {
     // slice proves a genuinely SMALLER transition. Two distinct executions ⇒ two distinct
     // genuine PI-35 endpoint commitments. (Both are real Ir2BatchProofs, minted + self-
     // verified on the executor's live balance/nonce.)
-    println!("(2) mint TWO real STARKs over the executor's genuine state (this is the prove half):");
+    println!(
+        "(2) mint TWO real STARKs over the executor's genuine state (this is the prove half):"
+    );
     let full_amount = 70u64; // the fuller view's larger state change
     let dark_amount = 7u64; // the darkened view's smaller state change
     println!("    minting the FULLER-view leg   (debit {full_amount}) …");
@@ -168,8 +184,14 @@ fn main() {
 
     let c_full = full_leg.new_root();
     let c_dark = dark_leg.new_root();
-    println!("    FULLER   endpoint commitment Cfull = {}…  (PI {PI_NEW_COMMIT})", felt8(&c_full));
-    println!("    DARKENED endpoint commitment Cdark = {}…  (PI {PI_NEW_COMMIT})", felt8(&c_dark));
+    println!(
+        "    FULLER   endpoint commitment Cfull = {}…  (PI {PI_NEW_COMMIT})",
+        felt8(&c_full)
+    );
+    println!(
+        "    DARKENED endpoint commitment Cdark = {}…  (PI {PI_NEW_COMMIT})",
+        felt8(&c_dark)
+    );
     println!(
         "    (both share the OLD-state commit at PI {PI_OLD_COMMIT} = {}… — same before-state,\n     \
          genuinely DIFFERENT after-states ⇒ Cfull ≠ Cdark)",
@@ -204,8 +226,14 @@ fn main() {
     let viewer_view = dark_snap
         .rehydrate_for(&viewer, gallery.surface())
         .expect("the viewer's STARK verifies and the darkened slice re-expands");
-    println!("    owner  (root)      STARK: OK → reacquires {:?}", owner_view.visible_names());
-    println!("    viewer (Signature) STARK: OK → reacquires {:?}  (the culled slice)", viewer_view.visible_names());
+    println!(
+        "    owner  (root)      STARK: OK → reacquires {:?}",
+        owner_view.visible_names()
+    );
+    println!(
+        "    viewer (Signature) STARK: OK → reacquires {:?}  (the culled slice)",
+        viewer_view.visible_names()
+    );
     println!("    liveness-type: {} \n", viewer_view.liveness.badge());
     assert_ne!(
         owner_view.visible_names(),
@@ -215,7 +243,9 @@ fn main() {
 
     // ── 5) THE NON-AMPLIFICATION OBLIGATION, CONCRETE: the weaker viewer ────────
     //       provably CANNOT prove the fuller view. Two independent walls.
-    println!("(5) the proof obligation made concrete — the weaker viewer CANNOT forge the fuller view:");
+    println!(
+        "(5) the proof obligation made concrete — the weaker viewer CANNOT forge the fuller view:"
+    );
 
     // (W1) The STARK wall. The viewer holds ONLY the darkened proof (`dark_leg`). To
     //      "prove the fuller view" they would have to present a STARK whose PI 35 = Cfull.
@@ -228,7 +258,9 @@ fn main() {
         Err(_) => println!(
             "    (W1) STARK wall:   the darkened proof CANNOT attest Cfull — UNSAT (forgery rejected)."
         ),
-        Ok(()) => panic!("FORGERY: the darkened proof must NOT verify against the fuller endpoint Cfull"),
+        Ok(()) => {
+            panic!("FORGERY: the darkened proof must NOT verify against the fuller endpoint Cfull")
+        }
     }
     // The darkened proof of course still verifies against its OWN (darkened) endpoint —
     // the refusal above was the lie, not collateral damage.
@@ -244,7 +276,9 @@ fn main() {
             "    (W2) membrane wall: the Signature viewer cannot PROJECT the fuller (Proof) lineage — \
              no projection minted."
         ),
-        other => panic!("the membrane must refuse to project the fuller lineage to a weaker viewer; got {other:?}"),
+        other => panic!(
+            "the membrane must refuse to project the fuller lineage to a weaker viewer; got {other:?}"
+        ),
     }
 
     println!(
@@ -260,7 +294,9 @@ fn main() {
     tampered.proof.public_inputs[PI_NEW_COMMIT] = honest + BabyBear::ONE;
     match tampered.rehydrate_for(&viewer, gallery.surface()) {
         Err(StarkRehydrateError::StarkInvalid(_)) => {
-            println!("    tampered darkened endpoint (PI {PI_NEW_COMMIT} flipped): REJECTED — no projection minted.")
+            println!(
+                "    tampered darkened endpoint (PI {PI_NEW_COMMIT} flipped): REJECTED — no projection minted."
+            )
         }
         other => panic!("a tampered darkened endpoint must be rejected; got {other:?}"),
     }

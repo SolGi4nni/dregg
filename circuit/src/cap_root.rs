@@ -673,7 +673,10 @@ mod tests {
             .expect("revoked slot present");
         assert_eq!(w.held, revoked, "membership opens the genuine held leaf");
         assert_eq!(w.old_root, tree.root(), "old_root is the seeded tree root");
-        assert_ne!(w.new_root, w.old_root, "revoking a held slot moves the root");
+        assert_ne!(
+            w.new_root, w.old_root,
+            "revoking a held slot moves the root"
+        );
 
         // Recompute the in-place tombstone root by hand: fold BabyBear::ZERO up the
         // witnessed path. This is EXACTLY what the witness returns (and what the
@@ -701,7 +704,10 @@ mod tests {
                 hash_fact(w.siblings[level], &[hcur])
             };
         }
-        assert_eq!(hcur, w.old_root, "the held leaf folds up the path to old_root");
+        assert_eq!(
+            hcur, w.old_root,
+            "the held leaf folds up the path to old_root"
+        );
     }
 
     /// THE TOMBSTONE EQUIVALENCE (the cell↔circuit revoke reconciliation
@@ -717,8 +723,7 @@ mod tests {
         let revoked = leaf(7, 0x11, 1, 0xFF);
         let other_a = leaf(3, 0x22, 1, 0xFFFF_FFFF);
         let other_b = leaf(42, 0x33, 2, 0x1);
-        let live_tree =
-            CanonicalCapTree::new(vec![revoked, other_a, other_b], CAP_TREE_DEPTH);
+        let live_tree = CanonicalCapTree::new(vec![revoked, other_a, other_b], CAP_TREE_DEPTH);
 
         // The circuit-truth post-revoke root: the zero-fold deletion witness.
         let w = live_tree
@@ -728,10 +733,8 @@ mod tests {
 
         // The cell-side tombstone rebuild: drop the revoked leaf from the live
         // set, record its slot_hash as a tombstone key.
-        let tombstone_root = compute_capability_root_with_tombstones(
-            vec![other_a, other_b],
-            &[revoked.slot_hash],
-        );
+        let tombstone_root =
+            compute_capability_root_with_tombstones(vec![other_a, other_b], &[revoked.slot_hash]);
 
         assert_eq!(
             tombstone_root, witness_root,
@@ -740,8 +743,7 @@ mod tests {
 
         // And it must DIFFER from the compacted rebuild (the pre-cap-crown cell
         // behavior), proving the reconciliation is non-vacuous.
-        let compacted_root =
-            CanonicalCapTree::new(vec![other_a, other_b], CAP_TREE_DEPTH).root();
+        let compacted_root = CanonicalCapTree::new(vec![other_a, other_b], CAP_TREE_DEPTH).root();
         assert_ne!(
             tombstone_root, compacted_root,
             "tombstone (zero-fold) must DIFFER from the compacted rebuild — the seam the reconciliation closes"
@@ -789,8 +791,7 @@ mod tests {
         let c = leaf(42, 0x33, 2, 0x1);
         let plain = CanonicalCapTree::new(vec![a, b, c], CAP_TREE_DEPTH).root();
         // b's slot is BOTH live and tombstoned: live must shadow the tombstone.
-        let shadowed =
-            compute_capability_root_with_tombstones(vec![a, b, c], &[b.slot_hash]);
+        let shadowed = compute_capability_root_with_tombstones(vec![a, b, c], &[b.slot_hash]);
         assert_eq!(
             shadowed, plain,
             "a live leaf must shadow a stale tombstone for the same slot key"

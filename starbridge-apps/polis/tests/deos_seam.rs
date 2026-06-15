@@ -35,11 +35,11 @@ use dregg_app_framework::{
     AgentCipherclerk, AppCipherclerk, AuthRequired, EmbeddedExecutor, FireExecuteError,
 };
 use starbridge_polis::{
+    STATE_SLOT,
     constitution::ConstitutionParams,
     council::{AmendmentTerms, CouncilCharter},
-    identity::{key_set_commitment, IdentityCharter},
-    mandate::{tool_scope_commitment, WorkerMandate},
-    STATE_SLOT,
+    identity::{IdentityCharter, key_set_commitment},
+    mandate::{WorkerMandate, tool_scope_commitment},
 };
 
 use dregg_app_framework::CellId;
@@ -209,7 +209,10 @@ fn constitution_named_supersede_commits_then_anon_supersede_is_refused() {
     let successor = *blake3::hash(b"constitution-v2-descriptor").as_bytes();
     let receipt = fire_constitution_amend(&app, &OWNER, successor, &cclerk, &executor)
         .expect("a named supersede commits (nonzero successor recorded)");
-    assert_ne!(receipt.turn_hash, [0u8; 32], "a real verified supersede turn");
+    assert_ne!(
+        receipt.turn_hash, [0u8; 32],
+        "a real verified supersede turn"
+    );
     let state = executor.cell_state(cclerk.cell_id()).unwrap();
     assert_eq!(
         state.fields[STATE_SLOT as usize],
@@ -217,7 +220,8 @@ fn constitution_named_supersede_commits_then_anon_supersede_is_refused() {
         "amend stepped the constitution ACTIVE -> SUPERSEDED",
     );
     assert_eq!(
-        state.fields[starbridge_polis::constitution::SUCCESSOR_HASH_SLOT as usize], successor,
+        state.fields[starbridge_polis::constitution::SUCCESSOR_HASH_SLOT as usize],
+        successor,
         "the successor hash is recorded (the forward certification)",
     );
 }
@@ -329,10 +333,14 @@ fn identity_rotate_after_cooling_commits_exhibiting_the_preimage() {
 
     let receipt = fire_identity_rotate(&app, &OWNER, g1, g2, 1_000, &cclerk, &executor)
         .expect("a cooled rotation exhibiting the pre-committed preimage commits");
-    assert_ne!(receipt.turn_hash, [0u8; 32], "a real verified rotation turn");
+    assert_ne!(
+        receipt.turn_hash, [0u8; 32],
+        "a real verified rotation turn"
+    );
     let state = executor.cell_state(cclerk.cell_id()).unwrap();
     assert_eq!(
-        state.fields[starbridge_polis::identity::CURRENT_KEYS_COMMIT_SLOT as usize], g1,
+        state.fields[starbridge_polis::identity::CURRENT_KEYS_COMMIT_SLOT as usize],
+        g1,
         "rotate installed the exhibited preimage as the new current commitment",
     );
     assert_eq!(
@@ -361,7 +369,8 @@ fn identity_rotate_inside_cooling_is_a_real_executor_refusal() {
     // Anti-ghost: the key registers are unchanged (genesis still in force).
     let after = executor.cell_state(cclerk.cell_id()).unwrap();
     assert_eq!(
-        after.fields[starbridge_polis::identity::CURRENT_KEYS_COMMIT_SLOT as usize], g0,
+        after.fields[starbridge_polis::identity::CURRENT_KEYS_COMMIT_SLOT as usize],
+        g0,
         "the refused rotation committed nothing — the genesis current commitment still holds",
     );
 }

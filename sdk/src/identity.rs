@@ -45,7 +45,7 @@ use crate::runtime::AgentRuntime;
 
 pub use starbridge_polis::STATE_SLOT;
 pub use starbridge_polis::identity::{
-    CURRENT_KEYS_COMMIT_SLOT, COUNCIL_COMMIT_SLOT, IdentityCharter, IdentityState, IdentityStatus,
+    COUNCIL_COMMIT_SLOT, CURRENT_KEYS_COMMIT_SLOT, IdentityCharter, IdentityState, IdentityStatus,
     LAST_ROTATED_AT_SLOT, NEXT_KEYS_DIGEST_SLOT, STATE_ACTIVE, STATE_RETIRED, STATE_UNINIT,
     identity_factory_descriptor, inspect_identity, key_set_commitment, next_keys_digest,
 };

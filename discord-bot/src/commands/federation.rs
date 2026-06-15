@@ -50,19 +50,13 @@ async fn fetch_federations(state: &BotState) -> Result<Vec<FederationInfo>, Stri
         "{}/api/federations",
         state.config.devnet_url.trim_end_matches('/')
     );
-    let resp = state
-        .devnet
-        .client()
-        .get(&url)
-        .send()
-        .await
-        .map_err(|e| {
-            if e.is_connect() || e.is_timeout() {
-                "Couldn't reach the node. The devnet may be offline — check `/status`.".to_string()
-            } else {
-                format!("Network error reading the federation surface: {e}")
-            }
-        })?;
+    let resp = state.devnet.client().get(&url).send().await.map_err(|e| {
+        if e.is_connect() || e.is_timeout() {
+            "Couldn't reach the node. The devnet may be offline — check `/status`.".to_string()
+        } else {
+            format!("Network error reading the federation surface: {e}")
+        }
+    })?;
     if !resp.status().is_success() {
         return Err(format!(
             "Node returned HTTP {} reading `/api/federations`.",
@@ -328,7 +322,12 @@ pub async fn handle_status(ctx: &Context, command: &CommandInteraction, state: &
     let feds = match fetch_federations(state).await {
         Ok(feds) => feds,
         Err(msg) => {
-            edit_embed(ctx, command, embeds::error_embed("Federation Unavailable", &msg)).await;
+            edit_embed(
+                ctx,
+                command,
+                embeds::error_embed("Federation Unavailable", &msg),
+            )
+            .await;
             return;
         }
     };
@@ -351,7 +350,11 @@ pub async fn handle_status(ctx: &Context, command: &CommandInteraction, state: &
     let local = feds.iter().find(|f| f.is_local).unwrap_or(&feds[0]);
     let mut embed = embeds::dregg_embed("Federation Status")
         .field("Federation", short_hex(fed_id(local)), true)
-        .field("Scope", if local.is_local { "local" } else { "remote" }, true)
+        .field(
+            "Scope",
+            if local.is_local { "local" } else { "remote" },
+            true,
+        )
         .field("Epoch", local.committee_epoch.to_string(), true)
         .field(
             "Threshold",
@@ -360,7 +363,11 @@ pub async fn handle_status(ctx: &Context, command: &CommandInteraction, state: &
         )
         .field("Members", local.member_count.to_string(), true)
         .field("Latest Height", local.latest_height.to_string(), true)
-        .field("Finalized Roots", local.num_finalized_roots.to_string(), true)
+        .field(
+            "Finalized Roots",
+            local.num_finalized_roots.to_string(),
+            true,
+        )
         .field(
             "Latest Root",
             local
@@ -401,7 +408,12 @@ pub async fn handle_peers(ctx: &Context, command: &CommandInteraction, state: &B
     let feds = match fetch_federations(state).await {
         Ok(feds) => feds,
         Err(msg) => {
-            edit_embed(ctx, command, embeds::error_embed("Federation Unavailable", &msg)).await;
+            edit_embed(
+                ctx,
+                command,
+                embeds::error_embed("Federation Unavailable", &msg),
+            )
+            .await;
             return;
         }
     };
@@ -410,7 +422,10 @@ pub async fn handle_peers(ctx: &Context, command: &CommandInteraction, state: &B
         edit_embed(
             ctx,
             command,
-            embeds::warning_embed("No Federations", "The node reports no known reference groups."),
+            embeds::warning_embed(
+                "No Federations",
+                "The node reports no known reference groups.",
+            ),
         )
         .await;
         return;

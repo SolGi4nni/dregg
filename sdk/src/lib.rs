@@ -289,13 +289,6 @@ pub use captp_client::{CapTpClient, CapTpConfig, EventualRef, LiveRef};
 // turn-intents through the owner's `.turn()` path, custody-receipted by the
 // relay's existing dequeue proofs.
 #[cfg(feature = "captp")]
-pub use mailbox::{
-    CrankDisposition, CrankOutcome, CrankReport, CustodyReceipt, DeliveredMessage, MailboxCrank,
-    MailboxTransport, MailboxTurnIntent, RefusalReason, seal_intent,
-};
-#[cfg(all(feature = "captp", feature = "federation-client", feature = "network"))]
-pub use mailbox::RelayHttpTransport;
-#[cfg(feature = "captp")]
 pub use dregg_captp::handoff::HandoffCertificate;
 #[cfg(feature = "captp")]
 pub use dregg_captp::pipeline::PipelinedAction;
@@ -303,3 +296,10 @@ pub use dregg_captp::pipeline::PipelinedAction;
 pub use dregg_captp::uri::DreggUri;
 #[cfg(feature = "captp")]
 pub use dregg_captp::{FederationId, GroupId};
+#[cfg(all(feature = "captp", feature = "federation-client", feature = "network"))]
+pub use mailbox::RelayHttpTransport;
+#[cfg(feature = "captp")]
+pub use mailbox::{
+    CrankDisposition, CrankOutcome, CrankReport, CustodyReceipt, DeliveredMessage, MailboxCrank,
+    MailboxTransport, MailboxTurnIntent, RefusalReason, seal_intent,
+};

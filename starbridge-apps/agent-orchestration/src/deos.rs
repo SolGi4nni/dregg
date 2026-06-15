@@ -75,7 +75,11 @@ pub fn board_open_precondition() -> dregg_app_framework::CellProgram {
 /// (e.g. [`WORKER_RIGHTS`]), strictly below the coordinator's `None` — so a worker can fire
 /// `worker_step` but never `delegate_mandate`. The off-cell mandate triple ([`crate::Mandate`]) rides
 /// alongside; THIS is the on-cell cap-graph grant the executor records.
-pub fn delegate_mandate_effect(board: CellId, worker_cell: CellId, worker_authority: AuthRequired) -> Effect {
+pub fn delegate_mandate_effect(
+    board: CellId,
+    worker_cell: CellId,
+    worker_authority: AuthRequired,
+) -> Effect {
     Effect::GrantCapability {
         from: board,
         to: worker_cell,
@@ -127,29 +131,23 @@ pub fn fire_worker_step(
 ) -> Result<dregg_app_framework::TurnReceipt, dregg_app_framework::FireExecuteError> {
     let spend_slot = worker.spend_slot() as usize;
     let board = cell.cell();
-    cell.fire_gated_through_executor_with(
-        "worker_step",
-        held,
-        cipherclerk,
-        executor,
-        move |live| {
-            // Read the worker's running spend + the live epoch from the cell's current state.
-            let live_spent = field_tail_u64(&live.fields[spend_slot]);
-            let live_epoch = field_tail_u64(&live.fields[EPOCH_SLOT as usize]);
-            vec![
-                Effect::SetField {
-                    cell: board,
-                    index: spend_slot,
-                    value: crate::field_from_u64(live_spent.saturating_add(cost)),
-                },
-                Effect::SetField {
-                    cell: board,
-                    index: EPOCH_SLOT as usize,
-                    value: crate::field_from_u64(live_epoch.saturating_add(1)),
-                },
-            ]
-        },
-    )
+    cell.fire_gated_through_executor_with("worker_step", held, cipherclerk, executor, move |live| {
+        // Read the worker's running spend + the live epoch from the cell's current state.
+        let live_spent = field_tail_u64(&live.fields[spend_slot]);
+        let live_epoch = field_tail_u64(&live.fields[EPOCH_SLOT as usize]);
+        vec![
+            Effect::SetField {
+                cell: board,
+                index: spend_slot,
+                value: crate::field_from_u64(live_spent.saturating_add(cost)),
+            },
+            Effect::SetField {
+                cell: board,
+                index: EPOCH_SLOT as usize,
+                value: crate::field_from_u64(live_epoch.saturating_add(1)),
+            },
+        ]
+    })
 }
 
 /// Read a [`dregg_app_framework::FieldElement`] as the big-endian u64 in its last 8 bytes (the
@@ -276,11 +274,23 @@ mod tests {
         // is_attenuation(held, granted): granted is narrower-or-equal to held.
         use dregg_cell::is_attenuation;
         // an auditor (Signature) is ⊑ a worker (Either) is ⊑ a coordinator (None).
-        assert!(is_attenuation(&WORKER_RIGHTS, &AUDITOR_RIGHTS), "auditor ⊑ worker");
-        assert!(is_attenuation(&COORDINATOR_RIGHTS, &WORKER_RIGHTS), "worker ⊑ coordinator");
-        assert!(is_attenuation(&COORDINATOR_RIGHTS, &AUDITOR_RIGHTS), "auditor ⊑ coordinator");
+        assert!(
+            is_attenuation(&WORKER_RIGHTS, &AUDITOR_RIGHTS),
+            "auditor ⊑ worker"
+        );
+        assert!(
+            is_attenuation(&COORDINATOR_RIGHTS, &WORKER_RIGHTS),
+            "worker ⊑ coordinator"
+        );
+        assert!(
+            is_attenuation(&COORDINATOR_RIGHTS, &AUDITOR_RIGHTS),
+            "auditor ⊑ coordinator"
+        );
         // and NOT the other way — a worker is not broad enough to be a coordinator.
-        assert!(!is_attenuation(&WORKER_RIGHTS, &COORDINATOR_RIGHTS), "coordinator ⊄ worker (strict)");
+        assert!(
+            !is_attenuation(&WORKER_RIGHTS, &COORDINATOR_RIGHTS),
+            "coordinator ⊄ worker (strict)"
+        );
     }
 
     #[test]
@@ -334,7 +344,10 @@ mod tests {
             Effect::GrantCapability { to, cap, .. } => {
                 assert_eq!(to, worker);
                 assert_eq!(cap.target, board, "the cap reaches the board");
-                assert!(matches!(cap.permissions, AuthRequired::Either), "the worker gets the worker tier");
+                assert!(
+                    matches!(cap.permissions, AuthRequired::Either),
+                    "the worker gets the worker tier"
+                );
             }
             other => panic!("expected GrantCapability, got {other:?}"),
         }

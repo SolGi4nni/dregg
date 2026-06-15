@@ -98,18 +98,29 @@ async fn the_three_provenance_roles_see_different_cap_only_surfaces() {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
-        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
         serde_json::from_slice::<serde_json::Value>(&bytes).unwrap()["visible"].clone()
     }
 
     // A VERIFIER (Signature) sees `view_provenance` (the narrow read tier).
-    assert_eq!(visible(&router, "signature").await, serde_json::json!(["view_provenance"]));
+    assert_eq!(
+        visible(&router, "signature").await,
+        serde_json::json!(["view_provenance"])
+    );
     // A RECORDER (Either) sees the same cap-only set — `append_entry` is GATED (not on the
     // cap-only projection); it lights on the gated surface against live state.
-    assert_eq!(visible(&router, "either").await, serde_json::json!(["view_provenance"]));
+    assert_eq!(
+        visible(&router, "either").await,
+        serde_json::json!(["view_provenance"])
+    );
     // The OWNER (root) attenuates down to the same cap-only read (no grant affordance on
     // this app — append is the only mutation and it is gated).
-    assert_eq!(visible(&router, "root").await, serde_json::json!(["view_provenance"]));
+    assert_eq!(
+        visible(&router, "root").await,
+        serde_json::json!(["view_provenance"])
+    );
 }
 
 // =============================================================================
@@ -181,7 +192,11 @@ async fn the_log_is_published_into_the_web_of_cells() {
     // another federation reacquires the log's provenance across the membrane.
     let uris = app.publish_all(100).await;
     assert_eq!(uris.len(), 1);
-    assert!(uris[0].starts_with("dregg://"), "a real sturdyref: {}", uris[0]);
+    assert!(
+        uris[0].starts_with("dregg://"),
+        "a real sturdyref: {}",
+        uris[0]
+    );
 }
 
 // =============================================================================
@@ -198,14 +213,21 @@ fn a_log_snapshot_rehydrates_per_viewer_respecting_the_lattice() {
     // to a downstream auditor) ⇒ liveness REPLAYED-DETERMINISTIC.
     let wlog = InteractionLog::new().record(Interaction::witnessed_turn(log.cell(), [9u8; 32]));
     let snap = log.snapshot(wlog, false);
-    assert_eq!(snap.lineage, AuthRequired::Signature, "snapshot at the published lineage");
+    assert_eq!(
+        snap.lineage,
+        AuthRequired::Signature,
+        "snapshot at the published lineage"
+    );
     assert_eq!(snap.liveness(), Rehydration::ReplayedDeterministic);
     assert!(snap.liveness().is_faithful());
 
     // A VERIFIER (Signature) rehydrating reacquires `view_provenance` (the cap-only surface
     // at its tier) — the log snapshot respects the lattice.
     let verifier = log.rehydrate(&snap, AuthRequired::Signature).unwrap();
-    assert_eq!(verifier.visible_names(), vec!["view_provenance".to_string()]);
+    assert_eq!(
+        verifier.visible_names(),
+        vec!["view_provenance".to_string()]
+    );
 
     // An INCOMPARABLE authority (a distinct Custom identity) cannot rehydrate at all — the
     // membrane mints NO projection (the no-peek refusal).
@@ -243,7 +265,9 @@ async fn the_app_ships_a_web_component_surface_and_a_manifest() {
         .unwrap()
         .to_string();
     assert!(ct.contains("javascript"), "served as a JS module: {ct}");
-    let bytes = axum::body::to_bytes(surface.into_body(), usize::MAX).await.unwrap();
+    let bytes = axum::body::to_bytes(surface.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let js = String::from_utf8(bytes.to_vec()).unwrap();
     assert!(js.contains("customElements.define(\"dregg-affordance-surface\""));
     // The anti-drift affordance map names the cap-only fire endpoint.
@@ -256,14 +280,29 @@ async fn the_app_ships_a_web_component_surface_and_a_manifest() {
         .await
         .unwrap();
     assert_eq!(manifest.status(), StatusCode::OK);
-    let bytes = axum::body::to_bytes(manifest.into_body(), usize::MAX).await.unwrap();
+    let bytes = axum::body::to_bytes(manifest.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let m: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(m["app"], "agent-provenance");
-    assert_eq!(m["discoverable"], serde_json::json!(["provenance", "audit"]));
-    assert!(m["persistence"].as_str().unwrap().contains("embedded-ledger"));
+    assert_eq!(
+        m["discoverable"],
+        serde_json::json!(["provenance", "audit"])
+    );
+    assert!(
+        m["persistence"]
+            .as_str()
+            .unwrap()
+            .contains("embedded-ledger")
+    );
     assert_eq!(m["cells"].as_array().unwrap().len(), 1);
     // The manifest advertises the gated (cap∧state) affordance.
-    let gated = m["cells"][0]["gatedAffordances"].as_array().expect("gated affordances");
+    let gated = m["cells"][0]["gatedAffordances"]
+        .as_array()
+        .expect("gated affordances");
     let names: Vec<&str> = gated.iter().filter_map(|g| g["name"].as_str()).collect();
-    assert!(names.contains(&"append_entry"), "append_entry is advertised as gated");
+    assert!(
+        names.contains(&"append_entry"),
+        "append_entry is advertised as gated"
+    );
 }

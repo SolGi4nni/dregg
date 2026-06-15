@@ -138,8 +138,7 @@ async fn run_subscription(
                         if event.name.as_deref() != Some("receipt") {
                             continue;
                         }
-                        let Ok(wire) = serde_json::from_str::<WireReceiptEvent>(&event.data)
-                        else {
+                        let Ok(wire) = serde_json::from_str::<WireReceiptEvent>(&event.data) else {
                             continue;
                         };
                         if tx.send(Receipt::new(wire.receipt)).await.is_err() {

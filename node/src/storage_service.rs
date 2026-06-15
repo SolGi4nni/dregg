@@ -661,7 +661,9 @@ fn commit_operator_turn(
     let federation_id = crate::executor_setup::federation_id_for_executor(s);
     let agent_cell = crate::executor_setup::local_agent_cell(s);
 
-    let action = s.cclerk.make_action(target, method, effects, &federation_id);
+    let action = s
+        .cclerk
+        .make_action(target, method, effects, &federation_id);
     let mut call_forest = CallForest::new();
     call_forest.add_root(action);
 
@@ -950,7 +952,14 @@ async fn get_storage_stat(
     );
     let key = format!("stat:{hash_hex}");
     let admitted = admit(inner, gateway, StorageOp::List, &key, None)?;
-    commit_storage_op(inner, gateway, StorageOp::List, &key, admitted.new_spent, hash.0)?;
+    commit_storage_op(
+        inner,
+        gateway,
+        StorageOp::List,
+        &key,
+        admitted.new_spent,
+        hash.0,
+    )?;
 
     Ok(Json(StatResponse {
         exists: inner.storage_gateway.store.contains(&hash),

@@ -1243,10 +1243,7 @@ fn test_refusal_in_range_witness_index_commits() {
     let mut ledger = Ledger::new();
     let (agent, _) = make_open_cell(63, 5000);
     let agent_id = agent.id();
-    let nonce_before = ledger
-        .get(&agent_id)
-        .map(|c| c.state.nonce())
-        .unwrap_or(0);
+    let nonce_before = ledger.get(&agent_id).map(|c| c.state.nonce()).unwrap_or(0);
     ledger.insert_cell(agent).unwrap();
     let executor = zero_cost_executor();
 
@@ -2018,7 +2015,10 @@ fn test_heap_field_index_commits() {
     let turn = builder.fee(100).build();
 
     let result = executor.execute(&turn, &mut ledger);
-    assert!(result.is_committed(), "heap field write must commit: {result:?}");
+    assert!(
+        result.is_committed(),
+        "heap field write must commit: {result:?}"
+    );
 
     let target = ledger.get(&target_id).expect("target present");
     assert_eq!(
@@ -2129,15 +2129,14 @@ fn test_program_heap_field_constraint_enforced() {
 /// coverage classifier in `teasting/tests/protocol_coverage_gate.rs`.
 #[test]
 fn test_program_delegation_epoch_equals_enforced() {
-    use dregg_cell::program::StateConstraint;
     use dregg_cell::field_from_u64;
+    use dregg_cell::program::StateConstraint;
 
     const EPOCH_SLOT: usize = 2;
-    let program = dregg_cell::CellProgram::Predicate(vec![
-        StateConstraint::DelegationEpochEquals {
+    let program =
+        dregg_cell::CellProgram::Predicate(vec![StateConstraint::DelegationEpochEquals {
             index: EPOCH_SLOT as u8,
-        },
-    ]);
+        }]);
 
     let mut ledger = Ledger::new();
     let (agent, _) = make_open_cell(1, 50_000);
@@ -2186,7 +2185,10 @@ fn test_program_delegation_epoch_equals_enforced() {
             .build(),
     );
     let result = execute_chained(&executor, &builder.fee(500).build(), &mut ledger);
-    assert!(result.is_committed(), "tie at epoch 0 must admit: {result:?}");
+    assert!(
+        result.is_committed(),
+        "tie at epoch 0 must admit: {result:?}"
+    );
 
     // THE UNIFICATION: spawn a delegated child of the target (the epoch
     // anchor), then step the slot AND bump delegation_epoch via
@@ -2205,7 +2207,10 @@ fn test_program_delegation_epoch_equals_enforced() {
             .build(),
     );
     let result = execute_chained(&executor, &builder.fee(500).build(), &mut ledger);
-    assert!(result.is_committed(), "anchor spawn must commit: {result:?}");
+    assert!(
+        result.is_committed(),
+        "anchor spawn must commit: {result:?}"
+    );
     // The target (grantor) needs a c-list entry for the child to revoke.
     ledger
         .get_mut(&target_id)
@@ -2274,8 +2279,7 @@ fn test_program_count_ge_enforced() {
 
     let member_a = [0xA1u8; 32];
     let member_b = [0xB2u8; 32];
-    let quorum: std::collections::BTreeSet<[u8; 32]> =
-        [member_a, member_b].into_iter().collect();
+    let quorum: std::collections::BTreeSet<[u8; 32]> = [member_a, member_b].into_iter().collect();
     let commitment = count_ge_set_commitment(&quorum);
     let solo: std::collections::BTreeSet<[u8; 32]> = [member_a].into_iter().collect();
     let solo_commitment = count_ge_set_commitment(&solo);
@@ -2294,9 +2298,8 @@ fn test_program_count_ge_enforced() {
 
     let executor = zero_cost_executor();
 
-    let exhibit = |elems: &[[u8; 32]]| -> Vec<u8> {
-        postcard::to_allocvec(&elems.to_vec()).unwrap()
-    };
+    let exhibit =
+        |elems: &[[u8; 32]]| -> Vec<u8> { postcard::to_allocvec(&elems.to_vec()).unwrap() };
     let quorum_action = |value: dregg_cell::FieldElement, blob: Option<Vec<u8>>| {
         let mut action =
             ActionBuilder::new_unchecked_for_tests(target_id, "council_write", agent_id)
@@ -2313,13 +2316,19 @@ fn test_program_count_ge_enforced() {
 
     // ACCEPT: the 2-distinct exhibit opens the committed quorum (threshold 2).
     let mut builder = TurnBuilder::new(agent_id, 0);
-    builder.add_action(quorum_action(commitment, Some(exhibit(&[member_a, member_b]))));
+    builder.add_action(quorum_action(
+        commitment,
+        Some(exhibit(&[member_a, member_b])),
+    ));
     let result = execute_chained(&executor, &builder.fee(500).build(), &mut ledger);
     assert!(
         result.is_committed(),
         "a bound 2-of-2 exhibit must admit, got: {result:?}"
     );
-    assert_eq!(ledger.get(&target_id).unwrap().state.fields[QC_SLOT], commitment);
+    assert_eq!(
+        ledger.get(&target_id).unwrap().state.fields[QC_SLOT],
+        commitment
+    );
 
     // REFUSE (the distinctness tooth): a duplicate-padded exhibit dedupes to
     // ONE element — the commitment binds ({A} opens solo_commitment) but the
@@ -11921,7 +11930,10 @@ mod sender_authorized_membership_e2e {
             "authorized member with a genuine membership STARK must commit, got {result:?}"
         );
         // The effect actually applied.
-        assert_eq!(ledger.get(&target_id).unwrap().state.fields[0], [0x42u8; 32]);
+        assert_eq!(
+            ledger.get(&target_id).unwrap().state.fields[0],
+            [0x42u8; 32]
+        );
     }
 
     /// REJECT (control): a DIFFERENT signer (not the authorized member) is
@@ -11966,7 +11978,10 @@ mod sender_authorized_membership_e2e {
             other => panic!("expected ProgramViolation for non-member, got {other:?}"),
         }
         // The effect did NOT apply (turn rejected atomically).
-        assert_ne!(ledger.get(&target_id).unwrap().state.fields[0], [0x42u8; 32]);
+        assert_ne!(
+            ledger.get(&target_id).unwrap().state.fields[0],
+            [0x42u8; 32]
+        );
     }
 
     /// REJECT (control 2): even the AUTHORIZED member is refused if it carries
@@ -12010,8 +12025,7 @@ mod sender_authorized_membership_e2e {
         let turn = wrap(agent_id, action);
 
         let mut executor = TurnExecutor::new(ComputronCosts::zero());
-        executor
-            .set_witnessed_registry(crate::executor::registry_with_real_verifiers());
+        executor.set_witnessed_registry(crate::executor::registry_with_real_verifiers());
 
         let result = executor.execute(&turn, &mut ledger);
         assert!(

@@ -222,4 +222,3 @@ pub fn v9_context() -> dregg_cell::commitment::V9RotationContext {
         iroot: BabyBear::new(0),
     }
 }
-

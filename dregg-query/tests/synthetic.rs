@@ -149,12 +149,7 @@ fn eval_join_on_bindings() {
     let q = Query::new()
         .atom(
             Pred::Granted,
-            vec![
-                Term::var("F"),
-                Term::var("T"),
-                Term::var("Cap"),
-                Term::Wild,
-            ],
+            vec![Term::var("F"), Term::var("T"), Term::var("Cap"), Term::Wild],
         )
         .atom(Pred::Revoked, vec![Term::var("Cap"), Term::var("Hr")]);
     let rows = eval(&base, &q).unwrap();
@@ -410,7 +405,12 @@ fn coverage_whole_log_over_non_prefix_rejected() {
     lying.coverage = Coverage::WholeLog;
     assert!(matches!(
         lying.verify(&Blake3Mmr, &trusted_root),
-        Err(AttestError::CoverageNotWholeLog { lo: 2, len: 6, head: 5, .. })
+        Err(AttestError::CoverageNotWholeLog {
+            lo: 2,
+            len: 6,
+            head: 5,
+            ..
+        })
     ));
 }
 
@@ -431,7 +431,12 @@ fn coverage_whole_log_short_of_head_rejected() {
     ans.coverage = Coverage::WholeLog;
     assert!(matches!(
         ans.verify(&Blake3Mmr, &trusted_root),
-        Err(AttestError::CoverageNotWholeLog { lo: 0, hi: 3, len: 6, head: 5 })
+        Err(AttestError::CoverageNotWholeLog {
+            lo: 0,
+            hi: 3,
+            len: 6,
+            head: 5
+        })
     ));
 }
 

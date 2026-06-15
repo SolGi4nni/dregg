@@ -35,7 +35,7 @@ use serde::{Deserialize, Serialize};
 
 use dregg_turn::{Finality, TurnReceipt};
 
-use crate::findings::{short_hex, AnalysisReport, Finding, Severity};
+use crate::findings::{AnalysisReport, Finding, Severity, short_hex};
 
 /// A captured receipt strand: an ordered chain of committed-turn receipts, with
 /// optional executor keys for signature verification.
@@ -237,7 +237,9 @@ fn analyze_link_graph(receipts: &[TurnReceipt], breaks: usize, report: &mut Anal
         let f = Finding {
             severity: Severity::Notice,
             attestation: if chain_intact {
-                crate::findings::Attestation::Verified { by: graph_by.into() }
+                crate::findings::Attestation::Verified {
+                    by: graph_by.into(),
+                }
             } else {
                 crate::findings::Attestation::Observed
             },
@@ -277,7 +279,10 @@ fn analyze_link_graph(receipts: &[TurnReceipt], breaks: usize, report: &mut Anal
         report.push(Finding::observed(
             Severity::Info,
             "receipts.finality_all_final",
-            format!("all {} receipt(s) carry Final finality (BFT-quorum backed)", receipts.len()),
+            format!(
+                "all {} receipt(s) carry Final finality (BFT-quorum backed)",
+                receipts.len()
+            ),
         ));
     }
 
@@ -299,7 +304,9 @@ fn analyze_link_graph(receipts: &[TurnReceipt], breaks: usize, report: &mut Anal
     report.push(Finding {
         severity: Severity::Info,
         attestation: if chain_intact {
-            crate::findings::Attestation::Verified { by: graph_by.into() }
+            crate::findings::Attestation::Verified {
+                by: graph_by.into(),
+            }
         } else {
             crate::findings::Attestation::Observed
         },

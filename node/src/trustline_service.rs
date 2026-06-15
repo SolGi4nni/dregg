@@ -66,10 +66,9 @@ use serde::{Deserialize, Serialize};
 
 use dregg_cell::CellId;
 use dregg_cell::blueprint::{
-    STATE_OPEN, TL_CEILING_SLOT, TL_DIGEST_SLOT, TL_DRAWN_SLOT,
-    TL_HOLDER_SLOT, TL_ISSUER_SLOT, TL_SETTLED_SLOT, TL_STATE_CLOSED, TL_STATE_SLOT,
-    TrustlineCollateral, TrustlineTerms, trustline_cell_program_collateral,
-    trustline_factory_descriptor_collateral,
+    STATE_OPEN, TL_CEILING_SLOT, TL_DIGEST_SLOT, TL_DRAWN_SLOT, TL_HOLDER_SLOT, TL_ISSUER_SLOT,
+    TL_SETTLED_SLOT, TL_STATE_CLOSED, TL_STATE_SLOT, TrustlineCollateral, TrustlineTerms,
+    trustline_cell_program_collateral, trustline_factory_descriptor_collateral,
 };
 use dregg_cell::factory::{FactoryCreationParams, FactoryDescriptor, canonical_program_vk};
 use dregg_coord::budget::BudgetError;
@@ -103,10 +102,17 @@ impl TrustlineRegistry {
             Ok(pairs) => {
                 let count = pairs.len();
                 for (scope, digest) in pairs {
-                    registry.digests.entry(CellId(scope)).or_default().insert(digest);
+                    registry
+                        .digests
+                        .entry(CellId(scope))
+                        .or_default()
+                        .insert(digest);
                 }
                 if count > 0 {
-                    tracing::info!(digests = count, "restored trustline forever-digest registry");
+                    tracing::info!(
+                        digests = count,
+                        "restored trustline forever-digest registry"
+                    );
                 }
             }
             Err(e) => {
@@ -451,7 +457,9 @@ pub(crate) fn run_signed_turn(
     let operator_cell = crate::executor_setup::local_agent_cell(s);
     let is_operator_turn = agent == operator_cell;
 
-    let action = s.cclerk.make_action(target, method, effects, &federation_id);
+    let action = s
+        .cclerk
+        .make_action(target, method, effects, &federation_id);
     let mut call_forest = CallForest::new();
     call_forest.add_root(action);
 
@@ -769,8 +777,9 @@ pub(crate) async fn open_trustline(
     // construction. fullReserve's descriptor is byte-identical to the
     // historical (pre-axis) descriptor, so already-born lines are untouched.
     // pureCredit lines are constructed by their own (DERIVED-leg) flow.
-    let descriptor = trustline_factory_descriptor_collateral(&terms, TrustlineCollateral::FullReserve)
-        .map_err(|e| TrustlineRefusal::BadTerms(e.to_string()))?;
+    let descriptor =
+        trustline_factory_descriptor_collateral(&terms, TrustlineCollateral::FullReserve)
+            .map_err(|e| TrustlineRefusal::BadTerms(e.to_string()))?;
 
     // Per-line token id: deterministic over the terms + caller salt + the
     // issuer's current replay nonce (a fresh nonce per committed turn, so
@@ -965,9 +974,8 @@ async fn post_trustline_draw(
     }
 
     let digest = match &req.digest {
-        Some(hex) => hex_decode_32(hex).ok_or_else(|| {
-            TrustlineRefusal::BadRequest(format!("malformed draw digest: {hex}"))
-        })?,
+        Some(hex) => hex_decode_32(hex)
+            .ok_or_else(|| TrustlineRefusal::BadRequest(format!("malformed draw digest: {hex}")))?,
         None => {
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -1645,11 +1653,7 @@ mod tests {
         {
             let s = state.write().await;
             assert!(
-                s.ledger
-                    .get(&holder)
-                    .unwrap()
-                    .capabilities
-                    .has_access(&tl),
+                s.ledger.get(&holder).unwrap().capabilities.has_access(&tl),
                 "holder must hold the line capability"
             );
         }
@@ -2069,10 +2073,7 @@ mod tests {
         );
         let failures = json["failures"].as_array().unwrap();
         assert_eq!(failures.len(), 1, "the loud failure surface stays: {json}");
-        assert!(
-            failures[0].as_str().unwrap().contains("rejected"),
-            "{json}"
-        );
+        assert!(failures[0].as_str().unwrap().contains("rejected"), "{json}");
         // The cell truth is unmoved (the rejected turn committed nothing).
         assert_eq!(tl_slot(&state, tl, TL_SETTLED_SLOT).await, 0);
         assert_eq!(tl_slot(&state, tl, TL_DRAWN_SLOT).await, 30);
@@ -2110,7 +2111,11 @@ mod tests {
         // (the counter re-carried it) and it now applies.
         {
             let mut s = state.write().await;
-            s.ledger.get_mut(&tl).unwrap().state.set_balance(LINE as i64);
+            s.ledger
+                .get_mut(&tl)
+                .unwrap()
+                .state
+                .set_balance(LINE as i64);
         }
         let escrow_before = balance(&state, tl).await;
         let (status, json) = post_json(&state, "/trustline/settle", serde_json::json!({})).await;

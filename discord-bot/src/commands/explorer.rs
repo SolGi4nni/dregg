@@ -610,7 +610,11 @@ async fn handle_blocklace(ctx: &Context, command: &CommandInteraction, state: &B
                     kind_icon(&block.kind),
                     block.height,
                     truncate(&block.block_hash, 12),
-                    if block.kind.is_empty() { "block" } else { &block.kind },
+                    if block.kind.is_empty() {
+                        "block"
+                    } else {
+                        &block.kind
+                    },
                     block.predecessors.len(),
                     block.num_votes,
                     block.qc_threshold,
@@ -642,10 +646,8 @@ async fn handle_federations(ctx: &Context, command: &CommandInteraction, state: 
     match node_get_json::<Vec<FederationInfoWire>>(state, "/api/federations").await {
         Ok(feds) => {
             if feds.is_empty() {
-                let embed = embeds::warning_embed(
-                    "No Federations",
-                    "The node tracks no federations yet.",
-                );
+                let embed =
+                    embeds::warning_embed("No Federations", "The node tracks no federations yet.");
                 let _ = command
                     .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
                     .await;
@@ -661,7 +663,11 @@ async fn handle_federations(ctx: &Context, command: &CommandInteraction, state: 
                     .unwrap_or_else(|| "none".to_string());
                 let title = format!(
                     "{} {}",
-                    if fed.is_local { "\u{2b50}" } else { "\u{1f517}" },
+                    if fed.is_local {
+                        "\u{2b50}"
+                    } else {
+                        "\u{1f517}"
+                    },
                     truncate(&fed.id, 16)
                 );
                 embed = embed.field(
@@ -703,11 +709,31 @@ async fn handle_checkpoint(ctx: &Context, command: &CommandInteraction, state: &
                 )
                 .field("Height", cp.height.to_string(), true)
                 .field("Epoch", cp.epoch.to_string(), true)
-                .field("QC Votes", format!("{}/{}", cp.qc_votes, cp.federation_members), true)
-                .field("Ledger State Root", format!("`{}...`", truncate(&cp.ledger_state_root, 24)), false)
-                .field("Note Tree Root", format!("`{}...`", truncate(&cp.note_tree_root, 24)), false)
-                .field("Nullifier Set Root", format!("`{}...`", truncate(&cp.nullifier_set_root, 24)), false)
-                .field("Revocation Tree Root", format!("`{}...`", truncate(&cp.revocation_tree_root, 24)), false)
+                .field(
+                    "QC Votes",
+                    format!("{}/{}", cp.qc_votes, cp.federation_members),
+                    true,
+                )
+                .field(
+                    "Ledger State Root",
+                    format!("`{}...`", truncate(&cp.ledger_state_root, 24)),
+                    false,
+                )
+                .field(
+                    "Note Tree Root",
+                    format!("`{}...`", truncate(&cp.note_tree_root, 24)),
+                    false,
+                )
+                .field(
+                    "Nullifier Set Root",
+                    format!("`{}...`", truncate(&cp.nullifier_set_root, 24)),
+                    false,
+                )
+                .field(
+                    "Revocation Tree Root",
+                    format!("`{}...`", truncate(&cp.revocation_tree_root, 24)),
+                    false,
+                )
                 .field("Timestamp", cp.timestamp.to_string(), true);
             let _ = command
                 .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
@@ -716,7 +742,9 @@ async fn handle_checkpoint(ctx: &Context, command: &CommandInteraction, state: &
         Err(e) => {
             let embed = embeds::warning_embed(
                 "No Checkpoint",
-                &format!("Could not load the latest checkpoint: {e}\n\nA fresh node may not have finalized one yet."),
+                &format!(
+                    "Could not load the latest checkpoint: {e}\n\nA fresh node may not have finalized one yet."
+                ),
             );
             let _ = command
                 .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
@@ -761,17 +789,37 @@ async fn handle_witnesses(ctx: &Context, command: &CommandInteraction, state: &B
             }
             let mut desc = String::new();
             for (i, art) in w.witness_artifacts.iter().take(6).enumerate() {
-                desc.push_str(&format!("`#{i}` `{}...` ({} bytes)\n", truncate(art, 24), art.len() / 2));
+                desc.push_str(&format!(
+                    "`#{i}` `{}...` ({} bytes)\n",
+                    truncate(art, 24),
+                    art.len() / 2
+                ));
             }
             let embed = embeds::dregg_embed("Receipt Witnesses")
-                .field("Receipt", format!("`{}...`", truncate(&w.receipt_hash, 16)), false)
+                .field(
+                    "Receipt",
+                    format!("`{}...`", truncate(&w.receipt_hash, 16)),
+                    false,
+                )
                 .field("Witness Count", w.witness_count.to_string(), true)
                 .field(
                     "Artifact Format",
-                    if w.artifact_format.is_empty() { "n/a".to_string() } else { w.artifact_format },
+                    if w.artifact_format.is_empty() {
+                        "n/a".to_string()
+                    } else {
+                        w.artifact_format
+                    },
                     true,
                 )
-                .field("Artifacts (head)", if desc.is_empty() { "none".to_string() } else { desc }, false);
+                .field(
+                    "Artifacts (head)",
+                    if desc.is_empty() {
+                        "none".to_string()
+                    } else {
+                        desc
+                    },
+                    false,
+                );
             let _ = command
                 .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
                 .await;
@@ -862,8 +910,10 @@ async fn handle_proof(ctx: &Context, command: &CommandInteraction, state: &BotSt
     let resp = match state.devnet.client().get(&url).send().await {
         Ok(resp) => resp,
         Err(e) => {
-            let embed =
-                embeds::error_embed("Node Unreachable", &format!("Could not fetch the proof: {e}"));
+            let embed = embeds::error_embed(
+                "Node Unreachable",
+                &format!("Could not fetch the proof: {e}"),
+            );
             let _ = command
                 .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
                 .await;
@@ -900,10 +950,22 @@ async fn handle_proof(ctx: &Context, command: &CommandInteraction, state: &BotSt
             let kib = proof.proof_len as f64 / 1024.0;
             let explorer_url = format!("{}/turn/{}", state.devnet.explorer_base_url(), hash);
             let embed = embeds::dregg_embed("Turn Proof Artifact")
-                .field("Turn", format!("`{}...`", truncate(&proof.turn_hash, 16)), false)
-                .field("Proof Size", format!("{} bytes ({kib:.1} KiB)", proof.proof_len), true)
+                .field(
+                    "Turn",
+                    format!("`{}...`", truncate(&proof.turn_hash, 16)),
+                    false,
+                )
+                .field(
+                    "Proof Size",
+                    format!("{} bytes ({kib:.1} KiB)", proof.proof_len),
+                    true,
+                )
                 .field("Attached", "\u{2705} yes", true)
-                .field("Proof (head)", format!("`{}...`", truncate(&proof.proof_hex, 32)), false)
+                .field(
+                    "Proof (head)",
+                    format!("`{}...`", truncate(&proof.proof_hex, 32)),
+                    false,
+                )
                 .field("Explorer", format!("[View turn]({explorer_url})"), false);
             let _ = command
                 .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
@@ -1251,12 +1313,12 @@ fn event_icon(event_type: &str) -> &'static str {
 /// Icon for a blocklace block kind.
 fn kind_icon(kind: &str) -> &'static str {
     match kind {
-        "turn" | "turn_bundle" => "\u{1f7e2}",   // green: state-advancing
-        "heartbeat" => "\u{1f499}",              // blue heart: liveness
-        "checkpoint" => "\u{1f4cd}",             // pin: finalization
-        "membership" => "\u{1f465}",             // people: committee change
-        "data" => "\u{1f4e6}",                   // package
-        _ => "\u{26aa}",                          // white circle
+        "turn" | "turn_bundle" => "\u{1f7e2}", // green: state-advancing
+        "heartbeat" => "\u{1f499}",            // blue heart: liveness
+        "checkpoint" => "\u{1f4cd}",           // pin: finalization
+        "membership" => "\u{1f465}",           // people: committee change
+        "data" => "\u{1f4e6}",                 // package
+        _ => "\u{26aa}",                       // white circle
     }
 }
 

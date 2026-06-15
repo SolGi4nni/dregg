@@ -352,7 +352,10 @@ impl TranscludedSurface {
     /// height. The `dregg://` ref is UNCHANGED, so a transclusion that quoted it
     /// re-resolves to the NEW finalized value (the live quote). Returns the new
     /// federation height.
-    pub fn amend(&mut self, new_value: &[u8]) -> Result<u64, starbridge_web_surface::web_of_cells::FetchError> {
+    pub fn amend(
+        &mut self,
+        new_value: &[u8],
+    ) -> Result<u64, starbridge_web_surface::web_of_cells::FetchError> {
         self.web.amend(&self.uri, new_value)
     }
 }
@@ -387,7 +390,11 @@ pub fn render_transclusion(label: &str, field: &TranscludedField) -> Transcluded
 /// finalized flag. What tooling renders as "quoted from `dregg://<cell>` at
 /// receipt R; finalized".
 pub fn provenance_line(p: &Provenance) -> String {
-    let finalized = if p.finalized { "finalized" } else { "UNFINALIZED" };
+    let finalized = if p.finalized {
+        "finalized"
+    } else {
+        "UNFINALIZED"
+    };
     format!(
         "quoted from `{}` · receipt `{}` · {finalized}",
         p.source.to_uri_string(),
@@ -532,7 +539,11 @@ mod tests {
         assert_eq!(council, vec!["approve".to_string(), "view".to_string()]);
         assert_eq!(
             owner,
-            vec!["admin".to_string(), "approve".to_string(), "view".to_string()]
+            vec![
+                "admin".to_string(),
+                "approve".to_string(),
+                "view".to_string()
+            ]
         );
 
         // DIVERGENCE over the SAME surface, monotone in authority (the deos property).
@@ -619,7 +630,11 @@ mod tests {
             Err(FireError::Unauthorized { .. })
         ));
         // But the OWNER (root) CAN fire admin — the gate is the real lattice.
-        assert!(surface.fire("admin", cid(53), DiscordCapTier::Owner).is_ok());
+        assert!(
+            surface
+                .fire("admin", cid(53), DiscordCapTier::Owner)
+                .is_ok()
+        );
     }
 
     #[test]
@@ -673,9 +688,16 @@ mod tests {
 
         // The SAME dregg:// ref now resolves to the NEW committed value.
         let uri_after = tally.uri_string();
-        assert_eq!(uri_before, uri_after, "the dregg:// link is unbreakable (unchanged)");
+        assert_eq!(
+            uri_before, uri_after,
+            "the dregg:// link is unbreakable (unchanged)"
+        );
         let after = tally.transclude().expect("re-resolves to the new value");
-        assert_eq!(after.quoted_bytes(), b"8", "the live quote reflects the new committed value");
+        assert_eq!(
+            after.quoted_bytes(),
+            b"8",
+            "the live quote reflects the new committed value"
+        );
         assert!(after.verify().is_ok());
     }
 
@@ -720,8 +742,10 @@ mod tests {
         // through the public `observe` + `gate_source` API).
         let mut gated = WhatLinksHere::new();
         gated.observe(obs_a, &field);
-        let gated =
-            gated.gate_source(source, SurfaceCapability::root(source, AuthRequired::Either));
+        let gated = gated.gate_source(
+            source,
+            SurfaceCapability::root(source, AuthRequired::Either),
+        );
 
         // An AUTHORIZED viewer (holds Either) projects the lineage → sees the backlink.
         let strong = Membrane::new(SurfaceCapability::root(cid(150), AuthRequired::Either));
@@ -731,11 +755,17 @@ mod tests {
         // An INCOMPARABLE viewer (Proof vs a Signature-gated source) is FOGGED.
         let mut sig_gated = WhatLinksHere::new();
         sig_gated.observe(obs_a, &field);
-        let sig_gated =
-            sig_gated.gate_source(source, SurfaceCapability::root(source, AuthRequired::Signature));
+        let sig_gated = sig_gated.gate_source(
+            source,
+            SurfaceCapability::root(source, AuthRequired::Signature),
+        );
         let incomparable = Membrane::new(SurfaceCapability::root(cid(151), AuthRequired::Proof));
         assert!(!sig_gated.viewer_may_see(source, &incomparable));
-        assert!(sig_gated.observers_for_viewer(source, &incomparable).is_empty());
+        assert!(
+            sig_gated
+                .observers_for_viewer(source, &incomparable)
+                .is_empty()
+        );
     }
 
     #[test]

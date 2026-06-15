@@ -29,8 +29,8 @@ use dregg_app_framework::{
     FederationId, Interaction, InteractionLog, RehydrateError, Rehydration, StarbridgeAppContext,
 };
 
-use starbridge_governed_namespace::{governance_app, register_deos, seed_governance};
 use dregg_app_framework::field_from_bytes;
+use starbridge_governed_namespace::{governance_app, register_deos, seed_governance};
 
 fn agent() -> (AppCipherclerk, EmbeddedExecutor) {
     let cclerk = AppCipherclerk::new(AgentCipherclerk::new(), [0x67; 32]);
@@ -84,7 +84,10 @@ fn the_whole_app_is_one_composed_registration() {
     gated.sort();
     assert_eq!(
         gated,
-        vec!["propose_table_update".to_string(), "vote_on_proposal".to_string()]
+        vec![
+            "propose_table_update".to_string(),
+            "vote_on_proposal".to_string()
+        ]
     );
 
     // The governance cell is the agent's own (so fires execute against the seeded ledger),
@@ -125,12 +128,17 @@ async fn the_three_governance_roles_see_different_cap_only_surfaces() {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
-        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
         serde_json::from_slice::<serde_json::Value>(&bytes).unwrap()["visible"].clone()
     }
 
     // A VIEWER (Signature) sees only `view_table` (the narrow read tier).
-    assert_eq!(visible(&router, "signature").await, serde_json::json!(["view_table"]));
+    assert_eq!(
+        visible(&router, "signature").await,
+        serde_json::json!(["view_table"])
+    );
     // A COMMITTEE member (Either) additionally sees `register_service` (the cap-only mount);
     // `propose`/`vote` are GATED (not on the cap-only projection) — they light on the gated
     // surface against live state.
@@ -211,7 +219,11 @@ async fn the_governance_cell_is_published_into_the_web_of_cells() {
     // federation reacquires the live table across the membrane.
     let uris = app.publish_all(100).await;
     assert_eq!(uris.len(), 1);
-    assert!(uris[0].starts_with("dregg://"), "a real sturdyref: {}", uris[0]);
+    assert!(
+        uris[0].starts_with("dregg://"),
+        "a real sturdyref: {}",
+        uris[0]
+    );
 }
 
 // =============================================================================
@@ -228,7 +240,11 @@ fn a_board_snapshot_rehydrates_per_viewer_respecting_the_lattice() {
     // to a downstream auditor) ⇒ liveness REPLAYED-DETERMINISTIC.
     let log = InteractionLog::new().record(Interaction::witnessed_turn(board.cell(), [9u8; 32]));
     let snap = board.snapshot(log, false);
-    assert_eq!(snap.lineage, AuthRequired::Signature, "snapshot at the published lineage");
+    assert_eq!(
+        snap.lineage,
+        AuthRequired::Signature,
+        "snapshot at the published lineage"
+    );
     assert_eq!(snap.liveness(), Rehydration::ReplayedDeterministic);
     assert!(snap.liveness().is_faithful());
 
@@ -273,7 +289,9 @@ async fn the_app_ships_a_web_component_surface_and_a_manifest() {
         .unwrap()
         .to_string();
     assert!(ct.contains("javascript"), "served as a JS module: {ct}");
-    let bytes = axum::body::to_bytes(surface.into_body(), usize::MAX).await.unwrap();
+    let bytes = axum::body::to_bytes(surface.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let js = String::from_utf8(bytes.to_vec()).unwrap();
     assert!(js.contains("customElements.define(\"dregg-affordance-surface\""));
     // The anti-drift affordance map names the cap-only fire endpoints.
@@ -287,17 +305,35 @@ async fn the_app_ships_a_web_component_surface_and_a_manifest() {
         .await
         .unwrap();
     assert_eq!(manifest.status(), StatusCode::OK);
-    let bytes = axum::body::to_bytes(manifest.into_body(), usize::MAX).await.unwrap();
+    let bytes = axum::body::to_bytes(manifest.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let m: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(m["app"], "governed-namespace");
-    assert_eq!(m["discoverable"], serde_json::json!(["governance", "namespace"]));
-    assert!(m["persistence"].as_str().unwrap().contains("embedded-ledger"));
+    assert_eq!(
+        m["discoverable"],
+        serde_json::json!(["governance", "namespace"])
+    );
+    assert!(
+        m["persistence"]
+            .as_str()
+            .unwrap()
+            .contains("embedded-ledger")
+    );
     assert_eq!(m["cells"].as_array().unwrap().len(), 1);
     // The manifest advertises the two gated (cap∧state) committee affordances.
-    let gated = m["cells"][0]["gatedAffordances"].as_array().expect("gated affordances");
+    let gated = m["cells"][0]["gatedAffordances"]
+        .as_array()
+        .expect("gated affordances");
     let names: Vec<&str> = gated.iter().filter_map(|g| g["name"].as_str()).collect();
-    assert!(names.contains(&"propose_table_update"), "propose is advertised as gated");
-    assert!(names.contains(&"vote_on_proposal"), "vote is advertised as gated");
+    assert!(
+        names.contains(&"propose_table_update"),
+        "propose is advertised as gated"
+    );
+    assert!(
+        names.contains(&"vote_on_proposal"),
+        "vote is advertised as gated"
+    );
 }
 
 // =============================================================================
@@ -315,7 +351,11 @@ fn register_deos_mounts_the_seeded_surface_into_the_context() {
     // is the SHIPPED one (the census promotion) and the gated fires are live.
     let app = register_deos(&ctx);
     assert_eq!(app.name(), "governed-namespace");
-    assert_eq!(ctx.affordance_registry().len(), 1, "the deos surface is registered");
+    assert_eq!(
+        ctx.affordance_registry().len(),
+        1,
+        "the deos surface is registered"
+    );
 
     // The seeded board is quiescent (no in-flight proposal), so a committee member can open a
     // proposal through the mounted surface immediately (the gateable seam is closed + live).

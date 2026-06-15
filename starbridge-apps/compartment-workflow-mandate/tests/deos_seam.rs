@@ -64,18 +64,22 @@ fn seeding_installs_the_workflow_program_and_cursor_zero() {
     // The seeded mandate cell carries `cwm_cell_program()` — the FULL workflow policy
     // (the `Always` invariants AND the `advance_step`-scoped `MonotonicSequence`),
     // installed so the executor re-enforces it on every touching turn.
-    let installed = executor.with_ledger_mut(|ledger| {
-        ledger.get(&cclerk.cell_id()).map(|c| c.program.clone())
-    });
+    let installed =
+        executor.with_ledger_mut(|ledger| ledger.get(&cclerk.cell_id()).map(|c| c.program.clone()));
     assert_eq!(
         installed,
         Some(cwm_cell_program()),
         "the seeded mandate cell carries the workflow program (the seam's enforcement layer)"
     );
     // ...and the seeded state is at cursor 0 with the charter terminal pinned (3).
-    let state = executor.cell_state(cclerk.cell_id()).expect("seeded cell exists");
+    let state = executor
+        .cell_state(cclerk.cell_id())
+        .expect("seeded cell exists");
     assert_eq!(state.fields[STEP_CURSOR_SLOT as usize], field_from_u64(0));
-    assert_eq!(state.fields[CHARTER_TERMINAL_SLOT as usize], field_from_u64(3));
+    assert_eq!(
+        state.fields[CHARTER_TERMINAL_SLOT as usize],
+        field_from_u64(3)
+    );
 }
 
 // =============================================================================
@@ -95,7 +99,10 @@ fn an_operator_advances_a_step_through_the_gated_fire_a_real_verified_turn() {
     // `FieldLteField(STEP_CURSOR <= CHARTER_TERMINAL)` holds (1 <= 3). A real verified turn.
     let receipt = fire_advance_step(&app, &AuthRequired::None, &cclerk, &executor)
         .expect("an operator advances (caps ∧ state ∧ monotonic-sequence ∧ lte-terminal all pass)");
-    assert_ne!(receipt.turn_hash, [0u8; 32], "a real verified turn through the executor");
+    assert_ne!(
+        receipt.turn_hash, [0u8; 32],
+        "a real verified turn through the executor"
+    );
 
     // The charter cursor advanced (the step committed).
     let state = executor.cell_state(cclerk.cell_id()).unwrap();
@@ -119,7 +126,10 @@ fn advancing_to_the_terminal_darkens_advance_step() {
     // Before reaching the terminal, the OPERATOR sees `advance_step` LIT (the not-at-terminal
     // precondition cursor < terminal holds: 0 < 3). The htmx tooth, off live state.
     let lit_before = app.cells()[0].gated_fireable_names(&AuthRequired::None, &executor);
-    assert!(lit_before.contains(&"advance_step".to_string()), "steps remain: advance lights");
+    assert!(
+        lit_before.contains(&"advance_step".to_string()),
+        "steps remain: advance lights"
+    );
 
     // Drive the cursor to the terminal: 0 -> 1 -> 2 -> 3 (three real verified fires).
     for expect in 1..=3u64 {
@@ -127,7 +137,10 @@ fn advancing_to_the_terminal_darkens_advance_step() {
             .unwrap_or_else(|e| panic!("advance to cursor {expect} should commit, got {e:?}"));
         assert_ne!(receipt.turn_hash, [0u8; 32]);
         let state = executor.cell_state(cclerk.cell_id()).unwrap();
-        assert_eq!(state.fields[STEP_CURSOR_SLOT as usize], field_from_u64(expect));
+        assert_eq!(
+            state.fields[STEP_CURSOR_SLOT as usize],
+            field_from_u64(expect)
+        );
     }
 
     // After reaching the terminal (cursor == 3 == terminal), `advance_step` goes DARK (the
@@ -209,10 +222,16 @@ fn the_executor_re_enforces_a_non_plus_one_advance_is_refused() {
     let stale = advance_effects(cell, 0, [0u8; 32]);
     let action = cclerk.make_action(cell, "advance_step", stale);
     let refused = executor.submit_action(&cclerk, action);
-    assert!(refused.is_err(), "a non-+1 (no-advance) step must be refused by the executor");
+    assert!(
+        refused.is_err(),
+        "a non-+1 (no-advance) step must be refused by the executor"
+    );
     let msg = format!("{:?}", refused.unwrap_err()).to_lowercase();
     assert!(
-        msg.contains("monotonic") || msg.contains("sequence") || msg.contains("program") || msg.contains("field[0]"),
+        msg.contains("monotonic")
+            || msg.contains("sequence")
+            || msg.contains("program")
+            || msg.contains("field[0]"),
         "the executor refuses on the MonotonicSequence(STEP_CURSOR) caveat, got: {msg}"
     );
 
@@ -246,7 +265,10 @@ fn the_executor_re_enforces_a_skip_ahead_advance_is_refused() {
     assert!(refused.is_err(), "skipping a step (non-+1) must be refused");
     let msg = format!("{:?}", refused.unwrap_err()).to_lowercase();
     assert!(
-        msg.contains("monotonic") || msg.contains("sequence") || msg.contains("program") || msg.contains("field[0]"),
+        msg.contains("monotonic")
+            || msg.contains("sequence")
+            || msg.contains("program")
+            || msg.contains("field[0]"),
         "the executor refuses the skip on MonotonicSequence(STEP_CURSOR), got: {msg}"
     );
 
@@ -279,17 +301,27 @@ fn the_executor_re_enforces_an_advance_past_the_terminal_is_refused() {
             .expect("honest advance commits");
     }
     let state = executor.cell_state(cell).unwrap();
-    assert_eq!(state.fields[STEP_CURSOR_SLOT as usize], field_from_u64(3), "at the terminal");
+    assert_eq!(
+        state.fields[STEP_CURSOR_SLOT as usize],
+        field_from_u64(3),
+        "at the terminal"
+    );
 
     // A PAST-TERMINAL advance: cursor 3 -> 4 (a legal +1 for MonotonicSequence, but 4 > 3
     // terminal). `FieldLteField(STEP_CURSOR <= CHARTER_TERMINAL)` refuses it.
     let overrun = advance_effects(cell, 4, [0u8; 32]);
     let action = cclerk.make_action(cell, "advance_step", overrun);
     let refused = executor.submit_action(&cclerk, action);
-    assert!(refused.is_err(), "advancing past the charter terminal must be refused");
+    assert!(
+        refused.is_err(),
+        "advancing past the charter terminal must be refused"
+    );
     let msg = format!("{:?}", refused.unwrap_err()).to_lowercase();
     assert!(
-        msg.contains("lte") || msg.contains("field") || msg.contains("program") || msg.contains("terminal"),
+        msg.contains("lte")
+            || msg.contains("field")
+            || msg.contains("program")
+            || msg.contains("terminal"),
         "the executor refuses on the FieldLteField(STEP_CURSOR <= CHARTER_TERMINAL) caveat, got: {msg}"
     );
 
@@ -317,7 +349,11 @@ fn register_deos_mounts_the_seeded_surface_into_the_context() {
     // the SHIPPED one (the census promotion) and the gated fire is live.
     let app = register_deos(&ctx);
     assert_eq!(app.name(), "compartment-workflow-mandate");
-    assert_eq!(ctx.affordance_registry().len(), 1, "the deos surface is registered");
+    assert_eq!(
+        ctx.affordance_registry().len(),
+        1,
+        "the deos surface is registered"
+    );
 
     // The seeded mandate is at cursor 0 with a charter terminal, so an operator can advance
     // through the mounted surface immediately (the seam is closed + live).

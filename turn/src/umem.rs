@@ -463,8 +463,7 @@ pub fn fold(pre: &UProjection, ops: &[UmemOp]) -> UProjection {
 /// serial, and a read returns exactly its claimed previous value.
 pub fn disciplined(ops: &[UmemOp]) -> bool {
     ops.iter().enumerate().all(|(i, op)| {
-        op.prev_serial < (i as u64) + 1
-            && (op.kind != UmemKind::Read || op.val == op.prev_val)
+        op.prev_serial < (i as u64) + 1 && (op.kind != UmemKind::Read || op.val == op.prev_val)
     })
 }
 
@@ -582,10 +581,9 @@ fn touches_of_entry(e: &JournalEntry) -> Vec<Touch> {
             UKey::NoteNullifier(nullifier.0),
             Some(None), // freshness IS the double-spend gate
         )],
-        JournalEntry::BridgedNullifierInserted { nullifier } => vec![Touch::At(
-            UKey::BridgedNullifier(*nullifier),
-            Some(None),
-        )],
+        JournalEntry::BridgedNullifierInserted { nullifier } => {
+            vec![Touch::At(UKey::BridgedNullifier(*nullifier), Some(None))]
+        }
         // Markers / receipt-surface entries: no state cell.
         JournalEntry::NoteSpend | JournalEntry::NoteCreate => vec![],
         JournalEntry::EventEmitted { .. } => vec![],

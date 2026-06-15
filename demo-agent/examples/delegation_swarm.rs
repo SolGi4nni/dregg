@@ -28,7 +28,8 @@ const NUM_WORKERS: usize = 10;
 const TURNS_PER_WORKER: usize = 3;
 
 /// Create a cell with open permissions and a given balance.
-fn make_open_cell(seed: u8, balance: i64) -> Cell { // signed-wells (ac01f9b7b): i64 balances
+fn make_open_cell(seed: u8, balance: i64) -> Cell {
+    // signed-wells (ac01f9b7b): i64 balances
     let mut key = [0u8; 32];
     key[0] = seed;
     let token_id = [0u8; 32];

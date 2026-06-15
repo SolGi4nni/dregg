@@ -55,8 +55,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let plan = spawn_worker_mandate(&mandate, owner_pubkey, [0x07; 32], orchestrator)?;
     let worker = plan.cell_id;
     runtime.deploy_factory(plan.descriptor.clone());
-    runtime.turn().effects(plan.create_effects.clone()).sign()?.submit()?;
-    runtime.turn().effects(plan.fund_effects.clone()).sign()?.submit()?;
+    runtime
+        .turn()
+        .effects(plan.create_effects.clone())
+        .sign()?
+        .submit()?;
+    runtime
+        .turn()
+        .effects(plan.fund_effects.clone())
+        .sign()?
+        .submit()?;
     runtime
         .turn()
         .as_cell(worker, ADOPT_TURN_FEE)

@@ -112,22 +112,30 @@ pub fn escrow_cell_program() -> CellProgram {
         },
         // ── list: open the listing (seller + ceiling bound here) ────────
         TransitionCase {
-            guard: TransitionGuard::MethodIs { method: symbol("list") },
+            guard: TransitionGuard::MethodIs {
+                method: symbol("list"),
+            },
             constraints: vec![],
         },
         // ── fund: the buyer escrows ≤ ceiling (TRUSTLINE invariant above) ─
         TransitionCase {
-            guard: TransitionGuard::MethodIs { method: symbol("fund") },
+            guard: TransitionGuard::MethodIs {
+                method: symbol("fund"),
+            },
             constraints: vec![],
         },
         // ── ship: commit the sealed delivery (MAILBOX invariant above) ──
         TransitionCase {
-            guard: TransitionGuard::MethodIs { method: symbol("ship") },
+            guard: TransitionGuard::MethodIs {
+                method: symbol("ship"),
+            },
             constraints: vec![],
         },
         // ── settle: FLASHWELL conservation — RELEASED+REFUNDED == ESCROWED ─
         TransitionCase {
-            guard: TransitionGuard::MethodIs { method: symbol("settle") },
+            guard: TransitionGuard::MethodIs {
+                method: symbol("settle"),
+            },
             constraints: vec![StateConstraint::AffineEq {
                 terms: vec![
                     (1, RELEASED_SLOT as u8),
@@ -927,24 +935,33 @@ mod tests {
     fn factory_bakes_the_four_organ_caveats() {
         let d = escrow_factory_descriptor();
         // TRUSTLINE: ESCROWED ≤ CEILING.
-        assert!(d.state_constraints.iter().any(|c| matches!(
-            c,
-            StateConstraint::FieldLteField { left_index, right_index }
-                if *left_index == ESCROWED_SLOT as u8 && *right_index == CEILING_SLOT as u8
-        )), "trustline ceiling caveat missing");
+        assert!(
+            d.state_constraints.iter().any(|c| matches!(
+                c,
+                StateConstraint::FieldLteField { left_index, right_index }
+                    if *left_index == ESCROWED_SLOT as u8 && *right_index == CEILING_SLOT as u8
+            )),
+            "trustline ceiling caveat missing"
+        );
         // MAILBOX: WriteOnce(DELIVERY_HASH).
-        assert!(d.state_constraints.iter().any(|c| matches!(
-            c, StateConstraint::WriteOnce { index } if *index == DELIVERY_HASH_SLOT as u8
-        )), "mailbox delivery-commit caveat missing");
+        assert!(
+            d.state_constraints.iter().any(|c| matches!(
+                c, StateConstraint::WriteOnce { index } if *index == DELIVERY_HASH_SLOT as u8
+            )),
+            "mailbox delivery-commit caveat missing"
+        );
         // FLASHWELL no-mint (executor-enforced, every turn):
         //   RELEASED + REFUNDED − ESCROWED ≤ 0.
-        assert!(d.state_constraints.iter().any(|c| matches!(
-            c, StateConstraint::AffineLe { terms, c: k }
-                if *k == 0
-                    && terms.contains(&(1, RELEASED_SLOT as u8))
-                    && terms.contains(&(1, REFUNDED_SLOT as u8))
-                    && terms.contains(&(-1, ESCROWED_SLOT as u8))
-        )), "flashwell no-mint caveat missing from the flat descriptor");
+        assert!(
+            d.state_constraints.iter().any(|c| matches!(
+                c, StateConstraint::AffineLe { terms, c: k }
+                    if *k == 0
+                        && terms.contains(&(1, RELEASED_SLOT as u8))
+                        && terms.contains(&(1, REFUNDED_SLOT as u8))
+                        && terms.contains(&(-1, ESCROWED_SLOT as u8))
+            )),
+            "flashwell no-mint caveat missing from the flat descriptor"
+        );
         // FLASHWELL no-burn (settle-scoped, in the canonical program recipe):
         //   RELEASED + REFUNDED − ESCROWED == 0.
         let has_settle_eq = match escrow_cell_program() {
@@ -956,11 +973,17 @@ mod tests {
             }),
             _ => false,
         };
-        assert!(has_settle_eq, "flashwell no-burn equality missing from the settle case");
+        assert!(
+            has_settle_eq,
+            "flashwell no-burn equality missing from the settle case"
+        );
         // LIFECYCLE: StrictMonotonic(STATE).
-        assert!(d.state_constraints.iter().any(|c| matches!(
-            c, StateConstraint::StrictMonotonic { index } if *index == STATE_SLOT as u8
-        )), "lifecycle caveat missing");
+        assert!(
+            d.state_constraints.iter().any(|c| matches!(
+                c, StateConstraint::StrictMonotonic { index } if *index == STATE_SLOT as u8
+            )),
+            "lifecycle caveat missing"
+        );
     }
 
     #[test]
@@ -985,7 +1008,10 @@ mod tests {
         let program = escrow_cell_program();
         let err = eval_for(&program, "drain_funds", &listed(1000), Some(&empty()))
             .expect_err("an unknown method must be default-denied");
-        assert!(matches!(err, dregg_cell::ProgramError::NoTransitionCaseMatched));
+        assert!(matches!(
+            err,
+            dregg_cell::ProgramError::NoTransitionCaseMatched
+        ));
     }
 
     #[test]

@@ -389,10 +389,7 @@ impl AgentRuntime {
     /// wants fail-closed `SenderAuthorized`, or
     /// `dregg_turn::executor::registry_with_real_verifiers_full(..)` to add the
     /// host-context-dependent kinds (Dfa / Temporal / BlindedSet issuer-root).
-    pub fn set_witnessed_registry(
-        &mut self,
-        registry: dregg_cell::WitnessedPredicateRegistry,
-    ) {
+    pub fn set_witnessed_registry(&mut self, registry: dregg_cell::WitnessedPredicateRegistry) {
         self.executor.set_witnessed_registry(registry);
     }
 

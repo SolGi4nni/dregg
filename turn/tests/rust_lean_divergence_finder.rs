@@ -127,7 +127,8 @@ fn grant_self_cap(ledger: &mut Ledger, holder: CellId) {
         .expect("grant self cap");
 }
 
-fn two_cell_ledger(bal_a: i64, bal_b: i64) -> (Ledger, CellId, CellId) { // signed-wells (ac01f9b7b)
+fn two_cell_ledger(bal_a: i64, bal_b: i64) -> (Ledger, CellId, CellId) {
+    // signed-wells (ac01f9b7b)
     let a = make_open_cell(1, bal_a);
     let b = make_open_cell(2, bal_b);
     let (ida, idb) = (a.id(), b.id());

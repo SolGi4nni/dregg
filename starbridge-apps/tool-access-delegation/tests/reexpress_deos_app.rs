@@ -106,13 +106,18 @@ async fn the_two_delegation_roles_see_different_cap_only_surfaces() {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
-        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
         serde_json::from_slice::<serde_json::Value>(&bytes).unwrap()["visible"].clone()
     }
 
     // A WORKER (Either) sees only `view_grant` on the cap-only projection (`invoke` is GATED —
     // it lights on the gated surface against live state, not here).
-    assert_eq!(visible(&router, "either").await, serde_json::json!(["view_grant"]));
+    assert_eq!(
+        visible(&router, "either").await,
+        serde_json::json!(["view_grant"])
+    );
     // The GRANTOR (root) additionally sees `grant` (the cap-graph handoff) on top of the read.
     assert_eq!(
         visible(&router, "root").await,
@@ -153,7 +158,10 @@ async fn only_the_grantor_can_grant_a_real_turn() {
     // None/root) is REFUSED at the cap gate (403) BEFORE anything reaches the executor — only
     // the grantor re-keys the invoke cap. The cap gate is the genuine `is_attenuation`
     // (`None` ⊄ Either).
-    assert_eq!(fire(&router, "grant", "either").await, StatusCode::FORBIDDEN);
+    assert_eq!(
+        fire(&router, "grant", "either").await,
+        StatusCode::FORBIDDEN
+    );
 
     // The GRANTOR (root) CLEARS the cap gate (not 403) — it is cap-authorized to hand the
     // invoke cap forward.
@@ -184,7 +192,11 @@ async fn the_mandate_is_published_into_the_web_of_cells() {
     // another federation reacquires the mandate across the membrane.
     let uris = app.publish_all(100).await;
     assert_eq!(uris.len(), 1);
-    assert!(uris[0].starts_with("dregg://"), "a real sturdyref: {}", uris[0]);
+    assert!(
+        uris[0].starts_with("dregg://"),
+        "a real sturdyref: {}",
+        uris[0]
+    );
 }
 
 // =============================================================================
@@ -201,7 +213,11 @@ fn a_mandate_snapshot_rehydrates_per_viewer_respecting_the_lattice() {
     // handed to a downstream auditor) ⇒ liveness REPLAYED-DETERMINISTIC.
     let log = InteractionLog::new().record(Interaction::witnessed_turn(mandate.cell(), [9u8; 32]));
     let snap = mandate.snapshot(log, false);
-    assert_eq!(snap.lineage, AuthRequired::Either, "snapshot at the published (worker) lineage");
+    assert_eq!(
+        snap.lineage,
+        AuthRequired::Either,
+        "snapshot at the published (worker) lineage"
+    );
     assert_eq!(snap.liveness(), Rehydration::ReplayedDeterministic);
     assert!(snap.liveness().is_faithful());
 
@@ -259,7 +275,9 @@ async fn the_app_ships_a_web_component_surface_and_a_manifest() {
         .unwrap()
         .to_string();
     assert!(ct.contains("javascript"), "served as a JS module: {ct}");
-    let bytes = axum::body::to_bytes(surface.into_body(), usize::MAX).await.unwrap();
+    let bytes = axum::body::to_bytes(surface.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let js = String::from_utf8(bytes.to_vec()).unwrap();
     assert!(js.contains("customElements.define(\"dregg-affordance-surface\""));
     // The anti-drift affordance map names the cap-only fire endpoints.
@@ -273,14 +291,26 @@ async fn the_app_ships_a_web_component_surface_and_a_manifest() {
         .await
         .unwrap();
     assert_eq!(manifest.status(), StatusCode::OK);
-    let bytes = axum::body::to_bytes(manifest.into_body(), usize::MAX).await.unwrap();
+    let bytes = axum::body::to_bytes(manifest.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let m: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(m["app"], "tool-access-delegation");
-    assert_eq!(m["discoverable"], serde_json::json!(["tools", "delegation"]));
-    assert!(m["persistence"].as_str().unwrap().contains("embedded-ledger"));
+    assert_eq!(
+        m["discoverable"],
+        serde_json::json!(["tools", "delegation"])
+    );
+    assert!(
+        m["persistence"]
+            .as_str()
+            .unwrap()
+            .contains("embedded-ledger")
+    );
     assert_eq!(m["cells"].as_array().unwrap().len(), 1);
     // The manifest advertises the gated (cap∧state) `invoke` affordance.
-    let gated = m["cells"][0]["gatedAffordances"].as_array().expect("gated affordances");
+    let gated = m["cells"][0]["gatedAffordances"]
+        .as_array()
+        .expect("gated affordances");
     let names: Vec<&str> = gated.iter().filter_map(|g| g["name"].as_str()).collect();
     assert!(names.contains(&"invoke"), "invoke is advertised as gated");
 }
@@ -304,13 +334,22 @@ fn grant_carries_the_real_grant_capability_effect() {
         .get("grant")
         .unwrap()
         .effect_summary();
-    assert_eq!(summary, EffectSummary::GrantCapability { from: mandate, to: worker });
+    assert_eq!(
+        summary,
+        EffectSummary::GrantCapability {
+            from: mandate,
+            to: worker
+        }
+    );
 
     // And the standalone effect builder matches (one source of truth).
     let standalone = grant_invoke_effect(mandate, worker);
     assert_eq!(
         EffectSummary::of(&standalone),
-        EffectSummary::GrantCapability { from: mandate, to: worker }
+        EffectSummary::GrantCapability {
+            from: mandate,
+            to: worker
+        }
     );
 
     // (Silence the unused warnings on imports used only by sibling tests.)
@@ -318,7 +357,13 @@ fn grant_carries_the_real_grant_capability_effect() {
         CellAffordance::new(
             "x",
             AuthRequired::None,
-            Effect::EmitEvent { cell: mandate, event: Event { topic: [0u8; 32], data: vec![] } },
+            Effect::EmitEvent {
+                cell: mandate,
+                event: Event {
+                    topic: [0u8; 32],
+                    data: vec![],
+                },
+            },
         ),
         CALLS_MADE_SLOT,
         DeosCell::new(mandate, "x"),

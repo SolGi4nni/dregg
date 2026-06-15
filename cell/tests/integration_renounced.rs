@@ -25,13 +25,13 @@
 use std::sync::Arc;
 
 use dregg_cell::{
+    CellProgram, CellState, StateConstraint,
     preconditions::EvalContext,
     predicate::{
         CredentialSetMembershipVerifier, NeighborAdjacencyVerifier, NonMembershipNeighborProof,
         NonMembershipProofV2, SortedNeighborNonMembershipVerifier, WitnessedPredicateRegistry,
     },
     program::{RenouncedSet, TransitionMeta, WitnessBlobView, WitnessBundle, WitnessKindTag},
-    CellProgram, CellState, StateConstraint,
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

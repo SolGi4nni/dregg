@@ -319,8 +319,8 @@ impl<S: MirrorSink> PgMirror<S> {
     /// not chain (a gap, a replay, or a tampered post-state) is REFUSED and the
     /// chain/head are left UNCHANGED.
     pub fn mirror_record(&mut self, record: &CommitRecord) -> Result<(), MirrorError> {
-        let batch = batch_from_commit_record(record, self.prev_root)
-            .map_err(MirrorError::Malformed)?;
+        let batch =
+            batch_from_commit_record(record, self.prev_root).map_err(MirrorError::Malformed)?;
         // The node holds the same chain the pg side re-checks: refuse a batch
         // that would not chain BEFORE shipping it.
         self.chain.extend(&batch).map_err(MirrorError::Chain)?;
@@ -682,7 +682,10 @@ mod tests {
         assert_eq!(batch.cells.len(), 1);
         assert_eq!(batch.cells[0].cell_id, cid);
         assert_eq!(batch.cells[0].balance, 123);
-        assert_eq!(batch.cells[0].cell_root, cell_root, "cell_root is the canonical state commitment");
+        assert_eq!(
+            batch.cells[0].cell_root, cell_root,
+            "cell_root is the canonical state commitment"
+        );
         assert_eq!(batch.cells[0].last_ordinal, 0, "stamped by from_parts");
         // The universal-memory registers projection (balance + nonce).
         assert_eq!(batch.memory.len(), 2);
@@ -701,9 +704,15 @@ mod tests {
         // Three verified turns chain g -> r1 -> r2 -> r3; the sink receives all
         // three, in order, each chaining onto the prior post-state.
         let mut mirror = PgMirror::new(MemorySink::default());
-        mirror.mirror_record(&record(0, root(1), vec![cell(1, 10)])).unwrap();
-        mirror.mirror_record(&record(1, root(2), vec![cell(2, 20)])).unwrap();
-        mirror.mirror_record(&record(2, root(3), vec![cell(1, 15)])).unwrap();
+        mirror
+            .mirror_record(&record(0, root(1), vec![cell(1, 10)]))
+            .unwrap();
+        mirror
+            .mirror_record(&record(1, root(2), vec![cell(2, 20)]))
+            .unwrap();
+        mirror
+            .mirror_record(&record(2, root(3), vec![cell(1, 15)]))
+            .unwrap();
 
         let batches = &mirror.sink().batches;
         assert_eq!(batches.len(), 3);
@@ -717,7 +726,9 @@ mod tests {
         // An independent pg-side RootChain re-validates the whole shipped stream.
         let mut pg_chain = RootChain::new();
         for b in batches {
-            pg_chain.extend(b).expect("pg side re-validates the shipped chain");
+            pg_chain
+                .extend(b)
+                .expect("pg side re-validates the shipped chain");
         }
         assert_eq!(pg_chain.head(), Some(root(3)));
     }
@@ -727,12 +738,21 @@ mod tests {
         // A gap (skipping ordinal 1) is refused — the sink never sees it and the
         // head does not move.
         let mut mirror = PgMirror::new(MemorySink::default());
-        mirror.mirror_record(&record(0, root(1), vec![cell(1, 10)])).unwrap();
+        mirror
+            .mirror_record(&record(0, root(1), vec![cell(1, 10)]))
+            .unwrap();
         let err = mirror
             .mirror_record(&record(2, root(3), vec![cell(2, 20)]))
             .unwrap_err();
-        assert!(matches!(err, MirrorError::Chain(ChainRefusal::OrdinalGap { .. })));
-        assert_eq!(mirror.sink().batches.len(), 1, "the gapped record is not shipped");
+        assert!(matches!(
+            err,
+            MirrorError::Chain(ChainRefusal::OrdinalGap { .. })
+        ));
+        assert_eq!(
+            mirror.sink().batches.len(),
+            1,
+            "the gapped record is not shipped"
+        );
         assert_eq!(mirror.head(), root(1), "head unchanged after refusal");
     }
 
@@ -743,8 +763,12 @@ mod tests {
         // prev_root no longer chains, OR its ledger_root was substituted) is
         // refused by the independent pg-side RootChain.
         let mut mirror = PgMirror::new(MemorySink::default());
-        mirror.mirror_record(&record(0, root(1), vec![cell(1, 10)])).unwrap();
-        mirror.mirror_record(&record(1, root(2), vec![cell(2, 20)])).unwrap();
+        mirror
+            .mirror_record(&record(0, root(1), vec![cell(1, 10)]))
+            .unwrap();
+        mirror
+            .mirror_record(&record(1, root(2), vec![cell(2, 20)]))
+            .unwrap();
         let mut shipped = mirror.sink().batches.clone();
 
         // An adversary substitutes turn 1's pre-state root (claims it chained
@@ -785,7 +809,9 @@ mod tests {
         let mut mirror = PgMirror::resume(MemorySink::default(), root(2), 2);
         assert_eq!(mirror.head(), root(2));
         assert_eq!(mirror.next_ordinal(), 2);
-        mirror.mirror_record(&record(2, root(3), vec![cell(7, 70)])).unwrap();
+        mirror
+            .mirror_record(&record(2, root(3), vec![cell(7, 70)]))
+            .unwrap();
         assert_eq!(mirror.sink().batches[0].turn.prev_root, root(2));
         assert_eq!(mirror.head(), root(3));
     }
@@ -808,7 +834,9 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn pg_sink_writes_through_to_live_pg() {
         let Ok(url) = std::env::var("DREGG_PG_MIRROR_TEST_URL") else {
-            eprintln!("pg_sink_writes_through_to_live_pg: DREGG_PG_MIRROR_TEST_URL unset — skipping");
+            eprintln!(
+                "pg_sink_writes_through_to_live_pg: DREGG_PG_MIRROR_TEST_URL unset — skipping"
+            );
             return;
         };
         let cfg = PgMirrorConfig { url };
@@ -837,13 +865,21 @@ mod tests {
             .expect("clean prior rows");
 
         // The NODE's own sink, connected to the live pg, driving a real PgMirror.
-        let sink = pg_live::PgSink::connect(&cfg).await.expect("PgSink::connect");
+        let sink = pg_live::PgSink::connect(&cfg)
+            .await
+            .expect("PgSink::connect");
         let mut mirror = PgMirror::new(sink);
 
         // Ship a chained sequence of three verified turns g -> r1 -> r2 -> r3.
-        mirror.mirror_record(&record(0, root(1), vec![cell(1, 10)])).unwrap();
-        mirror.mirror_record(&record(1, root(2), vec![cell(2, 20)])).unwrap();
-        mirror.mirror_record(&record(2, root(3), vec![cell(1, 15)])).unwrap();
+        mirror
+            .mirror_record(&record(0, root(1), vec![cell(1, 10)]))
+            .unwrap();
+        mirror
+            .mirror_record(&record(1, root(2), vec![cell(2, 20)]))
+            .unwrap();
+        mirror
+            .mirror_record(&record(2, root(3), vec![cell(1, 15)]))
+            .unwrap();
         assert_eq!(mirror.head(), root(3));
 
         // The rows LANDED: three turns, and cell 1's latest post-image (balance 15
@@ -877,6 +913,9 @@ mod tests {
             .await
             .unwrap()
             .get(0);
-        assert_eq!(breaks, 0, "the live-written turns table is an unbroken hash chain");
+        assert_eq!(
+            breaks, 0,
+            "the live-written turns table is an unbroken hash chain"
+        );
     }
 }

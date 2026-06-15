@@ -161,12 +161,6 @@ pub mod poseidon2;
 #[allow(deprecated)]
 pub mod presentation;
 
-/// The canonical, openable capability-set commitment: a sorted Poseidon2 binary
-/// Merkle tree over a cell's c-list. The SINGLE source of truth for the
-/// `cap_root` value — `dregg-cell`'s `compute_canonical_capability_root` calls
-/// it, and the EffectVM circuit seeds its `cap_root` column from the same value
-/// (cap Phase A). Pure Poseidon2 (no plonky3): available in the `mock` build.
-pub mod cap_root;
 /// The OPENABLE `capability_root` descriptor loader (cap-reshape crown #103, the ARGUS linchpin):
 /// the Lean-verified `EffectVmDescriptor` that checks non-amplification (`granted ⊑ held` submask, per
 /// bit) + production-authority (the mint opens the issuer cap from the producer's held-set root)
@@ -174,6 +168,12 @@ pub mod cap_root;
 /// the running `parse_vm_descriptor` (the prover authors no constraint). Standalone (not in the locked
 /// `effect_vm_descriptors` registry).
 pub mod cap_reshape_descriptor;
+/// The canonical, openable capability-set commitment: a sorted Poseidon2 binary
+/// Merkle tree over a cell's c-list. The SINGLE source of truth for the
+/// `cap_root` value — `dregg-cell`'s `compute_canonical_capability_root` calls
+/// it, and the EffectVM circuit seeds its `cap_root` column from the same value
+/// (cap Phase A). Pure Poseidon2 (no plonky3): available in the `mock` build.
+pub mod cap_root;
 #[allow(deprecated)]
 pub mod committed_threshold;
 pub mod effect_vm;
@@ -336,13 +336,13 @@ pub use cross_state_derivation::{
     CombiningRule, CrossStateDerivationProof, SourceDerivation, SourceInput,
     prove_cross_state_derivation, verify_cross_state_derivation,
 };
+#[cfg(not(feature = "recursion"))]
+pub use effect_vm::EffectVmAir;
 pub use effect_vm::{
     CellState, EFFECT_VM_WIDTH, Effect, NUM_EFFECTS, compute_effects_hash, encode_net_delta,
     extract_custom_proof_commitments, extract_net_delta, generate_effect_vm_trace,
     verify_balance_limb_pis,
 };
-#[cfg(not(feature = "recursion"))]
-pub use effect_vm::EffectVmAir;
 pub use field::BabyBear;
 pub use ivc::{
     FoldDelta, FoldMembershipEntry, FoldStepWitness, IvcBackend, IvcBackendProof, IvcBuilder,

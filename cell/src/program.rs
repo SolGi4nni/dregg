@@ -696,7 +696,10 @@ pub enum SimpleStateConstraint {
     /// `AnyOf`/`Not` exactly like the Lean lift lands in
     /// `SimpleConstraint`. See [`HeapAtom`] for the full semantics +
     /// Lean theorem names. APPEND-ONLY (postcard variant indices).
-    HeapField { key: u64, atom: HeapAtom },
+    HeapField {
+        key: u64,
+        atom: HeapAtom,
+    },
     /// **Program-readable `delegation_epoch` (the channels closure
     /// lane):** the post-state slot `new[index]` must equal the touched
     /// cell's own post-turn `delegation_epoch` (the R7
@@ -718,7 +721,9 @@ pub enum SimpleStateConstraint {
     /// (`metatheory/Dregg2/Exec/Program.lean`). Lives in
     /// `SimpleStateConstraint` so it composes under `AnyOf`/`Not`.
     /// APPEND-ONLY (postcard variant indices).
-    DelegationEpochEquals { index: u8 },
+    DelegationEpochEquals {
+        index: u8,
+    },
     /// **Count-≥ / order-statistic atom (in-program M-of-N):** the turn
     /// must EXHIBIT, in its witness blobs (the unique `Cleartext` blob,
     /// postcard `Vec<[u8; 32]>`), a set of at least `threshold` DISTINCT
@@ -1659,9 +1664,7 @@ impl ElemPredAtom {
     /// read — `Value.scalar` over a missing field is `none`, so the
     /// predicate built from it is `false`).
     fn eval(&self, elem: &[Option<FieldElement>]) -> bool {
-        let read = |off: u32| -> Option<FieldElement> {
-            elem.get(off as usize).copied().flatten()
-        };
+        let read = |off: u32| -> Option<FieldElement> { elem.get(off as usize).copied().flatten() };
         match self {
             ElemPredAtom::FieldEquals { offset, value } => read(*offset) == Some(*value),
             ElemPredAtom::FieldGte { offset, value } => {
@@ -2065,7 +2068,9 @@ impl CellProgram {
             CellProgram::None => Ok(()),
             CellProgram::Predicate(constraints) => {
                 for constraint in constraints {
-                    evaluate_constraint_full(constraint, new_state, old_state, ctx, meta, witnesses)?;
+                    evaluate_constraint_full(
+                        constraint, new_state, old_state, ctx, meta, witnesses,
+                    )?;
                 }
                 Ok(())
             }
@@ -3671,8 +3676,8 @@ fn evaluate_constraint_full(
             // anti-AffineLe design: nothing accumulates in state, so no
             // counter slot can fake M). Bind by uniqueness, fail closed on
             // ambiguity — the `unique_blob_of_kinds` discipline.
-            let (_, blob) = unique_blob_of_kinds(witnesses, &[WitnessKindTag::Cleartext])
-                .map_err(|e| match e {
+            let (_, blob) = unique_blob_of_kinds(witnesses, &[WitnessKindTag::Cleartext]).map_err(
+                |e| match e {
                     UniqueBlobError::Missing => ProgramError::MissingContextField {
                         field: "count-ge set-exhibit witness (Cleartext)",
                     },
@@ -3682,7 +3687,8 @@ fn evaluate_constraint_full(
                                  the set exhibit cannot be bound"
                             .to_string(),
                     },
-                })?;
+                },
+            )?;
             let elements: Vec<[u8; 32]> = postcard::from_bytes(blob.bytes).map_err(|_| {
                 ProgramError::WitnessedPredicateRejected {
                     kind_name: "CountGe",
@@ -3697,9 +3703,7 @@ fn evaluate_constraint_full(
             if new_state.fields[idx] != commitment {
                 return violated(
                     constraint,
-                    format!(
-                        "exhibited set does not open the commitment in slot[{idx}] (CountGe)"
-                    ),
+                    format!("exhibited set does not open the commitment in slot[{idx}] (CountGe)"),
                 );
             }
             if (set.len() as u64) < (*threshold as u64) {
@@ -3790,8 +3794,7 @@ fn evaluate_constraint_full(
             // over an absent collection is unevaluable
             // (`collectionAggregate_absent_refuses`).
             let anchor = pred.anchor_offset();
-            let Some(coll) =
-                read_collection(new_state, *collection_id, *stride, *fuel, anchor)
+            let Some(coll) = read_collection(new_state, *collection_id, *stride, *fuel, anchor)
             else {
                 return violated(
                     constraint,
@@ -3868,7 +3871,10 @@ fn evaluate_heap_atom(
             Some(x) if x == *value => Ok(()),
             Some(_) => violated(constraint, format!("heap[{key}] != expected value")),
             // Absent ≠ present-zero on the heap (evalHeap_equals_absent_refuses).
-            None => violated(constraint, format!("heap[{key}] absent post-state (Equals)")),
+            None => violated(
+                constraint,
+                format!("heap[{key}] absent post-state (Equals)"),
+            ),
         },
         HeapAtom::Gte { value } => match new_v {
             Some(ref x) if field_gte(x, value) => Ok(()),
@@ -3886,7 +3892,10 @@ fn evaluate_heap_atom(
                 constraint,
                 format!("heap[{key}] = {} not in allowlist", field_to_u64(x)),
             ),
-            None => violated(constraint, format!("heap[{key}] absent post-state (MemberOf)")),
+            None => violated(
+                constraint,
+                format!("heap[{key}] absent post-state (MemberOf)"),
+            ),
         },
         HeapAtom::InRangeTwoSided { lo, hi } => match new_v {
             Some(ref x) => {
@@ -3894,7 +3903,10 @@ fn evaluate_heap_atom(
                 if v >= *lo && v <= *hi {
                     Ok(())
                 } else {
-                    violated(constraint, format!("heap[{key}] = {v} outside [{lo}, {hi}]"))
+                    violated(
+                        constraint,
+                        format!("heap[{key}] = {v} outside [{lo}, {hi}]"),
+                    )
                 }
             }
             None => violated(
@@ -4129,7 +4141,14 @@ fn evaluate_simple_constraint(
     match s {
         SimpleStateConstraint::Not(inner) => {
             let lifted_inner = lift_simple(inner);
-            match evaluate_constraint_full(&lifted_inner, new_state, old_state, ctx, meta, witnesses) {
+            match evaluate_constraint_full(
+                &lifted_inner,
+                new_state,
+                old_state,
+                ctx,
+                meta,
+                witnesses,
+            ) {
                 // Inner accepted ⇒ Not rejects.
                 Ok(()) => Err(ProgramError::ConstraintViolated {
                     constraint: lifted_inner.clone(),
@@ -4565,11 +4584,16 @@ pub enum StateConstraintView {
     },
     /// Heap-keyed atom lifted over heap key `key` (the rotation's
     /// app-state lane; `key >= STATE_SLOTS` lives in `fields_map`).
-    HeapField { key: u64, atom: HeapAtomView },
+    HeapField {
+        key: u64,
+        atom: HeapAtomView,
+    },
     /// `new[index]` ≡ the cell's own post-turn `delegation_epoch` (the
     /// channels closure lane — a live group cell self-describes that its
     /// epoch slot IS the capability-freshness counter).
-    DelegationEpochEquals { index: u8 },
+    DelegationEpochEquals {
+        index: u8,
+    },
     /// Witness-exhibited distinct-count ≥ `threshold` bound to the set
     /// commitment in `new[set_commitment_slot]` (in-program M-of-N).
     CountGe {
@@ -4578,16 +4602,25 @@ pub enum StateConstraintView {
     },
     /// Turn sender must be one of the bound public keys (each 64-hex) —
     /// the multi-admin actor binding (apps gap 3).
-    SenderMemberOf { members: Vec<String> },
+    SenderMemberOf {
+        members: Vec<String>,
+    },
     /// The cell's per-turn balance change must be `<= max` (signed; apps
     /// gap 4 rate ceiling).
-    BalanceDeltaLte { max: i64 },
+    BalanceDeltaLte {
+        max: i64,
+    },
     /// The cell's per-turn balance change must be `>= min` (signed; apps
     /// gap 4 rate floor).
-    BalanceDeltaGte { min: i64 },
+    BalanceDeltaGte {
+        min: i64,
+    },
     /// `Σ kᵢ·(new[slotᵢ] − old[slotᵢ]) <= c` — multi-field delta gate;
     /// `terms` are `(coefficient, slot)` pairs (apps gap 2).
-    AffineDeltaLe { terms: Vec<(i64, u8)>, c: i64 },
+    AffineDeltaLe {
+        terms: Vec<(i64, u8)>,
+        c: i64,
+    },
     /// `new[local_field]` ≡ the FINALIZED value of `source_field` on peer
     /// `source_cell` at `at_root` (§11.2 cross-cell verified observation —
     /// a market reading an oracle's finalized price; cells are 64-hex).
@@ -4611,17 +4644,31 @@ pub enum StateConstraintView {
     /// Admits IFF some branch admits; each [`BoundBranchView`] surfaces whether
     /// it is the cheap no-proof leg or a witnessed cross-cell read naming its
     /// own proof blob.
-    AnyOfBound { branches: Vec<BoundBranchView> },
+    AnyOfBound {
+        branches: Vec<BoundBranchView>,
+    },
     /// `field_to_u64(new[index]) == sym` — the symbol-lane identity equality.
-    SymEq { index: u8, sym: u64 },
+    SymEq {
+        index: u8,
+        sym: u64,
+    },
     /// `field_to_u64(new[index]) ∈ set` — enum membership over the symbol lane.
-    SymMemberOf { index: u8, set: Vec<u64> },
+    SymMemberOf {
+        index: u8,
+        set: Vec<u64>,
+    },
     /// `new[index] == digest` (full 32-byte field) — digest equality. `digest`
     /// is surfaced hex-encoded like every other [`FieldElement`] view.
-    DigEq { index: u8, digest: String },
+    DigEq {
+        index: u8,
+        digest: String,
+    },
     /// `new[left_index] == new[right_index]` (full 32-byte fields) — the
     /// digest cross-slot equality (owner-match).
-    DigFieldEq { left_index: u8, right_index: u8 },
+    DigFieldEq {
+        left_index: u8,
+        right_index: u8,
+    },
 }
 
 /// [`BoundBranch`] view (nested in [`StateConstraintView::AnyOfBound`]). The
@@ -4631,7 +4678,9 @@ pub enum StateConstraintView {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "branch")]
 pub enum BoundBranchView {
-    Simple { constraint: Box<StateConstraintView> },
+    Simple {
+        constraint: Box<StateConstraintView>,
+    },
     Witnessed {
         local_field: u8,
         source_cell: String,
@@ -4707,11 +4756,24 @@ impl ElemPredAtom {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "kind")]
 pub enum CollPredView {
-    CountSatGe { m: u32, p: ElemPredAtomView },
-    SumOfLe { offset: u32, bound: i64 },
-    SumOfGe { offset: u32, bound: i64 },
-    AllMembers { p: ElemPredAtomView },
-    ExistsMember { p: ElemPredAtomView },
+    CountSatGe {
+        m: u32,
+        p: ElemPredAtomView,
+    },
+    SumOfLe {
+        offset: u32,
+        bound: i64,
+    },
+    SumOfGe {
+        offset: u32,
+        bound: i64,
+    },
+    AllMembers {
+        p: ElemPredAtomView,
+    },
+    ExistsMember {
+        p: ElemPredAtomView,
+    },
     MOfNDistinct {
         m: u32,
         key_offset: u32,
@@ -5892,16 +5954,34 @@ mod tests {
         let empty = CellState::new(0);
         assert!(coll_eval(&council, &empty).is_err());
         // Every aggregate shape fails closed on the absent collection.
-        assert!(coll_eval(&coll_prog(CollPred::CountSatGe { m: 1, p: voted_yes() }), &empty).is_err());
         assert!(
             coll_eval(
-                &coll_prog(CollPred::SumOfLe { offset: VOTE_OFF, bound: 0 }),
+                &coll_prog(CollPred::CountSatGe {
+                    m: 1,
+                    p: voted_yes()
+                }),
+                &empty
+            )
+            .is_err()
+        );
+        assert!(
+            coll_eval(
+                &coll_prog(CollPred::SumOfLe {
+                    offset: VOTE_OFF,
+                    bound: 0
+                }),
                 &empty
             )
             .is_err()
         );
         assert!(coll_eval(&coll_prog(CollPred::AllMembers { p: voted_yes() }), &empty).is_err());
-        assert!(coll_eval(&coll_prog(CollPred::ExistsMember { p: voted_yes() }), &empty).is_err());
+        assert!(
+            coll_eval(
+                &coll_prog(CollPred::ExistsMember { p: voted_yes() }),
+                &empty
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -6046,7 +6126,11 @@ mod tests {
             },
         };
         match council.to_view() {
-            StateConstraintView::CollectionAggregate { collection_id, pred, .. } => {
+            StateConstraintView::CollectionAggregate {
+                collection_id,
+                pred,
+                ..
+            } => {
                 assert_eq!(collection_id, COLL_ID);
                 match pred {
                     CollPredView::MOfNDistinct { m, key_offset, .. } => {
@@ -6301,8 +6385,7 @@ mod tests {
     fn preimage_gate_poseidon2_verifies_real_hash() {
         let preimage = [7u8; 32];
         // The canonical Poseidon2 commitment — IDENTICAL to the circuit's.
-        let commitment =
-            crate::felt_to_bytes32(dregg_circuit::poseidon2::hash_bytes(&preimage));
+        let commitment = crate::felt_to_bytes32(dregg_circuit::poseidon2::hash_bytes(&preimage));
         let p = CellProgram::Predicate(vec![StateConstraint::PreimageGate {
             commitment_index: 0,
             hash_kind: HashKind::Poseidon2,
@@ -6317,7 +6400,8 @@ mod tests {
         );
         // Wrong preimage → rejects.
         assert!(
-            p.evaluate(&s, None, Some(&ctx_preimage([8u8; 32]))).is_err(),
+            p.evaluate(&s, None, Some(&ctx_preimage([8u8; 32])))
+                .is_err(),
             "Poseidon2 PreimageGate must reject a wrong preimage"
         );
         // A Poseidon2 slot must NOT be openable by the old BLAKE3 stand-in
@@ -7340,9 +7424,11 @@ mod tests {
         }]);
         let st = CellState::new(0);
         // A board member is admitted.
-        assert!(board
-            .evaluate(&st, None, Some(&ctx_sender(alice, 0)))
-            .is_ok());
+        assert!(
+            board
+                .evaluate(&st, None, Some(&ctx_sender(alice, 0)))
+                .is_ok()
+        );
         assert!(board.evaluate(&st, None, Some(&ctx_sender(bob, 0))).is_ok());
         // A non-member is rejected (ConstraintViolated, not a pass).
         assert!(matches!(
@@ -7376,17 +7462,23 @@ mod tests {
         let mut flipped = old.clone();
         flipped.fields[0] = field_from_u64(6);
         // Mallory leaving the slot ALONE is admitted (Immutable branch).
-        assert!(bound
-            .evaluate(&old, Some(&old), Some(&ctx_sender(mallory, 0)))
-            .is_ok());
+        assert!(
+            bound
+                .evaluate(&old, Some(&old), Some(&ctx_sender(mallory, 0)))
+                .is_ok()
+        );
         // Mallory FLIPPING the slot is rejected (neither branch passes).
-        assert!(bound
-            .evaluate(&flipped, Some(&old), Some(&ctx_sender(mallory, 0)))
-            .is_err());
+        assert!(
+            bound
+                .evaluate(&flipped, Some(&old), Some(&ctx_sender(mallory, 0)))
+                .is_err()
+        );
         // Alice (a member) flipping the slot is admitted (member branch).
-        assert!(bound
-            .evaluate(&flipped, Some(&old), Some(&ctx_sender(alice, 0)))
-            .is_ok());
+        assert!(
+            bound
+                .evaluate(&flipped, Some(&old), Some(&ctx_sender(alice, 0)))
+                .is_ok()
+        );
     }
 
     /// Apps gap 4 — the per-turn balance RATE gates. `BalanceDeltaLte` /
@@ -8132,8 +8224,14 @@ mod tests {
                 },
                 "SenderMemberOf",
             ),
-            (StateConstraint::BalanceDeltaLte { max: 10 }, "BalanceDeltaLte"),
-            (StateConstraint::BalanceDeltaGte { min: -5 }, "BalanceDeltaGte"),
+            (
+                StateConstraint::BalanceDeltaLte { max: 10 },
+                "BalanceDeltaLte",
+            ),
+            (
+                StateConstraint::BalanceDeltaGte { min: -5 },
+                "BalanceDeltaGte",
+            ),
             (
                 StateConstraint::AffineDeltaLe {
                     terms: vec![(1, 1), (1, 2)],

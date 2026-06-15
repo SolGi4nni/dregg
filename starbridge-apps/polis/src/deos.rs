@@ -52,11 +52,12 @@ use dregg_turn::action::WitnessBlob;
 // package-cycle workaround), so `crate` is the test crate, and the pure polis
 // library is reached by its external name.
 use starbridge_polis::{
+    STATE_SLOT,
     constitution::{self, ConstitutionParams},
     council::{self, AmendmentTerms, CouncilCharter},
     identity::{self, IdentityCharter},
     mandate::{self, WorkerMandate},
-    party_field, STATE_SLOT,
+    party_field,
 };
 
 /// **Build an embedded executor running at block `height`** — the time-gated
@@ -236,7 +237,11 @@ pub fn council_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) ->
 /// cell (the executor re-enforces it on every touching turn), then stage a proposal —
 /// step slot 0 to PROPOSED, write the staged hash + the membership commitment — directly
 /// into the embedded ledger. After seeding the council is in PROPOSED with approvals open.
-pub fn seed_council(executor: &EmbeddedExecutor, charter: &CouncilCharter, proposal_hash: [u8; 32]) {
+pub fn seed_council(
+    executor: &EmbeddedExecutor,
+    charter: &CouncilCharter,
+    proposal_hash: [u8; 32],
+) {
     let cell = executor.cell_id();
     let program =
         council::council_cell_program(charter).expect("the charter validates (caller checked)");
@@ -363,7 +368,11 @@ pub fn amendment_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) 
     );
 
     DeosApp::builder("polis-amendment", cipherclerk.clone(), executor.clone())
-        .discoverable(vec!["polis".into(), "amendment".into(), "governance".into()])
+        .discoverable(vec![
+            "polis".into(),
+            "amendment".into(),
+            "governance".into(),
+        ])
         .persistence(PersistenceSeam::EmbeddedLedger)
         .cell(
             DeosCell::new(amendment, "amendment-proposal")
@@ -391,8 +400,10 @@ pub fn seed_amendment_approved(executor: &EmbeddedExecutor, terms: &AmendmentTer
         if let Some(c) = ledger.get_mut(&cell) {
             c.state
                 .set_field(STATE_SLOT as usize, field_from_u64(council::STATE_APPROVED));
-            c.state
-                .set_field(council::PROPOSAL_HASH_SLOT as usize, terms.new_constitution_hash);
+            c.state.set_field(
+                council::PROPOSAL_HASH_SLOT as usize,
+                terms.new_constitution_hash,
+            );
             c.state
                 .set_field(council::MEMBERS_COMMIT_SLOT as usize, commit);
             // every member approves — the threshold is met (Σ approvals == N >= M).
@@ -518,7 +529,11 @@ pub fn constitution_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecuto
     );
 
     DeosApp::builder("polis-constitution", cipherclerk.clone(), executor.clone())
-        .discoverable(vec!["polis".into(), "constitution".into(), "governance".into()])
+        .discoverable(vec![
+            "polis".into(),
+            "constitution".into(),
+            "governance".into(),
+        ])
         .persistence(PersistenceSeam::EmbeddedLedger)
         .cell(
             DeosCell::new(constitution, "constitution")
@@ -542,10 +557,14 @@ pub fn seed_constitution_active(executor: &EmbeddedExecutor, params: &Constituti
     executor.install_program(cell, program);
     executor.with_ledger_mut(|ledger| {
         if let Some(c) = ledger.get_mut(&cell) {
-            c.state
-                .set_field(STATE_SLOT as usize, field_from_u64(constitution::STATE_ACTIVE));
-            c.state
-                .set_field(constitution::VERSION_SLOT as usize, field_from_u64(params.version));
+            c.state.set_field(
+                STATE_SLOT as usize,
+                field_from_u64(constitution::STATE_ACTIVE),
+            );
+            c.state.set_field(
+                constitution::VERSION_SLOT as usize,
+                field_from_u64(params.version),
+            );
             c.state.set_field(
                 constitution::COUNCIL_THRESHOLD_SLOT as usize,
                 field_from_u64(params.council_threshold),
@@ -688,7 +707,11 @@ pub fn mandate_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) ->
     );
 
     DeosApp::builder("polis-mandate", cipherclerk.clone(), executor.clone())
-        .discoverable(vec!["polis".into(), "mandate".into(), "orchestration".into()])
+        .discoverable(vec![
+            "polis".into(),
+            "mandate".into(),
+            "orchestration".into(),
+        ])
         .persistence(PersistenceSeam::EmbeddedLedger)
         .cell(
             DeosCell::new(worker, "worker-mandate")
@@ -715,7 +738,8 @@ pub fn seed_mandate_active(executor: &EmbeddedExecutor, m: &WorkerMandate) {
                 .set_field(STATE_SLOT as usize, field_from_u64(mandate::STATE_ACTIVE));
             c.state
                 .set_field(mandate::SLICE_SLOT as usize, field_from_u64(m.slice));
-            c.state.set_field(mandate::TOOL_SCOPE_SLOT as usize, m.tool_scope);
+            c.state
+                .set_field(mandate::TOOL_SCOPE_SLOT as usize, m.tool_scope);
             c.state.set_field(
                 mandate::ORCHESTRATOR_SLOT as usize,
                 party_field(m.orchestrator),
@@ -1002,7 +1026,11 @@ pub fn fire_identity_rotate(
 /// the context's affordance registry. Returns the live [`DeosApp`].
 pub fn register_council_deos(ctx: &StarbridgeAppContext, charter: &CouncilCharter) -> DeosApp {
     let app = council_app(ctx.cipherclerk(), ctx.executor());
-    seed_council(ctx.executor(), charter, *blake3::hash(b"polis-council-proposal").as_bytes());
+    seed_council(
+        ctx.executor(),
+        charter,
+        *blake3::hash(b"polis-council-proposal").as_bytes(),
+    );
     app.register(ctx);
     app
 }
@@ -1091,10 +1119,22 @@ mod tests {
 
     #[test]
     fn the_rights_ladder_is_observer_subset_participant_subset_authority() {
-        assert!(is_attenuation(&PARTICIPANT_RIGHTS, &OBSERVER_RIGHTS), "observer ⊑ participant");
-        assert!(is_attenuation(&AUTHORITY_RIGHTS, &PARTICIPANT_RIGHTS), "participant ⊑ authority");
-        assert!(is_attenuation(&AUTHORITY_RIGHTS, &OBSERVER_RIGHTS), "observer ⊑ authority");
-        assert!(!is_attenuation(&PARTICIPANT_RIGHTS, &AUTHORITY_RIGHTS), "authority ⊄ participant");
+        assert!(
+            is_attenuation(&PARTICIPANT_RIGHTS, &OBSERVER_RIGHTS),
+            "observer ⊑ participant"
+        );
+        assert!(
+            is_attenuation(&AUTHORITY_RIGHTS, &PARTICIPANT_RIGHTS),
+            "participant ⊑ authority"
+        );
+        assert!(
+            is_attenuation(&AUTHORITY_RIGHTS, &OBSERVER_RIGHTS),
+            "observer ⊑ authority"
+        );
+        assert!(
+            !is_attenuation(&PARTICIPANT_RIGHTS, &AUTHORITY_RIGHTS),
+            "authority ⊄ participant"
+        );
     }
 
     #[test]
@@ -1104,7 +1144,10 @@ mod tests {
         // council: view (cap-only) + approve/certify (gated).
         let council = council_app(&c, &e);
         assert_eq!(council.name(), "polis-council");
-        assert_eq!(council.cells()[0].surface().all_names(), vec!["view_council".to_string()]);
+        assert_eq!(
+            council.cells()[0].surface().all_names(),
+            vec!["view_council".to_string()]
+        );
         // amendment.
         assert_eq!(amendment_app(&c, &e).name(), "polis-amendment");
         // constitution.

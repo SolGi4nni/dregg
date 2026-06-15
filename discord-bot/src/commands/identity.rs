@@ -316,49 +316,45 @@ async fn handle_verify(ctx: &Context, command: &CommandInteraction, state: &BotS
 
     // Determine the stored status + presentation JSON + the embed shape from the
     // proof outcome. Each branch persists a structured (never-null) record.
-    let (status, presentation_json, embed_title, embed_body): (
-        &str,
-        String,
-        &str,
-        String,
-    ) = match &proof_outcome {
-        Some(Ok(generated)) => (
-            "unlinkable_predicate_proof",
-            generated.presentation_json(&subject_cell),
-            "Selective Disclosure Proof Generated",
-            format!(
-                "Generated a REAL unlinkable predicate proof for <@{target_id}> over cell `{}`.",
-                &subject_cell[..16.min(subject_cell.len())],
+    let (status, presentation_json, embed_title, embed_body): (&str, String, &str, String) =
+        match &proof_outcome {
+            Some(Ok(generated)) => (
+                "unlinkable_predicate_proof",
+                generated.presentation_json(&subject_cell),
+                "Selective Disclosure Proof Generated",
+                format!(
+                    "Generated a REAL unlinkable predicate proof for <@{target_id}> over cell `{}`.",
+                    &subject_cell[..16.min(subject_cell.len())],
+                ),
             ),
-        ),
-        Some(Err(e)) => (
-            "proof_unavailable",
-            serde_json::json!({
-                "type": "predicate_proof_unavailable",
-                "predicate": predicate,
-                "reason": e.to_string(),
-                "cryptographic_proof": "none (predicate false or unparseable)",
-            })
-            .to_string(),
-            "Proof Not Generated",
-            format!("A real proof could not be generated: {e}"),
-        ),
-        None => (
-            "no_local_credential",
-            serde_json::json!({
-                "type": "no_local_credential",
-                "predicate": predicate,
-                "reason": "no held credential matched this predicate for the subject",
-                "cryptographic_proof": "none (no matching credential)",
-            })
-            .to_string(),
-            "No Matching Credential",
-            format!(
-                "<@{target_id}> has no held credential matching this predicate. \
+            Some(Err(e)) => (
+                "proof_unavailable",
+                serde_json::json!({
+                    "type": "predicate_proof_unavailable",
+                    "predicate": predicate,
+                    "reason": e.to_string(),
+                    "cryptographic_proof": "none (predicate false or unparseable)",
+                })
+                .to_string(),
+                "Proof Not Generated",
+                format!("A real proof could not be generated: {e}"),
+            ),
+            None => (
+                "no_local_credential",
+                serde_json::json!({
+                    "type": "no_local_credential",
+                    "predicate": predicate,
+                    "reason": "no held credential matched this predicate for the subject",
+                    "cryptographic_proof": "none (no matching credential)",
+                })
+                .to_string(),
+                "No Matching Credential",
+                format!(
+                    "<@{target_id}> has no held credential matching this predicate. \
                  Issue one with `/credential issue` first."
+                ),
             ),
-        ),
-    };
+        };
 
     let presentation = match state
         .db

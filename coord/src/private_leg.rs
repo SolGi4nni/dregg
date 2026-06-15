@@ -23,8 +23,8 @@ use dregg_turn::action::{Action, Authorization, CommitmentMode, DelegationMode, 
 use dregg_turn::{CallForest, ComputronCosts};
 
 use crate::atomic::{
-    check_chain_bound, AtomicForest, ChainBreak, Coordinator, Decision, MixedAdmitError, MixedJoint,
-    PrivateContribution, PrivateLeg, PrivateLegProof, Vote,
+    AtomicForest, ChainBreak, Coordinator, Decision, MixedAdmitError, MixedJoint,
+    PrivateContribution, PrivateLeg, PrivateLegProof, Vote, check_chain_bound,
 };
 
 // ───────────────────────────── helpers ─────────────────────────────
@@ -172,7 +172,10 @@ fn private_leg_anti_ghost_proof_does_not_bind_jid() {
     // The leg consents to `turn_jid`...
     let leg = PrivateLeg::new(asset("asset-0"), root("pre"), root("post"), turn_jid);
     // ...but the proof binds a leg with a DIFFERENT jid (same asset/commitments, wrong jid).
-    let wrong_jid_leg = PrivateLeg { jid: other_jid, ..leg };
+    let wrong_jid_leg = PrivateLeg {
+        jid: other_jid,
+        ..leg
+    };
     let forged_proof = PrivateLegProof::for_leg(&wrong_jid_leg);
 
     // The per-leg gate REFUSES: the proof's bound statement (over other_jid) ≠ leg's statement.
@@ -208,7 +211,10 @@ fn private_leg_anti_ghost_wrong_jid_consent() {
     // A perfectly self-consistent leg+proof — but for a DIFFERENT turn.
     let foreign_leg = PrivateLeg::new(asset("a"), root("pre"), root("post"), foreign_jid);
     let proof = PrivateLegProof::for_leg(&foreign_leg);
-    assert!(proof.verify(&foreign_leg), "the foreign leg's own proof binds it");
+    assert!(
+        proof.verify(&foreign_leg),
+        "the foreign leg's own proof binds it"
+    );
 
     let (_ledger, public_forest) = public_backbone();
     let mj = MixedJoint::new(
@@ -273,7 +279,11 @@ fn private_leg_anti_ghost_rejecting_stark() {
     assert!(!proof.verify(&leg), "a non-accepting STARK must not verify");
 
     let (_ledger, public_forest) = public_backbone();
-    let mj = MixedJoint::new(jid, public_forest, vec![PrivateContribution::new(leg, proof)]);
+    let mj = MixedJoint::new(
+        jid,
+        public_forest,
+        vec![PrivateContribution::new(leg, proof)],
+    );
     assert_eq!(
         mj.check_private_legs_admissible(),
         Err(MixedAdmitError::PrivateProofRejected { index: 0 }),
@@ -430,7 +440,10 @@ fn mixed_turn_public_commits_and_private_admits() {
     let mj = MixedJoint::new(
         jid,
         public_forest,
-        vec![PrivateContribution::new(leg, PrivateLegProof::for_leg(&leg))],
+        vec![PrivateContribution::new(
+            leg,
+            PrivateLegProof::for_leg(&leg),
+        )],
     );
     assert_eq!(
         mj.check_private_legs_admissible(),

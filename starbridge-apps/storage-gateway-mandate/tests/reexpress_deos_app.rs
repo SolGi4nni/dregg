@@ -77,7 +77,10 @@ fn the_whole_app_is_one_composed_registration() {
     // The GATEWAY cell is the agent's own (so fires execute against the seeded ledger),
     // and is published into the web-of-cells at the reader tier.
     assert_eq!(gateway.cell(), cclerk.cell_id());
-    assert_eq!(gateway.published_authority(), Some(&AuthRequired::Signature));
+    assert_eq!(
+        gateway.published_authority(),
+        Some(&AuthRequired::Signature)
+    );
 
     // ONE registration folds the whole surface into a shared host context.
     let ctx = dregg_app_framework::StarbridgeAppContext::new(cclerk.clone(), executor.clone());
@@ -112,18 +115,29 @@ async fn the_storage_roles_see_their_cap_only_surfaces() {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
-        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
         serde_json::from_slice::<serde_json::Value>(&bytes).unwrap()["visible"].clone()
     }
 
     // A READER (Signature) sees both reads `get` + `list` (the narrow read tier). `put` is
     // GATED (not on the cap-only projection); it lights on the gated surface against live
     // state.
-    assert_eq!(visible(&router, "signature").await, serde_json::json!(["get", "list"]));
+    assert_eq!(
+        visible(&router, "signature").await,
+        serde_json::json!(["get", "list"])
+    );
     // A WRITER (Either) sees the same cap-only set (the reads) — `put` is GATED.
-    assert_eq!(visible(&router, "either").await, serde_json::json!(["get", "list"]));
+    assert_eq!(
+        visible(&router, "either").await,
+        serde_json::json!(["get", "list"])
+    );
     // The MANDATE-HOLDER (root) ⊇ writer ⊇ reader, so it also sees the two cap-only reads.
-    assert_eq!(visible(&router, "root").await, serde_json::json!(["get", "list"]));
+    assert_eq!(
+        visible(&router, "root").await,
+        serde_json::json!(["get", "list"])
+    );
 }
 
 // =============================================================================
@@ -163,7 +177,10 @@ async fn a_reader_can_get_a_real_turn_through_the_mounted_surface() {
         "a reader is cap-authorized to get (clears the cap gate)"
     );
     // `list` is equally a reader affordance.
-    assert_ne!(fire(&router, "list", "signature").await, StatusCode::FORBIDDEN);
+    assert_ne!(
+        fire(&router, "list", "signature").await,
+        StatusCode::FORBIDDEN
+    );
 }
 
 // =============================================================================
@@ -186,7 +203,11 @@ async fn the_gateway_is_published_into_the_web_of_cells() {
     // federation reacquires the gateway across the membrane.
     let uris = app.publish_all(100).await;
     assert_eq!(uris.len(), 1);
-    assert!(uris[0].starts_with("dregg://"), "a real sturdyref: {}", uris[0]);
+    assert!(
+        uris[0].starts_with("dregg://"),
+        "a real sturdyref: {}",
+        uris[0]
+    );
 }
 
 // =============================================================================
@@ -203,14 +224,21 @@ fn a_gateway_snapshot_rehydrates_per_viewer_respecting_the_lattice() {
     // snapshot handed to a downstream auditor) ⇒ liveness REPLAYED-DETERMINISTIC.
     let log = InteractionLog::new().record(Interaction::witnessed_turn(gateway.cell(), [9u8; 32]));
     let snap = gateway.snapshot(log, false);
-    assert_eq!(snap.lineage, AuthRequired::Signature, "snapshot at the published lineage");
+    assert_eq!(
+        snap.lineage,
+        AuthRequired::Signature,
+        "snapshot at the published lineage"
+    );
     assert_eq!(snap.liveness(), Rehydration::ReplayedDeterministic);
     assert!(snap.liveness().is_faithful());
 
     // A READER (Signature) rehydrating reacquires both cap-only reads (the surface at its
     // tier) — the gateway snapshot respects the lattice.
     let reader = gateway.rehydrate(&snap, AuthRequired::Signature).unwrap();
-    assert_eq!(reader.visible_names(), vec!["get".to_string(), "list".to_string()]);
+    assert_eq!(
+        reader.visible_names(),
+        vec!["get".to_string(), "list".to_string()]
+    );
 
     // An INCOMPARABLE authority (a distinct Custom identity) cannot rehydrate at all — the
     // membrane mints NO projection (the no-peek refusal → Amplification).
@@ -248,7 +276,9 @@ async fn the_app_ships_a_web_component_surface_and_a_manifest() {
         .unwrap()
         .to_string();
     assert!(ct.contains("javascript"), "served as a JS module: {ct}");
-    let bytes = axum::body::to_bytes(surface.into_body(), usize::MAX).await.unwrap();
+    let bytes = axum::body::to_bytes(surface.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let js = String::from_utf8(bytes.to_vec()).unwrap();
     assert!(js.contains("customElements.define(\"dregg-affordance-surface\""));
     // The anti-drift affordance map names the cap-only fire endpoints.
@@ -262,14 +292,23 @@ async fn the_app_ships_a_web_component_surface_and_a_manifest() {
         .await
         .unwrap();
     assert_eq!(manifest.status(), StatusCode::OK);
-    let bytes = axum::body::to_bytes(manifest.into_body(), usize::MAX).await.unwrap();
+    let bytes = axum::body::to_bytes(manifest.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let m: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(m["app"], "storage-gateway-mandate");
     assert_eq!(m["discoverable"], serde_json::json!(["storage"]));
-    assert!(m["persistence"].as_str().unwrap().contains("embedded-ledger"));
+    assert!(
+        m["persistence"]
+            .as_str()
+            .unwrap()
+            .contains("embedded-ledger")
+    );
     assert_eq!(m["cells"].as_array().unwrap().len(), 1);
     // The manifest advertises the gated (cap∧state) `put` affordance.
-    let gated = m["cells"][0]["gatedAffordances"].as_array().expect("gated affordances");
+    let gated = m["cells"][0]["gatedAffordances"]
+        .as_array()
+        .expect("gated affordances");
     let names: Vec<&str> = gated.iter().filter_map(|g| g["name"].as_str()).collect();
     assert!(names.contains(&"put"), "put is advertised as gated");
 }

@@ -64,19 +64,27 @@ fn seeding_installs_the_name_program_and_state_on_the_name_cell() {
     // The seeded name cell carries `name_invariants_program()` — the floor's
     // WriteOnce(NAME_HASH) + Monotonic(EXPIRY) + WriteOnce(REVOKED), installed so the
     // executor re-enforces it on every touching turn.
-    let installed = executor.with_ledger_mut(|ledger| {
-        ledger.get(&cclerk.cell_id()).map(|c| c.program.clone())
-    });
+    let installed =
+        executor.with_ledger_mut(|ledger| ledger.get(&cclerk.cell_id()).map(|c| c.program.clone()));
     assert_eq!(
         installed,
         Some(name_invariants_program()),
         "the seeded name cell carries the name program (the seam's enforcement layer)"
     );
     // ...and the seeded state is a registered, active name at the seeded expiry.
-    let state = executor.cell_state(cclerk.cell_id()).expect("seeded cell exists");
-    assert_eq!(state.fields[NAME_HASH_SLOT], field_from_bytes(b"deos.dregg"));
+    let state = executor
+        .cell_state(cclerk.cell_id())
+        .expect("seeded cell exists");
+    assert_eq!(
+        state.fields[NAME_HASH_SLOT],
+        field_from_bytes(b"deos.dregg")
+    );
     assert_eq!(state.fields[EXPIRY_SLOT], field_from_u64(5_000));
-    assert_eq!(state.fields[REVOKED_SLOT], field_from_u64(0), "active (not revoked)");
+    assert_eq!(
+        state.fields[REVOKED_SLOT],
+        field_from_u64(0),
+        "active (not revoked)"
+    );
 }
 
 // =============================================================================
@@ -95,7 +103,10 @@ fn an_owner_renews_through_the_gated_fire_a_real_verified_turn() {
     // RE-ENFORCES the name program: `Monotonic(EXPIRY)` holds (forward). A real verified turn.
     let receipt = fire_renew(&app, &AuthRequired::None, &cclerk, &executor)
         .expect("the owner renews (caps ∧ state ∧ monotonic expiry all pass)");
-    assert_ne!(receipt.turn_hash, [0u8; 32], "a real verified turn through the executor");
+    assert_ne!(
+        receipt.turn_hash, [0u8; 32],
+        "a real verified turn through the executor"
+    );
 
     // The expiry advanced exactly one rent epoch off the live value (the renew committed).
     let state = executor.cell_state(cclerk.cell_id()).unwrap();
@@ -132,7 +143,11 @@ fn a_resolver_cannot_revoke_the_cap_tooth_bites_in_band() {
 
     // The name is still active — nothing committed (anti-ghost).
     let state = executor.cell_state(cclerk.cell_id()).unwrap();
-    assert_eq!(state.fields[REVOKED_SLOT], field_from_u64(0), "still active");
+    assert_eq!(
+        state.fields[REVOKED_SLOT],
+        field_from_u64(0),
+        "still active"
+    );
 }
 
 // =============================================================================
@@ -151,7 +166,11 @@ fn after_revoke_renew_and_set_target_go_dark_the_htmx_tooth() {
     lit_before.sort();
     assert_eq!(
         lit_before,
-        vec!["renew".to_string(), "revoke".to_string(), "set_target".to_string()],
+        vec![
+            "renew".to_string(),
+            "revoke".to_string(),
+            "set_target".to_string()
+        ],
         "active: all three owner ops light"
     );
 
@@ -197,7 +216,10 @@ fn the_executor_re_enforces_a_rewound_expiry_is_refused() {
     }];
     let action = cclerk.make_action(cell, "renew_name", rewind);
     let refused = executor.submit_action(&cclerk, action);
-    assert!(refused.is_err(), "rewinding the expiry must be refused by the executor");
+    assert!(
+        refused.is_err(),
+        "rewinding the expiry must be refused by the executor"
+    );
     let msg = format!("{:?}", refused.unwrap_err()).to_lowercase();
     assert!(
         msg.contains("monotonic") || msg.contains("program") || msg.contains("field[4]"),
@@ -240,10 +262,16 @@ fn the_executor_re_enforces_an_un_revoke_is_refused() {
     }];
     let action = cclerk.make_action(cell, "revoke_name", un_revoke);
     let refused = executor.submit_action(&cclerk, action);
-    assert!(refused.is_err(), "un-revoking a name must be refused by the executor");
+    assert!(
+        refused.is_err(),
+        "un-revoking a name must be refused by the executor"
+    );
     let msg = format!("{:?}", refused.unwrap_err()).to_lowercase();
     assert!(
-        msg.contains("write-once") || msg.contains("already set") || msg.contains("program") || msg.contains("field[5]"),
+        msg.contains("write-once")
+            || msg.contains("already set")
+            || msg.contains("program")
+            || msg.contains("field[5]"),
         "the executor refuses on the WriteOnce(REVOKED) caveat, got: {msg}"
     );
 
@@ -280,10 +308,16 @@ fn the_executor_re_enforces_a_name_rebind_is_refused() {
     }];
     let action = cclerk.make_action(cell, "register_name", rebind);
     let refused = executor.submit_action(&cclerk, action);
-    assert!(refused.is_err(), "rebinding the name slot must be refused by the executor");
+    assert!(
+        refused.is_err(),
+        "rebinding the name slot must be refused by the executor"
+    );
     let msg = format!("{:?}", refused.unwrap_err()).to_lowercase();
     assert!(
-        msg.contains("write-once") || msg.contains("already set") || msg.contains("program") || msg.contains("field[2]"),
+        msg.contains("write-once")
+            || msg.contains("already set")
+            || msg.contains("program")
+            || msg.contains("field[2]"),
         "the executor refuses on the WriteOnce(NAME_HASH) caveat, got: {msg}"
     );
 
@@ -313,7 +347,10 @@ fn an_owner_sets_the_resolve_target_through_the_gated_fire() {
     let target = resolve_target("dregg://cell/aabbccddee");
     let receipt = fire_set_target(&app, &AuthRequired::None, &cclerk, &executor, target)
         .expect("the owner re-points the name (caps ∧ state)");
-    assert_ne!(receipt.turn_hash, [0u8; 32], "a real verified set-target turn");
+    assert_ne!(
+        receipt.turn_hash, [0u8; 32],
+        "a real verified set-target turn"
+    );
 
     let state = executor.cell_state(cclerk.cell_id()).unwrap();
     assert_eq!(
@@ -337,7 +374,11 @@ fn register_deos_mounts_the_seeded_surface_into_the_context() {
     // the SHIPPED one (the census promotion) and the gated fires are live.
     let app = register_deos(&ctx);
     assert_eq!(app.name(), "nameservice");
-    assert_eq!(ctx.affordance_registry().len(), 1, "the deos surface is registered");
+    assert_eq!(
+        ctx.affordance_registry().len(),
+        1,
+        "the deos surface is registered"
+    );
 
     // The seeded name is active, so an owner can renew through the mounted surface
     // immediately (the seam is closed + live).

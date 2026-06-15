@@ -2836,6 +2836,9 @@ dependencies = [
 name = "dregg-turn"
 version = "0.1.0"
 dependencies = [
+ "ark-ff",
+ "ark-serialize",
+ "ark-std",
  "blake3",
  "chacha20poly1305",
  "curve25519-dalek",
@@ -2844,6 +2847,7 @@ dependencies = [
  "dregg-circuit",
  "dregg-commit",
  "dregg-dsl-runtime",
+ "dregg-hints",
  "dregg-lean-ffi",
  "dregg-token",
  "dregg-types",
@@ -7136,6 +7140,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "starbridge-compute-exchange"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "blake3",
+ "dregg-app-framework",
+ "dregg-cell",
+ "dregg-types",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tower",
+]
+
+[[package]]
 name = "starbridge-escrow-market"
 version = "0.1.0"
 dependencies = [
@@ -7152,6 +7171,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "starbridge-gallery"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "blake3",
+ "dregg-app-framework",
+ "dregg-cell",
+ "dregg-types",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tower",
+]
+
+[[package]]
 name = "starbridge-governed-namespace"
 version = "0.1.0"
 dependencies = [
@@ -7160,6 +7194,8 @@ dependencies = [
  "dregg-app-framework",
  "dregg-cell",
  "dregg-dfa",
+ "dregg-federation",
+ "dregg-hints",
  "dregg-turn",
  "dregg-types",
  "serde",

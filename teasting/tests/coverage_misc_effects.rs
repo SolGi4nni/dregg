@@ -26,7 +26,10 @@ use dregg_turn::{
     // (CommittedEscrow, compute_identity_commitment) were dissolved with the
     // committed-escrow verb family; the escrow/bridge section headers below are
     // vestigial and their tests already removed.
-    ActionBuilder, Effect, TurnBuilder, TurnResult,
+    ActionBuilder,
+    Effect,
+    TurnBuilder,
+    TurnResult,
     action::RefusalReason,
     executor::{ComputronCosts, TurnExecutor},
 };

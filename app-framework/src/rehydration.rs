@@ -37,7 +37,7 @@
 //!    turn, else `ReconstructedApproximate`. `DEOS.md`'s "rehydration confinement =
 //!    the liveness-type" — the system cannot lie about which kind of true you get.
 
-use dregg_cell::{is_attenuation, AuthRequired};
+use dregg_cell::{AuthRequired, is_attenuation};
 use dregg_types::CellId;
 
 use crate::affordance::{AffordanceSurface, CellAffordance};
@@ -306,7 +306,10 @@ impl Membrane {
     /// [`RehydrateError::Amplification`] iff they are incomparable (no projection both
     /// admit — the structural refusal). Anti-amplification holds by construction: the
     /// result is an [`is_attenuation`] of BOTH inputs.
-    pub fn project_authority(&self, lineage: &AuthRequired) -> Result<AuthRequired, RehydrateError> {
+    pub fn project_authority(
+        &self,
+        lineage: &AuthRequired,
+    ) -> Result<AuthRequired, RehydrateError> {
         meet_authority(&self.held, lineage).ok_or_else(|| RehydrateError::Amplification {
             held: self.held.clone(),
             lineage: lineage.clone(),
@@ -526,7 +529,9 @@ mod tests {
         // A viewer holding Either, a lineage of Signature ⇒ projection Signature.
         let membrane = Membrane::new(AuthRequired::Either);
         assert_eq!(
-            membrane.project_authority(&AuthRequired::Signature).unwrap(),
+            membrane
+                .project_authority(&AuthRequired::Signature)
+                .unwrap(),
             AuthRequired::Signature
         );
         // A viewer holding Signature, a lineage of Proof ⇒ incomparable ⇒ refused.
@@ -572,7 +577,11 @@ mod tests {
         let root_view = snap.rehydrate_for(&root, &surface).unwrap();
         assert_eq!(
             root_view.visible_names(),
-            vec!["admin".to_string(), "comment".to_string(), "view".to_string()]
+            vec![
+                "admin".to_string(),
+                "comment".to_string(),
+                "view".to_string()
+            ]
         );
 
         // A viewer (Signature) rehydrating the SAME snapshot reacquires only {view} —

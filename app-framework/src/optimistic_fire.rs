@@ -222,7 +222,11 @@ mod tests {
         let executor = EmbeddedExecutor::new(&cclerk, "default");
         let cell = cclerk.cell_id();
         let surface = AffordanceSurface::named(cell, "live")
-            .declare(CellAffordance::new("move", AuthRequired::None, emit_event(cell)))
+            .declare(CellAffordance::new(
+                "move",
+                AuthRequired::None,
+                emit_event(cell),
+            ))
             .declare(CellAffordance::new(
                 "admin",
                 AuthRequired::None,
@@ -243,8 +247,8 @@ mod tests {
         assert!(matches!(refused, Err(FireError::Unauthorized { .. })));
 
         // An authorized predict yields the optimistic fire WITHOUT a verified turn yet.
-        let fire = OptimisticFire::predict(&surface, "move", actor, &ADMIN)
-            .expect("authorized predict");
+        let fire =
+            OptimisticFire::predict(&surface, "move", actor, &ADMIN).expect("authorized predict");
         assert_eq!(fire.affordance(), "move");
         assert_eq!(
             *fire.predicted_effect(),
@@ -258,8 +262,8 @@ mod tests {
         let actor = cclerk.cell_id();
 
         // Predict (interactive tempo) → settle (verified boundary).
-        let fire = OptimisticFire::predict(&surface, "move", actor, &ADMIN)
-            .expect("authorized predict");
+        let fire =
+            OptimisticFire::predict(&surface, "move", actor, &ADMIN).expect("authorized predict");
         let settlement = fire.settle(&surface, &cclerk, &executor);
 
         // The verified turn was accepted; the predicted effect matched; the receipt is
@@ -279,8 +283,11 @@ mod tests {
         let cclerk = AppCipherclerk::new(AgentCipherclerk::new(), [3u8; 32]);
         let executor = EmbeddedExecutor::new(&cclerk, "default");
         let ghost = CellId::from_bytes([200u8; 32]); // not in the ledger
-        let surface = AffordanceSurface::named(ghost, "ghost")
-            .declare(CellAffordance::new("move", AuthRequired::None, emit_event(ghost)));
+        let surface = AffordanceSurface::named(ghost, "ghost").declare(CellAffordance::new(
+            "move",
+            AuthRequired::None,
+            emit_event(ghost),
+        ));
 
         let fire = OptimisticFire::predict(&surface, "move", cclerk.cell_id(), &ADMIN)
             .expect("predict passes the gate");

@@ -12,11 +12,9 @@
 use dregg_app_framework::{AgentCipherclerk, AppCipherclerk, AuthRequired, CellId, Effect};
 use dregg_cell::CapabilityRef;
 use dregg_turn::forest::{CallForest, CallTree};
-use starbridge_swarm_orchestration::{
-    Worker, build_dispatch_action, build_open_board_action,
-};
+use starbridge_swarm_orchestration::{Worker, build_dispatch_action, build_open_board_action};
 
-use dregg_userspace_verify::{analyze, check_no_amplification, check_ring_balance, RingLeg};
+use dregg_userspace_verify::{RingLeg, analyze, check_no_amplification, check_ring_balance};
 
 fn cclerk() -> AppCipherclerk {
     AppCipherclerk::new(AgentCipherclerk::new(), [0x71u8; 32])
@@ -56,7 +54,16 @@ fn the_honest_dispatch_plan_passes_userspace_verify() {
     let plan = forest(vec![
         build_open_board_action(&c, board, "lead-pk", 1000),
         build_dispatch_action(&c, board, Worker::A, worker_a_cell(), 0, 600, 1, "index"),
-        build_dispatch_action(&c, board, Worker::B, worker_b_cell(), 0, 300, 2, "summarize"),
+        build_dispatch_action(
+            &c,
+            board,
+            Worker::B,
+            worker_b_cell(),
+            0,
+            300,
+            2,
+            "summarize",
+        ),
     ]);
 
     let assurance = analyze(&plan, false);
@@ -65,9 +72,18 @@ fn the_honest_dispatch_plan_passes_userspace_verify() {
         "the honest dispatch plan must pass every static check; findings: {:?}",
         assurance.all_findings()
     );
-    assert!(assurance.conservation.is_pass(), "no value moves ⇒ conserves");
-    assert!(assurance.no_amplification.is_pass(), "no grants ⇒ no amplification");
-    assert!(assurance.wellformed.is_pass(), "real signatures, non-empty actions");
+    assert!(
+        assurance.conservation.is_pass(),
+        "no value moves ⇒ conserves"
+    );
+    assert!(
+        assurance.no_amplification.is_pass(),
+        "no grants ⇒ no amplification"
+    );
+    assert!(
+        assurance.wellformed.is_pass(),
+        "real signatures, non-empty actions"
+    );
 }
 
 /// THE PAYOUT RING BALANCES. When the swarm settles worker payouts as a closed
@@ -83,16 +99,40 @@ fn a_balanced_payout_ring_passes_ring_balance() {
     // A closed 3-cycle: board -> a -> b -> board, 100 each. Every participant
     // nets to zero (gives 100, gets 100).
     let legs = vec![
-        RingLeg { from: board, to: worker_a, asset: "computron".into(), amount: 100 },
-        RingLeg { from: worker_a, to: worker_b, asset: "computron".into(), amount: 100 },
-        RingLeg { from: worker_b, to: board, asset: "computron".into(), amount: 100 },
+        RingLeg {
+            from: board,
+            to: worker_a,
+            asset: "computron".into(),
+            amount: 100,
+        },
+        RingLeg {
+            from: worker_a,
+            to: worker_b,
+            asset: "computron".into(),
+            amount: 100,
+        },
+        RingLeg {
+            from: worker_b,
+            to: board,
+            asset: "computron".into(),
+            amount: 100,
+        },
     ];
     let verdict = check_ring_balance(&legs);
-    assert!(verdict.is_pass(), "a closed, conserving ring must pass: {:?}", verdict.findings());
+    assert!(
+        verdict.is_pass(),
+        "a closed, conserving ring must pass: {:?}",
+        verdict.findings()
+    );
 
     // ...and an UN-balanced ring (a worker is a pure sink) is CAUGHT.
     let bad = vec![
-        RingLeg { from: board, to: worker_a, asset: "computron".into(), amount: 100 },
+        RingLeg {
+            from: board,
+            to: worker_a,
+            asset: "computron".into(),
+            amount: 100,
+        },
         // worker_a never gives it back: a pure sink — the ring does not close.
     ];
     let verdict = check_ring_balance(&bad);
@@ -136,7 +176,9 @@ fn an_amplifying_grant_is_caught_by_userspace_verify() {
         permissions: AuthRequired::Signature,
         breadstuff: None,
         expires_at: None,
-        allowed_effects: Some(dregg_cell::facet::EFFECT_SET_FIELD | dregg_cell::facet::EFFECT_TRANSFER),
+        allowed_effects: Some(
+            dregg_cell::facet::EFFECT_SET_FIELD | dregg_cell::facet::EFFECT_TRANSFER,
+        ),
         stored_epoch: None,
     };
 
@@ -146,7 +188,11 @@ fn an_amplifying_grant_is_caught_by_userspace_verify() {
     let board_grant = c.make_action(
         board,
         "delegate",
-        vec![Effect::GrantCapability { from: board, to: worker, cap: narrow.clone() }],
+        vec![Effect::GrantCapability {
+            from: board,
+            to: worker,
+            cap: narrow.clone(),
+        }],
     );
     let worker_regrant = c.make_action(
         worker,
@@ -159,7 +205,10 @@ fn an_amplifying_grant_is_caught_by_userspace_verify() {
     );
     let mut root = CallTree::new(board_grant);
     root.add_child(worker_regrant);
-    let amplifying = CallForest { roots: vec![root], forest_hash: [0u8; 32] };
+    let amplifying = CallForest {
+        roots: vec![root],
+        forest_hash: [0u8; 32],
+    };
 
     let verdict = check_no_amplification(&amplifying);
     assert!(
@@ -168,7 +217,9 @@ fn an_amplifying_grant_is_caught_by_userspace_verify() {
     );
     let findings = verdict.findings();
     assert!(
-        findings.iter().any(|f| f.guarantee.contains("non-amplification")),
+        findings
+            .iter()
+            .any(|f| f.guarantee.contains("non-amplification")),
         "the finding must name guarantee A (non-amplification); got {findings:?}"
     );
     assert!(
@@ -191,10 +242,17 @@ fn an_amplifying_grant_is_caught_by_userspace_verify() {
     let mut root2 = CallTree::new(c.make_action(
         board,
         "delegate",
-        vec![Effect::GrantCapability { from: board, to: worker, cap: narrow }],
+        vec![Effect::GrantCapability {
+            from: board,
+            to: worker,
+            cap: narrow,
+        }],
     ));
     root2.add_child(attenuating_regrant);
-    let attenuating = CallForest { roots: vec![root2], forest_hash: [0u8; 32] };
+    let attenuating = CallForest {
+        roots: vec![root2],
+        forest_hash: [0u8; 32],
+    };
     assert!(
         check_no_amplification(&attenuating).is_pass(),
         "an attenuating (subset) re-grant must PASS — the tooth is non-vacuous"
@@ -211,10 +269,14 @@ fn a_non_conserving_move_is_caught_by_userspace_verify() {
     let board = board_cell();
     // An action that conjures +500 with no offsetting debit (a balance_change
     // delta with no counterpart) — does not conserve.
-    let mut conjure = c.make_action(board, "conjure", vec![Effect::EmitEvent {
-        cell: board,
-        event: dregg_turn::action::Event::new(dregg_turn::action::symbol("conjure"), vec![]),
-    }]);
+    let mut conjure = c.make_action(
+        board,
+        "conjure",
+        vec![Effect::EmitEvent {
+            cell: board,
+            event: dregg_turn::action::Event::new(dregg_turn::action::symbol("conjure"), vec![]),
+        }],
+    );
     conjure.balance_change = Some(500);
     let bad = forest(vec![conjure]);
 

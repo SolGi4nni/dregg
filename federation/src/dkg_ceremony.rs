@@ -304,14 +304,15 @@ impl SignedCeremonyMsg {
                 claimed,
             });
         }
-        let entry = roster.get(&self.signer).ok_or(CeremonyError::BadSignature {
-            signer: self.signer,
-        })?;
-        let vk = VerifyingKey::from_bytes(&entry.auth_pk).map_err(|_| {
-            CeremonyError::BadSignature {
+        let entry = roster
+            .get(&self.signer)
+            .ok_or(CeremonyError::BadSignature {
                 signer: self.signer,
-            }
-        })?;
+            })?;
+        let vk =
+            VerifyingKey::from_bytes(&entry.auth_pk).map_err(|_| CeremonyError::BadSignature {
+                signer: self.signer,
+            })?;
         let transcript = signing_transcript(&self.ceremony, self.signer, &self.msg.to_bytes());
         vk.verify(&transcript, &Signature::from_bytes(&self.signature))
             .map_err(|_| CeremonyError::BadSignature {
@@ -354,8 +355,7 @@ pub struct SealedShare {
 }
 
 fn share_payload(ceremony: &[u8; 32], share: &PrivateShare) -> Vec<u8> {
-    let mut p =
-        Vec::with_capacity(CEREMONY_SHARE_DOMAIN.len() + 32 + 16 + share.share_bytes.len());
+    let mut p = Vec::with_capacity(CEREMONY_SHARE_DOMAIN.len() + 32 + 16 + share.share_bytes.len());
     p.extend_from_slice(CEREMONY_SHARE_DOMAIN.as_bytes());
     p.extend_from_slice(ceremony);
     p.extend_from_slice(&(share.dealer as u64).to_le_bytes());
@@ -371,7 +371,8 @@ pub fn seal_share(
     recipient_seal_pk: &[u8; 32],
 ) -> SealedShare {
     let payload = share_payload(ceremony, share);
-    let (ephemeral_pk, ciphertext) = encrypt_for_destination(&payload, recipient_seal_pk, &[0u8; 32]);
+    let (ephemeral_pk, ciphertext) =
+        encrypt_for_destination(&payload, recipient_seal_pk, &[0u8; 32]);
     SealedShare {
         ceremony: *ceremony,
         dealer: share.dealer,
@@ -757,7 +758,10 @@ impl CeremonyView {
             };
             let answered = self.reveals.get(&(dealer, complainer)).is_some_and(|r| {
                 crate::dkg::compute_qual(
-                    &DkgParams { n: self.params.n, t: self.params.t },
+                    &DkgParams {
+                        n: self.params.n,
+                        t: self.params.t,
+                    },
                     &BTreeMap::from([(dealer, dealing.clone())]),
                     &[Complaint { dealer, complainer }],
                     std::slice::from_ref(r),
@@ -922,12 +926,8 @@ impl CeremonyDriver {
     ) -> Result<(Self, SignedCeremonyMsg, Vec<SealedShare>), CeremonyError> {
         let view = CeremonyView::new(ceremony, params, roster)?;
         let (participant, dealing, shares) = DkgParticipant::new(params, index)?;
-        let signed = SignedCeremonyMsg::sign(
-            ceremony,
-            index,
-            CeremonyMsg::Dealing(dealing),
-            &signing_key,
-        );
+        let signed =
+            SignedCeremonyMsg::sign(ceremony, index, CeremonyMsg::Dealing(dealing), &signing_key);
         let sealed = shares
             .iter()
             .map(|s| {
@@ -1085,8 +1085,7 @@ mod tests {
         for i in 1..=n {
             let (sign_sk, seal_sk) = secrets[i - 1];
             let (d, signed, sealed) =
-                CeremonyDriver::new(ceremony, params, i, sign_sk, seal_sk, roster.clone())
-                    .unwrap();
+                CeremonyDriver::new(ceremony, params, i, sign_sk, seal_sk, roster.clone()).unwrap();
             drivers.push(d);
             dealings.push(signed);
             sealed_all.extend(sealed);
@@ -1128,7 +1127,10 @@ mod tests {
         assert_eq!(q0, (1..=4).collect());
         for d in &drivers {
             assert_eq!(d.view().dealings_root(), r0);
-            assert_eq!(d.view().responses_root(), drivers[0].view().responses_root());
+            assert_eq!(
+                d.view().responses_root(),
+                drivers[0].view().responses_root()
+            );
             assert_eq!(d.view().qual(), q0);
             assert!(d.view().offenses().is_empty());
         }
@@ -1158,7 +1160,12 @@ mod tests {
         let ceremony = [9u8; 32];
         let (roster, secrets) = make_roster(3);
         let (_d1, signed1, _) = CeremonyDriver::new(
-            ceremony, params, 1, secrets[0].0, secrets[0].1, roster.clone(),
+            ceremony,
+            params,
+            1,
+            secrets[0].0,
+            secrets[0].1,
+            roster.clone(),
         )
         .unwrap();
         let mut view = CeremonyView::new(ceremony, params, roster.clone()).unwrap();
@@ -1173,13 +1180,13 @@ mod tests {
 
         // Participant 2 signing a dealing CLAIMING dealer 1 refused.
         let cross = SignedCeremonyMsg::sign(ceremony, 2, signed1.msg.clone(), &secrets[1].0);
-        let cross = SignedCeremonyMsg {
-            signer: 2,
-            ..cross
-        };
+        let cross = SignedCeremonyMsg { signer: 2, ..cross };
         assert!(matches!(
             view.record(&cross),
-            Err(CeremonyError::AuthorMismatch { signer: 2, claimed: 1 })
+            Err(CeremonyError::AuthorMismatch {
+                signer: 2,
+                claimed: 1
+            })
         ));
 
         // The genuine one records.
@@ -1195,11 +1202,21 @@ mod tests {
 
         // Dealer 1 deals TWICE (two fresh participants, same index/keys).
         let (_p, first, _) = CeremonyDriver::new(
-            ceremony, params, 1, secrets[0].0, secrets[0].1, roster.clone(),
+            ceremony,
+            params,
+            1,
+            secrets[0].0,
+            secrets[0].1,
+            roster.clone(),
         )
         .unwrap();
         let (_p2, second, _) = CeremonyDriver::new(
-            ceremony, params, 1, secrets[0].0, secrets[0].1, roster.clone(),
+            ceremony,
+            params,
+            1,
+            secrets[0].0,
+            secrets[0].1,
+            roster.clone(),
         )
         .unwrap();
         assert_eq!(view.record(&first).unwrap(), Recorded::Fresh);
@@ -1233,7 +1250,12 @@ mod tests {
         let other = [14u8; 32];
         let (roster, secrets) = make_roster(3);
         let (_d, _signed, sealed) = CeremonyDriver::new(
-            ceremony, params, 1, secrets[0].0, secrets[0].1, roster.clone(),
+            ceremony,
+            params,
+            1,
+            secrets[0].0,
+            secrets[0].1,
+            roster.clone(),
         )
         .unwrap();
         let to_two = sealed.iter().find(|s| s.recipient == 2).unwrap();

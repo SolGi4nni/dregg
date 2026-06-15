@@ -27,13 +27,13 @@
 // width trait) is the `not(recursion)` floor only; under `recursion` the v1 single-proof
 // verify fails closed and the ROTATED path (`rotated_replay`) is live, so these are absent.
 #[cfg(not(feature = "recursion"))]
-use dregg_circuit::stark::StarkAir;
-#[cfg(not(feature = "recursion"))]
-use dregg_circuit::{field::BabyBear, stark};
+use dregg_circuit::EffectVmAir;
 #[cfg(feature = "recursion")]
 use dregg_circuit::field::BabyBear;
 #[cfg(not(feature = "recursion"))]
-use dregg_circuit::EffectVmAir;
+use dregg_circuit::stark::StarkAir;
+#[cfg(not(feature = "recursion"))]
+use dregg_circuit::{field::BabyBear, stark};
 use serde::{Deserialize, Serialize};
 
 pub mod aggregated_bundle;
@@ -47,17 +47,17 @@ pub mod rotated_replay;
 pub use aggregated_bundle::{
     AggregatedBundleVerdict, verify_aggregated_bundle_json, verify_aggregated_bundle_struct,
 };
-#[cfg(feature = "recursion")]
-pub use rotated_replay::{
-    RotatedChainOutput, RotatedReplayLeg, RotatedReplayVerdict, verify_rotated_leg,
-    verify_rotated_replay_chain,
-};
 pub use bilateral_pair::{
     BilateralBundle, BilateralEntry, BilateralVerdict, fabricate_witnessed_receipt,
     verify_bilateral_bundle, verify_bilateral_bundle_json,
 };
 pub use cross_fed::{
     CommitteeDescriptor, CrossFedVerdict, ValidatorDescriptor, verify_cross_fed_bundle,
+};
+#[cfg(feature = "recursion")]
+pub use rotated_replay::{
+    RotatedChainOutput, RotatedReplayLeg, RotatedReplayVerdict, verify_rotated_leg,
+    verify_rotated_replay_chain,
 };
 
 // ---------------------------------------------------------------------------

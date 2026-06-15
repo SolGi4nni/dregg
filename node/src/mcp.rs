@@ -520,9 +520,11 @@ fn try_generate_effect_vm_proof(
     #[cfg(feature = "recursion")]
     {
         let _ = &trace;
-        Err("standalone v1 effect-vm proof material is not produced under the recursion build \
+        Err(
+            "standalone v1 effect-vm proof material is not produced under the recursion build \
              (finalized turns prove rotated through the node commit pipeline)"
-            .to_string())
+                .to_string(),
+        )
     }
 }
 
@@ -2745,10 +2747,12 @@ async fn tool_grant_capability(params: &Value, state: &NodeState) -> McpToolResu
     // Effect VM proof is a structured rejection, not a committed null-proof turn.
     // THE EPOCH: balances are SIGNED (i64); the VM pre-state is u64. The agent
     // is an ORDINARY cell (non-negative) — checked conversion, never `as`.
-    let pre_state: Option<(u64, u64)> = s
-        .ledger
-        .get(&agent_cell_id)
-        .map(|c| (u64::try_from(c.state.balance()).unwrap_or(0), c.state.nonce()));
+    let pre_state: Option<(u64, u64)> = s.ledger.get(&agent_cell_id).map(|c| {
+        (
+            u64::try_from(c.state.balance()).unwrap_or(0),
+            c.state.nonce(),
+        )
+    });
 
     let vm_effects = vec![dregg_circuit::effect_vm::Effect::GrantCapability {
         // 32-byte widening: the cap-entry identity is a scalar slot index here,
@@ -4265,10 +4269,12 @@ async fn tool_exercise_bearer_cap(params: &Value, state: &NodeState) -> McpToolR
     // bearer operates as on this node (the exerciser of the cap).
     // THE EPOCH: balances are SIGNED (i64); the VM pre-state is u64. The agent
     // is an ORDINARY cell (non-negative) — checked conversion, never `as`.
-    let pre_state: Option<(u64, u64)> = s
-        .ledger
-        .get(&agent_cell_id)
-        .map(|c| (u64::try_from(c.state.balance()).unwrap_or(0), c.state.nonce()));
+    let pre_state: Option<(u64, u64)> = s.ledger.get(&agent_cell_id).map(|c| {
+        (
+            u64::try_from(c.state.balance()).unwrap_or(0),
+            c.state.nonce(),
+        )
+    });
 
     let vm_effects = project_effects_for_mcp(&parsed_effects);
     let proof_material = if vm_effects.is_empty() {
@@ -5973,10 +5979,12 @@ async fn tool_exercise_handoff_cert(params: &Value, state: &NodeState) -> McpToo
     // ── Snapshot agent pre-state for Effect-VM proof ──────────────────────────
     // THE EPOCH: balances are SIGNED (i64); the VM pre-state is u64. The agent
     // is an ORDINARY cell (non-negative) — checked conversion, never `as`.
-    let pre_state: Option<(u64, u64)> = s
-        .ledger
-        .get(&agent_cell_id)
-        .map(|c| (u64::try_from(c.state.balance()).unwrap_or(0), c.state.nonce()));
+    let pre_state: Option<(u64, u64)> = s.ledger.get(&agent_cell_id).map(|c| {
+        (
+            u64::try_from(c.state.balance()).unwrap_or(0),
+            c.state.nonce(),
+        )
+    });
 
     let mut vm_effects: Vec<dregg_circuit::effect_vm::Effect> =
         vec![dregg_circuit::effect_vm::Effect::NoOp];
@@ -6201,12 +6209,11 @@ async fn tool_sign_sovereign_witness(params: &Value, state: &NodeState) -> McpTo
             amount: vm_effect_amount,
             direction: 1,
         }];
-        let (proof_hex, _pi, _trace, _wh) =
-            generate_effect_vm_proof(
-                u64::try_from(cell.state.balance()).unwrap_or(0),
-                cell.state.nonce(),
-                &vm_effects,
-            );
+        let (proof_hex, _pi, _trace, _wh) = generate_effect_vm_proof(
+            u64::try_from(cell.state.balance()).unwrap_or(0),
+            cell.state.nonce(),
+            &vm_effects,
+        );
         proof_hex
     } else {
         String::new()
@@ -6505,14 +6512,18 @@ async fn tool_bilateral_action(params: &Value, state: &NodeState) -> McpToolResu
 
     // THE EPOCH: balances are SIGNED (i64); the VM pre-state tuples are u64.
     // Both sides are ORDINARY cells (non-negative) — checked conversion.
-    let from_pre = s
-        .ledger
-        .get(&from_cell)
-        .map(|c| (u64::try_from(c.state.balance()).unwrap_or(0), c.state.nonce()));
-    let to_pre = s
-        .ledger
-        .get(&to_cell)
-        .map(|c| (u64::try_from(c.state.balance()).unwrap_or(0), c.state.nonce()));
+    let from_pre = s.ledger.get(&from_cell).map(|c| {
+        (
+            u64::try_from(c.state.balance()).unwrap_or(0),
+            c.state.nonce(),
+        )
+    });
+    let to_pre = s.ledger.get(&to_cell).map(|c| {
+        (
+            u64::try_from(c.state.balance()).unwrap_or(0),
+            c.state.nonce(),
+        )
+    });
 
     let (from_vm, to_vm): (
         Vec<dregg_circuit::effect_vm::Effect>,
@@ -6989,7 +7000,10 @@ fn ensure_cell_in_ledger(
     match ledger.get(&cell_id) {
         // THE EPOCH: balances are SIGNED (i64); the VM pre-state tuple is u64.
         // These are ORDINARY cells (non-negative) — checked conversion.
-        Some(c) => (u64::try_from(c.state.balance()).unwrap_or(0), c.state.nonce()),
+        Some(c) => (
+            u64::try_from(c.state.balance()).unwrap_or(0),
+            c.state.nonce(),
+        ),
         None => (0, 0),
     }
 }
@@ -10487,7 +10501,10 @@ mod tests {
         let text = v["result"]["contents"][0]["text"].as_str().unwrap();
         let catalog: Value = serde_json::from_str(text).unwrap();
         let effects = catalog["effects"].as_array().expect("effects array");
-        assert!(!effects.is_empty(), "ontology must advertise at least one effect");
+        assert!(
+            !effects.is_empty(),
+            "ontology must advertise at least one effect"
+        );
         assert_eq!(
             catalog["effect_count"].as_u64(),
             Some(effects.len() as u64),

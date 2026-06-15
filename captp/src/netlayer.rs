@@ -891,10 +891,7 @@ pub mod ocapn_uri {
             packed[..32].copy_from_slice(&uri.cell_id);
             packed[32..].copy_from_slice(&uri.swiss);
             OcapnSturdyRef {
-                location: OcapnLocation::new(
-                    bs58::encode(&uri.federation_id).into_string(),
-                    hint,
-                ),
+                location: OcapnLocation::new(bs58::encode(&uri.federation_id).into_string(), hint),
                 swiss: bs58::encode(&packed).into_string(),
             }
         }
@@ -903,11 +900,12 @@ pub mod ocapn_uri {
         /// [`from_dregg`](Self::from_dregg)).
         pub fn to_dregg(&self) -> Result<DreggUri, OcapnUriError> {
             let federation_id = decode_b58_32(&self.location.designator)?;
-            let packed = bs58::decode(&self.swiss)
-                .into_vec()
-                .map_err(|e| OcapnUriError::Base58 {
-                    message: e.to_string(),
-                })?;
+            let packed =
+                bs58::decode(&self.swiss)
+                    .into_vec()
+                    .map_err(|e| OcapnUriError::Base58 {
+                        message: e.to_string(),
+                    })?;
             if packed.len() != 64 {
                 return Err(OcapnUriError::WrongSwissLength {
                     found: packed.len(),
@@ -949,7 +947,9 @@ pub mod ocapn_uri {
 
     /// Shared parser: returns the location plus the path segments.
     fn parse_parts(s: &str) -> Result<(OcapnLocation, Vec<&str>), OcapnUriError> {
-        let rest = s.strip_prefix("ocapn://").ok_or(OcapnUriError::InvalidScheme)?;
+        let rest = s
+            .strip_prefix("ocapn://")
+            .ok_or(OcapnUriError::InvalidScheme)?;
 
         // Split off ?query.
         let (body, query) = match rest.split_once('?') {
@@ -1247,10 +1247,7 @@ mod tests {
         assert_eq!(loc.hint, "inproc");
         assert_eq!(loc.designator, bs58::encode([0xa1; 32]).into_string());
         // The location string parses back.
-        assert_eq!(
-            OcapnLocation::parse(&loc.to_uri_string()).unwrap(),
-            loc
-        );
+        assert_eq!(OcapnLocation::parse(&loc.to_uri_string()).unwrap(), loc);
     }
 
     // -------------------------------------------------------------------

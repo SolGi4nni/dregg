@@ -11,13 +11,13 @@
 use std::collections::BTreeMap;
 
 use dregg_cell::CapabilityRef;
+use dregg_cell::CellMode;
 use dregg_cell::factory::{
     CapGrant, CapTarget, CapTemplate, FactoryCreationParams, FactoryDescriptor,
 };
 use dregg_cell::permissions::AuthRequired;
 use dregg_cell::program::StateConstraint;
 use dregg_cell::state::FieldElement;
-use dregg_cell::CellMode;
 use dregg_turn::action::{Action, DelegationMode, Effect};
 use dregg_turn::{CallForest, CallTree};
 use dregg_types::{CellId, FederationId};
@@ -27,9 +27,13 @@ use crate::schema::*;
 /// Lowering / resolution errors, each naming the offending row.
 #[derive(Debug, thiserror::Error, PartialEq)]
 pub enum LowerError {
-    #[error("cell `{cell}` references factory `{factory}`, which is not declared in any [[factory]]")]
+    #[error(
+        "cell `{cell}` references factory `{factory}`, which is not declared in any [[factory]]"
+    )]
     UnknownFactory { cell: String, factory: String },
-    #[error("{site} references name `{name}`, which is not a declared cell and is not a 64-hex CellId")]
+    #[error(
+        "{site} references name `{name}`, which is not a declared cell and is not a 64-hex CellId"
+    )]
     UnknownName { site: String, name: String },
     #[error("duplicate factory ref `{0}` (each [[factory]].ref must be unique)")]
     DuplicateFactory(String),
@@ -320,7 +324,10 @@ impl Lowered {
             if cell_ids.contains_key(&c.name) {
                 return Err(LowerError::DuplicateCell(c.name.clone()));
             }
-            cell_ids.insert(c.name.clone(), CellId(derive32("dregg-deploy-cell-v1", &c.name)));
+            cell_ids.insert(
+                c.name.clone(),
+                CellId(derive32("dregg-deploy-cell-v1", &c.name)),
+            );
         }
 
         // The name resolver closes over cells (and accepts raw 64-hex ids).
@@ -342,12 +349,13 @@ impl Lowered {
 
         // (3) births: one CreateCellFromFactory per [[cell]], dependency-first.
         for c in &dep.cells {
-            let factory_vk = *factory_vks.get(&c.factory).ok_or_else(|| {
-                LowerError::UnknownFactory {
-                    cell: c.name.clone(),
-                    factory: c.factory.clone(),
-                }
-            })?;
+            let factory_vk =
+                *factory_vks
+                    .get(&c.factory)
+                    .ok_or_else(|| LowerError::UnknownFactory {
+                        cell: c.name.clone(),
+                        factory: c.factory.clone(),
+                    })?;
             let desc = &factory_descs[&c.factory];
             let cell_id = cell_ids[&c.name];
 
@@ -367,8 +375,11 @@ impl Lowered {
                 Some(s) => Some(parse_hex32(&format!("cell `{}`.program_vk", c.name), s)?),
                 None => desc.child_program_vk,
             };
-            let initial_fields: Vec<(u32, u64)> =
-                c.initial_fields.iter().map(|fr| (fr.slot, fr.value)).collect();
+            let initial_fields: Vec<(u32, u64)> = c
+                .initial_fields
+                .iter()
+                .map(|fr| (fr.slot, fr.value))
+                .collect();
 
             let params = FactoryCreationParams {
                 mode,
@@ -386,7 +397,11 @@ impl Lowered {
                 token_id,
                 params,
             };
-            roots.push(CallTree::new(action_on(cell_id, "deploy.create_cell", vec![effect])));
+            roots.push(CallTree::new(action_on(
+                cell_id,
+                "deploy.create_cell",
+                vec![effect],
+            )));
         }
 
         // (4) funds: one Transfer per [[fund]].
@@ -469,7 +484,8 @@ impl Lowered {
         }
         // Assemble: process in reverse so children are folded into parents.
         // Move trees out, attach child trees to parents, collect roots.
-        let mut trees: Vec<Option<CallTree>> = grant_nodes.into_iter().map(|g| Some(g.tree)).collect();
+        let mut trees: Vec<Option<CallTree>> =
+            grant_nodes.into_iter().map(|g| Some(g.tree)).collect();
         for i in (0..trees.len()).rev() {
             if let Some(p) = parent[i] {
                 let child = trees[i].take().expect("each grant tree taken once");
@@ -544,7 +560,10 @@ fn build_descriptor(f: &Factory) -> Result<FactoryDescriptor, LowerError> {
         )?),
         None => None,
     };
-    let default_mode = parse_mode(&format!("factory `{}`.default_mode", f.r#ref), &f.default_mode)?;
+    let default_mode = parse_mode(
+        &format!("factory `{}`.default_mode", f.r#ref),
+        &f.default_mode,
+    )?;
 
     let mut state_constraints = Vec::new();
     for sc in &f.state_constraints {
@@ -560,7 +579,10 @@ fn build_descriptor(f: &Factory) -> Result<FactoryDescriptor, LowerError> {
             &format!("factory `{}`.allowed_cap_template.permissions", f.r#ref),
             &t.permissions,
         )?;
-        let target = parse_cap_target(&format!("factory `{}`.allowed_cap_template.target", f.r#ref), &t.target)?;
+        let target = parse_cap_target(
+            &format!("factory `{}`.allowed_cap_template.target", f.r#ref),
+            &t.target,
+        )?;
         allowed_cap_templates.push(CapTemplate {
             target,
             max_permissions,

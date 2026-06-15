@@ -115,6 +115,8 @@ fn print_human(a: &dregg_userspace_verify::Assurance) {
              credentials, freshness. Run with --boundary for the full line."
         );
     } else {
-        println!("VERDICT: FAIL — fix the findings above before submitting (you'd pay gas to be rejected).");
+        println!(
+            "VERDICT: FAIL — fix the findings above before submitting (you'd pay gas to be rejected)."
+        );
     }
 }

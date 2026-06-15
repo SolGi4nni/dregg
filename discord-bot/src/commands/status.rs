@@ -219,11 +219,7 @@ pub async fn handle_status(ctx: &Context, command: &CommandInteraction, state: &
     };
 
     let mut embed = embeds::dregg_embed("Node Status")
-        .field(
-            "Health",
-            format!("{health_icon} {health_word}"),
-            true,
-        )
+        .field("Health", format!("{health_icon} {health_word}"), true)
         .field(
             "Consensus",
             if status.consensus_live {
@@ -362,14 +358,18 @@ pub async fn handle_proof(ctx: &Context, command: &CommandInteraction, state: &B
         Ok(proof) => {
             let kib = proof.proof_len as f64 / 1024.0;
             let preview = short(&proof.proof_hex, 32);
-            let explorer_url = format!(
-                "{}/turn/{}",
-                state.devnet.explorer_base_url(),
-                turn_hash
-            );
+            let explorer_url = format!("{}/turn/{}", state.devnet.explorer_base_url(), turn_hash);
             let embed = embeds::success_embed("Proof Artifact")
-                .field("Turn", format!("`{}...`", short(&proof.turn_hash, 16)), false)
-                .field("Proof Size", format!("{} bytes ({kib:.1} KiB)", proof.proof_len), true)
+                .field(
+                    "Turn",
+                    format!("`{}...`", short(&proof.turn_hash, 16)),
+                    false,
+                )
+                .field(
+                    "Proof Size",
+                    format!("{} bytes ({kib:.1} KiB)", proof.proof_len),
+                    true,
+                )
                 .field("Attached", "\u{2705} yes", true)
                 .field("Proof (head)", format!("`{preview}...`"), false)
                 .field("Explorer", format!("[View turn]({explorer_url})"), false);

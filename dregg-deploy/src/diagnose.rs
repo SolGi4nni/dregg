@@ -62,7 +62,10 @@ impl DeployDiagnostics {
     }
     /// The enriched explanation lines, one per finding (for printing).
     pub fn lines(&self) -> Vec<String> {
-        self.findings.iter().map(|e| e.explanation.clone()).collect()
+        self.findings
+            .iter()
+            .map(|e| e.explanation.clone())
+            .collect()
     }
 }
 
@@ -279,8 +282,14 @@ target = "deal"
         assert!(m.contains("operator"), "names grantor: {m}");
         assert!(m.contains("sub"), "names recipient: {m}");
         assert!(m.contains("deal"), "names target: {m}");
-        assert!(m.contains("unrestricted"), "describes the granted (wider) facet: {m}");
-        assert!(m.contains("transfer-only"), "describes the parent (held) facet: {m}");
+        assert!(
+            m.contains("unrestricted"),
+            "describes the granted (wider) facet: {m}"
+        );
+        assert!(
+            m.contains("transfer-only"),
+            "describes the parent (held) facet: {m}"
+        );
         assert!(m.contains("WIDENS"), "calls it a widening: {m}");
     }
 
@@ -291,6 +300,10 @@ target = "deal"
         let lowered = Lowered::from_deployment(&dep).unwrap();
         let assurance = dregg_userspace_verify::analyze(&lowered.forest, false);
         let diag = explain_assurance(&lowered, &assurance);
-        assert!(diag.is_clean(), "a valid deploy has no findings: {:?}", diag.lines());
+        assert!(
+            diag.is_clean(),
+            "a valid deploy has no findings: {:?}",
+            diag.lines()
+        );
     }
 }

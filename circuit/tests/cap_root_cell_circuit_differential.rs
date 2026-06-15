@@ -268,7 +268,10 @@ fn a2_revoke_cell_equals_circuit_tombstone() {
     let t2 = CellId::derive_raw(&[2u8; 32], &[2u8; 32]);
     let t3 = CellId::derive_raw(&[3u8; 32], &[3u8; 32]);
 
-    let s1 = cell.capabilities.grant(t1, AuthRequired::Signature).unwrap();
+    let s1 = cell
+        .capabilities
+        .grant(t1, AuthRequired::Signature)
+        .unwrap();
     let s2 = cell
         .capabilities
         .grant_with_expiry(t2, AuthRequired::Proof, 12345)
@@ -287,7 +290,10 @@ fn a2_revoke_cell_equals_circuit_tombstone() {
         cap_root::CanonicalCapTree::new(vec![leaf1, leaf2, leaf3], cap_root::CAP_TREE_DEPTH);
 
     // CELL revokes the MIDDLE slot (s2). Logical c-list: s2 is now absent.
-    assert!(cell.capabilities.revoke(s2), "revoke must find and remove s2");
+    assert!(
+        cell.capabilities.revoke(s2),
+        "revoke must find and remove s2"
+    );
     assert!(
         cell.capabilities.lookup(s2).is_none(),
         "revoked slot is logically absent from the c-list"
@@ -336,7 +342,10 @@ fn a2_revoke_preserves_survivor_membership() {
     let t1 = CellId::derive_raw(&[1u8; 32], &[1u8; 32]);
     let t2 = CellId::derive_raw(&[2u8; 32], &[2u8; 32]);
     let t3 = CellId::derive_raw(&[3u8; 32], &[3u8; 32]);
-    let s1 = cell.capabilities.grant(t1, AuthRequired::Signature).unwrap();
+    let s1 = cell
+        .capabilities
+        .grant(t1, AuthRequired::Signature)
+        .unwrap();
     let s2 = cell.capabilities.grant(t2, AuthRequired::Proof).unwrap();
     let s3 = cell.capabilities.grant(t3, AuthRequired::Either).unwrap();
     let leaf1 = ref_leaf(s1, &t1, &AuthRequired::Signature, None, None, None);
@@ -351,7 +360,11 @@ fn a2_revoke_preserves_survivor_membership() {
         &[cap_root::slot_hash(s2)],
         cap_root::CAP_TREE_DEPTH,
     );
-    assert_eq!(tomb_tree.root(), cell_root, "tombstone tree root == cell root");
+    assert_eq!(
+        tomb_tree.root(),
+        cell_root,
+        "tombstone tree root == cell root"
+    );
 
     // Each survivor still has an authenticated membership path to the new root.
     for (key, leaf) in [(s1, leaf1), (s3, leaf3)] {

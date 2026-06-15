@@ -61,15 +61,11 @@ impl Drop for NodeProc {
 /// node serves plain JSON on localhost). Returns None on any connection/parse failure.
 fn http_get(port: u16, path: &str) -> Option<String> {
     let mut stream = TcpStream::connect(("127.0.0.1", port)).ok()?;
-    stream
-        .set_read_timeout(Some(Duration::from_secs(3)))
-        .ok()?;
+    stream.set_read_timeout(Some(Duration::from_secs(3))).ok()?;
     stream
         .set_write_timeout(Some(Duration::from_secs(3)))
         .ok()?;
-    let req = format!(
-        "GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
-    );
+    let req = format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n");
     use std::io::Write;
     stream.write_all(req.as_bytes()).ok()?;
     let mut buf = String::new();
@@ -244,10 +240,7 @@ fn three_node_full_mode_runs_the_ordering_rule() {
 
     // ── readiness ──────────────────────────────────────────────────────────────
     for (name, p) in [("node-0", h0), ("node-1", h1), ("node-2", h2)] {
-        assert!(
-            wait_for_port(p, 40),
-            "{name} never came up on :{p}"
-        );
+        assert!(wait_for_port(p, 40), "{name} never came up on :{p}");
     }
 
     // ── [A] full mode + multi-party tau path engaged (anti-vacuity) ────────────

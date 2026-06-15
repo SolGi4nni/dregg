@@ -581,7 +581,15 @@ pub fn build_forged_handoff_action(
     i: usize,
 ) -> Action {
     // Identical shape to an honest handoff — only the (missing) authority differs.
-    build_handoff_action(cipherclerk, item, claimed_from, claimed_to, prev, new_epoch, i)
+    build_handoff_action(
+        cipherclerk,
+        item,
+        claimed_from,
+        claimed_to,
+        prev,
+        new_epoch,
+        i,
+    )
 }
 
 // =============================================================================
@@ -759,17 +767,21 @@ pub fn item_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) -> De
         },
     );
 
-    DeosApp::builder("supply-chain-provenance", cipherclerk.clone(), executor.clone())
-        .discoverable(vec!["supply-chain".into(), "provenance".into()])
-        .cell(
-            DeosCell::new(item, "item")
-                .affordance(view)
-                .gated(accept)
-                .gated(mint)
-                .affordance(grant)
-                .publish(VERIFIER_RIGHTS),
-        )
-        .build()
+    DeosApp::builder(
+        "supply-chain-provenance",
+        cipherclerk.clone(),
+        executor.clone(),
+    )
+    .discoverable(vec!["supply-chain".into(), "provenance".into()])
+    .cell(
+        DeosCell::new(item, "item")
+            .affordance(view)
+            .gated(accept)
+            .gated(mint)
+            .affordance(grant)
+            .publish(VERIFIER_RIGHTS),
+    )
+    .build()
 }
 
 /// The signer's **identity scalar** — the 32-byte public key the executor reads as a
@@ -853,22 +865,37 @@ pub fn accept_custody_effects(
     let event = custody_event(from, &to, new_epoch);
     let link = link_hash(prev, &event);
     vec![
-        Effect::SetField { cell: item, index: CUSTODIAN_SLOT as usize, value: to },
+        Effect::SetField {
+            cell: item,
+            index: CUSTODIAN_SLOT as usize,
+            value: to,
+        },
         Effect::SetField {
             cell: item,
             index: EPOCH_SLOT as usize,
             value: field_from_u64(new_epoch),
         },
-        Effect::SetField { cell: item, index: link_slot(i), value: link },
+        Effect::SetField {
+            cell: item,
+            index: link_slot(i),
+            value: link,
+        },
         Effect::SetField {
             cell: item,
             index: HEAD_SLOT as usize,
             value: field_from_u64((i + 1) as u64),
         },
-        Effect::SetField { cell: item, index: TIP_SLOT as usize, value: link },
+        Effect::SetField {
+            cell: item,
+            index: TIP_SLOT as usize,
+            value: link,
+        },
         Effect::EmitEvent {
             cell: item,
-            event: Event::new(symbol("custody-handoff"), vec![*from, to, field_from_u64(new_epoch), link]),
+            event: Event::new(
+                symbol("custody-handoff"),
+                vec![*from, to, field_from_u64(new_epoch), link],
+            ),
         },
     ]
 }
@@ -949,7 +976,10 @@ pub fn fire_mint(
         .iter()
         .any(|n| n == "mint_item")
     {
-        let ga = cell.gated_surface().get("mint_item").expect("mint_item is gated");
+        let ga = cell
+            .gated_surface()
+            .get("mint_item")
+            .expect("mint_item is gated");
         let state = executor.cell_state(item).ok_or_else(|| {
             FireExecuteError::Gate(FireError::StateConditionUnmet {
                 affordance: "mint_item".into(),
@@ -1079,7 +1109,11 @@ mod tests {
         let CellProgram::Predicate(ks) = item_program() else {
             panic!("item program must be a flat Predicate");
         };
-        assert_eq!(ks, custody_constraints(), "the program IS custody_constraints");
+        assert_eq!(
+            ks,
+            custody_constraints(),
+            "the program IS custody_constraints"
+        );
         // the actor-bound custody register: AnyOf[Immutable, SenderInSlot] on CUSTODIAN.
         assert!(
             ks.iter().any(|k| matches!(
@@ -1091,13 +1125,19 @@ mod tests {
             "the actor-bound handoff caveat AnyOf[Immutable(CUSTODIAN), SenderInSlot(CUSTODIAN)] must be a clause"
         );
         // no replay + append-only chain.
-        assert!(ks.iter().any(|k| matches!(k, StateConstraint::StrictMonotonic { index } if *index == EPOCH_SLOT)));
-        assert!(ks.iter().any(|k| matches!(k, StateConstraint::Monotonic { index } if *index == HEAD_SLOT)));
+        assert!(ks.iter().any(
+            |k| matches!(k, StateConstraint::StrictMonotonic { index } if *index == EPOCH_SLOT)
+        ));
+        assert!(
+            ks.iter()
+                .any(|k| matches!(k, StateConstraint::Monotonic { index } if *index == HEAD_SLOT))
+        );
         // every link slot is write-once (tamper-evidence).
         for i in 0..LINK_CAPACITY {
             let idx = link_slot(i) as u8;
             assert!(
-                ks.iter().any(|k| matches!(k, StateConstraint::WriteOnce { index } if *index == idx)),
+                ks.iter()
+                    .any(|k| matches!(k, StateConstraint::WriteOnce { index } if *index == idx)),
                 "expected WriteOnce on link slot {idx}"
             );
         }
@@ -1105,13 +1145,22 @@ mod tests {
 
     #[test]
     fn child_program_vk_is_canonical_recipe() {
-        assert_eq!(item_child_program_vk(), canonical_program_vk(&item_program()));
-        assert_eq!(item_factory_descriptor().child_program_vk, Some(item_child_program_vk()));
+        assert_eq!(
+            item_child_program_vk(),
+            canonical_program_vk(&item_program())
+        );
+        assert_eq!(
+            item_factory_descriptor().child_program_vk,
+            Some(item_child_program_vk())
+        );
     }
 
     #[test]
     fn descriptor_is_deterministic() {
-        assert_eq!(item_factory_descriptor().hash(), item_factory_descriptor().hash());
+        assert_eq!(
+            item_factory_descriptor().hash(),
+            item_factory_descriptor().hash()
+        );
     }
 
     // ── the provenance hash chain + verifier ─────────────────────────────────
@@ -1123,10 +1172,26 @@ mod tests {
         let b = identity_field("carrier-b");
         let c = identity_field("retailer-c");
         vec![
-            Handoff { from: GENESIS_PREV, to: m, epoch: 1 }, // mint
-            Handoff { from: m, to: a, epoch: 2 },
-            Handoff { from: a, to: b, epoch: 3 },
-            Handoff { from: b, to: c, epoch: 4 },
+            Handoff {
+                from: GENESIS_PREV,
+                to: m,
+                epoch: 1,
+            }, // mint
+            Handoff {
+                from: m,
+                to: a,
+                epoch: 2,
+            },
+            Handoff {
+                from: a,
+                to: b,
+                epoch: 3,
+            },
+            Handoff {
+                from: b,
+                to: c,
+                epoch: 4,
+            },
         ]
     }
 
@@ -1134,8 +1199,14 @@ mod tests {
     fn honest_custody_chain_verifies_and_is_connected() {
         let h = demo_history();
         let committed = custody_chain_digests(&h);
-        assert!(verify_chain(&h, &committed), "the honest custody chain must verify");
-        assert!(custody_chain_is_connected(&h), "the honest custody chain is connected (conserved)");
+        assert!(
+            verify_chain(&h, &committed),
+            "the honest custody chain must verify"
+        );
+        assert!(
+            custody_chain_is_connected(&h),
+            "the honest custody chain is connected (conserved)"
+        );
     }
 
     #[test]
@@ -1155,7 +1226,10 @@ mod tests {
         let h = demo_history();
         let mut committed = custody_chain_digests(&h);
         committed[2] = custody_event(&identity_field("x"), &identity_field("y"), 99);
-        assert!(!verify_chain(&h, &committed), "a tampered middle link must break verification");
+        assert!(
+            !verify_chain(&h, &committed),
+            "a tampered middle link must break verification"
+        );
     }
 
     #[test]
@@ -1163,7 +1237,10 @@ mod tests {
         let h = demo_history();
         let mut committed = custody_chain_digests(&h);
         committed.pop();
-        assert!(!verify_chain(&h, &committed), "a dropped tail handoff must break verification");
+        assert!(
+            !verify_chain(&h, &committed),
+            "a dropped tail handoff must break verification"
+        );
     }
 
     #[test]
@@ -1172,7 +1249,10 @@ mod tests {
         let mut swapped = h.clone();
         swapped.swap(1, 2);
         let honest = custody_chain_digests(&h);
-        assert!(!verify_chain(&swapped, &honest), "reordered handoffs must break verification");
+        assert!(
+            !verify_chain(&swapped, &honest),
+            "reordered handoffs must break verification"
+        );
     }
 
     // ── single-custodianship as conservation (the connected-chain witness) ───
@@ -1186,10 +1266,22 @@ mod tests {
         let rogue = identity_field("rogue");
         let b = identity_field("carrier-b");
         let forked = vec![
-            Handoff { from: GENESIS_PREV, to: m, epoch: 1 },
-            Handoff { from: m, to: a, epoch: 2 },
+            Handoff {
+                from: GENESIS_PREV,
+                to: m,
+                epoch: 1,
+            },
+            Handoff {
+                from: m,
+                to: a,
+                epoch: 2,
+            },
             // rogue hands off as if it held custody — but `a` held it, not rogue.
-            Handoff { from: rogue, to: b, epoch: 3 },
+            Handoff {
+                from: rogue,
+                to: b,
+                epoch: 3,
+            },
         ];
         assert!(
             !custody_chain_is_connected(&forked),
@@ -1204,9 +1296,21 @@ mod tests {
         let a = identity_field("warehouse-a");
         let b = identity_field("carrier-b");
         let replayed = vec![
-            Handoff { from: GENESIS_PREV, to: m, epoch: 1 },
-            Handoff { from: m, to: a, epoch: 2 },
-            Handoff { from: a, to: b, epoch: 2 }, // replayed epoch
+            Handoff {
+                from: GENESIS_PREV,
+                to: m,
+                epoch: 1,
+            },
+            Handoff {
+                from: m,
+                to: a,
+                epoch: 2,
+            },
+            Handoff {
+                from: a,
+                to: b,
+                epoch: 2,
+            }, // replayed epoch
         ];
         assert!(
             !custody_chain_is_connected(&replayed),
@@ -1242,7 +1346,15 @@ mod tests {
     #[test]
     fn handoff_action_advances_register_epoch_and_link() {
         let cclerk = test_cipherclerk();
-        let action = build_handoff_action(&cclerk, test_item(), "manufacturer", "warehouse-a", &GENESIS_PREV, 2, 1);
+        let action = build_handoff_action(
+            &cclerk,
+            test_item(),
+            "manufacturer",
+            "warehouse-a",
+            &GENESIS_PREV,
+            2,
+            1,
+        );
         assert_eq!(action.effects.len(), 6);
         assert!(matches!(
             &action.effects[0],
@@ -1278,7 +1390,10 @@ mod tests {
         // that bites — isolating the constraint under test.)
         let program = item_program();
         let mut old = empty();
-        old.fields[link_slot(0)] = link_hash(&GENESIS_PREV, &custody_event(&GENESIS_PREV, &identity_field("m"), 1));
+        old.fields[link_slot(0)] = link_hash(
+            &GENESIS_PREV,
+            &custody_event(&GENESIS_PREV, &identity_field("m"), 1),
+        );
         old.fields[HEAD_SLOT as usize] = field_from_u64(1);
         old.fields[EPOCH_SLOT as usize] = field_from_u64(1);
         old.set_nonce(1);

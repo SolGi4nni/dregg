@@ -50,8 +50,8 @@
 //!   refused ring).
 
 use dregg_cell::blueprint::{
-    FW_FEE_SLOT, FW_OWNER_SLOT, FW_PRINCIPAL_SLOT, FW_RATCHET_SLOT, FW_STATE_CLOSED,
-    FW_STATE_SLOT, FlashWellError, FlashWellTerms, STATE_OPEN, flash_well_accrued_fees,
+    FW_FEE_SLOT, FW_OWNER_SLOT, FW_PRINCIPAL_SLOT, FW_RATCHET_SLOT, FW_STATE_CLOSED, FW_STATE_SLOT,
+    FlashWellError, FlashWellTerms, STATE_OPEN, flash_well_accrued_fees,
     flash_well_factory_descriptor,
 };
 use dregg_cell::factory::{FactoryCreationParams, FactoryDescriptor};
@@ -214,11 +214,7 @@ pub struct FlashWell {
 /// Discover the operator's c-list slot holding a capability over `well`
 /// (installed by the adopt-time self-grant). The borrower drives every
 /// well-touching effect through this slot.
-fn well_cap_slot(
-    runtime: &AgentRuntime,
-    operator: CellId,
-    well: CellId,
-) -> Result<u32, SdkError> {
+fn well_cap_slot(runtime: &AgentRuntime, operator: CellId, well: CellId) -> Result<u32, SdkError> {
     let ledger = runtime.ledger().lock().unwrap();
     let cell = ledger
         .get(&operator)
@@ -503,7 +499,11 @@ mod tests {
                 ledger.insert_cell(cell).unwrap();
             }
             assert!(
-                ledger.get_mut(&agent).unwrap().state.credit_balance(FUNDING),
+                ledger
+                    .get_mut(&agent)
+                    .unwrap()
+                    .state
+                    .credit_balance(FUNDING),
                 "agent accepts funding"
             );
         }
@@ -732,7 +732,10 @@ mod tests {
         );
 
         // CLOSED is terminal/inert: no more rings, no reopening.
-        assert!(well.borrow(&runtime, 1).is_err(), "closed well refuses borrows");
+        assert!(
+            well.borrow(&runtime, 1).is_err(),
+            "closed well refuses borrows"
+        );
         let reopen = runtime
             .turn()
             .on(well.cell)

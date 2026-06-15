@@ -26,8 +26,14 @@ use crate::report::{CheckResult, run_check};
 
 pub fn run() -> Vec<CheckResult> {
     vec![
-        run_check("factory_descriptors_deploy", check_factory_descriptors_deploy),
-        run_check("subscription_factory_birth", check_subscription_factory_birth),
+        run_check(
+            "factory_descriptors_deploy",
+            check_factory_descriptors_deploy,
+        ),
+        run_check(
+            "subscription_factory_birth",
+            check_subscription_factory_birth,
+        ),
         run_check("identity_factory_birth", check_identity_factory_birth),
     ]
 }
@@ -54,7 +60,10 @@ fn check_factory_descriptors_deploy() -> Result<(), String> {
     let apps: [(&str, Vec<FactoryDescriptor>); 6] = [
         ("nameservice", starbridge_nameservice::factory_descriptors()),
         ("identity", starbridge_identity::factory_descriptors()),
-        ("subscription", starbridge_subscription::factory_descriptors()),
+        (
+            "subscription",
+            starbridge_subscription::factory_descriptors(),
+        ),
         (
             "governed-namespace",
             starbridge_governed_namespace::factory_descriptors(),
@@ -71,7 +80,9 @@ fn check_factory_descriptors_deploy() -> Result<(), String> {
 
     for (app, descriptors) in apps {
         if descriptors.is_empty() {
-            return Err(format!("{app}: factory_descriptors() returned no descriptors"));
+            return Err(format!(
+                "{app}: factory_descriptors() returned no descriptors"
+            ));
         }
         for descriptor in descriptors {
             let declared_vk = descriptor.factory_vk;
@@ -178,12 +189,8 @@ fn check_identity_factory_birth() -> Result<(), String> {
         initial_caps: vec![],
         owner_pubkey: owner,
     };
-    let birth = cclerk.create_from_factory(
-        starbridge_identity::ISSUER_FACTORY_VK,
-        owner,
-        token,
-        params,
-    );
+    let birth =
+        cclerk.create_from_factory(starbridge_identity::ISSUER_FACTORY_VK, owner, token, params);
     exec.submit_turn(&birth)
         .map_err(|e| format!("issuer birth turn rejected: {e}"))?;
 

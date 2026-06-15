@@ -493,7 +493,9 @@ impl SortitionTicket {
         }
         Ok(Self {
             public_key: bytes[..32].try_into().expect("length checked"),
-            proof: bytes[32..32 + PROOF_LEN].try_into().expect("length checked"),
+            proof: bytes[32..32 + PROOF_LEN]
+                .try_into()
+                .expect("length checked"),
             output: bytes[32 + PROOF_LEN..].try_into().expect("length checked"),
         })
     }
@@ -696,8 +698,14 @@ mod tests {
             *b = 0xff;
         }
         assert_eq!(VrfProof::from_bytes(&pi), Err(VrfError::InvalidProof));
-        assert_eq!(VrfProof::from_bytes(&[0u8; 79]), Err(VrfError::InvalidProof));
-        assert_eq!(VrfProof::from_bytes(&[0u8; 81]), Err(VrfError::InvalidProof));
+        assert_eq!(
+            VrfProof::from_bytes(&[0u8; 79]),
+            Err(VrfError::InvalidProof)
+        );
+        assert_eq!(
+            VrfProof::from_bytes(&[0u8; 81]),
+            Err(VrfError::InvalidProof)
+        );
     }
 
     #[test]
@@ -715,8 +723,14 @@ mod tests {
 
     #[test]
     fn threshold_endpoints_and_ratio() {
-        assert_eq!(SortitionThreshold::from_ratio(1, 1), Some(SortitionThreshold::ALWAYS));
-        assert_eq!(SortitionThreshold::from_ratio(0, 7), Some(SortitionThreshold::NEVER));
+        assert_eq!(
+            SortitionThreshold::from_ratio(1, 1),
+            Some(SortitionThreshold::ALWAYS)
+        );
+        assert_eq!(
+            SortitionThreshold::from_ratio(0, 7),
+            Some(SortitionThreshold::NEVER)
+        );
         assert_eq!(SortitionThreshold::from_ratio(2, 1), None);
         assert_eq!(SortitionThreshold::from_ratio(1, 0), None);
         assert!(SortitionThreshold::from_ratio(1, 2) < SortitionThreshold::from_ratio(2, 3));
@@ -760,7 +774,9 @@ mod tests {
         assert!(verify_sortition(&beacon, role, SortitionThreshold::ALWAYS, &lied).is_err());
         // Different beacon / role: refused (no replay across draws).
         assert!(verify_sortition(&[0u8; 32], role, SortitionThreshold::ALWAYS, &ticket).is_err());
-        assert!(verify_sortition(&beacon, b"other-role", SortitionThreshold::ALWAYS, &ticket).is_err());
+        assert!(
+            verify_sortition(&beacon, b"other-role", SortitionThreshold::ALWAYS, &ticket).is_err()
+        );
         // Substituted public key: refused.
         let mut stolen = ticket;
         stolen.public_key = VrfSecretKey::from_seed(&[13u8; 32]).public().to_bytes();
@@ -777,7 +793,10 @@ mod tests {
         let mut selected = 0usize;
         for i in 0u8..64 {
             let sk = VrfSecretKey::from_seed(&[i; 32]);
-            if sortition_select(&beacon, &sk, role, half).unwrap().is_some() {
+            if sortition_select(&beacon, &sk, role, half)
+                .unwrap()
+                .is_some()
+            {
                 selected += 1;
             }
         }

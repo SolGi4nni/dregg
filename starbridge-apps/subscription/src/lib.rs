@@ -1075,12 +1075,17 @@ pub fn seed_feed(executor: &EmbeddedExecutor, capacity: u64, owner: &str) -> u64
     executor.install_program(feed, feed_invariants_program());
     executor.with_ledger_mut(|ledger| {
         if let Some(cell) = ledger.get_mut(&feed) {
-            cell.state.set_field(CAPACITY_SLOT as usize, field_from_u64(capacity));
             cell.state
-                .set_field(OWNER_PK_HASH_SLOT as usize, field_from_bytes(owner.as_bytes()));
+                .set_field(CAPACITY_SLOT as usize, field_from_u64(capacity));
+            cell.state.set_field(
+                OWNER_PK_HASH_SLOT as usize,
+                field_from_bytes(owner.as_bytes()),
+            );
             // one pending delivery: head at 1, tail at 0 (tail < head).
-            cell.state.set_field(SEQ_HEAD_SLOT as usize, field_from_u64(1));
-            cell.state.set_field(SEQ_TAIL_SLOT as usize, field_from_u64(0));
+            cell.state
+                .set_field(SEQ_HEAD_SLOT as usize, field_from_u64(1));
+            cell.state
+                .set_field(SEQ_TAIL_SLOT as usize, field_from_u64(0));
         }
     });
     1
@@ -1193,7 +1198,11 @@ pub fn fire_publish(
     let payload = field_from_bytes(&new_head.to_be_bytes());
     let new_root = fold_message_root(&prev_root, new_head, &payload);
     // Submit the FULL multi-effect delivery turn — the executor re-enforces the invariants.
-    let action = cipherclerk.make_action(feed, "publish", publish_effects(feed, new_head, new_root, payload));
+    let action = cipherclerk.make_action(
+        feed,
+        "publish",
+        publish_effects(feed, new_head, new_root, payload),
+    );
     executor
         .submit_action(cipherclerk, action)
         .map_err(FireExecuteError::Executor)
@@ -1235,7 +1244,8 @@ pub fn fire_consume(
     let tail = field_to_u64(&state.fields[SEQ_TAIL_SLOT as usize]);
     let new_tail = tail + 1;
     let consumed = state.fields[LATEST_PAYLOAD_SLOT as usize];
-    let action = cipherclerk.make_action(feed, "consume", consume_effects(feed, new_tail, consumed));
+    let action =
+        cipherclerk.make_action(feed, "consume", consume_effects(feed, new_tail, consumed));
     executor
         .submit_action(cipherclerk, action)
         .map_err(FireExecuteError::Executor)

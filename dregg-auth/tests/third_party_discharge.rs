@@ -3,9 +3,7 @@
 //! missing / unbound / bound-elsewhere / forged / expired discharges are all
 //! refused, the honest bound discharge admits.
 
-use dregg_auth::credential::{
-    Caveat, Context, Discharge, GatewayKey, Pred, Refusal, RootKey,
-};
+use dregg_auth::credential::{Caveat, Context, Discharge, GatewayKey, Pred, Refusal, RootKey};
 
 fn payments_caveat(gateway: &GatewayKey) -> Caveat {
     Caveat::ThirdParty {
@@ -73,9 +71,9 @@ fn discharge_bound_to_another_credential_is_refused() {
     let root = RootKey::from_seed([25u8; 32]);
     let gateway = GatewayKey::from_seed([26u8; 32]);
 
-    let narrow = root.mint([payments_caveat(&gateway)]).attenuate([
-        Caveat::FirstParty(Pred::NotAfter { at: 10 }),
-    ]);
+    let narrow = root
+        .mint([payments_caveat(&gateway)])
+        .attenuate([Caveat::FirstParty(Pred::NotAfter { at: 10 })]);
     let wide = root.mint([payments_caveat(&gateway)]);
 
     // The gateway discharges the NARROW credential.
@@ -178,5 +176,8 @@ fn discharge_wire_roundtrip() {
     // The discharge explains itself.
     let explained = d.explain();
     assert!(explained.contains("not after clock 600"), "{explained}");
-    assert!(explained.contains("bound to credential tail"), "{explained}");
+    assert!(
+        explained.contains("bound to credential tail"),
+        "{explained}"
+    );
 }

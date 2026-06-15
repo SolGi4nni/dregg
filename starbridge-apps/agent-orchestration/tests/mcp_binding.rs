@@ -10,9 +10,10 @@ use dregg_app_framework::{
 };
 use dregg_cell::FactoryCreationParams;
 use starbridge_agent_orchestration::{
-    Mandate, OrchestrationEngine, OrchestrationError, OrchestrationLog, Tool, WorkerSlot, audit_run,
-    coordinator_child_program_vk, orchestration_factory_descriptor, ORCHESTRATION_FACTORY_VK,
+    Mandate, ORCHESTRATION_FACTORY_VK, OrchestrationEngine, OrchestrationError, OrchestrationLog,
+    Tool, WorkerSlot, audit_run, coordinator_child_program_vk,
     mcp::{McpStepError, McpToolCall, step_from_mcp_call, tool_for_mcp_name},
+    orchestration_factory_descriptor,
 };
 
 fn born_board(cclerk: &AppCipherclerk, exec: &EmbeddedExecutor, seed: &[u8]) -> CellId {
@@ -46,7 +47,11 @@ fn born_board(cclerk: &AppCipherclerk, exec: &EmbeddedExecutor, seed: &[u8]) -> 
 /// Coordinator holds read+search+summarize+write; worker-A is a researcher (read+search+summarize, no
 /// write/spend); worker-B reads only.
 fn mandates() -> (Mandate, Mandate, Mandate) {
-    let c = Mandate::coordinator([Tool::Read, Tool::Search, Tool::Summarize, Tool::Write], 1000, "task");
+    let c = Mandate::coordinator(
+        [Tool::Read, Tool::Search, Tool::Summarize, Tool::Write],
+        1000,
+        "task",
+    );
     let a = c.attenuate([Tool::Read, Tool::Search, Tool::Summarize], 700, "research");
     let b = c.attenuate([Tool::Read], 300, "fact-check");
     (c, a, b)
@@ -60,7 +65,8 @@ fn an_mcp_tool_call_runs_as_a_verified_worker_step() {
     let (coord, a, b) = mandates();
 
     let mut log = OrchestrationLog::new();
-    let mut engine = OrchestrationEngine::new(&cclerk, &exec, board, coord.clone(), a.clone(), b.clone());
+    let mut engine =
+        OrchestrationEngine::new(&cclerk, &exec, board, coord.clone(), a.clone(), b.clone());
     engine.open("lead").expect("opens");
 
     // worker-A's LLM emits an MCP `search` call — it maps to Tool::Search (in A's mandate) and runs
@@ -97,14 +103,27 @@ fn an_mcp_call_for_a_tool_outside_the_mandate_is_refused_in_the_fire_path() {
 
     // worker-B (read only) emits an MCP `write_file` call — Tool::Write is NOT in B's mandate. The
     // call is REFUSED in the fire path (before any effect), and nothing is logged.
-    let call = McpToolCall::new("write_file", serde_json::json!({"path": "/etc/passwd", "data": "x"}));
+    let call = McpToolCall::new(
+        "write_file",
+        serde_json::json!({"path": "/etc/passwd", "data": "x"}),
+    );
     let err = step_from_mcp_call(&mut engine, WorkerSlot::B, &call, &mut log)
         .expect_err("an out-of-mandate MCP call must be refused");
     assert!(
-        matches!(err, McpStepError::Refused(OrchestrationError::OutOfMandate { worker: WorkerSlot::B, tool: Tool::Write, .. })),
+        matches!(
+            err,
+            McpStepError::Refused(OrchestrationError::OutOfMandate {
+                worker: WorkerSlot::B,
+                tool: Tool::Write,
+                ..
+            })
+        ),
         "expected OutOfMandate(write) in the fire path, got {err:?}"
     );
-    assert!(log.is_empty(), "a refused MCP call commits nothing (fail-closed)");
+    assert!(
+        log.is_empty(),
+        "a refused MCP call commits nothing (fail-closed)"
+    );
 }
 
 #[test]
@@ -146,9 +165,18 @@ fn a_run_of_mcp_calls_audits_clean_binding_each_tool() {
         open_receipt = engine.open_receipt().cloned().unwrap();
         // A worker loop drives three real MCP calls; each runs as a verified step.
         for (worker, call) in [
-            (WorkerSlot::A, McpToolCall::new("web_search", serde_json::json!({"q": "x"}))),
-            (WorkerSlot::A, McpToolCall::new("summarize", serde_json::json!({"doc": "y"}))),
-            (WorkerSlot::B, McpToolCall::new("fetch", serde_json::json!({"url": "z"}))),
+            (
+                WorkerSlot::A,
+                McpToolCall::new("web_search", serde_json::json!({"q": "x"})),
+            ),
+            (
+                WorkerSlot::A,
+                McpToolCall::new("summarize", serde_json::json!({"doc": "y"})),
+            ),
+            (
+                WorkerSlot::B,
+                McpToolCall::new("fetch", serde_json::json!({"url": "z"})),
+            ),
         ] {
             step_from_mcp_call(&mut engine, worker, &call, &mut log)
                 .unwrap_or_else(|e| panic!("MCP call should run: {e}"));

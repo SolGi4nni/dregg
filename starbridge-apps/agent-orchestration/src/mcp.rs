@@ -70,7 +70,10 @@ impl McpToolCall {
 
     /// A short hex of the content-address (for logs / the step sub-task label).
     pub fn digest_hex(&self) -> String {
-        self.digest()[..8].iter().map(|b| format!("{b:02x}")).collect()
+        self.digest()[..8]
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect()
     }
 }
 

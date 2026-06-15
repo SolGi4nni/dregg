@@ -27,8 +27,8 @@
 //! web component.
 
 use dregg_app_framework::{
-    AffordanceSpec, AppSpec, AuthRequired, CellSpec, DeosApp, EmbeddedExecutor, Interaction,
-    InteractionLog, AgentCipherclerk, AppCipherclerk, CapTpServer, FederationId,
+    AffordanceSpec, AgentCipherclerk, AppCipherclerk, AppSpec, AuthRequired, CapTpServer, CellSpec,
+    DeosApp, EmbeddedExecutor, FederationId, Interaction, InteractionLog,
 };
 
 /// The app, declaratively — the builder writes THIS; the framework wires everything
@@ -39,7 +39,11 @@ fn feed_spec() -> AppSpec {
             CellSpec::new("feed")
                 .affordance(AffordanceSpec::emit("consume", "signature", "consumed"))
                 .affordance(AffordanceSpec::edit("publish", "either", 1))
-                .affordance(AffordanceSpec::emit("grant_publisher", "none", "publisher-granted"))
+                .affordance(AffordanceSpec::emit(
+                    "grant_publisher",
+                    "none",
+                    "publisher-granted",
+                ))
                 .publish("signature"),
         )
         .discoverable(vec!["pubsub".into()])
@@ -90,7 +94,10 @@ async fn main() {
     let fire = feed
         .predict_fire("publish", actor, &AuthRequired::Either)
         .expect("publisher predicts publish");
-    println!("optimistic publish (interactive tempo): predicted {:?}", fire.predicted_effect());
+    println!(
+        "optimistic publish (interactive tempo): predicted {:?}",
+        fire.predicted_effect()
+    );
     match fire.settle(feed.surface(), &cclerk, &executor) {
         s if s.is_confirmed() => {
             let r = s.receipt().unwrap();
@@ -102,8 +109,14 @@ async fn main() {
         s => println!("  settled: ROLLED BACK ({s:?})\n"),
     }
     let refused = feed.predict_fire("publish", actor, &AuthRequired::Signature);
-    println!("a consumer firing publish: {} (anti-ghost — never executes)\n",
-        if refused.is_err() { "REFUSED" } else { "??unexpectedly allowed" });
+    println!(
+        "a consumer firing publish: {} (anti-ghost — never executes)\n",
+        if refused.is_err() {
+            "REFUSED"
+        } else {
+            "??unexpectedly allowed"
+        }
+    );
 
     // 3) The web-of-cells: the feed cell becomes a dregg:// sturdyref.
     let uris = app.publish_all(100).await;
@@ -122,9 +135,14 @@ async fn main() {
         snap.liveness().badge()
     );
     let consumer_view = feed.rehydrate(&snap, AuthRequired::Signature).unwrap();
-    println!("  a consumer rehydrates {:?} (the snapshot respects the lattice)", consumer_view.visible_names());
+    println!(
+        "  a consumer rehydrates {:?} (the snapshot respects the lattice)",
+        consumer_view.visible_names()
+    );
     match feed.rehydrate(&snap, AuthRequired::Custom { vk_hash: [7u8; 32] }) {
-        Err(_) => println!("  an incomparable-identity viewer: CANNOT peek (membrane mints no projection)\n"),
+        Err(_) => println!(
+            "  an incomparable-identity viewer: CANNOT peek (membrane mints no projection)\n"
+        ),
         Ok(_) => println!("  ??incomparable viewer unexpectedly rehydrated\n"),
     }
 
@@ -133,7 +151,10 @@ async fn main() {
     let first = surface_js.lines().nth(1).unwrap_or("");
     println!("web surface (`/surface.js`, a <dregg-affordance-surface> custom element):");
     println!("  {first}");
-    println!("  …{} bytes of htmx-on-crack web component\n", surface_js.len());
+    println!(
+        "  …{} bytes of htmx-on-crack web component\n",
+        surface_js.len()
+    );
 
     if serve {
         use dregg_app_framework::server::{AppConfig, AppServer};

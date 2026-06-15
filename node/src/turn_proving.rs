@@ -544,7 +544,10 @@ pub fn prove_and_verify_finalized_turn(
     // (non-NoOp) effect — if a lone-NoOp turn ever arrives WITH a rotation witness, the rotated leg
     // would attest a fictional cohort transition, so we make THAT regression loud.
     debug_assert!(
-        rotation.is_none() || vm_effects.iter().any(|e| !matches!(e, dregg_circuit::effect_vm::Effect::NoOp)),
+        rotation.is_none()
+            || vm_effects
+                .iter()
+                .any(|e| !matches!(e, dregg_circuit::effect_vm::Effect::NoOp)),
         "PATH-PRESERVE Shape-3: prove_and_verify_finalized_turn reached with a ROTATION witness \
          for a NoOp-only actor projection — a no-actor-effect turn cannot rotate (the cohort gate \
          must have refused it ⇒ rotation==None). agent={agent:?}, effects={effects:?}, \
@@ -742,7 +745,9 @@ pub fn prove_and_verify_finalized_turn_freshness(
     // and the NoOp sentinel is never the lone element here. The non-vacuous invariant: a `[NoOp]`-only
     // projection (which cannot occur for a spend) must never carry a rotation witness.
     debug_assert!(
-        vm_effects.iter().any(|e| !matches!(e, dregg_circuit::effect_vm::Effect::NoOp)),
+        vm_effects
+            .iter()
+            .any(|e| !matches!(e, dregg_circuit::effect_vm::Effect::NoOp)),
         "PATH-PRESERVE Shape-3: prove_and_verify_finalized_turn_freshness reached with a NoOp-only \
          projection — a spend turn must project a real NoteSpend effect. agent={agent:?}, \
          effects={effects:?}, vm_effects={vm_effects:?}"
@@ -898,7 +903,10 @@ pub fn prove_and_verify_finalized_turn_capability(
     // (non-NoOp) effect — a lone-NoOp turn arriving WITH a rotation witness would mis-attest a
     // cohort transition, so we make THAT regression loud.
     debug_assert!(
-        rotation.is_none() || vm_effects.iter().any(|e| !matches!(e, dregg_circuit::effect_vm::Effect::NoOp)),
+        rotation.is_none()
+            || vm_effects
+                .iter()
+                .any(|e| !matches!(e, dregg_circuit::effect_vm::Effect::NoOp)),
         "PATH-PRESERVE Shape-3: prove_and_verify_finalized_turn_capability reached with a ROTATION \
          witness for a NoOp-only actor projection — a no-actor-effect cap turn cannot rotate. \
          agent={agent:?}, effects={effects:?}, vm_effects={vm_effects:?}"
@@ -907,9 +915,7 @@ pub fn prove_and_verify_finalized_turn_capability(
         Some(rot) => rot
             .before_cell_state()
             .map_err(FullTurnProvingError::Prove)?,
-        None => {
-            CellState::with_capability_root(pre_balance, pre_nonce as u32, pre_capability_root)
-        }
+        None => CellState::with_capability_root(pre_balance, pre_nonce as u32, pre_capability_root),
     };
     let old_commit = initial_vm_state.state_commitment;
     let (_trace, pi) = generate_effect_vm_trace(&initial_vm_state, &vm_effects);
@@ -979,8 +985,7 @@ mod tests {
         // Alice's actor-cell perspective this is an outgoing transfer (balance debits by 100). The
         // agent id IS the cell's id on the live path, so the effect's `from` + the proving `agent`
         // are `before_cell.id()`.
-        let before_cell =
-            dregg_cell::Cell::with_balance([0xA1; 32], [0u8; 32], pre_balance as i64);
+        let before_cell = dregg_cell::Cell::with_balance([0xA1; 32], [0u8; 32], pre_balance as i64);
         let alice = before_cell.id();
         let amount: u64 = 100;
         let mut after_cell = before_cell.clone();
@@ -1008,9 +1013,15 @@ mod tests {
             rotation.is_some(),
             "a cap-less transfer turn must yield a rotation witness"
         );
-        let proven =
-            prove_and_verify_finalized_turn(&alice, pre_balance, pre_nonce, &effects, turn_hash, rotation)
-                .expect("finalized turn should prove and self-verify");
+        let proven = prove_and_verify_finalized_turn(
+            &alice,
+            pre_balance,
+            pre_nonce,
+            &effects,
+            turn_hash,
+            rotation,
+        )
+        .expect("finalized turn should prove and self-verify");
 
         // The proof is real (non-empty wire bytes) and re-verifies.
         assert!(!proven.proof_bytes().is_empty());
@@ -1032,8 +1043,7 @@ mod tests {
         let pre_balance: u64 = 1000;
         let pre_nonce: u64 = 0;
 
-        let before_cell =
-            dregg_cell::Cell::with_balance([0xA1; 32], [0u8; 32], pre_balance as i64);
+        let before_cell = dregg_cell::Cell::with_balance([0xA1; 32], [0u8; 32], pre_balance as i64);
         let alice = before_cell.id();
         let amount: u64 = 100;
         let mut after_cell = before_cell.clone();
@@ -1055,9 +1065,15 @@ mod tests {
             &receipt_hashes,
             &effects,
         );
-        let proven =
-            prove_and_verify_finalized_turn(&alice, pre_balance, pre_nonce, &effects, turn_hash, rotation)
-                .expect("honest turn should prove");
+        let proven = prove_and_verify_finalized_turn(
+            &alice,
+            pre_balance,
+            pre_nonce,
+            &effects,
+            turn_hash,
+            rotation,
+        )
+        .expect("honest turn should prove");
 
         // Forge the post-state commitment: claim a DIFFERENT new state than
         // the one the proof actually attests.
@@ -1110,9 +1126,15 @@ mod tests {
             &receipt_hashes,
             &effects,
         );
-        let proven =
-            prove_and_verify_finalized_turn(&alice, pre_balance, pre_nonce, &effects, turn_hash, rotation)
-                .expect("honest turn should prove");
+        let proven = prove_and_verify_finalized_turn(
+            &alice,
+            pre_balance,
+            pre_nonce,
+            &effects,
+            turn_hash,
+            rotation,
+        )
+        .expect("honest turn should prove");
 
         let forged_old_commit = proven.old_commit + BabyBear::new(1);
         let result =
@@ -1283,8 +1305,9 @@ mod tests {
 
         // Independent re-verification against the carried commitments (a light client's path):
         // OLD_COMMIT is the REAL field-bearing cell's commitment, reproducible from the real cell.
-        dregg_sdk::verify_full_turn(&proven.proof, proven.old_commit, proven.new_commit)
-            .expect("the non-synthetic rotated proof must re-verify against the real-cell commitments");
+        dregg_sdk::verify_full_turn(&proven.proof, proven.old_commit, proven.new_commit).expect(
+            "the non-synthetic rotated proof must re-verify against the real-cell commitments",
+        );
     }
 
     /// ANTI-GHOST (PATH-PRESERVE §4): the non-synthetic rotated turn's commitments are LOAD-BEARING
@@ -1456,8 +1479,9 @@ mod tests {
 
         // Independent re-verification against the carried commitments (a light client's chain-check):
         // first.OLD == old_commit, last.NEW == new_commit, interior adjacency closes.
-        dregg_sdk::verify_full_turn(&proven.proof, proven.old_commit, proven.new_commit)
-            .expect("the chained heterogeneous proof must re-verify against the real-cell commitments");
+        dregg_sdk::verify_full_turn(&proven.proof, proven.old_commit, proven.new_commit).expect(
+            "the chained heterogeneous proof must re-verify against the real-cell commitments",
+        );
     }
 
     /// PATH-PRESERVE §6.2 ANTI-GHOST (the chain): a TAMPERED interior chain leg is REJECTED. We
@@ -1881,7 +1905,9 @@ mod tests {
                 "ANTI-GHOST (rotated no-double-spend): a spend of N whose freshness attests a \
                  DIFFERENT item M was ACCEPTED on the rotated leg — the C4 weld weakened the tooth!"
             ),
-            Err(other) => panic!("expected Verify(NullifierMismatch) on the rotated leg, got {other:?}"),
+            Err(other) => {
+                panic!("expected Verify(NullifierMismatch) on the rotated leg, got {other:?}")
+            }
         }
     }
 
@@ -2604,9 +2630,15 @@ mod tests {
             &receipt_hashes,
             &effects,
         );
-        let proven =
-            prove_and_verify_finalized_turn(&alice, pre_balance, pre_nonce, &effects, [0xD1u8; 32], rotation)
-                .expect("self-sovereign turn proves as before");
+        let proven = prove_and_verify_finalized_turn(
+            &alice,
+            pre_balance,
+            pre_nonce,
+            &effects,
+            [0xD1u8; 32],
+            rotation,
+        )
+        .expect("self-sovereign turn proves as before");
         assert!(
             !proven.proof.components.has_cap_membership,
             "a self-sovereign turn carries NO cap-membership leg"

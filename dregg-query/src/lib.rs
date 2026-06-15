@@ -55,11 +55,11 @@ pub mod query;
 pub mod receipt;
 
 pub use attested::{
-    answer, answer_whole_log, AttestError, AttestedAnswer, AttestedSlice, Coverage,
-    RangeCertificate,
+    AttestError, AttestedAnswer, AttestedSlice, Coverage, RangeCertificate, answer,
+    answer_whole_log,
 };
-pub use classify::{classify, Classification, CoordinationClass};
+pub use classify::{Classification, CoordinationClass, classify};
 pub use fact::{Fact, FactBase, Height, Pred, Value};
-pub use mmr::{verify_range, Blake3Mmr, Mmr, MmrError, MmrHasher, Peak, RangeOpening};
-pub use query::{eval, Atom, Bindings, CmpOp, Filter, Query, QueryError, Term};
-pub use receipt::{extract_facts, EffectSummary, ReceiptRecord};
+pub use mmr::{Blake3Mmr, Mmr, MmrError, MmrHasher, Peak, RangeOpening, verify_range};
+pub use query::{Atom, Bindings, CmpOp, Filter, Query, QueryError, Term, eval};
+pub use receipt::{EffectSummary, ReceiptRecord, extract_facts};

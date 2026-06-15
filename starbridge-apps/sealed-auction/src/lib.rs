@@ -65,6 +65,7 @@
 
 use std::collections::BTreeMap;
 
+use dregg_app_framework::CellId as DeosCellId;
 use dregg_app_framework::{
     AppCipherclerk, AuthRequired, CapTarget, CapTemplate, CellAffordance, CellMode, CellProgram,
     ChildVkStrategy, ConstantsModule, DeosApp, DeosCell, Effect, EmbeddedExecutor, Event,
@@ -72,7 +73,6 @@ use dregg_app_framework::{
     StarbridgeAppContext, StateConstraint, TransitionCase, TransitionGuard, TurnReceipt,
     canonical_program_vk, field_from_bytes, field_from_u64, hex_encode_32, symbol,
 };
-use dregg_app_framework::CellId as DeosCellId;
 
 use dregg_intent::verified_settle::{
     VerifiedLedger, VerifiedLeg, VerifiedSettleError, settle_ring_verified,
@@ -808,7 +808,10 @@ pub fn close_commit_effects(cell: DeosCellId) -> Vec<Effect> {
 pub fn reveal_bid_effects(cell: DeosCellId, bidder: FieldElement, value: u64) -> Vec<Effect> {
     vec![Effect::EmitEvent {
         cell,
-        event: Event::new(symbol("auction-reveal"), vec![bidder, field_from_u64(value)]),
+        event: Event::new(
+            symbol("auction-reveal"),
+            vec![bidder, field_from_u64(value)],
+        ),
     }]
 }
 
@@ -867,16 +870,10 @@ pub fn fire_commit_bid(
 ) -> Result<TurnReceipt, FireExecuteError> {
     let cell = &app.cells()[0];
     let target = cell.cell();
-    cell.fire_gated_through_executor_with(
-        "commit_bid",
-        held,
-        cipherclerk,
-        executor,
-        move |live| {
-            let slot = next_free_commit_slot(live).unwrap_or_else(|| commit_slot(0));
-            commit_bid_effects(target, slot, &seal)
-        },
-    )
+    cell.fire_gated_through_executor_with("commit_bid", held, cipherclerk, executor, move |live| {
+        let slot = next_free_commit_slot(live).unwrap_or_else(|| commit_slot(0));
+        commit_bid_effects(target, slot, &seal)
+    })
 }
 
 /// **Fire `close_commit`** — the deos cap∧state PRECONDITION gate (cap ⊇ None AND the
@@ -912,13 +909,9 @@ pub fn fire_reveal_bid(
 ) -> Result<TurnReceipt, FireExecuteError> {
     let cell = &app.cells()[0];
     let target = cell.cell();
-    cell.fire_gated_through_executor_with(
-        "reveal_bid",
-        held,
-        cipherclerk,
-        executor,
-        move |_live| reveal_bid_effects(target, bidder, value),
-    )
+    cell.fire_gated_through_executor_with("reveal_bid", held, cipherclerk, executor, move |_live| {
+        reveal_bid_effects(target, bidder, value)
+    })
 }
 
 /// **Fire `resolve`** — the deos cap∧state PRECONDITION gate (cap ⊇ None AND the auction is
@@ -936,13 +929,9 @@ pub fn fire_resolve(
 ) -> Result<TurnReceipt, FireExecuteError> {
     let cell = &app.cells()[0];
     let target = cell.cell();
-    cell.fire_gated_through_executor_with(
-        "resolve",
-        held,
-        cipherclerk,
-        executor,
-        move |_live| resolve_effects(target, winner, high_bid),
-    )
+    cell.fire_gated_through_executor_with("resolve", held, cipherclerk, executor, move |_live| {
+        resolve_effects(target, winner, high_bid)
+    })
 }
 
 /// Read a `u64` from the last 8 big-endian bytes of a field element (the inverse of
@@ -1084,7 +1073,10 @@ mod floor_tests {
     fn child_program_vk_is_canonical_recipe() {
         let expected = canonical_program_vk(&auction_cell_program());
         assert_eq!(auction_child_program_vk(), expected);
-        assert_eq!(auction_factory_descriptor().child_program_vk, Some(expected));
+        assert_eq!(
+            auction_factory_descriptor().child_program_vk,
+            Some(expected)
+        );
     }
 
     #[test]
@@ -1119,7 +1111,10 @@ mod floor_tests {
             }),
             _ => false,
         };
-        assert!(phase_strict, "StrictMonotonic(PHASE) missing from the resolve case");
+        assert!(
+            phase_strict,
+            "StrictMonotonic(PHASE) missing from the resolve case"
+        );
     }
 
     #[test]
@@ -1132,8 +1127,9 @@ mod floor_tests {
         old.set_nonce(1);
         let mut overwrite = old.clone();
         overwrite.fields[commit_slot(0)] = Bid::new(7, 70, 9).seal(); // a different, higher bid
-        let err = eval_for(&program, "commit_bid", &overwrite, Some(&old))
-            .expect_err("overwriting a committed sealed bid must be rejected — the anti-front-running tooth");
+        let err = eval_for(&program, "commit_bid", &overwrite, Some(&old)).expect_err(
+            "overwriting a committed sealed bid must be rejected — the anti-front-running tooth",
+        );
         assert!(
             matches!(err, dregg_cell::ProgramError::ConstraintViolated {
                 constraint: StateConstraint::WriteOnce { index }, ..
@@ -1181,7 +1177,8 @@ mod floor_tests {
         assert!(matches!(
             err,
             dregg_cell::ProgramError::ConstraintViolated {
-                constraint: StateConstraint::StrictMonotonic { .. }, ..
+                constraint: StateConstraint::StrictMonotonic { .. },
+                ..
             }
         ));
     }
@@ -1191,7 +1188,10 @@ mod floor_tests {
         let program = auction_cell_program();
         let err = eval_for(&program, "rig_auction", &committing(), Some(&empty()))
             .expect_err("an unknown method must be default-denied");
-        assert!(matches!(err, dregg_cell::ProgramError::NoTransitionCaseMatched));
+        assert!(matches!(
+            err,
+            dregg_cell::ProgramError::NoTransitionCaseMatched
+        ));
     }
 
     #[test]

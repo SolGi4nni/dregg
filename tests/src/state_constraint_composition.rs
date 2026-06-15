@@ -23,11 +23,11 @@ use dregg_cell::program::{
     SimpleStateConstraint, TransitionMeta, WitnessBlobView, WitnessBundle, WitnessKindTag,
 };
 use dregg_cell::{
-    field_from_u64, AuthRequired, Cell, CellId, CellProgram, CellState, EvalContext, Ledger,
-    Permissions, ProgramError, StateConstraint,
+    AuthRequired, Cell, CellId, CellProgram, CellState, EvalContext, Ledger, Permissions,
+    ProgramError, StateConstraint, field_from_u64,
 };
 use dregg_turn::action::{
-    symbol, Action, Authorization, CommitmentMode, DelegationMode, WitnessBlob,
+    Action, Authorization, CommitmentMode, DelegationMode, WitnessBlob, symbol,
 };
 use dregg_turn::{CallForest, ComputronCosts, Effect, Turn, TurnBuilder, TurnExecutor, TurnResult};
 
@@ -341,21 +341,25 @@ fn any_of_inside_predicate_vec_works_as_or_inside_and() {
         },
     ]);
     // Holds: slot0=1, slot1=2.
-    assert!(p
-        .evaluate(&state_with(&[(0, 1), (1, 2)]), None, None)
-        .is_ok());
+    assert!(
+        p.evaluate(&state_with(&[(0, 1), (1, 2)]), None, None)
+            .is_ok()
+    );
     // Holds: slot0=1, slot1=3.
-    assert!(p
-        .evaluate(&state_with(&[(0, 1), (1, 3)]), None, None)
-        .is_ok());
+    assert!(
+        p.evaluate(&state_with(&[(0, 1), (1, 3)]), None, None)
+            .is_ok()
+    );
     // Fails outer: slot0=2.
-    assert!(p
-        .evaluate(&state_with(&[(0, 2), (1, 2)]), None, None)
-        .is_err());
+    assert!(
+        p.evaluate(&state_with(&[(0, 2), (1, 2)]), None, None)
+            .is_err()
+    );
     // Fails AnyOf branch: slot0=1, slot1=4.
-    assert!(p
-        .evaluate(&state_with(&[(0, 1), (1, 4)]), None, None)
-        .is_err());
+    assert!(
+        p.evaluate(&state_with(&[(0, 1), (1, 4)]), None, None)
+            .is_err()
+    );
 }
 
 // ===========================================================================

@@ -123,13 +123,13 @@ pub use lifecycle::{
 };
 pub use note::{Note, NoteBatcher, NoteCommitment, NoteError, Nullifier, PositionedNote};
 #[cfg(feature = "crypto")]
-pub use note_encryption::{NoteDecryptError, NotePlaintext, decrypt_note, encrypt_note_to};
-#[cfg(feature = "crypto")]
 pub use note_bridge::{
     BridgeDestination, BridgeError, BridgeReceipt, BridgeState, BridgedNullifierSet, PendingBridge,
     PendingBridgeSet, PortableNoteProof, cancel_bridge, create_portable_note, finalize_bridge,
     initiate_bridge, verify_bridge_receipt, verify_portable_note,
 };
+#[cfg(feature = "crypto")]
+pub use note_encryption::{NoteDecryptError, NotePlaintext, decrypt_note, encrypt_note_to};
 pub use nullifier_set::{MerkleMembershipProof, NonMembershipProof, NullifierSet};
 #[cfg(feature = "crypto")]
 pub use oblivious_transfer::{

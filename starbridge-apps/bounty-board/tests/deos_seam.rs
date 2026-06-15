@@ -34,7 +34,7 @@ use dregg_app_framework::{
 };
 
 use starbridge_bounty_board::{
-    CLAIMANT_HASH_SLOT, STATE_SLOT, STATE_CLAIMED, STATE_OPEN, bounty_app, bounty_cell_program,
+    CLAIMANT_HASH_SLOT, STATE_CLAIMED, STATE_OPEN, STATE_SLOT, bounty_app, bounty_cell_program,
     claim_effects, claimant_hash, fire_claim, fire_payout, fire_submit, register_deos, seed_bounty,
     state_field,
 };
@@ -57,16 +57,17 @@ fn seeding_installs_the_lifecycle_program_and_posts_the_bounty() {
     // The seeded bounty cell carries `bounty_cell_program()` — the FULL lifecycle policy
     // (WriteOnce title/reward/claimant/submission + StrictMonotonic(STATE)), installed so
     // the executor re-enforces it on every touching turn.
-    let installed = executor.with_ledger_mut(|ledger| {
-        ledger.get(&cclerk.cell_id()).map(|c| c.program.clone())
-    });
+    let installed =
+        executor.with_ledger_mut(|ledger| ledger.get(&cclerk.cell_id()).map(|c| c.program.clone()));
     assert_eq!(
         installed,
         Some(bounty_cell_program()),
         "the seeded bounty cell carries the full lifecycle program (the seam's enforcement layer)"
     );
     // ...and the seeded state is POSTED/OPEN.
-    let state = executor.cell_state(cclerk.cell_id()).expect("seeded cell exists");
+    let state = executor
+        .cell_state(cclerk.cell_id())
+        .expect("seeded cell exists");
     assert_eq!(state.fields[STATE_SLOT], state_field(STATE_OPEN));
 }
 
@@ -83,7 +84,10 @@ fn a_worker_claims_a_posted_bounty_then_the_button_goes_dark() {
     // Before the claim, a WORKER (Either) sees `claim` LIT (posted precondition STATE==OPEN
     // holds) and `payout` DARK (it needs STATE==SUBMITTED). The htmx tooth, off live state.
     let lit_before = app.cells()[0].gated_fireable_names(&AuthRequired::Either, &executor);
-    assert!(lit_before.contains(&"claim".to_string()), "posted: claim lights");
+    assert!(
+        lit_before.contains(&"claim".to_string()),
+        "posted: claim lights"
+    );
     assert!(
         !lit_before.contains(&"payout".to_string()),
         "posted: payout is DARK (needs SUBMITTED)"
@@ -98,8 +102,16 @@ fn a_worker_claims_a_posted_bounty_then_the_button_goes_dark() {
 
     // The lifecycle advanced (the claim committed): STATE is CLAIMED, claimant bound.
     let state = executor.cell_state(cclerk.cell_id()).unwrap();
-    assert_eq!(state.fields[STATE_SLOT], state_field(STATE_CLAIMED), "claim advanced STATE 1 -> 2");
-    assert_eq!(state.fields[CLAIMANT_HASH_SLOT], claimant_hash("bob"), "the claimant is bound");
+    assert_eq!(
+        state.fields[STATE_SLOT],
+        state_field(STATE_CLAIMED),
+        "claim advanced STATE 1 -> 2"
+    );
+    assert_eq!(
+        state.fields[CLAIMANT_HASH_SLOT],
+        claimant_hash("bob"),
+        "the claimant is bound"
+    );
 
     // After the claim, `claim` goes DARK (posted precondition now fails) and `submit` LIGHTS
     // (claimed precondition now holds). Same viewer, same caps, DIFFERENT button-set — because
@@ -109,7 +121,10 @@ fn a_worker_claims_a_posted_bounty_then_the_button_goes_dark() {
         !lit_after.contains(&"claim".to_string()),
         "claimed: claim darkens (the htmx tooth)"
     );
-    assert!(lit_after.contains(&"submit".to_string()), "claimed: submit lights (the htmx tooth)");
+    assert!(
+        lit_after.contains(&"submit".to_string()),
+        "claimed: submit lights (the htmx tooth)"
+    );
 }
 
 // =============================================================================
@@ -162,7 +177,10 @@ fn the_executor_re_enforces_a_no_advance_state_is_refused() {
     }];
     let action = cclerk.make_action(bounty, "claim", no_advance);
     let refused = executor.submit_action(&cclerk, action);
-    assert!(refused.is_err(), "a no-advance STATE must be refused by the executor (strict-mono)");
+    assert!(
+        refused.is_err(),
+        "a no-advance STATE must be refused by the executor (strict-mono)"
+    );
     let msg = format!("{:?}", refused.unwrap_err()).to_lowercase();
     assert!(
         msg.contains("strictmonotonic")
@@ -239,12 +257,16 @@ fn the_full_four_state_lifecycle_runs_through_the_gated_fires() {
     // claim (worker) -> submit (worker) -> payout (poster). Each gated fire passes its
     // cap∧state precondition and the executor re-enforces StrictMonotonic(STATE) on the
     // advance. The canonical 4-state ratchet, all green.
-    fire_claim(&app, &AuthRequired::Either, "bob", &cclerk, &executor)
-        .expect("claim commits");
-    fire_submit(&app, &AuthRequired::Either, "dregg://cell/work-artifact", &cclerk, &executor)
-        .expect("submit commits");
-    fire_payout(&app, &AuthRequired::None, &cclerk, &executor)
-        .expect("payout commits");
+    fire_claim(&app, &AuthRequired::Either, "bob", &cclerk, &executor).expect("claim commits");
+    fire_submit(
+        &app,
+        &AuthRequired::Either,
+        "dregg://cell/work-artifact",
+        &cclerk,
+        &executor,
+    )
+    .expect("submit commits");
+    fire_payout(&app, &AuthRequired::None, &cclerk, &executor).expect("payout commits");
 
     // The bounty reached PAID (terminal).
     let state = executor.cell_state(cclerk.cell_id()).unwrap();
@@ -283,7 +305,11 @@ fn register_deos_mounts_the_seeded_surface_into_the_context() {
     // SHIPPED one (the census promotion) and the gated fires are live.
     let app = register_deos(&ctx);
     assert_eq!(app.name(), "bounty-board");
-    assert_eq!(ctx.affordance_registry().len(), 1, "the deos surface is registered");
+    assert_eq!(
+        ctx.affordance_registry().len(),
+        1,
+        "the deos surface is registered"
+    );
 
     // The seeded bounty is POSTED, so a worker can claim through the mounted surface
     // immediately (the seam is closed + live).
@@ -293,5 +319,9 @@ fn register_deos_mounts_the_seeded_surface_into_the_context() {
 
     // The claimant moved (a real binding on the seeded cell).
     let state = executor.cell_state(cclerk.cell_id()).unwrap();
-    assert_eq!(state.fields[CLAIMANT_HASH_SLOT], claimant_hash("bob"), "the claim bound the claimant");
+    assert_eq!(
+        state.fields[CLAIMANT_HASH_SLOT],
+        claimant_hash("bob"),
+        "the claim bound the claimant"
+    );
 }

@@ -682,7 +682,11 @@ pub fn seed_poll(executor: &EmbeddedExecutor, question: &str) -> FieldElement {
 /// reaching it so the operator can author the `cast_vote` turn. The genesis state binds
 /// `POLL_REF` (`WriteOnce`, the poll this ballot votes in) and leaves `VOTE` at 0 (unset).
 /// Mirrors the factory-birth companion-cell pattern. Returns the ballot cell id.
-pub fn seed_ballot(executor: &EmbeddedExecutor, cipherclerk: &AppCipherclerk, poll: CellId) -> CellId {
+pub fn seed_ballot(
+    executor: &EmbeddedExecutor,
+    cipherclerk: &AppCipherclerk,
+    poll: CellId,
+) -> CellId {
     let pk = cipherclerk.public_key().0;
     let ballot = ballot_cell_id(&pk);
 
@@ -701,7 +705,9 @@ pub fn seed_ballot(executor: &EmbeddedExecutor, cipherclerk: &AppCipherclerk, po
     let agent = cipherclerk.cell_id();
     executor.with_ledger_mut(|ledger| {
         if let Some(agent_cell) = ledger.get_mut(&agent) {
-            agent_cell.capabilities.grant(ballot, AuthRequired::Signature);
+            agent_cell
+                .capabilities
+                .grant(ballot, AuthRequired::Signature);
         }
     });
     ballot
@@ -734,22 +740,24 @@ pub fn fire_cast_vote(
         .map(|s| s.fields[POLL_REF_SLOT])
         .unwrap_or([0u8; 32]);
     let choice_field = field_from_u64(choice);
-    cell.fire_gated_through_executor_with(
-        "cast_vote",
-        held,
-        cipherclerk,
-        executor,
-        move |_live| {
-            vec![
-                Effect::SetField { cell: ballot, index: POLL_REF_SLOT, value: poll_ref_value },
-                Effect::SetField { cell: ballot, index: VOTE_SLOT, value: choice_field },
-                Effect::EmitEvent {
-                    cell: ballot,
-                    event: Event::new(symbol("vote-cast"), vec![poll_ref_value, choice_field]),
-                },
-            ]
-        },
-    )
+    cell.fire_gated_through_executor_with("cast_vote", held, cipherclerk, executor, move |_live| {
+        vec![
+            Effect::SetField {
+                cell: ballot,
+                index: POLL_REF_SLOT,
+                value: poll_ref_value,
+            },
+            Effect::SetField {
+                cell: ballot,
+                index: VOTE_SLOT,
+                value: choice_field,
+            },
+            Effect::EmitEvent {
+                cell: ballot,
+                event: Event::new(symbol("vote-cast"), vec![poll_ref_value, choice_field]),
+            },
+        ]
+    })
 }
 
 /// **Fire `record_tally`** — the deos cap∧state PRECONDITION gate (cap ⊇ root AND the poll is
@@ -808,21 +816,19 @@ pub fn fire_close_poll(
         .cell(&poll)
         .ok_or(FireExecuteError::Gate(FireError::NoSuchAffordance))?;
     let marker = field_from_u64(CLOSED_MARKER);
-    cell.fire_gated_through_executor_with(
-        "close_poll",
-        held,
-        cipherclerk,
-        executor,
-        move |_live| {
-            vec![
-                Effect::SetField { cell: poll, index: CLOSED_SLOT, value: marker },
-                Effect::EmitEvent {
-                    cell: poll,
-                    event: Event::new(symbol("poll-closed"), vec![marker]),
-                },
-            ]
-        },
-    )
+    cell.fire_gated_through_executor_with("close_poll", held, cipherclerk, executor, move |_live| {
+        vec![
+            Effect::SetField {
+                cell: poll,
+                index: CLOSED_SLOT,
+                value: marker,
+            },
+            Effect::EmitEvent {
+                cell: poll,
+                event: Event::new(symbol("poll-closed"), vec![marker]),
+            },
+        ]
+    })
 }
 
 /// Read a `u64` from the last 8 big-endian bytes of a field element (the inverse of

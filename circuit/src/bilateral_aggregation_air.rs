@@ -304,7 +304,6 @@ pub const OUTER_BASE_COUNT: usize = OUTER_BILATERAL_CONSISTENT + 1;
 
 use crate::stark::{BoundaryConstraint, StarkAir};
 
-
 // ---------------------------------------------------------------------------
 // Witness construction
 // ---------------------------------------------------------------------------
@@ -397,7 +396,8 @@ pub fn build_aggregation_trace_v2(rows: &[AggregationInnerRowV2]) -> Vec<Vec<Bab
         t[agg::N_CELLS_ACTIVE_COL] = BabyBear::new(n_cells_active);
         if let Some(first) = rows.first() {
             for i in 0..sched::TURN_HASH_LEN {
-                t[agg::sch_col(sched::TURN_HASH_BASE + i)] = first.schedule[sched::TURN_HASH_BASE + i];
+                t[agg::sch_col(sched::TURN_HASH_BASE + i)] =
+                    first.schedule[sched::TURN_HASH_BASE + i];
             }
             for i in 0..sched::EFFECTS_HASH_GLOBAL_LEN {
                 t[agg::sch_col(sched::EFFECTS_HASH_GLOBAL_BASE + i)] =
@@ -424,8 +424,7 @@ pub fn build_aggregation_trace_v2(rows: &[AggregationInnerRowV2]) -> Vec<Vec<Bab
 pub fn prove_aggregation_v2(
     trace: &[Vec<BabyBear>],
     outer_pi: &[BabyBear],
-) -> Result<crate::descriptor_ir2::Ir2BatchProof<crate::descriptor_ir2::DreggStarkConfig>, String>
-{
+) -> Result<crate::descriptor_ir2::Ir2BatchProof<crate::descriptor_ir2::DreggStarkConfig>, String> {
     let desc = bilateral_aggregation_descriptor();
     crate::descriptor_ir2::prove_vm_descriptor2(
         &desc,
@@ -1184,14 +1183,24 @@ mod tests {
         assert_eq!(d.trace_width, 87);
         assert_eq!(d.public_input_count, outer_pi_v2::COUNT);
         assert_eq!(d.public_input_count, 23);
-        assert!(d.tables.is_empty(), "pure row-window AIR: no committed tables");
-        assert_eq!(d.constraints.len(), 70, "the Lean #guard pins 70 constraints");
+        assert!(
+            d.tables.is_empty(),
+            "pure row-window AIR: no committed tables"
+        );
+        assert_eq!(
+            d.constraints.len(),
+            70,
+            "the Lean #guard pins 70 constraints"
+        );
         let window_gates = d
             .constraints
             .iter()
             .filter(|c| matches!(c, VmConstraint2::WindowGate(_)))
             .count();
-        assert_eq!(window_gates, 2, "exactly the two cumulative-sum window gates");
+        assert_eq!(
+            window_gates, 2,
+            "exactly the two cumulative-sum window gates"
+        );
     }
 
     /// The cross-side-existence (CG-5) descriptor parses with the Lean-pinned shape
@@ -1208,19 +1217,29 @@ mod tests {
         assert_eq!(d.trace_width, CSE2_WIDTH);
         assert_eq!(d.trace_width, 10);
         assert_eq!(d.public_input_count, CSE2_PI_COUNT);
-        assert_eq!(d.public_input_count, 2, "commit seed + edge-sequence commitment");
+        assert_eq!(
+            d.public_input_count, 2,
+            "commit seed + edge-sequence commitment"
+        );
         assert_eq!(d.tables.len(), 1, "one declared table");
         assert!(
             matches!(d.tables[0].sem, TableSem::Poseidon2Chip),
             "the fingerprint + commitment ride a real Poseidon2 chip table"
         );
-        assert_eq!(d.constraints.len(), 11, "the Lean #guard pins 11 constraints");
+        assert_eq!(
+            d.constraints.len(),
+            11,
+            "the Lean #guard pins 11 constraints"
+        );
         let window_gates = d
             .constraints
             .iter()
             .filter(|c| matches!(c, VmConstraint2::WindowGate(_)))
             .count();
-        assert_eq!(window_gates, 2, "the balance + commitment-continuity window gates");
+        assert_eq!(
+            window_gates, 2,
+            "the balance + commitment-continuity window gates"
+        );
         let chip_lookups = d
             .constraints
             .iter()
@@ -1332,7 +1351,10 @@ mod tests {
     fn schedule_block_offsets_match_v1_pi_window() {
         assert_eq!(SCHEDULE_PI_BASE, 25);
         assert_eq!(sched::WIDTH, 49);
-        assert_eq!(inner_pi::TURN_HASH_BASE, SCHEDULE_PI_BASE + sched::TURN_HASH_BASE);
+        assert_eq!(
+            inner_pi::TURN_HASH_BASE,
+            SCHEDULE_PI_BASE + sched::TURN_HASH_BASE
+        );
         assert_eq!(
             inner_pi::EFFECTS_HASH_GLOBAL_BASE,
             SCHEDULE_PI_BASE + sched::EFFECTS_HASH_GLOBAL_BASE
@@ -1350,7 +1372,10 @@ mod tests {
             inner_pi::OUTGOING_TRANSFER_ROOT_BASE,
             SCHEDULE_PI_BASE + sched::ROOTS_BASE
         );
-        assert_eq!(inner_pi::IS_AGENT_CELL, SCHEDULE_PI_BASE + sched::IS_AGENT_CELL);
+        assert_eq!(
+            inner_pi::IS_AGENT_CELL,
+            SCHEDULE_PI_BASE + sched::IS_AGENT_CELL
+        );
         // The window is exactly the 49 felts [25, 74) — nothing else lives in it.
         assert_eq!(SCHEDULE_PI_BASE + sched::WIDTH, inner_pi::IS_AGENT_CELL + 1);
     }

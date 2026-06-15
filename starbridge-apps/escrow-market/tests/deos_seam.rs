@@ -49,10 +49,21 @@ fn agent() -> (AppCipherclerk, EmbeddedExecutor) {
 
 /// Drive the honest lifecycle up to (but not including) settle: seed LISTED, fund as the BUYER,
 /// ship as the SELLER. Returns the configured ceiling.
-fn fund_and_ship(app: &dregg_app_framework::DeosApp, cclerk: &AppCipherclerk, executor: &EmbeddedExecutor) {
+fn fund_and_ship(
+    app: &dregg_app_framework::DeosApp,
+    cclerk: &AppCipherclerk,
+    executor: &EmbeddedExecutor,
+) {
     let _ = seed_escrow(executor, "acme-corp", 1000);
-    fire_fund(app, &AuthRequired::Either, "buyer-bob", 800, cclerk, executor)
-        .expect("a buyer funds (cap Either ⊇ Either, state LISTED, escrowed 800 <= ceiling 1000)");
+    fire_fund(
+        app,
+        &AuthRequired::Either,
+        "buyer-bob",
+        800,
+        cclerk,
+        executor,
+    )
+    .expect("a buyer funds (cap Either ⊇ Either, state LISTED, escrowed 800 <= ceiling 1000)");
     let delivery = sealed_delivery_digest(b"the-goods-ciphertext");
     fire_ship(app, &AuthRequired::None, delivery, cclerk, executor)
         .expect("a seller ships (cap None ⊇ None, state FUNDED)");
@@ -69,17 +80,21 @@ fn seeding_installs_the_escrow_program_and_listed_state() {
 
     // The seeded escrow cell carries the canonical escrow program (the Cases shape carrying the
     // TRUSTLINE / MAILBOX / FLASHWELL / LIFECYCLE caveats), installed so the executor re-enforces it.
-    let installed = executor.with_ledger_mut(|ledger| {
-        ledger.get(&cclerk.cell_id()).map(|c| c.program.clone())
-    });
+    let installed =
+        executor.with_ledger_mut(|ledger| ledger.get(&cclerk.cell_id()).map(|c| c.program.clone()));
     assert_eq!(
         installed,
         Some(escrow_program()),
         "the seeded escrow cell carries the escrow program (the seam's enforcement layer)"
     );
     // ...and the seeded state is LISTED with a bound ceiling and zero escrow.
-    let state = executor.cell_state(cclerk.cell_id()).expect("seeded cell exists");
-    assert_eq!(state.fields[STATE_SLOT as usize], field_from_u64(STATE_LISTED));
+    let state = executor
+        .cell_state(cclerk.cell_id())
+        .expect("seeded cell exists");
+    assert_eq!(
+        state.fields[STATE_SLOT as usize],
+        field_from_u64(STATE_LISTED)
+    );
     assert_eq!(state.fields[CEILING_SLOT as usize], field_from_u64(1000));
     assert_eq!(state.fields[ESCROWED_SLOT as usize], field_from_u64(0));
 }
@@ -95,20 +110,39 @@ fn the_honest_lifecycle_runs_fund_ship_settle_through_the_gated_fires() {
     let _ = seed_escrow(&executor, "acme-corp", 1000);
 
     // FUND (the BUYER, Either): cap passes, state LISTED passes, escrowed 800 <= ceiling 1000.
-    let r1 = fire_fund(&app, &AuthRequired::Either, "buyer-bob", 800, &cclerk, &executor)
-        .expect("a buyer funds within the ceiling");
+    let r1 = fire_fund(
+        &app,
+        &AuthRequired::Either,
+        "buyer-bob",
+        800,
+        &cclerk,
+        &executor,
+    )
+    .expect("a buyer funds within the ceiling");
     assert_ne!(r1.turn_hash, [0u8; 32], "a real verified fund turn");
     let s = executor.cell_state(cclerk.cell_id()).unwrap();
-    assert_eq!(s.fields[STATE_SLOT as usize], field_from_u64(2), "STATE advanced LISTED -> FUNDED");
-    assert_eq!(s.fields[ESCROWED_SLOT as usize], field_from_u64(800), "the escrow committed");
+    assert_eq!(
+        s.fields[STATE_SLOT as usize],
+        field_from_u64(2),
+        "STATE advanced LISTED -> FUNDED"
+    );
+    assert_eq!(
+        s.fields[ESCROWED_SLOT as usize],
+        field_from_u64(800),
+        "the escrow committed"
+    );
 
     // SHIP (the SELLER, None): cap passes, state FUNDED passes; the sealed delivery commits.
     let delivery = sealed_delivery_digest(b"the-goods-ciphertext");
-    let r2 = fire_ship(&app, &AuthRequired::None, delivery, &cclerk, &executor)
-        .expect("a seller ships");
+    let r2 =
+        fire_ship(&app, &AuthRequired::None, delivery, &cclerk, &executor).expect("a seller ships");
     assert_ne!(r2.turn_hash, [0u8; 32], "a real verified ship turn");
     let s = executor.cell_state(cclerk.cell_id()).unwrap();
-    assert_eq!(s.fields[STATE_SLOT as usize], field_from_u64(3), "STATE advanced FUNDED -> SHIPPED");
+    assert_eq!(
+        s.fields[STATE_SLOT as usize],
+        field_from_u64(3),
+        "STATE advanced FUNDED -> SHIPPED"
+    );
 
     // SETTLE (the SELLER, None): cap passes, state SHIPPED passes; the fire reads live ESCROWED (800)
     // and releases it IN FULL, so the FLASHWELL AffineEq (released + refunded == escrowed) holds.
@@ -116,8 +150,16 @@ fn the_honest_lifecycle_runs_fund_ship_settle_through_the_gated_fires() {
         .expect("a seller settles, conserving the escrow on the honest path");
     assert_ne!(r3.turn_hash, [0u8; 32], "a real verified settle turn");
     let s = executor.cell_state(cclerk.cell_id()).unwrap();
-    assert_eq!(s.fields[STATE_SLOT as usize], field_from_u64(STATE_SETTLED), "STATE advanced SHIPPED -> SETTLED");
-    assert_eq!(s.fields[RELEASED_SLOT as usize], field_from_u64(800), "the seller received the full escrow");
+    assert_eq!(
+        s.fields[STATE_SLOT as usize],
+        field_from_u64(STATE_SETTLED),
+        "STATE advanced SHIPPED -> SETTLED"
+    );
+    assert_eq!(
+        s.fields[RELEASED_SLOT as usize],
+        field_from_u64(800),
+        "the seller received the full escrow"
+    );
 }
 
 // =============================================================================
@@ -134,21 +176,46 @@ fn the_lit_button_set_tracks_the_lifecycle_state_the_htmx_tooth() {
     // On LISTED: a BUYER (Either) sees `fund` LIT (listed precondition holds); `ship`/`settle` are
     // DARK (their FUNDED/SHIPPED preconditions fail). The htmx tooth off live state.
     let lit_listed = cell.gated_fireable_names(&AuthRequired::Either, &executor);
-    assert!(lit_listed.contains(&"fund".to_string()), "LISTED: fund lights");
-    assert!(!lit_listed.contains(&"ship".to_string()), "LISTED: ship dark");
-    assert!(!lit_listed.contains(&"settle".to_string()), "LISTED: settle dark");
+    assert!(
+        lit_listed.contains(&"fund".to_string()),
+        "LISTED: fund lights"
+    );
+    assert!(
+        !lit_listed.contains(&"ship".to_string()),
+        "LISTED: ship dark"
+    );
+    assert!(
+        !lit_listed.contains(&"settle".to_string()),
+        "LISTED: settle dark"
+    );
 
     // Fund it (a real turn) — the cell transitions to FUNDED.
-    fire_fund(&app, &AuthRequired::Either, "buyer-bob", 800, &cclerk, &executor)
-        .expect("the buyer funds");
+    fire_fund(
+        &app,
+        &AuthRequired::Either,
+        "buyer-bob",
+        800,
+        &cclerk,
+        &executor,
+    )
+    .expect("the buyer funds");
 
     // After fund: as the SELLER (None, the top tier), `fund` DARKENS (LISTED precondition now fails)
     // and `ship` LIGHTS (FUNDED precondition holds). Same cell, DIFFERENT button-set — because the
     // cell transitioned. The htmx tooth.
     let lit_funded = cell.gated_fireable_names(&AuthRequired::None, &executor);
-    assert!(!lit_funded.contains(&"fund".to_string()), "FUNDED: fund darkens (the htmx tooth)");
-    assert!(lit_funded.contains(&"ship".to_string()), "FUNDED: ship lights (the htmx tooth)");
-    assert!(!lit_funded.contains(&"settle".to_string()), "FUNDED: settle still dark");
+    assert!(
+        !lit_funded.contains(&"fund".to_string()),
+        "FUNDED: fund darkens (the htmx tooth)"
+    );
+    assert!(
+        lit_funded.contains(&"ship".to_string()),
+        "FUNDED: ship lights (the htmx tooth)"
+    );
+    assert!(
+        !lit_funded.contains(&"settle".to_string()),
+        "FUNDED: settle still dark"
+    );
 }
 
 // =============================================================================
@@ -161,8 +228,15 @@ fn a_buyer_cannot_fire_ship_the_cap_tooth_bites_in_band() {
     let app = escrow_app(&cclerk, &executor);
     let _ = seed_escrow(&executor, "acme-corp", 1000);
     // Fund first so the FUNDED precondition for `ship` would otherwise hold — isolating the CAP tooth.
-    fire_fund(&app, &AuthRequired::Either, "buyer-bob", 800, &cclerk, &executor)
-        .expect("the buyer funds");
+    fire_fund(
+        &app,
+        &AuthRequired::Either,
+        "buyer-bob",
+        800,
+        &cclerk,
+        &executor,
+    )
+    .expect("the buyer funds");
 
     // A BUYER (Either) firing `ship` (requires None/root): the CAP tooth refuses IN-BAND (Either does
     // not attenuate to None). Nothing is submitted (anti-ghost), even though the state precondition holds.
@@ -184,7 +258,11 @@ fn a_buyer_cannot_fire_ship_the_cap_tooth_bites_in_band() {
     );
     // The state did NOT advance — the refused fire committed nothing (anti-ghost).
     let s = executor.cell_state(cclerk.cell_id()).unwrap();
-    assert_eq!(s.fields[STATE_SLOT as usize], field_from_u64(2), "still FUNDED — ship never fired");
+    assert_eq!(
+        s.fields[STATE_SLOT as usize],
+        field_from_u64(2),
+        "still FUNDED — ship never fired"
+    );
 }
 
 // =============================================================================
@@ -215,10 +293,16 @@ fn the_executor_re_enforces_a_non_advancing_state_is_refused_strictmonotonic() {
     }
     let action = cclerk.make_action(cell, "settle", effects);
     let refused = executor.submit_action(&cclerk, action);
-    assert!(refused.is_err(), "a non-advancing settle must be refused by the executor");
+    assert!(
+        refused.is_err(),
+        "a non-advancing settle must be refused by the executor"
+    );
     let msg = format!("{:?}", refused.unwrap_err()).to_lowercase();
     assert!(
-        msg.contains("strictmonotonic") || msg.contains("strictly") || msg.contains("monotonic") || msg.contains("program"),
+        msg.contains("strictmonotonic")
+            || msg.contains("strictly")
+            || msg.contains("monotonic")
+            || msg.contains("program"),
         "the executor refuses on the StrictMonotonic(STATE) caveat, got: {msg}"
     );
 
@@ -250,7 +334,10 @@ fn the_executor_re_enforces_an_over_ceiling_fund_is_refused_trustline() {
     let over = starbridge_escrow_market::fund_effects(cell, "buyer-bob", 1500);
     let action = cclerk.make_action(cell, "fund", over);
     let refused = executor.submit_action(&cclerk, action);
-    assert!(refused.is_err(), "escrowing past the ceiling must be refused");
+    assert!(
+        refused.is_err(),
+        "escrowing past the ceiling must be refused"
+    );
     let msg = format!("{:?}", refused.unwrap_err()).to_lowercase();
     assert!(
         msg.contains("lte") || msg.contains("field") || msg.contains("program"),
@@ -293,7 +380,10 @@ fn the_executor_re_enforces_a_non_conserving_settle_is_refused_flashwell() {
     assert!(refused.is_err(), "a value-minting settle must be refused");
     let msg = format!("{:?}", refused.unwrap_err()).to_lowercase();
     assert!(
-        msg.contains("affine") || msg.contains("conserv") || msg.contains("sum") || msg.contains("program"),
+        msg.contains("affine")
+            || msg.contains("conserv")
+            || msg.contains("sum")
+            || msg.contains("program"),
         "the executor refuses the mint on the AffineLe no-mint caveat, got: {msg}"
     );
 
@@ -303,7 +393,10 @@ fn the_executor_re_enforces_a_non_conserving_settle_is_refused_flashwell() {
     assert!(refused.is_err(), "a value-burning settle must be refused");
     let msg = format!("{:?}", refused.unwrap_err()).to_lowercase();
     assert!(
-        msg.contains("affine") || msg.contains("conserv") || msg.contains("sum") || msg.contains("program"),
+        msg.contains("affine")
+            || msg.contains("conserv")
+            || msg.contains("sum")
+            || msg.contains("program"),
         "the executor refuses the burn on the AffineEq no-burn caveat, got: {msg}"
     );
 
@@ -320,7 +413,11 @@ fn the_executor_re_enforces_a_non_conserving_settle_is_refused_flashwell() {
         .expect("the conserving settle commits");
     assert_ne!(r.turn_hash, [0u8; 32], "a real verified conserving settle");
     let after = executor.cell_state(cell).unwrap();
-    assert_eq!(after.fields[STATE_SLOT as usize], field_from_u64(STATE_SETTLED), "the deal SETTLED");
+    assert_eq!(
+        after.fields[STATE_SLOT as usize],
+        field_from_u64(STATE_SETTLED),
+        "the deal SETTLED"
+    );
 }
 
 // =============================================================================
@@ -338,13 +435,28 @@ fn register_deos_mounts_the_seeded_surface_into_the_context() {
     // promotion) and the gated fires are live.
     let app = register_deos(&ctx);
     assert_eq!(app.name(), "escrow-market");
-    assert_eq!(ctx.affordance_registry().len(), 1, "the deos surface is registered");
+    assert_eq!(
+        ctx.affordance_registry().len(),
+        1,
+        "the deos surface is registered"
+    );
 
     // The seeded escrow is LISTED with a ceiling, so a buyer can fund through the mounted surface
     // immediately (the seam is closed + live).
-    let receipt = fire_fund(&app, &AuthRequired::Either, "buyer-bob", 500, &cclerk, &executor)
-        .expect("the mounted, seeded surface funds (the promotion is live)");
+    let receipt = fire_fund(
+        &app,
+        &AuthRequired::Either,
+        "buyer-bob",
+        500,
+        &cclerk,
+        &executor,
+    )
+    .expect("the mounted, seeded surface funds (the promotion is live)");
     assert_ne!(receipt.turn_hash, [0u8; 32]);
     let s = executor.cell_state(cclerk.cell_id()).unwrap();
-    assert_eq!(s.fields[ESCROWED_SLOT as usize], field_from_u64(500), "the fund committed through the mounted surface");
+    assert_eq!(
+        s.fields[ESCROWED_SLOT as usize],
+        field_from_u64(500),
+        "the fund committed through the mounted surface"
+    );
 }

@@ -66,11 +66,11 @@ pub mod optimistic_fire;
 pub mod persistence;
 pub mod queue_endpoint;
 pub mod rehydration;
-pub mod stark_rehydrate;
 pub mod ring_trade;
 pub mod scaffold;
 pub mod server;
 pub mod starbridge;
+pub mod stark_rehydrate;
 pub mod store;
 pub mod transclude_affordance;
 pub mod vk;
@@ -168,8 +168,8 @@ pub use captp_server::CapTpServer;
 // `FederationId` (the web-of-cells group identity) — re-exported so a deos app can
 // construct a `CapTpServer` / set its `DeosApp` federation without adding
 // `dregg-types` to its own Cargo.toml.
-pub use dregg_types::FederationId;
 pub use discovery::{DiscoveryError, NameRegistration, NameserviceClient};
+pub use dregg_types::FederationId;
 pub use fee_policy::{AcceptedAsset, FeePolicy};
 pub use multi_group::MultiGroupConfig;
 pub use ring_trade::{LegId, RingTradeParticipant};
@@ -199,7 +199,7 @@ pub use affordance::{
 // `FireError::StateConditionUnmet`, in-band, before any dispatch.
 pub use affordance::{GatedAffordance, GatedSurface};
 pub use affordance_endpoint::{
-    AffordanceEndpoint, HeaderHeldRights, HeldRightsResolver, HELD_RIGHTS_HEADER,
+    AffordanceEndpoint, HELD_RIGHTS_HEADER, HeaderHeldRights, HeldRightsResolver,
 };
 
 // The deos-app COMPOSITION (DEOS-APPS.md §"the deos app model") — the six layers
@@ -222,8 +222,8 @@ pub use deos_app::{DeosApp, DeosAppBuilder, DeosCell, PersistenceSeam};
 // other way). The transclusion primitives themselves are re-exported from
 // `starbridge_web_surface::transclusion`.
 pub use transclude_affordance::{
-    surface_declares, DeosCellTranscludeExt, ProjectedTransclusion, RenderedTransclusion,
-    TranscludeAffordance, TranscludeProjectError,
+    DeosCellTranscludeExt, ProjectedTransclusion, RenderedTransclusion, TranscludeAffordance,
+    TranscludeProjectError, surface_declares,
 };
 
 // The frustum-snapshot + cap-membrane (DEOS.md §"the frustum-culled snapshot") — the
@@ -231,7 +231,7 @@ pub use transclude_affordance::{
 // snapshot an app surface, a peer rehydrates their attenuated, liveness-typed,
 // per-viewer view.
 pub use rehydration::{
-    Interaction, InteractionLog, Membrane, RehydratedSurface, RehydrateError, Rehydration,
+    Interaction, InteractionLog, Membrane, RehydrateError, RehydratedSurface, Rehydration,
     Sturdyref, meet_authority,
 };
 
@@ -241,8 +241,8 @@ pub use rehydration::{
 // STARK (light-client style), so a tampered surface state / forged proof / wrong-root
 // proof is rejected at rehydration, with NO receipt-chain walk.
 pub use stark_rehydrate::{
-    mint_stark_snapshot, mint_transfer_leg, verify_stark_leg, witness_replay_is_genuine,
-    RotatedParticipantLeg, StarkRehydrateError, StarkSnapshot, TransferTurn,
+    RotatedParticipantLeg, StarkRehydrateError, StarkSnapshot, TransferTurn, mint_stark_snapshot,
+    mint_transfer_leg, verify_stark_leg, witness_replay_is_genuine,
 };
 
 // The interactive-tempo bridge (DEOS-APPS.md §"the interactive/real-time tempo gap";

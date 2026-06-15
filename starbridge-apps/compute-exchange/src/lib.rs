@@ -111,17 +111,23 @@ pub fn job_cell_program() -> CellProgram {
         },
         // ── post: open the job (requester + budget + spec bound here) ───
         TransitionCase {
-            guard: TransitionGuard::MethodIs { method: symbol("post") },
+            guard: TransitionGuard::MethodIs {
+                method: symbol("post"),
+            },
             constraints: vec![],
         },
         // ── bid: a provider bids <= budget (BUDGET invariant above) ─────
         TransitionCase {
-            guard: TransitionGuard::MethodIs { method: symbol("bid") },
+            guard: TransitionGuard::MethodIs {
+                method: symbol("bid"),
+            },
             constraints: vec![],
         },
         // ── settle: FLASHWELL conservation — PAID+REFUNDED == BUDGET ─────
         TransitionCase {
-            guard: TransitionGuard::MethodIs { method: symbol("settle") },
+            guard: TransitionGuard::MethodIs {
+                method: symbol("settle"),
+            },
             constraints: vec![StateConstraint::AffineEq {
                 terms: vec![
                     (1, PAID_SLOT as u8),
@@ -636,7 +642,8 @@ pub fn seed_job(executor: &EmbeddedExecutor, requester: &str, budget: u64) -> u6
             c.state
                 .set_field(REQUESTER_HASH_SLOT, field_from_bytes(requester.as_bytes()));
             c.state.set_field(BUDGET_SLOT, field_from_u64(budget));
-            c.state.set_field(SPEC_HASH_SLOT, spec_digest(b"render-frame-batch"));
+            c.state
+                .set_field(SPEC_HASH_SLOT, spec_digest(b"render-frame-batch"));
             c.state.set_field(BID_SLOT, field_from_u64(0));
             c.state.set_field(STATE_SLOT, field_from_u64(STATE_POSTED));
         }
@@ -835,24 +842,33 @@ mod tests {
     fn factory_bakes_the_four_organ_caveats() {
         let d = job_factory_descriptor();
         // BUDGET: BID <= BUDGET.
-        assert!(d.state_constraints.iter().any(|c| matches!(
-            c,
-            StateConstraint::FieldLteField { left_index, right_index }
-                if *left_index == BID_SLOT as u8 && *right_index == BUDGET_SLOT as u8
-        )), "budget-gate caveat missing");
+        assert!(
+            d.state_constraints.iter().any(|c| matches!(
+                c,
+                StateConstraint::FieldLteField { left_index, right_index }
+                    if *left_index == BID_SLOT as u8 && *right_index == BUDGET_SLOT as u8
+            )),
+            "budget-gate caveat missing"
+        );
         // ACCEPTED: WriteOnce(BID).
-        assert!(d.state_constraints.iter().any(|c| matches!(
-            c, StateConstraint::WriteOnce { index } if *index == BID_SLOT as u8
-        )), "accepted-bid write-once caveat missing");
+        assert!(
+            d.state_constraints.iter().any(|c| matches!(
+                c, StateConstraint::WriteOnce { index } if *index == BID_SLOT as u8
+            )),
+            "accepted-bid write-once caveat missing"
+        );
         // FLASHWELL no-mint (executor-enforced, every turn):
         //   PAID + REFUNDED - BUDGET <= 0.
-        assert!(d.state_constraints.iter().any(|c| matches!(
-            c, StateConstraint::AffineLe { terms, c: k }
-                if *k == 0
-                    && terms.contains(&(1, PAID_SLOT as u8))
-                    && terms.contains(&(1, REFUNDED_SLOT as u8))
-                    && terms.contains(&(-1, BUDGET_SLOT as u8))
-        )), "flashwell no-mint caveat missing from the flat descriptor");
+        assert!(
+            d.state_constraints.iter().any(|c| matches!(
+                c, StateConstraint::AffineLe { terms, c: k }
+                    if *k == 0
+                        && terms.contains(&(1, PAID_SLOT as u8))
+                        && terms.contains(&(1, REFUNDED_SLOT as u8))
+                        && terms.contains(&(-1, BUDGET_SLOT as u8))
+            )),
+            "flashwell no-mint caveat missing from the flat descriptor"
+        );
         // FLASHWELL no-burn (settle-scoped, in the canonical program recipe):
         //   PAID + REFUNDED - BUDGET == 0.
         let has_settle_eq = match job_cell_program() {
@@ -864,11 +880,17 @@ mod tests {
             }),
             _ => false,
         };
-        assert!(has_settle_eq, "flashwell no-burn equality missing from the settle case");
+        assert!(
+            has_settle_eq,
+            "flashwell no-burn equality missing from the settle case"
+        );
         // LIFECYCLE: StrictMonotonic(STATE).
-        assert!(d.state_constraints.iter().any(|c| matches!(
-            c, StateConstraint::StrictMonotonic { index } if *index == STATE_SLOT as u8
-        )), "lifecycle caveat missing");
+        assert!(
+            d.state_constraints.iter().any(|c| matches!(
+                c, StateConstraint::StrictMonotonic { index } if *index == STATE_SLOT as u8
+            )),
+            "lifecycle caveat missing"
+        );
     }
 
     #[test]
@@ -893,7 +915,10 @@ mod tests {
         let program = job_cell_program();
         let err = eval_for(&program, "drain_budget", &posted(1000), Some(&empty()))
             .expect_err("an unknown method must be default-denied");
-        assert!(matches!(err, dregg_cell::ProgramError::NoTransitionCaseMatched));
+        assert!(matches!(
+            err,
+            dregg_cell::ProgramError::NoTransitionCaseMatched
+        ));
     }
 
     #[test]

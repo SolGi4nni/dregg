@@ -23,15 +23,15 @@ use dregg_circuit::descriptor_ir2::{
     MemBoundaryWitness, UMemBoundaryWitness, parse_vm_descriptor2, prove_vm_descriptor2_for_config,
     verify_vm_descriptor2_with_config,
 };
-use dregg_circuit::ivc_turn_chain::ir2_leaf_wrap_config;
-use dregg_circuit::plonky3_recursion_impl::recursive::{
-    DreggRecursionConfig, verify_recursive_batch_proof_with_config,
-};
 use dregg_circuit::effect_vm::trace_rotated::{
     ROT_WIDTH, RotatedBlockWitness, generate_rotated_effect_vm_trace, transfer_caveat_manifest,
 };
 use dregg_circuit::effect_vm::{CellState, Effect};
 use dregg_circuit::effect_vm_descriptors::V3_STAGED_REGISTRY_TSV;
+use dregg_circuit::ivc_turn_chain::ir2_leaf_wrap_config;
+use dregg_circuit::plonky3_recursion_impl::recursive::{
+    DreggRecursionConfig, verify_recursive_batch_proof_with_config,
+};
 use dregg_turn::rotation_witness as rw;
 
 fn rotated_transfer_json() -> &'static str {
@@ -161,7 +161,10 @@ fn rotated_transfer_leaf_folds_as_batchstark() {
     //      the duplicate `Public` to a bus reader (`PreprocessedColumns::dup_public_outputs`),
     //      restoring one-creator-per-witness; upstream's debug `check_lookups` passes.
     let wrapped = dregg_circuit::ivc_turn_chain::prove_descriptor_leaf_rotated_with_config(
-        &desc, &proof, &dpis, &wrap_config,
+        &desc,
+        &proof,
+        &dpis,
+        &wrap_config,
     )
     .expect("the rotated multi-table LogUp leaf folds as a NativeBatchStark recursion leaf");
     verify_recursive_batch_proof_with_config(&wrapped.0, &wrap_config)
@@ -246,15 +249,16 @@ fn two_rotated_leaves_aggregate_at_wrap_config() {
     let left = left_out.into_recursion_input::<BatchOnly>();
     let right = right_out.into_recursion_input::<BatchOnly>();
 
-    let agg = build_and_prove_aggregation_layer::<DreggRecursionConfig, BatchOnly, BatchOnly, _, 4>(
-        &left,
-        &right,
-        &wrap_config,
-        &backend,
-        &params,
-        None,
-    )
-    .expect("two rotated leaves aggregate at the wrap config");
+    let agg =
+        build_and_prove_aggregation_layer::<DreggRecursionConfig, BatchOnly, BatchOnly, _, 4>(
+            &left,
+            &right,
+            &wrap_config,
+            &backend,
+            &params,
+            None,
+        )
+        .expect("two rotated leaves aggregate at the wrap config");
     verify_recursive_batch_proof_with_config(&agg.0, &wrap_config)
         .expect("the aggregated root verifies in-circuit at the wrap config");
 }

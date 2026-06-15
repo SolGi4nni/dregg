@@ -66,9 +66,23 @@ fn clean_blocklace_authenticates_and_has_no_equivocation() {
     };
     let report = crate::blocklace::analyze(&capture);
 
-    assert!(report.is_clean(), "clean blocklace should have no critical finding: {:#?}", report.findings);
-    assert!(report.findings.iter().any(|f| f.code == "blocklace.authenticated" && f.is_verified()));
-    assert!(report.findings.iter().any(|f| f.code == "blocklace.no_equivocation" && f.is_verified()));
+    assert!(
+        report.is_clean(),
+        "clean blocklace should have no critical finding: {:#?}",
+        report.findings
+    );
+    assert!(
+        report
+            .findings
+            .iter()
+            .any(|f| f.code == "blocklace.authenticated" && f.is_verified())
+    );
+    assert!(
+        report
+            .findings
+            .iter()
+            .any(|f| f.code == "blocklace.no_equivocation" && f.is_verified())
+    );
     assert!(report.verified_count() >= 2);
 }
 
@@ -98,7 +112,10 @@ fn planted_equivocation_is_detected_by_real_verifier() {
         .find(|f| f.code == "blocklace.equivocation")
         .expect("equivocation must be detected");
     assert_eq!(equiv.severity, Severity::Critical);
-    assert!(equiv.is_verified(), "equivocation finding must be attested by the real verifier");
+    assert!(
+        equiv.is_verified(),
+        "equivocation finding must be attested by the real verifier"
+    );
     assert!(!report.is_clean());
 }
 
@@ -126,10 +143,18 @@ fn planted_equivocation_surfaces_the_concrete_fork_witness() {
         .find(|f| f.code == "blocklace.equivocation_fork_witness")
         .expect("the concrete fork-witness pair must be surfaced");
     assert_eq!(witness.severity, Severity::Critical);
-    assert!(witness.is_verified(), "the fork witness is attested by the real detect_equivocation");
+    assert!(
+        witness.is_verified(),
+        "the fork witness is attested by the real detect_equivocation"
+    );
     // The witness names two distinct conflicting block ids at the same seq.
     assert!(witness.message.contains("block_a") && witness.message.contains("block_b"));
-    assert!(report.summary.iter().any(|(k, _)| k == "equivocation_forks"));
+    assert!(
+        report
+            .summary
+            .iter()
+            .any(|(k, _)| k == "equivocation_forks")
+    );
 }
 
 // ─── blocklace: forged signature rejected ───────────────────────────────────────
@@ -147,7 +172,12 @@ fn forged_signature_capture_is_rejected_by_authenticating_loader() {
         wavelength: None,
     };
     let report = crate::blocklace::analyze(&capture);
-    assert!(report.findings.iter().any(|f| f.code == "blocklace.authentication_failed" && f.is_verified()));
+    assert!(
+        report
+            .findings
+            .iter()
+            .any(|f| f.code == "blocklace.authentication_failed" && f.is_verified())
+    );
     assert!(!report.is_clean());
 }
 
@@ -180,9 +210,23 @@ fn clean_receipt_chain_integrity_verified() {
         executor_keys: vec![],
     };
     let report = crate::receipts::analyze(&capture);
-    assert!(report.is_clean(), "clean chain should pass: {:#?}", report.findings);
-    assert!(report.findings.iter().any(|f| f.code == "receipts.chain_intact" && f.is_verified()));
-    assert!(report.findings.iter().any(|f| f.code == "receipts.conservation_disclosed"));
+    assert!(
+        report.is_clean(),
+        "clean chain should pass: {:#?}",
+        report.findings
+    );
+    assert!(
+        report
+            .findings
+            .iter()
+            .any(|f| f.code == "receipts.chain_intact" && f.is_verified())
+    );
+    assert!(
+        report
+            .findings
+            .iter()
+            .any(|f| f.code == "receipts.conservation_disclosed")
+    );
 }
 
 #[test]
@@ -203,7 +247,10 @@ fn tampered_receipt_chain_is_flagged() {
         .find(|f| f.code == "receipts.chain_break")
         .expect("tamper must break the chain");
     assert_eq!(brk.severity, Severity::Critical);
-    assert!(brk.is_verified(), "chain-break is attested via the real receipt_hash");
+    assert!(
+        brk.is_verified(),
+        "chain-break is attested via the real receipt_hash"
+    );
     assert!(!report.is_clean());
 }
 
@@ -221,11 +268,29 @@ fn clean_chain_surfaces_the_receipt_link_graph() {
         .iter()
         .find(|f| f.code == "receipts.link_graph")
         .expect("the receipt-link graph must be surfaced");
-    assert!(graph.is_verified(), "on an intact chain the graph is bound (verified)");
+    assert!(
+        graph.is_verified(),
+        "on an intact chain the graph is bound (verified)"
+    );
     // Single-agent, single-federation, all-final clean strand.
-    assert!(report.summary.iter().any(|(k, v)| k == "distinct_agents" && v == "1"));
-    assert!(report.summary.iter().any(|(k, v)| k == "distinct_federations" && v == "1"));
-    assert!(report.findings.iter().any(|f| f.code == "receipts.finality_all_final"));
+    assert!(
+        report
+            .summary
+            .iter()
+            .any(|(k, v)| k == "distinct_agents" && v == "1")
+    );
+    assert!(
+        report
+            .summary
+            .iter()
+            .any(|(k, v)| k == "distinct_federations" && v == "1")
+    );
+    assert!(
+        report
+            .findings
+            .iter()
+            .any(|f| f.code == "receipts.finality_all_final")
+    );
 }
 
 #[test]
@@ -243,8 +308,18 @@ fn cross_federation_strand_is_flagged() {
         executor_keys: vec![],
     };
     let report = crate::receipts::analyze(&capture);
-    assert!(report.findings.iter().any(|f| f.code == "receipts.cross_federation_strand"));
-    assert!(report.summary.iter().any(|(k, v)| k == "distinct_federations" && v == "2"));
+    assert!(
+        report
+            .findings
+            .iter()
+            .any(|f| f.code == "receipts.cross_federation_strand")
+    );
+    assert!(
+        report
+            .summary
+            .iter()
+            .any(|(k, v)| k == "distinct_federations" && v == "2")
+    );
     // Cross-federation is a NOTICE, not Critical — the chain itself is intact.
     assert!(report.is_clean());
 }
@@ -259,8 +334,18 @@ fn tentative_finality_receipts_are_surfaced() {
         executor_keys: vec![],
     };
     let report = crate::receipts::analyze(&capture);
-    assert!(report.findings.iter().any(|f| f.code == "receipts.finality_tentative"));
-    assert!(report.summary.iter().any(|(k, v)| k == "receipts_tentative" && v == "1"));
+    assert!(
+        report
+            .findings
+            .iter()
+            .any(|f| f.code == "receipts.finality_tentative")
+    );
+    assert!(
+        report
+            .summary
+            .iter()
+            .any(|(k, v)| k == "receipts_tentative" && v == "1")
+    );
 }
 
 #[test]
@@ -274,8 +359,18 @@ fn burn_disclosure_surfaced_as_nonconservation() {
     };
     let report = crate::receipts::analyze(&capture);
     // Chain still intact (burn is a disclosed, bound bit), but a burn notice fires.
-    assert!(report.findings.iter().any(|f| f.code == "receipts.chain_intact"));
-    assert!(report.findings.iter().any(|f| f.code == "receipts.burn_disclosed"));
+    assert!(
+        report
+            .findings
+            .iter()
+            .any(|f| f.code == "receipts.chain_intact")
+    );
+    assert!(
+        report
+            .findings
+            .iter()
+            .any(|f| f.code == "receipts.burn_disclosed")
+    );
 }
 
 // ─── receipts: executor signature ───────────────────────────────────────────────
@@ -293,7 +388,12 @@ fn executor_signature_verified_against_real_canonical_message() {
         executor_keys: vec![exec.verifying_key().to_bytes()],
     };
     let report = crate::receipts::analyze(&capture);
-    assert!(report.findings.iter().any(|f| f.code == "receipts.executor_sigs_ok" && f.is_verified()));
+    assert!(
+        report
+            .findings
+            .iter()
+            .any(|f| f.code == "receipts.executor_sigs_ok" && f.is_verified())
+    );
     assert!(report.is_clean());
 }
 
@@ -312,7 +412,12 @@ fn forged_executor_signature_is_flagged() {
         executor_keys: vec![exec.verifying_key().to_bytes()],
     };
     let report = crate::receipts::analyze(&capture);
-    assert!(report.findings.iter().any(|f| f.code == "receipts.executor_sig_invalid" && f.is_verified()));
+    assert!(
+        report
+            .findings
+            .iter()
+            .any(|f| f.code == "receipts.executor_sig_invalid" && f.is_verified())
+    );
     assert!(!report.is_clean());
 }
 
@@ -344,12 +449,31 @@ fn conserving_forest_is_attested() {
         }
     }
     let forest = CallForest {
-        roots: vec![CallTree::new(act(cell(1), vec![Effect::Transfer { from: cell(1), to: cell(2), amount: 100 }]))],
+        roots: vec![CallTree::new(act(
+            cell(1),
+            vec![Effect::Transfer {
+                from: cell(1),
+                to: cell(2),
+                amount: 100,
+            }],
+        ))],
         forest_hash: [0u8; 32],
     };
-    let report = crate::forest::analyze(&crate::forest::ForestCapture { forest, treat_as_ring: false });
-    assert!(report.is_clean(), "conserving forest should pass: {:#?}", report.findings);
-    assert!(report.findings.iter().any(|f| f.code == "forest.assured" && f.is_verified()));
+    let report = crate::forest::analyze(&crate::forest::ForestCapture {
+        forest,
+        treat_as_ring: false,
+    });
+    assert!(
+        report.is_clean(),
+        "conserving forest should pass: {:#?}",
+        report.findings
+    );
+    assert!(
+        report
+            .findings
+            .iter()
+            .any(|f| f.code == "forest.assured" && f.is_verified())
+    );
 }
 
 #[test]
@@ -376,9 +500,20 @@ fn nonconserving_forest_is_flagged() {
         witness_blobs: vec![],
     };
     a.balance_change = Some(50); // +50 with no offset: does not conserve.
-    let forest = CallForest { roots: vec![CallTree::new(a)], forest_hash: [0u8; 32] };
-    let report = crate::forest::analyze(&crate::forest::ForestCapture { forest, treat_as_ring: false });
-    assert!(report.findings.iter().any(|f| f.code == "forest.check_fail" && f.is_verified()));
+    let forest = CallForest {
+        roots: vec![CallTree::new(a)],
+        forest_hash: [0u8; 32],
+    };
+    let report = crate::forest::analyze(&crate::forest::ForestCapture {
+        forest,
+        treat_as_ring: false,
+    });
+    assert!(
+        report
+            .findings
+            .iter()
+            .any(|f| f.code == "forest.check_fail" && f.is_verified())
+    );
     assert!(!report.is_clean());
 }
 
@@ -405,44 +540,103 @@ fn clean_wal_passes_crash_consistency() {
         commit_rec(1, 2, 2),
         commit_rec(2, 3, 4),
     ];
-    let capture = WalCapture { records, commit_cursor: Some(3) };
+    let capture = WalCapture {
+        records,
+        commit_cursor: Some(3),
+    };
     let report = crate::wal::analyze(&capture);
     assert!(report.is_clean(), "clean WAL: {:#?}", report.findings);
-    assert!(report.findings.iter().any(|f| f.code == "wal.ordinals_dense" && f.is_verified()));
-    assert!(report.findings.iter().any(|f| f.code == "wal.cursor_consistent" && f.is_verified()));
-    assert!(report.findings.iter().any(|f| f.code == "wal.hwm_monotone" && f.is_verified()));
+    assert!(
+        report
+            .findings
+            .iter()
+            .any(|f| f.code == "wal.ordinals_dense" && f.is_verified())
+    );
+    assert!(
+        report
+            .findings
+            .iter()
+            .any(|f| f.code == "wal.cursor_consistent" && f.is_verified())
+    );
+    assert!(
+        report
+            .findings
+            .iter()
+            .any(|f| f.code == "wal.hwm_monotone" && f.is_verified())
+    );
 }
 
 #[test]
 fn torn_cursor_wal_is_flagged() {
     // cursor claims 5 turns committed but only 3 records exist: torn cursor.
-    let records = vec![commit_rec(0, 1, 1), commit_rec(1, 2, 2), commit_rec(2, 3, 3)];
-    let capture = WalCapture { records, commit_cursor: Some(5) };
+    let records = vec![
+        commit_rec(0, 1, 1),
+        commit_rec(1, 2, 2),
+        commit_rec(2, 3, 3),
+    ];
+    let capture = WalCapture {
+        records,
+        commit_cursor: Some(5),
+    };
     let report = crate::wal::analyze(&capture);
-    assert!(report.findings.iter().any(|f| f.code == "wal.cursor_torn" && f.is_verified()));
+    assert!(
+        report
+            .findings
+            .iter()
+            .any(|f| f.code == "wal.cursor_torn" && f.is_verified())
+    );
     assert!(!report.is_clean());
 }
 
 #[test]
 fn ordinal_gap_wal_is_flagged() {
     // ordinals 0, 1, 3 (missing 2): not dense.
-    let records = vec![commit_rec(0, 1, 1), commit_rec(1, 2, 2), commit_rec(3, 3, 3)];
-    let capture = WalCapture { records, commit_cursor: Some(3) };
+    let records = vec![
+        commit_rec(0, 1, 1),
+        commit_rec(1, 2, 2),
+        commit_rec(3, 3, 3),
+    ];
+    let capture = WalCapture {
+        records,
+        commit_cursor: Some(3),
+    };
     let report = crate::wal::analyze(&capture);
-    assert!(report.findings.iter().any(|f| f.code == "wal.ordinal_gap" && f.is_verified()));
+    assert!(
+        report
+            .findings
+            .iter()
+            .any(|f| f.code == "wal.ordinal_gap" && f.is_verified())
+    );
     assert!(!report.is_clean());
 }
 
 #[test]
 fn replay_set_surfaced_as_recovery_overlay() {
     // cursor below len: the tail is the replay set (a crash mid-batch).
-    let records = vec![commit_rec(0, 1, 1), commit_rec(1, 2, 2), commit_rec(2, 3, 3)];
-    let capture = WalCapture { records, commit_cursor: Some(1) };
+    let records = vec![
+        commit_rec(0, 1, 1),
+        commit_rec(1, 2, 2),
+        commit_rec(2, 3, 3),
+    ];
+    let capture = WalCapture {
+        records,
+        commit_cursor: Some(1),
+    };
     let report = crate::wal::analyze(&capture);
-    assert!(report.findings.iter().any(|f| f.code == "wal.replay_pending"));
+    assert!(
+        report
+            .findings
+            .iter()
+            .any(|f| f.code == "wal.replay_pending")
+    );
     // A pending-replay capture is NOT critical (it is an expected recovery state).
     assert!(report.is_clean());
-    assert!(report.summary.iter().any(|(k, v)| k == "replay_turns" && v == "2"));
+    assert!(
+        report
+            .summary
+            .iter()
+            .any(|(k, v)| k == "replay_turns" && v == "2")
+    );
 }
 
 /// A commit record carrying explicit touched-cell snapshots and an explicit
@@ -477,7 +671,10 @@ fn replay_overlay_details_the_replayed_turns() {
         commit_rec_cells(1, 2, 2, [2u8; 32], one_cell.clone()),
         commit_rec_cells(2, 3, 3, [3u8; 32], one_cell),
     ];
-    let capture = WalCapture { records, commit_cursor: Some(1) };
+    let capture = WalCapture {
+        records,
+        commit_cursor: Some(1),
+    };
     let report = crate::wal::analyze(&capture);
     let overlay = report
         .findings
@@ -486,7 +683,12 @@ fn replay_overlay_details_the_replayed_turns() {
         .expect("the replay overlay detail must be surfaced");
     // Two records replay (#1, #2), re-touching two cell snapshots.
     assert!(overlay.message.contains("#1") && overlay.message.contains("#2"));
-    assert!(report.summary.iter().any(|(k, v)| k == "replay_touched_cells" && v == "2"));
+    assert!(
+        report
+            .summary
+            .iter()
+            .any(|(k, v)| k == "replay_touched_cells" && v == "2")
+    );
 }
 
 #[test]
@@ -499,7 +701,10 @@ fn stagnant_ledger_root_with_touched_cells_is_flagged() {
         // same root [7;32] as #0, but touches a cell → stall anomaly.
         commit_rec_cells(1, 2, 2, [7u8; 32], one_cell),
     ];
-    let capture = WalCapture { records, commit_cursor: Some(2) };
+    let capture = WalCapture {
+        records,
+        commit_cursor: Some(2),
+    };
     let report = crate::wal::analyze(&capture);
     let stall = report
         .findings
@@ -519,9 +724,22 @@ fn coherent_ledger_root_trail_is_attested() {
         commit_rec_cells(0, 1, 1, [1u8; 32], one_cell.clone()),
         commit_rec_cells(1, 2, 2, [2u8; 32], one_cell),
     ];
-    let capture = WalCapture { records, commit_cursor: Some(2) };
+    let capture = WalCapture {
+        records,
+        commit_cursor: Some(2),
+    };
     let report = crate::wal::analyze(&capture);
-    assert!(report.findings.iter().any(|f| f.code == "wal.root_trail_coherent" && f.is_verified()));
-    assert!(report.summary.iter().any(|(k, v)| k == "distinct_ledger_roots" && v == "2"));
+    assert!(
+        report
+            .findings
+            .iter()
+            .any(|f| f.code == "wal.root_trail_coherent" && f.is_verified())
+    );
+    assert!(
+        report
+            .summary
+            .iter()
+            .any(|(k, v)| k == "distinct_ledger_roots" && v == "2")
+    );
     assert!(report.is_clean());
 }

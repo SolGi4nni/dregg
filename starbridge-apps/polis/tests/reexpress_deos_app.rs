@@ -27,13 +27,13 @@ mod deos;
 use deos::*;
 use dregg_app_framework::{
     AgentCipherclerk, AppCipherclerk, AuthRequired, CapTpServer, CellId, DeosApp, EmbeddedExecutor,
-    FederationId, StarbridgeAppContext, HELD_RIGHTS_HEADER,
+    FederationId, HELD_RIGHTS_HEADER, StarbridgeAppContext,
 };
 use starbridge_polis::{
     constitution::ConstitutionParams,
     council::{AmendmentTerms, CouncilCharter},
-    identity::{key_set_commitment, IdentityCharter},
-    mandate::{tool_scope_commitment, WorkerMandate},
+    identity::{IdentityCharter, key_set_commitment},
+    mandate::{WorkerMandate, tool_scope_commitment},
 };
 
 fn agent(seed: u8) -> (AppCipherclerk, EmbeddedExecutor) {
@@ -133,14 +133,25 @@ async fn council_projects_per_viewer_over_http() {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK, "projection over HTTP is OK");
-        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
         serde_json::from_slice::<serde_json::Value>(&bytes).unwrap()["visible"].clone()
     }
 
     // The cap-only surface holds only the read; every tier at/above `Signature` sees it.
-    assert_eq!(visible(&router, "signature").await, serde_json::json!(["view_council"]));
-    assert_eq!(visible(&router, "either").await, serde_json::json!(["view_council"]));
-    assert_eq!(visible(&router, "root").await, serde_json::json!(["view_council"]));
+    assert_eq!(
+        visible(&router, "signature").await,
+        serde_json::json!(["view_council"])
+    );
+    assert_eq!(
+        visible(&router, "either").await,
+        serde_json::json!(["view_council"])
+    );
+    assert_eq!(
+        visible(&router, "root").await,
+        serde_json::json!(["view_council"])
+    );
 }
 
 #[tokio::test]
@@ -157,7 +168,11 @@ async fn council_publishes_into_the_web_of_cells() {
 
     let uris = app.publish_all(100).await;
     assert_eq!(uris.len(), 1);
-    assert!(uris[0].starts_with("dregg://"), "a real sturdyref: {}", uris[0]);
+    assert!(
+        uris[0].starts_with("dregg://"),
+        "a real sturdyref: {}",
+        uris[0]
+    );
 }
 
 #[tokio::test]
@@ -186,7 +201,9 @@ async fn council_ships_a_web_component_and_a_manifest() {
         .unwrap()
         .to_string();
     assert!(ct.contains("javascript"), "served as a JS module: {ct}");
-    let bytes = axum::body::to_bytes(surface.into_body(), usize::MAX).await.unwrap();
+    let bytes = axum::body::to_bytes(surface.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let js = String::from_utf8(bytes.to_vec()).unwrap();
     assert!(js.contains("customElements.define(\"dregg-affordance-surface\""));
 
@@ -196,12 +213,21 @@ async fn council_ships_a_web_component_and_a_manifest() {
         .await
         .unwrap();
     assert_eq!(manifest.status(), StatusCode::OK);
-    let bytes = axum::body::to_bytes(manifest.into_body(), usize::MAX).await.unwrap();
+    let bytes = axum::body::to_bytes(manifest.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let m: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(m["app"], "polis-council");
-    assert!(m["persistence"].as_str().unwrap().contains("embedded-ledger"));
+    assert!(
+        m["persistence"]
+            .as_str()
+            .unwrap()
+            .contains("embedded-ledger")
+    );
     assert_eq!(m["cells"].as_array().unwrap().len(), 1);
-    let gated = m["cells"][0]["gatedAffordances"].as_array().expect("gated affordances");
+    let gated = m["cells"][0]["gatedAffordances"]
+        .as_array()
+        .expect("gated affordances");
     let names: Vec<&str> = gated.iter().filter_map(|g| g["name"].as_str()).collect();
     assert!(names.contains(&"approve"), "approve is advertised as gated");
     assert!(names.contains(&"certify"), "certify is advertised as gated");
@@ -217,10 +243,16 @@ fn council_register_deos_folds_the_seeded_surface_into_a_context() {
     // surface into the context's affordance registry.
     let app = register_council_deos(&ctx, &council_2of3());
     assert_eq!(app.name(), "polis-council");
-    assert_eq!(ctx.affordance_registry().len(), 1, "the deos surface is registered");
+    assert_eq!(
+        ctx.affordance_registry().len(),
+        1,
+        "the deos surface is registered"
+    );
     // The seeded cell is PROPOSED (approvals open), so an approve fires immediately through
     // the mounted surface (the seam is live).
-    let state = executor.cell_state(cclerk.cell_id()).expect("seeded cell exists");
+    let state = executor
+        .cell_state(cclerk.cell_id())
+        .expect("seeded cell exists");
     assert_eq!(
         state.fields[0],
         dregg_app_framework::field_from_u64(starbridge_polis::council::STATE_PROPOSED),
@@ -272,7 +304,9 @@ async fn mandate_projects_per_viewer_over_http() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
-    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let visible = serde_json::from_slice::<serde_json::Value>(&bytes).unwrap()["visible"].clone();
     // The cap-only surface holds only the read (invoke/revoke are gated, not on the cap-only
     // projection — they light on the gated surface against live state).
@@ -291,7 +325,11 @@ async fn mandate_publishes_into_the_web_of_cells() {
 
     let uris = app.publish_all(100).await;
     assert_eq!(uris.len(), 1);
-    assert!(uris[0].starts_with("dregg://"), "a real sturdyref: {}", uris[0]);
+    assert!(
+        uris[0].starts_with("dregg://"),
+        "a real sturdyref: {}",
+        uris[0]
+    );
 }
 
 #[tokio::test]
@@ -310,7 +348,9 @@ async fn mandate_ships_a_web_component_and_a_manifest() {
         .await
         .unwrap();
     assert_eq!(surface.status(), StatusCode::OK);
-    let bytes = axum::body::to_bytes(surface.into_body(), usize::MAX).await.unwrap();
+    let bytes = axum::body::to_bytes(surface.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let js = String::from_utf8(bytes.to_vec()).unwrap();
     assert!(js.contains("customElements.define(\"dregg-affordance-surface\""));
 
@@ -319,11 +359,18 @@ async fn mandate_ships_a_web_component_and_a_manifest() {
         .await
         .unwrap();
     assert_eq!(manifest.status(), StatusCode::OK);
-    let bytes = axum::body::to_bytes(manifest.into_body(), usize::MAX).await.unwrap();
+    let bytes = axum::body::to_bytes(manifest.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let m: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(m["app"], "polis-mandate");
-    assert_eq!(m["discoverable"], serde_json::json!(["polis", "mandate", "orchestration"]));
-    let gated = m["cells"][0]["gatedAffordances"].as_array().expect("gated affordances");
+    assert_eq!(
+        m["discoverable"],
+        serde_json::json!(["polis", "mandate", "orchestration"])
+    );
+    let gated = m["cells"][0]["gatedAffordances"]
+        .as_array()
+        .expect("gated affordances");
     let names: Vec<&str> = gated.iter().filter_map(|g| g["name"].as_str()).collect();
     assert!(names.contains(&"invoke"));
     assert!(names.contains(&"revoke"));
@@ -356,7 +403,10 @@ fn identity_is_one_composed_app_with_the_cap_only_and_gated_split() {
 
     assert_eq!(app.name(), "polis-identity");
     let cell = &app.cells()[0];
-    assert_eq!(cell.surface().all_names(), vec!["view_identity".to_string()]);
+    assert_eq!(
+        cell.surface().all_names(),
+        vec!["view_identity".to_string()]
+    );
     let mut gated: Vec<String> = cell
         .gated_surface()
         .affordances
@@ -389,7 +439,9 @@ async fn identity_projects_per_viewer_over_http() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
-    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let visible = serde_json::from_slice::<serde_json::Value>(&bytes).unwrap()["visible"].clone();
     assert_eq!(visible, serde_json::json!(["view_identity"]));
 }
@@ -406,7 +458,11 @@ async fn identity_publishes_into_the_web_of_cells() {
 
     let uris = app.publish_all(100).await;
     assert_eq!(uris.len(), 1);
-    assert!(uris[0].starts_with("dregg://"), "a real sturdyref: {}", uris[0]);
+    assert!(
+        uris[0].starts_with("dregg://"),
+        "a real sturdyref: {}",
+        uris[0]
+    );
 }
 
 #[tokio::test]
@@ -425,7 +481,9 @@ async fn identity_ships_a_web_component_and_a_manifest() {
         .await
         .unwrap();
     assert_eq!(surface.status(), StatusCode::OK);
-    let bytes = axum::body::to_bytes(surface.into_body(), usize::MAX).await.unwrap();
+    let bytes = axum::body::to_bytes(surface.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let js = String::from_utf8(bytes.to_vec()).unwrap();
     assert!(js.contains("customElements.define(\"dregg-affordance-surface\""));
 
@@ -434,11 +492,18 @@ async fn identity_ships_a_web_component_and_a_manifest() {
         .await
         .unwrap();
     assert_eq!(manifest.status(), StatusCode::OK);
-    let bytes = axum::body::to_bytes(manifest.into_body(), usize::MAX).await.unwrap();
+    let bytes = axum::body::to_bytes(manifest.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let m: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(m["app"], "polis-identity");
-    assert_eq!(m["discoverable"], serde_json::json!(["polis", "identity", "keri"]));
-    let gated = m["cells"][0]["gatedAffordances"].as_array().expect("gated affordances");
+    assert_eq!(
+        m["discoverable"],
+        serde_json::json!(["polis", "identity", "keri"])
+    );
+    let gated = m["cells"][0]["gatedAffordances"]
+        .as_array()
+        .expect("gated affordances");
     let names: Vec<&str> = gated.iter().filter_map(|g| g["name"].as_str()).collect();
     assert!(names.contains(&"attest"));
     assert!(names.contains(&"rotate"));
@@ -480,14 +545,21 @@ fn amendment_builds_registers_and_presents_its_gated_ratify() {
     let app = amendment_app(&cclerk, &executor);
     assert_eq!(app.name(), "polis-amendment");
     // The cap-only read + the gated `ratify` (the authority's decisive enact).
-    assert_eq!(app.cells()[0].surface().all_names(), vec!["view_amendment".to_string()]);
+    assert_eq!(
+        app.cells()[0].surface().all_names(),
+        vec!["view_amendment".to_string()]
+    );
     let gated: Vec<String> = app.cells()[0]
         .gated_surface()
         .affordances
         .iter()
         .map(|g| g.name().to_string())
         .collect();
-    assert_eq!(gated, vec!["ratify".to_string()], "the gated authority transition is present");
+    assert_eq!(
+        gated,
+        vec!["ratify".to_string()],
+        "the gated authority transition is present"
+    );
 
     // register_amendment_deos folds the seeded (APPROVED) surface into a context.
     let ctx = StarbridgeAppContext::new(cclerk.clone(), executor.clone());
@@ -516,14 +588,21 @@ fn constitution_builds_registers_and_presents_its_gated_amend() {
     let (cclerk, executor) = agent(0xC8);
     let app = constitution_app(&cclerk, &executor);
     assert_eq!(app.name(), "polis-constitution");
-    assert_eq!(app.cells()[0].surface().all_names(), vec!["view_constitution".to_string()]);
+    assert_eq!(
+        app.cells()[0].surface().all_names(),
+        vec!["view_constitution".to_string()]
+    );
     let gated: Vec<String> = app.cells()[0]
         .gated_surface()
         .affordances
         .iter()
         .map(|g| g.name().to_string())
         .collect();
-    assert_eq!(gated, vec!["amend".to_string()], "the gated authority transition is present");
+    assert_eq!(
+        gated,
+        vec!["amend".to_string()],
+        "the gated authority transition is present"
+    );
 
     let ctx = StarbridgeAppContext::new(cclerk.clone(), executor.clone());
     let reg = register_constitution_deos(&ctx, &params_v1());

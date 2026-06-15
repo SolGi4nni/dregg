@@ -39,10 +39,10 @@
 use std::sync::Arc;
 
 use axum::{
+    Json, Router,
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
     routing::{get, post},
-    Json, Router,
 };
 use serde_json::json;
 
@@ -50,7 +50,7 @@ use dregg_cell::AuthRequired;
 
 use crate::affordance::{AffordanceSurface, FireError, FireExecuteError, GatedSurface};
 use crate::cipherclerk::{AppCipherclerk, EmbeddedExecutor};
-use crate::server::{api_error, ErrorResponse};
+use crate::server::{ErrorResponse, api_error};
 
 /// Resolves the **held authority** a request carries — the `held` side of the
 /// affordance gate `required ⊆ held`.
@@ -390,14 +390,16 @@ async fn handle_gated_fire(
             StatusCode::NOT_FOUND,
             format!("no gated affordance named `{name}` on this surface"),
         )),
-        Err(FireExecuteError::Gate(FireError::Unauthorized { affordance, required, held })) => {
-            Err(api_error(
-                StatusCode::FORBIDDEN,
-                format!(
-                    "unauthorized: firing `{affordance}` requires {required:?} but holder has {held:?}"
-                ),
-            ))
-        }
+        Err(FireExecuteError::Gate(FireError::Unauthorized {
+            affordance,
+            required,
+            held,
+        })) => Err(api_error(
+            StatusCode::FORBIDDEN,
+            format!(
+                "unauthorized: firing `{affordance}` requires {required:?} but holder has {held:?}"
+            ),
+        )),
         Err(FireExecuteError::Gate(FireError::StateConditionUnmet { affordance, reason })) => {
             Err(api_error(
                 StatusCode::CONFLICT,
@@ -442,7 +444,10 @@ mod tests {
     fn emit_event(cell: dregg_types::CellId) -> Effect {
         Effect::EmitEvent {
             cell,
-            event: Event { topic: [1u8; 32], data: vec![] },
+            event: Event {
+                topic: [1u8; 32],
+                data: vec![],
+            },
         }
     }
 
@@ -454,9 +459,21 @@ mod tests {
         let executor = EmbeddedExecutor::new(&cclerk, "default");
         let doc = cclerk.cell_id();
         let surface = AffordanceSurface::named(doc, "doc")
-            .declare(CellAffordance::new("view", AuthRequired::Signature, emit_event(doc)))
-            .declare(CellAffordance::new("comment", AuthRequired::Either, emit_event(doc)))
-            .declare(CellAffordance::new("admin", AuthRequired::None, emit_event(doc)));
+            .declare(CellAffordance::new(
+                "view",
+                AuthRequired::Signature,
+                emit_event(doc),
+            ))
+            .declare(CellAffordance::new(
+                "comment",
+                AuthRequired::Either,
+                emit_event(doc),
+            ))
+            .declare(CellAffordance::new(
+                "admin",
+                AuthRequired::None,
+                emit_event(doc),
+            ));
         (cclerk, executor, surface)
     }
 

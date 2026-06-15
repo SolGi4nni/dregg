@@ -103,13 +103,18 @@ async fn the_three_identity_roles_see_different_cap_only_surfaces() {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
-        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
         serde_json::from_slice::<serde_json::Value>(&bytes).unwrap()["visible"].clone()
     }
 
     // A VERIFIER / HOLDER (Signature) sees only `verify` (the narrow read tier; `present`
     // needs Either).
-    assert_eq!(visible(&router, "signature").await, serde_json::json!(["verify"]));
+    assert_eq!(
+        visible(&router, "signature").await,
+        serde_json::json!(["verify"])
+    );
     // A PRESENTER (Either) additionally sees `present`. `issue` / `revoke` are GATED (not on
     // the cap-only projection); they light on the gated surface against live state.
     assert_eq!(
@@ -155,7 +160,10 @@ async fn a_holder_below_the_presenter_tier_cannot_present() {
     // The CAP tooth, in-band (anti-ghost): a HOLDER/VERIFIER (Signature) firing `present`
     // (requires Either) is REFUSED at the cap gate (403) BEFORE anything reaches the executor.
     // The cap gate is the genuine `is_attenuation` (`Either` ⊄ Signature).
-    assert_eq!(fire(&router, "present", "signature").await, StatusCode::FORBIDDEN);
+    assert_eq!(
+        fire(&router, "present", "signature").await,
+        StatusCode::FORBIDDEN
+    );
 
     // A PRESENTER (Either) CLEARS the cap gate (not 403) — it is cap-authorized to present.
     assert_ne!(
@@ -188,7 +196,11 @@ async fn the_issuer_is_published_into_the_web_of_cells() {
     // boundary. This is the credential-across-trust-boundary web-of-cells keystone.
     let uris = app.publish_all(100).await;
     assert_eq!(uris.len(), 1);
-    assert!(uris[0].starts_with("dregg://"), "a real sturdyref: {}", uris[0]);
+    assert!(
+        uris[0].starts_with("dregg://"),
+        "a real sturdyref: {}",
+        uris[0]
+    );
 }
 
 // =============================================================================
@@ -205,7 +217,11 @@ fn an_issuer_snapshot_rehydrates_per_viewer_respecting_the_lattice() {
     // to a downstream relying party) ⇒ liveness REPLAYED-DETERMINISTIC.
     let log = InteractionLog::new().record(Interaction::witnessed_turn(issuer.cell(), [9u8; 32]));
     let snap = issuer.snapshot(log, false);
-    assert_eq!(snap.lineage, AuthRequired::Signature, "snapshot at the published lineage");
+    assert_eq!(
+        snap.lineage,
+        AuthRequired::Signature,
+        "snapshot at the published lineage"
+    );
     assert_eq!(snap.liveness(), Rehydration::ReplayedDeterministic);
     assert!(snap.liveness().is_faithful());
 
@@ -250,7 +266,9 @@ async fn the_app_ships_a_web_component_surface_and_a_manifest() {
         .unwrap()
         .to_string();
     assert!(ct.contains("javascript"), "served as a JS module: {ct}");
-    let bytes = axum::body::to_bytes(surface.into_body(), usize::MAX).await.unwrap();
+    let bytes = axum::body::to_bytes(surface.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let js = String::from_utf8(bytes.to_vec()).unwrap();
     assert!(js.contains("customElements.define(\"dregg-affordance-surface\""));
     // The anti-drift affordance map names the cap-only fire endpoints.
@@ -264,14 +282,26 @@ async fn the_app_ships_a_web_component_surface_and_a_manifest() {
         .await
         .unwrap();
     assert_eq!(manifest.status(), StatusCode::OK);
-    let bytes = axum::body::to_bytes(manifest.into_body(), usize::MAX).await.unwrap();
+    let bytes = axum::body::to_bytes(manifest.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let m: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(m["app"], "identity");
-    assert_eq!(m["discoverable"], serde_json::json!(["identity", "credentials"]));
-    assert!(m["persistence"].as_str().unwrap().contains("embedded-ledger"));
+    assert_eq!(
+        m["discoverable"],
+        serde_json::json!(["identity", "credentials"])
+    );
+    assert!(
+        m["persistence"]
+            .as_str()
+            .unwrap()
+            .contains("embedded-ledger")
+    );
     assert_eq!(m["cells"].as_array().unwrap().len(), 1);
     // The manifest advertises the two gated (cap∧state) affordances: issue + revoke.
-    let gated = m["cells"][0]["gatedAffordances"].as_array().expect("gated affordances");
+    let gated = m["cells"][0]["gatedAffordances"]
+        .as_array()
+        .expect("gated affordances");
     let names: Vec<&str> = gated.iter().filter_map(|g| g["name"].as_str()).collect();
     assert!(names.contains(&"issue"), "issue is advertised as gated");
     assert!(names.contains(&"revoke"), "revoke is advertised as gated");

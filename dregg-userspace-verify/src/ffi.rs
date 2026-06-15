@@ -129,7 +129,13 @@ struct Response {
 
 impl Response {
     fn err(msg: impl Into<String>) -> Self {
-        Response { ok: false, pass: false, assurance: None, app_findings: Vec::new(), error: Some(msg.into()) }
+        Response {
+            ok: false,
+            pass: false,
+            assurance: None,
+            app_findings: Vec::new(),
+            error: Some(msg.into()),
+        }
     }
 }
 
@@ -155,7 +161,11 @@ fn parse_cell(s: &str) -> Result<CellId, String> {
 pub(crate) fn analyze_json(input: &str) -> String {
     let req: Request = match serde_json::from_str(input) {
         Ok(r) => r,
-        Err(e) => return to_json(&Response::err(format!("request is not a valid uverify Request JSON: {e}"))),
+        Err(e) => {
+            return to_json(&Response::err(format!(
+                "request is not a valid uverify Request JSON: {e}"
+            )));
+        }
     };
 
     let assurance = crate::analyze(&req.forest, req.treat_as_ring);
@@ -185,7 +195,11 @@ pub(crate) fn analyze_json(input: &str) -> String {
                 Ok(c) => c,
                 Err(e) => return to_json(&Response::err(format!("app.bounty.cell: {e}"))),
             };
-            let schema = app::LifecycleSchema { cell, state_slot: b.state_slot, ladder: b.ladder };
+            let schema = app::LifecycleSchema {
+                cell,
+                state_slot: b.state_slot,
+                ladder: b.ladder,
+            };
             app_findings.extend(
                 app::check_bounty_lifecycle(&req.forest, &schema, b.prior_state)
                     .findings()
@@ -198,7 +212,12 @@ pub(crate) fn analyze_json(input: &str) -> String {
                 Ok(c) => c,
                 Err(e) => return to_json(&Response::err(format!("app.provenance.cell: {e}"))),
             };
-            let claims = match p.claims.iter().map(|s| parse_hex32(s)).collect::<Result<Vec<_>, _>>() {
+            let claims = match p
+                .claims
+                .iter()
+                .map(|s| parse_hex32(s))
+                .collect::<Result<Vec<_>, _>>()
+            {
                 Ok(c) => c,
                 Err(e) => return to_json(&Response::err(format!("app.provenance.claims: {e}"))),
             };
@@ -209,9 +228,16 @@ pub(crate) fn analyze_json(input: &str) -> String {
                 .collect::<Result<Vec<_>, _>>()
             {
                 Ok(c) => c,
-                Err(e) => return to_json(&Response::err(format!("app.provenance.prior_committed: {e}"))),
+                Err(e) => {
+                    return to_json(&Response::err(format!(
+                        "app.provenance.prior_committed: {e}"
+                    )));
+                }
             };
-            let schema = app::ProvenanceSchema { cell, entry_base: p.entry_base };
+            let schema = app::ProvenanceSchema {
+                cell,
+                entry_base: p.entry_base,
+            };
             app_findings.extend(
                 app::check_provenance_chain_in_forest(&req.forest, &schema, &claims, &prior)
                     .findings()
@@ -222,7 +248,13 @@ pub(crate) fn analyze_json(input: &str) -> String {
     }
 
     let pass = assurance.pass() && app_findings.is_empty();
-    to_json(&Response { ok: true, pass, assurance: Some(assurance), app_findings, error: None })
+    to_json(&Response {
+        ok: true,
+        pass,
+        assurance: Some(assurance),
+        app_findings,
+        error: None,
+    })
 }
 
 fn to_json(r: &Response) -> String {

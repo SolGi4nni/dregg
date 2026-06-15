@@ -60,7 +60,7 @@
 
 use dregg_cell::{AuthRequired, Cell};
 use dregg_circuit::descriptor_ir2::{
-    verify_vm_descriptor2_with_config, EffectVmDescriptor2, Ir2BatchProof,
+    EffectVmDescriptor2, Ir2BatchProof, verify_vm_descriptor2_with_config,
 };
 use dregg_circuit::effect_vm::{CellState as VmCellState, Effect as VmEffect};
 use dregg_circuit::field::BabyBear;
@@ -69,7 +69,7 @@ use dregg_circuit::plonky3_recursion_impl::recursive::DreggRecursionConfig;
 use dregg_types::CellId;
 
 use crate::affordance::AffordanceSurface;
-use crate::rehydration::{Membrane, RehydratedSurface, RehydrateError, Rehydration};
+use crate::rehydration::{Membrane, RehydrateError, RehydratedSurface, Rehydration};
 
 /// The rotated participant leg the snapshot carries: the real `Ir2BatchProof` + the
 /// descriptor it satisfies + the 38-PI vector it attests. Re-exported from the circuit
@@ -362,9 +362,7 @@ pub mod stark_chain_snapshot {
     //! (`verify_turn_chain_recursive`) instead of a single `Ir2BatchProof`
     //! (`verify_vm_descriptor2`) — the same snapshot-carries-proof /
     //! rehydrate-verifies-proof weld, at the K-turn light-client ROOT.
-    pub use dregg_circuit::ivc_turn_chain::{
-        verify_turn_chain_recursive, WholeChainProof,
-    };
+    pub use dregg_circuit::ivc_turn_chain::{WholeChainProof, verify_turn_chain_recursive};
 }
 
 #[cfg(test)]
@@ -417,9 +415,21 @@ mod tests {
     /// view@Signature, comment@Either, admin@None — the canonical doc surface.
     fn doc_surface(doc: CellId) -> AffordanceSurface {
         AffordanceSurface::named(doc, "doc")
-            .declare(CellAffordance::new("view", AuthRequired::Signature, emit_event(doc)))
-            .declare(CellAffordance::new("comment", AuthRequired::Either, emit_event(doc)))
-            .declare(CellAffordance::new("admin", AuthRequired::None, emit_event(doc)))
+            .declare(CellAffordance::new(
+                "view",
+                AuthRequired::Signature,
+                emit_event(doc),
+            ))
+            .declare(CellAffordance::new(
+                "comment",
+                AuthRequired::Either,
+                emit_event(doc),
+            ))
+            .declare(CellAffordance::new(
+                "admin",
+                AuthRequired::None,
+                emit_event(doc),
+            ))
     }
 
     /// Mint a real STARK-gated snapshot over a transfer DEBIT of `amount` from
@@ -454,14 +464,21 @@ mod tests {
 
         // The STARK verifies — the surface state is the genuine endpoint of a verified
         // turn (NO receipt-chain walk; one proof checked).
-        snap.verify_stark().expect("the genuine snapshot's STARK must verify");
+        snap.verify_stark()
+            .expect("the genuine snapshot's STARK must verify");
 
         // The root holder rehydrates the FULL surface.
         let root = Membrane::new(AuthRequired::None);
-        let root_view = snap.rehydrate_for(&root, &surface).expect("root rehydrates");
+        let root_view = snap
+            .rehydrate_for(&root, &surface)
+            .expect("root rehydrates");
         assert_eq!(
             root_view.visible_names(),
-            vec!["admin".to_string(), "comment".to_string(), "view".to_string()]
+            vec![
+                "admin".to_string(),
+                "comment".to_string(),
+                "view".to_string()
+            ]
         );
         // Faithful-by-STARK.
         assert_eq!(root_view.liveness, Rehydration::ReplayedDeterministic);
@@ -470,7 +487,9 @@ mod tests {
         // A weaker viewer (Signature) rehydrating the SAME snapshot reacquires only
         // {view} — the STARK gate did not loosen the cap-membrane.
         let viewer = Membrane::new(AuthRequired::Signature);
-        let viewer_view = snap.rehydrate_for(&viewer, &surface).expect("viewer rehydrates");
+        let viewer_view = snap
+            .rehydrate_for(&viewer, &surface)
+            .expect("viewer rehydrates");
         assert_eq!(viewer_view.visible_names(), vec!["view".to_string()]);
         assert_ne!(root_view.visible_names(), viewer_view.visible_names());
     }
@@ -580,7 +599,9 @@ mod tests {
         let blue = Membrane::new(AuthRequired::Custom { vk_hash: [9u8; 32] });
         match snap.rehydrate_for(&blue, &surface) {
             Err(StarkRehydrateError::Membrane(RehydrateError::Amplification { .. })) => {}
-            other => panic!("an incomparable viewer must be refused by the membrane; got {other:?}"),
+            other => {
+                panic!("an incomparable viewer must be refused by the membrane; got {other:?}")
+            }
         }
     }
 
@@ -616,6 +637,9 @@ mod tests {
     #[test]
     fn witness_replay_helper_is_non_vacuous() {
         assert!(!witness_replay_is_genuine(&[]), "empty chain: not genuine");
-        assert!(witness_replay_is_genuine(&[[1u8; 32]]), "one receipt: genuine");
+        assert!(
+            witness_replay_is_genuine(&[[1u8; 32]]),
+            "one receipt: genuine"
+        );
     }
 }

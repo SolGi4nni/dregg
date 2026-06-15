@@ -213,8 +213,8 @@ pub fn chunks_match_manifest(manifest: &AvailabilityManifest, chunks: &[ErasureC
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::quota::SpaceBank;
     use crate::QuotaId;
+    use crate::quota::SpaceBank;
 
     fn test_store(computrons: u64) -> (ContentStore, QuotaId) {
         let mut bank = SpaceBank::new(1, 50, 0.8);
@@ -364,6 +364,9 @@ mod tests {
         let (manifest, chunks) = encode_bytes_for_availability(b"matched set", 16, 2);
         assert!(chunks_match_manifest(&manifest, &chunks));
         // A truncated set must not match (wrong count).
-        assert!(!chunks_match_manifest(&manifest, &chunks[..chunks.len() - 1]));
+        assert!(!chunks_match_manifest(
+            &manifest,
+            &chunks[..chunks.len() - 1]
+        ));
     }
 }

@@ -18,9 +18,7 @@
 
 use axum::body::Body;
 use axum::http::Request;
-use dregg_app_framework::{
-    AgentCipherclerk, AppCipherclerk, EmbeddedExecutor, HELD_RIGHTS_HEADER,
-};
+use dregg_app_framework::{AgentCipherclerk, AppCipherclerk, EmbeddedExecutor, HELD_RIGHTS_HEADER};
 use starbridge_agent_orchestration::{
     Mandate, Tool, WorkStep, WorkerSlot, audit_run, coordinator_program,
     deos::orchestration_app,
@@ -48,7 +46,9 @@ async fn get(router: &axum::Router, uri: &str, tier: Option<&str>) -> serde_json
         .oneshot(req.body(Body::empty()).unwrap())
         .await
         .unwrap();
-    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
     serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null)
 }
 
@@ -81,12 +81,23 @@ async fn main() {
         manifest["app"].as_str().unwrap_or("?"),
         manifest["persistence"].as_str().unwrap_or("?")
     );
-    for (role, tier) in [("auditor", "signature"), ("worker", "either"), ("coordinator", "root")] {
+    for (role, tier) in [
+        ("auditor", "signature"),
+        ("worker", "either"),
+        ("coordinator", "root"),
+    ] {
         let proj = get(&router, "/orchestration-board/projected", Some(tier)).await;
-        println!("  {:<11} (holds {:<9}) projects cap-only buttons: {}", role, tier, proj["visible"]);
+        println!(
+            "  {:<11} (holds {:<9}) projects cap-only buttons: {}",
+            role, tier, proj["visible"]
+        );
     }
-    println!("  → an auditor sees only `view_audit`; a coordinator additionally sees `delegate_mandate`.");
-    println!("    No viewer can fire what its caps do not authorize; the executor re-checks every fire.");
+    println!(
+        "  → an auditor sees only `view_audit`; a coordinator additionally sees `delegate_mandate`."
+    );
+    println!(
+        "    No viewer can fire what its caps do not authorize; the executor re-checks every fire."
+    );
 
     // =======================================================================
     // 2. DELEGATE — the coordinator attenuates mandates (granted ⊑ held).
@@ -98,14 +109,25 @@ async fn main() {
         swarm_budget,
         "research-brief",
     );
-    let worker_a = coordinator.attenuate([Tool::Read, Tool::Search, Tool::Summarize], 700, "research");
+    let worker_a =
+        coordinator.attenuate([Tool::Read, Tool::Search, Tool::Summarize], 700, "research");
     let worker_b = coordinator.attenuate([Tool::Read], 300, "fact-check");
     println!("  coordinator holds {{read,search,summarize,write}} budget {swarm_budget}");
     println!(
         "  → worker-A: {{{}}}/{}  · worker-B: {{{}}}/{} (`write` STRICTLY dropped) — both ⊑ coordinator",
-        worker_a.tools.iter().map(|t| t.label()).collect::<Vec<_>>().join(","),
+        worker_a
+            .tools
+            .iter()
+            .map(|t| t.label())
+            .collect::<Vec<_>>()
+            .join(","),
         worker_a.budget,
-        worker_b.tools.iter().map(|t| t.label()).collect::<Vec<_>>().join(","),
+        worker_b
+            .tools
+            .iter()
+            .map(|t| t.label())
+            .collect::<Vec<_>>()
+            .join(","),
         worker_b.budget
     );
 
@@ -168,7 +190,9 @@ async fn main() {
             worker_b.clone(),
         );
         let prefix: Vec<_> = plan[..2].to_vec();
-        let out = d.run("coordinator-pk", &prefix, &mut durable).expect("the prefix commits");
+        let out = d
+            .run("coordinator-pk", &prefix, &mut durable)
+            .expect("the prefix commits");
         open_receipt = d.open_receipt().cloned().expect("open receipt");
         println!(
             "  ran {} verified steps, checkpointed {} to the durable log (then the engine 'crashes')",
@@ -178,8 +202,8 @@ async fn main() {
     }
 
     rule("4. CRASH → RECOVER (re-validate the chain) → RESUME (exactly-once)");
-    let (_log, recovered) =
-        DurableOrchestration::recover(&open_receipt, &durable).expect("recover re-validates the chain");
+    let (_log, recovered) = DurableOrchestration::recover(&open_receipt, &durable)
+        .expect("recover re-validates the chain");
     println!(
         "  recovered from the durable log alone: worker-A spent {}, next epoch {}",
         recovered.spent_a, recovered.next_epoch
@@ -219,7 +243,13 @@ async fn main() {
         .await
         .unwrap();
     // And re-derives the verdict off the receipt chain (the off-cell light-client computation).
-    match audit_run(&open_receipt, durable.orchestration_log(), &coordinator, &worker_a, &worker_b) {
+    match audit_run(
+        &open_receipt,
+        durable.orchestration_log(),
+        &coordinator,
+        &worker_a,
+        &worker_b,
+    ) {
         Ok(ok) => {
             println!(
                 "  AUDIT OK: {} steps · worker-A {} · worker-B {} · Σ {} ≤ budget {}",
@@ -229,8 +259,13 @@ async fn main() {
                 ok.spent_a + ok.spent_b,
                 ok.budget
             );
-            println!("  non-amplification ✓ · chain integrity ✓ · per-step mandate ✓ · conservation ✓");
-            println!("  chain head (the commitment a light client pins): {}", short(&ok.head));
+            println!(
+                "  non-amplification ✓ · chain integrity ✓ · per-step mandate ✓ · conservation ✓"
+            );
+            println!(
+                "  chain head (the commitment a light client pins): {}",
+                short(&ok.head)
+            );
         }
         Err(e) => println!("  !! AUDIT FAILED on a clean run: {e}"),
     }
@@ -246,8 +281,12 @@ async fn main() {
     println!(
         "\x1b[1m✓ a swarm whose every action is provably authorized, recorded, budgeted, and coordinated —\x1b[0m"
     );
-    println!("  a live cap-gated web surface over a durable verified spine, auditable by a stranger.");
-    println!("  the loop is the integrator's game; dregg owns the one seam — and the swarm cannot pretend.\n");
+    println!(
+        "  a live cap-gated web surface over a durable verified spine, auditable by a stranger."
+    );
+    println!(
+        "  the loop is the integrator's game; dregg owns the one seam — and the swarm cannot pretend.\n"
+    );
     println!("  four loops, one seam,");
     println!("  six primitives each hand-rolled —");
     println!("  dregg makes them bite.\n");

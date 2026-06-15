@@ -119,7 +119,10 @@ fn assert_committed(result: &TurnResult, ctx: &str) {
 fn assert_rejected_with(result: &TurnResult, ctx: &str, matcher: impl FnOnce(&TurnError) -> bool) {
     match result {
         TurnResult::Rejected { reason, .. } => {
-            assert!(matcher(reason), "{ctx}: unexpected rejection reason {reason:?}");
+            assert!(
+                matcher(reason),
+                "{ctx}: unexpected rejection reason {reason:?}"
+            );
         }
         other => panic!("{ctx}: expected rejected, got {other:?}"),
     }

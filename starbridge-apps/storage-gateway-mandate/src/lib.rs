@@ -610,16 +610,20 @@ pub fn gateway_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) ->
         budget_remaining_precondition(),
     );
 
-    DeosApp::builder("storage-gateway-mandate", cipherclerk.clone(), executor.clone())
-        .discoverable(vec!["storage".into()])
-        .cell(
-            DeosCell::new(gateway, "gateway")
-                .affordance(get)
-                .affordance(list)
-                .gated(put)
-                .publish(READER_RIGHTS),
-        )
-        .build()
+    DeosApp::builder(
+        "storage-gateway-mandate",
+        cipherclerk.clone(),
+        executor.clone(),
+    )
+    .discoverable(vec!["storage".into()])
+    .cell(
+        DeosCell::new(gateway, "gateway")
+            .affordance(get)
+            .affordance(list)
+            .gated(put)
+            .publish(READER_RIGHTS),
+    )
+    .build()
 }
 
 /// **Seed the GATEWAY cell** so the gated fires have live state + the invariants bite:
@@ -643,8 +647,10 @@ pub fn seed_gateway(
     executor.install_program(gateway, gateway_invariants_program());
     executor.with_ledger_mut(|ledger| {
         if let Some(cell) = ledger.get_mut(&gateway) {
-            cell.state
-                .set_field(COMMITMENT_ANCHOR_SLOT as usize, field_from_u64(commitment_anchor));
+            cell.state.set_field(
+                COMMITMENT_ANCHOR_SLOT as usize,
+                field_from_u64(commitment_anchor),
+            );
             cell.state
                 .set_field(VOLUME_CEILING_SLOT as usize, field_from_u64(volume_ceiling));
             cell.state

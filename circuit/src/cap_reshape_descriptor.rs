@@ -29,10 +29,11 @@
 //! binding of the opened `cap_root` to the producer's authenticated cell-root is the sdk
 //! authority-binding (`full_turn_proof.rs`), cited not duplicated here.
 
-use crate::lean_descriptor_air::{parse_vm_descriptor, EffectVmDescriptor, LeanExpr, VmConstraint};
+use crate::lean_descriptor_air::{EffectVmDescriptor, LeanExpr, VmConstraint, parse_vm_descriptor};
 
 /// The byte-exact verified-Lean JSON for the openable-`capability_root` descriptor.
-pub const CAPRESHAPE_V1_JSON: &str = include_str!("../descriptors/dregg-effectvm-capreshape-v1.json");
+pub const CAPRESHAPE_V1_JSON: &str =
+    include_str!("../descriptors/dregg-effectvm-capreshape-v1.json");
 
 /// The SHA-256 of the committed bytes (the anti-drift fingerprint).
 pub const CAPRESHAPE_V1_FP: &str =
@@ -159,7 +160,8 @@ mod tests {
             "cap-reshape descriptor fingerprint drift: re-run EmitAllJson + update CAPRESHAPE_V1_FP"
         );
 
-        let d = cap_reshape_descriptor().expect("cap-reshape descriptor must parse via interpreter");
+        let d =
+            cap_reshape_descriptor().expect("cap-reshape descriptor must parse via interpreter");
         assert_eq!(d.name, CAPRESHAPE_V1_NAME, "parsed name != wire identity");
         assert_eq!(
             d.trace_width, 186,
@@ -226,7 +228,10 @@ mod tests {
         let has_asset_pi = d.constraints.iter().any(|c| {
             matches!(c, VmConstraint::PiBinding { col, pi_index, .. } if *col == 71 && *pi_index == 0)
         });
-        assert!(has_asset_pi, "production-authority asset PI binding missing");
+        assert!(
+            has_asset_pi,
+            "production-authority asset PI binding missing"
+        );
         // (b) the control-bit gate: add(var held_bit[6], mul(const -1, const 1)) = 0, i.e. h6 = 1.
         let has_control_gate = d.constraints.iter().any(|c| match c {
             VmConstraint::Gate(LeanExpr::Add(l, r)) => {

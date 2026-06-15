@@ -95,18 +95,18 @@ pub use gc::{DropMessage, DropResult, ExportGcManager, ImportGcManager, SessionI
 pub use handoff::{
     HandoffAcceptance, HandoffCertificate, HandoffError, HandoffPresentation, validate_handoff,
 };
-pub use pipeline::{
-    BrokenPromiseNotification, CrossFedPipelineBridge, PipelineError, PipelinePromiseState,
-    PipelineRegistry, PipelineResultValue, PipelineWireMessage, PipelinedAction, PipelinedMessage,
-};
 pub use netlayer::{
-    InProcessFabric, InProcessNetlayer, NetConnection, NetSession, Netlayer, NetlayerError,
-    PeerId, RelayAddr, RelayNetlayer,
+    InProcessFabric, InProcessNetlayer, NetConnection, NetSession, Netlayer, NetlayerError, PeerId,
+    RelayAddr, RelayNetlayer,
     ocapn_uri::{OcapnLocation, OcapnSturdyRef, OcapnUriError},
 };
 pub use ocapn::{
     session::{AbortReason, OcapnSessionError, StartSession},
     syrup::{self, SyrupError, Value as SyrupValue},
+};
+pub use pipeline::{
+    BrokenPromiseNotification, CrossFedPipelineBridge, PipelineError, PipelinePromiseState,
+    PipelineRegistry, PipelineResultValue, PipelineWireMessage, PipelinedAction, PipelinedMessage,
 };
 pub use session::CapSession;
 pub use store_forward::{

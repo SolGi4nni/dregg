@@ -885,9 +885,7 @@ pub fn channel_member_leaf(member_cell: &[u8; 32], seal_pk: &[u8; 32]) -> [u8; 3
 /// Canonical openable commitment over the member-leaf set: BLAKE3 over the
 /// length-prefixed SORTED leaves (the mailbox sender-set shape). An empty
 /// set commits to a nonzero root distinct from the unborn all-zero slot.
-pub fn channel_member_root(
-    leaves: &std::collections::BTreeSet<[u8; 32]>,
-) -> FieldElement {
+pub fn channel_member_root(leaves: &std::collections::BTreeSet<[u8; 32]>) -> FieldElement {
     let mut hasher = blake3::Hasher::new_derive_key(CHANNEL_MEMBER_ROOT_DOMAIN);
     hasher.update(&(leaves.len() as u64).to_le_bytes());
     for leaf in leaves {
@@ -1447,8 +1445,8 @@ mod tests {
     fn trustline_pure_credit_pins_the_mode_and_distinguishes_the_vk() {
         let t = tl_terms();
         let full = trustline_factory_descriptor(&t).unwrap();
-        let pure = trustline_factory_descriptor_collateral(&t, TrustlineCollateral::PureCredit)
-            .unwrap();
+        let pure =
+            trustline_factory_descriptor_collateral(&t, TrustlineCollateral::PureCredit).unwrap();
         assert_ne!(
             full.factory_vk, pure.factory_vk,
             "the collateral point is content-addressed into the per-line program"
@@ -1468,9 +1466,11 @@ mod tests {
         );
         // Once open, flipping the mode back is refused (term pin).
         let mut flipped = open.clone();
-        flipped.fields[TL_COLLATERAL_SLOT as usize] =
-            field_from_u64(TL_COLLATERAL_FULL_RESERVE);
-        assert!(eval(&p, &flipped, Some(&open), 0).is_err(), "mode immutable");
+        flipped.fields[TL_COLLATERAL_SLOT as usize] = field_from_u64(TL_COLLATERAL_FULL_RESERVE);
+        assert!(
+            eval(&p, &flipped, Some(&open), 0).is_err(),
+            "mode immutable"
+        );
         // The credit teeth ride unchanged: within-line draw admits, over-line
         // refuses (Lean §12b stepC — draws move only the credit registers).
         let mut drawn = open.clone();
@@ -1576,12 +1576,7 @@ mod tests {
 
     fn ch_member_set(n: u64) -> std::collections::BTreeSet<[u8; 32]> {
         (0..n)
-            .map(|i| {
-                channel_member_leaf(
-                    &field_from_u64(100 + i),
-                    &field_from_u64(200 + i),
-                )
-            })
+            .map(|i| channel_member_leaf(&field_from_u64(100 + i), &field_from_u64(200 + i)))
             .collect()
     }
 
@@ -1608,7 +1603,14 @@ mod tests {
             "all-zero birth passes (epoch slot 0 = delegation_epoch 0)"
         );
         assert!(
-            eval_ch(&p, &ch_open_state(&t), Some(&born), &ctx_sender(ADMIN, 0), 1).is_ok(),
+            eval_ch(
+                &p,
+                &ch_open_state(&t),
+                Some(&born),
+                &ctx_sender(ADMIN, 0),
+                1
+            )
+            .is_ok(),
             "the open turn writes terms + the first epoch (and the anchor \
              revocation bumps delegation_epoch 0 → 1 in the same turn)"
         );
@@ -1646,8 +1648,7 @@ mod tests {
         // Remove WITHOUT the epoch step: UNSAT (membership ⇒ epoch tooth).
         let mut no_epoch = removed.clone();
         no_epoch.fields[CH_EPOCH_SLOT as usize] = open.fields[CH_EPOCH_SLOT as usize];
-        no_epoch.fields[CH_KEY_COMMIT_SLOT as usize] =
-            open.fields[CH_KEY_COMMIT_SLOT as usize];
+        no_epoch.fields[CH_KEY_COMMIT_SLOT as usize] = open.fields[CH_KEY_COMMIT_SLOT as usize];
         assert!(
             eval_ch(&p, &no_epoch, Some(&open), &admin, 1).is_err(),
             "membership change without an epoch step must refuse"
@@ -1656,8 +1657,7 @@ mod tests {
         // Remove + epoch step but the OLD key kept: UNSAT (epoch ⇒ fresh-key
         // tooth — the removal that forgets to rekey).
         let mut stale_key = removed.clone();
-        stale_key.fields[CH_KEY_COMMIT_SLOT as usize] =
-            open.fields[CH_KEY_COMMIT_SLOT as usize];
+        stale_key.fields[CH_KEY_COMMIT_SLOT as usize] = open.fields[CH_KEY_COMMIT_SLOT as usize];
         assert!(
             eval_ch(&p, &stale_key, Some(&open), &admin, 2).is_err(),
             "an epoch step carrying the stale key must refuse"
@@ -1825,8 +1825,7 @@ mod tests {
         let mut flipped = open.clone();
         flipped.fields[CH_MEMBER_ROOT_SLOT as usize] = channel_member_root(&ch_member_set(2));
 
-        let exhibit =
-            |elems: &[[u8; 32]]| postcard::to_allocvec(&elems.to_vec()).unwrap();
+        let exhibit = |elems: &[[u8; 32]]| postcard::to_allocvec(&elems.to_vec()).unwrap();
         let eval_with = |new: &CellState,
                          ctx: &EvalContext,
                          blob: Option<&[u8]>|
@@ -1878,7 +1877,10 @@ mod tests {
     fn channel_zero_terms_rejected_at_build() {
         let mut t = ch_terms();
         t.admin = FIELD_ZERO;
-        assert_eq!(channel_state_constraints(&t), Err(BlueprintError::ZeroAdmin));
+        assert_eq!(
+            channel_state_constraints(&t),
+            Err(BlueprintError::ZeroAdmin)
+        );
         let mut t2 = ch_terms();
         t2.tag = FIELD_ZERO;
         assert_eq!(channel_state_constraints(&t2), Err(BlueprintError::ZeroTag));
@@ -1892,11 +1894,17 @@ mod tests {
         let mut t2 = ch_terms();
         t2.tag = field_from_u64(2);
         let c = channel_factory_descriptor(&t2).unwrap();
-        assert_ne!(a.factory_vk, c.factory_vk, "different tag → different group");
+        assert_ne!(
+            a.factory_vk, c.factory_vk,
+            "different tag → different group"
+        );
         let mut t3 = ch_terms();
         t3.admin = STRANGER;
         let d = channel_factory_descriptor(&t3).unwrap();
-        assert_ne!(a.factory_vk, d.factory_vk, "different admin → different group");
+        assert_ne!(
+            a.factory_vk, d.factory_vk,
+            "different admin → different group"
+        );
     }
 
     #[test]
@@ -1907,7 +1915,10 @@ mod tests {
         assert_eq!(r1, r2);
         // …distinct from the empty set and the unborn slot…
         assert_ne!(r1, channel_member_root(&std::collections::BTreeSet::new()));
-        assert_ne!(channel_member_root(&std::collections::BTreeSet::new()), FIELD_ZERO);
+        assert_ne!(
+            channel_member_root(&std::collections::BTreeSet::new()),
+            FIELD_ZERO
+        );
         // …and a SEAL-KEY substitution for the same member cell re-commits
         // to a different root (the fan-out target set is chain-pinned).
         let mut subbed = ch_member_set(2);
@@ -2514,7 +2525,10 @@ mod flash_well_tests {
         );
         let mut t = fw_terms();
         t.fee = 0;
-        assert_eq!(flash_well_state_constraints(&t), Err(FlashWellError::ZeroFee));
+        assert_eq!(
+            flash_well_state_constraints(&t),
+            Err(FlashWellError::ZeroFee)
+        );
         let mut t = fw_terms();
         t.owner = FIELD_ZERO;
         assert_eq!(

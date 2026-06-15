@@ -27,7 +27,11 @@ fn permissive_cell(seed: u8, balance: u64) -> Cell {
     let mut pk = [0u8; 32];
     pk[0] = seed;
     pk[31] = seed.wrapping_mul(31);
-    let mut cell = Cell::with_balance(pk, [0u8; 32], i64::try_from(balance).expect("balance fits i64"));
+    let mut cell = Cell::with_balance(
+        pk,
+        [0u8; 32],
+        i64::try_from(balance).expect("balance fits i64"),
+    );
     cell.permissions = Permissions {
         send: AuthRequired::None,
         receive: AuthRequired::None,

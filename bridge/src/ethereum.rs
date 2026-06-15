@@ -652,7 +652,11 @@ mod tests {
         .expect("256-byte Groth16 proof wraps");
 
         let tail = p.public_input_tail();
-        assert_eq!(tail.len(), 32 + 32 + 8 + 32, "tail is the 104-byte PI region");
+        assert_eq!(
+            tail.len(),
+            32 + 32 + 8 + 32,
+            "tail is the 104-byte PI region"
+        );
         // The tail is exactly the calldata after the 256-byte proof prefix.
         assert_eq!(tail, p.to_calldata()[256..].to_vec());
 

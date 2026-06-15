@@ -65,7 +65,10 @@ fn mirror_agrees_with_flowrefine_rightskew_fails() {
 #[test]
 fn mirror_reflexive_and_distinct_letters() {
     // FlowRefine #guard: a flow refines itself; distinct single letters do not.
-    assert!(decide_refines(&early_ex(), &early_ex()), "reflexive: a flow refines itself");
+    assert!(
+        decide_refines(&early_ex(), &early_ex()),
+        "reflexive: a flow refines itself"
+    );
     assert!(
         !decide_refines(&Proc::Emit(1), &Proc::Emit(2)),
         "distinct letters: fire 1 ⋠ fire 2"
@@ -123,7 +126,10 @@ fn a_deploy_plan_lowers_to_a_nonempty_fireable_flow() {
     // The flow is non-vacuous: it has at least one move (a vacuous refinement
     // that held because the graph is dead would be a BUG — the FlowAlgebra
     // non-vacuity discipline).
-    assert!(!moves(&flow).is_empty(), "the deploy flow actually fires effects");
+    assert!(
+        !moves(&flow).is_empty(),
+        "the deploy flow actually fires effects"
+    );
     // It refines itself (the gate's reflexive sanity — every plan is a safe
     // upgrade of itself).
     assert!(decide_refines(&flow, &flow), "a plan's flow refines itself");
@@ -278,7 +284,10 @@ fn the_divergence_finding_names_the_widening_effect_in_words() {
         .as_deref()
         .expect("the divergence is resolved to a concrete effect");
     // It is the extra grant: a GrantCapability effect, with a facet description.
-    assert!(label.contains("GrantCapability"), "names the effect kind: {label}");
+    assert!(
+        label.contains("GrantCapability"),
+        "names the effect kind: {label}"
+    );
     assert!(label.contains("facet"), "describes the cap facet: {label}");
     // The human message embeds the same concrete description.
     assert!(
@@ -295,8 +304,14 @@ fn the_two_checks_are_independent_widening_passes_safety_but_fails_refinement() 
     // are DIFFERENT properties. WIDENED passes safety, fails refinement.
     let base = plan_apply_toml(BASE, false).unwrap();
     let widened = plan_apply_toml(WIDENED, false).unwrap();
-    assert!(widened.assurance.no_amplification.is_pass(), "SAFETY: passes");
-    assert!(!refines_upgrade(&widened, &base).is_refine(), "REFINEMENT: fails");
+    assert!(
+        widened.assurance.no_amplification.is_pass(),
+        "SAFETY: passes"
+    );
+    assert!(
+        !refines_upgrade(&widened, &base).is_refine(),
+        "REFINEMENT: fails"
+    );
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -337,7 +352,9 @@ fn lowering_that_exceeds_the_intent_envelope_is_rejected() {
         "the finding names the out-of-envelope effect (the grant)"
     );
     assert!(
-        findings[0].message.contains("MORE than the declared intent")
+        findings[0]
+            .message
+            .contains("MORE than the declared intent")
             || findings[0].message.contains("exceeds"),
         "the finding explains the envelope breach; got: {}",
         findings[0].message
@@ -381,7 +398,10 @@ fn intent_trace_decision_agrees_with_the_decide_refines_game() {
     // game on μ say REFINES.
     let allow_all = FlowSpec::from_plan_envelope(&base);
     let menu_all = allow_all.to_menu_proc(depth);
-    assert!(allow_all.allows_trace(&trace).is_ok(), "trace-check: all allowed → refines");
+    assert!(
+        allow_all.allows_trace(&trace).is_ok(),
+        "trace-check: all allowed → refines"
+    );
     assert!(
         decide_refines(&lowered, &menu_all),
         "the decide_refines GAME on μ agrees: lowered ≤ᶠ μ(all-allowed)"
@@ -391,7 +411,14 @@ fn intent_trace_decision_agrees_with_the_decide_refines_game() {
     // both the trace-check and the game say does-NOT-refine.
     let mut short: Vec<u64> = trace.clone();
     short.pop(); // remove one real letter from the allowed alphabet
-    let allow_partial = FlowSpec { allowed: { let mut a = short.clone(); a.sort_unstable(); a.dedup(); a } };
+    let allow_partial = FlowSpec {
+        allowed: {
+            let mut a = short.clone();
+            a.sort_unstable();
+            a.dedup();
+            a
+        },
+    };
     // (only valid if the dropped letter is genuinely absent from the kept set)
     let dropped = *trace.last().unwrap();
     if !short.contains(&dropped) {

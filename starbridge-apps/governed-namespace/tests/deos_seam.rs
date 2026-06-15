@@ -70,16 +70,17 @@ fn seeding_installs_the_governance_program_and_quiescent_pending_root() {
 
     // The seeded governance cell carries the full operation-scoped governance program,
     // installed so the executor re-enforces it on every touching turn.
-    let installed = executor.with_ledger_mut(|ledger| {
-        ledger.get(&cclerk.cell_id()).map(|c| c.program.clone())
-    });
+    let installed =
+        executor.with_ledger_mut(|ledger| ledger.get(&cclerk.cell_id()).map(|c| c.program.clone()));
     assert_eq!(
         installed,
         Some(governance_program()),
         "the seeded governance cell carries the governance program (the seam's enforcement layer)"
     );
     // ...and the seeded state is a quiescent board: no in-flight proposal.
-    let state = executor.cell_state(cclerk.cell_id()).expect("seeded cell exists");
+    let state = executor
+        .cell_state(cclerk.cell_id())
+        .expect("seeded cell exists");
     assert_eq!(
         state.fields[PENDING_PROPOSAL_ROOT_SLOT as usize],
         field_from_u64(0),
@@ -105,7 +106,10 @@ fn a_committee_member_proposes_through_the_gated_fire_a_real_verified_turn() {
     // `route_table_root`/`version` stay frozen. A real verified turn.
     let receipt = fire_propose(&app, &AuthRequired::Either, &cclerk, &executor)
         .expect("a committee member opens a proposal (caps ∧ state ∧ monotonic pending all pass)");
-    assert_ne!(receipt.turn_hash, [0u8; 32], "a real verified turn through the executor");
+    assert_ne!(
+        receipt.turn_hash, [0u8; 32],
+        "a real verified turn through the executor"
+    );
 
     // The pending root advanced (the proposal opened).
     let state = executor.cell_state(cclerk.cell_id()).unwrap();
@@ -130,8 +134,14 @@ fn after_propose_propose_darkens_and_vote_lights_the_htmx_tooth() {
     // precondition pending == 0 holds) and `vote` DARK (proposal-exists precondition
     // pending >= 1 fails). The htmx tooth, off live state.
     let lit_before = app.cells()[0].gated_fireable_names(&AuthRequired::Either, &executor);
-    assert!(lit_before.contains(&"propose_table_update".to_string()), "quiescent: propose lights");
-    assert!(!lit_before.contains(&"vote_on_proposal".to_string()), "quiescent: vote dark");
+    assert!(
+        lit_before.contains(&"propose_table_update".to_string()),
+        "quiescent: propose lights"
+    );
+    assert!(
+        !lit_before.contains(&"vote_on_proposal".to_string()),
+        "quiescent: vote dark"
+    );
 
     // The member opens a proposal — pending 0 -> 1. A real turn.
     let receipt = fire_propose(&app, &AuthRequired::Either, &cclerk, &executor)
@@ -166,13 +176,19 @@ fn a_viewer_below_the_committee_tier_cannot_propose_the_cap_tooth_bites_in_band(
     // the CAP tooth refuses IN-BAND. Nothing is submitted (anti-ghost). Signature ⊄ Either.
     let refused = fire_propose(&app, &AuthRequired::Signature, &cclerk, &executor);
     assert!(
-        matches!(refused, Err(FireExecuteError::Gate(FireError::Unauthorized { .. }))),
+        matches!(
+            refused,
+            Err(FireExecuteError::Gate(FireError::Unauthorized { .. }))
+        ),
         "a viewer's propose is refused at the cap tooth in-band, got {refused:?}"
     );
 
     // The pending root did NOT move — nothing was submitted (anti-ghost for the cap tooth).
     let state = executor.cell_state(cclerk.cell_id()).unwrap();
-    assert_eq!(state.fields[PENDING_PROPOSAL_ROOT_SLOT as usize], field_from_u64(0));
+    assert_eq!(
+        state.fields[PENDING_PROPOSAL_ROOT_SLOT as usize],
+        field_from_u64(0)
+    );
 }
 
 // =============================================================================
@@ -218,7 +234,8 @@ fn the_executor_re_enforces_a_rewound_pending_root_on_propose_is_refused() {
     // First open a proposal so pending == 1 (a non-zero baseline to rewind FROM).
     executor.with_ledger_mut(|ledger| {
         if let Some(c) = ledger.get_mut(&cell) {
-            c.state.set_field(PENDING_PROPOSAL_ROOT_SLOT as usize, field_from_u64(5));
+            c.state
+                .set_field(PENDING_PROPOSAL_ROOT_SLOT as usize, field_from_u64(5));
         }
     });
 
@@ -238,7 +255,10 @@ fn the_executor_re_enforces_a_rewound_pending_root_on_propose_is_refused() {
         dregg_turn::executor::single_member_membership_proof(&cclerk.public_key().0),
     )];
     let refused = executor.submit_action(&cclerk, rewind);
-    assert!(refused.is_err(), "rewinding the pending root on a propose must be refused");
+    assert!(
+        refused.is_err(),
+        "rewinding the pending root on a propose must be refused"
+    );
     let msg = format!("{:?}", refused.unwrap_err()).to_lowercase();
     assert!(
         msg.contains("monotonic") || msg.contains("pending"),
@@ -267,7 +287,8 @@ fn the_executor_re_enforces_a_vote_that_swaps_the_table_is_refused() {
     // Open a proposal (pending non-zero) so the vote rides a live proposal.
     executor.with_ledger_mut(|ledger| {
         if let Some(c) = ledger.get_mut(&cell) {
-            c.state.set_field(PENDING_PROPOSAL_ROOT_SLOT as usize, field_from_u64(1));
+            c.state
+                .set_field(PENDING_PROPOSAL_ROOT_SLOT as usize, field_from_u64(1));
         }
     });
 
@@ -294,7 +315,10 @@ fn the_executor_re_enforces_a_vote_that_swaps_the_table_is_refused() {
         dregg_turn::executor::single_member_membership_proof(&cclerk.public_key().0),
     )];
     let refused = executor.submit_action(&cclerk, forged);
-    assert!(refused.is_err(), "a vote that swaps the route table must be refused");
+    assert!(
+        refused.is_err(),
+        "a vote that swaps the route table must be refused"
+    );
     let msg = format!("{:?}", refused.unwrap_err()).to_lowercase();
     assert!(
         msg.contains("immutable") || msg.contains("route"),
@@ -346,7 +370,8 @@ fn a_non_member_signer_is_refused_at_the_real_sender_authorized_stark() {
                 dregg_turn::executor::single_member_authorized_root(&stranger.public_key().0),
             );
             // A live proposal so the propose effects are well-formed (pending advances).
-            c.state.set_field(PENDING_PROPOSAL_ROOT_SLOT as usize, field_from_u64(0));
+            c.state
+                .set_field(PENDING_PROPOSAL_ROOT_SLOT as usize, field_from_u64(0));
         }
     });
 
@@ -371,9 +396,7 @@ fn a_non_member_signer_is_refused_at_the_real_sender_authorized_stark() {
     );
     let msg = format!("{:?}", refused.unwrap_err()).to_lowercase();
     assert!(
-        msg.contains("merklemembership")
-            || msg.contains("not a member")
-            || msg.contains("member"),
+        msg.contains("merklemembership") || msg.contains("not a member") || msg.contains("member"),
         "the refusal must name the membership failure (the non-forgeability tooth), got: {msg}"
     );
 
@@ -453,7 +476,11 @@ fn register_deos_mounts_the_seeded_surface_and_a_proposal_can_open() {
     // the SHIPPED one and the gated fires are live.
     let app = register_deos(&ctx);
     assert_eq!(app.name(), "governed-namespace");
-    assert_eq!(ctx.affordance_registry().len(), 1, "the deos surface is registered");
+    assert_eq!(
+        ctx.affordance_registry().len(),
+        1,
+        "the deos surface is registered"
+    );
 
     // The seeded board is quiescent, so a committee member can open a proposal through the
     // mounted surface immediately (the gateable seam is closed + live).
@@ -463,5 +490,8 @@ fn register_deos_mounts_the_seeded_surface_and_a_proposal_can_open() {
 
     // The pending root moved (a real proposal opened).
     let state = executor.cell_state(cclerk.cell_id()).unwrap();
-    assert_eq!(state.fields[PENDING_PROPOSAL_ROOT_SLOT as usize], field_from_u64(1));
+    assert_eq!(
+        state.fields[PENDING_PROPOSAL_ROOT_SLOT as usize],
+        field_from_u64(1)
+    );
 }

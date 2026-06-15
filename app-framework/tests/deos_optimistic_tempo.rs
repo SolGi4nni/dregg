@@ -21,8 +21,8 @@
 //! *when the verified turn is demanded*, never *whether the gate holds*.
 
 use dregg_app_framework::{
-    AffordanceSpec, AppSpec, AuthRequired, CellSpec, DeosApp, EmbeddedExecutor, FireError,
-    Settlement, AgentCipherclerk, AppCipherclerk, CellId, CellAffordance, DeosCell, Effect, Event,
+    AffordanceSpec, AgentCipherclerk, AppCipherclerk, AppSpec, AuthRequired, CellAffordance,
+    CellId, CellSpec, DeosApp, DeosCell, Effect, EmbeddedExecutor, Event, FireError, Settlement,
 };
 
 fn agent() -> (AppCipherclerk, EmbeddedExecutor) {
@@ -90,7 +90,11 @@ fn optimism_is_not_unchecked_an_unauthorized_fire_is_refused_at_predict() {
     let owner_fire = board
         .predict_fire("clear", actor, &AuthRequired::None)
         .expect("owner predicts clear");
-    assert!(owner_fire.settle(board.surface(), &cclerk, &executor).is_confirmed());
+    assert!(
+        owner_fire
+            .settle(board.surface(), &cclerk, &executor)
+            .is_confirmed()
+    );
 }
 
 #[test]
@@ -105,7 +109,13 @@ fn settle_rolls_back_when_the_boundary_rejects() {
     let board = DeosCell::new(ghost, "ghost-board").affordance(CellAffordance::new(
         "stroke",
         AuthRequired::None,
-        Effect::EmitEvent { cell: ghost, event: Event { topic: [1u8; 32], data: vec![] } },
+        Effect::EmitEvent {
+            cell: ghost,
+            event: Event {
+                topic: [1u8; 32],
+                data: vec![],
+            },
+        },
     ));
 
     let fire = board

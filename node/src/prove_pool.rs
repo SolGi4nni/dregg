@@ -213,7 +213,12 @@ async fn run_job(worker_id: usize, job: ProveJob, state: &NodeState) {
     // a v1-only Silver-Vision artifact the rotated leg does not carry.
     let prove_result = tokio::task::spawn_blocking(move || {
         let proven = crate::turn_proving::prove_and_verify_finalized_turn(
-            &agent, pre_balance, pre_nonce, &effects, turn_hash, rotation,
+            &agent,
+            pre_balance,
+            pre_nonce,
+            &effects,
+            turn_hash,
+            rotation,
         )
         .map_err(|e| format!("async full-turn proof generation failed: {e}"))?;
         let proof_bytes = proven.proof_bytes().to_vec();
@@ -224,8 +229,12 @@ async fn run_job(worker_id: usize, job: ProveJob, state: &NodeState) {
             .iter()
             .map(|f| f.as_u32())
             .collect();
-        let witnessed =
-            dregg_turn::WitnessedReceipt::from_components(receipt, proof_bytes, public_inputs_u32, None);
+        let witnessed = dregg_turn::WitnessedReceipt::from_components(
+            receipt,
+            proof_bytes,
+            public_inputs_u32,
+            None,
+        );
         Ok::<_, String>(witnessed)
     })
     .await;

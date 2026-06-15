@@ -1763,10 +1763,12 @@ fn run(cmd: &str, rest: &[String], state_dir: &PathBuf) -> Result<bool, String> 
             #[cfg(feature = "recursion")]
             {
                 let _ = state_dir;
-                Err("make-captp-delivered-chain mints a v1 hand-AIR (EffectVmAir) NoOp STARK, \
+                Err(
+                    "make-captp-delivered-chain mints a v1 hand-AIR (EffectVmAir) NoOp STARK, \
                      retired under the recursion build; rebuild with --no-default-features for the \
                      v1 floor, or mint a rotated \"effect-vm-rotated\" IR-v2 leg instead"
-                    .to_string())
+                        .to_string(),
+                )
             }
         }
         "verify-captp-delivered" => Ok(cmd_verify_captp_delivered(state_dir)),
@@ -1807,10 +1809,12 @@ fn run(cmd: &str, rest: &[String], state_dir: &PathBuf) -> Result<bool, String> 
             #[cfg(feature = "recursion")]
             {
                 let _ = (state_dir, turn_nonce);
-                Err("make-recursive-witness mints a v1 hand-AIR (EffectVmAir) NoOp STARK, retired \
+                Err(
+                    "make-recursive-witness mints a v1 hand-AIR (EffectVmAir) NoOp STARK, retired \
                      under the recursion build; rebuild with --no-default-features for the v1 \
                      floor, or mint a rotated leaf via mint_rotated_participant_leg instead"
-                    .to_string())
+                        .to_string(),
+                )
             }
         }
         "make-bilateral-bundle" => {

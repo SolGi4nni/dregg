@@ -278,8 +278,7 @@ fn prove_joint_core_rotated(
     // the SAME FRI engine the whole rotated tree runs at — proving it at the default
     // `create_recursion_config` (log_blowup 3) and then wrapping at the wrap config raises
     // `InvalidProofShape("Fewer siblings in proof than op_ids provided")` in-circuit.
-    let (binding_matrix, binding_pis) =
-        recursion_binding_trace_descriptor_rotated(&participants)?;
+    let (binding_matrix, binding_pis) = recursion_binding_trace_descriptor_rotated(&participants)?;
     let binding_air = JointTurnAggregationAir;
     let binding_inner =
         prove_inner_for_air_with_config(&binding_air, binding_matrix, &binding_pis, &config);

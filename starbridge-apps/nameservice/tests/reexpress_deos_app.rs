@@ -71,7 +71,11 @@ fn the_whole_app_is_one_composed_registration() {
     gated.sort();
     assert_eq!(
         gated,
-        vec!["renew".to_string(), "revoke".to_string(), "set_target".to_string()]
+        vec![
+            "renew".to_string(),
+            "revoke".to_string(),
+            "set_target".to_string()
+        ]
     );
 
     // The NAME cell is the agent's own (so fires execute against the seeded ledger), and is
@@ -112,14 +116,19 @@ async fn the_two_name_roles_see_different_cap_only_surfaces() {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
-        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
         serde_json::from_slice::<serde_json::Value>(&bytes).unwrap()["visible"].clone()
     }
 
     // A RESOLVER (Signature) sees only `resolve` (the narrow read tier). `renew` / `revoke`
     // / `set_target` are GATED (not on the cap-only projection); they light on the gated
     // surface against live state.
-    assert_eq!(visible(&router, "signature").await, serde_json::json!(["resolve"]));
+    assert_eq!(
+        visible(&router, "signature").await,
+        serde_json::json!(["resolve"])
+    );
     // The OWNER (root) additionally sees `transfer` (the cap-graph owner re-key).
     assert_eq!(
         visible(&router, "root").await,
@@ -139,7 +148,12 @@ async fn only_the_owner_can_transfer_a_real_turn() {
 
     let (cclerk, executor) = agent();
     let app = name_app(&cclerk, &executor);
-    let _ = seed_name(&executor, "deos.dregg", owner_pk(&cclerk), DEFAULT_RENT_EPOCH_BLOCKS);
+    let _ = seed_name(
+        &executor,
+        "deos.dregg",
+        owner_pk(&cclerk),
+        DEFAULT_RENT_EPOCH_BLOCKS,
+    );
     let router = app.mount();
 
     async fn fire(router: &axum::Router, name: &str, tier: &str) -> StatusCode {
@@ -159,7 +173,10 @@ async fn only_the_owner_can_transfer_a_real_turn() {
     // The CAP tooth, in-band (anti-ghost): a RESOLVER (Signature) firing `transfer` is
     // REFUSED at the cap gate (403) BEFORE anything reaches the executor — only the owner
     // re-keys the name. The cap gate is the genuine `is_attenuation` (`None` ⊄ Signature).
-    assert_eq!(fire(&router, "transfer", "signature").await, StatusCode::FORBIDDEN);
+    assert_eq!(
+        fire(&router, "transfer", "signature").await,
+        StatusCode::FORBIDDEN
+    );
 
     // The OWNER (root) CLEARS the cap gate (not 403) — it is cap-authorized to re-key.
     assert_ne!(
@@ -213,7 +230,11 @@ fn a_name_snapshot_rehydrates_per_viewer_respecting_the_lattice() {
     // downstream resolver) ⇒ liveness REPLAYED-DETERMINISTIC.
     let log = InteractionLog::new().record(Interaction::witnessed_turn(name.cell(), [9u8; 32]));
     let snap = name.snapshot(log, false);
-    assert_eq!(snap.lineage, AuthRequired::Signature, "snapshot at the published lineage");
+    assert_eq!(
+        snap.lineage,
+        AuthRequired::Signature,
+        "snapshot at the published lineage"
+    );
     assert_eq!(snap.liveness(), Rehydration::ReplayedDeterministic);
     assert!(snap.liveness().is_faithful());
 
@@ -258,7 +279,9 @@ async fn the_app_ships_a_web_component_surface_and_a_manifest() {
         .unwrap()
         .to_string();
     assert!(ct.contains("javascript"), "served as a JS module: {ct}");
-    let bytes = axum::body::to_bytes(surface.into_body(), usize::MAX).await.unwrap();
+    let bytes = axum::body::to_bytes(surface.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let js = String::from_utf8(bytes.to_vec()).unwrap();
     assert!(js.contains("customElements.define(\"dregg-affordance-surface\""));
     // The anti-drift affordance map names the cap-only fire endpoints.
@@ -272,18 +295,30 @@ async fn the_app_ships_a_web_component_surface_and_a_manifest() {
         .await
         .unwrap();
     assert_eq!(manifest.status(), StatusCode::OK);
-    let bytes = axum::body::to_bytes(manifest.into_body(), usize::MAX).await.unwrap();
+    let bytes = axum::body::to_bytes(manifest.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let m: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(m["app"], "nameservice");
     assert_eq!(m["discoverable"], serde_json::json!(["names"]));
-    assert!(m["persistence"].as_str().unwrap().contains("embedded-ledger"));
+    assert!(
+        m["persistence"]
+            .as_str()
+            .unwrap()
+            .contains("embedded-ledger")
+    );
     assert_eq!(m["cells"].as_array().unwrap().len(), 1);
     // The manifest advertises the three gated (cap∧state) affordances.
-    let gated = m["cells"][0]["gatedAffordances"].as_array().expect("gated affordances");
+    let gated = m["cells"][0]["gatedAffordances"]
+        .as_array()
+        .expect("gated affordances");
     let names: Vec<&str> = gated.iter().filter_map(|g| g["name"].as_str()).collect();
     assert!(names.contains(&"renew"), "renew is advertised as gated");
     assert!(names.contains(&"revoke"), "revoke is advertised as gated");
-    assert!(names.contains(&"set_target"), "set_target is advertised as gated");
+    assert!(
+        names.contains(&"set_target"),
+        "set_target is advertised as gated"
+    );
 }
 
 // =============================================================================
@@ -296,17 +331,21 @@ fn the_seeded_name_carries_the_floor_name_program() {
     // The seeded name cell carries `name_cell_program()` — the floor's WriteOnce(NAME_HASH)
     // + Monotonic(EXPIRY) + WriteOnce(REVOKED). Same program, now on the deos bones.
     let _ = seed_name(&executor, "deos.dregg", owner_pk(&cclerk), 5_000);
-    let installed = executor.with_ledger_mut(|ledger| {
-        ledger.get(&cclerk.cell_id()).map(|c| c.program.clone())
-    });
+    let installed =
+        executor.with_ledger_mut(|ledger| ledger.get(&cclerk.cell_id()).map(|c| c.program.clone()));
     assert_eq!(
         installed,
         Some(name_cell_program()),
         "the seeded name cell carries the floor's name program"
     );
     // ...and the seeded state is an active name at the seeded expiry.
-    let state = executor.cell_state(cclerk.cell_id()).expect("seeded cell exists");
-    assert_eq!(state.fields[EXPIRY_SLOT], dregg_app_framework::field_from_u64(5_000));
+    let state = executor
+        .cell_state(cclerk.cell_id())
+        .expect("seeded cell exists");
+    assert_eq!(
+        state.fields[EXPIRY_SLOT],
+        dregg_app_framework::field_from_u64(5_000)
+    );
 
     // (Silence the unused import on the resolve-target helper — used by sibling suites.)
     let _ = resolve_target("dregg://cell/x");

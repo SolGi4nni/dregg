@@ -464,8 +464,7 @@ pub mod rev {
     /// Absolute column where the revoke scalar block begins (after the generic
     /// hash blocks, the Attenuate scalar block, AND the Attenuate hash blocks).
     pub fn rev_scalar_base() -> usize {
-        super::attn::attn_hash_base()
-            + super::attn::NUM_ATTN_HASH_SITES * POSEIDON2_PERM_AUX_COLS
+        super::attn::attn_hash_base() + super::attn::NUM_ATTN_HASH_SITES * POSEIDON2_PERM_AUX_COLS
     }
     /// Absolute column where the revoke dedicated Poseidon2 hash blocks begin.
     pub fn rev_hash_base() -> usize {
@@ -2292,7 +2291,10 @@ fn extend_trace_inner(
             // (4) Attenuate Poseidon2 hash blocks, computed from the scalar block.
             let attn_aux = attenuate_hash_witness(&full);
             full.extend(attn_aux);
-            debug_assert_eq!(full.len(), scalar_end + attn::NUM_ATTN_HASH_SITES * POSEIDON2_PERM_AUX_COLS);
+            debug_assert_eq!(
+                full.len(),
+                scalar_end + attn::NUM_ATTN_HASH_SITES * POSEIDON2_PERM_AUX_COLS
+            );
             // (5) Revoke scalar block: from the supplied witness, else zeros.
             match revoke_blocks {
                 Some(blocks) => {

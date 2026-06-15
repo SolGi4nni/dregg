@@ -1391,7 +1391,10 @@ impl core::fmt::Display for MixedAdmitError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             MixedAdmitError::PrivateProofRejected { index } => {
-                write!(f, "private leg {index}: ZK proof rejected (STARK or binding)")
+                write!(
+                    f,
+                    "private leg {index}: ZK proof rejected (STARK or binding)"
+                )
             }
             MixedAdmitError::PrivateJidMismatch {
                 index,

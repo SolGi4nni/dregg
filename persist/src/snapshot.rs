@@ -447,7 +447,10 @@ mod tests {
         let snap = store.ship_snapshot(0).unwrap();
         // The snapshot is based on the height-3 checkpoint with a non-empty overlay.
         assert_eq!(snap.overlay_base_height, 3);
-        assert!(!snap.is_empty_delta(), "turns above height 3 → non-empty overlay");
+        assert!(
+            !snap.is_empty_delta(),
+            "turns above height 3 → non-empty overlay"
+        );
 
         // Apply reconstructs the EXACT full-replay ledger.
         let mut rebuilt = store.apply_snapshot(&snap).unwrap();
@@ -514,7 +517,10 @@ mod tests {
 
         let snap = store.ship_snapshot(0).unwrap();
         // No turn has height > 3, so the overlay is empty.
-        assert!(snap.is_empty_delta(), "joiner already current → empty delta");
+        assert!(
+            snap.is_empty_delta(),
+            "joiner already current → empty delta"
+        );
         // Apply still reconstructs the exact ledger from the checkpoint alone.
         let mut rebuilt = store.apply_snapshot(&snap).unwrap();
         assert_eq!(rebuilt.root(), full_replay_root(&store));
@@ -524,7 +530,10 @@ mod tests {
     #[test]
     fn ship_from_genesis_equals_full_replay() {
         let store = PersistentStore::open_in_memory().unwrap();
-        commit_turns(&store, &[(1, 100, 1), (2, 200, 2), (1, 150, 3), (3, 300, 4)]);
+        commit_turns(
+            &store,
+            &[(1, 100, 1), (2, 200, 2), (1, 150, 3), (3, 300, 4)],
+        );
         // NO checkpoint at all: ship_snapshot bases at genesis, overlay = all.
         let snap = store.ship_snapshot(0).unwrap();
         assert!(snap.checkpoint.is_none(), "no checkpoint → genesis base");
@@ -563,7 +572,13 @@ mod tests {
         let shipper = PersistentStore::open_in_memory().unwrap();
         commit_turns(
             &shipper,
-            &[(1, 100, 1), (2, 200, 2), (1, 150, 3), (3, 300, 4), (2, 250, 5)],
+            &[
+                (1, 100, 1),
+                (2, 200, 2),
+                (1, 150, 3),
+                (3, 300, 4),
+                (2, 250, 5),
+            ],
         );
         let mut cp_ledger = Ledger::new();
         for rec in shipper.commit_records_from(0).unwrap() {

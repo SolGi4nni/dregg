@@ -55,11 +55,11 @@ use serde::{Deserialize, Serialize};
 
 use dregg_cell::CellId;
 use dregg_cell::blueprint::{
-    DKG_ADMIN_SLOT, DKG_COMPLAINT_DEADLINE_SLOT, DKG_DEALING_DEADLINE_SLOT,
-    DKG_DEALINGS_ROOT_SLOT, DKG_OUTPUT_SLOT, DKG_PARAMS_SLOT, DKG_PHASE_ABORTED,
-    DKG_PHASE_COMPLAINT, DKG_PHASE_DEALING, DKG_PHASE_FINAL, DKG_PHASE_REVEAL, DKG_PHASE_SLOT,
-    DKG_RESPONSES_ROOT_SLOT, DKG_REVEAL_DEADLINE_SLOT, DKG_REVEALS_ROOT_SLOT, DKG_ROSTER_SLOT,
-    DKG_TAG_SLOT, DkgCeremonyTerms, dkg_ceremony_cell_program, dkg_ceremony_factory_descriptor,
+    DKG_ADMIN_SLOT, DKG_COMPLAINT_DEADLINE_SLOT, DKG_DEALING_DEADLINE_SLOT, DKG_DEALINGS_ROOT_SLOT,
+    DKG_OUTPUT_SLOT, DKG_PARAMS_SLOT, DKG_PHASE_ABORTED, DKG_PHASE_COMPLAINT, DKG_PHASE_DEALING,
+    DKG_PHASE_FINAL, DKG_PHASE_REVEAL, DKG_PHASE_SLOT, DKG_RESPONSES_ROOT_SLOT,
+    DKG_REVEAL_DEADLINE_SLOT, DKG_REVEALS_ROOT_SLOT, DKG_ROSTER_SLOT, DKG_TAG_SLOT,
+    DkgCeremonyTerms, dkg_ceremony_cell_program, dkg_ceremony_factory_descriptor,
     dkg_ceremony_token_id, dkg_params_field, dkg_params_from_field, dkg_participant_leaf,
     dkg_roster_root,
 };
@@ -202,9 +202,9 @@ impl DkgRefusal {
             DkgRefusal::WrongPhase { at, needed } => {
                 format!("ceremony is at phase {at}; this request needs {needed}")
             }
-            DkgRefusal::TooEarly { deadline, height } => format!(
-                "round closes at height {deadline}; the close turn would run at {height}"
-            ),
+            DkgRefusal::TooEarly { deadline, height } => {
+                format!("round closes at height {deadline}; the close turn would run at {height}")
+            }
             DkgRefusal::Equivocation { dealer } => format!(
                 "CONFLICTING dealing from dealer {dealer}: refused as a contribution, \
                  RETAINED as slashable evidence (see status offenses)"
@@ -336,11 +336,7 @@ fn next_turn_height(s: &NodeStateInner) -> u64 {
 /// pinning that round's agreed-view root; the installed program enforces
 /// the deadline, the root nonzero-ness, the write-once window, and the
 /// coordinator gate — a refused turn moves NOTHING.
-fn advance_to(
-    inner: &mut NodeStateInner,
-    ceremony: CellId,
-    target: u64,
-) -> Result<(), DkgRefusal> {
+fn advance_to(inner: &mut NodeStateInner, ceremony: CellId, target: u64) -> Result<(), DkgRefusal> {
     loop {
         let (terms, position) = resolve_ceremony(inner, ceremony)?;
         if position.phase >= target {
@@ -767,8 +763,8 @@ fn parse_ceremony(s: &str) -> Result<CellId, DkgRefusal> {
 }
 
 fn parse_signed(message: &str) -> Result<SignedCeremonyMsg, DkgRefusal> {
-    let bytes = hex_decode(message)
-        .ok_or_else(|| DkgRefusal::BadRequest("message must be hex".into()))?;
+    let bytes =
+        hex_decode(message).ok_or_else(|| DkgRefusal::BadRequest("message must be hex".into()))?;
     SignedCeremonyMsg::from_bytes(&bytes)
         .map_err(|_| DkgRefusal::BadRequest("malformed signed ceremony message".into()))
 }
@@ -985,7 +981,11 @@ async fn post_finalize(
                 })
             })
             .collect();
-        (room.view.reveals_root(), room.view.public_output(), offenses)
+        (
+            room.view.reveals_root(),
+            room.view.public_output(),
+            offenses,
+        )
     };
 
     let operator = crate::executor_setup::local_agent_cell(inner);
@@ -1219,8 +1219,7 @@ mod tests {
                 s.ledger.insert_cell(cell).expect("member inserts");
                 let sign_sk = [0x21 + i as u8; 32];
                 let auth_pk = SigningKey::from_bytes(&sign_sk).verifying_key().to_bytes();
-                let (seal_sk, seal_pk) =
-                    dregg_captp::store_forward::generate_x25519_keypair();
+                let (seal_sk, seal_pk) = dregg_captp::store_forward::generate_x25519_keypair();
                 members.push(TestMember {
                     cell: id,
                     sign_sk,
@@ -1475,11 +1474,21 @@ mod tests {
 
         // Dealer 1 deals TWICE (same identity, fresh polynomial).
         let (_d1, first, sealed1) = CeremonyDriver::new(
-            ceremony.0, params, 1, members[0].sign_sk, members[0].seal_sk, roster.clone(),
+            ceremony.0,
+            params,
+            1,
+            members[0].sign_sk,
+            members[0].seal_sk,
+            roster.clone(),
         )
         .unwrap();
         let (_d2, second, _) = CeremonyDriver::new(
-            ceremony.0, params, 1, members[0].sign_sk, members[0].seal_sk, roster,
+            ceremony.0,
+            params,
+            1,
+            members[0].sign_sk,
+            members[0].seal_sk,
+            roster,
         )
         .unwrap();
         let (status, _) = post_json(
@@ -1537,7 +1546,12 @@ mod tests {
         let roster = client_roster(&members);
 
         let (mut d1, dealing, sealed) = CeremonyDriver::new(
-            ceremony.0, params, 1, members[0].sign_sk, members[0].seal_sk, roster,
+            ceremony.0,
+            params,
+            1,
+            members[0].sign_sk,
+            members[0].seal_sk,
+            roster,
         )
         .unwrap();
         // A reveal during the dealing phase refuses at the window.

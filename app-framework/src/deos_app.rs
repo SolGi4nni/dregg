@@ -59,7 +59,7 @@
 
 use std::sync::Arc;
 
-use axum::{routing::get, Json, Router};
+use axum::{Json, Router, routing::get};
 use dregg_cell::{AuthRequired, CellProgram, StateConstraint};
 use dregg_types::{CellId, FederationId};
 use serde_json::json;
@@ -71,7 +71,7 @@ use crate::affordance_endpoint::{AffordanceEndpoint, HeldRightsResolver};
 use crate::captp_server::CapTpServer;
 use crate::cipherclerk::{AppCipherclerk, EmbeddedExecutor};
 use crate::discovery::{NameRegistration, NameserviceClient};
-use crate::rehydration::{InteractionLog, Membrane, RehydratedSurface, RehydrateError, Sturdyref};
+use crate::rehydration::{InteractionLog, Membrane, RehydrateError, RehydratedSurface, Sturdyref};
 use crate::starbridge::StarbridgeAppContext;
 
 // =============================================================================
@@ -208,10 +208,7 @@ impl DeosCell {
     /// The snapshot is TINY (the lineage + the witness-log + the culling boundary) —
     /// the affordance data is re-expanded from the live surface at rehydration.
     pub fn snapshot(&self, witness_log: InteractionLog, sources_reachable: bool) -> Sturdyref {
-        let lineage = self
-            .published_at
-            .clone()
-            .unwrap_or(AuthRequired::None);
+        let lineage = self.published_at.clone().unwrap_or(AuthRequired::None);
         Sturdyref::new(self.cell(), lineage, witness_log, sources_reachable)
     }
 
@@ -522,10 +519,13 @@ impl DeosApp {
         let mut router = Router::new();
         // The app manifest — the whole surface, from the Rust source of truth.
         let manifest = self.manifest();
-        router = router.route("/manifest", get(move || {
-            let manifest = manifest.clone();
-            async move { Json(manifest) }
-        }));
+        router = router.route(
+            "/manifest",
+            get(move || {
+                let manifest = manifest.clone();
+                async move { Json(manifest) }
+            }),
+        );
 
         // The web surface — the `<dregg-affordance-surface>` web component (the
         // htmx-on-crack custom element the embedded servo web-surface mounts). Served
@@ -538,7 +538,10 @@ impl DeosApp {
                 let surface_js = surface_js.clone();
                 async move {
                     (
-                        [(axum::http::header::CONTENT_TYPE, "text/javascript; charset=utf-8")],
+                        [(
+                            axum::http::header::CONTENT_TYPE,
+                            "text/javascript; charset=utf-8",
+                        )],
                         surface_js,
                     )
                 }
@@ -546,11 +549,14 @@ impl DeosApp {
         );
 
         for c in &self.cells {
-            let mut endpoint =
-                AffordanceEndpoint::new(c.surface.clone(), self.cipherclerk.clone(), self.executor.clone())
-                    // Thread the cell's GATED (cap∧state) surface so `/gated/projected` +
-                    // `/gated/fire/{name}` are served — the htmx-on-crack reactive button-set over HTTP.
-                    .with_gated(c.gated.clone());
+            let mut endpoint = AffordanceEndpoint::new(
+                c.surface.clone(),
+                self.cipherclerk.clone(),
+                self.executor.clone(),
+            )
+            // Thread the cell's GATED (cap∧state) surface so `/gated/projected` +
+            // `/gated/fire/{name}` are served — the htmx-on-crack reactive button-set over HTTP.
+            .with_gated(c.gated.clone());
             if let Some(resolver) = &self.resolver {
                 endpoint = endpoint.with_resolver(Arc::clone(resolver));
             }
@@ -651,7 +657,10 @@ impl DeosApp {
     /// **Announce** the app in the nameservice (if [`DeosAppBuilder::discoverable`]
     /// was set) — register under the app name with its tags at `target_uri`.
     /// Best-effort; a failure is returned for the caller to log non-fatally.
-    pub async fn announce(&self, target_uri: impl Into<String>) -> Result<(), crate::discovery::DiscoveryError> {
+    pub async fn announce(
+        &self,
+        target_uri: impl Into<String>,
+    ) -> Result<(), crate::discovery::DiscoveryError> {
         let Some(tags) = &self.discovery_tags else {
             return Ok(());
         };
@@ -864,9 +873,21 @@ mod tests {
         DeosApp::builder("doc-app", cclerk.clone(), executor.clone())
             .cell(
                 DeosCell::new(doc, "doc")
-                    .affordance(CellAffordance::new("view", AuthRequired::Signature, emit_event(doc)))
-                    .affordance(CellAffordance::new("edit", AuthRequired::Either, set_field(doc, 1)))
-                    .affordance(CellAffordance::new("admin", AuthRequired::None, emit_event(doc)))
+                    .affordance(CellAffordance::new(
+                        "view",
+                        AuthRequired::Signature,
+                        emit_event(doc),
+                    ))
+                    .affordance(CellAffordance::new(
+                        "edit",
+                        AuthRequired::Either,
+                        set_field(doc, 1),
+                    ))
+                    .affordance(CellAffordance::new(
+                        "admin",
+                        AuthRequired::None,
+                        emit_event(doc),
+                    ))
                     .publish(AuthRequired::Signature),
             )
             .discoverable(vec!["docs".into()])
@@ -912,7 +933,12 @@ mod tests {
 
         assert_eq!(m["app"], "doc-app");
         // The persistence seam is VISIBLE (honest, not faked) — embedded by default.
-        assert!(m["persistence"].as_str().unwrap().contains("embedded-ledger"));
+        assert!(
+            m["persistence"]
+                .as_str()
+                .unwrap()
+                .contains("embedded-ledger")
+        );
         assert_eq!(m["discoverable"], json!(["docs"]));
         let cells = m["cells"].as_array().unwrap();
         assert_eq!(cells.len(), 1);
@@ -940,10 +966,12 @@ mod tests {
             .persistence(PersistenceSeam::PgDregg)
             .build();
         assert_eq!(durable.persistence(), PersistenceSeam::PgDregg);
-        assert!(durable.manifest()["persistence"]
-            .as_str()
-            .unwrap()
-            .contains("pg-dregg"));
+        assert!(
+            durable.manifest()["persistence"]
+                .as_str()
+                .unwrap()
+                .contains("pg-dregg")
+        );
     }
 
     #[test]
@@ -992,14 +1020,22 @@ mod tests {
             .web_of_cells(captp)
             .cell(
                 DeosCell::new(doc, "doc")
-                    .affordance(CellAffordance::new("view", AuthRequired::Signature, emit_event(doc)))
+                    .affordance(CellAffordance::new(
+                        "view",
+                        AuthRequired::Signature,
+                        emit_event(doc),
+                    ))
                     .publish(AuthRequired::Signature),
             )
             .build();
 
         let uris = app.publish_all(100).await;
         assert_eq!(uris.len(), 1, "the one published cell is exported");
-        assert!(uris[0].starts_with("dregg://"), "a real sturdyref URI: {}", uris[0]);
+        assert!(
+            uris[0].starts_with("dregg://"),
+            "a real sturdyref URI: {}",
+            uris[0]
+        );
         // The manifest now advertises the web-of-cells.
         assert_eq!(app.manifest()["webOfCells"], true);
     }
@@ -1033,7 +1069,11 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(fired.status(), StatusCode::OK, "the mounted fire executes a real turn");
+        assert_eq!(
+            fired.status(),
+            StatusCode::OK,
+            "the mounted fire executes a real turn"
+        );
     }
 
     #[test]
@@ -1043,14 +1083,19 @@ mod tests {
         let (cclerk, executor) = agent();
         let doc = cclerk.cell_id();
         let app = DeosApp::builder("d", cclerk.clone(), executor.clone())
-            .cell(
-                DeosCell::new(doc, "doc")
-                    .affordance(CellAffordance::new("view", AuthRequired::Signature, emit_event(doc))),
-            )
+            .cell(DeosCell::new(doc, "doc").affordance(CellAffordance::new(
+                "view",
+                AuthRequired::Signature,
+                emit_event(doc),
+            )))
             .build();
         let cell = &app.cells()[0];
         assert_eq!(cell.published_authority(), None);
         let snap = cell.snapshot(InteractionLog::new(), false);
-        assert_eq!(snap.lineage, AuthRequired::None, "local-only ⇒ root lineage");
+        assert_eq!(
+            snap.lineage,
+            AuthRequired::None,
+            "local-only ⇒ root lineage"
+        );
     }
 }

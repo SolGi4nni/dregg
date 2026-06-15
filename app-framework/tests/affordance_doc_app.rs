@@ -35,7 +35,7 @@ use tower::ServiceExt; // oneshot
 use dregg_app_framework::{
     AffordanceEndpoint, AffordanceSurface, AgentCipherclerk, AppCipherclerk, AuthRequired,
     CapabilityRef, CellAffordance, CellId, ConstantsModule, Effect, EmbeddedExecutor, Event,
-    StarbridgeAppContext, HELD_RIGHTS_HEADER,
+    HELD_RIGHTS_HEADER, StarbridgeAppContext,
 };
 
 // ── the example app: a doc cell with four cap-gated affordances ───────────────
@@ -45,14 +45,21 @@ use dregg_app_framework::{
 fn emit_event(cell: CellId) -> Effect {
     Effect::EmitEvent {
         cell,
-        event: Event { topic: [7u8; 32], data: vec![] },
+        event: Event {
+            topic: [7u8; 32],
+            data: vec![],
+        },
     }
 }
 
 /// A real `SetField` effect (the genuine turn for an edit — writes the doc body
 /// slot).
 fn set_body(cell: CellId) -> Effect {
-    Effect::SetField { cell, index: 1, value: [42u8; 32] }
+    Effect::SetField {
+        cell,
+        index: 1,
+        value: [42u8; 32],
+    }
 }
 
 /// The stable recipient of the admin affordance's capability grant. The admin
@@ -90,10 +97,26 @@ fn grant_cap(from: CellId, to: CellId) -> Effect {
 /// so the embedded ledger has it (fires actually execute).
 fn doc_app(doc: CellId) -> AffordanceSurface {
     AffordanceSurface::named(doc, "doc")
-        .declare(CellAffordance::new("view", AuthRequired::Signature, emit_event(doc)))
-        .declare(CellAffordance::new("comment", AuthRequired::Either, emit_event(doc)))
-        .declare(CellAffordance::new("edit", AuthRequired::Either, set_body(doc)))
-        .declare(CellAffordance::new("admin", AuthRequired::None, grant_cap(doc, admin_grant_recipient())))
+        .declare(CellAffordance::new(
+            "view",
+            AuthRequired::Signature,
+            emit_event(doc),
+        ))
+        .declare(CellAffordance::new(
+            "comment",
+            AuthRequired::Either,
+            emit_event(doc),
+        ))
+        .declare(CellAffordance::new(
+            "edit",
+            AuthRequired::Either,
+            set_body(doc),
+        ))
+        .declare(CellAffordance::new(
+            "admin",
+            AuthRequired::None,
+            grant_cap(doc, admin_grant_recipient()),
+        ))
 }
 
 /// The app's `register(ctx)` hook — registers the doc affordance surface on the
@@ -111,7 +134,9 @@ fn agent() -> (AppCipherclerk, EmbeddedExecutor) {
 }
 
 async fn body_json(resp: axum::response::Response) -> serde_json::Value {
-    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
     serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null)
 }
 
@@ -124,13 +149,22 @@ fn the_app_registers_its_affordance_surface_through_the_context() {
     let ctx = StarbridgeAppContext::new(cclerk, executor);
 
     let key = register(&ctx, doc);
-    assert_eq!(key, *doc.as_bytes(), "the surface is keyed by its backing cell");
+    assert_eq!(
+        key,
+        *doc.as_bytes(),
+        "the surface is keyed by its backing cell"
+    );
     assert_eq!(ctx.affordance_registry().len(), 1);
 
     let surface = ctx.affordance_registry().get(&doc).expect("registered");
     assert_eq!(
         surface.all_names(),
-        vec!["admin".to_string(), "comment".to_string(), "edit".to_string(), "view".to_string()]
+        vec![
+            "admin".to_string(),
+            "comment".to_string(),
+            "edit".to_string(),
+            "view".to_string()
+        ]
     );
 }
 
@@ -199,7 +233,10 @@ async fn two_viewers_diverge_over_http() {
         .await
         .unwrap();
     let ev = body_json(editor).await;
-    assert_eq!(ev["visible"], serde_json::json!(["comment", "edit", "view"]));
+    assert_eq!(
+        ev["visible"],
+        serde_json::json!(["comment", "edit", "view"])
+    );
 
     // The two viewers genuinely DIVERGE over the SAME surface.
     assert_ne!(vv["visible"], ev["visible"]);
@@ -255,8 +292,14 @@ async fn admin_fires_admin_grant_cap_turn() {
     // to a nonexistent cell). Ensure it — this is real app setup, not a stub: the
     // GrantCapability effect that fires is the genuine one.
     let recipient = dregg_cell::Cell::new([99u8; 32], [0u8; 32]);
-    assert_eq!(recipient.id(), admin_grant_recipient(), "recipient id derivation");
-    executor.ensure_cell(recipient).expect("ensure recipient cell");
+    assert_eq!(
+        recipient.id(),
+        admin_grant_recipient(),
+        "recipient id derivation"
+    );
+    executor
+        .ensure_cell(recipient)
+        .expect("ensure recipient cell");
 
     // The admin (root / None) fires `admin` (req None): authorized → executes the
     // real GrantCapability turn through the embedded executor.

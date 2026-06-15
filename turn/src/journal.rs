@@ -9,8 +9,12 @@ use std::sync::Mutex;
 
 use dregg_cell::{
     CapabilityRef, CellId, DelegatedRef, Ledger, NoteCommitment, Nullifier, Permissions,
-    VerificationKey, lifecycle::CellLifecycle, note_bridge::BridgedNullifierSet,
-    nullifier_set::NullifierSet, permissions::AuthRequired, state::{FieldElement, STATE_SLOTS},
+    VerificationKey,
+    lifecycle::CellLifecycle,
+    note_bridge::BridgedNullifierSet,
+    nullifier_set::NullifierSet,
+    permissions::AuthRequired,
+    state::{FieldElement, STATE_SLOTS},
 };
 
 use crate::action::Symbol;

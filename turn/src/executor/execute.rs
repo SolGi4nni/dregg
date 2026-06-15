@@ -323,9 +323,7 @@ impl TurnExecutor {
         // Check fee coverage (agent must have enough balance for the fee).
         // SIGNED balances (THE EPOCH §5): the agent is an ordinary cell, so
         // any negative reading or a balance below the fee refuses.
-        if agent_cell.state.balance() < 0
-            || (agent_cell.state.balance() as u64) < turn.fee
-        {
+        if agent_cell.state.balance() < 0 || (agent_cell.state.balance() as u64) < turn.fee {
             return TurnResult::Rejected {
                 reason: TurnError::InsufficientBalance {
                     cell: turn.agent,

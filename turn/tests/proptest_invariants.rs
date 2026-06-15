@@ -36,7 +36,8 @@ fn make_cell(seed: u8, balance: i64) -> Cell {
 }
 
 /// Create a ledger with N cells, each having the given starting balance.
-fn setup_ledger(n: u8, balance_each: i64) -> (Ledger, Vec<CellId>) { // signed-wells (ac01f9b7b): i64 balances
+fn setup_ledger(n: u8, balance_each: i64) -> (Ledger, Vec<CellId>) {
+    // signed-wells (ac01f9b7b): i64 balances
     let mut ledger = Ledger::new();
     let mut ids = Vec::new();
     for i in 0..n {

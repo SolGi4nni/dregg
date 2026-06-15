@@ -48,13 +48,21 @@ fn the_whole_app_is_one_composed_registration_with_two_figures() {
 
     let figure_a = &app.cells()[0];
     let figure_b = &app.cells()[1];
-    assert_eq!(figure_a.cell(), cclerk.cell_id(), "figure A is the agent's own cell");
+    assert_eq!(
+        figure_a.cell(),
+        cclerk.cell_id(),
+        "figure A is the agent's own cell"
+    );
     assert_eq!(
         figure_b.cell(),
         figure_b_cell_id(&cclerk.public_key().0),
         "figure B is the distinct companion cell"
     );
-    assert_ne!(figure_a.cell(), figure_b.cell(), "the two figures have distinct CellIds");
+    assert_ne!(
+        figure_a.cell(),
+        figure_b.cell(),
+        "the two figures have distinct CellIds"
+    );
 
     // Each figure's cap-only surface carries the read; the three state-mutating verbs are
     // GATED (cap∧state) — per figure.
@@ -117,7 +125,9 @@ async fn each_figure_projects_its_cap_only_surface_per_viewer() {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
-        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
         serde_json::from_slice::<serde_json::Value>(&bytes).unwrap()["visible"].clone()
     }
 
@@ -180,7 +190,11 @@ fn a_figure_snapshot_rehydrates_per_viewer_respecting_the_lattice() {
     // downstream spectator) ⇒ liveness REPLAYED-DETERMINISTIC.
     let log = InteractionLog::new().record(Interaction::witnessed_turn(figure.cell(), [7u8; 32]));
     let snap = figure.snapshot(log, false);
-    assert_eq!(snap.lineage, AuthRequired::Signature, "snapshot at the published lineage");
+    assert_eq!(
+        snap.lineage,
+        AuthRequired::Signature,
+        "snapshot at the published lineage"
+    );
     assert_eq!(snap.liveness(), Rehydration::ReplayedDeterministic);
     assert!(snap.liveness().is_faithful());
 
@@ -225,7 +239,9 @@ async fn the_app_ships_a_web_component_surface_and_a_manifest_for_two_figures() 
         .unwrap()
         .to_string();
     assert!(ct.contains("javascript"), "served as a JS module: {ct}");
-    let bytes = axum::body::to_bytes(surface.into_body(), usize::MAX).await.unwrap();
+    let bytes = axum::body::to_bytes(surface.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let js = String::from_utf8(bytes.to_vec()).unwrap();
     assert!(js.contains("customElements.define(\"dregg-affordance-surface\""));
     // The anti-drift affordance map names a figure's cap-only fire endpoint.
@@ -238,19 +254,33 @@ async fn the_app_ships_a_web_component_surface_and_a_manifest_for_two_figures() 
         .await
         .unwrap();
     assert_eq!(manifest.status(), StatusCode::OK);
-    let bytes = axum::body::to_bytes(manifest.into_body(), usize::MAX).await.unwrap();
+    let bytes = axum::body::to_bytes(manifest.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let m: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(m["app"], "tussle");
     assert_eq!(m["discoverable"], serde_json::json!(["tussle", "combat"]));
-    assert!(m["persistence"].as_str().unwrap().contains("embedded-ledger"));
-    assert_eq!(m["cells"].as_array().unwrap().len(), 2, "two figure cells in the manifest");
+    assert!(
+        m["persistence"]
+            .as_str()
+            .unwrap()
+            .contains("embedded-ledger")
+    );
+    assert_eq!(
+        m["cells"].as_array().unwrap().len(),
+        2,
+        "two figure cells in the manifest"
+    );
 
     // Each figure advertises the three gated (cap∧state) verbs.
     for c in m["cells"].as_array().unwrap() {
         let gated = c["gatedAffordances"].as_array().expect("gated affordances");
         let names: Vec<&str> = gated.iter().filter_map(|g| g["name"].as_str()).collect();
         for verb in ["commit_move", "reveal_move", "resolve_frame"] {
-            assert!(names.contains(&verb), "{verb} is advertised as gated on a figure");
+            assert!(
+                names.contains(&verb),
+                "{verb} is advertised as gated on a figure"
+            );
         }
     }
 }
@@ -269,7 +299,10 @@ fn seeded_two_figure_app_rehydrates_with_live_state() {
     let figure_b = seed_figure_b(&executor, &cclerk);
 
     // Both figures are in the ledger with live state now.
-    assert!(executor.cell_state(cclerk.cell_id()).is_some(), "figure A is live");
+    assert!(
+        executor.cell_state(cclerk.cell_id()).is_some(),
+        "figure A is live"
+    );
     assert!(executor.cell_state(figure_b).is_some(), "figure B is live");
     assert_eq!(figure_b, figure_b_cell_id(&cclerk.public_key().0));
 

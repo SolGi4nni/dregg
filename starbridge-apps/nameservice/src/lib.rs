@@ -659,7 +659,10 @@ pub fn name_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) -> De
         RESOLVER_RIGHTS,
         Effect::EmitEvent {
             cell,
-            event: Event::new(symbol("name-resolved"), vec![field_from_u64(RESOLVE_TARGET_SLOT as u64)]),
+            event: Event::new(
+                symbol("name-resolved"),
+                vec![field_from_u64(RESOLVE_TARGET_SLOT as u64)],
+            ),
         },
     );
     // `transfer` — the OWNER re-keys the owner slot. Cap-only (a cap-graph re-key, no gated
@@ -767,7 +770,8 @@ pub fn seed_name(
         if let Some(c) = ledger.get_mut(&cell) {
             c.state.set_field(NAME_HASH_SLOT, nh);
             c.state.set_field(OWNER_HASH_SLOT, field_from_bytes(&owner));
-            c.state.set_field(EXPIRY_SLOT, field_from_u64(initial_expiry));
+            c.state
+                .set_field(EXPIRY_SLOT, field_from_u64(initial_expiry));
             c.state.set_field(REVOKED_SLOT, field_from_u64(0));
         }
     });
@@ -848,19 +852,25 @@ pub fn fire_set_target(
 ) -> Result<TurnReceipt, FireExecuteError> {
     let cell = &app.cells()[0];
     let name_cell = cell.cell();
-    cell.fire_gated_through_executor_with("set_target", held, cipherclerk, executor, move |_state| {
-        vec![
-            Effect::SetField {
-                cell: name_cell,
-                index: RESOLVE_TARGET_SLOT,
-                value: target,
-            },
-            Effect::EmitEvent {
-                cell: name_cell,
-                event: Event::new(symbol("name-target-set"), vec![target]),
-            },
-        ]
-    })
+    cell.fire_gated_through_executor_with(
+        "set_target",
+        held,
+        cipherclerk,
+        executor,
+        move |_state| {
+            vec![
+                Effect::SetField {
+                    cell: name_cell,
+                    index: RESOLVE_TARGET_SLOT,
+                    value: target,
+                },
+                Effect::EmitEvent {
+                    cell: name_cell,
+                    event: Event::new(symbol("name-target-set"), vec![target]),
+                },
+            ]
+        },
+    )
 }
 
 /// Read a `u64` from the last 8 big-endian bytes of a field element (the inverse of

@@ -73,9 +73,9 @@ fn real_vk(program: &str) -> VerificationKey {
 
 /// One renderable cell, with everything the viewer needs to inspect it.
 struct ImageCell {
-    key: &'static str,    // short nav key (rail label)
-    title: &'static str,  // human title
-    blurb: &'static str,  // one-line "what is this" subtitle
+    key: &'static str,   // short nav key (rail label)
+    title: &'static str, // human title
+    blurb: &'static str, // one-line "what is this" subtitle
     cell: Cell,
     // a couple of human field annotations (slot -> meaning) for legibility
     field_notes: &'static [(usize, &'static str)],
@@ -113,7 +113,9 @@ fn lifecycle_tags(c: &Cell) -> (&'static str, String) {
             format!("permanently retired at height {destroyed_at}"),
         ),
         Migrated { .. } => ("MIGRATED", "moved to a successor cell".into()),
-        Archived { archived_through, .. } => (
+        Archived {
+            archived_through, ..
+        } => (
             "ARCHIVED",
             format!("history checkpointed through height {archived_through}; still live"),
         ),
@@ -155,7 +157,9 @@ fn build_image() -> Vec<ImageCell> {
         let mut c = Cell::from_config(
             pk,
             GARDEN_TOKEN,
-            CellConfig::sovereign().with_balance(0).with_permissions(Permissions::sovereign_default()),
+            CellConfig::sovereign()
+                .with_balance(0)
+                .with_permissions(Permissions::sovereign_default()),
         );
         c.state.set_field(0, fe_text("welcome to deos"));
         c.state.set_field(1, fe_text("a computer you hold"));
@@ -183,11 +187,7 @@ fn build_image() -> Vec<ImageCell> {
     // ── 2. the garden — a sovereign content cell holding the Sacred Motto.
     {
         let pk = pk_for(0x9A);
-        let mut c = Cell::from_config(
-            pk,
-            GARDEN_TOKEN,
-            CellConfig::sovereign().with_balance(0),
-        );
+        let mut c = Cell::from_config(pk, GARDEN_TOKEN, CellConfig::sovereign().with_balance(0));
         c.state.set_field(0, fe_text("I object to doing"));
         c.state.set_field(1, fe_text("things computers"));
         c.state.set_field(2, fe_text("can do."));
@@ -196,7 +196,8 @@ fn build_image() -> Vec<ImageCell> {
         let _ = c.state.increment_nonce();
         // selectively-disclosable: a private field (commitment only)
         c.state.set_field(10, fe_text("a private leaf"));
-        c.state.set_field_visibility(10, dregg_cell::state::FieldVisibility::Committed, 0x2a);
+        c.state
+            .set_field_visibility(10, dregg_cell::state::FieldVisibility::Committed, 0x2a);
         cells.push(ImageCell {
             key: "garden",
             title: "the garden",
@@ -220,7 +221,9 @@ fn build_image() -> Vec<ImageCell> {
         let mut c = Cell::from_config(
             pk,
             VALUE_TOKEN,
-            CellConfig::sovereign().with_balance(1_000).with_permissions(Permissions::default_user()),
+            CellConfig::sovereign()
+                .with_balance(1_000)
+                .with_permissions(Permissions::default_user()),
         );
         // grant real caps to other cells in the image
         let garden_id = CellId::derive_raw(&pk_for(0x9A), &GARDEN_TOKEN);
@@ -249,7 +252,9 @@ fn build_image() -> Vec<ImageCell> {
         let mut c = Cell::from_config(
             pk,
             VALUE_TOKEN,
-            CellConfig::sovereign().with_balance(0).with_permissions(Permissions::sovereign_default()),
+            CellConfig::sovereign()
+                .with_balance(0)
+                .with_permissions(Permissions::sovereign_default()),
         );
         // the well carries −supply for the value minted into the wallet (1000)
         // plus the peer (200): Σ = 0.
@@ -271,11 +276,7 @@ fn build_image() -> Vec<ImageCell> {
     // (proved state). Shows the EVIDENCE substance richly.
     {
         let pk = pk_for(0xC0);
-        let mut c = Cell::from_config(
-            pk,
-            GARDEN_TOKEN,
-            CellConfig::sovereign().with_balance(0),
-        );
+        let mut c = Cell::from_config(pk, GARDEN_TOKEN, CellConfig::sovereign().with_balance(0));
         // a proof set all 16 fields → proved_state true
         for i in 0..16 {
             c.state.set_field(i, fe_u64((i as u64 + 1) * 111));
@@ -306,7 +307,9 @@ fn build_image() -> Vec<ImageCell> {
         let mut c = Cell::from_config(
             pk,
             VALUE_TOKEN,
-            CellConfig::sovereign().with_balance(200).with_permissions(Permissions::default_user()),
+            CellConfig::sovereign()
+                .with_balance(200)
+                .with_permissions(Permissions::default_user()),
         );
         c.state.set_field(0, fe_text("a friend's cell"));
         let _ = c.state.increment_nonce();
@@ -406,7 +409,12 @@ fn emit(cells: &[ImageCell]) {
         let (life_tag, life_desc) = lifecycle_tags(c);
         let is_well = c.state.balance() < 0;
         let fields_used = (0..16)
-            .filter(|&i| c.state.get_field(i).map(|f| f != &[0u8; 32]).unwrap_or(false))
+            .filter(|&i| {
+                c.state
+                    .get_field(i)
+                    .map(|f| f != &[0u8; 32])
+                    .unwrap_or(false)
+            })
             .count() as u32;
 
         println!("    ImageCell {{");
@@ -506,7 +514,10 @@ fn emit(cells: &[ImageCell]) {
                 println!("        vk_program: \"\",");
             }
         }
-        println!("        commitment: {:?},", hex_full_short(&c.state_commitment()));
+        println!(
+            "        commitment: {:?},",
+            hex_full_short(&c.state_commitment())
+        );
         println!("    }},");
     }
     println!("];");
@@ -519,7 +530,6 @@ fn emit(cells: &[ImageCell]) {
     println!("pub const BALANCE_SUM: i64 = {total};");
     println!("/// How many cells are in the image.");
     println!("pub const N_CELLS: usize = {};", cells.len());
-
 }
 
 /// Best-effort decode of a field element for display: text if printable, else

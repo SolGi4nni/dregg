@@ -109,9 +109,9 @@ impl WitnessedPredicateVerifier for EquivocationEvidenceVerifier {
         // The input binds the turn to THIS exhibit (its burn digest).
         let bound: [u8; 32] = match input {
             PredicateInput::Slot(s) => **s,
-            PredicateInput::Bytes(b) => (*b).try_into().map_err(|_| {
-                reject("evidence-digest input must be exactly 32 bytes".into())
-            })?,
+            PredicateInput::Bytes(b) => (*b)
+                .try_into()
+                .map_err(|_| reject("evidence-digest input must be exactly 32 bytes".into()))?,
             other => {
                 return Err(WitnessedPredicateError::InputShapeMismatch {
                     kind_name: "valid-equivocation",
@@ -137,7 +137,10 @@ impl WitnessedPredicateVerifier for EquivocationEvidenceVerifier {
 /// Install the court atom into a [`WitnessedPredicateRegistry`] under its
 /// canonical vk_hash. Hosts call this where they build the executor registry.
 pub fn register_equivocation_court(registry: &mut WitnessedPredicateRegistry) {
-    registry.register_custom(equivocation_predicate_vk(), Arc::new(EquivocationEvidenceVerifier));
+    registry.register_custom(
+        equivocation_predicate_vk(),
+        Arc::new(EquivocationEvidenceVerifier),
+    );
 }
 
 // =============================================================================
@@ -467,7 +470,7 @@ mod tests {
 
         let wp = WitnessedPredicate::custom(
             equivocation_predicate_vk(),
-            ev.creator,                    // commitment = the accused strand
+            ev.creator,                     // commitment = the accused strand
             InputRef::Witness { index: 0 }, // input = the evidence digest
             1,                              // proof = the evidence bytes
         );

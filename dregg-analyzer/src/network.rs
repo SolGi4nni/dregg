@@ -14,7 +14,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::findings::{short_hex, AnalysisReport, Finding, Severity};
+use crate::findings::{AnalysisReport, Finding, Severity, short_hex};
 
 /// One observed gossip reception: a block, from whom, when.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -65,7 +65,10 @@ pub fn analyze(capture: &NetworkCapture) -> AnalysisReport {
     // many distinct blocks had a single distinct source.
     let mut block_sources: HashMap<[u8; 32], std::collections::HashSet<[u8; 32]>> = HashMap::new();
     for o in obs {
-        block_sources.entry(o.block_id).or_default().insert(o.from_peer);
+        block_sources
+            .entry(o.block_id)
+            .or_default()
+            .insert(o.from_peer);
     }
     let single_sourced = block_sources.values().filter(|s| s.len() == 1).count();
     report.summarize("single_sourced_blocks", single_sourced);

@@ -379,8 +379,7 @@ fn foreign_circuit_root_is_refused_by_vk_pin() {
     // An honest K=2 fold (the artifact whose carried publics + binding proof the
     // attacker will try to pair with a foreign root).
     let (turns, _g, _f) = make_chain(1000, 0, 7, 2);
-    let mut whole =
-        prove_turn_chain_recursive(&turns).expect("the honest 2-turn chain must fold");
+    let mut whole = prove_turn_chain_recursive(&turns).expect("the honest 2-turn chain must fold");
     let vk = whole.root_vk_fingerprint();
     verify_turn_chain_recursive(&whole, &vk).expect("honest artifact verifies");
 
@@ -472,4 +471,3 @@ fn two_step_core_rejects_discontinuity() {
 // above) carries the SAME load-bearing assertion — a forged commitment has no
 // satisfying in-circuit leaf — through the rotated path; the in-circuit-wrap variant is
 // covered by the lib's own `rotation_batchstark_leaf_smoke.rs`.
-

@@ -20,8 +20,8 @@ use dregg_cell::predicate::{
     WitnessedPredicateKind, WitnessedPredicateRegistry, WitnessedPredicateVerifier,
 };
 use dregg_cell::program::{
-    CellProgram, ProgramError, StateConstraint, TransitionMeta, WitnessBundle, WitnessKindTag,
-    WitnessBlobView,
+    CellProgram, ProgramError, StateConstraint, TransitionMeta, WitnessBlobView, WitnessBundle,
+    WitnessKindTag,
 };
 use dregg_cell::{CellState, EvalContext, InputRef, MerkleMembershipProof, Nullifier};
 

@@ -574,15 +574,19 @@ pub fn workflow_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) -
         },
     );
 
-    DeosApp::builder("compartment-workflow-mandate", cipherclerk.clone(), executor.clone())
-        .discoverable(vec!["workflow".into(), "compartment".into()])
-        .cell(
-            DeosCell::new(cell, "workflow")
-                .affordance(view)
-                .gated(advance)
-                .publish(AuthRequired::Signature),
-        )
-        .build()
+    DeosApp::builder(
+        "compartment-workflow-mandate",
+        cipherclerk.clone(),
+        executor.clone(),
+    )
+    .discoverable(vec!["workflow".into(), "compartment".into()])
+    .cell(
+        DeosCell::new(cell, "workflow")
+            .affordance(view)
+            .gated(advance)
+            .publish(AuthRequired::Signature),
+    )
+    .build()
 }
 
 /// **Seed the MANDATE cell** so the gated fire has live state + the program bites:
@@ -607,15 +611,20 @@ pub fn seed_workflow(
     executor.install_program(cell, cwm_cell_program());
     executor.with_ledger_mut(|ledger| {
         if let Some(c) = ledger.get_mut(&cell) {
-            c.state
-                .set_field(COMMITMENT_ANCHOR_SLOT as usize, field_from_u64(commitment_anchor));
-            c.state
-                .set_field(CHARTER_TERMINAL_SLOT as usize, field_from_u64(charter_terminal));
+            c.state.set_field(
+                COMMITMENT_ANCHOR_SLOT as usize,
+                field_from_u64(commitment_anchor),
+            );
+            c.state.set_field(
+                CHARTER_TERMINAL_SLOT as usize,
+                field_from_u64(charter_terminal),
+            );
             c.state
                 .set_field(CLEARANCE_GRAPH_ROOT_SLOT as usize, clearance_graph_root);
             c.state
                 .set_field(SPEND_POLICY_SLOT as usize, field_from_u64(spend_policy));
-            c.state.set_field(STEP_CURSOR_SLOT as usize, field_from_u64(0));
+            c.state
+                .set_field(STEP_CURSOR_SLOT as usize, field_from_u64(0));
         }
     });
     charter_terminal
@@ -644,17 +653,11 @@ pub fn fire_advance_step(
     // The accumulating fire: the cap∧state gate is run in-band by
     // `fire_gated_through_executor_with`; on both passing, the closure derives the
     // advance effects from the LIVE cursor (so the button advances each time).
-    cell.fire_gated_through_executor_with(
-        "advance_step",
-        held,
-        cipherclerk,
-        executor,
-        |live| {
-            let live_cursor = field_to_u64(&live.fields[STEP_CURSOR_SLOT as usize]);
-            let next = live_cursor + 1;
-            advance_effects(cell.cell(), next, phase_label_for(next))
-        },
-    )
+    cell.fire_gated_through_executor_with("advance_step", held, cipherclerk, executor, |live| {
+        let live_cursor = field_to_u64(&live.fields[STEP_CURSOR_SLOT as usize]);
+        let next = live_cursor + 1;
+        advance_effects(cell.cell(), next, phase_label_for(next))
+    })
 }
 
 /// Read a `u64` from the last 8 big-endian bytes of a field element (the inverse of

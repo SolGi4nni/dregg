@@ -858,12 +858,12 @@ pub fn prove_effect_vm_rotated_ir2(
     before_w: &dregg_turn::rotation_witness::RotationWitness,
     after_w: &dregg_turn::rotation_witness::RotationWitness,
 ) -> Result<
-    dregg_circuit::descriptor_ir2::Ir2BatchProof<
-        dregg_circuit::descriptor_ir2::DreggStarkConfig,
-    >,
+    dregg_circuit::descriptor_ir2::Ir2BatchProof<dregg_circuit::descriptor_ir2::DreggStarkConfig>,
     SdkError,
 > {
-    use dregg_circuit::effect_vm::trace_rotated::{empty_caveat_manifest, transfer_caveat_manifest};
+    use dregg_circuit::effect_vm::trace_rotated::{
+        empty_caveat_manifest, transfer_caveat_manifest,
+    };
 
     // The transfer-shaped caveat manifest stays the validated reference for a single transfer
     // effect (it exercises BOTH caveat domains); every other cohort effect proves with the
@@ -913,9 +913,7 @@ pub fn prove_effect_vm_rotated_ir2_with_caveat(
     after_w: &dregg_turn::rotation_witness::RotationWitness,
     caveat: &dregg_circuit::effect_vm::trace_rotated::RotatedCaveatManifest,
 ) -> Result<
-    dregg_circuit::descriptor_ir2::Ir2BatchProof<
-        dregg_circuit::descriptor_ir2::DreggStarkConfig,
-    >,
+    dregg_circuit::descriptor_ir2::Ir2BatchProof<dregg_circuit::descriptor_ir2::DreggStarkConfig>,
     SdkError,
 > {
     use dregg_circuit::descriptor_ir2::{
@@ -1027,7 +1025,9 @@ fn rotated_descriptor_json_for_effects(
                 None
             }
         })
-        .ok_or_else(|| SdkError::InvalidWitness(format!("{name} not in staged rotated registry")))?;
+        .ok_or_else(|| {
+            SdkError::InvalidWitness(format!("{name} not in staged rotated registry"))
+        })?;
     Ok((name, json))
 }
 
@@ -1291,7 +1291,7 @@ fn verify_effect_vm_rotated_with_cutover(
     expected_vk_hash: &[u8; 32],
 ) -> Result<(), String> {
     use dregg_circuit::descriptor_ir2::{
-        Ir2BatchProof, DreggStarkConfig, parse_vm_descriptor2, verify_vm_descriptor2,
+        DreggStarkConfig, Ir2BatchProof, parse_vm_descriptor2, verify_vm_descriptor2,
     };
     use dregg_circuit::effect_vm_descriptors::V3_STAGED_REGISTRY_TSV;
 
@@ -1871,13 +1871,11 @@ pub fn verify_full_turn_bound(
             // via the audited IR-v2 batch verifier. `not(recursion)` builds never produce this
             // leg, so the arm is recursion-gated.
             #[cfg(feature = "recursion")]
-            "effect-vm-rotated" => {
-                verify_effect_vm_rotated_with_cutover(
-                    &attached.proof_bytes,
-                    &attached.sub_public_inputs,
-                    &attached.vk_hash,
-                )
-            }
+            "effect-vm-rotated" => verify_effect_vm_rotated_with_cutover(
+                &attached.proof_bytes,
+                &attached.sub_public_inputs,
+                &attached.vk_hash,
+            ),
             // AUTHORIZATION / MEMBERSHIP / NON-REVOCATION: all now verified by
             // the AUDITED Plonky3 verifier (`p3-batch-stark`). ZERO `stark::`
             // calls remain. Each proof is a postcard-serialized batch proof; the
@@ -2253,7 +2251,9 @@ pub fn verify_full_turn_bound(
         // leg. Scan the chain for it: the rotated note-spend leg (39-PI, `ROT_NULLIFIER_PI_COUNT`)
         // or the v1 leg's `NOTESPEND_NULLIFIER` slot. N=1 collapses to exactly the prior read.
         let effect_nullifier = {
-            use dregg_circuit::effect_vm::trace_rotated::{ROT_NULLIFIER_PI, ROT_NULLIFIER_PI_COUNT};
+            use dregg_circuit::effect_vm::trace_rotated::{
+                ROT_NULLIFIER_PI, ROT_NULLIFIER_PI_COUNT,
+            };
             let mut nullifier = BabyBear::ZERO;
             for leg in &effect_legs {
                 let leg_nullifier = if leg.label == "effect-vm-rotated" {
@@ -3520,21 +3520,43 @@ mod tests {
         // A homogeneous turn (every effect the same cohort) is ONE run — so the chained path is
         // byte-identical to the single rotated leg for the existing fleet.
         let effects = vec![
-            VmEffect::Transfer { amount: 10, direction: 1 },
-            VmEffect::Transfer { amount: 20, direction: 1 },
-            VmEffect::Transfer { amount: 5, direction: 0 },
+            VmEffect::Transfer {
+                amount: 10,
+                direction: 1,
+            },
+            VmEffect::Transfer {
+                amount: 20,
+                direction: 1,
+            },
+            VmEffect::Transfer {
+                amount: 5,
+                direction: 0,
+            },
         ];
         let runs = split_into_cohort_runs(&effects);
-        assert_eq!(runs, vec![0..3], "consecutive same-cohort effects coalesce into one run");
+        assert_eq!(
+            runs,
+            vec![0..3],
+            "consecutive same-cohort effects coalesce into one run"
+        );
     }
 
     #[test]
     fn split_heterogeneous_turn_yields_runs() {
         // Transfer and SetField are DIFFERENT cohorts ⇒ three runs (no coalescing across cohorts).
         let effects = vec![
-            VmEffect::Transfer { amount: 10, direction: 1 },
-            VmEffect::SetField { field_idx: 0, value: BabyBear::new(7) },
-            VmEffect::Transfer { amount: 5, direction: 0 },
+            VmEffect::Transfer {
+                amount: 10,
+                direction: 1,
+            },
+            VmEffect::SetField {
+                field_idx: 0,
+                value: BabyBear::new(7),
+            },
+            VmEffect::Transfer {
+                amount: 5,
+                direction: 0,
+            },
         ];
         let runs = split_into_cohort_runs(&effects);
         assert_eq!(runs, vec![0..1, 1..2, 2..3]);
@@ -3544,10 +3566,22 @@ mod tests {
     fn split_coalesces_then_breaks() {
         // Two Transfers coalesce, then a SetField opens a new run.
         let effects = vec![
-            VmEffect::Transfer { amount: 1, direction: 1 },
-            VmEffect::Transfer { amount: 2, direction: 1 },
-            VmEffect::SetField { field_idx: 1, value: BabyBear::new(3) },
-            VmEffect::SetField { field_idx: 1, value: BabyBear::new(4) },
+            VmEffect::Transfer {
+                amount: 1,
+                direction: 1,
+            },
+            VmEffect::Transfer {
+                amount: 2,
+                direction: 1,
+            },
+            VmEffect::SetField {
+                field_idx: 1,
+                value: BabyBear::new(3),
+            },
+            VmEffect::SetField {
+                field_idx: 1,
+                value: BabyBear::new(4),
+            },
         ];
         let runs = split_into_cohort_runs(&effects);
         // Same field index ⇒ same per-slot descriptor ⇒ the two SetFields coalesce.
@@ -3558,8 +3592,14 @@ mod tests {
     fn split_distinct_setfield_slots_are_distinct_cohorts() {
         // `setFieldVmDescriptor2-0R24` vs `-1R24` are distinct AIRs ⇒ distinct cohorts ⇒ split.
         let effects = vec![
-            VmEffect::SetField { field_idx: 0, value: BabyBear::new(3) },
-            VmEffect::SetField { field_idx: 1, value: BabyBear::new(4) },
+            VmEffect::SetField {
+                field_idx: 0,
+                value: BabyBear::new(3),
+            },
+            VmEffect::SetField {
+                field_idx: 1,
+                value: BabyBear::new(4),
+            },
         ];
         let runs = split_into_cohort_runs(&effects);
         assert_eq!(runs, vec![0..1, 1..2]);
@@ -3624,7 +3664,10 @@ mod tests {
                 caveat: dregg_circuit::effect_vm::trace_rotated::empty_caveat_manifest(),
             };
             let res = prove_cohort_run_chain(&initial, &[], &rot);
-            assert!(res.is_err(), "the chained prover must fail closed on an empty turn");
+            assert!(
+                res.is_err(),
+                "the chained prover must fail closed on an empty turn"
+            );
         }
     }
 
@@ -3673,9 +3716,18 @@ mod tests {
         let pre_balance: i64 = 1_000;
         let before_cell = dregg_cell::Cell::with_balance([0xA1; 32], [0u8; 32], pre_balance);
         let effects = vec![
-            VmEffect::Transfer { amount: 100, direction: 1 }, // -100, nonce+1
-            VmEffect::SetField { field_idx: 0, value: BabyBear::new(7) }, // field, nonce+1
-            VmEffect::Transfer { amount: 30, direction: 0 }, // +30, nonce+1
+            VmEffect::Transfer {
+                amount: 100,
+                direction: 1,
+            }, // -100, nonce+1
+            VmEffect::SetField {
+                field_idx: 0,
+                value: BabyBear::new(7),
+            }, // field, nonce+1
+            VmEffect::Transfer {
+                amount: 30,
+                direction: 0,
+            }, // +30, nonce+1
         ];
 
         let initial = CellState::new(pre_balance as u64, 0);
@@ -3737,7 +3789,10 @@ mod tests {
             let sign = leg.sub_public_inputs[effect_vm::pi::NET_DELTA_SIGN].0;
             chain_net += if sign == 1 { -mag } else { mag };
         }
-        assert_eq!(chain_net, mono_net, "Σ net_delta(legs) == monolithic net_delta");
+        assert_eq!(
+            chain_net, mono_net,
+            "Σ net_delta(legs) == monolithic net_delta"
+        );
 
         // The FULL composed chained proof proves + verifies against the real pre/post commitments.
         let proof = prove_turn_self_sovereign_rotated(&initial, &effects, [0x5A; 32], Some(rot))
@@ -3769,9 +3824,18 @@ mod tests {
     fn path_preserve_tampered_middle_leg_is_rejected() {
         let before_cell = dregg_cell::Cell::with_balance([0xA2; 32], [0u8; 32], 1_000);
         let effects = vec![
-            VmEffect::Transfer { amount: 100, direction: 1 },
-            VmEffect::SetField { field_idx: 0, value: BabyBear::new(7) },
-            VmEffect::Transfer { amount: 30, direction: 0 },
+            VmEffect::Transfer {
+                amount: 100,
+                direction: 1,
+            },
+            VmEffect::SetField {
+                field_idx: 0,
+                value: BabyBear::new(7),
+            },
+            VmEffect::Transfer {
+                amount: 30,
+                direction: 0,
+            },
         ];
         let initial = CellState::new(1_000, 0);
         let (_mt, mono_pi) = generate_effect_vm_trace(&initial, &effects);
@@ -3825,9 +3889,18 @@ mod tests {
     fn path_preserve_conservation_sums_across_the_chain() {
         let before_cell = dregg_cell::Cell::with_balance([0xA3; 32], [0u8; 32], 1_000);
         let effects = vec![
-            VmEffect::Transfer { amount: 100, direction: 1 }, // -100
-            VmEffect::SetField { field_idx: 0, value: BabyBear::new(7) },
-            VmEffect::Transfer { amount: 100, direction: 0 }, // +100  ⇒ net 0
+            VmEffect::Transfer {
+                amount: 100,
+                direction: 1,
+            }, // -100
+            VmEffect::SetField {
+                field_idx: 0,
+                value: BabyBear::new(7),
+            },
+            VmEffect::Transfer {
+                amount: 100,
+                direction: 0,
+            }, // +100  ⇒ net 0
         ];
         let initial = CellState::new(1_000, 0);
         let (_mt, mono_pi) = generate_effect_vm_trace(&initial, &effects);
@@ -3850,7 +3923,9 @@ mod tests {
             effects: effects.clone(),
             authorization: None,
             membership: None,
-            conservation: Some(ConservationWitness { expected_net_delta: 0 }),
+            conservation: Some(ConservationWitness {
+                expected_net_delta: 0,
+            }),
             non_revocation: None,
             cap_membership: None,
             turn_hash: [0x5A; 32],
@@ -3870,9 +3945,18 @@ mod tests {
     fn path_preserve_conservation_wrong_net_is_rejected() {
         let before_cell = dregg_cell::Cell::with_balance([0xA4; 32], [0u8; 32], 1_000);
         let effects = vec![
-            VmEffect::Transfer { amount: 100, direction: 1 },
-            VmEffect::SetField { field_idx: 0, value: BabyBear::new(7) },
-            VmEffect::Transfer { amount: 100, direction: 0 },
+            VmEffect::Transfer {
+                amount: 100,
+                direction: 1,
+            },
+            VmEffect::SetField {
+                field_idx: 0,
+                value: BabyBear::new(7),
+            },
+            VmEffect::Transfer {
+                amount: 100,
+                direction: 0,
+            },
         ];
         let initial = CellState::new(1_000, 0);
         let mut after_cell = before_cell.clone();
@@ -3887,7 +3971,9 @@ mod tests {
             effects,
             authorization: None,
             membership: None,
-            conservation: Some(ConservationWitness { expected_net_delta: 5 }), // WRONG
+            conservation: Some(ConservationWitness {
+                expected_net_delta: 5,
+            }), // WRONG
             non_revocation: None,
             cap_membership: None,
             turn_hash: [0x5A; 32],

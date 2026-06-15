@@ -992,9 +992,14 @@ mod rotation_fields_tests {
     /// `resolve_total`: every declared name resolves when ≤ 16 are declared.
     #[test]
     fn resolution_total_on_declared() {
-        let decl: Vec<String> = (0..NUM_ROTATED_REGISTERS).map(|i| format!("f{i}")).collect();
+        let decl: Vec<String> = (0..NUM_ROTATED_REGISTERS)
+            .map(|i| format!("f{i}"))
+            .collect();
         for n in &decl {
-            assert!(resolve_field_name(&decl, n).is_some(), "declared name {n} must resolve");
+            assert!(
+                resolve_field_name(&decl, n).is_some(),
+                "declared name {n} must resolve"
+            );
         }
     }
 

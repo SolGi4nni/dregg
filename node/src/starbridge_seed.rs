@@ -607,8 +607,9 @@ mod tests {
         let descriptors = register_starbridge_factory_descriptors();
         assert_eq!(descriptors.len(), 10);
         assert!(
-            descriptors.iter().any(|d| d.factory_vk
-                == dregg_storage_templates::cap_inbox::CAP_INBOX_FACTORY_VK),
+            descriptors
+                .iter()
+                .any(|d| d.factory_vk == dregg_storage_templates::cap_inbox::CAP_INBOX_FACTORY_VK),
             "cap-inbox factory descriptor must be registered for boot seeding"
         );
     }

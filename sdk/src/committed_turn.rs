@@ -643,7 +643,11 @@ mod tests {
 
         // It must NOT be the old placeholder (recipient||nonce = 64 bytes of
         // public data). The ECIES box is eph(32)+nonce(12)+ciphertext(>tag).
-        assert_ne!(encrypted_note.len(), 64, "must not be the placeholder shape");
+        assert_ne!(
+            encrypted_note.len(),
+            64,
+            "must not be the placeholder shape"
+        );
 
         // Recipient decrypts and recovers the true opening.
         let opening = dregg_cell::decrypt_note(&view_secret_bytes, &encrypted_note)
@@ -668,8 +672,8 @@ mod tests {
                 _ => None,
             })
             .expect("value commitment present");
-        let recovered_blinding = Scalar::from_canonical_bytes(opening.blinding)
-            .expect("blinding is a canonical scalar");
+        let recovered_blinding =
+            Scalar::from_canonical_bytes(opening.blinding).expect("blinding is a canonical scalar");
         let recomputed = ValueCommitment::commit(opening.value, &recovered_blinding);
         assert_eq!(
             recomputed.to_bytes().0,

@@ -51,8 +51,8 @@ pub use commit_log::{CommitRecord, IndexAuditReport};
 pub use federation::StoredAttestedRoot;
 pub use ledger_store::LedgerCheckpoint;
 pub use note_tree::{NoteTree, PersistentNullifierSet};
-pub use snapshot::{Snapshot, SnapshotHead};
 pub use poseidon2_note_tree::Poseidon2NoteTree;
+pub use snapshot::{Snapshot, SnapshotHead};
 
 /// Errors that can occur during store operations.
 #[derive(Debug)]

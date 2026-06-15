@@ -933,16 +933,15 @@ impl WitnessedPredicateVerifier for BridgePredicateStarkVerifier {
                     "BridgePredicate proof wire did not decode (expected BridgePredicateWire): {e}"
                 ),
             })?;
-        let requirement = self
-            .policies
-            .requirement(commitment)
-            .ok_or_else(|| WitnessedPredicateError::Rejected {
+        let requirement = self.policies.requirement(commitment).ok_or_else(|| {
+            WitnessedPredicateError::Rejected {
                 kind_name: "BridgePredicate",
                 reason:
                     "no bridge-predicate policy registered for this commitment (fact_commitment); \
                      the operator/threshold is not host-trusted, so the proof fails closed"
                         .into(),
-            })?;
+            }
+        })?;
 
         // The committed fact is a BabyBear felt published in the 32-byte
         // commitment as its canonical 4-byte LE form (the `root_felt_from_slot`
@@ -1057,8 +1056,11 @@ pub fn bridge_predicate_range_proof_bytes(
     low_proof: &PredicateProof,
     high_proof: &PredicateProof,
 ) -> Vec<u8> {
-    postcard::to_allocvec(&BridgePredicateWire::Range(low_proof.clone(), high_proof.clone()))
-        .expect("BridgePredicateWire serialization is infallible")
+    postcard::to_allocvec(&BridgePredicateWire::Range(
+        low_proof.clone(),
+        high_proof.clone(),
+    ))
+    .expect("BridgePredicateWire serialization is infallible")
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -1327,7 +1329,10 @@ pub fn register_threshold_sig_verifier(
     vk_hash: [u8; 32],
     policy: Arc<dyn ThresholdSigPolicyAuthority>,
 ) {
-    registry.register_custom(vk_hash, Arc::new(ThresholdSigVerifier::new(vk_hash, policy)));
+    registry.register_custom(
+        vk_hash,
+        Arc::new(ThresholdSigVerifier::new(vk_hash, policy)),
+    );
 }
 
 /// Serialize a `hints::Signature` aggregate QC into the proof-blob bytes a
@@ -2055,9 +2060,13 @@ mod tests {
         let dummy = [0u8; 32];
 
         // Honest: value=50 in [10, 100].
-        let (low_p, high_p) =
-            prove_in_range(BabyBear::new(50), BabyBear::new(10), BabyBear::new(100), fact_commitment)
-                .expect("honest in-range must be provable");
+        let (low_p, high_p) = prove_in_range(
+            BabyBear::new(50),
+            BabyBear::new(10),
+            BabyBear::new(100),
+            fact_commitment,
+        )
+        .expect("honest in-range must be provable");
         let bytes = bridge_predicate_range_proof_bytes(&low_p, &high_p);
 
         let ok_policy = Arc::new(OneBridgePolicy {
@@ -2226,8 +2235,12 @@ mod tests {
             let qc = c.qc_bytes(b"message A", &[0, 1]);
             let v = ThresholdSigVerifier::new(VK_HASH, policy(&c, 2));
             assert!(
-                v.verify(&COMMITMENT, &PredicateInput::SigningMessage(b"message B"), &qc)
-                    .is_err(),
+                v.verify(
+                    &COMMITMENT,
+                    &PredicateInput::SigningMessage(b"message B"),
+                    &qc
+                )
+                .is_err(),
                 "a QC over a different message must be rejected"
             );
         }
@@ -2288,8 +2301,12 @@ mod tests {
             let v = ThresholdSigVerifier::new(VK_HASH, policy(&c, 2));
             // Garbage QC bytes → deserialization fails.
             assert!(
-                v.verify(&COMMITMENT, &PredicateInput::SigningMessage(b"x"), b"not-a-qc")
-                    .is_err(),
+                v.verify(
+                    &COMMITMENT,
+                    &PredicateInput::SigningMessage(b"x"),
+                    b"not-a-qc"
+                )
+                .is_err(),
                 "malformed QC bytes must be rejected"
             );
             // Wrong input shape (Slot, not SigningMessage/Bytes).
@@ -2314,7 +2331,12 @@ mod tests {
             let qc = c.qc_bytes(msg, &[0, 1]);
             let mut reg = registry_with_real_verifiers();
             register_threshold_sig_verifier(&mut reg, VK_HASH, policy(&c, 2));
-            let wp = WitnessedPredicate::custom(VK_HASH, COMMITMENT, PredicateInputRefSigningMessage(), 0);
+            let wp = WitnessedPredicate::custom(
+                VK_HASH,
+                COMMITMENT,
+                PredicateInputRefSigningMessage(),
+                0,
+            );
             reg.verify(&wp, &PredicateInput::SigningMessage(msg), &qc)
                 .expect("the registry must route Custom { vk_hash } to the threshold-sig verifier");
         }

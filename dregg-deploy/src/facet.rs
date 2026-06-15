@@ -20,13 +20,13 @@
 //! and a Rust-SDK facet denote the same authority.
 
 use dregg_cell::{
-    EffectMask, EFFECT_ALL, EFFECT_ATTENUATE_CAPABILITY, EFFECT_BRIDGE_OPS, EFFECT_BURN,
-    EFFECT_CAPTP_OPS, EFFECT_CREATE_CELL, EFFECT_DELEGATION_OPS, EFFECT_EMIT_EVENT,
-    EFFECT_ESCROW_OPS, EFFECT_GRANT_CAPABILITY, EFFECT_INCREMENT_NONCE, EFFECT_INTRODUCE,
-    EFFECT_LIFECYCLE_OPS, EFFECT_NOTE_CREATE, EFFECT_NOTE_SPEND, EFFECT_OBLIGATION_OPS,
-    EFFECT_QUEUE_OPS, EFFECT_REFUSAL, EFFECT_REVOKE_CAPABILITY, EFFECT_SEAL_OPS, EFFECT_SET_FIELD,
-    EFFECT_SET_PERMISSIONS, EFFECT_SET_VERIFICATION_KEY, EFFECT_SOVEREIGN_OPS, EFFECT_TRANSFER,
-    FACET_ADMIN, FACET_DELEGATOR, FACET_READ_ONLY, FACET_STATE_WRITER, FACET_TRANSFER_ONLY,
+    EFFECT_ALL, EFFECT_ATTENUATE_CAPABILITY, EFFECT_BRIDGE_OPS, EFFECT_BURN, EFFECT_CAPTP_OPS,
+    EFFECT_CREATE_CELL, EFFECT_DELEGATION_OPS, EFFECT_EMIT_EVENT, EFFECT_ESCROW_OPS,
+    EFFECT_GRANT_CAPABILITY, EFFECT_INCREMENT_NONCE, EFFECT_INTRODUCE, EFFECT_LIFECYCLE_OPS,
+    EFFECT_NOTE_CREATE, EFFECT_NOTE_SPEND, EFFECT_OBLIGATION_OPS, EFFECT_QUEUE_OPS, EFFECT_REFUSAL,
+    EFFECT_REVOKE_CAPABILITY, EFFECT_SEAL_OPS, EFFECT_SET_FIELD, EFFECT_SET_PERMISSIONS,
+    EFFECT_SET_VERIFICATION_KEY, EFFECT_SOVEREIGN_OPS, EFFECT_TRANSFER, EffectMask, FACET_ADMIN,
+    FACET_DELEGATOR, FACET_READ_ONLY, FACET_STATE_WRITER, FACET_TRANSFER_ONLY,
 };
 
 /// An error parsing a facet string — names the offending token + the surface
@@ -270,9 +270,15 @@ mod tests {
 
     #[test]
     fn named_facets_resolve() {
-        assert_eq!(parse_facet("t", "transfer-only").unwrap(), FACET_TRANSFER_ONLY);
+        assert_eq!(
+            parse_facet("t", "transfer-only").unwrap(),
+            FACET_TRANSFER_ONLY
+        );
         assert_eq!(parse_facet("t", "read-only").unwrap(), FACET_READ_ONLY);
-        assert_eq!(parse_facet("t", "state-writer").unwrap(), FACET_STATE_WRITER);
+        assert_eq!(
+            parse_facet("t", "state-writer").unwrap(),
+            FACET_STATE_WRITER
+        );
         assert_eq!(parse_facet("t", "delegator").unwrap(), FACET_DELEGATOR);
         assert_eq!(parse_facet("t", "all").unwrap(), EFFECT_ALL);
     }
@@ -297,7 +303,10 @@ mod tests {
     #[test]
     fn raw_masks_resolve() {
         assert_eq!(parse_facet("t", "2").unwrap(), EFFECT_TRANSFER); // 1<<1
-        assert_eq!(parse_facet("t", "0x6").unwrap(), EFFECT_TRANSFER | EFFECT_GRANT_CAPABILITY);
+        assert_eq!(
+            parse_facet("t", "0x6").unwrap(),
+            EFFECT_TRANSFER | EFFECT_GRANT_CAPABILITY
+        );
     }
 
     #[test]
@@ -320,8 +329,14 @@ mod tests {
 
     #[test]
     fn describe_round_trips_intent() {
-        assert_eq!(describe_allowed_effects(None), "unrestricted (all effect kinds)");
-        assert_eq!(describe_facet(FACET_TRANSFER_ONLY), "transfer-only {Transfer}");
+        assert_eq!(
+            describe_allowed_effects(None),
+            "unrestricted (all effect kinds)"
+        );
+        assert_eq!(
+            describe_facet(FACET_TRANSFER_ONLY),
+            "transfer-only {Transfer}"
+        );
         assert_eq!(
             describe_facet(EFFECT_SET_FIELD | EFFECT_EMIT_EVENT),
             "state-writer {SetField, EmitEvent}"

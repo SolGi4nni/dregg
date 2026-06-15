@@ -214,7 +214,12 @@ impl TranscludeAffordance {
     /// (the cell that contains this affordance) transcludes the source, carrying the
     /// cited receipt + content commitment from the quote's provenance — a verifiable
     /// backlink, not a bare pointer. Idempotent on identical observations.
-    pub fn record_into(&self, links: &mut Backlinks, observer: CellId, rendered: &RenderedTransclusion) {
+    pub fn record_into(
+        &self,
+        links: &mut Backlinks,
+        observer: CellId,
+        rendered: &RenderedTransclusion,
+    ) {
         links.observe(observer, &rendered.field);
     }
 }
@@ -328,7 +333,10 @@ impl std::fmt::Display for TranscludeProjectError {
                 "transclusion `{affordance}` not visible: requires {required:?} but viewer holds {held:?}"
             ),
             TranscludeProjectError::Membrane(e) => {
-                write!(f, "transclusion quote projection refused by membrane: {e:?}")
+                write!(
+                    f,
+                    "transclusion quote projection refused by membrane: {e:?}"
+                )
             }
         }
     }
@@ -423,7 +431,11 @@ mod tests {
             uri.clone(),
         );
         let (cell, t) = DeosCell::new(doc, "doc")
-            .affordance(CellAffordance::new("view", AuthRequired::Signature, cite_event(doc)))
+            .affordance(CellAffordance::new(
+                "view",
+                AuthRequired::Signature,
+                cite_event(doc),
+            ))
             .transclude(t);
 
         // The transclusion sits in the cell's surface beside `view` (it IS a
@@ -452,7 +464,10 @@ mod tests {
             rendered.field.resource.content_hash
         );
         // And the resolved quote re-verifies (the value EQUALS its source, recomputably).
-        assert!(rendered.verify().is_ok(), "the quote's provenance chain must verify");
+        assert!(
+            rendered.verify().is_ok(),
+            "the quote's provenance chain must verify"
+        );
     }
 
     // (2) A FORGED PROVENANCE IS REFUSED — no opened provenance ⇒ no quote. The
@@ -548,7 +563,9 @@ mod tests {
             cite_event(doc),
             uri.clone(),
         );
-        let rendered = t.resolve(&web).expect("resolves (resolution is the source's gate, not the viewer's)");
+        let rendered = t
+            .resolve(&web)
+            .expect("resolves (resolution is the source's gate, not the viewer's)");
 
         // A viewer holding only Signature does NOT clear the affordance's `None`
         // (root) requirement — the quote is not offered to them (the framework
@@ -589,11 +606,20 @@ mod tests {
 
         let observers = links.observers_of(uri.cell);
         assert_eq!(observers.len(), 1, "exactly one observer (idempotent)");
-        assert_eq!(observers[0].observer, doc, "the doc cell is the backlink observer");
+        assert_eq!(
+            observers[0].observer, doc,
+            "the doc cell is the backlink observer"
+        );
         // The backlink cites the receipt + content commitment from the quote's
         // provenance — a verifiable fact, not a bare pointer.
-        assert_eq!(observers[0].receipt_hash, rendered.provenance().receipt_hash);
-        assert_eq!(observers[0].content_hash, rendered.provenance().content_hash);
+        assert_eq!(
+            observers[0].receipt_hash,
+            rendered.provenance().receipt_hash
+        );
+        assert_eq!(
+            observers[0].content_hash,
+            rendered.provenance().content_hash
+        );
         assert_eq!(links.backlink_count(uri.cell), 1);
     }
 }

@@ -122,7 +122,9 @@ async fn dash_get<T: for<'de> serde::Deserialize<'de>>(
     if !resp.status().is_success() {
         return Err(format!("HTTP {}", resp.status().as_u16()));
     }
-    resp.json::<T>().await.map_err(|e| format!("parse {route}: {e}"))
+    resp.json::<T>()
+        .await
+        .map_err(|e| format!("parse {route}: {e}"))
 }
 
 /// Handle `/dashboard` — render the live node-health dashboard.
@@ -163,13 +165,21 @@ pub async fn handle_dashboard(ctx: &Context, command: &CommandInteraction, state
     } else {
         "\u{1f534}"
     };
-    let producer_icon = if status.lean_producer { "\u{2705}" } else { "\u{26a0}\u{fe0f}" };
+    let producer_icon = if status.lean_producer {
+        "\u{2705}"
+    } else {
+        "\u{26a0}\u{fe0f}"
+    };
     let producer = if status.state_producer.is_empty() {
         if status.lean_producer { "lean" } else { "rust" }.to_string()
     } else {
         status.state_producer.clone()
     };
-    let proving = if status.full_turn_proving { "\u{2705} on" } else { "\u{2796} off" };
+    let proving = if status.full_turn_proving {
+        "\u{2705} on"
+    } else {
+        "\u{2796} off"
+    };
     let nodes = if status.federation_mode == "solo" {
         "1 (solo)".to_string()
     } else {
@@ -181,16 +191,42 @@ pub async fn handle_dashboard(ctx: &Context, command: &CommandInteraction, state
             "{health_icon} Live snapshot of `{}`.",
             state.config.devnet_url
         ))
-        .field("Health", if status.healthy { "healthy" } else if status.consensus_live { "degraded" } else { "offline" }, true)
-        .field("Consensus", if status.consensus_live { "\u{2705} live" } else { "\u{274c} idle" }, true)
+        .field(
+            "Health",
+            if status.healthy {
+                "healthy"
+            } else if status.consensus_live {
+                "degraded"
+            } else {
+                "offline"
+            },
+            true,
+        )
+        .field(
+            "Consensus",
+            if status.consensus_live {
+                "\u{2705} live"
+            } else {
+                "\u{274c} idle"
+            },
+            true,
+        )
         .field("Mode", &status.federation_mode, true)
         .field("Attested Height", status.latest_height.to_string(), true)
         .field("DAG Tip", status.dag_height.to_string(), true)
         .field("DAG Blocks", status.block_count.to_string(), true)
         .field("Nodes", nodes, true)
-        .field("State Producer", format!("{producer_icon} {producer}"), true)
+        .field(
+            "State Producer",
+            format!("{producer_icon} {producer}"),
+            true,
+        )
         .field("Full-Turn Proving", proving.to_string(), true)
-        .field("SWAP-Safe Effects", status.producer_covered_effects.to_string(), true);
+        .field(
+            "SWAP-Safe Effects",
+            status.producer_covered_effects.to_string(),
+            true,
+        );
 
     // Federations (real route).
     if let Ok(feds) = dash_get::<Vec<DashFederation>>(state, "/api/federations").await {

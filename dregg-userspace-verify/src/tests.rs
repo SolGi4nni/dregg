@@ -2,10 +2,10 @@
 //! amplifying / non-conserving / malformed / unbalanced-ring forest FAILS
 //! with the precise locus.
 
+use dregg_cell::facet::{EFFECT_GRANT_CAPABILITY, EFFECT_SET_FIELD, EFFECT_TRANSFER};
+use dregg_cell::note::{NoteCommitment, Nullifier};
 use dregg_cell::permissions::AuthRequired;
 use dregg_cell::{CapabilityRef, CellId};
-use dregg_cell::note::{NoteCommitment, Nullifier};
-use dregg_cell::facet::{EFFECT_TRANSFER, EFFECT_SET_FIELD, EFFECT_GRANT_CAPABILITY};
 use dregg_turn::action::{Action, Authorization, DelegationMode, Effect};
 use dregg_turn::{CallForest, CallTree};
 
@@ -46,7 +46,10 @@ fn cap(target: CellId, slot: u32, facet: Option<u32>, expiry: Option<u64>) -> Ca
 }
 
 fn forest_of(roots: Vec<CallTree>) -> CallForest {
-    CallForest { roots, forest_hash: [0u8; 32] }
+    CallForest {
+        roots,
+        forest_hash: [0u8; 32],
+    }
 }
 
 // ─── B: conservation ────────────────────────────────────────────────────────
@@ -55,16 +58,22 @@ fn forest_of(roots: Vec<CallTree>) -> CallForest {
 fn balanced_transfer_forest_conserves() {
     // A → B 100, B → A 100 : nets to zero.
     let f = forest_of(vec![
-        CallTree::new(action(cell(1), vec![Effect::Transfer {
-            from: cell(1),
-            to: cell(2),
-            amount: 100,
-        }])),
-        CallTree::new(action(cell(2), vec![Effect::Transfer {
-            from: cell(2),
-            to: cell(1),
-            amount: 100,
-        }])),
+        CallTree::new(action(
+            cell(1),
+            vec![Effect::Transfer {
+                from: cell(1),
+                to: cell(2),
+                amount: 100,
+            }],
+        )),
+        CallTree::new(action(
+            cell(2),
+            vec![Effect::Transfer {
+                from: cell(2),
+                to: cell(1),
+                amount: 100,
+            }],
+        )),
     ]);
     assert!(check_conservation(&f).is_pass());
 }
@@ -85,24 +94,27 @@ fn nonconserving_balance_change_fails_with_locus() {
 #[test]
 fn note_value_imbalance_fails() {
     // spend 100 of asset 7, create 60 of asset 7: residue +40.
-    let f = forest_of(vec![CallTree::new(action(cell(1), vec![
-        Effect::NoteSpend {
-            nullifier: Nullifier([0u8; 32]),
-            note_tree_root: [0u8; 32],
-            value: 100,
-            asset_type: 7,
-            spending_proof: vec![],
-            value_commitment: None,
-        },
-        Effect::NoteCreate {
-            commitment: NoteCommitment([0u8; 32]),
-            value: 60,
-            asset_type: 7,
-            encrypted_note: vec![],
-            value_commitment: None,
-            range_proof: None,
-        },
-    ]))]);
+    let f = forest_of(vec![CallTree::new(action(
+        cell(1),
+        vec![
+            Effect::NoteSpend {
+                nullifier: Nullifier([0u8; 32]),
+                note_tree_root: [0u8; 32],
+                value: 100,
+                asset_type: 7,
+                spending_proof: vec![],
+                value_commitment: None,
+            },
+            Effect::NoteCreate {
+                commitment: NoteCommitment([0u8; 32]),
+                value: 60,
+                asset_type: 7,
+                encrypted_note: vec![],
+                value_commitment: None,
+                range_proof: None,
+            },
+        ],
+    ))]);
     let v = check_conservation(&f);
     assert!(!v.is_pass());
     assert_eq!(v.findings()[0].locus.asset.as_deref(), Some("note:7"));
@@ -110,24 +122,27 @@ fn note_value_imbalance_fails() {
 
 #[test]
 fn note_value_balance_conserves() {
-    let f = forest_of(vec![CallTree::new(action(cell(1), vec![
-        Effect::NoteSpend {
-            nullifier: Nullifier([0u8; 32]),
-            note_tree_root: [0u8; 32],
-            value: 100,
-            asset_type: 7,
-            spending_proof: vec![],
-            value_commitment: None,
-        },
-        Effect::NoteCreate {
-            commitment: NoteCommitment([0u8; 32]),
-            value: 100,
-            asset_type: 7,
-            encrypted_note: vec![],
-            value_commitment: None,
-            range_proof: None,
-        },
-    ]))]);
+    let f = forest_of(vec![CallTree::new(action(
+        cell(1),
+        vec![
+            Effect::NoteSpend {
+                nullifier: Nullifier([0u8; 32]),
+                note_tree_root: [0u8; 32],
+                value: 100,
+                asset_type: 7,
+                spending_proof: vec![],
+                value_commitment: None,
+            },
+            Effect::NoteCreate {
+                commitment: NoteCommitment([0u8; 32]),
+                value: 100,
+                asset_type: 7,
+                encrypted_note: vec![],
+                value_commitment: None,
+                range_proof: None,
+            },
+        ],
+    ))]);
     assert!(check_conservation(&f).is_pass());
 }
 
@@ -138,17 +153,23 @@ fn in_forest_attenuating_grant_passes() {
     // root grants cell(2) a transfer-only cap on cell(9);
     // child (under 2's scope) re-grants the SAME (or narrower) cap → attenuation.
     let granted_cap = cap(cell(9), 0, Some(EFFECT_TRANSFER), None);
-    let mut root = CallTree::new(action(cell(1), vec![Effect::GrantCapability {
-        from: cell(1),
-        to: cell(2),
-        cap: granted_cap.clone(),
-    }]));
+    let mut root = CallTree::new(action(
+        cell(1),
+        vec![Effect::GrantCapability {
+            from: cell(1),
+            to: cell(2),
+            cap: granted_cap.clone(),
+        }],
+    ));
     // child: cell(2) re-grants the same cap to cell(3) — same target, same facet.
-    root.children.push(CallTree::new(action(cell(2), vec![Effect::GrantCapability {
-        from: cell(2),
-        to: cell(3),
-        cap: granted_cap,
-    }])));
+    root.children.push(CallTree::new(action(
+        cell(2),
+        vec![Effect::GrantCapability {
+            from: cell(2),
+            to: cell(3),
+            cap: granted_cap,
+        }],
+    )));
     let f = forest_of(vec![root]);
     assert!(check_no_amplification(&f).is_pass());
 }
@@ -159,16 +180,22 @@ fn in_forest_amplifying_grant_fails_with_locus() {
     // child cell(2) re-grants a WIDER cap (transfer + set_field) on cell(9): amplify.
     let narrow = cap(cell(9), 0, Some(EFFECT_TRANSFER), None);
     let wide = cap(cell(9), 0, Some(EFFECT_TRANSFER | EFFECT_SET_FIELD), None);
-    let mut root = CallTree::new(action(cell(1), vec![Effect::GrantCapability {
-        from: cell(1),
-        to: cell(2),
-        cap: narrow,
-    }]));
-    root.children.push(CallTree::new(action(cell(2), vec![Effect::GrantCapability {
-        from: cell(2),
-        to: cell(3),
-        cap: wide,
-    }])));
+    let mut root = CallTree::new(action(
+        cell(1),
+        vec![Effect::GrantCapability {
+            from: cell(1),
+            to: cell(2),
+            cap: narrow,
+        }],
+    ));
+    root.children.push(CallTree::new(action(
+        cell(2),
+        vec![Effect::GrantCapability {
+            from: cell(2),
+            to: cell(3),
+            cap: wide,
+        }],
+    )));
     let f = forest_of(vec![root]);
     let v = check_no_amplification(&f);
     assert!(!v.is_pass());
@@ -184,16 +211,22 @@ fn unrestricted_regrant_of_restricted_cap_fails() {
     // parent grant is faceted (transfer only); child re-grants UNRESTRICTED (None) → amplify.
     let narrow = cap(cell(9), 0, Some(EFFECT_TRANSFER), None);
     let unrestricted = cap(cell(9), 0, None, None);
-    let mut root = CallTree::new(action(cell(1), vec![Effect::GrantCapability {
-        from: cell(1),
-        to: cell(2),
-        cap: narrow,
-    }]));
-    root.children.push(CallTree::new(action(cell(2), vec![Effect::GrantCapability {
-        from: cell(2),
-        to: cell(3),
-        cap: unrestricted,
-    }])));
+    let mut root = CallTree::new(action(
+        cell(1),
+        vec![Effect::GrantCapability {
+            from: cell(1),
+            to: cell(2),
+            cap: narrow,
+        }],
+    ));
+    root.children.push(CallTree::new(action(
+        cell(2),
+        vec![Effect::GrantCapability {
+            from: cell(2),
+            to: cell(3),
+            cap: unrestricted,
+        }],
+    )));
     let f = forest_of(vec![root]);
     assert!(!check_no_amplification(&f).is_pass());
 }
@@ -202,16 +235,22 @@ fn unrestricted_regrant_of_restricted_cap_fails() {
 fn later_expiry_regrant_fails() {
     let parent = cap(cell(9), 0, Some(EFFECT_TRANSFER), Some(100));
     let extended = cap(cell(9), 0, Some(EFFECT_TRANSFER), Some(200));
-    let mut root = CallTree::new(action(cell(1), vec![Effect::GrantCapability {
-        from: cell(1),
-        to: cell(2),
-        cap: parent,
-    }]));
-    root.children.push(CallTree::new(action(cell(2), vec![Effect::GrantCapability {
-        from: cell(2),
-        to: cell(3),
-        cap: extended,
-    }])));
+    let mut root = CallTree::new(action(
+        cell(1),
+        vec![Effect::GrantCapability {
+            from: cell(1),
+            to: cell(2),
+            cap: parent,
+        }],
+    ));
+    root.children.push(CallTree::new(action(
+        cell(2),
+        vec![Effect::GrantCapability {
+            from: cell(2),
+            to: cell(3),
+            cap: extended,
+        }],
+    )));
     let f = forest_of(vec![root]);
     assert!(!check_no_amplification(&f).is_pass());
 }
@@ -222,16 +261,22 @@ fn grant_over_unrelated_target_not_flagged() {
     // Holding is a dynamic question → not flagged (the honest boundary).
     let granted = cap(cell(9), 0, Some(EFFECT_TRANSFER), None);
     let elsewhere = cap(cell(99), 0, None, None);
-    let mut root = CallTree::new(action(cell(1), vec![Effect::GrantCapability {
-        from: cell(1),
-        to: cell(2),
-        cap: granted,
-    }]));
-    root.children.push(CallTree::new(action(cell(2), vec![Effect::GrantCapability {
-        from: cell(2),
-        to: cell(3),
-        cap: elsewhere,
-    }])));
+    let mut root = CallTree::new(action(
+        cell(1),
+        vec![Effect::GrantCapability {
+            from: cell(1),
+            to: cell(2),
+            cap: granted,
+        }],
+    ));
+    root.children.push(CallTree::new(action(
+        cell(2),
+        vec![Effect::GrantCapability {
+            from: cell(2),
+            to: cell(3),
+            cap: elsewhere,
+        }],
+    )));
     let f = forest_of(vec![root]);
     assert!(check_no_amplification(&f).is_pass());
 }
@@ -247,7 +292,12 @@ fn cap_attenuates_basic() {
     assert!(!cap_attenuates(&other, &narrow));
     // subset facet ok; superset facet not
     let xfer = cap(cell(9), 0, Some(EFFECT_TRANSFER), None);
-    let xfer_grant = cap(cell(9), 0, Some(EFFECT_TRANSFER | EFFECT_GRANT_CAPABILITY), None);
+    let xfer_grant = cap(
+        cell(9),
+        0,
+        Some(EFFECT_TRANSFER | EFFECT_GRANT_CAPABILITY),
+        None,
+    );
     assert!(cap_attenuates(&xfer, &xfer_grant));
     assert!(!cap_attenuates(&xfer_grant, &xfer));
 }
@@ -283,26 +333,41 @@ fn empty_action_flagged() {
     let f = forest_of(vec![CallTree::new(action(cell(1), vec![]))]);
     let v = check_wellformed(&f);
     assert!(!v.is_pass());
-    assert!(v.findings().iter().any(|f| f.message.contains("zero effects")));
+    assert!(
+        v.findings()
+            .iter()
+            .any(|f| f.message.contains("zero effects"))
+    );
 }
 
 #[test]
 fn noop_exercise_flagged() {
-    let f = forest_of(vec![CallTree::new(action(cell(1), vec![
-        Effect::ExerciseViaCapability { cap_slot: 0, inner_effects: vec![] },
-    ]))]);
+    let f = forest_of(vec![CallTree::new(action(
+        cell(1),
+        vec![Effect::ExerciseViaCapability {
+            cap_slot: 0,
+            inner_effects: vec![],
+        }],
+    ))]);
     let v = check_wellformed(&f);
     assert!(!v.is_pass());
-    assert!(v.findings().iter().any(|f| f.message.contains("no-op exercise")));
+    assert!(
+        v.findings()
+            .iter()
+            .any(|f| f.message.contains("no-op exercise"))
+    );
 }
 
 #[test]
 fn wellformed_signed_turn_passes() {
-    let f = forest_of(vec![CallTree::new(action(cell(1), vec![Effect::Transfer {
-        from: cell(1),
-        to: cell(2),
-        amount: 5,
-    }]))]);
+    let f = forest_of(vec![CallTree::new(action(
+        cell(1),
+        vec![Effect::Transfer {
+            from: cell(1),
+            to: cell(2),
+            amount: 5,
+        }],
+    ))]);
     assert!(check_wellformed(&f).is_pass());
 }
 
@@ -312,9 +377,24 @@ fn wellformed_signed_turn_passes() {
 fn balanced_three_party_ring_passes() {
     // A →(X,10)→ B →(X,10)→ C →(X,10)→ A : every participant nets 0 in X.
     let legs = vec![
-        RingLeg { from: cell(1), to: cell(2), asset: "X".into(), amount: 10 },
-        RingLeg { from: cell(2), to: cell(3), asset: "X".into(), amount: 10 },
-        RingLeg { from: cell(3), to: cell(1), asset: "X".into(), amount: 10 },
+        RingLeg {
+            from: cell(1),
+            to: cell(2),
+            asset: "X".into(),
+            amount: 10,
+        },
+        RingLeg {
+            from: cell(2),
+            to: cell(3),
+            asset: "X".into(),
+            amount: 10,
+        },
+        RingLeg {
+            from: cell(3),
+            to: cell(1),
+            asset: "X".into(),
+            amount: 10,
+        },
     ];
     assert!(check_ring_balance(&legs).is_pass());
 }
@@ -324,22 +404,44 @@ fn unbalanced_ring_fails_with_participant_locus() {
     // A gives 10 to B, B gives 10 to C, but C does NOT close back to A:
     // A nets −10, C nets +10. Open ring.
     let legs = vec![
-        RingLeg { from: cell(1), to: cell(2), asset: "X".into(), amount: 10 },
-        RingLeg { from: cell(2), to: cell(3), asset: "X".into(), amount: 10 },
+        RingLeg {
+            from: cell(1),
+            to: cell(2),
+            asset: "X".into(),
+            amount: 10,
+        },
+        RingLeg {
+            from: cell(2),
+            to: cell(3),
+            asset: "X".into(),
+            amount: 10,
+        },
     ];
     let v = check_ring_balance(&legs);
     assert!(!v.is_pass());
     // at least one finding names asset X and a nonzero net.
-    assert!(v.findings().iter().any(|f| {
-        f.locus.asset.as_deref() == Some("X") && f.message.contains("not balanced")
-    }));
+    assert!(
+        v.findings().iter().any(|f| {
+            f.locus.asset.as_deref() == Some("X") && f.message.contains("not balanced")
+        })
+    );
 }
 
 #[test]
 fn self_loop_ring_flagged() {
     let legs = vec![
-        RingLeg { from: cell(1), to: cell(1), asset: "X".into(), amount: 10 },
-        RingLeg { from: cell(2), to: cell(2), asset: "X".into(), amount: 10 },
+        RingLeg {
+            from: cell(1),
+            to: cell(1),
+            asset: "X".into(),
+            amount: 10,
+        },
+        RingLeg {
+            from: cell(2),
+            to: cell(2),
+            asset: "X".into(),
+            amount: 10,
+        },
     ];
     let v = check_ring_balance(&legs);
     assert!(!v.is_pass());
@@ -349,16 +451,22 @@ fn self_loop_ring_flagged() {
 #[test]
 fn extract_ring_legs_from_transfer_forest() {
     let f = forest_of(vec![
-        CallTree::new(action(cell(1), vec![Effect::Transfer {
-            from: cell(1),
-            to: cell(2),
-            amount: 10,
-        }])),
-        CallTree::new(action(cell(2), vec![Effect::Transfer {
-            from: cell(2),
-            to: cell(1),
-            amount: 10,
-        }])),
+        CallTree::new(action(
+            cell(1),
+            vec![Effect::Transfer {
+                from: cell(1),
+                to: cell(2),
+                amount: 10,
+            }],
+        )),
+        CallTree::new(action(
+            cell(2),
+            vec![Effect::Transfer {
+                from: cell(2),
+                to: cell(1),
+                amount: 10,
+            }],
+        )),
     ]);
     let legs = extract_ring_legs(&f);
     assert_eq!(legs.len(), 2);
@@ -369,11 +477,14 @@ fn extract_ring_legs_from_transfer_forest() {
 
 #[test]
 fn analyze_clean_turn_passes() {
-    let f = forest_of(vec![CallTree::new(action(cell(1), vec![Effect::Transfer {
-        from: cell(1),
-        to: cell(2),
-        amount: 7,
-    }]))]);
+    let f = forest_of(vec![CallTree::new(action(
+        cell(1),
+        vec![Effect::Transfer {
+            from: cell(1),
+            to: cell(2),
+            amount: 7,
+        }],
+    ))]);
     let a = analyze(&f, false);
     assert!(a.pass());
     assert!(a.all_findings().is_empty());
@@ -381,11 +492,14 @@ fn analyze_clean_turn_passes() {
 
 #[test]
 fn analyze_serializes_to_json() {
-    let f = forest_of(vec![CallTree::new(action(cell(1), vec![Effect::Transfer {
-        from: cell(1),
-        to: cell(2),
-        amount: 7,
-    }]))]);
+    let f = forest_of(vec![CallTree::new(action(
+        cell(1),
+        vec![Effect::Transfer {
+            from: cell(1),
+            to: cell(2),
+            amount: 7,
+        }],
+    ))]);
     let a = analyze(&f, true);
     let j = serde_json::to_string(&a).unwrap();
     assert!(j.contains("conservation"));

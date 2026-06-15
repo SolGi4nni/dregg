@@ -989,7 +989,10 @@ pub fn fire_issue(
         },
         Effect::EmitEvent {
             cell: issuer,
-            event: Event::new(symbol("credential-issued"), vec![field_from_u64(new_counter)]),
+            event: Event::new(
+                symbol("credential-issued"),
+                vec![field_from_u64(new_counter)],
+            ),
         },
     ];
     let mut action = cipherclerk.make_action(issuer, "issue", effects);

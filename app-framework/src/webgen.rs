@@ -474,13 +474,20 @@ mod tests {
                 AuthRequired::Signature,
                 Effect::EmitEvent {
                     cell: doc,
-                    event: Event { topic: [1u8; 32], data: vec![] },
+                    event: Event {
+                        topic: [1u8; 32],
+                        data: vec![],
+                    },
                 },
             ))
             .declare(CellAffordance::new(
                 "edit",
                 AuthRequired::Either,
-                Effect::SetField { cell: doc, index: 1, value: [0u8; 32] },
+                Effect::SetField {
+                    cell: doc,
+                    index: 1,
+                    value: [0u8; 32],
+                },
             ));
 
         let m = ConstantsModule::new("doc-app")

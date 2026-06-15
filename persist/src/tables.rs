@@ -237,8 +237,7 @@ pub const COMMIT_COMPACTED_BLOCK_IDS: TableDefinition<&[u8; 32], ()> =
 /// The scope is the cell the digest was burned against (the trustline cell id
 /// for `NS_TRUSTLINE_DIGEST`); namespaces whose digests are global use the
 /// all-zero scope.
-pub const FOREVER_DIGESTS: TableDefinition<&[u8; 65], ()> =
-    TableDefinition::new("forever_digests");
+pub const FOREVER_DIGESTS: TableDefinition<&[u8; 65], ()> = TableDefinition::new("forever_digests");
 
 /// Namespace byte: the node's trustline digest registry (committed draws,
 /// shadow-rebuild digests, settle-unapplied compensation digests — everything

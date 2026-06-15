@@ -52,6 +52,7 @@
 
 use std::collections::BTreeMap;
 
+use dregg_app_framework::CellId as DeosCellId;
 use dregg_app_framework::{
     AppCipherclerk, AuthRequired, CapTarget, CapTemplate, CellAffordance, CellMode, CellProgram,
     ChildVkStrategy, ConstantsModule, DeosApp, DeosCell, Effect, EmbeddedExecutor, Event,
@@ -59,7 +60,6 @@ use dregg_app_framework::{
     StarbridgeAppContext, StateConstraint, TransitionCase, TransitionGuard, TurnReceipt,
     canonical_program_vk, field_from_bytes, field_from_u64, hex_encode_32, symbol,
 };
-use dregg_app_framework::CellId as DeosCellId;
 
 /// An artist/piece id, restricted to the low byte the in-process model indexes by.
 pub type ArtistId = u8;
@@ -142,10 +142,15 @@ pub enum GalleryError {
 impl std::fmt::Display for GalleryError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::NotSubmissionPhase => write!(f, "submission attempted outside the submission phase"),
+            Self::NotSubmissionPhase => {
+                write!(f, "submission attempted outside the submission phase")
+            }
             Self::NotRevealPhase => write!(f, "reveal/curate attempted before submissions closed"),
             Self::AlreadyCurated => write!(f, "the gallery is already curated"),
-            Self::NotSubmitted => write!(f, "the revealed piece was not among the committed submissions"),
+            Self::NotSubmitted => write!(
+                f,
+                "the revealed piece was not among the committed submissions"
+            ),
             Self::NothingToFeature => write!(f, "no valid reveals collected; nothing to feature"),
         }
     }
@@ -649,7 +654,8 @@ pub fn seed_gallery(executor: &EmbeddedExecutor, curator: &str) -> FieldElement 
     executor.with_ledger_mut(|ledger| {
         if let Some(c) = ledger.get_mut(&cell) {
             c.state.set_field(CURATOR_SLOT, curator_f);
-            c.state.set_field(PHASE_SLOT, field_from_u64(PHASE_SUBMISSION));
+            c.state
+                .set_field(PHASE_SLOT, field_from_u64(PHASE_SUBMISSION));
         }
     });
     curator_f
@@ -695,7 +701,10 @@ pub fn close_submissions_effects(cell: DeosCellId) -> Vec<Effect> {
 pub fn reveal_effects(cell: DeosCellId, artist: FieldElement, piece: u64) -> Vec<Effect> {
     vec![Effect::EmitEvent {
         cell,
-        event: Event::new(symbol("gallery-reveal"), vec![artist, field_from_u64(piece)]),
+        event: Event::new(
+            symbol("gallery-reveal"),
+            vec![artist, field_from_u64(piece)],
+        ),
     }]
 }
 
@@ -703,7 +712,11 @@ pub fn reveal_effects(cell: DeosCellId, artist: FieldElement, piece: u64) -> Vec
 /// `FEATURED_HASH` (frozen by the `Always` `WriteOnce`), and emit `gallery-curated`.
 /// THIS is the turn [`fire_curate`] submits; the executor re-enforces
 /// `StrictMonotonic(PHASE)` + `WriteOnce(FEATURED/FEATURED_HASH)`.
-pub fn curate_effects(cell: DeosCellId, featured: FieldElement, featured_hash: &Seal) -> Vec<Effect> {
+pub fn curate_effects(
+    cell: DeosCellId,
+    featured: FieldElement,
+    featured_hash: &Seal,
+) -> Vec<Effect> {
     vec![
         Effect::SetField {
             cell,
@@ -752,16 +765,10 @@ pub fn fire_submit(
 ) -> Result<TurnReceipt, FireExecuteError> {
     let cell = &app.cells()[0];
     let target = cell.cell();
-    cell.fire_gated_through_executor_with(
-        "submit",
-        held,
-        cipherclerk,
-        executor,
-        move |live| {
-            let slot = next_free_submit_slot(live).unwrap_or_else(|| submit_slot(0));
-            submit_effects(target, slot, &seal)
-        },
-    )
+    cell.fire_gated_through_executor_with("submit", held, cipherclerk, executor, move |live| {
+        let slot = next_free_submit_slot(live).unwrap_or_else(|| submit_slot(0));
+        submit_effects(target, slot, &seal)
+    })
 }
 
 /// **Fire `close_submissions`** — the deos cap∧state PRECONDITION gate (cap ⊇ None AND
@@ -798,13 +805,9 @@ pub fn fire_reveal(
 ) -> Result<TurnReceipt, FireExecuteError> {
     let cell = &app.cells()[0];
     let target = cell.cell();
-    cell.fire_gated_through_executor_with(
-        "reveal",
-        held,
-        cipherclerk,
-        executor,
-        move |_live| reveal_effects(target, artist, piece),
-    )
+    cell.fire_gated_through_executor_with("reveal", held, cipherclerk, executor, move |_live| {
+        reveal_effects(target, artist, piece)
+    })
 }
 
 /// **Fire `curate`** — the deos cap∧state PRECONDITION gate (cap ⊇ None AND the
@@ -822,13 +825,9 @@ pub fn fire_curate(
 ) -> Result<TurnReceipt, FireExecuteError> {
     let cell = &app.cells()[0];
     let target = cell.cell();
-    cell.fire_gated_through_executor_with(
-        "curate",
-        held,
-        cipherclerk,
-        executor,
-        move |_live| curate_effects(target, featured, &featured_hash),
-    )
+    cell.fire_gated_through_executor_with("curate", held, cipherclerk, executor, move |_live| {
+        curate_effects(target, featured, &featured_hash)
+    })
 }
 
 /// Read a `u64` from the last 8 big-endian bytes of a field element.
@@ -964,7 +963,10 @@ mod floor_tests {
     fn child_program_vk_is_canonical_recipe() {
         let expected = canonical_program_vk(&gallery_cell_program());
         assert_eq!(gallery_child_program_vk(), expected);
-        assert_eq!(gallery_factory_descriptor().child_program_vk, Some(expected));
+        assert_eq!(
+            gallery_factory_descriptor().child_program_vk,
+            Some(expected)
+        );
     }
 
     #[test]
@@ -981,7 +983,11 @@ mod floor_tests {
             );
         }
         // the result registers freeze once written.
-        for idx in [CURATOR_SLOT as u8, FEATURED_SLOT as u8, FEATURED_HASH_SLOT as u8] {
+        for idx in [
+            CURATOR_SLOT as u8,
+            FEATURED_SLOT as u8,
+            FEATURED_HASH_SLOT as u8,
+        ] {
             assert!(
                 d.state_constraints.iter().any(|c| matches!(
                     c, StateConstraint::WriteOnce { index } if *index == idx
@@ -999,7 +1005,10 @@ mod floor_tests {
             }),
             _ => false,
         };
-        assert!(phase_strict, "StrictMonotonic(PHASE) missing from the curate case");
+        assert!(
+            phase_strict,
+            "StrictMonotonic(PHASE) missing from the curate case"
+        );
     }
 
     #[test]
@@ -1012,8 +1021,9 @@ mod floor_tests {
         old.set_nonce(1);
         let mut swap = old.clone();
         swap.fields[submit_slot(0)] = Submission::new(7, 70, 9).seal(); // a different piece
-        let err = eval_for(&program, "submit", &swap, Some(&old))
-            .expect_err("swapping a committed sealed submission must be rejected — the anti-tamper tooth");
+        let err = eval_for(&program, "submit", &swap, Some(&old)).expect_err(
+            "swapping a committed sealed submission must be rejected — the anti-tamper tooth",
+        );
         assert!(
             matches!(err, dregg_cell::ProgramError::ConstraintViolated {
                 constraint: StateConstraint::WriteOnce { index }, ..
@@ -1056,7 +1066,8 @@ mod floor_tests {
         assert!(matches!(
             err,
             dregg_cell::ProgramError::ConstraintViolated {
-                constraint: StateConstraint::StrictMonotonic { .. }, ..
+                constraint: StateConstraint::StrictMonotonic { .. },
+                ..
             }
         ));
     }
@@ -1066,7 +1077,10 @@ mod floor_tests {
         let program = gallery_cell_program();
         let err = eval_for(&program, "rig_jury", &submitting(), Some(&empty()))
             .expect_err("an unknown method must be default-denied");
-        assert!(matches!(err, dregg_cell::ProgramError::NoTransitionCaseMatched));
+        assert!(matches!(
+            err,
+            dregg_cell::ProgramError::NoTransitionCaseMatched
+        ));
     }
 
     #[test]

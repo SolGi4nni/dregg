@@ -61,7 +61,10 @@ fn main() {
                 "descriptor-interp proof (IR-v2)",
                 fmt_bytes(b)
             ),
-            None => println!("  {:<34} {:>12}", "descriptor-interp proof", "(no descriptor)"),
+            None => println!(
+                "  {:<34} {:>12}",
+                "descriptor-interp proof", "(no descriptor)"
+            ),
         }
         println!(
             "  {:<34} {:>12}",

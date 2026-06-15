@@ -79,9 +79,8 @@ fn seeding_installs_the_full_issuer_program_and_authorizes_the_signer() {
     // SenderAuthorized(PublicRoot { ISSUER_AUTH_ROOT_SLOT }) — installed so the executor
     // re-enforces ALL FOUR (the SenderAuthorized authority tooth now bites for real, the
     // verifier being STARK-backed by default).
-    let installed = executor.with_ledger_mut(|ledger| {
-        ledger.get(&cclerk.cell_id()).map(|c| c.program.clone())
-    });
+    let installed =
+        executor.with_ledger_mut(|ledger| ledger.get(&cclerk.cell_id()).map(|c| c.program.clone()));
     assert_eq!(
         installed,
         Some(issuer_program()),
@@ -92,14 +91,24 @@ fn seeding_installs_the_full_issuer_program_and_authorizes_the_signer() {
     // the FIRING SIGNER into ISSUER_AUTH_ROOT (= single_member_authorized_root(signer_pk)) — so
     // the signer IS the sole authorized issuer the floor's `SenderAuthorized` clause reads, and
     // `issuer_membership_witness(signer)` proves against this exact root.
-    let state = executor.cell_state(cclerk.cell_id()).expect("seeded cell exists");
+    let state = executor
+        .cell_state(cclerk.cell_id())
+        .expect("seeded cell exists");
     assert_eq!(
         state.fields[SCHEMA_COMMITMENT_SLOT],
         schema_commitment(&kyc_schema()),
         "the schema commitment is bound"
     );
-    assert_eq!(state.fields[ISSUANCE_COUNTER_SLOT], field_from_u64(0), "fresh counter");
-    assert_eq!(state.fields[REVOCATION_ROOT_SLOT], field_from_u64(0), "nothing revoked");
+    assert_eq!(
+        state.fields[ISSUANCE_COUNTER_SLOT],
+        field_from_u64(0),
+        "fresh counter"
+    );
+    assert_eq!(
+        state.fields[REVOCATION_ROOT_SLOT],
+        field_from_u64(0),
+        "nothing revoked"
+    );
     assert_eq!(
         state.fields[ISSUER_AUTH_ROOT_SLOT],
         issuer_auth_root(&cclerk),
@@ -126,7 +135,10 @@ fn the_issuer_issues_through_the_gated_fire_counter_advances_by_one() {
     // A real verified turn through the REAL authority tooth.
     let receipt = fire_issue(&app, &AuthRequired::None, &cclerk, &executor)
         .expect("the issuer issues (caps ∧ state ∧ SenderAuthorized ∧ MonotonicSequence +1)");
-    assert_ne!(receipt.turn_hash, [0u8; 32], "a real verified turn through the executor");
+    assert_ne!(
+        receipt.turn_hash, [0u8; 32],
+        "a real verified turn through the executor"
+    );
 
     // The issuance counter advanced by exactly 1 (the issuance committed).
     let state = executor.cell_state(cclerk.cell_id()).unwrap();
@@ -166,7 +178,11 @@ fn the_authorized_signer_without_a_membership_proof_is_refused() {
     let issue = cclerk.make_action(
         cell,
         "issue",
-        vec![Effect::SetField { cell, index: ISSUANCE_COUNTER_SLOT, value: field_from_u64(1) }],
+        vec![Effect::SetField {
+            cell,
+            index: ISSUANCE_COUNTER_SLOT,
+            value: field_from_u64(1),
+        }],
     );
     let refused = executor.submit_action(&cclerk, issue);
     assert!(
@@ -217,7 +233,11 @@ fn a_holder_cannot_issue_the_cap_tooth_bites_in_band() {
 
     // The counter never moved — nothing committed (anti-ghost).
     let state = executor.cell_state(cclerk.cell_id()).unwrap();
-    assert_eq!(state.fields[ISSUANCE_COUNTER_SLOT], field_from_u64(0), "still fresh");
+    assert_eq!(
+        state.fields[ISSUANCE_COUNTER_SLOT],
+        field_from_u64(0),
+        "still fresh"
+    );
 }
 
 // =============================================================================
@@ -249,7 +269,8 @@ fn the_executor_re_enforces_sender_authorized_a_non_issuer_is_refused() {
     let foreign_root = issuer_auth_root(&other);
     executor.with_ledger_mut(|ledger| {
         if let Some(c) = ledger.get_mut(&cell) {
-            c.state.set_field(SCHEMA_COMMITMENT_SLOT, schema_commitment(&kyc_schema()));
+            c.state
+                .set_field(SCHEMA_COMMITMENT_SLOT, schema_commitment(&kyc_schema()));
             c.state.set_field(ISSUANCE_COUNTER_SLOT, field_from_u64(0));
             c.state.set_field(REVOCATION_ROOT_SLOT, field_from_u64(0));
             c.state.set_field(ISSUER_AUTH_ROOT_SLOT, foreign_root);
@@ -261,7 +282,11 @@ fn the_executor_re_enforces_sender_authorized_a_non_issuer_is_refused() {
     let mut issue = cclerk.make_action(
         cell,
         "issue",
-        vec![Effect::SetField { cell, index: ISSUANCE_COUNTER_SLOT, value: field_from_u64(1) }],
+        vec![Effect::SetField {
+            cell,
+            index: ISSUANCE_COUNTER_SLOT,
+            value: field_from_u64(1),
+        }],
     );
     issue.witness_blobs = vec![issuer_membership_witness(&cclerk)];
     let refused = executor.submit_action(&cclerk, issue);
@@ -312,11 +337,18 @@ fn the_executor_re_enforces_a_non_unit_issuance_is_refused() {
     let mut action = cclerk.make_action(
         cell,
         "issue",
-        vec![Effect::SetField { cell, index: ISSUANCE_COUNTER_SLOT, value: field_from_u64(5) }],
+        vec![Effect::SetField {
+            cell,
+            index: ISSUANCE_COUNTER_SLOT,
+            value: field_from_u64(5),
+        }],
     );
     action.witness_blobs = vec![issuer_membership_witness(&cclerk)];
     let refused = executor.submit_action(&cclerk, action);
-    assert!(refused.is_err(), "an issuance that skips the counter must be refused by the executor");
+    assert!(
+        refused.is_err(),
+        "an issuance that skips the counter must be refused by the executor"
+    );
     let msg = format!("{:?}", refused.unwrap_err()).to_lowercase();
     assert!(
         msg.contains("monotonic")
@@ -356,7 +388,8 @@ fn the_executor_re_enforces_a_revocation_root_rewind_is_refused() {
 
     // Issue once (so `revoke`'s something-issued precondition holds), then revoke.
     fire_issue(&app, &AuthRequired::None, &cclerk, &executor).expect("first issuance commits");
-    fire_revoke(&app, &AuthRequired::None, &cclerk, &executor).expect("first revoke advances the root");
+    fire_revoke(&app, &AuthRequired::None, &cclerk, &executor)
+        .expect("first revoke advances the root");
     let mid = executor.cell_state(cell).unwrap();
     assert_eq!(
         field_to_u64(&mid.fields[REVOCATION_ROOT_SLOT]),
@@ -372,7 +405,11 @@ fn the_executor_re_enforces_a_revocation_root_rewind_is_refused() {
         cell,
         "revoke",
         vec![
-            Effect::SetField { cell, index: REVOCATION_ROOT_SLOT, value: field_from_u64(0) },
+            Effect::SetField {
+                cell,
+                index: REVOCATION_ROOT_SLOT,
+                value: field_from_u64(0),
+            },
             Effect::SetField {
                 cell,
                 index: ISSUANCE_COUNTER_SLOT,
@@ -382,7 +419,10 @@ fn the_executor_re_enforces_a_revocation_root_rewind_is_refused() {
     );
     action.witness_blobs = vec![issuer_membership_witness(&cclerk)];
     let refused = executor.submit_action(&cclerk, action);
-    assert!(refused.is_err(), "rewinding the revocation root must be refused by the executor");
+    assert!(
+        refused.is_err(),
+        "rewinding the revocation root must be refused by the executor"
+    );
     let msg = format!("{:?}", refused.unwrap_err()).to_lowercase();
     assert!(
         msg.contains("monotonic") || msg.contains("program") || msg.contains("field[4]"),
@@ -431,7 +471,11 @@ fn register_deos_mounts_the_seeded_surface_into_the_context() {
     // the deos surface is the SHIPPED one (the census promotion) and the gated fires are live.
     let app = register_deos(&ctx);
     assert_eq!(app.name(), "identity");
-    assert_eq!(ctx.affordance_registry().len(), 1, "the deos surface is registered");
+    assert_eq!(
+        ctx.affordance_registry().len(),
+        1,
+        "the deos surface is registered"
+    );
 
     // The seeded issuer is configured + authorized, so the issuer can issue green through the
     // mounted surface immediately (the seam is closed + live, authority tooth included).

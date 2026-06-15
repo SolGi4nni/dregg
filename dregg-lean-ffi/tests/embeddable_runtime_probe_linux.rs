@@ -75,7 +75,11 @@ fn defining_image(addr: *const c_void) -> Option<String> {
         if dladdr(addr, &mut info) == 0 || info.dli_fname.is_null() {
             return None;
         }
-        Some(CStr::from_ptr(info.dli_fname).to_string_lossy().into_owned())
+        Some(
+            CStr::from_ptr(info.dli_fname)
+                .to_string_lossy()
+                .into_owned(),
+        )
     }
 }
 
@@ -116,7 +120,11 @@ fn embeddable_runtime_probe_linux() {
     let shared_link = std::env::var("DREGG_LEAN_LINK").as_deref() == Ok("shared");
     println!(
         "[mode] link = {} (DREGG_LEAN_LINK={})",
-        if shared_link { "SHARED (cdylib / pgrx path)" } else { "static" },
+        if shared_link {
+            "SHARED (cdylib / pgrx path)"
+        } else {
+            "static"
+        },
         std::env::var("DREGG_LEAN_LINK").unwrap_or_else(|_| "<unset>".into())
     );
 
@@ -130,7 +138,8 @@ fn embeddable_runtime_probe_linux() {
         || malloc_img.contains("libc.so.6");
     // Whatever it resolves to, it must NOT be the dregg/Lean image (an interposed
     // mimalloc would resolve `malloc` into this binary / a mimalloc object).
-    let into_lean = malloc_img.contains("dregg") || malloc_img.contains("leanshared")
+    let into_lean = malloc_img.contains("dregg")
+        || malloc_img.contains("leanshared")
         || malloc_img.contains("libdregg_lean");
     assert!(
         is_glibc && !into_lean,
@@ -141,7 +150,10 @@ fn embeddable_runtime_probe_linux() {
 
     // ── PROP-2: thread discipline across init + a turn (link-mode-aware) ─────
     let t_before = live_thread_count();
-    assert!(t_before > 0, "/proc/self/status Threads: must report a positive count");
+    assert!(
+        t_before > 0,
+        "/proc/self/status Threads: must report a positive count"
+    );
     println!("[PROP-2] threads BEFORE init:                {t_before}");
 
     assert!(

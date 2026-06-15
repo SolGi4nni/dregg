@@ -237,7 +237,9 @@ fn check_effect_vm_proof() -> Result<(), String> {
     use dregg_circuit::effect_vm::{CellState, Effect as VmEffect, compute_effects_hash, pi};
     use dregg_circuit::effect_vm_descriptors::descriptor_for_selector;
     use dregg_circuit::generate_effect_vm_trace;
-    use dregg_circuit::lean_descriptor_air::{parse_vm_descriptor, prove_vm_descriptor, verify_vm_descriptor};
+    use dregg_circuit::lean_descriptor_air::{
+        parse_vm_descriptor, prove_vm_descriptor, verify_vm_descriptor,
+    };
 
     let initial_state = CellState::new(1000, 0);
     // selector 1 = TRANSFER — the validated descriptor; one Transfer effect.

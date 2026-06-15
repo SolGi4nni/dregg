@@ -70,9 +70,7 @@ fn missing_clock_is_a_refusal_even_under_not() {
     // predicate — and `Not` must not convert that absence into authority.
     let root = RootKey::from_seed([2u8; 32]);
     let cred = root.mint([fp(Pred::Not(Box::new(Pred::NotAfter { at: 100 })))]);
-    let refusal = cred
-        .verify(&root.public(), &Context::new())
-        .unwrap_err();
+    let refusal = cred.verify(&root.public(), &Context::new()).unwrap_err();
     assert!(matches!(
         refusal,
         Refusal::ContextIncomplete {
@@ -196,11 +194,15 @@ fn stripping_the_attenuation_block_is_refused() {
 #[test]
 fn tampered_signature_is_refused() {
     let root = RootKey::from_seed([8u8; 32]);
-    let cred = root.mint([fp(tool_eq("read"))]).attenuate([fp(Pred::NotAfter { at: 99 })]);
+    let cred = root
+        .mint([fp(tool_eq("read"))])
+        .attenuate([fp(Pred::NotAfter { at: 99 })]);
     let encoded = cred.encode();
     use base64::Engine;
     let eng = base64::engine::general_purpose::URL_SAFE_NO_PAD;
-    let mut bytes = eng.decode(encoded.strip_prefix(CREDENTIAL_PREFIX).unwrap()).unwrap();
+    let mut bytes = eng
+        .decode(encoded.strip_prefix(CREDENTIAL_PREFIX).unwrap())
+        .unwrap();
     // Flip a byte in the middle of the chain (a block signature / caveat
     // byte): either the schema breaks or a signature stops verifying. Both
     // are refusals — never a silent wider grant.
@@ -253,8 +255,14 @@ fn wire_roundtrip_preserves_the_decision() {
 
     let decoded = Credential::decode(&encoded).unwrap();
     let pk = root.public();
-    let ok = Context::new().at(400).attr("tool", "read").attr("path", "/docs/guide");
-    let bad = Context::new().at(400).attr("tool", "read").attr("path", "/secrets");
+    let ok = Context::new()
+        .at(400)
+        .attr("tool", "read")
+        .attr("path", "/docs/guide");
+    let bad = Context::new()
+        .at(400)
+        .attr("tool", "read")
+        .attr("path", "/secrets");
     assert_eq!(decoded.verify(&pk, &ok), Ok(()));
     assert!(decoded.verify(&pk, &bad).is_err());
     // Tail (the discharge binding target) survives the roundtrip.
@@ -290,10 +298,13 @@ fn public_key_hex_roundtrip() {
 fn explain_names_every_term_and_the_tail() {
     let root = RootKey::from_seed([13u8; 32]);
     let cred = root
-        .mint([fp(tool_eq("read")), fp(Pred::Within {
-            not_before: 100,
-            not_after: 200,
-        })])
+        .mint([
+            fp(tool_eq("read")),
+            fp(Pred::Within {
+                not_before: 100,
+                not_after: 200,
+            }),
+        ])
         .attenuate([fp(Pred::AttrPrefix {
             key: "path".into(),
             prefix: "/docs/".into(),
@@ -301,10 +312,22 @@ fn explain_names_every_term_and_the_tail() {
     let explained = cred.explain();
     assert!(explained.contains("block 0 (root grant)"), "{explained}");
     assert!(explained.contains("block 1 (attenuation)"), "{explained}");
-    assert!(explained.contains("attribute `tool` = `read`"), "{explained}");
-    assert!(explained.contains("within clock window [100, 200]"), "{explained}");
-    assert!(explained.contains("attribute `path` starts with `/docs/`"), "{explained}");
+    assert!(
+        explained.contains("attribute `tool` = `read`"),
+        "{explained}"
+    );
+    assert!(
+        explained.contains("within clock window [100, 200]"),
+        "{explained}"
+    );
+    assert!(
+        explained.contains("attribute `path` starts with `/docs/`"),
+        "{explained}"
+    );
     // The faithfulness tag: the full tail hex.
     let tail_hex: String = cred.tail().iter().map(|b| format!("{b:02x}")).collect();
-    assert!(explained.contains(&format!("[tail {tail_hex}]")), "{explained}");
+    assert!(
+        explained.contains(&format!("[tail {tail_hex}]")),
+        "{explained}"
+    );
 }

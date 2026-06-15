@@ -138,8 +138,12 @@ pub fn swarm_constraints() -> Vec<StateConstraint> {
         // the appointed lead's identity is bound once at open then frozen (the provenance anchor).
         StateConstraint::WriteOnce { index: LEAD_SLOT },
         // the per-worker meters only accumulate (never roll back to forge head-room).
-        StateConstraint::Monotonic { index: SPENT_A_SLOT },
-        StateConstraint::Monotonic { index: SPENT_B_SLOT },
+        StateConstraint::Monotonic {
+            index: SPENT_A_SLOT,
+        },
+        StateConstraint::Monotonic {
+            index: SPENT_B_SLOT,
+        },
         // (no replay) every touching turn strictly advances the epoch.
         StateConstraint::StrictMonotonic { index: EPOCH_SLOT },
     ]
@@ -253,10 +257,7 @@ impl Worker {
 /// provably agree (the Lean `affineLe` is the single source of truth).
 pub fn dispatch_within_budget(prev_spent: u64, cost: u64, other_spent: u64, budget: u64) -> bool {
     // saturating to avoid wrap; the executor reads the same big-endian u64 sum lifted to i128.
-    prev_spent
-        .saturating_add(cost)
-        .saturating_add(other_spent)
-        <= budget
+    prev_spent.saturating_add(cost).saturating_add(other_spent) <= budget
 }
 
 // =============================================================================
@@ -606,10 +607,14 @@ pub fn seed_board(executor: &EmbeddedExecutor, lead: &str, budget: u64) -> u64 {
     executor.install_program(board, coordinator_program());
     executor.with_ledger_mut(|ledger| {
         if let Some(cell) = ledger.get_mut(&board) {
-            cell.state.set_field(LEAD_SLOT as usize, identity_field(lead));
-            cell.state.set_field(BUDGET_SLOT as usize, field_from_u64(budget));
-            cell.state.set_field(SPENT_A_SLOT as usize, field_from_u64(0));
-            cell.state.set_field(SPENT_B_SLOT as usize, field_from_u64(0));
+            cell.state
+                .set_field(LEAD_SLOT as usize, identity_field(lead));
+            cell.state
+                .set_field(BUDGET_SLOT as usize, field_from_u64(budget));
+            cell.state
+                .set_field(SPENT_A_SLOT as usize, field_from_u64(0));
+            cell.state
+                .set_field(SPENT_B_SLOT as usize, field_from_u64(0));
             cell.state.set_field(EPOCH_SLOT as usize, field_from_u64(1));
         }
     });
@@ -718,7 +723,10 @@ pub fn fire_open_board(
         .iter()
         .any(|n| n == "open_board")
     {
-        let ga = cell.gated_surface().get("open_board").expect("open_board is gated");
+        let ga = cell
+            .gated_surface()
+            .get("open_board")
+            .expect("open_board is gated");
         let state = executor.cell_state(board).ok_or_else(|| {
             FireExecuteError::Gate(FireError::StateConditionUnmet {
                 affordance: "open_board".into(),
@@ -729,7 +737,8 @@ pub fn fire_open_board(
             ga.fire(board, held, &state, &state).unwrap_err(),
         ));
     }
-    let action = cipherclerk.make_action(board, "open_board", open_board_effects(board, lead, budget));
+    let action =
+        cipherclerk.make_action(board, "open_board", open_board_effects(board, lead, budget));
     executor
         .submit_action(cipherclerk, action)
         .map_err(FireExecuteError::Executor)
@@ -788,7 +797,15 @@ pub fn fire_dispatch(
     let new_spent = prev_spent.saturating_add(cost);
     // Submit the FULL multi-effect dispatch turn — the executor re-enforces the program (the
     // `AffineLe` budget gate sums the new meter against the OTHER meter + the budget).
-    let effects = dispatch_effects(board, worker, worker_cell, new_spent, epoch + 1, cost, topic);
+    let effects = dispatch_effects(
+        board,
+        worker,
+        worker_cell,
+        new_spent,
+        epoch + 1,
+        cost,
+        topic,
+    );
     let action = cipherclerk.make_action(board, "dispatch", effects);
     executor
         .submit_action(cipherclerk, action)
@@ -913,11 +930,28 @@ mod tests {
             "the budget gate spent_a + spent_b <= budget must be a clause"
         );
         // write-once mandate + lead (born-empty, bound once, frozen) + monotones + strict-mono epoch.
-        assert!(ks.iter().any(|k| matches!(k, StateConstraint::WriteOnce { index } if *index == BUDGET_SLOT)));
-        assert!(ks.iter().any(|k| matches!(k, StateConstraint::WriteOnce { index } if *index == LEAD_SLOT)));
-        assert!(ks.iter().any(|k| matches!(k, StateConstraint::Monotonic { index } if *index == SPENT_A_SLOT)));
-        assert!(ks.iter().any(|k| matches!(k, StateConstraint::Monotonic { index } if *index == SPENT_B_SLOT)));
-        assert!(ks.iter().any(|k| matches!(k, StateConstraint::StrictMonotonic { index } if *index == EPOCH_SLOT)));
+        assert!(
+            ks.iter().any(
+                |k| matches!(k, StateConstraint::WriteOnce { index } if *index == BUDGET_SLOT)
+            )
+        );
+        assert!(
+            ks.iter()
+                .any(|k| matches!(k, StateConstraint::WriteOnce { index } if *index == LEAD_SLOT))
+        );
+        assert!(
+            ks.iter().any(
+                |k| matches!(k, StateConstraint::Monotonic { index } if *index == SPENT_A_SLOT)
+            )
+        );
+        assert!(
+            ks.iter().any(
+                |k| matches!(k, StateConstraint::Monotonic { index } if *index == SPENT_B_SLOT)
+            )
+        );
+        assert!(ks.iter().any(
+            |k| matches!(k, StateConstraint::StrictMonotonic { index } if *index == EPOCH_SLOT)
+        ));
     }
 
     // ── the budget pre-check mirrors the executor's AffineLe gate ────────────
@@ -964,8 +998,16 @@ mod tests {
     fn dispatch_action_advances_meter_epoch_and_emits_wake() {
         let cclerk = test_cipherclerk();
         let worker_cell = CellId::from_bytes([9u8; 32]);
-        let action =
-            build_dispatch_action(&cclerk, test_cell(), Worker::A, worker_cell, 0, 300, 1, "index");
+        let action = build_dispatch_action(
+            &cclerk,
+            test_cell(),
+            Worker::A,
+            worker_cell,
+            0,
+            300,
+            1,
+            "index",
+        );
         // spent_a := 300, epoch := 1, + wake on the WORKER cell.
         assert_eq!(action.effects.len(), 3);
         assert!(matches!(

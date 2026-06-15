@@ -871,7 +871,10 @@ fn sender_is_accept_and_reject() {
         CellProgram::Predicate(vec![StateConstraint::SenderIs { pk: agent_pk }]),
     );
     let ok = ex.submit_action(&cc, set_field(&ex, &cc, 0, field_from_u64(1)));
-    assert!(ok.is_ok(), "SenderIs accept (bound to own pk) failed: {ok:?}");
+    assert!(
+        ok.is_ok(),
+        "SenderIs accept (bound to own pk) failed: {ok:?}"
+    );
 
     // Reject: bind to a different identity; the agent's sender no longer matches.
     let mut other_pk = agent_pk;
@@ -940,7 +943,10 @@ fn balance_gte_accept_and_reject() {
         CellProgram::Predicate(vec![StateConstraint::BalanceGte { min: 500_000 }]),
     );
     let ok = ex.submit_action(&cc, set_field(&ex, &cc, 0, field_from_u64(1)));
-    assert!(ok.is_ok(), "BalanceGte accept (1_000_000 >= 500_000) failed: {ok:?}");
+    assert!(
+        ok.is_ok(),
+        "BalanceGte accept (1_000_000 >= 500_000) failed: {ok:?}"
+    );
 
     ex.install_program(
         ex.cell_id(),
@@ -968,7 +974,10 @@ fn balance_lte_accept_and_reject() {
         CellProgram::Predicate(vec![StateConstraint::BalanceLte { max: 2_000_000 }]),
     );
     let ok = ex.submit_action(&cc, set_field(&ex, &cc, 0, field_from_u64(1)));
-    assert!(ok.is_ok(), "BalanceLte accept (1_000_000 <= 2_000_000) failed: {ok:?}");
+    assert!(
+        ok.is_ok(),
+        "BalanceLte accept (1_000_000 <= 2_000_000) failed: {ok:?}"
+    );
 
     ex.install_program(
         ex.cell_id(),

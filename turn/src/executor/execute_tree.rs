@@ -466,9 +466,7 @@ impl TurnExecutor {
                 // (The unimplemented-mode signal is raised at the child gate.)
                 // Use Effect::Introduce for explicit capability transfer between cells.
                 match parent_delegation {
-                    DelegationMode::None
-                    | DelegationMode::ParentsOwn
-                    | DelegationMode::Inherit => {
+                    DelegationMode::None | DelegationMode::ParentsOwn | DelegationMode::Inherit => {
                         return Err((
                             TurnError::CapabilityNotHeld {
                                 actor: *parent_cell,
@@ -852,9 +850,7 @@ impl TurnExecutor {
             // Record old balance for rollback and apply the delta.
             let cell_mut = ledger.get_mut(&action.target).unwrap();
             journal.record_set_balance(action.target, cell_mut.state.balance());
-            cell_mut
-                .state
-                .set_balance(cell_mut.state.balance() + delta);
+            cell_mut.state.set_balance(cell_mut.state.balance() + delta);
 
             // Update excess: withdrawal (negative delta) PRODUCES excess (adds to excess),
             // deposit (positive delta) CONSUMES excess (subtracts from excess).

@@ -125,7 +125,10 @@ fn producer_cell(balance: i64, nonce: u64) -> Cell {
 /// differential's commitment agreement LOAD-BEARING (non-vacuous) for a field-bearing cell.
 fn producer_cell_with_field(balance: i64, nonce: u64, field_idx: usize, field: [u8; 32]) -> Cell {
     let mut cell = producer_cell(balance, nonce);
-    assert!(cell.state.set_field(field_idx, field), "set_field must take on a fresh cell");
+    assert!(
+        cell.state.set_field(field_idx, field),
+        "set_field must take on a fresh cell"
+    );
     cell
 }
 
@@ -858,8 +861,7 @@ fn rotated_non_synthetic_field_bearing_cell_old_new_commit_agree() {
     // (the field is unchanged by a transfer, so it persists; only balance + nonce move).
     let mut ledger = Ledger::new();
     let before_cell = producer_cell_with_field(before_balance, 0, 0, field0_bytes);
-    let after_cell =
-        producer_cell_with_field(before_balance - amount as i64, 1, 0, field0_bytes);
+    let after_cell = producer_cell_with_field(before_balance - amount as i64, 1, 0, field0_bytes);
     ledger.insert_cell(after_cell.clone()).unwrap();
     let nullifier_root = [0u8; 32];
     let receipt_log: Vec<[u8; 32]> = vec![[1u8; 32], [2u8; 32]];

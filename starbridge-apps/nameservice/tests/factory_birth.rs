@@ -82,7 +82,10 @@ fn factory_born_name_cell_accepts_register_and_refuses_rebind() {
             .map(|c| !c.program.is_none())
             .unwrap_or(false)
     });
-    assert!(has_program, "factory-born name cell must carry a CellProgram");
+    assert!(
+        has_program,
+        "factory-born name cell must carry a CellProgram"
+    );
 
     // ACCEPT: the first registration writes NAME_HASH/OWNER/EXPIRY from zero.
     let owner = [0xAAu8; 32];
@@ -97,8 +100,7 @@ fn factory_born_name_cell_accepts_register_and_refuses_rebind() {
 
     // The committed binding reads back from the ledger.
     let committed = exec.with_ledger_mut(|ledger| {
-        ledger.get(&name_cell).unwrap().state.fields
-            [starbridge_nameservice::NAME_HASH_SLOT]
+        ledger.get(&name_cell).unwrap().state.fields[starbridge_nameservice::NAME_HASH_SLOT]
     });
     assert_eq!(committed, name_hash("alice.dregg"));
 
@@ -115,8 +117,7 @@ fn factory_born_name_cell_accepts_register_and_refuses_rebind() {
 
     // ...and the committed binding survives the refused turn.
     let still = exec.with_ledger_mut(|ledger| {
-        ledger.get(&name_cell).unwrap().state.fields
-            [starbridge_nameservice::NAME_HASH_SLOT]
+        ledger.get(&name_cell).unwrap().state.fields[starbridge_nameservice::NAME_HASH_SLOT]
     });
     assert_eq!(still, name_hash("alice.dregg"));
 }

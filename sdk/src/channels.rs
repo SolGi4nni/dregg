@@ -304,8 +304,7 @@ pub struct SealedEpochKey {
 pub trait KeySchedule {
     /// Seal `key` (serving `epoch`) to every roster member, producing the
     /// per-member fan-out the epoch step delivers off-chain.
-    fn seal_epoch_key(&self, epoch: u64, key: &[u8; 32], roster: &Roster)
-    -> Vec<SealedEpochKey>;
+    fn seal_epoch_key(&self, epoch: u64, key: &[u8; 32], roster: &Roster) -> Vec<SealedEpochKey>;
 }
 
 /// Today's schedule: a fresh random group key per epoch, sealed pairwise to
@@ -314,12 +313,7 @@ pub trait KeySchedule {
 pub struct SenderKeys;
 
 impl KeySchedule for SenderKeys {
-    fn seal_epoch_key(
-        &self,
-        epoch: u64,
-        key: &[u8; 32],
-        roster: &Roster,
-    ) -> Vec<SealedEpochKey> {
+    fn seal_epoch_key(&self, epoch: u64, key: &[u8; 32], roster: &Roster) -> Vec<SealedEpochKey> {
         let mut payload = Vec::with_capacity(EPOCH_KEY_PAYLOAD_DOMAIN.len() + 8 + 32);
         payload.extend_from_slice(EPOCH_KEY_PAYLOAD_DOMAIN);
         payload.extend_from_slice(&epoch.to_le_bytes());
@@ -477,7 +471,9 @@ pub fn open_message(key: &[u8; 32], envelope: &ChannelEnvelope) -> Result<Vec<u8
                 aad: &message_aad(&envelope.channel, envelope.epoch),
             },
         )
-        .map_err(|_| SdkError::Rejected("channel message AEAD refused (wrong key or tampered)".into()))
+        .map_err(|_| {
+            SdkError::Rejected("channel message AEAD refused (wrong key or tampered)".into())
+        })
 }
 
 // =============================================================================
@@ -515,12 +511,9 @@ impl MemberKeyring {
     /// sealed to someone else (DH failure), tampered payloads, and payload
     /// epochs disagreeing with the envelope's claim.
     pub fn accept(&mut self, sealed: &SealedEpochKey) -> Result<u64, SdkError> {
-        let payload = decrypt_from_sender(
-            &sealed.ciphertext,
-            &sealed.ephemeral_pk,
-            &self.seal_secret,
-        )
-        .map_err(|e| SdkError::Rejected(format!("sealed epoch key refused: {e:?}")))?;
+        let payload =
+            decrypt_from_sender(&sealed.ciphertext, &sealed.ephemeral_pk, &self.seal_secret)
+                .map_err(|e| SdkError::Rejected(format!("sealed epoch key refused: {e:?}")))?;
         let dlen = EPOCH_KEY_PAYLOAD_DOMAIN.len();
         if payload.len() != dlen + 8 + 32 || &payload[..dlen] != EPOCH_KEY_PAYLOAD_DOMAIN {
             return Err(SdkError::Rejected(
@@ -1011,8 +1004,7 @@ mod tests {
         assert_eq!(slots.len(), 1);
         let (pre_slot, stamp) = slots[0];
         assert_eq!(stamp, Some(1), "founding cap is stamped at epoch 1");
-        exercise(&runtime, pre_probe, ch.cell, pre_slot)
-            .expect("epoch-1 cap exercises at epoch 1");
+        exercise(&runtime, pre_probe, ch.cell, pre_slot).expect("epoch-1 cap exercises at epoch 1");
         let (removed_slot, _) = member_cap_slots(&runtime, removed, ch.cell)[0];
 
         // THE REMOVE: one turn (one receipt), epoch 1 → 2 on BOTH counters,
@@ -1176,8 +1168,7 @@ mod tests {
                 .iter()
                 .map(|(id, ring)| (*id, ring.seal_pk()))
                 .collect();
-            Channel::create(&mut runtime, field_from_u64(0xC0FFEE), roster)
-                .expect("create channel")
+            Channel::create(&mut runtime, field_from_u64(0xC0FFEE), roster).expect("create channel")
         };
         accept_fan_out(&mut members, &fan_out);
         let epoch1_envelope = ch.post(b"before the join").unwrap();
@@ -1255,9 +1246,17 @@ mod tests {
             // Each path's sealed copy decrypts to the SAME epoch key for this
             // member — the real behavioural-equivalence guarantee.
             assert_eq!(ring.accept(a).expect("free copy decrypts"), epoch);
-            assert_eq!(*ring.epoch_key(epoch).unwrap(), key, "free path delivers the key");
+            assert_eq!(
+                *ring.epoch_key(epoch).unwrap(),
+                key,
+                "free path delivers the key"
+            );
             assert_eq!(ring.accept(b).expect("trait copy decrypts"), epoch);
-            assert_eq!(*ring.epoch_key(epoch).unwrap(), key, "trait path delivers the key");
+            assert_eq!(
+                *ring.epoch_key(epoch).unwrap(),
+                key,
+                "trait path delivers the key"
+            );
         }
     }
 

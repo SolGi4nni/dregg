@@ -35,7 +35,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
 use dregg_blocklace::finality::{Block, Blocklace, CheckpointData, Payload};
-use dregg_blocklace::ordering::{tau_with_config, OrderingConfig};
+use dregg_blocklace::ordering::{OrderingConfig, tau_with_config};
 use dregg_blocklace::supermajority_threshold;
 // The ORDERING layer (`tau`) runs on the unsigned ordering-projection blocklace
 // (`dregg_blocklace::Blocklace`, the `lib` type), which is DISTINCT from the
@@ -45,7 +45,7 @@ use dregg_blocklace::supermajority_threshold;
 use dregg_blocklace::{Block as OBlock, BlockId as OBlockId, Blocklace as OBlocklace};
 use ed25519_dalek::SigningKey;
 
-use crate::findings::{short_hex, AnalysisReport, Finding, Severity};
+use crate::findings::{AnalysisReport, Finding, Severity, short_hex};
 
 /// A captured blocklace DAG plus the consensus context a finality analysis
 /// needs. This is the node's own checkpoint format ([`CheckpointData`]) lifted
@@ -159,8 +159,9 @@ pub fn analyze(capture: &BlocklaceCapture) -> AnalysisReport {
         None
     };
     let lace_for_forks: Option<&Blocklace> = lace.as_ref().or(trusted_fallback.as_ref());
-    let equivocators: HashSet<[u8; 32]> =
-        lace_for_forks.map(|l| l.equivocators().clone()).unwrap_or_default();
+    let equivocators: HashSet<[u8; 32]> = lace_for_forks
+        .map(|l| l.equivocators().clone())
+        .unwrap_or_default();
     report.summarize("equivocators_detected", equivocators.len());
     if equivocators.is_empty() {
         report.push(Finding::verified(
@@ -318,7 +319,10 @@ fn block_is_heartbeat(b: &Block) -> bool {
 /// predecessors are translated and a reverse map is returned).
 fn build_ordering_blocklace(
     finality_lace: &Blocklace,
-) -> (OBlocklace, HashMap<OBlockId, dregg_blocklace::finality::BlockId>) {
+) -> (
+    OBlocklace,
+    HashMap<OBlockId, dregg_blocklace::finality::BlockId>,
+) {
     let mut ordering_lace = OBlocklace::new();
     let mut fin_to_ord: HashMap<dregg_blocklace::finality::BlockId, OBlockId> = HashMap::new();
     let mut ord_to_fin: HashMap<OBlockId, dregg_blocklace::finality::BlockId> = HashMap::new();
@@ -373,12 +377,14 @@ fn max_chain_depth(lace: &Blocklace, raw: &[Block]) -> usize {
             return 0; // cycle guard (a valid DAG has none, but be safe)
         }
         let here = match lace.get(&id) {
-            Some(b) => 1 + b
-                .predecessors
-                .iter()
-                .map(|p| d(*p, lace, memo, stack))
-                .max()
-                .unwrap_or(0),
+            Some(b) => {
+                1 + b
+                    .predecessors
+                    .iter()
+                    .map(|p| d(*p, lace, memo, stack))
+                    .max()
+                    .unwrap_or(0)
+            }
             None => 0,
         };
         stack.remove(&id);

@@ -91,11 +91,19 @@ pub struct Locus {
 impl Locus {
     /// The forest-level (whole-artifact) locus — no specific node.
     pub fn forest() -> Self {
-        Locus { node_path: Vec::new(), effect_index: None, asset: None }
+        Locus {
+            node_path: Vec::new(),
+            effect_index: None,
+            asset: None,
+        }
     }
     /// A node-level locus.
     pub fn node(node_path: Vec<usize>) -> Self {
-        Locus { node_path, effect_index: None, asset: None }
+        Locus {
+            node_path,
+            effect_index: None,
+            asset: None,
+        }
     }
     /// Attach an effect index.
     pub fn at_effect(mut self, i: usize) -> Self {
@@ -227,7 +235,11 @@ fn hex32(b: &[u8; 32]) -> String {
 /// the index-path from the forest down to `node` (pre-order DFS — the order the
 /// executor applies the actions).
 pub(crate) fn walk<'a>(forest: &'a CallForest, mut f: impl FnMut(&[usize], &'a CallTree)) {
-    fn rec<'a>(path: &mut Vec<usize>, node: &'a CallTree, f: &mut impl FnMut(&[usize], &'a CallTree)) {
+    fn rec<'a>(
+        path: &mut Vec<usize>,
+        node: &'a CallTree,
+        f: &mut impl FnMut(&[usize], &'a CallTree),
+    ) {
         f(path, node);
         for (i, child) in node.children.iter().enumerate() {
             path.push(i);
@@ -286,11 +298,15 @@ pub fn check_conservation(forest: &CallForest) -> Verdict {
                     *net.entry(COMPUTRON_ASSET.to_string()).or_default() -= *amount as i128;
                     *net.entry(COMPUTRON_ASSET.to_string()).or_default() += *amount as i128;
                 }
-                Effect::NoteSpend { value, asset_type, .. } => {
+                Effect::NoteSpend {
+                    value, asset_type, ..
+                } => {
                     // spend releases value into the pool: +value.
                     *net.entry(format!("note:{asset_type}")).or_default() += *value as i128;
                 }
-                Effect::NoteCreate { value, asset_type, .. } => {
+                Effect::NoteCreate {
+                    value, asset_type, ..
+                } => {
                     // create locks value out of the pool: −value.
                     *net.entry(format!("note:{asset_type}")).or_default() -= *value as i128;
                 }
@@ -343,8 +359,8 @@ pub fn cap_attenuates(granted: &CapabilityRef, parent: &CapabilityRef) -> bool {
     }
     // facet mask: child bits must be a subset of parent bits.
     let facet_ok = match (granted.allowed_effects, parent.allowed_effects) {
-        (_, None) => true,            // parent unrestricted = top; any child ⊆ top
-        (None, Some(_)) => false,     // child unrestricted but parent restricted = amplify
+        (_, None) => true,        // parent unrestricted = top; any child ⊆ top
+        (None, Some(_)) => false, // child unrestricted but parent restricted = amplify
         // EffectMask = u32 bitmask: child ⊆ parent iff (child & parent) == child.
         (Some(g), Some(p)) => (g & p) == g,
     };
@@ -353,8 +369,8 @@ pub fn cap_attenuates(granted: &CapabilityRef, parent: &CapabilityRef) -> bool {
     }
     // expiry: child must not outlive parent.
     match (granted.expires_at, parent.expires_at) {
-        (_, None) => true,            // parent never-expires = top
-        (None, Some(_)) => false,     // child never-expires but parent does = amplify
+        (_, None) => true,        // parent never-expires = top
+        (None, Some(_)) => false, // child never-expires but parent does = amplify
         (Some(g), Some(p)) => g <= p,
     }
 }
@@ -398,8 +414,7 @@ pub fn check_no_amplification(forest: &CallForest) -> Verdict {
                 if let Some(parent_caps) = granted_to.get(from) {
                     let covers_target = parent_caps.iter().any(|p| p.target == cap.target);
                     if covers_target {
-                        let attenuates =
-                            parent_caps.iter().any(|p| cap_attenuates(cap, p));
+                        let attenuates = parent_caps.iter().any(|p| cap_attenuates(cap, p));
                         if !attenuates {
                             findings.push(Finding {
                                 guarantee: "A (non-amplification)".to_string(),
@@ -489,7 +504,10 @@ pub fn check_wellformed(forest: &CallForest) -> Verdict {
                 });
             }
             Authorization::OneOf { candidates, .. } => {
-                if candidates.iter().any(|c| matches!(c, Authorization::Unchecked)) {
+                if candidates
+                    .iter()
+                    .any(|c| matches!(c, Authorization::Unchecked))
+                {
                     findings.push(Finding {
                         guarantee: "well-formedness".to_string(),
                         locus: Locus::node(path.to_vec()),

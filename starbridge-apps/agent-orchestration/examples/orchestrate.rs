@@ -29,7 +29,9 @@
 //! Every frame is a real turn through the embedded verified executor (or a real static check), not a
 //! mock. Run with:  `cargo run --release -p starbridge-agent-orchestration --example orchestrate`
 
-use dregg_app_framework::{AgentCipherclerk, AppCipherclerk, AuthRequired, CellMode, EmbeddedExecutor};
+use dregg_app_framework::{
+    AgentCipherclerk, AppCipherclerk, AuthRequired, CellMode, EmbeddedExecutor,
+};
 use dregg_cell::FactoryCreationParams;
 use starbridge_agent_orchestration::{
     AuditError, Mandate, OrchestrationEngine, OrchestrationError, OrchestrationLog, Tool, WorkStep,
@@ -72,12 +74,8 @@ fn main() {
         initial_caps: vec![],
         owner_pubkey: owner,
     };
-    let birth = cclerk.create_from_factory(
-        *b"starbridge-agent-orchestr-factry",
-        owner,
-        token,
-        params,
-    );
+    let birth =
+        cclerk.create_from_factory(*b"starbridge-agent-orchestr-factry", owner, token, params);
     let birth_r = exec.submit_turn(&birth).expect("board birth commits");
     let board = dregg_app_framework::CellId::derive_raw(&owner, &token);
     exec.with_ledger_mut(|l| {
@@ -92,7 +90,9 @@ fn main() {
         short(board.as_bytes()),
         short(&birth_r.receipt_hash())
     );
-    println!("  its installed program IS the swarm budget policy (AffineLe Σspend ≤ budget · WriteOnce · no-replay)");
+    println!(
+        "  its installed program IS the swarm budget policy (AffineLe Σspend ≤ budget · WriteOnce · no-replay)"
+    );
 
     // =======================================================================
     // 2. DELEGATE — the coordinator attenuates its broad mandate into two
@@ -117,9 +117,7 @@ fn main() {
         !worker_b_mandate.tools.contains(&Tool::Write),
         "STRICT: B's mandate dropped `write`"
     );
-    println!(
-        "  coordinator holds {{read,search,summarize,write}} budget {swarm_budget}"
-    );
+    println!("  coordinator holds {{read,search,summarize,write}} budget {swarm_budget}");
     println!(
         "  → worker-A mandate: {{{}}} sub-budget {}   (⊑ coordinator)",
         worker_a_mandate
@@ -169,7 +167,9 @@ fn main() {
 
         // Run the first TWO steps (the prefix), then "crash" (drop the engine).
         for step in &plan[..2] {
-            let r = engine.step(step, &mut log).expect("verified worker step commits");
+            let r = engine
+                .step(step, &mut log)
+                .expect("verified worker step commits");
             println!(
                 "  {} {} ({}) cost {} → receipt {} · running spend {}",
                 step.worker.label(),
@@ -224,7 +224,8 @@ fn main() {
         "  engine dropped; the durable log survives with {committed_at_crash} committed steps"
     );
     // Recover: re-validate the receipt chain from the log ALONE, re-derive the resumable state.
-    let recovered = recover(&open_receipt, &log).expect("the durable chain re-validates on recovery");
+    let recovered =
+        recover(&open_receipt, &log).expect("the durable chain re-validates on recovery");
     println!(
         "  recovered from the log: worker-A spent {}, worker-B spent {}, next epoch {}",
         recovered.spent_a, recovered.spent_b, recovered.next_epoch
@@ -274,7 +275,10 @@ fn main() {
             println!(
                 "  non-amplification ✓ · chain integrity ✓ · per-step mandate ✓ · conservation ✓"
             );
-            println!("  chain head (the commitment a light client pins): {}", short(&ok.head));
+            println!(
+                "  chain head (the commitment a light client pins): {}",
+                short(&ok.head)
+            );
         }
         Err(e) => println!("  !! AUDIT FAILED on a clean run: {e}"),
     }

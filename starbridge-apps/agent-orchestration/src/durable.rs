@@ -63,7 +63,12 @@ use crate::{
 /// in-process stand-in for the durable table); a host backs this with the real durable store.
 pub trait DurableLog {
     /// Append a committed step's verified receipt (one logical durable commit).
-    fn append(&mut self, step: &WorkStep, spent_after: u64, receipt: &TurnReceipt) -> Result<(), String>;
+    fn append(
+        &mut self,
+        step: &WorkStep,
+        spent_after: u64,
+        receipt: &TurnReceipt,
+    ) -> Result<(), String>;
     /// Load the durable log back as an [`OrchestrationLog`] (the receipt chain + per-step records).
     fn load(&self) -> Result<OrchestrationLog, String>;
 }
@@ -96,7 +101,12 @@ impl MemLog {
 }
 
 impl DurableLog for MemLog {
-    fn append(&mut self, step: &WorkStep, spent_after: u64, receipt: &TurnReceipt) -> Result<(), String> {
+    fn append(
+        &mut self,
+        step: &WorkStep,
+        spent_after: u64,
+        receipt: &TurnReceipt,
+    ) -> Result<(), String> {
         self.log.entries.push(crate::LoggedStep {
             step: step.clone(),
             spent_after,
@@ -169,7 +179,10 @@ impl<'a> DurableOrchestration<'a> {
                 .map_err(OrchestrationError::Refused)?;
             committed += 1;
         }
-        Ok(DurableOutcome { committed, skipped: 0 })
+        Ok(DurableOutcome {
+            committed,
+            skipped: 0,
+        })
     }
 
     /// **RECOVER** — re-validate the durable log after a crash and re-derive the resumable state (the
@@ -216,7 +229,10 @@ impl<'a> DurableOrchestration<'a> {
                 .map_err(OrchestrationError::Refused)?;
             committed += 1;
         }
-        Ok(DurableOutcome { committed, skipped: done })
+        Ok(DurableOutcome {
+            committed,
+            skipped: done,
+        })
     }
 }
 
@@ -278,9 +294,7 @@ pub fn cold_rebuild<L: DurableLog>(
     lead: &str,
     durable: &L,
 ) -> Result<ColdRebuild, OrchestrationError> {
-    let original = durable
-        .load()
-        .map_err(OrchestrationError::Refused)?;
+    let original = durable.load().map_err(OrchestrationError::Refused)?;
     // The plan, recovered from the durable log: the SAME sequence of WorkSteps, in commit order.
     let plan: Vec<WorkStep> = original.entries.iter().map(|e| e.step.clone()).collect();
 
@@ -327,7 +341,9 @@ fn derive_spend(log: &OrchestrationLog) -> (u64, u64) {
 mod tests {
     use super::*;
     use crate::{Tool, coordinator_child_program_vk, orchestration_factory_descriptor};
-    use dregg_app_framework::{AgentCipherclerk, AppCipherclerk, AuthRequired, CellId, CellMode, EmbeddedExecutor};
+    use dregg_app_framework::{
+        AgentCipherclerk, AppCipherclerk, AuthRequired, CellId, CellMode, EmbeddedExecutor,
+    };
     use dregg_cell::FactoryCreationParams;
 
     fn born_board(cclerk: &AppCipherclerk, exec: &EmbeddedExecutor, seed: &[u8]) -> CellId {
@@ -347,7 +363,8 @@ mod tests {
             initial_caps: vec![],
             owner_pubkey: owner,
         };
-        let birth = cclerk.create_from_factory(crate::ORCHESTRATION_FACTORY_VK, owner, token, params);
+        let birth =
+            cclerk.create_from_factory(crate::ORCHESTRATION_FACTORY_VK, owner, token, params);
         exec.submit_turn(&birth).expect("board birth commits");
         let board = CellId::derive_raw(&owner, &token);
         exec.with_ledger_mut(|l| {
@@ -359,7 +376,11 @@ mod tests {
     }
 
     fn mandates() -> (Mandate, Mandate, Mandate) {
-        let c = Mandate::coordinator([Tool::Read, Tool::Search, Tool::Summarize, Tool::Write], 1000, "task");
+        let c = Mandate::coordinator(
+            [Tool::Read, Tool::Search, Tool::Summarize, Tool::Write],
+            1000,
+            "task",
+        );
         let a = c.attenuate([Tool::Read, Tool::Search, Tool::Summarize], 700, "research");
         let b = c.attenuate([Tool::Read], 300, "fact-check");
         (c, a, b)
@@ -378,10 +399,16 @@ mod tests {
         ];
         let mut durable = MemLog::new();
         let mut d = durable_orchestration(&cclerk, &exec, board, c, a, b);
-        let out = d.run("lead", &plan, &mut durable).expect("durable run commits");
+        let out = d
+            .run("lead", &plan, &mut durable)
+            .expect("durable run commits");
         assert_eq!(out.committed, 2);
         assert_eq!(out.skipped, 0);
-        assert_eq!(durable.len(), 2, "each verified turn checkpointed to the durable log");
+        assert_eq!(
+            durable.len(),
+            2,
+            "each verified turn checkpointed to the durable log"
+        );
     }
 
     #[test]
@@ -402,8 +429,10 @@ mod tests {
 
         // Run the prefix, then "crash" (drop the durable orchestration).
         {
-            let mut d = durable_orchestration(&cclerk, &exec, board, c.clone(), a.clone(), b.clone());
-            d.run("lead", &plan[..2], &mut durable).expect("prefix commits");
+            let mut d =
+                durable_orchestration(&cclerk, &exec, board, c.clone(), a.clone(), b.clone());
+            d.run("lead", &plan[..2], &mut durable)
+                .expect("prefix commits");
             open_receipt = d.open_receipt().cloned().expect("open receipt");
             assert_eq!(durable.len(), 2);
         }
@@ -416,13 +445,21 @@ mod tests {
 
         // Resume the SAME plan — the prefix is skipped, only the tail runs.
         {
-            let mut d = durable_orchestration(&cclerk, &exec, board, c.clone(), a.clone(), b.clone());
+            let mut d =
+                durable_orchestration(&cclerk, &exec, board, c.clone(), a.clone(), b.clone());
             d.resume_state(recovered, open_receipt.clone());
             let out = d.resume(&plan, &mut durable).expect("the tail finishes");
-            assert_eq!(out.skipped, 2, "the committed prefix is skipped, never re-applied");
+            assert_eq!(
+                out.skipped, 2,
+                "the committed prefix is skipped, never re-applied"
+            );
             assert_eq!(out.committed, 2, "only the tail runs");
         }
-        assert_eq!(durable.len(), 4, "four turns total — exactly-once, no double-apply");
+        assert_eq!(
+            durable.len(),
+            4,
+            "four turns total — exactly-once, no double-apply"
+        );
 
         // The whole durable run audits clean.
         let log = durable.orchestration_log();
@@ -452,7 +489,8 @@ mod tests {
             let board1 = born_board(&cclerk1, &exec1, b"cold-orig");
             let mut d =
                 durable_orchestration(&cclerk1, &exec1, board1, c.clone(), a.clone(), b.clone());
-            d.run("lead", &plan, &mut durable).expect("original run commits");
+            d.run("lead", &plan, &mut durable)
+                .expect("original run commits");
             assert_eq!(durable.len(), 3);
         }
         // ledger #1 is GONE — only `durable` (the log) survives.
@@ -473,7 +511,10 @@ mod tests {
         )
         .expect("the cold rebuild re-executes every step from genesis");
         // The reconstructed state matches the original (the log alone reconstructs the verified state).
-        assert!(rebuild.spend_matches, "cold-rebuilt spend matches the original durable run");
+        assert!(
+            rebuild.spend_matches,
+            "cold-rebuilt spend matches the original durable run"
+        );
         assert_eq!(rebuild.rebuilt.len(), 3);
         // The rebuilt run is independently auditable.
         let open2 = exec2; // (keep exec2 alive; board2 state lives in its ledger)
@@ -515,7 +556,8 @@ mod tests {
             // Commit only the first (legal) step honestly so the log has a real receipt to chain.
             let mut d =
                 durable_orchestration(&cclerk1, &exec1, board1, c.clone(), a.clone(), b.clone());
-            d.run("lead", &plan[..1], &mut durable).expect("first step commits");
+            d.run("lead", &plan[..1], &mut durable)
+                .expect("first step commits");
         }
         // Tamper: append the over-budget step record (with the first step's receipt as a stand-in).
         let stolen = durable.orchestration_log().entries[0].receipt.clone();
@@ -530,7 +572,10 @@ mod tests {
         let err = cold_rebuild(&cclerk2, &exec2, board2, c, a, b, "lead", &durable)
             .expect_err("a tampered over-budget plan must fail the cold rebuild");
         assert!(
-            matches!(err, OrchestrationError::Refused(_) | OrchestrationError::OutOfMandate { .. }),
+            matches!(
+                err,
+                OrchestrationError::Refused(_) | OrchestrationError::OutOfMandate { .. }
+            ),
             "the bad step is refused on re-execution, got {err:?}"
         );
     }

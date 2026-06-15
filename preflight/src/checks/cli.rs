@@ -149,7 +149,9 @@ fn check_cli_doctor() -> Result<(), String> {
 
     // The summary line: "All N checks passed." or "N passed, M failed."
     if !combined.contains("passed") {
-        return Err(format!("doctor must print a pass/fail summary:\n{combined}"));
+        return Err(format!(
+            "doctor must print a pass/fail summary:\n{combined}"
+        ));
     }
 
     Ok(())

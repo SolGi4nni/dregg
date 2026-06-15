@@ -33,7 +33,11 @@ fn make_cipherclerk() -> AppCipherclerk {
 
 /// Deploy the CWM factory and birth a mandate cell from it through the
 /// executor. Returns the born cell's id.
-fn birth_mandate_cell(exec: &EmbeddedExecutor, cclerk: &AppCipherclerk, token_tag: &[u8]) -> CellId {
+fn birth_mandate_cell(
+    exec: &EmbeddedExecutor,
+    cclerk: &AppCipherclerk,
+    token_tag: &[u8],
+) -> CellId {
     exec.deploy_factory(cwm_factory_descriptor());
 
     let agent = cclerk.cell_id();
@@ -53,7 +57,8 @@ fn birth_mandate_cell(exec: &EmbeddedExecutor, cclerk: &AppCipherclerk, token_ta
         owner_pubkey: owner,
     };
     let birth = cclerk.create_from_factory(CWM_FACTORY_VK, owner, token, params);
-    exec.submit_turn(&birth).expect("mandate-cell birth commits");
+    exec.submit_turn(&birth)
+        .expect("mandate-cell birth commits");
 
     let born = CellId::derive_raw(&owner, &token);
     exec.with_ledger_mut(|ledger| {

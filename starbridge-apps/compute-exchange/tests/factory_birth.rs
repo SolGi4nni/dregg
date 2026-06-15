@@ -70,13 +70,19 @@ fn factory_born_job_runs_the_whole_deal() {
     let job = birth_job_cell(&exec, &cclerk, b"job-render-1");
 
     let has_program = exec.with_ledger_mut(|ledger| {
-        ledger.get(&job).map(|c| !c.program.is_none()).unwrap_or(false)
+        ledger
+            .get(&job)
+            .map(|c| !c.program.is_none())
+            .unwrap_or(false)
     });
     assert!(has_program, "factory-born job must carry a CellProgram");
 
     let spec = spec_digest(b"render-frame-batch");
-    exec.submit_action(&cclerk, build_post_action(&cclerk, job, "requester-corp", 1000, &spec))
-        .expect("post must commit");
+    exec.submit_action(
+        &cclerk,
+        build_post_action(&cclerk, job, "requester-corp", 1000, &spec),
+    )
+    .expect("post must commit");
     exec.submit_action(&cclerk, build_bid_action(&cclerk, job, "provider-pat", 800))
         .expect("bid within the budget must commit");
 
@@ -100,8 +106,16 @@ fn factory_born_job_runs_the_whole_deal() {
             c.state.fields[PAID_SLOT as usize],
         )
     });
-    assert_eq!(state, field_from_u64(STATE_SETTLED), "the deal must end SETTLED");
-    assert_eq!(paid, field_from_u64(800), "the provider must be paid the accepted bid");
+    assert_eq!(
+        state,
+        field_from_u64(STATE_SETTLED),
+        "the deal must end SETTLED"
+    );
+    assert_eq!(
+        paid,
+        field_from_u64(800),
+        "the provider must be paid the accepted bid"
+    );
 }
 
 /// BUDGET tooth: bidding 1500 against a 1000 budget is REFUSED by the executor
@@ -113,11 +127,17 @@ fn factory_born_job_refuses_bidding_over_budget() {
     let job = birth_job_cell(&exec, &cclerk, b"job-render-2");
 
     let spec = spec_digest(b"render-frame-batch");
-    exec.submit_action(&cclerk, build_post_action(&cclerk, job, "requester-corp", 1000, &spec))
-        .expect("post must commit");
+    exec.submit_action(
+        &cclerk,
+        build_post_action(&cclerk, job, "requester-corp", 1000, &spec),
+    )
+    .expect("post must commit");
 
     let err = exec
-        .submit_action(&cclerk, build_bid_action(&cclerk, job, "provider-pat", 1500))
+        .submit_action(
+            &cclerk,
+            build_bid_action(&cclerk, job, "provider-pat", 1500),
+        )
         .expect_err("bidding over the budget must be refused — the BUDGET tooth");
     let msg = format!("{err}").to_lowercase();
     assert!(
@@ -136,8 +156,11 @@ fn factory_born_job_refuses_minting_tampering_and_double_settle() {
     let job = birth_job_cell(&exec, &cclerk, b"job-render-3");
 
     let spec = spec_digest(b"render-frame-batch");
-    exec.submit_action(&cclerk, build_post_action(&cclerk, job, "requester-corp", 1000, &spec))
-        .expect("post commits");
+    exec.submit_action(
+        &cclerk,
+        build_post_action(&cclerk, job, "requester-corp", 1000, &spec),
+    )
+    .expect("post commits");
     exec.submit_action(&cclerk, build_bid_action(&cclerk, job, "provider-pat", 800))
         .expect("bid commits");
 
@@ -167,7 +190,10 @@ fn factory_born_job_refuses_minting_tampering_and_double_settle() {
         .expect_err("a non-conserving settlement must be refused — the FLASHWELL tooth");
     let msg = format!("{err}").to_lowercase();
     assert!(
-        msg.contains("affine") || msg.contains("conserv") || msg.contains("sum") || msg.contains("program"),
+        msg.contains("affine")
+            || msg.contains("conserv")
+            || msg.contains("sum")
+            || msg.contains("program"),
         "refusal must cite the conservation bound, got: {msg}"
     );
 

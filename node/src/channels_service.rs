@@ -57,12 +57,12 @@ use futures_util::stream::Stream;
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 
-use dregg_cell::{CellId, Ledger};
 use dregg_cell::blueprint::{
     CH_ADMIN_SLOT, CH_EPOCH_SLOT, CH_KEY_COMMIT_SLOT, CH_MEMBER_ROOT_SLOT, CH_STATE_SLOT,
     CH_TAG_SLOT, ChannelTerms, STATE_OPEN, channel_cell_program, channel_factory_descriptor,
 };
 use dregg_cell::factory::{FactoryCreationParams, canonical_program_vk};
+use dregg_cell::{CellId, Ledger};
 use dregg_sdk::channels::{
     Roster, SealedEpochKey, anchor_token_id, channel_token_id, epoch_step_effects, open_effects,
     roster_root, seal_epoch_key_to_roster,
@@ -221,11 +221,7 @@ impl ChannelRegistry {
     ///   persisted (a delivery property, not a soundness one); the restored
     ///   room carries an empty key map and a rekey re-establishes forward
     ///   delivery, while membership operations resume immediately.
-    pub fn restore_rosters(
-        &mut self,
-        store: &dregg_persist::PersistentStore,
-        ledger: &Ledger,
-    ) {
+    pub fn restore_rosters(&mut self, store: &dregg_persist::PersistentStore, ledger: &Ledger) {
         let stored = match store.load_channel_rosters() {
             Ok(s) => s,
             Err(e) => {
@@ -252,9 +248,7 @@ impl ChannelRegistry {
             };
             // Re-commit against the on-cell membership root. Anything that
             // does not match is STALE and discarded (durably).
-            let on_cell_root = ledger
-                .get(&channel)
-                .and_then(channel_terms_of_root);
+            let on_cell_root = ledger.get(&channel).and_then(channel_terms_of_root);
             if on_cell_root != Some(roster_root(&roster)) {
                 tracing::warn!(
                     channel = %hex_encode(&channel_bytes),
@@ -478,10 +472,7 @@ fn resolve_channel(
 
 /// The request-level authority gate (the trustline shape): node unlocked
 /// and the operator's agent cell holds a capability over the group cell.
-fn require_operator_authority(
-    s: &NodeStateInner,
-    channel: CellId,
-) -> Result<(), ChannelRefusal> {
+fn require_operator_authority(s: &NodeStateInner, channel: CellId) -> Result<(), ChannelRefusal> {
     if !s.unlocked {
         return Err(ChannelRefusal::Locked);
     }
@@ -660,7 +651,10 @@ async fn post_create(
     let operator = crate::executor_setup::local_agent_cell(inner);
     let admin_pk = inner.cclerk.public_key().0;
     let tag = crate::trustline_service::field_u64(req.tag);
-    let terms = ChannelTerms { admin: admin_pk, tag };
+    let terms = ChannelTerms {
+        admin: admin_pk,
+        tag,
+    };
     let descriptor =
         channel_factory_descriptor(&terms).map_err(|e| ChannelRefusal::BadTerms(e.to_string()))?;
 
@@ -872,7 +866,9 @@ async fn post_join(
         .room(&channel)
         .ok_or_else(|| ChannelRefusal::NoChannel("no room state for this group".into()))?;
     if room.roster.contains_key(&member) {
-        return Err(ChannelRefusal::BadRequest("member already in the group".into()));
+        return Err(ChannelRefusal::BadRequest(
+            "member already in the group".into(),
+        ));
     }
     let mut next = room.roster.clone();
     next.insert(member, seal_pk);
@@ -970,14 +966,20 @@ async fn post_message(
         });
     }
     if inner.channels.room(&channel).is_none() {
-        return Err(ChannelRefusal::NoChannel("no room state for this group".into()));
+        return Err(ChannelRefusal::NoChannel(
+            "no room state for this group".into(),
+        ));
     }
     // Shape checks only — the body is opaque ciphertext by design.
     if req.nonce.len() != 24 || hex_decode_32(&format!("{:0<64}", req.nonce)).is_none() {
-        return Err(ChannelRefusal::BadRequest("nonce must be 12 bytes hex".into()));
+        return Err(ChannelRefusal::BadRequest(
+            "nonce must be 12 bytes hex".into(),
+        ));
     }
     if req.ciphertext.is_empty() || req.ciphertext.len() % 2 != 0 {
-        return Err(ChannelRefusal::BadRequest("ciphertext must be non-empty hex".into()));
+        return Err(ChannelRefusal::BadRequest(
+            "ciphertext must be non-empty hex".into(),
+        ));
     }
     let seq = inner
         .channels
@@ -1064,7 +1066,9 @@ async fn messages_stream(
     let rx = {
         let s = state.read().await;
         if s.channels.room(&channel).is_none() {
-            return Err(ChannelRefusal::NoChannel("no room state for this group".into()));
+            return Err(ChannelRefusal::NoChannel(
+                "no room state for this group".into(),
+            ));
         }
         s.channels.subscribe()
     };
@@ -1259,11 +1263,7 @@ mod tests {
         // Members accept their epoch-1 keys.
         for sealed in created["fan_out"].as_array().unwrap() {
             let member = CellId(hex_decode_32(sealed["member"].as_str().unwrap()).unwrap());
-            let ring = &mut members
-                .iter_mut()
-                .find(|(id, _)| *id == member)
-                .unwrap()
-                .1;
+            let ring = &mut members.iter_mut().find(|(id, _)| *id == member).unwrap().1;
             let eph = hex_decode_32(sealed["ephemeral_pk"].as_str().unwrap()).unwrap();
             let ct_hex = sealed["ciphertext"].as_str().unwrap();
             let ct: Vec<u8> = (0..ct_hex.len())

@@ -57,11 +57,11 @@
 //! SDK swaps each `DeferredField::Deferred` to `Filled(..)` from the executor's
 //! response — the plan becomes a live receipt chain in place.
 
-use dregg_turn::turn::{Turn, TurnReceipt};
 use dregg_turn::CallForest;
+use dregg_turn::turn::{Turn, TurnReceipt};
 use dregg_types::CellId;
 
-use crate::lower::{Lowered, LowerError};
+use crate::lower::{LowerError, Lowered};
 use crate::schema::Deployment;
 use dregg_userspace_verify::Assurance;
 

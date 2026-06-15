@@ -1284,11 +1284,7 @@ impl TurnExecutor {
     /// Resolve the registered ISSUER WELL for a cell's asset (`token_id`),
     /// or `None` when the asset has no registered well (legacy burn
     /// semantics).
-    pub(super) fn issuer_well_for(
-        &self,
-        ledger: &Ledger,
-        cell: &CellId,
-    ) -> Option<CellId> {
+    pub(super) fn issuer_well_for(&self, ledger: &Ledger, cell: &CellId) -> Option<CellId> {
         let token_id = *ledger.get(cell)?.token_id();
         self.issuer_wells.get(&token_id).copied()
     }

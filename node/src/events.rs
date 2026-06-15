@@ -118,7 +118,9 @@ fn matches(filter: &StreamFilter, ev: &ReceiptEvent) -> bool {
     if let Some(kind) = &filter.kind {
         let hit = ev.kinds.iter().any(|k| {
             k.eq_ignore_ascii_case(kind)
-                || k.split(':').next().is_some_and(|p| p.eq_ignore_ascii_case(kind))
+                || k.split(':')
+                    .next()
+                    .is_some_and(|p| p.eq_ignore_ascii_case(kind))
         });
         if !hit {
             return false;
@@ -184,9 +186,10 @@ pub async fn events_stream(
                     let sse = Event::default()
                         .event("receipt")
                         .id(ev.chain_index.to_string())
-                        .data(serde_json::to_string(&ev).unwrap_or_else(|e| {
-                            format!("{{\"error\":\"serialize: {e}\"}}")
-                        }));
+                        .data(
+                            serde_json::to_string(&ev)
+                                .unwrap_or_else(|e| format!("{{\"error\":\"serialize: {e}\"}}")),
+                        );
                     return Some((Ok::<_, Infallible>(sse), c));
                 }
                 Some(None) => continue,

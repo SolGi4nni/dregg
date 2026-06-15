@@ -29,13 +29,13 @@
 
 use std::collections::HashMap;
 
+use dregg_cell::Permissions;
 use dregg_cell::{AuthRequired, Cell, CellId, Ledger};
 use dregg_circuit::effect_vm::{
     CellState as VmCellState, Effect as VmEffect, extract_net_delta, generate_effect_vm_trace,
     state as vm_state,
 };
 use dregg_circuit::field::BabyBear;
-use dregg_cell::Permissions;
 use dregg_turn::{
     Action, Authorization, CallForest, ComputronCosts, DelegationMode, Effect, TurnExecutor,
     turn::Turn,
@@ -363,8 +363,8 @@ fn air_claim(actor_cell: &Cell, turn: &Turn) -> AirClaim {
     // THE EPOCH: the actor cell is ORDINARY (non-negative); the VM's starting
     // balance is u64, so use a checked conversion rather than an `as` cast
     // that would silently wrap a (well-only) negative balance.
-    let vm_balance =
-        u64::try_from(actor_cell.state.balance()).expect("ordinary actor cell balance is non-negative");
+    let vm_balance = u64::try_from(actor_cell.state.balance())
+        .expect("ordinary actor cell balance is non-negative");
     let mut vm_initial = VmCellState::new(vm_balance, actor_cell.state.nonce() as u32);
     // Pull current field bytes into BabyBear (truncated; matches executor
     // projection).

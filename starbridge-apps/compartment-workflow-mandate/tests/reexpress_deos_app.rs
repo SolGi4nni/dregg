@@ -70,7 +70,10 @@ fn the_whole_app_is_one_composed_registration() {
     // The MANDATE cell is the agent's own (so fires execute against the seeded ledger),
     // and is published into the web-of-cells at the observer tier.
     assert_eq!(mandate.cell(), cclerk.cell_id());
-    assert_eq!(mandate.published_authority(), Some(&AuthRequired::Signature));
+    assert_eq!(
+        mandate.published_authority(),
+        Some(&AuthRequired::Signature)
+    );
 
     // ONE registration folds the whole surface into a shared host context.
     let ctx = dregg_app_framework::StarbridgeAppContext::new(cclerk.clone(), executor.clone());
@@ -105,17 +108,25 @@ async fn the_two_workflow_roles_see_different_cap_only_surfaces() {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
-        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
         serde_json::from_slice::<serde_json::Value>(&bytes).unwrap()["visible"].clone()
     }
 
     // An OBSERVER (Signature) sees only `view_workflow` (the narrow read tier). The
     // `advance_step` op is GATED (not on the cap-only projection); it lights on the gated
     // surface against live state.
-    assert_eq!(visible(&router, "signature").await, serde_json::json!(["view_workflow"]));
+    assert_eq!(
+        visible(&router, "signature").await,
+        serde_json::json!(["view_workflow"])
+    );
     // The OPERATOR (root) sees the same cap-only set — there are no extra cap-only ops at
     // the operator tier here (advance_step is gated, not cap-only).
-    assert_eq!(visible(&router, "root").await, serde_json::json!(["view_workflow"]));
+    assert_eq!(
+        visible(&router, "root").await,
+        serde_json::json!(["view_workflow"])
+    );
 }
 
 // =============================================================================
@@ -198,16 +209,24 @@ async fn the_mandate_is_published_into_the_web_of_cells() {
     // minter). `workflow_app` publishes the mandate cell at the observer tier.
     let captp = CapTpServer::new(FederationId([0x3c; 32]));
     let base = workflow_app(&cclerk, &executor);
-    let app = DeosApp::builder("compartment-workflow-mandate", cclerk.clone(), executor.clone())
-        .web_of_cells(captp)
-        .cell(base.cells()[0].clone())
-        .build();
+    let app = DeosApp::builder(
+        "compartment-workflow-mandate",
+        cclerk.clone(),
+        executor.clone(),
+    )
+    .web_of_cells(captp)
+    .cell(base.cells()[0].clone())
+    .build();
 
     // The MANDATE cell is exported as a real `dregg://` sturdyref — an auditor on another
     // federation reacquires the workflow's charter state across the membrane.
     let uris = app.publish_all(100).await;
     assert_eq!(uris.len(), 1);
-    assert!(uris[0].starts_with("dregg://"), "a real sturdyref: {}", uris[0]);
+    assert!(
+        uris[0].starts_with("dregg://"),
+        "a real sturdyref: {}",
+        uris[0]
+    );
 }
 
 // =============================================================================
@@ -224,7 +243,11 @@ fn a_mandate_snapshot_rehydrates_per_viewer_respecting_the_lattice() {
     // snapshot handed to a downstream auditor) ⇒ liveness REPLAYED-DETERMINISTIC.
     let log = InteractionLog::new().record(Interaction::witnessed_turn(mandate.cell(), [9u8; 32]));
     let snap = mandate.snapshot(log, false);
-    assert_eq!(snap.lineage, AuthRequired::Signature, "snapshot at the published lineage");
+    assert_eq!(
+        snap.lineage,
+        AuthRequired::Signature,
+        "snapshot at the published lineage"
+    );
     assert_eq!(snap.liveness(), Rehydration::ReplayedDeterministic);
     assert!(snap.liveness().is_faithful());
 
@@ -269,7 +292,9 @@ async fn the_app_ships_a_web_component_surface_and_a_manifest() {
         .unwrap()
         .to_string();
     assert!(ct.contains("javascript"), "served as a JS module: {ct}");
-    let bytes = axum::body::to_bytes(surface.into_body(), usize::MAX).await.unwrap();
+    let bytes = axum::body::to_bytes(surface.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let js = String::from_utf8(bytes.to_vec()).unwrap();
     assert!(js.contains("customElements.define(\"dregg-affordance-surface\""));
     // The anti-drift affordance map names the cap-only fire endpoint.
@@ -282,14 +307,29 @@ async fn the_app_ships_a_web_component_surface_and_a_manifest() {
         .await
         .unwrap();
     assert_eq!(manifest.status(), StatusCode::OK);
-    let bytes = axum::body::to_bytes(manifest.into_body(), usize::MAX).await.unwrap();
+    let bytes = axum::body::to_bytes(manifest.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let m: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(m["app"], "compartment-workflow-mandate");
-    assert_eq!(m["discoverable"], serde_json::json!(["workflow", "compartment"]));
-    assert!(m["persistence"].as_str().unwrap().contains("embedded-ledger"));
+    assert_eq!(
+        m["discoverable"],
+        serde_json::json!(["workflow", "compartment"])
+    );
+    assert!(
+        m["persistence"]
+            .as_str()
+            .unwrap()
+            .contains("embedded-ledger")
+    );
     assert_eq!(m["cells"].as_array().unwrap().len(), 1);
     // The manifest advertises the gated (cap∧state) affordance.
-    let gated = m["cells"][0]["gatedAffordances"].as_array().expect("gated affordances");
+    let gated = m["cells"][0]["gatedAffordances"]
+        .as_array()
+        .expect("gated affordances");
     let names: Vec<&str> = gated.iter().filter_map(|g| g["name"].as_str()).collect();
-    assert!(names.contains(&"advance_step"), "advance_step is advertised as gated");
+    assert!(
+        names.contains(&"advance_step"),
+        "advance_step is advertised as gated"
+    );
 }

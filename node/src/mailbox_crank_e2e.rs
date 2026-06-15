@@ -23,9 +23,7 @@ use std::sync::Arc;
 
 use dregg_captp::FederationId;
 use dregg_captp::store_forward::generate_x25519_keypair;
-use dregg_cell::{
-    AuthRequired, Cell, CellId, CellMode, CapabilityRef, FactoryCreationParams,
-};
+use dregg_cell::{AuthRequired, CapabilityRef, Cell, CellId, CellMode, FactoryCreationParams};
 use dregg_sdk::mailbox::{
     CrankDisposition, MailboxCrank, MailboxTurnIntent, RefusalReason, RelayHttpTransport,
     seal_intent,
@@ -160,12 +158,7 @@ fn offline_sealed_send_drains_executes_and_custody_receipt_checks() {
 
     // ── B: runtime, inbox cell (CapInbox factory), relay subscription ──
     let mut b_runtime = AgentRuntime::new_simple(AgentCipherclerk::new(), "mailbox-e2e");
-    let b_pk = b_runtime
-        .cipherclerk()
-        .read()
-        .unwrap()
-        .public_key()
-        .0;
+    let b_pk = b_runtime.cipherclerk().read().unwrap().public_key().0;
     let inbox_cell = birth_inbox(&mut b_runtime, b_pk);
     let (b_x_secret, b_x_public) = generate_x25519_keypair();
 
@@ -182,8 +175,8 @@ fn offline_sealed_send_drains_executes_and_custody_receipt_checks() {
         id
     };
 
-    let b_transport = RelayHttpTransport::new(&base_url, b_runtime.cipherclerk().clone())
-        .expect("b transport");
+    let b_transport =
+        RelayHttpTransport::new(&base_url, b_runtime.cipherclerk().clone()).expect("b transport");
     b_transport
         .subscribe(Some(8), Some(1))
         .expect("relay subscribe");
@@ -200,8 +193,8 @@ fn offline_sealed_send_drains_executes_and_custody_receipt_checks() {
     {
         // The executor-committed slot-5 root anchors the crank's opening.
         let ledger = b_runtime.ledger().lock().unwrap();
-        let root = ledger.get(&inbox_cell).unwrap().state.fields
-            [dregg_sdk::mailbox::SENDER_SET_ROOT_SLOT];
+        let root =
+            ledger.get(&inbox_cell).unwrap().state.fields[dregg_sdk::mailbox::SENDER_SET_ROOT_SLOT];
         assert_ne!(root, [0u8; 32], "grant must commit a non-zero sender root");
     }
 

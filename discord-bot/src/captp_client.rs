@@ -254,7 +254,10 @@ impl CapTPClient {
         db.upsert_captp_held_ref(&CaptpHeldRecord::from_cap(&cell_hex, &cap))
             .await
             .map_err(storage_error)?;
-        info!(cell_id = cell_hex, "Enlivened via web-of-cells verified resolve");
+        info!(
+            cell_id = cell_hex,
+            "Enlivened via web-of-cells verified resolve"
+        );
         Ok((cap, content_bytes))
     }
 

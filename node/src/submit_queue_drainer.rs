@@ -157,10 +157,7 @@ async fn run(cfg: PgMirrorConfig, state: NodeState) {
 /// alternate between notification wake-ups and periodic sweeps until the
 /// connection drops. Returns `Ok(())` on a clean connection close, `Err` on a
 /// connection or setup error (the outer loop reconnects either way).
-async fn connect_and_drain(
-    cfg: &PgMirrorConfig,
-    state: &NodeState,
-) -> Result<(), String> {
+async fn connect_and_drain(cfg: &PgMirrorConfig, state: &NodeState) -> Result<(), String> {
     // Connect, and take the connection object so we can poll it for async
     // notifications (`AsyncMessage::Notification`) ourselves — unlike the
     // PgSink WRITE side, which only needs the client and spawns the connection
@@ -174,8 +171,8 @@ async fn connect_and_drain(
     // whenever a NOTIFY on our channel arrives (or when the connection ends).
     let (notify_tx, mut notify_rx) = tokio::sync::mpsc::channel::<()>(8);
     let conn_task = tokio::spawn(async move {
-        use futures_util::stream::poll_fn;
         use futures_util::StreamExt;
+        use futures_util::stream::poll_fn;
         // Drive the connection AND surface notifications. `poll_message`
         // advances the protocol and yields `AsyncMessage::Notification` for
         // each NOTIFY; we collapse them to a single "wake the drainer" ping
@@ -214,7 +211,10 @@ async fn connect_and_drain(
         conn_task.abort();
         return Err(format!("LISTEN {NOTIFY_CHANNEL}: {e}"));
     }
-    tracing::info!(channel = NOTIFY_CHANNEL, "pg-drainer: connected + LISTENing");
+    tracing::info!(
+        channel = NOTIFY_CHANNEL,
+        "pg-drainer: connected + LISTENing"
+    );
 
     // Initial sweep: drain everything already pending (resume after a restart).
     drain_all_pending(&client, state).await?;
@@ -255,7 +255,10 @@ async fn drain_all_pending(client: &Client, state: &NodeState) -> Result<(), Str
     if pending.is_empty() {
         return Ok(());
     }
-    tracing::info!(count = pending.len(), "pg-drainer: draining pending submissions");
+    tracing::info!(
+        count = pending.len(),
+        "pg-drainer: draining pending submissions"
+    );
     for sub in pending {
         let outcome = execute_submission(state, &sub.signed_turn).await;
         resolve_row(client, &sub.id, outcome).await?;
@@ -517,7 +520,11 @@ mod tests {
                 .unwrap_or(0);
             let mut turn = dregg_turn::Turn {
                 agent: operator,
-                nonce: s.ledger.get(&operator).map(|c| c.state.nonce()).unwrap_or(0),
+                nonce: s
+                    .ledger
+                    .get(&operator)
+                    .map(|c| c.state.nonce())
+                    .unwrap_or(0),
                 fee: 0,
                 memo: None,
                 valid_until: Some(now + 3600),
@@ -610,6 +617,9 @@ mod tests {
             .await
             .expect("read bad row")
             .get(0);
-        assert_eq!(bad_status, "refused", "a malformed turn is refused, never stuck");
+        assert_eq!(
+            bad_status, "refused",
+            "a malformed turn is refused, never stuck"
+        );
     }
 }

@@ -33,7 +33,7 @@ use serde::{Deserialize, Serialize};
 
 use dregg_persist::commit_log::CommitRecord;
 
-use crate::findings::{short_hex, AnalysisReport, Finding, Severity};
+use crate::findings::{AnalysisReport, Finding, Severity, short_hex};
 
 /// A captured WAL / commit-log: the durable commit records in ordinal order plus
 /// the durable commit cursor at capture time.
@@ -215,7 +215,10 @@ pub fn analyze(capture: &WalCapture) -> AnalysisReport {
         prev_height = Some(rec.height);
         prev_hwm = Some(rec.block_executed_up_to);
     }
-    report.summarize("touched_cells_total", records.iter().map(|r| r.touched_cells.len()).sum::<usize>());
+    report.summarize(
+        "touched_cells_total",
+        records.iter().map(|r| r.touched_cells.len()).sum::<usize>(),
+    );
     if height_regressions > 0 {
         report.push(Finding::observed(
             Severity::Notice,
@@ -296,7 +299,12 @@ fn replay_overlay_detail(replay: &[CommitRecord]) -> String {
     let mut parts: Vec<String> = replay
         .iter()
         .take(CAP)
-        .map(|r| format!("[#{} h={} b={}]", r.ordinal, r.height, r.block_executed_up_to))
+        .map(|r| {
+            format!(
+                "[#{} h={} b={}]",
+                r.ordinal, r.height, r.block_executed_up_to
+            )
+        })
         .collect();
     if replay.len() > CAP {
         parts.push(format!("…(+{} more)", replay.len() - CAP));

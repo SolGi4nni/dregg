@@ -83,7 +83,11 @@ fn rotated_sovereign_turn_proves_and_verifies() {
         .as_ref()
         .expect("execution_proof attached");
     assert!(!proof_bytes.is_empty());
-    assert_ne!(&proof_bytes[0..4], b"DREG", "rotated wire is a postcard BatchProof");
+    assert_ne!(
+        &proof_bytes[0..4],
+        b"DREG",
+        "rotated wire is a postcard BatchProof"
+    );
     assert_eq!(turn.execution_proof_cell, Some(cell_id));
     assert!(turn.execution_proof_new_commitment.is_some());
     assert!(turn.sovereign_witnesses.is_empty());
@@ -98,7 +102,10 @@ fn rotated_sovereign_turn_proves_and_verifies() {
     let new_commitment = ledger
         .get_sovereign_commitment(&cell_id)
         .expect("commitment present after commit");
-    assert_eq!(*new_commitment, turn.execution_proof_new_commitment.unwrap());
+    assert_eq!(
+        *new_commitment,
+        turn.execution_proof_new_commitment.unwrap()
+    );
 }
 
 /// ANTI-GHOST: a rotated sovereign turn whose claimed post-state commitment is
@@ -153,7 +160,8 @@ mod wall_a {
     use dregg_cell::{Cell, CellMode, Ledger};
     use dregg_circuit::effect_vm::{self, CellState};
     use dregg_sdk::full_turn_proof::{
-        ConservationWitness, FullTurnWitness, RotationTurnWitness, prove_full_turn, verify_full_turn,
+        ConservationWitness, FullTurnWitness, RotationTurnWitness, prove_full_turn,
+        verify_full_turn,
     };
     use dregg_turn::rotation_witness as rw;
 

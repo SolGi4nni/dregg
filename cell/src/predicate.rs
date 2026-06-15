@@ -740,10 +740,7 @@ impl FinalizedRootAuthority for StaticFinalizedRootAuthority {
         at_root: &[u8; 32],
         source_field: u8,
     ) -> Result<crate::FieldElement, String> {
-        match self
-            .bindings
-            .get(&(*source_cell, *at_root, source_field))
-        {
+        match self.bindings.get(&(*source_cell, *at_root, source_field)) {
             Some(value) => Ok(*value),
             None => Err(
                 "no finalized binding for (source_cell, at_root, source_field); the root is not a \

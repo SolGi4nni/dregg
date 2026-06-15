@@ -159,8 +159,7 @@ use crate::lean_descriptor_air::{
 use crate::lean_descriptor_air::i64_to_babybear;
 use crate::lean_descriptor_air::{EffectVmDescriptor, RangeSpec};
 use crate::plonky3_prover::{
-    POSEIDON2_PERM_AUX_COLS, POSEIDON2_WIDTH, create_config_with_fri, poseidon2_permute_expr,
-    to_p3,
+    POSEIDON2_PERM_AUX_COLS, POSEIDON2_WIDTH, create_config_with_fri, poseidon2_permute_expr, to_p3,
 };
 // The concrete permutation aux-witness fill is prover-only (`perm_aux`).
 #[cfg(feature = "recursion")]
@@ -468,8 +467,12 @@ impl WindowExpr {
             WindowExpr::Loc(i) => local[*i].into(),
             WindowExpr::Nxt(i) => next[*i].into(),
             WindowExpr::Const(c) => const_to_expr::<AB>(*c),
-            WindowExpr::Add(a, b) => a.eval_expr::<AB>(local, next) + b.eval_expr::<AB>(local, next),
-            WindowExpr::Mul(a, b) => a.eval_expr::<AB>(local, next) * b.eval_expr::<AB>(local, next),
+            WindowExpr::Add(a, b) => {
+                a.eval_expr::<AB>(local, next) + b.eval_expr::<AB>(local, next)
+            }
+            WindowExpr::Mul(a, b) => {
+                a.eval_expr::<AB>(local, next) * b.eval_expr::<AB>(local, next)
+            }
         }
     }
 
@@ -3949,7 +3952,14 @@ pub fn ir2_airs_and_common_for_config<SC>(
     proof: &BatchProof<SC>,
     public_inputs: &[BabyBear],
     config: &SC,
-) -> Result<(Vec<Ir2Air>, Vec<Vec<P3BabyBear>>, p3_batch_stark::CommonData<SC>), String>
+) -> Result<
+    (
+        Vec<Ir2Air>,
+        Vec<Vec<P3BabyBear>>,
+        p3_batch_stark::CommonData<SC>,
+    ),
+    String,
+>
 where
     SC: StarkGenericConfig,
     Domain<SC>: PolynomialSpace<Val = P3BabyBear>,
@@ -4049,8 +4059,14 @@ pub(crate) fn ir2_airs_and_common(
     desc: &EffectVmDescriptor2,
     proof: &BatchProof<DreggStarkConfig>,
     public_inputs: &[BabyBear],
-) -> Result<(Vec<Ir2Air>, Vec<Vec<P3BabyBear>>, p3_batch_stark::CommonData<DreggStarkConfig>), String>
-{
+) -> Result<
+    (
+        Vec<Ir2Air>,
+        Vec<Vec<P3BabyBear>>,
+        p3_batch_stark::CommonData<DreggStarkConfig>,
+    ),
+    String,
+> {
     let config = ir2_config();
     let layout = check_descriptor2(desc)?;
     let presence = Presence::of(desc, &layout);
@@ -4876,7 +4892,10 @@ mod tests {
         // guard = sel::CUSTOM (8); commit = param CUSTOM_PROOF_COMMIT_BASE (PARAM_BASE+4 = 72);
         // vk = param CUSTOM_VK_HASH_BASE (PARAM_BASE+0 = 68). (PARAM_BASE = STATE_BEFORE_BASE +
         // state::SIZE = 54 + 14 = 68.)
-        assert_eq!(m.guard, LeanExpr::Var(crate::effect_vm::columns::sel::CUSTOM));
+        assert_eq!(
+            m.guard,
+            LeanExpr::Var(crate::effect_vm::columns::sel::CUSTOM)
+        );
         assert_eq!(
             m.commit,
             LeanExpr::Var(
@@ -5927,7 +5946,10 @@ mod tests {
         // Forge it to a non-caveat plane (caps = 2).
         let mut t = rows.clone();
         t[0][e1 + 1] = BabyBear::new(2);
-        assert!(refused(&t, &pi), "forged domain tag (heap→caps) must refuse");
+        assert!(
+            refused(&t, &pi),
+            "forged domain tag (heap→caps) must refuse"
+        );
         // Tamper the HEAP KEY (point the caveat at a different heap field).
         let mut t = rows.clone();
         t[0][e1 + 2] = t[0][e1 + 2] + BabyBear::ONE;

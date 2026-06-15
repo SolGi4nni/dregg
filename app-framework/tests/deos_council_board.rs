@@ -43,7 +43,9 @@ fn pending_precondition() -> CellProgram {
 
 /// The cell's lifetime invariant: status is monotonic (may resolve, never un-resolve).
 fn proposal_invariant() -> CellProgram {
-    CellProgram::Predicate(vec![StateConstraint::Monotonic { index: STATUS_SLOT as u8 }])
+    CellProgram::Predicate(vec![StateConstraint::Monotonic {
+        index: STATUS_SLOT as u8,
+    }])
 }
 
 fn set_status(executor: &EmbeddedExecutor, proposal: dregg_app_framework::CellId, status: u64) {
@@ -68,14 +70,24 @@ fn board() -> (AppCipherclerk, EmbeddedExecutor, DeosCell) {
         CellAffordance::new(
             "approve",
             AuthRequired::Either,
-            Effect::SetField { cell: proposal, index: STATUS_SLOT, value: fe(RESOLVED) },
+            Effect::SetField {
+                cell: proposal,
+                index: STATUS_SLOT,
+                value: fe(RESOLVED),
+            },
         ),
         pending_precondition(),
     );
     let comment = CellAffordance::new(
         "comment",
         AuthRequired::Signature,
-        Effect::EmitEvent { cell: proposal, event: Event { topic: [0xC0; 32], data: vec![] } },
+        Effect::EmitEvent {
+            cell: proposal,
+            event: Event {
+                topic: [0xC0; 32],
+                data: vec![],
+            },
+        },
     );
     let cell = DeosCell::new(proposal, "proposal")
         .affordance(comment)
@@ -97,8 +109,15 @@ fn the_per_viewer_per_state_projection_diverges_by_caps_and_state() {
     // not (cap tooth darkens it). The framework reads the live state from the executor.
     let approver_lit = board.gated_fireable_names(&approver, &executor);
     let member_lit = board.gated_fireable_names(&member, &executor);
-    assert_eq!(approver_lit, vec!["approve".to_string()], "approver: approve lit in PENDING");
-    assert!(member_lit.is_empty(), "member: approve dark (wrong caps) — got {member_lit:?}");
+    assert_eq!(
+        approver_lit,
+        vec!["approve".to_string()],
+        "approver: approve lit in PENDING"
+    );
+    assert!(
+        member_lit.is_empty(),
+        "member: approve dark (wrong caps) — got {member_lit:?}"
+    );
 
     // Transition to RESOLVED: the SAME approver's projected set loses `approve` (the
     // htmx tooth — the surface reacted to the cell, not to who is looking).
@@ -119,17 +138,26 @@ fn both_pass_fires_a_real_verified_turn_through_the_executor() {
         .fire_gated_through_executor("approve", &AuthRequired::Either, &cclerk, &executor)
         .expect("caps ∧ state both pass ⇒ a real verified turn");
     assert_ne!(receipt.turn_hash, [0u8; 32], "a real turn hash");
-    assert_eq!(receipt.agent, board.cell(), "the receipt's agent is the proposal cell");
+    assert_eq!(
+        receipt.agent,
+        board.cell(),
+        "the receipt's agent is the proposal cell"
+    );
     // The verified turn moved the cell: status is now RESOLVED.
     let st = executor.cell_state(board.cell()).expect("cell present");
-    assert_eq!(st.get_field(STATUS_SLOT), Some(&fe(RESOLVED)), "approve resolved the proposal");
+    assert_eq!(
+        st.get_field(STATUS_SLOT),
+        Some(&fe(RESOLVED)),
+        "approve resolved the proposal"
+    );
 }
 
 #[test]
 fn the_cap_tooth_refuses_a_member_in_band_nothing_submitted() {
     let (cclerk, executor, board) = board();
     // PENDING (right state), Signature (wrong caps) ⇒ refused by the CAP tooth in-band.
-    match board.fire_gated_through_executor("approve", &AuthRequired::Signature, &cclerk, &executor) {
+    match board.fire_gated_through_executor("approve", &AuthRequired::Signature, &cclerk, &executor)
+    {
         Err(FireExecuteError::Gate(FireError::Unauthorized { affordance, .. })) => {
             assert_eq!(affordance, "approve");
         }
@@ -137,7 +165,11 @@ fn the_cap_tooth_refuses_a_member_in_band_nothing_submitted() {
     }
     // Anti-ghost: nothing was submitted — the proposal is still PENDING.
     let st = executor.cell_state(board.cell()).expect("cell present");
-    assert_eq!(st.get_field(STATUS_SLOT), Some(&fe(PENDING)), "no turn ran (still PENDING)");
+    assert_eq!(
+        st.get_field(STATUS_SLOT),
+        Some(&fe(PENDING)),
+        "no turn ran (still PENDING)"
+    );
 }
 
 #[test]
@@ -158,7 +190,11 @@ fn the_state_tooth_refuses_a_stale_fire_even_for_an_authorized_actor() {
     // Anti-ghost for the state tooth: the second fire submitted nothing; status is the
     // RESOLVED the FIRST (legitimate) turn left, not a second mutation.
     let st = executor.cell_state(board.cell()).expect("cell present");
-    assert_eq!(st.get_field(STATUS_SLOT), Some(&fe(RESOLVED)), "the stale fire ran no turn");
+    assert_eq!(
+        st.get_field(STATUS_SLOT),
+        Some(&fe(RESOLVED)),
+        "the stale fire ran no turn"
+    );
 }
 
 #[test]

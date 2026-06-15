@@ -22,11 +22,11 @@ use dregg_circuit::ivc_turn_chain::{
     FinalizedTurn, prove_turn_chain_recursive, verify_turn_chain_recursive,
 };
 use dregg_circuit::joint_turn_aggregation::DescriptorParticipant;
-use dregg_turn::rotation_witness::mint_rotated_participant_leg;
 use dregg_circuit::lean_descriptor_air::{
     EffectVmDescriptorAir, descriptor_recursion_matrix, parse_vm_descriptor,
 };
 use dregg_circuit::plonky3_prover::{DreggStarkConfig, create_config_with_fri, to_p3};
+use dregg_turn::rotation_witness::mint_rotated_participant_leg;
 use p3_baby_bear::BabyBear as P3BabyBear;
 use p3_batch_stark::{ProverData, StarkInstance, prove_batch, verify_batch};
 
@@ -210,7 +210,9 @@ fn t1_per_turn_descriptor_proof_size() {
 
     let (digests, numbers) = census(proof);
 
-    println!("== T1 per-turn EffectVM ROTATED descriptor proof (transfer, 311-col rotated trace) ==");
+    println!(
+        "== T1 per-turn EffectVM ROTATED descriptor proof (transfer, 311-col rotated trace) =="
+    );
     println!(
         "total: {} bytes ({:.1} KiB) | prove+selfverify: {prove_ms} ms | verify: {verify_ms:.1} ms",
         bytes.len(),
@@ -226,8 +228,7 @@ fn t1_per_turn_descriptor_proof_size() {
     println!("  digest census: {digests} merkle digests, {numbers} field elements total");
     println!(
         "  rotated descriptor: trace_width={}, public_input_count={}",
-        leg.descriptor.trace_width,
-        leg.descriptor.public_input_count,
+        leg.descriptor.trace_width, leg.descriptor.public_input_count,
     );
 }
 

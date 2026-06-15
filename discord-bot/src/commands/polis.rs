@@ -181,7 +181,13 @@ pub async fn handle_council_approve(ctx: &Context, command: &CommandInteraction,
     let member_index = integer_opt(command, "member-index").unwrap_or(-1);
 
     if cell_hex.len() != 64 || !cell_hex.chars().all(|c| c.is_ascii_hexdigit()) {
-        edit_err(ctx, command, "Invalid Proposal Cell", "Expected a 64-character hex cell id.").await;
+        edit_err(
+            ctx,
+            command,
+            "Invalid Proposal Cell",
+            "Expected a 64-character hex cell id.",
+        )
+        .await;
         return;
     }
     if !(0..MAX_MEMBERS as i64).contains(&member_index) {
@@ -299,7 +305,13 @@ pub async fn handle_council_approve(ctx: &Context, command: &CommandInteraction,
                 .await;
         }
         Err(e) => {
-            edit_err(ctx, command, "Approval Failed", &e.user_message("cast your approval")).await;
+            edit_err(
+                ctx,
+                command,
+                "Approval Failed",
+                &e.user_message("cast your approval"),
+            )
+            .await;
         }
     }
 }

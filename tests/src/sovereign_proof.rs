@@ -20,7 +20,11 @@ fn setup_sovereign_cell(balance: u64) -> (AgentCipherclerk, CellId, Ledger) {
     let pub_key = cclerk.public_key().0;
     let token_id = *blake3::hash(b"test-domain").as_bytes();
 
-    let mut cell = Cell::with_balance(pub_key, token_id, i64::try_from(balance).expect("balance fits i64"));
+    let mut cell = Cell::with_balance(
+        pub_key,
+        token_id,
+        i64::try_from(balance).expect("balance fits i64"),
+    );
     cell.mode = CellMode::Sovereign;
     let cell_id = cell.id();
 

@@ -275,8 +275,7 @@ fn two_leg_heterogeneous_chain_verifies_with_adjacency() {
     let after_w = rw::produce(&final_cell, &ledger, &nr, &rl);
 
     // leg 0: Transfer, s0→s1. Interior after-block uses `before_w` (turn context).
-    let (leg0, old0, new0) =
-        mint_rotated_leg_with_witnesses(&s0, transfer, &before_w, &before_w);
+    let (leg0, old0, new0) = mint_rotated_leg_with_witnesses(&s0, transfer, &before_w, &before_w);
     // leg 1: IncrementNonce, s1→s2. Final after-block uses the real `after_w`.
     let (leg1, old1, new1) =
         mint_rotated_leg_with_witnesses(&s1, Effect::IncrementNonce, &before_w, &after_w);
@@ -347,7 +346,10 @@ fn two_sound_but_nonadjacent_legs_rejected() {
     // Both legs pass crypto (step 1); the rejection lands on leg 1's adjacency.
     assert_eq!(out.first_failure, Some(1));
     let RotatedReplayVerdict::Rejected { reason } = &out.per_leg[1] else {
-        panic!("expected leg-1 Rejected (adjacency), got {:?}", out.per_leg[1]);
+        panic!(
+            "expected leg-1 Rejected (adjacency), got {:?}",
+            out.per_leg[1]
+        );
     };
     assert!(
         reason.contains("adjacency"),

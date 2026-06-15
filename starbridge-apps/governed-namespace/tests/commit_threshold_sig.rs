@@ -43,12 +43,15 @@ use dregg_cell::state::CellState;
 use dregg_federation::threshold::{FederationCommittee, MemberSecret, generate_test_committee};
 use dregg_turn::TurnExecutor;
 use dregg_turn::action::{Action, WitnessBlob};
-use dregg_turn::executor::{StaticThresholdSigPolicy, ThresholdSigCommittee, register_threshold_sig_verifier};
+use dregg_turn::executor::{
+    StaticThresholdSigPolicy, ThresholdSigCommittee, register_threshold_sig_verifier,
+};
 use hints::PartialSignature;
 use starbridge_governed_namespace::{
-    GOVERNANCE_COMMITTEE_ROOT_SLOT, GOVERNANCE_VK, PENDING_PROPOSAL_ROOT_SLOT, ROUTE_TABLE_ROOT_SLOT,
-    THRESHOLD_SLOT, VERSION_SLOT, blake3_field, build_commit_table_update_action,
-    build_route_table, governance_program, route_table_commitment, u64_field,
+    GOVERNANCE_COMMITTEE_ROOT_SLOT, GOVERNANCE_VK, PENDING_PROPOSAL_ROOT_SLOT,
+    ROUTE_TABLE_ROOT_SLOT, THRESHOLD_SLOT, VERSION_SLOT, blake3_field,
+    build_commit_table_update_action, build_route_table, governance_program,
+    route_table_commitment, u64_field,
 };
 
 use dregg_cell::program::{CellProgram, StateConstraint};
@@ -180,7 +183,12 @@ fn sign_commit(
 
     let shares: Vec<(usize, PartialSignature)> = signers
         .iter()
-        .map(|&i| (members[i].index, committee.sign_share(&members[i], &message)))
+        .map(|&i| {
+            (
+                members[i].index,
+                committee.sign_share(&members[i], &message),
+            )
+        })
         .collect();
     let qc = committee
         .aggregate(&shares, &message)
@@ -219,13 +227,8 @@ fn run_propose_vote_round(
     let mut cur = propose_receipt.emitted_events[0].data[0];
 
     for _ in 0..COMMITTEE_K {
-        let vote = build_vote_on_proposal_action(
-            proposer,
-            namespace_cell,
-            cur,
-            VoteKind::Approve,
-            1,
-        );
+        let vote =
+            build_vote_on_proposal_action(proposer, namespace_cell, cur, VoteKind::Approve, 1);
         let r = executor
             .submit_action(proposer, vote)
             .expect("vote must be accepted");
@@ -357,8 +360,10 @@ fn commit_with_under_threshold_sig_refused() {
         proposer.federation_id(),
         turn_nonce,
     );
-    let one_share: Vec<(usize, PartialSignature)> =
-        vec![(members[0].index, committee.sign_share(&members[0], &message))];
+    let one_share: Vec<(usize, PartialSignature)> = vec![(
+        members[0].index,
+        committee.sign_share(&members[0], &message),
+    )];
     let agg = committee.aggregate(&one_share, &message);
     assert!(
         agg.is_err(),
@@ -419,7 +424,12 @@ fn commit_with_wrong_message_sig_refused() {
     );
     let shares: Vec<(usize, PartialSignature)> = [0usize, 1]
         .iter()
-        .map(|&i| (members[i].index, committee.sign_share(&members[i], &wrong_message)))
+        .map(|&i| {
+            (
+                members[i].index,
+                committee.sign_share(&members[i], &wrong_message),
+            )
+        })
         .collect();
     let qc = committee.aggregate(&shares, &wrong_message).unwrap();
     commit_action.witness_blobs = vec![WitnessBlob::proof(qc.to_bytes())];
@@ -455,7 +465,8 @@ fn commit_with_wrong_committee_sig_refused() {
     let root = committee_root();
 
     // The HOST-TRUSTED committee (bound into the policy at `root`).
-    let (host_committee, _host_members) = generate_test_committee(COMMITTEE_N, COMMITTEE_K).unwrap();
+    let (host_committee, _host_members) =
+        generate_test_committee(COMMITTEE_N, COMMITTEE_K).unwrap();
     // A DISTINCT attacker committee (different keys; the prover controls it).
     let (attacker_committee, attacker_members) =
         dregg_federation::threshold::generate_test_committee_with_seed(

@@ -361,10 +361,7 @@ fn chain_commitment_error(
     if walk_end == legs.len() {
         let last = &legs[legs.len() - 1];
         let Some(last_new) = last.new_commit() else {
-            return Some((
-                legs.len() - 1,
-                "last leg PI missing NEW_COMMIT".to_string(),
-            ));
+            return Some((legs.len() - 1, "last leg PI missing NEW_COMMIT".to_string()));
         };
         if last_new != expected_new_commit {
             return Some((

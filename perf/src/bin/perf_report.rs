@@ -53,7 +53,9 @@ fn main() {
     println!("  dregg prover performance report");
     println!("  machine: {}", machine());
     println!("  config: BabyBear, FRI log_blowup=3 (8x LDE), 50 queries, 16 PoW bits");
-    println!("  live EffectVM path: rotated IR-v2 descriptor-interpreter (the v1 hand-AIR is retired under recursion)");
+    println!(
+        "  live EffectVM path: rotated IR-v2 descriptor-interpreter (the v1 hand-AIR is retired under recursion)"
+    );
 
     // selector 1 = TRANSFER — the validated descriptor every transfer workload proves against.
     let transfer_desc = descriptor_for_selector(1)
@@ -71,9 +73,12 @@ fn main() {
             let dpis = full_pis[..desc.public_input_count].to_vec();
             let proof = prove_vm_descriptor(desc, &trace, &dpis).expect("prove");
             verify_vm_descriptor(desc, &proof, &dpis).expect("verify");
-            let prove = time_mean(5, || prove_vm_descriptor(desc, &trace, &dpis).expect("prove"));
-            let verify =
-                time_mean(30, || verify_vm_descriptor(desc, &proof, &dpis).expect("verify"));
+            let prove = time_mean(5, || {
+                prove_vm_descriptor(desc, &trace, &dpis).expect("prove")
+            });
+            let verify = time_mean(30, || {
+                verify_vm_descriptor(desc, &proof, &dpis).expect("verify")
+            });
             println!(
                 "  {:<22} {:>5} {:>6} {:>13} {:>13} {:>11}",
                 name,
@@ -109,9 +114,13 @@ fn main() {
             descriptor_recursion_matrix(desc, &base_trace).expect("descriptor matrix")
         });
         // (c) total prove (includes (b) internally) and (d) verify.
-        let total = time_mean(5, || prove_vm_descriptor(desc, &base_trace, &dpis).expect("prove"));
+        let total = time_mean(5, || {
+            prove_vm_descriptor(desc, &base_trace, &dpis).expect("prove")
+        });
         let proof = prove_vm_descriptor(desc, &base_trace, &dpis).expect("prove");
-        let verify = time_mean(30, || verify_vm_descriptor(desc, &proof, &dpis).expect("verify"));
+        let verify = time_mean(30, || {
+            verify_vm_descriptor(desc, &proof, &dpis).expect("verify")
+        });
         println!("  {:<40} {:>13}", "stage", "time");
         println!(
             "  {:<40} {:>13}",

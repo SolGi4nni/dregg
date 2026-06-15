@@ -25,7 +25,13 @@ fn make_entry(content: &[u8], sender: [u8; 32], deposit: u64) -> QueueEntry {
 fn three_entry_queue() -> (MerkleQueue, Vec<QueueEntry>) {
     let mut q = MerkleQueue::new(10);
     let entries: Vec<QueueEntry> = (0u8..3)
-        .map(|i| make_entry(format!("msg-{i}").as_bytes(), [i + 1; 32], 100 * (i as u64 + 1)))
+        .map(|i| {
+            make_entry(
+                format!("msg-{i}").as_bytes(),
+                [i + 1; 32],
+                100 * (i as u64 + 1),
+            )
+        })
         .collect();
     for e in &entries {
         q.enqueue(e.clone()).unwrap();
@@ -44,7 +50,10 @@ fn legitimate_proof_verifies() {
 
     let (got, proof) = q.dequeue().unwrap();
     assert_eq!(got, entries[0]);
-    assert!(verify_dequeue_proof(&proof), "real dequeue proof must verify");
+    assert!(
+        verify_dequeue_proof(&proof),
+        "real dequeue proof must verify"
+    );
     assert!(
         verify_dequeue_proof_against(&proof, &pre_root),
         "real dequeue proof must verify against the live pre-root"
@@ -66,7 +75,11 @@ fn legitimate_proof_chain_verifies_to_empty() {
         );
         tracked_root = proof.new_root;
     }
-    assert_eq!(tracked_root, empty_queue_root(), "chain ends at the empty root");
+    assert_eq!(
+        tracked_root,
+        empty_queue_root(),
+        "chain ends at the empty root"
+    );
 }
 
 #[test]
@@ -135,7 +148,10 @@ fn equal_roots_refused() {
     let (_, proof) = q.dequeue().unwrap();
     let mut t = proof.clone();
     t.new_root = t.old_root;
-    assert!(!verify_dequeue_proof(&t), "old_root == new_root is never a dequeue");
+    assert!(
+        !verify_dequeue_proof(&t),
+        "old_root == new_root is never a dequeue"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -230,7 +246,10 @@ fn dropped_remaining_leaf_refused() {
     let (_, proof) = q.dequeue().unwrap();
     let mut t = proof.clone();
     t.remaining_leaves.pop();
-    assert!(!verify_dequeue_proof(&t), "dropping a pending message must refuse");
+    assert!(
+        !verify_dequeue_proof(&t),
+        "dropping a pending message must refuse"
+    );
 }
 
 #[test]
@@ -239,7 +258,10 @@ fn injected_remaining_leaf_refused() {
     let (_, proof) = q.dequeue().unwrap();
     let mut t = proof.clone();
     t.remaining_leaves.push([0x99; 32]);
-    assert!(!verify_dequeue_proof(&t), "injecting a pending message must refuse");
+    assert!(
+        !verify_dequeue_proof(&t),
+        "injecting a pending message must refuse"
+    );
 }
 
 #[test]
@@ -249,7 +271,10 @@ fn reordered_remaining_leaves_refused() {
     let mut t = proof.clone();
     assert_eq!(t.remaining_leaves.len(), 2);
     t.remaining_leaves.swap(0, 1);
-    assert!(!verify_dequeue_proof(&t), "reordering pending messages must refuse");
+    assert!(
+        !verify_dequeue_proof(&t),
+        "reordering pending messages must refuse"
+    );
 }
 
 #[test]

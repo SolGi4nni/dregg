@@ -29,12 +29,12 @@
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::classify::{classify, Classification};
+use crate::classify::{Classification, classify};
 use crate::fact::Height;
 use crate::hexutil::serde_hex32;
-use crate::mmr::{verify_range, MmrError, MmrHasher, RangeOpening};
-use crate::query::{eval, Bindings, Query, QueryError};
-use crate::receipt::{extract_facts, ReceiptError, ReceiptRecord};
+use crate::mmr::{MmrError, MmrHasher, RangeOpening, verify_range};
+use crate::query::{Bindings, Query, QueryError, eval};
+use crate::receipt::{ReceiptError, ReceiptRecord, extract_facts};
 
 /// The non-omission certificate for a receipt slice: the committed root the
 /// server claims, the dense position range, and the range opening.
@@ -128,7 +128,11 @@ impl AttestedSlice {
     /// receipt's `chain_index` IS its certified dense position. On success
     /// the slice is exactly positions `[lo, min(hi, len-1)]` of the genuine
     /// log. Returns the root-pinned log length.
-    pub fn verify<H: MmrHasher>(&self, hasher: &H, trusted_root: &[u8; 32]) -> Result<u64, AttestError> {
+    pub fn verify<H: MmrHasher>(
+        &self,
+        hasher: &H,
+        trusted_root: &[u8; 32],
+    ) -> Result<u64, AttestError> {
         if &self.cert.root != trusted_root {
             return Err(AttestError::UntrustedRoot);
         }

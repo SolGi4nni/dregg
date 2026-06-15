@@ -19,7 +19,7 @@ use dregg_app_framework::{
 };
 use dregg_cell::FactoryCreationParams;
 use starbridge_sealed_auction::{
-    AUCTION_FACTORY_VK, Bid, COMMIT_BASE, PHASE_COMMIT, PHASE_REVEAL, PHASE_RESOLVED, PHASE_SLOT,
+    AUCTION_FACTORY_VK, Bid, COMMIT_BASE, PHASE_COMMIT, PHASE_RESOLVED, PHASE_REVEAL, PHASE_SLOT,
     SELLER_SLOT, WINNER_SLOT, auction_child_program_vk, auction_factory_descriptor,
     close_commit_effects, commit_bid_effects, commit_slot, resolve_effects,
 };
@@ -30,7 +30,11 @@ fn make_cipherclerk() -> AppCipherclerk {
 
 /// Deploy the auction factory and birth an auction cell from it through the
 /// executor. Returns the born cell's id, with an owner cap granted to the agent.
-fn birth_auction_cell(exec: &EmbeddedExecutor, cclerk: &AppCipherclerk, token_tag: &[u8]) -> CellId {
+fn birth_auction_cell(
+    exec: &EmbeddedExecutor,
+    cclerk: &AppCipherclerk,
+    token_tag: &[u8],
+) -> CellId {
     exec.deploy_factory(auction_factory_descriptor());
 
     let agent = cclerk.cell_id();
@@ -50,7 +54,8 @@ fn birth_auction_cell(exec: &EmbeddedExecutor, cclerk: &AppCipherclerk, token_ta
         owner_pubkey: owner,
     };
     let birth = cclerk.create_from_factory(AUCTION_FACTORY_VK, owner, token, params);
-    exec.submit_turn(&birth).expect("auction-cell birth commits");
+    exec.submit_turn(&birth)
+        .expect("auction-cell birth commits");
 
     let born = CellId::derive_raw(&owner, &token);
     exec.with_ledger_mut(|ledger| {
@@ -74,7 +79,8 @@ fn seed_phase_commit(exec: &EmbeddedExecutor, cclerk: &AppCipherclerk, auction: 
     );
     // PHASE_COMMIT == 0; writing 0 onto an absent/zero slot is a no-op-equivalent and
     // is admitted (no StrictMonotonic in the commit_bid case).
-    exec.submit_action(cclerk, set_phase).expect("seed PHASE = COMMIT");
+    exec.submit_action(cclerk, set_phase)
+        .expect("seed PHASE = COMMIT");
 }
 
 /// The happy path: birth → commit two sealed bids (fresh WriteOnce slots) →
@@ -87,7 +93,10 @@ fn factory_born_auction_runs_the_whole_sale() {
     let auction = birth_auction_cell(&exec, &cclerk, b"sale-compute-1");
 
     let has_program = exec.with_ledger_mut(|ledger| {
-        ledger.get(&auction).map(|c| !c.program.is_none()).unwrap_or(false)
+        ledger
+            .get(&auction)
+            .map(|c| !c.program.is_none())
+            .unwrap_or(false)
     });
     assert!(has_program, "factory-born auction must carry a CellProgram");
 
@@ -98,12 +107,20 @@ fn factory_born_auction_runs_the_whole_sale() {
     let bid_b = Bid::new(11, 50, 8); // the top bid
     exec.submit_action(
         &cclerk,
-        cclerk.make_action(auction, "commit_bid", commit_bid_effects(auction, commit_slot(0), &bid_a.seal())),
+        cclerk.make_action(
+            auction,
+            "commit_bid",
+            commit_bid_effects(auction, commit_slot(0), &bid_a.seal()),
+        ),
     )
     .expect("first sealed commit must commit");
     exec.submit_action(
         &cclerk,
-        cclerk.make_action(auction, "commit_bid", commit_bid_effects(auction, commit_slot(1), &bid_b.seal())),
+        cclerk.make_action(
+            auction,
+            "commit_bid",
+            commit_bid_effects(auction, commit_slot(1), &bid_b.seal()),
+        ),
     )
     .expect("second sealed commit must commit");
 
@@ -121,19 +138,29 @@ fn factory_born_auction_runs_the_whole_sale() {
     assert_eq!(phase, field_from_u64(PHASE_COMMIT), "still in COMMIT");
 
     // Close the commit phase (COMMIT → REVEAL).
-    exec.submit_action(&cclerk, cclerk.make_action(auction, "close_commit", close_commit_effects(auction)))
-        .expect("close_commit must commit (StrictMonotonic 0 -> 1)");
+    exec.submit_action(
+        &cclerk,
+        cclerk.make_action(auction, "close_commit", close_commit_effects(auction)),
+    )
+    .expect("close_commit must commit (StrictMonotonic 0 -> 1)");
 
     // Resolve: announce the winner B with the top bid 50 (REVEAL → RESOLVED).
     let winner_id = field_from_u64(11);
-    exec.submit_action(&cclerk, cclerk.make_action(auction, "resolve", resolve_effects(auction, winner_id, 50)))
-        .expect("resolve must commit (StrictMonotonic 1 -> 2)");
+    exec.submit_action(
+        &cclerk,
+        cclerk.make_action(auction, "resolve", resolve_effects(auction, winner_id, 50)),
+    )
+    .expect("resolve must commit (StrictMonotonic 1 -> 2)");
 
     let (phase, winner) = exec.with_ledger_mut(|ledger| {
         let c = ledger.get(&auction).unwrap();
         (c.state.fields[PHASE_SLOT], c.state.fields[WINNER_SLOT])
     });
-    assert_eq!(phase, field_from_u64(PHASE_RESOLVED), "the sale must end RESOLVED");
+    assert_eq!(
+        phase,
+        field_from_u64(PHASE_RESOLVED),
+        "the sale must end RESOLVED"
+    );
     assert_eq!(winner, winner_id, "the winner is announced");
 }
 
@@ -150,7 +177,11 @@ fn factory_born_auction_refuses_overwriting_a_committed_bid() {
     let bid = Bid::new(10, 30, 7);
     exec.submit_action(
         &cclerk,
-        cclerk.make_action(auction, "commit_bid", commit_bid_effects(auction, commit_slot(0), &bid.seal())),
+        cclerk.make_action(
+            auction,
+            "commit_bid",
+            commit_bid_effects(auction, commit_slot(0), &bid.seal()),
+        ),
     )
     .expect("the sealed commit commits");
 
@@ -165,9 +196,9 @@ fn factory_born_auction_refuses_overwriting_a_committed_bid() {
             value: switched.seal(),
         }],
     );
-    let err = exec
-        .submit_action(&cclerk, overwrite)
-        .expect_err("overwriting a committed sealed bid must be refused — the anti-front-running tooth");
+    let err = exec.submit_action(&cclerk, overwrite).expect_err(
+        "overwriting a committed sealed bid must be refused — the anti-front-running tooth",
+    );
     let msg = format!("{err}").to_lowercase();
     assert!(
         msg.contains("writeonce") || msg.contains("write-once") || msg.contains("program"),
@@ -175,8 +206,13 @@ fn factory_born_auction_refuses_overwriting_a_committed_bid() {
     );
 
     // The committed bid did NOT change (anti-ghost).
-    let c0 = exec.with_ledger_mut(|ledger| ledger.get(&auction).unwrap().state.fields[commit_slot(0)]);
-    assert_eq!(c0, bid.seal(), "the refused overwrite committed nothing — the original seal stands");
+    let c0 =
+        exec.with_ledger_mut(|ledger| ledger.get(&auction).unwrap().state.fields[commit_slot(0)]);
+    assert_eq!(
+        c0,
+        bid.seal(),
+        "the refused overwrite committed nothing — the original seal stands"
+    );
 }
 
 /// LIFECYCLE tooth: REWINDING the phase is REFUSED on the real executor path. The
@@ -195,8 +231,11 @@ fn factory_born_auction_refuses_phase_rewind() {
     seed_phase_commit(&exec, &cclerk, auction);
 
     // Advance to REVEAL.
-    exec.submit_action(&cclerk, cclerk.make_action(auction, "close_commit", close_commit_effects(auction)))
-        .expect("close_commit commits (0 -> 1)");
+    exec.submit_action(
+        &cclerk,
+        cclerk.make_action(auction, "close_commit", close_commit_effects(auction)),
+    )
+    .expect("close_commit commits (0 -> 1)");
 
     // A resolve that REWINDS the phase (REVEAL → COMMIT) is refused — the born cell's
     // universal `Monotonic(PHASE)` floor (a decrease is rejected).
@@ -209,9 +248,9 @@ fn factory_born_auction_refuses_phase_rewind() {
             value: field_from_u64(PHASE_COMMIT),
         }],
     );
-    let err = exec
-        .submit_action(&cclerk, rewind)
-        .expect_err("rewinding the phase must be refused — the Monotonic(PHASE) anti-rollback floor");
+    let err = exec.submit_action(&cclerk, rewind).expect_err(
+        "rewinding the phase must be refused — the Monotonic(PHASE) anti-rollback floor",
+    );
     assert!(
         format!("{err}").to_lowercase().contains("monotonic")
             || format!("{err}").to_lowercase().contains("strict")
@@ -220,15 +259,32 @@ fn factory_born_auction_refuses_phase_rewind() {
     );
 
     // The phase did NOT change — the refused turn committed nothing (anti-ghost).
-    let phase = exec.with_ledger_mut(|ledger| ledger.get(&auction).unwrap().state.fields[PHASE_SLOT]);
-    assert_eq!(phase, field_from_u64(PHASE_REVEAL), "the refused rewind committed nothing — still REVEAL");
+    let phase =
+        exec.with_ledger_mut(|ledger| ledger.get(&auction).unwrap().state.fields[PHASE_SLOT]);
+    assert_eq!(
+        phase,
+        field_from_u64(PHASE_REVEAL),
+        "the refused rewind committed nothing — still REVEAL"
+    );
 
     // The honest advance (REVEAL → RESOLVED) DOES commit on the born cell (Monotonic admits
     // the increase; the result registers are written through the WriteOnce floor).
-    exec.submit_action(&cclerk, cclerk.make_action(auction, "resolve", resolve_effects(auction, field_from_u64(11), 50)))
-        .expect("the honest forward resolve commits (REVEAL -> RESOLVED)");
-    let phase = exec.with_ledger_mut(|ledger| ledger.get(&auction).unwrap().state.fields[PHASE_SLOT]);
-    assert_eq!(phase, field_from_u64(PHASE_RESOLVED), "the forward advance commits — the sale RESOLVED");
+    exec.submit_action(
+        &cclerk,
+        cclerk.make_action(
+            auction,
+            "resolve",
+            resolve_effects(auction, field_from_u64(11), 50),
+        ),
+    )
+    .expect("the honest forward resolve commits (REVEAL -> RESOLVED)");
+    let phase =
+        exec.with_ledger_mut(|ledger| ledger.get(&auction).unwrap().state.fields[PHASE_SLOT]);
+    assert_eq!(
+        phase,
+        field_from_u64(PHASE_RESOLVED),
+        "the forward advance commits — the sale RESOLVED"
+    );
 
     // Silence the unused-import lint for symbols this suite imports for documentation parity.
     let _ = (COMMIT_BASE, SELLER_SLOT);

@@ -52,18 +52,25 @@ fn seeding_installs_the_full_custody_program_on_the_item_cell() {
     // The seeded item cell carries `item_program()` — the FULL custody policy
     // (actor-bound register + strict-mono epoch + write-once links + monotonic head),
     // installed so the executor re-enforces it on every touching turn.
-    let installed = executor.with_ledger_mut(|ledger| {
-        ledger.get(&cclerk.cell_id()).map(|c| c.program.clone())
-    });
+    let installed =
+        executor.with_ledger_mut(|ledger| ledger.get(&cclerk.cell_id()).map(|c| c.program.clone()));
     assert_eq!(
         installed,
         Some(starbridge_supply_chain_provenance::item_program()),
         "the seeded item cell carries the full custody program (the seam's enforcement layer)"
     );
     // ...and the seeded genesis state is at epoch 1, manufacturer holding the baton.
-    let state = executor.cell_state(cclerk.cell_id()).expect("seeded cell exists");
-    assert_eq!(state.fields[EPOCH_SLOT as usize], dregg_app_framework::field_from_u64(1));
-    assert_eq!(state.fields[CUSTODIAN_SLOT as usize], identity_field("manufacturer"));
+    let state = executor
+        .cell_state(cclerk.cell_id())
+        .expect("seeded cell exists");
+    assert_eq!(
+        state.fields[EPOCH_SLOT as usize],
+        dregg_app_framework::field_from_u64(1)
+    );
+    assert_eq!(
+        state.fields[CUSTODIAN_SLOT as usize],
+        identity_field("manufacturer")
+    );
 }
 
 // =============================================================================
@@ -83,9 +90,13 @@ fn the_holder_accepts_custody_through_the_gated_fire_a_real_verified_turn() {
     // -> signer, `Immutable` fails, but the turn is SIGNED BY the signer so
     // `SenderInSlot(CUSTODIAN)` holds and `AnyOf[Immutable, SenderInSlot]` ADMITS. A real
     // verified turn — the executor's OWN receipt.
-    let receipt = fire_accept_custody(&app, &AuthRequired::Either, &cclerk, &executor)
-        .expect("the recorded incoming holder accepts custody (caps ∧ state ∧ actor-bound all pass)");
-    assert_ne!(receipt.turn_hash, [0u8; 32], "a real verified turn through the executor");
+    let receipt = fire_accept_custody(&app, &AuthRequired::Either, &cclerk, &executor).expect(
+        "the recorded incoming holder accepts custody (caps ∧ state ∧ actor-bound all pass)",
+    );
+    assert_ne!(
+        receipt.turn_hash, [0u8; 32],
+        "a real verified turn through the executor"
+    );
 
     // The baton now holds the signer's identity (the handoff committed).
     let state = executor.cell_state(cclerk.cell_id()).unwrap();
@@ -126,7 +137,10 @@ fn accept_custody_is_dark_before_the_mint_the_state_tooth_bites_in_band() {
     let (cclerk, executor) = agent(0x5c);
     let app = item_app(&cclerk, &executor);
     // Install the program but DO NOT mint (EPOCH stays 0).
-    executor.install_program(cclerk.cell_id(), starbridge_supply_chain_provenance::item_program());
+    executor.install_program(
+        cclerk.cell_id(),
+        starbridge_supply_chain_provenance::item_program(),
+    );
 
     let refused = fire_accept_custody(&app, &AuthRequired::Either, &cclerk, &executor);
     assert!(
@@ -161,10 +175,15 @@ fn the_executor_re_enforces_the_full_program_a_stale_epoch_handoff_is_refused() 
     let stale = accept_custody_effects(&cclerk, item, &from, &prev, 1, 1);
     let action = cclerk.make_action(item, "accept_custody", stale);
     let refused = executor.submit_action(&cclerk, action);
-    assert!(refused.is_err(), "a stale-epoch handoff must be refused by the executor");
+    assert!(
+        refused.is_err(),
+        "a stale-epoch handoff must be refused by the executor"
+    );
     let msg = format!("{:?}", refused.unwrap_err());
     assert!(
-        msg.contains("StrictMonotonic") || msg.contains("strictly increase") || msg.contains("field[1]"),
+        msg.contains("StrictMonotonic")
+            || msg.contains("strictly increase")
+            || msg.contains("field[1]"),
         "the executor refuses on the StrictMonotonic(EPOCH) caveat, got: {msg}"
     );
 
@@ -200,7 +219,10 @@ fn a_write_once_link_overwrite_is_refused_by_the_executor() {
     let overwrite = accept_custody_effects(&cclerk, item, &from, &prev, 3, 1);
     let action = cclerk.make_action(item, "accept_custody", overwrite);
     let refused = executor.submit_action(&cclerk, action);
-    assert!(refused.is_err(), "overwriting a committed custody link must be refused");
+    assert!(
+        refused.is_err(),
+        "overwriting a committed custody link must be refused"
+    );
     let msg = format!("{:?}", refused.unwrap_err());
     assert!(
         msg.contains("write-once") || msg.contains("WriteOnce") || msg.contains("already set"),
@@ -217,13 +239,20 @@ fn the_manufacturer_mints_through_the_gated_fire_then_the_button_goes_dark() {
     let (cclerk, executor) = agent(0x5c);
     let app = item_app(&cclerk, &executor);
     // Install the program; a FRESH item (EPOCH == 0, NOT seeded/minted).
-    executor.install_program(cclerk.cell_id(), starbridge_supply_chain_provenance::item_program());
+    executor.install_program(
+        cclerk.cell_id(),
+        starbridge_supply_chain_provenance::item_program(),
+    );
 
     // Before the mint, the MANUFACTURER (root) sees `mint_item` LIT (pre-mint
     // precondition EPOCH == 0 holds) and `accept_custody` DARK (minted precondition
     // EPOCH >= 1 fails). The htmx tooth, off live state.
     let lit_before = app.cells()[0].gated_fireable_names(&AuthRequired::None, &executor);
-    assert_eq!(lit_before, vec!["mint_item".to_string()], "pre-mint: only mint_item lights");
+    assert_eq!(
+        lit_before,
+        vec!["mint_item".to_string()],
+        "pre-mint: only mint_item lights"
+    );
 
     // The manufacturer mints — the decisive EPOCH 0 -> 1 advance. The executor
     // re-enforces the program (StrictMonotonic(EPOCH) holds, 0 -> 1). A real turn.
@@ -251,7 +280,10 @@ fn fire_mint_submits_the_full_multi_effect_mint_turn() {
     // gated-fire mint above — both work; this binds the whole genesis state in one turn.
     let (cclerk, executor) = agent(0x5c);
     let app = item_app(&cclerk, &executor);
-    executor.install_program(cclerk.cell_id(), starbridge_supply_chain_provenance::item_program());
+    executor.install_program(
+        cclerk.cell_id(),
+        starbridge_supply_chain_provenance::item_program(),
+    );
 
     let receipt = fire_mint(&app, &AuthRequired::None, &cclerk, &executor)
         .expect("the manufacturer mints (full multi-effect turn)");
@@ -260,8 +292,14 @@ fn fire_mint_submits_the_full_multi_effect_mint_turn() {
     // The genesis state is bound: epoch 1, the SIGNER (the minter) holds the baton (the
     // actor-bound register's inception — the minter signs and takes custody), HEAD at 1.
     let state = executor.cell_state(cclerk.cell_id()).unwrap();
-    assert_eq!(state.fields[EPOCH_SLOT as usize], dregg_app_framework::field_from_u64(1));
-    assert_eq!(state.fields[CUSTODIAN_SLOT as usize], signer_identity(&cclerk));
+    assert_eq!(
+        state.fields[EPOCH_SLOT as usize],
+        dregg_app_framework::field_from_u64(1)
+    );
+    assert_eq!(
+        state.fields[CUSTODIAN_SLOT as usize],
+        signer_identity(&cclerk)
+    );
 }
 
 #[test]
@@ -305,7 +343,11 @@ fn register_deos_mounts_the_seeded_surface_into_the_context() {
     // SHIPPED one (the census promotion) and the gated fires are live.
     let app = register_deos(&ctx);
     assert_eq!(app.name(), "supply-chain-provenance");
-    assert_eq!(ctx.affordance_registry().len(), 1, "the deos surface is registered");
+    assert_eq!(
+        ctx.affordance_registry().len(),
+        1,
+        "the deos surface is registered"
+    );
 
     // The seeded item is minted, so a custodian can accept custody through the mounted
     // surface immediately (the seam is closed and live).
@@ -317,5 +359,8 @@ fn register_deos_mounts_the_seeded_surface_into_the_context() {
 // keep field_from_bytes referenced (it backs identity_field) so the import is live.
 #[test]
 fn identity_field_is_field_from_bytes() {
-    assert_eq!(identity_field("manufacturer"), field_from_bytes("manufacturer".as_bytes()));
+    assert_eq!(
+        identity_field("manufacturer"),
+        field_from_bytes("manufacturer".as_bytes())
+    );
 }

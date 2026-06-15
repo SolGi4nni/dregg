@@ -37,7 +37,7 @@ use crate::witnessed_receipt::WitnessedReceipt;
 use dregg_circuit::bilateral_aggregation_air::{
     AggregationInnerRowV2, AggregationOuterPi, CrossSideHalfEdge, FOLD_PI_COUNT, agg,
     build_aggregation_trace_v2, build_tree_fold_trace, outer_pi_v2, prove_aggregation_v2,
-    prove_cross_side_existence_v2, prove_tree_fold_v2, schedule_block_from_inner_pi, sched,
+    prove_cross_side_existence_v2, prove_tree_fold_v2, sched, schedule_block_from_inner_pi,
     verify_aggregation_v2, verify_cross_side_existence_v2, verify_tree_fold_v2,
 };
 #[cfg(feature = "recursion")]
@@ -187,14 +187,16 @@ fn build_inner_rows_v2(
         // full v1 PI slice to project from); else FALL BACK to projecting the window out of
         // the v1 PI vector (the unchanged legacy path — every current WR construction).
         let schedule_block: [BabyBear; sched::WIDTH] = match &wr.bilateral_schedule {
-            Some(block) => <[BabyBear; sched::WIDTH]>::try_from(block.as_slice()).map_err(|_| {
-                TurnError::InvalidExecutionProof(format!(
-                    "WR for cell {:?}: native bilateral_schedule has {} felts, expected {}",
-                    cid,
-                    block.len(),
-                    sched::WIDTH
-                ))
-            })?,
+            Some(block) => {
+                <[BabyBear; sched::WIDTH]>::try_from(block.as_slice()).map_err(|_| {
+                    TurnError::InvalidExecutionProof(format!(
+                        "WR for cell {:?}: native bilateral_schedule has {} felts, expected {}",
+                        cid,
+                        block.len(),
+                        sched::WIDTH
+                    ))
+                })?
+            }
             None => {
                 if wr.public_inputs.len() < inner_pi::ACTIVE_BASE_COUNT {
                     return Err(TurnError::InvalidExecutionProof(format!(
@@ -573,7 +575,11 @@ pub fn verify_aggregated_bundle(bundle: &AggregatedBundle) -> Result<(), TurnErr
             blk
         })
         .collect();
-    let rebuilt_rows = build_inner_rows_v2_from_schedule(&bundle.turn, &bundle.participating_cells, &claimed_schedule);
+    let rebuilt_rows = build_inner_rows_v2_from_schedule(
+        &bundle.turn,
+        &bundle.participating_cells,
+        &claimed_schedule,
+    );
     let rebuilt_trace = build_aggregation_trace_v2(&rebuilt_rows);
     let rebuilt_u32: Vec<Vec<u32>> = rebuilt_trace
         .iter()
@@ -792,9 +798,7 @@ pub fn prove_cross_side_existence(
     turn: &Turn,
     participating_cells: &[CellId],
 ) -> Result<CrossSideExistenceProof, TurnError> {
-    use dregg_circuit::bilateral_aggregation_air::{
-        CSE2_BALANCE_COL, build_cross_side_trace_v2,
-    };
+    use dregg_circuit::bilateral_aggregation_air::{CSE2_BALANCE_COL, build_cross_side_trace_v2};
     let covered: std::collections::HashSet<CellId> = participating_cells.iter().cloned().collect();
     let half_edges = canonical_half_edges(turn, &covered);
     let (trace, pi) = build_cross_side_trace_v2(&half_edges);
@@ -1275,13 +1279,15 @@ mod tests {
         // A native block deliberately DISTINCT from the projection.
         let mut native = projected;
         native[sched::IS_AGENT_CELL] += BabyBear::new(1);
-        assert_ne!(native, projected, "native must differ from projection for the test");
+        assert_ne!(
+            native, projected,
+            "native must differ from projection for the test"
+        );
 
         let mut alice_wr = fabricate_wr(&turn, &alice);
         alice_wr.bilateral_schedule = Some(native.to_vec());
 
-        let (rows, _feds) =
-            build_inner_rows_v2(&turn, &[(alice, alice_wr)]).expect("rows build");
+        let (rows, _feds) = build_inner_rows_v2(&turn, &[(alice, alice_wr)]).expect("rows build");
         assert_eq!(
             rows[0].schedule, native,
             "build_inner_rows_v2 must use the WR's native bilateral_schedule, not the PI projection"
@@ -1363,8 +1369,12 @@ mod tests {
         let short_pi: Vec<u32> = vec![0u32; 39];
         assert!(short_pi.len() < inner_pi::ACTIVE_BASE_COUNT);
         let trace = dummy_scope2_trace();
-        let mut wr =
-            WitnessedReceipt::from_components(dummy_receipt(turn.agent.clone()), vec![], short_pi, Some(&trace));
+        let mut wr = WitnessedReceipt::from_components(
+            dummy_receipt(turn.agent.clone()),
+            vec![],
+            short_pi,
+            Some(&trace),
+        );
         wr.bilateral_schedule =
             Some(crate::bilateral_schedule::schedule_block_for_cell(turn, cell_id).to_vec());
         wr
@@ -1407,8 +1417,8 @@ mod tests {
             assert!(wr.bilateral_schedule.is_some());
         }
 
-        let bundle =
-            prove_aggregated_bundle(&turn, &entries).expect("rotated native-schedule bundle proves");
+        let bundle = prove_aggregated_bundle(&turn, &entries)
+            .expect("rotated native-schedule bundle proves");
         assert_eq!(bundle.participating_cells.len(), 2);
         verify_aggregated_bundle(&bundle).expect("verify rotated native-schedule bundle");
     }

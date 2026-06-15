@@ -4762,14 +4762,20 @@ impl AgentCipherclerk {
             match effect {
                 Effect::Transfer { from, to, amount } => {
                     if from == cell_id {
-                        new_cell_state
-                            .state
-                            .set_balance(new_cell_state.state.balance().saturating_sub(*amount as i64));
+                        new_cell_state.state.set_balance(
+                            new_cell_state
+                                .state
+                                .balance()
+                                .saturating_sub(*amount as i64),
+                        );
                     }
                     if to == cell_id {
-                        new_cell_state
-                            .state
-                            .set_balance(new_cell_state.state.balance().saturating_add(*amount as i64));
+                        new_cell_state.state.set_balance(
+                            new_cell_state
+                                .state
+                                .balance()
+                                .saturating_add(*amount as i64),
+                        );
                     }
                 }
                 Effect::SetField { cell, index, value } if cell == cell_id => {
@@ -5062,14 +5068,20 @@ impl AgentCipherclerk {
             match effect {
                 Effect::Transfer { from, to, amount } => {
                     if from == cell_id {
-                        new_cell_state
-                            .state
-                            .set_balance(new_cell_state.state.balance().saturating_sub(*amount as i64));
+                        new_cell_state.state.set_balance(
+                            new_cell_state
+                                .state
+                                .balance()
+                                .saturating_sub(*amount as i64),
+                        );
                     }
                     if to == cell_id {
-                        new_cell_state
-                            .state
-                            .set_balance(new_cell_state.state.balance().saturating_add(*amount as i64));
+                        new_cell_state.state.set_balance(
+                            new_cell_state
+                                .state
+                                .balance()
+                                .saturating_add(*amount as i64),
+                        );
                     }
                 }
                 Effect::SetField { cell, index, value } if cell == cell_id => {
@@ -5288,8 +5300,11 @@ impl AgentCipherclerk {
         //    its own receipt chain. The before/after blocks share this turn-invariant
         //    context (the receipt log does not change mid-proof).
         let nullifier_root = [0u8; 32];
-        let receipt_hashes: Vec<[u8; 32]> =
-            self.receipt_chain.iter().map(|r| r.receipt_hash()).collect();
+        let receipt_hashes: Vec<[u8; 32]> = self
+            .receipt_chain
+            .iter()
+            .map(|r| r.receipt_hash())
+            .collect();
         let mut ctx_ledger = dregg_cell::Ledger::new();
         let _ = ctx_ledger.insert_cell(before_cell.clone());
 
@@ -8739,9 +8754,13 @@ mod tests {
         let seed = [3u8; 64];
         let root = AgentCipherclerk::from_seed(seed);
 
-        let laptop = root.derive_sub_agent_at_path("dregg/device/laptop").unwrap();
+        let laptop = root
+            .derive_sub_agent_at_path("dregg/device/laptop")
+            .unwrap();
         let phone = root.derive_sub_agent_at_path("dregg/device/phone").unwrap();
-        let app = root.derive_sub_agent_at_path("dregg/app/orderbook").unwrap();
+        let app = root
+            .derive_sub_agent_at_path("dregg/app/orderbook")
+            .unwrap();
 
         // Distinct paths -> distinct identities.
         assert_ne!(laptop.public_key(), phone.public_key());
@@ -8749,7 +8768,9 @@ mod tests {
         assert_ne!(phone.public_key(), app.public_key());
         // Path is recorded and stable across re-derivation.
         assert_eq!(laptop.derivation_path(), Some("dregg/device/laptop"));
-        let laptop_again = root.derive_sub_agent_at_path("dregg/device/laptop").unwrap();
+        let laptop_again = root
+            .derive_sub_agent_at_path("dregg/device/laptop")
+            .unwrap();
         assert_eq!(laptop.public_key(), laptop_again.public_key());
 
         // derive_sub_agent(i) is exactly derive_sub_agent_at_path("dregg/{i}").
@@ -8762,7 +8783,11 @@ mod tests {
     fn derive_sub_agent_at_path_requires_seed() {
         // A raw-key cipherclerk has no seed and cannot derive sub-agents.
         let cclerk = AgentCipherclerk::new();
-        assert!(cclerk.derive_sub_agent_at_path("dregg/device/laptop").is_err());
+        assert!(
+            cclerk
+                .derive_sub_agent_at_path("dregg/device/laptop")
+                .is_err()
+        );
     }
 }
 

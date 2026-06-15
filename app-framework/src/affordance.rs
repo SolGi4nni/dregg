@@ -49,7 +49,7 @@
 //! `required ⊆ held`.
 
 use dregg_cell::state::CellState;
-use dregg_cell::{is_attenuation, AuthRequired, CellProgram};
+use dregg_cell::{AuthRequired, CellProgram, is_attenuation};
 use dregg_turn::action::Effect;
 use dregg_types::CellId;
 
@@ -129,15 +129,34 @@ impl CellAffordance {
 /// equality-friendly projection a test or a UI can compare.)
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EffectSummary {
-    SetField { cell: CellId, index: usize },
-    Transfer { from: CellId, to: CellId, amount: u64 },
-    GrantCapability { from: CellId, to: CellId },
-    RevokeCapability { cell: CellId, slot: u32 },
-    EmitEvent { cell: CellId },
-    IncrementNonce { cell: CellId },
+    SetField {
+        cell: CellId,
+        index: usize,
+    },
+    Transfer {
+        from: CellId,
+        to: CellId,
+        amount: u64,
+    },
+    GrantCapability {
+        from: CellId,
+        to: CellId,
+    },
+    RevokeCapability {
+        cell: CellId,
+        slot: u32,
+    },
+    EmitEvent {
+        cell: CellId,
+    },
+    IncrementNonce {
+        cell: CellId,
+    },
     /// Any other real `Effect` variant, tagged by its name (still the genuine
     /// effect — only the *summary* is coarse).
-    Other { tag: &'static str },
+    Other {
+        tag: &'static str,
+    },
 }
 
 impl EffectSummary {
@@ -269,10 +288,7 @@ impl std::fmt::Display for FireError {
                 f,
                 "unauthorized: firing `{affordance}` requires {required:?} but holder has {held:?}"
             ),
-            FireError::StateConditionUnmet {
-                affordance,
-                reason,
-            } => write!(
+            FireError::StateConditionUnmet { affordance, reason } => write!(
                 f,
                 "state condition unmet: firing `{affordance}` is not admissible in the cell's current state ({reason})"
             ),
@@ -364,11 +380,7 @@ impl AffordanceSurface {
     /// The names a viewer is authorized to see (sorted) — the per-viewer affordance
     /// set, the thing two different-cap viewers DIVERGE on.
     pub fn visible_names(&self, held: &AuthRequired) -> Vec<String> {
-        let mut names: Vec<String> = self
-            .project_for(held)
-            .into_iter()
-            .map(|a| a.name)
-            .collect();
+        let mut names: Vec<String> = self.project_for(held).into_iter().map(|a| a.name).collect();
         names.sort();
         names
     }
@@ -444,11 +456,8 @@ impl AffordanceSurface {
         // Step 2: the gated effect → a signed turn targeting the surface cell, with
         // the affordance name as the method (so the witness-graph records WHICH
         // affordance was fired). A real `Authorization::Signature` — no placeholder.
-        let action = cipherclerk.make_action(
-            self.cell,
-            &intent.affordance,
-            vec![intent.effect.clone()],
-        );
+        let action =
+            cipherclerk.make_action(self.cell, &intent.affordance, vec![intent.effect.clone()]);
         let turn = cipherclerk.make_turn(action);
         // Step 3: dispatch through the executor; return its OWN receipt.
         executor
@@ -987,7 +996,10 @@ mod tests {
         let edit = CellAffordance::new("edit", AuthRequired::Either, set_field(doc, 3));
         assert_eq!(
             edit.effect_summary(),
-            EffectSummary::SetField { cell: doc, index: 3 }
+            EffectSummary::SetField {
+                cell: doc,
+                index: 3
+            }
         );
         assert!(matches!(edit.effect_template, Effect::SetField { .. }));
     }
@@ -1027,7 +1039,11 @@ mod tests {
         assert_eq!(viewer_set, vec!["view".to_string()]);
         assert_eq!(
             editor_set,
-            vec!["comment".to_string(), "edit".to_string(), "view".to_string()]
+            vec![
+                "comment".to_string(),
+                "edit".to_string(),
+                "view".to_string()
+            ]
         );
         assert_eq!(
             admin_set,
@@ -1071,7 +1087,10 @@ mod tests {
         assert_eq!(intent.actor, cid(50));
         assert_eq!(intent.surface_cell, doc);
         assert_eq!(intent.affordance, "view");
-        assert_eq!(intent.effect_summary(), EffectSummary::EmitEvent { cell: doc });
+        assert_eq!(
+            intent.effect_summary(),
+            EffectSummary::EmitEvent { cell: doc }
+        );
         assert!(matches!(intent.effect, Effect::EmitEvent { .. }));
     }
 
@@ -1099,7 +1118,10 @@ mod tests {
             .expect("admin holder fires admin");
         assert_eq!(
             admin_intent.effect_summary(),
-            EffectSummary::GrantCapability { from: doc, to: cid(99) }
+            EffectSummary::GrantCapability {
+                from: doc,
+                to: cid(99)
+            }
         );
     }
 
@@ -1116,13 +1138,27 @@ mod tests {
     fn declare_replaces_by_name() {
         let doc = cid(91);
         let surface = AffordanceSurface::new(doc)
-            .declare(CellAffordance::new("x", AuthRequired::None, emit_event(doc)))
-            .declare(CellAffordance::new("x", AuthRequired::Signature, set_field(doc, 0)));
+            .declare(CellAffordance::new(
+                "x",
+                AuthRequired::None,
+                emit_event(doc),
+            ))
+            .declare(CellAffordance::new(
+                "x",
+                AuthRequired::Signature,
+                set_field(doc, 0),
+            ));
         assert_eq!(surface.affordances.len(), 1);
-        assert_eq!(surface.get("x").unwrap().required_rights, AuthRequired::Signature);
+        assert_eq!(
+            surface.get("x").unwrap().required_rights,
+            AuthRequired::Signature
+        );
         assert_eq!(
             surface.get("x").unwrap().effect_summary(),
-            EffectSummary::SetField { cell: doc, index: 0 }
+            EffectSummary::SetField {
+                cell: doc,
+                index: 0
+            }
         );
     }
 
@@ -1147,7 +1183,11 @@ mod tests {
 
         // The receipt is the EXECUTOR'S own — not a self-reported stub.
         assert_ne!(receipt.turn_hash, [0u8; 32], "turn_hash must be non-zero");
-        assert_eq!(receipt.agent, cclerk.cell_id(), "receipt agent is the actor");
+        assert_eq!(
+            receipt.agent,
+            cclerk.cell_id(),
+            "receipt agent is the actor"
+        );
         assert_eq!(receipt.action_count, 1, "one action fired");
     }
 
@@ -1188,8 +1228,16 @@ mod tests {
         let executor = EmbeddedExecutor::new(&cclerk, "default");
         let cell = cclerk.cell_id();
         let surface = AffordanceSurface::new(cell)
-            .declare(CellAffordance::new("admin", AuthRequired::None, grant_cap(cell, cid(99))))
-            .declare(CellAffordance::new("view", AuthRequired::None, emit_event(cell)));
+            .declare(CellAffordance::new(
+                "admin",
+                AuthRequired::None,
+                grant_cap(cell, cid(99)),
+            ))
+            .declare(CellAffordance::new(
+                "view",
+                AuthRequired::None,
+                emit_event(cell),
+            ));
 
         // Unauthorized fire: VIEWER (Signature) cannot fire admin (req None).
         let refused = surface.fire_through_executor("admin", &VIEWER, &cclerk, &executor);
@@ -1278,7 +1326,11 @@ mod tests {
     /// proposal in PENDING. The conjunction the cap-only model could not express.
     fn approve_btn(cell: CellId) -> GatedAffordance {
         GatedAffordance::new(
-            CellAffordance::new("approve", AuthRequired::Either, set_field(cell, STATUS_SLOT)),
+            CellAffordance::new(
+                "approve",
+                AuthRequired::Either,
+                set_field(cell, STATUS_SLOT),
+            ),
             pending_cond(),
         )
     }
@@ -1304,7 +1356,10 @@ mod tests {
         // `fireGated_carries_real_effect`).
         assert_eq!(
             intent.effect_summary(),
-            EffectSummary::SetField { cell: doc, index: STATUS_SLOT }
+            EffectSummary::SetField {
+                cell: doc,
+                index: STATUS_SLOT
+            }
         );
     }
 
@@ -1365,8 +1420,14 @@ mod tests {
         let btn = approve_btn(doc);
         let pending = proposal_state(PENDING);
         let resolved = proposal_state(RESOLVED);
-        assert!(btn.gated_ok(&APPROVER, &pending, &pending), "lit in PENDING");
-        assert!(!btn.gated_ok(&APPROVER, &resolved, &resolved), "dark in RESOLVED");
+        assert!(
+            btn.gated_ok(&APPROVER, &pending, &pending),
+            "lit in PENDING"
+        );
+        assert!(
+            !btn.gated_ok(&APPROVER, &resolved, &resolved),
+            "dark in RESOLVED"
+        );
     }
 
     #[test]
@@ -1428,7 +1489,13 @@ mod tests {
         let resolved = proposal_state(RESOLVED);
 
         // Stale (RESOLVED): refused in-band, by the state tooth, before any submit.
-        match btn.fire_through_executor(&AuthRequired::None, &resolved, &resolved, &cclerk, &executor) {
+        match btn.fire_through_executor(
+            &AuthRequired::None,
+            &resolved,
+            &resolved,
+            &cclerk,
+            &executor,
+        ) {
             Err(FireExecuteError::Gate(FireError::StateConditionUnmet { affordance, .. })) => {
                 assert_eq!(affordance, "approve");
             }

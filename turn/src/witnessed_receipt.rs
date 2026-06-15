@@ -512,8 +512,10 @@ impl WitnessedReceipt {
     /// A short-PI WR WITHOUT a native schedule block is a hard reject (no schedule to check).
     fn bilateral_bundle_pi(
         wrs: &[(dregg_types::CellId, &WitnessedReceipt)],
-    ) -> Result<Vec<(dregg_types::CellId, Vec<dregg_circuit::field::BabyBear>)>, crate::error::TurnError>
-    {
+    ) -> Result<
+        Vec<(dregg_types::CellId, Vec<dregg_circuit::field::BabyBear>)>,
+        crate::error::TurnError,
+    > {
         use dregg_circuit::effect_vm::pi as p;
         use dregg_circuit::field::BabyBear;
 
@@ -535,19 +537,22 @@ impl WitnessedReceipt {
             // path does (`recursion`/`verifier`); `not(recursion)` (wasm) has no rotated WRs.
             #[cfg(any(feature = "recursion", feature = "verifier"))]
             if let Some(block) = &wr.bilateral_schedule {
-                let arr = <[BabyBear;
-                    dregg_circuit::bilateral_aggregation_air::sched::WIDTH]>::try_from(
-                    block.as_slice(),
-                )
-                .map_err(|_| {
-                    crate::error::TurnError::InvalidExecutionProof(format!(
-                        "WR for cell {:?}: native bilateral_schedule has {} felts, expected {}",
-                        cid,
-                        block.len(),
-                        dregg_circuit::bilateral_aggregation_air::sched::WIDTH
-                    ))
-                })?;
-                bundle.push((cid.clone(), crate::bilateral_schedule::pi_from_schedule_block(&arr)));
+                let arr =
+                    <[BabyBear; dregg_circuit::bilateral_aggregation_air::sched::WIDTH]>::try_from(
+                        block.as_slice(),
+                    )
+                    .map_err(|_| {
+                        crate::error::TurnError::InvalidExecutionProof(format!(
+                            "WR for cell {:?}: native bilateral_schedule has {} felts, expected {}",
+                            cid,
+                            block.len(),
+                            dregg_circuit::bilateral_aggregation_air::sched::WIDTH
+                        ))
+                    })?;
+                bundle.push((
+                    cid.clone(),
+                    crate::bilateral_schedule::pi_from_schedule_block(&arr),
+                ));
                 continue;
             }
             return Err(crate::error::TurnError::InvalidExecutionProof(format!(

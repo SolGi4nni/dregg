@@ -216,12 +216,7 @@ impl BeaconCommittee {
         }
         // Degree t-1 polynomial; f(0) = coeffs[0] = the group secret.
         let coeffs: Vec<F> = (0..t).map(|_| F::rand(rng)).collect();
-        let eval = |x: F| {
-            coeffs
-                .iter()
-                .rev()
-                .fold(F::zero(), |acc, c| acc * x + c)
-        };
+        let eval = |x: F| coeffs.iter().rev().fold(F::zero(), |acc, c| acc * x + c);
 
         let g1 = G1::generator();
         let mut shares = Vec::with_capacity(n);
@@ -353,7 +348,11 @@ impl BeaconCommittee {
     /// Serialize the public committee (threshold, group key, share keys).
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut buf = Vec::new();
-        (self.threshold as u64, self.group_public, &self.share_publics)
+        (
+            self.threshold as u64,
+            self.group_public,
+            &self.share_publics,
+        )
             .serialize_compressed(&mut buf)
             .expect("serialization cannot fail");
         buf
@@ -815,10 +814,7 @@ mod tests {
         assert_eq!(select_jury(&out.randomness, 100, 12).unwrap(), jury);
 
         // Edges: full pool is a permutation; over-asking is refused.
-        assert_eq!(
-            select_jury(&out.randomness, 5, 5).unwrap().len(),
-            5
-        );
+        assert_eq!(select_jury(&out.randomness, 5, 5).unwrap().len(), 5);
         assert_eq!(select_jury(&out.randomness, 5, 6), None);
     }
 

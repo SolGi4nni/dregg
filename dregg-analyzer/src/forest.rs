@@ -22,7 +22,7 @@
 use serde::{Deserialize, Serialize};
 
 use dregg_turn::CallForest;
-use dregg_userspace_verify::{analyze as uverify, Verdict};
+use dregg_userspace_verify::{Verdict, analyze as uverify};
 
 use crate::findings::{AnalysisReport, Finding, Severity};
 
@@ -81,10 +81,7 @@ pub fn analyze(capture: &ForestCapture) -> AnalysisReport {
                         Severity::Critical,
                         by,
                         "forest.check_fail",
-                        format!(
-                            "{name} VIOLATED at {}: {}",
-                            f.locus, f.message
-                        ),
+                        format!("{name} VIOLATED at {}: {}", f.locus, f.message),
                     ));
                 }
             }

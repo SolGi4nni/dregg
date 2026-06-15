@@ -439,22 +439,19 @@ pub fn extract_identity_log(
     let rows: Vec<(EventAnchor, [FieldElement; 16])> = records
         .iter()
         .filter_map(|r| {
-            r.touched_cells
-                .iter()
-                .find(|c| c.id() == *cell)
-                .map(|c| {
-                    (
-                        EventAnchor {
-                            height: r.height,
-                            ordinal: r.ordinal,
-                            block_id: r.block_id,
-                            turn_hash: r.turn_hash,
-                            receipt_hash: r.receipt_hash,
-                            ledger_root: r.ledger_root,
-                        },
-                        c.state.fields,
-                    )
-                })
+            r.touched_cells.iter().find(|c| c.id() == *cell).map(|c| {
+                (
+                    EventAnchor {
+                        height: r.height,
+                        ordinal: r.ordinal,
+                        block_id: r.block_id,
+                        turn_hash: r.turn_hash,
+                        receipt_hash: r.receipt_hash,
+                        ledger_root: r.ledger_root,
+                    },
+                    c.state.fields,
+                )
+            })
         })
         .collect();
     if rows.is_empty() {
@@ -501,38 +498,72 @@ pub fn extract_identity_log(
 pub enum VerifyError {
     UnknownFormat(String),
     Empty,
-    BadHex { seq: u64, field: &'static str, detail: String },
+    BadHex {
+        seq: u64,
+        field: &'static str,
+        detail: String,
+    },
     BadField(String),
-    SeqGap { expected: u64, got: u64 },
+    SeqGap {
+        expected: u64,
+        got: u64,
+    },
     /// Stated `event_digest` does not match the recomputed canonical digest.
-    EventDigestMismatch { seq: u64 },
+    EventDigestMismatch {
+        seq: u64,
+    },
     /// `prior_event_digest` does not match the previous event's digest.
-    ChainBroken { seq: u64 },
+    ChainBroken {
+        seq: u64,
+    },
     /// Event 0 must carry no prior; later events must carry one.
-    PriorPresenceWrong { seq: u64 },
+    PriorPresenceWrong {
+        seq: u64,
+    },
     /// More than one inception, an inception after the first install, or a
     /// rotation before any inception.
-    InceptionShape { seq: u64, detail: String },
+    InceptionShape {
+        seq: u64,
+        detail: String,
+    },
     /// `blake3(exhibited preimage)` does not equal the previous event's
     /// `next_keys_digest` — the rotation chain does not replay.
-    RotationPreimage { seq: u64 },
+    RotationPreimage {
+        seq: u64,
+    },
     /// A rotation's structural fields are wrong (zero registers, stamp
     /// mismatch, missing/mismatched exhibited preimage).
-    RotationShape { seq: u64, detail: String },
+    RotationShape {
+        seq: u64,
+        detail: String,
+    },
     /// Key state (or the pinned council commitment) moved outside a
     /// rotation/inception event.
-    KeyStateMoved { seq: u64, detail: String },
+    KeyStateMoved {
+        seq: u64,
+        detail: String,
+    },
     /// An event follows the terminal RETIRED state.
-    AfterRetirement { seq: u64 },
+    AfterRetirement {
+        seq: u64,
+    },
     /// An attached receipt's recomputed `receipt_hash()` differs from the
     /// event's `receipt_hash`.
-    ReceiptHashMismatch { seq: u64 },
+    ReceiptHashMismatch {
+        seq: u64,
+    },
     /// An attached receipt's executor signature failed Ed25519
     /// verification against the pinned key.
-    BadExecutorSignature { seq: u64, detail: String },
+    BadExecutorSignature {
+        seq: u64,
+        detail: String,
+    },
     /// A witness artifact failed to decode, or its embedded receipt is not
     /// bound to this event's `receipt_hash`.
-    BadWitnessArtifact { seq: u64, detail: String },
+    BadWitnessArtifact {
+        seq: u64,
+        detail: String,
+    },
 }
 
 impl std::fmt::Display for VerifyError {
@@ -788,11 +819,10 @@ pub fn verify_export(
 
         // ── witness artifacts: decode + re-bind to this event's receipt ──
         for (wi, artifact_hex) in ev.witness_artifacts.iter().enumerate() {
-            let bytes =
-                unhex_var(artifact_hex).map_err(|e| VerifyError::BadWitnessArtifact {
-                    seq,
-                    detail: format!("artifact {wi}: {e}"),
-                })?;
+            let bytes = unhex_var(artifact_hex).map_err(|e| VerifyError::BadWitnessArtifact {
+                seq,
+                detail: format!("artifact {wi}: {e}"),
+            })?;
             let witnessed = WitnessedReceipt::from_artifact_bytes(&bytes).map_err(|e| {
                 VerifyError::BadWitnessArtifact {
                     seq,
@@ -891,7 +921,10 @@ mod tests {
 
         let rows = vec![
             // factory birth: all-zero registers, UNINIT
-            (anchor(0, 10), fields(STATE_UNINIT_U64, FIELD_ZERO, FIELD_ZERO, 0, FIELD_ZERO)),
+            (
+                anchor(0, 10),
+                fields(STATE_UNINIT_U64, FIELD_ZERO, FIELD_ZERO, 0, FIELD_ZERO),
+            ),
             // inception: install K0 + pre-commit blake3(K1), pin council
             (anchor(1, 11), fields(STATE_ACTIVE, n1, k0, 0, council)),
             // rotation at height 20: exhibit K1, pre-commit blake3(K2), stamp
@@ -957,7 +990,10 @@ mod tests {
         log.events.remove(1);
         assert_eq!(
             verify_export(&log, None),
-            Err(VerifyError::SeqGap { expected: 1, got: 2 })
+            Err(VerifyError::SeqGap {
+                expected: 1,
+                got: 2
+            })
         );
     }
 
@@ -976,7 +1012,10 @@ mod tests {
         // the log says happened) — the VERIFIER is the tooth.
         let rows = vec![
             (anchor(0, 11), fields(STATE_ACTIVE, n1, k0, 0, council)),
-            (anchor(1, 20), fields(STATE_ACTIVE, n_evil, k_evil, 20, council)),
+            (
+                anchor(1, 20),
+                fields(STATE_ACTIVE, n_evil, k_evil, 20, council),
+            ),
         ];
         let events = events_from_snapshots(&cell, &rows);
         let log = IdentityEventLog {
@@ -1019,7 +1058,10 @@ mod tests {
         let n_swapped = *blake3::hash(b"swapped").as_bytes();
         let rows = vec![
             (anchor(0, 11), fields(STATE_ACTIVE, n1, k0, 0, council)),
-            (anchor(1, 12), fields(STATE_ACTIVE, n_swapped, k0, 0, council)),
+            (
+                anchor(1, 12),
+                fields(STATE_ACTIVE, n_swapped, k0, 0, council),
+            ),
         ];
         let events = events_from_snapshots(&cell, &rows);
         // Same current commit ⇒ classified Interaction; the verifier
@@ -1061,13 +1103,14 @@ mod tests {
         log.events[3].event_digest = hex32(&dec.surface.digest());
         log.events[3].receipt = Some(receipt.clone());
 
-        let report =
-            verify_export(&log, Some(&pubkey)).expect("signed receipt must verify");
+        let report = verify_export(&log, Some(&pubkey)).expect("signed receipt must verify");
         assert_eq!(report.receipts_checked, 1);
         assert_eq!(report.signatures_checked, 1);
 
         // Wrong pinned key refuses.
-        let wrong = SigningKey::from_bytes(&[8u8; 32]).verifying_key().to_bytes();
+        let wrong = SigningKey::from_bytes(&[8u8; 32])
+            .verifying_key()
+            .to_bytes();
         assert!(matches!(
             verify_export(&log, Some(&wrong)),
             Err(VerifyError::BadExecutorSignature { seq: 3, .. })

@@ -79,7 +79,10 @@ fn golden_index(kind: &str) -> std::collections::BTreeMap<String, String> {
             );
         }
     }
-    assert!(!m.is_empty(), "golden has no `{kind}` lines — is goldens/marshal-golden.txt populated?");
+    assert!(
+        !m.is_empty(),
+        "golden has no `{kind}` lines — is goldens/marshal-golden.txt populated?"
+    );
     m
 }
 
@@ -111,7 +114,8 @@ fn t8_encode_matches_lean_golden_byte_for_byte() {
         corpus.iter().map(|(n, ..)| n.clone()).collect();
     let golden_names: std::collections::BTreeSet<String> = golden.keys().cloned().collect();
     assert_eq!(
-        rust_names, golden_names,
+        rust_names,
+        golden_names,
         "Rust IN corpus and Lean golden cover different case names (drift!):\n  \
          in Rust only: {:?}\n  in golden only: {:?}",
         rust_names.difference(&golden_names).collect::<Vec<_>>(),
@@ -126,7 +130,8 @@ fn t8_encode_matches_lean_golden_byte_for_byte() {
         let got = marshal_turn_hosted(host, state, turn)
             .unwrap_or_else(|e| panic!("marshal_turn_hosted errored on `{name}`: {e}"));
         assert_eq!(
-            &got, want,
+            &got,
+            want,
             "T8 BYTE MISMATCH on `{name}` — the Rust marshaller diverges from the PROVED Lean \
              encodeWWire:\n  {}",
             first_diff(&got, want)
@@ -154,7 +159,8 @@ fn t9_decode_inverts_lean_output_encoder() {
         expectations.iter().map(|e| e.name.to_string()).collect();
     let golden_names: std::collections::BTreeSet<String> = golden.keys().cloned().collect();
     assert_eq!(
-        rust_names, golden_names,
+        rust_names,
+        golden_names,
         "Rust OUT expectations and Lean golden cover different names (drift!):\n  \
          in Rust only: {:?}\n  in golden only: {:?}",
         rust_names.difference(&golden_names).collect::<Vec<_>>(),
@@ -172,7 +178,11 @@ fn t9_decode_inverts_lean_output_encoder() {
                     "`{}`: expected the malformed-wire sentinel ERROR but decode succeeded",
                     exp.name
                 );
-                assert_eq!(res.committed, exp.committed, "`{}`: committed bit", exp.name);
+                assert_eq!(
+                    res.committed, exp.committed,
+                    "`{}`: committed bit",
+                    exp.name
+                );
                 assert_eq!(res.loglen, exp.loglen, "`{}`: loglen", exp.name);
                 assert_eq!(res.status, exp.status, "`{}`: status code", exp.name);
             }

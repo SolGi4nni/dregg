@@ -58,7 +58,8 @@ fn set_spent(executor: &EmbeddedExecutor, spent: u64) {
     let gateway = executor.cell_id();
     executor.with_ledger_mut(|ledger| {
         if let Some(cell) = ledger.get_mut(&gateway) {
-            cell.state.set_field(VOLUME_SPENT_SLOT as usize, field_from_u64(spent));
+            cell.state
+                .set_field(VOLUME_SPENT_SLOT as usize, field_from_u64(spent));
         }
     });
 }
@@ -75,9 +76,8 @@ fn seeding_installs_the_volume_invariants_and_a_funded_budget() {
     // The seeded gateway cell carries the volume invariants (WriteOnce anchor/ceiling/
     // prefix/compartment + Monotonic VOLUME_SPENT + FieldLteField(spent <= ceiling)),
     // installed so the executor re-enforces them.
-    let installed = executor.with_ledger_mut(|ledger| {
-        ledger.get(&cclerk.cell_id()).map(|c| c.program.clone())
-    });
+    let installed =
+        executor.with_ledger_mut(|ledger| ledger.get(&cclerk.cell_id()).map(|c| c.program.clone()));
     assert_eq!(
         installed,
         Some(gateway_invariants_program()),
@@ -85,8 +85,13 @@ fn seeding_installs_the_volume_invariants_and_a_funded_budget() {
     );
     // ...and the seeded state is the WriteOnce-bound ceiling (10) with a fresh budget
     // (VOLUME_SPENT == 0, nothing spent yet).
-    let state = executor.cell_state(cclerk.cell_id()).expect("seeded cell exists");
-    assert_eq!(state.fields[VOLUME_CEILING_SLOT as usize], field_from_u64(10));
+    let state = executor
+        .cell_state(cclerk.cell_id())
+        .expect("seeded cell exists");
+    assert_eq!(
+        state.fields[VOLUME_CEILING_SLOT as usize],
+        field_from_u64(10)
+    );
     assert_eq!(state.fields[VOLUME_SPENT_SLOT as usize], field_from_u64(0));
 }
 
@@ -105,9 +110,19 @@ fn a_writer_puts_through_the_gated_fire_a_real_verified_turn() {
     // budget remains), and the FULL metered write advances the meter 0 -> 4. The executor
     // RE-ENFORCES the invariants: `FieldLteField(4 <= 10)` holds, `Monotonic(0 -> 4)` holds.
     // A real verified turn.
-    let receipt = fire_put(&app, &AuthRequired::Either, &cclerk, &executor, "uploads/doc.txt", 4)
-        .expect("a writer performs a metered write (caps ∧ budget ∧ invariants all pass)");
-    assert_ne!(receipt.turn_hash, [0u8; 32], "a real verified turn through the executor");
+    let receipt = fire_put(
+        &app,
+        &AuthRequired::Either,
+        &cclerk,
+        &executor,
+        "uploads/doc.txt",
+        4,
+    )
+    .expect("a writer performs a metered write (caps ∧ budget ∧ invariants all pass)");
+    assert_ne!(
+        receipt.turn_hash, [0u8; 32],
+        "a real verified turn through the executor"
+    );
 
     // The volume meter advanced (the metered debit committed).
     let state = executor.cell_state(cclerk.cell_id()).unwrap();
@@ -131,7 +146,10 @@ fn put_darkens_when_the_budget_is_exhausted_the_htmx_tooth() {
     // Before exhaustion, a WRITER (Either) sees `put` LIT (budget-remaining precondition
     // VOLUME_SPENT < VOLUME_CEILING holds: 0 < 3). The htmx tooth, off live state.
     let lit_before = app.cells()[0].gated_fireable_names(&AuthRequired::Either, &executor);
-    assert!(lit_before.contains(&"put".to_string()), "budget remains: put lights");
+    assert!(
+        lit_before.contains(&"put".to_string()),
+        "budget remains: put lights"
+    );
 
     // Spend the budget right up to the ceiling (VOLUME_SPENT := 3 == VOLUME_CEILING).
     set_spent(&executor, 3);
@@ -146,7 +164,14 @@ fn put_darkens_when_the_budget_is_exhausted_the_htmx_tooth() {
     );
 
     // And a fire is refused IN-BAND at the STATE tooth (anti-ghost — nothing submitted).
-    let refused = fire_put(&app, &AuthRequired::Either, &cclerk, &executor, "uploads/x.txt", 1);
+    let refused = fire_put(
+        &app,
+        &AuthRequired::Either,
+        &cclerk,
+        &executor,
+        "uploads/x.txt",
+        1,
+    );
     assert!(
         matches!(
             refused,
@@ -171,7 +196,14 @@ fn a_reader_below_the_writer_tier_cannot_put_the_cap_tooth_bites_in_band() {
     // A READER holding `AuthRequired::Signature` (⊄ Either) firing `put`: the CAP tooth
     // refuses IN-BAND — `is_attenuation(Signature, Either)` is false. Nothing is submitted
     // (anti-ghost). A reader can read but cannot perform a metered write.
-    let refused = fire_put(&app, &AuthRequired::Signature, &cclerk, &executor, "uploads/x.txt", 1);
+    let refused = fire_put(
+        &app,
+        &AuthRequired::Signature,
+        &cclerk,
+        &executor,
+        "uploads/x.txt",
+        1,
+    );
     assert!(
         matches!(
             refused,
@@ -206,7 +238,10 @@ fn the_executor_re_enforces_an_over_budget_write_is_refused() {
     let overspend = put_effects(gateway, "uploads/huge.bin", 5, [9u8; 32]);
     let action = cclerk.make_action(gateway, "put", overspend);
     let refused = executor.submit_action(&cclerk, action);
-    assert!(refused.is_err(), "an over-budget write must be refused by the executor");
+    assert!(
+        refused.is_err(),
+        "an over-budget write must be refused by the executor"
+    );
     let msg = format!("{:?}", refused.unwrap_err()).to_lowercase();
     assert!(
         msg.contains("lte") || msg.contains("field") || msg.contains("program"),
@@ -243,7 +278,10 @@ fn the_executor_re_enforces_a_rewound_volume_meter_is_refused() {
     let rewind = put_effects(gateway, "uploads/cheat.txt", 2, [8u8; 32]);
     let action = cclerk.make_action(gateway, "put", rewind);
     let refused = executor.submit_action(&cclerk, action);
-    assert!(refused.is_err(), "rewinding the volume meter must be refused by the executor");
+    assert!(
+        refused.is_err(),
+        "rewinding the volume meter must be refused by the executor"
+    );
     let msg = format!("{:?}", refused.unwrap_err()).to_lowercase();
     assert!(
         msg.contains("monotonic") || msg.contains("program") || msg.contains("field[2]"),
@@ -274,12 +312,23 @@ fn register_deos_mounts_the_seeded_surface_into_the_context() {
     // deos surface is the SHIPPED one (the census promotion) and the gated `put` fire is live.
     let app = register_deos(&ctx);
     assert_eq!(app.name(), "storage-gateway-mandate");
-    assert_eq!(ctx.affordance_registry().len(), 1, "the deos surface is registered");
+    assert_eq!(
+        ctx.affordance_registry().len(),
+        1,
+        "the deos surface is registered"
+    );
 
     // The seeded gateway is configured with a funded budget, so a writer can perform a
     // metered write through the mounted surface immediately (the seam is closed + live).
-    let receipt = fire_put(&app, &AuthRequired::Either, &cclerk, &executor, "uploads/first.txt", 2)
-        .expect("the mounted, seeded surface performs a metered write (the promotion is live)");
+    let receipt = fire_put(
+        &app,
+        &AuthRequired::Either,
+        &cclerk,
+        &executor,
+        "uploads/first.txt",
+        2,
+    )
+    .expect("the mounted, seeded surface performs a metered write (the promotion is live)");
     assert_ne!(receipt.turn_hash, [0u8; 32]);
 
     // The volume meter advanced (a real metered debit on the write).

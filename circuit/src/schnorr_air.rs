@@ -297,10 +297,7 @@ fn check_scan_phase(trace: &[Vec<BabyBear>], start: usize, base: CurvePoint) -> 
         let cur_base = point_from_row(&trace[row], col::BASE_X);
 
         // (4a) slope-witness equation when bit == 1 and addable with distinct x.
-        if bit == BabyBear::ONE
-            && !acc.is_infinity
-            && !cur_base.is_infinity
-            && acc.x != cur_base.x
+        if bit == BabyBear::ONE && !acc.is_infinity && !cur_base.is_infinity && acc.x != cur_base.x
         {
             let lambda = bb8_from_row(&trace[row], col::LAMBDA);
             let lhs = lambda.mul(&cur_base.x.sub(&acc.x));

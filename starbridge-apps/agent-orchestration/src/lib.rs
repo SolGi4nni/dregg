@@ -105,7 +105,9 @@ fn verify_receipt_window(receipts: &[TurnReceipt]) -> Result<(), VerifyError> {
 /// A **tool** the orchestration's agents may invoke (the scope dimension of a [`Mandate`]). A
 /// coordinator holds a broad tool-set; a worker is handed a NARROWED subset. Modeled on the Lean
 /// authority rights (`[read, write]` etc.) — the worker `keep` drops at least one.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 pub enum Tool {
     /// Read a document / fetch a URL (the least-privilege baseline).
     Read,
@@ -1119,7 +1121,10 @@ mod tests {
         assert!(ok.le(&held));
         // a WIDER tool is not ⊑.
         let wider = Mandate::coordinator([Tool::Read, Tool::Write, Tool::Spend], 400, "s");
-        assert!(!wider.le(&held), "a tool not held breaks ⊑ (no amplification)");
+        assert!(
+            !wider.le(&held),
+            "a tool not held breaks ⊑ (no amplification)"
+        );
         // a LARGER budget is not ⊑.
         let richer = Mandate::coordinator([Tool::Read], 1001, "s");
         assert!(!richer.le(&held), "a larger budget breaks ⊑");
@@ -1165,8 +1170,14 @@ mod tests {
             )),
             "the budget gate spent_a + spent_b <= budget must be a clause"
         );
-        assert!(ks.iter().any(|k| matches!(k, StateConstraint::WriteOnce { index } if *index == BUDGET_SLOT)));
-        assert!(ks.iter().any(|k| matches!(k, StateConstraint::StrictMonotonic { index } if *index == EPOCH_SLOT)));
+        assert!(
+            ks.iter().any(
+                |k| matches!(k, StateConstraint::WriteOnce { index } if *index == BUDGET_SLOT)
+            )
+        );
+        assert!(ks.iter().any(
+            |k| matches!(k, StateConstraint::StrictMonotonic { index } if *index == EPOCH_SLOT)
+        ));
     }
 
     // ── §3 turn builders carry real effects + a real signature ───────────────
@@ -1226,6 +1237,10 @@ mod tests {
         let vk = register(&ctx);
         assert_eq!(vk, ORCHESTRATION_FACTORY_VK);
         assert_eq!(ctx.factory_registry().len(), 1);
-        assert!(ctx.inspector_registry().get("orchestration-board").is_some());
+        assert!(
+            ctx.inspector_registry()
+                .get("orchestration-board")
+                .is_some()
+        );
     }
 }

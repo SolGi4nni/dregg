@@ -949,8 +949,7 @@ impl PersistentStore {
                 let mut idx_receipt = write_txn.open_table(tables::IDX_RECEIPT_BY_HASH)?;
                 let mut idx_turn = write_txn.open_table(tables::IDX_TURN_BY_HASH)?;
                 let mut idx_hc = write_txn.open_table(tables::IDX_TURN_BY_HEIGHT_CREATOR)?;
-                let mut compacted_ids =
-                    write_txn.open_table(tables::COMMIT_COMPACTED_BLOCK_IDS)?;
+                let mut compacted_ids = write_txn.open_table(tables::COMMIT_COMPACTED_BLOCK_IDS)?;
                 for d in &doomed {
                     log.remove(d.ordinal)?;
                     idx_receipt.remove(&d.receipt_hash)?;
@@ -1403,11 +1402,7 @@ mod tests {
             let mut rec = record(0, 0, vec![cell(1, 42)]);
             rec.turn_hash[0] = 0xb1;
             store
-                .commit_finalized_turn_with_burns(
-                    0,
-                    &rec,
-                    &[(NS_TRUSTLINE_DIGEST, scope, digest)],
-                )
+                .commit_finalized_turn_with_burns(0, &rec, &[(NS_TRUSTLINE_DIGEST, scope, digest)])
                 .unwrap();
             // Crash before any further write.
             drop(store);
@@ -1543,9 +1538,7 @@ mod tests {
             sovereign_commitments: Vec::new(),
             sovereign_registrations: Vec::new(),
         };
-        store
-            .store_ledger_checkpoint_snapshot(&snapshot)
-            .unwrap();
+        store.store_ledger_checkpoint_snapshot(&snapshot).unwrap();
     }
 
     /// Commit `n` turns at heights 1..=n (record(k).height == k+1, so turn k
@@ -1639,7 +1632,14 @@ mod tests {
             "checkpoint ⊕ overlay after compaction must equal the pre-compaction ledger"
         );
         // The head record (cursor-1) — recovery's anchors — is intact.
-        assert_eq!(store.commit_record_at(cursor_before - 1).unwrap().unwrap().ordinal, 5);
+        assert_eq!(
+            store
+                .commit_record_at(cursor_before - 1)
+                .unwrap()
+                .unwrap()
+                .ordinal,
+            5
+        );
         assert_eq!(store.recovered_block_cursor().unwrap(), 5 * 10);
         assert_eq!(
             store.recovered_ledger_root().unwrap().unwrap(),
@@ -1670,7 +1670,12 @@ mod tests {
         assert_eq!(report.cursor, 6, "cursor unchanged == records + compacted");
 
         // A compacted turn no longer resolves through the (removed) index entry…
-        assert!(store.lookup_turn(&compacted_turn.turn_hash).unwrap().is_none());
+        assert!(
+            store
+                .lookup_turn(&compacted_turn.turn_hash)
+                .unwrap()
+                .is_none()
+        );
         assert!(
             store
                 .lookup_receipt(&compacted_turn.receipt_hash)
@@ -1679,7 +1684,11 @@ mod tests {
         );
         // …but a survivor still does.
         assert_eq!(
-            store.lookup_turn(&surviving_turn.turn_hash).unwrap().unwrap().ordinal,
+            store
+                .lookup_turn(&surviving_turn.turn_hash)
+                .unwrap()
+                .unwrap()
+                .ordinal,
             4
         );
 

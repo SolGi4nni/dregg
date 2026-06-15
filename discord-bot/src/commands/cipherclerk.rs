@@ -656,10 +656,12 @@ fn sub_string_opt(command: &CommandInteraction, name: &str) -> Option<String> {
     let CommandDataOptionValue::SubCommand(opts) = &command.data.options[0].value else {
         return None;
     };
-    opts.iter().find(|o| o.name == name).and_then(|o| match &o.value {
-        CommandDataOptionValue::String(s) => Some(s.clone()),
-        _ => None,
-    })
+    opts.iter()
+        .find(|o| o.name == name)
+        .and_then(|o| match &o.value {
+            CommandDataOptionValue::String(s) => Some(s.clone()),
+            _ => None,
+        })
 }
 
 /// Pull an Integer sub-option from the first (sub-command) option.
@@ -667,10 +669,12 @@ fn sub_integer_opt(command: &CommandInteraction, name: &str) -> Option<i64> {
     let CommandDataOptionValue::SubCommand(opts) = &command.data.options[0].value else {
         return None;
     };
-    opts.iter().find(|o| o.name == name).and_then(|o| match &o.value {
-        CommandDataOptionValue::Integer(n) => Some(*n),
-        _ => None,
-    })
+    opts.iter()
+        .find(|o| o.name == name)
+        .and_then(|o| match &o.value {
+            CommandDataOptionValue::Integer(n) => Some(*n),
+            _ => None,
+        })
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────

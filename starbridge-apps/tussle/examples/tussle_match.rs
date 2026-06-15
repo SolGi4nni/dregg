@@ -140,10 +140,20 @@ fn play_and_narrate(script: &[(JointVector, JointVector)], announce: bool) -> (i
     if announce {
         match m.outcome() {
             Some(MatchEnd::TargetReached(w)) => {
-                println!("🏆 KNOCKOUT — {} reaches the target. Final {} — {}.", label(w).trim(), m.score0(), m.score1());
+                println!(
+                    "🏆 KNOCKOUT — {} reaches the target. Final {} — {}.",
+                    label(w).trim(),
+                    m.score0(),
+                    m.score1()
+                );
             }
             Some(MatchEnd::FrameCap(Some(w))) => {
-                println!("⏱  frame cap — {} leads. Final {} — {}.", label(w).trim(), m.score0(), m.score1());
+                println!(
+                    "⏱  frame cap — {} leads. Final {} — {}.",
+                    label(w).trim(),
+                    m.score0(),
+                    m.score1()
+                );
             }
             Some(MatchEnd::FrameCap(None)) => {
                 println!("⏱  frame cap — a draw at {} — {}.", m.score0(), m.score1());
@@ -162,14 +172,14 @@ fn play_and_narrate(script: &[(JointVector, JointVector)], announce: bool) -> (i
 fn main() {
     // A scripted bout: Blue presses, Red defends then counters, a cancelled clash, a finisher.
     let script: [(JointVector, JointVector); 8] = [
-        (push(3), guard(2)),  // Blue pushes 3, Red braces 2 + counters 2 → Red's brace blunts Blue
-        (push(3), push(1)),   // Blue out-pushes → Blue scores
-        (push(2), push(2)),   // even clash — cancels, no score
-        (push(3), guard(1)),  // Blue pushes 3, Red braces 1 + pushes 3 → Red counters
-        (push(4), push(1)),   // Blue all-in push → Blue scores big
-        (push(3), push(1)),   // Blue presses → Blue scores
-        (push(1), push(3)),   // Red surges → Red scores
-        (push(4), push(0)),   // Blue finisher
+        (push(3), guard(2)), // Blue pushes 3, Red braces 2 + counters 2 → Red's brace blunts Blue
+        (push(3), push(1)),  // Blue out-pushes → Blue scores
+        (push(2), push(2)),  // even clash — cancels, no score
+        (push(3), guard(1)), // Blue pushes 3, Red braces 1 + pushes 3 → Red counters
+        (push(4), push(1)),  // Blue all-in push → Blue scores big
+        (push(3), push(1)),  // Blue presses → Blue scores
+        (push(1), push(3)),  // Red surges → Red scores
+        (push(4), push(0)),  // Blue finisher
     ];
 
     let (s0, s1, frames) = play_and_narrate(&script, true);
@@ -185,7 +195,11 @@ fn main() {
     );
     println!(
         "  same moves → same outcome: {}",
-        if same { "YES ✓ (deterministic + reproducible)" } else { "NO ✗" }
+        if same {
+            "YES ✓ (deterministic + reproducible)"
+        } else {
+            "NO ✗"
+        }
     );
     assert!(same, "the deterministic resolution was not reproducible");
 
@@ -198,7 +212,9 @@ fn main() {
         let old = Figure::spawn(P0, 0).cell;
         let mut bad = old.clone();
         bad.set_field(0, field_from_u64(7)); // sym 7 ∉ {Relax,Contract,Hold,Extend}
-        let refused = Figure::joint_program().evaluate(&bad, Some(&old), None).is_err();
+        let refused = Figure::joint_program()
+            .evaluate(&bad, Some(&old), None)
+            .is_err();
         println!(
             "  typed-sym enum tooth: out-of-enum joint (sym 7) refused by the cell program: {}",
             if refused { "YES ✓" } else { "NO ✗" }

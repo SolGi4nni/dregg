@@ -432,7 +432,12 @@ pub async fn handle_peer(ctx: &Context, command: &CommandInteraction, state: &Bo
     let bot_cell = state.captp.bot_cell_id.clone();
     let node = state.captp.node_url.clone();
 
-    let held = state.captp.list_held(&state.db).await.map(|h| h.len()).unwrap_or(0);
+    let held = state
+        .captp
+        .list_held(&state.db)
+        .await
+        .map(|h| h.len())
+        .unwrap_or(0);
     let exports = state
         .captp
         .list_exports(&state.db)
@@ -453,8 +458,16 @@ pub async fn handle_peer(ctx: &Context, command: &CommandInteraction, state: &Bo
              shared `dregg://` URIs, mints/redeems canonical handoff certificates, and routes \
              through the live node — alongside node and sdk peers.",
         )
-        .field("Federation Root", format!("`{}...`", truncate(&fed_id, 24)), false)
-        .field("Bot Cell", format!("`{}...`", truncate(&bot_cell, 24)), false)
+        .field(
+            "Federation Root",
+            format!("`{}...`", truncate(&fed_id, 24)),
+            false,
+        )
+        .field(
+            "Bot Cell",
+            format!("`{}...`", truncate(&bot_cell, 24)),
+            false,
+        )
         .field("Node", format!("`{node}`"), false)
         .field("Held (live refs)", held.to_string(), true)
         .field("Exported", exports.to_string(), true)

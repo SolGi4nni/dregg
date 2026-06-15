@@ -2797,18 +2797,22 @@ async fn post_submit_turn(
             // actor cells (pre_ledger / the just-committed s.ledger). A build hiccup
             // (missing/unrepresentable pre-state) is NON-FATAL: the commit stands and
             // the receipt is simply left unattested (the executor is the authority).
-            let witness_outcome =
-                match prepare_rotatable_turn(&turn, &pre_ledger, &s.ledger, receipt_hash) {
-                    Ok(outcome) => outcome,
-                    Err(err) => {
-                        tracing::warn!(
-                            turn_hash = %turn_hash,
-                            error = %err,
-                            "could not prepare rotated attestation; receipt committed-but-unattested"
-                        );
-                        HttpWitnessOutcome::NotRequired
-                    }
-                };
+            let witness_outcome = match prepare_rotatable_turn(
+                &turn,
+                &pre_ledger,
+                &s.ledger,
+                receipt_hash,
+            ) {
+                Ok(outcome) => outcome,
+                Err(err) => {
+                    tracing::warn!(
+                        turn_hash = %turn_hash,
+                        error = %err,
+                        "could not prepare rotated attestation; receipt committed-but-unattested"
+                    );
+                    HttpWitnessOutcome::NotRequired
+                }
+            };
             // The receipt is committed; its attestation is pending if there is a
             // transition to prove (ProofPending), else NotRequired.
             let proof_status = match &witness_outcome {
@@ -3060,18 +3064,22 @@ async fn post_submit_signed_turn(
                 }));
             }
             let receipt_hash = receipt.receipt_hash();
-            let witness_outcome =
-                match prepare_rotatable_turn(&signed.turn, &pre_ledger, &s.ledger, receipt_hash) {
-                    Ok(outcome) => outcome,
-                    Err(err) => {
-                        tracing::warn!(
-                            turn_hash = %turn_hash,
-                            error = %err,
-                            "could not prepare rotated attestation; receipt committed-but-unattested"
-                        );
-                        HttpWitnessOutcome::NotRequired
-                    }
-                };
+            let witness_outcome = match prepare_rotatable_turn(
+                &signed.turn,
+                &pre_ledger,
+                &s.ledger,
+                receipt_hash,
+            ) {
+                Ok(outcome) => outcome,
+                Err(err) => {
+                    tracing::warn!(
+                        turn_hash = %turn_hash,
+                        error = %err,
+                        "could not prepare rotated attestation; receipt committed-but-unattested"
+                    );
+                    HttpWitnessOutcome::NotRequired
+                }
+            };
             let proof_status = match &witness_outcome {
                 HttpWitnessOutcome::Rotatable(_) => ActivityProofStatus::ProofPending,
                 HttpWitnessOutcome::NotRequired => ActivityProofStatus::NotRequired,
@@ -3487,18 +3495,22 @@ async fn post_submit_encrypted_turn(
                 }));
             }
             let receipt_hash = receipt.receipt_hash();
-            let witness_outcome =
-                match prepare_rotatable_turn(&cleartext_turn, &pre_ledger, &s.ledger, receipt_hash) {
-                    Ok(outcome) => outcome,
-                    Err(err) => {
-                        tracing::warn!(
-                            turn_hash = %turn_hash,
-                            error = %err,
-                            "could not prepare rotated attestation; receipt committed-but-unattested"
-                        );
-                        HttpWitnessOutcome::NotRequired
-                    }
-                };
+            let witness_outcome = match prepare_rotatable_turn(
+                &cleartext_turn,
+                &pre_ledger,
+                &s.ledger,
+                receipt_hash,
+            ) {
+                Ok(outcome) => outcome,
+                Err(err) => {
+                    tracing::warn!(
+                        turn_hash = %turn_hash,
+                        error = %err,
+                        "could not prepare rotated attestation; receipt committed-but-unattested"
+                    );
+                    HttpWitnessOutcome::NotRequired
+                }
+            };
             let proof_status = match &witness_outcome {
                 HttpWitnessOutcome::Rotatable(_) => ActivityProofStatus::ProofPending,
                 HttpWitnessOutcome::NotRequired => ActivityProofStatus::NotRequired,
@@ -7588,9 +7600,8 @@ mod tests {
         // into the carrier the async pool proves — and for a cohort transfer it builds
         // the ROTATION witness, so the async proof goes through the rotated descriptor,
         // NOT the node's own v1 effect-vm hand-AIR.
-        let outcome =
-            prepare_rotatable_turn(&turn, &pre_ledger, &ledger, receipt.receipt_hash())
-                .expect("projectable HTTP turn prepares for attestation");
+        let outcome = prepare_rotatable_turn(&turn, &pre_ledger, &ledger, receipt.receipt_hash())
+            .expect("projectable HTTP turn prepares for attestation");
         let HttpWitnessOutcome::Rotatable(rotatable) = outcome else {
             panic!("a transfer-bearing HTTP turn must be Rotatable, not NotRequired");
         };
@@ -7721,7 +7732,12 @@ mod tests {
                 .await
                 .expect("faucet response");
             assert_eq!(response.status(), StatusCode::OK);
-            let bytes = response.into_body().collect().await.expect("body").to_bytes();
+            let bytes = response
+                .into_body()
+                .collect()
+                .await
+                .expect("body")
+                .to_bytes();
             let json: serde_json::Value = serde_json::from_slice(&bytes).expect("faucet json");
             assert_eq!(json["success"], true, "faucet must succeed: {json}");
         }
@@ -7810,7 +7826,12 @@ mod tests {
         // ── ACCEPT: the honest remote envelope commits. ──
         let response = submit(envelope.clone()).await.expect("submit response");
         assert_eq!(response.status(), StatusCode::OK);
-        let bytes = response.into_body().collect().await.expect("body").to_bytes();
+        let bytes = response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
         let json: serde_json::Value = serde_json::from_slice(&bytes).expect("submit json");
         assert_eq!(
             json["accepted"], true,
@@ -7833,7 +7854,12 @@ mod tests {
             .await
             .expect("receipts response");
         assert_eq!(response.status(), StatusCode::OK);
-        let bytes = response.into_body().collect().await.expect("body").to_bytes();
+        let bytes = response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
         let receipts: serde_json::Value = serde_json::from_slice(&bytes).expect("receipts json");
         assert!(
             receipts
@@ -7850,7 +7876,12 @@ mod tests {
         let response = submit(postcard::to_stdvec(&tampered).expect("encode"))
             .await
             .expect("tamper response");
-        let bytes = response.into_body().collect().await.expect("body").to_bytes();
+        let bytes = response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
         let json: serde_json::Value = serde_json::from_slice(&bytes).expect("tamper json");
         assert_eq!(json["accepted"], false, "tampered envelope must refuse");
         assert_eq!(json["error"], serde_json::json!("invalid turn signature"));
@@ -7863,7 +7894,12 @@ mod tests {
         let response = submit(postcard::to_stdvec(&wrong_signed).expect("encode"))
             .await
             .expect("wrong-agent response");
-        let bytes = response.into_body().collect().await.expect("body").to_bytes();
+        let bytes = response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
         let json: serde_json::Value = serde_json::from_slice(&bytes).expect("wrong-agent json");
         assert_eq!(json["accepted"], false, "wrong-agent envelope must refuse");
         assert_eq!(
@@ -7874,7 +7910,12 @@ mod tests {
         // ── REPLAY REFUSES: the exact accepted envelope, resubmitted, is
         // rejected — its receipt-chain binding now points behind the head. ──
         let response = submit(envelope).await.expect("replay response");
-        let bytes = response.into_body().collect().await.expect("body").to_bytes();
+        let bytes = response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
         let json: serde_json::Value = serde_json::from_slice(&bytes).expect("replay json");
         assert_eq!(json["accepted"], false, "replayed envelope must refuse");
         assert_eq!(json["error"], serde_json::json!("receipt chain mismatch"));

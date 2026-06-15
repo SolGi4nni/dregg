@@ -602,7 +602,8 @@ impl TurnExecutor {
                     let e = updated_cells
                         .entry(*cell_id)
                         .or_insert_with(CellStateDelta::empty);
-                    e.field_updates.push((*index, new_value.unwrap_or(FIELD_ZERO)));
+                    e.field_updates
+                        .push((*index, new_value.unwrap_or(FIELD_ZERO)));
                 }
             }
         }

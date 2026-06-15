@@ -66,7 +66,10 @@ fn the_whole_app_is_one_composed_registration() {
         .map(|g| g.name().to_string())
         .collect();
     gated.sort();
-    assert_eq!(gated, vec!["accept_custody".to_string(), "mint_item".to_string()]);
+    assert_eq!(
+        gated,
+        vec!["accept_custody".to_string(), "mint_item".to_string()]
+    );
 
     // The ITEM cell is the agent's own (so fires execute against the seeded ledger),
     // and is published into the web-of-cells at the verifier tier.
@@ -106,15 +109,23 @@ async fn the_three_supply_chain_roles_see_different_cap_only_surfaces() {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
-        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
         serde_json::from_slice::<serde_json::Value>(&bytes).unwrap()["visible"].clone()
     }
 
     // A VERIFIER (Signature) sees only `view_provenance` (the narrow read tier).
-    assert_eq!(visible(&router, "signature").await, serde_json::json!(["view_provenance"]));
+    assert_eq!(
+        visible(&router, "signature").await,
+        serde_json::json!(["view_provenance"])
+    );
     // A CUSTODIAN (Either) sees the same cap-only set — `accept_custody` is GATED (not on
     // the cap-only projection); it lights on the gated surface against live state.
-    assert_eq!(visible(&router, "either").await, serde_json::json!(["view_provenance"]));
+    assert_eq!(
+        visible(&router, "either").await,
+        serde_json::json!(["view_provenance"])
+    );
     // The MANUFACTURER (root) additionally sees `grant_custody` (the cap-graph handoff).
     assert_eq!(
         visible(&router, "root").await,
@@ -155,8 +166,14 @@ async fn only_the_manufacturer_can_grant_custody_a_real_turn() {
     // (Signature) firing `grant_custody` are REFUSED at the cap gate (403) BEFORE
     // anything reaches the executor — only the owner re-keys the custody cap. The cap
     // gate is the genuine `is_attenuation` (`None` ⊄ Either/Signature).
-    assert_eq!(fire(&router, "grant_custody", "either").await, StatusCode::FORBIDDEN);
-    assert_eq!(fire(&router, "grant_custody", "signature").await, StatusCode::FORBIDDEN);
+    assert_eq!(
+        fire(&router, "grant_custody", "either").await,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        fire(&router, "grant_custody", "signature").await,
+        StatusCode::FORBIDDEN
+    );
 
     // The MANUFACTURER (root) CLEARS the cap gate (not 403) — it is cap-authorized to
     // hand the custody cap forward. (A bare `grant_custody` reaches the executor, where
@@ -192,7 +209,11 @@ async fn the_item_is_published_into_the_web_of_cells() {
     // federation reacquires the item's provenance across the membrane.
     let uris = app.publish_all(100).await;
     assert_eq!(uris.len(), 1);
-    assert!(uris[0].starts_with("dregg://"), "a real sturdyref: {}", uris[0]);
+    assert!(
+        uris[0].starts_with("dregg://"),
+        "a real sturdyref: {}",
+        uris[0]
+    );
 }
 
 // =============================================================================
@@ -209,14 +230,21 @@ fn an_item_snapshot_rehydrates_per_viewer_respecting_the_lattice() {
     // snapshot handed to a downstream auditor) ⇒ liveness REPLAYED-DETERMINISTIC.
     let log = InteractionLog::new().record(Interaction::witnessed_turn(item.cell(), [9u8; 32]));
     let snap = item.snapshot(log, false);
-    assert_eq!(snap.lineage, AuthRequired::Signature, "snapshot at the published lineage");
+    assert_eq!(
+        snap.lineage,
+        AuthRequired::Signature,
+        "snapshot at the published lineage"
+    );
     assert_eq!(snap.liveness(), Rehydration::ReplayedDeterministic);
     assert!(snap.liveness().is_faithful());
 
     // A VERIFIER (Signature) rehydrating reacquires only `view_provenance` (the cap-only
     // surface at its tier) — the item snapshot respects the lattice.
     let verifier = item.rehydrate(&snap, AuthRequired::Signature).unwrap();
-    assert_eq!(verifier.visible_names(), vec!["view_provenance".to_string()]);
+    assert_eq!(
+        verifier.visible_names(),
+        vec!["view_provenance".to_string()]
+    );
 
     // An INCOMPARABLE authority (a distinct Custom identity) cannot rehydrate at all —
     // the membrane mints NO projection (the no-peek refusal).
@@ -254,7 +282,9 @@ async fn the_app_ships_a_web_component_surface_and_a_manifest() {
         .unwrap()
         .to_string();
     assert!(ct.contains("javascript"), "served as a JS module: {ct}");
-    let bytes = axum::body::to_bytes(surface.into_body(), usize::MAX).await.unwrap();
+    let bytes = axum::body::to_bytes(surface.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let js = String::from_utf8(bytes.to_vec()).unwrap();
     assert!(js.contains("customElements.define(\"dregg-affordance-surface\""));
     // The anti-drift affordance map names the cap-only fire endpoints.
@@ -268,17 +298,35 @@ async fn the_app_ships_a_web_component_surface_and_a_manifest() {
         .await
         .unwrap();
     assert_eq!(manifest.status(), StatusCode::OK);
-    let bytes = axum::body::to_bytes(manifest.into_body(), usize::MAX).await.unwrap();
+    let bytes = axum::body::to_bytes(manifest.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let m: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(m["app"], "supply-chain-provenance");
-    assert_eq!(m["discoverable"], serde_json::json!(["supply-chain", "provenance"]));
-    assert!(m["persistence"].as_str().unwrap().contains("embedded-ledger"));
+    assert_eq!(
+        m["discoverable"],
+        serde_json::json!(["supply-chain", "provenance"])
+    );
+    assert!(
+        m["persistence"]
+            .as_str()
+            .unwrap()
+            .contains("embedded-ledger")
+    );
     assert_eq!(m["cells"].as_array().unwrap().len(), 1);
     // The manifest advertises the two gated (cap∧state) affordances.
-    let gated = m["cells"][0]["gatedAffordances"].as_array().expect("gated affordances");
+    let gated = m["cells"][0]["gatedAffordances"]
+        .as_array()
+        .expect("gated affordances");
     let names: Vec<&str> = gated.iter().filter_map(|g| g["name"].as_str()).collect();
-    assert!(names.contains(&"accept_custody"), "accept_custody is advertised as gated");
-    assert!(names.contains(&"mint_item"), "mint_item is advertised as gated");
+    assert!(
+        names.contains(&"accept_custody"),
+        "accept_custody is advertised as gated"
+    );
+    assert!(
+        names.contains(&"mint_item"),
+        "mint_item is advertised as gated"
+    );
 }
 
 // =============================================================================
@@ -291,22 +339,48 @@ fn the_handoff_still_carries_the_verified_custody_chain() {
     let a = identity_field("warehouse-a");
     let b = identity_field("carrier-b");
     let history = vec![
-        Handoff { from: GENESIS_PREV, to: m, epoch: 1 }, // mint
-        Handoff { from: m, to: a, epoch: 2 },
-        Handoff { from: a, to: b, epoch: 3 },
+        Handoff {
+            from: GENESIS_PREV,
+            to: m,
+            epoch: 1,
+        }, // mint
+        Handoff {
+            from: m,
+            to: a,
+            epoch: 2,
+        },
+        Handoff {
+            from: a,
+            to: b,
+            epoch: 3,
+        },
     ];
     let committed = custody_chain_digests(&history);
-    assert!(verify_chain(&history, &committed), "the honest custody chain re-derives");
+    assert!(
+        verify_chain(&history, &committed),
+        "the honest custody chain re-derives"
+    );
     assert!(
         custody_chain_is_connected(&history),
         "single-custodianship is conserved (a connected custody path)"
     );
     let rogue = identity_field("rogue");
     let forked = vec![
-        Handoff { from: GENESIS_PREV, to: m, epoch: 1 },
-        Handoff { from: rogue, to: b, epoch: 2 }, // rogue did not hold custody
+        Handoff {
+            from: GENESIS_PREV,
+            to: m,
+            epoch: 1,
+        },
+        Handoff {
+            from: rogue,
+            to: b,
+            epoch: 2,
+        }, // rogue did not hold custody
     ];
-    assert!(!custody_chain_is_connected(&forked), "a forged handoff is not conserved");
+    assert!(
+        !custody_chain_is_connected(&forked),
+        "a forged handoff is not conserved"
+    );
 }
 
 // =============================================================================
@@ -328,15 +402,38 @@ fn grant_custody_carries_the_real_grant_capability_effect() {
         .get("grant_custody")
         .unwrap()
         .effect_summary();
-    assert_eq!(summary, EffectSummary::GrantCapability { from: item, to: next });
+    assert_eq!(
+        summary,
+        EffectSummary::GrantCapability {
+            from: item,
+            to: next
+        }
+    );
 
     // And the standalone effect builder matches (one source of truth).
     let standalone = grant_custody_effect(item, next);
-    assert_eq!(EffectSummary::of(&standalone), EffectSummary::GrantCapability { from: item, to: next });
+    assert_eq!(
+        EffectSummary::of(&standalone),
+        EffectSummary::GrantCapability {
+            from: item,
+            to: next
+        }
+    );
 
     // (Silence the unused warnings on imports used only by sibling tests.)
-    let _ = (CellAffordance::new("x", AuthRequired::None, Effect::EmitEvent {
-        cell: item,
-        event: Event { topic: [0u8; 32], data: vec![] },
-    }), CUSTODIAN_SLOT, DeosCell::new(item, "x"));
+    let _ = (
+        CellAffordance::new(
+            "x",
+            AuthRequired::None,
+            Effect::EmitEvent {
+                cell: item,
+                event: Event {
+                    topic: [0u8; 32],
+                    data: vec![],
+                },
+            },
+        ),
+        CUSTODIAN_SLOT,
+        DeosCell::new(item, "x"),
+    );
 }

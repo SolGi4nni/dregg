@@ -21,12 +21,12 @@ use dregg_cell::program::{
     WitnessKindTag,
 };
 use dregg_cell::state::CellState;
+use dregg_circuit::BabyBear;
 use dregg_circuit::dsl::membership::create_test_witness;
 use dregg_circuit::poseidon2;
-use dregg_circuit::BabyBear;
 use dregg_turn::executor::membership_verifier::{
-    authorized_set_root_bytes, authorized_set_root_felt, prove_sender_membership,
-    registry_with_real_sender_membership, MerkleMembershipStarkVerifier,
+    MerkleMembershipStarkVerifier, authorized_set_root_bytes, authorized_set_root_felt,
+    prove_sender_membership, registry_with_real_sender_membership,
 };
 
 fn compress(bytes: &[u8; 32]) -> BabyBear {

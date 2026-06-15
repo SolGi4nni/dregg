@@ -25,8 +25,7 @@ pub fn register_history() -> CreateCommand {
 
 /// Register the /activity command.
 pub fn register_activity() -> CreateCommand {
-    CreateCommand::new("activity")
-        .description("Show recent committed activity across the devnet")
+    CreateCommand::new("activity").description("Show recent committed activity across the devnet")
 }
 
 /// Handle /faucet interaction.
@@ -253,8 +252,9 @@ pub async fn handle_activity(ctx: &Context, command: &CommandInteraction, state:
 
     match state.devnet.get_recent_events(12, None).await {
         Ok(events) if events.is_empty() => {
-            let embed = embeds::dregg_embed("Devnet Activity")
-                .description("No committed turns observed yet. Be the first — try `/faucet` or `/send`.");
+            let embed = embeds::dregg_embed("Devnet Activity").description(
+                "No committed turns observed yet. Be the first — try `/faucet` or `/send`.",
+            );
             let _ = command
                 .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
                 .await;
@@ -280,11 +280,7 @@ pub async fn handle_activity(ctx: &Context, command: &CommandInteraction, state:
             let embed = embeds::dregg_embed("Devnet Activity")
                 .description(description)
                 .field("Events", events.len().to_string(), true)
-                .field(
-                    "Source",
-                    "Live node `/api/events` (committed turns)",
-                    true,
-                );
+                .field("Source", "Live node `/api/events` (committed turns)", true);
             let _ = command
                 .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
                 .await;

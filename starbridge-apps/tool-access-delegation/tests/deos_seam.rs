@@ -58,15 +58,17 @@ fn seeding_installs_the_cases_program_and_zero_counter() {
 
     // The seeded mandate cell carries the FULL `Cases` program (the seam's enforcement layer
     // the executor re-enforces on every touching turn).
-    let installed = executor
-        .with_ledger_mut(|ledger| ledger.get(&cclerk.cell_id()).map(|c| c.program.clone()));
+    let installed =
+        executor.with_ledger_mut(|ledger| ledger.get(&cclerk.cell_id()).map(|c| c.program.clone()));
     assert_eq!(
         installed,
         Some(tad_cell_program()),
         "the seeded mandate cell carries the Cases program (the seam's enforcement layer)"
     );
     // ...and the counter is born at 0, with the rate ceiling bound.
-    let state = executor.cell_state(cclerk.cell_id()).expect("seeded cell exists");
+    let state = executor
+        .cell_state(cclerk.cell_id())
+        .expect("seeded cell exists");
     assert_eq!(state.fields[CALLS_MADE_SLOT as usize], field_from_u64(0));
     assert_eq!(state.fields[RATE_LIMIT_SLOT as usize], field_from_u64(8));
 }
@@ -88,7 +90,10 @@ fn a_worker_invokes_through_the_gated_fire_a_real_verified_turn() {
     // <= block_height 0) all hold. A real verified turn.
     let receipt = fire_invoke(&app, &AuthRequired::Either, &cclerk, &executor)
         .expect("a worker meters one call (caps ∧ state ∧ rate ∧ deadline all pass)");
-    assert_ne!(receipt.turn_hash, [0u8; 32], "a real verified turn through the executor");
+    assert_ne!(
+        receipt.turn_hash, [0u8; 32],
+        "a real verified turn through the executor"
+    );
 
     // The counter advanced (the invocation committed).
     let state = executor.cell_state(cclerk.cell_id()).unwrap();
@@ -101,7 +106,11 @@ fn a_worker_invokes_through_the_gated_fire_a_real_verified_turn() {
     // A second invoke advances again (the accumulating fire reads the live counter).
     let _ = fire_invoke(&app, &AuthRequired::Either, &cclerk, &executor).expect("second call");
     let state = executor.cell_state(cclerk.cell_id()).unwrap();
-    assert_eq!(state.fields[CALLS_MADE_SLOT as usize], field_from_u64(2), "0 -> 1 -> 2");
+    assert_eq!(
+        state.fields[CALLS_MADE_SLOT as usize],
+        field_from_u64(2),
+        "0 -> 1 -> 2"
+    );
 }
 
 // =============================================================================
@@ -162,7 +171,11 @@ fn the_executor_re_enforces_an_over_budget_invocation_is_refused() {
     fire_invoke(&app, &AuthRequired::Either, &cclerk, &executor).expect("call 1 (0 -> 1)");
     fire_invoke(&app, &AuthRequired::Either, &cclerk, &executor).expect("call 2 (1 -> 2)");
     let state = executor.cell_state(mandate).unwrap();
-    assert_eq!(state.fields[CALLS_MADE_SLOT as usize], field_from_u64(2), "budget exhausted at 2");
+    assert_eq!(
+        state.fields[CALLS_MADE_SLOT as usize],
+        field_from_u64(2),
+        "budget exhausted at 2"
+    );
 
     // The deos precondition now darkens the button (budget-remaining `calls < rate` is 2 < 2 =
     // false) — the honest gated fire is refused at the STATE tooth in-band.
@@ -182,7 +195,10 @@ fn the_executor_re_enforces_an_over_budget_invocation_is_refused() {
     let overbudget = invoke_effects(mandate, 3); // calls := 3, but rate == 2
     let action = cclerk.make_action(mandate, "invoke_tool", overbudget);
     let refused = executor.submit_action(&cclerk, action);
-    assert!(refused.is_err(), "an invocation past the rate ceiling must be refused by the executor");
+    assert!(
+        refused.is_err(),
+        "an invocation past the rate ceiling must be refused by the executor"
+    );
     let msg = format!("{:?}", refused.unwrap_err()).to_lowercase();
     assert!(
         msg.contains("lte") || msg.contains("field") || msg.contains("program"),
@@ -226,7 +242,10 @@ fn the_executor_re_enforces_a_counter_rewind_is_refused() {
     let rewind = invoke_effects(mandate, 1); // calls := 1, but the live counter is 2
     let action = cclerk.make_action(mandate, "invoke_tool", rewind);
     let refused = executor.submit_action(&cclerk, action);
-    assert!(refused.is_err(), "rewinding the rate counter must be refused by the executor");
+    assert!(
+        refused.is_err(),
+        "rewinding the rate counter must be refused by the executor"
+    );
     let msg = format!("{:?}", refused.unwrap_err()).to_lowercase();
     assert!(
         msg.contains("monotonic") || msg.contains("program") || msg.contains("field[0]"),
@@ -303,7 +322,11 @@ fn register_deos_mounts_the_seeded_surface_into_the_context() {
     // one (the census promotion) and the gated fire is live.
     let app = register_deos(&ctx);
     assert_eq!(app.name(), "tool-access-delegation");
-    assert_eq!(ctx.affordance_registry().len(), 1, "the deos surface is registered");
+    assert_eq!(
+        ctx.affordance_registry().len(),
+        1,
+        "the deos surface is registered"
+    );
 
     // The seeded mandate is granted with budget remaining, so a worker can meter a call through
     // the mounted surface immediately (the seam is closed + live).

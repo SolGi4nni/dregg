@@ -91,15 +91,16 @@ pub mod refine;
 pub mod schema;
 
 pub use apply::{
-    plan_apply, plan_apply_toml, AppliedPlan, ApplyError, DeferredField, PlannedTurn,
-    ProjectedReceipt,
+    AppliedPlan, ApplyError, DeferredField, PlannedTurn, ProjectedReceipt, plan_apply,
+    plan_apply_toml,
 };
-pub use diagnose::{explain_assurance, explain_finding, DeployDiagnostics};
+pub use diagnose::{DeployDiagnostics, explain_assurance, explain_finding};
 pub use facet::{describe_allowed_effects, describe_facet, facet_to_allowed_effects, parse_facet};
-pub use lower::{Lowered, LowerError};
+pub use lower::{LowerError, Lowered};
 pub use refine::{
-    decide_refines, describe_diverging_effect, describe_effect, flow_of_forest, flow_of_plan,
-    refines_intent, refines_upgrade, FlowSpec, IntentEffect, Proc, RefineFinding, RefineVerdict,
+    FlowSpec, IntentEffect, Proc, RefineFinding, RefineVerdict, decide_refines,
+    describe_diverging_effect, describe_effect, flow_of_forest, flow_of_plan, refines_intent,
+    refines_upgrade,
 };
 pub use schema::*;
 

@@ -526,23 +526,27 @@ pub fn tad_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) -> Deo
         budget_remaining_precondition(),
     );
 
-    DeosApp::builder("tool-access-delegation", cipherclerk.clone(), executor.clone())
-        .discoverable(vec!["tools".into(), "delegation".into()])
-        .cell(
-            DeosCell::new(mandate, "mandate")
-                .affordance(view)
-                .affordance(grant)
-                .gated(invoke)
-                // Published at the WORKER tier (`Either`) — the narrowest role that holds
-                // the mandate, and the narrowest cap-only affordance (`view_grant`, Either)
-                // on the surface. A snapshot's lineage caps the per-viewer rehydration meet
-                // (`held ∧ lineage`); publishing BELOW the worker tier (e.g. `Signature`)
-                // would cap every rehydration below `view_grant`'s `Either` tier, so the
-                // worker could never reacquire its own read across the membrane. The worker
-                // tier is the correct lineage (the delegated agent reacquires the mandate).
-                .publish(WORKER_RIGHTS),
-        )
-        .build()
+    DeosApp::builder(
+        "tool-access-delegation",
+        cipherclerk.clone(),
+        executor.clone(),
+    )
+    .discoverable(vec!["tools".into(), "delegation".into()])
+    .cell(
+        DeosCell::new(mandate, "mandate")
+            .affordance(view)
+            .affordance(grant)
+            .gated(invoke)
+            // Published at the WORKER tier (`Either`) — the narrowest role that holds
+            // the mandate, and the narrowest cap-only affordance (`view_grant`, Either)
+            // on the surface. A snapshot's lineage caps the per-viewer rehydration meet
+            // (`held ∧ lineage`); publishing BELOW the worker tier (e.g. `Signature`)
+            // would cap every rehydration below `view_grant`'s `Either` tier, so the
+            // worker could never reacquire its own read across the membrane. The worker
+            // tier is the correct lineage (the delegated agent reacquires the mandate).
+            .publish(WORKER_RIGHTS),
+    )
+    .build()
 }
 
 /// **`invoke` effects** — the state-parameterized metered-invocation body: advance
@@ -646,14 +650,17 @@ pub fn fire_invoke(
                 reason: "cell has no live state (fail-closed)".into(),
             })
         })?;
-        return Err(FireExecuteError::Gate(ga.fire(mandate, held, &state, &state).unwrap_err()));
+        return Err(FireExecuteError::Gate(
+            ga.fire(mandate, held, &state, &state).unwrap_err(),
+        ));
     }
     // Both teeth bit: read the LIVE counter and submit the FULL `invoke_tool` turn (the method
     // symbol the installed `Cases` program's dispatch case scopes), which the executor
     // re-enforces the program on (the rate ceiling, the counter Monotonic, the deadline).
     let live = executor.cell_state(mandate).expect("checked above");
     let new_calls = field_to_u64(&live.fields[CALLS_MADE_SLOT as usize]) + 1;
-    let action = cipherclerk.make_action(mandate, "invoke_tool", invoke_effects(mandate, new_calls));
+    let action =
+        cipherclerk.make_action(mandate, "invoke_tool", invoke_effects(mandate, new_calls));
     executor
         .submit_action(cipherclerk, action)
         .map_err(FireExecuteError::Executor)
@@ -906,7 +913,10 @@ mod tests {
         // The cap-only surface carries the read + the (cap-graph) invoke grant.
         let mut cap_only = mandate.surface().all_names();
         cap_only.sort();
-        assert_eq!(cap_only, vec!["grant".to_string(), "view_grant".to_string()]);
+        assert_eq!(
+            cap_only,
+            vec!["grant".to_string(), "view_grant".to_string()]
+        );
 
         // The gated surface carries the single state-mutating, cap∧state operation.
         let gated: Vec<String> = mandate
@@ -932,12 +942,17 @@ mod tests {
 
         // The seeded mandate cell carries the FULL `Cases` floor program (the seam's
         // enforcement layer the executor re-enforces on every touching turn).
-        let installed = executor
-            .with_ledger_mut(|ledger| ledger.get(&cipherclerk.cell_id()).map(|c| c.program.clone()));
+        let installed = executor.with_ledger_mut(|ledger| {
+            ledger
+                .get(&cipherclerk.cell_id())
+                .map(|c| c.program.clone())
+        });
         assert_eq!(installed, Some(tad_cell_program()));
 
         // ...and the counter is born at 0, with the rate ceiling bound.
-        let state = executor.cell_state(cipherclerk.cell_id()).expect("seeded cell exists");
+        let state = executor
+            .cell_state(cipherclerk.cell_id())
+            .expect("seeded cell exists");
         assert_eq!(state.fields[CALLS_MADE_SLOT as usize], field_from_u64(0));
         assert_eq!(state.fields[RATE_LIMIT_SLOT as usize], field_from_u64(8));
     }
@@ -951,8 +966,13 @@ mod tests {
 
         // The seeded mandate is granted with budget remaining, so a worker can meter a call
         // through the mounted surface immediately (the seam is closed + live).
-        let receipt = fire_invoke(&app, &AuthRequired::Either, ctx.cipherclerk(), ctx.executor())
-            .expect("the mounted, seeded surface meters an invocation (the promotion is live)");
+        let receipt = fire_invoke(
+            &app,
+            &AuthRequired::Either,
+            ctx.cipherclerk(),
+            ctx.executor(),
+        )
+        .expect("the mounted, seeded surface meters an invocation (the promotion is live)");
         assert_ne!(receipt.turn_hash, [0u8; 32]);
     }
 }

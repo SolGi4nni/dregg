@@ -160,8 +160,9 @@ fn factory_born_issuer_refuses_schema_rebind() {
     );
 
     // ...and the committed schema survives the refused turn.
-    let still =
-        exec.with_ledger_mut(|ledger| ledger.get(&issuer).unwrap().state.fields[SCHEMA_COMMITMENT_SLOT]);
+    let still = exec.with_ledger_mut(|ledger| {
+        ledger.get(&issuer).unwrap().state.fields[SCHEMA_COMMITMENT_SLOT]
+    });
     assert_eq!(still, schema);
 }
 
@@ -201,7 +202,7 @@ fn factory_born_issuer_refuses_unwitnessed_issuance() {
     );
 
     // ...and the counter never moved.
-    let counter =
-        exec.with_ledger_mut(|ledger| ledger.get(&issuer).unwrap().state.fields[ISSUANCE_COUNTER_SLOT]);
+    let counter = exec
+        .with_ledger_mut(|ledger| ledger.get(&issuer).unwrap().state.fields[ISSUANCE_COUNTER_SLOT]);
     assert_eq!(counter, [0u8; 32]);
 }

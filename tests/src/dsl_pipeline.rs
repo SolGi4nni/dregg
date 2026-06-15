@@ -19,7 +19,9 @@ use dregg_circuit::stark::StarkAir;
 use dregg_dsl_runtime::circuit::{
     BoundaryDef, BoundaryRow, CircuitDescriptor, ColumnDef, ColumnKind, ConstraintExpr, PolyTerm,
 };
-use dregg_dsl_runtime::{CellProgram, DslCircuit, ProgramRegistry, prove_dsl_plonky3, verify_dsl_plonky3};
+use dregg_dsl_runtime::{
+    CellProgram, DslCircuit, ProgramRegistry, prove_dsl_plonky3, verify_dsl_plonky3,
+};
 use dregg_turn::{
     ActionBuilder, ComputronCosts, DelegationMode, Effect, TurnBuilder, TurnExecutor, TurnResult,
 };
@@ -633,8 +635,8 @@ fn test_dsl_pipeline_wrong_proof_rejected() {
     let (trace, _) = generate_temporal_trace(&values, threshold);
 
     let circuit = DslCircuit::new(deploy_descriptor);
-    let mut proof_bytes = prove_dsl_plonky3(&circuit.descriptor, &trace, &full_pi)
-        .expect("prove_dsl_plonky3 failed");
+    let mut proof_bytes =
+        prove_dsl_plonky3(&circuit.descriptor, &trace, &full_pi).expect("prove_dsl_plonky3 failed");
 
     // Tamper with the proof bytes (flip some bytes in the middle).
     let mid = proof_bytes.len() / 2;
@@ -760,8 +762,8 @@ fn test_dsl_pipeline_wrong_vk_rejected() {
     let (trace, _) = generate_temporal_trace(&values, threshold);
 
     let circuit = DslCircuit::new(deploy_descriptor);
-    let proof_bytes = prove_dsl_plonky3(&circuit.descriptor, &trace, &full_pi)
-        .expect("prove_dsl_plonky3 failed");
+    let proof_bytes =
+        prove_dsl_plonky3(&circuit.descriptor, &trace, &full_pi).expect("prove_dsl_plonky3 failed");
 
     turn.execution_proof = Some(proof_bytes);
     turn.execution_proof_cell = Some(sovereign_cell_id);

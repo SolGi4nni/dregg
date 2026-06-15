@@ -24,11 +24,12 @@ mod executor_setup;
 mod genesis;
 pub mod gossip;
 mod identity_export;
+#[cfg(test)]
+mod mailbox_crank_e2e;
 mod mcp;
 pub mod metrics;
 pub mod multi_group;
-#[cfg(test)]
-mod mailbox_crank_e2e;
+mod pg_mirror;
 mod prove_pool;
 mod relay_service;
 mod routing_table;
@@ -36,10 +37,9 @@ mod starbridge_seed;
 mod state;
 mod storage_service;
 mod strand_admission_gate;
-mod trustline_service;
-mod pg_mirror;
 #[cfg(feature = "pg-mirror-live")]
 mod submit_queue_drainer;
+mod trustline_service;
 mod turn_proving;
 mod ws;
 
@@ -605,9 +605,9 @@ async fn run_node(
                             match hex_decode_32(issuer_well_hex) {
                                 // The devnet issuer well backs the DEFAULT
                                 // asset (all-zero token domain).
-                                Some(id) => s
-                                    .issuer_wells
-                                    .push(([0u8; 32], dregg_cell::CellId(id))),
+                                Some(id) => {
+                                    s.issuer_wells.push(([0u8; 32], dregg_cell::CellId(id)))
+                                }
                                 None => tracing::warn!(
                                     "genesis issuer_well is not a 32-byte hex cell id; burns stay non-conserving"
                                 ),

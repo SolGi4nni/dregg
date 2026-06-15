@@ -136,7 +136,10 @@ impl std::fmt::Display for EvidenceError {
                 write!(f, "headers sign the same statement (no conflicting story)")
             }
             EvidenceError::BadSignature { which } => {
-                write!(f, "header {which} signature does not verify against the accused creator")
+                write!(
+                    f,
+                    "header {which} signature does not verify against the accused creator"
+                )
             }
             EvidenceError::Malformed => write!(f, "evidence bytes are malformed"),
         }

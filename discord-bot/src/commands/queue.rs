@@ -131,7 +131,13 @@ pub async fn handle_create(ctx: &Context, command: &CommandInteraction, state: &
         return;
     };
     if name.trim().is_empty() {
-        respond_warning(ctx, command, "Missing Name", "A queue needs a non-empty name.").await;
+        respond_warning(
+            ctx,
+            command,
+            "Missing Name",
+            "A queue needs a non-empty name.",
+        )
+        .await;
         return;
     }
 
@@ -175,7 +181,12 @@ pub async fn handle_create(ctx: &Context, command: &CommandInteraction, state: &
         )
         .await
     {
-        edit_embed(ctx, command, embeds::error_embed("Queue State Error", &e.to_string())).await;
+        edit_embed(
+            ctx,
+            command,
+            embeds::error_embed("Queue State Error", &e.to_string()),
+        )
+        .await;
         return;
     }
     let _ = state
@@ -239,14 +250,21 @@ pub async fn handle_publish(ctx: &Context, command: &CommandInteraction, state: 
                 command,
                 embeds::warning_embed(
                     "Queue Not Found",
-                    &format!("No queue is mounted at `{namespace_path}`. Run `/queue-create` first."),
+                    &format!(
+                        "No queue is mounted at `{namespace_path}`. Run `/queue-create` first."
+                    ),
                 ),
             )
             .await;
             return;
         }
         Err(e) => {
-            edit_embed(ctx, command, embeds::error_embed("Queue State Error", &e.to_string())).await;
+            edit_embed(
+                ctx,
+                command,
+                embeds::error_embed("Queue State Error", &e.to_string()),
+            )
+            .await;
             return;
         }
     };
@@ -324,7 +342,9 @@ pub async fn handle_publish(ctx: &Context, command: &CommandInteraction, state: 
         }
         Ok(r) => embeds::error_embed(
             "Publish Rejected",
-            r.error.as_deref().unwrap_or("the node rejected the signed publish"),
+            r.error
+                .as_deref()
+                .unwrap_or("the node rejected the signed publish"),
         ),
         Err(e) => embeds::error_embed("Publish Failed", &e.user_message("publish to the queue")),
     };
@@ -350,14 +370,21 @@ pub async fn handle_subscribe(ctx: &Context, command: &CommandInteraction, state
                 command,
                 embeds::warning_embed(
                     "Queue Not Found",
-                    &format!("No queue is mounted at `{namespace_path}`. Run `/queue-create` first."),
+                    &format!(
+                        "No queue is mounted at `{namespace_path}`. Run `/queue-create` first."
+                    ),
                 ),
             )
             .await;
             return;
         }
         Err(e) => {
-            edit_embed(ctx, command, embeds::error_embed("Queue State Error", &e.to_string())).await;
+            edit_embed(
+                ctx,
+                command,
+                embeds::error_embed("Queue State Error", &e.to_string()),
+            )
+            .await;
             return;
         }
     }
@@ -394,7 +421,12 @@ pub async fn handle_subscribe(ctx: &Context, command: &CommandInteraction, state
             edit_embed(ctx, command, embed).await;
         }
         Err(e) => {
-            edit_embed(ctx, command, embeds::error_embed("Subscribe Failed", &e.to_string())).await;
+            edit_embed(
+                ctx,
+                command,
+                embeds::error_embed("Subscribe Failed", &e.to_string()),
+            )
+            .await;
         }
     }
 }
@@ -426,7 +458,12 @@ pub async fn handle_status(ctx: &Context, command: &CommandInteraction, state: &
             return;
         }
         Err(e) => {
-            edit_embed(ctx, command, embeds::error_embed("Queue State Error", &e.to_string())).await;
+            edit_embed(
+                ctx,
+                command,
+                embeds::error_embed("Queue State Error", &e.to_string()),
+            )
+            .await;
             return;
         }
     };
@@ -478,7 +515,9 @@ pub async fn handle_status(ctx: &Context, command: &CommandInteraction, state: &
         )
         .field(
             "Rate Limit",
-            queue.rate_limit.map_or("none".to_string(), |r| format!("{r}/min")),
+            queue
+                .rate_limit
+                .map_or("none".to_string(), |r| format!("{r}/min")),
             true,
         )
         .field("Queue ID", short_queue(&queue.queue_id), true)
@@ -556,7 +595,12 @@ pub async fn handle_mount(ctx: &Context, command: &CommandInteraction, state: &B
             edit_embed(ctx, command, embed).await;
         }
         Err(e) => {
-            edit_embed(ctx, command, embeds::error_embed("Mount Failed", &e.to_string())).await;
+            edit_embed(
+                ctx,
+                command,
+                embeds::error_embed("Mount Failed", &e.to_string()),
+            )
+            .await;
         }
     }
 }
@@ -653,11 +697,13 @@ async fn require_hosted(
         .get_user_identity(&command.user.id.get().to_string())
         .await
     {
-        Ok(Some(identity)) if identity.mode == IdentityMode::Hosted => Some(UserCipherclerk::derive(
-            &state.config.bot_secret,
-            command.user.id.get(),
-            state.federation_id_bytes,
-        )),
+        Ok(Some(identity)) if identity.mode == IdentityMode::Hosted => {
+            Some(UserCipherclerk::derive(
+                &state.config.bot_secret,
+                command.user.id.get(),
+                state.federation_id_bytes,
+            ))
+        }
         Ok(Some(_)) => {
             edit_embed(
                 ctx,
@@ -683,7 +729,12 @@ async fn require_hosted(
             None
         }
         Err(e) => {
-            edit_embed(ctx, command, embeds::error_embed("Database Error", &e.to_string())).await;
+            edit_embed(
+                ctx,
+                command,
+                embeds::error_embed("Database Error", &e.to_string()),
+            )
+            .await;
             None
         }
     }

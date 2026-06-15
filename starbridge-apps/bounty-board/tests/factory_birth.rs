@@ -86,8 +86,11 @@ fn factory_born_bounty_runs_the_whole_lifecycle() {
     assert!(has_program, "factory-born bounty must carry a CellProgram");
 
     // ACCEPT: post (write title + reward, STATE → OPEN).
-    exec.submit_action(&cclerk, build_post_action(&cclerk, bounty, "fix the bug", 500))
-        .expect("post must commit");
+    exec.submit_action(
+        &cclerk,
+        build_post_action(&cclerk, bounty, "fix the bug", 500),
+    )
+    .expect("post must commit");
     let (reward, state) = exec.with_ledger_mut(|ledger| {
         let c = ledger.get(&bounty).unwrap();
         (
@@ -96,24 +99,36 @@ fn factory_born_bounty_runs_the_whole_lifecycle() {
         )
     });
     assert_eq!(reward, reward_field(500), "post must escrow the reward");
-    assert_eq!(state, field_from_u64(STATE_OPEN), "post must open the bounty");
+    assert_eq!(
+        state,
+        field_from_u64(STATE_OPEN),
+        "post must open the bounty"
+    );
 
     // ACCEPT: claim (bind claimant, STATE OPEN → CLAIMED).
     exec.submit_action(&cclerk, build_claim_action(&cclerk, bounty, "bob"))
         .expect("claim must commit");
-    let claimant = exec
-        .with_ledger_mut(|ledger| ledger.get(&bounty).unwrap().state.fields[CLAIMANT_HASH_SLOT as usize]);
-    assert_eq!(claimant, claimant_hash("bob"), "claim must bind the claimant");
+    let claimant = exec.with_ledger_mut(|ledger| {
+        ledger.get(&bounty).unwrap().state.fields[CLAIMANT_HASH_SLOT as usize]
+    });
+    assert_eq!(
+        claimant,
+        claimant_hash("bob"),
+        "claim must bind the claimant"
+    );
 
     // ACCEPT: submit (bind artifact, STATE CLAIMED → SUBMITTED).
-    exec.submit_action(&cclerk, build_submit_action(&cclerk, bounty, "ipfs://artifact"))
-        .expect("submit must commit");
+    exec.submit_action(
+        &cclerk,
+        build_submit_action(&cclerk, bounty, "ipfs://artifact"),
+    )
+    .expect("submit must commit");
 
     // ACCEPT: payout (STATE SUBMITTED → PAID, terminal).
     exec.submit_action(&cclerk, build_payout_action(&cclerk, bounty))
         .expect("payout must commit");
-    let final_state =
-        exec.with_ledger_mut(|ledger| ledger.get(&bounty).unwrap().state.fields[STATE_SLOT as usize]);
+    let final_state = exec
+        .with_ledger_mut(|ledger| ledger.get(&bounty).unwrap().state.fields[STATE_SLOT as usize]);
     assert_eq!(
         final_state,
         field_from_u64(starbridge_bounty_board::STATE_PAID),
@@ -131,8 +146,11 @@ fn factory_born_bounty_refuses_theft_replay_and_reward_tampering() {
     let exec = EmbeddedExecutor::new(&cclerk, "default");
     let bounty = birth_bounty_cell(&exec, &cclerk, b"fix-the-bug-bounty-2");
 
-    exec.submit_action(&cclerk, build_post_action(&cclerk, bounty, "fix the bug", 500))
-        .expect("post must commit");
+    exec.submit_action(
+        &cclerk,
+        build_post_action(&cclerk, bounty, "fix the bug", 500),
+    )
+    .expect("post must commit");
     exec.submit_action(&cclerk, build_claim_action(&cclerk, bounty, "bob"))
         .expect("first claim must commit");
 
@@ -213,12 +231,18 @@ fn factory_born_bounty_refuses_state_regression_and_double_payout() {
     let exec = EmbeddedExecutor::new(&cclerk, "default");
     let bounty = birth_bounty_cell(&exec, &cclerk, b"fix-the-bug-bounty-3");
 
-    exec.submit_action(&cclerk, build_post_action(&cclerk, bounty, "fix the bug", 500))
-        .expect("post commits");
+    exec.submit_action(
+        &cclerk,
+        build_post_action(&cclerk, bounty, "fix the bug", 500),
+    )
+    .expect("post commits");
     exec.submit_action(&cclerk, build_claim_action(&cclerk, bounty, "bob"))
         .expect("claim commits");
-    exec.submit_action(&cclerk, build_submit_action(&cclerk, bounty, "ipfs://artifact"))
-        .expect("submit commits");
+    exec.submit_action(
+        &cclerk,
+        build_submit_action(&cclerk, bounty, "ipfs://artifact"),
+    )
+    .expect("submit commits");
     exec.submit_action(&cclerk, build_payout_action(&cclerk, bounty))
         .expect("payout commits");
 

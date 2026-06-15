@@ -87,7 +87,9 @@ impl AffordanceSpec {
         let name = name.into();
         AffordanceSpec {
             required_rights: rights.into(),
-            effect: AffordanceEffect::Emit { topic: name.clone() },
+            effect: AffordanceEffect::Emit {
+                topic: name.clone(),
+            },
             name,
         }
     }
@@ -101,7 +103,9 @@ impl AffordanceSpec {
         AffordanceSpec {
             name: name.into(),
             required_rights: rights.into(),
-            effect: AffordanceEffect::Emit { topic: topic.into() },
+            effect: AffordanceEffect::Emit {
+                topic: topic.into(),
+            },
         }
     }
 
@@ -297,10 +301,7 @@ impl Scaffold {
         // rights labels / empty cells BEFORE emitting half a crate.
         let probe_cclerk = AppCipherclerk::new(dregg_sdk::AgentCipherclerk::new(), [0u8; 32]);
         let probe_exec = EmbeddedExecutor::new(&probe_cclerk, "default");
-        let app = self
-            .spec
-            .clone()
-            .into_app(probe_cclerk, probe_exec)?;
+        let app = self.spec.clone().into_app(probe_cclerk, probe_exec)?;
 
         Ok(ScaffoldFiles {
             cargo_toml: self.render_cargo_toml(),
@@ -363,7 +364,10 @@ impl Scaffold {
         ));
         s.push_str(&format!("    AppSpec::new(\"{}\")\n", self.spec.name));
         for cell in &self.spec.cells {
-            s.push_str(&format!("        .cell(\n            CellSpec::new(\"{}\")\n", cell.name));
+            s.push_str(&format!(
+                "        .cell(\n            CellSpec::new(\"{}\")\n",
+                cell.name
+            ));
             for aff in &cell.affordances {
                 match &aff.effect {
                     AffordanceEffect::Emit { topic } => s.push_str(&format!(
@@ -540,7 +544,11 @@ mod tests {
         assert_eq!(cell.cell(), cclerk.cell_id());
         assert_eq!(
             cell.surface().all_names(),
-            vec!["read".to_string(), "set_title".to_string(), "sign".to_string()]
+            vec![
+                "read".to_string(),
+                "set_title".to_string(),
+                "sign".to_string()
+            ]
         );
         assert_eq!(cell.published_authority(), Some(&AuthRequired::Signature));
     }
@@ -559,7 +567,10 @@ mod tests {
         );
         assert_eq!(
             cell.surface().get("set_title").unwrap().effect_summary(),
-            EffectSummary::SetField { cell: doc, index: 0 }
+            EffectSummary::SetField {
+                cell: doc,
+                index: 0
+            }
         );
     }
 
@@ -594,7 +605,9 @@ mod tests {
     #[test]
     fn an_empty_spec_is_rejected() {
         let (cclerk, executor) = agent();
-        let err = AppSpec::new("empty").into_app(cclerk, executor).unwrap_err();
+        let err = AppSpec::new("empty")
+            .into_app(cclerk, executor)
+            .unwrap_err();
         assert!(matches!(err, ScaffoldError::NoCells));
     }
 
@@ -612,10 +625,22 @@ mod tests {
         assert!(files.lib_rs.contains("pub fn spec() -> AppSpec"));
         assert!(files.lib_rs.contains("AppSpec::new(\"guestbook\")"));
         assert!(files.lib_rs.contains("CellSpec::new(\"book\")"));
-        assert!(files.lib_rs.contains("AffordanceSpec::emit(\"sign\", \"either\", \"signed\")"));
-        assert!(files.lib_rs.contains("AffordanceSpec::edit(\"set_title\", \"none\", 0)"));
+        assert!(
+            files
+                .lib_rs
+                .contains("AffordanceSpec::emit(\"sign\", \"either\", \"signed\")")
+        );
+        assert!(
+            files
+                .lib_rs
+                .contains("AffordanceSpec::edit(\"set_title\", \"none\", 0)")
+        );
         assert!(files.lib_rs.contains(".publish(\"signature\")"));
-        assert!(files.lib_rs.contains(".discoverable(vec![\"social\".into()])"));
+        assert!(
+            files
+                .lib_rs
+                .contains(".discoverable(vec![\"social\".into()])")
+        );
         assert!(files.lib_rs.contains("pub fn build_app("));
 
         // main.rs is the one-command serve through the composed mount().

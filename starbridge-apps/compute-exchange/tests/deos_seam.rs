@@ -43,10 +43,21 @@ fn agent() -> (AppCipherclerk, EmbeddedExecutor) {
 
 /// Drive the honest lifecycle up to (but not including) settle: seed POSTED, bid as the
 /// PROVIDER. Returns nothing; leaves STATE == BID with a bound accepted price.
-fn post_and_bid(app: &dregg_app_framework::DeosApp, cclerk: &AppCipherclerk, executor: &EmbeddedExecutor) {
+fn post_and_bid(
+    app: &dregg_app_framework::DeosApp,
+    cclerk: &AppCipherclerk,
+    executor: &EmbeddedExecutor,
+) {
     let _ = seed_job(executor, "requester-corp", 1000);
-    fire_bid(app, &AuthRequired::Either, "provider-pat", 800, cclerk, executor)
-        .expect("a provider bids (cap Either ⊇ Either, state POSTED, bid 800 <= budget 1000)");
+    fire_bid(
+        app,
+        &AuthRequired::Either,
+        "provider-pat",
+        800,
+        cclerk,
+        executor,
+    )
+    .expect("a provider bids (cap Either ⊇ Either, state POSTED, bid 800 <= budget 1000)");
 }
 
 // =============================================================================
@@ -58,16 +69,20 @@ fn seeding_installs_the_job_program_and_posted_state() {
     let (cclerk, executor) = agent();
     let _ = seed_job(&executor, "requester-corp", 1000);
 
-    let installed = executor.with_ledger_mut(|ledger| {
-        ledger.get(&cclerk.cell_id()).map(|c| c.program.clone())
-    });
+    let installed =
+        executor.with_ledger_mut(|ledger| ledger.get(&cclerk.cell_id()).map(|c| c.program.clone()));
     assert_eq!(
         installed,
         Some(job_program()),
         "the seeded job cell carries the job program (the seam's enforcement layer)"
     );
-    let state = executor.cell_state(cclerk.cell_id()).expect("seeded cell exists");
-    assert_eq!(state.fields[STATE_SLOT as usize], field_from_u64(STATE_POSTED));
+    let state = executor
+        .cell_state(cclerk.cell_id())
+        .expect("seeded cell exists");
+    assert_eq!(
+        state.fields[STATE_SLOT as usize],
+        field_from_u64(STATE_POSTED)
+    );
     assert_eq!(state.fields[BUDGET_SLOT as usize], field_from_u64(1000));
     assert_eq!(state.fields[BID_SLOT as usize], field_from_u64(0));
 }
@@ -83,12 +98,27 @@ fn the_honest_lifecycle_runs_bid_settle_through_the_gated_fires() {
     let _ = seed_job(&executor, "requester-corp", 1000);
 
     // BID (the PROVIDER, Either): cap passes, state POSTED passes, bid 800 <= budget 1000.
-    let r1 = fire_bid(&app, &AuthRequired::Either, "provider-pat", 800, &cclerk, &executor)
-        .expect("a provider bids within the budget");
+    let r1 = fire_bid(
+        &app,
+        &AuthRequired::Either,
+        "provider-pat",
+        800,
+        &cclerk,
+        &executor,
+    )
+    .expect("a provider bids within the budget");
     assert_ne!(r1.turn_hash, [0u8; 32], "a real verified bid turn");
     let s = executor.cell_state(cclerk.cell_id()).unwrap();
-    assert_eq!(s.fields[STATE_SLOT as usize], field_from_u64(STATE_BID), "STATE advanced POSTED -> BID");
-    assert_eq!(s.fields[BID_SLOT as usize], field_from_u64(800), "the bid committed");
+    assert_eq!(
+        s.fields[STATE_SLOT as usize],
+        field_from_u64(STATE_BID),
+        "STATE advanced POSTED -> BID"
+    );
+    assert_eq!(
+        s.fields[BID_SLOT as usize],
+        field_from_u64(800),
+        "the bid committed"
+    );
 
     // SETTLE (the REQUESTER, None): cap passes, state BID passes; the fire reads live BID (800)
     // + BUDGET (1000) and pays the provider IN FULL (paid 800, refunded 200), so the FLASHWELL
@@ -97,9 +127,21 @@ fn the_honest_lifecycle_runs_bid_settle_through_the_gated_fires() {
         .expect("a requester settles, conserving the budget on the honest path");
     assert_ne!(r2.turn_hash, [0u8; 32], "a real verified settle turn");
     let s = executor.cell_state(cclerk.cell_id()).unwrap();
-    assert_eq!(s.fields[STATE_SLOT as usize], field_from_u64(STATE_SETTLED), "STATE advanced BID -> SETTLED");
-    assert_eq!(s.fields[PAID_SLOT as usize], field_from_u64(800), "the provider was paid the accepted bid");
-    assert_eq!(s.fields[REFUNDED_SLOT as usize], field_from_u64(200), "the requester was refunded the remainder");
+    assert_eq!(
+        s.fields[STATE_SLOT as usize],
+        field_from_u64(STATE_SETTLED),
+        "STATE advanced BID -> SETTLED"
+    );
+    assert_eq!(
+        s.fields[PAID_SLOT as usize],
+        field_from_u64(800),
+        "the provider was paid the accepted bid"
+    );
+    assert_eq!(
+        s.fields[REFUNDED_SLOT as usize],
+        field_from_u64(200),
+        "the requester was refunded the remainder"
+    );
 }
 
 // =============================================================================
@@ -116,18 +158,37 @@ fn the_lit_button_set_tracks_the_lifecycle_state_the_htmx_tooth() {
     // On POSTED: a PROVIDER (Either) sees `bid` LIT (posted precondition holds); `settle` is
     // DARK (its BID precondition fails). The htmx tooth off live state.
     let lit_posted = cell.gated_fireable_names(&AuthRequired::Either, &executor);
-    assert!(lit_posted.contains(&"bid".to_string()), "POSTED: bid lights");
-    assert!(!lit_posted.contains(&"settle".to_string()), "POSTED: settle dark");
+    assert!(
+        lit_posted.contains(&"bid".to_string()),
+        "POSTED: bid lights"
+    );
+    assert!(
+        !lit_posted.contains(&"settle".to_string()),
+        "POSTED: settle dark"
+    );
 
     // Bid it (a real turn) — the cell transitions to BID.
-    fire_bid(&app, &AuthRequired::Either, "provider-pat", 800, &cclerk, &executor)
-        .expect("the provider bids");
+    fire_bid(
+        &app,
+        &AuthRequired::Either,
+        "provider-pat",
+        800,
+        &cclerk,
+        &executor,
+    )
+    .expect("the provider bids");
 
     // After bid: as the REQUESTER (None, the top tier), `bid` DARKENS (POSTED precondition now
     // fails) and `settle` LIGHTS (BID precondition holds). Same cell, DIFFERENT button-set.
     let lit_bid = cell.gated_fireable_names(&AuthRequired::None, &executor);
-    assert!(!lit_bid.contains(&"bid".to_string()), "BID: bid darkens (the htmx tooth)");
-    assert!(lit_bid.contains(&"settle".to_string()), "BID: settle lights (the htmx tooth)");
+    assert!(
+        !lit_bid.contains(&"bid".to_string()),
+        "BID: bid darkens (the htmx tooth)"
+    );
+    assert!(
+        lit_bid.contains(&"settle".to_string()),
+        "BID: settle lights (the htmx tooth)"
+    );
 }
 
 // =============================================================================
@@ -140,8 +201,15 @@ fn a_provider_cannot_fire_settle_the_cap_tooth_bites_in_band() {
     let app = job_app(&cclerk, &executor);
     let _ = seed_job(&executor, "requester-corp", 1000);
     // Bid first so the BID precondition for `settle` would otherwise hold — isolating the CAP tooth.
-    fire_bid(&app, &AuthRequired::Either, "provider-pat", 800, &cclerk, &executor)
-        .expect("the provider bids");
+    fire_bid(
+        &app,
+        &AuthRequired::Either,
+        "provider-pat",
+        800,
+        &cclerk,
+        &executor,
+    )
+    .expect("the provider bids");
 
     // A PROVIDER (Either) firing `settle` (requires None/root): the CAP tooth refuses IN-BAND
     // (Either does not attenuate to None). Nothing is submitted (anti-ghost), even though the
@@ -157,7 +225,11 @@ fn a_provider_cannot_fire_settle_the_cap_tooth_bites_in_band() {
         "a provider's settle is refused at the cap tooth in-band, got {refused:?}"
     );
     let s = executor.cell_state(cclerk.cell_id()).unwrap();
-    assert_eq!(s.fields[STATE_SLOT as usize], field_from_u64(STATE_BID), "still BID — settle never fired");
+    assert_eq!(
+        s.fields[STATE_SLOT as usize],
+        field_from_u64(STATE_BID),
+        "still BID — settle never fired"
+    );
 }
 
 // =============================================================================
@@ -183,10 +255,16 @@ fn the_executor_re_enforces_a_non_advancing_state_is_refused_strictmonotonic() {
     }
     let action = cclerk.make_action(cell, "settle", effects);
     let refused = executor.submit_action(&cclerk, action);
-    assert!(refused.is_err(), "a non-advancing settle must be refused by the executor");
+    assert!(
+        refused.is_err(),
+        "a non-advancing settle must be refused by the executor"
+    );
     let msg = format!("{:?}", refused.unwrap_err()).to_lowercase();
     assert!(
-        msg.contains("strictmonotonic") || msg.contains("strictly") || msg.contains("monotonic") || msg.contains("program"),
+        msg.contains("strictmonotonic")
+            || msg.contains("strictly")
+            || msg.contains("monotonic")
+            || msg.contains("program"),
         "the executor refuses on the StrictMonotonic(STATE) caveat, got: {msg}"
     );
     let after = executor.cell_state(cell).unwrap();
@@ -248,7 +326,10 @@ fn the_executor_re_enforces_a_non_conserving_settle_is_refused_flashwell() {
     assert!(refused.is_err(), "a value-minting settle must be refused");
     let msg = format!("{:?}", refused.unwrap_err()).to_lowercase();
     assert!(
-        msg.contains("affine") || msg.contains("conserv") || msg.contains("sum") || msg.contains("program"),
+        msg.contains("affine")
+            || msg.contains("conserv")
+            || msg.contains("sum")
+            || msg.contains("program"),
         "the executor refuses the mint on the AffineLe no-mint caveat, got: {msg}"
     );
 
@@ -259,7 +340,10 @@ fn the_executor_re_enforces_a_non_conserving_settle_is_refused_flashwell() {
     assert!(refused.is_err(), "a value-burning settle must be refused");
     let msg = format!("{:?}", refused.unwrap_err()).to_lowercase();
     assert!(
-        msg.contains("affine") || msg.contains("conserv") || msg.contains("sum") || msg.contains("program"),
+        msg.contains("affine")
+            || msg.contains("conserv")
+            || msg.contains("sum")
+            || msg.contains("program"),
         "the executor refuses the burn on the AffineEq no-burn caveat, got: {msg}"
     );
 
@@ -275,7 +359,11 @@ fn the_executor_re_enforces_a_non_conserving_settle_is_refused_flashwell() {
         .expect("the conserving settle commits");
     assert_ne!(r.turn_hash, [0u8; 32], "a real verified conserving settle");
     let after = executor.cell_state(cell).unwrap();
-    assert_eq!(after.fields[STATE_SLOT as usize], field_from_u64(STATE_SETTLED), "the deal SETTLED");
+    assert_eq!(
+        after.fields[STATE_SLOT as usize],
+        field_from_u64(STATE_SETTLED),
+        "the deal SETTLED"
+    );
 }
 
 // =============================================================================
@@ -290,13 +378,28 @@ fn register_deos_mounts_the_seeded_surface_into_the_context() {
 
     let app = register_deos(&ctx);
     assert_eq!(app.name(), "compute-exchange");
-    assert_eq!(ctx.affordance_registry().len(), 1, "the deos surface is registered");
+    assert_eq!(
+        ctx.affordance_registry().len(),
+        1,
+        "the deos surface is registered"
+    );
 
     // The seeded job is POSTED with a budget, so a provider can bid through the mounted surface
     // immediately (the seam is closed + live).
-    let receipt = fire_bid(&app, &AuthRequired::Either, "provider-pat", 500, &cclerk, &executor)
-        .expect("the mounted, seeded surface bids (the promotion is live)");
+    let receipt = fire_bid(
+        &app,
+        &AuthRequired::Either,
+        "provider-pat",
+        500,
+        &cclerk,
+        &executor,
+    )
+    .expect("the mounted, seeded surface bids (the promotion is live)");
     assert_ne!(receipt.turn_hash, [0u8; 32]);
     let s = executor.cell_state(cclerk.cell_id()).unwrap();
-    assert_eq!(s.fields[BID_SLOT as usize], field_from_u64(500), "the bid committed through the mounted surface");
+    assert_eq!(
+        s.fields[BID_SLOT as usize],
+        field_from_u64(500),
+        "the bid committed through the mounted surface"
+    );
 }

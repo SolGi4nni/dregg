@@ -109,7 +109,11 @@ fn out_of_enum_joint_is_refused_by_the_cell_program() {
     // And a legal pose IS admitted (non-vacuity: the gate is not always-false).
     let mut good = old.clone();
     good.set_field(slot::JOINT_BASE, field_from_u64(JointState::Contract.sym()));
-    assert!(Figure::joint_program().evaluate(&good, Some(&old), None).is_ok());
+    assert!(
+        Figure::joint_program()
+            .evaluate(&good, Some(&old), None)
+            .is_ok()
+    );
 }
 
 #[test]
@@ -131,7 +135,9 @@ fn pose_checked_is_the_in_band_enum_gate() {
     let mut corrupt = f.cell.clone();
     corrupt.set_field(slot::JOINT_BASE + 1, field_from_u64(5)); // 5 ∉ {0,1,2,3}
     assert!(
-        Figure::joint_program().evaluate(&corrupt, Some(&f.cell), None).is_err(),
+        Figure::joint_program()
+            .evaluate(&corrupt, Some(&f.cell), None)
+            .is_err(),
         "the in-band enum gate did not refuse an out-of-enum joint"
     );
 }
@@ -147,7 +153,9 @@ fn opponent_move_is_unreadable_before_reveal() {
 
     let mut frame = Frame::new(P0, P1);
     frame.commit(P1, seal).unwrap();
-    frame.commit(P0, MoveCommit::new(P0, push(1), 1).seal()).unwrap();
+    frame
+        .commit(P0, MoveCommit::new(P0, push(1), 1).seal())
+        .unwrap();
     frame.seal_commit_phase();
 
     // From P0's vantage, all that is observable about P1's move is the seal.
@@ -184,7 +192,9 @@ fn peek_then_switch_is_refused() {
     // guarantee.
     let committed = MoveCommit::new(P1, push(3), 7);
     let mut frame = Frame::new(P0, P1);
-    frame.commit(P0, MoveCommit::new(P0, push(1), 1).seal()).unwrap();
+    frame
+        .commit(P0, MoveCommit::new(P0, push(1), 1).seal())
+        .unwrap();
     frame.commit(P1, committed.seal()).unwrap();
     frame.seal_commit_phase();
 
@@ -229,7 +239,10 @@ fn player_cannot_pose_the_opponents_figure() {
     let hijack = MoveCommit::new(P1, push(2), 5);
     let verdict = frame.reveal(hijack);
     assert!(
-        matches!(verdict, Err(TussleError::NotCommitted) | Err(TussleError::WrongFigure { .. })),
+        matches!(
+            verdict,
+            Err(TussleError::NotCommitted) | Err(TussleError::WrongFigure { .. })
+        ),
         "a player posing the opponent's figure was not refused: {verdict:?}"
     );
 
@@ -374,7 +387,10 @@ fn frame_resolves_through_the_verified_executor() {
     let before_total = m.ledger.total_asset(&SCORE_ASSET);
 
     let r = m
-        .play_frame(MoveCommit::new(P0, push(3), 1), MoveCommit::new(P1, push(1), 2))
+        .play_frame(
+            MoveCommit::new(P0, push(3), 1),
+            MoveCommit::new(P1, push(1), 2),
+        )
         .expect("frame should resolve through the verified executor");
     let c = r.contact.expect("contact expected");
     assert_eq!(c.striker, P0);

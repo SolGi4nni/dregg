@@ -625,8 +625,7 @@ impl DkgParticipant {
                 index: dealing.dealer,
             });
         }
-        if dealing.commitments.len() != self.params.t || !dealing.commitments.iter().all(point_ok)
-        {
+        if dealing.commitments.len() != self.params.t || !dealing.commitments.iter().all(point_ok) {
             return Err(DkgError::MalformedDealing {
                 dealer: dealing.dealer,
             });
@@ -979,11 +978,7 @@ pub struct ReshareParticipant {
 impl ReshareParticipant {
     /// New member `index` (1-based in the NEW committee) joining a reshare
     /// from the old committee described by `old`.
-    pub fn new(
-        old: DkgPublicView,
-        new_params: DkgParams,
-        index: usize,
-    ) -> Result<Self, DkgError> {
+    pub fn new(old: DkgPublicView, new_params: DkgParams, index: usize) -> Result<Self, DkgError> {
         new_params.validate()?;
         if index == 0 || index > new_params.n {
             return Err(DkgError::IndexOutOfRange { index });
@@ -1027,7 +1022,10 @@ impl ReshareParticipant {
 
     /// Verify a private sub-share against the dealer's anchored commitments.
     /// Same typed Ack/Complaint surface as the DKG round.
-    pub fn receive_share(&mut self, share: &ResharePrivateShare) -> Result<ShareResponse, DkgError> {
+    pub fn receive_share(
+        &mut self,
+        share: &ResharePrivateShare,
+    ) -> Result<ShareResponse, DkgError> {
         if share.recipient != self.index {
             return Err(DkgError::WrongRecipient {
                 expected: self.index,
@@ -1159,7 +1157,10 @@ mod tests {
                 "honest share must ack"
             );
         }
-        parts.iter().map(|p| p.finalize(&[], &[]).unwrap()).collect()
+        parts
+            .iter()
+            .map(|p| p.finalize(&[], &[]).unwrap())
+            .collect()
     }
 
     // ── The full honest ceremony: drop-in for the beacon ─────────────────
@@ -1310,7 +1311,10 @@ mod tests {
             .map(|p| p.finalize(&[complaint], &[reveal.clone()]).unwrap())
             .collect();
         // Full QUAL — identical to the run with no complaints at all.
-        let honest: Vec<DkgOutput> = parts.iter().map(|p| p.finalize(&[], &[]).unwrap()).collect();
+        let honest: Vec<DkgOutput> = parts
+            .iter()
+            .map(|p| p.finalize(&[], &[]).unwrap())
+            .collect();
         for (a, b) in outs.iter().zip(&honest) {
             assert_eq!(a.qual(), &[1, 2, 3, 4, 5]);
             assert_eq!(BeaconCommittee::from(a), BeaconCommittee::from(b));
@@ -1407,8 +1411,7 @@ mod tests {
         let mut reshare_dealings = Vec::new();
         let mut reshare_shares = Vec::new();
         for (k, old) in old_outs.iter().enumerate() {
-            let (d, ss) =
-                reshare_deal_with_seed(old, new_params, [120 + k as u8; 32]).unwrap();
+            let (d, ss) = reshare_deal_with_seed(old, new_params, [120 + k as u8; 32]).unwrap();
             reshare_dealings.push(d);
             reshare_shares.extend(ss);
         }
@@ -1425,8 +1428,7 @@ mod tests {
             let resp = new_parts[ps.recipient - 1].receive_share(ps).unwrap();
             assert!(matches!(resp, ShareResponse::Ack { .. }));
         }
-        let new_outs: Vec<DkgOutput> =
-            new_parts.iter().map(|p| p.finalize().unwrap()).collect();
+        let new_outs: Vec<DkgOutput> = new_parts.iter().map(|p| p.finalize().unwrap()).collect();
 
         // SAME group public key; identical committee across new members;
         // deterministic dealer set R = lowest old-t indices.
@@ -1479,8 +1481,7 @@ mod tests {
         // A dealer trying to substitute a FRESH secret (commitments not
         // anchored to its old share public) is rejected fail-closed: build
         // a dealing from old member 1's secret but claim it is member 2's.
-        let (mut forged, _) =
-            reshare_deal_with_seed(&old_outs[0], new_params, [200; 32]).unwrap();
+        let (mut forged, _) = reshare_deal_with_seed(&old_outs[0], new_params, [200; 32]).unwrap();
         forged.dealer = 2;
         let mut p = ReshareParticipant::new(view.clone(), new_params, 1).unwrap();
         assert_eq!(

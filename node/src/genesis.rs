@@ -8,6 +8,7 @@
 
 use std::path::Path;
 
+use dregg_storage_templates::cap_inbox::CAP_INBOX_FACTORY_VK;
 use serde::Serialize;
 use starbridge_bounty_board::BOUNTY_FACTORY_VK;
 use starbridge_compartment_workflow_mandate::CWM_FACTORY_VK;
@@ -16,7 +17,6 @@ use starbridge_identity::ISSUER_FACTORY_VK;
 use starbridge_nameservice::NAME_FACTORY_VK;
 use starbridge_privacy_voting::{BALLOT_FACTORY_VK, POLL_FACTORY_VK};
 use starbridge_storage_gateway_mandate::SGM_FACTORY_VK;
-use dregg_storage_templates::cap_inbox::CAP_INBOX_FACTORY_VK;
 use starbridge_subscription::SUBSCRIPTION_FACTORY_VK;
 
 /// A validator entry in the genesis configuration.
@@ -290,7 +290,10 @@ pub fn run_genesis(validators: usize, epoch_length: u64, checkpoint_interval: u6
         });
     }
     debug_assert_eq!(
-        initial_cells.iter().map(|c| c.balance as i128).sum::<i128>(),
+        initial_cells
+            .iter()
+            .map(|c| c.balance as i128)
+            .sum::<i128>(),
         0,
         "genesis value column must sum to zero"
     );

@@ -27,7 +27,10 @@ fn valid_escrow_deployment_passes() {
 fn resolved_ids_are_deterministic() {
     let a = check(ESCROW, false).unwrap();
     let b = check(ESCROW, false).unwrap();
-    assert_eq!(a.cells, b.cells, "cell ids are a deterministic function of names");
+    assert_eq!(
+        a.cells, b.cells,
+        "cell ids are a deterministic function of names"
+    );
     assert_eq!(a.factories, b.factories, "factory_vks are deterministic");
 }
 
@@ -44,7 +47,10 @@ fn non_conserving_fund_is_caught() {
     //
     // Here we assert the positive: a plain funded deployment conserves.
     let v = check(ESCROW, false).unwrap();
-    assert!(v.assurance.conservation.is_pass(), "funding transfers self-net");
+    assert!(
+        v.assurance.conservation.is_pass(),
+        "funding transfers self-net"
+    );
 }
 
 #[test]
@@ -209,7 +215,10 @@ factory = "does-not-exist"
 "#;
     let err = check(dl, false).unwrap_err();
     let msg = format!("{err}");
-    assert!(msg.contains("does-not-exist"), "names the missing factory: {msg}");
+    assert!(
+        msg.contains("does-not-exist"),
+        "names the missing factory: {msg}"
+    );
 }
 
 #[test]
@@ -228,7 +237,10 @@ to   = "ghost"
 "#;
     let err = check(dl, false).unwrap_err();
     let msg = format!("{err}");
-    assert!(msg.contains("ghost"), "names the unresolved recipient: {msg}");
+    assert!(
+        msg.contains("ghost"),
+        "names the unresolved recipient: {msg}"
+    );
 }
 
 #[test]
@@ -246,7 +258,10 @@ name = "a"
 factory = "f"
 "#;
     let err = check(dl, false).unwrap_err();
-    assert!(format!("{err}").contains("duplicate cell name"), "rejects dup names");
+    assert!(
+        format!("{err}").contains("duplicate cell name"),
+        "rejects dup names"
+    );
 }
 
 // ─── round-trip: parse → re-serialize → parse is stable ──────────────────────
@@ -267,7 +282,10 @@ fn lower_is_deterministic_byte_for_byte() {
     let b = Lowered::from_deployment(&dep).unwrap();
     let ja = serde_json::to_vec(&a.forest).unwrap();
     let jb = serde_json::to_vec(&b.forest).unwrap();
-    assert_eq!(ja, jb, "lowering the same DreggDL yields a byte-identical forest");
+    assert_eq!(
+        ja, jb,
+        "lowering the same DreggDL yields a byte-identical forest"
+    );
     assert_eq!(a.federation_id, b.federation_id);
 }
 
@@ -345,7 +363,10 @@ facet = "transfer-only"
 allowed_effects = 1
 "#;
     let err = check(dl, false).unwrap_err();
-    assert!(format!("{err}").contains("DISAGREE"), "the conflict is named: {err}");
+    assert!(
+        format!("{err}").contains("DISAGREE"),
+        "the conflict is named: {err}"
+    );
 }
 
 #[test]
@@ -375,7 +396,11 @@ factory = "f"
             }
         }
     }
-    assert_eq!(found, Some([0xabu8; 32]), "the birth effect uses the PINNED factory vk");
+    assert_eq!(
+        found,
+        Some([0xabu8; 32]),
+        "the birth effect uses the PINNED factory vk"
+    );
 }
 
 // ─── the app-deploy specs: ACCEPT the correct one, REFUSE the over-grant ──────
@@ -464,7 +489,7 @@ fn projected_receipt_dynamic_fields_are_deferred_not_zeroed() {
 //  static check.
 // ════════════════════════════════════════════════════════════════════════════
 
-use crate::apply::{plan_apply, plan_apply_toml, ApplyError};
+use crate::apply::{ApplyError, plan_apply, plan_apply_toml};
 
 /// An amplifying deployment: operator is handed a TRANSFER-ONLY facet (mask 2)
 /// over `deal`, then re-delegates to `sub` an UNRESTRICTED cap over the same
@@ -510,7 +535,9 @@ fn apply_refuses_an_amplifying_spec_before_emitting_any_turn() {
     let err = plan_apply_toml(AMPLIFYING, false)
         .expect_err("an amplifying deployment must be REFUSED by the gate, not planned");
     match err {
-        crate::DeployError::Lower(_) | crate::DeployError::Toml(_) | crate::DeployError::Json(_) => {
+        crate::DeployError::Lower(_)
+        | crate::DeployError::Toml(_)
+        | crate::DeployError::Json(_) => {
             panic!("expected a Refused gate failure, not a parse/lower error: {err}")
         }
         crate::DeployError::Apply(ApplyError::Refused { assurance }) => {
@@ -555,7 +582,10 @@ fn apply_refuses_directly_via_plan_apply_with_the_assurance() {
 fn apply_emits_the_per_root_turn_sequence_for_a_valid_spec() {
     let plan = plan_apply_toml(ESCROW, false).expect("valid escrow applies");
     // The gate passed (by construction of a returned plan).
-    assert!(plan.assurance.pass(), "a returned plan carries a passing assurance");
+    assert!(
+        plan.assurance.pass(),
+        "a returned plan carries a passing assurance"
+    );
     // 3 births + 1 fund + 1 grant = 5 root effect-groups = 5 turns.
     assert_eq!(plan.len(), 5, "one turn per root effect-group");
     // Phases come out in dependency order: births first, then funds, then grants.
@@ -591,7 +621,10 @@ fn apply_chains_the_receipts_into_one_strand() {
         );
     }
     // The self-consistency invariant holds.
-    assert!(plan.chain_is_linked(), "the plan's receipt chain is internally linked");
+    assert!(
+        plan.chain_is_linked(),
+        "the plan's receipt chain is internally linked"
+    );
 }
 
 #[test]
@@ -654,7 +687,11 @@ allowed_effects = 2
     assert!(plan.assurance.pass());
     // 3 births + 2 grants, but the second grant NESTS under the first, so there
     // are 3 birth turns + 1 grant turn = 4 top-level turns.
-    assert_eq!(plan.len(), 4, "the re-delegation nests, not a separate root turn");
+    assert_eq!(
+        plan.len(),
+        4,
+        "the re-delegation nests, not a separate root turn"
+    );
     let grant_turn = plan.turns.iter().find(|t| t.phase == "grant").unwrap();
     // The grant turn's single root carries the child grant as a nested action.
     assert_eq!(
@@ -698,7 +735,10 @@ amount = 10
     let crate::DeployError::Apply(ApplyError::Refused { assurance }) = err else {
         panic!("expected a ring refusal, got {err}");
     };
-    assert!(!assurance.ring_balance.is_pass(), "refused on the ring-balance check");
+    assert!(
+        !assurance.ring_balance.is_pass(),
+        "refused on the ring-balance check"
+    );
     // The CLOSED ring applies cleanly (and emits 3 fund turns).
     let closed = format!("{dl}\n[[fund]]\nfrom = \"c\"\nto = \"a\"\namount = 10\n");
     let plan = plan_apply_toml(&closed, true).expect("a closed ring applies");

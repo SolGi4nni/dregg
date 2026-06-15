@@ -247,7 +247,11 @@ impl Credential {
         let caveats: Vec<Caveat> = caveats.into_iter().collect();
         let next = fresh_signing_key();
         let next_pub = next.verifying_key().to_bytes();
-        let prev_sig = self.blocks.last().expect("a credential has a root block").sig;
+        let prev_sig = self
+            .blocks
+            .last()
+            .expect("a credential has a root block")
+            .sig;
         let msg = block_digest(&prev_sig, &caveats, &next_pub);
         let sig = self.proof.sign(&msg).to_bytes();
         self.blocks.push(Block {
@@ -301,8 +305,8 @@ impl Credential {
 
         // 2. The signature chain, from the root key down (BiscuitGraph: each
         //    block verifies under its parent's vkey).
-        let mut vkey = VerifyingKey::from_bytes(&root.0)
-            .map_err(|_| Refusal::MalformedKey { block: 0 })?;
+        let mut vkey =
+            VerifyingKey::from_bytes(&root.0).map_err(|_| Refusal::MalformedKey { block: 0 })?;
         let mut prev: Option<[u8; 64]> = None;
         for (i, block) in self.blocks.iter().enumerate() {
             let msg = match prev {

@@ -508,7 +508,11 @@ pub fn describe_effect(eff: &Effect) -> String {
             describe_allowed_effects(cap.allowed_effects),
         ),
         Effect::Transfer { from, to, amount } => {
-            format!("Transfer {} → {} amount {amount}", short(&from.0), short(&to.0))
+            format!(
+                "Transfer {} → {} amount {amount}",
+                short(&from.0),
+                short(&to.0)
+            )
         }
         Effect::CreateCellFromFactory { factory_vk, .. } => {
             format!("CreateCellFromFactory from factory {}", short(factory_vk))

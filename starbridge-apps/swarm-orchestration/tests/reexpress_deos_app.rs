@@ -73,7 +73,10 @@ fn the_whole_app_is_one_composed_registration() {
         .map(|g| g.name().to_string())
         .collect();
     gated.sort();
-    assert_eq!(gated, vec!["dispatch".to_string(), "open_board".to_string()]);
+    assert_eq!(
+        gated,
+        vec!["dispatch".to_string(), "open_board".to_string()]
+    );
 
     // The BOARD cell is the agent's own (so fires execute against the seeded ledger), and is
     // published into the web-of-cells at the observer tier.
@@ -114,13 +117,18 @@ async fn the_three_swarm_roles_see_different_cap_only_surfaces() {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
-        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
         serde_json::from_slice::<serde_json::Value>(&bytes).unwrap()["visible"].clone()
     }
 
     // An OBSERVER (Signature) sees only `view_board` — it can AUDIT but cannot ack, dispatch,
     // or open (`dispatch`/`open_board` are GATED, not on the cap-only projection).
-    assert_eq!(visible(&router, "signature").await, serde_json::json!(["view_board"]));
+    assert_eq!(
+        visible(&router, "signature").await,
+        serde_json::json!(["view_board"])
+    );
     // A WORKER (Either) additionally sees `ack_dispatch` — its attenuated action space: it
     // can drain a wake, but it CANNOT dispatch (it is not the lead). This IS DEOS-APPS.md §5's
     // "the affordance set is an agent's attenuated action space."
@@ -165,16 +173,28 @@ async fn a_worker_acks_an_observer_cannot_and_only_the_lead_grants() {
     }
 
     // A WORKER (Either) acks a dispatch (the async drain) — a real turn (not 403).
-    assert_ne!(fire(&router, "ack_dispatch", "either").await, StatusCode::FORBIDDEN);
+    assert_ne!(
+        fire(&router, "ack_dispatch", "either").await,
+        StatusCode::FORBIDDEN
+    );
     // An OBSERVER (Signature) cannot ack — it only audits; the ack is a worker's own turn.
-    assert_eq!(fire(&router, "ack_dispatch", "signature").await, StatusCode::FORBIDDEN);
+    assert_eq!(
+        fire(&router, "ack_dispatch", "signature").await,
+        StatusCode::FORBIDDEN
+    );
 
     // The CAP tooth, in-band (anti-ghost): a WORKER and an OBSERVER firing `grant_worker` are
     // REFUSED at the cap gate (403) BEFORE anything reaches the executor — only the lead hands
     // a worker an attenuated slice (the no-amplification guarantee). The cap gate is the
     // genuine `is_attenuation` (`None` ⊄ Either/Signature).
-    assert_eq!(fire(&router, "grant_worker", "either").await, StatusCode::FORBIDDEN);
-    assert_eq!(fire(&router, "grant_worker", "signature").await, StatusCode::FORBIDDEN);
+    assert_eq!(
+        fire(&router, "grant_worker", "either").await,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        fire(&router, "grant_worker", "signature").await,
+        StatusCode::FORBIDDEN
+    );
     // The LEAD (root) CLEARS the cap gate (not 403) — it is cap-authorized to grant.
     assert_ne!(
         fire(&router, "grant_worker", "root").await,
@@ -203,7 +223,11 @@ async fn the_board_is_published_into_the_web_of_cells() {
     // the dispatch board across the membrane.
     let uris = app.publish_all(100).await;
     assert_eq!(uris.len(), 1);
-    assert!(uris[0].starts_with("dregg://"), "a real sturdyref: {}", uris[0]);
+    assert!(
+        uris[0].starts_with("dregg://"),
+        "a real sturdyref: {}",
+        uris[0]
+    );
 }
 
 // =============================================================================
@@ -220,7 +244,11 @@ fn a_board_snapshot_rehydrates_per_viewer_respecting_the_lattice() {
     // to a downstream auditor) ⇒ liveness REPLAYED-DETERMINISTIC.
     let log = InteractionLog::new().record(Interaction::witnessed_turn(board.cell(), [9u8; 32]));
     let snap = board.snapshot(log, false);
-    assert_eq!(snap.lineage, AuthRequired::Signature, "snapshot at the published lineage");
+    assert_eq!(
+        snap.lineage,
+        AuthRequired::Signature,
+        "snapshot at the published lineage"
+    );
     assert_eq!(snap.liveness(), Rehydration::ReplayedDeterministic);
     assert!(snap.liveness().is_faithful());
 
@@ -266,7 +294,9 @@ async fn the_app_ships_a_web_component_surface_and_a_manifest() {
         .unwrap()
         .to_string();
     assert!(ct.contains("javascript"), "served as a JS module: {ct}");
-    let bytes = axum::body::to_bytes(surface.into_body(), usize::MAX).await.unwrap();
+    let bytes = axum::body::to_bytes(surface.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let js = String::from_utf8(bytes.to_vec()).unwrap();
     assert!(js.contains("customElements.define(\"dregg-affordance-surface\""));
     // The anti-drift affordance map names the cap-only fire endpoints.
@@ -280,17 +310,35 @@ async fn the_app_ships_a_web_component_surface_and_a_manifest() {
         .await
         .unwrap();
     assert_eq!(manifest.status(), StatusCode::OK);
-    let bytes = axum::body::to_bytes(manifest.into_body(), usize::MAX).await.unwrap();
+    let bytes = axum::body::to_bytes(manifest.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let m: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(m["app"], "swarm-orchestration");
-    assert_eq!(m["discoverable"], serde_json::json!(["orchestration", "swarm"]));
-    assert!(m["persistence"].as_str().unwrap().contains("embedded-ledger"));
+    assert_eq!(
+        m["discoverable"],
+        serde_json::json!(["orchestration", "swarm"])
+    );
+    assert!(
+        m["persistence"]
+            .as_str()
+            .unwrap()
+            .contains("embedded-ledger")
+    );
     assert_eq!(m["cells"].as_array().unwrap().len(), 1);
     // The manifest advertises the two gated (cap∧state) affordances.
-    let gated = m["cells"][0]["gatedAffordances"].as_array().expect("gated affordances");
+    let gated = m["cells"][0]["gatedAffordances"]
+        .as_array()
+        .expect("gated affordances");
     let names: Vec<&str> = gated.iter().filter_map(|g| g["name"].as_str()).collect();
-    assert!(names.contains(&"dispatch"), "dispatch is advertised as gated");
-    assert!(names.contains(&"open_board"), "open_board is advertised as gated");
+    assert!(
+        names.contains(&"dispatch"),
+        "dispatch is advertised as gated"
+    );
+    assert!(
+        names.contains(&"open_board"),
+        "open_board is advertised as gated"
+    );
 }
 
 // =============================================================================
@@ -305,8 +353,14 @@ fn the_budget_gate_still_refuses_an_overrun() {
     // the fire path — see `tests/deos_seam.rs::the_executor_re_enforces_an_over_budget_dispatch_is_refused`).
     //
     // budget 1000; A at 600, a 300-to-B fits (900 <= 1000); a 500-to-B breaches.
-    assert!(dispatch_within_budget(0, 300, 600, 1000), "900 <= 1000 admitted");
-    assert!(!dispatch_within_budget(0, 500, 600, 1000), "1100 > 1000 REFUSED — the budget tooth");
+    assert!(
+        dispatch_within_budget(0, 300, 600, 1000),
+        "900 <= 1000 admitted"
+    );
+    assert!(
+        !dispatch_within_budget(0, 500, 600, 1000),
+        "1100 > 1000 REFUSED — the budget tooth"
+    );
     // The two meters are distinct columns the gate sums (no single-field counter sees it).
     assert_ne!(Worker::A.spend_slot(), Worker::B.spend_slot());
     assert_eq!(Worker::A.spend_slot(), SPENT_A_SLOT);
@@ -331,9 +385,21 @@ fn grant_worker_carries_the_real_grant_capability_effect() {
         .get("grant_worker")
         .unwrap()
         .effect_summary();
-    assert_eq!(summary, EffectSummary::GrantCapability { from: board, to: worker });
+    assert_eq!(
+        summary,
+        EffectSummary::GrantCapability {
+            from: board,
+            to: worker
+        }
+    );
 
     // And the standalone effect builder matches (one source of truth).
     let standalone = grant_worker_effect(board, worker);
-    assert_eq!(EffectSummary::of(&standalone), EffectSummary::GrantCapability { from: board, to: worker });
+    assert_eq!(
+        EffectSummary::of(&standalone),
+        EffectSummary::GrantCapability {
+            from: board,
+            to: worker
+        }
+    );
 }

@@ -20,7 +20,7 @@
 use std::process::ExitCode;
 
 use dregg_deploy::{
-    check, explain_assurance, parse_toml, plan_apply, serialize_toml, ApplyError, Lowered,
+    ApplyError, Lowered, check, explain_assurance, parse_toml, plan_apply, serialize_toml,
 };
 
 fn main() -> ExitCode {
@@ -139,10 +139,22 @@ fn print_human(v: &dregg_deploy::DeployVerdict, text: &str) {
         }
     };
     println!("static assurance over the declared authority layout:");
-    line("B  conservation      (funding transfers net to zero)", &a.conservation);
-    line("A  no-amplification  (grant edges are attenuations)  ", &a.no_amplification);
-    line("   well-formedness   (structural shape)              ", &a.wellformed);
-    line("   ring balance                                      ", &a.ring_balance);
+    line(
+        "B  conservation      (funding transfers net to zero)",
+        &a.conservation,
+    );
+    line(
+        "A  no-amplification  (grant edges are attenuations)  ",
+        &a.no_amplification,
+    );
+    line(
+        "   well-formedness   (structural shape)              ",
+        &a.wellformed,
+    );
+    line(
+        "   ring balance                                      ",
+        &a.ring_balance,
+    );
     println!();
     // On a FAIL, print the ENRICHED diagnostics: a no-amplification finding named
     // by spec name + human facet + the parent cap it exceeded (not a hex prefix).

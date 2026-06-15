@@ -30,8 +30,8 @@ use dregg_app_framework::{
 };
 
 use starbridge_tussle::{
-    COMMIT, COMMIT_SEAL_SLOT, JointState, N_JOINTS, PHASE_SLOT, REVEAL, RESOLVED, REST_POSE,
-    fire_commit_move, fire_resolve_frame, fire_reveal_move, figure_b_cell_id, figure_deos_program,
+    COMMIT, COMMIT_SEAL_SLOT, JointState, N_JOINTS, PHASE_SLOT, RESOLVED, REST_POSE, REVEAL,
+    figure_b_cell_id, figure_deos_program, fire_commit_move, fire_resolve_frame, fire_reveal_move,
     register_deos, seed_figure, seed_figure_b, slot, tussle_app,
 };
 
@@ -61,7 +61,8 @@ fn seeding_installs_the_figure_program_and_commit_phase_on_both_figures() {
     // BOTH figures carry the figure program (the SymMemberOf joint tooth + the phase gate),
     // installed so the executor re-enforces it on every touching turn.
     for fig in [cclerk.cell_id(), figure_b] {
-        let installed = executor.with_ledger_mut(|ledger| ledger.get(&fig).map(|c| c.program.clone()));
+        let installed =
+            executor.with_ledger_mut(|ledger| ledger.get(&fig).map(|c| c.program.clone()));
         assert_eq!(
             installed,
             Some(figure_deos_program()),
@@ -69,7 +70,11 @@ fn seeding_installs_the_figure_program_and_commit_phase_on_both_figures() {
         );
         // ...and the figure starts in the commit phase, in the Relax rest pose.
         let state = executor.cell_state(fig).expect("seeded figure exists");
-        assert_eq!(state.fields[PHASE_SLOT], field_from_u64(COMMIT), "figure starts in COMMIT");
+        assert_eq!(
+            state.fields[PHASE_SLOT],
+            field_from_u64(COMMIT),
+            "figure starts in COMMIT"
+        );
         for j in 0..N_JOINTS {
             assert_eq!(
                 state.fields[slot::JOINT_BASE + j],
@@ -89,8 +94,9 @@ fn seeding_installs_the_figure_program_and_commit_phase_on_both_figures() {
         .count();
     assert_eq!(n_sym, N_JOINTS, "one SymMemberOf per joint slot");
     assert!(
-        cs.iter()
-            .any(|c| matches!(c, StateConstraint::Monotonic { index } if *index == PHASE_SLOT as u8)),
+        cs.iter().any(
+            |c| matches!(c, StateConstraint::Monotonic { index } if *index == PHASE_SLOT as u8)
+        ),
         "the phase gate Monotonic(PHASE_SLOT) is a clause"
     );
 }
@@ -109,22 +115,50 @@ fn a_fighter_commits_a_move_through_the_gated_fire_a_real_verified_turn() {
 
     // The seal slot is empty before the commit.
     let before = executor.cell_state(figure_a).unwrap();
-    assert_eq!(before.fields[COMMIT_SEAL_SLOT], field_from_u64(0), "no sealed commit yet");
+    assert_eq!(
+        before.fields[COMMIT_SEAL_SLOT],
+        field_from_u64(0),
+        "no sealed commit yet"
+    );
 
     // A FIGHTER (Either) fires `commit_move` on its OWN figure: the cap-gate passes
     // (Either ⊇ Either), the live-state precondition passes (PHASE == COMMIT), and the FULL
     // commit turn writes the sealed BLAKE3 digest. The executor re-enforces the figure program
     // (Monotonic(PHASE) holds — the phase is unchanged at COMMIT). A real verified turn.
-    let pose = [JointState::Contract, JointState::Hold, JointState::Extend, JointState::Relax];
-    let receipt = fire_commit_move(&app, figure_a, &AuthRequired::Either, &pose, 0xC0FFEE, &cclerk, &executor)
-        .expect("a fighter commits (caps ∧ state ∧ monotonic phase all pass)");
-    assert_ne!(receipt.turn_hash, [0u8; 32], "a real verified turn through the executor");
+    let pose = [
+        JointState::Contract,
+        JointState::Hold,
+        JointState::Extend,
+        JointState::Relax,
+    ];
+    let receipt = fire_commit_move(
+        &app,
+        figure_a,
+        &AuthRequired::Either,
+        &pose,
+        0xC0FFEE,
+        &cclerk,
+        &executor,
+    )
+    .expect("a fighter commits (caps ∧ state ∧ monotonic phase all pass)");
+    assert_ne!(
+        receipt.turn_hash, [0u8; 32],
+        "a real verified turn through the executor"
+    );
 
     // The sealed commit landed (the fog-of-war digest is on the figure cell now).
     let after = executor.cell_state(figure_a).unwrap();
-    assert_ne!(after.fields[COMMIT_SEAL_SLOT], field_from_u64(0), "the sealed commit was written");
+    assert_ne!(
+        after.fields[COMMIT_SEAL_SLOT],
+        field_from_u64(0),
+        "the sealed commit was written"
+    );
     // ...and the phase did NOT advance (a commit keeps the figure in the commit phase).
-    assert_eq!(after.fields[PHASE_SLOT], field_from_u64(COMMIT), "still COMMIT after a commit");
+    assert_eq!(
+        after.fields[PHASE_SLOT],
+        field_from_u64(COMMIT),
+        "still COMMIT after a commit"
+    );
 }
 
 // =============================================================================
@@ -144,8 +178,14 @@ fn the_lit_verb_set_follows_the_phase_the_htmx_tooth() {
     // In COMMIT, a FIGHTER (Either) sees `commit_move` LIT and `reveal_move` DARK (the phase
     // precondition `PHASE == REVEAL` fails). The htmx tooth, off live state.
     let lit_commit = cell.gated_fireable_names(&AuthRequired::Either, &executor);
-    assert!(lit_commit.contains(&"commit_move".to_string()), "COMMIT: commit_move lights");
-    assert!(!lit_commit.contains(&"reveal_move".to_string()), "COMMIT: reveal_move is dark");
+    assert!(
+        lit_commit.contains(&"commit_move".to_string()),
+        "COMMIT: commit_move lights"
+    );
+    assert!(
+        !lit_commit.contains(&"reveal_move".to_string()),
+        "COMMIT: reveal_move is dark"
+    );
 
     // Advance the phase to REVEAL (a referee would; here we set it directly to drive the htmx
     // transition under test — the phase-advance Monotonic tooth is exercised by the resolve fire).
@@ -158,8 +198,14 @@ fn the_lit_verb_set_follows_the_phase_the_htmx_tooth() {
     // SAME viewer, SAME caps, DIFFERENT button-set — because the figure transitioned. Now
     // `reveal_move` lights and `commit_move` darkens.
     let lit_reveal = cell.gated_fireable_names(&AuthRequired::Either, &executor);
-    assert!(lit_reveal.contains(&"reveal_move".to_string()), "REVEAL: reveal_move lights");
-    assert!(!lit_reveal.contains(&"commit_move".to_string()), "REVEAL: commit_move is dark");
+    assert!(
+        lit_reveal.contains(&"reveal_move".to_string()),
+        "REVEAL: reveal_move lights"
+    );
+    assert!(
+        !lit_reveal.contains(&"commit_move".to_string()),
+        "REVEAL: commit_move is dark"
+    );
 }
 
 // =============================================================================
@@ -193,7 +239,8 @@ fn a_stranger_cannot_set_joints_on_a_figure_it_does_not_hold_the_wrong_figure_ca
     assert!(
         matches!(
             refused,
-            Err(FireExecuteError::Executor(_)) | Err(FireExecuteError::Gate(FireError::Unauthorized { .. }))
+            Err(FireExecuteError::Executor(_))
+                | Err(FireExecuteError::Gate(FireError::Unauthorized { .. }))
         ),
         "a stranger setting joints on a figure it does not hold must be refused, got {refused:?}"
     );
@@ -234,14 +281,24 @@ fn a_reveal_with_an_illegal_joint_value_is_refused_by_the_symmemberof_caveat() {
     // and the EXECUTOR's installed `SymMemberOf` REFUSES the produced transition. The typed
     // enum atom bites a real signed turn (NOT a side check). ★ THE HEADLINE ★
     let illegal = [7u64, 1, 2, 0]; // 7 is out-of-enum
-    let refused = fire_reveal_move(&app, figure_a, &AuthRequired::Either, illegal, &cclerk, &executor);
+    let refused = fire_reveal_move(
+        &app,
+        figure_a,
+        &AuthRequired::Either,
+        illegal,
+        &cclerk,
+        &executor,
+    );
     assert!(
         matches!(refused, Err(FireExecuteError::Executor(_))),
         "an illegal joint reveal must be refused by the EXECUTOR (the SymMemberOf caveat), got {refused:?}"
     );
     let msg = format!("{refused:?}").to_lowercase();
     assert!(
-        msg.contains("sym") || msg.contains("member") || msg.contains("enum") || msg.contains("program"),
+        msg.contains("sym")
+            || msg.contains("member")
+            || msg.contains("enum")
+            || msg.contains("program"),
         "the executor refuses on the SymMemberOf typed-enum caveat, got: {msg}"
     );
 
@@ -262,9 +319,19 @@ fn a_reveal_with_an_illegal_joint_value_is_refused_by_the_symmemberof_caveat() {
         JointState::Extend.sym(),
         JointState::Relax.sym(),
     ];
-    let ok = fire_reveal_move(&app, figure_a, &AuthRequired::Either, legal, &cclerk, &executor)
-        .expect("a legal reveal (all joints in-enum) is accepted by the SymMemberOf caveat");
-    assert_ne!(ok.turn_hash, [0u8; 32], "the legal reveal is a real verified turn");
+    let ok = fire_reveal_move(
+        &app,
+        figure_a,
+        &AuthRequired::Either,
+        legal,
+        &cclerk,
+        &executor,
+    )
+    .expect("a legal reveal (all joints in-enum) is accepted by the SymMemberOf caveat");
+    assert_ne!(
+        ok.turn_hash, [0u8; 32],
+        "the legal reveal is a real verified turn"
+    );
     let after_legal = executor.cell_state(figure_a).unwrap();
     assert_eq!(
         after_legal.fields[slot::JOINT_BASE],
@@ -290,18 +357,30 @@ fn a_reveal_in_the_commit_phase_is_refused_in_band_the_phase_state_tooth() {
     // IN-BAND at the STATE tooth (the precondition `PHASE == REVEAL` fails) — the button is
     // dark in the commit phase (the htmx tooth), and NOTHING is submitted (anti-ghost).
     let legal = [JointState::Contract.sym(); N_JOINTS];
-    let refused = fire_reveal_move(&app, figure_a, &AuthRequired::Either, legal, &cclerk, &executor);
+    let refused = fire_reveal_move(
+        &app,
+        figure_a,
+        &AuthRequired::Either,
+        legal,
+        &cclerk,
+        &executor,
+    );
     assert!(
         matches!(
             refused,
-            Err(FireExecuteError::Gate(FireError::StateConditionUnmet { .. }))
+            Err(FireExecuteError::Gate(
+                FireError::StateConditionUnmet { .. }
+            ))
         ),
         "a reveal in the commit phase is refused at the state tooth in-band, got {refused:?}"
     );
 
     // Anti-ghost: nothing was written (the joint slot still holds the Relax default).
     let after = executor.cell_state(figure_a).unwrap();
-    assert_eq!(after.fields[slot::JOINT_BASE], field_from_u64(JointState::Relax.sym()));
+    assert_eq!(
+        after.fields[slot::JOINT_BASE],
+        field_from_u64(JointState::Relax.sym())
+    );
 }
 
 #[test]
@@ -325,12 +404,16 @@ fn the_referee_resolves_the_frame_advancing_the_phase_and_a_rewind_is_refused() 
     executor.with_ledger_mut(|ledger| {
         if let Some(c) = ledger.get_mut(&figure_a) {
             for j in 0..3 {
-                c.state.set_field(slot::JOINT_BASE + j, field_from_u64(JointState::Contract.sym()));
+                c.state.set_field(
+                    slot::JOINT_BASE + j,
+                    field_from_u64(JointState::Contract.sym()),
+                );
             }
             c.state.set_field(slot::POSITION, field_from_u64(0));
         }
         if let Some(c) = ledger.get_mut(&figure_b) {
-            c.state.set_field(slot::JOINT_BASE, field_from_u64(JointState::Contract.sym()));
+            c.state
+                .set_field(slot::JOINT_BASE, field_from_u64(JointState::Contract.sym()));
             c.state.set_field(slot::POSITION, field_from_u64(2));
         }
     });
@@ -339,13 +422,24 @@ fn the_referee_resolves_the_frame_advancing_the_phase_and_a_rewind_is_refused() 
     // gate passes (None ⊇ everything AND PHASE == REVEAL), and the FULL resolve turn advances
     // PHASE → RESOLVED, folding contact off both figures. The executor re-enforces
     // Monotonic(PHASE) (REVEAL → RESOLVED is a forward advance). A real verified turn.
-    let receipt = fire_resolve_frame(&app, figure_a, figure_b, &AuthRequired::None, &cclerk, &executor)
-        .expect("the referee resolves the frame (caps ∧ state ∧ monotonic phase all pass)");
+    let receipt = fire_resolve_frame(
+        &app,
+        figure_a,
+        figure_b,
+        &AuthRequired::None,
+        &cclerk,
+        &executor,
+    )
+    .expect("the referee resolves the frame (caps ∧ state ∧ monotonic phase all pass)");
     assert_ne!(receipt.turn_hash, [0u8; 32], "a real verified resolve turn");
 
     // The phase advanced to RESOLVED.
     let after = executor.cell_state(figure_a).unwrap();
-    assert_eq!(after.fields[PHASE_SLOT], field_from_u64(RESOLVED), "PHASE advanced to RESOLVED");
+    assert_eq!(
+        after.fields[PHASE_SLOT],
+        field_from_u64(RESOLVED),
+        "PHASE advanced to RESOLVED"
+    );
 
     // THE PHASE-REWIND TOOTH: a turn that REWINDS the phase (RESOLVED → REVEAL) is refused by
     // the executor's Monotonic(PHASE_SLOT) — the frame machine never runs backward. We submit
@@ -360,7 +454,10 @@ fn the_referee_resolves_the_frame_advancing_the_phase_and_a_rewind_is_refused() 
         }],
     );
     let refused = executor.submit_action(&cclerk, rewind);
-    assert!(refused.is_err(), "rewinding the frame phase must be refused by the executor");
+    assert!(
+        refused.is_err(),
+        "rewinding the frame phase must be refused by the executor"
+    );
     let msg = format!("{:?}", refused.unwrap_err()).to_lowercase();
     assert!(
         msg.contains("monotonic") || msg.contains("program") || msg.contains("field"),
@@ -392,7 +489,11 @@ fn register_deos_mounts_the_seeded_two_figure_surface_into_the_context() {
     // SHIPPED one and the gated fires are live.
     let app = register_deos(&ctx);
     assert_eq!(app.name(), "tussle");
-    assert_eq!(ctx.affordance_registry().len(), 2, "two figure cells registered");
+    assert_eq!(
+        ctx.affordance_registry().len(),
+        2,
+        "two figure cells registered"
+    );
 
     // Both seeded figures are live and in the COMMIT phase — a fighter can commit on either
     // through the mounted surface immediately (the seam is closed + live).
@@ -404,11 +505,28 @@ fn register_deos_mounts_the_seeded_two_figure_surface_into_the_context() {
     }
 
     // A fighter commits on figure A through the mounted, seeded surface (the promotion is live).
-    let pose = [JointState::Contract, JointState::Relax, JointState::Hold, JointState::Extend];
-    let receipt = fire_commit_move(&app, figure_a, &AuthRequired::Either, &pose, 1, &cclerk, &executor)
-        .expect("the mounted, seeded surface accepts a commit (the promotion is live)");
+    let pose = [
+        JointState::Contract,
+        JointState::Relax,
+        JointState::Hold,
+        JointState::Extend,
+    ];
+    let receipt = fire_commit_move(
+        &app,
+        figure_a,
+        &AuthRequired::Either,
+        &pose,
+        1,
+        &cclerk,
+        &executor,
+    )
+    .expect("the mounted, seeded surface accepts a commit (the promotion is live)");
     assert_ne!(receipt.turn_hash, [0u8; 32]);
     let state = executor.cell_state(figure_a).unwrap();
-    assert_ne!(state.fields[COMMIT_SEAL_SLOT], field_from_u64(0), "the commit folded the seal");
+    assert_ne!(
+        state.fields[COMMIT_SEAL_SLOT],
+        field_from_u64(0),
+        "the commit folded the seal"
+    );
     let _ = field_to_u64; // (a helper used by sibling assertions; keep it referenced)
 }

@@ -87,11 +87,17 @@ pub async fn handle_status(ctx: &Context, command: &CommandInteraction, state: &
              `/handoff-redeem`. The bot's soft-federation swiss table is the broker that the \
              canonical `validate_handoff` checks the presentation against.",
         )
-        .field("Soft-Federation Root", format!("`{}...`", short(&fed_id)), false)
+        .field(
+            "Soft-Federation Root",
+            format!("`{}...`", short(&fed_id)),
+            false,
+        )
         .field("Live Swiss Entries", swiss.to_string(), true)
         .field(
             "Node Height (validity ref)",
-            height.map(|h| h.to_string()).unwrap_or_else(|| "unreachable".to_string()),
+            height
+                .map(|h| h.to_string())
+                .unwrap_or_else(|| "unreachable".to_string()),
             true,
         )
         .field(

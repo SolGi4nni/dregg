@@ -36,7 +36,11 @@ fn make_cell_with_program(seed: u8, balance: u64, program: CellProgram) -> Cell 
     pk[0] = seed;
     pk[31] = seed.wrapping_mul(7);
     let token_id = [0u8; 32];
-    let mut cell = Cell::with_balance(pk, token_id, i64::try_from(balance).expect("balance fits i64"));
+    let mut cell = Cell::with_balance(
+        pk,
+        token_id,
+        i64::try_from(balance).expect("balance fits i64"),
+    );
     cell.permissions = Permissions {
         send: AuthRequired::None,
         receive: AuthRequired::None,

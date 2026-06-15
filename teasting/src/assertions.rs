@@ -102,8 +102,8 @@ pub fn assert_conservation_invariant(ledger: &Ledger, expected_total: u64) {
     // conservation harnesses use ORDINARY-only ledgers, so the signed total is
     // non-negative and converts back to the u64 `expected_total` (checked).
     let signed_total: i64 = ledger.iter().map(|(_, cell)| cell.state.balance()).sum();
-    let actual_total: u64 =
-        u64::try_from(signed_total).expect("conservation total is non-negative for ordinary ledgers");
+    let actual_total: u64 = u64::try_from(signed_total)
+        .expect("conservation total is non-negative for ordinary ledgers");
     assert_eq!(
         actual_total,
         expected_total,

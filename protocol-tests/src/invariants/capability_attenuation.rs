@@ -18,8 +18,8 @@
 //! attenuation check.
 
 use crate::Invariant;
-use crate::generators::{LedgerSpec, build_open_ledger};
 use crate::generators::capability::arb_auth_required;
+use crate::generators::{LedgerSpec, build_open_ledger};
 
 use dregg_cell::{AuthRequired, CapabilityRef, is_attenuation};
 use dregg_turn::{

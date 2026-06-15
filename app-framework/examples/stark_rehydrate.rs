@@ -33,8 +33,8 @@
 //! same weld one proof up — see `stark_rehydrate::stark_chain_snapshot`.
 
 use dregg_app_framework::stark_rehydrate::{
-    mint_transfer_leg, verify_stark_leg, verify_stark_proof_against, witness_replay_is_genuine,
-    StarkRehydrateError, StarkSnapshot, TransferTurn, PI_NEW_COMMIT,
+    PI_NEW_COMMIT, StarkRehydrateError, StarkSnapshot, TransferTurn, mint_transfer_leg,
+    verify_stark_leg, verify_stark_proof_against, witness_replay_is_genuine,
 };
 use dregg_app_framework::{
     AffordanceSpec, AgentCipherclerk, AppCipherclerk, AppSpec, AuthRequired, CellSpec,
@@ -91,7 +91,10 @@ fn main() {
     let vault = app.cells()[0].clone();
     let actor = cclerk.cell_id();
 
-    println!("== {} — a STARK-backed rehydratable snapshot ==\n", app.name());
+    println!(
+        "== {} — a STARK-backed rehydratable snapshot ==\n",
+        app.name()
+    );
 
     // ── 1) A REAL verified turn through the embedded executor ──────────────────
     // The surface state we will snapshot is the genuine OUTPUT of a verified turn.
@@ -132,7 +135,8 @@ fn main() {
     };
     let before = producer_cell(balance as i64, nonce as u64);
     let after = producer_cell((balance as i64) - (amount as i64), nonce as u64);
-    let leg = mint_transfer_leg(&turn, &before, &after).expect("the rotated leg mints + self-verifies");
+    let leg =
+        mint_transfer_leg(&turn, &before, &after).expect("the rotated leg mints + self-verifies");
     let snap = StarkSnapshot::new(vault.cell(), AuthRequired::None, leg);
     println!(
         "    minted: a real STARK over the genuine state transition (endpoint commitment {}…)",
@@ -143,10 +147,15 @@ fn main() {
     );
 
     // ── 3) Rehydrate by VERIFYING the STARK, per-viewer ────────────────────────
-    println!("(3) rehydrate by VERIFYING the STARK (light-client style; per-viewer through the membrane):");
-    snap.verify_stark()
-        .expect("the genuine snapshot's STARK verifies — this surface state IS the verified endpoint");
-    println!("    STARK verify: OK — proven the genuine endpoint of a verified turn (NO receipt-chain walk).");
+    println!(
+        "(3) rehydrate by VERIFYING the STARK (light-client style; per-viewer through the membrane):"
+    );
+    snap.verify_stark().expect(
+        "the genuine snapshot's STARK verifies — this surface state IS the verified endpoint",
+    );
+    println!(
+        "    STARK verify: OK — proven the genuine endpoint of a verified turn (NO receipt-chain walk)."
+    );
 
     // The root holder rehydrates the FULL surface; a weaker viewer a NARROWER one — the
     // STARK gate did NOT loosen the cap-membrane.
@@ -156,8 +165,14 @@ fn main() {
     let viewer_view = snap
         .rehydrate_for(&Membrane::new(AuthRequired::Signature), vault.surface())
         .expect("a Signature viewer rehydrates");
-    println!("    owner  (root)      reacquires {:?}", root_view.visible_names());
-    println!("    viewer (Signature) reacquires {:?}", viewer_view.visible_names());
+    println!(
+        "    owner  (root)      reacquires {:?}",
+        root_view.visible_names()
+    );
+    println!(
+        "    viewer (Signature) reacquires {:?}",
+        viewer_view.visible_names()
+    );
     println!(
         "    liveness-type: {} (faithful-by-STARK)\n",
         root_view.liveness.badge()
@@ -173,7 +188,9 @@ fn main() {
     tampered.proof.public_inputs[PI_NEW_COMMIT] = honest + BabyBear::ONE;
     match tampered.rehydrate_for(&Membrane::new(AuthRequired::None), vault.surface()) {
         Err(StarkRehydrateError::StarkInvalid(_)) => {
-            println!("    tampered post-state (PI 35 flipped): REJECTED — no projection minted, even for root.");
+            println!(
+                "    tampered post-state (PI 35 flipped): REJECTED — no projection minted, even for root."
+            );
         }
         other => panic!("a tampered post-state must be rejected; got {other:?}"),
     }
@@ -182,7 +199,9 @@ fn main() {
     //     (setField) descriptor — a different AIR set; the verifier refuses.
     let foreign = foreign_setfield_descriptor();
     match verify_stark_proof_against(&foreign, &snap.proof.proof, &snap.proof.public_inputs) {
-        Err(_) => println!("    wrong-circuit proof (foreign descriptor): REJECTED — the proof binds its own AIR set."),
+        Err(_) => println!(
+            "    wrong-circuit proof (foreign descriptor): REJECTED — the proof binds its own AIR set."
+        ),
         Ok(()) => panic!("a transfer proof must not verify under a foreign descriptor"),
     }
 
@@ -214,8 +233,8 @@ fn main() {
 /// Resolve a NON-transfer rotated descriptor (a setField R24 cohort) from the staged
 /// registry — the "wrong circuit" the anti-ghost (b) tooth verifies against.
 fn foreign_setfield_descriptor() -> dregg_circuit::descriptor_ir2::EffectVmDescriptor2 {
-    use dregg_circuit::effect_vm::trace_rotated::rotated_descriptor_name_for_effect;
     use dregg_circuit::effect_vm::Effect as VmEffect;
+    use dregg_circuit::effect_vm::trace_rotated::rotated_descriptor_name_for_effect;
     use dregg_circuit::effect_vm_descriptors::V3_STAGED_REGISTRY_TSV;
     let setfield = VmEffect::SetField {
         field_idx: 0,

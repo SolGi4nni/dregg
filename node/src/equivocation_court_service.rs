@@ -144,10 +144,7 @@ impl CourtLedger {
                     .durable_resolved
                     .extend(pairs.into_iter().map(|(_scope, digest)| digest));
                 if count > 0 {
-                    tracing::info!(
-                        digests = count,
-                        "restored court resolved-evidence digests"
-                    );
+                    tracing::info!(digests = count, "restored court resolved-evidence digests");
                 }
             }
             Err(e) => {
@@ -613,9 +610,7 @@ async fn post_court_bond(
                     .as_deref()
                     .ok_or(CourtServiceRefusal::SignatureRequired)?;
                 let sig = hex_decode_64(sig_hex).ok_or_else(|| {
-                    CourtServiceRefusal::BadRequest(format!(
-                        "malformed bond signature: {sig_hex}"
-                    ))
+                    CourtServiceRefusal::BadRequest(format!("malformed bond signature: {sig_hex}"))
                 })?;
                 Bond {
                     owner,
@@ -675,16 +670,8 @@ async fn post_court_bond(
         ),
     });
     turn_hashes.push(
-        run_signed_turn(
-            inner,
-            operator,
-            operator,
-            "court_bond",
-            effects,
-            None,
-            None,
-        )
-        .map_err(|e| CourtServiceRefusal::TurnRejected(e.detail()))?,
+        run_signed_turn(inner, operator, operator, "court_bond", effects, None, None)
+            .map_err(|e| CourtServiceRefusal::TurnRejected(e.detail()))?,
     );
     if needs_adopt {
         // The adopt (cell-agent turn): the bond cell grants the operator
@@ -1001,7 +988,10 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::OK, "{json}");
         assert_eq!(json["burned"].as_u64(), Some(STAKE));
-        assert_eq!(json["admitted_after"], false, "slashed strand loses admission");
+        assert_eq!(
+            json["admitted_after"], false,
+            "slashed strand loses admission"
+        );
 
         // CONSERVED: bond cell debited the exact stake, the sink credited it.
         assert_eq!(balance(&state, bond_cell).await, 0, "bonded cell debited");

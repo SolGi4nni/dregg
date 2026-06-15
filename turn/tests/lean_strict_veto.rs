@@ -43,7 +43,8 @@ fn make_open_cell(seed: u8, balance: i64) -> Cell {
     cell
 }
 
-fn one_cell_ledger(bal: i64) -> (Ledger, CellId) { // signed-wells (ac01f9b7b): i64 balances
+fn one_cell_ledger(bal: i64) -> (Ledger, CellId) {
+    // signed-wells (ac01f9b7b): i64 balances
     let a = make_open_cell(1, bal);
     let id = a.id();
     let mut l = Ledger::new();

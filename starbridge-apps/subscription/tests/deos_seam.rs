@@ -52,16 +52,17 @@ fn seeding_installs_the_queue_invariants_on_the_feed_cell() {
 
     // The seeded feed cell carries the queue invariants (Monotonic head/tail + WriteOnce
     // capacity/owner + tail <= head), installed so the executor re-enforces them.
-    let installed = executor.with_ledger_mut(|ledger| {
-        ledger.get(&cclerk.cell_id()).map(|c| c.program.clone())
-    });
+    let installed =
+        executor.with_ledger_mut(|ledger| ledger.get(&cclerk.cell_id()).map(|c| c.program.clone()));
     assert_eq!(
         installed,
         Some(feed_invariants_program()),
         "the seeded feed cell carries the queue invariants (the seam's enforcement layer)"
     );
     // ...and the seeded state is configured (capacity 16) with one pending delivery.
-    let state = executor.cell_state(cclerk.cell_id()).expect("seeded cell exists");
+    let state = executor
+        .cell_state(cclerk.cell_id())
+        .expect("seeded cell exists");
     assert_eq!(state.fields[CAPACITY_SLOT as usize], field_from_u64(16));
     assert_eq!(state.fields[SEQ_HEAD_SLOT as usize], field_from_u64(1));
     assert_eq!(state.fields[SEQ_TAIL_SLOT as usize], field_from_u64(0));
@@ -83,7 +84,10 @@ fn a_publisher_publishes_through_the_gated_fire_a_real_verified_turn() {
     // invariants: `Monotonic(SEQ_HEAD)` holds (1 -> 2). A real verified turn.
     let receipt = fire_publish(&app, &AuthRequired::Either, &cclerk, &executor)
         .expect("a publisher delivers (caps ∧ state ∧ monotonic head all pass)");
-    assert_ne!(receipt.turn_hash, [0u8; 32], "a real verified turn through the executor");
+    assert_ne!(
+        receipt.turn_hash, [0u8; 32],
+        "a real verified turn through the executor"
+    );
 
     // The producer cursor advanced (the delivery committed).
     let state = executor.cell_state(cclerk.cell_id()).unwrap();
@@ -103,7 +107,10 @@ fn a_consumer_draws_a_pending_item_then_the_button_goes_dark() {
     // Before the draw, a CONSUMER (Signature) sees `consume` LIT (pending precondition
     // tail < head holds: 0 < 1). The htmx tooth, off live state.
     let lit_before = app.cells()[0].gated_fireable_names(&AuthRequired::Signature, &executor);
-    assert!(lit_before.contains(&"consume".to_string()), "pending: consume lights");
+    assert!(
+        lit_before.contains(&"consume".to_string()),
+        "pending: consume lights"
+    );
 
     // The consumer draws the pending item — tail 0 -> 1. The executor re-enforces the
     // invariants (`FieldLteField(tail <= head)` holds, 1 <= 1). A real turn.
@@ -191,7 +198,10 @@ fn the_executor_re_enforces_a_rewound_delivery_cursor_is_refused() {
     let rewind = starbridge_subscription::publish_effects(feed, 0, [9u8; 32], [8u8; 32]);
     let action = cclerk.make_action(feed, "publish", rewind);
     let refused = executor.submit_action(&cclerk, action);
-    assert!(refused.is_err(), "rewinding the producer cursor must be refused by the executor");
+    assert!(
+        refused.is_err(),
+        "rewinding the producer cursor must be refused by the executor"
+    );
     let msg = format!("{:?}", refused.unwrap_err()).to_lowercase();
     assert!(
         msg.contains("monotonic") || msg.contains("program") || msg.contains("field[0]"),
@@ -220,7 +230,10 @@ fn the_executor_re_enforces_an_over_draw_is_refused() {
     let overdraw = consume_effects(feed, 5, [3u8; 32]); // tail := 5, but head == 1
     let action = cclerk.make_action(feed, "consume", overdraw);
     let refused = executor.submit_action(&cclerk, action);
-    assert!(refused.is_err(), "drawing past the delivered head must be refused");
+    assert!(
+        refused.is_err(),
+        "drawing past the delivered head must be refused"
+    );
     let msg = format!("{:?}", refused.unwrap_err()).to_lowercase();
     assert!(
         msg.contains("lte") || msg.contains("field") || msg.contains("program"),
@@ -251,7 +264,11 @@ fn register_deos_mounts_the_seeded_surface_into_the_context() {
     // the SHIPPED one (the census promotion) and the gated fires are live.
     let app = register_deos(&ctx);
     assert_eq!(app.name(), "subscription");
-    assert_eq!(ctx.affordance_registry().len(), 1, "the deos surface is registered");
+    assert_eq!(
+        ctx.affordance_registry().len(),
+        1,
+        "the deos surface is registered"
+    );
 
     // The seeded feed is configured with a pending item, so a publisher can deliver and a
     // consumer can draw through the mounted surface immediately (the seam is closed + live).
@@ -261,5 +278,8 @@ fn register_deos_mounts_the_seeded_surface_into_the_context() {
 
     // The MESSAGE_ROOT moved (a real commitment fold on delivery).
     let state = executor.cell_state(cclerk.cell_id()).unwrap();
-    assert_ne!(state.fields[MESSAGE_ROOT_SLOT as usize], [0u8; 32], "the delivery folded the root");
+    assert_ne!(
+        state.fields[MESSAGE_ROOT_SLOT as usize], [0u8; 32],
+        "the delivery folded the root"
+    );
 }

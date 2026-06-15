@@ -87,8 +87,19 @@ fn fault_budget_matches_real_golden() {
 fn quorum_threshold_matches_real_golden() {
     // Lean §5b `#guard quorumThreshold {1,2,3,4,7,10}` golden vectors, with the REAL (post-#170)
     // supermajority alongside: one HIGHER exactly at 3∣n (the StrictBft closure).
-    for (n, lean_q, rust_q) in [(1, 1, 1), (2, 2, 2), (3, 2, 3), (4, 3, 3), (7, 5, 5), (10, 7, 7)] {
-        assert_eq!(lean_quorum_threshold(n), lean_q, "lean quorumThreshold({n})");
+    for (n, lean_q, rust_q) in [
+        (1, 1, 1),
+        (2, 2, 2),
+        (3, 2, 3),
+        (4, 3, 3),
+        (7, 5, 5),
+        (10, 7, 7),
+    ] {
+        assert_eq!(
+            lean_quorum_threshold(n),
+            lean_q,
+            "lean quorumThreshold({n})"
+        );
         assert_eq!(quorum_threshold(n), rust_q, "real quorum_threshold({n})");
     }
 }
@@ -111,7 +122,10 @@ fn formulas_agree_exhaustively() {
             "quorumThreshold relation at n={n}"
         );
         // Safe-side directions: more signers demanded, less corruption claimed.
-        assert!(quorum_threshold(n) >= lean_quorum_threshold(n), "q dir n={n}");
+        assert!(
+            quorum_threshold(n) >= lean_quorum_threshold(n),
+            "q dir n={n}"
+        );
         assert!(fault_tolerance(n) <= lean_fault_budget(n), "f dir n={n}");
         // `quorum_gt_faultBudget`: a quorum strictly exceeds the corruption budget (n ≥ 1) —
         // holds for BOTH the Lean pair and the real pair.

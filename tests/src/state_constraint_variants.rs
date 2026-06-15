@@ -37,8 +37,8 @@ use dregg_cell::program::{
     WitnessKindTag,
 };
 use dregg_cell::{
-    EFFECT_SET_FIELD, FIELD_ZERO, field_from_u64, CellProgram, CellState, EvalContext, FieldElement,
-    ProgramError, StateConstraint,
+    CellProgram, CellState, EFFECT_SET_FIELD, EvalContext, FIELD_ZERO, FieldElement, ProgramError,
+    StateConstraint, field_from_u64,
 };
 use dregg_turn::action::symbol;
 
@@ -1734,8 +1734,8 @@ fn renounced_accepts_when_sender_not_in_set() {
     };
     use dregg_circuit::poseidon2::hash_2_to_1;
     use dregg_turn::executor::membership_verifier::{
-        adjacency_commitment_bytes, adjacency_leaf_felt, prove_neighbor_adjacency,
-        registry_with_real_verifiers, NeighborAdjStep,
+        NeighborAdjStep, adjacency_commitment_bytes, adjacency_leaf_felt, prove_neighbor_adjacency,
+        registry_with_real_verifiers,
     };
 
     let candidate = [0x05u8; 32];

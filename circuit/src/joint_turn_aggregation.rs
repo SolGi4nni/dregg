@@ -187,7 +187,9 @@ impl RotatedParticipantLeg {
             .first()
             .ok_or_else(|| "mint_rotated_participant_leg: empty effect slice".to_string())?;
         let r24_name = rotated_descriptor_name_for_effect(lead).ok_or_else(|| {
-            format!("mint_rotated_participant_leg: effect {lead:?} is not a rotated R=24 cohort member")
+            format!(
+                "mint_rotated_participant_leg: effect {lead:?} is not a rotated R=24 cohort member"
+            )
         })?;
         for e in &effects[1..] {
             if rotated_descriptor_name_for_effect(e) != Some(r24_name) {

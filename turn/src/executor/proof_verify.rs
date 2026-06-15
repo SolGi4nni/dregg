@@ -81,6 +81,7 @@ impl TurnExecutor {
         turn: &Turn,
         ledger: &mut Ledger,
     ) -> Result<(), TurnError> {
+        use crate::rotation_witness::{NUM_PRE_LIMBS, committed_height_felt};
         use dregg_circuit::descriptor_ir2::{
             DreggStarkConfig, Ir2BatchProof, parse_vm_descriptor2, verify_vm_descriptor2,
         };
@@ -90,7 +91,6 @@ impl TurnExecutor {
         };
         use dregg_circuit::effect_vm_descriptors::V3_STAGED_REGISTRY_TSV;
         use dregg_circuit::field::BabyBear;
-        use crate::rotation_witness::{NUM_PRE_LIMBS, committed_height_felt};
 
         // 1. Stored sovereign commitment (the v9 felt the matched producer wrote).
         let old_commitment = if let Some(c) = ledger.get_sovereign_commitment(cell_id) {
@@ -101,7 +101,9 @@ impl TurnExecutor {
             return Err(TurnError::SovereignNotRegistered { cell: *cell_id });
         };
         let new_commitment = turn.execution_proof_new_commitment.ok_or_else(|| {
-            TurnError::InvalidExecutionProof("execution_proof_new_commitment is required".to_string())
+            TurnError::InvalidExecutionProof(
+                "execution_proof_new_commitment is required".to_string(),
+            )
         })?;
 
         // 2. Deserialize the rotated `Ir2BatchProof` (postcard; no `DREG` magic).
@@ -126,8 +128,8 @@ impl TurnExecutor {
         // pre-state diverges from the producer's, PI 34 ≠ the stored sovereign commitment.
         let cap_root = dregg_cell::compute_canonical_capability_root_felt(&cell.capabilities);
         let post_fee_balance = cell.state.balance();
-        let pre_balance = u64::try_from(post_fee_balance.saturating_add(turn.fee as i64))
-            .map_err(|_| {
+        let pre_balance =
+            u64::try_from(post_fee_balance.saturating_add(turn.fee as i64)).map_err(|_| {
                 TurnError::InvalidExecutionProof(
                     "rotated verify: cell balance is negative".to_string(),
                 )
@@ -179,10 +181,9 @@ impl TurnExecutor {
         //    witness-INDEPENDENT PIs (0..33 + 37) exactly; the commit/height PIs (34/35/36)
         //    are overridden from trusted storage/claim/cell below.
         let placeholder =
-            RotatedBlockWitness::new(vec![BabyBear::ZERO; NUM_PRE_LIMBS], BabyBear::ZERO)
-                .map_err(|e| {
-                    TurnError::InvalidExecutionProof(format!("rotated placeholder witness: {e}"))
-                })?;
+            RotatedBlockWitness::new(vec![BabyBear::ZERO; NUM_PRE_LIMBS], BabyBear::ZERO).map_err(
+                |e| TurnError::InvalidExecutionProof(format!("rotated placeholder witness: {e}")),
+            )?;
         let (_trace, mut dpis) = generate_rotated_effect_vm_trace(
             &initial_vm_state,
             &vm_effects,
@@ -190,9 +191,7 @@ impl TurnExecutor {
             &placeholder,
             &caveat,
         )
-        .map_err(|e| {
-            TurnError::InvalidExecutionProof(format!("rotated PI reconstruction: {e}"))
-        })?;
+        .map_err(|e| TurnError::InvalidExecutionProof(format!("rotated PI reconstruction: {e}")))?;
         if dpis.len() != desc.public_input_count {
             return Err(TurnError::InvalidExecutionProof(format!(
                 "rotated verify: reconstructed {} PIs but descriptor wants {}",
@@ -309,8 +308,8 @@ impl TurnExecutor {
         let approved_handoffs_root: [BabyBear; 4] = self.read_approved_handoffs_root();
 
         // 9. Build the public inputs vector (PI v3 layout).
-        let pi_len = effect_vm::pi::ACTIVE_BASE_COUNT
-            + custom_count * effect_vm::pi::CUSTOM_ENTRY_SIZE;
+        let pi_len =
+            effect_vm::pi::ACTIVE_BASE_COUNT + custom_count * effect_vm::pi::CUSTOM_ENTRY_SIZE;
         let mut public_inputs: Vec<BabyBear> = vec![BabyBear::ZERO; pi_len];
         for i in 0..effect_vm::pi::OLD_COMMIT_LEN {
             public_inputs[effect_vm::pi::OLD_COMMIT_BASE + i] = old_commit_4[i];

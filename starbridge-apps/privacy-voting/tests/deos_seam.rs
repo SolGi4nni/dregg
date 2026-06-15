@@ -29,7 +29,7 @@ use dregg_app_framework::{
 };
 
 use starbridge_privacy_voting::{
-    CLOSED_SLOT, POLL_REF_SLOT, TALLY_YES_SLOT, VOTE_SLOT, VOTE_NO, VOTE_YES, ballot_cell_id,
+    CLOSED_SLOT, POLL_REF_SLOT, TALLY_YES_SLOT, VOTE_NO, VOTE_SLOT, VOTE_YES, ballot_cell_id,
     ballot_cell_program, fire_cast_vote, fire_close_poll, fire_record_tally, poll_cell_program,
     poll_ref, register_deos, seed_ballot, seed_poll, voting_app,
 };
@@ -52,9 +52,8 @@ fn seeding_installs_both_programs_and_state() {
     let ballot = seed_ballot(&executor, &cclerk, poll);
 
     // The POLL cell carries the poll program (Monotonic tallies + WriteOnce question/closed).
-    let poll_program_installed = executor.with_ledger_mut(|ledger| {
-        ledger.get(&poll).map(|c| c.program.clone())
-    });
+    let poll_program_installed =
+        executor.with_ledger_mut(|ledger| ledger.get(&poll).map(|c| c.program.clone()));
     assert_eq!(
         poll_program_installed,
         Some(poll_cell_program()),
@@ -63,17 +62,24 @@ fn seeding_installs_both_programs_and_state() {
 
     // The BALLOT companion cell carries the ballot program (WriteOnce poll_ref/vote), and is
     // bound to the poll (POLL_REF set) with VOTE unset.
-    let ballot_program_installed = executor.with_ledger_mut(|ledger| {
-        ledger.get(&ballot).map(|c| c.program.clone())
-    });
+    let ballot_program_installed =
+        executor.with_ledger_mut(|ledger| ledger.get(&ballot).map(|c| c.program.clone()));
     assert_eq!(
         ballot_program_installed,
         Some(ballot_cell_program()),
         "the seeded ballot companion cell carries the ballot program"
     );
     let ballot_state = executor.cell_state(ballot).expect("ballot seeded");
-    assert_eq!(ballot_state.fields[POLL_REF_SLOT], poll_ref(poll), "the ballot is bound to the poll");
-    assert_eq!(ballot_state.fields[VOTE_SLOT], field_from_u64(0), "the ballot is unset");
+    assert_eq!(
+        ballot_state.fields[POLL_REF_SLOT],
+        poll_ref(poll),
+        "the ballot is bound to the poll"
+    );
+    assert_eq!(
+        ballot_state.fields[VOTE_SLOT],
+        field_from_u64(0),
+        "the ballot is unset"
+    );
 }
 
 // =============================================================================
@@ -94,7 +100,10 @@ fn a_voter_casts_a_vote_through_the_gated_fire_a_real_verified_turn() {
     // from zero). A real verified turn.
     let receipt = fire_cast_vote(&app, &AuthRequired::Either, VOTE_YES, &cclerk, &executor)
         .expect("a voter casts a vote (caps ∧ state ∧ write-once-from-zero all pass)");
-    assert_ne!(receipt.turn_hash, [0u8; 32], "a real verified turn through the executor");
+    assert_ne!(
+        receipt.turn_hash, [0u8; 32],
+        "a real verified turn through the executor"
+    );
 
     // The ballot's VOTE slot now holds the choice (the vote committed).
     let state = executor.cell_state(ballot).unwrap();
@@ -120,7 +129,10 @@ fn a_second_cast_vote_is_dark_the_htmx_tooth() {
 
     // Before voting, a VOTER (Either) sees `cast_vote` LIT (unset precondition VOTE == 0).
     let lit_before = ballot_cell.gated_fireable_names(&AuthRequired::Either, &executor);
-    assert!(lit_before.contains(&"cast_vote".to_string()), "unset ballot: cast_vote lights");
+    assert!(
+        lit_before.contains(&"cast_vote".to_string()),
+        "unset ballot: cast_vote lights"
+    );
 
     // Cast the vote — VOTE 0 -> YES.
     fire_cast_vote(&app, &AuthRequired::Either, VOTE_YES, &cclerk, &executor)
@@ -195,7 +207,10 @@ fn the_executor_re_enforces_a_double_vote_is_refused() {
     }];
     let action = cclerk.make_action(ballot, "cast_vote", rewrite);
     let refused = executor.submit_action(&cclerk, action);
-    assert!(refused.is_err(), "rewriting a committed vote (a double vote) must be refused");
+    assert!(
+        refused.is_err(),
+        "rewriting a committed vote (a double vote) must be refused"
+    );
     let msg = format!("{:?}", refused.unwrap_err()).to_lowercase();
     assert!(
         msg.contains("writeonce")
@@ -234,7 +249,11 @@ fn the_executor_re_enforces_a_tally_rewind_is_refused() {
     fire_record_tally(&app, &AuthRequired::None, VOTE_YES, &cclerk, &executor)
         .expect("the administrator records a YES tally (0 -> 1)");
     let mid = executor.cell_state(poll).unwrap();
-    assert_eq!(mid.fields[TALLY_YES_SLOT], field_from_u64(1), "the tally advanced 0 -> 1");
+    assert_eq!(
+        mid.fields[TALLY_YES_SLOT],
+        field_from_u64(1),
+        "the tally advanced 0 -> 1"
+    );
 
     // A rewind: tally := 0 (< the committed 1). `Monotonic(TALLY_YES)` refuses 1 -> 0.
     let rewind = vec![dregg_app_framework::Effect::SetField {
@@ -244,7 +263,10 @@ fn the_executor_re_enforces_a_tally_rewind_is_refused() {
     }];
     let action = cclerk.make_action(poll, "record_tally", rewind);
     let refused = executor.submit_action(&cclerk, action);
-    assert!(refused.is_err(), "rewinding a tally to erase a vote must be refused");
+    assert!(
+        refused.is_err(),
+        "rewinding a tally to erase a vote must be refused"
+    );
     let msg = format!("{:?}", refused.unwrap_err()).to_lowercase();
     assert!(
         msg.contains("monotonic") || msg.contains("program") || msg.contains("field[3]"),
@@ -281,13 +303,23 @@ fn the_executor_re_enforces_reopening_a_closed_poll_is_refused() {
         .expect("the administrator closes the poll");
     assert_ne!(receipt.turn_hash, [0u8; 32], "a real verified close turn");
     let closed = executor.cell_state(poll).unwrap();
-    assert_eq!(closed.fields[CLOSED_SLOT], field_from_u64(1), "the poll is closed");
+    assert_eq!(
+        closed.fields[CLOSED_SLOT],
+        field_from_u64(1),
+        "the poll is closed"
+    );
 
     // After closing, `close_poll` AND `record_tally` go DARK (the open precondition CLOSED ==
     // 0 now fails). The htmx tooth: a closed poll's administrator buttons darken.
     let lit_after = poll_cell.gated_fireable_names(&AuthRequired::None, &executor);
-    assert!(!lit_after.contains(&"close_poll".to_string()), "closed poll: close_poll darkens");
-    assert!(!lit_after.contains(&"record_tally".to_string()), "closed poll: record_tally darkens");
+    assert!(
+        !lit_after.contains(&"close_poll".to_string()),
+        "closed poll: close_poll darkens"
+    );
+    assert!(
+        !lit_after.contains(&"record_tally".to_string()),
+        "closed poll: record_tally darkens"
+    );
 
     // A reopen: CLOSED := 0 (rewriting the committed 1). `WriteOnce(CLOSED)` refuses 1 -> 0.
     let reopen = vec![dregg_app_framework::Effect::SetField {
@@ -331,7 +363,11 @@ fn register_deos_mounts_the_seeded_two_cell_surface_into_the_context() {
     // and the gated fires are live.
     let app = register_deos(&ctx);
     assert_eq!(app.name(), "privacy-voting");
-    assert_eq!(ctx.affordance_registry().len(), 2, "the two-cell deos surface is registered");
+    assert_eq!(
+        ctx.affordance_registry().len(),
+        2,
+        "the two-cell deos surface is registered"
+    );
 
     // The seeded ballot is unset, so a voter can cast through the mounted surface immediately
     // (the seam is closed + live).
@@ -342,5 +378,9 @@ fn register_deos_mounts_the_seeded_two_cell_surface_into_the_context() {
     // The ballot VOTE moved (a real vote committed).
     let ballot = ballot_cell_id(&cclerk.public_key().0);
     let state = executor.cell_state(ballot).unwrap();
-    assert_eq!(state.fields[VOTE_SLOT], field_from_u64(VOTE_YES), "the vote committed");
+    assert_eq!(
+        state.fields[VOTE_SLOT],
+        field_from_u64(VOTE_YES),
+        "the vote committed"
+    );
 }

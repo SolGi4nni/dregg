@@ -450,9 +450,7 @@ impl TurnExecutor {
                 got: atomic_turn.nonce,
             });
         }
-        if agent_cell.state.balance() < 0
-            || (agent_cell.state.balance() as u64) < atomic_turn.fee
-        {
+        if agent_cell.state.balance() < 0 || (agent_cell.state.balance() as u64) < atomic_turn.fee {
             return Err(AtomicTurnError::InsufficientFee {
                 available: agent_cell.state.balance(),
                 required: atomic_turn.fee,
@@ -750,9 +748,7 @@ impl TurnExecutor {
                 got: mixed_turn.nonce,
             });
         }
-        if agent_cell.state.balance() < 0
-            || (agent_cell.state.balance() as u64) < mixed_turn.fee
-        {
+        if agent_cell.state.balance() < 0 || (agent_cell.state.balance() as u64) < mixed_turn.fee {
             return Err(AtomicTurnError::InsufficientFee {
                 available: agent_cell.state.balance(),
                 required: mixed_turn.fee,

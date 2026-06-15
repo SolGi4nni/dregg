@@ -1796,7 +1796,10 @@ pub fn all_auths_demo() -> Vec<WireAuth> {
 /// Mirror of `EmitMarshalGolden.stateMinimal` — the minimal non-empty state.
 fn conf_state_minimal() -> WireState {
     WireState {
-        cells: vec![(0, WireValue::Record(vec![("balance".into(), WireValue::Int(0))]))],
+        cells: vec![(
+            0,
+            WireValue::Record(vec![("balance".into(), WireValue::Int(0))]),
+        )],
         ..Default::default()
     }
 }
@@ -1813,7 +1816,10 @@ fn conf_state_demo() -> WireState {
                     ("nonce".into(), WireValue::Int(7)),
                 ]),
             ),
-            (1, WireValue::Record(vec![("balance".into(), WireValue::Int(5))])),
+            (
+                1,
+                WireValue::Record(vec![("balance".into(), WireValue::Int(5))]),
+            ),
         ],
         caps: vec![(9, vec![Cap::Node(0)])],
         bal: vec![(0, 0, 100), (1, 0, 5)],
@@ -1872,11 +1878,20 @@ fn conf_state_full() -> WireState {
                     ("weird\"key\\x".into(), WireValue::Int(1)),
                 ]),
             ),
-            (1, WireValue::Record(vec![("balance".into(), WireValue::Int(5))])),
+            (
+                1,
+                WireValue::Record(vec![("balance".into(), WireValue::Int(5))]),
+            ),
             (2, WireValue::Dig(0xABCDEF)),
         ],
         caps: vec![
-            (0, vec![Cap::Endpoint(1, vec![Auth::Read, Auth::Write]), Cap::Node(0)]),
+            (
+                0,
+                vec![
+                    Cap::Endpoint(1, vec![Auth::Read, Auth::Write]),
+                    Cap::Node(0),
+                ],
+            ),
             (9, vec![Cap::Node(0), Cap::Null]),
         ],
         bal: vec![(0, 0, 100), (0, 1, -3), (1, 0, 5)],
@@ -1980,7 +1995,12 @@ fn conf_turn_bh(root: WForest) -> WireTurn {
 fn conf_root_tier3() -> WForest {
     WForest {
         auth: WireAuth::Unchecked,
-        caveats: vec![WireCaveat { tier: 3, cell: 2, asset: 1, min: -5 }],
+        caveats: vec![WireCaveat {
+            tier: 3,
+            cell: 2,
+            asset: 1,
+            min: -5,
+        }],
         action: WireAction::PipelinedSend { actor: 9 },
         children: vec![],
     }
@@ -2016,10 +2036,25 @@ fn conf_forest_deep() -> WForest {
             sig: 7,
         },
         caveats: vec![
-            WireCaveat { tier: 0, cell: 0, asset: 0, min: 0 },
-            WireCaveat { tier: 2, cell: 1, asset: 0, min: 1 },
+            WireCaveat {
+                tier: 0,
+                cell: 0,
+                asset: 0,
+                min: 0,
+            },
+            WireCaveat {
+                tier: 2,
+                cell: 1,
+                asset: 0,
+                min: 1,
+            },
         ],
-        action: WireAction::Emit { actor: 0, cell: 0, topic: 0, data: 0 },
+        action: WireAction::Emit {
+            actor: 0,
+            cell: 0,
+            topic: 0,
+            data: 0,
+        },
         children: vec![
             WChild {
                 holder: 1,
@@ -2030,8 +2065,18 @@ fn conf_forest_deep() -> WForest {
                         issuer_key: Digest::from_u64(14),
                         sig: 15,
                     },
-                    caveats: vec![WireCaveat { tier: 1, cell: 1, asset: 0, min: 0 }],
-                    action: WireAction::Emit { actor: 1, cell: 1, topic: 0, data: 0 },
+                    caveats: vec![WireCaveat {
+                        tier: 1,
+                        cell: 1,
+                        asset: 0,
+                        min: 0,
+                    }],
+                    action: WireAction::Emit {
+                        actor: 1,
+                        cell: 1,
+                        topic: 0,
+                        data: 0,
+                    },
                     children: vec![WChild {
                         holder: 2,
                         keep: vec![Auth::Read, Auth::Write],

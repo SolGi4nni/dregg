@@ -1536,8 +1536,15 @@ fn turn_to_wire_turn(
         .ok_or_else(|| "shadow: forest not fully marshallable".to_string())?;
     // Subsequent forest roots: null-cap sibling subtrees of the wire root (sequential, own authority).
     for (position, sibling) in roots {
-        let sib = tree_to_wforest(sibling, pre, &mut fresh_seq, &turn.agent, &sig_ctx, position)
-            .ok_or_else(|| "shadow: forest not fully marshallable".to_string())?;
+        let sib = tree_to_wforest(
+            sibling,
+            pre,
+            &mut fresh_seq,
+            &turn.agent,
+            &sig_ctx,
+            position,
+        )
+        .ok_or_else(|| "shadow: forest not fully marshallable".to_string())?;
         root.children.push(WChild {
             holder: agent,
             keep: vec![],
@@ -1746,7 +1753,9 @@ fn auth_to_wire_ctx(
     position: usize,
 ) -> dregg_lean_ffi::marshal::WireAuth {
     match auth {
-        Authorization::Signature(r, s) => sig_echo_wire(action, target_cell, r, s, sig_ctx, position),
+        Authorization::Signature(r, s) => {
+            sig_echo_wire(action, target_cell, r, s, sig_ctx, position)
+        }
         // `OneOf` may carry a `Signature` candidate: recurse with the SAME node context so a nested
         // signature is realized against the real check too (the chosen-slot verdict still gates).
         Authorization::OneOf {
@@ -1832,9 +1841,7 @@ fn sig_echo_wire(
     // signing message into one 32-byte digest, then narrow to the low 64 bits. Tamper-sensitive (any
     // change to the cell pubkey or the action/federation/nonce/position changes the message ⇒ a
     // different commitment) AND 64-bit-narrow (so the digest-statement and the u64-proof can coincide).
-    let pk_bytes = target_cell
-        .map(|c| *c.public_key())
-        .unwrap_or([0u8; 32]);
+    let pk_bytes = target_cell.map(|c| *c.public_key()).unwrap_or([0u8; 32]);
     let mut hasher = blake3::Hasher::new_derive_key("dregg-lean-shadow-sig-bind-v1");
     hasher.update(&pk_bytes);
     hasher.update(&message);
@@ -2208,7 +2215,10 @@ mod auth_shape_marshal_tests {
         let cavs = action_caveats(&bare_action(cell, Authorization::Unchecked, pre), actor);
         assert_eq!(cavs.len(), 1, "min_balance must produce exactly one caveat");
         let c = &cavs[0];
-        assert_eq!(c.tier, 0, "min_balance is a monotone (drift-stable) within-cell read");
+        assert_eq!(
+            c.tier, 0,
+            "min_balance is a monotone (drift-stable) within-cell read"
+        );
         assert_eq!(c.cell, actor, "caveat reads the action's own target cell");
         assert_eq!(c.asset, 0, "the cell's primary balance is wire asset 0");
         assert_eq!(c.min, 500i128, "the threshold is the min_balance floor");
@@ -2221,7 +2231,10 @@ mod auth_shape_marshal_tests {
             &bare_action(cell, Authorization::Unchecked, Preconditions::default()),
             9,
         );
-        assert!(cavs.is_empty(), "an action with no min_balance carries no caveat (additive)");
+        assert!(
+            cavs.is_empty(),
+            "an action with no min_balance carries no caveat (additive)"
+        );
     }
 
     /// (2) TOKEN DISCHARGE: `token_chain_hash` is sensitive to the FULL `encoded ‖ discharges`
@@ -2265,10 +2278,9 @@ mod auth_shape_marshal_tests {
         let a = mk(vec![b"good".to_vec()]);
         let b = mk(vec![b"bad".to_vec()]);
         match (&a, &b) {
-            (
-                WireAuth::Token { sig: sa, .. },
-                WireAuth::Token { sig: sb, .. },
-            ) => assert_ne!(sa, sb, "a different discharge ⇒ a different wire token sig"),
+            (WireAuth::Token { sig: sa, .. }, WireAuth::Token { sig: sb, .. }) => {
+                assert_ne!(sa, sb, "a different discharge ⇒ a different wire token sig")
+            }
             _ => panic!("biscuit Token must map to the wire token arm"),
         }
         // the issuer key still crosses in full (the WHO anchor is preserved):
@@ -2283,9 +2295,9 @@ mod auth_shape_marshal_tests {
     /// could share.
     #[test]
     fn bearer_wire_is_full_sig_sensitive() {
-        use dregg_lean_ffi::marshal::WireAuth;
         use crate::action::BearerCapProof;
         use dregg_cell::AuthRequired;
+        use dregg_lean_ffi::marshal::WireAuth;
         let mk = |sig: [u8; 64]| {
             auth_to_wire(&Authorization::Bearer(BearerCapProof {
                 target: CellId([5u8; 32]),
@@ -2310,8 +2322,16 @@ mod auth_shape_marshal_tests {
         let b = mk(sig_b);
         match (&a, &b) {
             (
-                WireAuth::Bearer { deleg_sig: da, stark: false, .. },
-                WireAuth::Bearer { deleg_sig: db, stark: false, .. },
+                WireAuth::Bearer {
+                    deleg_sig: da,
+                    stark: false,
+                    ..
+                },
+                WireAuth::Bearer {
+                    deleg_sig: db,
+                    stark: false,
+                    ..
+                },
             ) => assert_ne!(
                 da, db,
                 "a high-half sig byte flip must change deleg_sig (old truncation missed it)"

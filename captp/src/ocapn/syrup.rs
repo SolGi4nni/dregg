@@ -360,23 +360,27 @@ impl fmt::Display for SyrupError {
             SyrupError::IntOverflow { at } => {
                 write!(f, "integer at offset {at} exceeds i128 range")
             }
-            SyrupError::LengthOverflow {
-                len,
-                remaining,
-                at,
-            } => write!(
+            SyrupError::LengthOverflow { len, remaining, at } => write!(
                 f,
                 "declared length {len} at offset {at} exceeds {remaining} remaining bytes"
             ),
-            SyrupError::InvalidUtf8 { at } => write!(f, "invalid UTF-8 in string/symbol at offset {at}"),
+            SyrupError::InvalidUtf8 { at } => {
+                write!(f, "invalid UTF-8 in string/symbol at offset {at}")
+            }
             SyrupError::MalformedFloat { at } => {
                 write!(f, "float tag 'D' at offset {at} not followed by 8 bytes")
             }
             SyrupError::NonCanonicalDict { at } => {
-                write!(f, "non-canonical dictionary (key out of order / duplicate) at offset {at}")
+                write!(
+                    f,
+                    "non-canonical dictionary (key out of order / duplicate) at offset {at}"
+                )
             }
             SyrupError::NonCanonicalSet { at } => {
-                write!(f, "non-canonical set (member out of order / duplicate) at offset {at}")
+                write!(
+                    f,
+                    "non-canonical set (member out of order / duplicate) at offset {at}"
+                )
             }
             SyrupError::TrailingBytes { remaining } => {
                 write!(f, "{remaining} trailing bytes after a complete value")
@@ -566,7 +570,9 @@ impl<'a> Decoder<'a> {
 
     /// Decode one value, dispatching on the leading tag.
     fn value(&mut self) -> Result<Value, SyrupError> {
-        let tag = self.peek().ok_or(SyrupError::UnexpectedEof { wanted: "value" })?;
+        let tag = self
+            .peek()
+            .ok_or(SyrupError::UnexpectedEof { wanted: "value" })?;
         match tag {
             b't' => {
                 self.pos += 1;
@@ -680,7 +686,11 @@ impl<'a> Decoder<'a> {
                     return Ok(Value::List(items));
                 }
                 Some(_) => items.push(self.value()?),
-                None => return Err(SyrupError::UnexpectedEof { wanted: "list item or ']'" }),
+                None => {
+                    return Err(SyrupError::UnexpectedEof {
+                        wanted: "list item or ']'",
+                    });
+                }
             }
         }
     }
@@ -713,7 +723,7 @@ impl<'a> Decoder<'a> {
                 None => {
                     return Err(SyrupError::UnexpectedEof {
                         wanted: "dict key or '}'",
-                    })
+                    });
                 }
             }
         }
@@ -745,7 +755,7 @@ impl<'a> Decoder<'a> {
                 None => {
                     return Err(SyrupError::UnexpectedEof {
                         wanted: "set member or '$'",
-                    })
+                    });
                 }
             }
         }
@@ -772,7 +782,7 @@ impl<'a> Decoder<'a> {
                 None => {
                     return Err(SyrupError::UnexpectedEof {
                         wanted: "record field or '>'",
-                    })
+                    });
                 }
             }
         }
@@ -841,9 +851,8 @@ mod tests {
     /// Encode → decode is the identity for every value family.
     fn assert_roundtrip(v: Value) {
         let bytes = v.encode();
-        let back = Value::decode(&bytes).unwrap_or_else(|e| {
-            panic!("decode failed for {v:?}: {e} (bytes: {bytes:?})")
-        });
+        let back = Value::decode(&bytes)
+            .unwrap_or_else(|e| panic!("decode failed for {v:?}: {e} (bytes: {bytes:?})"));
         assert_eq!(back, v, "roundtrip mismatch (bytes: {bytes:?})");
     }
 
@@ -1173,10 +1182,7 @@ mod tests {
     fn bytestring_allows_arbitrary_bytes() {
         // The SAME 0xff 0xfe bytes are fine in a *bytestring* (no UTF-8 rule).
         let ok = [b'2', b':', 0xff, 0xfe];
-        assert_eq!(
-            Value::decode(&ok).unwrap(),
-            Value::bytes(vec![0xff, 0xfe])
-        );
+        assert_eq!(Value::decode(&ok).unwrap(), Value::bytes(vec![0xff, 0xfe]));
     }
 
     #[test]
@@ -1341,11 +1347,19 @@ mod tests {
                 }
                 4 => {
                     let n = (next() % 8) as usize;
-                    Value::Str((0..n).map(|_| char::from(b'a' + (next() % 26) as u8)).collect())
+                    Value::Str(
+                        (0..n)
+                            .map(|_| char::from(b'a' + (next() % 26) as u8))
+                            .collect(),
+                    )
                 }
                 5 => {
                     let n = (next() % 8) as usize;
-                    Value::Symbol((0..n).map(|_| char::from(b'a' + (next() % 26) as u8)).collect())
+                    Value::Symbol(
+                        (0..n)
+                            .map(|_| char::from(b'a' + (next() % 26) as u8))
+                            .collect(),
+                    )
                 }
                 6 => {
                     let n = (next() % 4) as usize;

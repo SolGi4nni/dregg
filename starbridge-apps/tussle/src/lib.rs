@@ -220,7 +220,10 @@ impl Figure {
         // All joints start at Relax (sym 0) — already the zero field, but write through the
         // enum-pinned setter to keep the invariant explicit.
         for j in 0..N_JOINTS {
-            cell.set_field(slot::JOINT_BASE + j, field_from_u64(JointState::Relax.sym()));
+            cell.set_field(
+                slot::JOINT_BASE + j,
+                field_from_u64(JointState::Relax.sym()),
+            );
         }
         cell.set_field(slot::POSITION, field_from_u64(position as u64));
         cell.set_field(slot::SCORE, field_from_u64(0));
@@ -302,13 +305,15 @@ impl Figure {
 
     /// Set the figure's position slot (after a resolution step).
     fn write_position(&mut self, pos: i64) {
-        self.cell.set_field(slot::POSITION, field_from_u64(pos as u64));
+        self.cell
+            .set_field(slot::POSITION, field_from_u64(pos as u64));
     }
 
     /// Set the figure's score slot to mirror its verified-ledger score column (after a joint turn).
     /// The verified ledger's amount domain is `i128`; the figure cell stores the `u64` lane of it.
     fn write_score(&mut self, score: i128) {
-        self.cell.set_field(slot::SCORE, field_from_u64(score as u64));
+        self.cell
+            .set_field(slot::SCORE, field_from_u64(score as u64));
     }
 }
 
@@ -414,7 +419,10 @@ impl std::fmt::Display for TussleError {
             }
             Self::MissingReveal => write!(f, "both players must reveal before the frame resolves"),
             Self::JointTurnRejected(e) => {
-                write!(f, "the frame's joint turn was rejected by the verified executor: {e}")
+                write!(
+                    f,
+                    "the frame's joint turn was rejected by the verified executor: {e}"
+                )
             }
         }
     }
@@ -549,9 +557,7 @@ impl Frame {
             // one it committed as — both refused (a peeker who re-targets, or the opponent's figure).
             None => {
                 // If the seal matches some OTHER committed figure, that is a wrong-figure attempt.
-                if let Some((&bound_fig, _)) =
-                    self.commitments.iter().find(|(_, s)| **s == seal)
-                {
+                if let Some((&bound_fig, _)) = self.commitments.iter().find(|(_, s)| **s == seal) {
                     return Err(TussleError::WrongFigure {
                         revealed: mv.figure,
                         bound: bound_fig,
@@ -615,8 +621,14 @@ impl Frame {
             return Err(TussleError::MissingReveal);
         }
         // The two revealed moves, in player order. Defensive: both keys are present (both_revealed).
-        let m0 = *self.reveals.get(&self.players.0).ok_or(TussleError::MissingReveal)?;
-        let m1 = *self.reveals.get(&self.players.1).ok_or(TussleError::MissingReveal)?;
+        let m0 = *self
+            .reveals
+            .get(&self.players.0)
+            .ok_or(TussleError::MissingReveal)?;
+        let m1 = *self
+            .reveals
+            .get(&self.players.1)
+            .ok_or(TussleError::MissingReveal)?;
 
         // THE DETERMINISTIC RESOLUTION — a pure function over the revealed joint vectors + positions.
         let outcome = resolution::resolve_contact(
@@ -1041,8 +1053,10 @@ pub fn seed_figure(executor: &EmbeddedExecutor, cell: CellId) {
     executor.with_ledger_mut(|ledger| {
         if let Some(c) = ledger.get_mut(&cell) {
             for j in 0..N_JOINTS {
-                c.state
-                    .set_field(slot::JOINT_BASE + j, field_from_u64(JointState::Relax.sym()));
+                c.state.set_field(
+                    slot::JOINT_BASE + j,
+                    field_from_u64(JointState::Relax.sym()),
+                );
             }
             c.state.set_field(slot::POSITION, field_from_u64(0));
             c.state.set_field(slot::SCORE, field_from_u64(0));
@@ -1077,7 +1091,9 @@ pub fn seed_figure_b(executor: &EmbeddedExecutor, cipherclerk: &AppCipherclerk) 
     let agent = cipherclerk.cell_id();
     executor.with_ledger_mut(|ledger| {
         if let Some(agent_cell) = ledger.get_mut(&agent) {
-            agent_cell.capabilities.grant(figure_b, AuthRequired::Signature);
+            agent_cell
+                .capabilities
+                .grant(figure_b, AuthRequired::Signature);
         }
     });
 
@@ -1106,9 +1122,9 @@ pub fn fire_commit_move(
     // The low byte the per-figure seal binds to (the figure cell's ledger-id view).
     let figure_id = figure.as_bytes()[0];
     let seal = MoveCommit::new(figure_id, *joints, nonce).seal();
-    let cell = app
-        .cell(&figure)
-        .ok_or(FireExecuteError::Gate(dregg_app_framework::FireError::NoSuchAffordance))?;
+    let cell = app.cell(&figure).ok_or(FireExecuteError::Gate(
+        dregg_app_framework::FireError::NoSuchAffordance,
+    ))?;
     cell.fire_gated_through_executor_with(
         "commit_move",
         held,
@@ -1147,9 +1163,9 @@ pub fn fire_reveal_move(
     cipherclerk: &AppCipherclerk,
     executor: &EmbeddedExecutor,
 ) -> Result<TurnReceipt, FireExecuteError> {
-    let cell = app
-        .cell(&figure)
-        .ok_or(FireExecuteError::Gate(dregg_app_framework::FireError::NoSuchAffordance))?;
+    let cell = app.cell(&figure).ok_or(FireExecuteError::Gate(
+        dregg_app_framework::FireError::NoSuchAffordance,
+    ))?;
     cell.fire_gated_through_executor_with(
         "reveal_move",
         held,
@@ -1193,9 +1209,9 @@ pub fn fire_resolve_frame(
     cipherclerk: &AppCipherclerk,
     executor: &EmbeddedExecutor,
 ) -> Result<TurnReceipt, FireExecuteError> {
-    let cell = app
-        .cell(&figure)
-        .ok_or(FireExecuteError::Gate(dregg_app_framework::FireError::NoSuchAffordance))?;
+    let cell = app.cell(&figure).ok_or(FireExecuteError::Gate(
+        dregg_app_framework::FireError::NoSuchAffordance,
+    ))?;
     // Read the OTHER figure's revealed pose + position from the ledger (the coordinator
     // folds contact off both figures).
     let other_state = executor.cell_state(other);

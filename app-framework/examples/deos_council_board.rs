@@ -82,7 +82,9 @@ fn pending_precondition() -> CellProgram {
 /// This is the genuine state-machine of the cell, distinct from the affordance's
 /// precondition; the `approve` turn (1 → 2) satisfies it, so the gated fire commits.
 fn proposal_invariant() -> CellProgram {
-    CellProgram::Predicate(vec![StateConstraint::Monotonic { index: STATUS_SLOT as u8 }])
+    CellProgram::Predicate(vec![StateConstraint::Monotonic {
+        index: STATUS_SLOT as u8,
+    }])
 }
 
 /// Set the proposal cell's `status` slot directly in the embedded ledger (so the
@@ -122,7 +124,11 @@ fn main() {
         CellAffordance::new(
             "approve",
             AuthRequired::Either,
-            Effect::SetField { cell: proposal, index: STATUS_SLOT, value: fe(RESOLVED) },
+            Effect::SetField {
+                cell: proposal,
+                index: STATUS_SLOT,
+                value: fe(RESOLVED),
+            },
         ),
         pending_precondition(),
     );
@@ -131,7 +137,10 @@ fn main() {
         AuthRequired::Signature,
         Effect::EmitEvent {
             cell: proposal,
-            event: Event { topic: [0xC0; 32], data: vec![] },
+            event: Event {
+                topic: [0xC0; 32],
+                data: vec![],
+            },
         },
     );
 
@@ -155,13 +164,17 @@ fn main() {
     //     others — the structural no-peek).
     let approver = AuthRequired::Either;
     let member = AuthRequired::Signature;
-    let outsider = AuthRequired::Custom { vk_hash: [0x9E; 32] };
+    let outsider = AuthRequired::Custom {
+        vk_hash: [0x9E; 32],
+    };
 
     println!("== council-board — a deos approval board (cap∧state gated) ==\n");
 
     // 1) THE PER-VIEWER, PER-STATE PROJECTION (proposal PENDING). The framework reads
     //    the cell's live state; the author threads nothing.
-    println!("proposal is PENDING. each viewer projects a DIFFERENT button-set off the SAME board:");
+    println!(
+        "proposal is PENDING. each viewer projects a DIFFERENT button-set off the SAME board:"
+    );
     print_projection(&board, "approver (Either)   ", &approver, &executor);
     print_projection(&board, "member   (Signature)", &member, &executor);
     print_projection(&board, "outsider (Custom)   ", &outsider, &executor);
@@ -190,7 +203,9 @@ fn main() {
     //    Right caps, wrong state ⇒ REFUSED IN-BAND; nothing reaches the executor.
     println!("the approver fires `approve` AGAIN, now that it is RESOLVED (stale state):");
     match board.fire_gated_through_executor("approve", &approver, &cclerk, &executor) {
-        Err(e) => println!("  → REFUSED in-band: {e}\n    (the STATE tooth — even a fully-authorized actor; nothing submitted)\n"),
+        Err(e) => println!(
+            "  → REFUSED in-band: {e}\n    (the STATE tooth — even a fully-authorized actor; nothing submitted)\n"
+        ),
         Ok(_) => println!("  → ??unexpectedly fired a stale-state approve\n"),
     }
 
@@ -199,15 +214,18 @@ fn main() {
     set_status(&executor, proposal, PENDING);
     println!("reset to PENDING. a MEMBER (signature only) fires `approve`:");
     match board.fire_gated_through_executor("approve", &member, &cclerk, &executor) {
-        Err(e) => println!("  → REFUSED in-band: {e}\n    (the CAP tooth — the right state is not enough; nothing submitted)\n"),
+        Err(e) => println!(
+            "  → REFUSED in-band: {e}\n    (the CAP tooth — the right state is not enough; nothing submitted)\n"
+        ),
         Ok(_) => println!("  → ??unexpectedly let a member approve\n"),
     }
 
     // 6) THE FRUSTUM-SNAPSHOT REHYDRATES PER-VIEWER. A cold snapshot of the board
     //    re-expands a DIFFERENT view per identity; an incomparable identity gets none.
-    let log = InteractionLog::new().record(
-        dregg_app_framework::Interaction::witnessed_turn(board.cell(), [0xC0; 32]),
-    );
+    let log = InteractionLog::new().record(dregg_app_framework::Interaction::witnessed_turn(
+        board.cell(),
+        [0xC0; 32],
+    ));
     let snap = board.snapshot(log, /* sources_reachable */ false);
     println!(
         "a frustum-snapshot of the board (lineage {:?}, liveness: {}):",
@@ -215,11 +233,16 @@ fn main() {
         snap.liveness().badge()
     );
     match board.rehydrate(&snap, approver.clone()) {
-        Ok(view) => println!("  the approver rehydrates {:?} (per-viewer, lattice-respecting)", view.visible_names()),
+        Ok(view) => println!(
+            "  the approver rehydrates {:?} (per-viewer, lattice-respecting)",
+            view.visible_names()
+        ),
         Err(e) => println!("  the approver could not rehydrate: {e:?}"),
     }
     match board.rehydrate(&snap, outsider.clone()) {
-        Err(_) => println!("  the outsider (incomparable identity): CANNOT peek — the membrane mints no projection\n"),
+        Err(_) => println!(
+            "  the outsider (incomparable identity): CANNOT peek — the membrane mints no projection\n"
+        ),
         Ok(_) => println!("  ??the outsider unexpectedly rehydrated\n"),
     }
 
@@ -233,7 +256,9 @@ fn main() {
                 println!(
                     "  {} — requires {}, state-gate: {}",
                     g.get("name").and_then(|v| v.as_str()).unwrap_or("?"),
-                    g.get("requiredRights").and_then(|v| v.as_str()).unwrap_or("?"),
+                    g.get("requiredRights")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("?"),
                     g.get("stateGate").and_then(|v| v.as_str()).unwrap_or("?"),
                 );
             }
