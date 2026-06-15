@@ -1,0 +1,78 @@
+[package]
+name = "starbridge-agent-orchestration"
+version = "0.1.0"
+edition = "2024"
+description = "Verifiable DURABLE + AUDITABLE multi-agent orchestration — a COORDINATOR cell issues each WORKER an ATTENUATED MANDATE (a scope-narrowed tool-set ∧ a sub-budget ∧ a sub-task — strictly weaker than the coordinator holds: granted ⊑ held, the proven non-amplification), and every worker action is a cap-gated VERIFIED TURN through the real embedded executor: a worker that reaches for a WIDER tool, an OVER-budget spend, or an OUT-OF-scope cell is REFUSED, fail-closed, in the fire path (the executor's AffineLe budget tooth + the off-ledger mandate pre-check that provably agrees). The whole orchestration is a DURABLE workflow whose every step is a verified turn checkpointed to a receipt log (crash-recoverable, EXACTLY-ONCE on resume — modeled on pg-dregg::workflow), and it is AUDITABLE: an auditor (a light client) re-derives the run from the receipt chain and verifies no agent ever exceeded its mandate (dregg_turn::verify_receipt_chain over the chained TurnReceipts + the per-step mandate re-check) — a clean run audits OK, a tampered or over-mandate step is DETECTABLE. Rust mirror of metatheory/Dregg2/Apps/AgentOrchestration.lean (worker_authority_subset_orchestrator · worker_attenuation_is_strict · workForest_conserves · badWorkerForest_fails_closed) + AgentOrchestrationBudget.lean (the affine budget tooth) + Deos/WorkflowBridge.lean (a workflow step IS a gated affordance fire) + Protocol/Workflow.lean (the durable verified-turn choreography)."
+
+# Mirrors the verified Lean developments (NO new Lean module is added by this app):
+#   - `metatheory/Dregg2/Apps/AgentOrchestration.lean` — the kernel-executor
+#     swarm with attenuated, non-amplifying delegation. The keystones this crate
+#     makes runnable:
+#       * `worker_authority_subset_orchestrator` — a delegated worker's conferred
+#         authority is a SUBSET of the orchestrator's (no amplification);
+#       * `worker_attenuation_is_strict` — the subset is STRICT (the orchestrator
+#         holds `write`, the attenuated worker mandate does not);
+#       * `workForest_conserves` / `orchestration_conserves` — the whole
+#         multi-agent run conserves every asset (no mint/burn);
+#       * `badWorkerForest_fails_closed` / `unauthorized_mint_rejected` — a
+#         worker's out-of-mandate action returns `none`; the all-or-nothing
+#         rollback rejects the whole forest.
+#     The `Mandate` here (scope tool-set ∧ sub-budget ∧ sub-task) is the Rust image
+#     of the orchestrator → worker `keep`-attenuation (`workerKeep ⊑ orchestratorCap`).
+#   - `metatheory/Dregg2/Apps/AgentOrchestrationBudget.lean` — the dispatch-board
+#     POLICY: the affine budget tooth `affineLe [(1,spentA),(1,spentB)] mandate`
+#     (`spent_a + spent_b <= budget`), `immutable budgetF`, `strictMono epochF`. The
+#     coordinator cell installs EXACTLY this as its `CellProgram` (re-checked by the
+#     verified executor on every touching turn) — the over-budget worker is a real
+#     executor refusal.
+#   - `metatheory/Dregg2/Deos/WorkflowBridge.lean` — a `Protocol.Workflow.exec` step
+#     IS a sequenced cap∧state affordance fire (the durable surface RENDERS the
+#     choreography, it does not fork it). The durable orchestration's steps are those
+#     verified gated fires, sequenced.
+#   - `metatheory/Dregg2/Protocol/Workflow.lean` — the multi-step authenticated
+#     choreography (`exec_authorized`, `exec_in_order`): a step commits ONLY when the
+#     actor is authorized and the workflow is in the precondition phase.
+#
+# This crate is the executable surface: the mandate is enforced by the verified
+# executor (`EmbeddedExecutor`) on EVERY worker turn (the over-tool / over-budget /
+# out-of-scope refusals are REAL executor refusals, not app bookkeeping), the run is
+# durable (each verified turn checkpointed to a receipt log; crash-recoverable;
+# exactly-once on resume), and the receipt chain is auditable (a light client
+# re-derives the run and proves no agent exceeded its mandate via
+# `dregg_turn::verify_receipt_chain` + the per-step mandate re-check). The durability
+# + audit spine is modeled on `pg-dregg/src/workflow.rs` (`WorkflowEngine` /
+# `run_durable` / `recover_from_durable` / `resume_durable` / the chain tooth) —
+# realized here on the in-process embedded executor with the real `TurnReceipt`
+# chain as the durable log (pg-dregg is a standalone workspace, not a workspace
+# member, so it is the MODEL, not a dependency).
+
+[lib]
+name = "starbridge_agent_orchestration"
+
+[dependencies]
+dregg-app-framework = { path = "../../app-framework" }
+dregg-cell = { path = "../../cell", default-features = false }
+dregg-turn = { path = "../../turn" }
+dregg-types = { path = "../../types" }
+dregg-coord = { path = "../../coord" }
+
+blake3 = "1"
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+# The userspace "lint your orchestration plan before you spend gas" toolkit: the
+# delegation/dispatch forest is run through `analyze()` (conservation +
+# non-amplification + well-formedness) BEFORE submission, exactly as a stranger
+# would pre-flight the run.
+dregg-userspace-verify = { path = "../../dregg-userspace-verify" }
+# The composed DeosApp surface is mounted as a real axum Router and driven
+# end-to-end (per-viewer projection + cap-gated fires through the executor) by
+# `tests/deos_surface.rs` — the ADOS reference proof: a stranger fetches the
+# manifest, projects their button-set, and fires the audit, never trusting the loop.
+axum = "0.8"
+tokio = { version = "1", features = ["full"] }
+tower = "0.5"
+
+[lints]
+workspace = true
