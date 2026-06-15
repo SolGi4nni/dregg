@@ -1518,6 +1518,8 @@ const MAX_BODY_SIZE: usize = 1_024 * 1_024;
 /// Includes CORS, body size limits, rate limiting on passphrase endpoints,
 /// per-identity rate limiting on turn submission, and Bearer token
 /// authentication on protected routes.
+// Convenience constructor retained for embedders/tests; the binary uses router_with_cors.
+#[allow(dead_code)]
 pub fn router(
     state: NodeState,
     enable_faucet: bool,
@@ -4240,7 +4242,7 @@ async fn post_sse_search(
     if req.capability_keywords.is_empty() {
         return Err(StatusCode::BAD_REQUEST);
     }
-    let limit = req.limit.unwrap_or(DEFAULT_LIMIT).min(MAX_LIMIT).max(1);
+    let limit = req.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
 
     // Derive search tokens from the fulfiller's keywords.
     let keyword_refs: Vec<&str> = req.capability_keywords.iter().map(String::as_str).collect();
@@ -4286,7 +4288,7 @@ async fn post_sse_search(
 /// Unlike `/intents/encrypted` (single-recipient SSE sealed-box), this
 /// path routes through [`dregg_intent::trustless::TrustlessIntentEngine`]:
 /// validators collaboratively decrypt the batch via Shamir-over-GF(256)
-/// + ChaCha20-Poly1305, solvers compete with STARK validity proofs, and
+/// and ChaCha20-Poly1305, solvers compete with STARK validity proofs, and
 /// the winning solution settles atomically through the lowering tower.
 async fn post_trustless_intent(
     State(state): State<NodeState>,
@@ -7078,7 +7080,7 @@ fn classify_starbridge_app(memo: Option<&str>, effect_summaries: &[String]) -> O
 fn effect_kind(effect: &dregg_turn::Effect) -> String {
     let debug = format!("{effect:?}");
     debug
-        .split(|c: char| c == ' ' || c == '{' || c == '(')
+        .split([' ', '{', '('])
         .next()
         .unwrap_or("Unknown")
         .to_ascii_lowercase()
@@ -7181,30 +7183,36 @@ fn verify_ed25519_sig(
 // =============================================================================
 // Queue Operations
 // =============================================================================
+// Wire DTOs retained for the queue HTTP surface (deserialized by clients).
 
+#[allow(dead_code)]
 #[derive(Deserialize)]
 struct QueueAllocateRequest {
     capacity: u64,
     program_vk: Option<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Serialize)]
 struct QueueAllocateResponse {
     #[serde(rename = "queueId")]
     queue_id: String,
 }
 
+#[allow(dead_code)]
 #[derive(Deserialize)]
 struct QueueEnqueueRequest {
     message_hash: String,
     deposit: u64,
 }
 
+#[allow(dead_code)]
 #[derive(Serialize)]
 struct QueueEnqueueResponse {
     position: u64,
 }
 
+#[allow(dead_code)]
 #[derive(Serialize)]
 struct QueueDequeueResponse {
     #[serde(rename = "messageHash")]
@@ -7212,6 +7220,7 @@ struct QueueDequeueResponse {
     deposit: u64,
 }
 
+#[allow(dead_code)]
 #[derive(Serialize)]
 struct QueueStatusResponse {
     #[serde(rename = "queueId")]
@@ -7223,17 +7232,20 @@ struct QueueStatusResponse {
     program_vk: Option<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Deserialize)]
 struct QueueAtomicTxRequest {
     operations: Vec<serde_json::Value>,
 }
 
+#[allow(dead_code)]
 #[derive(Serialize)]
 struct QueueAtomicTxResponse {
     success: bool,
     results: Vec<QueueAtomicTxResult>,
 }
 
+#[allow(dead_code)]
 #[derive(Serialize)]
 struct QueueAtomicTxResult {
     index: usize,

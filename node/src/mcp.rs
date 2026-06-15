@@ -534,6 +534,7 @@ fn try_generate_effect_vm_proof(
 
 #[derive(Deserialize)]
 struct JsonRpcRequest {
+    #[allow(dead_code)] // Deserialized from the wire (version field) but not branched on.
     jsonrpc: String,
     id: Option<Value>,
     method: String,
@@ -726,6 +727,7 @@ struct McpContent {
 }
 
 impl McpToolResult {
+    #[allow(dead_code)] // Convenience ctor retained alongside the explicit-content path.
     fn text(s: impl Into<String>) -> Self {
         Self {
             content: vec![McpContent {
@@ -2114,6 +2116,7 @@ fn mcp_authority_cell(node_pk: &[u8; 32], issuer_pubkey: &[u8; 32]) -> dregg_cel
 /// the verbs in [`tool_required_scope`] (`"read"` / `"write"` / `"admin"`).
 ///
 /// Returns the encoded `eb2_…` biscuit string.
+#[allow(dead_code)] // Retained MCP cap-minting helper for the tools/call gate.
 fn mint_tool_cap(
     cclerk: &AgentCipherclerk,
     node_pk: &[u8; 32],
@@ -3407,7 +3410,7 @@ async fn tool_list_cells(params: &Value, state: &NodeState) -> McpToolResult {
     // Stable order: sort by cell id so pagination is deterministic across calls.
     let mut all: Vec<(dregg_cell::CellId, &dregg_cell::Cell)> =
         s.ledger.iter().map(|(id, c)| (*id, c)).collect();
-    all.sort_by(|a, b| a.0.0.cmp(&b.0.0));
+    all.sort_by_key(|a| a.0.0);
     let total = all.len();
 
     let page: Vec<Value> = all
@@ -6296,16 +6299,13 @@ fn schedule_projected_wr(
     }
 
     let (th, eg, actor_nonce, prev) = dregg_turn::TurnExecutor::compute_turn_identity_pi(turn);
-    for i in 0..p::TURN_HASH_LEN {
-        pi[p::TURN_HASH_BASE + i] = th[i];
-    }
-    for i in 0..p::EFFECTS_HASH_GLOBAL_LEN {
-        pi[p::EFFECTS_HASH_GLOBAL_BASE + i] = eg[i];
-    }
+    pi[p::TURN_HASH_BASE..p::TURN_HASH_BASE + p::TURN_HASH_LEN]
+        .copy_from_slice(&th[..p::TURN_HASH_LEN]);
+    pi[p::EFFECTS_HASH_GLOBAL_BASE..p::EFFECTS_HASH_GLOBAL_BASE + p::EFFECTS_HASH_GLOBAL_LEN]
+        .copy_from_slice(&eg[..p::EFFECTS_HASH_GLOBAL_LEN]);
     pi[p::ACTOR_NONCE] = BabyBear::new((actor_nonce & 0x7FFF_FFFF) as u32);
-    for i in 0..p::PREVIOUS_RECEIPT_HASH_LEN {
-        pi[p::PREVIOUS_RECEIPT_HASH_BASE + i] = prev[i];
-    }
+    pi[p::PREVIOUS_RECEIPT_HASH_BASE..p::PREVIOUS_RECEIPT_HASH_BASE + p::PREVIOUS_RECEIPT_HASH_LEN]
+        .copy_from_slice(&prev[..p::PREVIOUS_RECEIPT_HASH_LEN]);
 
     let schedule = ExpectedBilateral::from_turn(turn);
     let counts = schedule.counts_for(cell_id);
@@ -6920,6 +6920,7 @@ async fn tool_create_cell_from_factory_effect(params: &Value, state: &NodeState)
 /// - `SetField` → `VmEffect::SetField`
 /// - `Transfer` → `VmEffect::Transfer` (debit side, direction=1)
 /// - `EmitEvent` → `VmEffect::EmitEvent` (BLAKE3 topic + payload, per #110)
+///
 /// Returns `None` for variants without an AIR-side analog (IncrementNonce,
 /// GrantCapability, RevokeCapability, CreateCell, etc.).
 fn project_setfield_to_vm(effect: &dregg_turn::Effect) -> Option<dregg_circuit::effect_vm::Effect> {

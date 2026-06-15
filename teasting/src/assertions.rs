@@ -111,11 +111,7 @@ pub fn assert_conservation_invariant(ledger: &Ledger, expected_total: u64) {
          Difference = {} computrons {} from nothing.",
         expected_total,
         actual_total,
-        if actual_total > expected_total {
-            actual_total - expected_total
-        } else {
-            expected_total - actual_total
-        },
+        actual_total.abs_diff(expected_total),
         if actual_total > expected_total {
             "created"
         } else {

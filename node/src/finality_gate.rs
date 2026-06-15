@@ -47,10 +47,10 @@ const WAVELENGTH: u64 = 3;
 /// verified rule gates new state). `DREGG_FINALITY_GATE=0`/`false`/`off` opts OUT (keeps the legacy
 /// un-gated path) for an operator who needs to bypass it.
 pub fn finality_gate_enabled() -> bool {
-    match std::env::var("DREGG_FINALITY_GATE").ok().as_deref() {
-        Some("0") | Some("false") | Some("FALSE") | Some("off") | Some("OFF") => false,
-        _ => true,
-    }
+    !matches!(
+        std::env::var("DREGG_FINALITY_GATE").ok().as_deref(),
+        Some("0") | Some("false") | Some("FALSE") | Some("off") | Some("OFF")
+    )
 }
 
 /// The verified finalized order, as the set of `(creator_id, seq)` coordinates the verified Lean rule
@@ -205,11 +205,13 @@ impl VerifiedFinality {
     }
 
     /// Number of `(creator, seq)` coordinates the verified rule finalized (for diagnostics).
+    #[allow(dead_code)] // Diagnostic accessor retained on the verified-finality surface.
     pub fn len(&self) -> usize {
         self.finalized.len()
     }
 
     /// Whether the verified rule finalized nothing.
+    #[allow(dead_code)] // Diagnostic accessor retained on the verified-finality surface.
     pub fn is_empty(&self) -> bool {
         self.finalized.is_empty()
     }

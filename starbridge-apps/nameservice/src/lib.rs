@@ -224,8 +224,8 @@ pub fn name_child_program_vk() -> [u8; 32] {
 ///   (`Caveat::ResourcePrefix`, etc.); the factory itself does not
 ///   mint those separately.
 /// - `field_constraints` (creation-time): every created name cell *must*
-///     initialize its `NAME_HASH_SLOT` and `EXPIRY_SLOT` to non-zero
-///     values. These run once at constructor invocation.
+///   initialize its `NAME_HASH_SLOT` and `EXPIRY_SLOT` to non-zero
+///   values. These run once at constructor invocation.
 /// - `state_constraints` (perpetual / Lane G slot caveats):
 ///   - `StateConstraint::WriteOnce { index: NAME_HASH_SLOT }` — the
 ///     name-hash slot may only be written from `FIELD_ZERO`. After the

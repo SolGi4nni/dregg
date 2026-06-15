@@ -48,6 +48,7 @@ impl StarbridgeSeedStats {
 ///
 /// No-op when `starbridge_cells` is absent or empty. Safe to call on every
 /// boot: already-present cells (ledger or marker file) are skipped.
+#[allow(dead_code)] // Genesis starbridge-cell seeding; invoked on the cfg-gated boot path.
 pub fn seed_starbridge_factory_cells(
     genesis: &serde_json::Value,
     data_dir: &Path,

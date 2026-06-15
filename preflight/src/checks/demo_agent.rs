@@ -128,9 +128,6 @@ fn run_example(name: &str) -> Result<(), String> {
 
     std::thread::spawn(move || {
         // Collect stdout/stderr while waiting (prevents pipe-full deadlock).
-        let stdout_buf;
-        let stderr_buf;
-
         // Read both pipes concurrently using two nested threads.
         let (so_tx, so_rx) = mpsc::channel::<Vec<u8>>();
         let (se_tx, se_rx) = mpsc::channel::<Vec<u8>>();
@@ -154,8 +151,8 @@ fn run_example(name: &str) -> Result<(), String> {
             }
         };
 
-        stdout_buf = so_rx.recv().unwrap_or_default();
-        stderr_buf = se_rx.recv().unwrap_or_default();
+        let stdout_buf = so_rx.recv().unwrap_or_default();
+        let stderr_buf = se_rx.recv().unwrap_or_default();
 
         let output = std::process::Output {
             status,

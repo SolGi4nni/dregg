@@ -100,11 +100,13 @@ impl OrphanBuffer {
         self.orphans.len()
     }
 
+    #[allow(dead_code)] // Retained accessor on the orphan-buffer surface.
     pub fn is_empty(&self) -> bool {
         self.orphans.is_empty()
     }
 
     /// True if `id` is already staged as an orphan.
+    #[allow(dead_code)] // Retained accessor on the orphan-buffer surface.
     pub fn contains(&self, id: &BlockId) -> bool {
         self.orphans.contains_key(id)
     }

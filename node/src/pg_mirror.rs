@@ -253,6 +253,8 @@ impl MirrorSink for Box<dyn MirrorSink> {
 
 /// An in-memory sink: records every emitted batch. The testable substrate that
 /// proves construction + chaining without a live postgres.
+// Retained test/embedder substrate for the pg-mirror chain (no live postgres).
+#[allow(dead_code)]
 #[derive(Default)]
 pub struct MemorySink {
     pub batches: Vec<MirrorBatch>,
@@ -277,6 +279,7 @@ pub struct PgMirror<S: MirrorSink> {
     sink: S,
 }
 
+#[allow(dead_code)] // Retained pg-mirror constructors/accessors for embedders + the resume path.
 impl<S: MirrorSink> PgMirror<S> {
     /// A fresh mirror expecting ordinal 0 from genesis.
     pub fn new(sink: S) -> Self {

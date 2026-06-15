@@ -40,10 +40,10 @@ static GATE_BACKEND_ANNOUNCED: Once = Once::new();
 /// Whether the live 2PC-decision gate is enabled. **Default ON**. `DREGG_COORD_DECISION_GATE=0`/
 /// `false`/`off` opts OUT (keeps the raw Rust `Decision`).
 pub fn coord_decision_gate_enabled() -> bool {
-    match std::env::var("DREGG_COORD_DECISION_GATE").ok().as_deref() {
-        Some("0") | Some("false") | Some("FALSE") | Some("off") | Some("OFF") => false,
-        _ => true,
-    }
+    !matches!(
+        std::env::var("DREGG_COORD_DECISION_GATE").ok().as_deref(),
+        Some("0") | Some("false") | Some("FALSE") | Some("off") | Some("OFF")
+    )
 }
 
 /// Whether the verified Lean distributed exports are linked (so the gate decides via the VERIFIED

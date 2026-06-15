@@ -22,10 +22,5 @@ pub fn drive_to_finalization(
     fed_idx: usize,
     max_rounds: usize,
 ) -> Option<usize> {
-    for i in 1..=max_rounds {
-        if harness.run_consensus_round(fed_idx) {
-            return Some(i);
-        }
-    }
-    None
+    (1..=max_rounds).find(|_| harness.run_consensus_round(fed_idx))
 }

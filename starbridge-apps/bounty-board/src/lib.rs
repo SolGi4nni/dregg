@@ -515,9 +515,9 @@ pub fn bounty_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) -> 
 
 /// **Seed the BOUNTY cell** so the gated fires have live state + the caveats bite: install
 /// the full bounty [`bounty_cell_program`] on the seeded bounty cell (so the executor
-/// re-enforces it on every touching turn), then post the genesis state (bind `TITLE_HASH`
-/// + `REWARD` under `WriteOnce`, set `STATE = STATE_OPEN`) directly into the embedded
-/// ledger.
+/// re-enforces it on every touching turn), then post the genesis state (bind
+/// `TITLE_HASH` and `REWARD` under `WriteOnce`, set `STATE = STATE_OPEN`) directly into
+/// the embedded ledger.
 ///
 /// After seeding, the bounty is POSTED/OPEN with its title + reward bound — a real
 /// `(old, new)` baseline against which `claim` advances. Returns the posted `STATE` value.

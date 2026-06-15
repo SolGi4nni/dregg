@@ -380,7 +380,7 @@ pub fn resolve_gateway(
         .filter(|(_, cell)| is_sgm_cell(cell))
         .map(|(id, _)| *id)
         .collect();
-    candidates.sort_by(|a, b| a.0.cmp(&b.0));
+    candidates.sort_by_key(|a| a.0);
     candidates.into_iter().next().ok_or_else(|| {
         StorageRefusal::NoGateway(
             "no storage-gateway mandate cell in ledger (was the starbridge seed run?)".into(),

@@ -397,8 +397,8 @@ async fn main() {
     let config = match Config::from_env() {
         Ok(c) => c,
         Err(msg) => {
-            eprintln!("error: {}", msg);
-            eprintln!("");
+            eprintln!("error: {msg}");
+            eprintln!();
             eprintln!("Set the required environment variables and try again. Example:");
             eprintln!("  export DISCORD_TOKEN=...");
             eprintln!("  export DISCORD_APP_ID=...");

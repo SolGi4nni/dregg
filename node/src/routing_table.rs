@@ -13,6 +13,9 @@ use dregg_cell::CellId;
 use dregg_turn::RoutingDirective;
 
 /// A single route entry describing how to reach a cell.
+// Retained scaffolding: the introduce-driven routing table is wired but not yet
+// consulted on the live node path; fields populated for the verification flow.
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub struct RouteEntry {
     /// The peer address through which this cell is reachable.
@@ -34,6 +37,8 @@ pub struct RouteEntry {
 }
 
 /// Error returned when a routing directive is rejected.
+// Retained scaffolding for the introduce-driven routing table (see RouteEntry).
+#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RoutingError {
     /// The directive's authorizing turn is a null hash (all zeros).
@@ -44,6 +49,8 @@ pub enum RoutingError {
 ///
 /// Populated from `RoutingDirective`s extracted from turn receipts.
 /// Expired entries are pruned periodically or on lookup.
+// Retained scaffolding for the introduce-driven routing table (see RouteEntry).
+#[allow(dead_code)]
 #[derive(Clone, Debug, Default)]
 pub struct RoutingTable {
     routes: HashMap<CellId, Vec<RouteEntry>>,
@@ -51,6 +58,7 @@ pub struct RoutingTable {
     total_entries: usize,
 }
 
+#[allow(dead_code)] // Retained scaffolding for the introduce-driven routing table (see RouteEntry).
 impl RoutingTable {
     /// Create a new empty routing table.
     pub fn new() -> Self {

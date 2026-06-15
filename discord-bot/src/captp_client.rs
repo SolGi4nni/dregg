@@ -373,7 +373,7 @@ impl CapTPClient {
             DreggUri::parse(&record.uri).map_err(|e| CapTPError::InvalidUri(e.to_string()))?;
         let cap = HeldCapability {
             uri,
-            label: Some(format!("handoff:{}", &record.token)),
+            label: Some(format!("handoff:{}", record.token)),
             shared_by: None,
             acquired_at: current_epoch(),
             live: true,

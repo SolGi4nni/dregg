@@ -118,6 +118,8 @@ struct CapTpDeliveredArtifact {
     tampered_turn_bytes_hex: String,
 }
 
+// Retained silver-demo manifest DTO (serialized into the artifact manifest).
+#[allow(dead_code)]
 #[derive(Serialize, Deserialize)]
 struct CapTpDeliveredChainArtifact {
     /// The turn hash from the CapTpDelivered turn (hex).
@@ -230,6 +232,8 @@ struct IntroduceArtifact {
     schedule_has_one_introduce: bool,
 }
 
+// Retained silver-demo manifest DTO (serialized into the artifact manifest).
+#[allow(dead_code)]
 #[derive(Serialize, Deserialize)]
 struct RecursiveWitnessArtifact {
     /// True iff `from_components_with_compression` attached a recursive
@@ -244,6 +248,8 @@ struct RecursiveWitnessArtifact {
     chain_path_tampered: String,
 }
 
+// Retained silver-demo manifest aggregate (serialized into the artifact manifest).
+#[allow(dead_code)]
 #[derive(Serialize, Deserialize, Default)]
 struct SilverManifest {
     identities: Option<DemoIdentities>,
@@ -1030,10 +1036,7 @@ fn cmd_slot_caveat_suite(state_dir: &PathBuf) {
     //   yields V+N as a field element. Positive: respect the delta.
     //   Negative: violate it by 1.
     let delta = field_from_u64(7);
-    let fd_constraint = StateConstraint::FieldDelta {
-        index: 0,
-        delta: delta,
-    };
+    let fd_constraint = StateConstraint::FieldDelta { index: 0, delta };
     let fd_pos = eval_one(
         fd_constraint.clone(),
         vec![field_from_u64(100)],

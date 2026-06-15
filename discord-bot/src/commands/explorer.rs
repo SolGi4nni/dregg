@@ -28,6 +28,7 @@ struct BlockViewWire {
     #[serde(default)]
     view: u64,
     #[serde(default)]
+    #[allow(dead_code)] // Deserialized from the block-view wire but not rendered.
     proposer: String,
     #[serde(default)]
     block_hash: String,
@@ -597,7 +598,7 @@ async fn handle_blocklace(ctx: &Context, command: &CommandInteraction, state: &B
                 return;
             }
             // Newest first.
-            blocks.sort_by(|a, b| b.height.cmp(&a.height));
+            blocks.sort_by_key(|b| std::cmp::Reverse(b.height));
             let total = blocks.len();
             let mut desc = String::new();
             for block in blocks.iter().take(count) {
@@ -1130,7 +1131,7 @@ async fn handle_recent(ctx: &Context, command: &CommandInteraction, state: &BotS
         .iter()
         .find(|o| o.name == "count")
         .and_then(|o| match &o.value {
-            CommandDataOptionValue::Integer(n) => Some((*n as u32).min(20).max(1)),
+            CommandDataOptionValue::Integer(n) => Some((*n as u32).clamp(1, 20)),
             _ => None,
         })
         .unwrap_or(5);

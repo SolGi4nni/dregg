@@ -1486,8 +1486,9 @@ fn field_to_u64(f: &FieldElement) -> u64 {
 /// install the full [`governance_program`] (`Cases`) on the seeded governance cell (so
 /// the executor re-enforces it on every touching turn), then bind the genesis
 /// constitutional state directly into the embedded ledger — `GOVERNANCE_COMMITTEE_ROOT`
-/// + `THRESHOLD` (`WriteOnce`, frozen after), `VERSION = initial`, `ROUTE_TABLE_ROOT =
-/// initial`, and `PENDING_PROPOSAL_ROOT = 0` (a quiescent board: no in-flight proposal).
+/// and `THRESHOLD` (`WriteOnce`, frozen after), `VERSION = initial`,
+/// `ROUTE_TABLE_ROOT = initial`, and `PENDING_PROPOSAL_ROOT = 0` (a quiescent board: no
+/// in-flight proposal).
 ///
 /// **The `SenderAuthorized` membership root (the REAL verifier now bites).** The
 /// `propose` / `vote` cases carry `SenderAuthorized { PublicRoot { set_root_index:

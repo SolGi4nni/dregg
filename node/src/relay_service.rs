@@ -16,6 +16,9 @@
 //! GET  /relay/proof/:msg_id     -- get dequeue proof for a delivered message
 //! ```
 
+// RelayOperator is deprecated in favor of the relay_operator_factory_descriptor cell-program template (STORAGE-AS-CELL-PROGRAMS.md §3.5); this service is the legacy in-process path, migration tracked separately.
+#![allow(deprecated)]
+
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;

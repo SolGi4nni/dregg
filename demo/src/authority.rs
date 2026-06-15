@@ -18,6 +18,7 @@ pub use dregg_types::{PublicKey, SigningKey, hex_encode};
 /// An authority represents one organization's signing identity.
 pub struct Authority {
     /// Human-readable name for the authority (e.g., "acme.corp").
+    #[allow(dead_code)] // Retained label on the demo authority identity.
     pub name: String,
     /// The private signing key (Ed25519).
     signing_key: SigningKey,
@@ -90,6 +91,7 @@ impl Authority {
 
     /// Sign an arbitrary-length message using the authority's Ed25519 signing key.
     /// Returns a 64-byte Ed25519 signature.
+    #[allow(dead_code)] // Retained signing helper on the demo authority surface.
     pub fn sign_bytes(&self, message: &[u8]) -> [u8; 64] {
         let sig = dregg_types::sign(&self.signing_key, message);
         sig.0
@@ -97,6 +99,7 @@ impl Authority {
 
     /// Verify a signature against this authority's public key.
     /// Uses Ed25519 public-key verification -- no secret key needed.
+    #[allow(dead_code)] // Retained verify helper on the demo authority surface.
     pub fn verify_signature(&self, message: &[u8; 32], signature: &[u8; 64]) -> bool {
         self.public_key
             .verify(message, &dregg_types::Signature(*signature))

@@ -408,7 +408,7 @@ pub async fn handle_revoke(ctx: &Context, command: &CommandInteraction, state: &
         Ok(()) => {
             let embed = embeds::success_embed("Capability Revoked").description(format!(
                 "Cell `{}` has been revoked. The local sturdy ref is no longer accepted by the bot.",
-                &cell_id
+                cell_id
             ));
             let _ = command
                 .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))

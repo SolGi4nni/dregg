@@ -1783,7 +1783,7 @@ async fn handle_frontier(
     }
 
     // Large delta: send in chunks to avoid OOM / timeout on either side.
-    let num_chunks = (total_missing + MAX_BLOCKS_PER_PUSH - 1) / MAX_BLOCKS_PER_PUSH;
+    let num_chunks = total_missing.div_ceil(MAX_BLOCKS_PER_PUSH);
     info!(
         from = %from,
         total_blocks = total_missing,
@@ -1888,7 +1888,7 @@ pub(crate) fn plan_round_block(
 
     if cohort_creators.len() >= supermajority {
         // Deterministic predecessor order (independent of HashMap iteration).
-        cohort_blocks.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+        cohort_blocks.sort_unstable_by_key(|a| a.0);
         RoundPlan::Advance {
             predecessors: cohort_blocks,
             next_round: my_max_round + 1,
@@ -5218,7 +5218,7 @@ pub(crate) fn canonical_ledger_root(ledger: &dregg_cell::Ledger) -> [u8; 32] {
             (*id, h)
         })
         .collect();
-    entries.sort_by(|a, b| a.0.0.cmp(&b.0.0));
+    entries.sort_by_key(|a| a.0.0);
     // v2: domain bumped when the commitment widened from `cell.state` to the
     // whole `cell` (above). A persisted v1 root is height-only-consumed
     // (`attested_block_height` reads `.height`, never the hash), so the bump is a

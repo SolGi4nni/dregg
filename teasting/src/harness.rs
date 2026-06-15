@@ -386,7 +386,7 @@ impl SimFederation {
             })
             .collect();
         // Sort by pubkey bytes — same order as Federation::from_committee sorts.
-        pairs.sort_by(|(a, _), (b, _)| a.cmp(b));
+        pairs.sort_by_key(|(a, _)| *a);
         pairs.into_iter().map(|(_, sk)| sk).collect()
     }
 }

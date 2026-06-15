@@ -862,9 +862,10 @@ pub fn identity_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) -
 /// **Seed the ISSUER cell** so the gated fires have live state + the FULL floor caveats —
 /// INCLUDING the now-real `SenderAuthorized` authority tooth — bite on the green path.
 ///
-/// Installs the FLOOR's [`issuer_program`] (all four perpetual caveats: `WriteOnce(
-/// SCHEMA_COMMITMENT)` + `MonotonicSequence(ISSUANCE_COUNTER)` + `Monotonic(REVOCATION_ROOT)`
-/// + `SenderAuthorized(PublicRoot { ISSUER_AUTH_ROOT_SLOT })`) on the seeded issuer cell, so
+/// Installs the FLOOR's [`issuer_program`] (all four perpetual caveats:
+/// `WriteOnce(SCHEMA_COMMITMENT)`, `MonotonicSequence(ISSUANCE_COUNTER)`,
+/// `Monotonic(REVOCATION_ROOT)`, and
+/// `SenderAuthorized(PublicRoot { ISSUER_AUTH_ROOT_SLOT })`) on the seeded issuer cell, so
 /// the executor re-enforces them on every touching turn. Then binds the genesis state
 /// directly into the embedded ledger — `SCHEMA_COMMITMENT` (`WriteOnce`, frozen after, = the
 /// schema's commitment hash), `ISSUANCE_COUNTER = 0` (the fresh issuer has minted nothing),

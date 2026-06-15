@@ -52,10 +52,10 @@ static GATE_BACKEND_ANNOUNCED: Once = Once::new();
 /// F-4 rule gates participation). `DREGG_STRAND_ADMISSION_GATE=0`/`false`/`off` opts OUT (keeps the
 /// raw constitution participant set) for an operator who needs to bypass it.
 pub fn strand_admission_gate_enabled() -> bool {
-    match std::env::var("DREGG_STRAND_ADMISSION_GATE").ok().as_deref() {
-        Some("0") | Some("false") | Some("FALSE") | Some("off") | Some("OFF") => false,
-        _ => true,
-    }
+    !matches!(
+        std::env::var("DREGG_STRAND_ADMISSION_GATE").ok().as_deref(),
+        Some("0") | Some("false") | Some("FALSE") | Some("off") | Some("OFF")
+    )
 }
 
 /// Whether the verified Lean strand-admission export is linked (so the gate decides via the VERIFIED
