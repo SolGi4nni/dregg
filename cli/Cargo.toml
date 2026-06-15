@@ -2,10 +2,25 @@
 name = "dregg-cli"
 version.workspace = true
 edition.workspace = true
+# `repository`/`homepage` inherited + a `description`: `dist` (release management,
+# see root Cargo.toml [workspace.metadata.dist]) requires `repository` on each
+# distable package (the workspace-metadata fallback is not accepted), and the
+# Homebrew formula uses `description` + `homepage` for its metadata.
+repository.workspace = true
+homepage.workspace = true
+description = "dregg CLI — the command-line client for the dregg verified-capability federation (identities, tokens, node interaction)"
 
 [[bin]]
 name = "dregg"
 path = "src/main.rs"
+
+# `dist` opt-in: the workspace default is `dist = false`; this ships the `dregg`
+# CLI binary. The CLI is Lean-free and cross-platform clean, so it inherits the
+# workspace target set (macOS+Linux x86_64/aarch64 + Windows-msvc) — no
+# per-package `targets` override needed here. (No version bump: the dev-tag
+# scheme is `v0.0.0-dev`; crates stay at 0.1.0 until ember cuts a tag.)
+[package.metadata.dist]
+dist = true
 
 [dependencies]
 clap = { version = "4", features = ["derive", "env", "color", "suggestions", "wrap_help"] }

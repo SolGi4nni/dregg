@@ -30,6 +30,74 @@ license = "AGPL-3.0-or-later"
 homepage = "https://dregg.dev"
 repository = "https://github.com/emberian/dregg"
 
+# ─────────────────────────────────────────────────────────────────────────────
+# RELEASE MANAGEMENT — `dist` (formerly cargo-dist), config pinned to 0.31.0.
+#
+# This block governs the SHIPPABLE BINARIES of the dregg workspace. dist ships a
+# package's binaries only when that package opts in; we set the workspace DEFAULT
+# to `dist = false` and opt the two shippable crates IN at the package level
+# (`cli/Cargo.toml` → bin `dregg`, `node/Cargo.toml` → bin `dregg-node`). Every
+# other workspace member (demos, test harnesses, the discord bot, …) stays
+# un-shipped. There is NO workspace-level package allowlist in dist 0.31 — the
+# per-package `[package.metadata.dist] dist = true` is the only selector, and
+# `repository` must resolve on each shipped package (cli adds
+# `repository.workspace = true` for this; node already inherits it).
+#
+# `starbridge-v2` (the gpui native master interface) is DELIBERATELY ABSENT: it
+# is a STANDALONE workspace (in the root `exclude` list, line above), so dist's
+# workspace metadata cannot reach it; it is also gpui/Metal host-sensitive and
+# pins a different (rolling-nightly) toolchain. Its installers are packed by the
+# bespoke `.github/workflows/starbridge-v2-installers.yml` (a separate lane), not
+# by dist.
+#
+# TARGETS: the workspace target list is the CLI's broad set (macOS + Linux,
+# x86_64 + aarch64, plus Windows-msvc). `dregg-node` LINKS THE VERIFIED LEAN
+# ARCHIVE (libdregg_lean.a, a host-native static lib produced by the Lean
+# compiler) and so CANNOT cross-compile; it overrides `targets` at the package
+# level down to the two x86_64 host-native targets where a native CI runner +
+# the Lean toolchain are available (aarch64 / Windows node builds are blocked on
+# the Lean link — see node/Cargo.toml's per-package note).
+#
+# TOOLCHAIN: no `rust-toolchain-version` here (it is deprecated in 0.31). The
+# generated `release.yml` carries no explicit `rustup default`, so CI honours the
+# repo's root `rust-toolchain.toml` (nightly-2026-01-01) automatically. NOTE: the
+# generated workflow installs Rust only; the `dregg-node` job additionally needs
+# the Lean toolchain (elan/lake + warm mathlib) provisioned on the runner for its
+# build.rs to splice libdregg_lean.a — a follow-up the bespoke starbridge
+# workflow already models. The CLI job needs nothing beyond Rust.
+#
+# VERSION SCHEME: a dev pre-release tag is `v0.0.0-dev` (or `v0.0.0-dev.1`);
+# `~` (as in the informal "v0.0.0~dev") is ILLEGAL SemVer and cargo/dist reject
+# it. A `-dev`-suffixed tag is auto-marked a GitHub *prerelease* by dist. No crate
+# version is bumped here — this only establishes the scheme; the crates remain
+# at 0.1.0 until ember cuts a tag.
+[workspace.metadata.dist]
+# The preferred dist version to use in CI (`dist init` will fail to mismatch).
+cargo-dist-version = "0.31.0"
+# CI backend.
+ci = "github"
+# Installers to generate. shell + homebrew cover macOS/Linux cleanly. Windows is
+# NOT given a native installer: `msi` requires per-package WiX GUIDs
+# (upgrade-guid/path-guid) + bundle config that isn't clean yet, and `powershell`
+# only activates with a Windows-installer story — so both are omitted honestly.
+# The Windows CLI TARGET still builds (it produces a `.zip` artifact users can
+# fetch directly); only the native Windows *installer* is deferred. Add `msi`
+# back (with `dist init` to mint the GUIDs) when a clean Windows installer is
+# wanted.
+installers = ["shell", "homebrew"]
+# Workspace target list = the CLI's broad set. Per-package `targets` narrows node.
+targets = [
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-pc-windows-msvc",
+]
+# Default: do NOT ship a package's binaries unless it opts in per-package.
+dist = false
+# Publish prereleases (e.g. a `v0.0.0-dev` tag) as GitHub prereleases.
+pr-run-mode = "plan"
+
 [patch.crates-io]
 ark-serialize = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
 ark-serialize-derive = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }

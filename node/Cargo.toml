@@ -124,5 +124,21 @@ dregg-verifier = { path = "../verifier" }
 name = "dregg-node"
 path = "src/main.rs"
 
+# `dist` opt-in (release management; see root Cargo.toml [workspace.metadata.dist]).
+# The workspace default is `dist = false`; this ships the `dregg-node` daemon.
+#
+# TARGETS ARE NARROWED to the two x86_64 host-native targets. `dregg-node` links
+# the verified Lean archive (libdregg_lean.a) UNCONDITIONALLY on native (via
+# dregg-turn → dregg-lean-ffi), and that archive is host-native objects produced
+# by the Lean compiler — it CANNOT be cross-compiled. dist builds each target on
+# a native runner, so x86_64 macOS + Linux are buildable WHERE THE RUNNER ALSO
+# HAS THE LEAN TOOLCHAIN (elan/lake + warm mathlib) for build.rs to splice the
+# archive. aarch64 (no historical native runner + no aarch64 Lean archive build
+# here) and Windows (Lean link unproven) are BLOCKED for node; the CLI carries
+# those platforms instead.
+[package.metadata.dist]
+dist = true
+targets = ["x86_64-apple-darwin", "x86_64-unknown-linux-gnu"]
+
 [lints]
 workspace = true
