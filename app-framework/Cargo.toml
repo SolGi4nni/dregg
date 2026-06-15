@@ -19,6 +19,14 @@ dregg-types = { path = "../types" }
 dregg-storage = { path = "../storage" }
 dregg-captp = { path = "../captp" }
 
+# The REAL transclusion primitive (`starbridge_web_surface::transclusion`): the
+# verified cross-cell finalized read (`TranscludedField`/`Provenance`/`Backlinks`),
+# the per-viewer `Membrane`, and `SurfaceCapability`/`WebOfCells`. The deos-app
+# transclusion affordance (`src/transclude_affordance.rs`) is the NAMED consumer of
+# these — it surfaces a transcluded peer field as a first-class framework affordance,
+# reinventing neither the attested-read nor the cap model.
+starbridge-web-surface = { path = "../starbridge-web-surface" }
+
 axum = "0.8"
 http = "1"
 tower-http = { version = "0.6", features = ["cors"] }

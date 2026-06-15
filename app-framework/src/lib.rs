@@ -71,6 +71,7 @@ pub mod scaffold;
 pub mod server;
 pub mod starbridge;
 pub mod store;
+pub mod transclude_affordance;
 pub mod vk;
 pub mod webgen;
 
@@ -207,6 +208,22 @@ pub use affordance_endpoint::{
 // the host context; `app.mount()` yields the whole axum surface (manifest +
 // `/surface.js` web component + per-cell cap-gated fires).
 pub use deos_app::{DeosApp, DeosAppBuilder, DeosCell, PersistenceSeam};
+
+// The deos-app TRANSCLUSION AFFORDANCE (the named consumer of the transclusion
+// primitive, `starbridge_web_surface::transclusion`) — a `DeosCell` declares that it
+// TRANSCLUDES another cell's finalized field the way it declares any other
+// affordance, and the framework renders it WITH its provenance, per-viewer through
+// the REAL membrane. Built ON the REAL `TranscludedField`/`Provenance`/`Backlinks` +
+// the REAL framework `CellAffordance`/`AffordanceSurface`/`DeosCell` — names them,
+// reinvents none. `TranscludeAffordance::resolve` is the verified finalized read;
+// `project_for` is the cap-gate ∧ membrane per-viewer projection (a quote is a READ,
+// never amplified); `record_into` populates the backlinks (the witness-graph the
+// other way). The transclusion primitives themselves are re-exported from
+// `starbridge_web_surface::transclusion`.
+pub use transclude_affordance::{
+    surface_declares, DeosCellTranscludeExt, ProjectedTransclusion, RenderedTransclusion,
+    TranscludeAffordance, TranscludeProjectError,
+};
 
 // The frustum-snapshot + cap-membrane (DEOS.md §"the frustum-culled snapshot") — the
 // dregg-only novelty, re-expressed over the framework's OWN `is_attenuation` lattice:
