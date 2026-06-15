@@ -207,4 +207,4 @@ pub use shell::{Layout, Scene, SceneItem, Shell, ShellError};
 #[cfg(feature = "embedded-executor")]
 pub use surface::{Rect, Surface, SurfaceCapability, SurfaceId, SurfaceKind};
 #[cfg(feature = "embedded-executor")]
-pub use world::{CommitOutcome, World};
+pub use world::{demo_genesis, demo_world, CommitOutcome, DemoSeed, World};

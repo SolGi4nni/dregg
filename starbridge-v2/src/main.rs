@@ -50,10 +50,10 @@ fn main() {
 
     #[cfg(feature = "embedded-executor")]
     {
-        // Boot a LIVE local image off the embedded verified executor.
-        let (world, anchors) = world::demo_world();
-
         if headless || !cfg!(feature = "gpui-ui") {
+            // The HEADLESS / CI path wants the fully-populated image up front, so
+            // it builds it EAGERLY (all five seed turns run now).
+            let (world, _anchors) = world::demo_world();
             headless_report(&world);
             // THE FOUR-SURFACE KILLER DEMO (N5) — the pug-handoff evaluation
             // artifact: mint → agent turn → notify handoff → the dual refusal, all
@@ -66,7 +66,15 @@ fn main() {
 
         #[cfg(feature = "gpui-ui")]
         {
-            run_window(world, anchors, node_url);
+            // THE WINDOW PATH — open INSTANTLY on the at-rest genesis image (the
+            // four cells installed via the genesis path; NO executor turns yet), so
+            // the cockpit paints sub-second. The five demo seed turns run AFTER the
+            // window is up, driven one-at-a-time from a foreground async task (see
+            // `run_window`) so the cells fill in LIVE — same content, off the paint
+            // path. (`demo_world`'s eager seeding is exactly what made `main` grind
+            // through the embedded executor before the window ever opened.)
+            let (world, anchors, seed) = world::demo_genesis();
+            run_window(world, anchors, seed, node_url);
             return;
         }
     }
@@ -190,6 +198,7 @@ fn node_url_arg(args: &[String]) -> Option<String> {
 fn run_window(
     world: world::World,
     anchors: [dregg_cell::CellId; 3],
+    seed: world::DemoSeed,
     node_url: Option<String>,
 ) {
     use gpui::{
@@ -198,6 +207,7 @@ fn run_window(
     use gpui_platform::application;
     use std::cell::RefCell;
     use std::rc::Rc;
+    use std::time::Duration;
 
     // STARTUP PROOF (the no-blank-screen receipt): build the HOME landing
     // portal's text model from the live world and report how many real lines of
@@ -205,6 +215,12 @@ fn run_window(
     // model, a non-zero count here is a non-blank rendered tree — the thing to
     // confirm if the window ever looks empty. (Printed before the run loop so it
     // shows even though `application().run` never returns.)
+    //
+    // NOTE: this image is the at-rest GENESIS image — the four cells exist but the
+    // five demo seed turns have not run yet (they seed in live, after first paint).
+    // The portal is full and alive regardless (it greets + names the heart + shows
+    // "the image is at rest, waiting for your first turn"); the receipt/height
+    // numbers simply climb as the seeding completes.
     {
         let portal = starbridge_v2::landing::LandingPortal::build(&world);
         println!("== Starbridge v2 · opening the window — boot view: HOME landing portal ==");
@@ -215,6 +231,11 @@ fn run_window(
         );
         println!("  headline: {}", portal.headline);
         println!(
+            "  the window opens INSTANTLY on the at-rest image; the {} demo seed turns \
+             then seed in live (cells appear as each commits) — off the paint path.",
+            world::DemoSeed::TOTAL
+        );
+        println!(
             "  (if the window looks blank, the text above is what should be on screen — \
              a render/display issue, not an empty UI)"
         );
@@ -224,28 +245,66 @@ fn run_window(
 
     application().run(move |cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(1280.), px(820.)), cx);
-        cx.open_window(
-            WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                titlebar: Some(TitlebarOptions {
-                    title: Some("Starbridge v2 — the live verified image".into()),
+        // Move the seed into the window builder (it is installed onto the cockpit,
+        // which drives it after first paint). `Option` so it is consumed exactly once.
+        let mut seed = Some(seed);
+        let window = cx
+            .open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    titlebar: Some(TitlebarOptions {
+                        title: Some("Starbridge v2 — the live verified image".into()),
+                        ..Default::default()
+                    }),
                     ..Default::default()
-                }),
-                ..Default::default()
-            },
-            |window, cx| {
-                let node_url = node_url.clone();
-                let view = cx.new(|cx| {
-                    let focus = cx.focus_handle();
-                    cockpit::Cockpit::with_node(shared.clone(), anchors, focus, node_url)
-                });
-                // Focus the cockpit root so it receives ⌘K + palette keystrokes.
-                view.update(cx, |c, cx| c.focus_on_open(window, cx));
-                view
-            },
-        )
-        .expect("failed to open window");
+                },
+                |window, cx| {
+                    let node_url = node_url.clone();
+                    let pending_seed = seed.take();
+                    let view = cx.new(|cx| {
+                        let focus = cx.focus_handle();
+                        cockpit::Cockpit::with_node(
+                            shared.clone(),
+                            anchors,
+                            focus,
+                            node_url,
+                            pending_seed,
+                        )
+                    });
+                    // Focus the cockpit root so it receives ⌘K + palette keystrokes.
+                    view.update(cx, |c, cx| c.focus_on_open(window, cx));
+                    view
+                },
+            )
+            .expect("failed to open window");
         cx.activate(true);
+
+        // THE POST-PAINT SEEDING TASK — the window is now up (this runs on the
+        // FOREGROUND executor, after the first frame). Drive the demo seed turns
+        // one at a time, yielding a beat between each so the UI paints the new cell/
+        // receipt before the next verified turn runs. Each `seed_next_demo_turn`
+        // commits ONE real executor turn and `cx.notify()`s; the loop ends when the
+        // image is fully seeded. The window was alive the whole time.
+        cx.spawn(async move |cx| {
+            loop {
+                // A short beat so the just-committed turn paints (and the embedded
+                // executor's next turn doesn't monopolize the frame).
+                cx.background_executor()
+                    .timer(Duration::from_millis(60))
+                    .await;
+                let more = match window.update(cx, |cockpit, _window, cx| {
+                    cockpit.seed_next_demo_turn(cx)
+                }) {
+                    Ok(more) => more,
+                    // The window closed (or its root changed) — stop seeding.
+                    Err(_) => break,
+                };
+                if !more {
+                    break;
+                }
+            }
+        })
+        .detach();
     });
 }
 

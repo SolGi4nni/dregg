@@ -263,10 +263,24 @@ pub struct Cockpit {
     /// the demo is a self-contained scripted scenario the operator drives to the
     /// climax. The four frames + both refusals are the single runnable end-to-end
     /// story a stranger runs to judge whether the substrate is real and usable.
-    killer_demo: HeadlineDemo,
+    ///
+    /// LAZY (`None` until first needed): booting it builds a metered verified world
+    /// + deploys the mint factory, and the demo's turns are the slow proof-bearing
+    /// metered path. It is therefore NOT booted at window-open — it boots on the
+    /// first navigation to the SWARM tab (or the first killer-demo verb), so it
+    /// never sits on the first-paint path. Access it through [`Self::killer_demo`].
+    killer_demo: Option<HeadlineDemo>,
     /// The render lines the killer demo has emitted so far (one per advanced frame),
     /// shown in the SWARM-tab demo strip. Newest appended last.
     killer_demo_lines: Vec<String>,
+
+    /// The PENDING demo seed turns — the five real executor turns that populate the
+    /// HOME image (treasury/user/service flows + the ocap grant + a field write).
+    /// The window opens on the bare genesis image (these NOT yet run), and a
+    /// foreground async task drives [`Self::seed_next_demo_turn`] after first paint,
+    /// committing one per yield so the cells/receipts fill in LIVE. `None`/exhausted
+    /// once fully seeded. (The headless/test path pre-seeds and passes `None`.)
+    pending_seed: Option<world::DemoSeed>,
 
     // --- the ⌘K COMMAND PALETTE --------------------------------------------
     /// The command palette over EVERY action (open with ⌘K). The cockpit feeds
@@ -379,6 +393,7 @@ impl Cockpit {
         anchors: [CellId; 3],
         focus: FocusHandle,
         node_url: Option<String>,
+        pending_seed: Option<world::DemoSeed>,
     ) -> Self {
         let cells = sorted_cells(&world.borrow());
 
@@ -538,8 +553,12 @@ impl Cockpit {
             editor_buffer_cap,
             terminal,
             swarm,
-            killer_demo: HeadlineDemo::boot(),
+            // LAZY: the metered demo world + factory deploy + the slow proof-bearing
+            // demo turns must NOT sit on the first-paint path. Booted on first SWARM
+            // navigation / killer-demo verb (see `killer_demo()` + `set_tab`).
+            killer_demo: None,
             killer_demo_lines: Vec::new(),
+            pending_seed,
             palette: CommandPalette::new(),
             focus,
             live_node,
@@ -572,6 +591,49 @@ impl Cockpit {
 
     fn refresh_cells(&mut self) {
         self.cells = sorted_cells(&self.world.borrow());
+    }
+
+    /// Whether there are demo seed turns still waiting to be committed (drives the
+    /// post-paint async seeding loop in `main::run_window`).
+    pub fn has_pending_seed(&self) -> bool {
+        self.pending_seed.as_ref().is_some_and(|s| !s.is_done())
+    }
+
+    /// **Commit the NEXT demo seed turn** against the live world (the real executor),
+    /// refresh the cell rail + the live banner, and `cx.notify()` so the new cell/
+    /// receipt paints immediately. Returns `true` if MORE seed turns remain (the
+    /// caller loops, yielding between calls so the UI breathes), `false` once the
+    /// image is fully seeded.
+    ///
+    /// This is the paint-friendly counterpart to `demo_world`'s eager seeding: the
+    /// SAME five verified turns, run one-per-yield AFTER the window is already up,
+    /// so the cockpit was alive instantly and the demo provenance fills in live.
+    pub fn seed_next_demo_turn(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(seed) = self.pending_seed.as_mut() else {
+            return false;
+        };
+        // Commit exactly one real turn against the shared world.
+        let label = {
+            let mut w = self.world.borrow_mut();
+            seed.next(&mut w)
+        };
+        let more = !self.pending_seed.as_ref().unwrap().is_done();
+        if let Some(label) = label {
+            // A live status line so the operator SEES the image populating.
+            let remaining = self.pending_seed.as_ref().unwrap().remaining();
+            self.last_outcome = Some(if more {
+                format!("seeding the live image — {label} ({remaining} more)")
+            } else {
+                format!("seeding the live image — {label} (demo image ready)")
+            });
+            self.refresh_cells();
+        }
+        if !more {
+            // Fully seeded — drop the plan.
+            self.pending_seed = None;
+        }
+        cx.notify();
+        more
     }
 
     // --- the verbs (each runs the REAL embedded executor) -------------------
@@ -962,11 +1024,20 @@ impl Cockpit {
     /// OWN embedded verified world, appending the frame's render line to the strip.
     /// When the script is complete, the button reports it (and the operator can
     /// reset to replay).
+    /// The killer demo, BOOTED ON FIRST ACCESS. Building it constructs a metered
+    /// verified world + deploys the mint factory; that (and its slow proof-bearing
+    /// turns) is exactly what we keep off the first-paint path — so the demo is
+    /// `None` until the operator first reaches the SWARM tab or a killer-demo verb,
+    /// at which point this materializes it. Every later access reuses the same one.
+    fn killer_demo(&mut self) -> &mut HeadlineDemo {
+        self.killer_demo.get_or_insert_with(HeadlineDemo::boot)
+    }
+
     fn killer_demo_advance(&mut self, cx: &mut Context<Self>) {
-        if self.killer_demo.is_complete() {
+        if self.killer_demo().is_complete() {
             self.last_outcome =
                 Some("killer demo: the script is complete — reset to replay it.".to_string());
-        } else if let Some(line) = self.killer_demo.advance() {
+        } else if let Some(line) = self.killer_demo().advance() {
             self.killer_demo_lines.push(line.clone());
             // The trimmed first line of the frame, for the outcome banner.
             let banner = line.lines().next().unwrap_or(&line).trim().to_string();
@@ -982,15 +1053,15 @@ impl Cockpit {
     /// strip so the operator can read the four frames + both refusals.
     fn killer_demo_run_all(&mut self, cx: &mut Context<Self>) {
         // Reset to a fresh world so "run all" is a clean replay from frame 0.
-        self.killer_demo.reset();
+        self.killer_demo().reset();
         self.killer_demo_lines.clear();
-        while let Some(line) = self.killer_demo.advance() {
+        while let Some(line) = self.killer_demo().advance() {
             self.killer_demo_lines.push(line);
-            if self.killer_demo.is_complete() {
+            if self.killer_demo().is_complete() {
                 break;
             }
         }
-        self.last_outcome = Some(if self.killer_demo.contract_holds() {
+        self.last_outcome = Some(if self.killer_demo().contract_holds() {
             "killer demo ✓ — four frames committed, two distinct handoff receipts, \
              BOTH refusals fired fail-closed. (pg step 5 deferred.)"
                 .to_string()
@@ -1008,7 +1079,13 @@ impl Cockpit {
     /// executor REJECTS the widening (`DelegationDenied`), surfaced as `⚠ over-share`
     /// at the PIXEL layer. Requires the demo to have MINTED its token cell (frame 1).
     fn killer_demo_over_share(&mut self, cx: &mut Context<Self>) {
-        let result = self.killer_demo.refuse_over_share(&mut self.shell);
+        // Ensure the demo is booted, then drive it. We can't go through the
+        // `killer_demo()` accessor here (it would hold a &mut borrow of `self`
+        // across the `&mut self.shell` arg); boot it, then reach the now-`Some`
+        // field directly so `shell` is a disjoint borrow.
+        let _ = self.killer_demo();
+        let demo = self.killer_demo.as_mut().expect("just booted");
+        let result = demo.refuse_over_share(&mut self.shell);
         let line = match result {
             Ok(reason) => format!("killer demo: {reason}"),
             Err(why) => format!("killer demo: over-share path — {why}"),
@@ -1022,7 +1099,7 @@ impl Cockpit {
     /// **Reset the killer demo** to a fresh world at frame 0 (the SWARM-tab "reset"
     /// button) so the operator can replay the script from the start.
     fn killer_demo_reset(&mut self, cx: &mut Context<Self>) {
-        self.killer_demo.reset();
+        self.killer_demo().reset();
         self.killer_demo_lines.clear();
         self.last_outcome = Some("killer demo: reset to frame 0 — ready to replay.".to_string());
         self.tab = Tab::Swarm;
@@ -1534,6 +1611,13 @@ impl Cockpit {
     }
 
     fn set_tab(&mut self, tab: Tab, cx: &mut Context<Self>) {
+        // Navigating to SWARM is where the killer demo lives — boot it lazily HERE
+        // (on the click), so the metered-world + factory-deploy cost lands on the
+        // navigation rather than on the first paint. The SWARM panel then always
+        // has a booted demo to reflect. (Every other tab leaves it `None`.)
+        if matches!(tab, Tab::Swarm) {
+            let _ = self.killer_demo();
+        }
         self.tab = tab;
         cx.notify();
     }
@@ -2596,22 +2680,28 @@ impl Cockpit {
              through the real executor. (pg step 5 deferred.)",
         ));
         // Demo state header: where the script is + the verified budget meter.
+        // `set_tab(Swarm)` boots the demo before this renders, so it is normally
+        // `Some`; the `None` arm is a graceful "booting" fallback only.
         {
-            let cursor = self.killer_demo.cursor();
-            let total = HeadlineDemo::TOTAL_STEPS;
-            let next = self.killer_demo.next_step_label();
             let mut hdr = div().flex().flex_wrap().gap_1().items_center().mt_1();
-            hdr = hdr.child(pill(format!("frame {cursor}/{total}"), theme::accent()));
-            if let Some(label) = next {
-                hdr = hdr.child(pill(format!("next: {label}"), theme::warn()));
+            if let Some(demo) = self.killer_demo.as_ref() {
+                let cursor = demo.cursor();
+                let total = HeadlineDemo::TOTAL_STEPS;
+                let next = demo.next_step_label();
+                hdr = hdr.child(pill(format!("frame {cursor}/{total}"), theme::accent()));
+                if let Some(label) = next {
+                    hdr = hdr.child(pill(format!("next: {label}"), theme::warn()));
+                } else {
+                    hdr = hdr.child(pill("script complete", theme::good()));
+                }
+                if let Some(v) = demo.swarm().stingray_view() {
+                    hdr = hdr.child(pill(
+                        format!("budget {}/{} computrons", v.total_drawn, v.ceiling),
+                        if v.exhausted { theme::bad() } else { theme::good() },
+                    ));
+                }
             } else {
-                hdr = hdr.child(pill("script complete", theme::good()));
-            }
-            if let Some(v) = self.killer_demo.swarm().stingray_view() {
-                hdr = hdr.child(pill(
-                    format!("budget {}/{} computrons", v.total_drawn, v.ceiling),
-                    if v.exhausted { theme::bad() } else { theme::good() },
-                ));
+                hdr = hdr.child(pill("booting the demo…", theme::muted()));
             }
             col = col.child(hdr);
         }

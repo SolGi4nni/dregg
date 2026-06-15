@@ -943,7 +943,27 @@ pub fn create_cell_from_factory(
 /// an issuer well carrying −supply, and a handful of committed turns so the
 /// cockpit boots into a LIVE image with real provenance — not a mock. Returns
 /// the world and the (treasury, service, user) ids for the views to anchor on.
+///
+/// This runs the demo's five seed TURNS eagerly (the `--headless` self-check +
+/// every `cargo test` path want the fully-populated image up front). The gpui
+/// cockpit instead opens the window on the INSTANT genesis ([`demo_genesis`])
+/// and drives [`DemoSeed::next`] AFTER first paint, so the window is alive
+/// immediately and the cells fill in live — same content, just not on the paint
+/// path. Both routes run the SAME real executor turns; nothing is faked.
 pub fn demo_world() -> (World, [CellId; 3]) {
+    let (mut w, anchors, mut seed) = demo_genesis();
+    // Run every seed turn now (the eager, headless/test path).
+    while seed.next(&mut w).is_some() {}
+    (w, anchors)
+}
+
+/// The INSTANT half of [`demo_world`]: install the three anchor cells (treasury,
+/// service, user) and the issuer well via the GENESIS PATH (which bypasses the
+/// executor — no turns run), and return a [`DemoSeed`] that will commit the five
+/// demo turns on demand. This is sub-millisecond: no `commit_turn` runs here, so
+/// the cockpit can open its window on this image immediately and seed the turns
+/// afterward (cells appear live as each commits). Returns `(world, anchors, seed)`.
+pub fn demo_genesis() -> (World, [CellId; 3], DemoSeed) {
     let mut w = World::new();
     let treasury = w.genesis_cell(0x11, 1_000_000);
     let user = w.genesis_cell(0x33, 5_000);
@@ -956,25 +976,88 @@ pub fn demo_world() -> (World, [CellId; 3]) {
     let _ = well.state.well_debit_balance(1_000_000);
     w.genesis_install(well);
 
-    // Seed some real history through the embedded executor.
-    let t1 = w.turn(treasury, vec![transfer(treasury, service, 250_000)]);
-    let _ = w.commit_turn(t1);
-    let t2 = w.turn(treasury, vec![transfer(treasury, user, 50_000)]);
-    let _ = w.commit_turn(t2);
-    let t3 = w.turn(user, vec![transfer(user, service, 1_000)]);
-    let _ = w.commit_turn(t3);
-    // An ocap grant: the service re-grants its user-capability back to itself at
-    // a fresh slot (legitimate — it holds the cap at `user_cap_slot`).
-    let t4 = w.turn(
-        service,
-        vec![grant_capability(service, service, user, user_cap_slot + 1)],
-    );
-    let _ = w.commit_turn(t4);
-    // A state-field write on the service cell.
-    let t5 = w.turn(service, vec![set_field(service, 0, [7u8; 32])]);
-    let _ = w.commit_turn(t5);
+    let seed = DemoSeed {
+        anchors: [treasury, service, user],
+        user_cap_slot,
+        step: 0,
+    };
+    (w, [treasury, service, user], seed)
+}
 
-    (w, [treasury, service, user])
+/// The seed-turn plan for the demo image: the five real executor turns that give
+/// the cockpit its provenance, played ONE AT A TIME via [`DemoSeed::next`].
+///
+/// [`demo_world`] drains it eagerly; the gpui cockpit drives it from a foreground
+/// async task after the window is already painted, calling `cx.notify()` between
+/// steps so each committed turn shows up live. Each step runs the SAME real
+/// `commit_turn` the eager path does — the asynchrony is purely about WHEN, never
+/// about WHETHER the verified turn ran.
+pub struct DemoSeed {
+    anchors: [CellId; 3],
+    user_cap_slot: u32,
+    /// The index of the NEXT seed turn to commit (0..=5; `5` = done).
+    step: usize,
+}
+
+impl DemoSeed {
+    /// The total number of seed turns (the five that populate the demo image).
+    pub const TOTAL: usize = 5;
+
+    /// How many seed turns are still pending (0 once fully seeded).
+    pub fn remaining(&self) -> usize {
+        Self::TOTAL.saturating_sub(self.step)
+    }
+
+    /// Whether every seed turn has been committed.
+    pub fn is_done(&self) -> bool {
+        self.step >= Self::TOTAL
+    }
+
+    /// Commit the NEXT seed turn against `w` (the real executor), advancing the
+    /// plan. Returns a short human label for the committed step (for a status/log
+    /// line), or `None` once the plan is exhausted. Each call runs exactly ONE
+    /// real verified turn — so a caller can drive it from a paint-friendly async
+    /// loop, one turn per yield.
+    pub fn next(&mut self, w: &mut World) -> Option<&'static str> {
+        let [treasury, service, user] = self.anchors;
+        let label = match self.step {
+            0 => {
+                let t = w.turn(treasury, vec![transfer(treasury, service, 250_000)]);
+                let _ = w.commit_turn(t);
+                "treasury → service (250,000)"
+            }
+            1 => {
+                let t = w.turn(treasury, vec![transfer(treasury, user, 50_000)]);
+                let _ = w.commit_turn(t);
+                "treasury → user (50,000)"
+            }
+            2 => {
+                let t = w.turn(user, vec![transfer(user, service, 1_000)]);
+                let _ = w.commit_turn(t);
+                "user → service (1,000)"
+            }
+            3 => {
+                // An ocap grant: the service re-grants its user-capability back to
+                // itself at a fresh slot (legitimate — it holds the cap at
+                // `user_cap_slot`).
+                let t = w.turn(
+                    service,
+                    vec![grant_capability(service, service, user, self.user_cap_slot + 1)],
+                );
+                let _ = w.commit_turn(t);
+                "service re-grants its user-cap (ocap)"
+            }
+            4 => {
+                // A state-field write on the service cell.
+                let t = w.turn(service, vec![set_field(service, 0, [7u8; 32])]);
+                let _ = w.commit_turn(t);
+                "service state-field write"
+            }
+            _ => return None,
+        };
+        self.step += 1;
+        Some(label)
+    }
 }
 
 // ===========================================================================
@@ -1545,6 +1628,49 @@ mod tests {
         assert!(w.ledger().get(&user).unwrap().state.balance() > 0);
         let _ = treasury;
         // The ocap grant landed (service reaches user).
+        assert!(w.ledger().get(&service).unwrap().capabilities.has_access(&user));
+    }
+
+    #[test]
+    fn demo_genesis_is_instant_and_unseeded_but_alive() {
+        // THE FIRST-PAINT IMAGE: genesis installs the cells (no executor turns),
+        // so the cockpit can open its window on THIS immediately. It is "alive but
+        // at rest" — the four cells exist, but NO seed turn has run yet.
+        let (w, [treasury, service, user], seed) = demo_genesis();
+        assert_eq!(w.cell_count(), 4, "the four cells are installed at genesis");
+        assert_eq!(w.receipts().len(), 0, "NO seed turn has run on the first-paint image");
+        assert_eq!(w.height(), 0, "the at-rest image is at height 0");
+        assert_eq!(seed.remaining(), DemoSeed::TOTAL, "all five seed turns are still pending");
+        assert!(!seed.is_done());
+        // The anchors are real, installed cells already (so the cockpit's panels
+        // have their treasury/service/user the moment the window opens).
+        assert!(w.ledger().get(&treasury).is_some());
+        assert!(w.ledger().get(&service).is_some());
+        assert!(w.ledger().get(&user).is_some());
+    }
+
+    #[test]
+    fn demo_seed_reaches_the_same_image_as_demo_world() {
+        // Driving the seed plan one turn at a time (the async/paint-friendly path)
+        // converges to the EXACT image `demo_world` builds eagerly — same cells,
+        // same receipts, same balances, same ocap edge. The asynchrony is purely
+        // about WHEN each verified turn runs, never WHETHER.
+        let (mut w, [_t, service, user], mut seed) = demo_genesis();
+        let mut steps: usize = 0;
+        while let Some(_label) = seed.next(&mut w) {
+            steps += 1;
+            // Each `next` commits exactly ONE real turn (height + receipts grow by 1).
+            assert_eq!(w.height() as usize, steps, "one committed turn per seed step");
+            assert_eq!(w.receipts().len(), steps);
+        }
+        assert_eq!(steps, DemoSeed::TOTAL, "all five seed turns ran");
+        assert!(seed.is_done());
+        assert_eq!(seed.remaining(), 0);
+        // The fully-seeded image equals the eager `demo_world` image's invariants.
+        assert_eq!(w.cell_count(), 4);
+        assert_eq!(w.receipts().len(), 5);
+        assert_eq!(w.ledger().get(&service).unwrap().state.balance(), 251_000);
+        assert!(w.ledger().get(&user).unwrap().state.balance() > 0);
         assert!(w.ledger().get(&service).unwrap().capabilities.has_access(&user));
     }
 

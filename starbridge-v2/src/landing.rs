@@ -366,6 +366,54 @@ mod tests {
     }
 
     #[test]
+    fn portal_is_full_and_alive_on_the_unseeded_genesis_image() {
+        // THE FIRST-PAINT GUARANTEE: the HOME tab renders exactly this portal, and
+        // the window now opens on the AT-REST genesis image (the four cells exist
+        // but NONE of the five demo seed turns has run yet). Prove the boot view is
+        // already abundant, non-blank, real text on that image — so the window is
+        // alive the instant it opens, before any executor turn. (This is the render
+        // content the window builds without the demo turns having run.)
+        let (world, _anchors, _seed) = crate::world::demo_genesis();
+        // Sanity: this really is the un-seeded image (the thing the window opens on).
+        assert_eq!(world.receipts().len(), 0, "no seed turn has run on the boot image");
+        assert_eq!(world.height(), 0);
+        assert_eq!(world.cell_count(), 4, "the four genesis cells are present");
+
+        let portal = LandingPortal::build(&world);
+        let text = portal.all_text();
+        // The boot view is FULL — the six titled cards + many lines of real prose,
+        // every line non-empty. (If this were sparse, that is the blank-feeling
+        // window we are fixing.)
+        assert_eq!(portal.sections.len(), 6, "all six cards render on the at-rest image");
+        assert!(
+            portal.line_count() >= 25,
+            "the unseeded boot view must already render abundant text (got {})",
+            portal.line_count()
+        );
+        for line in &text {
+            assert!(!line.trim().is_empty(), "every boot-view line must be real text");
+        }
+        // It names the real heart + invites the palette + reports the live (here:
+        // zero-turn) numbers honestly — and shows the image's genesis heartbeat
+        // (the cells being born), so the boot view is alive, not a static splash.
+        let blob = text.join("\n");
+        assert!(blob.contains("TurnExecutor"), "names the real executor at boot");
+        assert!(blob.contains("⌘K"), "invites the command palette at boot");
+        assert!(blob.contains("4 live cells"), "reports the at-rest image's real cell count");
+        // Zero seed turns have run, so the chain is honestly at height 0 / 0 receipts.
+        assert!(
+            blob.contains("height h0") && blob.contains("0 receipts"),
+            "the boot view reports the un-seeded chain honestly (h0, no receipts yet)"
+        );
+        // The image is ALIVE (not a static splash): it shows a live heartbeat line
+        // (here the most recent genesis birth — the cells coming into being).
+        assert!(
+            blob.contains("last heartbeat"),
+            "the portal shows a live heartbeat line"
+        );
+    }
+
+    #[test]
     fn portal_grows_with_the_image_it_describes() {
         // A portal built over a world with MORE history reports more receipts —
         // proving the text is a live projection, never a static splash.

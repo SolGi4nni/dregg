@@ -71,6 +71,22 @@ local dregg world natively:
 - It renders with gpui (Zed's GPU UI framework). The whole cockpit is the
   visual layer over the embedded world.
 
+**Run the cockpit in `--release`.** Use the Makefile target:
+
+```
+cd starbridge-v2 && make run-cockpit          # builds + runs the window in release
+```
+
+(equivalently `cd starbridge-v2 && cargo run --release`). The embedded verified
+executor is the same code the federation runs as its producer — real conservation
+proofs, real ocap checks, real caveat crypto — and in a **debug** build those
+turn paths are *pathologically slow* and pin the CPU (exactly the reason `cargo
+test` is run in release; see *Tests* below). A debug cockpit grinds; a release
+cockpit is snappy. The window itself **opens instantly in either profile** — see
+*The landing*: it paints on the at-rest genesis image and seeds the demo turns in
+*after* first paint — but every demo/verb turn you then drive runs through the
+executor, so release is what keeps those interactions fast.
+
 ### `sel4-thin` — the eventual seL4 component
 
 ```
@@ -452,6 +468,28 @@ real executor, reports the live cell count, and *changes after a real turn* — 
 binary also prints a one-line receipt (`HOME portal: N lines of real text
 render …`) so a blank-looking window is immediately diagnosable as a
 render/display issue, never an empty UI.
+
+### The window opens INSTANTLY — the demo seeds in live (the AOL-WOW)
+
+The window **opens on the at-rest genesis image** and paints sub-second; the demo
+provenance fills in *after* first paint. `main()` builds the cockpit off
+[`world::demo_genesis`] — the four cells (treasury · service · user · issuer
+well) installed via the *genesis path*, which bypasses the executor, so **no turn
+runs before the window is up**. The five demo seed turns (the treasury/user/
+service flows, the ocap re-grant, a field write) are then driven *one at a time*
+from a foreground gpui async task ([`Cockpit::seed_next_demo_turn`], spawned in
+`run_window` after `open_window`), each committing one real verified turn and
+`cx.notify()`-ing, with a short beat between so the new cell/receipt paints before
+the next turn runs. The HOME portal's height/receipt numbers visibly climb as the
+seeding completes; the landing greets you the entire time. This is the difference
+between *staring at nothing for seconds while `main()` grinds five executor turns*
+and *the cockpit being there immediately, populating live*. The seeded content is
+identical — `demo_world` (the `--headless` / `cargo test` path) still runs the
+exact same five turns eagerly; only the **window** moves them off the paint path.
+
+Likewise the SWARM tab's **killer demo** (a metered world + factory deploy + the
+slow proof-bearing mint/notify/refusal turns) boots **lazily** — on the first
+navigation to SWARM, never at window-open — so it too stays off the first frame.
 
 ## The window (the Metal path)
 
