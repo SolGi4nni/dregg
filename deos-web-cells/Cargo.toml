@@ -1,0 +1,83 @@
+# deos-web-cells — live-DOM / JS-bundle web-of-cells cells: publish a static
+# JS/HTML/CSS bundle (or a snapshot of LIVE DOM / reactive-signal state) AS a
+# content-addressed `dregg://` cell, cap-gated, transcludable (Ted Nelson at the
+# DOM level), rehydratable per-viewer through the REAL membrane, and
+# liveness-typed.
+#
+# This crate builds NOTHING the protocol already has. It is a thin, web-bundle
+# layer over the STABLE public API of `starbridge-web-surface` — the
+# frustum-snapshot stack applied to the DOM:
+#
+#   * `starbridge_web_surface::web_of_cells` — the `dregg://` docuverse: a link
+#     is a capability, a fetch is a verified attested cross-cell read. A
+#     `WebBundle` is PUBLISHED through `WebOfCells::publish` (a real surface cell
+#     committing the bundle's content hash) and FETCHED through `WebOfCells::fetch`
+#     (the attested resolve the client `verify()`s). We add NO bespoke fetch.
+#
+#   * `starbridge_web_surface::rehydrate` — `Sturdyref`, `Membrane`, `rehydrate`,
+#     the `Rehydration` liveness-type. A `DomSnapshot` is the frustum-snapshot of
+#     a published bundle (a `Sturdyref` + a tiny culling boundary, NOT the bytes);
+#     `rehydrate_bundle` re-expands it PER-VIEWER through the REAL `Membrane` —
+#     the SAME `is_attenuation` lattice. We reinvent NO membrane, NO snapshot.
+#
+#   * `starbridge_web_surface::delegate` — `SurfaceCapability` (a firmament
+#     `Capability{ Surface(cell), rights }`), `is_attenuation`, `AuthRequired`.
+#     A bundle's per-asset visibility rides the per-viewer projection's REAL
+#     fetch-allowlist meet — never a parallel filter.
+#
+# It is a STANDALONE Cargo workspace — its own `[workspace]` table below makes it
+# its own root, exactly the `starbridge-web-surface` / `pg-dregg` pattern. So
+# `cd deos-web-cells && cargo test` builds + runs WITHOUT touching the repo-root
+# `./target` a node lane owns. It path-depends on the REAL crates (through
+# `starbridge-web-surface`) so the cap discipline is the GENUINE one.
+
+# Empty [workspace] table → this crate is its OWN workspace root, NOT a member of
+# the repo-root workspace. (Same as starbridge-web-surface.)
+[workspace]
+
+# THE FORK SEAM — replicated from `starbridge-web-surface/Cargo.toml` (same depth:
+# `../` = deos-web-cells → breadstuffs → dev). Because this crate is its OWN
+# workspace root the repo-root `[patch]` does NOT apply here, so the transitive
+# `dregg-circuit` (via `dregg-turn`, via `dregg-firmament`, via
+# `starbridge-web-surface`) would resolve `p3-recursion` from the PINNED git rev
+# lacking the `RecursionInput::NativeBatchStark` variant. We point the patch at the
+# SAME local fork checkout. Keep in sync with the root/firmament/web-surface
+# blocks; all revert to the git rev once the fork is pushed.
+[patch."https://github.com/emberian/plonky3-recursion"]
+p3-recursion = { path = "../../plonky3-recursion/recursion" }
+p3-circuit = { path = "../../plonky3-recursion/circuit" }
+p3-circuit-prover = { path = "../../plonky3-recursion/circuit-prover" }
+p3-poseidon2-circuit-air = { path = "../../plonky3-recursion/poseidon2-circuit-air" }
+
+[package]
+name = "deos-web-cells"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Live-DOM / JS-bundle web-of-cells cells: a content-addressed, cap-gated, transcludable, per-viewer-rehydratable, liveness-typed dregg:// cell that CONTAINS web content — the frustum-snapshot applied to the DOM, over the stable starbridge-web-surface API."
+
+[dependencies]
+# THE stable web-of-cells + rehydration + membrane API this crate is a thin layer
+# over. Everything load-bearing — the `dregg://` publish/fetch, the `Sturdyref`,
+# the `Membrane`, `rehydrate`, the `Rehydration` liveness-type, `SurfaceCapability`,
+# `is_attenuation`, `AuthRequired` — comes from here. We never reinvent the fetch,
+# the snapshot, or the membrane.
+starbridge-web-surface = { path = "../starbridge-web-surface" }
+
+# The REAL `CellId` (content-addressed cell identity) — re-exported by
+# starbridge-web-surface, named directly so a `BundleBoundary`'s cell is the
+# genuine type.
+dregg-types = { path = "../types" }
+
+# Content-addressing: the `content_hash = blake3(canonical bundle)` half of a
+# bundle's identity. The SAME `blake3 = "1"` starbridge-web-surface / cell / types
+# already pull in (the web-of-cells content hash IS blake3) — no new lockfile
+# surface, just naming it directly so the bundle's manifest digest is the genuine
+# content-address family.
+blake3 = "1"
+
+[dev-dependencies]
+# (tests live inline in each module + in `tests/`)
+
+[profile.release]
+opt-level = "s"
