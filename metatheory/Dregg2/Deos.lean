@@ -108,10 +108,23 @@ import Dregg2.Deos.WorkflowBridge
 -- sides denote the same set — flow_choice_languages_equal, the dregg Example 1.1); it lives in the
 -- ONLINE step-by-step simulation order (≤ᶠ), the algebraic shadow of the reactive rung: in (P⊔Q)⋆R the
 -- choice reads R's OUTPUT (the TransitionGate's old+new read), which the early-branch side cannot
--- anticipate with no lookahead. The distributive meet is real (flow_meet_semilattice). PAYOFF (named,
--- not built): right-skew ⟹ "does flow/caveat-policy A refine B" is DECIDABLE via Pradic's Büchi-game
--- characterization — the ARGUS "refines" bar gets a decision procedure. 18 keystones #assert_all_clean.
+-- anticipate with no lookahead. The distributive meet is real (flow_meet_semilattice). PAYOFF (the
+-- PRECONDITION, here): right-skew ⟹ "does flow/caveat-policy A refine B" is DECIDABLE via Pradic's
+-- Büchi-game characterization — built in Dregg2.Deos.FlowRefine below. 18 keystones #assert_all_clean.
 import Dregg2.Deos.FlowAlgebra
+-- The FLOW-REFINEMENT DECISION PROCEDURE (2026-06-14, the right-skew PAYOFF made CONSTRUCTIVE): "does flow
+-- / caveat-policy A refine B?" (A ≤ᶠ B) is DECIDABLE. The dregg analogue of Pradic's Theorem 1.4 — the
+-- ONLINE simulation order ≤ᶠ is characterized by a finite σ-free SIMULATION GAME (DupSim, Duplicator-win =
+-- a PStep-simulation; the Büchi acceptance collapses because the iteration-free fragment makes procSize
+-- strictly decrease, pstep_decreases) and decided by a kernel-reducible fuel-bounded greatest-simulation
+-- check (decideRefines : Proc → Proc → Bool, decideRefines_iff: = true ↔ A ≤ᶠ B, SOUND+COMPLETE). The
+-- σ-UNIFORMITY linchpin (step_to_pstep/pstep_to_step: no Step rule's letter/successor is gated by the
+-- threaded state) collapses ≤ᶠ's ∀σ to ONE game, yielding the full Decidable (A ≤ᶠ B) instance
+-- (instDecidableSim) — the ARGUS "refines" bar is a DECISION, not a hope. The procedure RECOMPUTES the
+-- right-skew on FlowAlgebra's own counterexample, both polarities (decideRefines earlyEx lateEx = true,
+-- decideRefines lateEx earlyEx = false — #guard, kernel-evaluated, agreeing with flow_choice_halfdistrib /
+-- flow_choice_right_skewed). 18 keystones #assert_all_clean.
+import Dregg2.Deos.FlowRefine
 -- TRANSCLUSION (2026-06-14, "Xanadu that shipped"): Ted Nelson's transclusion — include-by-reference
 -- with preserved provenance + unbreakable links + per-viewer confinement — made HONEST. A transclusion
 -- IS a verified cross-cell observation: `Transclusion := Authority.ImportBinding.ImportedEq`, a peer
