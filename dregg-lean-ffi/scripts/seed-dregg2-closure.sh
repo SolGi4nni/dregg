@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 # seed-dregg2-closure.sh — ONE-TIME seed of dregg-lean-ffi/libdregg_lean.a.
 #
-# build.rs keeps the archive's Dregg2 objects fresh on every `cargo build` by splicing them into an
-# EXISTING base archive that already holds the ~4300 precompiled mathlib/batteries/aesop/Qq
-# dependency objects. Those dependency objects are EXPENSIVE to regenerate (a leanc compile of the
-# whole transitive `:c` closure), so build.rs never rebuilds them en masse — it only refreshes
-# Dregg2_*.o (plus per-module closure completion when imports change).
+# The git-tracked `libdregg_lean.a` is a READ-ONLY SEED: a base archive holding the ~4300
+# precompiled mathlib/batteries/aesop/Qq dependency objects (EXPENSIVE to regenerate — a leanc
+# compile of the whole transitive `:c` closure). A `cargo build` NEVER mutates this seed. Instead,
+# each build COPIES the seed into a per-`OUT_DIR` working archive and splices the fresh Dregg2_*.o
+# (plus per-module closure completion) + reachability-GCs THAT copy — so concurrent multi-feature
+# lanes never tear the shared file (see build.rs, the SWARM-SAFE ARCHIVE note).
+#
+# This script (re)produces the SEED itself — the one place the git-tracked archive is written.
 #
 # This script SEEDS that base from scratch: it `lake build`s the FFI module's whole transitive
 # closure, then `leanc -c`-compiles EVERY emitted `.c` from EVERY IR root — the project's own
@@ -17,8 +20,8 @@
 #
 # Run it once (or when the Lean toolchain / mathlib pin changes); EXPECT the first run to take a
 # while (thousands of leanc invocations, parallelized to your core count). Afterwards
-# `cargo build -p dregg-lean-ffi` maintains the Dregg2 slice incrementally, and its reachability
-# GC prunes the archive down to the members the FFI exports actually need.
+# `cargo build -p dregg-lean-ffi` copies this seed into its OUT_DIR and maintains the Dregg2 slice
+# (+ reachability GC) on that per-build copy — the seed stays as produced here until re-seeded.
 #
 # Usage:  dregg-lean-ffi/scripts/seed-dregg2-closure.sh
 #         (or just ./scripts/bootstrap.sh from the repo root, which runs this when needed)
@@ -94,4 +97,4 @@ echo "==> Compiled $total objects ($dregg Dregg2 + $((total - dregg)) dependency
 echo "==> Archiving → $ARCH"
 ( cd "$OBJDIR" && ar rcs "$ARCH" *.o && ranlib "$ARCH" )
 ls -la "$ARCH"
-echo "==> SEEDED. \`cargo build -p dregg-lean-ffi\` now keeps the Dregg2 slice fresh (and GCs the archive to the reachable set)."
+echo "==> SEEDED. \`cargo build -p dregg-lean-ffi\` now copies this seed into OUT_DIR and keeps that per-build copy's Dregg2 slice fresh (+ GCs it to the reachable set); the seed itself stays as written here."

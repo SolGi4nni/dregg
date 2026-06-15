@@ -4,8 +4,22 @@
 //   * libdregg_lean.a — a single static archive of the native objects emitted by the
 //     Lean compiler for `Dregg2.Exec.FFI` and its ENTIRE transitive dependency
 //     closure (Dregg2 modules + mathlib + batteries + aesop + Qq + … — ~8200 .o).
-//     The archive lives next to this build.rs; it was produced by compiling each
-//     module's `.c` (lake's `:c` facet) with `leanc -c` and archiving with `llvm-ar`.
+//     The git-tracked SEED archive lives next to this build.rs; it was produced by
+//     compiling each module's `.c` (lake's `:c` facet) with `leanc -c` and archiving
+//     with `llvm-ar` (see `scripts/seed-dregg2-closure.sh`).
+//
+// ── SWARM-SAFE ARCHIVE (the per-OUT_DIR working copy) ──
+// The git-tracked `libdregg_lean.a` is treated as a READ-ONLY SEED. A `cargo build`
+// NEVER mutates it. Instead, each build copies the seed into a per-`OUT_DIR` working
+// archive (`$OUT_DIR/libdregg_lean.a`) and does its splice → closure-completion →
+// reachability-GC against THAT copy, then links against it. Because `OUT_DIR` is
+// per-(crate, feature-set, profile) — cargo's own fingerprint dir — concurrent lanes
+// with DIFFERENT feature sets each splice/prune their OWN archive and never tear a
+// shared file. (Before this split the shared seed was rewritten from every build
+// script invocation: two concurrent multi-feature lanes raced it into a torn /
+// wrong-feature archive → `Undefined symbols: _initialize_Dregg2_*` across the swarm.)
+// The seed is (re)produced ONLY out-of-band by `scripts/seed-dregg2-closure.sh` /
+// `scripts/rebuild-dregg2-closure.sh` — never by a `cargo build`.
 //   * the Lean runtime + stdlib in the elan toolchain `lib/lean` dir — STATIC by default
 //     (leancpp/Init/Std/Lean/leanrt + gmp/uv/c++), or SHARED (libleanshared + Lake_shared)
 //     when `DREGG_LEAN_LINK=shared` (the cdylib link mode, see `shared_link_mode`).
@@ -103,10 +117,62 @@ fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-/// Produce / refresh `libdregg_lean.a` next to build.rs by (1) `lake build`-ing the FFI module's
+/// Seed the per-OUT_DIR WORKING archive (`build`) from the git-tracked SEED (`seed`), so the
+/// splice/closure/GC steps below mutate the working copy and NEVER the shared seed (the swarm-safe
+/// split — see the top-of-file note). The seed is treated as read-only input.
+///
+/// We (re)copy when the working archive is missing OR older than the seed (an out-of-band re-seed
+/// via `scripts/seed-dregg2-closure.sh` must take effect). When the working copy is at least as new
+/// as the seed we leave it — its spliced Dregg2 slice + GC pruning are the incremental steady state
+/// for THIS feature set and must survive a no-op rebuild. The copy is staged to a sibling temp and
+/// renamed into place so a working archive is never observed half-written. If the seed is absent we
+/// do nothing: a prior working copy (if any) is reused; otherwise the `!build_archive.exists()`
+/// guard in `main` degrades to marshal-only.
+fn seed_build_archive(seed: &Path, build: &Path) {
+    if !seed.exists() {
+        return;
+    }
+    // Decide whether to (re)seed. Copy iff the working archive is missing or strictly older than
+    // the seed (mtime). `newer_than(seed, build)` ⇒ seed is newer (or build absent) ⇒ copy.
+    if build.exists() && !newer_than(seed, build) {
+        return;
+    }
+    let Some(parent) = build.parent() else {
+        return;
+    };
+    // Stage to a unique-ish temp in the SAME dir (so the final rename is same-filesystem & atomic),
+    // keyed on the build OUT_DIR's own path hash via the process id — one build script runs per
+    // OUT_DIR at a time, but this keeps a crashed prior attempt from colliding.
+    let tmp = parent.join(format!("libdregg_lean.a.seed-tmp.{}", std::process::id()));
+    let _ = std::fs::remove_file(&tmp);
+    match std::fs::copy(seed, &tmp) {
+        Ok(_) => {}
+        Err(e) => {
+            println!(
+                "cargo:warning=dregg-lean-ffi: could not stage the seed copy into OUT_DIR ({e}) — \
+                 the build will use the existing working archive if present."
+            );
+            let _ = std::fs::remove_file(&tmp);
+            return;
+        }
+    }
+    if let Err(e) = std::fs::rename(&tmp, build) {
+        // Same-dir rename should never cross devices; fall back to a copy if it somehow fails.
+        if std::fs::copy(&tmp, build).is_err() {
+            println!(
+                "cargo:warning=dregg-lean-ffi: could not install the working archive in OUT_DIR \
+                 ({e}) — using the existing working archive if present."
+            );
+        }
+        let _ = std::fs::remove_file(&tmp);
+    }
+}
+
+/// Produce / refresh `libdregg_lean.a` IN OUT_DIR by (1) `lake build`-ing the FFI module's
 /// `:c` facet, (2) `leanc -c`-compiling each freshly-emitted `Dregg2/**/*.c` whose `.c` is newer
-/// than its cached `.o`, and (3) splicing ONLY those `Dregg2_*.o` back into the existing archive —
-/// preserving the ~5600 expensive mathlib/batteries/aesop dependency objects untouched.
+/// than its cached `.o`, and (3) splicing ONLY those `Dregg2_*.o` back into the (seeded) working
+/// archive — preserving the ~5600 expensive mathlib/batteries/aesop dependency objects untouched.
+/// `archive` here is the PER-OUT_DIR working copy, never the git-tracked seed.
 ///
 /// Incremental + cached: `lake` is itself incremental, the `leanc` step is guarded on
 /// `.c`-newer-than-`.o`, and the (relatively expensive) `ar` extract/repack only runs when at least
@@ -963,7 +1029,12 @@ fn main() {
 
     let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR set by cargo"));
-    let lean_archive = crate_dir.join("libdregg_lean.a");
+    // The git-tracked SEED archive (read-only input; a `cargo build` never writes it).
+    let seed_archive = crate_dir.join("libdregg_lean.a");
+    // The per-OUT_DIR WORKING archive: where splice / closure-completion / GC happen and
+    // what we link against. Per-(crate,feature-set,profile) ⇒ concurrent multi-feature
+    // lanes never tear a shared file. See the SWARM-SAFE ARCHIVE note at the top of file.
+    let build_archive = out_dir.join("libdregg_lean.a");
 
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=src/lean_init.c");
@@ -975,13 +1046,22 @@ fn main() {
     let sysroot_opt = lean_sysroot();
     let meta_opt = metatheory_dir();
 
+    // ── SEED the per-OUT_DIR working archive from the git-tracked seed (read-only input). This
+    // copies the seed into `$OUT_DIR/libdregg_lean.a` once (and re-copies whenever the seed is
+    // newer than the working copy, e.g. after an out-of-band re-seed). All splice / closure /
+    // GC mutation below targets `build_archive`, never the seed — so concurrent multi-feature
+    // lanes never tear the shared file. `cargo:rerun-if-changed` on the seed re-runs build.rs
+    // when the seed is re-produced out-of-band, picking up the fresh base.
+    println!("cargo:rerun-if-changed={}", seed_archive.display());
+    seed_build_archive(&seed_archive, &build_archive);
+
     // ── PRODUCE / REFRESH the archive from the Lean source (the linchpin). We watch the whole
     // `metatheory/Dregg2` source tree + the toolchain marker; when any of those change, build.rs
     // reruns and `build_dregg2_archive` does the incremental `lake build` → `leanc -c` → `ar`
-    // splice. A genuine no-op cargo build does NOT rerun build.rs (no watched file changed), so the
-    // ~6000-object closure is never needlessly regenerated. We deliberately do NOT
-    // `rerun-if-changed=libdregg_lean.a`: that file is our OWN output (we rewrite it here), and
-    // watching it would force a perpetual rebuild loop.
+    // splice INTO THE PER-OUT_DIR WORKING ARCHIVE. A genuine no-op cargo build does NOT rerun
+    // build.rs (no watched file changed), so the ~6000-object closure is never needlessly
+    // regenerated. The working archive (`build_archive`) is our OWN per-build output; we do not
+    // `rerun-if-changed` it (it lives in OUT_DIR and watching it would loop).
     if let Some(meta) = &meta_opt {
         let mut watched = Vec::new();
         collect_files(&meta.join("Dregg2"), &mut watched);
@@ -994,7 +1074,7 @@ fn main() {
         );
 
         match &sysroot_opt {
-            Some(sysroot) => build_dregg2_archive(meta, sysroot, &lean_archive, &out_dir),
+            Some(sysroot) => build_dregg2_archive(meta, sysroot, &build_archive, &out_dir),
             None => println!(
                 "cargo:warning=dregg-lean-ffi: cannot resolve the Lean sysroot (no \
                  DREGG_LEAN_SYSROOT and `lake env` failed in metatheory/) — skipping the archive \
@@ -1011,14 +1091,15 @@ fn main() {
         );
     }
 
-    if !lean_archive.exists() {
+    if !build_archive.exists() {
         println!(
-            "cargo:warning=dregg-lean-ffi: libdregg_lean.a absent — building MARSHAL-ONLY: \
-             lean_available() will be false and the node falls back to the UNVERIFIED Rust \
-             executor. To link the verified Lean kernel, run `./scripts/bootstrap.sh` from the \
-             repo root (one command: it checks elan + the mathlib pin, lake-builds the executor, \
-             seeds this archive once, and verifies the link). Afterwards plain `cargo build` \
-             keeps the archive fresh automatically."
+            "cargo:warning=dregg-lean-ffi: libdregg_lean.a absent (no git-tracked seed AND no \
+             prior per-OUT_DIR working archive) — building MARSHAL-ONLY: lean_available() will be \
+             false and the node falls back to the UNVERIFIED Rust executor. To link the verified \
+             Lean kernel, run `./scripts/bootstrap.sh` from the repo root (one command: it checks \
+             elan + the mathlib pin, lake-builds the executor, seeds the archive once, and \
+             verifies the link). Afterwards plain `cargo build` copies the seed into OUT_DIR and \
+             keeps its Dregg2 slice fresh automatically."
         );
         return;
     }
@@ -1045,7 +1126,7 @@ fn main() {
     // string bridge when the archive actually exports it (otherwise the dangling ref breaks the
     // whole shim under -dead_strip). The forest-auth gate is the load-bearing path and is always
     // present.
-    let handler_present = archive_exports(&lean_archive, "dregg_exec_handler_turn");
+    let handler_present = archive_exports(&build_archive, "dregg_exec_handler_turn");
     if handler_present {
         println!("cargo:rustc-cfg=dregg_handler_present");
     } else {
@@ -1061,7 +1142,7 @@ fn main() {
     // archive splice compiles every `Dregg2/**/*.c` present in the IR tree, so once the module has
     // been `lake build`- t its object is spliced in and this symbol appears. Until then (e.g. a
     // stale archive) we compile the bridge out and the node falls back to the un-gated path.
-    let finalize_gate_present = archive_exports(&lean_archive, "dregg_blocklace_finalize");
+    let finalize_gate_present = archive_exports(&build_archive, "dregg_blocklace_finalize");
     if finalize_gate_present {
         println!("cargo:rustc-cfg=dregg_finalize_gate_present");
     } else {
@@ -1078,7 +1159,7 @@ fn main() {
     // spliced in (the self-linking closure follows the C shim's `initialize_…_StrandAdmission` ref)
     // and this symbol appears; until then we compile the bridge out and the federation falls back to
     // the Rust admission gate.
-    let strand_admit_present = archive_exports(&lean_archive, "dregg_strand_admit");
+    let strand_admit_present = archive_exports(&build_archive, "dregg_strand_admit");
     if strand_admit_present {
         println!("cargo:rustc-cfg=dregg_strand_admit_present");
     } else {
@@ -1098,7 +1179,7 @@ fn main() {
     // to its native Rust gates. We probe a single representative export — they are all defined in the
     // same module, so they are present/absent together.
     let distributed_exports_present =
-        archive_exports(&lean_archive, "dregg_captp_validate_handoff");
+        archive_exports(&build_archive, "dregg_captp_validate_handoff");
     if distributed_exports_present {
         println!("cargo:rustc-cfg=dregg_distributed_exports_present");
     } else {
@@ -1184,9 +1265,13 @@ fn main() {
     // The shim is linked `+whole-archive` so its single bridge object survives the final
     // `-Wl,-dead_strip` regardless of archive-member ordering (the empirical link-failure fix).
     let _ = shim_archive;
+    // BOTH the shim AND the spliced Lean archive resolve from `OUT_DIR` (the per-build working
+    // copy of `libdregg_lean.a`, seeded from the git-tracked seed and then spliced/GC'd HERE).
+    // We deliberately do NOT add `crate_dir` to the search path: pointing the linker at the
+    // git-tracked seed would (a) reintroduce the wrong-feature-set race this split closes and
+    // (b) link a non-GC'd (full-closure) archive. One search root for our static libs: OUT_DIR.
     println!("cargo:rustc-link-search=native={}", out_dir.display());
     println!("cargo:rustc-link-lib=static:+whole-archive=dregg_ffi_shim");
-    println!("cargo:rustc-link-search=native={}", crate_dir.display());
     println!("cargo:rustc-link-lib=static=dregg_lean");
     println!("cargo:rustc-link-search=native={}", lean_lib.display());
     println!(

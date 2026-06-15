@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
-# Recompile the Dregg2 Lean :c closure and splice into libdregg_lean.a.
+# Recompile the Dregg2 Lean :c closure and splice into the git-tracked SEED libdregg_lean.a.
 # Keeps mathlib/batteries/aesop objects from the existing archive unchanged.
+#
+# This is an OUT-OF-BAND re-seed of the seed's Dregg2 slice (it backs up + rewrites the tracked
+# archive). A plain `cargo build` does NOT do this — it splices into a per-OUT_DIR copy and leaves
+# the seed alone (see build.rs, the SWARM-SAFE ARCHIVE note). Use this only to refresh the seed.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"

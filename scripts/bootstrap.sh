@@ -91,9 +91,10 @@ step "lake build Dregg2.Exec.FFI (incremental; FIRST run compiles mathlib — lo
 # ── 4. seed the static archive (one-time) ────────────────────────────────────
 if [ -f "$ARCH" ]; then
   step "libdregg_lean.a already present ($(du -h "$ARCH" | cut -f1 | tr -d ' ')) — skipping the seed"
-  echo "  (cargo build keeps its Dregg2 objects fresh automatically; to re-seed from"
-  echo "   scratch — only needed when the toolchain/mathlib pin changes — delete it"
-  echo "   and re-run, or run dregg-lean-ffi/scripts/seed-dregg2-closure.sh directly.)"
+  echo "  (this seed is read-only; cargo build copies it into OUT_DIR and keeps THAT copy's"
+  echo "   Dregg2 objects fresh automatically. To re-seed from scratch — only needed when the"
+  echo "   toolchain/mathlib pin changes — delete it and re-run, or run"
+  echo "   dregg-lean-ffi/scripts/seed-dregg2-closure.sh directly.)"
 else
   step "Seeding dregg-lean-ffi/libdregg_lean.a (one-time; compiles the whole closure)"
   "$ROOT/dregg-lean-ffi/scripts/seed-dregg2-closure.sh"
