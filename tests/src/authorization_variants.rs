@@ -14,16 +14,22 @@
 //! `tests/src/main.rs`'s helper module.
 
 
+use std::sync::Arc;
+
 use dregg_cell::predicate::{
-    PredicateInput, WitnessedPredicate, WitnessedPredicateError,
+    InputRef, PredicateInput, WitnessedPredicate, WitnessedPredicateError,
     WitnessedPredicateKind, WitnessedPredicateVerifier,
 };
-use dregg_cell::{AuthRequired, Cell, CellId, Ledger, Permissions};
+use dregg_cell::{AuthRequired, Cell, CellId, Ledger, Permissions, WitnessedPredicateRegistry};
 use dregg_turn::action::{
-    Action, Authorization, CommitmentMode, DelegationMode,
+    Action, Authorization, BearerCapProof, CommitmentMode, DelegationMode, DelegationProofData,
     WitnessBlob, symbol,
 };
-use dregg_turn::{Effect, Turn, TurnBuilder};
+use dregg_turn::error::TurnError;
+use dregg_turn::{CallForest, ComputronCosts, Effect, Turn, TurnBuilder, TurnExecutor};
+
+// PredInputRef was renamed to InputRef in the dregg3 reduction.
+use InputRef as PredInputRef;
 
 // ---------------------------------------------------------------------------
 // Helpers

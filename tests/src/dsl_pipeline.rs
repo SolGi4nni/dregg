@@ -13,9 +13,15 @@
 //!
 //! Also tests: wrong proof rejected, wrong VK rejected.
 
+use dregg_cell::{Cell, CellId, Ledger};
 use dregg_circuit::field::{BABYBEAR_P, BabyBear};
+use dregg_circuit::stark::StarkAir;
 use dregg_dsl_runtime::circuit::{
     BoundaryDef, BoundaryRow, CircuitDescriptor, ColumnDef, ColumnKind, ConstraintExpr, PolyTerm,
+};
+use dregg_dsl_runtime::{CellProgram, DslCircuit, ProgramRegistry, prove_dsl_plonky3, verify_dsl_plonky3};
+use dregg_turn::{
+    ActionBuilder, ComputronCosts, DelegationMode, Effect, TurnBuilder, TurnExecutor, TurnResult,
 };
 
 // ============================================================================
@@ -502,18 +508,17 @@ fn test_dsl_pipeline_full_proof_carrying_turn() {
 
     // Generate the STARK proof with the DslCircuit + full_public_inputs.
     let circuit32 = DslCircuit::new(deploy_descriptor);
-    let proof = stark::prove(&circuit32, &trace, &full_public_inputs);
+    let proof_bytes = prove_dsl_plonky3(&circuit32.descriptor, &trace, &full_public_inputs)
+        .expect("prove_dsl_plonky3 failed");
 
     // Sanity: verify locally before submitting.
-    let local_verify = stark::verify(&circuit32, &proof, &full_public_inputs);
+    let local_verify = verify_dsl_plonky3(&circuit32.descriptor, &proof_bytes, &full_public_inputs);
     assert!(
-        local_verify.is_ok(),
+        matches!(local_verify, Ok(true)),
         "Local STARK verify failed: {:?}",
         local_verify.err()
     );
 
-    // Serialize proof to bytes.
-    let proof_bytes = stark::proof_to_bytes(&proof);
     assert!(
         proof_bytes.len() > 100,
         "Proof should be substantial: {} bytes",
@@ -628,8 +633,8 @@ fn test_dsl_pipeline_wrong_proof_rejected() {
     let (trace, _) = generate_temporal_trace(&values, threshold);
 
     let circuit = DslCircuit::new(deploy_descriptor);
-    let proof = stark::prove(&circuit, &trace, &full_pi);
-    let mut proof_bytes = stark::proof_to_bytes(&proof);
+    let mut proof_bytes = prove_dsl_plonky3(&circuit.descriptor, &trace, &full_pi)
+        .expect("prove_dsl_plonky3 failed");
 
     // Tamper with the proof bytes (flip some bytes in the middle).
     let mid = proof_bytes.len() / 2;
@@ -755,8 +760,8 @@ fn test_dsl_pipeline_wrong_vk_rejected() {
     let (trace, _) = generate_temporal_trace(&values, threshold);
 
     let circuit = DslCircuit::new(deploy_descriptor);
-    let proof = stark::prove(&circuit, &trace, &full_pi);
-    let proof_bytes = stark::proof_to_bytes(&proof);
+    let proof_bytes = prove_dsl_plonky3(&circuit.descriptor, &trace, &full_pi)
+        .expect("prove_dsl_plonky3 failed");
 
     turn.execution_proof = Some(proof_bytes);
     turn.execution_proof_cell = Some(sovereign_cell_id);

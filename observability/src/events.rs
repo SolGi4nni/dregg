@@ -813,6 +813,9 @@ fn constraint_dissect(
         ),
         // Field-equals against the transition's observed (post-execution) state.
         SC::ObservedFieldEquals { local_field, .. } => ("observed_field_equals", Some(*local_field), vec![]),
+        // Collection aggregate: no primary slot (binds a heap collection_id,
+        // not a u8 register); consumers read the predicate from the program view.
+        SC::CollectionAggregate { .. } => ("collection_aggregate", None, vec![]),
     }
 }
 

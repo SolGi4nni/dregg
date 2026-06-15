@@ -24,8 +24,9 @@ use dregg_cell::{AuthRequired, CapabilityRef, CellId};
 use dregg_turn::{
     ActionBuilder, Turn, TurnBuilder, TurnReceipt,
 };
+use dregg_turn::bilateral_schedule::{derive_intro_id, derive_intro_id_for_federation};
 use dregg_verifier::{
-    BilateralBundle, BilateralEntry, fabricate_witnessed_receipt,
+    BilateralBundle, BilateralEntry, fabricate_witnessed_receipt, verify_bilateral_bundle,
 };
 
 // ---------------------------------------------------------------------------
