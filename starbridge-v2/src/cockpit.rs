@@ -98,10 +98,17 @@ pub enum Tab {
     /// committed turn's verification tier + the attach/verify route. See
     /// [`starbridge_v2::proofs`].
     Proofs,
+    /// The WEB-OF-CELLS tab — the cockpit as a native BROWSER of the `dregg://`
+    /// docuverse: the addressable cells (the real `WebOfCells` attested fetch +
+    /// ledger-drawn `OriginChrome`), an opened cell's per-viewer affordance
+    /// surface (the real `AffordanceSurface::project_for` attenuation) + its
+    /// rehydration liveness-type, firing through the embedded executor. See
+    /// [`starbridge_v2::web_cells`].
+    WebOfCells,
 }
 
 impl Tab {
-    const ALL: [Tab; 15] = [
+    const ALL: [Tab; 16] = [
         Tab::Home,
         Tab::Shell,
         Tab::Agent,
@@ -109,6 +116,7 @@ impl Tab {
         Tab::Graph,
         Tab::Organs,
         Tab::Proofs,
+        Tab::WebOfCells,
         Tab::Buffer,
         Tab::Terminal,
         Tab::Composer,
@@ -127,6 +135,7 @@ impl Tab {
             Tab::Graph => "GRAPH",
             Tab::Organs => "ORGANS",
             Tab::Proofs => "PROOFS",
+            Tab::WebOfCells => "WEB-OF-CELLS",
             Tab::Buffer => "BUFFER",
             Tab::Terminal => "TERMINAL",
             Tab::Composer => "COMPOSER",
@@ -264,6 +273,23 @@ pub struct Cockpit {
     /// projected into the uniform `Inspectable` model. Refreshed by the "sync"
     /// verb; the per-receipt updates come from `live_stream`.
     live_snapshot: Option<starbridge_v2::client::LiveSnapshot>,
+
+    // --- the WEB-OF-CELLS browser panel state ------------------------------
+    /// Which `dregg://` cell the web-of-cells browser has OPENED (the focused
+    /// row whose affordance surface is projected). `None` opens the first
+    /// addressable cell. Clicking a row in the panel sets this.
+    web_cells_opened: Option<CellId>,
+    /// The viewer authority the browser projects the affordance surface FOR — the
+    /// `AuthRequired` the cockpit holds over the surface (what gates the
+    /// progressive attenuation). Defaults to the EDITOR tier (`Either`): a real
+    /// principal that genuinely clears view/comment/edit but NOT admin, so the
+    /// attenuation the panel shows is true, not a demo. The "view as root" toggle
+    /// lifts it to the root tier (`None`) to reveal the attenuated-away affordances.
+    web_cells_viewer_rights: dregg_cell::AuthRequired,
+    /// The last web-of-cells affordance-fire outcome banner (a REAL executor
+    /// verdict — committed receipt / refused-with-reason, or the in-band
+    /// anti-ghost refusal).
+    web_cells_outcome: Option<String>,
 }
 
 impl Cockpit {
@@ -424,6 +450,9 @@ impl Cockpit {
             live_stream,
             live_feed,
             live_snapshot,
+            web_cells_opened: None,
+            web_cells_viewer_rights: dregg_cell::AuthRequired::Either,
+            web_cells_outcome: None,
         }
     }
 
@@ -1789,6 +1818,7 @@ impl Cockpit {
             Tab::Graph => self.graph_panel().into_any_element(),
             Tab::Organs => self.organs_panel().into_any_element(),
             Tab::Proofs => self.proofs_panel().into_any_element(),
+            Tab::WebOfCells => self.web_of_cells_panel(cx).into_any_element(),
             Tab::Buffer => self.buffer_panel(cx).into_any_element(),
             Tab::Terminal => self.terminal_panel(cx).into_any_element(),
             Tab::Composer => self.composer(cx).into_any_element(),
@@ -2905,6 +2935,291 @@ impl Cockpit {
                 col = col.child(div().text_xs().text_color(theme::muted()).px_3().child(format!("→ next: {route}")));
             }
         }
+        col
+    }
+
+    /// THE WEB-OF-CELLS BROWSER panel — the cockpit as a native browser of the
+    /// `dregg://` docuverse. It browses the live image's cells AS the web of
+    /// cells: each cell is a `dregg://` page (the real [`starbridge_web_surface`]
+    /// attested fetch + ledger-drawn origin chrome), an opened cell shows its
+    /// per-viewer affordance surface (the real `AffordanceSurface::project_for`
+    /// progressive attenuation) + its derived rehydration liveness-type + a
+    /// transcluded field, and FIRING an affordance runs through THIS crate's
+    /// embedded executor (the seam the web crate could only model, closed). The
+    /// model is built gpui-free in [`starbridge_v2::web_cells`] (so it is
+    /// `cargo test`-able); this maps it onto gpui. See [`starbridge_v2::web_cells`].
+    fn web_of_cells_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let viewer = self.anchors[2]; // the "user" principal the cockpit browses as
+        let rights = self.web_cells_viewer_rights.clone();
+        let browser = {
+            let w = self.world.borrow();
+            starbridge_v2::web_cells::WebCellsBrowser::build(
+                &w,
+                viewer,
+                rights.clone(),
+                self.web_cells_opened,
+            )
+        };
+        let is_root = matches!(rights, dregg_cell::AuthRequired::None);
+
+        let mut col = div().flex().flex_col().gap_1().p_3().size_full().overflow_hidden();
+        col = col.child(
+            section_title("WEB-OF-CELLS · browse the dregg:// docuverse natively").mb_1(),
+        );
+        // The viewer + tier header, with the "view as root/editor" toggle that
+        // reveals/hides the attenuated affordances (the property, made tangible).
+        col = col.child(
+            div()
+                .flex()
+                .flex_wrap()
+                .items_center()
+                .gap_1()
+                .child(pill(
+                    format!("viewer {}", reflect::short_hex(&viewer.0)),
+                    theme::accent(),
+                ))
+                .child(pill(format!("holds {}", browser.viewer_tier), theme::good()))
+                .child(
+                    div()
+                        .id("web-cells-tier-toggle")
+                        .px_2()
+                        .py_0p5()
+                        .rounded_md()
+                        .bg(theme::panel_hi())
+                        .border_1()
+                        .border_color(theme::border())
+                        .text_xs()
+                        .text_color(theme::accent())
+                        .cursor_pointer()
+                        .hover(|s| s.bg(theme::border()))
+                        .child(if is_root {
+                            "view as EDITOR (attenuate)"
+                        } else {
+                            "view as ROOT (reveal all)"
+                        })
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|this, _ev, _w, cx| {
+                                this.web_cells_viewer_rights = match this.web_cells_viewer_rights {
+                                    dregg_cell::AuthRequired::None => {
+                                        dregg_cell::AuthRequired::Either
+                                    }
+                                    _ => dregg_cell::AuthRequired::None,
+                                };
+                                cx.notify();
+                            }),
+                        ),
+                ),
+        );
+        col = col.child(div().text_xs().text_color(theme::muted()).child(
+            "A dregg:// link is a CAPABILITY into a cell; fetching it is a verified, \
+             attested cross-cell read. The origin chrome is drawn from the LEDGER, never \
+             the page. You see exactly the affordances your caps authorize.",
+        ));
+
+        // The web-of-cells fire outcome banner (a REAL executor verdict).
+        if let Some(banner) = &self.web_cells_outcome {
+            let good = banner.starts_with("committed");
+            col = col.child(
+                div()
+                    .mt_1()
+                    .px_2()
+                    .py_0p5()
+                    .rounded_md()
+                    .bg(theme::panel_hi())
+                    .text_xs()
+                    .text_color(if good { theme::good() } else { theme::warn() })
+                    .child(banner.clone()),
+            );
+        }
+
+        // ── THE ADDRESSABLE CELLS (the dregg:// rows; clicking opens one) ──
+        col = col.child(
+            section_title(format!("addressable cells · {} dregg:// pages", browser.cells.len()))
+                .mt_2()
+                .mb_1(),
+        );
+        for row in &browser.cells {
+            let opened = browser.opened == Some(row.cell);
+            let cell = row.cell;
+            let att_color = if row.attested { theme::good() } else { theme::bad() };
+            col = col.child(
+                div()
+                    .id(SharedString::from(format!("web-cell-{}", reflect::short_hex(&cell.0))))
+                    .flex()
+                    .flex_col()
+                    .px_2()
+                    .py_0p5()
+                    .rounded_md()
+                    .bg(if opened { theme::panel_hi() } else { theme::panel() })
+                    .border_1()
+                    .border_color(if opened { theme::accent() } else { theme::border() })
+                    .cursor_pointer()
+                    .hover(|s| s.bg(theme::panel_hi()))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _ev, _w, cx| {
+                            this.web_cells_opened = Some(cell);
+                            this.web_cells_outcome = None;
+                            cx.notify();
+                        }),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .justify_between()
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(theme::text())
+                                    .child(row.chrome_badge.clone()),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(att_color)
+                                    .child(if row.attested { "✓ attested" } else { "⚠ unattested" }),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(theme::muted())
+                            .child(row.preview.clone()),
+                    ),
+            );
+        }
+
+        // ── THE OPENED CELL'S AFFORDANCE SURFACE (per-viewer projection) ──
+        if let Some(opened) = browser.opened {
+            col = col.child(
+                section_title(format!("opened dregg://{} · affordance surface", reflect::short_hex(&opened.0)))
+                    .mt_2()
+                    .mb_1(),
+            );
+            col = col.child(div().text_xs().text_color(theme::muted()).child(format!(
+                "you see {} of {} declared affordances — the rest are ATTENUATED away by your caps (progressive enhancement → progressive attenuation)",
+                browser.affordances.len(),
+                browser.affordances_declared,
+            )));
+            for aff in &browser.affordances {
+                let name = aff.name.clone();
+                let opened_cell = opened;
+                let viewer_id = viewer;
+                let viewer_rights = rights.clone();
+                col = col.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .px_2()
+                        .py_0p5()
+                        .child(
+                            div().flex().flex_col().child(
+                                div()
+                                    .text_xs()
+                                    .text_color(theme::text())
+                                    .child(format!("{} → {}", aff.name, aff.effect)),
+                            ).child(
+                                div()
+                                    .text_xs()
+                                    .text_color(theme::muted())
+                                    .child(format!("requires {}", aff.required)),
+                            ),
+                        )
+                        .child(
+                            // THE FIRE BUTTON — fires the affordance through the
+                            // REAL embedded executor (the closed seam).
+                            div()
+                                .id(SharedString::from(format!("web-fire-{name}")))
+                                .px_2()
+                                .py_0p5()
+                                .rounded_md()
+                                .bg(theme::panel_hi())
+                                .border_1()
+                                .border_color(theme::border())
+                                .text_xs()
+                                .text_color(theme::good())
+                                .cursor_pointer()
+                                .hover(|s| s.bg(theme::border()))
+                                .child("▶ fire")
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(move |this, _ev, _w, cx| {
+                                        let banner = {
+                                            let mut w = this.world.borrow_mut();
+                                            match starbridge_v2::web_cells::WebCellsBrowser::fire_affordance(
+                                                &mut w,
+                                                opened_cell,
+                                                viewer_id,
+                                                viewer_rights.clone(),
+                                                &name,
+                                            ) {
+                                                Ok(o) if o.is_committed() => {
+                                                    format!("committed: fired '{name}' → real verified turn")
+                                                }
+                                                Ok(starbridge_v2::affordance::FireOutcome::Refused { reason, .. }) => {
+                                                    format!("refused by executor: '{name}' — {reason}")
+                                                }
+                                                Ok(_) => format!("committed: fired '{name}'"),
+                                                Err(e) => format!("refused in-band (anti-ghost): '{name}' — {e}"),
+                                            }
+                                        };
+                                        this.web_cells_outcome = Some(banner);
+                                        this.refresh_cells();
+                                        cx.notify();
+                                    }),
+                                ),
+                        ),
+                );
+            }
+
+            // The rehydration liveness-type (DERIVED from the attested fetch).
+            col = col.child(
+                div()
+                    .mt_1()
+                    .px_2()
+                    .child(pill(
+                        format!("rehydration: {}", browser.rehydration_badge),
+                        theme::accent(),
+                    )),
+            );
+
+            // ── THE TED-NELSON TRANSCLUSION (one transcluded field + provenance) ──
+            if let Some(t) = &browser.transclusion {
+                col = col.child(
+                    section_title("transclusion · a field included from another cell")
+                        .mt_2()
+                        .mb_1(),
+                );
+                col = col.child(div().text_xs().text_color(theme::text()).child(format!(
+                    "this cell transcludes field {} from dregg://{}",
+                    t.transcluded_field,
+                    reflect::short_hex(&t.source.0),
+                )));
+                col = col.child(div().text_xs().text_color(theme::muted()).child(format!(
+                    "provenance receipt {} · source finalized={} (the inclusion is CHECKABLE, not trusted)",
+                    t.provenance_receipt, t.source_finalized,
+                )));
+            }
+        }
+
+        // ── THE SERVO NEXT LAYER (named honestly in the panel) ──
+        col = col.child(
+            div()
+                .mt_2()
+                .p_2()
+                .rounded_md()
+                .border_1()
+                .border_color(theme::border())
+                .bg(theme::panel())
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(theme::muted())
+                        .child(browser.servo_layer_note()),
+                ),
+        );
         col
     }
 

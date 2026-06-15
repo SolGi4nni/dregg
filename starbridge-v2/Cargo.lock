@@ -7496,6 +7496,18 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "starbridge-web-surface",
+]
+
+[[package]]
+name = "starbridge-web-surface"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "dregg-cell",
+ "dregg-firmament",
+ "dregg-turn",
+ "dregg-types",
 ]
 
 [[package]]

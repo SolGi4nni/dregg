@@ -51,6 +51,15 @@ pub mod live_node;
 #[cfg(feature = "embedded-executor")]
 pub mod affordance;
 
+// The WEB-OF-CELLS browser — the cockpit as a native browser of the `dregg://`
+// docuverse: it lists the addressable cells (the real `WebOfCells` attested
+// fetch + ledger-drawn `OriginChrome`), opens one to its per-viewer affordance
+// surface (the real `AffordanceSurface::project_for` attenuation) + rehydration
+// liveness-type, and fires an affordance through THIS crate's embedded executor.
+// gpui-free, `cargo test`-able (the model is pure data, like `landing`).
+#[cfg(feature = "embedded-executor")]
+pub mod web_cells;
+
 #[cfg(feature = "embedded-executor")]
 pub mod agent;
 #[cfg(feature = "embedded-executor")]
@@ -107,6 +116,8 @@ pub use affordance::{
     AffordanceIntent, AffordanceSnapshot, AffordanceSurface, CellAffordance, EffectSummary,
     FireError, FireOutcome, Rehydration,
 };
+#[cfg(feature = "embedded-executor")]
+pub use web_cells::{AffordanceRow, CellRow, Transclusion, WebCellsBrowser};
 #[cfg(feature = "embedded-executor")]
 pub use agent::{AgentActivity, AgentSurface};
 #[cfg(feature = "embedded-executor")]

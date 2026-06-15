@@ -175,15 +175,17 @@ starbridge-v2 (bin)
 ├── cockpit    — the gpui cockpit (feature gpui-ui): the comprehensive panels
 │               (cell world · inspector · blocklace · composer · objects ·
 │               dynamics) plus the workspace tabs (SHELL · agent · swarm · GRAPH ·
-│               ORGANS · PROOFS · buffer · terminal · composer · objects ·
-│               debugger · replay · cipherclerk · editor), rendering `World`
-│               directly. The SHELL tab renders the cap-first compositor scene
-│               (surfaces over real cells); the OBJECTS tab projects proofs /
+│               ORGANS · PROOFS · WEB-OF-CELLS · buffer · terminal · composer ·
+│               objects · debugger · replay · cipherclerk · editor), rendering
+│               `World` directly. The SHELL tab renders the cap-first compositor
+│               scene (surfaces over real cells); the OBJECTS tab projects proofs /
 │               nullifiers / cell lifecycle through `reflect`; the GRAPH tab draws
 │               the ocap delegation graph (multi-hop); the ORGANS tab reflects
 │               live organ cell-state; the PROOFS tab shows the verification-tier
-│               board. A ⌘K COMMAND PALETTE (`palette`) overlays the whole
-│               cockpit: one fuzzy-searchable surface over EVERY action.
+│               board; the WEB-OF-CELLS tab BROWSES the live image as the `dregg://`
+│               docuverse (see §"The web-of-cells browser" below). A ⌘K COMMAND
+│               PALETTE (`palette`) overlays the whole cockpit: one
+│               fuzzy-searchable surface over EVERY action.
 └── palette    — the ⌘K command registry + fuzzy matcher + selection model
                 (gpui-free, testable). Every cockpit action is one `CommandId`;
                 the cockpit dispatches a selected command through the SAME
@@ -288,6 +290,68 @@ toolbar button or the ⌘K palette.
 The SHELL boots ready (the console plus the three anchor cells — treasury ·
 user · service — already open as cap-confined surfaces over the real world) and
 is one click away. The cockpit's **boot view** is the HOME landing portal below.
+
+## The web-of-cells browser — browsing the dregg:// docuverse (the native-browser pillar)
+
+The SHELL is the native window-manager pillar; the **WEB-OF-CELLS** tab
+(`src/web_cells.rs` + the cockpit's `web_of_cells_panel`) is the native-*browser*
+pillar. It fuses the cockpit with the `starbridge-web-surface` crate — the **web
+of cells** — so the live verified image is also a browser of the `dregg://`
+docuverse. It names + USES the real web-of-cells components (it reinvents none):
+
+- **A `dregg://` link is a capability into a cell; fetching it is a verified,
+  attested cross-cell read.** The panel publishes each live `World` cell as a
+  `dregg://` page through the real `starbridge_web_surface::WebOfCells` and
+  fetches it back: each row carries a real `AttestedResource` (content-addressed +
+  receipt-in-stream + a quorum-signed `AttestedRoot`, checked by the genuine
+  `AttestedResource::verify`) and a real `OriginChrome` — the **trusted-path
+  origin badge drawn from the LEDGER**, never the page (the structural answer to
+  browser-chrome phishing).
+- **Opening a cell shows its per-viewer affordance surface (progressive
+  attenuation).** The surface is the genuine `web_surface::AffordanceSurface`;
+  the rows are `AffordanceSurface::project_for` through a real `SurfaceCapability`
+  for the cockpit's identity — so a viewer sees **exactly the affordances its caps
+  authorize**, gated by the proven `is_attenuation` lattice. The "view as
+  root/editor" toggle makes the property tangible: the editor tier sees view /
+  comment / edit (3 of 4); the attenuated-away `admin` (which needs the root tier)
+  is absent until you lift the viewer's authority.
+- **The rehydration liveness-type is DERIVED, not hand-set.** The opened surface
+  arrived via a `dregg://` *attested* fetch (witnessed in the graph), so
+  `Rehydration::classify` types its reacquisition `REPLAYED-DETERMINISTIC` — the
+  confined "every interaction went through the membrane" kind of true.
+- **A transcluded field with provenance.** The opened cell transcludes another
+  cell's finalized content commitment, with the source's serve-receipt shown — a
+  Ted-Nelson inclusion that is *checkable*, not trusted.
+- **Firing goes through the REAL embedded executor (the seam the web crate could
+  only model is CLOSED here).** An affordance the web-surface surface projects
+  carries the SAME real `dregg_turn::Effect` the cockpit's
+  `affordance::AffordanceIntent::fire_through_world` runs; `WebCellsBrowser::fire_affordance`
+  lifts it across that one-type bridge and commits it as a verified turn through
+  the live `World`. The cap-gate that decides whether the affordance may fire AT
+  ALL is the real `is_attenuation` (an unauthorized fire is refused **in-band**,
+  the anti-ghost tooth); the gate that decides whether the resulting turn commits
+  is the real executor (a guarantee firing is surfaced, never hidden). Neither is
+  faked.
+
+`src/web_cells.rs` is the panel's pure, gpui-free **text MODEL** (like
+`landing.rs`): the cockpit renders exactly its rows, so the `cargo test` that
+asserts they are real + attested + cap-projected proves the rendered tree browses
+the real web of cells without a GPU.
+
+### The servo layer — the named next increment
+
+The web-of-cells browser renders affordance **surfaces** natively today. Embedding
+**servo** to render actual `dregg://` web *content* — the `WebViewDelegate`
+cap-gate, where the `starbridge-web-surface` crate's `MockSurface` stands (the
+LIBSERVO SEAM in `web-surface/src/delegate.rs`) — is the **named next layer**: the
+servo Stage-A renderer lane. The browser states this in the panel itself
+(`WebCellsBrowser::servo_layer_note`), so the boundary between *what is integrated*
+(the shell browses the web of cells natively) and *what is named-next* (servo
+content render) is visible, not buried. A second named increment is the
+**verified-transclusion affordance**: hardening the Ted-Nelson inclusion into an
+in-circuit cross-cell observation via the protocol's `ObservedFieldEquals`
+predicate (which lives below the web-surface crate's public API in
+`dregg_cell::predicate`).
 
 ## The landing — the warm front door (the boot view)
 
