@@ -293,6 +293,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "dregg-deos-image-pd"
+version = "0.1.0"
+dependencies = [
+ "sel4-microkit",
+ "sel4-virtio-hal-impl",
+ "virtio-drivers",
+]
+
+[[package]]
 name = "dregg-deos-tutorial-pd"
 version = "0.1.0"
 dependencies = [
