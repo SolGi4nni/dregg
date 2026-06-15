@@ -139,7 +139,20 @@ embedded-executor = ["dep:dregg-turn", "dep:dregg-cell", "dep:dregg-types", "dep
 # which needs the offline Metal Toolchain component). On a host whose
 # MetalToolchain download is blocked/damaged, this is the difference between a
 # window that opens and a build that fails. See docs/STARBRIDGE-V2.md §Window.
-gpui-ui = ["dep:gpui", "dep:gpui_platform", "gpui_platform/runtime_shaders"]
+# `gpui_platform/{x11,wayland}` light up the wgpu/Vulkan X11 + Wayland windowing
+# backends for the LINUX build. They are enabled UNCONDITIONALLY here (rather than
+# via a `[target.cfg(linux)].dependencies` re-declaration of the optional
+# `gpui_platform`) because that target-block re-declaration TRIPPED A CARGO
+# RESOLVER PATHOLOGY: on macOS it made the package resolve with ONLY its optional
+# gpui deps and DROP every crates.io + path dependency (the lib's rustc carried the
+# feature flags but ZERO `--extern` for serde/postcard/blake3/dregg-*, so
+# `world.rs`'s `use dregg_cell::…` failed "unlinked crate"). Enabling the features
+# here instead is INERT on macOS — `gpui_platform`'s `x11`/`wayland` features
+# forward to `gpui_linux`, which is itself ONLY a `cfg(any(linux,freebsd))`
+# dependency of `gpui_platform`, so on macOS it is not in the graph and the
+# features activate nothing — while on Linux they enable x11+wayland exactly as the
+# old target block did.
+gpui-ui = ["dep:gpui", "dep:gpui_platform", "gpui_platform/runtime_shaders", "gpui_platform/x11", "gpui_platform/wayland"]
 
 # The Lean-free thin-client / verifier path for the seL4 component end-state.
 # Mutually exclusive with native-full at the linker level (no executor, no
@@ -152,25 +165,18 @@ sel4-thin = ["live-node"]
 gpui = { git = "https://github.com/zed-industries/zed", rev = "fca2ccd403e8d13c8f4b968cda2f2c322f420f5a", optional = true }
 gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "fca2ccd403e8d13c8f4b968cda2f2c322f420f5a", optional = true }
 
-# --- LINUX display backend for gpui (target-gated; NO-OP on macOS) -----------
-# On macOS gpui's window/render path is Metal, selected unconditionally inside
-# `gpui_macos`. On Linux/FreeBSD, `gpui_platform::application()` dispatches into
-# `gpui_linux::current_platform()`, which `match`es `guess_compositor()` over
-# "Wayland" / "X11" / "Headless" — but the "Wayland" and "X11" arms are
-# `#[cfg(feature = "…")]`-GATED on `gpui_linux`'s own `wayland` / `x11` features
-# (gpui_linux/src/linux.rs). `gpui_platform` re-exposes those as its OWN features
-# (`gpui_platform/{wayland,x11}` → `gpui_linux/{wayland,x11}`) but leaves them
-# OFF by default. With both off, only the "Headless" arm compiles and a real
-# DISPLAY/WAYLAND_DISPLAY session hits the `_ => unreachable!()` (linux.rs:55) —
-# the window panics with "entered unreachable code" the instant you try to open
-# it on a graphical Linux host. Enabling both here lights up the wgpu/Vulkan X11
-# AND Wayland windowing backends (the same wgpu Zed ships on Linux). This block
-# is `cfg(linux/freebsd)`-scoped, so the macOS build resolves IDENTICALLY to
-# before (the Mac never sees these features). Optional + `gpui-ui`-gated to match
-# the base `gpui_platform` line; cargo UNIONS the features of the two
-# specifications of the same git package.
-[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
-gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "fca2ccd403e8d13c8f4b968cda2f2c322f420f5a", optional = true, features = ["x11", "wayland"] }
+# --- LINUX display backend for gpui ------------------------------------------
+# The x11/wayland windowing backends gpui needs on Linux are enabled via the
+# `gpui-ui` feature above (`gpui_platform/{x11,wayland}`), NOT a
+# `[target.cfg(linux)].dependencies` re-declaration of the optional
+# `gpui_platform`. The target-block form (which this REPLACES) re-declared the
+# same optional dep and TRIPPED a cargo resolver pathology that dropped every
+# crates.io + path dependency on macOS (the lib compiled with feature flags but
+# zero `--extern`). The feature-list form is inert on macOS (gpui_linux is not in
+# the macOS graph) and lights up x11+wayland on Linux identically — without the
+# resolver hazard. On Linux without these, only `gpui_linux`'s "Headless" arm
+# compiles and a real DISPLAY/WAYLAND_DISPLAY session hits `_ => unreachable!()`
+# (gpui_linux/src/linux.rs) — the window panics the instant it opens.
 
 # --- the embedded verified executor (gated on `embedded-executor`) ----------
 # These link libdregg_lean.a on native. `default-features = true` keeps the

@@ -241,6 +241,11 @@ fn classify(error: &TurnError) -> (GuardKind, Vec<CellId>) {
         DelegationDenied { parent, child_target } => {
             (GuardKind::Capability, vec![*parent, *child_target])
         }
+        // A delegation MODE that confers nothing (a no-op denial) — a capability-
+        // family refusal, fail-closed, naming the parent + intended child target.
+        DelegationModeUnimplemented { parent, child_target, .. } => {
+            (GuardKind::Capability, vec![*parent, *child_target])
+        }
         FacetViolation { actor, target, .. } => (GuardKind::Capability, vec![*actor, *target]),
         BearerCapFacetViolation { target, .. }
         | BearerCapFacetAmplification { target, .. }
@@ -283,6 +288,10 @@ fn classify(error: &TurnError) -> (GuardKind, Vec<CellId>) {
         EmptyForest => (GuardKind::Structural, vec![]),
         InvalidEffect { .. } => (GuardKind::Structural, vec![]),
         InvalidFieldIndex { cell, .. } => (GuardKind::Structural, vec![*cell]),
+        // A refusal whose proof_witness_index does not resolve to a carried witness
+        // blob — structurally inadmissible (the non-action attestation must point at
+        // a real witness so a verifier can re-execute the refusal check).
+        InvalidWitnessIndex { cell, .. } => (GuardKind::Structural, vec![*cell]),
         CellNotFound { id } | TransferDestNotFound { id } | CellAlreadyExists { id } => {
             (GuardKind::Structural, vec![*id])
         }

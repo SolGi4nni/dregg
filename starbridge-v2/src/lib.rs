@@ -60,6 +60,23 @@ pub mod affordance;
 #[cfg(feature = "embedded-executor")]
 pub mod web_cells;
 
+// The DREGGVERSE navigation — "what links here", the verified per-viewer query on
+// the witness-graph. VENDORED byte-identical from the committed
+// `dregg_app_framework::dreggverse_map` (a thin pure navigation over the REAL
+// `starbridge_web_surface` `Backlinks` + `Membrane`, both already deps here), so the
+// cockpit renders the genuine `DreggverseMap::project_for` WITHOUT dragging
+// app-framework's heavy tokio/axum/captp tree into this standalone workspace.
+#[cfg(feature = "embedded-executor")]
+pub mod dreggverse_map;
+
+// The WHAT-LINKS-HERE panel model — Ted Nelson's two-way link, navigable: for the
+// focused cell it builds a REAL `Backlinks` witness-graph from the live image, walks
+// it with the vendored `DreggverseMap`, and projects through the focused agent's
+// `Membrane` (the link fog-of-war). gpui-free, `cargo test`-able (pure data, like
+// `web_cells`/`landing`).
+#[cfg(feature = "embedded-executor")]
+pub mod links_here;
+
 // The interactive POWERBOX (CapDesk) — the trusted designation flow: an app-cell
 // requests a capability it lacks; the trusted UI (the cockpit principal, NOT the app)
 // presents a picker filtered to what the USER actually holds (mint_needs_held_factory
@@ -129,6 +146,10 @@ pub use affordance::{
 pub use web_cells::{
     AffordanceRow, CellRow, SemiReinteractiveTransclusion, Transclusion, WebCellsBrowser,
 };
+#[cfg(feature = "embedded-executor")]
+pub use dreggverse_map::{DreggverseGraph, DreggverseLink, DreggverseMap};
+#[cfg(feature = "embedded-executor")]
+pub use links_here::{BacklinkRow, LinksHerePanel};
 #[cfg(feature = "embedded-executor")]
 pub use powerbox::{
     AppLauncher, CapabilityRequest, GrantableTarget, GrantedCap, LaunchedApp, Powerbox,

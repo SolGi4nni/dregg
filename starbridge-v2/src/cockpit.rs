@@ -105,6 +105,14 @@ pub enum Tab {
     /// rehydration liveness-type, firing through the embedded executor. See
     /// [`starbridge_v2::web_cells`].
     WebOfCells,
+    /// The WHAT-LINKS-HERE tab — Ted Nelson's two-way link, navigable: for the
+    /// focused cell it renders the REAL `Backlinks` witness-graph (who transcludes
+    /// ME), navigated by the genuine `DreggverseMap` and PROJECTED through the
+    /// focused agent's `Membrane` (the link fog-of-war — a backlink the viewer's
+    /// caps cannot admit is OMITTED). Each backlink is clickable to navigate into
+    /// the observing cell (and recursively its own "what links here"). See
+    /// [`starbridge_v2::links_here`].
+    LinksHere,
     /// The POWERBOX tab (CapDesk) — the trusted designation flow: a confined
     /// app-cell requests a capability it lacks; the TRUSTED powerbox (the cockpit
     /// principal, NOT the app) presents a picker filtered to what the USER actually
@@ -116,7 +124,7 @@ pub enum Tab {
 }
 
 impl Tab {
-    const ALL: [Tab; 17] = [
+    const ALL: [Tab; 18] = [
         Tab::Home,
         Tab::Shell,
         Tab::Agent,
@@ -125,6 +133,7 @@ impl Tab {
         Tab::Organs,
         Tab::Proofs,
         Tab::WebOfCells,
+        Tab::LinksHere,
         Tab::Powerbox,
         Tab::Buffer,
         Tab::Terminal,
@@ -145,6 +154,7 @@ impl Tab {
             Tab::Organs => "ORGANS",
             Tab::Proofs => "PROOFS",
             Tab::WebOfCells => "WEB-OF-CELLS",
+            Tab::LinksHere => "WHAT-LINKS-HERE",
             Tab::Powerbox => "POWERBOX",
             Tab::Buffer => "BUFFER",
             Tab::Terminal => "TERMINAL",
@@ -311,7 +321,27 @@ pub struct Cockpit {
     /// powerbox grant-turn verdict, or the in-band read-only/over-wide refusal).
     web_cells_transclusion_outcome: Option<String>,
 
-    // --- the POWERBOX (CapDesk) panel state --------------------------------
+    // --- the WHAT-LINKS-HERE panel state -----------------------------------
+    /// Which cell the what-links-here panel is FOCUSED on (the cell the question
+    /// "who transcludes ME?" is asked of). `None` focuses the cockpit's own `user`
+    /// principal. Clicking a backlink row sets this to the OBSERVING cell — so the
+    /// panel navigates INTO the cell that links here (and renders ITS own backlinks).
+    links_here_focus: Option<CellId>,
+    /// The depth bound the transitive backlink walk uses (backlinks-of-backlinks):
+    /// `1` = the direct backlinks of the focus only; higher reaches further out. The
+    /// walk is cycle-safe + depth-bounded, so it is always finite + cheap. Toggleable
+    /// in the panel (1 ⇄ 2 ⇄ 3) so the operator can watch the docuverse map deepen.
+    links_here_depth: usize,
+    /// The viewer authority the what-links-here map is PROJECTED for — the held
+    /// authority that decides the link fog-of-war (`DreggverseMap::project_for`
+    /// through this viewer's `Membrane`). The focus's backlinks are gated behind a
+    /// `Proof` link lineage, so a `None` (root) viewer projects it and SEES them, while
+    /// an INCOMPARABLE `Signature` viewer is FOGGED (the membrane refuses the lineage).
+    /// Defaults to `None` (root, sees all); the panel toggles None ⇄ Signature so the
+    /// operator can watch a gated backlink reveal/fog — the membrane made navigational.
+    /// (Distinct from the web-of-cells `web_cells_viewer_rights`, whose None ⇄ Either
+    /// drives the affordance attenuation — a different lattice line.)
+    links_here_viewer_rights: dregg_cell::AuthRequired,
     /// The confined APP-cell whose capability request the powerbox is mediating —
     /// a real cell in the live ledger holding NO ambient authority (a freshly
     /// "launched" app-as-cell). The powerbox grants designated, attenuated caps
@@ -521,6 +551,14 @@ impl Cockpit {
             web_cells_outcome: None,
             web_cells_upgraded: None,
             web_cells_transclusion_outcome: None,
+            // WHAT-LINKS-HERE: focus the cockpit's own `user` principal at depth 2
+            // (direct backlinks + one hop of backlinks-of-backlinks) so the panel
+            // boots into a populated docuverse map rather than an empty pane. Boot as
+            // ROOT (None) so the gated backlinks are visible; the toggle drops to
+            // Signature to watch them fog.
+            links_here_focus: None,
+            links_here_depth: 2,
+            links_here_viewer_rights: dregg_cell::AuthRequired::None,
             powerbox_app: Some(powerbox_app),
             // Default to the narrow Signature tier so a click demonstrates real
             // attenuation away from the user's wider (None) held authority.
@@ -1934,6 +1972,7 @@ impl Cockpit {
             Tab::Organs => self.organs_panel().into_any_element(),
             Tab::Proofs => self.proofs_panel().into_any_element(),
             Tab::WebOfCells => self.web_of_cells_panel(cx).into_any_element(),
+            Tab::LinksHere => self.links_here_panel(cx).into_any_element(),
             Tab::Powerbox => self.powerbox_panel(cx).into_any_element(),
             Tab::Buffer => self.buffer_panel(cx).into_any_element(),
             Tab::Terminal => self.terminal_panel(cx).into_any_element(),
@@ -3525,6 +3564,278 @@ impl Cockpit {
                         .text_xs()
                         .text_color(theme::muted())
                         .child(browser.servo_layer_note()),
+                ),
+        );
+        col
+    }
+
+    /// THE WHAT-LINKS-HERE panel — Ted Nelson's two-way link, navigable.
+    ///
+    /// For the focused cell it renders the REAL [`Backlinks`] witness-graph (who
+    /// transcludes ME), navigated by the genuine
+    /// [`DreggverseMap`](starbridge_v2::dreggverse_map::DreggverseMap) and PROJECTED
+    /// through the focused agent's [`Membrane`] via
+    /// [`DreggverseMap::project_for`](starbridge_v2::dreggverse_map::DreggverseMap::project_for):
+    /// a backlink whose link lineage the viewer's held authority cannot admit (the
+    /// REAL `is_attenuation` lattice) is OMITTED — the link fog-of-war. Each visible
+    /// backlink carries its cited receipt + content commitment (a verifiable fact) and
+    /// is CLICKABLE to navigate INTO the observing cell (whose own what-links-here then
+    /// renders — recursive docuverse navigation). The cockpit owns the render +
+    /// click-to-navigate; the verified per-viewer graph is the vendored map's. The
+    /// model is built gpui-free in [`starbridge_v2::links_here`] (so it is `cargo
+    /// test`-able); this maps it onto gpui.
+    ///
+    /// The viewer authority is the panel's own held-authority lens
+    /// (`links_here_viewer_rights`, None ⇄ Signature): the focus's backlinks are gated
+    /// behind a `Proof` link lineage, so a `None` (root) viewer projects it and SEES
+    /// them while an INCOMPARABLE `Signature` viewer is FOGGED — flipping the toggle
+    /// reveals/fogs the gated backlink, the membrane made navigational. The focused
+    /// cell defaults to the cockpit's own `user` principal.
+    fn links_here_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let focus = self.links_here_focus.unwrap_or(self.anchors[2]); // the cockpit `user`
+        let rights = self.links_here_viewer_rights.clone();
+        let depth = self.links_here_depth;
+        let panel = {
+            let w = self.world.borrow();
+            starbridge_v2::links_here::LinksHerePanel::build(&w, focus, rights.clone(), depth)
+        };
+        let is_root = matches!(rights, dregg_cell::AuthRequired::None);
+
+        let mut col = div().flex().flex_col().gap_1().p_3().size_full().overflow_hidden();
+        col = col.child(
+            section_title("WHAT-LINKS-HERE · Ted Nelson's two-way link, navigable").mb_1(),
+        );
+        col = col.child(div().text_xs().text_color(theme::muted()).child(
+            "The forward link points OUT (a cell transcludes another). This is the link the \
+             OTHER way — who transcludes ME — the REAL Backlinks witness-graph, navigated by \
+             DreggverseMap and PROJECTED through your membrane. Each backlink carries its cited \
+             receipt + content commitment (a verifiable fact). Click a backlink to navigate into \
+             the observing cell.",
+        ));
+
+        // ── THE FOCUS + VIEWER HEADER (with the held-authority + depth toggles) ──
+        col = col.child(
+            div()
+                .flex()
+                .flex_wrap()
+                .items_center()
+                .gap_1()
+                .child(pill(
+                    format!("focus {}", reflect::short_hex(&focus.0)),
+                    theme::accent(),
+                ))
+                .child(pill(format!("holds {}", panel.viewer_tier), theme::good()))
+                .child(pill(format!("depth {}", panel.depth), theme::accent()))
+                // The held-authority toggle (None ⇄ Signature): the viewer's authority
+                // decides the link fog-of-war. At ROOT (None) the Proof-gated backlinks
+                // are visible; dropping to the INCOMPARABLE Signature tier FOGS them
+                // (the membrane refuses the lineage) — the property made tangible.
+                .child(
+                    div()
+                        .id("links-here-tier-toggle")
+                        .px_2()
+                        .py_0p5()
+                        .rounded_md()
+                        .bg(theme::panel_hi())
+                        .border_1()
+                        .border_color(theme::border())
+                        .text_xs()
+                        .text_color(theme::accent())
+                        .cursor_pointer()
+                        .hover(|s| s.bg(theme::border()))
+                        .child(if is_root {
+                            "view as SIGNATURE (fog the gated links)"
+                        } else {
+                            "view as ROOT (reveal all)"
+                        })
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|this, _ev, _w, cx| {
+                                this.links_here_viewer_rights = match this.links_here_viewer_rights {
+                                    dregg_cell::AuthRequired::None => {
+                                        dregg_cell::AuthRequired::Signature
+                                    }
+                                    _ => dregg_cell::AuthRequired::None,
+                                };
+                                cx.notify();
+                            }),
+                        ),
+                )
+                // The depth toggle (1 ⇄ 2 ⇄ 3): how many hops of backlinks-of-backlinks
+                // the transitive walk reaches. The walk is cycle-safe + depth-bounded.
+                .child(
+                    div()
+                        .id("links-here-depth-toggle")
+                        .px_2()
+                        .py_0p5()
+                        .rounded_md()
+                        .bg(theme::panel_hi())
+                        .border_1()
+                        .border_color(theme::border())
+                        .text_xs()
+                        .text_color(theme::accent())
+                        .cursor_pointer()
+                        .hover(|s| s.bg(theme::border()))
+                        .child("cycle depth")
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|this, _ev, _w, cx| {
+                                // 1 → 2 → 3 → 1 (a small, finite, demonstrable range).
+                                this.links_here_depth = match this.links_here_depth {
+                                    0 | 1 => 2,
+                                    2 => 3,
+                                    _ => 1,
+                                };
+                                cx.notify();
+                            }),
+                        ),
+                ),
+        );
+
+        // The focus address + a "navigate to user (home focus)" affordance so the
+        // operator can always return to the principal's docuverse after drilling in.
+        col = col.child(
+            div()
+                .flex()
+                .items_center()
+                .gap_1()
+                .mt_1()
+                .child(div().text_xs().text_color(theme::text()).child(format!(
+                    "asking: who links to {} ?",
+                    panel.focus_uri
+                )))
+                .child(
+                    div()
+                        .id("links-here-refocus-user")
+                        .px_2()
+                        .py_0p5()
+                        .rounded_md()
+                        .bg(theme::panel_hi())
+                        .border_1()
+                        .border_color(theme::border())
+                        .text_xs()
+                        .text_color(theme::muted())
+                        .cursor_pointer()
+                        .hover(|s| s.bg(theme::border()))
+                        .child("↺ focus the user principal")
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|this, _ev, _w, cx| {
+                                this.links_here_focus = None; // None = the user anchor
+                                cx.notify();
+                            }),
+                        ),
+                ),
+        );
+
+        // ── THE VISIBLE-OF-TOTAL READOUT (the fog made legible) ──
+        let fogged = panel.fogged_count();
+        col = col.child(div().text_xs().text_color(theme::muted()).child(format!(
+            "you see {} of {} backlink(s) within {} hop(s) — {} fogged by your caps · {} navigable node(s)",
+            panel.backlinks.len(),
+            panel.total_link_count,
+            panel.depth,
+            fogged,
+            panel.visible_nodes,
+        )));
+        if panel.has_gated_links && fogged > 0 {
+            col = col.child(div().text_xs().text_color(theme::warn()).child(
+                "some backlinks are GATED behind a link lineage your held authority cannot project \
+                 — the membrane omits them (try 'view as ROOT'). This is the link fog-of-war: two \
+                 viewers navigate DIFFERENT maps of the same docuverse.",
+            ));
+        }
+
+        // ── THE BACKLINK ROWS (each clickable to navigate INTO the observer) ──
+        if panel.is_empty() {
+            col = col.child(
+                div()
+                    .mt_2()
+                    .px_2()
+                    .py_1()
+                    .text_xs()
+                    .text_color(theme::muted())
+                    .child(
+                        "no backlinks visible to you — nobody you are cleared to see transcludes \
+                         this cell (an honest empty readout, never a dangling guess).",
+                    ),
+            );
+        } else {
+            col = col.child(
+                section_title(format!("backlinks · {} two-way link(s) you can see", panel.backlinks.len()))
+                    .mt_2()
+                    .mb_1(),
+            );
+        }
+        for b in &panel.backlinks {
+            let observer = b.observer;
+            col = col.child(
+                div()
+                    .id(SharedString::from(format!("links-here-{}", reflect::short_hex(&observer.0))))
+                    .flex()
+                    .flex_col()
+                    .px_2()
+                    .py_0p5()
+                    .rounded_md()
+                    .bg(theme::panel())
+                    .border_1()
+                    .border_color(theme::border())
+                    .cursor_pointer()
+                    .hover(|s| s.bg(theme::panel_hi()))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _ev, _w, cx| {
+                            // NAVIGATE INTO the observing cell — render ITS own
+                            // what-links-here (recursive docuverse navigation).
+                            this.links_here_focus = Some(observer);
+                            cx.notify();
+                        }),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .justify_between()
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(theme::accent())
+                                    .child(format!("← {}", b.observer_uri)),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(theme::muted())
+                                    .child(format!("hop {}", b.hops)),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(theme::muted())
+                            .child(format!(
+                                "transcludes dregg://{} · receipt {} · commitment {}",
+                                reflect::short_hex(&b.source.0),
+                                b.receipt_hash,
+                                b.content_hash,
+                            )),
+                    ),
+            );
+        }
+
+        // ── THE SEEDED-GRAPH NOTE (named honestly in the panel) ──
+        col = col.child(
+            div()
+                .mt_2()
+                .p_2()
+                .rounded_md()
+                .border_1()
+                .border_color(theme::border())
+                .bg(theme::panel())
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(theme::muted())
+                        .child(panel.seeded_note()),
                 ),
         );
         col
