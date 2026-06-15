@@ -55,6 +55,7 @@ pub mod cipherclerk;
 pub mod deos_app;
 pub mod discovery;
 pub mod dispute;
+pub mod dreggverse_map;
 pub mod fee_policy;
 pub mod fields;
 pub mod hex;
