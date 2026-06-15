@@ -563,6 +563,33 @@ within that, stage with an internal route until the cutover.
   fails), or the seed change regresses the synthetic path.
 
 ### Phase 4 — CUTOVER: wire the chained path live (the flag-day; v1 fallback goes dormant)
+
+> **STATUS — LANDED (verified against HEAD).** The live cutover is committed: the node builds the
+> chained rotation witness on ALL THREE finalized-turn arms (`blocklace_sync.rs` capability `:2643`,
+> self-sovereign `:2702`, freshness internal `:2680`), `prove_full_turn` routes EVERY rotation
+> witness through `prove_cohort_run_chain` (`full_turn_proof.rs:1403`), and the chained verifier
+> (collect `:1939` + endpoint `:1977/:1984` + adjacency `:1994` = `chain_adjacency` anti-ghost) gates
+> acceptance. The lifted gates (`turn_proving.rs`) are representability (`:362-366`/`:463-468`) + the
+> heterogeneous-admitting `all_cohort` (`:390-396`/`:492-498`), NOT the old homogeneous/synthetic
+> gates. **Green evidence:** `dregg-sdk --features recursion full_turn_proof::tests` = 23 ok
+> (incl. `path_preserve_chain_equals_monolithic_and_verifies`, `..tampered_middle_leg_is_rejected`,
+> `..conservation_sums_across_the_chain`/`..wrong_net_is_rejected`); `dregg-node --bin dregg-node
+> turn_proving::tests` = 27 ok (incl. `flow_b_heterogeneous_turn_proves_rotated_chain` ≥2 legs +
+> zero v1, `flow_b_non_synthetic_cell_proves_rotated`, `flow_b_heterogeneous_chain_tampered_leg_is_rejected`).
+> **Coverage verdict:** the only reachable live shapes hitting `rotation: None` (→ v1) are the
+> genuine non-rotatables — empty/NoOp actor projection (Shape 3, cross-cell SetField) and the
+> multi-spend note turn (the rotated note-spend descriptor covers exactly one spend); both are
+> *cannot-rotate*, not coverage holes. **GAP A (agent absent at the `:2450` pre-cell capture →
+> `full_turn_pre_cell == None` → v1) is VACUOUS:** an absent-agent turn cannot COMMIT — both
+> producers hard-reject at admission upstream of the `Committed` arm (Rust `turn/src/executor/execute.rs:301-308`
+> `CellNotFound`; Lean `metatheory/.../Admission.lean:114` AgentLive + the `admissible_rejects_no_agent`
+> theorem `:202`), so the proving block never runs on it. **Guarded invariant (record, don't assume):**
+> this totality rests on agent-existence being upstream of commit in BOTH producers; a future
+> auto-create-agent / genesis-faucet shape where `turn.agent` is the newly-minted cell would FLIP
+> GAP A to real — so any such change must re-open this sweep. The bearer-delegation case (holder ≠
+> actor) is an **AUTHORITY-leg residual, NOT a rotation gap** — such a turn rotates fine but carries
+> no cap-membership leg (the delegator's pre-state cap root is uncaptured); orthogonal to C7.
+
 - **Do:** in `blocklace_sync.rs:2637-2720`, BUILD the chained rotation witness (instead of `None`)
   for heterogeneous + non-synthetic turns, so the LIVE node emits N rotated legs and the chained
   verifier gates acceptance. After this, **`rotation: None` is reached only for turns that genuinely
