@@ -1,0 +1,38 @@
+# persist-hosttest — the EXECUTABLE host witness for the persist-PD's durable
+# verified commit-log + the Tier-C chain gate (`commit_store.rs`).
+#
+# WHY A SEPARATE CRATE (same rationale as ../crypto-floor-hosttest). The persist PD
+# is a `no_std` Microkit ELF; its load-bearing artifact runs on aarch64 under
+# `qemu-system-aarch64` in the 5-PD assembly (sel4/dregg.system). On a macOS host
+# there is no user-mode `qemu-aarch64` to run a PD's logic in isolation, and the
+# `no_std`+`alloc` store module cannot host a std `cargo test` harness in the PD
+# crate itself. So this sibling std crate INCLUDES the SAME `commit_store` module
+# the persist PD carries (via `#[path]` in src/main.rs) and exercises the identical
+# commit -> read -> chain-gate spine as a normal host binary + `#[test]` — a real,
+# runnable witness on this box: a verified turn commits durably, a read returns it,
+# and a non-chaining / out-of-order / replayed / colliding turn is gated.
+#
+# The `commit_store` module is `#![no_std]`-shaped (`extern crate alloc`); in this
+# std crate `extern crate alloc` aliases std's own alloc — one allocator, no dup
+# (the same trick ../crypto-floor-hosttest uses for the carried stark_core). When
+# the redb-over-block-cap backend lands (docs/SEL4-EMBEDDING.md §3), the persist PD
+# `#[path]`-includes commit_store.rs verbatim and swaps the BTreeMap for redb.
+#
+# Standalone workspace (empty [workspace]) so it builds with its own target dir,
+# swarm-safely, NOT a member of the sel4/dregg-pd workspace.
+[workspace]
+
+[package]
+name = "dregg-persist-hosttest"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "host_persist_spine"
+path = "src/main.rs"
+
+# No external dependencies: the commit-store discipline is pure Rust primitives
+# (`[u8; 32]`, `u64`, `Option`, `Result`, `alloc::collections::BTreeMap`) — exactly
+# what makes it portable into the `no_std` persist PD.
+[dependencies]

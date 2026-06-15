@@ -16,6 +16,17 @@ ember's framing: *some operating systems embed SQLite (fine); some embed Postgre
 query engine, RLS-caps, federation-via-replication, the verified write loop — as a
 **confined** seL4 component that **never enters the trusted base**.
 
+> **Companion (the OTHER surface).** This doc embeds the *literal* Postgres C
+> program as a confined component (the VMM-guest ladder, §3). Its companion,
+> `docs/PG-DREGG-ON-SEL4-DEOS-SPINE.md`, takes the dual view: pg-dregg's *model* is
+> "durable verified state" (reads-free / writes-verified / durable), and the seL4
+> world already realizes that discipline **natively** in the executor-PD / persist-PD
+> pair — the persist PD *is* the `dregg.turns` commit log of the seL4 deos
+> foundation, no Postgres port required. That doc ships a green host witness
+> (`sel4/persist-hosttest/`) for the executor→persist→read spine + the Tier-C chain
+> gate. The two docs are the two faces of "your node IS your postgres": a SQL face
+> (here) and the native PD-pair spine (there).
+
 ---
 
 ## 0. The thesis, in one paragraph
