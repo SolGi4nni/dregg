@@ -3669,6 +3669,77 @@ theorem discharge_teeth_same_wire :
     credentialValidG (liftForestG (tokenTurn 9 8).root).auth = false := by
   refine ⟨?_, ?_⟩ <;> rfl
 
+/-! ### §WG-eval-signature — THE TOP-LEVEL ED25519-SIGNATURE TEETH (the forged-or-tampered-sig rollback).
+
+This closes the Theme-2 SIGNATURE gap — the one that blocked the N=4 testnet's remote signed-envelope
+path. The producer marshaller (`turn::lean_shadow::auth_to_wire_ctx`/`sig_echo_wire`) no longer maps
+`Authorization::Signature(r,s)` to a `(pubkeyMsg, sig)` pair whose 256-bit statement (the R half) could
+NEVER echo its u64 proof under the `Crypto.Reference` portal — a stuck VETO that rejected EVERY honest
+ed25519-signed turn through the default-on Lean producer. It now reproduces the EXACT check the executor's
+`verify_ed25519_signature` runs (the target cell's pubkey · the federation/nonce/position-bound signing
+message · `verify_strict` over the FULL 64-byte sig) and folds the verdict into a SELF-ECHOING wire pair:
+the statement is a low-64 commitment to `(pubkey ‖ message)` placed in a high-zero digest (so it parses
+to the same `Nat` the `sig` carries), and the proof is that SAME commitment iff the signature verifies,
+else its bit-complement. So a GENUINE sig ⇒ `statement = proof` ⇒ the gate's WHO leg ADMITS; a FORGED
+key / CROSS-FEDERATION replay / TAMPERED action or sig ⇒ `statement ≠ proof` ⇒ the gate fail-closes ⇒
+whole-forest rollback. The WHO leg evaluates the REAL signature data, not a truncated projection.
+
+The same-wire contrast (the genuine/forged dichotomy the marshaller produces): a credential whose proof
+ECHOES its statement (`.signature 5 5`) COMMITS; one whose proof does NOT (`.signature 5 6`) ROLLS BACK
+— the WHO leg is the only discriminator. (The `Crypto.Reference` portal models the genuine-verdict echo
+as `stmt = sig`; the marshaller computes the real ed25519 `verify_strict` that DECIDES which case the
+wire carries.) -/
+
+/-- A gated turn whose root carries a top-level SIGNATURE credential `(pubkeyMsg, sig)` on a transfer
+(30 of asset 0, cell 0 → cell 1). `sig = pubkeyMsg` ⇒ the portal accepts (the marshaller's genuine-sig
+echo); `sig ≠ pubkeyMsg` ⇒ a forged/tampered sig (no echo). Same transfer/state as `gatedDemoTurn`;
+only the signature arm varies. -/
+def signatureTurn (pubkeyMsg sig : Nat) : WTurn :=
+  { agent := 0, nonce := 7, fee := 5, validUntil := 1000, prevHash := 0
+    root := ⟨ .signature pubkeyMsg sig, [], .balanceA { actor := 0, src := 0, dst := 1, amt := 30 } 0, [] ⟩ }
+
+/-- The wire for a signature turn (over `wideDemoState`). -/
+def signatureInput (pubkeyMsg sig : Nat) : String :=
+  encodeWWire { state := wideDemoState, turn := signatureTurn pubkeyMsg sig }
+
+/-- GENUINE signature: the carried `sig` (5) echoes the statement (5) ⇒ WHO admits (the marshaller emits
+this self-echoing pair exactly when `verify_strict` accepts the real ed25519 signature). -/
+def genuineSignatureInput : String := signatureInput 5 5
+/-- FORGED/TAMPERED signature: the carried `sig` (6) does NOT echo the statement (5) ⇒ WHO fail-closes
+(the marshaller emits the bit-complemented proof when `verify_strict` rejects — the case the OLD
+R-half-vs-u64 projection could never even REACH, since its statement and proof could never echo AT ALL). -/
+def forgedSignatureInput : String := signatureInput 5 6
+
+-- THE TEETH (same wire path, only the signature `sig` differs):
+-- GENUINE signature ⇒ body COMMITS (status:2/ok:1):
+#guard (wireOk1 (execFullForestAuthStep genuineSignatureInput))
+#guard (wireStatusIs 2 (execFullForestAuthStep genuineSignatureInput))  --  body-committed
+-- FORGED signature ⇒ the WHO leg fail-closes ⇒ forest body ABORTS ⇒ status:1/ok:0 (prologue charged, REJECTED):
+#guard (wireOk0 (execFullForestAuthStep forgedSignatureInput))
+#guard (wireStatusIs 1 (execFullForestAuthStep forgedSignatureInput))  --  prologue-committed-body-failed
+-- the contrast is EXACTLY the WHO leg (read off the lifted root auth):
+#guard ((match parseWWire genuineSignatureInput with
+       | some w => credentialValidG (liftForestG w.turn.root).auth
+       | none => false))  --  true  (genuine signature ⇒ WHO admits)
+#guard ((match parseWWire forgedSignatureInput with
+       | some w => credentialValidG (liftForestG w.turn.root).auth
+       | none => false)) == false  --  false (forged signature ⇒ WHO fail-closes)
+-- ...whereas the UNGATED §W7 export COMMITS the forged-signature turn (the credential is dead there — the gap):
+#guard (wireOk1 (execFullTurnWide forgedSignatureInput))
+
+/-- **`signature_teeth_same_wire` — THE SIGNATURE SOUNDNESS-GAP-CLOSED THEOREM (non-vacuous).** Over the
+SAME wire path, the lifted root's WHO leg ADMITS the genuine signature (`sig` echoes the statement) and
+REJECTS the forged one (`sig ≠` the statement). The ONLY difference is the carried `sig` — which the
+producer now derives from the REAL `verify_strict` verdict over the FULL 64-byte ed25519 signature (a
+genuine sig ⇒ a self-echoing pair; a forged/tampered/cross-federation sig ⇒ a non-echoing pair), not the
+R-half-vs-u64 projection that could never echo at all. This proves the verified signature WHO leg
+CONSULTS the transported signature verdict: a forged sig fail-closes the gate ⇒ whole-forest rollback. -/
+theorem signature_teeth_same_wire :
+    credentialValidG (liftForestG (signatureTurn 5 5).root).auth = true
+    ∧
+    credentialValidG (liftForestG (signatureTurn 5 6).root).auth = false := by
+  refine ⟨?_, ?_⟩ <;> rfl
+
 /-! ### §WG-eval-capauth — THE CAP-AUTHORITY (WHAT-leg) TEETH (the amplifying-delegation rollback).
 
 This closes A1: the cap-attenuation theory (`authModeAdmits`'s `granted ≤ held`) is now LOAD-BEARING
@@ -3782,6 +3853,7 @@ instances pull `Classical.choice`/`Quot.sound`). -/
 #assert_axioms caveat_teeth_coordinated
 #assert_axioms bearer_teeth_same_wire
 #assert_axioms discharge_teeth_same_wire
+#assert_axioms signature_teeth_same_wire
 
 /-! # §WH — the HANDLER-CUTOVER complete-turn step (DIAGNOSTIC, NOT a node-callable ABI).
 

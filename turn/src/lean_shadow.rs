@@ -90,6 +90,14 @@ pub struct ShadowHostCtx {
     /// the cap-fidelity reconstitution (`lean_apply::collect_cap_ops`) needs the SAME value to
     /// rebuild the introduced cap's leaf byte-exactly. Defaults to the executor default (1000).
     pub intro_lifetime: u64,
+    /// The executor's local federation id (`self.local_federation_id`). The `Authorization::Signature`
+    /// WHO leg binds the ed25519 signing message to THIS federation
+    /// (`compute_signing_message`/`compute_partial_signing_message`), so the producer marshaller must
+    /// recompute the SAME message the executor's `verify_ed25519_signature` checks. A genuine sig is
+    /// then folded into the wire as a self-echoing `(statement, proof)` pair (admits); a forged /
+    /// cross-federation / tampered one fails the recomputed `verify_strict` and the wire DOES NOT echo
+    /// (the gate's WHO leg fail-closes). Defaults to the all-zero id (the test/round-trip federation).
+    pub federation_id: [u8; 32],
 }
 
 impl ShadowHostCtx {
@@ -102,6 +110,7 @@ impl ShadowHostCtx {
             stored_head: None,
             budget: 1_000_000_000,
             intro_lifetime: 1000,
+            federation_id: [0u8; 32],
         }
     }
 }
@@ -1259,7 +1268,7 @@ fn run_shadow(turn: &Turn, pre: &ShadowPreLedger, host: &ShadowHostCtx) -> Resul
 
     let block_height = host.block_height;
     let wire_state = ledger_to_wire_state(pre)?;
-    let wire_turn = turn_to_wire_turn(turn, pre, block_height)?;
+    let wire_turn = turn_to_wire_turn(turn, pre, host)?;
     // boundary-P1 (bug 1): the admission context is HOST/NODE-fed, NOT taken from the turn. The
     // executor supplies its OWN clock / freeze-set / stored chain-head / budget via `ShadowHostCtx`
     // (the agent cannot set its own). The turn's claimed `valid_until` / `prev` cross IN the turn
@@ -1316,7 +1325,7 @@ pub(crate) fn run_shadow_state(
 
     let block_height = host.block_height;
     let wire_state = ledger_to_wire_state(pre)?;
-    let wire_turn = turn_to_wire_turn(turn, pre, block_height)?;
+    let wire_turn = turn_to_wire_turn(turn, pre, host)?;
     let frozen_nats: Vec<u64> = host
         .frozen
         .iter()
@@ -1468,9 +1477,11 @@ fn id_map_lookup(pre: &ShadowPreLedger, c: &CellId) -> Option<u64> {
 fn turn_to_wire_turn(
     turn: &Turn,
     pre: &ShadowPreLedger,
-    block_height: u64,
+    host: &ShadowHostCtx,
 ) -> Result<dregg_lean_ffi::marshal::WireTurn, String> {
     use dregg_lean_ffi::marshal::{Cap, WChild, WireTurn};
+
+    let block_height = host.block_height;
 
     let agent = *pre
         .id_map
@@ -1482,9 +1493,18 @@ fn turn_to_wire_turn(
         .and_then(|v| u64::try_from(v).ok())
         .ok_or_else(|| "shadow: turn.valid_until required for wire marshal".to_string())?;
 
+    // The previous-receipt hash crosses as the SAME low-64 projection the host's `stored_head` uses
+    // (`bytes32_to_nat`), so the verified `admissible` ChainHead leg (`h.prevReceipt = ctx.storedHead`)
+    // compares like-for-like. `stored_head` is plumbed as a `u64` (the `WireHostCtx`/`AdmCtx` width), so
+    // marshalling `prev` as a FULL 256-bit digest (the old `digest_of`) made `h.prevReceipt` (full Nat)
+    // never equal `ctx.storedHead` (low-64) for ANY non-genesis receipt — rejecting every turn that
+    // links to a real prior receipt (`status:0`). Folded the same way, a genesis `None` → `0` =
+    // `genesisSentinel` (the prologue's `prevReceiptOf` maps it to `none`), and a real prev echoes the
+    // host head. (Both sides truncate identically; the full collision-resistance of the head is the
+    // §8 circuit's job, not this admission-bit projection.)
     let prev_hash = turn
         .previous_receipt_hash
-        .map(digest_of)
+        .map(|h| dregg_lean_ffi::marshal::Digest::from_u64(bytes32_to_nat(&h)))
         .unwrap_or_default();
 
     // Build the WHOLE call-FOREST recursively, preserving the tree's delegation EDGES (no longer
@@ -1499,15 +1519,24 @@ fn turn_to_wire_turn(
     // REAL `CallTree` child edges are reconstructed (`tree_to_wforest`), so the parent→child cap
     // handoff the verified gate enforces is no longer lost.
     let mut fresh_seq: u64 = 0;
-    let mut roots = turn.call_forest.roots.iter();
-    let first = roots
+    // The signing-message context the `Authorization::Signature` WHO leg binds to: the federation id
+    // (cross-federation replay defense) and the turn nonce (within-federation replay defense) the
+    // executor's `verify_ed25519_signature` consumes. `position` is the per-ROOT index in the forest
+    // (`compute_partial_signing_message`'s placement binding — `verify_ed25519_signature` reads it as
+    // `path.first()`), so each root tree carries its own position; every node within a tree shares it.
+    let sig_ctx = SigCtx {
+        federation_id: host.federation_id,
+        turn_nonce: turn.nonce,
+    };
+    let mut roots = turn.call_forest.roots.iter().enumerate();
+    let (_, first) = roots
         .next()
         .ok_or_else(|| "shadow: empty call forest".to_string())?;
-    let mut root = tree_to_wforest(first, pre, &mut fresh_seq, &turn.agent)
+    let mut root = tree_to_wforest(first, pre, &mut fresh_seq, &turn.agent, &sig_ctx, 0)
         .ok_or_else(|| "shadow: forest not fully marshallable".to_string())?;
     // Subsequent forest roots: null-cap sibling subtrees of the wire root (sequential, own authority).
-    for sibling in roots {
-        let sib = tree_to_wforest(sibling, pre, &mut fresh_seq, &turn.agent)
+    for (position, sibling) in roots {
+        let sib = tree_to_wforest(sibling, pre, &mut fresh_seq, &turn.agent, &sig_ctx, position)
             .ok_or_else(|| "shadow: forest not fully marshallable".to_string())?;
         root.children.push(WChild {
             holder: agent,
@@ -1569,11 +1598,24 @@ fn tree_to_wforest(
     pre: &ShadowPreLedger,
     fresh_seq: &mut u64,
     agent: &CellId,
+    sig_ctx: &SigCtx,
+    position: usize,
 ) -> Option<dregg_lean_ffi::marshal::WForest> {
     use dregg_lean_ffi::marshal::{Cap, WChild, WForest};
 
     let actor = *pre.id_map.get(&tree.action.target)?;
-    let wire_auth = auth_to_wire(&tree.action.authorization);
+    // The `Authorization::Signature` WHO leg is realized against the REAL ed25519 check the executor
+    // runs (`verify_ed25519_signature`: the TARGET cell's pubkey, the federation/nonce/position-bound
+    // signing message, the full 64-byte sig). `auth_to_wire_ctx` folds that verdict into a self-echoing
+    // wire `(statement, proof)` for a genuine sig and a NON-echoing pair for a forged/tampered one.
+    let target_cell = pre.cells.get(&tree.action.target);
+    let wire_auth = auth_to_wire_ctx(
+        &tree.action.authorization,
+        &tree.action,
+        target_cell,
+        sig_ctx,
+        position,
+    );
     let caveats = action_caveats(&tree.action, actor);
 
     // The action's effects → this node's action + intra-action `null`-cap sequencing children.
@@ -1607,7 +1649,9 @@ fn tree_to_wforest(
             return None;
         }
         let holder = *pre.id_map.get(&child.action.target)?;
-        let sub = tree_to_wforest(child, pre, fresh_seq, agent)?;
+        // Children inherit their root tree's `position` (the executor reads `path.first()` — the ROOT
+        // index — for EVERY node in the tree, so a child's signing message uses the same placement).
+        let sub = tree_to_wforest(child, pre, fresh_seq, agent, sig_ctx, position)?;
         // Same-cell / bearer: the subtree runs directly under its own credential (no cap handoff).
         children.push(WChild {
             holder,
@@ -1673,13 +1717,158 @@ fn action_caveats(
 // AUTH — carry the credential WHO-leg in FULL (no zeroed digests).
 // ===================================================================
 
+/// The signing-message context the `Authorization::Signature` WHO leg binds to (mirrors the inputs
+/// `TurnExecutor::verify_ed25519_signature` consumes beyond the action itself): the local federation
+/// id and the turn nonce. `position` (the per-root forest index) is threaded separately because it is
+/// per-node, not per-turn.
+#[cfg(not(feature = "no-lean-link"))]
+pub(crate) struct SigCtx {
+    pub(crate) federation_id: [u8; 32],
+    pub(crate) turn_nonce: u64,
+}
+
+/// Marshal an `Authorization` to the wire WHO-leg WITH the per-node context the `Signature` arm needs
+/// to reproduce the executor's real ed25519 check. Every non-`Signature` arm is identical to
+/// [`auth_to_wire`]; the `Signature` arm is realized by [`sig_echo_wire`] (the REAL `verify_strict`
+/// against the target cell's pubkey over the federation/nonce/position-bound signing message, folded
+/// into a self-echoing wire pair for a genuine sig and a non-echoing one for a forged/tampered sig).
+///
+/// `target_cell` is the action's target cell (the holder of the verifying pubkey
+/// `verify_ed25519_signature` reads). When it is absent (cell not in the pre-snapshot) the signature
+/// CANNOT be verified, so the wire fails closed (a non-echoing pair ⇒ the gate's WHO leg rejects) —
+/// never an admit-by-construction.
+#[cfg(not(feature = "no-lean-link"))]
+fn auth_to_wire_ctx(
+    auth: &Authorization,
+    action: &crate::action::Action,
+    target_cell: Option<&Cell>,
+    sig_ctx: &SigCtx,
+    position: usize,
+) -> dregg_lean_ffi::marshal::WireAuth {
+    match auth {
+        Authorization::Signature(r, s) => sig_echo_wire(action, target_cell, r, s, sig_ctx, position),
+        // `OneOf` may carry a `Signature` candidate: recurse with the SAME node context so a nested
+        // signature is realized against the real check too (the chosen-slot verdict still gates).
+        Authorization::OneOf {
+            candidates,
+            proof_index,
+        } => dregg_lean_ffi::marshal::WireAuth::OneOf {
+            candidates: candidates
+                .iter()
+                .map(|c| auth_to_wire_ctx(c, action, target_cell, sig_ctx, position))
+                .collect(),
+            proof_index: *proof_index as u64,
+        },
+        // Every other arm is context-free (its WHO data is self-contained in the credential).
+        other => auth_to_wire(other),
+    }
+}
+
+/// Realize an `Authorization::Signature(r, s)` WHO leg as a self-echoing wire `(statement, proof)`
+/// pair under the `Crypto.Reference` portal oracle (`verify stmt proof = (stmt == proof)`), driven by
+/// the EXECUTOR'S OWN ed25519 check.
+///
+/// `verify_ed25519_signature` admits iff `VerifyingKey::from_bytes(target.public_key())
+/// .verify_strict(message, r‖s)` succeeds, where `message` is the federation/nonce/position-bound
+/// signing message (`compute_signing_message` for `Full`, `compute_partial_signing_message` for
+/// `Partial`). We recompute EXACTLY that verdict here, then encode:
+///
+///   * `statement` (the wire `pubkey` digest) = a tamper-sensitive commitment to the
+///     `(pubkey ‖ message)` IDENTITY of this signed node, narrowed to the low 64 bits and placed in a
+///     digest whose high 24 bytes are zero — so it parses to the SAME `Nat` the `sig` `u64` carries
+///     (the kernel's `Crypto.Reference` portal compares the FULL Nats; a 256-bit statement could
+///     never equal a 64-bit proof — the exact stuck-veto bug this closes).
+///   * `proof` (the wire `sig` `u64`) = that same low-64 commitment IFF the signature verifies, else
+///     its bit-complement (guaranteed ≠ the statement).
+///
+/// So a GENUINE signature ⇒ `stmt == proof` ⇒ the gate's WHO leg ADMITS; a FORGED key, a
+/// CROSS-FEDERATION replay (different `federation_id`), or a TAMPERED action/sig (the recomputed
+/// `message` no longer matches what was signed, or `verify_strict` fails) ⇒ `stmt ≠ proof` ⇒ the gate
+/// fail-closes ⇒ whole-forest rollback. The verdict is the REAL ed25519 check over the FULL signature,
+/// not a truncated projection.
+#[cfg(not(feature = "no-lean-link"))]
+fn sig_echo_wire(
+    action: &crate::action::Action,
+    target_cell: Option<&Cell>,
+    r: &[u8; 32],
+    s: &[u8; 32],
+    sig_ctx: &SigCtx,
+    position: usize,
+) -> dregg_lean_ffi::marshal::WireAuth {
+    use crate::action::CommitmentMode;
+    use dregg_lean_ffi::marshal::{Digest, WireAuth};
+
+    // Recompute the EXACT signing message the executor's `verify_ed25519_signature` checks.
+    let message = match action.commitment_mode {
+        CommitmentMode::Partial => crate::executor::TurnExecutor::compute_partial_signing_message(
+            action,
+            position,
+            &sig_ctx.federation_id,
+            sig_ctx.turn_nonce,
+        ),
+        CommitmentMode::Full => {
+            crate::executor::TurnExecutor::compute_signing_message(action, &sig_ctx.federation_id)
+        }
+    };
+
+    let mut sig_bytes = [0u8; 64];
+    sig_bytes[..32].copy_from_slice(r);
+    sig_bytes[32..].copy_from_slice(s);
+
+    // The REAL ed25519 verdict: the target cell's pubkey must be a valid point AND `verify_strict`
+    // (rejects malleable / non-canonical R,S — same as the executor) must accept the FULL signature.
+    let verdict = match target_cell {
+        Some(cell) => match ed25519_dalek::VerifyingKey::from_bytes(cell.public_key()) {
+            Ok(vk) => {
+                let signature = ed25519_dalek::Signature::from_bytes(&sig_bytes);
+                vk.verify_strict(&message, &signature).is_ok()
+            }
+            Err(_) => false,
+        },
+        None => false, // cell absent ⇒ cannot verify ⇒ fail-closed (non-echoing pair below).
+    };
+
+    // The IDENTITY commitment: bind the verifying pubkey + the (federation/nonce/position-bound)
+    // signing message into one 32-byte digest, then narrow to the low 64 bits. Tamper-sensitive (any
+    // change to the cell pubkey or the action/federation/nonce/position changes the message ⇒ a
+    // different commitment) AND 64-bit-narrow (so the digest-statement and the u64-proof can coincide).
+    let pk_bytes = target_cell
+        .map(|c| *c.public_key())
+        .unwrap_or([0u8; 32]);
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-lean-shadow-sig-bind-v1");
+    hasher.update(&pk_bytes);
+    hasher.update(&message);
+    let commit = *hasher.finalize().as_bytes();
+    let low = bytes32_to_nat(&commit); // low 64 bits (big-endian) — the echo width.
+
+    // Place the low-64 commitment in a digest whose high 24 bytes are zero, so `parseHex32` yields
+    // exactly `low` as the statement `Nat` (matching the `sig` `u64` width the proof carries).
+    let mut stmt_digest = [0u8; 32];
+    stmt_digest[24..32].copy_from_slice(&low.to_be_bytes());
+
+    // Genuine ⇒ proof echoes the statement (admit); forged/tampered ⇒ bit-complement (≠ ⇒ veto).
+    let proof = if verdict { low } else { !low };
+
+    WireAuth::Signature {
+        pubkey: Digest::from_bytes(stmt_digest),
+        sig: proof,
+    }
+}
+
 #[cfg(not(feature = "no-lean-link"))]
 fn auth_to_wire(auth: &Authorization) -> dregg_lean_ffi::marshal::WireAuth {
     use dregg_lean_ffi::marshal::{Digest, WireAuth};
     match auth {
-        Authorization::Signature(pk, sig) => WireAuth::Signature {
-            pubkey: digest_from_halves(pk, sig),
-            sig: bytes32_to_nat(sig),
+        // Context-free FAIL-CLOSED fallback: a `Signature` reaching this path has NO target cell /
+        // signing message, so its ed25519 validity CANNOT be decided (the real verdict needs the
+        // verifying pubkey + the federation/nonce/position-bound message — see `sig_echo_wire`). Every
+        // verdict-path Signature is routed through `auth_to_wire_ctx` → `sig_echo_wire`; this arm is
+        // reached only by a contextless caller (e.g. a unit test), where admitting would be unsound. So
+        // emit a NON-echoing pair (a `1` statement vs a `0` proof) ⇒ `portalVerify .signature 1 0 =
+        // (1 == 0) = false` ⇒ the gate's WHO leg fail-closes (the §8 no-credential anchor).
+        Authorization::Signature(_, _) => WireAuth::Signature {
+            pubkey: Digest::from_u64(1),
+            sig: 0,
         },
         // dregg1's `Unchecked` means "no signature presented; authority is decided by the
         // c-list / ownership, NOT a credential" — apply.rs admits it when the cell's
@@ -1824,18 +2013,6 @@ fn predicate_proof_nat(p: &dregg_cell::predicate::WitnessedPredicate) -> u64 {
 }
 
 // ---- digest / nat helpers ----
-
-#[cfg(not(feature = "no-lean-link"))]
-fn digest_of(hash: [u8; 32]) -> dregg_lean_ffi::marshal::Digest {
-    dregg_lean_ffi::marshal::Digest::from_bytes(hash)
-}
-
-/// A signature is two 32-byte halves; the "pubkey/message" digest the wire carries for the
-/// `Signature` arm is the R half (the first 32 bytes), preserved in full.
-#[cfg(not(feature = "no-lean-link"))]
-fn digest_from_halves(r: &[u8; 32], _s: &[u8; 32]) -> dregg_lean_ffi::marshal::Digest {
-    dregg_lean_ffi::marshal::Digest::from_bytes(*r)
-}
 
 #[cfg(not(feature = "no-lean-link"))]
 fn blake3_of(bytes: &[u8]) -> [u8; 32] {
