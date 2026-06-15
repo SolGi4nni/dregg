@@ -49,6 +49,8 @@ from typing import TYPE_CHECKING, Any, Optional, Sequence, Union
 if TYPE_CHECKING:  # pragma: no cover - typing only
     import psycopg
 
+    from .pg_workflow import DurableWorkflow, RunReport
+
 __all__ = [
     "DreggPgError",
     "Pg",
@@ -677,6 +679,38 @@ class Pg:
         except Exception as exc:
             raise _wrap_pg_error(exc, "dregg_install_write_outbox") from exc
 
+    # ── durable verified workflows (each step a verified turn, exactly-once) ──
+    def durable_workflow(
+        self, name: str, *, workflow_id: Optional[str] = None
+    ) -> "DurableWorkflow":
+        """Open a :class:`~dregg.pg_workflow.DurableWorkflow` — an ordered, named
+        sequence of verified turns driven durably through this pg-dregg
+        connection. Each step is a signed turn enqueued into ``dregg.submit_queue``
+        (RLS-gated), applied by the node drainer through the verified executor,
+        and the runner drives it to a terminal outcome with **exactly-once across
+        crashes** (resume reconciles against the persisted audit rows). The Python
+        face of ``pg_dregg::workflow`` — see ``examples/pg_durable_workflow.py``.
+
+            wf = pg.durable_workflow("monthly-billing")
+            wf.step("charge alice", alice_cell, alice_turn_bytes)
+            report = wf.run(pg)          # or wf.resume(pg) after a crash
+        """
+        from .pg_workflow import DurableWorkflow
+
+        return DurableWorkflow(name, workflow_id=workflow_id)
+
+    def run_durable(self, workflow: "DurableWorkflow", **kwargs: Any) -> "RunReport":
+        """Run a :class:`~dregg.pg_workflow.DurableWorkflow` from the start against
+        this connection (a fresh run). Convenience for ``workflow.run(self,
+        **kwargs)``."""
+        return workflow.run(self, **kwargs)
+
+    def resume_durable(self, workflow: "DurableWorkflow", **kwargs: Any) -> "RunReport":
+        """Resume a :class:`~dregg.pg_workflow.DurableWorkflow` after a crash —
+        reconcile against what already committed and re-drive only the uncommitted
+        tail (exactly-once). Convenience for ``workflow.resume(self, **kwargs)``."""
+        return workflow.resume(self, **kwargs)
+
     def __repr__(self) -> str:  # pragma: no cover - cosmetic
         info = getattr(self._conn, "info", None)
         target = ""
@@ -724,3 +758,32 @@ def _wrap_pg_error(exc: Exception, what: str) -> DreggPgError:
             f"(CREATE EXTENSION pg_dregg; SELECT dregg_install_schema();). [{msg}]"
         )
     return DreggPgError(f"{what}: {msg}")
+
+
+# ─────────── re-export the durable-workflow surface under dregg.pg ───────────
+# So a user reaches the whole pg-dregg-native surface from one import:
+#   from dregg import pg
+#   wf = pg.DurableWorkflow("billing"); wf.step(...); wf.run(conn)
+# The module is imported at the bottom (after Pg is defined) to avoid a cycle —
+# pg_workflow imports Pg only under TYPE_CHECKING.
+from .pg_workflow import (  # noqa: E402
+    DurableWorkflow,
+    LocalDrainer,
+    RunReport,
+    StepOutcome,
+    StepRefused,
+    StepStatus,
+    WorkflowError,
+    WorkflowStep,
+)
+
+__all__ += [
+    "DurableWorkflow",
+    "WorkflowStep",
+    "StepStatus",
+    "StepOutcome",
+    "RunReport",
+    "WorkflowError",
+    "StepRefused",
+    "LocalDrainer",
+]

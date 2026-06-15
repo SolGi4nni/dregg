@@ -88,6 +88,67 @@ Python is audited by the exact same code as `dregg-deploy check`. An
 over-granting deployment FAILs with the located amplification; an unknown row
 raises `DreggError` naming it.
 
+## pg-dregg-native — drive pg-dregg from Python (`dregg.pg`)
+
+`dregg.pg` is a thin, well-typed `psycopg`-based binding of the **real** pg-dregg
+SQL surface (`docs/PG-DREGG.md`): a Python user connects to a pg-dregg-enabled
+PostgreSQL and lets pg-dregg enforce. The model is the spine — **reads are free
+SQL; state mutates only through verified turns** — so the surface falls into
+exactly that shape. `psycopg` is imported lazily; install it with
+`pip install 'dregg[pg]'`.
+
+```python
+from dregg import pg
+
+with pg.connect("host=/var/run/postgresql dbname=dregg", token=my_dga1_token) as db:
+    # (b) cap-gated reads — only the cells the presented token admits 'read' on.
+    for c in db.cell_balances():            # free SQL over dregg.cell_balances, RLS-gated
+        print(c.cell, c.balance)
+    head = db.chain_head()                  # the receipt hash chain (anti-substitution tooth)
+
+    # (c) a verified write — submit a signed turn through the spine (RLS-gated to
+    #     the agents the token admits 'submit' on); the node drains it.
+    sid = db.submit_turn(signed_turn_bytes, agent_cell)
+    print(db.submission(sid).status)        # pending → executed | refused
+```
+
+### (a) Durable verified workflows (`dregg.pg.DurableWorkflow`)
+
+An ordered, named sequence of verified turns, driven durably — **each step a
+verified turn, exactly-once across crashes**. The Python face of
+`pg_dregg::workflow` (`pg-dregg/examples/subscription_billing.rs` is the
+behavioral reference), realized over the **persisted** `dregg.submit_queue` rows
+(durability that survives a crash lives in the committed rows, which only the SQL
+path reaches):
+
+```python
+wf = (db.durable_workflow("monthly-billing")
+        .step("charge alice", alice_cell, alice_turn_bytes)
+        .step("charge bob",   bob_cell,   bob_turn_bytes))
+report = wf.run(db)            # enqueue each (durable), drive to executed | refused
+# …process crashes, restarts…
+report = wf.resume(db)         # reconciles the persisted queue: skips alice (already
+                               # committed), re-drives only the uncommitted tail
+print(report.committed, report.skipped)
+```
+
+Exactly-once is dual-enforced (the same as the Rust `resume_durable`): a committed
+step is skipped by reconciliation (the fast path), and even a stale re-submit is
+refused by the node's chain tooth (the backstop). A cancelled subscription is a
+`dregg_revoke` — the next charge is refused on the very next turn (instant
+revocation, consulted by the `submit_gate` RLS).
+
+**Honest seam.** The durable enqueue, the `submit_gate` RLS, and the crash-resume
+reconciliation are **real and enforced by the database engine** (exercised against
+live pg18 in `tests/test_pg_workflow.py`). The transition that *executes* a queued
+turn (`pending → executed`) is the **node drainer's** job (it runs each turn
+through the real verified Lean executor; `docs/PG-DREGG.md` §11.4). Where no node
+runs, `dregg.pg.LocalDrainer` stands in for dev/tests — a `dregg_kernel`-role
+applicator that resolves the row (and faithfully re-checks revocation) but is NOT
+the verified executor. See `examples/pg_durable_workflow.py` for the full
+recurring-billing story (cap-gated, instant-revocation, crash-resume) against live
+pg-dregg.
+
 ## The kernel this module embeds
 
 The extension module links the **verified Lean kernel** (`metatheory/Dregg2`, via
