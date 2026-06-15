@@ -93,10 +93,13 @@ pg_test = []
 # "unattested", never "attested"). Turning `tier-c` ON wires the seam to the real,
 # Lean-FREE circuit verifier (§8.1; `dregg-circuit` with `--features verifier`/`recursion`,
 # NO executor/NO Lean). The remaining settle items (named in `src/attest.rs` + §10.2):
-# S1 = serialize `WholeChainProof`; S2 = node-side proof producer + `dregg.turn_proofs`;
-# S3 = the `dregg-circuit` dep itself (added here when S1 lands). Declared depless now so
-# the staged shape is explicit and the default build stays circuit-free.
-tier-c = []
+# S1 = serialize `WholeChainProof` (LANDED: `circuit::ivc_turn_chain::WholeChainProofBytes`
+# + `verify_turn_chain_recursive_from_parts`); S2 = node-side proof producer +
+# `dregg.turn_proofs`; S3 = the `dregg-circuit` dep itself (wired below). Pulls the
+# Lean-FREE circuit verifier (`--features recursion`: NO executor, NO Lean runtime — §8.1
+# authorizes the circuit link for Tier C) so `attest::verify_serialized_proof` becomes the
+# REAL `verify_turn_chain_recursive_from_parts` instead of the fail-closed stub.
+tier-c = ["dep:dregg-circuit"]
 # Tier D (docs/PG-DREGG.md §11) — the EXECUTOR-IN-POSTGRES endgame. Links the
 # verified Lean executor (`dregg-lean-ffi`) so the drainer's PRODUCE gate runs the
 # REAL `execFullForestG` SINGLE-THREADED, IN the backend process
@@ -127,6 +130,14 @@ dregg-auth = { path = "../dregg-auth" }
 # `FoldProducer` stand-in). On the cdylib (extension `.so` / pgrx) link, the runtime
 # must be linked SHARED (`DREGG_LEAN_LINK=shared`).
 dregg-lean-ffi = { path = "../dregg-lean-ffi", optional = true }
+# The whole-chain IVC verifier — OPTIONAL, pulled ONLY by `tier-c`. Built Lean-FREE
+# (the `recursion` feature pulls the plonky3 verify/recursion stack, NOT the executor
+# or the Lean runtime; §8.1). With it linked, `attest::verify_serialized_proof` decodes
+# the transport's proof blobs and runs `verify_turn_chain_recursive_from_parts` — the
+# real cryptographic teeth. The default `cargo test` core + the `pgNN` extension never
+# pull it (the SRF fails closed there). `cargo tree -i dregg-circuit -p dregg-auth` stays
+# empty — this is the ONLY pg-dregg edge to the circuit, gated behind `tier-c`.
+dregg-circuit = { path = "../circuit", default-features = false, features = ["recursion"], optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # postcard backs the S1 whole-chain-proof transport (`attest::SerializedWholeChainProof`)
@@ -148,6 +159,31 @@ criterion = "0.5"
 # proptest backs the property/fuzz tests (`tests/proptest_*.rs`): the MirrorBatch
 # serde round-trip, the RootChain anti-substitution discipline, and authz.
 proptest = "1"
+# The TIER-C ADMIT TOOTH (`tests/tier_c_real_proof.rs`) produces a REAL whole-chain
+# IVC proof and routes it through `attest::verify_serialized_proof` to prove the
+# gate ACCEPTS a genuine proof (and REFUSES tampers) — the admit polarity the
+# default circuit-free `cargo test` cannot reach. These three crates compile ONLY
+# under `--features tier-c` (the test file is wholly `#[cfg(feature = "tier-c")]`),
+# so the default `cargo test` core/extension stays postgres- and circuit-free; they
+# are listed (not gated) because cargo dev-deps cannot be `optional`, but cargo
+# compiles them only when the `tier-c`-gated test target is actually built. Feature
+# choices mirror `wasm/Cargo.toml` (the proven light-client demo graph): cell with
+# default-features off, turn `no-lean-link` (NO `libdregg_lean` archive), circuit
+# `recursion` (the Lean-free plonky3 verify/prove stack). All resolve `p3-*` to the
+# SAME pinned fork rev `tier-c`'s `dregg-circuit` does (no fork `[patch]` here).
+dregg-circuit = { path = "../circuit", default-features = false, features = ["recursion"] }
+dregg-cell = { path = "../cell", default-features = false }
+# `recursion` MUST be ON here so it matches the unified `dregg-circuit` (which the
+# `tier-c` dep + the circuit dev-dep above put on `recursion`): with recursion ON
+# `dregg-turn` takes the ROTATED sovereign-verify path and never references
+# `dregg_circuit::EffectVmAir` (the v1 hand-AIR, exported only `cfg(not(recursion))`).
+# Mismatching them (turn recursion OFF, circuit recursion ON) breaks the legacy
+# `cfg(not(recursion))` block — the same unify the wasm light-client graph resolves
+# (`lightclient` forwards `dregg-turn/recursion`). `no-lean-link` keeps the Lean
+# archive out; `threshold-sig` stays off (the rotated mint does not need arkworks).
+dregg-turn = { path = "../turn", default-features = false, features = ["no-lean-link", "recursion"] }
+# postcard is already a normal dependency above; the test re-uses it to project a
+# `WholeChainProof` into the transport blobs (the documented S2 producer mapping).
 
 # The marketable throughput/latency numbers (docs/PG-DREGG-VS-DBOS.md): the
 # verified-write submit-decision path, the MirrorBatch chain-gate apply, the

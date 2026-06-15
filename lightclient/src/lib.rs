@@ -81,8 +81,8 @@
 
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::ivc_turn_chain::{
-    FinalizedTurn, RecursionVk, TurnChainError, WholeChainProof, prove_turn_chain_recursive,
-    verify_turn_chain_recursive,
+    FinalizedTurn, RecursionVk, TurnChainError, WholeChainProof, WholeChainProofBytes,
+    prove_turn_chain_recursive, verify_turn_chain_recursive, verify_whole_chain_proof_bytes,
 };
 
 /// The whole-history attestation a light client obtains from ONE verified aggregate — the Rust mirror
@@ -158,6 +158,35 @@ pub fn verify_history(
         final_root: agg.final_root,
         chain_digest: agg.chain_digest,
         num_turns: agg.num_turns,
+    })
+}
+
+/// **THE OVER-WIRE LIGHT-CLIENT CHECK** — verify an aggregate that arrived as a
+/// byte envelope ([`WholeChainProofBytes`]) against the client's trust anchor.
+///
+/// The exact dual of [`verify_history`] for the case where the verifier never held
+/// the in-memory [`WholeChainProof`] (a wallet/bridge/tab that fetched the proof
+/// from a node/relayer). It decodes the envelope and runs the SAME three teeth via
+/// [`verify_whole_chain_proof_bytes`] — the prover-only `root.1` is not in the
+/// envelope and is never needed. On success it returns the [`AttestedHistory`] read
+/// off the envelope's publics (which tooth 2 just verified against the binding
+/// proof). `expected_vk` is the client's configured anchor, NEVER read from the
+/// envelope (the envelope's claimed fingerprint is a discarded diagnostic).
+pub fn verify_history_bytes(
+    envelope_bytes: &[u8],
+    expected_vk: &RecursionVk,
+) -> Result<AttestedHistory, LightClientError> {
+    // Decode first so a malformed/wrong-version envelope yields its publics for the
+    // attestation only AFTER the cryptographic teeth pass.
+    let env = WholeChainProofBytes::from_postcard(envelope_bytes)
+        .map_err(LightClientError::AggregateInvalid)?;
+    verify_whole_chain_proof_bytes(envelope_bytes, expected_vk)
+        .map_err(LightClientError::AggregateInvalid)?;
+    Ok(AttestedHistory {
+        genesis_root: BabyBear::new(env.genesis_root),
+        final_root: BabyBear::new(env.final_root),
+        chain_digest: BabyBear::new(env.chain_digest),
+        num_turns: env.num_turns as usize,
     })
 }
 

@@ -1,17 +1,19 @@
-# gpui offscreen render — the real cockpit, no GPU (on glass, on seL4)
+# gpui offscreen render — the real renderer, no GPU (a cockpit-shaped Scene on glass, on seL4)
 
 The seL4 `qemu_virt_aarch64` machine has no GPU, so starbridge-v2's gpui (wgpu → Vulkan)
-cockpit cannot present to a window there. This is the path that renders it anyway —
+cockpit cannot present to a window there. This is the path that renders a gpui Scene anyway —
 **gpui → software Vulkan (lavapipe) → an offscreen texture → RGBA readback → the seL4
-compositor framebuffer** — so the real cockpit is a Mode inside the VM, beside the live
-image viewer.
+compositor framebuffer** — so a real gpui render is a Mode inside the VM, beside the live
+image viewer. (What renders today is a hand-built *cockpit-shaped* Scene through this exact
+renderer; swapping in the live `cockpit::Cockpit` element tree is the one named frontier — §below.)
 
-## LANDED — the real gpui cockpit is on the seL4 framebuffer (TAB to it)
+## LANDED — a real gpui render is on the seL4 framebuffer (cockpit-shaped; TAB to it)
 
 The weld is closed end-to-end. The deos-image PD (`sel4/dregg-pd/deos-image/`) now has
 **two live modes on one framebuffer**, switched with **TAB**:
 - `Mode::Image` — the Pharo/Smalltalk object browser of the six real deos cells.
-- `Mode::Cockpit` — the **real gpui-rendered starbridge-v2 cockpit**, blitted onto the
+- `Mode::Cockpit` — a **real gpui render of a starbridge-v2-cockpit-shaped Scene** (the
+  WORLD/SHELL/REFLECT layout, hand-built — see the frontier note below), blitted onto the
   ramfb framebuffer QEMU scans out (`src/cockpit_frame.rs`).
 
 The cockpit frame is rendered at the framebuffer's exact `800×600` by the **actual gpui
@@ -26,8 +28,8 @@ on glass.
 
 Reproduce + capture (both modes to PNG): `cd sel4 && make capture-image-modes` — boots
 headless, screendumps the live image, `send-key TAB` over QMP, screendumps the cockpit.
-Evidence: `patches/cockpit-on-sel4-framebuffer.png` (the gpui cockpit, scanned out of seL4
-ramfb) + `patches/deos-image-on-sel4-framebuffer.png` (the cell browser, same boot) +
+Evidence: `patches/cockpit-on-sel4-framebuffer.png` (the cockpit-shaped gpui render, scanned
+out of seL4 ramfb) + `patches/deos-image-on-sel4-framebuffer.png` (the cell browser, same boot) +
 `patches/cockpit-render-800x600.png` (the persvati render). Serial confirms
 `ramfb CONFIGURED: addr=0x60600000 XRGB8888 800x600` then `-> MODE: the starbridge-v2 COCKPIT`.
 

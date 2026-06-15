@@ -71,9 +71,10 @@ pub mod durable;
 /// mandate is refused in the fire path.
 pub mod mcp;
 
+use crate::deos::orchestration_app;
 use dregg_app_framework::{
     Action, AppCipherclerk, AuthRequired, CapTarget, CapTemplate, CellId, CellMode, CellProgram,
-    ChildVkStrategy, ConstantsModule, Effect, EmbeddedExecutor, Event, FactoryDescriptor,
+    ChildVkStrategy, ConstantsModule, DeosApp, Effect, EmbeddedExecutor, Event, FactoryDescriptor,
     FieldElement, InspectorDescriptor, StarbridgeAppContext, StateConstraint, canonical_program_vk,
     field_from_u64, hex_encode_32, symbol,
 };
@@ -1043,6 +1044,51 @@ pub fn web_constants() -> ConstantsModule {
         .topic("BOARD_OPENED", "orchestration-board-opened")
 }
 
+/// **Seed the board cell** on the context's embedded ledger so the deos surface's gated
+/// `worker_step` bites: install the [`coordinator_program`] (the `AffineLe Σspend ≤ budget`
+/// policy the executor re-enforces on every touching turn) and set `EPOCH >= 1` + a real swarm
+/// `BUDGET` (so the `board_open_precondition` lights the button — the htmx tooth — and the budget
+/// gate is non-vacuous). The board cell is the agent's own cell ([`EmbeddedExecutor::cell_id`]),
+/// which is what [`crate::deos::orchestration_app`] fires its turns on. Mirrors
+/// `subscription::seed_feed` / the deos-surface test's `open_board`.
+///
+/// Returns the seeded swarm budget.
+pub fn seed_board(executor: &EmbeddedExecutor, budget: u64, lead: &str) -> u64 {
+    let board = executor.cell_id();
+    executor.install_program(board, coordinator_program());
+    executor.with_ledger_mut(|ledger| {
+        if let Some(cell) = ledger.get_mut(&board) {
+            cell.state.set_field(LEAD_SLOT as usize, identity_field(lead));
+            cell.state
+                .set_field(BUDGET_SLOT as usize, field_from_u64(budget));
+            cell.state.set_field(SPENT_A_SLOT as usize, field_from_u64(0));
+            cell.state.set_field(SPENT_B_SLOT as usize, field_from_u64(0));
+            // EPOCH >= 1 ⇒ the board is OPEN ⇒ the gated `worker_step` button lights.
+            cell.state
+                .set_field(EPOCH_SLOT as usize, field_from_u64(1));
+        }
+    });
+    budget
+}
+
+/// **Mount the deos-native surface** ([`crate::deos::orchestration_app`]) on a shared context: build
+/// the composed [`DeosApp`] from the context's cipherclerk + executor, seed the board cell's program
+/// + genesis state (so the gated `worker_step` fire bites — the budget gate is REAL on the born
+/// cell), and fold the app into the context's affordance registry ([`DeosApp::register`]). Returns
+/// the live [`DeosApp`] (so a host can also [`DeosApp::mount`] its axum router /
+/// [`DeosApp::publish_all`] into the web-of-cells).
+///
+/// This is the same fold every other deos starbridge-app does in its `register` — agent-orchestration
+/// was the lone app that registered only the factory + inspector and never mounted the composed
+/// surface. Seeds a 256-budget board led by `coordinator` so the gated `worker_step` has a live
+/// `(old, new)` and the executor's `AffineLe Σspend ≤ budget` policy is re-enforced on every step.
+pub fn register_deos(ctx: &StarbridgeAppContext) -> DeosApp {
+    let app = orchestration_app(ctx.cipherclerk(), ctx.executor());
+    seed_board(ctx.executor(), DEFAULT_CREATION_BUDGET, "coordinator");
+    app.register(ctx);
+    app
+}
+
 /// Register the agent-orchestration starbridge-app on a shared context.
 pub fn register(ctx: &StarbridgeAppContext) -> [u8; 32] {
     let factory_vk = ctx.register_factory(orchestration_factory_descriptor());
@@ -1066,6 +1112,13 @@ pub fn register(ctx: &StarbridgeAppContext) -> [u8; 32] {
             "methods": ["open_board", "worker_step"],
         }),
     });
+
+    // Mount the deos-native composition surface (the `DeosApp`) on the SAME context — the fold every
+    // other deos starbridge-app does. The factory + inspector are where SOUNDNESS lives (an
+    // over-budget / replayed worker step is a real executor refusal on the born board cell); the deos
+    // surface is the composition skin (per-viewer projection on the auditor ⊂ worker ⊂ coordinator
+    // ladder, the cap∧state gated `worker_step` fire, the `dregg://` publish, the manifest).
+    register_deos(ctx);
 
     factory_vk
 }

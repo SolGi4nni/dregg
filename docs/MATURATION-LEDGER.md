@@ -168,9 +168,18 @@ a lane on.
 
 ## THEME 5 — Surface completeness & SDK parity
 
-- **CLI `cap export` emits a literal placeholder** — `cli/src/commands/cap.rs:88,113`:
-  `placeholder-for-cli-export` / `dregg://local/…/placeholder-see-sdk-for-real-bearer`, printed
-  as "Exported." Capability handoff from the shell is broken. MATURE: plumb `captp_client::export_cap`. (~M)
+- **CLI `cap export` emits a real bearer capability** — `cli/src/commands/cap.rs` (RESOLVED): the
+  placeholders are gone. Export now builds a canonical, Ed25519-signed `BearerCapProof`
+  (`SignedDelegation` envelope) under the active identity, binds it to the node's federation id
+  (fetched from `/api/federations`, sim-`[0u8;32]` fallback when offline), verifies it against the
+  node (`POST /turns/bearer-auth`), and prints the portable proof plus the canonical
+  `dregg://<fed>/<cell>/<swiss>` sturdy ref (three base58 32-byte segments, captp `DreggUri` format).
+  The delegation message is replicated byte-for-byte from
+  `TurnExecutor::compute_bearer_delegation_message` and golden-vector-locked
+  (`9fe1805d…`), so the node's executor verifies the signature. TOOTH: `cargo test -p dregg-cli`
+  — a freshly-signed proof verifies (valid admits) and any tamper (target / permissions / bearer key
+  / expiry / federation id / signature bit / wrong signer) rejects (invalid rejects); the URI
+  round-trips with no placeholder markers.
 - **Predictable sturdyref nonce** — `sdk/src/names.rs:667` (`swiss: [0u8;32]`) — flagged by TWO
   scanners (surfaces + executor). A zero swiss is guessable/collides; the security of a sturdyref
   IS the unguessable swiss. MATURE: derive from CSRNG/HKDF(identity, cell, nonce). (~S) **[verify

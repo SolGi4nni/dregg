@@ -26,7 +26,7 @@ use dregg_app_framework::{
     FederationId, Interaction, InteractionLog, RehydrateError, Rehydration,
 };
 
-use starbridge_compartment_workflow_mandate::{seed_workflow, workflow_app};
+use starbridge_compartment_workflow_mandate::{charter_clearance_root, seed_workflow, workflow_app};
 
 fn agent() -> (AppCipherclerk, EmbeddedExecutor) {
     let cclerk = AppCipherclerk::new(AgentCipherclerk::new(), [0x3c; 32]);
@@ -34,9 +34,11 @@ fn agent() -> (AppCipherclerk, EmbeddedExecutor) {
     (cclerk, executor)
 }
 
-/// Seed a mandate with a small charter terminal (3 steps) and the genesis cursor 0.
+/// Seed a mandate with a small charter terminal (3 steps), genesis cursor 0, and the
+/// REAL charter clearance-graph root (so the operator's gated `advance_step` fire is a
+/// genuine committing turn — the executor's root-bound ClearanceDominates passes).
 fn seed(executor: &EmbeddedExecutor) -> u64 {
-    seed_workflow(executor, 42, 3, [0x11; 32], 5)
+    seed_workflow(executor, 42, 3, charter_clearance_root(), 5)
 }
 
 // =============================================================================

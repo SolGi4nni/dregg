@@ -175,7 +175,7 @@ workspace (`Cargo.toml` `exclude`).
 | Whether the circuit really verifies effect X | [`docs/rebuild/_CIRCUIT-ASSURANCE-PER-EFFECT.md`](rebuild/_CIRCUIT-ASSURANCE-PER-EFFECT.md) — the per-effect class (A/B/C/D) ledger. |
 | How finality works | `Dregg2/Distributed/BlocklaceFinality.lean` + [`guides/distributed.md`](guides/distributed.md). |
 | The crypto trust assumptions | [`docs/rebuild/_CRYPTO-HYPOTHESIS-LEDGER.md`](rebuild/_CRYPTO-HYPOTHESIS-LEDGER.md), `Dregg2/CryptoKernel.lean`. |
-| What's still open / not done | "What the `sorry`s mean" in [`README.md`](../README.md); `Dregg2/*/CircuitOpenFronts.lean`, `Exec/HandlerOpenFronts.lean`; [`docs/rebuild/DREGG2-GAP-MAP.md`](rebuild/DREGG2-GAP-MAP.md). |
+| What's still open / not done | "What the `sorry`s mean" in [`README.md`](../README.md); `Dregg2/*/CircuitOpenFronts.lean`, `Exec/HandlerOpenFronts.lean`; [`docs/rebuild/_EXECUTOR-COMPLETENESS-GAPMAP.md`](rebuild/_EXECUTOR-COMPLETENESS-GAPMAP.md) (distance from `execFullForestG` to full execution) and [`docs/rebuild/_SWAP-COMPLETE-STATUS.md`](rebuild/_SWAP-COMPLETE-STATUS.md) (the Lean-producer boundary). |
 | The honesty / axiom-clean artifact | `Dregg2/Claims.lean` (`lake env lean Dregg2/Claims.lean`). |
 | Threat model / info-flow | [`docs/rebuild/_THREAT-MODEL.md`](rebuild/_THREAT-MODEL.md). |
 | What a Rust crate is / does | [`docs/rebuild/_SILVER-COVERAGE-LEDGER.md`](rebuild/_SILVER-COVERAGE-LEDGER.md). |

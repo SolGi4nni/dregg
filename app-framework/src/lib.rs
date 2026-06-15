@@ -282,6 +282,12 @@ pub use dregg_cell::{
 // every app had to add dregg-cell to its own Cargo.toml just to get these.
 pub use dregg_cell::predicate::{InputRef, WitnessedPredicate, WitnessedPredicateKind};
 pub use dregg_cell::program::{AuthorizedSet, TransitionCase, TransitionGuard};
+// The canonical clearance-graph commitment — the value a clearance-mandate cell
+// pins in its `clearance_graph_root` slot so the executor's
+// `StateConstraint::ClearanceDominates` (which recomputes it from the carried
+// edges) binds the stored root. Re-exported so an app can compute the root it
+// seeds without reaching into `dregg-cell` directly.
+pub use dregg_cell::program::clearance_graph_root;
 
 // Re-export the canonical field-element encoding helpers so apps can use them
 // without duplicating these in every crate.

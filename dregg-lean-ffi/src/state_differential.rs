@@ -384,6 +384,10 @@ enum Auth {
     Reply = 4,
     Reset = 5,
     Control = 6,
+    /// The async-notification SIGNAL authority (tag `7`; the wire image of the
+    /// verified `Dregg2.Authority.Auth.notify`). Present so this mirror is the
+    /// full 8-ctor `Auth`, lockstep with `FFI.lean:435`.
+    Notify = 7,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

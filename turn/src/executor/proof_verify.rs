@@ -1948,18 +1948,6 @@ impl TurnExecutor {
         None
     }
 
-    /// Encode a 32-byte hash as 8 BabyBear field elements (4 bytes each, little-endian).
-    pub(super) fn bytes32_to_babybear(bytes: &[u8; 32]) -> Vec<dregg_circuit::field::BabyBear> {
-        use dregg_circuit::field::BabyBear;
-        let mut result = Vec::with_capacity(8);
-        for chunk in bytes.chunks(4) {
-            let val = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
-            // Reduce mod BabyBear prime to ensure valid field element.
-            result.push(BabyBear(val % dregg_circuit::field::BABYBEAR_P));
-        }
-        result
-    }
-
     /// Convert 4 BabyBear elements to a 16-byte array (for custom proof commitment matching).
     /// V1-only (the rotated verify path reconstructs PIs from the trace generator); dead under
     /// `recursion`, deleted with the v1 leg at C7.

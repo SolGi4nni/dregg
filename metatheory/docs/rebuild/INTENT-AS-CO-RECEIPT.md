@@ -1,8 +1,9 @@
 # Intent as Co-Receipt — toward a first-class metatheory of web3
 
-**Status:** living design spine (started 2026-06-03). Not a spec to freeze; the shape we build the
+**Status:** living design spine. Not a spec to freeze; the shape we build the
 gallery auction (and eventually DeFi) against. Companion to the relativistic time-typing innovation
-(§4 here) and the escrow→userspace decision (`EFFECT-FIDELITY-LEDGER.md`, §"missing state dimension").
+(§4 here) and the escrow→userspace decision (escrow funded in userspace, with the missing
+post-state dimension carried explicitly rather than folded into the scalar balance).
 
 > The turn has **two faces**: the **receipt** (it happened) and the **intent** (let it happen).
 > They are adjoint through `Predicate ⊣ Witness`, funded by userspace escrow, time-typed as

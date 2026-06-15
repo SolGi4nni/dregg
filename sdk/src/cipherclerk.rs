@@ -432,6 +432,23 @@ pub struct HeldToken {
     /// authorization use; no mutation can bypass it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     delegation_binding: Option<DelegationBinding>,
+    /// The **`ExecAuth` projection of this token's caveat chain** — the effect-mask
+    /// authority the macaroon caveat chain confers, in the SAME `EffectMask` vocabulary
+    /// the kernel cap leg consumes (`dregg_cell::is_facet_attenuation`, the in-circuit
+    /// `granted ⊆ held` submask gate).
+    ///
+    /// This is the SDK-side `granted` of the `(granted, held)` pair the Lean bridge
+    /// `Dregg2.Authority.CaveatCapBridge.chainGateG_emits_granted_le_held` proves about:
+    /// the macaroon delegation caveat that narrows a capability-bearing verb EMITS the
+    /// same rights pair the kernel cap leg reads, so the macaroon narrowing IS the kernel
+    /// `granted ⊆ held` narrowing (not two parallel, informally-agreeing stories).
+    ///
+    /// `None` ⇒ unrestricted (`EFFECT_ALL`); a root token confers full effect-authority.
+    /// Every [`Self::attenuate`] narrows it monotonically (`is_facet_attenuation`-subset);
+    /// it can NEVER widen — a wider ask is clipped to the parent (no amplification), exactly
+    /// as the Lean `delegChain` clips an over-broad mask to the held rights.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    narrowed_authority: Option<dregg_cell::EffectMask>,
 }
 
 /// Default for deserialization of older snapshots that lack the `verified` field.
@@ -482,6 +499,8 @@ impl HeldToken {
             membership_proof: None,
             caveat_chain_hash: None,
             delegation_binding: None,
+            // A root token confers full effect-authority; attenuation narrows from here.
+            narrowed_authority: None,
         }
     }
 
@@ -492,12 +511,17 @@ impl HeldToken {
     /// verification, and generate ZK proofs, but cannot mint new root tokens.
     ///
     /// Attenuated tokens created locally (from a verified parent) are marked as verified.
+    ///
+    /// `narrowed_authority` is the parent's effect-mask projection narrowed by this
+    /// attenuation (the SDK-side `granted ⊆ held`); `None` carries forward an unrestricted
+    /// parent.
     pub(crate) fn new_attenuated(
         label: String,
         service: String,
         encoded: String,
         id: String,
         issuer_key: [u8; 32],
+        narrowed_authority: Option<dregg_cell::EffectMask>,
     ) -> Self {
         Self {
             label,
@@ -510,6 +534,7 @@ impl HeldToken {
             membership_proof: None,
             caveat_chain_hash: None,
             delegation_binding: None,
+            narrowed_authority,
         }
     }
 
@@ -553,6 +578,50 @@ impl HeldToken {
     /// BLAKE3 hash of the serialized caveat chain.
     pub fn caveat_chain_hash(&self) -> Option<[u8; 32]> {
         self.caveat_chain_hash
+    }
+
+    /// The **`ExecAuth` projection of this token's caveat chain** — the effect-mask
+    /// authority the chain confers, in the kernel cap leg's `EffectMask` vocabulary.
+    ///
+    /// `None` ⇒ unrestricted (`EFFECT_ALL`). This is the SDK-side `granted` of the
+    /// `(granted, held)` pair the Lean bridge proves about: it is `is_facet_attenuation`-
+    /// below the parent's projection for every attenuation, never above (no amplification).
+    pub fn narrowed_authority(&self) -> Option<dregg_cell::EffectMask> {
+        self.narrowed_authority
+    }
+
+    /// The token's effect-mask authority as a concrete `EffectMask` (`None` ⇒ `EFFECT_ALL`),
+    /// for the `is_facet_attenuation` comparison the kernel cap leg performs.
+    pub fn effective_authority_mask(&self) -> dregg_cell::EffectMask {
+        self.narrowed_authority.unwrap_or(dregg_cell::EFFECT_ALL)
+    }
+
+    /// **Narrow this token's effect-mask authority by `facet`** — the SDK realization of the
+    /// macaroon delegation caveat that EMITS the `(granted, held)` pair the kernel cap leg
+    /// reads, mirroring the Lean `CaveatCapBridge.delegChain granted held`.
+    ///
+    /// The result's `narrowed_authority` is `held & facet` (the bitwise meet): a NON-AMPLIFYING
+    /// ask (`facet ⊆ held`) records exactly `facet`; a wider ask is CLIPPED to the held rights
+    /// (no amplification — exactly as the Lean `delegChain` clips an over-broad mask to `held`).
+    /// Always `is_facet_attenuation(self.effective_authority_mask(), result.effective)`.
+    ///
+    /// Returns the new mask actually recorded (`held & facet`).
+    pub fn narrow_authority(&mut self, facet: dregg_cell::EffectMask) -> dregg_cell::EffectMask {
+        let held = self.effective_authority_mask();
+        // The bitwise meet IS `granted ⊆ held`: `narrowed & held == narrowed` holds by construction,
+        // so `is_facet_attenuation(held, narrowed)` is true — the macaroon can name no right the
+        // parent never held.
+        let narrowed = held & facet;
+        self.narrowed_authority = Some(narrowed);
+        narrowed
+    }
+
+    /// Whether `facet` would be a NON-AMPLIFYING narrowing of this token's effect-mask
+    /// authority (`facet ⊆ held`). The pure check the kernel cap leg performs
+    /// (`dregg_cell::is_facet_attenuation`), exposed for callers that want to reject an
+    /// amplifying ask up front rather than silently clip it.
+    pub fn is_authority_narrowing(&self, facet: dregg_cell::EffectMask) -> bool {
+        dregg_cell::is_facet_attenuation(self.effective_authority_mask(), facet)
     }
 
     /// Access the root key by reference (internal use only).
@@ -1415,12 +1484,17 @@ impl AgentCipherclerk {
         // This key is a one-way BLAKE3 derivation of the root key — possession of it
         // does NOT allow minting tokens or forging HMAC chains.
         let issuer_key = *token.issuer_key();
+        // The child carries the parent's effect-mask projection (the macaroon caveats in
+        // `restrictions` narrow the app/service/time axes; the effect-authority projection
+        // is carried forward, and is narrowed further only via `narrow_authority`). This is
+        // monotone: a child can never carry a wider `narrowed_authority` than its parent.
         let held = HeldToken::new_attenuated(
             format!("attenuated:{}", token.service),
             token.service.clone(),
             encoded,
             id,
             issuer_key,
+            token.narrowed_authority,
         );
 
         self.tokens.push(held.clone());
@@ -8793,6 +8867,88 @@ mod tests {
                 .derive_sub_agent_at_path("dregg/device/laptop")
                 .is_err()
         );
+    }
+
+    /// The `narrowed_authority` field is the SDK-side `granted` of the `(granted, held)` pair
+    /// the Lean bridge `CaveatCapBridge.chainGateG_emits_granted_le_held` proves about: the
+    /// macaroon caveat that narrows a capability-bearing verb EMITS the same effect-mask the
+    /// kernel cap leg (`is_facet_attenuation`) consumes. This test BOTH polarities:
+    ///   - a NON-AMPLIFYING facet (`facet ⊆ held`) is recorded EXACTLY, and `is_facet_attenuation`
+    ///     holds (the macaroon narrowing IS the kernel narrowing);
+    ///   - a WIDENING ask (`facet ⊄ held`) is CLIPPED to the held rights (no amplification),
+    ///     and `is_authority_narrowing` REJECTS it — the bridge's `granted ⊆ held` is a real
+    ///     constraint, refuted exactly when an over-broad mask is asked for.
+    #[test]
+    fn narrowed_authority_emits_granted_le_held_both_polarities() {
+        use dregg_cell::{
+            is_facet_attenuation, EFFECT_ALL, EFFECT_EMIT_EVENT, EFFECT_GRANT_CAPABILITY,
+            EFFECT_SET_FIELD, EFFECT_TRANSFER,
+        };
+
+        let mut cclerk = AgentCipherclerk::new();
+        let root_key = [42u8; 32];
+        let root = cclerk.mint_token(&root_key, "compute");
+
+        // (held) A root token confers full effect-authority (None ⇒ EFFECT_ALL).
+        assert_eq!(root.narrowed_authority(), None);
+        assert_eq!(root.effective_authority_mask(), EFFECT_ALL);
+
+        // (1) NON-AMPLIFYING narrowing: facet = {SetField, EmitEvent} ⊆ EFFECT_ALL.
+        let state_writer = EFFECT_SET_FIELD | EFFECT_EMIT_EVENT;
+        let restrictions = Attenuation {
+            services: vec![("compute".to_string(), "rw".to_string())],
+            ..Default::default()
+        };
+        let mut child = cclerk.attenuate(&root, &restrictions).unwrap();
+        // The macaroon caveat EMITS the granted mask the kernel cap leg reads:
+        let recorded = child.narrow_authority(state_writer);
+        assert_eq!(
+            recorded, state_writer,
+            "a non-amplifying facet is recorded EXACTLY (granted == facet ⊆ held)"
+        );
+        assert_eq!(child.narrowed_authority(), Some(state_writer));
+        // granted ⊆ held — the kernel cap-leg atom (`is_facet_attenuation`) holds:
+        assert!(
+            is_facet_attenuation(EFFECT_ALL, child.effective_authority_mask()),
+            "granted ⊆ held: the macaroon narrowing IS the kernel narrowing"
+        );
+
+        // (2) MONOTONE under further attenuation: the grandchild carries the parent's granted.
+        let grandchild = cclerk.attenuate(&child, &restrictions).unwrap();
+        assert_eq!(
+            grandchild.narrowed_authority(),
+            Some(state_writer),
+            "attenuation carries the narrowed mask forward (granted_grandchild ⊆ granted_child)"
+        );
+        assert!(is_facet_attenuation(
+            child.effective_authority_mask(),
+            grandchild.effective_authority_mask()
+        ));
+
+        // (3) NEGATIVE TOOTH — a WIDENING ask is CLIPPED, never amplified.
+        // child now holds {SetField, EmitEvent}; ask to ADD {Transfer, GrantCapability}.
+        let mut widen = child.clone();
+        let amplifying = EFFECT_TRANSFER | EFFECT_GRANT_CAPABILITY;
+        // The pure check the kernel cap leg performs REJECTS the amplifying ask up front:
+        assert!(
+            !widen.is_authority_narrowing(amplifying),
+            "a facet naming rights the parent never held is NOT a narrowing (granted ⊄ held)"
+        );
+        // And `narrow_authority` CLIPS it to the held rights (the meet) — no amplification:
+        let held_before = widen.effective_authority_mask();
+        let clipped = widen.narrow_authority(amplifying);
+        assert_eq!(
+            clipped,
+            held_before & amplifying,
+            "the over-broad ask is clipped to held & facet (the macaroon cannot name absent rights)"
+        );
+        assert!(
+            is_facet_attenuation(held_before, clipped),
+            "even an amplifying ask yields granted ⊆ held — no amplification, both ways"
+        );
+        // Concretely: {SetField,EmitEvent} & {Transfer,Grant} = ∅ (no shared bits) — the widening
+        // bought NOTHING past the parent (and named nothing the parent held in common).
+        assert_eq!(clipped, 0, "disjoint widening clips to the empty mask, not the wider ask");
     }
 }
 

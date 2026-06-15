@@ -13,15 +13,15 @@
 //!   sets, records) with round-trip + adversarial (malformed-input rejection)
 //!   coverage, including canonical-order enforcement on dictionaries and sets.
 //!   This is the self-contained, fully-testable artifact.
-//! - [`session`] — **sketched** (the message *shapes* and codec, not a driven
-//!   handshake). The `op:start-session` / `op:abort` records and their Syrup
-//!   encode/decode are present and tested as values; binding them to a live
-//!   [`Netlayer`](crate::netlayer::Netlayer) connection (write the start frame,
-//!   read the peer's, cross-certify the location signature, install the
-//!   epoch-correct [`CapSession`](crate::session::CapSession)) is described
-//!   precisely in that module's docs and left as the next bounded step — it
-//!   needs a signature scheme decision (§"What remains") and is deliberately
-//!   not over-built here.
+//! - [`session`] — **records + cross-certification done + tested**. The
+//!   `op:start-session` / `op:abort` records, their Syrup encode/decode, and the
+//!   Ed25519 location-signature verify ([`StartSession::verify_location_sig`])
+//!   are present and tested (valid sigs admit, forged/wrong-key/tampered ones
+//!   reject). What is not over-built here is binding them to a *live*
+//!   [`Netlayer`](crate::netlayer::Netlayer) connection (the async drive loop /
+//!   real socket netlayer that writes the start frame, reads the peer's, and
+//!   installs the epoch-correct [`CapSession`](crate::session::CapSession)) —
+//!   see that module's §"What remains".
 //!
 //! The descriptor layer (`desc:export` / `desc:import-object` /
 //! `desc:answer` ↔ our session tables) and the `op:deliver` invocation
@@ -31,5 +31,5 @@
 pub mod session;
 pub mod syrup;
 
-pub use session::{AbortReason, OcapnSessionError, StartSession};
+pub use session::{AbortReason, LocationVerifyError, OcapnSessionError, StartSession, desc};
 pub use syrup::{Dict, Set, SyrupError, Value};

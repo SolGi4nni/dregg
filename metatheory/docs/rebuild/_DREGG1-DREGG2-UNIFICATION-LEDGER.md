@@ -1,36 +1,31 @@
 # dregg1 ↔ dregg2 Unification Ledger
 
-The core types are DUPLICATED and not yet unified between the legacy dregg1 Rust
-(`turn/`, `cell/`, `macaroon/`, `token/`, `circuit/`, `federation/`) and the
-verified dregg2 Lean surface (`metatheory/Dregg2/`). This ledger maps every
-duplication precisely (Rust file:line ↔ Lean file:line), states whether the FFI
-codec (`dregg-lean-ffi/src/marshal.rs`) already bridges them, and records the
-exact condition to finish unification.
+The core types are duplicated between the dregg1 Rust surface (`turn/`, `cell/`,
+`macaroon/`, `token/`, `circuit/`, `federation/`) and the verified dregg2 Lean
+surface (`metatheory/Dregg2/`). This ledger maps every duplication precisely
+(Rust file:line ↔ Lean file:line), states whether the FFI codec
+(`dregg-lean-ffi/src/marshal.rs`) bridges them, and records the exact condition
+to finish unification.
 
-Ground truth: dregg2 Lean is the source of truth (verified, kernel-clean — the
-`lake build` of `Dregg2.Exec.FFI` + the `Inst/*` per-effect circuits is green,
+dregg2 Lean is the source of truth: verified, kernel-clean — the `lake build` of
+`Dregg2.Exec.FFI` + the `Inst/*` per-effect circuits is green,
 `#assert_namespace_axioms` whitelisting only `{propext, Classical.choice,
-Quot.sound}`). The Rust types are hand-written, unverified duplicates that dregg2
-*replaces*. The cutover ("THE SWAP") routes the running executor through the Lean
-via `dregg_exec_full_forest_auth`.
+Quot.sound}`. The Rust types are hand-written, unverified duplicates that dregg2
+*replaces*. **The Lean is the ORACLE; the Rust is the subject-under-test.**
 
-> **STATUS UPDATE (see `_SWAP-COMPLETE-STATUS.md`): the SWAP is REALIZED at the
-> producer for the swap-safe covered set.** The node commit path
-> (`node/src/blocklace_sync.rs:1846`) routes through
-> `dregg_turn::lean_apply::produce_via_lean` by DEFAULT
-> (`DREGG_LEAN_PRODUCER`, opt-OUT). For 10/56 effect kinds (SetField, Transfer,
-> EmitEvent, NoteSpend, NoteCreate, IncrementNonce, RefreshDelegation, Burn,
-> RevokeCapability, QueueAllocate) the verified Lean executor PRODUCES the
-> committed `cell::Ledger` (`wire_state_to_ledger` reconstitutes it from the
-> `WireState`) and the Rust `TurnExecutor` is demoted to a differential. The
-> residual (11 root-gap effects that fall back to Rust + 35 unmapped effects) is
-> named in `_SWAP-COMPLETE-STATUS.md` §3. The U5 item below is therefore
-> PARTIALLY DONE (covered-set authoritative); §U1–§U4 remain the path to the
-> full flip. The OLD "Lean runs only as a passive `DREGG_LEAN_SHADOW=1` shadow"
-> framing is superseded — the shadow/`decode_shadow_verdict` path is now only the
-> `DREGG_LEAN_PRODUCER=0` fallback.
-
-> The Lean is the ORACLE; the Rust is the subject-under-test. Never the reverse.
+**The Lean executor is the default-on runtime state PRODUCER for the swap-safe
+covered set** (`_SWAP-COMPLETE-STATUS.md`). The node commit path
+(`node/src/blocklace_sync.rs:1846`) routes through
+`dregg_turn::lean_apply::produce_via_lean` by default (`DREGG_LEAN_PRODUCER`,
+opt-OUT). For the covered effect kinds (SetField, Transfer, EmitEvent, NoteSpend,
+NoteCreate, IncrementNonce, RefreshDelegation, Burn, RevokeCapability,
+QueueAllocate, CellUnseal, …) the verified Lean executor PRODUCES the committed
+`cell::Ledger` — `wire_state_to_ledger` reconstitutes it from the `WireState` —
+and the Rust `TurnExecutor` runs as a demoted differential. The residual (root-gap
+effects that fall back to Rust + still-unmapped effects) is named in
+`_SWAP-COMPLETE-STATUS.md` §3; the U5 step below is covered-set authoritative, and
+§U1–§U4 are the path to the full flip. The passive `decode_shadow_verdict` shadow
+is the `DREGG_LEAN_PRODUCER=0` fallback.
 
 ---
 
@@ -39,7 +34,7 @@ via `dregg_exec_full_forest_auth`.
 | Concept | dregg1 Rust (file:line) | dregg2 Lean (file:line) | FFI bridge | Status |
 |---|---|---|---|---|
 | **Authorization** | `turn/src/action.rs:206` `pub enum Authorization` (10 variants) | `metatheory/Dregg2/Exec/FullForestAuth.lean:103` `inductive Authorization (Digest Proof)` | `dregg-lean-ffi/src/marshal.rs` `WireAuth` (`auth_to_wire` in `lean_shadow.rs:486`) | **BRIDGED (shadow).** All 10 Rust variants project to `WireAuth`; WHO-leg digests cross in full. Not yet *derived from* the Lean. |
-| **Effect / Action** | `turn/src/action.rs:760` `pub enum Effect` | `metatheory/Dregg2/Exec/TurnExecutorFull.lean:3203` `inductive FullActionA` | `dregg-lean-ffi/src/marshal.rs:360` `pub enum WireAction` (56 arms) | **PARTIAL.** `lean_shadow::effect_to_wire` projects: SetField, Transfer, SetPermissions, **SetVerificationKey, NoteSpend, NoteCreate** (added this drive), EmitEvent, MakeSovereign, RevokeDelegation. REMAINING: IncrementNonce (needs nonce threading), escrows, obligations, queues, bridge, seal/unseal, captp/swiss, factory, exercise — the Lean+wire already support these; only the Rust→wire projection is missing. |
+| **Effect / Action** | `turn/src/action.rs:760` `pub enum Effect` | `metatheory/Dregg2/Exec/TurnExecutorFull.lean:3203` `inductive FullActionA` | `dregg-lean-ffi/src/marshal.rs:360` `pub enum WireAction` (56 arms) | **PARTIAL.** `lean_shadow::effect_to_wire` projects: SetField, Transfer, SetPermissions, SetVerificationKey, NoteSpend, NoteCreate, EmitEvent, MakeSovereign, RevokeDelegation. REMAINING: IncrementNonce (needs nonce threading), escrows, obligations, queues, bridge, seal/unseal, captp/swiss, factory, exercise — the Lean+wire already support these; only the Rust→wire projection is missing. |
 | **CellProgram** | `cell/src/program.rs:53` `pub enum CellProgram`; also `circuit/src/dsl/circuit.rs:947` `pub struct CellProgram` (a 2nd, unrelated Rust dup!) | `metatheory/Dregg2/Exec/CellProgram.lean:76` `structure CellProgram` | none | **UNBRIDGED.** Two Rust `CellProgram`s (cell + circuit) vs one Lean. No codec. |
 | **Caveat** | `macaroon/src/caveat.rs:108` `CaveatSet`; `token/src/dregg_caveats.rs:137` `enum DreggGrant` | `metatheory/Dregg2/Authority/Caveat.lean:38` `inductive Caveat (Ctx Gateway)` | wire `caveats` field exists in `WForest`/`WChild` but `lean_shadow` sends `vec![]` (caveats not projected) | **UNBRIDGED.** The wire grammar HAS a caveats slot; the shadow projector drops it. |
 | **Predicate / Permissions** | `cell/src/permissions.rs:85` `pub struct Permissions`; `cell/src/predicate.rs:402` `enum PredicateInput`; `bridge/src/present.rs:2780` `enum Predicate` | `metatheory/Dregg2/` predicate surfaces (`Projection.lean`, `Coordination.lean`, the per-effect guard predicates in `Inst/*`) | `SetPerms { perms: i128 }` — collapses to `0` marker (`permissions_to_i128`) | **LOSSY BRIDGE.** Permissions collapse to a neutral scalar; the commit-bit decision doesn't depend on the exact value, but the structure is not carried. |
@@ -71,24 +66,22 @@ then make the Lean verdict authoritative (the SWAP).
   support escrow/obligation/queue/bridge/seal/captp/swiss/factory (52 verified
   `Inst/*` circuits + 56 `WireAction` arms). The only missing piece is the
   Rust→wire projection in `turn/src/lean_shadow.rs`. Each added effect = more of
-  every turn validated against the verified Lean. **DONE this drive: SetVk,
-  NoteSpend, NoteCreate.**
+  every turn validated against the verified Lean.
 - **U2 — project caveats.** `WForest.caveats` is sent as `vec![]`; wire the Rust
   per-node caveats onto `Dregg2/Authority/Caveat.lean`.
 - **U3 — carry Permissions structure** instead of the `0` collapse
   (`permissions_to_i128`), once the Lean models structured perms on the wire.
 - **U4 — collapse the two Rust `CellProgram`s** (`cell/src/program.rs:53` and
   `circuit/src/dsl/circuit.rs:947`) and bridge to `CellProgram.lean`.
-- **U5 — THE SWAP. PARTIALLY DONE (covered-set authoritative).** The flip from
-  shadow-compare to authoritative is LANDED for the 10 root-agreeing effects: the
-  Lean executor (`dregg_exec_full_forest_auth`) PRODUCES the committed state and
-  the Rust `TurnExecutor` is demoted to a differential
+- **U5 — THE SWAP (covered-set authoritative).** For the root-agreeing effects
+  the Lean executor (`dregg_exec_full_forest_auth`) produces the committed state
+  and the Rust `TurnExecutor` runs as a differential
   (`turn/src/lean_apply.rs::produce_via_lean`, default-on via
-  `DREGG_LEAN_PRODUCER`). Full retirement of the Rust `TurnExecutor` still needs
-  U1 (project the 35 unmapped effects), the root-gap closures (widen `WState` to
-  carry lifecycle/Permissions/VK/cap/`delegation_epoch`), and root-scheme
-  unification. See `_SWAP-COMPLETE-STATUS.md` for the realized boundary + the
-  precise residual; `SUCCESSOR-ROADMAP.md` for the remaining path.
+  `DREGG_LEAN_PRODUCER`). Full retirement of the Rust `TurnExecutor` needs U1
+  (project the remaining unmapped effects), the root-gap closures (widen `WState`
+  to carry lifecycle/Permissions/VK/cap/`delegation_epoch`), and root-scheme
+  unification. See `_SWAP-COMPLETE-STATUS.md` for the boundary + the precise
+  residual; `SUCCESSOR-ROADMAP.md` for the remaining path.
 
 ---
 

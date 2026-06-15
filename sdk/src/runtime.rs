@@ -68,10 +68,15 @@ pub fn lean_producer_env_enabled() -> bool {
 /// dependency (the verifier links it), so this adds no new heavy dep to the SDK.
 /// A host that needs fail-closed `SenderAuthorized` (e.g. a negative regression)
 /// can opt out via `AgentRuntime::set_witnessed_registry(empty())`.
+///
+/// As of the executor-default change, `TurnExecutor::new()` ALREADY installs
+/// `registry_with_real_verifiers()` (the bare executor is no longer a
+/// reject-everything stub), so this helper is now just the plain constructor —
+/// kept as a named seam so the SDK's intent stays explicit and so a host that
+/// wants the host-context-full registry can find the upgrade path
+/// (`registry_with_real_verifiers_full`) from here.
 fn executor_with_real_verifiers() -> TurnExecutor {
-    let mut e = TurnExecutor::new(ComputronCosts::default_costs());
-    e.set_witnessed_registry(dregg_turn::executor::registry_with_real_verifiers());
-    e
+    TurnExecutor::new(ComputronCosts::default_costs())
 }
 
 /// The default method a [`SubAgent`] is scoped to when no explicit set is
@@ -858,12 +863,15 @@ impl AgentRuntime {
         // However, it carries the derived issuer_key for ZK proof generation.
         // The issuer_key is always the derived proof key (never the raw root key).
         let issuer_key = *token.issuer_key();
+        // Carry the parent's effect-mask authority projection forward (monotone — the
+        // sub-agent's `granted` can never exceed the parent's `held`).
         let delegated_token = HeldToken::new_attenuated(
             delegated_label.clone(),
             token.service().to_string(),
             encoded.clone(),
             token_id.clone(),
             issuer_key,
+            token.narrowed_authority(),
         );
 
         // Pass through the issuer_key as the proof_key for the sub-agent's delegation.

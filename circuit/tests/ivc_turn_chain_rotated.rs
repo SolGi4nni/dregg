@@ -33,8 +33,10 @@
 use dregg_circuit::effect_vm::{CellState, Effect};
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::ivc_turn_chain::{
-    FinalizedTurn, TurnChainError, WholeChainProof, fold_two_turns, prove_turn_chain_recursive,
-    prove_turn_chain_recursive_without_host_gate, verify_turn_chain_recursive,
+    FinalizedTurn, TurnChainError, WholeChainProof, WholeChainProofBytes, fold_two_turns,
+    prove_turn_chain_recursive, prove_turn_chain_recursive_without_host_gate,
+    verify_turn_chain_recursive, verify_turn_chain_recursive_from_blobs,
+    verify_whole_chain_proof_bytes,
 };
 use dregg_circuit::joint_turn_aggregation::{DescriptorParticipant, RotatedParticipantLeg};
 use dregg_turn::rotation_witness::mint_rotated_participant_leg;
@@ -238,6 +240,119 @@ fn k_fold_turn_chain_proves_and_verifies() {
     // collateral damage).
     verify_turn_chain_recursive(&whole, &vk)
         .expect("the restored honest artifact must verify again");
+}
+
+/// THE BYTE PATH (S1, both polarities): a REAL whole-chain proof SERIALIZES into the
+/// versioned [`WholeChainProofBytes`] envelope, DESERIALIZES back, and VERIFIES over
+/// the wire against its honest anchor — re-witnessing nothing, never touching the
+/// prover-only `root.1`. Then the tampered polarities are REFUSED:
+///   - a corrupted root-proof byte fails the recursion verify;
+///   - a relabeled carried public (in the envelope) fails the claimed-publics tooth;
+///   - a wrong anchor fails the VK pin;
+///   - a bumped envelope version / truncated blob fails the decode (fail-closed).
+///
+/// This is the keystone tooth the wasm over-wire verify and pg-dregg's tier-c gate
+/// both rest on: the in-memory `verify_turn_chain_recursive` and the byte
+/// `verify_whole_chain_proof_bytes` share ONE verifier body and AGREE on this proof.
+#[test]
+#[ignore = "SLOW: real recursion fold (~minutes); run with --ignored"]
+fn whole_chain_proof_bytes_roundtrip_and_tamper() {
+    let (turns, genesis, final_root) = make_chain(1000, 0, 7, 3);
+    let whole: WholeChainProof = prove_turn_chain_recursive(&turns)
+        .expect("a continuous 3-turn rotated finalized chain must fold recursively");
+    let vk = whole.root_vk_fingerprint();
+
+    // (A) ADMITS: serialize → bytes → deserialize → the env carries the true publics.
+    let bytes = whole.to_bytes();
+    assert!(!bytes.is_empty(), "the byte envelope must be non-empty");
+    let env = WholeChainProofBytes::from_postcard(&bytes)
+        .expect("the honest envelope must decode");
+    assert_eq!(env.version, 1);
+    assert_eq!(env.genesis_root, genesis.as_u32());
+    assert_eq!(env.final_root, final_root.as_u32());
+    assert_eq!(env.num_turns, 3);
+    assert_eq!(env.vk_fingerprint_hex, vk.to_hex());
+
+    // The over-wire verify AGREES with the in-memory verify (the keystone): a real
+    // whole-chain proof serializes, deserializes, and VERIFIES against its anchor.
+    verify_whole_chain_proof_bytes(&bytes, &vk)
+        .expect("the deserialized whole-chain proof must verify over the wire");
+    // The lower blob seam (pg-dregg's path) accepts the same bytes' components.
+    verify_turn_chain_recursive_from_blobs(
+        &env.root_proof,
+        &env.binding_proof,
+        env.genesis_root,
+        env.final_root,
+        env.chain_digest,
+        env.num_turns as usize,
+        &vk.0,
+    )
+    .expect("the blob seam must verify the same honest components");
+
+    // (B) REFUSES: a corrupted root-proof byte. Flip a byte deep in the root blob
+    // (past the length/version prefix) and re-pack; the recursion verify must reject
+    // it (or the structural decode catches it first — both are fail-closed).
+    {
+        let mut bad = env.clone();
+        let mid = bad.root_proof.len() / 2;
+        bad.root_proof[mid] ^= 0xFF;
+        let bad_bytes = bad.to_postcard();
+        match verify_whole_chain_proof_bytes(&bad_bytes, &vk) {
+            Err(
+                TurnChainError::RecursionFailed { .. }
+                | TurnChainError::VkFingerprintMismatch { .. }
+                | TurnChainError::EnvelopeDecode { .. },
+            ) => {}
+            other => panic!("a corrupted root proof must be refused; got {other:?}"),
+        }
+    }
+
+    // (C) REFUSES: a relabeled carried public in the ENVELOPE (a post-fold splice).
+    // The claimed-publics tooth reads the publics against the binding proof.
+    {
+        let mut bad = env.clone();
+        bad.final_root = bad.final_root.wrapping_add(1);
+        let bad_bytes = bad.to_postcard();
+        match verify_whole_chain_proof_bytes(&bad_bytes, &vk) {
+            Err(TurnChainError::ClaimedPublicsUnattested { .. }) => {}
+            other => panic!("a relabeled envelope final_root must be refused; got {other:?}"),
+        }
+    }
+
+    // (D) REFUSES: a wrong anchor (a different circuit) — the VK pin fires.
+    {
+        let mut wrong = vk;
+        wrong.0[0] ^= 0xFF;
+        match verify_whole_chain_proof_bytes(&bytes, &wrong) {
+            Err(TurnChainError::VkFingerprintMismatch { .. }) => {}
+            other => panic!("a wrong anchor must be refused over the wire; got {other:?}"),
+        }
+    }
+
+    // (E) REFUSES (fail-closed decode): a bumped version, a truncated body, empty.
+    {
+        let mut bad = env.clone();
+        bad.version = 999;
+        match WholeChainProofBytes::from_postcard(&bad.to_postcard()) {
+            Err(TurnChainError::EnvelopeDecode { .. }) => {}
+            other => panic!("a bumped envelope version must be refused; got {other:?}"),
+        }
+        match WholeChainProofBytes::from_postcard(&[]) {
+            Err(TurnChainError::EnvelopeDecode { .. }) => {}
+            other => panic!("empty bytes must be refused; got {other:?}"),
+        }
+        match WholeChainProofBytes::from_postcard(&bytes[..bytes.len() / 2]) {
+            Err(TurnChainError::EnvelopeDecode { .. }) => {}
+            other => panic!("a truncated envelope must be refused; got {other:?}"),
+        }
+        // An empty proof-component is refused even with a valid version.
+        let mut empty_root = env.clone();
+        empty_root.root_proof = Vec::new();
+        match WholeChainProofBytes::from_postcard(&empty_root.to_postcard()) {
+            Err(TurnChainError::EnvelopeDecode { .. }) => {}
+            other => panic!("an empty root-proof component must be refused; got {other:?}"),
+        }
+    }
 }
 
 /// TEMPORAL TOOTH (host): a turn whose real ROTATED old_root != previous new_root

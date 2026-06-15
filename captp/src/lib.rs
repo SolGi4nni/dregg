@@ -101,7 +101,7 @@ pub use netlayer::{
     ocapn_uri::{OcapnLocation, OcapnSturdyRef, OcapnUriError},
 };
 pub use ocapn::{
-    session::{AbortReason, OcapnSessionError, StartSession},
+    session::{AbortReason, LocationVerifyError, OcapnSessionError, StartSession, desc},
     syrup::{self, SyrupError, Value as SyrupValue},
 };
 pub use pipeline::{

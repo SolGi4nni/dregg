@@ -137,7 +137,7 @@ pub use compositor_pd::{
 };
 pub use distributed::DistributedBacking;
 pub use emulated_kernel::{
-    EmulatedKernel, IpcError, Message, ObjectId, ObjectType, ReplyToken, RetypeError,
+    EmulatedKernel, IpcError, Message, NotifyCap, ObjectId, ObjectType, ReplyToken, RetypeError,
 };
 pub use executor_pd::{
     stage_turn_into, ExecutorPd, ServedTurn, TurnRunner, LABEL_RUN_TURN, LABEL_TURN_COMMITTED,

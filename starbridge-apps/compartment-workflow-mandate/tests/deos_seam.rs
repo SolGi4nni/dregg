@@ -37,8 +37,9 @@ use dregg_app_framework::{
 };
 
 use starbridge_compartment_workflow_mandate::{
-    CHARTER_TERMINAL_SLOT, STEP_CURSOR_SLOT, advance_effects, cwm_cell_program, fire_advance_step,
-    register_deos, seed_workflow, workflow_app,
+    ACTOR_CLEARANCE_SLOT, CHARTER_TERMINAL_SLOT, STEP_COMPARTMENT_SLOT, STEP_CURSOR_SLOT,
+    WorkflowPhase, advance_effects, charter_clearance_root, clerk_label, cwm_cell_program,
+    fire_advance_step, officer_label, register_deos, seed_workflow, workflow_app,
 };
 
 fn agent(seed: u8) -> (AppCipherclerk, EmbeddedExecutor) {
@@ -47,9 +48,11 @@ fn agent(seed: u8) -> (AppCipherclerk, EmbeddedExecutor) {
     (cclerk, executor)
 }
 
-/// Seed a mandate with charter terminal 3 (review → redact → sign) and cursor 0.
+/// Seed a mandate with charter terminal 3 (review → redact → sign), cursor 0, and the
+/// REAL charter clearance-graph root (so the executor's root-bound ClearanceDominates
+/// admits a cleared officer's advances and refuses a clerk past `review`).
 fn seed(executor: &EmbeddedExecutor) -> u64 {
-    seed_workflow(executor, 42, 3, [0x11; 32], 5)
+    seed_workflow(executor, 42, 3, charter_clearance_root(), 5)
 }
 
 // =============================================================================
@@ -97,7 +100,7 @@ fn an_operator_advances_a_step_through_the_gated_fire_a_real_verified_turn() {
     // advances the cursor 0 -> 1. The executor RE-ENFORCES the workflow program:
     // `MonotonicSequence(STEP_CURSOR)` holds (0 -> 1, exact +1) and
     // `FieldLteField(STEP_CURSOR <= CHARTER_TERMINAL)` holds (1 <= 3). A real verified turn.
-    let receipt = fire_advance_step(&app, &AuthRequired::None, &cclerk, &executor)
+    let receipt = fire_advance_step(&app, &AuthRequired::None, officer_label(), &cclerk, &executor)
         .expect("an operator advances (caps ∧ state ∧ monotonic-sequence ∧ lte-terminal all pass)");
     assert_ne!(
         receipt.turn_hash, [0u8; 32],
@@ -133,7 +136,7 @@ fn advancing_to_the_terminal_darkens_advance_step() {
 
     // Drive the cursor to the terminal: 0 -> 1 -> 2 -> 3 (three real verified fires).
     for expect in 1..=3u64 {
-        let receipt = fire_advance_step(&app, &AuthRequired::None, &cclerk, &executor)
+        let receipt = fire_advance_step(&app, &AuthRequired::None, officer_label(), &cclerk, &executor)
             .unwrap_or_else(|e| panic!("advance to cursor {expect} should commit, got {e:?}"));
         assert_ne!(receipt.turn_hash, [0u8; 32]);
         let state = executor.cell_state(cclerk.cell_id()).unwrap();
@@ -154,7 +157,7 @@ fn advancing_to_the_terminal_darkens_advance_step() {
 
     // ...and a fire AT the terminal is refused IN-BAND at the STATE tooth (anti-ghost) —
     // nothing submitted, the cursor holds at 3.
-    let refused = fire_advance_step(&app, &AuthRequired::None, &cclerk, &executor);
+    let refused = fire_advance_step(&app, &AuthRequired::None, officer_label(), &cclerk, &executor);
     assert!(
         matches!(
             refused,
@@ -181,7 +184,8 @@ fn an_observer_below_the_operator_tier_cannot_advance_the_cap_tooth_bites_in_ban
     // An OBSERVER (Signature) firing `advance_step` (requires None/operator): the CAP tooth
     // refuses IN-BAND — `is_attenuation(Signature, None)` is false (None ⊄ Signature).
     // Nothing is submitted (anti-ghost). An auditor can read the cursor but cannot drive it.
-    let refused = fire_advance_step(&app, &AuthRequired::Signature, &cclerk, &executor);
+    let refused =
+        fire_advance_step(&app, &AuthRequired::Signature, officer_label(), &cclerk, &executor);
     assert!(
         matches!(
             refused,
@@ -218,8 +222,15 @@ fn the_executor_re_enforces_a_non_plus_one_advance_is_refused() {
 
     // A NO-ADVANCE: cursor 0 -> 0 under the `advance_step` method. `MonotonicSequence`
     // requires exactly `old + 1`; 0 is not 0 + 1, so it is refused. (`advance_effects`
-    // with new_cursor 0 writes the cursor := 0 unchanged.)
-    let stale = advance_effects(cell, 0, [0u8; 32]);
+    // with new_cursor 0 writes the cursor := 0 unchanged.) The actor is a cleared
+    // officer with a valid box, so ONLY the MonotonicSequence tooth bites (the
+    // clearance tooth is satisfied — the no-advance is isolated).
+    let stale = advance_effects(
+        cell,
+        0,
+        officer_label(),
+        WorkflowPhase::Review.compartment_label(),
+    );
     let action = cclerk.make_action(cell, "advance_step", stale);
     let refused = executor.submit_action(&cclerk, action);
     assert!(
@@ -255,11 +266,17 @@ fn the_executor_re_enforces_a_skip_ahead_advance_is_refused() {
     let cell = cclerk.cell_id();
 
     // One honest step: 0 -> 1.
-    fire_advance_step(&app, &AuthRequired::None, &cclerk, &executor)
+    fire_advance_step(&app, &AuthRequired::None, officer_label(), &cclerk, &executor)
         .expect("first advance commits (0 -> 1)");
 
-    // A SKIP-AHEAD: cursor 1 -> 3 (should be 2). MonotonicSequence refuses.
-    let skip = advance_effects(cell, 3, [0u8; 32]);
+    // A SKIP-AHEAD: cursor 1 -> 3 (should be 2). MonotonicSequence refuses. Officer +
+    // a valid box (sign) so ONLY the MonotonicSequence tooth bites (skip isolated).
+    let skip = advance_effects(
+        cell,
+        3,
+        officer_label(),
+        WorkflowPhase::Sign.compartment_label(),
+    );
     let action = cclerk.make_action(cell, "advance_step", skip);
     let refused = executor.submit_action(&cclerk, action);
     assert!(refused.is_err(), "skipping a step (non-+1) must be refused");
@@ -297,7 +314,7 @@ fn the_executor_re_enforces_an_advance_past_the_terminal_is_refused() {
 
     // Drive 0 -> 1 -> 2 -> 3 through honest fires (each a real +1).
     for _ in 0..3 {
-        fire_advance_step(&app, &AuthRequired::None, &cclerk, &executor)
+        fire_advance_step(&app, &AuthRequired::None, officer_label(), &cclerk, &executor)
             .expect("honest advance commits");
     }
     let state = executor.cell_state(cell).unwrap();
@@ -308,8 +325,14 @@ fn the_executor_re_enforces_an_advance_past_the_terminal_is_refused() {
     );
 
     // A PAST-TERMINAL advance: cursor 3 -> 4 (a legal +1 for MonotonicSequence, but 4 > 3
-    // terminal). `FieldLteField(STEP_CURSOR <= CHARTER_TERMINAL)` refuses it.
-    let overrun = advance_effects(cell, 4, [0u8; 32]);
+    // terminal). `FieldLteField(STEP_CURSOR <= CHARTER_TERMINAL)` refuses it. Officer + a
+    // box it dominates (sign) so clearance passes and ONLY the LTE-terminal tooth bites.
+    let overrun = advance_effects(
+        cell,
+        4,
+        officer_label(),
+        WorkflowPhase::Sign.compartment_label(),
+    );
     let action = cclerk.make_action(cell, "advance_step", overrun);
     let refused = executor.submit_action(&cclerk, action);
     assert!(
@@ -335,6 +358,113 @@ fn the_executor_re_enforces_an_advance_past_the_terminal_is_refused() {
 }
 
 // =============================================================================
+// (g) THE CLEARANCE TOOTH (the recovered Lean `stepClearanceOK`, root-bound):
+//     an OFFICER (clears all steps) advances the whole charter; a CLERK (clears
+//     only `review`) is REFUSED past `review` by the REAL executor.
+// =============================================================================
+
+#[test]
+fn an_officer_clears_every_step_a_clerk_is_refused_past_review() {
+    let (cclerk, executor) = agent(0x3b);
+    let app = workflow_app(&cclerk, &executor);
+    let _ = seed(&executor); // cursor 0, terminal 3, REAL charter clearance root
+
+    // A CLERK (clears only `review`) advances step 0 -> 1 (review): the clerk's
+    // clearance DOMINATES the `review` compartment in the root-bound charter graph, so
+    // the executor's ClearanceDominates ADMITS. A real verified turn.
+    let receipt = fire_advance_step(&app, &AuthRequired::None, clerk_label(), &cclerk, &executor)
+        .expect("a clerk clears review (clerk -> review edge): admitted by the executor");
+    assert_ne!(receipt.turn_hash, [0u8; 32]);
+    let state = executor.cell_state(cclerk.cell_id()).unwrap();
+    assert_eq!(
+        state.fields[STEP_CURSOR_SLOT as usize],
+        field_from_u64(1),
+        "the clerk's review advance committed (0 -> 1)"
+    );
+    // ...and the executor recorded the actor clearance + the entered compartment (review).
+    assert_eq!(state.fields[ACTOR_CLEARANCE_SLOT as usize], clerk_label());
+    assert_eq!(
+        state.fields[STEP_COMPARTMENT_SLOT as usize],
+        WorkflowPhase::Review.compartment_label()
+    );
+
+    // Now the clerk tries to advance step 1 -> 2 (redact): the clerk's clearance does
+    // NOT dominate `redact` (no clerk -> redact path in the charter graph). The cap-gate
+    // passes (None ⊇ None) and the not-at-terminal precondition passes (1 < 3), so this is
+    // a REAL submitted turn whose ClearanceDominates the EXECUTOR refuses — the half a
+    // flat `contains` scaffold would have WRONGLY admitted.
+    let refused = fire_advance_step(&app, &AuthRequired::None, clerk_label(), &cclerk, &executor);
+    assert!(
+        refused.is_err(),
+        "a clerk advancing to redact must be refused (clerk does not clear redact), got {refused:?}"
+    );
+    let msg = format!("{:?}", refused.unwrap_err()).to_lowercase();
+    assert!(
+        msg.contains("dominate") || msg.contains("clearance") || msg.contains("program"),
+        "the executor refuses on the ClearanceDominates tooth, got: {msg}"
+    );
+    // Anti-ghost: the cursor still holds 1 (the refused redact committed nothing).
+    let after = executor.cell_state(cclerk.cell_id()).unwrap();
+    assert_eq!(
+        after.fields[STEP_CURSOR_SLOT as usize],
+        field_from_u64(1),
+        "the refused clerk-redact committed nothing — cursor holds 1"
+    );
+
+    // ...whereas an OFFICER (clears redact) advancing 1 -> 2 IS admitted: the SAME live
+    // cursor, the SAME step, but a dominating clearance. Both polarities, real executor.
+    let officer_step = fire_advance_step(
+        &app,
+        &AuthRequired::None,
+        officer_label(),
+        &cclerk,
+        &executor,
+    )
+    .expect("an officer clears redact (officer -> redact edge): admitted");
+    assert_ne!(officer_step.turn_hash, [0u8; 32]);
+    let after2 = executor.cell_state(cclerk.cell_id()).unwrap();
+    assert_eq!(
+        after2.fields[STEP_CURSOR_SLOT as usize],
+        field_from_u64(2),
+        "the officer's redact advance committed (1 -> 2)"
+    );
+}
+
+// =============================================================================
+// (h) THE ROOT TOOTH: the clearance check ACTUALLY CONSULTS CLEARANCE_GRAPH_ROOT_SLOT
+//     — a mandate seeded with a WRONG root refuses EVERY advance (fails closed), even
+//     for a fully-cleared officer, because the carried graph no longer commits to the
+//     stored root.
+// =============================================================================
+
+#[test]
+fn the_clearance_check_consults_the_stored_graph_root() {
+    let (cclerk, executor) = agent(0x3b);
+    let app = workflow_app(&cclerk, &executor);
+    // Seed with a BOGUS clearance-graph root (NOT charter_clearance_root()). The
+    // executor's ClearanceDominates recomputes the carried graph's commitment and
+    // compares it to this stored root — they differ, so it FAILS CLOSED.
+    let _ = seed_workflow(&executor, 42, 3, [0xAB; 32], 5);
+
+    // Even a fully-cleared OFFICER's review advance (0 -> 1) is refused — the stored root
+    // does not match the graph the constraint walks. This proves the slot is LOAD-BEARING
+    // (the floor scaffold ignored CLEARANCE_GRAPH_ROOT_SLOT entirely).
+    let refused = fire_advance_step(&app, &AuthRequired::None, officer_label(), &cclerk, &executor);
+    assert!(
+        refused.is_err(),
+        "a wrong stored graph root must fail closed even for an officer, got {refused:?}"
+    );
+    let msg = format!("{:?}", refused.unwrap_err()).to_lowercase();
+    assert!(
+        msg.contains("root") || msg.contains("commit") || msg.contains("clearance") || msg.contains("program"),
+        "the executor refuses on the stored-root mismatch, got: {msg}"
+    );
+    // Anti-ghost: nothing committed (cursor holds 0).
+    let after = executor.cell_state(cclerk.cell_id()).unwrap();
+    assert_eq!(after.fields[STEP_CURSOR_SLOT as usize], field_from_u64(0));
+}
+
+// =============================================================================
 // register_deos mounts the surface AND seeds the cell (the promotion is live).
 // =============================================================================
 
@@ -357,7 +487,7 @@ fn register_deos_mounts_the_seeded_surface_into_the_context() {
 
     // The seeded mandate is at cursor 0 with a charter terminal, so an operator can advance
     // through the mounted surface immediately (the seam is closed + live).
-    let receipt = fire_advance_step(&app, &AuthRequired::None, &cclerk, &executor)
+    let receipt = fire_advance_step(&app, &AuthRequired::None, officer_label(), &cclerk, &executor)
         .expect("the mounted, seeded surface advances a step (the promotion is live)");
     assert_ne!(receipt.turn_hash, [0u8; 32]);
 

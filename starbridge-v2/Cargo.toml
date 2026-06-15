@@ -89,7 +89,7 @@ edition = "2021"
 rust-version = "1.94.0"
 authors = ["Dregg Contributors"]
 license = "AGPL-3.0-or-later"
-homepage = "https://dregg.dev"
+homepage = "https://dregg.fg-goose.online"
 repository = "https://github.com/emberian/dregg"
 description = "Starbridge v2 — the native dregg master interface: a live, verified, ocap world (someday an seL4 component)"
 

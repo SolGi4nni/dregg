@@ -1127,12 +1127,20 @@ pub fn create_bearer_cap_proof(
     Ok(serde_wasm_bindgen::to_value(&proof)?)
 }
 
-/// Sig-only verification of a real BearerCapProof (SignedDelegation path).
+/// Cryptographic verification of a real BearerCapProof for the inspector's
+/// paste-and-verify UX. Handles BOTH delegation variants:
+/// - `SignedDelegation`: verifies the delegator's Ed25519 signature over the
+///   canonical delegation message.
+/// - `StarkDelegation`: verifies the STARK proof's *scope binding* — it
+///   deserializes the proof and requires its committed public inputs to equal
+///   the canonical scope vector (root issuer ‖ target ‖ scope-hash of
+///   federation/permission/expiry). This is the same Ledger-free core the
+///   in-ledger executor runs (`dregg_turn::action::verify_stark_delegation_binding`).
+///
 /// Does *not* perform the full executor cap-lookup / revocation / amplification
-/// checks (those require a Ledger snapshot); this is the cryptographic piece
-/// for inspector paste-and-verify UX. Accepts the canonical JSON shape of
-/// BearerCapProof (or a minimal subset for the sig fields).
-/// Returns { signature_valid, expired, valid_for_sig }.
+/// checks (those require a Ledger snapshot). Accepts the canonical JSON shape of
+/// BearerCapProof (or a minimal subset for the SignedDelegation sig fields).
+/// Returns { delegation_kind, signature_valid, expired, valid_for_sig, binding_error? }.
 #[wasm_bindgen]
 pub fn verify_bearer_cap_proof_sig(
     proof_json: &str,
@@ -1183,50 +1191,97 @@ pub fn verify_bearer_cap_proof_sig(
     })?;
 
     let fed_id = hex_decode_32(federation_id_hex)?;
-
-    let (delegator_pk, signature, bearer_pk, auth_req, expires) = match &proof.delegation_proof {
-        DelegationProofData::SignedDelegation {
-            delegator_pk,
-            signature,
-            bearer_pk,
-        } => (
-            *delegator_pk,
-            *signature,
-            *bearer_pk,
-            proof.permissions.clone(),
-            proof.expires_at,
-        ),
-        _ => {
-            return Err(JsError::new(
-                "StarkDelegation verify not yet in minimal binding",
-            ));
-        }
-    };
-
-    let message = TurnExecutor::compute_bearer_delegation_message(
-        &proof.target,
-        &auth_req,
-        &bearer_pk,
-        expires,
-        &fed_id,
-    );
-
-    let vk = VerifyingKey::from_bytes(&delegator_pk)
-        .map_err(|e| JsError::new(&format!("bad delegator pk: {e}")))?;
-    let sig = Signature::from_bytes(&signature);
-    let sig_valid = vk.verify_strict(&message, &sig).is_ok();
+    let expires = proof.expires_at;
     let expired = expires > 0 && current_time > expires;
+
+    // The cryptographic verdict + a human-readable kind, computed per
+    // delegation-proof variant. `signature_valid` means "the cryptographic
+    // binding for this proof variant verified": an Ed25519 delegation signature
+    // for `SignedDelegation`, or the STARK scope-binding (public inputs commit
+    // to this target/permission/expiry/federation/root-issuer) for
+    // `StarkDelegation`. Both run the SAME logic the in-ledger executor runs.
+    let (delegation_kind, sig_valid, binding_error): (&str, bool, Option<String>) =
+        match &proof.delegation_proof {
+            DelegationProofData::SignedDelegation {
+                delegator_pk,
+                signature,
+                bearer_pk,
+            } => {
+                let message = TurnExecutor::compute_bearer_delegation_message(
+                    &proof.target,
+                    &proof.permissions,
+                    bearer_pk,
+                    expires,
+                    &fed_id,
+                );
+                match VerifyingKey::from_bytes(delegator_pk) {
+                    Ok(vk) => {
+                        let sig = Signature::from_bytes(signature);
+                        let ok = vk.verify_strict(&message, &sig).is_ok();
+                        (
+                            "SignedDelegation",
+                            ok,
+                            if ok {
+                                None
+                            } else {
+                                Some("delegation signature verification failed".to_string())
+                            },
+                        )
+                    }
+                    Err(e) => (
+                        "SignedDelegation",
+                        false,
+                        Some(format!("bad delegator pk: {e}")),
+                    ),
+                }
+            }
+            DelegationProofData::StarkDelegation {
+                proof_bytes,
+                root_issuer_commitment,
+            } => {
+                // The Ledger-free core of the executor's StarkDelegation arm
+                // (`dregg_turn::action::verify_stark_delegation_binding`): the
+                // proof must deserialize AND its committed public inputs must
+                // equal the canonical scope vector. A forged/relayed proof whose
+                // committed scope differs (wrong root issuer, or a wider
+                // target/permission/expiry/federation grant) is rejected here.
+                match dregg_turn::action::verify_stark_delegation_binding(
+                    proof_bytes,
+                    root_issuer_commitment,
+                    &proof.target,
+                    &proof.permissions,
+                    expires,
+                    &fed_id,
+                ) {
+                    Ok(_stark_proof) => ("StarkDelegation", true, None),
+                    Err(e) => ("StarkDelegation", false, Some(e.to_string())),
+                }
+            }
+        };
 
     #[derive(Serialize)]
     struct VerifyRealResult {
+        /// The delegation-proof variant: "SignedDelegation" | "StarkDelegation".
+        delegation_kind: &'static str,
+        /// The variant's cryptographic binding verified (signature, or STARK
+        /// scope-binding of public inputs).
         signature_valid: bool,
+        /// The proof's `expires_at` is in the past relative to `current_time`.
         expired: bool,
+        /// Overall: the binding is valid AND the proof is not expired. (Does not
+        /// include the Ledger-dependent cap-lookup / revocation / amplification
+        /// checks — those require a snapshot and run in the executor.)
         valid_for_sig: bool,
+        /// Why the binding failed, when it did.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        binding_error: Option<String>,
     }
     let out = VerifyRealResult {
+        delegation_kind,
         signature_valid: sig_valid,
         expired,
         valid_for_sig: sig_valid && !expired,
+        binding_error,
     };
     Ok(serde_wasm_bindgen::to_value(&out)?)
 }

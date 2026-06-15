@@ -165,7 +165,8 @@ use dregg_app_framework::{
     DeosCell, Effect, EmbeddedExecutor, Event, FactoryDescriptor, FieldElement, FireError,
     FireExecuteError, GatedAffordance, InputRef, InspectorDescriptor, StarbridgeAppContext,
     StateConstraint, TransitionCase, TransitionGuard, TurnReceipt, WitnessedPredicate,
-    WitnessedPredicateKind, field_from_bytes, field_from_u64, hex_encode_32, symbol,
+    WitnessedPredicateKind, canonical_program_vk, field_from_bytes, field_from_u64, hex_encode_32,
+    symbol,
 };
 use dregg_dfa::{GovernedRouter, KindRegistry, RouteTable, RouteTableBuilder, RouteTarget, Router};
 use dregg_turn::action::WitnessBlob;
@@ -231,8 +232,21 @@ pub const DEFAULT_CREATION_BUDGET: u64 = 64;
 pub const GOVERNANCE_FACTORY_VK: [u8; 32] = *b"starbridge-governed-namespace-fa";
 
 /// The child cell-program VK installed on per-cell governed-namespace
-/// instances. As above, a stable placeholder.
-pub const GOVERNANCE_CHILD_PROGRAM_VK: [u8; 32] = *b"starbridge-governed-namespace-cp";
+/// instances.
+///
+/// Computed canonically per `VK-AS-RE-EXECUTION-RECIPE.md` §2.1:
+/// `canonical_program_vk(&governance_program())`. A validator holding the
+/// program can re-derive this VK and confirm it binds to a program they
+/// can re-execute against witness data — the same recipe every other
+/// starbridge-app's `*_child_program_vk()` follows.
+///
+/// Previously a byte-string placeholder
+/// (`*b"starbridge-governed-namespace-cp"`); the canonical form makes the
+/// governed-namespace factory honest pre-recursion, in line with the
+/// other 18 apps.
+pub fn governance_child_program_vk() -> [u8; 32] {
+    canonical_program_vk(&governance_program())
+}
 
 /// The registered `WitnessedPredicateKind::Custom { vk_hash }`
 /// identifying the governance threshold-signature verifier. The
@@ -475,7 +489,8 @@ pub fn governance_program() -> CellProgram {
 /// Pins the constructor contract anyone can audit by hashing the
 /// descriptor:
 ///
-/// - `child_program_vk = GOVERNANCE_CHILD_PROGRAM_VK` — the AIR
+/// - `child_program_vk = governance_child_program_vk()` — the canonical
+///   `canonical_program_vk(&governance_program())` recipe VK; the AIR
 ///   enforcing [`governance_program`]'s `CellProgram::Cases`.
 /// - `default_mode = Sovereign` — governed-namespace cells are
 ///   federation-shared roots; they need to be sovereign so the
@@ -504,8 +519,8 @@ pub fn governance_program() -> CellProgram {
 pub fn governance_factory_descriptor() -> FactoryDescriptor {
     FactoryDescriptor {
         factory_vk: GOVERNANCE_FACTORY_VK,
-        child_program_vk: Some(GOVERNANCE_CHILD_PROGRAM_VK),
-        child_vk_strategy: Some(ChildVkStrategy::Fixed(Some(GOVERNANCE_CHILD_PROGRAM_VK))),
+        child_program_vk: Some(governance_child_program_vk()),
+        child_vk_strategy: Some(ChildVkStrategy::Fixed(Some(governance_child_program_vk()))),
         allowed_cap_templates: vec![CapTemplate {
             target: CapTarget::SelfCell,
             // The committee cap is dispatched via the
@@ -1089,7 +1104,7 @@ pub fn register(ctx: &StarbridgeAppContext) -> [u8; 32] {
                 "pending_proposal_root":       PENDING_PROPOSAL_ROOT_SLOT,
             },
             "factory_vk_hex":              hex_encode_32(&factory_vk),
-            "child_program_vk_hex":        hex_encode_32(&GOVERNANCE_CHILD_PROGRAM_VK),
+            "child_program_vk_hex":        hex_encode_32(&governance_child_program_vk()),
             "governance_vk_hex":           hex_encode_32(&GOVERNANCE_VK),
             "namespace_service_kind":      NAMESPACE_SERVICE_KIND,
         }),
@@ -1793,9 +1808,51 @@ mod tests {
     fn factory_descriptor_pins_program_vk() {
         let d = governance_factory_descriptor();
         assert_eq!(d.factory_vk, GOVERNANCE_FACTORY_VK);
-        assert_eq!(d.child_program_vk, Some(GOVERNANCE_CHILD_PROGRAM_VK));
+        assert_eq!(d.child_program_vk, Some(governance_child_program_vk()));
         assert_eq!(d.default_mode, CellMode::Sovereign);
         assert_eq!(d.creation_budget, Some(DEFAULT_CREATION_BUDGET));
+    }
+
+    #[test]
+    fn governance_child_program_vk_is_canonical_recipe() {
+        // Per VK-AS-RE-EXECUTION-RECIPE.md §2.1 the child program VK is the
+        // canonical hash of the program text — a validator holding the program
+        // can re-derive it. This is the divergence the migration closes:
+        // governed-namespace was ALONE among the apps in pinning a byte-string
+        // placeholder here instead of this recipe.
+        let expected = dregg_app_framework::canonical_program_vk(&governance_program());
+        assert_eq!(
+            governance_child_program_vk(),
+            expected,
+            "governance_child_program_vk must equal canonical_program_vk(&governance_program())"
+        );
+    }
+
+    #[test]
+    fn governance_child_program_vk_is_not_placeholder_bytes() {
+        // The pre-recipe placeholder was `*b"starbridge-governed-namespace-cp"`.
+        // The canonical VK MUST differ from it — the invalid-rejects tooth: a
+        // re-introduced placeholder would no longer be re-derivable from the
+        // program and this asserts it can never silently come back.
+        let old_placeholder: [u8; 32] = *b"starbridge-governed-namespace-cp";
+        assert_ne!(
+            governance_child_program_vk(),
+            old_placeholder,
+            "canonical VK must differ from the pre-recipe placeholder"
+        );
+    }
+
+    #[test]
+    fn governance_child_program_vk_is_v2_layered_hash() {
+        // VK v2 (VK-AS-RE-EXECUTION-RECIPE.md §v2): the layered hash commits to
+        // program bytes + Effect-VM AIR + verifier + proving-system fingerprints,
+        // so it must differ from the v1 program-bytes-only hash.
+        let v1 = dregg_app_framework::canonical_program_bytes_hash(&governance_program());
+        assert_ne!(
+            governance_child_program_vk(),
+            v1,
+            "v2 layered VK must differ from the v1 program-bytes-only hash"
+        );
     }
 
     #[test]
@@ -2266,7 +2323,7 @@ mod tests {
             .get(&GOVERNANCE_FACTORY_VK)
             .expect("governance factory registered");
         assert_eq!(got.factory_vk, GOVERNANCE_FACTORY_VK);
-        assert_eq!(got.child_program_vk, Some(GOVERNANCE_CHILD_PROGRAM_VK));
+        assert_eq!(got.child_program_vk, Some(governance_child_program_vk()));
         assert_eq!(got.default_mode, CellMode::Sovereign);
     }
 

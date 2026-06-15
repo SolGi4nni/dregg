@@ -818,6 +818,11 @@ fn constraint_dissect(
         // Collection aggregate: no primary slot (binds a heap collection_id,
         // not a u8 register); consumers read the predicate from the program view.
         SC::CollectionAggregate { .. } => ("collection_aggregate", None, vec![]),
+        // Fields-map collection aggregate: like `CollectionAggregate` but reads a
+        // contiguous run of user-map keys (anchored at the u64 `base`, not a u8
+        // register), so no primary slot; consumers read the predicate from the
+        // program view.
+        SC::FieldsCollectionAggregate { .. } => ("fields_collection_aggregate", None, vec![]),
         // Witnessed disjunction (§11.3): a composite leaf with no primary slot —
         // each branch names its own predicate; consumers read the program view.
         SC::AnyOfBound { .. } => ("any_of_bound", None, vec![]),
@@ -833,6 +838,18 @@ fn constraint_dissect(
             left_index,
             right_index,
         } => ("dig_field_eq", Some(*left_index), vec![*right_index]),
+        // Root-bound clearance-graph dominance: primary is the actor-label slot,
+        // the committed-root slot is extra (the graph edges live in the program
+        // body; consumers read the program view for them).
+        SC::ClearanceDominates {
+            actor_label_index,
+            root_index,
+            ..
+        } => (
+            "clearance_dominates",
+            Some(*actor_label_index),
+            vec![*root_index],
+        ),
     }
 }
 

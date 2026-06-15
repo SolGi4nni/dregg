@@ -26,12 +26,12 @@ The mandate cell models a content-addressed object store with:
 | `StorageOp` GET/PUT/LIST + `StorageOp.toInt` | [`StorageOp`] + `to_field_value` / `from_field_value` | Domain encoding |
 | `opAllowed` | [`op_allowed`] | Predicate |
 | `keyUnderPrefix` / `putPrefixOK` | [`key_under_prefix`] | Predicate (PUT gate) |
-| `getClearanceOK` / `mayRead` | [`get_clearance_ok`] | Predicate (GET gate; scaffold) |
+| `getClearanceOK` / `mayRead` / `dominatesD` | [`get_clearance_ok`] (predicate) + `StateConstraint::ClearanceDominates` (executor, `MethodIs(get)` case) | Predicate AND executor (root-bound graph walk over `CLEARANCE_GRAPH_ROOT_SLOT`) |
 | `opCost` + `Slice.tryDebit` | [`volume_debit_ok`] + `StorageOp::demo_cost` | Stingray volume budget |
 | `sgmAdmitM` — composed admission | [`sgm_admit`] | Predicate |
 | `sgm_op_not_allowed_rejected` | `op_allowed` false → `sgm_admit` returns `None` | Fail-closed |
 | `sgm_prefix_violation_rejected` | `key_under_prefix` false on PUT | Fail-closed |
-| `sgm_clearance_fail_rejected` | `get_clearance_ok` false on GET | Fail-closed |
+| `sgm_clearance_fail_rejected` | `get_clearance_ok` false (predicate) AND a guest's GET is a REAL executor refusal (`ClearanceDominates`, `MethodIs(get)` case) | Predicate + executor fail-closed |
 | `sgm_over_debit_rejected` | `volume_debit_ok` false | Fail-closed |
 | `sgm_over_debit_rejected_exec` | `Monotonic(VOLUME_SPENT)` + `FieldLteField` vs `VOLUME_CEILING` | Executor caveat |
 | `sgm_volume_legal_forever` / `sgmWF` | `FieldLteField(VOLUME_SPENT, VOLUME_CEILING)` invariant | Forever stream |

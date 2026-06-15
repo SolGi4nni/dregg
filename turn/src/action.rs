@@ -535,6 +535,150 @@ pub enum DelegationProofData {
     },
 }
 
+/// Encode a 32-byte hash as 8 `BabyBear` field elements (4 bytes each, LE),
+/// reduced mod the BabyBear prime.
+///
+/// Byte-for-byte identical to the executor's
+/// `TurnExecutor::bytes32_to_babybear` (`executor/proof_verify.rs`). Kept here
+/// so the bearer-cap STARK public-input layout has ONE definition that both the
+/// in-ledger executor arm and the Ledger-free inspector/wasm verifier share.
+fn stark_delegation_bytes32_to_babybear(
+    bytes: &[u8; 32],
+) -> Vec<dregg_circuit::field::BabyBear> {
+    use dregg_circuit::field::{BABYBEAR_P, BabyBear};
+    let mut result = Vec::with_capacity(8);
+    for chunk in bytes.chunks(4) {
+        let val = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+        result.push(BabyBear(val % BABYBEAR_P));
+    }
+    result
+}
+
+/// Recompute the canonical public-input vector a [`DelegationProofData::StarkDelegation`]
+/// bearer proof must commit to, given the `root_issuer_commitment` and the
+/// (federation, target, permission-tier, expiry) scope it is being exercised under.
+///
+/// Layout (each 32-byte value → 8 `BabyBear` limbs, in order):
+///   `root_issuer_commitment` ‖ `target` ‖ `scope_hash`
+/// where `scope_hash = blake3("dregg-stark-delegation-scope-v1:" ‖ federation_id
+/// ‖ perm_tag(LE u32) [‖ vk_hash if Custom] ‖ expires_at(LE u64))`.
+///
+/// This is the SAME vector the executor's [`crate::executor::TurnExecutor::verify_bearer_cap`]
+/// `StarkDelegation` arm recomputes (`executor/authorize.rs`). The
+/// delegator/bearer pubkeys are deliberately NOT bound — anonymity of the
+/// delegation chain is the whole point of the STARK path; only the public
+/// scope facts (which appear on the turn anyway) are bound, so a relay cannot
+/// reuse a valid proof for a *wider* grant (different target, permission tier,
+/// expiry, federation, or root issuer).
+pub fn stark_delegation_expected_public_inputs(
+    target: &CellId,
+    permissions: &AuthRequired,
+    expires_at: u64,
+    federation_id: &[u8; 32],
+    root_issuer_commitment: &[u8; 32],
+) -> Vec<dregg_circuit::field::BabyBear> {
+    let mut public_inputs = Vec::new();
+    public_inputs.extend(stark_delegation_bytes32_to_babybear(root_issuer_commitment));
+    public_inputs.extend(stark_delegation_bytes32_to_babybear(target.as_bytes()));
+    let perm_tag: u32 = match permissions {
+        AuthRequired::None => 0,
+        AuthRequired::Signature => 1,
+        AuthRequired::Proof => 2,
+        AuthRequired::Either => 3,
+        AuthRequired::Impossible => 4,
+        AuthRequired::Custom { .. } => 5,
+    };
+    let scope_hash = {
+        let mut h = blake3::Hasher::new();
+        h.update(b"dregg-stark-delegation-scope-v1:");
+        h.update(federation_id);
+        h.update(&perm_tag.to_le_bytes());
+        if let AuthRequired::Custom { vk_hash } = permissions {
+            h.update(vk_hash);
+        }
+        h.update(&expires_at.to_le_bytes());
+        *h.finalize().as_bytes()
+    };
+    public_inputs.extend(stark_delegation_bytes32_to_babybear(&scope_hash));
+    public_inputs
+}
+
+/// Why a STARK-delegation bearer proof's scope binding was rejected.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum StarkDelegationBindingError {
+    /// The serialized STARK proof bytes did not parse.
+    Deserialization(String),
+    /// The proof carries fewer public inputs than the bound scope requires.
+    TooFewPublicInputs { have: usize, expected: usize },
+    /// A bound public input did not equal the recomputed scope value.
+    PublicInputMismatch { index: usize },
+}
+
+impl core::fmt::Display for StarkDelegationBindingError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            StarkDelegationBindingError::Deserialization(e) => {
+                write!(f, "STARK proof deserialization failed: {e}")
+            }
+            StarkDelegationBindingError::TooFewPublicInputs { have, expected } => write!(
+                f,
+                "STARK proof has {have} public inputs, expected at least {expected}"
+            ),
+            StarkDelegationBindingError::PublicInputMismatch { index } => {
+                write!(f, "STARK public input mismatch at index {index}")
+            }
+        }
+    }
+}
+
+/// Verify the *scope binding* of a [`DelegationProofData::StarkDelegation`] bearer
+/// proof: deserialize the STARK proof bytes and require that the public inputs it
+/// commits to equal the canonical scope vector for `(target, permissions,
+/// expires_at, federation_id, root_issuer_commitment)`.
+///
+/// This is the Ledger-free cryptographic core of the executor's `StarkDelegation`
+/// authorization arm — the part that catches a forged or relayed proof whose
+/// committed scope does not match the grant being exercised (wrong root issuer,
+/// wider target/permission/expiry/federation). It is feature-uniform (no
+/// recursion/prover dependency), so the inspector/wasm verifier runs the *same*
+/// binding check the in-ledger executor runs.
+///
+/// Note: this does NOT run the STARK FRI verification of `proof_bytes` itself
+/// (that is the executor's `EffectVmAir` leg, which is a v1-floor artifact gated
+/// to `not(feature = "recursion")`). It establishes that the proof is *bound to
+/// this scope*; a verifier that also has the FRI/AIR leg available composes the
+/// two.
+pub fn verify_stark_delegation_binding(
+    proof_bytes: &[u8],
+    root_issuer_commitment: &[u8; 32],
+    target: &CellId,
+    permissions: &AuthRequired,
+    expires_at: u64,
+    federation_id: &[u8; 32],
+) -> Result<dregg_circuit::stark::StarkProof, StarkDelegationBindingError> {
+    let stark_proof = dregg_circuit::stark::proof_from_bytes(proof_bytes)
+        .map_err(StarkDelegationBindingError::Deserialization)?;
+    let expected = stark_delegation_expected_public_inputs(
+        target,
+        permissions,
+        expires_at,
+        federation_id,
+        root_issuer_commitment,
+    );
+    if stark_proof.public_inputs.len() < expected.len() {
+        return Err(StarkDelegationBindingError::TooFewPublicInputs {
+            have: stark_proof.public_inputs.len(),
+            expected: expected.len(),
+        });
+    }
+    for (i, exp) in expected.iter().enumerate() {
+        if dregg_circuit::field::BabyBear(stark_proof.public_inputs[i]) != *exp {
+            return Err(StarkDelegationBindingError::PublicInputMismatch { index: i });
+        }
+    }
+    Ok(stark_proof)
+}
+
 impl Authorization {
     /// Map this authorization to the corresponding AuthKind for permission checking.
     /// Returns None for Authorization::Unchecked, Breadstuff, and Bearer (handled separately).

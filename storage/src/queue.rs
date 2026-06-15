@@ -338,6 +338,22 @@ impl MerkleQueue {
         self.len() >= self.capacity
     }
 
+    /// Maximum number of pending entries this queue can hold (the bound set
+    /// at construction).
+    pub fn capacity(&self) -> usize {
+        self.capacity
+    }
+
+    /// How many more entries can be enqueued before [`is_full`] holds.
+    ///
+    /// Equal to `capacity - len`, saturating at 0 (a queue can never report
+    /// negative headroom even if it were somehow over-filled).
+    ///
+    /// [`is_full`]: MerkleQueue::is_full
+    pub fn remaining_capacity(&self) -> usize {
+        self.capacity.saturating_sub(self.len())
+    }
+
     /// Current Merkle root hash.
     pub fn root(&self) -> [u8; 32] {
         self.root
@@ -653,6 +669,33 @@ mod tests {
             let (got, _) = q.dequeue().unwrap();
             assert_eq!(&got, expected);
         }
+    }
+
+    #[test]
+    fn remaining_capacity_reports_real_headroom() {
+        let mut q = MerkleQueue::new(3);
+        // Empty: full headroom.
+        assert_eq!(q.capacity(), 3);
+        assert_eq!(q.remaining_capacity(), 3);
+
+        q.enqueue(make_entry(b"a", [1u8; 32], 10)).unwrap();
+        assert_eq!(q.remaining_capacity(), 2);
+
+        // Near-full (2 of 3): the correct small count, not a placeholder.
+        q.enqueue(make_entry(b"b", [2u8; 32], 20)).unwrap();
+        assert!(!q.is_full());
+        assert_eq!(q.remaining_capacity(), 1);
+
+        // Full: exactly zero, consistent with is_full.
+        q.enqueue(make_entry(b"c", [3u8; 32], 30)).unwrap();
+        assert!(q.is_full());
+        assert_eq!(q.remaining_capacity(), 0);
+
+        // Dequeue reopens headroom by one.
+        q.dequeue().unwrap();
+        assert_eq!(q.remaining_capacity(), 1);
+        // capacity() is the construction bound, invariant under fill.
+        assert_eq!(q.capacity(), 3);
     }
 
     #[test]

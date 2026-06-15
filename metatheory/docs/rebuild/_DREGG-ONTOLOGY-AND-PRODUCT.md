@@ -1,10 +1,9 @@
-# DREGG — Ground-Truth Ontology, Functional Correctness, and Product Layer
+# DREGG — Ontology, Functional Correctness, and Product Layer
 
-> Canonical, brutally-honest map synthesized from 5 deep code reviews of both the
-> Lean (`metatheory/Dregg2/…`) and Rust (`turn/`, `cell/`, `sdk/`, `node/`,
-> `starbridge-apps/`, `storage/`) sides. Read this before asking "what is a turn",
-> "is the cell program correct", or "is the orchestration/toolcalling/storage stuff real".
-> Trust this over the marketing in the older docs; trust the code over this.
+> The map of both the Lean (`metatheory/Dregg2/…`) and Rust (`turn/`, `cell/`, `sdk/`,
+> `node/`, `starbridge-apps/`, `storage/`) sides. Read this before asking "what is a
+> turn", "is the cell program correct", or "is the orchestration/toolcalling/storage
+> real". When this doc and the code disagree, the code wins.
 
 ---
 
@@ -139,11 +138,11 @@ The Lean mirror is `execFullForestG` via `@[export] dregg_exec_full_forest_auth`
 
 ---
 
-## PART 2 — FUNCTIONAL CORRECTNESS (the honest line)
+## PART 2 — FUNCTIONAL CORRECTNESS
 
-### Verdict: the SECURITY ENVELOPE is verified. FULL FUNCTIONAL SEMANTICS are NOT (except the transfer beachhead).
+### The SECURITY ENVELOPE is verified; FULL FUNCTIONAL SEMANTICS are verified for the transfer beachhead.
 
-There is a clean, structural reason, and it is the single most important fact about
+There is a clean structural reason, and it is the single most important fact about
 dregg's verification story:
 
 > **A cell program is a CONSTRAINT, not a function.** `RecordProgram.admits :
@@ -163,7 +162,7 @@ many predicate-satisfying next-states.
 - `recExec_admitted` — every committed transition was admitted by the program (the gate is load-bearing, never bypassed).
 - `recExec_commits_applyOp` + `setField_scalar_self` — a commit commits **exactly** `applyOp`'s candidate (no silent rewrite); reading a field you just set returns what you set.
 - `recExec_some_iff_admits` — full ⇔ characterization of when the arrow fires.
-- `recExec_mono_holds` — for `monotonic "count"`, a committed transition genuinely has `new.count ≥ old.count`, recovered as an honest `Int` inequality.
+- `recExec_mono_holds` — for `monotonic "count"`, a committed transition has `new.count ≥ old.count`, recovered as an `Int` inequality.
 - `recCexec_attests` / `recReplay_preserves_sumEquals` — across a whole replay, a `sumEquals` program keeps `Σ new[fields] = c`.
 - `denote_conserves` / `denote_run_conserves` / `system_refines_kernel` — a `CellProgram` cannot bypass kernel conservation or produce a transition `exec` wouldn't.
 - DSL elaboration correctness (`counter_eq_counterProgram`, `escrow_eq_expected`, ~11 atom smoke-tests, by `rfl`) — the eDSL surface elaborates to **exactly** the intended verified catalog term.
@@ -188,9 +187,9 @@ many predicate-satisfying next-states.
 | "All 18 state fields are pinned per effect with anti-ghost teeth" | **NOT VERIFIED** (transfer only) |
 
 This is **l4v-style refinement of the ENVELOPE** (Hoare postconditions = the
-constraints), **not** l4v-style functional refinement against an abstract spec
-function. The honest answer to "is cell-program functional correctness verified" is:
-**the security semantics are; the functional semantics are not.**
+constraints), not l4v-style functional refinement against an abstract spec function. The
+answer to "is cell-program functional correctness verified": the security semantics are;
+the functional semantics are (beyond the transfer beachhead) the refinement lane below.
 
 **Shortest push to real functional correctness:** introduce an independent declarative
 reference per cell-program family (e.g. `escrowSpec : Method → State → State` in plain
@@ -207,11 +206,11 @@ Ratings: **RUNNING** (built binary, runs end-to-end on the live Rust engine) ·
 **VERIFIED-MODEL** (proved in Lean over a toy/abstract ledger, disjoint from the
 running path) · **SEED** (architecturally present, key wire missing).
 
-The recurring structural truth across all four products: **the Rust runtime runs, the
-Lean proofs are real, and the two are largely DISJOINT** — the verified executor is a
-shadow/producer behind env flags over only ~20 of ~43 marshallable effects, not yet the
-universal engine, and the load-bearing security gates frequently run as out-of-band
-advisory checks rather than inline executor admission.
+The structural shape across all four products: **the Rust runtime runs, the Lean proofs
+are real, and the two are largely DISJOINT** — the verified executor is a shadow/producer
+behind env flags over ~20 of ~43 marshallable effects, not yet the universal engine, and
+several load-bearing security gates run as out-of-band advisory checks rather than inline
+executor admission. The per-product "push-next" below is the lane that fuses them.
 
 ### 3a — Agent orchestration apps — **RUNNING demo + VERIFIED-MODEL (disjoint)**
 

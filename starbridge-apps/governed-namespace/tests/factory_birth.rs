@@ -24,8 +24,8 @@ use dregg_app_framework::{
 };
 use dregg_cell::FactoryCreationParams;
 use starbridge_governed_namespace::{
-    GOVERNANCE_CHILD_PROGRAM_VK, GOVERNANCE_COMMITTEE_ROOT_SLOT, GOVERNANCE_FACTORY_VK,
-    RESERVED_SLOT_6, THRESHOLD_SLOT, VERSION_SLOT, governance_factory_descriptor,
+    GOVERNANCE_COMMITTEE_ROOT_SLOT, GOVERNANCE_FACTORY_VK, RESERVED_SLOT_6, THRESHOLD_SLOT,
+    VERSION_SLOT, governance_child_program_vk, governance_factory_descriptor,
 };
 
 fn make_cipherclerk() -> AppCipherclerk {
@@ -52,7 +52,7 @@ fn birth_namespace_cell(
     let token: [u8; 32] = *blake3::hash(token_tag).as_bytes();
     let params = FactoryCreationParams {
         mode: CellMode::Sovereign,
-        program_vk: Some(GOVERNANCE_CHILD_PROGRAM_VK),
+        program_vk: Some(governance_child_program_vk()),
         initial_fields: vec![],
         initial_caps: vec![],
         owner_pubkey: owner,

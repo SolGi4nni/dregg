@@ -81,10 +81,49 @@
 use std::collections::HashMap;
 
 use dregg_cell::CellId;
+use dregg_firmament::{NotifyCap, ObjectId, Rights};
 
 use crate::dynamics::WorldEvent;
 use crate::swarm_budget::{StingrayBudgetView, StingraySwarmBudget};
 use crate::world::{self, CommitOutcome, World};
+
+/// THE NOTIFY AUTHORITY OVER A SWARM WAKE — the topic-badge a peer's `EmitEvent`
+/// must fall within for the coordinator to route it into a member's inbox.
+///
+/// The async cross-agent edge (`docs/NOTIFY-PRIMITIVE.md` §2.5) is now a HELD,
+/// attenuable authority, not ambient routing: a member holds a [`NotifyCap`]
+/// ([`SwarmMember::notify_grant`]) whose `badge_mask` is the set of topic bits
+/// peers may wake it with. A peer's wake is admitted iff the emitted topic's
+/// badge is within that mask — checked by the REAL `dregg_firmament`
+/// [`NotifyCap::signal_admissible`] (the Rust mirror of the verified
+/// `Dregg2.Firmament.NotifyAuthority.NotifyCap.signalAdmissible`). Restricting a
+/// member's grant ([`SwarmMember::restrict_notify`]) attenuates it on the SAME
+/// `granted ⊆ held` order — so "this peer may wake me only for topic K" is a real
+/// capability, and out-of-mask wakes are REFUSED (fail-closed, the §3.4 covert
+/// edge bounded by the mask).
+///
+/// **The topic → badge map.** A 32-byte topic hash projects to ONE badge bit:
+/// `1 << (topic_hash[0] % 64)`. So a topic occupies a single bit of the 64-bit
+/// badge lattice, and a mask is the OR of the topic bits a member admits.
+/// `u64::MAX` = "wake me for any topic" (the open default, preserving the prior
+/// route-everything behaviour until a member attenuates).
+#[must_use]
+pub fn topic_badge(topic_hash: &[u8; 32]) -> u64 {
+    1u64 << (topic_hash[0] % 64)
+}
+
+/// The per-member notification OBJECT id the member's [`NotifyCap`] targets — the
+/// member's own wake accumulator (the §3.1 canonical `Notification`, one per
+/// member). Derived deterministically from the cell id so the cap is target-bound
+/// (a forged cap aimed at a different member's object pokes nothing). The low 8
+/// bytes of the cell id, as the firmament `u64` `ObjectId`.
+#[must_use]
+fn member_notify_object(agent: &CellId) -> ObjectId {
+    let b = agent.as_bytes();
+    ObjectId(u64::from_le_bytes([
+        b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7],
+    ]))
+}
 
 /// One pending notification in a swarm member's inbox: a wake signal deposited
 /// by a COMMITTED `EmitEvent` turn from another member. The recipient drains it
@@ -250,6 +289,16 @@ pub struct SwarmMember {
     /// BEFORE it runs (fail-closed). `spent` grows by each committed action's
     /// metered computrons.
     pub budget: BudgetMeter,
+    /// THE HELD NOTIFY AUTHORITY — "which topics peers may wake me with", a REAL
+    /// `dregg_firmament` [`NotifyCap`] over this member's wake object
+    /// ([`member_notify_object`]). The coordinator routes a peer's `EmitEvent`
+    /// into this member's inbox iff the emitted topic's badge is within this cap's
+    /// `badge_mask` ([`NotifyCap::signal_admissible`]) — making the async edge a
+    /// held, attenuable capability (`docs/NOTIFY-PRIMITIVE.md` §2.5), not ambient
+    /// routing. Opens at `u64::MAX` (wake-me-for-any-topic) so the prior behaviour
+    /// is preserved; [`Self::restrict_notify`] attenuates it (a peer with an
+    /// out-of-mask topic is then REFUSED, fail-closed).
+    pub notify_grant: NotifyCap,
 }
 
 impl SwarmMember {
@@ -266,12 +315,49 @@ impl SwarmMember {
             backed: false,
             balance: 0,
             budget: BudgetMeter::default(),
+            // Open by default: admit a wake for ANY topic (the prior
+            // route-everything behaviour) until the member attenuates.
+            notify_grant: NotifyCap {
+                target: member_notify_object(&agent),
+                rights: Rights::Either,
+                badge_mask: u64::MAX,
+            },
         }
     }
 
     /// Whether this member is bound to a cap-confined shell surface (its pane).
     pub fn has_surface(&self) -> bool {
         self.surface_cap.is_some()
+    }
+
+    /// **ATTENUATE THIS MEMBER'S WAKE AUTHORITY** to admit ONLY the given topics
+    /// (their badges OR'd into the new mask). After this, the coordinator REFUSES
+    /// a peer's `EmitEvent` whose topic is not in `topics` — "peers may wake me
+    /// only for these topics" as a real, non-amplifying attenuation of the held
+    /// [`NotifyCap`] (the SAME `granted ⊆ held` order the firmament mint gates on).
+    /// Returns `false` (and leaves the grant unchanged) if the requested mask is
+    /// not narrower-or-equal to the current one — a widening is refused.
+    pub fn restrict_notify(&mut self, topics: &[[u8; 32]]) -> bool {
+        let mask = topics.iter().fold(0u64, |m, t| m | topic_badge(t));
+        // Keep the rights tier; narrow only the badge mask. (Cloned out first
+        // because `attenuate` takes its rights by value and `Rights` is not `Copy`.)
+        let rights = self.notify_grant.rights.clone();
+        match self.notify_grant.attenuate(rights, mask) {
+            Some(narrower) => {
+                self.notify_grant = narrower;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// May a peer wake this member with `topic_hash`? Iff the topic's badge is
+    /// within the held [`NotifyCap`]'s mask — the REAL `dregg_firmament`
+    /// [`NotifyCap::signal_admissible`] over this member's wake object.
+    #[must_use]
+    pub fn admits_wake(&self, topic_hash: &[u8; 32]) -> bool {
+        self.notify_grant
+            .signal_admissible(self.notify_grant.target, topic_badge(topic_hash))
     }
 
     /// How many notifications are pending (undrained) in the inbox.
@@ -383,6 +469,12 @@ pub struct SwarmActionOutcome {
     /// received a wake. (Only inter-member events; self-notifications are
     /// filtered out in `Swarm::run`.)
     pub notify_edges: Vec<(CellId, NotifyEdge)>,
+    /// Notify edges that were REFUSED by the recipient's held notify authority —
+    /// a peer emitted to a member on a topic NOT within that member's
+    /// [`NotifyCap`] mask, so the coordinator did NOT route it (fail-closed). Each
+    /// entry is `(recipient, topic_hash)`. The honest record that the async edge
+    /// is cap-gated: an un-granted wake is dropped, not delivered.
+    pub notify_refused: Vec<(CellId, [u8; 32])>,
     /// A human-meaningful summary of the action's effects.
     pub summary: String,
 }
@@ -467,6 +559,21 @@ impl Swarm {
         &self.members
     }
 
+    /// **ATTENUATE WHICH TOPICS A MEMBER ADMITS WAKES FOR** — narrow `agent`'s
+    /// held notify authority ([`SwarmMember::notify_grant`]) to admit ONLY the
+    /// given `topics`. After this, the coordinator REFUSES a peer's `EmitEvent` to
+    /// `agent` on any topic outside the set (the wake is dropped, recorded in
+    /// [`SwarmActionOutcome::notify_refused`]) — "peers may wake me only for these
+    /// topics" as a real, non-amplifying attenuation of the held [`NotifyCap`].
+    /// Returns `false` if `agent` is unknown or the requested mask would WIDEN the
+    /// member's current grant (a widening is refused — no amplification).
+    pub fn restrict_member_notify(&mut self, agent: &CellId, topics: &[[u8; 32]]) -> bool {
+        match self.index.get(agent) {
+            Some(&idx) => self.members[idx].restrict_notify(topics),
+            None => false,
+        }
+    }
+
     /// **RUN A SWARM ACTION — the cap-gated, receipted, notify-edge-routing seam.**
     ///
     /// This is A2's one seam: every action the swarm takes routes here, is
@@ -543,6 +650,7 @@ impl Swarm {
                 height: None,
                 computrons: 0,
                 notify_edges: Vec::new(),
+                notify_refused: Vec::new(),
                 summary: format!(
                     "BUDGET EXHAUSTED — spent {} ≥ ceiling {ceiling} (dispatch refused, no commit)",
                     b.spent
@@ -577,6 +685,7 @@ impl Swarm {
                 height: None,
                 computrons: 0,
                 notify_edges: Vec::new(),
+                notify_refused: Vec::new(),
                 summary: format!(
                     "SHARED POOL EXHAUSTED — draw would reach {would_be} > ceiling {ceiling} (dispatch refused, no commit)"
                 ),
@@ -603,9 +712,16 @@ impl Swarm {
                 let height = world.height();
                 let computrons = receipt.computrons_used;
 
-                // (5) Scan the new dynamics for inter-member EventEmitted entries.
+                // (5) Scan the new dynamics for inter-member EventEmitted entries,
+                //     and route each through the recipient's HELD NOTIFY AUTHORITY:
+                //     a wake lands in a member's inbox iff the emitted topic's badge
+                //     is within that member's `NotifyCap` mask (the REAL
+                //     `dregg_firmament::NotifyCap::signal_admissible`). An out-of-mask
+                //     topic is REFUSED (fail-closed) and recorded, not delivered —
+                //     the async edge as a cap, not ambient routing (§2.5).
                 let new_events = world.dynamics().since(dyn_cursor_before);
                 let mut notify_edges: Vec<(CellId, NotifyEdge)> = Vec::new();
+                let mut notify_refused: Vec<(CellId, [u8; 32])> = Vec::new();
 
                 for ev in new_events {
                     if let WorldEvent::EventEmitted {
@@ -621,8 +737,15 @@ impl Swarm {
                         if sender == recipient {
                             continue;
                         }
-                        if !self.index.contains_key(recipient) {
+                        let Some(&ridx) = self.index.get(recipient) else {
                             continue; // not a swarm member — skip
+                        };
+                        // THE NOTIFY-AUTHORITY GATE: does the recipient's held
+                        // NotifyCap admit a wake on this topic? (Iff the topic's
+                        // badge ⊑ the member's badge_mask.)
+                        if !self.members[ridx].admits_wake(topic_hash) {
+                            notify_refused.push((*recipient, *topic_hash));
+                            continue; // un-granted wake — dropped, fail-closed
                         }
                         let edge = NotifyEdge {
                             from: *sender,
@@ -637,7 +760,7 @@ impl Swarm {
                     }
                 }
 
-                // Deposit the edges into the recipients' inboxes (newest-first).
+                // Deposit the ADMITTED edges into the recipients' inboxes (newest-first).
                 for (recipient, edge) in &notify_edges {
                     if let Some(&ridx) = self.index.get(recipient) {
                         self.members[ridx].inbox.insert(0, edge.clone());
@@ -670,6 +793,7 @@ impl Swarm {
                     height: Some(height),
                     computrons,
                     notify_edges: notify_edges.clone(),
+                    notify_refused,
                     summary,
                 };
                 self.action_log.push(ao.clone());
@@ -683,6 +807,7 @@ impl Swarm {
                     height: None,
                     computrons: 0,
                     notify_edges: Vec::new(),
+                    notify_refused: Vec::new(),
                     summary: format!("REFUSED — {reason}"),
                 };
                 self.action_log.push(ao.clone());
@@ -806,6 +931,7 @@ impl Swarm {
                 height: None,
                 computrons: 0,
                 notify_edges: Vec::new(),
+                notify_refused: Vec::new(),
                 summary: format!(
                     "ATOMIC bundle REFUSED — budget exhausted (spent {} ≥ ceiling {ceiling})",
                     b.spent
@@ -835,6 +961,7 @@ impl Swarm {
                 height: None,
                 computrons: 0,
                 notify_edges: Vec::new(),
+                notify_refused: Vec::new(),
                 summary: format!(
                     "ATOMIC bundle REFUSED — shared pool would reach {would_be} > ceiling {ceiling}"
                 ),
@@ -861,9 +988,12 @@ impl Swarm {
 
                 // (5) Route any inter-member notify edges the bundle produced (a
                 //     bundled EmitEvent still wakes a peer — the atomic turn and
-                //     the async edge compose).
+                //     the async edge compose), through the SAME held notify
+                //     authority gate as the single-action path: a wake lands iff the
+                //     recipient's NotifyCap admits the topic, else it is refused.
                 let new_events = world.dynamics().since(dyn_cursor_before);
                 let mut notify_edges: Vec<(CellId, NotifyEdge)> = Vec::new();
+                let mut notify_refused: Vec<(CellId, [u8; 32])> = Vec::new();
                 for ev in new_events {
                     if let WorldEvent::EventEmitted {
                         sender,
@@ -872,7 +1002,14 @@ impl Swarm {
                         data_len,
                     } = ev
                     {
-                        if sender == recipient || !self.index.contains_key(recipient) {
+                        if sender == recipient {
+                            continue;
+                        }
+                        let Some(&ridx) = self.index.get(recipient) else {
+                            continue;
+                        };
+                        if !self.members[ridx].admits_wake(topic_hash) {
+                            notify_refused.push((*recipient, *topic_hash));
                             continue;
                         }
                         notify_edges.push((
@@ -918,6 +1055,7 @@ impl Swarm {
                     height: Some(height),
                     computrons,
                     notify_edges: notify_edges.clone(),
+                    notify_refused,
                     summary,
                 };
                 self.action_log.push(ao.clone());
@@ -931,6 +1069,7 @@ impl Swarm {
                     height: None,
                     computrons: 0,
                     notify_edges: Vec::new(),
+                    notify_refused: Vec::new(),
                     summary: format!("ATOMIC bundle REFUSED — {reason}"),
                 };
                 self.action_log.push(ao.clone());
@@ -1018,6 +1157,7 @@ impl Swarm {
                     height: Some(drain_height),
                     computrons,
                     notify_edges: Vec::new(),
+                    notify_refused: Vec::new(),
                     summary,
                 });
 
@@ -1462,6 +1602,129 @@ mod tests {
         assert_eq!(edge.sender_receipt, outcome.receipt_hash.unwrap());
         assert!(!edge.drained, "the edge is pending, not drained");
         assert_eq!(swarm.total_pending(), 1);
+    }
+
+    // ── THE NOTIFY-AUTHORITY WELD: the async edge is a HELD, attenuable cap ────
+    //
+    // `docs/NOTIFY-PRIMITIVE.md` §2.5 — a member holds a `NotifyCap` over its wake
+    // object; a peer's `EmitEvent` lands in the inbox iff the emitted topic's
+    // badge is within that member's `badge_mask` (the REAL `dregg_firmament`
+    // `NotifyCap::signal_admissible`). These are the BOTH-POLARITY teeth at the
+    // live swarm seam: a granted topic ADMITS, an un-granted topic is REFUSED.
+
+    #[test]
+    fn a_restricted_member_refuses_an_out_of_mask_wake_admits_an_in_mask_one() {
+        // worker_a attenuates its grant to admit wakes ONLY for "task/start"
+        // (badge bit 44). A peer wake on "task/done" (bit 0, NOT in the mask) is
+        // then REFUSED — it does NOT land in the inbox; it is recorded as refused.
+        let (mut world, mut swarm, coord, worker_a, _worker_b) = swarm_world();
+        let task_start = *blake3::hash(b"task/start").as_bytes();
+        let task_done = *blake3::hash(b"task/done").as_bytes();
+        // Sanity: the two topics genuinely occupy DIFFERENT badge bits (so the
+        // mask actually discriminates — the test is non-vacuous).
+        assert_ne!(
+            topic_badge(&task_start),
+            topic_badge(&task_done),
+            "the two topics must land on distinct badge bits for the gate to bite"
+        );
+
+        // ATTENUATE: worker_a now admits wakes ONLY for "task/start".
+        assert!(
+            swarm.restrict_member_notify(&worker_a, &[task_start]),
+            "narrowing the grant to a held topic must succeed"
+        );
+
+        // NEGATIVE POLARITY — a peer emits "task/done" to worker_a: REFUSED.
+        let refused = swarm
+            .run(
+                &mut world,
+                coord,
+                vec![emit_event(worker_a, "task/done", vec![])],
+            )
+            .expect("the EmitEvent turn itself still commits (the wake is what's gated)");
+        assert!(refused.committed, "the sender's turn commits regardless");
+        assert!(
+            refused.notify_edges.is_empty(),
+            "an out-of-mask wake deposits NO inbox edge (fail-closed)"
+        );
+        assert_eq!(
+            refused.notify_refused,
+            vec![(worker_a, task_done)],
+            "the refused wake is recorded as (recipient, topic)"
+        );
+        let member_a = swarm.members().iter().find(|m| m.agent == worker_a).unwrap();
+        assert_eq!(
+            member_a.pending_notify_count(),
+            0,
+            "worker_a's inbox is still EMPTY — the un-granted wake was dropped"
+        );
+        assert_eq!(swarm.total_pending(), 0);
+
+        // POSITIVE POLARITY — a peer emits "task/start" (in-mask) to worker_a: ADMITTED.
+        let admitted = swarm
+            .run(
+                &mut world,
+                coord,
+                vec![emit_event(worker_a, "task/start", vec![])],
+            )
+            .expect("emit must commit");
+        assert!(admitted.committed);
+        assert_eq!(
+            admitted.notify_edges.len(),
+            1,
+            "the in-mask wake lands one inbox edge"
+        );
+        assert!(
+            admitted.notify_refused.is_empty(),
+            "an in-mask wake refuses nothing"
+        );
+        let member_a = swarm.members().iter().find(|m| m.agent == worker_a).unwrap();
+        assert_eq!(
+            member_a.pending_notify_count(),
+            1,
+            "the granted wake landed in the inbox"
+        );
+        assert_eq!(swarm.total_pending(), 1);
+    }
+
+    #[test]
+    fn restrict_member_notify_is_non_amplifying_and_admits_a_subset() {
+        // The swarm-layer mirror of the firmament `NotifyCap` non-amplification:
+        // attenuating a member's grant only SHRINKS the topics it admits, and a
+        // WIDENING (re-admitting a dropped topic) is refused.
+        let (_world, mut swarm, _coord, worker_a, _worker_b) = swarm_world();
+        let task_start = *blake3::hash(b"task/start").as_bytes();
+        let task_done = *blake3::hash(b"task/done").as_bytes();
+
+        // Open by default: worker_a admits BOTH topics (mask = u64::MAX).
+        {
+            let m = swarm.members().iter().find(|m| m.agent == worker_a).unwrap();
+            assert!(m.admits_wake(&task_start), "open grant admits task/start");
+            assert!(m.admits_wake(&task_done), "open grant admits task/done");
+        }
+
+        // Narrow to {task_start}: now task/done is OUTSIDE the mask.
+        assert!(swarm.restrict_member_notify(&worker_a, &[task_start]));
+        {
+            let m = swarm.members().iter().find(|m| m.agent == worker_a).unwrap();
+            assert!(m.admits_wake(&task_start), "still admits the kept topic");
+            assert!(
+                !m.admits_wake(&task_done),
+                "the dropped topic is now refused (strictly fewer admitted)"
+            );
+        }
+
+        // WIDENING refused: re-admitting task/done (a bit not in the narrowed mask)
+        // is rejected — the grant is unchanged, no amplification.
+        assert!(
+            !swarm.restrict_member_notify(&worker_a, &[task_start, task_done]),
+            "a widening attenuation must be refused"
+        );
+        let m = swarm.members().iter().find(|m| m.agent == worker_a).unwrap();
+        assert!(
+            !m.admits_wake(&task_done),
+            "after the refused widening, task/done is STILL refused (grant unchanged)"
+        );
     }
 
     #[test]

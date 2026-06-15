@@ -1229,7 +1229,7 @@ mod tests {
         let (bob_secret, bob_public) = test_x25519_keypair();
         let (alice_secret, _) = test_x25519_keypair();
 
-        let messages = vec![
+        let messages = [
             (b"msg-zero".as_slice(), 0u64),
             (b"msg-one".as_slice(), 1u64),
             (b"msg-two".as_slice(), 2u64),

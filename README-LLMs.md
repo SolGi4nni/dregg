@@ -197,9 +197,13 @@ theorem. Key constructs (Lean models in `metatheory/Dregg2/Deos/`):
   is the same decision the kernel makes.
 - **seL4/firmament:** `sel4/` + `docs/FIRMAMENT.md`. The Robigalia v0 demo boots
   Rust userspace PDs, a real on-device STARK verifier PD, AND the executor PD (the
-  Lean kernel runs inside a real seL4 protection domain), under QEMU. The native
-  cockpit also renders on the seL4 framebuffer (a switchable mode beside the live
-  cell browser). The "one true blocker" (libuv-free single-threaded Lean runtime) is
+  Lean kernel runs inside a real seL4 protection domain), under QEMU. A real gpui
+  render is on the seL4 framebuffer too (a TAB-switchable mode beside the live cell
+  browser): a cockpit-shaped gpui `Scene` driven through the actual gpui renderer
+  (`render_scene_to_image` on lavapipe, no GPU) and blitted onto ramfb — the render
+  path is proven; swapping in the live `cockpit::Cockpit` element tree is the one
+  named frontier (`docs/desktop-os-research/GPUI-OFFSCREEN-FORK.md`). The "one true
+  blocker" (libuv-free single-threaded Lean runtime) is
   closed (`docs/EMBEDDABLE-LEAN-RUNTIME.md`). An seL4 capability and a dregg
   capability are the same abstraction at two distances; at n=1 the distributed
   bounds collapse to strong local properties.

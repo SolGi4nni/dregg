@@ -1540,6 +1540,104 @@ mod tests {
         dregg_cell::predicate::InputRef::Sender
     }
 
+    /// THE DEFAULT-EXECUTOR TOOTH (both polarities).
+    ///
+    /// A *bare* `TurnExecutor::new(..)` — no `set_witnessed_registry`, no app
+    /// wiring — must enforce the REAL MerkleMembership verifier, because
+    /// `dregg-turn` owns the real STARK gadget and uses
+    /// [`registry_with_real_verifiers`] as its constructor default. This test
+    /// reaches into the executor's OWN `witnessed_registry` (the default the
+    /// constructor installed, NOT a hand-built one) and proves both polarities
+    /// through it:
+    ///
+    /// - a genuine member's proof is ADMITTED (valid leaf reaches the root), and
+    /// - a non-member's forge against the same root is REJECTED at the STARK
+    ///   level (Poseidon2 collision resistance — no path exists, so
+    ///   `verify_membership_dsl` fails and `SenderAuthorized` rejects).
+    ///
+    /// If a future edit silently reverts the default back to
+    /// `dregg_cell::default_builtins()` (the `NotYetWiredVerifier` stub), the
+    /// ADMIT half flips to a `Rejected { reason: "not yet wired" }` and this
+    /// test fails — the regression the footgun this change closes.
+    #[test]
+    fn default_executor_admits_valid_membership_and_rejects_forge() {
+        use crate::executor::{ComputronCosts, TurnExecutor};
+
+        // The thing under test: a bare executor with NOTHING wired by the host.
+        let executor = TurnExecutor::new(ComputronCosts::default_costs());
+        let registry = executor
+            .witnessed_registry
+            .as_ref()
+            .expect("a fresh TurnExecutor must default its witnessed_registry to Some");
+
+        // Sanity: the default really is the REAL verifier, not the stub.
+        assert_eq!(
+            registry
+                .get(WitnessedPredicateKind::MerkleMembership)
+                .expect("MerkleMembership must be registered by default")
+                .name(),
+            "merkle-membership-stark",
+            "the bare-executor default must install the real STARK verifier, \
+             not dregg_cell::default_builtins's NotYetWired stub",
+        );
+
+        // An honest authorized member: derive the one-member set root and the
+        // matching membership proof from the same single-leaf tree.
+        let member = [0xA7u8; 32];
+        let set_root = single_member_authorized_root(&member);
+        let proof = single_member_membership_proof(&member);
+        let wp = WitnessedPredicate::merkle_membership(set_root, PredicateInputRefSender(), 0);
+
+        // ── ADMIT: the genuine member verifies through the DEFAULT registry. ──
+        registry
+            .verify(&wp, &PredicateInput::Sender(&member), &proof)
+            .expect(
+                "the default executor must ADMIT a valid membership proof for an \
+                 authorized member",
+            );
+
+        // ── REJECT (forge #1): a non-member sender against the SAME root, ────
+        // reusing the genuine member's proof bytes. The committed leaf is
+        // `compress(non_member)`, which does not reach `set_root`, so the STARK
+        // public-input boundary fails.
+        let non_member = [0xBEu8; 32];
+        let forge_err = registry
+            .verify(&wp, &PredicateInput::Sender(&non_member), &proof)
+            .expect_err("a non-member must be REJECTED by the default executor");
+        assert!(
+            matches!(forge_err, WitnessedPredicateError::Rejected { .. }),
+            "non-member forge must be Rejected at the STARK level; got {forge_err:?}",
+        );
+
+        // ── REJECT (forge #2): the non-member tries to forge their OWN proof ──
+        // against the honest member's root. They can build a self-consistent
+        // proof only for THEIR OWN single-member root; verified against the
+        // member's `set_root` it cannot pass (roots differ → boundary mismatch).
+        let attacker_proof = single_member_membership_proof(&non_member);
+        let forge2_err = registry
+            .verify(&wp, &PredicateInput::Sender(&non_member), &attacker_proof)
+            .expect_err("a self-fabricated proof against another's root must be REJECTED");
+        assert!(
+            matches!(forge2_err, WitnessedPredicateError::Rejected { .. }),
+            "self-fabricated wrong-root proof must be Rejected; got {forge2_err:?}",
+        );
+
+        // ── THE DELIBERATE-DECISION TOOTH: the three context-dependent kinds ──
+        // (Dfa, Temporal, BridgePredicate) stay fail-closed in the default —
+        // they have no safe context-free verifier and must be installed via
+        // `registry_with_real_verifiers_full(..)`. Prove Dfa still rejects out
+        // of the box so "raises the floor without lowering any ceiling" is a
+        // checked property, not a comment.
+        let dfa_wp = WitnessedPredicate::dfa([0u8; 32], PredicateInputRefSender(), 0);
+        let dfa_err = registry
+            .verify(&dfa_wp, &PredicateInput::Sender(&member), &[1u8, 2, 3])
+            .expect_err("Dfa must stay fail-closed by default (needs a ProgramRegistry)");
+        assert!(
+            matches!(dfa_err, WitnessedPredicateError::Rejected { .. }),
+            "default Dfa must be the NotYetWired fail-closed stub; got {dfa_err:?}",
+        );
+    }
+
     // ─────────────────────────────────────────────────────────────────────
     // Dfa / Temporal / PedersenEquality real-verifier wiring tests.
     // ─────────────────────────────────────────────────────────────────────

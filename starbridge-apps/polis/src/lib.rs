@@ -836,6 +836,336 @@ pub mod council {
 }
 
 // =============================================================================
+// Large council — UNBOUNDED-N M-of-N over the executor-reachable user-field MAP
+// =============================================================================
+
+/// The large council: an **arbitrary-N** M-of-N proposal cell whose member
+/// approvals live in the cell's EXECUTOR-REACHABLE user-field MAP
+/// (`_RECORD-LAYER-UPGRADE.md`'s `fields_root`/`fields_map`) instead of the
+/// fixed register slots.
+///
+/// ## Why this exists — the wall the record-layer upgrade lifts
+///
+/// The plain [`council`] is hard-capped at [`council::MAX_MEMBERS`] (= 3): its
+/// per-member approval bits are FIXED register slots 3..6, and its threshold
+/// gate is an `AffineLe` over those slots. A 16-slot cell cannot hold a larger
+/// member set (module-docs gap 7: *"Larger councils need the dregg4 grammar —
+/// dynamic member sets / map-slot constraints"*). The record-layer upgrade
+/// makes the cell's field map UNBOUNDED (keys `>= STATE_SLOTS` live in
+/// `fields_map`, committed by `fields_root`, folded into the canonical
+/// commitment v9, written by the executor's `SetField { index >= STATE_SLOTS }`
+/// effect). This module is that gap dissolved: the council holds N members for
+/// **any N**, each approval a record in the map, and the threshold gate is the
+/// dynamic-N [`StateConstraint::FieldsCollectionAggregate`] with
+/// [`CollPred::MOfNDistinct`] — the proven distinctness-enforced council
+/// keystone (`Dregg2.Exec.Collections.mOfNDistinct`), now READING the
+/// executor-reachable map.
+///
+/// ## The element layout (in `fields_map`, keys >= STATE_SLOTS)
+///
+/// The approval collection starts at user-map key [`APPROVAL_BASE`]; element
+/// `i` (charter order) occupies the stride
+/// `[APPROVAL_BASE + i*STRIDE .. APPROVAL_BASE + i*STRIDE + STRIDE)`:
+///
+/// | offset | name | meaning |
+/// |--------|------|---------|
+/// | [`MEMBER_OFF`] (0) | member identity | the member's pubkey-lane id (the DISTINCTNESS key) |
+/// | [`VOTE_OFF`] (1) | vote | `1` = approve; anything else = not-an-approval |
+///
+/// The quorum gate `MOfNDistinct { m, key_offset: MEMBER_OFF, approved: vote==1 }`
+/// counts DISTINCT member identities that voted `1`: a duplicate-padded forge
+/// (one member written `m`×) collapses to ONE identity and REFUSES; an unbound
+/// forge (a padding element that does not vote `1`) is filtered before the
+/// count. Both biting teeth ride the proven `mOfNDistinct`.
+///
+/// ## The machine + where the quorum gate fires
+///
+/// Same lifecycle as [`council`] (DRAFT→PROPOSED→APPROVED→EXECUTED, terminal
+/// states inert). The dynamic-N quorum gate is a SECOND `Cases` arm guarded by
+/// `SlotChanged { APPROVED_FLAG_SLOT }` — it fires on EXACTLY the turn that arms
+/// the certification flag (0→1). So certifying the proposal DEMANDS the
+/// distinct-M quorum in the same post-state, exactly as the plain council's
+/// `AffineLe` makes arming the flag demand `Σ approvals >= M` — but now over an
+/// unbounded member set in the committed map. Proposing, rejecting, and a member
+/// merely casting their vote do not touch the flag, so they run under the
+/// `Always` invariants arm without the quorum gate.
+pub mod large_council {
+    use super::*;
+    use dregg_cell::program::{
+        CollPred, ElemPredAtom, TransitionCase, TransitionGuard,
+    };
+
+    /// First user-map key the approval collection starts at — the map TAIL
+    /// (`>= STATE_SLOTS`), so the run lives wholly in the committed `fields_map`
+    /// the executor's `SetField` path writes. Chosen as the first map key.
+    pub const APPROVAL_BASE: u64 = dregg_cell::state::STATE_SLOTS as u64;
+    /// Per-element key stride: `{member_id, vote}` ⇒ 2 map keys per member.
+    pub const STRIDE: u32 = 2;
+    /// Element-relative offset of the member-identity key (the distinctness
+    /// key the council dedups over).
+    pub const MEMBER_OFF: u32 = 0;
+    /// Element-relative offset of the member's vote (`1` = approve).
+    pub const VOTE_OFF: u32 = 1;
+
+    /// The fuel (upper element-count bound) the quorum gate reads to — an
+    /// explicit ceiling so the read is bounded. Large enough for any council a
+    /// single cell would hold; a charter with more members than this fails at
+    /// build ([`LargeCouncilCharter::validate`]).
+    pub const MAX_FUEL: u32 = 4096;
+
+    pub use super::council::{
+        APPROVED_FLAG_SLOT, MEMBERS_COMMIT_SLOT, PROPOSAL_HASH_SLOT, RESERVED_SLOT, STATE_APPROVED,
+        STATE_DRAFT, STATE_EXECUTED, STATE_PROPOSED, STATE_REJECTED,
+    };
+
+    /// A large-council charter: the published membership identities + the
+    /// threshold. Unlike [`council::CouncilCharter`] there is NO `MAX_MEMBERS`
+    /// cap — the members live in the unbounded map.
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub struct LargeCouncilCharter {
+        /// Member identities (the DISTINCTNESS keys), in charter order. Each is
+        /// the member's pubkey-lane id as a field element (e.g.
+        /// [`field_from_u64`] of a member ordinal, or a pubkey digest). At most
+        /// [`MAX_FUEL`].
+        pub members: Vec<FieldElement>,
+        /// Approvals required to certify (`1 <= threshold <= members.len()`).
+        pub threshold: u64,
+    }
+
+    impl LargeCouncilCharter {
+        /// A large council over `members` requiring `threshold` distinct
+        /// approvals.
+        pub fn new(members: Vec<FieldElement>, threshold: u64) -> Self {
+            Self { members, threshold }
+        }
+
+        /// Fail-closed validation (mirrors [`council::CouncilCharter::validate`]
+        /// minus the fixed-slot cap; gains a `MAX_FUEL` ceiling).
+        pub fn validate(&self) -> Result<(), PolisError> {
+            if self.members.is_empty() {
+                return Err(PolisError::NoMembers);
+            }
+            if self.members.len() > MAX_FUEL as usize {
+                return Err(PolisError::TooManyMembers {
+                    got: self.members.len(),
+                    max: MAX_FUEL as usize,
+                });
+            }
+            if self.threshold == 0 || self.threshold > self.members.len() as u64 {
+                return Err(PolisError::ThresholdOutOfRange {
+                    threshold: self.threshold,
+                    members: self.members.len(),
+                });
+            }
+            for (i, m) in self.members.iter().enumerate() {
+                if *m == FIELD_ZERO {
+                    // A zero identity can never be a real distinct approver and
+                    // would alias the unborn slot; fail loudly at build.
+                    return Err(PolisError::ZeroMemberKey { index: i });
+                }
+                if self.members[..i].contains(m) {
+                    return Err(PolisError::DuplicateMember);
+                }
+            }
+            Ok(())
+        }
+
+        /// The map key holding member `index`'s identity element field.
+        pub fn member_id_key(&self, index: usize) -> u64 {
+            APPROVAL_BASE + (index as u64) * (STRIDE as u64) + MEMBER_OFF as u64
+        }
+
+        /// The map key holding member `index`'s vote element field.
+        pub fn member_vote_key(&self, index: usize) -> u64 {
+            APPROVAL_BASE + (index as u64) * (STRIDE as u64) + VOTE_OFF as u64
+        }
+
+        /// The published membership commitment — the same domain-separated
+        /// digest shape [`council`] uses, over the threshold + the member
+        /// identities. Pinned into [`MEMBERS_COMMIT_SLOT`] once out of DRAFT.
+        pub fn members_commitment(&self) -> FieldElement {
+            let mut hasher = blake3::Hasher::new_derive_key("dregg-polis:large-council-members v1");
+            hasher.update(&self.threshold.to_be_bytes());
+            hasher.update(&(self.members.len() as u64).to_be_bytes());
+            for m in &self.members {
+                hasher.update(m);
+            }
+            *hasher.finalize().as_bytes()
+        }
+    }
+
+    /// The dynamic-N quorum gate: `MOfNDistinct` over the map-borne approval
+    /// collection. The proven council keystone, READING the executor-reachable
+    /// `fields_map`.
+    pub fn quorum_gate(threshold: u64) -> StateConstraint {
+        StateConstraint::FieldsCollectionAggregate {
+            base: APPROVAL_BASE,
+            stride: STRIDE,
+            fuel: MAX_FUEL,
+            pred: CollPred::MOfNDistinct {
+                m: threshold as u32,
+                key_offset: MEMBER_OFF,
+                approved: ElemPredAtom::FieldEquals {
+                    offset: VOTE_OFF,
+                    value: field_from_u64(1),
+                },
+            },
+        }
+    }
+
+    /// The structural invariants that hold on EVERY transition (the machine,
+    /// the write-once proposal, the certification flag discipline, the
+    /// membership publication). The quorum gate is NOT here — it is the
+    /// flag-arming-scoped second case.
+    fn invariants(charter: &LargeCouncilCharter) -> Vec<StateConstraint> {
+        vec![
+            // ── the state machine; terminal states have NO outgoing row ──
+            StateConstraint::AllowedTransitions {
+                slot_index: STATE_SLOT,
+                allowed: vec![
+                    (field_from_u64(STATE_DRAFT), field_from_u64(STATE_DRAFT)),
+                    (field_from_u64(STATE_DRAFT), field_from_u64(STATE_PROPOSED)),
+                    (
+                        field_from_u64(STATE_PROPOSED),
+                        field_from_u64(STATE_PROPOSED),
+                    ),
+                    (
+                        field_from_u64(STATE_PROPOSED),
+                        field_from_u64(STATE_REJECTED),
+                    ),
+                    (
+                        field_from_u64(STATE_PROPOSED),
+                        field_from_u64(STATE_APPROVED),
+                    ),
+                    (
+                        field_from_u64(STATE_APPROVED),
+                        field_from_u64(STATE_APPROVED),
+                    ),
+                    (
+                        field_from_u64(STATE_APPROVED),
+                        field_from_u64(STATE_EXECUTED),
+                    ),
+                ],
+            },
+            // ── one proposal per cell; any state step requires a staged hash ──
+            StateConstraint::WriteOnce {
+                index: PROPOSAL_HASH_SLOT,
+            },
+            StateConstraint::BoundedBy {
+                index: STATE_SLOT,
+                witness_index: PROPOSAL_HASH_SLOT,
+            },
+            // ── membership publication (pinned once out of DRAFT) ──
+            pin_term(MEMBERS_COMMIT_SLOT, charter.members_commitment()),
+            // ── the certification flag: a monotone bit, armable only with a
+            //    staged proposal ──
+            StateConstraint::MemberOf {
+                index: APPROVED_FLAG_SLOT,
+                set: vec![0, 1],
+            },
+            StateConstraint::Monotonic {
+                index: APPROVED_FLAG_SLOT,
+            },
+            StateConstraint::BoundedBy {
+                index: APPROVED_FLAG_SLOT,
+                witness_index: PROPOSAL_HASH_SLOT,
+            },
+            // ── APPROVED / EXECUTED demand the certified flag ──
+            when_state(
+                STATE_APPROVED,
+                SimpleStateConstraint::FieldEquals {
+                    index: APPROVED_FLAG_SLOT,
+                    value: field_from_u64(1),
+                },
+            ),
+            when_state(
+                STATE_EXECUTED,
+                SimpleStateConstraint::FieldEquals {
+                    index: APPROVED_FLAG_SLOT,
+                    value: field_from_u64(1),
+                },
+            ),
+            // ── the reserved register slot stays pinned zero (the map carries
+            //    member data; the fixed slots beyond the machine are unused) ──
+            pinned_zero(RESERVED_SLOT),
+        ]
+    }
+
+    /// The large-council `CellProgram`: a two-case program.
+    ///
+    /// * Case `Always` — the structural [`invariants`] (machine, write-once
+    ///   proposal, flag discipline, membership publication).
+    /// * Case `SlotChanged { APPROVED_FLAG_SLOT }` — the dynamic-N
+    ///   [`quorum_gate`]. Fires on EXACTLY the certification turn (the flag
+    ///   0→1), so arming the flag DEMANDS the distinct-M quorum over the
+    ///   map-borne member approvals. Proposing / rejecting / a member casting a
+    ///   vote leave the flag alone and run under the invariants alone.
+    pub fn large_council_cell_program(
+        charter: &LargeCouncilCharter,
+    ) -> Result<CellProgram, PolisError> {
+        charter.validate()?;
+        Ok(CellProgram::Cases(vec![
+            TransitionCase {
+                guard: TransitionGuard::Always,
+                constraints: invariants(charter),
+            },
+            TransitionCase {
+                guard: TransitionGuard::SlotChanged {
+                    index: APPROVED_FLAG_SLOT,
+                },
+                constraints: vec![quorum_gate(charter.threshold)],
+            },
+        ]))
+    }
+
+    /// **The large-council factory (per-charter, content-addressed).** Each
+    /// proposal is one cell born from this factory; the membership + threshold
+    /// are baked into every proposal cell's program for life.
+    ///
+    /// THE DESCRIPTOR/CELL-PROGRAM SPLIT (the established subscription pattern,
+    /// `starbridge-subscription::subscription_factory_descriptor`): the
+    /// descriptor's `state_constraints` is a FLAT `Vec<StateConstraint>` — no
+    /// `Cases` shape — so it carries the structural [`invariants`] (the machine,
+    /// write-once proposal, flag discipline, membership publication), which the
+    /// factory-birth path installs as a `Predicate` and which bite on EVERY
+    /// touching turn. The full TWO-CASE shape — the flag-arming-scoped dynamic-N
+    /// [`quorum_gate`] — is committed by `child_program_vk` (the cell-program
+    /// VK) and is the program a host installs on the born cell (via
+    /// `install_program` / `Cell::with_program`) so the quorum gate fires on the
+    /// certification turn. `large_council_cell_program(charter)` is that full
+    /// program.
+    pub fn large_council_factory_descriptor(
+        charter: &LargeCouncilCharter,
+    ) -> Result<FactoryDescriptor, PolisError> {
+        charter.validate()?;
+        // The full two-case program — committed by `child_program_vk`.
+        let program = large_council_cell_program(charter)?;
+        let child_vk = dregg_cell::factory::canonical_program_vk(&program);
+        // The flat invariants — carried in the descriptor, installed on birth.
+        let flat_invariants = invariants(charter);
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-polis:large-council-factory v1");
+        let encoded = postcard::to_allocvec(&program).unwrap_or_default();
+        hasher.update(&(encoded.len() as u64).to_le_bytes());
+        hasher.update(&encoded);
+        let factory_vk = *hasher.finalize().as_bytes();
+        Ok(FactoryDescriptor {
+            factory_vk,
+            child_program_vk: Some(child_vk),
+            child_vk_strategy: Some(ChildVkStrategy::Fixed(Some(child_vk))),
+            allowed_cap_templates: vec![CapTemplate {
+                target: CapTarget::SelfCell,
+                max_permissions: AuthRequired::Signature,
+                attenuatable: true,
+            }],
+            field_constraints: vec![],
+            state_constraints: flat_invariants,
+            default_mode: CellMode::Hosted,
+            creation_budget: None,
+        })
+    }
+}
+
+// =============================================================================
 // Constitution — parameters-as-pinned-program, per-version cells
 // =============================================================================
 

@@ -2488,16 +2488,19 @@ dependencies = [
 name = "dregg-perf"
 version = "0.1.0"
 dependencies = [
+ "blake3",
  "criterion",
  "dregg-cell",
  "dregg-circuit",
  "dregg-intent",
+ "dregg-lean-ffi",
  "dregg-sdk",
  "dregg-token",
  "dregg-turn",
  "postcard",
  "serde",
  "serde_json",
+ "starbridge-v2",
 ]
 
 [[package]]
@@ -7380,6 +7383,27 @@ dependencies = [
  "serde_json",
  "tokio",
  "tower",
+]
+
+[[package]]
+name = "starbridge-v2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "blake3",
+ "dregg-cell",
+ "dregg-coord",
+ "dregg-firmament",
+ "dregg-sdk",
+ "dregg-token",
+ "dregg-turn",
+ "dregg-types",
+ "dregg-userspace-verify",
+ "hex",
+ "postcard",
+ "serde",
+ "serde_json",
+ "starbridge-web-surface",
 ]
 
 [[package]]

@@ -947,7 +947,7 @@ mod tests {
         assert_roundtrip(Value::int(i128::MIN));
         assert_roundtrip(Value::float(0.0));
         assert_roundtrip(Value::float(-0.0));
-        assert_roundtrip(Value::float(3.141592653589793));
+        assert_roundtrip(Value::float(std::f64::consts::PI));
         assert_roundtrip(Value::float(f64::INFINITY));
         assert_roundtrip(Value::float(f64::NEG_INFINITY));
     }

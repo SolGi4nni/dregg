@@ -21,17 +21,30 @@ The switch is one function: `dregg_perf::perf_full()`.
 
 ## Bench inventory
 
-`perf/benches/*.rs` (criterion, `harness = false`):
+`perf/benches/*.rs` (criterion, `harness = false`). The measured numbers these
+produce live in **`docs/PERFORMANCE.md`**; this is the index.
 
 | bench | hot path | public API | SMOKE / FULL |
 |---|---|---|---|
-| `turn_proof`     | EffectVM prove **and** verify | `prove_effect_vm_p3` / `verify_effect_vm_p3` | 1-eff / 1·4·16-eff |
-| `prove`          | transfer prove (hand-AIR + descriptor) | `prove_effect_vm_p3`, `prove_vm_descriptor` | 1-eff / 1·4·16-eff |
-| `verify`         | proof verify (light-client cost) | `verify_effect_vm_p3` | 1-eff / 1·4·16-eff |
+| `turn_witness_vs_proving` | THE headline contrast: admit vs prove, one turn, every leg | `TurnExecutor::execute`, `generate_effect_vm_trace`, rotated `prove_full_turn` / `verify_full_turn` | 1 turn / amount ladder |
+| `turn_proof`     | live rotated full-turn prove **and** verify | rotated `prove_full_turn` / `verify_full_turn` | 1 turn / ladder |
+| `prove`          | full rotated turn + the IR-v2 descriptor leg in isolation | `prove_full_turn`, `prove_vm_descriptor2` | 1 turn / ladder |
+| `verify`         | rotated full-turn verify (light-client cost) | `verify_full_turn` | 1 turn / ladder |
+| `cohort_circuit` | the rotated IR-v2 multi-table batch STARK per effect cohort | `prove_vm_descriptor2` / `verify_vm_descriptor2` | transfer / + map·umem·absent |
+| `recursion_fold` | the bundle-tree aggregation fold (N-leaf compress chain) | `prove_tree_fold_v2` / `verify_tree_fold_v2` | 2 leaves / 2·8·32·128 |
+| `embedded_commit`| the verified Lean kernel commit (node / seL4-PD hot path) | `shadow_exec_full_forest_auth`, `decode_shadow_verdict` | same input |
+| `ui_projection`  | the deos desktop: first-paint data + scene/affordance projection | `demo_world`/`demo_genesis`, `Shell::compose{,_scene}`, `AffordanceSurface::project_for` | same input |
 | `executor_turn`  | live Rust executor turn | `TurnExecutor::execute` over a `Ledger` | same input |
-| `trace_gen`      | witness gen + Poseidon2-aux extension | `generate_effect_vm_trace`, `extend_trace_with_hashes` | 1-eff / ladder |
+| `trace_gen`      | witness gen + descriptor-matrix extension | `generate_effect_vm_trace`, `descriptor_recursion_matrix` | 1-eff / ladder |
 | `commitment`     | canonical cell commitment v8 + v9 rotated | `compute_canonical_state_commitment{,_v9}` | same input |
 | `poseidon2`      | width-16 permutation + 2→1 + sponge | `Poseidon2State::permute`, `hash_2_to_1`, `hash_many` | sponge 8 / 64 |
+
+> NOTE: the full-turn prove/verify benches drive the LIVE **rotated** path
+> (`prove_full_turn` with a real `RotationTurnWitness`). The v1
+> `prove_turn_self_sovereign` entry is retired under the `recursion` default — it
+> panics "thread a rotation witness" — so the benches build the witness via
+> `dregg_turn::rotation_witness::produce` (the `dregg_perf::rotated_transfer_turn`
+> helper, mirroring the C1 reference).
 
 Report / microbench binaries (`perf/src/bin/*.rs`):
 
@@ -145,13 +158,15 @@ Ordered by expected cost, **with why**, so the future lane has a map:
    take to prove." Levers: blowup factor, query count, batching/folding across
    sub-proofs, parallel FRI. Profile target: `prove` / `turn_proof` benches.
 
-2. **In-circuit Poseidon2 (the aux witness + every commitment).**
-   The audited p3 path costs a multiple of the bespoke prover precisely because
-   it computes **real in-circuit Poseidon2** (hash aux blocks) rather than
-   abstracting it. Poseidon2 is the per-row hash cost folded into FRI, and the
-   sole hash in cell commitments. Levers: the permutation S-box / linear-layer
-   implementation, vectorization, reducing the number of absorbed limbs.
-   Profile target: `poseidon2`, `commitment`, `trace_gen` (hashext).
+2. **In-circuit Poseidon2 (the chip table + every commitment).**
+   The rotated IR-v2 path computes **real in-circuit Poseidon2** in the chip
+   table (the map-op/cap-root hashes the batch STARK commits). Poseidon2 is also
+   the sole hash in the cell commitment — and the cell commitment is a
+   measured outlier: the cap-root sorted-Poseidon2 tree costs ~225 ms (v8) /
+   ~157 ms (v9), see `docs/PERFORMANCE.md`. Levers: the permutation
+   S-box / linear-layer implementation, vectorization, the commitment
+   witness-vs-recompute split. Profile target: `poseidon2`, `commitment`,
+   `cohort_circuit`.
 
 3. **Trace / witness generation (`generate_effect_vm_trace` + hash extension).**
    Sub-millisecond today and a small fraction of prove — but it is the
@@ -163,11 +178,13 @@ Ordered by expected cost, **with why**, so the future lane has a map:
    peer** pays per turn, so it is tracked separately. Levers live in the FRI
    query count and proof size. Profile target: `verify`.
 
-5. **Silver joint-turn AGGREGATION (linear in cells).**
-   Silver re-verifies every per-cell proof (no recursion) ⇒ verify grows ~linear
-   in the number of cells. The gold recursive path collapses this to one
-   succinct proof at higher prove cost. Target the silver→gold crossover.
-   (Measured by `perf-report` §7, not a criterion bench yet.)
+5. **Recursive aggregation FOLD (the bundle-tree compress chain).**
+   The fold collapses N per-participant digests into one aggregate root; cost
+   scales with fan-out. Measured: ~10 ms prove / ~2.4 ms verify for 2 leaves
+   (`recursion_fold` bench). The rotated full-turn prove (~147 ms) wraps the
+   ~52 ms descriptor leg in the recursion-binding proof — that wrap, not the leaf,
+   is the majority of per-turn prove cost. Profile target: `recursion_fold`,
+   `cohort_circuit` (the leaf), `turn_proof` (the wrapped whole).
 
 6. **The executor turn (non-proof path).**
    `TurnExecutor::execute` — state lookup, authorization gating, effect

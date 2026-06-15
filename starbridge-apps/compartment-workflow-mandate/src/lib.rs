@@ -22,7 +22,8 @@ use dregg_app_framework::{
     CellProgram, ChildVkStrategy, ConstantsModule, DeosApp, DeosCell, Effect, EmbeddedExecutor,
     Event, FactoryDescriptor, FireExecuteError, GatedAffordance, InspectorDescriptor,
     StarbridgeAppContext, StateConstraint, TransitionCase, TransitionGuard, TurnReceipt,
-    canonical_program_vk, field_from_bytes, field_from_u64, hex_encode_32, symbol,
+    canonical_program_vk, clearance_graph_root, field_from_bytes, field_from_u64, hex_encode_32,
+    symbol,
 };
 
 // Re-export the field type so differential tests can build the same clearance-label corpus the
@@ -104,6 +105,18 @@ pub const CLEARANCE_GRAPH_ROOT_SLOT: u8 = 3;
 /// Slot 4 — `spend_policy`. Immutable per-step Stingray debit amount.
 pub const SPEND_POLICY_SLOT: u8 = 4;
 
+/// Slot 5 — `actor_clearance`. The acting officer's clearance label (the label
+/// whose dominance over the entered step's compartment the executor checks).
+/// Bound per turn by the advancing turn (the officer presents their clearance).
+pub const ACTOR_CLEARANCE_SLOT: u8 = 5;
+
+/// Slot 6 — `step_compartment`. The compartment label of the step being ENTERED,
+/// materialized into state by the advancing turn so the executor's
+/// [`StateConstraint::ClearanceDominates`] reads the required compartment for the
+/// step (the per-step `needsAll g actorLabels [step.compartment]` of Lean
+/// `stepClearanceOK`, made a state read).
+pub const STEP_COMPARTMENT_SLOT: u8 = 6;
+
 // =============================================================================
 // Factory configuration
 // =============================================================================
@@ -138,14 +151,97 @@ pub fn step_admissible(step_id: u64, completed: &[u64], phase: WorkflowPhase) ->
         && !completed.contains(&step_id)
 }
 
-/// **`step_clearance_ok`** — actor labels dominate the step's compartment.
+/// The named clearance labels of the canonical charter graph (Lean
+/// `charterGraph3`, `Apps/CompartmentWorkflowMandate/Core.lean:172`).
+pub fn officer_label() -> FieldElement {
+    clearance_label("officer")
+}
+/// The clerk clearance label (clears ONLY `review`). See [`officer_label`].
+pub fn clerk_label() -> FieldElement {
+    clearance_label("clerk")
+}
+
+/// **The canonical charter clearance graph** — the `(dominator, dominated)` edge
+/// set of Lean `charterGraph3` (`Apps/CompartmentWorkflowMandate/Core.lean:172`):
 ///
-/// Scaffold: checks that `actor_label_hashes` contains the step compartment.
-/// Full `needsAll` over a `ClearanceGraph` lands when the graph root verifier
-/// is wired (Lean `Authority/ClearanceGraph.lean`).
+///   officer ⊐ {review, redact, sign},   clerk ⊐ {review}.
+///
+/// An officer's clearance dominates every step compartment (it may run the whole
+/// charter); a clerk's dominates only `review` (it may only do step 0). Dominance
+/// is the reflexive-transitive closure of these edges — the proved-sound
+/// `ClearanceGraph.dominatesD`. This IS the graph the cell commits in its
+/// `CLEARANCE_GRAPH_ROOT_SLOT` ([`charter_clearance_root`]) and that the
+/// executor's [`StateConstraint::ClearanceDominates`] walks.
+pub fn charter_clearance_graph() -> Vec<(FieldElement, FieldElement)> {
+    vec![
+        (officer_label(), WorkflowPhase::Review.compartment_label()),
+        (officer_label(), WorkflowPhase::Redact.compartment_label()),
+        (officer_label(), WorkflowPhase::Sign.compartment_label()),
+        (clerk_label(), WorkflowPhase::Review.compartment_label()),
+    ]
+}
+
+/// The canonical commitment of the charter clearance graph — the value pinned in
+/// the cell's `CLEARANCE_GRAPH_ROOT_SLOT`. The executor's `ClearanceDominates`
+/// recomputes this from the carried edges and refuses any turn whose graph does
+/// not match it (the stored root is LOAD-BEARING).
+pub fn charter_clearance_root() -> FieldElement {
+    clearance_graph_root(&charter_clearance_graph())
+}
+
+/// Fuel-bounded reflexive-transitive dominance over the clearance graph — the
+/// hand-port of the proved-sound Lean `ClearanceGraph.dominatesD`/`dominatesFuel`
+/// (`Authority/ClearanceGraph.lean:46,53`) over the felt-label substrate. `a`
+/// dominates `b` iff `a == b` or some edge `(a, mid)` and `mid` dominates `b`,
+/// bounded by `edges.len() + 1`. Reflexive (an actor holding exactly the box
+/// label is cleared). Mirrors the executor's `dominates_closure`
+/// (`cell/src/program.rs`) — the predicate layer and the executor decide
+/// dominance the SAME way.
+pub fn dominates(edges: &[(FieldElement, FieldElement)], a: FieldElement, b: FieldElement) -> bool {
+    fn go(
+        edges: &[(FieldElement, FieldElement)],
+        a: FieldElement,
+        b: FieldElement,
+        fuel: usize,
+    ) -> bool {
+        if fuel == 0 {
+            return false;
+        }
+        if a == b {
+            return true;
+        }
+        edges
+            .iter()
+            .any(|(src, mid)| *src == a && go(edges, *mid, b, fuel - 1))
+    }
+    go(edges, a, b, edges.len() + 1)
+}
+
+/// **`mayRead`** — some held label dominates `box` in the graph (Lean
+/// `ClearanceGraph.mayRead`).
+pub fn may_read(
+    edges: &[(FieldElement, FieldElement)],
+    actor_labels: &[FieldElement],
+    box_label: FieldElement,
+) -> bool {
+    actor_labels.iter().any(|&a| dominates(edges, a, box_label))
+}
+
+/// **`step_clearance_ok`** — the actor's held labels CLEAR the step's compartment
+/// in the charter clearance graph: `needsAll g actorLabels [step.compartment]`
+/// over a single required compartment (Lean `stepClearanceOK`,
+/// `Apps/CompartmentWorkflowMandate/Core.lean:87`). NO LONGER a flat
+/// `contains` — it walks the reflexive-transitive dominance closure of
+/// [`charter_clearance_graph`], so an officer (whose clearance dominates the step
+/// compartment) is cleared while a clerk is cleared only for `review`. This is
+/// the predicate-layer twin of the executor's
+/// [`StateConstraint::ClearanceDominates`] tooth (both decide via [`dominates`]).
 pub fn step_clearance_ok(phase: WorkflowPhase, actor_label_hashes: &[FieldElement]) -> bool {
-    let required = phase.compartment_label();
-    actor_label_hashes.contains(&required)
+    may_read(
+        &charter_clearance_graph(),
+        actor_label_hashes,
+        phase.compartment_label(),
+    )
 }
 
 /// **`cwm_advance_admits`** — predicate-level one-step admission (Lean `cwmAdvanceM`).
@@ -198,11 +294,42 @@ pub fn cwm_cell_program() -> CellProgram {
             guard: TransitionGuard::MethodIs {
                 method: symbol("advance_step"),
             },
-            constraints: vec![StateConstraint::MonotonicSequence {
-                seq_index: STEP_CURSOR_SLOT,
-            }],
+            constraints: vec![
+                StateConstraint::MonotonicSequence {
+                    seq_index: STEP_CURSOR_SLOT,
+                },
+                // THE CLEARANCE TOOTH (Lean `stepClearanceOK`, root-bound): the
+                // acting officer's clearance (slot 5) must DOMINATE the entered
+                // step's compartment (slot 6) in the charter clearance graph, and
+                // that graph must commit to the root stored in
+                // `CLEARANCE_GRAPH_ROOT_SLOT` (slot 3). The advancing turn
+                // materializes both the actor clearance and the step compartment
+                // into state (see [`advance_effects`]), so a clerk advancing to
+                // `redact`/`sign` (clerk does not dominate them) is a REAL
+                // executor refusal, while an officer advances; substitute an
+                // over-permissive graph or tamper the root and it fails closed on
+                // the root check.
+                clearance_dominates_constraint(),
+            ],
         },
     ])
+}
+
+/// The root-bound clearance constraint the executor re-enforces on every
+/// `advance_step`: the actor clearance in `ACTOR_CLEARANCE_SLOT` dominates the
+/// entered step's compartment in `STEP_COMPARTMENT_SLOT`, in the charter
+/// clearance graph whose canonical commitment must equal
+/// `CLEARANCE_GRAPH_ROOT_SLOT`. The Rust twin of Lean `stepClearanceOK` made an
+/// inline executor tooth (`ClearanceGraph.dominatesD`, soundness
+/// `dominates_of_dominatesD`), bound to the stored root so the slot is
+/// LOAD-BEARING.
+pub fn clearance_dominates_constraint() -> StateConstraint {
+    StateConstraint::ClearanceDominates {
+        actor_label_index: ACTOR_CLEARANCE_SLOT,
+        box_index: STEP_COMPARTMENT_SLOT,
+        root_index: CLEARANCE_GRAPH_ROOT_SLOT,
+        edges: charter_clearance_graph(),
+    }
 }
 
 /// Canonical child program VK.
@@ -265,37 +392,31 @@ pub fn factory_descriptors() -> Vec<FactoryDescriptor> {
 // Turn builders
 // =============================================================================
 
-/// Build the on-ledger [`Action`] that advances the mandate step cursor by one.
+/// Build the on-ledger [`Action`] that advances the mandate step cursor by one,
+/// presenting `actor_clearance` as the acting officer's clearance label.
 ///
-/// Effects:
+/// Effects (= [`advance_effects`]):
 /// 1. `SetField(STEP_CURSOR_SLOT, new_cursor)` — `MonotonicSequence` enforces `+1`.
-/// 2. `EmitEvent("workflow-step-advanced", [old_cursor, new_cursor, phase_label])`.
+/// 2. `SetField(ACTOR_CLEARANCE_SLOT, actor_clearance)` — the officer's clearance.
+/// 3. `SetField(STEP_COMPARTMENT_SLOT, phase.compartment)` — the entered step's box.
+/// 4. `EmitEvent("workflow-step-advanced", [old_cursor, new_cursor, phase_label])`.
+///
+/// The executor's root-bound [`clearance_dominates_constraint`] then checks the
+/// presented clearance dominates the entered compartment.
 pub fn build_advance_step_action(
     cipherclerk: &AppCipherclerk,
     mandate_cell: CellId,
     current_cursor: u64,
+    actor_clearance: FieldElement,
     phase: WorkflowPhase,
 ) -> Action {
     let new_cursor = current_cursor + 1;
-    let old_field = field_from_u64(current_cursor);
-    let new_field = field_from_u64(new_cursor);
-    let phase_label = phase.compartment_label();
-
-    let effects = vec![
-        Effect::SetField {
-            cell: mandate_cell,
-            index: STEP_CURSOR_SLOT as usize,
-            value: new_field,
-        },
-        Effect::EmitEvent {
-            cell: mandate_cell,
-            event: Event::new(
-                symbol("workflow-step-advanced"),
-                vec![old_field, new_field, phase_label],
-            ),
-        },
-    ];
-
+    let effects = advance_effects(
+        mandate_cell,
+        new_cursor,
+        actor_clearance,
+        phase.compartment_label(),
+    );
     cipherclerk.make_action(mandate_cell, "advance_step", effects)
 }
 
@@ -363,6 +484,8 @@ pub fn web_constants() -> ConstantsModule {
             CLEARANCE_GRAPH_ROOT_SLOT as u64,
         )
         .slot("SPEND_POLICY_SLOT", SPEND_POLICY_SLOT as u64)
+        .slot("ACTOR_CLEARANCE_SLOT", ACTOR_CLEARANCE_SLOT as u64)
+        .slot("STEP_COMPARTMENT_SLOT", STEP_COMPARTMENT_SLOT as u64)
         .string("FACTORY_VK_HEX", hex_encode_32(&CWM_FACTORY_VK))
         .topic("INITIALIZED", "workflow-mandate-initialized")
         .topic("STEP_ADVANCED", "workflow-step-advanced")
@@ -484,12 +607,22 @@ pub fn not_at_terminal_precondition() -> CellProgram {
 
 /// **`advance_step` effects** — the multi-effect advance body for a target cursor:
 /// advance `STEP_CURSOR` to `new_cursor` (`MonotonicSequence` enforces the exact `+1`
-/// on the produced transition) and emit `workflow-step-advanced`. This is the ONE
+/// on the produced transition), MATERIALIZE the acting officer's clearance label
+/// into `ACTOR_CLEARANCE_SLOT` and the entered step's compartment into
+/// `STEP_COMPARTMENT_SLOT` (so the executor's [`clearance_dominates_constraint`]
+/// reads both from post-state), and emit `workflow-step-advanced`. This is the ONE
 /// coherent transition the installed program admits (the cursor advances by exactly
-/// one step, the config slots stay frozen, `STEP_CURSOR <= CHARTER_TERMINAL` preserved).
-/// `new_anchor` labels the advanced step in the event (the charter phase compartment
-/// label for the step just entered). THIS is the turn [`fire_advance_step`] submits.
-pub fn advance_effects(cell: CellId, new_cursor: u64, new_anchor: FieldElement) -> Vec<Effect> {
+/// one step, the config slots stay frozen, `STEP_CURSOR <= CHARTER_TERMINAL` preserved,
+/// AND the actor's clearance dominates the entered step's compartment in the
+/// root-bound charter graph). `new_anchor` is the compartment label for the step just
+/// entered — it both labels the event AND is the box the clearance check reads. THIS
+/// is the turn [`fire_advance_step`] submits.
+pub fn advance_effects(
+    cell: CellId,
+    new_cursor: u64,
+    actor_clearance: FieldElement,
+    new_anchor: FieldElement,
+) -> Vec<Effect> {
     let old_field = field_from_u64(new_cursor.saturating_sub(1));
     let new_field = field_from_u64(new_cursor);
     vec![
@@ -497,6 +630,20 @@ pub fn advance_effects(cell: CellId, new_cursor: u64, new_anchor: FieldElement) 
             cell,
             index: STEP_CURSOR_SLOT as usize,
             value: new_field,
+        },
+        // The acting officer presents their clearance label — the executor's
+        // ClearanceDominates checks it dominates the entered step's compartment.
+        Effect::SetField {
+            cell,
+            index: ACTOR_CLEARANCE_SLOT as usize,
+            value: actor_clearance,
+        },
+        // The compartment of the step being ENTERED — the box the clearance check
+        // reads (the per-step `needsAll [step.compartment]` of `stepClearanceOK`).
+        Effect::SetField {
+            cell,
+            index: STEP_COMPARTMENT_SLOT as usize,
+            value: new_anchor,
         },
         Effect::EmitEvent {
             cell,
@@ -642,21 +789,28 @@ pub fn seed_workflow(
 /// submits; a program violation is a real executor refusal.
 ///
 /// The cursor is read from the cell's live state (current `STEP_CURSOR` ⇒ `+1`), so the
-/// caller threads nothing — each fire advances one step. Use [`seed_workflow`] first.
+/// caller threads only WHICH actor is advancing — `actor_clearance` is the acting
+/// officer's clearance label, materialized into `ACTOR_CLEARANCE_SLOT` so the
+/// executor's [`clearance_dominates_constraint`] checks it dominates the entered step's
+/// compartment in the root-bound charter graph (an officer advances every step; a clerk
+/// is REFUSED past `review`). Use [`seed_workflow`] first.
 pub fn fire_advance_step(
     app: &DeosApp,
     held: &AuthRequired,
+    actor_clearance: FieldElement,
     cipherclerk: &AppCipherclerk,
     executor: &EmbeddedExecutor,
 ) -> Result<TurnReceipt, FireExecuteError> {
     let cell = &app.cells()[0];
     // The accumulating fire: the cap∧state gate is run in-band by
     // `fire_gated_through_executor_with`; on both passing, the closure derives the
-    // advance effects from the LIVE cursor (so the button advances each time).
+    // advance effects from the LIVE cursor (so the button advances each time) and
+    // materializes the actor clearance + entered step compartment for the executor's
+    // root-bound ClearanceDominates tooth.
     cell.fire_gated_through_executor_with("advance_step", held, cipherclerk, executor, |live| {
         let live_cursor = field_to_u64(&live.fields[STEP_CURSOR_SLOT as usize]);
         let next = live_cursor + 1;
-        advance_effects(cell.cell(), next, phase_label_for(next))
+        advance_effects(cell.cell(), next, actor_clearance, phase_label_for(next))
     })
 }
 
@@ -687,7 +841,10 @@ pub fn register_deos(ctx: &StarbridgeAppContext) -> DeosApp {
         ctx.executor(),
         DEFAULT_COMMITMENT_ANCHOR,
         DEFAULT_CHARTER_STEPS,
-        clearance_label("clearance-graph-root"),
+        // The REAL charter clearance-graph commitment — so the executor's
+        // root-bound ClearanceDominates admits a cleared officer and refuses a
+        // clerk past `review` (a bogus root would fail EVERY advance closed).
+        charter_clearance_root(),
         DEFAULT_STEP_SPEND_POLICY,
     );
     app.register(ctx);
@@ -750,19 +907,30 @@ mod tests {
     #[test]
     fn advance_action_carries_set_field_and_emit_event() {
         let cipherclerk = test_cipherclerk();
-        let action = build_advance_step_action(&cipherclerk, test_cell(), 0, WorkflowPhase::Review);
-        assert_eq!(action.effects.len(), 2);
+        let action =
+            build_advance_step_action(&cipherclerk, test_cell(), 0, officer_label(), WorkflowPhase::Review);
+        // cursor + actor clearance + step compartment + event.
+        assert_eq!(action.effects.len(), 4);
         assert!(matches!(
             &action.effects[0],
             Effect::SetField { index, .. } if *index == STEP_CURSOR_SLOT as usize
         ));
-        assert!(matches!(&action.effects[1], Effect::EmitEvent { .. }));
+        assert!(matches!(
+            &action.effects[1],
+            Effect::SetField { index, .. } if *index == ACTOR_CLEARANCE_SLOT as usize
+        ));
+        assert!(matches!(
+            &action.effects[2],
+            Effect::SetField { index, .. } if *index == STEP_COMPARTMENT_SLOT as usize
+        ));
+        assert!(matches!(&action.effects[3], Effect::EmitEvent { .. }));
     }
 
     #[test]
     fn advance_action_carries_real_signature() {
         let cipherclerk = test_cipherclerk();
-        let action = build_advance_step_action(&cipherclerk, test_cell(), 1, WorkflowPhase::Redact);
+        let action =
+            build_advance_step_action(&cipherclerk, test_cell(), 1, officer_label(), WorkflowPhase::Redact);
         match action.authorization {
             Authorization::Signature(a, b) => {
                 assert!(a != [0u8; 32] || b != [0u8; 32]);

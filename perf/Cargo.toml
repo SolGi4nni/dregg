@@ -35,9 +35,24 @@ dregg-intent = { path = "../intent" }
 dregg-token = { path = "../token" }
 dregg-turn = { path = "../turn" }
 dregg-cell = { path = "../cell" }
+# The verified Lean kernel FFI — the EMBEDDED executor the node + the seL4
+# `executor` PD drive (`shadow_exec_full_forest_auth` = `@[export]
+# dregg_exec_full_forest_auth`). Already linked transitively via `dregg-turn`'s
+# default Lean link; named here directly so the embedded-commit bench can call it.
+dregg-lean-ffi = { path = "../dregg-lean-ffi" }
+# The deos desktop — pulled with ONLY its `embedded-executor` feature (NO gpui),
+# so the UI-projection bench measures the real `World`/`Shell`/affordance
+# projection the cockpit paints WITHOUT dragging gpui's native GPU/window tree.
+# This feature shares the exact dep tree perf already pulls (dregg-sdk / -turn /
+# -cell / -circuit), so it adds the `starbridge-v2` lib crate itself, not a new
+# heavy subtree. The gpui FIRST-PAINT (a real GPU scan-out) needs lavapipe and is
+# measured on persvati — see docs/PERFORMANCE.md §UI.
+starbridge-v2 = { path = "../starbridge-v2", default-features = false, features = ["embedded-executor"] }
 postcard = { version = "1", features = ["use-std"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Domain-separated token/turn-hash seeds for the rotated full-turn witness builder.
+blake3 = "1"
 
 [dev-dependencies]
 criterion = { workspace = true }
@@ -89,6 +104,40 @@ harness = false
 # the in-circuit hash primitive that dominates aux witness-gen.
 [[bench]]
 name = "poseidon2"
+harness = false
+
+# WITNESS-ONLY vs FULL-PROVING: the headline contrast — the executor admit path
+# (no SNARK) and the full self-sovereign turn prover, side by side in one group,
+# so the proving multiplier reads off directly. Gap (a).
+[[bench]]
+name = "turn_witness_vs_proving"
+harness = false
+
+# COHORT CIRCUIT: the rotated IR-v2 multi-table batch STARK (prove + verify) per
+# effect-cohort table shape (transfer / map-write / umem / absent). Gap (b).
+[[bench]]
+name = "cohort_circuit"
+harness = false
+
+# RECURSION FOLD: the bundle-tree aggregation fold (prove + verify) over the
+# N-leaf compress chain — the recursive aggregation cost. Gap (c).
+[[bench]]
+name = "recursion_fold"
+harness = false
+
+# EMBEDDED COMMIT: the verified Lean kernel commit_turn throughput
+# (`shadow_exec_full_forest_auth`) — the starbridge-v2 / node / seL4-executor-PD
+# hot path. Gap (d).
+[[bench]]
+name = "embedded_commit"
+harness = false
+
+# UI PROJECTION: the deos desktop's first-paint DATA cost (`demo_world` = the five
+# real embedded `commit_turn`s the cockpit paints) + the compositor scene
+# composition + the per-viewer affordance projection — the whole-system UI measure
+# (gpui-free; the GPU first-paint is on persvati). Gap (e).
+[[bench]]
+name = "ui_projection"
 harness = false
 
 [[bin]]

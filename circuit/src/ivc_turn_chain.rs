@@ -275,6 +275,14 @@ pub enum TurnChainError {
         /// The underlying verification error.
         reason: String,
     },
+    /// **The byte envelope did not decode.** A serialized [`WholeChainProofBytes`]
+    /// was malformed, carried an unsupported version, or its embedded proof
+    /// components failed to postcard-decode into the concrete recursion proof
+    /// types. Fail-closed: a non-decoding envelope is refused, never half-read.
+    EnvelopeDecode {
+        /// What went wrong while decoding.
+        reason: String,
+    },
 }
 
 impl core::fmt::Display for TurnChainError {
@@ -307,6 +315,10 @@ impl core::fmt::Display for TurnChainError {
                 f,
                 "claimed chain publics are not attested by the carried binding proof \
                  (relabeled genesis/final/num_turns/digest): {reason}"
+            ),
+            TurnChainError::EnvelopeDecode { reason } => write!(
+                f,
+                "whole-chain proof byte envelope did not decode: {reason}"
             ),
         }
     }
@@ -658,6 +670,246 @@ impl WholeChainProof {
     pub fn root_vk_fingerprint(&self) -> RecursionVk {
         recursion_vk_fingerprint(&self.root.0)
     }
+
+    /// Serialize the VERIFY-SUFFICIENT subset of this proof into a versioned byte
+    /// envelope ([`WholeChainProofBytes`]) that round-trips over a wire.
+    ///
+    /// A whole [`WholeChainProof`] is NOT byte-encodable: its `root.1`
+    /// (`Rc<CircuitProverData>`) is prover-chaining data with no serde and no
+    /// verifier use. The envelope therefore carries only what
+    /// [`verify_turn_chain_recursive_from_parts`] reads — the root
+    /// [`BatchStarkProof`] (`root.0`), the chain-binding `Proof`, and the four
+    /// public scalars — as a self-describing, version-tagged blob. The producer
+    /// (a node/relayer that ran the history) ships this; the consumer (a wasm tab,
+    /// a pg-dregg SRF) calls [`verify_whole_chain_proof_bytes`] on it.
+    ///
+    /// Infallible: the alloc/postcard serializer does not fail on a well-formed
+    /// value, and both proof components derive `Serialize` (`#[serde(bound = "")]`).
+    pub fn to_bytes(&self) -> Vec<u8> {
+        WholeChainProofBytes::from_proof(self).to_postcard()
+    }
+}
+
+/// The versioned, wire-crossable byte envelope of a [`WholeChainProof`] — the S1
+/// artifact (`docs/PG-DREGG.md` §10.2, `WEB-FORWARD.md` §7).
+///
+/// It carries the VERIFY-SUFFICIENT subset of a [`WholeChainProof`]: the
+/// prover-only `root.1` (`Rc<CircuitProverData>`) is omitted because the verifier
+/// never reads it. Both proof components ride as opaque postcard blobs so the
+/// envelope itself is a plain serde value; the four publics ride as canonical
+/// `u32`s (a `BabyBear` is one field element). A carried `vk_fingerprint_hex`
+/// rides as a producer CLAIM for diagnostics and is NEVER trusted at verify — the
+/// verifier compares the RECOMPUTED fingerprint against a caller-held anchor.
+///
+/// The version pin fail-closes a layout change: a stale producer's bytes are
+/// refused (`EnvelopeDecode`), never misread as a different shape.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct WholeChainProofBytes {
+    /// The envelope format version ([`WHOLE_CHAIN_PROOF_ENVELOPE_V1`]).
+    pub version: u16,
+    /// The producer's CLAIMED root-circuit VK fingerprint (hex). NEVER trusted at
+    /// verify — the verifier recomputes it from `root_proof` and compares to the
+    /// caller-held anchor. Carried only so a consumer can render the precise
+    /// "built-for-circuit X, your anchor pins Y" diagnostic.
+    pub vk_fingerprint_hex: String,
+    /// Postcard bytes of `WholeChainProof.root.0` — the root [`BatchStarkProof`].
+    /// Teeth 1 (VK pin) and 3 (root batch verify) read exactly this.
+    pub root_proof: Vec<u8>,
+    /// Postcard bytes of `WholeChainProof.binding_proof` — the chain-binding
+    /// uni-STARK `Proof`. Tooth 2 verifies the four publics AS its public inputs.
+    pub binding_proof: Vec<u8>,
+    /// The genesis root the chain starts from (canonical `BabyBear` as `u32`).
+    pub genesis_root: u32,
+    /// The final root the chain reaches.
+    pub final_root: u32,
+    /// The ordered-history digest over the (old_root, new_root) pairs.
+    pub chain_digest: u32,
+    /// The number of finalized turns folded.
+    pub num_turns: u64,
+}
+
+/// The on-the-wire version tag of [`WholeChainProofBytes`]. Bumped on any layout
+/// change so an old producer's bytes are refused (fail-closed) not misread.
+pub const WHOLE_CHAIN_PROOF_ENVELOPE_V1: u16 = 1;
+
+impl WholeChainProofBytes {
+    /// Project a [`WholeChainProof`] to its verify-sufficient byte envelope.
+    pub fn from_proof(proof: &WholeChainProof) -> Self {
+        let root_proof = postcard::to_allocvec(&proof.root.0)
+            .expect("root BatchStarkProof postcard-encodes (serde(bound=\"\"))");
+        let binding_proof = postcard::to_allocvec(&proof.binding_proof)
+            .expect("binding Proof postcard-encodes (serde(bound=\"\"))");
+        WholeChainProofBytes {
+            version: WHOLE_CHAIN_PROOF_ENVELOPE_V1,
+            vk_fingerprint_hex: proof.root_vk_fingerprint().to_hex(),
+            root_proof,
+            binding_proof,
+            genesis_root: proof.genesis_root.as_u32(),
+            final_root: proof.final_root.as_u32(),
+            chain_digest: proof.chain_digest.as_u32(),
+            num_turns: proof.num_turns as u64,
+        }
+    }
+
+    /// Encode to wire bytes (postcard). Infallible on a well-formed value.
+    pub fn to_postcard(&self) -> Vec<u8> {
+        postcard::to_allocvec(self).expect("WholeChainProofBytes postcard-encodes")
+    }
+
+    /// Decode from wire bytes. Fail-closed: empty input, a malformed body, a wrong
+    /// version, or an empty proof component is an `Err` — never a silently-accepted
+    /// half-envelope.
+    pub fn from_postcard(bytes: &[u8]) -> Result<Self, TurnChainError> {
+        if bytes.is_empty() {
+            return Err(TurnChainError::EnvelopeDecode {
+                reason: "empty whole-chain proof envelope".to_string(),
+            });
+        }
+        let env: WholeChainProofBytes = postcard::from_bytes(bytes).map_err(|e| {
+            TurnChainError::EnvelopeDecode {
+                reason: format!("envelope body does not decode: {e}"),
+            }
+        })?;
+        if env.version != WHOLE_CHAIN_PROOF_ENVELOPE_V1 {
+            return Err(TurnChainError::EnvelopeDecode {
+                reason: format!(
+                    "unsupported envelope version {} (this build reads v{})",
+                    env.version, WHOLE_CHAIN_PROOF_ENVELOPE_V1
+                ),
+            });
+        }
+        if env.root_proof.is_empty() {
+            return Err(TurnChainError::EnvelopeDecode {
+                reason: "envelope carries an empty root proof".to_string(),
+            });
+        }
+        if env.binding_proof.is_empty() {
+            return Err(TurnChainError::EnvelopeDecode {
+                reason: "envelope carries an empty binding proof".to_string(),
+            });
+        }
+        Ok(env)
+    }
+
+    /// Decode the two opaque blobs into the concrete recursion proof types.
+    /// Fail-closed on a blob that does not deserialize into its target type.
+    fn decode_parts(
+        &self,
+    ) -> Result<
+        (
+            p3_circuit_prover::BatchStarkProof<DreggRecursionConfig>,
+            RecursionCompatibleProof,
+        ),
+        TurnChainError,
+    > {
+        let root_proof: p3_circuit_prover::BatchStarkProof<DreggRecursionConfig> =
+            postcard::from_bytes(&self.root_proof).map_err(|e| {
+                TurnChainError::EnvelopeDecode {
+                    reason: format!("root BatchStarkProof does not decode: {e}"),
+                }
+            })?;
+        // Re-check the structural invariants the prover enforces but a raw
+        // `#[derive(Deserialize)]` can bypass (ext-degree, row counts, packing,
+        // non-primitive manifest) — a malformed-but-decodable root is refused
+        // BEFORE the cryptographic teeth run on it.
+        root_proof
+            .validate()
+            .map_err(|e| TurnChainError::EnvelopeDecode {
+                reason: format!("root BatchStarkProof failed structural validation: {e:?}"),
+            })?;
+        let binding_proof: RecursionCompatibleProof = postcard::from_bytes(&self.binding_proof)
+            .map_err(|e| TurnChainError::EnvelopeDecode {
+                reason: format!("binding Proof does not decode: {e}"),
+            })?;
+        Ok((root_proof, binding_proof))
+    }
+}
+
+/// **Verify a whole-chain proof straight from its byte envelope**, against a
+/// caller-held trust anchor. The over-wire dual of [`verify_turn_chain_recursive`].
+///
+/// Decodes the [`WholeChainProofBytes`] (fail-closed on malformed/wrong-version/
+/// empty-component bytes), reconstructs the two concrete proof types, and runs the
+/// SAME three teeth as the in-memory verifier via
+/// [`verify_turn_chain_recursive_from_parts`]. The prover-only `root.1` is never
+/// needed, so byte-reconstruction of the verify path is total.
+///
+/// `expected_vk` is the caller's OWN configured anchor — it is NEVER read from the
+/// envelope (the envelope's `vk_fingerprint_hex` is a discarded claim). A root of a
+/// different circuit fails tooth 1; tampered publics fail tooth 2; a corrupted root
+/// proof fails tooth 3 (or structural validation at decode).
+pub fn verify_whole_chain_proof_bytes(
+    bytes: &[u8],
+    expected_vk: &RecursionVk,
+) -> Result<(), TurnChainError> {
+    let env = WholeChainProofBytes::from_postcard(bytes)?;
+    let (root_proof, binding_proof) = env.decode_parts()?;
+    verify_turn_chain_recursive_from_parts(
+        &root_proof,
+        &binding_proof,
+        BabyBear::new(env.genesis_root),
+        BabyBear::new(env.final_root),
+        BabyBear::new(env.chain_digest),
+        env.num_turns as usize,
+        expected_vk,
+    )
+}
+
+/// **Verify from the two OPAQUE proof-component blobs + publics** — the seam a
+/// downstream that cannot name the p3 proof types (e.g. `pg-dregg`, which does not
+/// depend on `p3-circuit-prover`) plugs into.
+///
+/// `root_blob` is the postcard of the root [`BatchStarkProof`] (`WholeChainProof.
+/// root.0`) and `binding_blob` the postcard of the chain-binding `Proof`
+/// (`WholeChainProof.binding_proof`) — exactly the two blobs a transport
+/// (`pg-dregg`'s `SerializedWholeChainProof`, or the circuit's
+/// [`WholeChainProofBytes`]) carries. This decodes them inside the circuit crate
+/// (where the p3 types live), structurally validates the root, and runs the SAME
+/// three teeth as [`verify_turn_chain_recursive`] via
+/// [`verify_turn_chain_recursive_from_parts`]. Fail-closed on a blob that does not
+/// decode. `vk_anchor` is the caller's configured 32-byte trust anchor.
+#[allow(clippy::too_many_arguments)]
+pub fn verify_turn_chain_recursive_from_blobs(
+    root_blob: &[u8],
+    binding_blob: &[u8],
+    genesis_root: u32,
+    final_root: u32,
+    chain_digest: u32,
+    num_turns: usize,
+    vk_anchor: &[u8; 32],
+) -> Result<(), TurnChainError> {
+    if root_blob.is_empty() {
+        return Err(TurnChainError::EnvelopeDecode {
+            reason: "empty root proof blob".to_string(),
+        });
+    }
+    if binding_blob.is_empty() {
+        return Err(TurnChainError::EnvelopeDecode {
+            reason: "empty binding proof blob".to_string(),
+        });
+    }
+    let root_proof: p3_circuit_prover::BatchStarkProof<DreggRecursionConfig> =
+        postcard::from_bytes(root_blob).map_err(|e| TurnChainError::EnvelopeDecode {
+            reason: format!("root BatchStarkProof blob does not decode: {e}"),
+        })?;
+    root_proof
+        .validate()
+        .map_err(|e| TurnChainError::EnvelopeDecode {
+            reason: format!("root BatchStarkProof failed structural validation: {e:?}"),
+        })?;
+    let binding_proof: RecursionCompatibleProof = postcard::from_bytes(binding_blob)
+        .map_err(|e| TurnChainError::EnvelopeDecode {
+            reason: format!("binding Proof blob does not decode: {e}"),
+        })?;
+    verify_turn_chain_recursive_from_parts(
+        &root_proof,
+        &binding_proof,
+        BabyBear::new(genesis_root),
+        BabyBear::new(final_root),
+        BabyBear::new(chain_digest),
+        num_turns,
+        &RecursionVk(*vk_anchor),
+    )
 }
 
 /// Fold K finalized-turn proofs into ONE whole-chain recursive proof.
@@ -914,8 +1166,48 @@ pub fn verify_turn_chain_recursive(
     proof: &WholeChainProof,
     expected_vk: &RecursionVk,
 ) -> Result<(), TurnChainError> {
+    verify_turn_chain_recursive_from_parts(
+        &proof.root.0,
+        &proof.binding_proof,
+        proof.genesis_root,
+        proof.final_root,
+        proof.chain_digest,
+        proof.num_turns,
+        expected_vk,
+    )
+}
+
+/// The verify core, taking the VERIFY-SUFFICIENT PARTS directly instead of a whole
+/// [`WholeChainProof`] value.
+///
+/// This is the byte-path's verifier: a [`WholeChainProof`] cannot be reconstructed
+/// from bytes because its `root.1` (`Rc<CircuitProverData>`) is prover-only and not
+/// serde — but the verifier never reads `root.1`. The three teeth use only
+/// `root.0` (the root [`BatchStarkProof`]), the chain-binding `Proof`, and the four
+/// public scalars, which is exactly this signature. [`verify_turn_chain_recursive`]
+/// is a thin wrapper that forwards a whole value's parts here, and
+/// [`verify_whole_chain_proof_bytes`] decodes a [`WholeChainProofBytes`] envelope and
+/// calls this — so the in-memory and over-wire paths share ONE verifier body.
+///
+/// The teeth, in order (identical to [`verify_turn_chain_recursive`]):
+///   1. **VK pin** — recompute the root's verifier-key fingerprint and compare to
+///      `expected_vk` (a foreign-circuit root is refused before any check trusts it).
+///   2. **Claimed-publics attestation** — `genesis_root`/`final_root`/`num_turns`/
+///      `chain_digest` must verify as the public inputs of the carried binding proof
+///      (Fiat–Shamir binds all four); a relabeled public is refused.
+///   3. **The root** — the single root batch-STARK proof verifies.
+#[allow(clippy::too_many_arguments)]
+pub fn verify_turn_chain_recursive_from_parts(
+    root_proof: &p3_circuit_prover::BatchStarkProof<DreggRecursionConfig>,
+    binding_proof: &RecursionCompatibleProof,
+    genesis_root: BabyBear,
+    final_root: BabyBear,
+    chain_digest: BabyBear,
+    num_turns: usize,
+    expected_vk: &RecursionVk,
+) -> Result<(), TurnChainError> {
     // (1) VK pin.
-    let found = recursion_vk_fingerprint(&proof.root.0);
+    let found = recursion_vk_fingerprint(root_proof);
     if found != *expected_vk {
         return Err(TurnChainError::VkFingerprintMismatch {
             expected: expected_vk.to_hex(),
@@ -927,14 +1219,14 @@ pub fn verify_turn_chain_recursive(
     // the rotated leaf-wrap config (log_blowup 6, `prove_chain_binding_leaf_rotated`), so it must
     // be verified under that SAME config.
     let claimed_pis = vec![
-        proof.genesis_root,
-        proof.final_root,
-        BabyBear::new(proof.num_turns as u32),
-        proof.chain_digest,
+        genesis_root,
+        final_root,
+        BabyBear::new(num_turns as u32),
+        chain_digest,
     ];
     crate::plonky3_recursion_impl::recursive::verify_inner_for_air_with_config(
         &TurnChainBindingAir,
-        &proof.binding_proof,
+        binding_proof,
         &claimed_pis,
         &ir2_leaf_wrap_config(),
     )
@@ -945,7 +1237,7 @@ pub fn verify_turn_chain_recursive(
     // the whole rotated tree runs at), NOT the default `create_recursion_config` (log_blowup 3 /
     // 38 queries). It MUST be verified under that same config, else FRI reconstruction expects
     // the wrong query count (`QueryProofCountMismatch { expected: 38, got: 19 }`).
-    verify_recursive_batch_proof_with_config(&proof.root.0, &ir2_leaf_wrap_config())
+    verify_recursive_batch_proof_with_config(root_proof, &ir2_leaf_wrap_config())
         .map_err(|reason| TurnChainError::RecursionFailed { reason })
 }
 

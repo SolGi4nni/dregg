@@ -24,7 +24,7 @@ use dregg_cell::FactoryCreationParams;
 use starbridge_compartment_workflow_mandate::{
     COMMITMENT_ANCHOR_SLOT, CWM_FACTORY_VK, DEFAULT_CHARTER_STEPS, DEFAULT_COMMITMENT_ANCHOR,
     DEFAULT_STEP_SPEND_POLICY, STEP_CURSOR_SLOT, WorkflowPhase, build_advance_step_action,
-    build_init_mandate_action, cwm_child_program_vk, cwm_factory_descriptor,
+    build_init_mandate_action, cwm_child_program_vk, cwm_factory_descriptor, officer_label,
 };
 
 fn make_cipherclerk() -> AppCipherclerk {
@@ -105,7 +105,8 @@ fn factory_born_mandate_walks_charter_and_refuses_overrun() {
 
     // ACCEPT: the three charter steps, in DAG order.
     for (cursor, phase) in WorkflowPhase::CHARTER.iter().enumerate() {
-        let advance = build_advance_step_action(&cclerk, mandate, cursor as u64, *phase);
+        let advance =
+            build_advance_step_action(&cclerk, mandate, cursor as u64, officer_label(), *phase);
         exec.submit_action(&cclerk, advance)
             .unwrap_or_else(|e| panic!("charter step {cursor} must commit: {e}"));
     }
@@ -117,8 +118,13 @@ fn factory_born_mandate_walks_charter_and_refuses_overrun() {
     assert_eq!(cursor, field_from_u64(DEFAULT_CHARTER_STEPS));
 
     // REFUSE: a fourth advance overruns the charter terminal (cursor 4 > 3).
-    let overrun =
-        build_advance_step_action(&cclerk, mandate, DEFAULT_CHARTER_STEPS, WorkflowPhase::Sign);
+    let overrun = build_advance_step_action(
+        &cclerk,
+        mandate,
+        DEFAULT_CHARTER_STEPS,
+        officer_label(),
+        WorkflowPhase::Sign,
+    );
     let err = exec
         .submit_action(&cclerk, overrun)
         .expect_err("advancing past the charter terminal must be refused");
@@ -146,7 +152,7 @@ fn factory_born_mandate_refuses_rollback_and_anchor_rebind() {
     init_mandate(&exec, &cclerk, mandate);
 
     // Advance to cursor 1 (review done).
-    let advance = build_advance_step_action(&cclerk, mandate, 0, WorkflowPhase::Review);
+    let advance = build_advance_step_action(&cclerk, mandate, 0, officer_label(), WorkflowPhase::Review);
     exec.submit_action(&cclerk, advance)
         .expect("review step must commit");
 

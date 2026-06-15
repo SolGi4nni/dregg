@@ -631,16 +631,79 @@ pub fn spent_nullifiers(effects: &[dregg_turn::Effect]) -> Vec<[u8; 32]> {
 /// breadstuff authorization surface, where the actor's own c-list held the
 /// consumed authority. This is the routing predicate for the AUTHORITY /
 /// cap-membership path (cap Phase D): a receipt carrying such a witness routes
-/// through [`prove_and_verify_finalized_turn_capability`].
+/// through [`prove_and_verify_finalized_turn_capability`], binding the leg
+/// against the ACTOR's canonical pre-state cap root.
 ///
-/// Bearer-delegation witnesses (`holder != actor`) are NOT selected: their leg
-/// must bind the DELEGATOR's pre-state capability root, which the commit path
-/// does not capture yet (a named residual, logged loudly at the routing site).
+/// Bearer-delegation witnesses (`holder != actor`) are picked by the sibling
+/// [`bearer_consumed_cap`]; they route through
+/// [`prove_and_verify_finalized_turn_capability_holder`], binding the leg against
+/// the DELEGATOR's canonical pre-state cap root.
 pub fn actor_consumed_cap<'a>(
     consumed: &'a [dregg_turn::ConsumedCapWitness],
     agent: &CellId,
 ) -> Option<&'a dregg_turn::ConsumedCapWitness> {
     consumed.iter().find(|w| w.holder == *agent)
+}
+
+/// Pick the consumed-capability witness whose HOLDER is NOT the actor cell — a
+/// BEARER-delegation witness, where some OTHER cell (the delegator) held the
+/// consumed authority and signed a delegation the actor exercised this turn.
+///
+/// This is the routing predicate for the bearer AUTHORITY leg: such a receipt
+/// routes through [`prove_and_verify_finalized_turn_capability_holder`] with the
+/// DELEGATOR's (`holder`'s) canonical pre-state cap root — recomputed by the node
+/// from its own authoritative pre-execution ledger (see
+/// [`delegator_pre_state_cap_roots`]), never taken from the receipt — so the
+/// authority leg PROVES the delegated cap was real (not merely that the witness
+/// is internally consistent). Returns the FIRST bearer witness; a single turn
+/// exercising several distinct delegators is a multi-bearer extension (the first
+/// is proven through the authority leg, the rest ride the v1 fallback until the
+/// circuit batches multiple cap-membership legs).
+pub fn bearer_consumed_cap<'a>(
+    consumed: &'a [dregg_turn::ConsumedCapWitness],
+    agent: &CellId,
+) -> Option<&'a dregg_turn::ConsumedCapWitness> {
+    consumed.iter().find(|w| w.holder != *agent)
+}
+
+/// Snapshot the canonical pre-state `capability_root` of every cell that a
+/// bearer (`SignedDelegation`) authorization in `forest` names as its delegator,
+/// keyed by the delegator cell's `CellId`. Captured from the node's
+/// authoritative PRE-execution `ledger` (BEFORE any effect mutates a c-list), so
+/// a bearer turn's AUTHORITY leg can bind the DELEGATOR's real pre-state cap root
+/// — the value the executor's Phase-C witness records as its `cap_root` "as it
+/// was in scope at authorization time" — without trusting the receipt.
+///
+/// The delegator is resolved exactly as the executor resolves it
+/// (`cell.public_key() == delegator_pk`), so the keyed `CellId` matches the
+/// witness's `holder` (`delegator_cell.id()`). The anonymous `StarkDelegation`
+/// path names no concrete delegator cell (and the executor records no holder
+/// witness for it), so it contributes nothing here. Only walked when full-turn
+/// proving is enabled; an empty map for a turn with no bearer authorization.
+pub fn delegator_pre_state_cap_roots(
+    forest: &dregg_turn::CallForest,
+    ledger: &dregg_cell::Ledger,
+) -> std::collections::HashMap<CellId, BabyBear> {
+    use dregg_turn::{Authorization, DelegationProofData};
+    let mut out = std::collections::HashMap::new();
+    for tree in forest.iter_dfs() {
+        if let Authorization::Bearer(proof) = &tree.action.authorization {
+            if let DelegationProofData::SignedDelegation { delegator_pk, .. } =
+                &proof.delegation_proof
+            {
+                // Resolve the delegator cell by public key (the executor's own
+                // lookup), then snapshot its pre-state canonical cap root.
+                if let Some((id, cell)) =
+                    ledger.iter().find(|(_, c)| c.public_key() == delegator_pk)
+                {
+                    out.entry(*id).or_insert_with(|| {
+                        dregg_cell::compute_canonical_capability_root_felt(&cell.capabilities)
+                    });
+                }
+            }
+        }
+    }
+    out
 }
 
 /// Fold a raw 32-byte note nullifier into the BabyBear field element the
@@ -849,21 +912,80 @@ pub fn prove_and_verify_finalized_turn_capability(
     previously_spent: &[[u8; 32]],
     rotation: Option<dregg_sdk::RotationTurnWitness>,
 ) -> Result<ProvenFinalizedTurn, FullTurnProvingError> {
+    // BREADSTUFF (actor-held) path: the cap's HOLDER is the actor, so the
+    // AUTHORITY leg binds against the ACTOR's own canonical pre-state cap root —
+    // the same root the EffectVm state-transition leg is seeded from. The bearer
+    // generalisation (`..._holder`) takes a distinct holder root.
+    prove_and_verify_finalized_turn_capability_holder(
+        agent,
+        pre_balance,
+        pre_nonce,
+        pre_capability_root,
+        pre_capability_root,
+        effects,
+        turn_hash,
+        consumed,
+        spent_nullifier,
+        previously_spent,
+        rotation,
+    )
+}
+
+/// Prove a finalized CAPABILITY-GATED turn binding the AUTHORITY (cap-membership)
+/// leg against a HOLDER pre-state cap root that may differ from the ACTOR's
+/// EffectVm-seed root — the BEARER-delegation generalisation (cap Phase D).
+///
+/// `pre_capability_root` seeds the actor's EffectVm pre-state (`old_commit`) and
+/// the rotation witness — it is the ACTOR's canonical pre-state cap root.
+/// `holder_cap_root` is the cap HOLDER's (the delegator's, for a bearer turn)
+/// canonical pre-state cap root the cap-membership leg opens against and the
+/// verifier pins (`CapRootMismatch` tooth). For the breadstuff/actor-held path
+/// the two coincide (holder == actor) and this is byte-identical to the v1
+/// `prove_and_verify_finalized_turn_capability`.
+///
+/// SOUNDNESS (the bearer authority leg): a bearer-delegated turn (the consumed
+/// cap's `holder` is the DELEGATOR, not the actor) now PROVES the authority leg
+/// — the disclosed delegated cap is a sorted-Poseidon2 member of the DELEGATOR's
+/// real pre-state c-list (`holder_cap_root`, recomputed by the node from its own
+/// authoritative pre-execution ledger, NEVER taken from the receipt). A bearer
+/// turn whose delegator did NOT actually hold the cap is REJECTED here (the
+/// witness's recorded `cap_root` will not equal the node-derived `holder_cap_root`,
+/// or — for a fabricated path — `verify_full_turn_bound`'s `CapRootMismatch`
+/// fires). The actor's state-transition leg is bound independently to the actor's
+/// own `old_commit`/`new_commit`, so the two legs together attest "the actor's
+/// state evolved correctly AND the delegated authority it exercised was real."
+#[allow(clippy::too_many_arguments)]
+pub fn prove_and_verify_finalized_turn_capability_holder(
+    agent: &CellId,
+    pre_balance: u64,
+    pre_nonce: u64,
+    pre_capability_root: BabyBear,
+    holder_cap_root: BabyBear,
+    effects: &[dregg_turn::Effect],
+    turn_hash: [u8; 32],
+    consumed: &dregg_turn::ConsumedCapWitness,
+    spent_nullifier: Option<&[u8; 32]>,
+    previously_spent: &[[u8; 32]],
+    rotation: Option<dregg_sdk::RotationTurnWitness>,
+) -> Result<ProvenFinalizedTurn, FullTurnProvingError> {
     // Defence in depth: the receipt witness must be internally consistent AND
-    // open to the CANONICAL pre-state capability root the node itself derived.
-    // (verify_full_turn_bound re-checks the root equality cryptographically;
-    // refusing here avoids minting a proof the bound verifier must reject.)
+    // open to the CANONICAL pre-state capability root the node itself derived for
+    // the cap's HOLDER (the delegator on the bearer path; the actor on the
+    // breadstuff path). (verify_full_turn_bound re-checks the root equality
+    // cryptographically; refusing here avoids minting a proof the bound verifier
+    // must reject.)
     if !consumed.verify() {
         return Err(FullTurnProvingError::ConsumedCapWitnessInvalid {
             reason: "membership path does not recompute the witness's own cap_root".into(),
         });
     }
-    if consumed.cap_root != pre_capability_root.as_u32() {
+    if consumed.cap_root != holder_cap_root.as_u32() {
         return Err(FullTurnProvingError::ConsumedCapWitnessInvalid {
             reason: format!(
-                "witness cap_root {} != canonical pre-state capability_root {}",
+                "witness cap_root {} != canonical pre-state holder capability_root {} \
+                 (the cap was NOT a member of the holder's authoritative pre-state c-list)",
                 consumed.cap_root,
-                pre_capability_root.as_u32()
+                holder_cap_root.as_u32()
             ),
         });
     }
@@ -882,18 +1004,25 @@ pub fn prove_and_verify_finalized_turn_capability(
     };
     let canonical_revocation_root = non_revocation.as_ref().map(|(tree, _)| tree.root());
 
-    // Effect-VM pre-state, seeded with the REAL canonical capability root (cap
-    // Phase A) — the same root the membership leg opens against.
+    // Effect-VM pre-state, seeded with the ACTOR's REAL canonical capability root
+    // (cap Phase A) — `pre_capability_root`. NOTE the actor/holder split: the
+    // EffectVm state-transition leg attests the ACTOR's evolution, so it is seeded
+    // from the ACTOR's pre-state cap root; the cap-membership leg attests that the
+    // consumed cap is a member of the HOLDER's c-list, so it opens against
+    // `holder_cap_root`. On the breadstuff/actor-held path holder == actor and the
+    // two roots coincide. On the bearer path they DIFFER — and that is sound
+    // because `verify_full_turn_bound` does NOT cross-bind the cap-membership leg's
+    // `cap_root` to the EffectVm row (it pins the leg to the caller-supplied
+    // `CapMembershipExpectation.cap_root` only), so the two legs are independent.
     //
     // PATH-PRESERVE §4 (the non-synthetic-cell lift): with a rotation witness threaded the rotated
     // leg's OLD_COMMIT is the v1 prefix emitted from THIS `initial_vm_state`, so it must carry the
     // REAL cell's fields[0..8] (not the zero fields `with_capability_root` seeds) for a field-bearing
     // cap-holding cell's rotated OLD_COMMIT to faithfully represent it. We seed from
     // `rotation.before_cell_state()` (decoded from the same welded limbs the rotated leg uses) so the
-    // agreement holds by construction; that decode carries the real cap_root too, which the gate
-    // already pinned to `pre_capability_root` (so the membership leg still opens the SAME tree the
-    // EffectVm row's `cap_root` column binds). Without a rotation witness the byte-identical
-    // `with_capability_root` (zero fields, real cap root) v1 cap leg runs.
+    // agreement holds by construction; that decode carries the actor's real cap_root. Without a
+    // rotation witness the byte-identical `with_capability_root` (zero fields, actor cap root) v1 cap
+    // leg runs.
     let vm_effects = AgentCipherclerk::convert_effects_to_vm(agent, effects);
     // SHAPE-3 INVARIANT (PATH-PRESERVE §1/§7 Phase 0 — CORRECTED; see the canonical note in
     // `prove_and_verify_finalized_turn`: the projector injects a NoOp sentinel so `vm_effects` is
@@ -945,7 +1074,7 @@ pub fn prove_and_verify_finalized_turn_capability(
     // disclosed consumed capability, is rejected here.
     let expectation = CapMembershipExpectation {
         leaf: consumed.cap_leaf(),
-        cap_root: pre_capability_root,
+        cap_root: holder_cap_root,
     };
     verify_full_turn_bound(
         &proof,
@@ -2954,6 +3083,459 @@ mod tests {
                  leg — rights amplification through the proof is OPEN!"
             ),
             Err(other) => panic!("expected CapLeafMismatch on the rotated leg, got {other:?}"),
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // BEARER-DELEGATION AUTHORITY leg (the soundness fix —
+    // `blocklace_sync.rs` routes a `holder != actor` witness through
+    // `prove_and_verify_finalized_turn_capability_holder` bound to the
+    // DELEGATOR's node-derived pre-state cap root). These teeth cover the
+    // residual the prior code merely warned-and-fell-through on: a bearer
+    // turn now PROVES the authority leg against the delegator's real c-list,
+    // and a bearer turn whose delegator lacked the cap is REJECTED.
+    // ──────────────────────────────────────────────────────────────────────
+
+    /// Build the (delegator keypair, bearer pk) the bearer fixtures use. Fixed
+    /// seeds ⇒ deterministic, reproducible cell ids. Real ed25519 keys: the
+    /// executor verifies the delegation signature and resolves the delegator
+    /// cell by `cell.public_key() == delegator_pk`, so the cell's public key
+    /// MUST be a genuine verifying key.
+    fn bearer_keys() -> (ed25519_dalek::SigningKey, [u8; 32], [u8; 32]) {
+        use ed25519_dalek::SigningKey;
+        let delegator_sk = SigningKey::from_bytes(&[7u8; 32]);
+        let delegator_pk = delegator_sk.verifying_key().to_bytes();
+        let bearer_pk = SigningKey::from_bytes(&[8u8; 32]).verifying_key().to_bytes();
+        (delegator_sk, delegator_pk, bearer_pk)
+    }
+
+    /// Construct the bearer turn's forest: the BEARER (actor) transfers FROM
+    /// ITSELF to a recipient, authorized by a delegation of the delegator's
+    /// capability over the BEARER cell (target == bearer). The actor's Effect-VM
+    /// projection is therefore `[Transfer{direction:1}]` — a NON-EMPTY rotatable
+    /// cohort transition (the same rotatable shape `run_self_cap_gated_turn_full`
+    /// uses), so the live commit path proves it ROTATED under `recursion` (the
+    /// v1 effect-vm fallback being retired).
+    fn make_bearer_transfer_turn(
+        delegator_sk: &ed25519_dalek::SigningKey,
+        delegator_pk: [u8; 32],
+        bearer_pk: [u8; 32],
+        bearer_id: CellId,
+        recipient_id: CellId,
+    ) -> Turn {
+        use ed25519_dalek::Signer;
+        // The delegation is over the BEARER cell (so it satisfies the bearer's
+        // own Signature-gated `send`).
+        let message = dregg_turn::TurnExecutor::compute_bearer_delegation_message(
+            &bearer_id,
+            &AuthRequired::None,
+            &bearer_pk,
+            1_000,
+            &[0u8; 32],
+        );
+        let signature = delegator_sk.sign(&message).to_bytes();
+        let bearer_proof = dregg_turn::action::BearerCapProof {
+            target: bearer_id,
+            permissions: AuthRequired::None,
+            delegation_proof: dregg_turn::DelegationProofData::SignedDelegation {
+                delegator_pk,
+                signature,
+                bearer_pk,
+            },
+            expires_at: 1_000,
+            revocation_channel: None,
+            allowed_effects: None,
+        };
+        wrap_turn(
+            bearer_id,
+            transfer_action(
+                bearer_id,
+                recipient_id,
+                100,
+                Authorization::Bearer(bearer_proof),
+            ),
+        )
+    }
+
+    /// Run a REAL bearer-delegation turn through the executor (the cap Phase C
+    /// bearer capture path, `authorize.rs`): a DELEGATOR cell holds a capability
+    /// over the BEARER cell and signs a `SignedDelegation` the BEARER (actor)
+    /// exercises via `Authorization::Bearer` to authorize its OWN outgoing
+    /// transfer. The executor records the consumed-cap witness against the
+    /// DELEGATOR's pre-state c-list, so the receipt carries a witness whose
+    /// `holder` is the delegator (NOT the actor) — exactly the shape the commit
+    /// path routes through the bearer authority leg.
+    ///
+    /// Returns the committed receipt (carrying the bearer consumed-cap witness),
+    /// the actor (bearer) id, the DELEGATOR id, the delegator's CANONICAL
+    /// pre-state capability root (recomputed independently, as the commit path's
+    /// `delegator_pre_state_cap_roots` does), the actor's CANONICAL pre-state cap
+    /// root (the EffectVm-seed root, distinct from the delegator's), the effects,
+    /// and the actor's REAL before/after `Cell` (so the teeth build the actor's
+    /// rotation witness from the real cell, exactly as the commit path does).
+    #[allow(clippy::type_complexity)]
+    fn run_bearer_delegated_turn() -> (
+        dregg_turn::TurnReceipt,
+        CellId,   // actor (bearer) id
+        CellId,   // delegator id
+        BabyBear, // delegator pre-state cap root (the authority-leg root)
+        BabyBear, // actor pre-state cap root (the EffectVm-seed root)
+        Vec<dregg_turn::Effect>,
+        Cell, // bearer before-cell
+        Cell, // bearer after-cell
+    ) {
+        let (delegator_sk, delegator_pk, bearer_pk) = bearer_keys();
+
+        // DELEGATOR cell: holds a real capability over the BEARER (+ a decoy so
+        // the consumed cap is not the only leaf), with open `delegate`/`access`.
+        let mut delegator = Cell::with_balance(delegator_pk, [0u8; 32], 1_000);
+        delegator.permissions = open_permissions();
+        delegator
+            .capabilities
+            .grant(CellId::from_bytes([0x66u8; 32]), AuthRequired::None);
+
+        // BEARER (actor) cell: gates its OWN `send` at the Signature tier (so the
+        // delegated authority is MEANINGFUL), holds a decoy cap of its own.
+        let bearer_token: [u8; 32] = [0u8; 32];
+        let mut bearer = Cell::with_balance(bearer_pk, bearer_token, 1_000);
+        let mut bearer_perms = open_permissions();
+        bearer_perms.send = AuthRequired::Signature;
+        bearer.permissions = bearer_perms;
+        bearer
+            .capabilities
+            .grant(CellId::from_bytes([0x99u8; 32]), AuthRequired::None);
+        let bearer_id = bearer.id();
+        let actor_cap_root =
+            dregg_cell::compute_canonical_capability_root_felt(&bearer.capabilities);
+
+        // The delegator's capability is over the BEARER cell.
+        delegator
+            .capabilities
+            .grant(bearer_id, AuthRequired::None);
+        let delegator_id = delegator.id();
+        let delegator_cap_root =
+            dregg_cell::compute_canonical_capability_root_felt(&delegator.capabilities);
+        assert_ne!(
+            delegator_cap_root, actor_cap_root,
+            "the bearer fixture must have distinct delegator/actor cap roots so the \
+             authority-leg (holder) root genuinely differs from the EffectVm-seed (actor) root"
+        );
+
+        // The recipient (its `receive` is open).
+        let recipient = Cell::with_balance([0x3Bu8; 32], [0u8; 32], 0);
+        let recipient_id = recipient.id();
+
+        let before_cell = bearer.clone();
+
+        let mut ledger = Ledger::new();
+        ledger.insert_cell(delegator).unwrap();
+        ledger.insert_cell(bearer).unwrap();
+        ledger.insert_cell(recipient).unwrap();
+
+        let executor = TurnExecutor::new(ComputronCosts::zero());
+        let turn = make_bearer_transfer_turn(
+            &delegator_sk,
+            delegator_pk,
+            bearer_pk,
+            bearer_id,
+            recipient_id,
+        );
+        let effects: Vec<dregg_turn::Effect> = turn
+            .call_forest
+            .total_effects()
+            .into_iter()
+            .cloned()
+            .collect();
+        let receipt = match executor.execute(&turn, &mut ledger) {
+            TurnResult::Committed { receipt, .. } => receipt,
+            other => panic!("bearer-delegated turn must commit, got {other:?}"),
+        };
+        let after_cell = ledger
+            .get(&bearer_id)
+            .expect("bearer present after exec")
+            .clone();
+        (
+            receipt,
+            bearer_id,
+            delegator_id,
+            delegator_cap_root,
+            actor_cap_root,
+            effects,
+            before_cell,
+            after_cell,
+        )
+    }
+
+    /// ROUTING: a bearer-delegated receipt is classified onto the BEARER
+    /// authority path — `bearer_consumed_cap` finds the `holder != actor`
+    /// witness, `actor_consumed_cap` does NOT, and `delegator_pre_state_cap_roots`
+    /// snapshots the delegator's real pre-state root keyed by its id. This is the
+    /// routing the commit path depends on to reach the (None, Some(..)) arm.
+    #[test]
+    fn routing_identifies_bearer_delegated_turn() {
+        let (receipt, bearer_id, delegator_id, delegator_cap_root, _actor_root, _eff, _b, _a) =
+            run_bearer_delegated_turn();
+
+        // The actor holds no consumed cap of its own; the bearer witness is the
+        // delegator's.
+        assert!(
+            actor_consumed_cap(&receipt.consumed_capabilities, &bearer_id).is_none(),
+            "the actor (bearer) holds no actor-cap witness — must not route the actor cap path"
+        );
+        let bearer = bearer_consumed_cap(&receipt.consumed_capabilities, &bearer_id)
+            .expect("a bearer-delegated turn carries a holder != actor consumed-cap witness");
+        assert_eq!(
+            bearer.holder, delegator_id,
+            "the bearer witness's holder is the DELEGATOR cell"
+        );
+        assert_eq!(
+            bearer.auth_path,
+            dregg_turn::ConsumedCapAuthPath::BearerSignedDelegation,
+            "the witness records the bearer signed-delegation surface"
+        );
+        // The witness's recorded cap_root is the delegator's pre-state root: the
+        // node re-derives the SAME value from its authoritative pre-execution
+        // ledger (never trusting the receipt).
+        assert_eq!(
+            bearer.cap_root,
+            delegator_cap_root.as_u32(),
+            "the witness opens against the delegator's pre-state capability root"
+        );
+
+        // The node-side capture (`delegator_pre_state_cap_roots`) re-derives the
+        // delegator root from the forest + pre-state ledger and keys it by the
+        // delegator's id — the value the commit path feeds the authority leg.
+        let (delegator_sk, delegator_pk, bearer_pk) = bearer_keys();
+        let mut delegator = Cell::with_balance(delegator_pk, [0u8; 32], 1_000);
+        delegator.permissions = open_permissions();
+        delegator
+            .capabilities
+            .grant(CellId::from_bytes([0x66u8; 32]), AuthRequired::None);
+        delegator
+            .capabilities
+            .grant(bearer_id, AuthRequired::None);
+        let mut ledger = Ledger::new();
+        ledger.insert_cell(delegator).unwrap();
+        let turn = make_bearer_transfer_turn(
+            &delegator_sk,
+            delegator_pk,
+            bearer_pk,
+            bearer_id,
+            CellId::from_bytes([0x3Bu8; 32]),
+        );
+        let roots = delegator_pre_state_cap_roots(&turn.call_forest, &ledger);
+        assert_eq!(
+            roots.get(&delegator_id),
+            Some(&delegator_cap_root),
+            "the node-derived delegator pre-state cap root must match (keyed by the delegator id)"
+        );
+    }
+
+    /// CONTROL (honest bearer turn ACCEPTS with the authority leg): a real
+    /// bearer-delegated turn proves + verifies end-to-end through
+    /// `prove_and_verify_finalized_turn_capability_holder`, the cap-membership
+    /// (authority) leg bound to the DELEGATOR's pre-state cap root — which is
+    /// DISTINCT from the actor's EffectVm-seed root. A light client re-deriving
+    /// the expectation from the receipt witness + the delegator's canonical root
+    /// accepts. This is the honest case the soundness gap's verifier MUST admit.
+    #[test]
+    fn honest_bearer_delegated_turn_proves_with_authority_leg() {
+        let (
+            receipt,
+            bearer_id,
+            _delegator_id,
+            delegator_cap_root,
+            actor_cap_root,
+            effects,
+            before_cell,
+            after_cell,
+        ) = run_bearer_delegated_turn();
+        let consumed = bearer_consumed_cap(&receipt.consumed_capabilities, &bearer_id)
+            .expect("bearer consumed-cap witness")
+            .clone();
+
+        // The two roots genuinely differ: the actor's EffectVm-seed root vs the
+        // delegator's authority-leg root.
+        assert_ne!(
+            actor_cap_root, delegator_cap_root,
+            "the authority leg binds a DIFFERENT root than the actor's EffectVm seed"
+        );
+
+        // The actor (bearer) transfers FROM itself ⇒ a rotatable `Transfer{dir:1}`
+        // projection. Build the actor's rotation witness from the REAL before/after
+        // cells EXACTLY as the commit path's bearer arm does (`blocklace_sync.rs`),
+        // so the actor leg proves ROTATED while the delegator-bound cap leg runs
+        // alongside it.
+        let receipts = [receipt.receipt_hash()];
+        let rotation = rotation_witness_for_self_sovereign(
+            1_000,
+            0,
+            &before_cell,
+            &after_cell,
+            &receipts,
+            &effects,
+        );
+        assert!(
+            rotation.is_some(),
+            "the bearer self-transfer must yield an actor rotation witness (faithful real cell)"
+        );
+
+        let proven = prove_and_verify_finalized_turn_capability_holder(
+            &bearer_id,
+            1_000,              // actor pre-balance
+            0,                  // actor pre-nonce
+            actor_cap_root,     // EffectVm-seed root (the ACTOR's)
+            delegator_cap_root, // authority-leg root (the DELEGATOR's)
+            &effects,
+            [0xB0u8; 32],
+            &consumed,
+            None,
+            &[],
+            rotation,
+        )
+        .expect("honest bearer-delegated turn must prove + authority-bound-verify");
+
+        assert!(
+            proven.proof.components.has_cap_membership,
+            "the AUTHORITY (cap-membership) leg is attached for a bearer turn"
+        );
+        assert!(!proven.proof_bytes().is_empty());
+
+        // Light-client re-verify: recompute the expectation from the receipt
+        // witness + the DELEGATOR's canonical pre-state root → accepts.
+        let expectation = dregg_sdk::CapMembershipExpectation {
+            leaf: consumed.cap_leaf(),
+            cap_root: delegator_cap_root,
+        };
+        verify_full_turn_bound(
+            &proven.proof,
+            proven.old_commit,
+            proven.new_commit,
+            None,
+            Some(&expectation),
+        )
+        .expect("light-client re-verify against the delegator's root must accept");
+    }
+
+    /// SOUNDNESS TOOTH (the gap closed): a bearer turn whose DELEGATOR did NOT
+    /// actually hold the cap is REJECTED. The node binds the authority leg to
+    /// the delegator's REAL pre-state cap root; if a fabricated delegator (one
+    /// whose c-list never contained the cap) is supplied, the proof is refused
+    /// — both at the prover gate (the witness's recorded `cap_root` is not that
+    /// cell's canonical root) AND at the verifier (an honest proof re-verified
+    /// against the wrong holder root fails `CapRootMismatch`). This is the
+    /// invalid case the soundness gap's verifier MUST reject; before the fix the
+    /// authority leg was never bound, so such a turn slipped through with only
+    /// the membership leg "proven."
+    #[test]
+    fn bearer_turn_whose_delegator_lacked_the_cap_is_rejected() {
+        let (
+            receipt,
+            bearer_id,
+            _delegator_id,
+            delegator_cap_root,
+            actor_cap_root,
+            effects,
+            before_cell,
+            after_cell,
+        ) = run_bearer_delegated_turn();
+        let consumed = bearer_consumed_cap(&receipt.consumed_capabilities, &bearer_id)
+            .expect("bearer consumed-cap witness")
+            .clone();
+        let receipts = [receipt.receipt_hash()];
+        let rotation = || {
+            rotation_witness_for_self_sovereign(
+                1_000,
+                0,
+                &before_cell,
+                &after_cell,
+                &receipts,
+                &effects,
+            )
+        };
+
+        // A would-be delegator that NEVER held the cap: a cell with a different
+        // c-list ⇒ a different canonical root. (This is what the node would
+        // derive for a forged `holder` that lacked the authority — or, in the
+        // commit path, the empty root for an absent delegator.)
+        let mut impostor = Cell::with_balance([0x12u8; 32], [0u8; 32], 0);
+        impostor
+            .capabilities
+            .grant(CellId::from_bytes([0x34u8; 32]), AuthRequired::None);
+        let impostor_root =
+            dregg_cell::compute_canonical_capability_root_felt(&impostor.capabilities);
+        assert_ne!(
+            impostor_root, delegator_cap_root,
+            "the impostor delegator's root must differ from the real delegator's"
+        );
+
+        // (a) PROVER refuses: the bearer witness's recorded cap_root is the REAL
+        // delegator's root, which does not equal the impostor's node-derived
+        // holder root → `ConsumedCapWitnessInvalid` (the cap was NOT a member of
+        // this holder's authoritative pre-state c-list). The refusal fires before
+        // the rotated leg is built, even WITH a rotation witness in hand.
+        let result = prove_and_verify_finalized_turn_capability_holder(
+            &bearer_id,
+            1_000,
+            0,
+            actor_cap_root,
+            impostor_root, // the holder root the cap did NOT belong to
+            &effects,
+            [0xB1u8; 32],
+            &consumed,
+            None,
+            &[],
+            rotation(),
+        );
+        assert!(
+            matches!(
+                result,
+                Err(FullTurnProvingError::ConsumedCapWitnessInvalid { .. })
+            ),
+            "SOUNDNESS (BEARER AUTHORITY): a bearer turn bound to a holder root the cap was \
+             never a member of must be REFUSED, got {result:?}"
+        );
+
+        // (b) VERIFIER rejects: prove the honest turn ROTATED (bound to the REAL
+        // delegator root), then re-verify against the impostor's root — the
+        // cap leg's in-circuit-bound root mismatches → `CapRootMismatch`. A
+        // bearer proof for the delegator's tree cannot be replayed as authority
+        // from a different (impostor) cell.
+        let proven = prove_and_verify_finalized_turn_capability_holder(
+            &bearer_id,
+            1_000,
+            0,
+            actor_cap_root,
+            delegator_cap_root,
+            &effects,
+            [0xB2u8; 32],
+            &consumed,
+            None,
+            &[],
+            rotation(),
+        )
+        .expect("honest bearer proof (bound to the real delegator root)");
+        let expectation = dregg_sdk::CapMembershipExpectation {
+            leaf: consumed.cap_leaf(),
+            cap_root: impostor_root,
+        };
+        match verify_full_turn_bound(
+            &proven.proof,
+            proven.old_commit,
+            proven.new_commit,
+            None,
+            Some(&expectation),
+        ) {
+            Err(FullTurnVerifyError::CapRootMismatch { expected, got }) => {
+                assert_eq!(expected, impostor_root);
+                assert_eq!(got, delegator_cap_root);
+            }
+            Ok(()) => panic!(
+                "SOUNDNESS (BEARER AUTHORITY): a bearer authority proof for the delegator's tree \
+                 was ACCEPTED against a DIFFERENT (impostor) holder root — the delegated-authority \
+                 splicing hole is OPEN!"
+            ),
+            Err(other) => panic!("expected CapRootMismatch, got {other:?}"),
         }
     }
 }

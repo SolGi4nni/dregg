@@ -86,6 +86,7 @@ dregg-lightclient = { path = "../lightclient" }
 
 blake3 = "1"
 bs58 = "0.5"
+base64 = "0.22"
 postcard = { version = "1", features = ["alloc"] }
 js-sys = "0.3"
 x25519-dalek = { version = "2", features = ["static_secrets"] }

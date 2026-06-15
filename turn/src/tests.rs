@@ -8895,6 +8895,29 @@ fn make_bearer_delegation(
     }
 }
 
+#[test]
+fn ZZZ_adversarial_verify_cli_golden_vector_matches_real_executor() {
+    // THROWAWAY adversarial cross-check (verifier-added; to be reverted).
+    // Confirms the CLI's pinned constant in cli/src/commands/cap.rs equals what
+    // the REAL executor computes on the same inputs.
+    let target = CellId::from_bytes([0xABu8; 32]);
+    let bearer = [0xCDu8; 32];
+    let fed = [0xEFu8; 32];
+    let expires = 0x0102_0304_0506_0708u64;
+    let got = TurnExecutor::compute_bearer_delegation_message(
+        &target,
+        &AuthRequired::Signature,
+        &bearer,
+        expires,
+        &fed,
+    );
+    assert_eq!(
+        hex::encode(got),
+        "9fe1805d6e21ecaf4334cbc0030e70c3a9842773621e91d69a9df7b75fb05271",
+        "REAL executor diverged from the CLI's pinned golden vector"
+    );
+}
+
 fn make_open_permissions() -> dregg_cell::Permissions {
     dregg_cell::Permissions {
         send: AuthRequired::None,
@@ -9354,6 +9377,202 @@ fn test_bearer_cap_stark_delegation_invalid_proof_rejected() {
         ),
         other => panic!("expected Rejected, got: {:?}", other),
     }
+}
+
+/// Build a minimal serialized `StarkProof` carrying exactly `public_inputs`.
+///
+/// The scope-binding verifier (`verify_stark_delegation_binding`) only inspects
+/// the deserialized `public_inputs` (and length); the FRI/query payload is not
+/// touched. So an empty-query proof with the chosen public inputs is a faithful
+/// vehicle for exercising the binding teeth, feature-uniform (works under
+/// `recursion`, where the v1 `EffectVmAir` prover is retired).
+#[cfg(test)]
+fn stark_proof_bytes_with_public_inputs(public_inputs: &[u32]) -> Vec<u8> {
+    use dregg_circuit::stark::{StarkProof, proof_to_bytes};
+    let proof = StarkProof {
+        trace_commitment: [0u8; 32],
+        constraint_commitment: [0u8; 32],
+        fri_commitments: vec![],
+        fri_final_poly: vec![],
+        query_proofs: vec![],
+        public_inputs: public_inputs.to_vec(),
+        trace_len: 64,
+        num_cols: 1,
+        air_name: "dregg-effect-vm-v1".to_string(),
+        nonce: None,
+        boundary_commitment: None,
+        boundary_query_values: vec![],
+        boundary_query_paths: vec![],
+        pow_nonce: 0,
+        pow_bits: 0,
+    };
+    proof_to_bytes(&proof)
+}
+
+/// Both-polarity teeth for the shared STARK-delegation scope-binding verifier
+/// (`dregg_turn::action::verify_stark_delegation_binding`) — the Ledger-free
+/// core the executor's `StarkDelegation` arm and the wasm inspector both call.
+///
+/// A proof whose committed public inputs equal the canonical scope vector for
+/// `(root_issuer, target, permissions, expiry, federation)` ADMITS; any forgery
+/// — wrong root issuer, wider target, escalated permission tier, extended
+/// expiry, or a different federation, all while reusing the same `proof_bytes`
+/// — is REJECTED with a public-input mismatch. Garbage bytes are rejected at
+/// deserialization.
+#[test]
+fn stark_delegation_binding_admits_valid_rejects_forged() {
+    use crate::action::{StarkDelegationBindingError, verify_stark_delegation_binding};
+    use dregg_cell::AuthRequired;
+
+    let federation = [0x11u8; 32];
+    let target = CellId([0x22u8; 32]);
+    let root_issuer = [0x33u8; 32];
+    let permissions = AuthRequired::Signature;
+    let expires_at: u64 = 1_000;
+
+    // The honest prover commits to exactly the canonical scope vector.
+    let pis: Vec<u32> = crate::action::stark_delegation_expected_public_inputs(
+        &target,
+        &permissions,
+        expires_at,
+        &federation,
+        &root_issuer,
+    )
+    .iter()
+    .map(|bb| bb.0)
+    .collect();
+    let valid_bytes = stark_proof_bytes_with_public_inputs(&pis);
+
+    // TOOTH 1 (admit): a correctly-bound proof verifies.
+    assert!(
+        verify_stark_delegation_binding(
+            &valid_bytes,
+            &root_issuer,
+            &target,
+            &permissions,
+            expires_at,
+            &federation,
+        )
+        .is_ok(),
+        "a STARK-delegation proof bound to the exercised scope must verify"
+    );
+
+    // TOOTH 2 (reject): forged root issuer — relay reuses the proof but claims a
+    // different root-of-trust.
+    let forged_root = [0xFFu8; 32];
+    assert!(
+        matches!(
+            verify_stark_delegation_binding(
+                &valid_bytes,
+                &forged_root,
+                &target,
+                &permissions,
+                expires_at,
+                &federation,
+            ),
+            Err(StarkDelegationBindingError::PublicInputMismatch { .. })
+        ),
+        "a proof presented under a different root issuer must be rejected"
+    );
+
+    // TOOTH 3 (reject): wider target — relay points the same proof at another cell.
+    let wider_target = CellId([0x99u8; 32]);
+    assert!(
+        matches!(
+            verify_stark_delegation_binding(
+                &valid_bytes,
+                &root_issuer,
+                &wider_target,
+                &permissions,
+                expires_at,
+                &federation,
+            ),
+            Err(StarkDelegationBindingError::PublicInputMismatch { .. })
+        ),
+        "a proof presented against a different target must be rejected"
+    );
+
+    // TOOTH 4 (reject): escalated permission tier (Signature -> Proof).
+    assert!(
+        matches!(
+            verify_stark_delegation_binding(
+                &valid_bytes,
+                &root_issuer,
+                &target,
+                &AuthRequired::Proof,
+                expires_at,
+                &federation,
+            ),
+            Err(StarkDelegationBindingError::PublicInputMismatch { .. })
+        ),
+        "a proof exercised at a higher permission tier must be rejected"
+    );
+
+    // TOOTH 5 (reject): extended expiry — same proof, later deadline.
+    assert!(
+        matches!(
+            verify_stark_delegation_binding(
+                &valid_bytes,
+                &root_issuer,
+                &target,
+                &permissions,
+                expires_at + 1,
+                &federation,
+            ),
+            Err(StarkDelegationBindingError::PublicInputMismatch { .. })
+        ),
+        "a proof exercised with an extended expiry must be rejected"
+    );
+
+    // TOOTH 6 (reject): cross-federation replay.
+    let other_federation = [0x44u8; 32];
+    assert!(
+        matches!(
+            verify_stark_delegation_binding(
+                &valid_bytes,
+                &root_issuer,
+                &target,
+                &permissions,
+                expires_at,
+                &other_federation,
+            ),
+            Err(StarkDelegationBindingError::PublicInputMismatch { .. })
+        ),
+        "a proof replayed in another federation must be rejected"
+    );
+
+    // TOOTH 7 (reject): garbage bytes do not deserialize.
+    assert!(
+        matches!(
+            verify_stark_delegation_binding(
+                &[0xDE, 0xAD, 0xBE, 0xEF],
+                &root_issuer,
+                &target,
+                &permissions,
+                expires_at,
+                &federation,
+            ),
+            Err(StarkDelegationBindingError::Deserialization(_))
+        ),
+        "non-deserializable proof bytes must be rejected"
+    );
+
+    // TOOTH 8 (reject): too few public inputs (a stripped proof).
+    let short_bytes = stark_proof_bytes_with_public_inputs(&pis[..pis.len() - 1]);
+    assert!(
+        matches!(
+            verify_stark_delegation_binding(
+                &short_bytes,
+                &root_issuer,
+                &target,
+                &permissions,
+                expires_at,
+                &federation,
+            ),
+            Err(StarkDelegationBindingError::TooFewPublicInputs { .. })
+        ),
+        "a proof with fewer public inputs than the scope requires must be rejected"
+    );
 }
 
 // =============================================================================

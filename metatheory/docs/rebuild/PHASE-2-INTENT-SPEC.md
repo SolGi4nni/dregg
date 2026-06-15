@@ -118,4 +118,4 @@ full-build gate.
   `ResourceTheory` category-shape (what exactly are the resource objects) to ember before it sets.
 
 Then **Phase 3** (conservation-as-monoid-hom + userspace escrow ≥ kernel-escrow) and **Phase 4** (the
-gallery auction) per `HANDOFF-2026-06-03.md` §2.
+gallery auction).

@@ -22,10 +22,10 @@ The mandate cell models a charter DAG (**review → redact → sign**) with:
 | Lean (CompartmentWorkflowMandate) | Rust (this crate) | Layer |
 |---|---|---|
 | `stepAdmissible` — DAG prerequisites + not-already-done | [`step_admissible`] | Predicate (off-chain / turn-builder preflight) |
-| `stepClearanceOK` / `needsAll` — compartment clearance | [`step_clearance_ok`] | Predicate (scaffold; full graph via `CLEARANCE_GRAPH_ROOT_SLOT`) |
+| `stepClearanceOK` / `mayRead` / `dominatesD` — compartment clearance | [`step_clearance_ok`] (predicate) + `StateConstraint::ClearanceDominates` (executor) | Predicate AND executor (root-bound graph walk over `CLEARANCE_GRAPH_ROOT_SLOT`) |
 | `cwmAdvanceM` — composed one-step admission | [`cwm_advance_admits`] | Predicate |
 | `cwm_illegal_dag_rejected` | `step_admissible` returns false → builder must not emit action | Predicate fail-closed |
-| `cwm_clearance_violation_rejected` | `step_clearance_ok` returns false → no action | Predicate fail-closed |
+| `cwm_clearance_violation_rejected` | `step_clearance_ok` false (predicate) AND a clerk's past-clearance advance is a REAL executor refusal (`ClearanceDominates`, `MethodIs(advance_step)` case) | Predicate + executor fail-closed |
 | `cwm_illegal_dag_rejected_exec` — illegal cursor jump | `StateConstraint::MonotonicSequence { STEP_CURSOR_SLOT }` | Executor slot caveat |
 | `mandateCaveats` — immutable anchor + bounded cursor | `Immutable(COMMITMENT_ANCHOR_SLOT)` + `FieldLteField(STEP_CURSOR, CHARTER_TERMINAL)` | Executor |
 | `cwm_step_legal_forever` / `cwmWF` | `FieldLteField` + `MonotonicSequence` on every admitted turn | Invariant |
@@ -53,7 +53,7 @@ cwm_factory_descriptor() -> FactoryDescriptor
 cwm_cell_program() -> CellProgram
 factory_descriptors() -> Vec<FactoryDescriptor>
 
-build_advance_step_action(cclerk, mandate_cell, current_cursor, phase) -> Action
+build_advance_step_action(cclerk, mandate_cell, current_cursor, actor_clearance, phase) -> Action
 build_init_mandate_action(cclerk, mandate_cell, anchor, terminal, graph_root, spend) -> Action
 
 register(ctx: &StarbridgeAppContext) -> [u8; 32]

@@ -7,8 +7,7 @@
 //! surfaced the legacy `WitnessedPredicateRequiresExecutor` sentinel
 //! and the executor mapped it to `TurnError::ProgramViolation`.
 //!
-//! Block 3.5 fix: `TurnExecutor` now defaults to
-//! `Some(WitnessedPredicateRegistry::default_builtins())` on every
+//! `TurnExecutor` defaults to a non-`None` witnessed registry on every
 //! constructor (`new`, `with_budget_gate`, `with_proof_verifier`), and
 //! the slot-caveat program-evaluator + the precondition checker both
 //! consult `self.witnessed_registry` when they encounter a witnessed
@@ -16,13 +15,25 @@
 //!
 //! These tests exercise the dispatch surface, not the proof algebra.
 //!
-//! **Post AIR-soundness audit (commit `ce1e2def`).** The default
-//! registry now installs `NotYetWiredVerifier` for the kinds whose real
-//! cryptographic verifier lives in `dregg-circuit` / `dregg-bridge`
-//! (Dfa, Temporal, MerkleMembership, BlindedSet, BridgePredicate,
-//! PedersenEquality) — those verifiers **reject** every proof until a
-//! host installs the real adapter. NonMembership ships with the real
-//! Silver-Sound `SortedNeighborNonMembershipVerifier` in this crate.
+//! # Two distinct defaults — do not conflate them
+//!
+//! - `dregg_cell::WitnessedPredicateRegistry::default_builtins()` is the
+//!   *cell-layer* default. The cell crate cannot link `dregg-circuit`
+//!   (dependency cycle), so it installs `NotYetWiredVerifier` (fail-closed)
+//!   for every kind whose real verifier lives in the circuit: Dfa, Temporal,
+//!   MerkleMembership, BlindedSet, BridgePredicate, PedersenEquality. The
+//!   `default_builtins_registry_*` tests below pin THAT contract and are
+//!   unaffected by the executor default.
+//! - `dregg-turn`'s `TurnExecutor` constructors default to
+//!   `executor::registry_with_real_verifiers()` instead — because `dregg-turn`
+//!   DOES link `dregg-circuit` and owns the real STARK verifiers. So a bare
+//!   `TurnExecutor::new()` enforces the REAL MerkleMembership / NonMembership /
+//!   BlindedSet / PedersenEquality verifiers (admits valid proofs, rejects
+//!   forgeries at the STARK level). The three kinds that need host-trusted
+//!   policy context — Dfa, Temporal, BridgePredicate — DELIBERATELY stay
+//!   fail-closed in that default and are installed via
+//!   `registry_with_real_verifiers_full(..)`. The `turn_executor_*` tests
+//!   below pin THIS contract.
 //!
 //! For tests that previously relied on `default_builtins()` accepting
 //! arbitrary non-empty proof bytes (the stub-verifier behavior), switch
@@ -141,21 +152,75 @@ fn default_builtins_registry_unknown_custom_not_registered() {
 // TurnExecutor wiring: the registry is now non-None by default.
 // ─────────────────────────────────────────────────────────────────────
 
+/// A bare `TurnExecutor::new()` defaults to the REAL-verifier registry
+/// (`registry_with_real_verifiers`), NOT cell's fail-closed
+/// `default_builtins`. The context-free crypto kinds get genuine STARK /
+/// Bulletproof verifiers; the three context-dependent kinds deliberately stay
+/// fail-closed until the host wires their policy authorities. (Both polarities
+/// of the MerkleMembership default are proven end-to-end in
+/// `dregg_turn::executor::membership_verifier`'s
+/// `default_executor_admits_valid_membership_and_rejects_forge`.)
 #[test]
-fn turn_executor_new_defaults_to_default_builtins_registry() {
+fn turn_executor_new_defaults_to_real_verifier_registry() {
     let executor = TurnExecutor::new(ComputronCosts::zero());
     assert!(
         executor.witnessed_registry.is_some(),
-        "TurnExecutor::new must default-equip the witnessed registry (Block 3.5)"
+        "TurnExecutor::new must default-equip the witnessed registry"
     );
     let reg = executor.witnessed_registry.as_ref().unwrap();
-    // Confirm a builtin is present.
-    assert!(reg.get(WitnessedPredicateKind::Dfa).is_some());
-    assert!(reg.get(WitnessedPredicateKind::MerkleMembership).is_some());
-    assert!(reg.get(WitnessedPredicateKind::BlindedSet).is_some());
-    assert!(reg.get(WitnessedPredicateKind::Temporal).is_some());
-    assert!(reg.get(WitnessedPredicateKind::BridgePredicate).is_some());
-    assert!(reg.get(WitnessedPredicateKind::PedersenEquality).is_some());
+
+    // Every builtin kind is present (dispatch is always live).
+    for kind in [
+        WitnessedPredicateKind::Dfa,
+        WitnessedPredicateKind::Temporal,
+        WitnessedPredicateKind::MerkleMembership,
+        WitnessedPredicateKind::NonMembership,
+        WitnessedPredicateKind::BlindedSet,
+        WitnessedPredicateKind::BridgePredicate,
+        WitnessedPredicateKind::PedersenEquality,
+    ] {
+        assert!(reg.get(kind).is_some(), "{kind:?} must be registered");
+    }
+
+    // The context-free crypto kinds are the REAL verifiers by default —
+    // this is what distinguishes the turn-layer default from cell's
+    // fail-closed `default_builtins()`.
+    assert_eq!(
+        reg.get(WitnessedPredicateKind::MerkleMembership)
+            .unwrap()
+            .name(),
+        "merkle-membership-stark",
+        "bare-executor default must install the real MerkleMembership STARK verifier"
+    );
+    assert_eq!(
+        reg.get(WitnessedPredicateKind::NonMembership).unwrap().name(),
+        "sorted-neighbor-non-membership",
+    );
+    assert_eq!(
+        reg.get(WitnessedPredicateKind::BlindedSet).unwrap().name(),
+        "credential-set-membership",
+    );
+
+    // The DELIBERATE-DECISION half: kinds needing host-trusted policy
+    // context stay fail-closed (NotYetWired) — they cannot have a safe
+    // context-free default and are installed via
+    // `registry_with_real_verifiers_full(..)`. A `non-empty-proof` against
+    // them must be Rejected, not accepted.
+    for wp in [
+        WitnessedPredicate::dfa([1u8; 32], InputRef::Sender, 0),
+        WitnessedPredicate::temporal([2u8; 32], 0, 0),
+        WitnessedPredicate::bridge_predicate([3u8; 32], InputRef::PublicInput { pi_index: 0 }, 0),
+    ] {
+        let pk = [0u8; 32];
+        let err = reg
+            .verify(&wp, &PredicateInput::Sender(&pk), b"non-empty-proof")
+            .unwrap_err();
+        assert!(
+            matches!(err, WitnessedPredicateError::Rejected { .. }),
+            "context-dependent kind {:?} must stay fail-closed in the default; got {err:?}",
+            wp.kind
+        );
+    }
 }
 
 #[test]
@@ -196,14 +261,16 @@ fn turn_executor_can_swap_registry() {
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// Tampered witness rejects: empty proof bytes routes through the stub
-// rejection path.
+// Tampered witness rejects: an empty Dfa proof routes through the
+// fail-closed (NotYetWired) default-registry path.
 // ─────────────────────────────────────────────────────────────────────
 
 #[test]
 fn tampered_empty_proof_rejects_through_executor_registry() {
     let executor = TurnExecutor::new(ComputronCosts::zero());
     let reg = executor.witnessed_registry.as_ref().unwrap();
+    // Dfa stays fail-closed in the bare-executor default (host-policy kind),
+    // so any proof — empty or not — is Rejected.
     let wp = WitnessedPredicate::dfa([0u8; 32], InputRef::Sender, 0);
     let pk = [0u8; 32];
     let err = reg

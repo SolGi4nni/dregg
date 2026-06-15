@@ -46,12 +46,12 @@ net-delivered live turn (the live `notified`-path read of `turn_in` is wired + c
 QEMU since net only brings the NIC up here — a real ingress→turn_in→executor delivery is the next strand).
 Named: firmament keystone LANDED, 2026-06-15.
 
-## DESKTOP KEYSTONE — LANDED: the REAL gpui cockpit is on the seL4 framebuffer (TAB beside the live image, 2026-06-15)
+## DESKTOP KEYSTONE — LANDED: a REAL gpui render (cockpit-shaped) is on the seL4 framebuffer (TAB beside the live image, 2026-06-15)
 
 THE #1 PRECIOUS undone thing is done: the proven gpui-offscreen render is WIRED INTO the seL4
 framebuffer. The deos-image PD (`sel4/dregg-pd/deos-image/`) now has TWO live modes on one ramfb
 framebuffer, switched with **TAB**: `Mode::Image` (the Pharo cell browser) and `Mode::Cockpit` —
-the **real gpui-rendered starbridge-v2 cockpit** (the WORLD/SHELL/REFLECT columns + four-substance
+a **real gpui render of a starbridge-v2-cockpit-shaped Scene** (the WORLD/SHELL/REFLECT columns + four-substance
 tiles + title/status bars), rendered at the framebuffer's exact 800×600 by the actual gpui renderer
 (`gpui_wgpu::WgpuRenderer::render_scene_to_image`, the offscreen patch) on lavapipe (llvmpipe,
 `type=Cpu`, no GPU/window) on persvati — 21 quads + 322 glyph sprites — baked into the `#![no_std]`
@@ -59,8 +59,8 @@ PD as raw RGBA8 (`src/cockpit_frame.rgba`, 1.92 MiB, exactly as `image_data.rs` 
 swizzled RGBA→XRGB8888 into the framebuffer at blit time. A TAB keypress (evdev 15) → the PD's
 `notified()` toggles mode + repaints. `make -C sel4 capture-image-modes` reproduces it end-to-end
 (boots headless, screendumps the image, QMP `send-key TAB`, screendumps the cockpit). Evidence:
-`docs/desktop-os-research/patches/cockpit-on-sel4-framebuffer.png` (the gpui cockpit, scanned out of
-seL4 ramfb) + `deos-image-on-sel4-framebuffer.png` + `cockpit-render-800x600.png`. Serial:
+`docs/desktop-os-research/patches/cockpit-on-sel4-framebuffer.png` (the cockpit-shaped gpui render,
+scanned out of seL4 ramfb) + `deos-image-on-sel4-framebuffer.png` + `cockpit-render-800x600.png`. Serial:
 `ramfb CONFIGURED: addr=0x60600000 XRGB8888 800x600` then `-> MODE: the starbridge-v2 COCKPIT`.
 
 THE ONE REMAINING SWAP (named, not hidden — the honest frontier): the blitted Scene is a hand-built
@@ -115,6 +115,53 @@ Rust/Go seam). SHIP (B), BUILD (C). KEY FINDING (B): do NOT wrap the experimenta
 (BLAKE3 Merkle, no zkVM accelerator — the
 guest ran >200 CPU-min unfinished); use the production Poseidon2 path (field-native, ~10x lighter in
 zkVM). Named: EVM bridge, 2026-06-15.
+
+## PERFORMANCE PILLAR — LANDED: comprehensive criterion coverage of every hot path + measured numbers (2026-06-15)
+
+The `dregg-perf` crate now covers comprehensive swathes of the system under BOTH proving and
+witness-only loads, all measured (Apple M2 Max, bench profile). Five coverage gaps CLOSED with real,
+runnable criterion benches (each drives the production PUBLIC API; numbers banked in
+`docs/PERFORMANCE.md`, recipe in `docs/PERF.md`):
+- (a) `turn_witness_vs_proving` — THE headline contrast, all four legs of one turn side by side:
+  witness-only executor execute **~7 µs** · witness-gen **~319 µs** · full rotated prove **~147 ms** ·
+  rotated verify **~149 ms**. **The proving multiplier ≈ 21,000×** — the empirical case for
+  admit-then-prove-async.
+- (b) `cohort_circuit` — the rotated IR-v2 multi-table batch STARK prove+verify per effect cohort:
+  transfer-5table 52 ms/3.9 ms; and the UNIVERSAL-MEMORY economics MEASURED — a chip-bearing map-write
+  proves **~227 ms** vs the same intent as no-chip umem ops **~14.9 ms** (~15× — the Blum multiset
+  commits no Poseidon2 chip table).
+- (c) `recursion_fold` — the bundle-tree aggregation fold: prove scales sub-linearly (10→14→36→98 ms for
+  2→8→32→128 leaves) but **verify is ~CONSTANT ~2.4 ms regardless of fan-out** (the succinct-aggregation
+  property, measured).
+- (d) `embedded_commit` — the verified Lean kernel commit (`shadow_exec_full_forest_auth`, the node /
+  seL4-executor-PD hot path) over the GOLDEN firmament-boot turn: **~157 µs** (microseconds, same order
+  as the Rust executor — verified-and-cheap admit).
+- (e) `ui_projection` — the deos desktop whole-system measure (gpui-free; the real GPU first-paint is on
+  persvati): per-frame scene/affordance projection is **nanoseconds** (compose_scene 102 ns, paint_list
+  472 ns, affordance_project 96 ns — never the bottleneck); the first-paint DATA cost is the five embedded
+  commits (`demo_world_seed` ~5.8 s) — which is why the cockpit opens on the instant-genesis image and
+  seeds turns async.
+
+The full perf crate is clippy-clean; `cargo bench -p dregg-perf --no-run` green. SMOKE is default; FULL
+(`PERF_FULL=1`) is the persvati ladder capture (the fold + cohort FULL ladders already captured + in the
+doc). Named: performance pillar LANDED, 2026-06-15.
+
+## ⚑ TWO PERF FINDINGS surfaced by the harness (closure lanes, named 2026-06-15)
+
+1. **`prove_turn_self_sovereign` (rotation=None) is RETIRED under recursion and PANICS** ("thread a
+   rotation witness — the live node always does"). The v1 effect-vm fallback was deleted in the cutover but
+   this entry was left as a now-broken door. The perf benches/bins/`perf-report §6` that called it were
+   migrated to the LIVE rotated `prove_full_turn` (via the new `dregg_perf::rotated_transfer_turn` helper,
+   mirroring `sdk/tests/sovereign_rotated_c1.rs` wall_a). CLOSURE: either delete the
+   `prove_turn_self_sovereign` entry (it can only panic) or make it mint a default rotation witness so it
+   is honest — right now it is a trap for any caller. (`sdk/src/full_turn_proof.rs:2646`.)
+2. **The cell commitment is dominated by the cap-root Poseidon2 tree (~225 ms v8 / ~157 ms v9)**, NOT the
+   blake3 envelope (which alone is µs). `compute_canonical_state_commitment` absorbs the openable
+   sorted-Poseidon2 capability root (`compute_canonical_capability_root`) — building that full-depth tree,
+   even over an EMPTY cap set, is the ~225 ms. It is the heaviest non-FRI per-turn primitive and the long
+   pole of the genesis/first-paint cost (`demo_genesis_instant` ~1.24 s). CLOSURE: a witness-vs-recompute
+   split (compute once, cache, prove the delta) — the same lever the prover already uses — or a lazier
+   cap-root that doesn't pay full depth for a small/empty cap map. (`cell/src/commitment.rs`.)
 
 ## DREGG-LEAN-FFI ARCHIVE IS A SHARED MUTABLE FILE — concurrent-feature-set build race (named 2026-06-15)
 
@@ -860,6 +907,7 @@ the backbone v1 path is still UNCONDITIONAL per WALL A above.)
 ## Node / runtime closures
 
 - **Stage-5 consensus de-vac (Klein/HIGH-6) — `docs/STAGE5-CONSENSUS-DEVAC.md`.** LANDED: the running-node witness that consensus runs at n>1 — `scripts/devnet-n3-ordering.sh` + `node/tests/three_node_ordering_rule.rs` boot 3 REAL nodes in `--federation-mode full` (3-validator genesis, supermajority(3)=3) and assert [A] full-mode multi-party tau path engaged + [B] cross-node block exchange over the real gossip wire (both PASS). Verified: the Lean BFT model is NON-vacuous (`bft_safety` is adversary-parametrized, liveness reduced to a DLS88/HotStuff `Pacemaker`; the empty-adversary inhabitant is only a satisfiability witness) and the tau rule faithfully refines the Rust (`BlocklaceFinality.lean`). **✅ S5-1 CLOSED (`ed35b23b2`, 2026-06-14):** the running node now COMMITS a turn through the rule at n≥2 — `three_node_ordering_rule.rs` green under `DREGG_TEST_REQUIRE_FINALITY=1` (4/4+3/3); `devnet-n3-ordering.sh REQUIRE_FINALITY=1` → [C] CONVERGED `latest_height 1 1 1` at n=3 (supermajority(3)=3, the strongest case). FOUR measured defects closed (the doc named only dissemination): (1) the Dandelion privacy-STEM misroute → `publish_eager` direct full-payload push to all committee peers; (2) a CHAIN-not-round-synchronous DAG (one creator/round → `is_super_ratified` never fired) → round-disciplined production (the exact `build_rounds` shape `tau` finalizes); (3) THE root cause = HALF-DUPLEX connections (gossip read only INBOUND streams → the last-booted node could send but never receive → deadlock under supermajority==n) → spawn `serve_connection` on outbound too (~50%→12/12) + QUIC keep-alive + a `Frontier` liveness nonce + a connectivity gate; (4) a turn-execution double-apply once finality fired (faucet eager-exec → nonce-replay / dest-not-found on peers) → faucet scratch-clone in multi-party mode + `execute_finalized_turn` materializes a missing Transfer dest as a remote stub. FOLLOW-UP (NOT blocking, devnet-correct today): a production-hardening pass on faucet/finalized-execution cell-provisioning semantics → node/api + execute_finalized. Then S5-2 live commit refinement, S5-3 #170 quorum-consumer migration, S5-4 consensus leg of the composed apex, S5-5 equivocator Lean↔Rust differential pin, S5-6 finality-on-demand (`docs/CONSENSUS-FLEX.md`). → net/gossip + blocklace/dissemination + node/blocklace_sync.
+- **pg-dregg Tier-C proof-attest — S1+S3 DONE, only the node producer (S2) remains.** The whole-chain IVC proof now crosses the SQL boundary for real: `circuit::ivc_turn_chain::WholeChainProofBytes` + `verify_turn_chain_recursive_from_blobs` (S1) and pg-dregg's `tier-c` leg wiring the REAL verifier (S3) are LANDED and green — the byte round-trip + tamper teeth pass (`circuit/tests/ivc_turn_chain_rotated.rs::whole_chain_proof_bytes_roundtrip_and_tamper`, 428s real fold), and the pg-dregg admit/refuse polarity is proven (`pg-dregg/tests/tier_c_real_proof.rs`, `--features tier-c`, ignored real fold). The fork (`emberian/plonky3-recursion`) needs NO edit: at the pinned rev `72ffc56` `BatchStarkProof` already derives `Serialize/Deserialize` (`#[serde(bound="")]`) and the binding `Proof<SC>` rides the pinned Plonky3 rev's serde. REMAINS = **S2, the node-side PRODUCER** (named in `pg-dregg/src/attest.rs` + `turn_proofs.rs` + `docs/PG-DREGG.md §10.2`): when finality advances, fold the new finalized turns (`prove_turn_chain_recursive` / `fold_two_turns`) and write the serialized transport + window bounds into `dregg.turn_proofs(lo, hi, genesis_root, final_root, proof bytea, vk)` the SRF reads. A real `tier-c` `ChainFolder` impl replaces `turn_proofs::StandInFolder`. → node + pg-dregg, post-rotation.
 - Stale-cap c-list sweep (channels 72d43dc64 residue): epoch-step turn should `RevokeCapability` superseded grants. STILL OPEN — a real verb gap, NOT a quick fix: `member_cap_grants` installs into each MEMBER's c-list, while `RevokeCapability {cell,slot}` removes from a cell's OWN c-list; sweeping a departed member needs cross-cell `Delegate` authority the operator doesn't hold. `RevokeDelegation` epoch bump already DARKENS prior-epoch group caps at admission (R7 `CapabilityStale`) → this is c-list GC (storage), not soundness. Honest closure = a new verb shape (member-initiated self-revoke or group-scoped revoke authority). → node/turn, post-flip.
 - Adjudication: bond cell → program-toothed obligation cell; tau-exclusion via a membership cell (court is the value leg only; 460d4d6bd residues). STILL OPEN — bond is a plain operator cell, not yet deployed via the obligation factory; deferred to AFTER the FLASH-WELL/blueprint `obligation_factory_descriptor` lands+verifies, then `post_bond` deploys via the factory in one slice. (That pattern now landed — unblocked for a future lane.)
 - Storage: erasure coding + dedup-beyond-content-addressing — IN-CRATE half closed (storage/src/availability.rs, 10 tests). REMAINS: the node put/get HTTP route (gated by storage-gateway-mandate cell) can now CALL the in-crate availability route — the "weld to the shell" half. → node, post-flip.

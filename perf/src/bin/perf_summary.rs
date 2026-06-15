@@ -1,7 +1,8 @@
 //! Standalone turn-proof performance summary — prints a table of real
-//! prove/verify wall-clock times for the production self-sovereign turn path
-//! (`prove_turn_self_sovereign` / `verify_full_turn`). Under the `recursion`
-//! default the EffectVM leg proves through the rotated IR-v2 descriptor tower.
+//! prove/verify wall-clock times for the LIVE rotated self-sovereign turn path
+//! (`prove_full_turn` / `verify_full_turn` over a real `RotationTurnWitness`). Under
+//! the `recursion` default the EffectVM leg proves through the rotated IR-v2 descriptor
+//! tower (the v1 `prove_turn_self_sovereign` entry is retired and panics).
 //!
 //! Run: `cargo run --release -p dregg-perf --bin perf-summary`
 //!
@@ -12,11 +13,8 @@
 
 use std::time::Instant;
 
-use dregg_circuit::effect_vm::pi;
-use dregg_perf::{build_trace, workloads};
-use dregg_sdk::{prove_turn_self_sovereign, verify_full_turn};
-
-const TURN_HASH: [u8; 32] = [7u8; 32];
+use dregg_perf::rotated_turns;
+use dregg_sdk::full_turn_proof::{prove_full_turn, verify_full_turn};
 
 fn fmt(secs: f64) -> String {
     if secs < 1e-3 {
@@ -30,25 +28,20 @@ fn fmt(secs: f64) -> String {
 
 fn main() {
     println!(
-        "{:<20} {:>6} {:>12} {:>12}",
-        "workload", "effs", "prove (mean)", "verify (mean)"
+        "{:<20} {:>12} {:>12}",
+        "workload", "prove (mean)", "verify (mean)"
     );
-    println!("{}", "-".repeat(54));
+    println!("{}", "-".repeat(46));
 
-    for w in workloads() {
-        let (_trace, pis) = build_trace(&w);
-        let old_commit = pis[pi::OLD_COMMIT];
-        let new_commit = pis[pi::NEW_COMMIT];
-
+    for (name, rt) in rotated_turns() {
         // Warm + correctness gate.
-        let proof = prove_turn_self_sovereign(&w.initial, &w.effects, TURN_HASH)
-            .expect("honest turn must prove");
-        verify_full_turn(&proof, old_commit, new_commit).expect("honest proof must verify");
+        let proof = prove_full_turn(&rt.witness).expect("honest turn must prove");
+        verify_full_turn(&proof, rt.old_commit, rt.new_commit).expect("honest proof must verify");
 
         let prove_iters = 5u32;
         let t0 = Instant::now();
         for _ in 0..prove_iters {
-            let p = prove_turn_self_sovereign(&w.initial, &w.effects, TURN_HASH).expect("prove");
+            let p = prove_full_turn(&rt.witness).expect("prove");
             std::hint::black_box(&p);
         }
         let prove_mean = t0.elapsed().as_secs_f64() / prove_iters as f64;
@@ -56,14 +49,13 @@ fn main() {
         let verify_iters = 50u32;
         let t1 = Instant::now();
         for _ in 0..verify_iters {
-            verify_full_turn(&proof, old_commit, new_commit).expect("verify");
+            verify_full_turn(&proof, rt.old_commit, rt.new_commit).expect("verify");
         }
         let verify_mean = t1.elapsed().as_secs_f64() / verify_iters as f64;
 
         println!(
-            "{:<20} {:>6} {:>12} {:>12}",
-            w.name,
-            w.effects.len(),
+            "{:<20} {:>12} {:>12}",
+            name,
             fmt(prove_mean),
             fmt(verify_mean)
         );

@@ -149,6 +149,69 @@ struct Notification {
     badge: u64,
 }
 
+/// A held capability to WAKE a Notification — the **`notify` authority** as a thing
+/// you hold, the Rust mirror of the verified `Dregg2.Firmament.NotifyAuthority.NotifyCap`
+/// (and of the `Dregg2.Authority.Auth.notify` async-signal authority).
+///
+/// This is the async dual of an endpoint-call cap: it confers the right to *poke*
+/// `target`, scoped to badges within `badge_mask`, and NOTHING else — no read, no
+/// synchronous message body, no reply. The census (`docs/NOTIFY-PRIMITIVE.md`) found
+/// five subsystems that each re-implement async-signal ungated; this is the one held,
+/// attenuable authority the bare [`EmulatedKernel::signal`] lacked. The badge mask is
+/// the seL4 `NotificationCap oref badge cap_rights` payload scope: "may signal, but
+/// only badge ⊑ `badge_mask`", admissible iff the signalled bits are within the mask
+/// (`badge & !badge_mask == 0`), exactly the Lean `badgeWithinMask` / the `u32`-mask
+/// bit-subset `facetAttenuation`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NotifyCap {
+    /// The Notification object this cap may signal (a stale/forged handle to any
+    /// OTHER object is refused: a notify cap is target-scoped).
+    pub target: ObjectId,
+    /// The held seL4 cap-rights tier (the SAME [`crate::Rights`] = `AuthRequired`
+    /// lattice the firmament `mint` gates on, so the rights attenuation rides the
+    /// existing `is_narrower_or_equal` = the Lean `grantOk`).
+    pub rights: crate::Rights,
+    /// The badge-mask scope: a `signal` is admissible iff its badge ⊑ `badge_mask`
+    /// (the bits signalled are a subset of the mask's). `0` = "may signal nothing"
+    /// (the fully-revoked bottom); `u64::MAX` = "may signal any badge".
+    pub badge_mask: u64,
+}
+
+impl NotifyCap {
+    /// May this cap signal `notif` with `badge`? Iff the cap targets `notif` AND the
+    /// badge's bits are within the held `badge_mask` (`badge & !badge_mask == 0`).
+    /// The Rust mirror of the Lean `NotifyCap.signalAdmissible` (over `badgeWithinMask`),
+    /// extended with the target check (the Lean cap is implicitly target-scoped by the
+    /// kernel routing; here the cap carries its own `target`).
+    #[must_use]
+    pub fn signal_admissible(&self, notif: ObjectId, badge: u64) -> bool {
+        self.target == notif && (badge & !self.badge_mask) == 0
+    }
+
+    /// Attenuate this cap on BOTH axes — narrow the rights (gated on
+    /// `is_narrower_or_equal`, the firmament mint's `granted ⊆ held`) and the badge
+    /// mask (gated on bit-subset, `narrower_mask & self.badge_mask == narrower_mask`).
+    /// Returns the narrowed cap, or `None` if EITHER axis would AMPLIFY (a rights
+    /// widening OR a mask with a bit not held). The Rust mirror of the Lean
+    /// `attenuateNotify`; the keystone non-amplification property (a badge admissible
+    /// through the attenuated cap is admissible through this one) is the test
+    /// `attenuated_notify_cap_admits_only_a_subset`.
+    #[must_use]
+    pub fn attenuate(&self, narrower_rights: crate::Rights, narrower_mask: u64) -> Option<NotifyCap> {
+        let rights_ok = narrower_rights.is_narrower_or_equal(&self.rights);
+        let mask_ok = (narrower_mask & self.badge_mask) == narrower_mask;
+        if rights_ok && mask_ok {
+            Some(NotifyCap {
+                target: self.target,
+                rights: narrower_rights,
+                badge_mask: narrower_mask,
+            })
+        } else {
+            None
+        }
+    }
+}
+
 /// An Untyped memory region + its retype budget — the seL4 `Untyped` cap.
 ///
 /// A factory PD holds an Untyped and may `retype` it into objects of a declared
@@ -433,6 +496,36 @@ impl EmulatedKernel {
         Ok(())
     }
 
+    /// `seL4_Signal`, **cap-gated** — the [`NotifyCap`]-authorized wake, the Rust
+    /// mirror of the verified `Dregg2.Firmament.NotifyAuthority.signalGated`.
+    ///
+    /// A signal is permitted iff the holder's `cap` admits it (it targets THIS
+    /// notification AND the badge is within the cap's `badge_mask`). When permitted,
+    /// it OR's the **masked** badge (`badge & cap.badge_mask`, which equals `badge`
+    /// exactly when admissible) into the accumulator via the unchanged [`Self::signal`]
+    /// — so a committed wake delivers precisely the intended badge, no truncation.
+    /// Otherwise it REFUSES with [`IpcError::NotPermitted`] (fail-closed): you cannot
+    /// wake a notification you hold no cap to, nor with a badge bit outside your mask.
+    ///
+    /// This is the WELD (`docs/NOTIFY-PRIMITIVE.md` §3.1): the same badge-OR
+    /// [`Notification`] object, now reachable ONLY through a held authority — the
+    /// ungated [`Self::signal`] becomes the kernel-internal primitive, and a wake the
+    /// authority model can reason about (attenuable, non-amplifying) is `signal_gated`.
+    pub fn signal_gated(
+        &self,
+        cap: &NotifyCap,
+        notif: ObjectId,
+        badge: u64,
+    ) -> Result<(), IpcError> {
+        if cap.signal_admissible(notif, badge) {
+            // Masked badge == badge when admissible; mask explicitly so the value is
+            // bounded by the cap even if `signal_admissible` is ever relaxed.
+            self.signal(notif, badge & cap.badge_mask)
+        } else {
+            Err(IpcError::NotPermitted)
+        }
+    }
+
     /// `seL4_Wait` — BLOCK until the notification's badge is non-zero, then
     /// atomically read-and-clear it and return the accumulated badge. This is
     /// the seL4 semantics: the returned badge is the OR of all signals since the
@@ -663,6 +756,11 @@ pub struct ReplyToken {
 pub enum IpcError {
     /// No object exists at the given [`ObjectId`] (a stale or forged handle).
     NoSuchObject,
+    /// The holder's [`NotifyCap`] does not admit this signal — either the cap
+    /// targets a different object, or the signalled badge carries a bit outside
+    /// the cap's `badge_mask` (fail-closed, the Rust mirror of the Lean
+    /// `signalGated … = none`). The wake is REFUSED, not silently dropped.
+    NotPermitted,
 }
 
 /// Errors from [`EmulatedKernel::retype`] — the kernel-enforced factory
@@ -766,6 +864,97 @@ mod tests {
         assert_eq!(waiter.join().unwrap(), 0xABC);
         // The object reset to zero after the wait consumed the badge.
         assert_eq!(k.poll_notification(n).unwrap(), 0);
+    }
+
+    // ── Notify AUTHORITY: signal_gated = the cap-gated wake (both polarities) ──
+    //
+    // The Rust mirror of the verified `Dregg2.Firmament.NotifyAuthority` teeth
+    // (`signalGated_commits_of_admissible` / `signalGated_refuses_of_inadmissible`
+    // / `signalAdmissible_attenuate_no_amplify`). The primitive existed
+    // un-witnessed in Rust; these are the both-polarity teeth its doc-comments
+    // promise — a wake WITHIN the held badge-mask COMMITS, a wake OUTSIDE it is
+    // REFUSED, and attenuation only SHRINKS what a holder may signal.
+
+    #[test]
+    fn signal_gated_commits_within_mask_refuses_outside_mask() {
+        let k = EmulatedKernel::new();
+        let n = k.create_notification();
+        // A cap to `n` that may wake for the two task-kind bits 0b001 and 0b100
+        // (mask 0b101), carrying the `Either` rights tier.
+        let cap = NotifyCap {
+            target: n,
+            rights: AuthRequired::Either,
+            badge_mask: 0b101,
+        };
+        // ADMITS: badge 0b001 is within the mask ⇒ commits, OR'ing exactly 0b001.
+        k.signal_gated(&cap, n, 0b001).expect("within-mask signal commits");
+        // ADMITS: badge 0b100 (the OTHER held bit) is within the mask ⇒ commits.
+        k.signal_gated(&cap, n, 0b100).expect("the other held bit commits");
+        // The accumulator now holds the OR of the two committed badges (0b101),
+        // and a single read-and-clear returns it (the seL4 badge-OR, gated).
+        assert_eq!(k.poll_notification(n).unwrap(), 0b101);
+        // REFUSES (fail-closed): badge 0b010 has a bit NOT in the mask ⇒ NotPermitted,
+        // and the accumulator is UNTOUCHED (a refused wake delivers nothing).
+        let refused = k.signal_gated(&cap, n, 0b010).unwrap_err();
+        assert!(matches!(refused, IpcError::NotPermitted));
+        assert_eq!(
+            k.poll_notification(n).unwrap(),
+            0,
+            "a refused signal must leave the accumulator at zero"
+        );
+        // REFUSES (wrong target): the SAME admissible badge to a DIFFERENT object
+        // is refused — the cap is target-scoped (a stale/forged handle pokes nothing).
+        let other = k.create_notification();
+        let wrong_target = k.signal_gated(&cap, other, 0b001).unwrap_err();
+        assert!(matches!(wrong_target, IpcError::NotPermitted));
+    }
+
+    #[test]
+    fn attenuated_notify_cap_admits_only_a_subset() {
+        let k = EmulatedKernel::new();
+        let n = k.create_notification();
+        let parent = NotifyCap {
+            target: n,
+            rights: AuthRequired::Either,
+            badge_mask: 0b101,
+        };
+        // The PARENT admits badge 0b100.
+        assert!(parent.signal_admissible(n, 0b100));
+        // Attenuate on BOTH axes: narrow the rights Either → Signature (a real
+        // narrowing on the AuthRequired lattice) AND the mask 0b101 → 0b001 (drop
+        // the 0b100 bit). Both narrow ⇒ Some.
+        let child = parent
+            .attenuate(AuthRequired::Signature, 0b001)
+            .expect("narrowing both axes must succeed");
+        assert_eq!(child.badge_mask, 0b001);
+        assert_eq!(child.rights, AuthRequired::Signature);
+        // NON-AMPLIFICATION (the keystone, witnessed): the attenuated child now
+        // REFUSES badge 0b100 — which the parent ADMITTED — but STILL admits 0b001.
+        // Attenuation strictly shrank the admissible set; it did not go dark.
+        assert!(!child.signal_admissible(n, 0b100), "attenuated cap drops 0b100");
+        assert!(child.signal_admissible(n, 0b001), "attenuated cap keeps 0b001");
+        // And the gate AGREES with the cap: signalling 0b100 through the child is
+        // refused at the kernel seam, while 0b001 commits.
+        assert!(matches!(
+            k.signal_gated(&child, n, 0b100).unwrap_err(),
+            IpcError::NotPermitted
+        ));
+        k.signal_gated(&child, n, 0b001).expect("the kept bit commits");
+        // REFUSES a MASK WIDENING: a child mask with a bit the parent does not
+        // hold (0b010 ∉ 0b101) is rejected — `None`, no amplification.
+        assert!(
+            parent.attenuate(AuthRequired::Signature, 0b111).is_none(),
+            "a mask widening (adding 0b010) must be refused"
+        );
+        // REFUSES a RIGHTS WIDENING: Signature → Either is broader on the lattice,
+        // so even with a narrowing mask the attenuation is refused.
+        let narrow_rights = parent
+            .attenuate(AuthRequired::Signature, 0b001)
+            .expect("narrow first");
+        assert!(
+            narrow_rights.attenuate(AuthRequired::Either, 0b001).is_none(),
+            "a rights widening (Signature → Either) must be refused"
+        );
     }
 
     // ── Endpoint: synchronous rendezvous (Call parks until Recv) ──────────────

@@ -139,9 +139,62 @@ fn write_private(path: &PathBuf, bytes: &[u8]) -> std::io::Result<()> {
 /// (`sdk/src/mnemonic.rs::derive_keypair` at path `dregg/0`): the BLAKE3 KDF
 /// output is the Ed25519 seed.
 fn derive_public_key(seed: &[u8; 64]) -> [u8; 32] {
+    derive_signing_key(seed).verifying_key().to_bytes()
+}
+
+/// Derive the Ed25519 [`SigningKey`](ed25519_dalek::SigningKey) from a 64-byte
+/// master seed — the SAME derivation as [`derive_public_key`] (BLAKE3 KDF at
+/// path `dregg/0`), exposed so other commands (e.g. `cap export`) can SIGN with
+/// the active identity, not just display its public key. The golden vector at
+/// the bottom of this file pins the derived public key, so any drift here fails
+/// the test in lockstep with the SDK profile store.
+fn derive_signing_key(seed: &[u8; 64]) -> ed25519_dalek::SigningKey {
     let derived = Zeroizing::new(blake3::derive_key(DERIVATION_PATH, seed));
-    let signing = ed25519_dalek::SigningKey::from_bytes(&derived);
-    signing.verifying_key().to_bytes()
+    ed25519_dalek::SigningKey::from_bytes(&derived)
+}
+
+/// The active identity's signing key + public key, loaded from the profile
+/// store (`DREGG_PROFILE` env → `ACTIVE` file → the named `<name>.json` seed).
+///
+/// This is the SIGNING counterpart to the display-only profile listing: it
+/// reads the (mode-0600) 64-byte seed and re-derives the Ed25519 key the SDK
+/// would use, so a CLI-built credential (a real `BearerCapProof`) carries a
+/// signature the node's executor will verify under the operator's identity.
+///
+/// Returns an error (not a panic) when no profile is active or the seed is
+/// malformed, so callers can surface an actionable "run `dregg id create`"
+/// message instead of crashing.
+pub fn active_signing_key()
+-> Result<(ed25519_dalek::SigningKey, [u8; 32]), Box<dyn std::error::Error>> {
+    let name = active_name().ok_or(
+        "no active identity profile — create one with `dregg id create <name>` \
+         (or set DREGG_PROFILE=<name>), then retry",
+    )?;
+    let path = profile_path(&name);
+    let contents = std::fs::read_to_string(&path).map_err(|e| {
+        format!(
+            "active profile {name:?} could not be read ({}): {e}",
+            path.display()
+        )
+    })?;
+    let record: ProfileFile = serde_json::from_str(&contents)
+        .map_err(|e| format!("active profile {name:?} is malformed: {e}"))?;
+    let seed_vec = Zeroizing::new(
+        hex::decode(&record.seed_hex)
+            .map_err(|e| format!("active profile {name:?} has invalid seed hex: {e}"))?,
+    );
+    if seed_vec.len() != 64 {
+        return Err(format!(
+            "active profile {name:?} seed is {} bytes, expected 64",
+            seed_vec.len()
+        )
+        .into());
+    }
+    let mut seed = Zeroizing::new([0u8; 64]);
+    seed.copy_from_slice(&seed_vec);
+    let signing = derive_signing_key(&seed);
+    let public = signing.verifying_key().to_bytes();
+    Ok((signing, public))
 }
 
 // ─── the verbs ───

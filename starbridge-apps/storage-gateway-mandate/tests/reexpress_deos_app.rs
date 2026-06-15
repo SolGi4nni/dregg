@@ -55,24 +55,25 @@ fn the_whole_app_is_one_composed_registration() {
     let (cclerk, executor) = agent();
     let app = gateway_app(&cclerk, &executor);
 
-    // ONE app, ONE cell. The cap-only surface carries the two reads; the metered write
-    // (`put`) is GATED (cap∧state).
+    // ONE app, ONE cell. The cap-only surface carries the enumerate read (`list`); the
+    // clearance-gated read (`get`) and the metered write (`put`) are GATED (cap∧state).
     assert_eq!(app.name(), "storage-gateway-mandate");
     assert_eq!(app.cells().len(), 1);
     let gateway = &app.cells()[0];
     assert_eq!(
         gateway.surface().all_names(),
-        vec!["get".to_string(), "list".to_string()],
-        "the cap-only surface: the two reads (get + list)"
+        vec!["list".to_string()],
+        "the cap-only surface: the enumerate read (list)"
     );
-    // The gated surface carries the single state-mutating, cap∧state operation.
+    // The gated surface carries the cap∧state operations: the clearance-gated `get`
+    // (the executor re-enforces the root-bound ClearanceDominates) and the metered `put`.
     let gated: Vec<String> = gateway
         .gated_surface()
         .affordances
         .iter()
         .map(|g| g.name().to_string())
         .collect();
-    assert_eq!(gated, vec!["put".to_string()]);
+    assert_eq!(gated, vec!["get".to_string(), "put".to_string()]);
 
     // The GATEWAY cell is the agent's own (so fires execute against the seeded ledger),
     // and is published into the web-of-cells at the reader tier.
@@ -121,23 +122,20 @@ async fn the_storage_roles_see_their_cap_only_surfaces() {
         serde_json::from_slice::<serde_json::Value>(&bytes).unwrap()["visible"].clone()
     }
 
-    // A READER (Signature) sees both reads `get` + `list` (the narrow read tier). `put` is
-    // GATED (not on the cap-only projection); it lights on the gated surface against live
-    // state.
+    // A READER (Signature) sees the cap-only enumerate read `list` (the narrow read tier).
+    // `get` (clearance-gated) and `put` (budget-gated) are GATED — not on the cap-only
+    // projection; they light on the gated surface against live state.
     assert_eq!(
         visible(&router, "signature").await,
-        serde_json::json!(["get", "list"])
+        serde_json::json!(["list"])
     );
-    // A WRITER (Either) sees the same cap-only set (the reads) — `put` is GATED.
+    // A WRITER (Either) sees the same cap-only set (the enumerate read) — get/put GATED.
     assert_eq!(
         visible(&router, "either").await,
-        serde_json::json!(["get", "list"])
+        serde_json::json!(["list"])
     );
-    // The MANDATE-HOLDER (root) ⊇ writer ⊇ reader, so it also sees the two cap-only reads.
-    assert_eq!(
-        visible(&router, "root").await,
-        serde_json::json!(["get", "list"])
-    );
+    // The MANDATE-HOLDER (root) ⊇ writer ⊇ reader, so it also sees the cap-only read.
+    assert_eq!(visible(&router, "root").await, serde_json::json!(["list"]));
 }
 
 // =============================================================================
@@ -145,7 +143,7 @@ async fn the_storage_roles_see_their_cap_only_surfaces() {
 // =============================================================================
 
 #[tokio::test]
-async fn a_reader_can_get_a_real_turn_through_the_mounted_surface() {
+async fn a_reader_can_list_cap_only_and_clears_the_get_cap_gate() {
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
     use tower::ServiceExt;
@@ -168,18 +166,35 @@ async fn a_reader_can_get_a_real_turn_through_the_mounted_surface() {
             .unwrap()
             .status()
     }
+    async fn fire_gated(router: &axum::Router, name: &str, tier: &str) -> StatusCode {
+        router
+            .clone()
+            .oneshot(
+                Request::post(format!("/gateway/gated/fire/{name}"))
+                    .header(dregg_app_framework::HELD_RIGHTS_HEADER, tier)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+            .status()
+    }
 
-    // A READER (Signature) firing `get` CLEARS the cap gate (not 403) — `get` requires
-    // only `Signature`. A real verified read turn through the embedded executor.
-    assert_ne!(
-        fire(&router, "get", "signature").await,
-        StatusCode::FORBIDDEN,
-        "a reader is cap-authorized to get (clears the cap gate)"
-    );
-    // `list` is equally a reader affordance.
+    // A READER (Signature) firing the cap-only `list` CLEARS the cap gate (not 403) — a
+    // real verified enumerate turn through the embedded executor.
     assert_ne!(
         fire(&router, "list", "signature").await,
-        StatusCode::FORBIDDEN
+        StatusCode::FORBIDDEN,
+        "a reader is cap-authorized to list (clears the cap gate)"
+    );
+    // A READER (Signature) firing the GATED `get` CLEARS the cap gate (not 403) — `get`
+    // requires only `Signature`. (The executor's root-bound ClearanceDominates is the
+    // SECOND tooth on the actual fire; the genuine both-polarity clearance refusal is
+    // proven through the executor in `tests/deos_seam.rs`.)
+    assert_ne!(
+        fire_gated(&router, "get", "signature").await,
+        StatusCode::FORBIDDEN,
+        "a reader is cap-authorized to attempt a get (clears the cap gate)"
     );
 }
 
@@ -232,13 +247,11 @@ fn a_gateway_snapshot_rehydrates_per_viewer_respecting_the_lattice() {
     assert_eq!(snap.liveness(), Rehydration::ReplayedDeterministic);
     assert!(snap.liveness().is_faithful());
 
-    // A READER (Signature) rehydrating reacquires both cap-only reads (the surface at its
-    // tier) — the gateway snapshot respects the lattice.
+    // A READER (Signature) rehydrating reacquires the cap-only enumerate read (the surface
+    // at its tier; `get`/`put` are gated, projected separately) — the gateway snapshot
+    // respects the lattice.
     let reader = gateway.rehydrate(&snap, AuthRequired::Signature).unwrap();
-    assert_eq!(
-        reader.visible_names(),
-        vec!["get".to_string(), "list".to_string()]
-    );
+    assert_eq!(reader.visible_names(), vec!["list".to_string()]);
 
     // An INCOMPARABLE authority (a distinct Custom identity) cannot rehydrate at all — the
     // membrane mints NO projection (the no-peek refusal → Amplification).
@@ -281,8 +294,8 @@ async fn the_app_ships_a_web_component_surface_and_a_manifest() {
         .unwrap();
     let js = String::from_utf8(bytes.to_vec()).unwrap();
     assert!(js.contains("customElements.define(\"dregg-affordance-surface\""));
-    // The anti-drift affordance map names the cap-only fire endpoints.
-    assert!(js.contains("fireEndpoint: \"/gateway/fire/get\","));
+    // The anti-drift affordance map names the cap-only fire endpoint (`list`; `get`/`put`
+    // are gated and ride the `/gated/fire/` route).
     assert!(js.contains("fireEndpoint: \"/gateway/fire/list\","));
 
     // GET /manifest serves the whole composed surface, including the GATED affordance with
@@ -305,10 +318,12 @@ async fn the_app_ships_a_web_component_surface_and_a_manifest() {
             .contains("embedded-ledger")
     );
     assert_eq!(m["cells"].as_array().unwrap().len(), 1);
-    // The manifest advertises the gated (cap∧state) `put` affordance.
+    // The manifest advertises the gated (cap∧state) affordances: the clearance-gated
+    // `get` and the budget-gated `put`.
     let gated = m["cells"][0]["gatedAffordances"]
         .as_array()
         .expect("gated affordances");
     let names: Vec<&str> = gated.iter().filter_map(|g| g["name"].as_str()).collect();
     assert!(names.contains(&"put"), "put is advertised as gated");
+    assert!(names.contains(&"get"), "get (clearance-gated) is advertised as gated");
 }

@@ -436,8 +436,16 @@ add the "verify the whole history yourself" button to the explorer (W6) and the
 playground (S3). The VK anchor is genesis/checkpoint config, never taken from the
 artifact under verification (the lightclient already enforces this). Wide-safe:
 adds a wasm export + a site button. (Honest scope: carries the lightclient's named
-floor — `recursive_sound` + the two fork follow-ups — surfaced in the UI, not
-hidden.)
+floor — `recursive_sound` — surfaced in the UI, not hidden.)
+
+*Byte path CLOSED (§7).* The over-wire seam — a `WholeChainProof` had no serde
+because its `root.1` (`Rc<CircuitProverData>`) is prover-only — is wired:
+`circuit::ivc_turn_chain` serializes the **verify-sufficient subset** as the
+versioned `WholeChainProofBytes` envelope (`WholeChainProof::to_bytes()`), and
+`dregg_lightclient::verify_history_bytes` runs the three teeth over the decoded
+bytes. The wasm `produce_external_history_envelope` fills `proof_bytes_b64` and
+`verify_devnet_history` decodes + verifies it for real (no longer a reported
+seam). Teeth in `circuit/tests/ivc_turn_chain_rotated.rs::whole_chain_proof_bytes_roundtrip_and_tamper`.
 
 **S5 — the SDK two-noun browser front door (W3, the acting surface).** Finish the
 `sdk-browser-ed25519-webcrypto` follow-up named in `sdk-ts/src/browser.ts`: back

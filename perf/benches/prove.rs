@@ -1,44 +1,35 @@
 //! Criterion bench: TRANSFER PROVE.
 //!
-//! Times the LIVE EffectVM proving paths over the canonical Transfer transition:
-//!   * `prove_vm_descriptor` — the verified-by-construction descriptor-interpreter
-//!     prover (the Lean-emitted descriptor the rotated IR-v2 commit tower descends
-//!     from). This is the EffectVM sub-proof number.
-//!   * `prove_turn_self_sovereign` — the real self-sovereign commit-path entry the
-//!     node drives (EffectVM leg + PI-binding main proof). This is the full real
-//!     turn number, over the workload ladder.
+//! Times the LIVE proving paths for a Transfer turn:
+//!   * `prove_full_turn` (rotated) — the real self-sovereign commit-path entry the node
+//!     drives under `recursion`: the Effect-VM leg proves through the rotated IR-v2
+//!     multi-table descriptor (`"effect-vm-rotated"`) + the PI-binding main proof, over a
+//!     `FullTurnWitness` carrying a real `RotationTurnWitness`. The full real turn number.
+//!   * `prove_vm_descriptor2` — the EPOCH IR-v2 multi-table batch STARK over the graduated
+//!     transfer descriptor (the rotated leg's circuit, in isolation). The EffectVM sub-proof
+//!     number under the live tower.
 //!
-//! (The v1 hand-AIR `prove_effect_vm_p3` is the `not(recursion)` wasm floor and is
-//! retired here — under the `recursion` default it is absent.)
+//! (The v1 `prove_turn_self_sovereign` / hand-AIR `prove_effect_vm_p3` are RETIRED under
+//! the recursion default — `prove_turn_self_sovereign` panics "thread a rotation witness".)
 //!
-//! SMOKE (default): the single smallest real turn (`transfer_1effect`).
-//! FULL (`PERF_FULL=1`): the 1/4/16-effect ladder for the full-turn prover.
+//! SMOKE (default): the single rotated transfer. FULL (`PERF_FULL=1`): the rotated ladder.
 //!
 //! Run: `cargo bench -p dregg-perf --bench prove`
 //! Persvati capture: `PERF_FULL=1 cargo bench -p dregg-perf --bench prove`
 
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
-use dregg_circuit::effect_vm_descriptors::descriptor_for_selector;
-use dregg_circuit::lean_descriptor_air::{parse_vm_descriptor, prove_vm_descriptor};
-use dregg_perf::{build_trace, regime, single_transfer, workloads};
-use dregg_sdk::prove_turn_self_sovereign;
+use dregg_perf::{cohort_transfer, prove_cohort, regime, rotated_turns};
+use dregg_sdk::full_turn_proof::prove_full_turn;
 
-const TURN_HASH: [u8; 32] = [7u8; 32];
-
-/// The full self-sovereign turn prover — the real commit path the node drives.
+/// The full LIVE rotated turn prover — the real commit path the node drives.
 fn bench_prove_full_turn(c: &mut Criterion) {
     let mut group = c.benchmark_group(format!("prove_full_turn/{}", regime()));
     // Proving is seconds-scale; keep the sample count modest.
     group.sample_size(10);
-    for w in workloads() {
-        group.bench_function(w.name, |b| {
+    for (name, rt) in rotated_turns() {
+        group.bench_function(name, |b| {
             b.iter(|| {
-                let proof = prove_turn_self_sovereign(
-                    black_box(&w.initial),
-                    black_box(&w.effects),
-                    TURN_HASH,
-                )
-                .expect("honest turn must prove");
+                let proof = prove_full_turn(black_box(&rt.witness)).expect("honest turn must prove");
                 black_box(proof);
             });
         });
@@ -46,28 +37,15 @@ fn bench_prove_full_turn(c: &mut Criterion) {
     group.finish();
 }
 
-/// The verified descriptor-interpreter prover for the canonical Transfer.
-/// selector 1 = TRANSFER (the validated cutover-ready descriptor).
+/// The EPOCH IR-v2 multi-table batch STARK for the graduated transfer descriptor (the
+/// rotated leg's circuit in isolation) — the EffectVM sub-proof number.
 fn bench_prove_descriptor(c: &mut Criterion) {
-    let Some(json) = descriptor_for_selector(1) else {
-        eprintln!("prove_descriptor: no transfer descriptor registered — skipped");
-        return;
-    };
-    let desc = parse_vm_descriptor(json).expect("parse transfer descriptor");
-    let (st, effs) = single_transfer();
-    let (trace, full_pis) = build_trace(&dregg_perf::Workload {
-        name: "transfer_1effect",
-        initial: st,
-        effects: effs,
-    });
-    let dpis = full_pis[..desc.public_input_count].to_vec();
-
+    let cohort = cohort_transfer();
     let mut group = c.benchmark_group(format!("prove_descriptor/{}", regime()));
     group.sample_size(10);
-    group.bench_function("transfer_1effect", |b| {
+    group.bench_function("transfer_5table", |b| {
         b.iter(|| {
-            let proof = prove_vm_descriptor(black_box(&desc), black_box(&trace), black_box(&dpis))
-                .expect("descriptor prove");
+            let proof = prove_cohort(black_box(&cohort));
             black_box(proof);
         });
     });

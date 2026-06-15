@@ -1340,77 +1340,49 @@ impl TurnExecutor {
                 proof_bytes,
                 root_issuer_commitment,
             } => {
-                use dregg_circuit::field::BabyBear;
-                use dregg_circuit::stark;
-                let stark_proof = stark::proof_from_bytes(proof_bytes).map_err(|e| {
+                // Goal-2 hardening (anonymous delegation): bind the *exercised
+                // scope* into the proof's public inputs so a relay cannot reuse a
+                // valid proof for a wider grant. The delegator/bearer pubkeys are
+                // deliberately NOT bound (they stay hidden behind
+                // `root_issuer_commitment` — that is the whole point of the
+                // anonymous path); only the permission tier, the expiry, and the
+                // federation id are bound, all of which are public on the turn
+                // anyway. This binding check is the Ledger-free core shared with
+                // the inspector / wasm verifier (`crate::action::
+                // verify_stark_delegation_binding`) so both paths agree.
+                let stark_proof = crate::action::verify_stark_delegation_binding(
+                    proof_bytes,
+                    root_issuer_commitment,
+                    &proof.target,
+                    &proof.permissions,
+                    proof.expires_at,
+                    &self.local_federation_id,
+                )
+                .map_err(|e| {
                     (
                         TurnError::BearerCapInvalidProof {
                             target: proof.target,
-                            reason: format!("STARK proof deserialization failed: {e}"),
+                            reason: e.to_string(),
                         },
                         path.to_vec(),
                     )
                 })?;
-                let mut public_inputs: Vec<BabyBear> = Vec::new();
-                public_inputs.extend(Self::bytes32_to_babybear(root_issuer_commitment));
-                public_inputs.extend(Self::bytes32_to_babybear(proof.target.as_bytes()));
-                // Goal-2 hardening (anonymous delegation): bind the
-                // *exercised scope* into the proof's public inputs so a
-                // relay cannot reuse a valid proof for a wider grant.
-                // The delegator/bearer pubkeys are deliberately NOT
-                // bound (they stay hidden behind `root_issuer_commitment`
-                // — that is the whole point of the anonymous path); only
-                // the permission tier, the expiry, and the federation id
-                // are bound, all of which are public on the turn anyway.
-                let perm_tag: u32 = match &proof.permissions {
-                    AuthRequired::None => 0,
-                    AuthRequired::Signature => 1,
-                    AuthRequired::Proof => 2,
-                    AuthRequired::Either => 3,
-                    AuthRequired::Impossible => 4,
-                    AuthRequired::Custom { .. } => 5,
-                };
-                let scope_hash = {
-                    let mut h = blake3::Hasher::new();
-                    h.update(b"dregg-stark-delegation-scope-v1:");
-                    h.update(&self.local_federation_id);
-                    h.update(&perm_tag.to_le_bytes());
-                    if let AuthRequired::Custom { vk_hash } = &proof.permissions {
-                        h.update(vk_hash);
-                    }
-                    h.update(&proof.expires_at.to_le_bytes());
-                    *h.finalize().as_bytes()
-                };
-                public_inputs.extend(Self::bytes32_to_babybear(&scope_hash));
-                if stark_proof.public_inputs.len() < public_inputs.len() {
-                    return Err((
-                        TurnError::BearerCapInvalidProof {
-                            target: proof.target,
-                            reason: format!(
-                                "STARK proof has {} public inputs, expected at least {}",
-                                stark_proof.public_inputs.len(),
-                                public_inputs.len()
-                            ),
-                        },
-                        path.to_vec(),
-                    ));
-                }
-                for (i, expected) in public_inputs.iter().enumerate() {
-                    if BabyBear(stark_proof.public_inputs[i]) != *expected {
-                        return Err((
-                            TurnError::BearerCapInvalidProof {
-                                target: proof.target,
-                                reason: format!("STARK public input mismatch at index {i}"),
-                            },
-                            path.to_vec(),
-                        ));
-                    }
-                }
+                // The recomputed scope vector is what the v1 FRI leg below checks
+                // the trace against; rebuild it once for that call.
+                #[cfg(not(feature = "recursion"))]
+                let public_inputs = crate::action::stark_delegation_expected_public_inputs(
+                    &proof.target,
+                    &proof.permissions,
+                    proof.expires_at,
+                    &self.local_federation_id,
+                    root_issuer_commitment,
+                );
                 // V1 FLOOR: the bearer-cap STARK is the v1 hand-AIR (`EffectVmAir`). The recursion
                 // tower retires this leg; a v1 bearer-cap STARK presented to a recursion build is
                 // rejected rather than verified.
                 #[cfg(not(feature = "recursion"))]
                 {
+                    use dregg_circuit::stark;
                     let air = dregg_circuit::EffectVmAir::new(stark_proof.trace_len);
                     stark::verify(&air, &stark_proof, &public_inputs).map_err(|e| {
                         (

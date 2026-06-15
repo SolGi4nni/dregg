@@ -37,10 +37,13 @@ fn main() {
         p3_bytes(&proof)
     });
 
-    // 2. full self-sovereign turn proof (the real node wire size).
+    // 2. full self-sovereign turn proof (the real node wire size) — the LIVE rotated path
+    //    (the v1 `prove_turn_self_sovereign` is retired under recursion and panics).
     let turn_bytes = {
-        use dregg_sdk::prove_turn_self_sovereign;
-        let proof = prove_turn_self_sovereign(&st, &effs, [7u8; 32]).expect("full-turn prove");
+        use dregg_perf::rotated_transfer_turn;
+        use dregg_sdk::full_turn_proof::prove_full_turn;
+        let rt = rotated_transfer_turn(1_000_000, 100);
+        let proof = prove_full_turn(&rt.witness).expect("full-turn prove");
         proof.proof_bytes.len()
     };
 

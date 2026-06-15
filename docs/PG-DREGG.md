@@ -955,32 +955,35 @@ The SRF *shape* is **built and `cargo test`-proven** in `pg-dregg/src/attest.rs`
 cannot attest a window of more than K — and the fail-closed expansion to rows),
 written ONCE against a single circuit-link seam, `attest::verify_serialized_proof`.
 
-**The circuit-link is the named settle item.** `verify_turn_chain_recursive`
-takes an *in-memory* `WholeChainProof` (plonky3 proof objects), which is **not
-yet serde-serializable**, so a proof cannot cross the SQL boundary as `bytea`
-today. What *can* cross now is the 32-byte VK anchor (`RecursionVk`) and the
-bound publics. So the proof-bytes leg is **stubbed behind the `tier-c` feature**,
-and the stub FAILS CLOSED — it attests nothing — which is the §10.3 safe
-direction (a stub that returned *success* would be the forbidden failure mode;
-this stub returns *refusal*). Wiring it is three bounded steps:
+**The circuit-link, by feature.** `verify_turn_chain_recursive` takes an
+*in-memory* `WholeChainProof`, whose `root.1` (`Rc<CircuitProverData>`) is
+prover-only and not serde — but the verifier never reads it. The
+**verify-sufficient subset** (the root `BatchStarkProof`, the chain-binding
+`Proof`, the four publics) **is** serde, so it crosses the SQL boundary as
+`bytea`. With `tier-c` **OFF** (default) the circuit is not linked and the seam
+`attest::verify_serialized_proof` FAILS CLOSED — it attests nothing — which is
+the §10.3 safe direction. With `tier-c` **ON** the seam decodes the transport's
+proof blobs and runs the real cryptographic teeth. The three steps:
 
-- **S1** — add a versioned serialization to `circuit::ivc_turn_chain::WholeChainProof`
-  (the plonky3 proof objects are postcard/serde-encodable; the struct needs the
-  derives + an envelope), so the node ships a proof as `bytea` and the SRF does
-  `decode → verify_turn_chain_recursive`.
+- **S1 (LANDED)** — `circuit::ivc_turn_chain` carries the versioned envelope
+  `WholeChainProofBytes` + `WholeChainProof::to_bytes()` and the parts/blob
+  verifiers `verify_turn_chain_recursive_from_parts` /
+  `verify_turn_chain_recursive_from_blobs` (a split of `verify_turn_chain_recursive`'s
+  body, which already reads only the verify-sufficient subset). The transport
+  `attest::SerializedWholeChainProof` carries the same two postcard blobs + publics.
 - **S2** — the node-side PRODUCER: when finality advances, fold the new finalized
   turns (`prove_turn_chain_recursive` / the `fold_two_turns` accumulator) and
   write the serialized proof + its window bounds into a `dregg.turn_proofs(lo,
   hi, genesis_root, final_root, proof bytea, vk)` table the SRF reads.
-- **S3** — the `tier-c` feature pulls `dregg-circuit` **Lean-free** (`--features
-  verifier`/`recursion`: the prover-free batch-STARK verify surface + the
-  recursion verifier, NO executor, NO Lean runtime — §8.1 authorizes the circuit
-  link for Tier C), so `attest::verify_serialized_proof` becomes the real
-  `verify_turn_chain_recursive` instead of the stub.
+- **S3 (LANDED)** — the `tier-c` feature pulls `dregg-circuit` **Lean-free**
+  (`--features recursion`: the recursion verifier, NO executor, NO Lean runtime —
+  §8.1 authorizes the circuit link for Tier C), and `attest::verify_serialized_proof`
+  decodes the transport blobs and calls `verify_turn_chain_recursive_from_blobs`
+  against the anchor.
 
 S2 touches the node and is therefore the post-flip half of M3 (the structural
-gate + this SRF shape are the realizable pg-side halves that ship now); S1/S3 are
-circuit-side and Lean-free.
+gate + this SRF shape + the now-real circuit link are the pg-side halves that
+ship); S1/S3 are circuit-side and Lean-free.
 
 ### 10.3 Soundness, and the honest failure mode
 

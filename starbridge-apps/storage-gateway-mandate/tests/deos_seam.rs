@@ -30,9 +30,10 @@ use dregg_app_framework::{
 };
 
 use starbridge_storage_gateway_mandate::{
-    DEFAULT_COMMITMENT_ANCHOR, DEFAULT_KEY_PREFIX, DEFAULT_READ_COMPARTMENT, VOLUME_CEILING_SLOT,
-    VOLUME_SPENT_SLOT, fire_put, gateway_app, gateway_invariants_program, put_effects,
-    register_deos, seed_gateway,
+    ACTOR_CLEARANCE_SLOT, CLEARANCE_GRAPH_ROOT_SLOT, DEFAULT_COMMITMENT_ANCHOR, DEFAULT_KEY_PREFIX,
+    DEFAULT_READ_COMPARTMENT, READ_COMPARTMENT_SLOT, VOLUME_CEILING_SLOT, VOLUME_SPENT_SLOT,
+    clearance_root, fire_get, fire_put, gateway_app, gateway_program_with_clearance, guest_label,
+    put_effects, register_deos, seed_gateway, writer_label,
 };
 
 fn agent(seed: u8) -> (AppCipherclerk, EmbeddedExecutor) {
@@ -80,8 +81,15 @@ fn seeding_installs_the_volume_invariants_and_a_funded_budget() {
         executor.with_ledger_mut(|ledger| ledger.get(&cclerk.cell_id()).map(|c| c.program.clone()));
     assert_eq!(
         installed,
-        Some(gateway_invariants_program()),
-        "the seeded gateway cell carries the volume invariants (the seam's enforcement layer)"
+        Some(gateway_program_with_clearance()),
+        "the seeded gateway cell carries the volume invariants + the GET-clearance tooth"
+    );
+    // ...and the REAL clearance-graph root is seeded (the slot is LOAD-BEARING).
+    let st = executor.cell_state(cclerk.cell_id()).expect("seeded");
+    assert_eq!(
+        st.fields[CLEARANCE_GRAPH_ROOT_SLOT as usize],
+        clearance_root(),
+        "the gateway commits the real clearance-graph root"
     );
     // ...and the seeded state is the WriteOnce-bound ceiling (10) with a fresh budget
     // (VOLUME_SPENT == 0, nothing spent yet).
@@ -294,6 +302,107 @@ fn the_executor_re_enforces_a_rewound_volume_meter_is_refused() {
         after.fields[VOLUME_SPENT_SLOT as usize],
         field_from_u64(6),
         "the refused rewind committed nothing — the meter still holds 6"
+    );
+}
+
+// =============================================================================
+// (g) THE GET-CLEARANCE TOOTH (the recovered Lean `getClearanceOK`, root-bound):
+//     a WRITER (clears `storage-read`) GETs; a GUEST (does not) is REFUSED by the
+//     REAL executor; the check ACTUALLY CONSULTS CLEARANCE_GRAPH_ROOT_SLOT.
+// =============================================================================
+
+#[test]
+fn a_writer_gets_a_guest_is_refused_clearance() {
+    let (cclerk, executor) = agent(0x71);
+    let app = gateway_app(&cclerk, &executor);
+    seed_with_ceiling(&executor, 10); // funded budget + REAL clearance root + read compartment
+
+    // A WRITER (Either ⊇ READER's Signature) GETs, presenting the `writer` clearance: the
+    // cap gate passes, the budget precondition passes (0 < 10), and the executor's
+    // root-bound ClearanceDominates ADMITS (writer -> storage-read edge). A real verified
+    // read turn.
+    let receipt = fire_get(
+        &app,
+        &AuthRequired::Either,
+        writer_label(),
+        &cclerk,
+        &executor,
+        "uploads/doc.txt",
+    )
+    .expect("a writer clears storage-read (writer -> storage-read): admitted by the executor");
+    assert_ne!(receipt.turn_hash, [0u8; 32]);
+    // The executor recorded the actor clearance; the read compartment box is unchanged.
+    let st = executor.cell_state(cclerk.cell_id()).unwrap();
+    assert_eq!(st.fields[ACTOR_CLEARANCE_SLOT as usize], writer_label());
+    assert_eq!(
+        st.fields[READ_COMPARTMENT_SLOT as usize],
+        dregg_app_framework::field_from_bytes(DEFAULT_READ_COMPARTMENT.as_bytes())
+    );
+
+    // A GUEST presenting the `guest` clearance GETs: the cap gate passes (Either ⊇ reader)
+    // and the budget precondition passes, so this is a REAL submitted turn whose
+    // ClearanceDominates the EXECUTOR refuses — guest does NOT dominate `storage-read` (no
+    // guest -> storage-read path). The half a flat `contains` scaffold WRONGLY admitted.
+    let refused = fire_get(
+        &app,
+        &AuthRequired::Either,
+        guest_label(),
+        &cclerk,
+        &executor,
+        "uploads/secret.txt",
+    );
+    assert!(
+        refused.is_err(),
+        "a guest's GET must be refused (guest does not clear storage-read), got {refused:?}"
+    );
+    let msg = format!("{:?}", refused.unwrap_err()).to_lowercase();
+    assert!(
+        msg.contains("dominate") || msg.contains("clearance") || msg.contains("program"),
+        "the executor refuses on the ClearanceDominates tooth, got: {msg}"
+    );
+    // Anti-ghost: the guest's refused GET left the recorded clearance at the writer's.
+    let after = executor.cell_state(cclerk.cell_id()).unwrap();
+    assert_eq!(
+        after.fields[ACTOR_CLEARANCE_SLOT as usize],
+        writer_label(),
+        "the refused guest GET committed nothing"
+    );
+}
+
+#[test]
+fn the_get_clearance_check_consults_the_stored_graph_root() {
+    // THE ROOT TOOTH: the clearance check ACTUALLY CONSULTS CLEARANCE_GRAPH_ROOT_SLOT. Seed
+    // a gateway with a BOGUS clearance-graph root (NOT clearance_root()). The executor's
+    // ClearanceDominates recomputes the carried graph's commitment and compares it to this
+    // stored root — they differ, so even a fully-cleared WRITER's GET FAILS CLOSED. This
+    // proves the slot is LOAD-BEARING (the floor scaffold ignored it entirely).
+    let (cclerk, executor) = agent(0x71);
+    let app = gateway_app(&cclerk, &executor);
+    seed_with_ceiling(&executor, 10);
+    // Overwrite the (correctly-seeded) root with a wrong one.
+    executor.with_ledger_mut(|ledger| {
+        if let Some(cell) = ledger.get_mut(&cclerk.cell_id()) {
+            cell.state
+                .set_field(CLEARANCE_GRAPH_ROOT_SLOT as usize, [0xCD; 32]);
+        }
+    });
+
+    let refused = fire_get(
+        &app,
+        &AuthRequired::Either,
+        writer_label(),
+        &cclerk,
+        &executor,
+        "uploads/doc.txt",
+    );
+    assert!(
+        refused.is_err(),
+        "a wrong stored graph root must fail closed even for a writer, got {refused:?}"
+    );
+    let msg = format!("{:?}", refused.unwrap_err()).to_lowercase();
+    assert!(
+        msg.contains("root") || msg.contains("commit") || msg.contains("clearance") || msg.contains("program"),
+        "the executor refuses on the stored-root mismatch, got: {msg}"
     );
 }
 

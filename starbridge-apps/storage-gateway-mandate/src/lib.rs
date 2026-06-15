@@ -19,7 +19,7 @@ use dregg_app_framework::{
     CellProgram, ChildVkStrategy, ConstantsModule, DeosApp, DeosCell, Effect, EmbeddedExecutor,
     Event, FactoryDescriptor, FireExecuteError, GatedAffordance, InspectorDescriptor,
     StarbridgeAppContext, StateConstraint, TransitionCase, TransitionGuard, TurnReceipt,
-    canonical_program_vk, field_from_u64, hex_encode_32, symbol,
+    canonical_program_vk, clearance_graph_root, field_from_u64, hex_encode_32, symbol,
 };
 
 // Re-export the field primitives so differential tests (and downstream callers) can build the
@@ -106,8 +106,22 @@ pub const VOLUME_CEILING_SLOT: u8 = 4;
 /// Slot 5 — `key_prefix_hash`. Immutable authorized prefix commitment.
 pub const KEY_PREFIX_HASH_SLOT: u8 = 5;
 
-/// Slot 6 — `read_compartment_hash`. Immutable GET clearance label.
+/// Slot 6 — `read_compartment_hash`. Immutable GET clearance label (the box label
+/// a GET actor's clearance must dominate). Frozen by `init_gateway` (`WriteOnce`).
 pub const READ_COMPARTMENT_SLOT: u8 = 6;
+
+/// Slot 7 — `clearance_graph_root`. Immutable Merkle commitment over the
+/// `(dominator, dominated)` clearance edges (Lean `demoGraph`). The executor's
+/// [`StateConstraint::ClearanceDominates`] recomputes this from the carried edges
+/// and refuses any GET whose graph does not match it (the stored root is
+/// LOAD-BEARING). Frozen by `init_gateway` (`WriteOnce`).
+pub const CLEARANCE_GRAPH_ROOT_SLOT: u8 = 7;
+
+/// Slot 8 — `actor_clearance`. The GET actor's clearance label, materialized into
+/// state by the GET turn so the executor's [`StateConstraint::ClearanceDominates`]
+/// checks it dominates `READ_COMPARTMENT_SLOT` in the root-bound clearance graph.
+/// Re-bound per GET (the acting reader presents their clearance).
+pub const ACTOR_CLEARANCE_SLOT: u8 = 8;
 
 // =============================================================================
 // Factory configuration
@@ -139,9 +153,94 @@ pub fn key_under_prefix(prefix: &str, key: &str) -> bool {
     key.starts_with(prefix)
 }
 
-/// GET requires compartment clearance (Lean `getClearanceOK` scaffold).
+/// The named `writer` clearance label of the demo clearance graph (Lean
+/// `demoMandate.actorLabels`, `StorageGatewayMandate/Core.lean:331`). A writer's
+/// clearance dominates `storage-read`, so a writer may GET.
+pub fn writer_label() -> FieldElement {
+    field_from_bytes(b"writer")
+}
+/// The named `guest` clearance label (Lean `guestMandate`): does NOT dominate
+/// `storage-read`, so a guest's GET is refused. See [`writer_label`].
+pub fn guest_label() -> FieldElement {
+    field_from_bytes(b"guest")
+}
+
+/// **The demo clearance graph** — the `(dominator, dominated)` edge set of Lean
+/// `demoGraph` (`StorageGatewayMandate/Core.lean:320`): `writer ⊐ storage-read`.
+/// A writer's clearance dominates the read compartment (it may GET); a guest's
+/// does not. Dominance is the reflexive-transitive closure of these edges (the
+/// proved-sound `ClearanceGraph.dominatesD`). This IS the graph the cell commits
+/// in `CLEARANCE_GRAPH_ROOT_SLOT` ([`clearance_root`]) and the executor's
+/// [`StateConstraint::ClearanceDominates`] walks.
+pub fn clearance_graph() -> Vec<(FieldElement, FieldElement)> {
+    vec![(
+        writer_label(),
+        field_from_bytes(DEFAULT_READ_COMPARTMENT.as_bytes()),
+    )]
+}
+
+/// The canonical commitment of the demo clearance graph — the value pinned in the
+/// cell's `CLEARANCE_GRAPH_ROOT_SLOT`. The executor's `ClearanceDominates`
+/// recomputes this from the carried edges and refuses any GET whose graph does not
+/// match it (the stored root is LOAD-BEARING).
+pub fn clearance_root() -> FieldElement {
+    clearance_graph_root(&clearance_graph())
+}
+
+/// Fuel-bounded reflexive-transitive dominance over the clearance graph — the
+/// hand-port of the proved-sound Lean `ClearanceGraph.dominatesD`/`dominatesFuel`
+/// (`Authority/ClearanceGraph.lean:46,53`) over the felt-label substrate.
+/// Reflexive (an actor holding exactly the box label is cleared). Mirrors the
+/// executor's `dominates_closure` (`cell/src/program.rs`).
+pub fn dominates(edges: &[(FieldElement, FieldElement)], a: FieldElement, b: FieldElement) -> bool {
+    fn go(
+        edges: &[(FieldElement, FieldElement)],
+        a: FieldElement,
+        b: FieldElement,
+        fuel: usize,
+    ) -> bool {
+        if fuel == 0 {
+            return false;
+        }
+        if a == b {
+            return true;
+        }
+        edges
+            .iter()
+            .any(|(src, mid)| *src == a && go(edges, *mid, b, fuel - 1))
+    }
+    go(edges, a, b, edges.len() + 1)
+}
+
+/// **`get_clearance_ok`** — some held actor label DOMINATES the GET read
+/// compartment in the demo clearance graph (Lean `getClearanceOK` =
+/// `mayRead m.clearanceGraph m.actorLabels m.readCompartment`,
+/// `StorageGatewayMandate/Core.lean:85`). NO LONGER a flat `contains` — it walks
+/// the reflexive-transitive dominance closure of [`clearance_graph`], so a writer
+/// (whose clearance dominates `storage-read`) is cleared while a guest is not.
+/// This is the predicate-layer twin of the executor's
+/// [`StateConstraint::ClearanceDominates`] tooth (both decide via [`dominates`]).
 pub fn get_clearance_ok(actor_labels: &[FieldElement], read_compartment: FieldElement) -> bool {
-    actor_labels.contains(&read_compartment)
+    let edges = clearance_graph();
+    actor_labels
+        .iter()
+        .any(|&a| dominates(&edges, a, read_compartment))
+}
+
+/// The root-bound clearance constraint the executor re-enforces on every GET: the
+/// GET actor's clearance in `ACTOR_CLEARANCE_SLOT` dominates the read compartment
+/// in `READ_COMPARTMENT_SLOT`, in the demo clearance graph whose canonical
+/// commitment must equal `CLEARANCE_GRAPH_ROOT_SLOT`. The Rust twin of Lean
+/// `getClearanceOK` made an inline executor tooth (`ClearanceGraph.dominatesD`,
+/// soundness `dominates_of_dominatesD`), bound to the stored root so the slot is
+/// LOAD-BEARING.
+pub fn clearance_dominates_constraint() -> StateConstraint {
+    StateConstraint::ClearanceDominates {
+        actor_label_index: ACTOR_CLEARANCE_SLOT,
+        box_index: READ_COMPARTMENT_SLOT,
+        root_index: CLEARANCE_GRAPH_ROOT_SLOT,
+        edges: clearance_graph(),
+    }
 }
 
 /// Stingray volume debit admission (Lean `Slice.tryDebit`).
@@ -528,6 +627,50 @@ pub fn gateway_invariants_program() -> CellProgram {
     CellProgram::Predicate(sgm_factory_descriptor().state_constraints)
 }
 
+/// The **seeded gateway program** the deos fires re-enforce — the life-of-cell
+/// invariants (an `Always` case carrying the flat [`gateway_invariants_program`]
+/// constraints) PLUS the GET-clearance tooth (a `MethodIs("get")` case carrying
+/// [`clearance_dominates_constraint`]). The deos surface's three operations —
+/// `get` / `put` / `list` — are the dispatch cases (so the default-deny carve-out
+/// admits exactly them, and the GET case adds the clearance check on top of the
+/// universal invariants).
+///
+/// THE GET-CLEARANCE TOOTH (Lean `getClearanceOK`, root-bound): a GET turn
+/// materializes the acting reader's clearance into `ACTOR_CLEARANCE_SLOT`; the
+/// executor checks it DOMINATES the frozen `READ_COMPARTMENT_SLOT` box in the
+/// clearance graph whose canonical commitment must equal `CLEARANCE_GRAPH_ROOT_SLOT`
+/// — so a guest's GET (guest does not dominate `storage-read`) is a REAL executor
+/// refusal, while a writer's GET is admitted; substitute an over-permissive graph
+/// or tamper the root and it fails closed on the root check. `put` / `list` carry
+/// no extra method-scoped teeth here (the `Always` invariants cover them).
+pub fn gateway_program_with_clearance() -> CellProgram {
+    let invariants = sgm_factory_descriptor().state_constraints;
+    CellProgram::Cases(vec![
+        TransitionCase {
+            guard: TransitionGuard::Always,
+            constraints: invariants,
+        },
+        TransitionCase {
+            guard: TransitionGuard::MethodIs {
+                method: symbol("get"),
+            },
+            constraints: vec![clearance_dominates_constraint()],
+        },
+        TransitionCase {
+            guard: TransitionGuard::MethodIs {
+                method: symbol("put"),
+            },
+            constraints: vec![],
+        },
+        TransitionCase {
+            guard: TransitionGuard::MethodIs {
+                method: symbol("list"),
+            },
+            constraints: vec![],
+        },
+    ])
+}
+
 /// The `put` **live-state precondition** — the gateway must have BUDGET REMAINING
 /// (`VOLUME_SPENT < VOLUME_CEILING`, i.e. `VOLUME_SPENT <= VOLUME_CEILING - 1`). A real
 /// [`CellProgram`] read against the cell's current state, so a `put` button is DARK on an
@@ -571,14 +714,26 @@ pub fn budget_remaining_precondition() -> CellProgram {
 pub fn gateway_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) -> DeosApp {
     let gateway = cipherclerk.cell_id();
 
-    // `get` — a READER reads an object. Cap-only.
-    let get = CellAffordance::new(
-        "get",
-        READER_RIGHTS,
-        Effect::EmitEvent {
-            cell: gateway,
-            event: Event::new(symbol("storage-get"), vec![]),
-        },
+    // `get` — a READER reads an object (clearance-gated). A [`GatedAffordance`]: the cap
+    // gate (`READER_RIGHTS`) AND a live-state PRECONDITION ([`budget_remaining_precondition`]:
+    // budget headroom for the read) decide the button's verdict in-band. The real fire
+    // ([`fire_get`]) submits the GET turn ([`get_effects`]) materializing the reader's
+    // clearance, which the executor's `MethodIs("get")` [`clearance_dominates_constraint`]
+    // re-enforces — so a GUEST's GET (guest does not dominate `storage-read` in the
+    // root-bound clearance graph) is a REAL executor refusal, while a WRITER's is admitted.
+    // The surface representative effect is the actor-clearance write (the decisive GET
+    // effect); the real per-reader clearance is threaded by [`fire_get`].
+    let get = GatedAffordance::new(
+        CellAffordance::new(
+            "get",
+            READER_RIGHTS,
+            Effect::SetField {
+                cell: gateway,
+                index: ACTOR_CLEARANCE_SLOT as usize,
+                value: writer_label(),
+            },
+        ),
+        budget_remaining_precondition(),
     );
     // `list` — a READER enumerates a prefix. Cap-only.
     let list = CellAffordance::new(
@@ -618,7 +773,7 @@ pub fn gateway_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) ->
     .discoverable(vec!["storage".into()])
     .cell(
         DeosCell::new(gateway, "gateway")
-            .affordance(get)
+            .gated(get)
             .affordance(list)
             .gated(put)
             .publish(READER_RIGHTS),
@@ -644,7 +799,10 @@ pub fn seed_gateway(
     read_compartment: &str,
 ) {
     let gateway = executor.cell_id();
-    executor.install_program(gateway, gateway_invariants_program());
+    // Install the seeded program WITH the GET-clearance tooth (an `Always` invariants
+    // case + a `MethodIs("get")` ClearanceDominates case), so the executor re-enforces
+    // GET clearance on the fire path (a guest's GET is a REAL refusal).
+    executor.install_program(gateway, gateway_program_with_clearance());
     executor.with_ledger_mut(|ledger| {
         if let Some(cell) = ledger.get_mut(&gateway) {
             cell.state.set_field(
@@ -659,6 +817,11 @@ pub fn seed_gateway(
                 READ_COMPARTMENT_SLOT as usize,
                 field_from_bytes(read_compartment.as_bytes()),
             );
+            // The REAL clearance-graph commitment — so the executor's root-bound
+            // ClearanceDominates admits a cleared writer's GET and refuses a guest's
+            // (a bogus root would fail EVERY GET closed).
+            cell.state
+                .set_field(CLEARANCE_GRAPH_ROOT_SLOT as usize, clearance_root());
             // a fresh, fully-funded budget: nothing spent yet.
             cell.state
                 .set_field(VOLUME_SPENT_SLOT as usize, field_from_u64(0));
@@ -744,6 +907,71 @@ pub fn fire_put(
     })
 }
 
+/// **`get` effects** — the GET turn body: MATERIALIZE the acting reader's clearance
+/// label into `ACTOR_CLEARANCE_SLOT` (so the executor's [`clearance_dominates_constraint`]
+/// reads it), record `LAST_OP = GET`, and emit `storage-op`. Leaves `VOLUME_SPENT`
+/// unchanged (`Monotonic` admits the no-change; the GET-clearance demo isolates the
+/// dominance tooth — the budget tooth is exercised by `put`). This is the turn
+/// [`fire_get`] submits; the executor's `MethodIs("get")` case then checks the
+/// presented clearance DOMINATES the frozen read compartment in the root-bound graph.
+pub fn get_effects(gateway: CellId, key: &str, actor_clearance: FieldElement) -> Vec<Effect> {
+    let key_field = object_key_field(key);
+    let op_field = field_from_u64(StorageOp::Get.to_field_value());
+    vec![
+        Effect::SetField {
+            cell: gateway,
+            index: OBJECT_KEY_SLOT as usize,
+            value: key_field,
+        },
+        Effect::SetField {
+            cell: gateway,
+            index: LAST_OP_SLOT as usize,
+            value: op_field,
+        },
+        // The reader presents their clearance label — the executor's ClearanceDominates
+        // checks it dominates the frozen READ_COMPARTMENT_SLOT box.
+        Effect::SetField {
+            cell: gateway,
+            index: ACTOR_CLEARANCE_SLOT as usize,
+            value: actor_clearance,
+        },
+        Effect::EmitEvent {
+            cell: gateway,
+            event: Event::new(
+                symbol("storage-op"),
+                vec![op_field, key_field, field_from_u64(0), actor_clearance],
+            ),
+        },
+    ]
+}
+
+/// **Fire `get`** — the deos cap∧state PRECONDITION gate (anti-ghost, in-band), then a
+/// real verified GET turn through the executor, presenting `actor_clearance` as the
+/// acting reader's clearance label. The two-tempo bridge: the gated `get` affordance
+/// decides the button's verdict (cap ⊇ `READER_RIGHTS` AND budget remains) WITHOUT
+/// touching the executor; on both passing, the GET turn ([`get_effects`]) materializes
+/// the reader's clearance, and the executor's `MethodIs("get")`
+/// [`clearance_dominates_constraint`] is the SECOND, verified tooth — a reader whose
+/// clearance DOMINATES the frozen read compartment in the root-bound clearance graph is
+/// ADMITTED; a guest (does not dominate `storage-read`) is a REAL executor refusal;
+/// substitute an over-permissive graph or tamper the root and it fails closed. Use
+/// [`seed_gateway`] first.
+pub fn fire_get(
+    app: &DeosApp,
+    held: &AuthRequired,
+    actor_clearance: FieldElement,
+    cipherclerk: &AppCipherclerk,
+    executor: &EmbeddedExecutor,
+    key: &str,
+) -> Result<TurnReceipt, FireExecuteError> {
+    let cell = &app.cells()[0];
+    let gateway = cell.cell();
+    let key = key.to_string();
+    cell.fire_gated_through_executor_with("get", held, cipherclerk, executor, move |_live| {
+        get_effects(gateway, &key, actor_clearance)
+    })
+}
+
 /// Read a `u64` from the last 8 big-endian bytes of a field element (the inverse of
 /// [`field_from_u64`] for the volume meter the gateway stores).
 fn field_to_u64(f: &FieldElement) -> u64 {
@@ -790,6 +1018,11 @@ pub fn web_constants() -> ConstantsModule {
         .slot("VOLUME_CEILING_SLOT", VOLUME_CEILING_SLOT as u64)
         .slot("KEY_PREFIX_HASH_SLOT", KEY_PREFIX_HASH_SLOT as u64)
         .slot("READ_COMPARTMENT_SLOT", READ_COMPARTMENT_SLOT as u64)
+        .slot(
+            "CLEARANCE_GRAPH_ROOT_SLOT",
+            CLEARANCE_GRAPH_ROOT_SLOT as u64,
+        )
+        .slot("ACTOR_CLEARANCE_SLOT", ACTOR_CLEARANCE_SLOT as u64)
         .string("FACTORY_VK_HEX", hex_encode_32(&SGM_FACTORY_VK))
         .topic("INITIALIZED", "storage-gateway-initialized")
         .topic("OP", "storage-op")

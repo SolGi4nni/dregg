@@ -26,20 +26,23 @@
 //!   from `agg.root_vk_fingerprint()`. A correct config anchor attests; a tampered
 //!   anchor is REFUSED with the genuine `VkFingerprintMismatch` — "you did not
 //!   trust the server, you CHECKED it against your own configured anchor."
+//! - [`produce_external_history_envelope`] — the PRODUCER: fold a real chain and
+//!   emit the [`ExternalHistoryEnvelope`] JSON with `proof_bytes_b64` populated
+//!   from the proof's versioned byte envelope
+//!   ([`dregg_circuit::ivc_turn_chain::WholeChainProofBytes`]). The whole
+//!   round-trip (fold → serialize → bytes → deserialize → verify) runs in-tab.
 //! - [`verify_devnet_history`] — verify an EXTERNALLY-produced aggregate
 //!   (a versioned envelope of proof bytes + carried publics) against a
 //!   CONFIG-pinned VK anchor (the anchor a SEPARATE argument, NEVER read off the
 //!   envelope under verification — the light-client invariant). The byte-verify
-//!   path is blocked by ONE named fork seam (`WholeChainProof.root` is an
-//!   `Rc`-backed in-memory object with no serde); this entry parses the versioned
-//!   envelope, runs the anchor-discipline check that IS expressible, and reports
-//!   the seam rather than faking the recursion verify.
+//!   path is CLOSED: this entry base64-decodes `proof_bytes`, decodes the byte
+//!   envelope, and runs the REAL recursion verify over the wire (the three teeth)
+//!   via [`dregg_lightclient::verify_history_bytes`], re-witnessing nothing.
 //!
 //! HONEST SCOPE (the project law): this carries the light client's NAMED floor —
-//! `recursive_sound` (the recursion fork's FRI engine soundness) + the two
-//! precisely-scoped fork follow-ups stated in `circuit/src/ivc_turn_chain.rs` —
-//! surfaced in the UI, NOT hidden. The verification IS the trust: IF the aggregate
-//! verifies (engine sound), THEN the whole history is attested.
+//! `recursive_sound` (the recursion fork's FRI engine soundness) — surfaced in the
+//! UI, NOT hidden. The verification IS the trust: IF the aggregate verifies (engine
+//! sound), THEN the whole history is attested.
 
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
@@ -202,33 +205,36 @@ pub fn verify_history_against_anchor(
     }
 }
 
-/// The wasm-side **versioned external-aggregate envelope** — the transport shape a
-/// node/relayer serializes a `WholeChainProof` into and a tab deserializes.
+/// The wasm-side **versioned external-aggregate envelope** — the JSON/paste-UX
+/// transport a node/relayer serializes a `WholeChainProof` into and a tab
+/// deserializes. It is the OUTER wrapper: `proof_bytes_b64` is the base64 of the
+/// circuit's INNER versioned byte envelope
+/// ([`dregg_circuit::ivc_turn_chain::WholeChainProofBytes`]), which carries the
+/// verify-sufficient subset of the proof (the root `BatchStarkProof`, the binding
+/// `Proof`, the four publics) — everything the recursion verify reads, and nothing
+/// of the prover-only `root.1`.
 ///
-/// This is the SHAPE the byte path needs; it is defined HERE (wasm-side) rather
-/// than circuit-side precisely because the one missing piece — `proof_bytes` for
-/// the `Rc`-backed `RecursionOutput` — is a fork seam this lane does not touch.
-/// The discipline the envelope ENFORCES today:
-///
-/// - `vk_fingerprint_hex` rides in the envelope as the producer's CLAIM, but it is
-///   NEVER trusted from here — the verifier compares it to its OWN configured
-///   anchor (a separate argument) and refuses on mismatch. (Carrying it lets the
+/// - `vk_fingerprint_hex` rides as the producer's CLAIM, NEVER trusted from here —
+///   the verifier compares it to its OWN configured anchor and, crucially, re-pins
+///   the anchor from the proof bytes during the real verify. (Carrying it lets the
 ///   client give a precise "your config anchor ≠ the one this aggregate was built
-///   for" diagnostic without ever trusting it.)
+///   for" diagnostic without trusting it.)
 /// - `genesis_root` / `final_root` / `num_turns` / `chain_digest` are the carried
-///   public commitments (the same four `verify_history` re-attests against the
-///   binding proof once the bytes are present).
-/// - `version` pins the envelope format so a future byte path is a clean upgrade.
+///   public commitments — the same four the recursion verify re-attests against the
+///   binding proof (a relabeled value is refused at tooth 2).
+/// - `version` pins the OUTER envelope format.
 #[derive(serde::Deserialize, serde::Serialize)]
 pub struct ExternalHistoryEnvelope {
     /// Envelope format version (current: 1).
     pub version: u32,
     /// The producer's CLAIMED root-circuit VK fingerprint (hex). NEVER trusted
-    /// from the envelope — compared to the client's configured anchor.
+    /// from the envelope — compared to the client's configured anchor AND re-pinned
+    /// from the proof bytes during verify.
     pub vk_fingerprint_hex: String,
-    /// The recursion root proof bytes. EMPTY today: the fork seam
-    /// (`Rc`-backed `RecursionOutput`, no serde) is not yet closed. A present,
-    /// non-empty `proof_bytes` is what the byte-verify path is waiting on.
+    /// Base64 of the proof's inner versioned byte envelope
+    /// ([`dregg_circuit::ivc_turn_chain::WholeChainProofBytes`]). Populated by
+    /// [`produce_external_history_envelope`]; an empty value fails closed at verify
+    /// (nothing to cryptographically check).
     #[serde(default)]
     pub proof_bytes_b64: String,
     /// Carried public commitment: the genesis state root (decimal felt).
@@ -250,28 +256,34 @@ pub struct ExternalHistoryEnvelope {
 /// SEPARATE argument (`config_anchor_hex`) and is NEVER read off the envelope under
 /// verification (the light-client invariant).
 ///
-/// What this DOES enforce today (real, not faked):
+/// What this enforces (real, not faked):
 /// 1. parse + version-check the envelope;
 /// 2. parse the SEPARATE `config_anchor_hex` (the client's own configured anchor);
-/// 3. the **anchor-discipline check**: the envelope's claimed fingerprint is
+/// 3. the **anchor-discipline pre-check**: the envelope's claimed fingerprint is
 ///    compared to the configured anchor — a mismatch is REFUSED here (the precise
 ///    "this aggregate was built for a different circuit than your config pins"
-///    diagnostic), and the claimed value is otherwise discarded, never trusted.
+///    diagnostic), and the claimed value is otherwise discarded, never trusted;
+/// 4. base64-decode `proof_bytes`, decode the inner byte envelope, and run the
+///    REAL recursion verify (the three teeth) against the config anchor — a
+///    tampered proof, a foreign circuit, or a relabeled public is refused.
 ///
-/// HONEST OBSTACLE (named, not hidden — `WEB-FORWARD.md §7` discipline): the
-/// crate's [`dregg_circuit::ivc_turn_chain::WholeChainProof`] is an IN-MEMORY proof
-/// object — its `root: RecursionOutput<SC>` wraps an `Rc<CircuitProverData>` — so it
-/// has NO serde/byte encoding, and `proof_bytes_b64` is therefore empty. The
-/// recursion-verify step (the cryptographic teeth of `verify_history`) thus cannot
-/// run over the wire yet; this entry reports that seam rather than pretending a
-/// byte path exists. The runnable in-tab teeth are [`light_client_demo`] (fold +
-/// verify) and [`verify_history_against_anchor`] (real `verify_history` against a
-/// config-supplied anchor) — both with the proof present locally.
+/// THE BYTE PATH (closed): `proof_bytes_b64` carries the base64 of the proof's
+/// versioned byte envelope ([`dregg_circuit::ivc_turn_chain::WholeChainProofBytes`]),
+/// produced by [`produce_external_history_envelope`]. The whole [`WholeChainProof`]
+/// is not byte-encodable — its `root.1` (`Rc<CircuitProverData>`) is prover-only —
+/// but the VERIFY-sufficient subset (the root `BatchStarkProof`, the binding
+/// `Proof`, the four publics) IS, and the verifier never reads `root.1`. So this
+/// entry decodes the bytes and runs the REAL recursion verify over the wire via
+/// [`dregg_lightclient::verify_history_bytes`], re-witnessing nothing.
 #[wasm_bindgen]
 pub fn verify_devnet_history(
     envelope_json: &str,
     config_anchor_hex: &str,
 ) -> Result<JsValue, JsError> {
+    use base64::Engine as _;
+    use dregg_circuit::ivc_turn_chain::RecursionVk;
+    use dregg_lightclient::{verify_history_bytes, LightClientError};
+
     // (1) Parse + version-check the envelope.
     let env: ExternalHistoryEnvelope = serde_json::from_str(envelope_json)
         .map_err(|e| JsError::new(&format!("envelope parse failed: {e}")))?;
@@ -285,11 +297,14 @@ pub fn verify_devnet_history(
     // (2) Parse the SEPARATE config anchor (the client's own — NOT from the envelope).
     let cfg_bytes = parse_hex32(config_anchor_hex)
         .map_err(|e| JsError::new(&format!("config VK anchor parse failed: {e}")))?;
+    let anchor = RecursionVk(cfg_bytes);
 
-    // (3) The anchor-discipline check: the envelope's CLAIMED fingerprint is
+    // (3) The anchor-discipline pre-check: the envelope's CLAIMED fingerprint is
     // compared to the CONFIGURED anchor; the claim is never trusted, only used to
-    // diagnose. A mismatch is refused here (a from-scratch prover that built a
-    // DIFFERENT circuit cannot pass the client's anchor).
+    // give a precise diagnostic. A mismatch is refused here (a from-scratch prover
+    // that built a DIFFERENT circuit cannot pass the client's anchor) — the REAL
+    // recursion verify in (5) re-pins the anchor from the proof bytes regardless,
+    // so this is a fast-path diagnostic, not the soundness boundary.
     let claimed_bytes = parse_hex32(&env.vk_fingerprint_hex).map_err(|e| {
         JsError::new(&format!("envelope claimed fingerprint malformed: {e}"))
     })?;
@@ -311,34 +326,95 @@ pub fn verify_devnet_history(
         return serde_wasm_bindgen::to_value(&view).map_err(JsError::from);
     }
 
-    // The named fork seam: the cryptographic recursion verify needs the proof
-    // bytes, which `WholeChainProof.root` (Rc-backed RecursionOutput) cannot yet
-    // serialize. We report it honestly — the anchor discipline above is real, the
-    // byte-verify is the one blocked step.
-    let bytes_present = !env.proof_bytes_b64.is_empty();
-    let view = AttestedHistoryView {
-        attested: false,
-        genesis_root: env.genesis_root,
-        final_root: env.final_root,
-        chain_digest: env.chain_digest,
-        num_turns: env.num_turns,
-        engine: "recursive-stark (plonky3 fork)".to_string(),
-        named_floor: if bytes_present {
-            "anchor discipline OK (envelope fingerprint == your configured anchor). \
-             proof_bytes present but the in-tab byte-verifier is not wired yet — the \
-             recursion-proof byte path lands with the fork-side WholeChainProof serialization."
-                .to_string()
-        } else {
-            "anchor discipline OK (envelope fingerprint == your configured anchor), but \
-             proof_bytes is EMPTY: WholeChainProof.root is an Rc-backed RecursionOutput with \
-             no serde encoding — the cryptographic recursion verify needs a fork-side \
-             recursion-proof serialization (NAMED seam, not closed here). Use \
-             verify_history_against_anchor for the real in-tab verify with the proof present \
-             locally."
-                .to_string()
-        },
+    // (4) The proof bytes must be present for the cryptographic verify.
+    if env.proof_bytes_b64.is_empty() {
+        let view = AttestedHistoryView {
+            attested: false,
+            genesis_root: env.genesis_root,
+            final_root: env.final_root,
+            chain_digest: env.chain_digest,
+            num_turns: env.num_turns,
+            engine: "recursive-stark (plonky3 fork)".to_string(),
+            named_floor: "REFUSED: the envelope carries no proof_bytes — the anchor discipline \
+                          passed, but there is nothing to cryptographically verify (fail-closed). \
+                          A producer must call produce_external_history_envelope to populate it."
+                .to_string(),
+        };
+        return serde_wasm_bindgen::to_value(&view).map_err(JsError::from);
+    }
+    let proof_bytes = base64::engine::general_purpose::STANDARD
+        .decode(env.proof_bytes_b64.as_bytes())
+        .map_err(|e| JsError::new(&format!("proof_bytes_b64 is not valid base64: {e}")))?;
+
+    // (5) THE REAL OVER-WIRE VERIFY. Decode the byte envelope and run the three
+    // teeth (VK pin against the CONFIG anchor, carried-publics attestation against
+    // the binding proof, root batch verify) — re-witnessing nothing. The anchor is
+    // the config (a separate argument), never read from the artifact.
+    match verify_history_bytes(&proof_bytes, &anchor) {
+        Ok(attested) => {
+            let view = AttestedHistoryView {
+                attested: true,
+                genesis_root: attested.genesis_root.as_u32(),
+                final_root: attested.final_root.as_u32(),
+                chain_digest: attested.chain_digest.as_u32(),
+                num_turns: attested.num_turns,
+                engine: "recursive-stark (plonky3 fork) · descriptor-leaf EffectVM".to_string(),
+                named_floor: "verified OVER THE WIRE against a CONFIG-supplied anchor: the byte \
+                              envelope decoded, the VK pin + carried-publics attestation + root \
+                              verify all held. named floor: recursive_sound (FRI engine soundness)"
+                    .to_string(),
+            };
+            serde_wasm_bindgen::to_value(&view).map_err(JsError::from)
+        }
+        Err(LightClientError::AggregateInvalid(e)) => {
+            // The engine REFUSED the bytes (tamper, wrong circuit, malformed
+            // envelope). We carry the genuine reason; no attestation is laundered.
+            let view = AttestedHistoryView {
+                attested: false,
+                genesis_root: env.genesis_root,
+                final_root: env.final_root,
+                chain_digest: env.chain_digest,
+                num_turns: env.num_turns,
+                engine: "recursive-stark (plonky3 fork)".to_string(),
+                named_floor: format!(
+                    "REFUSED at the over-wire recursion verify: {e} — the byte envelope was \
+                     decoded and checked against YOUR config anchor; a tampered proof or a \
+                     proof of a different circuit cannot be laundered into an attestation"
+                ),
+            };
+            serde_wasm_bindgen::to_value(&view).map_err(JsError::from)
+        }
+    }
+}
+
+/// **THE PRODUCER** — fold a real `k`-turn chain in the tab and emit its
+/// [`ExternalHistoryEnvelope`] as JSON, with `proof_bytes_b64` populated from the
+/// proof's versioned byte envelope. This is the artifact a node/relayer ships and a
+/// tab feeds to [`verify_devnet_history`]; producing it in-tab makes the whole
+/// round-trip (fold → serialize → bytes → deserialize → verify) tactile.
+///
+/// The carried `vk_fingerprint_hex` is the producer's CLAIM (the verifier re-pins
+/// from the bytes regardless). `k` is clamped to `[2, 4]` (recursive proving is
+/// heavy). Returns the JSON string.
+#[wasm_bindgen]
+pub fn produce_external_history_envelope(k: usize, step: u64) -> Result<String, JsError> {
+    use base64::Engine as _;
+
+    let (agg, _attested) = fold_demo_chain(k, step)?;
+    let proof_bytes = agg.to_bytes();
+    let proof_bytes_b64 = base64::engine::general_purpose::STANDARD.encode(&proof_bytes);
+
+    let env = ExternalHistoryEnvelope {
+        version: 1,
+        vk_fingerprint_hex: agg.root_vk_fingerprint().to_hex(),
+        proof_bytes_b64,
+        genesis_root: agg.genesis_root.as_u32(),
+        final_root: agg.final_root.as_u32(),
+        chain_digest: agg.chain_digest.as_u32(),
+        num_turns: agg.num_turns,
     };
-    serde_wasm_bindgen::to_value(&view).map_err(JsError::from)
+    serde_json::to_string(&env)
+        .map_err(|e| JsError::new(&format!("envelope serialize failed: {e}")))
 }
 
 // ---------------------------------------------------------------------------
@@ -532,6 +608,32 @@ mod tests {
             "final_root":0,"chain_digest":0,"num_turns":2}"#;
         let m: ExternalHistoryEnvelope = serde_json::from_str(minimal).unwrap();
         assert!(m.proof_bytes_b64.is_empty(), "omitted proof bytes default empty");
+    }
+
+    #[test]
+    fn populated_proof_bytes_survive_the_json_envelope() {
+        // The byte path is real: arbitrary proof bytes base64-encode INTO the JSON
+        // envelope and decode back bit-identically (the wrapper the producer fills
+        // and the verifier reads). Uses base64 the SAME way the producer/verifier do.
+        use base64::Engine as _;
+        let raw: Vec<u8> = (0u16..512).map(|i| (i % 251) as u8).collect();
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&raw);
+        let env = ExternalHistoryEnvelope {
+            version: 1,
+            vk_fingerprint_hex: "ab".repeat(32),
+            proof_bytes_b64: b64.clone(),
+            genesis_root: 7,
+            final_root: 9,
+            chain_digest: 13,
+            num_turns: 3,
+        };
+        let json = serde_json::to_string(&env).unwrap();
+        let back: ExternalHistoryEnvelope = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.proof_bytes_b64, b64, "the b64 survives the JSON wrapper");
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(back.proof_bytes_b64.as_bytes())
+            .expect("the carried b64 decodes");
+        assert_eq!(decoded, raw, "the proof bytes round-trip through the envelope");
     }
 
     #[test]

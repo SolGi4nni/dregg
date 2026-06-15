@@ -362,34 +362,14 @@ impl CapInbox {
         self.owner_quota
     }
 
-    /// Queue capacity.
+    /// Queue capacity (the bound set at construction).
     pub fn capacity(&self) -> usize {
-        // Access capacity through queue state.
-        // The capacity was set at construction.
-        if self.queue.is_full() {
-            self.queue.len()
-        } else {
-            // Derive from the MerkleQueue.
-            self.queue.len() + self.remaining_capacity()
-        }
+        self.queue.capacity()
     }
 
-    /// How many more messages can be enqueued.
-    fn remaining_capacity(&self) -> usize {
-        // If queue is full, 0. Otherwise we need to know the capacity.
-        // We store capacity in MerkleQueue, but expose it indirectly.
-        // For a clean approach, test fullness by attempting.
-        // Actually the MerkleQueue tracks capacity internally. Let's just
-        // keep a local copy for status reporting.
-        // This is a workaround — the real capacity is in self.queue.
-        // We'll use the status check through is_full + len.
-        if self.queue.is_full() {
-            0
-        } else {
-            // We cannot directly query remaining from MerkleQueue without
-            // exposing its capacity field. For status, we'll use a different approach.
-            1 // placeholder — actual capacity tracked by MerkleQueue::is_full
-        }
+    /// How many more messages can be enqueued before the inbox is full.
+    pub fn remaining_capacity(&self) -> usize {
+        self.queue.remaining_capacity()
     }
 
     /// Get the underlying queue root.
@@ -606,5 +586,65 @@ mod tests {
         let mut inbox = test_inbox();
         let result = inbox.read_next();
         assert_eq!(result, Err(InboxError::Empty));
+    }
+
+    #[test]
+    fn remaining_capacity_tracks_real_count_not_placeholder() {
+        // Capacity 5. Empty inbox reports the FULL capacity remaining — not
+        // the old hardcoded `1` placeholder.
+        let mut inbox = CapInbox::new(QuotaId(7), 5, 50);
+        assert_eq!(inbox.capacity(), 5);
+        assert_eq!(inbox.remaining_capacity(), 5);
+        assert_eq!(inbox.status().capacity, 5);
+
+        let msg = |n: u8| InboxMessage::Encrypted {
+            ciphertext: vec![n; 4],
+            sender: [n; 32],
+        };
+
+        // Fill to near-full (4 of 5): remaining must be the correct SMALL
+        // count `1`, which here is a real measurement, not the placeholder.
+        for n in 0..4u8 {
+            inbox.receive(msg(n), 100).unwrap();
+        }
+        assert_eq!(inbox.len(), 4);
+        assert!(!inbox.is_full());
+        assert_eq!(inbox.remaining_capacity(), 1);
+        // capacity() stays constant regardless of fill level (regression: the
+        // old impl derived capacity as len + placeholder, so a near-full
+        // inbox would have reported capacity 4 + 1 = 5 only by coincidence,
+        // and an inbox at len 2 would have wrongly reported capacity 3).
+        assert_eq!(inbox.capacity(), 5);
+
+        // One more reaches capacity: remaining is exactly 0 and is_full holds.
+        inbox.receive(msg(4), 100).unwrap();
+        assert!(inbox.is_full());
+        assert_eq!(inbox.remaining_capacity(), 0);
+        assert_eq!(inbox.capacity(), 5);
+
+        // Drain two: headroom reopens to the correct count.
+        inbox.read_next().unwrap();
+        inbox.read_next().unwrap();
+        assert_eq!(inbox.len(), 3);
+        assert_eq!(inbox.remaining_capacity(), 2);
+        assert_eq!(inbox.capacity(), 5);
+    }
+
+    #[test]
+    fn mid_fill_capacity_is_constant_regression() {
+        // The placeholder bug surfaced as a WRONG capacity() at partial fill:
+        // old code returned `len() + 1`. With capacity 10 and 2 pending, that
+        // would report capacity 3 (invalid). Pin the correct value.
+        let mut inbox = CapInbox::new(QuotaId(1), 10, 50);
+        let msg = InboxMessage::Encrypted {
+            ciphertext: vec![0xAB; 4],
+            sender: [0x01; 32],
+        };
+        inbox.receive(msg.clone(), 100).unwrap();
+        inbox.receive(msg, 100).unwrap();
+        assert_eq!(inbox.len(), 2);
+        assert_eq!(inbox.capacity(), 10);
+        assert_eq!(inbox.remaining_capacity(), 8);
+        assert_eq!(inbox.status().capacity, 10);
     }
 }

@@ -2680,6 +2680,26 @@ async fn execute_finalized_turn(
         Vec::new()
     };
 
+    // BEARER AUTHORITY path: capture the CANONICAL pre-execution `capability_root`
+    // of every cell a bearer (`SignedDelegation`) authorization in this turn names
+    // as its DELEGATOR, keyed by the delegator's `CellId`. A bearer-delegated turn
+    // (the consumed cap's `holder` is the delegator, not the actor) binds its
+    // AUTHORITY leg against THIS root — the delegator's real pre-state c-list — so
+    // the leg proves the delegated cap was actually held (not merely that the
+    // receipt witness is internally consistent). Captured BEFORE execution: an
+    // earlier effect in the same forest could grant/revoke on the delegator, and
+    // the authority the bearer exercised was the pre-execution authority. A turn
+    // with no bearer authorization yields an empty map (zero cost on the hot path).
+    let full_turn_delegator_cap_roots: HashMap<dregg_types::CellId, dregg_circuit::field::BabyBear> =
+        if s.full_turn_proving_enabled {
+            crate::turn_proving::delegator_pre_state_cap_roots(
+                &signed_turn.turn.call_forest,
+                &s.ledger,
+            )
+        } else {
+            HashMap::new()
+        };
+
     // UNIFORM CROSS-NODE APPLICATION: a finalized Transfer must execute the SAME on
     // every node so each emits the same attested root AND the same ledger content.
     // No node has the destination's pre-image (the recipient's public key is not
@@ -2796,8 +2816,14 @@ async fn execute_finalized_turn(
             //    the no-double-spend bindings (a)+(b) FIRE.
             //  - Everything else stays on the self-sovereign Effect-VM path (the
             //    correct trust model for an owner-authorized turn).
-            // Residual (logged below): a BEARER-delegation witness (holder !=
-            // actor) needs the DELEGATOR's pre-state root captured — not wired yet.
+            //  - A BEARER-delegation turn (a consumed witness whose `holder` is
+            //    the DELEGATOR, not the actor) routes through the AUTHORITY path
+            //    binding the DELEGATOR's pre-state cap root
+            //    (`prove_and_verify_finalized_turn_capability_holder` with
+            //    `holder_cap_root = full_turn_delegator_cap_roots[holder]`), so
+            //    the authority leg PROVES the delegated cap was really held — the
+            //    former soundness residual (proving WITHOUT the authority leg) is
+            //    CLOSED.
             let full_turn_proof_attached: Option<Vec<u8>> =
                 if let Some((pre_balance, pre_nonce)) = full_turn_pre_state {
                     let effects: Vec<dregg_turn::Effect> = signed_turn
@@ -2812,17 +2838,50 @@ async fn execute_finalized_turn(
                         &receipt.consumed_capabilities,
                         &signed_turn.turn.agent,
                     );
-                    if actor_cap_witness.is_none() && !receipt.consumed_capabilities.is_empty() {
-                        warn!(
-                            turn_hash = %turn_hash_hex,
-                            witnesses = receipt.consumed_capabilities.len(),
-                            "turn consumed BEARER-delegated capabilities (holder != actor); \
-                             the cap-membership leg needs the delegator's pre-state root \
-                             capture (named residual) — proving WITHOUT the AUTHORITY leg"
-                        );
-                    }
-                    let proving_result = match (actor_cap_witness, spent_nullifiers.first()) {
-                        (Some(consumed), spent_nullifier) => {
+                    // The bearer witness (holder != actor) + the node-derived
+                    // pre-state cap root of its delegator. The actor path takes
+                    // precedence (a turn holding its own cap proves over its own
+                    // root); only when there is NO actor-held witness do we route
+                    // a bearer witness through the delegator-bound authority leg.
+                    let bearer_cap = if actor_cap_witness.is_none() {
+                        crate::turn_proving::bearer_consumed_cap(
+                            &receipt.consumed_capabilities,
+                            &signed_turn.turn.agent,
+                        )
+                    } else {
+                        None
+                    };
+                    let bearer_cap_witness: Option<(
+                        &dregg_turn::ConsumedCapWitness,
+                        dregg_circuit::field::BabyBear,
+                    )> = bearer_cap.and_then(|w| {
+                        match full_turn_delegator_cap_roots.get(&w.holder) {
+                            Some(root) => Some((w, *root)),
+                            None => {
+                                // The delegator was not resolvable in the node's
+                                // pre-state ledger (e.g. an anonymous STARK
+                                // delegation, which records no concrete holder, or
+                                // a delegator absent at pre-state). We cannot bind
+                                // a real authority leg, so we keep the v1 fallback
+                                // and surface it loudly rather than mint a proof
+                                // missing the authority binding.
+                                warn!(
+                                    turn_hash = %turn_hash_hex,
+                                    holder = %w.holder,
+                                    "bearer-delegated turn: delegator pre-state cap root \
+                                     unavailable (no resolvable delegator cell) — proving \
+                                     WITHOUT the AUTHORITY leg (v1 fallback)"
+                                );
+                                None
+                            }
+                        }
+                    });
+                    let proving_result = match (
+                        actor_cap_witness,
+                        bearer_cap_witness,
+                        spent_nullifiers.first(),
+                    ) {
+                        (Some(consumed), _, spent_nullifier) => {
                             // CAPABILITY-GATED turn → AUTHORITY path (cap Phase D),
                             // freshness leg included when it also spends. FLOW-B (C7 close): build
                             // the per-turn ROTATION producer witnesses from the REAL before/after
@@ -2863,7 +2922,51 @@ async fn execute_finalized_turn(
                                 rotation,
                             )
                         }
-                        (None, Some(spent_nullifier)) => {
+                        (None, Some((consumed, holder_cap_root)), spent_nullifier) => {
+                            // BEARER-DELEGATION turn → AUTHORITY path bound to the DELEGATOR's
+                            // pre-state cap root (the soundness fix). The actor's EffectVm
+                            // state-transition leg is seeded from the ACTOR's pre-state cap root
+                            // (`full_turn_pre_cap_root`), while the cap-membership leg opens against
+                            // the DELEGATOR's pre-state cap root (`holder_cap_root`, node-derived).
+                            // So the proof attests "the actor's state evolved correctly AND the
+                            // delegated authority it exercised was a real member of the delegator's
+                            // c-list." The actor's rotation witness is built from its REAL
+                            // before/after cells (same as the self-sovereign / actor-cap arms); when
+                            // the gate refuses it, the byte-identical v1 actor leg runs ALONGSIDE the
+                            // delegator-bound cap leg. A bearer turn that ALSO spends keeps its
+                            // freshness leg (the nullifier is threaded through).
+                            let rotation = match (
+                                full_turn_pre_cell.as_ref(),
+                                s.ledger.get(&signed_turn.turn.agent),
+                            ) {
+                                (Some(before_cell), Some(after_cell)) => {
+                                    let receipt_hashes = [receipt.receipt_hash()];
+                                    crate::turn_proving::rotation_witness_for_self_sovereign(
+                                        pre_balance,
+                                        pre_nonce,
+                                        before_cell,
+                                        after_cell,
+                                        &receipt_hashes,
+                                        &effects,
+                                    )
+                                }
+                                _ => None,
+                            };
+                            crate::turn_proving::prove_and_verify_finalized_turn_capability_holder(
+                                &signed_turn.turn.agent,
+                                pre_balance,
+                                pre_nonce,
+                                full_turn_pre_cap_root,
+                                holder_cap_root,
+                                &effects,
+                                computed_hash,
+                                consumed,
+                                spent_nullifier,
+                                &full_turn_previously_spent,
+                                rotation,
+                            )
+                        }
+                        (None, None, Some(spent_nullifier)) => {
                             // SPEND turn → freshness path (bound verify). FLOW-B (C4 close): unlike
                             // the sibling arms, this path builds the per-turn ROTATION producer
                             // witnesses INTERNALLY (from the cap-less synthetic actor cell — the
@@ -2885,7 +2988,7 @@ async fn execute_finalized_turn(
                                 &full_turn_previously_spent,
                             )
                         }
-                        (None, None) => {
+                        (None, None, None) => {
                             // Non-spend turn → self-sovereign Effect-VM path. FLOW-B: build the
                             // per-turn ROTATION producer witnesses from the REAL before/after
                             // cells so the live node turn proves ROTATED (the builder's

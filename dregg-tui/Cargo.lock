@@ -1177,7 +1177,9 @@ name = "dregg-lightclient"
 version = "0.1.0"
 dependencies = [
  "dregg-blocklace",
+ "dregg-cell",
  "dregg-circuit",
+ "dregg-turn",
 ]
 
 [[package]]
@@ -1284,6 +1286,8 @@ dependencies = [
 name = "dregg-turn"
 version = "0.1.0"
 dependencies = [
+ "ark-ff",
+ "ark-serialize",
  "blake3",
  "chacha20poly1305",
  "curve25519-dalek",
@@ -1292,6 +1296,7 @@ dependencies = [
  "dregg-circuit",
  "dregg-commit",
  "dregg-dsl-runtime",
+ "dregg-hints",
  "dregg-lean-ffi",
  "dregg-token",
  "dregg-types",
@@ -2252,7 +2257,7 @@ dependencies = [
 [[package]]
 name = "p3-circuit"
 version = "0.1.0"
-source = "git+https://github.com/emberian/plonky3-recursion?rev=c14b5fc079af18d7f3ba3f3586f173bd166c7cd4#c14b5fc079af18d7f3ba3f3586f173bd166c7cd4"
+source = "git+https://github.com/emberian/plonky3-recursion?rev=72ffc5646e90af9324ab17248b4beed31c036db3#72ffc5646e90af9324ab17248b4beed31c036db3"
 dependencies = [
  "hashbrown 0.16.1",
  "itertools 0.14.0",
@@ -2279,7 +2284,7 @@ dependencies = [
 [[package]]
 name = "p3-circuit-prover"
 version = "0.1.0"
-source = "git+https://github.com/emberian/plonky3-recursion?rev=c14b5fc079af18d7f3ba3f3586f173bd166c7cd4#c14b5fc079af18d7f3ba3f3586f173bd166c7cd4"
+source = "git+https://github.com/emberian/plonky3-recursion?rev=72ffc5646e90af9324ab17248b4beed31c036db3#72ffc5646e90af9324ab17248b4beed31c036db3"
 dependencies = [
  "hashbrown 0.16.1",
  "p3-air",
@@ -2555,7 +2560,7 @@ dependencies = [
 [[package]]
 name = "p3-poseidon1-circuit-air"
 version = "0.1.0"
-source = "git+https://github.com/emberian/plonky3-recursion?rev=c14b5fc079af18d7f3ba3f3586f173bd166c7cd4#c14b5fc079af18d7f3ba3f3586f173bd166c7cd4"
+source = "git+https://github.com/emberian/plonky3-recursion?rev=72ffc5646e90af9324ab17248b4beed31c036db3#72ffc5646e90af9324ab17248b4beed31c036db3"
 dependencies = [
  "itertools 0.14.0",
  "p3-air",
@@ -2605,7 +2610,7 @@ dependencies = [
 [[package]]
 name = "p3-poseidon2-circuit-air"
 version = "0.1.0"
-source = "git+https://github.com/emberian/plonky3-recursion?rev=c14b5fc079af18d7f3ba3f3586f173bd166c7cd4#c14b5fc079af18d7f3ba3f3586f173bd166c7cd4"
+source = "git+https://github.com/emberian/plonky3-recursion?rev=72ffc5646e90af9324ab17248b4beed31c036db3#72ffc5646e90af9324ab17248b4beed31c036db3"
 dependencies = [
  "itertools 0.14.0",
  "p3-air",
@@ -2629,7 +2634,7 @@ dependencies = [
 [[package]]
 name = "p3-recursion"
 version = "0.1.0"
-source = "git+https://github.com/emberian/plonky3-recursion?rev=c14b5fc079af18d7f3ba3f3586f173bd166c7cd4#c14b5fc079af18d7f3ba3f3586f173bd166c7cd4"
+source = "git+https://github.com/emberian/plonky3-recursion?rev=72ffc5646e90af9324ab17248b4beed31c036db3#72ffc5646e90af9324ab17248b4beed31c036db3"
 dependencies = [
  "hashbrown 0.16.1",
  "itertools 0.14.0",

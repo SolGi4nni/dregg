@@ -21,7 +21,7 @@
 use std::time::Instant;
 
 use dregg_circuit::dsl::membership::create_test_witness;
-use dregg_circuit::effect_vm::{CellState, Effect, generate_effect_vm_trace, pi};
+use dregg_circuit::effect_vm::{CellState, Effect, generate_effect_vm_trace};
 use dregg_circuit::effect_vm_descriptors::descriptor_for_selector;
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::lean_descriptor_air::{
@@ -186,21 +186,20 @@ fn main() {
         "   descriptor (§1); the audited multi-table batch verifier is `descriptor_ir2::verify_vm_descriptor2`.)"
     );
 
-    section("6. FULL-TURN COMMIT PATH — the real node number (prove_turn_self_sovereign)");
+    section("6. FULL-TURN COMMIT PATH — the real node number (LIVE rotated prove_full_turn)");
     {
-        use dregg_sdk::{prove_turn_self_sovereign, verify_full_turn};
-        let (st, effs) = single_transfer();
-        let turn_hash = [7u8; 32];
-        let (_t, pis) = generate_effect_vm_trace(&st, &effs);
-        let old_commit = pis[pi::OLD_COMMIT];
-        let new_commit = pis[pi::NEW_COMMIT];
+        use dregg_perf::rotated_transfer_turn;
+        use dregg_sdk::full_turn_proof::{prove_full_turn, verify_full_turn};
+        // The LIVE rotated commit path (the v1 `prove_turn_self_sovereign` is retired under
+        // recursion and panics). A single outgoing transfer through the rotated descriptor leg.
+        let rt = rotated_transfer_turn(1_000_000, 100);
+        let old_commit = rt.old_commit;
+        let new_commit = rt.new_commit;
         let t0 = Instant::now();
-        let proof = prove_turn_self_sovereign(&st, &effs, turn_hash).expect("full-turn prove");
+        let proof = prove_full_turn(&rt.witness).expect("full-turn prove");
         let first = t0.elapsed().as_secs_f64();
         verify_full_turn(&proof, old_commit, new_commit).expect("full-turn verify");
-        let prove = time_mean(3, || {
-            prove_turn_self_sovereign(&st, &effs, turn_hash).expect("full-turn prove")
-        });
+        let prove = time_mean(3, || prove_full_turn(&rt.witness).expect("full-turn prove"));
         let verify = time_mean(20, || {
             verify_full_turn(&proof, old_commit, new_commit).expect("full-turn verify")
         });

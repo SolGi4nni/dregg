@@ -132,6 +132,10 @@ enum Auth {
     Reply = 4,
     Reset = 5,
     Control = 6,
+    /// The async-notification SIGNAL authority (tag `7`; the wire image of the
+    /// verified `Dregg2.Authority.Auth.notify`). Keeps this mirror lockstep with
+    /// `FFI.lean:435` so a notify cap decodes faithfully (`7 => Auth::Notify`).
+    Notify = 7,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -662,6 +666,7 @@ impl<'a> P<'a> {
                 4 => Auth::Reply,
                 5 => Auth::Reset,
                 6 => Auth::Control,
+                7 => Auth::Notify,
                 _ => return Err(format!("bad auth tag {tag}")),
             };
             out.push(a);

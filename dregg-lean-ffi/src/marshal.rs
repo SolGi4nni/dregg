@@ -65,7 +65,7 @@
 pub enum MarshalError {
     /// A wire-`Nat` field (agent/nonce/valid_until/id/...) was given a negative value.
     NonNatField { field: &'static str },
-    /// An AUTHS tag exceeded 6 (the `Auth` enumeration is 0..6).
+    /// An AUTHS tag exceeded 7 (the `Auth` enumeration is 0..7, incl. `Notify`).
     AuthTagOutOfRange(u8),
     /// A `Turn` envelope field the wire grammar requires is absent (e.g. `valid_until: None`).
     MissingEnvelopeField { field: &'static str },
@@ -80,7 +80,7 @@ impl std::fmt::Display for MarshalError {
                     "wire-Nat field `{field}` was negative (grammar needs Nat)"
                 )
             }
-            MarshalError::AuthTagOutOfRange(t) => write!(f, "AUTHS tag {t} > 6 (Auth is 0..6)"),
+            MarshalError::AuthTagOutOfRange(t) => write!(f, "AUTHS tag {t} > 7 (Auth is 0..7)"),
             MarshalError::MissingEnvelopeField { field } => {
                 write!(
                     f,
@@ -117,11 +117,19 @@ impl std::fmt::Display for UnmarshalError {
 impl std::error::Error for UnmarshalError {}
 
 // ===================================================================
-// AUTHORITY: Auth (0..6) and Cap — faithful mirrors of Dregg2.Authority.
+// AUTHORITY: Auth (0..7, incl. Notify) and Cap — faithful mirrors of Dregg2.Authority.
 // (Identical to the mirror in full_turn_differential.rs.)
 // ===================================================================
 
-/// The 7-constructor `Auth` enumeration, in `Auth` ctor order (FFI.lean:410).
+/// The 8-constructor `Auth` enumeration, in `Auth` ctor order (FFI.lean:435).
+///
+/// `Notify` is the async-notification SIGNAL authority (the 8th IPC auth; tag `7`),
+/// the wire image of the verified `Dregg2.Authority.Auth.notify`. It is the
+/// asynchronous dual of the synchronous endpoint `Write` (l4v `SyncSend`): the right
+/// to cause a WAKE on a target with no read / synchronous-message / reply. Adding it
+/// keeps the Rust marshaller's `authTag`/`authOfTag` codec lockstep with the Lean
+/// `FFI.lean:435` (`| .notify => 7`) / `:441` (`7 => some .notify`), so a notify cap
+/// crosses the FFI faithfully rather than tripping the `bad auth tag` decode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Auth {
     Read = 0,
@@ -131,6 +139,7 @@ pub enum Auth {
     Reply = 4,
     Reset = 5,
     Control = 6,
+    Notify = 7,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2530,6 +2539,7 @@ fn parse_auths(p: &mut Parser) -> Result<Vec<Auth>, String> {
             4 => Auth::Reply,
             5 => Auth::Reset,
             6 => Auth::Control,
+            7 => Auth::Notify,
             _ => return Err(format!("bad auth tag {tag}")),
         };
         out.push(a);

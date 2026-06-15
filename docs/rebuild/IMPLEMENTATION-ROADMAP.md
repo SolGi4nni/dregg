@@ -2,7 +2,8 @@
 
 > **Status:** the plan ember and the agents steer the implementation from. Synthesized
 > (READ-ONLY, no code changed) from the four assessment docs written this session —
-> `SWAP-READINESS.md`, `DREGG2-GAP-MAP.md`, `APPS-READINESS.md`, `DOWNSTREAM-READINESS.md`
+> `SWAP-READINESS.md`, `APPS-READINESS.md`, `DOWNSTREAM-READINESS.md` (+ the gap-map fills now in
+> `docs/RECOVERED-DESIGNS.md`)
 > — plus the live task ledger (E1–E6 done: full effect catalog executable+proved #98–104,
 > FFI export #95, proof-forest #101/#102, caveat/attestation carry-forward #122/#124,
 > consistency witness #126, zero-sorry+CI #128 in flight).
@@ -473,8 +474,8 @@ in its signature). Only **two crates embed a `TurnExecutor` in-process** — `dr
 
 - `docs/rebuild/SWAP-READINESS.md` — can the Lean kernel HOST a real turn; the first safe
   rewiring step; the deletion gate.
-- `docs/rebuild/DREGG2-GAP-MAP.md` (and the `metatheory/docs/rebuild/` copy) — the 11 fills,
-  criticality, sizes, dependency order, PREREQ-vs-ABOVE-CORE split.
+- `docs/RECOVERED-DESIGNS.md` (the gap-map's specced-but-unbuilt fills were banked here) — the
+  fills, criticality, sizes, dependency order, PREREQ-vs-ABOVE-CORE split.
 - `docs/rebuild/APPS-READINESS.md` — the four shipped apps, the constraint-coverage table, the
   nameservice pilot increment.
 - `docs/rebuild/DOWNSTREAM-READINESS.md` — SDK/bot/wasm/CLI consumers, the stable-vs-shifting

@@ -357,6 +357,12 @@ pub fn project_slot_caveat_manifest(
             // CollectionAggregate opens an element run in the heap and
             // evaluates a CollPred aggregate — no AIR slot projection.
             | dregg_cell::StateConstraint::CollectionAggregate { .. }
+            // FieldsCollectionAggregate opens an element run in the
+            // executor-reachable user-field map (`fields_map`) and evaluates
+            // a CollPred aggregate — executor-enforced by the scalar
+            // evaluator; the map tail commits via `fields_root`, not a u8
+            // register-slot SlotCaveat AIR column.
+            | dregg_cell::StateConstraint::FieldsCollectionAggregate { .. }
             // The delegation_epoch tie reads the sealed per-cell counter
             // (`TransitionMeta::delegation_epoch`), not a state column in
             // the current AIR layout — executor-enforced like the other
@@ -405,7 +411,14 @@ pub fn project_slot_caveat_manifest(
             | dregg_cell::StateConstraint::SymEq { .. }
             | dregg_cell::StateConstraint::SymMemberOf { .. }
             | dregg_cell::StateConstraint::DigEq { .. }
-            | dregg_cell::StateConstraint::DigFieldEq { .. } => None,
+            | dregg_cell::StateConstraint::DigFieldEq { .. }
+            // Root-bound clearance-graph dominance: binds the actor-label slot
+            // AND the committed-root slot, walks a graph carried in the program
+            // body, and verifies the carried graph commits to the stored root.
+            // Two-slot + data-bearing — no single-`slot_index` SlotCaveat AIR
+            // projection in this wave; scalar-evaluator-enforced (cell/program.rs
+            // owns its arm), like `Reachable` / `AnyOfBound` above.
+            | dregg_cell::StateConstraint::ClearanceDominates { .. } => None,
         };
         if let Some(e) = entry {
             entries[count] = e;
@@ -641,16 +654,39 @@ pub struct TurnExecutor {
     /// route through this registry to verify proof bytes from the
     /// action's `witness_blobs`.
     ///
-    /// Block 3.5: defaults to
-    /// [`dregg_cell::WitnessedPredicateRegistry::default_builtins`] on
-    /// every `TurnExecutor` constructor, so the dispatch path is
-    /// always live and programs that declare `Witnessed { wp }` always
-    /// evaluate. Hosts that want to swap in real (non-stub) verifiers
-    /// call `set_witnessed_registry` with a registry pre-populated by
-    /// `dregg_circuit::witnessed_predicate::default_registry()` (or
-    /// register kinds piecemeal). `None` is *legal* — it disables
-    /// dispatch and reverts to the legacy sentinel surface — but
-    /// nothing inside `turn` constructs an executor that way anymore.
+    /// Defaults to [`registry_with_real_verifiers`] on every
+    /// `TurnExecutor` constructor. `dregg-turn` links `dregg-circuit`
+    /// and OWNS the real STARK-backed verifiers (in
+    /// `executor::membership_verifier`), so the sensible default here is
+    /// the *real* registry — NOT `dregg_cell`'s `default_builtins`. The
+    /// cell crate's `default_builtins` fails MerkleMembership /
+    /// NonMembership / BlindedSet / PedersenEquality closed *only*
+    /// because cell must not link `dregg-circuit` (dependency cycle); at
+    /// the `turn` layer that constraint is gone, so a bare
+    /// `TurnExecutor::new()` enforces those four with genuine
+    /// cryptographic verifiers: it ADMITS a valid membership proof and
+    /// REJECTS a forged one at the STARK level.
+    ///
+    /// The three kinds that need host-trusted policy context —
+    /// `Dfa` (a deployed `ProgramRegistry`), `Temporal` (a
+    /// `TemporalPolicyAuthority`), and `BridgePredicate` (a
+    /// `BridgePredicatePolicyAuthority`) — DELIBERATELY remain
+    /// fail-closed in this default: there is no safe context-free value
+    /// for them (auto-accepting would let a prover pick the policy), so
+    /// they must be installed explicitly via
+    /// [`registry_with_real_verifiers_full`] +
+    /// [`Self::set_witnessed_registry`]. The default therefore raises the
+    /// floor (real crypto wherever it is context-free) without lowering
+    /// any ceiling (the genuinely host-dependent kinds stay closed until
+    /// the host wires their authorities).
+    ///
+    /// Hosts that need a different surface call `set_witnessed_registry`
+    /// with their own registry (e.g. `default_builtins()` for a
+    /// plumbing-only test that wants every crypto kind stubbed-closed, or
+    /// `with_stubs()` for the legacy permissive playground). `None` is
+    /// *legal* — it disables dispatch and reverts to the legacy sentinel
+    /// surface — but nothing inside `turn` constructs an executor that
+    /// way anymore.
     pub witnessed_registry: Option<dregg_cell::WitnessedPredicateRegistry>,
     /// Optional custom-effect verifier registry, parallel structure to
     /// [`dregg_cell::WitnessedPredicateRegistry`] but keyed on the
@@ -715,7 +751,7 @@ impl TurnExecutor {
             executor_signing_key: None,
             turn_decryption_keypair: None,
             require_validity_proof: false,
-            witnessed_registry: Some(dregg_cell::WitnessedPredicateRegistry::default_builtins()),
+            witnessed_registry: Some(membership_verifier::registry_with_real_verifiers()),
             custom_effect_registry: None,
             consumed_cap_witnesses: Mutex::new(Vec::new()),
             umem_witness_enabled: std::sync::atomic::AtomicBool::new(false),
@@ -756,7 +792,7 @@ impl TurnExecutor {
             executor_signing_key: None,
             turn_decryption_keypair: None,
             require_validity_proof: false,
-            witnessed_registry: Some(dregg_cell::WitnessedPredicateRegistry::default_builtins()),
+            witnessed_registry: Some(membership_verifier::registry_with_real_verifiers()),
             custom_effect_registry: None,
             consumed_cap_witnesses: Mutex::new(Vec::new()),
             umem_witness_enabled: std::sync::atomic::AtomicBool::new(false),
@@ -793,7 +829,7 @@ impl TurnExecutor {
             executor_signing_key: None,
             turn_decryption_keypair: None,
             require_validity_proof: false,
-            witnessed_registry: Some(dregg_cell::WitnessedPredicateRegistry::default_builtins()),
+            witnessed_registry: Some(membership_verifier::registry_with_real_verifiers()),
             custom_effect_registry: None,
             consumed_cap_witnesses: Mutex::new(Vec::new()),
             umem_witness_enabled: std::sync::atomic::AtomicBool::new(false),

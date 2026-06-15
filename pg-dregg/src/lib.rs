@@ -545,16 +545,21 @@ mod pg {
     /// LEFT JOIN dregg_attest_range(:proof, :vk, 0, 100) a USING (ordinal);
     /// ```
     ///
-    /// **The circuit-link settle item (named, §10.2):** the IVC verifier takes an
-    /// in-memory `WholeChainProof` (plonky3 proof objects), which is not yet
-    /// serde-serializable, so the proof-bytes leg (`crate::attest::verify_serialized_proof`)
-    /// is STUBBED behind the `tier-c` feature. With `tier-c` OFF (the default,
-    /// circuit-free build), the SRF FAILS CLOSED — it attests NOTHING (returns zero
-    /// rows), which is the only safe default (§10.3: a labeled proof gate that does
-    /// not verify must say "unattested", never "attested"). Wiring it is settle
-    /// items S1–S3 in `crate::attest`: serialize `WholeChainProof` (S1), the
-    /// node-side proof producer + a `dregg.turn_proofs` table (S2), and the
-    /// `tier-c` dep on the Lean-free circuit verifier (S3, §8.1-authorized).
+    /// **Which build verifies the proof (§10.2):** the proof crosses as the
+    /// versioned `crate::attest::SerializedWholeChainProof` transport (the
+    /// verify-sufficient subset of a `WholeChainProof` — its prover-only `root.1` is
+    /// never serialized). The proof-bytes leg
+    /// (`crate::attest::verify_serialized_proof`) is gated by the `tier-c` feature:
+    /// with `tier-c` OFF (the default, circuit-free build) the SRF FAILS CLOSED — it
+    /// attests NOTHING (returns zero rows) even on a well-formed transport, the only
+    /// safe default (§10.3: a labeled proof gate that does not verify must say
+    /// "unattested", never "attested"). With `tier-c` ON it links the Lean-free
+    /// circuit verifier (§8.1-authorized) and runs the REAL three teeth
+    /// (`circuit::ivc_turn_chain::verify_turn_chain_recursive_from_blobs`): a genuine
+    /// proof attests, a tampered one is refused (proven in
+    /// `tests/tier_c_real_proof.rs`). S1 (the serializable transport) and S3 (the
+    /// circuit link) are DONE; the one remaining piece lives in the node, not here —
+    /// S2, the producer that folds finalized windows into `dregg.turn_proofs` rows.
     ///
     /// `dregg_attest_explain(proof, vk_anchor, lo, hi) -> text` returns the verdict
     /// reason (for debugging which requirement failed) without the row expansion.

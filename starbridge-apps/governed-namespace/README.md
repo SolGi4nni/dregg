@@ -52,7 +52,9 @@ delegated to the `GOVERNANCE_VK` verifier's contract.
 The factory descriptor flattens the lifetime invariants into its
 `Vec<StateConstraint>`; the full operation-scoped shape lives in
 `governance_program()` and is committed by the cell-program VK
-(`GOVERNANCE_CHILD_PROGRAM_VK`).
+(`governance_child_program_vk() = canonical_program_vk(&governance_program())`
+— the canonical re-execution recipe, identical to every other
+starbridge-app, so a validator holding the program can re-derive the VK).
 
 ## Operations
 

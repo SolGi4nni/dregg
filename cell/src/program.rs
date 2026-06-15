@@ -1624,6 +1624,116 @@ pub enum StateConstraint {
     /// compares slots as a u64-lane ORDERING (`<=`), never as a full-digest
     /// EQUALITY. Admit-char (Lean): `Pred.digFieldEq_iff`.
     DigFieldEq { left_index: u8, right_index: u8 },
+
+    /// **Clearance-graph dominance (the SGM/CWM mandate tooth, root-bound)** —
+    /// admits IFF the actor's clearance label read from `new[actor_label_index]`
+    /// (a full 32-byte field label) DOMINATES the required compartment label read
+    /// from `new[box_index]` in the dominance graph `edges`, AND that graph's
+    /// canonical commitment equals the root stored in `new[root_index]`.
+    ///
+    /// This is the Rust realization of the Lean `Pred.clearanceGe` /
+    /// `stepClearanceOK` admission (`metatheory/Dregg2/Exec/Program.lean`,
+    /// `Apps/CompartmentWorkflowMandate/Core.lean`): the dominance walk is the
+    /// proved-sound reflexive-transitive closure of `ClearanceGraph.dominatesD`
+    /// (`Authority/ClearanceGraph.lean:53`, soundness `dominates_of_dominatesD
+    /// :92`), realised over the untyped felt substrate (a `Label` is a 32-byte
+    /// field, exactly as the `SymEq`/`DigEq` type-erasure note above documents —
+    /// `Label.id`/`Label.named` both land as one `FieldElement`). BOTH labels are
+    /// slot-borne: reading the box from `box_index` (rather than baking it in)
+    /// lets ONE static constraint enforce a PER-STEP clearance (CWM: the
+    /// advancing turn materializes the entered step's compartment into the box
+    /// slot) AND a FIXED-compartment clearance (SGM: `box_index` points at the
+    /// frozen `read_compartment` slot). It is STRONGER than the bare Lean atom in
+    /// ONE way the apps need: it also binds the graph to a STORED root, so the
+    /// `clearance_graph_root` slot a mandate cell pins at birth (`WriteOnce`,
+    /// frozen) is LOAD-BEARING — a turn that walks a different (e.g.
+    /// over-permissive) graph, or tampers the root slot, FAILS CLOSED on the root
+    /// check before the dominance walk runs. Distinct from [`Self::Reachable`] (a
+    /// u64-lane source field, inline edges, NO root binding): this reads two
+    /// full-field label slots and is bound to a committed root.
+    ///
+    /// The canonical commitment is [`clearance_graph_root`]: a domain-separated
+    /// BLAKE3 hash over the LEX-SORTED, deduplicated `(dominator, dominated)`
+    /// edge bytes (order-independent — the graph is a SET of edges), the same
+    /// BLAKE3 family the apps hash their labels with (`field_from_bytes`).
+    ///
+    /// Fail-closed: a bad slot index is `InvalidFieldIndex`; a root mismatch or a
+    /// non-dominating actor label is `ConstraintViolated`. A `StateConstraint`
+    /// (it reads post-state + carries graph data, like [`Self::Reachable`]); it
+    /// does not lift into the post-state-local [`SimpleStateConstraint`] fragment.
+    /// APPEND-ONLY (postcard variant indices preserved — factory VKs / content
+    /// addresses byte-identical, §2).
+    ClearanceDominates {
+        /// Slot holding the actor's clearance label (a full 32-byte field).
+        actor_label_index: u8,
+        /// Slot holding the required compartment/box label the actor must
+        /// dominate (a full 32-byte field). Reading the box from state (not a
+        /// baked constant) is what lets one constraint serve PER-STEP (CWM) and
+        /// FIXED-compartment (SGM) clearance.
+        box_index: u8,
+        /// Slot holding the committed clearance-graph root
+        /// ([`clearance_graph_root`] of `edges`). The binding that makes the
+        /// stored root LOAD-BEARING.
+        root_index: u8,
+        /// The dominance graph as `(dominator, dominated)` edges. Dominance is
+        /// the reflexive-transitive closure of these edges (Lean `dominatesD`).
+        edges: Vec<(FieldElement, FieldElement)>,
+    },
+
+    /// **Aggregate over a named collection in the EXECUTOR-REACHABLE user-field
+    /// MAP** (`_RECORD-LAYER-UPGRADE.md` §B — the `fields_root`/`fields_map`
+    /// committed key→value map; the doc's actual deliverable). The
+    /// executor-writable twin of [`Self::CollectionAggregate`]: where that
+    /// reads the cell's `(collection_id, key) → value` HEAP ([`CellState::get_heap`],
+    /// which has **no executor write effect**), this reads the **`fields_map`**
+    /// ([`CellState::get_field_ext`]) — the map the executor's
+    /// `SetField { index >= STATE_SLOTS }` effect already writes (committed by
+    /// `fields_root`, folded into the canonical commitment v9, bridged to the
+    /// circuit as `UKey::Field { slot: u64 }`). This is what makes the proven
+    /// `MOfNDistinct` council lift reachable END-TO-END through a real turn.
+    ///
+    /// A collection is a contiguous run of element records laid out in
+    /// `fields_map` starting at user key `base` (`base >= STATE_SLOTS`): element
+    /// `i` occupies the key stride `[base + i*stride .. base + i*stride + stride)`,
+    /// and element `i`'s field at element-relative offset `f` is the map value at
+    /// key `base + i*stride + f`. The collection is the contiguous prefix whose
+    /// ANCHOR field (`pred`'s key/read offset) is PRESENT, truncating at the
+    /// first absent index (the `readIndexed` fail-closed truncation — no phantom
+    /// tail beyond a gap), bounded by `fuel` (an upper element count).
+    ///
+    /// THE COUNCIL LIFT rides [`CollPred::MOfNDistinct`] exactly as
+    /// [`Self::CollectionAggregate`] does — arbitrary-N M-of-N, distinctness
+    /// enforced (a duplicate-padded forge collapses to ONE key; an unbound forge
+    /// is filtered). The aggregate evaluator (`CollPred::eval`) is REUSED
+    /// verbatim; only the read source differs (`fields_map` vs heap), so the
+    /// duplicate-pad / sub-quorum / unbound-forge / absent-collection teeth all
+    /// transport.
+    ///
+    /// Fail-closed: an absent collection (element 0's anchor not present, or a
+    /// zero stride) REJECTS — an aggregate over an absent collection is
+    /// unevaluable (mirrors `collectionAggregate_absent_refuses`).
+    ///
+    /// A `StateConstraint` (reads only post-state map, but is proof/data-bearing
+    /// over a committed map — like [`Self::CollectionAggregate`] it does not lift
+    /// into the post-state-local [`SimpleStateConstraint`] fragment). APPEND-ONLY
+    /// (declared LAST so every existing postcard/serde variant index is
+    /// preserved — factory VKs / content addresses byte-identical, §2).
+    FieldsCollectionAggregate {
+        /// The first user-map key the element run starts at. MUST be
+        /// `>= STATE_SLOTS` (the map tail; lower keys are the fixed register
+        /// file and are not read by this aggregate).
+        base: u64,
+        /// The per-element key stride (the element record's width — how many
+        /// map keys one element occupies). Must be `>= 1`.
+        stride: u32,
+        /// An upper bound on the element count (the `readIndexed` fuel: no
+        /// element index is read beyond it). The collection is the contiguous
+        /// present prefix, at most `fuel` long.
+        fuel: u32,
+        /// The aggregate predicate over the read-out collection (the same
+        /// [`CollPred`] vocabulary [`Self::CollectionAggregate`] uses).
+        pred: CollPred,
+    },
 }
 
 /// A per-element decision predicate over the felt fields of one collection
@@ -1830,6 +1940,49 @@ fn read_collection(
                 .ok()
                 .and_then(|k| new_state.get_heap(collection_id, k));
             elem.push(v);
+        }
+        coll.push(elem);
+    }
+    if coll.is_empty() { None } else { Some(coll) }
+}
+
+/// Read a contiguous collection out of the cell's EXECUTOR-REACHABLE user-field
+/// MAP (`fields_map`, the `_RECORD-LAYER-UPGRADE.md` deliverable) — the
+/// executor-writable twin of [`read_collection`]. Element `i` occupies map keys
+/// `[base + i*stride .. base + i*stride + stride)`; element `i`'s field at
+/// element-relative offset `f` is the map value at key `base + i*stride + f`
+/// ([`CellState::get_field_ext`]). The collection is the prefix whose ANCHOR key
+/// (`anchor_off`) is present, truncating at the first absent index (fail-closed —
+/// no phantom tail beyond a gap), bounded by `fuel`. `None` if even element 0's
+/// anchor is absent (no collection to aggregate ⇒ fail-closed reject upstream),
+/// or if `stride == 0` (an ill-formed shape).
+///
+/// Reads route through [`CellState::get_field_ext`], so keys `< STATE_SLOTS`
+/// would resolve to the fixed register file; callers MUST pass `base >=
+/// STATE_SLOTS` so the run lives wholly in the committed map tail (the executor
+/// `SetField` path that writes those keys is what makes this reachable).
+fn read_collection_fields(
+    new_state: &CellState,
+    base: u64,
+    stride: u32,
+    fuel: u32,
+    anchor_off: u32,
+) -> Option<Vec<Vec<Option<FieldElement>>>> {
+    if stride == 0 {
+        return None;
+    }
+    let mut coll: Vec<Vec<Option<FieldElement>>> = Vec::new();
+    for i in 0..fuel {
+        let elem_base = base + (i as u64) * (stride as u64);
+        let anchor_present = new_state
+            .get_field_ext(elem_base + (anchor_off as u64))
+            .is_some();
+        if !anchor_present {
+            break;
+        }
+        let mut elem: Vec<Option<FieldElement>> = Vec::with_capacity(stride as usize);
+        for f in 0..stride {
+            elem.push(new_state.get_field_ext(elem_base + (f as u64)));
         }
         coll.push(elem);
     }
@@ -3345,6 +3498,47 @@ fn evaluate_constraint_full(
             Ok(())
         }
 
+        StateConstraint::ClearanceDominates {
+            actor_label_index,
+            box_index,
+            root_index,
+            edges,
+        } => {
+            let actor_idx = check_index(*actor_label_index)?;
+            let box_idx = check_index(*box_index)?;
+            let root_idx = check_index(*root_index)?;
+            // The slot-consulting tooth: the carried graph MUST commit to the
+            // root stored in `new[root_index]`, else a turn could walk an
+            // over-permissive (or entirely substituted) graph. Recompute the
+            // canonical commitment and compare to the stored root — FAIL CLOSED
+            // on mismatch BEFORE the dominance walk.
+            let committed = clearance_graph_root(edges);
+            if committed != new_state.fields[root_idx] {
+                return violated(
+                    constraint,
+                    format!(
+                        "clearance graph commitment does not match stored root in slot {root_idx} \
+                         (carried graph is not the committed one)"
+                    ),
+                );
+            }
+            // The proved-sound `dominatesD` walk: the actor's clearance label
+            // must dominate the required compartment label (both read from
+            // post-state slots) in the (now root-verified) graph.
+            let actor = new_state.fields[actor_idx];
+            let box_label = new_state.fields[box_idx];
+            if !dominates_closure(edges, actor, box_label) {
+                return violated(
+                    constraint,
+                    format!(
+                        "actor clearance label in slot {actor_idx} does not dominate the required \
+                         compartment label in slot {box_idx} in the clearance graph"
+                    ),
+                );
+            }
+            Ok(())
+        }
+
         StateConstraint::AllOf { variants } => {
             for v in variants {
                 evaluate_simple_constraint(v, new_state, old_state, ctx, meta, witnesses)?;
@@ -3818,6 +4012,40 @@ fn evaluate_constraint_full(
                 )
             }
         }
+
+        // ─── Aggregate over the EXECUTOR-REACHABLE user-field map (the
+        //     `fields_map` twin of CollectionAggregate; the `_RECORD-LAYER-
+        //     UPGRADE.md` deliverable). Same fail-closed shape, same CollPred
+        //     evaluator — only the read source is the map, not the heap. ───
+        StateConstraint::FieldsCollectionAggregate {
+            base,
+            stride,
+            fuel,
+            pred,
+        } => {
+            let anchor = pred.anchor_offset();
+            let Some(coll) = read_collection_fields(new_state, *base, *stride, *fuel, anchor) else {
+                return violated(
+                    constraint,
+                    format!(
+                        "fields-map collection at base {base} is absent/empty \
+                         (FieldsCollectionAggregate fails closed: no collection to aggregate)"
+                    ),
+                );
+            };
+            if pred.eval(&coll) {
+                Ok(())
+            } else {
+                violated(
+                    constraint,
+                    format!(
+                        "aggregate over fields-map collection at base {base} ({} element(s)) \
+                         refuses (FieldsCollectionAggregate)",
+                        coll.len()
+                    ),
+                )
+            }
+        }
     }
 }
 
@@ -4282,6 +4510,66 @@ fn reachable_closure(edges: &[(u64, u64)], a: u64, b: u64) -> bool {
     go(edges, a, b, edges.len() + 1)
 }
 
+/// Fuel-bounded reflexive-transitive reachability over FULL-FIELD
+/// `(dominator, dominated)` edges (`a` dominates `b`). The 32-byte-label twin
+/// of [`reachable_closure`]; it IS the proved-sound Lean
+/// `ClearanceGraph.dominatesFuel`/`dominatesD`
+/// (`metatheory/Dregg2/Authority/ClearanceGraph.lean:46,53`) realised over the
+/// untyped felt substrate, fuel = `edges.len() + 1` bounding the search depth on
+/// a finite graph. Reflexive: `a == b ⇒ true` (an actor holding exactly the box
+/// label is cleared).
+fn dominates_closure(edges: &[(FieldElement, FieldElement)], a: FieldElement, b: FieldElement) -> bool {
+    fn go(
+        edges: &[(FieldElement, FieldElement)],
+        a: FieldElement,
+        b: FieldElement,
+        fuel: usize,
+    ) -> bool {
+        if fuel == 0 {
+            return false;
+        }
+        if a == b {
+            return true;
+        }
+        edges
+            .iter()
+            .any(|(src, mid)| *src == a && go(edges, *mid, b, fuel - 1))
+    }
+    go(edges, a, b, edges.len() + 1)
+}
+
+/// Canonical commitment of a clearance graph (a SET of `(dominator, dominated)`
+/// edges) to a 32-byte [`FieldElement`] root, for [`StateConstraint::ClearanceDominates`].
+///
+/// Domain-separated BLAKE3 over the LEX-SORTED, deduplicated edge bytes — the
+/// same BLAKE3 family the apps hash their labels with (`field_from_bytes`), so a
+/// mandate cell can pin this value in its `clearance_graph_root` slot and the
+/// executor recomputes it on every touching turn. ORDER-INDEPENDENT (the graph
+/// is a set; sorting + dedup means two edge lists denoting the same graph commit
+/// to the same root), so reordering edges does NOT change the root, and a
+/// duplicate edge does not. The leading `len` is bound (length-extension /
+/// concatenation ambiguity), then each 64-byte `dominator || dominated` edge.
+pub fn clearance_graph_root(edges: &[(FieldElement, FieldElement)]) -> FieldElement {
+    let mut canon: Vec<[u8; 64]> = edges
+        .iter()
+        .map(|(hi, lo)| {
+            let mut buf = [0u8; 64];
+            buf[..32].copy_from_slice(hi);
+            buf[32..].copy_from_slice(lo);
+            buf
+        })
+        .collect();
+    canon.sort_unstable();
+    canon.dedup();
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"dregg.clearance-graph-root.v1");
+    hasher.update(&(canon.len() as u64).to_be_bytes());
+    for edge in &canon {
+        hasher.update(edge);
+    }
+    *hasher.finalize().as_bytes()
+}
+
 /// Compare two field elements as unsigned big-endian: a >= b.
 fn field_gte(a: &FieldElement, b: &FieldElement) -> bool {
     a >= b
@@ -4640,6 +4928,16 @@ pub enum StateConstraintView {
         fuel: u32,
         pred: CollPredView,
     },
+    /// Aggregate over a named collection in the executor-reachable user-field
+    /// MAP (`fields_map`) — the executor-writable twin of `CollectionAggregate`
+    /// (`_RECORD-LAYER-UPGRADE.md`). Same self-describing aggregate; `base` is
+    /// the first user-map key (`>= STATE_SLOTS`) the element run starts at.
+    FieldsCollectionAggregate {
+        base: u64,
+        stride: u32,
+        fuel: u32,
+        pred: CollPredView,
+    },
     /// Witnessed branches under disjunction (§11.3 — the `AnyOfBound` rung).
     /// Admits IFF some branch admits; each [`BoundBranchView`] surfaces whether
     /// it is the cheap no-proof leg or a witnessed cross-cell read naming its
@@ -4668,6 +4966,16 @@ pub enum StateConstraintView {
     DigFieldEq {
         left_index: u8,
         right_index: u8,
+    },
+    /// The actor's clearance label in `new[actor_label_index]` dominates the
+    /// compartment label in `new[box_index]` in the graph `edges`, which must
+    /// commit to the root stored in `new[root_index]`. Edge labels are lowercase
+    /// 64-hex strings.
+    ClearanceDominates {
+        actor_label_index: u8,
+        box_index: u8,
+        root_index: u8,
+        edges: Vec<(String, String)>,
     },
 }
 
@@ -5283,6 +5591,17 @@ impl StateConstraint {
                 fuel: *fuel,
                 pred: pred.to_view(),
             },
+            StateConstraint::FieldsCollectionAggregate {
+                base,
+                stride,
+                fuel,
+                pred,
+            } => StateConstraintView::FieldsCollectionAggregate {
+                base: *base,
+                stride: *stride,
+                fuel: *fuel,
+                pred: pred.to_view(),
+            },
             StateConstraint::AnyOfBound { branches } => StateConstraintView::AnyOfBound {
                 branches: branches.iter().map(|b| b.to_view()).collect(),
             },
@@ -5304,6 +5623,20 @@ impl StateConstraint {
             } => StateConstraintView::DigFieldEq {
                 left_index: *left_index,
                 right_index: *right_index,
+            },
+            StateConstraint::ClearanceDominates {
+                actor_label_index,
+                box_index,
+                root_index,
+                edges,
+            } => StateConstraintView::ClearanceDominates {
+                actor_label_index: *actor_label_index,
+                box_index: *box_index,
+                root_index: *root_index,
+                edges: edges
+                    .iter()
+                    .map(|(hi, lo)| (view_hex(hi), view_hex(lo)))
+                    .collect(),
             },
         }
     }
@@ -6144,6 +6477,132 @@ mod tests {
         }
     }
 
+    // ── FieldsCollectionAggregate: THE COUNCIL LIFT over the EXECUTOR-REACHABLE
+    //    user-field map (`_RECORD-LAYER-UPGRADE.md`'s `fields_map`). The
+    //    `CollectionAggregate` twin whose read source is the map the executor's
+    //    `SetField { index >= STATE_SLOTS }` effect actually writes — so a
+    //    large council is reachable end-to-end through a real turn. Same
+    //    distinctness teeth, only the store differs. ─────────────────────────
+
+    /// Base user-map key (>= STATE_SLOTS) the council collection starts at.
+    const FMAP_BASE: u64 = dregg_cell::state::STATE_SLOTS as u64;
+
+    /// Lay an approver collection (`(voter_id, vote)` pairs) into a fresh cell's
+    /// EXECUTOR-REACHABLE `fields_map` starting at `FMAP_BASE`, element `i` at
+    /// `FMAP_BASE + i*COLL_STRIDE`. The `fields_map` twin of `council_state`:
+    /// each write goes through [`CellState::set_field_ext`] (the same accessor
+    /// the executor's `SetField` path calls for keys `>= STATE_SLOTS`), so the
+    /// laid-out collection is committed by `fields_root`.
+    fn fmap_council_state(approvers: &[(u64, u64)]) -> CellState {
+        let mut s = CellState::new(0);
+        for (i, (voter, vote)) in approvers.iter().enumerate() {
+            let base = FMAP_BASE + (i as u64) * (COLL_STRIDE as u64);
+            assert!(s.set_field_ext(base + VOTER_OFF as u64, field_from_u64(*voter)));
+            assert!(s.set_field_ext(base + VOTE_OFF as u64, field_from_u64(*vote)));
+        }
+        s
+    }
+
+    /// A `FieldsCollectionAggregate` program over `FMAP_BASE` carrying `pred`.
+    fn fmap_coll_prog(pred: CollPred) -> CellProgram {
+        CellProgram::Predicate(vec![StateConstraint::FieldsCollectionAggregate {
+            base: FMAP_BASE,
+            stride: COLL_STRIDE,
+            fuel: 16,
+            pred,
+        }])
+    }
+
+    #[test]
+    fn fmap_council_3of5_accepts_refuses_subquorum_dupforge_unbound() {
+        // The council gate at threshold 3, now over the user-field MAP. The
+        // SAME distinctness keystone (`MOfNDistinct`) the heap council proves —
+        // the `CollPred` evaluator is reused verbatim; only the read source is
+        // `fields_map` (executor-reachable) instead of the heap.
+        let council = fmap_coll_prog(CollPred::MOfNDistinct {
+            m: 3,
+            key_offset: VOTER_OFF,
+            approved: voted_yes(),
+        });
+
+        // ACCEPT — voters 0,1,2 vote YES (distinct); 3,4 NO. 3 distinct ⇒ quorum.
+        let ok = fmap_council_state(&[(0, 1), (1, 1), (2, 1), (3, 0), (4, 0)]);
+        assert!(coll_eval(&council, &ok).is_ok());
+
+        // REFUSE (sub-quorum) — only 0,1 YES ⇒ 2 distinct < 3.
+        let sub = fmap_council_state(&[(0, 1), (1, 1), (2, 0), (3, 0), (4, 0)]);
+        assert!(coll_eval(&council, &sub).is_err());
+
+        // REFUSE (DUPLICATE-PADDED forge) — voter 0 listed 3×, all YES ⇒ ONE
+        // distinct identity ⇒ refuses (the anti-fake keystone over the map).
+        let dup = fmap_council_state(&[(0, 1), (0, 1), (0, 1), (3, 0), (4, 0)]);
+        assert!(coll_eval(&council, &dup).is_err());
+
+        // REFUSE (UNBOUND forge) — 0,1 YES; a padding voter 7 votes NO, filtered
+        // before the count ⇒ 2 distinct < 3.
+        let unbound = fmap_council_state(&[(0, 1), (1, 1), (7, 0)]);
+        assert!(coll_eval(&council, &unbound).is_err());
+    }
+
+    #[test]
+    fn fmap_council_absent_fails_closed() {
+        // Fail-closed: a cell with NO collection in its map has no element-0
+        // anchor ⇒ `read_collection_fields` is `None` ⇒ the aggregate REFUSES.
+        let council = fmap_coll_prog(CollPred::MOfNDistinct {
+            m: 1,
+            key_offset: VOTER_OFF,
+            approved: voted_yes(),
+        });
+        let empty = CellState::new(0);
+        assert!(coll_eval(&council, &empty).is_err());
+    }
+
+    #[test]
+    fn fmap_council_truncates_at_first_gap() {
+        // The `readIndexed` truncation over the map: a hole caps the council at
+        // the contiguous present prefix (no phantom tail beyond a gap).
+        let mut s = fmap_council_state(&[(0, 1), (1, 1), (2, 1)]);
+        // Element 4 (base FMAP_BASE + 4*stride) is a fourth distinct approver,
+        // but element 3 is absent, so the read stops at index 3.
+        let e4 = FMAP_BASE + 4 * (COLL_STRIDE as u64);
+        assert!(s.set_field_ext(e4 + VOTER_OFF as u64, field_from_u64(9)));
+        assert!(s.set_field_ext(e4 + VOTE_OFF as u64, field_from_u64(1)));
+        let council4 = fmap_coll_prog(CollPred::MOfNDistinct {
+            m: 4,
+            key_offset: VOTER_OFF,
+            approved: voted_yes(),
+        });
+        assert!(coll_eval(&council4, &s).is_err());
+        // Threshold 3 over the visible prefix still ACCEPTS.
+        let council3 = fmap_coll_prog(CollPred::MOfNDistinct {
+            m: 3,
+            key_offset: VOTER_OFF,
+            approved: voted_yes(),
+        });
+        assert!(coll_eval(&council3, &s).is_ok());
+    }
+
+    #[test]
+    fn fmap_council_view_round_trips() {
+        let council = StateConstraint::FieldsCollectionAggregate {
+            base: FMAP_BASE,
+            stride: COLL_STRIDE,
+            fuel: 16,
+            pred: CollPred::MOfNDistinct {
+                m: 3,
+                key_offset: VOTER_OFF,
+                approved: voted_yes(),
+            },
+        };
+        let json = serde_json::to_value(council.to_view()).expect("view serializes");
+        assert_eq!(
+            json.get("kind").and_then(|k| k.as_str()),
+            Some("FieldsCollectionAggregate"),
+        );
+        assert_eq!(json["base"], FMAP_BASE);
+        assert_eq!(json["pred"]["m"], 3);
+    }
+
     // ── New variants ──────────────────────────────────────────────────────
 
     #[test]
@@ -6236,6 +6695,101 @@ mod tests {
         assert!(p.evaluate(&new_s, Some(&old), None).is_ok());
         new_s.fields[0] = field_from_u64(70);
         assert!(p.evaluate(&new_s, Some(&old), None).is_err());
+    }
+
+    #[test]
+    fn clearance_dominates_root_bound_dominance() {
+        // The kernel tooth for the SGM/CWM clearance mandate: an actor whose
+        // clearance label DOMINATES the required compartment in the (root-bound)
+        // graph admits; an actor that does not is REFUSED; and the stored
+        // `root` slot is LOAD-BEARING — a tampered root / substituted graph
+        // FAILS CLOSED. The graph mirrors the Lean `charterGraph3`:
+        //   officer ⊐ {review, redact, sign},  clerk ⊐ {review}.
+        const OFFICER: FieldElement = [0xA0; 32];
+        const CLERK: FieldElement = [0xB0; 32];
+        const REVIEW: FieldElement = [0x01; 32];
+        const REDACT: FieldElement = [0x02; 32];
+        const SIGN: FieldElement = [0x03; 32];
+        let edges = vec![
+            (OFFICER, REVIEW),
+            (OFFICER, REDACT),
+            (OFFICER, SIGN),
+            (CLERK, REVIEW),
+        ];
+        let root = clearance_graph_root(&edges);
+
+        // slot 0 = actor label, slot 1 = box (required compartment), slot 2 = root.
+        let p = CellProgram::Predicate(vec![StateConstraint::ClearanceDominates {
+            actor_label_index: 0,
+            box_index: 1,
+            root_index: 2,
+            edges: edges.clone(),
+        }]);
+
+        let mk = |actor: FieldElement, box_label: FieldElement, root: FieldElement| {
+            let mut s = CellState::new(1);
+            s.fields[0] = actor;
+            s.fields[1] = box_label;
+            s.fields[2] = root;
+            s
+        };
+
+        // ADMIT: officer dominates redact (officer → redact edge).
+        assert!(p.evaluate(&mk(OFFICER, REDACT, root), None, None).is_ok());
+        // ADMIT: officer dominates sign.
+        assert!(p.evaluate(&mk(OFFICER, SIGN, root), None, None).is_ok());
+        // ADMIT (reflexive): clerk holding exactly review dominates review.
+        assert!(p.evaluate(&mk(CLERK, REVIEW, root), None, None).is_ok());
+
+        // REJECT: clerk does NOT dominate redact (incomparable — no clerk→redact path).
+        assert!(p.evaluate(&mk(CLERK, REDACT, root), None, None).is_err());
+        // REJECT: clerk does NOT dominate sign.
+        assert!(p.evaluate(&mk(CLERK, SIGN, root), None, None).is_err());
+
+        // ROOT TOOTH: a TAMPERED root slot fails closed even for a dominating
+        // actor (the carried graph no longer commits to the stored root).
+        let wrong_root = [0xFF; 32];
+        assert!(
+            p.evaluate(&mk(OFFICER, REDACT, wrong_root), None, None)
+                .is_err(),
+            "a tampered clearance-graph root must fail closed"
+        );
+
+        // GRAPH-SUBSTITUTION TOOTH: a turn that walks an OVER-PERMISSIVE graph
+        // (adds clerk → sign) against the cell's ORIGINAL committed root is
+        // refused — the substituted graph does not match the stored root.
+        let over_permissive = {
+            let mut e = edges.clone();
+            e.push((CLERK, SIGN));
+            e
+        };
+        let p_sub = CellProgram::Predicate(vec![StateConstraint::ClearanceDominates {
+            actor_label_index: 0,
+            box_index: 1,
+            root_index: 2,
+            edges: over_permissive,
+        }]);
+        assert!(
+            p_sub.evaluate(&mk(CLERK, SIGN, root), None, None).is_err(),
+            "an over-permissive substituted graph must not match the committed root"
+        );
+    }
+
+    #[test]
+    fn clearance_graph_root_is_order_and_dup_independent() {
+        // The commitment is a SET commitment: reordering edges or adding a
+        // duplicate edge does NOT change the root (so two encodings of the same
+        // graph commit identically), but a genuinely different edge DOES.
+        const A: FieldElement = [1u8; 32];
+        const B: FieldElement = [2u8; 32];
+        const C: FieldElement = [3u8; 32];
+        let g1 = vec![(A, B), (B, C)];
+        let g2 = vec![(B, C), (A, B)]; // reordered
+        let g3 = vec![(A, B), (B, C), (A, B)]; // duplicate edge
+        let g4 = vec![(A, B), (A, C)]; // different graph
+        assert_eq!(clearance_graph_root(&g1), clearance_graph_root(&g2));
+        assert_eq!(clearance_graph_root(&g1), clearance_graph_root(&g3));
+        assert_ne!(clearance_graph_root(&g1), clearance_graph_root(&g4));
     }
 
     #[test]
@@ -8266,6 +8820,22 @@ mod tests {
                 "CollectionAggregate",
             ),
             (
+                StateConstraint::FieldsCollectionAggregate {
+                    base: 16,
+                    stride: 2,
+                    fuel: 8,
+                    pred: CollPred::MOfNDistinct {
+                        m: 3,
+                        key_offset: 0,
+                        approved: ElemPredAtom::FieldEquals {
+                            offset: 1,
+                            value: field_from_u64(1),
+                        },
+                    },
+                },
+                "FieldsCollectionAggregate",
+            ),
+            (
                 StateConstraint::AnyOfBound {
                     branches: vec![
                         BoundBranch::Simple(SimpleStateConstraint::FieldGte {
@@ -8304,6 +8874,15 @@ mod tests {
                     right_index: 1,
                 },
                 "DigFieldEq",
+            ),
+            (
+                StateConstraint::ClearanceDominates {
+                    actor_label_index: 0,
+                    box_index: 6,
+                    root_index: 3,
+                    edges: vec![([1u8; 32], [2u8; 32])],
+                },
+                "ClearanceDominates",
             ),
         ];
 
@@ -8364,11 +8943,13 @@ mod tests {
                 | StateConstraint::AffineDeltaLe { .. }
                 | StateConstraint::ObservedFieldEquals { .. }
                 | StateConstraint::CollectionAggregate { .. }
+                | StateConstraint::FieldsCollectionAggregate { .. }
                 | StateConstraint::AnyOfBound { .. }
                 | StateConstraint::SymEq { .. }
                 | StateConstraint::SymMemberOf { .. }
                 | StateConstraint::DigEq { .. }
-                | StateConstraint::DigFieldEq { .. } => {}
+                | StateConstraint::DigFieldEq { .. }
+                | StateConstraint::ClearanceDominates { .. } => {}
             }
         }
 

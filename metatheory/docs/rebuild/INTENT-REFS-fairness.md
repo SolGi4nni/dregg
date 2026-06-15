@@ -2,7 +2,7 @@
 
 **Pillar:** the right **completeness criterion** for liveness in dregg2's reactive turn-system — the answer to
 Track-D's gated question *"what liveness assumption, and how to ground `Enabled`/`Effective`?"*
-**Companion to:** `PHASE-2-INTENT-SPEC.md` (Track D in `HANDOFF-2026-06-03.md` §4); the Track-D scope-spec.
+**Companion to:** `PHASE-2-INTENT-SPEC.md` — the Track-D (liveness/fairness) scope-spec.
 **Status:** the **decision record** + reference map for Track D (liveness/fairness) and the deferred liveness
 reading of Track B (CTL `AF`/`EG`). Produced by the `study-vanglabbeek-fairness` workflow (2026-06-04):
 hunt (9 papers pulled) → deep-read → dregg mapping (grounded in the real executor code).
