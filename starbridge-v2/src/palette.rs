@@ -53,6 +53,11 @@ pub enum CommandId {
     /// requests a cap it lacks; the user designates from what they hold; the powerbox
     /// mints a fresh attenuated cap via a real grant turn).
     GoPowerbox,
+    /// LAUNCH a confined app at RUNTIME — birth a fresh app-cell holding NO ambient
+    /// authority (a real confined app-as-cell) and route its capability request through
+    /// the existing powerbox (the powerbox's missing first half). Switches to the
+    /// POWERBOX tab so the designation flow is in view.
+    LaunchConfinedApp,
 
     // --- the A1 IDE DEVELOPER surfaces (editor buffer + terminal) ---
     /// Type a line into the editor buffer (free, in-memory — the doc goes dirty).
@@ -153,9 +158,8 @@ impl CommandId {
     pub fn category(self) -> Category {
         use CommandId::*;
         match self {
-            Transfer | ComposeMulti | Grant | CreateCell | Seal | Burn | OverGrant => {
-                Category::Verb
-            }
+            Transfer | ComposeMulti | Grant | CreateCell | Seal | Burn | OverGrant
+            | LaunchConfinedApp => Category::Verb,
             GoHome | GoComposer | GoObjects | GoDebugger | GoReplay | GoCipherclerk | GoEditor
             | GoShell | GoAgent | GoBuffer | GoTerminal | GoSwarm | GoGraph | GoOrgans
             | GoProofs | GoPowerbox => Category::Navigate,
@@ -204,6 +208,7 @@ impl CommandId {
             GoOrgans => "Go to Organs (live trustline · flash-well cell-state)",
             GoProofs => "Go to Proofs (attach + STARK verification status)",
             GoPowerbox => "Go to Powerbox (CapDesk — designate a held cap into an app, attenuated)",
+            LaunchConfinedApp => "Launch a confined app (no ambient authority → it requests via the powerbox)",
             SwarmCoordinatorEmitA => {
                 "Swarm: coordinator emits task/go → worker-a (notify edge, async)"
             }
@@ -276,6 +281,7 @@ impl CommandId {
             GoOrgans => "organ trustline flashwell flash-well credit line channel mailbox court live cell-state",
             GoProofs => "proof stark verify attach tier verification signed by-construction light-client",
             GoPowerbox => "powerbox capdesk designate grant capability attenuate mint file dialog ocap pick picker confined app no-ambient-authority",
+            LaunchConfinedApp => "launch spawn start run confined app birth new cell powerbox request capability no-ambient-authority sandbox open application capdesk",
             SwarmCoordinatorEmitA => {
                 "emit event notify wake inbox async turn receipt seam swarm coordinator worker"
             }
@@ -381,6 +387,8 @@ pub fn all_commands() -> Vec<Command> {
     [
         // verbs first (the most common operator actions)
         Transfer, ComposeMulti, Grant, CreateCell, Seal, Burn, OverGrant,
+        // the runtime app-launcher (births a confined app → powerbox request)
+        LaunchConfinedApp,
         // the cipherclerk loop
         ClerkMint, ClerkAttenuate, ClerkDelegate, ClerkDischarge,
         // the cap-first shell / compositor
@@ -650,6 +658,24 @@ mod tests {
         assert!(!ids.contains(&CommandId::Dismiss));
         // The registry is non-trivial (and now includes the shell surface + swarm A2).
         assert!(reg.len() >= 34, "registry should cover the whole action surface");
+    }
+
+    #[test]
+    fn the_runtime_app_launcher_command_is_registered_and_findable() {
+        // The runtime app-launcher (the powerbox's missing first half) is reachable
+        // through the ⌘K palette like every other action — no parallel path. It is a
+        // Verb (it births a cell), and findable by its launch/spawn/confined concepts.
+        let reg = all_commands();
+        let ids: std::collections::HashSet<CommandId> = reg.iter().map(|c| c.id).collect();
+        assert!(ids.contains(&CommandId::LaunchConfinedApp), "the launcher command is registered");
+        assert_eq!(CommandId::LaunchConfinedApp.category(), Category::Verb);
+        // Found by concept: "launch", "spawn", "confined" all surface the launcher.
+        for q in ["launch", "spawn confined", "confined app"] {
+            assert!(
+                search(&reg, q).iter().any(|h| h.command.id == CommandId::LaunchConfinedApp),
+                "the launcher is findable via {q:?}"
+            );
+        }
     }
 
     #[test]

@@ -300,13 +300,25 @@ pub struct Cockpit {
     /// verdict — committed receipt / refused-with-reason, or the in-band
     /// anti-ghost refusal).
     web_cells_outcome: Option<String>,
+    /// IF the user pressed "⚡ make interactive" on the transclusion row and the
+    /// powerbox GRANTED: the upgraded semi-reinteractive transclusion (the host now
+    /// holds an attenuated affordance cap reaching the source). The panel then shows
+    /// the INTERACTIVE state + a fire button. `None` = the quote is still read-only
+    /// (the default — a verified quote is free; interacting needs a powerbox grant).
+    web_cells_upgraded:
+        Option<starbridge_v2::web_cells::SemiReinteractiveTransclusion>,
+    /// The last transclusion-upgrade / transcluded-fire outcome banner (a REAL
+    /// powerbox grant-turn verdict, or the in-band read-only/over-wide refusal).
+    web_cells_transclusion_outcome: Option<String>,
 
     // --- the POWERBOX (CapDesk) panel state --------------------------------
     /// The confined APP-cell whose capability request the powerbox is mediating —
     /// a real cell in the live ledger holding NO ambient authority (a freshly
     /// "launched" app-as-cell). The powerbox grants designated, attenuated caps
-    /// INTO this cell's c-list. Set once at boot (a demo app); a real launcher
-    /// would set it per app.
+    /// INTO this cell's c-list. Seeded at boot with a demo app, then repointed by
+    /// the RUNTIME app-launcher (`run_launch_confined_app`) at each fresh confined
+    /// app it spawns — so the powerbox mediates whichever app was most recently
+    /// launched.
     powerbox_app: Option<CellId>,
     /// The rights tier the powerbox would CONFER on the next designation — the
     /// attenuation the user picks (the granted cap is `≤` the user's held
@@ -319,6 +331,12 @@ pub struct Cockpit {
     /// the executor's own receipt on a mint, or the in-band amplification/
     /// no-such-target refusal).
     powerbox_outcome: Option<String>,
+    /// The apps LAUNCHED at runtime through the app-launcher (each a fresh confined
+    /// app-cell birthed into the live world, holding no ambient authority). The
+    /// most-recently-launched app is the one whose request the powerbox panel is
+    /// currently mediating (`powerbox_app` points at it). Pressing "+ launch confined
+    /// app" births a NEW one and routes its request through the existing powerbox.
+    launched_apps: Vec<starbridge_v2::powerbox::LaunchedApp>,
 }
 
 impl Cockpit {
@@ -412,6 +430,13 @@ impl Cockpit {
         // The user holds full (None) authority reaching `service` — the powerbox can
         // confer this or any narrower right, never wider.
         let _ = world.borrow_mut().genesis_grant_cap(&user, service);
+        // …and reaching `treasury` too, so the WEB-OF-CELLS ⚡ "make interactive"
+        // upgrade (a real powerbox grant over the transcluded SOURCE) lands on a cell
+        // the user genuinely holds whatever the transclusion picks as its source among
+        // the principal cells (the powerbox still REFUSES any source the user does not
+        // hold — `mint_needs_held_factory` — so this broadens the demo's reach without
+        // faking authority). Both caps are installed via the real genesis grant path.
+        let _ = world.borrow_mut().genesis_grant_cap(&user, treasury);
 
         // The A1 TERMINAL surface: the SERVICE cell backs it — it holds a REAL
         // cap reaching the user cell (a genuine mandate), so a command targeting
@@ -494,11 +519,16 @@ impl Cockpit {
             web_cells_opened: None,
             web_cells_viewer_rights: dregg_cell::AuthRequired::Either,
             web_cells_outcome: None,
+            web_cells_upgraded: None,
+            web_cells_transclusion_outcome: None,
             powerbox_app: Some(powerbox_app),
             // Default to the narrow Signature tier so a click demonstrates real
             // attenuation away from the user's wider (None) held authority.
             powerbox_confer_rights: dregg_cell::AuthRequired::Signature,
             powerbox_outcome: None,
+            // The boot-seeded demo app (above) is the FIRST entry — the launcher
+            // appends a fresh confined app per "+ launch" press.
+            launched_apps: Vec::new(),
         }
     }
 
@@ -547,6 +577,43 @@ impl Cockpit {
             w.commit_turn(turn)
         };
         self.note_outcome(outcome);
+        self.refresh_cells();
+        cx.notify();
+    }
+
+    /// **LAUNCH a confined app at RUNTIME** — the powerbox's missing first half.
+    ///
+    /// The boot-seeded `powerbox_app` is one demo app; this spawns an ARBITRARY
+    /// confined app on demand. It calls the real [`AppLauncher::launch`]: births a
+    /// fresh app-cell into the live world holding NO ambient authority (an empty
+    /// c-list — a genuine confined app-as-cell), records it, and makes IT the app
+    /// whose [`CapabilityRequest`] the powerbox panel now mediates (`powerbox_app`
+    /// points at the freshly launched cell). The request then routes through the
+    /// EXISTING [`Powerbox::present`] the panel already renders — the launcher
+    /// supplies the confined requester; the powerbox supplies the grant. Re-runnable:
+    /// each press births a distinct app and switches the panel to it.
+    fn run_launch_confined_app(&mut self, cx: &mut Context<Self>) {
+        use starbridge_v2::powerbox::AppLauncher;
+        let n = self.launched_apps.len() + 1;
+        let launched = {
+            let mut w = self.world.borrow_mut();
+            AppLauncher::launch(
+                &mut w,
+                format!("launched-app-{n}"),
+                "this app launched at runtime and needs to reach one peer/resource — designate exactly one",
+                dregg_cell::AuthRequired::None,
+            )
+        };
+        // The freshly launched confined app is now the powerbox's current requester:
+        // its standing request is routed through the existing Powerbox::present the
+        // panel renders. Switch to the POWERBOX tab so the designation flow is in view.
+        self.powerbox_app = Some(launched.app_cell);
+        self.powerbox_outcome = Some(format!(
+            "launched: {} — a fresh CONFINED app (no ambient authority); it can only ASK. Designate a held target below.",
+            launched.label()
+        ));
+        self.launched_apps.push(launched);
+        self.tab = Tab::Powerbox;
         self.refresh_cells();
         cx.notify();
     }
@@ -1374,6 +1441,7 @@ impl Cockpit {
             CommandId::GoOrgans => self.set_tab(Tab::Organs, cx),
             CommandId::GoProofs => self.set_tab(Tab::Proofs, cx),
             CommandId::GoPowerbox => self.set_tab(Tab::Powerbox, cx),
+            CommandId::LaunchConfinedApp => self.run_launch_confined_app(cx),
 
             CommandId::BufferType => self.buffer_type_demo(cx),
             CommandId::BufferCommit => self.buffer_commit(cx),
@@ -2994,7 +3062,15 @@ impl Cockpit {
     /// progressive attenuation) + its derived rehydration liveness-type + a
     /// transcluded field, and FIRING an affordance runs through THIS crate's
     /// embedded executor (the seam the web crate could only model, closed). The
-    /// model is built gpui-free in [`starbridge_v2::web_cells`] (so it is
+    /// transclusion row carries the SEMI-REINTERACTIVE "⚡ make interactive" button:
+    /// it runs the real
+    /// [`WebCellsBrowser::upgrade_transclusion_via_powerbox`](starbridge_v2::web_cells::WebCellsBrowser::upgrade_transclusion_via_powerbox)
+    /// so the
+    /// user confers an ATTENUATED affordance cap reaching the transcluded SOURCE into
+    /// the HOST document (a read-only quote becomes act-on-able via a powerbox grant —
+    /// held-authority + non-amplification enforced by the real powerbox + executor),
+    /// after which the host may fire exactly the granted affordance on the source and
+    /// no wider. The model is built gpui-free in [`starbridge_v2::web_cells`] (so it is
     /// `cargo test`-able); this maps it onto gpui. See [`starbridge_v2::web_cells`].
     fn web_of_cells_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let viewer = self.anchors[2]; // the "user" principal the cockpit browses as
@@ -3054,6 +3130,11 @@ impl Cockpit {
                                     }
                                     _ => dregg_cell::AuthRequired::None,
                                 };
+                                // The conferred tier of a ⚡ upgrade is the viewer's
+                                // tier; changing it invalidates a prior grant — drop
+                                // the upgrade so re-pressing ⚡ confers the new tier.
+                                this.web_cells_upgraded = None;
+                                this.web_cells_transclusion_outcome = None;
                                 cx.notify();
                             }),
                         ),
@@ -3109,6 +3190,11 @@ impl Cockpit {
                         cx.listener(move |this, _ev, _w, cx| {
                             this.web_cells_opened = Some(cell);
                             this.web_cells_outcome = None;
+                            // Opening a different cell changes the transclusion
+                            // (a new host/source); drop any stale powerbox upgrade
+                            // so the ⚡ interactive state never mismatches the row.
+                            this.web_cells_upgraded = None;
+                            this.web_cells_transclusion_outcome = None;
                             cx.notify();
                         }),
                     )
@@ -3249,6 +3335,179 @@ impl Cockpit {
                     "provenance receipt {} · source finalized={} (the inclusion is CHECKABLE, not trusted)",
                     t.provenance_receipt, t.source_finalized,
                 )));
+
+                // ── SEMI-REINTERACTIVE UPGRADE (the ⚡ "make interactive" button) ──
+                //
+                // A plain transclusion is a READ-ONLY quote — the free verified
+                // observation (a quote is a read, not a key). Pressing ⚡ runs a REAL
+                // `Powerbox::grant` (via `upgrade_transclusion_via_powerbox`) so the
+                // user confers an ATTENUATED affordance cap reaching the SOURCE into
+                // the HOST document's c-list — the host can then FIRE one of the
+                // source's affordances, attenuated to what the user holds, and no
+                // wider. The conferred tier is the viewer's current tier (the
+                // "view as ROOT/EDITOR" toggle), so the attenuation is the user's own
+                // authority. The `view` affordance (the Signature-tier default) is the
+                // one made act-on-able. Held-authority + non-amplification are enforced
+                // by the real powerbox + executor — a denial leaves the quote read-only.
+                let upgraded_here = self.web_cells_upgraded.as_ref().filter(|u| {
+                    u.read.host == t.host && u.read.source == t.source && u.interactive
+                });
+                match upgraded_here {
+                    // INTERACTIVE: the powerbox granted — show the conferred state +
+                    // a button that fires the granted affordance on the SOURCE through
+                    // the real embedded executor (and refuses any wider affordance).
+                    Some(upgraded) => {
+                        let fire_name = upgraded
+                            .granted_affordance
+                            .clone()
+                            .unwrap_or_else(|| "view".to_string());
+                        col = col.child(
+                            div()
+                                .mt_1()
+                                .px_2()
+                                .py_0p5()
+                                .rounded_md()
+                                .bg(theme::panel_hi())
+                                .text_xs()
+                                .text_color(theme::good())
+                                .child(upgraded.affordance_note()),
+                        );
+                        let fire_name_btn = fire_name.clone();
+                        col = col.child(
+                            div()
+                                .id("web-transclusion-fire")
+                                .mt_1()
+                                .px_2()
+                                .py_0p5()
+                                .rounded_md()
+                                .bg(theme::panel_hi())
+                                .border_1()
+                                .border_color(theme::border())
+                                .text_xs()
+                                .text_color(theme::good())
+                                .cursor_pointer()
+                                .hover(|s| s.bg(theme::border()))
+                                .child(format!("▶ fire `{fire_name}` on the source"))
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(move |this, _ev, _w, cx| {
+                                        let banner = match this.web_cells_upgraded.clone() {
+                                            Some(up) => {
+                                                let mut w = this.world.borrow_mut();
+                                                match starbridge_v2::web_cells::WebCellsBrowser::fire_transcluded_affordance(
+                                                    &mut w,
+                                                    &up,
+                                                    &fire_name_btn,
+                                                ) {
+                                                    Ok(o) if o.is_committed() => format!(
+                                                        "committed: fired `{fire_name_btn}` on the transcluded source → real verified turn"
+                                                    ),
+                                                    Ok(starbridge_v2::affordance::FireOutcome::Refused { reason, .. }) => format!(
+                                                        "refused by executor: `{fire_name_btn}` — {reason}"
+                                                    ),
+                                                    Ok(_) => format!("committed: fired `{fire_name_btn}`"),
+                                                    Err(e) => format!(
+                                                        "refused in-band (anti-ghost): `{fire_name_btn}` — {e}"
+                                                    ),
+                                                }
+                                            }
+                                            None => "no upgraded transclusion to fire".to_string(),
+                                        };
+                                        this.web_cells_transclusion_outcome = Some(banner);
+                                        this.refresh_cells();
+                                        cx.notify();
+                                    }),
+                                ),
+                        );
+                    }
+                    // READ-ONLY: offer the ⚡ upgrade. Pressing it runs the real
+                    // powerbox grant through THIS crate's embedded executor.
+                    None => {
+                        col = col.child(div().text_xs().text_color(theme::muted()).child(
+                            "READ-ONLY: this verified quote is free. Make it act-on-able with a \
+                             powerbox-granted, attenuated affordance cap (a real grant turn).",
+                        ));
+                        let host = t.host;
+                        let source = t.source;
+                        let field = t.transcluded_field.clone();
+                        let receipt = t.provenance_receipt.clone();
+                        let finalized = t.source_finalized;
+                        let confer = rights.clone();
+                        col = col.child(
+                            div()
+                                .id("web-transclusion-make-interactive")
+                                .mt_1()
+                                .px_2()
+                                .py_0p5()
+                                .rounded_md()
+                                .bg(theme::panel_hi())
+                                .border_1()
+                                .border_color(theme::accent())
+                                .text_xs()
+                                .text_color(theme::accent())
+                                .cursor_pointer()
+                                .hover(|s| s.bg(theme::border()))
+                                .child("⚡ make interactive (powerbox-grant a source affordance)")
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(move |this, _ev, _w, cx| {
+                                        // Reconstruct the read-only quote for the
+                                        // currently-shown transclusion + UPGRADE it via
+                                        // the POWERBOX: confer the viewer's tier over the
+                                        // source so the host may fire `view`, attenuated.
+                                        let read = starbridge_v2::web_cells::Transclusion {
+                                            host,
+                                            source,
+                                            transcluded_field: field.clone(),
+                                            provenance_receipt: receipt.clone(),
+                                            source_finalized: finalized,
+                                        };
+                                        let principal = this.anchors[2]; // the cockpit user (granter)
+                                        let banner = {
+                                            let mut w = this.world.borrow_mut();
+                                            match starbridge_v2::web_cells::WebCellsBrowser::upgrade_transclusion_via_powerbox(
+                                                &mut w,
+                                                read,
+                                                principal,
+                                                "view",
+                                                confer.clone(),
+                                            ) {
+                                                Ok(upgraded) => {
+                                                    let note = upgraded.affordance_note();
+                                                    this.web_cells_upgraded = Some(upgraded);
+                                                    format!("upgraded via powerbox: {note}")
+                                                }
+                                                Err((still_read_only, reason)) => {
+                                                    this.web_cells_upgraded = Some(still_read_only);
+                                                    format!("powerbox refused the upgrade: {reason}")
+                                                }
+                                            }
+                                        };
+                                        this.web_cells_transclusion_outcome = Some(banner);
+                                        this.refresh_cells();
+                                        cx.notify();
+                                    }),
+                                ),
+                        );
+                    }
+                }
+
+                // The transclusion-upgrade / transcluded-fire outcome banner (a REAL
+                // powerbox grant-turn verdict, or the in-band read-only/over-wide refusal).
+                if let Some(banner) = &self.web_cells_transclusion_outcome {
+                    let good = banner.starts_with("upgraded") || banner.starts_with("committed");
+                    col = col.child(
+                        div()
+                            .mt_1()
+                            .px_2()
+                            .py_0p5()
+                            .rounded_md()
+                            .bg(theme::panel_hi())
+                            .text_xs()
+                            .text_color(if good { theme::good() } else { theme::warn() })
+                            .child(banner.clone()),
+                    );
+                }
             }
         }
 
@@ -3292,17 +3551,28 @@ impl Cockpit {
             .unwrap_or(principal); // the confined requester (a demo app-as-cell)
         let confer = self.powerbox_confer_rights.clone();
 
-        // The app's standing request (it holds no authority; it can only ask). A real
-        // launcher would carry the app's own reason; the demo app asks to message a peer.
-        let request = CapabilityRequest::new(
-            app,
-            "this app needs to reach one peer/resource — designate exactly one",
-            dregg_cell::AuthRequired::None,
-        );
+        // The app's standing request (it holds no authority; it can only ask). If `app`
+        // was LAUNCHED at runtime (via the app-launcher), use ITS OWN recorded request
+        // (the real `CapabilityRequest` the launched confined app raised) — so the panel
+        // routes the genuine launched-app request through the existing powerbox; the
+        // boot-seeded demo app falls back to the standing demo request.
+        let request = self
+            .launched_apps
+            .iter()
+            .find(|a| a.app_cell == app)
+            .map(|a| a.request.clone())
+            .unwrap_or_else(|| {
+                CapabilityRequest::new(
+                    app,
+                    "this app needs to reach one peer/resource — designate exactly one",
+                    dregg_cell::AuthRequired::None,
+                )
+            });
         let pb = {
             let w = self.world.borrow();
             Powerbox::present(&w, principal, &request)
         };
+        let launched_count = self.launched_apps.len();
 
         let mut col = div().flex().flex_col().gap_1().p_3().size_full().overflow_hidden();
         col = col.child(
@@ -3357,14 +3627,49 @@ impl Cockpit {
                                 cx.notify();
                             }),
                         ),
+                )
+                // THE RUNTIME APP-LAUNCHER button — birth a fresh confined app (no
+                // ambient authority) and route ITS request through this powerbox. The
+                // powerbox's missing first half: spawn the confined requester on demand.
+                .child(
+                    div()
+                        .id("powerbox-launch-app")
+                        .px_2()
+                        .py_0p5()
+                        .rounded_md()
+                        .bg(theme::panel_hi())
+                        .border_1()
+                        .border_color(theme::accent())
+                        .text_xs()
+                        .text_color(theme::good())
+                        .cursor_pointer()
+                        .hover(|s| s.bg(theme::border()))
+                        .child("+ launch confined app")
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|this, _ev, _w, cx| {
+                                // Births a fresh confined app-cell + routes its request
+                                // through the existing powerbox (sets it as powerbox_app).
+                                this.run_launch_confined_app(cx);
+                            }),
+                        ),
                 ),
         );
         col = col.child(div().text_xs().text_color(theme::muted()).child(
             "The app holds NO ambient authority — it can only ASK. The powerbox (this \
              trusted UI, NOT the app) can grant ONLY from YOUR own held caps: you can't \
              grant what you don't hold (mint_needs_held_factory). Designating a target \
-             MINTS a fresh ATTENUATED cap into the app via a real verified grant turn.",
+             MINTS a fresh ATTENUATED cap into the app via a real verified grant turn. \
+             Press '+ launch confined app' to SPAWN a new confined app at runtime (it \
+             holds nothing — it requests through this powerbox).",
         ));
+        // The runtime-launched apps roster (each a fresh confined app birthed on demand).
+        if launched_count > 0 {
+            col = col.child(div().text_xs().text_color(theme::accent()).child(format!(
+                "{launched_count} confined app(s) launched at runtime · now mediating: {}",
+                reflect::short_hex(&app.0)
+            )));
+        }
         col = col.child(div().text_xs().text_color(theme::muted()).italic().child(format!(
             "reason: {}",
             pb.reason

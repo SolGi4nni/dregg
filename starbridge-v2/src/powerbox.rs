@@ -340,6 +340,112 @@ impl Powerbox {
     }
 }
 
+/// **A freshly launched, confined app — born at RUNTIME, holding NO authority.**
+///
+/// The boot-seeded demo app-cell is just one app; the real surface is *spawning an
+/// arbitrary confined app on demand*. [`AppLauncher::launch`] does exactly that: it
+/// births a fresh cell in the live ledger — a genuine app-as-cell with an EMPTY
+/// c-list (no ambient authority, the ocap floor) — and produces that app's standing
+/// [`CapabilityRequest`]. The launched app can then only *ask*: the request is routed
+/// through the EXISTING [`Powerbox::present`] (this reinvents NO grant machinery — the
+/// powerbox is unchanged), and the user designates from their OWN held caps. So a
+/// launch is the missing first half of the powerbox ceremony: *birth the confined
+/// requester*, then the powerbox mediates the grant.
+///
+/// gpui-free + `cargo test`-able: the cockpit's launcher button calls exactly this and
+/// hands the produced request to the same `Powerbox::present` the panel already renders.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LaunchedApp {
+    /// The fresh confined app-cell birthed into the live ledger — a real cell with an
+    /// EMPTY c-list (it holds no ambient authority; it can only request).
+    pub app_cell: CellId,
+    /// A human label for the app (the launch name — what the user typed/picked).
+    pub name: String,
+    /// The standing capability request this app raises the moment it launches — the
+    /// authority it would *like*, which the powerbox treats as a ceiling request. Routed
+    /// through [`Powerbox::present`] unchanged.
+    pub request: CapabilityRequest,
+}
+
+impl LaunchedApp {
+    /// The app's short-hex id (the trusted-UI label — drawn from the ledger id).
+    pub fn label(&self) -> String {
+        format!("{} · app {}", self.name, reflect::short_hex(&self.app_cell.0))
+    }
+}
+
+/// **THE RUNTIME APP-LAUNCHER — spawn a confined app that can request a cap.**
+///
+/// Stateless designation helper (it owns nothing): each [`launch`](AppLauncher::launch)
+/// births ONE fresh confined app-cell in the live [`World`] and returns its
+/// [`LaunchedApp`] (the new cell + its standing [`CapabilityRequest`]). The launched
+/// app holds NO capability — a `make_open_cell`-shaped fresh cell with an empty c-list
+/// — so it is genuinely confined: it cannot name or reach anything it was not granted,
+/// and its only recourse is the powerbox.
+///
+/// The fresh cell's seed is chosen to NOT collide with any live cell (the genesis
+/// insert requires a free slot), by scanning candidate seeds against the live ledger —
+/// so launching is re-runnable: each launch births a distinct app.
+pub struct AppLauncher;
+
+impl AppLauncher {
+    /// **Launch a confined app at runtime.** Birth a fresh app-cell (empty c-list, no
+    /// ambient authority) into the live world and return it together with the standing
+    /// [`CapabilityRequest`] it raises. The request is then handed to the EXISTING
+    /// [`Powerbox::present`] (the panel already renders that) — the launcher provides
+    /// the *confined requester*; the powerbox provides the *grant*.
+    ///
+    /// `name` is the app's human label; `reason` is what the app says it needs; `desired`
+    /// is the authority it would like (a ceiling request the powerbox may confer or less).
+    pub fn launch(
+        world: &mut World,
+        name: impl Into<String>,
+        reason: impl Into<String>,
+        desired: AuthRequired,
+    ) -> LaunchedApp {
+        // Birth a FRESH confined cell. A `make_open_cell`-shaped genesis cell holds an
+        // EMPTY c-list (no ambient authority) — exactly a confined app-as-cell. The seed
+        // is chosen unoccupied so the genesis insert lands in a free slot (re-runnable).
+        let seed = fresh_app_seed(world);
+        let app_cell = world.genesis_cell(seed, 0);
+
+        let name = name.into();
+        let request = CapabilityRequest::new(app_cell, reason, desired);
+        LaunchedApp {
+            app_cell,
+            name,
+            request,
+        }
+    }
+}
+
+/// Choose a cell seed not already occupied in the live ledger, so a fresh app's genesis
+/// insert lands in a free slot. `make_open_cell` derives the id from the seed byte
+/// (`pk[0]=seed`, `pk[31]=seed*37`), so scanning seeds = scanning candidate ids. App
+/// seeds start high (`0xA0`) and step by a stride coprime to 256 so a long run of
+/// launches stays collision-free; if (improbably) all 256 are taken, fall back to the
+/// last candidate (the genesis insert is the real backstop).
+fn fresh_app_seed(world: &World) -> u8 {
+    let ledger = world.ledger();
+    let mut seed: u8 = 0xA0;
+    for _ in 0..256u16 {
+        let id = make_open_cell_id(seed);
+        if !ledger.contains(&id) {
+            return seed;
+        }
+        seed = seed.wrapping_add(7); // stride coprime to 256 → visits every residue
+    }
+    seed
+}
+
+/// The [`CellId`] a `make_open_cell(seed, _)` would derive — id is over the seed-shaped
+/// public key (`pk[0]=seed`, `pk[31]=seed*37`) + the zero token id, so we can predict a
+/// fresh cell's id WITHOUT inserting it (to pick a non-colliding seed).
+fn make_open_cell_id(seed: u8) -> CellId {
+    use crate::world::make_open_cell;
+    make_open_cell(seed, 0).id()
+}
+
 // ── the model-building helpers (pure; each names the real cap primitive) ──
 
 /// Build the picker: every distinct target the `principal` holds a cap reaching, read
@@ -593,6 +699,97 @@ mod tests {
         // target, the legitimate (non-amplifying) grant succeeds.
         let ok = Powerbox::grant(&mut world, principal, app, peer, AuthRequired::Signature);
         assert!(ok.is_granted(), "conferring ⊆ the held authority is a legitimate grant");
+    }
+
+    // ── THE RUNTIME APP-LAUNCHER tests ────────────────────────────────────────
+
+    #[test]
+    fn launching_an_app_births_a_fresh_confined_cell_holding_no_authority() {
+        // THE LAUNCH: spawn a confined app at runtime → a fresh cell exists in the live
+        // ledger that did NOT before, and it holds NO ambient authority (an empty c-list).
+        // It is genuinely confined: it can only ASK, never reach.
+        let (mut world, _principal, _app, _docs, _peer) = powerbox_world();
+        let count_before = world.cell_count();
+
+        let launched = AppLauncher::launch(
+            &mut world,
+            "scratch-pad",
+            "wants to reach one resource",
+            AuthRequired::Either,
+        );
+
+        // A brand-new cell was birthed into the live ledger.
+        assert_eq!(world.cell_count(), count_before + 1, "launch births exactly one new cell");
+        let app = world.ledger().get(&launched.app_cell).expect("the launched app is a real live cell");
+        // It holds NOTHING — no ambient authority, the ocap floor (a confined app-as-cell).
+        assert_eq!(
+            app.capabilities.len(),
+            0,
+            "a freshly launched confined app holds no capability — it can only request one"
+        );
+        // The standing request points back at the launched cell + carries the asked rights.
+        assert_eq!(launched.request.app_cell, launched.app_cell);
+        assert_eq!(launched.request.desired_rights, AuthRequired::Either);
+        assert!(launched.label().contains("scratch-pad"));
+    }
+
+    #[test]
+    fn a_launched_apps_request_routes_through_the_existing_powerbox_then_is_granted() {
+        // THE WHOLE CEREMONY end-to-end: launch a confined app at RUNTIME, route its
+        // request through the EXISTING Powerbox::present (unchanged), then the user
+        // designates a held target → the powerbox mints a real attenuated cap INTO the
+        // launched app. The launcher supplied the confined requester; the powerbox did
+        // the grant. This is exactly the cockpit's launcher button → powerbox panel flow.
+        let (mut world, principal, _seed_app, docs, _peer) = powerbox_world();
+
+        // 1. LAUNCH: birth the confined requester at runtime (not the boot-seeded one).
+        let launched = AppLauncher::launch(
+            &mut world,
+            "launched-app",
+            "needs your docs",
+            AuthRequired::None,
+        );
+        assert!(
+            !world.ledger().get(&launched.app_cell).unwrap().capabilities.has_access(&docs),
+            "the launched app does NOT reach docs before the powerbox grant"
+        );
+
+        // 2. ROUTE through the EXISTING powerbox: present the picker for the launched
+        //    app's request (the same Powerbox::present the panel renders — not a new path).
+        let pb = Powerbox::present(&world, principal, &launched.request);
+        assert_eq!(pb.app_cell, launched.app_cell, "the powerbox mediates the launched app's request");
+        assert!(pb.can_grant(&docs).is_some(), "the user holds docs → it is designable for the launched app");
+
+        // 3. The user DESIGNATES docs at an attenuated Signature → a real grant turn mints
+        //    the cap into the LAUNCHED app's c-list.
+        let receipts_before = world.receipts().len();
+        let outcome = Powerbox::grant(&mut world, principal, launched.app_cell, docs, AuthRequired::Signature);
+        let conferred = outcome.conferred().expect("the held, attenuated designation grants").clone();
+        assert_eq!(conferred.app_cell, launched.app_cell, "the cap landed in the LAUNCHED app");
+        assert_eq!(conferred.conferred_rights, AuthRequired::Signature, "attenuated, not the user's wider None");
+        assert_eq!(world.receipts().len(), receipts_before + 1, "the grant is a real verified turn");
+        assert!(
+            world.ledger().get(&launched.app_cell).unwrap().capabilities.has_access(&docs),
+            "the launched app now reaches docs — the runtime launch + powerbox grant closed the loop"
+        );
+    }
+
+    #[test]
+    fn launching_repeatedly_births_distinct_apps_no_collision() {
+        // Re-runnable: each launch births a DISTINCT confined app (the seed is chosen
+        // unoccupied), so the cockpit's "+ launch" button can spawn many apps.
+        let (mut world, _principal, _app, _docs, _peer) = powerbox_world();
+        let a = AppLauncher::launch(&mut world, "app-a", "r", AuthRequired::None);
+        let b = AppLauncher::launch(&mut world, "app-b", "r", AuthRequired::None);
+        let c = AppLauncher::launch(&mut world, "app-c", "r", AuthRequired::None);
+        assert_ne!(a.app_cell, b.app_cell, "two launches → two distinct app-cells");
+        assert_ne!(b.app_cell, c.app_cell, "three launches → three distinct app-cells");
+        assert_ne!(a.app_cell, c.app_cell);
+        // All three are live confined cells holding nothing.
+        for app in [&a, &b, &c] {
+            let cell = world.ledger().get(&app.app_cell).expect("launched app is live");
+            assert_eq!(cell.capabilities.len(), 0, "each launched app is confined (empty c-list)");
+        }
     }
 
     #[test]

@@ -2352,6 +2352,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "dregg-query"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "hex",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "dregg-sdk"
 version = "0.1.0"
 dependencies = [
@@ -7506,8 +7517,12 @@ dependencies = [
  "blake3",
  "dregg-cell",
  "dregg-firmament",
+ "dregg-query",
  "dregg-turn",
  "dregg-types",
+ "futures-core",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

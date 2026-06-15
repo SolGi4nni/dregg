@@ -131,7 +131,8 @@ pub use web_cells::{
 };
 #[cfg(feature = "embedded-executor")]
 pub use powerbox::{
-    CapabilityRequest, GrantableTarget, GrantedCap, Powerbox, PowerboxOutcome,
+    AppLauncher, CapabilityRequest, GrantableTarget, GrantedCap, LaunchedApp, Powerbox,
+    PowerboxOutcome,
 };
 #[cfg(feature = "embedded-executor")]
 pub use agent::{AgentActivity, AgentSurface};
