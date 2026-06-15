@@ -46,7 +46,7 @@ use dregg_circuit::effect_vm::trace_rotated::{
     ROT_WIDTH, RotatedBlockWitness, empty_caveat_manifest, generate_rotated_effect_vm_trace,
     rotated_descriptor_name_for_effect, transfer_caveat_manifest,
 };
-use dregg_circuit::effect_vm::{CellState, Effect};
+use dregg_circuit::effect_vm::{CellState, Effect, fold_bytes32_to_bb};
 use dregg_circuit::effect_vm_descriptors::V3_STAGED_REGISTRY_TSV;
 use dregg_circuit::field::BabyBear;
 use dregg_turn::rotation_witness as rw;
@@ -115,6 +115,17 @@ fn producer_cell(balance: i64, nonce: u64) -> Cell {
     for _ in 0..nonce {
         let _ = cell.state.increment_nonce();
     }
+    cell
+}
+
+/// PATH-PRESERVE §4 — a NON-SYNTHETIC producer cell: identical to [`producer_cell`] but with a
+/// NON-ZERO `fields[field_idx]` (the shape the pre-Phase-3 synthetic-shape gate REFUSED). The
+/// field flows into `pre_limbs[4 + field_idx] = fold_bytes32_to_bb(field)`
+/// (`cell/src/commitment.rs:894`) and so into the rotated OLD/NEW `wireCommitR` — making the
+/// differential's commitment agreement LOAD-BEARING (non-vacuous) for a field-bearing cell.
+fn producer_cell_with_field(balance: i64, nonce: u64, field_idx: usize, field: [u8; 32]) -> Cell {
+    let mut cell = producer_cell(balance, nonce);
+    assert!(cell.state.set_field(field_idx, field), "set_field must take on a fresh cell");
     cell
 }
 
@@ -787,5 +798,160 @@ fn rotated_set_field_and_bridge_mint_tick_nonce_and_refuse_forged_delta() {
         "C7 NONCE-TICK GATE GREEN (LIVE): rotated SetField + BridgeMint prove+verify on real \
          ticked turns through the LIVE generator, and a forged nonce delta is UNSAT — every \
          cohort effect now rotates."
+    );
+}
+
+/// PATH-PRESERVE §4 / §6.1 — THE NON-SYNTHETIC-CELL DIFFERENTIAL (Phase 0, the §4-premise check).
+///
+/// The other differential tests in this file run a real public-key cell but with ZERO fields. §4's
+/// lift drops the "pristine / zero-fields" gate so a FIELD-BEARING cell rotates — its premise is
+/// that the rotated OLD/NEW `wireCommitR` commitments still agree between the CELL (`v9`) and the
+/// CIRCUIT (the LIVE generator's row-0 / last-row `STATE_COMMIT` carrier) *regardless of the
+/// non-zero field*, because the field is folded the SAME way on both sides
+/// (`fold_bytes32_to_bb(&cell.state.fields[i]) == st.fields[i]`, then absorbed by `wireCommitR`).
+/// This test establishes that fact EMPIRICALLY before the live cutover (Phase 4) relies on it.
+///
+/// It proves a single-run rotated transfer over a cell whose `fields[0]` is NON-ZERO (`0x07…`),
+/// seeding the circuit `CellState.fields[0]` to the SAME folded felt so the v1-welded state block
+/// and the cell's v9 commitment are consistent (the §4 seed obligation: `initial_vm_state` must
+/// carry the real cell's `fields[0..8]`). It asserts:
+///   - the field felt is genuinely NON-ZERO and equals the trace's before-block FIELD[0] carrier
+///     (the load-bearing, NON-VACUOUS distinction from the zero-field tests);
+///   - cell-v9(before) == circuit row-0 `STATE_COMMIT` == PI[34] (OLD_COMMIT agreement on a
+///     field-bearing cell — the §4.2 premise);
+///   - cell-v9(after) == circuit last-row `STATE_COMMIT` == PI[35] (NEW_COMMIT agreement);
+///   - the whole rotated transfer PROVES + VERIFIES end-to-end on the field-bearing cell.
+///
+/// If OLD_COMMIT DISagreed here, §4's premise would be wrong and Phase 3 (already landed) would be
+/// unsound — so this is a regression tooth for the lift, not just coverage.
+#[test]
+fn rotated_non_synthetic_field_bearing_cell_old_new_commit_agree() {
+    let desc =
+        parse_vm_descriptor2(rotated_transfer_json()).expect("rotated transfer descriptor parses");
+
+    let before_balance: i64 = 100_000;
+    let amount: u64 = 50;
+    // The non-zero field carried by the cell (and, to keep the v1-welded state block consistent
+    // with the cell, by the circuit `CellState` the generator opens over).
+    let field0_bytes = [0x07u8; 32];
+    let field0_felt = fold_bytes32_to_bb(&field0_bytes);
+    assert_ne!(
+        field0_felt,
+        BabyBear::ZERO,
+        "the test field must fold to a NON-ZERO felt or the differential is vacuous"
+    );
+
+    // The circuit pre-state seeded with the SAME field[0] the cell carries (PATH-PRESERVE §4.1: the
+    // prover seeds `initial_vm_state` from the real cell, NOT a zero-field `CellState::new`).
+    let mut st = CellState::new(before_balance as u64, 0);
+    st.fields[0] = field0_felt;
+    st.refresh_commitment();
+    let effects = vec![Effect::Transfer {
+        amount,
+        direction: 1,
+    }];
+
+    // The REAL field-bearing before/after producer cells. The transfer TICKS the nonce in-circuit
+    // (`generate_effect_vm_trace` does `new_state.nonce += 1` on every effect row, `trace.rs:541`),
+    // so the real after-cell carries nonce = pre_nonce + 1 = 1 — the after-cell must match the
+    // circuit's ticked after-state for the v9(after) ≡ last-row STATE_COMMIT differential to hold
+    // (the field is unchanged by a transfer, so it persists; only balance + nonce move).
+    let mut ledger = Ledger::new();
+    let before_cell = producer_cell_with_field(before_balance, 0, 0, field0_bytes);
+    let after_cell =
+        producer_cell_with_field(before_balance - amount as i64, 1, 0, field0_bytes);
+    ledger.insert_cell(after_cell.clone()).unwrap();
+    let nullifier_root = [0u8; 32];
+    let receipt_log: Vec<[u8; 32]> = vec![[1u8; 32], [2u8; 32]];
+
+    let before_w = rw::produce(&before_cell, &ledger, &nullifier_root, &receipt_log);
+    let after_w = rw::produce(&after_cell, &ledger, &nullifier_root, &receipt_log);
+
+    let caveat = transfer_caveat_manifest();
+    let (trace, dpis) = generate_rotated_effect_vm_trace(
+        &st,
+        &effects,
+        &bridge(&before_w),
+        &bridge(&after_w),
+        &caveat,
+    )
+    .expect("live rotated generator must produce the field-bearing trace + 38 PIs");
+    let r0 = &trace[0];
+    let last = &trace[trace.len() - 1];
+
+    // (a) THE FIELD IS LOAD-BEARING: the cell's non-zero field[0] is folded into the producer limb
+    //     AND welded into the trace's before-block FIELD[0] carrier — both NON-ZERO and equal.
+    assert_eq!(
+        before_w.pre_limbs[4], field0_felt,
+        "the producer must fold the real cell's field[0] into pre_limbs[4]"
+    );
+    assert_eq!(
+        r0[STATE_BEFORE_BASE + state::FIELD_BASE],
+        field0_felt,
+        "the v1-welded before-block FIELD[0] must equal the seeded field felt (the §4 seed \
+         obligation — initial_vm_state carries the real field)"
+    );
+    assert_ne!(
+        r0[STATE_BEFORE_BASE + state::FIELD_BASE],
+        BabyBear::ZERO,
+        "the differential is NON-VACUOUS: the welded field[0] is genuinely non-zero"
+    );
+
+    // (b) OLD_COMMIT AGREEMENT (§4.2) on the field-bearing cell: cell-v9(before) == circuit row-0
+    //     STATE_COMMIT == PI[34]. The non-zero field is absorbed by `wireCommitR` identically on
+    //     both sides, so the agreement holds despite the field — the whole point of the lift.
+    let v9_ctx_before = V9RotationContext {
+        cells_root: before_w.pre_limbs[0],
+        nullifier_root,
+        iroot: before_w.iroot,
+    };
+    let cell_v9_before = compute_canonical_state_commitment_v9_felt(&before_cell, &v9_ctx_before);
+    assert_eq!(
+        cell_v9_before,
+        r0[BEFORE_BASE + B_STATE_COMMIT],
+        "§4.2: field-bearing cell v9(before) == circuit row-0 STATE_COMMIT (OLD_COMMIT agree)"
+    );
+    assert_eq!(
+        dpis[34],
+        r0[BEFORE_BASE + B_STATE_COMMIT],
+        "PI[34] (rotated OLD_COMMIT) == row-0 STATE_COMMIT on the field-bearing cell"
+    );
+    assert_eq!(
+        cell_v9_before, before_w.state_commit,
+        "field-bearing cell v9(before) == producer wire_commit(before)"
+    );
+
+    // (c) NEW_COMMIT AGREEMENT on the field-bearing after-cell: cell-v9(after) == circuit last-row
+    //     STATE_COMMIT == PI[35]. (The after-cell's turn-invariant limbs ride the after-block; the
+    //     welds carry the debited balance — the field is unchanged by a transfer, so it persists.)
+    let v9_ctx_after = V9RotationContext {
+        cells_root: after_w.pre_limbs[0],
+        nullifier_root,
+        iroot: after_w.iroot,
+    };
+    let cell_v9_after = compute_canonical_state_commitment_v9_felt(&after_cell, &v9_ctx_after);
+    assert_eq!(
+        cell_v9_after,
+        last[AFTER_BASE + B_STATE_COMMIT],
+        "§4.2: field-bearing cell v9(after) == circuit last-row STATE_COMMIT (NEW_COMMIT agree)"
+    );
+    assert_eq!(
+        dpis[35],
+        last[AFTER_BASE + B_STATE_COMMIT],
+        "PI[35] (rotated NEW_COMMIT) == last-row STATE_COMMIT on the field-bearing cell"
+    );
+
+    // (d) THE WHOLE FIELD-BEARING ROTATED TRANSFER PROVES + VERIFIES end-to-end.
+    let mem_boundary = MemBoundaryWitness::default();
+    let map_heaps: Vec<Vec<dregg_circuit::heap_root::HeapLeaf>> = vec![];
+    let proof = prove_vm_descriptor2(&desc, &trace, &dpis, &mem_boundary, &map_heaps)
+        .expect("field-bearing rotated transfer must prove end-to-end");
+    verify_vm_descriptor2(&desc, &proof, &dpis)
+        .expect("field-bearing rotated transfer proof must verify independently");
+
+    eprintln!(
+        "PATH-PRESERVE §4 DIFFERENTIAL GREEN: a FIELD-BEARING (non-synthetic) cell's rotated \
+         OLD/NEW commitments agree cell-v9 ≡ circuit STATE_COMMIT ≡ PI[34/35], the non-zero field \
+         is load-bearing, and the proof verifies — the lift's premise holds empirically."
     );
 }

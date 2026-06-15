@@ -530,6 +530,27 @@ pub fn prove_and_verify_finalized_turn(
     //    proves exactly what the cipherclerk would sign).
     let vm_effects = AgentCipherclerk::convert_effects_to_vm(agent, effects);
 
+    // SHAPE-3 INVARIANT (PATH-PRESERVE §1/§7 Phase 0 — CORRECTED against HEAD; the doc's §1/§8
+    // premise that this projector "returns an EMPTY vm_effects" is STALE). The FullTurnProof-path
+    // projector `AgentCipherclerk::convert_effects_to_vm` DOES inject a sentinel
+    // `VmEffect::NoOp` when no effect touches the actor (`sdk/src/cipherclerk.rs:5876-5877`:
+    // `if vm_effects.is_empty() { vm_effects.push(VmEffect::NoOp); }`), so `vm_effects` is NEVER
+    // empty here — a `debug_assert!(!is_empty())` would be VACUOUS. The real Shape-3 case is a
+    // `[NoOp]`-ONLY projection (a cross-cell / no-actor-effect turn): `rotated_descriptor_name_for_effect(&NoOp)`
+    // is `None` (`trace_rotated.rs:467`), so the cohort gate refuses it and the builder hands us
+    // `rotation == None` — the v1 leg then proves the trivial old==new no-op. That is the CORRECT
+    // routing; a `[NoOp]`-only turn is NOT a rotated state transition. The LOAD-BEARING invariant
+    // (non-vacuous) is therefore: the rotated path is taken ONLY for a projection carrying a real
+    // (non-NoOp) effect — if a lone-NoOp turn ever arrives WITH a rotation witness, the rotated leg
+    // would attest a fictional cohort transition, so we make THAT regression loud.
+    debug_assert!(
+        rotation.is_none() || vm_effects.iter().any(|e| !matches!(e, dregg_circuit::effect_vm::Effect::NoOp)),
+        "PATH-PRESERVE Shape-3: prove_and_verify_finalized_turn reached with a ROTATION witness \
+         for a NoOp-only actor projection — a no-actor-effect turn cannot rotate (the cohort gate \
+         must have refused it ⇒ rotation==None). agent={agent:?}, effects={effects:?}, \
+         vm_effects={vm_effects:?}"
+    );
+
     // 2. Build the actor cell's pre-execution Effect-VM state. The old
     //    commitment the proof binds to is this state's commitment.
     //
@@ -714,6 +735,18 @@ pub fn prove_and_verify_finalized_turn_freshness(
 
     // Same Effect-VM marshalling + pre-state as the self-sovereign path.
     let vm_effects = AgentCipherclerk::convert_effects_to_vm(agent, effects);
+    // SHAPE-3 INVARIANT (PATH-PRESERVE §1/§7 Phase 0 — CORRECTED; see the canonical note in
+    // `prove_and_verify_finalized_turn`: the projector injects a NoOp sentinel so `vm_effects` is
+    // NEVER empty). The freshness path is a SPEND turn — `NoteSpend` projects UNCONDITIONALLY
+    // (`cipherclerk.rs:5524`, no actor guard) — so a real (non-NoOp) effect is present a fortiori
+    // and the NoOp sentinel is never the lone element here. The non-vacuous invariant: a `[NoOp]`-only
+    // projection (which cannot occur for a spend) must never carry a rotation witness.
+    debug_assert!(
+        vm_effects.iter().any(|e| !matches!(e, dregg_circuit::effect_vm::Effect::NoOp)),
+        "PATH-PRESERVE Shape-3: prove_and_verify_finalized_turn_freshness reached with a NoOp-only \
+         projection — a spend turn must project a real NoteSpend effect. agent={agent:?}, \
+         effects={effects:?}, vm_effects={vm_effects:?}"
+    );
     let initial_vm_state = CellState::new(pre_balance, pre_nonce as u32);
     let old_commit = initial_vm_state.state_commitment;
     let (_trace, pi) = generate_effect_vm_trace(&initial_vm_state, &vm_effects);
@@ -856,6 +889,20 @@ pub fn prove_and_verify_finalized_turn_capability(
     // EffectVm row's `cap_root` column binds). Without a rotation witness the byte-identical
     // `with_capability_root` (zero fields, real cap root) v1 cap leg runs.
     let vm_effects = AgentCipherclerk::convert_effects_to_vm(agent, effects);
+    // SHAPE-3 INVARIANT (PATH-PRESERVE §1/§7 Phase 0 — CORRECTED; see the canonical note in
+    // `prove_and_verify_finalized_turn`: the projector injects a NoOp sentinel so `vm_effects` is
+    // NEVER empty). A cap-gated turn whose effects touch ONLY other cells (e.g. a cross-cell
+    // SetField) projects to `[NoOp]` on the actor; the cohort builder refuses it (NoOp resolves to
+    // no descriptor) and hands `rotation == None` ⇒ the v1 cap leg proves the trivial no-op. The
+    // non-vacuous invariant: the rotated cap path is taken ONLY for a projection carrying a real
+    // (non-NoOp) effect — a lone-NoOp turn arriving WITH a rotation witness would mis-attest a
+    // cohort transition, so we make THAT regression loud.
+    debug_assert!(
+        rotation.is_none() || vm_effects.iter().any(|e| !matches!(e, dregg_circuit::effect_vm::Effect::NoOp)),
+        "PATH-PRESERVE Shape-3: prove_and_verify_finalized_turn_capability reached with a ROTATION \
+         witness for a NoOp-only actor projection — a no-actor-effect cap turn cannot rotate. \
+         agent={agent:?}, effects={effects:?}, vm_effects={vm_effects:?}"
+    );
     let initial_vm_state = match &rotation {
         Some(rot) => rot
             .before_cell_state()
