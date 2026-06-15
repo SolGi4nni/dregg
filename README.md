@@ -51,15 +51,21 @@ curl -s https://devnet.dregg.fg-goose.online/status
 # {"healthy":true,"consensus_live":true,"federation_mode":"solo",
 #  "state_producer":"lean","full_turn_proving":true,"producer_covered_effects":19,…}
 
-# 2. Faucet yourself a cell (any fresh 32-byte hex id is a valid recipient).
+# 2. Watch the node execute a REAL verified turn — faucet a cell. NOTE: a cell id
+#    is a commitment to a public key (`id == derive_raw(pubkey, token)`), so this
+#    *random* id is a BARE ADDRESS — you'll see the turn land and read the balance,
+#    but you don't hold its key to spend it. (Funding a cell you OWN is step 4.)
 CID=$(python3 -c "import secrets;print(secrets.token_hex(32))")
 curl -s -X POST https://devnet.dregg.fg-goose.online/api/faucet \
   -H 'content-type: application/json' -d "{\"recipient\":\"$CID\",\"amount\":1000}"
 # {"success":true,"tx_hash":"…","amount":1000}
 
-# 3. Read it back — and see it in the explorer.
+# 3. Read it back — credited + queryable, but unspendable (no one holds this address's key).
 curl -s https://devnet.dregg.fg-goose.online/api/cell/$CID
 # {"id":"…","found":true,"balance":1000,"nonce":0,…}
+
+# 4. A cell you CONTROL + can spend from: you need its keypair. The CLI/SDKs manage
+#    your keys — QUICKSTART.md walks through signing a real turn from your own cell.
 ```
 
 Then open the browser surfaces at <https://dregg.fg-goose.online>: the
