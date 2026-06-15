@@ -41,6 +41,22 @@
 //! identity cannot peek. Swapping the *tamper-evidence mechanism* (witness-replay →
 //! STARK) does not loosen the *confinement* (the cap-membrane) — the two are
 //! orthogonal, exactly as `DEOS.md` separates them.
+//!
+//! ## Runnable demos
+//!
+//! Two `examples/` binaries exercise this module end to end against the REAL prover +
+//! verifier (`cargo run -p dregg-app-framework --example <name>`):
+//!   - **`stark_rehydrate`** — the Tier-A-vs-Tier-B narration: a snapshot carries a real
+//!     STARK and rehydration VERIFIES it (light-client style), per-viewer, with the
+//!     tampered-PI-35 / wrong-descriptor anti-ghost teeth.
+//!   - **`stark_frustum_cull`** — the **non-amplification proof obligation made
+//!     concrete**: it mints TWO real legs (a fuller endpoint and a *darkened* one) and
+//!     shows the weaker viewer holding the darkened proof provably **cannot prove the
+//!     fuller view** — splicing the fuller PI-35 commitment into the darkened proof is
+//!     UNSAT ([`verify_stark_proof_against`] rejects), AND the membrane independently
+//!     refuses to project the fuller lineage
+//!     ([`crate::rehydration::RehydrateError::Amplification`]). Two independent walls =
+//!     "frustum culling the semantic graph" with teeth.
 
 use dregg_cell::{AuthRequired, Cell};
 use dregg_circuit::descriptor_ir2::{
