@@ -2546,12 +2546,25 @@ async fn tool_submit_turn(params: &Value, state: &NodeState) -> McpToolResult {
     let turn_hash_bytes = turn.hash();
     let turn_hash = hex_encode(&turn_hash_bytes);
 
-    // Execute the turn locally.
+    // Execute the turn locally — THROUGH THE ONE producer gate (#171), so the
+    // generic MCP submit ingress runs on the SAME authoritative state producer as
+    // a consensus-finalized turn (`blocklace_sync::execute_finalized_turn`) or a
+    // pg-queued one (`submit_queue_drainer`): under producer mode (default ON) the
+    // VERIFIED Lean executor is authoritative for the swap-safe covered set and the
+    // Rust `TurnExecutor` is the demoted differential reference. Previously this
+    // surface called `executor.execute` directly, leaving Rust authoritative on the
+    // MCP path — the remaining Stage-0 seam this closes.
     let federation_id = s.federation_id;
     let mut executor = dregg_turn::TurnExecutor::new(dregg_turn::ComputronCosts::default());
     executor.set_local_federation_id(federation_id);
     executor.set_executor_signing_key(s.cclerk.gossip_signing_key().to_bytes());
-    let exec_result = executor.execute(&turn, &mut s.ledger);
+    let lean_producer_enabled = s.lean_producer_enabled;
+    let exec_result = crate::executor_setup::execute_via_producer(
+        &executor,
+        &turn,
+        &mut s.ledger,
+        lean_producer_enabled,
+    );
 
     match exec_result {
         dregg_turn::TurnResult::Committed { receipt, .. } => {
