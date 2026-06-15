@@ -1,0 +1,32 @@
+# crypto-floor-hosttest — the EXECUTABLE host witness for the executor PD's §2
+# byte-channel STARK verify (`crypto-floor/src/lib.rs::dreggcf_stark_verify_bytes`).
+#
+# WHY A SEPARATE CRATE. The crypto-floor itself is a `no_std` `staticlib` whose
+# load-bearing artifact runs on aarch64-musl under qemu (the C self-test). On a
+# macOS host there is no user-mode `qemu-aarch64` to run that ELF, and a
+# `staticlib` + alloc-heavy no_std deps cannot host a std `cargo test` harness
+# (the `--test` build double-links `core`). So this sibling std crate INCLUDES the
+# SAME carried STARK core source files (`crypto-floor/src/stark_core/{field,stark}.rs`,
+# via `#[path]`) and exercises the identical prove -> verify-bytes wiring as a
+# normal host binary + `#[test]` — a real, runnable anti-ghost witness on this box:
+# ACCEPT a sound proof, REJECT a tampered proof, REJECT a wrong public input.
+#
+# Standalone workspace (empty [workspace]) so it builds with its own target dir,
+# swarm-safely, NOT a member of the sel4/dregg-pd workspace.
+[workspace]
+
+[package]
+name = "dregg-crypto-floor-hosttest"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "host_stark_tooth"
+path = "src/main.rs"
+
+[dependencies]
+# The EXACT deps the carried stark_core needs (same versions/features as the
+# crypto-floor + verifier-stark crates), but here built for the host with std.
+blake3 = { version = "1", default-features = false, features = ["pure"] }
+serde = { version = "1", default-features = false, features = ["derive", "alloc"] }

@@ -68,11 +68,21 @@ the upstream `lean4@d024af099` sources for a **hosted aarch64-linux-musl** targe
      (Plonky3-conformant Poseidon2 over BabyBear + BLAKE3). A turn that hashes now
      computes a real on-device digest. REAL: Poseidon2 (§4, KAT'd == the circuit's
      `hash_2_to_1`), BLAKE3 (§5), the Poseidon2-derived nullifier (§6), the
-     BLAKE3-keyed MAC (§8). FAIL-CLOSED (ABI-correct, not reached by a hashing
-     turn): ed25519 (§1), Pedersen (§3), AEAD (§7), abstract-STARK verify (§2) —
-     these live on a crypto surface not carried in verifier-stark. (Was
-     `crypto-stub.c`: panic-if-reached with WRONG arity/types.) Run-verified via
-     `crypto-floor-selftest.c` (calls each portal at the Lean ABI; all checks pass).
+     BLAKE3-keyed MAC (§8), AND **§2 STARK verification** — the staticlib now
+     carries the verifier-stark `stark_core` (BabyBear+BLAKE3+FRI+Fiat-Shamir)
+     verbatim and exposes `dreggcf_stark_verify_bytes(proof, pi)`: decode the
+     structured proof, resolve the carried AIR, run `stark::verify` — ACCEPT a
+     sound proof, REJECT a tampered proof / wrong PI (the anti-ghost + boundary
+     teeth). (The Lean `dregg_stark_verify` *abstract Nat-pair* portal still fails
+     closed — two opaque Nats carry no checkable proof; the real check is the byte
+     channel the proof-carrying turn feeds.) FAIL-CLOSED (ABI-correct, not reached
+     by a hashing turn, a genuinely different elliptic-curve surface not in
+     verifier-stark): ed25519 (§1), Pedersen (§3), AEAD (§7). (Was `crypto-stub.c`:
+     panic-if-reached with WRONG arity/types.) Run-verified via
+     `crypto-floor-selftest.c` (calls each portal at the Lean ABI + the STARK
+     verify teeth; the ELF now links — the harness's C++-mangling bug is fixed) and
+     `sel4/crypto-floor-hosttest/` (the STARK verify teeth run natively on the host,
+     bitmask `0x7`).
    - `init-stubs.c` — no-op `initialize_Lean`/`initialize_aesop_Aesop`/
      `initialize_Dregg2_Dregg2_Tactics`. These cut the **Lean elaborator** out of
      the init-chain: the executor's compute path calls ZERO elaborator/kernel

@@ -16,6 +16,15 @@
 #include <stdio.h>
 #include <string.h>
 
+/* The portal + dreggcf_* symbols are C-ABI (crypto-floor.c is built with gcc;
+ * the dreggcf_* entries are Rust `extern "C"`). This harness is built with g++
+ * (link-probe.sh), so the declarations MUST be `extern "C"` or the compiler
+ * emits C++-mangled references (`_Z20dregg_poseidon2_hash…`) that never resolve
+ * against the unmangled definitions. (`lean.h` already wraps its own decls.) */
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /* The portal symbols, at the exact ABI from PortalFloor.c. */
 extern lean_object *dregg_poseidon2_hash(lean_object *, lean_object *);
 extern lean_object *dregg_blake3_hash(lean_object *);
@@ -29,7 +38,20 @@ extern uint8_t dregg_aead_open(lean_object *, lean_object *, lean_object *);
 /* The carried primitives directly (to cross-check the C shim against them). */
 extern uint64_t dreggcf_poseidon2_2to1(uint64_t, uint64_t);
 
+/* The REAL §2 byte-channel STARK verify + its on-device anti-ghost self-test
+ * (prove the carried CounterSquareAir, then ACCEPT good / REJECT tampered /
+ * REJECT wrong-PI — bits 0/1/2; a fully-correct floor returns 0x7). This is the
+ * executor-PD analogue of the verifier-stark PD's boot teeth, run on the real
+ * aarch64-musl artifact. */
+extern uint8_t dreggcf_stark_selftest(void);
+extern uint8_t dreggcf_stark_verify_bytes(const uint8_t *proof, size_t proof_len,
+                                          const uint8_t *pi, size_t pi_len);
+
 extern void lean_initialize_runtime_module(void);
+
+#ifdef __cplusplus
+} /* extern "C" */
+#endif
 
 static int failures = 0;
 #define CHECK(cond, msg) do { \
@@ -114,8 +136,33 @@ int main(void) {
         uint8_t s = dregg_stark_verify(lean_box(0), lean_box(0));
         uint8_t a = dregg_aead_open(lean_box(5), lean_box(5), lean_box(0));
         CHECK(e == 0, "ed25519 fails closed (rejects)");
-        CHECK(s == 0, "stark-verify(abstract) fails closed (rejects)");
+        CHECK(s == 0, "stark-verify(abstract Nat-pair) fails closed (rejects)");
         CHECK(a == 0, "aead-open fails closed (rejects)");
+    }
+
+    /* --- §2 the REAL byte-channel STARK verify: the anti-ghost teeth bite. ----
+     * dreggcf_stark_selftest() proves the carried CounterSquareAir (real
+     * Reed-Solomon + BLAKE3 Merkle + FRI + Fiat-Shamir — the SAME STARK the
+     * verifier-stark PD runs), then drives dreggcf_stark_verify_bytes on three
+     * cases. A fully-correct floor returns 0x7 (all three teeth bite). This is
+     * the executor-PD parity with verifier-stark's verified heart organ. */
+    {
+        uint8_t m = dreggcf_stark_selftest();
+        CHECK((m & 0x1) != 0, "real STARK verify: ACCEPTS a sound proof + correct PI");
+        CHECK((m & 0x2) != 0, "real STARK verify: REJECTS a tampered proof (anti-ghost tooth)");
+        CHECK((m & 0x4) != 0, "real STARK verify: REJECTS the good proof under a wrong PI (boundary tooth)");
+        CHECK(m == 0x7, "real STARK verify self-test: ALL teeth bite (0x7)");
+
+        /* a garbage proof buffer must fail closed (decode error -> reject). */
+        uint8_t garbage[64];
+        for (int i = 0; i < 64; i++) garbage[i] = 0xAB;
+        uint32_t pi0 = 0; /* PI = single LE u32 limb 0 */
+        uint8_t gv = dreggcf_stark_verify_bytes(garbage, sizeof garbage,
+                                                (const uint8_t *)&pi0, sizeof pi0);
+        CHECK(gv == 0, "real STARK verify: garbage proof fails closed (rejects)");
+        uint8_t ev = dreggcf_stark_verify_bytes((const uint8_t *)0, 0,
+                                                (const uint8_t *)&pi0, sizeof pi0);
+        CHECK(ev == 0, "real STARK verify: empty proof fails closed (rejects)");
     }
 
     /* --- §3 pedersen placeholder: total + deterministic over Int args. --- */

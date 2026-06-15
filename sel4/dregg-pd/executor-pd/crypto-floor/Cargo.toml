@@ -28,12 +28,21 @@ crate-type = ["staticlib"]
 # C/NEON SIMD path, which needs libc headers absent on the bare cross target).
 blake3 = { version = "1", default-features = false, features = ["pure"] }
 
+# serde: the carried StarkProof structs derive Serialize/Deserialize (the proof
+# BYTES use hand-rolled little-endian framing, but the derives must still compile).
+# Same dep + features the verifier-stark PD uses: no_std via default-features off
+# + derive + alloc. Backs the REAL §2 byte-channel STARK verify (stark_core/).
+serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
+
 # A no_std staticlib still needs a panic handler + (with panic=abort) no unwinder.
+# The load-bearing CROSS artifact (the seL4-musl staticlib, link-probe.sh) is ALWAYS
+# built `--release`, so the release profile keeps `panic = "abort"`. The dev profile
+# does NOT set panic=abort: the host KAT harness (`cargo test`, run on the host with
+# std) needs the std test runner's unwinding — a dev-profile `panic=abort` collides
+# the `blake3` no_std deps' `core` with the test crate's unwinding `core` (duplicate
+# lang item). The cross build never uses dev, so this does not affect the PD artifact.
 [profile.release]
 panic = "abort"
 opt-level = "s"
 lto = true
 codegen-units = 1
-
-[profile.dev]
-panic = "abort"

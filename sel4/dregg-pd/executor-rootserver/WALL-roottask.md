@@ -143,18 +143,33 @@ NOT worked around:
 
 This is the verified turn running on the microkernel — the firmament's heart
 beating on seL4. Two honest notes on what the PD does (NOT claims beyond it):
-- The **crypto floor is now REAL for the hashes** (`executor-pd/scripts/crypto-floor.c`
-  + the `dregg-crypto-floor` staticlib, relinked into `exec-sel4/` and linked by
-  `build.rs`): the 8 `dregg_*` portals are implemented at the exact Lean C ABI,
-  with Poseidon2 + BLAKE3 wired to the SAME carried crypto the verifier-stark PD
-  runs on seL4 (Plonky3-conformant Poseidon2 KAT'd against the circuit). So a turn
-  that hashes (Merkle/commitment/nullifier/transcript) computes a real on-device
-  digest. The demo wire is a non-crypto turn so it exercises the verified
-  decode→step→encode without reaching the floor; the boot receipt is byte-identical
-  with the real floor linked. The 3 not-carried primitives (ed25519/Pedersen/AEAD,
-  a different crypto surface) + the abstract-STARK verify keep an ABI-correct
-  FAIL-CLOSED floor (reject, never a spurious accept) — wiring those is the next
-  step. (Was `crypto-stub.c`: panic-if-reached, wrong arity/types.)
+- The **crypto floor is now REAL for the hashes AND for STARK verification**
+  (`executor-pd/scripts/crypto-floor.c` + the `dregg-crypto-floor` staticlib,
+  relinked into `exec-sel4/` and linked by `build.rs`): the 8 `dregg_*` portals
+  are implemented at the exact Lean C ABI, with Poseidon2 + BLAKE3 wired to the
+  SAME carried crypto the verifier-stark PD runs on seL4 (Plonky3-conformant
+  Poseidon2 KAT'd against the circuit). So a turn that hashes
+  (Merkle/commitment/nullifier/transcript) computes a real on-device digest.
+  **NEW — §2 STARK verify is now a REAL byte-channel verifier**, not the
+  abstract-Nat fail-closed stub: the staticlib carries the verifier-stark
+  `stark_core` (BabyBear+BLAKE3+FRI+Fiat-Shamir, the same STARK) verbatim and
+  exposes `dreggcf_stark_verify_bytes(proof, pi)` — decode the structured proof
+  bytes, resolve the carried AIR by name, run `stark::verify`. ACCEPTS a sound
+  proof, REJECTS a tampered proof + a wrong public input (the anti-ghost +
+  boundary teeth, the executor-PD analogue of verifier-stark's boot teeth). The
+  Lean portal `dregg_stark_verify` (abstract Nat-pair) STILL fails closed (two
+  opaque Nats carry no checkable proof) — the real check is the byte channel the
+  executor PD's proof-carrying turn feeds. Witnessed: `sel4/crypto-floor-hosttest/`
+  runs prove→verify-bytes natively (bitmask `0x7`, all teeth bite); the on-device
+  selftest `dreggcf_stark_selftest()` runs the same teeth, asserted in
+  `crypto-floor-selftest.c` (the ELF now LINKS — a pre-existing C++-mangling bug
+  in the harness's externs is fixed). The demo wire is a non-crypto turn so it
+  exercises the verified decode→step→encode without reaching the floor; the boot
+  receipt is byte-identical with the real floor linked. The 3 not-carried
+  primitives (ed25519/Pedersen/AEAD, a genuinely different elliptic-curve crypto
+  surface NOT in verifier-stark) keep an ABI-correct FAIL-CLOSED floor (reject,
+  never a spurious accept) — wiring those is the next step. (Was `crypto-stub.c`:
+  panic-if-reached, wrong arity/types.)
 - `/dev/urandom` + `clock_gettime` + `getrandom` are **deterministic** (zero-fill)
   in this PD. That is faithful for the deterministic verified turn; a PD needing
   real entropy/time would wire a hardware/seL4 source.
