@@ -153,7 +153,9 @@ impl EthSettlementProof {
 
     /// The calldata to submit to the Solidity verifier's `settle` method:
     /// abi-style concatenation of `(proof || genesis || final || numTurns ||
-    /// digest)`. The contract slices this and runs the pairing check.
+    /// digest)` — `proof` then 32-byte `genesis_root`, 32-byte `final_root`,
+    /// the 8-byte big-endian `num_turns`, and 32-byte `chain_digest`. The
+    /// contract slices this and runs the pairing check.
     pub fn to_calldata(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(self.snark_proof.len() + 32 * 4);
         out.extend_from_slice(&self.snark_proof);
@@ -162,6 +164,92 @@ impl EthSettlementProof {
         out.extend_from_slice(&self.public_inputs.num_turns.to_be_bytes());
         out.extend_from_slice(&self.public_inputs.chain_digest);
         out
+    }
+
+    /// The trailing public-input region of [`Self::to_calldata`]: everything
+    /// after the SNARK proof. For [`SnarkSystem::Groth16Bn254`] the proof prefix
+    /// is the fixed 256 bytes, so this is the calldata from byte 256 on
+    /// (`32 + 32 + 8 + 32 = 104` bytes). The inverse [`EthPublicInputs::from_tail`]
+    /// reconstructs the four dregg commitments from it.
+    pub fn public_input_tail(&self) -> Vec<u8> {
+        let cd = self.to_calldata();
+        cd[self.snark_proof.len()..].to_vec()
+    }
+}
+
+impl EthPublicInputs {
+    /// Reconstruct the four dregg public inputs from the 104-byte tail
+    /// [`EthSettlementProof::to_calldata`] writes after the proof
+    /// (`genesis_root(32) || final_root(32) || num_turns(8 BE) || chain_digest(32)`).
+    /// This is the inverse seam: a relayer reading a `settle` calldata back into
+    /// typed dregg commitments. Rejects a wrong-length tail.
+    pub fn from_tail(tail: &[u8]) -> Result<Self, EthBridgeError> {
+        if tail.len() != 32 + 32 + 8 + 32 {
+            return Err(EthBridgeError::Internal {
+                reason: format!("public-input tail must be 104 bytes, got {}", tail.len()),
+            });
+        }
+        let mut genesis_root = [0u8; 32];
+        genesis_root.copy_from_slice(&tail[0..32]);
+        let mut final_root = [0u8; 32];
+        final_root.copy_from_slice(&tail[32..64]);
+        let mut nt = [0u8; 8];
+        nt.copy_from_slice(&tail[64..72]);
+        let num_turns = u64::from_be_bytes(nt);
+        let mut chain_digest = [0u8; 32];
+        chain_digest.copy_from_slice(&tail[72..104]);
+        Ok(Self {
+            genesis_root,
+            final_root,
+            num_turns,
+            chain_digest,
+        })
+    }
+}
+
+/// A Groth16/BN254 proof's three points, sliced out of the 256-byte
+/// [`EthSettlementProof::snark_proof`] in the exact word order the Solidity
+/// `settle(uint256[2] a, uint256[2][2] b, uint256[2] c, ...)` ABI consumes
+/// (and the EIP-197 pairing precompile expects): `a = (x, y)`,
+/// `b = ((x_c1, x_c0), (y_c1, y_c0))`, `c = (x, y)`, each coordinate a 32-byte
+/// big-endian word. The imaginary G2 coordinate (`c1`) comes FIRST — the
+/// Ethereum word order, not arkworks'/gnark's native `c0 + c1·u` order.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Groth16Calldata {
+    /// `A ∈ G1`: `(x, y)`.
+    pub a: [[u8; 32]; 2],
+    /// `B ∈ G2`: `((x_c1, x_c0), (y_c1, y_c0))`.
+    pub b: [[[u8; 32]; 2]; 2],
+    /// `C ∈ G1`: `(x, y)`.
+    pub c: [[u8; 32]; 2],
+}
+
+impl Groth16Calldata {
+    /// Slice a 256-byte Groth16/BN254 proof into its `(A, B, C)` points — the
+    /// decode the Solidity verifier performs before the pairing precompile.
+    /// Pinning it here keeps the on-chain ABI and the bridge in lockstep. The
+    /// feasibility PoC (`/tmp/dregg-evm-wrap-poc`) emits exactly this 256-byte
+    /// layout from a REAL arkworks BN254 proof over the four dregg roots; the
+    /// `groth16_calldata_slices_abc` test below checks the slicing seam.
+    pub fn from_proof_bytes(proof: &[u8]) -> Result<Self, EthBridgeError> {
+        if proof.len() != 256 {
+            return Err(EthBridgeError::InvalidProof {
+                reason: format!(
+                    "Groth16/BN254 proof must be 256 bytes (A||B||C), got {}",
+                    proof.len()
+                ),
+            });
+        }
+        let w = |o: usize| -> [u8; 32] {
+            let mut x = [0u8; 32];
+            x.copy_from_slice(&proof[o..o + 32]);
+            x
+        };
+        Ok(Self {
+            a: [w(0), w(32)],
+            b: [[w(64), w(96)], [w(128), w(160)]],
+            c: [w(192), w(224)],
+        })
     }
 }
 
@@ -542,5 +630,62 @@ mod tests {
         let abi = solidity_verifier_interface();
         assert!(abi.contains("function settle("));
         assert!(abi.contains("IDreggSettlement"));
+    }
+
+    /// The public-input tail round-trips: the four dregg commitments encode into
+    /// the calldata tail and decode back identically — the relayer seam that
+    /// reads a `settle` calldata back into typed `WholeChainProof` publics.
+    #[test]
+    fn public_inputs_tail_round_trips() {
+        let p = wrap_for_ethereum(
+            [0xAB; 32],
+            EthPublicInputs {
+                genesis_root: [0x11; 32],
+                final_root: [0x22; 32],
+                num_turns: 0x0102_0304_0506_0708,
+                chain_digest: [0x33; 32],
+            },
+            SnarkSystem::Groth16Bn254,
+            Some(vec![7u8; 256]),
+            [9; 32],
+        )
+        .expect("256-byte Groth16 proof wraps");
+
+        let tail = p.public_input_tail();
+        assert_eq!(tail.len(), 32 + 32 + 8 + 32, "tail is the 104-byte PI region");
+        // The tail is exactly the calldata after the 256-byte proof prefix.
+        assert_eq!(tail, p.to_calldata()[256..].to_vec());
+
+        let decoded = EthPublicInputs::from_tail(&tail).expect("tail decodes");
+        assert_eq!(decoded, p.public_inputs, "publics survive the round trip");
+
+        // A wrong-length tail is rejected (the format is pinned).
+        assert!(EthPublicInputs::from_tail(&tail[..100]).is_err());
+    }
+
+    /// The Groth16 `(A, B, C)` slicer cuts the 256-byte proof into the exact
+    /// word order the Solidity `settle` ABI + EIP-197 precompile consume: A=G1,
+    /// B=G2 (imaginary coordinate first), C=G1. A non-256-byte proof is refused.
+    #[test]
+    fn groth16_calldata_slices_abc() {
+        // A proof whose 8 coordinate words are distinguishable (word i = byte i).
+        let mut proof = [0u8; 256];
+        for (i, w) in proof.chunks_mut(32).enumerate() {
+            w[31] = i as u8; // low byte of word i == i
+        }
+        let abc = Groth16Calldata::from_proof_bytes(&proof).expect("256B slices");
+        assert_eq!(abc.a[0][31], 0, "A.x = word 0");
+        assert_eq!(abc.a[1][31], 1, "A.y = word 1");
+        assert_eq!(abc.b[0][0][31], 2, "B.x_c1 = word 2 (imaginary first)");
+        assert_eq!(abc.b[0][1][31], 3, "B.x_c0 = word 3");
+        assert_eq!(abc.b[1][0][31], 4, "B.y_c1 = word 4");
+        assert_eq!(abc.b[1][1][31], 5, "B.y_c0 = word 5");
+        assert_eq!(abc.c[0][31], 6, "C.x = word 6");
+        assert_eq!(abc.c[1][31], 7, "C.y = word 7");
+
+        assert!(
+            Groth16Calldata::from_proof_bytes(&[0u8; 100]).is_err(),
+            "a non-256-byte proof must be refused"
+        );
     }
 }
