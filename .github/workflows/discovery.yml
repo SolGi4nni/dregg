@@ -36,7 +36,7 @@ jobs:
             mkdir -p nodes
             echo '{}' > nodes/.gitkeep
             git config user.name "dregg-federation[bot]"
-            git config user.email "federation@dregg.dev"
+            git config user.email "federation@dregg.fg-goose.online"
             git add .
             git commit -m "Initialize federation-state branch"
             git push origin federation-state
@@ -133,7 +133,7 @@ jobs:
             mkdir -p nodes
             echo '{}' > nodes/.gitkeep
             git config user.name "dregg-federation[bot]"
-            git config user.email "federation@dregg.dev"
+            git config user.email "federation@dregg.fg-goose.online"
             git add .
             git commit -m "Initialize federation-state branch"
           }
@@ -142,7 +142,7 @@ jobs:
           git add discovery.json
           git diff --cached --quiet || {
             git config user.name "dregg-federation[bot]"
-            git config user.email "federation@dregg.dev"
+            git config user.email "federation@dregg.fg-goose.online"
             git commit -m "Update discovery.json [skip ci]"
             git push origin federation-state
           }

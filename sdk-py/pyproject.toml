@@ -39,7 +39,7 @@ pg = ["psycopg[binary]>=3.1"]
 dev = ["pytest>=8.0", "psycopg[binary]>=3.1"]
 
 [project.urls]
-Homepage = "https://dregg.dev"
+Homepage = "https://dregg.fg-goose.online"
 Repository = "https://github.com/emberian/dregg"
 
 [tool.maturin]

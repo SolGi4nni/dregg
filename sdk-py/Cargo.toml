@@ -7,7 +7,7 @@ edition = "2024"
 rust-version = "1.94.0"
 authors = ["Dregg Contributors"]
 license = "AGPL-3.0-or-later"
-homepage = "https://dregg.dev"
+homepage = "https://dregg.fg-goose.online"
 repository = "https://github.com/emberian/dregg"
 description = "Python (pyo3) binding for the dregg SDK's two-noun surface: Identity → turn → sign → submit → Receipt"
 

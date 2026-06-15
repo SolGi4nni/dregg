@@ -142,7 +142,7 @@ jobs:
           git add nodes/node-3.json
           git diff --cached --quiet || {
             git config user.name "dregg-federation[bot]"
-            git config user.email "federation@dregg.dev"
+            git config user.email "federation@dregg.fg-goose.online"
             git commit -m "node-3 state update [skip ci]"
             git push origin federation-state
           }
