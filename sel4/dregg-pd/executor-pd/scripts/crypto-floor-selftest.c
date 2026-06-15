@@ -5,7 +5,12 @@
  * portal symbol (`dregg_*`, the exact Lean C ABI) and asserts:
  *   - Poseidon2/BLAKE3/nullifier/keyed-MAC return REAL, deterministic, non-trivial
  *     digests (Poseidon2 matches the frozen circuit hash_2_to_1 value);
- *   - the not-carried verifies (ed25519/stark/aead) FAIL CLOSED (return 0);
+ *   - the REAL elliptic-curve portals bite end-to-end through the Lean ABI:
+ *     ed25519 (§1) ACCEPTS a genuine signature + REJECTS a forged one; the Pedersen
+ *     commit (§3) returns the Ristretto255 `value·V+blinding·R` bytes equal to the
+ *     carried commit_bytes; AEAD open (§7) AUTHENTICATES a genuine box + REJECTS a
+ *     tampered one — each driven with a Rust-minted test vector;
+ *   - only the ABSTRACT-Nat STARK verify (§2) FAILS CLOSED (no checkable proof);
  *   - no refcount leak/crash across thousands of calls (the ownership contract).
  *
  * Built + run by scripts/link-probe.sh's self-test step (host musl under
@@ -37,6 +42,17 @@ extern uint8_t dregg_aead_open(lean_object *, lean_object *, lean_object *);
 
 /* The carried primitives directly (to cross-check the C shim against them). */
 extern uint64_t dreggcf_poseidon2_2to1(uint64_t, uint64_t);
+extern void     dreggcf_pedersen_commit(uint64_t value, const uint8_t *blinding, uint8_t *out32);
+
+/* The REAL elliptic-curve floor self-tests (mint+verify in Rust; 0xF = all teeth)
+ * + test-vector exporters so this harness can drive the Lean PORTALS end-to-end
+ * (the C harness cannot sign / seal itself). */
+extern uint8_t  dreggcf_ed25519_selftest(void);
+extern uint8_t  dreggcf_pedersen_selftest(void);
+extern uint8_t  dreggcf_chacha_selftest(void);
+extern void     dreggcf_ed25519_test_vector(uint8_t *pk_out, uint8_t *msg_out,
+                                            size_t *msg_len, uint8_t *sig_out);
+extern void     dreggcf_aead_test_vector(uint8_t *key_out, uint8_t *box_out, size_t *box_len);
 
 /* The REAL §2 byte-channel STARK verify + its on-device anti-ghost self-test
  * (prove the carried CounterSquareAir, then ACCEPT good / REJECT tampered /
@@ -77,6 +93,23 @@ static lean_object *mk_byte_list(const uint8_t *b, size_t n) {
         lst = cell;
     }
     return lst;
+}
+
+/* Build a Lean Nat from `n` little-endian bytes (acc = acc*256 + byte, MSB->LSB)
+ * — the inverse of the shim's `nat_to_le_bytes`, so a byte string round-trips
+ * Nat -> bytes -> Nat. Returns a freshly-owned Nat. */
+static lean_object *mk_nat_le(const uint8_t *b, size_t n) {
+    lean_object *acc = lean_box(0);
+    lean_object *base = lean_box(256);
+    for (size_t i = n; i-- > 0;) {
+        lean_object *scaled = lean_nat_mul(acc, base);
+        lean_dec(acc);
+        lean_object *byte = lean_box((size_t)b[i]);
+        lean_object *sum = lean_nat_add(scaled, byte);
+        lean_dec(scaled);
+        acc = sum;
+    }
+    return acc;
 }
 
 int main(void) {
@@ -139,14 +172,77 @@ int main(void) {
         CHECK(t1 != 0 && t1 != t2, "keyed-MAC non-zero + key-sensitive");
     }
 
-    /* --- the NOT-carried verifies must FAIL CLOSED (never spuriously accept). - */
+    /* --- §1 ed25519 verify_strict is REAL: the Lean PORTAL accepts a genuine sig
+     * and rejects a forged one (driven end-to-end — Rust mints the test vector,
+     * the C harness builds the Nat-encoded pk/msg/sig and calls dregg_ed25519_verify). */
     {
-        uint8_t e = dregg_ed25519_verify(lean_box(1), lean_box(1), lean_box(1));
+        /* the Rust-side teeth (mint+verify): ACCEPT genuine, REJECT forged/wrong-msg
+         * /wrong-key — a fully-correct floor returns 0xF. */
+        CHECK(dreggcf_ed25519_selftest() == 0xF, "ed25519 verify_strict: ALL teeth bite (0xF)");
+
+        /* end-to-end through the Lean ABI portal. */
+        uint8_t pk[32], sig[64];
+        static uint8_t msg[64];
+        size_t msg_len = sizeof msg;
+        dreggcf_ed25519_test_vector(pk, msg, &msg_len, sig);
+
+        lean_object *pkN = mk_nat_le(pk, sizeof pk);
+        lean_object *msgN = mk_nat_le(msg, msg_len);
+        lean_object *sigN = mk_nat_le(sig, sizeof sig);
+        /* dregg_ed25519_verify OWNS its args — pass fresh Nats. */
+        uint8_t ok = dregg_ed25519_verify(pkN, msgN, sigN);
+        CHECK(ok == 1, "ed25519 PORTAL: a genuine signature ACCEPTS (real verify_strict)");
+
+        /* forge: flip a byte of the signature -> the portal must REJECT. */
+        uint8_t fsig[64];
+        for (int i = 0; i < 64; i++) fsig[i] = sig[i];
+        fsig[40] ^= 0x01;
+        lean_object *pkN2 = mk_nat_le(pk, sizeof pk);
+        lean_object *msgN2 = mk_nat_le(msg, msg_len);
+        lean_object *fsigN = mk_nat_le(fsig, sizeof fsig);
+        uint8_t forged = dregg_ed25519_verify(pkN2, msgN2, fsigN);
+        CHECK(forged == 0, "ed25519 PORTAL: a forged signature REJECTS (fail-closed)");
+    }
+
+    /* --- §2 the ABSTRACT-Nat STARK verify stays FAIL-CLOSED (an opaque Nat pair
+     * carries no checkable StarkProof; the real check is the byte channel below). */
+    {
         uint8_t s = dregg_stark_verify(lean_box(0), lean_box(0));
-        uint8_t a = dregg_aead_open(lean_box(5), lean_box(5), lean_box(0));
-        CHECK(e == 0, "ed25519 fails closed (rejects)");
         CHECK(s == 0, "stark-verify(abstract Nat-pair) fails closed (rejects)");
-        CHECK(a == 0, "aead-open fails closed (rejects)");
+    }
+
+    /* --- §7 ChaCha20-Poly1305 AEAD open is REAL: the Lean PORTAL authenticates a
+     * genuine box and rejects a tampered one (driven end-to-end). */
+    {
+        /* the Rust-side teeth: round-trip + tampered-ct/wrong-key/tampered-tag fail. */
+        CHECK(dreggcf_chacha_selftest() == 0xF, "chacha20poly1305 AEAD: ALL teeth bite (0xF)");
+
+        uint8_t key[32];
+        static uint8_t boxbuf[128];
+        size_t box_len = sizeof boxbuf;
+        dreggcf_aead_test_vector(key, boxbuf, &box_len);
+        CHECK(box_len > 12 + 16, "aead test vector produced a non-trivial box");
+
+        /* aad is reserved -> Nat 0. ct = nonce(12) || ct||tag. */
+        lean_object *keyN = mk_nat_le(key, sizeof key);
+        lean_object *ctN = mk_nat_le(boxbuf, box_len);
+        uint8_t a = dregg_aead_open(keyN, ctN, lean_box(0));
+        CHECK(a == 1, "aead-open PORTAL: a genuine box AUTHENTICATES (real Poly1305)");
+
+        /* tamper a ciphertext byte (after the 12-byte nonce, before the 16-byte tag). */
+        uint8_t tampered[128];
+        for (size_t i = 0; i < box_len; i++) tampered[i] = boxbuf[i];
+        tampered[12 + (box_len - 12 - 16) / 2] ^= 0x01;
+        lean_object *keyN2 = mk_nat_le(key, sizeof key);
+        lean_object *ctN2 = mk_nat_le(tampered, box_len);
+        uint8_t at = dregg_aead_open(keyN2, ctN2, lean_box(0));
+        CHECK(at == 0, "aead-open PORTAL: a tampered ciphertext REJECTS (fail-closed)");
+
+        /* a too-short box (just the nonce, no body) must reject without crashing. */
+        lean_object *keyN3 = mk_nat_le(key, sizeof key);
+        lean_object *shortN = mk_nat_le(boxbuf, 12);
+        uint8_t ash = dregg_aead_open(keyN3, shortN, lean_box(0));
+        CHECK(ash == 0, "aead-open PORTAL: a too-short box REJECTS (fail-closed)");
     }
 
     /* --- §2 the REAL byte-channel STARK verify: the anti-ghost teeth bite. ----
@@ -197,11 +293,61 @@ int main(void) {
         CHECK(em == 0, "live-turn admit: empty turn wire fails closed (refuses)");
     }
 
-    /* --- §3 pedersen placeholder: total + deterministic over Int args. --- */
+    /* --- §3 Pedersen value commitment is REAL (Ristretto255): the Lean PORTAL
+     * returns the 32-byte `value·V + blinding·R` commitment (as a Nat) byte-for-byte
+     * equal to the carried `dreggcf_pedersen_commit` — which is byte-identical to
+     * cell::value_commitment::commit_bytes (the executor/circuit commitment). */
     {
-        lean_object *r = dregg_pedersen_commit(lean_box(3), lean_box(4));
-        uint64_t c = lean_uint64_of_nat(r); lean_dec(r);
-        CHECK(c != 0, "pedersen placeholder total + non-zero");
+        /* the Rust-side teeth: opening verifies, wrong value/blinding fail, homomorphic. */
+        CHECK(dreggcf_pedersen_selftest() == 0xF, "pedersen (Ristretto255): ALL teeth bite (0xF)");
+
+        /* the portal's commitment must equal the carried primitive's, for the SAME
+         * (value, blinding). value = 1234567; blinding = a fixed 32-byte LE scalar. */
+        uint64_t value = 1234567;
+        uint8_t blinding[32] = {0};
+        blinding[0] = 0x9A; blinding[31] = 0x42;
+
+        uint8_t expect[32] = {0};
+        dreggcf_pedersen_commit(value, blinding, expect);
+
+        /* drive the portal: v = Int 1234567; r = the blinding as a Nat (LE). */
+        lean_object *vN = lean_box((size_t)value);            /* small Int/Nat */
+        lean_object *rN = mk_nat_le(blinding, sizeof blinding);
+        lean_object *cN = dregg_pedersen_commit(vN, rN);
+        /* the returned Nat's LE bytes must equal `expect` (32 bytes). Decompose,
+         * tracking a write index `gi` (NOT conflating a genuine 0x00 byte with an
+         * unwritten slot) — peel low bytes off the big Nat, then drain any scalar
+         * tail from the SAME index. */
+        uint8_t got[32] = {0};
+        {
+            int gi = 0;
+            lean_object *cur = cN; lean_inc(cur);
+            lean_object *mask = lean_box(0xff); lean_object *eight = lean_box(8);
+            while (gi < 32 && !lean_is_scalar(cur)) {
+                lean_object *low = lean_nat_land(cur, mask);
+                got[gi++] = (uint8_t)lean_usize_of_nat(low); lean_dec(low);
+                lean_object *next = lean_nat_shiftr(cur, eight); lean_dec(cur); cur = next;
+            }
+            if (lean_is_scalar(cur)) {
+                size_t leftover = lean_unbox(cur);
+                while (gi < 32 && leftover) {
+                    got[gi++] = (uint8_t)(leftover & 0xff);
+                    leftover >>= 8;
+                }
+            }
+            lean_dec(cur);
+        }
+        lean_dec(cN);
+        int match = 1;
+        for (int i = 0; i < 32; i++) if (got[i] != expect[i]) { match = 0; break; }
+        CHECK(match, "pedersen PORTAL: commitment == carried commit_bytes (Ristretto255, real binding)");
+
+        /* determinism + a different value -> a different commitment (binding). */
+        uint8_t other[32] = {0};
+        dreggcf_pedersen_commit(value + 1, blinding, other);
+        int differ = 0;
+        for (int i = 0; i < 32; i++) if (other[i] != expect[i]) { differ = 1; break; }
+        CHECK(differ, "pedersen: a different value yields a different commitment (binding)");
     }
 
     /* --- ownership: many calls, no leak/crash. --- */

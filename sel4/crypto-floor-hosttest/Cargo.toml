@@ -30,3 +30,12 @@ path = "src/main.rs"
 # crypto-floor + verifier-stark crates), but here built for the host with std.
 blake3 = { version = "1", default-features = false, features = ["pure"] }
 serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
+
+# The SAME three elliptic-curve crates the floor's `ed25519.rs`/`pedersen.rs`/
+# `aead.rs` weld — pinned to the floor's exact versions/features so the host
+# witness runs byte-identical crypto. `rand_core` (ed25519) lets the witness mint
+# a keypair to sign with; the floor itself never needs it (callers supply bytes).
+ed25519-dalek = { version = "2", default-features = false, features = ["alloc", "hazmat", "rand_core"] }
+curve25519-dalek = { version = "4", default-features = false, features = ["alloc"] }
+chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }
+aead = { version = "0.5", default-features = false, features = ["alloc"] }

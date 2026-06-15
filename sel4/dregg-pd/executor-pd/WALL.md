@@ -85,17 +85,34 @@ the upstream `lean4@d024af099` sources for a **hosted aarch64-linux-musl** targe
      wrong-PI / malformed-envelope turn REFUSES (`dreggcf_admit_selftest()` → `0x7`).
      (The Lean `dregg_stark_verify` *abstract Nat-pair* portal still fails closed —
      two opaque Nats carry no checkable proof; the real check is the byte channel
-     the proof-carrying turn feeds.) FAIL-CLOSED (ABI-correct, not reached by a
-     hashing turn, a genuinely different elliptic-curve surface not in
-     verifier-stark): ed25519 (§1), Pedersen (§3), AEAD (§7). (Was `crypto-stub.c`:
-     panic-if-reached with WRONG arity/types.) Run-verified via
-     `crypto-floor-selftest.c` (calls each portal at the Lean ABI + the STARK
-     verify teeth + the LIVE admission teeth; the ELF links clean — 0 undefined
-     symbols, both `dreggcf_admit_*` present as defined text after `--gc-sections`)
-     and `sel4/crypto-floor-hosttest/` (the byte-channel AND the LIVE-turn admission
-     teeth run natively on the host, bitmask `0x7`; on-device RUN of the selftest
-     ELF awaits a user-mode `qemu-aarch64`, absent on macOS — the link is the
-     on-device checkpoint).
+     the proof-carrying turn feeds.) **The three elliptic-curve primitives are NOW
+     ALSO REAL** (welded from the SAME in-workspace crates the executor + cell use):
+     **ed25519 (§1)** — `dreggcf_ed25519_verify` runs ed25519-dalek `verify_strict`
+     (the exact check `turn/src/executor/authorize.rs` + the net-client turn gate
+     run); **Pedersen (§3)** — `dreggcf_pedersen_commit` computes the Ristretto255
+     `value·V + blinding·R` commitment byte-IDENTICAL to
+     `cell::value_commitment::commit_bytes` (the commitment the executor's
+     conservation check consumes and the circuit binds — the circuit does NOT
+     algebraically re-derive a value commitment, it binds these 32 bytes as a
+     public input, so matching them byte-for-byte is what "the same primitive the
+     circuit verifies" means); **AEAD (§7)** — `dreggcf_chacha_{seal,open,authenticate}`
+     runs ChaCha20-Poly1305, the committed-note ECIES box's primitive
+     (`cell::note_encryption`). The C shim marshals the structured byte inputs out
+     of the opaque Lean Nat/Int args (LE magnitudes) via `nat_to_le_bytes` /
+     `le_bytes_to_nat` (pure `lean.h` Nat API — no GMP coupling). Each accepts iff
+     valid, FAIL-CLOSED otherwise (a forged sig / wrong value / tampered ciphertext
+     never spuriously passes). (Was `crypto-stub.c`: panic-if-reached with WRONG
+     arity/types; then an ABI-correct fail-closed floor.) Run-verified via
+     `crypto-floor-selftest.c` (calls each portal at the Lean ABI: the §1/§3/§7
+     elliptic-curve teeth driven END-TO-END with Rust-minted test vectors, the
+     STARK verify teeth, the LIVE admission teeth; the ELF links clean — 0 undefined
+     symbols, the `dregg_{ed25519_verify,pedersen_commit,aead_open}` portals +
+     `dreggcf_*` present as defined text in the selftest ELF) and
+     `sel4/crypto-floor-hosttest/` (the byte-channel, the LIVE-turn admission, AND
+     the §1/§3/§7 elliptic-curve teeth — incl. the Pedersen==commit_bytes and
+     AEAD-opens-a-cell-sealed-note interop teeth — all run natively on the host,
+     every bitmask `0xF`/`0x7`; on-device RUN of the selftest ELF awaits a user-mode
+     `qemu-aarch64`, absent on macOS — the clean link is the on-device checkpoint).
    - `init-stubs.c` — the closure's import-boundary initializers. The **Lean
      elaborator** is cut at the SHAPE of the closure: `cross-compile-closure.sh`
      compiles exactly the import closure rooted at `Dregg2.Exec.FFI` (77 local

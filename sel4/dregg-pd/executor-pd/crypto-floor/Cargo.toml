@@ -34,6 +34,25 @@ blake3 = { version = "1", default-features = false, features = ["pure"] }
 # + derive + alloc. Backs the REAL §2 byte-channel STARK verify (stark_core/).
 serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
 
+# §1 ed25519 strict verify — the SAME crate + `hazmat` the executor auth path and
+# the net-client turn gate use (`turn/src/executor/authorize.rs`,
+# `net-client/src/turn_gate.rs`). no_std: default-features off + alloc + hazmat
+# (its curve25519-dalek backend is the portable serial backend on this target).
+ed25519-dalek = { version = "2", default-features = false, features = ["alloc", "hazmat"] }
+
+# §3 Pedersen value commitment over Ristretto255 — the SAME group + generators
+# `cell/src/value_commitment.rs` commits on (the bytes the executor's conservation
+# check consumes and the circuit binds). no_std: default-features off + alloc.
+curve25519-dalek = { version = "4", default-features = false, features = ["alloc"] }
+
+# §7 ChaCha20-Poly1305 AEAD — the SAME crate the committed-note ECIES box seals/
+# opens with (`cell/src/note_encryption.rs`). no_std: default-features off + alloc.
+chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }
+
+# The RustCrypto AEAD trait (`Aead`/`KeyInit`) — pulled directly so the floor's
+# seal/open call sites name `aead::{Aead, KeyInit}`. no_std: default off + alloc.
+aead = { version = "0.5", default-features = false, features = ["alloc"] }
+
 # A no_std staticlib still needs a panic handler + (with panic=abort) no unwinder.
 # The load-bearing CROSS artifact (the seL4-musl staticlib, link-probe.sh) is ALWAYS
 # built `--release`, so the release profile keeps `panic = "abort"`. The dev profile

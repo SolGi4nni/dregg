@@ -21,6 +21,11 @@ extern crate alloc;
 #[path = "../../dregg-pd/executor-pd/crypto-floor/src/stark_core/mod.rs"]
 mod stark_core;
 
+// The REAL elliptic-curve floor (§1 ed25519, §3 Pedersen, §7 AEAD) host witness —
+// includes the SAME floor modules and runs their teeth + the interop checks
+// (the floor's Pedersen == cell::commit_bytes; the floor opens a cell-sealed note).
+mod crypto_extras;
+
 use stark_core::field::BabyBear;
 use stark_core::stark::{prove, proof_from_bytes, proof_to_bytes, verify, BoundaryConstraint, StarkAir};
 
@@ -341,6 +346,10 @@ fn main() {
         "\n== LIVE-turn admission: a genuine turn is ADMITTED, a tampered/wrong-PI turn REFUSED ==\
          \n== the executor PD's proof-carrying turn routes its proof to the real verifier ( ◕‿◕ ) ==",
     );
+
+    // ---- the REAL elliptic-curve floor: §1 ed25519, §3 Pedersen, §7 AEAD -------
+    let crypto_ok = crypto_extras::run_report();
+    assert!(crypto_ok, "the elliptic-curve crypto floor teeth must all bite");
 }
 
 #[cfg(test)]
