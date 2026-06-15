@@ -585,13 +585,30 @@ impl TurnExecutor {
                     });
                 }
             } else {
-                let air = dregg_circuit::EffectVmAir::new(proof.trace_len);
-                stark::verify(&air, &proof, &public_inputs).map_err(|e| {
-                    AtomicTurnError::ProofFailed {
+                // V1 FLOOR: default hand-AIR (`EffectVmAir`) verify for a cell with no
+                // custom program VK. The recursion tower retires this leg — a no-VK cell's
+                // transition is attested through the rotated proof-carrying path, so an atomic
+                // entry with a v1 default-AIR proof fails closed under `recursion`.
+                #[cfg(not(feature = "recursion"))]
+                {
+                    let air = dregg_circuit::EffectVmAir::new(proof.trace_len);
+                    stark::verify(&air, &proof, &public_inputs).map_err(|e| {
+                        AtomicTurnError::ProofFailed {
+                            cell: entry.cell_id,
+                            reason: e,
+                        }
+                    })?;
+                }
+                #[cfg(feature = "recursion")]
+                {
+                    let _ = &proof;
+                    return Err(AtomicTurnError::ProofFailed {
                         cell: entry.cell_id,
-                        reason: e,
-                    }
-                })?;
+                        reason: "cell has no custom program VK; the v1 default-AIR verify is \
+                                 retired under recursion (use the rotated proof-carrying path)"
+                            .to_string(),
+                    });
+                }
             }
 
             // Extract proven balance delta from PI.
@@ -880,13 +897,28 @@ impl TurnExecutor {
                     });
                 }
             } else {
-                let air = dregg_circuit::EffectVmAir::new(proof.trace_len);
-                stark::verify(&air, &proof, &public_inputs).map_err(|e| {
-                    AtomicTurnError::ProofFailed {
+                // V1 FLOOR: default hand-AIR (`EffectVmAir`) verify; retired under recursion
+                // (the no-VK cell's transition is attested through the rotated path).
+                #[cfg(not(feature = "recursion"))]
+                {
+                    let air = dregg_circuit::EffectVmAir::new(proof.trace_len);
+                    stark::verify(&air, &proof, &public_inputs).map_err(|e| {
+                        AtomicTurnError::ProofFailed {
+                            cell: entry.cell_id,
+                            reason: e,
+                        }
+                    })?;
+                }
+                #[cfg(feature = "recursion")]
+                {
+                    let _ = &proof;
+                    return Err(AtomicTurnError::ProofFailed {
                         cell: entry.cell_id,
-                        reason: e,
-                    }
-                })?;
+                        reason: "cell has no custom program VK; the v1 default-AIR verify is \
+                                 retired under recursion (use the rotated proof-carrying path)"
+                            .to_string(),
+                    });
+                }
             }
 
             let proven_delta =

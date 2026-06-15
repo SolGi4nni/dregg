@@ -742,13 +742,19 @@ impl TurnExecutor {
         Ok(())
     }
 
-    /// Verify a sovereign-witness STARK transition proof.
+    /// Verify a sovereign-witness STARK transition proof (v1 hand-AIR floor).
     ///
     /// Mirrors `dregg_cell::peer_exchange::PeerExchange::verify_stark_transition`:
     /// deserializes the proof, widens the 32-byte commitments to 4 BabyBear
     /// felts each, overrides the proof's commitment PIs with verifier-
     /// derived values, and verifies via `EffectVmAir`. A divergence on
     /// commitment slots surfaces as `InvalidExecutionProof`.
+    ///
+    /// `not(recursion)`-only: the recursion tower verifies sovereign transitions through the
+    /// rotated proof-carrying turn (`verify_and_commit_proof` → `verify_and_commit_proof_rotated`),
+    /// not the v1 witness-STARK; a v1 `transition_proof` presented to a recursion build is rejected
+    /// at the `execute.rs` call site rather than verified here.
+    #[cfg(not(feature = "recursion"))]
     pub(super) fn verify_sovereign_witness_stark(
         &self,
         _cell_id: &CellId,
@@ -1847,6 +1853,9 @@ impl TurnExecutor {
     /// `verify_and_commit_proof` remains the path of record for production
     /// today; this helper exists to back tests and to give future
     /// multi-cell aggregation callers (Stage 7-γ.1+) a stable entry point.
+    ///
+    /// v1 floor only (takes a v1 `EffectVmAir` `StarkProof` bundle).
+    #[cfg(not(feature = "recursion"))]
     pub fn verify_bundle_with_stark(
         bundle: &[(
             dregg_circuit::stark::StarkProof,
@@ -1860,6 +1869,9 @@ impl TurnExecutor {
     /// Snapshot-aware variant of `verify_bundle_with_stark` that threads a
     /// `&Ledger` into the binding-proof sweep. Closes AIR #75 for callers
     /// who carry a Burn binding proof in `turn.effect_binding_proofs`.
+    ///
+    /// v1 floor only (takes a v1 `EffectVmAir` `StarkProof` bundle).
+    #[cfg(not(feature = "recursion"))]
     pub fn verify_bundle_with_stark_and_ledger(
         bundle: &[(
             dregg_circuit::stark::StarkProof,

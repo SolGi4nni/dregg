@@ -60,6 +60,12 @@ use dregg_circuit::dsl::revocation::{
 use dregg_circuit::effect_vm::columns::sel;
 use dregg_circuit::effect_vm::{self, CellState, Effect as VmEffectKind, generate_effect_vm_trace};
 use dregg_circuit::effect_vm_descriptors::descriptor_for_selector;
+// The v1 hand-AIR EffectVM proof type + prover/verifier. The `effect_vm_p3_full_air` module is
+// `#[cfg(not(feature = "recursion"))]` in `dregg-circuit` (v1 floor only), and every use-site here
+// (`prove_effect_vm_with_cutover`, `verify_effect_vm_proof_with_cutover`, the `"effect-vm"` verify
+// arm, the v1 prove leg, `revalidate_turn_self_sovereign`) is likewise `not(recursion)`-gated — the
+// recursion tower proves/verifies rotated IR-v2. So this import must match.
+#[cfg(not(feature = "recursion"))]
 use dregg_circuit::effect_vm_p3_full_air::{
     EffectVmP3Proof, prove_effect_vm_p3, verify_effect_vm_p3,
 };
@@ -519,7 +525,8 @@ const AUTH_PI_DERIVED_HASH: usize = 1;
 
 /// Is the descriptor-interpreter cutover prover enabled? DEFAULT ON.
 /// `DREGG_DESCRIPTOR_PROVER=0` (or `false`/`off`) is the opt-OUT that forces the legacy
-/// hand-AIR prover for comparison.
+/// hand-AIR prover for comparison. (v1 floor only; the recursion tower proves rotated IR-v2.)
+#[cfg(not(feature = "recursion"))]
 fn descriptor_prover_enabled() -> bool {
     !matches!(
         std::env::var("DREGG_DESCRIPTOR_PROVER").as_deref(),
@@ -555,6 +562,7 @@ fn descriptor_prover_enabled() -> bool {
 /// Lagrange-basis index gate — no single registry descriptor until that gate is
 /// emitted) / `Custom` (8) (needs an accumulator/recursive proof-binding constraint
 /// kind) / `RevokeCapability` (24) (cap-root advance, mid-reshape).
+#[cfg(not(feature = "recursion"))]
 fn selector_for_effect(effect: &VmEffectKind) -> Option<usize> {
     match effect {
         VmEffectKind::Transfer { .. } => Some(sel::TRANSFER),
@@ -596,6 +604,7 @@ fn selector_for_effect(effect: &VmEffectKind) -> Option<usize> {
 /// multi-instance traces. The descriptor ACCEPTS those traces (its PI prefix stops before
 /// the slot), i.e. it is MORE PERMISSIVE there — routing them would change the proven
 /// semantics, exactly what the cutover must never do.
+#[cfg(not(feature = "recursion"))]
 const MULTI_EFFECT_READY_SELECTORS: &[usize] = &[
     sel::TRANSFER,
     sel::CREATE_CELL_FROM_FACTORY,
@@ -619,6 +628,7 @@ const MULTI_EFFECT_READY_SELECTORS: &[usize] = &[
 
 /// Why a turn shape stays on the hand-AIR fallback engine — every fallback is NAMED and
 /// logged (`prove_effect_vm_with_cutover`), never a silent len/match miss.
+#[cfg(not(feature = "recursion"))]
 #[derive(Debug)]
 enum CutoverFallback {
     /// A turn with no effects (NoOp-only trace); no descriptor models the empty turn.
@@ -639,6 +649,7 @@ enum CutoverFallback {
     MultiInstancePiSlot { selector: usize },
 }
 
+#[cfg(not(feature = "recursion"))]
 impl std::fmt::Display for CutoverFallback {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -669,6 +680,7 @@ impl std::fmt::Display for CutoverFallback {
 ///   descriptor natively proves the multi-row trace — validated by the harness's
 ///   `homogeneous_multi_effect_turns_graduate_into_cutover`);
 /// * anything else → a [`CutoverFallback`].
+#[cfg(not(feature = "recursion"))]
 fn cutover_route(effects: &[VmEffectKind]) -> Result<usize, CutoverFallback> {
     if effects.is_empty() {
         return Err(CutoverFallback::EmptyTurn);
@@ -716,6 +728,7 @@ fn cutover_route(effects: &[VmEffectKind]) -> Result<usize, CutoverFallback> {
 /// REJECTED by every OTHER cutover descriptor's verifier). The post-state-commitment binding (the
 /// GROUP-4 hash sites + the `expected_new_commit` PI equality in `verify_full_turn`) is unchanged
 /// and remains the second, independent tooth.
+#[cfg(not(feature = "recursion"))]
 const CUTOVER_READY_SELECTORS: &[usize] = &[
     sel::TRANSFER,
     sel::NOTE_SPEND,
@@ -747,6 +760,7 @@ const CUTOVER_READY_SELECTORS: &[usize] = &[
 /// LOGGED hand-AIR fallback for non-graduated shapes. `DREGG_DESCRIPTOR_PROVER=0`
 /// opts out (forces the legacy hand-AIR for comparison). Returns the SAME wire proof
 /// type either way.
+#[cfg(not(feature = "recursion"))]
 fn prove_effect_vm_with_cutover(
     effects: &[VmEffectKind],
     effect_trace: &[Vec<BabyBear>],
@@ -1222,6 +1236,7 @@ fn prove_cohort_run_chain(
 /// interpreter binds a DIFFERENT AIR (different extended trace width / CommonData) than
 /// the hand-AIR, so the two verifiers are NOT interchangeable: try the descriptor
 /// verifiers (selector-bound) first; if none accepts, fall back to the hand-AIR verifier.
+#[cfg(not(feature = "recursion"))]
 fn verify_effect_vm_proof_with_cutover(
     proof: &EffectVmP3Proof,
     public_inputs: &[BabyBear],
@@ -1416,22 +1431,43 @@ pub fn prove_full_turn(witness: &FullTurnWitness) -> Result<FullTurnProof, SdkEr
     let rotated_effect_pis: Option<Vec<Vec<BabyBear>>> = None;
 
     if rotated_effect_pis.is_none() {
-        // The v1 leg: `v1_effect` is `Some` exactly when the rotated leg was NOT taken.
-        let (effect_trace, effect_pi) = v1_effect
-            .as_ref()
-            .expect("v1 effect trace present on the non-rotated path");
-        let effect_proof =
-            prove_effect_vm_with_cutover(&witness.effects, effect_trace, effect_pi)?;
-        let effect_proof_bytes = postcard::to_allocvec(&effect_proof).map_err(|e| {
-            SdkError::InvalidWitness(format!("effect-vm p3 proof serialize failed: {e}"))
-        })?;
-        all_public_inputs.extend_from_slice(effect_pi);
-        sub_proofs.push(AttachedSubProof {
-            label: "effect-vm".into(),
-            proof_bytes: effect_proof_bytes.clone(),
-            sub_public_inputs: effect_pi.clone(),
-            vk_hash: compute_vk_hash_bytes(&effect_vm_circuit_descriptor()),
-        });
+        // RECURSION TOWER: the v1 effect-vm leg is GONE (the rotated chained leg is the
+        // sole effect-vm prover — PATH-PRESERVE Phases 0-4). A finalized-turn prove with no
+        // rotation witness can no longer fall back to v1, so it FAILS CLOSED. This enforces
+        // the Phase-4 invariant in code: under `recursion`, every reachable finalized turn
+        // threads a rotation witness, so `rotation.is_none()` here is unreachable for the
+        // live node (whose cohort gate always yields `Some`); a caller that reaches it gets a
+        // structured error rather than a silent v1 proof.
+        #[cfg(feature = "recursion")]
+        {
+            let _ = &v1_effect;
+            return Err(SdkError::InvalidWitness(
+                "full-turn prove under `recursion`: no rotation witness threaded and the v1 \
+                 effect-vm fallback has been retired — thread a rotation witness (the live node \
+                 always does)"
+                    .into(),
+            ));
+        }
+        // V1 FLOOR: the byte-identical hand-AIR / descriptor-interpreter leg.
+        // `v1_effect` is `Some` exactly when the rotated leg was NOT taken.
+        #[cfg(not(feature = "recursion"))]
+        {
+            let (effect_trace, effect_pi) = v1_effect
+                .as_ref()
+                .expect("v1 effect trace present on the non-rotated path");
+            let effect_proof =
+                prove_effect_vm_with_cutover(&witness.effects, effect_trace, effect_pi)?;
+            let effect_proof_bytes = postcard::to_allocvec(&effect_proof).map_err(|e| {
+                SdkError::InvalidWitness(format!("effect-vm p3 proof serialize failed: {e}"))
+            })?;
+            all_public_inputs.extend_from_slice(effect_pi);
+            sub_proofs.push(AttachedSubProof {
+                label: "effect-vm".into(),
+                proof_bytes: effect_proof_bytes.clone(),
+                sub_public_inputs: effect_pi.clone(),
+                vk_hash: compute_vk_hash_bytes(&effect_vm_circuit_descriptor()),
+            });
+        }
     }
 
     // ========================================================================
@@ -1806,9 +1842,12 @@ pub fn verify_full_turn_bound(
     for (i, attached) in proof.composed.sub_proofs.iter().enumerate() {
         // Dispatch verification to the correct verifier based on label.
         let verify_result: Result<(), String> = match attached.label.as_str() {
-            // EFFECT VM: AUDITED p3 verifier (the load-bearing post-state
-            // binding). The proof bytes are a postcard-serialized
-            // `EffectVmP3Proof` (p3-batch-stark BatchProof).
+            // EFFECT VM (v1 floor): AUDITED p3 verifier of the v1 hand-AIR / descriptor-interpreter
+            // leg. The proof bytes are a postcard-serialized `EffectVmP3Proof`. The recursion tower
+            // never produces the `"effect-vm"` label (it emits `"effect-vm-rotated"` below), so this
+            // arm is `not(recursion)`-only; a recursion-built verifier presented a v1 leg rejects it
+            // at the catch-all.
+            #[cfg(not(feature = "recursion"))]
             "effect-vm" => {
                 let p3: EffectVmP3Proof =
                     postcard::from_bytes(&attached.proof_bytes).map_err(|e| {
@@ -2669,6 +2708,10 @@ pub fn prove_turn_self_sovereign_rotated(
 /// Returns the proven post-state commitment (the boundary public input the
 /// prover would bind) on accept, or `Err(())` if the regenerated witness fails
 /// any constraint (the turn must then be rejected, NOT committed).
+///
+/// v1 floor only: it runs the v1 hand-AIR predicate `bespoke_air_accepts`. The recursion tower's
+/// FRI-free inline revalidation is the rotated descriptor's constraint check (a future lane).
+#[cfg(not(feature = "recursion"))]
 pub fn revalidate_turn_self_sovereign(
     initial_state: &CellState,
     effects: &[effect_vm::Effect],

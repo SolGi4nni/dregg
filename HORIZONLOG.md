@@ -11,6 +11,41 @@ reason.)*
 Last sweep: 2026-06-13 (flagged-items burndown — removed ~14 landed/struck items,
 deduped the DreggDL/sel4/snapshot landings into git history, kept live tails).
 
+## ⚑⚑⚑ C7 GREP-ZERO LANDED (2026-06-14 — the v1 deletion drive, READ FIRST)
+
+**THE FLIP IS DONE — v1 effect-VM proof reaches GREP-ZERO under `recursion`.** With PATH-PRESERVE
+Phases 0-4 landed (chained rotated path is the live default on all 3 finalized-turn arms), the v1
+hand-AIR (`EffectVmAir` / `effect_vm_p3_full_air` / `CutoverFallback` / `BilateralAggregationAir`) is
+removed from the recursion build. The end-state is FENCE-not-delete: the v1 OLD-PROVER is retained
+`#[cfg(not(feature = "recursion"))]` for the v1 floor (the SACRED wasm prover floor + the demo MCP
+tools), and DELETED outright where dead in both builds (the Silver joint surface `JointParticipant`/
+`prove_joint_turn`/`verify_joint_turn`; `DescriptorForestNode`/`verify_descriptor_forest` — the last
+`EffectVmP3Proof` struct field; the v1 `BilateralAggregationAir`/`AggregationInnerRow`/
+`build_aggregation_trace` block). `generate_effect_vm_trace`/`EFFECT_VM_WIDTH`/`AIR_DESCRIPTOR`/
+`CUTOVER_READY_SELECTORS`/`EffectVmShapeAir`/`CrossSideExistenceAir`/`BundleTreeFoldAir`/the V2 bilateral
+all STAY (Bucket D/E). The recursion-leaf is the ROTATED `DescriptorParticipant`/`RotatedParticipantLeg`
+(Bucket F was already landed). **GREP-ZERO = 0 true live-under-recursion v1 refs** (236 literal matches,
+all comments/strings/not(recursion)-fenced). Gates GREEN on persvati: `cargo build --features recursion
+-p dregg-circuit -p dregg-sdk -p dregg-turn -p dregg-node` (Finished, exit 0) + `cargo test --features
+recursion --no-run -p …` (exit 0) + circuit `not(recursion)` floor (exit 0). The executor secondary-verify
+arms (`verify_sovereign_witness_stark`, the atomic-turn/bearer-cap default-AIR, `verify_bundle_with_stark`)
++ the SDK v1 cutover (`prove_effect_vm_with_cutover`/`verify_effect_vm_proof_with_cutover`/`revalidate_turn_
+self_sovereign`) + the v1 sovereign producer (`cipherclerk::prove_sovereign_turn`/`emit_witnessed_receipt`)
++ the MCP demo v1 tools are all `not(recursion)`-fenced with fail-closed `recursion` arms (no silent skip).
+
+### residue named by this drive (closure lanes):
+- **`dregg-node`/`dregg-verifier` gained a `recursion` feature** (default-on, forwarding to
+  `dregg-circuit/recursion`) — they previously had NO such feature so their `#[cfg(feature="recursion")]`
+  gates misaligned with the recursion-by-default circuit. Latent bug exposed + fixed by this drive.
+- **the standalone `dregg-verifier` has NO rotated replay-chain verify path** — under recursion its v1
+  `verify_effect_vm_proof`/`replay_one_with_prev` are FAIL-CLOSED stubs. Closure lane: build the rotated
+  replay-chain verify (`verify_vm_descriptor2`-based), analogous to the wasm-rotated Option-A. Until then
+  the recursion-built verifier rejects (honest, not silent).
+- **workspace `exclude` fix**: `starbridge-web-surface`/`starbridge-v2`/`deos-leptos`/`deos-web-cells`/
+  `servo-render`/`dregg-tui` (recently-added in-tree separate `[workspace]` roots) were breaking
+  workspace-wide `cargo` ("multiple workspace roots") — added to the root `Cargo.toml` `exclude`.
+- the wasm `not(recursion)` prover floor stays the separate Option-A ember-decision (out of this scope).
+
 ## ⚑⚑⚑ POST-COMPACTION STATE (2026-06-14 late — READ FIRST)
 
 **THE HARDSWAP — the VK EPOCH LANDED GREEN.** Rotated IR-v2 R=24 is now the DEFAULT registry,
@@ -648,7 +683,7 @@ the backbone v1 path is still UNCONDITIONAL per WALL A above.)
 - availability route follow-ons (§3.1): swap XOR-prototype erasure (erasure.rs:11) for real Reed–Solomon; real Merkle-path chunk proof vs manifest.root (erasure.rs:226 is integrity-only).
 - proving-modality dial #169 (§4.1): make prove-on-demand vs checkpoint vs eager a CONFIGURED axis, not hardcoded policy; settlement/pipelining depth (§4.2) parameterized by topology (n=1 = immediate settlement). Owns the PI 202/203 slots.
 - Room-as-OS + delay-tolerant polis (docs/ROOM-AS-OS.md, docs/DELAY-TOLERANT-POLIS.md).
-- **pg-dregg M3** (named 2026-06-13; M2 mirror + Tier-C chain-gate + the §11 write outbox LANDED + live on pg17/pg18; `node/src/pg_mirror.rs` `pg_live::PgSink` writes through over tokio-postgres incl. caps/memory in one txn). UPDATE 2026-06-13 (pg-dregg wide-safe lane, Opus): the **range-attest SRF SHAPE + the federation subscriber RE-VALIDATION are now BUILT** (`pg-dregg/src/attest.rs` + `mirror::revalidate_replicated_chain` + the `dregg_attest_range`/`dregg_attest_explain`/`dregg_install_federation`/`dregg_revalidate_replicated_chain` externs; core green, 50 `cargo test` + 2 new `#[pg_test]`s; docs/PG-DREGG.md §10.2.1 + §15 rewritten). What REMAINS — the genuinely NODE-/CIRCUIT-touching settle items (this lane does NOT touch node/ or circuit/): (a) **the outbox drainer** (§11.4): a node-side tokio task drains `dregg.submit_queue` as `dregg_kernel`, runs the submit gates + `execute_via_producer` (#171), resolves + mirrors back. (b) **the proof-gate circuit-link S1-S3** (§10.2.1): **S1** serialize `circuit::ivc_turn_chain::WholeChainProof` (it holds plonky3 proof objects, NOT serde today — needs derives + a versioned envelope); **S2** node-side proof PRODUCER (fold finalized turns via `prove_turn_chain_recursive`/`fold_two_turns` → write a `dregg.turn_proofs(lo,hi,genesis_root,final_root,proof bytea,vk)` table the SRF reads); **S3** the `tier-c` feature's `dregg-circuit` dep (`--features verifier`/`recursion`, **Lean-FREE** — §8.1) flips `attest::verify_serialized_proof` from the fail-closed stub to the real `verify_turn_chain_recursive`. Until S1-S3 the SRF attests NOTHING (safe direction, §10.3). Tier D (executor in-backend) stays the north star, gated on the pg/Lean process-model spike. The 4 §6/§13 ember-decisions now carry crisp recommendations (docs/PG-DREGG.md §13.1: instant-revocation default · typed-tables-lead/views-over-memory end-state · C-embed · spike-gated full-D else D-sidecar).
+- **pg-dregg M3** (named 2026-06-13; M2 mirror + Tier-C chain-gate + the §11 write outbox LANDED + live on pg17/pg18; `node/src/pg_mirror.rs` `pg_live::PgSink` writes through over tokio-postgres incl. caps/memory in one txn). UPDATE 2026-06-13 (pg-dregg wide-safe lane, Opus): the **range-attest SRF SHAPE + the federation subscriber RE-VALIDATION are now BUILT** (`pg-dregg/src/attest.rs` + `mirror::revalidate_replicated_chain` + the `dregg_attest_range`/`dregg_attest_explain`/`dregg_install_federation`/`dregg_revalidate_replicated_chain` externs; core green, 50 `cargo test` + 2 new `#[pg_test]`s; docs/PG-DREGG.md §10.2.1 + §15 rewritten). What REMAINS — the genuinely NODE-/CIRCUIT-touching settle items (this lane does NOT touch node/ or circuit/): (a) **the outbox drainer** (§11.4): a node-side tokio task drains `dregg.submit_queue` as `dregg_kernel`, runs the submit gates + `execute_via_producer` (#171), resolves + mirrors back. (b) **the proof-gate circuit-link S1-S3** (§10.2.1): **S1** serialize `circuit::ivc_turn_chain::WholeChainProof` (it holds plonky3 proof objects, NOT serde today — needs derives + a versioned envelope); **S2** node-side proof PRODUCER (fold finalized turns via `prove_turn_chain_recursive`/`fold_two_turns` → write a `dregg.turn_proofs(lo,hi,genesis_root,final_root,proof bytea,vk)` table the SRF reads); **S3** the `tier-c` feature's `dregg-circuit` dep (`--features verifier`/`recursion`, **Lean-FREE** — §8.1) flips `attest::verify_serialized_proof` from the fail-closed stub to the real `verify_turn_chain_recursive`. Until S1-S3 the SRF attests NOTHING (safe direction, §10.3). Tier D (executor in-backend) stays the north star, gated on the pg/Lean process-model spike. The 4 §6/§13 ember-decisions now carry crisp recommendations (docs/PG-DREGG.md §13.1: instant-revocation default · typed-tables-lead/views-over-memory end-state · C-embed · spike-gated full-D else D-sidecar). UPDATE 2026-06-14 (pg-dregg proof-gate lane, Opus, `pg-dregg/src/` only): **S1 SETTLED + S2 BUILT; S3 reduced to ONE named circuit line.** **S1 (the serde verdict):** `WholeChainProof` is NOT serde as a whole — but its `root` is `RecursionOutput(pub BatchStarkProof, pub Rc<CircuitProverData>)`, and the verifier (`verify_turn_chain_recursive`) reads ONLY `root.0` + `binding_proof` + the 4 publics, NEVER the prover-only `Rc` `root.1` (verified by reading the fn body: it touches `proof.root.0`/`genesis_root`/`final_root`/`num_turns`/`chain_digest`/`binding_proof` and nothing else). `BatchStarkProof` AND `RecursionCompatibleProof` (a uni-STARK `Proof`) BOTH derive `Serialize`/`Deserialize` (`#[serde(bound="")]`). So the verify-sufficient subset IS fully serde → shipped as `attest::SerializedWholeChainProof` (a versioned postcard transport: `[version][root.0 blob][binding blob][3×root bytes][num_turns]`, real encode/decode + 5 fail-closed `cargo test`s). A `WholeChainProof` VALUE can't be rebuilt from bytes (the `Rc` is prover-only) — so the ONE remaining circuit-side line is a ~6-line `verify_turn_chain_recursive_from_parts(&BatchStarkProof, &Proof, publics, &vk)` split of the existing fn (which already uses only those parts). **S2 (BUILT):** `pg-dregg/src/turn_proofs.rs` — `TurnProofProducer<F: ChainFolder>` folds a finalized window into ONE `dregg.turn_proofs(lo,hi,genesis_root,final_root,proof bytea,vk)` row (DDL `mirror::ddl::turn_proofs()` + `dregg_install_turn_proofs`), with watermark discipline (dense, non-overlapping windows) + an anti-fabrication tooth (a folder can't claim wider coverage than the window) + the `dregg_attest_window`/`dregg_attest_window_explain` externs that look the proof up FROM the table. The circuit fold plugs in behind the `ChainFolder` seam (same discipline as `Producer`/`Projector`), so the default build stays circuit-free; 7 `cargo test`s prove the producer over a stand-in folder. **S3 (the flip):** `attest::verify_serialized_proof` now DECODES the transport in BOTH builds (real, tested), then under `tier-c` calls `verify_turn_chain_recursive_from_parts` (named, the dead-behind-cfg real leg) — off, fail-closed AFTER a successful decode (proven: a WELL-FORMED transport STILL attests nothing, not just garbage). VERIFY: 120 core `cargo test` green (12 new) + clean `cargo check --features "pg18 pg_test"`. The `cargo pgrx test pg18` RUNTIME is environmentally broken on this box (a pre-existing unmodified M1 pg_test fails identically at `framework.rs:217` initdb/locale — NOT this lane). REMAINING for the flip: add `dregg-circuit` (`verifier`/`recursion`, Lean-free) to the `tier-c` feature + the circuit-side `verify_turn_chain_recursive_from_parts` split — both circuit-side, mechanical; the transport decode + publics mapping are live + tested.
 
 ### SDK polyglot crypto/binding closures
 
@@ -784,6 +819,32 @@ ALL LANDED (a7734efcc / a49448d09 / 152e6b3a5). Remaining lanes:)*
   `is_attenuation` gate (a narrow-cap viewer rehydrates a narrow interactive surface from the SAME
   snapshot; the live surface is the source of truth, so a dropped affordance does not rehydrate).
   (Cockpit affordance-PANEL: a follow-up; the surface + snapshot + their 5 tests are the heart.)
+- **starbridge-web-surface LIVE receipt-stream PRIMITIVE** — LANDED (`starbridge-web-surface/src/
+  receipt_stream.rs`, 11 tests; NEXT-WAVE.md item D). The standalone thesis crate (which MODELS
+  surfaces, no embedded executor) gained `ReceiptStream` — a subscription over the node's
+  `/api/events/stream` receipt feed so a surface's organs become LIVE reflections of the committing
+  node, not snapshots. Built ON the genuine shapes (`dregg_query::ReceiptEventRow` envelope +
+  the full `dregg_turn::TurnReceipt` the SSE `data:` carries; the dense `chain_index` cursor the
+  node serves as `Last-Event-ID`; `Dynamics::since(cursor)` semantics). The NEW tooth over the
+  cockpit's existing `ReceiptFeed` (which only DEDUPS by index, trusting the body): **forge-
+  rejection** — `ingest` REJECTS an out-of-order frame (`IngestError::OutOfOrder`, a gap/rewind in
+  the dense chain) AND a forged one (`IngestError::Forged`, body does not re-hash to its claimed
+  `receipt_hash` via the REAL `TurnReceipt::receipt_hash`), and `verify_against(&AttestedRoot)`
+  checks the whole delivered prefix against the federation's `receipt_stream_root`
+  (`merkle_root_of_receipt_hashes`). `StreamedReceipt` is the `WorldEvent`-shaped item; the pure
+  `ingest`/`since`/`verify_against` core is `cargo test`-able with NO runtime; `ReceiptStreamPoll`
+  (`stream` feature, default) is the `futures_core::Stream` the gpui executor `.await`s. Verified
+  NARROW: `cargo test -p starbridge-web-surface` green both `--no-default-features` (121 lib, pure)
+  and default (122 lib, +the Stream poll test) + 4 integration.
+  **FOLLOW-ON — the cockpit gpui-executor subscription (starbridge-v2, a DIFFERENT lane owns it):**
+  re-point the cockpit's live receipt path (`starbridge-v2/src/{live_node,client,cockpit}.rs` —
+  the `ReceiptFeed` + `drain_live_stream` + `cx.notify()` wiring) at THIS verifying primitive, so a
+  cockpit reflecting a REMOTE/untrusted node gains forge-rejection (today's `ReceiptFeed::ingest`
+  trusts the body); drive `ReceiptStreamPoll::poll_next` on gpui's async executor (`cx.spawn`),
+  storing the waker on feed so a fed `ingest` wakes the poll (the no-op-waker test shows the SHAPE;
+  the real waker is the cockpit's). Single-source the two `ReceiptEvent` mirrors (this crate's
+  `ReceiptEnvelope`/`ReceiptEventRow` + `starbridge-v2/src/model::ReceiptEvent`) under the named
+  `dregg-wire-types` extraction below while there.
 - **native federation/remote-node panel** (the LIVE NODE connection above is the wire; a richer
   multi-peer federation panel + the channel/mailbox/court LIVE reflections ride a connected node).
 - **seL4 framebuffer backend** — a gpui renderer targeting a framebuffer cap (SEL4-EMBEDDING end state) + **seL4 channel transport** (a `NodeClient::Channel` over an seL4 endpoint, same contract over IPC not TCP).

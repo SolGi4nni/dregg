@@ -30,6 +30,15 @@ blake3 = "1"
 postcard = { version = "1", features = ["alloc"] }
 
 [features]
+# `recursion` is in the DEFAULT set (matching `dregg-circuit`/`dregg-sdk`/`dregg-turn`, all of
+# which default to it): native builds compile the ROTATED stack, so the v1 hand-AIR (`EffectVmAir`)
+# is absent. It forwards to `dregg-circuit/recursion` so this crate's own `#[cfg(feature =
+# "recursion")]` gates align with the circuit's recursion state. The standalone v1 replay-chain
+# verify (`verify_effect_vm_proof` / `replay_one_with_prev`) is `not(recursion)`-only; a rotated
+# replay-chain verify is a separate lane (the verifier's rotated path is not yet built).
+default = ["recursion"]
+recursion = ["dregg-circuit/recursion"]
+
 # PLATFORM gate, OFF by default (same polarity as the rest of the tree, see
 # docs/FEATURE-HYGIENE.md §Lean and docs/SEL4-EMBEDDING.md §2). The verifier's
 # only transitive reach to `libdregg_lean.a` is via {federation, captp, turn};

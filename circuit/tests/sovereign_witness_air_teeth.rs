@@ -1,3 +1,4 @@
+#![cfg(not(feature = "recursion"))]
 //! Sovereign-witness AIR-teeth tests (Phase 1, per SOVEREIGN-WITNESS-AIR-DESIGN.md).
 //!
 //! These are AIR-level adversarial tests: they exercise the boundary

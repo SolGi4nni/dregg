@@ -1,3 +1,4 @@
+#![cfg(not(feature = "recursion"))]
 //! PHASE B — AttenuateCapability in-circuit NON-AMPLIFICATION (the reference).
 //!
 //! These tests are the PROOF that a verifying `AttenuateCapability` proof through

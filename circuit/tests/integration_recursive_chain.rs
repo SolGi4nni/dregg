@@ -1,3 +1,4 @@
+#![cfg(not(feature = "recursion"))]
 //! Integration tests: IVC hash-chain proofs (sequential turns compressed into
 //! a single proof) and multi-turn commitment-chain continuity.
 //!

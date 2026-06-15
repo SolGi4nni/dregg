@@ -4,6 +4,10 @@
 //! `circuit/tests/integration_*.rs` files.  Keep this module light:
 //! only types and functions that multiple integration test files share.
 
+// These helpers prove/verify through the v1 hand-AIR `EffectVmAir`, which exists
+// only on the v1 floor (`#[cfg(not(feature = "recursion"))]`). Fenced per-item so
+// the module stays compilable (empty) under `recursion` rather than blanket-gated.
+#[cfg(not(feature = "recursion"))]
 use dregg_circuit::{
     BabyBear, CellState, Effect, EffectVmAir,
     effect_vm::{EffectVmContext, generate_effect_vm_trace, generate_effect_vm_trace_ext},
@@ -14,10 +18,12 @@ use dregg_circuit::{
 // State builders
 // ─────────────────────────────────────────────────────────────────────────────
 
+#[cfg(not(feature = "recursion"))]
 pub fn make_state(balance: u64) -> CellState {
     CellState::new(balance, 0)
 }
 
+#[cfg(not(feature = "recursion"))]
 pub fn make_state_with_nonce(balance: u64, nonce: u32) -> CellState {
     CellState::new(balance, nonce)
 }
@@ -28,6 +34,7 @@ pub fn make_state_with_nonce(balance: u64, nonce: u32) -> CellState {
 
 /// Generate a valid proof for `effects` starting from `state`.
 /// Returns `(proof_bytes, pi_u32)` in the serialised form the verifier crate consumes.
+#[cfg(not(feature = "recursion"))]
 pub fn make_proof_bytes(state: &CellState, effects: &[Effect]) -> (Vec<u8>, Vec<u32>) {
     let (trace, pi) = generate_effect_vm_trace(state, effects);
     let air = EffectVmAir::new(trace.len());
@@ -39,6 +46,7 @@ pub fn make_proof_bytes(state: &CellState, effects: &[Effect]) -> (Vec<u8>, Vec<
 
 /// Generate proof with extended context (for effects that bind PI roots like
 /// `ValidateHandoff`).
+#[cfg(not(feature = "recursion"))]
 pub fn make_proof_bytes_ext(
     state: &CellState,
     effects: &[Effect],
@@ -54,6 +62,7 @@ pub fn make_proof_bytes_ext(
 
 /// Full round-trip: generate, prove, verify, return trace + pi.
 /// Panics if the proof does not verify (hard failure, not an expected rejection).
+#[cfg(not(feature = "recursion"))]
 pub fn assert_roundtrip(
     state: &CellState,
     effects: &[Effect],
@@ -72,6 +81,7 @@ pub fn assert_roundtrip(
 }
 
 /// Full round-trip through serialised bytes (simulates prover-to-verifier hand-off).
+#[cfg(not(feature = "recursion"))]
 pub fn assert_bytes_roundtrip(state: &CellState, effects: &[Effect], label: &str) {
     let (proof_bytes, pi_u32) = make_proof_bytes(state, effects);
     // Deserialise and verify to confirm the serialised form is sound.
@@ -92,12 +102,14 @@ pub fn assert_bytes_roundtrip(state: &CellState, effects: &[Effect], label: &str
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Flip a byte at `offset` in `proof_bytes`. Panics if `offset` is out of range.
+#[cfg(not(feature = "recursion"))]
 pub fn tamper_proof_byte(proof_bytes: &mut Vec<u8>, offset: usize) {
     let idx = offset.min(proof_bytes.len() - 1);
     proof_bytes[idx] ^= 0xFF;
 }
 
 /// XOR `mask` into `pi[slot]`.
+#[cfg(not(feature = "recursion"))]
 pub fn tamper_pi(pi: &mut Vec<u32>, slot: usize, mask: u32) {
     assert!(
         slot < pi.len(),

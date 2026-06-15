@@ -19,7 +19,7 @@ members = ["macaroon", "secrets", "token", "tokenizer", "hints", "commit", "trac
 # module that used to live in rbg has been promoted into `dregg-dfa`
 # per `DFA-RATIONALIZATION-DESIGN.md`; rbg/ no longer ships its own
 # routing engine.
-exclude = ["chain", "chain/program", "wasm", "sdk-py", "pg-dregg", "sel4/dregg-firmament"]
+exclude = ["chain", "chain/program", "wasm", "sdk-py", "pg-dregg", "sel4/dregg-firmament", "starbridge-web-surface", "starbridge-v2", "deos-leptos", "deos-web-cells", "servo-render", "dregg-tui"]
 
 [workspace.package]
 version = "0.1.0"

@@ -1406,16 +1406,34 @@ impl TurnExecutor {
                         ));
                     }
                 }
-                let air = dregg_circuit::EffectVmAir::new(stark_proof.trace_len);
-                stark::verify(&air, &stark_proof, &public_inputs).map_err(|e| {
-                    (
+                // V1 FLOOR: the bearer-cap STARK is the v1 hand-AIR (`EffectVmAir`). The recursion
+                // tower retires this leg; a v1 bearer-cap STARK presented to a recursion build is
+                // rejected rather than verified.
+                #[cfg(not(feature = "recursion"))]
+                {
+                    let air = dregg_circuit::EffectVmAir::new(stark_proof.trace_len);
+                    stark::verify(&air, &stark_proof, &public_inputs).map_err(|e| {
+                        (
+                            TurnError::BearerCapInvalidProof {
+                                target: proof.target,
+                                reason: format!("STARK proof verification failed: {e}"),
+                            },
+                            path.to_vec(),
+                        )
+                    })?;
+                }
+                #[cfg(feature = "recursion")]
+                {
+                    let _ = &stark_proof;
+                    return Err((
                         TurnError::BearerCapInvalidProof {
                             target: proof.target,
-                            reason: format!("STARK proof verification failed: {e}"),
+                            reason: "v1 bearer-cap STARK (EffectVmAir) is retired under recursion"
+                                .into(),
                         },
                         path.to_vec(),
-                    )
-                })?;
+                    ));
+                }
                 Ok(())
             }
         }

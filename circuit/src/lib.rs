@@ -263,10 +263,11 @@ pub mod bilateral_aggregation_air;
 #[cfg(feature = "recursion")]
 pub mod effect_vm_p3_air;
 
-/// Constraint-COMPLETE Plonky3 `Air` for the Effect VM: the live commit-path
-/// EffectVM proof migrated OFF the bespoke `crate::stark` (unaudited FRI) and
-/// ONTO the audited `p3-batch-stark` verifier, with real in-circuit Poseidon2
-/// for every state-commitment / cap-root hash. See module docs.
+/// Constraint-COMPLETE Plonky3 `Air` for the Effect VM (v1 hand-AIR): the v1
+/// commit-path EffectVM proof on the audited `p3-batch-stark` verifier. Retained
+/// under `#[cfg(not(feature = "recursion"))]` for the v1 floor; the recursion tower
+/// proves through the rotated IR-v2 multi-table descriptor (`crate::descriptor_ir2`).
+#[cfg(not(feature = "recursion"))]
 pub mod effect_vm_p3_full_air;
 
 /// Sorted-set neighbor-adjacency STARK: proves two leaves are *consecutive*
@@ -329,10 +330,12 @@ pub use cross_state_derivation::{
     prove_cross_state_derivation, verify_cross_state_derivation,
 };
 pub use effect_vm::{
-    CellState, EFFECT_VM_WIDTH, Effect, EffectVmAir, NUM_EFFECTS, compute_effects_hash,
-    encode_net_delta, extract_custom_proof_commitments, extract_net_delta,
-    generate_effect_vm_trace, verify_balance_limb_pis,
+    CellState, EFFECT_VM_WIDTH, Effect, NUM_EFFECTS, compute_effects_hash, encode_net_delta,
+    extract_custom_proof_commitments, extract_net_delta, generate_effect_vm_trace,
+    verify_balance_limb_pis,
 };
+#[cfg(not(feature = "recursion"))]
+pub use effect_vm::EffectVmAir;
 pub use field::BabyBear;
 pub use ivc::{
     FoldDelta, FoldMembershipEntry, FoldStepWitness, IvcBackend, IvcBackendProof, IvcBuilder,

@@ -7633,8 +7633,8 @@ fn setup_sovereign_cell_for_proof_test() -> (Ledger, CellId, CellId, [u8; 32]) {
 /// The `new_commitment` and `effects_hash` params are ignored (kept for API compat);
 /// the real new_commitment is determined by the Effect VM trace execution.
 // V1 hand-AIR proof helper: consumed only by the `not(recursion)`-gated v1 sovereign
-// tests; dead under `recursion`. Deleted with the v1 leg at C7.
-#[cfg_attr(feature = "recursion", allow(dead_code))]
+// tests. The recursion tower proves rotated, so this leg is compiled out under `recursion`.
+#[cfg(not(feature = "recursion"))]
 fn generate_valid_sovereign_proof(
     old_commitment: &[u8; 32],
     _new_commitment: &[u8; 32],
@@ -7652,7 +7652,9 @@ fn generate_valid_sovereign_proof(
 /// `TurnExecutor::commitment_4bb_to_bytes` (4 LE u32 felts in bytes 0..15).
 /// The returned `new_commitment` is in the same format, ready to be stored in the
 /// ledger and verified by `TurnExecutor::commitment_to_4bb`.
-#[cfg_attr(feature = "recursion", allow(dead_code))]
+// V1 hand-AIR proof helper (`EffectVmAir`): consumed only by the `not(recursion)`-gated v1
+// sovereign tests. Compiled out under `recursion` (the tower proves rotated).
+#[cfg(not(feature = "recursion"))]
 fn generate_valid_sovereign_proof_with_new_commit(
     _old_commitment: &[u8; 32],
 ) -> (Vec<u8>, [u8; 32]) {
@@ -7681,6 +7683,9 @@ fn build_transfer_turn_for_proof_test(agent_id: CellId, sovereign_id: CellId) ->
     builder.fee(100).build()
 }
 
+// V1 hand-AIR proof helper (`EffectVmAir`): only the `not(recursion)`-gated v1 sovereign tests
+// call it. Compiled out under recursion.
+#[cfg(not(feature = "recursion"))]
 fn generate_sovereign_transfer_proof_for_turn(
     turn: &Turn,
     proof_cell: &CellId,

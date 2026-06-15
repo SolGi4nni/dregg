@@ -1,3 +1,4 @@
+#![cfg(not(feature = "recursion"))]
 //! Magnesium-Vision headline demonstrator: **dregg2 issuing REAL verified
 //! proofs for a REAL app (ClockDAG / Simbi Mesh Credit).**
 //!

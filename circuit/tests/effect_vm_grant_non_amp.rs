@@ -1,3 +1,4 @@
+#![cfg(not(feature = "recursion"))]
 //! PHASE B2 — GrantCapability (sel 3) in-circuit NON-AMPLIFICATION: the
 //! cross-cell delegation, on the granter-side delegation row.
 //!

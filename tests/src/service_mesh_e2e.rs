@@ -1,4 +1,9 @@
+#![cfg(not(feature = "recursion"))]
 //! End-to-end service mesh integration tests.
+//!
+//! Entirely v1: both live tests prove the CAS effects through the bespoke
+//! `EffectVmAir` (recursion-absent) and assert the STARK verifies, so the whole
+//! module is gated `not(recursion)`.
 //!
 //! Tests the full service mesh pipeline:
 //! 1. ContentStore: nameless write -> verify hash = address (CAS)

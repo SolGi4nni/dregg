@@ -1,3 +1,8 @@
+// V1 floor only: this test drives the v1 hand-AIR (`EffectVmAir`) prover + the FRI-free
+// `bespoke_air_accepts` predicate, both retired under the recursion build (the tower proves
+// rotated). The F-DOS-1 liveness property is preserved on the rotated path by the async prove
+// pool (`prove_pool::run_job`, which proves rotated off any state lock).
+#![cfg(not(feature = "recursion"))]
 //! F-DOS-1 — proof of defence: a submitted turn must NOT wedge the node.
 //!
 //! ## The break this test pins down

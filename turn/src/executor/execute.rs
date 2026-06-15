@@ -795,6 +795,7 @@ impl TurnExecutor {
             //    effects_hash + cell_id` via `EffectVmAir`. A failed verify
             //    rejects the entire turn.
             if let Some(proof_bytes) = &witness.transition_proof {
+                #[cfg(not(feature = "recursion"))]
                 if let Err(e) = self.verify_sovereign_witness_stark(
                     cell_id,
                     &witness.old_commitment,
@@ -804,6 +805,21 @@ impl TurnExecutor {
                 ) {
                     return TurnResult::Rejected {
                         reason: e,
+                        at_action: vec![],
+                    };
+                }
+                // Recursion tower: the v1 witness-STARK verify is retired. A sovereign witness
+                // carrying a v1 `transition_proof` cannot be verified here — fail closed (the
+                // rotated proof-carrying turn is the sovereign attestation path).
+                #[cfg(feature = "recursion")]
+                {
+                    let _ = proof_bytes;
+                    return TurnResult::Rejected {
+                        reason: TurnError::InvalidExecutionProof(
+                            "sovereign witness carries a v1 transition_proof, which the recursion \
+                             build does not verify (use the rotated proof-carrying turn)"
+                                .into(),
+                        ),
                         at_action: vec![],
                     };
                 }

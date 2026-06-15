@@ -257,21 +257,33 @@ fn witnessed_receipt_from_effect_material(
         .iter()
         .map(|v| dregg_circuit::BabyBear::new(*v))
         .collect();
-    let air = dregg_circuit::effect_vm::EffectVmAir::new(trace.len());
-    let receipt_bound_proof =
-        dregg_circuit::stark::try_prove(&air, &trace, &public_input_felts).ok()?;
-    let proof_bytes = dregg_circuit::stark::proof_to_bytes(&receipt_bound_proof);
+    // V1 FLOOR: the receipt-bound WR carries a v1 hand-AIR (`EffectVmAir`) proof. The recursion
+    // tower's per-receipt attestation is the rotated finalized-turn proof produced by the node's
+    // async prove pool; this inline-trace v1 WR is a v1-only artifact, so under `recursion` the
+    // helper yields `None` (the receipt still commits; its rotated attestation arrives separately).
+    #[cfg(not(feature = "recursion"))]
+    {
+        let air = dregg_circuit::effect_vm::EffectVmAir::new(trace.len());
+        let receipt_bound_proof =
+            dregg_circuit::stark::try_prove(&air, &trace, &public_input_felts).ok()?;
+        let proof_bytes = dregg_circuit::stark::proof_to_bytes(&receipt_bound_proof);
 
-    Some(dregg_turn::WitnessedReceipt::from_components(
-        receipt,
-        proof_bytes,
-        public_inputs,
-        if trace.is_empty() {
-            None
-        } else {
-            Some(trace.as_slice())
-        },
-    ))
+        Some(dregg_turn::WitnessedReceipt::from_components(
+            receipt,
+            proof_bytes,
+            public_inputs,
+            if trace.is_empty() {
+                None
+            } else {
+                Some(trace.as_slice())
+            },
+        ))
+    }
+    #[cfg(feature = "recursion")]
+    {
+        let _ = (&trace, &public_input_felts, &public_inputs, receipt);
+        None
+    }
 }
 
 fn project_effects_for_mcp(
@@ -473,32 +485,45 @@ fn try_generate_effect_vm_proof(
     // standalone `dregg-verifier replay-chain` rejects the chain with
     // "PI[IS_AGENT_CELL] = 0 but single-proof replay requires 1".
     public_inputs[dregg_circuit::effect_vm::pi::IS_AGENT_CELL] = dregg_circuit::BabyBear::ONE;
-    // The trace generator pads to the next power of two ≥ 2; the AIR must be
-    // sized to the actual trace height, not the raw effect count (passing
-    // `vm_effects.len()` panics when it's less than 2 or not a power of two).
-    let air = dregg_circuit::effect_vm::EffectVmAir::new(trace.len());
-    let proof =
-        dregg_circuit::stark::try_prove(&air, &trace, &public_inputs).map_err(|e| e.to_string())?;
-    // Use the canonical DREG-prefixed byte format that the standalone
-    // dregg-verifier binary deserializes via stark::proof_from_bytes.
-    // postcard's encoding lacks the magic-header and is not what the
-    // verifier accepts on the wire.
-    let proof_bytes = dregg_circuit::stark::proof_to_bytes(&proof);
-    let proof_hex = hex_encode(&proof_bytes);
-    let public_inputs_u64: Vec<u64> = public_inputs.iter().map(|f| f.as_u32() as u64).collect();
-    // Build the canonical WitnessBundle::Inline so we can both ship the
-    // trace shape and compute its BLAKE3 hash via the canonical
-    // postcard-serialised form. The demo writes both to disk; the verifier
-    // re-derives the hash to enforce binding.
-    let bundle = dregg_turn::WitnessBundle::inline_from_trace(&trace);
-    let trace_rows = bundle.trace_rows.clone();
-    let witness_hash_hex = hex_encode(&bundle.witness_hash());
-    Ok(EffectVmProofMaterial {
-        proof_hex,
-        public_inputs: public_inputs_u64,
-        trace_rows,
-        witness_hash_hex,
-    })
+    // V1 FLOOR: standalone effect-VM proof material via the v1 hand-AIR (`EffectVmAir`), for the
+    // MCP demo/tool surfaces. The recursion tower proves rotated finalized turns through the node's
+    // commit pipeline; this standalone v1 material is not produced under `recursion`.
+    #[cfg(not(feature = "recursion"))]
+    {
+        // The trace generator pads to the next power of two ≥ 2; the AIR must be
+        // sized to the actual trace height, not the raw effect count (passing
+        // `vm_effects.len()` panics when it's less than 2 or not a power of two).
+        let air = dregg_circuit::effect_vm::EffectVmAir::new(trace.len());
+        let proof = dregg_circuit::stark::try_prove(&air, &trace, &public_inputs)
+            .map_err(|e| e.to_string())?;
+        // Use the canonical DREG-prefixed byte format that the standalone
+        // dregg-verifier binary deserializes via stark::proof_from_bytes.
+        // postcard's encoding lacks the magic-header and is not what the
+        // verifier accepts on the wire.
+        let proof_bytes = dregg_circuit::stark::proof_to_bytes(&proof);
+        let proof_hex = hex_encode(&proof_bytes);
+        let public_inputs_u64: Vec<u64> = public_inputs.iter().map(|f| f.as_u32() as u64).collect();
+        // Build the canonical WitnessBundle::Inline so we can both ship the
+        // trace shape and compute its BLAKE3 hash via the canonical
+        // postcard-serialised form. The demo writes both to disk; the verifier
+        // re-derives the hash to enforce binding.
+        let bundle = dregg_turn::WitnessBundle::inline_from_trace(&trace);
+        let trace_rows = bundle.trace_rows.clone();
+        let witness_hash_hex = hex_encode(&bundle.witness_hash());
+        Ok(EffectVmProofMaterial {
+            proof_hex,
+            public_inputs: public_inputs_u64,
+            trace_rows,
+            witness_hash_hex,
+        })
+    }
+    #[cfg(feature = "recursion")]
+    {
+        let _ = &trace;
+        Err("standalone v1 effect-vm proof material is not produced under the recursion build \
+             (finalized turns prove rotated through the node commit pipeline)"
+            .to_string())
+    }
 }
 
 // =============================================================================
@@ -4610,19 +4635,35 @@ async fn tool_prove_sovereign_turn(params: &Value, state: &NodeState) -> McpTool
     let (trace, public_inputs) =
         dregg_circuit::effect_vm::generate_effect_vm_trace(&initial_state, &vm_effects);
 
-    // Use the STARK prover (always available, serializable).
-    let air = dregg_circuit::effect_vm::EffectVmAir::new(vm_effects.len());
-    let proof = dregg_circuit::stark::prove(&air, &trace, &public_inputs);
-    let proof_hash = blake3::hash(&postcard::to_stdvec(&proof).unwrap_or_default());
+    // V1 FLOOR: this demo tool proves a standalone effect-VM transition through the v1 hand-AIR
+    // (`EffectVmAir`). The recursion tower retires the v1 prover; under `recursion` the tool reports
+    // that the standalone v1 proof is unavailable (finalized turns prove rotated via the commit path).
+    #[cfg(not(feature = "recursion"))]
+    {
+        let air = dregg_circuit::effect_vm::EffectVmAir::new(vm_effects.len());
+        let proof = dregg_circuit::stark::prove(&air, &trace, &public_inputs);
+        let proof_hash = blake3::hash(&postcard::to_stdvec(&proof).unwrap_or_default());
 
-    McpToolResult::json(&serde_json::json!({
-        "proved": true,
-        "cell_id": cell_id_hex,
-        "effect_count": vm_effects.len(),
-        "proof_hash": hex_encode(proof_hash.as_bytes()),
-        "public_inputs_count": public_inputs.len(),
-        "proof_hex": hex_encode(&postcard::to_stdvec(&proof).unwrap_or_default()),
-    }))
+        McpToolResult::json(&serde_json::json!({
+            "proved": true,
+            "cell_id": cell_id_hex,
+            "effect_count": vm_effects.len(),
+            "proof_hash": hex_encode(proof_hash.as_bytes()),
+            "public_inputs_count": public_inputs.len(),
+            "proof_hex": hex_encode(&postcard::to_stdvec(&proof).unwrap_or_default()),
+        }))
+    }
+    #[cfg(feature = "recursion")]
+    {
+        let _ = (&trace, &public_inputs, &cell_id_hex);
+        McpToolResult::json(&serde_json::json!({
+            "proved": false,
+            "cell_id": cell_id_hex,
+            "effect_count": vm_effects.len(),
+            "error": "standalone v1 effect-vm proof is retired under the recursion build; \
+                      finalized turns prove rotated through the node commit pipeline",
+        }))
+    }
 }
 
 async fn tool_verify_sovereign_proof(params: &Value, state: &NodeState) -> McpToolResult {
@@ -4658,16 +4699,31 @@ async fn tool_verify_sovereign_proof(params: &Value, state: &NodeState) -> McpTo
         .filter_map(|v| v.as_u64().map(|n| dregg_circuit::BabyBear::new(n as u32)))
         .collect();
 
-    // Verify the STARK proof using the Effect VM AIR.
-    let effect_count = proof.num_cols; // Approximate from proof metadata.
-    let air = dregg_circuit::effect_vm::EffectVmAir::new(effect_count.max(1));
-    let result = dregg_circuit::stark::verify(&air, &proof, &public_inputs);
+    // V1 FLOOR: verify the standalone v1 effect-VM `StarkProof` against the v1 hand-AIR
+    // (`EffectVmAir`). The recursion tower retires the v1 verifier; under `recursion` this demo tool
+    // reports that v1 verification is unavailable (rotated proofs verify via `verify_vm_descriptor2`).
+    #[cfg(not(feature = "recursion"))]
+    {
+        let effect_count = proof.num_cols; // Approximate from proof metadata.
+        let air = dregg_circuit::effect_vm::EffectVmAir::new(effect_count.max(1));
+        let result = dregg_circuit::stark::verify(&air, &proof, &public_inputs);
 
-    McpToolResult::json(&serde_json::json!({
-        "valid": result.is_ok(),
-        "error": result.err(),
-        "public_inputs_count": public_inputs.len(),
-    }))
+        McpToolResult::json(&serde_json::json!({
+            "valid": result.is_ok(),
+            "error": result.err(),
+            "public_inputs_count": public_inputs.len(),
+        }))
+    }
+    #[cfg(feature = "recursion")]
+    {
+        let _ = &proof;
+        McpToolResult::json(&serde_json::json!({
+            "valid": false,
+            "error": "v1 effect-vm STARK verification is retired under the recursion build \
+                      (rotated proofs verify through verify_vm_descriptor2)",
+            "public_inputs_count": public_inputs.len(),
+        }))
+    }
 }
 
 // =============================================================================
@@ -8748,6 +8804,10 @@ mod tests {
     /// See also `turn/src/executor/proof_verify.rs::populate_pi` (line
     /// 164) and `demo/two-ai-handoff/silver_helper.rs::cmd_make_recursive_witness`
     /// (line 1275), which set the same slot on their own paths.
+    ///
+    /// v1 floor only: `generate_effect_vm_proof` produces a v1 hand-AIR proof, which is absent
+    /// under the recursion build.
+    #[cfg(not(feature = "recursion"))]
     #[test]
     fn generate_effect_vm_proof_pins_is_agent_cell_to_one() {
         use dregg_circuit::effect_vm::pi as evm_pi;

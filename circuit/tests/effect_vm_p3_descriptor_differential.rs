@@ -1,3 +1,4 @@
+#![cfg(not(feature = "recursion"))]
 //! EFFECT-VM CIRCUIT CORRESPONDENCE DIFFERENTIAL — the running p3 AIR vs the
 //! constraint reference it is a term-for-term port of.
 //!

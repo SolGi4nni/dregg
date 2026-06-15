@@ -1,4 +1,10 @@
+#![cfg(not(feature = "recursion"))]
 //! Integration tests: replay-chain verifier paths.
+//!
+//! Entirely v1: `build_valid_entry` constructs a real `EffectVmAir` proof
+//! (recursion-absent) and the Verified cases assert `replay_chain` succeeds —
+//! the recursion build retires the bespoke AIR and fails the scope-1 replay
+//! step closed, so the whole module is gated `not(recursion)`.
 //!
 //! Exercises `replay_chain` (scope-1 + scope-2 trust-and-replay) using
 //! real Effect VM STARK proofs.  Covers:

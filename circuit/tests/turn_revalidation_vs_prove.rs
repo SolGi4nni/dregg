@@ -1,3 +1,4 @@
+#![cfg(not(feature = "recursion"))]
 //! REVALIDATION-vs-PROVE micro-bench — grounds the "commit on fast direct
 //! validation, prove async" architecture fix (task #109: move proving OFF the
 //! request path).

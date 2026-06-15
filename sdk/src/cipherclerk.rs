@@ -4923,6 +4923,12 @@ impl AgentCipherclerk {
 
     /// Produce a real per-cell [`WitnessedReceipt`] for a sovereign turn.
     ///
+    /// v1 floor only (the bilateral-aggregator WR path): it lifts the v1 hand-AIR
+    /// scope-2 trace + PI into a [`WitnessedReceipt`]. The recursion tower's sovereign
+    /// attestation is the rotated proof-carrying turn from
+    /// [`Self::execute_sovereign_turn_with_proof`]; this inline-trace WR is a v1-only
+    /// Silver-Vision artifact the rotated leg does not carry.
+    ///
     /// Where [`Self::execute_sovereign_turn_with_proof`] builds the STARK
     /// proof, drops the scope-2 trace, and returns only a proof-carrying
     /// [`Turn`], this method *retains* the trace and PI and lifts them — plus a
@@ -4941,6 +4947,7 @@ impl AgentCipherclerk {
     /// returned [`Turn`] is the same proof-carrying turn; callers that want
     /// both the submittable turn and the WR can read `.turn` and `.receipt`
     /// off the returned [`SovereignWitnessedReceipt`].
+    #[cfg(not(feature = "recursion"))]
     pub fn emit_witnessed_receipt(
         &mut self,
         cell_id: &CellId,
@@ -5016,11 +5023,13 @@ impl AgentCipherclerk {
     }
 
     /// Internal: build the proof-carrying [`Turn`] AND retain the scope-2
-    /// trace + γ.2-projected public inputs. Both
-    /// [`Self::execute_sovereign_turn_with_proof`] (which drops the trace) and
-    /// [`Self::emit_witnessed_receipt`] (which lifts it into a
-    /// [`WitnessedReceipt`]) call into this so the proving logic lives in one
-    /// place.
+    /// trace + γ.2-projected public inputs through the v1 hand-AIR (`EffectVmAir`).
+    /// v1 floor only; the recursion tower's sovereign producer is
+    /// [`Self::prove_sovereign_turn_rotated`]. Both
+    /// [`Self::execute_sovereign_turn_with_proof`] (under `not(recursion)`) and
+    /// [`Self::emit_witnessed_receipt`] (the bilateral-aggregator WR path, v1-only)
+    /// call into this.
+    #[cfg(not(feature = "recursion"))]
     fn prove_sovereign_turn(
         &mut self,
         cell_id: &CellId,
@@ -7569,6 +7578,9 @@ mod tests {
     /// through the canonical DWR1 witness_artifact, and (c) is structurally
     /// valid as one side of a γ.2 bilateral bundle. We build the matching peer
     /// side from the same turn's schedule and confirm the *pair* aggregates.
+    ///
+    /// v1 floor only: `emit_witnessed_receipt` produces the v1 hand-AIR WR, retired under recursion.
+    #[cfg(not(feature = "recursion"))]
     #[test]
     fn test_emit_witnessed_receipt_bilateral_pair_aggregates() {
         use dregg_circuit::effect_vm::pi;

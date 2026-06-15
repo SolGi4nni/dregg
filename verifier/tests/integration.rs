@@ -1,4 +1,10 @@
+#![cfg(not(feature = "recursion"))]
 //! Integration tests for `dregg-verifier`.
+//!
+//! Entirely v1: every test builds a real `EffectVmAir` proof (recursion-absent)
+//! and asserts `verify_effect_vm_proof` accepts/rejects it — the recursion build
+//! retires the bespoke AIR and fails the verifier closed, so the whole module is
+//! gated `not(recursion)`.
 //!
 //! These tests exercise the full verification path:
 //! 1. Generate a real Effect VM STARK proof using `dregg-circuit`.

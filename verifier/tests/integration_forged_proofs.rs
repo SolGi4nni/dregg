@@ -1,4 +1,11 @@
+#![cfg(not(feature = "recursion"))]
 //! Integration tests: forged-proof rejection paths.
+//!
+//! Entirely v1: every case constructs a genuine `EffectVmAir` STARK proof
+//! (recursion-absent) before tampering, and the honest-baseline cases assert
+//! `verify_effect_vm_proof` accepts — both break under the recursion build's
+//! retired AIR / fail-closed verifier, so the whole module is gated
+//! `not(recursion)`.
 //!
 //! For each major verifier entry-point, constructs a genuine STARK proof and
 //! then calls the verifier with systematically tampered inputs:

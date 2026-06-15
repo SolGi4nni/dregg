@@ -1,5 +1,28 @@
 # V1-DELETION RUNBOOK — PATH-PRESERVE Phase 5b (#103) + 5c, ordered to grep-zero
 
+> **✅ DONE (2026-06-14): grep-zero LANDED.** The v1 effect-VM proof is removed from the `recursion`
+> build (0 true live-under-recursion v1 refs across `circuit/src sdk/src turn/src node/src`). End-state
+> is **FENCE-not-delete**: the v1 OLD-PROVER (`EffectVmAir` / `effect_vm_p3_full_air` / the SDK cutover /
+> the executor secondary-verify arms / the v1 sovereign producer / the MCP demo tools) is retained
+> `#[cfg(not(feature = "recursion"))]` for the v1 floor, with fail-closed `#[cfg(feature = "recursion")]`
+> arms (no silent skip). DELETED outright (dead in both builds): the Silver joint surface
+> (`JointParticipant`/`prove_joint_turn`/`verify_joint_turn`), `DescriptorForestNode`/
+> `verify_descriptor_forest` (the last `EffectVmP3Proof` struct field), and the v1
+> `BilateralAggregationAir`/`AggregationInnerRow`/`build_aggregation_trace` block. Bucket E/D STAYS
+> (`generate_effect_vm_trace`, `EFFECT_VM_WIDTH`, `AIR_DESCRIPTOR`, `CUTOVER_READY_SELECTORS`,
+> `EffectVmShapeAir`, `CrossSideExistenceAir`/`BundleTreeFoldAir`, the V2 bilateral). Bucket F was already
+> landed (the rotated `DescriptorParticipant` is the recursion leaf). Two latent bugs were fixed in the
+> same drive: (1) `dregg-node`/`dregg-verifier` had NO `recursion` feature (their `#[cfg(feature=
+> "recursion")]` gates misaligned with the recursion-by-default circuit) — added one (default-on,
+> forwarding to `dregg-circuit/recursion`); (2) the workspace `exclude` was missing recently-added in-tree
+> separate `[workspace]` roots (`starbridge-web-surface`/`starbridge-v2`/`deos-leptos`/`deos-web-cells`/
+> `servo-render`/`dregg-tui`) — "multiple workspace roots" broke workspace-wide cargo; added to `exclude`.
+> Named residue: the standalone `dregg-verifier` has no rotated replay-chain verify yet (its v1 verify is a
+> fail-closed stub under recursion — a separate lane, like the wasm-rotated Option-A). Gates GREEN on
+> persvati: `cargo build --features recursion -p {circuit,sdk,turn,node}` (exit 0) + `cargo test --features
+> recursion --no-run -p …` (exit 0) + circuit `not(recursion)` floor (exit 0). The steps below are the
+> historical plan (kept for the audit trail).
+
 > Scoped against HEAD (post Phases 0-4 + Bucket F). The main loop runs this once bucket-F's
 > K-fold is green. **STATE CORRECTION:** the cutover is materially further along than
 > `PATH-PRESERVE.md`/`V1-DELETION-MANIFEST.md` imply — the recursion leaf structs are ALREADY

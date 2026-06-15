@@ -1,3 +1,4 @@
+#![cfg(not(feature = "recursion"))]
 //! # EFFECT-VM CUTOVER BEACHHEAD — descriptor interpreter as a drop-in runtime prover+verifier.
 //!
 //! The runtime proves/verifies every finalized turn with the HAND-WRITTEN AIR

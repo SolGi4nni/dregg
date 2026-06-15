@@ -24,7 +24,9 @@
 //! Future versions will support additional cell programs by VK hash lookup.
 
 use dregg_circuit::stark::StarkAir;
-use dregg_circuit::{EffectVmAir, field::BabyBear, stark};
+use dregg_circuit::{field::BabyBear, stark};
+#[cfg(not(feature = "recursion"))]
+use dregg_circuit::EffectVmAir;
 use serde::{Deserialize, Serialize};
 
 pub mod aggregated_bundle;
@@ -128,6 +130,30 @@ pub const AUTO_DETECT_VK_HASH: &str = "auto";
 /// - `vk_hash_hex`: 64-hex-char VK hash, or `"auto"` for development use
 ///
 /// Returns `VerifierOutput` and the corresponding exit code.
+///
+/// RECURSION STUB: this is the v1 hand-AIR (`EffectVmAir`) replay-chain verify, retained under
+/// `not(recursion)`. The recursion build retires the v1 verifier; a rotated replay-chain verify
+/// (via `descriptor_ir2::verify_vm_descriptor2`) is a separate lane not yet built, so under
+/// `recursion` this fails closed rather than verify a v1 proof.
+#[cfg(feature = "recursion")]
+pub fn verify_effect_vm_proof(
+    proof_bytes: &[u8],
+    public_inputs_u32: &[u32],
+    vk_hash_hex: &str,
+) -> (VerifierOutput, i32) {
+    let _ = (proof_bytes, public_inputs_u32, vk_hash_hex);
+    (
+        VerifierOutput::reject(
+            "v1 Effect VM STARK verification is retired under the recursion build; the rotated \
+             replay-chain verify (verify_vm_descriptor2) is a separate lane"
+                .to_string(),
+        ),
+        exit_code::ERROR,
+    )
+}
+
+/// Verify an Effect VM STARK proof (v1 hand-AIR floor). See the recursion stub above.
+#[cfg(not(feature = "recursion"))]
 pub fn verify_effect_vm_proof(
     proof_bytes: &[u8],
     public_inputs_u32: &[u32],
@@ -682,38 +708,53 @@ fn replay_one_with_prev(
         .map(|&v| BabyBear::new_canonical(v))
         .collect();
 
-    // Build the AIR sized to the trace.
-    let air = EffectVmAir::new(trace_len);
-    if trace_bb[0].len() != air.width() {
-        return ReplayVerdict::Rejected {
-            reason: format!(
-                "trace width {} != AIR width {}",
-                trace_bb[0].len(),
-                air.width()
-            ),
-        };
-    }
+    // Step 6 (V1 FLOOR): re-run the v1 hand-AIR (`EffectVmAir`) constraints across every
+    // consecutive row pair. Retired under recursion — the rotated replay-chain verify (a separate
+    // lane) is not yet built, so a recursion build fails closed here rather than re-running v1.
+    #[cfg(not(feature = "recursion"))]
+    {
+        // Build the AIR sized to the trace.
+        let air = EffectVmAir::new(trace_len);
+        if trace_bb[0].len() != air.width() {
+            return ReplayVerdict::Rejected {
+                reason: format!(
+                    "trace width {} != AIR width {}",
+                    trace_bb[0].len(),
+                    air.width()
+                ),
+            };
+        }
 
-    // Step 6: walk every consecutive (local, next) row pair across each
-    // alpha and confirm the AIR's combined constraint polynomial is zero.
-    for i in 0..(trace_len - 1) {
-        for &alpha in alphas {
-            let c = air.eval_constraints(&trace_bb[i], &trace_bb[i + 1], &pi_bb, alpha);
-            if c.as_u32() != 0 {
-                return ReplayVerdict::Rejected {
-                    reason: format!(
-                        "constraint violation at row {}, alpha=0x{:08x}: residue={}",
-                        i,
-                        alpha.as_u32(),
-                        c.as_u32()
-                    ),
-                };
+        // Walk every consecutive (local, next) row pair across each alpha and confirm the
+        // AIR's combined constraint polynomial is zero.
+        for i in 0..(trace_len - 1) {
+            for &alpha in alphas {
+                let c = air.eval_constraints(&trace_bb[i], &trace_bb[i + 1], &pi_bb, alpha);
+                if c.as_u32() != 0 {
+                    return ReplayVerdict::Rejected {
+                        reason: format!(
+                            "constraint violation at row {}, alpha=0x{:08x}: residue={}",
+                            i,
+                            alpha.as_u32(),
+                            c.as_u32()
+                        ),
+                    };
+                }
             }
         }
-    }
 
-    // All checks passed.
-    ReplayVerdict::Verified
+        // All checks passed.
+        ReplayVerdict::Verified
+    }
+    #[cfg(feature = "recursion")]
+    {
+        let _ = (&trace_bb, &pi_bb, trace_len, alphas);
+        ReplayVerdict::Rejected {
+            reason: "v1 hand-AIR replay-chain verification is retired under the recursion build \
+                     (the rotated replay-chain verify is a separate lane)"
+                .to_string(),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1261,6 +1302,9 @@ mod tests {
         );
     }
 
+    // V1 floor: these exercise the v1 hand-AIR (`EffectVmAir`) proof + the v1 `verify_effect_vm_proof`,
+    // both retired under recursion (where the standalone verify fails closed).
+    #[cfg(not(feature = "recursion"))]
     fn sample_effect_vm_proof_and_pi() -> (Vec<u8>, Vec<u32>) {
         let initial_state = dregg_circuit::CellState::new(1_000, 7);
         let effects = vec![dregg_circuit::effect_vm::Effect::Transfer {
@@ -1276,6 +1320,7 @@ mod tests {
         (proof_bytes, pi_u32)
     }
 
+    #[cfg(not(feature = "recursion"))]
     #[test]
     fn effect_vm_verifier_rejects_short_base_pi() {
         let (proof_bytes, mut pi_u32) = sample_effect_vm_proof_and_pi();
@@ -1291,6 +1336,7 @@ mod tests {
         );
     }
 
+    #[cfg(not(feature = "recursion"))]
     #[test]
     fn effect_vm_verifier_rejects_out_of_range_balance_limb_pi() {
         let (proof_bytes, mut pi_u32) = sample_effect_vm_proof_and_pi();

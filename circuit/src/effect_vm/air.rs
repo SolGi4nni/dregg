@@ -322,11 +322,19 @@ pub const AIR_DESCRIPTOR: crate::air_descriptor::AirDescriptor =
     };
 
 /// The Effect VM AIR. Proves an arbitrary sequence of effects in a single STARK.
+///
+/// v1 hand-AIR: retained under `#[cfg(not(feature = "recursion"))]` for the v1 floor.
+/// The recursion tower proves the effect-VM transition through the rotated IR-v2
+/// multi-table descriptor (`crate::descriptor_ir2`) instead. The shape descriptor
+/// [`AIR_DESCRIPTOR`] and the shared trace+PI generator (`generate_effect_vm_trace`,
+/// `EFFECT_VM_WIDTH`) STAY in both builds — the rotated leg is built on them.
+#[cfg(not(feature = "recursion"))]
 pub struct EffectVmAir {
     /// Maximum number of effects (trace height, padded to power of 2).
     pub max_effects: usize,
 }
 
+#[cfg(not(feature = "recursion"))]
 impl EffectVmAir {
     pub fn new(max_effects: usize) -> Self {
         // MIN 64 rows: closes the FRI single-row-gap (task #90). A short trace
@@ -345,6 +353,7 @@ impl EffectVmAir {
     }
 }
 
+#[cfg(not(feature = "recursion"))]
 impl StarkAir for EffectVmAir {
     fn width(&self) -> usize {
         EFFECT_VM_WIDTH

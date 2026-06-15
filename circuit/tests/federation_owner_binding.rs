@@ -1,3 +1,4 @@
+#![cfg(not(feature = "recursion"))]
 //! γ.2 follow-up (#131 + #132) AIR-teeth tests: per-cell federation +
 //! owner-cell-id binding.
 //!

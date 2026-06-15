@@ -5,10 +5,10 @@
 //! `docs/rebuild/PHASE-PROOF-CARRYING.md` — Proof-Carrying Data **minus** the
 //! accumulation/recursion step. We ship the *whole forest* of per-step proofs,
 //! each independently verifiable, plus the linking witness (the public-input
-//! commitments). [`verify_forest`] accepts only if:
+//! commitments). `verify_forest` accepts only if:
 //!
 //!   1. **Per-proof soundness** — every proof verifies against its own public
-//!      inputs under the real [`EffectVmAir`] (`stark::verify`).
+//!      inputs under the real `EffectVmAir` (`stark::verify`).
 //!   2. **The link** — along every sequential edge, the predecessor's
 //!      `NEW_COMMIT` public input equals the successor's `OLD_COMMIT` public
 //!      input (state continuity).
@@ -16,24 +16,27 @@
 //! The load-bearing property this module demonstrates: **composition soundness
 //! comes from the linking, not from the per-proof validity alone.** If you
 //! break the link (`prev.new != next.old`) while leaving both proofs
-//! individually valid, [`verify_forest`] rejects at the *link* check with a
-//! distinct [`ForestError::LinkBroken`].
+//! individually valid, `verify_forest` rejects at the *link* check with a
+//! distinct `ForestError::LinkBroken`.
 //!
-//! Scope (smallest first increment, §9 of the design): sequential intra-cell
-//! links only — no cross-cell `Σδ = 0` family binding, **no recursion /
-//! aggregation feature**. Cross-cell families slot in as a later increment;
-//! aggregation slots in as a node-local artifact swap that does not touch this
-//! verifier (§8 of the design).
+//! The bespoke-`EffectVmAir` forest (`ForestNode` / `ProofForest` / `verify_forest`)
+//! is the v1 path, retained under `#[cfg(not(feature = "recursion"))]` for the v1
+//! floor; the recursion tower folds the rotated leaf in `crate::ivc_turn_chain` /
+//! `crate::joint_turn_recursive` instead. The cutover-ready selector set
+//! [`CUTOVER_READY_SELECTORS`] is shared by both.
 
+#[cfg(not(feature = "recursion"))]
 use crate::effect_vm::EffectVmAir;
 use crate::effect_vm::pi;
 use crate::field::BabyBear;
+#[cfg(not(feature = "recursion"))]
 use crate::stark::{self, StarkProof};
 
 /// One node in the proof forest: a standalone EffectVm STARK proof plus the
 /// public-input vector it attests. The public inputs carry the linking surface
 /// (`OLD_COMMIT` at [`pi::OLD_COMMIT_BASE`], `NEW_COMMIT` at
 /// [`pi::NEW_COMMIT_BASE`], each 4 felts).
+#[cfg(not(feature = "recursion"))]
 #[derive(Clone, Debug)]
 pub struct ForestNode {
     /// The standalone EffectVm STARK proof.
@@ -43,6 +46,7 @@ pub struct ForestNode {
     pub public_inputs: Vec<BabyBear>,
 }
 
+#[cfg(not(feature = "recursion"))]
 impl ForestNode {
     /// The 4-felt `OLD_COMMIT` public input (input state commitment).
     pub fn old_commit(&self) -> &[BabyBear] {
@@ -58,6 +62,7 @@ impl ForestNode {
 /// A happened-before edge linking two nodes. For the smallest increment we
 /// model only sequential intra-cell continuity edges (`from.NEW_COMMIT ==
 /// to.OLD_COMMIT`). Cross-cell family edges are a later increment.
+#[cfg(not(feature = "recursion"))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LinkEdge {
     /// Source node index (the predecessor step).
@@ -67,6 +72,7 @@ pub struct LinkEdge {
 }
 
 /// The proof-forest artifact: the per-step proofs + the linking edges.
+#[cfg(not(feature = "recursion"))]
 #[derive(Clone, Debug)]
 pub struct ProofForest {
     /// One node per step (pre-order, the call-forest order).
@@ -80,6 +86,7 @@ pub struct ProofForest {
 /// caller (and the negative test) can tell **whether the failure was a
 /// per-proof crypto failure or a link-discipline failure** — the whole point of
 /// the proof-forest soundness story.
+#[cfg(not(feature = "recursion"))]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ForestError {
     /// Node `index`'s STARK proof failed to verify against its public inputs
@@ -119,6 +126,7 @@ pub enum ForestError {
     },
 }
 
+#[cfg(not(feature = "recursion"))]
 impl core::fmt::Display for ForestError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
@@ -150,6 +158,7 @@ impl core::fmt::Display for ForestError {
     }
 }
 
+#[cfg(not(feature = "recursion"))]
 impl std::error::Error for ForestError {}
 
 /// Verify a proof forest: (1) every proof verifies under the real EffectVm AIR
@@ -165,6 +174,7 @@ impl std::error::Error for ForestError {}
 ///
 /// This uses **only** the production-path EffectVm STARK (`stark::verify`); no
 /// recursion or aggregation feature is involved.
+#[cfg(not(feature = "recursion"))]
 pub fn verify_forest(forest: &ProofForest) -> Result<(), ForestError> {
     let min_pi_len = pi::NEW_COMMIT_BASE + pi::NEW_COMMIT_LEN;
 
@@ -217,31 +227,14 @@ pub fn verify_forest(forest: &ProofForest) -> Result<(), ForestError> {
 }
 
 // ============================================================================
-// DESCRIPTOR-BACKED FOREST — the ONE-circuit cutover of the forest consumer.
+// CUTOVER-READY SELECTOR SET — the graduated single-effect selectors.
 // ============================================================================
 //
-// `verify_forest` above is the LEGACY path: it verifies per-step proofs through
-// the bespoke-`stark` hand AIR (`EffectVmAir` + `stark::verify`). The ONE-circuit
-// migration re-points this consumer onto the verified-by-construction Lean
-// DESCRIPTOR INTERPRETER (`EffectVmDescriptorAir`, driven by the byte-exact
-// Lean-emitted descriptor JSON in `effect_vm_descriptors`), which the differential
-// harness (`circuit/tests/effect_vm_descriptor_cutover_harness.rs`) proves decides
-// IDENTICALLY to the hand-AIR on the real witness (honest accept + anti-ghost
-// reject) for the 17 GRADUATED single-effect selectors.
-//
-// A descriptor forest node carries an `EffectVmP3Proof` (the SAME wire type the SDK
-// production prove-path emits via `prove_effect_vm_with_cutover`), so this is the
-// real cutover surface — NOT a parallel toy. Each node is verified SELECTOR-BOUND
-// through the descriptor verifier: a node proof verifies under EXACTLY ONE cutover
-// descriptor (its own effect selector, enforced by the Lean `selectorGate s` tooth
-// proven in `descriptor_proof_binds_to_its_selector`), so a cross-selector replay
-// is rejected. The legacy bespoke-`stark` path is RETAINED as the transitional
-// differential guard until every consumer + the non-graduated selectors are cut
-// over (then the hand-AIR retires).
-
-use crate::effect_vm_descriptors::descriptor_for_selector;
-use crate::effect_vm_p3_full_air::EffectVmP3Proof;
-use crate::lean_descriptor_air::{parse_vm_descriptor, verify_vm_descriptor};
+// The selectors whose descriptors the differential harness has GRADUATED
+// (descriptor ⟺ hand-AIR proven IDENTICAL on the real witness + anti-ghost, AND each
+// carries the Lean `selectorGate s` binding tooth). The rotated joint-turn admission
+// (`joint_turn_aggregation::rotated_descriptor_selector`) maps a rotated cohort
+// descriptor's name back to its effect selector through this set.
 
 /// The cutover-ready selectors whose descriptors the differential harness has
 /// GRADUATED (descriptor ⟺ hand-AIR proven IDENTICAL on the real witness +
@@ -268,269 +261,7 @@ pub const CUTOVER_READY_SELECTORS: &[usize] = &[
     crate::effect_vm::columns::sel::INTRODUCE,
 ];
 
-/// One node in a DESCRIPTOR-backed proof forest: a descriptor-interpreter proof
-/// (`EffectVmP3Proof`, the production wire type) plus the public-input vector it
-/// attests. The linking surface (`OLD_COMMIT`/`NEW_COMMIT`) is in the descriptor
-/// PI prefix, so the same chain discipline as `ForestNode` applies.
-///
-/// (`EffectVmP3Proof` = `BatchProof<DreggStarkConfig>` is neither `Clone` nor
-/// `Debug`, so this node is move-only — matching the production proof artifact.)
-pub struct DescriptorForestNode {
-    /// The descriptor-interpreter STARK proof (audited p3 batch-stark).
-    pub proof: EffectVmP3Proof,
-    /// The full EffectVM public-input vector this proof attests.
-    pub public_inputs: Vec<BabyBear>,
-}
-
-impl DescriptorForestNode {
-    /// The 4-felt `OLD_COMMIT` public input (input state commitment).
-    pub fn old_commit(&self) -> &[BabyBear] {
-        &self.public_inputs[pi::OLD_COMMIT_BASE..pi::OLD_COMMIT_BASE + pi::OLD_COMMIT_LEN]
-    }
-
-    /// The 4-felt `NEW_COMMIT` public input (output state commitment).
-    pub fn new_commit(&self) -> &[BabyBear] {
-        &self.public_inputs[pi::NEW_COMMIT_BASE..pi::NEW_COMMIT_BASE + pi::NEW_COMMIT_LEN]
-    }
-}
-
-/// A descriptor-backed proof forest (the cutover analogue of [`ProofForest`]).
-pub struct DescriptorProofForest {
-    /// One node per step (call-forest order).
-    pub nodes: Vec<DescriptorForestNode>,
-    /// The happened-before sequential edges (`prev.NEW_COMMIT == next.OLD_COMMIT`).
-    pub edges: Vec<LinkEdge>,
-}
-
-/// Verify a node's descriptor-interpreter proof SELECTOR-BOUND: try each cutover
-/// descriptor's audited verifier over the descriptor's PI prefix and record which
-/// selectors accept. A SOUND descriptor proof verifies under EXACTLY ONE — its own
-/// effect selector (the Lean `selectorGate s` tooth). Returns the bound selector on
-/// success; rejects zero (not a cutover descriptor proof) or multiple (ambiguous
-/// binding — must not happen with the gate in place). This is the exact discipline
-/// `sdk::full_turn_proof::verify_effect_vm_proof_with_cutover` runs, reused here so
-/// the forest consumer's per-proof seam is the verified descriptor interpreter.
-fn verify_descriptor_node_selector_bound(node: &DescriptorForestNode) -> Result<usize, String> {
-    let mut bound: Vec<usize> = Vec::new();
-    for &s in CUTOVER_READY_SELECTORS {
-        if let Some(json) = descriptor_for_selector(s) {
-            if let Ok(desc) = parse_vm_descriptor(json) {
-                if node.public_inputs.len() >= desc.public_input_count {
-                    let dpis = &node.public_inputs[..desc.public_input_count];
-                    if verify_vm_descriptor(&desc, &node.proof, dpis).is_ok() {
-                        bound.push(s);
-                    }
-                }
-            }
-        }
-    }
-    match bound.as_slice() {
-        [only] => Ok(*only),
-        [] => Err("descriptor forest node verified under NO cutover selector \
-             (not a graduated descriptor proof)"
-            .into()),
-        multi => Err(format!(
-            "descriptor forest node verified under MULTIPLE cutover selectors {multi:?} \
-             — selector binding ambiguous, rejecting"
-        )),
-    }
-}
-
-/// Verify a DESCRIPTOR-backed proof forest: (1) every node's descriptor-interpreter
-/// proof verifies SELECTOR-BOUND through the verified-by-construction descriptor
-/// interpreter (the cutover replacement for the hand-AIR per-proof seam), and (2)
-/// every sequential edge links (`prev.NEW_COMMIT == next.OLD_COMMIT`).
-///
-/// Same load-bearing story as [`verify_forest`]: composition soundness comes from
-/// the linking, not per-proof validity. A forest of individually-valid descriptor
-/// proofs whose links are broken is rejected at the link check with
-/// [`ForestError::LinkBroken`]. The difference is the per-proof seam: the descriptor
-/// interpreter, not `stark::verify(EffectVmAir)`.
-pub fn verify_descriptor_forest(forest: &DescriptorProofForest) -> Result<(), ForestError> {
-    let min_pi_len = pi::NEW_COMMIT_BASE + pi::NEW_COMMIT_LEN;
-
-    // (1) Per-proof soundness — selector-bound through the descriptor interpreter.
-    for (index, node) in forest.nodes.iter().enumerate() {
-        if node.public_inputs.len() < min_pi_len {
-            return Err(ForestError::MalformedPublicInputs {
-                index,
-                len: node.public_inputs.len(),
-            });
-        }
-        if let Err(reason) = verify_descriptor_node_selector_bound(node) {
-            return Err(ForestError::ProofInvalid { index, reason });
-        }
-    }
-
-    // (2) Intra-cell chain-link — identical to the legacy path.
-    for &edge in &forest.edges {
-        if edge.from >= forest.nodes.len() || edge.to >= forest.nodes.len() {
-            return Err(ForestError::EdgeOutOfBounds {
-                edge,
-                node_count: forest.nodes.len(),
-            });
-        }
-        let prev = &forest.nodes[edge.from];
-        let next = &forest.nodes[edge.to];
-        let prev_new = prev.new_commit();
-        let next_old = next.old_commit();
-        if prev_new != next_old {
-            return Err(ForestError::LinkBroken {
-                edge,
-                expected_old_commit: prev_new.iter().map(|b| b.0).collect(),
-                actual_old_commit: next_old.iter().map(|b| b.0).collect(),
-            });
-        }
-    }
-
-    Ok(())
-}
-
-#[cfg(test)]
-mod descriptor_tests {
-    use super::*;
-    use crate::effect_vm::columns::sel;
-    use crate::effect_vm::{CellState, Effect, generate_effect_vm_trace};
-    use crate::lean_descriptor_air::prove_vm_descriptor;
-
-    /// Prove one step through the DESCRIPTOR INTERPRETER (the cutover prover), for a
-    /// graduated single-effect turn. Returns the descriptor node (proof + full PI) so
-    /// the caller can chain. This is the production cutover path:
-    /// `generate_effect_vm_trace` -> descriptor JSON -> `prove_vm_descriptor`.
-    fn prove_descriptor_step(
-        initial_state: &CellState,
-        effects: &[Effect],
-        selector: usize,
-    ) -> DescriptorForestNode {
-        let (trace, public_inputs) = generate_effect_vm_trace(initial_state, effects);
-        let json = descriptor_for_selector(selector).expect("graduated selector has a descriptor");
-        let desc = parse_vm_descriptor(json).expect("descriptor parses");
-        let dpis = &public_inputs[..desc.public_input_count];
-        let proof = prove_vm_descriptor(&desc, &trace, dpis)
-            .expect("descriptor interpreter proves the honest graduated witness");
-        DescriptorForestNode {
-            proof,
-            public_inputs,
-        }
-    }
-
-    fn apply_transfer(state: &CellState, amount: u64, direction: u32) -> CellState {
-        let new_balance = if direction == 0 {
-            state.balance + amount
-        } else {
-            state.balance - amount
-        };
-        CellState::new(new_balance, state.nonce + 1)
-    }
-
-    /// (1) POSITIVE: a 2-step linked forest of REAL DESCRIPTOR-INTERPRETER proofs
-    /// verifies — the forest consumer is cut over onto the verified circuit.
-    #[test]
-    fn two_step_descriptor_forest_verifies() {
-        let s0 = CellState::new(100, 0);
-        let node0 = prove_descriptor_step(
-            &s0,
-            &[Effect::Transfer {
-                amount: 30,
-                direction: 0,
-            }],
-            sel::TRANSFER,
-        );
-        let s1 = apply_transfer(&s0, 30, 0);
-        let node1 = prove_descriptor_step(
-            &s1,
-            &[Effect::Transfer {
-                amount: 10,
-                direction: 1,
-            }],
-            sel::TRANSFER,
-        );
-
-        assert_eq!(
-            node0.new_commit(),
-            node1.old_commit(),
-            "construction precondition: NEW_COMMIT(step0) == OLD_COMMIT(step1)"
-        );
-
-        let forest = DescriptorProofForest {
-            nodes: vec![node0, node1],
-            edges: vec![LinkEdge { from: 0, to: 1 }],
-        };
-        verify_descriptor_forest(&forest)
-            .expect("linked descriptor forest must verify through the descriptor interpreter");
-    }
-
-    /// (2) THE TEETH — broken link with both descriptor proofs individually valid is
-    /// rejected AT THE LINK (`LinkBroken`), proving composition soundness is supplied
-    /// by the link, not per-proof validity — on the descriptor path.
-    #[test]
-    fn tampered_link_rejected_on_descriptor_path() {
-        let s0 = CellState::new(100, 0);
-        let node0 = prove_descriptor_step(
-            &s0,
-            &[Effect::Transfer {
-                amount: 30,
-                direction: 0,
-            }],
-            sel::TRANSFER,
-        );
-        // Step 1 starts from an UNRELATED state, so its OLD_COMMIT != step0 NEW_COMMIT.
-        let s1_wrong = CellState::new(999, 1);
-        let node1 = prove_descriptor_step(
-            &s1_wrong,
-            &[Effect::Transfer {
-                amount: 10,
-                direction: 1,
-            }],
-            sel::TRANSFER,
-        );
-        assert_ne!(
-            node0.new_commit(),
-            node1.old_commit(),
-            "link must be broken"
-        );
-
-        // Both individually valid through the descriptor interpreter.
-        verify_descriptor_node_selector_bound(&node0).expect("node0 valid");
-        verify_descriptor_node_selector_bound(&node1).expect("node1 valid");
-
-        let forest = DescriptorProofForest {
-            nodes: vec![node0, node1],
-            edges: vec![LinkEdge { from: 0, to: 1 }],
-        };
-        match verify_descriptor_forest(&forest).expect_err("broken link must reject") {
-            ForestError::LinkBroken { edge, .. } => assert_eq!(edge, LinkEdge { from: 0, to: 1 }),
-            other => panic!("expected LinkBroken, got {other:?}"),
-        }
-    }
-
-    /// (3) ANTI-GHOST / SELECTOR-BINDING: a graduated BURN proof must verify
-    /// selector-bound to BURN and NOT under any other cutover selector — the
-    /// cross-selector replay is closed (the Lean `selectorGate s` tooth). This is the
-    /// per-node soundness the forest now rests on.
-    #[test]
-    fn descriptor_node_binds_to_its_own_selector() {
-        let s = CellState::new(100_000, 0);
-        let node = prove_descriptor_step(
-            &s,
-            &[Effect::Burn {
-                target_hash: BabyBear::new(0xB0B),
-                amount_lo: BabyBear::new(75),
-                amount_full: 75,
-            }],
-            sel::BURN,
-        );
-        let bound = verify_descriptor_node_selector_bound(&node)
-            .expect("burn descriptor node must verify selector-bound");
-        assert_eq!(
-            bound,
-            sel::BURN,
-            "must bind to BURN and no other cutover selector"
-        );
-    }
-}
-
-#[cfg(test)]
+#[cfg(all(test, not(feature = "recursion")))]
 mod tests {
     use super::*;
     use crate::effect_vm::{CellState, Effect, generate_effect_vm_trace};

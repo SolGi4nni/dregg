@@ -1,3 +1,4 @@
+#![cfg(not(feature = "recursion"))]
 //! Integration tests: Effect VM prove-then-verify, covering every major schema.
 //!
 //! Each test builds a real witness, generates a STARK proof, and runs the

@@ -1841,6 +1841,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "starbridge-web-surface",
  "thiserror 2.0.18",
  "tokio",
  "tower",
@@ -2285,6 +2286,15 @@ dependencies = [
  "sha2 0.10.9",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "dregg-firmament"
+version = "0.1.0"
+dependencies = [
+ "dregg-cell",
+ "dregg-turn",
+ "dregg-types",
 ]
 
 [[package]]
@@ -5337,6 +5347,7 @@ version = "0.1.0"
 dependencies = [
  "dregg-auth",
  "libc",
+ "postcard",
  "serde",
  "serde_json",
 ]
@@ -7247,6 +7258,21 @@ dependencies = [
  "dregg-app-framework",
  "dregg-cell",
  "dregg-types",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "starbridge-web-surface"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "dregg-cell",
+ "dregg-firmament",
+ "dregg-query",
+ "dregg-turn",
+ "dregg-types",
+ "futures-core",
  "serde",
  "serde_json",
 ]
