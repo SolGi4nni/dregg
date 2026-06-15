@@ -42,8 +42,8 @@
 use crate::field::BabyBear;
 use crate::poseidon2;
 use crate::schnorr_curve::{
-    CurvePoint, GENERATOR, Scalar, scalar_from_bytes, scalar_is_zero, scalar_mul_mod, scalar_sub,
-    scalar_to_bytes, scalar_to_u64,
+    CurvePoint, GENERATOR, Scalar, reduce_mod_n, scalar_from_bytes, scalar_is_zero, scalar_mul_mod,
+    scalar_sub, scalar_to_bytes,
 };
 
 // ============================================================================
@@ -187,7 +187,11 @@ fn compute_challenge(r: &CurvePoint, pk: &CurvePoint, message: &[u8]) -> Scalar 
 }
 
 /// Compute challenge from pre-encoded field elements.
-fn compute_challenge_from_elements(
+///
+/// Public so the in-circuit AIR (and its tests) can recompute the *exact* same
+/// Fiat–Shamir scalar `e` that the signer used — the verification equation
+/// `s·G + e·pk == R` only closes when both sides use the identical `e`.
+pub fn compute_challenge_from_elements(
     r: &CurvePoint,
     pk: &CurvePoint,
     message_hash: &[BabyBear; 8],
@@ -226,13 +230,12 @@ fn compute_challenge_from_elements(
 
 /// Convert 8 BabyBear elements (each < 2^31) into a scalar mod ORDER.
 ///
-/// Each element contributes ~31 bits. We treat them as a 256-bit integer
-/// (limbs) and reduce mod ORDER using Horner's method.
+/// Each element contributes ~31 bits, so the 8 limbs form a ~248-bit integer
+/// (the high bit of each 32-bit limb is clear). We reduce that full 256-bit
+/// value modulo the 248-bit prime ORDER. The resulting challenge therefore
+/// ranges over (essentially) all of `[0, N)`.
 fn scalar_from_challenge(elems: &[u32; 8]) -> Scalar {
-    let reduced = scalar_to_u64(elems);
-    let mut result = [0u32; 8];
-    result[0] = reduced as u32;
-    result
+    reduce_mod_n(elems)
 }
 
 // ============================================================================

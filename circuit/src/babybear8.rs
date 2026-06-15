@@ -1,54 +1,56 @@
 //! BabyBear^8 extension field arithmetic.
 //!
-//! Constructed as a tower: BabyBear^8 = BabyBear^4[y] / (y^2 - W)
-//! where BabyBear^4 = BabyBear[x] / (x^4 - 11) and we use the same non-residue
-//! W = 11 for the quadratic extension on top.
+//! Constructed as the **simple (non-towered) field** `F_p[z] / (z^8 - 11)`,
+//! where `p` is the BabyBear prime. `z^8 - 11` is irreducible over BabyBear
+//! (verified: it factors as a single degree-8 irreducible), so the quotient is a
+//! genuine field of size `p^8 ≈ 2^248`, giving ~124-bit Pollard-rho security for
+//! the discrete log on an elliptic curve defined over it.
 //!
-//! # SECURITY / SOUNDNESS BUG: this is NOT a field (zero divisors)
+//! # Why this construction (and not the old tower)
 //!
-//! Reusing `W = 11` for BOTH layers is mathematically wrong: in
-//! `F_p[x]/(x^4 - 11)`, the element `x^2` already satisfies `(x^2)^2 = x^4 = 11`,
-//! so `11` is a square there and `y^2 - 11 = (y - x^2)(y + x^2)` FACTORS. The
-//! quotient `F_{p^4}[y]/(y^2 - 11)` is therefore a product ring
-//! `≅ F_{p^4} × F_{p^4}` with zero divisors — NOT the field `F_{p^8}`. Witness:
-//! `A = y - x^2` is nonzero yet `A·(y + x^2) = y^2 - x^4 = 0`, and `A.inverse()`
-//! returns `None` (its norm `(-x^2)^2 - 11·1^2 = 11 - 11 = 0`). This voids the
-//! "field of size p^8 → ~124-bit DL security" premise at the foundation, on top
-//! of the separate composite-generator-order issue in `schnorr_curve`.
+//! An earlier version built `F_{p^8}` as a *tower*
+//! `F_p[x]/(x^4 - 11)` then `F_{p^4}[y]/(y^2 - 11)`, **reusing the same
+//! non-residue `11` for both layers**. That is not a field: in
+//! `F_p[x]/(x^4 - 11)` the element `x^2` already satisfies `(x^2)^2 = 11`, so
+//! `11` is a square there and `y^2 - 11 = (y - x^2)(y + x^2)` *factors* — the
+//! quotient is the product ring `F_{p^4} × F_{p^4}` with zero divisors (e.g.
+//! `A = y - x^2 ≠ 0` yet `A·(y + x^2) = 0`, and `A` has no inverse). No
+//! base-field constant works as a top non-residue either: every `c ∈ F_p*` is a
+//! square in `F_{p^4}`. The fix is to extend by a genuine degree-8 irreducible
+//! over `F_p` directly; `z^8 - 11` is the minimal "same flavor" choice.
 //!
-//! FIX (HORIZONLOG **PRIME-ORDER-SCHNORR-CURVE**): use a genuine non-residue for
-//! the top layer — e.g. `V = x` (an `F_{p^4}` element, not a base scalar), giving
-//! the clean field `F_p[z]/(z^8 - 11)` with `z = y`, `x = z^2`. (No base-field
-//! constant works as the top non-residue: every `c ∈ F_p*` is a square in
-//! `F_{p^4}`.) Over the corrected field a fully prime-order curve EXISTS
-//! (`y^2 = x^3 + (z+2)x + (z^3+8)`, cofactor 1, 124-bit security). On the
-//! confidential-VALUE (in-circuit Schnorr) path only — NOT core auth (Ed25519).
+//! # Representation
 //!
-//! An element of BabyBear^8 is stored as [a0, a1, a2, a3, a4, a5, a6, a7] where
-//! the "low" half [a0..a3] forms the BabyBear^4 coefficient of 1, and the "high"
-//! half [a4..a7] forms the BabyBear^4 coefficient of y.
+//! An element is stored as the 8 BabyBear coefficients `[c0, c1, …, c7]` of the
+//! polynomial
 //!
-//! Multiplication uses the Karatsuba-like formula for F[y]/(y^2 - W):
-//!   (A + B*y)(C + D*y) = (A*C + W*B*D) + (A*D + B*C)*y
+//! ```text
+//!   c0 + c1·z + c2·z^2 + c3·z^3 + c4·z^4 + c5·z^5 + c6·z^6 + c7·z^7   (mod z^8 - 11)
+//! ```
 //!
-//! This gives us a field of size p^8 ~ 2^248, providing ~124-bit Pollard-rho security
-//! for the discrete log problem on an elliptic curve defined over this field.
+//! i.e. `self.0[i]` is the coefficient of `z^i` (the natural power basis). This
+//! is the same field as the towered presentation under the basis map `z = y`,
+//! `x = z^2` (so the old `[1, x, x^2, x^3, y, xy, x^2y, x^3y]` coordinates are a
+//! permutation of these power-basis coordinates); since every consumer treats an
+//! element's coordinates as opaque field data, the power basis is used directly.
+//!
+//! # Arithmetic
+//!
+//! Multiplication is polynomial multiplication reduced modulo `z^8 - 11`, using
+//! `z^8 = 11` (so a degree-`k` term with `k ≥ 8` folds back as `11·z^{k-8}`).
+//! Inversion solves the 8×8 "multiply-by-self" linear system over BabyBear by
+//! Gaussian elimination (`a · a^{-1} = 1`).
 
 use crate::field::BabyBear;
 use std::fmt;
 use std::ops::{Add, Mul, Neg, Sub};
 
-/// The non-residue used for both extension layers: x^4 - W and y^2 - W.
-/// W = 11 is a non-residue in BabyBear and in BabyBear^4.
+/// The non-residue of the defining polynomial `z^8 - W`. `W = 11` makes
+/// `z^8 - 11` irreducible over BabyBear (a genuine degree-8 field extension).
 const W: BabyBear = BabyBear(11);
 
-/// An element of BabyBear^8.
-///
-/// Stored as 8 BabyBear coefficients representing:
-///   a[0] + a[1]*x + a[2]*x^2 + a[3]*x^3 + a[4]*y + a[5]*x*y + a[6]*x^2*y + a[7]*x^3*y
-///
-/// Equivalently, (a[0..4] as ExtElem) + (a[4..8] as ExtElem) * y
-/// in the tower BabyBear^4[y] / (y^2 - 11).
+/// An element of BabyBear^8, stored as the 8 power-basis coefficients
+/// `[c0, …, c7]` of `c0 + c1·z + … + c7·z^7` in `F_p[z]/(z^8 - 11)`.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct BabyBear8(pub [BabyBear; 8]);
 
@@ -68,7 +70,7 @@ impl BabyBear8 {
         BabyBear::ZERO,
     ]);
 
-    /// Embed a base field element.
+    /// Embed a base field element (the constant polynomial).
     pub fn from_base(x: BabyBear) -> Self {
         let mut r = Self::ZERO;
         r.0[0] = x;
@@ -83,23 +85,6 @@ impl BabyBear8 {
     /// Check if this element is zero.
     pub fn is_zero(&self) -> bool {
         self.0.iter().all(|x| *x == BabyBear::ZERO)
-    }
-
-    /// Get the "low" BabyBear^4 half (coefficients of 1).
-    fn low(&self) -> [BabyBear; 4] {
-        [self.0[0], self.0[1], self.0[2], self.0[3]]
-    }
-
-    /// Get the "high" BabyBear^4 half (coefficients of y).
-    fn high(&self) -> [BabyBear; 4] {
-        [self.0[4], self.0[5], self.0[6], self.0[7]]
-    }
-
-    /// Construct from low and high halves.
-    fn from_halves(low: [BabyBear; 4], high: [BabyBear; 4]) -> Self {
-        Self([
-            low[0], low[1], low[2], low[3], high[0], high[1], high[2], high[3],
-        ])
     }
 
     /// Component-wise addition.
@@ -129,74 +114,38 @@ impl BabyBear8 {
         Self(r)
     }
 
-    /// Multiply two BabyBear^4 elements (internal helper).
-    /// Uses the formula for F[x]/(x^4 - W):
-    ///   c0 = a0*b0 + W*(a1*b3 + a2*b2 + a3*b1)
-    ///   c1 = a0*b1 + a1*b0 + W*(a2*b3 + a3*b2)
-    ///   c2 = a0*b2 + a1*b1 + a2*b0 + W*(a3*b3)
-    ///   c3 = a0*b3 + a1*b2 + a2*b1 + a3*b0
-    fn mul4(a: &[BabyBear; 4], b: &[BabyBear; 4]) -> [BabyBear; 4] {
-        let w = W;
-        let c0 = a[0] * b[0] + w * (a[1] * b[3] + a[2] * b[2] + a[3] * b[1]);
-        let c1 = a[0] * b[1] + a[1] * b[0] + w * (a[2] * b[3] + a[3] * b[2]);
-        let c2 = a[0] * b[2] + a[1] * b[1] + a[2] * b[0] + w * (a[3] * b[3]);
-        let c3 = a[0] * b[3] + a[1] * b[2] + a[2] * b[1] + a[3] * b[0];
-        [c0, c1, c2, c3]
-    }
-
-    /// Add two BabyBear^4 elements (internal helper).
-    fn add4(a: &[BabyBear; 4], b: &[BabyBear; 4]) -> [BabyBear; 4] {
-        [a[0] + b[0], a[1] + b[1], a[2] + b[2], a[3] + b[3]]
-    }
-
-    /// Subtract two BabyBear^4 elements (internal helper).
-    fn sub4(a: &[BabyBear; 4], b: &[BabyBear; 4]) -> [BabyBear; 4] {
-        [a[0] - b[0], a[1] - b[1], a[2] - b[2], a[3] - b[3]]
-    }
-
-    /// Multiply a BabyBear^4 element by the non-residue W (scalar multiply by 11).
-    fn mul4_by_w(a: &[BabyBear; 4]) -> [BabyBear; 4] {
-        [a[0] * W, a[1] * W, a[2] * W, a[3] * W]
-    }
-
-    /// Extension field multiplication using the tower structure.
+    /// Extension field multiplication: polynomial product reduced mod `z^8 - W`.
     ///
-    /// (A + B*y)(C + D*y) = (A*C + W*B*D) + (A*D + B*C)*y
-    ///
-    /// where A, B, C, D are BabyBear^4 elements and W = 11.
+    /// The raw product `a·b` has coefficients of degree `0..=14`; using
+    /// `z^8 = W` (so `z^{8+m} = W·z^m`), each high coefficient `conv[m+8]` folds
+    /// back additively into `conv[m]` scaled by `W`.
     pub fn mul(&self, other: &Self) -> Self {
-        let a = self.low();
-        let b = self.high();
-        let c = other.low();
-        let d = other.high();
+        let a = &self.0;
+        let b = &other.0;
 
-        let ac = Self::mul4(&a, &c);
-        let bd = Self::mul4(&b, &d);
-        let ad = Self::mul4(&a, &d);
-        let bc = Self::mul4(&b, &c);
+        // Schoolbook convolution. Degrees run 0..=14; index 15 stays zero so the
+        // reduction below can read `conv[m + 8]` for all m in 0..8 uniformly.
+        let mut conv = [BabyBear::ZERO; 16];
+        for i in 0..8 {
+            if a[i] == BabyBear::ZERO {
+                continue;
+            }
+            for j in 0..8 {
+                conv[i + j] = conv[i + j] + a[i] * b[j];
+            }
+        }
 
-        let w_bd = Self::mul4_by_w(&bd);
-        let low = Self::add4(&ac, &w_bd);
-        let high = Self::add4(&ad, &bc);
-
-        Self::from_halves(low, high)
+        // Reduce modulo z^8 - W:  result[m] = conv[m] + W·conv[m+8].
+        let mut r = [BabyBear::ZERO; 8];
+        for m in 0..8 {
+            r[m] = conv[m] + W * conv[m + 8];
+        }
+        Self(r)
     }
 
-    /// Square this element (slightly optimized over generic mul).
+    /// Square this element (via the generic multiply; the reduction dominates).
     pub fn square(&self) -> Self {
-        let a = self.low();
-        let b = self.high();
-
-        // (A + By)^2 = (A^2 + W*B^2) + 2AB*y
-        let a2 = Self::mul4(&a, &a);
-        let b2 = Self::mul4(&b, &b);
-        let ab = Self::mul4(&a, &b);
-
-        let w_b2 = Self::mul4_by_w(&b2);
-        let low = Self::add4(&a2, &w_b2);
-        let high = Self::add4(&ab, &ab); // 2*ab
-
-        Self::from_halves(low, high)
+        self.mul(self)
     }
 
     /// Multiply by a base field scalar.
@@ -208,88 +157,74 @@ impl BabyBear8 {
         Self(r)
     }
 
-    /// Inverse of a BabyBear^4 element via Gaussian elimination.
-    /// Returns None if the element is zero.
-    fn inv4(a: &[BabyBear; 4]) -> Option<[BabyBear; 4]> {
-        if a.iter().all(|x| *x == BabyBear::ZERO) {
-            return None;
-        }
-
-        let w = W;
-        // Build the 4x5 augmented matrix for the multiplication-by-a map.
-        // The multiplication matrix for (a0+a1*x+a2*x^2+a3*x^3) in F[x]/(x^4-W):
-        //  Row 0: [a0, W*a3, W*a2, W*a1 | 1]
-        //  Row 1: [a1, a0,   W*a3, W*a2 | 0]
-        //  Row 2: [a2, a1,   a0,   W*a3 | 0]
-        //  Row 3: [a3, a2,   a1,   a0   | 0]
-        let mut mat = [[BabyBear::ZERO; 5]; 4];
-        mat[0] = [a[0], w * a[3], w * a[2], w * a[1], BabyBear::ONE];
-        mat[1] = [a[1], a[0], w * a[3], w * a[2], BabyBear::ZERO];
-        mat[2] = [a[2], a[1], a[0], w * a[3], BabyBear::ZERO];
-        mat[3] = [a[3], a[2], a[1], a[0], BabyBear::ZERO];
-
-        for c in 0..4 {
-            let mut pivot = None;
-            for row in c..4 {
-                if mat[row][c] != BabyBear::ZERO {
-                    pivot = Some(row);
-                    break;
-                }
-            }
-            let pivot = pivot?;
-            if pivot != c {
-                mat.swap(c, pivot);
-            }
-            let inv_pivot = mat[c][c].inverse()?;
-            for j in 0..5 {
-                mat[c][j] = mat[c][j] * inv_pivot;
-            }
-            for row in 0..4 {
-                if row == c {
-                    continue;
-                }
-                let factor = mat[row][c];
-                for j in 0..5 {
-                    mat[row][j] = mat[row][j] - factor * mat[c][j];
-                }
-            }
-        }
-
-        Some([mat[0][4], mat[1][4], mat[2][4], mat[3][4]])
-    }
-
     /// Compute the multiplicative inverse of this element.
     ///
-    /// Uses the tower structure: for z = A + B*y, z^{-1} = (A - B*y) / (A^2 - W*B^2)
-    /// where (A^2 - W*B^2) is computed and inverted in BabyBear^4.
+    /// Solves `self · x = 1` for `x` by Gaussian elimination over BabyBear on the
+    /// 8×8 matrix `M` of the "multiply-by-self" map, where column `j` is the
+    /// reduced coefficient vector of `self · z^j`. Returns `None` for zero.
     pub fn inverse(&self) -> Option<Self> {
         if self.is_zero() {
             return None;
         }
 
-        let a = self.low();
-        let b = self.high();
+        let a = &self.0;
 
-        // norm = A^2 - W*B^2 in BabyBear^4
-        let a2 = Self::mul4(&a, &a);
-        let b2 = Self::mul4(&b, &b);
-        let w_b2 = Self::mul4_by_w(&b2);
-        let norm = Self::sub4(&a2, &w_b2);
+        // Build the augmented matrix [M | e0]. Column j of M is `a * z^j` reduced
+        // mod z^8 - W: a_i contributes to row (i+j); if i+j >= 8 it wraps to row
+        // (i+j-8) scaled by W.
+        let mut mat = [[BabyBear::ZERO; 9]; 8];
+        for j in 0..8 {
+            for i in 0..8 {
+                let deg = i + j;
+                if deg < 8 {
+                    mat[deg][j] = mat[deg][j] + a[i];
+                } else {
+                    mat[deg - 8][j] = mat[deg - 8][j] + W * a[i];
+                }
+            }
+        }
+        // Right-hand side: the constant polynomial 1 (target a*x = 1).
+        mat[0][8] = BabyBear::ONE;
 
-        // Invert the norm in BabyBear^4
-        let norm_inv = Self::inv4(&norm)?;
+        // Gauss–Jordan elimination.
+        for c in 0..8 {
+            // Find a nonzero pivot in column c at or below the diagonal.
+            let mut pivot = None;
+            for row in c..8 {
+                if mat[row][c] != BabyBear::ZERO {
+                    pivot = Some(row);
+                    break;
+                }
+            }
+            // A nonzero element always yields an invertible multiplication matrix
+            // in a field; `?` is defensive (cannot fire for nonzero `self`).
+            let pivot = pivot?;
+            if pivot != c {
+                mat.swap(c, pivot);
+            }
+            let inv_pivot = mat[c][c].inverse()?;
+            for j in 0..9 {
+                mat[c][j] = mat[c][j] * inv_pivot;
+            }
+            for row in 0..8 {
+                if row == c {
+                    continue;
+                }
+                let factor = mat[row][c];
+                if factor == BabyBear::ZERO {
+                    continue;
+                }
+                for j in 0..9 {
+                    mat[row][j] = mat[row][j] - factor * mat[c][j];
+                }
+            }
+        }
 
-        // z^{-1} = (A - B*y) * norm_inv = (A*norm_inv) + (-B*norm_inv)*y
-        let low = Self::mul4(&a, &norm_inv);
-        let neg_b = [
-            BabyBear::ZERO - b[0],
-            BabyBear::ZERO - b[1],
-            BabyBear::ZERO - b[2],
-            BabyBear::ZERO - b[3],
-        ];
-        let high = Self::mul4(&neg_b, &norm_inv);
-
-        Some(Self::from_halves(low, high))
+        let mut r = [BabyBear::ZERO; 8];
+        for i in 0..8 {
+            r[i] = mat[i][8];
+        }
+        Some(Self(r))
     }
 
     /// Exponentiation by a u32 exponent (square-and-multiply).
@@ -388,6 +323,20 @@ impl Neg for BabyBear8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::field::BABYBEAR_P;
+
+    /// A deterministic non-degenerate element generator for property tests.
+    fn elem(seed: u64) -> BabyBear8 {
+        let mut s = seed.wrapping_mul(0x9E3779B97F4A7C15).wrapping_add(1);
+        let mut out = [BabyBear::ZERO; 8];
+        for o in out.iter_mut() {
+            s ^= s >> 12;
+            s ^= s << 25;
+            s ^= s >> 27;
+            *o = BabyBear::new((s.wrapping_mul(0x2545F4914F6CDD1D) >> 33) as u32);
+        }
+        BabyBear8(out)
+    }
 
     #[test]
     fn zero_and_one() {
@@ -401,156 +350,67 @@ mod tests {
 
     #[test]
     fn addition_commutativity() {
-        let a = BabyBear8([
-            BabyBear::new(1),
-            BabyBear::new(2),
-            BabyBear::new(3),
-            BabyBear::new(4),
-            BabyBear::new(5),
-            BabyBear::new(6),
-            BabyBear::new(7),
-            BabyBear::new(8),
-        ]);
-        let b = BabyBear8([
-            BabyBear::new(10),
-            BabyBear::new(20),
-            BabyBear::new(30),
-            BabyBear::new(40),
-            BabyBear::new(50),
-            BabyBear::new(60),
-            BabyBear::new(70),
-            BabyBear::new(80),
-        ]);
+        let a = elem(1);
+        let b = elem(2);
         assert_eq!(a + b, b + a);
     }
 
     #[test]
     fn multiplication_identity() {
-        let a = BabyBear8([
-            BabyBear::new(17),
-            BabyBear::new(42),
-            BabyBear::new(99),
-            BabyBear::new(7),
-            BabyBear::new(13),
-            BabyBear::new(55),
-            BabyBear::new(3),
-            BabyBear::new(100),
-        ]);
+        let a = elem(3);
         assert_eq!(a * BabyBear8::ONE, a);
         assert_eq!(BabyBear8::ONE * a, a);
     }
 
     #[test]
+    fn multiplication_commutativity() {
+        let a = elem(11);
+        let b = elem(12);
+        assert_eq!(a * b, b * a);
+    }
+
+    #[test]
     fn multiplication_by_zero() {
-        let a = BabyBear8([
-            BabyBear::new(17),
-            BabyBear::new(42),
-            BabyBear::new(99),
-            BabyBear::new(7),
-            BabyBear::new(13),
-            BabyBear::new(55),
-            BabyBear::new(3),
-            BabyBear::new(100),
-        ]);
+        let a = elem(4);
         assert_eq!(a * BabyBear8::ZERO, BabyBear8::ZERO);
     }
 
     #[test]
     fn multiplication_associativity() {
-        let a = BabyBear8([
-            BabyBear::new(3),
-            BabyBear::new(7),
-            BabyBear::new(11),
-            BabyBear::new(13),
-            BabyBear::new(17),
-            BabyBear::new(19),
-            BabyBear::new(23),
-            BabyBear::new(29),
-        ]);
-        let b = BabyBear8([
-            BabyBear::new(31),
-            BabyBear::new(37),
-            BabyBear::new(41),
-            BabyBear::new(43),
-            BabyBear::new(47),
-            BabyBear::new(53),
-            BabyBear::new(59),
-            BabyBear::new(61),
-        ]);
-        let c = BabyBear8([
-            BabyBear::new(67),
-            BabyBear::new(71),
-            BabyBear::new(73),
-            BabyBear::new(79),
-            BabyBear::new(83),
-            BabyBear::new(89),
-            BabyBear::new(97),
-            BabyBear::new(101),
-        ]);
-        let ab_c = (a * b) * c;
-        let a_bc = a * (b * c);
-        assert_eq!(ab_c, a_bc);
+        let a = elem(5);
+        let b = elem(6);
+        let c = elem(7);
+        assert_eq!((a * b) * c, a * (b * c));
     }
 
     #[test]
     fn multiplication_distributivity() {
-        let a = BabyBear8([
-            BabyBear::new(5),
-            BabyBear::new(10),
-            BabyBear::new(15),
-            BabyBear::new(20),
-            BabyBear::new(25),
-            BabyBear::new(30),
-            BabyBear::new(35),
-            BabyBear::new(40),
-        ]);
-        let b = BabyBear8([
-            BabyBear::new(2),
-            BabyBear::new(4),
-            BabyBear::new(6),
-            BabyBear::new(8),
-            BabyBear::new(10),
-            BabyBear::new(12),
-            BabyBear::new(14),
-            BabyBear::new(16),
-        ]);
-        let c = BabyBear8([
-            BabyBear::new(1),
-            BabyBear::new(3),
-            BabyBear::new(5),
-            BabyBear::new(7),
-            BabyBear::new(9),
-            BabyBear::new(11),
-            BabyBear::new(13),
-            BabyBear::new(15),
-        ]);
-        // a*(b+c) == a*b + a*c
-        let lhs = a * (b + c);
-        let rhs = a * b + a * c;
-        assert_eq!(lhs, rhs);
+        let a = elem(8);
+        let b = elem(9);
+        let c = elem(10);
+        assert_eq!(a * (b + c), a * b + a * c);
+    }
+
+    /// `z^8 = 11` — the defining reduction holds in the chosen basis.
+    #[test]
+    fn defining_relation_z8_eq_w() {
+        // z = [0,1,0,0,0,0,0,0]; z^8 should equal the constant W = 11.
+        let mut z = BabyBear8::ZERO;
+        z.0[1] = BabyBear::ONE;
+        let z8 = z.pow_u32(8);
+        assert_eq!(z8, BabyBear8::from_base(W));
     }
 
     #[test]
     fn inverse_correctness() {
-        let a = BabyBear8([
-            BabyBear::new(42),
-            BabyBear::new(17),
-            BabyBear::new(99),
-            BabyBear::new(3),
-            BabyBear::new(7),
-            BabyBear::new(55),
-            BabyBear::new(200),
-            BabyBear::new(13),
-        ]);
+        let a = elem(13);
         let inv = a.inverse().unwrap();
-        let product = a * inv;
-        assert_eq!(product, BabyBear8::ONE);
+        assert_eq!(a * inv, BabyBear8::ONE);
     }
 
     #[test]
     fn inverse_of_one_is_one() {
-        let inv = BabyBear8::ONE.inverse().unwrap();
-        assert_eq!(inv, BabyBear8::ONE);
+        assert_eq!(BabyBear8::ONE.inverse().unwrap(), BabyBear8::ONE);
     }
 
     #[test]
@@ -558,18 +418,67 @@ mod tests {
         assert!(BabyBear8::ZERO.inverse().is_none());
     }
 
+    /// THE FIELD PROOF: this is a genuine field — *every* nonzero element is
+    /// invertible (no zero divisors). In particular the old tower's
+    /// zero-divisor witness `A = y - x^2` is GONE: in the power basis `y = z`,
+    /// `x^2 = z^4`, so `A = z - z^4` is nonzero and now HAS an inverse, and
+    /// `A·(y + x^2) = A·(z + z^4) ≠ 0`.
+    #[test]
+    fn is_a_field_no_zero_divisors() {
+        // Sweep a large family of nonzero elements; all must be invertible.
+        for s in 0u64..2000 {
+            let a = elem(s);
+            if a.is_zero() {
+                continue;
+            }
+            let inv = a
+                .inverse()
+                .unwrap_or_else(|| panic!("nonzero element {s:?} had no inverse — not a field"));
+            assert_eq!(a * inv, BabyBear8::ONE, "inverse wrong for seed {s}");
+        }
+
+        // The specific old zero-divisor: A = y - x^2 = z - z^4.
+        let mut a = BabyBear8::ZERO;
+        a.0[1] = BabyBear::ONE; // + z   (= y)
+        a.0[4] = -BabyBear::ONE; // - z^4 (= x^2)
+        assert!(!a.is_zero());
+        let a_inv = a
+            .inverse()
+            .expect("the old zero-divisor A = y - x^2 must now be invertible");
+        assert_eq!(a * a_inv, BabyBear8::ONE);
+
+        // And A·(y + x^2) = (z - z^4)(z + z^4) is NOT zero (it was 0 in the
+        // broken product ring).
+        let mut b = BabyBear8::ZERO;
+        b.0[1] = BabyBear::ONE; // + z   (= y)
+        b.0[4] = BabyBear::ONE; // + z^4 (= x^2)
+        assert!(!(a * b).is_zero(), "A·(y+x^2) must be nonzero in a field");
+    }
+
+    /// Fermat: for a field of size q = p^8, every nonzero a satisfies
+    /// `a^(q-1) = 1`. We check the equivalent `a^q = a` via repeated p-th powers
+    /// (Frobenius), avoiding a 248-bit exponent: a^(p^8) = Frob^8(a) = a.
+    #[test]
+    fn frobenius_order_eight() {
+        let a = elem(17);
+        // p-th power = Frobenius. Apply it 8 times; result must return to a.
+        let p_limbs = {
+            let mut l = [0u32; 8];
+            l[0] = BABYBEAR_P;
+            l
+        };
+        let mut cur = a;
+        for _ in 0..8 {
+            cur = cur.pow_multi(&p_limbs);
+        }
+        assert_eq!(cur, a, "a^(p^8) must equal a in F_{{p^8}}");
+        // And one Frobenius step should NOT fix a generic element (a is not in F_p).
+        assert_ne!(a.pow_multi(&p_limbs), a);
+    }
+
     #[test]
     fn square_equals_mul_self() {
-        let a = BabyBear8([
-            BabyBear::new(11),
-            BabyBear::new(22),
-            BabyBear::new(33),
-            BabyBear::new(44),
-            BabyBear::new(55),
-            BabyBear::new(66),
-            BabyBear::new(77),
-            BabyBear::new(88),
-        ]);
+        let a = elem(18);
         assert_eq!(a.square(), a * a);
     }
 
@@ -594,16 +503,7 @@ mod tests {
 
     #[test]
     fn negation_identity() {
-        let a = BabyBear8([
-            BabyBear::new(1),
-            BabyBear::new(2),
-            BabyBear::new(3),
-            BabyBear::new(4),
-            BabyBear::new(5),
-            BabyBear::new(6),
-            BabyBear::new(7),
-            BabyBear::new(8),
-        ]);
+        let a = elem(19);
         let neg_a = -a;
         assert_eq!(a + neg_a, BabyBear8::ZERO);
     }
@@ -617,16 +517,7 @@ mod tests {
 
     #[test]
     fn pow_u32_zero() {
-        let a = BabyBear8([
-            BabyBear::new(42),
-            BabyBear::new(17),
-            BabyBear::new(99),
-            BabyBear::new(3),
-            BabyBear::new(7),
-            BabyBear::new(55),
-            BabyBear::new(200),
-            BabyBear::new(13),
-        ]);
+        let a = elem(20);
         assert_eq!(a.pow_u32(0), BabyBear8::ONE);
     }
 }

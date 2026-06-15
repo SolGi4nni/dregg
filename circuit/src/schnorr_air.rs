@@ -43,13 +43,14 @@ use crate::schnorr_sig::{SchnorrPublicKey, SchnorrSignature};
 /// Trace width: 43 columns.
 pub const SCHNORR_AIR_WIDTH: usize = 43;
 
-/// Number of scalar bits scanned per phase (covers the reduced scalar range;
-/// ORDER currently fits well within 2^31, so 31 doublings suffice, but we scan
-/// a full 128-bit window for headroom toward a prime-order curve).
-pub const SCALAR_BITS: usize = 128;
+/// Number of scalar bits scanned per phase. The curve order `N` is a 248-bit
+/// prime, and scalars are reduced into `[0, N)` and carried as 8 full u32 limbs,
+/// so a phase must scan all 256 bits (8·32) to realize any scalar `< N`.
+pub const SCALAR_BITS: usize = 256;
 
-/// Total trace height (power-of-2 padded).
-pub const TRACE_HEIGHT: usize = 512;
+/// Total trace height (power-of-2 padded). Two `SCALAR_BITS` scan phases plus the
+/// boundary row need `2·256 + 1` rows; the next power of two is 1024.
+pub const TRACE_HEIGHT: usize = 1024;
 
 /// Row index where Phase 0 (s*G) begins.
 pub const PHASE_0_START: usize = 0;
@@ -104,35 +105,28 @@ pub mod pi {
 }
 
 /// Witness for Schnorr signature verification.
+///
+/// `challenge` is the Fiat–Shamir scalar `e` reduced mod the curve order `N`,
+/// carried as a full 8-limb [`Scalar`] (it spans up to 248 bits, so it does not
+/// fit in `[BabyBear; 8]` whose limbs are each `< 2^31`).
 pub struct SchnorrVerificationWitness {
     pub pk: SchnorrPublicKey,
     pub sig: SchnorrSignature,
     pub message_hash: [BabyBear; 8],
-    pub challenge: [BabyBear; 8],
+    pub challenge: Scalar,
 }
 
-/// Recompute the Fiat-Shamir challenge from (R, PK, message_hash).
+/// Recompute the Fiat-Shamir challenge scalar `e` from `(R, PK, message_hash)`.
+///
+/// Delegates to the canonical signer transcript
+/// ([`crate::schnorr_sig::compute_challenge_from_elements`]) so the AIR's `e`
+/// is bit-for-bit the value the signature was produced against, reduced mod `N`.
 pub fn recompute_challenge(
     r: &CurvePoint,
     pk: &CurvePoint,
     message_hash: &[BabyBear; 8],
-) -> [BabyBear; 8] {
-    use crate::poseidon2;
-    // Challenge = H(R.x || R.y || PK.x || PK.y || message_hash)
-    let mut preimage = Vec::with_capacity(40);
-    preimage.extend_from_slice(&r.x.0);
-    preimage.extend_from_slice(&r.y.0);
-    preimage.extend_from_slice(&pk.x.0);
-    preimage.extend_from_slice(&pk.y.0);
-    preimage.extend_from_slice(message_hash);
-    let hash = poseidon2::hash_many(&preimage);
-    // Expand single hash to 8 elements via sequential hashing.
-    let mut result = [BabyBear::ZERO; 8];
-    result[0] = hash;
-    for i in 1..8 {
-        result[i] = poseidon2::hash_2_to_1(result[i - 1], BabyBear::new(i as u32));
-    }
-    result
+) -> Scalar {
+    crate::schnorr_sig::compute_challenge_from_elements(r, pk, message_hash)
 }
 
 /// Generate the Schnorr verification trace.
@@ -150,7 +144,7 @@ pub fn generate_schnorr_trace(
     let mut trace: Vec<Vec<BabyBear>> = vec![vec![BabyBear::ZERO; SCHNORR_AIR_WIDTH]; num_rows];
 
     let s_bits = scalar_to_bits(&witness.sig.s);
-    let e_bits = scalar_to_bits_bb(&witness.challenge);
+    let e_bits = scalar_to_bits(&witness.challenge);
 
     // Phase 0: double-and-add for s*G.
     fill_scan_phase(
@@ -366,8 +360,9 @@ pub fn verify_schnorr_via_trace(trace: &[Vec<BabyBear>], public_inputs: &[BabyBe
 
 // Write a curve point's x and y limbs to the trace row at `start_col`.
 fn write_point_to_row(row: &mut [BabyBear], start_col: usize, point: &CurvePoint) {
-    // Infinity is encoded as (0, 0) — the curve y^2 = x^3 + b has no point with
-    // x = 0, y = 0 (that would require b = 0), so this sentinel is unambiguous.
+    // Infinity is encoded as (0, 0). On y^2 = x^3 + a·x + b, the point (0, 0)
+    // would require b = 0 (the a·x term vanishes at x = 0); since b = z^3 + 8 ≠ 0
+    // for this curve, (0, 0) is off-curve and the sentinel is unambiguous.
     if point.is_infinity {
         for i in 0..8 {
             row[start_col + i] = BabyBear::ZERO;
@@ -417,24 +412,14 @@ fn point_from_pi(public_inputs: &[BabyBear], x_pi: usize, y_pi: usize) -> CurveP
     CurvePoint::new(xp, yp)
 }
 
-// Helper: convert Scalar ([u32; 8]) to bits (LSB-first).
+// Helper: convert Scalar ([u32; 8]) to its full 256 bits (LSB-first). All 32
+// bits of every limb are emitted — a reduced scalar `< N` (248-bit) uses up to
+// 248 of them and the rest are zero, but the curve order needs the full width.
 fn scalar_to_bits(s: &Scalar) -> Vec<u8> {
     let mut bits = Vec::with_capacity(256);
     for &limb in s.iter() {
-        for bit_idx in 0..31 {
+        for bit_idx in 0..32 {
             bits.push(((limb >> bit_idx) & 1) as u8);
-        }
-    }
-    bits
-}
-
-// Helper: convert [BabyBear; 8] to bits (LSB-first).
-fn scalar_to_bits_bb(s: &[BabyBear; 8]) -> Vec<u8> {
-    let mut bits = Vec::with_capacity(256);
-    for limb in s {
-        let val = limb.0;
-        for bit_idx in 0..31 {
-            bits.push(((val >> bit_idx) & 1) as u8);
         }
     }
     bits
@@ -450,65 +435,22 @@ mod tests {
     use crate::schnorr_curve::GENERATOR;
     use crate::schnorr_sig::{schnorr_keygen, schnorr_sign};
 
-    /// Build a verification witness from a real keygen+sign, with the challenge
-    /// recomputed the way the verifier does.
+    /// Build a verification witness from a real keygen+sign, recomputing the
+    /// challenge `e` exactly as the signer/verifier does (the canonical
+    /// transcript), reduced mod `N`.
     fn real_witness(seed: [u8; 32], msg: &[u8]) -> SchnorrVerificationWitness {
         let (sk, pk) = schnorr_keygen(&seed);
         let sig = schnorr_sign(&sk, &pk, msg);
         let msg_blake = blake3::hash(msg);
         let message_hash = BabyBear::encode_hash(msg_blake.as_bytes());
-        // The in-circuit challenge uses the same transcript hash the signer used
-        // (compute_challenge_from_elements); recompute it via the signature path
-        // by re-running a verify and extracting e is not exposed, so we mirror
-        // the signer: e is whatever schnorr_verify_prehashed recomputes. We use
-        // the curve scalar that the signature actually validates against.
-        let challenge = challenge_for(&sig.r, &pk.0, &message_hash);
+        let challenge =
+            crate::schnorr_sig::compute_challenge_from_elements(&sig.r, &pk.0, &message_hash);
         SchnorrVerificationWitness {
             pk,
             sig,
             message_hash,
             challenge,
         }
-    }
-
-    // Recompute the challenge scalar exactly as schnorr_sig does, expanded to 8
-    // BabyBear limbs (so the AIR's e-bit scan matches the signer's e).
-    fn challenge_for(
-        r: &CurvePoint,
-        pk: &CurvePoint,
-        message_hash: &[BabyBear; 8],
-    ) -> [BabyBear; 8] {
-        // Mirror schnorr_sig::compute_challenge_from_elements: build transcript,
-        // Poseidon2 sponge with the "SCHN" domain tag, squeeze 8 limbs, reduce.
-        use crate::poseidon2;
-        let mut transcript = Vec::with_capacity(40);
-        transcript.extend_from_slice(&r.x.0);
-        transcript.extend_from_slice(&r.y.0);
-        transcript.extend_from_slice(&pk.x.0);
-        transcript.extend_from_slice(&pk.y.0);
-        transcript.extend_from_slice(message_hash);
-
-        let mut state = poseidon2::Poseidon2State::new();
-        state.state[15] = BabyBear::new(0x5343484E);
-        let rate = 8;
-        for chunk in transcript.chunks(rate) {
-            for (i, &elem) in chunk.iter().enumerate() {
-                state.state[i] += elem;
-            }
-            state.permute();
-        }
-        let mut challenge_elems = [0u32; 8];
-        for i in 0..8 {
-            challenge_elems[i] = state.state[i].as_u32();
-        }
-        // Reduce mod ORDER into the first limb (matches scalar_from_challenge).
-        let reduced = crate::schnorr_curve::scalar_to_u64(&challenge_elems);
-        let mut out = [BabyBear::ZERO; 8];
-        out[0] = BabyBear::new(reduced as u32);
-        // High limbs: the reduced scalar fits in one u32, so the e-bit scan only
-        // needs the low limb. Higher limbs stay zero.
-        let _ = &mut challenge_elems;
-        out
     }
 
     #[test]
@@ -535,12 +477,8 @@ mod tests {
         let s_g_direct = GENERATOR.scalar_mul(&w.sig.s);
         assert_eq!(s_g_scan, s_g_direct, "phase-0 scan must equal s*G");
 
-        let mut e_limbs = [0u32; 8];
-        for i in 0..8 {
-            e_limbs[i] = w.challenge[i].as_u32();
-        }
         let e_pk_scan = final_accumulator(&trace, PHASE_1_START);
-        let e_pk_direct = w.pk.0.scalar_mul(&e_limbs);
+        let e_pk_direct = w.pk.0.scalar_mul(&w.challenge);
         assert_eq!(e_pk_scan, e_pk_direct, "phase-1 scan must equal e*pk");
     }
 
