@@ -472,6 +472,103 @@ theorem facet_refines_owner (caps : Caps) (fcaps : FacetCaps) (provided : AuthPr
 #assert_axioms wrong_tier_unauthorized
 #assert_axioms facet_refines_owner
 
+/-! ## §10.5 — THE FAITHFUL KERNEL GATE (§10(A) landed additively, here below `Kernel`).
+
+`Kernel.lean` cannot reference `authorizedFacetB` (it is imported BY this module — a cycle), so the
+additive faithful kernel state + executor live here. `FacetKernelState` carries the deployed FACET
+caps (`fcaps : FacetCaps`) alongside the same finite ledger; `execFaithful` is `Kernel.exec` with the
+authority conjunct repointed from the toy `authorizedB` onto the faithful two-axis `authorizedFacetB`,
+reading the auth the turn `provided`. The conservation/availability/distinctness/liveness legs are
+UNCHANGED (orthogonal to authority) — only the authority gate is faithful. The re-stated teeth
+(`execFaithful_authorized`/`execFaithful_unauthorized_fails`) are the §10(A) `exec_authorized`/
+`exec_unauthorized_fails` over the faithful gate. -/
+
+open Dregg2.Exec (KernelState transferBal)
+
+/-- **`FacetKernelState`** — the kernel state with the DEPLOYED FACET caps (the §10(A) `fcaps`
+parallel field, made a faithful state here): the finite `accounts`, the ℤ balance, and the
+`FacetCaps` table (NOT the toy `Caps`). -/
+structure FacetKernelState where
+  /-- The finite set of live cells whose balances are conserved. -/
+  accounts : Finset CellId
+  /-- Resource balance per cell. -/
+  bal      : CellId → ℤ
+  /-- The DEPLOYED facet capability table (tier × facet per held cap). -/
+  fcaps    : FacetCaps
+
+/-- **`execFaithful k provided turn`** — the FAITHFUL executable kernel transition (§10(A)).
+Identical to `Kernel.exec` EXCEPT the authority conjunct is the deployed two-axis `authorizedFacetB
+k.fcaps provided turn` (NOT the toy `authorizedB`). Fail-closed; commits only when the actor is
+authorized on BOTH axes (facet permits TRANSFER ∧ tier satisfied by `provided`), the amount is
+non-negative and available, `src ≠ dst`, and both cells are live. -/
+def execFaithful (k : FacetKernelState) (provided : AuthProvided) (turn : Turn) :
+    Option FacetKernelState :=
+  if authorizedFacetB k.fcaps provided turn = true ∧ 0 ≤ turn.amt ∧ turn.amt ≤ k.bal turn.src
+      ∧ turn.src ≠ turn.dst ∧ turn.src ∈ k.accounts ∧ turn.dst ∈ k.accounts then
+    some { k with bal := transferBal k.bal turn.src turn.dst turn.amt }
+  else
+    none
+
+/-- **`execFaithful_authorized`** (§10(A) `exec_authorized`, faithful) — no state change without the
+faithful authority: every committed turn passed the deployed two-axis `authorizedFacetB` gate. -/
+theorem execFaithful_authorized (k k' : FacetKernelState) (provided : AuthProvided) (turn : Turn)
+    (h : execFaithful k provided turn = some k') :
+    authorizedFacetB k.fcaps provided turn = true := by
+  unfold execFaithful at h
+  by_cases hg : authorizedFacetB k.fcaps provided turn = true ∧ 0 ≤ turn.amt ∧ turn.amt ≤ k.bal turn.src
+      ∧ turn.src ≠ turn.dst ∧ turn.src ∈ k.accounts ∧ turn.dst ∈ k.accounts
+  · exact hg.1
+  · rw [if_neg hg] at h; exact absurd h (by simp)
+
+/-- **`execFaithful_unauthorized_fails`** (§10(A) `exec_unauthorized_fails`, faithful) — a turn the
+deployed two-axis gate REJECTS does NOT commit. -/
+theorem execFaithful_unauthorized_fails (k : FacetKernelState) (provided : AuthProvided) (turn : Turn)
+    (h : authorizedFacetB k.fcaps provided turn = false) :
+    execFaithful k provided turn = none := by
+  unfold execFaithful
+  rw [if_neg]
+  rintro ⟨ha, _⟩
+  rw [h] at ha; exact absurd ha (by simp)
+
+/-- **`execFaithful_conserves`** — the faithful gate preserves total supply over the live accounts
+(authority is orthogonal to conservation; the debit/credit cancel exactly as in `Kernel`). -/
+theorem execFaithful_conserves (k k' : FacetKernelState) (provided : AuthProvided) (turn : Turn)
+    (h : execFaithful k provided turn = some k') :
+    (∑ c ∈ k'.accounts, k'.bal c) = ∑ c ∈ k.accounts, k.bal c := by
+  unfold execFaithful at h
+  by_cases hg : authorizedFacetB k.fcaps provided turn = true ∧ 0 ≤ turn.amt ∧ turn.amt ≤ k.bal turn.src
+      ∧ turn.src ≠ turn.dst ∧ turn.src ∈ k.accounts ∧ turn.dst ∈ k.accounts
+  · rw [if_pos hg] at h
+    simp only [Option.some.injEq] at h
+    subst h
+    obtain ⟨_, _, _, hne, hsrc, hdst⟩ := hg
+    exact Dregg2.Exec.transfer_sum_conserve k.accounts k.bal turn.src turn.dst turn.amt hsrc hdst hne
+  · rw [if_neg hg] at h; exact absurd h (by simp)
+
+/-! ### §10.5 demo — the faithful kernel runs (`#guard`). -/
+
+namespace FacetDemo
+
+/-- Actor 0 owns 100, cell 1 owns 5; actor 0 holds NO facet cap (authority is by ownership). -/
+def fs0 : FacetKernelState :=
+  { accounts := {0, 1}
+    bal := fun c => if c = 0 then 100 else if c = 1 then 5 else 0
+    fcaps := fun _ => [] }
+
+/-- Actor 0 transfers 30 to cell 1 (owns src 0 ⇒ authorized intra-vat). -/
+def ft1 : Turn := { actor := 0, src := 0, dst := 1, amt := 30 }
+/-- Actor 2 attempts the same — unauthorized (no facet cap over src 0, and 2 ≠ 0). -/
+def ftBad : Turn := { actor := 2, src := 0, dst := 1, amt := 30 }
+
+#guard (execFaithful fs0 .signature ft1).isSome              -- true (owner)
+#guard (execFaithful fs0 .signature ftBad).isSome == false   -- false (unauthorized)
+
+end FacetDemo
+
+#assert_axioms execFaithful_authorized
+#assert_axioms execFaithful_unauthorized_fails
+#assert_axioms execFaithful_conserves
+
 /-! ## §10 — THE CUTOVER PLAN (file-by-file swaps; what `List Auth` retires).
 
 This module is ADDITIVE. The kernel still authorizes by the toy `authorizedB`. The cutover

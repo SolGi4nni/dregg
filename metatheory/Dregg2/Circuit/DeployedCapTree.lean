@@ -52,6 +52,7 @@ No `sorry`, no `:= True`, no `native_decide`.
 import Dregg2.Circuit.Poseidon2Binding
 import Dregg2.Crypto.CommitmentBinding
 import Dregg2.Exec.Kernel
+import Dregg2.Exec.FacetAuthority
 import Dregg2.Circuit.Emit.EffectVmEmitCapReshape
 
 namespace Dregg2.Circuit.DeployedCapTree
@@ -59,6 +60,9 @@ namespace Dregg2.Circuit.DeployedCapTree
 open Dregg2.Crypto.CommitmentBinding (Compress1CR)
 open Dregg2.Authority (Cap Auth Caps Label capAuthConferred)
 open Dregg2.Circuit.Emit.EffectVmEmitCapReshape (authBitN rightsMaskOf)
+open Dregg2.Exec.FacetAuthority
+  (AuthTier AuthProvided FacetCap FacetCaps EffectMask EFFECT_TRANSFER isEffectPermitted
+   authorizedFacetB authorizedFacetB_holds_transfer_cap turnEffectBit capAuthorizesFacet)
 
 set_option autoImplicit false
 
@@ -235,54 +239,82 @@ kernel `caps`: a write-rights membership opening of an authority-edge leaf witne
 endpoint cap. We carry the faithfulness as the runtime-encoding contract, exactly the
 `compute_canonical_capability_root_felt` discipline. -/
 
-/-- A leaf carries WRITE authority iff its `mask_lo` limb is the mask of a read+write endpoint cap.
-We decode against the deployed split-mask `(mask_lo, mask_hi)`: the write authority bit lives in the
-low limb (`authBitN Auth.write < 2^16`), so `confersWriteLeaf` reads it off `mask_lo`
-(`cap_root.rs::split_effect_mask`, `EffectVmEmitCapReshape.rightsMaskOf`). -/
-def confersWriteLeaf (l : CapLeaf) : Prop :=
-  l.mask_lo = rightsMaskOf (Cap.endpoint 0 [Auth.read, Auth.write])
+/-! ### §6.0 — the FAITHFUL two-axis leaf decode (THE CUTOVER, FacetAuthority §10(C)).
 
-/-- **`DeployedFaithful S caps root leafAt`** — the leaf-set `leafAt` (indexed by authority edge)
-faithfully realizes `caps`: every WRITE-rights member leaf at an `(actor ⇒ src)` edge is backed by a
-real held `Cap.endpoint src r` conferring `Auth.write`. The forward encoding contract (caps ⇒ tree),
-the genuine direction; the bridge below reads it backward through one opening. -/
-structure DeployedFaithful (caps : Caps) (root : ℤ) (leafAt : Label → Label → CapLeaf) : Prop where
-  /-- FAITHFULNESS: a write-rights member opening witnesses a REAL held endpoint cap. -/
+The deployed leaf commits the authority on TWO axes, both in the 7-field leaf (`cap_root.rs:41-51`):
+a FACET (`mask_lo`/`mask_hi`, two 16-bit limbs of one `EffectMask` u32) and a TIER (`auth_tag`, the
+`AuthRequired` byte None=0…Custom=5). The cutover decodes BOTH off the leaf and gates the turn on
+`authorizedFacetB` — NOT the toy `mask_lo == write-mask` shadow. -/
+
+/-- **`maskOfLimbs lo hi`** — recombine the deployed split mask `(mask_lo, mask_hi)` into the one
+`EffectMask` `u32`: `mask = mask_lo + mask_hi · 2^16` (`cap_root.rs::split_effect_mask`: `lo = mask &
+0xFFFF`, `hi = (mask >> 16) & 0xFFFF`). The leaf-faithful inverse of the deployed limb split. -/
+def maskOfLimbs (lo hi : ℤ) : ℤ := lo + hi * 65536
+
+/-- **`tierOfTag tag`** — decode the deployed `auth_tag` BYTE to an `AuthTier` (`cap_root.rs:46`:
+None=0…Custom=5; `AuthTier.tierByte` is the forward map). The IPC tiers (None…Impossible) decode by
+the discriminant byte; tag `5` decodes to a `Custom` whose `vkHash` is the residual felt-absorb
+(carried as `vkOfTag`, the one named crypto residual — transfers never use `Custom`, see §10). -/
+def tierOfTag (vkOfTag : ℤ → Nat) : ℤ → AuthTier
+  | 0 => .none
+  | 1 => .signature
+  | 2 => .proof
+  | 3 => .either
+  | 4 => .impossible
+  | tag => .custom (vkOfTag tag)   -- tag = 5 (Custom): vkHash absorbed (NAMED residual `vkOfTag`)
+
+/-- **`facetOfLeaf l`** — the leaf's decoded `Option EffectMask` facet: `some (maskOfLimbs mask_lo
+mask_hi)` (the deployed `allowed_effects`; here always `some` — the leaf commits a concrete mask). -/
+def facetOfLeaf (l : CapLeaf) : Option EffectMask := some (maskOfLimbs l.mask_lo l.mask_hi).toNat
+
+/-- **`confersTransferLeaf vkOfTag provided l`** — THE FAITHFUL two-axis leaf gate (replaces the toy
+`confersWriteLeaf`). The leaf confers TRANSFER authority iff (1) its decoded FACET permits the
+`EFFECT_TRANSFER` bit (`isEffectPermitted`, `facet.rs:123`) AND (2) its decoded TIER (`tierOfTag
+auth_tag`) is satisfied by the auth the turn `provided` (`AuthTier.isSatisfiedBy`, `permissions.rs:33`).
+This is the deployed `(allowed_effects, permissions)` authority core, decoded off the committed leaf. -/
+def confersTransferLeaf (vkOfTag : ℤ → Nat) (provided : AuthProvided) (l : CapLeaf) : Prop :=
+  isEffectPermitted (facetOfLeaf l) EFFECT_TRANSFER = true
+    ∧ (tierOfTag vkOfTag l.auth_tag).isSatisfiedBy provided = true
+
+/-- **`DeployedFaithful S vkOfTag provided caps root leafAt`** — the leaf-set `leafAt` faithfully
+realizes the FACET caps `caps`: every TRANSFER-conferring member leaf at an `(actor ⇒ src)` edge is
+backed by a real held `FacetCap` over `src` whose facet permits TRANSFER and whose tier is satisfied by
+`provided`. The forward encoding contract (caps ⇒ tree); the bridge below reads it backward through one
+opening into `authorizedFacetB`. -/
+structure DeployedFaithful (vkOfTag : ℤ → Nat) (provided : AuthProvided)
+    (caps : FacetCaps) (root : ℤ) (leafAt : Label → Label → CapLeaf) : Prop where
+  /-- FAITHFULNESS: a transfer-conferring member opening witnesses a REAL held `FacetCap` whose facet
+  permits TRANSFER under a tier the `provided` auth satisfies. -/
   backed : ∀ (actor src : Label),
     MembersAt S root (leafAt actor src) →
-    confersWriteLeaf (leafAt actor src) →
-    ∃ r', Cap.endpoint src r' ∈ caps actor ∧ Auth.write ∈ r'
+    confersTransferLeaf vkOfTag provided (leafAt actor src) →
+    ∃ c : FacetCap, c ∈ caps actor ∧ c.target = src
+      ∧ isEffectPermitted c.facet EFFECT_TRANSFER = true
+      ∧ c.tier.isSatisfiedBy provided = true
 
-/-- **`DeployedEncodes S caps root`** — THE deployed commitment relation: `root` is the deployed
-cap-tree root of SOME leaf assignment that faithfully realizes `caps`. -/
-def DeployedEncodes (caps : Caps) (root : ℤ) : Prop :=
-  ∃ leafAt : Label → Label → CapLeaf, DeployedFaithful S caps root leafAt
+/-- **`DeployedEncodes S vkOfTag provided caps root`** — THE deployed commitment relation: `root` is
+the deployed cap-tree root of SOME leaf assignment that faithfully realizes the FACET caps `caps`. -/
+def DeployedEncodes (vkOfTag : ℤ → Nat) (provided : AuthProvided) (caps : FacetCaps) (root : ℤ) : Prop :=
+  ∃ leafAt : Label → Label → CapLeaf, DeployedFaithful S vkOfTag provided caps root leafAt
 
-/-- **`deployedCapOpen_implies_authorizedB` — THE AUTHORITY BRIDGE against the deployed tree.**
-GIVEN the deployed commitment relation, AND an in-circuit membership opening carrying the write bit —
-THEN the kernel's `authorizedB` PASSES for the turn `⟨actor, src, dst, amt⟩`. The circuit's depth-16
-binary-Merkle membership proof discharges the kernel's authority gate. -/
+/-- **`deployedCapOpen_implies_authorizedB` — THE FAITHFUL AUTHORITY BRIDGE against the deployed tree.**
+GIVEN the deployed commitment relation, AND an in-circuit membership opening whose leaf confers TRANSFER
+on BOTH axes (facet permits `EFFECT_TRANSFER`, tier satisfied by `provided`) — THEN the kernel's FAITHFUL
+`authorizedFacetB` PASSES for the turn `⟨actor, src, dst, amt⟩`. The circuit's depth-16 binary-Merkle
+membership proof discharges the deployed two-axis (tier × facet) authority gate, reusing
+`authorizedFacetB_holds_transfer_cap`. -/
 theorem deployedCapOpen_implies_authorizedB
-    (caps : Caps) (root : ℤ) (leafAt : Label → Label → CapLeaf)
-    (hfaith : DeployedFaithful S caps root leafAt)
+    (vkOfTag : ℤ → Nat) (provided : AuthProvided)
+    (caps : FacetCaps) (root : ℤ) (leafAt : Label → Label → CapLeaf)
+    (hfaith : DeployedFaithful S vkOfTag provided caps root leafAt)
     (actor src dst : Label) (amt : ℤ)
     (hopen : MembersAt S root (leafAt actor src))
-    (hwrite : confersWriteLeaf (leafAt actor src)) :
-    Dregg2.Exec.authorizedB caps { actor := actor, src := src, dst := dst, amt := amt } = true := by
-  obtain ⟨r', hmem, hwrite'⟩ := hfaith.backed actor src hopen hwrite
-  unfold Dregg2.Exec.authorizedB
-  simp only [Bool.or_eq_true]
-  right
-  rw [List.any_eq_true]
-  refine ⟨Cap.endpoint src r', hmem, ?_⟩
-  simp only [Bool.or_eq_true]
-  right
-  show (match (Cap.endpoint src r' : Cap) with
-        | .endpoint t rights => (t == src) && rights.contains Auth.write
-        | _ => false) = true
-  simp only [beq_self_eq_true, Bool.true_and]
-  rw [List.contains_eq_mem]
-  simpa using hwrite'
+    (hconf : confersTransferLeaf vkOfTag provided (leafAt actor src)) :
+    authorizedFacetB caps provided { actor := actor, src := src, dst := dst, amt := amt } = true := by
+  obtain ⟨c, hmem, htgt, hfacet, htier⟩ := hfaith.backed actor src hopen hconf
+  exact authorizedFacetB_holds_transfer_cap caps provided
+    { actor := actor, src := src, dst := dst, amt := amt } c hmem htgt
+    (by simpa [turnEffectBit] using hfacet) htier
 
 end CapHashScheme
 
@@ -294,56 +326,69 @@ that edge, and the bridge firing; plus a witness-FALSE where the empty cap-table
 
 open CapHashScheme
 
-/-- A single-edge cap-table: actor 5 holds a read+write endpoint cap over src 9; everyone else holds
-nothing. -/
-def oneEdgeCaps : Caps := fun a => if a = 5 then [Cap.endpoint 9 [Auth.read, Auth.write]] else []
+/-- A trivial vk-decode (no `Custom` leaf in the demo; transfers never use `Custom`). -/
+def demoVkOfTag : ℤ → Nat := fun _ => 0
 
-/-- The faithful leaf assignment for `oneEdgeCaps`: the `(5 ⇒ 9)` edge carries the write-mask leaf;
-every other edge carries a leaf whose `mask_lo` is NOT the write mask (so `confersWriteLeaf` is false
-there and faithfulness is vacuously met). -/
+/-- A single-edge FACET cap-table: actor 5 holds a TRANSFER-facet, `Signature`-tier cap over src 9;
+everyone else holds nothing. -/
+def oneEdgeCaps : FacetCaps := fun a =>
+  if a = 5 then [{ target := 9, tier := .signature, facet := some EFFECT_TRANSFER }] else []
+
+/-- The faithful leaf assignment for `oneEdgeCaps`: the `(5 ⇒ 9)` edge carries a TRANSFER-facet,
+`Signature`-tier (`auth_tag = 1`) leaf; every other edge carries a deny-all (`mask = 0` ⇒ facet rejects)
+leaf, so `confersTransferLeaf` is false there and faithfulness is vacuously met. -/
 def oneEdgeLeaf : Label → Label → CapLeaf := fun actor src =>
   if actor = 5 ∧ src = 9 then
-    { slot_hash := 0, target := 9, auth_tag := 0,
-      mask_lo := rightsMaskOf (Cap.endpoint 0 [Auth.read, Auth.write]),
-      mask_hi := 0, expiry := 0, breadstuff := 0 }
+    { slot_hash := 0, target := 9, auth_tag := 1,   -- tier = Signature
+      mask_lo := EFFECT_TRANSFER, mask_hi := 0, expiry := 0, breadstuff := 0 }
   else
-    { slot_hash := 0, target := 0, auth_tag := 0,
-      mask_lo := rightsMaskOf (Cap.endpoint 0 [Auth.read, Auth.write]) + 1,
-      mask_hi := 0, expiry := 0, breadstuff := 0 }
+    { slot_hash := 0, target := 0, auth_tag := 1,
+      mask_lo := 0, mask_hi := 0, expiry := 0, breadstuff := 0 }   -- mask 0 ⇒ deny-all
 
-/-- **`oneEdge_faithful`** — `oneEdgeLeaf` faithfully realizes `oneEdgeCaps` against any root: the ONLY
-edge carrying the write mask is `(5 ⇒ 9)`, and actor 5 holds the read+write cap over src 9. -/
+/-- **`oneEdge_faithful`** — `oneEdgeLeaf` faithfully realizes `oneEdgeCaps` (under a provided signature)
+against any root: the ONLY transfer-conferring edge is `(5 ⇒ 9)`, where actor 5 holds the matching
+`FacetCap`. The deny-all leaf elsewhere makes `confersTransferLeaf` false (facet rejects), so the
+faithfulness obligation is vacuous off the edge. -/
 theorem oneEdge_faithful {State : Type} (S : CapHashScheme State) (root : ℤ) :
-    DeployedFaithful S oneEdgeCaps root oneEdgeLeaf := by
+    DeployedFaithful S demoVkOfTag .signature oneEdgeCaps root oneEdgeLeaf := by
   refine ⟨?_⟩
-  intro actor src _hopen hwrite
+  intro actor src _hopen hconf
   by_cases hedge : actor = 5 ∧ src = 9
   · obtain ⟨ha, hs⟩ := hedge
     subst ha; subst hs
-    exact ⟨[Auth.read, Auth.write], by simp [oneEdgeCaps], by simp⟩
+    refine ⟨{ target := 9, tier := .signature, facet := some EFFECT_TRANSFER }, by simp [oneEdgeCaps], rfl, ?_, rfl⟩
+    decide
   · exfalso
-    simp only [confersWriteLeaf, oneEdgeLeaf, if_neg hedge] at hwrite
-    omega
+    obtain ⟨hfacet, _⟩ := hconf
+    simp only [oneEdgeLeaf, if_neg hedge, facetOfLeaf, maskOfLimbs] at hfacet
+    -- the off-edge leaf has mask 0 ⇒ `isEffectPermitted (some 0) _ = false`.
+    revert hfacet; decide
 
 /-- **`deployedEncodes_inhabited`** — the deployed commitment relation is INHABITED. -/
 theorem deployedEncodes_inhabited {State : Type} (S : CapHashScheme State) (root : ℤ) :
-    DeployedEncodes S oneEdgeCaps root :=
+    DeployedEncodes S demoVkOfTag .signature oneEdgeCaps root :=
   ⟨oneEdgeLeaf, oneEdge_faithful S root⟩
 
 /-- **NON-VACUITY (the bridge FIRES on a real edge).** Given a membership opening of the `(5 ⇒ 9)`
-write-mask leaf against the deployed tree, the bridge yields `authorizedB oneEdgeCaps ⟨5,9,…⟩ = true`. -/
+transfer leaf against the deployed tree (with a provided signature), the bridge yields
+`authorizedFacetB oneEdgeCaps .signature ⟨5,9,…⟩ = true`. -/
 theorem bridge_fires {State : Type} (S : CapHashScheme State) (root : ℤ)
     (hopen : MembersAt S root (oneEdgeLeaf 5 9)) :
-    Dregg2.Exec.authorizedB oneEdgeCaps { actor := 5, src := 9, dst := 0, amt := 0 } = true := by
-  apply deployedCapOpen_implies_authorizedB S oneEdgeCaps root oneEdgeLeaf
+    authorizedFacetB oneEdgeCaps .signature { actor := 5, src := 9, dst := 0, amt := 0 } = true := by
+  apply deployedCapOpen_implies_authorizedB S demoVkOfTag .signature oneEdgeCaps root oneEdgeLeaf
       (oneEdge_faithful S root) 5 9 0 0 hopen
-  unfold confersWriteLeaf oneEdgeLeaf; simp
+  have hleaf : oneEdgeLeaf 5 9
+      = { slot_hash := 0, target := 9, auth_tag := 1,
+          mask_lo := EFFECT_TRANSFER, mask_hi := 0, expiry := 0, breadstuff := 0 } := by
+    unfold oneEdgeLeaf; simp
+  rw [hleaf]
+  refine ⟨?_, ?_⟩ <;> decide
 
-/-- **NON-VACUITY (witness FALSE — the gate is real).** Over the EMPTY cap-table, the kernel rejects a
-non-owned src — so the bridge's conclusion is NOT vacuously always-true. -/
+/-- **NON-VACUITY (witness FALSE — the gate is real).** Over the EMPTY FACET cap-table, the faithful gate
+rejects a non-owned src — so the bridge's conclusion is NOT vacuously always-true. -/
 theorem empty_caps_unauthorized :
-    Dregg2.Exec.authorizedB (fun _ => []) { actor := 5, src := 9, dst := 0, amt := 0 } = false := by
-  unfold Dregg2.Exec.authorizedB; simp
+    authorizedFacetB (fun _ => []) .signature { actor := 5, src := 9, dst := 0, amt := 0 } = false := by
+  decide
 
 /-! ## §8 — Axiom hygiene. -/
 

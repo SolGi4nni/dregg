@@ -3,22 +3,23 @@
 
 `DeployedCapOpen.lean` PROVES the in-circuit cap-tree membership-open as a set of generic
 `Lookup` + gate `VmConstraint2`s (`leafLookup` + 16 `nodeLookup` + `dirBoolGate`/`rootPinGate`/
-`targetBindGate`/`writeMaskGate`) over an abstract `CapOpenCols` column layout, with the keystone
-`capOpen_sound`: a `Satisfied` row yields `MembersAt cap_root leaf ∧ leaf.target = src ∧
-confersWriteLeaf leaf`. But nothing LAID THOSE CONSTRAINTS DOWN into a live `EffectVmDescriptor2`:
-the proof existed, disconnected from the wire.
+`targetBindGate`/`transferFacetGate`/`facetHiGate`/`authTagGate`) over an abstract `CapOpenCols`
+column layout, with the keystone `capOpen_sound`: a `Satisfied` row yields `MembersAt cap_root leaf ∧
+leaf.target = src ∧ confersTransferLeaf vkOfTag .signature leaf` (the FAITHFUL two-axis tier × facet
+gate). But nothing LAID THOSE CONSTRAINTS DOWN into a live `EffectVmDescriptor2`: the proof existed,
+disconnected from the wire.
 
 This file welds it. It (a) pins `CapOpenCols` to a concrete appendix of trace columns past the
 rotated R=24 width (`capOpenCols`, §1), (b) assembles the proven constraints into a constraint list
-(`capOpenConstraints`, §2) — `leafLookup` + the 16 `nodeLookup`s as `.lookup`, the four gates as
+(`capOpenConstraints`, §2) — `leafLookup` + the 16 `nodeLookup`s as `.lookup`, the six gates as
 `.base (.gate …)` — and (c) appends them to the rotated attenuate descriptor (`capOpenAttenuateV3`,
 §3), widening the trace by `CAP_OPEN_SPAN` and welding the `capRoot`/`src` columns to the committed
 rotated before-block cap-root and the turn's src.
 
 The keystone (§4, `capOpenAttenuateV3_authorizes`): a `Satisfied2` witness of the live descriptor —
 against a sound chip table — REBUILDS `DeployedCapOpen.Satisfied`, hence `capOpen_sound`, hence (via
-`deployedCapOpen_implies_authorizedB`) the kernel's `authorizedB`. The `&[]` cap-path placeholder is
-GONE: the depth-16 fold the descriptor now carries IS the proof.
+`deployedCapOpen_implies_authorizedB`) the kernel's FAITHFUL `authorizedFacetB`. The `&[]` cap-path
+placeholder is GONE: the depth-16 fold the descriptor now carries IS the proof.
 
 ## Law #1
 
@@ -43,15 +44,17 @@ leaf` and `sponge [FACT_MARK, l, r]` IS `nodeOf S l r` when `sponge := S.chipAbs
 The prior revision's rate-4 `hash_many` leaf + capacity-tagged `hash_fact` node (the source of the
 gap) are GONE; one in-circuit cap hash everywhere.
 
-## Mask convention (the NAMED fork — NOT faked here)
+## Mask convention (the fork CLOSED — the faithful two-axis gate)
 
-`writeMaskGate` pins `leaf.mask_lo == rightsMaskOf(endpoint[read,write]) = 3` (the abstract `Auth`
-rights mask). The deployed `cap_root.rs::CapLeaf.mask_lo` is the low-16 of a `cell/facet.rs`
-`EffectMask` (effect-KIND bitmap) — a DIFFERENT convention (HORIZONLOG MASK-CONVENTION RECONCILE,
-an ember decision). This file emits `writeMaskGate` FAITHFULLY (`mask_lo == 3`): the write leg is
-only satisfiable on a leaf whose committed `mask_lo` is literally the rights mask. NO constant is
-faked to pretend the two conventions agree; the target-bind + root-pinned membership legs (which are
-convention-INDEPENDENT) are the load-bearing authority production this file lands.
+The earlier revision's `writeMaskGate` pinned the abstract `Auth` rights mask `mask_lo == 3` — a
+DIFFERENT convention from the deployed `cap_root.rs::CapLeaf.mask_lo` (the low-16 of a `cell/facet.rs`
+`EffectMask` effect-KIND bitmap). The cutover RESOLVES that fork onto the deployed convention: the
+authority leg now emits the FAITHFUL two-axis gates — `transferFacetGate` (`mask_lo == EFFECT_TRANSFER`)
++ `facetHiGate` (`mask_hi == 0`) decode the `EffectMask` facet and check the `EFFECT_TRANSFER` bit, and
+`authTagGate` (`auth_tag == 1`) decodes the `AuthRequired` tier (`Signature`). A `Satisfied` row thus
+discharges `confersTransferLeaf` (facet permits the effect-kind AND tier is satisfied), which the
+bridge turns into the deployed `authorizedFacetB`. Residual: the tier is pinned to `Signature` here
+rather than read off the leaf's committed `auth_tag` generically (FacetAuthority §10 named residual).
 
 ## Axiom hygiene
 
@@ -72,10 +75,11 @@ open Dregg2.Circuit.DescriptorIR2
 open Dregg2.Circuit.DeployedCapOpen
 open Dregg2.Circuit.DeployedCapTree (CapLeaf CapHashScheme)
 open Dregg2.Circuit.DeployedCapTree.CapHashScheme
-  (capLeafDigest MembersAt confersWriteLeaf DeployedFaithful
+  (capLeafDigest MembersAt confersTransferLeaf DeployedFaithful
    deployedCapOpen_implies_authorizedB)
 open Dregg2.Circuit.Emit.EffectVmEmitRotationV3 (attenuateV3 APPENDIX_SPAN B_CAP_ROOT)
-open Dregg2.Authority (Caps Label)
+open Dregg2.Authority (Label)
+open Dregg2.Exec.FacetAuthority (AuthProvided FacetCaps authorizedFacetB)
 
 set_option autoImplicit false
 
@@ -122,19 +126,23 @@ def dirBoolGates : List VmConstraint2 :=
   (List.range DEPTH).map (fun lvl => .base (.gate (dirBoolGate capOpenCols lvl)))
 
 /-- **The full cap-open constraint list** — the leaf-digest lookup, the 16 node lookups, the 16
-direction-boolean gates, the root pin, the target binding, the write-mask binding. This is the
-set `DeployedCapOpen.Satisfied` enumerates, in wire-emittable form. -/
+direction-boolean gates, the root pin, the target binding, and the FAITHFUL two-axis bindings: the
+transfer-facet gate (`mask_lo = EFFECT_TRANSFER`), the facet-high-zero gate (`mask_hi = 0`), and the
+tier gate (`auth_tag = Signature`). This is the set `DeployedCapOpen.Satisfied` enumerates, in
+wire-emittable form. -/
 def capOpenConstraints : List VmConstraint2 :=
   .lookup (leafLookup capOpenCols)
   :: nodeLookups
   ++ dirBoolGates
   ++ [ .base (.gate (rootPinGate capOpenCols))
      , .base (.gate (targetBindGate capOpenCols))
-     , .base (.gate (writeMaskGate capOpenCols)) ]
+     , .base (.gate (transferFacetGate capOpenCols))
+     , .base (.gate (facetHiGate capOpenCols))
+     , .base (.gate (authTagGate capOpenCols)) ]
 
-/-- The cap-open constraint count: 1 leaf lookup + 16 node lookups + 16 dir gates + 3 binding
-gates = 36. -/
-theorem capOpenConstraints_length : capOpenConstraints.length = 36 := by
+/-- The cap-open constraint count: 1 leaf lookup + 16 node lookups + 16 dir gates + 5 binding
+gates = 38. -/
+theorem capOpenConstraints_length : capOpenConstraints.length = 38 := by
   simp [capOpenConstraints, nodeLookups, dirBoolGates, DEPTH]
 
 /-! ## §3 — the live descriptor: the rotated attenuate WITH the cap-open appendix.
@@ -165,7 +173,8 @@ theorem capOpenConstraints_mem (c : VmConstraint2) (hc : c ∈ capOpenConstraint
 The keystone. A `Satisfied2` witness of the live descriptor, on ANY row, satisfies every cap-open
 constraint (they are constraints of the descriptor). Reading them back gives exactly the fields of
 `DeployedCapOpen.Satisfied`, so `capOpen_sound` fires: the row OPENS the committed cap-tree at a
-write-mask leaf whose target is the turn's src. -/
+transfer-conferring leaf (facet permits `EFFECT_TRANSFER`, tier satisfied) whose target is the turn's
+src. -/
 
 /-- A `Satisfied2` witness of the live descriptor reconstructs the proven `DeployedCapOpen.Satisfied`
 on every row — the in-circuit cap-membership row IS satisfied. -/
@@ -178,7 +187,8 @@ theorem capOpenAttenuateV3_satisfied (hash : List ℤ → ℤ)
   have hrow := hsat.rowConstraints i hi
   refine
     { leafHashed := ?_, nodeHashed := ?_, dirBool := ?_
-    , rootPinned := ?_, targetBound := ?_, writeMasked := ?_ }
+    , rootPinned := ?_, targetBound := ?_
+    , facetTransfer := ?_, facetHiZero := ?_, tierTagged := ?_ }
   · -- leaf lookup
     have h := hrow (.lookup (leafLookup capOpenCols))
       (capOpenConstraints_mem _ (by simp [capOpenConstraints]))
@@ -209,17 +219,27 @@ theorem capOpenAttenuateV3_satisfied (hash : List ℤ → ℤ)
       simp [capOpenConstraints]
     have h := hrow _ (capOpenConstraints_mem _ hmem)
     simpa [VmConstraint2.holdsAt, VmConstraint.holdsVm] using h
-  · -- write-mask binding
-    have hmem : VmConstraint2.base (.gate (writeMaskGate capOpenCols)) ∈ capOpenConstraints := by
+  · -- transfer-facet binding (mask_lo = EFFECT_TRANSFER)
+    have hmem : VmConstraint2.base (.gate (transferFacetGate capOpenCols)) ∈ capOpenConstraints := by
+      simp [capOpenConstraints]
+    have h := hrow _ (capOpenConstraints_mem _ hmem)
+    simpa [VmConstraint2.holdsAt, VmConstraint.holdsVm] using h
+  · -- facet-high-zero binding (mask_hi = 0)
+    have hmem : VmConstraint2.base (.gate (facetHiGate capOpenCols)) ∈ capOpenConstraints := by
+      simp [capOpenConstraints]
+    have h := hrow _ (capOpenConstraints_mem _ hmem)
+    simpa [VmConstraint2.holdsAt, VmConstraint.holdsVm] using h
+  · -- tier binding (auth_tag = Signature)
+    have hmem : VmConstraint2.base (.gate (authTagGate capOpenCols)) ∈ capOpenConstraints := by
       simp [capOpenConstraints]
     have h := hrow _ (capOpenConstraints_mem _ hmem)
     simpa [VmConstraint2.holdsAt, VmConstraint.holdsVm] using h
 
 /-- **`capOpenAttenuateV3_sound` — the live cap-open is SOUND.** A `Satisfied2` witness of the live
 descriptor (against a sound chip table) PRODUCES, on every row, the membership the kernel authority
-bridge consumes: `MembersAt cap_root leaf ∧ leaf.target = src ∧ confersWriteLeaf leaf`. The `&[]`
+bridge consumes: `MembersAt cap_root leaf ∧ leaf.target = src ∧ confersTransferLeaf vkOfTag .signature leaf`. The `&[]`
 placeholder is discharged — the depth-16 fold the descriptor carries IS the proof. -/
-theorem capOpenAttenuateV3_sound {State : Type} (S : CapHashScheme State)
+theorem capOpenAttenuateV3_sound {State : Type} (S : CapHashScheme State) (vkOfTag : ℤ → Nat)
     (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ)
     (t : Dregg2.Circuit.DescriptorIR2.VmTrace)
     (hChip : ChipTableSound S.chipAbsorb (t.tf .poseidon2))
@@ -229,42 +249,43 @@ theorem capOpenAttenuateV3_sound {State : Type} (S : CapHashScheme State)
         (leafOf capOpenCols (Dregg2.Circuit.DescriptorIR2.envAt t i))
     ∧ (leafOf capOpenCols (Dregg2.Circuit.DescriptorIR2.envAt t i)).target
         = (Dregg2.Circuit.DescriptorIR2.envAt t i).loc capOpenCols.src
-    ∧ confersWriteLeaf (leafOf capOpenCols (Dregg2.Circuit.DescriptorIR2.envAt t i)) :=
-  capOpen_sound S t.tf capOpenCols _ hChip
+    ∧ confersTransferLeaf vkOfTag .signature
+        (leafOf capOpenCols (Dregg2.Circuit.DescriptorIR2.envAt t i)) :=
+  capOpen_sound S t.tf capOpenCols _ vkOfTag hChip
     (capOpenAttenuateV3_satisfied S.chipAbsorb minit mfin maddrs t hsat i hi)
 
 /-- **`capOpenAttenuateV3_authorizes` — THE END-TO-END AUTHORITY LEG, LIVE.** Against the deployed
 commitment relation, a `Satisfied2` witness of the live descriptor whose opened leaf IS the
-faithfulness contract's `(actor ⇒ src)` edge discharges the kernel's `authorizedB` for the turn —
+faithfulness contract's `(actor ⇒ src)` edge discharges the kernel's `authorizedFacetB` for the turn —
 from the IN-CIRCUIT depth-16 binary-Merkle membership proof the descriptor now carries. -/
-theorem capOpenAttenuateV3_authorizes {State : Type} (S : CapHashScheme State)
+theorem capOpenAttenuateV3_authorizes {State : Type} (S : CapHashScheme State) (vkOfTag : ℤ → Nat)
     (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ)
     (t : Dregg2.Circuit.DescriptorIR2.VmTrace)
     (hChip : ChipTableSound S.chipAbsorb (t.tf .poseidon2))
     (hsat : Satisfied2 S.chipAbsorb capOpenAttenuateV3 minit mfin maddrs t)
     (i : Nat) (hi : i < t.rows.length)
-    (caps : Caps) (leafAt : Label → Label → CapLeaf)
-    (hfaith : DeployedFaithful S caps
+    (caps : FacetCaps) (leafAt : Label → Label → CapLeaf)
+    (hfaith : DeployedFaithful S vkOfTag .signature caps
       ((Dregg2.Circuit.DescriptorIR2.envAt t i).loc capOpenCols.capRoot) leafAt)
     (actor src dst : Label) (amt : ℤ)
     (hsrc : (Dregg2.Circuit.DescriptorIR2.envAt t i).loc capOpenCols.src = (src : ℤ))
     (hedge : leafOf capOpenCols (Dregg2.Circuit.DescriptorIR2.envAt t i) = leafAt actor src) :
-    Dregg2.Exec.authorizedB caps
+    authorizedFacetB caps .signature
       { actor := actor, src := src, dst := dst, amt := amt } = true
     ∧ (leafAt actor src).target = (src : ℤ) :=
-  capOpen_authorizes S t.tf capOpenCols _ hChip
+  capOpen_authorizes S t.tf capOpenCols _ vkOfTag hChip
     (capOpenAttenuateV3_satisfied S.chipAbsorb minit mfin maddrs t hsat i hi)
     caps leafAt hfaith actor src dst amt hsrc hedge
 
 /-! ## §5 — the wire face: the emitted JSON carries the cap-open constraints.
 
 The Rust registry twin parses `emitVmJson2 capOpenAttenuateV3`. We pin the shape: the descriptor's
-trace width is the rotated width + 58, and its constraint list is the attenuate's plus the 36
+trace width is the rotated width + 58, and its constraint list is the attenuate's plus the 38
 cap-open constraints. The full byte-golden lands in the Rust differential test (the wire string is
 large; `lake`'s `#guard` on the constraint COUNT + width is the Lean-side pin). -/
 
--- The live descriptor adds exactly the 36 cap-open constraints past the attenuate base.
-#guard capOpenAttenuateV3.constraints.length == attenuateV3.constraints.length + 36
+-- The live descriptor adds exactly the 38 cap-open constraints past the attenuate base.
+#guard capOpenAttenuateV3.constraints.length == attenuateV3.constraints.length + 38
 -- The width grows by the 58-column cap-open appendix.
 #guard capOpenAttenuateV3.traceWidth == attenuateV3.traceWidth + 58
 -- The cap-open appendix begins past the rotated R=24 width (311).

@@ -55,10 +55,12 @@ open Dregg2.Circuit.DescriptorIR2
 open Dregg2.Circuit.DeployedCapTree
   (CapLeaf FACT_MARK leafFields packNode CapHashScheme)
 open Dregg2.Circuit.DeployedCapTree.CapHashScheme
-  (Step capLeafDigest nodeOf recomposeUp MembersAt confersWriteLeaf DeployedFaithful
-   deployedCapOpen_implies_authorizedB)
+  (Step capLeafDigest nodeOf recomposeUp MembersAt DeployedFaithful confersTransferLeaf
+   maskOfLimbs facetOfLeaf tierOfTag deployedCapOpen_implies_authorizedB)
 open Dregg2.Circuit.Emit.EffectVmEmitCapReshape (rightsMaskOf)
 open Dregg2.Authority (Cap Auth Caps Label)
+open Dregg2.Exec.FacetAuthority
+  (AuthTier AuthProvided FacetCaps EFFECT_TRANSFER isEffectPermitted authorizedFacetB)
 
 set_option autoImplicit false
 
@@ -177,9 +179,24 @@ def rootPinGate (c : CapOpenCols) : EmittedExpr :=
 def targetBindGate (c : CapOpenCols) : EmittedExpr :=
   .add (.var (c.leaf 1)) (.mul (.const (-1)) (.var c.src))
 
-/-- The write-mask binding: `leaf.mask_lo - WRITE_MASK = 0`. -/
-def writeMaskGate (c : CapOpenCols) : EmittedExpr :=
-  .add (.var (c.leaf 3)) (.const (-(rightsMaskOf (Cap.endpoint 0 [Auth.read, Auth.write]))))
+/-- **`transferFacetGate`** (THE CUTOVER, FacetAuthority §10(C)) — the FACET binding: it pins the
+leaf's low mask limb to `EFFECT_TRANSFER` and the high limb to `0`, so the decoded facet `maskOfLimbs
+mask_lo mask_hi = EFFECT_TRANSFER` permits the `EFFECT_TRANSFER` bit (`facet.rs:123`). This REPLACES the
+toy `writeMaskGate` (`mask_lo == write-mask`). Two equations as one zero-pinned sum is impossible, so
+we pin `mask_lo` here and `mask_hi` in `facetHiGate`. -/
+def transferFacetGate (c : CapOpenCols) : EmittedExpr :=
+  .add (.var (c.leaf 3)) (.const (-(EFFECT_TRANSFER)))
+
+/-- The high-limb pin: `leaf.mask_hi = 0` (so `maskOfLimbs mask_lo mask_hi = mask_lo`). -/
+def facetHiGate (c : CapOpenCols) : EmittedExpr :=
+  .var (c.leaf 4)
+
+/-- **`authTagGate`** (THE CUTOVER, FacetAuthority §10(C)) — the TIER binding: it pins the leaf's
+`auth_tag` to the `Signature` tier byte `1` (`tierOfTag 1 = .signature`, satisfiable by a provided
+signature). The tier-off-the-leaf generality (any committed `auth_tag`) is the NAMED §10 residual; here
+the in-circuit row binds a concrete satisfiable tier. -/
+def authTagGate (c : CapOpenCols) : EmittedExpr :=
+  .add (.var (c.leaf 2)) (.const (-1))
 
 /-! ## §5 — `Satisfied`: the full per-row denotation of one cap-membership constraint. -/
 
@@ -197,8 +214,12 @@ structure Satisfied (sponge : List ℤ → ℤ) (tf : TraceFamily) (c : CapOpenC
   rootPinned : (rootPinGate c).eval env.loc = 0
   /-- The leaf's target equals the turn's src. -/
   targetBound : (targetBindGate c).eval env.loc = 0
-  /-- The leaf's mask_lo is the write-endpoint mask. -/
-  writeMasked : (writeMaskGate c).eval env.loc = 0
+  /-- The leaf's `mask_lo` is `EFFECT_TRANSFER` (the facet permits TRANSFER). -/
+  facetTransfer : (transferFacetGate c).eval env.loc = 0
+  /-- The leaf's `mask_hi` is `0` (so the decoded facet is exactly `mask_lo`). -/
+  facetHiZero : (facetHiGate c).eval env.loc = 0
+  /-- The leaf's `auth_tag` is the `Signature` tier byte (satisfiable by a provided signature). -/
+  tierTagged : (authTagGate c).eval env.loc = 0
 
 /-! ## §6 — soundness: the leaf-digest column carries the genuine `capLeafDigest`.
 
@@ -357,16 +378,34 @@ theorem capOpen_target (sponge : List ℤ → ℤ) (tf : TraceFamily) (c : CapOp
   simp only [leafOf]
   linarith
 
-/-- The write-mask gate pins `confersWriteLeaf leaf`. -/
-theorem capOpen_write (sponge : List ℤ → ℤ) (tf : TraceFamily) (c : CapOpenCols)
-    (env : VmRowEnv) (hsat : Satisfied sponge tf c env) :
-    confersWriteLeaf (leafOf c env) := by
-  have h := hsat.writeMasked
-  unfold writeMaskGate at h
-  simp only [EmittedExpr.eval] at h
-  unfold confersWriteLeaf
-  simp only [leafOf]
-  linarith
+/-- **`capOpen_confers`** (THE CUTOVER) — the facet + tier gates pin the FAITHFUL two-axis
+`confersTransferLeaf vkOfTag .signature leaf`: the decoded facet (`maskOfLimbs mask_lo mask_hi =
+EFFECT_TRANSFER`) permits the TRANSFER bit, and the decoded tier (`tierOfTag auth_tag = .signature`,
+since `auth_tag = 1`) is satisfied by a provided signature. Holds for ANY `vkOfTag` (the tag is `1`,
+not the `Custom` byte `5`). -/
+theorem capOpen_confers (sponge : List ℤ → ℤ) (tf : TraceFamily) (c : CapOpenCols)
+    (env : VmRowEnv) (vkOfTag : ℤ → Nat) (hsat : Satisfied sponge tf c env) :
+    confersTransferLeaf vkOfTag .signature (leafOf c env) := by
+  have hlo := hsat.facetTransfer
+  have hhi := hsat.facetHiZero
+  have htag := hsat.tierTagged
+  unfold transferFacetGate at hlo
+  unfold facetHiGate at hhi
+  unfold authTagGate at htag
+  simp only [EmittedExpr.eval] at hlo hhi htag
+  -- decode: mask_lo = EFFECT_TRANSFER, mask_hi = 0, auth_tag = 1.
+  have hmlo : (leafOf c env).mask_lo = EFFECT_TRANSFER := by simp only [leafOf]; linarith
+  have hmhi : (leafOf c env).mask_hi = 0 := by simp only [leafOf]; exact hhi
+  have htg : (leafOf c env).auth_tag = 1 := by simp only [leafOf]; linarith
+  unfold confersTransferLeaf facetOfLeaf maskOfLimbs
+  rw [hmlo, hmhi, htg]
+  refine ⟨?_, ?_⟩
+  · -- facet: maskOfLimbs EFFECT_TRANSFER 0 = EFFECT_TRANSFER permits EFFECT_TRANSFER.
+    show isEffectPermitted (some (EFFECT_TRANSFER + (0 : ℤ) * 65536).toNat) EFFECT_TRANSFER = true
+    decide
+  · -- tier: tierOfTag vkOfTag 1 = .signature, satisfied by a provided signature (by rfl).
+    show (tierOfTag vkOfTag 1).isSatisfiedBy .signature = true
+    rfl
 
 /-! ## §9 — THE KEYSTONE: `capOpen_sound` (Satisfied ⟹ MembersAt ∧ binding). -/
 
@@ -375,15 +414,15 @@ at a write-mask leaf whose target is the turn's `src`. THE authority leg's circu
 `SchemeRealizedByChip` chip↔scheme bridge is DISCHARGED (the chip's hash IS `S.chipAbsorb`, by
 `chipAbsorb_realizes`) — no longer a carried hypothesis. -/
 theorem capOpen_sound {State : Type} (S : CapHashScheme State)
-    (tf : TraceFamily) (c : CapOpenCols) (env : VmRowEnv)
+    (tf : TraceFamily) (c : CapOpenCols) (env : VmRowEnv) (vkOfTag : ℤ → Nat)
     (hChip : ChipTableSound S.chipAbsorb (tf .poseidon2))
     (hsat : Satisfied S.chipAbsorb tf c env) :
     MembersAt S (env.loc c.capRoot) (leafOf c env)
     ∧ (leafOf c env).target = env.loc c.src
-    ∧ confersWriteLeaf (leafOf c env) :=
+    ∧ confersTransferLeaf vkOfTag .signature (leafOf c env) :=
   ⟨capOpen_membership S tf c env hChip hsat,
    capOpen_target S.chipAbsorb tf c env hsat,
-   capOpen_write S.chipAbsorb tf c env hsat⟩
+   capOpen_confers S.chipAbsorb tf c env vkOfTag hsat⟩
 
 /-! ## §10 — CHAINING to the kernel `authorizedB` (the end-to-end authority leg). -/
 
@@ -392,25 +431,25 @@ theorem capOpen_sound {State : Type} (S : CapHashScheme State)
 kernel's `authorizedB = true`. The `SchemeRealizedByChip` bridge is DISCHARGED (`chipAbsorb_realizes`)
 — the chip genuinely realizes the cap hash. -/
 theorem capOpen_authorizes {State : Type} (S : CapHashScheme State)
-    (tf : TraceFamily) (c : CapOpenCols) (env : VmRowEnv)
+    (tf : TraceFamily) (c : CapOpenCols) (env : VmRowEnv) (vkOfTag : ℤ → Nat)
     (hChip : ChipTableSound S.chipAbsorb (tf .poseidon2))
     (hsat : Satisfied S.chipAbsorb tf c env)
-    (caps : Caps) (leafAt : Label → Label → CapLeaf)
-    (hfaith : DeployedFaithful S caps (env.loc c.capRoot) leafAt)
+    (caps : FacetCaps) (leafAt : Label → Label → CapLeaf)
+    (hfaith : DeployedFaithful S vkOfTag .signature caps (env.loc c.capRoot) leafAt)
     (actor src dst : Label) (amt : ℤ)
     (hsrc : env.loc c.src = (src : ℤ))
     (hedge : leafOf c env = leafAt actor src) :
-    Dregg2.Exec.authorizedB caps
+    authorizedFacetB caps .signature
       { actor := actor, src := src, dst := dst, amt := amt } = true
     ∧ (leafAt actor src).target = (src : ℤ) := by
   have hmem : MembersAt S (env.loc c.capRoot) (leafAt actor src) := by
     rw [← hedge]; exact capOpen_membership S tf c env hChip hsat
-  have hwrite : confersWriteLeaf (leafAt actor src) := by
-    rw [← hedge]; exact capOpen_write S.chipAbsorb tf c env hsat
+  have hconf : confersTransferLeaf vkOfTag .signature (leafAt actor src) := by
+    rw [← hedge]; exact capOpen_confers S.chipAbsorb tf c env vkOfTag hsat
   have htgt : (leafAt actor src).target = (src : ℤ) := by
     rw [← hedge, capOpen_target S.chipAbsorb tf c env hsat, hsrc]
-  exact ⟨deployedCapOpen_implies_authorizedB S caps (env.loc c.capRoot) leafAt hfaith
-    actor src dst amt hmem hwrite, htgt⟩
+  exact ⟨deployedCapOpen_implies_authorizedB S vkOfTag .signature caps (env.loc c.capRoot) leafAt hfaith
+    actor src dst amt hmem hconf, htgt⟩
 
 /-! ## §A — THE CHIP-RATE GAP IS CLOSED (`SchemeRealizedByChip` DISCHARGED, not carried).
 
@@ -443,11 +482,12 @@ theorem node_leaf_length_disjoint (l r : ℤ) (leaf : CapLeaf) :
 
 /-! ## §11 — discriminating teeth (the gates are real). -/
 
-/-- **The write-mask gate is DISCRIMINATING (witness FALSE).** -/
-theorem writeMaskGate_discriminates (c : CapOpenCols) (env : VmRowEnv)
-    (hbad : env.loc (c.leaf 3) = rightsMaskOf (Cap.endpoint 0 [Auth.read, Auth.write]) + 1) :
-    (writeMaskGate c).eval env.loc ≠ 0 := by
-  unfold writeMaskGate
+/-- **The transfer-facet gate is DISCRIMINATING (witness FALSE).** A leaf whose `mask_lo` is NOT
+`EFFECT_TRANSFER` fails the facet binding. -/
+theorem transferFacetGate_discriminates (c : CapOpenCols) (env : VmRowEnv)
+    (hbad : env.loc (c.leaf 3) = EFFECT_TRANSFER + 1) :
+    (transferFacetGate c).eval env.loc ≠ 0 := by
+  unfold transferFacetGate
   simp only [EmittedExpr.eval, hbad]
   intro h; linarith
 
@@ -468,11 +508,12 @@ theorem targetBindGate_discriminates (c : CapOpenCols) (env : VmRowEnv)
 #assert_axioms node_sound
 #assert_axioms recompose_reaches_cur
 #assert_axioms capOpen_membership
+#assert_axioms capOpen_confers
 #assert_axioms capOpen_sound
 #assert_axioms capOpen_authorizes
 #assert_axioms schemeRealizedByChip_discharged
 #assert_axioms node_leaf_length_disjoint
-#assert_axioms writeMaskGate_discriminates
+#assert_axioms transferFacetGate_discriminates
 #assert_axioms targetBindGate_discriminates
 
 end Dregg2.Circuit.DeployedCapOpen
