@@ -631,6 +631,7 @@ impl CapOpenWitness {
 ///   * level `lvl`: `sib` at `base + 8 + 3·lvl`, `dir` at `base + 9 + 3·lvl`,
 ///     `node = hash_many(&[FACT_MARK, left, right])` at `base + 10 + 3·lvl`;
 ///   * `capRoot` at `base + 56`, `src` at `base + 57`.
+///
 /// The top node (`lvl = 15`) MUST equal `w.cap_root` (asserted). Every value is a genuine
 /// `hash_many`-absorb output, so the auto-gathered chip table carries a matching row for each
 /// of the 1 + 16 chip lookups.
