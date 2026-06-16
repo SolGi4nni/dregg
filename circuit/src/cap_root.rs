@@ -66,9 +66,65 @@
 //! those are Phase B.
 
 use crate::field::BabyBear;
-use crate::poseidon2::{hash_fact, hash_many};
+use crate::poseidon2::{Poseidon2State, hash_many};
 
 pub use crate::dsl::revocation::{SENTINEL_MAX, SENTINEL_MIN};
+
+/// The `hash_fact` domain-separation marker (`poseidon2.rs::hash_fact` state[5]),
+/// here absorbed as the FIRST RATE input of the cap node's arity-3 chip absorb
+/// (`descriptor_ir2.rs::FACT_MARK`, `DeployedCapTree.FACT_MARK`). Used as a rate
+/// input so the node is ONE chip-realizable absorb, not the capacity-tagged
+/// `hash_fact` permute.
+///
+/// PUBLIC so the standalone cap-membership DSL AIR's `Hash3Cap` node form
+/// (`dsl_p3_air::hash_input_state`) seeds the SAME `FACT_MARK` rate input.
+pub const CAP_FACT_MARK: u32 = 0xFACF;
+
+/// **`cap_chip_absorb`** — the SINGLE in-circuit chip hash the cap-tree commits to,
+/// byte-identical to the IR-v2 Poseidon2 chip's BUS_P2 absorb (`descriptor_ir2.rs`
+/// `Ir2Air::Chip`). One width-16 Poseidon2 permutation; squeeze state[0].
+///
+/// The chip distinguishes two seedings by `big = [arity == 7]`:
+///   * `arity ≤ 4` (rate-4): `state[0..len] = ins`, `state[4] = len` (the arity tag),
+///     `state[5..] = 0`.
+///   * `arity == 7` (rate-8 leaf): `state[0..7] = ins`, no tag lane (`state[7..] = 0`).
+///
+/// The cap NODE is the arity-3 absorb of `[CAP_FACT_MARK, l, r]`; the cap LEAF is the
+/// arity-7 absorb of the 7 leaf fields. Both ride this one hash — the unification that
+/// discharges Lean's `SchemeRealizedByChip`.
+///
+/// PUBLIC so the cap-open trace scaffold (`effect_vm::trace_rotated`) fills its leaf /
+/// node columns from the SAME hash the cap-tree commits — one cap hash across the whole
+/// crate (the unification's Rust invariant).
+pub fn cap_chip_absorb(ins: &[BabyBear]) -> BabyBear {
+    let len = ins.len();
+    debug_assert!(
+        len == 3 || len == 7,
+        "cap_chip_absorb only commits the arity-3 node / arity-7 leaf shapes"
+    );
+    let mut st = [BabyBear::ZERO; crate::poseidon2::WIDTH];
+    for (i, &x) in ins.iter().enumerate() {
+        st[i] = x;
+    }
+    if len != 7 {
+        // Rate-4 seeding: the length tag rides state[4] (the `big = 0` branch).
+        st[4] = BabyBear::new(len as u32);
+    }
+    // (arity 7 ⇒ `big = 1`: state[4..7] are the genuine inputs in4..in6, no tag.)
+    let mut state = Poseidon2State { state: st };
+    state.permute();
+    state.state[0]
+}
+
+/// The cap-tree internal node hash: the arity-3 chip absorb of `[CAP_FACT_MARK, l, r]`
+/// (`DeployedCapTree.nodeOf` = `sponge [FACT_MARK, l, r]`). Replaces the deployed
+/// capacity-tagged `hash_fact(l, [r])` — one in-circuit hash everywhere.
+///
+/// PUBLIC so the standalone cap-membership DSL AIR (`dsl::cap_membership`, via the
+/// `ConstraintExpr::Hash3Cap` node form) folds with the SAME node hash the tree commits.
+pub fn cap_node(l: BabyBear, r: BabyBear) -> BabyBear {
+    cap_chip_absorb(&[BabyBear::new(CAP_FACT_MARK), l, r])
+}
 
 /// Tree depth for the canonical capability tree. A binary tree of depth 16
 /// holds `2^16 - 2 = 65534` capabilities (two positions reserved for the
@@ -113,7 +169,11 @@ impl CapLeaf {
     /// value the sorted Merkle tree stores at the leaf position; the leaf is
     /// *placed* by its `slot_hash` ordering.
     pub fn digest(&self) -> BabyBear {
-        hash_many(&[
+        // The SINGLE rate-8 chip absorb of the 7 fields (arity 7), byte-identical to
+        // the IR-v2 Poseidon2 chip's BUS_P2 leaf absorb and the Lean `capLeafDigest`
+        // (= `sponge ∘ leafFields`). Replaces the deployed rate-4 two-permute
+        // `hash_many` — one in-circuit hash, so the chip realizes the cap-leaf as one row.
+        cap_chip_absorb(&[
             self.slot_hash,
             self.target,
             self.auth_tag,
@@ -299,7 +359,7 @@ impl CanonicalCapTree {
             let prev = levels.last().unwrap();
             let mut next_level = Vec::with_capacity(prev.len() / 2);
             for chunk in prev.chunks(2) {
-                next_level.push(hash_fact(chunk[0], &[chunk[1]]));
+                next_level.push(cap_node(chunk[0], chunk[1]));
             }
             levels.push(next_level);
         }
@@ -425,9 +485,9 @@ impl CanonicalCapTree {
         for level in 0..self.depth {
             let sib = siblings[level];
             cur = if directions[level] == 0 {
-                hash_fact(cur, &[sib])
+                cap_node(cur, sib)
             } else {
-                hash_fact(sib, &[cur])
+                cap_node(sib, cur)
             };
         }
         Some(CapAttenuationWitness {
@@ -468,9 +528,9 @@ impl CanonicalCapTree {
         for level in 0..self.depth {
             let sib = siblings[level];
             cur = if directions[level] == 0 {
-                hash_fact(cur, &[sib])
+                cap_node(cur, sib)
             } else {
-                hash_fact(sib, &[cur])
+                cap_node(sib, cur)
             };
         }
         Some(CapAttenuationWitness {
@@ -581,9 +641,9 @@ pub fn recompose_membership(leaf_digest: BabyBear, siblings: &[BabyBear], direct
     for level in 0..siblings.len() {
         let sib = siblings[level];
         cur = if directions[level] == 0 {
-            hash_fact(cur, &[sib])
+            cap_node(cur, sib)
         } else {
-            hash_fact(sib, &[cur])
+            cap_node(sib, cur)
         };
     }
     cur
@@ -783,9 +843,9 @@ mod tests {
         let mut cur = BabyBear::ZERO;
         for level in 0..CAP_TREE_DEPTH {
             cur = if w.directions[level] == 0 {
-                hash_fact(cur, &[w.siblings[level]])
+                cap_node(cur, w.siblings[level])
             } else {
-                hash_fact(w.siblings[level], &[cur])
+                cap_node(w.siblings[level], cur)
             };
         }
         assert_eq!(
@@ -798,9 +858,9 @@ mod tests {
         let mut hcur = revoked.digest();
         for level in 0..CAP_TREE_DEPTH {
             hcur = if w.directions[level] == 0 {
-                hash_fact(hcur, &[w.siblings[level]])
+                cap_node(hcur, w.siblings[level])
             } else {
-                hash_fact(w.siblings[level], &[hcur])
+                cap_node(w.siblings[level], hcur)
             };
         }
         assert_eq!(

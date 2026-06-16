@@ -28,17 +28,20 @@ gates on the transition builder). This file is pure PLUMBING — a column layout
 the bridge proof. The Rust registry twin (`V3_STAGED_REGISTRY_TSV`) carries the byte-identical wire
 string emitted by `emitVmJson2`.
 
-## The chip-arity seam (NAMED — the end-to-end prove's one blocker, NOT faked)
+## The chip-rate seam (CLOSED — decision #1, `SchemeRealizedByChip` DISCHARGED)
 
-`leafLookup` is arity 7 and each `nodeLookup` is arity 3, inherited from `DeployedCapOpen`'s
-`CHIP_RATE = 8` assumption. The DEPLOYED IR-v2 chip (`descriptor_ir2.rs`) is rate-4 and enforces
-`arity ∈ {0,2,4}` — so neither absorb is realizable as ONE chip row (and the deployed 7-field
-`cap_root.rs::CapLeaf::digest` `hash_many` is itself a two-permute sponge). The Lean emission + the
-bridge proofs below are sound AS STATED (against any sponge + sound chip table at `CHIP_RATE = 8`);
-the Rust self-verify is consequently `#[ignore]`d (HONESTLY, not faked). The closure is a
-proof-carrying Lean RE-EMIT of `capLeafDigest`/`nodeOf`'s chip realization as an arity-2/arity-4
-absorb fold (HORIZONLOG, in-circuit cap-membership-open §(1)) — a Lean change, never a Rust
-constraint edit. The membership + target-bind legs the bridge produces are otherwise complete.
+`leafLookup` is a single chip absorb of the 7 leaf fields (arity 7); each `nodeLookup` a single chip
+absorb of `[FACT_MARK, l, r]` (arity 3). The DEPLOYED cap primitives are NOW exactly these single chip
+absorbs: the cap-tree is re-committed to `cap_root.rs::cap_chip_absorb` (mirrored as
+`DeployedCapTree`'s one `chipAbsorb` carrier), so `capLeafDigest S = S.chipAbsorb ∘ leafFields` and
+`nodeOf S l r = S.chipAbsorb [FACT_MARK, l, r]`. The chip's `sponge (leafFields)` IS `capLeafDigest S
+leaf` and `sponge [FACT_MARK, l, r]` IS `nodeOf S l r` when `sponge := S.chipAbsorb`.
+
+`DeployedCapOpen`'s named bridge `SchemeRealizedByChip hash S` is therefore DISCHARGED by
+`chipAbsorb_realizes` (both equations hold by `rfl`), and the two keystone theorems below specialize
+`hash := S.chipAbsorb` and supply the realization internally — it is no longer a carried hypothesis.
+The prior revision's rate-4 `hash_many` leaf + capacity-tagged `hash_fact` node (the source of the
+gap) are GONE; one in-circuit cap hash everywhere.
 
 ## Mask convention (the NAMED fork — NOT faked here)
 
@@ -53,8 +56,8 @@ convention-INDEPENDENT) are the load-bearing authority production this file land
 ## Axiom hygiene
 
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}; Poseidon2 CR enters only as the named
-`Poseidon2SpongeCR` floor (and the chip-soundness `ChipTableSound`), inherited unchanged from
-`DeployedCapOpen`. No sorry/native_decide/:= True.
+`CapHashScheme.chipAbsorb`/`chipCR` floor (and the chip-soundness `ChipTableSound`), inherited
+unchanged from `DeployedCapOpen`. No sorry/native_decide/:= True.
 -/
 import Dregg2.Circuit.DeployedCapOpen
 import Dregg2.Circuit.Emit.EffectVmEmitRotationV3
@@ -67,8 +70,9 @@ open Dregg2.Circuit.Emit.EffectVmEmit (VmRowEnv VmConstraint EFFECT_VM_WIDTH)
 open Dregg2.Circuit.DescriptorIR2
   (Table TraceFamily TableId Lookup VmConstraint2 EffectVmDescriptor2 ChipTableSound Satisfied2)
 open Dregg2.Circuit.DeployedCapOpen
-open Dregg2.Circuit.DeployedCapTree
-  (CapLeaf capLeafDigest MembersAt confersWriteLeaf DeployedFaithful
+open Dregg2.Circuit.DeployedCapTree (CapLeaf CapHashScheme)
+open Dregg2.Circuit.DeployedCapTree.CapHashScheme
+  (capLeafDigest MembersAt confersWriteLeaf DeployedFaithful
    deployedCapOpen_implies_authorizedB)
 open Dregg2.Circuit.Emit.EffectVmEmitRotationV3 (attenuateV3 APPENDIX_SPAN B_CAP_ROOT)
 open Dregg2.Authority (Caps Label)
@@ -215,32 +219,32 @@ theorem capOpenAttenuateV3_satisfied (hash : List ℤ → ℤ)
 descriptor (against a sound chip table) PRODUCES, on every row, the membership the kernel authority
 bridge consumes: `MembersAt cap_root leaf ∧ leaf.target = src ∧ confersWriteLeaf leaf`. The `&[]`
 placeholder is discharged — the depth-16 fold the descriptor carries IS the proof. -/
-theorem capOpenAttenuateV3_sound (hash : List ℤ → ℤ)
+theorem capOpenAttenuateV3_sound {State : Type} (S : CapHashScheme State)
     (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ)
     (t : Dregg2.Circuit.DescriptorIR2.VmTrace)
-    (hChip : ChipTableSound hash (t.tf .poseidon2))
-    (hsat : Satisfied2 hash capOpenAttenuateV3 minit mfin maddrs t)
+    (hChip : ChipTableSound S.chipAbsorb (t.tf .poseidon2))
+    (hsat : Satisfied2 S.chipAbsorb capOpenAttenuateV3 minit mfin maddrs t)
     (i : Nat) (hi : i < t.rows.length) :
-    MembersAt hash ((Dregg2.Circuit.DescriptorIR2.envAt t i).loc capOpenCols.capRoot)
+    MembersAt S ((Dregg2.Circuit.DescriptorIR2.envAt t i).loc capOpenCols.capRoot)
         (leafOf capOpenCols (Dregg2.Circuit.DescriptorIR2.envAt t i))
     ∧ (leafOf capOpenCols (Dregg2.Circuit.DescriptorIR2.envAt t i)).target
         = (Dregg2.Circuit.DescriptorIR2.envAt t i).loc capOpenCols.src
     ∧ confersWriteLeaf (leafOf capOpenCols (Dregg2.Circuit.DescriptorIR2.envAt t i)) :=
-  capOpen_sound hash t.tf capOpenCols _ hChip
-    (capOpenAttenuateV3_satisfied hash minit mfin maddrs t hsat i hi)
+  capOpen_sound S t.tf capOpenCols _ hChip
+    (capOpenAttenuateV3_satisfied S.chipAbsorb minit mfin maddrs t hsat i hi)
 
 /-- **`capOpenAttenuateV3_authorizes` — THE END-TO-END AUTHORITY LEG, LIVE.** Against the deployed
 commitment relation, a `Satisfied2` witness of the live descriptor whose opened leaf IS the
 faithfulness contract's `(actor ⇒ src)` edge discharges the kernel's `authorizedB` for the turn —
 from the IN-CIRCUIT depth-16 binary-Merkle membership proof the descriptor now carries. -/
-theorem capOpenAttenuateV3_authorizes (hash : List ℤ → ℤ)
+theorem capOpenAttenuateV3_authorizes {State : Type} (S : CapHashScheme State)
     (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ)
     (t : Dregg2.Circuit.DescriptorIR2.VmTrace)
-    (hChip : ChipTableSound hash (t.tf .poseidon2))
-    (hsat : Satisfied2 hash capOpenAttenuateV3 minit mfin maddrs t)
+    (hChip : ChipTableSound S.chipAbsorb (t.tf .poseidon2))
+    (hsat : Satisfied2 S.chipAbsorb capOpenAttenuateV3 minit mfin maddrs t)
     (i : Nat) (hi : i < t.rows.length)
     (caps : Caps) (leafAt : Label → Label → CapLeaf)
-    (hfaith : DeployedFaithful hash caps
+    (hfaith : DeployedFaithful S caps
       ((Dregg2.Circuit.DescriptorIR2.envAt t i).loc capOpenCols.capRoot) leafAt)
     (actor src dst : Label) (amt : ℤ)
     (hsrc : (Dregg2.Circuit.DescriptorIR2.envAt t i).loc capOpenCols.src = (src : ℤ))
@@ -248,8 +252,8 @@ theorem capOpenAttenuateV3_authorizes (hash : List ℤ → ℤ)
     Dregg2.Exec.authorizedB caps
       { actor := actor, src := src, dst := dst, amt := amt } = true
     ∧ (leafAt actor src).target = (src : ℤ) :=
-  capOpen_authorizes hash t.tf capOpenCols _ hChip
-    (capOpenAttenuateV3_satisfied hash minit mfin maddrs t hsat i hi)
+  capOpen_authorizes S t.tf capOpenCols _ hChip
+    (capOpenAttenuateV3_satisfied S.chipAbsorb minit mfin maddrs t hsat i hi)
     caps leafAt hfaith actor src dst amt hsrc hedge
 
 /-! ## §5 — the wire face: the emitted JSON carries the cap-open constraints.

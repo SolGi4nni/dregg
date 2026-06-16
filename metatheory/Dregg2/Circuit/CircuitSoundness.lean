@@ -494,14 +494,282 @@ theorem lightclient_turn_unfoolable
   rw [execFullTurnA_iff_turnSpec]
   exact ⟨post, hstep, rfl⟩
 
-/-! ## §8 — axiom-hygiene tripwires.
+/-! ## §8 — the WHOLE-TURN apex: composing the per-effect rung along a turn (FOREST shape).
 
-Every theorem's axiom footprint ⊆ {propext, Classical.choice, Quot.sound} + the NAMED crypto carriers
-(`Poseidon2SpongeCR`, `StarkSound`) which enter as typeclass/structure hypotheses, never as `axiom`s.
-The `opaque` decls (`verifyBatch`/`registryCommit`/`tracePublishedCommit`) are interface STUBS — they
-appear in no proof's reasoning (only `StarkSound.extract` mentions `verifyBatch`/`tracePublishedCommit`,
-as a hypothesis), so they add no soundness-bearing axiom. `WitnessDecodes`, like `StarkSound`, is a
-NAMED carried obligation entering the apex as a hypothesis — never an `axiom`. -/
+§6/§7 land the apex on ONE effect. A turn is a LIST of effects, witnessed by a LIST of per-step circuit
+witnesses, each publishing its own OLD/NEW commitment (the prover's chained-root column). This section
+LIFTS the single-effect apex to a whole-turn statement: from the carried per-effect family `hrefines :
+∀ e, descriptorRefines (R e) (dispatchArm e)` + the named floors, derive that a turn whose EVERY step's
+circuit is satisfied yields a genuine `execFullTurnA s acts = some s'` over chained kernel states whose
+ENDPOINTS commit to the published turn-level `(pre, post)`.
+
+The composition is the §4 `DecodedStep` chain, folded:
+
+  * `TurnDecodeChain` — a list of `DecodedStep`s threaded left-to-right so each step's post IS the next
+    step's pre (`a.post = b.pre` as a FULL chained state — the executor's actual carried state), with
+    the published seam commitments AGREEING across the boundary (`a.pc.pubPost = b.pc.pubPre`) at one
+    boundary turn. The KERNEL half of the seam is then DERIVED — `stateDecodeChain_frame_continuous`
+    proves the threaded kernels coincide from the published-commitment binding, so a prover who
+    publishes a seam commitment disagreeing with the threaded kernel is REJECTED (the frame TOOTH). The
+    chain is the §4 frame made whole-turn: not assumed, certified.
+
+  * `turnDecodeChain_refines_turnSpec` — fold the per-step `descriptorRefines` (each step's circuit
+    witness + faithful decode ⟹ its `dispatchArm`) along the chain into the declarative `turnSpec`,
+    mirroring `TurnCircuitCompose.turn_emitted_refines_exec_direct`'s shape but landing on the ROTATED
+    `dispatchArm` (not the universe-A `stepEmittedSat`).
+
+  * `lightclient_turn_unfoolable_forest` — the whole-turn headline: a verified turn (every step's
+    circuit satisfied, decoded, seam-published) + `hrefines` + floors ⟹ `∃ acts s s', execFullTurnA s
+    acts = some s' ∧ turn-pre = commit s ∧ turn-post = commit s'`. Re-exported to `execFullForestG` by
+    the existing `WholeTurnTriangle.execFullForestG_eq_execFullTurnG` lowering downstream.
+
+### NEW carried obligation (named, added to the ledger — NOT laundered)
+
+  * `seamFullState` (a field of `TurnDecodeChain`) — the FULL-state seam `a.post = b.pre`. The
+    commitment surface commits ONLY the `RecChainedState.kernel` (`recStateCommit` takes a
+    `RecordKernelState`), so the published seam binds the KERNEL half of `a.post = b.pre`
+    (DERIVED, the tooth) but NOT the `log` (receipt-chain) half. The executor `execFullTurnA` threads
+    the FULL state; thus the log-continuity of the seam is the genuine residue the commitments cannot
+    certify. It is carried EXPLICITLY as a chain field (the prover threads the real executor state, so
+    `a.post = b.pre` holds by construction of an honest run; a verifier obtains it from the same
+    chained-root column that ties the kernels, EXTENDED to the uncommitted log column). REALIZABLE
+    (the honest prover's post IS the next pre); named, not assumed silently. The kernel half is
+    re-derived as the frame TOOTH (`turnDecodeChain_seam_kernel_derived`) so the commitment binding
+    stays load-bearing on the part it covers. -/
+
+/-- **`TurnDecodeChain S start steps fin`** — a whole-turn decode: a list of §4 `DecodedStep`s threaded
+left-to-right from `start` to `fin`, each step's circuit satisfied, with the published seam
+commitments agreeing across boundaries. The frame's KERNEL half is DERIVED
+(`turnDecodeChain_seam_kernel_derived`); the full-state `seam`/`headPre`/`lastPost` fields carry the
+uncommitted `log` residue (the NAMED obligation). -/
+structure TurnDecodeChain (hash : List ℤ → ℤ) (S : CommitSurface)
+    (start fin : RecChainedState) where
+  /-- the decoded per-step records (action, descriptor, published commitment, decode). -/
+  steps     : List (DecodedStep S)
+  /-- every step publishes a circuit witness `Satisfied2` of its descriptor (the per-step accept). -/
+  sat       : ∀ d ∈ steps, ∃ (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace),
+                Satisfied2 hash d.descr minit mfin maddrs t ∧
+                  tracePublishedCommit t = d.pc
+  /-- the turn pre-state IS the first step's pre (or `start = fin` on an empty turn). -/
+  headPre   : steps.head?.elim (start = fin) (fun d => start = d.pre)
+  /-- the turn post-state IS the last step's post (full-state). -/
+  lastPost  : steps.getLast?.elim (start = fin) (fun d => d.post = fin)
+  /-- **the threaded seam (FULL-state):** each step's post IS the next step's pre. The KERNEL half is
+      DERIVED from the published seam; the `log` half is the NAMED residue (see the ledger). -/
+  seam      : List.IsChain (fun a b => a.post = b.pre) steps
+  /-- the published seam commitments AGREE across each boundary (the prover's chained-root column). -/
+  pubSeam   : List.IsChain (fun a b => a.pc.turn = b.pc.turn ∧ a.pc.pubPost = b.pc.pubPre) steps
+
+/-- **The frame TOOTH (kernel half DERIVED, not assumed).** For every adjacent pair in a
+`TurnDecodeChain`, the published seam commitments FORCE the threaded kernels to coincide
+(`a.post.kernel = b.pre.kernel`) — `stateDecodeChain_frame_continuous` applied along the chain. So a
+prover whose published seam commitment disagrees with the threaded kernel is REJECTED: the kernel half
+of `seam` is certified by the commitment binding, not taken on faith. -/
+theorem turnDecodeChain_seam_kernel_derived (hash : List ℤ → ℤ) (S : CommitSurface)
+    {start fin : RecChainedState} (c : TurnDecodeChain hash S start fin) :
+    List.IsChain (fun a b => a.post.kernel = b.pre.kernel) c.steps := by
+  refine List.IsChain.imp ?_ c.pubSeam
+  intro a b hpub
+  exact stateDecodeChain_frame_continuous S a b hpub.1 hpub.2
+
+/-- **The per-step refinement obligation over a decoded turn.** Each decoded step's descriptor is the
+registry entry for SOME effect index `e`, and its circuit witness + faithful decode force `dispatchArm
+e d.pre d.post` (i.e. an action of effect `e` carries the step). This is the per-step accept the
+carried `descriptorRefines` family discharges — quantified over the chain's steps. -/
+def StepsRefine (hash : List ℤ → ℤ) (S : CommitSurface) (R : Registry)
+    {start fin : RecChainedState} (c : TurnDecodeChain hash S start fin) : Prop :=
+  ∀ d ∈ c.steps, ∃ e : EffectIdx, d.descr = R e ∧ dispatchArm e d.pre d.post
+
+/-- **Each step's `descriptorRefines` discharges `StepsRefine`.** Given the carried per-effect family
+`hrefines` and the named hash CR carrier, the per-step circuit accepts (`c.sat`) + faithful decodes
+(`d.decode`) force `dispatchArm e d.pre d.post` at every step whose descriptor is `R e`. This is the
+registry-wide rung consumed step-by-step — the rotated analog of `step_emitted_refines_fullActionStep`.
+The effect-index identification (`d.descr = R e`) is supplied by the witness layout (`hidx`). -/
+theorem stepsRefine_of_descriptorRefines
+    (hash : List ℤ → ℤ) (S : CommitSurface) (R : Registry)
+    (hCR : Poseidon2SpongeCR hash)
+    (hrefines : ∀ e, descriptorRefines S hash (R e) (dispatchArm e))
+    {start fin : RecChainedState} (c : TurnDecodeChain hash S start fin)
+    (hidx : ∀ d ∈ c.steps, ∃ e : EffectIdx, d.descr = R e) :
+    StepsRefine hash S R c := by
+  intro d hd
+  obtain ⟨e, hde⟩ := hidx d hd
+  obtain ⟨minit, mfin, maddrs, t, hsat, hpub⟩ := c.sat d hd
+  refine ⟨e, hde, ?_⟩
+  -- the carried rung for descriptor `R e`, fed the named CR carrier, the witness, and the decode.
+  have hsat' : Satisfied2 hash (R e) minit mfin maddrs t := hde ▸ hsat
+  exact hrefines e hCR minit mfin maddrs t d.pc d.pre d.post hsat' d.decode
+
+/-- **Fold `StepsRefine` along the threaded chain into `turnSpec`.** A `TurnDecodeChain` whose every
+step refines (`StepsRefine`) induces the declarative `turnSpec` from `start` to `fin` over SOME action
+list (each action the `fa` the step's `dispatchArm` names). Mirrors `turn_emitted_refines_exec_direct`'s
+per-step→turn fold; the full-state `seam` threads the actual executor state (kernel half certified by
+the frame tooth), so the fold composes left-to-right with no gap. -/
+theorem turnDecodeChain_refines_turnSpec
+    (hash : List ℤ → ℤ) (S : CommitSurface) (R : Registry)
+    {start fin : RecChainedState} (c : TurnDecodeChain hash S start fin)
+    (href : StepsRefine hash S R c) :
+    ∃ acts : List FullActionA, turnSpec start acts fin := by
+  -- A clean list induction with every threaded hypothesis as an explicit `∀`/`→` argument, so the
+  -- IH shape is exactly the recursion (`start := d.post`). The endpoints (`headPre`/`lastPost`), the
+  -- full-state `seam`, and the per-step refinement are all threaded uniformly.
+  unfold StepsRefine at href
+  obtain ⟨steps, _sat, headPre, lastPost, seam, _pubSeam⟩ := c
+  simp only at href headPre lastPost
+  suffices key : ∀ (steps : List (DecodedStep S)) (start : RecChainedState),
+      List.IsChain (fun a b => a.post = b.pre) steps →
+      steps.head?.elim (start = fin) (fun d => start = d.pre) →
+      steps.getLast?.elim (start = fin) (fun d => d.post = fin) →
+      (∀ d ∈ steps, ∃ e : EffectIdx, d.descr = R e ∧ dispatchArm e d.pre d.post) →
+      ∃ acts : List FullActionA, turnSpec start acts fin by
+    exact key steps start seam headPre lastPost href
+  clear seam headPre lastPost href _sat _pubSeam steps start
+  intro steps
+  induction steps with
+  | nil =>
+      -- empty turn: `start = fin`, the empty `turnSpec`.
+      intro start _seam headPre _lastPost _href
+      simp only [List.head?_nil, Option.elim_none] at headPre
+      exact ⟨[], by simpa [turnSpec] using headPre⟩
+  | cons d rest ih =>
+      intro start seam headPre lastPost href
+      -- head: `start = d.pre`; the head step refines to `dispatchArm e d.pre d.post`.
+      simp only [List.head?_cons, Option.elim_some] at headPre
+      obtain ⟨e, _hde, fa, _htag, hstep⟩ := href d List.mem_cons_self
+      -- the seam gives `d.post = (head of rest).pre`; recurse from `d.post`.
+      have hseamRest : List.IsChain (fun a b => a.post = b.pre) rest := seam.tail
+      have hheadRest : rest.head?.elim (d.post = fin) (fun d' => d.post = d'.pre) := by
+        cases rest with
+        | nil => simpa using (by simpa using lastPost)
+        | cons d' _ =>
+            have hrel := (List.isChain_cons.mp seam).1 d' (by simp)
+            simpa using hrel
+      have hlastRest : rest.getLast?.elim (d.post = fin) (fun d' => d'.post = fin) := by
+        cases rest with
+        | nil => simpa using lastPost
+        | cons d' rest' =>
+            have heq : (d :: d' :: rest').getLast? = (d' :: rest').getLast? := by
+              simp [List.getLast?_cons_cons]
+            simpa [heq] using lastPost
+      have hrefRest : ∀ d'' ∈ rest, ∃ e' : EffectIdx, d''.descr = R e' ∧
+          dispatchArm e' d''.pre d''.post := fun d'' hd'' => href d'' (List.mem_cons_of_mem _ hd'')
+      obtain ⟨acts, htail⟩ := ih d.post hseamRest hheadRest hlastRest hrefRest
+      -- prepend `fa`: `fullActionStep start fa d.post` (subst `start = d.pre`), then the tail.
+      subst headPre
+      exact ⟨fa :: acts, d.post, hstep, htail⟩
+
+/-! ### §8.1 — the turn-level endpoint commitments (DERIVED from the chain's first/last step).
+
+The whole-turn headline must export the PUBLISHED turn-level `(pre, post)` as genuine commitments of
+the executor's endpoint kernels (`start`/`fin`). The turn's published pre/post commitments are exactly
+the head step's `pubPre` and the last step's `pubPost` (the two open ends of the prover's chained-root
+column). `TurnEndpoints` says the turn-level published commitments AND turn are pinned to those open
+ends; `turnDecodeChain_endpoints_commit` then DERIVES, from the head/last step decodes alone, that the
+published turn-level pre/post ARE `S.commit start.kernel` / `S.commit fin.kernel` — the endpoint
+commitments are forced by the same per-step binding the seams use, not assumed. -/
+
+/-- **`TurnEndpoints`** — the turn-level published commitment view pinned to the chain's open ends. The
+published turn-pre/turn-post commitments equal the head step's `pubPre` / the last step's `pubPost`
+(the two unmatched ends of the prover's chained-root column), at the boundary turn `tp.turn`, which
+agrees with the head/last step's commitment turn. On an EMPTY turn there is no step root to read, so the
+degenerate branch carries the endpoint binding DIRECTLY (`tp.pubPre`/`tp.pubPost = S.commit start.kernel
+tp.turn`, with `start = fin` so both endpoints commit to the same kernel) — named, not laundered. -/
+structure TurnEndpoints (hash : List ℤ → ℤ) (S : CommitSurface)
+    {start fin : RecChainedState} (c : TurnDecodeChain hash S start fin) where
+  /-- the published turn-level pre/post commitment view (the light client's `pi.toPublished`). -/
+  tp        : PublishedCommit
+  /-- the published turn-pre commitment IS the head step's `pubPre` (the open OLD end); on the empty
+      turn it directly binds `start.kernel` (no step root exists to derive it from). -/
+  headOpen  : c.steps.head?.elim (tp.pubPre = S.commit start.kernel tp.turn)
+                (fun d => tp.pubPre = d.pc.pubPre ∧ tp.turn = d.pc.turn)
+  /-- the published turn-post commitment IS the last step's `pubPost` (the open NEW end); on the empty
+      turn it directly binds `fin.kernel`. -/
+  lastOpen  : c.steps.getLast?.elim (tp.pubPost = S.commit fin.kernel tp.turn)
+                (fun d => tp.pubPost = d.pc.pubPost ∧ tp.turn = d.pc.turn)
+
+/-- **The turn-level endpoint commitments are DERIVED (not assumed) on a non-empty turn.** Given the
+chain's `headPre`/`lastPost` (which thread `start`/`fin` to the head/last step's `pre`/`post`) and the
+`TurnEndpoints` pinning of the published turn-pre/turn-post to the open ends, the published turn-level
+commitments ARE the surface commitments of the executor endpoints: `tp.pubPre = S.commit start.kernel
+tp.turn` and `tp.pubPost = S.commit fin.kernel tp.turn`. On a non-empty turn the head/last step decodes
+(`preBinds`/`postBinds`) FORCE the binding (same per-step rung the seams use); on the empty turn the
+`TurnEndpoints` degenerate branch carries it directly. -/
+theorem turnDecodeChain_endpoints_commit (hash : List ℤ → ℤ) (S : CommitSurface)
+    {start fin : RecChainedState} (c : TurnDecodeChain hash S start fin)
+    (te : TurnEndpoints hash S c) :
+    te.tp.pubPre = S.commit start.kernel te.tp.turn ∧
+      te.tp.pubPost = S.commit fin.kernel te.tp.turn := by
+  obtain ⟨tp, headOpen, lastOpen⟩ := te
+  -- The head step pins `start`; the last step pins `fin`. Both via the step decode's binding.
+  refine ⟨?_, ?_⟩
+  · -- pubPre = S.commit start.kernel tp.turn
+    cases hsteps : c.steps with
+    | nil =>
+        -- empty turn: the degenerate `TurnEndpoints` branch binds `start.kernel` directly.
+        rw [hsteps] at headOpen; simpa using headOpen
+    | cons d rest =>
+        have hhead : tp.pubPre = d.pc.pubPre ∧ tp.turn = d.pc.turn := by
+          rw [hsteps] at headOpen; simpa using headOpen
+        have hstart : start = d.pre := by
+          have := c.headPre; rw [hsteps] at this; simpa using this
+        rw [hhead.1, hhead.2, hstart]; exact d.decode.preBinds
+  · -- pubPost = S.commit fin.kernel tp.turn
+    cases hsteps : c.steps.getLast? with
+    | none =>
+        -- `getLast? = none ⟺ steps = []`; the degenerate branch binds `fin.kernel` directly.
+        have hnil : c.steps = [] := List.getLast?_eq_none_iff.mp hsteps
+        rw [hnil] at lastOpen; simpa using lastOpen
+    | some dl =>
+        have hlastOpen : tp.pubPost = dl.pc.pubPost ∧ tp.turn = dl.pc.turn := by
+          rw [hsteps] at lastOpen; simpa using lastOpen
+        have hfin : dl.post = fin := by
+          have := c.lastPost; rw [hsteps] at this; simpa using this
+        rw [hlastOpen.1, hlastOpen.2, ← hfin]; exact dl.decode.postBinds
+
+/-! ### §8.2 — `lightclient_turn_unfoolable_forest`: the WHOLE-TURN apex.
+
+The headline. A verified turn — a `TurnDecodeChain` (every step's circuit `Satisfied2`, decoded, the
+published seams agreeing) + the per-step effect-index identification (`hidx`) + the turn-level endpoint
+pinning (`TurnEndpoints`) — together with the named floors (`hCR` + the carried per-effect family
+`hrefines`) yields a GENUINE executor run `execFullTurnA start acts = some fin` whose ENDPOINTS commit
+to the published turn-level `(pre, post)`. The light client RAN NOTHING; it verified per-step accepts
+and read the two open ends of the chained-root column.
+
+The derivation:
+  1. `stepsRefine_of_descriptorRefines` discharges the per-step `dispatchArm` from the carried
+     `hrefines` family + the per-step circuit accepts (`c.sat`) + faithful decodes (`d.decode`);
+  2. `turnDecodeChain_refines_turnSpec` folds those along the threaded (kernel-half-certified) chain
+     into `∃ acts, turnSpec start acts fin`;
+  3. `execFullTurnA_iff_turnSpec` lowers `turnSpec` to the real executor `execFullTurnA`;
+  4. `turnDecodeChain_endpoints_commit` re-exports the published turn-level pre/post as the genuine
+     endpoint commitments (`S.commit start.kernel` / `S.commit fin.kernel`).
+
+`execFullForestG`: the natural tree-shaped run lowers to this linear `execFullTurnA` by the existing
+`Exec.FullForestAuth.execFullForestG_eq_execFullTurnG` / `Spec.WholeTurnTriangle` bridge — a forest is
+the pre-order lowering of its turns, so this whole-turn statement is the linear core the forest run
+factors through. -/
+theorem lightclient_turn_unfoolable_forest
+    (hash : List ℤ → ℤ) (S : CommitSurface) (R : Registry)
+    (hCR : Poseidon2SpongeCR hash)
+    (hrefines : ∀ e, descriptorRefines S hash (R e) (dispatchArm e))
+    {start fin : RecChainedState} (c : TurnDecodeChain hash S start fin)
+    (hidx : ∀ d ∈ c.steps, ∃ e : EffectIdx, d.descr = R e)
+    (te : TurnEndpoints hash S c) :
+    ∃ (acts : List FullActionA) (s s' : RecChainedState),
+      execFullTurnA s acts = some s' ∧
+      te.tp.pubPre = S.commit s.kernel te.tp.turn ∧
+      te.tp.pubPost = S.commit s'.kernel te.tp.turn := by
+  -- (1) the carried per-effect family discharges the per-step `dispatchArm` over the whole chain.
+  have href : StepsRefine hash S R c :=
+    stepsRefine_of_descriptorRefines hash S R hCR hrefines c hidx
+  -- (2) fold the per-step refinement along the threaded chain into the declarative `turnSpec`.
+  obtain ⟨acts, hturn⟩ := turnDecodeChain_refines_turnSpec hash S R c href
+  -- (3) lower `turnSpec` to the genuine executor run.
+  have hexec : execFullTurnA start acts = some fin :=
+    (execFullTurnA_iff_turnSpec start fin acts).mpr hturn
+  -- (4) the published turn-level commitments ARE the endpoint commitments (derived; §8.1).
+  obtain ⟨hpre, hpost⟩ := turnDecodeChain_endpoints_commit hash S c te
+  exact ⟨acts, start, fin, hexec, hpre, hpost⟩
 
 #assert_axioms CommitSurface.commit_binds
 #assert_axioms stateDecode_pre_faithful
@@ -509,5 +777,9 @@ NAMED carried obligation entering the apex as a hypothesis — never an `axiom`.
 #assert_axioms stateDecodeChain_frame_continuous
 #assert_axioms lightclient_unfoolable
 #assert_axioms lightclient_turn_unfoolable
+#assert_axioms turnDecodeChain_seam_kernel_derived
+#assert_axioms turnDecodeChain_refines_turnSpec
+#assert_axioms turnDecodeChain_endpoints_commit
+#assert_axioms lightclient_turn_unfoolable_forest
 
 end Dregg2.Circuit.CircuitSoundness

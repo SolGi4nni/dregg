@@ -21,33 +21,33 @@
 //!     to the holder's CANONICAL pre-state `capability_root`, so a path into a
 //!     prover-chosen tree mismatches).
 //!
-//! ## The statement (depth = [`CAP_TREE_DEPTH`], binary `hash_fact` nodes)
+//! ## The statement (depth = [`CAP_TREE_DEPTH`], binary `cap_node` nodes)
 //!
 //! The trace is exactly `CAP_TREE_DEPTH` rows (16 — a power of two, no
 //! padding), one per tree level, bottom-up:
 //!
 //! ```text
 //! row r:  cur_r  ∈ {left_r, right_r}   (selected by dir_r ∈ {0,1})
-//!         parent_r = hash_fact(left_r, [right_r])     (in-circuit Poseidon2)
+//!         parent_r = cap_node(left_r, right_r)        (in-circuit Poseidon2)
 //!         cur_{r+1} = parent_r                        (chain continuity)
 //! row 0:  cur_0 = pi[LEAF_DIGEST]
 //! last:   parent  = pi[CAP_ROOT]
 //! ```
 //!
-//! `hash_fact(left, [right])` is byte-identical to the node hash
-//! [`CanonicalCapTree`] builds with (and the in-circuit gadget
-//! `dsl_p3_air::hash_input_state` mirrors `crate::poseidon2::hash_fact`
-//! exactly), so the proven root IS the canonical capability root. All five
-//! constraints are forms the audited `prove_dsl_p3`/`verify_dsl_p3` path
-//! arithmetizes for real (no bespoke `stark`).
+//! `cap_node(left, right)` (= `cap_chip_absorb([FACT_MARK, left, right])`, the
+//! SINGLE in-circuit cap hash since decision #1) is byte-identical to the node
+//! hash [`CanonicalCapTree`] builds with (the in-circuit gadget
+//! `dsl_p3_air::hash_input_state` mirrors it via the `Hash3Cap` form), so the
+//! proven root IS the canonical capability root. All five constraints are forms
+//! the audited `prove_dsl_p3`/`verify_dsl_p3` path arithmetizes for real (no
+//! bespoke `stark`).
 
-use crate::cap_root::CAP_TREE_DEPTH;
+use crate::cap_root::{CAP_TREE_DEPTH, cap_node};
 use crate::dsl::circuit::{
     BoundaryDef, BoundaryRow, CircuitDescriptor, ColumnDef, ColumnKind, ConstraintExpr, DslCircuit,
     PolyTerm,
 };
 use crate::field::BabyBear;
-use crate::poseidon2::hash_fact;
 
 /// Trace width: `[cur, left, right, parent, dir]`.
 pub const TRACE_WIDTH: usize = 5;
@@ -61,7 +61,7 @@ pub mod col {
     pub const LEFT: usize = 1;
     /// Right child of this level's node hash.
     pub const RIGHT: usize = 2;
-    /// `hash_fact(left, [right])` — the parent node.
+    /// `cap_node(left, right)` — the parent node.
     pub const PARENT: usize = 3;
     /// Direction bit: 0 ⇒ `cur` is the LEFT child (sibling right), 1 ⇒ RIGHT.
     pub const DIR: usize = 4;
@@ -114,12 +114,14 @@ pub fn cap_membership_circuit_descriptor() -> CircuitDescriptor {
         ],
     });
 
-    // C3: parent = hash_fact(left, [right]) — REAL in-circuit Poseidon2
-    // (one permutation aux block per row on the p3 path), the exact node hash
-    // `CanonicalCapTree` builds with.
-    constraints.push(ConstraintExpr::Hash {
+    // C3: parent = cap_node(left, right) — REAL in-circuit Poseidon2 (one permutation
+    // aux block per row on the p3 path), the EXACT node hash `CanonicalCapTree` builds
+    // with since decision #1 (`cap_chip_absorb([FACT_MARK, left, right])`, the single
+    // in-circuit cap hash — NOT the capacity-tagged `hash_fact`).
+    constraints.push(ConstraintExpr::Hash3Cap {
         output_col: col::PARENT,
-        input_cols: vec![col::LEFT, col::RIGHT],
+        left_col: col::LEFT,
+        right_col: col::RIGHT,
     });
 
     // C4: chain continuity — the next level authenticates THIS level's parent.
@@ -219,7 +221,7 @@ pub fn generate_cap_membership_trace(
             1 => (sib, cur),
             d => return Err(format!("direction bit {d} at level {level} is not binary")),
         };
-        let parent = hash_fact(left, &[right]);
+        let parent = cap_node(left, right);
         trace.push(vec![
             cur,
             left,

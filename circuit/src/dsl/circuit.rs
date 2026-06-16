@@ -140,6 +140,16 @@ pub enum ConstraintExpr {
         output_col: usize,
         input_cols: [usize; 4],
     },
+    /// Constrain `output_col == cap_root::cap_node(left, right)` — the SINGLE in-circuit
+    /// cap-tree node hash (`cap_chip_absorb([FACT_MARK, left, right])`: the arity-3 rate-8
+    /// chip absorb, `state[0]=FACT_MARK, state[1]=left, state[2]=right, state[4]=3`). This is
+    /// the node hash `CanonicalCapTree` commits since decision #1 (one in-circuit cap hash);
+    /// it REPLACES the capacity-tagged `Hash` (`hash_fact`) form for cap-tree node folds.
+    Hash3Cap {
+        output_col: usize,
+        left_col: usize,
+        right_col: usize,
+    },
     /// Constrain output_col == Poseidon2_hash_4_to_1(children) where children are
     /// reconstructed from (current_col, sib_cols[3], position_col) by placing
     /// current at the position index and siblings in the remaining slots.
@@ -387,6 +397,15 @@ impl ConstraintExpr {
                     local[input_cols[3]],
                 ];
                 let expected = crate::poseidon2::hash_4_to_1(&children);
+                expected - local[*output_col]
+            }
+            Self::Hash3Cap {
+                output_col,
+                left_col,
+                right_col,
+            } => {
+                // The single in-circuit cap-tree node hash (`cap_chip_absorb([FACT_MARK, l, r])`).
+                let expected = crate::cap_root::cap_node(local[*left_col], local[*right_col]);
                 expected - local[*output_col]
             }
             Self::MerkleHash {
@@ -817,6 +836,10 @@ impl ConstraintExpr {
                 // hash_4_to_1([a,b,c,d]) - output: the hash is opaque, constraint is degree 1.
                 1
             }
+            Self::Hash3Cap { .. } => {
+                // cap_node(l, r) - output: the hash is opaque, constraint is degree 1.
+                1
+            }
             Self::MerkleHash { .. } => {
                 // Position-aware hash_4_to_1(children): opaque hash, constraint is degree 1.
                 1
@@ -899,6 +922,11 @@ impl ConstraintExpr {
                 let max_input = input_cols.iter().copied().max().unwrap_or(0);
                 Some((*output_col).max(max_input))
             }
+            Self::Hash3Cap {
+                output_col,
+                left_col,
+                right_col,
+            } => Some((*output_col).max(*left_col).max(*right_col)),
             Self::MerkleHash {
                 output_col,
                 current_col,

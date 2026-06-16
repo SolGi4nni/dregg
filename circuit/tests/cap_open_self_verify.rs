@@ -6,10 +6,10 @@
 //! depth-16 cap-tree at a write-mask leaf whose target is the turn's `src`. This test realizes
 //! that descriptor in Rust on a REAL witness: it builds a genuine rotated AttenuateCapability
 //! base trace (the proven 311-wide attenuate path), widens it to 369 with the cap-open appendix
-//! filled by `widen_to_cap_open` (genuine `hash_many`-ABSORB leaf + node digests — NOT
-//! `hash_fact`), and PROVES through `prove_vm_descriptor2`. The proof self-verifies before
-//! returning, so a green test == the cap-open chip-lookups + base gates are exercised
-//! end-to-end against the IR-v2 interpreter's auto-gathered chip table.
+//! filled by `widen_to_cap_open` (genuine `cap_chip_absorb` leaf + node digests — the SINGLE
+//! in-circuit chip hash the cap-tree commits to), and PROVES through `prove_vm_descriptor2`. The
+//! proof self-verifies before returning, so a green test == the cap-open chip-lookups + base gates
+//! are exercised end-to-end against the IR-v2 interpreter's auto-gathered chip table.
 //!
 //! LAW #1: this test fills COLUMNS only; every constraint is the Lean-declared chip lookup /
 //! base gate the IR-v2 interpreter realizes generically. No hand-authored Rust constraint
@@ -145,12 +145,11 @@ fn cap_open_witness() -> CapOpenWitness {
     CapOpenWitness::build(&[other, chosen], 1).expect("cap-open witness builds")
 }
 
-/// The REALIZED-TODAY half: the cap-open descriptor parses; the witness builds + recomposes its
-/// cap_root over the genuine `hash_many`-ABSORB (NOT `hash_fact`) depth-16 fold; the proven
-/// 311-wide attenuate base trace builds + carries the phase-B wirings; the cap-open appendix
-/// columns fill to the witness values; and the depth-16 NODE lookups (arity 3) are chip-realizable
-/// (the deployed rate-4 chip supports arity ∈ {2,4}). This is the end-to-end machinery up to the
-/// single remaining seam (the LEAF lookup arity, see `cap_open_attenuate_self_verifies`).
+/// The cap-open descriptor parses; the witness builds + recomposes its cap_root over the genuine
+/// `cap_chip_absorb` (the single in-circuit chip hash) depth-16 fold; the proven 311-wide attenuate
+/// base trace builds + carries the phase-B wirings; and the cap-open appendix columns fill to the
+/// witness values. Both the leaf lookup (arity 7) and the 16 node lookups (arity 3) are
+/// chip-realizable single absorbs; the full prove is `cap_open_attenuate_self_verifies`.
 #[test]
 fn cap_open_witness_and_appendix_are_genuine() {
     let desc = parse_vm_descriptor2(reg_json(CAP_OPEN_KEY)).expect("cap-open descriptor parses");
@@ -188,22 +187,15 @@ fn cap_open_witness_and_appendix_are_genuine() {
 
 /// END-TO-END self-verify through `prove_vm_descriptor2`.
 ///
-/// IGNORED — a single SEAM blocks the prove: the descriptor's cap-LEAF lookup is an **arity-7**
-/// poseidon absorb (`capLeafDigest = hash_many(&[7 fields])`, the deployed `cap_root.rs::
-/// CapLeaf::digest`), but the deployed IR-v2 chip realizes only **arity ∈ {2,4}** single rate-4
-/// permutes (`descriptor_ir2.rs` lines ~1865-1873 pin chip inputs 4..8 to zero and in2/in3 vanish
-/// unless arity=4). A 7-input `hash_many` is a TWO-permute sponge the single-permute chip cannot
-/// express as one lookup row. Everything ELSE is realized + verified: the base attenuate trace
-/// PROVES (verified standalone), the 16 NODE lookups (arity 3) are chip-realizable, and the
-/// witness/appendix are genuine (`cap_open_witness_and_appendix_are_genuine`). The CLOSURE is a
-/// Lean re-emit of `CapOpenEmit.capLeafDigest` as a chip-realizable fold (a binary tree of
-/// arity-2/arity-4 absorbs over the 7 fields), kept byte-identical with the deployed
-/// `CapLeaf::digest` — NOT a Rust constraint edit (LAW#1). Until then this prove fails on the leaf
-/// lookup's chip membership; it is `#[ignore]`d so the seam is visible, not hidden.
+/// The cap-tree is committed to the SINGLE in-circuit hash `cap_root.rs::cap_chip_absorb` (the IR-v2
+/// chip's BUS_P2 absorb). The cap-LEAF lookup is the arity-7 (`big = 1`, rate-8) chip absorb of the
+/// 7 leaf fields; each of the 16 NODE lookups is the arity-3 absorb of `[FACT_MARK, left, right]`.
+/// The chip realizes BOTH shapes as one row apiece (the `big = [arity == 7]` seeding lane), so the
+/// auto-gathered chip table carries a matching row for every cap-open lookup, and the proof
+/// self-verifies end-to-end against the IR-v2 interpreter. This is decision #1 made good: the Lean
+/// `DeployedCapOpen.SchemeRealizedByChip` bridge is DISCHARGED (the chip genuinely realizes the cap
+/// hash), so the membership leg is sound outright, not relative to a carried hypothesis.
 #[test]
-#[ignore = "blocked: cap-leaf lookup is arity-7 but the deployed chip realizes only arity ∈ {2,4}; \
-            needs a Lean re-emit of capLeafDigest as a chip-realizable fold (LAW#1: no Rust \
-            constraint edit)"]
 fn cap_open_attenuate_self_verifies() {
     let desc = parse_vm_descriptor2(reg_json(CAP_OPEN_KEY)).expect("cap-open descriptor parses");
     let (mut trace, pis) = build_attenuate_base();

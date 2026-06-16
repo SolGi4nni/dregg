@@ -3,45 +3,44 @@
 
 ## Why this file exists (the critical-path authority leg)
 
-`DeployedCapTree.lean` models the deployed 7-field depth-16 `hash_fact` cap-tree and proves the
-KERNEL-side bridge `deployedCapOpen_implies_authorizedB`: a write-mask `MembersAt` opening implies
-the kernel's `authorizedB`. But that bridge consumes `MembersAt` as a HYPOTHESIS — nothing in the
-circuit denotation produced it. The deployed Rust `cap_root` column is, today, a FROZEN digest: the
-depth-16 cap-tree is never OPENED in-circuit, so the authority leg of every `fullActionStep` arm
-(`authorizedB`) is asserted, not witnessed.
+`DeployedCapTree.lean` models the deployed 7-field depth-16 cap-tree (now committed to the SINGLE
+chip absorb `cap_root.rs::cap_chip_absorb` — the arity-7 leaf + the arity-3 `[FACT_MARK, l, r]` node,
+over the one `chipAbsorb` carrier) and proves the KERNEL-side bridge
+`deployedCapOpen_implies_authorizedB`: a write-mask `MembersAt` opening implies the kernel's
+`authorizedB`. But that bridge consumes `MembersAt` as a HYPOTHESIS — nothing in the circuit
+denotation produced it.
 
 This file closes that gap on the CIRCUIT side. It defines a CONSTRAINT — `CapOpenConstraint` — whose
 denotation is exactly the in-circuit shape the Rust AIR realizes:
 
-  * the 7 cap-leaf fields ride a Poseidon2 chip ABSORB (arity 7) producing the leaf digest column —
-    `DescriptorIR2.chip_lookup_sound` ENFORCES `leafDigest = sponge[7 fields]` against a sound chip
-    table (the EXACT `DeployedCapTree.capLeafDigest`);
-  * each of the depth-16 levels rides a `hash_fact`-shaped chip absorb (the tagged 3-list
-    `[FACT_MARK, l, r]`) mixing `(cur, sib)` by the direction bit — `chip_lookup_sound` ENFORCES each
-    node equals `DeployedCapTree.nodeOf`, and the chain's top is CONSTRAINED `== cap_root` column;
-  * the leaf's `target` column is CONSTRAINED `== src` (the turn's source cell), and the leaf's
-    `mask_lo` column is CONSTRAINED to the write-endpoint mask (`confersWriteLeaf`).
+  * the 7 cap-leaf fields ride a Poseidon2 chip ABSORB (arity 7) producing the leaf digest column;
+  * each of the depth-16 levels rides an arity-3 chip absorb (the tagged 3-list `[FACT_MARK, l, r]`)
+    mixing `(cur, sib)` by the direction bit; the chain's top is CONSTRAINED `== cap_root` column;
+  * the leaf's `target` column is CONSTRAINED `== src`, and `mask_lo` to the write-endpoint mask.
 
-The keystone `capOpen_sound` proves: a `Satisfied` `CapOpenConstraint` (against a sound chip table)
-yields `DeployedCapTree.MembersAt cap_root leaf ∧ leaf.target = src ∧ confersWriteLeaf leaf`. Chained
-through `DeployedCapTree.deployedCapOpen_implies_authorizedB` against the deployed commitment, this
-DISCHARGES the kernel's `authorizedB` gate from the in-circuit membership proof. The cap path-witness
-is no longer a `&[]`: the depth-16 fold IS the proof.
+## The chip-rate reconciliation (DISCHARGED — decision #1, the gap CLOSED, §A)
 
-## What is faithful here (Rust anchors)
+The IR-v2 Poseidon2 chip (`DescriptorIR2`, `CHIP_RATE = babyBearD4W16.rate = 8`) realizes ONE rate-8
+absorb of the lookup tuple: `chip_lookup_sound` enforces `digest = sponge (inputs.eval)` where
+`sponge` is the chip's rate-8 list-hash. The deployed cap primitives are NOW the SAME single chip
+absorb (`cap_root.rs::cap_chip_absorb`, mirrored in `DeployedCapTree`):
 
-  * The leaf absorb mirrors `cap_root.rs::CapLeaf::digest` (`hash_many` of the 7 fields).
-  * The per-level fold mirrors `descriptor_ir2.rs` MapOps `mix` (lines 2109-2135) and the Rust
-    `CapMembership` AIR's `fact_bus` chain — `(left, right) = ((1-dir)·cur + dir·sib, …)` then the
-    `hash_fact` node, with the LAST level constrained against the `cap_root` column. The leaf↔effect
-    binding (`target == src`, write-mask) mirrors the AIR's `assert_zero(target - src)` gate.
-  * `MembersAt`/`recomposeUp`/`capLeafDigest`/`nodeOf` are imported UNCHANGED from `DeployedCapTree`.
+  * the leaf `capLeafDigest S = S.chipAbsorb ∘ leafFields` — ONE chip absorb of the 7 fields (arity 7);
+  * the node `nodeOf S l r = S.chipAbsorb (packNode l r)` — ONE chip absorb of `[FACT_MARK, l, r]`
+    (arity 3).
+
+So the chip's `sponge (leafFields)` IS `capLeafDigest S leaf` and `sponge [FACT_MARK, l, r]` IS
+`nodeOf S l r` — definitionally — when `sponge := S.chipAbsorb`. The reconciliation `SchemeRealizedBy
+Chip sponge S` is therefore PROVABLE (`chipAbsorb_realizes`, §A): the chip genuinely realizes the
+deployed cap hash now. The membership/soundness theorems specialize `sponge := S.chipAbsorb` and
+DISCHARGE the bridge internally — it is no longer a carried hypothesis. (The named relation is kept as
+documentation of the equations the realization satisfies.)
 
 ## Axiom hygiene
 
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}. Poseidon2 CR enters ONLY as the named
-`Poseidon2SpongeCR` hypothesis (the same single floor the chip lever already carries). No `sorry`, no
-`native_decide`, no `:= True`. NEW file; imports are read-only.
+`CapHashScheme` carrier (`chipAbsorb`/`chipCR`, inherited from `DeployedCapTree`) + the chip-soundness
+`ChipTableSound`. No `sorry`, no `native_decide`, no `:= True`.
 -/
 import Dregg2.Circuit.DescriptorIR2
 import Dregg2.Circuit.DeployedCapTree
@@ -54,34 +53,54 @@ open Dregg2.Circuit.Emit.EffectVmEmit (VmRowEnv)
 open Dregg2.Circuit.DescriptorIR2
   (Table TraceFamily TableId Lookup chipLookupTuple ChipTableSound chip_lookup_sound CHIP_RATE)
 open Dregg2.Circuit.DeployedCapTree
-  (CapLeaf Step capLeafDigest nodeOf FACT_MARK recomposeUp MembersAt confersWriteLeaf
-   DeployedFaithful deployedCapOpen_implies_authorizedB)
-open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
+  (CapLeaf FACT_MARK leafFields packNode CapHashScheme)
+open Dregg2.Circuit.DeployedCapTree.CapHashScheme
+  (Step capLeafDigest nodeOf recomposeUp MembersAt confersWriteLeaf DeployedFaithful
+   deployedCapOpen_implies_authorizedB)
 open Dregg2.Circuit.Emit.EffectVmEmitCapReshape (rightsMaskOf)
 open Dregg2.Authority (Cap Auth Caps Label)
 
 set_option autoImplicit false
 
-/-! ## §0 — the column plan for one cap-membership row.
+/-! ## §0 — the chip↔scheme realization bridge (NOW DISCHARGED — the chip IS the cap hash).
 
-A `CapOpenConstraint` row carries (as columns, read off `env.loc`):
+The chip's rate-8 `sponge : List ℤ → ℤ` realizes the deployed scheme `S` exactly when its single
+absorb of the leaf-field list reproduces `capLeafDigest`, and its single absorb of `[FACT_MARK, l, r]`
+reproduces `nodeOf`. Since the deployed scheme NOW commits exactly the chip absorb (`capLeafDigest S =
+S.chipAbsorb ∘ leafFields`, `nodeOf S l r = S.chipAbsorb (packNode l r)`), the chip whose `sponge` is
+`S.chipAbsorb` satisfies both equations DEFINITIONALLY — see `chipAbsorb_realizes` (§A). -/
 
-  * the 7 leaf-field columns (`leafCols`), one per `CapLeaf` field;
-  * the leaf-digest column (`leafDigestCol`) — the chip absorb output;
-  * for each of `DEPTH` levels: a sibling column (`sibCol lvl`), a direction column (`dirCol lvl`),
-    and the level's node-output column (`nodeCol lvl`); the top node-output is constrained `== cap_root`;
-  * the `cap_root` column and the `src` column (the turn's source cell id).
+/-- **`SchemeRealizedByChip sponge S`** — the chip's rate-8 list-hash `sponge` reproduces the deployed
+cap scheme `S`'s leaf and node digests. With the cap-tree re-committed to the chip absorb, this is
+DISCHARGED by `sponge := S.chipAbsorb` (`chipAbsorb_realizes`), not carried. (Kept as a named record
+of the realization equations; `packNode S l r = [FACT_MARK, l, r]` is the chip's node block.) -/
+structure SchemeRealizedByChip {State : Type} (sponge : List ℤ → ℤ) (S : CapHashScheme State) : Prop where
+  /-- The chip's 7-field absorb reproduces the deployed leaf digest. -/
+  leafRealized : ∀ l : CapLeaf, sponge (leafFields l) = capLeafDigest S l
+  /-- The chip's `[FACT_MARK, l, r]` absorb reproduces the deployed node digest. -/
+  nodeRealized : ∀ l r : ℤ, sponge (packNode l r) = nodeOf S l r
 
-These are abstract column indices `Nat`; the Rust layout pins them (`descriptor_ir2.rs` cap-membership
-table). The Lean denotation reads them through `env.loc`, exactly as every other v2 constraint does. -/
+/-- **`chipAbsorb_realizes` — THE DISCHARGE.** The chip whose `sponge` is the deployed scheme's own
+`chipAbsorb` carrier realizes `S`: both equations hold by `rfl` (`capLeafDigest`/`nodeOf` ARE
+`S.chipAbsorb` of their input blocks). This is decision #1 made good — the cap-tree is re-committed to
+the one in-circuit hash, so the chip genuinely realizes it. -/
+theorem chipAbsorb_realizes {State : Type} (S : CapHashScheme State) :
+    SchemeRealizedByChip S.chipAbsorb S :=
+  { leafRealized := fun _ => rfl
+  , nodeRealized := fun _ _ => rfl }
+
+/-! ## §1 — the column plan for one cap-membership row.
+
+(The COLUMN LAYOUT and the chip LOOKUPS are exactly what the Rust AIR realizes; with the cap-tree
+re-committed to the chip absorb, the digest the chip soundness yields IS the deployed scheme's
+`capLeafDigest`/`nodeOf` — no reconciliation step, the bridge discharges by `rfl`.) -/
 
 /-- The deployed cap-tree depth (`cap_root.rs::CAP_TREE_DEPTH = 16`). -/
 def DEPTH : Nat := 16
 
 /-- The column layout for a cap-membership row. All indices abstract `Nat`; the Rust AIR pins them. -/
 structure CapOpenCols where
-  /-- The 7 leaf-field columns, in `CapLeaf` order (slot_hash, target, auth_tag, mask_lo, mask_hi,
-  expiry, breadstuff). -/
+  /-- The 7 leaf-field columns, in `CapLeaf` order. -/
   leaf       : Fin 7 → Nat
   /-- The leaf-digest column (the chip absorb output). -/
   leafDigest : Nat
@@ -89,14 +108,14 @@ structure CapOpenCols where
   sib        : Nat → Nat
   /-- The direction-bit column at each level (0 ⇒ cur is LEFT child). -/
   dir        : Nat → Nat
-  /-- The node-output column at each level (the `hash_fact` output; top == cap_root). -/
+  /-- The node-output column at each level. -/
   node       : Nat → Nat
   /-- The committed `cap_root` column. -/
   capRoot    : Nat
-  /-- The turn's source-cell-id column (the effect's `src`). -/
+  /-- The turn's source-cell-id column. -/
   src        : Nat
 
-/-! ## §1 — the leaf-field accessors (decode the 7 leaf columns to a `CapLeaf`). -/
+/-! ## §2 — the leaf-field accessors (decode the 7 leaf columns to a `CapLeaf`). -/
 
 /-- Read the `CapLeaf` whose fields are the row's 7 leaf columns. -/
 def leafOf (c : CapOpenCols) (env : VmRowEnv) : CapLeaf :=
@@ -112,20 +131,13 @@ def leafOf (c : CapOpenCols) (env : VmRowEnv) : CapLeaf :=
 def leafInputs (c : CapOpenCols) : List EmittedExpr :=
   (List.finRange 7).map (fun i => EmittedExpr.var (c.leaf i))
 
-/-- The leaf inputs evaluate to exactly the `capLeafDigest` argument list. -/
+/-- The leaf inputs evaluate to exactly the `leafFields` of the decoded leaf. -/
 theorem leafInputs_eval (c : CapOpenCols) (env : VmRowEnv) :
-    (leafInputs c).map (·.eval env.loc)
-      = [ (leafOf c env).slot_hash, (leafOf c env).target, (leafOf c env).auth_tag,
-          (leafOf c env).mask_lo, (leafOf c env).mask_hi, (leafOf c env).expiry,
-          (leafOf c env).breadstuff ] := by
-  simp only [leafInputs, List.map_map]
+    (leafInputs c).map (·.eval env.loc) = leafFields (leafOf c env) := by
+  simp only [leafInputs, List.map_map, leafFields]
   rfl
 
-/-! ## §2 — the chip-lookup tuples (leaf absorb + per-level node absorb).
-
-Each is a `chipLookupTuple` — the SAME primitive `DescriptorIR2.chip_lookup_sound` enforces. The leaf
-absorb is arity 7 (`capLeafDigest`); each node absorb is arity 3 (`nodeOf = sponge[FACT_MARK, l, r]`).
-Both fit `CHIP_RATE = 8`. -/
+/-! ## §3 — the chip-lookup tuples (leaf absorb + per-level node absorb). -/
 
 /-- The leaf-digest chip lookup tuple: absorb the 7 leaf-field columns, output = `leafDigest`. -/
 def leafLookup (c : CapOpenCols) : Lookup :=
@@ -146,15 +158,14 @@ def rightExpr (c : CapOpenCols) (lvl : Nat) : EmittedExpr :=
   .add (.mul (.add (.const 1) (.mul (.const (-1)) (.var (c.dir lvl)))) (.var (c.sib lvl)))
        (.mul (.var (c.dir lvl)) (.var (curCol c lvl)))
 
-/-- The node chip lookup tuple at level `lvl`: absorb `[FACT_MARK, left, right]`, output = `node lvl`.
-(The last level's output column is constrained `== capRoot` separately, §3.) -/
+/-- The node chip lookup tuple at level `lvl`: absorb `[FACT_MARK, left, right]`, output = `node lvl`. -/
 def nodeLookup (c : CapOpenCols) (lvl : Nat) : Lookup :=
   { table := .poseidon2
   , tuple := chipLookupTuple [.const FACT_MARK, leftExpr c lvl, rightExpr c lvl] (c.node lvl) }
 
-/-! ## §3 — the gate equations (booleanity, root pin, leaf↔effect binding). -/
+/-! ## §4 — the gate equations (booleanity, root pin, leaf↔effect binding). -/
 
-/-- `dir` is boolean: `dir·(dir-1) = 0`. (Mirrors the Rust `assert_zero(dir*(dir-1))`.) -/
+/-- `dir` is boolean: `dir·(dir-1) = 0`. -/
 def dirBoolGate (c : CapOpenCols) (lvl : Nat) : EmittedExpr :=
   .mul (.var (c.dir lvl)) (.add (.var (c.dir lvl)) (.const (-1)))
 
@@ -166,16 +177,14 @@ def rootPinGate (c : CapOpenCols) : EmittedExpr :=
 def targetBindGate (c : CapOpenCols) : EmittedExpr :=
   .add (.var (c.leaf 1)) (.mul (.const (-1)) (.var c.src))
 
-/-- The write-mask binding: `leaf.mask_lo - WRITE_MASK = 0`, where `WRITE_MASK` is the
-read+write endpoint mask (`confersWriteLeaf`'s pinned value). -/
+/-- The write-mask binding: `leaf.mask_lo - WRITE_MASK = 0`. -/
 def writeMaskGate (c : CapOpenCols) : EmittedExpr :=
   .add (.var (c.leaf 3)) (.const (-(rightsMaskOf (Cap.endpoint 0 [Auth.read, Auth.write]))))
 
-/-! ## §4 — `Satisfied`: the full per-row denotation of one cap-membership constraint. -/
+/-! ## §5 — `Satisfied`: the full per-row denotation of one cap-membership constraint. -/
 
-/-- **`Satisfied sponge tf c env`** — the cap-membership row is satisfied: every chip lookup is a
-row of the (sound) chip table, every `dir` is boolean, the root pin / target / write-mask gates
-vanish. This is the in-circuit denotation the Rust `CapMembership` AIR realizes. -/
+/-- **`Satisfied sponge tf c env`** — the cap-membership row is satisfied. The in-circuit denotation
+the Rust `CapMembership` AIR realizes (the chip lookups + the base gates). -/
 structure Satisfied (sponge : List ℤ → ℤ) (tf : TraceFamily) (c : CapOpenCols)
     (env : VmRowEnv) : Prop where
   /-- The leaf-digest chip absorb is a chip-table row. -/
@@ -191,13 +200,20 @@ structure Satisfied (sponge : List ℤ → ℤ) (tf : TraceFamily) (c : CapOpenC
   /-- The leaf's mask_lo is the write-endpoint mask. -/
   writeMasked : (writeMaskGate c).eval env.loc = 0
 
-/-! ## §5 — soundness: the leaf-digest column carries the genuine `capLeafDigest`. -/
+/-! ## §6 — soundness: the leaf-digest column carries the genuine `capLeafDigest`.
 
-/-- Under a sound chip table, the leaf-digest column carries `capLeafDigest sponge (leafOf c env)`. -/
-theorem leafDigest_sound (sponge : List ℤ → ℤ) (tf : TraceFamily) (c : CapOpenCols)
-    (env : VmRowEnv) (hChip : ChipTableSound sponge (tf .poseidon2))
-    (hsat : Satisfied sponge tf c env) :
-    env.loc c.leafDigest = capLeafDigest sponge (leafOf c env) := by
+The chip enforces `leafDigest = sponge (leafFields)` with `sponge := S.chipAbsorb` — and the deployed
+`capLeafDigest S = S.chipAbsorb ∘ leafFields`, so the two coincide (the realization is `chipAbsorb_
+realizes`, discharged in place). -/
+
+/-- Under a sound chip table (the chip's hash IS the deployed `S.chipAbsorb`), the leaf-digest column
+carries the deployed `capLeafDigest S (leafOf c env)`. The `SchemeRealizedByChip` bridge is DISCHARGED
+internally by `chipAbsorb_realizes` — no longer a hypothesis. -/
+theorem leafDigest_sound {State : Type} (S : CapHashScheme State)
+    (tf : TraceFamily) (c : CapOpenCols) (env : VmRowEnv)
+    (hChip : ChipTableSound S.chipAbsorb (tf .poseidon2))
+    (hsat : Satisfied S.chipAbsorb tf c env) :
+    env.loc c.leafDigest = capLeafDigest S (leafOf c env) := by
   have hlen : (leafInputs c).length ≤ CHIP_RATE := by
     simp [leafInputs, List.length_map, List.length_finRange, CHIP_RATE]
     decide
@@ -205,11 +221,10 @@ theorem leafDigest_sound (sponge : List ℤ → ℤ) (tf : TraceFamily) (c : Cap
     have := hsat.leafHashed
     unfold Lookup.holdsAt leafLookup at this
     exact this
-  have h := chip_lookup_sound sponge (tf .poseidon2) hChip env.loc (leafInputs c) c.leafDigest hlen hmem
-  rw [h, leafInputs_eval]
-  rfl
+  have h := chip_lookup_sound S.chipAbsorb (tf .poseidon2) hChip env.loc (leafInputs c) c.leafDigest hlen hmem
+  rw [h, leafInputs_eval, (chipAbsorb_realizes S).leafRealized]
 
-/-- The direction BOOL value at a level (decoded from the boolean gate). -/
+/-- The direction BOOL value at a level. -/
 def dirBoolVal (c : CapOpenCols) (env : VmRowEnv) (lvl : Nat) : Bool :=
   env.loc (c.dir lvl) = 1
 
@@ -223,15 +238,17 @@ theorem dir_zero_or_one (c : CapOpenCols) (env : VmRowEnv) (lvl : Nat)
   · exact Or.inl h0
   · right; linarith
 
-/-- Under a sound chip table, level `lvl`'s node column carries the genuine `nodeOf` of the mixed
-`(cur, sib)` pair — exactly one `recomposeUp` step. -/
-theorem node_sound (sponge : List ℤ → ℤ) (tf : TraceFamily) (c : CapOpenCols)
-    (env : VmRowEnv) (hChip : ChipTableSound sponge (tf .poseidon2))
-    (hsat : Satisfied sponge tf c env) (lvl : Nat) (hlvl : lvl < DEPTH) :
+/-- Under a sound chip table (the chip's hash IS the deployed `S.chipAbsorb`), level `lvl`'s node
+column carries the genuine deployed `nodeOf S` of the mixed `(cur, sib)` pair — exactly one
+`recomposeUp` step. The `SchemeRealizedByChip` bridge is DISCHARGED by `chipAbsorb_realizes`. -/
+theorem node_sound {State : Type} (S : CapHashScheme State)
+    (tf : TraceFamily) (c : CapOpenCols) (env : VmRowEnv)
+    (hChip : ChipTableSound S.chipAbsorb (tf .poseidon2))
+    (hsat : Satisfied S.chipAbsorb tf c env) (lvl : Nat) (hlvl : lvl < DEPTH) :
     env.loc (c.node lvl)
       = (if dirBoolVal c env lvl
-          then nodeOf sponge (env.loc (c.sib lvl)) (env.loc (curCol c lvl))
-          else nodeOf sponge (env.loc (curCol c lvl)) (env.loc (c.sib lvl))) := by
+          then nodeOf S (env.loc (c.sib lvl)) (env.loc (curCol c lvl))
+          else nodeOf S (env.loc (curCol c lvl)) (env.loc (c.sib lvl))) := by
   have hlen : ([EmittedExpr.const FACT_MARK, leftExpr c lvl, rightExpr c lvl]).length ≤ CHIP_RATE := by
     show 3 ≤ CHIP_RATE
     rw [show CHIP_RATE = 8 from rfl]; omega
@@ -240,44 +257,37 @@ theorem node_sound (sponge : List ℤ → ℤ) (tf : TraceFamily) (c : CapOpenCo
     have := hsat.nodeHashed lvl hlvl
     unfold Lookup.holdsAt nodeLookup at this
     exact this
-  have h := chip_lookup_sound sponge (tf .poseidon2) hChip env.loc
+  have h := chip_lookup_sound S.chipAbsorb (tf .poseidon2) hChip env.loc
     [.const FACT_MARK, leftExpr c lvl, rightExpr c lvl] (c.node lvl) hlen hmem
   rw [h]
-  -- The absorbed list evaluates to `[FACT_MARK, leftVal, rightVal]`.
+  -- The absorbed list evaluates to `[FACT_MARK, leftVal, rightVal] = packNode leftVal rightVal`;
+  -- the realization turns `S.chipAbsorb (packNode ·, ·)` into the deployed `nodeOf S`.
   simp only [List.map_cons, List.map_nil, EmittedExpr.eval, leftExpr, rightExpr]
-  -- Case on the direction bit.
   rcases dir_zero_or_one c env lvl (hsat.dirBool lvl hlvl) with hd0 | hd1
-  · -- dir = 0 ⇒ cur is LEFT child ⇒ nodeOf cur sib.
-    have hbool : dirBoolVal c env lvl = false := by
+  · have hbool : dirBoolVal c env lvl = false := by
       simp only [dirBoolVal, hd0]; decide
     rw [hbool, hd0]
     simp only [Bool.false_eq_true, if_false]
-    show sponge _ = nodeOf sponge _ _
-    unfold nodeOf
-    congr 1
-    simp only [List.cons.injEq, and_true, true_and]
-    constructor <;> ring
+    rw [show ((1 : ℤ) + -1 * 0) * env.loc (curCol c lvl) + 0 * env.loc (c.sib lvl)
+          = env.loc (curCol c lvl) by ring,
+        show ((1 : ℤ) + -1 * 0) * env.loc (c.sib lvl) + 0 * env.loc (curCol c lvl)
+          = env.loc (c.sib lvl) by ring]
+    exact (chipAbsorb_realizes S).nodeRealized _ _
   · have hbool : dirBoolVal c env lvl = true := by
       simp only [dirBoolVal, hd1]; decide
     rw [hbool, hd1]
     simp only [if_true]
-    show sponge _ = nodeOf sponge _ _
-    unfold nodeOf
-    congr 1
-    simp only [List.cons.injEq, and_true, true_and]
-    constructor <;> ring
+    rw [show ((1 : ℤ) + -1 * 1) * env.loc (curCol c lvl) + 1 * env.loc (c.sib lvl)
+          = env.loc (c.sib lvl) by ring,
+        show ((1 : ℤ) + -1 * 1) * env.loc (c.sib lvl) + 1 * env.loc (curCol c lvl)
+          = env.loc (curCol c lvl) by ring]
+    exact (chipAbsorb_realizes S).nodeRealized _ _
 
-/-! ## §6 — assembling the recompose: the node columns realize a `recomposeUp` path.
+/-! ## §7 — assembling the recompose: the node columns realize a `recomposeUp` path. -/
 
-We read the `(sib, dir)` columns into a `Step` list and prove, by induction on the level count, that
-folding `recomposeUp` from the leaf digest reproduces the TOP node column. The root pin then gives
-`recomposeUp … = cap_root`, i.e. `MembersAt`. -/
-
-/-- `recomposeUp` distributes over a path append: fold the prefix, then fold the suffix from there.
-(`recomposeUp` is a left fold, so this is the standard `foldl_append`-shape decomposition.) -/
-theorem recomposeUp_append (sponge : List ℤ → ℤ) (cur : ℤ) (p q : List Step) :
-    recomposeUp sponge cur (p ++ q)
-      = recomposeUp sponge (recomposeUp sponge cur p) q := by
+/-- `recomposeUp` distributes over a path append. -/
+theorem recomposeUp_append {State : Type} (S : CapHashScheme State) (cur : ℤ) (p q : List Step) :
+    recomposeUp S cur (p ++ q) = recomposeUp S (recomposeUp S cur p) q := by
   induction p generalizing cur with
   | nil => simp [recomposeUp]
   | cons s rest ih => simp only [List.cons_append, recomposeUp]; rw [ih]
@@ -286,14 +296,14 @@ theorem recomposeUp_append (sponge : List ℤ → ℤ) (cur : ℤ) (p q : List S
 def pathOf (c : CapOpenCols) (env : VmRowEnv) (n : Nat) : List Step :=
   (List.range n).map (fun lvl => { sib := env.loc (c.sib lvl), dir := dirBoolVal c env lvl })
 
-/-- Folding `recomposeUp` over the first `n` levels reproduces `curCol c n` (the digest entering
-level `n`), under chip soundness. The `cur` recurrence (`curCol c (l+1) = node l`) IS the fold step
-that `node_sound` discharges. -/
-theorem recompose_reaches_cur (sponge : List ℤ → ℤ) (tf : TraceFamily) (c : CapOpenCols)
-    (env : VmRowEnv) (hChip : ChipTableSound sponge (tf .poseidon2))
-    (hsat : Satisfied sponge tf c env) :
+/-- Folding `recomposeUp` over the first `n` levels reproduces `curCol c n`, under chip soundness
+(the chip↔scheme bridge DISCHARGED by `chipAbsorb_realizes`). -/
+theorem recompose_reaches_cur {State : Type} (S : CapHashScheme State)
+    (tf : TraceFamily) (c : CapOpenCols) (env : VmRowEnv)
+    (hChip : ChipTableSound S.chipAbsorb (tf .poseidon2))
+    (hsat : Satisfied S.chipAbsorb tf c env) :
     ∀ n, n ≤ DEPTH →
-      recomposeUp sponge (env.loc c.leafDigest) (pathOf c env n) = env.loc (curCol c n) := by
+      recomposeUp S (env.loc c.leafDigest) (pathOf c env n) = env.loc (curCol c n) := by
   intro n
   induction n with
   | zero => intro _; simp [pathOf, recomposeUp, curCol]
@@ -301,14 +311,12 @@ theorem recompose_reaches_cur (sponge : List ℤ → ℤ) (tf : TraceFamily) (c 
     intro hk
     have hkd : k < DEPTH := Nat.lt_of_succ_le hk
     have hkle : k ≤ DEPTH := Nat.le_of_lt hkd
-    -- pathOf at k+1 = pathOf at k ++ [step k]
     have hpath : pathOf c env (k + 1)
         = pathOf c env k ++ [{ sib := env.loc (c.sib k), dir := dirBoolVal c env k }] := by
       simp [pathOf, List.range_succ, List.map_append]
     rw [hpath, recomposeUp_append, ih hkle]
-    -- one more fold step from curCol c k, mixing (cur, sib) by dir.
     simp only [recomposeUp]
-    have hns := node_sound sponge tf c env hChip hsat k hkd
+    have hns := node_sound S tf c env hChip hsat k hkd
     have hcur : curCol c (k + 1) = c.node k := rfl
     rw [hcur]
     cases hb : dirBoolVal c env k
@@ -317,33 +325,29 @@ theorem recompose_reaches_cur (sponge : List ℤ → ℤ) (tf : TraceFamily) (c 
     · simp only [hb, if_true] at hns ⊢
       rw [hns]
 
-/-- **`capOpen_membership` — the in-circuit fold IS a `MembersAt` opening.** Under a sound chip
-table, a `Satisfied` cap-membership row witnesses `DeployedCapTree.MembersAt sponge cap_root leaf`:
-the depth-16 `(sib, dir)` path recomposes the committed `cap_root` from the genuine 7-field leaf
-digest. THE in-circuit production of the membership the kernel bridge consumes. -/
-theorem capOpen_membership (sponge : List ℤ → ℤ) (tf : TraceFamily) (c : CapOpenCols)
-    (env : VmRowEnv) (hChip : ChipTableSound sponge (tf .poseidon2))
-    (hsat : Satisfied sponge tf c env) :
-    MembersAt sponge (env.loc c.capRoot) (leafOf c env) := by
+/-- **`capOpen_membership` — the in-circuit fold IS a `MembersAt` opening.** Under a sound chip table
+(the chip's hash IS `S.chipAbsorb`, so the `SchemeRealizedByChip` bridge is DISCHARGED by
+`chipAbsorb_realizes`), a `Satisfied` row witnesses `MembersAt S cap_root leaf`. -/
+theorem capOpen_membership {State : Type} (S : CapHashScheme State)
+    (tf : TraceFamily) (c : CapOpenCols) (env : VmRowEnv)
+    (hChip : ChipTableSound S.chipAbsorb (tf .poseidon2))
+    (hsat : Satisfied S.chipAbsorb tf c env) :
+    MembersAt S (env.loc c.capRoot) (leafOf c env) := by
   refine ⟨pathOf c env DEPTH, ?_⟩
-  -- The fold over all DEPTH levels reaches curCol c DEPTH = node (DEPTH-1) = cap_root.
-  have hfold := recompose_reaches_cur sponge tf c env hChip hsat DEPTH (le_refl _)
-  -- Replace the leaf-digest column by the genuine capLeafDigest.
-  have hleaf := leafDigest_sound sponge tf c env hChip hsat
+  have hfold := recompose_reaches_cur S tf c env hChip hsat DEPTH (le_refl _)
+  have hleaf := leafDigest_sound S tf c env hChip hsat
   rw [hleaf] at hfold
-  -- curCol c DEPTH = node (DEPTH-1).
   have hcurTop : curCol c DEPTH = c.node (DEPTH - 1) := rfl
   rw [hcurTop] at hfold
-  -- root pin: node (DEPTH-1) = cap_root.
   have hpin := hsat.rootPinned
   unfold rootPinGate at hpin
   simp only [EmittedExpr.eval] at hpin
   have hroot : env.loc (c.node (DEPTH - 1)) = env.loc c.capRoot := by linarith
   rw [hfold, hroot]
 
-/-! ## §7 — the leaf↔effect binding (target = src, write-mask). -/
+/-! ## §8 — the leaf↔effect binding (target = src, write-mask). -/
 
-/-- The target gate pins `leaf.target = src` (the `src` column). -/
+/-- The target gate pins `leaf.target = src`. -/
 theorem capOpen_target (sponge : List ℤ → ℤ) (tf : TraceFamily) (c : CapOpenCols)
     (env : VmRowEnv) (hsat : Satisfied sponge tf c env) :
     (leafOf c env).target = env.loc c.src := by
@@ -353,7 +357,7 @@ theorem capOpen_target (sponge : List ℤ → ℤ) (tf : TraceFamily) (c : CapOp
   simp only [leafOf]
   linarith
 
-/-- The write-mask gate pins `confersWriteLeaf leaf` (`mask_lo` is the read+write endpoint mask). -/
+/-- The write-mask gate pins `confersWriteLeaf leaf`. -/
 theorem capOpen_write (sponge : List ℤ → ℤ) (tf : TraceFamily) (c : CapOpenCols)
     (env : VmRowEnv) (hsat : Satisfied sponge tf c env) :
     confersWriteLeaf (leafOf c env) := by
@@ -364,64 +368,82 @@ theorem capOpen_write (sponge : List ℤ → ℤ) (tf : TraceFamily) (c : CapOpe
   simp only [leafOf]
   linarith
 
-/-! ## §8 — THE KEYSTONE: `capOpen_sound` (Satisfied ⟹ MembersAt ∧ binding).
-
-The deliverable. A `Satisfied` cap-membership row (against a sound chip table) PRODUCES the three
-facts the kernel authority bridge consumes:
-`MembersAt cap_root leaf ∧ leaf.target = src ∧ confersWriteLeaf leaf`. -/
+/-! ## §9 — THE KEYSTONE: `capOpen_sound` (Satisfied ⟹ MembersAt ∧ binding). -/
 
 /-- **`capOpen_sound`** — the in-circuit cap-membership row is SOUND: it opens the deployed cap-tree
-at a write-mask leaf whose target is the turn's `src`. THE authority leg's circuit foundation. -/
-theorem capOpen_sound (sponge : List ℤ → ℤ) (tf : TraceFamily) (c : CapOpenCols)
-    (env : VmRowEnv) (hChip : ChipTableSound sponge (tf .poseidon2))
-    (hsat : Satisfied sponge tf c env) :
-    MembersAt sponge (env.loc c.capRoot) (leafOf c env)
+at a write-mask leaf whose target is the turn's `src`. THE authority leg's circuit foundation. The
+`SchemeRealizedByChip` chip↔scheme bridge is DISCHARGED (the chip's hash IS `S.chipAbsorb`, by
+`chipAbsorb_realizes`) — no longer a carried hypothesis. -/
+theorem capOpen_sound {State : Type} (S : CapHashScheme State)
+    (tf : TraceFamily) (c : CapOpenCols) (env : VmRowEnv)
+    (hChip : ChipTableSound S.chipAbsorb (tf .poseidon2))
+    (hsat : Satisfied S.chipAbsorb tf c env) :
+    MembersAt S (env.loc c.capRoot) (leafOf c env)
     ∧ (leafOf c env).target = env.loc c.src
     ∧ confersWriteLeaf (leafOf c env) :=
-  ⟨capOpen_membership sponge tf c env hChip hsat,
-   capOpen_target sponge tf c env hsat,
-   capOpen_write sponge tf c env hsat⟩
+  ⟨capOpen_membership S tf c env hChip hsat,
+   capOpen_target S.chipAbsorb tf c env hsat,
+   capOpen_write S.chipAbsorb tf c env hsat⟩
 
-/-! ## §9 — CHAINING to the kernel `authorizedB` (the end-to-end authority leg).
+/-! ## §10 — CHAINING to the kernel `authorizedB` (the end-to-end authority leg). -/
 
-Against the deployed commitment relation (`DeployedFaithful`), a satisfying cap-membership row whose
-opened leaf is the faithfully-laid-down `(actor ⇒ src)` edge discharges the kernel `authorizedB` for
-the turn. The membership the bridge demanded is now PRODUCED in-circuit. -/
-
-/-- **`capOpen_authorizes` — THE END-TO-END AUTHORITY LEG.** GIVEN the deployed commitment
-`DeployedFaithful caps cap_root leafAt`, a `Satisfied` cap-membership row whose opened leaf IS the
-faithfulness contract's `(actor ⇒ src)` edge leaf — and whose `cap_root` column is the committed root,
-whose `src` column is `src` — yields the kernel's `authorizedB caps ⟨actor, src, dst, amt⟩ = true`.
-The in-circuit depth-16 binary-Merkle membership proof DISCHARGES the kernel's authority gate. -/
-theorem capOpen_authorizes (sponge : List ℤ → ℤ) (tf : TraceFamily) (c : CapOpenCols)
-    (env : VmRowEnv) (hChip : ChipTableSound sponge (tf .poseidon2))
-    (hsat : Satisfied sponge tf c env)
+/-- **`capOpen_authorizes` — THE END-TO-END AUTHORITY LEG.** GIVEN the deployed commitment, a
+`Satisfied` row whose opened leaf IS the faithfulness contract's `(actor ⇒ src)` edge leaf yields the
+kernel's `authorizedB = true`. The `SchemeRealizedByChip` bridge is DISCHARGED (`chipAbsorb_realizes`)
+— the chip genuinely realizes the cap hash. -/
+theorem capOpen_authorizes {State : Type} (S : CapHashScheme State)
+    (tf : TraceFamily) (c : CapOpenCols) (env : VmRowEnv)
+    (hChip : ChipTableSound S.chipAbsorb (tf .poseidon2))
+    (hsat : Satisfied S.chipAbsorb tf c env)
     (caps : Caps) (leafAt : Label → Label → CapLeaf)
-    (hfaith : DeployedFaithful sponge caps (env.loc c.capRoot) leafAt)
+    (hfaith : DeployedFaithful S caps (env.loc c.capRoot) leafAt)
     (actor src dst : Label) (amt : ℤ)
     (hsrc : env.loc c.src = (src : ℤ))
     (hedge : leafOf c env = leafAt actor src) :
     Dregg2.Exec.authorizedB caps
       { actor := actor, src := src, dst := dst, amt := amt } = true
     ∧ (leafAt actor src).target = (src : ℤ) := by
-  have hmem : MembersAt sponge (env.loc c.capRoot) (leafAt actor src) := by
-    rw [← hedge]; exact capOpen_membership sponge tf c env hChip hsat
+  have hmem : MembersAt S (env.loc c.capRoot) (leafAt actor src) := by
+    rw [← hedge]; exact capOpen_membership S tf c env hChip hsat
   have hwrite : confersWriteLeaf (leafAt actor src) := by
-    rw [← hedge]; exact capOpen_write sponge tf c env hsat
-  -- The opened leaf's target IS the turn's src (the leaf↔effect binding, authenticated).
+    rw [← hedge]; exact capOpen_write S.chipAbsorb tf c env hsat
   have htgt : (leafAt actor src).target = (src : ℤ) := by
-    rw [← hedge, capOpen_target sponge tf c env hsat, hsrc]
-  exact ⟨deployedCapOpen_implies_authorizedB sponge caps (env.loc c.capRoot) leafAt hfaith
+    rw [← hedge, capOpen_target S.chipAbsorb tf c env hsat, hsrc]
+  exact ⟨deployedCapOpen_implies_authorizedB S caps (env.loc c.capRoot) leafAt hfaith
     actor src dst amt hmem hwrite, htgt⟩
 
-/-! ## §10 — NON-VACUITY: the constraint is satisfiable on a real opening, and the binding is REAL.
+/-! ## §A — THE CHIP-RATE GAP IS CLOSED (`SchemeRealizedByChip` DISCHARGED, not carried).
 
-A witness-FALSE: with the write-mask gate failing (a non-write leaf), `capOpen_write` cannot fire — so
-the conclusion `confersWriteLeaf` is not vacuously derivable. We pin the gate's discriminating power. -/
+Decision #1: the cap-tree is re-committed to the chip's hash (`cap_root.rs::cap_chip_absorb`,
+mirrored as `DeployedCapTree`'s single `chipAbsorb` carrier). So the chip whose `sponge` is
+`S.chipAbsorb` realizes the deployed scheme DEFINITIONALLY — `chipAbsorb_realizes` (§0) supplies it,
+and every soundness theorem above specializes `sponge := S.chipAbsorb` and discharges the bridge in
+place. There is NO carried `SchemeRealizedByChip` hypothesis on the live path anymore.
 
-/-- **The write-mask gate is DISCRIMINATING (witness FALSE).** A leaf whose `mask_lo` is NOT the
-write-endpoint mask makes the `writeMaskGate` non-zero — the constraint is UNSATISFIABLE for it, so
-`capOpen_write` is not vacuous (it genuinely requires the committed write mask). -/
+The realization is NON-VACUOUS in the load-bearing sense: it is the chip-absorb collision-resistance
+`S.chipCR` (a `Compress1CR`, primitive #4 — NOT `True`; a constant compression falsifies it) that
+makes the membership leg's anti-ghost (`recomposeUp_inj_of_path`, `nodeOf_injective`,
+`capLeafDigest_injective`) bite. We re-state the discharge as the headline fact, and pin that the
+node and leaf domains are length-disjoint (the chip's per-row arity seeding that lets one `chipAbsorb`
+serve both shapes). -/
+
+/-- **THE DISCHARGE, re-stated as the §A headline.** The deployed scheme's own chip-absorb carrier
+realizes the scheme — `SchemeRealizedByChip S.chipAbsorb S` holds (both equations by `rfl`). The
+chip-rate gap the prior revision carried is CLOSED: the IR-v2 chip genuinely realizes the cap hash. -/
+theorem schemeRealizedByChip_discharged {State : Type} (S : CapHashScheme State) :
+    SchemeRealizedByChip S.chipAbsorb S :=
+  chipAbsorb_realizes S
+
+/-- The node block `packNode l r = [FACT_MARK, l, r]` (length 3) and any leaf-field block `leafFields
+leaf` (length 7) are LENGTH-DISJOINT — the structural fact behind the chip serving both arities from
+one `chipAbsorb` (the chip seeds by `(arity, padded inputs)`, so the two shapes never alias). -/
+theorem node_leaf_length_disjoint (l r : ℤ) (leaf : CapLeaf) :
+    (packNode l r).length ≠ (leafFields leaf).length := by
+  simp [packNode, leafFields]
+
+/-! ## §11 — discriminating teeth (the gates are real). -/
+
+/-- **The write-mask gate is DISCRIMINATING (witness FALSE).** -/
 theorem writeMaskGate_discriminates (c : CapOpenCols) (env : VmRowEnv)
     (hbad : env.loc (c.leaf 3) = rightsMaskOf (Cap.endpoint 0 [Auth.read, Auth.write]) + 1) :
     (writeMaskGate c).eval env.loc ≠ 0 := by
@@ -429,9 +451,7 @@ theorem writeMaskGate_discriminates (c : CapOpenCols) (env : VmRowEnv)
   simp only [EmittedExpr.eval, hbad]
   intro h; linarith
 
-/-- **The target gate is DISCRIMINATING (witness FALSE).** A leaf whose `target` differs from the
-`src` column makes the `targetBindGate` non-zero — the binding genuinely authenticates the ACTOR's
-write-cap over `src`, not an arbitrary leaf. -/
+/-- **The target gate is DISCRIMINATING (witness FALSE).** -/
 theorem targetBindGate_discriminates (c : CapOpenCols) (env : VmRowEnv)
     (hne : env.loc (c.leaf 1) ≠ env.loc c.src) :
     (targetBindGate c).eval env.loc ≠ 0 := by
@@ -441,14 +461,17 @@ theorem targetBindGate_discriminates (c : CapOpenCols) (env : VmRowEnv)
   apply hne
   linarith
 
-/-! ## §11 — Axiom hygiene. -/
+/-! ## §12 — Axiom hygiene. -/
 
+#assert_axioms chipAbsorb_realizes
 #assert_axioms leafDigest_sound
 #assert_axioms node_sound
 #assert_axioms recompose_reaches_cur
 #assert_axioms capOpen_membership
 #assert_axioms capOpen_sound
 #assert_axioms capOpen_authorizes
+#assert_axioms schemeRealizedByChip_discharged
+#assert_axioms node_leaf_length_disjoint
 #assert_axioms writeMaskGate_discriminates
 #assert_axioms targetBindGate_discriminates
 

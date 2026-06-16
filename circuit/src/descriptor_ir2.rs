@@ -1458,8 +1458,18 @@ const CHIP_IN0: usize = 1;
 const CHIP_OUT: usize = CHIP_IN0 + CHIP_RATE; // 9
 const CHIP_MULT: usize = CHIP_OUT + 1; // 10
 const CHIP_IS_FACT: usize = CHIP_MULT + 1; // 11
-const CHIP_AUX0: usize = CHIP_IS_FACT + 1; // 12
-const CHIP_WIDTH: usize = CHIP_AUX0 + POSEIDON2_PERM_AUX_COLS; // 364
+/// `big = [arity == 7]`: selects the rate-8 absorb seeding (inputs in lanes 0..6,
+/// length tag absent from lanes 4..6) from the rate-4 seeding (tag at lane 4).
+const CHIP_BIG: usize = CHIP_IS_FACT + 1; // 12
+/// Dedicated seed-source columns for the three AMBIGUOUS state lanes 4/5/6 (input
+/// vs tag/fact). Each is read DIRECTLY into the permuted state (degree 1), while
+/// its VALUE is pinned by a degree-≤3 SIDE constraint (never through the x⁷ S-box) —
+/// the only degree-safe way to serve two seedings from one fixed state array.
+const CHIP_S4: usize = CHIP_BIG + 1; // 13
+const CHIP_S5: usize = CHIP_S4 + 1; // 14
+const CHIP_S6: usize = CHIP_S5 + 1; // 15
+const CHIP_AUX0: usize = CHIP_S6 + 1; // 16
+const CHIP_WIDTH: usize = CHIP_AUX0 + POSEIDON2_PERM_AUX_COLS; // 368
 
 /// The five-table interpreter AIR. One Rust type covering every instance of the batch
 /// (the batch prover is monomorphic in the AIR type), entirely descriptor-driven.
@@ -1835,54 +1845,107 @@ where
             Ir2Air::Chip => {
                 let arity: AB::Expr = local[CHIP_ARITY].into();
                 let is_fact: AB::Expr = local[CHIP_IS_FACT].into();
+                let big: AB::Expr = local[CHIP_BIG].into();
                 let two = AB::Expr::from_u64(2);
+                let three = AB::Expr::from_u64(3);
                 let four = AB::Expr::from_u64(4);
+                let seven = AB::Expr::from_u64(7);
                 builder.assert_zero(is_fact.clone() * (is_fact.clone() - AB::Expr::ONE));
-                // arity ∈ {0 (pad/fact), 2, 4} — the deployed site arities.
+                // arity ∈ {0 (pad/fact), 2, 3 (cap node [FACT_MARK,l,r]), 4, 7 (cap leaf)}.
                 builder.assert_zero(
-                    arity.clone() * (arity.clone() - two.clone()) * (arity.clone() - four.clone()),
+                    arity.clone()
+                        * (arity.clone() - two.clone())
+                        * (arity.clone() - three.clone())
+                        * (arity.clone() - four.clone())
+                        * (arity.clone() - seven.clone()),
                 );
-                // A fact row carries arity 0 (so state[4] = arity is the genuine fact
-                // state's zero tag — no hybrid absorb/fact state is expressible).
+                // A fact row carries arity 0 (so the genuine fact state's zero tag is
+                // expressible — no hybrid absorb/fact state is).
                 builder.assert_zero(is_fact.clone() * arity.clone());
-                // Inputs beyond the arity are ZERO (the padTo discipline — a row with junk
-                // padding is not a genuine chipRow and must be rejected). Fact rows absorb
-                // exactly (in0, in1), so their in0/in1 are exempt; in2.. stay pinned.
+                // `big = [arity == 7]`: boolean, low off the 7 branch, high on it. Together
+                // with the membership gate above these pin `big` uniquely. `big` selects the
+                // rate-8 absorb seeding (lanes 4..6 = genuine inputs in4..in6) from the rate-4
+                // seeding (lane 4 = arity tag, lanes 5/6 = the fact marker/flag).
+                builder.assert_zero(big.clone() * (big.clone() - AB::Expr::ONE));
+                builder.assert_zero(big.clone() * (arity.clone() - seven.clone()));
+                // p7 ≠ 0 ⇔ arity ∈ {0,2,3,4} (= 0 exactly at arity 7); p7·(1−big) forces big
+                // HIGH on the arity-7 branch. (Degree 5 — a SIDE constraint, not S-boxed.)
+                let p7 = arity.clone()
+                    * (arity.clone() - two.clone())
+                    * (arity.clone() - three.clone())
+                    * (arity.clone() - four.clone());
+                builder.assert_zero(p7 * (AB::Expr::ONE - big.clone()));
+                // Inputs beyond the arity are ZERO (the padTo discipline — a junk-padded row is
+                // not a genuine chipRow). The input lanes a row genuinely uses are exactly
+                // `i < arity`; the gates below vanish each lane on the arity classes that do
+                // NOT reach it. (All ≤ degree 5; none routed through the S-box.)
+                //
+                // in0/in1: used by every absorb arity {2,3,4,7} AND fact rows; pinned only on
+                // the bare pad row (arity 0, non-fact). q01 = (a−2)(a−3)(a−4)(a−7) is 168 on the
+                // pad row and 0 on arity∈{2,3,4,7}; subtracting 168·is_fact frees fact rows.
+                let q01 = (arity.clone() - two.clone())
+                    * (arity.clone() - three.clone())
+                    * (arity.clone() - four.clone())
+                    * (arity.clone() - seven.clone());
                 for i in 0..2 {
-                    // in0/in1 vanish unless arity ∈ {2,4} or the row is a fact row.
-                    // With arity ∈ {0,2,4} and is_fact·arity = 0 both pinned above,
-                    // `(arity−2)(arity−4) − 8·is_fact` is 8 exactly on non-fact arity-0
-                    // (pad) rows and 0 on absorb and fact rows — the same gate as the
-                    // older `(arity−2)(arity−4)(1−is_fact)` form at degree 3 instead of
-                    // 4, for free (no extra columns; the S-box still sets the table's
-                    // degree — see `max_constraint_degree`).
                     let inp: AB::Expr = local[CHIP_IN0 + i].into();
                     builder.assert_zero(
-                        inp * ((arity.clone() - two.clone()) * (arity.clone() - four.clone())
-                            - AB::Expr::from_u64(8) * is_fact.clone()),
+                        inp * (q01.clone() - AB::Expr::from_u64(168) * is_fact.clone()),
                     );
                 }
-                for i in 2..4 {
-                    // in2/in3 vanish unless arity = 4 (fact rows have arity 0 ⇒ pinned).
-                    let inp: AB::Expr = local[CHIP_IN0 + i].into();
-                    builder.assert_zero(inp * (arity.clone() - four.clone()));
+                // in2: genuine for arity ∈ {3,4,7} (the cap node's `r`, and 4/7's third field);
+                // pinned on {0,2} and fact.
+                builder.assert_zero(
+                    local[CHIP_IN0 + 2].into()
+                        * (arity.clone() - three.clone())
+                        * (arity.clone() - four.clone())
+                        * (arity.clone() - seven.clone()),
+                );
+                // in3: genuine only for arity ∈ {4,7}; pinned on {0,2,3} and fact.
+                builder.assert_zero(
+                    local[CHIP_IN0 + 3].into()
+                        * (arity.clone() - four.clone())
+                        * (arity.clone() - seven.clone()),
+                );
+                // in4/in5/in6: genuine only for arity 7 (the rate-8 leaf absorb); pinned else.
+                for i in 4..7 {
+                    builder.assert_zero(local[CHIP_IN0 + i].into() * (arity.clone() - seven.clone()));
                 }
-                for i in 4..CHIP_RATE {
-                    // The deployed absorb is rate-4 with the arity tag at state 4; the high
-                    // padding lanes are identically zero.
-                    builder.assert_zero(local[CHIP_IN0 + i].into());
-                }
-                // The REAL permutation, output pinned. Absorb rows (is_fact = 0):
-                // state = (in0..in3, arity tag) — `hash_many`'s shape. Fact rows
-                // (is_fact = 1, arity = 0): state = (l, r, 0, 0, 0, FACT_MARK, 1, 0…) —
-                // `hash_fact`'s marker shape, byte-identical to fact_state.
+                // in7: never an input (the largest admitted arity, 7, uses lanes 0..6).
+                builder.assert_zero(local[CHIP_IN0 + 7].into());
+                // The three AMBIGUOUS seed-source columns S4/S5/S6, pinned by SIDE constraints
+                // (degree ≤ 3, off the S-box path). For a rate-4 row (big = 0): S4 = arity tag,
+                // S5 = is_fact·FACT_MARK, S6 = is_fact — byte-identical to the deployed seeding.
+                // For the rate-8 leaf row (big = 1): S4/S5/S6 = the genuine in4/in5/in6.
+                builder.assert_zero(
+                    local[CHIP_S4].into()
+                        - (big.clone() * local[CHIP_IN0 + 4].into()
+                            + (AB::Expr::ONE - big.clone()) * arity.clone()),
+                );
+                builder.assert_zero(
+                    local[CHIP_S5].into()
+                        - (big.clone() * local[CHIP_IN0 + 5].into()
+                            + (AB::Expr::ONE - big.clone())
+                                * is_fact.clone()
+                                * AB::Expr::from_u64(FACT_MARK as u64)),
+                );
+                builder.assert_zero(
+                    local[CHIP_S6].into()
+                        - (big.clone() * local[CHIP_IN0 + 6].into()
+                            + (AB::Expr::ONE - big.clone()) * is_fact.clone()),
+                );
+                // The REAL permutation, output pinned. Every seeded lane reads ONE column
+                // (degree 1) so the first x⁷ S-box stays at the degree-7 budget. Rate-4 rows
+                // (is_fact = 0): state = (in0..in3, arity tag) — `hash_many`'s shape. Rate-8 leaf
+                // (arity 7): state = (in0..in6, 0…). Fact rows (is_fact = 1, arity 0): state =
+                // (l, r, 0, 0, 0, FACT_MARK, 1, 0…) — `hash_fact`'s marker shape via S5/S6.
                 let mut st: [AB::Expr; POSEIDON2_WIDTH] = core::array::from_fn(|_| AB::Expr::ZERO);
                 for i in 0..4 {
                     st[i] = local[CHIP_IN0 + i].into();
                 }
-                st[4] = arity;
-                st[5] = is_fact.clone() * AB::Expr::from_u64(FACT_MARK as u64);
-                st[6] = is_fact.clone();
+                st[4] = local[CHIP_S4].into();
+                st[5] = local[CHIP_S5].into();
+                st[6] = local[CHIP_S6].into();
                 let aux: Vec<AB::Var> =
                     local[CHIP_AUX0..CHIP_AUX0 + POSEIDON2_PERM_AUX_COLS].to_vec();
                 let digest = poseidon2_permute_expr::<AB>(builder, st, &aux);
@@ -3625,12 +3688,32 @@ fn build_traces(
     let chip: Option<Vec<Vec<BabyBear>>> = if presence.chip {
         let mut chip_rows: Vec<Vec<BabyBear>> = Vec::new();
         for (tuple, mult) in &chip_hist {
-            let mut row: Vec<BabyBear> = tuple.iter().map(|&v| BabyBear::new(v)).collect();
-            row.push(BabyBear::new((*mult % (BABYBEAR_P as u64)) as u32));
-            row.push(BabyBear::ZERO); // is_fact
+            // tuple = [arity, in0..in7, out] (CHIP_TUPLE_LEN wide).
+            let arity_u = tuple[CHIP_ARITY];
+            let big_row = arity_u == 7;
+            let mut row = vec![BabyBear::ZERO; CHIP_AUX0];
+            for (j, &v) in tuple.iter().enumerate() {
+                row[j] = BabyBear::new(v);
+            }
+            row[CHIP_MULT] = BabyBear::new((*mult % (BABYBEAR_P as u64)) as u32);
+            row[CHIP_IS_FACT] = BabyBear::ZERO;
+            row[CHIP_BIG] = if big_row { BabyBear::ONE } else { BabyBear::ZERO };
+            // Seed-source columns, mirroring the AIR's S4/S5/S6 blend (is_fact = 0 here).
+            if big_row {
+                row[CHIP_S4] = BabyBear::new(tuple[CHIP_IN0 + 4]);
+                row[CHIP_S5] = BabyBear::new(tuple[CHIP_IN0 + 5]);
+                row[CHIP_S6] = BabyBear::new(tuple[CHIP_IN0 + 6]);
+            } else {
+                row[CHIP_S4] = BabyBear::new(arity_u); // arity tag
+                row[CHIP_S5] = BabyBear::ZERO; // is_fact·FACT_MARK = 0
+                row[CHIP_S6] = BabyBear::ZERO; // is_fact = 0
+            }
+            // Seed the permutation from the SAME source columns the AIR reads.
             let mut st = [BabyBear::ZERO; POSEIDON2_WIDTH];
             st[..4].copy_from_slice(&row[CHIP_IN0..CHIP_IN0 + 4]);
-            st[4] = row[CHIP_ARITY];
+            st[4] = row[CHIP_S4];
+            st[5] = row[CHIP_S5];
+            st[6] = row[CHIP_S6];
             let (aux, _digest) = perm_aux(st);
             row.extend(aux);
             chip_rows.push(row);
@@ -3642,6 +3725,12 @@ fn build_traces(
             row[CHIP_OUT] = BabyBear::new(out);
             row[CHIP_MULT] = BabyBear::new((*mult % (BABYBEAR_P as u64)) as u32);
             row[CHIP_IS_FACT] = BabyBear::ONE;
+            // Fact rows are rate-4 (big = 0): S4 = arity tag (0), S5 = FACT_MARK, S6 = 1 —
+            // reproduces `fact_state_c` (st[5]=FACT_MARK, st[6]=1) through the S4/S5/S6 seeding.
+            row[CHIP_BIG] = BabyBear::ZERO;
+            row[CHIP_S4] = BabyBear::ZERO;
+            row[CHIP_S5] = BabyBear::new(FACT_MARK);
+            row[CHIP_S6] = BabyBear::ONE;
             let (aux, _digest) = perm_aux(fact_state_c(BabyBear::new(l), BabyBear::new(r)));
             row.extend(aux);
             chip_rows.push(row);

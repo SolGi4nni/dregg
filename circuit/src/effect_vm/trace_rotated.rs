@@ -531,15 +531,19 @@ pub struct CapOpenWitness {
     pub src: BabyBear,
 }
 
-/// The leaf digest: `hash_many(&[the 7 leaf fields])` (Lean `capLeafDigest`).
+/// The leaf digest: the SINGLE rate-8 chip absorb of the 7 leaf fields (arity 7), byte-identical
+/// to `cap_root::CapLeaf::digest` and the Lean `capLeafDigest = sponge ∘ leafFields`. ONE chip
+/// row (no length tag; lanes 0..6 = the genuine fields), so the IR-v2 chip realizes it as one
+/// lookup — the unification that discharges `SchemeRealizedByChip`.
 pub fn cap_leaf_digest(leaf: &[BabyBear; 7]) -> BabyBear {
-    hash_many(leaf)
+    crate::cap_root::cap_chip_absorb(leaf)
 }
 
-/// One node hash: `hash_many(&[FACT_MARK, left, right])` (Lean `nodeOf` — the ABSORB-node
-/// tagged 3-list, NOT `hash_fact`).
+/// One node hash: the arity-3 rate-8 chip absorb of `[FACT_MARK, left, right]` (Lean
+/// `nodeOf = sponge [FACT_MARK, l, r]`), byte-identical to `cap_root::cap_node`. ONE chip row
+/// (FACT_MARK rides rate lane 0, length tag 3 in lane 4) — NOT the capacity-tagged `hash_fact`.
 pub fn cap_node(left: BabyBear, right: BabyBear) -> BabyBear {
-    hash_many(&[BabyBear::new(FACT_MARK), left, right])
+    crate::cap_root::cap_chip_absorb(&[BabyBear::new(FACT_MARK), left, right])
 }
 
 /// Mix `(cur, sib)` by the direction bit into `(left, right)` (Lean `leftExpr`/`rightExpr`):

@@ -80,6 +80,7 @@ impl DslP3Air {
             ConstraintExpr::Hash { .. }
             | ConstraintExpr::Hash2to1 { .. }
             | ConstraintExpr::Hash4to1 { .. }
+            | ConstraintExpr::Hash3Cap { .. }
             | ConstraintExpr::MerkleHash { .. }
             | ConstraintExpr::ChainedHash2to1 { .. }
             | ConstraintExpr::SeedHash2to1 { .. }
@@ -286,6 +287,7 @@ where
         ConstraintExpr::Hash { .. }
         | ConstraintExpr::Hash2to1 { .. }
         | ConstraintExpr::Hash4to1 { .. }
+        | ConstraintExpr::Hash3Cap { .. }
         | ConstraintExpr::MerkleHash { .. } => (AB::Expr::ZERO, false),
         // Cross-row (`ChainedHash2to1`) and PI-seeded (`SeedHash2to1`) running-hash forms
         // span the local/next windows (or bind a public input), and `TableFunction` is a

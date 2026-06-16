@@ -372,14 +372,12 @@ fn a2_revoke_preserves_survivor_membership() {
             .position_of(cap_root::slot_hash(key))
             .expect("survivor slot still occupies a position after the revoke");
         let (sibs, dirs) = tomb_tree.prove_membership(pos).expect("membership path");
-        let mut cur = leaf.digest();
-        for level in 0..cap_root::CAP_TREE_DEPTH {
-            cur = if dirs[level] == 0 {
-                dregg_circuit::poseidon2::hash_fact(cur, &[sibs[level]])
-            } else {
-                dregg_circuit::poseidon2::hash_fact(sibs[level], &[cur])
-            };
-        }
+        // Fold the survivor's leaf digest up its sibling path with the SAME node hash
+        // the cap-tree commits (`cap_node` = the rate-8 chip absorb of `[FACT_MARK, l, r]`,
+        // exposed as `cap_root::recompose_membership`). The deployed cap-tree is now ONE
+        // in-circuit hash everywhere — the leaf and the node both ride the IR-v2 chip
+        // absorb — so the hand-rolled `hash_fact` fold no longer reproduces the root.
+        let cur = cap_root::recompose_membership(leaf.digest(), &sibs, &dirs);
         assert_eq!(
             cur, cell_root,
             "survivor slot {key} must still open to the post-revoke root (position-stable)"

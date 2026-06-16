@@ -163,7 +163,8 @@ fn check_algebraic(c: &ConstraintExpr, index: usize) -> Result<(), DslP3Error> {
         | ConstraintExpr::AtLeastOne { .. }
         | ConstraintExpr::Hash { .. }
         | ConstraintExpr::Hash2to1 { .. }
-        | ConstraintExpr::Hash4to1 { .. } => Ok(()),
+        | ConstraintExpr::Hash4to1 { .. }
+        | ConstraintExpr::Hash3Cap { .. } => Ok(()),
         ConstraintExpr::Gated { inner, .. }
         | ConstraintExpr::InvertedGated { inner, .. }
         | ConstraintExpr::Squared { inner } => check_algebraic(inner, index),
@@ -209,6 +210,7 @@ fn is_hash(c: &ConstraintExpr) -> bool {
         ConstraintExpr::Hash { .. }
             | ConstraintExpr::Hash2to1 { .. }
             | ConstraintExpr::Hash4to1 { .. }
+            | ConstraintExpr::Hash3Cap { .. }
     )
 }
 
@@ -332,7 +334,20 @@ fn hash_input_state<AB: AirBuilder>(
             st[3] = local[input_cols[3]].into();
             st[4] = AB::Expr::from_u64(4); // arity tag (matches hash_4_to_1)
         }
-        _ => unreachable!("hash_input_state only called on Hash/Hash2to1/Hash4to1"),
+        // `cap_node(left, right)` = `cap_chip_absorb([FACT_MARK, left, right])`: the arity-3
+        // rate-8 chip absorb — FACT_MARK at rate lane 0, children at 1/2, length tag 3 at
+        // lane 4. Mirrors `crate::cap_root::cap_node` byte-for-byte.
+        ConstraintExpr::Hash3Cap {
+            left_col,
+            right_col,
+            ..
+        } => {
+            st[0] = AB::Expr::from_u64(crate::cap_root::CAP_FACT_MARK as u64);
+            st[1] = local[*left_col].into();
+            st[2] = local[*right_col].into();
+            st[4] = AB::Expr::from_u64(3); // arity tag (matches cap_chip_absorb len=3)
+        }
+        _ => unreachable!("hash_input_state only called on Hash/Hash2to1/Hash4to1/Hash3Cap"),
     }
     st
 }
@@ -342,8 +357,9 @@ fn hash_output_col(c: &ConstraintExpr) -> usize {
     match c {
         ConstraintExpr::Hash { output_col, .. }
         | ConstraintExpr::Hash2to1 { output_col, .. }
-        | ConstraintExpr::Hash4to1 { output_col, .. } => *output_col,
-        _ => unreachable!("hash_output_col only called on Hash/Hash2to1/Hash4to1"),
+        | ConstraintExpr::Hash4to1 { output_col, .. }
+        | ConstraintExpr::Hash3Cap { output_col, .. } => *output_col,
+        _ => unreachable!("hash_output_col only called on Hash/Hash2to1/Hash4to1/Hash3Cap"),
     }
 }
 
@@ -376,6 +392,17 @@ fn hash_input_state_concrete(c: &ConstraintExpr, row: &[BabyBear]) -> [BabyBear;
             st[2] = row[input_cols[2]];
             st[3] = row[input_cols[3]];
             st[4] = BabyBear::new(4);
+        }
+        ConstraintExpr::Hash3Cap {
+            left_col,
+            right_col,
+            ..
+        } => {
+            // `cap_node` seeding: FACT_MARK at lane 0, children at 1/2, length tag 3 at lane 4.
+            st[0] = BabyBear::new(crate::cap_root::CAP_FACT_MARK);
+            st[1] = row[*left_col];
+            st[2] = row[*right_col];
+            st[4] = BabyBear::new(3);
         }
         _ => unreachable!(),
     }
@@ -443,10 +470,11 @@ fn eval_expr<AB: AirBuilder>(c: &ConstraintExpr, local: &[AB::Var], next: &[AB::
             }
             product
         }
-        // Unreachable: rejected by try_from_dsl.
+        // Unreachable here: hash forms are emitted as Poseidon2 aux blocks, not eval_expr terms.
         ConstraintExpr::Hash { .. }
         | ConstraintExpr::Hash2to1 { .. }
         | ConstraintExpr::Hash4to1 { .. }
+        | ConstraintExpr::Hash3Cap { .. }
         | ConstraintExpr::MerkleHash { .. }
         | ConstraintExpr::Lookup { .. }
         | ConstraintExpr::ChainedHash2to1 { .. }
