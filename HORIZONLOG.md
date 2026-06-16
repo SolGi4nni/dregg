@@ -25,24 +25,45 @@ recompose + binding + tests landed in `circuit/src/cap_root.rs` (`CapMembershipW
 rejection + binding teeth).
 
 NAMED (remaining-steps, the Rust-AIR + prover legs of the original 4):
-  (1) RUST `CapMembership` AIR: add an `Ir2Air::CapMembership` variant to `circuit/src/descriptor_ir2.rs` mirroring
-      the MapOps Merkle-chain fold (lines ~2104-2136 `mix`/`fact_bus`) but with the 7-field leaf absorb on `BUS_P2`
-      and the root-pin/target/mask gates — plus its trace-fill (model on the MapOps fill ~3490-3537 using
-      `cap_root.rs::membership_witness`), bus registration, and the prove/verify entry-point plumbing + a golden
-      descriptor pin. (NOT done — deliberately not half-wired into the batch assembly; the Lean denotation IS the
-      spec the AIR must meet, and `cap_root.rs::recompose_membership` IS the witness-construction it consumes.)
-  (2) PROVER wire: `sdk/src/full_turn_proof.rs:662` — build the `CapMembershipWitness` from the actor's c-list and
-      pass it for cap turns (kill the `&[]`); re-emit the attenuate descriptor; note the new VK pin (VK changes —
-      authorized).
-  (3) MASK-CONVENTION RECONCILE (flag-day): the Lean `confersWriteLeaf` pins `mask_lo == rightsMaskOf(endpoint
-      [read,write])` over the abstract `Auth`-rights mask; the deployed `CapLeaf.mask_lo` is the low-16 of a
-      `cell/facet.rs` `EffectMask` (effect-kind bitmap — DIFFERENT convention). Align so the in-circuit write bit IS
-      the deployed `mask_lo`'s write-conferring bit (or document the leaf carries the rights mask, not the effect
-      mask). `cap_root.rs::confers_write` checks the submask SHAPE either convention shares; the constant alignment
-      is the open item — do NOT fake a Rust constant that pretends they agree.
+LANDED (2026-06-16, the LIVE emission + bridge + Rust appendix — no hand-authored Rust constraints, LAW#1):
+  `metatheory/Dregg2/Circuit/Emit/CapOpenEmit.lean` lays `DeployedCapOpen`'s PROVEN constraints (leafLookup + 16
+  nodeLookups + 16 dir-bool + rootPin/targetBind/writeMask) over a concrete `capOpenCols` appendix (58 cols past
+  the rotated R=24 width 311) into `capOpenAttenuateV3` (width 369), with the bridge `capOpenAttenuateV3_satisfied`
+  (a live `Satisfied2` REBUILDS `DeployedCapOpen.Satisfied`) ⟹ `capOpenAttenuateV3_sound` (MembersAt cap_root leaf
+  ∧ target=src ∧ confersWriteLeaf) ⟹ `capOpenAttenuateV3_authorizes` (kernel `authorizedB`). `#assert_axioms`-clean,
+  full `Dregg2` build green. Rust twin: `attenuateCapOpenVmDescriptor2R24` registry member (byte-identical
+  `emitVmJson2`), `CapOpenWitness`/`fill_cap_open`/`generate_cap_open_attenuate_trace` in `trace_rotated.rs`
+  (genuine absorb-node `hash_many` fills, proven by `cap_open_witness_and_appendix_are_genuine`), V3_STAGED FP
+  bumped to `2d4a594b1deec12c111b1f965786f7c4550cabb4f71c6b50ffe2eb894fc2c5db`; the 311-wide attenuate base proves
+  standalone. writeMaskGate emitted FAITHFULLY (mask_lo==3, the abstract rights mask — NOT faked to the deployed
+  EffectMask, see (3)).
 
-CLOSURE SHAPE: (1)+(2) are mechanical mirrors of the existing MapOps AIR + a witness pass; (3) is an ember-adjacent
-data-model decision (which mask the cap leaf commits). Named: in-circuit cap-membership-open, 2026-06-16.
+NAMED (the ONE thing blocking the end-to-end prove — `cap_open_attenuate_self_verifies` is `#[ignore]`d, not faked):
+  (1) CHIP-ARITY RE-EMIT (Lean, proof-carrying): `DeployedCapOpen` declares chip lookups at arity 7 (leaf) and
+      arity 3 (each node), assuming `CHIP_RATE = 8`. The DEPLOYED IR-v2 chip (`descriptor_ir2.rs` ~1841-1873) is
+      rate-4 and enforces `arity ∈ {0,2,4}` — so arity-7 AND arity-3 absorbs are BOTH unrealizable as a single chip
+      row (and the deployed `cap_root.rs::CapLeaf::digest` 7-field `hash_many` is itself a TWO-permute sponge).
+      Re-emit `capLeafDigest`/`nodeOf`'s chip realization as an explicit fold of arity-2/arity-4 absorbs (sponge
+      state threaded across rows), kept byte-identical to the deployed digest, and RE-PROVE the soundness lemmas
+      (`leafDigest_sound`/`node_sound` upward). LEAN file change (NOT a Rust constraint edit); once it lands the Rust
+      `fill_cap_open` mirrors the new fold and `cap_open_attenuate_self_verifies` un-ignores. (Alternative worth
+      weighing: ride the `BUS_FACT` fact rows for nodes — the deployed cap-tree's real `hash_fact` shape — instead
+      of absorb rows, which also re-binds the open to the DEPLOYED `CanonicalCapTree` root rather than the
+      absorb-node tree the current emission commits.)
+  (2) PROVER wire: `sdk/src/full_turn_proof.rs:662` — once (1) lands, route cap turns through the cap-open
+      descriptor + witness (kill the `&[]`); note the new VK pin (VK changes — authorized).
+  (3) MASK-CONVENTION RECONCILE (flag-day, ember decision): the Lean `confersWriteLeaf`/`writeMaskGate` pin
+      `mask_lo == rightsMaskOf(endpoint[read,write]) = 3` over the abstract `Auth`-rights mask; the deployed
+      `CapLeaf.mask_lo` is the low-16 of a `cell/facet.rs` `EffectMask` (effect-kind bitmap — DIFFERENT convention:
+      EFFECT_TRANSFER=1<<1, EFFECT_GRANT_CAPABILITY=1<<2…). Align so the in-circuit write bit IS the deployed
+      `mask_lo`'s write-conferring bit (or document the leaf carries the rights mask, not the effect mask).
+      `cap_root.rs::confers_write` checks the submask SHAPE either convention shares; the constant alignment is the
+      open item — do NOT fake a Rust constant that pretends they agree. (The membership + target-bind legs the
+      LANDED work lands are convention-INDEPENDENT, so this only gates the write-rights leg.)
+
+CLOSURE SHAPE: (1) is a proof-carrying Lean re-emit (the chip-arity floor the original emission missed); (2) a
+witness pass once (1) lands; (3) an ember-adjacent data-model decision (which mask the cap leaf commits). Named:
+in-circuit cap-membership-open, 2026-06-16.
 
 ## CIRCUIT FUNCTIONAL CORRECTNESS — light-client unfoolability apex NAMED; #103 cap-family residue mapped (2026-06-16)
 

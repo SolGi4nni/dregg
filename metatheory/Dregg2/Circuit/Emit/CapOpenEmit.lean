@@ -28,6 +28,18 @@ gates on the transition builder). This file is pure PLUMBING — a column layout
 the bridge proof. The Rust registry twin (`V3_STAGED_REGISTRY_TSV`) carries the byte-identical wire
 string emitted by `emitVmJson2`.
 
+## The chip-arity seam (NAMED — the end-to-end prove's one blocker, NOT faked)
+
+`leafLookup` is arity 7 and each `nodeLookup` is arity 3, inherited from `DeployedCapOpen`'s
+`CHIP_RATE = 8` assumption. The DEPLOYED IR-v2 chip (`descriptor_ir2.rs`) is rate-4 and enforces
+`arity ∈ {0,2,4}` — so neither absorb is realizable as ONE chip row (and the deployed 7-field
+`cap_root.rs::CapLeaf::digest` `hash_many` is itself a two-permute sponge). The Lean emission + the
+bridge proofs below are sound AS STATED (against any sponge + sound chip table at `CHIP_RATE = 8`);
+the Rust self-verify is consequently `#[ignore]`d (HONESTLY, not faked). The closure is a
+proof-carrying Lean RE-EMIT of `capLeafDigest`/`nodeOf`'s chip realization as an arity-2/arity-4
+absorb fold (HORIZONLOG, in-circuit cap-membership-open §(1)) — a Lean change, never a Rust
+constraint edit. The membership + target-bind legs the bridge produces are otherwise complete.
+
 ## Mask convention (the NAMED fork — NOT faked here)
 
 `writeMaskGate` pins `leaf.mask_lo == rightsMaskOf(endpoint[read,write]) = 3` (the abstract `Auth`
