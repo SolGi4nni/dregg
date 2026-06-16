@@ -682,23 +682,47 @@ fn recompute_block_commit(row: &mut [BabyBear], base: usize) {
     row[base + B_STATE_COMMIT] = hash_many(&[d, row[base + B_IROOT]]);
 }
 
+/// Recompute one v1 state block's STATE_COMMIT intermediates + digest from the block's state
+/// columns, byte-identical to the descriptor's STATE_COMMIT poseidon lookups (arity-4
+/// `hash_many` of `[s0..s3]`, `[s4..s7]`, `[s8..s11]` → three intermediates, then arity-4
+/// `hash_many([i1, i2, i3, 0])` → the STATE_COMMIT). `state_base` is the block's column base
+/// (54 for before, 76 for after); `i1/i2/i3` are the AUX intermediate carriers the lookups bind.
+fn recompute_v1_state_commit(
+    row: &mut [BabyBear],
+    state_base: usize,
+    i1: usize,
+    i2: usize,
+    i3: usize,
+) {
+    use super::columns::state;
+    let s = state_base;
+    row[i1] = hash_many(&[row[s], row[s + 1], row[s + 2], row[s + 3]]);
+    row[i2] = hash_many(&[row[s + 4], row[s + 5], row[s + 6], row[s + 7]]);
+    row[i3] = hash_many(&[row[s + 8], row[s + 9], row[s + 10], row[s + 11]]);
+    row[s + state::STATE_COMMIT] =
+        hash_many(&[row[i1], row[i2], row[i3], BabyBear::ZERO]);
+}
+
 /// Make a generated rotated AttenuateCapability trace satisfy the `attenuateV3` base
-/// constraints' phase-B bindings that the bare `generate_rotated_effect_vm_trace` output does
-/// not yet carry. THE TWO WITNESS WIRINGS (column fills only — ZERO constraint semantics):
+/// constraints' phase-B bindings the bare `generate_rotated_effect_vm_trace` output does not
+/// carry. THE WITNESS WIRINGS (column FILLS only — ZERO hand-authored constraint semantics):
 ///
-///   * **nonce PASSTHROUGH** — the attenuate descriptor pins `after.nonce == before.nonce`
-///     (cols 78 == 56) AND the rotated after-block nonce weld (`r1`, col `AFTER_BASE+2`) to it.
-///     `generate_effect_vm_trace` ticks the nonce on every effect row; attenuate's audited
-///     shape is a passthrough (the cap-root advance, not the nonce, is the state move), so we
-///     copy the before-nonce into the v1 after-nonce + the rotated after-block r1 weld, then
-///     RECOMPUTE the after-block commit chain so its `state_commit` (and PI[35]) stay genuine.
-///   * **cap-root advance binding** — the descriptor pins `after.cap_root == param2` (cols
-///     87 == 70). The generator leaves param2 at 0; we wire it to the row's own advanced
-///     after-cap-root (col 87), the value the legacy 2-of-2 fold produced.
+///   * **nonce PASSTHROUGH (frozen)** — the attenuate descriptor pins `after.nonce ==
+///     before.nonce` (an UNCONDITIONAL gate) AND the cross-row continuity transition
+///     `next.before == local.after`. `generate_effect_vm_trace` TICKS the nonce on every effect
+///     row (so each row's after-nonce, and the next row's before-nonce, climbs); attenuate's
+///     audited shape is a nonce PASSTHROUGH (the cap-root advance is the state move). So we
+///     FREEZE the nonce to row 0's before-nonce across BOTH state blocks on EVERY row — making
+///     `after.nonce == before.nonce` hold and the per-row blocks identical so continuity holds.
+///   * **cap-root advance binding** — the descriptor pins `after.cap_root == param2`; the
+///     generator leaves param2 at 0, so we wire it to the row's own advanced after-cap-root.
 ///
-/// Returns the corrected 38-PI vector (PI[35] re-read from the recomputed after-block
-/// state_commit). The 311-wide trace is patched in place; widen it to the cap-open shape with
-/// [`widen_to_cap_open`].
+/// After freezing the nonce we REBUILD every dependent commitment so the whole trace stays
+/// internally genuine: the v1 BEFORE + AFTER STATE_COMMIT chains (the descriptor's poseidon
+/// lookups), the before-state-commit cross-row continuity carrier, and the rotated BEFORE +
+/// AFTER blocks' welded nonce limb + chained `wireCommitR` state_commit. Then the four rotated
+/// PI carriers are re-read from the rebuilt trace. Returns the corrected 38-PI vector. Widen
+/// the patched 311-wide trace to the cap-open shape with [`widen_to_cap_open`].
 pub fn patch_attenuate_base_for_cap_open(
     trace: &mut [Vec<BabyBear>],
     pis: &[BabyBear],
@@ -719,41 +743,58 @@ pub fn patch_attenuate_base_for_cap_open(
             pis.len()
         ));
     }
-    let before_nonce_col = STATE_BEFORE_BASE + state::NONCE; // 56
-    let after_nonce_col = STATE_AFTER_BASE + state::NONCE; // 78
-    let after_cap_root_col = STATE_AFTER_BASE + state::CAP_ROOT; // 87
-    let param2_col = super::columns::PARAM_BASE + 2; // 70
-    // The v1 after-state column base + the AUX state-commit intermediate carriers the v1
-    // STATE_COMMIT poseidon lookups bind (cols 98/99/100 → 88): col 98 = hash_many(after[0..4]),
-    // col 99 = hash_many(after[4..8]), col 100 = hash_many(after[8..12]), col 88 =
-    // hash_many([98,99,100]). Patching the nonce changes after[2], so these must recompute.
+    let sb = STATE_BEFORE_BASE; // 54
     let sa = STATE_AFTER_BASE; // 76
-    let inter1 = super::columns::AUX_BASE + 8; // 98
-    let inter2 = super::columns::AUX_BASE + 9; // 99
-    let inter3 = super::columns::AUX_BASE + 10; // 100
-    let commit_col = sa + state::STATE_COMMIT; // 88
+    let before_nonce_col = sb + state::NONCE; // 56
+    let after_nonce_col = sa + state::NONCE; // 78
+    let after_cap_root_col = sa + state::CAP_ROOT; // 87
+    let param2_col = super::columns::PARAM_BASE + 2; // 70
+    // The AUX STATE_COMMIT intermediate carriers the v1 lookups bind. The generator wrote the
+    // AFTER-block intermediates at AUX_BASE+8..10 (`aux_off::STATE_INTER1..3`); the descriptor's
+    // BEFORE-block STATE_COMMIT (col `sb + STATE_COMMIT`) carries no in-descriptor lookup (it is
+    // only consumed by the cross-row continuity), so we recompute it consistently from the
+    // (frozen) before-state and reuse the same arity-4 chain shape via scratch intermediates
+    // that we DO NOT need to land on bound columns — but to stay byte-identical we land the
+    // after-block intermediates on their bound carriers.
+    let a_i1 = super::columns::AUX_BASE + 8; // 98
+    let a_i2 = super::columns::AUX_BASE + 9; // 99
+    let a_i3 = super::columns::AUX_BASE + 10; // 100
+
+    // The frozen nonce: row 0's before-nonce (the turn's pre-state nonce — attenuate does not
+    // tick it).
+    let frozen_nonce = trace[0][before_nonce_col];
+
     for row in trace.iter_mut() {
-        // (1) nonce passthrough — v1 after-nonce + rotated after-block r1 weld.
-        let bn = row[before_nonce_col];
-        row[after_nonce_col] = bn;
-        row[AFTER_BASE + 2] = bn; // the rotated after-block r1 (nonce) weld.
+        // (1) FREEZE the nonce in BOTH v1 state blocks + the rotated block r1 welds.
+        row[before_nonce_col] = frozen_nonce;
+        row[after_nonce_col] = frozen_nonce;
+        row[BEFORE_BASE + 2] = frozen_nonce; // rotated before-block r1 (nonce) weld
+        row[AFTER_BASE + 2] = frozen_nonce; // rotated after-block r1 (nonce) weld
         // (2) cap-root advance binding: param2 := after.cap_root.
         row[param2_col] = row[after_cap_root_col];
-        // (3) recompute the v1 after STATE_COMMIT intermediates over the patched nonce.
-        row[inter1] = hash_many(&[row[sa], row[sa + 1], row[sa + 2], row[sa + 3]]);
-        row[inter2] = hash_many(&[row[sa + 4], row[sa + 5], row[sa + 6], row[sa + 7]]);
-        row[inter3] = hash_many(&[row[sa + 8], row[sa + 9], row[sa + 10], row[sa + 11]]);
-        // #62's tuple is arity-4 with the fourth input an explicit const 0, so the digest is
-        // hash_many over FOUR inputs `[i1, i2, i3, 0]` (state[4] = 4, not 3).
-        row[commit_col] =
-            hash_many(&[row[inter1], row[inter2], row[inter3], BabyBear::ZERO]);
-        // (4) recompute the rotated after-block commit chain over the patched limbs.
+        // (3) rebuild the v1 AFTER STATE_COMMIT chain (the descriptor's bound poseidon lookups).
+        recompute_v1_state_commit(row, sa, a_i1, a_i2, a_i3);
+        // (4) rebuild the v1 BEFORE STATE_COMMIT (consumed by cross-row continuity). We compute
+        //     it with the SAME arity-4 chain into scratch and land only the digest column; the
+        //     before-block intermediates are not bound to any in-descriptor lookup.
+        let bi1 = hash_many(&[row[sb], row[sb + 1], row[sb + 2], row[sb + 3]]);
+        let bi2 = hash_many(&[row[sb + 4], row[sb + 5], row[sb + 6], row[sb + 7]]);
+        let bi3 = hash_many(&[row[sb + 8], row[sb + 9], row[sb + 10], row[sb + 11]]);
+        row[sb + state::STATE_COMMIT] = hash_many(&[bi1, bi2, bi3, BabyBear::ZERO]);
+        // (5) rebuild both rotated blocks' chained `wireCommitR` digests over the frozen limbs.
+        recompute_block_commit(row, BEFORE_BASE);
         recompute_block_commit(row, AFTER_BASE);
     }
-    // The corrected PIs: PI[35] re-reads the recomputed last-row after state_commit.
+
+    // The four rotated PI carriers, re-read from the rebuilt trace (same columns the descriptor's
+    // pin constraints bind: 218 / 261 / 259 / 310).
+    let r0 = &trace[0];
     let last = &trace[trace.len() - 1];
     let mut dpis: Vec<BabyBear> = pis[..ROT_PI_COUNT].to_vec();
-    dpis[35] = last[AFTER_BASE + B_STATE_COMMIT];
+    dpis[34] = r0[BEFORE_BASE + B_STATE_COMMIT]; // rotated OLD commit
+    dpis[35] = last[AFTER_BASE + B_STATE_COMMIT]; // rotated NEW commit
+    dpis[36] = last[AFTER_BASE + B_COMMITTED_HEIGHT]; // committed height (unchanged)
+    dpis[37] = last[CAVEAT_BASE + C_SPAN - 1]; // caveat commit (unchanged)
     Ok(dpis)
 }
 
