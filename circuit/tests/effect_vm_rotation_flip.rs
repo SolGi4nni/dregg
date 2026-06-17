@@ -1383,3 +1383,159 @@ fn rotated_audit_record_pin_forces_record_digest_and_rejects_frozen_forgery() {
         );
     }
 }
+
+/// THE KERNEL-SET DEPLOYMENT-SOUNDNESS GAP, demonstrated as a LIVE-DESCRIPTOR ADMISSIBILITY witness
+/// (the prompt's HONESTY bar — report the gap precisely, do NOT fake a binding).
+///
+/// ## What this proves (and what it deliberately does NOT)
+///
+/// The kernel-set effects (`createCell` / `createCellFromFactory` / `spawn` insert into the
+/// `accounts` cell-table set; `noteCreate` inserts into the `commitments` set; `noteSpend` inserts
+/// into the `nullifiers` set) mutate KERNEL-LEVEL sets, not per-cell state. The deployed rotated
+/// commitment (`wireCommitR` over the 31 pre-iroot limbs) DOES absorb a turn-level `cells_root`
+/// (`pre_limbs[0]`) and a `nullifier_root` (`pre_limbs[26]`) — but those limbs are TURN-INVARIANT
+/// WITNESS limbs: `fill_block` (`trace_rotated.rs`) copies them verbatim and OVERRIDES only the
+/// welded per-cell registers (r0..r10, cap_root) from the v1 state block. NO per-effect gate forces
+/// `after.cells_root = insert(newCell, before.cells_root)` or `after.nullifier_root =
+/// grow(before.nullifier_root)`. And there is NO `accounts_root` limb and NO `commitments_root` limb
+/// in the deployed shape AT ALL.
+///
+/// This test makes that gap CONCRETE: it proves a real `noteCreate` rotated turn through the LIVE
+/// `noteCreateVmDescriptor2R24` descriptor where the kernel-set witness is FROZEN — the before and
+/// after blocks carry IDENTICAL `cells_root` / `nullifier_root` limbs (no growth), exactly as the
+/// live full-turn path mints them (`produce` reads ONE ledger for both blocks). The live descriptor
+/// VERIFIES it. Then it shows the descriptor STILL verifies after the `cells_root` / `nullifier_root`
+/// limbs are tampered in LOCKSTEP across both blocks (a value the kernel never grew): because no gate
+/// reads these limbs, only `wireCommitR` absorbs them, a self-consistent re-fill proves and verifies.
+///
+/// The honest reading: the deployed EffectVM apex binds these set-roots into the commitment but does
+/// NOT FORCE the set-insert. The Lean `RotatedKernelRefinementBirth` (`accountsRoot` / `gAccountsGrow`)
+/// and `RotatedKernelRefinementNotes` (`nullifiersRoot` / `commitmentsRoot` / `gNoteGrow`) rungs prove
+/// soundness against a MODELED committed set-root limb + gate that the DEPLOYED circuit does not yet
+/// carry (their own headers say "The Rust realization: `compute_commitment` absorbs an `accounts_root`
+/// limb" — future tense; grep confirms no such limb exists). Closing the gap deployment-real requires
+/// the flag-day NEW-limb addition (extend NUM_PRE_LIMBS 31→, re-balance `wireCommitR`, add a NOVEL
+/// turn-level grow-gate kind the per-cell per-row descriptor cannot currently express, re-emit ALL
+/// descriptor goldens, and rotate the VK). This test STANDS as the precise, undeniable record of the
+/// residual until that flag-day lands.
+#[test]
+fn kernel_set_insert_is_not_forced_by_the_live_descriptor() {
+    // The note-create cohort member's rotated descriptor (the `commitments`-set growth effect).
+    let cm = BabyBear::new(0xC0FFEE);
+    let create = Effect::NoteCreate {
+        commitment: cm,
+        value: 250,
+    };
+    let name =
+        rotated_descriptor_name_for_effect(&create).expect("NoteCreate is a rotated cohort member");
+    assert_eq!(name, "noteCreateVmDescriptor2R24");
+    let desc = parse_vm_descriptor2(rotated_descriptor_json(name))
+        .expect("rotated note-create descriptor parses");
+    assert_eq!(desc.trace_width, ROT_WIDTH, "rotated width 311");
+
+    // A real note-create turn (EffectVM credits balance by `value`, the shielding convention).
+    let before_balance: i64 = 60_000;
+    let value: u64 = 250;
+    let st = CellState::new(before_balance as u64, 0);
+    let effects = vec![create];
+
+    // -- THE FROZEN-SET WITNESS: exactly how the live full-turn path mints it. `produce` reads ONE
+    //    ledger for BOTH the before and after blocks (sdk/src/full_turn_proof.rs:2650-2651,
+    //    3572-3573), so `cells_root` (pre_limbs[0]) and `nullifier_root` (pre_limbs[26]) are
+    //    IDENTICAL before vs after — the kernel-set insert leaves NO delta on any limb. There is no
+    //    `commitments_root` limb for the note-commitment insert to touch at all. --
+    let mut ledger = Ledger::new();
+    let before_cell = producer_cell(before_balance, 0);
+    let after_cell = producer_cell(before_balance + value as i64, 1);
+    ledger.insert_cell(after_cell.clone()).unwrap();
+    let nullifier_root = [0u8; 32];
+    let receipt_log: Vec<[u8; 32]> = vec![[11u8; 32]];
+
+    let before_w = rw::produce(&before_cell, &ledger, &nullifier_root, &receipt_log);
+    let after_w = rw::produce(&after_cell, &ledger, &nullifier_root, &receipt_log);
+
+    // The set-limbs are turn-invariant: before-block and after-block carry the SAME value (no
+    // representable delta). This is the structural shape of the gap.
+    assert_eq!(
+        before_w.pre_limbs[0], after_w.pre_limbs[0],
+        "cells_root is turn-invariant — the live producer carries NO accounts/cell-set delta"
+    );
+    assert_eq!(
+        before_w.pre_limbs[26], after_w.pre_limbs[26],
+        "nullifier_root is turn-invariant — the live producer carries NO note-set delta"
+    );
+
+    let caveat = empty_caveat_manifest();
+    let (trace, dpis) = generate_rotated_effect_vm_trace(
+        &st,
+        &effects,
+        &bridge(&before_w),
+        &bridge(&after_w),
+        &caveat,
+    )
+    .expect("live rotated generator must produce a note-create trace");
+    assert_eq!(trace[0].len(), ROT_WIDTH, "311-col rotated trace");
+
+    let mem_boundary = MemBoundaryWitness::default();
+    let map_heaps: Vec<Vec<dregg_circuit::heap_root::HeapLeaf>> = vec![];
+
+    // -- (1) THE GAP: the live deployed descriptor PROVES + VERIFIES a note-create turn whose
+    //    committed kernel-set witness was NOT grown (frozen `cells_root` / `nullifier_root`, no
+    //    `commitments_root` limb). A circuit that FORCED the set-insert would have rejected this. --
+    let proof = prove_vm_descriptor2(&desc, &trace, &dpis, &mem_boundary, &map_heaps)
+        .expect("note-create proves on a FROZEN kernel-set witness — the gap");
+    verify_vm_descriptor2(&desc, &proof, &dpis)
+        .expect("note-create VERIFIES on a FROZEN kernel-set witness — the live descriptor does \
+                 NOT force the set-insert");
+
+    // -- (2) THE LIMBS ARE UNGATED: lockstep-tamper `cells_root` (limb 0) and `nullifier_root`
+    //    (limb 26) to values the kernel never produced, re-fill the dependent `wireCommitR` chain +
+    //    STATE_COMMIT consistently, and re-derive the appended commit PIs. If ANY per-effect gate
+    //    read these limbs, the re-filled trace would be UNSAT. It is NOT — they enter only the
+    //    commitment, which we recompute, so the tampered turn proves + verifies. This is the
+    //    definitive both-polarity witness that the set-roots are commitment-absorbed but UNFORCED. --
+    {
+        let bump = BabyBear::new(0x9999);
+        // Rebuild the two block witnesses with the set-limbs tampered, then RE-RUN the live generator
+        // so the `wireCommitR` chain + STATE_COMMIT carriers are internally consistent on the forged
+        // limbs (the generator recomputes them in `fill_block`).
+        let mut tampered_before = before_w.pre_limbs.clone();
+        let mut tampered_after = after_w.pre_limbs.clone();
+        for limbs in [&mut tampered_before, &mut tampered_after] {
+            limbs[0] = limbs[0] + bump; // cells_root — a cell-set the kernel never had
+            limbs[26] = limbs[26] + bump; // nullifier_root — a nullifier-set the kernel never had
+        }
+        let bw = RotatedBlockWitness::new(tampered_before, before_w.iroot).unwrap();
+        let aw = RotatedBlockWitness::new(tampered_after, after_w.iroot).unwrap();
+        let (t2, p2) = generate_rotated_effect_vm_trace(&st, &effects, &bw, &aw, &caveat)
+            .expect("the generator re-fills the chain on the forged set-limbs");
+        // Sanity: the forged limbs really do ride the trace (they are not silently dropped).
+        assert_eq!(
+            t2[0][BEFORE_BASE + 0], before_w.pre_limbs[0] + bump,
+            "the forged cells_root rides the before block"
+        );
+        assert_eq!(
+            t2[0][BEFORE_BASE + 26], before_w.pre_limbs[26] + bump,
+            "the forged nullifier_root rides the before block"
+        );
+        let proof2 = prove_vm_descriptor2(&desc, &t2, &p2, &mem_boundary, &map_heaps).expect(
+            "a turn with FORGED kernel-set roots (a cell/nullifier set the kernel never produced) \
+             still PROVES — the set-roots are absorbed but UNGATED",
+        );
+        verify_vm_descriptor2(&desc, &proof2, &p2).expect(
+            "and VERIFIES — DEFINITIVE: the live deployed descriptor binds the set-roots into the \
+             commitment but does NOT force the kernel-set insert (the Birth/Notes accountsRoot / \
+             commitmentsRoot gate is MODELED in Lean, not yet deployed in Rust)",
+        );
+    }
+
+    eprintln!(
+        "KERNEL-SET GAP (R=24, LIVE noteCreate): the deployed descriptor PROVES + VERIFIES a turn \
+         on a FROZEN kernel-set witness AND on FORGED set-roots — the cells_root / nullifier_root \
+         limbs are commitment-ABSORBED but UNGATED, and there is no commitments_root limb at all. \
+         The set-insert is NOT FORCED in the deployed EffectVM apex. The Lean Birth/Notes rungs \
+         prove soundness against a MODELED set-root limb + gate (accountsRoot / gAccountsGrow / \
+         nullifiersRoot / commitmentsRoot / gNoteGrow); closing the gap deployment-real is the \
+         flag-day NEW-limb + turn-level-grow-gate addition (NAMED residual)."
+    );
+}

@@ -2686,6 +2686,7 @@ mod tests {
     }
 
     /// Smoke test: prove and verify a self-sovereign turn (Effect VM only).
+    #[cfg(feature = "prover")]
     #[test]
     fn prove_verify_self_sovereign_turn() {
         let initial = CellState::new(1000, 0);
@@ -2695,7 +2696,14 @@ mod tests {
         }];
         let turn_hash = [0xABu8; 32];
 
-        let proof = prove_turn_self_sovereign(&initial, &effects, turn_hash)
+        // The retired v1 fallback means every finalized turn threads a rotation witness; the
+        // rotated leg's OLD/NEW_COMMIT match the monolithic reference by construction.
+        let (_mono_trace, mono_pi) = generate_effect_vm_trace(&initial, &effects);
+        let old_commit = mono_pi[effect_vm::pi::OLD_COMMIT];
+        let new_commit = mono_pi[effect_vm::pi::NEW_COMMIT];
+
+        let rot = rotation_for_initial(&initial, &effects);
+        let proof = prove_turn_self_sovereign_rotated(&initial, &effects, turn_hash, Some(rot))
             .expect("proof generation should succeed");
 
         assert!(proof.components.has_state_transition);
@@ -2703,15 +2711,6 @@ mod tests {
         assert!(!proof.components.has_membership);
         assert!(!proof.components.has_conservation);
         assert!(!proof.components.has_non_revocation);
-
-        // Verify with correct commitments.
-        let old_commit = initial.state_commitment;
-        // Compute expected new commitment.
-        let mut expected_final = initial.clone();
-        expected_final.balance = 900;
-        expected_final.nonce = 1;
-        expected_final.refresh_commitment();
-        let new_commit = expected_final.state_commitment;
 
         let result = verify_full_turn(&proof, old_commit, new_commit);
         assert!(
@@ -2722,6 +2721,7 @@ mod tests {
     }
 
     /// Verify that wrong commitments cause rejection.
+    #[cfg(feature = "prover")]
     #[test]
     fn verify_rejects_wrong_commitment() {
         let initial = CellState::new(500, 5);
@@ -2731,10 +2731,13 @@ mod tests {
         }];
         let turn_hash = [0xCDu8; 32];
 
-        let proof = prove_turn_self_sovereign(&initial, &effects, turn_hash)
+        let (_mt, mono_pi) = generate_effect_vm_trace(&initial, &effects);
+        let old_commit = mono_pi[effect_vm::pi::OLD_COMMIT];
+
+        let rot = rotation_for_initial(&initial, &effects);
+        let proof = prove_turn_self_sovereign_rotated(&initial, &effects, turn_hash, Some(rot))
             .expect("proof generation should succeed");
 
-        let old_commit = initial.state_commitment;
         let wrong_new_commit = BabyBear::new(99999);
 
         let result = verify_full_turn(&proof, old_commit, wrong_new_commit);
@@ -2750,6 +2753,7 @@ mod tests {
     /// This test demonstrates that the Rust verifier code correctly catches
     /// cross-proof PI mismatches. In a future version, this binding will also
     /// be enforced IN-CIRCUIT via a CompositionBindingAir.
+    #[cfg(feature = "prover")]
     #[test]
     fn verify_rejects_cross_proof_splicing() {
         // Create two different cells.
@@ -2762,15 +2766,19 @@ mod tests {
             direction: 1,
         }];
         let turn_hash = [0xEEu8; 32];
-        let proof_a = prove_turn_self_sovereign(&cell_a, &effects_a, turn_hash)
-            .expect("proof_a should succeed");
+        let rot = rotation_for_initial(&cell_a, &effects_a);
+        let proof_a =
+            prove_turn_self_sovereign_rotated(&cell_a, &effects_a, turn_hash, Some(rot))
+                .expect("proof_a should succeed");
 
-        // The proof for cell_a has old_commit = cell_a.state_commitment.
-        // If we verify with cell_b's commitment, it should fail.
+        // The proof for cell_a's old_commit is cell_a's EffectVM OLD_COMMIT. cell_b's commitment
+        // differs, so verifying with it must fail on old_commitment.
+        let (_mt_b, mono_pi_b) = generate_effect_vm_trace(&cell_b, &effects_a);
+        let cell_b_commit = mono_pi_b[effect_vm::pi::OLD_COMMIT];
         let result = verify_full_turn(
             &proof_a,
-            cell_b.state_commitment, // WRONG: this is cell_b, not cell_a
-            BabyBear::new(12345),    // doesn't matter, should fail on old_commit
+            cell_b_commit,        // WRONG: this is cell_b, not cell_a
+            BabyBear::new(12345), // doesn't matter, should fail on old_commit
         );
         assert!(
             result.is_err(),
@@ -2802,6 +2810,7 @@ mod tests {
     /// equality check, leaving ONLY the in-circuit boundary binding to catch
     /// it. The audited p3 verifier rejects because the proof's bound trace
     /// commitment is the honest one, not the forged PI.
+    #[cfg(feature = "prover")]
     #[test]
     fn verify_rejects_forged_post_state_on_audited_p3() {
         use dregg_circuit::effect_vm::pi as vmpi;
@@ -2813,25 +2822,23 @@ mod tests {
         }];
         let turn_hash = [0x5Au8; 32];
 
-        let mut proof = prove_turn_self_sovereign(&initial, &effects, turn_hash)
-            .expect("honest proof should generate");
-
-        // Honest commitments (what the proof legitimately attests).
-        let old_commit = initial.state_commitment;
-        let mut expected_final = initial.clone();
-        expected_final.balance = 900;
-        expected_final.nonce = 1;
-        expected_final.refresh_commitment();
-        let honest_new_commit = expected_final.state_commitment;
+        let (_mt, mono_pi) = generate_effect_vm_trace(&initial, &effects);
+        let old_commit = mono_pi[effect_vm::pi::OLD_COMMIT];
+        let honest_new_commit = mono_pi[effect_vm::pi::NEW_COMMIT];
         let forged_new_commit = honest_new_commit + BabyBear::new(1);
 
-        // Tamper the published EffectVM post-state commitment in the wire proof.
+        let rot = rotation_for_initial(&initial, &effects);
+        let mut proof =
+            prove_turn_self_sovereign_rotated(&initial, &effects, turn_hash, Some(rot))
+                .expect("honest proof should generate");
+
+        // Tamper the published EffectVM post-state commitment in the wire proof (the rotated leg).
         let eff = proof
             .composed
             .sub_proofs
             .iter_mut()
-            .find(|sp| sp.label == "effect-vm")
-            .expect("effect-vm sub-proof present");
+            .find(|sp| sp.label == "effect-vm-rotated")
+            .expect("effect-vm-rotated sub-proof present");
         eff.sub_public_inputs[vmpi::NEW_COMMIT] = forged_new_commit;
 
         // Verify against the FORGED commitment (so the surface-level PI equality
@@ -2849,6 +2856,7 @@ mod tests {
     /// proofs proves and verifies — ALL three legs now route through the AUDITED
     /// p3 verifier (`p3-batch-stark`). This exercises the migrated membership and
     /// non-revocation legs through `prove_full_turn`/`verify_full_turn`.
+    #[cfg(feature = "prover")]
     #[test]
     fn full_turn_with_membership_and_non_revocation_through_audited_p3() {
         use dregg_circuit::dsl::membership::create_test_witness as merkle_test_witness;
@@ -2888,7 +2896,7 @@ mod tests {
             }),
             cap_membership: None,
             turn_hash: [0x77u8; 32],
-            rotation: None,
+            rotation: Some(rotation_for_initial(&initial, &effects)),
         };
 
         let proof = prove_full_turn(&witness).expect("full turn proof should generate");
@@ -2896,12 +2904,9 @@ mod tests {
         assert!(proof.components.has_membership);
         assert!(proof.components.has_non_revocation);
 
-        let old_commit = initial.state_commitment;
-        let mut expected_final = initial.clone();
-        expected_final.balance = 900;
-        expected_final.nonce = 1;
-        expected_final.refresh_commitment();
-        let new_commit = expected_final.state_commitment;
+        let (_mt, mono_pi) = generate_effect_vm_trace(&initial, &effects);
+        let old_commit = mono_pi[effect_vm::pi::OLD_COMMIT];
+        let new_commit = mono_pi[effect_vm::pi::NEW_COMMIT];
 
         verify_full_turn(&proof, old_commit, new_commit).expect(
             "full turn with membership + non-revocation must verify on the audited p3 path",
@@ -2911,6 +2916,7 @@ mod tests {
     /// FRESHNESS / no-double-spend — binding (a), HONEST: a full turn whose
     /// non-revocation proof proves freshness against the CANONICAL accumulator
     /// root verifies through `verify_full_turn_bound(Some(canonical_root))`.
+    #[cfg(feature = "prover")]
     #[test]
     fn freshness_bound_turn_with_canonical_root_verifies() {
         use dregg_circuit::dsl::revocation::DslRevocationTree;
@@ -2932,7 +2938,7 @@ mod tests {
 
         let witness = FullTurnWitness {
             initial_cell_state: initial.clone(),
-            effects,
+            effects: effects.clone(),
             authorization: None,
             membership: None,
             conservation: None,
@@ -2942,16 +2948,13 @@ mod tests {
             }),
             cap_membership: None,
             turn_hash: [0x91u8; 32],
-            rotation: None,
+            rotation: Some(rotation_for_initial(&initial, &effects)),
         };
         let proof = prove_full_turn(&witness).expect("honest fresh-spend proof should generate");
 
-        let old_commit = initial.state_commitment;
-        let mut expected_final = initial.clone();
-        expected_final.balance = 900;
-        expected_final.nonce = 1;
-        expected_final.refresh_commitment();
-        let new_commit = expected_final.state_commitment;
+        let (_mt, mono_pi) = generate_effect_vm_trace(&initial, &effects);
+        let old_commit = mono_pi[effect_vm::pi::OLD_COMMIT];
+        let new_commit = mono_pi[effect_vm::pi::NEW_COMMIT];
 
         verify_full_turn_bound(&proof, old_commit, new_commit, Some(canonical_root), None).expect(
             "honest fresh spend (freshness proven against THE canonical accumulator root) must verify",
@@ -2967,6 +2970,7 @@ mod tests {
     /// proof of freshness against the canonical nullifier set. The
     /// `RevocationRootMismatch` tooth is the ONLY thing standing between the
     /// prover's hand-picked accumulator and acceptance — and it MUST reject.
+    #[cfg(feature = "prover")]
     #[test]
     fn freshness_bound_turn_rejects_prover_chosen_root() {
         use dregg_circuit::dsl::revocation::DslRevocationTree;
@@ -3005,7 +3009,7 @@ mod tests {
 
         let witness = FullTurnWitness {
             initial_cell_state: initial.clone(),
-            effects,
+            effects: effects.clone(),
             authorization: None,
             membership: None,
             conservation: None,
@@ -3015,17 +3019,14 @@ mod tests {
             }),
             cap_membership: None,
             turn_hash: [0x92u8; 32],
-            rotation: None,
+            rotation: Some(rotation_for_initial(&initial, &effects)),
         };
         let proof = prove_full_turn(&witness)
             .expect("proof generates (the forgery is a verify-time property)");
 
-        let old_commit = initial.state_commitment;
-        let mut expected_final = initial.clone();
-        expected_final.balance = 900;
-        expected_final.nonce = 1;
-        expected_final.refresh_commitment();
-        let new_commit = expected_final.state_commitment;
+        let (_mt, mono_pi) = generate_effect_vm_trace(&initial, &effects);
+        let old_commit = mono_pi[effect_vm::pi::OLD_COMMIT];
+        let new_commit = mono_pi[effect_vm::pi::NEW_COMMIT];
 
         // With the canonical root pinned, the prover-chosen root is rejected.
         let result =
@@ -3100,6 +3101,7 @@ mod tests {
     /// non-revocation proof of freshness for EXACTLY that nullifier verifies
     /// through `verify_full_turn` — the new step-8 nullifier tooth accepts when
     /// the proven-fresh item IS this turn's nullifier.
+    #[cfg(feature = "prover")]
     #[test]
     fn freshness_binding_b_honest_spend_verifies() {
         use dregg_circuit::dsl::revocation::DslRevocationTree;
@@ -3134,24 +3136,35 @@ mod tests {
             }),
             cap_membership: None,
             turn_hash: [0xB1u8; 32],
-            rotation: None,
+            rotation: Some(rotation_for_initial(&initial, &effects)),
         };
         let proof = prove_full_turn(&witness).expect("honest fresh-spend proof should generate");
 
-        // Sanity: the EffectVM PI carries the nullifier (so step 8 actually fires).
+        // Sanity: the rotated EffectVM leg surfaces the nullifier (so step 8 actually fires).
+        // The rotated note-spend leg publishes a 39-PI vector with the nullifier appended at
+        // `ROT_NULLIFIER_PI` — the SAME index the verifier's step-8 tooth reads.
+        use dregg_circuit::effect_vm::trace_rotated::{ROT_NULLIFIER_PI, ROT_NULLIFIER_PI_COUNT};
         let eff = proof
             .composed
             .sub_proofs
             .iter()
-            .find(|sp| sp.label == "effect-vm")
+            .find(|sp| sp.label == "effect-vm-rotated")
             .unwrap();
         assert_eq!(
-            eff.sub_public_inputs[vmpi::NOTESPEND_NULLIFIER],
-            nullifier,
-            "precondition: the spend turn surfaces its nullifier into PI[NOTESPEND_NULLIFIER]",
+            eff.sub_public_inputs.len(),
+            ROT_NULLIFIER_PI_COUNT,
+            "precondition: a note-spend rotated leg publishes the {ROT_NULLIFIER_PI_COUNT}-PI \
+             (nullifier-bearing) vector",
         );
+        assert_eq!(
+            eff.sub_public_inputs[ROT_NULLIFIER_PI],
+            nullifier,
+            "precondition: the spend turn surfaces its nullifier into PI[ROT_NULLIFIER_PI]",
+        );
+        let _ = vmpi::NOTESPEND_NULLIFIER;
 
-        let old_commit = initial.state_commitment;
+        let (_mt, mono_pi) = generate_effect_vm_trace(&initial, &effects);
+        let old_commit = mono_pi[effect_vm::pi::OLD_COMMIT];
         let new_commit = eff.sub_public_inputs[vmpi::NEW_COMMIT];
 
         verify_full_turn(&proof, old_commit, new_commit).expect(
@@ -3170,6 +3183,7 @@ mod tests {
     /// the genuinely-proven item — step 8's `pi[1] != PI[NOTESPEND_NULLIFIER]`
     /// comparison is the ONLY thing between the mismatched freshness and
     /// acceptance, and it MUST reject.
+    #[cfg(feature = "prover")]
     #[test]
     fn freshness_binding_b_rejects_wrong_item() {
         use dregg_circuit::dsl::revocation::DslRevocationTree;
@@ -3206,7 +3220,7 @@ mod tests {
             }),
             cap_membership: None,
             turn_hash: [0xB2u8; 32],
-            rotation: None,
+            rotation: Some(rotation_for_initial(&initial, &effects)),
         };
         let proof = prove_full_turn(&witness)
             .expect("proof generates (the mismatch is a verify-time property)");
@@ -3215,9 +3229,10 @@ mod tests {
             .composed
             .sub_proofs
             .iter()
-            .find(|sp| sp.label == "effect-vm")
+            .find(|sp| sp.label == "effect-vm-rotated")
             .unwrap();
-        let old_commit = initial.state_commitment;
+        let (_mt, mono_pi) = generate_effect_vm_trace(&initial, &effects);
+        let old_commit = mono_pi[effect_vm::pi::OLD_COMMIT];
         let new_commit = eff.sub_public_inputs[vmpi::NEW_COMMIT];
 
         let result = verify_full_turn(&proof, old_commit, new_commit);
@@ -3244,6 +3259,7 @@ mod tests {
     /// `Allow(effects_commit)` for the turn's actual effects (built via
     /// `derivation_authorizing_effects`) verifies through `verify_full_turn`,
     /// including the new authorization↔effect binding tooth.
+    #[cfg(feature = "prover")]
     #[test]
     fn auth_bound_turn_with_matching_effect_verifies() {
         let initial = CellState::new(1000, 0);
@@ -3251,23 +3267,31 @@ mod tests {
             amount: 100,
             direction: 1,
         }];
-        let old_commit = initial.state_commitment;
+        let (_mt, mono_pi) = generate_effect_vm_trace(&initial, &effects);
+        let old_commit = mono_pi[effect_vm::pi::OLD_COMMIT];
+        let new_commit = mono_pi[effect_vm::pi::NEW_COMMIT];
 
         // The actor's capability evidence lives at the cell's fact-tree root
         // (== old_commitment, so the cell-binding tooth also holds).
         let capability_fact_hash = BabyBear::new(0xCA9A);
         let derivation = derivation_authorizing_effects(&effects, capability_fact_hash, old_commit);
 
-        let proof = prove_turn_with_auth(&initial, &effects, &derivation, [0x11u8; 32])
-            .expect("auth-bound proof should generate");
+        let witness = FullTurnWitness {
+            initial_cell_state: initial.clone(),
+            effects: effects.clone(),
+            authorization: Some(AuthorizationWitness {
+                derivation: derivation.clone(),
+            }),
+            membership: None,
+            conservation: None,
+            non_revocation: None,
+            cap_membership: None,
+            turn_hash: [0x11u8; 32],
+            rotation: Some(rotation_for_initial(&initial, &effects)),
+        };
+        let proof = prove_full_turn(&witness).expect("auth-bound proof should generate");
         assert!(proof.components.has_authorization);
         assert!(proof.components.has_state_transition);
-
-        let mut expected_final = initial.clone();
-        expected_final.balance = 900;
-        expected_final.nonce = 1;
-        expected_final.refresh_commitment();
-        let new_commit = expected_final.state_commitment;
 
         verify_full_turn(&proof, old_commit, new_commit)
             .expect("honest auth-bound turn must verify (derivation concludes Allow(this effect))");
@@ -3281,16 +3305,18 @@ mod tests {
     /// PI so the prior teeth (cell binding, commitments) all PASS, and confirm the
     /// new authorization↔effect tooth is the ONLY thing standing between the
     /// mismatched authorization and acceptance — and that it rejects.
+    #[cfg(feature = "prover")]
     #[test]
     fn auth_bound_turn_rejects_authorization_for_different_effect() {
         let initial = CellState::new(1000, 0);
-        let old_commit = initial.state_commitment;
 
         // The turn the Effect-VM proof actually performs: transfer 100 out.
         let effects_a = vec![VmEffect::Transfer {
             amount: 100,
             direction: 1,
         }];
+        let (_mt, mono_pi) = generate_effect_vm_trace(&initial, &effects_a);
+        let old_commit = mono_pi[effect_vm::pi::OLD_COMMIT];
         // A DIFFERENT effect the malicious authorization is really for: transfer 500.
         let effects_b = vec![VmEffect::Transfer {
             amount: 500,
@@ -3309,14 +3335,23 @@ mod tests {
             derivation_authorizing_effects(&effects_b, capability_fact_hash, old_commit);
 
         // Prove the turn with effects_A but the effects_B-authorizing derivation.
-        let proof = prove_turn_with_auth(&initial, &effects_a, &derivation_b, [0x22u8; 32])
+        let witness = FullTurnWitness {
+            initial_cell_state: initial.clone(),
+            effects: effects_a.clone(),
+            authorization: Some(AuthorizationWitness {
+                derivation: derivation_b.clone(),
+            }),
+            membership: None,
+            conservation: None,
+            non_revocation: None,
+            cap_membership: None,
+            turn_hash: [0x22u8; 32],
+            rotation: Some(rotation_for_initial(&initial, &effects_a)),
+        };
+        let proof = prove_full_turn(&witness)
             .expect("proof generation succeeds (mismatch is a verify-time property)");
 
-        let mut expected_final = initial.clone();
-        expected_final.balance = 900; // effects_A: 1000 - 100
-        expected_final.nonce = 1;
-        expected_final.refresh_commitment();
-        let new_commit = expected_final.state_commitment;
+        let new_commit = mono_pi[effect_vm::pi::NEW_COMMIT];
 
         let result = verify_full_turn(&proof, old_commit, new_commit);
         match result {
@@ -3336,6 +3371,7 @@ mod tests {
     /// ANTI-GHOST end-to-end: forging the published MEMBERSHIP root in a finished
     /// full-turn proof MUST be rejected by the audited membership verifier (the
     /// proof binds the genuine hash-chain root, not the forged PI).
+    #[cfg(feature = "prover")]
     #[test]
     fn full_turn_rejects_forged_membership_root() {
         use dregg_circuit::dsl::membership::create_test_witness as merkle_test_witness;
@@ -3350,7 +3386,7 @@ mod tests {
 
         let witness = FullTurnWitness {
             initial_cell_state: initial.clone(),
-            effects,
+            effects: effects.clone(),
             authorization: None,
             membership: Some(MembershipWitness {
                 leaf_hash: leaf,
@@ -3361,7 +3397,7 @@ mod tests {
             non_revocation: None,
             cap_membership: None,
             turn_hash: [0x88u8; 32],
-            rotation: None,
+            rotation: Some(rotation_for_initial(&initial, &effects)),
         };
         let mut proof = prove_full_turn(&witness).expect("honest proof should generate");
 
@@ -3374,12 +3410,9 @@ mod tests {
             .expect("membership sub-proof present");
         mem.sub_public_inputs[1] = mem.sub_public_inputs[1] + BabyBear::new(1);
 
-        let old_commit = initial.state_commitment;
-        let mut expected_final = initial.clone();
-        expected_final.balance = 900;
-        expected_final.nonce = 1;
-        expected_final.refresh_commitment();
-        let new_commit = expected_final.state_commitment;
+        let (_mt, mono_pi) = generate_effect_vm_trace(&initial, &effects);
+        let old_commit = mono_pi[effect_vm::pi::OLD_COMMIT];
+        let new_commit = mono_pi[effect_vm::pi::NEW_COMMIT];
 
         let res = verify_full_turn(&proof, old_commit, new_commit);
         assert!(
@@ -3578,6 +3611,30 @@ mod tests {
             after: after_w,
             caveat: dregg_circuit::effect_vm::trace_rotated::empty_caveat_manifest(),
         }
+    }
+
+    /// Thread a rotation witness for a turn described only by an Effect-VM `initial` state +
+    /// `effects` (the common shape of the composition-leg tests). Since the v1 effect-vm fallback
+    /// is retired, EVERY finalized-turn prove must carry a rotation witness; this builds the same
+    /// before/after producer witnesses the live node mints, over a real `dregg_cell::Cell` whose
+    /// EffectVM balance matches `initial`. The rotated leg's OLD/NEW_COMMIT endpoints are welded
+    /// from the v1 trace over `initial`+`effects` (`trace_rotated.rs:294-307`), so they agree with
+    /// the monolithic reference (`generate_effect_vm_trace`) BY CONSTRUCTION — the after-cell's raw
+    /// field bytes only need to be SOME marker for the producer's heap/authority views.
+    #[cfg(feature = "prover")]
+    fn rotation_for_initial(initial: &CellState, effects: &[VmEffect]) -> RotationTurnWitness {
+        let before_cell =
+            dregg_cell::Cell::with_balance([0xC0; 32], [0u8; 32], initial.balance as i64);
+        let mut after_cell = before_cell.clone();
+        // A non-zero marker in field[0] so the after-block producer view differs from the before
+        // one; the rotated endpoints come from the v1 weld, not these bytes.
+        after_cell.state.fields[0] = {
+            let mut b = [0u8; 32];
+            b[0] = 1;
+            b
+        };
+        let _ = effects;
+        rotation_witness_for_cells(&before_cell, &after_cell, &[[0x11u8; 32]])
     }
 
     /// THE LOAD-BEARING DIFFERENTIAL (§6.1): a heterogeneous turn `[Transfer, SetField, Transfer]`
