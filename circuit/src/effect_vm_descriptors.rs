@@ -59,9 +59,15 @@
 //! ## DO NOT hand-edit
 //!
 //! The const block and the tables below are generated from the Lean emit. To
-//! refresh: re-run `EmitAllJson.lean`, rewrite `circuit/descriptors/*.json`,
-//! recompute the `*_FP` SHA-256s, and regenerate this block. The drift test will
-//! reject any inconsistency.
+//! refresh, run the ONE command:
+//!
+//!   scripts/emit-descriptors.sh
+//!
+//! It runs every Lean emitter, rewrites `circuit/descriptors/*.json`, and re-pins
+//! the `*_FP` SHA-256 constants — idempotent (a no-op on a clean tree). The CI
+//! gate `scripts/check-descriptor-drift.sh` (the `descriptor-drift` job) forbids
+//! Lean↔JSON drift; the in-Rust round-trip `#[test]` below additionally guards
+//! JSON↔FP self-consistency. See `docs/DESCRIPTOR-EMIT.md`.
 
 // ==== include_str! consts + sha256 fingerprints (auto-generated; do not hand-edit) ====
 pub const DREGG_EFFECTVM_ATTENUATEA_V1_JSON: &str =

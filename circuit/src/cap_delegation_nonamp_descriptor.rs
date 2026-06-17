@@ -161,7 +161,7 @@ mod tests {
         let fp = sha256_hex(GENUINE_NONAMP_JSON.as_bytes());
         assert_eq!(
             fp, GENUINE_NONAMP_FP,
-            "genuine-non-amp descriptor fingerprint drift: re-run EmitAllJson + update GENUINE_NONAMP_FP"
+            "genuine-non-amp descriptor fingerprint drift: run scripts/emit-descriptors.sh and commit"
         );
 
         let d = cap_delegation_nonamp_descriptor()

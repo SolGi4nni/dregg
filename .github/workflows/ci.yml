@@ -154,3 +154,39 @@ jobs:
       # ledger). The corpus must remain at ZERO sorry forever.
       - name: Zero-sorry guard
         run: bash scripts/no-sorry-metatheory.sh
+
+  descriptor-drift:
+    name: Descriptor Lean↔JSON drift gate
+    runs-on: ubuntu-latest
+    # The circuit descriptor JSONs (circuit/descriptors/*.json) and their *_FP
+    # sha256 constants are MACHINE-GENERATED from the verified Lean emit (the
+    # source of truth). This gate regenerates them via scripts/emit-descriptors.sh
+    # and fails if the result differs from what is checked in — catching the
+    # Lean→JSON drift the in-Rust sha256 round-trip test cannot (a stale JSON whose
+    # self-consistent FP passes the round-trip while the Lean emission has moved).
+    # Same elan + pinned-mathlib setup as the zero-sorry job (it needs `lake`).
+    env:
+      MATHLIB_REV: 1c2b90b13009c65b090d95a83c98e248deafb6f1
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install elan (Lean toolchain manager)
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
+            -o elan-init.sh
+          bash elan-init.sh -y --default-toolchain "$(cat metatheory/lean-toolchain)"
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+
+      - name: Fetch pinned mathlib4
+        run: |
+          MATHLIB_DIR="$(cd "$GITHUB_WORKSPACE/../.." && pwd)/src/mathlib4"
+          mkdir -p "$MATHLIB_DIR"
+          git clone https://github.com/leanprover-community/mathlib4 "$MATHLIB_DIR"
+          git -C "$MATHLIB_DIR" checkout "$MATHLIB_REV"
+          ( cd "$MATHLIB_DIR" && ~/.elan/bin/lake exe cache get )
+
+      # Regenerates from Lean and `git diff --exit-code`s the descriptors + the
+      # *_FP constants. On drift: prints the offending diff + the fix command and
+      # exits nonzero. See docs/DESCRIPTOR-EMIT.md.
+      - name: Descriptor drift gate
+        run: bash scripts/check-descriptor-drift.sh

@@ -161,7 +161,7 @@ mod tests {
         let fp = sha256_hex(CAPRESHAPE_V1_JSON.as_bytes());
         assert_eq!(
             fp, CAPRESHAPE_V1_FP,
-            "cap-reshape descriptor fingerprint drift: re-run EmitAllJson + update CAPRESHAPE_V1_FP"
+            "cap-reshape descriptor fingerprint drift: run scripts/emit-descriptors.sh and commit"
         );
 
         let d =
