@@ -814,7 +814,7 @@ pub const V3_STAGED_CAVEAT_DESCRIPTORS: &[(&str, &str, &str)] = &[(
 pub const V3_STAGED_REGISTRY_TSV: &str =
     include_str!("../descriptors/rotation-v3-staged-registry.tsv");
 pub const V3_STAGED_REGISTRY_FP: &str =
-    "6c01910d91f93f4fcd0c8ea2b6175b8ce2919dea3811097d50c99965a6a81780";
+    "d8b75e8897db4f6e1658d6a4370df765a5a10768df9073dcb8b8db81a12e629f";
 
 /// The rotated probe layout at register count `r` (the Rust twin of the Lean parametric
 /// layout `EffectVmEmitRotationR`: columns are FUNCTIONS of R; the chunking is 4-wide head,
@@ -1757,6 +1757,20 @@ mod tests {
                     _ => None,
                 })
                 .collect();
+            // THE RECORD-FORCING PIN (the deployment-soundness close, `EffectVmEmitRotationV3
+            // .rotateV3WithRecordPin`): cellSeal/cellUnseal/cellDestroy force the AFTER block's
+            // lifecycle limb (col `after_base + B_LIFECYCLE`); setPermissions/setVK force the
+            // AFTER record-digest / authority-digest limb (col `after_base + B_AUTHORITY_DIGEST`).
+            // Each carries a FIFTH last-row PI pin to slot 38, so the committed write is FORCED.
+            use crate::effect_vm::trace_rotated::{B_AUTHORITY_DIGEST, B_LIFECYCLE};
+            let lifecycle_record_pin_member = matches!(
+                key,
+                "cellSealVmDescriptor2R24"
+                    | "cellUnsealVmDescriptor2R24"
+                    | "cellDestroyVmDescriptor2R24"
+                    | "setPermsVmDescriptor2R24"
+                    | "setVKVmDescriptor2R24"
+            );
             if key == "noteSpendVmDescriptor2R24" {
                 assert_eq!(
                     d.public_input_count, 39,
@@ -1767,14 +1781,32 @@ mod tests {
                     vec![(PARAM_BASE + param::NULLIFIER, pi_base + 4)],
                     "noteSpend: the fifth pin welds the folded nullifier (param0) to PI[38]"
                 );
+            } else if lifecycle_record_pin_member {
+                assert_eq!(
+                    d.public_input_count, 39,
+                    "{key}: rotated 38-PI + the appended record-forcing slot"
+                );
+                let forced_col = if key == "setPermsVmDescriptor2R24"
+                    || key == "setVKVmDescriptor2R24"
+                {
+                    after_base + B_AUTHORITY_DIGEST
+                } else {
+                    after_base + B_LIFECYCLE
+                };
+                assert_eq!(
+                    nullifier_pins,
+                    vec![(forced_col, pi_base + 4)],
+                    "{key}: the fifth pin welds the AFTER block's correctly-written record/lifecycle \
+                     limb to PI[38] (the deployment-soundness gate)"
+                );
             } else {
                 assert_eq!(
                     d.public_input_count, 38,
-                    "{key}: non-note-spend cohort carries the rotated 38-PI"
+                    "{key}: non-record-pin cohort carries the rotated 38-PI"
                 );
                 assert!(
                     nullifier_pins.is_empty(),
-                    "{key}: only note-spend carries the fifth nullifier pin"
+                    "{key}: only note-spend / the 5 record-pin effects carry a fifth pin"
                 );
             }
         }

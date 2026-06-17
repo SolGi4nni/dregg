@@ -84,6 +84,13 @@ pub const ROT_WIDTH: usize = V1_WIDTH + APPENDIX; // 311
 /// input), so the v1 OLD_COMMIT binds the SAME authority residue the rotated weld
 /// carries — closing audit P0-2 across BOTH legs.
 pub const B_AUTHORITY_DIGEST: usize = 24;
+/// Alias used by the record-forcing pin (`record_pin_offset`): the setPermissions/setVK post
+/// `record_digest` limb IS the authority-digest limb (r23, limb 24). Lean `B_RECORD_DIGEST`.
+pub const B_RECORD_DIGEST: usize = B_AUTHORITY_DIGEST;
+/// In-block offset of the per-cell `lifecycle` felt limb (limb 28 in `preLimbsAt`), filled by
+/// the producer witness `rotation_witness.rs::lifecycle_felt`. The forced limb for the lifecycle
+/// flips (cellSeal/cellUnseal/cellDestroy). Lean `EffectVmEmitRotationV3.B_LIFECYCLE`.
+pub const B_LIFECYCLE: usize = 28;
 /// In-block offset of the `cap_root` limb (the welded cap-root, limb 25).
 pub const B_CAP_ROOT: usize = 25;
 /// In-block offset of the `committed_height` limb (limb 30).
@@ -286,7 +293,40 @@ pub fn generate_rotated_effect_vm_trace(
         debug_assert_eq!(dpis.len(), ROT_NULLIFIER_PI_COUNT);
     }
 
+    // THE RECORD-FORCING PIN (the deployment-soundness close for the 5 binds-but-unforced
+    // effects: cellSeal/cellUnseal/cellDestroy/setPermissions/setVK — `EffectVmEmitRotationV3
+    // .rotateV3WithRecordPin`). The rotated AFTER block CARRIES the per-cell write (limb
+    // `B_LIFECYCLE = 28` for the lifecycle flips, limb `B_RECORD_DIGEST = 24` for the
+    // permissions/VK record-digest), and the rolled-up commitment BINDS it — but bare `rotateV3`
+    // does NOT FORCE the AFTER limb to the correctly-written value. The descriptor for these five
+    // carries a FIFTH last-row PI pin welding that limb to rotated PI slot 38; a frozen-lifecycle
+    // / un-written-record AFTER block FAILS the pin and is UNSAT. We push the honest post value
+    // (read from the LAST row's AFTER block, exactly the column the pin binds) so the honest trace
+    // satisfies it; the verifier recomputes PI[38] from the committed pre-state + the effect, so a
+    // forgery cannot match it. The 35 other cohort members keep the 38-PI vector.
+    if let Some(off) = record_pin_offset(effects.first()) {
+        dpis.push(last[AFTER_BASE + off]); // PI 38: the correctly-written post lifecycle / record digest
+        debug_assert_eq!(dpis.len(), ROT_PI_COUNT + 1);
+    }
+
     Ok((trace, dpis))
+}
+
+/// The in-AFTER-block limb offset the record-forcing pin welds for a given lead effect, or
+/// `None` for the 35 cohort members that carry no record pin. The lifecycle flips force the
+/// per-cell `lifecycle` felt (limb 28); the permissions/VK writes force the per-cell
+/// `authority_digest` / `record_digest` (limb 24 = r23). Mirrors the Lean routing in
+/// `EffectVmEmitRotationV3.v3Registry` (`cellSealV3` … `setVKV3`).
+fn record_pin_offset(lead: Option<&Effect>) -> Option<usize> {
+    match lead {
+        Some(Effect::CellSeal { .. })
+        | Some(Effect::CellUnseal { .. })
+        | Some(Effect::CellDestroy { .. }) => Some(B_LIFECYCLE),
+        Some(Effect::SetPermissions { .. }) | Some(Effect::SetVerificationKey { .. }) => {
+            Some(B_RECORD_DIGEST)
+        }
+        _ => None,
+    }
 }
 
 /// Fill one rotated block (BEFORE or AFTER) at `base` for ONE row. The WELDED limbs

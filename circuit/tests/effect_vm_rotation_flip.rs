@@ -1093,3 +1093,133 @@ fn rotated_non_synthetic_field_bearing_cell_old_new_commit_agree() {
          is load-bearing, and the proof verifies — the lift's premise holds empirically."
     );
 }
+
+/// THE DEPLOYMENT-SOUNDNESS CLOSE (the record-forcing pin, end-to-end in-circuit): a real
+/// ROTATED `CellSeal` turn proves + verifies through the `cellSealVmDescriptor2R24` descriptor
+/// (the FIFTH appended PI pin, `EffectVmEmitRotationV3.cellSealV3` /
+/// `rotateV3WithRecordPin B_LIFECYCLE`), the rotated PI vector is 39 elements with the
+/// CORRECTLY-WRITTEN post lifecycle felt at PI[38] = the AFTER block's lifecycle limb (col
+/// `AFTER_BASE + B_LIFECYCLE` = 258), AND the SOUNDNESS TOOTH bites: a trace that FREEZES the
+/// lifecycle (AFTER limb still the PRE/Live value) while claiming the sealed PI[38] is UNSAT.
+///
+/// This is the gap the `RotatedKernelRefinementCellSeal` rung proved against a FIX descriptor
+/// (`gLifecycleSeal` / `cellSeal_descriptorRefines_rejects_unsealed`), now BITING in the LIVE
+/// deployed rotated descriptor. Before this pin the rotated cellSeal merely FROZE the economic
+/// block + ticked the nonce; the lifecycle flip was OFF-ROW (`cellSeal_offrow_unenforced`), so a
+/// prover could publish a commitment to an UN-SEALED post and the descriptor accepted — the
+/// forgery the light client could not detect. The pin forces the committed lifecycle limb.
+#[test]
+fn rotated_cellseal_record_pin_forces_lifecycle_and_rejects_frozen_forgery() {
+    use dregg_circuit::effect_vm::trace_rotated::B_LIFECYCLE;
+
+    let seal_effect = Effect::CellSeal {
+        target: [BabyBear::new(0); 8],
+        reason_hash: [BabyBear::new(9); 8],
+    };
+    let name = rotated_descriptor_name_for_effect(&seal_effect)
+        .expect("CellSeal is a rotated cohort member");
+    assert_eq!(name, "cellSealVmDescriptor2R24");
+
+    let json = rotated_descriptor_json(name);
+    let desc = parse_vm_descriptor2(json).expect("rotated cellSeal descriptor parses");
+    assert_eq!(desc.trace_width, ROT_WIDTH, "rotated width 311");
+    assert_eq!(
+        desc.public_input_count, 39,
+        "cellSeal carries the appended record-forcing pin (39 PIs)"
+    );
+
+    // A real cellSeal turn: lifecycle Live -> Sealed, economic block frozen, nonce ticks.
+    let balance: i64 = 50_000;
+    let st = CellState::new(balance as u64, 0);
+    let effects = vec![seal_effect];
+
+    let mut ledger = Ledger::new();
+    let before_cell = producer_cell(balance, 0);
+    let mut after_cell = producer_cell(balance, 1); // nonce ticks
+    after_cell
+        .seal([9u8; 32], 0)
+        .expect("Live cell must seal");
+    ledger.insert_cell(after_cell.clone()).unwrap();
+    let nullifier_root = [0u8; 32];
+    let receipt_log: Vec<[u8; 32]> = vec![[3u8; 32]];
+
+    let before_w = rw::produce(&before_cell, &ledger, &nullifier_root, &receipt_log);
+    let after_w = rw::produce(&after_cell, &ledger, &nullifier_root, &receipt_log);
+
+    // The lifecycle limb genuinely MOVED Live -> Sealed (the forgery the pin forbids would freeze it).
+    assert_ne!(
+        before_w.pre_limbs[B_LIFECYCLE], after_w.pre_limbs[B_LIFECYCLE],
+        "the producer witnesses a DISTINCT lifecycle felt for the sealed post (anti-omission)"
+    );
+
+    let caveat = empty_caveat_manifest();
+    let (trace, dpis) =
+        generate_rotated_effect_vm_trace(&st, &effects, &bridge(&before_w), &bridge(&after_w), &caveat)
+            .expect("live rotated generator must produce a cellSeal trace + 39 PIs");
+    assert_eq!(trace[0].len(), ROT_WIDTH, "311-col rotated trace");
+
+    // THE FIFTH PI: 39 elements, and PI[38] == the LAST row's AFTER lifecycle limb (the
+    // correctly-written sealed post the verifier recomputes), the column the pin binds.
+    assert_eq!(dpis.len(), 39, "cellSeal rotated PI is 39 (the record-forcing slot appended)");
+    let last = &trace[trace.len() - 1];
+    assert_eq!(
+        dpis[38],
+        last[AFTER_BASE + B_LIFECYCLE],
+        "PI 38 = the AFTER block's correctly-written (sealed) lifecycle limb"
+    );
+    assert_eq!(
+        dpis[38], after_w.pre_limbs[B_LIFECYCLE],
+        "PI 38 = lifecycle_felt(Sealed) from the post-state producer witness"
+    );
+    // The four commit pins are undisturbed below it.
+    assert_eq!(dpis[34], trace[0][BEFORE_BASE + B_STATE_COMMIT], "PI 34 = rotated OLD commit");
+
+    let mem_boundary = MemBoundaryWitness::default();
+    let map_heaps: Vec<Vec<dregg_circuit::heap_root::HeapLeaf>> = vec![];
+
+    // PROVE + VERIFY the honest sealed turn end-to-end.
+    let proof = prove_vm_descriptor2(&desc, &trace, &dpis, &mem_boundary, &map_heaps)
+        .expect("honest rotated cellSeal must prove end-to-end");
+    verify_vm_descriptor2(&desc, &proof, &dpis)
+        .expect("honest rotated cellSeal proof must verify independently");
+
+    // -- THE SOUNDNESS TOOTH (anti-ghost): the FROZEN-lifecycle forgery is UNSAT. --
+    let refused = |t: &Vec<Vec<BabyBear>>, p: &Vec<BabyBear>| -> bool {
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            prove_vm_descriptor2(&desc, t, p, &mem_boundary, &map_heaps)
+        }));
+        match r {
+            Err(_) => true,
+            Ok(res) => res.is_err(),
+        }
+    };
+    // (a) publish a DIFFERENT post in PI[38] than the AFTER block carries.
+    {
+        let mut p = dpis.clone();
+        p[38] = p[38] + BabyBear::ONE;
+        assert!(
+            refused(&trace, &p),
+            "a published PI[38] differing from the AFTER lifecycle limb MUST be UNSAT (the record pin)"
+        );
+    }
+    // (b) THE CENTRAL FORGERY: FREEZE the AFTER lifecycle limb to the PRE (Live) value — the
+    //     un-sealed post the deployed circuit USED to accept — while PI[38] stays the honest
+    //     sealed felt. The pin (last.loc(258) == PI[38]) now bites: this is UNSAT.
+    {
+        let mut t = trace.clone();
+        let last_row = t.len() - 1;
+        t[last_row][AFTER_BASE + B_LIFECYCLE] = before_w.pre_limbs[B_LIFECYCLE]; // frozen Live
+        assert!(
+            refused(&t, &dpis),
+            "FREEZING the AFTER lifecycle limb (un-sealed post) while claiming the sealed PI[38] \
+             MUST be UNSAT — the deployment-soundness gap is closed (the forgery the light client \
+             could not previously detect is now rejected in the LIVE descriptor)"
+        );
+    }
+
+    eprintln!(
+        "ROTATED CELLSEAL RECORD-PIN (R=24, 39-PI, LIVE-GENERATED): PROVED + VERIFIED; the \
+         committed lifecycle limb is FORCED at PI[38], and a FROZEN-lifecycle forgery is UNSAT — \
+         the binds-but-unforced deployment gap is closed for cellSeal."
+    );
+}

@@ -1288,6 +1288,166 @@ theorem mintP1_rejects_wrong_credit (hash : List ℤ → ℤ) (env : VmRowEnv) (
 #guard (let env : VmRowEnv := ⟨fun c => if c == 54 then 100 else if c == 76 then 999 else if c == 69 then 30 else 0, fun _ => 0, fun _ => 0⟩;
         decide (gBalLoCreditP1.eval env.loc ≠ 0))   -- 999 ≠ 100 + 30 ⇒ REJECTS
 
+/-! ### The RECORD-FORCING PIN (the deployment-soundness close for the 5 binds-but-unforced effects).
+
+`cellSeal` / `cellUnseal` / `cellDestroy` write the per-cell `lifecycle` side-table; `setPermissions`
+/ `setVK` write a record slot folded into the per-cell `authority_digest` (the `record_digest`). The
+rotated AFTER block CARRIES those writes (limb 28 = `lifecycle`, limb 24 = `authority_digest`, filled
+from the post-state producer witness, `turn/src/rotation_witness.rs`) and the rolled-up commitment
+BINDS them — but NOTHING in `rotateV3` FORCES the AFTER limb to equal the CORRECTLY-WRITTEN value. So
+a malicious prover can publish an AFTER block whose lifecycle is still the PRE value (frozen, never
+sealed) and whose `authority_digest` is the PRE record — the descriptor accepts, the light client is
+fooled (the `RotatedKernelRefinement{CellSeal,Lifecycle,PermsVK}` rungs prove the gate that bites this
+against a FIX descriptor; THIS wires that gate LIVE).
+
+The forcing is ONE appended last-row PI pin, exactly the `rotateV3WithNullifierPin` shape: the AFTER
+block's forced limb is bound to a NEW rotated PI slot (`piCount`, the first past the four commit pins)
+carrying the correctly-written post value. The off-circuit verifier RECOMPUTES that PI from the
+committed pre-state + the effect (`lifecycle_felt(post)` for the lifecycle effects, the post
+`record_digest` for setPerms/setVK), so a frozen / wrong-record AFTER block FAILS the pin and is UNSAT
+— the deployment analog of the rungs' `gLifecycleSeal` / `gSlotSet`. Every v1 column, constraint, hash
+site, and the four commit pins are UNTOUCHED, so `rotateV3`'s keystones (`rotateV3_satisfiedVm_v1`,
+`rotV3_binds_published`, `graduable_rotateV3`) compose verbatim — this only ADDS one PI pin + one PI
+slot, exactly as the nullifier weld does. -/
+
+/-- In-block offset of the `lifecycle` limb (limb 28 in `preLimbsAt`): the per-cell lifecycle felt
+the producer witness carries (`rotation_witness.rs::lifecycle_felt`, `pre_limbs[28]`). The forced
+limb for `cellSeal` / `cellUnseal` / `cellDestroy`. -/
+def B_LIFECYCLE : Nat := 28
+
+/-- In-block offset of the `authority_digest` / `record_digest` limb (limb 24 = r23 in `preLimbsAt`):
+the single felt folding ALL authority-bearing cell state including the `permissions` / `verification_key`
+slots (`trace_rotated.rs::B_AUTHORITY_DIGEST`). The forced limb for `setPermissions` / `setVK`. -/
+def B_RECORD_DIGEST : Nat := 24
+
+/-- The rotated AFTER-block base offset (past the v1 layout + the BEFORE block). -/
+def AFTER_BLOCK_OFF : Nat := 43
+
+/-- **`rotateV3WithRecordPin off d`** — `rotateV3` PLUS a fifth appended last-row PI pin welding the
+AFTER block's limb at in-block offset `off` (`B_LIFECYCLE` or `B_RECORD_DIGEST`) to the new rotated PI
+slot `r.piCount` (the first past the four commit pins). The write LANDS in the AFTER state (the
+post-state producer witness fills it), so the LAST-row pin is the rotated analog of the rungs' post-root
+gate. Every v1 column, constraint, hash site, and the four commit pins are UNTOUCHED (so `rotateV3`'s
+keystones compose verbatim; this only ADDS one PI pin + one PI slot). -/
+def rotateV3WithRecordPin (off : Nat) (d : EffectVmDescriptor) : EffectVmDescriptor :=
+  let r := rotateV3 d
+  { r with
+    piCount     := r.piCount + 1
+    constraints := r.constraints
+      ++ [.piBinding .last (d.traceWidth + AFTER_BLOCK_OFF + off) r.piCount] }
+
+/-- The appended record pin is the only constraint past `rotateV3`'s. -/
+theorem rotateV3WithRecordPin_constraints (off : Nat) (d : EffectVmDescriptor) :
+    (rotateV3WithRecordPin off d).constraints
+      = (rotateV3 d).constraints
+        ++ [.piBinding .last (d.traceWidth + AFTER_BLOCK_OFF + off) (rotateV3 d).piCount] := rfl
+
+/-- The record pin does NOT disturb graduation (it is a CONSTRAINT; `graduable` reads only
+sites/ranges, which are `rotateV3`'s verbatim). -/
+theorem graduable_rotateV3WithRecordPin (off : Nat) {d : EffectVmDescriptor}
+    (h : graduable d = true) : graduable (rotateV3WithRecordPin off d) = true := by
+  have hr := graduable_rotateV3 h
+  unfold rotateV3WithRecordPin
+  unfold graduable at hr ⊢
+  simpa using hr
+
+/-- **The record weld holds on a satisfying LAST row**: a row satisfying `rotateV3WithRecordPin off d`
+carries the AFTER block's forced limb EQUAL to the published rotated PI `(rotateV3 d).piCount`. -/
+theorem rotateV3WithRecordPin_pins (off : Nat) (hash : List ℤ → ℤ) (d : EffectVmDescriptor)
+    (env : VmRowEnv) (isFirst : Bool)
+    (h : satisfiedVm hash (rotateV3WithRecordPin off d) env isFirst true) :
+    env.loc (d.traceWidth + AFTER_BLOCK_OFF + off) = env.pub (rotateV3 d).piCount := by
+  have hpin := h.1 (.piBinding .last (d.traceWidth + AFTER_BLOCK_OFF + off) (rotateV3 d).piCount)
+    (by rw [rotateV3WithRecordPin_constraints]; exact List.mem_append_right _ List.mem_cons_self)
+  simpa only [VmConstraint.holdsVm] using hpin rfl
+
+/-- **ANTI-GHOST (forced limb ≠ published post ⇒ UNSAT)** — the deployment tooth. A LAST row whose
+AFTER forced limb does NOT equal the published post value `PI[(rotateV3 d).piCount]` does NOT satisfy
+`rotateV3WithRecordPin off d`: the appended pin REJECTS it. This is EXACTLY the forgery the rungs'
+`gLifecycleSeal` / `gSlotSet` teeth reject (a frozen lifecycle / un-written record claiming a changed
+post), now BITING in the LIVE deployed descriptor — the gap closed. -/
+theorem rotateV3WithRecordPin_rejects_wrong_post (off : Nat) (hash : List ℤ → ℤ)
+    (d : EffectVmDescriptor) (env : VmRowEnv) (isFirst : Bool)
+    (hwrong : env.loc (d.traceWidth + AFTER_BLOCK_OFF + off) ≠ env.pub (rotateV3 d).piCount) :
+    ¬ satisfiedVm hash (rotateV3WithRecordPin off d) env isFirst true :=
+  fun h => hwrong (rotateV3WithRecordPin_pins off hash d env isFirst h)
+
+/-- The v1 denotation survives the added record pin (the per-effect faithfulness / anti-ghost
+theorems compose through, exactly as for the nullifier pin). -/
+theorem rotateV3WithRecordPin_satisfiedVm_v1 (off : Nat) (hash : List ℤ → ℤ)
+    (d : EffectVmDescriptor) (env : VmRowEnv) (isFirst isLast : Bool)
+    (h : satisfiedVm hash (rotateV3WithRecordPin off d) env isFirst isLast) :
+    satisfiedVm hash d env isFirst isLast := by
+  apply rotateV3_satisfiedVm_v1 hash d env isFirst isLast
+  obtain ⟨hc, hsites, hr⟩ := h
+  refine ⟨fun c hc' => hc c ?_, hsites, hr⟩
+  rw [rotateV3WithRecordPin_constraints]
+  exact List.mem_append_left _ hc'
+
+/-- **`cellSealV3`** — the LIVE rotated cellSeal WITH the lifecycle-forcing pin: the AFTER block's
+lifecycle limb (`B_LIFECYCLE`) is welded to PI `38`, the verifier-recomputed `lifecycle_felt(Sealed …)`.
+A frozen-lifecycle (un-sealed) AFTER block is now UNSAT (`rotateV3WithRecordPin_rejects_wrong_post`). -/
+def cellSealV3 : EffectVmDescriptor2 :=
+  graduateV1 (rotateV3WithRecordPin B_LIFECYCLE EffectVmEmitCellSeal.cellSealVmDescriptor)
+
+/-- **`cellUnsealV3`** — the LIVE rotated cellUnseal WITH the lifecycle-forcing pin (post = `Live`). -/
+def cellUnsealV3 : EffectVmDescriptor2 :=
+  graduateV1 (rotateV3WithRecordPin B_LIFECYCLE EffectVmEmitCellUnseal.cellUnsealVmDescriptor)
+
+/-- **`cellDestroyV3`** — the LIVE rotated cellDestroy WITH the lifecycle-forcing pin (post = `Destroyed
+…`; the death-cert is folded into the same per-cell lifecycle felt — the producer's `lifecycle_felt`
+binds the Destroyed discriminant + the death-certificate payload, so the one pin forces both legs). -/
+def cellDestroyV3 : EffectVmDescriptor2 :=
+  graduateV1 (rotateV3WithRecordPin B_LIFECYCLE EffectVmEmitCellDestroy.cellDestroyVmDescriptor)
+
+/-- **`setPermsV3`** — the LIVE rotated setPermissions WITH the record-digest-forcing pin: the AFTER
+block's `authority_digest` limb (`B_RECORD_DIGEST` = r23) is welded to PI `38`, the verifier-recomputed
+post `record_digest` (which folds the written `permissions := p`). A frozen-record forgery is UNSAT. -/
+def setPermsV3 : EffectVmDescriptor2 :=
+  graduateV1 (rotateV3WithRecordPin B_RECORD_DIGEST EffectVmEmitSetPermissions.setPermsVmDescriptor)
+
+/-- **`setVKV3`** — the LIVE rotated setVK WITH the record-digest-forcing pin (post `record_digest`
+folds the written `verification_key := vk`). -/
+def setVKV3 : EffectVmDescriptor2 :=
+  graduateV1 (rotateV3WithRecordPin B_RECORD_DIGEST EffectVmEmitSetVK.setVKVmDescriptor)
+
+#assert_axioms graduable_rotateV3WithRecordPin
+#assert_axioms rotateV3WithRecordPin_pins
+#assert_axioms rotateV3WithRecordPin_rejects_wrong_post
+#assert_axioms rotateV3WithRecordPin_satisfiedVm_v1
+
+-- The record pin lands at PI slot 38 (one past the four rotated commit pins 34..37); each forced
+-- descriptor publishes 39 PIs, and graduation survives the appended pin.
+#guard (rotateV3 EffectVmEmitCellSeal.cellSealVmDescriptor).piCount == 38
+#guard cellSealV3.piCount == 39
+#guard cellUnsealV3.piCount == 39
+#guard cellDestroyV3.piCount == 39
+#guard setPermsV3.piCount == 39
+#guard setVKV3.piCount == 39
+#guard graduable (rotateV3WithRecordPin B_LIFECYCLE EffectVmEmitCellSeal.cellSealVmDescriptor)
+#guard graduable (rotateV3WithRecordPin B_LIFECYCLE EffectVmEmitCellUnseal.cellUnsealVmDescriptor)
+#guard graduable (rotateV3WithRecordPin B_LIFECYCLE EffectVmEmitCellDestroy.cellDestroyVmDescriptor)
+#guard graduable (rotateV3WithRecordPin B_RECORD_DIGEST EffectVmEmitSetPermissions.setPermsVmDescriptor)
+#guard graduable (rotateV3WithRecordPin B_RECORD_DIGEST EffectVmEmitSetVK.setVKVmDescriptor)
+-- Each forced descriptor carries EXACTLY one constraint past its bare `rotateV3` form (the pin).
+#guard cellSealV3.constraints.length
+        == (v3Of EffectVmEmitCellSeal.cellSealVmDescriptor).constraints.length + 1
+#guard setPermsV3.constraints.length
+        == (v3Of EffectVmEmitSetPermissions.setPermsVmDescriptor).constraints.length + 1
+-- The forced AFTER limbs are the lifecycle limb (col tw+43+28) and the record-digest limb (col
+-- tw+43+24) — the producer-witnessed limbs the commitment binds but `rotateV3` did not force.
+#guard B_LIFECYCLE == 28
+#guard B_RECORD_DIGEST == 24
+-- BOTH POLARITIES of the deployment tooth, executable on a toy LAST row (AFTER lifecycle limb at col
+-- tw+43+28; with tw = 186 that is col 257; PI 38 carries the recomputed post felt). A row whose AFTER
+-- limb equals PI[38] PASSES the pin; a frozen / wrong one FAILS it (the forgery is rejected).
+#guard (let off := B_LIFECYCLE; let tw := (186 : Nat);
+        let env : VmRowEnv := ⟨fun c => if c == tw + 43 + off then 1 else 0, fun _ => 0, fun k => if k == 38 then 1 else 0⟩;
+        decide (env.loc (tw + 43 + off) = env.pub 38))   -- sealed (1) == PI[38] ⇒ pin holds
+#guard (let off := B_LIFECYCLE; let tw := (186 : Nat);
+        let env : VmRowEnv := ⟨fun c => if c == tw + 43 + off then 0 else 0, fun _ => 0, fun k => if k == 38 then 1 else 0⟩;
+        decide (env.loc (tw + 43 + off) ≠ env.pub 38))   -- frozen-Live (0) ≠ sealed PI[38] ⇒ pin REJECTS
+
 /-- **`v3Registry`** — the full 35-member cohort at the rotated block (the 27 v2-graduated members
 + the 8 STEP-1-widened; keys = the v2 keys suffixed `R24`; wire strings via `emitVmJson2`; driver
 `EmitRotationV3.lean`). -/
@@ -1297,11 +1457,11 @@ def v3Registry : List (String × EffectVmDescriptor2) :=
   , ("mintVmDescriptor2R24", mintV3)
   , ("noteSpendVmDescriptor2R24", noteSpendV3)
   , ("noteCreateVmDescriptor2R24", v3Of EffectVmEmitNoteCreate.noteCreateVmDescriptor)
-  , ("cellSealVmDescriptor2R24", v3Of EffectVmEmitCellSeal.cellSealVmDescriptor)
-  , ("cellDestroyVmDescriptor2R24", v3Of EffectVmEmitCellDestroy.cellDestroyVmDescriptor)
+  , ("cellSealVmDescriptor2R24", cellSealV3)
+  , ("cellDestroyVmDescriptor2R24", cellDestroyV3)
   , ("refusalVmDescriptor2R24", v3Of EffectVmEmitRefusal.refusalVmDescriptor)
-  , ("setPermsVmDescriptor2R24", v3Of EffectVmEmitSetPermissions.setPermsVmDescriptor)
-  , ("setVKVmDescriptor2R24", v3Of EffectVmEmitSetVK.setVKVmDescriptor)
+  , ("setPermsVmDescriptor2R24", setPermsV3)
+  , ("setVKVmDescriptor2R24", setVKV3)
   , ("exerciseVmDescriptor2R24", v3Of EffectVmEmitExercise.exerciseVmDescriptor)
   , ("pipelinedSendVmDescriptor2R24", v3Of EffectVmEmitPipelinedSend.pipelinedSendVmDescriptor)
   , ("refreshVmDescriptor2R24", v3Of EffectVmEmitRefreshDelegation.refreshVmDescriptor)
@@ -1330,7 +1490,7 @@ def v3Registry : List (String × EffectVmDescriptor2) :=
   , ("spawnVmDescriptor2R24", v3Of EffectVmEmitSpawn.spawnActorVmDescriptor)
   , ("receiptArchiveVmDescriptor2R24",
       v3Of EffectVmEmitReceiptArchive.receiptArchiveActorVmDescriptor)
-  , ("cellUnsealVmDescriptor2R24", v3Of EffectVmEmitCellUnseal.cellUnsealVmDescriptor)
+  , ("cellUnsealVmDescriptor2R24", cellUnsealV3)
   , ("emitEventVmDescriptor2R24", v3Of EffectVmEmitEmitEvent.emitEventVmDescriptor) ]
   ++ (List.finRange 8).map fun slot =>
       (s!"setFieldVmDescriptor2-{slot.val}R24", setFieldV3 slot)
