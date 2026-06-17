@@ -660,6 +660,86 @@ impl CapOpenWitness {
         debug_assert_eq!(w.recomposes(), w.cap_root, "cap-open witness must recompose");
         Ok(w)
     }
+
+    /// Build a cap-open trace witness from the actor's REAL consumed capability — a 7-field
+    /// [`crate::cap_root::CapLeaf`] plus the depth-16 `(sibling, direction)` membership path opened
+    /// against the holder's pre-state `capability_root`. This is the prove-site bridge: the c-list
+    /// opening the turn carries (`TurnReceipt::consumed_capabilities`, threaded through the SDK's
+    /// `CapMembershipWitness`) and `CapOpenWitness` is the trace-column shape [`widen_to_cap_open`]
+    /// fills. Both are field-for-field twins (same 7-field [`cap_leaf_digest`], same absorb-node
+    /// fold via [`cap_node`]); this converts the dynamically-sized path to the fixed depth-16 arrays
+    /// the appendix declares, RECOMPOSES the committed root from the leaf digest, and pins
+    /// `src := leaf.target` so the `targetBindGate` holds.
+    ///
+    /// Fails closed when:
+    ///   * the membership path is not exactly [`CAP_OPEN_DEPTH`] levels (the deployed depth);
+    ///   * the leaf does not satisfy the FAITHFUL two-axis facet × tier the descriptor's gates pin
+    ///     (`mask_lo == EFFECT_TRANSFER`, `mask_hi == 0`, `auth_tag == Signature`) — i.e. the
+    ///     consumed cap does not actually confer the transfer authority the open asserts.
+    pub fn from_membership(
+        leaf: &crate::cap_root::CapLeaf,
+        siblings: &[BabyBear],
+        directions: &[u8],
+    ) -> Result<Self, String> {
+        if siblings.len() != CAP_OPEN_DEPTH || directions.len() != CAP_OPEN_DEPTH {
+            return Err(format!(
+                "cap-open from_membership: path depth ({} sib / {} dir) != deployed depth {CAP_OPEN_DEPTH}",
+                siblings.len(),
+                directions.len()
+            ));
+        }
+        let leaf: [BabyBear; 7] = [
+            leaf.slot_hash,
+            leaf.target,
+            leaf.auth_tag,
+            leaf.mask_lo,
+            leaf.mask_hi,
+            leaf.expiry,
+            leaf.breadstuff,
+        ];
+        if leaf[3] != BabyBear::new(WRITE_MASK_LO) {
+            return Err(format!(
+                "cap-open from_membership: leaf mask_lo {} != EFFECT_TRANSFER {WRITE_MASK_LO} \
+                 (the consumed cap does not confer the transfer facet the transferFacetGate pins)",
+                leaf[3].as_u32()
+            ));
+        }
+        if leaf[4] != BabyBear::new(FACET_MASK_HI) {
+            return Err(format!(
+                "cap-open from_membership: leaf mask_hi {} != {FACET_MASK_HI} (the facetHiGate pin)",
+                leaf[4].as_u32()
+            ));
+        }
+        if leaf[2] != BabyBear::new(SIGNATURE_AUTH_TAG) {
+            return Err(format!(
+                "cap-open from_membership: leaf auth_tag {} != Signature {SIGNATURE_AUTH_TAG} \
+                 (the authTagGate pin — wrong tier)",
+                leaf[2].as_u32()
+            ));
+        }
+        let mut sib_arr = [BabyBear::ZERO; CAP_OPEN_DEPTH];
+        let mut dir_arr = [0u8; CAP_OPEN_DEPTH];
+        sib_arr.copy_from_slice(siblings);
+        dir_arr.copy_from_slice(directions);
+        // The committed root IS the recomposition of THIS path from the genuine leaf digest — the
+        // value the rootPin gate binds. (A fabricated leaf / tampered sibling yields a different
+        // root; the chip-lookup membership chain then opens a tree whose root the descriptor's
+        // rootPin does not match its own seeded `cap_root` column — UNSAT in-circuit.)
+        let mut cur = cap_leaf_digest(&leaf);
+        for lvl in 0..CAP_OPEN_DEPTH {
+            let (l, r) = cap_mix(cur, sib_arr[lvl], dir_arr[lvl]);
+            cur = cap_node(l, r);
+        }
+        let w = Self {
+            leaf,
+            siblings: sib_arr,
+            directions: dir_arr,
+            cap_root: cur,
+            src: leaf[1],
+        };
+        debug_assert_eq!(w.recomposes(), w.cap_root, "cap-open from_membership recompose");
+        Ok(w)
+    }
 }
 
 /// Fill the 58 cap-open columns at `base` for ONE row from `w` (Lean `CapOpenCols` layout):

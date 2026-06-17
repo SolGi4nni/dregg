@@ -672,6 +672,131 @@ pub fn prove_effect_vm_rotated_ir2_with_caveat(
         .map_err(|e| SdkError::InvalidWitness(format!("rotated IR-v2 proof: {e}")))
 }
 
+/// The CAP-OPEN single-leg prover (soundness loop #5): prove an `AttenuateCapability` turn
+/// through the CAP-OPEN descriptor (`attenuateCapOpenVmDescriptor2R24`, the 369-wide
+/// `capOpenAttenuateV3` leg), so the in-circuit cap-membership open — the authority leg the
+/// soundness proof relies on (`DeployedCapOpen.Satisfied`) — is GENUINELY exercised end-to-end.
+///
+/// The live single-leg/chain prover resolves the BASE attenuate descriptor
+/// (`attenuateVmDescriptor2R24`, 311-wide, NO cap-membership appendix). When the actor's REAL
+/// consumed capability is threaded (`witness.cap_membership`), this proves the wider cap-open
+/// descriptor instead: it builds the proven 311-wide rotated attenuate base, wires the attenuate
+/// phase-B bindings (`patch_attenuate_base_for_cap_open`), converts the SDK
+/// [`dregg_circuit::cap_root::CapMembershipWitness`] to the trace-column
+/// [`dregg_circuit::effect_vm::trace_rotated::CapOpenWitness`], and widens the trace with the
+/// 58-column cap-open membership appendix (`widen_to_cap_open`) before proving through
+/// `prove_vm_descriptor2`. The depth-16 absorb-node fold opens the committed `cap_root` at a
+/// write-mask leaf whose target is the turn's `src`; the proof self-verifies before return.
+///
+/// Returns `(proof, dpis)` — the dpis are the SAME 38-PI vector the base attenuate leg carries
+/// (the cap-open descriptor declares 38 PIs), corrected by the phase-B base wiring. The verifier
+/// (`verify_effect_vm_rotated_with_cutover`) binds the cap-open descriptor naturally (it iterates
+/// every committed cohort descriptor and binds the unique acceptor), so no verify-side change is
+/// needed beyond the cap-open vk_hash.
+#[cfg(feature = "prover")]
+fn prove_effect_vm_cap_open_attenuate(
+    initial_state: &CellState,
+    effects: &[VmEffectKind],
+    before_w: &dregg_turn::rotation_witness::RotationWitness,
+    after_w: &dregg_turn::rotation_witness::RotationWitness,
+    cap: &CapMembershipWitness,
+) -> Result<
+    (
+        dregg_circuit::descriptor_ir2::Ir2BatchProof<dregg_circuit::descriptor_ir2::DreggStarkConfig>,
+        Vec<BabyBear>,
+    ),
+    SdkError,
+> {
+    use dregg_circuit::descriptor_ir2::{
+        MemBoundaryWitness, parse_vm_descriptor2, prove_vm_descriptor2,
+    };
+    use dregg_circuit::effect_vm::trace_rotated::{
+        CapOpenWitness, RotatedBlockWitness, empty_caveat_manifest,
+        generate_rotated_effect_vm_trace, patch_attenuate_base_for_cap_open, widen_to_cap_open,
+    };
+
+    // This leg is ONLY for a single AttenuateCapability effect (the cap-open descriptor extends the
+    // attenuate base). A multi-effect or non-attenuate run never reaches here (the caller gates).
+    if !matches!(effects, [VmEffectKind::AttenuateCapability { .. }]) {
+        return Err(SdkError::InvalidWitness(
+            "cap-open prover: expects exactly one AttenuateCapability effect".into(),
+        ));
+    }
+
+    let (_name, json) = rotated_cap_open_descriptor_json()?;
+    let desc = parse_vm_descriptor2(json)
+        .map_err(|e| SdkError::InvalidWitness(format!("cap-open descriptor parse: {e}")))?;
+
+    let bridge = |w: &dregg_turn::rotation_witness::RotationWitness| {
+        RotatedBlockWitness::new(w.pre_limbs.clone(), w.iroot)
+    };
+    let before = bridge(before_w)
+        .map_err(|e| SdkError::InvalidWitness(format!("cap-open before-witness: {e}")))?;
+    let after = bridge(after_w)
+        .map_err(|e| SdkError::InvalidWitness(format!("cap-open after-witness: {e}")))?;
+
+    // The cap-open base is the attenuate path with the EMPTY caveat manifest (attenuate carries no
+    // in-circuit caveat operand; its map ops are guard-gated off, so an empty `map_heaps` is
+    // correct and the &[] 5th arg below is genuinely vacuous).
+    let caveat = empty_caveat_manifest();
+    let (mut trace, pis) =
+        generate_rotated_effect_vm_trace(initial_state, effects, &before, &after, &caveat)
+            .map_err(|e| SdkError::InvalidWitness(format!("cap-open base trace: {e}")))?;
+    // Wire the attenuate phase-B bindings the bare generator does not carry (nonce passthrough +
+    // cap-root advance binding); returns the corrected 38-PI vector.
+    let dpis = patch_attenuate_base_for_cap_open(&mut trace, &pis)
+        .map_err(|e| SdkError::InvalidWitness(format!("cap-open base phase-B wiring: {e}")))?;
+
+    // Convert the SDK-threaded c-list opening (the actor's REAL consumed capability) to the
+    // trace-column witness, then widen the base trace with the 58-column membership appendix. The
+    // conversion fails closed if the cap does not recompose its root or does not confer the
+    // transfer facet/tier the descriptor's gates pin.
+    let cap_open = CapOpenWitness::from_membership(&cap.leaf, &cap.siblings, &cap.directions)
+        .map_err(|e| SdkError::InvalidWitness(format!("cap-open witness: {e}")))?;
+    widen_to_cap_open(&mut trace, &cap_open)
+        .map_err(|e| SdkError::InvalidWitness(format!("cap-open widen: {e}")))?;
+
+    let proof = prove_vm_descriptor2(&desc, &trace, &dpis, &MemBoundaryWitness::default(), &[])
+        .map_err(|e| SdkError::InvalidWitness(format!("cap-open IR-v2 proof: {e}")))?;
+    Ok((proof, dpis))
+}
+
+/// The committed cap-open descriptor JSON (`attenuateCapOpenVmDescriptor2R24` —
+/// `dregg-effectvm-attenuateA-v1-rot24-v3-capopen`) from the staged rotated registry. Unlike the
+/// base cohort members, it is NOT resolved by `rotated_descriptor_name_for_effect` (no effect
+/// selects it — it is the cap-AUGMENTED attenuate leg the prove site opts into when a cap witness
+/// is present); the SDK names its registry key directly. Returns `(key, json)`.
+#[cfg(feature = "prover")]
+fn rotated_cap_open_descriptor_json() -> Result<(&'static str, &'static str), SdkError> {
+    use dregg_circuit::effect_vm_descriptors::V3_STAGED_REGISTRY_TSV;
+    const CAP_OPEN_KEY: &str = "attenuateCapOpenVmDescriptor2R24";
+    let json = V3_STAGED_REGISTRY_TSV
+        .lines()
+        .find_map(|line| {
+            let mut it = line.splitn(3, '\t');
+            if it.next() == Some(CAP_OPEN_KEY) {
+                let _display = it.next();
+                it.next()
+            } else {
+                None
+            }
+        })
+        .ok_or_else(|| {
+            SdkError::InvalidWitness(format!("{CAP_OPEN_KEY} not in staged rotated registry"))
+        })?;
+    Ok((CAP_OPEN_KEY, json))
+}
+
+/// The cap-open leg's `vk_hash`: the blake3 fingerprint of the committed cap-open descriptor JSON
+/// (the same fingerprint `verify_effect_vm_rotated_with_cutover` re-derives from the uniquely
+/// accepting cap-open cohort descriptor). Distinct from `rotated_effect_vm_vk_hash` (which pins the
+/// BASE attenuate descriptor), so the cap-open leg's attached vk_hash matches its actual descriptor.
+#[cfg(feature = "prover")]
+fn rotated_cap_open_vk_hash() -> Result<[u8; 32], SdkError> {
+    let (_key, json) = rotated_cap_open_descriptor_json()?;
+    Ok(*blake3::hash(json.as_bytes()).as_bytes())
+}
+
 /// Resolve the committed rotated cohort descriptor JSON for a turn's effects (the SAME
 /// resolution `prove_effect_vm_rotated_ir2_with_caveat` performs): the lead effect's cohort
 /// name via `rotated_descriptor_name_for_effect`, requiring a homogeneous cohort, then the
@@ -861,6 +986,7 @@ fn prove_cohort_run_chain(
     initial_state: &CellState,
     effects: &[VmEffectKind],
     rot: &RotationTurnWitness,
+    cap_membership: Option<&CapMembershipWitness>,
 ) -> Result<Vec<AttachedSubProof>, SdkError> {
     let runs = split_into_cohort_runs(effects);
     if runs.is_empty() {
@@ -885,32 +1011,58 @@ fn prove_cohort_run_chain(
         // before-cell's for interior runs, the real after-cell's for the final run.
         let is_final = k + 1 == n_runs;
         let after_w = if is_final { &rot.after } else { &rot.before };
-        let proof = prove_effect_vm_rotated_ir2_with_caveat(
-            &s_k,
-            run_effects,
-            &rot.before,
-            after_w,
-            &caveat,
-        )?;
-        // Re-derive this run's rotated PI vector (the prover self-verified it; we need the felts
-        // for the composed PI + the leg's `sub_public_inputs`). Build a throwaway per-run witness
-        // so we reuse the single-leg PI re-derivation helper.
-        let run_rot = RotationTurnWitness {
-            before: rot.before.clone(),
-            after: after_w.clone(),
-            caveat,
+
+        // CAP-OPEN ROUTING (soundness loop #5): a single AttenuateCapability run whose authority
+        // rides a REAL consumed capability proves through the CAP-OPEN descriptor — so the
+        // in-circuit cap-membership open the soundness proof relies on is exercised end-to-end.
+        // A run with NO cap witness (or any non-attenuate run) proves the base cohort descriptor;
+        // the empty cap path is correct for those (no cap authority is opened).
+        let cap_open_run = matches!(run_effects, [VmEffectKind::AttenuateCapability { .. }])
+            .then_some(cap_membership)
+            .flatten();
+        let (proof_bytes, rot_pi, vk_hash) = if let Some(cap) = cap_open_run {
+            let (proof, dpis) = prove_effect_vm_cap_open_attenuate(
+                &s_k,
+                run_effects,
+                &rot.before,
+                after_w,
+                cap,
+            )?;
+            let proof_bytes = postcard::to_allocvec(&proof).map_err(|e| {
+                SdkError::InvalidWitness(format!(
+                    "cap-open rotated proof serialize failed (run {k}): {e}"
+                ))
+            })?;
+            (proof_bytes, dpis, rotated_cap_open_vk_hash()?)
+        } else {
+            let proof = prove_effect_vm_rotated_ir2_with_caveat(
+                &s_k,
+                run_effects,
+                &rot.before,
+                after_w,
+                &caveat,
+            )?;
+            // Re-derive this run's rotated PI vector (the prover self-verified it; we need the felts
+            // for the composed PI + the leg's `sub_public_inputs`). Build a throwaway per-run
+            // witness so we reuse the single-leg PI re-derivation helper.
+            let run_rot = RotationTurnWitness {
+                before: rot.before.clone(),
+                after: after_w.clone(),
+                caveat,
+            };
+            let rot_pi = rotated_effect_pi_for(&s_k, run_effects, &run_rot)?;
+            let proof_bytes = postcard::to_allocvec(&proof).map_err(|e| {
+                SdkError::InvalidWitness(format!(
+                    "chained rotated proof serialize failed (run {k}): {e}"
+                ))
+            })?;
+            (proof_bytes, rot_pi, rotated_effect_vm_vk_hash(run_effects)?)
         };
-        let rot_pi = rotated_effect_pi_for(&s_k, run_effects, &run_rot)?;
-        let proof_bytes = postcard::to_allocvec(&proof).map_err(|e| {
-            SdkError::InvalidWitness(format!(
-                "chained rotated proof serialize failed (run {k}): {e}"
-            ))
-        })?;
         legs.push(AttachedSubProof {
             label: "effect-vm-rotated".into(),
             proof_bytes,
             sub_public_inputs: rot_pi,
-            vk_hash: rotated_effect_vm_vk_hash(run_effects)?,
+            vk_hash,
         });
         // Thread s_k → s_{k+1} off the generator's own STATE_AFTER columns (no hand-replay).
         if !is_final {
@@ -1044,7 +1196,12 @@ pub fn prove_full_turn(witness: &FullTurnWitness) -> Result<FullTurnProof, SdkEr
     // `rotation` is always `None`, so `rotated_effect_pis` is `None` and the guard fails closed.
     #[cfg(feature = "prover")]
     let rotated_effect_pis: Option<Vec<Vec<BabyBear>>> = if let Some(rot) = &witness.rotation {
-        let legs = prove_cohort_run_chain(&witness.initial_cell_state, &witness.effects, rot)?;
+        let legs = prove_cohort_run_chain(
+            &witness.initial_cell_state,
+            &witness.effects,
+            rot,
+            witness.cap_membership.as_ref(),
+        )?;
         let mut leg_pis: Vec<Vec<BabyBear>> = Vec::with_capacity(legs.len());
         for leg in legs {
             all_public_inputs.extend_from_slice(&leg.sub_public_inputs);
@@ -2357,6 +2514,134 @@ mod tests {
     use dregg_circuit::effect_vm::{CellState, Effect as VmEffect};
     use dregg_circuit::field::BabyBear;
 
+    /// SOUNDNESS LOOP #5 — the cap-open authority leg is exercised END-TO-END.
+    ///
+    /// A turn whose authority rides a REAL consumed capability (an `AttenuateCapability` with a
+    /// threaded `cap_membership`) proves through the CAP-OPEN descriptor
+    /// (`attenuateCapOpenVmDescriptor2R24`): the 58-column cap-membership appendix opens the
+    /// committed `cap_root` at a write-mask leaf whose target is the turn's `src`. This test builds
+    /// a genuine cap witness, drives the cap-open prover (`prove_effect_vm_cap_open_attenuate`,
+    /// which self-verifies before return), and re-verifies the produced leg through the SAME verify
+    /// path the full-turn verifier uses (`verify_effect_vm_rotated_with_cutover`) — which binds the
+    /// cap-open cohort descriptor (NOT the bare attenuate one). A green test means the in-circuit
+    /// cap-open membership chip-lookups + the faithful facet/tier gates are genuinely satisfied by
+    /// the live prover's output, not skipped (the `&[]` map-heaps arg stays vacuous — attenuate's
+    /// map ops are guard-gated off).
+    #[cfg(feature = "prover")]
+    #[test]
+    fn cap_open_attenuate_leg_proves_and_verifies_end_to_end() {
+        use dregg_circuit::cap_root::CapLeaf;
+        use dregg_circuit::effect_vm::trace_rotated::{
+            CapOpenWitness, FACET_MASK_HI, SIGNATURE_AUTH_TAG, WRITE_MASK_LO,
+        };
+        use dregg_turn::rotation_witness as rw;
+
+        // A FAITHFUL transfer-conferring leaf: the descriptor's two-axis gate pins auth_tag ==
+        // Signature, mask_lo == EFFECT_TRANSFER, mask_hi == 0; target == src.
+        let chosen: [BabyBear; 7] = [
+            BabyBear::new(0xA11CE),
+            BabyBear::new(7_777), // target (== src)
+            BabyBear::new(SIGNATURE_AUTH_TAG),
+            BabyBear::new(WRITE_MASK_LO),
+            BabyBear::new(FACET_MASK_HI),
+            BabyBear::new(0x00FF_FFFF),
+            BabyBear::new(42),
+        ];
+        let other: [BabyBear; 7] = [
+            BabyBear::new(0xBEEF),
+            BabyBear::new(123),
+            BabyBear::new(1),
+            BabyBear::new(1),
+            BabyBear::new(0),
+            BabyBear::new(9),
+            BabyBear::new(0),
+        ];
+        // Build a genuine c-list opening, then re-shape it as the SDK's `CapMembershipWitness`
+        // (the c-list opening the turn threads through `TurnReceipt::consumed_capabilities`).
+        let open = CapOpenWitness::build(&[other, chosen], 1).expect("cap-open witness builds");
+        let cap = CapMembershipWitness {
+            leaf: CapLeaf {
+                slot_hash: chosen[0],
+                target: chosen[1],
+                auth_tag: chosen[2],
+                mask_lo: chosen[3],
+                mask_hi: chosen[4],
+                expiry: chosen[5],
+                breadstuff: chosen[6],
+            },
+            siblings: open.siblings.to_vec(),
+            directions: open.directions.to_vec(),
+        };
+
+        // A real AttenuateCapability turn + its rotation producer witnesses (mirrors the circuit
+        // `cap_open_self_verify` scaffolding: attenuate is a nonce-tick state passthrough).
+        let before_balance: u64 = 100_000;
+        let initial = CellState::new(before_balance, 0);
+        let effects = vec![VmEffect::AttenuateCapability {
+            cap_slot_hash: [BabyBear::new(0x51); 8],
+            narrower_commitment: [BabyBear::new(0x52); 8],
+            phase_b: None,
+        }];
+
+        let mut pk = [0u8; 32];
+        pk[0] = 7;
+        let mut before_cell =
+            dregg_cell::Cell::with_balance(pk, [0u8; 32], before_balance as i64);
+        before_cell.permissions = dregg_cell::Permissions {
+            send: dregg_cell::AuthRequired::None,
+            receive: dregg_cell::AuthRequired::None,
+            set_state: dregg_cell::AuthRequired::None,
+            set_permissions: dregg_cell::AuthRequired::None,
+            set_verification_key: dregg_cell::AuthRequired::None,
+            increment_nonce: dregg_cell::AuthRequired::None,
+            delegate: dregg_cell::AuthRequired::None,
+            access: dregg_cell::AuthRequired::None,
+        };
+        let mut after_cell = before_cell.clone();
+        let _ = after_cell.state.increment_nonce();
+
+        let mut ledger = dregg_cell::Ledger::new();
+        ledger.insert_cell(after_cell.clone()).unwrap();
+        let nullifier_root = [0u8; 32];
+        let receipt_log: Vec<[u8; 32]> = vec![[3u8; 32], [4u8; 32]];
+        let before_w = rw::produce(&before_cell, &ledger, &nullifier_root, &receipt_log);
+        let after_w = rw::produce(&after_cell, &ledger, &nullifier_root, &receipt_log);
+
+        // PROVE the cap-open leg (self-verifies internally) and re-verify it through the live
+        // verify path with the cap-open vk_hash.
+        let (proof, dpis) =
+            prove_effect_vm_cap_open_attenuate(&initial, &effects, &before_w, &after_w, &cap)
+                .expect("cap-open attenuate leg must prove + self-verify");
+        let proof_bytes = postcard::to_allocvec(&proof).expect("serialize cap-open leg");
+        let vk_hash = rotated_cap_open_vk_hash().expect("cap-open vk_hash");
+        verify_effect_vm_rotated_with_cutover(&proof_bytes, &dpis, &vk_hash).expect(
+            "the cap-open leg MUST verify under the cap-open cohort descriptor (the in-circuit \
+             cap-membership open is exercised, not skipped)",
+        );
+
+        // NEGATIVE: a cap whose leaf does NOT confer the transfer facet is refused at witness
+        // build (the descriptor's transferFacetGate would be UNSAT) — fail-closed at the seam.
+        let non_transfer = CapMembershipWitness {
+            leaf: CapLeaf {
+                mask_lo: BabyBear::new(WRITE_MASK_LO + 1),
+                ..cap.leaf
+            },
+            siblings: cap.siblings.clone(),
+            directions: cap.directions.clone(),
+        };
+        assert!(
+            prove_effect_vm_cap_open_attenuate(
+                &initial,
+                &effects,
+                &before_w,
+                &after_w,
+                &non_transfer
+            )
+            .is_err(),
+            "a cap that does not confer EFFECT_TRANSFER MUST be refused (fail-closed)"
+        );
+    }
+
     /// Smoke test: prove and verify a self-sovereign turn (Effect VM only).
     #[test]
     fn prove_verify_self_sovereign_turn() {
@@ -3212,7 +3497,7 @@ mod tests {
                 ),
                 caveat: dregg_circuit::effect_vm::trace_rotated::empty_caveat_manifest(),
             };
-            let res = prove_cohort_run_chain(&initial, &[], &rot);
+            let res = prove_cohort_run_chain(&initial, &[], &rot, None);
             assert!(
                 res.is_err(),
                 "the chained prover must fail closed on an empty turn"
@@ -3309,7 +3594,7 @@ mod tests {
         let rot = rotation_witness_for_cells(&before_cell, &after_cell, &[[0x11u8; 32]]);
 
         // Build the chained legs directly (the prover the composed path uses).
-        let legs = prove_cohort_run_chain(&initial, &effects, &rot)
+        let legs = prove_cohort_run_chain(&initial, &effects, &rot, None)
             .expect("heterogeneous turn must prove as a chain of rotated legs");
         assert_eq!(legs.len(), 3, "three cohort runs ⇒ three rotated legs");
         for leg in &legs {
