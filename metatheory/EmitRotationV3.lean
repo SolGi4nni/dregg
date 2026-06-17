@@ -30,7 +30,7 @@ open Dregg2.Circuit.Emit.EffectVmEmitRotationR (rotationProbeVmDescriptorR2)
 open Dregg2.Circuit.Emit.EffectVmEmitRotationCaveat
   (rotationCaveatLayoutManifest rotationCaveatProbeVmDescriptor2)
 open Dregg2.Circuit.Emit.EffectVmEmitRotationV3 (v3Registry)
-open Dregg2.Circuit.Emit.CapOpenEmit (capOpenAttenuateV3)
+open Dregg2.Circuit.Emit.CapOpenEmit (capOpenAttenuateV3 v3RegistryCapOpen)
 
 def main : IO Unit := do
   IO.println s!"rotationLayoutManifest\t{rotationLayoutManifest}"
@@ -46,10 +46,10 @@ def main : IO Unit := do
   -- THE FULL-COHORT REGEN (ROTATION-CUTOVER §5 item 1): all 26 v2Registry members at the
   -- rotated R=24 block — `key\tname\tjson`, the byte source of
   -- `circuit/descriptors/rotation-v3-staged-registry.tsv`.
-  for (key, d) in v3Registry do
+  -- THE FULL 37-MEMBER REGISTRY (`v3RegistryCapOpen` = the 36 cohort members + the cap-open
+  -- authority member as the 37th). Looping over the cap-open registry emits the 36 cohort lines
+  -- then the cap-open line `attenuateCapOpenVmDescriptor2R24` — byte-identical to the prior
+  -- "loop v3Registry then emit capOpen" shape, now from ONE source of truth (the apex's `Rfix`
+  -- re-keys over THIS list, so the wire and the committed registry coincide).
+  for (key, d) in v3RegistryCapOpen do
     IO.println s!"v3rot\t{key}\t{d.name}\t{emitVmJson2 d}"
-  -- THE CAP-OPEN MEMBER (`capOpenAttenuateV3`): the rotated attenuate descriptor carrying the
-  -- in-circuit cap-membership open (58-column appendix past the shared rotated width). Its key
-  -- `attenuateCapOpenVmDescriptor2R24` is the 37th registry member the Rust v3 test audits on its
-  -- OWN width/PI/cap-lookup contract.
-  IO.println s!"v3rot\tattenuateCapOpenVmDescriptor2R24\t{capOpenAttenuateV3.name}\t{emitVmJson2 capOpenAttenuateV3}"

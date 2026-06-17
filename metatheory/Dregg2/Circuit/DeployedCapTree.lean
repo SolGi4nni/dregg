@@ -276,6 +276,21 @@ def confersTransferLeaf (vkOfTag : ℤ → Nat) (provided : AuthProvided) (l : C
   isEffectPermitted (facetOfLeaf l) EFFECT_TRANSFER = true
     ∧ (tierOfTag vkOfTag l.auth_tag).isSatisfiedBy provided = true
 
+/-- **`confersLeaf vkOfTag provided effectBit l`** (F6 — the GENERAL two-axis leaf gate). The
+generalization of `confersTransferLeaf` from the pinned `EFFECT_TRANSFER` constant to an ARBITRARY
+effect-kind bit `effectBit`: the leaf confers `effectBit` authority iff (1) its decoded FACET
+(`facetOfLeaf`, the genuine `maskOfLimbs mask_lo mask_hi`) permits `effectBit` AND (2) its decoded
+TIER (`tierOfTag auth_tag`, the genuine committed byte — NOT a constant) is satisfied by `provided`.
+`confersTransferLeaf vkOfTag provided = confersLeaf vkOfTag provided EFFECT_TRANSFER` (by `rfl`). -/
+def confersLeaf (vkOfTag : ℤ → Nat) (provided : AuthProvided) (effectBit : EffectMask)
+    (l : CapLeaf) : Prop :=
+  isEffectPermitted (facetOfLeaf l) effectBit = true
+    ∧ (tierOfTag vkOfTag l.auth_tag).isSatisfiedBy provided = true
+
+/-- `confersTransferLeaf` is the `EFFECT_TRANSFER` instance of the general `confersLeaf`. -/
+theorem confersTransferLeaf_eq_general (vkOfTag : ℤ → Nat) (provided : AuthProvided) (l : CapLeaf) :
+    confersTransferLeaf vkOfTag provided l = confersLeaf vkOfTag provided EFFECT_TRANSFER l := rfl
+
 /-- **`DeployedFaithful S vkOfTag provided caps root leafAt`** — the leaf-set `leafAt` faithfully
 realizes the FACET caps `caps`: every TRANSFER-conferring member leaf at an `(actor ⇒ src)` edge is
 backed by a real held `FacetCap` over `src` whose facet permits TRANSFER and whose tier is satisfied by

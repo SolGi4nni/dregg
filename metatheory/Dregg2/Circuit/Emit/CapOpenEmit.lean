@@ -277,6 +277,34 @@ theorem capOpenAttenuateV3_authorizes {State : Type} (S : CapHashScheme State) (
     (capOpenAttenuateV3_satisfied S.chipAbsorb minit mfin maddrs t hsat i hi)
     caps leafAt hfaith actor src dst amt hsrc hedge
 
+/-- **`capOpenAttenuateV3_authorizes_tierGeneral` (F6) — THE LIVE AUTHORITY LEG, GENERAL TIER.** The
+generalization of `capOpenAttenuateV3_authorizes` from the pinned `.signature` to ANY `provided` auth
+that satisfies the tier DECODED off the committed leaf (`tierOfTag vkOfTag leaf.auth_tag`). A
+`Satisfied2` witness of the live cap-open descriptor whose opened leaf IS the faithfulness contract's
+`(actor ⇒ src)` edge discharges `authorizedFacetB caps provided turn` for the GENUINE committed tier —
+the §10 tier residual closed end-to-end on the live wire. -/
+theorem capOpenAttenuateV3_authorizes_tierGeneral {State : Type} (S : CapHashScheme State)
+    (vkOfTag : ℤ → Nat) (provided : AuthProvided)
+    (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ)
+    (t : Dregg2.Circuit.DescriptorIR2.VmTrace)
+    (hChip : ChipTableSound S.chipAbsorb (t.tf .poseidon2))
+    (hsat : Satisfied2 S.chipAbsorb capOpenAttenuateV3 minit mfin maddrs t)
+    (i : Nat) (hi : i < t.rows.length)
+    (caps : FacetCaps) (leafAt : Label → Label → CapLeaf)
+    (hfaith : DeployedFaithful S vkOfTag provided caps
+      ((Dregg2.Circuit.DescriptorIR2.envAt t i).loc capOpenCols.capRoot) leafAt)
+    (actor src dst : Label) (amt : ℤ)
+    (hsrc : (Dregg2.Circuit.DescriptorIR2.envAt t i).loc capOpenCols.src = (src : ℤ))
+    (hedge : leafOf capOpenCols (Dregg2.Circuit.DescriptorIR2.envAt t i) = leafAt actor src)
+    (htier : (Dregg2.Circuit.DeployedCapTree.CapHashScheme.tierOfTag vkOfTag
+        (leafAt actor src).auth_tag).isSatisfiedBy provided = true) :
+    authorizedFacetB caps provided
+      { actor := actor, src := src, dst := dst, amt := amt } = true
+    ∧ (leafAt actor src).target = (src : ℤ) :=
+  capOpen_authorizes_tierGeneral S t.tf capOpenCols _ vkOfTag provided hChip
+    (capOpenAttenuateV3_satisfied S.chipAbsorb minit mfin maddrs t hsat i hi)
+    caps leafAt hfaith actor src dst amt hsrc hedge htier
+
 /-! ## §5 — the wire face: the emitted JSON carries the cap-open constraints.
 
 The Rust registry twin parses `emitVmJson2 capOpenAttenuateV3`. We pin the shape: the descriptor's
@@ -294,10 +322,49 @@ large; `lake`'s `#guard` on the constraint COUNT + width is the Lean-side pin). 
 -- The five EPOCH tables are inherited unchanged (the cap-open rides the chip + main tables).
 #guard capOpenAttenuateV3.tables.length == 5
 
-/-! ## §6 — Axiom hygiene. -/
+/-! ## §6 — the registry WITH the cap-open: the 37th member (F5 — `Rfix` ranges over the
+authority descriptor).
+
+`EffectVmEmitRotationV3.v3Registry` is the 36-member cohort; it CANNOT itself name the cap-open
+(`CapOpenEmit` imports `EffectVmEmitRotationV3`, so the dependency runs this way). The deployed wire
+registry (`V3_STAGED_REGISTRY_TSV`) carries 37 lines — the 36 cohort members + the cap-open as the
+37th (`EmitRotationV3.lean` emits it). `v3RegistryCapOpen` is the Lean twin of that 37-line registry:
+the cohort with `capOpenAttenuateV3` appended as the authority member. The soundness apex's `Rfix` is
+re-keyed over THIS list, so `registryCommit Rfix` ranges over the cap-open descriptor — the one
+in-circuit authority gadget is now inside the registry the apex's `StarkSound` quantifies over (F5
+CLOSED). -/
+
+/-- **`v3RegistryCapOpen`** — the 37-member deployed registry: the 36 cohort members
+(`EffectVmEmitRotationV3.v3Registry`) plus `capOpenAttenuateV3` as the authority member (registry
+position 36, key `attenuateCapOpenVmDescriptor2R24`). The Lean twin of the 37-line
+`V3_STAGED_REGISTRY_TSV`; the soundness apex's `Rfix` re-keys over it (so the cap-open authority
+descriptor is in the registry `registryCommit Rfix` commits). -/
+def v3RegistryCapOpen : List (String × EffectVmDescriptor2) :=
+  Dregg2.Circuit.Emit.EffectVmEmitRotationV3.v3Registry
+    ++ [("attenuateCapOpenVmDescriptor2R24", capOpenAttenuateV3)]
+
+/-- The registry-with-cap-open has 37 members (36 cohort + the cap-open). -/
+theorem v3RegistryCapOpen_length : v3RegistryCapOpen.length = 37 := by
+  simp [v3RegistryCapOpen, Dregg2.Circuit.Emit.EffectVmEmitRotationV3.v3Registry]
+
+-- The cap-open authority member is the 37th registry entry (position 36).
+#guard v3RegistryCapOpen.length == 37
+#guard (v3RegistryCapOpen[36]?.map (·.1)) == some "attenuateCapOpenVmDescriptor2R24"
+-- The 36 cohort members are unchanged at positions 0..35 (the prefix is verbatim `v3Registry`).
+#guard (v3RegistryCapOpen[0]?.map (·.1)) == some "transferVmDescriptor2R24"
+
+/-- The cap-open member of the registry IS `capOpenAttenuateV3` (position 36). The apex's `Rfix` at
+the cap-open tag therefore lands at the genuine cap-open authority descriptor. -/
+theorem v3RegistryCapOpen_capOpen :
+    (v3RegistryCapOpen[36]?.map (·.2)) = some capOpenAttenuateV3 := rfl
+
+/-! ## §7 — Axiom hygiene. -/
 
 #assert_axioms capOpenAttenuateV3_satisfied
 #assert_axioms capOpenAttenuateV3_sound
 #assert_axioms capOpenAttenuateV3_authorizes
+#assert_axioms capOpenAttenuateV3_authorizes_tierGeneral
+#assert_axioms v3RegistryCapOpen_length
+#assert_axioms v3RegistryCapOpen_capOpen
 
 end Dregg2.Circuit.Emit.CapOpenEmit

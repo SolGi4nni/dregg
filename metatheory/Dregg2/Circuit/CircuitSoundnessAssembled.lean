@@ -121,7 +121,9 @@ def actionTagToPos : EffectIdx → Nat
   | 9  => 9    -- setVK           → setVKVmDescriptor2R24
   | 10 => 15   -- introduce       → introduceVmDescriptor2R24
   | 11 => 16   -- delegateAtten   → attenuateVmDescriptor2R24
-  | 12 => 16   -- attenuate       → attenuateVmDescriptor2R24
+  | 12 => 36   -- attenuate       → attenuateCapOpenVmDescriptor2R24 (F5: the IN-CIRCUIT authority
+               --                   descriptor — the cap-open is now the registry member the apex
+               --                   commits for the cap-authorized attenuate path)
   | 14 => 14   -- revokeDelegation→ revokeVmDescriptor2R24
   | 16 => 10   -- exercise        → exerciseVmDescriptor2R24
   | 17 => 22   -- createCell      → createCellVmDescriptor2R24
@@ -147,7 +149,7 @@ no own descriptor (heapWrite, off-range) fall back to the transfer descriptor, s
 lands each per-effect rung (stated at `actionTag`) at its GENUINE descriptor — in particular
 `Rfix 0 = transferV3` by `rfl`. -/
 def Rfix : Registry := fun e =>
-  match Dregg2.Circuit.Emit.EffectVmEmitRotationV3.v3Registry[actionTagToPos e]? with
+  match Dregg2.Circuit.Emit.CapOpenEmit.v3RegistryCapOpen[actionTagToPos e]? with
   | some (_, d) => d
   | none => transferDescr
 
@@ -161,6 +163,13 @@ theorem Rfix_total (e : EffectIdx) : ∃ d : EffectVmDescriptor2, Rfix e = d := 
 transfer descriptor `v3Of transferVmDescriptor = transferV3`. So `Rfix 0` IS the genuine transfer
 descriptor — the rung at the transfer tag discharges its refinement about the right descriptor. -/
 theorem Rfix_transfer : Rfix 0 = Dregg2.Circuit.RotatedKernelRefinement.transferV3 := rfl
+
+/-- **`Rfix_capOpen` — F5: the apex's registry RANGES OVER the in-circuit authority descriptor.**
+The attenuate tag (`12`) re-keys to `v3RegistryCapOpen` position `36` — the cap-open authority member
+`capOpenAttenuateV3` (the descriptor carrying the depth-16 in-circuit cap-membership open). So
+`vkOfRegistry Rfix` / the apex's `StarkSound hash Rfix` quantify over the cap-open: the one in-circuit
+authority gadget is INSIDE the registry the light-client apex commits, not beside it. -/
+theorem Rfix_capOpen : Rfix 12 = Dregg2.Circuit.Emit.CapOpenEmit.capOpenAttenuateV3 := rfl
 
 /-! ## §2 — `kstepAll`: the assembled dispatcher arm.
 
@@ -296,6 +305,7 @@ theorem kstepAll_transfer_from_faithful
 
 #assert_axioms Rfix_total
 #assert_axioms Rfix_transfer
+#assert_axioms Rfix_capOpen
 #assert_axioms hrefinesAll
 #assert_axioms lightclient_unfoolable_assembled
 #assert_axioms lightclient_turn_unfoolable_forest_assembled

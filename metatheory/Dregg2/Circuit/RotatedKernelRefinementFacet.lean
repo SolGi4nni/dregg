@@ -278,6 +278,55 @@ theorem authoritySource_authorizes (hash : List ℤ → ℤ) (fcaps : FacetCaps)
     src0.t src0.hChip src0.hsat src0.i src0.hi fcaps src0.leafAt src0.hfaith
     tr.actor tr.src tr.dst tr.amt src0.hsrc src0.hedge).1
 
+/-! ## §3.G — F6: the GENERAL-TIER cap-open authority source (decoded `auth_tag`, not pinned).
+
+`TransferAuthoritySource` pins `.signature` (the cap-open's `authTagGate` constant). F6 generalizes:
+`TransferAuthoritySourceG` carries a `provided : AuthProvided` and the fact that `provided` satisfies
+the tier DECODED off the committed leaf (`tierOfTag vkOfTag (leafAt actor src).auth_tag`), rather than
+hardcoding Signature. `authoritySourceG_authorizes` then forces `authorizedFacetB fcaps provided tr`
+for the GENUINE committed tier — the §10 tier residual closed in the apex authority leg. -/
+
+/-- **`TransferAuthoritySourceG hash fcaps provided pre tr`** (F6) — the GENERAL-TIER cap-open authority
+source. Identical to `TransferAuthoritySource` but the deployed faithfulness is over an arbitrary
+`provided` (not `.signature`), and it adds `htier`: `provided` satisfies the tier decoded off the
+committed leaf. The authority conclusion (`authorizedFacetB fcaps provided`) is forced from the
+in-circuit open + the committed tier — NOT pinned to Signature. -/
+structure TransferAuthoritySourceG (hash : List ℤ → ℤ) (fcaps : FacetCaps) (provided : AuthProvided)
+    (pre : RecChainedState) (tr : Turn) : Type 1 where
+  State : Type
+  S : CapHashScheme State
+  vkOfTag : ℤ → Nat
+  minit : ℤ → ℤ
+  mfin : ℤ → ℤ × Nat
+  maddrs : List ℤ
+  t : VmTrace
+  hChip : ChipTableSound S.chipAbsorb (t.tf .poseidon2)
+  hsat : Satisfied2 S.chipAbsorb capOpenAttenuateV3 minit mfin maddrs t
+  i : Nat
+  hi : i < t.rows.length
+  leafAt : Dregg2.Authority.Label → Dregg2.Authority.Label → CapLeaf
+  hfaith : DeployedFaithful S vkOfTag provided fcaps ((envAt t i).loc capOpenCols.capRoot) leafAt
+  hsrc : (envAt t i).loc capOpenCols.src = (tr.src : ℤ)
+  hedge : leafOf capOpenCols (envAt t i) = leafAt tr.actor tr.src
+  /-- the off-circuit auth satisfies the tier DECODED off the committed leaf (NOT a Signature pin). -/
+  htier : (Dregg2.Circuit.DeployedCapTree.CapHashScheme.tierOfTag vkOfTag
+      (leafAt tr.actor tr.src).auth_tag).isSatisfiedBy provided = true
+
+/-- **`authoritySourceG_authorizes` (F6) — the cap-open FORCES the GENERAL-tier deployed authority.**
+From a `TransferAuthoritySourceG`, `authorizedFacetB fcaps provided tr` PASSES for the GENUINE committed
+tier (`tierOfTag auth_tag`), not the pinned Signature: the in-circuit cap-open + the committed-tier
+satisfaction discharge the faithful authority gate. -/
+theorem authoritySourceG_authorizes (hash : List ℤ → ℤ) (fcaps : FacetCaps) (provided : AuthProvided)
+    (pre : RecChainedState) (tr : Turn)
+    (src0 : TransferAuthoritySourceG hash fcaps provided pre tr) :
+    authorizedFacetB fcaps provided tr = true := by
+  show authorizedFacetB fcaps provided
+      { actor := tr.actor, src := tr.src, dst := tr.dst, amt := tr.amt } = true
+  exact (Dregg2.Circuit.Emit.CapOpenEmit.capOpenAttenuateV3_authorizes_tierGeneral
+    src0.S src0.vkOfTag provided src0.minit src0.mfin src0.maddrs src0.t src0.hChip src0.hsat
+    src0.i src0.hi fcaps src0.leafAt src0.hfaith tr.actor tr.src tr.dst tr.amt src0.hsrc
+    src0.hedge src0.htier).1
+
 /-! ## §4 — `transfer_descriptorRefines_facet`: the TEMPLATE keystone.
 
 The faithful refinement. From a satisfying transfer VALUE witness (`Satisfied2 hash transferV3 …`
@@ -313,6 +362,29 @@ theorem transfer_descriptorRefines_facet (hash : List ℤ → ℤ)
   -- the AUTHORITY leg — FORCED by the cap-open (NOT the toy `htoy` from the decode).
   have hfaithAuth : authorizedFacetB fcaps .signature tr = true :=
     authoritySource_authorizes hash fcaps pre tr hauth
+  exact ⟨⟨hfaithAuth, hnn, hav, hne, hls, hld, hacc⟩, hrest⟩
+
+set_option maxHeartbeats 800000 in
+/-- **`transfer_descriptorRefines_facet_tierGeneral` (F6) — the FAITHFUL refinement at the GENERAL
+tier.** Identical to `transfer_descriptorRefines_facet` but the authority leg rides the GENERAL-tier
+cap-open source (`TransferAuthoritySourceG`, the committed `auth_tag` decoded — NOT the Signature
+pin), forcing `BalanceMovementSpecFacet fcaps provided` for any `provided` the committed tier admits.
+The §10 tier residual is closed in the refinement keystone: the faithful spec now carries the deployed
+two-axis gate at the GENUINE committed tier. -/
+theorem transfer_descriptorRefines_facet_tierGeneral (hash : List ℤ → ℤ)
+    {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
+    (hside : RotTableSide hash t)
+    (hsat : Satisfied2 hash transferV3 minit mfin maddrs t)
+    (pre post : RecChainedState) (tr : Turn) (a : AssetId)
+    (henc : rotatedEncodes hash minit mfin maddrs t pre post tr a)
+    (fcaps : FacetCaps) (provided : AuthProvided)
+    (hauth : TransferAuthoritySourceG hash fcaps provided pre tr) :
+    BalanceMovementSpecFacet fcaps provided pre tr a post := by
+  have hval : BalanceMovementSpec pre tr a post :=
+    transfer_descriptorRefines hash hside hsat pre post tr a henc
+  obtain ⟨⟨_htoy, hnn, hav, hne, hls, hld, hacc⟩, hrest⟩ := hval
+  have hfaithAuth : authorizedFacetB fcaps provided tr = true :=
+    authoritySourceG_authorizes hash fcaps provided pre tr hauth
   exact ⟨⟨hfaithAuth, hnn, hav, hne, hls, hld, hacc⟩, hrest⟩
 
 /-- **`transfer_descriptorRefines_facet_rejects_unauthorized` (the faithful authority tooth).** If the
@@ -420,7 +492,9 @@ theorem balanceMovementSpecFacet_owner_admits (fcaps : FacetCaps) (provided : Au
 #assert_axioms specFacet_rejects_unauthorized
 #assert_axioms balanceMovementSpecFacet_to_toy
 #assert_axioms authoritySource_authorizes
+#assert_axioms authoritySourceG_authorizes
 #assert_axioms transfer_descriptorRefines_facet
+#assert_axioms transfer_descriptorRefines_facet_tierGeneral
 #assert_axioms transfer_descriptorRefines_facet_rejects_unauthorized
 #assert_axioms lightclient_transfer_faithful
 #assert_axioms dispatchArmFacet_to_dispatchArm

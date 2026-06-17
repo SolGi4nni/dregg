@@ -672,6 +672,38 @@ pub fn prove_effect_vm_rotated_ir2_with_caveat(
         .map_err(|e| SdkError::InvalidWitness(format!("rotated IR-v2 proof: {e}")))
 }
 
+/// **`cap_open_supported_for_run`** (F1) — does a cap-open descriptor exist for this single-effect
+/// run's effect-kind? The cap-open routing (`prove_cohort_run_chain`) is cap-PRESENCE driven: any
+/// run threading a real consumed-cap witness routes the cap-open. This gate maps the run's
+/// effect-kind to its cap-open descriptor:
+///
+///   * **`AttenuateCapability`** — WIRED (`attenuateCapOpenVmDescriptor2R24`, the
+///     `prove_effect_vm_cap_open_attenuate` path); the cap-membership open is proven + self-verified
+///     end-to-end (`circuit/tests/cap_open_self_verify.rs`).
+///   * **every other cap-authorized effect-kind** (notably the cross-vat **Transfer-via-granted-cap**,
+///     `actor != src` with authority from a held transfer cap) — NO cap-open descriptor is emitted
+///     yet (the cap-open appendix is generic — `widen_to_cap_open` opens the cap-tree at `src` for
+///     ANY base — but a `transferCapOpenVmDescriptor2R24` = transfer-base + cap-open appendix has not
+///     been registered, and `patch_attenuate_base_for_cap_open` is attenuate-shaped). These fail
+///     CLOSED here with a precise error. This is the NAMED per-effect F1 residual: the routing is
+///     general, the descriptor coverage is attenuate-only.
+#[cfg(feature = "prover")]
+fn cap_open_supported_for_run(run_effects: &[VmEffectKind]) -> Result<(), SdkError> {
+    match run_effects {
+        [VmEffectKind::AttenuateCapability { .. }] => Ok(()),
+        [other] => Err(SdkError::InvalidWitness(format!(
+            "cap-open routing: a cap witness was threaded for a {other:?} run, but no cap-open \
+             descriptor is emitted for that effect-kind yet (only AttenuateCapability is wired; \
+             cross-vat Transfer-via-cap needs a transferCapOpenVmDescriptor2R24 — the NAMED F1 \
+             residual). Drop the cap witness to prove the base cohort descriptor, or add the \
+             per-effect cap-open descriptor."
+        ))),
+        _ => Err(SdkError::InvalidWitness(
+            "cap-open routing: expected exactly one cap-authorized effect in the run".into(),
+        )),
+    }
+}
+
 /// The CAP-OPEN single-leg prover (soundness loop #5): prove an `AttenuateCapability` turn
 /// through the CAP-OPEN descriptor (`attenuateCapOpenVmDescriptor2R24`, the 369-wide
 /// `capOpenAttenuateV3` leg), so the in-circuit cap-membership open — the authority leg the
@@ -1012,15 +1044,26 @@ fn prove_cohort_run_chain(
         let is_final = k + 1 == n_runs;
         let after_w = if is_final { &rot.after } else { &rot.before };
 
-        // CAP-OPEN ROUTING (soundness loop #5): a single AttenuateCapability run whose authority
-        // rides a REAL consumed capability proves through the CAP-OPEN descriptor — so the
+        // CAP-OPEN ROUTING (soundness loop #5, F1 — cap-presence-driven). A run whose authority
+        // rides a REAL consumed capability (`cap_membership` threaded — the actor does NOT own the
+        // cell, authority comes from a held cap) proves through the CAP-OPEN descriptor, so the
         // in-circuit cap-membership open the soundness proof relies on is exercised end-to-end.
-        // A run with NO cap witness (or any non-attenuate run) proves the base cohort descriptor;
-        // the empty cap path is correct for those (no cap authority is opened).
-        let cap_open_run = matches!(run_effects, [VmEffectKind::AttenuateCapability { .. }])
-            .then_some(cap_membership)
-            .flatten();
+        // OWNER-authorized runs (actor == src) thread NO cap witness, so `cap_membership` is
+        // `None` and the base cohort descriptor is proven (correct — no cap authority is opened).
+        //
+        // The routing condition is now the PRESENCE of a cap witness for a single-effect run, NOT
+        // the effect being AttenuateCapability. The cap-open descriptor is resolved per effect-kind
+        // by `cap_open_supported_for_run`: AttenuateCapability is wired
+        // (`attenuateCapOpenVmDescriptor2R24`); other cap-authorized effect-kinds (notably the
+        // cross-vat Transfer-via-granted-cap) have NO cap-open descriptor emitted yet, so they fail
+        // CLOSED with a precise "no cap-open descriptor for <effect>" error — the wiring is general,
+        // the per-effect descriptor coverage is the NAMED residual (see `cap_open_supported_for_run`).
+        let cap_open_run = match (run_effects.len(), cap_membership) {
+            (1, Some(cap)) => Some(cap),
+            _ => None,
+        };
         let (proof_bytes, rot_pi, vk_hash) = if let Some(cap) = cap_open_run {
+            cap_open_supported_for_run(run_effects)?;
             let (proof, dpis) = prove_effect_vm_cap_open_attenuate(
                 &s_k,
                 run_effects,

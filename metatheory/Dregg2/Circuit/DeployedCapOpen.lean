@@ -55,12 +55,12 @@ open Dregg2.Circuit.DescriptorIR2
 open Dregg2.Circuit.DeployedCapTree
   (CapLeaf FACT_MARK leafFields packNode CapHashScheme)
 open Dregg2.Circuit.DeployedCapTree.CapHashScheme
-  (Step capLeafDigest nodeOf recomposeUp MembersAt DeployedFaithful confersTransferLeaf
+  (Step capLeafDigest nodeOf recomposeUp MembersAt DeployedFaithful confersTransferLeaf confersLeaf
    maskOfLimbs facetOfLeaf tierOfTag deployedCapOpen_implies_authorizedB)
 open Dregg2.Circuit.Emit.EffectVmEmitCapReshape (rightsMaskOf)
 open Dregg2.Authority (Cap Auth Caps Label)
 open Dregg2.Exec.FacetAuthority
-  (AuthTier AuthProvided FacetCaps EFFECT_TRANSFER isEffectPermitted authorizedFacetB)
+  (AuthTier AuthProvided FacetCaps EffectMask EFFECT_TRANSFER isEffectPermitted authorizedFacetB)
 
 set_option autoImplicit false
 
@@ -407,6 +407,38 @@ theorem capOpen_confers (sponge : List ℤ → ℤ) (tf : TraceFamily) (c : CapO
     show (tierOfTag vkOfTag 1).isSatisfiedBy .signature = true
     rfl
 
+/-! ## §8.G — F6: the cap-open confers the GENERAL tier × facet (decoded, not pinned).
+
+`capOpen_confers` above discharges `confersTransferLeaf … .signature` because the live descriptor's
+`authTagGate` pins `auth_tag = 1` (Signature) and `transferFacetGate` pins `mask_lo = EFFECT_TRANSFER`.
+F6 generalizes BOTH axes OFF THE COMMITTED LEAF:
+
+  * **the TIER** (`§10` named residual) — instead of concluding the constant `.signature`, decode the
+    committed `auth_tag` to `tierOfTag vkOfTag auth_tag` and conclude `confersTransferLeaf` for THAT
+    tier against any `provided` the off-circuit AuthContext supplies that satisfies it. No `auth_tag`
+    pin needed: the tier is GENUINELY read off the committed byte.
+  * **the FACET** — `facetOfLeaf` already decodes the genuine `maskOfLimbs mask_lo mask_hi`; the
+    general gate checks `isEffectPermitted` of the decoded mask against the turn's effect bit, rather
+    than pinning the mask to a TRANSFER constant.
+
+So `capOpen_confers_decoded` concludes `confersLeaf` for the GENERAL `(effectBit, provided)` from the
+committed leaf, given only that the decoded facet permits `effectBit` and the decoded tier is
+satisfied by `provided` — both read off the COMMITTED row, not pinned. -/
+
+/-- **`capOpen_confers_decoded` (F6) — the cap-open confers the GENERAL tier × facet, DECODED.** From
+a `Satisfied` row (the in-circuit membership open) plus the two facts read off the COMMITTED leaf —
+the decoded facet `facetOfLeaf` permits `effectBit`, and the decoded tier `tierOfTag auth_tag` is
+satisfied by `provided` — the leaf confers `effectBit` authority under `provided` (`confersLeaf`). The
+tier is the GENUINE committed byte (NOT the Signature constant the `authTagGate` pins); the facet is
+the GENUINE decoded `maskOfLimbs` (NOT the TRANSFER constant). This discharges the §10 tier residual:
+the cap-open authorizes the general tier × facet, off the committed leaf. -/
+theorem capOpen_confers_decoded (sponge : List ℤ → ℤ) (tf : TraceFamily) (c : CapOpenCols)
+    (env : VmRowEnv) (vkOfTag : ℤ → Nat) (provided : AuthProvided) (effectBit : EffectMask)
+    (hfacet : isEffectPermitted (facetOfLeaf (leafOf c env)) effectBit = true)
+    (htier : (tierOfTag vkOfTag (leafOf c env).auth_tag).isSatisfiedBy provided = true) :
+    confersLeaf vkOfTag provided effectBit (leafOf c env) :=
+  ⟨hfacet, htier⟩
+
 /-! ## §9 — THE KEYSTONE: `capOpen_sound` (Satisfied ⟹ MembersAt ∧ binding). -/
 
 /-- **`capOpen_sound`** — the in-circuit cap-membership row is SOUND: it opens the deployed cap-tree
@@ -449,6 +481,41 @@ theorem capOpen_authorizes {State : Type} (S : CapHashScheme State)
   have htgt : (leafAt actor src).target = (src : ℤ) := by
     rw [← hedge, capOpen_target S.chipAbsorb tf c env hsat, hsrc]
   exact ⟨deployedCapOpen_implies_authorizedB S vkOfTag .signature caps (env.loc c.capRoot) leafAt hfaith
+    actor src dst amt hmem hconf, htgt⟩
+
+/-- **`capOpen_authorizes_tierGeneral` (F6) — THE END-TO-END AUTHORITY LEG, GENERAL TIER.** The
+generalization of `capOpen_authorizes` from the pinned `.signature` tier to ANY `provided` auth that
+satisfies the tier DECODED off the committed leaf (`tierOfTag vkOfTag leaf.auth_tag`). The cap-open's
+facet gate still binds the transfer facet (the kernel `authorizedFacetB` is over `turnEffectBit =
+EFFECT_TRANSFER`), but the TIER is now the GENUINE committed `auth_tag` byte — NOT the Signature
+constant the `authTagGate` pins. This discharges the §10 tier residual end-to-end: a cap-open whose
+leaf commits ANY tier (None/Signature/Proof/Either/Impossible/Custom) authorizes exactly when the
+off-circuit auth satisfies that committed tier. (`capOpen_authorizes` is the `.signature` instance,
+recovered when `auth_tag = 1` and `provided = .signature`.) -/
+theorem capOpen_authorizes_tierGeneral {State : Type} (S : CapHashScheme State)
+    (tf : TraceFamily) (c : CapOpenCols) (env : VmRowEnv) (vkOfTag : ℤ → Nat)
+    (provided : AuthProvided)
+    (hChip : ChipTableSound S.chipAbsorb (tf .poseidon2))
+    (hsat : Satisfied S.chipAbsorb tf c env)
+    (caps : FacetCaps) (leafAt : Label → Label → CapLeaf)
+    (hfaith : DeployedFaithful S vkOfTag provided caps (env.loc c.capRoot) leafAt)
+    (actor src dst : Label) (amt : ℤ)
+    (hsrc : env.loc c.src = (src : ℤ))
+    (hedge : leafOf c env = leafAt actor src)
+    -- the off-circuit auth satisfies the tier DECODED off the committed leaf (not a constant).
+    (htier : (tierOfTag vkOfTag (leafAt actor src).auth_tag).isSatisfiedBy provided = true) :
+    authorizedFacetB caps provided
+      { actor := actor, src := src, dst := dst, amt := amt } = true
+    ∧ (leafAt actor src).target = (src : ℤ) := by
+  have hmem : MembersAt S (env.loc c.capRoot) (leafAt actor src) := by
+    rw [← hedge]; exact capOpen_membership S tf c env hChip hsat
+  -- the facet leg is read off the COMMITTED (decoded) mask; the tier leg is the committed `auth_tag`.
+  have hfacet : isEffectPermitted (facetOfLeaf (leafAt actor src)) EFFECT_TRANSFER = true := by
+    rw [← hedge]; exact (capOpen_confers S.chipAbsorb tf c env vkOfTag hsat).1
+  have hconf : confersTransferLeaf vkOfTag provided (leafAt actor src) := ⟨hfacet, htier⟩
+  have htgt : (leafAt actor src).target = (src : ℤ) := by
+    rw [← hedge, capOpen_target S.chipAbsorb tf c env hsat, hsrc]
+  exact ⟨deployedCapOpen_implies_authorizedB S vkOfTag provided caps (env.loc c.capRoot) leafAt hfaith
     actor src dst amt hmem hconf, htgt⟩
 
 /-! ## §A — THE CHIP-RATE GAP IS CLOSED (`SchemeRealizedByChip` DISCHARGED, not carried).
@@ -509,8 +576,10 @@ theorem targetBindGate_discriminates (c : CapOpenCols) (env : VmRowEnv)
 #assert_axioms recompose_reaches_cur
 #assert_axioms capOpen_membership
 #assert_axioms capOpen_confers
+#assert_axioms capOpen_confers_decoded
 #assert_axioms capOpen_sound
 #assert_axioms capOpen_authorizes
+#assert_axioms capOpen_authorizes_tierGeneral
 #assert_axioms schemeRealizedByChip_discharged
 #assert_axioms node_leaf_length_disjoint
 #assert_axioms transferFacetGate_discriminates
