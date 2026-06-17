@@ -10,7 +10,7 @@
 //! `dregg_circuit::effect_vm::generate_rotated_effect_vm_trace` (`effect_vm/trace_rotated.rs`),
 //! NOT hand-welded in this test. The generator promotes the former in-test `fill_block` /
 //! `fill_caveat` into genuine circuit machinery: from the v1 186-col trace + the producer
-//! witness limbs it emits the 311-col rotated trace + the 38-PI vector the staged registry
+//! witness limbs it emits the 315-col rotated trace + the 38-PI vector the staged registry
 //! descriptor (`transferVmDescriptor2R24`) pins.
 //!
 //! G3: the LIVE cell≡circuit binding — `dregg_cell::commitment::compute_canonical_state_
@@ -21,7 +21,7 @@
 //! What it asserts (all on the ROTATED R=24 shape):
 //!
 //!   1. **THE FULL ROTATED TRANSFER PROVES+VERIFIES** — `transferVmDescriptor2R24` (width
-//!      311) over a real transfer witness, LIVE-generated, every chained `wireCommitR` digest
+//!      315) over a real transfer witness, LIVE-generated, every chained `wireCommitR` digest
 //!      genuine, the four appended PI pins published.
 //!   2. **THE cell≡circuit ROTATED DIFFERENTIAL** — (a) the producer's limbs EQUAL the
 //!      generated trace's limbs; (b) the producer's `state_commit` AND the cell's v9
@@ -52,7 +52,7 @@ use dregg_circuit::field::BabyBear;
 use dregg_turn::rotation_witness as rw;
 
 const B_CAP_ROOT: usize = 25;
-const NUM_PRE: usize = rw::NUM_PRE_LIMBS; // 31
+const NUM_PRE: usize = rw::NUM_PRE_LIMBS; // 32
 
 /// Resolve the rotated transfer descriptor JSON from the staged registry TSV.
 fn rotated_transfer_json() -> &'static str {
@@ -136,7 +136,7 @@ fn producer_cell_with_field(balance: i64, nonce: u64, field_idx: usize, field: [
 fn rotated_transfer_proves_verifies_differential_and_refuses_ghost() {
     let desc =
         parse_vm_descriptor2(rotated_transfer_json()).expect("rotated transfer descriptor parses");
-    assert_eq!(desc.trace_width, ROT_WIDTH, "rotated width 311");
+    assert_eq!(desc.trace_width, ROT_WIDTH, "rotated width 315");
     assert_eq!(desc.public_input_count, 38, "34 v1 PIs + 4 appended");
 
     // -- a real transfer: the validated v1 reference witness (transfer-out). --
@@ -155,10 +155,11 @@ fn rotated_transfer_proves_verifies_differential_and_refuses_ghost() {
     let after_cell = producer_cell(before_balance - amount as i64, 0);
     ledger.insert_cell(after_cell.clone()).unwrap();
     let nullifier_root = [0u8; 32];
+    let commitments_root = [0u8; 32];
     let receipt_log: Vec<[u8; 32]> = vec![[1u8; 32], [2u8; 32]];
 
-    let before_w = rw::produce(&before_cell, &ledger, &nullifier_root, &receipt_log);
-    let after_w = rw::produce(&after_cell, &ledger, &nullifier_root, &receipt_log);
+    let before_w = rw::produce(&before_cell, &ledger, &nullifier_root, &commitments_root, &receipt_log);
+    let after_w = rw::produce(&after_cell, &ledger, &nullifier_root, &commitments_root, &receipt_log);
 
     // -- (G1) THE LIVE GENERATOR drives the rotated trace + PIs (NOT hand-built). --
     let caveat = transfer_caveat_manifest();
@@ -169,8 +170,8 @@ fn rotated_transfer_proves_verifies_differential_and_refuses_ghost() {
         &bridge(&after_w),
         &caveat,
     )
-    .expect("live rotated generator must produce a 311-col trace + 38 PIs");
-    assert_eq!(trace[0].len(), ROT_WIDTH, "311-col rotated trace");
+    .expect("live rotated generator must produce a 315-col trace + 38 PIs");
+    assert_eq!(trace[0].len(), ROT_WIDTH, "315-col rotated trace");
     assert_eq!(dpis.len(), 38);
 
     // -- (2) THE cell≡circuit ROTATED DIFFERENTIAL: producer limbs == the generated trace's
@@ -249,6 +250,7 @@ fn rotated_transfer_proves_verifies_differential_and_refuses_ghost() {
     let v9_ctx = V9RotationContext {
         cells_root: before_w.pre_limbs[0],
         nullifier_root,
+        commitments_root,
         iroot: before_w.iroot,
     };
     let cell_v9 = compute_canonical_state_commitment_v9_felt(&before_cell, &v9_ctx);
@@ -384,7 +386,7 @@ fn rotated_burn_cohort_member_proves_verifies_with_authority_commitment() {
         })
         .expect("burnVmDescriptor2R24 in registry");
     let desc = parse_vm_descriptor2(json).expect("burn descriptor parses");
-    assert_eq!(desc.trace_width, ROT_WIDTH, "rotated width 311");
+    assert_eq!(desc.trace_width, ROT_WIDTH, "rotated width 315");
     assert_eq!(desc.public_input_count, 38);
 
     // A real burn turn: a 30-unit balance debit (no destination credit).
@@ -398,10 +400,11 @@ fn rotated_burn_cohort_member_proves_verifies_with_authority_commitment() {
     let after_cell = producer_cell(before_balance - amount as i64, 0);
     ledger.insert_cell(after_cell.clone()).unwrap();
     let nullifier_root = [0u8; 32];
+    let commitments_root = [0u8; 32];
     let receipt_log: Vec<[u8; 32]> = vec![[3u8; 32]];
 
-    let before_w = rw::produce(&before_cell, &ledger, &nullifier_root, &receipt_log);
-    let after_w = rw::produce(&after_cell, &ledger, &nullifier_root, &receipt_log);
+    let before_w = rw::produce(&before_cell, &ledger, &nullifier_root, &commitments_root, &receipt_log);
+    let after_w = rw::produce(&after_cell, &ledger, &nullifier_root, &commitments_root, &receipt_log);
 
     // The burn carries no in-circuit caveat operand → the EMPTY manifest (cohort default).
     let caveat = empty_caveat_manifest();
@@ -419,6 +422,7 @@ fn rotated_burn_cohort_member_proves_verifies_with_authority_commitment() {
     let v9_ctx = V9RotationContext {
         cells_root: before_w.pre_limbs[0],
         nullifier_root,
+        commitments_root,
         iroot: before_w.iroot,
     };
     let cell_v9 = compute_canonical_state_commitment_v9_felt(&before_cell, &v9_ctx);
@@ -482,7 +486,7 @@ fn rotated_note_spend_pins_nullifier_and_refuses_tamper() {
         })
         .expect("noteSpendVmDescriptor2R24 in the staged registry");
     let desc = parse_vm_descriptor2(json).expect("rotated note-spend descriptor parses");
-    assert_eq!(desc.trace_width, ROT_WIDTH, "rotated width 311");
+    assert_eq!(desc.trace_width, ROT_WIDTH, "rotated width 315");
     assert_eq!(
         desc.public_input_count, 39,
         "the rotated note-spend carries 38 prefix PIs + the appended nullifier slot"
@@ -500,10 +504,11 @@ fn rotated_note_spend_pins_nullifier_and_refuses_tamper() {
     let after_cell = producer_cell(before_balance + value as i64, 1);
     ledger.insert_cell(after_cell.clone()).unwrap();
     let nullifier_root = [0u8; 32];
+    let commitments_root = [0u8; 32];
     let receipt_log: Vec<[u8; 32]> = vec![[7u8; 32]];
 
-    let before_w = rw::produce(&before_cell, &ledger, &nullifier_root, &receipt_log);
-    let after_w = rw::produce(&after_cell, &ledger, &nullifier_root, &receipt_log);
+    let before_w = rw::produce(&before_cell, &ledger, &nullifier_root, &commitments_root, &receipt_log);
+    let after_w = rw::produce(&after_cell, &ledger, &nullifier_root, &commitments_root, &receipt_log);
 
     let caveat = empty_caveat_manifest();
     let (trace, dpis) = generate_rotated_effect_vm_trace(
@@ -514,7 +519,7 @@ fn rotated_note_spend_pins_nullifier_and_refuses_tamper() {
         &caveat,
     )
     .expect("live rotated generator must produce a note-spend trace + 39 PIs");
-    assert_eq!(trace[0].len(), ROT_WIDTH, "311-col rotated trace");
+    assert_eq!(trace[0].len(), ROT_WIDTH, "315-col rotated trace");
 
     // THE FIFTH PI: 39 elements, and PI[38] == the row-0 spend's folded nullifier (param0).
     assert_eq!(
@@ -684,7 +689,7 @@ fn rotated_create_cell_pins_accounts_and_refuses_tamper() {
     assert_eq!(name, "createCellVmDescriptor2R24");
     let desc =
         parse_vm_descriptor2(rotated_descriptor_json(name)).expect("rotated createCell parses");
-    assert_eq!(desc.trace_width, ROT_WIDTH, "rotated width 311");
+    assert_eq!(desc.trace_width, ROT_WIDTH, "rotated width 315");
     assert_eq!(
         desc.public_input_count, 39,
         "rotated createCell carries 38 prefix PIs + the appended new-cell-key slot"
@@ -701,9 +706,10 @@ fn rotated_create_cell_pins_accounts_and_refuses_tamper() {
     let after_cell = producer_cell(before_balance, 1);
     ledger.insert_cell(after_cell.clone()).unwrap();
     let nullifier_root = [0u8; 32];
+    let commitments_root = [0u8; 32];
     let receipt_log: Vec<[u8; 32]> = vec![[5u8; 32]];
-    let before_w = rw::produce(&before_cell, &ledger, &nullifier_root, &receipt_log);
-    let after_w = rw::produce(&after_cell, &ledger, &nullifier_root, &receipt_log);
+    let before_w = rw::produce(&before_cell, &ledger, &nullifier_root, &commitments_root, &receipt_log);
+    let after_w = rw::produce(&after_cell, &ledger, &nullifier_root, &commitments_root, &receipt_log);
 
     let caveat = empty_caveat_manifest();
     let mem_boundary = MemBoundaryWitness::default();
@@ -717,7 +723,7 @@ fn rotated_create_cell_pins_accounts_and_refuses_tamper() {
         &st, &effects, &bridge(&before_w), &bridge(&after_w), &caveat, &before_accounts,
     )
     .expect("accounts-tree wiring must produce a deployment-real createCell trace");
-    assert_eq!(trace[0].len(), ROT_WIDTH, "311-col rotated trace");
+    assert_eq!(trace[0].len(), ROT_WIDTH, "315-col rotated trace");
 
     // THE FIFTH PI: 39 elements, and PI[38] == the row-0 new-cell key (param0 for createCell).
     assert_eq!(dpis.len(), 39, "createCell rotated PI is 39 (the new-cell-key slot appended)");
@@ -840,7 +846,7 @@ fn rotated_set_field_and_bridge_mint_tick_nonce_and_refuse_forged_delta() {
         assert_eq!(name, "setFieldVmDescriptor2-0R24");
         let desc = parse_vm_descriptor2(rotated_descriptor_json(name))
             .expect("rotated setField descriptor parses");
-        assert_eq!(desc.trace_width, ROT_WIDTH, "rotated width 311");
+        assert_eq!(desc.trace_width, ROT_WIDTH, "rotated width 315");
         assert_eq!(
             desc.public_input_count, 38,
             "setField is a 38-PI cohort member"
@@ -858,10 +864,11 @@ fn rotated_set_field_and_bridge_mint_tick_nonce_and_refuse_forged_delta() {
         let after_cell = producer_cell(before_balance, 6); // nonce TICKED 5 → 6
         ledger.insert_cell(after_cell.clone()).unwrap();
         let nullifier_root = [0u8; 32];
+        let commitments_root = [0u8; 32];
         let receipt_log: Vec<[u8; 32]> = vec![[9u8; 32]];
 
-        let before_w = rw::produce(&before_cell, &ledger, &nullifier_root, &receipt_log);
-        let after_w = rw::produce(&after_cell, &ledger, &nullifier_root, &receipt_log);
+        let before_w = rw::produce(&before_cell, &ledger, &nullifier_root, &commitments_root, &receipt_log);
+        let after_w = rw::produce(&after_cell, &ledger, &nullifier_root, &commitments_root, &receipt_log);
 
         let caveat = empty_caveat_manifest();
         let (trace, dpis) = generate_rotated_effect_vm_trace(
@@ -872,7 +879,7 @@ fn rotated_set_field_and_bridge_mint_tick_nonce_and_refuse_forged_delta() {
             &caveat,
         )
         .expect("live rotated generator must produce a setField trace + 38 PIs");
-        assert_eq!(trace[0].len(), ROT_WIDTH, "311-col rotated trace");
+        assert_eq!(trace[0].len(), ROT_WIDTH, "315-col rotated trace");
 
         // THE NONCE TICK (the runtime ground truth): the rotated r1 weld carries before+1.
         let r0 = &trace[0];
@@ -941,7 +948,7 @@ fn rotated_set_field_and_bridge_mint_tick_nonce_and_refuse_forged_delta() {
         assert_eq!(name, "mintVmDescriptor2R24");
         let desc = parse_vm_descriptor2(rotated_descriptor_json(name))
             .expect("rotated bridgeMint descriptor parses");
-        assert_eq!(desc.trace_width, ROT_WIDTH, "rotated width 311");
+        assert_eq!(desc.trace_width, ROT_WIDTH, "rotated width 315");
         assert_eq!(
             desc.public_input_count, 38,
             "bridgeMint is a 38-PI cohort member"
@@ -958,10 +965,11 @@ fn rotated_set_field_and_bridge_mint_tick_nonce_and_refuse_forged_delta() {
         let after_cell = producer_cell(before_balance + value, 6); // credit + nonce TICK
         ledger.insert_cell(after_cell.clone()).unwrap();
         let nullifier_root = [0u8; 32];
+        let commitments_root = [0u8; 32];
         let receipt_log: Vec<[u8; 32]> = vec![[11u8; 32]];
 
-        let before_w = rw::produce(&before_cell, &ledger, &nullifier_root, &receipt_log);
-        let after_w = rw::produce(&after_cell, &ledger, &nullifier_root, &receipt_log);
+        let before_w = rw::produce(&before_cell, &ledger, &nullifier_root, &commitments_root, &receipt_log);
+        let after_w = rw::produce(&after_cell, &ledger, &nullifier_root, &commitments_root, &receipt_log);
 
         let caveat = empty_caveat_manifest();
         let (trace, dpis) = generate_rotated_effect_vm_trace(
@@ -1057,7 +1065,7 @@ fn rotated_published_commit_lean_differential_and_permission_flip_moves_it() {
     // ALONE last. Independent of the deployed `v9_wire_commit` (re-derived here from the public
     // `hash_many` primitive + the pre-limb vector), so agreement is a genuine differential.
     fn independent_wire_commit(pre_limbs: &[BabyBear], iroot: BabyBear) -> BabyBear {
-        assert_eq!(pre_limbs.len(), V9_NUM_PRE_LIMBS, "31 pre-iroot limbs at R=24");
+        assert_eq!(pre_limbs.len(), V9_NUM_PRE_LIMBS, "32 pre-iroot limbs at R=24");
         // 4-wide head over the first four limbs (cells_root, r0, r1, r2).
         let mut d = hash_many(&[pre_limbs[0], pre_limbs[1], pre_limbs[2], pre_limbs[3]]);
         let mut col = 4;
@@ -1078,18 +1086,20 @@ fn rotated_published_commit_lean_differential_and_permission_flip_moves_it() {
     // A residue-free baseline cell (default permissions / no VK) and a turn context.
     let plain = producer_cell(100_000, 0);
     let nullifier_root = [0u8; 32];
+    let commitments_root = [0u8; 32];
     let iroot = BabyBear::new(0x1234);
     let cells_root = BabyBear::new(0x5678);
     let ctx = V9RotationContext {
         cells_root,
         nullifier_root,
+        commitments_root,
         iroot,
     };
 
     // -- (a) THE INDEPENDENT RE-FOLD == the deployed PUBLISHED commitment. --
     // The deployed pre-limb vector (the Lean `rotatedLimbs` order) and the deployed published felt.
     let pre = compute_rotated_pre_limbs(&plain, &ctx);
-    assert_eq!(pre.len(), V9_NUM_PRE_LIMBS, "31 limbs");
+    assert_eq!(pre.len(), V9_NUM_PRE_LIMBS, "32 limbs");
     // The authority residue sits at index 24 (register r23) — the Lean `authority_digest_at_index_24`.
     assert_eq!(
         pre[24],
@@ -1147,10 +1157,44 @@ fn rotated_published_commit_lean_differential_and_permission_flip_moves_it() {
         "the independent re-fold == the deployed published commitment on the flipped cell too"
     );
 
+    // -- (c) THE commitments_root FLIP (the flag-day's reason for the new limb): a note-commitment
+    //    ADD — a DIFFERENT `commitments_root` context — MOVES the published commitment, AND moves it
+    //    ONLY at index 27 (the new committed shielded-set root). This is the P0-2 non-vacuity on the
+    //    note-commitments set: a turn that grew the commitments set publishes a DIFFERENT OLD/NEW
+    //    commit than one that did not. The differential's Lean twin is
+    //    `RotatedCommitDifferential.rotatedCommit_binds_commitments_root`. --
+    let ctx_grown = V9RotationContext {
+        commitments_root: [9u8; 32], // a note commitment the kernel inserted
+        ..ctx
+    };
+    let pre_grown = compute_rotated_pre_limbs(&plain, &ctx_grown);
+    for i in 0..V9_NUM_PRE_LIMBS {
+        if i == 27 {
+            assert_ne!(pre[i], pre_grown[i], "index 27 (commitments_root) MUST move on a note add");
+        } else {
+            assert_eq!(
+                pre[i], pre_grown[i],
+                "limb {i} must be unchanged by a commitments-set-only change"
+            );
+        }
+    }
+    let published_grown = compute_canonical_state_commitment_v9_felt(&plain, &ctx_grown);
+    assert_ne!(
+        published, published_grown,
+        "P0-2 on the commitments set: a note-commitment ADD MOVES the published rotated commitment \
+         (limb 27 is bound) — the kernel-set insert is now witnessed by the published commitment"
+    );
+    assert_eq!(
+        published_grown,
+        independent_wire_commit(&pre_grown, iroot),
+        "the independent re-fold == the deployed published commitment on the grown-set context too"
+    );
+
     eprintln!(
         "ROTATED WIRE-COMMIT LEAN DIFFERENTIAL GREEN: the PUBLISHED rotated commitment == an \
-         independent re-fold over the Lean rotatedLimbs order, and a permission flip MOVES the \
-         published OLD/NEW_COMMIT (P0-2 non-vacuity on the commitment the light client pins)."
+         independent re-fold over the Lean rotatedLimbs order; a permission flip MOVES it (P0-2 on \
+         the authority residue, limb 24); and a note-commitment ADD MOVES it (P0-2 on the \
+         commitments set, the flag-day limb 27)."
     );
 }
 
@@ -1214,10 +1258,11 @@ fn rotated_non_synthetic_field_bearing_cell_old_new_commit_agree() {
     let after_cell = producer_cell_with_field(before_balance - amount as i64, 1, 0, field0_bytes);
     ledger.insert_cell(after_cell.clone()).unwrap();
     let nullifier_root = [0u8; 32];
+    let commitments_root = [0u8; 32];
     let receipt_log: Vec<[u8; 32]> = vec![[1u8; 32], [2u8; 32]];
 
-    let before_w = rw::produce(&before_cell, &ledger, &nullifier_root, &receipt_log);
-    let after_w = rw::produce(&after_cell, &ledger, &nullifier_root, &receipt_log);
+    let before_w = rw::produce(&before_cell, &ledger, &nullifier_root, &commitments_root, &receipt_log);
+    let after_w = rw::produce(&after_cell, &ledger, &nullifier_root, &commitments_root, &receipt_log);
 
     let caveat = transfer_caveat_manifest();
     let (trace, dpis) = generate_rotated_effect_vm_trace(
@@ -1255,6 +1300,7 @@ fn rotated_non_synthetic_field_bearing_cell_old_new_commit_agree() {
     let v9_ctx_before = V9RotationContext {
         cells_root: before_w.pre_limbs[0],
         nullifier_root,
+        commitments_root,
         iroot: before_w.iroot,
     };
     let cell_v9_before = compute_canonical_state_commitment_v9_felt(&before_cell, &v9_ctx_before);
@@ -1279,6 +1325,7 @@ fn rotated_non_synthetic_field_bearing_cell_old_new_commit_agree() {
     let v9_ctx_after = V9RotationContext {
         cells_root: after_w.pre_limbs[0],
         nullifier_root,
+        commitments_root,
         iroot: after_w.iroot,
     };
     let cell_v9_after = compute_canonical_state_commitment_v9_felt(&after_cell, &v9_ctx_after);
@@ -1336,7 +1383,7 @@ fn rotated_cellseal_record_pin_forces_lifecycle_and_rejects_frozen_forgery() {
 
     let json = rotated_descriptor_json(name);
     let desc = parse_vm_descriptor2(json).expect("rotated cellSeal descriptor parses");
-    assert_eq!(desc.trace_width, ROT_WIDTH, "rotated width 311");
+    assert_eq!(desc.trace_width, ROT_WIDTH, "rotated width 315");
     assert_eq!(
         desc.public_input_count, 39,
         "cellSeal carries the appended record-forcing pin (39 PIs)"
@@ -1355,10 +1402,11 @@ fn rotated_cellseal_record_pin_forces_lifecycle_and_rejects_frozen_forgery() {
         .expect("Live cell must seal");
     ledger.insert_cell(after_cell.clone()).unwrap();
     let nullifier_root = [0u8; 32];
+    let commitments_root = [0u8; 32];
     let receipt_log: Vec<[u8; 32]> = vec![[3u8; 32]];
 
-    let before_w = rw::produce(&before_cell, &ledger, &nullifier_root, &receipt_log);
-    let after_w = rw::produce(&after_cell, &ledger, &nullifier_root, &receipt_log);
+    let before_w = rw::produce(&before_cell, &ledger, &nullifier_root, &commitments_root, &receipt_log);
+    let after_w = rw::produce(&after_cell, &ledger, &nullifier_root, &commitments_root, &receipt_log);
 
     // The lifecycle limb genuinely MOVED Live -> Sealed (the forgery the pin forbids would freeze it).
     assert_ne!(
@@ -1370,7 +1418,7 @@ fn rotated_cellseal_record_pin_forces_lifecycle_and_rejects_frozen_forgery() {
     let (trace, dpis) =
         generate_rotated_effect_vm_trace(&st, &effects, &bridge(&before_w), &bridge(&after_w), &caveat)
             .expect("live rotated generator must produce a cellSeal trace + 39 PIs");
-    assert_eq!(trace[0].len(), ROT_WIDTH, "311-col rotated trace");
+    assert_eq!(trace[0].len(), ROT_WIDTH, "315-col rotated trace");
 
     // THE FIFTH PI: 39 elements, and PI[38] == the LAST row's AFTER lifecycle limb (the
     // correctly-written sealed post the verifier recomputes), the column the pin binds.
@@ -1481,7 +1529,7 @@ fn rotated_audit_record_pin_forces_record_digest_and_rejects_frozen_forgery() {
 
         let json = rotated_descriptor_json(name);
         let desc = parse_vm_descriptor2(json).expect("rotated audit descriptor parses");
-        assert_eq!(desc.trace_width, ROT_WIDTH, "rotated width 311");
+        assert_eq!(desc.trace_width, ROT_WIDTH, "rotated width 315");
         assert_eq!(
             desc.public_input_count, 39,
             "{name} carries the appended record-forcing pin (39 PIs)"
@@ -1506,10 +1554,11 @@ fn rotated_audit_record_pin_forces_record_digest_and_rejects_frozen_forgery() {
         );
         ledger.insert_cell(after_cell.clone()).unwrap();
         let nullifier_root = [0u8; 32];
+        let commitments_root = [0u8; 32];
         let receipt_log: Vec<[u8; 32]> = vec![[3u8; 32]];
 
-        let before_w = rw::produce(&before_cell, &ledger, &nullifier_root, &receipt_log);
-        let after_w = rw::produce(&after_cell, &ledger, &nullifier_root, &receipt_log);
+        let before_w = rw::produce(&before_cell, &ledger, &nullifier_root, &commitments_root, &receipt_log);
+        let after_w = rw::produce(&after_cell, &ledger, &nullifier_root, &commitments_root, &receipt_log);
 
         // The record-digest limb genuinely MOVED (the forgery the pin forbids would freeze it):
         // the authority residue folds `fields_root`, which the audit write changed.
@@ -1528,7 +1577,7 @@ fn rotated_audit_record_pin_forces_record_digest_and_rejects_frozen_forgery() {
             &caveat,
         )
         .unwrap_or_else(|e| panic!("live rotated generator must produce a {name} trace + 39 PIs: {e}"));
-        assert_eq!(trace[0].len(), ROT_WIDTH, "311-col rotated trace");
+        assert_eq!(trace[0].len(), ROT_WIDTH, "315-col rotated trace");
 
         // THE FIFTH PI: 39 elements, and PI[38] == the LAST row's AFTER record-digest limb.
         assert_eq!(dpis.len(), 39, "{name} rotated PI is 39 (the record-forcing slot appended)");
@@ -1598,32 +1647,28 @@ fn rotated_audit_record_pin_forces_record_digest_and_rejects_frozen_forgery() {
     }
 }
 
-/// THE KERNEL-SET DEPLOYMENT-SOUNDNESS GAP, demonstrated as a LIVE-DESCRIPTOR ADMISSIBILITY witness
-/// (the prompt's HONESTY bar — report the gap precisely, do NOT fake a binding).
+/// THE KERNEL-SET DEPLOYMENT-SOUNDNESS CLOSE for the whole family.
 ///
-/// ## What this proves (and what it deliberately does NOT)
+/// The kernel-set effects mutate KERNEL-LEVEL sets, each with its OWN committed openable
+/// sorted-Poseidon2 accumulator limb the rotated commitment absorbs and a per-effect grow-gate
+/// FORCES grown:
+///   * `createCell` / `createCellFromFactory` / `spawn` → the `cells_root` accounts set (limb 0,
+///     `cellsInsertOp`) — `rotated_create_cell_pins_accounts_and_refuses_tamper`;
+///   * `noteSpend` → the `nullifier_root` set (limb 26, `nullifierInsertOp` + the `.absent`
+///     double-spend tooth) — `rotated_note_spend_pins_nullifier_and_refuses_tamper`;
+///   * `noteCreate` → the `commitments_root` set (limb 27, the flag-day NUM_PRE_LIMBS 31→32 limb,
+///     `commitmentsInsertOp`) — `note_create_pins_commitments_and_refuses_tamper`.
+/// Each gate pins `after_root = insert(before_root, key)` to the GENUINE sorted insert, so a frozen
+/// or forged set-root (the kernel-set insert NOT grown) is REJECTED. The family is deployment-real
+/// end to end; the historical residual narrative below is retained only for context.
 ///
-/// The kernel-set effects (`createCell` / `createCellFromFactory` / `spawn` insert into the
-/// `accounts` cell-table set; `noteCreate` inserts into the `commitments` set; `noteSpend` inserts
-/// into the `nullifiers` set) mutate KERNEL-LEVEL sets, not per-cell state. The deployed rotated
-/// commitment (`wireCommitR` over the 31 pre-iroot limbs) DOES absorb a turn-level `cells_root`
-/// (`pre_limbs[0]`) and a `nullifier_root` (`pre_limbs[26]`) — but those limbs are TURN-INVARIANT
-/// WITNESS limbs: `fill_block` (`trace_rotated.rs`) copies them verbatim and OVERRIDES only the
-/// welded per-cell registers (r0..r10, cap_root) from the v1 state block. NO per-effect gate forces
-/// `after.cells_root = insert(newCell, before.cells_root)` or `after.nullifier_root =
-/// grow(before.nullifier_root)`. And there is NO `accounts_root` limb and NO `commitments_root` limb
-/// in the deployed shape AT ALL.
+/// This test makes that close CONCRETE for the FORMERLY-OPEN `noteCreate` residual: it proves a real
+/// `noteCreate` rotated turn through the LIVE `noteCreateVmDescriptor2R24` descriptor over a GENUINE
+/// grown commitments tree, then REJECTS a forged after-`commitments_root` (the `.insert` op pins the
+/// after-root to the genuine sorted insert, so a kernel-set the prover never grew has no witness).
 ///
-/// This test makes that gap CONCRETE: it proves a real `noteCreate` rotated turn through the LIVE
-/// `noteCreateVmDescriptor2R24` descriptor where the kernel-set witness is FROZEN — the before and
-/// after blocks carry IDENTICAL `cells_root` / `nullifier_root` limbs (no growth), exactly as the
-/// live full-turn path mints them (`produce` reads ONE ledger for both blocks). The live descriptor
-/// VERIFIES it. Then it shows the descriptor STILL verifies after the `cells_root` / `nullifier_root`
-/// limbs are tampered in LOCKSTEP across both blocks (a value the kernel never grew): because no gate
-/// reads these limbs, only `wireCommitR` absorbs them, a self-consistent re-fill proves and verifies.
-///
-/// ## STATUS: noteSpend (nullifiers) AND the cells family (createCell/factory/spawn) are CLOSED;
-/// this test holds ONLY the noteCreate (`commitments` set) residual.
+/// ## STATUS: the WHOLE kernel-set family (noteSpend · createCell/factory/spawn · noteCreate) is
+/// CLOSED deployment-real.
 ///
 /// The nullifier family is deployment-real: `noteSpendVmDescriptor2R24` carries the kernel-set
 /// grow-gate — two map-ops (`nullifierFreshOp` `.absent` + `nullifierInsertOp` `.insert`,
@@ -1639,19 +1684,21 @@ fn rotated_audit_record_pin_forces_record_digest_and_rejects_frozen_forgery() {
 /// cap-handoff (the child cap-root MOVE + delegation snapshot) is ORTHOGONAL to the accounts-set
 /// insert and is the NAMED spawn residual.
 ///
-/// THIS test deliberately exercises `noteCreate` (the `commitments` set), which remains the ONE NAMED
-/// RESIDUAL in this family: there is NO `commitments_root` limb in the 31-limb rotated shape, so the
-/// commitment-set insert is still commitment-absorbed-but-unforced. Closing it deployment-real needs
-/// the flag-day NEW-limb addition (extend `NUM_PRE_LIMBS` 31→32, re-balance the entire rotated block
-/// geometry — `B_SPAN`/`B_IROOT`/`B_STATE_COMMIT`/the after-block `+43` offsets/the cap-open base/all
-/// 66 descriptor JSONs — the Lean `wireCommitR` is already parametric and
-/// `RotatedKernelRefinementNotes.noteCreate_descriptorRefines` is already PROVEN-FIX against a MODELED
-/// `commitmentsRoot` limb), then append the same `MapOp::Insert` grow-gate keyed on the new limb.
-/// (Tampering `cells_root` below still verifies on a noteCreate turn because noteCreate does NOT touch
-/// the accounts set — that limb is ungated FOR THIS effect; the createCell family's own gate is what
-/// the sibling test exercises.)
+/// THIS test exercises `noteCreate` (the `commitments` set) — the LAST kernel-set residual, now
+/// CLOSED deployment-real by the `commitments_root` flag-day (NUM_PRE_LIMBS 31→32, the new committed
+/// shielded-set root at limb 27 + the `commitmentsInsertOp .insert` grow-gate keyed on the published
+/// commitment `param0`, `EffectVmEmitRotationV3.noteCreateV3`). The deployed `noteCreateV3`
+/// descriptor FORCES `after.commitments_root = insert(before.commitments_root, cm)` — the deployed
+/// face of `RotatedKernelRefinementNotes.noteCreate_commitments_forced`. A frozen or forged
+/// `commitments_root` (the kernel-set insert NOT grown, exactly the old residual) is REJECTED.
 #[test]
-fn kernel_set_insert_is_not_forced_by_the_live_descriptor() {
+fn note_create_pins_commitments_and_refuses_tamper() {
+    use dregg_circuit::effect_vm::trace_rotated::{
+        B_COMMITMENTS_ROOT, generate_rotated_note_create_trace_with_commitments_tree,
+        recompute_after_blocks_for_test,
+    };
+    use dregg_circuit::heap_root::HeapLeaf;
+
     // The note-create cohort member's rotated descriptor (the `commitments`-set growth effect).
     let cm = BabyBear::new(0xC0FFEE);
     let create = Effect::NoteCreate {
@@ -1663,7 +1710,7 @@ fn kernel_set_insert_is_not_forced_by_the_live_descriptor() {
     assert_eq!(name, "noteCreateVmDescriptor2R24");
     let desc = parse_vm_descriptor2(rotated_descriptor_json(name))
         .expect("rotated note-create descriptor parses");
-    assert_eq!(desc.trace_width, ROT_WIDTH, "rotated width 311");
+    assert_eq!(desc.trace_width, ROT_WIDTH, "rotated width 315");
 
     // A real note-create turn (EffectVM credits balance by `value`, the shielding convention).
     let before_balance: i64 = 60_000;
@@ -1671,103 +1718,77 @@ fn kernel_set_insert_is_not_forced_by_the_live_descriptor() {
     let st = CellState::new(before_balance as u64, 0);
     let effects = vec![create];
 
-    // -- THE FROZEN-SET WITNESS: exactly how the live full-turn path mints it. `produce` reads ONE
-    //    ledger for BOTH the before and after blocks (sdk/src/full_turn_proof.rs:2650-2651,
-    //    3572-3573), so `cells_root` (pre_limbs[0]) and `nullifier_root` (pre_limbs[26]) are
-    //    IDENTICAL before vs after — the kernel-set insert leaves NO delta on any limb. There is no
-    //    `commitments_root` limb for the note-commitment insert to touch at all. --
     let mut ledger = Ledger::new();
     let before_cell = producer_cell(before_balance, 0);
     let after_cell = producer_cell(before_balance + value as i64, 1);
     ledger.insert_cell(after_cell.clone()).unwrap();
     let nullifier_root = [0u8; 32];
+    let commitments_root = [0u8; 32];
     let receipt_log: Vec<[u8; 32]> = vec![[11u8; 32]];
 
-    let before_w = rw::produce(&before_cell, &ledger, &nullifier_root, &receipt_log);
-    let after_w = rw::produce(&after_cell, &ledger, &nullifier_root, &receipt_log);
-
-    // The set-limbs are turn-invariant: before-block and after-block carry the SAME value (no
-    // representable delta). This is the structural shape of the gap.
-    assert_eq!(
-        before_w.pre_limbs[0], after_w.pre_limbs[0],
-        "cells_root is turn-invariant — the live producer carries NO accounts/cell-set delta"
-    );
-    assert_eq!(
-        before_w.pre_limbs[26], after_w.pre_limbs[26],
-        "nullifier_root is turn-invariant — the live producer carries NO note-set delta"
-    );
+    let before_w = rw::produce(&before_cell, &ledger, &nullifier_root, &commitments_root, &receipt_log);
+    let after_w = rw::produce(&after_cell, &ledger, &nullifier_root, &commitments_root, &receipt_log);
 
     let caveat = empty_caveat_manifest();
-    let (trace, dpis) = generate_rotated_effect_vm_trace(
+    let mem_boundary = MemBoundaryWitness::default();
+
+    // -- THE SET-INSERT, FORCED: the commitments-tree wiring makes limb 27 the openable committed
+    //    accumulator. The BEFORE tree holds the existing commitments; the AFTER tree is BEFORE + the
+    //    inserted note commitment `cm`. The live `commitmentsInsertOp .insert` op pins the after-root
+    //    to the GENUINE sorted insert, so the published commitment binds the grown set. --
+    let before_commitments = vec![
+        HeapLeaf { addr: BabyBear::new(0x111), value: BabyBear::new(1) },
+        HeapLeaf { addr: BabyBear::new(0x222), value: BabyBear::new(1) },
+    ];
+    let (trace, dpis, map_heaps) = generate_rotated_note_create_trace_with_commitments_tree(
         &st,
         &effects,
         &bridge(&before_w),
         &bridge(&after_w),
         &caveat,
+        &before_commitments,
     )
-    .expect("live rotated generator must produce a note-create trace");
-    assert_eq!(trace[0].len(), ROT_WIDTH, "311-col rotated trace");
+    .expect("the commitments-tree wiring builds a genuine grown-set noteCreate trace");
+    assert_eq!(trace[0].len(), ROT_WIDTH, "315-col rotated trace");
 
-    let mem_boundary = MemBoundaryWitness::default();
-    let map_heaps: Vec<Vec<dregg_circuit::heap_root::HeapLeaf>> = vec![];
-
-    // -- (1) THE GAP: the live deployed descriptor PROVES + VERIFIES a note-create turn whose
-    //    committed kernel-set witness was NOT grown (frozen `cells_root` / `nullifier_root`, no
-    //    `commitments_root` limb). A circuit that FORCED the set-insert would have rejected this. --
     let proof = prove_vm_descriptor2(&desc, &trace, &dpis, &mem_boundary, &map_heaps)
-        .expect("note-create proves on a FROZEN kernel-set witness — the gap");
+        .expect("note-create PROVES on a GENUINE grown commitments-set witness — the gate is honored");
     verify_vm_descriptor2(&desc, &proof, &dpis)
-        .expect("note-create VERIFIES on a FROZEN kernel-set witness — the live descriptor does \
-                 NOT force the set-insert");
+        .expect("and VERIFIES — the live noteCreate descriptor FORCES the commitments set-insert");
 
-    // -- (2) THE LIMBS ARE UNGATED: lockstep-tamper `cells_root` (limb 0) and `nullifier_root`
-    //    (limb 26) to values the kernel never produced, re-fill the dependent `wireCommitR` chain +
-    //    STATE_COMMIT consistently, and re-derive the appended commit PIs. If ANY per-effect gate
-    //    read these limbs, the re-filled trace would be UNSAT. It is NOT — they enter only the
-    //    commitment, which we recompute, so the tampered turn proves + verifies. This is the
-    //    definitive both-polarity witness that the set-roots are commitment-absorbed but UNFORCED. --
+    // -- THE SET-INSERT TOOTH (the residual, now CLOSED): FORGE the AFTER commitments root (limb 27
+    //    of every after-block) to a value the kernel never produced, recompute the dependent
+    //    `wireCommitR` chain so the commitment is self-consistent, and re-derive the NEW commit PI.
+    //    The `.insert` map-op pins the after-root to the GENUINE sorted insert, so the forged root
+    //    (which is NOT that insert) has no witness and the prover REFUSES it — exactly the forgery
+    //    the OLD `kernel_set_insert_is_not_forced_by_the_live_descriptor` documented, now REJECTED. --
     {
         let bump = BabyBear::new(0x9999);
-        // Rebuild the two block witnesses with the set-limbs tampered, then RE-RUN the live generator
-        // so the `wireCommitR` chain + STATE_COMMIT carriers are internally consistent on the forged
-        // limbs (the generator recomputes them in `fill_block`).
-        let mut tampered_before = before_w.pre_limbs.clone();
-        let mut tampered_after = after_w.pre_limbs.clone();
-        for limbs in [&mut tampered_before, &mut tampered_after] {
-            limbs[0] = limbs[0] + bump; // cells_root — a cell-set the kernel never had
-            limbs[26] = limbs[26] + bump; // nullifier_root — a nullifier-set the kernel never had
-        }
-        let bw = RotatedBlockWitness::new(tampered_before, before_w.iroot).unwrap();
-        let aw = RotatedBlockWitness::new(tampered_after, after_w.iroot).unwrap();
-        let (t2, p2) = generate_rotated_effect_vm_trace(&st, &effects, &bw, &aw, &caveat)
-            .expect("the generator re-fills the chain on the forged set-limbs");
-        // Sanity: the forged limbs really do ride the trace (they are not silently dropped).
-        assert_eq!(
-            t2[0][BEFORE_BASE + 0], before_w.pre_limbs[0] + bump,
-            "the forged cells_root rides the before block"
-        );
-        assert_eq!(
-            t2[0][BEFORE_BASE + 26], before_w.pre_limbs[26] + bump,
-            "the forged nullifier_root rides the before block"
-        );
-        let proof2 = prove_vm_descriptor2(&desc, &t2, &p2, &mem_boundary, &map_heaps).expect(
-            "a turn with FORGED kernel-set roots (a cell/nullifier set the kernel never produced) \
-             still PROVES — the set-roots are absorbed but UNGATED",
-        );
-        verify_vm_descriptor2(&desc, &proof2, &p2).expect(
-            "and VERIFIES — DEFINITIVE: the live deployed descriptor binds the set-roots into the \
-             commitment but does NOT force the kernel-set insert (the Birth/Notes accountsRoot / \
-             commitmentsRoot gate is MODELED in Lean, not yet deployed in Rust)",
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let mut t = trace.clone();
+            for row in t.iter_mut() {
+                row[AFTER_BASE + B_COMMITMENTS_ROOT] =
+                    row[AFTER_BASE + B_COMMITMENTS_ROOT] + bump; // a commitments-set the kernel never grew
+            }
+            let mut p = dpis.clone();
+            recompute_after_blocks_for_test(&mut t);
+            p[35] = t[t.len() - 1][AFTER_BASE + B_STATE_COMMIT];
+            prove_vm_descriptor2(&desc, &t, &p, &mem_boundary, &map_heaps)
+        }));
+        let rejected = matches!(r, Err(_)) || matches!(r, Ok(res) if res.is_err());
+        assert!(
+            rejected,
+            "a FORGED after commitments_root (a set the kernel never grew) MUST be REJECTED by the \
+             live noteCreate grow-gate (the `.insert` op pins the after-root to the genuine insert) \
+             — the kernel-set-insert gap is CLOSED for noteCreate, the LAST residual of the family"
         );
     }
 
     eprintln!(
-        "KERNEL-SET RESIDUAL (R=24, LIVE noteCreate): the deployed noteCreate descriptor PROVES + \
-         VERIFIES a turn whose commitments-set witness was NOT grown — there is NO commitments_root \
-         limb in the 31-limb shape, so the commitment-set insert is commitment-ABSORBED but \
-         UNFORCED. This is the ONE remaining NAMED residual in the kernel-set family (noteSpend, \
-         createCell, factory, spawn are all CLOSED). Closing noteCreate deployment-real is the \
-         flag-day NUM_PRE_LIMBS 31→32 widening + the same MapOp::Insert grow-gate; the Lean \
-         noteCreate_descriptorRefines is already PROVEN-FIX against the modeled commitmentsRoot."
+        "KERNEL-SET CLOSED (R=24, LIVE noteCreate): the deployed noteCreate descriptor FORCES the \
+         commitments set-insert on the flag-day limb 27 (`commitmentsInsertOp .insert`); a genuine \
+         grown-set witness PROVES+VERIFIES and a forged/frozen commitments_root is REJECTED. \
+         noteSpend, createCell, factory, spawn, noteCreate are ALL CLOSED — the kernel-set family is \
+         deployment-real end to end."
     );
 }

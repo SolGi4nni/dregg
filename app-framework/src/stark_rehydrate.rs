@@ -309,6 +309,7 @@ pub fn mint_transfer_leg(
     // The receipt-log + nullifier-root the rotated mint folds into the iroot (a genuine
     // non-empty log so the iroot non-omission tooth has content to bind).
     let nullifier_root = [0u8; 32];
+    let commitments_root = [0u8; 32];
     let receipt_log: Vec<[u8; 32]> = vec![[1u8; 32], [2u8; 32]];
     dregg_turn::rotation_witness::mint_rotated_participant_leg(
         &state,
@@ -316,6 +317,7 @@ pub fn mint_transfer_leg(
         before_cell,
         after_cell,
         &nullifier_root,
+        &commitments_root,
         &receipt_log,
         None,
     )

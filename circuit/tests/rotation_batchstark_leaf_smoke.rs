@@ -104,10 +104,11 @@ fn rotated_transfer_leaf_folds_as_batchstark() {
     let after_cell = producer_cell(before_balance - amount as i64, 0);
     ledger.insert_cell(after_cell.clone()).unwrap();
     let nullifier_root = [0u8; 32];
+    let commitments_root = [0u8; 32];
     let receipt_log: Vec<[u8; 32]> = vec![[1u8; 32], [2u8; 32]];
 
-    let before_w = rw::produce(&before_cell, &ledger, &nullifier_root, &receipt_log);
-    let after_w = rw::produce(&after_cell, &ledger, &nullifier_root, &receipt_log);
+    let before_w = rw::produce(&before_cell, &ledger, &nullifier_root, &commitments_root, &receipt_log);
+    let after_w = rw::produce(&after_cell, &ledger, &nullifier_root, &commitments_root, &receipt_log);
 
     let bridge = |w: &rw::RotationWitness| -> RotatedBlockWitness {
         RotatedBlockWitness::new(w.pre_limbs.clone(), w.iroot).expect("31 pre-iroot limbs")
@@ -205,9 +206,10 @@ fn two_rotated_leaves_aggregate_at_wrap_config() {
         let after_cell = producer_cell(before_balance - amount as i64, 0);
         ledger.insert_cell(after_cell.clone()).unwrap();
         let nullifier_root = [0u8; 32];
+        let commitments_root = [0u8; 32];
         let receipt_log: Vec<[u8; 32]> = vec![[1u8; 32], [2u8; 32]];
-        let before_w = rw::produce(&before_cell, &ledger, &nullifier_root, &receipt_log);
-        let after_w = rw::produce(&after_cell, &ledger, &nullifier_root, &receipt_log);
+        let before_w = rw::produce(&before_cell, &ledger, &nullifier_root, &commitments_root, &receipt_log);
+        let after_w = rw::produce(&after_cell, &ledger, &nullifier_root, &commitments_root, &receipt_log);
         let bridge = |w: &rw::RotationWitness| -> RotatedBlockWitness {
             RotatedBlockWitness::new(w.pre_limbs.clone(), w.iroot).expect("31 pre-iroot limbs")
         };

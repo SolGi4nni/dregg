@@ -5221,6 +5221,7 @@ impl AgentCipherclerk {
         //    its own receipt chain. The before/after blocks share this turn-invariant
         //    context (the receipt log does not change mid-proof).
         let nullifier_root = [0u8; 32];
+        let commitments_root = [0u8; 32];
         let receipt_hashes: Vec<[u8; 32]> = self
             .receipt_chain
             .iter()
@@ -5229,8 +5230,8 @@ impl AgentCipherclerk {
         let mut ctx_ledger = dregg_cell::Ledger::new();
         let _ = ctx_ledger.insert_cell(before_cell.clone());
 
-        let before_w = rw::produce(&before_cell, &ctx_ledger, &nullifier_root, &receipt_hashes);
-        let after_w = rw::produce(&after_cell, &ctx_ledger, &nullifier_root, &receipt_hashes);
+        let before_w = rw::produce(&before_cell, &ctx_ledger, &nullifier_root, &commitments_root, &receipt_hashes);
+        let after_w = rw::produce(&after_cell, &ctx_ledger, &nullifier_root, &commitments_root, &receipt_hashes);
 
         // 5. Bridge the producer witnesses into the circuit generator's block witnesses.
         let before_bw = dregg_circuit::effect_vm::trace_rotated::RotatedBlockWitness::new(
@@ -5286,6 +5287,7 @@ impl AgentCipherclerk {
                 &V9RotationContext {
                     cells_root: before_w.pre_limbs[0],
                     nullifier_root,
+                    commitments_root,
                     iroot: before_w.iroot,
                 },
             ),

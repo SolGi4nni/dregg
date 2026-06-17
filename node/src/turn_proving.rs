@@ -372,6 +372,7 @@ fn rotation_witness_for_self_sovereign_impl(
 
     // The non-spend self-sovereign turn spends no note → the empty nullifier root.
     let nullifier_root = [0u8; 32];
+    let commitments_root = [0u8; 32];
 
     // COHORT GATE (PATH-PRESERVE §1/§4 Shape-1 cutover): the rotated effect-vm prover
     // (`prove_effect_vm_rotated_ir2_with_caveat`) proves exactly ONE cohort descriptor per call and
@@ -395,8 +396,8 @@ fn rotation_witness_for_self_sovereign_impl(
         return None;
     }
 
-    let before_w = rw::produce(before_cell, &ctx_ledger, &nullifier_root, receipt_hashes);
-    let after_w = rw::produce(after_cell, &ctx_ledger, &nullifier_root, receipt_hashes);
+    let before_w = rw::produce(before_cell, &ctx_ledger, &nullifier_root, &commitments_root, receipt_hashes);
+    let after_w = rw::produce(after_cell, &ctx_ledger, &nullifier_root, &commitments_root, receipt_hashes);
 
     Some(dregg_sdk::RotationTurnWitness::for_effects(
         before_w,
@@ -477,6 +478,7 @@ fn rotation_witness_for_capability_turn(
     // single rotated note-spend member — and falls back to the v1 leg, which keeps the freshness
     // tooth).
     let nullifier_root = [0u8; 32];
+    let commitments_root = [0u8; 32];
 
     // COHORT GATE (PATH-PRESERVE §1/§4 Shape-1 cutover — identical to the self-sovereign builder):
     // `prove_full_turn` routes EVERY rotation witness through the N-leg chain (`prove_cohort_run_chain`),
@@ -507,8 +509,8 @@ fn rotation_witness_for_capability_turn(
     // nonce delta is UNSAT — `setFieldTick_rejects_wrong_nonce_delta` / `mintTick_rejects_wrong_nonce_delta`).
     // No broken-descriptor fallback remains: EVERY cohort effect rotates.
 
-    let before_w = rw::produce(before_cell, &ctx_ledger, &nullifier_root, receipt_hashes);
-    let after_w = rw::produce(after_cell, &ctx_ledger, &nullifier_root, receipt_hashes);
+    let before_w = rw::produce(before_cell, &ctx_ledger, &nullifier_root, &commitments_root, receipt_hashes);
+    let after_w = rw::produce(after_cell, &ctx_ledger, &nullifier_root, &commitments_root, receipt_hashes);
 
     Some(dregg_sdk::RotationTurnWitness::for_effects(
         before_w,

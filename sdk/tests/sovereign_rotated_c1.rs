@@ -35,6 +35,7 @@ fn setup_sovereign_cell(balance: u64) -> (AgentCipherclerk, CellId, Ledger) {
     let cell_id = cell.id();
 
     let nullifier_root = [0u8; 32];
+    let commitments_root = [0u8; 32];
     let mut ctx_ledger = Ledger::new();
     let _ = ctx_ledger.insert_cell(cell.clone());
     let cells_root = dregg_turn::rotation_witness::cells_root(&ctx_ledger);
@@ -42,6 +43,7 @@ fn setup_sovereign_cell(balance: u64) -> (AgentCipherclerk, CellId, Ledger) {
     let v9_ctx = dregg_cell::commitment::V9RotationContext {
         cells_root,
         nullifier_root,
+        commitments_root,
         iroot,
     };
     let commitment = dregg_cell::commitment::compute_canonical_state_commitment_v9(&cell, &v9_ctx);
@@ -200,12 +202,13 @@ mod wall_a {
         }];
 
         let nullifier_root = [0u8; 32];
+        let commitments_root = [0u8; 32];
         let receipt_hashes: Vec<[u8; 32]> = Vec::new();
         let mut ctx_ledger = Ledger::new();
         let _ = ctx_ledger.insert_cell(before_cell.clone());
 
-        let before_w = rw::produce(&before_cell, &ctx_ledger, &nullifier_root, &receipt_hashes);
-        let after_w = rw::produce(&after_cell, &ctx_ledger, &nullifier_root, &receipt_hashes);
+        let before_w = rw::produce(&before_cell, &ctx_ledger, &nullifier_root, &commitments_root, &receipt_hashes);
+        let after_w = rw::produce(&after_cell, &ctx_ledger, &nullifier_root, &commitments_root, &receipt_hashes);
 
         // The cell-side v9 commitment of the before-state == rotated PI 34; the after-state
         // v9 == rotated PI 35 (the cross-checks the cipherclerk asserts by construction).
@@ -214,6 +217,7 @@ mod wall_a {
             &V9RotationContext {
                 cells_root: before_w.pre_limbs[0],
                 nullifier_root,
+                commitments_root,
                 iroot: before_w.iroot,
             },
         );
@@ -222,6 +226,7 @@ mod wall_a {
             &V9RotationContext {
                 cells_root: after_w.pre_limbs[0],
                 nullifier_root,
+                commitments_root,
                 iroot: after_w.iroot,
             },
         );

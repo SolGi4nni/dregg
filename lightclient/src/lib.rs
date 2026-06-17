@@ -447,6 +447,7 @@ mod tests {
         let before_cell = producer_cell(balance as i64, nonce as u64);
         let after_cell = producer_cell((balance as i64) - (amount as i64), nonce as u64);
         let nullifier_root = [0u8; 32];
+        let commitments_root = [0u8; 32];
         let receipt_log: Vec<[u8; 32]> = vec![[1u8; 32], [2u8; 32]];
         let leg = mint_rotated_participant_leg(
             &state,
@@ -454,6 +455,7 @@ mod tests {
             &before_cell,
             &after_cell,
             &nullifier_root,
+            &commitments_root,
             &receipt_log,
             None,
         )

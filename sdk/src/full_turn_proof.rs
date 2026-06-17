@@ -2809,9 +2809,10 @@ mod tests {
         let mut ledger = dregg_cell::Ledger::new();
         ledger.insert_cell(after_cell.clone()).unwrap();
         let nullifier_root = [0u8; 32];
+        let commitments_root = [0u8; 32];
         let receipt_log: Vec<[u8; 32]> = vec![[3u8; 32], [4u8; 32]];
-        let before_w = rw::produce(&before_cell, &ledger, &nullifier_root, &receipt_log);
-        let after_w = rw::produce(&after_cell, &ledger, &nullifier_root, &receipt_log);
+        let before_w = rw::produce(&before_cell, &ledger, &nullifier_root, &commitments_root, &receipt_log);
+        let after_w = rw::produce(&after_cell, &ledger, &nullifier_root, &commitments_root, &receipt_log);
 
         // PROVE the cap-open leg (self-verifies internally) and re-verify it through the live
         // verify path with the cap-open vk_hash.
@@ -3877,11 +3878,13 @@ mod tests {
                     &dregg_cell::Cell::with_balance([0xE0; 32], [0u8; 32], 1234),
                     &dregg_cell::Ledger::new(),
                     &[0u8; 32],
+                    &[0u8; 32],
                     &[[0x11u8; 32]],
                 ),
                 after: dregg_turn::rotation_witness::produce(
                     &dregg_cell::Cell::with_balance([0xE0; 32], [0u8; 32], 1234),
                     &dregg_cell::Ledger::new(),
+                    &[0u8; 32],
                     &[0u8; 32],
                     &[[0x11u8; 32]],
                 ),
@@ -3916,8 +3919,9 @@ mod tests {
         let mut ctx_ledger = dregg_cell::Ledger::new();
         let _ = ctx_ledger.insert_cell(before_cell.clone());
         let nullifier_root = [0u8; 32];
-        let before_w = rw::produce(before_cell, &ctx_ledger, &nullifier_root, receipt_hashes);
-        let after_w = rw::produce(after_cell, &ctx_ledger, &nullifier_root, receipt_hashes);
+        let commitments_root = [0u8; 32];
+        let before_w = rw::produce(before_cell, &ctx_ledger, &nullifier_root, &commitments_root, receipt_hashes);
+        let after_w = rw::produce(after_cell, &ctx_ledger, &nullifier_root, &commitments_root, receipt_hashes);
         // The caveat is recomputed per-run inside the chained prover; the manifest stored here is
         // only the single-leg default and is unused by `prove_cohort_run_chain`.
         RotationTurnWitness {

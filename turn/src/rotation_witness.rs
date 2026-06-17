@@ -18,11 +18,11 @@
 //!
 //! ## The rotated block (R = 24, CONFIRMED — `ROTATION-CUTOVER.md` §2b)
 //!
-//! The 31 pre-iroot limbs ride in the absorption order the Lean keystone
+//! The 32 pre-iroot limbs ride in the absorption order the Lean keystone
 //! (`EffectVmEmitRotationV3.preLimbsAt`, `EffectVmEmitRotationR.wireCommitR`) pins:
 //!
 //! ```text
-//!   cells_root · r0..r23 · cap_root · nullifier_root · heap_root
+//!   cells_root · r0..r23 · cap_root · nullifier_root · commitments_root · heap_root
 //!              · lifecycle · epoch · committed_height · iroot   (LAST)
 //! ```
 //!
@@ -60,21 +60,22 @@ use dregg_circuit::poseidon2::{hash_bytes, hash_many};
 /// The CONFIRMED rotated register count (ember 2026-06-12, `ROTATION-CUTOVER.md` §2b).
 pub const NUM_REGISTERS: usize = 24;
 
-/// The number of pre-iroot absorption limbs (cells_root · r0..r23 · cap/nullifier/heap
-/// roots · lifecycle · epoch · committed_height). Matches Lean `preLimbsAt_length = 31`
-/// at R = 24.
-pub const NUM_PRE_LIMBS: usize = 1 + NUM_REGISTERS + 3 + 3; // 1 + 24 + 3 + 3 = 31
+/// The number of pre-iroot absorption limbs (cells_root · r0..r23 · cap_root · nullifier_root ·
+/// commitments_root · heap_root · lifecycle · epoch · committed_height). Matches Lean
+/// `preLimbsAt_length = 32` at R = 24, after the `commitments_root` flag-day widening
+/// (NUM_PRE_LIMBS 31→32 — the 4 map roots cap/nullifier/commitments/heap).
+pub const NUM_PRE_LIMBS: usize = 1 + NUM_REGISTERS + 4 + 3; // 1 + 24 + 4 + 3 = 32
 
 /// The collection id under which a present-cell existence leaf is keyed in the cells tree.
 const CELLS_COLLECTION: u32 = 0;
 
 /// One turn's rotated state-block witness for a single cell's before/after RecordKernelState.
 ///
-/// `pre_limbs` is the 31-limb absorption vector in the Lean-pinned order; `iroot` is the
+/// `pre_limbs` is the 32-limb absorption vector in the Lean-pinned order; `iroot` is the
 /// MMR root absorbed LAST. `state_commit = wireCommitR(pre_limbs, iroot)`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RotationWitness {
-    /// The 31 pre-iroot limbs, in absorption order.
+    /// The 32 pre-iroot limbs, in absorption order.
     pub pre_limbs: Vec<BabyBear>,
     /// The receipt-index MMR root (absorbed last).
     pub iroot: BabyBear,
@@ -253,6 +254,7 @@ pub fn produce(
     cell: &Cell,
     ledger: &Ledger,
     nullifier_root: &[u8; 32],
+    commitments_root: &[u8; 32],
     receipt_hashes: &[[u8; 32]],
 ) -> RotationWitness {
     let mut pre_limbs = vec![BabyBear::ZERO; NUM_PRE_LIMBS];
@@ -278,13 +280,16 @@ pub fn produce(
     // `cap_root` column carries (cell and circuit compute it through the SAME impl, the A2
     // differential guards it), so the `cap_root ↔ cap_root` weld holds by construction.
     pre_limbs[25] = compute_canonical_capability_root_felt(&cell.capabilities);
-    // limbs 26,27: nullifier_root, heap_root.
+    // limb 26: nullifier_root (the noteSpend shielded-set root).
     pre_limbs[26] = root_felt(nullifier_root);
-    pre_limbs[27] = root_felt(&cell.state.heap_root);
-    // limbs 28,29,30: lifecycle, epoch, committed_height.
-    pre_limbs[28] = lifecycle_felt(&cell.lifecycle);
-    pre_limbs[29] = epoch_felt(cell.state.delegation_epoch());
-    pre_limbs[30] = committed_height_felt(cell.state.committed_height());
+    // limb 27: commitments_root (the noteCreate shielded-set root — the flag-day new limb).
+    pre_limbs[27] = root_felt(commitments_root);
+    // limb 28: heap_root.
+    pre_limbs[28] = root_felt(&cell.state.heap_root);
+    // limbs 29,30,31: lifecycle, epoch, committed_height.
+    pre_limbs[29] = lifecycle_felt(&cell.lifecycle);
+    pre_limbs[30] = epoch_felt(cell.state.delegation_epoch());
+    pre_limbs[31] = committed_height_felt(cell.state.committed_height());
 
     let iroot_val = iroot(receipt_hashes);
     let state_commit = wire_commit(&pre_limbs, iroot_val);
@@ -326,6 +331,7 @@ pub fn mint_rotated_participant_leg(
     before_cell: &Cell,
     after_cell: &Cell,
     nullifier_root: &[u8; 32],
+    commitments_root: &[u8; 32],
     receipt_log: &[[u8; 32]],
     turn_id: Option<BabyBear>,
 ) -> Result<dregg_circuit::joint_turn_aggregation::RotatedParticipantLeg, String> {
@@ -339,8 +345,8 @@ pub fn mint_rotated_participant_leg(
         .insert_cell(after_cell.clone())
         .map_err(|e| format!("mint_rotated_participant_leg: ledger seed failed: {e:?}"))?;
 
-    let before_w = produce(before_cell, &ledger, nullifier_root, receipt_log);
-    let after_w = produce(after_cell, &ledger, nullifier_root, receipt_log);
+    let before_w = produce(before_cell, &ledger, nullifier_root, commitments_root, receipt_log);
+    let after_w = produce(after_cell, &ledger, nullifier_root, commitments_root, receipt_log);
     let bridge = |w: &RotationWitness| -> Result<RotatedBlockWitness, String> {
         RotatedBlockWitness::new(w.pre_limbs.clone(), w.iroot)
             .map_err(|e| format!("mint_rotated_participant_leg: rotated block witness: {e}"))
@@ -367,8 +373,8 @@ mod tests {
     }
 
     #[test]
-    fn pre_limb_count_is_31_at_r24() {
-        assert_eq!(NUM_PRE_LIMBS, 31);
+    fn pre_limb_count_is_32_at_r24() {
+        assert_eq!(NUM_PRE_LIMBS, 32);
     }
 
     /// THE iroot NON-OMISSION TOOTH (Lean `mroot_injective`): tamper / truncate / extend /
@@ -418,7 +424,8 @@ mod tests {
     }
 
     /// The chained `wire_commit` binds every pre-iroot limb and the iroot: moving any limb
-    /// (here the heap_root limb at offset 27) or the iroot moves the commitment.
+    /// (here the commitments_root limb at offset 27, and the heap_root at 28) or the iroot moves
+    /// the commitment.
     #[test]
     fn wire_commit_binds_limbs_and_iroot() {
         let limbs: Vec<BabyBear> = (0..NUM_PRE_LIMBS)
@@ -430,7 +437,14 @@ mod tests {
         assert_ne!(
             c,
             wire_commit(&moved, BabyBear::new(7)),
-            "heap_root limb is bound"
+            "commitments_root limb (27) is bound"
+        );
+        let mut moved_heap = limbs.clone();
+        moved_heap[28] = BabyBear::new(999);
+        assert_ne!(
+            c,
+            wire_commit(&moved_heap, BabyBear::new(7)),
+            "heap_root limb (28) is bound"
         );
         assert_ne!(c, wire_commit(&limbs, BabyBear::new(8)), "iroot is bound");
     }

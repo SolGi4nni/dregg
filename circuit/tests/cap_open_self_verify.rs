@@ -97,10 +97,11 @@ fn build_attenuate_base() -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
     let after_cell = producer_cell(before_balance, 1);
     ledger.insert_cell(after_cell.clone()).unwrap();
     let nullifier_root = [0u8; 32];
+    let commitments_root = [0u8; 32];
     let receipt_log: Vec<[u8; 32]> = vec![[3u8; 32], [4u8; 32]];
 
-    let before_w = rw::produce(&before_cell, &ledger, &nullifier_root, &receipt_log);
-    let after_w = rw::produce(&after_cell, &ledger, &nullifier_root, &receipt_log);
+    let before_w = rw::produce(&before_cell, &ledger, &nullifier_root, &commitments_root, &receipt_log);
+    let after_w = rw::produce(&after_cell, &ledger, &nullifier_root, &commitments_root, &receipt_log);
 
     let caveat = empty_caveat_manifest();
     let (mut trace, pis) = generate_rotated_effect_vm_trace(

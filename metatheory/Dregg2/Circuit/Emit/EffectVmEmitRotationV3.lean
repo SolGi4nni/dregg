@@ -9,10 +9,11 @@ cohort member against the rotated 25+…-limb state block — as ONE parametric 
 
   * **§1 the appended geometry** — each rotated descriptor carries, PAST its v1 layout
     (every v1 column index, constraint, and theorem untouched): a rotated BEFORE block at
-    `d.traceWidth` (31 absorption-ordered limbs · iroot · state_commit · 10 chain carriers
-    = 43 columns, the `EffectVmEmitRotationR` R=24 geometry verbatim), a rotated AFTER
-    block at `d.traceWidth + 43`, and the WIDENED-CAVEAT region at `d.traceWidth + 86`
-    (29-felt manifest · 9 chain carriers · caveat commit = 39 columns). Width: `+125`.
+    `d.traceWidth` (32 absorption-ordered limbs · iroot · state_commit · 11 chain carriers
+    = 45 columns, the R=24 register geometry PLUS the `commitments_root` map-root limb), a
+    rotated AFTER block at `d.traceWidth + 45`, and the WIDENED-CAVEAT region at
+    `d.traceWidth + 90` (29-felt manifest · 9 chain carriers · caveat commit = 39 columns).
+    Width: `+129`.
   * **§2 col-chained sites** — the chained absorptions reference their carrier COLUMNS
     (`.col`), never `.digest k`, so the site group is POSITION-INDEPENDENT (appendable
     after any descriptor's own sites with no index shift) and graduates to the SAME wire
@@ -108,44 +109,60 @@ set_option autoImplicit false
 
 /-! ## §1 — the appended geometry (R = 24, offsets relative to a block base). -/
 
-/-- The per-block span: 31 pre-iroot limbs + iroot + state_commit + 10 chain carriers. -/
-def B_SPAN : Nat := 43
+-- ── THE `commitments_root` FLAG-DAY (NUM_PRE_LIMBS 31→32) ─────────────────────────────────────
+-- The deployed rotated block carries a dedicated `commitments_root` limb at in-block offset 27
+-- (right after `nullifier_root` at 26; `heap_root` shifts 27→28, `lifecycle` 28→29, `epoch` 29→30,
+-- `committed_height` 30→31). The 32-limb pre-iroot list chains as: a 4-wide head + nine 3-wide body
+-- groups (limbs 4..30) + ONE arity-2 leftover site (limb 31) + the iroot ALONE last = 12 chained
+-- sites (11 chain carriers + the state-commit carrier). This is the R=24 register shape PLUS the
+-- one extra committed map-root limb, so the per-block span grows 43→45 (one more chain carrier than
+-- the bare R=24 probe). `wireCommitR`/`chunk31` (`EffectVmEmitRotationR`) are length-generic, so the
+-- chained-commitment binding lifts unchanged; only the literal site walk + offsets move here.
+
+/-- The per-block span: 32 pre-iroot limbs + iroot + state_commit + 11 chain carriers. -/
+def B_SPAN : Nat := 45
 /-- iroot offset inside a block. -/
-def B_IROOT : Nat := 31
+def B_IROOT : Nat := 32
 /-- state-commit offset inside a block. -/
-def B_STATE_COMMIT : Nat := 32
-/-- committed-height offset inside a block. -/
-def B_COMMITTED_HEIGHT : Nat := 30
-/-- cap-root offset inside a block. -/
+def B_STATE_COMMIT : Nat := 33
+/-- committed-height offset inside a block (limb 31, after the `commitments_root` shift). -/
+def B_COMMITTED_HEIGHT : Nat := 31
+/-- cap-root offset inside a block (unshifted — `commitments_root` rides AFTER nullifier_root). -/
 def B_CAP_ROOT : Nat := 25
+/-- nullifier-root offset inside a block (unshifted, limb 26). -/
+def B_NULLIFIER_ROOT_OFF : Nat := 26
+/-- commitments-root offset inside a block (limb 27 — the flag-day new committed shielded-set root). -/
+def B_COMMITMENTS_ROOT : Nat := 27
 /-- The caveat region span: 29 manifest felts + 9 chain carriers + 1 commit. -/
 def C_SPAN : Nat := 39
 /-- caveat-commit offset inside the caveat region. -/
 def C_COMMIT : Nat := 38
 /-- The whole appendix width: two rotated blocks + the caveat region. -/
-def APPENDIX_SPAN : Nat := 125
+def APPENDIX_SPAN : Nat := 129
 
--- The geometry IS the measured R=24 probe geometry (the staged constants do not move).
-#guard B_IROOT == irootCol 24
-#guard B_STATE_COMMIT == stateCommitCol 24
-#guard B_COMMITTED_HEIGHT == committedHeightCol 24
+-- The map-root offsets ride past the R=24 probe's named columns (cap_root at probe `capRootCol 24`);
+-- the `commitments_root` limb is the +1 over the bare R=24 register shape.
 #guard B_CAP_ROOT == capRootCol 24
-#guard B_SPAN == probeWidth 24
+#guard B_COMMITMENTS_ROOT == B_NULLIFIER_ROOT_OFF + 1
+#guard B_IROOT == 32                 -- 32 pre-iroot limbs, then iroot
+#guard B_STATE_COMMIT == B_IROOT + 1
+#guard B_COMMITTED_HEIGHT == 31      -- last pre-iroot limb
+#guard B_SPAN == probeWidth 24 + 2   -- +1 limb + +1 leftover chain carrier over the R=24 probe
 #guard APPENDIX_SPAN == 2 * B_SPAN + C_SPAN
 
-/-- The pre-iroot limb list of a block at `base` (31 limbs, absorption order: cells_root ·
-r0..r23 · cap/nullifier/heap roots · lifecycle · epoch · committed height). Literal, so every
-positional fact is `rfl`. -/
+/-- The pre-iroot limb list of a block at `base` (32 limbs, absorption order: cells_root ·
+r0..r23 · cap_root · nullifier_root · **commitments_root** · heap_root · lifecycle · epoch ·
+committed height). Literal, so every positional fact is `rfl`. -/
 def preLimbsAt (base : Nat) (a : Assignment) : List ℤ :=
   [ a (base + 0), a (base + 1), a (base + 2), a (base + 3), a (base + 4), a (base + 5)
   , a (base + 6), a (base + 7), a (base + 8), a (base + 9), a (base + 10), a (base + 11)
   , a (base + 12), a (base + 13), a (base + 14), a (base + 15), a (base + 16), a (base + 17)
   , a (base + 18), a (base + 19), a (base + 20), a (base + 21), a (base + 22), a (base + 23)
   , a (base + 24), a (base + 25), a (base + 26), a (base + 27), a (base + 28), a (base + 29)
-  , a (base + 30) ]
+  , a (base + 30), a (base + 31) ]
 
 theorem preLimbsAt_length (base : Nat) (a : Assignment) :
-    (preLimbsAt base a).length = 31 := rfl
+    (preLimbsAt base a).length = 32 := rfl
 
 /-- Read the caveat manifest off a row at region base `base` (positional, 29 felts). -/
 def manifestAt (base : Nat) (a : Assignment) : RotCaveatManifest :=
@@ -161,22 +178,25 @@ def manifestAt (base : Nat) (a : Assignment) : RotCaveatManifest :=
 
 /-! ## §2 — the col-chained sites (position-independent; graduate to the probe's bytes). -/
 
-/-- The 11 chained absorption sites of a rotated block at `base`: the 4-wide head, nine
-3-wide body groups (limbs 4..30 — the EXACT 3-fill of R=24), the iroot ALONE last onto the
-state-commit carrier. Chaining is by CARRIER COLUMNS (`.col`), which graduates to the SAME
-wire bytes as `.digest` chaining while keeping the group position-independent. -/
+/-- The 12 chained absorption sites of a rotated block at `base`: the 4-wide head, nine
+3-wide body groups (limbs 4..30), ONE arity-2 leftover site (limb 31 — the `commitments_root`
+flag-day's extra limb pushes the body to 28 limbs = 9×3 + 1), then the iroot ALONE last onto the
+state-commit carrier. Chaining is by CARRIER COLUMNS (`.col`), which graduates to the SAME wire
+bytes as `.digest` chaining while keeping the group position-independent. Chain carriers ride
+`base + 34 .. base + 44` (11 carriers); the state-commit carrier is `base + 33`. -/
 def rotV3SitesAt (base : Nat) : List VmHashSite :=
-  [ ⟨base + 33, [.col (base + 0), .col (base + 1), .col (base + 2), .col (base + 3)], 4⟩
-  , ⟨base + 34, [.col (base + 33), .col (base + 4), .col (base + 5), .col (base + 6)], 4⟩
-  , ⟨base + 35, [.col (base + 34), .col (base + 7), .col (base + 8), .col (base + 9)], 4⟩
-  , ⟨base + 36, [.col (base + 35), .col (base + 10), .col (base + 11), .col (base + 12)], 4⟩
-  , ⟨base + 37, [.col (base + 36), .col (base + 13), .col (base + 14), .col (base + 15)], 4⟩
-  , ⟨base + 38, [.col (base + 37), .col (base + 16), .col (base + 17), .col (base + 18)], 4⟩
-  , ⟨base + 39, [.col (base + 38), .col (base + 19), .col (base + 20), .col (base + 21)], 4⟩
-  , ⟨base + 40, [.col (base + 39), .col (base + 22), .col (base + 23), .col (base + 24)], 4⟩
-  , ⟨base + 41, [.col (base + 40), .col (base + 25), .col (base + 26), .col (base + 27)], 4⟩
-  , ⟨base + 42, [.col (base + 41), .col (base + 28), .col (base + 29), .col (base + 30)], 4⟩
-  , ⟨base + 32, [.col (base + 42), .col (base + 31)], 2⟩ ]
+  [ ⟨base + 34, [.col (base + 0), .col (base + 1), .col (base + 2), .col (base + 3)], 4⟩
+  , ⟨base + 35, [.col (base + 34), .col (base + 4), .col (base + 5), .col (base + 6)], 4⟩
+  , ⟨base + 36, [.col (base + 35), .col (base + 7), .col (base + 8), .col (base + 9)], 4⟩
+  , ⟨base + 37, [.col (base + 36), .col (base + 10), .col (base + 11), .col (base + 12)], 4⟩
+  , ⟨base + 38, [.col (base + 37), .col (base + 13), .col (base + 14), .col (base + 15)], 4⟩
+  , ⟨base + 39, [.col (base + 38), .col (base + 16), .col (base + 17), .col (base + 18)], 4⟩
+  , ⟨base + 40, [.col (base + 39), .col (base + 19), .col (base + 20), .col (base + 21)], 4⟩
+  , ⟨base + 41, [.col (base + 40), .col (base + 22), .col (base + 23), .col (base + 24)], 4⟩
+  , ⟨base + 42, [.col (base + 41), .col (base + 25), .col (base + 26), .col (base + 27)], 4⟩
+  , ⟨base + 43, [.col (base + 42), .col (base + 28), .col (base + 29), .col (base + 30)], 4⟩
+  , ⟨base + 44, [.col (base + 43), .col (base + 31)], 2⟩
+  , ⟨base + 33, [.col (base + 44), .col (base + 32)], 2⟩ ]
 
 /-- The 10 chained caveat sites at region base `base` (the `caveatSites` shape, positional):
 4-wide head over `[count, e0.tag, e0.dom, e0.key]`, eight (carrier+3) body groups, the
@@ -193,29 +213,56 @@ def caveatV3SitesAt (base : Nat) : List VmHashSite :=
   , ⟨base + 37, [.col (base + 36), .col (base + 25), .col (base + 26), .col (base + 27)], 4⟩
   , ⟨base + 38, [.col (base + 37), .col (base + 28)], 2⟩ ]
 
-/-- The whole appendix site group for a descriptor of width `w`. -/
+/-- The whole appendix site group for a descriptor of width `w`. The AFTER block rides at
+`w + B_SPAN` (= `w + 45`); the caveat region at `w + 2·B_SPAN` (= `w + 90`). -/
 def rotV3Appendix (w : Nat) : List VmHashSite :=
-  rotV3SitesAt w ++ rotV3SitesAt (w + 43) ++ caveatV3SitesAt (w + 86)
+  rotV3SitesAt w ++ rotV3SitesAt (w + 45) ++ caveatV3SitesAt (w + 90)
 
 -- Arity discipline: every appendix site is arity 4 or 2 (the chip refuses 3) — checked at
 -- a concrete base; the literal arities are base-independent.
 #guard (rotV3Appendix 186).all fun s => s.arity == 4 || s.arity == 2
-#guard (rotV3Appendix 186).length == 32
+#guard (rotV3Appendix 186).length == 34   -- 12 (before) + 12 (after) + 10 (caveat)
 
--- **THE BYTE-IDENTITY TRIPWIRE**: at base 0, the col-chained block graduates to the EXACT
--- wire JSON of the digest-chained R=24 probe (name-aligned) — col-chaining IS the probe's
--- absorption, byte-for-byte.
+-- **THE BYTE-IDENTITY TRIPWIRE** (32-limb shape): the col-chained 12-site block at base 0
+-- graduates to the EXACT wire JSON of its DIGEST-chained twin (the running accumulator referenced
+-- as `.digest (k-1)` instead of `.col carrier`). `HashInput.toExpr` resolves `.digest k` to site
+-- `k`'s `digestCol`, which IS the chain-carrier column the col-chained form names, so the two emit
+-- byte-for-byte. This is the standalone analog of the old R=24-probe cross-check, at the deployed
+-- 32-limb geometry (the R-register probe no longer matches the +commitments_root limb shape).
+private def rotV3SitesDigestAt0 : List VmHashSite :=
+  [ ⟨34, [.col 0, .col 1, .col 2, .col 3], 4⟩
+  , ⟨35, [.digest 0, .col 4, .col 5, .col 6], 4⟩
+  , ⟨36, [.digest 1, .col 7, .col 8, .col 9], 4⟩
+  , ⟨37, [.digest 2, .col 10, .col 11, .col 12], 4⟩
+  , ⟨38, [.digest 3, .col 13, .col 14, .col 15], 4⟩
+  , ⟨39, [.digest 4, .col 16, .col 17, .col 18], 4⟩
+  , ⟨40, [.digest 5, .col 19, .col 20, .col 21], 4⟩
+  , ⟨41, [.digest 6, .col 22, .col 23, .col 24], 4⟩
+  , ⟨42, [.digest 7, .col 25, .col 26, .col 27], 4⟩
+  , ⟨43, [.digest 8, .col 28, .col 29, .col 30], 4⟩
+  , ⟨44, [.digest 9, .col 31], 2⟩
+  , ⟨33, [.digest 10, .col 32], 2⟩ ]
+
 #guard emitVmJson2 (graduateV1
-    { name := (rotationProbeVmDescriptorR 24).name
-    , traceWidth := probeWidth 24
+    { name := "dregg-effectvm-rotation-v3-commitments-tripwire"
+    , traceWidth := B_SPAN
     , piCount := 2
     , constraints :=
-        [ .piBinding .last (stateCommitCol 24) Dregg2.Circuit.Emit.EffectVmEmitRotation.PUB_COMMIT
-        , .piBinding .last (committedHeightCol 24)
+        [ .piBinding .last B_STATE_COMMIT Dregg2.Circuit.Emit.EffectVmEmitRotation.PUB_COMMIT
+        , .piBinding .last B_COMMITTED_HEIGHT
             Dregg2.Circuit.Emit.EffectVmEmitRotation.PUB_HEIGHT ]
     , hashSites := rotV3SitesAt 0
     , ranges := [] })
-  == emitVmJson2 (rotationProbeVmDescriptorR2 24)
+  == emitVmJson2 (graduateV1
+    { name := "dregg-effectvm-rotation-v3-commitments-tripwire"
+    , traceWidth := B_SPAN
+    , piCount := 2
+    , constraints :=
+        [ .piBinding .last B_STATE_COMMIT Dregg2.Circuit.Emit.EffectVmEmitRotation.PUB_COMMIT
+        , .piBinding .last B_COMMITTED_HEIGHT
+            Dregg2.Circuit.Emit.EffectVmEmitRotation.PUB_HEIGHT ]
+    , hashSites := rotV3SitesDigestAt0
+    , ranges := [] })
 
 /-! ## §3 — the welds and the transformation. -/
 
@@ -249,9 +296,9 @@ def weldsAt (base stateBase : Nat) : List VmConstraint :=
 rotated OLD commit (first row) · rotated NEW commit · rotated height · caveat commit (last). -/
 def rotPins (w piBase : Nat) : List VmConstraint :=
   [ .piBinding .first (w + B_STATE_COMMIT) piBase
-  , .piBinding .last (w + 43 + B_STATE_COMMIT) (piBase + 1)
-  , .piBinding .last (w + 43 + B_COMMITTED_HEIGHT) (piBase + 2)
-  , .piBinding .last (w + 86 + C_COMMIT) (piBase + 3) ]
+  , .piBinding .last (w + 45 + B_STATE_COMMIT) (piBase + 1)
+  , .piBinding .last (w + 45 + B_COMMITTED_HEIGHT) (piBase + 2)
+  , .piBinding .last (w + 90 + C_COMMIT) (piBase + 3) ]
 
 /-- **`rotateV3`** — the ONE parametric regen: append the rotated BEFORE/AFTER blocks and
 the caveat region past the descriptor's own layout; weld where the v1 block carries the
@@ -264,7 +311,7 @@ def rotateV3 (d : EffectVmDescriptor) : EffectVmDescriptor :=
   , piCount     := d.piCount + 4
   , constraints := d.constraints
       ++ (weldsAt d.traceWidth STATE_BEFORE_BASE
-          ++ weldsAt (d.traceWidth + 43) STATE_AFTER_BASE
+          ++ weldsAt (d.traceWidth + 45) STATE_AFTER_BASE
           ++ rotPins d.traceWidth d.piCount)
   , hashSites   := d.hashSites ++ rotV3Appendix d.traceWidth
   , ranges      := d.ranges }
@@ -324,11 +371,11 @@ theorem go_append_left (hash : List ℤ → ℤ) (env : VmRowEnv) :
     obtain ⟨hd, hgo⟩ := h
     exact ⟨hd, ih _ Q hgo⟩
 
-/-- Every rotated-block site is col-only (11 literal cases). -/
+/-- Every rotated-block site is col-only (12 literal cases). -/
 theorem rotV3SitesAt_colOnly (base : Nat) : ∀ s ∈ rotV3SitesAt base, colOnly s = true := by
   intro s hs
   simp only [rotV3SitesAt, List.mem_cons, List.not_mem_nil, or_false] at hs
-  rcases hs with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;> rfl
+  rcases hs with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;> rfl
 
 /-- Every caveat site is col-only (10 literal cases). -/
 theorem caveatV3SitesAt_colOnly (base : Nat) :
@@ -338,67 +385,70 @@ theorem caveatV3SitesAt_colOnly (base : Nat) :
   rcases hs with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;> rfl
 
 set_option maxHeartbeats 6400000 in
-/-- **The block pin, parametric in `base`**: the eleven col-chained site equations compose
-into the chained rotated commitment — the row's state-commit carrier at `base + 32` IS
-`wireCommitR` of the row's OWN 31 limbs and iroot. -/
+/-- **The block pin, parametric in `base`**: the twelve col-chained site equations compose
+into the chained rotated commitment — the row's state-commit carrier at `base + 33` IS
+`wireCommitR` of the row's OWN 32 limbs and iroot (the `commitments_root` flag-day shape). -/
 theorem rotV3SitesAt_pin (hash : List ℤ → ℤ) (env : VmRowEnv) (base : Nat)
     (h : ∀ s ∈ rotV3SitesAt base, env.loc s.digestCol = hash (s.resolvedInputs env [])) :
-    env.loc (base + 32)
-      = wireCommitR hash (preLimbsAt base env.loc) (env.loc (base + 31)) := by
-  have h0 : env.loc (base + 33) = hash [env.loc (base + 0), env.loc (base + 1),
+    env.loc (base + 33)
+      = wireCommitR hash (preLimbsAt base env.loc) (env.loc (base + 32)) := by
+  have h0 : env.loc (base + 34) = hash [env.loc (base + 0), env.loc (base + 1),
       env.loc (base + 2), env.loc (base + 3)] := by
     simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
-      h ⟨base + 33, [.col (base + 0), .col (base + 1), .col (base + 2), .col (base + 3)], 4⟩
+      h ⟨base + 34, [.col (base + 0), .col (base + 1), .col (base + 2), .col (base + 3)], 4⟩
         (by simp [rotV3SitesAt])
-  have h1 : env.loc (base + 34) = hash [env.loc (base + 33), env.loc (base + 4),
+  have h1 : env.loc (base + 35) = hash [env.loc (base + 34), env.loc (base + 4),
       env.loc (base + 5), env.loc (base + 6)] := by
     simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
-      h ⟨base + 34, [.col (base + 33), .col (base + 4), .col (base + 5), .col (base + 6)], 4⟩
+      h ⟨base + 35, [.col (base + 34), .col (base + 4), .col (base + 5), .col (base + 6)], 4⟩
         (by simp [rotV3SitesAt])
-  have h2 : env.loc (base + 35) = hash [env.loc (base + 34), env.loc (base + 7),
+  have h2 : env.loc (base + 36) = hash [env.loc (base + 35), env.loc (base + 7),
       env.loc (base + 8), env.loc (base + 9)] := by
     simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
-      h ⟨base + 35, [.col (base + 34), .col (base + 7), .col (base + 8), .col (base + 9)], 4⟩
+      h ⟨base + 36, [.col (base + 35), .col (base + 7), .col (base + 8), .col (base + 9)], 4⟩
         (by simp [rotV3SitesAt])
-  have h3 : env.loc (base + 36) = hash [env.loc (base + 35), env.loc (base + 10),
+  have h3 : env.loc (base + 37) = hash [env.loc (base + 36), env.loc (base + 10),
       env.loc (base + 11), env.loc (base + 12)] := by
     simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
-      h ⟨base + 36, [.col (base + 35), .col (base + 10), .col (base + 11),
+      h ⟨base + 37, [.col (base + 36), .col (base + 10), .col (base + 11),
         .col (base + 12)], 4⟩ (by simp [rotV3SitesAt])
-  have h4 : env.loc (base + 37) = hash [env.loc (base + 36), env.loc (base + 13),
+  have h4 : env.loc (base + 38) = hash [env.loc (base + 37), env.loc (base + 13),
       env.loc (base + 14), env.loc (base + 15)] := by
     simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
-      h ⟨base + 37, [.col (base + 36), .col (base + 13), .col (base + 14),
+      h ⟨base + 38, [.col (base + 37), .col (base + 13), .col (base + 14),
         .col (base + 15)], 4⟩ (by simp [rotV3SitesAt])
-  have h5 : env.loc (base + 38) = hash [env.loc (base + 37), env.loc (base + 16),
+  have h5 : env.loc (base + 39) = hash [env.loc (base + 38), env.loc (base + 16),
       env.loc (base + 17), env.loc (base + 18)] := by
     simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
-      h ⟨base + 38, [.col (base + 37), .col (base + 16), .col (base + 17),
+      h ⟨base + 39, [.col (base + 38), .col (base + 16), .col (base + 17),
         .col (base + 18)], 4⟩ (by simp [rotV3SitesAt])
-  have h6 : env.loc (base + 39) = hash [env.loc (base + 38), env.loc (base + 19),
+  have h6 : env.loc (base + 40) = hash [env.loc (base + 39), env.loc (base + 19),
       env.loc (base + 20), env.loc (base + 21)] := by
     simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
-      h ⟨base + 39, [.col (base + 38), .col (base + 19), .col (base + 20),
+      h ⟨base + 40, [.col (base + 39), .col (base + 19), .col (base + 20),
         .col (base + 21)], 4⟩ (by simp [rotV3SitesAt])
-  have h7 : env.loc (base + 40) = hash [env.loc (base + 39), env.loc (base + 22),
+  have h7 : env.loc (base + 41) = hash [env.loc (base + 40), env.loc (base + 22),
       env.loc (base + 23), env.loc (base + 24)] := by
     simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
-      h ⟨base + 40, [.col (base + 39), .col (base + 22), .col (base + 23),
+      h ⟨base + 41, [.col (base + 40), .col (base + 22), .col (base + 23),
         .col (base + 24)], 4⟩ (by simp [rotV3SitesAt])
-  have h8 : env.loc (base + 41) = hash [env.loc (base + 40), env.loc (base + 25),
+  have h8 : env.loc (base + 42) = hash [env.loc (base + 41), env.loc (base + 25),
       env.loc (base + 26), env.loc (base + 27)] := by
     simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
-      h ⟨base + 41, [.col (base + 40), .col (base + 25), .col (base + 26),
+      h ⟨base + 42, [.col (base + 41), .col (base + 25), .col (base + 26),
         .col (base + 27)], 4⟩ (by simp [rotV3SitesAt])
-  have h9 : env.loc (base + 42) = hash [env.loc (base + 41), env.loc (base + 28),
+  have h9 : env.loc (base + 43) = hash [env.loc (base + 42), env.loc (base + 28),
       env.loc (base + 29), env.loc (base + 30)] := by
     simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
-      h ⟨base + 42, [.col (base + 41), .col (base + 28), .col (base + 29),
+      h ⟨base + 43, [.col (base + 42), .col (base + 28), .col (base + 29),
         .col (base + 30)], 4⟩ (by simp [rotV3SitesAt])
-  have h10 : env.loc (base + 32) = hash [env.loc (base + 42), env.loc (base + 31)] := by
+  have h10 : env.loc (base + 44) = hash [env.loc (base + 43), env.loc (base + 31)] := by
     simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
-      h ⟨base + 32, [.col (base + 42), .col (base + 31)], 2⟩ (by simp [rotV3SitesAt])
-  rw [h10, h9, h8, h7, h6, h5, h4, h3, h2, h1, h0]
+      h ⟨base + 44, [.col (base + 43), .col (base + 31)], 2⟩ (by simp [rotV3SitesAt])
+  have h11 : env.loc (base + 33) = hash [env.loc (base + 44), env.loc (base + 32)] := by
+    simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
+      h ⟨base + 33, [.col (base + 44), .col (base + 32)], 2⟩ (by simp [rotV3SitesAt])
+  rw [h11, h10, h9, h8, h7, h6, h5, h4, h3, h2, h1, h0]
   rfl
 
 set_option maxHeartbeats 6400000 in
@@ -479,13 +529,13 @@ commitment of the row's OWN limbs. -/
 theorem rotateV3_pins_commits (hash : List ℤ → ℤ) (d : EffectVmDescriptor)
     (env : VmRowEnv) (isFirst isLast : Bool)
     (h : satisfiedVm hash (rotateV3 d) env isFirst isLast) :
-    env.loc (d.traceWidth + 32)
-      = wireCommitR hash (preLimbsAt d.traceWidth env.loc) (env.loc (d.traceWidth + 31))
-    ∧ env.loc (d.traceWidth + 43 + 32)
-      = wireCommitR hash (preLimbsAt (d.traceWidth + 43) env.loc)
-          (env.loc (d.traceWidth + 43 + 31))
-    ∧ env.loc (d.traceWidth + 86 + 38)
-      = caveatCommit hash (manifestAt (d.traceWidth + 86) env.loc) := by
+    env.loc (d.traceWidth + 33)
+      = wireCommitR hash (preLimbsAt d.traceWidth env.loc) (env.loc (d.traceWidth + 32))
+    ∧ env.loc (d.traceWidth + 45 + 33)
+      = wireCommitR hash (preLimbsAt (d.traceWidth + 45) env.loc)
+          (env.loc (d.traceWidth + 45 + 32))
+    ∧ env.loc (d.traceWidth + 90 + 38)
+      = caveatCommit hash (manifestAt (d.traceWidth + 90) env.loc) := by
   have hsites := h.2.1
   have heq := go_colOnly_mem hash env [] _ hsites
   have hmem : ∀ s ∈ rotV3Appendix d.traceWidth, s ∈ (rotateV3 d).hashSites :=
@@ -494,10 +544,10 @@ theorem rotateV3_pins_commits (hash : List ℤ → ℤ) (d : EffectVmDescriptor)
   · exact rotV3SitesAt_pin hash env d.traceWidth fun s hs =>
       heq s (hmem s (List.mem_append_left _ (List.mem_append_left _ hs)))
         (rotV3SitesAt_colOnly _ s hs)
-  · exact rotV3SitesAt_pin hash env (d.traceWidth + 43) fun s hs =>
+  · exact rotV3SitesAt_pin hash env (d.traceWidth + 45) fun s hs =>
       heq s (hmem s (List.mem_append_left _ (List.mem_append_right _ hs)))
         (rotV3SitesAt_colOnly _ s hs)
-  · exact caveatV3SitesAt_pin hash env (d.traceWidth + 86) fun s hs =>
+  · exact caveatV3SitesAt_pin hash env (d.traceWidth + 90) fun s hs =>
       heq s (hmem s (List.mem_append_right _ hs)) (caveatV3SitesAt_colOnly _ s hs)
 
 /-- A weld of the rotated descriptor holds on every satisfying row. -/
@@ -506,7 +556,7 @@ theorem rotateV3_weld (hash : List ℤ → ℤ) (d : EffectVmDescriptor)
     (h : satisfiedVm hash (rotateV3 d) env isFirst isLast)
     {a b : Nat}
     (hw : colEq a b ∈ weldsAt d.traceWidth STATE_BEFORE_BASE
-        ∨ colEq a b ∈ weldsAt (d.traceWidth + 43) STATE_AFTER_BASE) :
+        ∨ colEq a b ∈ weldsAt (d.traceWidth + 45) STATE_AFTER_BASE) :
     env.loc a = env.loc b := by
   have hc := h.1 (colEq a b) (List.mem_append_right _ (by
     rcases hw with hw | hw
@@ -523,9 +573,9 @@ theorem rotateV3_welds_named (hash : List ℤ → ℤ) (d : EffectVmDescriptor)
     env.loc (d.traceWidth + 1) = env.loc (sbCol state.BALANCE_LO)
     ∧ env.loc (d.traceWidth + 2) = env.loc (sbCol state.NONCE)
     ∧ env.loc (d.traceWidth + B_CAP_ROOT) = env.loc (sbCol state.CAP_ROOT)
-    ∧ env.loc (d.traceWidth + 43 + 1) = env.loc (saCol state.BALANCE_LO)
-    ∧ env.loc (d.traceWidth + 43 + 2) = env.loc (saCol state.NONCE)
-    ∧ env.loc (d.traceWidth + 43 + B_CAP_ROOT) = env.loc (saCol state.CAP_ROOT) := by
+    ∧ env.loc (d.traceWidth + 45 + 1) = env.loc (saCol state.BALANCE_LO)
+    ∧ env.loc (d.traceWidth + 45 + 2) = env.loc (saCol state.NONCE)
+    ∧ env.loc (d.traceWidth + 45 + B_CAP_ROOT) = env.loc (saCol state.CAP_ROOT) := by
   refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩
   · exact rotateV3_weld hash d env isFirst isLast h (Or.inl (by simp [weldsAt, sbCol]))
   · exact rotateV3_weld hash d env isFirst isLast h (Or.inl (by simp [weldsAt, sbCol]))
@@ -604,7 +654,7 @@ theorem graduable_rotateV3 {d : EffectVmDescriptor} (h : graduable d = true) :
     rcases List.mem_append.mp hs with hs' | hs'
     · rcases List.mem_append.mp hs' with hs'' | hs'' <;>
       · simp only [rotV3SitesAt, List.mem_cons, List.not_mem_nil, or_false] at hs''
-        rcases hs'' with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;> rfl
+        rcases hs'' with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;> rfl
     · simp only [caveatV3SitesAt, List.mem_cons, List.not_mem_nil, or_false] at hs'
       rcases hs' with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;> rfl
 
@@ -642,14 +692,14 @@ theorem rotV3_pins (hash : List ℤ → ℤ) (d : EffectVmDescriptor)
     (hgrad : graduable d = true)
     (hsat : Satisfied2 hash (v3Of d) minit mfin maddrs t)
     (i : Nat) (hi : i < t.rows.length) :
-    (envAt t i).loc (d.traceWidth + 32)
+    (envAt t i).loc (d.traceWidth + 33)
       = wireCommitR hash (preLimbsAt d.traceWidth (envAt t i).loc)
-          ((envAt t i).loc (d.traceWidth + 31))
-    ∧ (envAt t i).loc (d.traceWidth + 43 + 32)
-      = wireCommitR hash (preLimbsAt (d.traceWidth + 43) (envAt t i).loc)
-          ((envAt t i).loc (d.traceWidth + 43 + 31))
-    ∧ (envAt t i).loc (d.traceWidth + 86 + 38)
-      = caveatCommit hash (manifestAt (d.traceWidth + 86) (envAt t i).loc) :=
+          ((envAt t i).loc (d.traceWidth + 32))
+    ∧ (envAt t i).loc (d.traceWidth + 45 + 33)
+      = wireCommitR hash (preLimbsAt (d.traceWidth + 45) (envAt t i).loc)
+          ((envAt t i).loc (d.traceWidth + 45 + 32))
+    ∧ (envAt t i).loc (d.traceWidth + 90 + 38)
+      = caveatCommit hash (manifestAt (d.traceWidth + 90) (envAt t i).loc) :=
   rotateV3_pins_commits hash d _ _ _
     (graduateV1_sound hash (rotateV3 d) minit mfin maddrs t hchip hrange
       (graduable_rotateV3 hgrad) hsat i hi)
@@ -666,21 +716,21 @@ theorem rotV3_publishes (hash : List ℤ → ℤ) (d : EffectVmDescriptor)
     ((i == 0) = true →
       (envAt t i).loc (d.traceWidth + B_STATE_COMMIT) = (envAt t i).pub d.piCount)
     ∧ ((i + 1 == t.rows.length) = true →
-      (envAt t i).loc (d.traceWidth + 43 + B_STATE_COMMIT) = (envAt t i).pub (d.piCount + 1)
-      ∧ (envAt t i).loc (d.traceWidth + 43 + B_COMMITTED_HEIGHT)
+      (envAt t i).loc (d.traceWidth + 45 + B_STATE_COMMIT) = (envAt t i).pub (d.piCount + 1)
+      ∧ (envAt t i).loc (d.traceWidth + 45 + B_COMMITTED_HEIGHT)
           = (envAt t i).pub (d.piCount + 2)
-      ∧ (envAt t i).loc (d.traceWidth + 86 + C_COMMIT) = (envAt t i).pub (d.piCount + 3)) := by
+      ∧ (envAt t i).loc (d.traceWidth + 90 + C_COMMIT) = (envAt t i).pub (d.piCount + 3)) := by
   have h := graduateV1_sound hash (rotateV3 d) minit mfin maddrs t hchip hrange
     (graduable_rotateV3 hgrad) hsat i hi
   have hmem : ∀ c ∈ rotPins d.traceWidth d.piCount, c ∈ (rotateV3 d).constraints :=
     fun c hc => List.mem_append_right _ (List.mem_append_right _ hc)
   have h0 := h.1 _ (hmem (.piBinding .first (d.traceWidth + B_STATE_COMMIT) d.piCount)
     (by simp [rotPins]))
-  have h1 := h.1 _ (hmem (.piBinding .last (d.traceWidth + 43 + B_STATE_COMMIT)
+  have h1 := h.1 _ (hmem (.piBinding .last (d.traceWidth + 45 + B_STATE_COMMIT)
     (d.piCount + 1)) (by simp [rotPins]))
-  have h2 := h.1 _ (hmem (.piBinding .last (d.traceWidth + 43 + B_COMMITTED_HEIGHT)
+  have h2 := h.1 _ (hmem (.piBinding .last (d.traceWidth + 45 + B_COMMITTED_HEIGHT)
     (d.piCount + 2)) (by simp [rotPins]))
-  have h3 := h.1 _ (hmem (.piBinding .last (d.traceWidth + 86 + C_COMMIT) (d.piCount + 3))
+  have h3 := h.1 _ (hmem (.piBinding .last (d.traceWidth + 90 + C_COMMIT) (d.piCount + 3))
     (by simp [rotPins]))
   simp only [VmConstraint.holdsVm] at h0 h1 h2 h3
   exact ⟨h0, fun hl => ⟨h1 hl, h2 hl, h3 hl⟩⟩
@@ -712,13 +762,13 @@ theorem rotV3_binds_published (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR
     (hpubNew : (envAt t k).pub (d.piCount + 1) = (envAt t' l).pub (d.piCount + 1))
     (hpubCav : (envAt t k).pub (d.piCount + 3) = (envAt t' l).pub (d.piCount + 3)) :
     (preLimbsAt d.traceWidth (envAt t i).loc = preLimbsAt d.traceWidth (envAt t' j).loc
-      ∧ (envAt t i).loc (d.traceWidth + 31) = (envAt t' j).loc (d.traceWidth + 31))
-    ∧ (preLimbsAt (d.traceWidth + 43) (envAt t k).loc
-        = preLimbsAt (d.traceWidth + 43) (envAt t' l).loc
-      ∧ (envAt t k).loc (d.traceWidth + 43 + 31) = (envAt t' l).loc (d.traceWidth + 43 + 31)
+      ∧ (envAt t i).loc (d.traceWidth + 32) = (envAt t' j).loc (d.traceWidth + 32))
+    ∧ (preLimbsAt (d.traceWidth + 45) (envAt t k).loc
+        = preLimbsAt (d.traceWidth + 45) (envAt t' l).loc
+      ∧ (envAt t k).loc (d.traceWidth + 45 + 32) = (envAt t' l).loc (d.traceWidth + 45 + 32)
       ∧ (envAt t k).pub (d.piCount + 2) = (envAt t' l).pub (d.piCount + 2))
-    ∧ manifestAt (d.traceWidth + 86) (envAt t k).loc
-        = manifestAt (d.traceWidth + 86) (envAt t' l).loc := by
+    ∧ manifestAt (d.traceWidth + 90) (envAt t k).loc
+        = manifestAt (d.traceWidth + 90) (envAt t' l).loc := by
   have hp := rotV3_pins hash d minit mfin maddrs t hchip hrange hgrad hsat
   have hp' := rotV3_pins hash d minit' mfin' maddrs' t' hchip' hrange' hgrad hsat'
   have hq := rotV3_publishes hash d minit mfin maddrs t hchip hrange hgrad hsat
@@ -728,9 +778,9 @@ theorem rotV3_binds_published (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR
     have hc := (hq i hi).1 hfirst
     have hc' := (hq' j hj).1 hfirst'
     have hwire : wireCommitR hash (preLimbsAt d.traceWidth (envAt t i).loc)
-        ((envAt t i).loc (d.traceWidth + 31))
+        ((envAt t i).loc (d.traceWidth + 32))
         = wireCommitR hash (preLimbsAt d.traceWidth (envAt t' j).loc)
-            ((envAt t' j).loc (d.traceWidth + 31)) := by
+            ((envAt t' j).loc (d.traceWidth + 32)) := by
       rw [← (hp i hi).1, ← (hp' j hj).1]
       show (envAt t i).loc (d.traceWidth + B_STATE_COMMIT)
         = (envAt t' j).loc (d.traceWidth + B_STATE_COMMIT)
@@ -740,27 +790,27 @@ theorem rotV3_binds_published (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR
   · -- the after block, via the last-row pins
     obtain ⟨hc, hh, -⟩ := (hq k hk).2 hlast
     obtain ⟨hc', hh', -⟩ := (hq' l hl).2 hlast'
-    have hwire : wireCommitR hash (preLimbsAt (d.traceWidth + 43) (envAt t k).loc)
-        ((envAt t k).loc (d.traceWidth + 43 + 31))
-        = wireCommitR hash (preLimbsAt (d.traceWidth + 43) (envAt t' l).loc)
-            ((envAt t' l).loc (d.traceWidth + 43 + 31)) := by
+    have hwire : wireCommitR hash (preLimbsAt (d.traceWidth + 45) (envAt t k).loc)
+        ((envAt t k).loc (d.traceWidth + 45 + 32))
+        = wireCommitR hash (preLimbsAt (d.traceWidth + 45) (envAt t' l).loc)
+            ((envAt t' l).loc (d.traceWidth + 45 + 32)) := by
       rw [← (hp k hk).2.1, ← (hp' l hl).2.1]
-      show (envAt t k).loc (d.traceWidth + 43 + B_STATE_COMMIT)
-        = (envAt t' l).loc (d.traceWidth + 43 + B_STATE_COMMIT)
+      show (envAt t k).loc (d.traceWidth + 45 + B_STATE_COMMIT)
+        = (envAt t' l).loc (d.traceWidth + 45 + B_STATE_COMMIT)
       rw [hc, hc', hpubNew]
     obtain ⟨hpre, hir⟩ := wireCommitR_binds hash hCR
       (by rw [preLimbsAt_length, preLimbsAt_length]) hwire
     refine ⟨hpre, hir, ?_⟩
     rw [← hh, ← hh']
-    exact congrArg (fun L => L.getD 30 0) hpre
+    exact congrArg (fun L => L.getD 31 0) hpre
   · -- the caveat manifest, via the last-row pin
     obtain ⟨-, -, hk1⟩ := (hq k hk).2 hlast
     obtain ⟨-, -, hk2⟩ := (hq' l hl).2 hlast'
-    have hcc : caveatCommit hash (manifestAt (d.traceWidth + 86) (envAt t k).loc)
-        = caveatCommit hash (manifestAt (d.traceWidth + 86) (envAt t' l).loc) := by
+    have hcc : caveatCommit hash (manifestAt (d.traceWidth + 90) (envAt t k).loc)
+        = caveatCommit hash (manifestAt (d.traceWidth + 90) (envAt t' l).loc) := by
       rw [← (hp k hk).2.2, ← (hp' l hl).2.2]
-      show (envAt t k).loc (d.traceWidth + 86 + C_COMMIT)
-        = (envAt t' l).loc (d.traceWidth + 86 + C_COMMIT)
+      show (envAt t k).loc (d.traceWidth + 90 + C_COMMIT)
+        = (envAt t' l).loc (d.traceWidth + 90 + C_COMMIT)
       rw [hk1, hk2, hpubCav]
     exact caveatCommit_binds hash hCR hcc
 
@@ -863,9 +913,9 @@ sorted-Poseidon2 root the grow-gate opens against. -/
 def beforeNullifierRootCol (w : Nat) : Nat := w + 26
 
 /-- The rotated AFTER-block `nullifier_root` limb column (limb 26 of the after block at
-`base = traceWidth + 43`). The deployed nullifier accumulator's POST root — the grow-gate's
+`base = traceWidth + 45`). The deployed nullifier accumulator's POST root — the grow-gate's
 `newRoot`. -/
-def afterNullifierRootCol (w : Nat) : Nat := w + 43 + 26
+def afterNullifierRootCol (w : Nat) : Nat := w + 45 + 26
 
 /-! ## §5.N — the noteSpend KERNEL-SET GROW-GATE (the deployment-real set-insert + double-spend
 tooth).
@@ -1045,6 +1095,114 @@ theorem noteSpendV3_satisfiedVm_v1 (hash : List ℤ → ℤ)
 #guard (let env : VmRowEnv := ⟨fun c => if c == 68 then 5 else 0, fun _ => 0, fun k => if k == 38 then 9 else 0⟩;
         decide (env.loc NULLIFIER_PARAM_COL ≠ env.pub ROT_NULLIFIER_PI))   -- mismatch ⇒ pin REJECTS
 
+/-! ## §5.NC — the noteCreate KERNEL-SET GROW-GATE (the deployment-real COMMITMENTS set-insert).
+
+The `commitments_root` flag-day limb (in-block offset `B_COMMITMENTS_ROOT = 27`, the NEW committed
+shielded-set root the widening NUM_PRE_LIMBS 31→32 added) gives the note COMMITMENT set a committed
+home. Before the widening there was NO `commitments_root` limb at all, so
+`kernel_set_insert_is_not_forced_by_the_live_descriptor` proved a noteCreate turn whose commitments
+set was NOT grown still verified — the ONE remaining named residual of the kernel-set family.
+
+This `MapOp` CLOSES it on the live wire, CLONING the noteSpend grow-gate onto limb 27. `NoteCreate`
+is append-only (`NoteCreateASpec` has NO guard — `noteCreateAdmit = True`), so unlike noteSpend there
+is NO freshness `.absent` tooth: just the SET-INSERT. The inserted KEY is the published note
+commitment `param0` (`generate_effect_vm_trace`'s `Effect::NoteCreate` arm lays
+`param0 = commitment`), cross-bound to a published PI slot by `rotateV3WithCommitmentKeyPin` so the
+apex reads the SAME commitment the gate forces:
+
+  * **`commitmentsInsertOp`** (`.insert`) — the SET-INSERT (the deployed `gNoteGrow` face): the
+    AFTER commitments root (limb 27 of the after block) IS the genuine sorted insert of `param0`
+    into the BEFORE root. Under CR (`writesTo_functional`) the after-root column cannot be frozen or
+    forged — it is pinned to the real grown commitments tree. This is the deployed realization of
+    `RotatedKernelRefinementNotes.noteCreate_commitments_forced` against the NOW-LIVE limb 27.
+
+Gated by the noteCreate selector (`SEL_NOTE_CREATE = 5`), so non-create / NoOp pad rows contribute
+nothing. The note value (`param::NOTE_VALUE_LO = param1`) rides as the leaf value so a created
+commitment carries its note datum. -/
+
+/-- The rotated published-PI slot the note commitment (`param0`) welds to — the FIRST slot past the
+four rotated commit pins (`piCount = 34 + 4 = 38`), the same arithmetic as `ROT_NULLIFIER_PI`
+(noteCreate and noteSpend never co-occur on one row, so sharing slot 38 is sound). -/
+def ROT_COMMITMENT_KEY_PI : Nat := 38
+
+/-- The note-commitment key parameter column (`param0`, `prmCol 0`) — the noteCreate row's
+single published note-commitment felt (`Effect::NoteCreate { commitment }` ⇒ `row[PARAM_BASE+0]`). -/
+def COMMITMENT_KEY_PARAM_COL : Nat := prmCol 0
+
+/-- The rotated BEFORE-block `commitments_root` limb column (limb 27 of the before block at
+`base = traceWidth`). The deployed commitments accumulator's PRE root. -/
+def beforeCommitmentsRootCol (w : Nat) : Nat := w + B_COMMITMENTS_ROOT
+
+/-- The rotated AFTER-block `commitments_root` limb column (limb 27 of the after block at
+`base = traceWidth + 45`). The deployed commitments accumulator's POST root — the grow-gate's
+`newRoot`. -/
+def afterCommitmentsRootCol (w : Nat) : Nat := w + 45 + B_COMMITMENTS_ROOT
+
+/-- **`rotateV3WithCommitmentKeyPin`** — `rotateV3` PLUS the fifth appended PI pin welding the note
+commitment (`prmCol 0`) to `ROT_COMMITMENT_KEY_PI = 38` on the FIRST row. Structurally identical to
+`rotateV3WithNullifierPin`; every v1 column/constraint/site and the four rotated commit pins are
+UNTOUCHED. -/
+def rotateV3WithCommitmentKeyPin (d : EffectVmDescriptor) : EffectVmDescriptor :=
+  let r := rotateV3 d
+  { r with
+    piCount     := r.piCount + 1
+    constraints := r.constraints ++ [.piBinding .first COMMITMENT_KEY_PARAM_COL ROT_COMMITMENT_KEY_PI] }
+
+/-- The SET-INSERT: the AFTER commitments root (limb 27 of the after block) IS the genuine sorted
+write of the note commitment (`param0`) into the BEFORE root, with the note value (`param1`) as the
+leaf value. Guarded by the noteCreate selector. -/
+def commitmentsInsertOp : MapOp :=
+  { guard   := .var EffectVmEmitNoteCreate.SEL_NOTE_CREATE
+  , root    := .var (beforeCommitmentsRootCol EFFECT_VM_WIDTH)
+  , key     := .var COMMITMENT_KEY_PARAM_COL
+  , value   := .var (prmCol EffectVmEmitNoteCreate.param.NOTE_VALUE_LO)
+  , newRoot := .var (afterCommitmentsRootCol EFFECT_VM_WIDTH)
+  , op      := .insert }
+
+/-- **`noteCreateV3`** — the rotated noteCreate WITH the commitment PI weld AND the KERNEL-SET
+GROW-GATE (the deployment-real commitments set-insert). `piCount = 39`. Past the graduated
+`rotateV3WithCommitmentKeyPin` descriptor it appends the one map-op that FORCES the commitment
+set-insert on the live wire (`commitmentsInsertOp .insert`), repointing limb 27 from a turn-invariant
+witness limb into a FORCED, grown commitments root. NoteCreate is append-only — there is no `.absent`
+freshness tooth (`NoteCreateASpec` has no guard), so the gate is the single insert. -/
+def noteCreateV3 : EffectVmDescriptor2 :=
+  let base := graduateV1 (rotateV3WithCommitmentKeyPin EffectVmEmitNoteCreate.noteCreateVmDescriptor)
+  { base with
+    constraints := base.constraints ++ [.mapOp commitmentsInsertOp] }
+
+/-- **`noteCreateV3_grow_gate_forces_set_insert` — the live descriptor FORCES the commitment
+set-insert (the deployment-real tooth).** On a satisfying `noteCreateV3` witness whose create
+selector fires, the appended map-op holds: the AFTER commitments root (limb 27 of the after block)
+IS the genuine sorted insert of the published note commitment (`param0`) into the BEFORE root
+(`writesTo`). Under CR this is FUNCTIONAL (`writesTo_functional`), so a frozen or forged after-root
+cannot satisfy the descriptor — exactly the forgery
+`kernel_set_insert_is_not_forced_by_the_live_descriptor` documented as the noteCreate residual, now
+REJECTED. The map-op is the deployed face of
+`RotatedKernelRefinementNotes.noteCreate_commitments_forced` against the live limb 27. -/
+theorem noteCreateV3_grow_gate_forces_set_insert (hash : List ℤ → ℤ)
+    {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
+    (hsat : Satisfied2 hash noteCreateV3 minit mfin maddrs t)
+    (i : Nat) (hi : i < t.rows.length)
+    (hcreate : (envAt t i).loc EffectVmEmitNoteCreate.SEL_NOTE_CREATE = 1) :
+    writesTo hash ((envAt t i).loc (beforeCommitmentsRootCol EFFECT_VM_WIDTH))
+        ((envAt t i).loc COMMITMENT_KEY_PARAM_COL)
+        ((envAt t i).loc (prmCol EffectVmEmitNoteCreate.param.NOTE_VALUE_LO))
+        ((envAt t i).loc (afterCommitmentsRootCol EFFECT_VM_WIDTH)) := by
+  have hrowc := hsat.rowConstraints i hi
+  have hins := hrowc (.mapOp commitmentsInsertOp) (by simp [noteCreateV3])
+  exact hins hcreate
+
+#assert_axioms noteCreateV3_grow_gate_forces_set_insert
+
+-- The commitment pin lands at PI slot 38; the rotated noteCreate publishes 39 PIs and carries the
+-- single grow-gate map-op on the new commitments_root limb (27).
+#guard ROT_COMMITMENT_KEY_PI == 34 + 4
+#guard COMMITMENT_KEY_PARAM_COL == 68
+#guard noteCreateV3.piCount == 39
+#guard (mapOpsOf noteCreateV3).length == 1
+#guard beforeCommitmentsRootCol EFFECT_VM_WIDTH == EFFECT_VM_WIDTH + 27
+#guard afterCommitmentsRootCol EFFECT_VM_WIDTH == EFFECT_VM_WIDTH + 45 + 27
+
 /-! ## §5.C — the createCell / factory / spawn KERNEL-SET GROW-GATE (the deployment-real
 ACCOUNTS set-insert).
 
@@ -1088,9 +1246,9 @@ sorted-Poseidon2 root the grow-gate opens against. -/
 def beforeCellsRootCol (w : Nat) : Nat := w + 0
 
 /-- The rotated AFTER-block `cells_root` limb column (limb 0 of the after block at
-`base = traceWidth + 43`). The deployed accounts accumulator's POST root — the grow-gate's
+`base = traceWidth + 45`). The deployed accounts accumulator's POST root — the grow-gate's
 `newRoot`. -/
-def afterCellsRootCol (w : Nat) : Nat := w + 43 + 0
+def afterCellsRootCol (w : Nat) : Nat := w + 45 + 0
 
 /-- **`rotateV3WithNewCellKeyPin`** — `rotateV3` PLUS the fifth appended PI pin welding the
 new-cell key (column `keyCol`) to `ROT_NEW_CELL_KEY_PI = 38` on the FIRST row. Structurally identical
@@ -1612,18 +1770,19 @@ site, and the four commit pins are UNTOUCHED, so `rotateV3`'s keystones (`rotate
 `rotV3_binds_published`, `graduable_rotateV3`) compose verbatim — this only ADDS one PI pin + one PI
 slot, exactly as the nullifier weld does. -/
 
-/-- In-block offset of the `lifecycle` limb (limb 28 in `preLimbsAt`): the per-cell lifecycle felt
-the producer witness carries (`rotation_witness.rs::lifecycle_felt`, `pre_limbs[28]`). The forced
-limb for `cellSeal` / `cellUnseal` / `cellDestroy`. -/
-def B_LIFECYCLE : Nat := 28
+/-- In-block offset of the `lifecycle` limb (limb 29 in `preLimbsAt`, shifted +1 by the
+`commitments_root` flag-day): the per-cell lifecycle felt the producer witness carries
+(`rotation_witness.rs::lifecycle_felt`, `pre_limbs[29]`). The forced limb for `cellSeal` /
+`cellUnseal` / `cellDestroy`. -/
+def B_LIFECYCLE : Nat := 29
 
 /-- In-block offset of the `authority_digest` / `record_digest` limb (limb 24 = r23 in `preLimbsAt`):
 the single felt folding ALL authority-bearing cell state including the `permissions` / `verification_key`
 slots (`trace_rotated.rs::B_AUTHORITY_DIGEST`). The forced limb for `setPermissions` / `setVK`. -/
 def B_RECORD_DIGEST : Nat := 24
 
-/-- The rotated AFTER-block base offset (past the v1 layout + the BEFORE block). -/
-def AFTER_BLOCK_OFF : Nat := 43
+/-- The rotated AFTER-block base offset (past the v1 layout + the BEFORE block, `B_SPAN = 45`). -/
+def AFTER_BLOCK_OFF : Nat := 45
 
 /-- **`rotateV3WithRecordPin off d`** — `rotateV3` PLUS a fifth appended last-row PI pin welding the
 AFTER block's limb at in-block offset `off` (`B_LIFECYCLE` or `B_RECORD_DIGEST`) to the new rotated PI
@@ -1764,19 +1923,20 @@ def receiptArchiveV3 : EffectVmDescriptor2 :=
         == (v3Of EffectVmEmitCellSeal.cellSealVmDescriptor).constraints.length + 1
 #guard setPermsV3.constraints.length
         == (v3Of EffectVmEmitSetPermissions.setPermsVmDescriptor).constraints.length + 1
--- The forced AFTER limbs are the lifecycle limb (col tw+43+28) and the record-digest limb (col
--- tw+43+24) — the producer-witnessed limbs the commitment binds but `rotateV3` did not force.
-#guard B_LIFECYCLE == 28
+-- The forced AFTER limbs are the lifecycle limb (col tw+45+29) and the record-digest limb (col
+-- tw+45+24) — the producer-witnessed limbs the commitment binds but `rotateV3` did not force
+-- (lifecycle shifted 28→29 by the `commitments_root` flag-day; AFTER block base 43→45).
+#guard B_LIFECYCLE == 29
 #guard B_RECORD_DIGEST == 24
 -- BOTH POLARITIES of the deployment tooth, executable on a toy LAST row (AFTER lifecycle limb at col
--- tw+43+28; with tw = 186 that is col 257; PI 38 carries the recomputed post felt). A row whose AFTER
+-- tw+45+29; with tw = 186 that is col 260; PI 38 carries the recomputed post felt). A row whose AFTER
 -- limb equals PI[38] PASSES the pin; a frozen / wrong one FAILS it (the forgery is rejected).
 #guard (let off := B_LIFECYCLE; let tw := (186 : Nat);
-        let env : VmRowEnv := ⟨fun c => if c == tw + 43 + off then 1 else 0, fun _ => 0, fun k => if k == 38 then 1 else 0⟩;
-        decide (env.loc (tw + 43 + off) = env.pub 38))   -- sealed (1) == PI[38] ⇒ pin holds
+        let env : VmRowEnv := ⟨fun c => if c == tw + 45 + off then 1 else 0, fun _ => 0, fun k => if k == 38 then 1 else 0⟩;
+        decide (env.loc (tw + 45 + off) = env.pub 38))   -- sealed (1) == PI[38] ⇒ pin holds
 #guard (let off := B_LIFECYCLE; let tw := (186 : Nat);
-        let env : VmRowEnv := ⟨fun c => if c == tw + 43 + off then 0 else 0, fun _ => 0, fun k => if k == 38 then 1 else 0⟩;
-        decide (env.loc (tw + 43 + off) ≠ env.pub 38))   -- frozen-Live (0) ≠ sealed PI[38] ⇒ pin REJECTS
+        let env : VmRowEnv := ⟨fun c => if c == tw + 45 + off then 0 else 0, fun _ => 0, fun k => if k == 38 then 1 else 0⟩;
+        decide (env.loc (tw + 45 + off) ≠ env.pub 38))   -- frozen-Live (0) ≠ sealed PI[38] ⇒ pin REJECTS
 
 /-- **`v3Registry`** — the full 35-member cohort at the rotated block (the 27 v2-graduated members
 + the 8 STEP-1-widened; keys = the v2 keys suffixed `R24`; wire strings via `emitVmJson2`; driver
@@ -1786,7 +1946,7 @@ def v3Registry : List (String × EffectVmDescriptor2) :=
   , ("burnVmDescriptor2R24", v3Of EffectVmEmitBurn.burnVmDescriptor)
   , ("mintVmDescriptor2R24", mintV3)
   , ("noteSpendVmDescriptor2R24", noteSpendV3)
-  , ("noteCreateVmDescriptor2R24", v3Of EffectVmEmitNoteCreate.noteCreateVmDescriptor)
+  , ("noteCreateVmDescriptor2R24", noteCreateV3)
   , ("cellSealVmDescriptor2R24", cellSealV3)
   , ("cellDestroyVmDescriptor2R24", cellDestroyV3)
   , ("refusalVmDescriptor2R24", refusalV3)
@@ -1830,9 +1990,9 @@ def v3Registry : List (String × EffectVmDescriptor2) :=
 #guard v3Registry.all fun (_, d) => d.traceWidth == EFFECT_VM_WIDTH + APPENDIX_SPAN
 #guard v3Registry.all fun (_, d) => d.tables.length == 5
 #guard v3Registry.all fun (_, d) => d.hashSites.length == 0 && d.ranges.length == 0
--- The rotated transfer: the v1 graduation's constraints + 24 welds + 4 pins + 32 chip sites.
+-- The rotated transfer: the v1 graduation's constraints + 24 welds + 4 pins + 34 chip sites.
 #guard (v3Of EffectVmEmitTransfer.transferVmDescriptor).constraints.length
-        == transferVmDescriptor2.constraints.length + 24 + 4 + 32
+        == transferVmDescriptor2.constraints.length + 24 + 4 + 34
 #guard (v3Of EffectVmEmitTransfer.transferVmDescriptor).piCount == 34 + 4
 -- The graduation side conditions hold on every v1-faced member (per-instance witnesses of
 -- the parametric `graduable_rotateV3`; attenuate/setFieldDyn ride `v3OfWith` over faces

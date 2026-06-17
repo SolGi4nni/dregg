@@ -178,12 +178,13 @@ pub fn rotated_transfer_turn(balance: u64, amount: u64) -> RotatedTurn {
     }];
 
     let nullifier_root = [0u8; 32];
+    let commitments_root = [0u8; 32];
     let receipt_hashes: Vec<[u8; 32]> = Vec::new();
     let mut ctx_ledger = Ledger::new();
     let _ = ctx_ledger.insert_cell(before_cell.clone());
 
-    let before_w = rw::produce(&before_cell, &ctx_ledger, &nullifier_root, &receipt_hashes);
-    let after_w = rw::produce(&after_cell, &ctx_ledger, &nullifier_root, &receipt_hashes);
+    let before_w = rw::produce(&before_cell, &ctx_ledger, &nullifier_root, &commitments_root, &receipt_hashes);
+    let after_w = rw::produce(&after_cell, &ctx_ledger, &nullifier_root, &commitments_root, &receipt_hashes);
 
     let rotation = RotationTurnWitness::for_effects(before_w, after_w, &vm_effects);
     let witness = FullTurnWitness {
@@ -340,6 +341,7 @@ pub fn v9_context() -> dregg_cell::commitment::V9RotationContext {
     dregg_cell::commitment::V9RotationContext {
         cells_root: BabyBear::new(0),
         nullifier_root: [0u8; 32],
+        commitments_root: [0u8; 32],
         iroot: BabyBear::new(0),
     }
 }

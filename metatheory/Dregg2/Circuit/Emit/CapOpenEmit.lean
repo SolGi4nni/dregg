@@ -85,7 +85,7 @@ set_option autoImplicit false
 
 /-! ## §1 — the concrete column layout: the cap-open appendix past the rotated R=24 width.
 
-The rotated attenuate trace is `EFFECT_VM_WIDTH + APPENDIX_SPAN = 312` columns wide. The cap-open
+The rotated attenuate trace is `EFFECT_VM_WIDTH + APPENDIX_SPAN = 316` columns wide. The cap-open
 appendix starts at `CAP_OPEN_BASE` and carries, in order: 7 leaf-field columns, 1 leaf-digest
 column, then for each of `DEPTH = 16` levels a `(sib, dir, node)` triple, then the `capRoot` and
 `src` columns. Total `CAP_OPEN_SPAN = 7 + 1 + 16·3 + 2 = 58`. -/
@@ -333,8 +333,9 @@ constraint COUNT + width is the Lean-side pin). -/
 #guard capOpenAttenuateV3.constraints.length == attenuateV3.constraints.length + 40
 -- The width grows by the 59-column cap-open appendix (58 prior + 1 effBit column).
 #guard capOpenAttenuateV3.traceWidth == attenuateV3.traceWidth + 59
--- The cap-open appendix begins past the rotated R=24 width (312 = 187 base + 125 appendix).
-#guard CAP_OPEN_BASE == 312
+-- The cap-open appendix begins past the rotated width (316 = 187 base + 129 appendix, after the
+-- commitments_root flag-day widened APPENDIX_SPAN 125→129).
+#guard CAP_OPEN_BASE == 316
 #guard CAP_OPEN_SPAN == 59
 -- The five EPOCH tables are inherited unchanged (the cap-open rides the chip + main tables).
 #guard capOpenAttenuateV3.tables.length == 5

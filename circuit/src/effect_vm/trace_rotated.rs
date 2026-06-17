@@ -2,11 +2,11 @@
 //!
 //! `docs/ROTATION-CUTOVER.md` §5 deferred the rotated trace BUILDER: the staged keystones
 //! (`EffectVmEmitRotationV3.lean`) prove the rotated R=24 cohort sound and the staged probe
-//! measures the SHAPE, but the LIVE machinery that turns a real turn into the 311-column
+//! measures the SHAPE, but the LIVE machinery that turns a real turn into the 315-column
 //! rotated trace existed ONLY hand-welded inside `circuit/tests/effect_vm_rotation_flip.rs`
 //! (`fill_block` / `fill_caveat`). This module PROMOTES that hand-welding into a genuine
 //! generator: from the v1 186-column trace (`generate_effect_vm_trace`) plus the per-turn
-//! producer witness limbs, it emits the rotated 311-column trace — the two rotated blocks
+//! producer witness limbs, it emits the rotated 315-column trace — the two rotated blocks
 //! (BEFORE / AFTER) + the widened-caveat region + every chained `wireCommitR` digest — and
 //! the 38-PI vector (34 v1 + 4 appended) the staged registry descriptor
 //! (`transferVmDescriptor2R24`) pins.
@@ -62,19 +62,22 @@ pub const V1_WIDTH: usize = EFFECT_VM_WIDTH; // 187 (P0-2 record-digest aux colu
 /// The CONFIRMED rotated register count (ember 2026-06-12, `ROTATION-CUTOVER.md` §2b).
 pub const NUM_REGISTERS: usize = 24;
 
-/// The number of pre-iroot absorption limbs (cells_root · r0..r23 · cap/nullifier/heap roots
-/// · lifecycle · epoch · committed_height). Lean `preLimbsAt_length = 31` at R = 24.
-pub const NUM_PRE_LIMBS: usize = 1 + NUM_REGISTERS + 3 + 3; // 31
+/// The number of pre-iroot absorption limbs (cells_root · r0..r23 · cap_root · nullifier_root ·
+/// **commitments_root** · heap_root · lifecycle · epoch · committed_height). Lean
+/// `preLimbsAt_length = 32` at R = 24, after the `commitments_root` flag-day widening
+/// (NUM_PRE_LIMBS 31→32 — the noteCreate commitment-set's committed home).
+pub const NUM_PRE_LIMBS: usize = 1 + NUM_REGISTERS + 4 + 3; // 32 (the 4 map roots: cap/nullifier/commitments/heap)
 
-/// A rotated block: 31 limbs + iroot + state_commit + 10 chain carriers = 43 columns
-/// (`rotation_layout_for(24).probe_width`).
-pub const B_SPAN: usize = 43;
+/// A rotated block: 32 limbs + iroot + state_commit + 11 chain carriers = 45 columns. The 32-limb
+/// body chunks as a 4-wide head + nine 3-wide groups + ONE arity-2 leftover (limb 31) + the iroot
+/// alone, so there is ONE more chain carrier than the bare 31-limb shape (B_SPAN 43→45).
+pub const B_SPAN: usize = 45;
 /// The widened-caveat region: 29 manifest + 9 chain + 1 commit = 39 columns.
 pub const C_SPAN: usize = 39;
 /// The appendix: two blocks + the caveat region.
-pub const APPENDIX: usize = 2 * B_SPAN + C_SPAN; // 125
+pub const APPENDIX: usize = 2 * B_SPAN + C_SPAN; // 129
 /// The rotated trace width.
-pub const ROT_WIDTH: usize = V1_WIDTH + APPENDIX; // 311
+pub const ROT_WIDTH: usize = V1_WIDTH + APPENDIX; // 315
 
 /// In-block offset of the AUTHORITY-DIGEST limb (r23, limb 24) — the single felt
 /// folding ALL authority-bearing cell state no other rotated limb carries
@@ -87,31 +90,38 @@ pub const B_AUTHORITY_DIGEST: usize = 24;
 /// Alias used by the record-forcing pin (`record_pin_offset`): the setPermissions/setVK post
 /// `record_digest` limb IS the authority-digest limb (r23, limb 24). Lean `B_RECORD_DIGEST`.
 pub const B_RECORD_DIGEST: usize = B_AUTHORITY_DIGEST;
-/// In-block offset of the per-cell `lifecycle` felt limb (limb 28 in `preLimbsAt`), filled by
-/// the producer witness `rotation_witness.rs::lifecycle_felt`. The forced limb for the lifecycle
-/// flips (cellSeal/cellUnseal/cellDestroy). Lean `EffectVmEmitRotationV3.B_LIFECYCLE`.
-pub const B_LIFECYCLE: usize = 28;
+/// In-block offset of the per-cell `lifecycle` felt limb (limb 29 in `preLimbsAt`, shifted +1 by
+/// `commitments_root`), filled by the producer witness `rotation_witness.rs::lifecycle_felt`. The
+/// forced limb for the lifecycle flips (cellSeal/cellUnseal/cellDestroy). Lean
+/// `EffectVmEmitRotationV3.B_LIFECYCLE`.
+pub const B_LIFECYCLE: usize = 29;
 /// In-block offset of the `cap_root` limb (the welded cap-root, limb 25).
 pub const B_CAP_ROOT: usize = 25;
 /// nullifier-root offset inside a block (limb 26) — the deployed nullifier accumulator's
 /// openable sorted-Poseidon2 root the noteSpend grow-gate (`nullifierFreshOp` / `nullifierInsertOp`)
 /// opens against.
 pub const B_NULLIFIER_ROOT: usize = 26;
-/// In-block offset of the `committed_height` limb (limb 30).
-pub const B_COMMITTED_HEIGHT: usize = 30;
-/// In-block offset of the iroot carrier (absorbed last, limb 31).
-pub const B_IROOT: usize = 31;
+/// commitments-root offset inside a block (limb 27) — the flag-day committed shielded-set root
+/// the noteCreate grow-gate (`commitmentsInsertOp`) opens against. Rides AFTER nullifier_root,
+/// shifting heap/lifecycle/epoch/committed_height each by one (Lean `B_COMMITMENTS_ROOT`).
+pub const B_COMMITMENTS_ROOT: usize = 27;
+/// heap-root offset inside a block (limb 28, shifted +1 by `commitments_root`).
+pub const B_HEAP_ROOT: usize = 28;
+/// In-block offset of the `committed_height` limb (limb 31, shifted +1).
+pub const B_COMMITTED_HEIGHT: usize = 31;
+/// In-block offset of the iroot carrier (absorbed last, limb 32).
+pub const B_IROOT: usize = 32;
 /// In-block offset of the `state_commit` carrier (the chain's final digest).
-pub const B_STATE_COMMIT: usize = 32;
-/// In-block base of the chained-absorption intermediate carriers (10 sites, 33..=42).
-pub const B_CHAIN_BASE: usize = 33;
+pub const B_STATE_COMMIT: usize = 33;
+/// In-block base of the chained-absorption intermediate carriers (11 sites, 34..=44).
+pub const B_CHAIN_BASE: usize = 34;
 
 /// Absolute base column of the BEFORE rotated block.
 pub const BEFORE_BASE: usize = V1_WIDTH; // 186
 /// Absolute base column of the AFTER rotated block.
-pub const AFTER_BASE: usize = V1_WIDTH + B_SPAN; // 229
+pub const AFTER_BASE: usize = V1_WIDTH + B_SPAN; // 232
 /// Absolute base column of the widened-caveat region.
-pub const CAVEAT_BASE: usize = V1_WIDTH + 2 * B_SPAN; // 272
+pub const CAVEAT_BASE: usize = V1_WIDTH + 2 * B_SPAN; // 277
 
 /// The number of v1 public inputs the rotated PI vector prefixes (`ACTIVE_BASE_COUNT`).
 pub const V1_PI_COUNT: usize = 34;
@@ -140,7 +150,7 @@ pub const ROT_NULLIFIER_PI: usize = ROT_PI_COUNT;
 /// limbs directly.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RotatedBlockWitness {
-    /// The 31 pre-iroot limbs, in absorption order.
+    /// The 32 pre-iroot limbs, in absorption order.
     pub pre_limbs: Vec<BabyBear>,
     /// The receipt-index MMR root (absorbed last).
     pub iroot: BabyBear,
@@ -300,7 +310,7 @@ pub fn generate_rotated_effect_vm_trace(
     // THE RECORD-FORCING PIN (the deployment-soundness close for the 7 binds-but-unforced
     // effects: cellSeal/cellUnseal/cellDestroy/setPermissions/setVK + the audit writes
     // refusal/receiptArchive — `EffectVmEmitRotationV3.rotateV3WithRecordPin`). The rotated AFTER
-    // block CARRIES the per-cell write (limb `B_LIFECYCLE = 28` for the lifecycle flips, limb
+    // block CARRIES the per-cell write (limb `B_LIFECYCLE = 29` for the lifecycle flips, limb
     // `B_RECORD_DIGEST = 24` for the permissions/VK record-digest AND the audit-slot writes —
     // refusal/receiptArchive set a named record field in `fields_root`, which the r23 authority
     // digest folds), and the rolled-up commitment BINDS it — but bare `rotateV3` does NOT FORCE
@@ -327,6 +337,20 @@ pub fn generate_rotated_effect_vm_trace(
     if let Some(key_col) = new_cell_key_param_col(effects.first()) {
         use super::columns::PARAM_BASE;
         dpis.push(r0[PARAM_BASE + key_col]); // PI 38: the new-cell key
+        debug_assert_eq!(dpis.len(), ROT_NULLIFIER_PI_COUNT);
+    }
+
+    // THE COMMITMENTS-SET GROW-GATE PIN (noteCreate — the deployment-real commitment set-insert
+    // close, the `commitments_root` flag-day). The live `noteCreateVmDescriptor2R24` carries a FIFTH
+    // pin welding the published note commitment (`param0`, col `PARAM_BASE + 0` — the
+    // `Effect::NoteCreate` arm writes the commitment there on row 0) to rotated PI slot 38, plus the
+    // `commitmentsInsertOp` map-op (limb 27) that forces the commitment set-insert. We push the row-0
+    // commitment so the honest trace matches the 39-PI shape; the openable before/after commitments
+    // trees are threaded by `generate_rotated_note_create_trace_with_commitments_tree`. Mirrors Lean
+    // `EffectVmEmitRotationV3.noteCreateV3`.
+    if matches!(effects.first(), Some(Effect::NoteCreate { .. })) {
+        use super::columns::{PARAM_BASE, param};
+        dpis.push(r0[PARAM_BASE + param::NULLIFIER]); // PI 38: the published note commitment (param0)
         debug_assert_eq!(dpis.len(), ROT_NULLIFIER_PI_COUNT);
     }
 
@@ -499,9 +523,75 @@ pub fn generate_rotated_create_cell_trace_with_accounts_tree(
     Ok((trace, dpis, vec![before_accounts.to_vec()]))
 }
 
+/// **THE DEPLOYMENT-REAL noteCreate commitments-tree wiring (the commitments-set grow-gate's
+/// witness).** The clone of `generate_rotated_note_spend_trace_with_nullifier_tree` for the
+/// `commitments_root` limb (limb 27 — the flag-day new committed shielded-set root): it makes limb
+/// 27 the openable commitments accumulator for a noteCreate turn.
+///   * `before_commitments` are the existing note-commitment-set leaves;
+///   * limb 27 of every before-block is overwritten with the BEFORE tree's root, and limb 27 of
+///     every after-block with the root of BEFORE + the inserted note commitment (the set-insert the
+///     `commitmentsInsertOp .insert` op forces);
+///   * the affected `wireCommitR` chain + `STATE_COMMIT` carriers are recomputed in place, and the
+///     OLD/NEW rotated commit PIs are re-derived so the published commitment binds the grown set;
+///   * the BEFORE tree's leaves are returned as the single `map_heaps` entry the prover threads.
+/// The commitment key column is `param0` (`Effect::NoteCreate { commitment }`); the inserted leaf
+/// value is the note value (`param::NOTE_VALUE_LO = param1`). NoteCreate is append-only, so there
+/// is NO `.absent` freshness precondition (a re-published commitment is admissible). Returns
+/// `(trace, dpis, map_heaps)`.
+pub fn generate_rotated_note_create_trace_with_commitments_tree(
+    initial_state: &CellState,
+    effects: &[Effect],
+    before_w: &RotatedBlockWitness,
+    after_w: &RotatedBlockWitness,
+    caveat: &RotatedCaveatManifest,
+    before_commitments: &[crate::heap_root::HeapLeaf],
+) -> Result<(Vec<Vec<BabyBear>>, Vec<BabyBear>, Vec<Vec<crate::heap_root::HeapLeaf>>), String> {
+    use super::columns::{PARAM_BASE, param};
+    use crate::heap_root::{CanonicalHeapTree, HEAP_TREE_DEPTH, HeapLeaf};
+
+    if !matches!(effects.first(), Some(Effect::NoteCreate { .. })) {
+        return Err("commitments-tree wiring is only for a NoteCreate lead effect".into());
+    }
+
+    // The base rotated trace (carries the welds, the v1 economic block, the commitment PI[38]).
+    let (mut trace, mut dpis) =
+        generate_rotated_effect_vm_trace(initial_state, effects, before_w, after_w, caveat)?;
+
+    // The note commitment's leaf key (param0) + value (param1), read from the create row (row 0).
+    let cm_key = trace[0][PARAM_BASE + param::NULLIFIER]; // param0 (the commitment rides param slot 0)
+    let cm_value = trace[0][PARAM_BASE + param::NOTE_VALUE_LO];
+
+    // The BEFORE commitments tree and the AFTER tree (= BEFORE + the inserted commitment). NoteCreate
+    // is append-only — no `.absent` freshness precondition.
+    let before_tree = CanonicalHeapTree::new(before_commitments.to_vec(), HEAP_TREE_DEPTH);
+    let before_root = before_tree.root();
+    let mut after_leaves = before_commitments.to_vec();
+    after_leaves.push(HeapLeaf {
+        addr: cm_key,
+        value: cm_value,
+    });
+    let after_root = CanonicalHeapTree::new(after_leaves.clone(), HEAP_TREE_DEPTH).root();
+
+    // Override limb 27 of BOTH blocks on EVERY row with the openable accumulator roots, then
+    // recompute the dependent chained commitments so the published `STATE_COMMIT` binds the grown
+    // set.
+    for row in trace.iter_mut() {
+        row[BEFORE_BASE + B_COMMITMENTS_ROOT] = before_root;
+        row[AFTER_BASE + B_COMMITMENTS_ROOT] = after_root;
+        recompute_block_commit(row, BEFORE_BASE);
+        recompute_block_commit(row, AFTER_BASE);
+    }
+
+    // Re-derive the OLD/NEW rotated commit PIs (the limb-27 override moved the commitments).
+    dpis[V1_PI_COUNT] = trace[0][BEFORE_BASE + B_STATE_COMMIT]; // PI 34: rotated OLD commit
+    dpis[V1_PI_COUNT + 1] = trace[trace.len() - 1][AFTER_BASE + B_STATE_COMMIT]; // PI 35: NEW commit
+
+    Ok((trace, dpis, vec![before_commitments.to_vec()]))
+}
+
 /// The in-AFTER-block limb offset the record-forcing pin welds for a given lead effect, or
 /// `None` for the 35 cohort members that carry no record pin. The lifecycle flips force the
-/// per-cell `lifecycle` felt (limb 28); the permissions/VK writes force the per-cell
+/// per-cell `lifecycle` felt (limb 29); the permissions/VK writes force the per-cell
 /// `authority_digest` / `record_digest` (limb 24 = r23). Mirrors the Lean routing in
 /// `EffectVmEmitRotationV3.v3Registry` (`cellSealV3` … `setVKV3`).
 fn record_pin_offset(lead: Option<&Effect>) -> Option<usize> {
@@ -636,7 +726,7 @@ fn fill_caveat(row: &mut [BabyBear], base: usize, m: &RotatedCaveatManifest) {
 /// `*VmDescriptor2R24` member of `V3_STAGED_REGISTRY_TSV` whose rotated shape proves THIS
 /// effect. The cohort is the 36 graduated descriptors the Lean `EffectVmEmitRotationV3.
 /// v3Registry` emits (28 base + 8 per-slot `setField`); the trace the rotated generator emits
-/// is the SAME shape (311 cols + 38 PIs) for every member (the appendix is parametric, not
+/// is the SAME shape (315 cols + 38 PIs) for every member (the appendix is parametric, not
 /// per-effect — `rotateV3`), so this resolver picks WHICH per-effect constraint family the
 /// IR-v2 prover enforces on the shared trace.
 ///
@@ -763,8 +853,8 @@ pub fn empty_caveat_manifest() -> RotatedCaveatManifest {
 
 /// The deployed cap-tree depth (`CapOpenEmit.DEPTH = 16`).
 pub const CAP_OPEN_DEPTH: usize = 16;
-/// The base column of the cap-open appendix (`CAP_OPEN_BASE = ROT_WIDTH = 311`).
-pub const CAP_OPEN_BASE: usize = ROT_WIDTH; // 311
+/// The base column of the cap-open appendix (`CAP_OPEN_BASE = ROT_WIDTH = 315`).
+pub const CAP_OPEN_BASE: usize = ROT_WIDTH; // 315
 /// The cap-open appendix span: 7 leaf + 1 leafDigest + 16×(sib,dir,node) + capRoot + src + effBit
 /// = 59 (residual (a): the trailing `effBit` column carries the turn's ACTUAL effect-kind bit).
 pub const CAP_OPEN_SPAN: usize = 7 + 1 + 3 * CAP_OPEN_DEPTH + 3; // 59
@@ -1111,7 +1201,7 @@ fn recompute_v1_state_commit(
 /// lookups), the before-state-commit cross-row continuity carrier, and the rotated BEFORE +
 /// AFTER blocks' welded nonce limb + chained `wireCommitR` state_commit. Then the four rotated
 /// PI carriers are re-read from the rebuilt trace. Returns the corrected 38-PI vector. Widen
-/// the patched 311-wide trace to the cap-open shape with [`widen_to_cap_open`].
+/// the patched 315-wide trace to the cap-open shape with [`widen_to_cap_open`].
 pub fn patch_attenuate_base_for_cap_open(
     trace: &mut [Vec<BabyBear>],
     pis: &[BabyBear],
@@ -1190,8 +1280,8 @@ pub fn patch_attenuate_base_for_cap_open(
 /// Widen an already-built rotated base trace (`ROT_WIDTH`-wide) to the `CAP_OPEN_WIDTH`-wide
 /// cap-open trace, filling the 59 cap-open columns on EVERY row uniformly with `w` (so the every-row base
 /// gates — dir-bool, rootPin, targetBind, transferFacet/facetHi/authTag — hold on every row).
-/// The base trace's own 311 columns + 38 PIs are unchanged; the cap-open appendix is purely
-/// additive. The base trace MUST be a 311-wide rotated trace the base `attenuateV3`
+/// The base trace's own 315 columns + 38 PIs are unchanged; the cap-open appendix is purely
+/// additive. The base trace MUST be a 315-wide rotated trace the base `attenuateV3`
 /// constraints already accept (e.g. from [`generate_rotated_effect_vm_trace`] on an
 /// AttenuateCapability turn).
 pub fn widen_to_cap_open(trace: &mut [Vec<BabyBear>], w: &CapOpenWitness) -> Result<(), String> {

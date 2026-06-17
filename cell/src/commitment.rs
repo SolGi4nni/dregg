@@ -639,9 +639,10 @@ pub fn canonical_to_babybear_pi(canonical: &[u8; 32]) -> [u32; 8] {
 
 /// The CONFIRMED rotated register count (ember 2026-06-12, `ROTATION-CUTOVER.md` §2b).
 pub const V9_NUM_REGISTERS: usize = 24;
-/// The number of pre-iroot absorption limbs (cells_root · r0..r23 · cap/nullifier/heap roots
-/// · lifecycle · epoch · committed_height). Lean `preLimbsAt_length = 31` at R = 24.
-pub const V9_NUM_PRE_LIMBS: usize = 1 + V9_NUM_REGISTERS + 3 + 3; // 31
+/// The number of pre-iroot absorption limbs (cells_root · r0..r23 · cap_root · nullifier_root ·
+/// commitments_root · heap_root · lifecycle · epoch · committed_height). Lean
+/// `preLimbsAt_length = 32` at R = 24, after the `commitments_root` flag-day widening.
+pub const V9_NUM_PRE_LIMBS: usize = 1 + V9_NUM_REGISTERS + 4 + 3; // 32 (4 map roots: cap/nullifier/commitments/heap)
 
 /// The turn-level context the rotated commitment absorbs that is NOT cell-local: the
 /// boundary `cells_root` (the sorted-Poseidon2 root over present cells), the cell's committed
@@ -655,6 +656,10 @@ pub struct V9RotationContext {
     pub cells_root: dregg_circuit::field::BabyBear,
     /// The cell's committed nullifier-map root (limb 26).
     pub nullifier_root: [u8; 32],
+    /// The committed note-COMMITMENTS-set root (limb 27 — the `commitments_root` flag-day limb).
+    /// The shielded note-commitment set's accumulator root the noteCreate grow-gate opens against
+    /// (`EffectVmEmitRotationV3.commitmentsInsertOp`). A turn-level set root, like `nullifier_root`.
+    pub commitments_root: [u8; 32],
     /// The receipt-index MMR root, absorbed LAST.
     pub iroot: dregg_circuit::field::BabyBear,
 }
@@ -715,7 +720,7 @@ fn v9_lifecycle_felt(lc: &crate::lifecycle::CellLifecycle) -> dregg_circuit::fie
 /// `proved_state`, `swiss_table_root`, `refcount_table_root`, `fields_root`,
 /// `system_roots_digest`, all 16 `fields`). The rotated v9 commitment's NAMED limbs cover
 /// only a SUBSET of this: balance/nonce (r0/r1/r2), `fields[0..8]` (r3..r10), `cap_root`
-/// (r25), `nullifier_root`/`heap_root` (r26/r27), `lifecycle`/`epoch`/`committed_height`
+/// (r25), `nullifier_root`/`commitments_root`/`heap_root` (r26/r27/r28), `lifecycle`/`epoch`/`committed_height`
 /// (r28/r29/r30). Everything else — permissions, VK, delegate, delegation, program, mode,
 /// token_id, the visibility/commitment/proved/side-table sub-roots, and `fields[8..16]` —
 /// would be DROPPED by a rotated commitment that left the app-register headroom zeroed.
@@ -869,7 +874,7 @@ pub fn compute_authority_digest_felt(cell: &Cell) -> dregg_circuit::field::BabyB
     hash_bytes(&bytes)
 }
 
-/// Build the 31 pre-iroot rotated limbs for a cell + turn-context, in the Lean-pinned
+/// Build the 32 pre-iroot rotated limbs for a cell + turn-context, in the Lean-pinned
 /// absorption order (`EffectVmEmitRotationV3.preLimbsAt`). Byte-identical to the producer
 /// `dregg_turn::rotation_witness::produce`'s `pre_limbs`.
 pub fn compute_rotated_pre_limbs(
@@ -904,13 +909,16 @@ pub fn compute_rotated_pre_limbs(
     // limb 25: cap_root (welded) — the SAME openable sorted-Poseidon2 felt the circuit's
     // `cap_root` column carries.
     pre[25] = compute_canonical_capability_root_felt(&cell.capabilities);
-    // limbs 26,27: nullifier_root, heap_root.
+    // limb 26: nullifier_root (the noteSpend shielded-set root).
     pre[26] = hash_bytes(&ctx.nullifier_root);
-    pre[27] = hash_bytes(&cell.state.heap_root);
-    // limbs 28,29,30: lifecycle, epoch, committed_height.
-    pre[28] = v9_lifecycle_felt(&cell.lifecycle);
-    pre[29] = BabyBear::new((cell.state.delegation_epoch() & 0x7FFF_FFFF) as u32);
-    pre[30] = BabyBear::new((cell.state.committed_height() & 0x7FFF_FFFF) as u32);
+    // limb 27: commitments_root (the noteCreate shielded-set root — the flag-day new limb).
+    pre[27] = hash_bytes(&ctx.commitments_root);
+    // limb 28: heap_root.
+    pre[28] = hash_bytes(&cell.state.heap_root);
+    // limbs 29,30,31: lifecycle, epoch, committed_height.
+    pre[29] = v9_lifecycle_felt(&cell.lifecycle);
+    pre[30] = BabyBear::new((cell.state.delegation_epoch() & 0x7FFF_FFFF) as u32);
+    pre[31] = BabyBear::new((cell.state.committed_height() & 0x7FFF_FFFF) as u32);
     pre
 }
 
@@ -1599,22 +1607,44 @@ mod tests {
         V9RotationContext {
             cells_root: BabyBear::new(cells_root),
             nullifier_root: [0u8; 32],
+            commitments_root: [0u8; 32],
             iroot: BabyBear::new(iroot),
         }
     }
 
-    /// The v9 pre-limb vector has the Lean-pinned 31-limb shape, and the welded scalars sit
+    /// The v9 pre-limb vector has the Lean-pinned 32-limb shape, and the welded scalars sit
     /// in the absorption order the producer / circuit carry.
     #[test]
     fn v9_pre_limbs_shape_and_welds() {
         let cell = Cell::with_balance(test_key(7), test_token(0), 100_000);
         let pre = compute_rotated_pre_limbs(&cell, &v9_ctx(11, 22));
         assert_eq!(pre.len(), V9_NUM_PRE_LIMBS);
-        assert_eq!(pre.len(), 31);
+        assert_eq!(pre.len(), 32);
         // cells_root rides limb 0; the welded r0 (balance_lo) is non-zero for a funded cell.
         assert_eq!(pre[0], BabyBear::new(11));
         let (lo, _hi) = dregg_circuit::effect_vm::split_u64(100_000u64);
         assert_eq!(pre[1], lo, "r0 ↔ balance_lo weld");
+        // limb 27 is the commitments_root (the flag-day new shielded-set root).
+        assert_eq!(
+            pre[27],
+            dregg_circuit::poseidon2::hash_bytes(&[0u8; 32]),
+            "commitments_root rides limb 27"
+        );
+    }
+
+    /// The `commitments_root` limb (27) is load-bearing: a different note-commitments-set root
+    /// MOVES the published rotated commitment (the flag-day soundness reason for the new limb).
+    #[test]
+    fn v9_commitment_binds_commitments_root() {
+        let cell = Cell::with_balance(test_key(7), test_token(0), 100_000);
+        let ctx0 = v9_ctx(11, 22);
+        let mut ctx1 = ctx0;
+        ctx1.commitments_root = [9u8; 32];
+        assert_ne!(
+            compute_canonical_state_commitment_v9_felt(&cell, &ctx0),
+            compute_canonical_state_commitment_v9_felt(&cell, &ctx1),
+            "commitments_root (limb 27) is bound into the published rotated commitment"
+        );
     }
 
     /// The v9 commitment BINDS every limb and the iroot: moving the iroot or any cell field

@@ -92,6 +92,7 @@ fn make_chain(k: usize, step: u64) -> Vec<FinalizedTurn> {
         let before_cell = producer_cell(balance as i64, nonce as u64);
         let after_cell = producer_cell((balance as i64) - (step as i64), nonce as u64);
         let nullifier_root = [0u8; 32];
+        let commitments_root = [0u8; 32];
         let receipt_log: Vec<[u8; 32]> = vec![[1u8; 32], [2u8; 32]];
         let leg = mint_rotated_participant_leg(
             &state,
@@ -99,6 +100,7 @@ fn make_chain(k: usize, step: u64) -> Vec<FinalizedTurn> {
             &before_cell,
             &after_cell,
             &nullifier_root,
+            &commitments_root,
             &receipt_log,
             None,
         )
