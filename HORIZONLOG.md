@@ -1391,6 +1391,24 @@ redeploy point-of-no-return.)*
   turn/lean_shadow, when a bearer/token turn rides the verified producer. (Not in the Signature-arm brief;
   named so it isn't lost.)
 
+- **circuit-soundness apex REDUCED to {four realizable floors + the dischargeable decode-extraction
+  family} (`Dregg2/Circuit/ClosureAll.lean`, 2026-06-17).** `lightclient_unfoolable_closed` instantiates
+  the apex at `S_live`/`Rfix`/`kstepAll`, carrying {`StarkSound`, `Poseidon2SpongeCR` + the `CommitSurface`
+  CR fields, `WitnessDecodes`, `mkLog` (the `logHashInjective` log binding), and `∀ e, ClosedLogExtract e`}.
+  `#print axioms` = {propext, Classical.choice, Quot.sound}, green (3978). HONEST: `ClosedLogExtract e` IS
+  the per-effect `Satisfied2 (R e) → StateDecodeLog → kstep` refinement (= `descriptorRefines` + log) — the
+  circuit-forcing RUNGS are PROVEN (the `RotatedKernelRefinement*` family + the 31 `*_closedLog` wrappers),
+  but the `Satisfied2 ⟹ encode` DECODE-EXTRACTION is still CARRIED inside `ClosedLogExtract` (and the
+  `extract` hypothesis of `closedLogExtract_transfer`). That extraction is a THEOREM (dischargeable — the
+  trace columns ARE in the `Satisfied2` witness), NOT a floor. So this is a clean REDUCTION, not closure.
+  GENUINE REMAINING WORK: (a) DISCHARGE the per-effect `Satisfied2 (R e) ⟹ <effect>Encode` decode-extraction
+  (the column readout; the cap-tree/guard openings ride the realizable prover-witness residual, the
+  `TransferAuthoritySource` class) — `TransferDecodeBridge` did the ledger half. (b) FIX the
+  `Rfix := v3Registry[e]?` index seam — it keys by LIST POSITION, = `actionTag` only for leading slots, so
+  non-leading effects' rungs aren't yet at their genuine descriptor; re-key `Rfix` by `actionTag`.
+  (c) `exercise` (tag 16) genuinely has NO outer `.log` receipt (its log advances in the inner fold) —
+  `exercise_closedLog` bridges faithfully (not a hole). Named: circuit-soundness reduction, 2026-06-17.
+
 ## Decisions pending (ember)
 
 - #93 proof-audit: build a harness, or declare `#assert_axioms` + non-vacuity-both-polarities + the Convergence gauntlet its successor and close. (Recommendation: the latter — WRITTEN UP as docs/ASSURANCE.md §4 with the close-rationale; awaiting ember's flip to close.)
