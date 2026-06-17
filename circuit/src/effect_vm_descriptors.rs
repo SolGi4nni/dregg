@@ -814,7 +814,7 @@ pub const V3_STAGED_CAVEAT_DESCRIPTORS: &[(&str, &str, &str)] = &[(
 pub const V3_STAGED_REGISTRY_TSV: &str =
     include_str!("../descriptors/rotation-v3-staged-registry.tsv");
 pub const V3_STAGED_REGISTRY_FP: &str =
-    "1bc19e27d4abe909fdc62e94b738fae2b6116f0215130e8dd82dee52b1cb9a06";
+    "42b7e745081f1e6b6f36d701008f1714c0724e809235d11c70ef9149218ec2ab";
 
 /// The rotated probe layout at register count `r` (the Rust twin of the Lean parametric
 /// layout `EffectVmEmitRotationR`: columns are FUNCTIONS of R; the chunking is 4-wide head,
@@ -1591,18 +1591,21 @@ mod tests {
             let d = parse_vm_descriptor2(json)
                 .unwrap_or_else(|e| panic!("v3 registry {key} failed parse_vm_descriptor2: {e}"));
 
-            // THE CAP-OPEN MEMBER (`capOpenAttenuateV3`) carries the 58-column cap-membership
-            // APPENDIX past the shared 311-wide rotated layout (trace_width 369 = 311 + 58) plus
-            // 1 leaf + 16 node chip-lookups + the cap-open base gates. Its appendix shape is
-            // DELIBERATELY wider than the 36-member rotated cohort's uniform 311/4-pin shape, so
-            // it is audited on ITS OWN contract (width, PI count, cap-open chip lookups present)
-            // and SKIPS the rotated-cohort-specific absorb/digest/pin equalities below. This is
-            // not a relaxed check — it is the cap-open member's own width + lookup obligation.
-            if key == "attenuateCapOpenVmDescriptor2R24" {
+            // THE CAP-OPEN MEMBERS (`capOpenAttenuateV3` + `transferCapOpenV3`, residual (b)) carry
+            // the 59-column cap-membership APPENDIX past the shared rotated layout (= V1_WIDTH +
+            // APPENDIX_SPAN + 59) plus 1 leaf + 16 node chip-lookups + the cap-open base gates. The
+            // appendix is 59 = the 58 prior columns + 1 `effBit` column (residual (a): the turn's
+            // ACTUAL effect-kind bit, against which the general `facetEffGate` binds the leaf mask —
+            // not the constant EFFECT_TRANSFER). Both share the appendix (base-agnostic), so they are
+            // audited on the SAME own contract (width, PI count, cap-open chip lookups present) and
+            // SKIP the rotated-cohort absorb/digest/pin equalities below.
+            if key == "attenuateCapOpenVmDescriptor2R24"
+                || key == "transferCapOpenVmDescriptor2R24"
+            {
                 assert_eq!(
                     d.trace_width,
-                    V1_WIDTH + APPENDIX_SPAN + 58,
-                    "{key}: cap-open trace width = rotated 311 + 58-column cap-membership appendix"
+                    V1_WIDTH + APPENDIX_SPAN + 59,
+                    "{key}: cap-open trace width = rotated base + 59-column cap-membership appendix"
                 );
                 assert_eq!(
                     d.public_input_count, 38,
@@ -1779,6 +1782,16 @@ mod tests {
                         | "cellUnsealVmDescriptor2R24"
                         | "cellDestroyVmDescriptor2R24"
                 );
+            // The createCell / factory / spawn ACCOUNTS-SET grow-gate family: the fifth pin welds
+            // the new-cell key (param0) to PI[38], and the two cells_root map-ops force the
+            // accounts set-insert on limb 0 (`EffectVmEmitRotationV3.{createCellV3,factoryV3,
+            // spawnV3}`).
+            let new_cell_key_pin_member = matches!(
+                key,
+                "createCellVmDescriptor2R24"
+                    | "factoryVmDescriptor2R24"
+                    | "spawnVmDescriptor2R24"
+            );
             if key == "noteSpendVmDescriptor2R24" {
                 assert_eq!(
                     d.public_input_count, 39,
@@ -1788,6 +1801,24 @@ mod tests {
                     nullifier_pins,
                     vec![(PARAM_BASE + param::NULLIFIER, pi_base + 4)],
                     "noteSpend: the fifth pin welds the folded nullifier (param0) to PI[38]"
+                );
+            } else if new_cell_key_pin_member {
+                assert_eq!(
+                    d.public_input_count, 39,
+                    "{key}: rotated 38-PI + the appended new-cell-key slot"
+                );
+                // createCell/spawn key on param0 (the new-cell id); factory keys on param1
+                // (CHILD_VK_DERIVED — param0 carries the factory VK).
+                let key_col = if key == "factoryVmDescriptor2R24" {
+                    PARAM_BASE + param::CHILD_VK_DERIVED
+                } else {
+                    PARAM_BASE
+                };
+                assert_eq!(
+                    nullifier_pins,
+                    vec![(key_col, pi_base + 4)],
+                    "{key}: the fifth pin welds the new-cell key to PI[38] (the accounts-set \
+                     grow-gate)"
                 );
             } else if lifecycle_record_pin_member {
                 assert_eq!(
@@ -1817,9 +1848,9 @@ mod tests {
             }
         }
         assert_eq!(
-            n, 37,
-            "expected the 36-member rotated cohort (28 v2-graduated + 8 widened) + the cap-open \
-             member (capOpenAttenuateV3)"
+            n, 38,
+            "expected the 36-member rotated cohort (28 v2-graduated + 8 widened) + the two cap-open \
+             members (attenuateCapOpenVmDescriptor2R24 + transferCapOpenVmDescriptor2R24)"
         );
     }
 

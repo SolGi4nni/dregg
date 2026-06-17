@@ -56,11 +56,13 @@ open Dregg2.Circuit.DeployedCapTree
   (CapLeaf FACT_MARK leafFields packNode CapHashScheme)
 open Dregg2.Circuit.DeployedCapTree.CapHashScheme
   (Step capLeafDigest nodeOf recomposeUp MembersAt DeployedFaithful confersTransferLeaf confersLeaf
-   maskOfLimbs facetOfLeaf tierOfTag deployedCapOpen_implies_authorizedB)
+   maskOfLimbs facetOfLeaf tierOfTag deployedCapOpen_implies_authorizedB
+   DeployedFaithfulEff deployedCapOpen_implies_authorizedEffB)
 open Dregg2.Circuit.Emit.EffectVmEmitCapReshape (rightsMaskOf)
 open Dregg2.Authority (Cap Auth Caps Label)
 open Dregg2.Exec.FacetAuthority
-  (AuthTier AuthProvided FacetCaps EffectMask EFFECT_TRANSFER isEffectPermitted authorizedFacetB)
+  (AuthTier AuthProvided FacetCaps EffectMask EFFECT_TRANSFER isEffectPermitted authorizedFacetB
+   authorizedFacetEffB)
 
 set_option autoImplicit false
 
@@ -116,6 +118,11 @@ structure CapOpenCols where
   capRoot    : Nat
   /-- The turn's source-cell-id column. -/
   src        : Nat
+  /-- **(residual (a)) The turn's ACTUAL effect-kind bit column** — the `EFFECT_<kind>` the turn
+  performs (a single `1 <<< n` bit). The general facet gate `facetEffGate` binds the leaf's `mask_lo`
+  to THIS column (not the constant `EFFECT_TRANSFER`), so the cap-open authorizes the turn's genuine
+  effect. The deployed transfer descriptor commits `EFFECT_TRANSFER` here (byte-faithful). -/
+  effBit     : Nat
 
 /-! ## §2 — the leaf-field accessors (decode the 7 leaf columns to a `CapLeaf`). -/
 
@@ -187,6 +194,26 @@ we pin `mask_lo` here and `mask_hi` in `facetHiGate`. -/
 def transferFacetGate (c : CapOpenCols) : EmittedExpr :=
   .add (.var (c.leaf 3)) (.const (-(EFFECT_TRANSFER)))
 
+/-- **`facetEffGate`** (residual (a) — the GENERAL facet binding) — pins the leaf's low mask limb to
+the turn's ACTUAL effect-bit COLUMN `effBit` (`mask_lo - effBit = 0`), NOT the constant `EFFECT_TRANSFER`.
+With `mask_hi = 0` (the `facetHiGate`) and `effBit` a nonzero single bit, this forces the decoded facet
+`maskOfLimbs mask_lo 0 = effBit`, which permits `effBit` (`effBit &&& effBit = effBit ≠ 0`) — the genuine
+in-circuit `isEffectPermitted` against the turn's effect. A cap permitting a DIFFERENT effect (mask_lo ≠
+effBit) FAILS this gate. The deployed transfer descriptor commits `effBit = EFFECT_TRANSFER`, so
+`facetEffGate` reduces to `transferFacetGate` there (byte-faithful) — see `transferFacetGate_eq_effGate`.
+-/
+def facetEffGate (c : CapOpenCols) : EmittedExpr :=
+  .add (.var (c.leaf 3)) (.mul (.const (-1)) (.var c.effBit))
+
+/-- **`effBitGate`** (residual (a)) — pins the committed effect-bit column `effBit` to the constant
+`EFFECT_TRANSFER` FOR THE TRANSFER cap-open descriptor (so the prover cannot put an arbitrary effect bit
+in the column). The descriptor for a DIFFERENT effect-kind pins its OWN bit here. Together with
+`facetEffGate` (`mask_lo = effBit`) this yields the genuine in-circuit `isEffectPermitted` against the
+turn's effect: for transfer the chain is `mask_lo = effBit = EFFECT_TRANSFER`, byte-identical to
+`transferFacetGate`, but the FACET is now bound to a committed effect column, not a literal constant. -/
+def effBitGate (c : CapOpenCols) : EmittedExpr :=
+  .add (.var c.effBit) (.const (-(EFFECT_TRANSFER)))
+
 /-- The high-limb pin: `leaf.mask_hi = 0` (so `maskOfLimbs mask_lo mask_hi = mask_lo`). -/
 def facetHiGate (c : CapOpenCols) : EmittedExpr :=
   .var (c.leaf 4)
@@ -220,6 +247,12 @@ structure Satisfied (sponge : List ℤ → ℤ) (tf : TraceFamily) (c : CapOpenC
   facetHiZero : (facetHiGate c).eval env.loc = 0
   /-- The leaf's `auth_tag` is the `Signature` tier byte (satisfiable by a provided signature). -/
   tierTagged : (authTagGate c).eval env.loc = 0
+  /-- **(residual (a))** The committed effect-bit column `effBit` is `EFFECT_TRANSFER` (the transfer
+  descriptor pins its effect; a different effect's descriptor pins its own bit). -/
+  effBitTransfer : (effBitGate c).eval env.loc = 0
+  /-- **(residual (a))** The GENERAL facet binding holds: `mask_lo = effBit` (`facetEffGate`) — the
+  leaf's facet is bound to the committed effect-bit COLUMN, not a literal constant. -/
+  facetEffBound : (facetEffGate c).eval env.loc = 0
 
 /-! ## §6 — soundness: the leaf-digest column carries the genuine `capLeafDigest`.
 
@@ -439,6 +472,94 @@ theorem capOpen_confers_decoded (sponge : List ℤ → ℤ) (tf : TraceFamily) (
     confersLeaf vkOfTag provided effectBit (leafOf c env) :=
   ⟨hfacet, htier⟩
 
+/-! ## §8.E — residual (a): the IN-CIRCUIT GENERAL FACET gate (`facetEffGate`, not the constant pin).
+
+`capOpen_confers`/`Satisfied.facetTransfer` pin `mask_lo = EFFECT_TRANSFER` — a CONSTANT, so the cap-open
+only ever authorizes the transfer facet. `facetEffGate` instead binds `mask_lo` to the turn's ACTUAL
+effect-bit COLUMN `effBit`. The lemma below shows that gate IS a genuine in-circuit `isEffectPermitted`:
+if `facetEffGate` holds (`mask_lo = env.effBit`), `facetHiGate` holds (`mask_hi = 0`), and the committed
+`effBit` is a nonzero single effect bit `1 <<< n`, then the decoded facet PERMITS that effect — and a
+leaf whose `mask_lo` is any OTHER value fails the gate (the wrong-facet rejection). This is the genuine
+facet generalization: the binding is against a committed column, not a constant. -/
+
+/-- **`facetEffGate_permits` (residual (a) — the in-circuit general `isEffectPermitted`).** If the
+general facet gate holds (`mask_lo = env.effBit`, `facetEffGate.eval = 0`), the high limb is zero
+(`facetHiGate.eval = 0`), and the committed effect bit is a genuine single bit `env.effBit = 1 <<< n`
+(`n < 32`, a deployed `EffectMask` bit), then the leaf's DECODED facet permits that effect bit:
+`isEffectPermitted (facetOfLeaf leaf) (1 <<< n) = true`. The cap's facet equals the turn's effect — the
+genuine in-circuit `facet.rs::is_effect_permitted`, against the committed effect-bit column, NOT the
+constant `EFFECT_TRANSFER`. -/
+theorem facetEffGate_permits (sponge : List ℤ → ℤ) (tf : TraceFamily) (c : CapOpenCols)
+    (env : VmRowEnv) (n : Nat) (hn : n < 32)
+    (hbit : env.loc c.effBit = ((1 <<< n : Nat) : ℤ))
+    (hfacet : (facetEffGate c).eval env.loc = 0)
+    (hhi : (facetHiGate c).eval env.loc = 0) :
+    isEffectPermitted (facetOfLeaf (leafOf c env)) (1 <<< n) = true := by
+  unfold facetEffGate at hfacet
+  unfold facetHiGate at hhi
+  simp only [EmittedExpr.eval] at hfacet hhi
+  -- mask_lo = effBit = 1 <<< n; mask_hi = 0.
+  have hmlo : (leafOf c env).mask_lo = ((1 <<< n : Nat) : ℤ) := by
+    simp only [leafOf]; rw [← hbit]; linarith
+  have hmhi : (leafOf c env).mask_hi = 0 := by simp only [leafOf]; exact hhi
+  -- the decoded facet is `some (1<<<n)`.
+  have hdec : facetOfLeaf (leafOf c env) = some (1 <<< n) := by
+    unfold facetOfLeaf maskOfLimbs
+    rw [hmlo, hmhi]
+    congr 1
+  rw [hdec]
+  -- 1<<<n = 2^n > 0, so the single bit is nonzero.
+  have hpos : 0 < (1 <<< n : Nat) := by
+    rw [Nat.shiftLeft_eq, Nat.one_mul]; exact Nat.two_pow_pos n
+  have hm0 : (1 <<< n : Nat) ≠ 0 := by omega
+  have hne : (1 <<< n : Nat) &&& (1 <<< n : Nat) ≠ 0 := by
+    rw [Nat.and_self]; exact hm0
+  -- discharge `isEffectPermitted (some (1<<<n)) (1<<<n)`: the `some m` branch with m ≠ 0.
+  unfold isEffectPermitted
+  cases hm : (1 <<< n : Nat) with
+  | zero => exact absurd hm hm0
+  | succ k =>
+    simp only [hm] at hne ⊢
+    simp [hne]
+
+/-- **`facetEffGate_rejects_wrong_facet` (residual (a) — the WRONG-FACET tooth, witness FALSE).** If the
+committed effect bit `env.effBit` is some value `v` but the leaf's `mask_lo` is a DIFFERENT value `w ≠ v`
+(a cap permitting a different effect), then the general facet gate `facetEffGate` does NOT hold — the
+in-circuit binding REJECTS a cap whose facet does not match the turn's effect. This is the bite the
+constant `transferFacetGate` could not express (it only ever checked `EFFECT_TRANSFER`). -/
+theorem facetEffGate_rejects_wrong_facet (c : CapOpenCols) (env : VmRowEnv)
+    (hne : env.loc (c.leaf 3) ≠ env.loc c.effBit) :
+    (facetEffGate c).eval env.loc ≠ 0 := by
+  unfold facetEffGate
+  simp only [EmittedExpr.eval]
+  intro h
+  apply hne
+  linarith
+
+/-- **`capOpen_confers_via_effGate` (residual (a) — the LIVE general facet, transfer instance).** A
+`Satisfied` row confers `EFFECT_TRANSFER` via the GENERAL facet path: the `effBitGate` pins the committed
+effect-bit column to `EFFECT_TRANSFER = 1 <<< 1`, the `facetEffGate` binds `mask_lo` to that column, and
+`facetEffGate_permits` then yields the genuine in-circuit `isEffectPermitted (facetOfLeaf leaf)
+EFFECT_TRANSFER`. The TIER leg is the decoded `auth_tag`. So the cap-open confers the transfer effect
+through a facet gate bound to a COMMITTED effect column, not the constant `EFFECT_TRANSFER`. -/
+theorem capOpen_confers_via_effGate (sponge : List ℤ → ℤ) (tf : TraceFamily) (c : CapOpenCols)
+    (env : VmRowEnv) (vkOfTag : ℤ → Nat) (provided : AuthProvided) (hsat : Satisfied sponge tf c env)
+    (htier : (tierOfTag vkOfTag (leafOf c env).auth_tag).isSatisfiedBy provided = true) :
+    confersLeaf vkOfTag provided EFFECT_TRANSFER (leafOf c env) := by
+  -- effBit = EFFECT_TRANSFER = 1 <<< 1, pinned by `effBitGate`.
+  have heff : env.loc c.effBit = ((1 <<< 1 : Nat) : ℤ) := by
+    have h := hsat.effBitTransfer
+    unfold effBitGate at h
+    simp only [EmittedExpr.eval] at h
+    show env.loc c.effBit = ((1 <<< 1 : Nat) : ℤ)
+    have : (EFFECT_TRANSFER : ℤ) = ((1 <<< 1 : Nat) : ℤ) := by unfold EFFECT_TRANSFER; norm_num
+    rw [← this]; linarith
+  have hperm : isEffectPermitted (facetOfLeaf (leafOf c env)) (1 <<< 1) = true :=
+    facetEffGate_permits sponge tf c env 1 (by norm_num) heff hsat.facetEffBound hsat.facetHiZero
+  have hbit : (1 <<< 1 : Nat) = EFFECT_TRANSFER := by unfold EFFECT_TRANSFER; norm_num
+  rw [hbit] at hperm
+  exact ⟨hperm, htier⟩
+
 /-! ## §9 — THE KEYSTONE: `capOpen_sound` (Satisfied ⟹ MembersAt ∧ binding). -/
 
 /-- **`capOpen_sound`** — the in-circuit cap-membership row is SOUND: it opens the deployed cap-tree
@@ -577,6 +698,9 @@ theorem targetBindGate_discriminates (c : CapOpenCols) (env : VmRowEnv)
 #assert_axioms capOpen_membership
 #assert_axioms capOpen_confers
 #assert_axioms capOpen_confers_decoded
+#assert_axioms facetEffGate_permits
+#assert_axioms facetEffGate_rejects_wrong_facet
+#assert_axioms capOpen_confers_via_effGate
 #assert_axioms capOpen_sound
 #assert_axioms capOpen_authorizes
 #assert_axioms capOpen_authorizes_tierGeneral

@@ -62,7 +62,8 @@ open Dregg2.Authority (Cap Auth Caps Label capAuthConferred)
 open Dregg2.Circuit.Emit.EffectVmEmitCapReshape (authBitN rightsMaskOf)
 open Dregg2.Exec.FacetAuthority
   (AuthTier AuthProvided FacetCap FacetCaps EffectMask EFFECT_TRANSFER isEffectPermitted
-   authorizedFacetB authorizedFacetB_holds_transfer_cap turnEffectBit capAuthorizesFacet)
+   authorizedFacetB authorizedFacetB_holds_transfer_cap turnEffectBit capAuthorizesFacet
+   authorizedFacetEffB authorizedFacetEffB_holds_cap)
 
 set_option autoImplicit false
 
@@ -331,6 +332,48 @@ theorem deployedCapOpen_implies_authorizedB
     { actor := actor, src := src, dst := dst, amt := amt } c hmem htgt
     (by simpa [turnEffectBit] using hfacet) htier
 
+/-! ### §6.G — the EFFECT-GENERAL faithfulness + bridge (residual (a): the facet axis over the turn's
+ACTUAL effect, not the constant `EFFECT_TRANSFER`).
+
+`DeployedFaithful`/`deployedCapOpen_implies_authorizedB` above pin the facet to `EFFECT_TRANSFER`, so
+they only ever authorize transfer-facet caps. `DeployedFaithfulEff` carries the turn's ACTUAL
+effect-kind bit `effectBit` and backs a `confersLeaf … effectBit` opening with a held cap whose facet
+permits THAT bit; `deployedCapOpen_implies_authorizedEffB` concludes the GENERAL
+`authorizedFacetEffB … effectBit`. The transfer case is the `EFFECT_TRANSFER` instance. -/
+
+/-- **`DeployedFaithfulEff S vkOfTag provided effectBit caps root leafAt`** — the effect-general
+faithfulness: every member leaf at an `(actor ⇒ src)` edge that confers `effectBit` (decoded facet
+permits `effectBit`, decoded tier satisfied) is backed by a real held `FacetCap` over `src` whose facet
+permits `effectBit`. `DeployedFaithful` is the `EFFECT_TRANSFER` instance. -/
+structure DeployedFaithfulEff (vkOfTag : ℤ → Nat) (provided : AuthProvided) (effectBit : EffectMask)
+    (caps : FacetCaps) (root : ℤ) (leafAt : Label → Label → CapLeaf) : Prop where
+  /-- FAITHFULNESS: an `effectBit`-conferring member opening witnesses a REAL held `FacetCap` whose
+  facet permits `effectBit` under a tier the `provided` auth satisfies. -/
+  backed : ∀ (actor src : Label),
+    MembersAt S root (leafAt actor src) →
+    confersLeaf vkOfTag provided effectBit (leafAt actor src) →
+    ∃ c : FacetCap, c ∈ caps actor ∧ c.target = src
+      ∧ isEffectPermitted c.facet effectBit = true
+      ∧ c.tier.isSatisfiedBy provided = true
+
+/-- **`deployedCapOpen_implies_authorizedEffB` — THE EFFECT-GENERAL AUTHORITY BRIDGE.** Given the
+effect-general commitment relation, AND an in-circuit opening whose leaf confers `effectBit` on BOTH
+axes — THEN the GENERAL `authorizedFacetEffB … effectBit` PASSES. The cap-open membership discharges the
+deployed two-axis gate over the turn's ACTUAL effect-kind, reusing `authorizedFacetEffB_holds_cap`. The
+transfer bridge is `effectBit := EFFECT_TRANSFER`. -/
+theorem deployedCapOpen_implies_authorizedEffB
+    (vkOfTag : ℤ → Nat) (provided : AuthProvided) (effectBit : EffectMask)
+    (caps : FacetCaps) (root : ℤ) (leafAt : Label → Label → CapLeaf)
+    (hfaith : DeployedFaithfulEff S vkOfTag provided effectBit caps root leafAt)
+    (actor src dst : Label) (amt : ℤ)
+    (hopen : MembersAt S root (leafAt actor src))
+    (hconf : confersLeaf vkOfTag provided effectBit (leafAt actor src)) :
+    authorizedFacetEffB caps provided effectBit
+      { actor := actor, src := src, dst := dst, amt := amt } = true := by
+  obtain ⟨c, hmem, htgt, hfacet, htier⟩ := hfaith.backed actor src hopen hconf
+  exact authorizedFacetEffB_holds_cap caps provided effectBit
+    { actor := actor, src := src, dst := dst, amt := amt } c hmem htgt hfacet htier
+
 end CapHashScheme
 
 /-! ## §7 — NON-VACUITY: the deployed-tree bridge FIRES on a concrete edge, and the gate is REAL.
@@ -411,6 +454,7 @@ theorem empty_caps_unauthorized :
 #assert_axioms CapHashScheme.nodeOf_injective
 #assert_axioms CapHashScheme.recomposeUp_inj_of_path
 #assert_axioms CapHashScheme.deployedCapOpen_implies_authorizedB
+#assert_axioms CapHashScheme.deployedCapOpen_implies_authorizedEffB
 #assert_axioms oneEdge_faithful
 #assert_axioms deployedEncodes_inhabited
 #assert_axioms bridge_fires

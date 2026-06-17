@@ -316,6 +316,20 @@ pub fn generate_rotated_effect_vm_trace(
         debug_assert_eq!(dpis.len(), ROT_PI_COUNT + 1);
     }
 
+    // THE ACCOUNTS-SET GROW-GATE PIN (createCell / factory / spawn — the deployment-real account
+    // set-insert close). The live `{createCell,factory,spawn}VmDescriptor2R24` carry a FIFTH pin
+    // welding the new-cell key (`param0`, col `PARAM_BASE + 0` — the `Effect::CreateCell`/`Spawn`/
+    // `Factory` arm writes the child id there on row 0) to rotated PI slot 38, plus the two
+    // `cells_root` map-ops (limb 0) that force the accounts set-insert. We push the row-0 new-cell
+    // key so the honest trace matches the 39-PI shape; the openable before/after cells trees are
+    // threaded by `generate_rotated_create_cell_trace_with_accounts_tree`. Mirrors Lean
+    // `EffectVmEmitRotationV3.{createCellV3,factoryV3,spawnV3}`.
+    if let Some(key_col) = new_cell_key_param_col(effects.first()) {
+        use super::columns::PARAM_BASE;
+        dpis.push(r0[PARAM_BASE + key_col]); // PI 38: the new-cell key
+        debug_assert_eq!(dpis.len(), ROT_NULLIFIER_PI_COUNT);
+    }
+
     Ok((trace, dpis))
 }
 
@@ -404,6 +418,87 @@ pub fn generate_rotated_note_spend_trace_with_nullifier_tree(
     Ok((trace, dpis, vec![before_nullifiers.to_vec()]))
 }
 
+/// The deployed `cells_root` (limb 0 of the rotated block) — the openable sorted-Poseidon2 accounts
+/// accumulator. The createCell/factory/spawn descriptors (`EffectVmEmitRotationV3.{createCellV3,
+/// factoryV3,spawnV3}`) now carry two map-ops on it: `cellsFreshOp` (`.absent`: the new-cell key is
+/// a NON-MEMBER of the BEFORE accounts tree — no id collision) and `cellsInsertOp` (`.insert`: the
+/// AFTER root IS the genuine sorted insert of the new-cell key).
+const B_CELLS_ROOT: usize = 0;
+
+/// **THE DEPLOYMENT-REAL createCell / factory / spawn accounts-tree wiring (the accounts-set
+/// grow-gate's witness).** The clone of `generate_rotated_note_spend_trace_with_nullifier_tree` for
+/// the `cells_root` limb (limb 0): it makes limb 0 the openable accounts accumulator for a
+/// createCell/factory/spawn turn.
+///   * `before_accounts` are the existing account-set leaves (the new-cell key MUST be absent — the
+///     no-collision precondition the `.absent` op enforces);
+///   * limb 0 of every before-block is overwritten with the BEFORE tree's root, and limb 0 of every
+///     after-block with the root of BEFORE + the inserted new-cell key (the set-insert the `.insert`
+///     op forces);
+///   * the affected `wireCommitR` chain + `STATE_COMMIT` carriers are recomputed in place, and the
+///     OLD/NEW rotated commit PIs are re-derived so the published commitment binds the grown set;
+///   * the BEFORE tree's leaves are returned as the single `map_heaps` entry the prover threads.
+/// The new-cell key column is `param0` for createCell/spawn, `param1` (CHILD_VK_DERIVED) for factory
+/// (`new_cell_key_param_col`). Returns `(trace, dpis, map_heaps)`.
+pub fn generate_rotated_create_cell_trace_with_accounts_tree(
+    initial_state: &CellState,
+    effects: &[Effect],
+    before_w: &RotatedBlockWitness,
+    after_w: &RotatedBlockWitness,
+    caveat: &RotatedCaveatManifest,
+    before_accounts: &[crate::heap_root::HeapLeaf],
+) -> Result<(Vec<Vec<BabyBear>>, Vec<BabyBear>, Vec<Vec<crate::heap_root::HeapLeaf>>), String> {
+    use super::columns::PARAM_BASE;
+    use crate::heap_root::{CanonicalHeapTree, HEAP_TREE_DEPTH, HeapLeaf};
+
+    let key_col = new_cell_key_param_col(effects.first()).ok_or_else(|| {
+        "accounts-tree wiring is only for a CreateCell / CreateCellFromFactory / SpawnWithDelegation \
+         lead effect"
+            .to_string()
+    })?;
+
+    // The base rotated trace (carries the welds, the v1 economic block, the new-cell-key PI[38]).
+    let (mut trace, mut dpis) =
+        generate_rotated_effect_vm_trace(initial_state, effects, before_w, after_w, caveat)?;
+
+    // The new-cell key, read from the create row (row 0).
+    let cell_key = trace[0][PARAM_BASE + key_col];
+
+    // The BEFORE accounts tree and the AFTER tree (= BEFORE + the inserted new-cell key). The
+    // new-cell key MUST be absent from BEFORE — the no-collision precondition the `.absent` op
+    // enforces; a re-creation of an existing cell has no bracketing witness and the prover REFUSES.
+    let before_tree = CanonicalHeapTree::new(before_accounts.to_vec(), HEAP_TREE_DEPTH);
+    if before_tree.position_of(cell_key).is_some() {
+        return Err(
+            "account-id collision: the new-cell key is already in the BEFORE accounts tree — the \
+             in-circuit no-collision (`.absent`) op has no bracketing witness and refuses the turn"
+                .into(),
+        );
+    }
+    let before_root = before_tree.root();
+    let mut after_leaves = before_accounts.to_vec();
+    after_leaves.push(HeapLeaf {
+        addr: cell_key,
+        value: cell_key, // the born-empty cell rides its own key as its leaf value.
+    });
+    let after_root = CanonicalHeapTree::new(after_leaves.clone(), HEAP_TREE_DEPTH).root();
+
+    // Override limb 0 of BOTH blocks on EVERY row with the openable accumulator roots, then
+    // recompute the dependent chained commitments so the published `STATE_COMMIT` binds the grown
+    // set.
+    for row in trace.iter_mut() {
+        row[BEFORE_BASE + B_CELLS_ROOT] = before_root;
+        row[AFTER_BASE + B_CELLS_ROOT] = after_root;
+        recompute_block_commit(row, BEFORE_BASE);
+        recompute_block_commit(row, AFTER_BASE);
+    }
+
+    // Re-derive the OLD/NEW rotated commit PIs (the limb-0 override moved the commitments).
+    dpis[V1_PI_COUNT] = trace[0][BEFORE_BASE + B_STATE_COMMIT]; // PI 34: rotated OLD commit
+    dpis[V1_PI_COUNT + 1] = trace[trace.len() - 1][AFTER_BASE + B_STATE_COMMIT]; // PI 35: NEW commit
+
+    Ok((trace, dpis, vec![before_accounts.to_vec()]))
+}
+
 /// The in-AFTER-block limb offset the record-forcing pin welds for a given lead effect, or
 /// `None` for the 35 cohort members that carry no record pin. The lifecycle flips force the
 /// per-cell `lifecycle` felt (limb 28); the permissions/VK writes force the per-cell
@@ -428,6 +523,22 @@ fn record_pin_offset(lead: Option<&Effect>) -> Option<usize> {
         // record digest and is UNSAT. Mirrors Lean `EffectVmEmitRotationV3.{refusalV3,
         // receiptArchiveV3}`.
         Some(Effect::Refusal { .. }) | Some(Effect::ReceiptArchive { .. }) => Some(B_RECORD_DIGEST),
+        _ => None,
+    }
+}
+
+/// The param column carrying the new-cell key for the accounts-set grow-gate family
+/// (createCell / factory / spawn), or `None` otherwise. createCell/spawn write the new-cell id
+/// into `param0`; factory writes the factory VK into `param0` and the DERIVED CHILD VK into
+/// `param1` — so the factory's new-cell key (and the column its grow-gate + PI[38] pin reference)
+/// is `param1`. Mirrors Lean `EffectVmEmitRotationV3.{NEW_CELL_KEY_PARAM_COL,
+/// FACTORY_CHILD_KEY_PARAM_COL}` (the gate key columns of `{createCellV3,factoryV3,spawnV3}`).
+fn new_cell_key_param_col(lead: Option<&Effect>) -> Option<usize> {
+    match lead {
+        Some(Effect::CreateCell { .. }) | Some(Effect::SpawnWithDelegation { .. }) => Some(0),
+        Some(Effect::CreateCellFromFactory { .. }) => {
+            Some(super::columns::param::CHILD_VK_DERIVED)
+        }
         _ => None,
     }
 }
@@ -631,7 +742,7 @@ pub fn empty_caveat_manifest() -> RotatedCaveatManifest {
 // THE CAP-OPEN APPENDIX (Lean `Dregg2.Circuit.Emit.CapOpenEmit` —
 // `capOpenAttenuateV3`, descriptor `dregg-effectvm-attenuateA-v1-rot24-v3-capopen`).
 //
-// The cap-open appendix EXTENDS the 311-wide rotated attenuate trace with 58 columns
+// The cap-open appendix EXTENDS the rotated base trace with 59 columns
 // that OPEN the deployed depth-16 cap-tree at a write-mask leaf whose target is the
 // turn's `src`. The Lean constraints (`DeployedCapOpen.Satisfied`) realize:
 //   * 1 leaf chip-absorb (arity 7: the 7 leaf fields → leafDigest);
@@ -654,10 +765,11 @@ pub fn empty_caveat_manifest() -> RotatedCaveatManifest {
 pub const CAP_OPEN_DEPTH: usize = 16;
 /// The base column of the cap-open appendix (`CAP_OPEN_BASE = ROT_WIDTH = 311`).
 pub const CAP_OPEN_BASE: usize = ROT_WIDTH; // 311
-/// The cap-open appendix span: 7 leaf + 1 leafDigest + 16×(sib,dir,node) + capRoot + src = 58.
-pub const CAP_OPEN_SPAN: usize = 7 + 1 + 3 * CAP_OPEN_DEPTH + 2; // 58
-/// The cap-open trace width (`311 + 58 = 369`).
-pub const CAP_OPEN_WIDTH: usize = ROT_WIDTH + CAP_OPEN_SPAN; // 369
+/// The cap-open appendix span: 7 leaf + 1 leafDigest + 16×(sib,dir,node) + capRoot + src + effBit
+/// = 59 (residual (a): the trailing `effBit` column carries the turn's ACTUAL effect-kind bit).
+pub const CAP_OPEN_SPAN: usize = 7 + 1 + 3 * CAP_OPEN_DEPTH + 3; // 59
+/// The cap-open trace width (`ROT_WIDTH + 59`).
+pub const CAP_OPEN_WIDTH: usize = ROT_WIDTH + CAP_OPEN_SPAN;
 
 /// The `FACT_MARK` node-tag felt (`DeployedCapTree.FACT_MARK = 0xFACF`).
 pub const FACT_MARK: u32 = 0xFACF; // 64207
@@ -885,16 +997,19 @@ impl CapOpenWitness {
     }
 }
 
-/// Fill the 58 cap-open columns at `base` for ONE row from `w` (Lean `CapOpenCols` layout):
+/// Fill the 59 cap-open columns at `base` for ONE row from `w` (Lean `CapOpenCols` layout):
 ///   * leaf field `i` at `base + i` (i = 0..6);
 ///   * `leafDigest = hash_many(&leaf)` at `base + 7`;
 ///   * level `lvl`: `sib` at `base + 8 + 3·lvl`, `dir` at `base + 9 + 3·lvl`,
 ///     `node = hash_many(&[FACT_MARK, left, right])` at `base + 10 + 3·lvl`;
-///   * `capRoot` at `base + 56`, `src` at `base + 57`.
+///   * `capRoot` at `base + 56`, `src` at `base + 57`, `effBit` at `base + 58`.
 ///
-/// The top node (`lvl = 15`) MUST equal `w.cap_root` (asserted). Every value is a genuine
-/// `hash_many`-absorb output, so the auto-gathered chip table carries a matching row for each
-/// of the 1 + 16 chip lookups.
+/// The `effBit` column (residual (a)) carries the turn's ACTUAL effect-kind bit, pinned by the
+/// descriptor's `effBitGate` to `EFFECT_TRANSFER (= WRITE_MASK_LO)` for this transfer cap-open;
+/// the `facetEffGate` then binds `leaf.mask_lo == effBit` (the leaf's facet is bound to the
+/// committed effect column, NOT a literal constant). The top node (`lvl = 15`) MUST equal
+/// `w.cap_root` (asserted). Every digest is a genuine `hash_many`-absorb, so the auto-gathered
+/// chip table carries a matching row for each of the 1 + 16 chip lookups.
 pub fn fill_cap_open(row: &mut [BabyBear], base: usize, w: &CapOpenWitness) {
     for (i, &f) in w.leaf.iter().enumerate() {
         row[base + i] = f;
@@ -915,6 +1030,9 @@ pub fn fill_cap_open(row: &mut [BabyBear], base: usize, w: &CapOpenWitness) {
     debug_assert_eq!(cur, w.cap_root, "cap-open fill: top node must equal cap_root");
     row[base + 56] = w.cap_root;
     row[base + 57] = w.src;
+    // residual (a): the committed effect-bit column. The transfer cap-open pins it to
+    // EFFECT_TRANSFER (= WRITE_MASK_LO = 2); the `facetEffGate` binds `leaf.mask_lo == effBit`.
+    row[base + 58] = BabyBear::new(WRITE_MASK_LO);
 }
 
 /// Recompute one rotated block's chained `wireCommitR` digests + `state_commit` from the limbs
@@ -1069,8 +1187,8 @@ pub fn patch_attenuate_base_for_cap_open(
     Ok(dpis)
 }
 
-/// Widen an already-built 311-wide rotated attenuate trace to the 369-wide cap-open trace,
-/// filling the 58 cap-open columns on EVERY row uniformly with `w` (so the every-row base
+/// Widen an already-built rotated base trace (`ROT_WIDTH`-wide) to the `CAP_OPEN_WIDTH`-wide
+/// cap-open trace, filling the 59 cap-open columns on EVERY row uniformly with `w` (so the every-row base
 /// gates — dir-bool, rootPin, targetBind, transferFacet/facetHi/authTag — hold on every row).
 /// The base trace's own 311 columns + 38 PIs are unchanged; the cap-open appendix is purely
 /// additive. The base trace MUST be a 311-wide rotated trace the base `attenuateV3`
@@ -1129,16 +1247,20 @@ mod tests {
     /// names nothing the registry lacks (fail-closed for non-cohort effects).
     #[test]
     fn resolvers_cover_exactly_the_rotated_registry() {
-        // The cap-open member (`capOpenAttenuateV3`) is a SELF-VERIFY-only descriptor: it carries
-        // the 58-column cap-membership appendix and is NOT reached by the effect→descriptor
-        // resolvers (no live effect selects it; the rotated generator widens an attenuate trace
-        // into it explicitly via `widen_to_cap_open`). So it is excluded from the resolver-cohort
-        // completeness audit — the resolvers must still cover EXACTLY the 36 rotated cohort
-        // members.
+        // The cap-open members (`capOpenAttenuateV3` + `transferCapOpenV3`) are SELF-VERIFY /
+        // cap-PRESENCE-routed descriptors: they carry the 59-column cap-membership appendix and are
+        // NOT reached by the effect→descriptor resolvers (no live effect selects them by kind; the
+        // rotated generator widens a base trace into them explicitly via `widen_to_cap_open` when a
+        // consumed-cap witness is present). So they are excluded from the resolver-cohort
+        // completeness audit — the resolvers must still cover EXACTLY the 36 rotated cohort members.
         let registry: BTreeSet<&str> = V3_STAGED_REGISTRY_TSV
             .lines()
             .filter_map(|l| l.split('\t').next())
-            .filter(|s| !s.is_empty() && *s != "attenuateCapOpenVmDescriptor2R24")
+            .filter(|s| {
+                !s.is_empty()
+                    && *s != "attenuateCapOpenVmDescriptor2R24"
+                    && *s != "transferCapOpenVmDescriptor2R24"
+            })
             .collect();
         assert_eq!(
             registry.len(),

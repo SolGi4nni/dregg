@@ -229,6 +229,100 @@ def authorizedFacetB (caps : FacetCaps) (provided : AuthProvided) (turn : Turn) 
   decide (turn.actor = turn.src)
     || (caps turn.actor).any (capAuthorizesFacet provided turn)
 
+/-! ## §5.G — `authorizedFacetEffB`: the GENERAL two-axis gate over the turn's ACTUAL effect bit.
+
+`authorizedFacetB`/`capAuthorizesFacet` above hardwire `turnEffectBit turn = EFFECT_TRANSFER`, so the
+facet axis only ever checks the TRANSFER bit — the cap-open then authorizes ANY effect's transfer-facet
+cap regardless of the effect being performed (the residual-(a) under-binding). The general gate takes
+the turn's ACTUAL effect-kind bit `effectBit : EffectMask` as a parameter and checks the held cap's
+facet against THAT bit (`isEffectPermitted c.facet effectBit`), so a cap permitting a DIFFERENT effect
+than the turn performs is REJECTED. `authorizedFacetB` is the `EFFECT_TRANSFER` instance recovered when
+`effectBit := turnEffectBit turn`. -/
+
+/-- A held `FacetCap` AUTHORIZES the turn FOR a specific effect-kind `effectBit` iff it targets `src`,
+its facet permits THAT effect bit, and its tier is satisfied. The general (effect-parameterized) per-cap
+leg; `capAuthorizesFacet` is the `turnEffectBit turn` instance. -/
+def capAuthorizesFacetEff (provided : AuthProvided) (effectBit : EffectMask) (turn : Turn)
+    (c : FacetCap) : Bool :=
+  decide (c.target = turn.src)
+    && isEffectPermitted c.facet effectBit
+    && c.tier.isSatisfiedBy provided
+
+/-- **`authorizedFacetEffB caps provided effectBit turn`** — THE general two-axis authority gate, over
+the turn's ACTUAL effect-kind bit. The actor owns `src` (intra-vat), OR holds some `FacetCap` over `src`
+whose facet permits `effectBit` AND whose tier is satisfied by `provided`. The facet axis now checks the
+turn's GENUINE effect (NOT the constant `EFFECT_TRANSFER`), so a cap permitting a different effect is
+rejected. `authorizedFacetB = authorizedFacetEffB … (turnEffectBit turn)`. -/
+def authorizedFacetEffB (caps : FacetCaps) (provided : AuthProvided) (effectBit : EffectMask)
+    (turn : Turn) : Bool :=
+  decide (turn.actor = turn.src)
+    || (caps turn.actor).any (capAuthorizesFacetEff provided effectBit turn)
+
+/-- `capAuthorizesFacet` is the `turnEffectBit turn` instance of the general per-cap leg. -/
+theorem capAuthorizesFacet_eq_eff (provided : AuthProvided) (turn : Turn) (c : FacetCap) :
+    capAuthorizesFacet provided turn c
+      = capAuthorizesFacetEff provided (turnEffectBit turn) turn c := rfl
+
+/-- **`authorizedFacetB` is the `turnEffectBit turn` instance of `authorizedFacetEffB`.** The general
+effect-parameterized gate at the transfer bit IS the transfer-pinned gate — so every theorem about
+`authorizedFacetB` is a specialization of one about `authorizedFacetEffB`. -/
+theorem authorizedFacetB_eq_eff (caps : FacetCaps) (provided : AuthProvided) (turn : Turn) :
+    authorizedFacetB caps provided turn
+      = authorizedFacetEffB caps provided (turnEffectBit turn) turn := rfl
+
+/-- **`authorizedFacetEffB_owner`** — owning `src` short-circuits to authorized (intra-vat), for ANY
+effect bit (the owner leg is effect-agnostic — own-it ⇒ arbitrary change). -/
+theorem authorizedFacetEffB_owner (caps : FacetCaps) (provided : AuthProvided) (effectBit : EffectMask)
+    (turn : Turn) (h : turn.actor = turn.src) :
+    authorizedFacetEffB caps provided effectBit turn = true := by
+  unfold authorizedFacetEffB
+  simp [h]
+
+/-- **`authorizedFacetEffB_holds_cap`** — a non-owner holding a `FacetCap` over `src` whose facet
+permits the turn's ACTUAL `effectBit` under a satisfied tier IS authorized for that effect (the general
+two-axis admit). -/
+theorem authorizedFacetEffB_holds_cap
+    (caps : FacetCaps) (provided : AuthProvided) (effectBit : EffectMask) (turn : Turn) (c : FacetCap)
+    (hmem : c ∈ caps turn.actor)
+    (htgt : c.target = turn.src)
+    (hfacet : isEffectPermitted c.facet effectBit = true)
+    (htier : c.tier.isSatisfiedBy provided = true) :
+    authorizedFacetEffB caps provided effectBit turn = true := by
+  unfold authorizedFacetEffB
+  simp only [Bool.or_eq_true, List.any_eq_true]
+  right
+  exact ⟨c, hmem, by unfold capAuthorizesFacetEff; simp [htgt, hfacet, htier]⟩
+
+/-- **`wrong_effect_unauthorized` — the GENERAL facet axis BITES (witness FALSE).** A non-owner holding
+a cap whose facet permits ONLY `permitted` is NOT authorized for a turn performing a DIFFERENT
+single-bit effect `wanted` (with `permitted ≠ 0`, `wanted ≠ 0`, and `wanted &&& permitted = 0` — the two
+effect bits are disjoint). The facet axis rejects the cap because the turn's actual effect is outside the
+cap's mask — exactly the under-binding `authorizedFacetB` could not catch. -/
+theorem wrong_effect_unauthorized
+    (actor src dst : Label) (amt : ℤ) (tier : AuthTier) (provided : AuthProvided)
+    (permitted wanted : EffectMask)
+    (hsat : tier.isSatisfiedBy provided = true) (hne : actor ≠ src)
+    (hdisjoint : wanted &&& permitted = 0) :
+    authorizedFacetEffB
+        (fun a => if a = actor then [{ target := src, tier := tier, facet := some permitted }] else [])
+        provided wanted { actor := actor, src := src, dst := dst, amt := amt } = false := by
+  unfold authorizedFacetEffB
+  have howner : (decide (({ actor := actor, src := src, dst := dst, amt := amt } : Turn).actor
+      = ({ actor := actor, src := src, dst := dst, amt := amt } : Turn).src)) = false := by
+    simp [hne]
+  rw [howner, Bool.false_or]
+  -- the actor's only held cap rejects `wanted` on the facet axis: wanted &&& permitted = 0.
+  have hperm : isEffectPermitted (some permitted) wanted = false := by
+    unfold isEffectPermitted
+    by_cases hz : permitted = 0
+    · subst hz; rfl
+    · -- some (permitted ≠ 0): decide (wanted &&& permitted ≠ 0) = false since wanted &&& permitted = 0.
+      cases permitted with
+      | zero => exact absurd rfl hz
+      | succ n => simp [hdisjoint]
+  simp only [if_true, List.any_cons, List.any_nil, Bool.or_false, capAuthorizesFacetEff,
+    hperm, Bool.and_false, Bool.false_and]
+
 /-! ## §6 — the FAITHFUL teeth (both polarities, non-vacuous).
 
 (1) NON-AMP = the facet bitwise-narrowing is a real subset gate;
@@ -467,6 +561,10 @@ theorem facet_refines_owner (caps : Caps) (fcaps : FacetCaps) (provided : AuthPr
 #assert_axioms tier_amplify_rejected
 #assert_axioms authorizedFacetB_owner
 #assert_axioms authorizedFacetB_holds_transfer_cap
+#assert_axioms authorizedFacetB_eq_eff
+#assert_axioms authorizedFacetEffB_owner
+#assert_axioms authorizedFacetEffB_holds_cap
+#assert_axioms wrong_effect_unauthorized
 #assert_axioms empty_facetCaps_unauthorized
 #assert_axioms wrong_facet_unauthorized
 #assert_axioms wrong_tier_unauthorized

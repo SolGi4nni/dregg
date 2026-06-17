@@ -1045,6 +1045,207 @@ theorem noteSpendV3_satisfiedVm_v1 (hash : List ℤ → ℤ)
 #guard (let env : VmRowEnv := ⟨fun c => if c == 68 then 5 else 0, fun _ => 0, fun k => if k == 38 then 9 else 0⟩;
         decide (env.loc NULLIFIER_PARAM_COL ≠ env.pub ROT_NULLIFIER_PI))   -- mismatch ⇒ pin REJECTS
 
+/-! ## §5.C — the createCell / factory / spawn KERNEL-SET GROW-GATE (the deployment-real
+ACCOUNTS set-insert).
+
+`cells_root` (rotated limb 0) is ALREADY an openable sorted-Poseidon2 root, but — exactly as
+limb 26 was for noteSpend before §5.N — the createCell/factory/spawn descriptors carried it as a
+TURN-INVARIANT witness limb (before == after; no gate), so
+`kernel_set_insert_is_not_forced_by_the_live_descriptor` proved a frozen/forged cells_root still
+verifies and the new cell's account-set growth was unwitnessed (`createCell_offrow_unenforced`).
+
+These two `MapOp`s CLOSE that on the live wire, CLONING the noteSpend grow-gate onto limb 0. The
+inserted KEY is the new-cell identity `param0` (`Effect::CreateCell { create_hash }` ⇒
+`row[PARAM_BASE+0] = create_hash[0]`; the spawn/factory child-id likewise lands in `param0`),
+cross-bound to a published PI slot by `rotateV3WithNewCellKeyPin` so the apex reads the SAME key
+the gate forces:
+
+  * **`cellsFreshOp`** (`.absent`) — the FRESHNESS tooth: the new-cell key `param0` is a
+    NON-MEMBER of the BEFORE cells tree (limb 0). A re-creation of an existing cell id has no
+    bracketing witness and is UNSAT (no account-id collision).
+  * **`cellsInsertOp`** (`.insert`) — the SET-INSERT: the AFTER cells root (limb 0 of the after
+    block) IS the genuine sorted insert of `param0` into the BEFORE root. Under CR
+    (`writesTo_functional`) the after-root column cannot be frozen or forged — it is pinned to the
+    real grown accounts tree.
+
+The gate is guarded per-effect by the runtime selector (createCell `31`, factory `13`, spawn `32`),
+so non-matching / NoOp pad rows contribute nothing. spawn's cap-handoff (the child cap-root MOVE +
+delegation snapshot) is ORTHOGONAL to this accounts-set insert — it rides spawn's existing
+`gCapMove`/delegation legs and is NOT closed here (the named spawn residual). -/
+
+/-- The rotated published-PI slot the new-cell key (`param0`) welds to — the FIRST slot past the
+four rotated commit pins (`piCount = 34 + 4 = 38`), the same arithmetic as `ROT_NULLIFIER_PI`
+(these descriptors and noteSpend never co-occur on one row, so sharing slot 38 is sound). -/
+def ROT_NEW_CELL_KEY_PI : Nat := 38
+
+/-- The new-cell key parameter column (`param0`, `prmCol 0`) — the create/factory/spawn row's
+single folded new-cell identity felt (`create_hash[0]`). -/
+def NEW_CELL_KEY_PARAM_COL : Nat := prmCol 0
+
+/-- The rotated BEFORE-block `cells_root` limb column (limb 0 of the before block at
+`base = traceWidth`). The deployed accounts accumulator's PRE root — the openable
+sorted-Poseidon2 root the grow-gate opens against. -/
+def beforeCellsRootCol (w : Nat) : Nat := w + 0
+
+/-- The rotated AFTER-block `cells_root` limb column (limb 0 of the after block at
+`base = traceWidth + 43`). The deployed accounts accumulator's POST root — the grow-gate's
+`newRoot`. -/
+def afterCellsRootCol (w : Nat) : Nat := w + 43 + 0
+
+/-- **`rotateV3WithNewCellKeyPin`** — `rotateV3` PLUS the fifth appended PI pin welding the
+new-cell key (column `keyCol`) to `ROT_NEW_CELL_KEY_PI = 38` on the FIRST row. Structurally identical
+to `rotateV3WithNullifierPin`; every v1 column/constraint/site and the four rotated commit pins are
+UNTOUCHED. `keyCol` is `param0` for createCell/spawn, `param1` (the derived child VK) for factory. -/
+def rotateV3WithNewCellKeyPin (keyCol : Nat) (d : EffectVmDescriptor) : EffectVmDescriptor :=
+  let r := rotateV3 d
+  { r with
+    piCount     := r.piCount + 1
+    constraints := r.constraints ++ [.piBinding .first keyCol ROT_NEW_CELL_KEY_PI] }
+
+/-- The FRESHNESS tooth (no account-id collision): the new-cell key (column `keyCol`) is a NON-MEMBER
+of the BEFORE cells tree (limb 0); the root is unchanged by an absent read. Guarded by the supplied
+runtime selector column `sel`. `keyCol` is `param0` for createCell/spawn (the new-cell id) and `param1`
+for factory (the derived child VK). -/
+def cellsFreshOp (sel keyCol : Nat) : MapOp :=
+  { guard   := .var sel
+  , root    := .var (beforeCellsRootCol EFFECT_VM_WIDTH)
+  , key     := .var keyCol
+  , value   := .const 0
+  , newRoot := .var (beforeCellsRootCol EFFECT_VM_WIDTH)
+  , op      := .absent }
+
+/-- The SET-INSERT: the AFTER cells root (limb 0 of the after block) IS the genuine sorted write of
+the new-cell key (`keyCol`) into the BEFORE root. The key rides as its own leaf value (a born-empty
+cell). -/
+def cellsInsertOp (sel keyCol : Nat) : MapOp :=
+  { guard   := .var sel
+  , root    := .var (beforeCellsRootCol EFFECT_VM_WIDTH)
+  , key     := .var keyCol
+  , value   := .var keyCol
+  , newRoot := .var (afterCellsRootCol EFFECT_VM_WIDTH)
+  , op      := .insert }
+
+/-- The factory's new-cell key column (`param1`, the derived child VK — `CHILD_VK_DERIVED`); factory's
+`param0` carries the factory VK, so the child id is `param1`. -/
+def FACTORY_CHILD_KEY_PARAM_COL : Nat := prmCol 1
+
+/-- **`createCellV3`** — the rotated createCell WITH the new-cell-key PI weld AND the ACCOUNTS-SET
+GROW-GATE. `piCount = 39`. Past the graduated `rotateV3WithNewCellKeyPin` descriptor it appends the
+two map-ops that FORCE the accounts set-insert on the live wire (`cellsFreshOp .absent` +
+`cellsInsertOp .insert`), repointing limb 0 from a turn-invariant witness limb into a FORCED, grown,
+fresh accounts root. -/
+def createCellV3 : EffectVmDescriptor2 :=
+  let base := graduateV1 (rotateV3WithNewCellKeyPin NEW_CELL_KEY_PARAM_COL
+    EffectVmEmitCreateCell.createCellActorVmDescriptor)
+  { base with
+    constraints := base.constraints
+      ++ [.mapOp (cellsFreshOp EffectVmEmitCreateCell.SEL_CREATE_CELL_RT NEW_CELL_KEY_PARAM_COL),
+          .mapOp (cellsInsertOp EffectVmEmitCreateCell.SEL_CREATE_CELL_RT NEW_CELL_KEY_PARAM_COL)] }
+
+/-- **`factoryV3`** — the rotated createCellFromFactory WITH the new-cell-key weld + accounts-set
+grow-gate (factory selector `13`). Same shape as `createCellV3`. -/
+def factoryV3 : EffectVmDescriptor2 :=
+  let base := graduateV1 (rotateV3WithNewCellKeyPin FACTORY_CHILD_KEY_PARAM_COL
+    EffectVmEmitCreateCellFromFactory.factoryActorVmDescriptor)
+  { base with
+    constraints := base.constraints
+      ++ [.mapOp (cellsFreshOp EffectVmEmitCreateCellFromFactory.SEL_FACTORY_RT
+            FACTORY_CHILD_KEY_PARAM_COL),
+          .mapOp (cellsInsertOp EffectVmEmitCreateCellFromFactory.SEL_FACTORY_RT
+            FACTORY_CHILD_KEY_PARAM_COL)] }
+
+/-- **`spawnV3`** — the rotated spawn WITH the new-cell-key weld + accounts-set grow-gate (spawn
+selector `32`). The cap-handoff (child cap-root MOVE + delegation snapshot) is NOT closed here — it
+rides spawn's existing `gCapMove`/delegation legs (the named spawn residual). -/
+def spawnV3 : EffectVmDescriptor2 :=
+  let base := graduateV1 (rotateV3WithNewCellKeyPin NEW_CELL_KEY_PARAM_COL
+    EffectVmEmitSpawn.spawnActorVmDescriptor)
+  { base with
+    constraints := base.constraints
+      ++ [.mapOp (cellsFreshOp EffectVmEmitSpawn.SEL_SPAWN_RT NEW_CELL_KEY_PARAM_COL),
+          .mapOp (cellsInsertOp EffectVmEmitSpawn.SEL_SPAWN_RT NEW_CELL_KEY_PARAM_COL)] }
+
+/-- **`createCellV3_grow_gate_forces_set_insert` — the live descriptor FORCES the accounts
+set-insert + freshness.** On a satisfying `createCellV3` witness whose createCell selector fires, the
+two appended map-ops hold: (1) the published new-cell key is ABSENT from the BEFORE cells tree (limb
+0) — the no-collision tooth (`opensTo … none`); and (2) the AFTER cells root IS the genuine sorted
+insert of that key into the BEFORE root (`writesTo`). Under CR these are FUNCTIONAL, so a frozen or
+forged after-root, or a re-created (present) cell id, cannot satisfy the descriptor — exactly the
+forgery `kernel_set_insert_is_not_forced_by_the_live_descriptor` documented, now REJECTED. -/
+theorem createCellV3_grow_gate_forces_set_insert (hash : List ℤ → ℤ)
+    {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
+    (hsat : Satisfied2 hash createCellV3 minit mfin maddrs t)
+    (i : Nat) (hi : i < t.rows.length)
+    (hcreate : (envAt t i).loc EffectVmEmitCreateCell.SEL_CREATE_CELL_RT = 1) :
+    (opensTo hash ((envAt t i).loc (beforeCellsRootCol EFFECT_VM_WIDTH))
+        ((envAt t i).loc NEW_CELL_KEY_PARAM_COL) none)
+    ∧ writesTo hash ((envAt t i).loc (beforeCellsRootCol EFFECT_VM_WIDTH))
+        ((envAt t i).loc NEW_CELL_KEY_PARAM_COL)
+        ((envAt t i).loc NEW_CELL_KEY_PARAM_COL)
+        ((envAt t i).loc (afterCellsRootCol EFFECT_VM_WIDTH)) := by
+  have hrowc := hsat.rowConstraints i hi
+  have hfresh := hrowc (.mapOp (cellsFreshOp EffectVmEmitCreateCell.SEL_CREATE_CELL_RT
+    NEW_CELL_KEY_PARAM_COL)) (by simp [createCellV3])
+  have hins := hrowc (.mapOp (cellsInsertOp EffectVmEmitCreateCell.SEL_CREATE_CELL_RT
+    NEW_CELL_KEY_PARAM_COL)) (by simp [createCellV3])
+  exact ⟨(hfresh hcreate).1, hins hcreate⟩
+
+/-- **`factoryV3_grow_gate_forces_set_insert`** — `createCellV3`'s tooth for the factory descriptor
+(selector `13`). -/
+theorem factoryV3_grow_gate_forces_set_insert (hash : List ℤ → ℤ)
+    {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
+    (hsat : Satisfied2 hash factoryV3 minit mfin maddrs t)
+    (i : Nat) (hi : i < t.rows.length)
+    (hfactory : (envAt t i).loc EffectVmEmitCreateCellFromFactory.SEL_FACTORY_RT = 1) :
+    (opensTo hash ((envAt t i).loc (beforeCellsRootCol EFFECT_VM_WIDTH))
+        ((envAt t i).loc FACTORY_CHILD_KEY_PARAM_COL) none)
+    ∧ writesTo hash ((envAt t i).loc (beforeCellsRootCol EFFECT_VM_WIDTH))
+        ((envAt t i).loc FACTORY_CHILD_KEY_PARAM_COL)
+        ((envAt t i).loc FACTORY_CHILD_KEY_PARAM_COL)
+        ((envAt t i).loc (afterCellsRootCol EFFECT_VM_WIDTH)) := by
+  have hrowc := hsat.rowConstraints i hi
+  have hfresh := hrowc (.mapOp (cellsFreshOp EffectVmEmitCreateCellFromFactory.SEL_FACTORY_RT
+    FACTORY_CHILD_KEY_PARAM_COL)) (by simp [factoryV3])
+  have hins := hrowc (.mapOp (cellsInsertOp EffectVmEmitCreateCellFromFactory.SEL_FACTORY_RT
+    FACTORY_CHILD_KEY_PARAM_COL)) (by simp [factoryV3])
+  exact ⟨(hfresh hfactory).1, hins hfactory⟩
+
+/-- **`spawnV3_grow_gate_forces_set_insert`** — `createCellV3`'s tooth for the spawn descriptor
+(selector `32`). The accounts set-insert is FORCED; the cap-handoff is the named spawn residual. -/
+theorem spawnV3_grow_gate_forces_set_insert (hash : List ℤ → ℤ)
+    {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
+    (hsat : Satisfied2 hash spawnV3 minit mfin maddrs t)
+    (i : Nat) (hi : i < t.rows.length)
+    (hspawn : (envAt t i).loc EffectVmEmitSpawn.SEL_SPAWN_RT = 1) :
+    (opensTo hash ((envAt t i).loc (beforeCellsRootCol EFFECT_VM_WIDTH))
+        ((envAt t i).loc NEW_CELL_KEY_PARAM_COL) none)
+    ∧ writesTo hash ((envAt t i).loc (beforeCellsRootCol EFFECT_VM_WIDTH))
+        ((envAt t i).loc NEW_CELL_KEY_PARAM_COL)
+        ((envAt t i).loc NEW_CELL_KEY_PARAM_COL)
+        ((envAt t i).loc (afterCellsRootCol EFFECT_VM_WIDTH)) := by
+  have hrowc := hsat.rowConstraints i hi
+  have hfresh := hrowc (.mapOp (cellsFreshOp EffectVmEmitSpawn.SEL_SPAWN_RT
+    NEW_CELL_KEY_PARAM_COL)) (by simp [spawnV3])
+  have hins := hrowc (.mapOp (cellsInsertOp EffectVmEmitSpawn.SEL_SPAWN_RT
+    NEW_CELL_KEY_PARAM_COL)) (by simp [spawnV3])
+  exact ⟨(hfresh hspawn).1, hins hspawn⟩
+
+#assert_axioms createCellV3_grow_gate_forces_set_insert
+#assert_axioms factoryV3_grow_gate_forces_set_insert
+#assert_axioms spawnV3_grow_gate_forces_set_insert
+
+-- The new-cell-key pin lands at PI slot 38; each rotated create-family descriptor publishes 39 PIs.
+#guard ROT_NEW_CELL_KEY_PI == 34 + 4
+#guard NEW_CELL_KEY_PARAM_COL == 68
+#guard createCellV3.piCount == 39
+#guard factoryV3.piCount == 39
+#guard spawnV3.piCount == 39
+-- Each carries the four rotated commit pins + one new-cell-key pin + the two grow-gate map-ops.
+#guard createCellV3.constraints.length == (v3Of EffectVmEmitCreateCell.createCellActorVmDescriptor).constraints.length + 1 + 2
+#guard (mapOpsOf createCellV3).length == 2
+#guard (mapOpsOf factoryV3).length == 2
+#guard (mapOpsOf spawnV3).length == 2
+
 /-! ### The SetField + BridgeMint runtime reconcile (the last rotation flip gate, C7).
 
 The model (the end-to-end `effect_vm_rotation_flip` prove) surfaced TWO runtime divergences in
@@ -1613,10 +1814,9 @@ def v3Registry : List (String × EffectVmDescriptor2) :=
   , ("grantCapVmDescriptor2R24", v3Of EffectVmEmitAttenuateA.attenuateVmDescriptor)
   , ("makeSovereignVmDescriptor2R24",
       v3Of EffectVmEmitMakeSovereign.makeSovereignRuntimeVmDescriptor)
-  , ("createCellVmDescriptor2R24", v3Of EffectVmEmitCreateCell.createCellActorVmDescriptor)
-  , ("factoryVmDescriptor2R24",
-      v3Of EffectVmEmitCreateCellFromFactory.factoryActorVmDescriptor)
-  , ("spawnVmDescriptor2R24", v3Of EffectVmEmitSpawn.spawnActorVmDescriptor)
+  , ("createCellVmDescriptor2R24", createCellV3)
+  , ("factoryVmDescriptor2R24", factoryV3)
+  , ("spawnVmDescriptor2R24", spawnV3)
   , ("receiptArchiveVmDescriptor2R24", receiptArchiveV3)
   , ("cellUnsealVmDescriptor2R24", cellUnsealV3)
   , ("emitEventVmDescriptor2R24", v3Of EffectVmEmitEmitEvent.emitEventVmDescriptor) ]

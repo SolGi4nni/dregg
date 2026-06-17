@@ -659,6 +659,143 @@ fn rotated_note_spend_pins_nullifier_and_refuses_tamper() {
     }
 }
 
+/// **THE DEPLOYMENT-REAL createCell ACCOUNTS-SET grow-gate (the cells_root sibling of the noteSpend
+/// tooth).** The live `createCellVmDescriptor2R24` now carries two map-ops gated by the createCell
+/// selector — `cellsFreshOp` (`.absent`: the new-cell key is a NON-MEMBER of the BEFORE accounts tree
+/// — no id collision) and `cellsInsertOp` (`.insert`: the AFTER `cells_root` IS the genuine sorted
+/// insert of the new-cell key). These open the rotated `cells_root` limb (limb 0). This test proves
+/// the set-insert is FORCED, and that a forged/frozen `cells_root` (a turn that claims a cell was
+/// created but whose after-block accounts root is NOT the genuine insert) is REJECTED — exactly the
+/// gap `kernel_set_insert_is_not_forced_by_the_live_descriptor` documented for createCell, now closed.
+/// factory/spawn follow the identical pattern (selectors 13/32; spawn's cap-handoff is orthogonal —
+/// the named spawn residual).
+#[test]
+fn rotated_create_cell_pins_accounts_and_refuses_tamper() {
+    use dregg_circuit::effect_vm::columns::PARAM_BASE;
+    use dregg_circuit::effect_vm::trace_rotated::generate_rotated_create_cell_trace_with_accounts_tree;
+    use dregg_circuit::heap_root::{CanonicalHeapTree, HEAP_TREE_DEPTH, HeapLeaf};
+
+    // The createCell cohort member's rotated descriptor — 39 PIs (38 prefix + the new-cell-key pin).
+    let new_cell_id = BabyBear::new(0xCE11);
+    let create = Effect::CreateCell {
+        create_hash: [new_cell_id; 8],
+    };
+    let name = rotated_descriptor_name_for_effect(&create).expect("CreateCell is a cohort member");
+    assert_eq!(name, "createCellVmDescriptor2R24");
+    let desc =
+        parse_vm_descriptor2(rotated_descriptor_json(name)).expect("rotated createCell parses");
+    assert_eq!(desc.trace_width, ROT_WIDTH, "rotated width 311");
+    assert_eq!(
+        desc.public_input_count, 39,
+        "rotated createCell carries 38 prefix PIs + the appended new-cell-key slot"
+    );
+
+    let before_balance: i64 = 40_000;
+    let st = CellState::new(before_balance as u64, 0);
+    let effects = vec![create];
+
+    // The before/after producer witnesses (the createCell actor row freezes the balance + ticks the
+    // nonce; cells_root is then overridden by the accounts-tree wrapper).
+    let mut ledger = Ledger::new();
+    let before_cell = producer_cell(before_balance, 0);
+    let after_cell = producer_cell(before_balance, 1);
+    ledger.insert_cell(after_cell.clone()).unwrap();
+    let nullifier_root = [0u8; 32];
+    let receipt_log: Vec<[u8; 32]> = vec![[5u8; 32]];
+    let before_w = rw::produce(&before_cell, &ledger, &nullifier_root, &receipt_log);
+    let after_w = rw::produce(&after_cell, &ledger, &nullifier_root, &receipt_log);
+
+    let caveat = empty_caveat_manifest();
+    let mem_boundary = MemBoundaryWitness::default();
+
+    // A non-empty BEFORE accounts set (distinct from the new-cell key `0xCE11`).
+    let before_accounts = vec![
+        HeapLeaf { addr: BabyBear::new(0xAA01), value: BabyBear::new(0xAA01) },
+        HeapLeaf { addr: BabyBear::new(0xAA02), value: BabyBear::new(0xAA02) },
+    ];
+    let (trace, dpis, map_heaps) = generate_rotated_create_cell_trace_with_accounts_tree(
+        &st, &effects, &bridge(&before_w), &bridge(&after_w), &caveat, &before_accounts,
+    )
+    .expect("accounts-tree wiring must produce a deployment-real createCell trace");
+    assert_eq!(trace[0].len(), ROT_WIDTH, "311-col rotated trace");
+
+    // THE FIFTH PI: 39 elements, and PI[38] == the row-0 new-cell key (param0 for createCell).
+    assert_eq!(dpis.len(), 39, "createCell rotated PI is 39 (the new-cell-key slot appended)");
+    assert_eq!(
+        dpis[38], trace[0][PARAM_BASE],
+        "PI 38 = the create row's new-cell key (param0)"
+    );
+
+    // PROVE + VERIFY the whole rotated createCell end-to-end — the set-insert FORCED.
+    let proof = prove_vm_descriptor2(&desc, &trace, &dpis, &mem_boundary, &map_heaps)
+        .expect("rotated createCell (set-insert FORCED) must prove end-to-end");
+    verify_vm_descriptor2(&desc, &proof, &dpis)
+        .expect("rotated createCell proof must verify independently");
+    eprintln!(
+        "ROTATED createCell (R=24, 39-PI, LIVE-GENERATED, SET-INSERT FORCED): PROVED + VERIFIED; \
+         the new-cell key is pinned at PI[38] AND the accounts-set insert is forced in-circuit \
+         (limb-0 cells_root accumulator grow-gate)"
+    );
+
+    let refused = |t: &Vec<Vec<BabyBear>>, p: &Vec<BabyBear>, mh: &Vec<Vec<HeapLeaf>>| -> bool {
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            prove_vm_descriptor2(&desc, t, p, &mem_boundary, mh)
+        }));
+        match r {
+            Err(_) => true,
+            Ok(res) => res.is_err(),
+        }
+    };
+
+    // -- THE SET-INSERT TOOTH #1 (FORGED after-root): bump the AFTER cells_root (limb 0 of every
+    //    after block) to a value the kernel never grew. The `.insert` map-op pins the after-root to
+    //    the GENUINE sorted insert, so a forged after-root has no witness and the prover REFUSES. --
+    {
+        use dregg_circuit::effect_vm::trace_rotated::{AFTER_BASE as AB, B_STATE_COMMIT as BSC};
+        let bump = BabyBear::new(0x9999);
+        let mut t = trace.clone();
+        for row in t.iter_mut() {
+            row[AB + 0] = row[AB + 0] + bump; // forged after cells_root
+        }
+        let mut p = dpis.clone();
+        p[35] = t[t.len() - 1][AB + BSC]; // a self-consistent (but forged) NEW commit PI
+        assert!(
+            refused(&t, &p, &map_heaps),
+            "a FORGED after cells_root (not the genuine sorted insert) MUST be UNSAT — the \
+             `.insert` grow-gate pins the after-root"
+        );
+    }
+
+    // -- THE SET-INSERT TOOTH #2 (FROZEN cells_root): the after cells_root EQUALS the before (no
+    //    growth — the OLD pre-grow-gate shape). The `.insert` op forces after = insert(before, key)
+    //    ≠ before, so a frozen accounts root has no witness and is REJECTED. --
+    {
+        let frozen_before = CanonicalHeapTree::new(before_accounts.clone(), HEAP_TREE_DEPTH).root();
+        use dregg_circuit::effect_vm::trace_rotated::{AFTER_BASE as AB, BEFORE_BASE as BB};
+        let mut t = trace.clone();
+        for row in t.iter_mut() {
+            row[BB + 0] = frozen_before;
+            row[AB + 0] = frozen_before; // FROZEN: after == before (no insert)
+        }
+        assert!(
+            refused(&t, &dpis, &map_heaps),
+            "a FROZEN cells_root (after == before, no growth) MUST be UNSAT — the `.insert` \
+             grow-gate forces a genuine insert"
+        );
+    }
+
+    // -- THE ANTI-GHOST TOOTH: a published PI[38] differing from the create row's new-cell key
+    //    (param0) is UNSAT (the new-cell-key weld pin). --
+    {
+        let mut p = dpis.clone();
+        p[38] = p[38] + BabyBear::ONE;
+        assert!(
+            refused(&trace, &p, &map_heaps),
+            "a published PI[38] differing from the create row's new-cell key MUST be UNSAT"
+        );
+    }
+}
+
 /// THE C7 LAST-FLIP-GATE (end-to-end, in-circuit): a real ROTATED `SetField` turn AND a real
 /// ROTATED `BridgeMint` turn each prove + verify through their rotated descriptors
 /// (`setFieldVmDescriptor2-{slot}R24` / `mintVmDescriptor2R24`), and the NONCE-TICK SOUNDNESS
@@ -1485,29 +1622,34 @@ fn rotated_audit_record_pin_forces_record_digest_and_rejects_frozen_forgery() {
 /// limbs are tampered in LOCKSTEP across both blocks (a value the kernel never grew): because no gate
 /// reads these limbs, only `wireCommitR` absorbs them, a self-consistent re-fill proves and verifies.
 ///
-/// ## STATUS: noteSpend (nullifiers) is now CLOSED; this test holds the noteCreate/cells residual.
+/// ## STATUS: noteSpend (nullifiers) AND the cells family (createCell/factory/spawn) are CLOSED;
+/// this test holds ONLY the noteCreate (`commitments` set) residual.
 ///
-/// The nullifier family is now deployment-real: `noteSpendVmDescriptor2R24` carries the kernel-set
+/// The nullifier family is deployment-real: `noteSpendVmDescriptor2R24` carries the kernel-set
 /// grow-gate — two map-ops (`nullifierFreshOp` `.absent` + `nullifierInsertOp` `.insert`,
-/// `EffectVmEmitRotationV3.noteSpendV3`) that open the limb-26 nullifier accumulator. The set-insert
-/// is FORCED (the `.insert` op pins `after_root = insert(before_root, nf)`), and the in-circuit
-/// double-spend tooth bites (the `.absent` op refuses a present nullifier). This is proven
-/// end-to-end in `rotated_note_spend_pins_nullifier_and_refuses_tamper` (set-insert FORCED, a forged
-/// after-root REJECTED, a double-spend REFUSED). The mechanism is Option A — the EXISTING IR-v2
-/// map-ops machinery is the row-level grow-gate; NO new IR construct was needed (the earlier "needs a
-/// NOVEL turn-level grow-gate the per-row IR cannot express" reading was wrong — `MapOp::Insert`
-/// against the openable limb already expresses it).
+/// `EffectVmEmitRotationV3.noteSpendV3`) that open the limb-26 nullifier accumulator. Proven
+/// end-to-end in `rotated_note_spend_pins_nullifier_and_refuses_tamper`.
 ///
-/// THIS test deliberately exercises `noteCreate` (the `commitments` set), which remains the NAMED
-/// RESIDUAL: there is NO `commitments_root` limb in the 31-limb rotated shape, so the commitment-set
-/// insert is still commitment-absorbed-but-unforced. Closing it deployment-real needs the flag-day
-/// NEW-limb addition (extend `NUM_PRE_LIMBS` 31→32, re-balance `wireCommitR` — the Lean `wireCommitR`
-/// is already parametric and `RotatedKernelRefinementNotes.noteCreate_descriptorRefines` is already
-/// PROVEN-FIX, so this is mechanical), then append the same `MapOp::Insert` grow-gate. The cells
-/// (`createCell`/factory/spawn) family is also residual: `cells_root` (limb 0) IS already an openable
-/// sorted-Poseidon2 root, but the new-cell KEY is not yet a published column the gate can reference
-/// (createCell's `piCount = 34` has no new-cell-key PI). This test STANDS as the precise record of
-/// THOSE two residuals (noteCreate + cells); the nullifier residual it formerly recorded is CLOSED.
+/// The cells family (`createCell`/`factory`/`spawn`) is ALSO now deployment-real:
+/// `{createCell,factory,spawn}VmDescriptor2R24` carry `cellsFreshOp` (`.absent`) + `cellsInsertOp`
+/// (`.insert`) on the openable `cells_root` limb (limb 0), keyed by a NEW published new-cell-key
+/// PI[38] (`EffectVmEmitRotationV3.{createCellV3,factoryV3,spawnV3}` — param0 for createCell/spawn,
+/// param1/CHILD_VK_DERIVED for factory). The set-insert is FORCED; a forged/frozen `cells_root` is
+/// REJECTED. Proven end-to-end in `rotated_create_cell_pins_accounts_and_refuses_tamper`. spawn's
+/// cap-handoff (the child cap-root MOVE + delegation snapshot) is ORTHOGONAL to the accounts-set
+/// insert and is the NAMED spawn residual.
+///
+/// THIS test deliberately exercises `noteCreate` (the `commitments` set), which remains the ONE NAMED
+/// RESIDUAL in this family: there is NO `commitments_root` limb in the 31-limb rotated shape, so the
+/// commitment-set insert is still commitment-absorbed-but-unforced. Closing it deployment-real needs
+/// the flag-day NEW-limb addition (extend `NUM_PRE_LIMBS` 31→32, re-balance the entire rotated block
+/// geometry — `B_SPAN`/`B_IROOT`/`B_STATE_COMMIT`/the after-block `+43` offsets/the cap-open base/all
+/// 66 descriptor JSONs — the Lean `wireCommitR` is already parametric and
+/// `RotatedKernelRefinementNotes.noteCreate_descriptorRefines` is already PROVEN-FIX against a MODELED
+/// `commitmentsRoot` limb), then append the same `MapOp::Insert` grow-gate keyed on the new limb.
+/// (Tampering `cells_root` below still verifies on a noteCreate turn because noteCreate does NOT touch
+/// the accounts set — that limb is ungated FOR THIS effect; the createCell family's own gate is what
+/// the sibling test exercises.)
 #[test]
 fn kernel_set_insert_is_not_forced_by_the_live_descriptor() {
     // The note-create cohort member's rotated descriptor (the `commitments`-set growth effect).
@@ -1620,12 +1762,12 @@ fn kernel_set_insert_is_not_forced_by_the_live_descriptor() {
     }
 
     eprintln!(
-        "KERNEL-SET GAP (R=24, LIVE noteCreate): the deployed descriptor PROVES + VERIFIES a turn \
-         on a FROZEN kernel-set witness AND on FORGED set-roots — the cells_root / nullifier_root \
-         limbs are commitment-ABSORBED but UNGATED, and there is no commitments_root limb at all. \
-         The set-insert is NOT FORCED in the deployed EffectVM apex. The Lean Birth/Notes rungs \
-         prove soundness against a MODELED set-root limb + gate (accountsRoot / gAccountsGrow / \
-         nullifiersRoot / commitmentsRoot / gNoteGrow); closing the gap deployment-real is the \
-         flag-day NEW-limb + turn-level-grow-gate addition (NAMED residual)."
+        "KERNEL-SET RESIDUAL (R=24, LIVE noteCreate): the deployed noteCreate descriptor PROVES + \
+         VERIFIES a turn whose commitments-set witness was NOT grown — there is NO commitments_root \
+         limb in the 31-limb shape, so the commitment-set insert is commitment-ABSORBED but \
+         UNFORCED. This is the ONE remaining NAMED residual in the kernel-set family (noteSpend, \
+         createCell, factory, spawn are all CLOSED). Closing noteCreate deployment-real is the \
+         flag-day NUM_PRE_LIMBS 31→32 widening + the same MapOp::Insert grow-gate; the Lean \
+         noteCreate_descriptorRefines is already PROVEN-FIX against the modeled commitmentsRoot."
     );
 }
