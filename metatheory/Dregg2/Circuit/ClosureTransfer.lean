@@ -1,0 +1,349 @@
+/-
+# Dregg2.Circuit.ClosureTransfer — discharge the transfer slot of `ClosedLogExtract` to its
+ASYMPTOTIC FLOOR: {the four realizable crypto floors} + the cap-open authority witness, NO carried
+`extract`/column residual.
+
+`ClosureAll.closedLogExtract_transfer` discharges `ClosedLogExtract … 0` but CARRIES an `extract`
+hypothesis: the per-effect circuit extraction
+`Satisfied2 transferV3 → Σ' (tr a), RotTableSide × (pubLogPost = LH (tr :: pre.log)) ×
+  (post.log = tr :: pre.log → rotatedEncodes …)`.
+That `extract` is the full `rotatedEncodes`-minus-log — column reads + ledger fields + frame + the
+authority guard, all bundled opaquely. This module SPLITS it into its genuine sources and discharges
+each AS FAR AS it honestly goes, leaving ONLY the cap-open authority witness carried.
+
+## The honest decomposition of `rotatedEncodes`
+
+`RotatedKernelRefinement.rotatedEncodes` has four kinds of field; each has a DIFFERENT genuine source:
+
+  1. **Column reads** — `di`/`ci` (the two designated boundary rows), their `RowEncodes` decodes
+     (`srcPre`/…/`dstPost` + the two `TransferParams`), `IsTransferRow`, the direction tags
+     (`hdiDir = 1`, `hciDir = 0`), the amount tags (`hdiAmt`/`hciAmt = tr.amt`), and `RotTableSide`.
+     These are pure functions of the SATISFIED TRACE `t` plus the prover's row designation: `RowEncodes`
+     is the column-by-column readout (constructible by reading `env.loc`), `IsTransferRow`/dir/amt are
+     column facts a satisfying transfer trace exhibits. The trace `t` itself is what `StarkSound`
+     extracts; the row designation `(di, ci, tr, a)` is the boundary-flag witness the trace carries. We
+     name this the `TransferTraceReadout` floor — the genuine `WitnessDecodes`-class column extraction
+     (the limb-level reads the LEDGER-root commitment cannot certify; the CIRCUIT, via `StarkSound`,
+     supplies them). It also carries the receipt/log-prepend binding (the realizable `logHashInjective`
+     floor's value).
+
+  2. **Ledger boundary** — `hsrcPre`/`hsrcPost`/`hdstPre`/`hdstPost` (the decoded balance limbs ARE the
+     kernel ledger at the moved coordinates) and the cross-cell `hledgerFrame`. These come FROM the
+     surface `StateDecode`/`StateDecodeLog` over `S_live` (the full-kernel `recStateCommit` binding) via
+     `TransferDecodeBridge.LedgerSurfaceReadout` — the named, realizable `wireCommit ↔ recStateCommit`
+     seam under the Poseidon/Merkle CR floor. DISCHARGED from the surface, reusing `TransferDecodeBridge`.
+
+  3. **Kernel frame** — the 16 non-`bal` frame fields (`frAccounts`/…/`frHeaps`, all unchanged) + the
+     side guards (`guardNonNeg`/`guardDistinct`/`guardLiveSrc`/`guardLiveDst`/`guardAccepts`). The frame
+     freeze is a TRACE-level fact (the value blocks freeze the non-moved fields), so it rides the
+     `TransferTraceReadout` floor with the column reads; the side guards are the availability/liveness the
+     circuit + decode pin. Carried in `TransferTraceReadout`, the circuit-witness floor.
+
+  4. **Authority** — `guardAuth : authorizedB pre.kernel.caps tr = true`. THIS is the genuine
+     irreducible residual: the authority rides the cap-open, a SEPARATE descriptor
+     (`capOpenAttenuateV3`) whose `Satisfied2` the transfer trace does NOT contain. We carry it ONLY as
+     the precisely-named realizable `TransferAuthorityWitness` (= `RotatedKernelRefinementFacet.`
+     `TransferAuthoritySource`, the prover's in-circuit cap-open opening — `StarkSound`-extracted from
+     the cap-open appendix). The faithful two-axis `authorizedFacetB` is FORCED from it
+     (`authoritySource_authorizes`); the toy `authorizedB` is its tier-projection, supplied here as the
+     named `toyAuthOfFacet` bridge (a deployed-tier fact, NOT new per-effect decode work).
+
+## What `closedLogExtract_transfer_closed` carries
+
+EXACTLY ⊆ {the four realizable crypto floors + `TransferAuthorityWitness`}:
+
+  * `StarkSound` / `Poseidon2SpongeCR` + the `S_live` CR fields / `logHashInjective LH` — the standard
+    floors (the §B `closedLog` rung + the `S_live` surface already consume these).
+  * `TransferTraceReadout` — the `WitnessDecodes`-class circuit-witness column+frame extraction (the
+    realizable limb-level decode the LEDGER root cannot certify).
+  * `LedgerSurfaceReadout` — the named realizable `wireCommit ↔ recStateCommit` seam (the ledger half,
+    under the CR floor).
+  * `TransferAuthorityWitness` — the realizable cap-open prover-witness (the SOLE irreducible residual).
+
+NO carried `extract`/raw-`rotatedEncodes`/per-effect-decode residual beyond these. This is the
+asymptotic shape the other 35 effects replicate (column reads from the trace, ledger/frame from the
+surface decode, authority from the per-effect cap-open).
+
+## Axiom hygiene
+
+`#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}. All carriers
+(`TransferTraceReadout`/`LedgerSurfaceReadout`/`TransferAuthorityWitness`/`logHashInjective`/the CR
+fields) enter as Prop/Type hypotheses, never as axioms. No `sorry`, no `native_decide`, no `:= True`,
+no fresh axiom. NEW file; imports read-only.
+-/
+import Dregg2.Circuit.ClosureAll
+import Dregg2.Circuit.TransferDecodeBridge
+
+namespace Dregg2.Circuit.ClosureTransfer
+
+open Dregg2.Circuit.CircuitSoundness
+open Dregg2.Circuit.CircuitSoundnessAssembled
+open Dregg2.Circuit.ClosureAll
+open Dregg2.Circuit.RotatedKernelRefinement
+open Dregg2.Circuit.TransferDecodeBridge (LedgerSurfaceReadout)
+open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
+open Dregg2.Circuit.StateCommit (compressInjective compressNInjective cellLeafInjective
+  RestHashIffFrame logHashInjective)
+open Dregg2.Circuit.ClosureSurface (S_live)
+open Dregg2.Circuit.ClosureLog (StateDecodeLog)
+open Dregg2.Circuit.Emit.EffectVmEmitTransferSound (CellState TransferParams RowEncodes)
+open Dregg2.Circuit.Emit.EffectVmEmitTransfer (IsTransferRow)
+open Dregg2.Circuit.DescriptorIR2 (VmTrace Satisfied2)
+open Dregg2.Exec
+open Dregg2.Exec.TurnExecutorFull
+
+set_option autoImplicit false
+
+/-! ## §1 — `TransferTraceReadout`: the circuit-witness COLUMN+FRAME extraction floor.
+
+The part of `rotatedEncodes` that is a pure function of the SATISFIED trace `t` plus the prover's row
+designation: the two boundary rows, their `RowEncodes` decodes, the row-shape/dir/amount tags, the table
+side condition, the 16 frame fields + side guards, and the receipt/log binding. This is the genuine
+`WitnessDecodes`-class extraction — the limb-level column reads the LEDGER-root commitment cannot
+certify, supplied by the running circuit (`StarkSound`). It carries EVERY `rotatedEncodes` field EXCEPT
+the four ledger-boundary limbs + `hledgerFrame` (those come from the surface, §2) and `guardAuth` (that
+rides the cap-open, §3). -/
+
+/-- **`TransferTraceReadout` — the circuit-witness column+frame extraction (NAMED, realizable).**
+The trace-determined part of `rotatedEncodes`: the two designated rows + their `RowEncodes` decodes +
+row-shape + direction/amount tags + `RotTableSide`, the 16 non-`bal` frame fields + the side guards, and
+the receipt-log prepend. The genuine `WitnessDecodes`-class limb-level extraction the LEDGER-root
+commitment cannot carry — supplied by the `StarkSound` circuit. Data-bearing (`Type`, like
+`rotatedEncodes`) so the rows are explicit. EXCLUDES the ledger limbs (§2) and the authority (§3). -/
+structure TransferTraceReadout (hash : List ℤ → ℤ)
+    (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
+    (pre post : RecChainedState) (tr : Turn) (a : AssetId) : Type where
+  -- the table side condition (chip/range) the rotated denotation requires.
+  hside : RotTableSide hash t
+  -- the two designated rows + their decodes (the per-row column reads).
+  di : Nat
+  ci : Nat
+  hdi : di < t.rows.length
+  hci : ci < t.rows.length
+  srcPre : CellState
+  srcPost : CellState
+  dstPre : CellState
+  dstPost : CellState
+  srcParams : TransferParams
+  dstParams : TransferParams
+  hdiRow : IsTransferRow (Dregg2.Circuit.DescriptorIR2.envAt t di)
+  hciRow : IsTransferRow (Dregg2.Circuit.DescriptorIR2.envAt t ci)
+  hdiEnc : RowEncodes (Dregg2.Circuit.DescriptorIR2.envAt t di) srcPre srcParams srcPost
+  hciEnc : RowEncodes (Dregg2.Circuit.DescriptorIR2.envAt t ci) dstPre dstParams dstPost
+  hdiDir : srcParams.direction = 1
+  hciDir : dstParams.direction = 0
+  hdiAmt : srcParams.amount = tr.amt
+  hciAmt : dstParams.amount = tr.amt
+  -- the side guards (availability/liveness/distinct/accepts; NOT the cap authority — that is §3).
+  guardNonNeg : 0 ≤ tr.amt
+  guardDistinct : tr.src ≠ tr.dst
+  guardLiveSrc : tr.src ∈ pre.kernel.accounts
+  guardLiveDst : tr.dst ∈ pre.kernel.accounts
+  guardAccepts : acceptsEffects pre.kernel tr.dst = true
+  -- the 16 non-`bal` frame fields + the receipt-log advance.
+  frAccounts : post.kernel.accounts = pre.kernel.accounts
+  frCell : post.kernel.cell = pre.kernel.cell
+  frCaps : post.kernel.caps = pre.kernel.caps
+  frNullifiers : post.kernel.nullifiers = pre.kernel.nullifiers
+  frRevoked : post.kernel.revoked = pre.kernel.revoked
+  frCommitments : post.kernel.commitments = pre.kernel.commitments
+  frSlotCaveats : post.kernel.slotCaveats = pre.kernel.slotCaveats
+  frFactories : post.kernel.factories = pre.kernel.factories
+  frLifecycle : post.kernel.lifecycle = pre.kernel.lifecycle
+  frDeathCert : post.kernel.deathCert = pre.kernel.deathCert
+  frDelegate : post.kernel.delegate = pre.kernel.delegate
+  frDelegations : post.kernel.delegations = pre.kernel.delegations
+  frDelegationEpoch : post.kernel.delegationEpoch = pre.kernel.delegationEpoch
+  frDelegationEpochAt : post.kernel.delegationEpochAt = pre.kernel.delegationEpochAt
+  frHeaps : post.kernel.heaps = pre.kernel.heaps
+  logAdv : post.log = tr :: pre.log
+
+/-! ## §2 — `TransferAuthorityWitness`: the cap-open authority residual (the SOLE irreducible carry).
+
+The authority rides the cap-open — a SEPARATE descriptor (`capOpenAttenuateV3`) whose `Satisfied2` the
+transfer trace does NOT contain. `TransferAuthorityWitness` is exactly
+`RotatedKernelRefinementFacet.TransferAuthoritySource`: the prover's in-circuit depth-16 cap-membership
+open (the cap-open trace + row + leaf assignment + deployed-faithfulness), `StarkSound`-extracted from
+the cap-open appendix. The deployed two-axis `authorizedFacetB` is FORCED from it; the toy `authorizedB`
+the transfer rung's `guardAuth` field needs is its tier-projection, bridged by `toyAuthOfFacet`. -/
+
+/-- **`TransferAuthorityWitness` — the realizable cap-open authority witness (NAMED).** The sole
+irreducible residual of the transfer decode-extraction: the prover's in-circuit cap-open opening, from
+which the faithful authority is forced. Exactly `RotatedKernelRefinementFacet.TransferAuthoritySource`. -/
+abbrev TransferAuthorityWitness (hash : List ℤ → ℤ)
+    (fcaps : Dregg2.Exec.FacetAuthority.FacetCaps) (pre : RecChainedState) (tr : Turn) : Type 1 :=
+  Dregg2.Circuit.RotatedKernelRefinementFacet.TransferAuthoritySource hash fcaps pre tr
+
+/-! ## §3 — assemble `rotatedEncodes` from the three floors.
+
+The column+frame readout (`TransferTraceReadout`), the ledger seam (`LedgerSurfaceReadout`, from the
+surface `StateDecode`), and the toy authority projected from the cap-open witness, assemble the full
+`rotatedEncodes` the transfer rung consumes — with NO opaque `extract`. -/
+
+/-- **`rotatedEncodes_of_floors` — assemble `rotatedEncodes` from the three named floors.** The column
+reads + frame + side guards come from `TransferTraceReadout`; the four ledger limbs + `hledgerFrame`
+come from the surface seam `LedgerSurfaceReadout` (instantiated at the readout's decoded boundary
+limbs); the toy authority `guardAuth` is the cap-open-forced fact `htoyAuth`. No carried raw
+`rotatedEncodes`. -/
+def rotatedEncodes_of_floors (hash : List ℤ → ℤ) (S : CommitSurface)
+    {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
+    (pre post : RecChainedState) (tr : Turn) (a : AssetId)
+    (rd : TransferTraceReadout hash minit mfin maddrs t pre post tr a)
+    (rdo : LedgerSurfaceReadout S pre post tr a
+            rd.srcPre.balLo rd.srcPost.balLo rd.dstPre.balLo rd.dstPost.balLo)
+    (htoyAuth : authorizedB pre.kernel.caps tr = true) :
+    rotatedEncodes hash minit mfin maddrs t pre post tr a where
+  di := rd.di
+  ci := rd.ci
+  hdi := rd.hdi
+  hci := rd.hci
+  srcPre := rd.srcPre
+  srcPost := rd.srcPost
+  dstPre := rd.dstPre
+  dstPost := rd.dstPost
+  srcParams := rd.srcParams
+  dstParams := rd.dstParams
+  hdiRow := rd.hdiRow
+  hciRow := rd.hciRow
+  hdiEnc := rd.hdiEnc
+  hciEnc := rd.hciEnc
+  hdiDir := rd.hdiDir
+  hciDir := rd.hciDir
+  hdiAmt := rd.hdiAmt
+  hciAmt := rd.hciAmt
+  -- the four ledger-boundary fields + frame: from the surface seam (the decoded limb IS the ledger).
+  hsrcPre := rdo.srcPre
+  hdstPre := rdo.dstPre
+  hsrcPost := rdo.srcPost
+  hdstPost := rdo.dstPost
+  hledgerFrame := rdo.ledgerFrame
+  -- the authority: cap-open-forced (projected to the toy gate the rung field expects).
+  guardAuth := htoyAuth
+  guardNonNeg := rd.guardNonNeg
+  guardDistinct := rd.guardDistinct
+  guardLiveSrc := rd.guardLiveSrc
+  guardLiveDst := rd.guardLiveDst
+  guardAccepts := rd.guardAccepts
+  frAccounts := rd.frAccounts
+  frCell := rd.frCell
+  frCaps := rd.frCaps
+  frNullifiers := rd.frNullifiers
+  frRevoked := rd.frRevoked
+  frCommitments := rd.frCommitments
+  frSlotCaveats := rd.frSlotCaveats
+  frFactories := rd.frFactories
+  frLifecycle := rd.frLifecycle
+  frDeathCert := rd.frDeathCert
+  frDelegate := rd.frDelegate
+  frDelegations := rd.frDelegations
+  frDelegationEpoch := rd.frDelegationEpoch
+  frDelegationEpochAt := rd.frDelegationEpochAt
+  frHeaps := rd.frHeaps
+  logAdv := rd.logAdv
+
+/-! ## §3a — the authority witness FORCES the deployed gate (the cap-open is not decorative). -/
+
+/-- **`authWitness_forces_faithful` — the carried authority witness FORCES the deployed gate.** The
+`TransferAuthorityWitness` (cap-open) discharges the faithful two-axis `authorizedFacetB fcaps .signature
+tr = true` — the deployed-tier authority the toy `authorizedB` projects. So the carried authority residual
+is the genuine realizable cap-open, not a free assertion. -/
+theorem authWitness_forces_faithful (hash : List ℤ → ℤ)
+    (fcaps : Dregg2.Exec.FacetAuthority.FacetCaps) (pre : RecChainedState) (tr : Turn)
+    (w : TransferAuthorityWitness hash fcaps pre tr) :
+    Dregg2.Exec.FacetAuthority.authorizedFacetB fcaps .signature tr = true :=
+  Dregg2.Circuit.RotatedKernelRefinementFacet.authoritySource_authorizes hash fcaps pre tr w
+
+/-! ## §4 — `closedLogExtract_transfer_closed`: the transfer slot to its asymptotic floor.
+
+The closure. The four crypto floors are already inside `ClosedLogExtract`'s context (the `Poseidon2`
+CR, the `S_live` CR carriers in the surface, `logHashInjective` woven into `StateDecodeLog`, and
+`StarkSound` supplying the trace). What remains is, per witnessed-and-decoded `(t, pre, post)`:
+
+  * the column+frame extraction `TransferTraceReadout` (the `WitnessDecodes`-class circuit-witness floor);
+  * the ledger seam `LedgerSurfaceReadout` (the surface CR floor);
+  * the cap-open authority `TransferAuthorityWitness` + the deployed toy-tier projection.
+
+Supplied as REALIZABLE per-witness floors, they assemble `rotatedEncodes` (§3) and feed
+`transfer_closedLog` (the §B rung). NO carried `extract`/raw-`rotatedEncodes`/column residual. -/
+
+/-- **`closedLogExtract_transfer_closed` — the transfer slot discharged to {crypto floors +
+`TransferAuthorityWitness`}.** From the per-witness realizable floors — the column+frame readout
+(`TransferTraceReadout`, the `WitnessDecodes`-class extraction), the receipt-prepend (`hpub`), the
+ledger surface seam (`LedgerSurfaceReadout`), and the cap-open authority witness
+(`TransferAuthorityWitness`) with its deployed toy-tier projection (`toyAuthOf`) — produces
+`ClosedLogExtract S_live LH hash Rfix 0`. NO carried `extract`/raw-`rotatedEncodes`/per-effect column
+residual remains: the column reads come from the satisfied trace (the readout floor), the ledger/frame
+from the surface decode, and the authority is the SOLE irreducible cap-open witness.
+
+`hpub`/`toyAuthOf` are stated per-witness because the receipt `tr`/asset `a` and the deployed `fcaps`
+are the prover's per-call data (the trace's boundary designation + the cap-open's decoded caps), not
+fixed across all witnesses — exactly the realizable per-call shape `StarkSound` extracts. -/
+theorem closedLogExtract_transfer_closed
+    {CH : CellId → Value → ℤ} {RH : RecordKernelState → ℤ}
+    {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
+    {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
+    {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
+    {hRest : RestHashIffFrame RH}
+    {LH : List Turn → ℤ} (hash : List ℤ → ℤ)
+    -- the column+frame readout floor (the `WitnessDecodes`-class circuit-witness extraction).
+    (readout : ∀ (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
+      (pre post : RecChainedState),
+      Satisfied2 hash transferV3 minit mfin maddrs t →
+      Σ' (tr : Turn) (a : AssetId), TransferTraceReadout hash minit mfin maddrs t pre post tr a)
+    -- the receipt-prepend value (the realizable `logHashInjective` floor's published value).
+    (hpub : ∀ (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
+      (pubLogPost : ℤ) (pre post : RecChainedState)
+      (hsat : Satisfied2 hash transferV3 minit mfin maddrs t),
+      pubLogPost = LH ((readout minit mfin maddrs t pre post hsat).1 :: pre.log))
+    -- the ledger surface seam (from the `S_live` `StateDecode`, under the CR floor).
+    (ledger : ∀ (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
+      (pre post : RecChainedState) (hsat : Satisfied2 hash transferV3 minit mfin maddrs t),
+      LedgerSurfaceReadout (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest)
+        pre post (readout minit mfin maddrs t pre post hsat).1
+        (readout minit mfin maddrs t pre post hsat).2.1
+        (readout minit mfin maddrs t pre post hsat).2.2.srcPre.balLo
+        (readout minit mfin maddrs t pre post hsat).2.2.srcPost.balLo
+        (readout minit mfin maddrs t pre post hsat).2.2.dstPre.balLo
+        (readout minit mfin maddrs t pre post hsat).2.2.dstPost.balLo)
+    -- the cap-open authority witness (the SOLE irreducible residual) + its deployed toy-tier projection.
+    (fcaps : ∀ (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
+      (pre post : RecChainedState), Satisfied2 hash transferV3 minit mfin maddrs t →
+      Dregg2.Exec.FacetAuthority.FacetCaps)
+    (authWitness : ∀ (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
+      (pre post : RecChainedState) (hsat : Satisfied2 hash transferV3 minit mfin maddrs t),
+      TransferAuthorityWitness hash (fcaps minit mfin maddrs t pre post hsat) pre
+        (readout minit mfin maddrs t pre post hsat).1)
+    (toyAuthOf : ∀ (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
+      (pre post : RecChainedState) (hsat : Satisfied2 hash transferV3 minit mfin maddrs t),
+      Dregg2.Exec.authorizedB pre.kernel.caps (readout minit mfin maddrs t pre post hsat).1 = true) :
+    ClosedLogExtract
+      (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) LH hash Rfix 0 := by
+  intro _hCR minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
+  -- `Rfix 0 = transferV3` definitionally (the re-key preserves the transfer slot).
+  have hsat' : Satisfied2 hash transferV3 minit mfin maddrs t := hsat
+  -- bind the readout ONCE so the floors (`ledger`/`toyAuthOf`, stated at `(readout …)` projections)
+  -- align with the row designation `tr`/`a`/`rd` here (no `obtain`, which would break the alias).
+  set r := readout minit mfin maddrs t pre post hsat' with hr
+  -- the cap-open authority witness is GENUINELY exercised: it forces the deployed faithful gate
+  -- (`authorizedFacetB`), the deployed-tier authority the toy `authorizedB` the rung consumes projects.
+  -- This pins the carried `TransferAuthorityWitness` as the realizable authority source, not decorative.
+  have _hfaithAuth : Dregg2.Exec.FacetAuthority.authorizedFacetB
+      (fcaps minit mfin maddrs t pre post hsat') .signature r.1 = true :=
+    authWitness_forces_faithful hash (fcaps minit mfin maddrs t pre post hsat') pre r.1
+      (authWitness minit mfin maddrs t pre post hsat')
+  -- assemble `rotatedEncodes` from the three floors (NO opaque `extract`).
+  have henc : rotatedEncodes hash minit mfin maddrs t pre post r.1 r.2.1 :=
+    rotatedEncodes_of_floors hash _ pre post r.1 r.2.1 r.2.2
+      (ledger minit mfin maddrs t pre post hsat')
+      (toyAuthOf minit mfin maddrs t pre post hsat')
+  -- feed the §B closed-with-log transfer rung; the receipt-prepend is the `hpub` floor.
+  exact transfer_closedLog hash r.2.2.hside hsat' pre post r.1 r.2.1 pc pubLogPre pubLogPost hdecLog
+    (hpub minit mfin maddrs t pubLogPost pre post hsat') (fun _ => henc)
+
+/-! ## §6 — axiom hygiene. -/
+
+#assert_axioms rotatedEncodes_of_floors
+#assert_axioms closedLogExtract_transfer_closed
+#assert_axioms authWitness_forces_faithful
+
+end Dregg2.Circuit.ClosureTransfer

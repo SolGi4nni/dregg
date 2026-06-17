@@ -79,30 +79,75 @@ open Dregg2.Exec (RecChainedState)
 
 set_option autoImplicit false
 
-/-! ## §1 — `Rfix`: the live `v3Registry` as a total `Nat`-indexed `Registry`.
+/-! ## §1 — `Rfix`: the live `v3Registry` as a total, `actionTag`-keyed `Registry`.
 
 The apex's `Registry` is `EffectIdx → EffectVmDescriptor2` (a TOTAL function, so `vkOfRegistry` /
 `StarkSound.extract` are well-defined at every published effect index). The deployed registry
 `EffectVmEmitRotationV3.v3Registry` is a `List (String × EffectVmDescriptor2)` keyed by descriptor
-name. `Rfix` is its `actionTag`-indexed lookup: `Rfix e` is the rotated descriptor for the effect whose
-`ActionDispatch.actionTag` is `e`, falling back to the transfer slot off-range (so the function is total
-— a published index always resolves to a real descriptor, the one its per-effect rung is stated about).
+NAME — and its LIST POSITION does NOT coincide with `ActionDispatch.actionTag` (position 1 is `burn`
+while `burn`'s tag is `4`; position 2 is `mint` while `mint`'s tag is `3`; only transfer aligns at 0).
+The per-effect `*_closedLog`/`ClosedLogExtract` rungs are stated at `actionTag` (`kstepAll <tag>`,
+consuming `Satisfied2 (R <tag>)`), so a position-keyed `Rfix` would land each rung at the WRONG
+descriptor for every effect except transfer. `Rfix` therefore re-keys by `actionTag`: `Rfix e` is the
+genuine `v3Registry` descriptor for the effect whose `ActionDispatch.actionTag` is `e`.
 
-The "fix-augmented" content of the prompt — the committed-root-limb fix descriptors for the fix effects
-and the phase-D cap descriptors for the cap family — are ALREADY the `v3Registry` entries (`attenuateV3`,
-`revokeCapabilityV3`, the cap-family `…R24` slots, the eight `setFieldV3` slots): `Rfix` selects exactly
-those, so `Rfix e` IS the descriptor each per-effect rung discharges its refinement about. -/
+`actionTagToPos` is the explicit `actionTag ↦ registry-position` table (the inverse of the registry's
+declaration order). `Rfix e` looks up `v3Registry` at `actionTagToPos e`. Tags with no own rotated
+descriptor (the `Scap`/`compressN`-parametric rungs — delegate, revoke, the lifecycle/birth/note family)
+point at the `v3Registry` entry their effect family rides (introduce for delegate, the cap revoke for
+revoke, …), so `vkOfRegistry Rfix` ranges over exactly the deployed descriptor set; `heapWrite` (tag 56,
+no `v3Registry` entry) falls back to the transfer slot (its rung is descriptor-abstract). Off-range tags
+fall back to transfer too, so `Rfix` is total. The key correspondence — `Rfix 0 = transferV3` — is
+preserved by `rfl` (position `0`), so `closedLogExtract_transfer` lands at its genuine descriptor. -/
 
-/-- The transfer descriptor (the off-range fallback; effect tag `0`). -/
+/-- The transfer descriptor (the fallback for tags with no own `v3Registry` entry; tag `0`). -/
 def transferDescr : EffectVmDescriptor2 :=
   Dregg2.Circuit.RotatedKernelRefinement.transferV3
 
-/-- **`Rfix` — the fix-augmented live registry as a total `Nat`-indexed lookup.** `Rfix e` is the
-rotated `v3Registry` descriptor at the `actionTag` slot `e` (the descriptor the per-effect rung at
-effect `e` refines), with the transfer descriptor as the total-function fallback off-range. The fix and
-phase-D cap descriptors are the corresponding `v3Registry` entries selected here. -/
+/-- **`actionTagToPos` — the `actionTag ↦ v3Registry-position` table.** The inverse of the registry's
+declaration order (which is NOT `actionTag` order). Effects with no own rotated descriptor map to the
+`v3Registry` entry their family rides; `heapWrite` (tag 56) and off-range tags map past the registry
+(→ the transfer fallback in `Rfix`). -/
+def actionTagToPos : EffectIdx → Nat
+  | 0  => 0    -- transfer        → transferVmDescriptor2R24
+  | 1  => 15   -- delegate        → introduceVmDescriptor2R24 (cap-tree delegate; refines DelegateSpec)
+  | 2  => 14   -- revoke          → revokeVmDescriptor2R24
+  | 3  => 2    -- mint            → mintVmDescriptor2R24
+  | 4  => 1    -- burn            → burnVmDescriptor2R24
+  | 5  => 28   -- setField        → setFieldVmDescriptor2-0R24
+  | 6  => 27   -- emitEvent       → emitEventVmDescriptor2R24
+  | 7  => 13   -- incrementNonce  → incrementNonceVmDescriptor2R24
+  | 8  => 8    -- setPermissions  → setPermsVmDescriptor2R24
+  | 9  => 9    -- setVK           → setVKVmDescriptor2R24
+  | 10 => 15   -- introduce       → introduceVmDescriptor2R24
+  | 11 => 16   -- delegateAtten   → attenuateVmDescriptor2R24
+  | 12 => 16   -- attenuate       → attenuateVmDescriptor2R24
+  | 14 => 14   -- revokeDelegation→ revokeVmDescriptor2R24
+  | 16 => 10   -- exercise        → exerciseVmDescriptor2R24
+  | 17 => 22   -- createCell      → createCellVmDescriptor2R24
+  | 18 => 23   -- factory         → factoryVmDescriptor2R24
+  | 19 => 24   -- spawn           → spawnVmDescriptor2R24
+  | 20 => 2    -- bridgeMint      → mintVmDescriptor2R24 (refines MintASpec)
+  | 27 => 3    -- noteSpend       → noteSpendVmDescriptor2R24
+  | 28 => 4    -- noteCreate      → noteCreateVmDescriptor2R24
+  | 38 => 21   -- makeSovereign   → makeSovereignVmDescriptor2R24
+  | 39 => 7    -- refusal         → refusalVmDescriptor2R24
+  | 40 => 25   -- receiptArchive  → receiptArchiveVmDescriptor2R24
+  | 47 => 11   -- pipelinedSend   → pipelinedSendVmDescriptor2R24
+  | 52 => 5    -- cellSeal        → cellSealVmDescriptor2R24
+  | 53 => 26   -- cellUnseal      → cellUnsealVmDescriptor2R24
+  | 54 => 6    -- cellDestroy     → cellDestroyVmDescriptor2R24
+  | 55 => 12   -- refreshDelegation→ refreshVmDescriptor2R24
+  | _  => 1000 -- heapWrite (56) + off-range: past the registry → transfer fallback
+
+/-- **`Rfix` — the live registry as a total, `actionTag`-keyed lookup.** `Rfix e` is the rotated
+`v3Registry` descriptor for the effect whose `ActionDispatch.actionTag` is `e` (NOT the descriptor at
+LIST POSITION `e` — declaration order ≠ tag order). The lookup goes through `actionTagToPos`; tags with
+no own descriptor (heapWrite, off-range) fall back to the transfer descriptor, so `Rfix` is total. This
+lands each per-effect rung (stated at `actionTag`) at its GENUINE descriptor — in particular
+`Rfix 0 = transferV3` by `rfl`. -/
 def Rfix : Registry := fun e =>
-  match Dregg2.Circuit.Emit.EffectVmEmitRotationV3.v3Registry[e]? with
+  match Dregg2.Circuit.Emit.EffectVmEmitRotationV3.v3Registry[actionTagToPos e]? with
   | some (_, d) => d
   | none => transferDescr
 
@@ -110,6 +155,12 @@ def Rfix : Registry := fun e =>
 `StarkSound`/`WitnessDecodes` floors are well-defined at every published index). Holds by construction
 (`match` is total). -/
 theorem Rfix_total (e : EffectIdx) : ∃ d : EffectVmDescriptor2, Rfix e = d := ⟨Rfix e, rfl⟩
+
+/-- **`Rfix_transfer` — the key correspondence: the transfer tag lands at the transfer descriptor.**
+`actionTag (.balanceA …) = 0` and `actionTagToPos 0 = 0`, and `v3Registry`'s position-`0` entry is the
+transfer descriptor `v3Of transferVmDescriptor = transferV3`. So `Rfix 0` IS the genuine transfer
+descriptor — the rung at the transfer tag discharges its refinement about the right descriptor. -/
+theorem Rfix_transfer : Rfix 0 = Dregg2.Circuit.RotatedKernelRefinement.transferV3 := rfl
 
 /-! ## §2 — `kstepAll`: the assembled dispatcher arm.
 
@@ -244,6 +295,7 @@ theorem kstepAll_transfer_from_faithful
 /-! ## §8 — axiom hygiene. -/
 
 #assert_axioms Rfix_total
+#assert_axioms Rfix_transfer
 #assert_axioms hrefinesAll
 #assert_axioms lightclient_unfoolable_assembled
 #assert_axioms lightclient_turn_unfoolable_forest_assembled
