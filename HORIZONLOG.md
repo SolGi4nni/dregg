@@ -11,6 +11,33 @@ reason.)*
 Last sweep: 2026-06-13 (flagged-items burndown — removed ~14 landed/struck items,
 deduped the DreggDL/sel4/snapshot landings into git history, kept live tails).
 
+## CIRCUIT-SOUNDNESS APEX — light-client unfoolability: faithful core LANDED, per-effect terrain MAPPED (2026-06-16)
+
+The map + state lives in `docs/CIRCUIT-FUNCTIONAL-CORRECTNESS.md` (the obligation table is the resumable plan).
+
+LANDED (green, #assert_axioms-clean): the parametric apex `lightclient_unfoolable` (CircuitSoundness.lean,
+derives ∃ kernel transition; carries StarkSound + Poseidon2SpongeCR + hrefines + WitnessDecodes); the FAITHFUL
+authority leg (two-axis `authorizedFacetB`) single-step (`RotatedKernelRefinementFacet.lean`,
+`transfer_descriptorRefines_facet` — authority FORCED in-circuit by the cap-open) and WHOLE-TURN
+(`RotatedKernelForestFacet.lean`, `lightclient_turn_unfoolable_forest_facet` + generic fold
+`turnDecodeChain_refines_turnSpec_gen`); and 5/36 VALUE rungs (`descriptorRefines`): transfer, burn, mint,
+bridgeMint, setField — `RotatedKernelRefinement{,MintBurn,SetField}.lean`, each gate-forcing the designated
+moved column with both-polarity forgery teeth.
+
+NAMED (the remaining campaign to "closed-closed" — each is a burn-down lane, not a parking lot):
+  1. ~17 VALUE_MISSING descriptor FIXES (the real gap): the descriptors freeze+nonce-tick+recompute while the
+     actual write is off-row → `descriptorRefines` is genuinely FALSE (a prover may publish a commitment to an
+     un-stepped post). Need gates that bind the write into the committed column, then a proof. Highest value:
+     the capability family (introduce/grantCap/refresh/delegate) — wire the PROVEN-but-unwired
+     `attenuateVmDescriptorGenuineNonAmp` (recompute + submask non-amp) in. Highest severity: `spawn` (freezes
+     cap_root while its spec IS a cap handoff — self-contradictory) and `heapWrite` (no live descriptor at all).
+  2. ~5 VALUE_PARTIAL (attenuate base-root-supplied-not-recomputed; setFieldDyn; incrementNonce generic-tick;
+     makeSovereign rebind; pipelinedSend nonce-tick-vs-freeze) — bounded extra binding.
+  3. Wire each effect's faithful arm into `fullActionStepFacet`; retire the forest `hidx0 : e=0` residual.
+  4. Discharge `WitnessDecodes` per effect; connect `TransferAuthoritySource`; kill the `&[]` cap path-witness
+     at `sdk/src/full_turn_proof.rs:662`. Then the VK epoch (ember-gated).
+  Crypto floors that legitimately remain: `StarkSound`, Poseidon2/permutation CR.
+
 ## IN-CIRCUIT CAP-TREE MEMBERSHIP-OPEN — Lean soundness LANDED; Rust AIR wiring + prover + mask-reconcile NAMED (2026-06-16)
 
 LANDED (green, #assert_axioms-clean, Poseidon2SpongeCR only): `metatheory/Dregg2/Circuit/DeployedCapOpen.lean`
