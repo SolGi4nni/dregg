@@ -24,18 +24,25 @@ authority leg (two-axis `authorizedFacetB`) single-step (`RotatedKernelRefinemen
 bridgeMint, setField — `RotatedKernelRefinement{,MintBurn,SetField}.lean`, each gate-forcing the designated
 moved column with both-polarity forgery teeth.
 
-NAMED (the remaining campaign to "closed-closed" — each is a burn-down lane, not a parking lot):
-  1. ~17 VALUE_MISSING fixes are RUNTIME+circuit, NOT Lean-only (the session's key finding): the runtime
-     hand-AIR FREEZES the 8 field columns and routes the real write off-row (params/effects_hash, or the
-     lifecycle/deathCert/nullifiers/commitments/sorted-cap side-tables that have NO committed column/root) →
-     no gate can force `pubPost` (a setField-style transplant would force a frozen column ⇒ honest trace
-     UNSAT). The fix per family = bind the write into a committed column/root + emit it in the runtime, then
-     a setField-style refinement discharges. Principled unification: a per-touched-cell RECORD-DIGEST column
-     (closes setPerms/setVK/refusal/lifecycle/deathCert at once); the capability family wants the openable
-     SORTED cap-tree update (cap-reshape phase-D, #103 — attenuate's cap_root is a prepend-ACCUMULATOR, not a
-     sorted tree, so non-amp is forced but the exact Caps move is not); the note family wants accumulator-root
-     columns. All VK-affecting (deploy = the ember-gated VK epoch). Severity flags: `spawn` (freezes cap_root
-     while its spec IS a cap handoff — self-contradictory) and `heapWrite` (no live descriptor at all).
+UPDATE (later same session) — EVERY effect's VALUE rung is now PROVEN. The ~17 VALUE_MISSING fixes were
+built (the principled-fix committed-root-limb pattern: cellSeal/cellUnseal/cellDestroy/refusal/receipt
+Archive/setPerms/setVK/makeSovereign/setFieldDyn/createCell/factory/noteCreate), and the PHASE-D gadget
+LANDED (`SortedTreeNonMembership.lean` non-membership + `CapTreeUpdate.lean` insert/update/remove on the
+proven `DeployedCapOpen` membership): **noteSpend's double-spend non-membership is FORCED in-circuit** and
+the **capability family's exact sorted-set move is forced** (attenuate upgraded non-amp→set-exact, the
+ARGUS crown #103). The remaining boundary to literal closed-closed:
+  1. THE RUNTIME COMMITMENT REALIZATION (the one ember-gated VK epoch): `circuit/src/effect_vm/cell_state.rs
+     ::compute_commitment` must absorb the new committed root limbs (per-cell side-table/audit roots + the
+     sorted cap/nullifier/commitment roots) + the trace-fills emit them. ONE coordinated change realizes the
+     whole fix+phase-D family; changes the VK ⇒ ships as a VK epoch + registry re-pin.
+  2. The Lean registry cutover (swap fix descriptors into v3Registry so `R e` = the proven descriptor) +
+     the COMPOSITION (assemble the per-effect rungs into `∀ e, descriptorRefines (R e)` ⇒ discharge the
+     apex's carried `hrefines`).
+  3. The faithful-encoding carriers (cap-tree↔Caps, nullifier-tree↔set, SpineCommits) — realizable
+     hypotheses (the deployed Merkle fold), the Poseidon2SpongeCR floor class. + WitnessDecodes per effect +
+     the prover wiring (`&[]` cap path-witness, `sdk/src/full_turn_proof.rs:662`).
+  Full map: `docs/CIRCUIT-FUNCTIONAL-CORRECTNESS.md` §"Final state". `heapWrite` (no live registry entry,
+  proven fix off-apex) and `custom` (no kernel arm, out of scope) noted.
   2. ~5 VALUE_PARTIAL (attenuate base-root-supplied-not-recomputed; setFieldDyn; incrementNonce generic-tick;
      makeSovereign rebind; pipelinedSend nonce-tick-vs-freeze) — bounded extra binding.
   3. Wire each effect's faithful arm into `fullActionStepFacet`; retire the forest `hidx0 : e=0` residual.

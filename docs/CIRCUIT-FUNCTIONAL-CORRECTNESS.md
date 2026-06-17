@@ -22,9 +22,55 @@ obligations — each explicit, none laundered:
 - `StarkSound` — the audited p3 batch-STARK `verify ⟹ ∃ Satisfied2 witness` (FRI extraction). A
   legitimate crypto/audit floor; not provable in Lean.
 - `Poseidon2SpongeCR` + the commitment-surface CR set.
-- `hrefines` — the registry-wide family `∀ e, descriptorRefines (R e) (kstep e)`. **This is the real
-  gap**: it must be discharged for every live effect (see the obligation table).
+- `hrefines` — the registry-wide family `∀ e, descriptorRefines (R e) (kstep e)`. Every live effect's
+  rung is now PROVEN individually (see "Final state" below); the carried `∀` is the un-assembled
+  composition, and for the ~20 fix effects the rung is against a fix descriptor pending the runtime
+  realization.
 - `WitnessDecodes` — the witness→kernel-state existence rung, per effect.
+
+## Final state — every effect's VALUE rung proven; the boundary is the runtime commitment + VK epoch
+
+All 36 live effects' VALUE rungs (`descriptorRefines`) are discharged, in one of three honest grades:
+
+- **VALUE_FORCED, realized against the LIVE descriptor** (≈8): `transfer`, `burn`, `mint`, `bridgeMint`,
+  `setField`, `incrementNonce`, `emitEvent`, `pipelinedSend` — the effect writes a column the deployed
+  commitment already binds (`balance/nonce/field[i]/cap_root`) or (emitEvent/pipelinedSend) is forced by
+  the live passthrough + `effects_hash`/PI. These are load-bearing NOW.
+- **PRINCIPLED-FIX, proven against a fix descriptor** (≈12): `cellSeal`, `cellUnseal`, `cellDestroy`,
+  `refusal`, `receiptArchive`, `setPermissions`, `setVK`, `makeSovereign`, `setFieldDyn`, `createCell`,
+  `createCellFromFactory`, `noteCreate` — each adds a committed root limb (`lifecycleRoot`,
+  `deathCertRoot`, `auditSlotRoot`, `sovereignCommitRoot`, `dynFieldSlotRoot`, `accountsRoot`,
+  `commitmentsRoot`) + a gate forcing the side-table/field write, with both-polarity teeth. The rung is
+  proven; it becomes load-bearing once the runtime realizes the limb (one shared change + VK epoch).
+- **PHASE-D exact, via the sorted-tree gadget** (the capability family + `noteSpend` + `spawn`):
+  `SortedTreeNonMembership.lean` (`nonMembership_sound`/`update_sound`, built on the proven
+  `DeployedCapOpen` membership) + `CapTreeUpdate.lean` (insert/update/remove) force the exact sorted-set
+  move. **`noteSpend`'s double-spend non-membership is FORCED in-circuit** (the hole is closed). The
+  capability family (`delegate`/`introduce`/`grantCap`/`delegateAtten`/`attenuate`/`refresh`/`revoke`/
+  `revokeDelegation`/`revokeCapability`) has its exact key-set move forced; `attenuate` is upgraded from
+  non-amp-only to set-exact (the ARGUS non-amplification crown, #103). `spawn`'s handoff and the cap
+  `Caps`-FUNCTION value (lifting the forced key-set move to the `Caps` function) ride the named faithful
+  cap-tree↔kernel encoding carrier.
+
+`custom` is out of scope (no kernel arm). `heapWrite` has a proven fix but is absent from the live
+registry (the apex does not range over it).
+
+**What remains for literal "closed-closed" (the precise boundary):**
+1. **The runtime commitment realization (VK epoch — ember-gated).** `circuit/src/effect_vm/cell_state.rs::
+   compute_commitment` must absorb the new committed root limbs (one digest folding the per-cell
+   side-table/audit roots + the sorted cap/nullifier/commitment roots), and the trace-fills must emit
+   them. ONE coordinated change realizes the whole fix + phase-D family; it changes the VK, so it ships
+   as a VK epoch + registry re-pin. This is the one ember-reserved gate.
+2. **The Lean registry cutover + composition.** Swap the fix descriptors into `v3Registry` so `R e` is the
+   descriptor each proof is about, then assemble the per-effect rungs into `∀ e, descriptorRefines (R e)`
+   — discharging the apex's carried `hrefines` so it stands unconditionally (mod the floors).
+3. **The faithful-encoding carriers** (cap-tree↔`Caps`, nullifier-tree↔set, `SpineCommits`): realizable
+   hypotheses (the deployed Merkle fold), the same crypto-floor class as `Poseidon2SpongeCR` — discharge
+   or accept as named floors.
+4. **`WitnessDecodes`** per effect; the prover wiring (the `&[]` cap path-witness at
+   `sdk/src/full_turn_proof.rs:662`).
+
+The crypto floors that legitimately remain are `StarkSound` and the Poseidon2 / permutation / Merkle CR.
 
 ## The authority leg — closed faithfully (the deployed two-axis gate)
 
