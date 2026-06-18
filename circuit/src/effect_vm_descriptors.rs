@@ -814,7 +814,7 @@ pub const V3_STAGED_CAVEAT_DESCRIPTORS: &[(&str, &str, &str)] = &[(
 pub const V3_STAGED_REGISTRY_TSV: &str =
     include_str!("../descriptors/rotation-v3-staged-registry.tsv");
 pub const V3_STAGED_REGISTRY_FP: &str =
-    "5452db1836f1ab737b418f11e4a61d2a1a71e6165d693d677ad7046b0e85da89";
+    "ae97e341585842df38618f74483d4a330fd295c32e3153ba5d53b51e6b9c038e";
 
 /// The rotated probe layout at register count `r` (the Rust twin of the Lean parametric
 /// layout `EffectVmEmitRotationR`: columns are FUNCTIONS of R; the chunking is 4-wide head,
@@ -1605,15 +1605,26 @@ mod tests {
             // own rotated base. The fan-out legs' appendix binds the cap to THAT effect-kind bit (the
             // general `facetEffGate` / `effBitGateFor (1<<<n)`), not the constant EFFECT_TRANSFER.
             if key.contains("CapOpen") {
+                // The TURN-IDENTITY weld (`transferCapOpenTBVmDescriptor2R24`,
+                // CapOpenTurnPins.effCapOpenV3TB) is the cap-open PLUS two turn-identity columns
+                // (capOpenActorCol/capOpenDstCol) and three turn-identity PI pins (welding the
+                // cap-open `src`/`actor`/`dst` columns to the published turn PIs). So it carries the
+                // 91-column cap-membership appendix + 2 turn-identity columns = +93, and 38 + 3 = 41
+                // PIs. The cap-membership chip-lookup count (1 leaf + 16 node) is unchanged.
+                let is_tb = key.contains("CapOpenTB");
+                let extra_cols = if is_tb { 2 } else { 0 };
+                let extra_pis = if is_tb { 3 } else { 0 };
                 assert_eq!(
                     d.trace_width,
-                    V1_WIDTH + APPENDIX_SPAN + 91,
+                    V1_WIDTH + APPENDIX_SPAN + 91 + extra_cols,
                     "{key}: cap-open trace width = rotated base + 91-column cap-membership appendix \
-                     (59 prior + 32 mask-bit columns for the genuine submask facet gate)"
+                     (59 prior + 32 mask-bit columns for the genuine submask facet gate) \
+                     (+2 turn-identity columns for the TB weld)"
                 );
                 assert_eq!(
-                    d.public_input_count, 38,
-                    "{key}: cap-open carries the rotated 38-PI vector"
+                    d.public_input_count,
+                    38 + extra_pis,
+                    "{key}: cap-open carries the rotated 38-PI vector (+3 turn-identity PIs for TB)"
                 );
                 // The cap-open appendix declares EXACTLY 17 poseidon2 chip lookups whose digest
                 // lands in the cap-open appendix (>= 315): 1 leaf absorb + 16 node absorbs.
@@ -1867,13 +1878,14 @@ mod tests {
             }
         }
         assert_eq!(
-            n, 44,
+            n, 45,
             "expected the 36-member rotated cohort (28 v2-graduated + 8 widened) + the 6 fan-out \
              cap-open members (delegate/introduce/grantCap/revoke/refreshDelegation/revokeCapability \
              — each *CapOpenVmDescriptor2R24) + the 2 LIVE effect-general legs \
-             (transfer/attenuate *CapOpenEffVmDescriptor2R24). The Signature-pinned \
-             capOpenAttenuateV3/transferCapOpenV3 were DELETED (Stage D — the apex authority leg \
-             refines the LIVE *CapOpenEffV3 descriptors, so nothing is proven about an unwired one)."
+             (transfer/attenuate *CapOpenEffVmDescriptor2R24) + the TURN-IDENTITY weld \
+             (transferCapOpenTBVmDescriptor2R24, CapOpenTurnPins — the cap-open + 2 turn-identity \
+             columns + 3 turn-identity PI pins welding src/actor/dst to the published turn). The \
+             Signature-pinned capOpenAttenuateV3/transferCapOpenV3 were DELETED (Stage D)."
         );
     }
 

@@ -29,6 +29,36 @@ explicit. ~22 commits this session (3d139220d … 8f7360b7f). Owed: a full-works
 session's Rust changes (apply_refusal / cap-open geometry / verifier anchors) — targeted suites green,
 belt-and-suspenders pass pending.
 
+TURN-IDENTITY PI WELD — the owner-authority/turn-identity smuggle, BEACHHEAD landed (2026-06-18). The hole
+(confirmed at HEAD 4dc186212): the turn's `actor`/`src` are bound by NOTHING a light client sees —
+`recStateCommit` uses `src`/`dst` only as the cell-digest partition index and never absorbs `actor`; `rotPins`
+publishes only 4 PIs (OLD/NEW commit · height · caveat); the cap-open `capOpenCols.src`/`capRoot` are FREE
+appendix columns. So `RotatedKernelRefinementFacetTurnBound`'s `TurnIdentityBound`/`hsrc` were CARRIED
+obligations. BEACHHEAD (`Dregg2/Circuit/Emit/CapOpenTurnPins.lean`, new): `effCapOpenV3TB base name n` = the
+cap-open PLUS two turn-identity columns (`capOpenActorCol`/`capOpenDstCol`) + three `.piBinding .last` pins
+welding `capOpenCols.src`/`actor`/`dst` to NEW PI slots; `effCapOpenV3TB_to_base` lifts every cap-open
+keystone through the append; `effCapOpenV3TB_publishes` FORCES src/actor/dst = PI on the last row;
+`TurnIdentityAnchored` = the named verifier override (recompute the turn-identity PIs from the trusted turn,
+the record-pin `dpis[38]` analog); `effCapOpenV3TB_hsrc` DISCHARGES `capOpenCols.src = turn.src` from the PI
+weld + anchor. In `RotatedKernelRefinementFacetTurnBound`: `transferAuthoritySourceCanon_ofTB` builds the slim
+canonical authority source with the carried `hsrc` field REPLACED by the in-circuit derivation, and
+`transfer_descriptorRefines_facetTB_realized` re-proves the turn-bound refinement with `hsrc` realized (the
+assumed `src`-equality is gone from the authority leg's hypothesis set). Emitted: `transferCapOpenTBVmDescriptor2R24`
+(width 409, 41 PIs) added to the wire (`rotation-v3-staged-registry.tsv`); drift PASS; FP re-pinned; Rust
+audit + resolver-coverage tests updated (n→45, TB exclusions). NEGATIVE TOOTH `effCapOpenV3TB_rejects_mismatched_src`.
+#assert_axioms-clean. REMAINING (the fan-out, NOT yet done): (1) the CUTOVER routing the LIVE transfer cap-open
+(registry position 42) THROUGH `transferCapOpenTBVmDescriptor2R24` — the deployed prover's `fill_cap_open`
+must fill the 2 turn-identity columns and the verifier (`turn/src/executor/proof_verify.rs`) must compute +
+override the 3 turn-identity PIs from the trusted turn (the `TurnIdentityAnchored` realization), with a
+deployment negative test (forged published actor/src REJECTED); (2) the ACTOR↔leaf-position weld — binding
+`actor` end-to-end needs the Merkle path to encode the actor's c-list subtree (the module publishes the actor
+column+PI so the light client SEES it and the owner disjunct is a decision on published data, but does not yet
+root it in the cap-tree); (3) FAN-OUT to the value/non-cap-open descriptors + the whole-turn forest apex
+(`RotatedKernelForestFacet`) so the WHOLE-turn conclusion's authority is turn-bound, not just the single-step
+transfer; (4) `dst`/`amt` welds analogous to `src`. PRE-EXISTING unrelated RED (do not attribute):
+`effect_vm_rotation_flip::rotated_audit_record_pin_forces_record_digest_and_rejects_frozen_forgery` (refusal
+record-pin PI 38, STARK constraint #11 — untouched by this change; emit diff is ONE appended line).
+
 ACTIVE (2026-06-18) — the `facetEffGate` genuine-membership closure (residual (a) F6-FACET) + adversarial
 re-review. FOUND: the cap-open authority gate `facetEffGate` (`DeployedCapOpen.lean:205`) was implemented as
 EQUALITY `mask_lo == effBit` (with `effBitGate` pinning `effBit = EFFECT_TRANSFER`) — i.e. it forced a

@@ -73,6 +73,7 @@ cannot see.
 imported keystones. No `sorry`, no `native_decide`, no `:= True`, no fresh axiom. NEW names only.
 -/
 import Dregg2.Circuit.RotatedKernelRefinementFacet
+import Dregg2.Circuit.Emit.CapOpenTurnPins
 
 namespace Dregg2.Circuit.RotatedKernelRefinementFacetTurnBound
 
@@ -300,8 +301,139 @@ theorem lightclient_transfer_faithful_turnbound
   rw [BatchPublicInputs.toPublished_turn] at hstep
   exact ⟨pre, post, hdecode, hstep, by simpa using hdecode.preBinds, by simpa using hdecode.postBinds⟩
 
+/-! ## §6.R — THE REALIZATION: `hsrc` (and the src leg of `TurnIdentityBound`) DERIVED from the live
+turn-identity PI weld, no longer carried.
+
+`transfer_descriptorRefines_facetTB` carries `hbound : TurnIdentityBound pc tr` and `hauth :
+TransferAuthoritySourceCanon … pc.turn` — whose `hsrc` field (`capOpenCols.src = tr.src`) is an ASSUMED
+equality. `CapOpenTurnPins` REALIZES that binding in the live descriptor: `effCapOpenV3TB` publishes the
+turn's `src` to a PI slot and welds the cap-open `src` column to it; the deployed verifier ANCHORS that PI
+to `turn.src` (`TurnIdentityAnchored`). So a `Satisfied2` witness of the turn-pinned descriptor whose
+verifier anchored `PI = turn.src` FORCES `capOpenCols.src = turn.src` — `hsrc` is now a CIRCUIT
+consequence, no longer a structure field a prover supplies for a free column.
+
+This section feeds that forced `hsrc` into the slim canonical authority source, so the transfer
+refinement's authority leg rests on the OPENED LEAF's target welded to the PUBLISHED source — closing the
+prover-chosen-src smuggle for the cap disjunct. -/
+
+open Dregg2.Circuit.Emit.CapOpenEmit (capOpenCols EFF_TRANSFER)
+open Dregg2.Circuit.Emit.CapOpenTurnPins
+  (effCapOpenV3TB TurnIdentityAnchored effCapOpenV3TB_to_base effCapOpenV3TB_hsrc)
+open Dregg2.Circuit.DeployedCapOpen (leafOf)
+open Dregg2.Circuit.DeployedCapTree (CapHashScheme CapLeaf)
+open Dregg2.Circuit.DeployedCapTree.CapHashScheme (canonicalLeafAt tierOfTag)
+open Dregg2.Circuit.RotatedKernelRefinementFacet
+  (EffAuthoritySourceCanon TransferAuthoritySourceCanon transferAuthoritySourceCanon_authorizes
+   transfer_descriptorRefines_facet)
+
+/-- The LIVE transfer cap-open descriptor with the turn-identity PI weld (`effCapOpenV3TB` at the
+transfer base / `EFF_TRANSFER` bit). The descriptor the deployed prover routes through PLUS the three
+turn-identity pins (`capOpenCols.src` welded to the published `src`). -/
+def transferCapOpenEffV3TB : Dregg2.Circuit.DescriptorIR2.EffectVmDescriptor2 :=
+  effCapOpenV3TB Dregg2.Circuit.RotatedKernelRefinement.transferV3
+    "dregg-effectvm-transfer-v1-rot24-v3-capopen-eff" EFF_TRANSFER
+
+/-- **`transferAuthoritySourceCanon_ofTB` — the slim canonical transfer authority source with `hsrc`
+DERIVED from the turn-identity PI weld.** Build the `TransferAuthoritySourceCanon` over the LIVE
+`effCapOpenV3TB` cap-open whose `src` column the verifier-anchored PI pins to `tr.src`: the carried
+`hsrc` field is REPLACED by the forced `effCapOpenV3TB_hsrc` (the PI weld + the anchor). The base `hsat`
+is lifted from the TB descriptor via `effCapOpenV3TB_to_base`; every other field (`hChip`/`hedge`/
+`htier`/`hipc`/the bit bounds) is the same cap-tree residual as before — this constructor closes ONLY the
+`src`-binding leg, in-circuit. -/
+def transferAuthoritySourceCanon_ofTB (hash : List ℤ → ℤ) (fcaps : FacetCaps) (provided : AuthProvided)
+    (pre : RecChainedState) (tr : Turn)
+    {State : Type} (S : CapHashScheme State) (vkOfTag : ℤ → Nat)
+    (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ)
+    (t : Dregg2.Circuit.DescriptorIR2.VmTrace)
+    (hChip : Dregg2.Circuit.DescriptorIR2.ChipTableSound S.chipAbsorb (t.tf .poseidon2))
+    (hsat : Dregg2.Circuit.DescriptorIR2.Satisfied2 S.chipAbsorb transferCapOpenEffV3TB
+      minit mfin maddrs t)
+    (i : Nat) (hi : i < t.rows.length) (hlast : (i + 1 == t.rows.length) = true)
+    (hanchor : TurnIdentityAnchored Dregg2.Circuit.RotatedKernelRefinement.transferV3
+      "dregg-effectvm-transfer-v1-rot24-v3-capopen-eff" EFF_TRANSFER t i tr.src tr.actor tr.dst)
+    (hedge : leafOf capOpenCols (Dregg2.Circuit.DescriptorIR2.envAt t i)
+      = canonicalLeafAt fcaps tr.actor tr.src)
+    (hipc : ∀ (actor src : Dregg2.Authority.Label) (c : Dregg2.Exec.FacetAuthority.FacetCap),
+      c ∈ fcaps actor → c.target = src → ∀ vk, c.tier ≠ .custom vk)
+    (htier : (tierOfTag vkOfTag (canonicalLeafAt fcaps tr.actor tr.src).auth_tag).isSatisfiedBy
+      provided = true) :
+    TransferAuthoritySourceCanon hash fcaps provided pre tr where
+  hn := by decide
+  hn32 := by decide
+  State := State
+  S := S
+  vkOfTag := vkOfTag
+  minit := minit
+  mfin := mfin
+  maddrs := maddrs
+  t := t
+  hChip := hChip
+  -- THE LIFT: the TB descriptor's witness restricts to the cap-open base descriptor.
+  hsat := effCapOpenV3TB_to_base Dregg2.Circuit.RotatedKernelRefinement.transferV3
+    "dregg-effectvm-transfer-v1-rot24-v3-capopen-eff" EFF_TRANSFER S.chipAbsorb minit mfin maddrs t hsat
+  i := i
+  hi := hi
+  -- THE DISCHARGE: `hsrc` is FORCED by the turn-identity PI weld + the verifier's anchor, not carried.
+  hsrc := effCapOpenV3TB_hsrc Dregg2.Circuit.RotatedKernelRefinement.transferV3
+    "dregg-effectvm-transfer-v1-rot24-v3-capopen-eff" EFF_TRANSFER S.chipAbsorb minit mfin maddrs t hsat
+    i hi hlast tr.src tr.actor tr.dst hanchor
+  hedge := hedge
+  hipc := hipc
+  htier := htier
+
+set_option maxHeartbeats 800000 in
+/-- **`transfer_descriptorRefines_facetTB_realized` — THE TURN-BOUND REFINEMENT WITH `hsrc` REALIZED
+IN-CIRCUIT.** From a satisfying transfer VALUE witness + its decode, the turn-identity binding `hbound`,
+AND the LIVE turn-identity-pinned cap-open `Satisfied2` (whose verifier-anchored PI weld FORCES
+`capOpenCols.src = tr.src`), force `BalanceMovementSpecFacet fcaps provided pre pc.turn a post`. Unlike
+`transfer_descriptorRefines_facetTB`, the authority source's `hsrc` is NOT a carried hypothesis — it is
+DISCHARGED from the in-circuit PI weld (`transferAuthoritySourceCanon_ofTB`). The carried floor for the
+authority leg SHRINKS: the cap-open `src` column is forced to the PUBLISHED source, so a cap proof
+authorizes the committed src, not a free column. -/
+theorem transfer_descriptorRefines_facetTB_realized (hash : List ℤ → ℤ)
+    {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
+    (hside : RotTableSide hash t)
+    (hsat : Satisfied2 hash transferV3 minit mfin maddrs t)
+    (pre post : RecChainedState) (pc : PublishedCommit) (tr : Turn) (a : AssetId)
+    (henc : rotatedEncodes hash minit mfin maddrs t pre post tr a)
+    (hbound : TurnIdentityBound pc tr)
+    (fcaps : FacetCaps) (provided : AuthProvided)
+    -- the LIVE turn-identity-pinned cap-open witness + the verifier's anchor + the cap-tree residual:
+    {State : Type} (Sc : CapHashScheme State) (vkOfTag : ℤ → Nat)
+    (cminit : ℤ → ℤ) (cmfin : ℤ → ℤ × Nat) (cmaddrs : List ℤ)
+    (ct : Dregg2.Circuit.DescriptorIR2.VmTrace)
+    (hChip : Dregg2.Circuit.DescriptorIR2.ChipTableSound Sc.chipAbsorb (ct.tf .poseidon2))
+    (hcsat : Dregg2.Circuit.DescriptorIR2.Satisfied2 Sc.chipAbsorb transferCapOpenEffV3TB
+      cminit cmfin cmaddrs ct)
+    (ci : Nat) (hci : ci < ct.rows.length) (hclast : (ci + 1 == ct.rows.length) = true)
+    (hanchor : TurnIdentityAnchored Dregg2.Circuit.RotatedKernelRefinement.transferV3
+      "dregg-effectvm-transfer-v1-rot24-v3-capopen-eff" EFF_TRANSFER ct ci pc.turn.src pc.turn.actor
+      pc.turn.dst)
+    (hedge : leafOf capOpenCols (Dregg2.Circuit.DescriptorIR2.envAt ct ci)
+      = canonicalLeafAt fcaps pc.turn.actor pc.turn.src)
+    (hipc : ∀ (actor src : Dregg2.Authority.Label) (c : Dregg2.Exec.FacetAuthority.FacetCap),
+      c ∈ fcaps actor → c.target = src → ∀ vk, c.tier ≠ .custom vk)
+    (htier : (tierOfTag vkOfTag (canonicalLeafAt fcaps pc.turn.actor pc.turn.src).auth_tag).isSatisfiedBy
+      provided = true) :
+    BalanceMovementSpecFacet fcaps provided pre pc.turn a post := by
+  -- build the slim canonical authority source with `hsrc` DERIVED from the in-circuit PI weld.
+  have hauth : TransferAuthoritySourceCanon hash fcaps provided pre pc.turn :=
+    transferAuthoritySourceCanon_ofTB hash fcaps provided pre pc.turn Sc vkOfTag cminit cmfin cmaddrs ct
+      hChip hcsat ci hci hclast hanchor hedge hipc htier
+  -- the VALUE leg over the witness turn `tr`, rewritten to `pc.turn` via the turn-identity binding.
+  have hval : BalanceMovementSpec pre tr a post :=
+    transfer_descriptorRefines hash hside hsat pre post tr a henc
+  rw [hbound.eq] at hval
+  obtain ⟨⟨_htoy, hnn, hav, hne, hls, hld, hacc⟩, hrest⟩ := hval
+  -- the AUTHORITY leg — FORCED by the canonical cap-open whose `src` is the PUBLISHED source.
+  have hfaithAuth : authorizedFacetB fcaps provided pc.turn = true :=
+    transferAuthoritySourceCanon_authorizes hash fcaps provided pre pc.turn hauth
+  exact ⟨⟨hfaithAuth, hnn, hav, hne, hls, hld, hacc⟩, hrest⟩
+
 /-! ## §7 — Axiom hygiene. -/
 
+#assert_axioms transferAuthoritySourceCanon_ofTB
+#assert_axioms transfer_descriptorRefines_facetTB_realized
 #assert_axioms TurnIdentityBound.eq
 #assert_axioms dispatchArmFacetTB_to_dispatchArmFacet
 #assert_axioms ownerGateForced

@@ -23,6 +23,7 @@ import Dregg2.Circuit.Emit.EffectVmEmitRotationR
 import Dregg2.Circuit.Emit.EffectVmEmitRotationCaveat
 import Dregg2.Circuit.Emit.EffectVmEmitRotationV3
 import Dregg2.Circuit.Emit.CapOpenEmit
+import Dregg2.Circuit.Emit.CapOpenTurnPins
 
 open Dregg2.Circuit.DescriptorIR2 (emitVmJson2)
 open Dregg2.Circuit.Emit.EffectVmEmitRotation
@@ -53,3 +54,14 @@ def main : IO Unit := do
   -- re-keys over THIS list, so the wire and the committed registry coincide).
   for (key, d) in v3RegistryCapOpen do
     IO.println s!"v3rot\t{key}\t{d.name}\t{emitVmJson2 d}"
+  -- THE TURN-IDENTITY WELD (CapOpenTurnPins): the transfer cap-open PLUS the three turn-identity PI
+  -- pins welding `capOpenCols.src`/`actor`/`dst` to published PIs (the in-circuit realization of
+  -- `TurnIdentityBound`/`hsrc`). Emitted as a NEW member (`transferCapOpenTBVmDescriptor2R24`) so the
+  -- PROVEN turn-pinned descriptor rides the wire and the drift gate covers it. The cutover routing the
+  -- live transfer cap-open through THIS (the prover's column-fill + the verifier's turn-identity PI
+  -- anchor) is the named remaining integration — see CapOpenTurnPins / proof_verify.
+  let transferCapOpenTB : Dregg2.Circuit.DescriptorIR2.EffectVmDescriptor2 :=
+    Dregg2.Circuit.Emit.CapOpenTurnPins.effCapOpenV3TB
+      Dregg2.Circuit.Emit.CapOpenEmit.transferV3
+      "dregg-effectvm-transfer-v1-rot24-v3-capopen-eff-tb" Dregg2.Circuit.Emit.CapOpenEmit.EFF_TRANSFER
+  IO.println s!"v3rot\ttransferCapOpenTBVmDescriptor2R24\t{transferCapOpenTB.name}\t{emitVmJson2 transferCapOpenTB}"

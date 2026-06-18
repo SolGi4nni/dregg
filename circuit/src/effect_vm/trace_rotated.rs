@@ -1413,6 +1413,10 @@ mod tests {
                 !s.is_empty()
                     && !s.ends_with("CapOpenVmDescriptor2R24")
                     && !s.ends_with("CapOpenEffVmDescriptor2R24")
+                    // the TURN-IDENTITY weld (CapOpenTurnPins.effCapOpenV3TB) is likewise
+                    // cap-PRESENCE-routed / self-verify, not reached by the effect→descriptor
+                    // resolvers — excluded from the resolver-cohort completeness audit.
+                    && !s.ends_with("CapOpenTBVmDescriptor2R24")
             })
             .collect();
         assert_eq!(
