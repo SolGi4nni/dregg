@@ -55,9 +55,9 @@ deployment negative test (forged published actor/src REJECTED); (2) the ACTOR↔
 column+PI so the light client SEES it and the owner disjunct is a decision on published data, but does not yet
 root it in the cap-tree); (3) FAN-OUT to the value/non-cap-open descriptors + the whole-turn forest apex
 (`RotatedKernelForestFacet`) so the WHOLE-turn conclusion's authority is turn-bound, not just the single-step
-transfer; (4) `dst`/`amt` welds analogous to `src`. PRE-EXISTING unrelated RED (do not attribute):
-`effect_vm_rotation_flip::rotated_audit_record_pin_forces_record_digest_and_rejects_frozen_forgery` (refusal
-record-pin PI 38, STARK constraint #11 — untouched by this change; emit diff is ONE appended line).
+transfer; (4) `dst`/`amt` welds analogous to `src`. COMMITTED `d64600d5a` (beachhead) + `cc6102b87` (the
+flip-test fix — the former "PRE-EXISTING RED" `rotated_audit_record_pin` was STALE #218/#219 debt:
+receiptArchive routes to B_LIFECYCLE not B_RECORD_DIGEST; now parametrized per-effect, 10/10 green).
 
 ACTIVE (2026-06-18) — the `facetEffGate` genuine-membership closure (residual (a) F6-FACET) + adversarial
 re-review. FOUND: the cap-open authority gate `facetEffGate` (`DeployedCapOpen.lean:205`) was implemented as
