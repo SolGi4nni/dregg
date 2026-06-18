@@ -183,6 +183,9 @@ def TRANSFER : Nat := 1
 -- Rust `columns::sel` twin or the gate would reject the HONEST row.
 def GRANT_CAP            : Nat := 3   -- columns::sel::GRANT_CAP
 def REVOKE_CAPABILITY    : Nat := 24  -- columns::sel::REVOKE_CAPABILITY
+def REFRESH_DELEGATION   : Nat := 29  -- columns::sel::REFRESH_DELEGATION
+def REVOKE_DELEGATION    : Nat := 30  -- columns::sel::REVOKE_DELEGATION
+def INTRODUCE            : Nat := 35  -- columns::sel::INTRODUCE
 def ATTENUATE_CAPABILITY : Nat := 48  -- columns::sel::ATTENUATE_CAPABILITY
 end sel
 

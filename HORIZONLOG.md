@@ -112,19 +112,24 @@ forgery.rs`: NEGATIVE `setfield_lead_with_foreign_transfer_tail_is_unsat` + `min
 `prove_vm_descriptor2`/check_constraints ALONE — row 1 rejected); POSITIVE
 `honest_homogeneous_setfield_still_proves_and_verifies` (no downgrade). Green: lake 4002 axiom-clean · selector
 3/3 · rotation-flip 11/11 · sovereign-rotated 19/19 · drift PASS · FP re-pinned.
-⚑ NAMED FOLLOW-UP — the CAP-OPEN variants stay gate-less. `delegateCapOpenV3 / grantCapCapOpenV3 /
-revokeCapabilityCapOpenV3 / attenuateCapOpenEffV3` (+ introduce/revoke/refresh/transfer cap-open) carry the SAME
-structural gap (their `effCapOpenV3 base name n` uses the bare `base.constraints`, no selectorGate). NOT closed
-here because (a) they are NOT on the deployed sovereign single-descriptor path — they route via PATH-PRESERVE
-`cap_open_route_for_run` (`full_turn_proof.rs:790/950`), which ALREADY splits heterogeneous turns per cohort
-(the tail becomes its OWN leg), strongly mitigating the tail-forgery; (b) gating them re-threads the in-circuit
-authority APEX — `Rfix_*_capOpen` `rfl` identities (`CircuitSoundnessAssembled.lean:186/204-224`) + the
-`…CapOpenEffV3_authorizes` keystones (`RotatedKernelRefinementFacet`/`…Exercise Auth`/`…FacetTurnBound`) all
-consume the bare cap-open def. CLOSURE SHAPE: apply `withSelectorGate <baseRuntimeSelector>` at each
-`…CapOpenV3` def in `CapOpenEmit.lean` (selectors: grantCap/delegate→3, revokeCapability→24, attenuate→48,
-introduce→35, revoke/refresh-delegation→30/29) + lift the `Rfix_*_capOpen` identities and authority keystones
-through `withSelectorGate_satisfied2` (the same monotonicity already proven). A bounded but real cutover — the
-larger lane the main loop schedules (VK-affecting, ember-gated).
+✅ CLOSED (2026-06-18) — the CAP-OPEN selectorGate residual is CUT OVER. All 8 cap-open descriptors in
+`CapOpenEmit.lean` are now `withSelectorGate <baseRuntimeSelector> (effCapOpenV3 …)`: transfer→1, attenuate→48,
+delegate→3, grantCap→3, introduce→35, revoke(Delegation)→30, refresh-delegation→29, revokeCapability→24 (the
+3 missing Lean `sel` twins INTRODUCE/REFRESH_DELEGATION/REVOKE_DELEGATION added to `EffectVmEmit.sel`, mirroring
+`columns.rs::sel`). The cascade was LIFTED not rebuilt: the 8 `…CapOpenV3_authorizes` keystones + 8
+`…_rejects_wrong_facet` teeth strip the appended gate via `withSelectorGate_satisfied2` before applying the bare
+`effCapOpenV3_satisfiedEff`/`…_authorizes`; the `Rfix_*_capOpen` `rfl` identities held UNCHANGED (both registry
+entry and RHS are the wrapped def); one downstream lift in `RotatedKernelRefinementFacet.transferAuthoritySourceG_to_eff`
+(strip the gate before feeding the parametric `EffAuthoritySource.hsat`). Completeness side UNAFFECTED (the
+`*_authorityComplete` rungs reference the BASE `(attenuateV3,name,n)` + `CapOpenTraceFloor`, not the wrapped def).
+TOOTH `circuit/tests/cap_open_self_verify.rs::cap_open_attenuate_foreign_selector_row_is_unsat` — an honest
+attenuate cap-open trace with a NOOP pad flipped to a foreign TRANSFER selector is UNSAT via `prove_vm_descriptor2`
+ALONE (the gate `(1-sel[NOOP])·(1-sel[48]) = 1·1 = 1 ≠ 0` bites for a ledgerless client). NO DOWNGRADE: the honest
+`cap_open_attenuate_self_verifies` + `cap_open_turn_bound_verifier_forces_published_identity` stay green. The gate
+is +1 `.base` constraint, NO new column (width/PI unchanged), so the asymmetry the value-cohort fix (`b9b8b6973`)
+left open is closed symmetrically. Green: lake 4002 axiom-clean · cap-open 3/3 · turn-bound 1/1 · selector 3/3 ·
+rotation-flip 11/11 · drift PASS · `V3_STAGED_REGISTRY_FP` re-pinned. VK DEPLOY ember-gated (the wire registry +
+FP changed; built+proven+emitted, NOT deployed).
 
 ACTIVE (2026-06-18) — the `facetEffGate` genuine-membership closure (residual (a) F6-FACET) + adversarial
 re-review. FOUND: the cap-open authority gate `facetEffGate` (`DeployedCapOpen.lean:205`) was implemented as

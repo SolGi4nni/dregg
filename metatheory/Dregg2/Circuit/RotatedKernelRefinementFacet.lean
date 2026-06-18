@@ -431,7 +431,12 @@ def transferAuthoritySourceG_to_eff (hash : List ℤ → ℤ) (fcaps : FacetCaps
   maddrs := src0.maddrs
   t := src0.t
   hChip := src0.hChip
-  hsat := src0.hsat
+  -- `TransferAuthoritySourceG.hsat` is over the DEPLOYED (selector-gated) `transferCapOpenEffV3`;
+  -- strip the appended `selectorGate` tooth (constraint-subset monotonicity) to land the parametric
+  -- `EffAuthoritySource.hsat` over the bare `effCapOpenV3 transferV3 …` the parametric source names.
+  hsat := Dregg2.Circuit.Emit.EffectVmEmitRotationV3.withSelectorGate_satisfied2
+    src0.S.chipAbsorb Dregg2.Circuit.Emit.EffectVmEmit.sel.TRANSFER _
+    src0.minit src0.mfin src0.maddrs src0.t src0.hsat
   i := src0.i
   hi := src0.hi
   leafAt := src0.leafAt

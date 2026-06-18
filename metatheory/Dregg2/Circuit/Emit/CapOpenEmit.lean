@@ -83,7 +83,8 @@ open Dregg2.Circuit.DeployedCapTree (CapLeaf CapHashScheme)
 open Dregg2.Circuit.DeployedCapTree.CapHashScheme
   (capLeafDigest MembersAt confersTransferLeaf DeployedFaithful
    deployedCapOpen_implies_authorizedB)
-open Dregg2.Circuit.Emit.EffectVmEmitRotationV3 (attenuateV3 APPENDIX_SPAN B_CAP_ROOT v3Of v3OfFrozen)
+open Dregg2.Circuit.Emit.EffectVmEmitRotationV3
+  (attenuateV3 APPENDIX_SPAN B_CAP_ROOT v3Of v3OfFrozen withSelectorGate withSelectorGate_satisfied2)
 open Dregg2.Authority (Label)
 open Dregg2.Exec.FacetAuthority (AuthProvided FacetCaps authorizedFacetB)
 
@@ -334,22 +335,28 @@ def revokeCapabilityBaseV3 : EffectVmDescriptor2 :=
 `EFFECT_DELEGATION_OPS` appendix). The cross-vat delegate routes the in-circuit cap-membership open; the
 cap must permit `EFFECT_DELEGATION_OPS` (`1 <<< 16`). -/
 def delegateCapOpenV3 : EffectVmDescriptor2 :=
-  effCapOpenV3 grantCapV3 "dregg-effectvm-delegateAtten-v1-rot24-v3-capopen" EFF_DELEGATION_OPS
+  withSelectorGate Dregg2.Circuit.Emit.EffectVmEmit.sel.GRANT_CAP
+    (effCapOpenV3 grantCapV3 "dregg-effectvm-delegateAtten-v1-rot24-v3-capopen" EFF_DELEGATION_OPS)
 /-- **`introduceCapOpenV3`** — introduce-via-cap; the cap must permit `EFFECT_INTRODUCE` (`1 <<< 13`). -/
 def introduceCapOpenV3 : EffectVmDescriptor2 :=
-  effCapOpenV3 introduceV3 "dregg-effectvm-introduce-v1-rot24-v3-capopen" EFF_INTRODUCE
+  withSelectorGate Dregg2.Circuit.Emit.EffectVmEmit.sel.INTRODUCE
+    (effCapOpenV3 introduceV3 "dregg-effectvm-introduce-v1-rot24-v3-capopen" EFF_INTRODUCE)
 /-- **`grantCapCapOpenV3`** — grantCap-via-cap; the cap must permit `EFFECT_GRANT_CAPABILITY` (`1 <<< 2`). -/
 def grantCapCapOpenV3 : EffectVmDescriptor2 :=
-  effCapOpenV3 grantCapV3 "dregg-effectvm-grantCap-v1-rot24-v3-capopen" EFF_GRANT_CAPABILITY
+  withSelectorGate Dregg2.Circuit.Emit.EffectVmEmit.sel.GRANT_CAP
+    (effCapOpenV3 grantCapV3 "dregg-effectvm-grantCap-v1-rot24-v3-capopen" EFF_GRANT_CAPABILITY)
 /-- **`revokeCapOpenV3`** — revoke(Delegation)-via-cap; the cap must permit `EFFECT_DELEGATION_OPS`. -/
 def revokeCapOpenV3 : EffectVmDescriptor2 :=
-  effCapOpenV3 revokeDelegationV3 "dregg-effectvm-revoke-v1-rot24-v3-capopen" EFF_DELEGATION_OPS
+  withSelectorGate Dregg2.Circuit.Emit.EffectVmEmit.sel.REVOKE_DELEGATION
+    (effCapOpenV3 revokeDelegationV3 "dregg-effectvm-revoke-v1-rot24-v3-capopen" EFF_DELEGATION_OPS)
 /-- **`refreshDelegationCapOpenV3`** — refreshDelegation-via-cap; cap must permit `EFFECT_DELEGATION_OPS`. -/
 def refreshDelegationCapOpenV3 : EffectVmDescriptor2 :=
-  effCapOpenV3 refreshDelegationV3 "dregg-effectvm-refresh-v1-rot24-v3-capopen" EFF_DELEGATION_OPS
+  withSelectorGate Dregg2.Circuit.Emit.EffectVmEmit.sel.REFRESH_DELEGATION
+    (effCapOpenV3 refreshDelegationV3 "dregg-effectvm-refresh-v1-rot24-v3-capopen" EFF_DELEGATION_OPS)
 /-- **`revokeCapabilityCapOpenV3`** — revokeCapability-via-cap; cap must permit `EFFECT_REVOKE_CAPABILITY`. -/
 def revokeCapabilityCapOpenV3 : EffectVmDescriptor2 :=
-  effCapOpenV3 revokeCapabilityBaseV3 "dregg-effectvm-revokeCapability-v1-rot24-v3-capopen" EFF_REVOKE_CAPABILITY
+  withSelectorGate Dregg2.Circuit.Emit.EffectVmEmit.sel.REVOKE_CAPABILITY
+    (effCapOpenV3 revokeCapabilityBaseV3 "dregg-effectvm-revokeCapability-v1-rot24-v3-capopen" EFF_REVOKE_CAPABILITY)
 
 /-- **`transferCapOpenEffV3`** (residual (a) — THE LIVE transfer cap-open) — the transfer base + the
 effect-GENERAL appendix at `EFF_TRANSFER` (bit 1). Carries `capOpenConstraintsEff 1`: the genuine SUBMASK facet gate
@@ -357,28 +364,33 @@ effect-GENERAL appendix at `EFF_TRANSFER` (bit 1). Carries `capOpenConstraintsEf
 `auth_tag`, not pinned Signature). This is the descriptor the live `transferCapOpenVmDescriptor2R24`
 routing proves through, so an honest transfer cap — broad mask, None/Signature tier — PROVES. -/
 def transferCapOpenEffV3 : EffectVmDescriptor2 :=
-  effCapOpenV3 transferV3 "dregg-effectvm-transfer-v1-rot24-v3-capopen-eff" EFF_TRANSFER
+  withSelectorGate Dregg2.Circuit.Emit.EffectVmEmit.sel.TRANSFER
+    (effCapOpenV3 transferV3 "dregg-effectvm-transfer-v1-rot24-v3-capopen-eff" EFF_TRANSFER)
 
 /-- **`attenuateCapOpenEffV3`** (residual (a) — THE LIVE attenuate cap-open) — the attenuate base + the
 effect-GENERAL appendix at `EFF_TRANSFER` (bit 1; the attenuate cap-open's leaf must permit
 `EFFECT_TRANSFER`, mirroring the deployed `attenuateCapOpenVmDescriptor2R24` routing). Genuine submask
 facet + decoded tier, so an honest broad/None-tier cap PROVES. -/
 def attenuateCapOpenEffV3 : EffectVmDescriptor2 :=
-  effCapOpenV3 attenuateV3 "dregg-effectvm-attenuateA-v1-rot24-v3-capopen-eff" EFF_TRANSFER
+  withSelectorGate Dregg2.Circuit.Emit.EffectVmEmit.sel.ATTENUATE_CAPABILITY
+    (effCapOpenV3 attenuateV3 "dregg-effectvm-attenuateA-v1-rot24-v3-capopen-eff" EFF_TRANSFER)
 
--- The live transfer/attenuate effect-general descriptors share the appendix: +63 constraints, +83 cols.
-#guard transferCapOpenEffV3.constraints.length == transferV3.constraints.length + 70
-#guard attenuateCapOpenEffV3.constraints.length == attenuateV3.constraints.length + 70
+-- The live transfer/attenuate effect-general descriptors share the appendix + the appended
+-- `selectorGate` tooth: +70 appendix constraints +1 selector gate = +71; +91 cols (the gate is
+-- a `.base`, no new column).
+#guard transferCapOpenEffV3.constraints.length == transferV3.constraints.length + 71
+#guard attenuateCapOpenEffV3.constraints.length == attenuateV3.constraints.length + 71
 #guard transferCapOpenEffV3.traceWidth == transferV3.traceWidth + 91
 #guard attenuateCapOpenEffV3.traceWidth == attenuateV3.traceWidth + 91
 
--- Each fan-out descriptor adds the 38-constraint effect-general appendix + 59 cols past its base.
-#guard delegateCapOpenV3.constraints.length == grantCapV3.constraints.length + 70
-#guard introduceCapOpenV3.constraints.length == introduceV3.constraints.length + 70
-#guard grantCapCapOpenV3.constraints.length == grantCapV3.constraints.length + 70
-#guard revokeCapOpenV3.constraints.length == revokeDelegationV3.constraints.length + 70
-#guard refreshDelegationCapOpenV3.constraints.length == refreshDelegationV3.constraints.length + 70
-#guard revokeCapabilityCapOpenV3.constraints.length == revokeCapabilityBaseV3.constraints.length + 70
+-- Each fan-out descriptor adds the 70-constraint effect-general appendix + the selector-gate tooth
+-- (+71 constraints total) + 91 cols past its base.
+#guard delegateCapOpenV3.constraints.length == grantCapV3.constraints.length + 71
+#guard introduceCapOpenV3.constraints.length == introduceV3.constraints.length + 71
+#guard grantCapCapOpenV3.constraints.length == grantCapV3.constraints.length + 71
+#guard revokeCapOpenV3.constraints.length == revokeDelegationV3.constraints.length + 71
+#guard refreshDelegationCapOpenV3.constraints.length == refreshDelegationV3.constraints.length + 71
+#guard revokeCapabilityCapOpenV3.constraints.length == revokeCapabilityBaseV3.constraints.length + 71
 #guard delegateCapOpenV3.traceWidth == grantCapV3.traceWidth + 91
 #guard introduceCapOpenV3.traceWidth == introduceV3.traceWidth + 91
 #guard grantCapCapOpenV3.traceWidth == grantCapV3.traceWidth + 91
@@ -423,6 +435,10 @@ theorem transferCapOpenEffV3_authorizes {State : Type} (S : CapHashScheme State)
     authorizedFacetB caps provided
       { actor := actor, src := src, dst := dst, amt := amt } = true
     ∧ (leafAt actor src).target = (src : ℤ) := by
+  -- Strip the appended `selectorGate` tooth (constraint-subset monotonicity) before applying the
+  -- bare keystone: the appendix reads no base/selector column, so the open is unaffected.
+  have hsat := withSelectorGate_satisfied2 S.chipAbsorb Dregg2.Circuit.Emit.EffectVmEmit.sel.TRANSFER
+    _ minit mfin maddrs t hsat
   have h := effCapOpenV3_authorizes (State := State) transferV3
     "dregg-effectvm-transfer-v1-rot24-v3-capopen-eff" EFF_TRANSFER (by decide)
     S vkOfTag provided minit mfin maddrs t hChip hsat i hi caps leafAt hfaith
@@ -453,6 +469,8 @@ theorem attenuateCapOpenEffV3_authorizes {State : Type} (S : CapHashScheme State
     authorizedFacetB caps provided
       { actor := actor, src := src, dst := dst, amt := amt } = true
     ∧ (leafAt actor src).target = (src : ℤ) := by
+  have hsat := withSelectorGate_satisfied2 S.chipAbsorb
+    Dregg2.Circuit.Emit.EffectVmEmit.sel.ATTENUATE_CAPABILITY _ minit mfin maddrs t hsat
   have h := effCapOpenV3_authorizes (State := State) attenuateV3
     "dregg-effectvm-attenuateA-v1-rot24-v3-capopen-eff" EFF_TRANSFER (by decide)
     S vkOfTag provided minit mfin maddrs t hChip hsat i hi caps leafAt hfaith
@@ -473,7 +491,9 @@ theorem transferCapOpenEffV3_rejects_wrong_facet (hash : List ℤ → ℤ)
   satisfiedEff_rejects_wrong_facet hash t.tf capOpenCols
     (Dregg2.Circuit.DescriptorIR2.envAt t i) EFF_TRANSFER hclear
     (effCapOpenV3_satisfiedEff transferV3 "dregg-effectvm-transfer-v1-rot24-v3-capopen-eff" EFF_TRANSFER
-      hash minit mfin maddrs t hsat i hi)
+      hash minit mfin maddrs t
+      (withSelectorGate_satisfied2 hash Dregg2.Circuit.Emit.EffectVmEmit.sel.TRANSFER
+        _ minit mfin maddrs t hsat) i hi)
 
 /-- **`attenuateCapOpenEffV3_rejects_wrong_facet` (the LIVE attenuate authority tooth).** As above over
 `attenuateCapOpenEffV3`: a leaf lacking the `EFF_TRANSFER` facet bit ⟹ the appendix is UNSAT. -/
@@ -485,7 +505,9 @@ theorem attenuateCapOpenEffV3_rejects_wrong_facet (hash : List ℤ → ℤ)
   satisfiedEff_rejects_wrong_facet hash t.tf capOpenCols
     (Dregg2.Circuit.DescriptorIR2.envAt t i) EFF_TRANSFER hclear
     (effCapOpenV3_satisfiedEff attenuateV3 "dregg-effectvm-attenuateA-v1-rot24-v3-capopen-eff" EFF_TRANSFER
-      hash minit mfin maddrs t hsat i hi)
+      hash minit mfin maddrs t
+      (withSelectorGate_satisfied2 hash Dregg2.Circuit.Emit.EffectVmEmit.sel.ATTENUATE_CAPABILITY
+        _ minit mfin maddrs t hsat) i hi)
 
 /-! ## §5.F — THE FAN-OUT AUTHORITY KEYSTONES (`…CapOpenV3_authorizes`): the 6 cap-effects' apex
 authority leg over their DEPLOYED fan-out descriptor.
@@ -522,7 +544,9 @@ theorem introduceCapOpenV3_authorizes {State : Type} (S : CapHashScheme State) (
     ∧ (leafAt actor src).target = (src : ℤ) :=
   effCapOpenV3_authorizes (State := State) introduceV3
     "dregg-effectvm-introduce-v1-rot24-v3-capopen" EFF_INTRODUCE (by decide)
-    S vkOfTag provided minit mfin maddrs t hChip hsat i hi caps leafAt hfaith
+    S vkOfTag provided minit mfin maddrs t hChip
+    (withSelectorGate_satisfied2 S.chipAbsorb Dregg2.Circuit.Emit.EffectVmEmit.sel.INTRODUCE
+      _ minit mfin maddrs t hsat) i hi caps leafAt hfaith
     actor src dst amt hsrc hedge htier
 
 /-- **`delegateCapOpenV3_authorizes`** — the LIVE delegate-via-cap authority keystone (the delegateAtten
@@ -546,7 +570,9 @@ theorem delegateCapOpenV3_authorizes {State : Type} (S : CapHashScheme State) (v
     ∧ (leafAt actor src).target = (src : ℤ) :=
   effCapOpenV3_authorizes (State := State) grantCapV3
     "dregg-effectvm-delegateAtten-v1-rot24-v3-capopen" EFF_DELEGATION_OPS (by decide)
-    S vkOfTag provided minit mfin maddrs t hChip hsat i hi caps leafAt hfaith
+    S vkOfTag provided minit mfin maddrs t hChip
+    (withSelectorGate_satisfied2 S.chipAbsorb Dregg2.Circuit.Emit.EffectVmEmit.sel.GRANT_CAP
+      _ minit mfin maddrs t hsat) i hi caps leafAt hfaith
     actor src dst amt hsrc hedge htier
 
 /-- **`grantCapCapOpenV3_authorizes`** — the LIVE grantCap-via-cap authority keystone. Discharges
@@ -569,7 +595,9 @@ theorem grantCapCapOpenV3_authorizes {State : Type} (S : CapHashScheme State) (v
     ∧ (leafAt actor src).target = (src : ℤ) :=
   effCapOpenV3_authorizes (State := State) grantCapV3
     "dregg-effectvm-grantCap-v1-rot24-v3-capopen" EFF_GRANT_CAPABILITY (by decide)
-    S vkOfTag provided minit mfin maddrs t hChip hsat i hi caps leafAt hfaith
+    S vkOfTag provided minit mfin maddrs t hChip
+    (withSelectorGate_satisfied2 S.chipAbsorb Dregg2.Circuit.Emit.EffectVmEmit.sel.GRANT_CAP
+      _ minit mfin maddrs t hsat) i hi caps leafAt hfaith
     actor src dst amt hsrc hedge htier
 
 /-- **`revokeCapOpenV3_authorizes`** — the LIVE revoke(Delegation)-via-cap authority keystone. Discharges
@@ -592,7 +620,9 @@ theorem revokeCapOpenV3_authorizes {State : Type} (S : CapHashScheme State) (vkO
     ∧ (leafAt actor src).target = (src : ℤ) :=
   effCapOpenV3_authorizes (State := State) revokeDelegationV3
     "dregg-effectvm-revoke-v1-rot24-v3-capopen" EFF_DELEGATION_OPS (by decide)
-    S vkOfTag provided minit mfin maddrs t hChip hsat i hi caps leafAt hfaith
+    S vkOfTag provided minit mfin maddrs t hChip
+    (withSelectorGate_satisfied2 S.chipAbsorb Dregg2.Circuit.Emit.EffectVmEmit.sel.REVOKE_DELEGATION
+      _ minit mfin maddrs t hsat) i hi caps leafAt hfaith
     actor src dst amt hsrc hedge htier
 
 /-- **`refreshDelegationCapOpenV3_authorizes`** — the LIVE refreshDelegation-via-cap authority keystone.
@@ -615,7 +645,9 @@ theorem refreshDelegationCapOpenV3_authorizes {State : Type} (S : CapHashScheme 
     ∧ (leafAt actor src).target = (src : ℤ) :=
   effCapOpenV3_authorizes (State := State) refreshDelegationV3
     "dregg-effectvm-refresh-v1-rot24-v3-capopen" EFF_DELEGATION_OPS (by decide)
-    S vkOfTag provided minit mfin maddrs t hChip hsat i hi caps leafAt hfaith
+    S vkOfTag provided minit mfin maddrs t hChip
+    (withSelectorGate_satisfied2 S.chipAbsorb Dregg2.Circuit.Emit.EffectVmEmit.sel.REFRESH_DELEGATION
+      _ minit mfin maddrs t hsat) i hi caps leafAt hfaith
     actor src dst amt hsrc hedge htier
 
 /-- **`revokeCapabilityCapOpenV3_authorizes`** — the LIVE revokeCapability-via-cap authority keystone.
@@ -639,7 +671,9 @@ theorem revokeCapabilityCapOpenV3_authorizes {State : Type} (S : CapHashScheme S
     ∧ (leafAt actor src).target = (src : ℤ) :=
   effCapOpenV3_authorizes (State := State) revokeCapabilityBaseV3
     "dregg-effectvm-revokeCapability-v1-rot24-v3-capopen" EFF_REVOKE_CAPABILITY (by decide)
-    S vkOfTag provided minit mfin maddrs t hChip hsat i hi caps leafAt hfaith
+    S vkOfTag provided minit mfin maddrs t hChip
+    (withSelectorGate_satisfied2 S.chipAbsorb Dregg2.Circuit.Emit.EffectVmEmit.sel.REVOKE_CAPABILITY
+      _ minit mfin maddrs t hsat) i hi caps leafAt hfaith
     actor src dst amt hsrc hedge htier
 
 /-! ### The fan-out authority TEETH (`…CapOpenV3_rejects_wrong_facet`): a leaf lacking the effect's
@@ -655,7 +689,9 @@ theorem introduceCapOpenV3_rejects_wrong_facet (hash : List ℤ → ℤ)
   satisfiedEff_rejects_wrong_facet hash t.tf capOpenCols
     (Dregg2.Circuit.DescriptorIR2.envAt t i) EFF_INTRODUCE hclear
     (effCapOpenV3_satisfiedEff introduceV3 "dregg-effectvm-introduce-v1-rot24-v3-capopen" EFF_INTRODUCE
-      hash minit mfin maddrs t hsat i hi)
+      hash minit mfin maddrs t
+      (withSelectorGate_satisfied2 hash Dregg2.Circuit.Emit.EffectVmEmit.sel.INTRODUCE
+        _ minit mfin maddrs t hsat) i hi)
 
 /-- **`delegateCapOpenV3_rejects_wrong_facet`** — a leaf lacking the `EFF_DELEGATION_OPS` bit ⟹ UNSAT. -/
 theorem delegateCapOpenV3_rejects_wrong_facet (hash : List ℤ → ℤ)
@@ -666,7 +702,9 @@ theorem delegateCapOpenV3_rejects_wrong_facet (hash : List ℤ → ℤ)
   satisfiedEff_rejects_wrong_facet hash t.tf capOpenCols
     (Dregg2.Circuit.DescriptorIR2.envAt t i) EFF_DELEGATION_OPS hclear
     (effCapOpenV3_satisfiedEff grantCapV3 "dregg-effectvm-delegateAtten-v1-rot24-v3-capopen"
-      EFF_DELEGATION_OPS hash minit mfin maddrs t hsat i hi)
+      EFF_DELEGATION_OPS hash minit mfin maddrs t
+      (withSelectorGate_satisfied2 hash Dregg2.Circuit.Emit.EffectVmEmit.sel.GRANT_CAP
+        _ minit mfin maddrs t hsat) i hi)
 
 /-- **`grantCapCapOpenV3_rejects_wrong_facet`** — a leaf lacking the `EFF_GRANT_CAPABILITY` bit ⟹ UNSAT. -/
 theorem grantCapCapOpenV3_rejects_wrong_facet (hash : List ℤ → ℤ)
@@ -677,7 +715,9 @@ theorem grantCapCapOpenV3_rejects_wrong_facet (hash : List ℤ → ℤ)
   satisfiedEff_rejects_wrong_facet hash t.tf capOpenCols
     (Dregg2.Circuit.DescriptorIR2.envAt t i) EFF_GRANT_CAPABILITY hclear
     (effCapOpenV3_satisfiedEff grantCapV3 "dregg-effectvm-grantCap-v1-rot24-v3-capopen"
-      EFF_GRANT_CAPABILITY hash minit mfin maddrs t hsat i hi)
+      EFF_GRANT_CAPABILITY hash minit mfin maddrs t
+      (withSelectorGate_satisfied2 hash Dregg2.Circuit.Emit.EffectVmEmit.sel.GRANT_CAP
+        _ minit mfin maddrs t hsat) i hi)
 
 /-- **`revokeCapOpenV3_rejects_wrong_facet`** — a leaf lacking the `EFF_DELEGATION_OPS` bit ⟹ UNSAT. -/
 theorem revokeCapOpenV3_rejects_wrong_facet (hash : List ℤ → ℤ)
@@ -688,7 +728,9 @@ theorem revokeCapOpenV3_rejects_wrong_facet (hash : List ℤ → ℤ)
   satisfiedEff_rejects_wrong_facet hash t.tf capOpenCols
     (Dregg2.Circuit.DescriptorIR2.envAt t i) EFF_DELEGATION_OPS hclear
     (effCapOpenV3_satisfiedEff revokeDelegationV3 "dregg-effectvm-revoke-v1-rot24-v3-capopen"
-      EFF_DELEGATION_OPS hash minit mfin maddrs t hsat i hi)
+      EFF_DELEGATION_OPS hash minit mfin maddrs t
+      (withSelectorGate_satisfied2 hash Dregg2.Circuit.Emit.EffectVmEmit.sel.REVOKE_DELEGATION
+        _ minit mfin maddrs t hsat) i hi)
 
 /-- **`refreshDelegationCapOpenV3_rejects_wrong_facet`** — a leaf lacking `EFF_DELEGATION_OPS` ⟹ UNSAT. -/
 theorem refreshDelegationCapOpenV3_rejects_wrong_facet (hash : List ℤ → ℤ)
@@ -699,7 +741,9 @@ theorem refreshDelegationCapOpenV3_rejects_wrong_facet (hash : List ℤ → ℤ)
   satisfiedEff_rejects_wrong_facet hash t.tf capOpenCols
     (Dregg2.Circuit.DescriptorIR2.envAt t i) EFF_DELEGATION_OPS hclear
     (effCapOpenV3_satisfiedEff refreshDelegationV3 "dregg-effectvm-refresh-v1-rot24-v3-capopen"
-      EFF_DELEGATION_OPS hash minit mfin maddrs t hsat i hi)
+      EFF_DELEGATION_OPS hash minit mfin maddrs t
+      (withSelectorGate_satisfied2 hash Dregg2.Circuit.Emit.EffectVmEmit.sel.REFRESH_DELEGATION
+        _ minit mfin maddrs t hsat) i hi)
 
 /-- **`revokeCapabilityCapOpenV3_rejects_wrong_facet`** — a leaf lacking `EFF_REVOKE_CAPABILITY` ⟹ UNSAT. -/
 theorem revokeCapabilityCapOpenV3_rejects_wrong_facet (hash : List ℤ → ℤ)
@@ -710,7 +754,9 @@ theorem revokeCapabilityCapOpenV3_rejects_wrong_facet (hash : List ℤ → ℤ)
   satisfiedEff_rejects_wrong_facet hash t.tf capOpenCols
     (Dregg2.Circuit.DescriptorIR2.envAt t i) EFF_REVOKE_CAPABILITY hclear
     (effCapOpenV3_satisfiedEff revokeCapabilityBaseV3 "dregg-effectvm-revokeCapability-v1-rot24-v3-capopen"
-      EFF_REVOKE_CAPABILITY hash minit mfin maddrs t hsat i hi)
+      EFF_REVOKE_CAPABILITY hash minit mfin maddrs t
+      (withSelectorGate_satisfied2 hash Dregg2.Circuit.Emit.EffectVmEmit.sel.REVOKE_CAPABILITY
+        _ minit mfin maddrs t hsat) i hi)
 
 /-! ## §6 — the registry WITH the cap-open (F5 — `Rfix` ranges over the LIVE authority descriptor).
 

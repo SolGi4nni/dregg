@@ -24,6 +24,7 @@ use dregg_cell::{AuthRequired, Cell, Ledger, Permissions};
 use dregg_circuit::descriptor_ir2::{
     MemBoundaryWitness, parse_vm_descriptor2, prove_vm_descriptor2,
 };
+use dregg_circuit::effect_vm::columns::sel;
 use dregg_circuit::effect_vm::trace_rotated::{
     CAP_OPEN_BASE, CAP_OPEN_WIDTH, CapOpenWitness, FACET_MASK_HI, RotatedBlockWitness,
     SIGNATURE_AUTH_TAG, WRITE_MASK_LO, empty_caveat_manifest, generate_rotated_effect_vm_trace,
@@ -288,5 +289,58 @@ fn cap_open_attenuate_self_verifies() {
     eprintln!(
         "CAP-OPEN NEGATIVE TEETH GREEN: forged sibling rejected; wrong facet rejected; wrong tier \
          rejected."
+    );
+}
+
+/// THE SELECTOR-GATE FORGERY TOOTH (cap-open family). The cap-open descriptors now carry the
+/// `selectorGate <baseRuntimeSelector>` tooth (Lean `EffectVmEmitRotationV3.withSelectorGate`,
+/// `Dregg2.Circuit.Emit.CapOpenEmit` — the attenuate cap-open gates on `sel::ATTENUATE_CAPABILITY =
+/// 48`). The per-row body `(1 - sel[NOOP])·(1 - sel[48])` is forced ZERO on every row, so a non-pad
+/// row must carry the descriptor's OWN runtime selector. A row carrying a FOREIGN selector
+/// (`sel[NOOP] = 0`, `sel[48] = 0`, `sel[TRANSFER] = 1`) makes the body `1·1 = 1 ≠ 0` → UNSAT, at
+/// `prove_vm_descriptor2` ALONE (no ledger). This closes the gate-asymmetry residual that the
+/// value-cohort fix (`b9b8b6973`) left open on the cap-open family — defense-in-depth made symmetric.
+#[test]
+fn cap_open_attenuate_foreign_selector_row_is_unsat() {
+    let desc = parse_vm_descriptor2(reg_json(CAP_OPEN_KEY)).expect("cap-open descriptor parses");
+    let (mut trace, pis) = build_attenuate_base();
+    let w = cap_open_witness();
+    widen_to_cap_open(&mut trace, &w).expect("widen to cap-open");
+
+    let mem_boundary = MemBoundaryWitness::default();
+    let map_heaps: Vec<Vec<HeapLeaf>> = vec![];
+
+    // Honest baseline proves+self-verifies (the active row carries sel[48], the pads carry sel[NOOP]).
+    prove_vm_descriptor2(&desc, &trace, &pis, &mem_boundary, &map_heaps)
+        .expect("honest attenuate cap-open trace proves before the forgery");
+
+    // Locate a NOOP pad row (the honest tail) and flip it to a FOREIGN selector (TRANSFER), the
+    // smoking gun the appended gate forbids: a row whose transition this descriptor never binds.
+    let pad = trace
+        .iter()
+        .position(|row| row[sel::NOOP] == BabyBear::ONE)
+        .expect("the cap-open trace carries at least one NOOP pad row");
+    assert_eq!(
+        trace[pad][sel::ATTENUATE_CAPABILITY],
+        BabyBear::ZERO,
+        "the pad row does not carry the attenuate selector"
+    );
+    trace[pad][sel::NOOP] = BabyBear::ZERO;
+    trace[pad][sel::TRANSFER] = BabyBear::ONE;
+
+    let refused = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        prove_vm_descriptor2(&desc, &trace, &pis, &mem_boundary, &map_heaps)
+    }));
+    let rejected = matches!(refused, Err(_)) || matches!(refused, Ok(Err(_)));
+    assert!(
+        rejected,
+        "SOUNDNESS (light-client unfoolable): a foreign-selector (TRANSFER) row under the \
+         attenuate cap-open descriptor MUST be UNSAT — the appended `selectorGate \
+         ATTENUATE_CAPABILITY` rejects it"
+    );
+
+    eprintln!(
+        "CAP-OPEN SELECTOR-GATE FORGERY TOOTH GREEN: a foreign-TRANSFER row under \
+         attenuateCapOpenEffVmDescriptor2R24 is UNSAT (the selector-binding gate bites)."
     );
 }
