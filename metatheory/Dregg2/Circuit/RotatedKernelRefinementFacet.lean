@@ -12,8 +12,8 @@ two-axis (tier × facet) gate.
 
 This module repoints that conjunct onto the FAITHFUL `authorizedFacetB`
 (`Dregg2.Exec.FacetAuthority`), and DISCHARGES it — no longer carried — from the IN-CIRCUIT cap-open
-the descriptor now realizes (`CapOpenEmit.capOpenAttenuateV3_authorizes` /
-`DeployedCapOpen.capOpen_authorizes`). It is PURELY ADDITIVE: the toy `BalanceMovementSpec`,
+the descriptor now realizes (`CapOpenEmit.transferCapOpenEffV3_authorizes` — the LIVE membership
+descriptor the deployed prover routes through). It is PURELY ADDITIVE: the toy `BalanceMovementSpec`,
 `admitGuardA`, `authorizedB`, and the ~150 modules that read them are UNTOUCHED.
 
 ## What is built (the three rungs of the prompt)
@@ -81,10 +81,10 @@ open Dregg2.Circuit.Spec.BalanceMovement
 open Dregg2.Circuit.RotatedKernelRefinement
 open Dregg2.Circuit.DeployedCapTree (CapLeaf CapHashScheme)
 open Dregg2.Circuit.DeployedCapTree.CapHashScheme
-  (MembersAt confersTransferLeaf DeployedFaithful)
+  (MembersAt confersTransferLeaf DeployedFaithful DeployedFaithfulEff tierOfTag)
 open Dregg2.Circuit.DeployedCapOpen (CapOpenCols leafOf)
 open Dregg2.Circuit.Emit.CapOpenEmit
-  (capOpenAttenuateV3 capOpenCols capOpenAttenuateV3_authorizes)
+  (transferCapOpenEffV3 capOpenCols transferCapOpenEffV3_authorizes EFF_TRANSFER)
 open Dregg2.Circuit.DescriptorIR2 (VmTrace Satisfied2 ChipTableSound TraceFamily envAt)
 open Dregg2.Circuit.CircuitSoundness
 
@@ -215,7 +215,7 @@ The apex hands the rung a `StateDecode S pc pre post` + a `Satisfied2 hash trans
 VALUE leg of the faithful spec is forced by `RotatedKernelRefinement.transfer_descriptorRefines`,
 which needs a `rotatedEncodes pre post` boundary decode. The AUTHORITY leg needs the cap-open's
 `authorizedFacetB`, which the live descriptor's cap-open realizes — but to fire
-`capOpenAttenuateV3_authorizes` we need its row data: the cap-open `Satisfied2` (the descriptor's
+`transferCapOpenEffV3_authorizes` we need its row data: the cap-open `Satisfied2` (the descriptor's
 appendix is satisfied), the chip-table soundness, the deployed `DeployedFaithful` for the decoded
 `fcaps`, and the `(actor ⇒ src)` edge identification (`hsrc`/`hedge`). NONE of these is derivable
 from `StateDecode` (the commitment surface commits the LEDGER, not the cap-tree leaf assignment).
@@ -228,7 +228,7 @@ DERIVED from it (`authoritySource_authorizes`), not taken as a field. -/
 The realizability of the prover's IN-CIRCUIT cap-tree opening for the transfer's authority: a cap-open
 `Satisfied2` witness of the live cap-open descriptor (against a sound chip table) whose opened leaf IS
 the deployed-faithful `(actor ⇒ src)` edge, with the decoded `fcaps` the deployed faithfulness backs.
-The authority conclusion is FORCED from these (via `capOpenAttenuateV3_authorizes`); they are the
+The authority conclusion is FORCED from these (via `transferCapOpenEffV3_authorizes`); they are the
 cap-tree residual the ledger commitment cannot certify — carried, named (exactly as `StarkSound` is).
 DATA-bearing (`Type`, like `rotatedEncodes`): it exhibits the cap-open trace + row + leaf assignment,
 so the authority derivation reads them directly rather than burying them existentially. -/
@@ -247,36 +247,44 @@ structure TransferAuthoritySource (hash : List ℤ → ℤ) (fcaps : FacetCaps)
   t : VmTrace
   /-- the chip table is sound (the chip's hash IS the deployed cap-hash `S.chipAbsorb`). -/
   hChip : ChipTableSound S.chipAbsorb (t.tf .poseidon2)
-  /-- the cap-open descriptor's appendix is satisfied (the depth-16 Merkle open). -/
-  hsat : Satisfied2 S.chipAbsorb capOpenAttenuateV3 minit mfin maddrs t
+  /-- the LIVE transfer cap-open descriptor's appendix is satisfied (the depth-16 Merkle open + the
+  genuine `EFF_TRANSFER` submask facet gate + the decoded tier). This is the descriptor the live
+  `transferCapOpenVmDescriptor2R24` route proves through (the genuine submask facet + decoded tier). -/
+  hsat : Satisfied2 S.chipAbsorb transferCapOpenEffV3 minit mfin maddrs t
   /-- the cap-open row index. -/
   i : Nat
   hi : i < t.rows.length
   /-- the deployed leaf assignment the cap-tree root realizes. -/
   leafAt : Dregg2.Authority.Label → Dregg2.Authority.Label → CapLeaf
-  /-- the decoded `fcaps` are deployed-faithfully realized by `leafAt` at the cap-open's root. -/
-  hfaith : DeployedFaithful S vkOfTag .signature fcaps ((envAt t i).loc capOpenCols.capRoot) leafAt
+  /-- the decoded `fcaps` are deployed-faithfully realized by `leafAt` at the cap-open's root, over the
+  turn's ACTUAL effect bit (`1 <<< EFF_TRANSFER`), the effect-general faithfulness. -/
+  hfaith : DeployedFaithfulEff S vkOfTag .signature (1 <<< EFF_TRANSFER) fcaps
+    ((envAt t i).loc capOpenCols.capRoot) leafAt
   /-- the cap-open row's `src` column IS the turn's `src`. -/
   hsrc : (envAt t i).loc capOpenCols.src = (tr.src : ℤ)
   /-- the opened leaf IS the faithful `(actor ⇒ src)` edge leaf. -/
   hedge : leafOf capOpenCols (envAt t i) = leafAt tr.actor tr.src
+  /-- the pinned `.signature` satisfies the tier DECODED off the committed leaf (the decoded-tier
+  side condition the live keystone consumes; for the `.signature` pin this is the realizable fact that
+  the committed cap's tier admits a signature). -/
+  htier : (tierOfTag vkOfTag (leafAt tr.actor tr.src).auth_tag).isSatisfiedBy .signature = true
 
 /-- **`authoritySource_authorizes` — the cap-open FORCES the deployed authority.** From a
 `TransferAuthoritySource`, the deployed two-axis `authorizedFacetB fcaps .signature tr` PASSES: the
 in-circuit depth-16 cap-membership open discharges the faithful authority gate
-(`capOpenAttenuateV3_authorizes`). The authority leg is NOT carried — it is forced by the circuit. -/
+(`transferCapOpenEffV3_authorizes`). The authority leg is NOT carried — it is forced by the circuit. -/
 theorem authoritySource_authorizes (hash : List ℤ → ℤ) (fcaps : FacetCaps)
     (pre : RecChainedState) (tr : Turn)
     (src0 : TransferAuthoritySource hash fcaps pre tr) :
     authorizedFacetB fcaps .signature tr = true := by
-  -- `capOpenAttenuateV3_authorizes` concludes the gate over the rebuilt turn record
+  -- `transferCapOpenEffV3_authorizes` concludes the gate over the rebuilt turn record
   -- `⟨actor,src,dst,amt⟩`; since `Turn` is exactly those four fields, that record IS `tr` by eta, so
   -- the goal converts to the literal definitionally (`show`).
   show authorizedFacetB fcaps .signature
       { actor := tr.actor, src := tr.src, dst := tr.dst, amt := tr.amt } = true
-  exact (capOpenAttenuateV3_authorizes src0.S src0.vkOfTag src0.minit src0.mfin src0.maddrs
+  exact (transferCapOpenEffV3_authorizes src0.S src0.vkOfTag .signature src0.minit src0.mfin src0.maddrs
     src0.t src0.hChip src0.hsat src0.i src0.hi fcaps src0.leafAt src0.hfaith
-    tr.actor tr.src tr.dst tr.amt src0.hsrc src0.hedge).1
+    tr.actor tr.src tr.dst tr.amt src0.hsrc src0.hedge src0.htier).1
 
 /-! ## §3.G — F6: the GENERAL-TIER cap-open authority source (decoded `auth_tag`, not pinned).
 
@@ -301,15 +309,16 @@ structure TransferAuthoritySourceG (hash : List ℤ → ℤ) (fcaps : FacetCaps)
   maddrs : List ℤ
   t : VmTrace
   hChip : ChipTableSound S.chipAbsorb (t.tf .poseidon2)
-  hsat : Satisfied2 S.chipAbsorb capOpenAttenuateV3 minit mfin maddrs t
+  hsat : Satisfied2 S.chipAbsorb transferCapOpenEffV3 minit mfin maddrs t
   i : Nat
   hi : i < t.rows.length
   leafAt : Dregg2.Authority.Label → Dregg2.Authority.Label → CapLeaf
-  hfaith : DeployedFaithful S vkOfTag provided fcaps ((envAt t i).loc capOpenCols.capRoot) leafAt
+  hfaith : DeployedFaithfulEff S vkOfTag provided (1 <<< EFF_TRANSFER) fcaps
+    ((envAt t i).loc capOpenCols.capRoot) leafAt
   hsrc : (envAt t i).loc capOpenCols.src = (tr.src : ℤ)
   hedge : leafOf capOpenCols (envAt t i) = leafAt tr.actor tr.src
   /-- the off-circuit auth satisfies the tier DECODED off the committed leaf (NOT a Signature pin). -/
-  htier : (Dregg2.Circuit.DeployedCapTree.CapHashScheme.tierOfTag vkOfTag
+  htier : (tierOfTag vkOfTag
       (leafAt tr.actor tr.src).auth_tag).isSatisfiedBy provided = true
 
 /-- **`authoritySourceG_authorizes` (F6) — the cap-open FORCES the GENERAL-tier deployed authority.**
@@ -322,7 +331,7 @@ theorem authoritySourceG_authorizes (hash : List ℤ → ℤ) (fcaps : FacetCaps
     authorizedFacetB fcaps provided tr = true := by
   show authorizedFacetB fcaps provided
       { actor := tr.actor, src := tr.src, dst := tr.dst, amt := tr.amt } = true
-  exact (Dregg2.Circuit.Emit.CapOpenEmit.capOpenAttenuateV3_authorizes_tierGeneral
+  exact (transferCapOpenEffV3_authorizes
     src0.S src0.vkOfTag provided src0.minit src0.mfin src0.maddrs src0.t src0.hChip src0.hsat
     src0.i src0.hi fcaps src0.leafAt src0.hfaith tr.actor tr.src tr.dst tr.amt src0.hsrc
     src0.hedge src0.htier).1

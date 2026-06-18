@@ -830,7 +830,7 @@ pub fn empty_caveat_manifest() -> RotatedCaveatManifest {
 
 // ============================================================================
 // THE CAP-OPEN APPENDIX (Lean `Dregg2.Circuit.Emit.CapOpenEmit` —
-// `capOpenAttenuateV3`, descriptor `dregg-effectvm-attenuateA-v1-rot24-v3-capopen`).
+// `attenuateCapOpenEffV3`, descriptor `dregg-effectvm-attenuateA-v1-rot24-v3-capopen-eff`).
 //
 // The cap-open appendix EXTENDS the rotated base trace with 59 columns
 // that OPEN the deployed depth-16 cap-tree at a write-mask leaf whose target is the
@@ -1392,7 +1392,7 @@ mod tests {
     /// names nothing the registry lacks (fail-closed for non-cohort effects).
     #[test]
     fn resolvers_cover_exactly_the_rotated_registry() {
-        // The cap-open members (`capOpenAttenuateV3` + `transferCapOpenV3`) are SELF-VERIFY /
+        // The cap-open members (the LIVE `transferCapOpenEffV3`/`attenuateCapOpenEffV3` + 6 fan-out) are SELF-VERIFY /
         // cap-PRESENCE-routed descriptors: they carry the 59-column cap-membership appendix and are
         // NOT reached by the effect→descriptor resolvers (no live effect selects them by kind; the
         // rotated generator widens a base trace into them explicitly via `widen_to_cap_open` when a

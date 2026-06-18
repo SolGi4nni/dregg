@@ -30,7 +30,7 @@ open Dregg2.Circuit.Emit.EffectVmEmitRotationR (rotationProbeVmDescriptorR2)
 open Dregg2.Circuit.Emit.EffectVmEmitRotationCaveat
   (rotationCaveatLayoutManifest rotationCaveatProbeVmDescriptor2)
 open Dregg2.Circuit.Emit.EffectVmEmitRotationV3 (v3Registry)
-open Dregg2.Circuit.Emit.CapOpenEmit (capOpenAttenuateV3 v3RegistryCapOpen)
+open Dregg2.Circuit.Emit.CapOpenEmit (v3RegistryCapOpen)
 
 def main : IO Unit := do
   IO.println s!"rotationLayoutManifest\t{rotationLayoutManifest}"

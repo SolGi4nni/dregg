@@ -1,6 +1,6 @@
 /-
 # Dregg2.Circuit.RotatedKernelRefinementExerciseAuth — the exercise HOLD-GATE, FORCED in-circuit via
-  the deployed depth-16 cap-open membership (`CapOpenEmit.capOpenAttenuateV3_sound`), and the inner-fold
+  the deployed depth-16 cap-open membership (`CapOpenEmit.effCapOpenV3_satisfiedEff`), and the inner-fold
   connected to the WHOLE-TURN closed forest.
 
 ## What this closes (the exercise AUTHORITY residual)
@@ -9,7 +9,7 @@
 `holdGate`, `innerFold` — but carried the **hold-gate** `exerciseGuard pre actor target` as a bare
 `Prop` HYPOTHESIS (`exerciseEncodes.holdGate`), discharged only by reference to "the deployed cap-open".
 This module DISCHARGES it: the hold-gate IS a cap MEMBERSHIP (`(caps actor).any (confersEdgeTo target)`),
-and the deployed cap-open (`capOpenAttenuateV3_sound`) FORCES that membership in-circuit — exactly the
+and the deployed cap-open (the live cap-open membership (`effCapOpenV3_satisfiedEff`/`capOpenEff_membership`)) FORCES that membership in-circuit — exactly the
 template `RotatedKernelRefinementFacet.TransferAuthoritySource` uses to force `authorizedFacetB` for
 transfer. We build `ExerciseHoldSource`, the cap-open authority bundle for exercise, and DERIVE the
 hold-gate from it (NOT a carried field).
@@ -18,7 +18,7 @@ hold-gate from it (NOT a carried field).
 
   1. **AUTHORITY (the hold-gate)** — `ExerciseHoldSource` (DATA-bearing, like `TransferAuthoritySource`)
      bundles the cap-open `Satisfied2` witness + chip-soundness + the row index, from which
-     `capOpenAttenuateV3_sound` FORCES the deployed membership `MembersAt cap_root leaf ∧ leaf.target =
+     the live cap-open membership (`effCapOpenV3_satisfiedEff`/`capOpenEff_membership`) FORCES the deployed membership `MembersAt cap_root leaf ∧ leaf.target =
      target ∧ confersTransferLeaf leaf` IN-CIRCUIT. The lift from this DEPLOYED membership to the toy
      `exerciseGuard` (a `(caps actor).any (confersEdgeTo target)` over the toy `Caps` function) is the
      FAITHFUL cap-tree↔kernel-`Caps` encoding `ExerciseHoldFaithful` — the SAME residual class
@@ -62,7 +62,7 @@ open Dregg2.Circuit.ActionDispatch
 open Dregg2.Circuit.DeployedCapTree (CapLeaf CapHashScheme)
 open Dregg2.Circuit.DeployedCapTree.CapHashScheme (MembersAt confersTransferLeaf)
 open Dregg2.Circuit.DeployedCapOpen (CapOpenCols leafOf)
-open Dregg2.Circuit.Emit.CapOpenEmit (capOpenAttenuateV3 capOpenCols capOpenAttenuateV3_sound)
+open Dregg2.Circuit.Emit.CapOpenEmit (attenuateCapOpenEffV3 capOpenCols)
 open Dregg2.Circuit.DescriptorIR2 (VmTrace Satisfied2 ChipTableSound envAt)
 open Dregg2.Circuit.RotatedKernelRefinementExercise (exerciseEncodes)
 
@@ -75,7 +75,7 @@ set_option linter.unusedVariables false
 it bundles the prover's IN-CIRCUIT cap-tree opening for the exercise's hold-gate — the cap-open
 `Satisfied2` witness whose opened leaf confers an authority edge to `target` — TOGETHER with the
 FAITHFUL encoding carrier that lifts the deployed membership to the toy `exerciseGuard`. The deployed
-membership is FORCED by the circuit (`capOpenAttenuateV3_sound`); the toy↔deployed encoding is the named
+membership is FORCED by the circuit (the live cap-open membership (`effCapOpenV3_satisfiedEff`/`capOpenEff_membership`)); the toy↔deployed encoding is the named
 residual the ledger commitment cannot certify. -/
 
 /-- **`ExerciseHoldFaithful pre actor target leaf` — the toy↔deployed hold-gate encoding (NAMED).** A
@@ -95,7 +95,7 @@ The realizability of the prover's IN-CIRCUIT cap-tree opening for the exercise h
 `Satisfied2` witness of the live descriptor (against a sound chip table) at row `i`, whose opened leaf's
 target-column IS the exercise `target`, plus the faithful encoding (`ExerciseHoldFaithful`) lifting the
 deployed membership to the toy `exerciseGuard`. The hold-gate membership is FORCED from these (via
-`capOpenAttenuateV3_sound`); only the toy↔deployed encoding is the carried residual — exactly as
+the live cap-open membership (`effCapOpenV3_satisfiedEff`/`capOpenEff_membership`)); only the toy↔deployed encoding is the carried residual — exactly as
 `TransferAuthoritySource` carries `DeployedFaithful`. DATA-bearing (`Type`, like `rotatedEncodes`). -/
 structure ExerciseHoldSource (pre : RecChainedState) (actor target : CellId) : Type 1 where
   /-- the deployed cap-hash scheme the cap-tree commits under (its existential state type). -/
@@ -111,8 +111,9 @@ structure ExerciseHoldSource (pre : RecChainedState) (actor target : CellId) : T
   t : VmTrace
   /-- the chip table is sound (the chip's hash IS the deployed cap-hash `S.chipAbsorb`). -/
   hChip : ChipTableSound S.chipAbsorb (t.tf .poseidon2)
-  /-- the cap-open descriptor's appendix is satisfied (the depth-16 Merkle open). -/
-  hsat : Satisfied2 S.chipAbsorb capOpenAttenuateV3 minit mfin maddrs t
+  /-- the cap-open descriptor's appendix is satisfied (the depth-16 Merkle open). The LIVE
+  `attenuateCapOpenEffV3` descriptor (genuine submask facet + decoded tier). -/
+  hsat : Satisfied2 S.chipAbsorb attenuateCapOpenEffV3 minit mfin maddrs t
   /-- the cap-open row index. -/
   i : Nat
   hi : i < t.rows.length
@@ -123,7 +124,7 @@ structure ExerciseHoldSource (pre : RecChainedState) (actor target : CellId) : T
 
 /-- **`exercise_holdGate_forced` — the cap-open FORCES the exercise hold-gate (in-circuit membership).**
 From an `ExerciseHoldSource`, the toy hold-gate `exerciseGuard pre actor target` HOLDS: the in-circuit
-depth-16 cap-membership open (`capOpenAttenuateV3_sound`) forces the deployed membership conferring a
+depth-16 cap-membership open (the live cap-open membership (`effCapOpenV3_satisfiedEff`/`capOpenEff_membership`)) forces the deployed membership conferring a
 `target` edge, and the faithful encoding (`hfaith`) lifts it to the toy hold-gate. The hold-gate's
 MEMBERSHIP is NOT carried as a `Prop` hypothesis — it is FORCED by the circuit (only the toy↔deployed
 encoding is the named carrier). -/

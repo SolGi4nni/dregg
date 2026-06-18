@@ -814,7 +814,7 @@ pub const V3_STAGED_CAVEAT_DESCRIPTORS: &[(&str, &str, &str)] = &[(
 pub const V3_STAGED_REGISTRY_TSV: &str =
     include_str!("../descriptors/rotation-v3-staged-registry.tsv");
 pub const V3_STAGED_REGISTRY_FP: &str =
-    "a33875e7a37d3c043be963abf755b04501f29028b2918554d18bb89675adfe40";
+    "e849246168c8998ed21123b5d14bc80754872cafc4f38e9cdd1386bee7578cbe";
 
 /// The rotated probe layout at register count `r` (the Rust twin of the Lean parametric
 /// layout `EffectVmEmitRotationR`: columns are FUNCTIONS of R; the chunking is 4-wide head,
@@ -1591,7 +1591,7 @@ mod tests {
             let d = parse_vm_descriptor2(json)
                 .unwrap_or_else(|e| panic!("v3 registry {key} failed parse_vm_descriptor2: {e}"));
 
-            // THE CAP-OPEN MEMBERS (`capOpenAttenuateV3` + `transferCapOpenV3`, residual (b)) carry
+            // THE CAP-OPEN MEMBERS (the LIVE `transferCapOpenEffV3`/`attenuateCapOpenEffV3` + 6 fan-out) carry
             // the 59-column cap-membership APPENDIX past the shared rotated layout (= V1_WIDTH +
             // APPENDIX_SPAN + 59) plus 1 leaf + 16 node chip-lookups + the cap-open base gates. The
             // appendix is 59 = the 58 prior columns + 1 `effBit` column (residual (a): the turn's
@@ -1866,12 +1866,13 @@ mod tests {
             }
         }
         assert_eq!(
-            n, 46,
-            "expected the 36-member rotated cohort (28 v2-graduated + 8 widened) + the 8 \
-             Signature-pinned cap-open members (attenuate + transfer + the 6 fan-out: \
-             delegate/introduce/grantCap/revoke/refreshDelegation/revokeCapability — each \
-             *CapOpenVmDescriptor2R24) + the 2 live effect-general legs \
-             (transfer/attenuate *CapOpenEffVmDescriptor2R24)"
+            n, 44,
+            "expected the 36-member rotated cohort (28 v2-graduated + 8 widened) + the 6 fan-out \
+             cap-open members (delegate/introduce/grantCap/revoke/refreshDelegation/revokeCapability \
+             — each *CapOpenVmDescriptor2R24) + the 2 LIVE effect-general legs \
+             (transfer/attenuate *CapOpenEffVmDescriptor2R24). The Signature-pinned \
+             capOpenAttenuateV3/transferCapOpenV3 were DELETED (Stage D — the apex authority leg \
+             refines the LIVE *CapOpenEffV3 descriptors, so nothing is proven about an unwired one)."
         );
     }
 

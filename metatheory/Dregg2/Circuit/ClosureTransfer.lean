@@ -41,7 +41,7 @@ each AS FAR AS it honestly goes, leaving ONLY the cap-open authority witness car
 
   4. **Authority** — `guardAuth : authorizedB pre.kernel.caps tr = true`. THIS is the genuine
      irreducible residual: the authority rides the cap-open, a SEPARATE descriptor
-     (`capOpenAttenuateV3`) whose `Satisfied2` the transfer trace does NOT contain. We carry it ONLY as
+     (`transferCapOpenEffV3`) whose `Satisfied2` the transfer trace does NOT contain. We carry it ONLY as
      the precisely-named realizable `TransferAuthorityWitness` (= `RotatedKernelRefinementFacet.`
      `TransferAuthoritySource`, the prover's in-circuit cap-open opening — `StarkSound`-extracted from
      the cap-open appendix). The faithful two-axis `authorizedFacetB` is FORCED from it
@@ -160,7 +160,7 @@ structure TransferTraceReadout (hash : List ℤ → ℤ)
 
 /-! ## §2 — `TransferAuthorityWitness`: the cap-open authority residual (the SOLE irreducible carry).
 
-The authority rides the cap-open — a SEPARATE descriptor (`capOpenAttenuateV3`) whose `Satisfied2` the
+The authority rides the cap-open — a SEPARATE descriptor (`transferCapOpenEffV3`) whose `Satisfied2` the
 transfer trace does NOT contain. `TransferAuthorityWitness` is exactly
 `RotatedKernelRefinementFacet.TransferAuthoritySource`: the prover's in-circuit depth-16 cap-membership
 open (the cap-open trace + row + leaf assignment + deployed-faithfulness), `StarkSound`-extracted from

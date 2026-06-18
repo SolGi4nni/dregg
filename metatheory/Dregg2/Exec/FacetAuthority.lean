@@ -711,7 +711,7 @@ cap leaf's COMMITTED `auth_tag` (tier) + `mask_lo`/`mask_hi` (facet). Precisely:
     `authorizedB`. The body REUSES `authorizedFacetB_holds_transfer_cap` (this module) verbatim:
     exhibit the held `FacetCap`, discharge the two legs.
   * `Dregg2/Circuit/DeployedCapOpen.lean::capOpen_authorizes` and
-    `Dregg2/Circuit/Emit/CapOpenEmit.lean::capOpenAttenuateV3_authorizes` then conclude
+    `Dregg2/Circuit/Emit/CapOpenEmit.lean::transferCapOpenEffV3_authorizes` then conclude
     `authorizedFacetB` through the rewritten bridge — the `writeMaskGate` becomes a
     `transferFacetGate` (decode `mask_lo`/`mask_hi`, check `EFFECT_TRANSFER` bit) PLUS an
     `authTagGate` (decode `auth_tag`, check the tier), both already-faithful-to-`facet.rs`

@@ -726,10 +726,10 @@ pub fn prove_effect_vm_rotated_ir2_with_caveat(
 /// run threading a real consumed-cap witness routes the cap-open. This gate maps the run's
 /// effect-kind to its cap-open descriptor:
 ///
-///   * **`AttenuateCapability`** — WIRED (`attenuateCapOpenVmDescriptor2R24`, the
+///   * **`AttenuateCapability`** — WIRED (`attenuateCapOpenEffVmDescriptor2R24`, the
 ///     `prove_effect_vm_cap_open_attenuate` path); the cap-membership open is proven + self-verified
 ///     end-to-end (`circuit/tests/cap_open_self_verify.rs`).
-///   * **`Transfer`** (residual (b)) — WIRED (`transferCapOpenVmDescriptor2R24`, the
+///   * **`Transfer`** (residual (b)) — WIRED (`transferCapOpenEffVmDescriptor2R24`, the
 ///     `prove_effect_vm_cap_open_transfer` path): the cross-vat **Transfer-via-granted-cap**
 ///     (`actor != src`, authority from a held transfer cap) routes the in-circuit depth-16
 ///     cap-membership open over the TRANSFER base.
@@ -768,7 +768,7 @@ fn cap_open_route_for_run(run_effects: &[VmEffectKind]) -> Option<CapOpenRoute> 
             // residual (a): the LIVE transfer cap-open is the effect-GENERAL `-eff` descriptor
             // (`transferCapOpenEffVmDescriptor2R24`, `capOpenConstraintsEff 1`): genuine SUBMASK facet
             // (a BROAD honest cap PASSES) + DECODED tier (any `auth_tag`). The Signature-pinned
-            // `transferCapOpenVmDescriptor2R24` is kept for the apex/refinement proofs only.
+            // (the apex authority leg now ALSO refines this `-eff` descriptor — wire & proof are one).
             key: "transferCapOpenEffVmDescriptor2R24",
             eff_bit: EFFECT_TRANSFER,
             needs_attenuate_patch: false,
@@ -850,8 +850,8 @@ fn cap_open_supported_for_run(run_effects: &[VmEffectKind]) -> Result<(), SdkErr
 }
 
 /// The CAP-OPEN single-leg prover (soundness loop #5): prove an `AttenuateCapability` turn
-/// through the CAP-OPEN descriptor (`attenuateCapOpenVmDescriptor2R24`, the 369-wide
-/// `capOpenAttenuateV3` leg), so the in-circuit cap-membership open — the authority leg the
+/// through the CAP-OPEN descriptor (`attenuateCapOpenEffVmDescriptor2R24`, the 369-wide
+/// `attenuateCapOpenEffV3` leg — genuine submask facet + decoded tier), so the in-circuit cap-membership open — the authority leg the
 /// soundness proof relies on (`DeployedCapOpen.Satisfied`) — is GENUINELY exercised end-to-end.
 ///
 /// The live single-leg/chain prover resolves the BASE attenuate descriptor
@@ -887,7 +887,7 @@ fn prove_effect_vm_cap_open_attenuate(
 > {
     // This leg is ONLY for a single AttenuateCapability effect. A multi-effect or non-attenuate run
     // never reaches here (the caller gates). Delegates to the generic prover at the attenuate route
-    // (the transfer-pinned `capOpenAttenuateV3` appendix: eff_bit = EFFECT_TRANSFER, phase-B patch).
+    // (the `attenuateCapOpenEffV3` appendix: eff_bit = EFFECT_TRANSFER submask, phase-B patch).
     if !matches!(effects, [VmEffectKind::AttenuateCapability { .. }]) {
         return Err(SdkError::InvalidWitness(
             "cap-open prover: expects exactly one AttenuateCapability effect".into(),
@@ -903,7 +903,7 @@ fn prove_effect_vm_cap_open_attenuate(
 }
 
 /// Look up a cap-open descriptor JSON by its registry key from the staged rotated registry. The
-/// cap-open members (`attenuateCapOpenVmDescriptor2R24`, `transferCapOpenVmDescriptor2R24`) are
+/// cap-open members (`attenuateCapOpenEffVmDescriptor2R24`, `transferCapOpenEffVmDescriptor2R24`) are
 /// NOT resolved by `rotated_descriptor_name_for_effect` (no effect selects them by kind — they are
 /// the cap-AUGMENTED legs the prove site opts into when a consumed-cap witness is present); the SDK
 /// names the registry key directly. Returns the JSON for `key`.
@@ -942,7 +942,7 @@ fn rotated_cap_open_vk_hash() -> Result<[u8; 32], SdkError> {
 }
 
 /// The TRANSFER cap-open leg's `vk_hash` (residual (b)) — the blake3 fingerprint of the
-/// `transferCapOpenVmDescriptor2R24` JSON.
+/// `transferCapOpenEffVmDescriptor2R24` JSON (the LIVE genuine-submask descriptor).
 #[cfg(feature = "prover")]
 #[cfg_attr(not(test), allow(dead_code))] // test-only; the chain routes via `cap_open_vk_hash_by_key`
 fn rotated_transfer_cap_open_vk_hash() -> Result<[u8; 32], SdkError> {
@@ -951,7 +951,7 @@ fn rotated_transfer_cap_open_vk_hash() -> Result<[u8; 32], SdkError> {
 
 /// **`prove_effect_vm_cap_open_transfer`** (residual (b) — the CROSS-VAT Transfer-via-granted-cap
 /// authority leg) — prove a single `Transfer` turn through the TRANSFER cap-open descriptor
-/// (`transferCapOpenVmDescriptor2R24`, the transfer base + the cap-membership appendix). When the
+/// (`transferCapOpenEffVmDescriptor2R24`, the transfer base + the cap-membership appendix). When the
 /// actor's REAL consumed transfer-cap is threaded (the cross-vat `actor != src` case), this routes
 /// the in-circuit depth-16 cap-membership open so the authority leg
 /// (`CapOpenEmit.transferCapOpenV3_authorizes ⟹ authorizedFacetB`) is GENUINELY exercised.
@@ -1304,7 +1304,7 @@ fn prove_cohort_run_chain(
         // The routing condition is now the PRESENCE of a cap witness for a single-effect run, NOT
         // the effect being AttenuateCapability. The cap-open descriptor is resolved per effect-kind
         // by `cap_open_supported_for_run`: AttenuateCapability is wired
-        // (`attenuateCapOpenVmDescriptor2R24`); other cap-authorized effect-kinds (notably the
+        // (`attenuateCapOpenEffVmDescriptor2R24`); other cap-authorized effect-kinds (notably the
         // cross-vat Transfer-via-granted-cap) have NO cap-open descriptor emitted yet, so they fail
         // CLOSED with a precise "no cap-open descriptor for <effect>" error — the wiring is general,
         // the per-effect descriptor coverage is the NAMED residual (see `cap_open_supported_for_run`).
@@ -2824,7 +2824,7 @@ mod tests {
     ///
     /// A turn whose authority rides a REAL consumed capability (an `AttenuateCapability` with a
     /// threaded `cap_membership`) proves through the CAP-OPEN descriptor
-    /// (`attenuateCapOpenVmDescriptor2R24`): the 58-column cap-membership appendix opens the
+    /// (`attenuateCapOpenEffVmDescriptor2R24`): the 58-column cap-membership appendix opens the
     /// committed `cap_root` at a write-mask leaf whose target is the turn's `src`. This test builds
     /// a genuine cap witness, drives the cap-open prover (`prove_effect_vm_cap_open_attenuate`,
     /// which self-verifies before return), and re-verifies the produced leg through the SAME verify
@@ -2957,7 +2957,7 @@ mod tests {
     /// and the GENERAL facet gate BITES in-circuit (residual (a)).
     ///
     /// A single `Transfer` turn whose authority rides a REAL consumed transfer-cap proves through the
-    /// TRANSFER cap-open descriptor (`transferCapOpenVmDescriptor2R24` — transfer base + the 59-column
+    /// TRANSFER cap-open descriptor (`transferCapOpenEffVmDescriptor2R24` — transfer base + the 59-column
     /// cap-membership appendix), self-verifies, and re-verifies through the live verify path with the
     /// transfer cap-open vk_hash. Then the NEGATIVE: a cap whose leaf facet permits a DIFFERENT effect
     /// (not EFFECT_TRANSFER) is rejected — first at witness build (`from_membership` fail-closed), AND
@@ -3042,12 +3042,14 @@ mod tests {
             "a cap permitting a DIFFERENT effect (grant, not transfer) MUST be refused (fail-closed)"
         );
 
-        // NEGATIVE #2 (the GENERAL facet gate BITES IN-CIRCUIT): hand-build a CapOpenWitness whose
-        // leaf facet is the wrong effect bit, BYPASSING the build/from_membership facet pin (its
-        // root still recomposes, so `widen_to_cap_open`'s recompose check passes). The descriptor's
-        // `effBitGate` pins effBit == EFFECT_TRANSFER while `facetEffGate` forces mask_lo == effBit —
-        // so a wrong-facet leaf is UNSAT and the proof FAILS. This is the genuine in-circuit bite of
-        // the general facet (residual (a)): not the constant transfer pin, but mask_lo == effBit.
+        // NEGATIVE #2 (the GENERAL SUBMASK facet gate BITES IN-CIRCUIT): hand-build a CapOpenWitness
+        // whose leaf facet is the wrong effect bit, BYPASSING the build/from_membership facet pin (its
+        // root still recomposes, so `widen_to_cap_open`'s recompose check passes). The LIVE
+        // `transferCapOpenEffVmDescriptor2R24` descriptor's `effBitGateFor` pins effBit ==
+        // EFFECT_TRANSFER (= 2) while the submask gate forces `(effBit & full_mask) == effBit` — and a
+        // grant-only leaf (`mask_lo = 4`, bit 2) has `(2 & 4) == 0 != 2`, so it is UNSAT and the proof
+        // FAILS. The genuine in-circuit bite of the general submask facet (residual (a)): not the
+        // constant transfer pin, but the decoded `(EFFECT_TRANSFER & mask) == EFFECT_TRANSFER`.
         let mut wrong_leaf = chosen;
         wrong_leaf[3] = BabyBear::new(EFFECT_GRANT); // mask_lo = grant, not transfer
         let mut wsib = [BabyBear::ZERO; 16];
@@ -3082,7 +3084,7 @@ mod tests {
                 RotatedBlockWitness, generate_rotated_effect_vm_trace, transfer_caveat_manifest,
                 widen_to_cap_open,
             };
-            let json = cap_open_descriptor_json_by_key("transferCapOpenVmDescriptor2R24").unwrap();
+            let json = cap_open_descriptor_json_by_key("transferCapOpenEffVmDescriptor2R24").unwrap();
             let desc = parse_vm_descriptor2(json).unwrap();
             let before =
                 RotatedBlockWitness::new(before_w.pre_limbs.clone(), before_w.iroot).unwrap();

@@ -40,16 +40,29 @@ is CLEAN-CONFIRMED: 0 forgery-accept unsoundness; `lightclient_unfoolable_circui
 {StarkSound, Poseidon2/Merkle CR, logHashInjective, ClosedWitness} built from genuine per-effect `_closedLog`
 readouts (no circular carrier, no `sorry`/`native_decide`/`:= True`, transfer teeth both-polarity real). The
 CONNECTION-TO-DEPLOYMENT is NOT yet sound enough for completeness — must close first:
-  • **Finding 1 (DECISIVE, task #214)** — the deployed verifier `verify_and_commit_proof_rotated`
-    (`turn/src/executor/proof_verify.rs:196-220`) reconstructs the trace from ALL-ZERO placeholder witnesses
-    and overrides ONLY `dpis[34/35/36]`, NEVER `dpis[38]` (the record/lifecycle pin) → PI[38] reconstructed
-    as ZERO while the honest producer binds it to the real post authority-digest. So the record-pin family
-    (setPermissions/setVK/cellSeal/cellUnseal/cellDestroy/refusal/receiptArchive) is a LIVENESS WALL today
-    (honest proof-carrying turns rejected) AND the pin gives the verifier no real guarantee (it binds the
-    AFTER limb to a prover-chosen PI, not the trusted recomputed post-digest — a forgery vector if liveness
-    is naively patched). FALSIFIES the STATUS claim "running circuit IS S_live / SOUND-IN-DEPLOYED (12+
-    effects)" for that family. Fix: verifier recomputes `dpis[38]` from the trusted post-cell + a genuine
-    verifier-side forged-post-digest negative test. Blocked on the facetEffGate fixer (owns trace_rotated.rs).
+  • **Finding 1 → RESOLVED to a PRECISE verdict (task #214, agent a21e2f7a + direct confirmation).** The
+    reviewer's "verifier leaves record-pin dpis[38] ZERO" was IMPRECISE; the TRUE finding is sharper and
+    confirmed by reading `rotateV3WithRecordPin` (EffectVmEmitRotationV3.lean:1793-1834):
+      ‣ The record-pin gate for setPermissions/setVK/cellSeal/cellUnseal/cellDestroy/refusal/receiptArchive
+        appends ONE constraint — `after_block_limb_24 == PI[piCount]`, a binding to a PROVER-PUBLISHED free
+        PI with NO anchor to the effect's declared write (the permissions/vk/lifecycle param is at v1 col 68,
+        witness-independent, but the pin never references it). So `rotateV3WithRecordPin_rejects_wrong_post`
+        is honest-but-WEAK and its docstring "anti-ghost… gap closed" is a VACUITY/OVERCLAIM — the per-effect
+        VALUE rung does NOT force the post in deployment. This is the precise form of the memory's "deepest
+        finding" (RH richer than the circuit computes).
+      ‣ LATENT, not a live forgery: the cipherclerk producer models only Transfer/SetField/IncNonce (so these
+        effects produce after_cell==before_cell), and ONLY Effect::Transfer routes end-to-end through
+        verify_and_commit_proof_rotated. The Transfer path IS sound (PI[35]↔col-261 STATE_COMMIT binding;
+        tampered-commitment test green). The set-insert/note PI[38] is witness-INDEPENDENT (folded nullifier/
+        key/commitment at v1 col 68), so reproduced correctly; the real double-spend soundness lives in
+        verify_full_turn (grow-gate .absent + non-revocation accumulator) — a DIFFERENT verifier, sound.
+      ‣ CONSEQUENCE: the docs/STATUS "SOUND-IN-DEPLOYED (12+ effects)" / "running circuit IS S_live" are
+        OVERCLAIMS for the record-pin family — only Transfer (+ the economic effects that move bound columns)
+        is genuinely forced-in-deployed via this verifier. CORRECT the claim + GENUINE FIX: re-target the pin
+        to a TRANSITION gate `after_limb == compute_authority_digest_in_circuit(before_residue ⊕ effect_param)`
+        anchored to the cross-checked before + the witness-independent v1 param, AND have the verifier recompute
+        the after-limbs/new_commitment from the trusted before-cell+vm_effects (override, like dpis[34/36]).
+        Until then the record-pin descriptors should fail-closed at the cohort resolver, not be advertised closed.
   • **Findings 2/3/4 (tasks #213/#215)** — three OVER-STRICT cap-open siblings of the facetEffGate bug:
     (2) the equality `transferFacetGate` (`mask_lo==EFFECT_TRANSFER`) is STILL a co-present conjunct in the
     live `capOpenConstraints` (`CapOpenEmit.lean:142`), so the membership fix is dead-lettered unless removed

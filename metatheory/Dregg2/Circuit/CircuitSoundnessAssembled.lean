@@ -121,9 +121,9 @@ def actionTagToPos : EffectIdx → Nat
   | 9  => 9    -- setVK           → setVKVmDescriptor2R24
   | 10 => 15   -- introduce       → introduceVmDescriptor2R24
   | 11 => 16   -- delegateAtten   → attenuateVmDescriptor2R24
-  | 12 => 36   -- attenuate       → attenuateCapOpenVmDescriptor2R24 (F5: the IN-CIRCUIT authority
-               --                   descriptor — the cap-open is now the registry member the apex
-               --                   commits for the cap-authorized attenuate path)
+  | 12 => 43   -- attenuate       → attenuateCapOpenEffVmDescriptor2R24 (F5: the LIVE IN-CIRCUIT
+               --                   authority descriptor — the genuine-submask + decoded-tier cap-open
+               --                   the deployed prover routes AND the apex authority leg refines)
   | 14 => 14   -- revokeDelegation→ revokeVmDescriptor2R24
   | 16 => 10   -- exercise        → exerciseVmDescriptor2R24
   | 17 => 22   -- createCell      → createCellVmDescriptor2R24
@@ -164,12 +164,14 @@ transfer descriptor `v3Of transferVmDescriptor = transferV3`. So `Rfix 0` IS the
 descriptor — the rung at the transfer tag discharges its refinement about the right descriptor. -/
 theorem Rfix_transfer : Rfix 0 = Dregg2.Circuit.RotatedKernelRefinement.transferV3 := rfl
 
-/-- **`Rfix_capOpen` — F5: the apex's registry RANGES OVER the in-circuit authority descriptor.**
-The attenuate tag (`12`) re-keys to `v3RegistryCapOpen` position `36` — the cap-open authority member
-`capOpenAttenuateV3` (the descriptor carrying the depth-16 in-circuit cap-membership open). So
-`vkOfRegistry Rfix` / the apex's `StarkSound hash Rfix` quantify over the cap-open: the one in-circuit
-authority gadget is INSIDE the registry the light-client apex commits, not beside it. -/
-theorem Rfix_capOpen : Rfix 12 = Dregg2.Circuit.Emit.CapOpenEmit.capOpenAttenuateV3 := rfl
+/-- **`Rfix_capOpen` — F5: the apex's registry RANGES OVER the LIVE in-circuit authority descriptor.**
+The attenuate tag (`12`) re-keys to `v3RegistryCapOpen` position `43` — the LIVE cap-open authority
+member `attenuateCapOpenEffV3` (the genuine-submask + decoded-tier descriptor carrying the depth-16
+in-circuit cap-membership open). So `vkOfRegistry Rfix` / the apex's `StarkSound hash Rfix` quantify
+over the SAME descriptor the deployed prover routes AND the apex authority leg refines
+(`transferCapOpenEffV3_authorizes`): the one in-circuit authority gadget is INSIDE the registry the
+light-client apex commits, not beside it — and it is the LIVE one, not a pinned twin. -/
+theorem Rfix_capOpen : Rfix 12 = Dregg2.Circuit.Emit.CapOpenEmit.attenuateCapOpenEffV3 := rfl
 
 /-! ## §2 — `kstepAll`: the assembled dispatcher arm.
 

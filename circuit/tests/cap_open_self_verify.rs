@@ -1,7 +1,7 @@
 //! # THE IN-CIRCUIT CAP-MEMBERSHIP OPEN — self-verifies END-TO-END through `prove_vm_descriptor2`.
 //!
-//! The Lean keystone `Dregg2.Circuit.Emit.CapOpenEmit.capOpenAttenuateV3` (descriptor
-//! `dregg-effectvm-attenuateA-v1-rot24-v3-capopen`, trace_width 369 = 311 rotated + 58 cap-open
+//! The Lean keystone `Dregg2.Circuit.Emit.CapOpenEmit.attenuateCapOpenEffV3` (descriptor
+//! `dregg-effectvm-attenuateA-v1-rot24-v3-capopen-eff`, trace_width CAP_OPEN_WIDTH = rotated + cap-open
 //! appendix) PROVES that a `DeployedCapOpen.Satisfied` cap-membership row opens the deployed
 //! depth-16 cap-tree at a write-mask leaf whose target is the turn's `src`. This test realizes
 //! that descriptor in Rust on a REAL witness: it builds a genuine rotated AttenuateCapability
@@ -34,7 +34,10 @@ use dregg_circuit::field::BabyBear;
 use dregg_circuit::heap_root::HeapLeaf;
 use dregg_turn::rotation_witness as rw;
 
-const CAP_OPEN_KEY: &str = "attenuateCapOpenVmDescriptor2R24";
+// The LIVE attenuate cap-open descriptor (genuine submask facet + decoded tier). The Signature-pinned
+// `attenuateCapOpenVmDescriptor2R24` was deleted (Stage D — the apex authority leg now refines this
+// `-eff` membership descriptor, the one the deployed prover routes).
+const CAP_OPEN_KEY: &str = "attenuateCapOpenEffVmDescriptor2R24";
 
 /// Resolve a registry descriptor JSON by key from the committed staged TSV.
 fn reg_json(name: &str) -> &'static str {
