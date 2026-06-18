@@ -15,6 +15,20 @@ deduped the DreggDL/sel4/snapshot landings into git history, kept live tails).
 
 The map + state lives in `docs/CIRCUIT-FUNCTIONAL-CORRECTNESS.md` (the obligation table is the resumable plan).
 
+⚑⚑ COMPLETE (2026-06-18): the circuit is now SOUND ∧ COMPLETE, both axiom-clean, both honest about their
+floors. SOUNDNESS — the adversarial review (ember's gate) fully discharged; every cap-effect's authority
+forced in-circuit (no fail-closed, #217 closed), the whole record-pin family genuinely verifier-anchored
+(#218/#219/#220 — which the fix flushed out as 3 real bugs the vacuous pin had masked). COMPLETENESS — 5
+per-effect waves + the capstone `CircuitCompletenessAssembled.lean` (commit 8f7360b7f): every live effect
+has its genuine `descriptorComplete` rung. THE HONEST SHAPE (not papered over): value-leg UNCONDITIONALLY
+complete; authority-leg a STRUCTURAL DICHOTOMY (owner OR cap — the cap-open descriptor cannot witness an
+owner turn); the bidirectional `verifyBatch_kernel_bidirectional` is an HONEST two-arm conjunction, NOT a
+fused ↔ — SOUND needs WitnessDecodes (the hard surjection) + StarkSound, COMPLETE needs only
+stateDecode_construct (the prover HOLDS the kernels) + StarkComplete, and that floor asymmetry is kept
+explicit. ~22 commits this session (3d139220d … 8f7360b7f). Owed: a full-workspace gauntlet over the
+session's Rust changes (apply_refusal / cap-open geometry / verifier anchors) — targeted suites green,
+belt-and-suspenders pass pending.
+
 ACTIVE (2026-06-18) — the `facetEffGate` genuine-membership closure (residual (a) F6-FACET) + adversarial
 re-review. FOUND: the cap-open authority gate `facetEffGate` (`DeployedCapOpen.lean:205`) was implemented as
 EQUALITY `mask_lo == effBit` (with `effBitGate` pinning `effBit = EFFECT_TRANSFER`) — i.e. it forced a
