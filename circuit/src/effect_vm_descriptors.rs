@@ -809,12 +809,12 @@ pub const V3_STAGED_CAVEAT_DESCRIPTORS: &[(&str, &str, &str)] = &[(
 /// `key\tname\tjson` per line, sha-256 pinned by
 /// `v3_staged_registry_parses_matches_fingerprint_and_covers`.
 /// STAGED: a new constant, no VK bump, the live wire untouched. Each descriptor's
-/// `trace_width = EFFECT_VM_WIDTH (186) + APPENDIX_SPAN (129) = 315`; the rotated
+/// `trace_width = EFFECT_VM_WIDTH (186) + APPENDIX_SPAN (133) = 320`; the rotated
 /// commitments ride four appended PI slots (rotated OLD/NEW commit · height · caveat commit).
 pub const V3_STAGED_REGISTRY_TSV: &str =
     include_str!("../descriptors/rotation-v3-staged-registry.tsv");
 pub const V3_STAGED_REGISTRY_FP: &str =
-    "e9d13740f7fbd7348bf83b45d0970b099facbd3fa3c9b9d81bdcf5ffb5861aac";
+    "2d725f5206ca3adb76a093dd1ad351f45c41c843dda3f6817a4f812b838dbb74";
 
 /// The rotated probe layout at register count `r` (the Rust twin of the Lean parametric
 /// layout `EffectVmEmitRotationR`: columns are FUNCTIONS of R; the chunking is 4-wide head,
@@ -1568,15 +1568,15 @@ mod tests {
         // pre-iroot limbs — NOT the bare R=24 register probe `rotation_layout_for(24)`). Mirrors the
         // Lean `EffectVmEmitRotationV3` §1 constants and the caveat region inside it.
         const V1_WIDTH: usize = EFFECT_VM_WIDTH; // 186
-        const B_SPAN: usize = 45; // 32 limbs + iroot + state_commit + 11 chain carriers
-        const B_IROOT: usize = 32;
-        const B_STATE_COMMIT: usize = 33;
-        const B_CHAIN_BASE: usize = 34;
-        const B_NUM_CHAIN: usize = 11;
+        const B_SPAN: usize = 47; // 33 limbs + iroot + state_commit + 12 chain carriers
+        const B_IROOT: usize = 33;
+        const B_STATE_COMMIT: usize = 34;
+        const B_CHAIN_BASE: usize = 35;
+        const B_NUM_CHAIN: usize = 12;
         const B_COMMITTED_HEIGHT: usize = 31;
         const C_SPAN: usize = 39;
         const C_COMMIT: usize = 38;
-        const APPENDIX_SPAN: usize = 2 * B_SPAN + C_SPAN; // 129
+        const APPENDIX_SPAN: usize = 2 * B_SPAN + C_SPAN; // 133
 
         let mut n = 0usize;
         for line in V3_STAGED_REGISTRY_TSV.lines() {

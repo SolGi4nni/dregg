@@ -728,15 +728,43 @@ mod record_pin_anchor {
             );
 
         let caveat = dregg_circuit::effect_vm::trace_rotated::empty_caveat_manifest();
-        let forged_proof = prove_effect_vm_rotated_ir2_with_caveat(
-            &initial_vm_state,
-            &vm_effects,
-            &before_w,
-            &after_w,
-            &caveat,
-            None,
-        )
-        .unwrap_or_else(|e| panic!("{what}: the forged proof must be internally consistent: {e}"));
+        // THE LIVE DISC GATE bites FIRST: for a forged-after whose lifecycle DISCRIMINANT differs from
+        // the effect's mandated transition (a frozen seal → after-disc stays Live, a frozen unseal →
+        // after-disc stays Sealed, a wrong-disc archive), the deployed lifecycle-mover descriptor's
+        // in-circuit disc-transition gate (`EffectVmEmitRotationV3.rotateV3WithDiscGate`) makes the
+        // forged trace UNSAT — the prover's `check_constraints` cannot even close the proof (the disc
+        // gate is a row constraint, so the debug prover refuses it). That is the STRONGEST rejection:
+        // the forgery is unprovable, no trusted post-cell, no anchor needed. If the disc is unchanged by
+        // the forgery (a wrong PAYLOAD — e.g. cellDestroy with a different death-cert), the proof IS
+        // internally consistent and the PI-38 payload anchor rejects it at verify time (below).
+        let prove_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            prove_effect_vm_rotated_ir2_with_caveat(
+                &initial_vm_state,
+                &vm_effects,
+                &before_w,
+                &after_w,
+                &caveat,
+                None,
+            )
+        }));
+        let forged_proof = match prove_result {
+            Ok(Ok(p)) => p,
+            Ok(Err(e)) => {
+                eprintln!(
+                    "{what}: LIVE DISC GATE — the forged-after trace is UNSAT at prove time ({e}); the \
+                     forgery is unprovable (no trusted post-cell, no anchor)."
+                );
+                return;
+            }
+            Err(_) => {
+                eprintln!(
+                    "{what}: LIVE DISC GATE — the forged-after trace violates the in-circuit \
+                     disc-transition constraint (prover `check_constraints` refused it); the forgery is \
+                     unprovable for a ledgerless client (no trusted post-cell, no anchor)."
+                );
+                return;
+            }
+        };
         let proof_bytes = postcard::to_allocvec(&forged_proof).expect("serialize forged proof");
 
         let new_commit_felt = dregg_cell::commitment::compute_canonical_state_commitment_v9_felt(

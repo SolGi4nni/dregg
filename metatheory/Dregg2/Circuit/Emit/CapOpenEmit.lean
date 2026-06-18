@@ -92,7 +92,7 @@ set_option autoImplicit false
 
 /-! ## §1 — the concrete column layout: the cap-open appendix past the rotated R=24 width.
 
-The rotated attenuate trace is `EFFECT_VM_WIDTH + APPENDIX_SPAN = 316` columns wide. The cap-open
+The rotated attenuate trace is `EFFECT_VM_WIDTH + APPENDIX_SPAN = 320` columns wide. The cap-open
 appendix starts at `CAP_OPEN_BASE` and carries, in order: 7 leaf-field columns, 1 leaf-digest
 column, then for each of `DEPTH = 16` levels a `(sib, dir, node)` triple, then the `capRoot` and
 `src` columns. Total `CAP_OPEN_SPAN = 7 + 1 + 16·3 + 2 = 58`. -/

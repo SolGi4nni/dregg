@@ -640,9 +640,9 @@ pub fn canonical_to_babybear_pi(canonical: &[u8; 32]) -> [u32; 8] {
 /// The CONFIRMED rotated register count (ember 2026-06-12, `ROTATION-CUTOVER.md` §2b).
 pub const V9_NUM_REGISTERS: usize = 24;
 /// The number of pre-iroot absorption limbs (cells_root · r0..r23 · cap_root · nullifier_root ·
-/// commitments_root · heap_root · lifecycle · epoch · committed_height). Lean
-/// `preLimbsAt_length = 32` at R = 24, after the `commitments_root` flag-day widening.
-pub const V9_NUM_PRE_LIMBS: usize = 1 + V9_NUM_REGISTERS + 4 + 3; // 32 (4 map roots: cap/nullifier/commitments/heap)
+/// commitments_root · heap_root · lifecycle · epoch · committed_height · lifecycle_disc). Lean
+/// `preLimbsAt_length = 33` at R = 24, after the lifecycle-disc flag-day widening (32→33).
+pub const V9_NUM_PRE_LIMBS: usize = 1 + V9_NUM_REGISTERS + 4 + 3 + 1; // 33 (+ the lifecycle_disc limb)
 
 /// The turn-level context the rotated commitment absorbs that is NOT cell-local: the
 /// boundary `cells_root` (the sorted-Poseidon2 root over present cells), the cell's committed
@@ -915,10 +915,14 @@ pub fn compute_rotated_pre_limbs(
     pre[27] = hash_bytes(&ctx.commitments_root);
     // limb 28: heap_root.
     pre[28] = hash_bytes(&cell.state.heap_root);
-    // limbs 29,30,31: lifecycle, epoch, committed_height.
+    // limbs 29,30,31: lifecycle (opaque felt), epoch, committed_height.
     pre[29] = v9_lifecycle_felt(&cell.lifecycle);
     pre[30] = BabyBear::new((cell.state.delegation_epoch() & 0x7FFF_FFFF) as u32);
     pre[31] = BabyBear::new((cell.state.committed_height() & 0x7FFF_FFFF) as u32);
+    // limb 32: lifecycle_disc (the flag-day new committed discriminant — the raw `u8 0..4`, the gated
+    // disc-transition limb, the NEW LAST pre-iroot limb; byte-identical to the producer
+    // `rotation_witness::lifecycle_disc_felt`).
+    pre[32] = BabyBear::new(cell.lifecycle.discriminant() as u32);
     pre
 }
 
@@ -1612,14 +1616,14 @@ mod tests {
         }
     }
 
-    /// The v9 pre-limb vector has the Lean-pinned 32-limb shape, and the welded scalars sit
+    /// The v9 pre-limb vector has the Lean-pinned 33-limb shape, and the welded scalars sit
     /// in the absorption order the producer / circuit carry.
     #[test]
     fn v9_pre_limbs_shape_and_welds() {
         let cell = Cell::with_balance(test_key(7), test_token(0), 100_000);
         let pre = compute_rotated_pre_limbs(&cell, &v9_ctx(11, 22));
         assert_eq!(pre.len(), V9_NUM_PRE_LIMBS);
-        assert_eq!(pre.len(), 32);
+        assert_eq!(pre.len(), 33);
         // cells_root rides limb 0; the welded r0 (balance_lo) is non-zero for a funded cell.
         assert_eq!(pre[0], BabyBear::new(11));
         let (lo, _hi) = dregg_circuit::effect_vm::split_u64(100_000u64);
@@ -1629,6 +1633,29 @@ mod tests {
             pre[27],
             dregg_circuit::poseidon2::hash_bytes(&[0u8; 32]),
             "commitments_root rides limb 27"
+        );
+        // limb 32 is the lifecycle_disc (the flag-day NEW LAST limb); a Live cell's disc is 0.
+        assert_eq!(pre[32], BabyBear::new(0), "lifecycle_disc rides limb 32 (Live=0)");
+    }
+
+    /// The `lifecycle_disc` limb (32) is load-bearing: a different lifecycle discriminant MOVES the
+    /// published rotated commitment (the disc flag-day soundness reason — a frozen seal / resurrection
+    /// publishes a DIFFERENT commitment).
+    #[test]
+    fn v9_commitment_binds_lifecycle_disc() {
+        use crate::lifecycle::CellLifecycle;
+        let mut live = Cell::with_balance(test_key(7), test_token(0), 100_000);
+        live.lifecycle = CellLifecycle::Live;
+        let mut sealed = live.clone();
+        sealed.lifecycle = CellLifecycle::Sealed {
+            reason_hash: [0u8; 32],
+            sealed_at: 0,
+        };
+        let ctx = v9_ctx(11, 22);
+        assert_ne!(
+            compute_canonical_state_commitment_v9_felt(&live, &ctx),
+            compute_canonical_state_commitment_v9_felt(&sealed, &ctx),
+            "lifecycle_disc (limb 32) is bound: Live≠Sealed moves the published commitment"
         );
     }
 

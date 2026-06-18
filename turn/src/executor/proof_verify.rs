@@ -287,6 +287,16 @@ impl TurnExecutor {
         //     (the deployed `apply_receipt_archive` moves the lifecycle to `Archived`; the pin is
         //     re-routed to `B_LIFECYCLE` to match the deployed apply).
         //
+        // LIFECYCLE-DISC NOW IN-CIRCUIT (the disc flag-day, `B_DISC = 32`): the SAFETY-CRITICAL
+        // lifecycle TRANSITION (the disc) is no longer anchored off-cell — the deployed lifecycle-mover
+        // descriptors carry the LIVE disc-transition gate (`EffectVmEmitRotationV3.rotateV3WithDiscGate`)
+        // that FORCES the committed disc limb to the effect's mandated discriminant (cellSeal→Sealed,
+        // cellDestroy→Destroyed, …) as a CONSTANT in-circuit, NO trusted post-cell. A ledgerless light
+        // client's `verify_vm_descriptor2` ALONE rejects a frozen seal / Destroyed→Live resurrection /
+        // wrong-disc archive. The PI-38 lifecycle anchor below remains as BELT-AND-SUSPENDERS for the
+        // OPAQUE payload felt (`reason_hash`/`deathCert`/`sealed_at`) that `lifecycle_felt` folds at
+        // limb 29 — full-node-only; the disc itself needs no anchor.
+        //
         // A forged after-limb (a value the effect did NOT produce) makes the anchored PI 38 disagree
         // with the proof's bound forced column ⇒ `verify_vm_descriptor2` UNSAT. The whole record-pin
         // family is now a genuine forcing gate on the deployed path.

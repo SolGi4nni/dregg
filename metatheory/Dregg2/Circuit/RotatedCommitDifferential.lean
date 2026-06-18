@@ -99,23 +99,23 @@ def rotatedLimbs
     (cellsRoot r0 r1 r2 : ℤ) (fields : Fin 8 → ℤ)
     (r11 r12 r13 r14 r15 r16 r17 r18 r19 r20 r21 r22 : ℤ)
     (authorityDigest capRoot nullifierRoot commitmentsRoot heapRoot lifecycle epoch
-      committedHeight : ℤ) : List ℤ :=
+      committedHeight lifecycleDisc : ℤ) : List ℤ :=
   [ cellsRoot, r0, r1, r2, fields 0, fields 1, fields 2, fields 3, fields 4, fields 5, fields 6,
     fields 7, r11, r12, r13, r14, r15, r16, r17, r18, r19, r20, r21, r22,
     authorityDigest, capRoot, nullifierRoot, commitmentsRoot, heapRoot, lifecycle, epoch,
-    committedHeight ]
+    committedHeight, lifecycleDisc ]
 
-/-- The rotated limb list has exactly 32 entries (cells_root + 24 registers + cap_root + nullifier
-+ commitments + heap + 3 scalars). The length the chained `wireCommitR` consumes (`R + 8 = 32` at
-R = 24, after the `commitments_root` flag-day widening NUM_PRE_LIMBS 31→32). -/
+/-- The rotated limb list has exactly 33 entries (cells_root + 24 registers + cap_root + nullifier
++ commitments + heap + 3 scalars + lifecycle_disc). The length the chained `wireCommitR` consumes
+after the lifecycle-disc flag-day widening NUM_PRE_LIMBS 32→33. -/
 theorem rotatedLimbs_length
     (cellsRoot r0 r1 r2 : ℤ) (fields : Fin 8 → ℤ)
     (r11 r12 r13 r14 r15 r16 r17 r18 r19 r20 r21 r22 : ℤ)
     (authorityDigest capRoot nullifierRoot commitmentsRoot heapRoot lifecycle epoch
-      committedHeight : ℤ) :
+      committedHeight lifecycleDisc : ℤ) :
     (rotatedLimbs cellsRoot r0 r1 r2 fields r11 r12 r13 r14 r15 r16 r17 r18 r19 r20 r21 r22
       authorityDigest capRoot nullifierRoot commitmentsRoot heapRoot lifecycle epoch
-      committedHeight).length = 32 :=
+      committedHeight lifecycleDisc).length = 33 :=
   rfl
 
 /-- **`authority_digest_at_index_24`** — the named-correspondence pin: the authority residue limb is
@@ -125,10 +125,10 @@ theorem authority_digest_at_index_24
     (cellsRoot r0 r1 r2 : ℤ) (fields : Fin 8 → ℤ)
     (r11 r12 r13 r14 r15 r16 r17 r18 r19 r20 r21 r22 : ℤ)
     (authorityDigest capRoot nullifierRoot commitmentsRoot heapRoot lifecycle epoch
-      committedHeight : ℤ) :
+      committedHeight lifecycleDisc : ℤ) :
     (rotatedLimbs cellsRoot r0 r1 r2 fields r11 r12 r13 r14 r15 r16 r17 r18 r19 r20 r21 r22
       authorityDigest capRoot nullifierRoot commitmentsRoot heapRoot lifecycle epoch
-      committedHeight)[24]?
+      committedHeight lifecycleDisc)[24]?
       = some authorityDigest := rfl
 
 /-- **`cap_root_at_index_25`** — the cap-root limb is at index 25, right after the authority digest
@@ -137,10 +137,10 @@ theorem cap_root_at_index_25
     (cellsRoot r0 r1 r2 : ℤ) (fields : Fin 8 → ℤ)
     (r11 r12 r13 r14 r15 r16 r17 r18 r19 r20 r21 r22 : ℤ)
     (authorityDigest capRoot nullifierRoot commitmentsRoot heapRoot lifecycle epoch
-      committedHeight : ℤ) :
+      committedHeight lifecycleDisc : ℤ) :
     (rotatedLimbs cellsRoot r0 r1 r2 fields r11 r12 r13 r14 r15 r16 r17 r18 r19 r20 r21 r22
       authorityDigest capRoot nullifierRoot commitmentsRoot heapRoot lifecycle epoch
-      committedHeight)[25]?
+      committedHeight lifecycleDisc)[25]?
       = some capRoot := rfl
 
 /-- **`commitments_root_at_index_27`** — the note-commitments-set root limb is at index 27 (right
@@ -151,10 +151,10 @@ theorem commitments_root_at_index_27
     (cellsRoot r0 r1 r2 : ℤ) (fields : Fin 8 → ℤ)
     (r11 r12 r13 r14 r15 r16 r17 r18 r19 r20 r21 r22 : ℤ)
     (authorityDigest capRoot nullifierRoot commitmentsRoot heapRoot lifecycle epoch
-      committedHeight : ℤ) :
+      committedHeight lifecycleDisc : ℤ) :
     (rotatedLimbs cellsRoot r0 r1 r2 fields r11 r12 r13 r14 r15 r16 r17 r18 r19 r20 r21 r22
       authorityDigest capRoot nullifierRoot commitmentsRoot heapRoot lifecycle epoch
-      committedHeight)[27]?
+      committedHeight lifecycleDisc)[27]?
       = some commitmentsRoot := rfl
 
 /-! ## §2 — the FAITHFUL Lean model of the PUBLISHED rotated commitment.
@@ -198,23 +198,23 @@ theorem rotatedCommit_binds_authority_digest (hash : List ℤ → ℤ) (hCR : Po
     (cellsRoot r0 r1 r2 : ℤ) (fields : Fin 8 → ℤ)
     (r11 r12 r13 r14 r15 r16 r17 r18 r19 r20 r21 r22 : ℤ)
     (authorityDigest authorityDigest' capRoot nullifierRoot commitmentsRoot heapRoot lifecycle epoch
-      committedHeight iroot : ℤ)
+      committedHeight lifecycleDisc iroot : ℤ)
     (h : rotatedCommit hash
           (rotatedLimbs cellsRoot r0 r1 r2 fields r11 r12 r13 r14 r15 r16 r17 r18 r19 r20 r21 r22
             authorityDigest capRoot nullifierRoot commitmentsRoot heapRoot lifecycle epoch
-            committedHeight) iroot
+            committedHeight lifecycleDisc) iroot
        = rotatedCommit hash
           (rotatedLimbs cellsRoot r0 r1 r2 fields r11 r12 r13 r14 r15 r16 r17 r18 r19 r20 r21 r22
             authorityDigest' capRoot nullifierRoot commitmentsRoot heapRoot lifecycle epoch
-            committedHeight) iroot) :
+            committedHeight lifecycleDisc) iroot) :
     authorityDigest = authorityDigest' := by
   have hlen :
       (rotatedLimbs cellsRoot r0 r1 r2 fields r11 r12 r13 r14 r15 r16 r17 r18 r19 r20 r21 r22
         authorityDigest capRoot nullifierRoot commitmentsRoot heapRoot lifecycle epoch
-        committedHeight).length
+        committedHeight lifecycleDisc).length
       = (rotatedLimbs cellsRoot r0 r1 r2 fields r11 r12 r13 r14 r15 r16 r17 r18 r19 r20 r21 r22
         authorityDigest' capRoot nullifierRoot commitmentsRoot heapRoot lifecycle epoch
-        committedHeight).length := by
+        committedHeight lifecycleDisc).length := by
     rw [rotatedLimbs_length, rotatedLimbs_length]
   obtain ⟨hlist, _⟩ := rotatedCommit_binds_limbs hash hCR hlen h
   -- the two limb lists are equal; read off the index-24 entry (the authority digest).
@@ -229,23 +229,23 @@ theorem rotatedCommit_binds_cap_root (hash : List ℤ → ℤ) (hCR : Poseidon2S
     (cellsRoot r0 r1 r2 : ℤ) (fields : Fin 8 → ℤ)
     (r11 r12 r13 r14 r15 r16 r17 r18 r19 r20 r21 r22 : ℤ)
     (authorityDigest capRoot capRoot' nullifierRoot commitmentsRoot heapRoot lifecycle epoch
-      committedHeight iroot : ℤ)
+      committedHeight lifecycleDisc iroot : ℤ)
     (h : rotatedCommit hash
           (rotatedLimbs cellsRoot r0 r1 r2 fields r11 r12 r13 r14 r15 r16 r17 r18 r19 r20 r21 r22
             authorityDigest capRoot nullifierRoot commitmentsRoot heapRoot lifecycle epoch
-            committedHeight) iroot
+            committedHeight lifecycleDisc) iroot
        = rotatedCommit hash
           (rotatedLimbs cellsRoot r0 r1 r2 fields r11 r12 r13 r14 r15 r16 r17 r18 r19 r20 r21 r22
             authorityDigest capRoot' nullifierRoot commitmentsRoot heapRoot lifecycle epoch
-            committedHeight) iroot) :
+            committedHeight lifecycleDisc) iroot) :
     capRoot = capRoot' := by
   have hlen :
       (rotatedLimbs cellsRoot r0 r1 r2 fields r11 r12 r13 r14 r15 r16 r17 r18 r19 r20 r21 r22
         authorityDigest capRoot nullifierRoot commitmentsRoot heapRoot lifecycle epoch
-        committedHeight).length
+        committedHeight lifecycleDisc).length
       = (rotatedLimbs cellsRoot r0 r1 r2 fields r11 r12 r13 r14 r15 r16 r17 r18 r19 r20 r21 r22
         authorityDigest capRoot' nullifierRoot commitmentsRoot heapRoot lifecycle epoch
-        committedHeight).length := by
+        committedHeight lifecycleDisc).length := by
     rw [rotatedLimbs_length, rotatedLimbs_length]
   obtain ⟨hlist, _⟩ := rotatedCommit_binds_limbs hash hCR hlen h
   have hidx := congrArg (fun L => L[25]?) hlist
@@ -279,7 +279,7 @@ theorem rotated_and_perCell_both_bind_authority_residue
     (hash : List ℤ → ℤ) (hCRN : Poseidon2SpongeCR hash)
     (cellsRoot r0 r1 r2 : ℤ) (rFields : Fin 8 → ℤ)
     (r11 r12 r13 r14 r15 r16 r17 r18 r19 r20 r21 r22 : ℤ)
-    (capRoot nullifierRoot commitmentsRoot heapRoot lifecycle epoch committedHeight iroot : ℤ)
+    (capRoot nullifierRoot commitmentsRoot heapRoot lifecycle epoch committedHeight lifecycleDisc iroot : ℤ)
     -- the SHARED authority residue felt and a tampered one
     (d d' : ℤ) (hd : d ≠ d') :
     -- per-cell commitment moves
@@ -288,16 +288,16 @@ theorem rotated_and_perCell_both_bind_authority_residue
     -- AND the published rotated commitment moves
     ∧ rotatedCommit hash
         (rotatedLimbs cellsRoot r0 r1 r2 rFields r11 r12 r13 r14 r15 r16 r17 r18 r19 r20 r21 r22
-          d capRoot nullifierRoot commitmentsRoot heapRoot lifecycle epoch committedHeight) iroot
+          d capRoot nullifierRoot commitmentsRoot heapRoot lifecycle epoch committedHeight lifecycleDisc) iroot
       ≠ rotatedCommit hash
         (rotatedLimbs cellsRoot r0 r1 r2 rFields r11 r12 r13 r14 r15 r16 r17 r18 r19 r20 r21 r22
-          d' capRoot nullifierRoot commitmentsRoot heapRoot lifecycle epoch committedHeight) iroot := by
+          d' capRoot nullifierRoot commitmentsRoot heapRoot lifecycle epoch committedHeight lifecycleDisc) iroot := by
   refine ⟨fun hpc => hd ?_, fun hrot => hd ?_⟩
   · exact Dregg2.Circuit.CommitDifferential.effectVmCommit_binds_record_digest h4 hCR4
       balLo balHi nonce pcFields pcCapRoot d d' hpc
   · exact rotatedCommit_binds_authority_digest hash hCRN cellsRoot r0 r1 r2 rFields
       r11 r12 r13 r14 r15 r16 r17 r18 r19 r20 r21 r22 d d' capRoot nullifierRoot commitmentsRoot
-      heapRoot lifecycle epoch committedHeight iroot hrot
+      heapRoot lifecycle epoch committedHeight lifecycleDisc iroot hrot
 
 /-- **`rotatedCommit_binds_commitments_root` (corollary).** Equal published rotated commitments over
 limb lists agreeing everywhere except the `commitments_root` limb (index 27) force EQUAL
@@ -308,23 +308,23 @@ theorem rotatedCommit_binds_commitments_root (hash : List ℤ → ℤ) (hCR : Po
     (cellsRoot r0 r1 r2 : ℤ) (fields : Fin 8 → ℤ)
     (r11 r12 r13 r14 r15 r16 r17 r18 r19 r20 r21 r22 : ℤ)
     (authorityDigest capRoot nullifierRoot commitmentsRoot commitmentsRoot' heapRoot lifecycle epoch
-      committedHeight iroot : ℤ)
+      committedHeight lifecycleDisc iroot : ℤ)
     (h : rotatedCommit hash
           (rotatedLimbs cellsRoot r0 r1 r2 fields r11 r12 r13 r14 r15 r16 r17 r18 r19 r20 r21 r22
             authorityDigest capRoot nullifierRoot commitmentsRoot heapRoot lifecycle epoch
-            committedHeight) iroot
+            committedHeight lifecycleDisc) iroot
        = rotatedCommit hash
           (rotatedLimbs cellsRoot r0 r1 r2 fields r11 r12 r13 r14 r15 r16 r17 r18 r19 r20 r21 r22
             authorityDigest capRoot nullifierRoot commitmentsRoot' heapRoot lifecycle epoch
-            committedHeight) iroot) :
+            committedHeight lifecycleDisc) iroot) :
     commitmentsRoot = commitmentsRoot' := by
   have hlen :
       (rotatedLimbs cellsRoot r0 r1 r2 fields r11 r12 r13 r14 r15 r16 r17 r18 r19 r20 r21 r22
         authorityDigest capRoot nullifierRoot commitmentsRoot heapRoot lifecycle epoch
-        committedHeight).length
+        committedHeight lifecycleDisc).length
       = (rotatedLimbs cellsRoot r0 r1 r2 fields r11 r12 r13 r14 r15 r16 r17 r18 r19 r20 r21 r22
         authorityDigest capRoot nullifierRoot commitmentsRoot' heapRoot lifecycle epoch
-        committedHeight).length := by
+        committedHeight lifecycleDisc).length := by
     rw [rotatedLimbs_length, rotatedLimbs_length]
   obtain ⟨hlist, _⟩ := rotatedCommit_binds_limbs hash hCR hlen h
   have hidx := congrArg (fun L => L[27]?) hlist
@@ -354,13 +354,14 @@ private def fieldsC : Fin 8 → ℤ := fun i => 10 + (i : ℤ)
 /-- A concrete rotated limb list with a residue felt `d` at index 24 and cap-root `999` at 25; the
 app registers `r11..r22` are distinct sentinels so the toy sponge keeps positions. -/
 private def demoLimbs (d : ℤ) : List ℤ :=
-  rotatedLimbs 1 2 3 4 fieldsC 50 51 52 53 54 55 56 57 58 59 60 61 d 999 70 700 71 72 73 74
+  rotatedLimbs 1 2 3 4 fieldsC 50 51 52 53 54 55 56 57 58 59 60 61 d 999 70 700 71 72 73 74 75
 
--- The residue felt genuinely lands at index 24, cap-root at 25, commitments-root at 27.
+-- The residue felt genuinely lands at index 24, cap-root at 25, commitments-root at 27, disc at 32.
 #guard (demoLimbs 42)[24]? == some (42 : ℤ)
 #guard (demoLimbs 42)[25]? == some (999 : ℤ)
 #guard (demoLimbs 42)[27]? == some (700 : ℤ)
-#guard (demoLimbs 42).length == 32
+#guard (demoLimbs 42)[32]? == some (75 : ℤ)
+#guard (demoLimbs 42).length == 33
 
 -- LOAD-BEARING: a cell differing ONLY in its authority residue PUBLISHES a different rotated commit
 -- (a `record_digest := 0`-style stub would make these EQUAL — the audit-P0-2 forgery, forbidden).
@@ -377,17 +378,25 @@ private def demoLimbs (d : ℤ) : List ℤ :=
 
 -- The cap-root limb (25) is load-bearing too: moving ONLY cap_root moves the published commit.
 #guard decide (rotatedCommit refSponge
-                 (rotatedLimbs 1 2 3 4 fieldsC 50 51 52 53 54 55 56 57 58 59 60 61 42 999 70 700 71 72 73 74) 7
+                 (rotatedLimbs 1 2 3 4 fieldsC 50 51 52 53 54 55 56 57 58 59 60 61 42 999 70 700 71 72 73 74 75) 7
              = rotatedCommit refSponge
-                 (rotatedLimbs 1 2 3 4 fieldsC 50 51 52 53 54 55 56 57 58 59 60 61 42 888 70 700 71 72 73 74) 7)
+                 (rotatedLimbs 1 2 3 4 fieldsC 50 51 52 53 54 55 56 57 58 59 60 61 42 888 70 700 71 72 73 74 75) 7)
             == false
 
 -- The commitments-root limb (27) is load-bearing: moving ONLY commitments_root moves the published
 -- commit (the note shielded-set growth is bound — the flag-day's reason for the new limb).
 #guard decide (rotatedCommit refSponge
-                 (rotatedLimbs 1 2 3 4 fieldsC 50 51 52 53 54 55 56 57 58 59 60 61 42 999 70 700 71 72 73 74) 7
+                 (rotatedLimbs 1 2 3 4 fieldsC 50 51 52 53 54 55 56 57 58 59 60 61 42 999 70 700 71 72 73 74 75) 7
              = rotatedCommit refSponge
-                 (rotatedLimbs 1 2 3 4 fieldsC 50 51 52 53 54 55 56 57 58 59 60 61 42 999 70 701 71 72 73 74) 7)
+                 (rotatedLimbs 1 2 3 4 fieldsC 50 51 52 53 54 55 56 57 58 59 60 61 42 999 70 701 71 72 73 74 75) 7)
+            == false
+
+-- The lifecycle-disc limb (32) is load-bearing: moving ONLY the disc moves the published commit (a
+-- frozen seal / resurrection would publish a DIFFERENT commitment — the disc flag-day's reason).
+#guard decide (rotatedCommit refSponge
+                 (rotatedLimbs 1 2 3 4 fieldsC 50 51 52 53 54 55 56 57 58 59 60 61 42 999 70 700 71 72 73 74 0) 7
+             = rotatedCommit refSponge
+                 (rotatedLimbs 1 2 3 4 fieldsC 50 51 52 53 54 55 56 57 58 59 60 61 42 999 70 700 71 72 73 74 1) 7)
             == false
 
 -- The iroot is bound: moving ONLY the iroot moves the published commit (whole-log non-omission).

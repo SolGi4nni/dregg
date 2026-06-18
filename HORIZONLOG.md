@@ -11,6 +11,29 @@ reason.)*
 Last sweep: 2026-06-13 (flagged-items burndown — removed ~14 landed/struck items,
 deduped the DreggDL/sel4/snapshot landings into git history, kept live tails).
 
+## WAVE 1 LIFECYCLE-DISC — the lifecycle-mover light-client forgery CLOSED LIVE (2026-06-18)
+
+The lifecycle movers (cellSeal/cellUnseal/cellDestroy/receiptArchive) forced their AFTER-lifecycle
+limb only via the off-circuit record-pin anchor (PI[38] from the TRUSTED post-cell) — for a ledgerless
+client PI[38] is free, so a frozen seal / Destroyed→Live resurrection / wrong-disc archive was accepted
+by `verifyBatch` alone. CLOSED LIVE by a VK flag-day (NUM_PRE_LIMBS 32→33): the lifecycle DISC (`u8 0..4`)
+is now a committed pre-limb (`B_DISC = 32`, the new LAST limb; B_SPAN 45→47, ROT_WIDTH 315→320,
+APPENDIX 129→133, CAP_OPEN_BASE 320 — all offsets 0..31 STABLE). The deployed lifecycle-mover descriptors
+carry the LIVE in-circuit disc-transition gate (`EffectVmEmitRotationV3.rotateV3WithDiscGate`: a
+selector-gated constant force on the committed disc limb — cellSeal forces before=Live/after=Sealed,
+cellDestroy forces after=Destroyed, …), so the forgery is UNSAT for a ledgerless client with NO trusted
+post-cell. Proven: `cellSealV3_disc_forces_sealed`, `cellSealV3_rejects_frozen`,
+`cellDestroyV3_rejects_resurrection` (deployed faces of `RotatedKernelRefinementLifecycleDisc`), all
+axiom-clean. Differential extended (`RotatedCommitDifferential.rotatedLimbs` 33-limb + the Rust flip
+test's disc-flip leg — limb 32 is load-bearing). LIVE tooth: the 3 forged seal/unseal/archive rejects
+now bite at PROVE time (the disc gate refuses the trace), the rest via the payload anchor. lake 4003
+axiom-clean · circuit lib 884 + flip 12/12 + descriptors + cap-open 3/3 · sovereign_rotated_c1 19/19 ·
+turn 496 + integration · node capability 8 · drift PASS · descriptors re-emitted (67 files, 64 FP).
+NAMED RESIDUAL: the opaque payload felt (reason_hash/deathCert/sealed_at, limb 29) stays prover-supplied
+with a full-node-only PI-38 anchor (the DISC is what's safety-critical; the payload is effect data the
+light client reads from the published effect). receiptArchive kernel-spec (frozen) vs deployed (Archived)
+disc-semantics divergence reconciles in WAVE 3.
+
 ## FEE-IN-PROOF — trust-surface hole #5 CLOSED for the sovereign actor cell (2026-06-18)
 
 The deployed sovereign transfer debited `turn.fee` in executor PHASE 1 BEFORE proving and the

@@ -62,10 +62,10 @@ use dregg_circuit::poseidon2::{hash_bytes, hash_many};
 pub const NUM_REGISTERS: usize = 24;
 
 /// The number of pre-iroot absorption limbs (cells_root · r0..r23 · cap_root · nullifier_root ·
-/// commitments_root · heap_root · lifecycle · epoch · committed_height). Matches Lean
-/// `preLimbsAt_length = 32` at R = 24, after the `commitments_root` flag-day widening
-/// (NUM_PRE_LIMBS 31→32 — the 4 map roots cap/nullifier/commitments/heap).
-pub const NUM_PRE_LIMBS: usize = 1 + NUM_REGISTERS + 4 + 3; // 1 + 24 + 4 + 3 = 32
+/// commitments_root · heap_root · lifecycle · epoch · committed_height · lifecycle_disc). Matches
+/// Lean `preLimbsAt_length = 33` at R = 24, after the lifecycle-disc flag-day widening
+/// (NUM_PRE_LIMBS 32→33 — the committed lifecycle discriminant, the NEW LAST pre-iroot limb).
+pub const NUM_PRE_LIMBS: usize = 1 + NUM_REGISTERS + 4 + 3 + 1; // 1 + 24 + 4 + 3 + 1 = 33
 
 /// The collection id under which a present-cell existence leaf is keyed in the cells tree.
 const CELLS_COLLECTION: u32 = 0;
@@ -155,6 +155,24 @@ pub fn lifecycle_felt(lc: &CellLifecycle) -> BabyBear {
         }
     }
     hash_bytes(&bytes)
+}
+
+/// The committed lifecycle DISCRIMINANT limb (the `u8 0..4` — Live=0, Sealed=1, Migrated=2,
+/// Destroyed=3, Archived=4) as a bare felt, committed BESIDE the opaque `lifecycle_felt`. The
+/// in-circuit twin of `EffectVmEmitRotationV3.B_DISC` (the disc flag-day's new last pre-iroot limb):
+/// the per-effect disc-transition gate FORCES this column to the effect's mandated discriminant, so a
+/// ledgerless light client cannot be fooled about the lifecycle STATE (a frozen seal / a resurrection
+/// / a wrong-disc archive). UNLIKE `lifecycle_felt`, this is the raw discriminant (not a hash), so it
+/// can be gated to a constant in-circuit.
+pub fn lifecycle_disc_felt(lc: &CellLifecycle) -> BabyBear {
+    let disc: u8 = match lc {
+        CellLifecycle::Live => 0,
+        CellLifecycle::Sealed { .. } => 1,
+        CellLifecycle::Migrated { .. } => 2,
+        CellLifecycle::Destroyed { .. } => 3,
+        CellLifecycle::Archived { .. } => 4,
+    };
+    BabyBear::new(disc as u32)
 }
 
 /// Felt-encode the parent-side delegation epoch — the `epoch` scalar limb.
@@ -287,10 +305,13 @@ pub fn produce(
     pre_limbs[27] = root_felt(commitments_root);
     // limb 28: heap_root.
     pre_limbs[28] = root_felt(&cell.state.heap_root);
-    // limbs 29,30,31: lifecycle, epoch, committed_height.
+    // limbs 29,30,31: lifecycle (opaque felt), epoch, committed_height.
     pre_limbs[29] = lifecycle_felt(&cell.lifecycle);
     pre_limbs[30] = epoch_felt(cell.state.delegation_epoch());
     pre_limbs[31] = committed_height_felt(cell.state.committed_height());
+    // limb 32: lifecycle_disc (the flag-day new committed discriminant — the gated disc-transition
+    // limb, the NEW LAST pre-iroot limb).
+    pre_limbs[32] = lifecycle_disc_felt(&cell.lifecycle);
 
     let iroot_val = iroot(receipt_hashes);
     let state_commit = wire_commit(&pre_limbs, iroot_val);
@@ -510,8 +531,8 @@ mod tests {
     }
 
     #[test]
-    fn pre_limb_count_is_32_at_r24() {
-        assert_eq!(NUM_PRE_LIMBS, 32);
+    fn pre_limb_count_is_33_at_r24() {
+        assert_eq!(NUM_PRE_LIMBS, 33);
     }
 
     /// THE iroot NON-OMISSION TOOTH (Lean `mroot_injective`): tamper / truncate / extend /
@@ -582,6 +603,13 @@ mod tests {
             c,
             wire_commit(&moved_heap, BabyBear::new(7)),
             "heap_root limb (28) is bound"
+        );
+        let mut moved_disc = limbs.clone();
+        moved_disc[32] = BabyBear::new(999);
+        assert_ne!(
+            c,
+            wire_commit(&moved_disc, BabyBear::new(7)),
+            "lifecycle_disc limb (32) is bound"
         );
         assert_ne!(c, wire_commit(&limbs, BabyBear::new(8)), "iroot is bound");
     }

@@ -52,7 +52,7 @@ use dregg_circuit::field::BabyBear;
 use dregg_turn::rotation_witness as rw;
 
 const B_CAP_ROOT: usize = 25;
-const NUM_PRE: usize = rw::NUM_PRE_LIMBS; // 32
+const NUM_PRE: usize = rw::NUM_PRE_LIMBS; // 33
 
 /// Resolve a rotated descriptor JSON from the staged registry TSV by key.
 fn rotated_json(key: &str) -> &'static str {
@@ -217,10 +217,12 @@ fn rotated_transfer_proves_verifies_differential_and_refuses_ghost() {
     for (idx, label) in [
         (0usize, "cells_root"),
         (26, "nullifier_root"),
-        (27, "heap_root"),
-        (28, "lifecycle"),
-        (29, "epoch"),
-        (30, "committed_height"),
+        (27, "commitments_root"),
+        (28, "heap_root"),
+        (29, "lifecycle"),
+        (30, "epoch"),
+        (31, "committed_height"),
+        (32, "lifecycle_disc"),
     ] {
         assert_eq!(
             after_w.pre_limbs[idx],
@@ -1070,7 +1072,7 @@ fn rotated_published_commit_lean_differential_and_permission_flip_moves_it() {
     // ALONE last. Independent of the deployed `v9_wire_commit` (re-derived here from the public
     // `hash_many` primitive + the pre-limb vector), so agreement is a genuine differential.
     fn independent_wire_commit(pre_limbs: &[BabyBear], iroot: BabyBear) -> BabyBear {
-        assert_eq!(pre_limbs.len(), V9_NUM_PRE_LIMBS, "32 pre-iroot limbs at R=24");
+        assert_eq!(pre_limbs.len(), V9_NUM_PRE_LIMBS, "33 pre-iroot limbs at R=24");
         // 4-wide head over the first four limbs (cells_root, r0, r1, r2).
         let mut d = hash_many(&[pre_limbs[0], pre_limbs[1], pre_limbs[2], pre_limbs[3]]);
         let mut col = 4;
@@ -1104,7 +1106,7 @@ fn rotated_published_commit_lean_differential_and_permission_flip_moves_it() {
     // -- (a) THE INDEPENDENT RE-FOLD == the deployed PUBLISHED commitment. --
     // The deployed pre-limb vector (the Lean `rotatedLimbs` order) and the deployed published felt.
     let pre = compute_rotated_pre_limbs(&plain, &ctx);
-    assert_eq!(pre.len(), V9_NUM_PRE_LIMBS, "32 limbs");
+    assert_eq!(pre.len(), V9_NUM_PRE_LIMBS, "33 limbs");
     // The authority residue sits at index 24 (register r23) — the Lean `authority_digest_at_index_24`.
     assert_eq!(
         pre[24],
@@ -1195,11 +1197,41 @@ fn rotated_published_commit_lean_differential_and_permission_flip_moves_it() {
         "the independent re-fold == the deployed published commitment on the grown-set context too"
     );
 
+    // -- (d) THE lifecycle_disc FLIP (the disc flag-day's reason for the new limb): a lifecycle
+    //    discriminant change (Live → Sealed) MOVES the published commitment, AND moves it ONLY at
+    //    index 32 (the new committed disc limb). This is the P0-2 non-vacuity on the lifecycle disc:
+    //    a frozen seal / a resurrection publishes a DIFFERENT OLD/NEW commit than the honest one. The
+    //    differential's Lean twin is `RotatedCommitDifferential.rotatedCommit_binds` at index 32. --
+    let mut sealed = producer_cell(100_000, 0);
+    sealed.lifecycle = dregg_cell::lifecycle::CellLifecycle::Sealed {
+        reason_hash: [0u8; 32],
+        sealed_at: 0,
+    };
+    let pre_sealed = compute_rotated_pre_limbs(&sealed, &ctx);
+    // The disc limb (32) MUST move; the opaque lifecycle_felt limb (29) also moves (both encode the
+    // state), so we only require index 32 to be the disc-distinguishing column.
+    assert_ne!(
+        pre[32], pre_sealed[32],
+        "index 32 (lifecycle_disc) MUST move on a Live→Sealed flip (the disc is committed)"
+    );
+    assert_eq!(pre[32], BabyBear::ZERO, "a Live cell's committed disc is 0");
+    let published_sealed = compute_canonical_state_commitment_v9_felt(&sealed, &ctx);
+    assert_ne!(
+        published, published_sealed,
+        "P0-2 on the lifecycle disc: a Live→Sealed flip MOVES the published rotated commitment \
+         (limb 32 is bound) — a frozen seal / resurrection publishes a DIFFERENT commit"
+    );
+    assert_eq!(
+        published_sealed,
+        independent_wire_commit(&pre_sealed, iroot),
+        "the independent re-fold == the deployed published commitment on the sealed cell too"
+    );
+
     eprintln!(
         "ROTATED WIRE-COMMIT LEAN DIFFERENTIAL GREEN: the PUBLISHED rotated commitment == an \
          independent re-fold over the Lean rotatedLimbs order; a permission flip MOVES it (P0-2 on \
-         the authority residue, limb 24); and a note-commitment ADD MOVES it (P0-2 on the \
-         commitments set, the flag-day limb 27)."
+         the authority residue, limb 24); a note-commitment ADD MOVES it (P0-2 on the commitments \
+         set, limb 27); and a Live→Sealed flip MOVES it (P0-2 on the lifecycle disc, limb 32)."
     );
 }
 
