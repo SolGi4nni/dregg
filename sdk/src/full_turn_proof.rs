@@ -178,6 +178,29 @@ pub struct FullTurnWitness {
     /// unconditionally. Only the rotated PROVE/VERIFY code is `prover`-gated; under
     /// `not(prover)` a present `rotation` is ignored (the v1 leg runs).
     pub rotation: Option<RotationTurnWitness>,
+
+    // -- TURN-IDENTITY felts (#225 turn-bound cap-open) --
+    /// Present for a TURN-BOUND cap-open turn (currently: a cap-gated `Transfer` routed through
+    /// `transferCapOpenTBVmDescriptor2R24`): the single-felt `(actor, src, dst)` of the turn the
+    /// light client publishes. `src` is the cap-leaf target (the column `targetBindGate` already
+    /// roots); `actor`/`dst` are the published turn-identity columns the verifier ANCHORS to the
+    /// trusted turn (`anchor_cap_open_turn_pins`). When `None`, the cap-open prover falls back to the
+    /// OWNER arm (`actor = dst = src = leaf.target`) — correct for an owner-authorized open, and the
+    /// honest self-test default. The threading of a CROSS-VAT `(actor ≠ src)` identity is supplied by
+    /// the node's cap-gated prove site (which holds the turn's `agent`/`from`/`to`).
+    pub cap_turn_identity: Option<TurnIdentityFelts>,
+}
+
+/// The single-felt turn identity published by the TURN-BOUND cap-open (#225): `(actor, src, dst)`.
+/// These ride the TB descriptor's three turn-identity PIs (`38/39/40`); the verifier ANCHORS them to
+/// the trusted turn so a ledgerless light client concludes the published identity = the proven
+/// transition's. The felt encoding MUST match the cap-leaf `target` convention for `src` (the column
+/// `targetBindGate` roots); `actor`/`dst` use the SAME single-felt cell projection.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TurnIdentityFelts {
+    pub actor: BabyBear,
+    pub src: BabyBear,
+    pub dst: BabyBear,
 }
 
 /// The per-turn rotation witnesses + caveat manifest for the rotated effect-vm leg of a full
@@ -729,10 +752,11 @@ pub fn prove_effect_vm_rotated_ir2_with_caveat(
 ///   * **`AttenuateCapability`** — WIRED (`attenuateCapOpenEffVmDescriptor2R24`, the
 ///     `prove_effect_vm_cap_open_attenuate` path); the cap-membership open is proven + self-verified
 ///     end-to-end (`circuit/tests/cap_open_self_verify.rs`).
-///   * **`Transfer`** (residual (b)) — WIRED (`transferCapOpenEffVmDescriptor2R24`, the
-///     `prove_effect_vm_cap_open_transfer` path): the cross-vat **Transfer-via-granted-cap**
-///     (`actor != src`, authority from a held transfer cap) routes the in-circuit depth-16
-///     cap-membership open over the TRANSFER base.
+///   * **`Transfer`** (#225 turn-identity cutover) — WIRED to the LIVE TURN-BOUND descriptor
+///     (`transferCapOpenTBVmDescriptor2R24`, the `prove_effect_vm_cap_open_transfer` path): the
+///     in-circuit depth-16 cap-membership open over the TRANSFER base PLUS the turn-identity weld
+///     (the `src`/`actor`/`dst` columns welded to PIs 38/39/40, anchored by the verifier to the
+///     trusted turn) so a ledgerless light client concludes the published identity = the proven turn.
 ///   * **every OTHER cap-authorized effect-kind** (delegate-via-cap, exercise-via-cap, …) — NO
 ///     cap-open descriptor is emitted yet (the cap-open appendix is base-agnostic, but a per-effect
 ///     `<effect>CapOpenVmDescriptor2R24` = that effect's base + the appendix has not been registered).
@@ -753,6 +777,13 @@ struct CapOpenRoute {
     /// only the Transfer base threads the transfer caveat manifest; every other base uses the empty
     /// manifest (mirroring `RotationTurnWitness::for_effects`).
     transfer_caveat: bool,
+    /// the TURN-BOUND cap-open (the `…CapOpenTBVmDescriptor2R24` weld): the descriptor carries TWO
+    /// extra turn-identity columns (`actor`/`dst`) and THREE extra PIs (`src`/`actor`/`dst` at
+    /// `38/39/40`), so the trace is widened with [`widen_to_cap_open_tb`] and the dpis extended with
+    /// [`cap_open_tb_dpis`]. The verifier ANCHORS the three PIs to the trusted turn (`anchor_cap_open_turn_pins`),
+    /// so a ledgerless light client can conclude the published `actor`/`src`/`dst` MATCH the proven
+    /// transition. Wired for `transfer` (the #225 weld); the other legs ride the non-TB `-eff` descriptor.
+    turn_bound: bool,
 }
 
 #[cfg(feature = "prover")]
@@ -765,14 +796,19 @@ fn cap_open_route_for_run(run_effects: &[VmEffectKind]) -> Option<CapOpenRoute> 
     const EFFECT_DELEGATION_OPS: u32 = 1 << 16;
     match run_effects {
         [VmEffectKind::Transfer { .. }] => Some(CapOpenRoute {
-            // residual (a): the LIVE transfer cap-open is the effect-GENERAL `-eff` descriptor
-            // (`transferCapOpenEffVmDescriptor2R24`, `capOpenConstraintsEff 1`): genuine SUBMASK facet
-            // (a BROAD honest cap PASSES) + DECODED tier (any `auth_tag`). The Signature-pinned
-            // (the apex authority leg now ALSO refines this `-eff` descriptor — wire & proof are one).
-            key: "transferCapOpenEffVmDescriptor2R24",
+            // #225 TURN-IDENTITY CUTOVER: the LIVE transfer cap-open is the TURN-BOUND descriptor
+            // (`transferCapOpenTBVmDescriptor2R24`, `CapOpenTurnPins.effCapOpenV3TB`): the effect-GENERAL
+            // `-eff` cap-open (genuine SUBMASK facet — a BROAD honest cap PASSES — + DECODED tier) PLUS
+            // two turn-identity columns (`actor`/`dst`) and three turn-identity PIs (`src`/`actor`/`dst`
+            // welded to PIs 38/39/40 by appended `.piBinding` gates). The verifier anchors those PIs to
+            // the trusted turn, so a ledgerless light client can conclude the published identity MATCHES
+            // the proven transition. The apex discharge `transfer_descriptorRefines_facetTB_realized`
+            // re-proves the refinement with `hsrc` REALIZED from the PI weld — wire & proof are one.
+            key: "transferCapOpenTBVmDescriptor2R24",
             eff_bit: EFFECT_TRANSFER,
             needs_attenuate_patch: false,
             transfer_caveat: true,
+            turn_bound: true,
         }),
         // residual (a): the LIVE attenuate cap-open is the effect-GENERAL `-eff` descriptor
         // (`attenuateCapOpenEffVmDescriptor2R24`, `capOpenConstraintsEff 1`) — its leaf must PERMIT
@@ -783,6 +819,7 @@ fn cap_open_route_for_run(run_effects: &[VmEffectKind]) -> Option<CapOpenRoute> 
             eff_bit: EFFECT_TRANSFER,
             needs_attenuate_patch: true,
             transfer_caveat: false,
+            turn_bound: false,
         }),
         // THE FAN-OUT (residual (a) closed): each routes to its `<effect>CapOpenVmDescriptor2R24`,
         // binding the cap to THAT effect-kind bit (not transfer). grantCap/revokeCapability are the
@@ -793,30 +830,35 @@ fn cap_open_route_for_run(run_effects: &[VmEffectKind]) -> Option<CapOpenRoute> 
             eff_bit: EFFECT_GRANT_CAPABILITY,
             needs_attenuate_patch: true,
             transfer_caveat: false,
+            turn_bound: false,
         }),
         [VmEffectKind::Introduce { .. }] => Some(CapOpenRoute {
             key: "introduceCapOpenVmDescriptor2R24",
             eff_bit: EFFECT_INTRODUCE,
             needs_attenuate_patch: false,
             transfer_caveat: false,
+            turn_bound: false,
         }),
         [VmEffectKind::RevokeDelegation { .. }] => Some(CapOpenRoute {
             key: "revokeCapOpenVmDescriptor2R24",
             eff_bit: EFFECT_DELEGATION_OPS,
             needs_attenuate_patch: false,
             transfer_caveat: false,
+            turn_bound: false,
         }),
         [VmEffectKind::RefreshDelegation] => Some(CapOpenRoute {
             key: "refreshDelegationCapOpenVmDescriptor2R24",
             eff_bit: EFFECT_DELEGATION_OPS,
             needs_attenuate_patch: false,
             transfer_caveat: false,
+            turn_bound: false,
         }),
         [VmEffectKind::RevokeCapability { .. }] => Some(CapOpenRoute {
             key: "revokeCapabilityCapOpenVmDescriptor2R24",
             eff_bit: EFFECT_REVOKE_CAPABILITY,
             needs_attenuate_patch: true,
             transfer_caveat: false,
+            turn_bound: false,
         }),
         _ => None,
     }
@@ -898,8 +940,9 @@ fn prove_effect_vm_cap_open_attenuate(
         eff_bit: dregg_circuit::effect_vm::trace_rotated::WRITE_MASK_LO,
         needs_attenuate_patch: true,
         transfer_caveat: false,
+        turn_bound: false,
     };
-    prove_effect_vm_cap_open(initial_state, effects, before_w, after_w, cap, &route)
+    prove_effect_vm_cap_open(initial_state, effects, before_w, after_w, cap, &route, None)
 }
 
 /// Look up a cap-open descriptor JSON by its registry key from the staged rotated registry. The
@@ -941,12 +984,12 @@ fn rotated_cap_open_vk_hash() -> Result<[u8; 32], SdkError> {
     cap_open_vk_hash_by_key("attenuateCapOpenEffVmDescriptor2R24")
 }
 
-/// The TRANSFER cap-open leg's `vk_hash` (residual (b)) — the blake3 fingerprint of the
-/// `transferCapOpenEffVmDescriptor2R24` JSON (the LIVE genuine-submask descriptor).
+/// The TRANSFER cap-open leg's `vk_hash` (#225) — the blake3 fingerprint of the LIVE TURN-BOUND
+/// `transferCapOpenTBVmDescriptor2R24` JSON (the genuine-submask descriptor PLUS the turn-identity weld).
 #[cfg(feature = "prover")]
 #[cfg_attr(not(test), allow(dead_code))] // test-only; the chain routes via `cap_open_vk_hash_by_key`
 fn rotated_transfer_cap_open_vk_hash() -> Result<[u8; 32], SdkError> {
-    cap_open_vk_hash_by_key("transferCapOpenEffVmDescriptor2R24")
+    cap_open_vk_hash_by_key("transferCapOpenTBVmDescriptor2R24")
 }
 
 /// **`prove_effect_vm_cap_open_transfer`** (residual (b) — the CROSS-VAT Transfer-via-granted-cap
@@ -986,12 +1029,15 @@ fn prove_effect_vm_cap_open_transfer(
         ));
     }
     let route = CapOpenRoute {
-        key: "transferCapOpenEffVmDescriptor2R24",
+        key: "transferCapOpenTBVmDescriptor2R24",
         eff_bit: dregg_circuit::effect_vm::trace_rotated::WRITE_MASK_LO,
         needs_attenuate_patch: false,
         transfer_caveat: true,
+        turn_bound: true,
     };
-    prove_effect_vm_cap_open(initial_state, effects, before_w, after_w, cap, &route)
+    // The test helper publishes the OWNER arm (no explicit cross-vat identity); the verifier anchors
+    // the three turn-identity PIs to the trusted turn in the deployment negative test.
+    prove_effect_vm_cap_open(initial_state, effects, before_w, after_w, cap, &route, None)
 }
 
 /// **`prove_effect_vm_cap_open`** (THE GENERIC FAN-OUT PROVER, residual (a)) — prove a single
@@ -1018,6 +1064,7 @@ fn prove_effect_vm_cap_open(
     after_w: &dregg_turn::rotation_witness::RotationWitness,
     cap: &CapMembershipWitness,
     route: &CapOpenRoute,
+    identity: Option<TurnIdentityFelts>,
 ) -> Result<
     (
         dregg_circuit::descriptor_ir2::Ir2BatchProof<dregg_circuit::descriptor_ir2::DreggStarkConfig>,
@@ -1029,8 +1076,9 @@ fn prove_effect_vm_cap_open(
         MemBoundaryWitness, parse_vm_descriptor2, prove_vm_descriptor2,
     };
     use dregg_circuit::effect_vm::trace_rotated::{
-        CapOpenWitness, RotatedBlockWitness, empty_caveat_manifest, generate_rotated_effect_vm_trace,
-        patch_attenuate_base_for_cap_open, transfer_caveat_manifest, widen_to_cap_open,
+        CapOpenWitness, RotatedBlockWitness, cap_open_tb_dpis, empty_caveat_manifest,
+        generate_rotated_effect_vm_trace, patch_attenuate_base_for_cap_open, transfer_caveat_manifest,
+        widen_to_cap_open, widen_to_cap_open_tb,
     };
 
     let json = cap_open_descriptor_json_by_key(route.key)?;
@@ -1070,8 +1118,26 @@ fn prove_effect_vm_cap_open(
     let cap_open =
         CapOpenWitness::from_membership_for(&cap.leaf, &cap.siblings, &cap.directions, route.eff_bit)
             .map_err(|e| SdkError::InvalidWitness(format!("cap-open witness ({}): {e}", route.key)))?;
-    widen_to_cap_open(&mut trace, &cap_open)
-        .map_err(|e| SdkError::InvalidWitness(format!("cap-open widen ({}): {e}", route.key)))?;
+
+    // The TURN-BOUND route (#225) widens with TWO extra turn-identity columns (`actor`/`dst`) and
+    // extends the dpis with THREE turn-identity PIs (`src`/`actor`/`dst` at 38/39/40). `src` is the
+    // cap-leaf target (the column `targetBindGate` roots); when no explicit identity is threaded the
+    // OWNER arm (`actor = dst = src`) is published. The verifier ANCHORS the three PIs to the trusted
+    // turn, so the published identity is FORCED to match the proven transition.
+    let dpis = if route.turn_bound {
+        let src = cap_open.src;
+        let (actor, dst) = match identity {
+            Some(id) => (id.actor, id.dst),
+            None => (src, src),
+        };
+        widen_to_cap_open_tb(&mut trace, &cap_open, actor, dst)
+            .map_err(|e| SdkError::InvalidWitness(format!("cap-open TB widen ({}): {e}", route.key)))?;
+        cap_open_tb_dpis(&dpis, src, actor, dst)
+    } else {
+        widen_to_cap_open(&mut trace, &cap_open)
+            .map_err(|e| SdkError::InvalidWitness(format!("cap-open widen ({}): {e}", route.key)))?;
+        dpis
+    };
 
     let proof = prove_vm_descriptor2(&desc, &trace, &dpis, &MemBoundaryWitness::default(), &[])
         .map_err(|e| SdkError::InvalidWitness(format!("cap-open IR-v2 proof ({}): {e}", route.key)))?;
@@ -1268,6 +1334,7 @@ fn prove_cohort_run_chain(
     effects: &[VmEffectKind],
     rot: &RotationTurnWitness,
     cap_membership: Option<&CapMembershipWitness>,
+    cap_turn_identity: Option<TurnIdentityFelts>,
     before_nullifiers: Option<&[BabyBear]>,
 ) -> Result<Vec<AttachedSubProof>, SdkError> {
     let runs = split_into_cohort_runs(effects);
@@ -1322,7 +1389,7 @@ fn prove_cohort_run_chain(
                 SdkError::InvalidWitness("cap-open routing: unreachable (gated above)".into())
             })?;
             let (proof, dpis) =
-                prove_effect_vm_cap_open(&s_k, run_effects, &rot.before, after_w, cap, &route)?;
+                prove_effect_vm_cap_open(&s_k, run_effects, &rot.before, after_w, cap, &route, cap_turn_identity)?;
             let proof_bytes = postcard::to_allocvec(&proof).map_err(|e| {
                 SdkError::InvalidWitness(format!(
                     "cap-open rotated proof serialize failed (run {k}): {e}"
@@ -1506,6 +1573,7 @@ pub fn prove_full_turn(witness: &FullTurnWitness) -> Result<FullTurnProof, SdkEr
             &witness.effects,
             rot,
             witness.cap_membership.as_ref(),
+            witness.cap_turn_identity,
             before_nullifiers.as_deref(),
         )?;
         let mut leg_pis: Vec<Vec<BabyBear>> = Vec::with_capacity(legs.len());
@@ -2686,6 +2754,7 @@ pub fn prove_turn_with_auth(
         cap_membership: None,
         turn_hash,
         rotation: None,
+        cap_turn_identity: None,
     };
     prove_full_turn(&witness)
 }
@@ -2709,6 +2778,7 @@ pub fn prove_turn_self_sovereign(
         cap_membership: None,
         turn_hash,
         rotation: None,
+        cap_turn_identity: None,
     };
     prove_full_turn(&witness)
 }
@@ -2736,6 +2806,7 @@ pub fn prove_turn_self_sovereign_rotated(
         cap_membership: None,
         turn_hash,
         rotation,
+        cap_turn_identity: None,
     };
     prove_full_turn(&witness)
 }
@@ -2841,7 +2912,8 @@ mod tests {
         // run). Each row asserts the deployed route binds the cap to THAT effect's bit (not transfer).
         let cases: Vec<(&'static str, u32, Vec<VmEffect>)> = vec![
             (
-                "transferCapOpenEffVmDescriptor2R24",
+                // #225: the LIVE transfer cap-open is the TURN-BOUND descriptor.
+                "transferCapOpenTBVmDescriptor2R24",
                 EFFECT_TRANSFER,
                 vec![VmEffect::Transfer { amount: 1, direction: 1 }],
             ),
@@ -2887,7 +2959,7 @@ mod tests {
             assert_eq!(route.key, *key, "{key}: route key mismatch");
             assert_eq!(route.eff_bit, *eff_bit, "{key}: bound the WRONG effect-kind bit");
             // each fan-out effect binds its OWN bit — never the transfer bit (unless it IS transfer).
-            if *key != "transferCapOpenEffVmDescriptor2R24"
+            if *key != "transferCapOpenTBVmDescriptor2R24"
                 && *key != "attenuateCapOpenEffVmDescriptor2R24"
             {
                 assert_ne!(
@@ -3054,8 +3126,9 @@ mod tests {
     /// and the GENERAL facet gate BITES in-circuit (residual (a)).
     ///
     /// A single `Transfer` turn whose authority rides a REAL consumed transfer-cap proves through the
-    /// TRANSFER cap-open descriptor (`transferCapOpenEffVmDescriptor2R24` — transfer base + the 59-column
-    /// cap-membership appendix), self-verifies, and re-verifies through the live verify path with the
+    /// LIVE TURN-BOUND transfer cap-open descriptor (`transferCapOpenTBVmDescriptor2R24` — transfer base
+    /// + the cap-membership appendix + the turn-identity weld), self-verifies, and re-verifies through
+    /// the live verify path with the
     /// transfer cap-open vk_hash. Then the NEGATIVE: a cap whose leaf facet permits a DIFFERENT effect
     /// (not EFFECT_TRANSFER) is rejected — first at witness build (`from_membership` fail-closed), AND
     /// in-circuit: a hand-built witness carrying a wrong-facet leaf (bypassing the build pin) makes the
@@ -3178,10 +3251,11 @@ mod tests {
                 MemBoundaryWitness, parse_vm_descriptor2, prove_vm_descriptor2,
             };
             use dregg_circuit::effect_vm::trace_rotated::{
-                RotatedBlockWitness, generate_rotated_effect_vm_trace, transfer_caveat_manifest,
-                widen_to_cap_open,
+                RotatedBlockWitness, cap_open_tb_dpis, generate_rotated_effect_vm_trace,
+                transfer_caveat_manifest, widen_to_cap_open_tb,
             };
-            let json = cap_open_descriptor_json_by_key("transferCapOpenEffVmDescriptor2R24").unwrap();
+            // #225: the LIVE transfer cap-open is the TURN-BOUND descriptor (409 wide, 41 PIs).
+            let json = cap_open_descriptor_json_by_key("transferCapOpenTBVmDescriptor2R24").unwrap();
             let desc = parse_vm_descriptor2(json).unwrap();
             let before =
                 RotatedBlockWitness::new(before_w.pre_limbs.clone(), before_w.iroot).unwrap();
@@ -3190,7 +3264,9 @@ mod tests {
             let (mut trace, dpis) =
                 generate_rotated_effect_vm_trace(&initial, &effects, &before, &after, &caveat)
                     .unwrap();
-            widen_to_cap_open(&mut trace, &wrong_w).unwrap();
+            let src = wrong_w.src;
+            widen_to_cap_open_tb(&mut trace, &wrong_w, src, src).unwrap();
+            let dpis = cap_open_tb_dpis(&dpis, src, src, src);
             prove_vm_descriptor2(&desc, &trace, &dpis, &MemBoundaryWitness::default(), &[]).is_ok()
         })
         .map(|ok| !ok) // proved OK ⇒ NOT rejected; we want rejected
@@ -3309,7 +3385,7 @@ mod tests {
 
         // PROVE the revoke cap-open leg (self-verifies internally) + re-verify through the live path.
         let (proof, dpis) =
-            prove_effect_vm_cap_open(&initial, &effects, &before_w, &after_w, &cap, &route)
+            prove_effect_vm_cap_open(&initial, &effects, &before_w, &after_w, &cap, &route, None)
                 .expect("revoke cap-open fan-out leg must prove + self-verify");
         let proof_bytes = postcard::to_allocvec(&proof).expect("serialize revoke cap-open leg");
         let vk_hash = cap_open_vk_hash_by_key(route.key).expect("revoke cap-open vk_hash");
@@ -3326,7 +3402,7 @@ mod tests {
             directions: cap.directions.clone(),
         };
         assert!(
-            prove_effect_vm_cap_open(&initial, &effects, &before_w, &after_w, &wrong_facet, &route)
+            prove_effect_vm_cap_open(&initial, &effects, &before_w, &after_w, &wrong_facet, &route, None)
                 .is_err(),
             "a cap permitting a DIFFERENT effect (transfer, not delegation) MUST be refused (fail-closed)"
         );
@@ -3599,6 +3675,7 @@ mod tests {
             cap_membership: None,
             turn_hash: [0x77u8; 32],
             rotation: Some(rotation_for_initial(&initial, &effects)),
+            cap_turn_identity: None,
         };
 
         let proof = prove_full_turn(&witness).expect("full turn proof should generate");
@@ -3651,6 +3728,7 @@ mod tests {
             cap_membership: None,
             turn_hash: [0x91u8; 32],
             rotation: Some(rotation_for_initial(&initial, &effects)),
+            cap_turn_identity: None,
         };
         let proof = prove_full_turn(&witness).expect("honest fresh-spend proof should generate");
 
@@ -3722,6 +3800,7 @@ mod tests {
             cap_membership: None,
             turn_hash: [0x92u8; 32],
             rotation: Some(rotation_for_initial(&initial, &effects)),
+            cap_turn_identity: None,
         };
         let proof = prove_full_turn(&witness)
             .expect("proof generates (the forgery is a verify-time property)");
@@ -3839,6 +3918,7 @@ mod tests {
             cap_membership: None,
             turn_hash: [0xB1u8; 32],
             rotation: Some(rotation_for_initial(&initial, &effects)),
+            cap_turn_identity: None,
         };
         let proof = prove_full_turn(&witness).expect("honest fresh-spend proof should generate");
 
@@ -3923,6 +4003,7 @@ mod tests {
             cap_membership: None,
             turn_hash: [0xB2u8; 32],
             rotation: Some(rotation_for_initial(&initial, &effects)),
+            cap_turn_identity: None,
         };
         let proof = prove_full_turn(&witness)
             .expect("proof generates (the mismatch is a verify-time property)");
@@ -3990,6 +4071,7 @@ mod tests {
             cap_membership: None,
             turn_hash: [0x11u8; 32],
             rotation: Some(rotation_for_initial(&initial, &effects)),
+            cap_turn_identity: None,
         };
         let proof = prove_full_turn(&witness).expect("auth-bound proof should generate");
         assert!(proof.components.has_authorization);
@@ -4049,6 +4131,7 @@ mod tests {
             cap_membership: None,
             turn_hash: [0x22u8; 32],
             rotation: Some(rotation_for_initial(&initial, &effects_a)),
+            cap_turn_identity: None,
         };
         let proof = prove_full_turn(&witness)
             .expect("proof generation succeeds (mismatch is a verify-time property)");
@@ -4100,6 +4183,7 @@ mod tests {
             cap_membership: None,
             turn_hash: [0x88u8; 32],
             rotation: Some(rotation_for_initial(&initial, &effects)),
+            cap_turn_identity: None,
         };
         let mut proof = prove_full_turn(&witness).expect("honest proof should generate");
 
@@ -4277,7 +4361,7 @@ mod tests {
                 ),
                 caveat: dregg_circuit::effect_vm::trace_rotated::empty_caveat_manifest(),
             };
-            let res = prove_cohort_run_chain(&initial, &[], &rot, None, None);
+            let res = prove_cohort_run_chain(&initial, &[], &rot, None, None, None);
             assert!(
                 res.is_err(),
                 "the chained prover must fail closed on an empty turn"
@@ -4399,7 +4483,7 @@ mod tests {
         let rot = rotation_witness_for_cells(&before_cell, &after_cell, &[[0x11u8; 32]]);
 
         // Build the chained legs directly (the prover the composed path uses).
-        let legs = prove_cohort_run_chain(&initial, &effects, &rot, None, None)
+        let legs = prove_cohort_run_chain(&initial, &effects, &rot, None, None, None)
             .expect("heterogeneous turn must prove as a chain of rotated legs");
         assert_eq!(legs.len(), 3, "three cohort runs ⇒ three rotated legs");
         for leg in &legs {
@@ -4569,6 +4653,7 @@ mod tests {
             cap_membership: None,
             turn_hash: [0x5A; 32],
             rotation: Some(rot),
+            cap_turn_identity: None,
         };
         let proof = prove_full_turn(&witness)
             .expect("chained proof with a correct Σ-net=0 conservation witness must generate");
@@ -4617,6 +4702,7 @@ mod tests {
             cap_membership: None,
             turn_hash: [0x5A; 32],
             rotation: Some(rot),
+            cap_turn_identity: None,
         };
         let res = prove_full_turn(&witness);
         assert!(

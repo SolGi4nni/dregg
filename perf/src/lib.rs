@@ -197,6 +197,7 @@ pub fn rotated_transfer_turn(balance: u64, amount: u64) -> RotatedTurn {
         cap_membership: None,
         turn_hash: *blake3::hash(b"perf-rotated-turn").as_bytes(),
         rotation: Some(rotation),
+        cap_turn_identity: None,
     };
     // Prove once to read the rotated leg's bound OLD/NEW commit carriers (what
     // `verify_full_turn` cross-binds — a separately-recomputed v9 felt does NOT match).

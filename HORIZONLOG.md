@@ -46,18 +46,23 @@ canonical authority source with the carried `hsrc` field REPLACED by the in-circ
 assumed `src`-equality is gone from the authority leg's hypothesis set). Emitted: `transferCapOpenTBVmDescriptor2R24`
 (width 409, 41 PIs) added to the wire (`rotation-v3-staged-registry.tsv`); drift PASS; FP re-pinned; Rust
 audit + resolver-coverage tests updated (n→45, TB exclusions). NEGATIVE TOOTH `effCapOpenV3TB_rejects_mismatched_src`.
-#assert_axioms-clean. REMAINING (the fan-out, NOT yet done): (1) the CUTOVER routing the LIVE transfer cap-open
-(registry position 42) THROUGH `transferCapOpenTBVmDescriptor2R24` — the deployed prover's `fill_cap_open`
-must fill the 2 turn-identity columns and the verifier (`turn/src/executor/proof_verify.rs`) must compute +
-override the 3 turn-identity PIs from the trusted turn (the `TurnIdentityAnchored` realization), with a
-deployment negative test (forged published actor/src REJECTED); (2) the ACTOR↔leaf-position weld — binding
-`actor` end-to-end needs the Merkle path to encode the actor's c-list subtree (the module publishes the actor
-column+PI so the light client SEES it and the owner disjunct is a decision on published data, but does not yet
-root it in the cap-tree); (3) FAN-OUT to the value/non-cap-open descriptors + the whole-turn forest apex
-(`RotatedKernelForestFacet`) so the WHOLE-turn conclusion's authority is turn-bound, not just the single-step
-transfer; (4) `dst`/`amt` welds analogous to `src`. COMMITTED `d64600d5a` (beachhead) + `cc6102b87` (the
-flip-test fix — the former "PRE-EXISTING RED" `rotated_audit_record_pin` was STALE #218/#219 debt:
-receiptArchive routes to B_LIFECYCLE not B_RECORD_DIGEST; now parametrized per-effect, 10/10 green).
+#assert_axioms-clean. ⚑ CUT OVER LIVE (2026-06-18): the live transfer cap-open is now routed THROUGH
+`transferCapOpenTBVmDescriptor2R24` (NOT a staged/excluded descriptor — per ember "stop cargo-culting VK
+epochs, just cut over"). The deployed prover fills the 2 turn-identity columns (`CAP_OPEN_TB_ACTOR_COL=407`,
+`_DST_COL=408`; `widen_to_cap_open_tb` in `trace_rotated.rs`) and the verifier anchors the 3 turn-identity PIs
+(38/39/40 ← trusted turn, `anchor_cap_open_turn_pins` = the `TurnIdentityAnchored` realization). Live key cut
+in `sdk/src/full_turn_proof.rs` (`CapOpenRoute.turn_bound`, `TurnIdentityFelts`); node site `node/src/turn_
+proving.rs` threads identity. DEPLOYMENT NEGATIVE TEST `circuit/tests/cap_open_turn_bound_verify.rs`
+(`..._forces_published_identity`): honest accept + forged src/actor/dst each REJECTED by `verify_vm_descriptor2`
+ALONE — the gate BITES for a ledgerless client. Green: lake 4001 · circuit cap-open/flip 13/13 · sdk cap_open
+4/4 · drift PASS. COMMITTED `d64600d5a` (beachhead) + `cc6102b87` (flip-test fix) + the cutover (this commit).
+REMAINING: (1) NAMED RESIDUAL — the live node cap-gated path publishes the OWNER arm (`cap_turn_identity:
+None` ⇒ `actor=dst=src`); threading a genuine cross-vat `(actor≠src)` identity needs single-felt projections of
+`actor`/`dst` CellIds (mirroring `leaf_target`'s u32 fold in `turn/src/executor/authorize.rs:1045`) added to
+`ConsumedCapWitness`/the node prove site (`node/src/turn_proving.rs:1059`) — the SDK/circuit/verifier already
+accept `Some(id)`, only the felt source is missing; (2) the ACTOR↔leaf-position weld (root `actor` in the
+cap-tree; owner-arm rooting needs the agent-signature pass #3); (3) FAN-OUT to the whole-turn forest apex
+(`RotatedKernelForestFacet`) so the WHOLE-turn authority is turn-bound; (4) `amt` weld analogous to `src`.
 
 ACTIVE (2026-06-18) — the `facetEffGate` genuine-membership closure (residual (a) F6-FACET) + adversarial
 re-review. FOUND: the cap-open authority gate `facetEffGate` (`DeployedCapOpen.lean:205`) was implemented as

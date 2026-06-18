@@ -1116,6 +1116,7 @@ mod wall_a {
             cap_membership: None,
             turn_hash: *blake3::hash(b"wallA-turn").as_bytes(),
             rotation: Some(rotation),
+            cap_turn_identity: None,
         };
         (witness, old_commit, new_commit)
     }

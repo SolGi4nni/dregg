@@ -875,6 +875,25 @@ pub const CAP_OPEN_SPAN: usize = 7 + 1 + 3 * CAP_OPEN_DEPTH + 3 + CAP_OPEN_MASK_
 /// The cap-open trace width (`ROT_WIDTH + 91`).
 pub const CAP_OPEN_WIDTH: usize = ROT_WIDTH + CAP_OPEN_SPAN;
 
+/// The turn-identity `actor` column of the TB (turn-bound) cap-open weld
+/// (`CapOpenTurnPins.capOpenActorCol w = w + CAP_OPEN_SPAN`, i.e. the first column PAST the
+/// cap-open appendix). `= CAP_OPEN_BASE + CAP_OPEN_SPAN = 316 + 91 = 407`.
+pub const CAP_OPEN_TB_ACTOR_COL: usize = CAP_OPEN_BASE + CAP_OPEN_SPAN;
+/// The turn-identity `dst` column of the TB cap-open weld (`CapOpenTurnPins.capOpenDstCol w = w +
+/// CAP_OPEN_SPAN + 1`). `= CAP_OPEN_BASE + CAP_OPEN_SPAN + 1 = 408`.
+pub const CAP_OPEN_TB_DST_COL: usize = CAP_OPEN_BASE + CAP_OPEN_SPAN + 1;
+/// The turn-bound cap-open trace width: the cap-open width PLUS the two turn-identity columns
+/// (`effCapOpenV3TB`'s `traceWidth := d.traceWidth + 2`). `= CAP_OPEN_WIDTH + 2 = 409`.
+pub const CAP_OPEN_TB_WIDTH: usize = CAP_OPEN_WIDTH + 2;
+/// The cap-open base descriptor's PI count (`effCapOpenV3.piCount = 38` — the rotated 38-PI vector;
+/// the cap-open appendix adds no PIs). The TB weld appends THREE turn-identity PIs at `38/39/40`.
+pub const CAP_OPEN_TB_PI_BASE: usize = ROT_PI_COUNT; // 38
+/// The published turn-identity PI slots of the TB cap-open (`effCapOpenV3.piCount + 0/1/2`):
+/// `src → PI[38]`, `actor → PI[39]`, `dst → PI[40]` (`CapOpenTurnPins.turnIdentityPins`).
+pub const CAP_OPEN_TB_PI_SRC: usize = CAP_OPEN_TB_PI_BASE; // 38
+pub const CAP_OPEN_TB_PI_ACTOR: usize = CAP_OPEN_TB_PI_BASE + 1; // 39
+pub const CAP_OPEN_TB_PI_DST: usize = CAP_OPEN_TB_PI_BASE + 2; // 40
+
 /// The `FACT_MARK` node-tag felt (`DeployedCapTree.FACT_MARK = 0xFACF`).
 pub const FACT_MARK: u32 = 0xFACF; // 64207
 /// The leaf `mask_lo` the FAITHFUL two-axis facet gate (`DeployedCapOpen.transferFacetGate`)
@@ -1364,6 +1383,75 @@ pub fn widen_to_cap_open(trace: &mut [Vec<BabyBear>], w: &CapOpenWitness) -> Res
     Ok(())
 }
 
+/// Fill the two TURN-IDENTITY columns of the TB (turn-bound) cap-open weld on a single row: the
+/// `actor` felt at `CAP_OPEN_TB_ACTOR_COL` (407) and the `dst` felt at `CAP_OPEN_TB_DST_COL` (408).
+/// (The `src` column — `CAP_OPEN_BASE + 57` = 373 — is the EXISTING cap-open `src` column already
+/// filled by [`fill_cap_open`] from `w.src`; the TB weld pins THAT column, not a new one.) The three
+/// `CapOpenTurnPins.turnIdentityPins` are LAST-row `.piBinding` gates welding these columns to the
+/// published turn PIs (`src → 38`, `actor → 39`, `dst → 40`).
+pub fn fill_cap_open_turn_pins(row: &mut [BabyBear], actor: BabyBear, dst: BabyBear) {
+    row[CAP_OPEN_TB_ACTOR_COL] = actor;
+    row[CAP_OPEN_TB_DST_COL] = dst;
+}
+
+/// Widen a rotated base trace (`ROT_WIDTH`) to the TURN-BOUND cap-open width (`CAP_OPEN_TB_WIDTH` =
+/// 409): the cap-open appendix (incl. the `src` column from `w.src`) PLUS the two turn-identity
+/// columns (`actor`/`dst`) filled UNIFORMLY on every row. The TB descriptor (`effCapOpenV3TB`) pins
+/// the `src`/`actor`/`dst` columns to PIs `38/39/40` on the LAST row; filling them uniformly makes the
+/// pins hold on the last row. The `src` column is rooted (`targetBindGate` already pins `leaf.target ==
+/// src`), so `src == w.src`; `actor`/`dst` are the published columns the verifier ANCHORS to the
+/// trusted turn (`TurnIdentityAnchored`). Caller MUST pass `actor`/`dst` consistent with `w.src` (the
+/// honest turn's identity); the verifier's PI override is what FORCES the published identity = trusted.
+pub fn widen_to_cap_open_tb(
+    trace: &mut [Vec<BabyBear>],
+    w: &CapOpenWitness,
+    actor: BabyBear,
+    dst: BabyBear,
+) -> Result<(), String> {
+    widen_to_cap_open(trace, w)?;
+    for row in trace.iter_mut() {
+        row.resize(CAP_OPEN_TB_WIDTH, BabyBear::ZERO);
+        fill_cap_open_turn_pins(row, actor, dst);
+    }
+    Ok(())
+}
+
+/// Extend a base 38-PI rotated vector to the TURN-BOUND 41-PI vector by APPENDING the three
+/// turn-identity PIs (`src` at 38, `actor` at 39, `dst` at 40). The honest prover publishes its own
+/// turn's `(src, actor, dst)`; the verifier OVERRIDES these slots from the trusted turn before
+/// `verify_vm_descriptor2` (see [`anchor_cap_open_turn_pins`]), so a forged identity is UNSAT.
+pub fn cap_open_tb_dpis(
+    base_dpis: &[BabyBear],
+    src: BabyBear,
+    actor: BabyBear,
+    dst: BabyBear,
+) -> Vec<BabyBear> {
+    let mut dpis = base_dpis[..ROT_PI_COUNT].to_vec();
+    debug_assert_eq!(dpis.len(), CAP_OPEN_TB_PI_BASE);
+    dpis.push(src); // PI 38
+    dpis.push(actor); // PI 39
+    dpis.push(dst); // PI 40
+    dpis
+}
+
+/// **`anchor_cap_open_turn_pins` — the `TurnIdentityAnchored` verifier override (DEPLOYMENT side).**
+/// Override the three turn-identity PIs (`38/39/40`) of a TB cap-open dpis vector with the TRUSTED
+/// turn's `(src, actor, dst)` felts, exactly as the record-pin family anchors `dpis[38]` from the
+/// trusted post-cell. A prover-published identity that disagrees (a forged `actor`/`src`/`dst`) makes
+/// the anchored PI disagree with the proof's bound, last-row-pinned column ⇒ `verify_vm_descriptor2`
+/// UNSAT ⇒ reject. This is what makes a LEDGERLESS light client able to conclude the published turn's
+/// `actor`/`src`/`dst` MATCH the proven transition: it recomputes them from the trusted turn it holds.
+pub fn anchor_cap_open_turn_pins(
+    dpis: &mut [BabyBear],
+    trusted_src: BabyBear,
+    trusted_actor: BabyBear,
+    trusted_dst: BabyBear,
+) {
+    dpis[CAP_OPEN_TB_PI_SRC] = trusted_src;
+    dpis[CAP_OPEN_TB_PI_ACTOR] = trusted_actor;
+    dpis[CAP_OPEN_TB_PI_DST] = trusted_dst;
+}
+
 /// The honest transfer-turn caveat manifest the flip test + the cutover use: ONE register
 /// caveat (entry 0, domain registers, key = register 3) and one HEAP-KEY caveat (entry 1,
 /// domain heap, key well beyond u8 range). The remaining slots stay empty.
@@ -1413,9 +1501,13 @@ mod tests {
                 !s.is_empty()
                     && !s.ends_with("CapOpenVmDescriptor2R24")
                     && !s.ends_with("CapOpenEffVmDescriptor2R24")
-                    // the TURN-IDENTITY weld (CapOpenTurnPins.effCapOpenV3TB) is likewise
-                    // cap-PRESENCE-routed / self-verify, not reached by the effect→descriptor
-                    // resolvers — excluded from the resolver-cohort completeness audit.
+                    // the TURN-IDENTITY weld (`transferCapOpenTBVmDescriptor2R24`,
+                    // CapOpenTurnPins.effCapOpenV3TB) is the LIVE transfer cap-open — like every
+                    // cap-open member it is cap-PRESENCE-routed / self-verify (widened from a base
+                    // trace via `widen_to_cap_open_tb` when a consumed-cap witness is present), NOT
+                    // reached by the effect→descriptor resolvers. So it is (permanently, not as a
+                    // staged beachhead) excluded from the resolver-cohort completeness audit — the
+                    // resolvers still cover EXACTLY the 36 rotated cohort members.
                     && !s.ends_with("CapOpenTBVmDescriptor2R24")
             })
             .collect();

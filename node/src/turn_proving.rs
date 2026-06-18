@@ -845,6 +845,7 @@ pub fn prove_and_verify_finalized_turn_freshness(
         cap_membership: None,
         turn_hash,
         rotation,
+        cap_turn_identity: None,
     };
     let proof = prove_full_turn(&witness).map_err(FullTurnProvingError::Prove)?;
 
@@ -1066,6 +1067,15 @@ pub fn prove_and_verify_finalized_turn_capability_holder(
         cap_membership: Some(CapMembershipWitness::from_consumed(consumed)),
         turn_hash,
         rotation,
+        // #225 TURN-IDENTITY: this cap-gated path is the OWNER/HOLDER arm (the consumed cap is a
+        // member of the actor/holder's OWN c-list — `actor == holder`, and the cap-leaf `target`
+        // IS the turn's `src`). So the published turn identity is the owner arm `actor = dst = src =
+        // leaf.target`, which the cap-open prover fills when `cap_turn_identity == None`. The verifier
+        // ANCHORS the three turn-identity PIs to the trusted turn, so the published identity is forced
+        // to match. RESIDUAL (named): threading a CROSS-VAT `(actor ≠ src)` identity needs a single-felt
+        // fold of `agent`/`dst` matching the cap-leaf `target` convention (the leaf carries only
+        // `target == src`); not exposed at this site — see the report's named seam.
+        cap_turn_identity: None,
     };
     let proof = prove_full_turn(&witness).map_err(FullTurnProvingError::Prove)?;
 
