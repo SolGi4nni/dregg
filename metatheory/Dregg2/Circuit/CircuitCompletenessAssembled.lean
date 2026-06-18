@@ -73,6 +73,7 @@ import Dregg2.Circuit.CircuitCompletenessRecord
 import Dregg2.Circuit.CircuitCompletenessLifecycle
 import Dregg2.Circuit.CircuitCompletenessAuthority
 import Dregg2.Circuit.CircuitCompletenessSetInsert
+import Dregg2.Circuit.CircuitCompletenessSatFloor
 import Dregg2.Circuit.CircuitSoundnessAssembled
 
 namespace Dregg2.Circuit.CircuitCompletenessAssembled
@@ -81,6 +82,7 @@ open Dregg2.Circuit.CircuitSoundness
 open Dregg2.Circuit.CircuitSoundnessAssembled (Rfix kstepAll actionTagToPos transferDescr)
 open Dregg2.Circuit.CircuitCompleteness (commitOf descriptorComplete stateDecode_construct
   lightclient_complete StarkComplete)
+open Dregg2.Circuit.CircuitCompletenessSatFloor (SatFloor descriptorComplete_of_satFloor)
 open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
 open Dregg2.Circuit.DescriptorIR2 (EffectVmDescriptor2 VmTrace Satisfied2)
 open Dregg2.Circuit.StateCommit (AccountsWF compressInjective compressNInjective cellLeafInjective
@@ -273,175 +275,147 @@ theorem dispatchArm_spawn (pre post : RecChainedState)
   cases fa <;> simp only [actionTag] at htag <;>
     first | (rw [fullActionStep] at hstep; exact ⟨_, _, _, hstep⟩) | omega
 
-/-! ## §2 — `CompletenessWitnesses`: the per-effect prover-floor bundle (DUAL of `ClosureReadouts`).
+/-! ## §2 — `CompletenessWitnesses`: the per-effect UNIFORM `SatFloor` bundle (DUAL of `ClosureReadouts`).
 
-For each VALUE/RECORD/LIFECYCLE/SET-INSERT live effect, the realizable `buildWitness` prover floor: from
-the leaf kernel step the honest prover CONSTRUCTS a satisfying trace of `Rfix e` publishing the kernel's
-own `commitOf S pre post turn`, plus the spec-determined boundary data / trace rows / root inserts the
-per-effect rung's construction consumes. Each field is the NAMED realizable construction floor — the dual
-of the soundness `<e>TraceReadout` decode-extraction (soundness READS a trace; completeness BUILDS one).
+For each VALUE/RECORD/LIFECYCLE/SET-INSERT live effect, the realizable `SatFloor`-class prover floor: from
+the leaf kernel `Spec` the honest prover CONSTRUCTS a satisfying trace of `Rfix e` publishing the kernel's
+own `commitOf S pre post turn` — and NOTHING ELSE. The fat per-effect `<e>TraceProver`/`<e>RootProver`
+bundles (the trace rows, the boundary `CellState`s, the FIX-root insert data) are GONE: they were
+spec-DETERMINED (built by `<e>_rotatedEncodes_construct`, consumed only into an unused `_henc`), so the
+rung never needed them. Each field is now the SAME uniform shape — `Satisfied2 hash (Rfix e) … ∧
+publication` — the descriptor-AGNOSTIC StarkComplete-class realizability, the dual of the soundness
+`<e>TraceReadout` extraction (soundness READS a trace; completeness BUILDS one). This is the value-leg
+analog of the authority-leg slim `CapOpenTraceFloor`.
 
-The Record/Lifecycle/Set-Insert rungs are GENERIC in the descriptor (`d : EffectVmDescriptor2`), so their
-floors are stated at `d := Rfix e` directly. The Value rungs (transfer/burn/mint/setField) are pinned to
-their concrete `<e>V3` descriptor; `Rfix e = <e>V3` holds by `rfl` (the re-key preserves the cohort
-positions), proved in `Rfix_*` below. -/
+Every field is at the SAME descriptor `Rfix e` (the value tags' `Rfix e = <e>V3` is `rfl`, the `Rfix_*`
+identities); the dispatchers (§4) lower the kernel step to its leaf `Spec` and feed the slim field. -/
 
-/-- `compressN` field-compression carriers are uniform `List ℤ → ℤ` (every `FieldElem := ℤ`). -/
+/-- The per-effect slim `Satisfied2`-publication floor, uniform over effects — `SatFloor` specialized to a
+fixed effect's leaf `Spec` antecedent. (Stated inline per field for the leaf-spec antecedent each tag
+carries; the realizability shape is identical across all 21.) -/
 structure CompletenessWitnesses (S : CommitSurface) (hash : List ℤ → ℤ)
     (compressN : List ℤ → ℤ) : Type 1 where
   /-- transfer (tag 0). -/
   bwTransfer : ∀ (pre post : RecChainedState) (tr : Turn) (a : AssetId) (turn : BoundaryTurn),
     Dregg2.Circuit.Spec.BalanceMovement.BalanceMovementSpec pre tr a post →
-    Σ' (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
-      (srcPre srcPost dstPre dstPost : Dregg2.Circuit.Emit.EffectVmEmitTransferSound.CellState)
-      (srcParams dstParams : Dregg2.Circuit.Emit.EffectVmEmitTransferSound.TransferParams),
-      Satisfied2 hash Dregg2.Circuit.RotatedKernelRefinement.transferV3 minit mfin maddrs t ×'
-      (tracePublishedCommit t = commitOf S pre post turn) ×'
-      (srcPre.balLo  = pre.kernel.bal tr.src a) ×'
-      (dstPre.balLo  = pre.kernel.bal tr.dst a) ×'
-      (srcPost.balLo = post.kernel.bal tr.src a) ×'
-      (dstPost.balLo = post.kernel.bal tr.dst a) ×'
-      (srcParams.direction = 1) ×' (dstParams.direction = 0) ×'
-      (srcParams.amount = tr.amt) ×' (dstParams.amount = tr.amt) ×'
-      Dregg2.Circuit.CircuitCompleteness.TransferTraceProver hash minit mfin maddrs t
-        srcPre srcPost dstPre dstPost srcParams dstParams
+    ∃ (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace),
+      Satisfied2 hash Dregg2.Circuit.RotatedKernelRefinement.transferV3 minit mfin maddrs t ∧
+      tracePublishedCommit t = commitOf S pre post turn
   /-- burn (tag 4). -/
   bwBurn : ∀ (pre post : RecChainedState) (actor cell : CellId) (a : AssetId) (amt : ℤ)
       (turn : BoundaryTurn),
     Dregg2.Circuit.Spec.SupplyDestruction.BurnSpec pre actor cell a amt post →
-    Σ' (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace),
-      Satisfied2 hash Dregg2.Circuit.RotatedKernelRefinementMintBurn.burnV3 minit mfin maddrs t ×'
-      (tracePublishedCommit t = commitOf S pre post turn) ×'
-      Dregg2.Circuit.CircuitCompletenessValue.BurnTraceProver hash minit mfin maddrs t
-        pre post cell a amt
+    ∃ (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace),
+      Satisfied2 hash Dregg2.Circuit.RotatedKernelRefinementMintBurn.burnV3 minit mfin maddrs t ∧
+      tracePublishedCommit t = commitOf S pre post turn
   /-- mint (tag 3) — also re-exported to bridgeMint (tag 20). -/
   bwMint : ∀ (pre post : RecChainedState) (actor cell : CellId) (a : AssetId) (amt : ℤ)
       (turn : BoundaryTurn),
     Dregg2.Circuit.Spec.SupplyCreation.MintASpec pre actor cell a amt post →
-    Σ' (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace),
-      Satisfied2 hash Dregg2.Circuit.Emit.EffectVmEmitRotationV3.mintV3 minit mfin maddrs t ×'
-      (tracePublishedCommit t = commitOf S pre post turn) ×'
-      Dregg2.Circuit.CircuitCompletenessValue.MintTraceProver hash minit mfin maddrs t
-        pre post cell a amt
+    ∃ (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace),
+      Satisfied2 hash Dregg2.Circuit.Emit.EffectVmEmitRotationV3.mintV3 minit mfin maddrs t ∧
+      tracePublishedCommit t = commitOf S pre post turn
   /-- setField (tag 5) — GENERIC field name, at the live `Rfix 5` descriptor (the `setFieldDyn` rung). -/
   bwSetFieldDyn : ∀ (pre post : RecChainedState) (actor cell : CellId) (f : FieldName) (v : ℤ)
       (turn : BoundaryTurn),
     Dregg2.Circuit.Spec.CellStateField.SetFieldSpec pre actor cell f v post →
-    Σ' (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace),
-      Satisfied2 hash (Rfix 5) minit mfin maddrs t ×'
-      (tracePublishedCommit t = commitOf S pre post turn) ×'
-      Dregg2.Circuit.CircuitCompletenessRecord.SetFieldDynRootProver compressN post cell f v
+    ∃ (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace),
+      Satisfied2 hash (Rfix 5) minit mfin maddrs t ∧
+      tracePublishedCommit t = commitOf S pre post turn
   /-- incrementNonce (tag 7). -/
   bwIncNonce : ∀ (pre post : RecChainedState) (actor cell : CellId) (n : ℤ) (turn : BoundaryTurn),
     Dregg2.Circuit.Spec.CellStateMonotone.IncrementNonceSpec pre actor cell n post →
-    Σ' (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace),
-      Satisfied2 hash Dregg2.Circuit.RotatedKernelRefinementIncNonce.incNonceV3 minit mfin maddrs t ×'
-      (tracePublishedCommit t = commitOf S pre post turn) ×'
-      Dregg2.Circuit.CircuitCompletenessRecord.IncNonceTraceProver hash minit mfin maddrs t n
-  /-- emitEvent (tag 6) — LIVE descriptor, no prover floor (the spec determines the whole decode). -/
+    ∃ (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace),
+      Satisfied2 hash Dregg2.Circuit.RotatedKernelRefinementIncNonce.incNonceV3 minit mfin maddrs t ∧
+      tracePublishedCommit t = commitOf S pre post turn
+  /-- emitEvent (tag 6) — LIVE descriptor. -/
   bwEmitEvent : ∀ (pre post : RecChainedState) (actor cell : CellId) (topic data : ℤ)
       (turn : BoundaryTurn),
     Dregg2.Circuit.Spec.CellStateLog.EmitEventSpec pre actor cell topic data post →
-    Σ' (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace),
-      Satisfied2 hash (Rfix 6) minit mfin maddrs t ×'
-      (tracePublishedCommit t = commitOf S pre post turn)
-  /-- pipelinedSend (tag 47) — LIVE descriptor, no prover floor. -/
+    ∃ (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace),
+      Satisfied2 hash (Rfix 6) minit mfin maddrs t ∧
+      tracePublishedCommit t = commitOf S pre post turn
+  /-- pipelinedSend (tag 47) — LIVE descriptor. -/
   bwPipelinedSend : ∀ (pre post : RecChainedState) (actor : CellId) (turn : BoundaryTurn),
     Dregg2.Circuit.Spec.QueuePipelinedSend.PipelinedSendSpec pre actor post →
-    Σ' (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace),
-      Satisfied2 hash (Rfix 47) minit mfin maddrs t ×'
-      (tracePublishedCommit t = commitOf S pre post turn)
+    ∃ (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace),
+      Satisfied2 hash (Rfix 47) minit mfin maddrs t ∧
+      tracePublishedCommit t = commitOf S pre post turn
   /-- makeSovereign (tag 38). -/
   bwMakeSovereign : ∀ (pre post : RecChainedState) (actor cell : CellId) (turn : BoundaryTurn),
     Dregg2.Circuit.Spec.SovereignCommitment.MakeSovereignSpec pre actor cell post →
-    Σ' (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace),
-      Satisfied2 hash (Rfix 38) minit mfin maddrs t ×'
-      (tracePublishedCommit t = commitOf S pre post turn) ×'
-      Dregg2.Circuit.CircuitCompletenessRecord.MakeSovereignRootProver compressN pre post cell
+    ∃ (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace),
+      Satisfied2 hash (Rfix 38) minit mfin maddrs t ∧
+      tracePublishedCommit t = commitOf S pre post turn
   /-- setPermissions (tag 8). -/
   bwSetPermissions : ∀ (pre post : RecChainedState) (actor cell : CellId) (p : ℤ) (turn : BoundaryTurn),
     Dregg2.Circuit.Spec.CellStatePermissions.SetPermissionsSpec pre actor cell p post →
-    Σ' (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace),
-      Satisfied2 hash (Rfix 8) minit mfin maddrs t ×'
-      (tracePublishedCommit t = commitOf S pre post turn) ×'
-      Dregg2.Circuit.CircuitCompletenessRecord.SetPermsRootProver compressN post cell p
+    ∃ (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace),
+      Satisfied2 hash (Rfix 8) minit mfin maddrs t ∧
+      tracePublishedCommit t = commitOf S pre post turn
   /-- setVK (tag 9). -/
   bwSetVK : ∀ (pre post : RecChainedState) (actor cell : CellId) (vk : ℤ) (turn : BoundaryTurn),
     Dregg2.Circuit.Spec.CellStateVK.SetVKSpec pre actor cell vk post →
-    Σ' (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace),
-      Satisfied2 hash (Rfix 9) minit mfin maddrs t ×'
-      (tracePublishedCommit t = commitOf S pre post turn) ×'
-      Dregg2.Circuit.CircuitCompletenessRecord.SetVKRootProver compressN post cell vk
+    ∃ (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace),
+      Satisfied2 hash (Rfix 9) minit mfin maddrs t ∧
+      tracePublishedCommit t = commitOf S pre post turn
   /-- cellSeal (tag 52). -/
   bwCellSeal : ∀ (pre post : RecChainedState) (actor cell : CellId) (turn : BoundaryTurn),
     Dregg2.Circuit.Spec.CellLifecycle.CellSealSpec pre actor cell post →
-    Σ' (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace),
-      Satisfied2 hash (Rfix 52) minit mfin maddrs t ×'
-      (tracePublishedCommit t = commitOf S pre post turn) ×'
-      Dregg2.Circuit.CircuitCompletenessLifecycle.LifecycleRootProver compressN pre post cell
+    ∃ (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace),
+      Satisfied2 hash (Rfix 52) minit mfin maddrs t ∧
+      tracePublishedCommit t = commitOf S pre post turn
   /-- cellUnseal (tag 53). -/
   bwCellUnseal : ∀ (pre post : RecChainedState) (actor cell : CellId) (turn : BoundaryTurn),
     Dregg2.Circuit.Spec.CellLifecycle.CellUnsealSpec pre actor cell post →
-    Σ' (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace),
-      Satisfied2 hash (Rfix 53) minit mfin maddrs t ×'
-      (tracePublishedCommit t = commitOf S pre post turn) ×'
-      Dregg2.Circuit.CircuitCompletenessLifecycle.UnsealRootProver compressN pre post cell
+    ∃ (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace),
+      Satisfied2 hash (Rfix 53) minit mfin maddrs t ∧
+      tracePublishedCommit t = commitOf S pre post turn
   /-- cellDestroy (tag 54). -/
   bwCellDestroy : ∀ (pre post : RecChainedState) (actor cell : CellId) (certHash : Nat)
       (turn : BoundaryTurn),
     Dregg2.Circuit.Spec.CellLifecycle.CellDestroySpec pre actor cell certHash post →
-    Σ' (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace),
-      Satisfied2 hash (Rfix 54) minit mfin maddrs t ×'
-      (tracePublishedCommit t = commitOf S pre post turn) ×'
-      Dregg2.Circuit.CircuitCompletenessLifecycle.DestroyRootProver compressN pre post cell certHash
+    ∃ (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace),
+      Satisfied2 hash (Rfix 54) minit mfin maddrs t ∧
+      tracePublishedCommit t = commitOf S pre post turn
   /-- refusal (tag 39). -/
   bwRefusal : ∀ (pre post : RecChainedState) (actor cell : CellId) (turn : BoundaryTurn),
     Dregg2.Circuit.Spec.CellStateAudit.RefusalSpec pre actor cell post →
-    Σ' (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace),
-      Satisfied2 hash (Rfix 39) minit mfin maddrs t ×'
-      (tracePublishedCommit t = commitOf S pre post turn) ×'
-      Dregg2.Circuit.CircuitCompletenessLifecycle.AuditRootProver compressN post cell refusalField
+    ∃ (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace),
+      Satisfied2 hash (Rfix 39) minit mfin maddrs t ∧
+      tracePublishedCommit t = commitOf S pre post turn
   /-- receiptArchive (tag 40). -/
   bwReceiptArchive : ∀ (pre post : RecChainedState) (actor cell : CellId) (turn : BoundaryTurn),
     Dregg2.Circuit.Spec.CellStateAudit.ReceiptArchiveSpec pre actor cell post →
-    Σ' (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace),
-      Satisfied2 hash (Rfix 40) minit mfin maddrs t ×'
-      (tracePublishedCommit t = commitOf S pre post turn) ×'
-      Dregg2.Circuit.CircuitCompletenessLifecycle.AuditRootProver compressN post cell lifecycleField
+    ∃ (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace),
+      Satisfied2 hash (Rfix 40) minit mfin maddrs t ∧
+      tracePublishedCommit t = commitOf S pre post turn
   /-- noteSpend (tag 27). -/
   bwNoteSpend : ∀ (pre post : RecChainedState) (nf : Nat) (actor : CellId) (spendProof : Bool)
       (turn : BoundaryTurn),
     Dregg2.Circuit.Spec.NoteNullifier.NoteSpendSpec pre nf actor spendProof post →
-    Σ' (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace),
-      Satisfied2 hash (Rfix 27) minit mfin maddrs t ×'
-      (tracePublishedCommit t = commitOf S pre post turn) ×'
-      Dregg2.Circuit.CircuitCompletenessSetInsert.SetInsertRootProver compressN
-        pre.kernel.nullifiers post.kernel.nullifiers nf
+    ∃ (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace),
+      Satisfied2 hash (Rfix 27) minit mfin maddrs t ∧
+      tracePublishedCommit t = commitOf S pre post turn
   /-- noteCreate (tag 28). -/
   bwNoteCreate : ∀ (pre post : RecChainedState) (cm : Nat) (actor : CellId) (turn : BoundaryTurn),
     Dregg2.Circuit.Spec.NoteCommitment.NoteCreateASpec pre cm actor post →
-    Σ' (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace),
-      Satisfied2 hash (Rfix 28) minit mfin maddrs t ×'
-      (tracePublishedCommit t = commitOf S pre post turn) ×'
-      Dregg2.Circuit.CircuitCompletenessSetInsert.SetInsertRootProver compressN
-        pre.kernel.commitments post.kernel.commitments cm
+    ∃ (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace),
+      Satisfied2 hash (Rfix 28) minit mfin maddrs t ∧
+      tracePublishedCommit t = commitOf S pre post turn
   /-- createCell (tag 17). -/
   bwCreateCell : ∀ (pre post : RecChainedState) (actor newCell : CellId) (turn : BoundaryTurn),
     Dregg2.Circuit.Spec.AccountGrowth.CreateCellSpec pre actor newCell post →
-    Σ' (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace),
-      Satisfied2 hash (Rfix 17) minit mfin maddrs t ×'
-      (tracePublishedCommit t = commitOf S pre post turn) ×'
-      Dregg2.Circuit.CircuitCompletenessSetInsert.AccountsInsertRootProver compressN
-        pre.kernel post.kernel newCell
+    ∃ (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace),
+      Satisfied2 hash (Rfix 17) minit mfin maddrs t ∧
+      tracePublishedCommit t = commitOf S pre post turn
   /-- createCellFromFactory (tag 18). -/
   bwCreateCellFromFactory : ∀ (pre post : RecChainedState) (actor newCell : CellId) (vk : ℤ)
       (turn : BoundaryTurn),
     Dregg2.Circuit.Spec.FactoryCreation.CreateFromFactorySpec pre actor newCell vk post →
-    Σ' (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace),
-      Satisfied2 hash (Rfix 18) minit mfin maddrs t ×'
-      (tracePublishedCommit t = commitOf S pre post turn) ×'
-      Dregg2.Circuit.CircuitCompletenessSetInsert.AccountsInsertRootProver compressN
-        pre.kernel post.kernel newCell
+    ∃ (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace),
+      Satisfied2 hash (Rfix 18) minit mfin maddrs t ∧
+      tracePublishedCommit t = commitOf S pre post turn
 
 /-! ## §3 — `Rfix_<e>` value-tag descriptor identities (the cohort positions the re-key preserves).
 
@@ -454,30 +428,20 @@ theorem Rfix_bridgeMint : Rfix 20 = Dregg2.Circuit.Emit.EffectVmEmitRotationV3.m
 
 /-! ## §4 — the per-effect VALUE-LEG dischargers (DUAL of `closedLogExtract_<e>_closed`).
 
-Each `descriptorComplete_<e> : descriptorComplete S hash (Rfix e) (kstepAll e)` LOWERS the kernel step
-`kstepAll e` to its leaf `Spec` (`dispatchArm_<e>`) and DISPATCHES to its proven `<e>_descriptorComplete`
-rung over the bundle's `buildWitness` floor. For the VALUE-family effects pinned to a concrete `<e>V3`
-descriptor, `Rfix e = <e>V3` (the `Rfix_*` identities) rewrites the conclusion into apex shape; the
-Record/Lifecycle/Set-Insert rungs are descriptor-generic, so the floor is stated at `Rfix e` directly.
+Each `descriptorComplete_<e> : descriptorComplete S hash (Rfix e) (kstepAll e)` now rides the UNIFORM slim
+floor: it ASSEMBLES a `SatFloor S hash (Rfix e) (kstepAll e)` from the bundle's slim `bw<e>` field
+(`dispatchArm_<e>` LOWERS the kernel step to its leaf `Spec`, then the slim field supplies the satisfying
+trace + publication), and discharges `descriptorComplete` via `descriptorComplete_of_satFloor` (the decode
+is CONSTRUCTED, not carried). The fat `<e>_descriptorComplete` rungs over `<e>TraceProver`/`<e>RootProver`
+are NO LONGER on this path — the spec-determined prover data DISAPPEARED from the live apex (it survives
+only as the SEPARATE `<e>_descriptorComplete_genuine` teeth). For the VALUE-family tags pinned to a
+concrete `<e>V3` descriptor, `Rfix e = <e>V3` is `rfl` (the `Rfix_*` identities), so the slim field's
+`Satisfied2 hash <e>V3 …` IS `Satisfied2 hash (Rfix e) …` definitionally.
 
 These are UNCONDITIONAL in authority: `descriptorComplete` is the value/state SATISFIABILITY (a kernel-valid
 step HAS a satisfying trace publishing the kernel's own commitment); the authority lives INSIDE `kstepAll e`
 (the `dispatchArm` executor guard) and is discharged separately by the §6 dichotomy. The dual of each
 `closedLogExtract_<e>_closed`. -/
-
-open Dregg2.Circuit.CircuitCompletenessValue
-  (burn_descriptorComplete mint_descriptorComplete bridgeMint_descriptorComplete)
-open Dregg2.Circuit.CircuitCompletenessRecord
-  (incrementNonce_descriptorComplete emitEvent_descriptorComplete pipelinedSend_descriptorComplete
-   makeSovereign_descriptorComplete setFieldDyn_descriptorComplete setPermissions_descriptorComplete
-   setVK_descriptorComplete)
-open Dregg2.Circuit.CircuitCompletenessLifecycle
-  (cellSeal_descriptorComplete cellUnseal_descriptorComplete cellDestroy_descriptorComplete
-   refusal_descriptorComplete receiptArchive_descriptorComplete)
-open Dregg2.Circuit.CircuitCompletenessSetInsert
-  (noteSpend_descriptorComplete noteCreate_descriptorComplete createCell_descriptorComplete
-   createCellFromFactory_descriptorComplete)
-open Dregg2.Circuit.CircuitCompleteness (transfer_descriptorComplete)
 
 /-- transfer (tag 0). -/
 theorem descriptorComplete_transfer
@@ -490,206 +454,205 @@ theorem descriptorComplete_transfer
     (bw : CompletenessWitnesses (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest)
       hash compressN) :
     descriptorComplete (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest)
-      hash (Rfix 0) (kstepAll 0) := by
-  intro _hCR pre post turn hstep hpreWF hpostWF
-  obtain ⟨tr, a, hspec⟩ := dispatchArm_transfer pre post hstep
-  exact transfer_descriptorComplete hash
-    (fun pre post tr a turn h => bw.bwTransfer pre post tr a turn h)
-    pre post tr a turn hspec hpreWF hpostWF
+      hash (Rfix 0) (kstepAll 0) :=
+  descriptorComplete_of_satFloor _ hash (Rfix 0) (kstepAll 0) <| by
+    intro pre post turn hstep _hpreWF _hpostWF
+    obtain ⟨tr, a, hspec⟩ := dispatchArm_transfer pre post hstep
+    exact bw.bwTransfer pre post tr a turn hspec
 
 /-- burn (tag 4). -/
 theorem descriptorComplete_burn (S : CommitSurface) (hash : List ℤ → ℤ) (compressN : List ℤ → ℤ)
     (bw : CompletenessWitnesses S hash compressN) :
-    descriptorComplete S hash (Rfix 4) (kstepAll 4) := by
-  intro _hCR pre post turn hstep hpreWF hpostWF
-  obtain ⟨actor, cell, a, amt, hspec⟩ := dispatchArm_burn pre post hstep
-  rw [Rfix_burn]
-  exact burn_descriptorComplete S hash bw.bwBurn pre post actor cell a amt turn hspec hpreWF hpostWF
+    descriptorComplete S hash (Rfix 4) (kstepAll 4) :=
+  descriptorComplete_of_satFloor S hash (Rfix 4) (kstepAll 4) <| by
+    intro pre post turn hstep _hpreWF _hpostWF
+    obtain ⟨actor, cell, a, amt, hspec⟩ := dispatchArm_burn pre post hstep
+    rw [Rfix_burn]
+    exact bw.bwBurn pre post actor cell a amt turn hspec
 
 /-- mint (tag 3). -/
 theorem descriptorComplete_mint (S : CommitSurface) (hash : List ℤ → ℤ) (compressN : List ℤ → ℤ)
     (bw : CompletenessWitnesses S hash compressN) :
-    descriptorComplete S hash (Rfix 3) (kstepAll 3) := by
-  intro _hCR pre post turn hstep hpreWF hpostWF
-  obtain ⟨actor, cell, a, amt, hspec⟩ := dispatchArm_mint pre post hstep
-  rw [Rfix_mint]
-  exact mint_descriptorComplete S hash bw.bwMint pre post actor cell a amt turn hspec hpreWF hpostWF
+    descriptorComplete S hash (Rfix 3) (kstepAll 3) :=
+  descriptorComplete_of_satFloor S hash (Rfix 3) (kstepAll 3) <| by
+    intro pre post turn hstep _hpreWF _hpostWF
+    obtain ⟨actor, cell, a, amt, hspec⟩ := dispatchArm_mint pre post hstep
+    rw [Rfix_mint]
+    exact bw.bwMint pre post actor cell a amt turn hspec
 
-/-- bridgeMint (tag 20) — shares the mint rung over the same `mintV3`. -/
+/-- bridgeMint (tag 20) — shares the mint floor over the same `mintV3`. -/
 theorem descriptorComplete_bridgeMint (S : CommitSurface) (hash : List ℤ → ℤ) (compressN : List ℤ → ℤ)
     (bw : CompletenessWitnesses S hash compressN) :
-    descriptorComplete S hash (Rfix 20) (kstepAll 20) := by
-  intro _hCR pre post turn hstep hpreWF hpostWF
-  obtain ⟨actor, cell, a, amt, hspec⟩ := dispatchArm_bridgeMint pre post hstep
-  rw [Rfix_bridgeMint]
-  exact bridgeMint_descriptorComplete S hash bw.bwMint pre post actor cell a amt turn hspec hpreWF hpostWF
+    descriptorComplete S hash (Rfix 20) (kstepAll 20) :=
+  descriptorComplete_of_satFloor S hash (Rfix 20) (kstepAll 20) <| by
+    intro pre post turn hstep _hpreWF _hpostWF
+    obtain ⟨actor, cell, a, amt, hspec⟩ := dispatchArm_bridgeMint pre post hstep
+    rw [Rfix_bridgeMint]
+    exact bw.bwMint pre post actor cell a amt turn hspec
 
-/-- setField (tag 5) — the descriptor-generic `setFieldDyn` rung at `Rfix 5`, GENERIC field name. -/
+/-- setField (tag 5) — at `Rfix 5`, GENERIC field name. -/
 theorem descriptorComplete_setField (S : CommitSurface) (hash : List ℤ → ℤ) (compressN : List ℤ → ℤ)
     (bw : CompletenessWitnesses S hash compressN) :
-    descriptorComplete S hash (Rfix 5) (kstepAll 5) := by
-  intro _hCR pre post turn hstep hpreWF hpostWF
-  obtain ⟨actor, cell, f, v, hspec⟩ := dispatchArm_setField pre post hstep
-  exact setFieldDyn_descriptorComplete compressN S hash (Rfix 5) bw.bwSetFieldDyn
-    pre post actor cell f v turn hspec hpreWF hpostWF
+    descriptorComplete S hash (Rfix 5) (kstepAll 5) :=
+  descriptorComplete_of_satFloor S hash (Rfix 5) (kstepAll 5) <| by
+    intro pre post turn hstep _hpreWF _hpostWF
+    obtain ⟨actor, cell, f, v, hspec⟩ := dispatchArm_setField pre post hstep
+    exact bw.bwSetFieldDyn pre post actor cell f v turn hspec
 
 /-- incrementNonce (tag 7). -/
 theorem descriptorComplete_incrementNonce (S : CommitSurface) (hash : List ℤ → ℤ) (compressN : List ℤ → ℤ)
     (bw : CompletenessWitnesses S hash compressN) :
-    descriptorComplete S hash (Rfix 7) (kstepAll 7) := by
-  intro _hCR pre post turn hstep hpreWF hpostWF
-  obtain ⟨actor, cell, n, hspec⟩ := dispatchArm_incrementNonce pre post hstep
-  rw [show Rfix 7 = Dregg2.Circuit.RotatedKernelRefinementIncNonce.incNonceV3 from rfl]
-  exact incrementNonce_descriptorComplete S hash bw.bwIncNonce pre post actor cell n turn hspec
-    hpreWF hpostWF
+    descriptorComplete S hash (Rfix 7) (kstepAll 7) :=
+  descriptorComplete_of_satFloor S hash (Rfix 7) (kstepAll 7) <| by
+    intro pre post turn hstep _hpreWF _hpostWF
+    obtain ⟨actor, cell, n, hspec⟩ := dispatchArm_incrementNonce pre post hstep
+    rw [show Rfix 7 = Dregg2.Circuit.RotatedKernelRefinementIncNonce.incNonceV3 from rfl]
+    exact bw.bwIncNonce pre post actor cell n turn hspec
 
-/-- emitEvent (tag 6) — LIVE descriptor, no prover floor. -/
+/-- emitEvent (tag 6) — LIVE descriptor. -/
 theorem descriptorComplete_emitEvent (S : CommitSurface) (hash : List ℤ → ℤ) (compressN : List ℤ → ℤ)
     (bw : CompletenessWitnesses S hash compressN) :
-    descriptorComplete S hash (Rfix 6) (kstepAll 6) := by
-  intro _hCR pre post turn hstep hpreWF hpostWF
-  obtain ⟨actor, cell, topic, data, hspec⟩ := dispatchArm_emitEvent pre post hstep
-  exact emitEvent_descriptorComplete S hash (Rfix 6)
-    (fun pre post actor cell topic data turn h => bw.bwEmitEvent pre post actor cell topic data turn h)
-    pre post actor cell topic data turn hspec hpreWF hpostWF
+    descriptorComplete S hash (Rfix 6) (kstepAll 6) :=
+  descriptorComplete_of_satFloor S hash (Rfix 6) (kstepAll 6) <| by
+    intro pre post turn hstep _hpreWF _hpostWF
+    obtain ⟨actor, cell, topic, data, hspec⟩ := dispatchArm_emitEvent pre post hstep
+    exact bw.bwEmitEvent pre post actor cell topic data turn hspec
 
-/-- pipelinedSend (tag 47) — LIVE descriptor, no prover floor. -/
+/-- pipelinedSend (tag 47) — LIVE descriptor. -/
 theorem descriptorComplete_pipelinedSend (S : CommitSurface) (hash : List ℤ → ℤ) (compressN : List ℤ → ℤ)
     (bw : CompletenessWitnesses S hash compressN) :
-    descriptorComplete S hash (Rfix 47) (kstepAll 47) := by
-  intro _hCR pre post turn hstep hpreWF hpostWF
-  obtain ⟨actor, hspec⟩ := dispatchArm_pipelinedSend pre post hstep
-  exact pipelinedSend_descriptorComplete S hash (Rfix 47)
-    (fun pre post actor turn h => bw.bwPipelinedSend pre post actor turn h)
-    pre post actor turn hspec hpreWF hpostWF
+    descriptorComplete S hash (Rfix 47) (kstepAll 47) :=
+  descriptorComplete_of_satFloor S hash (Rfix 47) (kstepAll 47) <| by
+    intro pre post turn hstep _hpreWF _hpostWF
+    obtain ⟨actor, hspec⟩ := dispatchArm_pipelinedSend pre post hstep
+    exact bw.bwPipelinedSend pre post actor turn hspec
 
 /-- makeSovereign (tag 38). -/
 theorem descriptorComplete_makeSovereign (S : CommitSurface) (hash : List ℤ → ℤ) (compressN : List ℤ → ℤ)
     (bw : CompletenessWitnesses S hash compressN) :
-    descriptorComplete S hash (Rfix 38) (kstepAll 38) := by
-  intro _hCR pre post turn hstep hpreWF hpostWF
-  obtain ⟨actor, cell, hspec⟩ := dispatchArm_makeSovereign pre post hstep
-  exact makeSovereign_descriptorComplete compressN S hash (Rfix 38) bw.bwMakeSovereign
-    pre post actor cell turn hspec hpreWF hpostWF
+    descriptorComplete S hash (Rfix 38) (kstepAll 38) :=
+  descriptorComplete_of_satFloor S hash (Rfix 38) (kstepAll 38) <| by
+    intro pre post turn hstep _hpreWF _hpostWF
+    obtain ⟨actor, cell, hspec⟩ := dispatchArm_makeSovereign pre post hstep
+    exact bw.bwMakeSovereign pre post actor cell turn hspec
 
 /-- setPermissions (tag 8). -/
 theorem descriptorComplete_setPermissions (S : CommitSurface) (hash : List ℤ → ℤ) (compressN : List ℤ → ℤ)
     (bw : CompletenessWitnesses S hash compressN) :
-    descriptorComplete S hash (Rfix 8) (kstepAll 8) := by
-  intro _hCR pre post turn hstep hpreWF hpostWF
-  obtain ⟨actor, cell, p, hspec⟩ := dispatchArm_setPermissions pre post hstep
-  exact setPermissions_descriptorComplete compressN S hash (Rfix 8) bw.bwSetPermissions
-    pre post actor cell p turn hspec hpreWF hpostWF
+    descriptorComplete S hash (Rfix 8) (kstepAll 8) :=
+  descriptorComplete_of_satFloor S hash (Rfix 8) (kstepAll 8) <| by
+    intro pre post turn hstep _hpreWF _hpostWF
+    obtain ⟨actor, cell, p, hspec⟩ := dispatchArm_setPermissions pre post hstep
+    exact bw.bwSetPermissions pre post actor cell p turn hspec
 
 /-- setVK (tag 9). -/
 theorem descriptorComplete_setVK (S : CommitSurface) (hash : List ℤ → ℤ) (compressN : List ℤ → ℤ)
     (bw : CompletenessWitnesses S hash compressN) :
-    descriptorComplete S hash (Rfix 9) (kstepAll 9) := by
-  intro _hCR pre post turn hstep hpreWF hpostWF
-  obtain ⟨actor, cell, vk, hspec⟩ := dispatchArm_setVK pre post hstep
-  exact setVK_descriptorComplete compressN S hash (Rfix 9) bw.bwSetVK
-    pre post actor cell vk turn hspec hpreWF hpostWF
+    descriptorComplete S hash (Rfix 9) (kstepAll 9) :=
+  descriptorComplete_of_satFloor S hash (Rfix 9) (kstepAll 9) <| by
+    intro pre post turn hstep _hpreWF _hpostWF
+    obtain ⟨actor, cell, vk, hspec⟩ := dispatchArm_setVK pre post hstep
+    exact bw.bwSetVK pre post actor cell vk turn hspec
 
 /-- cellSeal (tag 52). -/
 theorem descriptorComplete_cellSeal (S : CommitSurface) (hash : List ℤ → ℤ) (compressN : List ℤ → ℤ)
     (bw : CompletenessWitnesses S hash compressN) :
-    descriptorComplete S hash (Rfix 52) (kstepAll 52) := by
-  intro _hCR pre post turn hstep hpreWF hpostWF
-  obtain ⟨actor, cell, hspec⟩ := dispatchArm_cellSeal pre post hstep
-  exact cellSeal_descriptorComplete compressN S hash (Rfix 52) bw.bwCellSeal
-    pre post actor cell turn hspec hpreWF hpostWF
+    descriptorComplete S hash (Rfix 52) (kstepAll 52) :=
+  descriptorComplete_of_satFloor S hash (Rfix 52) (kstepAll 52) <| by
+    intro pre post turn hstep _hpreWF _hpostWF
+    obtain ⟨actor, cell, hspec⟩ := dispatchArm_cellSeal pre post hstep
+    exact bw.bwCellSeal pre post actor cell turn hspec
 
 /-- cellUnseal (tag 53). -/
 theorem descriptorComplete_cellUnseal (S : CommitSurface) (hash : List ℤ → ℤ) (compressN : List ℤ → ℤ)
     (bw : CompletenessWitnesses S hash compressN) :
-    descriptorComplete S hash (Rfix 53) (kstepAll 53) := by
-  intro _hCR pre post turn hstep hpreWF hpostWF
-  obtain ⟨actor, cell, hspec⟩ := dispatchArm_cellUnseal pre post hstep
-  exact cellUnseal_descriptorComplete compressN S hash (Rfix 53) bw.bwCellUnseal
-    pre post actor cell turn hspec hpreWF hpostWF
+    descriptorComplete S hash (Rfix 53) (kstepAll 53) :=
+  descriptorComplete_of_satFloor S hash (Rfix 53) (kstepAll 53) <| by
+    intro pre post turn hstep _hpreWF _hpostWF
+    obtain ⟨actor, cell, hspec⟩ := dispatchArm_cellUnseal pre post hstep
+    exact bw.bwCellUnseal pre post actor cell turn hspec
 
 /-- cellDestroy (tag 54). -/
 theorem descriptorComplete_cellDestroy (S : CommitSurface) (hash : List ℤ → ℤ) (compressN : List ℤ → ℤ)
     (bw : CompletenessWitnesses S hash compressN) :
-    descriptorComplete S hash (Rfix 54) (kstepAll 54) := by
-  intro _hCR pre post turn hstep hpreWF hpostWF
-  obtain ⟨actor, cell, certHash, hspec⟩ := dispatchArm_cellDestroy pre post hstep
-  exact cellDestroy_descriptorComplete compressN S hash (Rfix 54) bw.bwCellDestroy
-    pre post actor cell certHash turn hspec hpreWF hpostWF
+    descriptorComplete S hash (Rfix 54) (kstepAll 54) :=
+  descriptorComplete_of_satFloor S hash (Rfix 54) (kstepAll 54) <| by
+    intro pre post turn hstep _hpreWF _hpostWF
+    obtain ⟨actor, cell, certHash, hspec⟩ := dispatchArm_cellDestroy pre post hstep
+    exact bw.bwCellDestroy pre post actor cell certHash turn hspec
 
 /-- refusal (tag 39). -/
 theorem descriptorComplete_refusal (S : CommitSurface) (hash : List ℤ → ℤ) (compressN : List ℤ → ℤ)
     (bw : CompletenessWitnesses S hash compressN) :
-    descriptorComplete S hash (Rfix 39) (kstepAll 39) := by
-  intro _hCR pre post turn hstep hpreWF hpostWF
-  obtain ⟨actor, cell, hspec⟩ := dispatchArm_refusal pre post hstep
-  exact refusal_descriptorComplete compressN S hash (Rfix 39) bw.bwRefusal
-    pre post actor cell turn hspec hpreWF hpostWF
+    descriptorComplete S hash (Rfix 39) (kstepAll 39) :=
+  descriptorComplete_of_satFloor S hash (Rfix 39) (kstepAll 39) <| by
+    intro pre post turn hstep _hpreWF _hpostWF
+    obtain ⟨actor, cell, hspec⟩ := dispatchArm_refusal pre post hstep
+    exact bw.bwRefusal pre post actor cell turn hspec
 
 /-- receiptArchive (tag 40). -/
 theorem descriptorComplete_receiptArchive (S : CommitSurface) (hash : List ℤ → ℤ) (compressN : List ℤ → ℤ)
     (bw : CompletenessWitnesses S hash compressN) :
-    descriptorComplete S hash (Rfix 40) (kstepAll 40) := by
-  intro _hCR pre post turn hstep hpreWF hpostWF
-  obtain ⟨actor, cell, hspec⟩ := dispatchArm_receiptArchive pre post hstep
-  exact receiptArchive_descriptorComplete compressN S hash (Rfix 40) bw.bwReceiptArchive
-    pre post actor cell turn hspec hpreWF hpostWF
+    descriptorComplete S hash (Rfix 40) (kstepAll 40) :=
+  descriptorComplete_of_satFloor S hash (Rfix 40) (kstepAll 40) <| by
+    intro pre post turn hstep _hpreWF _hpostWF
+    obtain ⟨actor, cell, hspec⟩ := dispatchArm_receiptArchive pre post hstep
+    exact bw.bwReceiptArchive pre post actor cell turn hspec
 
 /-- noteSpend (tag 27). -/
 theorem descriptorComplete_noteSpend (S : CommitSurface) (hash : List ℤ → ℤ) (compressN : List ℤ → ℤ)
     (bw : CompletenessWitnesses S hash compressN) :
-    descriptorComplete S hash (Rfix 27) (kstepAll 27) := by
-  intro _hCR pre post turn hstep hpreWF hpostWF
-  obtain ⟨nf, actor, spendProof, hspec⟩ := dispatchArm_noteSpend pre post hstep
-  exact noteSpend_descriptorComplete compressN S hash (Rfix 27) bw.bwNoteSpend
-    pre post nf actor spendProof turn hspec hpreWF hpostWF
+    descriptorComplete S hash (Rfix 27) (kstepAll 27) :=
+  descriptorComplete_of_satFloor S hash (Rfix 27) (kstepAll 27) <| by
+    intro pre post turn hstep _hpreWF _hpostWF
+    obtain ⟨nf, actor, spendProof, hspec⟩ := dispatchArm_noteSpend pre post hstep
+    exact bw.bwNoteSpend pre post nf actor spendProof turn hspec
 
 /-- noteCreate (tag 28). -/
 theorem descriptorComplete_noteCreate (S : CommitSurface) (hash : List ℤ → ℤ) (compressN : List ℤ → ℤ)
     (bw : CompletenessWitnesses S hash compressN) :
-    descriptorComplete S hash (Rfix 28) (kstepAll 28) := by
-  intro _hCR pre post turn hstep hpreWF hpostWF
-  obtain ⟨cm, actor, hspec⟩ := dispatchArm_noteCreate pre post hstep
-  exact noteCreate_descriptorComplete compressN S hash (Rfix 28) bw.bwNoteCreate
-    pre post cm actor turn hspec hpreWF hpostWF
+    descriptorComplete S hash (Rfix 28) (kstepAll 28) :=
+  descriptorComplete_of_satFloor S hash (Rfix 28) (kstepAll 28) <| by
+    intro pre post turn hstep _hpreWF _hpostWF
+    obtain ⟨cm, actor, hspec⟩ := dispatchArm_noteCreate pre post hstep
+    exact bw.bwNoteCreate pre post cm actor turn hspec
 
 /-- createCell (tag 17). -/
 theorem descriptorComplete_createCell (S : CommitSurface) (hash : List ℤ → ℤ) (compressN : List ℤ → ℤ)
     (bw : CompletenessWitnesses S hash compressN) :
-    descriptorComplete S hash (Rfix 17) (kstepAll 17) := by
-  intro _hCR pre post turn hstep hpreWF hpostWF
-  obtain ⟨actor, newCell, hspec⟩ := dispatchArm_createCell pre post hstep
-  exact createCell_descriptorComplete compressN S hash (Rfix 17) bw.bwCreateCell
-    pre post actor newCell turn hspec hpreWF hpostWF
+    descriptorComplete S hash (Rfix 17) (kstepAll 17) :=
+  descriptorComplete_of_satFloor S hash (Rfix 17) (kstepAll 17) <| by
+    intro pre post turn hstep _hpreWF _hpostWF
+    obtain ⟨actor, newCell, hspec⟩ := dispatchArm_createCell pre post hstep
+    exact bw.bwCreateCell pre post actor newCell turn hspec
 
 /-- createCellFromFactory (tag 18). -/
 theorem descriptorComplete_createCellFromFactory (S : CommitSurface) (hash : List ℤ → ℤ)
     (compressN : List ℤ → ℤ) (bw : CompletenessWitnesses S hash compressN) :
-    descriptorComplete S hash (Rfix 18) (kstepAll 18) := by
-  intro _hCR pre post turn hstep hpreWF hpostWF
-  obtain ⟨actor, newCell, vk, hspec⟩ := dispatchArm_createCellFromFactory pre post hstep
-  exact createCellFromFactory_descriptorComplete compressN S hash (Rfix 18) bw.bwCreateCellFromFactory
-    pre post actor newCell vk turn hspec hpreWF hpostWF
+    descriptorComplete S hash (Rfix 18) (kstepAll 18) :=
+  descriptorComplete_of_satFloor S hash (Rfix 18) (kstepAll 18) <| by
+    intro pre post turn hstep _hpreWF _hpostWF
+    obtain ⟨actor, newCell, vk, hspec⟩ := dispatchArm_createCellFromFactory pre post hstep
+    exact bw.bwCreateCellFromFactory pre post actor newCell vk turn hspec
 
-/-- spawn (tag 19) — carries the cap-handoff floor EXPLICITLY (it cannot ride the uniform bundle: the
-`spawn_descriptorComplete` rung needs a `CapHashScheme State` + the `SpawnHandoffInsertProver` cap-tree
-insert, both `State`-parametric). The dual of `closedLogExtract_spawn_closed`. -/
-theorem descriptorComplete_spawn {State : Type}
-    (S : CommitSurface) (CapS : Dregg2.Circuit.DeployedCapTree.CapHashScheme State)
-    (compressN : List ℤ → ℤ) (hash : List ℤ → ℤ)
+/-- spawn (tag 19) — now rides the UNIFORM slim floor like every other value-leg effect. The
+`spawn_descriptorComplete` rung's `AccountsInsertRootProver` + `SpawnHandoffInsertProver` (the cap-tree
+handoff insert, both `State`-parametric) fed ONLY an unused `_henc`, so they are GONE from the live path:
+the slim `SatFloor`-shaped callback (the satisfying trace + publication) suffices, and the cap-handoff
+insert survives only as the SEPARATE `spawn_descriptorComplete_handoff_genuine` tooth. The dual of
+`closedLogExtract_spawn_closed`. -/
+theorem descriptorComplete_spawn
+    (S : CommitSurface) (hash : List ℤ → ℤ)
     (buildWitness : ∀ (pre post : RecChainedState) (actor child target : CellId) (turn : BoundaryTurn),
       Dregg2.Circuit.Spec.AccountGrowth.SpawnSpec pre actor child target post →
-      Σ' (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace),
-        Satisfied2 hash (Rfix 19) minit mfin maddrs t ×'
-        (tracePublishedCommit t = commitOf S pre post turn) ×'
-        Dregg2.Circuit.CircuitCompletenessSetInsert.AccountsInsertRootProver compressN
-          pre.kernel post.kernel child ×'
-        Dregg2.Circuit.CircuitCompletenessSetInsert.SpawnHandoffInsertProver CapS) :
-    descriptorComplete S hash (Rfix 19) (kstepAll 19) := by
-  intro _hCR pre post turn hstep hpreWF hpostWF
-  obtain ⟨actor, child, target, hspec⟩ := dispatchArm_spawn pre post hstep
-  exact Dregg2.Circuit.CircuitCompletenessSetInsert.spawn_descriptorComplete S CapS compressN hash
-    (Rfix 19) buildWitness pre post actor child target turn hspec hpreWF hpostWF
+      ∃ (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace),
+        Satisfied2 hash (Rfix 19) minit mfin maddrs t ∧
+        tracePublishedCommit t = commitOf S pre post turn) :
+    descriptorComplete S hash (Rfix 19) (kstepAll 19) :=
+  descriptorComplete_of_satFloor S hash (Rfix 19) (kstepAll 19) <| by
+    intro pre post turn hstep _hpreWF _hpostWF
+    obtain ⟨actor, child, target, hspec⟩ := dispatchArm_spawn pre post hstep
+    exact buildWitness pre post actor child target turn hspec
 
 /-! ## §5 — the AUTHORITY-LEG dichotomy (re-composed HONESTLY).
 

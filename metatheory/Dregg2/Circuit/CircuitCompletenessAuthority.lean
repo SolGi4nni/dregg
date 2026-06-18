@@ -131,104 +131,15 @@ theorem authorizedByCap_forces_gate (caps : FacetCaps) (provided : AuthProvided)
   obtain ⟨c, hmem, htgt, hfacet, htier⟩ := h
   exact authorizedFacetEffB_holds_cap caps provided effectBit tr c hmem htgt hfacet htier
 
-/-! ## §2 — `CapOpenWitness`: the realizable cap-open CONSTRUCTION floor (NAMED, dual of the soundness
-`EffAuthoritySource` data).
+/-! ## §2 — the GENERIC cap-authority completeness NON-VACUITY tooth.
 
-The soundness keystone `effCapOpenV3_authorizes` is handed (by `StarkSound`/`ChipTableSound`) the cap-open
-`Satisfied2`, the chip soundness, the opened row, the deployed leaf assignment + faithfulness, and the
-edge/tier side conditions — and EXTRACTS authority. Completeness goes the other way: the honest prover
-BUILDS that opening for its real cap. `CapOpenWitness` bundles EXACTLY that constructed data — the dual of
-the soundness extraction (here a CONSTRUCTION). It is the realizable prover floor (named, not faked); the
-authority conclusion is then FORCED from it through `EffAuthoritySource` (§3+), not assumed. -/
-
-/-- **`CapOpenWitness hash caps provided pre tr base name n` — the realizable cap-open construction floor
-(NAMED).** The prover's IN-CIRCUIT cap-tree opening for the cap-authorized turn at the fan-out descriptor
-`effCapOpenV3 base name n`: a cap-open `Satisfied2` of THAT live descriptor (against a sound chip table),
-the opened row, the deployed leaf assignment + its `DeployedFaithfulEff` at the cap-open's committed root
-over the ACTUAL effect bit `1 <<< n`, the `(actor⇒src)` edge identification, and the committed-tier side
-condition. The honest prover holding a real authorizing cap CAN produce this (it opens that cap's leaf);
-it is the realizable construction dual of the soundness `EffAuthoritySource`'s carried trace data.
-DATA-bearing (`Type 1`, like `EffAuthoritySource`). -/
-structure CapOpenWitness (hash : List ℤ → ℤ) (caps : FacetCaps) (provided : AuthProvided)
-    (pre : RecChainedState) (tr : Turn) (base : EffectVmDescriptor2) (name : String) (n : Nat)
-    : Type 1 where
-  /-- the effect bit `n` is a valid mask bit (`< MASK_BITS`); the submask-gate side condition. -/
-  hn : n < Dregg2.Circuit.DeployedCapOpen.MASK_BITS
-  /-- the deployed cap-hash scheme the cap-tree commits under (its existential state type). -/
-  State : Type
-  /-- the deployed cap-hash scheme carrier. -/
-  S : CapHashScheme State
-  /-- the `Custom`-tier vk decode (the named felt residual). -/
-  vkOfTag : ℤ → Nat
-  /-- the cap-open trace + its memory boundary (the prover's BUILT cap-tree opening). -/
-  minit : ℤ → ℤ
-  mfin : ℤ → ℤ × Nat
-  maddrs : List ℤ
-  t : VmTrace
-  /-- the chip table is sound (the chip's hash IS the deployed cap-hash `S.chipAbsorb`). -/
-  hChip : ChipTableSound S.chipAbsorb (t.tf .poseidon2)
-  /-- the prover's BUILT cap-open `Satisfied2` of the live fan-out descriptor. -/
-  hsat : Satisfied2 S.chipAbsorb (effCapOpenV3 base name n) minit mfin maddrs t
-  /-- the cap-open row index. -/
-  i : Nat
-  hi : i < t.rows.length
-  /-- the deployed leaf assignment the cap-tree root realizes. -/
-  leafAt : Label → Label → CapLeaf
-  /-- the deployed-faithfulness of the opened leaf set at the cap-open root over the ACTUAL effect bit. -/
-  hfaith : DeployedFaithfulEff S vkOfTag provided (1 <<< n) caps
-    ((envAt t i).loc capOpenCols.capRoot) leafAt
-  /-- the cap-open row's `src` column IS the turn's `src`. -/
-  hsrc : (envAt t i).loc capOpenCols.src = (tr.src : ℤ)
-  /-- the opened leaf IS the faithful `(actor⇒src)` edge leaf. -/
-  hedge : leafOf capOpenCols (envAt t i) = leafAt tr.actor tr.src
-  /-- `provided` satisfies the tier decoded off the committed leaf. -/
-  htier : (tierOfTag vkOfTag (leafAt tr.actor tr.src).auth_tag).isSatisfiedBy provided = true
-
-/-- **`capOpenWitness_to_source` — the cap-open floor IS an `EffAuthoritySource`.** Pure repackaging: a
-`CapOpenWitness` supplies EVERY field the soundness `EffAuthoritySource` carries. So the realizable
-construction floor and the soundness authority source are the SAME data — the completeness rung rides the
-soundness keystone (`effAuthoritySource_authorizes`) directly, not a divergent path. -/
-def capOpenWitness_to_source (hash : List ℤ → ℤ) (caps : FacetCaps) (provided : AuthProvided)
-    (pre : RecChainedState) (tr : Turn) (base : EffectVmDescriptor2) (name : String) (n : Nat)
-    (w : CapOpenWitness hash caps provided pre tr base name n) :
-    EffAuthoritySource hash caps provided pre tr base name n where
-  hn := w.hn
-  State := w.State
-  S := w.S
-  vkOfTag := w.vkOfTag
-  minit := w.minit
-  mfin := w.mfin
-  maddrs := w.maddrs
-  t := w.t
-  hChip := w.hChip
-  hsat := w.hsat
-  i := w.i
-  hi := w.hi
-  leafAt := w.leafAt
-  hfaith := w.hfaith
-  hsrc := w.hsrc
-  hedge := w.hedge
-  htier := w.htier
-
-/-! ## §3 — the GENERIC cap-authority completeness rung (the template all cap-effects share).
-
-From the realizable cap-open floor `CapOpenWitness` (the prover's BUILT opening), the deployed two-axis
-authority gate at the effect's OWN bit PASSES — FORCED by the constructed `EffAuthoritySource` via
-`effAuthoritySource_authorizes` (the soundness keystone). This is the dual of `effCapOpenV3_authorizes`:
-the in-circuit cap-membership open, BUILT by the honest prover, discharges the gate. -/
-
-/-- **`authorityComplete_generic` — THE CAP-AUTHORITY COMPLETENESS RUNG (generic template).** From the
-realizable cap-open construction floor `CapOpenWitness … base name n` (the honest prover's BUILT opening
-of the authorizing cap at the effect's bit `n`), the deployed two-axis `authorizedFacetEffB caps provided
-(1 <<< n) tr = true` PASSES — FORCED by the constructed `EffAuthoritySource` (`effAuthoritySource_
-authorizes`), NOT carried. The dual of `effCapOpenV3_authorizes`: a cap-authorized move HAS an accepting
-authority opening. -/
-theorem authorityComplete_generic (hash : List ℤ → ℤ) (caps : FacetCaps) (provided : AuthProvided)
-    (pre : RecChainedState) (tr : Turn) (base : EffectVmDescriptor2) (name : String) (n : Nat)
-    (w : CapOpenWitness hash caps provided pre tr base name n) :
-    authorizedFacetEffB caps provided (1 <<< n) tr = true :=
-  effAuthoritySource_authorizes hash caps provided pre tr base name n
-    (capOpenWitness_to_source hash caps provided pre tr base name n w)
+The LIVE cap-authority completeness RUNGS — the ones that BUILD the deployed gate from the prover's
+realizable cap-open opening — are RE-STATED over the SLIM `CapOpenTraceFloor` in
+`CircuitCompletenessAuthorityConstruct` (`<eff>_authorityComplete`, via `authComplete_constructed_from_
+hypothesis`), where the faithfulness / membership / leaf / edge / tier-decode are CONSTRUCTED from the
+witnessing cap rather than carried. The FAT `CapOpenWitness` that bundled those as assumed fields is
+RETIRED (the de-laundering: it carried the WHOLE conclusion, begging the question). What survives HERE is
+the kernel-side non-vacuity tooth + the owner-path companion + the both-polarity bite. -/
 
 /-- **`authorityComplete_generic_genuine` — the non-vacuity tooth (the cap-authority is REAL).** Under the
 cap-authority hypothesis `AuthorizedByCap caps provided (1 <<< n) tr`, the deployed gate the constructed
@@ -240,86 +151,7 @@ theorem authorityComplete_generic_genuine (caps : FacetCaps) (provided : AuthPro
     authorizedFacetEffB caps provided (1 <<< n) tr = true :=
   authorizedByCap_forces_gate caps provided (1 <<< n) tr h
 
-/-! ## §4 — the PER-EFFECT cap-authority rungs (each at its OWN descriptor + effect bit).
-
-Each cap-authorized effect rides its LIVE fan-out cap-open descriptor (`Emit/CapOpenEmit`) at its
-deployed effect bit. The rung is `authorityComplete_generic` specialized to that `(base, name, n)`; the
-genuine tooth is `authorityComplete_generic_genuine` at that bit. The bit assignments are the deployed
-`facet.rs` constants: transfer/attenuate-via-transfer-cap = `EFF_TRANSFER` (1); grantCap = `EFF_GRANT_
-CAPABILITY` (2); revokeCapability = `EFF_REVOKE_CAPABILITY` (3); introduce = `EFF_INTRODUCE` (13);
-delegate / revoke(Delegation) / refreshDelegation = `EFF_DELEGATION_OPS` (16). -/
-
-/-- **`attenuate_authorityComplete`** — the cap-authority completeness rung over the LIVE
-`attenuateCapOpenEffV3` (base `attenuateV3`, `EFF_TRANSFER`; the attenuate-via-transfer-cap leaf must
-permit `EFFECT_TRANSFER`). The dual of the attenuate authority leg. -/
-theorem attenuate_authorityComplete (hash : List ℤ → ℤ) (caps : FacetCaps) (provided : AuthProvided)
-    (pre : RecChainedState) (tr : Turn)
-    (w : CapOpenWitness hash caps provided pre tr
-      attenuateV3 "dregg-effectvm-attenuateA-v1-rot24-v3-capopen-eff" EFF_TRANSFER) :
-    authorizedFacetEffB caps provided (1 <<< EFF_TRANSFER) tr = true :=
-  authorityComplete_generic hash caps provided pre tr _ _ EFF_TRANSFER w
-
-/-- **`introduce_authorityComplete`** — the cap-authority completeness rung over the LIVE
-`introduceCapOpenV3` (base `introduceV3`, `EFF_INTRODUCE`; the cap must permit `EFFECT_INTRODUCE`). -/
-theorem introduce_authorityComplete (hash : List ℤ → ℤ) (caps : FacetCaps) (provided : AuthProvided)
-    (pre : RecChainedState) (tr : Turn)
-    (w : CapOpenWitness hash caps provided pre tr
-      introduceV3 "dregg-effectvm-introduce-v1-rot24-v3-capopen" EFF_INTRODUCE) :
-    authorizedFacetEffB caps provided (1 <<< EFF_INTRODUCE) tr = true :=
-  authorityComplete_generic hash caps provided pre tr _ _ EFF_INTRODUCE w
-
-/-- **`grantCap_authorityComplete`** — the cap-authority completeness rung over the LIVE
-`grantCapCapOpenV3` (base `grantCapV3`, `EFF_GRANT_CAPABILITY`; the cap must permit
-`EFFECT_GRANT_CAPABILITY`). -/
-theorem grantCap_authorityComplete (hash : List ℤ → ℤ) (caps : FacetCaps) (provided : AuthProvided)
-    (pre : RecChainedState) (tr : Turn)
-    (w : CapOpenWitness hash caps provided pre tr
-      grantCapV3 "dregg-effectvm-grantCap-v1-rot24-v3-capopen" EFF_GRANT_CAPABILITY) :
-    authorizedFacetEffB caps provided (1 <<< EFF_GRANT_CAPABILITY) tr = true :=
-  authorityComplete_generic hash caps provided pre tr _ _ EFF_GRANT_CAPABILITY w
-
-/-- **`delegate_authorityComplete`** — the cap-authority completeness rung over the LIVE
-`delegateCapOpenV3` (base `grantCapV3` — delegateAtten shares the grant base, distinguished by name;
-`EFF_DELEGATION_OPS`; the cap must permit `EFFECT_DELEGATION_OPS`). -/
-theorem delegate_authorityComplete (hash : List ℤ → ℤ) (caps : FacetCaps) (provided : AuthProvided)
-    (pre : RecChainedState) (tr : Turn)
-    (w : CapOpenWitness hash caps provided pre tr
-      grantCapV3 "dregg-effectvm-delegateAtten-v1-rot24-v3-capopen" EFF_DELEGATION_OPS) :
-    authorizedFacetEffB caps provided (1 <<< EFF_DELEGATION_OPS) tr = true :=
-  authorityComplete_generic hash caps provided pre tr _ _ EFF_DELEGATION_OPS w
-
-/-- **`revokeDelegation_authorityComplete`** — the cap-authority completeness rung over the LIVE
-`revokeCapOpenV3` (base `revokeDelegationV3`, `EFF_DELEGATION_OPS`; revoke / revokeDelegation share this
-base — the cap must permit `EFFECT_DELEGATION_OPS`). -/
-theorem revokeDelegation_authorityComplete (hash : List ℤ → ℤ) (caps : FacetCaps)
-    (provided : AuthProvided) (pre : RecChainedState) (tr : Turn)
-    (w : CapOpenWitness hash caps provided pre tr
-      revokeDelegationV3 "dregg-effectvm-revoke-v1-rot24-v3-capopen" EFF_DELEGATION_OPS) :
-    authorizedFacetEffB caps provided (1 <<< EFF_DELEGATION_OPS) tr = true :=
-  authorityComplete_generic hash caps provided pre tr _ _ EFF_DELEGATION_OPS w
-
-/-- **`refreshDelegation_authorityComplete`** — the cap-authority completeness rung over the LIVE
-`refreshDelegationCapOpenV3` (base `refreshDelegationV3`, `EFF_DELEGATION_OPS`; the cap must permit
-`EFFECT_DELEGATION_OPS`). -/
-theorem refreshDelegation_authorityComplete (hash : List ℤ → ℤ) (caps : FacetCaps)
-    (provided : AuthProvided) (pre : RecChainedState) (tr : Turn)
-    (w : CapOpenWitness hash caps provided pre tr
-      refreshDelegationV3 "dregg-effectvm-refresh-v1-rot24-v3-capopen" EFF_DELEGATION_OPS) :
-    authorizedFacetEffB caps provided (1 <<< EFF_DELEGATION_OPS) tr = true :=
-  authorityComplete_generic hash caps provided pre tr _ _ EFF_DELEGATION_OPS w
-
-/-- **`revokeCapability_authorityComplete`** — the cap-authority completeness rung over the LIVE
-`revokeCapabilityCapOpenV3` (base `revokeCapabilityBaseV3`, `EFF_REVOKE_CAPABILITY`; the cap must permit
-`EFFECT_REVOKE_CAPABILITY`). -/
-theorem revokeCapability_authorityComplete (hash : List ℤ → ℤ) (caps : FacetCaps)
-    (provided : AuthProvided) (pre : RecChainedState) (tr : Turn)
-    (w : CapOpenWitness hash caps provided pre tr
-      revokeCapabilityBaseV3 "dregg-effectvm-revokeCapability-v1-rot24-v3-capopen"
-      EFF_REVOKE_CAPABILITY) :
-    authorizedFacetEffB caps provided (1 <<< EFF_REVOKE_CAPABILITY) tr = true :=
-  authorityComplete_generic hash caps provided pre tr _ _ EFF_REVOKE_CAPABILITY w
-
-/-! ## §5 — the PER-EFFECT non-vacuity teeth (the cap-authority is REAL at each effect's bit).
+/-! ## §4 — the PER-EFFECT non-vacuity teeth (the cap-authority is REAL at each effect's bit).
 
 Each rung's antecedent is satisfiable: under the effect's `AuthorizedByCap` hypothesis the deployed gate
 holds (through the CAP path). These teeth pin that the per-effect conclusion is non-degenerate (a degenerate
@@ -356,26 +188,13 @@ theorem revokeCapability_authorityComplete_genuine (caps : FacetCaps) (provided 
     authorizedFacetEffB caps provided (1 <<< EFF_REVOKE_CAPABILITY) tr = true :=
   authorityComplete_generic_genuine caps provided EFF_REVOKE_CAPABILITY tr h
 
-/-! ## §6 — exercise: the HOLD-GATE cap-authority completeness rung.
+/-! ## §6 — exercise: the HOLD-GATE cap-authority completeness RUNG lives in the Construct module.
 
-`exercise`'s authority is a HOLD-GATE cap MEMBERSHIP (`exerciseGuard`: `(caps actor).any (confersEdgeTo
-target)`), forced in-circuit by the deployed cap-open over the LIVE `attenuateCapOpenEffV3` (the
-`RotatedKernelRefinementExerciseAuth.ExerciseHoldSource` template). Its authority bit is `EFF_TRANSFER`
-(the exercise hold-cap must permit `EFFECT_TRANSFER`, mirroring the deployed routing), so the exercise
-cap-authority completeness rung IS `attenuate_authorityComplete`'s descriptor at `EFF_TRANSFER` — the
-exercise hold-cap opens exactly as the attenuate transfer-cap does. We record it as its own named rung for
-the fan-out, riding the SAME `CapOpenWitness` floor. -/
-
-/-- **`exercise_authorityComplete`** — the exercise hold-gate cap-authority completeness rung (over the
-LIVE `attenuateCapOpenEffV3` at `EFF_TRANSFER`, the descriptor the deployed exercise hold-cap routes
-through). From the realizable cap-open floor, the deployed two-axis gate at `EFF_TRANSFER` PASSES — the
-exercise hold-cap membership has an accepting opening. -/
-theorem exercise_authorityComplete (hash : List ℤ → ℤ) (caps : FacetCaps) (provided : AuthProvided)
-    (pre : RecChainedState) (tr : Turn)
-    (w : CapOpenWitness hash caps provided pre tr
-      attenuateV3 "dregg-effectvm-attenuateA-v1-rot24-v3-capopen-eff" EFF_TRANSFER) :
-    authorizedFacetEffB caps provided (1 <<< EFF_TRANSFER) tr = true :=
-  authorityComplete_generic hash caps provided pre tr _ _ EFF_TRANSFER w
+`exercise`'s authority is a HOLD-GATE cap MEMBERSHIP (`exerciseGuard`), forced in-circuit by the deployed
+cap-open over the LIVE `attenuateCapOpenEffV3` at `EFF_TRANSFER`. The completeness RUNG
+`exercise_authorityComplete` (slim, over `CapOpenTraceFloor`) is RE-STATED in
+`CircuitCompletenessAuthorityConstruct` alongside the other per-effect rungs; the kernel-side non-vacuity
+tooth at its bit is `attenuate_authorityComplete_genuine` (`EFF_TRANSFER`). -/
 
 /-! ## §7 — THE OWNER PATH: the SEPARATE, trivially-constructive authority rung (the named residual).
 
@@ -442,8 +261,8 @@ theorem authorityComplete_fires :
 
 /-- **`unauthorized_no_authority` — the BOTH-POLARITY tooth (the gate BITES).** A NON-owner whose
 cap-table is EMPTY (confers no cap over `src`) is NOT authorized — the deployed gate is `false`. So there
-is no `AuthorizedByCap`, no `CapOpenWitness`, and no accepting authority opening for that turn: the cap
-rung's hypothesis genuinely separates authorized from unauthorized moves. -/
+is no `AuthorizedByCap`, no slim `CapOpenTraceFloor`, and no accepting authority opening for that turn: the
+cap rung's hypothesis genuinely separates authorized from unauthorized moves. -/
 theorem unauthorized_no_authority (provided : AuthProvided) (effectBit : EffectMask)
     (actor src dst : Label) (amt : ℤ) (hne : actor ≠ src) :
     authorizedFacetEffB (fun _ => []) provided effectBit
@@ -456,22 +275,12 @@ theorem unauthorized_no_authority (provided : AuthProvided) (effectBit : EffectM
 /-! ## §9 — axiom hygiene. -/
 
 #assert_axioms authorizedByCap_forces_gate
-#assert_axioms capOpenWitness_to_source
-#assert_axioms authorityComplete_generic
 #assert_axioms authorityComplete_generic_genuine
-#assert_axioms attenuate_authorityComplete
-#assert_axioms introduce_authorityComplete
-#assert_axioms grantCap_authorityComplete
-#assert_axioms delegate_authorityComplete
-#assert_axioms revokeDelegation_authorityComplete
-#assert_axioms refreshDelegation_authorityComplete
-#assert_axioms revokeCapability_authorityComplete
 #assert_axioms attenuate_authorityComplete_genuine
 #assert_axioms introduce_authorityComplete_genuine
 #assert_axioms grantCap_authorityComplete_genuine
 #assert_axioms delegationOps_authorityComplete_genuine
 #assert_axioms revokeCapability_authorityComplete_genuine
-#assert_axioms exercise_authorityComplete
 #assert_axioms owner_authorityComplete
 #assert_axioms authorityComplete_dichotomy
 #assert_axioms authorizedByCap_nonvacuous

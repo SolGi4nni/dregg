@@ -39,7 +39,7 @@ identification tying the trace's committed `cap_root`/`src` columns to the const
 is the honest prover's actual in-circuit cap-tree opening — the dual of the soundness `StarkSound`
 extraction, the same realizability `StarkComplete` bridges to FRI. It is NOT the conclusion: the
 faithfulness, the leaf, the edge, the tier decode, and the membership are all now CONSTRUCTED here and
-no longer assumed. (See `CircuitCompletenessAuthority.CapOpenWitnessReduced` for the slimmed carrier.)
+no longer assumed. (The slimmed carrier is `CapOpenTraceFloor`, §4 below.)
 
 ## Axiom hygiene
 
@@ -192,7 +192,11 @@ faithfulness, and FORCE the deployed gate — the rung the laundering pretended 
 
 open Dregg2.Circuit.RotatedKernelRefinementFacet (EffAuthoritySource effAuthoritySource_authorizes)
 open Dregg2.Circuit.DescriptorIR2 (EffectVmDescriptor2 VmTrace Satisfied2 ChipTableSound envAt)
-open Dregg2.Circuit.Emit.CapOpenEmit (effCapOpenV3 capOpenCols)
+open Dregg2.Circuit.Emit.CapOpenEmit
+  (effCapOpenV3 capOpenCols
+   EFF_TRANSFER EFF_GRANT_CAPABILITY EFF_REVOKE_CAPABILITY EFF_INTRODUCE EFF_DELEGATION_OPS
+   introduceV3 grantCapV3 revokeDelegationV3 refreshDelegationV3 revokeCapabilityBaseV3)
+open Dregg2.Circuit.Emit.EffectVmEmitRotationV3 (attenuateV3)
 open Dregg2.Circuit.DeployedCapOpen (CapOpenCols leafOf)
 
 /-- **`CapOpenTraceFloor S provided effectBit base name n actor0 c` — the IRREDUCIBLE trace realizability
@@ -320,7 +324,120 @@ theorem authComplete_constructed_from_hypothesis {State : Type} (S : CapHashSche
   exact authComplete_constructed S caps provided base name n hn tr.actor c hmem
     hfacet htier tr.dst tr.amt pre (floor c hmem htgt)
 
-/-! ## §5 — Axiom hygiene. -/
+/-! ## §5 — the PER-EFFECT cap-authority completeness rungs, RIDING THE SLIM FLOOR (de-laundered).
+
+The LIVE per-effect rungs (formerly `CircuitCompletenessAuthority.<eff>_authorityComplete`, which took the
+FAT `CapOpenWitness` carrying `hfaith`/`leafAt`/`hedge`/`htier`/membership as ASSUMED fields) are RE-STATED
+here over the SLIM `CapOpenTraceFloor` — the only residual that genuinely needs the prover (the cap-open
+trace + row-identification). Each rides `authComplete_constructed_from_hypothesis` at its `(base, name, n)`:
+the faithfulness / membership / leaf / edge / tier-decode are CONSTRUCTED (§1-§4) from the witnessing cap,
+NOT carried. The deployed bit assignments are the `facet.rs` constants. The fat `CapOpenWitness` is now
+DEAD (deleted from `CircuitCompletenessAuthority`) — the live authority path carries only `CapOpenTraceFloor`.
+
+Each rung takes the `AuthorizedByCap` PROP (the existential authority hypothesis) and a `floor`
+parametrized by the witnessing cap (the realizable trace for THAT cap's opening). -/
+
+open Dregg2.Circuit.CircuitCompletenessAuthority (AuthorizedByCap) in
+/-- **`attenuate_authorityComplete`** — slim cap-authority rung over the LIVE `attenuateCapOpenEffV3`
+(base `attenuateV3`, `EFF_TRANSFER`). The fat `CapOpenWitness` is gone; only `CapOpenTraceFloor` survives. -/
+theorem attenuate_authorityComplete {State : Type} (S : CapHashScheme State)
+    (caps : FacetCaps) (provided : AuthProvided) (tr : Turn) (pre : RecChainedState)
+    (h : AuthorizedByCap caps provided (1 <<< EFF_TRANSFER) tr)
+    (floor : ∀ c : FacetCap, c ∈ caps tr.actor → c.target = tr.src →
+      CapOpenTraceFloor S (1 <<< EFF_TRANSFER) attenuateV3
+        "dregg-effectvm-attenuateA-v1-rot24-v3-capopen-eff" EFF_TRANSFER tr.actor c) :
+    authorizedFacetEffB caps provided (1 <<< EFF_TRANSFER) tr = true :=
+  authComplete_constructed_from_hypothesis S caps provided _ _ EFF_TRANSFER (by decide) tr h pre floor
+
+open Dregg2.Circuit.CircuitCompletenessAuthority (AuthorizedByCap) in
+/-- **`introduce_authorityComplete`** — slim rung over the LIVE `introduceCapOpenV3` (`EFF_INTRODUCE`). -/
+theorem introduce_authorityComplete {State : Type} (S : CapHashScheme State)
+    (caps : FacetCaps) (provided : AuthProvided) (tr : Turn) (pre : RecChainedState)
+    (h : AuthorizedByCap caps provided (1 <<< EFF_INTRODUCE) tr)
+    (floor : ∀ c : FacetCap, c ∈ caps tr.actor → c.target = tr.src →
+      CapOpenTraceFloor S (1 <<< EFF_INTRODUCE) introduceV3
+        "dregg-effectvm-introduce-v1-rot24-v3-capopen" EFF_INTRODUCE tr.actor c) :
+    authorizedFacetEffB caps provided (1 <<< EFF_INTRODUCE) tr = true :=
+  authComplete_constructed_from_hypothesis S caps provided _ _ EFF_INTRODUCE (by decide) tr h pre floor
+
+open Dregg2.Circuit.CircuitCompletenessAuthority (AuthorizedByCap) in
+/-- **`grantCap_authorityComplete`** — slim rung over the LIVE `grantCapCapOpenV3` (`EFF_GRANT_CAPABILITY`). -/
+theorem grantCap_authorityComplete {State : Type} (S : CapHashScheme State)
+    (caps : FacetCaps) (provided : AuthProvided) (tr : Turn) (pre : RecChainedState)
+    (h : AuthorizedByCap caps provided (1 <<< EFF_GRANT_CAPABILITY) tr)
+    (floor : ∀ c : FacetCap, c ∈ caps tr.actor → c.target = tr.src →
+      CapOpenTraceFloor S (1 <<< EFF_GRANT_CAPABILITY) grantCapV3
+        "dregg-effectvm-grantCap-v1-rot24-v3-capopen" EFF_GRANT_CAPABILITY tr.actor c) :
+    authorizedFacetEffB caps provided (1 <<< EFF_GRANT_CAPABILITY) tr = true :=
+  authComplete_constructed_from_hypothesis S caps provided _ _ EFF_GRANT_CAPABILITY (by decide) tr h pre
+    floor
+
+open Dregg2.Circuit.CircuitCompletenessAuthority (AuthorizedByCap) in
+/-- **`delegate_authorityComplete`** — slim rung over the LIVE `delegateCapOpenV3` (base `grantCapV3`,
+`EFF_DELEGATION_OPS`). -/
+theorem delegate_authorityComplete {State : Type} (S : CapHashScheme State)
+    (caps : FacetCaps) (provided : AuthProvided) (tr : Turn) (pre : RecChainedState)
+    (h : AuthorizedByCap caps provided (1 <<< EFF_DELEGATION_OPS) tr)
+    (floor : ∀ c : FacetCap, c ∈ caps tr.actor → c.target = tr.src →
+      CapOpenTraceFloor S (1 <<< EFF_DELEGATION_OPS) grantCapV3
+        "dregg-effectvm-delegateAtten-v1-rot24-v3-capopen" EFF_DELEGATION_OPS tr.actor c) :
+    authorizedFacetEffB caps provided (1 <<< EFF_DELEGATION_OPS) tr = true :=
+  authComplete_constructed_from_hypothesis S caps provided _ _ EFF_DELEGATION_OPS (by decide) tr h pre
+    floor
+
+open Dregg2.Circuit.CircuitCompletenessAuthority (AuthorizedByCap) in
+/-- **`revokeDelegation_authorityComplete`** — slim rung over the LIVE `revokeCapOpenV3` (base
+`revokeDelegationV3`, `EFF_DELEGATION_OPS`; revoke / revokeDelegation share this base). -/
+theorem revokeDelegation_authorityComplete {State : Type} (S : CapHashScheme State)
+    (caps : FacetCaps) (provided : AuthProvided) (tr : Turn) (pre : RecChainedState)
+    (h : AuthorizedByCap caps provided (1 <<< EFF_DELEGATION_OPS) tr)
+    (floor : ∀ c : FacetCap, c ∈ caps tr.actor → c.target = tr.src →
+      CapOpenTraceFloor S (1 <<< EFF_DELEGATION_OPS) revokeDelegationV3
+        "dregg-effectvm-revoke-v1-rot24-v3-capopen" EFF_DELEGATION_OPS tr.actor c) :
+    authorizedFacetEffB caps provided (1 <<< EFF_DELEGATION_OPS) tr = true :=
+  authComplete_constructed_from_hypothesis S caps provided _ _ EFF_DELEGATION_OPS (by decide) tr h pre
+    floor
+
+open Dregg2.Circuit.CircuitCompletenessAuthority (AuthorizedByCap) in
+/-- **`refreshDelegation_authorityComplete`** — slim rung over the LIVE `refreshDelegationCapOpenV3`
+(`EFF_DELEGATION_OPS`). -/
+theorem refreshDelegation_authorityComplete {State : Type} (S : CapHashScheme State)
+    (caps : FacetCaps) (provided : AuthProvided) (tr : Turn) (pre : RecChainedState)
+    (h : AuthorizedByCap caps provided (1 <<< EFF_DELEGATION_OPS) tr)
+    (floor : ∀ c : FacetCap, c ∈ caps tr.actor → c.target = tr.src →
+      CapOpenTraceFloor S (1 <<< EFF_DELEGATION_OPS) refreshDelegationV3
+        "dregg-effectvm-refresh-v1-rot24-v3-capopen" EFF_DELEGATION_OPS tr.actor c) :
+    authorizedFacetEffB caps provided (1 <<< EFF_DELEGATION_OPS) tr = true :=
+  authComplete_constructed_from_hypothesis S caps provided _ _ EFF_DELEGATION_OPS (by decide) tr h pre
+    floor
+
+open Dregg2.Circuit.CircuitCompletenessAuthority (AuthorizedByCap) in
+/-- **`revokeCapability_authorityComplete`** — slim rung over the LIVE `revokeCapabilityCapOpenV3` (base
+`revokeCapabilityBaseV3`, `EFF_REVOKE_CAPABILITY`). -/
+theorem revokeCapability_authorityComplete {State : Type} (S : CapHashScheme State)
+    (caps : FacetCaps) (provided : AuthProvided) (tr : Turn) (pre : RecChainedState)
+    (h : AuthorizedByCap caps provided (1 <<< EFF_REVOKE_CAPABILITY) tr)
+    (floor : ∀ c : FacetCap, c ∈ caps tr.actor → c.target = tr.src →
+      CapOpenTraceFloor S (1 <<< EFF_REVOKE_CAPABILITY) revokeCapabilityBaseV3
+        "dregg-effectvm-revokeCapability-v1-rot24-v3-capopen" EFF_REVOKE_CAPABILITY tr.actor c) :
+    authorizedFacetEffB caps provided (1 <<< EFF_REVOKE_CAPABILITY) tr = true :=
+  authComplete_constructed_from_hypothesis S caps provided _ _ EFF_REVOKE_CAPABILITY (by decide) tr h pre
+    floor
+
+open Dregg2.Circuit.CircuitCompletenessAuthority (AuthorizedByCap) in
+/-- **`exercise_authorityComplete`** — the exercise HOLD-GATE rung (over the LIVE `attenuateCapOpenEffV3`
+at `EFF_TRANSFER`, the descriptor the deployed exercise hold-cap routes through). Same slim floor as
+`attenuate_authorityComplete`. -/
+theorem exercise_authorityComplete {State : Type} (S : CapHashScheme State)
+    (caps : FacetCaps) (provided : AuthProvided) (tr : Turn) (pre : RecChainedState)
+    (h : AuthorizedByCap caps provided (1 <<< EFF_TRANSFER) tr)
+    (floor : ∀ c : FacetCap, c ∈ caps tr.actor → c.target = tr.src →
+      CapOpenTraceFloor S (1 <<< EFF_TRANSFER) attenuateV3
+        "dregg-effectvm-attenuateA-v1-rot24-v3-capopen-eff" EFF_TRANSFER tr.actor c) :
+    authorizedFacetEffB caps provided (1 <<< EFF_TRANSFER) tr = true :=
+  authComplete_constructed_from_hypothesis S caps provided _ _ EFF_TRANSFER (by decide) tr h pre floor
+
+/-! ## §6 — Axiom hygiene. -/
 
 #assert_axioms authLeaf_membersAt
 #assert_axioms authLeaf_confers
@@ -328,5 +445,13 @@ theorem authComplete_constructed_from_hypothesis {State : Type} (S : CapHashSche
 #assert_axioms authConstructs_source
 #assert_axioms authComplete_constructed
 #assert_axioms authComplete_constructed_from_hypothesis
+#assert_axioms attenuate_authorityComplete
+#assert_axioms introduce_authorityComplete
+#assert_axioms grantCap_authorityComplete
+#assert_axioms delegate_authorityComplete
+#assert_axioms revokeDelegation_authorityComplete
+#assert_axioms refreshDelegation_authorityComplete
+#assert_axioms revokeCapability_authorityComplete
+#assert_axioms exercise_authorityComplete
 
 end Dregg2.Circuit.CircuitCompletenessAuthorityConstruct
