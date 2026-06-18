@@ -372,7 +372,8 @@ discharged from the in-circuit cap-open. -/
 
 open Dregg2.Circuit.Spec.AuthorityRevocation (RevokeSpec)
 open Dregg2.Circuit.Emit.CapOpenEmit (revokeCapabilityCapOpenV3 revokeCapabilityBaseV3 EFF_REVOKE_CAPABILITY)
-open Dregg2.Circuit.RotatedKernelRefinementFacet (EffAuthoritySource effAuthoritySource_authorizes)
+open Dregg2.Circuit.RotatedKernelRefinementFacet
+  (EffAuthoritySourceCanon effAuthoritySourceCanon_authorizes)
 open Dregg2.Exec.FacetAuthority (FacetCaps AuthProvided authorizedFacetEffB)
 
 /-- **`revokeCapabilityArm fcaps provided pre tr post`** — the FAITHFUL `revokeCapability` dispatch arm at
@@ -396,10 +397,10 @@ theorem revokeCapabilityArm_authority_forced (hash : List ℤ → ℤ)
     (fcaps : FacetCaps) (provided : AuthProvided)
     (pre : RecChainedState) (tr : Dregg2.Exec.Turn) (post : RecChainedState)
     (hval : RevokeSpec pre tr.src tr.dst post)
-    (src0 : EffAuthoritySource hash fcaps provided pre tr
+    (src0 : EffAuthoritySourceCanon hash fcaps provided pre tr
       revokeCapabilityBaseV3 "dregg-effectvm-revokeCapability-v1-rot24-v3-capopen" EFF_REVOKE_CAPABILITY) :
     revokeCapabilityArm fcaps provided pre tr post :=
-  ⟨hval, effAuthoritySource_authorizes hash fcaps provided pre tr
+  ⟨hval, effAuthoritySourceCanon_authorizes hash fcaps provided pre tr
     revokeCapabilityBaseV3 "dregg-effectvm-revokeCapability-v1-rot24-v3-capopen" EFF_REVOKE_CAPABILITY src0⟩
 
 /-- **`revokeCapabilityArm_to_dispatch` — the faithful arm LOWERS to the GENUINE kernel revoke step.** A

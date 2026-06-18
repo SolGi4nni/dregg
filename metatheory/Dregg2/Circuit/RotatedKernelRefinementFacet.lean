@@ -440,6 +440,200 @@ def transferAuthoritySourceG_to_eff (hash : List ℤ → ℤ) (fcaps : FacetCaps
   hedge := src0.hedge
   htier := src0.htier
 
+/-! ## §7.D — DISCHARGE the carried `hfaith` field: build the authority source from CR + the CANONICAL
+cap-tree, not from an assumed `DeployedFaithfulEff`.
+
+`EffAuthoritySource.hfaith` (and `TransferAuthoritySource(G).hfaith`) carry `DeployedFaithfulEff` as an
+ASSUMED structure FIELD over a FREE `leafAt` — the soundness analog of the completeness laundering. The
+discharge lives in `DeployedCapTree.deployedFaithfulEff_canonical`: for the CANONICAL leaf function the
+cap-tree actually commits (`canonicalLeafAt caps`, built FROM the c-list — the cap-tree analog of
+`recStateCommit`'s "leaves from the kernel"), `DeployedFaithfulEff` holds UNCONDITIONALLY (the `backed`
+witness is read off the construction's `find?`), modulo only the named `Custom`/`vkOfTag` residual.
+
+`effAuthoritySource_ofCanonical` constructs the `EffAuthoritySource` with that DISCHARGED `hfaith`:
+the caller supplies the cap-open trace data (`Satisfied2` + chip soundness — the genuine in-circuit
+membership the apex needs) and the IPC-tier side condition, NOT an independent faithful-encoding contract.
+The `leafAt` is PINNED to `canonicalLeafAt caps` (so `hedge` becomes "the prover opens the CANONICAL
+leaf", the realizable honest-prover identification — not a free leaf assignment). This shrinks the
+carried-floor set: `hfaith` is no longer an assumed field but a CR/construction consequence. -/
+
+open Dregg2.Circuit.DeployedCapTree.CapHashScheme
+  (canonicalLeafAt canonicalLeaf deployedFaithfulEff_canonical)
+
+/-- **`effAuthoritySource_ofCanonical` — the cap-open authority source with `hfaith` DISCHARGED.**
+Build an `EffAuthoritySource` at the CANONICAL leaf function `canonicalLeafAt caps` (the leaves the
+cap-tree commits, built from the c-list). The faithfulness `hfaith : DeployedFaithfulEff` is NOT a
+carried field — it is supplied by `deployedFaithfulEff_canonical` from the construction (the `backed`
+witness is the held cap `find?` returns), modulo the named IPC-tier side condition `hipc` (a `Custom`
+cap rides the `vkOfTag` residual). The caller provides ONLY the genuine in-circuit cap-open data
+(`hsat`/`hChip` — the depth-16 membership) + the edge/tier reads, NOT an independent encoding contract.
+This is the soundness de-laundering: the authority leg's faithfulness is a CR consequence, carried no
+more. -/
+def effAuthoritySource_ofCanonical (hash : List ℤ → ℤ) (caps : FacetCaps) (provided : AuthProvided)
+    (pre : RecChainedState) (tr : Turn) (base : EffectVmDescriptor2) (name : String) (n : Nat)
+    (hn : n < Dregg2.Circuit.DeployedCapOpen.MASK_BITS) (hn32 : n < 32)
+    {State : Type} (S : CapHashScheme State) (vkOfTag : ℤ → Nat)
+    (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
+    (hChip : ChipTableSound S.chipAbsorb (t.tf .poseidon2))
+    (hsat : Satisfied2 S.chipAbsorb (effCapOpenV3 base name n) minit mfin maddrs t)
+    (i : Nat) (hi : i < t.rows.length)
+    (hsrc : (envAt t i).loc capOpenCols.src = (tr.src : ℤ))
+    (hedge : leafOf capOpenCols (envAt t i) = canonicalLeafAt caps tr.actor tr.src)
+    -- the named IPC-tier residual: no held cap over the relevant edge is a `Custom` tier.
+    (hipc : ∀ (actor src : Dregg2.Authority.Label) (c : Dregg2.Exec.FacetAuthority.FacetCap),
+      c ∈ caps actor → c.target = src → ∀ vk, c.tier ≠ .custom vk)
+    -- the decoded-tier side condition for the opened canonical leaf.
+    (htier : (tierOfTag vkOfTag (canonicalLeafAt caps tr.actor tr.src).auth_tag).isSatisfiedBy
+      provided = true) :
+    EffAuthoritySource hash caps provided pre tr base name n where
+  hn := hn
+  State := State
+  S := S
+  vkOfTag := vkOfTag
+  minit := minit
+  mfin := mfin
+  maddrs := maddrs
+  t := t
+  hChip := hChip
+  hsat := hsat
+  i := i
+  hi := hi
+  leafAt := canonicalLeafAt caps
+  -- THE DISCHARGE: faithfulness is CONSTRUCTED from the canonical leaf set, not carried.
+  hfaith := deployedFaithfulEff_canonical S vkOfTag provided n hn32 caps
+    ((envAt t i).loc capOpenCols.capRoot) hipc
+  hsrc := hsrc
+  hedge := hedge
+  htier := htier
+
+/-- **`effAuthoritySource_ofCanonical_authorizes` — authority FORCED with faithfulness DISCHARGED.**
+The end-to-end: from the cap-open trace data + the canonical-leaf edge identification + the IPC-tier
+residual, the deployed `authorizedFacetEffB caps provided (1 <<< n) tr` PASSES — and the faithfulness
+the authorization rests on is the CONSTRUCTED `deployedFaithfulEff_canonical`, NOT an assumed field. The
+carried floor for this leg is now: the in-circuit membership (`hsat`/`hChip`, the genuine depth-16
+open), the canonical-leaf edge read, and the named IPC-tier/`vkOfTag` residual — `DeployedFaithfulEff`
+is no longer among them. -/
+theorem effAuthoritySource_ofCanonical_authorizes (hash : List ℤ → ℤ) (caps : FacetCaps)
+    (provided : AuthProvided) (pre : RecChainedState) (tr : Turn)
+    (base : EffectVmDescriptor2) (name : String) (n : Nat)
+    (hn : n < Dregg2.Circuit.DeployedCapOpen.MASK_BITS) (hn32 : n < 32)
+    {State : Type} (S : CapHashScheme State) (vkOfTag : ℤ → Nat)
+    (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
+    (hChip : ChipTableSound S.chipAbsorb (t.tf .poseidon2))
+    (hsat : Satisfied2 S.chipAbsorb (effCapOpenV3 base name n) minit mfin maddrs t)
+    (i : Nat) (hi : i < t.rows.length)
+    (hsrc : (envAt t i).loc capOpenCols.src = (tr.src : ℤ))
+    (hedge : leafOf capOpenCols (envAt t i) = canonicalLeafAt caps tr.actor tr.src)
+    (hipc : ∀ (actor src : Dregg2.Authority.Label) (c : Dregg2.Exec.FacetAuthority.FacetCap),
+      c ∈ caps actor → c.target = src → ∀ vk, c.tier ≠ .custom vk)
+    (htier : (tierOfTag vkOfTag (canonicalLeafAt caps tr.actor tr.src).auth_tag).isSatisfiedBy
+      provided = true) :
+    authorizedFacetEffB caps provided (1 <<< n) tr = true :=
+  effAuthoritySource_authorizes hash caps provided pre tr base name n
+    (effAuthoritySource_ofCanonical hash caps provided pre tr base name n hn hn32 S vkOfTag
+      minit mfin maddrs t hChip hsat i hi hsrc hedge hipc htier)
+
+/-! ## §7.E — THE SLIM CANONICAL SOURCES: the live soundness authority floor with `hfaith`/`leafAt` GONE.
+
+`EffAuthoritySource` carries `leafAt` + `hfaith : DeployedFaithfulEff` as ASSUMED structure FIELDS — the
+soundness laundering. `EffAuthoritySourceCanon` is the SLIM replacement the LIVE soundness keystones now
+consume: it has NO `leafAt` (the leaf function is PINNED to the canonical `canonicalLeafAt caps` the
+cap-tree actually commits) and NO `hfaith` (faithfulness is CONSTRUCTED inside `_authorizes` via
+`deployedFaithfulEff_canonical`). The only NEW carry over the trace data is the named IPC-tier residual
+`hipc` (a `Custom` cap rides the `vkOfTag` residual) + the bit bound `hn32`. The opened-leaf
+identification `hedge` is now "the prover opens the CANONICAL leaf" — the realizable honest-prover
+identification, not a free leaf assignment.
+
+THIS retires `hfaith`/`leafAt` from the live authority leg: the keystones (`transfer_descriptorRefines_facet`,
+`stepAuthorityFacetEff`, the whole-turn fold) take `EffAuthoritySourceCanon`/`TransferAuthoritySourceCanon`,
+and the deployed gate is FORCED with faithfulness a CR/construction consequence, carried no more. The
+general `EffAuthoritySource` (with `leafAt`/`hfaith`) survives ONLY as the COMPLETENESS dual's home, where
+`hfaith` is itself CONSTRUCTED (`CircuitCompletenessAuthorityConstruct.authConstructs_source`) — never an
+assumed soundness field. -/
+
+/-- **`EffAuthoritySourceCanon hash caps provided pre tr base name n` — the SLIM canonical authority
+source (`hfaith`/`leafAt` RETIRED).** Carries ONLY the genuine in-circuit cap-open data (the depth-16
+membership trace `t`/`hsat`/`hChip` + row id), the canonical-leaf edge identification (`hedge` against
+`canonicalLeafAt caps`), the decoded-tier read (`htier`), and the NAMED IPC-tier residual `hipc`. The
+faithfulness `DeployedFaithfulEff` is NOT a field — it is constructed in `effAuthoritySourceCanon_authorizes`
+from `deployedFaithfulEff_canonical`. DATA-bearing (`Type 1`). -/
+structure EffAuthoritySourceCanon (hash : List ℤ → ℤ) (caps : FacetCaps) (provided : AuthProvided)
+    (pre : RecChainedState) (tr : Turn) (base : EffectVmDescriptor2) (name : String) (n : Nat)
+    : Type 1 where
+  /-- the effect bit `n` is a valid mask bit (`< MASK_BITS = 32`); the submask-gate side condition. -/
+  hn : n < Dregg2.Circuit.DeployedCapOpen.MASK_BITS
+  /-- the effect bit `n` is `< 32` (the `deployedFaithfulEff_canonical` single-bit side condition). -/
+  hn32 : n < 32
+  /-- the deployed cap-hash scheme the cap-tree commits under (its existential state type). -/
+  State : Type
+  /-- the deployed cap-hash scheme carrier. -/
+  S : CapHashScheme State
+  /-- the `Custom`-tier vk decode (the named felt residual). -/
+  vkOfTag : ℤ → Nat
+  /-- the cap-open trace + its memory boundary (the prover's cap-tree opening witness). -/
+  minit : ℤ → ℤ
+  mfin : ℤ → ℤ × Nat
+  maddrs : List ℤ
+  t : VmTrace
+  /-- the chip table is sound (the chip's hash IS the deployed cap-hash `S.chipAbsorb`). -/
+  hChip : ChipTableSound S.chipAbsorb (t.tf .poseidon2)
+  /-- the LIVE fan-out cap-open descriptor's appendix is satisfied (the depth-16 Merkle open + the
+  genuine submask facet gate at bit `n` + the decoded tier). -/
+  hsat : Satisfied2 S.chipAbsorb (effCapOpenV3 base name n) minit mfin maddrs t
+  /-- the cap-open row index. -/
+  i : Nat
+  hi : i < t.rows.length
+  /-- the cap-open row's `src` column IS the turn's `src`. -/
+  hsrc : (envAt t i).loc capOpenCols.src = (tr.src : ℤ)
+  /-- the opened leaf IS the CANONICAL `(actor ⇒ src)` edge leaf — "the prover opens the canonical tree". -/
+  hedge : leafOf capOpenCols (envAt t i) = canonicalLeafAt caps tr.actor tr.src
+  /-- the NAMED IPC-tier residual: no held cap over the relevant edge is a `Custom` tier (a `Custom` cap
+  rides the `vkOfTag` felt residual). -/
+  hipc : ∀ (actor src : Dregg2.Authority.Label) (c : Dregg2.Exec.FacetAuthority.FacetCap),
+    c ∈ caps actor → c.target = src → ∀ vk, c.tier ≠ .custom vk
+  /-- `provided` satisfies the tier DECODED off the committed CANONICAL leaf. -/
+  htier : (tierOfTag vkOfTag (canonicalLeafAt caps tr.actor tr.src).auth_tag).isSatisfiedBy provided = true
+
+/-- **`effAuthoritySourceCanon_authorizes` — the fan-out cap-open FORCES authority, faithfulness DISCHARGED.**
+From the SLIM `EffAuthoritySourceCanon` (NO assumed `hfaith`/`leafAt`), the deployed two-axis
+`authorizedFacetEffB caps provided (1 <<< n) tr` PASSES — the faithfulness the authorization rests on is the
+CONSTRUCTED `deployedFaithfulEff_canonical`, not a carried field. The carried floor for this leg is now:
+the in-circuit membership (`hsat`/`hChip`), the canonical-leaf edge read (`hedge`), and the named
+IPC-tier/`vkOfTag` residual (`hipc`/`htier`) — `DeployedFaithfulEff` is no longer among them. -/
+theorem effAuthoritySourceCanon_authorizes (hash : List ℤ → ℤ) (caps : FacetCaps) (provided : AuthProvided)
+    (pre : RecChainedState) (tr : Turn) (base : EffectVmDescriptor2) (name : String) (n : Nat)
+    (src0 : EffAuthoritySourceCanon hash caps provided pre tr base name n) :
+    authorizedFacetEffB caps provided (1 <<< n) tr = true :=
+  effAuthoritySource_ofCanonical_authorizes hash caps provided pre tr base name n
+    src0.hn src0.hn32 src0.S src0.vkOfTag src0.minit src0.mfin src0.maddrs src0.t
+    src0.hChip src0.hsat src0.i src0.hi src0.hsrc src0.hedge src0.hipc src0.htier
+
+/-- **`TransferAuthoritySourceCanon hash fcaps provided pre tr` — the SLIM canonical transfer source.**
+The transfer instance of `EffAuthoritySourceCanon` at `base := transferV3, n := EFF_TRANSFER` — the live
+transfer authority floor with `hfaith`/`leafAt` RETIRED. Used by `transfer_descriptorRefines_facet` so the
+transfer keystone no longer takes an assumed `DeployedFaithfulEff`. -/
+abbrev TransferAuthoritySourceCanon (hash : List ℤ → ℤ) (fcaps : FacetCaps) (provided : AuthProvided)
+    (pre : RecChainedState) (tr : Turn) : Type 1 :=
+  EffAuthoritySourceCanon hash fcaps provided pre tr
+    Dregg2.Circuit.RotatedKernelRefinement.transferV3
+    "dregg-effectvm-transfer-v1-rot24-v3-capopen-eff" EFF_TRANSFER
+
+/-- **`transferAuthoritySourceCanon_authorizes` — the canonical transfer source FORCES `authorizedFacetB`.**
+From the slim `TransferAuthoritySourceCanon`, the deployed two-axis `authorizedFacetB fcaps provided tr`
+PASSES (the transfer-bit collapse `authorizedFacetEffB … (1 <<< EFF_TRANSFER) = authorizedFacetB`),
+faithfulness DISCHARGED via the canonical construction — NOT a carried field. -/
+theorem transferAuthoritySourceCanon_authorizes (hash : List ℤ → ℤ) (fcaps : FacetCaps)
+    (provided : AuthProvided) (pre : RecChainedState) (tr : Turn)
+    (src0 : TransferAuthoritySourceCanon hash fcaps provided pre tr) :
+    authorizedFacetB fcaps provided tr = true := by
+  have h := effAuthoritySourceCanon_authorizes hash fcaps provided pre tr
+    Dregg2.Circuit.RotatedKernelRefinement.transferV3
+    "dregg-effectvm-transfer-v1-rot24-v3-capopen-eff" EFF_TRANSFER src0
+  -- `authorizedFacetB = authorizedFacetEffB … (turnEffectBit _)`, and `turnEffectBit _ =
+  -- EFFECT_TRANSFER = 1 <<< 1 = 1 <<< EFF_TRANSFER` definitionally, so the collapse is `rw`+defeq.
+  rw [authorizedFacetB_eq_eff]
+  exact h
+
 /-! ## §4 — `transfer_descriptorRefines_facet`: the TEMPLATE keystone.
 
 The faithful refinement. From a satisfying transfer VALUE witness (`Satisfied2 hash transferV3 …`
@@ -466,15 +660,15 @@ theorem transfer_descriptorRefines_facet (hash : List ℤ → ℤ)
     (pre post : RecChainedState) (tr : Turn) (a : AssetId)
     (henc : rotatedEncodes hash minit mfin maddrs t pre post tr a)
     (fcaps : FacetCaps)
-    (hauth : TransferAuthoritySource hash fcaps pre tr) :
+    (hauth : TransferAuthoritySourceCanon hash fcaps .signature pre tr) :
     BalanceMovementSpecFacet fcaps .signature pre tr a post := by
   -- the VALUE leg (debit/credit/availability/frame/log) — REUSED verbatim from the value rung.
   have hval : BalanceMovementSpec pre tr a post :=
     transfer_descriptorRefines hash hside hsat pre post tr a henc
   obtain ⟨⟨_htoy, hnn, hav, hne, hls, hld, hacc⟩, hrest⟩ := hval
-  -- the AUTHORITY leg — FORCED by the cap-open (NOT the toy `htoy` from the decode).
+  -- the AUTHORITY leg — FORCED by the CANONICAL cap-open, faithfulness DISCHARGED (no carried `hfaith`).
   have hfaithAuth : authorizedFacetB fcaps .signature tr = true :=
-    authoritySource_authorizes hash fcaps pre tr hauth
+    transferAuthoritySourceCanon_authorizes hash fcaps .signature pre tr hauth
   exact ⟨⟨hfaithAuth, hnn, hav, hne, hls, hld, hacc⟩, hrest⟩
 
 set_option maxHeartbeats 800000 in
@@ -491,13 +685,13 @@ theorem transfer_descriptorRefines_facet_tierGeneral (hash : List ℤ → ℤ)
     (pre post : RecChainedState) (tr : Turn) (a : AssetId)
     (henc : rotatedEncodes hash minit mfin maddrs t pre post tr a)
     (fcaps : FacetCaps) (provided : AuthProvided)
-    (hauth : TransferAuthoritySourceG hash fcaps provided pre tr) :
+    (hauth : TransferAuthoritySourceCanon hash fcaps provided pre tr) :
     BalanceMovementSpecFacet fcaps provided pre tr a post := by
   have hval : BalanceMovementSpec pre tr a post :=
     transfer_descriptorRefines hash hside hsat pre post tr a henc
   obtain ⟨⟨_htoy, hnn, hav, hne, hls, hld, hacc⟩, hrest⟩ := hval
   have hfaithAuth : authorizedFacetB fcaps provided tr = true :=
-    authoritySourceG_authorizes hash fcaps provided pre tr hauth
+    transferAuthoritySourceCanon_authorizes hash fcaps provided pre tr hauth
   exact ⟨⟨hfaithAuth, hnn, hav, hne, hls, hld, hacc⟩, hrest⟩
 
 /-- **`transfer_descriptorRefines_facet_rejects_unauthorized` (the faithful authority tooth).** If the
@@ -599,103 +793,12 @@ theorem balanceMovementSpecFacet_owner_admits (fcaps : FacetCaps) (provided : Au
   refine ⟨⟨?_, hnn, hav, hne, hls, hld, hacc⟩, hrest⟩
   exact authorizedFacetB_owner fcaps provided tr howner
 
-/-! ## §7.D — DISCHARGE the carried `hfaith` field: build the authority source from CR + the CANONICAL
-cap-tree, not from an assumed `DeployedFaithfulEff`.
-
-`EffAuthoritySource.hfaith` (and `TransferAuthoritySource(G).hfaith`) carry `DeployedFaithfulEff` as an
-ASSUMED structure FIELD over a FREE `leafAt` — the soundness analog of the completeness laundering. The
-discharge lives in `DeployedCapTree.deployedFaithfulEff_canonical`: for the CANONICAL leaf function the
-cap-tree actually commits (`canonicalLeafAt caps`, built FROM the c-list — the cap-tree analog of
-`recStateCommit`'s "leaves from the kernel"), `DeployedFaithfulEff` holds UNCONDITIONALLY (the `backed`
-witness is read off the construction's `find?`), modulo only the named `Custom`/`vkOfTag` residual.
-
-`effAuthoritySource_ofCanonical` constructs the `EffAuthoritySource` with that DISCHARGED `hfaith`:
-the caller supplies the cap-open trace data (`Satisfied2` + chip soundness — the genuine in-circuit
-membership the apex needs) and the IPC-tier side condition, NOT an independent faithful-encoding contract.
-The `leafAt` is PINNED to `canonicalLeafAt caps` (so `hedge` becomes "the prover opens the CANONICAL
-leaf", the realizable honest-prover identification — not a free leaf assignment). This shrinks the
-carried-floor set: `hfaith` is no longer an assumed field but a CR/construction consequence. -/
-
-open Dregg2.Circuit.DeployedCapTree.CapHashScheme
-  (canonicalLeafAt canonicalLeaf deployedFaithfulEff_canonical)
-
-/-- **`effAuthoritySource_ofCanonical` — the cap-open authority source with `hfaith` DISCHARGED.**
-Build an `EffAuthoritySource` at the CANONICAL leaf function `canonicalLeafAt caps` (the leaves the
-cap-tree commits, built from the c-list). The faithfulness `hfaith : DeployedFaithfulEff` is NOT a
-carried field — it is supplied by `deployedFaithfulEff_canonical` from the construction (the `backed`
-witness is the held cap `find?` returns), modulo the named IPC-tier side condition `hipc` (a `Custom`
-cap rides the `vkOfTag` residual). The caller provides ONLY the genuine in-circuit cap-open data
-(`hsat`/`hChip` — the depth-16 membership) + the edge/tier reads, NOT an independent encoding contract.
-This is the soundness de-laundering: the authority leg's faithfulness is a CR consequence, carried no
-more. -/
-def effAuthoritySource_ofCanonical (hash : List ℤ → ℤ) (caps : FacetCaps) (provided : AuthProvided)
-    (pre : RecChainedState) (tr : Turn) (base : EffectVmDescriptor2) (name : String) (n : Nat)
-    (hn : n < Dregg2.Circuit.DeployedCapOpen.MASK_BITS) (hn32 : n < 32)
-    {State : Type} (S : CapHashScheme State) (vkOfTag : ℤ → Nat)
-    (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
-    (hChip : ChipTableSound S.chipAbsorb (t.tf .poseidon2))
-    (hsat : Satisfied2 S.chipAbsorb (effCapOpenV3 base name n) minit mfin maddrs t)
-    (i : Nat) (hi : i < t.rows.length)
-    (hsrc : (envAt t i).loc capOpenCols.src = (tr.src : ℤ))
-    (hedge : leafOf capOpenCols (envAt t i) = canonicalLeafAt caps tr.actor tr.src)
-    -- the named IPC-tier residual: no held cap over the relevant edge is a `Custom` tier.
-    (hipc : ∀ (actor src : Dregg2.Authority.Label) (c : Dregg2.Exec.FacetAuthority.FacetCap),
-      c ∈ caps actor → c.target = src → ∀ vk, c.tier ≠ .custom vk)
-    -- the decoded-tier side condition for the opened canonical leaf.
-    (htier : (tierOfTag vkOfTag (canonicalLeafAt caps tr.actor tr.src).auth_tag).isSatisfiedBy
-      provided = true) :
-    EffAuthoritySource hash caps provided pre tr base name n where
-  hn := hn
-  State := State
-  S := S
-  vkOfTag := vkOfTag
-  minit := minit
-  mfin := mfin
-  maddrs := maddrs
-  t := t
-  hChip := hChip
-  hsat := hsat
-  i := i
-  hi := hi
-  leafAt := canonicalLeafAt caps
-  -- THE DISCHARGE: faithfulness is CONSTRUCTED from the canonical leaf set, not carried.
-  hfaith := deployedFaithfulEff_canonical S vkOfTag provided n hn32 caps
-    ((envAt t i).loc capOpenCols.capRoot) hipc
-  hsrc := hsrc
-  hedge := hedge
-  htier := htier
-
-/-- **`effAuthoritySource_ofCanonical_authorizes` — authority FORCED with faithfulness DISCHARGED.**
-The end-to-end: from the cap-open trace data + the canonical-leaf edge identification + the IPC-tier
-residual, the deployed `authorizedFacetEffB caps provided (1 <<< n) tr` PASSES — and the faithfulness
-the authorization rests on is the CONSTRUCTED `deployedFaithfulEff_canonical`, NOT an assumed field. The
-carried floor for this leg is now: the in-circuit membership (`hsat`/`hChip`, the genuine depth-16
-open), the canonical-leaf edge read, and the named IPC-tier/`vkOfTag` residual — `DeployedFaithfulEff`
-is no longer among them. -/
-theorem effAuthoritySource_ofCanonical_authorizes (hash : List ℤ → ℤ) (caps : FacetCaps)
-    (provided : AuthProvided) (pre : RecChainedState) (tr : Turn)
-    (base : EffectVmDescriptor2) (name : String) (n : Nat)
-    (hn : n < Dregg2.Circuit.DeployedCapOpen.MASK_BITS) (hn32 : n < 32)
-    {State : Type} (S : CapHashScheme State) (vkOfTag : ℤ → Nat)
-    (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
-    (hChip : ChipTableSound S.chipAbsorb (t.tf .poseidon2))
-    (hsat : Satisfied2 S.chipAbsorb (effCapOpenV3 base name n) minit mfin maddrs t)
-    (i : Nat) (hi : i < t.rows.length)
-    (hsrc : (envAt t i).loc capOpenCols.src = (tr.src : ℤ))
-    (hedge : leafOf capOpenCols (envAt t i) = canonicalLeafAt caps tr.actor tr.src)
-    (hipc : ∀ (actor src : Dregg2.Authority.Label) (c : Dregg2.Exec.FacetAuthority.FacetCap),
-      c ∈ caps actor → c.target = src → ∀ vk, c.tier ≠ .custom vk)
-    (htier : (tierOfTag vkOfTag (canonicalLeafAt caps tr.actor tr.src).auth_tag).isSatisfiedBy
-      provided = true) :
-    authorizedFacetEffB caps provided (1 <<< n) tr = true :=
-  effAuthoritySource_authorizes hash caps provided pre tr base name n
-    (effAuthoritySource_ofCanonical hash caps provided pre tr base name n hn hn32 S vkOfTag
-      minit mfin maddrs t hChip hsat i hi hsrc hedge hipc htier)
-
 /-! ## §8 — Axiom hygiene. -/
 
 #assert_axioms effAuthoritySource_ofCanonical
 #assert_axioms effAuthoritySource_ofCanonical_authorizes
+#assert_axioms effAuthoritySourceCanon_authorizes
+#assert_axioms transferAuthoritySourceCanon_authorizes
 #assert_axioms execFaithful_iff_specFacet
 #assert_axioms specFacet_rejects_unauthorized
 #assert_axioms balanceMovementSpecFacet_to_toy

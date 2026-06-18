@@ -57,35 +57,19 @@ open Dregg2.Authority (Label)
 open Dregg2.Circuit.DeployedCapTree (CapLeaf CapHashScheme FACT_MARK packNode leafFields)
 open Dregg2.Circuit.DeployedCapTree.CapHashScheme
   (DeployedFaithfulEff capLeafDigest MembersAt recomposeUp tierOfTag confersLeaf
-   maskOfLimbs facetOfLeaf)
+   maskOfLimbs facetOfLeaf vkOfTier tierOfTag_tierByte)
 open Dregg2.Circuit.CircuitCompletenessAuthority (AuthorizedByCap)
 
 set_option autoImplicit false
 
-/-! ## §0 — the tier decode round-trips its own byte.
+/-! ## §0 — the tier decode round-trips its own byte (CONSOLIDATED into `DeployedCapTree`).
 
-`tierOfTag` (the deployed `auth_tag` BYTE → `AuthTier`) is the inverse of `AuthTier.tierByte` on the
-IPC tiers, and on `Custom` when `vkOfTag` recovers the vk. We use this to make the CONSTRUCTED leaf's
-decoded tier EQUAL the authorizing cap's tier — so the cap's `isSatisfiedBy` transfers verbatim. -/
-
-/-- The vk-decode that recovers a tier's `Custom` vk-hash (constant; inert on the IPC tiers, where
-`tierOfTag` ignores it). For `c.tier = .custom vk` this makes `tierOfTag _ 5 = .custom vk`. -/
-def vkOfTier : AuthTier → (ℤ → Nat)
-  | .custom vk => fun _ => vk
-  | _          => fun _ => 0
-
-/-- **`tierOfTag_tierByte` — the tier decode INVERTS its own byte (with the matching vk-decode).** For
-any tier `t`, decoding its deployed `auth_tag` byte `t.tierByte` under `vkOfTier t` recovers `t`. The
-constructed leaf can therefore commit `auth_tag := t.tierByte` and decode back to exactly `t`. -/
-theorem tierOfTag_tierByte (t : AuthTier) :
-    tierOfTag (vkOfTier t) (t.tierByte : ℤ) = t := by
-  cases t with
-  | none => rfl
-  | signature => rfl
-  | proof => rfl
-  | either => rfl
-  | impossible => rfl
-  | custom vk => rfl
+`vkOfTier` / `tierOfTag_tierByte` — the total tier round-trip (the deployed `auth_tag` BYTE → `AuthTier`
+is the inverse of `AuthTier.tierByte` under the matching `vkOfTier`, on ALL tiers incl. `Custom`) — are
+now the SHARED canonical-leaf machinery in `Dregg2.Circuit.DeployedCapTree.CapHashScheme` (the soundness
+home), imported above. Both this completeness construction's `authLeafAt` decode and the soundness
+`canonicalLeaf` decode read off the SAME inverse — no duplicate. We use it to make the CONSTRUCTED leaf's
+decoded tier EQUAL the authorizing cap's tier, so the cap's `isSatisfiedBy` transfers verbatim. -/
 
 /-! ## §1 — the CONSTRUCTED faithful leaf assignment + root (from the authorizing cap). -/
 
@@ -338,7 +322,6 @@ theorem authComplete_constructed_from_hypothesis {State : Type} (S : CapHashSche
 
 /-! ## §5 — Axiom hygiene. -/
 
-#assert_axioms tierOfTag_tierByte
 #assert_axioms authLeaf_membersAt
 #assert_axioms authLeaf_confers
 #assert_axioms authConstructed_faithful

@@ -169,10 +169,13 @@ the transfer rung's `guardAuth` field needs is its tier-projection, bridged by `
 
 /-- **`TransferAuthorityWitness` — the realizable cap-open authority witness (NAMED).** The sole
 irreducible residual of the transfer decode-extraction: the prover's in-circuit cap-open opening, from
-which the faithful authority is forced. Exactly `RotatedKernelRefinementFacet.TransferAuthoritySource`. -/
+which the faithful authority is forced. Exactly the SLIM canonical
+`RotatedKernelRefinementFacet.TransferAuthoritySourceCanon` (faithfulness DISCHARGED from the canonical
+leaf set — NO assumed `DeployedFaithfulEff` field; only the in-circuit membership + the named IPC-tier
+residual survive). -/
 abbrev TransferAuthorityWitness (hash : List ℤ → ℤ)
     (fcaps : Dregg2.Exec.FacetAuthority.FacetCaps) (pre : RecChainedState) (tr : Turn) : Type 1 :=
-  Dregg2.Circuit.RotatedKernelRefinementFacet.TransferAuthoritySource hash fcaps pre tr
+  Dregg2.Circuit.RotatedKernelRefinementFacet.TransferAuthoritySourceCanon hash fcaps .signature pre tr
 
 /-! ## §3 — assemble `rotatedEncodes` from the three floors.
 
@@ -251,7 +254,8 @@ theorem authWitness_forces_faithful (hash : List ℤ → ℤ)
     (fcaps : Dregg2.Exec.FacetAuthority.FacetCaps) (pre : RecChainedState) (tr : Turn)
     (w : TransferAuthorityWitness hash fcaps pre tr) :
     Dregg2.Exec.FacetAuthority.authorizedFacetB fcaps .signature tr = true :=
-  Dregg2.Circuit.RotatedKernelRefinementFacet.authoritySource_authorizes hash fcaps pre tr w
+  Dregg2.Circuit.RotatedKernelRefinementFacet.transferAuthoritySourceCanon_authorizes
+    hash fcaps .signature pre tr w
 
 /-! ## §4 — `closedLogExtract_transfer_closed`: the transfer slot to its asymptotic floor.
 

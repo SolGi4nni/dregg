@@ -394,20 +394,39 @@ SEPARATE membership leg already discharged from CR by `capOpen_membership`). The
 thereby reduced to "the prover opens against the CANONICAL leaf function" (the `hedge` identification the
 source already carries), not an independent semantic contract over a free `leafAt`. -/
 
-/-- **`tierTag t`** — the canonical `auth_tag` felt for an IPC tier (the inverse of `tierOfTag` on the
-five IPC tiers None…Impossible). `Custom` folds to byte `5` (its `vkHash` is the `vkOfTag` residual, so
-the canonical encoder is stated over the IPC tiers the deployed transfer/fan-out path uses; a `Custom`
-cap rides the named `vkOfTag` residual, exactly as elsewhere). -/
-def tierTag : AuthTier → ℤ
-  | .none       => 0
-  | .signature  => 1
-  | .proof      => 2
-  | .either     => 3
-  | .impossible => 4
-  | .custom _   => 5
+/-- **`tierTag t`** — the canonical `auth_tag` felt for a tier: the deployed `AuthTier.tierByte`
+discriminant cast to ℤ (None=0…Custom=5; `cap_root.rs:46`). This is THE canonical forward encode the
+cap-tree commits; `tierOfTag` is its inverse (`tierOfTag_tierTag` for the IPC tiers, `tierOfTag_tierByte`
+for ALL tiers incl. `Custom` under the matching `vkOfTier`). Defined off `AuthTier.tierByte` so there is
+ONE tier-byte map in the codebase. -/
+def tierTag (t : AuthTier) : ℤ := (t.tierByte : ℤ)
+
+/-- **`vkOfTier t`** — the vk-decode that recovers a tier's `Custom` vk-hash (constant; inert on the IPC
+tiers, where `tierOfTag` ignores it). For `t = .custom vk` this makes `tierOfTag (vkOfTier t) 5 =
+.custom vk`, so the tier round-trip `tierOfTag_tierByte` covers `Custom` too — the canonical tier decode
+is total, the `vkOfTag` residual supplied by THIS witness on the `Custom` branch. -/
+def vkOfTier : AuthTier → (ℤ → Nat)
+  | .custom vk => fun _ => vk
+  | _          => fun _ => 0
+
+/-- **`tierOfTag_tierByte` — the tier decode INVERTS its own byte (with the matching vk-decode), for ALL
+tiers.** Decoding `t.tierByte` under `vkOfTier t` recovers `t` — including `Custom` (the `vkOfTier`
+witness supplies the vk on tag `5`). The canonical-leaf tier round-trip; the shared total inverse both
+soundness (`canonicalLeaf`) and completeness (`authLeafAt`) read off. -/
+theorem tierOfTag_tierByte (t : AuthTier) :
+    tierOfTag (vkOfTier t) (t.tierByte : ℤ) = t := by
+  cases t with
+  | none => rfl
+  | signature => rfl
+  | proof => rfl
+  | either => rfl
+  | impossible => rfl
+  | custom vk => rfl
 
 /-- `tierOfTag` inverts `tierTag` on the five IPC tiers — the canonical tier encode round-trips through
-the deployed `auth_tag` decode (so the decoded tier of a canonical leaf IS the cap's tier). -/
+the deployed `auth_tag` decode (so the decoded tier of a canonical leaf IS the cap's tier). The IPC
+corollary of `tierOfTag_tierByte`: on a non-`Custom` tier `vkOfTier t` and any `vkOfTag` agree (both
+ignored by `tierOfTag` on tags 0..4), so the round-trip holds for ANY `vkOfTag`. -/
 theorem tierOfTag_tierTag (vkOfTag : ℤ → Nat) :
     ∀ t : AuthTier, (∀ vk, t ≠ .custom vk) →
       tierOfTag vkOfTag (tierTag t) = t := by
@@ -659,6 +678,7 @@ theorem empty_caps_unauthorized :
 #assert_axioms CapHashScheme.recomposeUp_inj_of_path
 #assert_axioms CapHashScheme.deployedCapOpen_implies_authorizedB
 #assert_axioms CapHashScheme.deployedCapOpen_implies_authorizedEffB
+#assert_axioms CapHashScheme.tierOfTag_tierByte
 #assert_axioms CapHashScheme.tierOfTag_tierTag
 #assert_axioms CapHashScheme.facetOfLeaf_canonical_permits
 #assert_axioms CapHashScheme.tierOfTag_canonical

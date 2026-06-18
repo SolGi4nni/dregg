@@ -64,7 +64,7 @@ open Dregg2.Exec.FacetAuthority (authorizedFacetEffB)
 open Dregg2.Circuit.DescriptorIR2 (EffectVmDescriptor2)
 open Dregg2.Circuit.RotatedKernelRefinementFacet
   (BalanceMovementSpecFacet dispatchArmFacet transfer_descriptorRefines_facet_rejects_unauthorized
-   EffAuthoritySource effAuthoritySource_authorizes)
+   EffAuthoritySourceCanon effAuthoritySourceCanon_authorizes)
 
 set_option autoImplicit false
 
@@ -207,22 +207,24 @@ EFF_TRANSFER`) from the transfer cap-open. The 6 FAN-OUT cap-effects
 (introduce/delegate/grantCap/revoke/refreshDelegation/revokeCapability) ride DIFFERENT effect bits and
 do NOT collapse to `authorizedFacetB`; their per-step authority is `authorizedFacetEffB caps provided
 (1 <<< n)` at the effect's OWN bit `n`. `stepAuthorityFacetEff` is the parametric authority arm: for ANY
-fan-out effect at bit `n`, its step authority is FORCED from that step's cap-open `EffAuthoritySource`
-(the descriptor `Rfix <tag>` now ranges over — `effAuthoritySource_authorizes`), NOT carried, NOT riding
-the toy gate. The transfer arm is the `n = EFF_TRANSFER` instance; this is the whole-turn-level analog of
-`effAuthoritySource_authorizes`, parametric over the 6 fan-out effects. -/
+fan-out effect at bit `n`, its step authority is FORCED from that step's SLIM canonical cap-open
+`EffAuthoritySourceCanon` (the descriptor `Rfix <tag>` now ranges over — `effAuthoritySourceCanon_authorizes`),
+NOT carried, NOT riding the toy gate, and with the deployed faithfulness DISCHARGED from the canonical leaf
+construction (no assumed `DeployedFaithfulEff` field). The transfer arm is the `n = EFF_TRANSFER` instance;
+this is the whole-turn-level analog, parametric over the fan-out effects. -/
 
 /-- **`stepAuthorityFacetEff` — a fan-out step's two-axis authority is FORCED at its OWN effect bit.**
 For any fan-out effect at bit `n`, the deployed `authorizedFacetEffB caps provided (1 <<< n) tr` PASSES,
-discharged from that step's in-circuit cap-open `EffAuthoritySource … base name n` — the descriptor the
-re-keyed `Rfix <tag>` ranges over. This is the per-effect authority arm of the whole-turn fold: each
-cap-effect step's authority bit is forced in-circuit at its genuine effect-kind, no longer riding the toy
-gate. (The transfer step is the `base := transferV3, n := EFF_TRANSFER` instance.) -/
+discharged from that step's SLIM in-circuit cap-open `EffAuthoritySourceCanon … base name n` (the descriptor
+the re-keyed `Rfix <tag>` ranges over) — faithfulness CONSTRUCTED via the canonical leaf set, NOT a carried
+`hfaith` field. This is the per-effect authority arm of the whole-turn fold: each cap-effect step's authority
+bit is forced in-circuit at its genuine effect-kind, no longer riding the toy gate. (The transfer step is the
+`base := transferV3, n := EFF_TRANSFER` instance.) -/
 theorem stepAuthorityFacetEff (hash : List ℤ → ℤ) (caps : FacetCaps) (provided : AuthProvided)
     (pre : RecChainedState) (tr : Turn) (base : EffectVmDescriptor2) (name : String) (n : Nat)
-    (src0 : EffAuthoritySource hash caps provided pre tr base name n) :
+    (src0 : EffAuthoritySourceCanon hash caps provided pre tr base name n) :
     authorizedFacetEffB caps provided (1 <<< n) tr = true :=
-  effAuthoritySource_authorizes hash caps provided pre tr base name n src0
+  effAuthoritySourceCanon_authorizes hash caps provided pre tr base name n src0
 
 /-- **`stepAuthorityFacetEff_rejects_wrong_facet` (the parametric authority TOOTH).** If the deployed
 general gate REJECTS the step at its effect bit (`authorizedFacetEffB caps provided (1 <<< n) tr =
@@ -234,9 +236,9 @@ theorem stepAuthorityFacetEff_rejects_wrong_facet (hash : List ℤ → ℤ) (cap
     (provided : AuthProvided) (pre : RecChainedState) (tr : Turn)
     (base : EffectVmDescriptor2) (name : String) (n : Nat)
     (hbad : authorizedFacetEffB caps provided (1 <<< n) tr = false)
-    (src0 : EffAuthoritySource hash caps provided pre tr base name n) : False := by
+    (src0 : EffAuthoritySourceCanon hash caps provided pre tr base name n) : False := by
   have hgood : authorizedFacetEffB caps provided (1 <<< n) tr = true :=
-    effAuthoritySource_authorizes hash caps provided pre tr base name n src0
+    effAuthoritySourceCanon_authorizes hash caps provided pre tr base name n src0
   rw [hbad] at hgood
   exact Bool.noConfusion hgood
 
