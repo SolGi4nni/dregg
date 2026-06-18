@@ -1371,10 +1371,12 @@ fn prove_cohort_run_chain(
         // The routing condition is now the PRESENCE of a cap witness for a single-effect run, NOT
         // the effect being AttenuateCapability. The cap-open descriptor is resolved per effect-kind
         // by `cap_open_supported_for_run`: AttenuateCapability is wired
-        // (`attenuateCapOpenEffVmDescriptor2R24`); other cap-authorized effect-kinds (notably the
-        // cross-vat Transfer-via-granted-cap) have NO cap-open descriptor emitted yet, so they fail
-        // CLOSED with a precise "no cap-open descriptor for <effect>" error — the wiring is general,
-        // the per-effect descriptor coverage is the NAMED residual (see `cap_open_supported_for_run`).
+        // (`attenuateCapOpenEffVmDescriptor2R24`) AND the cross-vat Transfer-via-granted-cap is wired
+        // (`transferCapOpenTBVmDescriptor2R24`, `turn_bound` — #225: it publishes + forces the turn's
+        // actor/src/dst identity PIs, and the node prove site now supplies the genuine cross-vat felts).
+        // Effect-kinds still WITHOUT a cap-open descriptor fail CLOSED with a precise "no cap-open
+        // descriptor for <effect>" error — the per-effect coverage is the NAMED residual (see
+        // `cap_open_supported_for_run`).
         let cap_open_run = match (run_effects.len(), cap_membership) {
             (1, Some(cap)) => Some(cap),
             _ => None,

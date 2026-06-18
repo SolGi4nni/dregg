@@ -1054,6 +1054,43 @@ pub fn prove_and_verify_finalized_turn_capability_holder(
     let (_trace, pi) = generate_effect_vm_trace(&initial_vm_state, &vm_effects);
     let new_commit = pi[dregg_circuit::effect_vm::pi::NEW_COMMIT];
 
+    // #225 TURN-IDENTITY (cross-vat close): derive the genuine `(actor, src, dst)` single-felt
+    // identity from the REAL turn so a cap-gated transfer where the cap HOLDER/actor (`agent`)
+    // differs from the cap's TARGET (`src` — the cell being moved) publishes its true identity.
+    //
+    // CONVENTION (precision-critical — must byte-match what `verify_vm_descriptor2` anchors into
+    // PIs 38/39/40 via `anchor_cap_open_turn_pins`): the single-felt cell projection is
+    // `dregg_circuit::cap_root::fold_bytes32(cell_id.as_bytes())`
+    // (`circuit/src/cap_root.rs:194` = `hash_many(&BabyBear::encode_hash(bytes))`).
+    //   - `src`   = the consumed cap's `leaf.target` — ALREADY the rooted value: the cap-leaf
+    //               `target` is `fold_bytes32(cap.target.as_bytes())` (`cell/src/commitment.rs:506`),
+    //               folded to `consumed.leaf_target` (`turn/src/executor/authorize.rs:1045`,
+    //               `leaf.target.as_u32()`). The SDK cap-open route reads exactly this as
+    //               `cap_open.src = leaf.target` (`circuit/.../trace_rotated.rs:1149`), so we re-use
+    //               the felt verbatim rather than re-folding.
+    //   - `actor` = the turn's actor / cap holder (`agent`), under the SAME `fold_bytes32` projection.
+    //   - `dst`   = the transfer's recipient cell (`Effect::Transfer.to`), SAME projection.
+    // NB: this is `cap_root::fold_bytes32` (Poseidon2 `encode_hash`), NOT the distinct
+    // `effect_vm::fold_bytes32_to_bb` Horner fold — they are different functions; using the latter
+    // for actor/dst would make an honest cross-vat proof's PIs disagree with the anchor and REJECT.
+    //
+    // On the OWNER arm (`agent == src cell` and `to == src cell`, a cap in the actor's own c-list)
+    // this yields `actor == dst == src`, byte-identical to the prior `None` default — so the owner
+    // path is unchanged. `dst` falls back to `src` when the turn carries no Transfer recipient.
+    let cap_turn_identity = {
+        use dregg_circuit::cap_root::fold_bytes32;
+        let src = BabyBear::new(consumed.leaf_target);
+        let actor = fold_bytes32(agent.as_bytes());
+        let dst = effects
+            .iter()
+            .find_map(|e| match e {
+                dregg_turn::Effect::Transfer { to, .. } => Some(fold_bytes32(to.as_bytes())),
+                _ => None,
+            })
+            .unwrap_or(src);
+        Some(dregg_sdk::TurnIdentityFelts { actor, src, dst })
+    };
+
     // Compose the full-turn proof WITH the cap-membership leg (+ freshness when
     // the turn also spends).
     let witness = FullTurnWitness {
@@ -1067,15 +1104,7 @@ pub fn prove_and_verify_finalized_turn_capability_holder(
         cap_membership: Some(CapMembershipWitness::from_consumed(consumed)),
         turn_hash,
         rotation,
-        // #225 TURN-IDENTITY: this cap-gated path is the OWNER/HOLDER arm (the consumed cap is a
-        // member of the actor/holder's OWN c-list — `actor == holder`, and the cap-leaf `target`
-        // IS the turn's `src`). So the published turn identity is the owner arm `actor = dst = src =
-        // leaf.target`, which the cap-open prover fills when `cap_turn_identity == None`. The verifier
-        // ANCHORS the three turn-identity PIs to the trusted turn, so the published identity is forced
-        // to match. RESIDUAL (named): threading a CROSS-VAT `(actor ≠ src)` identity needs a single-felt
-        // fold of `agent`/`dst` matching the cap-leaf `target` convention (the leaf carries only
-        // `target == src`); not exposed at this site — see the report's named seam.
-        cap_turn_identity: None,
+        cap_turn_identity,
     };
     let proof = prove_full_turn(&witness).map_err(FullTurnProvingError::Prove)?;
 
@@ -3549,5 +3578,221 @@ mod tests {
             ),
             Err(other) => panic!("expected CapRootMismatch, got {other:?}"),
         }
+    }
+
+    /// THE FEATURE (#225 cross-vat close): an HONEST CROSS-VAT cap-gated transfer —
+    /// the actor `A` (cap holder) is DISTINCT from the cap's TARGET `src` cell `B`,
+    /// and the published recipient `dst` is a third cell — proves + verifies
+    /// end-to-end through the live node holder path, and the proof PUBLISHES the
+    /// GENUINE `(actor, src, dst)` turn identity on PIs 38/39/40 with `actor != src`.
+    ///
+    /// Before the fix the node site forced `cap_turn_identity: None`, so the
+    /// cap-open prover defaulted to the OWNER arm (`actor = dst = src = leaf.target`)
+    /// — a genuine cross-vat transfer could NOT publish its real actor/dst. This
+    /// test drives a `consumed` witness whose `leaf.target` is `B` (distinct from the
+    /// actor `A`), confirms the node derives `actor = fold(A)`, `src = fold(B) =
+    /// leaf.target`, `dst = fold(recipient)`, welds them into the TB cap-open PIs,
+    /// and that the composed proof verifies. The convention: the single-felt cell
+    /// projection is `cap_root::fold_bytes32(cell_id.as_bytes())` (the SAME fold the
+    /// cap-leaf `target` uses — `cell/src/commitment.rs:506` — so `src` byte-matches
+    /// what `verify_vm_descriptor2` anchors on the deployment side).
+    #[test]
+    fn honest_cross_vat_cap_gated_transfer_publishes_genuine_identity() {
+        use dregg_circuit::cap_root::{
+            CAP_TREE_DEPTH, CanonicalCapTree, fold_bytes32,
+        };
+        use dregg_circuit::effect_vm::trace_rotated::{
+            CAP_OPEN_TB_PI_ACTOR, CAP_OPEN_TB_PI_DST, CAP_OPEN_TB_PI_SRC,
+        };
+
+        // The actor (cap HOLDER) `A` and the cap's TARGET `src` cell `B` are DISTINCT
+        // — this is the cross-vat shape (A spends a cap over B). We reuse the bearer
+        // fixture's REAL actor before/after cells + rotation for the (independent)
+        // state-transition leg; only the AUTHORITY (cap-membership) leg + the
+        // published identity are cross-vat.
+        let (
+            receipt,
+            actor_id, // `A` — the actor / cap holder (the bearer cell)
+            _delegator_id,
+            _delegator_cap_root,
+            actor_cap_root, // EffectVm-seed root (the ACTOR's)
+            effects,
+            before_cell,
+            after_cell,
+        ) = run_bearer_delegated_turn();
+
+        // The recipient (`dst`) the turn's Transfer effect names.
+        let dst_id = match effects
+            .iter()
+            .find_map(|e| match e {
+                dregg_turn::Effect::Transfer { to, .. } => Some(*to),
+                _ => None,
+            }) {
+            Some(to) => to,
+            None => panic!("bearer fixture must carry a Transfer effect"),
+        };
+
+        // `B` — the cap's TARGET cell, DISTINCT from the actor `A` and the recipient.
+        let src_cell = CellId::from_bytes([0xB2u8; 32]);
+        assert_ne!(src_cell, actor_id, "cross-vat: the cap target B != the actor A");
+
+        // The cap HOLDER cell's c-list: a cap whose TARGET is `B` (so `leaf.target =
+        // fold(B)`), permitting Transfer, plus a decoy so the consumed cap is not the
+        // sole leaf. We build the consumed witness directly against this holder tree
+        // (the same shape `record_consumed_cap_witness` records), so the authority
+        // leg opens to the holder's real root.
+        let mut holder = Cell::with_balance([0xC4u8; 32], [0u8; 32], 1_000);
+        holder.permissions = open_permissions();
+        holder
+            .capabilities
+            .grant(CellId::from_bytes([0x12u8; 32]), AuthRequired::None); // decoy
+        let slot = holder
+            .capabilities
+            .grant(src_cell, AuthRequired::None)
+            .expect("grant cross-vat cap over B");
+        // Transfer-permitting mask (so the cap-open submask check admits the Transfer
+        // effect-kind bit; the cap genuinely confers the moved effect).
+        holder
+            .capabilities
+            .iter_mut()
+            .find(|c| c.slot == slot)
+            .expect("granted cap present")
+            .allowed_effects = Some(dregg_cell::facet::EFFECT_TRANSFER);
+        let holder_cap_root =
+            dregg_cell::compute_canonical_capability_root_felt(&holder.capabilities);
+
+        // Build the consumed-cap membership witness for the B-targeting leaf against
+        // the holder's canonical tree (mirrors `record_consumed_cap_witness`).
+        let consumed_leaf = dregg_cell::cap_ref_to_leaf(
+            holder
+                .capabilities
+                .iter()
+                .find(|c| c.slot == slot)
+                .expect("granted cap present"),
+        );
+        assert_eq!(
+            consumed_leaf.target,
+            fold_bytes32(src_cell.as_bytes()),
+            "the cap-leaf target IS fold_bytes32(B) — the convention the published `src` must match"
+        );
+        let leaves: Vec<_> = holder
+            .capabilities
+            .iter()
+            .map(dregg_cell::cap_ref_to_leaf)
+            .collect();
+        let tree = CanonicalCapTree::new(leaves, CAP_TREE_DEPTH);
+        let pos = tree
+            .position_of(consumed_leaf.slot_hash)
+            .expect("consumed leaf present in holder tree");
+        let (siblings, directions) =
+            tree.prove_membership(pos).expect("membership path");
+        let consumed = dregg_turn::ConsumedCapWitness {
+            holder: holder.id(),
+            slot,
+            action_path: vec![0],
+            auth_path: dregg_turn::ConsumedCapAuthPath::BearerSignedDelegation,
+            leaf_slot_hash: consumed_leaf.slot_hash.as_u32(),
+            leaf_target: consumed_leaf.target.as_u32(),
+            leaf_auth_tag: consumed_leaf.auth_tag.as_u32(),
+            leaf_mask_lo: consumed_leaf.mask_lo.as_u32(),
+            leaf_mask_hi: consumed_leaf.mask_hi.as_u32(),
+            leaf_expiry: consumed_leaf.expiry.as_u32(),
+            leaf_breadstuff: consumed_leaf.breadstuff.as_u32(),
+            siblings: siblings.into_iter().map(|s| s.as_u32()).collect(),
+            directions,
+            cap_root: tree.root().as_u32(),
+        };
+        assert!(consumed.verify(), "the cross-vat consumed witness recomputes its own root");
+
+        // The actor's REAL rotation witness (the independent state-transition leg).
+        let receipts = [receipt.receipt_hash()];
+        let rotation = rotation_witness_for_self_sovereign(
+            1_000,
+            0,
+            &before_cell,
+            &after_cell,
+            &receipts,
+            &effects,
+        );
+        assert!(
+            rotation.is_some(),
+            "the actor self-transfer must yield a rotation witness (faithful real cell)"
+        );
+
+        // The expected GENUINE identity felts (what the node site now derives).
+        let exp_actor = fold_bytes32(actor_id.as_bytes());
+        let exp_src = BabyBear::new(consumed.leaf_target); // == fold_bytes32(B)
+        let exp_dst = fold_bytes32(dst_id.as_bytes());
+        assert_ne!(
+            exp_actor, exp_src,
+            "CROSS-VAT: the actor felt MUST differ from the src (cap-target) felt"
+        );
+
+        // PROVE + VERIFY through the live holder path (the actor's EffectVm-seed root
+        // is the actor's; the authority leg opens against the holder's distinct root).
+        let proven = prove_and_verify_finalized_turn_capability_holder(
+            &actor_id,
+            1_000,
+            0,
+            actor_cap_root,
+            holder_cap_root,
+            &effects,
+            [0xC5u8; 32],
+            &consumed,
+            None,
+            &[],
+            rotation,
+        )
+        .expect("honest cross-vat cap-gated transfer must prove + authority-bound-verify");
+        assert!(
+            proven.proof.components.has_cap_membership,
+            "the AUTHORITY (cap-membership) leg is attached for the cross-vat turn"
+        );
+
+        // The proof PUBLISHES the genuine cross-vat identity on the TB cap-open leg's
+        // PIs 38/39/40 — `actor != src`, exactly the felts the node derived.
+        let rotated_leg = proven
+            .proof
+            .composed
+            .sub_proofs
+            .iter()
+            .find(|p| p.label == "effect-vm-rotated")
+            .expect("the rotated effect-vm leg is present");
+        assert!(
+            rotated_leg.sub_public_inputs.len() > CAP_OPEN_TB_PI_DST,
+            "the TB cap-open leg publishes the three turn-identity PIs (38/39/40)"
+        );
+        assert_eq!(
+            rotated_leg.sub_public_inputs[CAP_OPEN_TB_PI_SRC], exp_src,
+            "published src == leaf.target (fold_bytes32(B))"
+        );
+        assert_eq!(
+            rotated_leg.sub_public_inputs[CAP_OPEN_TB_PI_ACTOR], exp_actor,
+            "published actor == fold_bytes32(A) — the GENUINE cross-vat actor"
+        );
+        assert_eq!(
+            rotated_leg.sub_public_inputs[CAP_OPEN_TB_PI_DST], exp_dst,
+            "published dst == fold_bytes32(recipient)"
+        );
+        assert_ne!(
+            rotated_leg.sub_public_inputs[CAP_OPEN_TB_PI_ACTOR],
+            rotated_leg.sub_public_inputs[CAP_OPEN_TB_PI_SRC],
+            "CROSS-VAT PUBLISHED: actor != src on the live proof (the feature — before the fix this \
+             was forced equal by the owner-arm `None` default)"
+        );
+
+        // Light-client re-verify against the holder's root accepts.
+        let expectation = dregg_sdk::CapMembershipExpectation {
+            leaf: consumed.cap_leaf(),
+            cap_root: holder_cap_root,
+        };
+        verify_full_turn_bound(
+            &proven.proof,
+            proven.old_commit,
+            proven.new_commit,
+            None,
+            Some(&expectation),
+        )
+        .expect("light-client re-verify of the cross-vat proof must accept");
     }
 }
