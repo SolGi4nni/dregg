@@ -63,23 +63,19 @@ CONNECTION-TO-DEPLOYMENT is NOT yet sound enough for completeness — must close
         anchored to the cross-checked before + the witness-independent v1 param, AND have the verifier recompute
         the after-limbs/new_commitment from the trusted before-cell+vm_effects (override, like dpis[34/36]).
         Until then the record-pin descriptors should fail-closed at the cohort resolver, not be advertised closed.
-  • **Record-pin family / #214 — setPermissions + setVK CLOSED (verifier-anchored, biting); the other 4
-    BLOCKED by 3 REAL bugs the vacuous pin masked (the model-finds-the-bug loop).** The genuine anchor
-    (verifier independently computes `dpis[38] = compute_authority_digest_felt(apply(trusted before, effect))`
-    via the shared `apply_effect_to_cell` helper) bites for setPermissions + setVK (forged-after REJECT
-    confirmed load-bearing). Fanning out EXPOSED three deployment bugs (tasks #218/#219/#220):
-      ‣ **#218 refusal** — deployed `apply_refusal` writes welded `fields[4]`, which `compute_authority_
-        digest_felt` does NOT fold (it reads `fields[8..16]`+`fields_root`) → the refusal audit record is
-        UNBOUND in the commitment; Lean spec models it in `fields_root` (a real Lean↔Rust divergence + a
-        soundness gap). Fix in the deployed executor apply.
-      ‣ **#219 receiptArchive** — `record_pin_offset` mis-routes it to `B_RECORD_DIGEST`; the genuine mover
-        is the lifecycle limb `B_LIFECYCLE`. Re-route the pin + use the `lifecycle_felt_cell` anchor.
-      ‣ **#220 cellSeal/cellUnseal/cellDestroy** — the cipherclerk producer collapses them to
-        `VmEffect::SetPermissions` while the executor bridge uses native variants → divergent descriptors,
-        honest proofs rejected pre-anchor; the lifecycle anchor WOULD bite once the producer is aligned
-        (+ a cellSeal `block_height`/`sealed_at` seam). Infra is in place (apply_effect_to_cell has all 6
-        arms + block_height; `lifecycle_felt_cell` exists) — the remaining closes are producer-projection /
-        executor-apply work, not new digest plumbing.
+  • **Record-pin family / #214 — FULLY CLOSED (commit a8363d6f9): all 7 effects genuinely verifier-anchored,
+    each forged-after tooth BITES.** The verifier (verify_and_commit_proof_rotated step 6b) anchors dpis[38]
+    from the trusted post-cell via the shared apply_effect_to_cell weld (the SAME projection the producer
+    uses): `compute_authority_digest_felt` for setPermissions/setVK/refusal, `lifecycle_felt_cell` for
+    cellSeal/cellUnseal/cellDestroy/receiptArchive. sovereign_rotated_c1 19/19 (7 accept/reject pairs). The
+    fan-out fixed the 3 bugs the vacuous pin masked (the model-finds-the-bug loop): **#218 refusal** — the
+    deployed apply_refusal now writes the audit into the protocol-reserved EXT key REFUSAL_AUDIT_EXT_KEY
+    (folded via fields_root), matching the Lean spec TurnExecutorFull.refusalField (was the unfolded welded
+    fields[4] — the refusal record was UNBOUND); **#219 receiptArchive** — record_pin_offset re-routed
+    B_RECORD_DIGEST→B_LIFECYCLE; **#220 cellSeal/Unseal/Destroy** — cipherclerk producer aligned to native
+    VmEffect variants (+ block_height threaded for the cellSeal seam). DEEPEST CROSS-CHECK GREEN: the full
+    rust_lean_divergence_finder PASSES — the apply_refusal change REDUCED Rust↔Lean divergence (Rust now
+    matches the Lean spec's fields_root), confirming #218 was the right fix, not a break.
   • **Finding 4 / #215 — CLOSED (pending commit, agent a9577e2a).** The 6 fan-out cap-effects'
     authority is now FORCED in-circuit in the apex: new effect-specific keystones
     `<effect>CapOpenV3_authorizes` (CapOpenEmit.lean §5.F) + a parametric `EffAuthoritySource`
