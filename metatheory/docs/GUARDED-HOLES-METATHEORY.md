@@ -1,10 +1,26 @@
-# Guarded Holes — a categorical / metalogical analysis
+# Guarded Holes — a categorical / metalogical analysis, and a system-coherence audit
 
 **Status: design study, not a build.** This document studies ember's "guarded hole" idea for its
 bearing on dregg's existing metatheory. Every structural claim is grounded in a named file; where a
 claim is a conjecture it is **labelled SPECULATION**. No code is changed by this document, and it does
 not assert that any guarded-hole construct is currently proven — only what it *would* instantiate or
 require.
+
+**Verdict, up front (added after a deeper system read — see §8).** The first pass below (§§1–7) is a
+*categorical/metalogical* analysis and it largely survives: the guard, the meet, the witness-discharge,
+the right-skew placement are all faithfully placed against existing objects. But it answered the wrong
+question. It studied a guarded hole as a **dataflow slot between fully-specified contributions** —
+because that is *exactly* what dregg's existing `EventualRef`/`Slots`/`Promise` machinery is. ember's
+sharper question is whether a hole can sit in a *conservation-* or *authority-bearing* position — a
+**missing contribution** whose delta and authority are not yet determined. Traced through the
+conservation keystone, the authority gate, the joint-turn machinery, and the light-client proof model,
+the answer is: **dregg's holes are deliberately NOT of that kind, and making them so is not a small
+extension — it is the move the construction was built to forbid.** §8 names this precisely. The honest
+verdict is **(c): the guarded-hole idea, in its strong "missing conservation/authority contribution"
+reading, EXPOSES the boundary the current construction enforces** — not a bug *in* dregg, but a
+sharp statement of what dregg's all-or-nothing / fully-specified-node discipline is *for*. In its weak
+"dataflow slot + late predicate" reading it is **(a): it composes cleanly and is mostly already code.**
+The two readings are different constructs and the value is in keeping them apart.
 
 ## 0. The idea, restated against the code
 
@@ -487,7 +503,7 @@ Mapping each piece to the brief's (a) fits-cleanly / (b) needs-named-extension /
    instance over `ConditionalBatch` would make "partial turn = partial lens" precise. Well-motivated by
    the optics literature; nothing in the repo builds it yet.
 
-**One-line verdict.** A guarded hole is a *constrained metavariable* — a subobject-of-the-fill guard
+**One-line verdict (first pass).** A guarded hole is a *constrained metavariable* — a subobject-of-the-fill guard
 (already `predStateStepGuarded`) attached to an `EventualRef`, accumulated by fibre-meet (already
 `attenuate_narrows`), filled by the existential-witness seam (already `Predicate ⊣ Witness`), checked
 *late* by the right-skew's mandate, and propagated by a contextual `□` that is S4-clean only under
@@ -496,3 +512,265 @@ proven**, **needs one named extension that is already started** (the linear/mono
 `IndexedMonoidal`), and **reveals exactly one genuinely-new theorem worth proving**:
 guard-gluing is coordination-free iff the guards are I-confluent — which is where the construct earns
 its keep, touching both the conservation boundary and the reflector-failure≅dual-H¹ novelty.
+
+*The one-line verdict above is correct but answers the weak reading. §8 re-examines against the
+load-bearing turn structure and finds the sharper answer.*
+
+---
+
+## 8. The system-coherence audit — does a hole compose with the load-bearing turn? (elegant or flaw)
+
+The §§1–7 analysis is sound but it silently assumed the *weak* reading of "hole": a **dataflow
+slot between fully-specified contributions**. That is what dregg's machinery actually is, and against
+that machinery the categorical placement is faithful. ember's sharpened question is about the *strong*
+reading — a hole as a **missing contribution** whose conservation delta and authority are not yet
+determined, with a predicate attached for a future party to discharge. This section traces the strong
+reading through the four load-bearing structures and reaches the elegant-or-flaw verdict.
+
+### 8.0 The one structural fact that decides everything
+
+A `ConditionalBatch.nodes` is `List Node`, and `Node := List FullAction` (`ConditionalTurn.lean:77`).
+**Every node is a fully-specified turn, present in the batch at construction time.** The "hole" is
+`edges : List (Nat × Nat)` plus the `Slots : Nat → Bool` environment (`ConditionalTurn.lean:87,101`):
+an edge `(consumer, producer)` says the consumer reads the producer's *output value*, which is not
+known until the producer commits. So:
+
+> **What is deferred is a producer's output VALUE. What is NOT deferred is any node's existence, its
+> action list, its conservation delta, or its authority requirement.** Every one of those is fixed the
+> moment the batch is built.
+
+The same is true of the `Promise`/`EventualRef` (`Spec/Await.lean:249-256`): a `Promise` is
+`{ id, fulfilled : Bool }` — a value-future, carrying no balance, no reserved budget, no partial write
+(confirmed across the Rust `pipeline.rs::PipelineRegistry`, whose state is two hashmaps of *queued
+serialized messages*, never a reserved resource; `break_promise` discards the queue and leaves state
+literally unchanged). This is E-language CapTP semantics: **promise pipelining is a latency
+optimisation, not a held-open commitment.** A dregg hole is a benign dataflow slot *by construction*.
+
+ember's strong guarded hole asks for something categorically different: a position where the
+*contribution itself* — and therefore its δ and its authority — is the thing left open. **That object
+does not exist in dregg, and §§8.1–8.4 show why each load-bearing structure forbids it.**
+
+### 8.1 Q1 — Conservation: a hole in a δ-bearing position is ill-typed until filled.
+
+The conservation keystone is per-asset and **unconditional on a *complete* turn**:
+`execFullTurnA_conserves_exact` (`TurnExecutorFull.lean:2750`) proves
+`recTotalAsset s'.kernel b = recTotalAsset s.kernel b` for *every* committed turn, because every verb's
+disclosed delta is identically zero (`ledgerDeltaAsset_eq_zero`, `:2232`). For the batch,
+`condTurn_conserves` (`ConditionalTurn.lean:267`) has the shape
+
+> `execConditionalTurn b s = some (s', o)` ∧ (Σ over committed nodes' deltas = 0) ⟹ `recTotal` preserved.
+
+Read the hypothesis exactly. Conservation is a theorem about a batch that **reached `some (s', o)`** —
+i.e. every node committed (the all-or-nothing `runOrder`, `:171`; `condTurn_atomic`, `:210`). **There
+is no conservation predicate over a batch with an unresolved node.** If you hold one node open, the
+executor never reaches `some`; the conservation theorem's hypothesis is *unsatisfiable*, not false. The
+partial turn has **no defined balance** — not "a balance that might be wrong," but no `recTotal`
+transition at all, because no transition has occurred.
+
+This is the precise sense in which a hole in a conservation position is **ill-typed until completion**:
+- A *dataflow* hole (the weak reading) is fine — the producer node's δ is already fixed and *known to
+  be zero* (every verb conserves), so the slot defers only a value, never a balance. Conservation is
+  closed for the whole batch the instant it commits, and the order of value-forwarding is irrelevant to
+  it.
+- A *contribution* hole (the strong reading) is the move the keystone forbids: it asks for a turn whose
+  δ is *undetermined*. But "δ undetermined" has no place in a world where conservation is proven by
+  every δ being *identically zero by construction* of the verb set. There is no `FullAction` with an
+  open delta to put in the hole. **You cannot hold open a conservation obligation, because dregg has no
+  non-zero-delta primitive to hold open in the first place** — the conservation invariant is enforced
+  *per verb*, not *per turn-by-cancellation*. (This is a strength: it means there is no "I owe you, to
+  be balanced by a future fill" state that could be abandoned. The system has *no* notion of an
+  outstanding imbalance, so it has no hole to leak one through.)
+
+> **Finding (Q1).** A hole is conservation-safe **iff it defers only a value, not a δ.** dregg's holes
+> defer only values (and the deferred verbs all have δ=0), so they are safe — *trivially*, because
+> dregg has no way to express a δ-bearing hole. The strong guarded hole is not *unsafe* here; it is
+> *inexpressible*, and that inexpressibility is the conservation keystone doing its job.
+
+### 8.2 Q2 — The joint-turn relationship: joint turns have the SAME discipline, and it is deliberate.
+
+Is a partial-turn-with-holes just a joint turn whose contributions arrive over time? **No — and the
+joint-turn machinery makes the reason explicit.** A joint turn is a **wide pullback**
+(`Metatheory/Categorical.lean:549`, `IsWideJointTurn`): the mediator `lift` is given *one agreeing cone
+of all views at once* (`lift {W} (views : ∀ i, W ⟶ P i) (hv : ∀ i i', …agree…)`). **There is no partial
+cone.** You supply every party's contribution simultaneously or no mediator exists. The operational
+realisation agrees: `MixedJoint` (`Distributed/PrivateLeg.lean:169`) carries `publicLegs` and
+`privateLegs` as *complete lists*, and `MixedAdmissible` (`:178`) requires `jointApplyAll` to commit the
+whole public backbone **and** *every* private proof to verify before the turn is admissible. The
+soundness keystone `joint_turn_sound_with_private_legs` (`:197`) delivers conservation
+(`∀ b, recTotalAsset k' b = recTotalAsset k b`) and no-cap-amplification (`k'.caps = k.caps`) **only
+under `MixedAdmissible`** — i.e. only when complete.
+
+So joint turns *appear* to be "the partial-turn idea, spatially" — private legs even *look* like holes
+(a leg whose state is hidden under an existential, `PrivLegHolds`, `:90`). But the resemblance is
+exactly where the discipline bites: a private leg is **not an unfilled hole — it is a fully-determined
+contribution whose *witness* is a proof rather than data.** Its δ is pinned (the ZK statement asserts
+`recTotalAsset kPost = recTotalAsset kPre`), its `jid` consent is pinned (CG-2 binding,
+`bind.consentOf l = mj.jid`). The proof must be *present and verifying* up front; a missing or
+unverified proof aborts, it does not "wait for a later fill."
+
+> **Finding (Q2).** The existing joint-turn machinery does **not** subsume the strong guarded hole, and
+> it does **not** harbour the same latent flaw — because it solves the problem the *opposite* way. It
+> permits *spatial* partiality (hidden contributions, proof-not-data witnesses) while forbidding
+> *temporal* partiality (an undetermined contribution filled later). The wide-pullback `lift`-takes-the-
+> whole-cone and the `MixedAdmissible` all-present requirement are the *same* all-or-nothing discipline
+> as the batch, lifted to multiparty. **Guarded holes do not expose a flaw in joint turns; they reveal
+> that joint turns already made the design decision guarded holes would have to overturn:** a
+> contribution is determined-with-deferred-witness, never undetermined-with-deferred-fill.
+
+### 8.3 Q3 — Authority bearing, against the live off-circuit finding.
+
+The live circuit-soundness work (`project-circuit-soundness-apex.md`,
+`Circuit/RotatedKernelRefinementFacet.lean`, `Circuit/ClosureTransfer.lean`) cuts authority into two
+parts, and the cut is exactly the cut a guarded hole would have to respect:
+
+- **The cap leg is FORCED in-circuit.** `authoritySource_authorizes`
+  (`RotatedKernelRefinementFacet.lean:275-290`) *derives* `authorizedFacetB fcaps .signature tr = true`
+  from a witnessed depth-16 cap-membership opening — the authority conclusion is a *theorem from the
+  witness*, not a carried field. `adversarial_find_cannot_forge` (`Predicate.lean:139`) makes the
+  predicate-discharge gate unforgeable: the prover is universally quantified, only the in-TCB verifier
+  decides.
+- **The owner short-circuit is OFF-circuit by design** (`FacetAuthority.lean:229`, `actor = src`): it
+  needs no witness because it is reflexive — there is nothing for an adversary to forge in "I am
+  acting on my own cell."
+
+Now place a guarded hole's predicate. A guard is *exactly* an authority-like obligation: "a fill is
+admissible only when the guard is discharged" (§0). The live finding says: **an obligation a light
+client must be able to trust has to be FORCED in-circuit (proof-witnessed), not carried off-circuit.**
+The pipeline machinery already honours this for the *value* case — `drainAll` re-runs
+`authorizedB k.caps turn` on *every* queued send at delivery (`Exec/CapTPPipeline.lean:129,147`;
+`pipelining_preserves_seam`, `Exec/CapTP.lean`: delivery rewrites only the target cell, never the
+guard, so a pipelined call is authorised iff its original was). So a *value*-hole's authority is already
+re-forced at fill time; pipelining is not an authority bypass.
+
+The strong guarded hole adds a *new* predicate `g` that a *future* party attaches. The question is
+whether `g`'s discharge is forced in-circuit. Two cases:
+
+1. **If `g`'s discharge enters the proof floor** (joins the `ClosedWitness` carriers), it is forced
+   in-circuit and the light client is safe. This is the *good* outcome — and it is **exactly the work
+   the live cap-bridge campaign is already doing for cap-authority.** A guarded-hole predicate is the
+   *same shape* as a cap-leaf authority obligation: a `Pred` over the transition that must be witnessed,
+   not trusted. So guarded holes do not invent a new in-circuit obligation type — they reuse the one
+   being built (`registry_sound` + the cap-open descriptor).
+2. **If `g` is checked only by the off-circuit executor** (the runtime evaluates `Pred.eval g old new`
+   but the *circuit* does not bind it), then a light client that trusts only the proof **cannot tell
+   whether the guard held.** This is the *worse* outcome, and it is the same failure mode the
+   obligation table in `docs/CIRCUIT-FUNCTIONAL-CORRECTNESS.md` catalogues for the ~17 effects whose
+   writes are not yet bound into the commitment.
+
+> **Finding (Q3).** Guarded holes do not *create* the off-circuit-trust problem and they do not *make
+> it worse on their own* — but they **sharpen it into a clean requirement**: a guarded-hole predicate
+> is sound under the light-client model **iff its discharge is bound into the circuit commitment**, by
+> the same mechanism (`registry_sound` forced via a descriptor) the cap-bridge campaign is landing for
+> authority. The frame is therefore *forcing-positive*: it names "the guard must be proof-witnessed"
+> as a first-class obligation rather than letting it hide in the executor. The danger is only realised
+> if someone implements a guard as an executor-only `Pred.eval` and forgets to bind it — which is
+> precisely the `CIRCUIT-FUNCTIONAL-CORRECTNESS` failure mode, now stated for predicates.
+
+### 8.4 Q4 — Right-skew, re-examined: is late-binding a genuine obstruction to the proof model?
+
+§3b found the guard must be checked *late* (after the producer emits the fill value), because the guard
+reads `new` and `flow_choice_right_skewed` (`FlowAlgebra.lean:467`) proves a late branch cannot be
+simulated by an early one. The first pass called this "the right-skew telling the implementation where
+the guard goes." Re-examined against the *proof* model, the question is sharper: does late-binding mean
+a guarded fill **cannot be verified at commit time without re-running the producer**?
+
+Answer: **no, and the distinction is the whole point.** Late-binding constrains *where the check
+happens in the dataflow* (after the value exists), not *whether a succinct proof of the check can be
+produced after the fact*. The two are independent because dregg's proof model is **execution-trace
+witnessing, not re-execution**: a STARK leaf certifies `recCexec s.pre s.turn = some s.post`
+(`RecursiveAggregation.lean`, `leaf_sound`) — the verifier checks a *proof that the step ran and
+satisfied its gates*, it never re-runs the producer. So "the guard reads the produced value" is
+discharged by the *same* trace that produced the value: the producer's commit and the guard's
+evaluation against the produced `new` are *one step's* obligations, both witnessed in that step's leaf.
+The right-skew forbids *hoisting the branch earlier in the algebra*; it does **not** forbid *proving the
+late branch held*. A proof is an after-the-fact object by nature.
+
+> **Finding (Q4).** The right-skew is a *benign placement prescription*, not an obstruction to the
+> proof model. It says: do not compile the guard to an early branch (provably impossible on reactive
+> data). It does **not** say the guarded fill can only be verified by re-running the producer — because
+> dregg verifies *traces*, not *re-executions*, and the produce-then-guard pair is a single trace step
+> whose leaf witnesses both. The only thing the right-skew would break is a (wrong) implementation that
+> tried to decide admissibility *before* the value exists; no correct implementation wants that.
+
+### 8.5 Q5 — The verdict, synthesised.
+
+Trace the strong guarded hole through all four:
+
+| Load-bearing structure | What it does to a strong (contribution-)hole |
+|---|---|
+| Conservation keystone (`execFullTurnA_conserves_exact`, `condTurn_conserves`) | **Inexpressible.** No δ-bearing hole exists because every verb has δ≡0; there is no outstanding-imbalance state to defer. (§8.1) |
+| Joint-turn wide pullback (`IsWideJointTurn`, `MixedAdmissible`) | **Already forbidden, deliberately.** Permits hidden/proof contributions (spatial), forbids undetermined-later contributions (temporal). (§8.2) |
+| Authority gate + circuit (`authoritySource_authorizes`, `registry_sound`) | **Forces the right requirement.** Guard discharge is sound iff bound in-circuit — the same cap-bridge mechanism already being built. (§8.3) |
+| Right-skew (`flow_choice_right_skewed`) | **Benign placement.** Check goes after the value; the trace-witness proof is after-the-fact regardless. (§8.4) |
+
+**The verdict is two-valued because there are two ideas wearing one name:**
+
+**(a) — Weak guarded hole = dataflow slot + late predicate. Elegant, composes cleanly, mostly already
+code.** A guard (`Pred`, a subobject of the fill type — `predStateStepGuarded`, `PredAlgebra.lean:580`)
+on an `EventualRef`, accumulated by fibre-meet (`attenuate_narrows`), discharged by the witness seam
+(`registry_sound`), checked late, forced in-circuit by the same descriptor mechanism as cap-authority.
+This is genuine added capability — *predicated pipelining* — and the only genuinely-new theorem it needs
+is the §5d/§6 `guardGluing_iff_iconfluent`. **This reading is real and worth building.**
+
+**(c) — Strong guarded hole = a hole in a conservation/authority position, i.e. an undetermined
+contribution. EXPOSES the boundary the construction enforces.** It is not a bug *in* dregg; it is a
+**clean statement of what dregg's discipline is *for*.** A complete turn is conservation-closed
+(by δ≡0 per verb), authority-gated (forced in-circuit), and all-or-nothing (the `runOrder`/`MixedAdmissible`/
+wide-pullback all-present requirement). A *contribution* hole asks to suspend exactly these three at
+once: hold an undetermined δ, defer an unforced authority obligation, and admit a partial structure.
+**dregg makes all three inexpressible, and they are inexpressible by the *same* design choice** — the
+**"a contribution is fully determined at the moment it joins the structure; only its *witness* (value
+or proof) may be deferred"** invariant. The wide-pullback-takes-the-whole-cone, the all-or-nothing
+batch, the δ≡0-per-verb keystone, and the in-circuit authority forcing are four faces of that one
+invariant.
+
+> **The single most important system-coherence finding.** dregg already draws a bright line:
+> **determination is eager; witness is lazy.** A contribution's *shape* (its actions, its δ, its
+> authority demand, its joint-turn consent) is fixed when it joins the structure; only its *witness*
+> (the produced value, or the discharging proof) may arrive later. Every "hole" the system has —
+> `EventualRef`, `Promise`, the private-leg existential, the pipelined send awaiting authorization
+> re-check — is a *lazy witness over an eager shape*. ember's **weak** guarded hole is a new lazy-
+> witness obligation (a predicate) over an eager shape — it fits. ember's **strong** guarded hole asks
+> for a *lazy shape* (an undetermined contribution) — and that is the one thing the whole construction
+> is built to forbid, because a lazy δ is an outstanding imbalance, a lazy authority is an off-circuit
+> trust, and a lazy contribution is a non-atomic turn. **The guarded hole, pushed to its strong form,
+> does not break dregg — it locates dregg's load-bearing invariant and names it.**
+
+**Is this a flaw?** Only if the strong reading is the *intended* one and the system silently fails to
+support it. It does not fail silently — it fails *by inexpressibility*, which is the safe failure: there
+is no `FullAction` with an open δ to construct, no wide-pullback cone with a missing leg to lift, no
+admissible mixed joint with a missing proof. The danger ember was right to suspect is real **but it does
+not currently exist in the code** — because the code has no constructor for it. The flaw would only
+appear if a future "partial turn" feature were built that *let* a contribution be undetermined-and-
+filled-later **without** re-imposing the eager-shape invariant at fill time (an in-circuit binding of the
+fill's δ and authority into the commitment). **That is the thing to never build**, and §8.3's
+forcing-positive frame is the guardrail: any future hole-fill must bind its δ and its guard into the
+proof, exactly as the cap-bridge binds authority.
+
+### 8.6 What this revises in §§1–7.
+
+- §1–§4 stand as a *categorical* placement of the **weak** reading; nothing there is overturned, but
+  every "fits cleanly" should be read as "fits cleanly *for a dataflow slot whose contribution shape is
+  already determined*."
+- §6(c)'s two "tensions" (right-skew, non-monotone gluing) are downgraded: the right-skew is benign
+  (§8.4), and the non-monotone-gluing tension is *the same boundary* as the conservation keystone (a
+  non-monotone guard is exactly a δ-bearing / capacity constraint, which §8.1 shows is inexpressible as
+  a hole). They are not separate frictions; they are two views of the one eager-shape invariant.
+- The genuinely-new theorem worth proving narrows to **two**, with priority reordered:
+  1. **`holeFill_binds_in_circuit`** (the §8.3 guardrail, *new, highest value*): any guarded fill must
+     bind its δ and its discharged guard into the commitment the light client verifies — the predicate
+     analogue of `authoritySource_authorizes`. This is the theorem that keeps the strong reading from
+     ever becoming an unsound feature.
+  2. **`guardGluing_iff_iconfluent`** (the §5d theorem): multiparty guard accumulation glues
+     coordination-free iff each guard is I-confluent — which §8.1 now reframes as *the conservation
+     boundary itself*: a non-monotone guard is a δ/capacity constraint and forces serialisation, the
+     same reason there is no δ-bearing hole.
+
+**Closing line.** Guarded holes are **elegant and system-coherent in their weak (dataflow-slot +
+late-predicate) form** — predicated pipelining, mostly already code — and in their **strong
+(undetermined-contribution) form they are a precise instrument that locates dregg's deepest invariant:
+*determination is eager, witness is lazy.* They do not expose a flaw in the construction; they expose
+(and name) the construction's load-bearing reason for refusing exactly the thing the strong reading
+asks for. The one durable obligation that falls out is the guardrail `holeFill_binds_in_circuit`: if a
+partial-turn feature is ever built, every fill must bind its δ and its guard into the proof the light
+client checks — never trusted off-circuit, never an outstanding imbalance.
