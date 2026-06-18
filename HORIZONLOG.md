@@ -87,6 +87,45 @@ expensive half — re-shape `RH` to `H(permsVK_limb, rest_limb)`, recompute the 
 continuity-weld the rest); WAVE 3 = refusal (audit→fields_root EXT, last). The full byte-faithful
 `compute_authority_digest_felt` fold is the WRONG shape (variable-length sponge) — the split-digest is the route.
 
+SELECTOR-BINDING TOOTH (the gate-less value-cohort) — light-client cross-effect smuggle, LIVE-CUT (2026-06-18).
+THE FORGERY (confirmed at HEAD): the deployed sovereign verifier (`turn/src/executor/proof_verify.rs:161`,
+`verify_and_commit_proof_rotated`) resolves ONE rotated descriptor by `vm_effects.first()` over a
+one-row-per-effect trace. A family of descriptors LACKED `selectorGate` — setField[0..7] / mint(BridgeMint) /
+attenuate / revokeCapability / grantCap — so a turn whose LEAD is gate-less + a TAIL effect (e.g.
+`[SetField(slot0,v), Transfer(self→victim,A)]`) proved under the gate-less LEAD descriptor while the TAIL row's
+transition was UNFORCED: the prover freely forged the tail balance, the commitment-integrity gates still passed,
+`verify_vm_descriptor2` ACCEPTED. STEP-0 (the safety crux) RESOLVED SAFE: the single-descriptor sovereign verify
+path receives ONLY homogeneous turns — `prove_effect_vm_rotated_ir2_with_caveat` REJECTS heterogeneous slices
+(`full_turn_proof.rs:670-679` "one rotated descriptor per proof") and PATH-PRESERVE `split_into_cohort_runs`
+splits heterogeneous turns per cohort into chained legs (`full_turn_proof.rs:1229`); transfer/burn ALREADY carry
+the gate and the suite is green, which is the same mechanism. CLOSE (Lean-emitted, law #1): each gate-less
+registry member appends `selectorGate <runtimeSelector>` via the new `EffectVmEmitRotationV3.withSelectorGate`
+(per-REGISTRY-entry, NOT the shared v1 face — grantCap/attenuate/revokeCapability ride the SAME
+`attenuateVmDescriptor` face but must gate to DISTINCT runtime selectors: GRANT_CAP=3 / ATTENUATE_CAPABILITY=48 /
+REVOKE_CAPABILITY=24 from `columns::sel`, NOT the faithfulness-abstraction `selA.ATTENUATE=2`). setField→2,
+mint→`selM.MINT`=40. New `sel.{GRANT_CAP,REVOKE_CAPABILITY,ATTENUATE_CAPABILITY}` constants pinned to their Rust
+`columns::sel` twins. Apex lift: `withSelectorGate_satisfied2` (constraint-subset monotonicity, +memLog/mapLog
+invariance lemmas) strips the gate so every per-effect VALUE/`ClosedLog` keystone (stated over the bare `mintV3`
+etc.) composes over the deployed gated member; `Rfix 3/20` (mint/bridgeMint) + `bwMint` re-keyed to the wrapped
+descriptor in `ClosureFanoutGenuine`/`CircuitCompletenessAssembled`. TEETH `circuit/tests/effect_vm_selector_gate_
+forgery.rs`: NEGATIVE `setfield_lead_with_foreign_transfer_tail_is_unsat` + `mint_lead_…` (forged tail UNSAT via
+`prove_vm_descriptor2`/check_constraints ALONE — row 1 rejected); POSITIVE
+`honest_homogeneous_setfield_still_proves_and_verifies` (no downgrade). Green: lake 4002 axiom-clean · selector
+3/3 · rotation-flip 11/11 · sovereign-rotated 19/19 · drift PASS · FP re-pinned.
+⚑ NAMED FOLLOW-UP — the CAP-OPEN variants stay gate-less. `delegateCapOpenV3 / grantCapCapOpenV3 /
+revokeCapabilityCapOpenV3 / attenuateCapOpenEffV3` (+ introduce/revoke/refresh/transfer cap-open) carry the SAME
+structural gap (their `effCapOpenV3 base name n` uses the bare `base.constraints`, no selectorGate). NOT closed
+here because (a) they are NOT on the deployed sovereign single-descriptor path — they route via PATH-PRESERVE
+`cap_open_route_for_run` (`full_turn_proof.rs:790/950`), which ALREADY splits heterogeneous turns per cohort
+(the tail becomes its OWN leg), strongly mitigating the tail-forgery; (b) gating them re-threads the in-circuit
+authority APEX — `Rfix_*_capOpen` `rfl` identities (`CircuitSoundnessAssembled.lean:186/204-224`) + the
+`…CapOpenEffV3_authorizes` keystones (`RotatedKernelRefinementFacet`/`…Exercise Auth`/`…FacetTurnBound`) all
+consume the bare cap-open def. CLOSURE SHAPE: apply `withSelectorGate <baseRuntimeSelector>` at each
+`…CapOpenV3` def in `CapOpenEmit.lean` (selectors: grantCap/delegate→3, revokeCapability→24, attenuate→48,
+introduce→35, revoke/refresh-delegation→30/29) + lift the `Rfix_*_capOpen` identities and authority keystones
+through `withSelectorGate_satisfied2` (the same monotonicity already proven). A bounded but real cutover — the
+larger lane the main loop schedules (VK-affecting, ember-gated).
+
 ACTIVE (2026-06-18) — the `facetEffGate` genuine-membership closure (residual (a) F6-FACET) + adversarial
 re-review. FOUND: the cap-open authority gate `facetEffGate` (`DeployedCapOpen.lean:205`) was implemented as
 EQUALITY `mask_lo == effBit` (with `effBitGate` pinning `effBit = EFFECT_TRANSFER`) — i.e. it forced a

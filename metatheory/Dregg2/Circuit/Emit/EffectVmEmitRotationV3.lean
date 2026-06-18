@@ -826,6 +826,80 @@ the attenuate phase-B leg and the dynamic setField ride through unchanged. -/
 def v3OfWith (d : EffectVmDescriptor) (extras : List VmConstraint2) : EffectVmDescriptor2 :=
   { v3Of d with constraints := (v3Of d).constraints ++ extras }
 
+/-- **`withSelectorGate s d`** — append the per-row SELECTOR-BINDING tooth (`selectorGate s`,
+`EffectVmEmit.§6½`) to an ALREADY-graduated v2 registry member, lifted into a v2 `.base`
+constraint. This is the cross-selector REPLAY close at the REGISTRY level: it BINDS the
+descriptor to its own runtime selector column `s` so a row carrying a FOREIGN selector
+(`sel[s] = 0`, `sel[NOOP] = 0`) is UNSAT — a one-row-per-effect trace cannot smuggle a
+heterogeneous TAIL effect (whose transition is otherwise unforced by this descriptor) under
+this descriptor's proof. `s` is the DEPLOYED runtime selector column (`columns::sel`, the
+column `effect_vm/trace.rs::effect_selector` sets), NOT the per-effect Lean faithfulness
+abstraction (e.g. the live `AttenuateCapability` row sets `sel[48]`, so the attenuate member
+gates on `48`, not `selA.ATTENUATE = 2`). Appending at the registry entry (rather than the v1
+FACE) keeps the SHARED faces (grantCap and attenuate both ride `attenuateVmDescriptor`; revoke
+rides it via a rename) gating to their OWN distinct runtime selectors. The honest leg is
+unaffected: an honest HOMOGENEOUS turn (the only kind the single-descriptor sovereign verify
+path receives — heterogeneous turns split per cohort in PATH-PRESERVE / are rejected by the
+rotated prover) lays only `sel[s] = 1` active rows and `sel[NOOP] = 1` pads, both of which the
+gate admits (`selectorGate_holds_of_active` / `_of_pad`). -/
+def withSelectorGate (s : Nat) (d : EffectVmDescriptor2) : EffectVmDescriptor2 :=
+  { d with constraints := d.constraints ++ [.base (selectorGate s)] }
+
+/-- `withSelectorGate` ONLY appends a `.base` constraint: it touches no table, hash site, range, or
+mem/map op, so the gathered `memOpsOf`/`mapOpsOf`/`memLog`/`mapLog` and the `hashSites`/`ranges`/
+`tables` are definitionally those of `d`. -/
+theorem withSelectorGate_constraints (s : Nat) (d : EffectVmDescriptor2) :
+    (withSelectorGate s d).constraints = d.constraints ++ [.base (selectorGate s)] := rfl
+
+/-- The appended `.base` op surfaces NO mem op, so the gathered `memOpsOf` is `d`'s. -/
+theorem withSelectorGate_memOpsOf (s : Nat) (d : EffectVmDescriptor2) :
+    Dregg2.Circuit.DescriptorIR2.memOpsOf (withSelectorGate s d)
+      = Dregg2.Circuit.DescriptorIR2.memOpsOf d := by
+  simp [Dregg2.Circuit.DescriptorIR2.memOpsOf, withSelectorGate_constraints, List.filterMap_append]
+
+/-- ...and NO map op. -/
+theorem withSelectorGate_mapOpsOf (s : Nat) (d : EffectVmDescriptor2) :
+    Dregg2.Circuit.DescriptorIR2.mapOpsOf (withSelectorGate s d)
+      = Dregg2.Circuit.DescriptorIR2.mapOpsOf d := by
+  simp [Dregg2.Circuit.DescriptorIR2.mapOpsOf, withSelectorGate_constraints, List.filterMap_append]
+
+/-- ...so the gathered memory log is `d`'s, op-for-op. -/
+theorem withSelectorGate_memLog (s : Nat) (d : EffectVmDescriptor2)
+    (t : Dregg2.Circuit.DescriptorIR2.VmTrace) :
+    Dregg2.Circuit.DescriptorIR2.memLog (withSelectorGate s d) t
+      = Dregg2.Circuit.DescriptorIR2.memLog d t := by
+  simp [Dregg2.Circuit.DescriptorIR2.memLog, withSelectorGate_memOpsOf]
+
+/-- ...and the gathered map log is `d`'s. -/
+theorem withSelectorGate_mapLog (s : Nat) (d : EffectVmDescriptor2)
+    (t : Dregg2.Circuit.DescriptorIR2.VmTrace) :
+    Dregg2.Circuit.DescriptorIR2.mapLog (withSelectorGate s d) t
+      = Dregg2.Circuit.DescriptorIR2.mapLog d t := by
+  simp [Dregg2.Circuit.DescriptorIR2.mapLog, withSelectorGate_mapOpsOf]
+
+/-- **`withSelectorGate` is a strict-ADD on `Satisfied2`** (constraint-subset monotonicity). A trace
+satisfying the gated descriptor satisfies the BARE descriptor: the gated descriptor's constraint list
+is `d`'s plus one appended `.base (selectorGate s)`, so every `d`-constraint is among the gated ones
+(`rowConstraints` restricts), and every other `Satisfied2` field (hashes, ranges, the four memory legs
+and the map-table leg) is UNCHANGED because the appended `.base` contributes no mem/map op
+(`memOpsOf`/`mapOpsOf` filter to `.memOp`/`.mapOp`). This lets every per-effect VALUE/`ClosedLog`
+keystone — stated over the bare `d` — lift to the DEPLOYED gated registry member with no reproof. -/
+theorem withSelectorGate_satisfied2 (hash : List ℤ → ℤ) (s : Nat) (d : EffectVmDescriptor2)
+    (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : Dregg2.Circuit.DescriptorIR2.VmTrace)
+    (h : Satisfied2 hash (withSelectorGate s d) minit mfin maddrs t) :
+    Satisfied2 hash d minit mfin maddrs t :=
+  { rowConstraints := fun i hi c hc =>
+      h.rowConstraints i hi c (by
+        rw [withSelectorGate_constraints]; exact List.mem_append_left _ hc)
+    rowHashes := h.rowHashes
+    rowRanges := h.rowRanges
+    memAddrsNodup := h.memAddrsNodup
+    memClosed := by have := h.memClosed; rwa [withSelectorGate_memLog] at this
+    memDisciplined := by have := h.memDisciplined; rwa [withSelectorGate_memLog] at this
+    memBalanced := by have := h.memBalanced; rwa [withSelectorGate_memLog] at this
+    memTableFaithful := by have := h.memTableFaithful; rwa [withSelectorGate_memLog] at this
+    mapTableFaithful := by have := h.mapTableFaithful; rwa [withSelectorGate_mapLog] at this }
+
 /-- The v1 face of the dynamic setField (its two mem ops are the v2 extras). -/
 def setFieldDynV1Face : EffectVmDescriptor :=
   { name        := "dregg-effectvm-setfield-dyn-v2"
@@ -2096,7 +2170,7 @@ def receiptArchiveV3 : EffectVmDescriptor2 :=
 def v3Registry : List (String × EffectVmDescriptor2) :=
   [ ("transferVmDescriptor2R24", v3OfFrozen EffectVmEmitTransfer.transferVmDescriptor)
   , ("burnVmDescriptor2R24", v3OfFrozen EffectVmEmitBurn.burnVmDescriptor)
-  , ("mintVmDescriptor2R24", v3OfFrozen mintTickFace)
+  , ("mintVmDescriptor2R24", withSelectorGate EffectVmEmitMint.selM.MINT (v3OfFrozen mintTickFace))
   , ("noteSpendVmDescriptor2R24", noteSpendV3)
   , ("noteCreateVmDescriptor2R24", noteCreateV3)
   , ("cellSealVmDescriptor2R24", cellSealV3)
@@ -2111,8 +2185,8 @@ def v3Registry : List (String × EffectVmDescriptor2) :=
       v3OfFrozen EffectVmEmitIncrementNonce.incrementNonceVmDescriptor)
   , ("revokeVmDescriptor2R24", v3Of EffectVmEmitRevokeDelegation.revokeVmDescriptor)
   , ("introduceVmDescriptor2R24", v3Of EffectVmEmitIntroduce.introduceVmDescriptor)
-  , ("attenuateVmDescriptor2R24", attenuateV3)
-  , ("revokeCapabilityVmDescriptor2R24", revokeCapabilityV3)
+  , ("attenuateVmDescriptor2R24", withSelectorGate sel.ATTENUATE_CAPABILITY attenuateV3)
+  , ("revokeCapabilityVmDescriptor2R24", withSelectorGate sel.REVOKE_CAPABILITY revokeCapabilityV3)
   , ("customVmDescriptor2R24", customV3)
   , ("setFieldDynVmDescriptor2R24", setFieldDynV3)
     -- THE COHORT-WIDENING (ROTATION-CUTOVER §2c, STEP 1): the eight LIVE-path effects that
@@ -2123,7 +2197,8 @@ def v3Registry : List (String × EffectVmDescriptor2) :=
     -- them. GrantCapability rides the BARE attenuate template (`dregg-effectvm-attenuateA-v1`,
     -- the UNATTENUATED cap-root grant — the v1 GRANT_CAP descriptor), distinct from the
     -- ATTENUATE_CAPABILITY phase-B `attenuateV3`.
-  , ("grantCapVmDescriptor2R24", v3Of EffectVmEmitAttenuateA.attenuateVmDescriptor)
+  , ("grantCapVmDescriptor2R24",
+      withSelectorGate sel.GRANT_CAP (v3Of EffectVmEmitAttenuateA.attenuateVmDescriptor))
   , ("makeSovereignVmDescriptor2R24",
       v3Of EffectVmEmitMakeSovereign.makeSovereignRuntimeVmDescriptor)
   , ("createCellVmDescriptor2R24", createCellV3)
@@ -2133,7 +2208,8 @@ def v3Registry : List (String × EffectVmDescriptor2) :=
   , ("cellUnsealVmDescriptor2R24", cellUnsealV3)
   , ("emitEventVmDescriptor2R24", v3OfFrozen EffectVmEmitEmitEvent.emitEventVmDescriptor) ]
   ++ (List.finRange 8).map fun slot =>
-      (s!"setFieldVmDescriptor2-{slot.val}R24", v3OfFrozen (setFieldTickFace slot))
+      (s!"setFieldVmDescriptor2-{slot.val}R24",
+        withSelectorGate EffectVmEmitSetField.SEL_SET_FIELD (v3OfFrozen (setFieldTickFace slot)))
 
 #guard v3Registry.length == 36
 -- Every registry entry emits a versioned v2 wire string with the rotated width, the five

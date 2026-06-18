@@ -175,6 +175,15 @@ def sysRootsDigestColBefore : Nat := EFFECT_VM_WIDTH + 1
 namespace sel
 def NOOP     : Nat := 0
 def TRANSFER : Nat := 1
+-- The DEPLOYED runtime selector columns (`circuit/src/effect_vm/columns.rs::sel`, the column
+-- `effect_vm/trace.rs::effect_selector` sets per effect row). These are the columns the
+-- selector-binding tooth (`selectorGate`, §6½) reads to bind a rotated descriptor to its OWN
+-- effect — distinct from the per-effect Lean faithfulness abstractions (e.g. `selA.ATTENUATE = 2`
+-- is the faithfulness-internal name; the LIVE attenuate row sets column 48). Each MUST equal its
+-- Rust `columns::sel` twin or the gate would reject the HONEST row.
+def GRANT_CAP            : Nat := 3   -- columns::sel::GRANT_CAP
+def REVOKE_CAPABILITY    : Nat := 24  -- columns::sel::REVOKE_CAPABILITY
+def ATTENUATE_CAPABILITY : Nat := 48  -- columns::sel::ATTENUATE_CAPABILITY
 end sel
 
 /-! Transfer parameter offsets (`param::AMOUNT` / `param::DIRECTION`). -/

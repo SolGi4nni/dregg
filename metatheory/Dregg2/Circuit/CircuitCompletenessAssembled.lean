@@ -308,12 +308,19 @@ structure CompletenessWitnesses (S : CommitSurface) (hash : List ℤ → ℤ)
     ∃ (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace),
       Satisfied2 hash Dregg2.Circuit.RotatedKernelRefinementMintBurn.burnV3 minit mfin maddrs t ∧
       tracePublishedCommit t = commitOf S pre post turn
-  /-- mint (tag 3) — also re-exported to bridgeMint (tag 20). -/
+  /-- mint (tag 3) — also re-exported to bridgeMint (tag 20). At the DEPLOYED gated mint descriptor
+  (`withSelectorGate selM.MINT mintV3`, the live `mintVmDescriptor2R24` carrying the selector-binding
+  tooth) — `= Rfix 3 = Rfix 20` — so an honest mint completeness witness must publish a trace
+  satisfying the deployed selector-bound descriptor (its active rows set `sel[MINT]`, its pads
+  `sel[NOOP]`, both of which the gate admits). -/
   bwMint : ∀ (pre post : RecChainedState) (actor cell : CellId) (a : AssetId) (amt : ℤ)
       (turn : BoundaryTurn),
     Dregg2.Circuit.Spec.SupplyCreation.MintASpec pre actor cell a amt post →
     ∃ (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace),
-      Satisfied2 hash Dregg2.Circuit.Emit.EffectVmEmitRotationV3.mintV3 minit mfin maddrs t ∧
+      Satisfied2 hash
+        (Dregg2.Circuit.Emit.EffectVmEmitRotationV3.withSelectorGate
+          Dregg2.Circuit.Emit.EffectVmEmitMint.selM.MINT
+          Dregg2.Circuit.Emit.EffectVmEmitRotationV3.mintV3) minit mfin maddrs t ∧
       tracePublishedCommit t = commitOf S pre post turn
   /-- setField (tag 5) — GENERIC field name, at the live `Rfix 5` descriptor (the `setFieldDyn` rung). -/
   bwSetFieldDyn : ∀ (pre post : RecChainedState) (actor cell : CellId) (f : FieldName) (v : ℤ)
@@ -423,8 +430,15 @@ The Value rungs conclude `Satisfied2 hash <e>V3`; the apex needs `Satisfied2 has
 (`actionTagToPos`) lands each value tag at its cohort position, so `Rfix e = <e>V3` by `rfl`. -/
 
 theorem Rfix_burn : Rfix 4 = Dregg2.Circuit.RotatedKernelRefinementMintBurn.burnV3 := rfl
-theorem Rfix_mint : Rfix 3 = Dregg2.Circuit.Emit.EffectVmEmitRotationV3.mintV3 := rfl
-theorem Rfix_bridgeMint : Rfix 20 = Dregg2.Circuit.Emit.EffectVmEmitRotationV3.mintV3 := rfl
+-- mint/bridgeMint route to the DEPLOYED gated `mintVmDescriptor2R24` (the bare `mintV3` plus the
+-- appended `selectorGate selM.MINT` — the cross-selector replay close), so the identities now name
+-- the WRAPPED descriptor.
+theorem Rfix_mint : Rfix 3 = Dregg2.Circuit.Emit.EffectVmEmitRotationV3.withSelectorGate
+    Dregg2.Circuit.Emit.EffectVmEmitMint.selM.MINT
+    Dregg2.Circuit.Emit.EffectVmEmitRotationV3.mintV3 := rfl
+theorem Rfix_bridgeMint : Rfix 20 = Dregg2.Circuit.Emit.EffectVmEmitRotationV3.withSelectorGate
+    Dregg2.Circuit.Emit.EffectVmEmitMint.selM.MINT
+    Dregg2.Circuit.Emit.EffectVmEmitRotationV3.mintV3 := rfl
 
 /-! ## §4 — the per-effect VALUE-LEG dischargers (DUAL of `closedLogExtract_<e>_closed`).
 

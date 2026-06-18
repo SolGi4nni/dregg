@@ -108,6 +108,10 @@ theorem closedLogExtract_mint_closed
       MintTraceReadout (LH := LH) (hash := hash) minit mfin maddrs t pubLogPost pre post) :
     ClosedLogExtract Slive LH hash Rfix 3 := by
   intro _hCR minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
+  -- `Rfix 3` is the DEPLOYED gated mint member (`withSelectorGate selM.MINT mintV3`); strip the
+  -- appended selector-binding gate to recover the bare-`mintV3` witness the readout/rung consume.
+  have hsat := Dregg2.Circuit.Emit.EffectVmEmitRotationV3.withSelectorGate_satisfied2
+    hash _ Dregg2.Circuit.Emit.EffectVmEmitRotationV3.mintV3 minit mfin maddrs t hsat
   obtain ⟨actor, cell, a, amt, hside, hpub, logNeeds⟩ :=
     readout minit mfin maddrs t pubLogPost pre post hsat
   exact mint_closedLog hash hside hsat pre post actor cell a amt pc pubLogPre pubLogPost hdecLog
@@ -152,6 +156,10 @@ theorem closedLogExtract_bridgeMint_closed
       BridgeMintTraceReadout (LH := LH) (hash := hash) minit mfin maddrs t pubLogPost pre post) :
     ClosedLogExtract Slive LH hash Rfix 20 := by
   intro _hCR minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
+  -- `Rfix 20` is the DEPLOYED gated mint member (`withSelectorGate selM.MINT mintV3`); strip the
+  -- appended selector-binding gate to recover the bare-`mintV3` witness the readout/rung consume.
+  have hsat := Dregg2.Circuit.Emit.EffectVmEmitRotationV3.withSelectorGate_satisfied2
+    hash _ Dregg2.Circuit.Emit.EffectVmEmitRotationV3.mintV3 minit mfin maddrs t hsat
   obtain ⟨actor, cell, a, amt, hside, hpub, logNeeds⟩ :=
     readout minit mfin maddrs t pubLogPost pre post hsat
   exact bridgeMint_closedLog hash hside hsat pre post actor cell a amt pc pubLogPre pubLogPost hdecLog
