@@ -32,10 +32,19 @@ realization seam.**
 3. **No agent/turn-header authentication on the proof path.** The proof-carrying path performs NO signature check
    (`execute.rs:466-478`); `native_signature_air` is unused (not in the rotated cohort). A light client cannot
    conclude "the rightful agent authorized THIS turn." (Distinct from the owner/cap authority disjunct — see #225.)
-4. **Replay: only the RELATIVE nonce is forced.** In-circuit forces `nonce_after = nonce_before+1` + folds nonce
-   into the commit (`air.rs:1630,1663`) — good. But the ABSOLUTE pre-nonce/pre-commit anchor is reconstructed
-   from the trusted ledger (`proof_verify.rs:137,218`); replay is caught only by the executor (`execute.rs:316`).
-   Light client (no ledger) can't tell a fresh application from a replayed proof on advanced state.
+4. ~~**Replay: only the RELATIVE nonce is forced.**~~ **RESOLVED (2026-06-18, by analysis — NOT an in-circuit
+   hole for a chain-following light client).** The nonce is folded into the per-cell commitment
+   (`cell_state.rs::compute_commitment` `hash_4_to_1([bal_lo, bal_hi, nonce, fields[0]])` — VERIFIED) AND forced
+   `nonce_after = nonce_before+1` in-circuit (`EffectVmEmitTransfer.gNonce`: `new_nonce − old_nonce − (1−s_noop)
+   = 0`, in `transferRowGates`, with `gNonce`'s rejection tooth — VERIFIED). So a cell's commitment sequence is
+   STRICTLY MONOTONIC in nonce → **no commitment ever repeats**, and the proof's `OLD_COMMIT` (PI 34) is forced
+   (the first-row `pi_binding`). A light client that follows the commit chain (tracks the head = latest
+   `NEW_COMMIT`, which it MUST to have a current state) accepts a turn iff its `OLD_COMMIT == head`; a stale /
+   replayed proof carries an old `OLD_COMMIT ≠ head` → rejected, and the monotone nonce guarantees no later head
+   ever equals it. The "absolute freshness anchor" IS the nonce-in-commit the light client already follows; the
+   verifier's `proof_verify.rs` reconstruction is a full-node convenience, not the light client's basis. The
+   genuine residual is a DIFFERENT property — chain-FORK resistance (the light client following the RIGHT chain)
+   — which is the consensus/blocklace layer's job, not the per-proof circuit. Not a per-proof replay hole.
 5. **Fee debit is out-of-proof.** Debited by the executor "PHASE 1, never rolled back" (`execute.rs:421`); the
    verifier reconstructs the pre-fee state (`proof_verify.rs:130-136`) so the proof is built against fee-removed
    state. The fee is not a constraint in the proven transition.
