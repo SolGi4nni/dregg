@@ -374,6 +374,210 @@ theorem deployedCapOpen_implies_authorizedEffB
   exact authorizedFacetEffB_holds_cap caps provided effectBit
     { actor := actor, src := src, dst := dst, amt := amt } c hmem htgt hfacet htier
 
+/-! ### §6.D — DISCHARGE: `DeployedFaithful*` is a CONSTRUCTION consequence, not a carried field.
+
+`DeployedFaithful`/`DeployedFaithfulEff` carry a `backed` hypothesis: a conferring member opening at an
+`(actor ⇒ src)` edge is backed by a REAL held `FacetCap`. The apex (`RotatedKernelRefinementFacet.
+TransferAuthoritySource.hfaith`) consumes this as an ASSUMED structure field over a FREE `leafAt`. That
+is the soundness analog of the ledger's faithfulness — and the ledger does NOT assume it: it BUILDS the
+commitment from the kernel (`recStateCommit k` is a function OF `k`) and recovers `k` by CR injectivity
+(`recStateCommit_binds_kernel`). The cap-tree side was MISSING that canonical builder, so `leafAt` floated
+free and `backed` had to be carried.
+
+This section supplies the missing builder. `canonicalLeafAt caps` is the leaf function the cap-tree
+COMMITS — the deployed `compute_canonical_capability_root_felt` discipline (the cell builds its cap-tree
+FROM its c-list, leaf-per-held-cap). For THAT canonical `leafAt`, `backed` is no longer a hypothesis: a
+conferring leaf EXISTS only when it was built from a held conferring cap, so the witness is read off the
+construction. `deployedFaithfulEff_canonical` discharges `DeployedFaithfulEff … (canonicalLeafAt caps)`
+UNCONDITIONALLY (for ANY root — the faithfulness is structural in the encoding, the root binding is the
+SEPARATE membership leg already discharged from CR by `capOpen_membership`). The carried `hfaith` field is
+thereby reduced to "the prover opens against the CANONICAL leaf function" (the `hedge` identification the
+source already carries), not an independent semantic contract over a free `leafAt`. -/
+
+/-- **`tierTag t`** — the canonical `auth_tag` felt for an IPC tier (the inverse of `tierOfTag` on the
+five IPC tiers None…Impossible). `Custom` folds to byte `5` (its `vkHash` is the `vkOfTag` residual, so
+the canonical encoder is stated over the IPC tiers the deployed transfer/fan-out path uses; a `Custom`
+cap rides the named `vkOfTag` residual, exactly as elsewhere). -/
+def tierTag : AuthTier → ℤ
+  | .none       => 0
+  | .signature  => 1
+  | .proof      => 2
+  | .either     => 3
+  | .impossible => 4
+  | .custom _   => 5
+
+/-- `tierOfTag` inverts `tierTag` on the five IPC tiers — the canonical tier encode round-trips through
+the deployed `auth_tag` decode (so the decoded tier of a canonical leaf IS the cap's tier). -/
+theorem tierOfTag_tierTag (vkOfTag : ℤ → Nat) :
+    ∀ t : AuthTier, (∀ vk, t ≠ .custom vk) →
+      tierOfTag vkOfTag (tierTag t) = t := by
+  intro t hipc
+  cases t with
+  | none => rfl
+  | signature => rfl
+  | proof => rfl
+  | either => rfl
+  | impossible => rfl
+  | custom v =>
+    -- the IPC side condition `hipc` excludes `Custom` (the named `vkOfTag` felt-absorb residual): a
+    -- `Custom`-tier cap rides the `vkOfTag` residual, exactly as elsewhere. So this branch is vacuous.
+    exact absurd rfl (hipc v)
+
+/-- The canonical full mask for a cap's `Option EffectMask` facet: `none` (unrestricted) encodes as
+`EFFECT_ALL` (`0xFFFF_FFFF`), `some m` encodes as `m`. For any single effect bit `1 <<< n` (`n < 32`),
+`isEffectPermitted (some (canonMask facet)) (1<<<n) = isEffectPermitted facet (1<<<n)` — the encode is
+facet-faithful on the bits the gate reads. -/
+def canonMask : Option EffectMask → ℤ
+  | .none   => ((0xFFFF_FFFF : Nat) : ℤ)
+  | .some m => (m : ℤ)
+
+/-- **`canonicalLeaf c`** — the canonical `CapLeaf` the deployed cap-tree commits for a held `FacetCap`
+`c`: `target := c.target`, `auth_tag := tierTag c.tier`, the low/high 16-bit limbs of `canonMask c.facet`,
+slot/expiry/breadstuff structural. This is the leaf `compute_canonical_capability_root_felt` builds from
+a c-list entry. -/
+def canonicalLeaf (c : FacetCap) : CapLeaf :=
+  { slot_hash  := 0
+  , target     := (c.target : ℤ)
+  , auth_tag   := tierTag c.tier
+  , mask_lo    := canonMask c.facet % 65536
+  , mask_hi    := canonMask c.facet / 65536
+  , expiry     := 0
+  , breadstuff := 0 }
+
+/-- The deny-all leaf (no cap held at an edge): `mask = 0` ⇒ `isEffectPermitted (some 0) _ = false`, so a
+deny-all leaf NEVER confers — faithfulness off the held edges is vacuous. -/
+def denyAllLeaf : CapLeaf :=
+  { slot_hash := 0, target := 0, auth_tag := 0, mask_lo := 0, mask_hi := 0, expiry := 0, breadstuff := 0 }
+
+/-- **`canonicalLeafAt caps`** — the leaf function the deployed cap-tree COMMITS (built FROM the c-list):
+at edge `(actor, src)`, the canonical leaf of the FIRST held `FacetCap` over `src` in `caps actor` (the
+c-list entry), or the deny-all leaf when the actor holds no cap over `src`. This is the cap-tree analog of
+`recStateCommit`'s "build the leaves from the kernel" — the `leafAt` is no longer free; it is a FUNCTION
+of `caps`. -/
+def canonicalLeafAt (caps : FacetCaps) : Label → Label → CapLeaf := fun actor src =>
+  match (caps actor).find? (fun c => decide (c.target = src)) with
+  | some c => canonicalLeaf c
+  | none   => denyAllLeaf
+
+/-- The canonical leaf's decoded facet permits exactly the bits the cap's facet permits, on any single
+effect bit `1 <<< n` (`n < 32`). The low/high limb split recomposes `canonMask`, so `facetOfLeaf
+(canonicalLeaf c)` is `some (canonMask c.facet).toNat`, and `(1<<<n) &&& canonMask = (1<<<n) &&& (cap
+mask)` agrees with the cap's `isEffectPermitted` on that bit. -/
+theorem facetOfLeaf_canonical_permits (c : FacetCap) (n : Nat) (hn : n < 32)
+    (hperm : isEffectPermitted c.facet (1 <<< n) = true) :
+    isEffectPermitted (facetOfLeaf (canonicalLeaf c)) (1 <<< n) = true := by
+  -- the limb split recomposes `canonMask c.facet` (a Nat `< 2^32`), so the decoded facet is its `.toNat`.
+  have hrecomp : maskOfLimbs (canonicalLeaf c).mask_lo (canonicalLeaf c).mask_hi = canonMask c.facet := by
+    simp only [canonicalLeaf, maskOfLimbs]
+    have h := Int.emod_add_ediv' (canonMask c.facet) 65536
+    linarith [h]
+  have hfacet : facetOfLeaf (canonicalLeaf c) = some (canonMask c.facet).toNat := by
+    simp only [facetOfLeaf, hrecomp]
+  rw [hfacet]
+  -- now compare to the cap's facet on bit `n`.
+  cases hf : c.facet with
+  | none =>
+      -- canonMask none = EFFECT_ALL; isEffectPermitted (some 0xFFFFFFFF) (1<<<n) = true for n < 32.
+      simp only [canonMask]
+      show isEffectPermitted (some (((0xFFFF_FFFF : Nat) : ℤ)).toNat) (1 <<< n) = true
+      have hcast : (((0xFFFF_FFFF : Nat) : ℤ)).toNat = (0xFFFF_FFFF : Nat) := Int.toNat_natCast _
+      rw [hcast]
+      unfold isEffectPermitted
+      have hand : (1 <<< n) &&& (0xFFFF_FFFF : Nat) ≠ 0 := by
+        have hpow : (1 <<< n : Nat) = 2 ^ n := by rw [Nat.shiftLeft_eq, Nat.one_mul]
+        rw [hpow]
+        intro hz
+        have htb := Nat.testBit_and (2 ^ n) (0xFFFF_FFFF) n
+        rw [hz] at htb
+        simp only [Nat.zero_testBit, Nat.testBit_two_pow_self, Bool.true_and] at htb
+        -- bit n of 0xFFFFFFFF is set for n < 32.
+        have : (0xFFFF_FFFF : Nat).testBit n = true := by
+          have : (0xFFFF_FFFF : Nat) = 2 ^ 32 - 1 := by norm_num
+          rw [this, Nat.testBit_two_pow_sub_one]
+          simp [hn]
+        rw [this] at htb; exact Bool.noConfusion htb
+      cases hm : (0xFFFF_FFFF : Nat) with
+      | zero => simp at hm
+      | succ k => simp only [hm] at hand ⊢; simp [hand]
+  | some m =>
+      -- canonMask (some m) = m; (m : ℤ).toNat = m; agrees with cap's isEffectPermitted.
+      simp only [canonMask]
+      show isEffectPermitted (some ((m : ℤ)).toNat) (1 <<< n) = true
+      rw [Int.toNat_natCast]
+      rw [hf] at hperm
+      exact hperm
+
+/-- The canonical leaf's decoded tier IS the cap's tier (on the IPC tiers; `Custom` rides `vkOfTag`),
+so a `provided` satisfying the cap's tier satisfies the decoded tier. -/
+theorem tierOfTag_canonical (vkOfTag : ℤ → Nat) (c : FacetCap)
+    (hipc : ∀ vk, c.tier ≠ .custom vk) :
+    tierOfTag vkOfTag (canonicalLeaf c).auth_tag = c.tier := by
+  simp only [canonicalLeaf]
+  exact tierOfTag_tierTag vkOfTag c.tier hipc
+
+/-- **`deployedFaithfulEff_canonical` — THE DISCHARGE (`backed` from the CONSTRUCTION, not assumed).**
+For the CANONICAL leaf function `canonicalLeafAt caps` (the leaves the cap-tree actually commits, built
+from the c-list), `DeployedFaithfulEff` holds for ANY root and ANY single effect bit `1 <<< n` (`n < 32`)
+— with NO carried faithfulness hypothesis. The `backed` obligation is discharged STRUCTURALLY: a leaf at
+`(actor, src)` confers `1<<<n` only when it is `canonicalLeaf` of a held cap over `src` whose facet
+permits `1<<<n` and whose decoded tier (= the cap's tier on the IPC tiers) is satisfied — so the held cap
+IS the witness, read off `find?`. (The IPC-tier side condition `hipc` excludes the named `Custom`/`vkOfTag`
+residual.) This turns the apex's `hfaith` FIELD into a consequence of "the prover opens the CANONICAL
+tree". -/
+theorem deployedFaithfulEff_canonical {State : Type} (S : CapHashScheme State)
+    (vkOfTag : ℤ → Nat) (provided : AuthProvided) (n : Nat) (hn : n < 32)
+    (caps : FacetCaps) (root : ℤ)
+    (hipc : ∀ (actor src : Label) (c : FacetCap),
+      c ∈ caps actor → c.target = src → ∀ vk, c.tier ≠ .custom vk) :
+    DeployedFaithfulEff S vkOfTag provided (1 <<< n) caps root (canonicalLeafAt caps) := by
+  refine ⟨?_⟩
+  intro actor src _hopen hconf
+  obtain ⟨hfacetConf, htierConf⟩ := hconf
+  -- the canonical leaf at (actor, src) is either a held cap's leaf or the deny-all leaf.
+  unfold canonicalLeafAt at hfacetConf htierConf
+  cases hfind : (caps actor).find? (fun c => decide (c.target = src)) with
+  | none =>
+      -- deny-all leaf: mask 0 ⇒ isEffectPermitted (some 0) _ = false, contradicting hfacetConf.
+      exfalso
+      rw [hfind] at hfacetConf
+      simp only [denyAllLeaf, facetOfLeaf, maskOfLimbs] at hfacetConf
+      -- mask 0 + 0*65536 = 0 ⇒ (0 : ℤ).toNat = 0 ⇒ isEffectPermitted (some 0) _ = false.
+      rw [show ((0 : ℤ) + 0 * 65536).toNat = 0 by decide] at hfacetConf
+      simp only [isEffectPermitted] at hfacetConf
+      exact Bool.noConfusion hfacetConf
+  | some c =>
+      rw [hfind] at hfacetConf htierConf
+      -- `find?` found a held cap `c` over `src`.
+      have hmem : c ∈ caps actor := List.mem_of_find?_eq_some hfind
+      have htgt : c.target = src := by
+        have := List.find?_some hfind
+        simpa using of_decide_eq_true this
+      -- the cap's facet permits 1<<<n: the canonical leaf's decoded facet permits it (hfacetConf), and
+      -- the encode agrees with the cap's facet on the bit.
+      have hcapFacet : isEffectPermitted c.facet (1 <<< n) = true := by
+        cases hf : c.facet with
+        | none =>
+            -- none (unrestricted) always permits.
+            simp [isEffectPermitted]
+        | some m =>
+            -- some m: the canonical leaf decodes facet to (m).toNat, agreeing with the cap on the bit.
+            have hrecomp : maskOfLimbs (canonicalLeaf c).mask_lo (canonicalLeaf c).mask_hi
+                = canonMask c.facet := by
+              simp only [canonicalLeaf, maskOfLimbs]
+              have h := Int.emod_add_ediv' (canonMask c.facet) 65536
+              linarith [h]
+            have hfacetEq : facetOfLeaf (canonicalLeaf c) = some (canonMask c.facet).toNat := by
+              simp only [facetOfLeaf, hrecomp]
+            rw [hfacetEq, hf] at hfacetConf
+            simp only [canonMask] at hfacetConf
+            rw [Int.toNat_natCast] at hfacetConf
+            exact hfacetConf
+      -- the decoded tier IS the cap's tier (IPC), so `provided` satisfies the cap's tier.
+      have htierEq : tierOfTag vkOfTag (canonicalLeaf c).auth_tag = c.tier :=
+        tierOfTag_canonical vkOfTag c (hipc actor src c hmem htgt)
+      rw [htierEq] at htierConf
+      exact ⟨c, hmem, htgt, hcapFacet, htierConf⟩
+
 end CapHashScheme
 
 /-! ## §7 — NON-VACUITY: the deployed-tree bridge FIRES on a concrete edge, and the gate is REAL.
@@ -455,6 +659,10 @@ theorem empty_caps_unauthorized :
 #assert_axioms CapHashScheme.recomposeUp_inj_of_path
 #assert_axioms CapHashScheme.deployedCapOpen_implies_authorizedB
 #assert_axioms CapHashScheme.deployedCapOpen_implies_authorizedEffB
+#assert_axioms CapHashScheme.tierOfTag_tierTag
+#assert_axioms CapHashScheme.facetOfLeaf_canonical_permits
+#assert_axioms CapHashScheme.tierOfTag_canonical
+#assert_axioms CapHashScheme.deployedFaithfulEff_canonical
 #assert_axioms oneEdge_faithful
 #assert_axioms deployedEncodes_inhabited
 #assert_axioms bridge_fires
