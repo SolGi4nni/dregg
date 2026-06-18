@@ -814,7 +814,7 @@ pub const V3_STAGED_CAVEAT_DESCRIPTORS: &[(&str, &str, &str)] = &[(
 pub const V3_STAGED_REGISTRY_TSV: &str =
     include_str!("../descriptors/rotation-v3-staged-registry.tsv");
 pub const V3_STAGED_REGISTRY_FP: &str =
-    "0432bd4f13f735d0b9f384f50c63da1c2616da9b0889cc6212e21b8bc7d41917";
+    "a33875e7a37d3c043be963abf755b04501f29028b2918554d18bb89675adfe40";
 
 /// The rotated probe layout at register count `r` (the Rust twin of the Lean parametric
 /// layout `EffectVmEmitRotationR`: columns are FUNCTIONS of R; the chunking is 4-wide head,
@@ -1604,11 +1604,12 @@ mod tests {
             // revokeCapability), each carrying the SAME 59-column appendix (base-agnostic) over its
             // own rotated base. The fan-out legs' appendix binds the cap to THAT effect-kind bit (the
             // general `facetEffGate` / `effBitGateFor (1<<<n)`), not the constant EFFECT_TRANSFER.
-            if key.ends_with("CapOpenVmDescriptor2R24") {
+            if key.contains("CapOpen") {
                 assert_eq!(
                     d.trace_width,
-                    V1_WIDTH + APPENDIX_SPAN + 59,
-                    "{key}: cap-open trace width = rotated base + 59-column cap-membership appendix"
+                    V1_WIDTH + APPENDIX_SPAN + 91,
+                    "{key}: cap-open trace width = rotated base + 91-column cap-membership appendix \
+                     (59 prior + 32 mask-bit columns for the genuine submask facet gate)"
                 );
                 assert_eq!(
                     d.public_input_count, 38,
@@ -1865,10 +1866,12 @@ mod tests {
             }
         }
         assert_eq!(
-            n, 44,
-            "expected the 36-member rotated cohort (28 v2-graduated + 8 widened) + the 8 cap-open \
-             members (attenuate + transfer + the 6 fan-out: delegate/introduce/grantCap/revoke/\
-             refreshDelegation/revokeCapability — each *CapOpenVmDescriptor2R24)"
+            n, 46,
+            "expected the 36-member rotated cohort (28 v2-graduated + 8 widened) + the 8 \
+             Signature-pinned cap-open members (attenuate + transfer + the 6 fan-out: \
+             delegate/introduce/grantCap/revoke/refreshDelegation/revokeCapability — each \
+             *CapOpenVmDescriptor2R24) + the 2 live effect-general legs \
+             (transfer/attenuate *CapOpenEffVmDescriptor2R24)"
         );
     }
 

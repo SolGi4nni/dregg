@@ -30,7 +30,7 @@ use dregg_turn::{
     Effect,
     TurnBuilder,
     TurnResult,
-    action::RefusalReason,
+    action::{RefusalReason, WitnessBlob, WitnessKind},
     executor::{ComputronCosts, TurnExecutor},
 };
 
@@ -86,10 +86,28 @@ fn exec_single_chained(
     prev_hash: Option<[u8; 32]>,
 ) -> TurnResult {
     let mut ab = ActionBuilder::new_unchecked_for_tests(agent, "test-op", agent);
-    for e in effects {
-        ab = ab.effect(e);
-    }
-    let action = ab.build();
+    // `Effect::Refusal` carries a `proof_witness_index` into the action's
+    // witness blobs (the "evidence of non-action" the executor binds presence
+    // of, per execute_tree.rs's per-action Refusal witness pass). Supply one
+    // blob per distinct referenced index so a refusal turn opens against a real
+    // witness rather than the empty list (which is fail-closed rejected).
+    let max_refusal_idx = effects.iter().filter_map(|e| match e {
+        Effect::Refusal { proof_witness_index, .. } => Some(*proof_witness_index as usize),
+        _ => None,
+    }).max();
+    let mut ab_effects = effects;
+    let action = {
+        for e in ab_effects.drain(..) {
+            ab = ab.effect(e);
+        }
+        let mut action = ab.build();
+        if let Some(max_idx) = max_refusal_idx {
+            action.witness_blobs = (0..=max_idx)
+                .map(|_| WitnessBlob::new(WitnessKind::Cleartext, vec![0xABu8; 8]))
+                .collect();
+        }
+        action
+    };
     let mut builder = TurnBuilder::new(agent, nonce);
     builder.add_action(action);
     let mut turn = builder.fee(0).build();

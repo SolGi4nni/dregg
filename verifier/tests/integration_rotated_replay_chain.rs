@@ -194,6 +194,11 @@ fn cell_state_after(s_k: &CellState, effect: &Effect) -> CellState {
         nonce,
         fields,
         capability_root,
+        // The authority-residue digest (audit P0-2) is invariant across these
+        // VM-level effects (they touch balance/nonce/fields/cap_root, never the
+        // permissions/VK/lifecycle residue the digest folds), so it carries
+        // forward unchanged from the predecessor state.
+        record_digest: s_k.record_digest,
         state_commitment: BabyBear::ZERO,
         sealed_field_mask: reserved & 0xFF,
         mode_flag: reserved >> 8,

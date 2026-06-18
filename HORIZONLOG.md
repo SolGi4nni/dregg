@@ -15,6 +15,51 @@ deduped the DreggDL/sel4/snapshot landings into git history, kept live tails).
 
 The map + state lives in `docs/CIRCUIT-FUNCTIONAL-CORRECTNESS.md` (the obligation table is the resumable plan).
 
+ACTIVE (2026-06-18) — the `facetEffGate` genuine-membership closure (residual (a) F6-FACET) + adversarial
+re-review. FOUND: the cap-open authority gate `facetEffGate` (`DeployedCapOpen.lean:205`) was implemented as
+EQUALITY `mask_lo == effBit` (with `effBitGate` pinning `effBit = EFFECT_TRANSFER`) — i.e. it forced a
+SINGLE-FACET cap, byte-rejecting every honest BROAD cap (`mask_lo = 0xFFFF`). The genuine kernel predicate
+(`cell/src/facet.rs:123` `is_effect_permitted`) is bitwise membership `(effBit & mask_lo) != 0`. The equality
+gate is SOUND (equality ⟹ membership, so the apex held) but over-strict + NOT the genuine predicate ember
+demands → 8 RED `dregg-node turn_proving` tests (witness-build `InvalidWitness` + AIR `constraint #84`
+unsatisfiable). Closure (in-flight, agent aa0cca1e): replace with the genuine submask membership via
+`mask_lo` bit-decomposition (lifting the proven `capDelegNonAmpGates`/`confers_write_leaf` per-bit submask
+pattern) across Lean (`DeployedCapOpen.lean`/`CapOpenEmit.lean`) + Rust (`trace_rotated.rs from_membership_for`
++ column fill) + re-emit JSON + F4 differential + fixtures; both-polarity teeth (broad cap PROVES; bit-clear
+cap UNSAT); cap-open block widens ~59→75 cols (a localized rotation-geometry shift, the noteCreate-flag-day
+precedent). ALSO IN-FLIGHT (agent a65e0528, read-only): a critical/adversarial re-review of the whole
+soundness argument + its connection-to-deployment, hunting for SIBLINGS of this bug-class (constant/equality
+masquerading as genuine; sound-but-over-strict; carried-but-unrealizable; the Lean↔deployed realization gap) —
+ember's explicit gate before completeness. NOTE: the `turn/src/turn.rs ConsumedCapWitness::recompute_root`
+real-bug fix (`hash_fact`→`cap_node` arity-3 absorb) + the red-test-crate fixes + the exercise hold-gate
+(`RotatedKernelRefinementExerciseAuth.lean`) + spawn cap-handoff (`RotatedKernelRefinementSpawnHandoff.lean`)
+Lean strands are GREEN and HELD uncommitted — to be committed with the facetEffGate fix once the tree is green.
+
+ADVERSARIAL RE-REVIEW VERDICT (2026-06-18, agent a65e0528, the gate before completeness). The Lean apex CORE
+is CLEAN-CONFIRMED: 0 forgery-accept unsoundness; `lightclient_unfoolable_circuit_sound` carries exactly
+{StarkSound, Poseidon2/Merkle CR, logHashInjective, ClosedWitness} built from genuine per-effect `_closedLog`
+readouts (no circular carrier, no `sorry`/`native_decide`/`:= True`, transfer teeth both-polarity real). The
+CONNECTION-TO-DEPLOYMENT is NOT yet sound enough for completeness — must close first:
+  • **Finding 1 (DECISIVE, task #214)** — the deployed verifier `verify_and_commit_proof_rotated`
+    (`turn/src/executor/proof_verify.rs:196-220`) reconstructs the trace from ALL-ZERO placeholder witnesses
+    and overrides ONLY `dpis[34/35/36]`, NEVER `dpis[38]` (the record/lifecycle pin) → PI[38] reconstructed
+    as ZERO while the honest producer binds it to the real post authority-digest. So the record-pin family
+    (setPermissions/setVK/cellSeal/cellUnseal/cellDestroy/refusal/receiptArchive) is a LIVENESS WALL today
+    (honest proof-carrying turns rejected) AND the pin gives the verifier no real guarantee (it binds the
+    AFTER limb to a prover-chosen PI, not the trusted recomputed post-digest — a forgery vector if liveness
+    is naively patched). FALSIFIES the STATUS claim "running circuit IS S_live / SOUND-IN-DEPLOYED (12+
+    effects)" for that family. Fix: verifier recomputes `dpis[38]` from the trusted post-cell + a genuine
+    verifier-side forged-post-digest negative test. Blocked on the facetEffGate fixer (owns trace_rotated.rs).
+  • **Findings 2/3/4 (tasks #213/#215)** — three OVER-STRICT cap-open siblings of the facetEffGate bug:
+    (2) the equality `transferFacetGate` (`mask_lo==EFFECT_TRANSFER`) is STILL a co-present conjunct in the
+    live `capOpenConstraints` (`CapOpenEmit.lean:142`), so the membership fix is dead-lettered unless removed
+    (the fixer's DoD forces this — verify on return); (3) `authTagGate` pins Signature as a constant (proven
+    `tierGeneral` machinery unwired); (4) `effBitGate` pins transfer-constant + only `capOpenAttenuateV3` is
+    wired ⇒ cross-vat authority for delegate/grantCap/introduce/refresh/exercise/spawn never forced
+    in-circuit. All fail-CLOSED (sound, over-strict/incomplete), not forgery. Down-grade the docs/STATUS
+    "faithful authority" claim to transfer-and-Signature-only until 3/4 wire the proven-but-unwired general
+    machinery into the live registry.
+
 LANDED (green, #assert_axioms-clean): the parametric apex `lightclient_unfoolable` (CircuitSoundness.lean,
 derives ∃ kernel transition; carries StarkSound + Poseidon2SpongeCR + hrefines + WitnessDecodes); the FAITHFUL
 authority leg (two-axis `authorizedFacetB`) single-step (`RotatedKernelRefinementFacet.lean`,

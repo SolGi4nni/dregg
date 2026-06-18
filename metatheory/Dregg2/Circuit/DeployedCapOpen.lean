@@ -123,6 +123,15 @@ structure CapOpenCols where
   to THIS column (not the constant `EFFECT_TRANSFER`), so the cap-open authorizes the turn's genuine
   effect. The deployed transfer descriptor commits `EFFECT_TRANSFER` here (byte-faithful). -/
   effBit     : Nat
+  /-- **(residual (a) — GENUINE MEMBERSHIP) The 16-bit decomposition of the leaf's low mask limb.**
+  `bit i` is the boolean column carrying bit `i` of `mask_lo` (`i < MASK_BITS = 16`). The membership
+  gate `facetEffGate` is NOT an equality `mask_lo == effBit`; it is the genuine `(effBit &&& mask_lo) =
+  effBit` SUBMASK test, enforced soundly in-circuit by: booleaning each `bit i` (`maskBitBoolGate`),
+  reconstructing `mask_lo = Σ bitᵢ·2ⁱ` (`maskReconGate`), and gating the SELECTED bit (bit `n`, where
+  `effBit = 1 <<< n`) to `1` (`facetEffGate` ≡ the selected-bit clause). A BROAD honest cap
+  (`mask_lo = 0xFFFF`, all 16 facets) decomposes with bit `n` set, so it PERMITS the effect — the
+  over-strict equality gate it replaces would reject it. -/
+  bit        : Nat → Nat
 
 /-! ## §2 — the leaf-field accessors (decode the 7 leaf columns to a `CapLeaf`). -/
 
@@ -194,16 +203,122 @@ we pin `mask_lo` here and `mask_hi` in `facetHiGate`. -/
 def transferFacetGate (c : CapOpenCols) : EmittedExpr :=
   .add (.var (c.leaf 3)) (.const (-(EFFECT_TRANSFER)))
 
-/-- **`facetEffGate`** (residual (a) — the GENERAL facet binding) — pins the leaf's low mask limb to
-the turn's ACTUAL effect-bit COLUMN `effBit` (`mask_lo - effBit = 0`), NOT the constant `EFFECT_TRANSFER`.
-With `mask_hi = 0` (the `facetHiGate`) and `effBit` a nonzero single bit, this forces the decoded facet
-`maskOfLimbs mask_lo 0 = effBit`, which permits `effBit` (`effBit &&& effBit = effBit ≠ 0`) — the genuine
-in-circuit `isEffectPermitted` against the turn's effect. A cap permitting a DIFFERENT effect (mask_lo ≠
-effBit) FAILS this gate. The deployed transfer descriptor commits `effBit = EFFECT_TRANSFER`, so
-`facetEffGate` reduces to `transferFacetGate` there (byte-faithful) — see `transferFacetGate_eq_effGate`.
--/
-def facetEffGate (c : CapOpenCols) : EmittedExpr :=
-  .add (.var (c.leaf 3)) (.mul (.const (-1)) (.var c.effBit))
+/-! ### residual (a) — the GENUINE SUBMASK-MEMBERSHIP facet gate (NOT an equality).
+
+The kernel predicate is `is_effect_permitted(Some m, bit) = (bit &&& m ≠ 0)` (`facet.rs:123`) — a
+SUBMASK/membership test over the FULL `EffectMask` `m`, NOT equality. For a single effect bit `effBit =
+1 <<< n`, that is exactly "bit `n` of `m` is set". The decoded facet is `m = maskOfLimbs mask_lo mask_hi
+= mask_lo + mask_hi·65536` (the full u32 effect mask). The over-strict equality `mask_lo == effBit` it
+replaces rejects every honest BROAD cap; this membership accepts any cap whose bit `n` is set — AND it
+does NOT pin `mask_hi = 0` (a broad cap `EFFECT_ALL` has `mask_hi = 0xFFFF`, bit 1 still in `mask_lo`).
+
+We enforce the membership soundly via a 32-bit decomposition of the FULL mask `m`:
+  (1) booleanity — each `bit i` is `0` or `1` (`maskBitBoolGate`);
+  (2) recomposition — `maskOfLimbs mask_lo mask_hi = Σ_{i<32} bitᵢ·2ⁱ` (`maskReconGate`), binding the
+      bits to the committed FULL mask (both limbs);
+  (3) the SELECTED-bit gate — bit `n` is `1` (`facetEffGate` / `selectedBitGate n`), where `n =
+      log2 effBit` is the descriptor's compile-time effect index.
+Bit `n` set + the recomposition ⟹ `(2ⁿ &&& m) = 2ⁿ ≠ 0`, i.e. the genuine `isEffectPermitted`. -/
+
+/-- The width of the FULL `EffectMask` bit decomposition (a deployed `u32` — `EFFECT_ALL =
+0xFFFF_FFFF`). The decoded facet `maskOfLimbs mask_lo mask_hi = mask_lo + mask_hi·65536` is the full
+32-bit mask, so the decomposition spans all 32 bits: any deployed effect-kind bit `1 <<< n` (`n < 32`,
+up to `EFFECT_ATTENUATE_CAPABILITY = 1 <<< 23`) is selectable, AND a broad cap (`EFFECT_ALL`, mask_hi =
+0xFFFF) decomposes fully. The Rust twin is `CAP_OPEN_MASK_BITS`. -/
+def MASK_BITS : Nat := 32
+
+/-- The bit-weighted reconstruction `Σ_{i<W} bitᵢ·2ⁱ` of the full mask from its bit columns
+(an `EmittedExpr` over the `bit` columns). The `maskReconGate` pins `maskOfLimbs mask_lo mask_hi` to this. -/
+def reconMaskExpr (c : CapOpenCols) : Nat → EmittedExpr
+  | 0     => .const 0
+  | n + 1 => .add (reconMaskExpr c n) (.mul (.var (c.bit n)) (.const ((2 ^ n : Nat) : ℤ)))
+
+/-- The Nat reconstruction `Σ_{i<W} bᵢ·2ⁱ` (the value the `EmittedExpr` reconstruction evaluates to,
+cast to `ℤ`, when the bit columns are boolean). -/
+def reconMaskN (b : Nat → Nat) : Nat → Nat
+  | 0     => 0
+  | n + 1 => reconMaskN b n + b n * 2 ^ n
+
+/-- A boolean reconstruction over `[0,W)` is `< 2^W` (each bit contributes at most its weight). -/
+theorem reconMaskN_lt (b : Nat → Nat) (W : Nat) (hb : ∀ i, i < W → b i = 0 ∨ b i = 1) :
+    reconMaskN b W < 2 ^ W := by
+  induction W with
+  | zero => simp [reconMaskN]
+  | succ w ih =>
+    have ihw := ih (fun i hi => hb i (Nat.lt_succ_of_lt hi))
+    unfold reconMaskN
+    have hbw : b w ≤ 1 := by rcases hb w (Nat.lt_succ_self w) with h | h <;> omega
+    have hle : b w * 2 ^ w ≤ 2 ^ w := by
+      calc b w * 2 ^ w ≤ 1 * 2 ^ w := Nat.mul_le_mul_right _ hbw
+        _ = 2 ^ w := by ring
+    have hpow : 2 ^ (w + 1) = 2 ^ w + 2 ^ w := by rw [pow_succ]; ring
+    omega
+
+/-- **`reconMaskN_testBit`** — bit `k` of the boolean reconstruction over `[0,W)` is exactly `b k`
+(`k < W`). The load-bearing digit lemma: the recomposition `mask_lo = Σ bᵢ2ⁱ` makes the committed
+mask's bit `k` READABLE as the carrier `b k`. -/
+theorem reconMaskN_testBit (b : Nat → Nat) (W : Nat) (hb : ∀ i, i < W → b i = 0 ∨ b i = 1)
+    (k : Nat) (hk : k < W) : (reconMaskN b W).testBit k = (b k == 1) := by
+  induction W with
+  | zero => omega
+  | succ w ih =>
+    have ihw := ih (fun i hi => hb i (Nat.lt_succ_of_lt hi))
+    rcases Nat.lt_succ_iff_lt_or_eq.mp hk with hlt | heq
+    · unfold reconMaskN
+      rw [show reconMaskN b w + b w * 2 ^ w = 2 ^ w * b w + reconMaskN b w by ring]
+      rw [Nat.testBit_two_pow_mul_add (b w)
+        (reconMaskN_lt b w (fun i hi => hb i (Nat.lt_succ_of_lt hi))) k]
+      simp only [hlt, if_true]; exact ihw hlt
+    · subst heq
+      unfold reconMaskN
+      rw [show reconMaskN b k + b k * 2 ^ k = 2 ^ k * b k + reconMaskN b k by ring]
+      rw [Nat.testBit_two_pow_mul_add (b k)
+        (reconMaskN_lt b k (fun i hi => hb i (Nat.lt_succ_of_lt hi))) k]
+      simp only [Nat.lt_irrefl, if_false, Nat.sub_self]
+      rcases hb k (Nat.lt_succ_self k) with h0 | h1
+      · rw [h0]; decide
+      · rw [h1]; decide
+
+/-- The `EmittedExpr` reconstruction evaluates to the Nat reconstruction (cast to `ℤ`) of the bit
+columns' `toNat`, when those columns are boolean over `[0,W)`. -/
+theorem reconMaskExpr_eval (c : CapOpenCols) (env : VmRowEnv) (W : Nat)
+    (hbit : ∀ i, i < W → env.loc (c.bit i) = 0 ∨ env.loc (c.bit i) = 1) :
+    (reconMaskExpr c W).eval env.loc
+      = ((reconMaskN (fun i => (env.loc (c.bit i)).toNat) W : Nat) : ℤ) := by
+  induction W with
+  | zero => simp [reconMaskExpr, reconMaskN, EmittedExpr.eval]
+  | succ w ih =>
+    have ihw := ih (fun i hi => hbit i (Nat.lt_succ_of_lt hi))
+    simp only [reconMaskExpr, reconMaskN, EmittedExpr.eval, ihw]
+    push_cast
+    rcases hbit w (Nat.lt_succ_self w) with h0 | h1
+    · rw [h0]; simp
+    · rw [h1]; simp
+
+/-- **`maskBitBoolGate c i`** — bit `i` of the full mask is boolean: `bitᵢ·(bitᵢ − 1) = 0`. -/
+def maskBitBoolGate (c : CapOpenCols) (i : Nat) : EmittedExpr :=
+  .mul (.var (c.bit i)) (.add (.var (c.bit i)) (.const (-1)))
+
+/-- **`maskReconGate c`** — the recomposition gate: `maskOfLimbs mask_lo mask_hi − Σ_{i<32} bitᵢ·2ⁱ =
+0`, i.e. `(mask_lo + mask_hi·65536) − Σ bitᵢ·2ⁱ = 0`, binding the 32-bit decomposition to the committed
+FULL `EffectMask` (both limbs). No `mask_hi = 0` pin is needed — the decode is the genuine full mask. -/
+def maskReconGate (c : CapOpenCols) : EmittedExpr :=
+  .add (.add (.var (c.leaf 3)) (.mul (.const 65536) (.var (c.leaf 4))))
+       (.mul (.const (-1)) (reconMaskExpr c MASK_BITS))
+
+/-- **`facetEffGate`** (residual (a) — the GENUINE membership SELECTED-bit gate, parametric in the
+effect index). For a single effect bit `effBit = 1 <<< n`, the kernel predicate `(effBit &&& m) ≠ 0`
+(over the full mask `m = maskOfLimbs mask_lo mask_hi`) is exactly "bit `n` of `m` is set".
+`selectedBitGate c n` pins `bitₙ − 1 = 0` (bit `n` is `1`). Together with `maskBitBoolGate`/`maskReconGate`
+(the bits decode the committed FULL mask), this yields the genuine in-circuit `isEffectPermitted
+(facetOfLeaf leaf) (1<<<n) = true` — and a cap whose bit `n` is CLEAR makes the gate UNSAT
+(`facetEffGate_rejects_wrong_facet`). This REPLACES the over-strict equality `mask_lo == effBit` (which
+rejected every honest BROAD cap) AND the `mask_hi = 0` pin (which rejected EFFECT_ALL caps). -/
+def selectedBitGate (c : CapOpenCols) (n : Nat) : EmittedExpr :=
+  .add (.var (c.bit n)) (.const (-1))
+
+/-- The transfer instance: `facetEffGate` selects bit `1` (`EFFECT_TRANSFER = 1 <<< 1`). -/
+def facetEffGate (c : CapOpenCols) : EmittedExpr := selectedBitGate c 1
 
 /-- **`effBitGate`** (residual (a)) — pins the committed effect-bit column `effBit` to the constant
 `EFFECT_TRANSFER` FOR THE TRANSFER cap-open descriptor (so the prover cannot put an arbitrary effect bit
@@ -250,8 +365,12 @@ structure Satisfied (sponge : List ℤ → ℤ) (tf : TraceFamily) (c : CapOpenC
   /-- **(residual (a))** The committed effect-bit column `effBit` is `EFFECT_TRANSFER` (the transfer
   descriptor pins its effect; a different effect's descriptor pins its own bit). -/
   effBitTransfer : (effBitGate c).eval env.loc = 0
-  /-- **(residual (a))** The GENERAL facet binding holds: `mask_lo = effBit` (`facetEffGate`) — the
-  leaf's facet is bound to the committed effect-bit COLUMN, not a literal constant. -/
+  /-- **(residual (a) — GENUINE MEMBERSHIP)** Each `mask_lo` bit column is boolean. -/
+  maskBitsBool : ∀ i < MASK_BITS, (maskBitBoolGate c i).eval env.loc = 0
+  /-- **(residual (a) — GENUINE MEMBERSHIP)** The 16-bit decomposition reconstructs `mask_lo`. -/
+  maskRecon : (maskReconGate c).eval env.loc = 0
+  /-- **(residual (a) — GENUINE MEMBERSHIP)** The SELECTED bit (`EFFECT_TRANSFER`'s bit 1) is set —
+  the genuine `(EFFECT_TRANSFER &&& mask_lo) ≠ 0` submask, NOT the over-strict equality. -/
   facetEffBound : (facetEffGate c).eval env.loc = 0
 
 /-! ## §6 — soundness: the leaf-digest column carries the genuine `capLeafDigest`.
@@ -482,59 +601,80 @@ if `facetEffGate` holds (`mask_lo = env.effBit`), `facetHiGate` holds (`mask_hi 
 leaf whose `mask_lo` is any OTHER value fails the gate (the wrong-facet rejection). This is the genuine
 facet generalization: the binding is against a committed column, not a constant. -/
 
-/-- **`facetEffGate_permits` (residual (a) — the in-circuit general `isEffectPermitted`).** If the
-general facet gate holds (`mask_lo = env.effBit`, `facetEffGate.eval = 0`), the high limb is zero
-(`facetHiGate.eval = 0`), and the committed effect bit is a genuine single bit `env.effBit = 1 <<< n`
-(`n < 32`, a deployed `EffectMask` bit), then the leaf's DECODED facet permits that effect bit:
-`isEffectPermitted (facetOfLeaf leaf) (1 <<< n) = true`. The cap's facet equals the turn's effect — the
-genuine in-circuit `facet.rs::is_effect_permitted`, against the committed effect-bit column, NOT the
-constant `EFFECT_TRANSFER`. -/
-theorem facetEffGate_permits (sponge : List ℤ → ℤ) (tf : TraceFamily) (c : CapOpenCols)
-    (env : VmRowEnv) (n : Nat) (hn : n < 32)
-    (hbit : env.loc c.effBit = ((1 <<< n : Nat) : ℤ))
-    (hfacet : (facetEffGate c).eval env.loc = 0)
-    (hhi : (facetHiGate c).eval env.loc = 0) :
+/-- **`facetEffGate_permits` (residual (a) — the in-circuit general `isEffectPermitted`, GENUINE
+SUBMASK over the FULL mask).** Given the genuine membership data — each mask bit column boolean
+(`hboolGate`), the 32-bit decomposition reconstructing the FULL mask `maskOfLimbs mask_lo mask_hi`
+(`hrecon`), and the SELECTED bit `n` set (`hsel`, `n < 32`) — the leaf's DECODED facet PERMITS the
+effect bit `1 <<< n`: `isEffectPermitted (facetOfLeaf leaf) (1 <<< n) = true`. This is the genuine
+`(2ⁿ &&& m) ≠ 0` SUBMASK membership over the full mask `m`: bit `n` of the committed full mask is set, so
+a BROAD honest cap (`EFFECT_ALL`, mask_hi = 0xFFFF) PERMITS the effect — NO `mask_hi = 0` pin is required
+(the decode is the genuine full mask), and the over-strict equality gate this replaces would reject it. -/
+theorem facetEffGate_permits (c : CapOpenCols) (env : VmRowEnv) (n : Nat) (hn : n < MASK_BITS)
+    (hboolGate : ∀ i, i < MASK_BITS → (maskBitBoolGate c i).eval env.loc = 0)
+    (hrecon : (maskReconGate c).eval env.loc = 0)
+    (hsel : env.loc (c.bit n) = 1) :
     isEffectPermitted (facetOfLeaf (leafOf c env)) (1 <<< n) = true := by
-  unfold facetEffGate at hfacet
-  unfold facetHiGate at hhi
-  simp only [EmittedExpr.eval] at hfacet hhi
-  -- mask_lo = effBit = 1 <<< n; mask_hi = 0.
-  have hmlo : (leafOf c env).mask_lo = ((1 <<< n : Nat) : ℤ) := by
-    simp only [leafOf]; rw [← hbit]; linarith
-  have hmhi : (leafOf c env).mask_hi = 0 := by simp only [leafOf]; exact hhi
-  -- the decoded facet is `some (1<<<n)`.
-  have hdec : facetOfLeaf (leafOf c env) = some (1 <<< n) := by
-    unfold facetOfLeaf maskOfLimbs
-    rw [hmlo, hmhi]
-    congr 1
+  -- each bit column is boolean, from the per-bit boolean gate `bitᵢ·(bitᵢ − 1) = 0`.
+  have hbool : ∀ i, i < MASK_BITS → env.loc (c.bit i) = 0 ∨ env.loc (c.bit i) = 1 := by
+    intro i hi
+    have h := hboolGate i hi
+    unfold maskBitBoolGate at h
+    simp only [EmittedExpr.eval] at h
+    rcases mul_eq_zero.mp h with h0 | h1
+    · exact Or.inl h0
+    · exact Or.inr (by linarith)
+  -- the bit decomposition recomposes the FULL mask `maskOfLimbs mask_lo mask_hi` (as a Nat, cast to ℤ).
+  set bN : Nat → Nat := fun i => (env.loc (c.bit i)).toNat with hbN
+  have hbNbool : ∀ i, i < MASK_BITS → bN i = 0 ∨ bN i = 1 := by
+    intro i hi
+    rcases hbool i hi with h0 | h1
+    · left; simp [hbN, h0]
+    · right; simp [hbN, h1]
+  -- the full mask is nonneg (it IS the Nat reconstruction cast to ℤ), so its `.toNat` round-trips.
+  have hmask : maskOfLimbs (leafOf c env).mask_lo (leafOf c env).mask_hi
+      = ((reconMaskN bN MASK_BITS : Nat) : ℤ) := by
+    have hr := hrecon
+    unfold maskReconGate at hr
+    simp only [EmittedExpr.eval] at hr
+    rw [reconMaskExpr_eval c env MASK_BITS hbool] at hr
+    unfold maskOfLimbs
+    simp only [leafOf]; linarith
+  -- the decoded facet is `some (reconMaskN bN 32)` (the full mask's `.toNat`).
+  have hdec : facetOfLeaf (leafOf c env) = some (reconMaskN bN MASK_BITS) := by
+    unfold facetOfLeaf
+    rw [hmask]; simp
   rw [hdec]
-  -- 1<<<n = 2^n > 0, so the single bit is nonzero.
-  have hpos : 0 < (1 <<< n : Nat) := by
-    rw [Nat.shiftLeft_eq, Nat.one_mul]; exact Nat.two_pow_pos n
-  have hm0 : (1 <<< n : Nat) ≠ 0 := by omega
-  have hne : (1 <<< n : Nat) &&& (1 <<< n : Nat) ≠ 0 := by
-    rw [Nat.and_self]; exact hm0
-  -- discharge `isEffectPermitted (some (1<<<n)) (1<<<n)`: the `some m` branch with m ≠ 0.
+  -- bit n of the reconstruction is set.
+  have hbn : bN n = 1 := by simp [hbN, hsel]
+  have htb : (reconMaskN bN MASK_BITS).testBit n = true := by
+    rw [reconMaskN_testBit bN MASK_BITS hbNbool n hn, hbn]; decide
+  -- 1<<<n = 2^n; the genuine submask `2^n &&& mask_lo ≠ 0`.
+  have hpow : (1 <<< n : Nat) = 2 ^ n := by rw [Nat.shiftLeft_eq, Nat.one_mul]
+  have hand : (1 <<< n) &&& (reconMaskN bN MASK_BITS) ≠ 0 := by
+    rw [hpow]
+    intro hz
+    have := Nat.testBit_and (2 ^ n) (reconMaskN bN MASK_BITS) n
+    rw [hz] at this
+    simp [Nat.testBit_two_pow_self, htb] at this
+  have hm0 : reconMaskN bN MASK_BITS ≠ 0 := by
+    intro hz; rw [hz] at htb; simp at htb
+  -- discharge `isEffectPermitted (some m) (1<<<n)`: the `some m` branch with m ≠ 0.
   unfold isEffectPermitted
-  cases hm : (1 <<< n : Nat) with
+  cases hm : reconMaskN bN MASK_BITS with
   | zero => exact absurd hm hm0
-  | succ k =>
-    simp only [hm] at hne ⊢
-    simp [hne]
+  | succ k => simp only [hm] at hand ⊢; simp [hand]
 
-/-- **`facetEffGate_rejects_wrong_facet` (residual (a) — the WRONG-FACET tooth, witness FALSE).** If the
-committed effect bit `env.effBit` is some value `v` but the leaf's `mask_lo` is a DIFFERENT value `w ≠ v`
-(a cap permitting a different effect), then the general facet gate `facetEffGate` does NOT hold — the
-in-circuit binding REJECTS a cap whose facet does not match the turn's effect. This is the bite the
-constant `transferFacetGate` could not express (it only ever checked `EFFECT_TRANSFER`). -/
-theorem facetEffGate_rejects_wrong_facet (c : CapOpenCols) (env : VmRowEnv)
-    (hne : env.loc (c.leaf 3) ≠ env.loc c.effBit) :
-    (facetEffGate c).eval env.loc ≠ 0 := by
-  unfold facetEffGate
-  simp only [EmittedExpr.eval]
-  intro h
-  apply hne
-  linarith
+/-- **`facetEffGate_rejects_wrong_facet` (residual (a) — the WRONG-FACET tooth, witness FALSE, GENUINE
+SUBMASK).** If the cap's mask bit `n` is CLEAR (the carrier `bitₙ = 0`, i.e. the cap does NOT permit the
+effect-kind `1 <<< n`), then the SELECTED-bit gate `selectedBitGate c n` does NOT hold (`bitₙ − 1 = −1 ≠
+0`) — the in-circuit binding REJECTS a cap whose facet does not carry the turn's effect bit. This is the
+genuine membership bite: not "mask_lo ≠ effBit" but "the selected facet bit is unset". -/
+theorem facetEffGate_rejects_wrong_facet (c : CapOpenCols) (env : VmRowEnv) (n : Nat)
+    (hclear : env.loc (c.bit n) = 0) :
+    (selectedBitGate c n).eval env.loc ≠ 0 := by
+  unfold selectedBitGate
+  simp only [EmittedExpr.eval, hclear]
+  intro h; linarith
 
 /-- **`capOpen_confers_via_effGate` (residual (a) — the LIVE general facet, transfer instance).** A
 `Satisfied` row confers `EFFECT_TRANSFER` via the GENERAL facet path: the `effBitGate` pins the committed
@@ -546,16 +686,14 @@ theorem capOpen_confers_via_effGate (sponge : List ℤ → ℤ) (tf : TraceFamil
     (env : VmRowEnv) (vkOfTag : ℤ → Nat) (provided : AuthProvided) (hsat : Satisfied sponge tf c env)
     (htier : (tierOfTag vkOfTag (leafOf c env).auth_tag).isSatisfiedBy provided = true) :
     confersLeaf vkOfTag provided EFFECT_TRANSFER (leafOf c env) := by
-  -- effBit = EFFECT_TRANSFER = 1 <<< 1, pinned by `effBitGate`.
-  have heff : env.loc c.effBit = ((1 <<< 1 : Nat) : ℤ) := by
-    have h := hsat.effBitTransfer
-    unfold effBitGate at h
+  -- the SELECTED bit (transfer = bit 1) is set, from `facetEffGate = selectedBitGate 1`.
+  have hsel : env.loc (c.bit 1) = 1 := by
+    have h := hsat.facetEffBound
+    unfold facetEffGate selectedBitGate at h
     simp only [EmittedExpr.eval] at h
-    show env.loc c.effBit = ((1 <<< 1 : Nat) : ℤ)
-    have : (EFFECT_TRANSFER : ℤ) = ((1 <<< 1 : Nat) : ℤ) := by unfold EFFECT_TRANSFER; norm_num
-    rw [← this]; linarith
+    linarith
   have hperm : isEffectPermitted (facetOfLeaf (leafOf c env)) (1 <<< 1) = true :=
-    facetEffGate_permits sponge tf c env 1 (by norm_num) heff hsat.facetEffBound hsat.facetHiZero
+    facetEffGate_permits c env 1 (by decide) hsat.maskBitsBool hsat.maskRecon hsel
   have hbit : (1 <<< 1 : Nat) = EFFECT_TRANSFER := by unfold EFFECT_TRANSFER; norm_num
   rw [hbit] at hperm
   exact ⟨hperm, htier⟩
@@ -801,12 +939,16 @@ structure SatisfiedEff (sponge : List ℤ → ℤ) (tf : TraceFamily) (c : CapOp
   core : MembershipCore sponge tf c env
   /-- The leaf's target equals the turn's src (shared). -/
   targetBound : (targetBindGate c).eval env.loc = 0
-  /-- The leaf's `mask_hi` is `0` (so the decoded facet is exactly `mask_lo`). -/
-  facetHiZero : (facetHiGate c).eval env.loc = 0
   /-- **(residual (a))** The committed effect-bit column `effBit` is THIS effect's bit `1 <<< n`. -/
   effBitPinned : (effBitGateFor c ((1 <<< n : Nat) : ℤ)).eval env.loc = 0
-  /-- **(residual (a))** The GENERAL facet binding holds: `mask_lo = effBit` (`facetEffGate`). -/
-  facetEffBound : (facetEffGate c).eval env.loc = 0
+  /-- **(residual (a) — GENUINE MEMBERSHIP)** Each full-mask bit column is boolean. -/
+  maskBitsBool : ∀ i < MASK_BITS, (maskBitBoolGate c i).eval env.loc = 0
+  /-- **(residual (a) — GENUINE MEMBERSHIP)** The 32-bit decomposition reconstructs the FULL mask
+  `maskOfLimbs mask_lo mask_hi` (NO `mask_hi = 0` pin — a broad `EFFECT_ALL` cap decomposes fully). -/
+  maskRecon : (maskReconGate c).eval env.loc = 0
+  /-- **(residual (a) — GENUINE MEMBERSHIP)** The SELECTED bit `n` (THIS effect's bit) is set — the
+  genuine `(1<<<n &&& mask_lo) ≠ 0` submask, NOT the over-strict equality `mask_lo == 1<<<n`. -/
+  facetEffBound : (selectedBitGate c n).eval env.loc = 0
 
 /-- A `SatisfiedEff` row witnesses `MembersAt S cap_root leaf` (the shared Merkle fold over the core). -/
 theorem capOpenEff_membership {State : Type} (S : CapHashScheme State)
@@ -831,17 +973,17 @@ off the committed `auth_tag` (NOT a constant): the `effBitPinned` pins `effBit =
 binds `mask_lo = effBit`, and `facetEffGate_permits` yields the genuine in-circuit `isEffectPermitted`
 against `1 <<< n` — the facet must permit THAT effect-kind. The tier rides the decoded `auth_tag`. -/
 theorem capOpenEff_confers (sponge : List ℤ → ℤ) (tf : TraceFamily) (c : CapOpenCols)
-    (env : VmRowEnv) (n : Nat) (hn : n < 32) (vkOfTag : ℤ → Nat) (provided : AuthProvided)
+    (env : VmRowEnv) (n : Nat) (hn : n < MASK_BITS) (vkOfTag : ℤ → Nat) (provided : AuthProvided)
     (hsat : SatisfiedEff sponge tf c env n)
     (htier : (tierOfTag vkOfTag (leafOf c env).auth_tag).isSatisfiedBy provided = true) :
     confersLeaf vkOfTag provided (1 <<< n) (leafOf c env) := by
-  have hbit : env.loc c.effBit = ((1 <<< n : Nat) : ℤ) := by
-    have h := hsat.effBitPinned
-    unfold effBitGateFor at h
+  have hsel : env.loc (c.bit n) = 1 := by
+    have h := hsat.facetEffBound
+    unfold selectedBitGate at h
     simp only [EmittedExpr.eval] at h
     linarith
   have hperm : isEffectPermitted (facetOfLeaf (leafOf c env)) (1 <<< n) = true :=
-    facetEffGate_permits sponge tf c env n hn hbit hsat.facetEffBound hsat.facetHiZero
+    facetEffGate_permits c env n hn hsat.maskBitsBool hsat.maskRecon hsel
   exact ⟨hperm, htier⟩
 
 /-- **`capOpenEff_authorizes` — THE EFFECT-GENERAL AUTHORITY LEG (fan-out keystone).** A `SatisfiedEff … n`
@@ -849,8 +991,8 @@ row whose opened leaf IS the faithfulness contract's `(actor ⇒ src)` edge disc
 `authorizedFacetEffB … (1 <<< n)` for the turn — over the effect-kind `1 <<< n` (NOT transfer), under any
 `provided` satisfying the committed tier. THE bridge each fan-out effect's cap-open descriptor consumes. -/
 theorem capOpenEff_authorizes {State : Type} (S : CapHashScheme State)
-    (tf : TraceFamily) (c : CapOpenCols) (env : VmRowEnv) (n : Nat) (hn : n < 32) (vkOfTag : ℤ → Nat)
-    (provided : AuthProvided)
+    (tf : TraceFamily) (c : CapOpenCols) (env : VmRowEnv) (n : Nat) (hn : n < MASK_BITS)
+    (vkOfTag : ℤ → Nat) (provided : AuthProvided)
     (hChip : ChipTableSound S.chipAbsorb (tf .poseidon2))
     (hsat : SatisfiedEff S.chipAbsorb tf c env n)
     (caps : FacetCaps) (leafAt : Label → Label → CapLeaf)
@@ -872,23 +1014,19 @@ theorem capOpenEff_authorizes {State : Type} (S : CapHashScheme State)
   exact ⟨deployedCapOpen_implies_authorizedEffB S vkOfTag provided (1 <<< n) caps
     (env.loc c.capRoot) leafAt hfaith actor src dst amt hmem hconf, htgt⟩
 
-/-- **`satisfiedEff_rejects_wrong_facet` (fan-out NEGATIVE — the wrong-facet tooth bites, witness FALSE).**
-A `SatisfiedEff … n` row pins `effBit = 1 <<< n`; a leaf whose `mask_lo` is a DIFFERENT effect-kind value
-`w ≠ 1 <<< n` (a cap permitting some OTHER effect) CANNOT satisfy the row — the general `facetEffGate` does
-not hold. The cap-open for effect-kind `n` authorizes THAT effect-kind ONLY; a wrong-facet cap is rejected
-in-circuit. -/
+/-- **`satisfiedEff_rejects_wrong_facet` (fan-out NEGATIVE — the wrong-facet tooth bites, witness FALSE,
+GENUINE SUBMASK).** A `SatisfiedEff … n` row requires the SELECTED bit `n` set; a leaf whose mask bit `n`
+is CLEAR (the carrier `bitₙ = 0`, i.e. the cap does NOT permit the effect-kind `1 <<< n`) CANNOT satisfy
+the row — the SELECTED-bit gate `selectedBitGate c n` does not hold. The cap-open for effect-kind `n`
+authorizes a cap that genuinely CARRIES that bit; a cap whose facet lacks it is rejected in-circuit. -/
 theorem satisfiedEff_rejects_wrong_facet (sponge : List ℤ → ℤ) (tf : TraceFamily) (c : CapOpenCols)
-    (env : VmRowEnv) (n : Nat) (hbad : env.loc (c.leaf 3) ≠ ((1 <<< n : Nat) : ℤ)) :
+    (env : VmRowEnv) (n : Nat) (hclear : env.loc (c.bit n) = 0) :
     ¬ SatisfiedEff sponge tf c env n := by
   intro hsat
-  have hbit : env.loc c.effBit = ((1 <<< n : Nat) : ℤ) := by
-    have h := hsat.effBitPinned; unfold effBitGateFor at h
-    simp only [EmittedExpr.eval] at h; linarith
   have hfacet := hsat.facetEffBound
-  unfold facetEffGate at hfacet
-  simp only [EmittedExpr.eval] at hfacet
-  apply hbad
-  rw [← hbit]; linarith
+  unfold selectedBitGate at hfacet
+  simp only [EmittedExpr.eval, hclear] at hfacet
+  linarith
 
 /-! ## §11 — discriminating teeth (the gates are real). -/
 

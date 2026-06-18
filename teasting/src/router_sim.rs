@@ -5,7 +5,8 @@
 //! and proposing governance amendments.
 
 use dregg_wire::dfa_router::{
-    GovernanceProof, GovernedRouter, RouteTarget, RouteUpdateError, compile_routes,
+    GovernanceProof, GovernedRouter, RouteTarget, RouteUpdateError, cell_target, compile_routes,
+    federation_target,
 };
 
 /// A simulated governed router attached to a federation.

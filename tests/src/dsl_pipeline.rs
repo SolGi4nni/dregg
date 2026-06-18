@@ -13,9 +13,17 @@
 //!
 //! Also tests: wrong proof rejected, wrong VK rejected.
 
+use dregg_cell::{Cell, CellId, Ledger};
 use dregg_circuit::field::{BABYBEAR_P, BabyBear};
+use dregg_circuit::stark::StarkAir;
 use dregg_dsl_runtime::circuit::{
     BoundaryDef, BoundaryRow, CircuitDescriptor, ColumnDef, ColumnKind, ConstraintExpr, PolyTerm,
+};
+use dregg_dsl_runtime::{
+    CellProgram, DslCircuit, ProgramRegistry, prove_dsl_plonky3, verify_dsl_plonky3,
+};
+use dregg_turn::{
+    ActionBuilder, ComputronCosts, DelegationMode, Effect, TurnBuilder, TurnExecutor, TurnResult,
 };
 
 // ============================================================================
@@ -519,7 +527,7 @@ fn test_dsl_pipeline_full_proof_carrying_turn() {
         proof_bytes.len()
     );
 
-    // --- Step 7: Build a Turn with execution_proof ---
+    // --- Step 7: Build a Turn carrying the DSL proof as `execution_proof` ---
     turn.execution_proof = Some(proof_bytes.clone());
     turn.execution_proof_cell = Some(sovereign_cell_id);
     turn.execution_proof_new_commitment = Some(new_commitment);
@@ -527,29 +535,38 @@ fn test_dsl_pipeline_full_proof_carrying_turn() {
     // --- Step 8: Execute the turn ---
     let result = executor.execute(&turn, &mut ledger);
 
-    // --- Step 9: Assert success ---
+    // --- Step 9: The execution_proof path CUT OVER to the rotated R=24
+    // `Ir2BatchProof` (the C1/C7 cutover — `turn/src/executor/proof_verify.rs`
+    // postcard-deserializes an `Ir2BatchProof`, no longer a raw
+    // `prove_dsl_plonky3` blob). A bare DSL proof is therefore NO LONGER a
+    // valid turn `execution_proof`: the rotated deserializer fails closed. The
+    // DSL prover/verifier itself stays sound — its roundtrip is asserted by the
+    // local `verify_dsl_plonky3` above; the live proof-carrying ACCEPTANCE path
+    // is exercised end-to-end in `sovereign_proof.rs` (which mints a real
+    // rotated proof). This test pins the cutover boundary: a DSL proof presented
+    // as an execution_proof is rejected, and the sovereign commitment is NOT
+    // advanced.
     match &result {
-        TurnResult::Committed {
-            computrons_used, ..
-        } => {
-            assert_eq!(
-                *computrons_used, 0,
-                "Proof-carrying turns use zero computrons"
+        TurnResult::Rejected { reason, .. } => {
+            let reason_str = format!("{reason:?}");
+            assert!(
+                reason_str.contains("InvalidExecutionProof"),
+                "a non-rotated DSL proof must fail closed on the rotated \
+                 execution_proof deserializer, got: {reason_str}"
             );
         }
-        TurnResult::Rejected { reason, .. } => {
-            panic!("Turn was rejected: {:?}", reason);
-        }
-        other => panic!("Unexpected result: {:?}", other),
+        other => panic!(
+            "a DSL proof is not a rotated execution_proof and must be rejected, got: {other:?}"
+        ),
     }
 
-    // Verify the sovereign commitment was updated.
+    // The sovereign commitment must NOT have advanced on the rejected proof.
     let updated = ledger
         .get_sovereign_registration(&sovereign_cell_id)
         .unwrap();
     assert_eq!(
-        updated.commitment, new_commitment,
-        "Commitment should be updated to new_commitment after proof-carrying turn"
+        updated.commitment, chosen_old_commitment,
+        "a rejected execution_proof must leave the sovereign commitment unchanged"
     );
 }
 
@@ -673,119 +690,14 @@ fn test_dsl_pipeline_wrong_proof_rejected() {
 }
 
 // ============================================================================
-// Test 3: Wrong VK rejected
+// (RETIRED) Test 3: Wrong VK rejected on the DSL-as-execution_proof path.
+//
+// The executor's `execution_proof` path cut over to the rotated R=24
+// `Ir2BatchProof` (C1/C7), so a `prove_dsl_plonky3` blob never reaches the
+// VK check — it fails closed at the rotated postcard deserializer first (see
+// the cutover boundary now pinned in Test 1). The wrong-VK rejection contract
+// it guarded is live-tested on the rotated path by `sovereign_proof.rs`, and
+// "bad proof rejected + commitment unchanged" by Test 2 above; this test's
+// specific reason-assertion is unreachable, so it is removed rather than
+// weakened.
 // ============================================================================
-
-#[test]
-fn test_dsl_pipeline_wrong_vk_rejected() {
-    // Deploy a program, but register the cell with a DIFFERENT VK hash.
-    let mut deploy_descriptor = temporal_predicate_descriptor();
-    deploy_descriptor.public_input_count = 32;
-
-    let program = CellProgram::new(deploy_descriptor.clone(), 1);
-    let _real_vk_hash = program.vk_hash;
-
-    let mut registry = ProgramRegistry::new();
-    registry.deploy(program.clone()).unwrap();
-
-    let mut executor = TurnExecutor::new(ComputronCosts::zero());
-    executor.set_program_registry(registry);
-
-    let agent_pub_key = *blake3::hash(b"dsl-pipeline-agent-wrong-vk").as_bytes();
-    let token_id = *blake3::hash(b"dsl-pipeline-domain-wrong-vk").as_bytes();
-    let agent_cell = Cell::with_balance(agent_pub_key, token_id, 100_000);
-    let agent_id = agent_cell.id();
-
-    let mut ledger = Ledger::new();
-    ledger.insert_cell(agent_cell).unwrap();
-
-    let sovereign_pub_key = *blake3::hash(b"dsl-pipeline-sov-wrong-vk").as_bytes();
-    let sovereign_token_id = *blake3::hash(b"dsl-pipeline-sov-token-wrong-vk").as_bytes();
-    let sovereign_cell_id = CellId::derive_raw(&sovereign_pub_key, &sovereign_token_id);
-
-    let padded_len = 4u32;
-    let mut old_commitment = [0u8; 32];
-    old_commitment[0..4].copy_from_slice(&padded_len.to_le_bytes());
-    old_commitment[4..].copy_from_slice(&blake3::hash(b"wrong-vk-old-rest").as_bytes()[..28]);
-
-    // Register with a WRONG VK hash (not deployed in registry).
-    let wrong_vk_hash = *blake3::hash(b"this-vk-does-not-exist").as_bytes();
-    ledger
-        .register_sovereign_cell_with_vk(
-            sovereign_cell_id,
-            old_commitment,
-            0,
-            1000,
-            Some(wrong_vk_hash),
-        )
-        .unwrap();
-
-    let new_commitment = *blake3::hash(b"wrong-vk-new-state").as_bytes();
-
-    // Build turn.
-    let mut turn_builder = TurnBuilder::new(agent_id, 0);
-    turn_builder.set_fee(0);
-    {
-        let action =
-            ActionBuilder::new_unchecked_for_tests(sovereign_cell_id, "temporal_check", agent_id)
-                .delegation(DelegationMode::None)
-                .effect(Effect::SetField {
-                    cell: sovereign_cell_id,
-                    index: 0,
-                    value: new_commitment,
-                })
-                .build();
-        turn_builder.add_action(action);
-    }
-    let mut turn = turn_builder.build();
-
-    let effects_hash = compute_effects_hash(&turn);
-    let cell_id_hash = *blake3::hash(sovereign_cell_id.as_bytes()).as_bytes();
-
-    let mut full_pi: Vec<BabyBear> = Vec::with_capacity(32);
-    full_pi.extend(bytes32_to_babybear(&old_commitment));
-    full_pi.extend(bytes32_to_babybear(&new_commitment));
-    full_pi.extend(bytes32_to_babybear(&effects_hash));
-    full_pi.extend(bytes32_to_babybear(&cell_id_hash));
-
-    // Generate a valid proof (using the real circuit).
-    let values = vec![100u32, 100, 100];
-    let threshold = 50u32;
-    let (trace, _) = generate_temporal_trace(&values, threshold);
-
-    let circuit = DslCircuit::new(deploy_descriptor);
-    let proof_bytes =
-        prove_dsl_plonky3(&circuit.descriptor, &trace, &full_pi).expect("prove_dsl_plonky3 failed");
-
-    turn.execution_proof = Some(proof_bytes);
-    turn.execution_proof_cell = Some(sovereign_cell_id);
-    turn.execution_proof_new_commitment = Some(new_commitment);
-
-    let result = executor.execute(&turn, &mut ledger);
-
-    match result {
-        TurnResult::Rejected { reason, .. } => {
-            let reason_str = format!("{:?}", reason);
-            assert!(
-                reason_str.contains("no matching program")
-                    || reason_str.contains("verification_key_hash")
-                    || reason_str.contains("ProofVerificationFailed"),
-                "Expected VK-not-found rejection, got: {}",
-                reason_str
-            );
-        }
-        TurnResult::Committed { .. } => {
-            panic!("Turn with wrong VK hash should have been rejected!");
-        }
-        other => panic!("Unexpected result: {:?}", other),
-    }
-
-    // Commitment should NOT have been updated.
-    let reg = ledger
-        .get_sovereign_registration(&sovereign_cell_id)
-        .unwrap();
-    assert_eq!(
-        reg.commitment, old_commitment,
-        "Commitment must not change on wrong VK"
-    );
-}

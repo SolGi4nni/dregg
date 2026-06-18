@@ -765,18 +765,21 @@ fn cap_open_route_for_run(run_effects: &[VmEffectKind]) -> Option<CapOpenRoute> 
     const EFFECT_DELEGATION_OPS: u32 = 1 << 16;
     match run_effects {
         [VmEffectKind::Transfer { .. }] => Some(CapOpenRoute {
-            key: "transferCapOpenVmDescriptor2R24",
+            // residual (a): the LIVE transfer cap-open is the effect-GENERAL `-eff` descriptor
+            // (`transferCapOpenEffVmDescriptor2R24`, `capOpenConstraintsEff 1`): genuine SUBMASK facet
+            // (a BROAD honest cap PASSES) + DECODED tier (any `auth_tag`). The Signature-pinned
+            // `transferCapOpenVmDescriptor2R24` is kept for the apex/refinement proofs only.
+            key: "transferCapOpenEffVmDescriptor2R24",
             eff_bit: EFFECT_TRANSFER,
             needs_attenuate_patch: false,
             transfer_caveat: true,
         }),
-        // attenuate's cap-open is the ORIGINAL transfer-pinned appendix (`capOpenAttenuateV3` carries
-        // `capOpenConstraints`, whose `transferFacetGate`/`effBitGate` pin EFFECT_TRANSFER) — its leaf
-        // must permit EFFECT_TRANSFER, so eff_bit stays EFFECT_TRANSFER here (NOT grant). It is a
-        // nonce-FREEZE + cap-root-advance base (needs the patch). The fan-out
-        // `grantCapCapOpenVmDescriptor2R24` is the effect-general grant leg.
+        // residual (a): the LIVE attenuate cap-open is the effect-GENERAL `-eff` descriptor
+        // (`attenuateCapOpenEffVmDescriptor2R24`, `capOpenConstraintsEff 1`) — its leaf must PERMIT
+        // EFFECT_TRANSFER (submask, not equality) and its tier is decoded. It is a nonce-FREEZE +
+        // cap-root-advance base (needs the patch).
         [VmEffectKind::AttenuateCapability { .. }] => Some(CapOpenRoute {
-            key: "attenuateCapOpenVmDescriptor2R24",
+            key: "attenuateCapOpenEffVmDescriptor2R24",
             eff_bit: EFFECT_TRANSFER,
             needs_attenuate_patch: true,
             transfer_caveat: false,
@@ -891,7 +894,7 @@ fn prove_effect_vm_cap_open_attenuate(
         ));
     }
     let route = CapOpenRoute {
-        key: "attenuateCapOpenVmDescriptor2R24",
+        key: "attenuateCapOpenEffVmDescriptor2R24",
         eff_bit: dregg_circuit::effect_vm::trace_rotated::WRITE_MASK_LO,
         needs_attenuate_patch: true,
         transfer_caveat: false,
@@ -935,7 +938,7 @@ fn cap_open_vk_hash_by_key(key: &str) -> Result<[u8; 32], SdkError> {
 #[cfg(feature = "prover")]
 #[cfg_attr(not(test), allow(dead_code))] // test-only; the chain routes via `cap_open_vk_hash_by_key`
 fn rotated_cap_open_vk_hash() -> Result<[u8; 32], SdkError> {
-    cap_open_vk_hash_by_key("attenuateCapOpenVmDescriptor2R24")
+    cap_open_vk_hash_by_key("attenuateCapOpenEffVmDescriptor2R24")
 }
 
 /// The TRANSFER cap-open leg's `vk_hash` (residual (b)) — the blake3 fingerprint of the
@@ -943,7 +946,7 @@ fn rotated_cap_open_vk_hash() -> Result<[u8; 32], SdkError> {
 #[cfg(feature = "prover")]
 #[cfg_attr(not(test), allow(dead_code))] // test-only; the chain routes via `cap_open_vk_hash_by_key`
 fn rotated_transfer_cap_open_vk_hash() -> Result<[u8; 32], SdkError> {
-    cap_open_vk_hash_by_key("transferCapOpenVmDescriptor2R24")
+    cap_open_vk_hash_by_key("transferCapOpenEffVmDescriptor2R24")
 }
 
 /// **`prove_effect_vm_cap_open_transfer`** (residual (b) — the CROSS-VAT Transfer-via-granted-cap
@@ -983,7 +986,7 @@ fn prove_effect_vm_cap_open_transfer(
         ));
     }
     let route = CapOpenRoute {
-        key: "transferCapOpenVmDescriptor2R24",
+        key: "transferCapOpenEffVmDescriptor2R24",
         eff_bit: dregg_circuit::effect_vm::trace_rotated::WRITE_MASK_LO,
         needs_attenuate_patch: false,
         transfer_caveat: true,
@@ -2923,11 +2926,15 @@ mod tests {
              cap-membership open is exercised, not skipped)",
         );
 
-        // NEGATIVE: a cap whose leaf does NOT confer the transfer facet is refused at witness
-        // build (the descriptor's transferFacetGate would be UNSAT) — fail-closed at the seam.
+        // NEGATIVE: a cap whose leaf does NOT PERMIT the transfer facet is refused at witness build
+        // (the GENUINE submask `facetEffGate` is UNSAT — bit 1 of the full mask is clear) — fail-closed
+        // at the seam. `mask_lo = EFFECT_SET_FIELD = 1` (bit 0 only) does NOT carry the transfer bit
+        // (bit 1), so `(EFFECT_TRANSFER & mask) == 0`. (NB the old over-strict equality would also have
+        // rejected `mask_lo = 3`, but `3 & 2 == 2` GENUINELY permits transfer, so `3` is NOT a valid
+        // negative under the membership gate — we use `1`, which is genuinely transfer-denying.)
         let non_transfer = CapMembershipWitness {
             leaf: CapLeaf {
-                mask_lo: BabyBear::new(WRITE_MASK_LO + 1),
+                mask_lo: BabyBear::new(1), // EFFECT_SET_FIELD = 1 << 0; bit 1 (transfer) is CLEAR
                 ..cap.leaf
             },
             siblings: cap.siblings.clone(),
@@ -2942,7 +2949,7 @@ mod tests {
                 &non_transfer
             )
             .is_err(),
-            "a cap that does not confer EFFECT_TRANSFER MUST be refused (fail-closed)"
+            "a cap that does not PERMIT EFFECT_TRANSFER MUST be refused (fail-closed — submask bites)"
         );
     }
 

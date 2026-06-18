@@ -54,9 +54,13 @@ use dregg_cell::{
 use dregg_circuit::effect_vm::{Effect as VmEffect, EffectVmContext, generate_effect_vm_trace_ext};
 #[cfg(not(feature = "prover"))]
 use dregg_circuit::{CellState as VmCellState, EffectVmAir, stark};
+use dregg_sdk::AgentCipherclerk;
 use dregg_turn::action::{BearerCapProof, DelegationProofData, symbol};
 use dregg_turn::eventual::EventualRef;
-use dregg_turn::{Action, Authorization, DelegationMode, Effect, Event, Turn, TurnResult};
+use dregg_turn::{
+    Action, Authorization, ComputronCosts, DelegationMode, Effect, Event, Turn, TurnExecutor,
+    TurnResult,
+};
 use dregg_types::AttestedRoot;
 
 // ---------------------------------------------------------------------------

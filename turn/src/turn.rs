@@ -686,18 +686,22 @@ impl ConsumedCapWitness {
     /// `None` if the witness is malformed (wrong path length / direction
     /// bits outside {0,1}).
     pub fn recompute_root(&self) -> Option<u32> {
-        use dregg_circuit::cap_root::CAP_TREE_DEPTH;
+        use dregg_circuit::cap_root::{CAP_TREE_DEPTH, cap_node};
         use dregg_circuit::field::BabyBear;
-        use dregg_circuit::poseidon2::hash_fact;
         if self.siblings.len() != CAP_TREE_DEPTH || self.directions.len() != CAP_TREE_DEPTH {
             return None;
         }
+        // The internal-node hash MUST be the canonical `cap_node` (the arity-3
+        // `cap_chip_absorb([CAP_FACT_MARK, l, r])`) the sorted `CanonicalCapTree`
+        // folds with — NOT a bare `hash_fact` — or the recomputed top diverges
+        // from `tree.root()` and `verify()` rejects a genuine membership path.
         let mut cur = self.cap_leaf().digest();
         for (sib, dir) in self.siblings.iter().zip(self.directions.iter()) {
             let sib = BabyBear::new(*sib);
             cur = match dir {
-                0 => hash_fact(cur, &[sib]),
-                1 => hash_fact(sib, &[cur]),
+                // direction 0 ⇒ current node is the LEFT child (sibling right).
+                0 => cap_node(cur, sib),
+                1 => cap_node(sib, cur),
                 _ => return None,
             };
         }

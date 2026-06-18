@@ -93,14 +93,18 @@ column, then for each of `DEPTH = 16` levels a `(sib, dir, node)` triple, then t
 /-- The base column of the cap-open appendix (the first column past the rotated R=24 width). -/
 def CAP_OPEN_BASE : Nat := EFFECT_VM_WIDTH + APPENDIX_SPAN
 
-/-- The cap-open appendix width: 7 leaf + 1 digest + 16·(sib,dir,node) + capRoot + src + effBit.
-The trailing `effBit` column (residual (a)) carries the turn's ACTUAL effect-kind bit, against which
-the general facet gate `facetEffGate` binds the leaf mask (NOT the constant `EFFECT_TRANSFER`). -/
-def CAP_OPEN_SPAN : Nat := 7 + 1 + DEPTH * 3 + 3
+/-- The cap-open appendix width: 7 leaf + 1 digest + 16·(sib,dir,node) + capRoot + src + effBit +
+`MASK_BITS` mask-bit columns. The trailing `effBit` column carries the turn's ACTUAL effect-kind bit;
+the `MASK_BITS` bit columns (residual (a) — GENUINE MEMBERSHIP) carry the 24-bit decomposition of the
+leaf's low mask limb, against which the genuine SUBMASK gate `facetEffGate` (`maskBitBoolGate` +
+`maskReconGate` + `selectedBitGate`) checks `(effBit &&& mask_lo) = effBit` — NOT the over-strict
+equality `mask_lo == effBit`. The bit columns are appended at the END of the block to localize the shift. -/
+def CAP_OPEN_SPAN : Nat := 7 + 1 + DEPTH * 3 + 3 + MASK_BITS
 
 /-- The concrete cap-open column layout, pinned to the appendix. Leaf fields 0..6 at
 `CAP_OPEN_BASE..+6`; leaf digest at `+7`; level `lvl`'s sibling/direction/node at `+8+3·lvl`,
-`+9+3·lvl`, `+10+3·lvl`; cap_root at `+56`; src at `+57`; effBit at `+58`. -/
+`+9+3·lvl`, `+10+3·lvl`; cap_root at `+56`; src at `+57`; effBit at `+58`; the 24 mask-bit columns at
+`+59..+82` (`bit i = CAP_OPEN_BASE + 59 + i`). -/
 def capOpenCols : CapOpenCols :=
   { leaf       := fun i => CAP_OPEN_BASE + i.val
   , leafDigest := CAP_OPEN_BASE + 7
@@ -109,10 +113,11 @@ def capOpenCols : CapOpenCols :=
   , node       := fun lvl => CAP_OPEN_BASE + 10 + 3 * lvl
   , capRoot    := CAP_OPEN_BASE + 8 + 3 * DEPTH       -- = CAP_OPEN_BASE + 56
   , src        := CAP_OPEN_BASE + 8 + 3 * DEPTH + 1   -- = CAP_OPEN_BASE + 57
-  , effBit     := CAP_OPEN_BASE + 8 + 3 * DEPTH + 2 } -- = CAP_OPEN_BASE + 58
+  , effBit     := CAP_OPEN_BASE + 8 + 3 * DEPTH + 2   -- = CAP_OPEN_BASE + 58
+  , bit        := fun i => CAP_OPEN_BASE + 8 + 3 * DEPTH + 3 + i } -- = CAP_OPEN_BASE + 59 + i
 
-/-- The cap-open appendix width is 59. -/
-theorem cap_open_span : CAP_OPEN_SPAN = 59 := by decide
+/-- The cap-open appendix width is 83 (the 59-col base + 24 mask-bit columns). -/
+theorem cap_open_span : CAP_OPEN_SPAN = 91 := by decide
 
 /-! ## §2 — the constraint list: the proven `DeployedCapOpen` constraints, assembled.
 
@@ -128,6 +133,11 @@ def nodeLookups : List VmConstraint2 :=
 def dirBoolGates : List VmConstraint2 :=
   (List.range DEPTH).map (fun lvl => .base (.gate (dirBoolGate capOpenCols lvl)))
 
+/-- The `MASK_BITS` per-bit boolean gates for the `mask_lo` decomposition (`maskBitBoolGate
+capOpenCols 0..23`) — each `mask_lo` bit column is `0` or `1`. -/
+def maskBitGates : List VmConstraint2 :=
+  (List.range MASK_BITS).map (fun i => .base (.gate (maskBitBoolGate capOpenCols i)))
+
 /-- **The full cap-open constraint list** — the leaf-digest lookup, the 16 node lookups, the 16
 direction-boolean gates, the root pin, the target binding, and the FAITHFUL two-axis bindings: the
 transfer-facet gate (`mask_lo = EFFECT_TRANSFER`), the facet-high-zero gate (`mask_hi = 0`), and the
@@ -137,18 +147,21 @@ def capOpenConstraints : List VmConstraint2 :=
   .lookup (leafLookup capOpenCols)
   :: nodeLookups
   ++ dirBoolGates
+  ++ maskBitGates
   ++ [ .base (.gate (rootPinGate capOpenCols))
      , .base (.gate (targetBindGate capOpenCols))
      , .base (.gate (transferFacetGate capOpenCols))
      , .base (.gate (facetHiGate capOpenCols))
      , .base (.gate (authTagGate capOpenCols))
      , .base (.gate (effBitGate capOpenCols))
+     , .base (.gate (maskReconGate capOpenCols))
      , .base (.gate (facetEffGate capOpenCols)) ]
 
-/-- The cap-open constraint count: 1 leaf lookup + 16 node lookups + 16 dir gates + 7 binding
-gates = 40 (the 5 prior + the residual-(a) `effBitGate` + `facetEffGate`). -/
-theorem capOpenConstraints_length : capOpenConstraints.length = 40 := by
-  simp [capOpenConstraints, nodeLookups, dirBoolGates, DEPTH]
+/-- The cap-open constraint count: 1 leaf lookup + 16 node lookups + 16 dir gates + 24 mask-bit
+gates + 8 binding gates (rootPin, targetBind, transferFacet, facetHi, authTag, effBit, maskRecon,
+facetEffGate) = 73 (32 mask-bit gates + 8 bindings). -/
+theorem capOpenConstraints_length : capOpenConstraints.length = 73 := by
+  simp [capOpenConstraints, nodeLookups, dirBoolGates, maskBitGates, DEPTH, MASK_BITS]
 
 /-! ## §3 — the live descriptor: the rotated attenuate WITH the cap-open appendix.
 
@@ -165,8 +178,8 @@ def capOpenAttenuateV3 : EffectVmDescriptor2 :=
 
 /-- The live descriptor's trace width is the rotated width plus the cap-open appendix. -/
 theorem capOpenAttenuateV3_width :
-    capOpenAttenuateV3.traceWidth = attenuateV3.traceWidth + 59 := by
-  simp [capOpenAttenuateV3, CAP_OPEN_SPAN, DEPTH]
+    capOpenAttenuateV3.traceWidth = attenuateV3.traceWidth + 91 := by
+  simp [capOpenAttenuateV3, CAP_OPEN_SPAN, DEPTH, MASK_BITS]
 
 /-- Every cap-open constraint is a constraint of the live descriptor. -/
 theorem capOpenConstraints_mem (c : VmConstraint2) (hc : c ∈ capOpenConstraints) :
@@ -194,7 +207,7 @@ theorem capOpenAttenuateV3_satisfied (hash : List ℤ → ℤ)
     { leafHashed := ?_, nodeHashed := ?_, dirBool := ?_
     , rootPinned := ?_, targetBound := ?_
     , facetTransfer := ?_, facetHiZero := ?_, tierTagged := ?_
-    , effBitTransfer := ?_, facetEffBound := ?_ }
+    , effBitTransfer := ?_, maskBitsBool := ?_, maskRecon := ?_, facetEffBound := ?_ }
   · -- leaf lookup
     have h := hrow (.lookup (leafLookup capOpenCols))
       (capOpenConstraints_mem _ (by simp [capOpenConstraints]))
@@ -203,7 +216,7 @@ theorem capOpenAttenuateV3_satisfied (hash : List ℤ → ℤ)
     intro lvl hlvl
     have hmem : VmConstraint2.lookup (nodeLookup capOpenCols lvl) ∈ capOpenConstraints := by
       refine List.mem_cons_of_mem _ ?_
-      refine List.mem_append_left _ (List.mem_append_left _ ?_)
+      refine List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ ?_))
       exact List.mem_map.mpr ⟨lvl, List.mem_range.mpr hlvl, rfl⟩
     have h := hrow _ (capOpenConstraints_mem _ hmem)
     simpa [VmConstraint2.holdsAt] using h
@@ -211,7 +224,7 @@ theorem capOpenAttenuateV3_satisfied (hash : List ℤ → ℤ)
     intro lvl hlvl
     have hmem : VmConstraint2.base (.gate (dirBoolGate capOpenCols lvl)) ∈ capOpenConstraints := by
       refine List.mem_cons_of_mem _ ?_
-      refine List.mem_append_left _ (List.mem_append_right _ ?_)
+      refine List.mem_append_left _ (List.mem_append_left _ (List.mem_append_right _ ?_))
       exact List.mem_map.mpr ⟨lvl, List.mem_range.mpr hlvl, rfl⟩
     have h := hrow _ (capOpenConstraints_mem _ hmem)
     simpa [VmConstraint2.holdsAt, VmConstraint.holdsVm] using h
@@ -245,7 +258,20 @@ theorem capOpenAttenuateV3_satisfied (hash : List ℤ → ℤ)
       simp [capOpenConstraints]
     have h := hrow _ (capOpenConstraints_mem _ hmem)
     simpa [VmConstraint2.holdsAt, VmConstraint.holdsVm] using h
-  · -- general facet binding (mask_lo = effBit) — residual (a)
+  · -- mask-bit booleanity gates — residual (a) GENUINE MEMBERSHIP
+    intro j hj
+    have hmem : VmConstraint2.base (.gate (maskBitBoolGate capOpenCols j)) ∈ capOpenConstraints := by
+      refine List.mem_cons_of_mem _ ?_
+      refine List.mem_append_left _ (List.mem_append_right _ ?_)
+      exact List.mem_map.mpr ⟨j, List.mem_range.mpr hj, rfl⟩
+    have h := hrow _ (capOpenConstraints_mem _ hmem)
+    simpa [VmConstraint2.holdsAt, VmConstraint.holdsVm] using h
+  · -- mask recomposition — residual (a) GENUINE MEMBERSHIP
+    have hmem : VmConstraint2.base (.gate (maskReconGate capOpenCols)) ∈ capOpenConstraints := by
+      simp [capOpenConstraints]
+    have h := hrow _ (capOpenConstraints_mem _ hmem)
+    simpa [VmConstraint2.holdsAt, VmConstraint.holdsVm] using h
+  · -- selected-bit gate (genuine submask: transfer bit 1 set) — residual (a)
     have hmem : VmConstraint2.base (.gate (facetEffGate capOpenCols)) ∈ capOpenConstraints := by
       simp [capOpenConstraints]
     have h := hrow _ (capOpenConstraints_mem _ hmem)
@@ -330,13 +356,13 @@ byte-golden lands in the Rust differential test (the wire string is large; `lake
 constraint COUNT + width is the Lean-side pin). -/
 
 -- The live descriptor adds exactly the 40 cap-open constraints past the attenuate base.
-#guard capOpenAttenuateV3.constraints.length == attenuateV3.constraints.length + 40
+#guard capOpenAttenuateV3.constraints.length == attenuateV3.constraints.length + 73
 -- The width grows by the 59-column cap-open appendix (58 prior + 1 effBit column).
-#guard capOpenAttenuateV3.traceWidth == attenuateV3.traceWidth + 59
+#guard capOpenAttenuateV3.traceWidth == attenuateV3.traceWidth + 91
 -- The cap-open appendix begins past the rotated width (316 = 187 base + 129 appendix, after the
 -- commitments_root flag-day widened APPENDIX_SPAN 125→129).
 #guard CAP_OPEN_BASE == 316
-#guard CAP_OPEN_SPAN == 59
+#guard CAP_OPEN_SPAN == 91
 -- The five EPOCH tables are inherited unchanged (the cap-open rides the chip + main tables).
 #guard capOpenAttenuateV3.tables.length == 5
 
@@ -367,8 +393,8 @@ def transferCapOpenV3 : EffectVmDescriptor2 :=
 
 /-- The transfer cap-open descriptor's trace width is the rotated transfer width + the 59-col appendix. -/
 theorem transferCapOpenV3_width :
-    transferCapOpenV3.traceWidth = transferV3.traceWidth + 59 := by
-  simp [transferCapOpenV3, CAP_OPEN_SPAN, DEPTH]
+    transferCapOpenV3.traceWidth = transferV3.traceWidth + 91 := by
+  simp [transferCapOpenV3, CAP_OPEN_SPAN, DEPTH, MASK_BITS]
 
 /-- Every cap-open constraint is a constraint of the transfer cap-open descriptor. -/
 theorem transferCapOpenV3_constraints_mem (c : VmConstraint2) (hc : c ∈ capOpenConstraints) :
@@ -389,21 +415,21 @@ theorem transferCapOpenV3_satisfied (hash : List ℤ → ℤ)
     { leafHashed := ?_, nodeHashed := ?_, dirBool := ?_
     , rootPinned := ?_, targetBound := ?_
     , facetTransfer := ?_, facetHiZero := ?_, tierTagged := ?_
-    , effBitTransfer := ?_, facetEffBound := ?_ }
+    , effBitTransfer := ?_, maskBitsBool := ?_, maskRecon := ?_, facetEffBound := ?_ }
   · have h := hrow (.lookup (leafLookup capOpenCols))
       (transferCapOpenV3_constraints_mem _ (by simp [capOpenConstraints]))
     simpa [VmConstraint2.holdsAt] using h
   · intro lvl hlvl
     have hmem : VmConstraint2.lookup (nodeLookup capOpenCols lvl) ∈ capOpenConstraints := by
       refine List.mem_cons_of_mem _ ?_
-      refine List.mem_append_left _ (List.mem_append_left _ ?_)
+      refine List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ ?_))
       exact List.mem_map.mpr ⟨lvl, List.mem_range.mpr hlvl, rfl⟩
     have h := hrow _ (transferCapOpenV3_constraints_mem _ hmem)
     simpa [VmConstraint2.holdsAt] using h
   · intro lvl hlvl
     have hmem : VmConstraint2.base (.gate (dirBoolGate capOpenCols lvl)) ∈ capOpenConstraints := by
       refine List.mem_cons_of_mem _ ?_
-      refine List.mem_append_left _ (List.mem_append_right _ ?_)
+      refine List.mem_append_left _ (List.mem_append_left _ (List.mem_append_right _ ?_))
       exact List.mem_map.mpr ⟨lvl, List.mem_range.mpr hlvl, rfl⟩
     have h := hrow _ (transferCapOpenV3_constraints_mem _ hmem)
     simpa [VmConstraint2.holdsAt, VmConstraint.holdsVm] using h
@@ -428,6 +454,17 @@ theorem transferCapOpenV3_satisfied (hash : List ℤ → ℤ)
     have h := hrow _ (transferCapOpenV3_constraints_mem _ hmem)
     simpa [VmConstraint2.holdsAt, VmConstraint.holdsVm] using h
   · have hmem : VmConstraint2.base (.gate (effBitGate capOpenCols)) ∈ capOpenConstraints := by
+      simp [capOpenConstraints]
+    have h := hrow _ (transferCapOpenV3_constraints_mem _ hmem)
+    simpa [VmConstraint2.holdsAt, VmConstraint.holdsVm] using h
+  · intro j hj
+    have hmem : VmConstraint2.base (.gate (maskBitBoolGate capOpenCols j)) ∈ capOpenConstraints := by
+      refine List.mem_cons_of_mem _ ?_
+      refine List.mem_append_left _ (List.mem_append_right _ ?_)
+      exact List.mem_map.mpr ⟨j, List.mem_range.mpr hj, rfl⟩
+    have h := hrow _ (transferCapOpenV3_constraints_mem _ hmem)
+    simpa [VmConstraint2.holdsAt, VmConstraint.holdsVm] using h
+  · have hmem : VmConstraint2.base (.gate (maskReconGate capOpenCols)) ∈ capOpenConstraints := by
       simp [capOpenConstraints]
     have h := hrow _ (transferCapOpenV3_constraints_mem _ hmem)
     simpa [VmConstraint2.holdsAt, VmConstraint.holdsVm] using h
@@ -461,8 +498,8 @@ theorem transferCapOpenV3_authorizes {State : Type} (S : CapHashScheme State) (v
     caps leafAt hfaith actor src dst amt hsrc hedge
 
 -- The transfer cap-open descriptor shares the appendix shape: +40 constraints, +59 cols.
-#guard transferCapOpenV3.constraints.length == transferV3.constraints.length + 40
-#guard transferCapOpenV3.traceWidth == transferV3.traceWidth + 59
+#guard transferCapOpenV3.constraints.length == transferV3.constraints.length + 73
+#guard transferCapOpenV3.traceWidth == transferV3.traceWidth + 91
 
 /-! ## §5.F — THE FAN-OUT: the effect-GENERAL cap-open appendix + per-effect descriptors.
 
@@ -488,16 +525,18 @@ def capOpenConstraintsEff (n : Nat) : List VmConstraint2 :=
   .lookup (leafLookup capOpenCols)
   :: nodeLookups
   ++ dirBoolGates
+  ++ maskBitGates
   ++ [ .base (.gate (rootPinGate capOpenCols))
      , .base (.gate (targetBindGate capOpenCols))
-     , .base (.gate (facetHiGate capOpenCols))
      , .base (.gate (effBitGateFor capOpenCols ((1 <<< n : Nat) : ℤ)))
-     , .base (.gate (facetEffGate capOpenCols)) ]
+     , .base (.gate (maskReconGate capOpenCols))
+     , .base (.gate (selectedBitGate capOpenCols n)) ]
 
-/-- The effect-general constraint count is 38 (5 fewer gate-pins than the transfer 40: it drops the two
-transfer constant pins and the redundant `effBitGate`, keeping the general `effBitGateFor`). -/
-theorem capOpenConstraintsEff_length (n : Nat) : (capOpenConstraintsEff n).length = 38 := by
-  simp [capOpenConstraintsEff, nodeLookups, dirBoolGates, DEPTH]
+/-- The effect-general constraint count is 1 leaf + 16 node + 16 dir + 32 mask-bit + 5 binding gates
+(rootPin, targetBind, effBitGateFor, maskRecon, selectedBit) = 70. (NO `facetHiGate` — the FULL mask is
+decomposed, so a broad `EFFECT_ALL` cap with `mask_hi ≠ 0` is admitted.) -/
+theorem capOpenConstraintsEff_length (n : Nat) : (capOpenConstraintsEff n).length = 70 := by
+  simp [capOpenConstraintsEff, nodeLookups, dirBoolGates, maskBitGates, DEPTH, MASK_BITS]
 
 /-- **`effCapOpenV3 base name n`** — the GENERIC per-effect cap-open descriptor: an effect's rotated base
 descriptor `base` (a `v3Of …` member, same `EFFECT_VM_WIDTH + APPENDIX_SPAN` width) widened by the cap-open
@@ -527,7 +566,8 @@ theorem effCapOpenV3_satisfiedEff (base : EffectVmDescriptor2) (name : String) (
   have hrow := hsat.rowConstraints i hi
   have hmem := effCapOpenV3_constraints_mem base name n
   refine
-    { core := ?_, targetBound := ?_, facetHiZero := ?_, effBitPinned := ?_, facetEffBound := ?_ }
+    { core := ?_, targetBound := ?_, effBitPinned := ?_
+    , maskBitsBool := ?_, maskRecon := ?_, facetEffBound := ?_ }
   · refine { leafHashed := ?_, nodeHashed := ?_, dirBool := ?_, rootPinned := ?_ }
     · have hin : VmConstraint2.lookup (leafLookup capOpenCols) ∈ capOpenConstraintsEff n := by
         simp [capOpenConstraintsEff]
@@ -536,14 +576,14 @@ theorem effCapOpenV3_satisfiedEff (base : EffectVmDescriptor2) (name : String) (
     · intro lvl hlvl
       have hin : VmConstraint2.lookup (nodeLookup capOpenCols lvl) ∈ capOpenConstraintsEff n := by
         refine List.mem_cons_of_mem _ ?_
-        refine List.mem_append_left _ (List.mem_append_left _ ?_)
+        refine List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ ?_))
         exact List.mem_map.mpr ⟨lvl, List.mem_range.mpr hlvl, rfl⟩
       have h := hrow _ (hmem _ hin)
       simpa [VmConstraint2.holdsAt] using h
     · intro lvl hlvl
       have hin : VmConstraint2.base (.gate (dirBoolGate capOpenCols lvl)) ∈ capOpenConstraintsEff n := by
         refine List.mem_cons_of_mem _ ?_
-        refine List.mem_append_left _ (List.mem_append_right _ ?_)
+        refine List.mem_append_left _ (List.mem_append_left _ (List.mem_append_right _ ?_))
         exact List.mem_map.mpr ⟨lvl, List.mem_range.mpr hlvl, rfl⟩
       have h := hrow _ (hmem _ hin)
       simpa [VmConstraint2.holdsAt, VmConstraint.holdsVm] using h
@@ -555,15 +595,22 @@ theorem effCapOpenV3_satisfiedEff (base : EffectVmDescriptor2) (name : String) (
       simp [capOpenConstraintsEff]
     have h := hrow _ (hmem _ hin)
     simpa [VmConstraint2.holdsAt, VmConstraint.holdsVm] using h
-  · have hin : VmConstraint2.base (.gate (facetHiGate capOpenCols)) ∈ capOpenConstraintsEff n := by
-      simp [capOpenConstraintsEff]
-    have h := hrow _ (hmem _ hin)
-    simpa [VmConstraint2.holdsAt, VmConstraint.holdsVm] using h
   · have hin : VmConstraint2.base (.gate (effBitGateFor capOpenCols ((1 <<< n : Nat) : ℤ)))
         ∈ capOpenConstraintsEff n := by simp [capOpenConstraintsEff]
     have h := hrow _ (hmem _ hin)
     simpa [VmConstraint2.holdsAt, VmConstraint.holdsVm] using h
-  · have hin : VmConstraint2.base (.gate (facetEffGate capOpenCols)) ∈ capOpenConstraintsEff n := by
+  · intro j hj
+    have hin : VmConstraint2.base (.gate (maskBitBoolGate capOpenCols j)) ∈ capOpenConstraintsEff n := by
+      refine List.mem_cons_of_mem _ ?_
+      refine List.mem_append_left _ (List.mem_append_right _ ?_)
+      exact List.mem_map.mpr ⟨j, List.mem_range.mpr hj, rfl⟩
+    have h := hrow _ (hmem _ hin)
+    simpa [VmConstraint2.holdsAt, VmConstraint.holdsVm] using h
+  · have hin : VmConstraint2.base (.gate (maskReconGate capOpenCols)) ∈ capOpenConstraintsEff n := by
+      simp [capOpenConstraintsEff]
+    have h := hrow _ (hmem _ hin)
+    simpa [VmConstraint2.holdsAt, VmConstraint.holdsVm] using h
+  · have hin : VmConstraint2.base (.gate (selectedBitGate capOpenCols n)) ∈ capOpenConstraintsEff n := by
       simp [capOpenConstraintsEff]
     have h := hrow _ (hmem _ hin)
     simpa [VmConstraint2.holdsAt, VmConstraint.holdsVm] using h
@@ -574,7 +621,7 @@ the kernel's GENERAL `authorizedFacetEffB … (1 <<< n)` for the turn — over e
 transfer), under any `provided` satisfying the committed tier. Every fan-out effect's authority leg is THIS
 theorem at its `<effect>V3`/`n`. -/
 theorem effCapOpenV3_authorizes {State : Type} (base : EffectVmDescriptor2) (name : String) (n : Nat)
-    (hn : n < 32) (S : CapHashScheme State) (vkOfTag : ℤ → Nat) (provided : AuthProvided)
+    (hn : n < MASK_BITS) (S : CapHashScheme State) (vkOfTag : ℤ → Nat) (provided : AuthProvided)
     (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ)
     (t : Dregg2.Circuit.DescriptorIR2.VmTrace)
     (hChip : ChipTableSound S.chipAbsorb (t.tf .poseidon2))
@@ -598,6 +645,7 @@ theorem effCapOpenV3_authorizes {State : Type} (base : EffectVmDescriptor2) (nam
 section FanoutDescriptors
 
 /-- The effect-kind bit exponents (`facet.rs` `1 <<< n`) for the cap-authorized fan-out effects. -/
+def EFF_TRANSFER           : Nat := 1   -- transfer, attenuate-via-transfer-cap (EFFECT_TRANSFER)
 def EFF_GRANT_CAPABILITY   : Nat := 2   -- grantCap, delegateAtten, attenuate (EFFECT_GRANT_CAPABILITY)
 def EFF_REVOKE_CAPABILITY  : Nat := 3   -- revokeCapability (EFFECT_REVOKE_CAPABILITY)
 def EFF_INTRODUCE          : Nat := 13  -- introduce (EFFECT_INTRODUCE)
@@ -642,19 +690,42 @@ def refreshDelegationCapOpenV3 : EffectVmDescriptor2 :=
 def revokeCapabilityCapOpenV3 : EffectVmDescriptor2 :=
   effCapOpenV3 revokeCapabilityBaseV3 "dregg-effectvm-revokeCapability-v1-rot24-v3-capopen" EFF_REVOKE_CAPABILITY
 
+/-- **`transferCapOpenEffV3`** (residual (a) — THE LIVE transfer cap-open) — the transfer base + the
+effect-GENERAL appendix at `EFF_TRANSFER` (bit 1). Unlike the Signature-pinned `transferCapOpenV3` (kept
+for the apex/refinement proofs), this carries `capOpenConstraintsEff 1`: the genuine SUBMASK facet gate
+(a BROAD honest transfer cap `mask_lo = 0xFFFF` PASSES — bit 1 set) and the DECODED tier (any committed
+`auth_tag`, not pinned Signature). This is the descriptor the live `transferCapOpenVmDescriptor2R24`
+routing proves through, so an honest transfer cap — broad mask, None/Signature tier — PROVES. -/
+def transferCapOpenEffV3 : EffectVmDescriptor2 :=
+  effCapOpenV3 transferV3 "dregg-effectvm-transfer-v1-rot24-v3-capopen-eff" EFF_TRANSFER
+
+/-- **`attenuateCapOpenEffV3`** (residual (a) — THE LIVE attenuate cap-open) — the attenuate base + the
+effect-GENERAL appendix at `EFF_TRANSFER` (bit 1; the attenuate cap-open's leaf must permit
+`EFFECT_TRANSFER`, mirroring the deployed `attenuateCapOpenVmDescriptor2R24` routing). Genuine submask
+facet + decoded tier, so an honest broad/None-tier cap PROVES. The Signature-pinned `capOpenAttenuateV3`
+is kept for the apex/refinement proofs. -/
+def attenuateCapOpenEffV3 : EffectVmDescriptor2 :=
+  effCapOpenV3 attenuateV3 "dregg-effectvm-attenuateA-v1-rot24-v3-capopen-eff" EFF_TRANSFER
+
+-- The live transfer/attenuate effect-general descriptors share the appendix: +63 constraints, +83 cols.
+#guard transferCapOpenEffV3.constraints.length == transferV3.constraints.length + 70
+#guard attenuateCapOpenEffV3.constraints.length == attenuateV3.constraints.length + 70
+#guard transferCapOpenEffV3.traceWidth == transferV3.traceWidth + 91
+#guard attenuateCapOpenEffV3.traceWidth == attenuateV3.traceWidth + 91
+
 -- Each fan-out descriptor adds the 38-constraint effect-general appendix + 59 cols past its base.
-#guard delegateCapOpenV3.constraints.length == grantCapV3.constraints.length + 38
-#guard introduceCapOpenV3.constraints.length == introduceV3.constraints.length + 38
-#guard grantCapCapOpenV3.constraints.length == grantCapV3.constraints.length + 38
-#guard revokeCapOpenV3.constraints.length == revokeDelegationV3.constraints.length + 38
-#guard refreshDelegationCapOpenV3.constraints.length == refreshDelegationV3.constraints.length + 38
-#guard revokeCapabilityCapOpenV3.constraints.length == revokeCapabilityBaseV3.constraints.length + 38
-#guard delegateCapOpenV3.traceWidth == grantCapV3.traceWidth + 59
-#guard introduceCapOpenV3.traceWidth == introduceV3.traceWidth + 59
-#guard grantCapCapOpenV3.traceWidth == grantCapV3.traceWidth + 59
-#guard revokeCapOpenV3.traceWidth == revokeDelegationV3.traceWidth + 59
-#guard refreshDelegationCapOpenV3.traceWidth == refreshDelegationV3.traceWidth + 59
-#guard revokeCapabilityCapOpenV3.traceWidth == revokeCapabilityBaseV3.traceWidth + 59
+#guard delegateCapOpenV3.constraints.length == grantCapV3.constraints.length + 70
+#guard introduceCapOpenV3.constraints.length == introduceV3.constraints.length + 70
+#guard grantCapCapOpenV3.constraints.length == grantCapV3.constraints.length + 70
+#guard revokeCapOpenV3.constraints.length == revokeDelegationV3.constraints.length + 70
+#guard refreshDelegationCapOpenV3.constraints.length == refreshDelegationV3.constraints.length + 70
+#guard revokeCapabilityCapOpenV3.constraints.length == revokeCapabilityBaseV3.constraints.length + 70
+#guard delegateCapOpenV3.traceWidth == grantCapV3.traceWidth + 91
+#guard introduceCapOpenV3.traceWidth == introduceV3.traceWidth + 91
+#guard grantCapCapOpenV3.traceWidth == grantCapV3.traceWidth + 91
+#guard revokeCapOpenV3.traceWidth == revokeDelegationV3.traceWidth + 91
+#guard refreshDelegationCapOpenV3.traceWidth == refreshDelegationV3.traceWidth + 91
+#guard revokeCapabilityCapOpenV3.traceWidth == revokeCapabilityBaseV3.traceWidth + 91
 
 end FanoutDescriptors
 
@@ -686,14 +757,21 @@ def v3RegistryCapOpen : List (String × EffectVmDescriptor2) :=
        , ("grantCapCapOpenVmDescriptor2R24", grantCapCapOpenV3)
        , ("revokeCapOpenVmDescriptor2R24", revokeCapOpenV3)
        , ("refreshDelegationCapOpenVmDescriptor2R24", refreshDelegationCapOpenV3)
-       , ("revokeCapabilityCapOpenVmDescriptor2R24", revokeCapabilityCapOpenV3) ]
+       , ("revokeCapabilityCapOpenVmDescriptor2R24", revokeCapabilityCapOpenV3)
+       -- residual (a) — THE LIVE transfer/attenuate cap-open members (genuine submask facet +
+       -- DECODED tier). The Signature-pinned `…CapOpenVmDescriptor2R24` at positions 36/37 are kept
+       -- for the apex/refinement proofs; the live prover routes these `…-eff` descriptors so an
+       -- honest broad/None-tier cap PROVES.
+       , ("transferCapOpenEffVmDescriptor2R24", transferCapOpenEffV3)
+       , ("attenuateCapOpenEffVmDescriptor2R24", attenuateCapOpenEffV3) ]
 
-/-- The registry-with-cap-open has 44 members (36 cohort + 2 transfer/attenuate + 6 fan-out). -/
-theorem v3RegistryCapOpen_length : v3RegistryCapOpen.length = 44 := by
+/-- The registry-with-cap-open has 46 members (36 cohort + 2 pinned transfer/attenuate + 6 fan-out +
+2 live `-eff` transfer/attenuate). -/
+theorem v3RegistryCapOpen_length : v3RegistryCapOpen.length = 46 := by
   simp [v3RegistryCapOpen, Dregg2.Circuit.Emit.EffectVmEmitRotationV3.v3Registry]
 
--- The cap-open authority members are positions 36..43; the 36 cohort members are unchanged at 0..35.
-#guard v3RegistryCapOpen.length == 44
+-- The cap-open authority members are positions 36..45; the 36 cohort members are unchanged at 0..35.
+#guard v3RegistryCapOpen.length == 46
 #guard (v3RegistryCapOpen[36]?.map (·.1)) == some "attenuateCapOpenVmDescriptor2R24"
 #guard (v3RegistryCapOpen[37]?.map (·.1)) == some "transferCapOpenVmDescriptor2R24"
 #guard (v3RegistryCapOpen[38]?.map (·.1)) == some "delegateCapOpenVmDescriptor2R24"
@@ -702,6 +780,8 @@ theorem v3RegistryCapOpen_length : v3RegistryCapOpen.length = 44 := by
 #guard (v3RegistryCapOpen[41]?.map (·.1)) == some "revokeCapOpenVmDescriptor2R24"
 #guard (v3RegistryCapOpen[42]?.map (·.1)) == some "refreshDelegationCapOpenVmDescriptor2R24"
 #guard (v3RegistryCapOpen[43]?.map (·.1)) == some "revokeCapabilityCapOpenVmDescriptor2R24"
+#guard (v3RegistryCapOpen[44]?.map (·.1)) == some "transferCapOpenEffVmDescriptor2R24"
+#guard (v3RegistryCapOpen[45]?.map (·.1)) == some "attenuateCapOpenEffVmDescriptor2R24"
 #guard (v3RegistryCapOpen[0]?.map (·.1)) == some "transferVmDescriptor2R24"
 
 /-- The attenuate cap-open member of the registry IS `capOpenAttenuateV3` (position 36). -/

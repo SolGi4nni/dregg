@@ -29,7 +29,8 @@ use dregg_turn::{Action, TurnReceipt};
 use starbridge_compartment_workflow_mandate::{
     CHARTER_TERMINAL_SLOT, COMMITMENT_ANCHOR_SLOT as CWM_ANCHOR_SLOT, DEFAULT_CHARTER_STEPS,
     DEFAULT_COMMITMENT_ANCHOR, DEFAULT_STEP_SPEND_POLICY, STEP_CURSOR_SLOT, WorkflowPhase,
-    build_advance_step_action, clearance_label, cwm_cell_program,
+    build_advance_step_action, charter_clearance_root, clearance_label, cwm_cell_program,
+    officer_label,
 };
 use starbridge_identity::{
     AttrValue, CredentialAttributes, IssuerKeys, Predicate, PredicateRequest, PresentationOptions,
@@ -118,7 +119,10 @@ fn fresh_env(seed: u8) -> Env {
                 ),
                 (
                     starbridge_compartment_workflow_mandate::CLEARANCE_GRAPH_ROOT_SLOT as usize,
-                    clearance_label("officer"),
+                    // The LOAD-BEARING committed root the executor's
+                    // `ClearanceDominates` recomputes from the carried charter
+                    // edges and binds against — NOT a bare label.
+                    charter_clearance_root(),
                 ),
                 (
                     starbridge_compartment_workflow_mandate::SPEND_POLICY_SLOT as usize,
@@ -230,9 +234,9 @@ fn build_actions(env: &Env) -> Vec<Action> {
         issue_action,
         present_action,
         verify_action,
-        build_advance_step_action(cc, env.cwm_cell, 0, WorkflowPhase::Review),
-        build_advance_step_action(cc, env.cwm_cell, 1, WorkflowPhase::Redact),
-        build_advance_step_action(cc, env.cwm_cell, 2, WorkflowPhase::Sign),
+        build_advance_step_action(cc, env.cwm_cell, 0, officer_label(), WorkflowPhase::Review),
+        build_advance_step_action(cc, env.cwm_cell, 1, officer_label(), WorkflowPhase::Redact),
+        build_advance_step_action(cc, env.cwm_cell, 2, officer_label(), WorkflowPhase::Sign),
         build_storage_put_action(
             cc,
             env.sgm_cell,

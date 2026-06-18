@@ -855,10 +855,19 @@ pub fn empty_caveat_manifest() -> RotatedCaveatManifest {
 pub const CAP_OPEN_DEPTH: usize = 16;
 /// The base column of the cap-open appendix (`CAP_OPEN_BASE = ROT_WIDTH = 315`).
 pub const CAP_OPEN_BASE: usize = ROT_WIDTH; // 315
+/// The width of the FULL `EffectMask` bit decomposition (residual (a) — GENUINE MEMBERSHIP). The
+/// decoded facet is the full `u32` mask `maskOfLimbs(mask_lo, mask_hi) = mask_lo + mask_hi·65536`
+/// (`EFFECT_ALL = 0xFFFF_FFFF`), so the decomposition spans all 32 bits: any deployed effect-kind bit
+/// `1 << n` (`n < 32`, up to `EFFECT_ATTENUATE_CAPABILITY = 1 << 23`) is selectable AND a broad cap
+/// (`mask_hi = 0xFFFF`) decomposes fully. The Lean twin is `DeployedCapOpen.MASK16_BITS`.
+pub const CAP_OPEN_MASK_BITS: usize = 32;
 /// The cap-open appendix span: 7 leaf + 1 leafDigest + 16×(sib,dir,node) + capRoot + src + effBit
-/// = 59 (residual (a): the trailing `effBit` column carries the turn's ACTUAL effect-kind bit).
-pub const CAP_OPEN_SPAN: usize = 7 + 1 + 3 * CAP_OPEN_DEPTH + 3; // 59
-/// The cap-open trace width (`ROT_WIDTH + 59`).
+/// + 32 mask-bit columns = 91. The trailing 32 mask-bit columns carry the boolean decomposition of
+/// the FULL effect mask the genuine SUBMASK facet gate (`maskBitBoolGate`/`maskReconGate`/
+/// `selectedBitGate`) reads — NOT the over-strict equality `mask_lo == effBit` (and NO `mask_hi == 0`
+/// pin, so a broad `EFFECT_ALL` cap is admitted).
+pub const CAP_OPEN_SPAN: usize = 7 + 1 + 3 * CAP_OPEN_DEPTH + 3 + CAP_OPEN_MASK_BITS; // 91
+/// The cap-open trace width (`ROT_WIDTH + 91`).
 pub const CAP_OPEN_WIDTH: usize = ROT_WIDTH + CAP_OPEN_SPAN;
 
 /// The `FACT_MARK` node-tag felt (`DeployedCapTree.FACT_MARK = 0xFACF`).
@@ -966,27 +975,23 @@ impl CapOpenWitness {
         if chosen.len() != 7 {
             return Err("cap-open witness: leaf must carry 7 fields".into());
         }
-        if chosen[3] != BabyBear::new(eff_bit) {
+        // GENUINE SUBMASK MEMBERSHIP (residual (a)): the chosen cap's facet must PERMIT the
+        // effect-kind bit `eff_bit` over the FULL mask `maskOfLimbs(mask_lo, mask_hi)` — `(eff_bit &
+        // full_mask) == eff_bit`, the kernel's `is_effect_permitted` for a single bit (`facet.rs:123`),
+        // NOT the over-strict equality `mask_lo == eff_bit`. A BROAD honest cap (`EFFECT_ALL`, mask_lo =
+        // 0xFFFF, mask_hi = 0xFFFF) PASSES — there is NO `mask_hi == 0` pin.
+        let chosen_full_mask: u64 =
+            chosen[3].as_u32() as u64 + (chosen[4].as_u32() as u64) * 65536;
+        if (eff_bit as u64 & chosen_full_mask) != eff_bit as u64 {
             return Err(format!(
-                "cap-open witness: chosen leaf mask_lo (col 3) must be {eff_bit} \
-                 (the effect-kind bit the facetEffGate pins), got {}",
-                chosen[3].as_u32()
-            ));
-        }
-        if chosen[4] != BabyBear::new(FACET_MASK_HI) {
-            return Err(format!(
-                "cap-open witness: chosen leaf mask_hi (col 4) must be {FACET_MASK_HI} \
-                 (the facetHiGate pin — decoded facet is exactly mask_lo), got {}",
+                "cap-open witness: chosen leaf full mask {chosen_full_mask} (mask_lo {}, mask_hi {}) \
+                 does not PERMIT the effect-kind bit {eff_bit} (the facetEffGate submask membership bites)",
+                chosen[3].as_u32(),
                 chosen[4].as_u32()
             ));
         }
-        if chosen[2] != BabyBear::new(SIGNATURE_AUTH_TAG) {
-            return Err(format!(
-                "cap-open witness: chosen leaf auth_tag (col 2) must be {SIGNATURE_AUTH_TAG} \
-                 (the Signature tier the authTagGate pins), got {}",
-                chosen[2].as_u32()
-            ));
-        }
+        // residual (a): NO tier pin — the effect-general cap-open appendix (`capOpenConstraintsEff`)
+        // DECODES the tier off `auth_tag` rather than pinning Signature, so a cap of ANY tier builds.
         // Lay the depth-16 tree: level 0 = the leaf-digest layer over 2^16 slots, the chosen
         // leaf at `position`, all others the zero-leaf padding digest. We materialize ONLY the
         // path: at each level we need the sibling digest, which is the OTHER child of the
@@ -1045,17 +1050,12 @@ impl CapOpenWitness {
         siblings: &[BabyBear],
         directions: &[u8],
     ) -> Result<Self, String> {
-        // The transfer/attenuate cap-open descriptors carry the ORIGINAL transfer-pinned appendix
-        // (`capOpenConstraints`), whose `authTagGate` ALSO pins `auth_tag == Signature (1)`. Enforce
-        // it here so the witness fails closed at build (the fan-out `from_membership_for` drops this
-        // pin — its `capOpenConstraintsEff` appendix reads the DECODED tier off `auth_tag`).
-        if leaf.auth_tag != BabyBear::new(SIGNATURE_AUTH_TAG) {
-            return Err(format!(
-                "cap-open from_membership: leaf auth_tag {} != Signature {SIGNATURE_AUTH_TAG} \
-                 (the authTagGate pin — wrong tier)",
-                leaf.auth_tag.as_u32()
-            ));
-        }
+        // residual (a): the LIVE transfer/attenuate cap-open now routes the effect-GENERAL
+        // descriptors (`transferCapOpenEffVmDescriptor2R24` / `attenuateCapOpenEffVmDescriptor2R24`),
+        // whose `capOpenConstraintsEff 1` appendix DECODES the tier off `auth_tag` (no Signature
+        // pin) and checks the genuine SUBMASK facet membership. So an honest cap of ANY tier
+        // (None/Signature/…) and ANY broad mask that PERMITS Transfer proves — we drop the old
+        // `auth_tag == Signature` pin and defer to the submask check in `from_membership_for`.
         Self::from_membership_for(leaf, siblings, directions, WRITE_MASK_LO)
     }
 
@@ -1089,16 +1089,18 @@ impl CapOpenWitness {
             leaf.expiry,
             leaf.breadstuff,
         ];
-        if leaf[3] != BabyBear::new(eff_bit) {
+        // GENUINE SUBMASK MEMBERSHIP (residual (a)): the consumed cap's facet must PERMIT the
+        // effect-kind bit `eff_bit` over the FULL mask `maskOfLimbs(mask_lo, mask_hi)` — `(eff_bit &
+        // full_mask) == eff_bit`, the kernel's `is_effect_permitted` for a single bit, NOT the
+        // over-strict equality `mask_lo == eff_bit`. A BROAD honest cap (`EFFECT_ALL`, mask_lo = 0xFFFF,
+        // mask_hi = 0xFFFF) PASSES; a cap that does NOT carry bit `n` is refused. NO `mask_hi == 0` pin.
+        let full_mask: u64 = leaf[3].as_u32() as u64 + (leaf[4].as_u32() as u64) * 65536;
+        if (eff_bit as u64 & full_mask) != eff_bit as u64 {
             return Err(format!(
-                "cap-open from_membership: leaf mask_lo {} != effect-kind bit {eff_bit} \
-                 (the consumed cap does not permit the turn's effect-kind — the facetEffGate bites)",
-                leaf[3].as_u32()
-            ));
-        }
-        if leaf[4] != BabyBear::new(FACET_MASK_HI) {
-            return Err(format!(
-                "cap-open from_membership: leaf mask_hi {} != {FACET_MASK_HI} (the facetHiGate pin)",
+                "cap-open from_membership: leaf full mask {full_mask} (mask_lo {}, mask_hi {}) does not \
+                 PERMIT effect-kind bit {eff_bit} (the consumed cap does not permit the turn's \
+                 effect-kind — the facetEffGate submask bites)",
+                leaf[3].as_u32(),
                 leaf[4].as_u32()
             ));
         }
@@ -1163,8 +1165,19 @@ pub fn fill_cap_open(row: &mut [BabyBear], base: usize, w: &CapOpenWitness) {
     row[base + 57] = w.src;
     // residual (a): the committed effect-bit column. Carries the turn's ACTUAL effect-kind bit
     // (`w.eff_bit` — EFFECT_TRANSFER for transfer/attenuate, each fan-out leg its own `1<<n`); the
-    // `effBitGateFor` pins it and the `facetEffGate` binds `leaf.mask_lo == effBit`.
+    // `effBitGateFor` pins it.
     row[base + 58] = BabyBear::new(w.eff_bit);
+    // residual (a) — GENUINE MEMBERSHIP: the 32-bit decomposition of the FULL effect mask
+    // `maskOfLimbs(mask_lo, mask_hi) = mask_lo + mask_hi·65536` (leaf fields 3 + 4) at `base + 59 + i`.
+    // The `maskBitBoolGate` booleans each bit, `maskReconGate` binds `full_mask = Σ bitᵢ·2ⁱ`, and
+    // `selectedBitGate n` gates bit `n` (where `eff_bit = 1<<n`) set — the genuine `(eff_bit &
+    // full_mask) == eff_bit` SUBMASK, NOT the over-strict equality `mask_lo == eff_bit`. A BROAD honest
+    // cap (`EFFECT_ALL`, mask_lo = 0xFFFF, mask_hi = 0xFFFF) decomposes with bit `n` set, so it PERMITS
+    // the effect — and no `mask_hi == 0` pin rejects it.
+    let full_mask: u64 = w.leaf[3].as_u32() as u64 + (w.leaf[4].as_u32() as u64) * 65536;
+    for i in 0..CAP_OPEN_MASK_BITS {
+        row[base + 59 + i] = BabyBear::new(((full_mask >> i) & 1) as u32);
+    }
 }
 
 /// Recompute one rotated block's chained `wireCommitR` digests + `state_commit` from the limbs
@@ -1388,7 +1401,14 @@ mod tests {
         let registry: BTreeSet<&str> = V3_STAGED_REGISTRY_TSV
             .lines()
             .filter_map(|l| l.split('\t').next())
-            .filter(|s| !s.is_empty() && !s.ends_with("CapOpenVmDescriptor2R24"))
+            // exclude ALL cap-open authority members (the Signature-pinned `…CapOpenVmDescriptor2R24`
+            // AND the live effect-general `…CapOpenEffVmDescriptor2R24`): they are self-verify /
+            // cap-PRESENCE-routed, not reached by the effect→descriptor resolvers.
+            .filter(|s| {
+                !s.is_empty()
+                    && !s.ends_with("CapOpenVmDescriptor2R24")
+                    && !s.ends_with("CapOpenEffVmDescriptor2R24")
+            })
             .collect();
         assert_eq!(
             registry.len(),
