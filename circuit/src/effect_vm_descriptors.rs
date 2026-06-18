@@ -814,7 +814,7 @@ pub const V3_STAGED_CAVEAT_DESCRIPTORS: &[(&str, &str, &str)] = &[(
 pub const V3_STAGED_REGISTRY_TSV: &str =
     include_str!("../descriptors/rotation-v3-staged-registry.tsv");
 pub const V3_STAGED_REGISTRY_FP: &str =
-    "e849246168c8998ed21123b5d14bc80754872cafc4f38e9cdd1386bee7578cbe";
+    "5452db1836f1ab737b418f11e4a61d2a1a71e6165d693d677ad7046b0e85da89";
 
 /// The rotated probe layout at register count `r` (the Rust twin of the Lean parametric
 /// layout `EffectVmEmitRotationR`: columns are FUNCTIONS of R; the chunking is 4-wide head,
@@ -1765,19 +1765,19 @@ mod tests {
                 })
                 .collect();
             // THE RECORD-FORCING PIN (the deployment-soundness close, `EffectVmEmitRotationV3
-            // .rotateV3WithRecordPin`): cellSeal/cellUnseal/cellDestroy force the AFTER block's
-            // lifecycle limb (col `after_base + B_LIFECYCLE`); setPermissions/setVK AND the audit
-            // writes refusal/receiptArchive force the AFTER record-digest / authority-digest limb
-            // (col `after_base + B_AUTHORITY_DIGEST`) — the audit slots (`"refusal"`/`"lifecycle"`
-            // record fields) land in `fields_root`, which the r23 authority digest folds. Each
-            // carries a FIFTH last-row PI pin to slot 38, so the committed write is FORCED.
+            // .rotateV3WithRecordPin`): cellSeal/cellUnseal/cellDestroy AND receiptArchive force the
+            // AFTER block's lifecycle limb (col `after_base + B_LIFECYCLE`) — the deployed apply moves
+            // the cell lifecycle (Sealed/Live/Destroyed/Archived); setPermissions/setVK AND the
+            // refusal audit write force the AFTER record-digest / authority-digest limb (col
+            // `after_base + B_AUTHORITY_DIGEST`) — the refusal audit lands in `fields_root`, which the
+            // r23 authority digest folds. Each carries a FIFTH last-row PI pin to slot 38, so the
+            // committed write is FORCED.
             use crate::effect_vm::trace_rotated::{B_AUTHORITY_DIGEST, B_LIFECYCLE};
             let record_digest_pin_member = matches!(
                 key,
                 "setPermsVmDescriptor2R24"
                     | "setVKVmDescriptor2R24"
                     | "refusalVmDescriptor2R24"
-                    | "receiptArchiveVmDescriptor2R24"
             );
             let lifecycle_record_pin_member = record_digest_pin_member
                 || matches!(
@@ -1785,6 +1785,7 @@ mod tests {
                     "cellSealVmDescriptor2R24"
                         | "cellUnsealVmDescriptor2R24"
                         | "cellDestroyVmDescriptor2R24"
+                        | "receiptArchiveVmDescriptor2R24"
                 );
             // The createCell / factory / spawn ACCOUNTS-SET grow-gate family: the fifth pin welds
             // the new-cell key (param0) to PI[38], and the two cells_root map-ops force the

@@ -233,44 +233,53 @@ impl TurnExecutor {
         // A forged after-permissions (a value the effect did NOT produce) makes this anchored PI 38
         // disagree with the proof's bound after-limb ⇒ `verify_vm_descriptor2` UNSAT ⇒ reject.
         //
-        // ANCHORED (record-digest limb 24, `compute_authority_digest_felt`): `SetPermissions` and
-        // `SetVerificationKey`. Both move the r23 authority residue (permissions / vk.hash are folded
-        // by `compute_authority_digest_felt`), both project to their NATIVE VmEffect on BOTH the
-        // producer and the executor bridge (so the descriptor reconstructs identically), and both
-        // BITE: a forged after-residue (a permissions/vk value the effect did NOT produce) makes the
-        // anchored PI 38 disagree with the proof's bound col-256 ⇒ UNSAT.
+        // ANCHORED — the FULL record-pin family (every effect whose descriptor ships at 39 PIs). Each
+        // projects to its NATIVE VmEffect on BOTH the producer (`cipherclerk::convert_effects_to_vm`)
+        // and the executor bridge (`convert_turn_effects_to_vm`), so the descriptor reconstructs
+        // identically, and each MOVES its forced limb so a forged after-limb is UNSAT:
         //
-        // NOT anchored — precise blockers (see `rotateV3WithRecordPin_rejects_wrong_post`):
-        //   * refusal / receiptArchive (record-digest pin) — the EXECUTOR's apply writes a WELDED
-        //     slot / the lifecycle (`apply_refusal` → `fields[4]` + nonce; `apply_receipt_archive` →
-        //     `lifecycle`), NEITHER of which `compute_authority_digest_felt` folds. So the honest
-        //     after-residue does NOT move off the before value, and the record-digest anchor cannot
-        //     BITE on the deployed path (the circuit-level close models an audit write into
-        //     `fields_root`, which the executor does not perform). Closing them needs an EXECUTOR
-        //     apply change (refusal → `set_field_ext`; archive → route to `B_LIFECYCLE`), out of scope
-        //     for a verifier-anchor-only change.
-        //   * cellSeal / cellUnseal / cellDestroy (lifecycle pin, limb 29) — the forced limb DOES move
-        //     (`lifecycle_felt` separates Live/Sealed/Destroyed), but the cipherclerk PRODUCER collapses
-        //     these to `VmEffect::SetPermissions` (`convert_effects_to_vm`) while the executor bridge
-        //     projects them to the NATIVE `VmEffect::{CellSeal,CellUnseal,CellDestroy}`. The two
-        //     descriptors differ ⇒ the verifier's reconstructed trace/PIs diverge from the proof ⇒
-        //     honest proofs are rejected BEFORE the anchor is reached. Closing them needs the producer
-        //     projection aligned to native (and, for cellSeal, the `block_height`/`sealed_at` seam
-        //     threaded into the stateless cipherclerk producer).
+        //   * RECORD-DIGEST limb 24 (`compute_authority_digest_felt`): `SetPermissions` /
+        //     `SetVerificationKey` (permissions / vk.hash folded into r23) AND `Refusal` (the deployed
+        //     `apply_refusal` now writes the audit into the EXT `fields_root`, which
+        //     `compute_authority_digest_felt` folds — `REFUSAL_AUDIT_EXT_KEY`).
+        //   * LIFECYCLE limb 29 (`lifecycle_felt_cell`): `CellSeal` / `CellUnseal` / `CellDestroy` (the
+        //     lifecycle separates Live/Sealed/Destroyed + folds the death-cert) AND `ReceiptArchive`
+        //     (the deployed `apply_receipt_archive` moves the lifecycle to `Archived`; the pin is
+        //     re-routed to `B_LIFECYCLE` to match the deployed apply).
+        //
+        // A forged after-limb (a value the effect did NOT produce) makes the anchored PI 38 disagree
+        // with the proof's bound forced column ⇒ `verify_vm_descriptor2` UNSAT. The whole record-pin
+        // family is now a genuine forcing gate on the deployed path.
         if desc.public_input_count == 39 && dpis.len() == 39 {
-            // The lead is record-digest-anchored iff it is one of the two authority-residue movers.
-            let record_digest_anchored = matches!(
-                lead,
-                dregg_circuit::effect_vm::Effect::SetPermissions { .. }
-                    | dregg_circuit::effect_vm::Effect::SetVerificationKey { .. }
-            );
-            if record_digest_anchored {
+            use dregg_circuit::effect_vm::Effect as VmEffect;
+            // The forced-limb anchor flavor for this lead: record-digest (Class-1) vs lifecycle (Class-2).
+            enum Anchor {
+                None,
+                RecordDigest,
+                Lifecycle,
+            }
+            let anchor = match lead {
+                VmEffect::SetPermissions { .. }
+                | VmEffect::SetVerificationKey { .. }
+                | VmEffect::Refusal { .. } => Anchor::RecordDigest,
+                VmEffect::CellSeal { .. }
+                | VmEffect::CellUnseal { .. }
+                | VmEffect::CellDestroy { .. }
+                | VmEffect::ReceiptArchive { .. } => Anchor::Lifecycle,
+                _ => Anchor::None,
+            };
+            if !matches!(anchor, Anchor::None) {
                 // Recover the kernel effect (the lead VmEffect only carries a hash). `dfs_collect_effects`
                 // walks the call forest in the SAME order as `convert_turn_effects_to_vm`, so the first
-                // matching effect targeting this cell is the lead's kernel pre-image.
+                // matching record-pin effect targeting this cell is the lead's kernel pre-image.
                 let lead_effect = Self::dfs_collect_effects(turn).into_iter().find(|e| {
                     matches!(e, Effect::SetPermissions { cell, .. } if cell == cell_id)
                         || matches!(e, Effect::SetVerificationKey { cell, .. } if cell == cell_id)
+                        || matches!(e, Effect::Refusal { cell, .. } if cell == cell_id)
+                        || matches!(e, Effect::CellSeal { target, .. } if target == cell_id)
+                        || matches!(e, Effect::CellUnseal { target } if target == cell_id)
+                        || matches!(e, Effect::CellDestroy { target, .. } if target == cell_id)
+                        || matches!(e, Effect::ReceiptArchive { checkpoint, .. } if checkpoint.cell_id == *cell_id)
                 });
                 if let Some(lead_effect) = lead_effect {
                     let mut post_cell = cell.clone();
@@ -280,7 +289,15 @@ impl TurnExecutor {
                         &lead_effect,
                         self.block_height,
                     );
-                    dpis[38] = dregg_cell::compute_authority_digest_felt(&post_cell);
+                    dpis[38] = match anchor {
+                        Anchor::RecordDigest => {
+                            dregg_cell::compute_authority_digest_felt(&post_cell)
+                        }
+                        Anchor::Lifecycle => {
+                            crate::rotation_witness::lifecycle_felt_cell(&post_cell)
+                        }
+                        Anchor::None => unreachable!(),
+                    };
                 }
             }
         }

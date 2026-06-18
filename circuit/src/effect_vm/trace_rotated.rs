@@ -602,17 +602,22 @@ fn record_pin_offset(lead: Option<&Effect>) -> Option<usize> {
         Some(Effect::SetPermissions { .. }) | Some(Effect::SetVerificationKey { .. }) => {
             Some(B_RECORD_DIGEST)
         }
-        // The deployment-soundness close for the field-NOT-bound audit writes. `Refusal` sets the
-        // cell record's `"refusal"` audit slot to 1; `ReceiptArchive` sets the `"lifecycle"` audit
-        // RECORD slot to 1. Both are NAMED record fields that land in the deployed cell's
-        // `fields_root` (the named-field map — NOT a welded `fields[0..7]` indexed slot), which
-        // `compute_authority_digest_felt` FOLDS into the r23 authority residue (`B_RECORD_DIGEST`).
-        // So the AFTER block's `record_digest` limb MOVES on a genuine refusal / archive; the
-        // record-forcing pin (`refusalV3` / `receiptArchiveV3`) welds it to PI 38. A frozen-audit-
-        // slot AFTER block (claiming a refusal / archive that did not happen) carries the unchanged
-        // record digest and is UNSAT. Mirrors Lean `EffectVmEmitRotationV3.{refusalV3,
-        // receiptArchiveV3}`.
-        Some(Effect::Refusal { .. }) | Some(Effect::ReceiptArchive { .. }) => Some(B_RECORD_DIGEST),
+        // `ReceiptArchive` writes the cell LIFECYCLE (`Archived`) in the deployed `apply_receipt_archive`
+        // (`c.archive(checkpoint)`), which `lifecycle_felt` (limb `B_LIFECYCLE = 29`) folds into a
+        // distinct `Archived` felt — NOT the r23 authority residue. So the genuine mover is the
+        // lifecycle limb; the record-forcing pin (`receiptArchiveV3`) welds limb 29 to PI 38 and the
+        // verifier anchors `lifecycle_felt_cell(post_cell)`. A frozen-lifecycle archive forgery is
+        // UNSAT. Mirrors Lean `EffectVmEmitRotationV3.receiptArchiveV3` (`rotateV3WithRecordPin
+        // B_LIFECYCLE …`).
+        Some(Effect::ReceiptArchive { .. }) => Some(B_LIFECYCLE),
+        // `Refusal` writes the WELDED `fields[4]` indexed slot + bumps the nonce in the deployed
+        // `apply_refusal`, ALIGNED to the Lean SPEC `TurnExecutorFull.refusalField` (the audit lands
+        // in the EXT `fields_root`, which `compute_authority_digest_felt` FOLDS into the r23 authority
+        // residue, `B_RECORD_DIGEST`). So the AFTER `record_digest` limb MOVES on a genuine refusal; the
+        // record-forcing pin (`refusalV3`) welds it to PI 38, and the verifier anchors
+        // `compute_authority_digest_felt(post_cell)`. A frozen-audit refusal forgery is UNSAT. Mirrors
+        // Lean `EffectVmEmitRotationV3.refusalV3`.
+        Some(Effect::Refusal { .. }) => Some(B_RECORD_DIGEST),
         _ => None,
     }
 }

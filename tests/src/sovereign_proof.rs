@@ -81,7 +81,7 @@ fn test_proof_carrying_sovereign_turn_accepted() {
     }];
 
     let turn = cclerk
-        .execute_sovereign_turn_with_proof(&cell_id, effects, 500)
+        .execute_sovereign_turn_with_proof(&cell_id, effects, 500, 0)
         .expect("should generate proof-carrying turn");
 
     // Verify the turn has an execution_proof.
@@ -133,7 +133,7 @@ fn test_proof_carrying_turn_tampered_commitment_rejected() {
     }];
 
     let mut turn = cclerk
-        .execute_sovereign_turn_with_proof(&cell_id, effects, 500)
+        .execute_sovereign_turn_with_proof(&cell_id, effects, 500, 0)
         .expect("should generate proof-carrying turn");
 
     // Tamper with the new commitment (simulates attacker trying to claim wrong state).

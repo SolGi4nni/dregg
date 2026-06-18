@@ -1806,15 +1806,25 @@ impl TurnExecutor {
         //   2. Bump the target cell's nonce so the refusal is
         //      ordered against other turns on the same cell
         //      (replay-safe).
-        //   3. Record the refusal commitment + reason in field[4]
-        //      (the audit slot) — a Poseidon2-ish commitment of
+        //   3. Record the refusal commitment + reason in the
+        //      protocol-reserved EXT audit field
+        //      (`REFUSAL_AUDIT_EXT_KEY >= STATE_SLOTS`, committed via
+        //      `fields_root`) — a blake3 commitment of
         //      `(offered_action_commitment, reason_discriminant)`
         //      so light clients can detect a refusal without
-        //      re-fetching the witness.
-        //   4. NEVER mutate balance, capability set, or any value
-        //      slot. Refusal is structurally *only* a non-action
-        //      attestation; permission/value mutations belong to
-        //      other effect variants.
+        //      re-fetching the witness. Landing the audit in
+        //      `fields_root` (NOT the user-addressable `fields[0..15]`
+        //      block) MOVES `compute_authority_digest_felt` (which
+        //      folds `fields_root`), so the rotated AFTER block's
+        //      `record_digest` limb advances on a genuine refusal and
+        //      the `refusalV3` record-pin BITES (the verifier anchors
+        //      PI 38 to the trusted post-cell digest). This matches the
+        //      Lean SPEC `TurnExecutorFull.refusalField` (the named
+        //      `"refusal"` record slot lands in `fields_root`).
+        //   4. NEVER mutate balance, capability set, or any user value
+        //      slot (`fields[0..15]`). Refusal is structurally *only* a
+        //      non-action attestation; permission/value mutations
+        //      belong to other effect variants.
         if cell != action_target {
             self.check_cross_cell_permission(
                 ledger,
@@ -1864,11 +1874,14 @@ impl TurnExecutor {
             }
         };
         let audit = *h.finalize().as_bytes();
-        journal.record_set_field(*cell, 4, Some(c.state.fields[4]));
-        c.state.fields[4] = audit;
-        if c.state.commitments[4].is_some() {
-            c.state.commitments[4] = None;
-        }
+        // The protocol-reserved EXT audit key (`>= STATE_SLOTS`) lands the commitment in the
+        // committed `fields_map` / `fields_root` — folded by `compute_authority_digest_felt`, so the
+        // refusal MOVES the record-digest limb (the `refusalV3` forcing gate). Journal the prior
+        // ext-value (`None` if the key was absent) so rollback restores it exactly.
+        let audit_key = dregg_cell::state::REFUSAL_AUDIT_EXT_KEY;
+        let old_audit = c.state.get_field_ext(audit_key);
+        journal.record_set_field(*cell, audit_key as usize, old_audit);
+        c.state.set_field_ext(audit_key, audit);
         Ok(())
     }
 

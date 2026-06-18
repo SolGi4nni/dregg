@@ -4975,6 +4975,12 @@ impl AgentCipherclerk {
     /// * `cell_id` - The sovereign cell to act on.
     /// * `effects` - Effects to apply (currently supports Transfer).
     /// * `fee` - Computron fee for this turn.
+    /// * `block_height` - The federation height the turn is proven against. LOAD-BEARING for the
+    ///   `CellSeal` record-pin family: `apply_cell_seal` writes `sealed_at = block_height` into the
+    ///   lifecycle, which `lifecycle_felt` folds into the AFTER block's limb-29 anchor. The executor
+    ///   MUST verify this turn at the SAME height (`TurnExecutor::set_block_height`) or an honest seal
+    ///   proof's lifecycle felt would not equal the verifier's anchored PI 38. Every other effect
+    ///   ignores it (pass `0` for height-independent turns).
     ///
     /// # Returns
     ///
@@ -4984,6 +4990,7 @@ impl AgentCipherclerk {
         cell_id: &CellId,
         effects: Vec<Effect>,
         fee: u64,
+        block_height: u64,
     ) -> Result<Turn, SdkError> {
         // THE ROTATION (cutover C1): when the rotated IR-v2 producer is compiled
         // (native default; `dregg-circuit/prover` present), this matched-pair
@@ -4995,11 +5002,13 @@ impl AgentCipherclerk {
         // trace shape until the bilateral-aggregator rotation (cutover C4).
         #[cfg(feature = "prover")]
         {
-            let proven = self.prove_sovereign_turn_rotated(cell_id, effects, fee)?;
+            let proven =
+                self.prove_sovereign_turn_rotated(cell_id, effects, fee, block_height)?;
             Ok(proven.turn)
         }
         #[cfg(not(feature = "prover"))]
         {
+            let _ = block_height; // the retired v1 path is height-independent
             let proven = self.prove_sovereign_turn(cell_id, effects, fee)?;
             Ok(proven.turn)
         }
@@ -5147,6 +5156,7 @@ impl AgentCipherclerk {
         cell_id: &CellId,
         effects: Vec<Effect>,
         fee: u64,
+        block_height: u64,
     ) -> Result<ProvenSovereignTurn, SdkError> {
         use dregg_cell::commitment::{
             V9RotationContext, compute_canonical_state_commitment_v9_felt, felt_to_bytes32,
@@ -5203,7 +5213,7 @@ impl AgentCipherclerk {
                         &mut after_cell,
                         cell_id,
                         effect,
-                        0,
+                        block_height,
                     );
                 }
                 // setVK (record-digest limb 24): same anti-drift weld as setPermissions. The
@@ -5217,7 +5227,54 @@ impl AgentCipherclerk {
                         &mut after_cell,
                         cell_id,
                         effect,
-                        0,
+                        block_height,
+                    );
+                }
+                // The LIFECYCLE record-pin family (limb 29) + the Refusal record-digest pin: project
+                // through the SHARED `apply_effect_to_cell` so the producer's AFTER block carries the
+                // forced limb (`lifecycle_felt` for the lifecycle effects, `record_digest`/`fields_root`
+                // for refusal) the verifier independently anchors PI 38 to. CellSeal's `sealed_at`
+                // depends on `block_height`, so the producer MUST apply at the SAME height the verifier
+                // will run at (threaded in from the federation height) or the honest seal's lifecycle
+                // felt would not equal the verifier's anchor.
+                Effect::CellSeal { target, .. } if target == cell_id => {
+                    dregg_turn::rotation_witness::apply_effect_to_cell(
+                        &mut after_cell,
+                        cell_id,
+                        effect,
+                        block_height,
+                    );
+                }
+                Effect::CellUnseal { target } if target == cell_id => {
+                    dregg_turn::rotation_witness::apply_effect_to_cell(
+                        &mut after_cell,
+                        cell_id,
+                        effect,
+                        block_height,
+                    );
+                }
+                Effect::CellDestroy { target, .. } if target == cell_id => {
+                    dregg_turn::rotation_witness::apply_effect_to_cell(
+                        &mut after_cell,
+                        cell_id,
+                        effect,
+                        block_height,
+                    );
+                }
+                Effect::ReceiptArchive { checkpoint, .. } if checkpoint.cell_id == *cell_id => {
+                    dregg_turn::rotation_witness::apply_effect_to_cell(
+                        &mut after_cell,
+                        cell_id,
+                        effect,
+                        block_height,
+                    );
+                }
+                Effect::Refusal { cell, .. } if cell == cell_id => {
+                    dregg_turn::rotation_witness::apply_effect_to_cell(
+                        &mut after_cell,
+                        cell_id,
+                        effect,
+                        block_height,
                     );
                 }
                 _ => {}
@@ -5615,79 +5672,59 @@ impl AgentCipherclerk {
                         create_hash: hash_to_8(create_hash_bytes.as_bytes()),
                     });
                 }
+                // CellSeal / CellUnseal / CellDestroy (the LIFECYCLE record-pin family, AFTER limb 29):
+                // project to the NATIVE `VmEffect::{CellSeal,CellUnseal,CellDestroy}`, byte-identical to
+                // the executor bridge (`turn::executor::effect_vm_bridge::convert_turn_effects_to_vm`),
+                // so the verifier resolves the SAME `{cellSeal,cellUnseal,cellDestroy}VmDescriptor2R24`
+                // record-pin descriptor (39 PIs) the producer proves over. The PRIOR
+                // `SetPermissions`/`EmitEvent` collapse resolved a DIFFERENT descriptor than the bridge
+                // (a producer/verifier projection divergence that rejected honest proofs BEFORE the
+                // lifecycle anchor was reached). The lifecycle limb (limb 29 = `lifecycle_felt`) is the
+                // genuine mover, anchored by `lifecycle_felt_cell(post_cell)`.
                 Effect::CellSeal { target, reason } if target == cell_id => {
-                    // Bind target + reason commitment into effects_hash.
-                    // CellSeal is a lifecycle gate: the proof carries the
-                    // 32-byte reason commitment so a verifier can attribute
-                    // the seal to the specific reason the actor committed to.
-                    let mut hasher = blake3::Hasher::new();
-                    hasher.update(target.as_bytes());
-                    hasher.update(reason);
-                    let seal_hash = hasher.finalize();
-                    vm_effects.push(VmEffect::SetPermissions {
-                        // CellSeal mutates the cell's lifecycle field, which
-                        // is structurally a permissions-class mutation. Reuse
-                        // SetPermissions shape with the seal_hash as the
-                        // permissions_hash: distinct from any real permission
-                        // encoding (which is postcard of Permissions struct)
-                        // because reason is a raw 32-byte commitment.
-                        permissions_hash: hash_to_8(seal_hash.as_bytes()),
+                    let target_hash = hash_to_8(target.as_bytes());
+                    let reason_hash = hash_to_8(reason);
+                    vm_effects.push(VmEffect::CellSeal {
+                        target: target_hash,
+                        reason_hash,
                     });
                 }
                 Effect::CellUnseal { target } if target == cell_id => {
-                    let mut hasher = blake3::Hasher::new();
-                    hasher.update(b"CellUnseal");
-                    hasher.update(target.as_bytes());
-                    let unseal_hash = hasher.finalize();
-                    vm_effects.push(VmEffect::SetPermissions {
-                        permissions_hash: hash_to_8(unseal_hash.as_bytes()),
+                    let target_hash = hash_to_8(target.as_bytes());
+                    vm_effects.push(VmEffect::CellUnseal {
+                        target: target_hash,
                     });
                 }
                 Effect::CellDestroy {
                     target,
                     certificate,
                 } if target == cell_id => {
-                    // CellDestroy is terminal and irreversible — it is
-                    // CRITICAL that the proof binds the death certificate
-                    // hash so a verifier can attribute the destruction to
-                    // the correct certificate. Bind target + cert_hash.
-                    let cert_hash_bytes = certificate.certificate_hash();
-                    let mut hasher = blake3::Hasher::new();
-                    hasher.update(target.as_bytes());
-                    hasher.update(&cert_hash_bytes);
-                    let destroy_hash = hasher.finalize();
-                    vm_effects.push(VmEffect::SetPermissions {
-                        // Terminal lifecycle mutations share the permissions
-                        // shape (both mutate the lifecycle field). The
-                        // destroy_hash is structurally distinct from any
-                        // SetPermissions invocation (target||cert vs
-                        // postcard(Permissions)) so cross-kind confusion
-                        // would not verify under the same schema.
-                        permissions_hash: hash_to_8(destroy_hash.as_bytes()),
+                    let target_hash = hash_to_8(target.as_bytes());
+                    let cert_hash = certificate.certificate_hash();
+                    vm_effects.push(VmEffect::CellDestroy {
+                        target_hash,
+                        death_certificate_hash: hash_to_8(&cert_hash),
                     });
                 }
+                // ReceiptArchive (the LIFECYCLE record-pin, AFTER limb 29): project to the NATIVE
+                // `VmEffect::ReceiptArchive`, byte-identical to the executor bridge, so the verifier
+                // resolves `receiptArchiveVmDescriptor2R24` (39 PIs, lifecycle-pinned). The deployed
+                // `apply_receipt_archive` moves the cell lifecycle to `Archived`, so `lifecycle_felt`
+                // (limb 29) is the genuine mover; the verifier anchors `lifecycle_felt_cell(post_cell)`.
+                // The PRIOR `EmitEvent` collapse resolved `emitEventVmDescriptor2R24` (no record pin),
+                // diverging from the bridge.
                 Effect::ReceiptArchive {
                     prefix_end_height,
                     checkpoint,
-                } => {
-                    // ReceiptArchive binds the archival attestation hash +
-                    // prefix_end_height. Neutral (no balance change); the
-                    // proof records that the actor committed to archiving
-                    // up to this height with this checkpoint.
-                    let mut hasher = blake3::Hasher::new();
-                    hasher.update(&prefix_end_height.to_le_bytes());
-                    hasher.update(checkpoint.cell_id.as_bytes());
-                    hasher.update(&checkpoint.archive_blob_hash);
-                    let archive_hash_bytes = *hasher.finalize().as_bytes();
-                    // #110: ReceiptArchive borrows the EmitEvent shape; use
-                    // a stable synthetic topic ("dregg-receipt-archive-v1")
-                    // and treat archive_hash as the payload so the (topic,
-                    // payload) PI slots distinguish ReceiptArchive from a
-                    // genuine event emission.
-                    let topic_bytes = *blake3::hash(b"dregg-receipt-archive-v1").as_bytes();
-                    vm_effects.push(VmEffect::EmitEvent {
-                        topic_hash: bytes32_to_8_felts(&topic_bytes),
-                        payload_hash: bytes32_to_8_felts(&archive_hash_bytes),
+                } if checkpoint.cell_id == *cell_id => {
+                    let target_hash = hash_to_8(checkpoint.cell_id.as_bytes());
+                    let end_height_bb =
+                        BabyBear::new((*prefix_end_height & ((1u64 << 30) - 1)) as u32);
+                    let terminal_hash = hash_to_8(&checkpoint.archive_terminal_receipt_hash);
+                    vm_effects.push(VmEffect::ReceiptArchive {
+                        target: target_hash,
+                        archive_end_height: end_height_bb,
+                        terminal_receipt_hash: terminal_hash,
                     });
                 }
 
@@ -5831,20 +5868,36 @@ impl AgentCipherclerk {
 
                 // -- CapTP runtime effects (CRITICAL: cap authority) -----------
 
-                // -- Refusal (evidence-of-absence) ----------------------------
+                // -- Refusal (evidence-of-absence, the record-digest record-pin, AFTER limb 24) ------
+                // Project to the NATIVE `VmEffect::Refusal`, byte-identical to the executor bridge
+                // (`convert_turn_effects_to_vm`), so the verifier resolves `refusalVmDescriptor2R24`
+                // (39 PIs, record-digest-pinned) the producer proves over. The deployed `apply_refusal`
+                // writes the refusal audit into the EXT `fields_root` (aligned to the Lean SPEC
+                // `TurnExecutorFull.refusalField`), which `compute_authority_digest_felt` folds into the
+                // r23 authority residue — so the AFTER `record_digest` limb (24) MOVES and the verifier
+                // anchors `compute_authority_digest_felt(post_cell)`. The PRIOR `EmitEvent` collapse
+                // resolved `emitEventVmDescriptor2R24` (no record pin), diverging from the bridge.
                 Effect::Refusal {
                     cell,
                     offered_action_commitment,
+                    refusal_reason,
                     ..
                 } if cell == cell_id => {
-                    // #110: bind the offered_action_commitment as the
-                    // event payload, with a stable synthetic topic
-                    // ("dregg-refusal-v1") so the (topic, payload) PI
-                    // distinguish Refusals from genuine events.
-                    let topic_bytes = *blake3::hash(b"dregg-refusal-v1").as_bytes();
-                    vm_effects.push(VmEffect::EmitEvent {
-                        topic_hash: bytes32_to_8_felts(&topic_bytes),
-                        payload_hash: bytes32_to_8_felts(offered_action_commitment),
+                    let target_hash = hash_to_8(cell.as_bytes());
+                    let discriminant = match refusal_reason {
+                        dregg_turn::action::RefusalReason::Declined => 0u32,
+                        dregg_turn::action::RefusalReason::NoAuthority => 1u32,
+                        dregg_turn::action::RefusalReason::WindowExpired => 2u32,
+                        dregg_turn::action::RefusalReason::Custom { .. } => 3u32,
+                    };
+                    let reason_bytes = dregg_circuit::effect_vm::refusal_reason_bytes(
+                        offered_action_commitment,
+                        discriminant,
+                    );
+                    let reason_hash = hash_to_8(&reason_bytes);
+                    vm_effects.push(VmEffect::Refusal {
+                        target: target_hash,
+                        reason_hash,
                     });
                 }
 

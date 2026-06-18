@@ -76,7 +76,7 @@ fn rotated_sovereign_turn_proves_and_verifies() {
     }];
 
     let turn = cclerk
-        .execute_sovereign_turn_with_proof(&cell_id, effects, 500)
+        .execute_sovereign_turn_with_proof(&cell_id, effects, 500, 0)
         .expect("rotated sovereign turn should prove");
 
     // The proof is real, postcard-encoded (NOT the `DREG`-magic hand-AIR wire).
@@ -129,7 +129,7 @@ fn rotated_sovereign_forged_post_state_is_rejected() {
     }];
 
     let mut turn = cclerk
-        .execute_sovereign_turn_with_proof(&cell_id, effects, 500)
+        .execute_sovereign_turn_with_proof(&cell_id, effects, 500, 0)
         .expect("rotated sovereign turn should prove");
 
     // Forge the claimed post-state commitment.
@@ -232,7 +232,7 @@ mod record_pin_anchor {
         }];
 
         let turn = cclerk
-            .execute_sovereign_turn_with_proof(&cell_id, effects, 0)
+            .execute_sovereign_turn_with_proof(&cell_id, effects, 0, 0)
             .expect("rotated sovereign setPermissions turn should prove");
 
         let executor = TurnExecutor::new(ComputronCosts::zero());
@@ -423,7 +423,7 @@ mod record_pin_anchor {
         }];
 
         let turn = cclerk
-            .execute_sovereign_turn_with_proof(&cell_id, effects, 0)
+            .execute_sovereign_turn_with_proof(&cell_id, effects, 0, 0)
             .expect("rotated sovereign setVK turn should prove");
 
         let executor = TurnExecutor::new(ComputronCosts::zero());
@@ -573,6 +573,452 @@ mod record_pin_anchor {
                  got {other:?}"
             ),
         }
+    }
+
+    // ───────────────────────────────────────────────────────────────────────────────────────────
+    // THE RECORD-PIN FAN-OUT CLOSE (#218/#219/#220): the lifecycle family (cellSeal/cellUnseal/
+    // cellDestroy → limb 29 via `lifecycle_felt_cell`; receiptArchive → limb 29, re-routed from
+    // the prior record-digest MIS-ROUTE) and the refusal record-digest pin (limb 24 via
+    // `compute_authority_digest_felt`, the deployed `apply_refusal` now writing the audit into
+    // `fields_root`). Each effect gets an HONEST accept (the producer + verifier route the effect
+    // through the SHARED `apply_effect_to_cell` so the after-limb the prover binds EQUALS the
+    // verifier's independently-recomputed anchor) and a FORGED-after reject (a proof whose after-
+    // limb is for a post-state the effect did NOT produce, every other PI honest, REJECTED by the
+    // anchor mismatch). The accept side BITES: without the anchor the verifier leaves PI 38 at the
+    // placeholder reconstruction (0), which disagrees with the honest after-limb ⇒ the honest turn
+    // is REJECTED (the same disable-the-anchor argument the setPermissions/setVK pairs make).
+    // ───────────────────────────────────────────────────────────────────────────────────────────
+
+    /// Same as `setup_with_cell`, but applies `mutate` to the cell BEFORE registration/storage so
+    /// the cipherclerk's local before-state (and the federation registration commitment) reflect a
+    /// non-default lifecycle (e.g. a pre-Sealed cell for the cellUnseal accept test).
+    fn setup_with_mutated_cell(
+        balance: u64,
+        mutate: impl FnOnce(&mut Cell),
+    ) -> (AgentCipherclerk, dregg_cell::CellId, Ledger, Cell) {
+        let cclerk = AgentCipherclerk::new();
+        let pub_key = cclerk.public_key().0;
+        let token_id = *blake3::hash(b"c1-domain").as_bytes();
+
+        let mut cell = Cell::with_balance(pub_key, token_id, i64::try_from(balance).unwrap());
+        cell.mode = CellMode::Sovereign;
+        mutate(&mut cell);
+        let cell_id = cell.id();
+
+        let nullifier_root = [0u8; 32];
+        let commitments_root = [0u8; 32];
+        let mut ctx_ledger = Ledger::new();
+        let _ = ctx_ledger.insert_cell(cell.clone());
+        let cells_root = rw::cells_root(&ctx_ledger);
+        let iroot = rw::iroot(&[]);
+        let v9_ctx = dregg_cell::commitment::V9RotationContext {
+            cells_root,
+            nullifier_root,
+            commitments_root,
+            iroot,
+        };
+        let commitment =
+            dregg_cell::commitment::compute_canonical_state_commitment_v9(&cell, &v9_ctx);
+
+        let mut cclerk = cclerk;
+        cclerk.store_sovereign_state(cell.clone());
+
+        let mut ledger = Ledger::new();
+        ledger.register_sovereign_cell(cell_id, commitment).unwrap();
+        let _ = ledger.insert_cell(cell.clone());
+
+        (cclerk, cell_id, ledger, cell)
+    }
+
+    /// A canonical death certificate for `cell_id` (the cellDestroy reflected-cert tests).
+    fn death_cert(cell_id: dregg_cell::CellId) -> dregg_cell::lifecycle::DeathCertificate {
+        dregg_cell::lifecycle::DeathCertificate {
+            cell_id,
+            last_receipt_hash: [4u8; 32],
+            final_state_commitment: [5u8; 32],
+            destroyed_at_height: 9,
+            reason: dregg_cell::lifecycle::DeathReason::Voluntary,
+        }
+    }
+
+    /// A canonical archival attestation for `cell_id` (the receiptArchive tests).
+    fn archive_att(cell_id: dregg_cell::CellId) -> dregg_cell::lifecycle::ArchivalAttestation {
+        dregg_cell::lifecycle::ArchivalAttestation {
+            cell_id,
+            archive_start_height: 0,
+            archive_end_height: 5,
+            archive_blob_hash: [1u8; 32],
+            archive_terminal_commitment: [2u8; 32],
+            archive_terminal_receipt_hash: [3u8; 32],
+        }
+    }
+
+    /// Which forced-limb anchor a record-pin effect uses (chooses the verifier's felt recompute).
+    #[derive(Clone, Copy)]
+    enum AnchorFlavor {
+        /// `compute_authority_digest_felt` (limb 24 — refusal in this fan-out).
+        RecordDigest,
+        /// `lifecycle_felt_cell` (limb 29 — the lifecycle family + receiptArchive).
+        Lifecycle,
+    }
+
+    impl AnchorFlavor {
+        fn felt(self, cell: &Cell) -> dregg_circuit::field::BabyBear {
+            match self {
+                AnchorFlavor::RecordDigest => dregg_cell::compute_authority_digest_felt(cell),
+                AnchorFlavor::Lifecycle => rw::lifecycle_felt_cell(cell),
+            }
+        }
+    }
+
+    /// SHARED FORGED-AFTER DRIVER: prove a rotated sovereign turn whose vm-effects are HONEST (so PI
+    /// 0..37 match the verifier by construction) but whose AFTER block carries the forged post-cell
+    /// (its forced limb = `flavor.felt(forged_after)`), assemble the proof-carrying turn, and assert
+    /// the executor REJECTS it via the anchor. The `before_cell` is the trusted registration state;
+    /// `honest_after` is the post-state the effect genuinely produces (used only to assert the forgery
+    /// actually moves the forced limb off the honest value — the bite witness).
+    #[allow(clippy::too_many_arguments)]
+    fn assert_forged_after_rejected(
+        cell_id: dregg_cell::CellId,
+        before_cell: &Cell,
+        effects: &[Effect],
+        honest_after: &Cell,
+        forged_after: &Cell,
+        flavor: AnchorFlavor,
+        mut ledger: Ledger,
+        what: &str,
+    ) {
+        use dregg_sdk::full_turn_proof::prove_effect_vm_rotated_ir2_with_caveat;
+
+        assert_ne!(
+            flavor.felt(forged_after),
+            flavor.felt(honest_after),
+            "{what}: the forgery must move the forced limb off the honest post-value (the bite witness)"
+        );
+
+        let vm_effects = AgentCipherclerk::convert_effects_to_vm(&cell_id, effects);
+
+        let nullifier_root = [0u8; 32];
+        let commitments_root = [0u8; 32];
+        let receipt_hashes: Vec<[u8; 32]> = Vec::new();
+        let mut ctx_ledger = Ledger::new();
+        let _ = ctx_ledger.insert_cell(before_cell.clone());
+
+        let before_w = rw::produce(
+            before_cell,
+            &ctx_ledger,
+            &nullifier_root,
+            &commitments_root,
+            &receipt_hashes,
+        );
+        let after_w = rw::produce(
+            forged_after,
+            &ctx_ledger,
+            &nullifier_root,
+            &commitments_root,
+            &receipt_hashes,
+        );
+
+        let initial_vm_state =
+            dregg_circuit::effect_vm::CellState::with_capability_root_and_record_digest(
+                u64::try_from(before_cell.state.balance()).unwrap(),
+                before_cell.state.nonce() as u32,
+                dregg_cell::compute_canonical_capability_root_felt(&before_cell.capabilities),
+                dregg_cell::compute_authority_digest_felt(before_cell),
+            );
+
+        let caveat = dregg_circuit::effect_vm::trace_rotated::empty_caveat_manifest();
+        let forged_proof = prove_effect_vm_rotated_ir2_with_caveat(
+            &initial_vm_state,
+            &vm_effects,
+            &before_w,
+            &after_w,
+            &caveat,
+            None,
+        )
+        .unwrap_or_else(|e| panic!("{what}: the forged proof must be internally consistent: {e}"));
+        let proof_bytes = postcard::to_allocvec(&forged_proof).expect("serialize forged proof");
+
+        let new_commit_felt = dregg_cell::commitment::compute_canonical_state_commitment_v9_felt(
+            forged_after,
+            &dregg_cell::commitment::V9RotationContext {
+                cells_root: after_w.pre_limbs[0],
+                nullifier_root,
+                commitments_root,
+                iroot: after_w.iroot,
+            },
+        );
+        let new_commitment = dregg_cell::commitment::felt_to_bytes32(new_commit_felt);
+
+        let mut forest = dregg_turn::forest::CallForest::new();
+        let action = dregg_sdk::raw::unsigned_action_named(
+            cell_id,
+            "sovereign_execute_proven",
+            effects.to_vec(),
+        );
+        forest.add_root(action);
+        let turn = Turn {
+            agent: cell_id,
+            nonce: 0,
+            call_forest: forest,
+            fee: 0,
+            memo: None,
+            valid_until: None,
+            previous_receipt_hash: None,
+            depends_on: Vec::new(),
+            conservation_proof: None,
+            sovereign_witnesses: Default::default(),
+            execution_proof: Some(proof_bytes),
+            execution_proof_cell: Some(cell_id),
+            execution_proof_new_commitment: Some(new_commitment),
+            custom_program_proofs: None,
+            effect_binding_proofs: Vec::new(),
+            cross_effect_dependencies: Vec::new(),
+            effect_witness_index_map: Vec::new(),
+        };
+
+        let executor = TurnExecutor::new(ComputronCosts::zero());
+        match executor.execute(&turn, &mut ledger) {
+            TurnResult::Rejected { reason, .. } => {
+                let s = format!("{reason:?}");
+                assert!(
+                    s.contains("ProofVerificationFailed") || s.contains("rotated"),
+                    "{what}: expected a rotated verify rejection from the PI-38 anchor mismatch, got: {s}"
+                );
+            }
+            other => panic!(
+                "{what}: ANTI-GHOST — a forged-after proof must be rejected by the record-pin anchor, \
+                 got {other:?}"
+            ),
+        }
+    }
+
+    /// HONEST accept driver: produce a rotated sovereign turn via the cipherclerk (which applies the
+    /// effect through the SHARED `apply_effect_to_cell`), then verify+commit through the executor.
+    /// A `Committed` result exercises the anchor's ACCEPT side (without the anchor the placeholder PI
+    /// 38 = 0 disagrees with the honest after-limb and the turn is REJECTED).
+    fn assert_honest_accept(
+        mut cclerk: AgentCipherclerk,
+        cell_id: dregg_cell::CellId,
+        mut ledger: Ledger,
+        effects: Vec<Effect>,
+        block_height: u64,
+        what: &str,
+    ) {
+        let turn = cclerk
+            .execute_sovereign_turn_with_proof(&cell_id, effects, 0, block_height)
+            .unwrap_or_else(|e| panic!("{what}: honest turn should prove: {e}"));
+        let mut executor = TurnExecutor::new(ComputronCosts::zero());
+        executor.set_block_height(block_height);
+        match executor.execute(&turn, &mut ledger) {
+            TurnResult::Committed { .. } => {}
+            other => panic!("{what}: honest turn must commit, got {other:?}"),
+        }
+        let committed = ledger
+            .get_sovereign_commitment(&cell_id)
+            .expect("sovereign commitment present after commit");
+        assert_eq!(
+            *committed,
+            turn.execution_proof_new_commitment.unwrap(),
+            "{what}: the sovereign commitment must advance to the proven post-state"
+        );
+    }
+
+    // ── cellSeal ────────────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn rotated_sovereign_cell_seal_proves_and_verifies() {
+        let height = 42;
+        let (cclerk, cell_id, ledger, _before) = setup_with_cell(1000);
+        let effects = vec![Effect::CellSeal {
+            target: cell_id,
+            reason: [9u8; 32],
+        }];
+        assert_honest_accept(cclerk, cell_id, ledger, effects, height, "cellSeal accept");
+    }
+
+    #[test]
+    fn rotated_sovereign_forged_after_cell_seal_is_rejected() {
+        let height = 42;
+        let (_c, cell_id, ledger, before_cell) = setup_with_cell(1000);
+        let effects = vec![Effect::CellSeal {
+            target: cell_id,
+            reason: [9u8; 32],
+        }];
+        // Honest after: sealed at `height` with reason [9;32].
+        let mut honest_after = before_cell.clone();
+        honest_after.seal([9u8; 32], height).unwrap();
+        // Forged after: still Live (claims a seal that did not move the lifecycle).
+        let forged_after = before_cell.clone();
+        assert_forged_after_rejected(
+            cell_id,
+            &before_cell,
+            &effects,
+            &honest_after,
+            &forged_after,
+            AnchorFlavor::Lifecycle,
+            ledger,
+            "cellSeal forged-after (frozen Live)",
+        );
+    }
+
+    // ── cellUnseal ──────────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn rotated_sovereign_cell_unseal_proves_and_verifies() {
+        // The before-cell is pre-Sealed (so unseal → Live is the genuine move).
+        let (cclerk, cell_id, ledger, _before) =
+            setup_with_mutated_cell(1000, |c| c.seal([9u8; 32], 7).unwrap());
+        let effects = vec![Effect::CellUnseal { target: cell_id }];
+        assert_honest_accept(cclerk, cell_id, ledger, effects, 0, "cellUnseal accept");
+    }
+
+    #[test]
+    fn rotated_sovereign_forged_after_cell_unseal_is_rejected() {
+        let (_c, cell_id, ledger, before_cell) =
+            setup_with_mutated_cell(1000, |c| c.seal([9u8; 32], 7).unwrap());
+        let effects = vec![Effect::CellUnseal { target: cell_id }];
+        // Honest after: Live (unsealed).
+        let mut honest_after = before_cell.clone();
+        honest_after.unseal().unwrap();
+        // Forged after: still Sealed (claims an unseal that did not happen).
+        let forged_after = before_cell.clone();
+        assert_forged_after_rejected(
+            cell_id,
+            &before_cell,
+            &effects,
+            &honest_after,
+            &forged_after,
+            AnchorFlavor::Lifecycle,
+            ledger,
+            "cellUnseal forged-after (frozen Sealed)",
+        );
+    }
+
+    // ── cellDestroy ─────────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn rotated_sovereign_cell_destroy_proves_and_verifies() {
+        let (cclerk, cell_id, ledger, _before) = setup_with_cell(1000);
+        let effects = vec![Effect::CellDestroy {
+            target: cell_id,
+            certificate: death_cert(cell_id),
+        }];
+        assert_honest_accept(cclerk, cell_id, ledger, effects, 0, "cellDestroy accept");
+    }
+
+    #[test]
+    fn rotated_sovereign_forged_after_cell_destroy_is_rejected() {
+        let (_c, cell_id, ledger, before_cell) = setup_with_cell(1000);
+        let cert = death_cert(cell_id);
+        let effects = vec![Effect::CellDestroy {
+            target: cell_id,
+            certificate: cert.clone(),
+        }];
+        // Honest after: Destroyed with `cert`.
+        let mut honest_after = before_cell.clone();
+        honest_after.destroy(&cert).unwrap();
+        // Forged after: Destroyed with a DIFFERENT death certificate (the death-cert MUST be
+        // reflected in the lifecycle felt — `lifecycle_felt` folds `death_certificate_hash`).
+        let mut forged_cert = cert.clone();
+        forged_cert.reason = dregg_cell::lifecycle::DeathReason::Forced;
+        let mut forged_after = before_cell.clone();
+        forged_after.destroy(&forged_cert).unwrap();
+        assert_forged_after_rejected(
+            cell_id,
+            &before_cell,
+            &effects,
+            &honest_after,
+            &forged_after,
+            AnchorFlavor::Lifecycle,
+            ledger,
+            "cellDestroy forged-after (wrong death-cert)",
+        );
+    }
+
+    // ── receiptArchive (the re-routed #219 close) ────────────────────────────────────────────────
+
+    #[test]
+    fn rotated_sovereign_receipt_archive_proves_and_verifies() {
+        let (cclerk, cell_id, ledger, _before) = setup_with_cell(1000);
+        let effects = vec![Effect::ReceiptArchive {
+            prefix_end_height: 5,
+            checkpoint: archive_att(cell_id),
+        }];
+        assert_honest_accept(cclerk, cell_id, ledger, effects, 0, "receiptArchive accept");
+    }
+
+    #[test]
+    fn rotated_sovereign_forged_after_receipt_archive_is_rejected() {
+        let (_c, cell_id, ledger, before_cell) = setup_with_cell(1000);
+        let att = archive_att(cell_id);
+        let effects = vec![Effect::ReceiptArchive {
+            prefix_end_height: 5,
+            checkpoint: att.clone(),
+        }];
+        // Honest after: Archived through height 5.
+        let mut honest_after = before_cell.clone();
+        honest_after.archive(&att).unwrap();
+        // Forged after: still Live (claims an archive that did not move the lifecycle). This is the
+        // exact MIS-ROUTE the prior record-digest pin could not catch (the deployed apply moves the
+        // lifecycle, NOT the record digest); the re-routed B_LIFECYCLE pin BITES.
+        let forged_after = before_cell.clone();
+        assert_forged_after_rejected(
+            cell_id,
+            &before_cell,
+            &effects,
+            &honest_after,
+            &forged_after,
+            AnchorFlavor::Lifecycle,
+            ledger,
+            "receiptArchive forged-after (frozen Live)",
+        );
+    }
+
+    // ── refusal (the #218 close — apply_refusal now writes fields_root) ───────────────────────────
+
+    #[test]
+    fn rotated_sovereign_refusal_proves_and_verifies() {
+        let (cclerk, cell_id, ledger, _before) = setup_with_cell(1000);
+        let effects = vec![Effect::Refusal {
+            cell: cell_id,
+            offered_action_commitment: [7u8; 32],
+            refusal_reason: dregg_turn::action::RefusalReason::Declined,
+            proof_witness_index: 0,
+        }];
+        assert_honest_accept(cclerk, cell_id, ledger, effects, 0, "refusal accept");
+    }
+
+    #[test]
+    fn rotated_sovereign_forged_after_refusal_is_rejected() {
+        let (_c, cell_id, ledger, before_cell) = setup_with_cell(1000);
+        let effects = vec![Effect::Refusal {
+            cell: cell_id,
+            offered_action_commitment: [7u8; 32],
+            refusal_reason: dregg_turn::action::RefusalReason::Declined,
+            proof_witness_index: 0,
+        }];
+        // Honest after: the refusal audit landed in fields_root (record digest moves) + nonce bumped.
+        let mut honest_after = before_cell.clone();
+        rw::apply_effect_to_cell(&mut honest_after, &cell_id, &effects[0], 0);
+        // Forged after: a DIFFERENT refusal audit (a refusal the effect did NOT produce). We forge by
+        // writing a different audit commitment into the reserved ext key, so the record digest moves
+        // off the honest value.
+        let mut forged_after = before_cell.clone();
+        let _ = forged_after.state.increment_nonce();
+        forged_after
+            .state
+            .set_field_ext(dregg_cell::state::REFUSAL_AUDIT_EXT_KEY, [0xEE; 32]);
+        assert_forged_after_rejected(
+            cell_id,
+            &before_cell,
+            &effects,
+            &honest_after,
+            &forged_after,
+            AnchorFlavor::RecordDigest,
+            ledger,
+            "refusal forged-after (wrong audit)",
+        );
     }
 }
 

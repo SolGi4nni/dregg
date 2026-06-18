@@ -424,12 +424,10 @@ pub fn apply_effect_to_cell(
             cell.verification_key = new_vk.clone();
         }
         // refusal (record-digest limb 24): mirror `apply_refusal`'s STATE writes — bump the nonce
-        // and write the audit commitment into `fields[4]`, clearing `commitments[4]`. NOTE: neither
-        // `fields[0..8]` nor the nonce is folded into `compute_authority_digest_felt` (it reads
-        // `fields[8..16]` + the ext `fields_root`), so this projection does NOT move the r23 residue
-        // — see the anchor's honesty note in `proof_verify.rs` (the refusal record-pin is a
-        // published-value binding, not a forcing gate, because the forced limb is record-digest yet
-        // the refusal write lands in a WELDED slot).
+        // and write the audit commitment into the protocol-reserved EXT `fields_root` key
+        // (`REFUSAL_AUDIT_EXT_KEY >= STATE_SLOTS`). `compute_authority_digest_felt` FOLDS
+        // `fields_root`, so a genuine refusal MOVES the r23 authority residue and the `refusalV3`
+        // record-pin BITES (the verifier anchors PI 38 to `compute_authority_digest_felt(post_cell)`).
         Effect::Refusal {
             cell: target,
             offered_action_commitment,
@@ -448,10 +446,9 @@ pub fn apply_effect_to_cell(
                     h.update(reason_hash)
                 }
             };
-            cell.state.fields[4] = *h.finalize().as_bytes();
-            if cell.state.commitments[4].is_some() {
-                cell.state.commitments[4] = None;
-            }
+            let audit = *h.finalize().as_bytes();
+            cell.state
+                .set_field_ext(dregg_cell::state::REFUSAL_AUDIT_EXT_KEY, audit);
         }
         // receiptArchive (lifecycle limb 29 — see routing note below): mirror `apply_receipt_archive`'s
         // STATE write — `c.archive(checkpoint)`, which moves the lifecycle to `Archived`. The executor's
@@ -615,10 +612,10 @@ mod tests {
             );
             assert_ne!(rd(&base), rd(&a), "setVK MUST move the record digest (anchored)");
         }
-        // refusal → record-digest pin, but the executor writes the WELDED fields[4] + nonce, which
-        // `compute_authority_digest_felt` does NOT fold ⇒ record digest does NOT move (the record-pin
-        // is a published-value binding on the deployed path; the anchor cannot bite without an
-        // executor apply change).
+        // refusal → record-digest: MOVES (anchored — the anchor bites). The deployed `apply_refusal`
+        // writes the audit into the EXT `fields_root` (`REFUSAL_AUDIT_EXT_KEY`), which
+        // `compute_authority_digest_felt` FOLDS, so the r23 record digest advances on a genuine refusal.
+        // The user `fields[0..15]` block is UNTOUCHED (refusal is purely a non-action attestation).
         {
             let mut a = base.clone();
             apply_effect_to_cell(
@@ -632,17 +629,19 @@ mod tests {
                 },
                 0,
             );
-            assert_ne!(base.state.fields[4], a.state.fields[4], "refusal writes the welded fields[4]");
             assert_eq!(
+                base.state.fields[4], a.state.fields[4],
+                "refusal must NOT touch the user-addressable fields[4] (the audit lands in fields_root)"
+            );
+            assert_ne!(
                 rd(&base),
                 rd(&a),
-                "refusal does NOT move the record digest (fields[4] is welded, not in the residue) — \
-                 the record-pin cannot bite on the deployed path"
+                "refusal MUST move the record digest (the audit lands in fields_root, which the r23 \
+                 authority residue folds) — the record-pin anchor BITES"
             );
         }
-        // receiptArchive → record-digest pin, but the executor writes the LIFECYCLE (Archived), which
-        // `compute_authority_digest_felt` does NOT fold; the genuine mover is `lifecycle_felt`. The
-        // record-pin is mis-routed for the deployed apply.
+        // receiptArchive → lifecycle: MOVES (the executor writes the LIFECYCLE `Archived`, which
+        // `lifecycle_felt` (limb 29) folds; the record-pin is now routed to `B_LIFECYCLE` to match).
         {
             let mut a = base.clone();
             let att = ArchivalAttestation {

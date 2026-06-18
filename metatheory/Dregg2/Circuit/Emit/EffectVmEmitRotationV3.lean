@@ -1846,38 +1846,29 @@ rotated_sovereign_set_vk_proves_and_verifies, rotated_sovereign_forged_after_vk_
 accept BITES (without the anchor PI 38 stays at the placeholder and the honest proof is rejected), and the
 forged-after proof is rejected by the anchor mismatch.
 
-STILL OPEN — with PRECISE deployment blockers (verified empirically by
-`dregg_turn::rotation_witness::tests::forced_limb_movement_map`):
+CLOSED FOR THE WHOLE RECORD-PIN FAMILY (the fan-out fixed the 3 bugs the vacuous pin had masked — the
+model-finds-the-bug loop; each effect's forged-after tooth BITES, tests in `sdk/tests/sovereign_rotated_c1.rs
+record_pin_anchor`, all 7 accept/reject pairs green):
 
-  * `refusal` — the RUST executor's `apply_refusal` writes the WELDED `fields[4]` indexed slot + bumps the
-    nonce. NEITHER is folded by `compute_authority_digest_felt` (it reads `fields[8..16]` + the EXT
-    `fields_root`, not the welded `fields[0..8]` or the nonce). So the honest after `record_digest` does NOT
-    move off the before value — the record-pin is a published-value binding on the DEPLOYED path and the
-    anchor CANNOT bite. (This Lean model's claim that the refusal audit slot lands in `fields_root` describes
-    `TurnExecutorFull.refusalField`, the SPEC executor; the deployed Rust `apply_refusal` writes `fields[4]`
-    instead — a spec/deployment divergence.) Closing it requires a RUST EXECUTOR apply change (write the audit
-    via `set_field_ext` into `fields_root`), out of scope for a verifier-anchor-only change.
+  * RECORD-DIGEST anchor (limb `B_RECORD_DIGEST = 24`, `compute_authority_digest_felt`): `setPermissions`,
+    `setVK`, and `refusal`. The refusal fix: the deployed `apply_refusal` now writes the audit commitment into
+    the protocol-reserved EXT key `REFUSAL_AUDIT_EXT_KEY` (`≥ STATE_SLOTS`, committed via `fields_root` which
+    `compute_authority_digest_felt` folds), matching the Lean SPEC `TurnExecutorFull.refusalField` — was the
+    welded `fields[4]` (unfolded), the spec/deployment divergence that left the refusal record UNBOUND.
 
-  * `receiptArchive` — `apply_receipt_archive` writes the cell LIFECYCLE (`Archived`), which
-    `compute_authority_digest_felt` does NOT fold; the genuine mover is `lifecycle_felt` (limb `B_LIFECYCLE`).
-    The `record_pin_offset` routes receiptArchive to `B_RECORD_DIGEST`, which the deployed write does NOT
-    move — a MIS-ROUTE for the deployed apply. Closing it requires re-routing receiptArchive's pin to
-    `B_LIFECYCLE` (and anchoring via `lifecycle_felt_cell`).
+  * LIFECYCLE anchor (limb `B_LIFECYCLE = 29`, `lifecycle_felt_cell`): `cellSeal`, `cellUnseal`, `cellDestroy`
+    (the lifecycle separates Live/Sealed/Destroyed + folds the death-cert for Destroy), AND `receiptArchive`
+    (`record_pin_offset` re-routed from the mis-routed `B_RECORD_DIGEST` to `B_LIFECYCLE`). The cellSeal/Unseal/
+    Destroy producer/verifier projection divergence (the cipherclerk producer collapsed them to
+    `VmEffect::SetPermissions` vs the executor bridge's native variants) was fixed by aligning the producer to
+    native projection (+ threading `block_height` into the otherwise-stateless producer for the cellSeal seam).
 
-  * `cellSeal` / `cellUnseal` / `cellDestroy` (limb `B_LIFECYCLE = 29`) — the forced limb DOES move
-    (`lifecycle_felt` separates Live / Sealed / Destroyed, and folds the death certificate for Destroy), so a
-    lifecycle anchor via `lifecycle_felt_cell(post_cell)` WOULD bite. The blocker is a PRODUCER/VERIFIER
-    PROJECTION DIVERGENCE: the cipherclerk producer (`convert_effects_to_vm`) collapses these to
-    `VmEffect::SetPermissions` while the executor bridge (`convert_turn_effects_to_vm`) projects the NATIVE
-    `VmEffect::{CellSeal,CellUnseal,CellDestroy}`. The two resolve DIFFERENT descriptors, so the verifier's
-    reconstructed trace/PIs diverge from the proof and honest proofs are rejected BEFORE the anchor is reached.
-    Closing them requires aligning the producer projection to native AND (for `cellSeal` only) threading the
-    `block_height`/`sealed_at` seam into the otherwise-stateless cipherclerk producer (the helper
-    `apply_effect_to_cell` already takes `block_height` for exactly this).
-
-The shared `apply_effect_to_cell` (`turn/src/rotation_witness.rs`) and the cell-lifecycle anchor helper
-`lifecycle_felt_cell` already carry ALL SIX arms (matching the executor apply) so the remaining closes are
-producer-projection / executor-apply work, not new digest plumbing. -/
+The verifier (`verify_and_commit_proof_rotated`, step 6b) clones the trusted before-cell, applies the kernel
+effect through the SHARED `dregg_turn::rotation_witness::apply_effect_to_cell` weld (the SAME projection the
+cipherclerk producer uses for its after-cell, so honest proofs are NOT rejected), and overrides `dpis[38]`
+from the trusted post-cell (`compute_authority_digest_felt` for the record-digest class, `lifecycle_felt_cell`
+for the lifecycle class) — so a forged after-residue disagrees with the anchored PI 38 ⇒ UNSAT. The record-pin
+is now a genuine forcing gate across the family, not a published-value binding. -/
 theorem rotateV3WithRecordPin_rejects_wrong_post (off : Nat) (hash : List ℤ → ℤ)
     (d : EffectVmDescriptor) (env : VmRowEnv) (isFirst : Bool)
     (hwrong : env.loc (d.traceWidth + AFTER_BLOCK_OFF + off) ≠ env.pub (rotateV3 d).piCount) :
@@ -1936,14 +1927,18 @@ before is now BITING. -/
 def refusalV3 : EffectVmDescriptor2 :=
   graduateV1 (rotateV3WithRecordPin B_RECORD_DIGEST EffectVmEmitRefusal.refusalVmDescriptor)
 
-/-- **`receiptArchiveV3`** — the LIVE rotated receiptArchive WITH the record-digest-forcing pin. The
-`.receiptArchiveA` arm sets the cell record's `"lifecycle"` audit RECORD slot to `1`
-(`TurnExecutorFull.lifecycleField`, `Spec.CellStateAudit.ReceiptArchiveSpec` — the RECORD field, NOT
-the `k.lifecycle` liveness side-table). That named record slot also lands in `fields_root`, folded
-into the r23 authority residue, so the AFTER `record_digest` limb MOVES on a genuine archive; pinning
-it to PI `38` forces it. A frozen-audit-slot archive forgery is UNSAT. -/
+/-- **`receiptArchiveV3`** — the LIVE rotated receiptArchive WITH the LIFECYCLE-forcing pin (limb
+`B_LIFECYCLE = 29`). The DEPLOYED `apply_receipt_archive` writes the cell LIFECYCLE (`Archived`) via
+`c.archive(checkpoint)` — NOT a `fields_root` record slot — so the genuine mover is `lifecycle_felt`
+(`rotation_witness.rs::lifecycle_felt`, AFTER limb 29), which folds the archival checkpoint into a
+distinct `Archived` felt. Pinning that limb to PI `38` forces it; the verifier anchors PI 38 to
+`lifecycle_felt_cell(post_cell)` (the Class-2 path), so a frozen-lifecycle archive forgery (claiming
+an archive that did not move the lifecycle) FAILS the pin and is UNSAT
+(`rotateV3WithRecordPin_rejects_wrong_post`). This MATCHES the deployed apply (which moves the
+lifecycle), where the prior `B_RECORD_DIGEST` route was a MIS-ROUTE (the deployed write does not move
+the authority residue). -/
 def receiptArchiveV3 : EffectVmDescriptor2 :=
-  graduateV1 (rotateV3WithRecordPin B_RECORD_DIGEST
+  graduateV1 (rotateV3WithRecordPin B_LIFECYCLE
     EffectVmEmitReceiptArchive.receiptArchiveActorVmDescriptor)
 
 #assert_axioms graduable_rotateV3WithRecordPin
@@ -1962,7 +1957,7 @@ def receiptArchiveV3 : EffectVmDescriptor2 :=
 #guard refusalV3.piCount == 39
 #guard receiptArchiveV3.piCount == 39
 #guard graduable (rotateV3WithRecordPin B_RECORD_DIGEST EffectVmEmitRefusal.refusalVmDescriptor)
-#guard graduable (rotateV3WithRecordPin B_RECORD_DIGEST
+#guard graduable (rotateV3WithRecordPin B_LIFECYCLE
         EffectVmEmitReceiptArchive.receiptArchiveActorVmDescriptor)
 #guard graduable (rotateV3WithRecordPin B_LIFECYCLE EffectVmEmitCellSeal.cellSealVmDescriptor)
 #guard graduable (rotateV3WithRecordPin B_LIFECYCLE EffectVmEmitCellUnseal.cellUnsealVmDescriptor)

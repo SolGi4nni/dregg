@@ -610,7 +610,10 @@ fn set_permissions_updates_cell_permissions() {
 }
 
 // ---------------------------------------------------------------------------
-// Refusal — bumps nonce, stores audit commitment in field[4].
+// Refusal — bumps nonce, stores audit commitment in the protocol-reserved ext
+// audit field (REFUSAL_AUDIT_EXT_KEY, committed via fields_root so the rotated
+// record-pin binds it; #218 — was the welded fields[4], which the commitment
+// did not fold).
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -623,7 +626,11 @@ fn refusal_bumps_nonce_and_stores_audit() {
     let executor = zero_executor();
 
     let before_nonce = ledger.get(&actor_id).unwrap().state.nonce();
-    let before_field4 = ledger.get(&actor_id).unwrap().state.fields[4];
+    let before_audit = ledger
+        .get(&actor_id)
+        .unwrap()
+        .state
+        .get_field_ext(dregg_cell::state::REFUSAL_AUDIT_EXT_KEY);
 
     let offered_commitment = [0xAA; 32];
     let result = exec_single(
@@ -649,8 +656,10 @@ fn refusal_bumps_nonce_and_stores_audit() {
         "Refusal (plus executor Phase 1) must bump nonce by 2"
     );
     assert_ne!(
-        after.state.fields[4], before_field4,
-        "Refusal must write audit commitment to field[4]"
+        after.state.get_field_ext(dregg_cell::state::REFUSAL_AUDIT_EXT_KEY),
+        before_audit,
+        "Refusal must write the audit commitment to the protocol-reserved ext field \
+         (REFUSAL_AUDIT_EXT_KEY, folded by fields_root)"
     );
 }
 
@@ -676,7 +685,11 @@ fn refusal_with_custom_reason_stores_distinct_audit() {
         }],
     );
     assert_committed(&result1, "Refusal Declined");
-    let field4_declined = ledger.get(&actor_id).unwrap().state.fields[4];
+    let audit_declined = ledger
+        .get(&actor_id)
+        .unwrap()
+        .state
+        .get_field_ext(dregg_cell::state::REFUSAL_AUDIT_EXT_KEY);
 
     // After the first Refusal turn, the cell nonce has been incremented twice:
     // once by the Refusal effect (apply_refusal) and once by the executor's
@@ -699,10 +712,14 @@ fn refusal_with_custom_reason_stores_distinct_audit() {
         prev,
     );
     assert_committed(&result2, "Refusal Custom");
-    let field4_custom = ledger.get(&actor_id).unwrap().state.fields[4];
+    let audit_custom = ledger
+        .get(&actor_id)
+        .unwrap()
+        .state
+        .get_field_ext(dregg_cell::state::REFUSAL_AUDIT_EXT_KEY);
 
     assert_ne!(
-        field4_declined, field4_custom,
+        audit_declined, audit_custom,
         "distinct refusal reasons must produce distinct audit commitments"
     );
 }

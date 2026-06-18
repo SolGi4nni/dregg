@@ -17,6 +17,16 @@ pub const FIELD_ZERO: FieldElement = [0u8; 32];
 /// Number of user-defined state slots per cell.
 pub const STATE_SLOTS: usize = 16;
 
+/// **Protocol-reserved ext-field key for the refusal audit record** (`>= STATE_SLOTS`, so it
+/// lands in the committed [`CellState::fields_map`] / [`fields_root`], NOT a user-addressable
+/// `fields[0..15]` indexed slot). The deployed `apply_refusal` writes the
+/// `(offered_action_commitment, reason)` audit commitment here so it is FOLDED by
+/// `compute_authority_digest_felt` (via `fields_root`) into the rotated AFTER block's
+/// `record_digest` limb — matching the Lean SPEC `TurnExecutorFull.refusalField` (the named
+/// `"refusal"` record slot lands in `fields_root`), which makes the rotated `refusalV3`
+/// record-pin a genuine forcing gate. Keyed high to avoid clashing with app ext-field usage.
+pub const REFUSAL_AUDIT_EXT_KEY: u64 = 0x0000_0001_0000_0000; // 2^32, far above app ext keys
+
 /// Number of kernel-owned side-table roots in the dedicated `system_roots`
 /// sub-block (`_RECORD-LAYER-UPGRADE.md` §C, Option C1; record-layer STAGE 3).
 /// One root per side-table; parallel to (and disjoint from) the 16 user
