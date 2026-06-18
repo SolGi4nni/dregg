@@ -814,7 +814,7 @@ pub const V3_STAGED_CAVEAT_DESCRIPTORS: &[(&str, &str, &str)] = &[(
 pub const V3_STAGED_REGISTRY_TSV: &str =
     include_str!("../descriptors/rotation-v3-staged-registry.tsv");
 pub const V3_STAGED_REGISTRY_FP: &str =
-    "16f19533f3af15f621097fded6507d3497e748f8e6ac3cbdc81538a8bde1a7ed";
+    "e9d13740f7fbd7348bf83b45d0970b099facbd3fa3c9b9d81bdcf5ffb5861aac";
 
 /// The rotated probe layout at register count `r` (the Rust twin of the Lean parametric
 /// layout `EffectVmEmitRotationR`: columns are FUNCTIONS of R; the chunking is 4-wide head,
@@ -1866,6 +1866,20 @@ mod tests {
                     "{key}: the fifth pin welds the AFTER block's correctly-written record/lifecycle \
                      limb to PI[38] (the deployment-soundness gate)"
                 );
+            } else if key == "transferFeeVmDescriptor2R24" {
+                // THE FEE-IN-PROOF transfer: the fifth pin welds the after-block RESERVED limb (col
+                // `STATE_AFTER_BASE + state::RESERVED`, the fee carrier) to PI[38], the fee debited
+                // INSIDE the proven transition (the bal-lo gate forces `after = before − amount − fee`).
+                use crate::effect_vm::columns::{STATE_AFTER_BASE, state};
+                assert_eq!(
+                    d.public_input_count, 39,
+                    "transferFee: rotated 38-PI + the appended fee slot"
+                );
+                assert_eq!(
+                    nullifier_pins,
+                    vec![(STATE_AFTER_BASE + state::RESERVED, pi_base + 4)],
+                    "transferFee: the fifth pin welds the after-block RESERVED fee limb (col 89) to PI[38]"
+                );
             } else {
                 assert_eq!(
                     d.public_input_count, 38,
@@ -1878,14 +1892,15 @@ mod tests {
             }
         }
         assert_eq!(
-            n, 45,
+            n, 46,
             "expected the 36-member rotated cohort (28 v2-graduated + 8 widened) + the 6 fan-out \
              cap-open members (delegate/introduce/grantCap/revoke/refreshDelegation/revokeCapability \
              — each *CapOpenVmDescriptor2R24) + the 2 LIVE effect-general legs \
              (transfer/attenuate *CapOpenEffVmDescriptor2R24) + the TURN-IDENTITY weld \
              (transferCapOpenTBVmDescriptor2R24, CapOpenTurnPins — the cap-open + 2 turn-identity \
-             columns + 3 turn-identity PI pins welding src/actor/dst to the published turn). The \
-             Signature-pinned capOpenAttenuateV3/transferCapOpenV3 were DELETED (Stage D)."
+             columns + 3 turn-identity PI pins welding src/actor/dst to the published turn) + the \
+             FEE-IN-PROOF transfer (transferFeeVmDescriptor2R24 — the fee debited in-proof, 39 PIs). \
+             The Signature-pinned capOpenAttenuateV3/transferCapOpenV3 were DELETED (Stage D)."
         );
     }
 

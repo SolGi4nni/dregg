@@ -744,6 +744,96 @@ pub fn prove_effect_vm_rotated_ir2_with_caveat(
         .map_err(|e| SdkError::InvalidWitness(format!("rotated IR-v2 proof: {e}")))
 }
 
+/// **THE FEE-IN-PROOF rotated prover (`transferFeeVmDescriptor2R24`).** The fee-path twin of
+/// [`prove_effect_vm_rotated_ir2_with_caveat`] for a plain sovereign `Transfer` lead: it routes the
+/// `transferFeeVmDescriptor2R24` descriptor (39 PIs), generates the fee-aware trace
+/// (`generate_rotated_effect_vm_trace_with_fee` — the fee debited in-proof so NEW_COMMIT binds the
+/// post-fee balance), and proves. A NON-Transfer lead falls back to the unfee'd prover (so this is a
+/// drop-in the sovereign producer can always call). Keeps the broad unfee'd cohort path 100% intact.
+#[cfg(feature = "prover")]
+pub fn prove_effect_vm_rotated_ir2_with_fee(
+    initial_state: &CellState,
+    effects: &[VmEffectKind],
+    before_w: &dregg_turn::rotation_witness::RotationWitness,
+    after_w: &dregg_turn::rotation_witness::RotationWitness,
+    caveat: &dregg_circuit::effect_vm::trace_rotated::RotatedCaveatManifest,
+    fee: u64,
+) -> Result<
+    dregg_circuit::descriptor_ir2::Ir2BatchProof<dregg_circuit::descriptor_ir2::DreggStarkConfig>,
+    SdkError,
+> {
+    use dregg_circuit::descriptor_ir2::{
+        MemBoundaryWitness, parse_vm_descriptor2, prove_vm_descriptor2,
+    };
+    use dregg_circuit::effect_vm::trace_rotated::{
+        RotatedBlockWitness, generate_rotated_effect_vm_trace_with_fee,
+        rotated_descriptor_name_for_effect_fee,
+    };
+    use dregg_circuit::effect_vm_descriptors::V3_STAGED_REGISTRY_TSV;
+
+    let lead = effects
+        .first()
+        .ok_or_else(|| SdkError::InvalidWitness("rotated fee prover: empty turn".into()))?;
+    // Non-Transfer leads carry no fee-in-proof descriptor — defer to the unfee'd prover.
+    if !matches!(lead, dregg_circuit::effect_vm::Effect::Transfer { .. }) {
+        return prove_effect_vm_rotated_ir2_with_caveat(
+            initial_state,
+            effects,
+            before_w,
+            after_w,
+            caveat,
+            None,
+        );
+    }
+    let name = rotated_descriptor_name_for_effect_fee(lead).ok_or_else(|| {
+        SdkError::InvalidWitness(format!(
+            "rotated fee prover: effect {lead:?} has no fee-in-proof descriptor"
+        ))
+    })?;
+    if effects.len() > 1 {
+        for e in &effects[1..] {
+            if rotated_descriptor_name_for_effect_fee(e) != Some(name) {
+                return Err(SdkError::InvalidWitness(
+                    "rotated fee prover: heterogeneous multi-effect turn (one descriptor per proof)"
+                        .into(),
+                ));
+            }
+        }
+    }
+
+    let json = V3_STAGED_REGISTRY_TSV
+        .lines()
+        .find_map(|line| {
+            let mut it = line.splitn(3, '\t');
+            if it.next() == Some(name) {
+                let _name = it.next();
+                it.next()
+            } else {
+                None
+            }
+        })
+        .ok_or_else(|| {
+            SdkError::InvalidWitness(format!("{name} not in staged rotated registry"))
+        })?;
+    let desc = parse_vm_descriptor2(json)
+        .map_err(|e| SdkError::InvalidWitness(format!("rotated fee descriptor parse: {e}")))?;
+
+    let bridge = |w: &dregg_turn::rotation_witness::RotationWitness| {
+        RotatedBlockWitness::new(w.pre_limbs.clone(), w.iroot)
+    };
+    let before = bridge(before_w)
+        .map_err(|e| SdkError::InvalidWitness(format!("rotated fee before-witness: {e}")))?;
+    let after = bridge(after_w)
+        .map_err(|e| SdkError::InvalidWitness(format!("rotated fee after-witness: {e}")))?;
+
+    let (trace, dpis) =
+        generate_rotated_effect_vm_trace_with_fee(initial_state, effects, &before, &after, caveat, fee)
+            .map_err(|e| SdkError::InvalidWitness(format!("rotated fee trace generation: {e}")))?;
+
+    prove_vm_descriptor2(&desc, &trace, &dpis, &MemBoundaryWitness::default(), &[])
+        .map_err(|e| SdkError::InvalidWitness(format!("rotated fee IR-v2 proof: {e}")))
+}
+
 /// **`cap_open_supported_for_run`** (F1) — does a cap-open descriptor exist for this single-effect
 /// run's effect-kind? The cap-open routing (`prove_cohort_run_chain`) is cap-PRESENCE driven: any
 /// run threading a real consumed-cap witness routes the cap-open. This gate maps the run's

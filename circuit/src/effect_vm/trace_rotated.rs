@@ -357,6 +357,225 @@ pub fn generate_rotated_effect_vm_trace(
     Ok((trace, dpis))
 }
 
+/// The maximum fee a fee-in-proof transfer may carry: the descriptor's col-89 range lookup is
+/// `table 2` (range, 30 bits), so the fee must fit in 30 bits — exactly the per-limb balance bound
+/// (`BAL_LIMB_BITS = 30`). A larger fee has no range-check witness and is UNSAT, so we fail closed
+/// here (rather than silently wrapping the felt) to keep producer and verifier in lockstep.
+pub const FEE_MAX: u64 = (1u64 << 30) - 1;
+
+/// **THE FEE-IN-PROOF rotated transfer generator (`transferFeeVmDescriptor2R24`).**
+///
+/// Identical to [`generate_rotated_effect_vm_trace`] EXCEPT the deployed `transferFeeVmDescriptor2R24`
+/// debits the turn `fee` INSIDE the proven transition (so NEW_COMMIT binds the POST-fee balance) and
+/// publishes the fee as PI slot 38. The descriptor (vs. the unfee'd `transferVmDescriptor2R24`)
+/// differs by exactly four constraint deltas (verified against the committed registry TSV):
+///   (a) the balance-lo gate is AUGMENTED to `after.bal_lo = before.bal_lo + amount·(1−2·dir) − feeCol`
+///       (`feeCol = STATE_AFTER_BASE + state::RESERVED = col 89`);
+///   (b) the RESERVED passthrough gate (`after.reserved == before.reserved`, col 89 == col 67) is DROPPED
+///       (RESERVED now carries the fee, not a frozen passthrough);
+///   (c) a 30-bit range check (table 2) is added on col 89;
+///   (d) a last-row `pi_binding` pins col 89 → PI 38.
+///
+/// The v1 generator (`generate_effect_vm_trace`) computes the after-balance from the effects WITHOUT
+/// the fee, so the bare after-block balance is the PRE-fee `before + amount·(1−2dir)`. This function
+/// makes the after-block POST-fee as a column override + commitment recompute (the effects cannot
+/// express a fee debit, and `after_w`'s welded balance limb is OVERRIDDEN per-row from the v1 state
+/// block by `fill_block`, so the authoritative after-balance is the v1 col 76):
+///   * the post-fee full u64 balance `post = bal − fee` is re-split into (lo, hi) and written to the
+///     v1 after-block `BALANCE_LO`/`BALANCE_HI` (cols 76/77);
+///   * the v1 GROUP-4 after-state-commit chain is recomputed (cols 98/99/100 intermediates → col 88
+///     STATE_COMMIT, absorbing the record-digest aux at col 186), so the v1 after STATE_COMMIT (PI 4)
+///     and the after bal_lo/hi (PIs 14/15) bind the post-fee balance;
+///   * `fill_block` is RE-RUN for the AFTER rotated block so its welded balance limb (col 232+1) +
+///     chained `wireCommitR` → rotated NEW_COMMIT (col 265 / PI 35) bind the post-fee balance;
+///   * the fee is written to col 89 (= `STATE_AFTER_BASE + state::RESERVED`) on EVERY row — the
+///     transfer-row gate reads it (selector 0 makes it inert on padding rows) and the last-row pin
+///     reads it regardless;
+///   * the 39-PI vector is re-read from the (now post-fee) trace carriers so producer and verifier
+///     reconstruct byte-identical PIs (Fiat–Shamir agreement). PI 38 = the fee felt.
+///
+/// The producer (`cipherclerk::prove_sovereign_turn_rotated`) and verifier
+/// (`proof_verify::verify_and_commit_proof_rotated`) BOTH call this with the SAME pre-fee
+/// `initial_state`/`effects` and the SAME `fee`, so the v1 sub-trace's pre-fee after-balance is
+/// identical on both sides and the post-fee override lands identically — they agree by construction.
+///
+/// RESERVED (`state::RESERVED`, col 89) is NOT a state-commitment hash input (it is absent from the
+/// GROUP-4 chain `[76..87] → 98/99/100 → 88`), so writing the fee there does NOT corrupt OLD/NEW
+/// COMMIT — only the BALANCE change (post-fee) flows into the commitment. Returns `(trace, pis)` ready
+/// for `transferFeeVmDescriptor2R24` (39 PIs).
+pub fn generate_rotated_effect_vm_trace_with_fee(
+    initial_state: &CellState,
+    effects: &[Effect],
+    before_w: &RotatedBlockWitness,
+    after_w: &RotatedBlockWitness,
+    caveat: &RotatedCaveatManifest,
+    fee: u64,
+) -> Result<(Vec<Vec<BabyBear>>, Vec<BabyBear>), String> {
+    use super::columns::state;
+
+    if fee > FEE_MAX {
+        return Err(format!(
+            "fee-in-proof: fee {fee} exceeds the 30-bit range-check bound {FEE_MAX} (col 89 has no \
+             range witness for a larger fee — the descriptor's table-2 lookup would be UNSAT)"
+        ));
+    }
+
+    // The base rotated trace + 38-PI vector (PRE-fee after-balance, welds, v1 economic block).
+    let (mut trace, base_pis) =
+        generate_rotated_effect_vm_trace(initial_state, effects, before_w, after_w, caveat)?;
+
+    let fee_col = STATE_AFTER_BASE + state::RESERVED; // 89
+    let record_digest = super::columns::AUX_BASE + super::columns::aux_off::STATE_RECORD_DIGEST; // 186
+    let fee_felt = BabyBear::new(fee as u32);
+
+    // The fee debits the actor's balance on the TRANSFER row (`Effect::Transfer` is laid on row 0,
+    // its AFTER block carrying the post-transfer balance). The post-transfer state then carries
+    // forward through the trailing NoOp passthrough rows as BOTH their before and after state. So the
+    // post-fee rewrite is:
+    //   * row 0 (transfer): subtract `fee` from the AFTER block ONLY (the BEFORE block is the pre-fee
+    //     OLD_COMMIT state; the fee gate verifies `after = before − amount − fee`);
+    //   * rows ≥ 1 (NoOp passthrough): subtract `fee` from BOTH the before and after block (they carry
+    //     the post-fee balance; the cross-row continuity `next.before == local.after` then chains the
+    //     post-fee state-commit from row 0 onward).
+    // Each touched block has its balance re-split, its v1 STATE_COMMIT recomputed (the AFTER block via
+    // the descriptor's published GROUP-4 lookups `[76..79]→98`, `[80..83]→99`, `[84..87]→100`,
+    // `[98,99,100,186]→88`; the BEFORE block by the same `hash_4_to_1` over its own limbs — its
+    // intermediates are not published, only its STATE_COMMIT col 66 is bound to PI 0 + the continuity),
+    // and its rotated block (welded balance limb → chained `wireCommitR` → STATE_COMMIT) re-run.
+    let n = trace.len();
+    for r in 0..n {
+        let is_transfer_row = r == 0;
+        // BEFORE block: debit only on the carry-forward NoOp rows (NOT the transfer row's pre-fee
+        // OLD_COMMIT state).
+        if !is_transfer_row {
+            debit_v1_block_balance(&mut trace[r], STATE_BEFORE_BASE, fee, record_digest, None);
+            fill_block(&mut trace[r], BEFORE_BASE, STATE_BEFORE_BASE, before_w);
+        }
+        // AFTER block: debit on EVERY row (row 0's post-transfer after, and the NoOp carry-forward).
+        // The AFTER block's GROUP-4 intermediates ARE published (cols 98/99/100), so thread them.
+        let aux = super::columns::AUX_BASE;
+        let inters = (
+            aux + super::columns::aux_off::STATE_INTER1,
+            aux + super::columns::aux_off::STATE_INTER2,
+            aux + super::columns::aux_off::STATE_INTER3,
+        );
+        debit_v1_block_balance(
+            &mut trace[r],
+            STATE_AFTER_BASE,
+            fee,
+            record_digest,
+            Some(inters),
+        );
+        fill_block(&mut trace[r], AFTER_BASE, STATE_AFTER_BASE, after_w);
+        // The fee rides the RESERVED limb on EVERY row, in BOTH the after-block (col 89 — read by the
+        // bal-lo fee gate and the last-row PI-38 pin) AND the before-block (col 67). The fee descriptor
+        // DROPS the RESERVED passthrough GATE but KEEPS the RESERVED cross-row CONTINUITY transition
+        // (`next.before.reserved == local.after.reserved`, offset 13), so the fee must ride the
+        // before-block RESERVED too or the continuity from row r to r+1 fails. RESERVED is NOT a
+        // state-commitment hash input (absent from the GROUP-4 chain over cols 54..65 / 76..87), so
+        // writing the fee there does not perturb OLD/NEW_COMMIT.
+        trace[r][fee_col] = fee_felt; // col 89 (after.reserved)
+        trace[r][STATE_BEFORE_BASE + state::RESERVED] = fee_felt; // col 67 (before.reserved)
+
+        // The bal-lo fee gate (`after.bal_lo − before.bal_lo + amount·(2dir−1) + fee == 0`, col 89 =
+        // fee) is UNCONDITIONAL — it fires on EVERY row, NOT selector-gated. On the TRANSFER row (row
+        // 0) the base generator's amount (param0 col 68) / dir (param1 col 69) satisfy it: `−600 =
+        // 100·(1−2) − 500`. But on the trailing NoOp passthrough rows the balance is unchanged
+        // (`after − before = 0`) and the base generator leaves amount/dir = 0, so the gate would demand
+        // `fee == 0` — UNSAT once the last-row PI-38 pin needs col 89 = fee. We satisfy the gate by
+        // writing amount(col 68) = fee, dir(col 69) = 0 on the NoOp rows, so `0 − fee + 0 + fee = 0`
+        // holds AND col 89 = fee for the pin. The only OTHER constraint touching cols 68/69 in this
+        // descriptor is the dir-boolean gate (`dir·(dir−1)`, satisfied by dir = 0); neither column is
+        // PI-bound or effects-hash-bound here, so this is free.
+        if !is_transfer_row {
+            trace[r][super::columns::PARAM_BASE] = fee_felt; // param0 (amount) = fee
+            trace[r][super::columns::PARAM_BASE + 1] = BabyBear::ZERO; // param1 (dir) = 0
+        }
+    }
+
+    // Re-read the 39-PI vector from the post-fee trace carriers so producer + verifier agree.
+    let last = &trace[trace.len() - 1];
+    let mut dpis: Vec<BabyBear> = base_pis[..ROT_PI_COUNT].to_vec();
+    // The witness-INDEPENDENT v1 prefix PIs that moved with the post-fee override (PI 4 / 14 / 15
+    // ride the LAST row's after-block, the post-fee final state).
+    dpis[4] = last[STATE_AFTER_BASE + state::STATE_COMMIT]; // v1 after STATE_COMMIT
+    dpis[14] = last[STATE_AFTER_BASE + state::BALANCE_LO]; // v1 after bal_lo
+    dpis[15] = last[STATE_AFTER_BASE + state::BALANCE_HI]; // v1 after bal_hi
+    dpis[35] = last[AFTER_BASE + B_STATE_COMMIT]; // rotated NEW_COMMIT (post-fee)
+    // (PI 34 / 36 / 37 are unaffected by the fee; they ride the base vector unchanged.)
+    dpis.push(fee_felt); // PI 38: the published fee (col 89, last-row pinned).
+    debug_assert_eq!(dpis.len(), ROT_PI_COUNT + 1);
+
+    Ok((trace, dpis))
+}
+
+/// Subtract `fee` from one v1 state block's balance (in place) and recompute its STATE_COMMIT, the
+/// fee-in-proof column surgery the `transferFeeVmDescriptor2R24` post-fee rewrite rests on. `base` is
+/// the block's column base (`STATE_BEFORE_BASE = 54` or `STATE_AFTER_BASE = 76`). The balance limbs
+/// are re-split (`split_u64`, the canonical 30-bit lo / 34-bit hi split `CellState::to_trace_cols`
+/// uses), then the GROUP-4 state-commit is rebuilt: `hash_many([bal_lo, bal_hi, nonce, field0])`,
+/// `hash_many([field1..4])`, `hash_many([field5..7, cap_root])`, then
+/// `hash_many([i1, i2, i3, record_digest])` → STATE_COMMIT — byte-identical to `compute_commitment`
+/// and the descriptor's poseidon lookups. When `inters` is `Some((c1, c2, c3))`, the three
+/// intermediates are ALSO written to those AUX columns (the AFTER block, whose intermediates the
+/// descriptor's lookups bind); `None` for the BEFORE block (only its STATE_COMMIT is published).
+fn debit_v1_block_balance(
+    row: &mut [BabyBear],
+    base: usize,
+    fee: u64,
+    record_digest_col: usize,
+    inters: Option<(usize, usize, usize)>,
+) {
+    use super::columns::state;
+    use super::helpers::split_u64;
+    let bal_lo = base + state::BALANCE_LO;
+    let bal_hi = base + state::BALANCE_HI;
+    // Recover the pre-fee balance from the limbs (`split_u64` inverse: `lo | (hi << 30)`), subtract
+    // the fee, re-split.
+    let pre = (row[bal_lo].as_u32() as u64) | ((row[bal_hi].as_u32() as u64) << 30);
+    let (lo, hi) = split_u64(pre.saturating_sub(fee));
+    row[bal_lo] = lo;
+    row[bal_hi] = hi;
+    // The GROUP-4 commit chain over the (now post-fee) block limbs + the record-digest aux.
+    let i1 = hash_many(&[
+        row[bal_lo],
+        row[bal_hi],
+        row[base + state::NONCE],
+        row[base + state::FIELD_BASE],
+    ]);
+    let i2 = hash_many(&[
+        row[base + state::FIELD_BASE + 1],
+        row[base + state::FIELD_BASE + 2],
+        row[base + state::FIELD_BASE + 3],
+        row[base + state::FIELD_BASE + 4],
+    ]);
+    let i3 = hash_many(&[
+        row[base + state::FIELD_BASE + 5],
+        row[base + state::FIELD_BASE + 6],
+        row[base + state::FIELD_BASE + 7],
+        row[base + state::CAP_ROOT],
+    ]);
+    if let Some((c1, c2, c3)) = inters {
+        row[c1] = i1;
+        row[c2] = i2;
+        row[c3] = i3;
+    }
+    row[base + state::STATE_COMMIT] = hash_many(&[i1, i2, i3, row[record_digest_col]]);
+}
+
+/// Resolve the rotated registry descriptor name for one EFFECT on the FEE-IN-PROOF path. A plain
+/// sovereign `Transfer` lead routes to `transferFeeVmDescriptor2R24` (the fee debited in-proof);
+/// every other effect falls back to [`rotated_descriptor_name_for_effect`] (the unfee'd cohort —
+/// the cap-open transfer routing and the 35 other members are UNCHANGED). This is the fee-path twin
+/// of `rotated_descriptor_name_for_effect`; the unfee'd resolver is left 100% intact so the broad
+/// cohort path is unaffected.
+pub fn rotated_descriptor_name_for_effect_fee(effect: &Effect) -> Option<&'static str> {
+    match effect {
+        Effect::Transfer { .. } => Some("transferFeeVmDescriptor2R24"),
+        other => rotated_descriptor_name_for_effect(other),
+    }
+}
+
 /// **THE DEPLOYMENT-REAL noteSpend nullifier-tree wiring (the kernel-set grow-gate's witness).**
 ///
 /// The live `noteSpendVmDescriptor2R24` now carries two map-ops gated by the spend selector — the
@@ -1509,12 +1728,28 @@ mod tests {
                     // staged beachhead) excluded from the resolver-cohort completeness audit — the
                     // resolvers still cover EXACTLY the 36 rotated cohort members.
                     && !s.ends_with("CapOpenTBVmDescriptor2R24")
+                    // the FEE-IN-PROOF transfer (`transferFeeVmDescriptor2R24`) is FEE-PRESENCE-routed:
+                    // it is reached by `rotated_descriptor_name_for_effect_fee` (the fee-path resolver)
+                    // for a sovereign Transfer whose fee is debited in-proof, NOT by the unfee'd
+                    // effect→descriptor resolvers. Like the cap-open members it is a separately-routed
+                    // member, excluded from the unfee'd-resolver cohort completeness audit.
+                    && s != &"transferFeeVmDescriptor2R24"
             })
             .collect();
         assert_eq!(
             registry.len(),
             36,
-            "the rotated resolver cohort has 36 members (cap-open is self-verify-only)"
+            "the rotated resolver cohort has 36 members (cap-open + fee-in-proof are separately routed)"
+        );
+        // The fee-path resolver reaches the fee descriptor (and falls back to the unfee'd resolver
+        // for non-Transfer leads), so the fee-in-proof member is covered by ITS resolver.
+        assert_eq!(
+            rotated_descriptor_name_for_effect_fee(&Effect::Transfer {
+                amount: 1,
+                direction: 1,
+            }),
+            Some("transferFeeVmDescriptor2R24"),
+            "the fee-path resolver routes a Transfer lead to the fee-in-proof descriptor"
         );
 
         // Every name the resolvers produce: the 17 selector-mapped base effects, the cap-crown

@@ -11,6 +11,44 @@ reason.)*
 Last sweep: 2026-06-13 (flagged-items burndown — removed ~14 landed/struck items,
 deduped the DreggDL/sel4/snapshot landings into git history, kept live tails).
 
+## FEE-IN-PROOF — trust-surface hole #5 CLOSED for the sovereign actor cell (2026-06-18)
+
+The deployed sovereign transfer debited `turn.fee` in executor PHASE 1 BEFORE proving and the
+verifier blindly UNDID it (`pre_balance = post_fee_balance + turn.fee`) from the TRUSTED `turn.fee`
+— so the fee was NOT a constraint in the proven transition (a ledgerless light client could not
+verify it). CLOSED: `transferFeeVmDescriptor2R24` (Lean `EffectVmEmitTransfer.transferFeeVmDescriptor`
++ `EffectVmEmitRotationV3.transferFeeV3`, registry tail at `v3RegistryCapOpen[44]`) augments the
+balance-lo gate to `after = before − transfer − fee`, carries the fee in the after-block RESERVED
+column (col 89 — dead weight, NOT in the commitment, off the ROT_WIDTH flag-day: width stays 316),
+and pins col 89 to a published fee PI (slot 38, `piCount 38→39`). The producer
+(`cipherclerk::prove_sovereign_turn_rotated` + `full_turn_proof::prove_effect_vm_rotated_ir2_with_fee`)
+debits the fee in-proof; the verifier (`proof_verify.rs`) sets PI 38 = `turn.fee` and the gate forces
+the debit — RETIRING the blind reconstruction for the proven transition. TOOTH:
+`fee_debit_is_proven_and_underclaimed_fee_is_unsat_for_a_ledgerless_client`
+(`circuit/tests/effect_vm_rotation_flip.rs`) — underclaimed/forged fee UNSAT via
+`prove/verify_vm_descriptor2` ALONE. `lake build Dregg2` 4003 axiom-clean, drift PASS, FP re-pinned,
+sovereign_rotated_c1 19/19 (fee=500) + node capability 8/8 green.
+
+### residue NAMED (closure lanes):
+- The fee on a **NON-sovereign agent cell** is still outside the proof. The fix binds the fee ⟺
+  balance ONLY for a SOVEREIGN turn where `turn.agent == execution_proof_cell` (the fee cell IS the
+  proven cell). A non-sovereign turn's fee debit (executor Phase 1 on a NON-proven cell) remains
+  executor-trusted — the proof covers no such cell. Closure: when the federation-cell ledger
+  transitions are themselves proof-carrying, fold the fee debit into THAT cell's transition proof.
+- The verifier's blind `pre = post + turn.fee` reconstruction **survives for the BEFORE/OLD_COMMIT
+  block only** (the pre-fee state OLD_COMMIT binds, cross-checked by PI 34 == stored sovereign
+  commitment). It no longer touches the PROVEN transition (the after-balance is gate-forced). This
+  is sound (OLD_COMMIT independently binds the pre-state) but the `+ turn.fee` term is still a
+  trusted input to the BEFORE reconstruction; a fully ledgerless BEFORE binding would carry the
+  pre-fee commitment as a published claim like NEW_COMMIT.
+- The fee'd path covers a **plain single-`Effect::Transfer` lead** (the deployed sovereign-transfer
+  shape). Non-transfer sovereign effects keep the unfee'd cohort (their fee is still Phase-1-trusted);
+  the same RESERVED-column + fee-pin mechanism graduates them when each becomes fee-bearing.
+- NoOp-row witness bookkeeping in the fee generator sets unconstrained param cols 68/69 (amount=fee,
+  dir=0) to satisfy the unconditional bal-lo gate on passthrough rows. Verified sound (cols 68/69 are
+  not PI/effects-hash-bound in this descriptor; only the dir-boolean gate touches them) — named as a
+  carried subtlety, not a hole.
+
 ## CIRCUIT-SOUNDNESS APEX — light-client unfoolability: faithful core LANDED, per-effect terrain MAPPED (2026-06-16)
 
 The map + state lives in `docs/CIRCUIT-FUNCTIONAL-CORRECTNESS.md` (the obligation table is the resumable plan).

@@ -87,7 +87,8 @@ impl TurnExecutor {
         };
         use dregg_circuit::effect_vm::trace_rotated::{
             RotatedBlockWitness, empty_caveat_manifest, generate_rotated_effect_vm_trace,
-            rotated_descriptor_name_for_effect, transfer_caveat_manifest,
+            generate_rotated_effect_vm_trace_with_fee, rotated_descriptor_name_for_effect,
+            rotated_descriptor_name_for_effect_fee, transfer_caveat_manifest,
         };
         use dregg_circuit::effect_vm_descriptors::V3_STAGED_REGISTRY_TSV;
         use dregg_circuit::field::BabyBear;
@@ -158,7 +159,22 @@ impl TurnExecutor {
         let lead = vm_effects.first().ok_or_else(|| {
             TurnError::InvalidExecutionProof("rotated verify: empty effect set".to_string())
         })?;
-        let name = rotated_descriptor_name_for_effect(lead).ok_or_else(|| {
+        // FEE-IN-PROOF (the `transferFeeVmDescriptor2R24` route): a plain sovereign `Transfer` lead
+        // routes the fee-aware descriptor (39 PIs) where the fee is debited INSIDE the proven
+        // transition — the producer (`cipherclerk::prove_sovereign_turn_rotated`) routes the SAME
+        // descriptor via `rotated_descriptor_name_for_effect_fee`. The fee is a PUBLISHED PI (slot 38)
+        // the verifier sets from `turn.fee`, and the proof's gate FORCES the after-balance =
+        // pre − transfer − fee, so a forged / underclaimed fee is UNSAT. We retire the old blind
+        // `pre_balance = post_fee_balance + turn.fee` after-state reconstruction for the proven
+        // transition (it survives ONLY for the pre-fee BEFORE/OLD_COMMIT block, below).
+        let is_fee_transfer =
+            matches!(vm_effects.as_slice(), [dregg_circuit::effect_vm::Effect::Transfer { .. }]);
+        let name = if is_fee_transfer {
+            rotated_descriptor_name_for_effect_fee(lead)
+        } else {
+            rotated_descriptor_name_for_effect(lead)
+        }
+        .ok_or_else(|| {
             TurnError::InvalidExecutionProof(format!(
                 "rotated verify: effect {lead:?} is not in the R=24 rotated cohort"
             ))
@@ -197,13 +213,29 @@ impl TurnExecutor {
             RotatedBlockWitness::new(vec![BabyBear::ZERO; NUM_PRE_LIMBS], BabyBear::ZERO).map_err(
                 |e| TurnError::InvalidExecutionProof(format!("rotated placeholder witness: {e}")),
             )?;
-        let (_trace, mut dpis) = generate_rotated_effect_vm_trace(
-            &initial_vm_state,
-            &vm_effects,
-            &placeholder,
-            &placeholder,
-            &caveat,
-        )
+        let (_trace, mut dpis) = if is_fee_transfer {
+            // Mirror the producer's fee-aware trace: the v1 sub-trace's after-balance is the PRE-fee
+            // `before + amount·(1−2dir)` (from `initial_vm_state`'s pre-fee balance — reconstructed at
+            // step 3 as `post_fee_balance + turn.fee`), and the fee generator debits `turn.fee` as the
+            // SAME column override + commitment recompute the producer ran. PI 38 = `turn.fee` (the
+            // generator writes it). The reconstructed post-fee after-block matches the producer's.
+            generate_rotated_effect_vm_trace_with_fee(
+                &initial_vm_state,
+                &vm_effects,
+                &placeholder,
+                &placeholder,
+                &caveat,
+                turn.fee,
+            )
+        } else {
+            generate_rotated_effect_vm_trace(
+                &initial_vm_state,
+                &vm_effects,
+                &placeholder,
+                &placeholder,
+                &caveat,
+            )
+        }
         .map_err(|e| TurnError::InvalidExecutionProof(format!("rotated PI reconstruction: {e}")))?;
         if dpis.len() != desc.public_input_count {
             return Err(TurnError::InvalidExecutionProof(format!(
@@ -218,6 +250,14 @@ impl TurnExecutor {
         dpis[34] = BabyBear::new(u32::from_le_bytes(old_commitment[0..4].try_into().unwrap()));
         dpis[35] = BabyBear::new(u32::from_le_bytes(new_commitment[0..4].try_into().unwrap()));
         dpis[36] = committed_height_felt(cell_committed_height);
+        // FEE-IN-PROOF: PI 38 is the PUBLISHED fee the col-89 last-row pin binds. Anchor it to the
+        // TRUSTED `turn.fee` (the generator already wrote `BabyBear::new(turn.fee as u32)`, but we set
+        // it explicitly so the published value is provably the turn's declared fee — a proof whose
+        // bound col 89 disagrees with `turn.fee` is UNSAT). The gate then forces the after-balance
+        // debit, retiring the verifier's blind `pre = post + fee` after-state reconstruction.
+        if is_fee_transfer {
+            dpis[38] = BabyBear::new(turn.fee as u32);
+        }
 
         // 6b. THE RECORD-PIN ANCHOR (the deployment-soundness close for the record-digest family;
         // setPermissions BEACHHEAD). The record-pin descriptors ship at `public_input_count == 39`:

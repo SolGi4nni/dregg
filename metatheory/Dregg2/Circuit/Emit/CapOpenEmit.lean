@@ -762,14 +762,15 @@ theorem revokeCapabilityCapOpenV3_rejects_wrong_facet (hash : List ℤ → ℤ)
 
 `EffectVmEmitRotationV3.v3Registry` is the 36-member cohort; it CANNOT itself name the cap-open
 (`CapOpenEmit` imports `EffectVmEmitRotationV3`, so the dependency runs this way). The deployed wire
-registry (`V3_STAGED_REGISTRY_TSV`) carries 44 lines — the 36 cohort members + the 6 fan-out cap-open
-members + the 2 LIVE effect-general transfer/attenuate legs (`EmitRotationV3.lean` emits them).
-`v3RegistryCapOpen` is the Lean twin of that 44-line registry. The soundness apex's `Rfix` is re-keyed
+registry (`V3_STAGED_REGISTRY_TSV`) carries 45 lines — the 36 cohort members + the 6 fan-out cap-open
+members + the 2 LIVE effect-general transfer/attenuate legs + the fee'd transfer at the tail
+(`EmitRotationV3.lean` emits them). `v3RegistryCapOpen` is the Lean twin of that registry. The
+soundness apex's `Rfix` ranges over positions 0..43 (unchanged); the fee'd transfer at 44 is re-keyed
 over THIS list, so `registryCommit Rfix` ranges over the LIVE cap-open descriptor (`Rfix 12 =
 attenuateCapOpenEffV3`) — the one in-circuit authority gadget the apex authority leg refines IS inside
 the registry the apex's `StarkSound` quantifies over (F5 CLOSED, on the LIVE descriptor). -/
 
-/-- **`v3RegistryCapOpen`** — the 44-member deployed registry: the 36 cohort members
+/-- **`v3RegistryCapOpen`** — the 45-member deployed registry: the 36 cohort members
 (`EffectVmEmitRotationV3.v3Registry`) + the 6 fan-out cap-open members (delegate/introduce/grantCap/
 revoke/refreshDelegation/revokeCapability) + the 2 LIVE effect-general legs
 (`transferCapOpenEffV3`/`attenuateCapOpenEffV3`, the genuine-submask + decoded-tier descriptors the
@@ -790,17 +791,26 @@ def v3RegistryCapOpen : List (String × EffectVmDescriptor2) :=
        -- refines them (`transferCapOpenEffV3_authorizes`) — the wire and the proven descriptor are
        -- ONE. An honest broad/None-tier cap PROVES.
        , ("transferCapOpenEffVmDescriptor2R24", transferCapOpenEffV3)
-       , ("attenuateCapOpenEffVmDescriptor2R24", attenuateCapOpenEffV3) ]
+       , ("attenuateCapOpenEffVmDescriptor2R24", attenuateCapOpenEffV3)
+       -- THE FEE'D TRANSFER (trust-surface hole #5) — appended at the TAIL (index 44) so the 0..43
+       -- positional apex is untouched. The deployed SOVEREIGN transfer routes HERE: the fee is
+       -- debited in-circuit (`new = old − transfer − fee`) and pinned to the published fee PI (39
+       -- PIs), so the fee debit is a PROVEN balance constraint — a ledgerless light client needs no
+       -- trusted `+ turn.fee` reconstruction.
+       , ("transferFeeVmDescriptor2R24",
+          Dregg2.Circuit.Emit.EffectVmEmitRotationV3.transferFeeV3) ]
 
-/-- The registry-with-cap-open has 44 members (36 cohort + 6 fan-out + 2 live `-eff`
-transfer/attenuate). The Signature-pinned `capOpenAttenuateV3`/`transferCapOpenV3` are DELETED — the
-apex authority leg refines the LIVE `…CapOpenEffV3` descriptors, so nothing is proven about an
-unwired descriptor. -/
-theorem v3RegistryCapOpen_length : v3RegistryCapOpen.length = 44 := by
+/-- The registry-with-cap-open has 45 members (36 cohort + 6 fan-out + 2 live `-eff`
+transfer/attenuate + the fee'd transfer at the tail). The Signature-pinned
+`capOpenAttenuateV3`/`transferCapOpenV3` are DELETED — the apex authority leg refines the LIVE
+`…CapOpenEffV3` descriptors, so nothing is proven about an unwired descriptor. -/
+theorem v3RegistryCapOpen_length : v3RegistryCapOpen.length = 45 := by
   simp [v3RegistryCapOpen, Dregg2.Circuit.Emit.EffectVmEmitRotationV3.v3Registry]
 
--- The cap-open authority members are positions 36..43; the 36 cohort members are unchanged at 0..35.
-#guard v3RegistryCapOpen.length == 44
+-- The cap-open authority members are positions 36..43; the 36 cohort members are unchanged at 0..35;
+-- the fee'd transfer rides the tail at 44.
+#guard v3RegistryCapOpen.length == 45
+#guard (v3RegistryCapOpen[44]?.map (·.1)) == some "transferFeeVmDescriptor2R24"
 #guard (v3RegistryCapOpen[36]?.map (·.1)) == some "delegateCapOpenVmDescriptor2R24"
 #guard (v3RegistryCapOpen[37]?.map (·.1)) == some "introduceCapOpenVmDescriptor2R24"
 #guard (v3RegistryCapOpen[38]?.map (·.1)) == some "grantCapCapOpenVmDescriptor2R24"

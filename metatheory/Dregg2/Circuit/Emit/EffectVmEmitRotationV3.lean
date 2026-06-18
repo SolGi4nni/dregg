@@ -981,6 +981,41 @@ def rotateV3WithNullifierPin (d : EffectVmDescriptor) : EffectVmDescriptor :=
     piCount     := r.piCount + 1
     constraints := r.constraints ++ [.piBinding .first NULLIFIER_PARAM_COL ROT_NULLIFIER_PI] }
 
+/-! ## §5.FEE — the FEE PI weld (trust-surface hole #5: the fee debit becomes a proven balance
+constraint, bound to a published PI on the deployed wire).
+
+`EffectVmEmitTransfer.transferFeeVmDescriptor` augments the balance-lo gate to debit the fee from
+the after-block `RESERVED` state column (`feeCol = saCol state.RESERVED`), so the proven FINAL_BAL
+(bound into NEW_COMMIT) is the POST-fee balance. But the fee column is a witness the prover CHOOSES
+— the in-circuit gate forces `new = old − transfer − fee` for SOME fee, not the verifier's
+`turn.fee`. `rotateV3WithFeePin` closes that: it pins the fee column to a published PI on the LAST
+row, so the verifier's `turn.fee` is FORCED equal to the balance the proof actually moved. A proof
+claiming a smaller fee PI than the balance moved is then UNSAT — no trusted reconstruction. -/
+
+/-- The rotated fee-PI slot: the FIRST slot past the four rotated commit pins (`rotateV3` appends
+OLD/NEW commit · height · caveat commit at `piCount..piCount+3`). For the transfer cohort member
+this is `34 + 4 = 38` — the same arithmetic as `ROT_NULLIFIER_PI` (transfer and note-spend never
+co-occur on one descriptor, so sharing the slot index is sound). -/
+def ROT_FEE_PI : Nat := 38
+
+/-- The fee column (the after-block `RESERVED` state limb of the v1 sub-trace). The v1 columns sit
+at fixed offsets inside `[0, EFFECT_VM_WIDTH)`, so this is `traceWidth`-independent. -/
+def FEE_COL : Nat := EffectVmEmitTransfer.feeCol
+
+/-- **`rotateV3WithFeePin`** — a rotated descriptor PLUS the fifth appended PI pin welding the fee
+column (`feeCol = saCol state.RESERVED`, carrying the debited fee) to the rotated PI slot
+`ROT_FEE_PI = 38` on the LAST row (the after-block carries the post-fee balance, so the fee pin is a
+last-row pin — the rotated analog of the boundary-last balance pins). `base` is a `rotateV3` /
+`rotateV3FrozenAuthority` form; every v1 column, constraint, hash site, and the four rotated commit
+pins are UNTOUCHED, so the keystones compose verbatim; this only ADDS one PI pin + one PI slot. -/
+def rotateV3WithFeePin (base : EffectVmDescriptor) : EffectVmDescriptor :=
+  { base with
+    piCount     := base.piCount + 1
+    constraints := base.constraints ++ [.piBinding .last FEE_COL ROT_FEE_PI] }
+
+-- `transferFeeV3` (the graduated frozen-authority + fee-pinned descriptor) is defined AFTER
+-- `rotateV3FrozenAuthority` (§near `v3OfFrozen`), since the freeze helper appears later in this file.
+
 /-- The rotated BEFORE-block `nullifier_root` limb column (limb 26 of the before block at
 `base = traceWidth`). The deployed nullifier accumulator's PRE root — the openable
 sorted-Poseidon2 root the grow-gate opens against. -/
@@ -1712,6 +1747,26 @@ continuity weld. Identical SHAPE to `v3Of d` (same width/piCount — the weld is
 constraints, no new column), so every width/graduability `#guard` and the per-effect value theorems
 lift verbatim (via `rotV3Frozen_sound_v1` below); it ADDS the authority-frame forcing. -/
 def v3OfFrozen (d : EffectVmDescriptor) : EffectVmDescriptor2 := graduateV1 (rotateV3FrozenAuthority d)
+
+-- The fee pin lands at PI slot 38 (one past the four rotated commit pins 34..37) and the rotated
+-- fee'd transfer publishes 39 PIs over the SAME rotated width as the unfee'd transfer.
+#guard (rotateV3WithFeePin (rotateV3FrozenAuthority EffectVmEmitTransfer.transferFeeVmDescriptor)).piCount == 39
+#guard (rotateV3WithFeePin (rotateV3FrozenAuthority EffectVmEmitTransfer.transferFeeVmDescriptor)).traceWidth
+        == EffectVmEmitTransfer.transferVmDescriptor.traceWidth + APPENDIX_SPAN
+
+/-- **`transferFeeV3`** — the graduated rotated fee'd transfer descriptor (the deployed fee'd cohort
+member; the frozen-authority + fee-pinned analog of `transferVmDescriptor2R24 = v3OfFrozen
+transferVmDescriptor`). `piCount = 39`: the four rotated commit pins + the appended fee pin. The fee
+column (`feeCol = saCol state.RESERVED`) is forced equal to the published fee PI on the last row, and
+the augmented balance-lo gate forces the fee debit into the proven balance flow (`new = old −
+transfer − fee`), so NEW_COMMIT binds the POST-fee balance and a ledgerless client needs no trusted
+`+ fee` reconstruction. -/
+def transferFeeV3 : EffectVmDescriptor2 :=
+  graduateV1 (rotateV3WithFeePin (rotateV3FrozenAuthority EffectVmEmitTransfer.transferFeeVmDescriptor))
+
+#guard transferFeeV3.piCount == 39
+#guard transferFeeV3.traceWidth == EFFECT_VM_WIDTH + APPENDIX_SPAN
+#guard graduable (rotateV3WithFeePin (rotateV3FrozenAuthority EffectVmEmitTransfer.transferFeeVmDescriptor))
 
 /-- A `Satisfied2` witness of the FROZEN graduation yields the full v1 denotation of the original
 descriptor on every row — so the per-effect VALUE soundness chains (`*_pins_value`, etc.) lift to the

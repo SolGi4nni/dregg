@@ -5284,6 +5284,23 @@ impl AgentCipherclerk {
         // 3. The Effect-VM marshalling + circuit pre-state (cap-root-seeded), identical
         //    to the v1 path so the rotated generator's v1 sub-trace is byte-identical.
         let vm_effects = Self::convert_effects_to_vm(cell_id, &effects);
+
+        // FEE-IN-PROOF (the `transferFeeVmDescriptor2R24` route): a plain sovereign `Transfer` lead
+        // debits the turn `fee` INSIDE the proven transition, so NEW_COMMIT binds the POST-fee
+        // balance and the verifier no longer reconstructs `pre = post + fee` blindly. We debit the
+        // fee from `after_cell` HERE (after the effects, before `after_w`/the proof) so the local
+        // sovereign state we advance to (step 8) matches the proven post-fee balance. The v1
+        // sub-trace's after-balance is still the PRE-fee `before + amount·(1−2dir)` (the effects
+        // alone); the fee generator subtracts the fee as a column override + commitment recompute,
+        // and the proof's gate FORCES `after.bal_lo = before − transfer − fee`, so an underclaimed
+        // fee is UNSAT. The BEFORE block stays pre-fee (OLD_COMMIT binds the pre-fee state).
+        let is_fee_transfer =
+            matches!(vm_effects.as_slice(), [dregg_circuit::effect_vm::Effect::Transfer { .. }]);
+        if is_fee_transfer && fee > 0 {
+            after_cell
+                .state
+                .set_balance(after_cell.state.balance().saturating_sub(fee as i64));
+        }
         // P0-2 (audit `cell/src/commitment.rs`, REVIEW[circuit-fix-coordination]): seed the
         // EffectVM `record_digest` from the cell's authority-residue digest so OLD_COMMIT/
         // NEW_COMMIT bind the FULL cell state (permissions / VK / lifecycle / …), not the
@@ -5351,7 +5368,17 @@ impl AgentCipherclerk {
         //    `compute_v9(after_cell)`, which would weld from `after_cell.state` and can
         //    diverge from the v1 sub-trace's after-state), so producer + verifier agree
         //    by construction.
-        let (trace, public_inputs) =
+        let (trace, public_inputs) = if is_fee_transfer {
+            dregg_circuit::effect_vm::trace_rotated::generate_rotated_effect_vm_trace_with_fee(
+                &initial_vm_state,
+                &vm_effects,
+                &before_bw,
+                &after_bw,
+                &caveat,
+                fee,
+            )
+            .map_err(|e| SdkError::InvalidWitness(format!("rotated fee trace generation: {e}")))?
+        } else {
             dregg_circuit::effect_vm::trace_rotated::generate_rotated_effect_vm_trace(
                 &initial_vm_state,
                 &vm_effects,
@@ -5359,7 +5386,8 @@ impl AgentCipherclerk {
                 &after_bw,
                 &caveat,
             )
-            .map_err(|e| SdkError::InvalidWitness(format!("rotated trace generation: {e}")))?;
+            .map_err(|e| SdkError::InvalidWitness(format!("rotated trace generation: {e}")))?
+        };
         // PI 34 = rotated OLD commit, PI 35 = rotated NEW commit (the v9 felts the proof
         // binds). Encode each canonically (`felt_to_bytes32`); the executor reads them
         // back as OLD_COMMIT / NEW_COMMIT. The before-block carrier equals
@@ -5412,17 +5440,31 @@ impl AgentCipherclerk {
             effect_witness_index_map: Vec::new(),
         };
 
-        let proof = crate::full_turn_proof::prove_effect_vm_rotated_ir2_with_caveat(
-            &initial_vm_state,
-            &vm_effects,
-            &before_w,
-            &after_w,
-            &caveat,
-            // This cipherclerk path threads no nullifier-set context; a NoteSpend turn here proves
-            // against an EMPTY before nullifier accumulator (the grow-gate inserts into empty). The
-            // full-turn chained path threads the real freshness leaves from the non-revocation witness.
-            None,
-        )?;
+        let proof = if is_fee_transfer {
+            // FEE-IN-PROOF: route the `transferFeeVmDescriptor2R24` prover (39 PIs, fee debited
+            // in-proof). The fee generator inside re-derives the SAME post-fee trace + PI vector this
+            // path computed above, so the bound PIs match `public_inputs`.
+            crate::full_turn_proof::prove_effect_vm_rotated_ir2_with_fee(
+                &initial_vm_state,
+                &vm_effects,
+                &before_w,
+                &after_w,
+                &caveat,
+                fee,
+            )?
+        } else {
+            crate::full_turn_proof::prove_effect_vm_rotated_ir2_with_caveat(
+                &initial_vm_state,
+                &vm_effects,
+                &before_w,
+                &after_w,
+                &caveat,
+                // This cipherclerk path threads no nullifier-set context; a NoteSpend turn here proves
+                // against an EMPTY before nullifier accumulator (the grow-gate inserts into empty). The
+                // full-turn chained path threads the real freshness leaves from the non-revocation witness.
+                None,
+            )?
+        };
         let proof_bytes = postcard::to_allocvec(&proof)
             .map_err(|e| SdkError::Wire(format!("rotated proof serialize: {e}")))?;
 

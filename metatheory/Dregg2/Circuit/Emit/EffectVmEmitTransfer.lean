@@ -547,12 +547,150 @@ theorem badRow_rejected : ¬ (VmConstraint.gate gBalLo).holdsVm badRow false fal
     state.NONCE, param.AMOUNT, param.DIRECTION]
   norm_num
 
+/-! ## §11.5 — THE FEE DEBIT (trust-surface hole #5 close).
+
+The deployed sovereign turn debits `turn.fee` from the actor cell in executor PHASE 1, BEFORE
+proving; the proof was then built over the PRE-fee balance and the verifier blindly UNDID the
+debit (`pre_balance = post_fee_balance + turn.fee`) from the TRUSTED `turn.fee`. So the fee debit
+was NOT a constraint in the proven transition — a ledgerless light client could not verify the fee
+was correctly taken. For a sovereign turn the fee is debited from the SAME cell the rotated proof
+covers, so the fee debit becomes a balance constraint IN that proof.
+
+The MECHANISM (off the ROT_WIDTH flag-day — no new committed column, no pre-limb geometry change):
+the fee rides in the after-block `RESERVED` state column (`saCol state.RESERVED`), which is dead
+weight in the v1 layout (a pure `before == after` passthrough, NOT absorbed into the state
+commitment, NOT welded into any rotated pre-limb). The balance-lo gate is AUGMENTED to subtract the
+fee column as well as the transfer move (`new = old − transfer − fee`), so the proven FINAL_BAL —
+the value `NEW_COMMIT` binds — is the POST-fee balance the executor's PHASE-1 debit produced. The
+rotated leg then pins the fee column to a published fee PI (`rotateV3WithFeePin`,
+`EffectVmEmitRotationV3`), so the verifier's published `turn.fee` is FORCED equal to the balance
+the proof actually moved. A proof claiming a SMALLER fee than the balance moved, or a fee not
+debited (`post ≠ pre − transfer − fee`), is UNSAT — no trusted reconstruction. -/
+
+/-- The fee column: the after-block `RESERVED` state limb carries `turn.fee`. Dead weight in the
+unfee'd transfer (passthrough, commitment-free), repurposed here as the published fee carrier. -/
+def feeCol : Nat := saCol state.RESERVED
+
+/-- Balance-lo debit/credit body WITH the fee debit: `new_bal_lo − old_bal_lo − amount + 2·dir·amount
++ fee`. On a fee'd transfer row this forces `new = old − amount·(1−2·dir) − fee` — the transfer move
+AND the fee debit, both on the actor's lo limb. -/
+def gBalLoFee : EmittedExpr :=
+  .add gBalLo (.var feeCol)
+
+/-- The fee'd per-row gates: the transfer gates with `gBalLo` swapped for `gBalLoFee` and the
+RESERVED passthrough `gResPass` DROPPED (RESERVED now carries the fee, so it is no longer frozen). -/
+def transferFeeRowGates : List VmConstraint :=
+  [ .gate gBalLoFee, .gate gBalHi, .gate gDirBool, .gate gNonce, .gate gCapPass ] ++ gFieldPassAll
+
+/-- **`transferFeeVmDescriptor`** — the fee'd TRANSFER descriptor: identical to `transferVmDescriptor`
+except the balance-lo gate also debits the fee column and RESERVED is no longer frozen (it carries
+the fee). The fee column gets a 30-bit range check (a fee near the field modulus would WRAP and forge
+a negative debit — the field-soundness tooth). The rotated leg (`rotateV3WithFeePin`) pins the fee
+column to the published fee PI. -/
+def transferFeeVmDescriptor : EffectVmDescriptor :=
+  { name := transferVmAirName ++ "-fee"
+  , traceWidth := EFFECT_VM_WIDTH
+  , piCount := 34
+  , constraints := transferFeeRowGates ++ transitionAll ++ boundaryFirstPins ++ boundaryLastPins
+                     ++ selectorGates sel.TRANSFER
+  , hashSites := transferHashSites
+  , ranges := [ ⟨saCol state.BALANCE_LO, 30⟩, ⟨saCol state.BALANCE_HI, 30⟩, ⟨feeCol, 30⟩ ] }
+
+/-- **`TransferFeeRowIntent env`** — the intended fee'd transfer move: the balance lo moves by the
+signed transfer amount AND the fee is debited; everything else (hi limb, nonce tick, cap_root, the 8
+fields) matches the unfee'd intent. RESERVED is NO LONGER frozen (it carries the fee). -/
+def TransferFeeRowIntent (env : VmRowEnv) : Prop :=
+  (env.loc (prmCol param.DIRECTION) = 0 ∨ env.loc (prmCol param.DIRECTION) = 1)
+  ∧ env.loc (saCol state.BALANCE_LO)
+      = env.loc (sbCol state.BALANCE_LO)
+        + env.loc (prmCol param.AMOUNT) * (1 - 2 * env.loc (prmCol param.DIRECTION))
+        - env.loc feeCol
+  ∧ env.loc (saCol state.BALANCE_HI) = env.loc (sbCol state.BALANCE_HI)
+  ∧ env.loc (saCol state.NONCE) = env.loc (sbCol state.NONCE) + 1
+  ∧ env.loc (saCol state.CAP_ROOT) = env.loc (sbCol state.CAP_ROOT)
+  ∧ (∀ i < 8, env.loc (saCol (state.FIELD_BASE + i)) = env.loc (sbCol (state.FIELD_BASE + i)))
+
+/-- **`transferFeeVm_faithful` — the fee'd deliverable.** On a transfer row, the fee'd descriptor's
+per-row gates hold IFF the fee'd transfer intent holds. So the concrete circuit enforces EXACTLY
+`new = old − transfer − fee` — the fee debit is now a proven balance constraint. -/
+theorem transferFeeVm_faithful (env : VmRowEnv) (hrow : IsTransferRow env) :
+    (∀ c ∈ transferFeeRowGates, c.holdsVm env false false) ↔ TransferFeeRowIntent env := by
+  obtain ⟨_hsT, hsN⟩ := hrow
+  unfold transferFeeRowGates gFieldPassAll TransferFeeRowIntent
+  constructor
+  · intro h
+    have hLo := h (.gate gBalLoFee) (by simp)
+    have hHi := h (.gate gBalHi) (by simp)
+    have hDir := h (.gate gDirBool) (by simp)
+    have hNon := h (.gate gNonce) (by simp)
+    have hCap := h (.gate gCapPass) (by simp)
+    have hFld : ∀ i, i < 8 → VmConstraint.holdsVm env false false (.gate (gFieldPass i)) := by
+      intro i hi
+      apply h
+      simp only [List.mem_append, List.mem_map, List.mem_range]
+      exact Or.inr ⟨i, hi, rfl⟩
+    simp only [VmConstraint.holdsVm, gBalLoFee, gBalLo, gBalHi, gDirBool, gNonce, gCapPass,
+      eSA, eSB, ePrm, eSub, eSelNoop, EmittedExpr.eval] at hLo hHi hDir hNon hCap
+    rw [hsN] at hNon
+    refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩
+    · have hd0 : env.loc (prmCol param.DIRECTION)
+                  * (env.loc (prmCol param.DIRECTION) + -1) = 0 := hDir
+      rcases mul_eq_zero.mp hd0 with hd | hd
+      · exact Or.inl hd
+      · exact Or.inr (by linarith)
+    · nlinarith [hLo]
+    · linarith [hHi]
+    · linarith [hNon]
+    · linarith [hCap]
+    · intro i hi
+      have := hFld i hi
+      simp only [VmConstraint.holdsVm, gFieldPass, eSA, eSB, eSub, EmittedExpr.eval] at this
+      linarith
+  · rintro ⟨hDir, hLo, hHi, hNon, hCap, hFld⟩ c hc
+    simp only [List.mem_append, List.mem_cons, List.not_mem_nil, or_false, List.mem_map,
+      List.mem_range] at hc
+    rcases hc with (rfl | rfl | rfl | rfl | rfl) | ⟨i, hi, rfl⟩
+    · simp only [VmConstraint.holdsVm, gBalLoFee, gBalLo, eSA, eSB, ePrm, eSub, EmittedExpr.eval]
+      rw [hLo]; ring
+    · simp only [VmConstraint.holdsVm, gBalHi, eSA, eSB, eSub, EmittedExpr.eval]
+      rw [hHi]; ring
+    · simp only [VmConstraint.holdsVm, gDirBool, ePrm, EmittedExpr.eval]
+      rcases hDir with hd | hd <;> rw [hd] <;> ring
+    · simp only [VmConstraint.holdsVm, gNonce, eSA, eSB, eSub, eSelNoop, EmittedExpr.eval]
+      rw [hsN, hNon]; ring
+    · simp only [VmConstraint.holdsVm, gCapPass, eSA, eSB, eSub, EmittedExpr.eval]
+      rw [hCap]; ring
+    · simp only [VmConstraint.holdsVm, gFieldPass, eSA, eSB, eSub, EmittedExpr.eval]
+      rw [hFld i hi]; ring
+
+/-- **Anti-ghost (fee tamper / the light-client tooth).** A fee'd transfer row whose post-`bal_lo`
+is NOT `old − transfer − fee` — i.e. the published fee column claims a SMALLER fee than the balance
+actually moved, or the fee was not debited — fails the `gBalLoFee` gate (UNSAT). This is the
+in-circuit bite: a ledgerless verifier needs NO trusted `+ turn.fee` reconstruction. -/
+theorem transferFeeVm_rejects_wrong_fee (env : VmRowEnv)
+    (hwrong : env.loc (saCol state.BALANCE_LO)
+      ≠ env.loc (sbCol state.BALANCE_LO)
+        + env.loc (prmCol param.AMOUNT) * (1 - 2 * env.loc (prmCol param.DIRECTION))
+        - env.loc feeCol) :
+    ¬ (VmConstraint.gate gBalLoFee).holdsVm env false false := by
+  simp only [VmConstraint.holdsVm, gBalLoFee, gBalLo, eSA, eSB, ePrm, eSub, EmittedExpr.eval]
+  intro h
+  apply hwrong
+  linarith [h]
+
 /-! ## §12 — Axiom-hygiene pins (the honesty tripwire). -/
 
 #guard transferVmDescriptor.constraints.length == 14 + 14 + 4 + 3 + 1  -- gates+transitions+4first+3last+selectorGate
 #guard transferVmDescriptor.hashSites.length == 4
 #guard transferVmDescriptor.ranges.length == 2
 #guard transferVmDescriptor.traceWidth == 187
+
+-- The fee'd descriptor: one fewer per-row gate (RESERVED passthrough dropped), one more range check.
+#guard transferFeeVmDescriptor.constraints.length == 13 + 14 + 4 + 3 + 1
+#guard transferFeeVmDescriptor.ranges.length == 3
+#guard transferFeeVmDescriptor.traceWidth == 187
+#assert_axioms transferFeeVm_faithful
+#assert_axioms transferFeeVm_rejects_wrong_fee
 
 #assert_axioms transferRowGates_holds_iff
 #assert_axioms transferVm_faithful

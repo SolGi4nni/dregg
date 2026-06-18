@@ -54,16 +54,21 @@ use dregg_turn::rotation_witness as rw;
 const B_CAP_ROOT: usize = 25;
 const NUM_PRE: usize = rw::NUM_PRE_LIMBS; // 32
 
-/// Resolve the rotated transfer descriptor JSON from the staged registry TSV.
-fn rotated_transfer_json() -> &'static str {
+/// Resolve a rotated descriptor JSON from the staged registry TSV by key.
+fn rotated_json(key: &str) -> &'static str {
     for line in V3_STAGED_REGISTRY_TSV.lines() {
         let mut it = line.splitn(3, '\t');
-        if it.next() == Some("transferVmDescriptor2R24") {
+        if it.next() == Some(key) {
             let _name = it.next();
             return it.next().expect("json column");
         }
     }
-    panic!("transferVmDescriptor2R24 not in V3_STAGED_REGISTRY_TSV");
+    panic!("{key} not in V3_STAGED_REGISTRY_TSV");
+}
+
+/// Resolve the rotated transfer descriptor JSON from the staged registry TSV.
+fn rotated_transfer_json() -> &'static str {
+    rotated_json("transferVmDescriptor2R24")
 }
 
 /// Bridge a producer `RotationWitness` into the circuit generator's `RotatedBlockWitness`
@@ -1948,5 +1953,160 @@ fn note_create_pins_commitments_and_refuses_tamper() {
          grown-set witness PROVES+VERIFIES and a forged/frozen commitments_root is REJECTED. \
          noteSpend, createCell, factory, spawn, noteCreate are ALL CLOSED — the kernel-set family is \
          deployment-real end to end."
+    );
+}
+
+/// THE LIGHT-CLIENT FEE TOOTH (trust-surface hole #5 close).
+///
+/// The deployed sovereign transfer debited `turn.fee` from the actor cell in executor PHASE 1,
+/// BEFORE proving; the proof was built over the PRE-fee balance and the verifier blindly UNDID the
+/// debit from the TRUSTED `turn.fee`. So the fee was NOT a constraint in the proven transition — a
+/// ledgerless light client could not verify it. `transferFeeVmDescriptor2R24` closes that: the
+/// balance-lo gate is augmented to debit the fee (`after = before − transfer − fee`), the fee rides
+/// the after-block RESERVED column (col 89, NOT in the state commitment), and a last-row pin welds
+/// that column to the published fee PI (slot 38).
+///
+/// This test exercises the bite with `prove_vm_descriptor2` / `verify_vm_descriptor2` ALONE — NO
+/// executor, NO trusted `+ turn.fee` reconstruction:
+///   1. an HONEST fee'd transfer PROVES + VERIFIES, and NEW_COMMIT (PI 35) binds the POST-fee
+///      balance (the verifier reads the fee off PI 38, not off any trusted ledger value);
+///   2. a proof claiming a SMALLER fee PI than the balance actually moved is UNSAT;
+///   3. a proof whose published fee PI is forged (≠ the debited column) is UNSAT.
+#[test]
+fn fee_debit_is_proven_and_underclaimed_fee_is_unsat_for_a_ledgerless_client() {
+    use dregg_circuit::effect_vm::trace_rotated::generate_rotated_effect_vm_trace_with_fee;
+
+    let desc = parse_vm_descriptor2(rotated_json("transferFeeVmDescriptor2R24"))
+        .expect("rotated fee'd transfer descriptor parses");
+    assert_eq!(desc.trace_width, ROT_WIDTH, "fee'd transfer keeps the rotated width 315");
+    assert_eq!(
+        desc.public_input_count, 39,
+        "fee'd transfer: 38 rotated PIs + the appended fee PI (slot 38)"
+    );
+
+    let before_balance: i64 = 100_000;
+    let amount: u64 = 50;
+    let fee: u64 = 7;
+    let st = CellState::new(before_balance as u64, 0);
+    let effects = vec![Effect::Transfer { amount, direction: 1 }];
+
+    // The producer's after-cell debits BOTH the transfer AND the fee (the proven post-fee state).
+    let mut ledger = Ledger::new();
+    let before_cell = producer_cell(before_balance, 0);
+    let after_cell = producer_cell(before_balance - amount as i64 - fee as i64, 0);
+    ledger.insert_cell(after_cell.clone()).unwrap();
+    let nullifier_root = [0u8; 32];
+    let commitments_root = [0u8; 32];
+    let receipt_log: Vec<[u8; 32]> = vec![[1u8; 32], [2u8; 32]];
+
+    let before_w = rw::produce(&before_cell, &ledger, &nullifier_root, &commitments_root, &receipt_log);
+    let after_w = rw::produce(&after_cell, &ledger, &nullifier_root, &commitments_root, &receipt_log);
+    let caveat = transfer_caveat_manifest();
+
+    let (trace, dpis) = generate_rotated_effect_vm_trace_with_fee(
+        &st,
+        &effects,
+        &bridge(&before_w),
+        &bridge(&after_w),
+        &caveat,
+        fee,
+    )
+    .expect("fee'd rotated generator produces a 315-col trace + 39 PIs");
+    assert_eq!(dpis.len(), 39, "39 PIs (38 rotated + the fee)");
+    assert_eq!(
+        dpis[38],
+        BabyBear::new(fee as u32),
+        "PI 38 is the published fee"
+    );
+
+    let mem_boundary = MemBoundaryWitness::default();
+    let map_heaps: Vec<Vec<dregg_circuit::heap_root::HeapLeaf>> = vec![];
+
+    // -- (1) the HONEST fee'd transfer proves + verifies, NEW_COMMIT binds the POST-fee balance. --
+    let proof = prove_vm_descriptor2(&desc, &trace, &dpis, &mem_boundary, &map_heaps)
+        .expect("honest fee'd transfer must prove");
+    verify_vm_descriptor2(&desc, &proof, &dpis)
+        .expect("honest fee'd transfer proof must verify independently (no trusted reconstruction)");
+
+    // The PROVEN final balance (PI 14 = FINAL_BAL_LO, the last-row after bal_lo bound into
+    // NEW_COMMIT) is the POST-fee balance `before − amount − fee` — the fee debit is INSIDE the
+    // proven transition, NOT a trusted reconstruction. A ledgerless client reads the fee off PI 38.
+    let (post_fee_lo, _post_fee_hi) =
+        dregg_circuit::effect_vm::split_u64((before_balance - amount as i64 - fee as i64) as u64);
+    assert_eq!(
+        dpis[14], post_fee_lo,
+        "FINAL_BAL_LO (bound into NEW_COMMIT) is the POST-fee balance `before − amount − fee` — the \
+         fee debit is proven, not reconstructed"
+    );
+    // And NEW_COMMIT (PI 35) is the trace's last-row after-block STATE_COMMIT carrier (post-fee).
+    assert_eq!(
+        dpis[35],
+        trace[trace.len() - 1][AFTER_BASE + B_STATE_COMMIT],
+        "NEW_COMMIT binds the post-fee after-block STATE_COMMIT carrier"
+    );
+
+    let refused = |t: &Vec<Vec<BabyBear>>, p: &Vec<BabyBear>| -> bool {
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            prove_vm_descriptor2(&desc, t, p, &mem_boundary, &map_heaps)
+        }));
+        match r {
+            Err(_) => true,
+            Ok(res) => res.is_err(),
+        }
+    };
+    let refused_verify = |p: &Vec<BabyBear>| -> bool {
+        // Verify the HONEST proof against a TAMPERED published-PI vector (the proof's transcript
+        // bound the honest PIs; a different PI vector fails Fiat–Shamir / the boundary pins).
+        verify_vm_descriptor2(&desc, &proof, p).is_err()
+    };
+
+    // -- (2) UNDERCLAIMED FEE: a witness that moves the balance by `fee` but publishes a SMALLER
+    //    fee PI (and writes the smaller fee into the after-block RESERVED column) is UNSAT. The
+    //    balance-lo gate forces `after = before − amount − col89`; if col89 < the real fee the
+    //    after-balance no longer matches the (post-fee) NEW_COMMIT-bound limb, and the last-row pin
+    //    forces col89 = PI[38]. So publishing a smaller fee cannot satisfy the descriptor. --
+    {
+        let underclaim: u64 = 3; // < fee
+        // Rebuild a trace whose fee column = the underclaim but whose ACTUAL balance moved by `fee`:
+        // generate the honest fee'd trace, then overwrite col 89 (the fee carrier) on every row +
+        // the published PI 38 with the underclaim. The bal-lo gate (`after = before − amount − col89`)
+        // then demands the after-balance be `before − amount − underclaim`, but the trace's after
+        // balance is `before − amount − fee` ≠ that — UNSAT.
+        let fee_col = STATE_AFTER_BASE + state::RESERVED;
+        let before_reserved = STATE_BEFORE_BASE + state::RESERVED;
+        let mut t = trace.clone();
+        for row in t.iter_mut() {
+            row[fee_col] = BabyBear::new(underclaim as u32);
+            row[before_reserved] = BabyBear::new(underclaim as u32);
+        }
+        let mut p = dpis.clone();
+        p[38] = BabyBear::new(underclaim as u32);
+        assert!(
+            refused(&t, &p),
+            "an UNDERCLAIMED fee (col 89 / PI 38 smaller than the balance actually moved) MUST be \
+             UNSAT — the balance-lo fee gate `after = before − amount − fee` rejects it, with NO \
+             trusted reconstruction"
+        );
+    }
+
+    // -- (3) FORGED FEE PI: keep the honest trace but publish a DIFFERENT fee PI. The last-row pin
+    //    `col 89 == PI[38]` forces the published fee to equal the proven column — a forged PI fails. --
+    {
+        let mut p = dpis.clone();
+        p[38] = dpis[38] + BabyBear::new(11);
+        assert!(
+            refused_verify(&p),
+            "a FORGED fee PI (≠ the debited after-block RESERVED column) MUST fail the last-row pin \
+             (col 89 == PI[38]) — a ledgerless client cannot be told a fee the proof did not move"
+        );
+    }
+
+    eprintln!(
+        "FEE-IN-PROOF CLOSED (R=24, LIVE): the deployed sovereign transfer debits the fee INSIDE \
+         the proven transition (transferFeeVmDescriptor2R24 — bal-lo gate `after = before − amount \
+         − fee`, fee pinned to PI 38). An honest fee'd transfer PROVES+VERIFIES with NEW_COMMIT \
+         binding the post-fee balance; an underclaimed or forged fee is UNSAT via \
+         verify_vm_descriptor2 ALONE — NO trusted `+ turn.fee` reconstruction. Trust-surface hole \
+         #5 is CLOSED for the sovereign actor cell."
     );
 }
