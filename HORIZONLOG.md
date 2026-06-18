@@ -64,6 +64,29 @@ accept `Some(id)`, only the felt source is missing; (2) the ACTOR↔leaf-positio
 cap-tree; owner-arm rooting needs the agent-signature pass #3); (3) FAN-OUT to the whole-turn forest apex
 (`RotatedKernelForestFacet`) so the WHOLE-turn authority is turn-bound; (4) `amt` weld analogous to `src`.
 
+AUTHORITY-RESIDUE CONTINUITY — #1 WAVE 0, LIVE-CUT (2026-06-18, `9f415ca97`). THE FORGERY (light-client): the
+deployed commitment binds the authority residue `r23` (`B_RECORD_DIGEST`=24, the concrete realization of the
+Lean `StateCommit.RH` rest-hash) + `B_LIFECYCLE`=29, but `weldsAt` welds ONLY balance/nonce/fields[0..7]/cap_root
+— so for a VALUE effect BEFORE-r23 and AFTER-r23 are independent free felts: a prover witnesses an AFTER-r23
+folding ARBITRARY permissions/VK/lifecycle/mode, the value gate passes, NEW_COMMIT binds forged authority, a
+ledgerless client is fooled (a "transfer" silently rewrites the authority half). CLOSE (Lean-emitted, law #1 —
+producer fills r23 honestly, no Rust producer edit): `rotateV3FrozenAuthority` appends two `colEq` welds forcing
+AFTER-r23==BEFORE-r23 + AFTER-lifecycle==BEFORE-lifecycle; by `StateCommit.RestHashIffFrame` (`RH k = RH k' ↔`
+the 16 non-cell authority components agree) this FORCES the frame the apex previously CARRIED. Proven companions
+(`_freezes`/`_rejects_drift`/`_satisfiedVm_v1`/`graduable_`/`v3OfFrozen`/`rotV3Frozen_sound_v1`). LIVE-routed the
+provably-frozen value cohort through `v3OfFrozen`: transfer/burn/mint(+bridgeMint)/incrementNonce/emitEvent/
+setField[0..7] — NOT the authority MOVERS (mode byte + fields[8..16] fold into r23, so they keep their record-pin
+/ future recompute). NEGATIVE TOOTH `effect_vm_rotation_flip::rotated_transfer_frozen_authority_forces_r23_and_
+rejects_drift`: honest accept (non-vacuous) + AFTER-r23/AFTER-lifecycle drift UNSAT via `verify_vm_descriptor2`
+ALONE. Green: lake 4001 axiom-clean · flip 11/11 · drift PASS · FP re-pinned. APEX FRAME left CARRIED
+(`rotatedEncodes.frCaps/frLifecycle` — the descriptor-level forcing is the win; discharging the carried frame
+from `_freezes`+`RestHashIffFrame` is an available strengthening). REMAINING record_digest waves (per the scoping
+`a5a69ce9`): WAVE 1 = lifecycle-mover IN-CIRCUIT recompute (cheapest — `lifecycle_felt` is fixed-width; replaces
+the off-circuit PI-38 anchor for seal/unseal/destroy/archive); WAVE 2 = perms/VK split-digest recompute (the
+expensive half — re-shape `RH` to `H(permsVK_limb, rest_limb)`, recompute the small mutable limb in-circuit,
+continuity-weld the rest); WAVE 3 = refusal (audit→fields_root EXT, last). The full byte-faithful
+`compute_authority_digest_felt` fold is the WRONG shape (variable-length sponge) — the split-digest is the route.
+
 ACTIVE (2026-06-18) — the `facetEffGate` genuine-membership closure (residual (a) F6-FACET) + adversarial
 re-review. FOUND: the cap-open authority gate `facetEffGate` (`DeployedCapOpen.lean:205`) was implemented as
 EQUALITY `mask_lo == effBit` (with `effBitGate` pinning `effBit = EFFECT_TRANSFER`) — i.e. it forced a
