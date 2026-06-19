@@ -384,6 +384,48 @@ pub fn hash_many(inputs: &[BabyBear]) -> BabyBear {
     state.state[0]
 }
 
+/// Hash inputs into a faithful **8-felt** (~248-bit, ~124-bit-collision) digest via the Poseidon2
+/// sponge — the wide-output primitive for the light-client-faithful state commitment.
+///
+/// Identical absorb to [`hash_many`] (same rate-4 absorb, same length-in-capacity domain separation),
+/// so `hash_many(xs) == hash_many_8(xs)[0]` is NOT guaranteed and MUST NOT be relied on — this is a
+/// distinct, wider digest. The squeeze follows the textbook sponge discipline: read the rate-4 block,
+/// permute, read the rate-4 block again → 8 genuinely distinct permutation outputs that each depend on
+/// the entire input. (Conservative vs reading `state[0..8]` from one final state, which would expose 4
+/// capacity felts; the squeeze-permute-squeeze keeps every output a rate-position squeeze.)
+///
+/// THIS IS A STANDALONE PRIMITIVE — it is NOT yet wired into the live commitment. A faithful commitment
+/// also requires the Merkle–Damgård CHAIN's intermediate accumulator to be 8 felts wide (else an
+/// adversary collides a 31-bit intermediate carrier); see `docs/FAITHFUL-STATE-COMMITMENT.md`. Bolting
+/// this onto only the final squeeze would be a laundered widening.
+pub fn hash_many_8(inputs: &[BabyBear]) -> [BabyBear; 8] {
+    let rate = 4;
+    let mut state = Poseidon2State::new();
+    // Domain separation: encode length in capacity (matches `hash_many`).
+    state.state[4] = BabyBear::new(inputs.len() as u32);
+
+    // Absorb phase (identical to `hash_many`).
+    for chunk in inputs.chunks(rate) {
+        for (i, &elem) in chunk.iter().enumerate() {
+            state.state[i] += elem;
+        }
+        state.permute();
+    }
+
+    // Squeeze 8: rate-4 block, permute, rate-4 block again.
+    let mut out = [BabyBear::ZERO; 8];
+    out[0] = state.state[0];
+    out[1] = state.state[1];
+    out[2] = state.state[2];
+    out[3] = state.state[3];
+    state.permute();
+    out[4] = state.state[0];
+    out[5] = state.state[1];
+    out[6] = state.state[2];
+    out[7] = state.state[3];
+    out
+}
+
 /// Hash arbitrary bytes into a single BabyBear field element via Poseidon2.
 ///
 /// Packs the input bytes into field elements (4 bytes per element with modular
@@ -475,6 +517,47 @@ pub fn poseidon2_trace(input_state: &[BabyBear; WIDTH]) -> Vec<[BabyBear; WIDTH]
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// THE ANTI-LAUNDERING TEST for the faithful 8-felt digest: the 8 outputs must be 8 GENUINELY
+    /// distinct, input-dependent felts — not `[0]×8`, not a replicated single squeeze. (a) the 8
+    /// outputs are pairwise-distinct for a generic input; (b) flipping ANY single input felt changes
+    /// ALL 8 outputs (avalanche); (c) the wide digest distinguishes near-collisions that a 1-felt
+    /// digest cannot promise.
+    #[test]
+    fn hash_many_8_is_eight_distinct_avalanching_felts() {
+        let input: Vec<BabyBear> = (1u32..=10).map(BabyBear::new).collect();
+        let out = hash_many_8(&input);
+
+        // (a) pairwise-distinct — catches a laundered `[0]×8` widening.
+        for i in 0..8 {
+            for j in (i + 1)..8 {
+                assert_ne!(out[i], out[j], "outputs {i} and {j} collide — not 8 distinct felts");
+            }
+        }
+        // and not the degenerate all-zero / all-equal output.
+        assert!(out.iter().any(|&x| x != out[0]) || out[0] != BabyBear::ZERO);
+
+        // (b) avalanche: flipping any one input felt changes ALL 8 outputs (each output depends on
+        // the whole input — a `[0]×8` or a final-felt-only widening would fail this).
+        for k in 0..input.len() {
+            let mut flipped = input.clone();
+            flipped[k] += BabyBear::new(1);
+            let out2 = hash_many_8(&flipped);
+            for i in 0..8 {
+                assert_ne!(
+                    out[i], out2[i],
+                    "flipping input {k} left output felt {i} unchanged — not full-input-dependent"
+                );
+            }
+        }
+
+        // (c) near-collision: two inputs differing in ONLY the last (high) felt produce digests that
+        // differ — and the FULL 8-felt digest differs, the property the light-client commitment needs.
+        let mut hi = input.clone();
+        *hi.last_mut().unwrap() += BabyBear::new(1);
+        let out_hi = hash_many_8(&hi);
+        assert_ne!(out, out_hi, "a high-position change must move the 8-felt digest");
+    }
 
     #[test]
     fn poseidon2_different_inputs_different_outputs() {
