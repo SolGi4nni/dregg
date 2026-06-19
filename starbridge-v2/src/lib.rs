@@ -171,6 +171,12 @@ pub mod wonder;
 // generalized Halo. The spine everything inherits. See docs/deos/INSPECTOR-FRAMEWORK.md.
 #[cfg(feature = "embedded-executor")]
 pub mod presentable;
+// THE REHYDRATABLE UI-SLICE SNAPSHOT — "the camera you can re-run": a tiny witness-cursor
+// (focus + presentation-kind + height/receipt-head) that re-derives the SAME inspector view
+// from the durability log (replay → re-project), liveness-typed (Live/ReplayedDeterministic/
+// ReconstructedApproximate). The screenshot keeps the angle, drops the frame. See REHYDRATABLE-SURFACES.md.
+#[cfg(feature = "embedded-executor")]
+pub mod ui_snapshot;
 #[cfg(feature = "embedded-executor")]
 pub mod cell_inspector;
 #[cfg(feature = "embedded-executor")]
