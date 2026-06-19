@@ -1101,6 +1101,183 @@ mod record_pin_anchor {
 }
 
 // ===========================================================================
+// THE WHOLE-TURN FOREST TOOTH (foolable gap #2, the LIVE-WIRE of
+// `RotatedKernelForestCohortChain.lean`). A heterogeneous sovereign turn
+// `[Transfer, SetPermissions]` splits into TWO maximal homogeneous cohort runs. The chained
+// producer (`prove_sovereign_cohort_chain`) mints ONE rotated leg per run + threads the per-run
+// 8-felt commit into a `SovereignCohortChain`; the deployed executor leg
+// (`verify_and_commit_proof_rotated`) verifies EVERY leg + chains them (leg[0].before == stored OLD,
+// leg[N-1].after == claimed NEW, leg[i+1].before == leg[i].after). These tests prove the WHOLE
+// forest is FORCED, not just the lead:
+//   * `multi_cohort_turn_proves_and_verifies` — the HONEST 2-cohort turn proves + commits.
+//   * `multi_cohort_tail_leg_omitted_is_rejected` — dropping the SetPermissions tail leg is REJECTED
+//     by the chain length / adjacency check (NO executor trust — the prior `effects.first()`-only
+//     verifier would have happily accepted the lead-only proof and left the tail unforced).
+//   * `multi_cohort_tail_leg_unchained_is_rejected` — corrupting the tail leg's `before8` so it does
+//     NOT chain off the Transfer's `after8` is REJECTED by the adjacency check.
+// ===========================================================================
+mod whole_turn_forest {
+    use dregg_cell::{Cell, CellId, CellMode, Ledger, Permissions};
+    use dregg_sdk::AgentCipherclerk;
+    use dregg_turn::executor::SovereignCohortChain;
+    use dregg_turn::rotation_witness as rw;
+    use dregg_turn::{ComputronCosts, Effect, TurnExecutor, TurnResult};
+
+    /// Register a sovereign cell + a dest cell for an outgoing transfer; return the live cipherclerk,
+    /// the sovereign cell id, the dest id, and the ledger (the executor's view).
+    fn setup() -> (AgentCipherclerk, CellId, CellId, Ledger) {
+        let cclerk = AgentCipherclerk::new();
+        let pub_key = cclerk.public_key().0;
+        let token_id = *blake3::hash(b"c1-domain").as_bytes();
+        let mut cell = Cell::with_balance(pub_key, token_id, 1000);
+        cell.mode = CellMode::Sovereign;
+        let cell_id = cell.id();
+
+        let nullifier_root = [0u8; 32];
+        let commitments_root = [0u8; 32];
+        let mut ctx_ledger = Ledger::new();
+        let _ = ctx_ledger.insert_cell(cell.clone());
+        let cells_root = rw::cells_root(&ctx_ledger);
+        let iroot = rw::iroot(&[]);
+        let v9_ctx = dregg_cell::commitment::V9RotationContext {
+            cells_root,
+            nullifier_root,
+            commitments_root,
+            iroot,
+        };
+        let commitment =
+            dregg_cell::commitment::compute_canonical_state_commitment_v9_8(&cell, &v9_ctx);
+
+        let mut cclerk = cclerk;
+        cclerk.store_sovereign_state(cell.clone());
+
+        let mut ledger = Ledger::new();
+        ledger.register_sovereign_cell(cell_id, commitment).unwrap();
+        let _ = ledger.insert_cell(cell);
+
+        let dest = Cell::with_balance([44u8; 32], token_id, 0);
+        let dest_id = dest.id();
+        let _ = ledger.insert_cell(dest);
+
+        (cclerk, cell_id, dest_id, ledger)
+    }
+
+    fn two_cohort_effects(cell_id: CellId, dest_id: CellId) -> Vec<Effect> {
+        vec![
+            Effect::Transfer {
+                from: cell_id,
+                to: dest_id,
+                amount: 100,
+            },
+            Effect::SetPermissions {
+                cell: cell_id,
+                new_permissions: Permissions::zkapp(),
+            },
+        ]
+    }
+
+    /// CONTROL: an HONEST 2-cohort `[Transfer, SetPermissions]` sovereign turn proves as a chain of
+    /// two rotated legs and the deployed executor verifies BOTH + commits to the chained NEW.
+    #[test]
+    fn multi_cohort_turn_proves_and_verifies() {
+        let (mut cclerk, cell_id, dest_id, mut ledger) = setup();
+        let effects = two_cohort_effects(cell_id, dest_id);
+
+        let turn = cclerk
+            .execute_sovereign_turn_with_proof(&cell_id, effects, 0, 0)
+            .expect("2-cohort sovereign turn should prove as a chain");
+
+        // The wire is the multi-leg chain (NOT a bare Ir2BatchProof) with exactly two legs.
+        let chain: SovereignCohortChain =
+            postcard::from_bytes(turn.execution_proof.as_ref().expect("execution_proof"))
+                .expect("multi-cohort turn carries the SovereignCohortChain wire");
+        assert_eq!(chain.legs.len(), 2, "two cohort runs ⇒ two legs");
+        // The chain is internally adjacent: leg[1].before == leg[0].after.
+        assert_eq!(
+            chain.legs[1].before8, chain.legs[0].after8,
+            "the producer threads the interior boundary commit"
+        );
+
+        let executor = TurnExecutor::new(ComputronCosts::zero());
+        match executor.execute(&turn, &mut ledger) {
+            TurnResult::Committed { .. } => {}
+            other => panic!("honest 2-cohort turn must commit through the deployed verifier, got {other:?}"),
+        }
+        let committed = ledger
+            .get_sovereign_commitment(&cell_id)
+            .expect("commitment present after commit");
+        assert_eq!(*committed, turn.execution_proof_new_commitment.unwrap());
+    }
+
+    /// ANTI-GHOST (the forest bites): DROP the SetPermissions tail leg. The chain then has ONE leg but
+    /// the turn splits into TWO cohort runs — the deployed verifier rejects on the length/coverage
+    /// check. NO executor trust: the lead Transfer leg is internally valid, yet the turn is rejected
+    /// because the tail cohort's transition is NOT covered (the gap the prior `effects.first()`-only
+    /// verifier left open).
+    #[test]
+    fn multi_cohort_tail_leg_omitted_is_rejected() {
+        let (mut cclerk, cell_id, dest_id, mut ledger) = setup();
+        let effects = two_cohort_effects(cell_id, dest_id);
+        let mut turn = cclerk
+            .execute_sovereign_turn_with_proof(&cell_id, effects, 0, 0)
+            .expect("2-cohort sovereign turn should prove");
+
+        let mut chain: SovereignCohortChain =
+            postcard::from_bytes(turn.execution_proof.as_ref().unwrap()).unwrap();
+        chain.legs.truncate(1); // DROP the SetPermissions tail leg.
+        turn.execution_proof = Some(postcard::to_allocvec(&chain).unwrap());
+
+        let executor = TurnExecutor::new(ComputronCosts::zero());
+        match executor.execute(&turn, &mut ledger) {
+            TurnResult::Rejected { reason, .. } => {
+                let s = format!("{reason:?}");
+                assert!(
+                    s.contains("cohort") || s.contains("forest") || s.contains("not covered"),
+                    "expected a whole-forest coverage rejection, got: {s}"
+                );
+            }
+            other => panic!(
+                "ANTI-GHOST: a turn whose tail cohort proof is OMITTED must be rejected by the \
+                 deployed verifier, got {other:?}"
+            ),
+        }
+    }
+
+    /// ANTI-GHOST (the chain bites): keep both legs but corrupt the tail leg's `before8` so it no
+    /// longer chains off the Transfer leg's `after8`. The deployed verifier's adjacency check rejects
+    /// (a spliced/unchained tail — the executor never trusts the interior boundary).
+    #[test]
+    fn multi_cohort_tail_leg_unchained_is_rejected() {
+        let (mut cclerk, cell_id, dest_id, mut ledger) = setup();
+        let effects = two_cohort_effects(cell_id, dest_id);
+        let mut turn = cclerk
+            .execute_sovereign_turn_with_proof(&cell_id, effects, 0, 0)
+            .expect("2-cohort sovereign turn should prove");
+
+        let mut chain: SovereignCohortChain =
+            postcard::from_bytes(turn.execution_proof.as_ref().unwrap()).unwrap();
+        // Break adjacency: the tail leg's before-anchor no longer equals the lead's after-anchor.
+        chain.legs[1].before8[0] += dregg_circuit::field::BabyBear::new(1);
+        turn.execution_proof = Some(postcard::to_allocvec(&chain).unwrap());
+
+        let executor = TurnExecutor::new(ComputronCosts::zero());
+        match executor.execute(&turn, &mut ledger) {
+            TurnResult::Rejected { reason, .. } => {
+                let s = format!("{reason:?}");
+                assert!(
+                    s.contains("adjacency") || s.contains("chain") || s.contains("ProofVerificationFailed"),
+                    "expected a chain-adjacency rejection, got: {s}"
+                );
+            }
+            other => panic!(
+                "ANTI-GHOST: a turn whose tail cohort is UNCHAINED must be rejected by the deployed \
+                 verifier, got {other:?}"
+            ),
+        }
+    }
+}
+
+// ===========================================================================
 // WALL A — the rotated `prove_full_turn` / `verify_full_turn` round-trip carries
 // ZERO v1 dependency. These drive `prove_full_turn` DIRECTLY with a rotation
 // witness (not the executor-mint path) so the rotated leg's vk_hash (A.1) and the

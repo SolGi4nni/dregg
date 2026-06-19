@@ -1563,7 +1563,7 @@ pub fn split_into_cohort_runs(effects: &[VmEffectKind]) -> Vec<core::ops::Range<
 /// number of real effect rows (rows `0..n_effects`; padding follows). Used to thread the synthetic
 /// interior boundary states the executor never materialized.
 #[cfg(feature = "prover")]
-fn cell_state_after_run(
+pub(crate) fn cell_state_after_run(
     trace: &[Vec<BabyBear>],
     n_effects: usize,
     seed_for_unchanged: &CellState,

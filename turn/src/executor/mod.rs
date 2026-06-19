@@ -1508,6 +1508,7 @@ mod execute;
 mod execute_tree;
 mod finalize;
 mod proof_verify;
+pub use proof_verify::{SovereignCohortChain, SovereignCohortLeg};
 
 // ─── Pipeline Execution ──────────────────────────────────────────────────────
 

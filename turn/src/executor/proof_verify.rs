@@ -4,6 +4,114 @@
 
 use super::*;
 
+/// One leg of a multi-cohort sovereign turn's proof chain (the WHOLE-TURN FOREST wire, foolable
+/// gap #2). A turn is N maximal homogeneous cohort runs; each run is proven as its OWN rotated
+/// `Ir2BatchProof` leg, carrying its pre/post 8-felt commit so the verifier can chain them
+/// (leg[0].before == stored OLD, leg[N-1].after == claimed NEW, leg[i+1].before == leg[i].after).
+/// This is the executor-leg twin of the SDK `AttachedSubProof` chain `verify_full_turn_bound`
+/// already runs (`sdk::full_turn_proof::prove_cohort_run_chain`).
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct SovereignCohortLeg {
+    /// The postcard-serialized rotated `Ir2BatchProof` for this cohort run.
+    pub proof_bytes: Vec<u8>,
+    /// This run's pre-state 8-felt commit (the chain's before-anchor for this leg).
+    pub before8: [dregg_circuit::field::BabyBear; 8],
+    /// This run's post-state 8-felt commit (the chain's after-anchor for this leg).
+    pub after8: [dregg_circuit::field::BabyBear; 8],
+}
+
+/// The multi-cohort sovereign proof chain (the `execution_proof` wire for a turn that splits into
+/// more than one cohort run). A single-cohort turn carries the bare `Ir2BatchProof` instead (the
+/// live fleet is byte-identical), so this wire is only emitted/expected when N > 1.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct SovereignCohortChain {
+    /// The legs in chain order (one per cohort run, s0→s1→…→sN).
+    pub legs: Vec<SovereignCohortLeg>,
+}
+
+/// Split a sovereign turn's VmEffect sequence into maximal runs where every effect resolves to the
+/// SAME rotated cohort descriptor — the executor-local twin of
+/// `sdk::full_turn_proof::split_into_cohort_runs` (the executor cannot depend on the SDK; this is a
+/// pure function over `dregg_circuit::effect_vm`). A homogeneous turn yields ONE run (byte-identical
+/// single-leg path); a `[Transfer, SetPermissions]` turn yields two. `None`-resolving (non-cohort)
+/// effects form their own singleton runs; the rotated verifier rejects such a run at descriptor
+/// resolution (fail-closed), matching the producer.
+#[cfg(feature = "prover")]
+pub(super) fn split_into_cohort_runs(
+    effects: &[dregg_circuit::effect_vm::Effect],
+) -> Vec<core::ops::Range<usize>> {
+    use dregg_circuit::effect_vm::trace_rotated::rotated_descriptor_name_for_effect;
+    let mut runs: Vec<core::ops::Range<usize>> = Vec::new();
+    let mut start = 0usize;
+    let mut current: Option<Option<&'static str>> = None;
+    for (i, e) in effects.iter().enumerate() {
+        let name = rotated_descriptor_name_for_effect(e);
+        match current {
+            None => {
+                current = Some(name);
+                start = i;
+            }
+            Some(cur) if cur == name => {}
+            Some(_) => {
+                runs.push(start..i);
+                current = Some(name);
+                start = i;
+            }
+        }
+    }
+    if current.is_some() && start < effects.len() {
+        runs.push(start..effects.len());
+    }
+    runs
+}
+
+/// Read the post-state `CellState` off the v1 trace's last REAL effect row's `STATE_AFTER` columns
+/// — the executor-local twin of `sdk::full_turn_proof::cell_state_after_run`. Used to thread the
+/// per-run circuit pre-state across cohort runs WITHOUT a hand-replay of effect semantics (the SAME
+/// `STATE_AFTER` columns the producer threads), so the verifier reproduces each interior run's PIs.
+#[cfg(feature = "prover")]
+pub(super) fn cell_state_after_run(
+    trace: &[Vec<dregg_circuit::field::BabyBear>],
+    n_effects: usize,
+    seed_for_unchanged: &dregg_circuit::CellState,
+) -> dregg_circuit::CellState {
+    use dregg_circuit::CellState;
+    use dregg_circuit::effect_vm::columns::{STATE_AFTER_BASE, state};
+    use dregg_circuit::field::BabyBear;
+    if n_effects == 0 || trace.is_empty() {
+        return seed_for_unchanged.clone();
+    }
+    let last_real = (n_effects - 1).min(trace.len() - 1);
+    let row = &trace[last_real];
+    let lo = row[STATE_AFTER_BASE + state::BALANCE_LO].0 as u64;
+    let hi = row[STATE_AFTER_BASE + state::BALANCE_HI].0 as u64;
+    let balance = lo | (hi << 30);
+    let nonce = row[STATE_AFTER_BASE + state::NONCE].0;
+    let mut fields = [BabyBear::ZERO; 8];
+    for (i, f) in fields.iter_mut().enumerate() {
+        *f = row[STATE_AFTER_BASE + state::FIELD_BASE + i];
+    }
+    let capability_root = row[STATE_AFTER_BASE + state::CAP_ROOT];
+    let reserved = row[STATE_AFTER_BASE + state::RESERVED].0;
+    let sealed_field_mask = reserved & 0xFF;
+    let mode_flag = reserved >> 8;
+    // The authority-residue digest is turn-invariant for kernel turns (the EffectVM trace mutates
+    // balance/nonce/fields/cap_root, never the residue), so the post-state carries the seed's digest.
+    let record_digest = seed_for_unchanged.record_digest;
+    let mut s = CellState {
+        balance,
+        nonce,
+        fields,
+        capability_root,
+        record_digest,
+        state_commitment: BabyBear::ZERO,
+        sealed_field_mask,
+        mode_flag,
+    };
+    s.refresh_commitment();
+    s
+}
+
 impl TurnExecutor {
     /// TRUST-CRITICAL: This function bridges the TRUSTLESS layer (STARK proofs) into the
     /// executor. If compromised: forged sovereign state could be committed without valid proofs.
@@ -81,18 +189,8 @@ impl TurnExecutor {
         turn: &Turn,
         ledger: &mut Ledger,
     ) -> Result<(), TurnError> {
-        use crate::rotation_witness::{NUM_PRE_LIMBS, committed_height_felt};
-        use dregg_circuit::descriptor_ir2::{
-            DreggStarkConfig, Ir2BatchProof, parse_vm_descriptor2, verify_vm_descriptor2,
-        };
-        use dregg_circuit::effect_vm::trace_rotated::{
-            RotatedBlockWitness, empty_caveat_manifest, generate_rotated_note_spend_wide,
-            generate_rotated_record_pin_wide, generate_rotated_transfer_shape_wide,
-            generate_rotated_transfer_shape_with_fee_wide, rotated_descriptor_name_for_effect,
-            rotated_descriptor_name_for_effect_fee, transfer_caveat_manifest,
-        };
-        use dregg_circuit::effect_vm_descriptors::WIDE_REGISTRY_STAGED_TSV;
-        use dregg_circuit::field::BabyBear;
+        use dregg_circuit::descriptor_ir2::{DreggStarkConfig, Ir2BatchProof};
+        use dregg_circuit::effect_vm::generate_effect_vm_trace;
 
         // 1. Stored sovereign commitment (the v9 felt the matched producer wrote).
         let old_commitment = if let Some(c) = ledger.get_sovereign_commitment(cell_id) {
@@ -107,12 +205,6 @@ impl TurnExecutor {
                 "execution_proof_new_commitment is required".to_string(),
             )
         })?;
-
-        // 2. Deserialize the rotated `Ir2BatchProof` (postcard; no `DREG` magic).
-        let ir2_proof: Ir2BatchProof<DreggStarkConfig> = postcard::from_bytes(proof_bytes)
-            .map_err(|e| {
-                TurnError::InvalidExecutionProof(format!("rotated proof deserialize: {e}"))
-            })?;
 
         // 3. Reconstruct the circuit pre-state + VM effects from the before-cell the
         //    ledger holds (the SAME construction the producer used).
@@ -155,11 +247,202 @@ impl TurnExecutor {
             );
         let vm_effects = convert_turn_effects_to_vm(cell_id, turn);
 
-        // 4. Resolve the cohort descriptor by the turn's lead effect (the SAME resolver
+        // 3b. WHOLE-TURN FOREST (foolable gap #2, the LIVE-WIRE of the
+        //     `RotatedKernelForestCohortChain.lean` build-half). A turn is N maximal homogeneous
+        //     cohort runs (`split_into_cohort_runs`). The matched producer
+        //     (`cipherclerk::prove_sovereign_turn_rotated`) proves ONE rotated leg per run, threading
+        //     each run's pre/post 8-felt commit, and serializes the leg list into `execution_proof`.
+        //     The verifier here mirrors `verify_full_turn_bound`'s chain check INTO the deployed
+        //     executor leg: it verifies EVERY leg's proof against ITS run's reconstructed PI vector
+        //     AND chains the commitments (leg[0].before == stored OLD, leg[N-1].after == claimed NEW,
+        //     leg[i+1].before == leg[i].after). A tail effect's transition is therefore FORCED — the
+        //     prior `effects.first()`-only resolve left tail cohorts unverified.
+        //
+        //     N == 1 (the entire live single-cohort fleet) is byte-identical to the prior single-leg
+        //     path: the lead IS the whole turn, the wire is the bare `Ir2BatchProof`, and the run's
+        //     before/after anchors ARE the stored OLD / claimed NEW. A multi-cohort turn carries the
+        //     `SovereignCohortChain` wire (postcard) and runs the per-leg verify + chain below.
+        let runs = split_into_cohort_runs(&vm_effects);
+        if runs.is_empty() {
+            return Err(TurnError::InvalidExecutionProof(
+                "rotated verify: empty effect set (no cohort runs)".to_string(),
+            ));
+        }
+        use dregg_cell::commitment::bytes32_to_felt8;
+        let stored_old8 = bytes32_to_felt8(&old_commitment);
+        let claimed_new8 = bytes32_to_felt8(&new_commitment);
+
+        if runs.len() > 1 {
+            // MULTI-COHORT: deserialize the N-leg chain wire + verify every leg + chain-check.
+            let chain: SovereignCohortChain = postcard::from_bytes(proof_bytes).map_err(|e| {
+                TurnError::InvalidExecutionProof(format!(
+                    "rotated verify: multi-cohort turn ({} cohort runs) requires a \
+                     SovereignCohortChain wire: {e}",
+                    runs.len()
+                ))
+            })?;
+            if chain.legs.len() != runs.len() {
+                return Err(TurnError::InvalidExecutionProof(format!(
+                    "rotated verify: cohort chain has {} legs but the turn splits into {} cohort \
+                     runs (a missing/extra tail leg — the whole forest is not covered)",
+                    chain.legs.len(),
+                    runs.len()
+                )));
+            }
+            // Chain endpoints + adjacency over the WIRE-supplied per-leg 8-felt commits. A missing or
+            // unchained tail breaks adjacency here (anti-ghost at the chain layer); the per-leg verify
+            // below then binds each run's transition to those same anchored commits.
+            if chain.legs[0].before8 != stored_old8 {
+                return Err(TurnError::ProofVerificationFailed(
+                    "rotated verify: cohort chain leg[0].before != stored OLD commitment".to_string(),
+                ));
+            }
+            if chain.legs[runs.len() - 1].after8 != claimed_new8 {
+                return Err(TurnError::ProofVerificationFailed(
+                    "rotated verify: cohort chain last-leg.after != claimed NEW commitment"
+                        .to_string(),
+                ));
+            }
+            for w in chain.legs.windows(2) {
+                if w[1].before8 != w[0].after8 {
+                    return Err(TurnError::ProofVerificationFailed(
+                        "rotated verify: cohort chain adjacency broken (leg[i+1].before != \
+                         leg[i].after) — a dropped/spliced cohort leg"
+                            .to_string(),
+                    ));
+                }
+            }
+            // Per-leg verify: thread the per-run circuit pre-state (`s_k`) off the generator's own
+            // STATE_AFTER columns (no hand-replay — the SAME threading the producer's
+            // `prove_cohort_run_chain` uses), and verify each run's reconstructed PI vector against
+            // its leg's proof, anchoring the 16 wide commit PIs to the leg's wire before/after.
+            let mut s_k = initial_vm_state.clone();
+            for (k, run) in runs.iter().enumerate() {
+                let run_effects = &vm_effects[run.clone()];
+                let leg = &chain.legs[k];
+                let ir2_proof: Ir2BatchProof<DreggStarkConfig> =
+                    postcard::from_bytes(&leg.proof_bytes).map_err(|e| {
+                        TurnError::InvalidExecutionProof(format!(
+                            "rotated verify: cohort leg {k} proof deserialize: {e}"
+                        ))
+                    })?;
+                self.verify_one_cohort_run(
+                    cell,
+                    cell_id,
+                    turn,
+                    &s_k,
+                    run_effects,
+                    &leg.before8,
+                    &leg.after8,
+                    cell_committed_height,
+                    0,    // multi-cohort legs run fee-free (chained producer requires turn.fee == 0)
+                    true, // is_chain_leg: route the BARE (non-fee) descriptor per the chained producer
+                    &ir2_proof,
+                )
+                .map_err(|e| match e {
+                    TurnError::ProofVerificationFailed(m) => TurnError::ProofVerificationFailed(
+                        format!("cohort leg {k}: {m}"),
+                    ),
+                    other => other,
+                })?;
+                // Thread s_k → s_{k+1} off the generator's STATE_AFTER columns (the last run's after
+                // anchor is the claimed NEW, already chain-checked above).
+                if k + 1 < runs.len() {
+                    let (v1_trace, _v1_pi) = generate_effect_vm_trace(&s_k, run_effects);
+                    s_k = cell_state_after_run(&v1_trace, run_effects.len(), &s_k);
+                }
+            }
+            // Commit update (step 8) — unchanged.
+            if ledger.is_sovereign(cell_id) {
+                let _ = ledger.update_sovereign_commitment(cell_id, new_commitment);
+            } else {
+                let _ = ledger.update_sovereign_registration_commitment(
+                    cell_id,
+                    old_commitment,
+                    new_commitment,
+                    self.block_height,
+                );
+            }
+            return Ok(());
+        }
+
+        // N == 1 (single-cohort, the live fleet): the bare `Ir2BatchProof` wire, the lead IS the
+        // whole turn, anchors are the stored OLD / claimed NEW. Byte-identical to the prior path.
+        let ir2_proof: Ir2BatchProof<DreggStarkConfig> = postcard::from_bytes(proof_bytes)
+            .map_err(|e| {
+                TurnError::InvalidExecutionProof(format!("rotated proof deserialize: {e}"))
+            })?;
+        self.verify_one_cohort_run(
+            cell,
+            cell_id,
+            turn,
+            &initial_vm_state,
+            &vm_effects,
+            &stored_old8,
+            &claimed_new8,
+            cell_committed_height,
+            turn.fee,
+            false, // is_chain_leg: single-cohort whole turn routes the fee descriptor (as today)
+            &ir2_proof,
+        )?;
+
+        // 8. Update commitment (legacy map first, then registrations) — unchanged.
+        if ledger.is_sovereign(cell_id) {
+            let _ = ledger.update_sovereign_commitment(cell_id, new_commitment);
+        } else {
+            let _ = ledger.update_sovereign_registration_commitment(
+                cell_id,
+                old_commitment,
+                new_commitment,
+                self.block_height,
+            );
+        }
+        Ok(())
+    }
+
+    /// Verify ONE cohort run's rotated `Ir2BatchProof` against its reconstructed PI vector
+    /// (the per-leg body the whole-turn-forest chain calls once per cohort run, and the
+    /// single-cohort path calls once for the whole turn). `run_initial_state` is this run's
+    /// circuit pre-state; `before8`/`after8` are the TRUSTED/CHAINED 8-felt commit anchors for
+    /// this run's pre/post (the chain layer pins them to stored-OLD / claimed-NEW / adjacency).
+    /// `record_pin_cell` is the trusted before-CELL the run's record-pin anchor projects from.
+    #[cfg(feature = "prover")]
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn verify_one_cohort_run(
+        &self,
+        record_pin_cell: &Cell,
+        cell_id: &CellId,
+        turn: &Turn,
+        run_initial_state: &dregg_circuit::CellState,
+        run_effects: &[dregg_circuit::effect_vm::Effect],
+        before8: &[dregg_circuit::field::BabyBear; 8],
+        after8: &[dregg_circuit::field::BabyBear; 8],
+        cell_committed_height: u64,
+        fee_for_run: u64,
+        is_chain_leg: bool,
+        ir2_proof: &dregg_circuit::descriptor_ir2::Ir2BatchProof<
+            dregg_circuit::descriptor_ir2::DreggStarkConfig,
+        >,
+    ) -> Result<(), TurnError> {
+        use crate::rotation_witness::{NUM_PRE_LIMBS, committed_height_felt};
+        use dregg_circuit::descriptor_ir2::{parse_vm_descriptor2, verify_vm_descriptor2};
+        use dregg_circuit::effect_vm::trace_rotated::{
+            RotatedBlockWitness, empty_caveat_manifest, generate_rotated_note_spend_wide,
+            generate_rotated_record_pin_wide, generate_rotated_transfer_shape_wide,
+            generate_rotated_transfer_shape_with_fee_wide, rotated_descriptor_name_for_effect,
+            rotated_descriptor_name_for_effect_fee, transfer_caveat_manifest,
+        };
+        use dregg_circuit::effect_vm_descriptors::WIDE_REGISTRY_STAGED_TSV;
+        use dregg_circuit::field::BabyBear;
+
+        let initial_vm_state = run_initial_state;
+
+        // 4. Resolve the cohort descriptor by the run's lead effect (the SAME resolver
         //    the producer used). A non-cohort effect fails closed.
-        let lead = vm_effects.first().ok_or_else(|| {
-            TurnError::InvalidExecutionProof("rotated verify: empty effect set".to_string())
+        let lead = run_effects.first().ok_or_else(|| {
+            TurnError::InvalidExecutionProof("rotated verify: empty cohort run".to_string())
         })?;
+        let vm_effects = run_effects;
         // FEE-IN-PROOF (the `transferFeeVmDescriptor2R24` route): a plain sovereign `Transfer` lead
         // routes the fee-aware descriptor (39 PIs) where the fee is debited INSIDE the proven
         // transition — the producer (`cipherclerk::prove_sovereign_turn_rotated`) routes the SAME
@@ -168,8 +451,17 @@ impl TurnExecutor {
         // pre − transfer − fee, so a forged / underclaimed fee is UNSAT. We retire the old blind
         // `pre_balance = post_fee_balance + turn.fee` after-state reconstruction for the proven
         // transition (it survives ONLY for the pre-fee BEFORE/OLD_COMMIT block, below).
-        let is_fee_transfer =
-            matches!(vm_effects.as_slice(), [dregg_circuit::effect_vm::Effect::Transfer { .. }]);
+        // Descriptor routing for a single `[Transfer]` run differs by path:
+        //   * single-cohort whole turn (`!is_chain_leg`): the FEE descriptor (846-wide), matching the
+        //     single-leg producer `cipherclerk::prove_sovereign_turn_rotated`'s shape-only
+        //     `is_fee_transfer = matches Transfer` (fee descriptor even at fee 0). `fee_for_run` is the
+        //     published fee PI (`turn.fee`).
+        //   * multi-cohort leg (`is_chain_leg`): the BARE transfer-shape descriptor (836-wide), matching
+        //     the chained producer's `prove_effect_vm_rotated_wide` (fee-free; `turn.fee == 0` enforced).
+        // A mismatch would diverge the trace width / Fiat–Shamir ⇒ honest reject, so the two halves
+        // route in lock-step.
+        let is_fee_transfer = !is_chain_leg
+            && matches!(vm_effects, [dregg_circuit::effect_vm::Effect::Transfer { .. }]);
         let name = if is_fee_transfer {
             rotated_descriptor_name_for_effect_fee(lead)
         } else {
@@ -202,7 +494,7 @@ impl TurnExecutor {
 
         // 5. The caveat manifest the producer used (transfer exercises both domains;
         //    everything else uses the empty manifest).
-        let caveat = match vm_effects.as_slice() {
+        let caveat = match vm_effects {
             [dregg_circuit::effect_vm::Effect::Transfer { .. }] => transfer_caveat_manifest(),
             _ => empty_caveat_manifest(),
         };
@@ -284,22 +576,26 @@ impl TurnExecutor {
         // 8-felt carriers, so a forged 8-felt NEW commit (a state the proven transition never produced)
         // makes the anchored PIs disagree with the carrier ⇒ `verify_vm_descriptor2` UNSAT. The ~31-bit
         // 1-felt waist is GONE — the published binding is the full ~124-bit 8-felt commit.
-        use dregg_cell::commitment::bytes32_to_felt8;
+        // WHOLE-TURN FOREST: the BEFORE/AFTER anchors are this RUN's pre/post 8-felt commits
+        // (`before8`/`after8`). For a single-cohort turn they are the stored OLD / claimed NEW; for a
+        // multi-cohort turn they are the chain-checked per-leg boundary commits (leg[0].before pinned
+        // to stored OLD, leg[N-1].after to claimed NEW, interior adjacency leg[i+1].before==leg[i].after).
+        // A forged run-after (a state the run's proven transition never produced) makes these anchored
+        // PIs disagree with the proof's bound 8-felt carrier ⇒ `verify_vm_descriptor2` UNSAT.
         let n_pi = dpis.len();
-        let trusted_before8 = bytes32_to_felt8(&old_commitment);
-        let trusted_after8 = bytes32_to_felt8(&new_commitment);
         for j in 0..8 {
-            dpis[n_pi - 16 + j] = trusted_before8[j];
-            dpis[n_pi - 8 + j] = trusted_after8[j];
+            dpis[n_pi - 16 + j] = before8[j];
+            dpis[n_pi - 8 + j] = after8[j];
         }
         dpis[36] = committed_height_felt(cell_committed_height);
         // FEE-IN-PROOF: PI 38 is the PUBLISHED fee the col-89 last-row pin binds. Anchor it to the
-        // TRUSTED `turn.fee` (the generator already wrote `BabyBear::new(turn.fee as u32)`, but we set
+        // TRUSTED `fee_for_run` (the generator already wrote `BabyBear::new(fee as u32)`, but we set
         // it explicitly so the published value is provably the turn's declared fee — a proof whose
-        // bound col 89 disagrees with `turn.fee` is UNSAT). The gate then forces the after-balance
-        // debit, retiring the verifier's blind `pre = post + fee` after-state reconstruction.
+        // bound col 89 disagrees is UNSAT). The gate then forces the after-balance debit. The fee is
+        // carried only by a single-cohort `[Transfer]` turn (`fee_for_run == turn.fee`); multi-cohort
+        // legs run fee-free (`fee_for_run == 0`, the chained producer requires `turn.fee == 0`).
         if is_fee_transfer {
-            dpis[38] = BabyBear::new(turn.fee as u32);
+            dpis[38] = BabyBear::new(fee_for_run as u32);
         }
 
         // 6b. THE RECORD-PIN ANCHOR (the deployment-soundness close for the record-digest family;
@@ -378,7 +674,7 @@ impl TurnExecutor {
                         || matches!(e, Effect::ReceiptArchive { checkpoint, .. } if checkpoint.cell_id == *cell_id)
                 });
                 if let Some(lead_effect) = lead_effect {
-                    let mut post_cell = cell.clone();
+                    let mut post_cell = record_pin_cell.clone();
                     crate::rotation_witness::apply_effect_to_cell(
                         &mut post_cell,
                         cell_id,
@@ -399,23 +695,11 @@ impl TurnExecutor {
         }
 
         // 7. Verify through the multi-table batch verifier (the hand-AIR leg is gone).
-        verify_vm_descriptor2(&desc, &ir2_proof, &dpis).map_err(|e| {
-            // A post-state forgery surfaces here: PI 35 disagrees with the trace's
-            // after-block STATE_COMMIT carrier (the descriptor's col-261 pi_binding).
+        verify_vm_descriptor2(&desc, ir2_proof, &dpis).map_err(|e| {
+            // A post-state forgery surfaces here: the anchored after-commit PIs disagree with the
+            // trace's after-block STATE_COMMIT carrier (the wide descriptor's carrier-12 pi_bindings).
             TurnError::ProofVerificationFailed(format!("rotated effect-vm verify: {e}"))
         })?;
-
-        // 8. Update commitment (legacy map first, then registrations) — unchanged.
-        if ledger.is_sovereign(cell_id) {
-            let _ = ledger.update_sovereign_commitment(cell_id, new_commitment);
-        } else {
-            let _ = ledger.update_sovereign_registration_commitment(
-                cell_id,
-                old_commitment,
-                new_commitment,
-                self.block_height,
-            );
-        }
         Ok(())
     }
 

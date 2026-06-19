@@ -5176,6 +5176,26 @@ impl AgentCipherclerk {
             })?
             .clone();
 
+        // 1b. WHOLE-TURN FOREST (foolable gap #2 producer half): a heterogeneous turn splits into
+        //     more than one maximal homogeneous cohort run. The single-leg wide prover fails closed on
+        //     such a turn (`prove_effect_vm_rotated_wide` rejects a heterogeneous slice), so we mint ONE
+        //     rotated leg per cohort run + thread the per-run pre/post 8-felt commit into a
+        //     `SovereignCohortChain` wire the deployed executor leg verifies + chains
+        //     (`verify_and_commit_proof_rotated`). A single-cohort turn (the live fleet) skips this and
+        //     takes the byte-identical single-leg path below.
+        {
+            let vm_effects_probe = Self::convert_effects_to_vm(cell_id, &effects);
+            if crate::full_turn_proof::split_into_cohort_runs(&vm_effects_probe).len() > 1 {
+                return self.prove_sovereign_cohort_chain(
+                    cell_id,
+                    &before_cell,
+                    effects,
+                    fee,
+                    block_height,
+                );
+            }
+        }
+
         // 2. Apply effects locally to derive the after-state cell (same projection the
         //    v1 path uses; the cipherclerk only models the variants whose AIR coverage
         //    it can soundly prove — others are NoOp at the circuit boundary).
@@ -5530,6 +5550,220 @@ impl AgentCipherclerk {
             turn,
             trace,
             public_inputs,
+            new_commitment,
+            pre_state_commitment,
+        })
+    }
+
+    /// THE WHOLE-TURN FOREST producer (foolable gap #2 producer half). Proves a heterogeneous
+    /// sovereign turn — one that splits into MORE THAN ONE maximal homogeneous cohort run — as N
+    /// rotated wide legs (one per run), threading each run's pre/post state, and packs them into the
+    /// `SovereignCohortChain` wire the deployed executor leg (`verify_and_commit_proof_rotated`)
+    /// verifies leg-by-leg + chains. This mirrors the SDK `prove_cohort_run_chain` (the
+    /// `verify_full_turn_bound` path) but onto the sovereign `execution_proof` wire.
+    ///
+    /// Per-run state is threaded two ways: the KERNEL `after_cell` accumulates each run's effects via
+    /// the SHARED `apply_effect_to_cell` weld (so the rotation witnesses' `cells_root`/`iroot`/8-felt
+    /// commit context advance), and the leg's pre/post 8-felt commits come straight off the wide
+    /// generator's PI vector (the last 16 PIs) so the executor's chain anchors match by construction.
+    ///
+    /// Restrictions (fail-closed): `fee` must be 0 (a multi-cohort fee split is out of scope; each leg
+    /// proves fee-free), and every cohort run must be a graduated rotated cohort (the single-leg wide
+    /// prover's coverage). A run the wide prover cannot mint fails closed here, so the executor never
+    /// receives a partial chain.
+    #[cfg(feature = "prover")]
+    fn prove_sovereign_cohort_chain(
+        &mut self,
+        cell_id: &CellId,
+        before_cell: &dregg_cell::Cell,
+        effects: Vec<Effect>,
+        fee: u64,
+        block_height: u64,
+    ) -> Result<ProvenSovereignTurn, SdkError> {
+        use dregg_cell::commitment::felt8_to_bytes32;
+        use dregg_circuit::field::BabyBear;
+        use dregg_turn::executor::{SovereignCohortChain, SovereignCohortLeg};
+        use dregg_turn::rotation_witness as rw;
+
+        if fee != 0 {
+            return Err(SdkError::InvalidWitness(
+                "multi-cohort sovereign turn with a nonzero fee is unsupported; the chained producer \
+                 proves each cohort leg fee-free (split the fee into its own turn)"
+                    .into(),
+            ));
+        }
+
+        // The vm-effect projection + the cohort-run split (the SAME the executor recomputes). For a
+        // sovereign turn over `cell_id` the projection is 1:1 with the kernel effects (each kernel
+        // effect targeting the cell maps to one VmEffect), so the run ranges index BOTH lists.
+        let vm_effects = Self::convert_effects_to_vm(cell_id, &effects);
+        if vm_effects.len() != effects.len() {
+            return Err(SdkError::InvalidWitness(format!(
+                "multi-cohort sovereign turn: the vm-effect projection ({} effects) is not 1:1 with \
+                 the kernel effects ({}); the chained producer needs a 1:1 mapping to thread per-run \
+                 kernel state",
+                vm_effects.len(),
+                effects.len()
+            )));
+        }
+        let runs = crate::full_turn_proof::split_into_cohort_runs(&vm_effects);
+        debug_assert!(runs.len() > 1, "the dispatcher only routes multi-cohort turns here");
+
+        let nullifier_root = [0u8; 32];
+        let commitments_root = [0u8; 32];
+        let receipt_hashes: Vec<[u8; 32]> = self
+            .receipt_chain
+            .iter()
+            .map(|r| r.receipt_hash())
+            .collect();
+
+        // The FULL kernel after-cell (all effects applied through the SHARED weld + the balance
+        // moves). The FINAL run's after-block witness is produced over this, so the last leg's
+        // after8 == the turn's claimed NEW commitment.
+        let mut full_after_cell = before_cell.clone();
+        for effect in &effects {
+            rw::apply_effect_to_cell(&mut full_after_cell, cell_id, effect, block_height);
+            if let Effect::Transfer { from, to, amount } = effect {
+                if from == cell_id {
+                    full_after_cell
+                        .state
+                        .set_balance(full_after_cell.state.balance().saturating_sub(*amount as i64));
+                }
+                if to == cell_id {
+                    full_after_cell
+                        .state
+                        .set_balance(full_after_cell.state.balance().saturating_add(*amount as i64));
+                }
+            }
+        }
+
+        // ONE turn-context ledger (the turn's before-cell) feeds EVERY `produce` — `cells_root`/`iroot`
+        // are turn-invariant. The single `before_w` is REUSED for every run's before-block AND every
+        // INTERIOR run's after-block (the witness-carried limbs — cells_root, authority digest, lifecycle,
+        // r11..r23 — are turn-invariant); only the FINAL run's after-block uses the real `after_w`. The
+        // changing welds (balance/nonce/fields) ride each run's v1 sub-trace, threaded via `s_k`. This is
+        // the SAME design as the SDK `prove_cohort_run_chain`, so `leg[k].after8 == leg[k+1].before8`
+        // holds by construction (both are `wireCommit(before_w carried-limbs, s_{k+1} welds)`).
+        let mut ctx_ledger = dregg_cell::Ledger::new();
+        let _ = ctx_ledger.insert_cell(before_cell.clone());
+        let before_w = rw::produce(
+            before_cell,
+            &ctx_ledger,
+            &nullifier_root,
+            &commitments_root,
+            &receipt_hashes,
+        );
+        let after_w = rw::produce(
+            &full_after_cell,
+            &ctx_ledger,
+            &nullifier_root,
+            &commitments_root,
+            &receipt_hashes,
+        );
+
+        // The circuit pre-state, seeded from the turn's before-cell (the SAME seed the single-leg
+        // path + the executor use; the executor threads s_k via the v1 sub-trace).
+        let initial_vm_state = dregg_circuit::CellState::with_capability_root_and_record_digest(
+            u64::try_from(before_cell.state.balance())
+                .map_err(|_| SdkError::Wire("cell balance is negative".into()))?,
+            before_cell.state.nonce() as u32,
+            dregg_cell::compute_canonical_capability_root_felt(&before_cell.capabilities),
+            dregg_cell::compute_authority_digest_felt(before_cell),
+        );
+
+        let mut s_k = initial_vm_state;
+        let mut legs: Vec<SovereignCohortLeg> = Vec::with_capacity(runs.len());
+        let mut last_after8 = [BabyBear::ZERO; 8];
+        let n_runs = runs.len();
+
+        for (k, run) in runs.iter().enumerate() {
+            let run_vm = &vm_effects[run.clone()];
+            let is_final = k + 1 == n_runs;
+            // INTERIOR runs reuse `before_w` for their after-block (turn-invariant carried limbs); the
+            // FINAL run uses the real `after_w` (so the last leg binds the turn's claimed NEW commit).
+            let after_block_w = if is_final { &after_w } else { &before_w };
+
+            let caveat = match run_vm {
+                [dregg_circuit::effect_vm::Effect::Transfer { .. }] => {
+                    dregg_circuit::effect_vm::trace_rotated::transfer_caveat_manifest()
+                }
+                _ => dregg_circuit::effect_vm::trace_rotated::empty_caveat_manifest(),
+            };
+
+            let (proof, dpis) = crate::full_turn_proof::prove_effect_vm_rotated_wide(
+                &s_k,
+                run_vm,
+                &before_w,
+                after_block_w,
+                &caveat,
+                None,
+            )?;
+            let n_pi = dpis.len();
+            let before8: [BabyBear; 8] = dpis[n_pi - 16..n_pi - 8]
+                .try_into()
+                .map_err(|_| SdkError::InvalidWitness("cohort leg: short wide PI vector".into()))?;
+            let after8: [BabyBear; 8] = dpis[n_pi - 8..n_pi]
+                .try_into()
+                .map_err(|_| SdkError::InvalidWitness("cohort leg: short wide PI vector".into()))?;
+            let proof_bytes = postcard::to_allocvec(&proof)
+                .map_err(|e| SdkError::Wire(format!("cohort leg proof serialize: {e}")))?;
+            legs.push(SovereignCohortLeg { proof_bytes, before8, after8 });
+            last_after8 = after8;
+
+            // Thread s_k → s_{k+1} off the generator's own STATE_AFTER columns (the SAME threading the
+            // executor's `cell_state_after_run` uses — no hand-replay).
+            if !is_final {
+                let (v1_trace, _v1_pi) =
+                    dregg_circuit::effect_vm::generate_effect_vm_trace(&s_k, run_vm);
+                s_k = crate::full_turn_proof::cell_state_after_run(&v1_trace, run_vm.len(), &s_k);
+            }
+        }
+        let final_after_cell = full_after_cell;
+
+        let new_commitment = felt8_to_bytes32(&last_after8);
+        let pre_state_commitment = felt8_to_bytes32(&legs[0].before8);
+
+        let chain = SovereignCohortChain { legs };
+        let chain_bytes = postcard::to_allocvec(&chain)
+            .map_err(|e| SdkError::Wire(format!("cohort chain serialize: {e}")))?;
+
+        // Build the proof-carrying turn (same identity as the single-leg path).
+        let agent_cell = *cell_id;
+        let nonce = self.receipt_chain.len() as u64;
+        let mut forest = dregg_turn::forest::CallForest::new();
+        let action =
+            crate::raw::unsigned_action_named(agent_cell, "sovereign_execute_proven", effects);
+        forest.add_root(action);
+        let turn = Turn {
+            agent: agent_cell,
+            nonce,
+            call_forest: forest,
+            fee,
+            memo: Some("sovereign_proof_carrying_rotated_chain".to_string()),
+            valid_until: None,
+            previous_receipt_hash: self.receipt_chain.last().map(|r| r.receipt_hash()),
+            depends_on: Vec::new(),
+            conservation_proof: None,
+            sovereign_witnesses: HashMap::new(),
+            execution_proof: Some(chain_bytes),
+            execution_proof_cell: Some(*cell_id),
+            execution_proof_new_commitment: Some(new_commitment),
+            custom_program_proofs: None,
+            effect_binding_proofs: Vec::new(),
+            cross_effect_dependencies: Vec::new(),
+            effect_witness_index_map: Vec::new(),
+        };
+
+        // Advance local sovereign state to the final after-cell.
+        self.sovereign_cells.insert(*cell_id, final_after_cell);
+
+        Ok(ProvenSovereignTurn {
+            turn,
+            // The chain has N traces/PI vectors; the `ProvenSovereignTurn` carries a single
+            // trace/PI for the WR lift, which the chained path does not feed. Empty placeholders are
+            // fine — the chained sovereign turn is consumed via `.turn` (the proof-carrying turn).
+            trace: Vec::new(),
+            public_inputs: Vec::new(),
             new_commitment,
             pre_state_commitment,
         })
