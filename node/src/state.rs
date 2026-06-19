@@ -11,7 +11,7 @@ use std::time::Instant;
 
 use tokio::sync::{RwLock, broadcast};
 
-use dregg_cell::{CellId, Ledger};
+use dregg_cell::{Cell, CellId, Ledger};
 use dregg_circuit::field::BabyBear;
 use dregg_commit::accumulator::PolynomialAccumulator;
 use dregg_coord::Coordinator;
@@ -411,6 +411,22 @@ fn persist_witnessed_receipt_order(store: &PersistentStore, order: &VecDeque<[u8
     }
 }
 
+/// Last-writer-wins install of a recovery-overlay cell into the ledger.
+///
+/// `dregg_cell::Ledger::insert_cell` is a STRICT insert: it returns
+/// `Err(CellAlreadyExists)` and KEEPS the existing cell when the id is already
+/// present. That is first-writer-wins — wrong for crash recovery. The durable
+/// commit-log overlay carries the POST-state of every cell touched since the
+/// checkpoint; a cell the checkpoint already holds must be OVERWRITTEN by its
+/// later overlay value, in ordinal order. The verified recovery model
+/// (`CrashRecovery.upd`, mirrored by `dregg_persist`'s snapshot overlay) is a
+/// last-writer-WINS point update: remove-then-insert. Recovery converges to the
+/// committing node's finalized root precisely under this semantics.
+fn upsert_cell(ledger: &mut Ledger, cell: Cell) {
+    let _ = ledger.remove(&cell.id());
+    let _ = ledger.insert_cell(cell);
+}
+
 fn load_witnessed_receipts(
     store: &PersistentStore,
 ) -> (HashMap<[u8; 32], Vec<WitnessedReceipt>>, VecDeque<[u8; 32]>) {
@@ -667,10 +683,12 @@ impl NodeState {
         // checkpoint reconstructs the EXACT finalized ledger up to the durable
         // commit cursor — without replaying/re-executing any turn (no
         // double-apply) and without losing any finalized turn that lies in the
-        // gap (no torn state). `Ledger::insert_cell` keys by `cell.id()`, so the
-        // overlay is last-writer-wins, matching the log's ordinal order. This is
-        // LaceMerge convergence applied to recovery: the recovered node reaches
-        // the same finalized state the committing node recorded.
+        // gap (no torn state). `upsert_cell` (remove-then-insert) makes the
+        // overlay last-writer-wins, matching the log's ordinal order — a strict
+        // `insert_cell` would first-writer-WIN and silently DROP a post-checkpoint
+        // write to an already-checkpointed cell. This is LaceMerge convergence
+        // applied to recovery: the recovered node reaches the same finalized
+        // state the committing node recorded.
         let (mut ledger, checkpoint_height) = match store.load_latest_ledger_checkpoint() {
             Ok(Some((height, restored_ledger))) => {
                 tracing::info!(
@@ -696,7 +714,7 @@ impl NodeState {
             Ok(overlay) if !overlay.is_empty() => {
                 let overlay_len = overlay.len();
                 for cell in overlay {
-                    let _ = ledger.insert_cell(cell);
+                    upsert_cell(&mut ledger, cell);
                 }
                 let recovered_root = crate::blocklace_sync::canonical_ledger_root(&ledger);
                 // Convergence assertion: the reconstructed root MUST equal the
@@ -714,15 +732,25 @@ impl NodeState {
                     Ok(Some(expected)) => {
                         // A mismatch means the checkpoint and the commit log are
                         // from inconsistent eras (e.g. a manually edited DB) — a
-                        // real integrity event, surfaced loudly rather than
-                        // silently serving a wrong ledger.
+                        // real integrity event. The reconstructed ledger does NOT
+                        // equal the finalized state the committing node recorded,
+                        // so serving it would serve a SILENTLY-WRONG ledger as
+                        // truth: a soundness event. FAIL CLOSED — surface loudly
+                        // AND refuse to start rather than fall through.
                         tracing::error!(
                             overlaid_cells = overlay_len,
                             recovered_root = %dregg_types::hex_encode(&recovered_root),
                             expected_root = %dregg_types::hex_encode(&expected),
                             "commit-log overlay recovered a ledger root that does NOT match the \
-                             durably recorded finalized root — STORE INTEGRITY EVENT"
+                             durably recorded finalized root — STORE INTEGRITY EVENT, refusing to start"
                         );
+                        return Err(format!(
+                            "recovery convergence failed: reconstructed ledger root {} does not \
+                             match the durably recorded finalized root {} — refusing to serve a \
+                             divergent ledger (STORE INTEGRITY EVENT)",
+                            dregg_types::hex_encode(&recovered_root),
+                            dregg_types::hex_encode(&expected),
+                        ));
                     }
                     _ => {
                         tracing::info!(
@@ -876,7 +904,10 @@ impl NodeState {
         };
         if let Ok(overlay) = store.cell_overlay_since(checkpoint_height) {
             for cell in overlay {
-                let _ = ledger.insert_cell(cell);
+                // Last-writer-wins point update (`CrashRecovery.upd`); a strict
+                // `insert_cell` would silently drop a post-checkpoint write to an
+                // already-checkpointed cell. See `new_with_key_file` / `upsert_cell`.
+                upsert_cell(&mut ledger, cell);
             }
         }
 
@@ -1981,5 +2012,162 @@ mod witnessed_receipt_persistence_tests {
         let guard = restored.read().await;
         assert!(!guard.witnessed_receipts.contains_key(&first_hash));
         assert_eq!(guard.witnessed_receipts.len(), MAX_WITNESSED_RECEIPTS);
+    }
+}
+
+#[cfg(test)]
+mod crash_recovery_overlay_tests {
+    //! Recovery-soundness regressions (docs/ARCHEOLOGY-LEDGER.md, HIGH tier).
+    //!
+    //! 1. LAST-WRITER-WINS OVERLAY: a post-checkpoint commit-log write to a cell
+    //!    the checkpoint ALREADY holds must OVERWRITE it (the verified
+    //!    `CrashRecovery.upd` point update), not be silently dropped. A strict
+    //!    `insert_cell` is first-writer-wins and would keep the stale
+    //!    checkpoint value — a silently-wrong recovered ledger served as truth.
+    //! 2. CONVERGENCE FAILS CLOSED: if the reconstructed ledger root does NOT
+    //!    match the durably recorded finalized root, recovery must REFUSE to
+    //!    start (return Err) rather than log-and-continue serving a divergent
+    //!    ledger (a soundness event).
+    use super::*;
+    use dregg_cell::Cell;
+    use dregg_persist::PersistentStore;
+
+    // A cell whose CONTENT-ADDRESSED id is fixed by (public_key, token_id); the
+    // balance varies, so the checkpoint value and the later overlay value share
+    // one id — exactly the "post-checkpoint write to an already-held cell" case.
+    fn cell(seed: u8, balance: i64) -> Cell {
+        Cell::with_balance([seed; 32], [seed.wrapping_add(7); 32], balance)
+    }
+
+    /// Build a store at `dir` with: a checkpoint at height 1 holding `cell(X)`
+    /// at `checkpoint_balance`, then a finalized turn at height 2 that rewrites
+    /// the SAME cell to `overlay_balance`. The committed `ledger_root` is set to
+    /// `record_root` (pass the genuine post-overlay root for the converging
+    /// case; a wrong root for the fail-closed case).
+    fn seed_store_with_overlay(
+        dir: &Path,
+        seed: u8,
+        checkpoint_balance: i64,
+        overlay_balance: i64,
+        record_root: [u8; 32],
+    ) {
+        let db_path = dir.join("dregg.redb");
+        let store = PersistentStore::open(&db_path).expect("open store");
+
+        // Checkpoint at height 1 holds the cell at the OLD value.
+        let mut checkpoint_ledger = Ledger::new();
+        checkpoint_ledger
+            .insert_cell(cell(seed, checkpoint_balance))
+            .expect("seed checkpoint cell");
+        store
+            .checkpoint_ledger(&checkpoint_ledger, 1)
+            .expect("write checkpoint");
+
+        // A finalized turn at height 2 > 1 rewrites the SAME cell to the NEW
+        // value. `cell_overlay_since(1)` returns this post-state.
+        let rec = dregg_persist::CommitRecord {
+            ordinal: 0,
+            height: 2,
+            block_id: [0u8; 32],
+            block_executed_up_to: 0,
+            turn_hash: [0xc1; 32],
+            creator: [0u8; 32],
+            receipt_hash: [0xc2; 32],
+            ledger_root: record_root,
+            touched_cells: vec![cell(seed, overlay_balance)],
+        };
+        store
+            .commit_finalized_turn(0, &rec)
+            .expect("commit overlay turn");
+    }
+
+    /// The genuine post-overlay canonical root: checkpoint ⊕ overlay applied
+    /// last-writer-wins, then committed by the node's own root function.
+    fn converged_root(seed: u8, overlay_balance: i64) -> [u8; 32] {
+        let mut ledger = Ledger::new();
+        ledger
+            .insert_cell(cell(seed, overlay_balance))
+            .expect("post-overlay cell");
+        crate::blocklace_sync::canonical_ledger_root(&ledger)
+    }
+
+    #[tokio::test]
+    async fn post_checkpoint_overlay_write_wins_over_checkpoint_value() {
+        // The checkpoint holds balance 100; the durable commit log says the
+        // finalized value is 999. Recovery MUST surface 999 (last-writer-wins),
+        // not the stale 100 a strict insert_cell would keep.
+        let seed = 0x5a;
+        let tmp = tempfile::tempdir().expect("tempdir");
+        seed_store_with_overlay(
+            tmp.path(),
+            seed,
+            100,
+            999,
+            converged_root(seed, 999),
+        );
+
+        let key_bytes = [0x11u8; 32];
+        let state = NodeState::with_cclerk(tmp.path(), vec![], key_bytes)
+            .expect("recovery with a converging overlay must succeed");
+        let guard = state.read().await;
+        let recovered = guard
+            .ledger
+            .get(&cell(seed, 0).id())
+            .expect("recovered cell present");
+        assert_eq!(
+            recovered.state.balance(),
+            999,
+            "post-checkpoint overlay write must WIN (last-writer-wins); a dropped \
+             overlay would leave the stale checkpoint value 100"
+        );
+    }
+
+    #[tokio::test]
+    async fn convergence_root_mismatch_refuses_to_start() {
+        // Same overlay, but the durably recorded finalized root is WRONG (does
+        // not match the reconstructed root). `new_with_key_file` runs the
+        // convergence check and MUST fail closed.
+        let seed = 0x3c;
+        let tmp = tempfile::tempdir().expect("tempdir");
+        seed_store_with_overlay(
+            tmp.path(),
+            seed,
+            7,
+            42,
+            [0xde; 32], // deliberately NOT the post-overlay root
+        );
+
+        let result = NodeState::new_with_key_file(tmp.path(), vec![], "node.key");
+        let err = result
+            .err()
+            .expect("a convergence-root mismatch must FAIL CLOSED, not log-and-continue");
+        assert!(
+            err.contains("convergence"),
+            "the refusal must name the convergence failure; got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn convergence_root_match_starts_normally() {
+        // Control: the SAME path with a CORRECT recorded root must start (proves
+        // the fail-closed Err is reached only on genuine divergence, not always).
+        let seed = 0x77;
+        let tmp = tempfile::tempdir().expect("tempdir");
+        seed_store_with_overlay(
+            tmp.path(),
+            seed,
+            7,
+            42,
+            converged_root(seed, 42),
+        );
+
+        let state = NodeState::new_with_key_file(tmp.path(), vec![], "node.key")
+            .expect("a converging recovery must start normally");
+        let guard = state.read().await;
+        let recovered = guard
+            .ledger
+            .get(&cell(seed, 0).id())
+            .expect("recovered cell present");
+        assert_eq!(recovered.state.balance(), 42);
     }
 }
