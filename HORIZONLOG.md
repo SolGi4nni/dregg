@@ -2305,3 +2305,46 @@ DRIVE ORDER: (1) #1 foundation — finish the isLast-guard port (tree RED at Eff
 in-flight) + construct the real multi-row per-effect Satisfied2 witnesses → retires the vacuity AND divergence
 #1; (2) #6 conservation per-asset (separate off-AIR lane); (3) #5 the differential checker (the standing
 faithfulness guard); (4) the let_=→? + NoOp-pad-boundary tightenings; (5) the build-half live-wires once settled.
+
+## ⚑⚑⚑ THE FOUNDATIONAL RECKONING (2026-06-19) — Satisfied2 does NOT denote the deployed verifier; the proofs are ungrounded
+
+The denotational reviews (lookup a82d354c, assembly a94c4eb1) + Lookup.lean's own header establish: the Lean
+`Satisfied2` is NOT a faithful denotation of the deployed Rust `verify_vm_descriptor2`. The byte-identity
+"differential" hid this for the entire campaign. THE proofs prove `Satisfied2 ⟹ genuine`; there is NO verified
+link that `Satisfied2` denotes what we deploy — and the link is BROKEN in multiple, opposite directions:
+
+- FAITHFUL: boundary, pi_binding, range (where exercised; range is height-pinned + lookup-replaced, the old
+  inert-ranges scar is closed).
+- gate/transition: Satisfied2 TOO STRICT (every-row, no isLast guard) → forces last-row state to 0 → the apex's
+  Satisfied2 is inhabited only by degenerate traces → VACUOUS for every real turn (#8's wall).
+- lookup / chip table: Satisfied2 TOO LOOSE — `tf .poseidon2` is prover-FREE (no chipTableFaithful leg);
+  `ChipTableSound` is an undischarged hypothesis ON the levers, not a leg OF Satisfied2 → accepts forged-digest
+  tables Rust rejects.
+- ⚑ THE ROOT (assembly): the LogUp/bus GRAND-PRODUCT — the mechanism `verify_global_sum` uses to tie EVERY
+  auxiliary table (chip/memory/map/range/Blum) to the main trace — is NOT MODELED in Lean AT ALL. `Satisfied2`
+  replaces it with POSTULATED equalities (memTableFaithful/mapTableFaithful = `tf = log`) + membership, and has
+  NO correlate for the chip/range/mem-check buses. Lookup.lean:17,32 states the philosophy outright: "membership
+  is the meaning; LogUp is merely how the prover ENFORCES it." So the soundness obligation `bus-balance ⟹ tables
+  faithful` is UNPROVEN + UNMODELED + UNNAMED. Every rung silently assumes "the buses did their job."
+
+CONSEQUENCE (ember's "none of our proofs mean anything"): the rungs are internally-valid theorems about a model
+that is neither a subset nor superset of the deployed accept-set. They do NOT establish deployed soundness. The
+model-to-system bridge — the load-bearing obligation — was substituted with a worthless syntactic JSON-fingerprint
+check. This is THE fundamental proof-engineering error.
+
+NOT total loss (the honest balance, NOT reassurance): the rungs + the crypto floors (Poseidon CR, FRI) survive as
+real artifacts; v1 PROVES the bridge is buildable (`Argus/InterpCore.lean::decideVm_iff_satisfiedVm` — an
+executable denotation proven == the spec — done for v1, SKIPPED for the v2/Ir2 apex). LogUp soundness is itself a
+legit NAMED floor (like FRI) — the sin isn't "we didn't re-prove LogUp," it's that we HID it (baked into "meaning
+= membership") instead of naming it + establishing the link.
+
+THE CLIMB-OUT (re-grounding, before any live-wire/purge — there's no point wiring/deleting against a phantom):
+1. NAME the floors explicitly (LogUp-soundly-enforces-membership · chip-AIR-constrains-table-to-genuine-Poseidon2
+   · byte/range-table-height-correct) as apex hypotheses, NOT baked into the denotation.
+2. WIRE table-soundness into Satisfied2 as STRUCTURAL legs (chipTableFaithful etc.) derived from those floors —
+   so rungs stop carrying undischarged ChipTableSound.
+3. UN-STRICT gate/transition (isLast-guard) so Satisfied2 isn't vacuous (the #1 fix, in flight).
+4. BUILD THE BRIDGE: a denotational differential `Ir2Air::eval-accept ⟺ Satisfied2` (under the named floors) —
+   the v2 analog of decideVm_iff_satisfiedVm. THE missing foundation; the real replacement for byte-identity.
+5. RE-VERIFY every rung against the faithful, floor-explicit Satisfied2 (breaks = real gaps the phantom hid).
+PURGE byte-identity + the live-wires come AFTER the model is the system.
