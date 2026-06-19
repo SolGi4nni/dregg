@@ -1,81 +1,79 @@
 # Light-Client Trust Surface — the definition of done for "a light client can actually trust dregg"
 
-> Goal (ember): keep working until a client running ONLY `verifyBatch` + the published public inputs —
-> with NO ledger, NO executor, NO producer trust — can conclude the published `(pre,post)` is a
-> **genuine, authorized, non-replayed, conservation-respecting** kernel transition.
+> Goal (ember): a client running ONLY `verify_and_commit_proof_rotated`'s `verify_batch` + the published
+> public inputs — with NO ledger, NO executor, NO producer trust — can conclude the published `(pre,post)`
+> is a **genuine, authorized, non-replayed, conservation-respecting** kernel transition.
 
-## The reframe (the finding that subsumes the rest)
-The deployed sovereign verifier `verify_and_commit_proof_rotated` (`turn/src/executor/proof_verify.rs:77`)
-is **not a light client — it is a producer-replay verifier.** It fetches the trusted before-cell from the
-ledger, reconstructs the circuit pre-state, *re-runs trace generation*, and **overrides the commitment PIs
-from trusted storage** (`dpis[34]`←stored old, `dpis[35]`←claimed new, `dpis[38]`←recomputed off-circuit
-from the trusted post-cell). Only then does it call the genuine `verify_batch`. So the *system* is sound
-because the verifier re-executes against a trusted ledger — NOT because the proof forces it. A true light
-client gets only what the circuit's `pi_binding` constraints force (the in-trace `state_commit` continuity
-col-261 == published NEW_COMMIT + per-row balance/nonce arithmetic). The Lean apex
-`lightclient_unfoolable_circuit_sound*` is internally honest + axiom-clean ({propext, Classical.choice,
-Quot.sound}, no sorry/axiom) — but its `S_live`/`recStateCommit` is a RICHER commitment (whole-kernel
-`RestHashIffFrame`) than the deployed circuit realizes. **The smuggles are all in the circuit↔deployment
-realization seam.**
+## How this doc stays honest (read before editing — this doc rotted once)
 
-## The 6 genuine smuggles (verdict: a light client CANNOT trust dregg today)
-1. **record_digest realization gap (MOST DANGEROUS).** The deployed commitment absorbs `record_digest` as a
-   FREE prover-witnessed aux column (`circuit/.../air.rs:1704`); the circuit never recomputes it from the
-   authority fields and never constrains before→after. Correct only because the verifier re-derives it from
-   the trusted ledger post-cell (`proof_verify.rs:284-300`). Light client: a prover can publish a NEW_COMMIT
-   binding ARBITRARY permissions/VK/lifecycle/deathCert/side-table roots the effect never produced — the
-   authority-bearing half of the kernel is unforced. This is the literal "we do NOT have a proven-secure circuit."
-2. **whole-turn composition is lead-only.** The verifier resolves ONE descriptor by `effects.first()` and proves
-   ONE proof (`proof_verify.rs:154-165`, `trace_rotated.rs:279/324/337/351`). A tail effect (`[Transfer(lead),
-   SetPermissions(tail)]`) rides into the committed post with NO forcing gate. The Lean forest apex
-   (`ClosureForest.lean:144`) requires per-step `Satisfied2` for EVERY effect — strictly stronger than deployed.
-3. **No agent/turn-header authentication on the proof path.** The proof-carrying path performs NO signature check
-   (`execute.rs:466-478`); `native_signature_air` is unused (not in the rotated cohort). A light client cannot
-   conclude "the rightful agent authorized THIS turn." (Distinct from the owner/cap authority disjunct — see #225.)
-4. ~~**Replay: only the RELATIVE nonce is forced.**~~ **RESOLVED (2026-06-18, by analysis — NOT an in-circuit
-   hole for a chain-following light client).** The nonce is folded into the per-cell commitment
-   (`cell_state.rs::compute_commitment` `hash_4_to_1([bal_lo, bal_hi, nonce, fields[0]])` — VERIFIED) AND forced
-   `nonce_after = nonce_before+1` in-circuit (`EffectVmEmitTransfer.gNonce`: `new_nonce − old_nonce − (1−s_noop)
-   = 0`, in `transferRowGates`, with `gNonce`'s rejection tooth — VERIFIED). So a cell's commitment sequence is
-   STRICTLY MONOTONIC in nonce → **no commitment ever repeats**, and the proof's `OLD_COMMIT` (PI 34) is forced
-   (the first-row `pi_binding`). A light client that follows the commit chain (tracks the head = latest
-   `NEW_COMMIT`, which it MUST to have a current state) accepts a turn iff its `OLD_COMMIT == head`; a stale /
-   replayed proof carries an old `OLD_COMMIT ≠ head` → rejected, and the monotone nonce guarantees no later head
-   ever equals it. The "absolute freshness anchor" IS the nonce-in-commit the light client already follows; the
-   verifier's `proof_verify.rs` reconstruction is a full-node convenience, not the light client's basis. The
-   genuine residual is a DIFFERENT property — chain-FORK resistance (the light client following the RIGHT chain)
-   — which is the consensus/blocklace layer's job, not the per-proof circuit. Not a per-proof replay hole.
-5. **Fee debit is out-of-proof.** Debited by the executor "PHASE 1, never rolled back" (`execute.rs:421`); the
-   verifier reconstructs the pre-fee state (`proof_verify.rs:130-136`) so the proof is built against fee-removed
-   state. The fee is not a constraint in the proven transition.
-6. **No turn-wide cross-cell Σδ=0.** Per-cell balance arithmetic + no-underflow + NET_DELTA ARE in-circuit
-   (genuine). But there is no cross-cell turn-wide conservation; a single-cell proof can't conclude no value was
-   minted turn-wide (cross-cell pairing is reconstructed off-AIR).
+The original version of this doc rotted in two ways that this format is designed to prevent: it **missed the
+deepest hole** (the per-cell commitment was 1 felt ≈ 31-bit — it saw the symptom, the off-circuit PI override,
+but framed it as a *trust seam* and never *counted the bits*, i.e. it laundered a 31-bit floor as "the existing
+scheme"), and it **over-claimed an open hole** (#4 replay, already closed by the nonce-in-commit it didn't
+trace). Both came from **unsourced assertions**, not a bad code source.
 
-## Floor residuals flagged (not smuggles, but named)
-7. **`pi_binding` (+ `umemOp`) arms NOT in the F4 differential** (`ir2_denotation_eval_differential.rs`) — and
-   `pi_binding` is the PI-35↔col-261 weld the whole forcing story rides on. The legit StarkSound floor, but this
-   arm is un-differentialed (hand-transcribed `eval_enforces`). Name + differential it.
-8. **`SatFloor` never constructively inhabited** (`CircuitCompletenessSatFloor.lean`) — no `: Satisfied2 := by`
-   anywhere. COMPLETENESS could be vacuous if the live descriptors were unsatisfiable. Build one concrete
-   inhabitant. (Does not affect soundness, which consumes `Satisfied2` as an antecedent.)
-9. **`WitnessDecodes`** (`CircuitSoundness.lean:421`) — a STRONG but legit named floor (commitment-surface
-   surjectivity); supplies the endpoints' existence/binding, NOT the transition. Flagged for strength, not a smuggle.
+So every status line below obeys three rules: **(1) cite the forcing mechanism** (file:line) — a closure you
+can't cite isn't closed; **(2) measure the quantity** (bits, where a binding has a width) — a felt is ≈30.9
+bits, a collision is ≈half that, the proof's own FRI soundness is ≈130-bit, so a commitment narrower than ~8
+felts is the floor regardless of how sound the proof is; **(3) date it + verify against HEAD** — this table is
+a point-in-time reading, NOT a standing truth; re-confirm a line against the code before relying on it. A claim
+forced to show its mechanism and count its bits cannot launder, over-claim, or silently rot.
 
-## DEFINITION OF DONE (force these in-circuit; all VK-affecting — greenfield VK rotation is expected)
-- [ ] **#225 (authority):** publish the turn's `actor`/`src`/`dst` as PIs + an equality gate `pi.turn = witnessTurn`;
-  weld `capOpenCols.src`/`capRoot` to the committed before-block. (Owner-authority + edge-id; turn-bound Lean layer
-  landed `6b9f3c225`, PI realization pending.)
-- [ ] **#1:** recompute `record_digest` in-circuit from the authority fields + a per-effect before→after transition
-  gate; retire the off-circuit anchor (`proof_verify.rs:253-303`).
-- [ ] **#2:** prove the whole forest, not the lead — one sub-proof/descriptor per effect (or a multi-effect
-  descriptor); retire the `effects.first()`-only pins.
-- [ ] **#3:** wire `native_signature_air` into the proof-carrying descriptor (agent signature over the turn-hash forced in-circuit).
-- [ ] **#4:** bind an ABSOLUTE freshness anchor in-circuit (pin OLD_COMMIT to a proof-fixed receipt-chain/nonce commitment).
-- [ ] **#5:** force the fee debit inside the proven transition (stop the UNDO-PHASE-1 reconstruction).
-- [ ] **#6:** add a turn-wide cross-cell Σδ=0 aggregation AIR.
-- [ ] **#7/#8:** differential the `pi_binding`/`umemOp` arms; construct a concrete `Satisfied2` inhabitant for `SatFloor`.
+## The lens: proof-FORCED vs off-circuit-ANCHORED
 
-When all are forced, a client running only `verifyBatch` + the PIs concludes the genuine/authorized/non-replayed/
-conserving transition with nothing trusted off-circuit. Until then: the proof is a beautiful theorem about a
-commitment surface the running circuit does not yet force.
+The deployed `verify_and_commit_proof_rotated` (`turn/src/executor/proof_verify.rs`) is, for some facts, still a
+**producer-replay verifier**: it reconstructs trusted state from the ledger and ANCHORS a published PI to it
+(sound for a full node; invisible to a ledgerless light client). A light client trusts only what the circuit's
+`pi_binding`/gates FORCE. Every smuggle is one fact still ANCHORED that must become FORCED. As of the 8-felt
+flip (`9e5a83935`) the *commitment itself* is forced (the ~31-bit waist is gone); the residue is per-fact.
+
+## ⚑ STATUS AT HEAD (2026-06-19, post 8-felt flip `9e5a83935`)
+
+| # | fact | status | mechanism (verify vs HEAD) |
+|---|------|--------|----------------------------|
+| commit width | the per-cell commitment | ✅ **FORCED ~124-bit** | 8-felt chip-faithful chain; 1-felt waist retired (`9e5a83935`); LIVE collision tooth bites with NO executor (`effect_vm_rotation_flip::wide_transfer..._collision_tooth_bites`). |
+| #1 authority residue | record_digest per mover class | **MIXED.** value-cohort (WAVE 0) · lifecycle disc (WAVE 1) · perms/VK (WAVE 2) · makeSovereign = **FORCED in-circuit**. **refusal + setFieldDyn = ANCHORED off-circuit** (NOT a cheap "restore" — see below). | WAVE0 `rotateV3FrozenAuthority` colEq welds (`EffectVmEmitRotationV3.lean:1724`, `9f415ca97`); refusal off-circuit `proof_verify.rs:360,389` (`Anchor::RecordDigest`). |
+
+**⚠ Correction (R1 audit `a424f1134992f6262`, supersedes the earlier "refusal is a cheap regression to restore"):**
+the proven gate `rotateV3WithFieldsRootGate` welds the committed AFTER `fields_root` to `prmCol 0`, and that
+works for setPerms/setVK (where `prmCol 0` = the new perms/vk hash, which the **effects_hash chain anchors to a
+light-client PI** — the client has the declared value from the effect it's verifying). It does NOT work for
+**refusal**: the refusal producer fills `prmCol 0` with the **target**, not the post-`fields_root`
+(`trace.rs:893`), and the post-`fields_root` is `insert(pre_fields_root_map, REFUSAL_AUDIT_KEY → audit)`
+(`rotation_witness.rs:518`) — a **map-root that depends on the whole pre-cell map**, which a ledgerless client
+does NOT have. So the only declared post-root is `fields_root_felt(post_cell)` from the trusted pre-cell —
+re-pointing would either make honest refusals UNSAT (the parked WIP `ff8c4d768` did exactly this) or merely
+RELOCATE the off-circuit anchor (PI 38 → `prmCol 0`), still needing the trusted post-cell. **A ledgerless refusal
+close needs the OPENABLE-fields_root / map-op construction** (derive the post-root in-circuit from the in-circuit
+pre-root + the public audit value — the cap-reshape #103 family), which is NEW soundness, not a re-point. Today
+refusal is **full-node-safe** (the 8-felt commitment already binds limb 36, anchored via the record-pin) — but
+NOT ledgerless-safe. **`setFieldDynForcedV3` is LIVE (`v3Registry:2889`) and shares this exact gate + the same
+`prmCol 0`-vs-fields_root mismatch, with NO end-to-end prove+verify roundtrip test — its deployed integration is
+genuinely incomplete; AUDIT whether the live setFieldDyn gate forces the wrong value or is simply inert.**
+| #2 whole-turn | the verifier proves `effects.first()` only | **OPEN (mitigated).** the selector-validity gate makes a same-cell cross-cohort tail UNSAT in-circuit + heterogeneous turns split producer-side; the residue is per-effect *forest forcing*. | lead-only `proof_verify.rs:160`; selector gate `b9b8b6973`/`4efae9380` + `effect_vm_selector_gate_forgery.rs`; the forest apex `RotatedKernelForestFacet`/`ClosureForest.lean` (Lean-only). |
+| #3 agent signature | "the rightful agent authorized THIS turn" | **OPEN (largest — Ed25519 AIR).** `native_signature_air` declared-but-unwired; the `execute.rs` Ed25519 check is the federation-witness path, not the rotated proof. | `circuit/src/lib.rs:144`; no signature verify in `proof_verify.rs`; turn-identity beachhead `d64600d5a` (off-circuit-anchored, owner-arm degenerate). |
+| #4 replay | freshness | ✅ **FORCED (by analysis).** nonce folds into the commit + forced `+1` → strictly-monotone commit sequence → a chain-following client rejects a stale OLD_COMMIT; the 8-felt widening preserves it. Residual = chain-FORK resistance (consensus layer, not the per-proof circuit). | `cell/src/commitment.rs:896` (nonce in pre-limbs), `gNonce` `+1` gate; `fd7b79b89`. |
+| #5 fee-in-proof | the fee debit | ✅ **FORCED-LIVE.** live sovereign transfer routes the wide fee descriptor (55-PI); fee PI-published, gate forces `after = before − transfer − fee`; underclaimed/forged fee UNSAT. Residue: fee on a NON-sovereign agent cell still executor-trusted; the OLD_COMMIT block uses a blind `pre=post+fee` reconstruction (sound — OLD_COMMIT independently binds — but a trusted input). | `proof_verify.rs:171,301`; `3aa5debe8`; survived the flip (col-89 pin + debit gate in the wide TSV). |
+| #6 cross-cell Σδ=0 | turn-wide conservation | **OPEN (foolable).** per-cell balance/no-underflow/NET_DELTA forced; no turn-wide cross-cell aggregation on the deployed path → a single-cell proof can't conclude no turn-wide mint. | no cross-cell gate in `proof_verify.rs`; aggregation AIRs exist (`joint_turn_aggregation.rs`) but off the sovereign per-cell path. |
+| #8 non-vacuity | completeness | **OPEN (cheap).** `SatFloor`/`TransferSatFloor` are carried hypotheses; no concrete `: Satisfied2 := by` inhabitant → completeness could be vacuous. Does NOT affect soundness. | `CircuitCompletenessSatFloor.lean:100` (`floor` param); grep finds no constructed `Satisfied2`. |
+
+## Remaining definition-of-done (ranked — trust-priority: *foolable* > *can't-prove*; regressions first)
+
+- [ ] **#8 — non-vacuity** (small, NEXT): construct one concrete `: Satisfied2 := by` inhabitant (an honest
+  transfer trace) so completeness is provably non-empty.
+- [ ] **setFieldDyn gate audit** (small, do alongside #8): `setFieldDynForcedV3` is LIVE and shares the
+  refusal-class `fields_root` gate with the `prmCol 0`-vs-fields_root mismatch + no roundtrip test — confirm the
+  live gate is inert (not forcing a wrong value) or fix it.
+- [ ] **refusal + setFieldDyn ledgerless authority** (medium, was mis-scoped as "R1 restore"): the OPENABLE-
+  fields_root / map-op construction (#103 cap-reshape family) — derive the post-root in-circuit from the
+  in-circuit pre-root + the public audit value. NEW soundness, not a re-point. Full-node-safe today.
+- [ ] **#6 — cross-cell Σδ=0** (medium): a turn-wide cross-cell conservation AIR over the per-cell NET_DELTA PIs
+  (lift the existing aggregation AIRs onto the deployed path).
+- [ ] **#2 — whole forest** (medium-large): prove every effect, not the lead — a multi-effect descriptor or
+  per-effect sub-proof; retire `effects.first()`-only (the forest apex exists in Lean to lift).
+- [ ] **#3 — agent signature** (large long-pole): wire `native_signature_air` (Ed25519 over the turn-hash)
+  into the rotated descriptor, forced in-circuit.
+
+When all are forced, a ledgerless `verify_batch` client concludes the genuine/authorized/non-replayed/conserving
+transition with nothing trusted off-circuit. The commitment floor (the deepest piece) is already there; the
+residue is per-fact forcing of authority (refusal), forest, signature, and cross-cell conservation.

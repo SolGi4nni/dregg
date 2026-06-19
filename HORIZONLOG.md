@@ -53,9 +53,16 @@ refused to launder a partial):**
   The Lean-emit + producer-fill half (the atomic remainder) LANDED: `siteLookup→chipLookupTupleN`, the producer
   weld `fill_chip_lanes`, all 67 JSONs re-emitted + 64 FPs re-pinned, discharged by `chip_lookup_sound_N`.
   **The commitment is STILL 1-FELT (lane0) — no security gain yet; B-ROTATION delivers the ~124-bit trust.**
-  ⚠ WAVE-3 ENTANGLEMENT: built on the parked WAVE-3 base (NUM_PRE_LIMBS 37); reaching green REVERTED refusalV3's
-  fields-root weld → the record-digest pin (previously-red `rotated_audit_record_pin` now GREEN; WAVE-3 refusal
-  sub-close ROLLED BACK; mode/fields_root limbs remain → WAVE-3 refusal/makeSovereign/setFieldDyn need re-exam).
+  ⚠ WAVE-3 ENTANGLEMENT (CORRECTED 2026-06-19, R1 audit `a424f1134992f6262`): the parked WAVE-3 base limbs
+  (NUM_PRE_LIMBS 37, mode+fields_root) remain; makeSovereign's mode-force is LIVE in-circuit (fine, NOT degraded);
+  setFieldDyn is a dead path (v1 trace-gen panics field_idx≥8). The "refusal fields-root weld ROLLED BACK" framing
+  was WRONG: there was never a GREEN in-circuit refusal weld to roll back — `rotateV3WithFieldsRootGate` welds
+  `prmCol 0`, but refusal fills `prmCol 0` with the TARGET not the post-fields_root (`trace.rs:893`), and the
+  post-fields_root is a map-insert root (`insert(pre_map, audit)`) NOT a light-client-knowable declared value.
+  So re-pointing makes honest refusals UNSAT (the parked WIP) or merely relocates the off-circuit anchor. Refusal
+  is full-node-safe today (the 8-felt commit binds limb 36 + record-pin) but a LEDGERLESS close needs the
+  OPENABLE-fields_root/map-op construction (#103 family) = NEW soundness, not a restore. ⚠ `setFieldDynForcedV3`
+  is LIVE + shares this gate + the same mismatch + NO roundtrip test → audit whether its live gate is inert.
   **RESUME AT PHASE B-ROTATION** (below). Rust-provider detail (still accurate): `poseidon2_permute_expr_lanes`
   (`plonky3_prover.rs`, returns the 8 final-state lanes; the legacy `poseidon2_permute_expr` delegates → lane0,
   every v1 inline site UNCHANGED); the chip AIR (`Ir2Air::Chip`) exposes `state[0..8]` and adds the 7 `assert_zero(
