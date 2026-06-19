@@ -63,9 +63,20 @@ refused to launder a partial):**
   `scripts/emit-descriptors.sh`; (d) the await-Lean-emit Rust tests go green (`ir2_degree_budget`, the rotation
   probes, bilateral/cross-side/tree-fold, `v3_staged_registry_parses…`). The `compress8` byte-mirror is a B-ROTATION
   concern, not B-GATE.
-- 🟥 **PHASE B-ROTATION — BLOCKED at the chip INPUT-ARITY cap (grounded, 2026-06-19)**: the 8-wide chain the
-  task prescribes (`d8 = perm_lanes(d8 ‖ new_limbs)[0..8]`, ONE permutation per step) is NOT expressible with the
-  B-GATE chip AS CONSTRAINED. B-GATE widened the chip OUTPUT to 8 lanes (`CHIP_OUT_LANES = 8`, the genuine
+- ✅ **PHASE B-GATE-INPUT — chip input widened 8→11** (commit `8d57b8598`, WHOLE TREE GREEN): wide-absorb arity 11
+  carries an 8-felt carrier + 3 limbs in ONE permutation; narrow arities byte-identical (KAT 7/7); `CHIP_RATE
+  8→11` (decoupled from sponge rate 8), `CHIP_TUPLE_LEN 17→20`, 34 JSONs re-emitted + 64 FPs re-pinned; teeth
+  `ir2_wide_absorb_forged_carrier_lane_refuses`/`..._carrier_felt_is_load_bearing` bite. The chip is now FULLY
+  SPONGE-CAPABLE. Commitment STILL 1-felt.
+- ⬜ **PHASE B-ROTATION — the 8-wide commitment, NOW EXPRESSIBLE (resume HERE = the actual ~124-bit trust)**:
+  `d8 = perm(d0..d7 ‖ limb,limb,limb)[0..8]` as ONE permutation/step via the arity-11 chip lookup binding all 8
+  output lanes as the next carrier (every intermediate `d8` is 8 felts — no 31-bit carrier). `B_STATE_COMMIT`
+  1→8 + chain carriers, `wireCommitR`/`chainFrom` carry an 8-vector, `wireCommitR_binds`/`chainFrom_inj` re-proved
+  over 8 via `chip_lookup_sound_N`, `rotPins` binds 8, differential to 8. Then PHASE C (PI 4→8, retire the
+  executor PI-loop, collision-distinguishing + intermediate-carrier teeth, VK deploy).
+- 🟥 ~~**PHASE B-ROTATION — BLOCKED at the chip INPUT-ARITY cap**~~ (RESOLVED by B-GATE-INPUT ✅ above; historical
+  detail): the 8-wide chain (`d8 = perm_lanes(d8 ‖ new_limbs)[0..8]`, ONE permutation per step) was NOT
+  expressible with the output-only B-GATE chip. B-GATE widened the chip OUTPUT to 8 lanes (`CHIP_OUT_LANES = 8`, the genuine
   distinct `state[0..8]` of one permutation — that half works), but the chip's INPUT side is hard-capped: AIR
   admits arities `{0,2,3,4,7}` only, seeds `state[0..7]` (st[0..4]=in0..3, st[4..6]=S4/S5/S6 on the arity-7
   branch), and `builder.assert_zero(local[CHIP_IN0 + 7])` PINS `state[7]` to ZERO with `state[8..16]` never
