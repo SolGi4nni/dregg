@@ -399,7 +399,6 @@ theorem leafDigest_sound {State : Type} (S : CapHashScheme State)
     env.loc c.leafDigest = capLeafDigest S (leafOf c env) := by
   have hlen : (leafInputs c).length ≤ CHIP_RATE := by
     simp [leafInputs, List.length_map, List.length_finRange, CHIP_RATE]
-    decide
   have hmem : (chipLookupTuple (leafInputs c) c.leafDigest (c.lanes 0)).map (·.eval env.loc)
       ∈ tf .poseidon2 := by
     have := hsat.leafHashed
@@ -436,7 +435,7 @@ theorem node_sound {State : Type} (S : CapHashScheme State)
           else nodeOf S (env.loc (curCol c lvl)) (env.loc (c.sib lvl))) := by
   have hlen : ([EmittedExpr.const FACT_MARK, leftExpr c lvl, rightExpr c lvl]).length ≤ CHIP_RATE := by
     show 3 ≤ CHIP_RATE
-    rw [show CHIP_RATE = 8 from rfl]; omega
+    rw [show CHIP_RATE = 11 from rfl]; omega
   have hmem : (chipLookupTuple [.const FACT_MARK, leftExpr c lvl, rightExpr c lvl] (c.node lvl)
       (c.lanes (lvl + 1))).map (·.eval env.loc) ∈ tf .poseidon2 := by
     have := hsat.nodeHashed lvl hlvl
@@ -862,7 +861,7 @@ theorem membershipCore_opens {State : Type} (S : CapHashScheme State)
   -- leaf-digest soundness from the core's `leafHashed`.
   have hleaf : env.loc c.leafDigest = capLeafDigest S (leafOf c env) := by
     have hlen : (leafInputs c).length ≤ CHIP_RATE := by
-      simp [leafInputs, List.length_map, List.length_finRange, CHIP_RATE]; decide
+      simp [leafInputs, List.length_map, List.length_finRange, CHIP_RATE]
     have hmem : (chipLookupTuple (leafInputs c) c.leafDigest (c.lanes 0)).map (·.eval env.loc)
         ∈ tf .poseidon2 := by
       have := hcore.leafHashed; unfold Lookup.holdsAt leafLookup at this; exact this
@@ -877,7 +876,7 @@ theorem membershipCore_opens {State : Type} (S : CapHashScheme State)
             else nodeOf S (env.loc (curCol c lvl)) (env.loc (c.sib lvl))) := by
     intro lvl hlvl
     have hlen : ([EmittedExpr.const FACT_MARK, leftExpr c lvl, rightExpr c lvl]).length ≤ CHIP_RATE := by
-      show 3 ≤ CHIP_RATE; rw [show CHIP_RATE = 8 from rfl]; omega
+      show 3 ≤ CHIP_RATE; rw [show CHIP_RATE = 11 from rfl]; omega
     have hmem : (chipLookupTuple [.const FACT_MARK, leftExpr c lvl, rightExpr c lvl] (c.node lvl)
         (c.lanes (lvl + 1))).map (·.eval env.loc) ∈ tf .poseidon2 := by
       have := hcore.nodeHashed lvl hlvl; unfold Lookup.holdsAt nodeLookup at this; exact this

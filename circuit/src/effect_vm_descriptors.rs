@@ -268,71 +268,71 @@ pub const DREGG_EFFECTVM_RECORD_V1_FP: &str =
 pub const DREGG_EFFECTVM_TRANSFER_IR2_JSON: &str =
     include_str!("../descriptors/dregg-effectvm-transfer-ir2.json");
 pub const DREGG_EFFECTVM_TRANSFER_IR2_FP: &str =
-    "034ace8c7fa26f3ee1d6912a3668a2e1d9fc81150b392d67fa5fa9772477fc3d";
+    "81e59315cf8adbd0bb933fa1c7ec4245b594da5dbc35a46de0da08a82c20f772";
 pub const DREGG_EFFECTVM_BURN_IR2_JSON: &str =
     include_str!("../descriptors/dregg-effectvm-burn-ir2.json");
 pub const DREGG_EFFECTVM_BURN_IR2_FP: &str =
-    "a0eacaf531ec92348b5e08bb654bea21def8d56763d867c8c019943ffb319027";
+    "23fcdf4367e5c2b31f2d5bc55dd2b3398ce5349f9a78dbf026dcc93abd8ecde8";
 pub const DREGG_EFFECTVM_MINT_IR2_JSON: &str =
     include_str!("../descriptors/dregg-effectvm-mint-ir2.json");
 pub const DREGG_EFFECTVM_MINT_IR2_FP: &str =
-    "830e04ecdfac6a60d0fdd1732e5744dfd5d102dea6fe1a04b94822875a97a985";
+    "9264f79c9473f19b5c2efbaee3ae5463157b6f9ccef7371bb4d8b72558ad9956";
 pub const DREGG_EFFECTVM_NOTE_SPEND_IR2_JSON: &str =
     include_str!("../descriptors/dregg-effectvm-note-spend-ir2.json");
 pub const DREGG_EFFECTVM_NOTE_SPEND_IR2_FP: &str =
-    "3eef45a67bb034f67b54484e3d3f4070fc871a7e605cfc62153101b698074c2c";
+    "952a555f7f744bd4c63af62ce1efc70df24fb5d444a4e5c9c76b2d8e0cec3b2b";
 pub const DREGG_EFFECTVM_NOTE_CREATE_IR2_JSON: &str =
     include_str!("../descriptors/dregg-effectvm-note-create-ir2.json");
 pub const DREGG_EFFECTVM_NOTE_CREATE_IR2_FP: &str =
-    "88a6834412439e9ef5fdfc71cf8e0d69c7e4aa9a8f025a49d4f5e2a9c16fda9b";
+    "e204d70ad59dd213816d7f22469567f935376838ef57ce93fac5e8c1d1140fe8";
 pub const DREGG_EFFECTVM_CELL_SEAL_IR2_JSON: &str =
     include_str!("../descriptors/dregg-effectvm-cell-seal-ir2.json");
 pub const DREGG_EFFECTVM_CELL_SEAL_IR2_FP: &str =
-    "f73ae70c5c5843993edc1c5e1ff0a03f9a13a7e9d4f45455f424e0acf80804cd";
+    "a3e2c6c04c115c686bea782a290889be199256977ab67761f008f5aab34be6ea";
 pub const DREGG_EFFECTVM_CELL_DESTROY_IR2_JSON: &str =
     include_str!("../descriptors/dregg-effectvm-cell-destroy-ir2.json");
 pub const DREGG_EFFECTVM_CELL_DESTROY_IR2_FP: &str =
-    "564fb6ed29e6b0a9a840d7da61381ddbab609f1fd588da223f2b85b022df94ea";
+    "a7cd6632c6fc254233c8eca34c0e31b93c5b3ce674c98a1b0beb06652440be77";
 pub const DREGG_EFFECTVM_REFUSAL_IR2_JSON: &str =
     include_str!("../descriptors/dregg-effectvm-refusal-ir2.json");
 pub const DREGG_EFFECTVM_REFUSAL_IR2_FP: &str =
-    "c13743dc27860b8643cdaa97cfccd188e70d566c286086976f5691e1f9146cf2";
+    "4aef8a894f68055c4faa7a9c82f0914bf4009a31ac05622a8fe0e5fb4d8842f3";
 pub const DREGG_EFFECTVM_SET_PERMS_IR2_JSON: &str =
     include_str!("../descriptors/dregg-effectvm-set-perms-ir2.json");
 pub const DREGG_EFFECTVM_SET_PERMS_IR2_FP: &str =
-    "0a28e3604a60225b91f7d2238c3ed18bad339bff14aaa677317e2eb2508fb4c1";
+    "f6ea5f295d0f24dcb4b0fc1480f3517a6a111b5e07db936b7ecb8f2140793c40";
 pub const DREGG_EFFECTVM_SET_VK_IR2_JSON: &str =
     include_str!("../descriptors/dregg-effectvm-set-vk-ir2.json");
 pub const DREGG_EFFECTVM_SET_VK_IR2_FP: &str =
-    "4a778013ac1dbad835c29f888b3c86c2be7761762e7d930020a45033548b9239";
+    "47c4e4223eed737585cfd14afe23003010dfb0da5923287035a9a02a0dc2fffe";
 pub const DREGG_EFFECTVM_EXERCISE_IR2_JSON: &str =
     include_str!("../descriptors/dregg-effectvm-exercise-ir2.json");
 pub const DREGG_EFFECTVM_EXERCISE_IR2_FP: &str =
-    "8a00c46e167f4ae45ecee02398e578dbf5a4263b554dbe3e26f51cf7f4c75ba7";
+    "c3851f38325730b7eb124cf4e07056f7b4771129e270e20c1ee806e6d2efc688";
 pub const DREGG_EFFECTVM_PIPELINED_SEND_IR2_JSON: &str =
     include_str!("../descriptors/dregg-effectvm-pipelined-send-ir2.json");
 pub const DREGG_EFFECTVM_PIPELINED_SEND_IR2_FP: &str =
-    "b77aca46bf603ced70238e7c1151354bc9c19225e09ace8eb275ba3423ab5df4";
+    "d1e362d4ac5eefdd5c35e05d5493cb1bd85d289bbb8f68a5362b34bb68850d27";
 pub const DREGG_EFFECTVM_REFRESH_IR2_JSON: &str =
     include_str!("../descriptors/dregg-effectvm-refresh-ir2.json");
 pub const DREGG_EFFECTVM_REFRESH_IR2_FP: &str =
-    "6dff21994c66cfdf03c2009f8656d4302a6f55bb29545f48c18f87da982d51fa";
+    "8de62a022441d7a012e197a9898211ffd7b3844fe800adcceba078178c74150c";
 pub const DREGG_EFFECTVM_INCREMENT_NONCE_IR2_JSON: &str =
     include_str!("../descriptors/dregg-effectvm-increment-nonce-ir2.json");
 pub const DREGG_EFFECTVM_INCREMENT_NONCE_IR2_FP: &str =
-    "f8ee7f550569ca61b9799039f9fd948d4c3f1583f31aeadc59475c4aa9d65e29";
+    "02c914b02238dd2ee3beede71eafdb004a34da460cd88720b500cb8882486ed8";
 pub const DREGG_EFFECTVM_REVOKE_IR2_JSON: &str =
     include_str!("../descriptors/dregg-effectvm-revoke-ir2.json");
 pub const DREGG_EFFECTVM_REVOKE_IR2_FP: &str =
-    "6fd0c2431683d6e0d78c00e1c5f07006b6375c556a444f793cffce2af56e4116";
+    "7873c17e8bcc5c12d46b0be12cf4477213c2063ab1e3860f1c57a8981d222afb";
 pub const DREGG_EFFECTVM_INTRODUCE_IR2_JSON: &str =
     include_str!("../descriptors/dregg-effectvm-introduce-ir2.json");
 pub const DREGG_EFFECTVM_INTRODUCE_IR2_FP: &str =
-    "759e43ab87720f2984a1d8832227a70d3cd498de382674b1c122a900e3688866";
+    "cd8e2e456bd0736677a9605f241f94ec4e2702b7834fda9447140361fda3228f";
 pub const DREGG_EFFECTVM_ATTENUATE_IR2_JSON: &str =
     include_str!("../descriptors/dregg-effectvm-attenuate-ir2.json");
 pub const DREGG_EFFECTVM_ATTENUATE_IR2_FP: &str =
-    "a715a054d1dfd4c9af3d2d0e068c03f12c57ae3907bafb9d6885de1922403111";
+    "0d34b4cac94ed67cfe8de257c356a68c440ef7311a6255f845131ba57679dee4";
 // GRADUATED (cap-crown): RevokeCapability (sel 24). The v2 leg of the cap-REMOVAL effect — a
 // held-membership map-read authenticated against the before cap_root + a ZERO-value remove-write
 // (the slot's rights deleted), NO submask (revoke deletes a slot, it does not narrow rights). Lean
@@ -341,7 +341,7 @@ pub const DREGG_EFFECTVM_ATTENUATE_IR2_FP: &str =
 pub const DREGG_EFFECTVM_REVOKE_CAP_IR2_JSON: &str =
     include_str!("../descriptors/dregg-effectvm-revoke-cap-ir2.json");
 pub const DREGG_EFFECTVM_REVOKE_CAP_IR2_FP: &str =
-    "6fc7151536dfc827880a205e03d9359040b0da4ff2c1b7e15575b780157afd9b";
+    "cd6000e0ca01e1d1390a1c9e04f840e3caa39348de7b2c96075881dc666f2bbe";
 // GRADUATED (Custom recursive-proof binding, sel 8): the runtime passthrough face graduated onto
 // IR-v2 PLUS the `proof_bind` op (`customProofBind`) that ties the row's `custom_proof_commitment`
 // to a VERIFYING external sub-proof of the recursion engine — the accumulator constraint the
@@ -350,43 +350,43 @@ pub const DREGG_EFFECTVM_REVOKE_CAP_IR2_FP: &str =
 pub const DREGG_EFFECTVM_CUSTOM_IR2_JSON: &str =
     include_str!("../descriptors/dregg-effectvm-custom-ir2.json");
 pub const DREGG_EFFECTVM_CUSTOM_IR2_FP: &str =
-    "96058884c472a5a23b72424874b87a3e50b7031c651858313910ce2587a515c8";
+    "34911722065e542fbd60015df6d64c8ff1cec1290c6261e3e3d5e15811e209ce";
 pub const DREGG_EFFECTVM_SET_FIELD_DYN_IR2_JSON: &str =
     include_str!("../descriptors/dregg-effectvm-set-field-dyn-ir2.json");
 pub const DREGG_EFFECTVM_SET_FIELD_DYN_IR2_FP: &str =
-    "12e5fe45964d83decba2f351f4d4be81c3f789bbcab857df5a195c5ca7ccf514";
+    "e5a97cc2fe289408a1161aea708a2e57cdc0a4556cf3079e370a966050407f78";
 pub const DREGG_EFFECTVM_SET_FIELD_0_IR2_JSON: &str =
     include_str!("../descriptors/dregg-effectvm-set-field-0-ir2.json");
 pub const DREGG_EFFECTVM_SET_FIELD_0_IR2_FP: &str =
-    "69b36069d6fc53ac3ca30e5c49b451d341ab4172ab023ddd3f0de57d3b589047";
+    "ccdbf03566320fdbf40d604c40b295291d693382b0bfe5579d0d700cef9c3dc0";
 pub const DREGG_EFFECTVM_SET_FIELD_1_IR2_JSON: &str =
     include_str!("../descriptors/dregg-effectvm-set-field-1-ir2.json");
 pub const DREGG_EFFECTVM_SET_FIELD_1_IR2_FP: &str =
-    "337f8a22f5a10ae2c7f2c12199e231d2b20afc3848e0df0b47e3976d750666d8";
+    "c8c403bd24e8ccdc60ca9371fd9de0b44ee5ae9238e081f22a289041a22496c4";
 pub const DREGG_EFFECTVM_SET_FIELD_2_IR2_JSON: &str =
     include_str!("../descriptors/dregg-effectvm-set-field-2-ir2.json");
 pub const DREGG_EFFECTVM_SET_FIELD_2_IR2_FP: &str =
-    "d1c4ea0d79e735691faaa83bea292d051a6ece6d171fdc48329a501c40bdc298";
+    "459c17997ab1ed776d49fecfe448acef96f59c2e4a7be28b4d0dcc7b9981c671";
 pub const DREGG_EFFECTVM_SET_FIELD_3_IR2_JSON: &str =
     include_str!("../descriptors/dregg-effectvm-set-field-3-ir2.json");
 pub const DREGG_EFFECTVM_SET_FIELD_3_IR2_FP: &str =
-    "0d9e1fed112f3866cfaed150e82ca3a8fb48f7a3f2da3153a47c46bd01f9672c";
+    "b90e7413cafc6cc668a9d03a418401c9a80597dad042e1c0255bba77a42920e4";
 pub const DREGG_EFFECTVM_SET_FIELD_4_IR2_JSON: &str =
     include_str!("../descriptors/dregg-effectvm-set-field-4-ir2.json");
 pub const DREGG_EFFECTVM_SET_FIELD_4_IR2_FP: &str =
-    "e8e66392b8b19485b74aca3276e7e9c3f3258685f9b86622e6f6a492f371dab3";
+    "3e6971aa7bda757d8c4ddd5f63da4549cd19d23daffa24787d307eb41b9a13c6";
 pub const DREGG_EFFECTVM_SET_FIELD_5_IR2_JSON: &str =
     include_str!("../descriptors/dregg-effectvm-set-field-5-ir2.json");
 pub const DREGG_EFFECTVM_SET_FIELD_5_IR2_FP: &str =
-    "bab8bb539730c41ef20e62f39f0b1574887f838f8c5e41a254c559b4cb6aee0a";
+    "c4f17dd4ec5e4536b39aa06243cc8ea22357115bccb537b394cdc5b38daf1a0f";
 pub const DREGG_EFFECTVM_SET_FIELD_6_IR2_JSON: &str =
     include_str!("../descriptors/dregg-effectvm-set-field-6-ir2.json");
 pub const DREGG_EFFECTVM_SET_FIELD_6_IR2_FP: &str =
-    "e98e1f03f5141578e7bc08803fd07a1b59ee0012c40b9bb7a1400f14d3d16033";
+    "ae260baaa004b34e28e042c3f6a495a013a7805c725d00bed96879026cf72321";
 pub const DREGG_EFFECTVM_SET_FIELD_7_IR2_JSON: &str =
     include_str!("../descriptors/dregg-effectvm-set-field-7-ir2.json");
 pub const DREGG_EFFECTVM_SET_FIELD_7_IR2_FP: &str =
-    "8d3b64c23a1d10d6f85209802850ff1e9f5a5a7f9a9e3500b74f87326e476d8d";
+    "0fd2c56d4bfeca69c96bcf2ceb49854ad36e5e34e293164ec913d1d1bd44e60f";
 
 // ==== selector index -> (descriptor name, const json, fingerprint) ====
 pub const SELECTOR_DESCRIPTORS: &[(usize, &str, &str, &str)] = &[
@@ -731,7 +731,7 @@ pub const ROTATION_LAYOUT_V3_STAGED_FP: &str =
 pub const DREGG_EFFECTVM_ROTATION_STATE_V3_STAGED_JSON: &str =
     include_str!("../descriptors/dregg-effectvm-rotation-state-v3-staged.json");
 pub const DREGG_EFFECTVM_ROTATION_STATE_V3_STAGED_FP: &str =
-    "32276271d1dd5949a2ce3e27f3884e8e3125f3e431df0ad59d5776f8914c0e43";
+    "a084de25197e5ec67a7e2ca1e86ce3ba0b455491ca4b48fbe30757d23ad615f0";
 
 /// The REGISTER-COUNT MEASUREMENT probes (`docs/ROTATION-CUTOVER.md` pre-gates): the same
 /// staged rotation probe emitted at R=24 and R=32 registers from the PARAMETRIC Lean
@@ -744,11 +744,11 @@ pub const DREGG_EFFECTVM_ROTATION_STATE_V3_STAGED_FP: &str =
 pub const DREGG_EFFECTVM_ROTATION_STATE_V3_STAGED_R24_JSON: &str =
     include_str!("../descriptors/dregg-effectvm-rotation-state-v3-staged-r24.json");
 pub const DREGG_EFFECTVM_ROTATION_STATE_V3_STAGED_R24_FP: &str =
-    "ed8e98ae4dab3363befbf093e994e14c1a5297415f333a6cb9441e782a4a2453";
+    "64142cfc426bc5a73ec42bf3369e41fe59d2ad48265a1627e93a9e16b1d067a6";
 pub const DREGG_EFFECTVM_ROTATION_STATE_V3_STAGED_R32_JSON: &str =
     include_str!("../descriptors/dregg-effectvm-rotation-state-v3-staged-r32.json");
 pub const DREGG_EFFECTVM_ROTATION_STATE_V3_STAGED_R32_FP: &str =
-    "d50d5d578eacb6bb6ba32668612d1841327bf14cb76026917a4e300f7311afe1";
+    "c7717b32e6cf1c55dce92b16b8065fd0e8a994fbfe3b6cf606f1f1b6d9d33af9";
 
 /// The v3-staged registry (keyed by Lean def-name, the `V2_DESCRIPTORS` pattern). Entry 0
 /// is the deployed R=16 reference; entries 1-2 are the register-count measurement probes.
@@ -787,7 +787,7 @@ pub const ROTATION_CAVEAT_LAYOUT_V3_STAGED_FP: &str =
 pub const DREGG_EFFECTVM_ROTATION_CAVEAT_V3_STAGED_JSON: &str =
     include_str!("../descriptors/dregg-effectvm-rotation-caveat-v3-staged-r24.json");
 pub const DREGG_EFFECTVM_ROTATION_CAVEAT_V3_STAGED_FP: &str =
-    "6cd196b560ba85e7a0a12cf6a4038f10bc3129abebac81b3ebe6dd86b9ff054f";
+    "c45e525f46dab10f18474b95554ab36fef9f709a827a8ab16ba17cb0d8b09582";
 
 /// The caveat-operand staged registry (kept SEPARATE from `V3_STAGED_DESCRIPTORS`
 /// so the three rotation-probe pins stay byte-frozen and their coverage walker
@@ -814,7 +814,7 @@ pub const V3_STAGED_CAVEAT_DESCRIPTORS: &[(&str, &str, &str)] = &[(
 pub const V3_STAGED_REGISTRY_TSV: &str =
     include_str!("../descriptors/rotation-v3-staged-registry.tsv");
 pub const V3_STAGED_REGISTRY_FP: &str =
-    "a4ba528f1d1902291ad3ea08810a9d9ca838007f9370bf5a938968df2d0f23e6";
+    "e4f1dbdb53ef680cd3c1039f74d365bb1523d787310384a64c5a45233a17c189";
 
 /// The rotated probe layout at register count `r` (the Rust twin of the Lean parametric
 /// layout `EffectVmEmitRotationR`: columns are FUNCTIONS of R; the chunking is 4-wide head,
