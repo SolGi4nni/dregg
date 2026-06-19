@@ -142,6 +142,8 @@ pub mod swarm_budget;
 #[cfg(feature = "embedded-executor")]
 pub mod terminal;
 #[cfg(feature = "embedded-executor")]
+pub mod token_inspector;
+#[cfg(feature = "embedded-executor")]
 pub mod world;
 
 // THE LIVE INSPECT→ACT LOOP — the Smalltalk inspect→act→inspect keystone: an
@@ -169,6 +171,20 @@ pub mod wonder;
 // generalized Halo. The spine everything inherits. See docs/deos/INSPECTOR-FRAMEWORK.md.
 #[cfg(feature = "embedded-executor")]
 pub mod presentable;
+#[cfg(feature = "embedded-executor")]
+pub mod cell_inspector;
+#[cfg(feature = "embedded-executor")]
+pub mod receipts_inspector;
+#[cfg(feature = "embedded-executor")]
+pub mod cap_inspector;
+#[cfg(feature = "embedded-executor")]
+pub mod predicate_composer;
+// L1-LANE INSPECTORS/GADGETS (the moldable-inspector multiplicity, all on the spine):
+// turn_builder (effect/call-forest/turn) · predicate_composer (the caveat-language uplift) ·
+// cap_inspector (attenuation/cap-crown) · cell_inspector (deep state) · receipts_inspector
+// (time-travel) · token_inspector (macaroon loop). See docs/deos/INSPECTOR-FRAMEWORK.md.
+#[cfg(feature = "embedded-executor")]
+pub mod turn_builder;
 
 #[cfg(feature = "embedded-executor")]
 pub use presentable::{
