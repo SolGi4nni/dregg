@@ -76,8 +76,26 @@ refused to launder a partial):**
   carrier, not-laundered, chip-faithful) + producer-side authority-near-collision; three-layer twins cell≡turn≡
   Lean (`felt8_to_bytes32` 8×4=full slot). ADDITIVE — the live wire is UNTOUCHED, commitment STILL 1-felt, no
   FP/VK re-pin. The cryptographic heart EXISTS + is proven; NO live security gain yet.
-- ⬜ **PHASE B-ROTATION LIVE CUTOVER — flip the wire to 8-felt (THE VK flag-day = the actual ~124-bit trust,
-  ember-gated, resume HERE)**: (1) trace geometry `B_STATE_COMMIT` 1→8 + `B_CHAIN_BASE`/`B_SPAN`/`ROT_WIDTH`
+- ⬜ **PHASE B-ROTATION LIVE CUTOVER — flip the wire to 8-felt (THE VK flag-day = the actual ~124-bit trust;
+  multi-session atomic, ember-gated, resume HERE)**. ⚑ 2026-06-19 RE-SCOPE (5th agent STOPPED clean at green HEAD
+  `93fba7ee5`): the staged wide lane is NOT drop-in. Two real blockers: **(B1, Lean, new proof)** `rotateV3Wide`
+  (`EffectVmEmitRotationWide.lean:286`) takes a BARE `EffectVmDescriptor` (`graduateV1 (rotateV3 d)`), but the live
+  `v3Registry` is 36 ALREADY-GATED `EffectVmDescriptor2`s (v3OfFrozen/withSelectorGate/the WAVE disc+perms gates/
+  fee-pin). Need an additive `wideAppend : EffectVmDescriptor2 → EffectVmDescriptor2` (append the two 13×8 wide
+  carriers + 16 PI pins onto an arbitrary gated host, carriers past `host.traceWidth`, PIs past `host.piCount`) +
+  re-prove `rotV3Wide_pins/_publishes/_binds_published` over `host` (additive, green-able like the bare-host
+  lane). **(B2, Rust, producer)** `fill_chip_lanes` (`descriptor_ir2.rs:2790`) fills lanes 1..7 but NEVER lane0
+  (the 1-felt path got it from `fill_block`'s digestCol); the wide carrier-12 lane0 IS the published commit's
+  lane0 → unfilled ⇒ honest prove FAILS. Widen `fill_chip_lanes` to write lane0 for wide lookups in forward
+  order across the 6 producers (cell/turn/sdk×2/node + proof_verify). THE RESUME RECIPE (steps 1-3 must ALL land
+  before whole-tree green — atomic): 1. `wideAppend` + repoint the 36 registry entries; 2. the producer lane0 +
+  +208 carrier fill (6 crates); 3. executor retire `dpis[34]/[35]` 1-felt match + bind the 16 wide PIs +
+  `felt8_to_bytes32` (proof_verify.rs/atomic.rs); 4. differential + LIVE collision tooth to 8; 5. re-emit + re-pin
+  all FPs. Geometry (confirmed): `rotateV3Wide` is ADDITIVE (`traceWidth + 208`, `piCount + 16`, reads the same
+  `preLimbsAt` → binds the same 37 limbs + iroot at full width; does NOT in-place reshape B_STATE_COMMIT/PI34/35
+  — the 1-felt pins stay, the 8-felt PIs are NEW, "replacing" happens consumer-side in the executor). Live consts:
+  `B_STATE_COMMIT=38`, `B_SPAN=51`, `ROT_WIDTH=328`, `GRAD_ROT_WIDTH=608`, `{OLD,NEW}_COMMIT_LEN=4`.
+  --- (original step list, subsumed by the recipe above): (1) trace geometry `B_STATE_COMMIT` 1→8 + `B_CHAIN_BASE`/`B_SPAN`/`ROT_WIDTH`
   follow, `fill_block` from `wire_commit_8` lanes, chain sites arity-4→11; (2) descriptor emits the rotated chain
   sites as arity-11 wide chip lookups binding 8 lanes (`chipLookupTupleN`/`chip_lookup_sound_N`); (3) `rotV3SitesAt`/
   `rotPins`→`wireCommitR8`, bind 8 `B_STATE_COMMIT` cols to 8 PIs/block; (4) `pi.rs {OLD,NEW}_COMMIT_LEN`→8, RETIRE
