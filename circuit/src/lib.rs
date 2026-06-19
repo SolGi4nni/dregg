@@ -151,6 +151,7 @@ pub mod relational_predicate_air;
 pub mod schnorr_air;
 #[cfg(feature = "plonky3")]
 pub mod temporal_predicate_air;
+pub mod turn_auth_signature_air;
 
 /// Backward-compatible re-export. Prefer [`constraint_prover`] for new code.
 #[doc(hidden)]
@@ -272,6 +273,13 @@ pub mod recursive_witness_bundle;
 /// proof attesting bilateral consistency. See module docs and
 /// `STAGE-7-GAMMA-2-PHASE-2-SKETCH.md`.
 pub mod bilateral_aggregation_air;
+
+/// Turn-wide CROSS-CELL value-conservation AIR (Σδ=0), emitted from Lean (law #1; closes foolable
+/// gap #6). Sums the per-cell proofs' published signed NET_DELTA PIs into a prefix-sum-to-zero per
+/// asset — the in-circuit `Σδ=0` the off-AIR debit↔credit pairing could not force. ADDITIVE: NOT
+/// wired into the live `proof_verify.rs` (see module docs for the verifier handoff seam). Lean twin
+/// `metatheory/Dregg2/Circuit/CrossCellConservation.lean`.
+pub mod cross_cell_conservation_air;
 
 /// Effect-VM-shape bridge AIR for the `p3-recursion` path. See module
 /// docs — this is a *shape* mirror of `effect_vm::EffectVmAir` used to

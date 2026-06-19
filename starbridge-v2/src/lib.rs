@@ -144,6 +144,25 @@ pub mod terminal;
 #[cfg(feature = "embedded-executor")]
 pub mod world;
 
+// THE LIVE INSPECT→ACT LOOP — the Smalltalk inspect→act→inspect keystone: an
+// inspected object shows the messages it understands (its cap-gated affordances)
+// inline, fires one as a real verified turn, and re-inspects the post-state.
+// gpui-free, `cargo test`-able (reuses `reflect` + `affordance` + `world`).
+#[cfg(feature = "embedded-executor")]
+pub mod inspect_act;
+// THE LIVE WORKSPACE — the doIt / printIt / inspectIt evaluator: compose an
+// intent, evaluate it in a forked throwaway world (predict, never mutate), print
+// the predicted receipt, inspect the predicted post-state as live objects, then
+// commit-or-discard. gpui-free, `cargo test`-able (reuses `simulate` + `reflect`).
+#[cfg(feature = "embedded-executor")]
+pub mod workspace;
+// THE WONDER ROOM — the AOL-wonder front door: every cell a pokeable glowing
+// object (glow = real recent activity from `dynamics`), with direct-manipulation
+// halos (inspect/grab/explain) and drag-value transfers (predict-then-commit).
+// gpui-free, `cargo test`-able. See `docs/deos/AOL-WONDER.md`.
+#[cfg(feature = "embedded-executor")]
+pub mod wonder;
+
 #[cfg(feature = "embedded-executor")]
 pub use affordance::{
     AffordanceIntent, AffordanceSnapshot, AffordanceSurface, CellAffordance, EffectSummary,
