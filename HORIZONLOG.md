@@ -68,12 +68,24 @@ refused to launder a partial):**
   8→11` (decoupled from sponge rate 8), `CHIP_TUPLE_LEN 17→20`, 34 JSONs re-emitted + 64 FPs re-pinned; teeth
   `ir2_wide_absorb_forged_carrier_lane_refuses`/`..._carrier_felt_is_load_bearing` bite. The chip is now FULLY
   SPONGE-CAPABLE. Commitment STILL 1-felt.
-- ⬜ **PHASE B-ROTATION — the 8-wide commitment, NOW EXPRESSIBLE (resume HERE = the actual ~124-bit trust)**:
-  `d8 = perm(d0..d7 ‖ limb,limb,limb)[0..8]` as ONE permutation/step via the arity-11 chip lookup binding all 8
-  output lanes as the next carrier (every intermediate `d8` is 8 felts — no 31-bit carrier). `B_STATE_COMMIT`
-  1→8 + chain carriers, `wireCommitR`/`chainFrom` carry an 8-vector, `wireCommitR_binds`/`chainFrom_inj` re-proved
-  over 8 via `chip_lookup_sound_N`, `rotPins` binds 8, differential to 8. Then PHASE C (PI 4→8, retire the
-  executor PI-loop, collision-distinguishing + intermediate-carrier teeth, VK deploy).
+- ✅ **PHASE B-ROTATION CORE — the proven 8-felt commitment primitive (staged, additive)** (commit `c734d938b`):
+  `poseidon2::wire_commit_8` (8-felt carrier, `single_perm_compress(d8‖fresh)[0..8]` per step, every intermediate
+  8 felts — no 31-bit waist), byte-identical to the arity-11 chip (`single_perm_compress_equals_chip_wide_lanes`);
+  Lean `wireCommitR8`/`chainFrom8` + the keystone `wireCommitR8_binds` + `chainFrom8_inj` under named floors
+  `Poseidon2WideCR`/`Poseidon2Width8`, `#assert_axioms` clean; teeth (collision-distinguishing, intermediate-
+  carrier, not-laundered, chip-faithful) + producer-side authority-near-collision; three-layer twins cell≡turn≡
+  Lean (`felt8_to_bytes32` 8×4=full slot). ADDITIVE — the live wire is UNTOUCHED, commitment STILL 1-felt, no
+  FP/VK re-pin. The cryptographic heart EXISTS + is proven; NO live security gain yet.
+- ⬜ **PHASE B-ROTATION LIVE CUTOVER — flip the wire to 8-felt (THE VK flag-day = the actual ~124-bit trust,
+  ember-gated, resume HERE)**: (1) trace geometry `B_STATE_COMMIT` 1→8 + `B_CHAIN_BASE`/`B_SPAN`/`ROT_WIDTH`
+  follow, `fill_block` from `wire_commit_8` lanes, chain sites arity-4→11; (2) descriptor emits the rotated chain
+  sites as arity-11 wide chip lookups binding 8 lanes (`chipLookupTupleN`/`chip_lookup_sound_N`); (3) `rotV3SitesAt`/
+  `rotPins`→`wireCommitR8`, bind 8 `B_STATE_COMMIT` cols to 8 PIs/block; (4) `pi.rs {OLD,NEW}_COMMIT_LEN`→8, RETIRE
+  the executor commitment PI-match (`dpis[34]/[35]`→8 via `bytes32_to_felt8`); (5) the differential + permission-
+  flip to 8; (6) VK/FP re-pin + drift. **The LIVE collision-distinguishing tooth** (two states differing in a high
+  position → published 8-felt commits differ, proof for A REJECTED against B's commit with NO executor) is the
+  light-client bite that proves it. Land as ONE coordinated flag-day (the B-GATE-OUTPUT precedent: it landed green
+  in one push). The core is proven + de-risked; this is the geometry/PI/executor wiring.
 - 🟥 ~~**PHASE B-ROTATION — BLOCKED at the chip INPUT-ARITY cap**~~ (RESOLVED by B-GATE-INPUT ✅ above; historical
   detail): the 8-wide chain (`d8 = perm_lanes(d8 ‖ new_limbs)[0..8]`, ONE permutation per step) was NOT
   expressible with the output-only B-GATE chip. B-GATE widened the chip OUTPUT to 8 lanes (`CHIP_OUT_LANES = 8`, the genuine
