@@ -371,6 +371,17 @@ pub struct WebCellsBrowser {
     /// model the whole-field [`Transclusion`] above could not express. `None` only if
     /// the web has too few cells to compose a multi-source document.
     pub document: Option<DreggverseDocumentView>,
+    /// THE SERVO LAYER, LIVE (feature `servo`): the opened cell's attested
+    /// `dregg://` page rasterized to a real, cap-gated SWGL [`RgbaFrame`] —
+    /// the FIRST real rendered `dregg://` CONTENT in the tab (what
+    /// [`WebCellsBrowser::servo_layer_note`] only NAMED). Populated in
+    /// [`WebCellsBrowser::build`] via `servo_render::render_dregg_page`
+    /// through the SAME held [`SurfaceCapability`] the affordance projection
+    /// uses (an out-of-cap origin is refused in-band → `None`). The cockpit
+    /// paints it with a gpui `img()`; `None`/feature-off falls back to the
+    /// `servo_layer_note()` placeholder. Absent in the default build.
+    #[cfg(feature = "servo")]
+    pub rendered_tile: Option<servo_render::RgbaFrame>,
 }
 
 impl WebCellsBrowser {
@@ -456,6 +467,10 @@ impl WebCellsBrowser {
         let mut affordances_declared = 0;
         let mut rehydration_badge =
             Rehydration::ReconstructedApproximate.badge().to_string();
+        // THE SERVO LAYER: the opened cell's attested page rasterized to a real,
+        // cap-gated SWGL frame (feature `servo`). Populated in the opened block.
+        #[cfg(feature = "servo")]
+        let mut rendered_tile: Option<servo_render::RgbaFrame> = None;
 
         if let Some(cell) = opened {
             let surface = affordance_surface_for(cell, viewer);
@@ -483,6 +498,26 @@ impl WebCellsBrowser {
                 // being witnessed makes it REPLAYED-DETERMINISTIC (confined), the
                 // honest "every interaction went through the membrane" type.
                 rehydration_badge = Rehydration::classify(&log, false).badge().to_string();
+
+                // THE SERVO SEAM CALL: render the SAME attested page bytes the row
+                // already verified into a real, cap-gated SWGL frame, through the
+                // SAME held SurfaceCapability the affordance projection ran. The cap
+                // gate is IN FRONT of the render — an out-of-cap origin is refused
+                // in-band (then `frame()` is `None`, and the tab falls back to the
+                // servo_layer_note placeholder). The frame is content-bound (distinct
+                // attested bytes → a visibly distinct tile). 640×400 is a sane tab
+                // surface; the SWGL rasterizer owns the buffer.
+                #[cfg(feature = "servo")]
+                {
+                    let outcome = servo_render::render_dregg_page(
+                        &held,
+                        &uri.to_uri_string(),
+                        &resource.content_bytes,
+                        640,
+                        400,
+                    );
+                    rendered_tile = outcome.frame().cloned();
+                }
             }
         }
 
@@ -512,6 +547,8 @@ impl WebCellsBrowser {
             rehydration_badge,
             transclusion,
             document,
+            #[cfg(feature = "servo")]
+            rendered_tile,
         }
     }
 

@@ -138,10 +138,15 @@ embedded-executor = ["dep:dregg-turn", "dep:dregg-cell", "dep:dregg-types", "dep
 # web-of-cells tab can paint a real `dregg://` page. Kept OFF the default
 # `embedded-executor` build so the cockpit stays lean (no C++ swgl build) unless
 # real-content rendering is deliberately turned on. The heavy `libservo`/mozjs
-# WebView upgrade is a further feature INSIDE servo-render, not here. The actual
-# tile wiring (web_cells.rs populate + cockpit.rs `img()`) is the named-next 2-line
-# seam (HORIZONLOG) — this feature makes the renderer reachable.
-servo = ["embedded-executor", "dep:servo-render"]
+# WebView upgrade is a further feature INSIDE servo-render, not here. The tile
+# wiring (web_cells.rs populate + cockpit.rs `img()`) is LIVE: the opened cell's
+# attested page rasterizes to a cap-gated `RgbaFrame` (web_cells) which the cockpit
+# paints with a gpui `img()`. That paint builds a `gpui::RenderImage` from raw
+# RGBA8, which requires the `image` crate (gpui's `RenderImage`/`Frame` are
+# `image`-typed and not re-exported) — so `servo` pulls `dep:image` (the SAME
+# `image 0.25` gpui + servo-render already resolve; the default build is unchanged,
+# `image` is still pulled only when `servo` or `headless-render` is on).
+servo = ["embedded-executor", "dep:servo-render", "dep:image"]
 
 # The gpui renderer. `runtime_shaders` is LOAD-BEARING on macOS: it makes gpui
 # compile its Metal shaders AT RUNTIME (via `MTLDevice::newLibraryWithSource`,

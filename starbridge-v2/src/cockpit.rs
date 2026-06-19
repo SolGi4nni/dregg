@@ -5260,8 +5260,39 @@ impl Cockpit {
             );
         }
 
-        // ── THE SERVO NEXT LAYER (named honestly in the panel) ──
-        col = col.child(
+        // ── THE SERVO LAYER ──
+        // With feature `servo` ON and a rendered tile present, paint the REAL
+        // cap-gated SWGL frame of the opened cell's attested `dregg://` page —
+        // the first real rendered `dregg://` CONTENT in the tab. Otherwise
+        // (feature-off, or the cap refused the page so no frame) fall back to the
+        // servo_layer_note() placeholder that NAMES the next layer.
+        #[cfg(feature = "servo")]
+        let servo_tile: Option<gpui::AnyElement> =
+            browser.rendered_tile.as_ref().map(|frame| {
+                div()
+                    .mt_2()
+                    .p_2()
+                    .rounded_md()
+                    .border_1()
+                    .border_color(theme::good())
+                    .bg(theme::panel())
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(theme::good())
+                            .child("SERVO: real cap-gated SWGL render of the opened cell's attested dregg:// page"),
+                    )
+                    .child(
+                        gpui::img(rgba_frame_to_image(frame))
+                            .w(gpui::px(frame.width as f32))
+                            .h(gpui::px(frame.height as f32)),
+                    )
+                    .into_any_element()
+            });
+        #[cfg(not(feature = "servo"))]
+        let servo_tile: Option<gpui::AnyElement> = None;
+
+        col = col.child(servo_tile.unwrap_or_else(|| {
             div()
                 .mt_2()
                 .p_2()
@@ -5274,8 +5305,9 @@ impl Cockpit {
                         .text_xs()
                         .text_color(theme::muted())
                         .child(browser.servo_layer_note()),
-                ),
-        );
+                )
+                .into_any_element()
+        }));
         col
     }
 
@@ -6745,4 +6777,24 @@ fn shell_button(
             }),
         )
         .child(label.to_string())
+}
+
+/// Convert a servo-render [`servo_render::RgbaFrame`] (RGBA8, row-major) into a
+/// gpui [`gpui::RenderImage`] the cockpit paints with `img()`. gpui's
+/// `RenderImage` holds **BGRA** frames (see `gpui::Image::to_image_data`, which
+/// swaps R↔B after decode), so we swap the red/blue channels of the SWGL frame's
+/// bytes the same way before wrapping them in an `image::Frame`. This is the SAME
+/// raw-bytes -> `RenderImage::new(vec![Frame::new(buf)])` path the upstream
+/// `repl::outputs::ImageView` uses — no parallel renderer, no re-fetch: just the
+/// already-rendered cap-gated pixels handed to gpui.
+#[cfg(feature = "servo")]
+fn rgba_frame_to_image(frame: &servo_render::RgbaFrame) -> std::sync::Arc<gpui::RenderImage> {
+    // Copy the RGBA8 bytes and swap R<->B in place to land in gpui's BGRA layout.
+    let mut bgra = frame.bytes.clone();
+    for px in bgra.chunks_exact_mut(4) {
+        px.swap(0, 2);
+    }
+    let buffer = image::RgbaImage::from_raw(frame.width, frame.height, bgra)
+        .expect("RgbaFrame carries width*height*4 RGBA8 bytes");
+    std::sync::Arc::new(gpui::RenderImage::new(vec![image::Frame::new(buffer)]))
 }
