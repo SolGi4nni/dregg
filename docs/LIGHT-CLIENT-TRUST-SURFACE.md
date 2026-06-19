@@ -90,3 +90,34 @@ REMAINING ARC: the commitment floor (deepest) is done; #2 forest + #4 replay + #
 residue is (a) #6 cross-cell — needs the batch collector; (b) #3 signature — the dual-scheme build; (c) refusal
 ledgerless authority — the openable-root; (d) #8 non-empty Lean inhabitant (polish). When (a)–(c) land, a
 ledgerless `verify_batch` client concludes genuine/authorized/non-replayed/conserving with nothing off-circuit.
+
+## Live-wire serialization plan (the seams; I serialize these one-at-a-time after the build-halves land)
+
+All four converge on `proof_verify.rs` / the cell crate / `node` block-assembly → SEQUENTIAL, not parallel.
+- **#3 dual-scheme** → `execute.rs:446` (the `execution_proof` branch is the PROVEN path; `SovereignCellWitness`
+  at `:734` is the RECEIPT path — dual-dispatch slots HERE) + `proof_verify.rs` (proven turn: assert forced
+  `cpk` == the cell's committed Curve authority) + the cell-authority scheme-tag (`cell/src/state.rs`/
+  `commitment.rs`, folded into the 8-felt commit) + SDK signer-select. Both-keyed.
+- **#6 batch collector** → the BLOCK level above `node/src/turn_proving.rs:843` (`conservation: None` becomes the
+  collector result): gather every per-cell proof's `(NET_DELTA_MAG, NET_DELTA_SIGN, asset)`, run the proven
+  `verify_cross_cell_conservation` per asset, reject an unbalanced block. (Per-cell isolation confirmed:
+  `effect_vm_bridge.rs:69` splits a Transfer into one cell's leg.)
+- **refusal openable-root** → re-point `refusalV3` (`EffectVmEmitRotationV3.lean`) to the openable-insertion gate
+  + drop `Anchor::RecordDigest` for refusal in `proof_verify.rs:360,389` + the cell `fields_root` becomes the
+  openable Merkle structure. VK-affecting (re-emit + re-pin).
+- **#8** → no live-wire (Lean-internal; the non-empty inhabitant replaces the empty-trace lemma).
+
+## The #2 follow-up — TRUE shape (a DELIBERATE fix, not a parallel rush; completeness, not soundness)
+
+`proof_verify.rs:672` computes `dpis[38] = digest(apply LEAD effect to record_pin_cell)` — first match only,
+`record_pin_cell` = the GLOBAL before-cell for every run. TWO completeness gaps (honest turns rejected; NOT a
+soundness hole — the closed multi-cohort tooth holds for authority-invariant earlier runs):
+1. **within-run multi-effect:** a `[SetPerms(A→B), SetPerms(B→C)]` run (same descriptor → ONE contiguous run)
+   commits perms=C but anchors perms=B (lead only) → rejected.
+2. **cross-run residue:** a later run's anchor projects from the global before-cell, missing an earlier run's
+   residue move.
+FIX needs the run→kernel-effect mapping — FIDDLY because `convert_turn_effects_to_vm` filters+projects (Transfer
+→ debit-or-credit, not 1:1) AND same-class runs can be NON-CONTIGUOUS (`[SetPerms,Transfer,SetPerms]` → two
+SetPerms runs), so "apply all matching by cell_id" over-applies. Getting it wrong regresses the live single-cohort
+fleet (`sovereign_rotated_c1` 22/0). → do it TEST-FIRST (a producible multi-residue-move turn) + verify no
+fleet regression. Deliberate, not rushed.
