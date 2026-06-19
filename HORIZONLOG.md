@@ -11,6 +11,39 @@ reason.)*
 Last sweep: 2026-06-13 (flagged-items burndown — removed ~14 landed/struck items,
 deduped the DreggDL/sel4/snapshot landings into git history, kept live tails).
 
+## WAVE 2 PERMS/VK — the setPermissions/setVK mover light-client forgery CLOSED LIVE (2026-06-18)
+
+The authority movers setPermissions/setVK forced their AFTER perms/VK only via the off-circuit
+record-pin anchor (PI[38] from the TRUSTED post-cell) — for a ledgerless client a setPermissions whose
+committed post-state bound ARBITRARY permissions/VK passed `verifyBatch` alone. CLOSED LIVE by the
+WAVE-2 VK flag-day (NUM_PRE_LIMBS 33→35, mirroring WAVE 1's 32→33): TWO committed authority sub-limbs
+were appended as the new LAST pre-limbs — perms-digest `B_PERMS = 33` and vk-digest `B_VK = 34` (B_SPAN
+47→49, ROT_WIDTH 320→324, APPENDIX 133→137, CAP_OPEN_BASE auto-follows; all offsets 0..32 incl. WAVE-1
+`B_DISC = 32` STABLE; the 35-limb body re-chunks to ten 3-wide groups + one singleton, site count stays
+13). Each sub-limb is the deployed declared-param felt `= bytes32_to_8_limbs(blake3(postcard(perms/vk)))[0]`
+(BYTE-IDENTICAL to `params[0]` of the live setPerms/setVK row; canonical
+`cell::commitment::{perms,vk}_digest_felt`, `turn::rotation_witness` delegates — ONE definition).
+The deployed setPerms/setVK descriptors carry the LIVE in-circuit weld
+(`EffectVmEmitRotationV3.rotateV3WithPermsVKGate`: a selector-gated weld of the AFTER perms/vk sub-limb
+to the in-circuit declared-param column `prmCol 0`), so a forged post-permissions / post-VK is UNSAT for
+a ledgerless client with NO trusted post-cell. The value cohort `rotateV3FrozenAuthority` continuity-welds
+both B_PERMS + B_VK (a value turn cannot smuggle an authority-shape change into NEW_COMMIT). Proven:
+`setPermsV3_forces_declared`, `setPermsV3_rejects_forged`, `setVKV3_rejects_forged`,
+`rotateV3WithPermsVKGate_{forces,rejects_forged}` — deployed faces of `RotatedKernelRefinementPermsVK`,
+all axiom-clean. Differential extended (`RotatedCommitDifferential.rotatedLimbs` 35-limb + load-bearing
+at indices 33/34 + the Rust flip test's perms-flip + vk-flip legs). LIVE teeth: the forged
+setPermissions/setVK rejects now bite at PROVE time (`check_constraints` refuses the trace — the weld is
+a row constraint), confirmed in `sovereign_rotated_c1` (`LIVE PERMS GATE`/`LIVE VK GATE` stderr).
+lake 4003 axiom-clean · circuit lib 884 + flip 12/12 + cap-open 3/3 + 1/1 + selector 3/3 + drift/registry
+PASS · sovereign_rotated_c1 19/19 · turn+cell+node build · registry re-emitted (46 lines, FP
+`369f6fbb…`). NAMED RESIDUAL: the in-circuit weld binds the declared param's LIMB[0] (`params[0]`); the
+full 8-limb declared perms/VK hash binds via the SAME `effects_hash`→PI chain the light client already
+verifies (the existing path — so the closed property is "committed authority-shape ≠ the PI-anchored
+declared authority"). The variable Custom-vk hash component rides that same effects_hash anchor (no
+in-circuit fixed-width tag fold — the deployed setPerms/setVK row keeps perms/VK off-trace, only
+`params[0]` is the in-circuit handle). The opaque full `record_digest` (r23) PI-38 anchor stays
+belt-and-suspenders. WAVE 3: refusal/makeSovereign/setFieldDyn (the identity/fieldsExt sub-limbs).
+
 ## WAVE 1 LIFECYCLE-DISC — the lifecycle-mover light-client forgery CLOSED LIVE (2026-06-18)
 
 The lifecycle movers (cellSeal/cellUnseal/cellDestroy/receiptArchive) forced their AFTER-lifecycle

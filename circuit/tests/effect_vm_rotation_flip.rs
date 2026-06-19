@@ -52,7 +52,7 @@ use dregg_circuit::field::BabyBear;
 use dregg_turn::rotation_witness as rw;
 
 const B_CAP_ROOT: usize = 25;
-const NUM_PRE: usize = rw::NUM_PRE_LIMBS; // 33
+const NUM_PRE: usize = rw::NUM_PRE_LIMBS; // 35
 
 /// Resolve a rotated descriptor JSON from the staged registry TSV by key.
 fn rotated_json(key: &str) -> &'static str {
@@ -223,6 +223,8 @@ fn rotated_transfer_proves_verifies_differential_and_refuses_ghost() {
         (30, "epoch"),
         (31, "committed_height"),
         (32, "lifecycle_disc"),
+        (33, "perms_digest"),
+        (34, "vk_digest"),
     ] {
         assert_eq!(
             after_w.pre_limbs[idx],
@@ -1072,7 +1074,7 @@ fn rotated_published_commit_lean_differential_and_permission_flip_moves_it() {
     // ALONE last. Independent of the deployed `v9_wire_commit` (re-derived here from the public
     // `hash_many` primitive + the pre-limb vector), so agreement is a genuine differential.
     fn independent_wire_commit(pre_limbs: &[BabyBear], iroot: BabyBear) -> BabyBear {
-        assert_eq!(pre_limbs.len(), V9_NUM_PRE_LIMBS, "33 pre-iroot limbs at R=24");
+        assert_eq!(pre_limbs.len(), V9_NUM_PRE_LIMBS, "35 pre-iroot limbs at R=24");
         // 4-wide head over the first four limbs (cells_root, r0, r1, r2).
         let mut d = hash_many(&[pre_limbs[0], pre_limbs[1], pre_limbs[2], pre_limbs[3]]);
         let mut col = 4;
@@ -1106,7 +1108,7 @@ fn rotated_published_commit_lean_differential_and_permission_flip_moves_it() {
     // -- (a) THE INDEPENDENT RE-FOLD == the deployed PUBLISHED commitment. --
     // The deployed pre-limb vector (the Lean `rotatedLimbs` order) and the deployed published felt.
     let pre = compute_rotated_pre_limbs(&plain, &ctx);
-    assert_eq!(pre.len(), V9_NUM_PRE_LIMBS, "33 limbs");
+    assert_eq!(pre.len(), V9_NUM_PRE_LIMBS, "35 limbs");
     // The authority residue sits at index 24 (register r23) — the Lean `authority_digest_at_index_24`.
     assert_eq!(
         pre[24],
@@ -1134,17 +1136,20 @@ fn rotated_published_commit_lean_differential_and_permission_flip_moves_it() {
          bound, not a constant stub"
     );
 
-    // The pre-limb vectors differ ONLY at index 24 (the authority digest) — every OTHER named limb
-    // (cells_root, balance/nonce/fields, cap_root, nullifier/heap roots, lifecycle/epoch/height) is
-    // identical, since only `permissions.send` changed.
+    // The pre-limb vectors differ at index 24 (the authority digest) AND index 33 (the WAVE-2
+    // perms-digest sub-limb, which folds the permissions) — every OTHER named limb (cells_root,
+    // balance/nonce/fields, cap_root, nullifier/heap roots, lifecycle/epoch/height/disc, vk) is
+    // identical, since only `permissions.send` changed (the VK is untouched, so limb 34 is frozen).
     let pre_locked = compute_rotated_pre_limbs(&locked, &ctx);
     for i in 0..V9_NUM_PRE_LIMBS {
         if i == 24 {
             assert_ne!(pre[i], pre_locked[i], "index 24 (authority digest) MUST move");
+        } else if i == 33 {
+            assert_ne!(pre[i], pre_locked[i], "index 33 (perms-digest) MUST move on a perms flip");
         } else {
             assert_eq!(
                 pre[i], pre_locked[i],
-                "limb {i} (a NAMED non-authority limb) must be unchanged by a permission flip"
+                "limb {i} (a NAMED non-perms-authority limb) must be unchanged by a permission flip"
             );
         }
     }
@@ -1227,11 +1232,72 @@ fn rotated_published_commit_lean_differential_and_permission_flip_moves_it() {
         "the independent re-fold == the deployed published commitment on the sealed cell too"
     );
 
+    // -- (e) THE perms_digest / vk_digest FLIP (the WAVE-2 perms/VK flag-day's reason for the two new
+    //    limbs): a permissions change MOVES the committed perms-digest limb (33) AND the published
+    //    commitment; a VK change MOVES the committed vk-digest limb (34) AND the published commitment.
+    //    This is the P0-2 non-vacuity on the perms/VK sub-limbs: a forged post-permissions / post-VK
+    //    publishes a DIFFERENT OLD/NEW commit than the honest one. The differential's Lean twin is
+    //    `RotatedCommitDifferential` load-bearing at indices 33 / 34. The committed sub-limb IS the
+    //    deployed declared param (`perms_digest_felt`/`vk_digest_felt` = `params[0]`), so the
+    //    setPerms/setVK weld forcing `after == params[0]` is a genuine in-circuit close. --
+    let mut perm_changed = producer_cell(100_000, 0);
+    perm_changed.permissions = dregg_cell::Permissions::zkapp(); // a DIFFERENT 8-field perms struct
+    let pre_perm = compute_rotated_pre_limbs(&perm_changed, &ctx);
+    assert_ne!(
+        pre[33], pre_perm[33],
+        "index 33 (perms_digest) MUST move on a permissions change (the perms sub-limb is committed)"
+    );
+    assert_eq!(
+        pre[33],
+        dregg_turn::rotation_witness::perms_digest_felt(&plain.permissions),
+        "the committed perms-digest limb IS the deployed declared param (params[0] of a setPerms row)"
+    );
+    let published_perm = compute_canonical_state_commitment_v9_felt(&perm_changed, &ctx);
+    assert_ne!(
+        published, published_perm,
+        "P0-2 on the perms-digest: a permissions change MOVES the published rotated commitment \
+         (limb 33 is bound) — a forged post-permissions publishes a DIFFERENT commit"
+    );
+    assert_eq!(
+        published_perm,
+        independent_wire_commit(&pre_perm, iroot),
+        "the independent re-fold == the deployed published commitment on the perms-changed cell too"
+    );
+
+    let mut vk_changed = producer_cell(100_000, 0);
+    vk_changed.verification_key = Some(dregg_cell::VerificationKey {
+        hash: [7u8; 32],
+        data: vec![1, 2, 3],
+    });
+    let pre_vk = compute_rotated_pre_limbs(&vk_changed, &ctx);
+    assert_ne!(
+        pre[34], pre_vk[34],
+        "index 34 (vk_digest) MUST move on a VK change (the vk sub-limb is committed)"
+    );
+    assert_eq!(
+        pre[34],
+        dregg_turn::rotation_witness::vk_digest_felt(&plain.verification_key),
+        "the committed vk-digest limb IS the deployed declared param (params[0] of a setVK row)"
+    );
+    let published_vk = compute_canonical_state_commitment_v9_felt(&vk_changed, &ctx);
+    assert_ne!(
+        published, published_vk,
+        "P0-2 on the vk-digest: a VK change MOVES the published rotated commitment (limb 34 is bound) \
+         — a forged post-VK publishes a DIFFERENT commit"
+    );
+    assert_eq!(
+        published_vk,
+        independent_wire_commit(&pre_vk, iroot),
+        "the independent re-fold == the deployed published commitment on the vk-changed cell too"
+    );
+
     eprintln!(
         "ROTATED WIRE-COMMIT LEAN DIFFERENTIAL GREEN: the PUBLISHED rotated commitment == an \
          independent re-fold over the Lean rotatedLimbs order; a permission flip MOVES it (P0-2 on \
          the authority residue, limb 24); a note-commitment ADD MOVES it (P0-2 on the commitments \
-         set, limb 27); and a Live→Sealed flip MOVES it (P0-2 on the lifecycle disc, limb 32)."
+         set, limb 27); a Live→Sealed flip MOVES it (P0-2 on the lifecycle disc, limb 32); a perms \
+         change MOVES it (P0-2 on the perms-digest, limb 33); and a VK change MOVES it (P0-2 on the \
+         vk-digest, limb 34)."
     );
 }
 

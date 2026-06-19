@@ -62,10 +62,11 @@ use dregg_circuit::poseidon2::{hash_bytes, hash_many};
 pub const NUM_REGISTERS: usize = 24;
 
 /// The number of pre-iroot absorption limbs (cells_root · r0..r23 · cap_root · nullifier_root ·
-/// commitments_root · heap_root · lifecycle · epoch · committed_height · lifecycle_disc). Matches
-/// Lean `preLimbsAt_length = 33` at R = 24, after the lifecycle-disc flag-day widening
-/// (NUM_PRE_LIMBS 32→33 — the committed lifecycle discriminant, the NEW LAST pre-iroot limb).
-pub const NUM_PRE_LIMBS: usize = 1 + NUM_REGISTERS + 4 + 3 + 1; // 1 + 24 + 4 + 3 + 1 = 33
+/// commitments_root · heap_root · lifecycle · epoch · committed_height · lifecycle_disc ·
+/// perms_digest · vk_digest). Matches Lean `preLimbsAt_length = 35` at R = 24, after the WAVE-2
+/// perms/VK flag-day widening (NUM_PRE_LIMBS 33→35 — the committed perms-digest + vk-digest sub-limbs,
+/// the NEW LAST pre-iroot limbs).
+pub const NUM_PRE_LIMBS: usize = 1 + NUM_REGISTERS + 4 + 3 + 3; // 1 + 24 + 4 + 3 + 3 = 35
 
 /// The collection id under which a present-cell existence leaf is keyed in the cells tree.
 const CELLS_COLLECTION: u32 = 0;
@@ -173,6 +174,26 @@ pub fn lifecycle_disc_felt(lc: &CellLifecycle) -> BabyBear {
         CellLifecycle::Archived { .. } => 4,
     };
     BabyBear::new(disc as u32)
+}
+
+/// The committed PERMISSIONS-DIGEST limb (`B_PERMS = 33`, the WAVE-2 perms/VK flag-day). Delegates to
+/// the CANONICAL `dregg_cell::commitment::perms_digest_felt` (the single definition, no Rust copy to
+/// differential): `bytes32_to_8_limbs(blake3(postcard(permissions)))[0]` — BYTE-IDENTICAL to the
+/// deployed `params[0]` of a setPermissions row (`effect_vm_bridge.rs::SetPermissions` → `hash_to_8`).
+/// The setPermissions weld (`EffectVmEmitRotationV3.rotateV3WithPermsVKGate`) FORCES the AFTER
+/// perms-digest limb EQUAL to the in-circuit declared-param column (this felt, PI-anchored via
+/// `effects_hash`), so a ledgerless light client cannot be shown a forged post-permissions.
+pub fn perms_digest_felt(perms: &dregg_cell::Permissions) -> BabyBear {
+    dregg_cell::commitment::perms_digest_felt(perms)
+}
+
+/// The committed VERIFICATION-KEY-DIGEST limb (`B_VK = 34`, the WAVE-2 flag-day). Delegates to the
+/// canonical `dregg_cell::commitment::vk_digest_felt` — BYTE-IDENTICAL to the deployed `params[0]` of
+/// a setVK row, `None` (revoke) → the all-zero limb (the deployed `vk_hash == [0; 8]` convention). The
+/// setVK weld FORCES the AFTER vk-digest limb to this declared param, closing the upgrade-safety
+/// (post-VK) light-client forgery.
+pub fn vk_digest_felt(vk: &Option<dregg_cell::VerificationKey>) -> BabyBear {
+    dregg_cell::commitment::vk_digest_felt(vk)
 }
 
 /// Felt-encode the parent-side delegation epoch — the `epoch` scalar limb.
@@ -309,9 +330,13 @@ pub fn produce(
     pre_limbs[29] = lifecycle_felt(&cell.lifecycle);
     pre_limbs[30] = epoch_felt(cell.state.delegation_epoch());
     pre_limbs[31] = committed_height_felt(cell.state.committed_height());
-    // limb 32: lifecycle_disc (the flag-day new committed discriminant — the gated disc-transition
-    // limb, the NEW LAST pre-iroot limb).
+    // limb 32: lifecycle_disc (the WAVE-1 flag-day committed discriminant — the gated disc-transition
+    // limb).
     pre_limbs[32] = lifecycle_disc_felt(&cell.lifecycle);
+    // limbs 33,34: perms_digest, vk_digest (the WAVE-2 flag-day committed authority sub-limbs — the
+    // setPerms / setVK welds force these to the declared param, the NEW LAST pre-iroot limbs).
+    pre_limbs[33] = perms_digest_felt(&cell.permissions);
+    pre_limbs[34] = vk_digest_felt(&cell.verification_key);
 
     let iroot_val = iroot(receipt_hashes);
     let state_commit = wire_commit(&pre_limbs, iroot_val);
@@ -531,8 +556,8 @@ mod tests {
     }
 
     #[test]
-    fn pre_limb_count_is_33_at_r24() {
-        assert_eq!(NUM_PRE_LIMBS, 33);
+    fn pre_limb_count_is_35_at_r24() {
+        assert_eq!(NUM_PRE_LIMBS, 35);
     }
 
     /// THE iroot NON-OMISSION TOOTH (Lean `mroot_injective`): tamper / truncate / extend /
@@ -610,6 +635,20 @@ mod tests {
             c,
             wire_commit(&moved_disc, BabyBear::new(7)),
             "lifecycle_disc limb (32) is bound"
+        );
+        let mut moved_perms = limbs.clone();
+        moved_perms[33] = BabyBear::new(999);
+        assert_ne!(
+            c,
+            wire_commit(&moved_perms, BabyBear::new(7)),
+            "perms_digest limb (33) is bound"
+        );
+        let mut moved_vk = limbs.clone();
+        moved_vk[34] = BabyBear::new(999);
+        assert_ne!(
+            c,
+            wire_commit(&moved_vk, BabyBear::new(7)),
+            "vk_digest limb (34) is bound"
         );
         assert_ne!(c, wire_commit(&limbs, BabyBear::new(8)), "iroot is bound");
     }

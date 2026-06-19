@@ -336,15 +336,41 @@ mod record_pin_anchor {
             );
 
         let caveat = dregg_circuit::effect_vm::trace_rotated::empty_caveat_manifest();
-        let forged_proof = prove_effect_vm_rotated_ir2_with_caveat(
-            &initial_vm_state,
-            &vm_effects,
-            &before_w,
-            &after_w,
-            &caveat,
-            None,
-        )
-        .expect("the forged proof is internally consistent (it proves a frozen() after-state)");
+        // THE LIVE WAVE-2 PERMS GATE bites FIRST: the forged-after's committed perms-digest sub-limb
+        // (`B_PERMS = 33`, = digest(frozen)) ≠ the in-circuit declared param `params[0]` (= digest(zkapp),
+        // the HONEST effect's hash, PI-anchored via effects_hash). The deployed `setPermsVmDescriptor2R24`
+        // in-circuit perms weld (`EffectVmEmitRotationV3.rotateV3WithPermsVKGate`) makes the forged trace
+        // UNSAT — the prover's `check_constraints` cannot even close the proof. That is the STRONGEST
+        // rejection: a forged post-permissions is UNPROVABLE for a ledgerless client (no trusted post-cell,
+        // no PI-38 anchor needed).
+        let prove_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            prove_effect_vm_rotated_ir2_with_caveat(
+                &initial_vm_state,
+                &vm_effects,
+                &before_w,
+                &after_w,
+                &caveat,
+                None,
+            )
+        }));
+        let forged_proof = match prove_result {
+            Ok(Ok(p)) => p,
+            Ok(Err(e)) => {
+                eprintln!(
+                    "forged-after-permissions: LIVE PERMS GATE — the forged-after trace is UNSAT at \
+                     prove time ({e}); the forgery is unprovable (no trusted post-cell, no anchor)."
+                );
+                return;
+            }
+            Err(_) => {
+                eprintln!(
+                    "forged-after-permissions: LIVE PERMS GATE — the forged-after trace violates the \
+                     in-circuit perms weld (prover `check_constraints` refused it); the forged \
+                     post-permissions is unprovable for a ledgerless client (no trusted post-cell)."
+                );
+                return;
+            }
+        };
         let proof_bytes = postcard::to_allocvec(&forged_proof).expect("serialize forged proof");
 
         // The forged NEW commitment = the v9 felt of the FORGED after-cell (so PI 35 matches the
@@ -510,15 +536,39 @@ mod record_pin_anchor {
             );
 
         let caveat = dregg_circuit::effect_vm::trace_rotated::empty_caveat_manifest();
-        let forged_proof = prove_effect_vm_rotated_ir2_with_caveat(
-            &initial_vm_state,
-            &vm_effects,
-            &before_w,
-            &after_w,
-            &caveat,
-            None,
-        )
-        .expect("the forged proof is internally consistent (it proves a vk_forged after-state)");
+        // THE LIVE WAVE-2 VK GATE bites FIRST: the forged-after's committed vk-digest sub-limb
+        // (`B_VK = 34`, = digest(vk_forged)) ≠ the in-circuit declared param `params[0]` (= the HONEST
+        // setVK effect's vk-hash, PI-anchored via effects_hash). The deployed `setVKVmDescriptor2R24`
+        // in-circuit vk weld makes the forged trace UNSAT — `check_constraints` cannot close the proof.
+        // A forged post-VK (the upgrade-safety forgery) is UNPROVABLE for a ledgerless client.
+        let prove_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            prove_effect_vm_rotated_ir2_with_caveat(
+                &initial_vm_state,
+                &vm_effects,
+                &before_w,
+                &after_w,
+                &caveat,
+                None,
+            )
+        }));
+        let forged_proof = match prove_result {
+            Ok(Ok(p)) => p,
+            Ok(Err(e)) => {
+                eprintln!(
+                    "forged-after-vk: LIVE VK GATE — the forged-after trace is UNSAT at prove time \
+                     ({e}); the forged post-VK is unprovable (no trusted post-cell, no anchor)."
+                );
+                return;
+            }
+            Err(_) => {
+                eprintln!(
+                    "forged-after-vk: LIVE VK GATE — the forged-after trace violates the in-circuit vk \
+                     weld (prover `check_constraints` refused it); the forged post-VK is unprovable for \
+                     a ledgerless client (no trusted post-cell)."
+                );
+                return;
+            }
+        };
         let proof_bytes = postcard::to_allocvec(&forged_proof).expect("serialize forged proof");
 
         let new_commit_felt = dregg_cell::commitment::compute_canonical_state_commitment_v9_felt(

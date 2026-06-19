@@ -2,11 +2,11 @@
 //!
 //! `docs/ROTATION-CUTOVER.md` §5 deferred the rotated trace BUILDER: the staged keystones
 //! (`EffectVmEmitRotationV3.lean`) prove the rotated R=24 cohort sound and the staged probe
-//! measures the SHAPE, but the LIVE machinery that turns a real turn into the 320-column
+//! measures the SHAPE, but the LIVE machinery that turns a real turn into the 324-column
 //! rotated trace existed ONLY hand-welded inside `circuit/tests/effect_vm_rotation_flip.rs`
 //! (`fill_block` / `fill_caveat`). This module PROMOTES that hand-welding into a genuine
 //! generator: from the v1 186-column trace (`generate_effect_vm_trace`) plus the per-turn
-//! producer witness limbs, it emits the rotated 320-column trace — the two rotated blocks
+//! producer witness limbs, it emits the rotated 324-column trace — the two rotated blocks
 //! (BEFORE / AFTER) + the widened-caveat region + every chained `wireCommitR` digest — and
 //! the 38-PI vector (34 v1 + 4 appended) the staged registry descriptor
 //! (`transferVmDescriptor2R24`) pins.
@@ -63,22 +63,23 @@ pub const V1_WIDTH: usize = EFFECT_VM_WIDTH; // 187 (P0-2 record-digest aux colu
 pub const NUM_REGISTERS: usize = 24;
 
 /// The number of pre-iroot absorption limbs (cells_root · r0..r23 · cap_root · nullifier_root ·
-/// commitments_root · heap_root · lifecycle · epoch · committed_height · **lifecycle_disc**). Lean
-/// `preLimbsAt_length = 33` at R = 24, after the lifecycle-disc flag-day widening (NUM_PRE_LIMBS
-/// 32→33 — the committed lifecycle discriminant, the NEW LAST pre-iroot limb).
-pub const NUM_PRE_LIMBS: usize = 1 + NUM_REGISTERS + 4 + 3 + 1; // 33 (+ the lifecycle_disc limb)
+/// commitments_root · heap_root · lifecycle · epoch · committed_height · lifecycle_disc ·
+/// **perms_digest** · **vk_digest**). Lean `preLimbsAt_length = 35` at R = 24, after the WAVE-2
+/// perms/VK flag-day widening (NUM_PRE_LIMBS 33→35 — the committed perms-digest + vk-digest sub-limbs,
+/// the NEW LAST pre-iroot limbs).
+pub const NUM_PRE_LIMBS: usize = 1 + NUM_REGISTERS + 4 + 3 + 3; // 35 (+ disc + perms + vk)
 
-/// A rotated block: 33 limbs + iroot + state_commit + 12 chain carriers = 47 columns. The 33-limb
-/// body chunks as a 4-wide head + nine 3-wide groups + TWO arity-2 leftovers (limb 31 = committed_
-/// height, limb 32 = the disc) + the iroot alone, so there is one more chain carrier than the 32-limb
-/// shape (B_SPAN 45→47).
-pub const B_SPAN: usize = 47;
+/// A rotated block: 35 limbs + iroot + state_commit + 12 chain carriers = 49 columns. The 35-limb
+/// body chunks (`chunk31` of limbs 4..34) as a 4-wide head + TEN 3-wide groups (limbs 4..33) + ONE
+/// arity-2 singleton (limb 34) + the iroot alone, so the chain-carrier count stays 12 over the 33-limb
+/// shape (B_SPAN 47→49 — two more limbs, no new carrier).
+pub const B_SPAN: usize = 49;
 /// The widened-caveat region: 29 manifest + 9 chain + 1 commit = 39 columns.
 pub const C_SPAN: usize = 39;
 /// The appendix: two blocks + the caveat region.
-pub const APPENDIX: usize = 2 * B_SPAN + C_SPAN; // 133
+pub const APPENDIX: usize = 2 * B_SPAN + C_SPAN; // 137
 /// The rotated trace width.
-pub const ROT_WIDTH: usize = V1_WIDTH + APPENDIX; // 320
+pub const ROT_WIDTH: usize = V1_WIDTH + APPENDIX; // 324
 
 /// In-block offset of the AUTHORITY-DIGEST limb (r23, limb 24) — the single felt
 /// folding ALL authority-bearing cell state no other rotated limb carries
@@ -110,23 +111,28 @@ pub const B_COMMITMENTS_ROOT: usize = 27;
 pub const B_HEAP_ROOT: usize = 28;
 /// In-block offset of the `committed_height` limb (limb 31, UNCHANGED by the disc flag-day).
 pub const B_COMMITTED_HEIGHT: usize = 31;
-/// In-block offset of the committed lifecycle-DISC limb (limb 32 — the flag-day NEW LAST pre-iroot
-/// limb, the `u8 0..4` discriminant committed BESIDE the opaque `lifecycle_felt` at 29). The forced
-/// limb for the live per-effect disc-transition gate. Lean `EffectVmEmitRotationV3.B_DISC`.
+/// In-block offset of the committed lifecycle-DISC limb (limb 32 — the WAVE-1 flag-day committed
+/// `u8 0..4` discriminant beside the opaque `lifecycle_felt` at 29). Lean `EffectVmEmitRotationV3.B_DISC`.
 pub const B_DISC: usize = 32;
-/// In-block offset of the iroot carrier (absorbed last, limb 33, shifted +1 by the disc limb).
-pub const B_IROOT: usize = 33;
+/// In-block offset of the committed PERMS-DIGEST limb (limb 33 — the WAVE-2 flag-day perms sub-limb,
+/// `= permsHash[0]`, the forced limb for the setPermissions weld). Lean `EffectVmEmitRotationV3.B_PERMS`.
+pub const B_PERMS: usize = 33;
+/// In-block offset of the committed VK-DIGEST limb (limb 34 — the WAVE-2 flag-day vk sub-limb,
+/// `= vkHash[0]`, the forced limb for the setVK weld). Lean `EffectVmEmitRotationV3.B_VK`.
+pub const B_VK: usize = 34;
+/// In-block offset of the iroot carrier (absorbed last, limb 35, shifted +2 by the perms/vk limbs).
+pub const B_IROOT: usize = 35;
 /// In-block offset of the `state_commit` carrier (the chain's final digest).
-pub const B_STATE_COMMIT: usize = 34;
-/// In-block base of the chained-absorption intermediate carriers (12 sites, 35..=46).
-pub const B_CHAIN_BASE: usize = 35;
+pub const B_STATE_COMMIT: usize = 36;
+/// In-block base of the chained-absorption intermediate carriers (12 sites, 37..=48).
+pub const B_CHAIN_BASE: usize = 37;
 
 /// Absolute base column of the BEFORE rotated block.
 pub const BEFORE_BASE: usize = V1_WIDTH; // 186
 /// Absolute base column of the AFTER rotated block.
-pub const AFTER_BASE: usize = V1_WIDTH + B_SPAN; // 234
+pub const AFTER_BASE: usize = V1_WIDTH + B_SPAN; // 235
 /// Absolute base column of the widened-caveat region.
-pub const CAVEAT_BASE: usize = V1_WIDTH + 2 * B_SPAN; // 281
+pub const CAVEAT_BASE: usize = V1_WIDTH + 2 * B_SPAN; // 284
 
 /// The number of v1 public inputs the rotated PI vector prefixes (`ACTIVE_BASE_COUNT`).
 pub const V1_PI_COUNT: usize = 34;
@@ -391,7 +397,7 @@ pub const FEE_MAX: u64 = (1u64 << 30) - 1;
 ///   * the v1 GROUP-4 after-state-commit chain is recomputed (cols 98/99/100 intermediates → col 88
 ///     STATE_COMMIT, absorbing the record-digest aux at col 186), so the v1 after STATE_COMMIT (PI 4)
 ///     and the after bal_lo/hi (PIs 14/15) bind the post-fee balance;
-///   * `fill_block` is RE-RUN for the AFTER rotated block so its welded balance limb (col 232+1) +
+///   * `fill_block` is RE-RUN for the AFTER rotated block so its welded balance limb (col 235+1) +
 ///     chained `wireCommitR` → rotated NEW_COMMIT (col 265 / PI 35) bind the post-fee balance;
 ///   * the fee is written to col 89 (= `STATE_AFTER_BASE + state::RESERVED`) on EVERY row — the
 ///     transfer-row gate reads it (selector 0 makes it inert on padding rows) and the last-row pin
@@ -955,7 +961,7 @@ fn fill_caveat(row: &mut [BabyBear], base: usize, m: &RotatedCaveatManifest) {
 /// `*VmDescriptor2R24` member of `V3_STAGED_REGISTRY_TSV` whose rotated shape proves THIS
 /// effect. The cohort is the 36 graduated descriptors the Lean `EffectVmEmitRotationV3.
 /// v3Registry` emits (28 base + 8 per-slot `setField`); the trace the rotated generator emits
-/// is the SAME shape (320 cols + 38 PIs) for every member (the appendix is parametric, not
+/// is the SAME shape (324 cols + 38 PIs) for every member (the appendix is parametric, not
 /// per-effect — `rotateV3`), so this resolver picks WHICH per-effect constraint family the
 /// IR-v2 prover enforces on the shared trace.
 ///
@@ -1082,8 +1088,8 @@ pub fn empty_caveat_manifest() -> RotatedCaveatManifest {
 
 /// The deployed cap-tree depth (`CapOpenEmit.DEPTH = 16`).
 pub const CAP_OPEN_DEPTH: usize = 16;
-/// The base column of the cap-open appendix (`CAP_OPEN_BASE = ROT_WIDTH = 320`).
-pub const CAP_OPEN_BASE: usize = ROT_WIDTH; // 320
+/// The base column of the cap-open appendix (`CAP_OPEN_BASE = ROT_WIDTH = 324`).
+pub const CAP_OPEN_BASE: usize = ROT_WIDTH; // 324
 /// The width of the FULL `EffectMask` bit decomposition (residual (a) — GENUINE MEMBERSHIP). The
 /// decoded facet is the full `u32` mask `maskOfLimbs(mask_lo, mask_hi) = mask_lo + mask_hi·65536`
 /// (`EFFECT_ALL = 0xFFFF_FFFF`), so the decomposition spans all 32 bits: any deployed effect-kind bit
@@ -1101,7 +1107,7 @@ pub const CAP_OPEN_WIDTH: usize = ROT_WIDTH + CAP_OPEN_SPAN;
 
 /// The turn-identity `actor` column of the TB (turn-bound) cap-open weld
 /// (`CapOpenTurnPins.capOpenActorCol w = w + CAP_OPEN_SPAN`, i.e. the first column PAST the
-/// cap-open appendix). `= CAP_OPEN_BASE + CAP_OPEN_SPAN = 320 + 91 = 411`.
+/// cap-open appendix). `= CAP_OPEN_BASE + CAP_OPEN_SPAN = 324 + 91 = 415`.
 pub const CAP_OPEN_TB_ACTOR_COL: usize = CAP_OPEN_BASE + CAP_OPEN_SPAN;
 /// The turn-identity `dst` column of the TB cap-open weld (`CapOpenTurnPins.capOpenDstCol w = w +
 /// CAP_OPEN_SPAN + 1`). `= CAP_OPEN_BASE + CAP_OPEN_SPAN + 1 = 412`.
@@ -1504,7 +1510,7 @@ fn recompute_v1_state_commit(
 /// lookups), the before-state-commit cross-row continuity carrier, and the rotated BEFORE +
 /// AFTER blocks' welded nonce limb + chained `wireCommitR` state_commit. Then the four rotated
 /// PI carriers are re-read from the rebuilt trace. Returns the corrected 38-PI vector. Widen
-/// the patched 320-wide trace to the cap-open shape with [`widen_to_cap_open`].
+/// the patched 324-wide trace to the cap-open shape with [`widen_to_cap_open`].
 pub fn patch_attenuate_base_for_cap_open(
     trace: &mut [Vec<BabyBear>],
     pis: &[BabyBear],
@@ -1583,8 +1589,8 @@ pub fn patch_attenuate_base_for_cap_open(
 /// Widen an already-built rotated base trace (`ROT_WIDTH`-wide) to the `CAP_OPEN_WIDTH`-wide
 /// cap-open trace, filling the 59 cap-open columns on EVERY row uniformly with `w` (so the every-row base
 /// gates — dir-bool, rootPin, targetBind, transferFacet/facetHi/authTag — hold on every row).
-/// The base trace's own 320 columns + 38 PIs are unchanged; the cap-open appendix is purely
-/// additive. The base trace MUST be a 320-wide rotated trace the base `attenuateV3`
+/// The base trace's own 324 columns + 38 PIs are unchanged; the cap-open appendix is purely
+/// additive. The base trace MUST be a 324-wide rotated trace the base `attenuateV3`
 /// constraints already accept (e.g. from [`generate_rotated_effect_vm_trace`] on an
 /// AttenuateCapability turn).
 pub fn widen_to_cap_open(trace: &mut [Vec<BabyBear>], w: &CapOpenWitness) -> Result<(), String> {
@@ -1608,8 +1614,8 @@ pub fn widen_to_cap_open(trace: &mut [Vec<BabyBear>], w: &CapOpenWitness) -> Res
 }
 
 /// Fill the two TURN-IDENTITY columns of the TB (turn-bound) cap-open weld on a single row: the
-/// `actor` felt at `CAP_OPEN_TB_ACTOR_COL` (407) and the `dst` felt at `CAP_OPEN_TB_DST_COL` (408).
-/// (The `src` column — `CAP_OPEN_BASE + 57` = 373 — is the EXISTING cap-open `src` column already
+/// `actor` felt at `CAP_OPEN_TB_ACTOR_COL` (415) and the `dst` felt at `CAP_OPEN_TB_DST_COL` (416).
+/// (The `src` column — `CAP_OPEN_BASE + 57` = 381 — is the EXISTING cap-open `src` column already
 /// filled by [`fill_cap_open`] from `w.src`; the TB weld pins THAT column, not a new one.) The three
 /// `CapOpenTurnPins.turnIdentityPins` are LAST-row `.piBinding` gates welding these columns to the
 /// published turn PIs (`src → 38`, `actor → 39`, `dst → 40`).
