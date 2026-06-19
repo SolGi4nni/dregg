@@ -174,17 +174,19 @@ fn assert_executor_anchor(
         circuit_carrier12[1..].iter().any(|f| *f != BabyBear::ZERO),
         "{name}: the wide commit is genuinely 8-felt-wide (lanes 1..8 not all zero)"
     );
-    // AND the divergence is documented: the plain `wire_commit_8` (the cell's CURRENT `_felt8`
-    // chain) does NOT match the deployed circuit carrier — the flip MUST repoint to the chip chain.
-    let plain_felt8 = compute_canonical_state_commitment_v9_felt8(cell, &ctx);
-    assert_ne!(
-        plain_felt8, circuit_carrier12,
-        "{name}: the CURRENT cell `_felt8` (plain single_perm chain) DIVERGES from the deployed \
-         circuit carrier — the executor-anchoring cutover (flip) must repoint it to wire_commit_8_chip"
+    // POST-FLIP: the cell's `compute_canonical_state_commitment_v9_felt8` is REPOINTED (under
+    // `prover`) to the CHIP chain (`wire_commit_8_chip`), so it now EQUALS the deployed circuit
+    // carrier — the executor-anchoring cutover landed. (Feature unification arms `dregg-cell/prover`
+    // here via `dregg-turn`.)
+    let cell_felt8_deployed = compute_canonical_state_commitment_v9_felt8(cell, &ctx);
+    assert_eq!(
+        cell_felt8_deployed, circuit_carrier12,
+        "{name}: the cell `_felt8` is repointed to the chip chain and MATCHES the deployed circuit \
+         carrier — the cell-side flip cutover is complete"
     );
     eprintln!(
         "WIDE {name}: executor-anchoring differential holds (cell chip-8-felt ≡ circuit carrier-12; \
-         the plain wire_commit_8 chain DIVERGES — flagged for the cell-side flip cutover)."
+         the cell `_felt8` is repointed to wire_commit_8_chip — the flip cutover is complete)."
     );
 }
 

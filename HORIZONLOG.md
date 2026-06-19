@@ -184,17 +184,33 @@ refused to launder a partial):**
   delete its `dpis[34]/dpis[35]` reconstruction (`trace_rotated.rs:1618-1619`, `:537`) — the verifier no longer
   pins those PIs, so the placeholder no longer causes a Fiat-Shamir mismatch (`InvalidPowWitness` gone). Blocker
   2 (initial-registration 8-felt commit) is independent + still open.
-- ⬜ **PHASE B-ROTATION — the flag-day SWITCH (ember-gated, VK-affecting; all legs proven green)**: ~~(a) FAN-OUT~~
-  (DONE) · ~~(b) EXECUTOR ANCHORING~~ (DONE) · ~~(c) the producer+executor flip LEGS~~ (DONE, slice 2b: proven
-  coherent end-to-end). THE ATOMIC SWITCH (the ONLY thing left, ember-gated since it bumps the VK — a partial
-  bricks the validator): in ONE commit, (1) repoint the live sovereign producer `cipherclerk::prove_sovereign_
-  turn_rotated` onto `prove_effect_vm_rotated_wide` (publish 16 wide PIs instead of `felt_to_bytes32(pi[34/35])`);
-  (2) repoint the executor `proof_verify::verify_and_commit_proof_rotated` to the WIDE registry + override the 16
-  wide PIs from `wire_commit_8_chip(compute_rotated_pre_limbs(trusted before/after cell))` (the slice-2b executor
-  leg) instead of `dpis[34]/[35]`; (3) repoint `compute_canonical_state_commitment_v9_felt8` onto the chip chain
-  (the slice-2 seam) so the stored sovereign commitment IS the deployed wide commit; (4) repoint the registry-
-  resolving consumers (`full_turn_proof`, `node`, the sdk wrappers) to `WIDE_REGISTRY_STAGED_TSV`; (5) re-emit +
-  re-pin all FPs + the VK. Do NOT repoint the apex `Rfix` (authority leg, detonates 11 rfl proofs).
+- ✅ **PHASE B-ROTATION — THE FLAG-DAY SWITCH LANDED (the live commitment is GENUINELY 8-FELT ~124-bit
+  end-to-end; NOT committed, ember-gated)**: the live sovereign path now proves+verifies at the 8-felt wide
+  geometry whole-tree green. (1) the live producer `cipherclerk::prove_sovereign_turn_rotated` routes the WIDE
+  generators (transfer-shape / FEE / record-pin / notespend) + publishes the 8-felt BEFORE/AFTER commit
+  (`felt8_to_bytes32` of the LAST-16 wide PIs); the NEW FEE WIDE leg
+  `full_turn_proof::prove_effect_vm_rotated_wide_with_fee` + `trace_rotated::generate_rotated_transfer_shape_with_
+  fee_wide` + `generate_rotated_record_pin_wide` were BUILT (the live sovereign transfer is FEE'd — covered).
+  (2) the executor `verify_and_commit_proof_rotated` resolves `WIDE_REGISTRY_STAGED_TSV`, reconstructs the wide
+  trace, RETIRES the `dpis[34]/[35]` 1-felt override, and anchors the 16 wide PIs from the trusted commits via
+  `bytes32_to_felt8` (OLD ← stored `_v9_8`, NEW ← `turn.execution_proof_new_commitment`). (3)
+  `compute_canonical_state_commitment_v9_felt8` repointed to `wire_commit_8_chip` under a NEW `dregg-cell/prover`
+  feature (forwarded by sdk/turn/node) — the stored sovereign commit IS the deployed chip carrier (Blocker 2:
+  registration stores `_v9_8`). KEY FIX (the Fiat-Shamir close): `append_wide_carriers` ZEROES the now-dead PI
+  34/35 slots on BOTH sides (every PI is absorbed into the transcript; a witness-dependent value there diverged
+  it → `InvalidPowWitness`). NO re-emit/re-pin needed — the wide TSV/FPs were already Lean-emitted + drift-PASS;
+  Lean UNTOUCHED (apex `Rfix` stays on `v3RegistryCapOpen` — authority leg). GREEN: lake 4004 axiom-clean ·
+  drift PASS · circuit lib 896/0 + all integration green · cell 660+ · turn lib 498/0 · sdk lib 229/0 ·
+  sovereign_rotated_c1 19/19 (fee'd) · sovereign_rotated_wide 2/2 · sovereign_proof 3/3 · node 229/0 + caps ·
+  node binary builds. LIVE collision tooth bites (high-position flip → distinct 8-felt commits → proof-A
+  rejected against B by `verify_vm_descriptor2` ALONE). **TWO ROBUSTNESS TAILS (not regressions, not green
+  blockers):** (i) the node API/MCP `register_sovereign_cell` writers store a blake3/placeholder commit (a
+  non-load-bearing API echo — the comment at `api.rs` says the REAL commit comes from the cipherclerk SDK via
+  `/cells/register`; never the OLD-commit of a verified rotated turn, pre-existing) → CLOSURE: route those
+  writers through `compute_canonical_state_commitment_v9_8` if/when they pair with proof-carrying turns. (ii) a
+  SPLIT-PROCESS registrar built with bare `dregg-cell` (no prover unification) would store the PLAIN chain ≠ the
+  chip anchor → CLOSURE: make `compute_canonical_state_commitment_v9_felt8` chip-faithful unconditionally (move
+  `wire_commit_8_chip` out of the `prover` gate) so the choice is not feature-unification-dependent.
 - ⬜ ~~**PHASE B-ROTATION LIVE CUTOVER — the pure Rust/executor flip**~~ (now the STAGED path above; original atomic framing): Now a ONE-LINE Lean repoint (`v3Registry →
   v3RegistryWide`) + the atomic Rust/executor: producer 8-felt carrier fill (+208) across 6 crates · executor
   retire `dpis[34]/[35]` → bind 16 wide PIs (`felt8_to_bytes32`) · the hardcoded geometry consts (`ROT_WIDTH`/

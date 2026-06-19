@@ -55,7 +55,7 @@ dregg-lean-ffi = { path = "../dregg-lean-ffi" }
 # surface lands (cutover C2, ROTATION-CUTOVER §EXEC). The feature forwards to
 # `dregg-circuit/prover` so `descriptor_ir2` is present when the branch is.
 default = ["prover", "threshold-sig"]
-prover = ["dregg-circuit/prover"]
+prover = ["dregg-circuit/prover", "dregg-cell/prover"]
 # Real BLS12-381 + KZG weighted-threshold-signature verifier for
 # `Authorization::Custom { vk_hash }` discharges (the governed-namespace
 # `commit_table_update` `GOVERNANCE_VK` fire). ON in the default set; the

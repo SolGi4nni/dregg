@@ -1924,6 +1924,19 @@ pub fn append_wide_carriers(
         fill_wide_block(row, cb_after, AFTER_BASE);
     }
     let mut dpis = base_pis;
+    // STAGE-1 PIN RETIREMENT: the 1-felt rotated OLD/NEW commit pins (PI 34/35) were DROPPED from the
+    // wide descriptor — the 8-felt wide commit (PIs past the base) is the SOLE binding. Those two base
+    // slots are now DEAD/unbound, but Fiat–Shamir still absorbs EVERY public input, so a
+    // witness-dependent value there (the producer's real carrier vs the executor's placeholder
+    // reconstruction) would diverge the transcript ⇒ `InvalidPowWitness`. ZERO them so producer +
+    // executor agree on these dead slots regardless of witness. (PI 34/35 exist on every wide family —
+    // the rotated commit carriers ride the bare 38-PI shape every member shares.)
+    const RETIRED_COMMIT_PI_OLD: usize = 34;
+    const RETIRED_COMMIT_PI_NEW: usize = 35;
+    if dpis.len() > RETIRED_COMMIT_PI_NEW {
+        dpis[RETIRED_COMMIT_PI_OLD] = BabyBear::ZERO;
+        dpis[RETIRED_COMMIT_PI_NEW] = BabyBear::ZERO;
+    }
     let before_commit_base = cb_before + 8 * WIDE_COMMIT_CARRIER;
     let after_commit_base = cb_after + 8 * WIDE_COMMIT_CARRIER;
     let r0 = trace[0].clone();
@@ -1959,6 +1972,67 @@ pub fn generate_rotated_transfer_shape_wide(
         ));
     }
     let dpis = append_wide_carriers(&mut trace, base_pis, GRAD_ROT_WIDTH);
+    Ok((trace, dpis))
+}
+
+/// **THE WIDE RECORD-PIN trace generator (the record-pin cohort — setPermissions / setVK / cellSeal /
+/// cellUnseal / cellDestroy / receiptArchive / refusal, 816-wide / 55-PI).** The base generator
+/// ([`generate_rotated_effect_vm_trace`]) pushes the record/lifecycle pin as PI 38 for these leads (39
+/// base PIs); this appends the wide carriers at `GRAD_ROT_WIDTH = 608` (so the published 8-felt commit
+/// rides PIs 39..54, after the record pin at 38). Returns `(trace, dpis)`.
+pub fn generate_rotated_record_pin_wide(
+    initial_state: &CellState,
+    effects: &[Effect],
+    before_w: &RotatedBlockWitness,
+    after_w: &RotatedBlockWitness,
+    caveat: &RotatedCaveatManifest,
+) -> Result<(Vec<Vec<BabyBear>>, Vec<BabyBear>), String> {
+    let (mut trace, base_pis) =
+        generate_rotated_effect_vm_trace(initial_state, effects, before_w, after_w, caveat)?;
+    if base_pis.len() != ROT_PI_COUNT + 1 {
+        return Err(format!(
+            "record-pin wide generator: base PI vector {} != {} (the record-pin family carries the \
+             39-PI rotated vector — the record/lifecycle pin rides PI 38)",
+            base_pis.len(),
+            ROT_PI_COUNT + 1
+        ));
+    }
+    let dpis = append_wide_carriers(&mut trace, base_pis, GRAD_ROT_WIDTH);
+    debug_assert_eq!(trace[0].len(), WIDE_WIDTH);
+    debug_assert_eq!(dpis.len(), WIDE_PI_COUNT + 1); // 39 base + 16 wide = 55
+    Ok((trace, dpis))
+}
+
+/// **THE WIDE FEE-IN-PROOF trace generator (`transferFeeVmDescriptor2R24Wide`, 816-wide / 55-PI).**
+/// The wide twin of the fee-aware base generator ([`generate_rotated_effect_vm_trace_with_fee`]): it
+/// debits the fee in-proof (so the rotated AFTER limbs carry the post-fee balance) and then appends
+/// the BEFORE/AFTER 13×8 wide carriers + 16 wide commit PIs at `GRAD_ROT_WIDTH = 608`. Because
+/// `fill_wide_block` re-absorbs the SAME post-fee `BEFORE_BASE`/`AFTER_BASE` limbs the fee rewrite
+/// laid, the published 8-felt commit (PIs 39..54, after the fee's PI 38) binds the post-fee state at
+/// ~124 bits. The live sovereign transfer IS fee'd — this is its wide producer leg. Returns
+/// `(trace, dpis)` ready for `prove_vm_descriptor2` against the wide fee descriptor.
+pub fn generate_rotated_transfer_shape_with_fee_wide(
+    initial_state: &CellState,
+    effects: &[Effect],
+    before_w: &RotatedBlockWitness,
+    after_w: &RotatedBlockWitness,
+    caveat: &RotatedCaveatManifest,
+    fee: u64,
+) -> Result<(Vec<Vec<BabyBear>>, Vec<BabyBear>), String> {
+    let (mut trace, base_pis) = generate_rotated_effect_vm_trace_with_fee(
+        initial_state, effects, before_w, after_w, caveat, fee,
+    )?;
+    if base_pis.len() != ROT_PI_COUNT + 1 {
+        return Err(format!(
+            "wide fee generator: base PI vector {} != {} (the fee descriptor carries the 39-PI \
+             rotated vector — the published fee rides PI 38)",
+            base_pis.len(),
+            ROT_PI_COUNT + 1
+        ));
+    }
+    let dpis = append_wide_carriers(&mut trace, base_pis, GRAD_ROT_WIDTH);
+    debug_assert_eq!(trace[0].len(), WIDE_WIDTH);
+    debug_assert_eq!(dpis.len(), WIDE_PI_COUNT + 1); // 39 base + 16 wide = 55
     Ok((trace, dpis))
 }
 

@@ -18,6 +18,14 @@ crypto = ["dep:bulletproofs", "dep:chacha20poly1305", "dep:curve25519-dalek", "d
 # feature-gated). `zkvm` additionally pulls in the proof-carrying helpers
 # (`dregg-commit` / `dregg-dsl-runtime`).
 zkvm = ["dep:dregg-commit", "dep:dregg-dsl-runtime"]
+# `prover` forwards `dregg-circuit/prover` so the faithful 8-felt commitment
+# (`compute_canonical_state_commitment_v9_felt8`) uses the CHIP-faithful chain
+# (`wire_commit_8_chip`, the byte-twin of the circuit's published wide carrier).
+# Cargo feature unification already builds circuit full-featured wherever the
+# matched producer/executor stack (sdk/node/turn) links cell, so this adds no new
+# feature surface there; a bare `dregg-cell` build (no prover) keeps the plain
+# `wire_commit_8` chain (the carrier is never published in that configuration).
+prover = ["dregg-circuit/prover"]
 # SOUNDNESS GATE — DO NOT ENABLE IN PRODUCTION.
 #
 # `test-stubs` arms the *accept* path of `StubVerifier` (predicate.rs), which

@@ -46,7 +46,7 @@ fn setup_sovereign_cell(balance: u64) -> (AgentCipherclerk, CellId, Ledger) {
         commitments_root,
         iroot,
     };
-    let commitment = dregg_cell::commitment::compute_canonical_state_commitment_v9(&cell, &v9_ctx);
+    let commitment = dregg_cell::commitment::compute_canonical_state_commitment_v9_8(&cell, &v9_ctx);
 
     let mut cclerk = cclerk;
     cclerk.store_sovereign_state(cell.clone());
@@ -199,7 +199,7 @@ mod record_pin_anchor {
             iroot,
         };
         let commitment =
-            dregg_cell::commitment::compute_canonical_state_commitment_v9(&cell, &v9_ctx);
+            dregg_cell::commitment::compute_canonical_state_commitment_v9_8(&cell, &v9_ctx);
 
         let mut cclerk = cclerk;
         cclerk.store_sovereign_state(cell.clone());
@@ -668,7 +668,7 @@ mod record_pin_anchor {
             iroot,
         };
         let commitment =
-            dregg_cell::commitment::compute_canonical_state_commitment_v9(&cell, &v9_ctx);
+            dregg_cell::commitment::compute_canonical_state_commitment_v9_8(&cell, &v9_ctx);
 
         let mut cclerk = cclerk;
         cclerk.store_sovereign_state(cell.clone());

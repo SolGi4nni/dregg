@@ -772,8 +772,8 @@ pub fn prove_effect_vm_rotated_wide(
         MemBoundaryWitness, parse_vm_descriptor2, prove_vm_descriptor2,
     };
     use dregg_circuit::effect_vm::trace_rotated::{
-        RotatedBlockWitness, generate_rotated_note_spend_wide, generate_rotated_transfer_shape_wide,
-        rotated_descriptor_name_for_effect,
+        RotatedBlockWitness, generate_rotated_note_spend_wide, generate_rotated_record_pin_wide,
+        generate_rotated_transfer_shape_wide, rotated_descriptor_name_for_effect,
     };
     use dregg_circuit::effect_vm_descriptors::WIDE_REGISTRY_STAGED_TSV;
 
@@ -836,6 +836,22 @@ pub fn prove_effect_vm_rotated_wide(
                 initial_state, effects, &before, &after, caveat, &leaves,
             )
             .map_err(|e| SdkError::InvalidWitness(format!("wide note-spend generation: {e}")))?
+        } else if matches!(
+            lead,
+            dregg_circuit::effect_vm::Effect::SetPermissions { .. }
+                | dregg_circuit::effect_vm::Effect::SetVerificationKey { .. }
+                | dregg_circuit::effect_vm::Effect::CellSeal { .. }
+                | dregg_circuit::effect_vm::Effect::CellUnseal { .. }
+                | dregg_circuit::effect_vm::Effect::CellDestroy { .. }
+                | dregg_circuit::effect_vm::Effect::ReceiptArchive { .. }
+                | dregg_circuit::effect_vm::Effect::Refusal { .. }
+        ) {
+            // The record-pin family carries the 39-PI base (record/lifecycle pin at PI 38).
+            let (t, d) = generate_rotated_record_pin_wide(
+                initial_state, effects, &before, &after, caveat,
+            )
+            .map_err(|e| SdkError::InvalidWitness(format!("wide record-pin generation: {e}")))?;
+            (t, d, vec![])
         } else {
             let (t, d) = generate_rotated_transfer_shape_wide(
                 initial_state, effects, &before, &after, caveat,
@@ -846,6 +862,96 @@ pub fn prove_effect_vm_rotated_wide(
 
     let proof = prove_vm_descriptor2(&desc, &trace, &dpis, &MemBoundaryWitness::default(), &map_heaps)
         .map_err(|e| SdkError::InvalidWitness(format!("wide rotated IR-v2 proof: {e}")))?;
+    Ok((proof, dpis))
+}
+
+/// **THE FEE-IN-PROOF WIDE rotated prover (`transferFeeVmDescriptor2R24Wide`, the flip's live
+/// sovereign producer leg).** The wide twin of [`prove_effect_vm_rotated_ir2_with_fee`]: it routes the
+/// WIDE fee descriptor (from `WIDE_REGISTRY_STAGED_TSV`), generates the fee-aware wide trace
+/// (`generate_rotated_transfer_shape_with_fee_wide` — fee debited in-proof, then the 8-felt carriers
+/// re-absorb the post-fee limbs), and proves at the wide geometry (55 PIs: 39 base + 16 wide). A
+/// NON-Transfer lead falls back to the unfee'd wide prover (so this is a drop-in the sovereign
+/// producer can always call). Returns `(proof, wide_dpis)`; the executor anchors the 16 wide commit
+/// PIs to the trusted cell's 8-felt commitments.
+#[cfg(feature = "prover")]
+pub fn prove_effect_vm_rotated_wide_with_fee(
+    initial_state: &CellState,
+    effects: &[dregg_circuit::effect_vm::Effect],
+    before_w: &dregg_turn::rotation_witness::RotationWitness,
+    after_w: &dregg_turn::rotation_witness::RotationWitness,
+    caveat: &dregg_circuit::effect_vm::trace_rotated::RotatedCaveatManifest,
+    fee: u64,
+) -> Result<
+    (
+        dregg_circuit::descriptor_ir2::Ir2BatchProof<dregg_circuit::descriptor_ir2::DreggStarkConfig>,
+        Vec<BabyBear>,
+    ),
+    SdkError,
+> {
+    use dregg_circuit::descriptor_ir2::{
+        MemBoundaryWitness, parse_vm_descriptor2, prove_vm_descriptor2,
+    };
+    use dregg_circuit::effect_vm::trace_rotated::{
+        RotatedBlockWitness, generate_rotated_transfer_shape_with_fee_wide,
+        rotated_descriptor_name_for_effect_fee,
+    };
+    use dregg_circuit::effect_vm_descriptors::WIDE_REGISTRY_STAGED_TSV;
+
+    let lead = effects
+        .first()
+        .ok_or_else(|| SdkError::InvalidWitness("wide fee prover: empty turn".into()))?;
+    // Non-Transfer leads carry no fee-in-proof descriptor — defer to the unfee'd wide prover.
+    if !matches!(lead, dregg_circuit::effect_vm::Effect::Transfer { .. }) {
+        return prove_effect_vm_rotated_wide(
+            initial_state, effects, before_w, after_w, caveat, None,
+        );
+    }
+    let name = rotated_descriptor_name_for_effect_fee(lead).ok_or_else(|| {
+        SdkError::InvalidWitness(format!(
+            "wide fee prover: effect {lead:?} has no fee-in-proof descriptor"
+        ))
+    })?;
+    if effects.len() > 1 {
+        for e in &effects[1..] {
+            if rotated_descriptor_name_for_effect_fee(e) != Some(name) {
+                return Err(SdkError::InvalidWitness(
+                    "wide fee prover: heterogeneous multi-effect turn".into(),
+                ));
+            }
+        }
+    }
+    let json = WIDE_REGISTRY_STAGED_TSV
+        .lines()
+        .find_map(|line| {
+            let mut it = line.splitn(3, '\t');
+            if it.next() == Some(name) {
+                let _name = it.next();
+                it.next()
+            } else {
+                None
+            }
+        })
+        .ok_or_else(|| {
+            SdkError::InvalidWitness(format!("{name} not in WIDE_REGISTRY_STAGED_TSV"))
+        })?;
+    let desc = parse_vm_descriptor2(json)
+        .map_err(|e| SdkError::InvalidWitness(format!("wide fee descriptor parse: {e}")))?;
+
+    let bridge = |w: &dregg_turn::rotation_witness::RotationWitness| {
+        RotatedBlockWitness::new(w.pre_limbs.clone(), w.iroot)
+    };
+    let before = bridge(before_w)
+        .map_err(|e| SdkError::InvalidWitness(format!("wide fee before-witness: {e}")))?;
+    let after = bridge(after_w)
+        .map_err(|e| SdkError::InvalidWitness(format!("wide fee after-witness: {e}")))?;
+
+    let (trace, dpis) = generate_rotated_transfer_shape_with_fee_wide(
+        initial_state, effects, &before, &after, caveat, fee,
+    )
+    .map_err(|e| SdkError::InvalidWitness(format!("wide fee trace generation: {e}")))?;
+
+    let proof = prove_vm_descriptor2(&desc, &trace, &dpis, &MemBoundaryWitness::default(), &[])
+        .map_err(|e| SdkError::InvalidWitness(format!("wide fee IR-v2 proof: {e}")))?;
     Ok((proof, dpis))
 }
 

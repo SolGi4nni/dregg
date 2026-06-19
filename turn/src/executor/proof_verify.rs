@@ -86,11 +86,12 @@ impl TurnExecutor {
             DreggStarkConfig, Ir2BatchProof, parse_vm_descriptor2, verify_vm_descriptor2,
         };
         use dregg_circuit::effect_vm::trace_rotated::{
-            RotatedBlockWitness, empty_caveat_manifest, generate_rotated_effect_vm_trace,
-            generate_rotated_effect_vm_trace_with_fee, rotated_descriptor_name_for_effect,
+            RotatedBlockWitness, empty_caveat_manifest, generate_rotated_note_spend_wide,
+            generate_rotated_record_pin_wide, generate_rotated_transfer_shape_wide,
+            generate_rotated_transfer_shape_with_fee_wide, rotated_descriptor_name_for_effect,
             rotated_descriptor_name_for_effect_fee, transfer_caveat_manifest,
         };
-        use dregg_circuit::effect_vm_descriptors::V3_STAGED_REGISTRY_TSV;
+        use dregg_circuit::effect_vm_descriptors::WIDE_REGISTRY_STAGED_TSV;
         use dregg_circuit::field::BabyBear;
 
         // 1. Stored sovereign commitment (the v9 felt the matched producer wrote).
@@ -179,7 +180,7 @@ impl TurnExecutor {
                 "rotated verify: effect {lead:?} is not in the R=24 rotated cohort"
             ))
         })?;
-        let json = V3_STAGED_REGISTRY_TSV
+        let json = WIDE_REGISTRY_STAGED_TSV
             .lines()
             .find_map(|line| {
                 let mut it = line.splitn(3, '\t');
@@ -192,7 +193,7 @@ impl TurnExecutor {
             })
             .ok_or_else(|| {
                 TurnError::InvalidExecutionProof(format!(
-                    "rotated verify: {name} not in the staged rotated registry"
+                    "rotated verify: {name} not in the WIDE rotated registry"
                 ))
             })?;
         let desc = parse_vm_descriptor2(json).map_err(|e| {
@@ -213,13 +214,15 @@ impl TurnExecutor {
             RotatedBlockWitness::new(vec![BabyBear::ZERO; NUM_PRE_LIMBS], BabyBear::ZERO).map_err(
                 |e| TurnError::InvalidExecutionProof(format!("rotated placeholder witness: {e}")),
             )?;
+        // THE WIDE FLIP: reconstruct the WIDE trace + wide-PI vector. The witness-INDEPENDENT PIs
+        // (0..33 + the caveat/height/fee/record pins) reconstruct from PLACEHOLDER block witnesses
+        // exactly (as in the 1-felt path); the 16 wide commit PIs (the LAST 16) are computed over the
+        // ZERO placeholder limbs here and OVERRIDDEN from the trusted before/after commits below —
+        // the wide analog of the retired `dpis[34]/[35]` override.
         let (_trace, mut dpis) = if is_fee_transfer {
-            // Mirror the producer's fee-aware trace: the v1 sub-trace's after-balance is the PRE-fee
-            // `before + amount·(1−2dir)` (from `initial_vm_state`'s pre-fee balance — reconstructed at
-            // step 3 as `post_fee_balance + turn.fee`), and the fee generator debits `turn.fee` as the
-            // SAME column override + commitment recompute the producer ran. PI 38 = `turn.fee` (the
-            // generator writes it). The reconstructed post-fee after-block matches the producer's.
-            generate_rotated_effect_vm_trace_with_fee(
+            // Mirror the producer's fee-aware WIDE trace: the fee generator debits `turn.fee` as the
+            // SAME column override + commitment recompute the producer ran. PI 38 = `turn.fee`.
+            generate_rotated_transfer_shape_with_fee_wide(
                 &initial_vm_state,
                 &vm_effects,
                 &placeholder,
@@ -227,8 +230,36 @@ impl TurnExecutor {
                 &caveat,
                 turn.fee,
             )
+        } else if matches!(lead, dregg_circuit::effect_vm::Effect::NoteSpend { .. }) {
+            generate_rotated_note_spend_wide(
+                &initial_vm_state,
+                &vm_effects,
+                &placeholder,
+                &placeholder,
+                &caveat,
+                &[],
+            )
+            .map(|(t, d, _heaps)| (t, d))
+        } else if matches!(
+            lead,
+            dregg_circuit::effect_vm::Effect::SetPermissions { .. }
+                | dregg_circuit::effect_vm::Effect::SetVerificationKey { .. }
+                | dregg_circuit::effect_vm::Effect::CellSeal { .. }
+                | dregg_circuit::effect_vm::Effect::CellUnseal { .. }
+                | dregg_circuit::effect_vm::Effect::CellDestroy { .. }
+                | dregg_circuit::effect_vm::Effect::ReceiptArchive { .. }
+                | dregg_circuit::effect_vm::Effect::Refusal { .. }
+        ) {
+            // The record-pin family carries the 39-PI base (record/lifecycle pin at PI 38).
+            generate_rotated_record_pin_wide(
+                &initial_vm_state,
+                &vm_effects,
+                &placeholder,
+                &placeholder,
+                &caveat,
+            )
         } else {
-            generate_rotated_effect_vm_trace(
+            generate_rotated_transfer_shape_wide(
                 &initial_vm_state,
                 &vm_effects,
                 &placeholder,
@@ -244,11 +275,23 @@ impl TurnExecutor {
                 desc.public_input_count
             )));
         }
-        // OLD commit (PI 34) ← stored v9 felt; NEW (PI 35) ← claimed v9 felt; the
-        // canonical single-felt encoding is the low-4-byte LE u32 (`felt_to_bytes32`),
-        // read back as `BabyBear::new(u32)`.
-        dpis[34] = BabyBear::new(u32::from_le_bytes(old_commitment[0..4].try_into().unwrap()));
-        dpis[35] = BabyBear::new(u32::from_le_bytes(new_commitment[0..4].try_into().unwrap()));
+        // THE FAITHFUL 8-FELT ANCHOR (the 1-felt PI 34/35 override is RETIRED — Stage 1 dropped those
+        // pins from the wide descriptor). The 16 wide commit PIs are the LAST 16 of the vector: BEFORE
+        // 8-felt commit (8) then AFTER 8-felt commit (8). Anchor them to the TRUSTED commits — OLD from
+        // the stored sovereign registration (the 8-felt `_v9_8` bytes), NEW from the turn's claimed
+        // post-state commitment — via `bytes32_to_felt8` (the wide analog of the 1-felt `dpis[34]/[35]`
+        // override). The wide descriptor's carrier-12 pi_bindings tie these 16 PIs to the proof's bound
+        // 8-felt carriers, so a forged 8-felt NEW commit (a state the proven transition never produced)
+        // makes the anchored PIs disagree with the carrier ⇒ `verify_vm_descriptor2` UNSAT. The ~31-bit
+        // 1-felt waist is GONE — the published binding is the full ~124-bit 8-felt commit.
+        use dregg_cell::commitment::bytes32_to_felt8;
+        let n_pi = dpis.len();
+        let trusted_before8 = bytes32_to_felt8(&old_commitment);
+        let trusted_after8 = bytes32_to_felt8(&new_commitment);
+        for j in 0..8 {
+            dpis[n_pi - 16 + j] = trusted_before8[j];
+            dpis[n_pi - 8 + j] = trusted_after8[j];
+        }
         dpis[36] = committed_height_felt(cell_committed_height);
         // FEE-IN-PROOF: PI 38 is the PUBLISHED fee the col-89 last-row pin binds. Anchor it to the
         // TRUSTED `turn.fee` (the generator already wrote `BabyBear::new(turn.fee as u32)`, but we set
@@ -300,7 +343,10 @@ impl TurnExecutor {
         // A forged after-limb (a value the effect did NOT produce) makes the anchored PI 38 disagree
         // with the proof's bound forced column ⇒ `verify_vm_descriptor2` UNSAT. The whole record-pin
         // family is now a genuine forcing gate on the deployed path.
-        if desc.public_input_count == 39 && dpis.len() == 39 {
+        // WIDE: the record-pin family ships at 55 PIs (39 base + 16 wide). The record/lifecycle
+        // pin still rides PI 38 (a base PI, BEFORE the 16 wide commit PIs at indices 39..54), so the
+        // anchor index is unchanged — only the descriptor-PI-count gate widens 39 → 55.
+        if desc.public_input_count == 55 && dpis.len() == 55 {
             use dregg_circuit::effect_vm::Effect as VmEffect;
             // The forced-limb anchor flavor for this lead: record-digest (Class-1) vs lifecycle (Class-2).
             enum Anchor {

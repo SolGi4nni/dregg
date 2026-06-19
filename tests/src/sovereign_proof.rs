@@ -46,7 +46,10 @@ fn setup_sovereign_cell(balance: u64) -> (AgentCipherclerk, CellId, Ledger) {
         commitments_root,
         iroot,
     };
-    let commitment = dregg_cell::commitment::compute_canonical_state_commitment_v9(&cell, &v9_ctx);
+    // THE FLIP (faithful 8-felt): register the 8-felt commit (`_v9_8`, `felt8_to_bytes32` of the
+    // chip-faithful chain) so the executor reads it back via `bytes32_to_felt8` as the 8 wide BEFORE
+    // commit PIs (the deployed ~124-bit binding; the retired 1-felt `_v9` left 28 bytes zero).
+    let commitment = dregg_cell::commitment::compute_canonical_state_commitment_v9_8(&cell, &v9_ctx);
 
     // Store the cell state in the cclerk.
     let mut cclerk = cclerk;

@@ -811,6 +811,7 @@ mod tests {
     /// felt — the binding a 1-felt (~31-bit) commit cannot promise. The producer twin equals the
     /// cell twin equals the circuit primitive (the three-way differential).
     #[test]
+    #[cfg(feature = "prover")]
     fn faithful_8felt_commit_distinguishes_authority_near_collision() {
         use dregg_cell::commitment::{
             compute_canonical_state_commitment_v9_felt8, V9RotationContext,
@@ -840,13 +841,15 @@ mod tests {
             "≥ 1 of the 8 committed felts must differ"
         );
 
-        // three-way differential: the producer twin == the cell twin (== the circuit primitive,
-        // since both delegate to `dregg_circuit::poseidon2::wire_commit_8`).
+        // POST-FLIP three-way differential: the cell twin (`_felt8`, repointed to the CHIP chain
+        // under `prover`) == the deployed circuit primitive `wire_commit_8_chip` (the byte-twin of the
+        // published wide carrier). The plain `wire_commit_8` DIVERGES (no arity-tag seeding) — that is
+        // why the flip repointed to the chip chain; the executor anchors against THIS.
         let pre = dregg_cell::commitment::compute_rotated_pre_limbs(&base, &ctx);
         assert_eq!(
-            wire_commit_8(&pre, ctx.iroot),
+            dregg_circuit::poseidon2::wire_commit_8_chip(&pre, ctx.iroot),
             c_base,
-            "producer 8-felt twin must equal the cell 8-felt twin"
+            "cell 8-felt twin must equal the deployed chip-faithful circuit primitive"
         );
     }
 

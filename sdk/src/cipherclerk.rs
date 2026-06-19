@@ -5159,8 +5159,10 @@ impl AgentCipherclerk {
         block_height: u64,
     ) -> Result<ProvenSovereignTurn, SdkError> {
         use dregg_cell::commitment::{
-            V9RotationContext, compute_canonical_state_commitment_v9_felt, felt_to_bytes32,
+            V9RotationContext, compute_rotated_pre_limbs, felt8_to_bytes32,
         };
+        use dregg_circuit::field::BabyBear;
+        use dregg_circuit::poseidon2::wire_commit_8_chip;
         use dregg_turn::rotation_witness as rw;
 
         // 1. Local before-state cell.
@@ -5359,17 +5361,19 @@ impl AgentCipherclerk {
             _ => dregg_circuit::effect_vm::trace_rotated::empty_caveat_manifest(),
         };
 
-        // 6. Generate the rotated trace + 38-PI vector. The commitment PIs (34/35) are
-        //    the trace's OWN before/after `STATE_COMMIT` carriers — these are what the
-        //    descriptor's `pi_binding`s bind and what the proof commits to. The
-        //    before-block welds its r0..r10 from the v1 sub-trace's BEFORE state; the
-        //    after-block from the v1 sub-trace's AFTER state (effects applied). We take
-        //    OLD/NEW commit from THESE carriers (NOT a separately-recomputed
-        //    `compute_v9(after_cell)`, which would weld from `after_cell.state` and can
-        //    diverge from the v1 sub-trace's after-state), so producer + verifier agree
-        //    by construction.
+        // 6. THE FAITHFUL 8-FELT WIDE FLIP (the deployed commitment is now ~124-bit, not
+        //    ~31-bit). Generate the WIDE rotated trace + wide-PI vector: the two 13×8
+        //    BEFORE/AFTER carriers re-absorb the SAME rotated limbs the 1-felt block lays
+        //    into a genuine 8-felt commitment, published on the 16 wide PIs (the LAST 16 of
+        //    the vector). The descriptor's wide `pi_binding`s tie those 16 PIs to the trace's
+        //    carrier-12 columns, so the proof commits to the full 8-felt commit — and the
+        //    1-felt PI 34/35 waist was retired from the wide descriptor (Stage 1).
+        //
+        //    `is_fee_transfer` routes the wide FEE producer (39 base PIs + 16 wide = 55):
+        //    BEFORE 8-felt commit = PIs 39..46, AFTER = PIs 47..54. Otherwise the bare wide
+        //    producer (38 base + 16 = 54): BEFORE = PIs 38..45, AFTER = 46..53.
         let (trace, public_inputs) = if is_fee_transfer {
-            dregg_circuit::effect_vm::trace_rotated::generate_rotated_effect_vm_trace_with_fee(
+            dregg_circuit::effect_vm::trace_rotated::generate_rotated_transfer_shape_with_fee_wide(
                 &initial_vm_state,
                 &vm_effects,
                 &before_bw,
@@ -5377,27 +5381,72 @@ impl AgentCipherclerk {
                 &caveat,
                 fee,
             )
-            .map_err(|e| SdkError::InvalidWitness(format!("rotated fee trace generation: {e}")))?
-        } else {
-            dregg_circuit::effect_vm::trace_rotated::generate_rotated_effect_vm_trace(
+            .map_err(|e| SdkError::InvalidWitness(format!("wide fee trace generation: {e}")))?
+        } else if matches!(
+            vm_effects.first(),
+            Some(dregg_circuit::effect_vm::Effect::NoteSpend { .. })
+        ) {
+            let (t, d, _heaps) =
+                dregg_circuit::effect_vm::trace_rotated::generate_rotated_note_spend_wide(
+                    &initial_vm_state,
+                    &vm_effects,
+                    &before_bw,
+                    &after_bw,
+                    &caveat,
+                    &[],
+                )
+                .map_err(|e| SdkError::InvalidWitness(format!("wide note-spend trace generation: {e}")))?;
+            (t, d)
+        } else if matches!(
+            vm_effects.first(),
+            Some(
+                dregg_circuit::effect_vm::Effect::SetPermissions { .. }
+                    | dregg_circuit::effect_vm::Effect::SetVerificationKey { .. }
+                    | dregg_circuit::effect_vm::Effect::CellSeal { .. }
+                    | dregg_circuit::effect_vm::Effect::CellUnseal { .. }
+                    | dregg_circuit::effect_vm::Effect::CellDestroy { .. }
+                    | dregg_circuit::effect_vm::Effect::ReceiptArchive { .. }
+                    | dregg_circuit::effect_vm::Effect::Refusal { .. }
+            )
+        ) {
+            // The record-pin family carries the 39-PI base (the record/lifecycle pin at PI 38).
+            dregg_circuit::effect_vm::trace_rotated::generate_rotated_record_pin_wide(
                 &initial_vm_state,
                 &vm_effects,
                 &before_bw,
                 &after_bw,
                 &caveat,
             )
-            .map_err(|e| SdkError::InvalidWitness(format!("rotated trace generation: {e}")))?
+            .map_err(|e| SdkError::InvalidWitness(format!("wide record-pin trace generation: {e}")))?
+        } else {
+            dregg_circuit::effect_vm::trace_rotated::generate_rotated_transfer_shape_wide(
+                &initial_vm_state,
+                &vm_effects,
+                &before_bw,
+                &after_bw,
+                &caveat,
+            )
+            .map_err(|e| SdkError::InvalidWitness(format!("wide trace generation: {e}")))?
         };
-        // PI 34 = rotated OLD commit, PI 35 = rotated NEW commit (the v9 felts the proof
-        // binds). Encode each canonically (`felt_to_bytes32`); the executor reads them
-        // back as OLD_COMMIT / NEW_COMMIT. The before-block carrier equals
-        // `compute_v9(before_cell)` (the cell-side commitment for the pre-state, which the
-        // executor's ledger registration holds); we keep that derivation as a cross-check.
-        let pre_state_commitment = felt_to_bytes32(public_inputs[34]);
-        let new_commitment = felt_to_bytes32(public_inputs[35]);
-        debug_assert_eq!(
-            public_inputs[34],
-            compute_canonical_state_commitment_v9_felt(
+        // The 16 wide commit PIs are the LAST 16 of the vector: BEFORE 8-felt commit (8) then
+        // AFTER 8-felt commit (8). Pack each through `felt8_to_bytes32` (the FULL 32-byte slot,
+        // ~124-bit). The executor reads them back via `bytes32_to_felt8` and re-anchors the 16
+        // wide PIs to the trusted cell's 8-felt commitments.
+        let n_pi = public_inputs.len();
+        let before_commit_8: [BabyBear; 8] = public_inputs[n_pi - 16..n_pi - 8]
+            .try_into()
+            .expect("wide PI vector carries 8 BEFORE commit felts");
+        let after_commit_8: [BabyBear; 8] = public_inputs[n_pi - 8..n_pi]
+            .try_into()
+            .expect("wide PI vector carries 8 AFTER commit felts");
+        let pre_state_commitment = felt8_to_bytes32(&before_commit_8);
+        let new_commitment = felt8_to_bytes32(&after_commit_8);
+        // The BEFORE 8-felt carrier equals the CHIP-faithful 8-felt commitment of the pre-state
+        // (the byte-twin of the circuit's `fill_wide_block`; the executor recomputes this SAME
+        // primitive from the trusted before-cell to anchor the wide PIs). We keep that derivation
+        // as a producer-side cross-check.
+        {
+            let pre = compute_rotated_pre_limbs(
                 &before_cell,
                 &V9RotationContext {
                     cells_root: before_w.pre_limbs[0],
@@ -5405,9 +5454,13 @@ impl AgentCipherclerk {
                     commitments_root,
                     iroot: before_w.iroot,
                 },
-            ),
-            "rotated PI 34 must equal the cell-side v9 commitment of the before-state"
-        );
+            );
+            debug_assert_eq!(
+                before_commit_8,
+                wire_commit_8_chip(&pre, before_w.iroot),
+                "rotated wide BEFORE commit must equal the chip-faithful 8-felt commitment of the before-state"
+            );
+        }
 
         // 7. Build the proof-carrying turn scaffold (same identity as the v1 path: the
         //    authority IS the attached proof; no signature leg).
@@ -5440,11 +5493,12 @@ impl AgentCipherclerk {
             effect_witness_index_map: Vec::new(),
         };
 
-        let proof = if is_fee_transfer {
-            // FEE-IN-PROOF: route the `transferFeeVmDescriptor2R24` prover (39 PIs, fee debited
-            // in-proof). The fee generator inside re-derives the SAME post-fee trace + PI vector this
-            // path computed above, so the bound PIs match `public_inputs`.
-            crate::full_turn_proof::prove_effect_vm_rotated_ir2_with_fee(
+        // THE WIDE FLIP: route the WIDE provers (8-felt commit published on the 16 wide PIs). The
+        // wide generators inside re-derive the SAME wide trace + PI vector computed above, so the
+        // bound 16 wide PIs match `public_inputs[n_pi-16..]`.
+        let (proof, _wide_dpis) = if is_fee_transfer {
+            // FEE-IN-PROOF wide: `transferFeeVmDescriptor2R24Wide` (55 PIs, fee debited in-proof).
+            crate::full_turn_proof::prove_effect_vm_rotated_wide_with_fee(
                 &initial_vm_state,
                 &vm_effects,
                 &before_w,
@@ -5453,7 +5507,7 @@ impl AgentCipherclerk {
                 fee,
             )?
         } else {
-            crate::full_turn_proof::prove_effect_vm_rotated_ir2_with_caveat(
+            crate::full_turn_proof::prove_effect_vm_rotated_wide(
                 &initial_vm_state,
                 &vm_effects,
                 &before_w,
