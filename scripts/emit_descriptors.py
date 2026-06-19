@@ -51,6 +51,7 @@ EMITTERS = [
     "EmitWideTransferProbe.lean",            # ADDITIVE: the faithful 8-felt wide transfer descriptor
     "EmitWideRegistryProbe.lean",            # ADDITIVE: the FULL 45-member faithful 8-felt wide registry
     "EmitBilateralLegs.lean",                # bilateral-aggregation legs
+    "EmitCrossCellConservation.lean",        # turn-wide cross-cell Σδ=0 conservation AIR (foolable gap #6)
 ]
 
 
@@ -199,6 +200,25 @@ def split_bilateral(stdout: str, written):
         write_file(p[1] + ".json", p[2], written)
 
 
+# ADDITIVE: the turn-wide cross-cell Σδ=0 conservation descriptor (foolable gap #6,
+# `EmitCrossCellConservation.lean`). The emitter prints the BARE descriptor JSON (no
+# `key\tname\tjson` TSV — `IO.println (emitVmJson2 crossCellConservationDescriptor)`), so the
+# split routes its stdout verbatim into the single checked-in file.
+CROSS_CELL_CONSERVATION_FILE = "dregg-cross-cell-conservation-v1.json"
+
+
+def split_cross_cell_conservation(stdout: str, written):
+    """`EmitCrossCellConservation.lean` emits the bare descriptor JSON via `IO.println`
+    (no TSV prefix), so its stdout is the descriptor JSON + one trailing newline — exactly
+    the checked-in file's bytes. Route the stdout VERBATIM (the trailing `\\n` from
+    `IO.println` is part of the checked-in artifact; do NOT strip it)."""
+    if not stdout.startswith('{"name":"dregg-cross-cell-conservation-v1"'):
+        sys.exit(
+            f"emit_descriptors: cross-cell-conservation emitter produced unexpected output: {stdout[:80]!r}"
+        )
+    write_file(CROSS_CELL_CONSERVATION_FILE, stdout, written)
+
+
 # ---- FP rewriting -----------------------------------------------------------
 
 def rewrite_fps(written: dict[str, str]) -> int:
@@ -274,6 +294,8 @@ def main():
             split_wide_registry(out, written)
         elif lean.endswith("EmitBilateralLegs.lean"):
             split_bilateral(out, written)
+        elif lean.endswith("EmitCrossCellConservation.lean"):
+            split_cross_cell_conservation(out, written)
         else:
             sys.exit(f"emit_descriptors: no split routine for {lean}")
 
