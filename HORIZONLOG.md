@@ -2348,3 +2348,33 @@ THE CLIMB-OUT (re-grounding, before any live-wire/purge — there's no point wir
    the v2 analog of decideVm_iff_satisfiedVm. THE missing foundation; the real replacement for byte-identity.
 5. RE-VERIFY every rung against the faithful, floor-explicit Satisfied2 (breaks = real gaps the phantom hid).
 PURGE byte-identity + the live-wires come AFTER the model is the system.
+
+## RECKONING REFINED (2026-06-19, mem/map review a2fc4403) — the modeling WORKS where done right; 3 specific divergent legs
+
+The mem/map review (deepest, field-by-field) REFINES the assembly review's "the bus is unmodeled" — that was too
+pessimistic. For MEMORY, the Lean conjunct `memTableFaithful : tf .memory = memLog` denotes EXACTLY what the
+Rust BUS_MEM_LOG/BUS_MEM_CHECK permutation buses enforce (the reviewer traced send/receive field-by-field, serials
+aligned, log-send correctly every-row, Blum multiset = bus grand-product). So Lean modeling the bus's NET EFFECT
+as a conjunct IS denotationally FAITHFUL (same accept-set) even without modeling the grand-product MECHANISM.
+memOp + umemOp: FAITHFUL (one tightening: pin log-send guards boolean in-AIR `guard·(guard−1)=0` vs the witness-
+builder's 0/1 reject — internalize it).
+
+So the COMPLETE faithfulness map (all 3 reviews):
+- FAITHFUL: boundary · pi_binding · range (height-pinned) · memOp · umemOp. The approach works where done right.
+- DIVERGENT leg #1 gate/transition: too STRICT (every-row) → Satisfied2 vacuous for real traces. FIX: isLast-guard
+  (in flight). [over-constrains]
+- DIVERGENT leg #2 chip table (lookup): a MISSING leg — there is NO `chipTableFaithful` conjunct for tf.poseidon2
+  (unlike memTableFaithful for memory) → the chip table is prover-FREE → accepts forged digests. FIX: ADD the
+  leg, template = memTableFaithful; wire ChipTableSoundN in structurally. [under-constrains]
+- DIVERGENT leg #3 map root: a WRONG leg — Lean `opensTo`/`writesTo` use `Heap.root` = FLAT SPONGE
+  (Heap.lean:367); deployed MapOps/MapAbsent use a DEPTH-16 BINARY MERKLE root (heap_root.rs); no bridge theorem
+  and none can hold (sponge ≠ tree-fold); DeployedCapTree.lean:8-20 admits it verbatim. FIX: re-define opensTo/
+  writesTo over the binary-Merkle model ALREADY PRESENT in DeployedCapTree.lean + re-prove the _functional
+  anti-ghost against nodeOf_injective. [models the wrong object]
+
+So it is NOT "burn it down" — most legs are faithful; the modeling approach is sound (memory proves it). It is
+3 specific legs to fix (templates EXIST for all 3) + the missing machine-checked BRIDGE (the reviews established
+faithfulness by careful HUMAN correspondence; there is still no `Satisfied2 ⟺ Ir2Air::eval` theorem — the
+denotational differential is what makes the human reviews machine-checked + regression-proof). Climb-out unchanged
+in shape, sharper in content: fix legs #1/#2/#3 (memTableFaithful / DeployedCapTree / isLast templates) → build
+the bridge → re-verify rungs. Serious (proofs don't establish deployed soundness until done) but BOUNDED.
