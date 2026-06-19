@@ -39,6 +39,40 @@ use crate::fb::{Canvas, HEIGHT, WIDTH};
 /// (w*h*4 = 1_920_000 bytes). Rendered by gpui on lavapipe — see the module doc.
 pub static COCKPIT_RGBA: &[u8] = include_bytes!("cockpit_frame.rgba");
 
+// ───────────────────────── the cockpit focus tabs ───────────────────────────
+//
+// The baked frame is a STATIC gpui render, so we cannot re-flow its element
+// tree in the PD (no wgpu in `#![no_std]`). What we CAN do — and do here — is
+// drive a REAL focus cursor OVER the frame: the keyboard's `Nav` moves a
+// highlight between the cockpit's top workspace tabs (HOME / SHELL / AGENT) and
+// ENTER selects one. The cursor is an overlay the `blit` repaints, so a
+// keypress in cockpit mode now visibly moves the highlight on glass — the same
+// IRQ -> drain -> apply -> repaint loop the image mode uses, now closed for the
+// cockpit too. (The honest next rung — having the SELECTED tab actually re-flow
+// the cockpit's workspace pane — needs the live off-VM re-render path; see the
+// module doc + main.rs's cockpit-focus state.)
+//
+// Boxes measured against `cockpit-render-800x600-LIVE.png`'s top tab band: the
+// three named workspace tabs sit at y≈14..28 in the top-right header.
+
+/// One focusable tab's on-frame label box `(x, y, w, h)`. The name lives in
+/// [`TABS`] at the same index (the focus order arrows walk).
+struct Tab {
+    x: u32,
+    y: u32,
+    w: u32,
+    h: u32,
+}
+
+/// The cockpit's top workspace tabs, left→right (the focus order arrows walk).
+pub const TABS: [&str; 3] = ["HOME", "SHELL", "AGENT"];
+
+const TAB_BOXES: [Tab; 3] = [
+    Tab { x: 602, y: 13, w: 40, h: 17 },
+    Tab { x: 651, y: 13, w: 46, h: 17 },
+    Tab { x: 707, y: 13, w: 44, h: 17 },
+];
+
 /// The render geometry — must equal the framebuffer geometry so the blit is a
 /// straight copy. (The persvati harness renders at exactly `fb::{WIDTH,HEIGHT}`.)
 pub const COCKPIT_W: u32 = 800;
@@ -46,10 +80,21 @@ pub const COCKPIT_H: u32 = 600;
 
 const _: () = assert!(COCKPIT_W == WIDTH && COCKPIT_H == HEIGHT);
 
-/// Blit the baked gpui cockpit frame into the framebuffer the QEMU ramfb engine
-/// scans out, converting RGBA8 -> XRGB8888 (`0x00RRGGBB`) per pixel. A real
-/// gpui render, on glass, on seL4.
-pub fn blit(c: &mut Canvas) {
+/// Blit the baked gpui cockpit frame into the framebuffer, then draw the live
+/// focus cursor over it. `focus` is the index (into [`TABS`]) the keyboard is
+/// hovering; `selected` is the tab last chosen with ENTER (if any). Because the
+/// cursor is repainted by this same `blit`, a `Nav` keypress in cockpit mode now
+/// visibly moves the highlight — the IRQ→drain→apply→repaint loop, closed for
+/// the cockpit.
+pub fn blit(c: &mut Canvas, focus: usize, selected: Option<usize>) {
+    blit_frame(c);
+    draw_focus(c, focus, selected);
+}
+
+/// Blit just the baked gpui cockpit frame into the framebuffer the QEMU ramfb
+/// engine scans out, converting RGBA8 -> XRGB8888 (`0x00RRGGBB`) per pixel. A
+/// real gpui render, on glass, on seL4.
+fn blit_frame(c: &mut Canvas) {
     // Defensive: if the baked frame is the wrong length (a regenerate mismatch),
     // paint a solid backdrop so the mode is still visibly distinct rather than
     // reading garbage. (The const assert above already guards geometry; this
@@ -80,16 +125,49 @@ pub fn blit(c: &mut Canvas) {
         }
     }
 
-    // A thin footer hint so the mode is self-describing (TAB returns to the live
-    // image). Drawn OVER the blitted frame's status-bar band.
+    // A thin footer hint so the mode is self-describing (LEFT/RIGHT move the tab
+    // focus, ENTER selects, TAB returns to the live image). Drawn OVER the
+    // blitted frame's status-bar band.
     let by = HEIGHT - 22;
-    let _ = c.text("TAB", 24, by, 1, 1, crate::fb::rgb(64, 224, 208));
-    let _ = c.text(
-        " back to the live image  ·  REAL gpui render (lavapipe, no GPU) on the seL4 framebuffer",
-        24 + Canvas::text_w("TAB", 1, 1),
-        by,
-        1,
-        1,
-        crate::fb::rgb(150, 178, 188),
-    );
+    let teal = crate::fb::rgb(64, 224, 208);
+    let grey = crate::fb::rgb(150, 178, 188);
+    let mut x = c.text("LEFT/RIGHT", 24, by, 1, 1, teal);
+    x = c.text(" focus a tab  ·  ", x, by, 1, 1, grey);
+    x = c.text("ENTER", x, by, 1, 1, teal);
+    x = c.text(" select  ·  ", x, by, 1, 1, grey);
+    x = c.text("TAB", x, by, 1, 1, teal);
+    let _ = c.text(" back to the live image", x, by, 1, 1, grey);
+}
+
+/// Draw the live focus cursor over the baked frame: an outline around the tab
+/// the keyboard is hovering, and a filled underline + label under the selected
+/// tab (the one chosen with ENTER). This is the cockpit mode's REAL consumption
+/// of the decoded `Nav` events — a keypress moves this highlight on glass.
+fn draw_focus(c: &mut Canvas, focus: usize, selected: Option<usize>) {
+    let teal = crate::fb::rgb(64, 224, 208);
+    let amber = crate::fb::rgb(255, 196, 92);
+
+    // The hovered tab: a 2px teal outline, clamped into [0, TABS.len()).
+    let f = focus.min(TAB_BOXES.len() - 1);
+    let t = &TAB_BOXES[f];
+    c.frame(t.x, t.y, t.w, t.h, 2, teal);
+
+    // The selected tab: an amber underline directly under its label.
+    if let Some(s) = selected {
+        if let Some(t) = TAB_BOXES.get(s) {
+            c.rect(t.x, t.y + t.h + 1, t.w, 2, amber);
+        }
+    }
+
+    // A small status line just under the tab band, naming the focused/selected
+    // tab, so the consumption is legible even on a still screenshot.
+    let sy = TAB_BOXES[0].y + TAB_BOXES[0].h + 6;
+    let mut x = c.text("focus ", 560, sy, 1, 1, crate::fb::rgb(150, 178, 188));
+    x = c.text(TABS[f], x, sy, 1, 1, teal);
+    if let Some(s) = selected {
+        if let Some(name) = TABS.get(s) {
+            x = c.text("  sel ", x, sy, 1, 1, crate::fb::rgb(150, 178, 188));
+            let _ = c.text(name, x, sy, 1, 1, amber);
+        }
+    }
 }

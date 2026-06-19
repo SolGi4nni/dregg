@@ -86,6 +86,11 @@ struct Viewer {
     mode: Mode,
     state: ViewState,
     kbd: Option<Keyboard>,
+    /// Cockpit-mode focus: which top workspace tab the keyboard is hovering
+    /// (index into `cockpit_frame::TABS`) and which was last chosen with ENTER.
+    /// This is the state cockpit mode navigates instead of discarding nav.
+    cockpit_focus: usize,
+    cockpit_selected: Option<usize>,
 }
 
 impl Viewer {
@@ -94,7 +99,9 @@ impl Viewer {
         let mut canvas = unsafe { Canvas::map() };
         match self.mode {
             Mode::Image => view::draw(&mut canvas, &self.state),
-            Mode::Cockpit => cockpit_frame::blit(&mut canvas),
+            Mode::Cockpit => {
+                cockpit_frame::blit(&mut canvas, self.cockpit_focus, self.cockpit_selected)
+            }
         }
     }
 
@@ -111,17 +118,58 @@ impl Viewer {
             match self.mode {
                 Mode::Image => debug_println!("[deos-image]   -> MODE: the live image"),
                 Mode::Cockpit => {
-                    debug_println!("[deos-image]   -> MODE: the starbridge-v2 COCKPIT (real gpui render of a cockpit-shaped Scene, on glass)")
+                    debug_println!("[deos-image]   -> MODE: the starbridge-v2 COCKPIT (real gpui render; LEFT/RIGHT focus a tab, ENTER selects)")
                 }
             }
             self.paint();
             return true;
         }
 
-        // In the cockpit mode, navigation keys are inert (the cockpit frame is a
-        // single rendered surface); only TAB (handled above) leaves it.
+        // In the cockpit mode, navigation now drives a REAL focus cursor over the
+        // baked frame: LEFT/UP and RIGHT/DOWN walk the top workspace tabs
+        // (HOME/SHELL/AGENT), ENTER selects the focused tab, ESC clears the
+        // selection. The baked gpui frame is a static surface (no wgpu in-PD to
+        // re-flow it), so the consumption is an overlay the repaint path draws —
+        // but it IS the same IRQ→drain→apply→repaint loop the image mode uses,
+        // now closed for the cockpit. (Re-flowing the workspace pane on select is
+        // the next rung; it needs the off-VM live re-render.)
         if self.mode == Mode::Cockpit {
-            return false;
+            let n = cockpit_frame::TABS.len();
+            let before_focus = self.cockpit_focus;
+            let before_selected = self.cockpit_selected;
+            match nav {
+                // RIGHT/DOWN walk the tabs forward; LEFT/UP walk backward.
+                Nav::Down => {
+                    self.cockpit_focus = (self.cockpit_focus + 1) % n;
+                }
+                Nav::Up => {
+                    self.cockpit_focus = (self.cockpit_focus + n - 1) % n;
+                }
+                Nav::Enter => {
+                    self.cockpit_selected = Some(self.cockpit_focus);
+                }
+                Nav::Back => {
+                    self.cockpit_selected = None;
+                }
+                Nav::None | Nav::Toggle => {}
+            }
+            let changed = self.cockpit_focus != before_focus
+                || self.cockpit_selected != before_selected;
+            if changed {
+                match self.cockpit_selected {
+                    Some(s) => debug_println!(
+                        "[deos-image]   -> cockpit tab focus {} (selected {})",
+                        cockpit_frame::TABS[self.cockpit_focus],
+                        cockpit_frame::TABS[s]
+                    ),
+                    None => debug_println!(
+                        "[deos-image]   -> cockpit tab focus {}",
+                        cockpit_frame::TABS[self.cockpit_focus]
+                    ),
+                }
+                self.paint();
+            }
+            return changed;
         }
 
         let n = self.state.n_cells();
@@ -226,6 +274,8 @@ fn init() -> Viewer {
         mode: Mode::Image,
         state: ViewState::new(),
         kbd: None,
+        cockpit_focus: 0,
+        cockpit_selected: None,
     };
 
     // (A) DRAW the first cell's overview FIRST, so the bytes are present the

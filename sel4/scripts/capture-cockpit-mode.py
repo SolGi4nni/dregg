@@ -27,6 +27,7 @@ QMP_SOCK = "/tmp/deos-image-qmp.sock"
 SERIAL_LOG = "/tmp/deos-image-serial.log"
 OUT_IMAGE = "/tmp/sel4-cockpit-image-mode.png"
 OUT_COCKPIT = "/tmp/sel4-cockpit-cockpit-mode.png"
+OUT_COCKPIT_NAV = "/tmp/sel4-cockpit-cockpit-nav-mode.png"
 
 
 class Qmp:
@@ -82,6 +83,10 @@ class Qmp:
             "send-key",
             keys=[{"type": "qcode", "data": "tab"}],
         )
+
+    def send_key(self, qcode):
+        # any qcode -> the virtio-keyboard. press + release.
+        return self._cmd("send-key", keys=[{"type": "qcode", "data": qcode}])
 
     def close(self):
         try:
@@ -156,6 +161,19 @@ def main():
         time.sleep(1.0)
         f2, r2 = q.screendump(OUT_COCKPIT)
         print(f"captured COCKPIT mode -> {f2}  ({r2})")
+        time.sleep(0.5)
+
+        # (3) RIGHT, RIGHT, ENTER -> move the cockpit focus cursor to AGENT and
+        # select it (cockpit mode now CONSUMES nav). The PD logs the focus move
+        # + repaints the overlay; capture proves the cursor moved on glass.
+        q.send_key("right")
+        q.send_key("right")
+        q.send_key("ret")
+        if not wait_for_serial("cockpit tab focus AGENT (selected AGENT)", timeout=10):
+            print("WARN: did not see the cockpit-nav serial marker; capturing anyway")
+        time.sleep(1.0)
+        f3, r3 = q.screendump(OUT_COCKPIT_NAV)
+        print(f"captured COCKPIT-NAV mode -> {f3}  ({r3})")
 
         time.sleep(0.5)
         q.close()
