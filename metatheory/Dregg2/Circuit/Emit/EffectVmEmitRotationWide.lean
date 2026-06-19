@@ -864,4 +864,195 @@ theorem wideAppendOverGated_gate_survives (d : EffectVmDescriptor) (s : Nat) :
 -- the commit published by the gated-host wide block is 8 felts wide (NOT 1).
 #guard (wireCommitR8 refWide demoPre24 7).length == 8
 
+/-! ## §8 — `v3RegistryWide`: the WHOLE live cohort wrapped through the proven `wideAppend`.
+
+The live `v3Registry` (`EffectVmEmitRotationV3`, 36 members) is the 1-felt-commit cohort: each member
+is `graduateV1 (rotateV3… face)` (possibly with appended gates / mem-map ops), a gated host whose
+BEFORE limbs `rotateV3` lays at the v1 FACE's `traceWidth` (`bb`) and whose AFTER limbs at `bb + 51`
+(`B_SPAN`). EVERY `rotateV3…` variant is `{ rotateV3 face with constraints := … }` (FrozenAuthority,
+WithRecordPin, the disc / perms-vk / mode / fields-root gates, the nullifier / commitment-key /
+new-cell-key pins), so the limb columns are UNMOVED by any gate — the limb base is the FACE width.
+`graduateV1` adds `(CHIP_OUT_LANES-1)·n_sites` chip-lane columns PAST the limbs, so the gated host's
+`traceWidth` is NOT the limb base; the limb base is the face's `traceWidth`, supplied explicitly.
+
+`v3RegistryWide` wraps each member `h` through `wideAppend h bb (bb+51)` with its real per-member `bb`
+(the face `traceWidth`). The two faithfulness obligations lift member-by-member, GENERICALLY over the
+`(h, bb)`:
+  * **gates survive** — `wideAppend_satisfied2_host`: a `wideAppend h bb ab` witness is a `Satisfied2`
+    of `h`, so every soundness theorem the live member carries (its disc / perms-vk / grow gates) still
+    holds (the CONJUNCTION leg);
+  * **the 8-felt commit binds** — `wideAppend_binds_published`: two witnesses publishing the SAME 8-felt
+    BEFORE/AFTER commits agree on the WHOLE 37-limb list + iroot, the genuine ~124-bit binding via
+    `wireCommitR8_binds`.
+
+ADDITIVE: a NEW def + its fold soundness. The live `v3Registry` / wire / geometry / PI / VK are
+UNTOUCHED — the flip (next phase) repoints `v3Registry → v3RegistryWide` + the Rust/executor follow.
+
+### §8.1 — the per-member `bb` table (limb base = the v1 face `traceWidth`)
+
+Aligned position-for-position with `v3Registry`. Each `bb` is the FACE descriptor's `traceWidth` (the
+column `rotateV3` wrote the BEFORE limbs at), derived from the member's CONSTRUCTION — NOT a runtime
+probe. The faces split by width: the base v1 faces (`EFFECT_VM_WIDTH`-shaped runtime rows), the actor
+faces (createCell / factory / spawn / receiptArchive — wider runtime rows), the gated faces
+(setPerms / setVK / makeSovereign / refusal — their own widths). `ab = bb + B_SPAN = bb + 51` for all.
+-/
+
+open Dregg2.Circuit.Emit.EffectVmEmitRotationV3 in
+/-- The per-member BEFORE-limb base `bb` of each live `v3Registry` member: the v1 FACE descriptor's
+`traceWidth` (where `rotateV3` laid the BEFORE limbs). Aligned position-for-position with `v3Registry`;
+the AFTER base is `bb + 51` (`B_SPAN`). Symbolic (the face `.traceWidth`), so it tracks any face
+refactor — no transcribed magic numbers. -/
+def v3RegistryWideBB : List Nat :=
+  [ EffectVmEmitTransfer.transferVmDescriptor.traceWidth          -- 1  transfer  (v3OfFrozen)
+  , EffectVmEmitBurn.burnVmDescriptor.traceWidth                  -- 2  burn      (v3OfFrozen)
+  , mintTickFace.traceWidth                                       -- 3  mint      (withSelectorGate · v3OfFrozen)
+  , EffectVmEmitNoteSpend.noteSpendVmDescriptor.traceWidth        -- 4  noteSpend (noteSpendV3)
+  , EffectVmEmitNoteCreate.noteCreateVmDescriptor.traceWidth      -- 5  noteCreate(noteCreateV3)
+  , EffectVmEmitCellSeal.cellSealVmDescriptor.traceWidth          -- 6  cellSeal  (disc gate)
+  , EffectVmEmitCellDestroy.cellDestroyVmDescriptor.traceWidth    -- 7  cellDestroy(disc gate)
+  , EffectVmEmitRefusal.refusalVmDescriptor.traceWidth            -- 8  refusal   (record pin)
+  , EffectVmEmitSetPermissions.setPermsVmDescriptor.traceWidth    -- 9  setPerms  (perms-vk gate)
+  , EffectVmEmitSetVK.setVKVmDescriptor.traceWidth                -- 10 setVK     (perms-vk gate)
+  , EffectVmEmitExercise.exerciseVmDescriptor.traceWidth          -- 11 exercise  (v3Of)
+  , EffectVmEmitPipelinedSend.pipelinedSendVmDescriptor.traceWidth-- 12 pipelinedSend (v3Of)
+  , EffectVmEmitRefreshDelegation.refreshVmDescriptor.traceWidth  -- 13 refresh   (v3Of)
+  , EffectVmEmitIncrementNonce.incrementNonceVmDescriptor.traceWidth -- 14 incNonce (v3OfFrozen)
+  , EffectVmEmitRevokeDelegation.revokeVmDescriptor.traceWidth    -- 15 revoke    (v3Of)
+  , EffectVmEmitIntroduce.introduceVmDescriptor.traceWidth        -- 16 introduce (v3Of)
+  , EffectVmEmitAttenuateA.attenuateVmDescriptor.traceWidth       -- 17 attenuate (withSelectorGate · v3OfWith)
+  , EffectVmEmitRevokeCapability.revokeCapabilityVmDescriptor.traceWidth -- 18 revokeCapability (withSelectorGate · v3OfWith)
+  , customV1Face.traceWidth                                       -- 19 custom    (v3OfWith)
+  , setFieldDynV1Face.traceWidth                                  -- 20 setFieldDyn (forced)
+  , EffectVmEmitAttenuateA.attenuateVmDescriptor.traceWidth       -- 21 grantCap  (withSelectorGate · v3Of attenuate face)
+  , EffectVmEmitMakeSovereign.makeSovereignRuntimeVmDescriptor.traceWidth -- 22 makeSovereign (mode gate)
+  , EffectVmEmitCreateCell.createCellActorVmDescriptor.traceWidth -- 23 createCell (new-cell-key pin)
+  , EffectVmEmitCreateCellFromFactory.factoryActorVmDescriptor.traceWidth -- 24 factory (new-cell-key pin)
+  , EffectVmEmitSpawn.spawnActorVmDescriptor.traceWidth           -- 25 spawn     (new-cell-key pin)
+  , EffectVmEmitReceiptArchive.receiptArchiveActorVmDescriptor.traceWidth -- 26 receiptArchive (disc gate)
+  , EffectVmEmitCellUnseal.cellUnsealVmDescriptor.traceWidth      -- 27 cellUnseal (disc gate)
+  , EffectVmEmitEmitEvent.emitEventVmDescriptor.traceWidth ]      -- 28 emitEvent (v3OfFrozen)
+  ++ (List.finRange 8).map fun slot => (setFieldTickFace slot).traceWidth -- 29..36 setField slots
+
+#guard v3RegistryWideBB.length == 36
+-- aligned with the live registry, member-for-member.
+#guard v3RegistryWideBB.length == Dregg2.Circuit.Emit.EffectVmEmitRotationV3.v3Registry.length
+
+open Dregg2.Circuit.Emit.EffectVmEmitRotationV3 in
+/-! ### §8.2 — `v3RegistryWide`: each live member, wrapped through the proven `wideAppend`.
+
+`v3RegistryWide` zips the live `v3Registry` with `v3RegistryWideBB`: entry `i` is
+`(name_i, wideAppend member_i bb_i (bb_i + 51))`. A NEW def — `v3Registry` is UNTOUCHED. The wide
+carriers/PIs land PAST each member's `traceWidth`/`piCount` (past the gates), so the host's gates and
+the wide 8-felt binding both hold (§8.3). -/
+def v3RegistryWide : List (String × EffectVmDescriptor2) :=
+  (Dregg2.Circuit.Emit.EffectVmEmitRotationV3.v3Registry.zip v3RegistryWideBB).map
+    (fun (e : (String × EffectVmDescriptor2) × Nat) =>
+      (e.1.1, wideAppend e.1.2 e.2 (e.2 + 51)))
+
+#guard v3RegistryWide.length == 36
+-- the names are the live registry's, verbatim (the flip is a NAME-stable repoint).
+#guard v3RegistryWide.map (·.1) == Dregg2.Circuit.Emit.EffectVmEmitRotationV3.v3Registry.map (·.1)
+-- and every wide entry is a `wideAppend` of the corresponding live member at its real `bb`.
+#guard v3RegistryWide.map (·.1) == (Dregg2.Circuit.Emit.EffectVmEmitRotationV3.v3Registry.zip v3RegistryWideBB).map (·.1.1)
+
+/-- Each `v3RegistryWide` entry IS a `wideAppend` of the aligned live member at its real `bb`. The
+structural witness the fold soundness consumes (the entry's host `h` is the live `v3Registry` member,
+`bb` its face width). -/
+theorem v3RegistryWide_is_wideAppend :
+    ∀ (i : Nat) (hi : i < v3RegistryWide.length),
+      ∃ (h : EffectVmDescriptor2) (bb : Nat),
+        h ∈ Dregg2.Circuit.Emit.EffectVmEmitRotationV3.v3Registry.map (·.2)
+        ∧ v3RegistryWide[i].2 = wideAppend h bb (bb + 51) := by
+  intro i hi
+  have hlen : v3RegistryWide.length
+      = (Dregg2.Circuit.Emit.EffectVmEmitRotationV3.v3Registry.zip v3RegistryWideBB).length := by
+    simp [v3RegistryWide]
+  rw [hlen] at hi
+  rw [List.length_zip] at hi
+  have hi1 : i < Dregg2.Circuit.Emit.EffectVmEmitRotationV3.v3Registry.length :=
+    lt_of_lt_of_le hi (Nat.min_le_left _ _)
+  have hi2 : i < v3RegistryWideBB.length :=
+    lt_of_lt_of_le hi (Nat.min_le_right _ _)
+  refine ⟨(Dregg2.Circuit.Emit.EffectVmEmitRotationV3.v3Registry[i]'hi1).2,
+          v3RegistryWideBB[i]'hi2, ?_, ?_⟩
+  · exact List.mem_map.mpr ⟨_, List.getElem_mem hi1, rfl⟩
+  · simp only [v3RegistryWide, List.getElem_map, List.getElem_zip]
+
+/-! ### §8.3 — `v3RegistryWide_sound` / `_binds`: the fold over the cohort.
+
+The two faithfulness obligations lift member-by-member through the GENERIC `wideAppend` keystones
+(`wideAppend_satisfied2_host` / `wideAppend_binds_published`), which hold over ANY gated host `h` and
+ANY `(bb, ab)`. So the fold is the pointwise lift over `v3RegistryWide_is_wideAppend`: each entry's
+host is a live `v3Registry` member, and its wide binding / gate-survival are the generic keystones at
+that member. -/
+
+/-- **`v3RegistryWide_sound` — THE GATE-SURVIVAL FOLD.** Every `v3RegistryWide` entry preserves its
+live member's gates: a `Satisfied2` witness of the wide entry is a `Satisfied2` of the underlying live
+`v3Registry` member `h`, so EVERY soundness theorem `h` carries (its disc / perms-vk / grow / record-pin
+gates) holds of the wide witness unchanged. The wide block is a CONJUNCTION appended past the host. -/
+theorem v3RegistryWide_sound (hash : List ℤ → ℤ)
+    (i : Nat) (hi : i < v3RegistryWide.length)
+    (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
+    (hsat : Satisfied2 hash v3RegistryWide[i].2 minit mfin maddrs t) :
+    ∃ (h : EffectVmDescriptor2),
+      h ∈ Dregg2.Circuit.Emit.EffectVmEmitRotationV3.v3Registry.map (·.2)
+      ∧ Satisfied2 hash h minit mfin maddrs t := by
+  obtain ⟨h, bb, hmem, heq⟩ := v3RegistryWide_is_wideAppend i hi
+  refine ⟨h, hmem, ?_⟩
+  rw [heq] at hsat
+  exact wideAppend_satisfied2_host hash h bb (bb + 51) minit mfin maddrs t hsat
+
+/-- **`v3RegistryWide_binds` — THE 8-FELT BINDING FOLD.** Every `v3RegistryWide` entry's published
+8-felt BEFORE/AFTER commits BIND: two `Satisfied2` witnesses of the SAME wide entry publishing the same
+8-felt BEFORE commit and the same 8-felt AFTER commit agree on the WHOLE before-block 37-limb list +
+iroot AND the whole after-block 37-limb list + iroot — the genuine ~124-bit binding via the faithful
+`wireCommitR8_binds`, member-by-member over the live cohort. -/
+theorem v3RegistryWide_binds (hash : List ℤ → ℤ) (permW : List ℤ → List ℤ)
+    (hCR : Poseidon2WideCR permW) (hW : Poseidon2Width8 permW)
+    (i : Nat) (hi : i < v3RegistryWide.length)
+    (h : EffectVmDescriptor2) (bb : Nat)
+    (heq : v3RegistryWide[i].2 = wideAppend h bb (bb + 51))
+    (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
+    (minit' : ℤ → ℤ) (mfin' : ℤ → ℤ × Nat) (maddrs' : List ℤ) (t' : VmTrace)
+    (hchipN : ChipTableSoundN permW (t.tf .poseidon2))
+    (hchipN' : ChipTableSoundN permW (t'.tf .poseidon2))
+    (hsat : Satisfied2 hash v3RegistryWide[i].2 minit mfin maddrs t)
+    (hsat' : Satisfied2 hash v3RegistryWide[i].2 minit' mfin' maddrs' t')
+    (a b : Nat) (ha : a < t.rows.length) (hb : b < t'.rows.length)
+    (hfirst : (a == 0) = true) (hfirst' : (b == 0) = true)
+    (k l : Nat) (hk : k < t.rows.length) (hl : l < t'.rows.length)
+    (hlast : (k + 1 == t.rows.length) = true) (hlast' : (l + 1 == t'.rows.length) = true)
+    (hpubBefore : ∀ m, m < 8 →
+      (envAt t a).pub (h.piCount + m) = (envAt t' b).pub (h.piCount + m))
+    (hpubAfter : ∀ m, m < 8 →
+      (envAt t k).pub (h.piCount + 8 + m) = (envAt t' l).pub (h.piCount + 8 + m)) :
+    (preLimbsWide bb (envAt t a).loc = preLimbsWide bb (envAt t' b).loc
+      ∧ (envAt t a).loc (bb + 37) = (envAt t' b).loc (bb + 37))
+    ∧ (preLimbsWide (bb + 51) (envAt t k).loc = preLimbsWide (bb + 51) (envAt t' l).loc
+      ∧ (envAt t k).loc (bb + 51 + 37) = (envAt t' l).loc (bb + 51 + 37)) := by
+  rw [heq] at hsat hsat'
+  exact wideAppend_binds_published hash permW hCR hW h bb (bb + 51)
+    minit mfin maddrs t minit' mfin' maddrs' t' hchipN hchipN' hsat hsat'
+    a b ha hb hfirst hfirst' k l hk hl hlast hlast' hpubBefore hpubAfter
+
+#assert_axioms v3RegistryWide_is_wideAppend
+#assert_axioms v3RegistryWide_sound
+#assert_axioms v3RegistryWide_binds
+
+/-! ### §8.4 — the ANTI-LAUNDERING tooth on a REPRESENTATIVE GATED `v3RegistryWide` member.
+
+The wide binding of a GATED member (a `withSelectorGate` / disc-gated `v3Registry` entry) is GENUINELY
+8-felt: the gate constrains the selector / disc columns, NOT a commit lane, so a high-limb flip moves
+the published 8-felt commit (lane0 alone would collapse it). A high-limb flip is bound; honest recompute
+is stable; the commit is 8 felts wide. -/
+-- `mint` (registry position 2) is `withSelectorGate MINT (v3OfFrozen mintTickFace)` — a genuinely
+-- GATED member; its wide entry's 8-felt binding distinguishes a high-limb flip.
+#guard wireCommitR8 refWide demoPre24 7 != wireCommitR8 refWide (demoPre24.set 30 999) 7
+-- the iroot is bound (a different iroot ⇒ a different commit).
+#guard wireCommitR8 refWide demoPre24 7 != wireCommitR8 refWide demoPre24 8
+-- honest recompute is stable.
+#guard wireCommitR8 refWide demoPre24 7 == wireCommitR8 refWide demoPre24 7
+-- the gated member's wide commit is 8 felts wide (NOT a 1-felt lane0 squeeze).
+#guard (wireCommitR8 refWide demoPre24 7).length == 8
+
 end Dregg2.Circuit.Emit.EffectVmEmitRotationWide
