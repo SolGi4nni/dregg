@@ -546,4 +546,322 @@ def demoWideCarrier (base cbase : Nat) (limbs : List ℤ) (ir : ℤ) (a : Assign
 -- the wide commit is 8 felts (NOT 1) — the structural anti-laundering width witness.
 #guard (wireCommitR8 refWide demoPre24 7).length == 8
 
+/-! ## §7 — `wideAppend`: the GATED-HOST wide-emission transformer (the live-flip primitive).
+
+`rotateV3Wide` (§4) appends the wide BEFORE/AFTER blocks onto a BARE host (`graduateV1 (rotateV3 d)`),
+internally re-graduating `d`. But the LIVE `v3Registry` is 36 ALREADY-GATED `EffectVmDescriptor2`s
+(`v3OfFrozen`, `withSelectorGate`, the WAVE-1/2 disc gates, the fee-pin transfer) — each a graduated
+host with appended gates. The live flip needs to append the wide carriers onto an ARBITRARY such host,
+NOT re-graduate a bare `d`.
+
+`wideAppend h bb ab` does exactly that: given an arbitrary graduated/gated `h : EffectVmDescriptor2`
+and the host's BEFORE/AFTER limb bases `bb ab` (the columns `rotateV3` laid the limbs at — `bb =
+d.traceWidth`, `ab = d.traceWidth + 51`, UNMOVED by any gate, which only appends constraints), it:
+
+  * bases the two 13×8 wide-carrier regions PAST `h.traceWidth` (`wideBeforeCBase h.traceWidth` /
+    `wideAfterCBase h.traceWidth`) — they cannot collide with the host's columns or its gates' columns;
+  * pins the two 8-felt commits to 16 PI slots PAST `h.piCount`;
+  * PRESERVES `h`'s constraints, gates, hash sites, ranges, AND mem/map logs verbatim (it ONLY APPENDS
+    `.lookup` and `.base (.piBinding …)` constraints — neither contributes a mem/map op, so the host's
+    four memory legs and the map-table leg are definitionally `h`'s, exactly the `withSelectorGate`
+    argument). `wideAppend h bb ab`'s constraints are `h.constraints ++ (wide binding)` — a CONJUNCTION,
+    so anything provable about `h` (its gates' soundness) still holds, AND the wide binding is forced.
+
+The wide lookups read the SAME `preLimbsAt bb`/`preLimbsAt ab` columns the host's 1-felt chain commits,
+so the 8-felt binding is over the same 37 limbs + iroot. -/
+
+/-- **`wideAppend h bb ab`** — append the two wide BEFORE/AFTER carrier blocks (each 13×8, based past
+`h.traceWidth`) and their 16 commit PI pins (past `h.piCount`) onto an ARBITRARY graduated/gated host
+`h`. The host's name/hashSites/ranges and ALL its existing constraints (its gates) are untouched; only
+the wide lookups + PI pins are ADDED. -/
+def wideAppend (h : EffectVmDescriptor2) (bb ab : Nat) : EffectVmDescriptor2 :=
+  let w := h.traceWidth
+  let cbB := wideBeforeCBase w
+  let cbA := wideAfterCBase w
+  { h with
+    traceWidth := w + 208           -- + 2 × (13 carriers × 8)
+    piCount    := h.piCount + 16
+    tables     := v2Tables (w + 208)
+    constraints := h.constraints
+      ++ rotV3WideLookups bb cbB
+      ++ rotV3WideLookups ab cbA
+      ++ commitPins .first (carrierCols cbB 12) h.piCount
+      ++ commitPins .last  (carrierCols cbA 12) (h.piCount + 8) }
+
+/-- `wideAppend h bb ab`'s constraints are `h`'s plus the four appended wide blocks. -/
+theorem wideAppend_constraints (h : EffectVmDescriptor2) (bb ab : Nat) :
+    (wideAppend h bb ab).constraints
+      = h.constraints
+        ++ rotV3WideLookups bb (wideBeforeCBase h.traceWidth)
+        ++ rotV3WideLookups ab (wideAfterCBase h.traceWidth)
+        ++ commitPins .first (carrierCols (wideBeforeCBase h.traceWidth) 12) h.piCount
+        ++ commitPins .last  (carrierCols (wideAfterCBase h.traceWidth) 12) (h.piCount + 8) := by
+  unfold wideAppend; simp [List.append_assoc]
+
+/-- `wideAppend` ONLY appends `.lookup` and `.base (.piBinding …)` constraints, so the gathered
+`memOpsOf` is `h`'s (no `.memOp` is added). -/
+theorem wideAppend_memOpsOf (h : EffectVmDescriptor2) (bb ab : Nat) :
+    Dregg2.Circuit.DescriptorIR2.memOpsOf (wideAppend h bb ab)
+      = Dregg2.Circuit.DescriptorIR2.memOpsOf h := by
+  unfold Dregg2.Circuit.DescriptorIR2.memOpsOf
+  rw [wideAppend_constraints]
+  unfold rotV3WideLookups commitPins
+  simp [Function.comp_def]
+
+/-- ...and no `.mapOp` is added, so the gathered `mapOpsOf` is `h`'s. -/
+theorem wideAppend_mapOpsOf (h : EffectVmDescriptor2) (bb ab : Nat) :
+    Dregg2.Circuit.DescriptorIR2.mapOpsOf (wideAppend h bb ab)
+      = Dregg2.Circuit.DescriptorIR2.mapOpsOf h := by
+  unfold Dregg2.Circuit.DescriptorIR2.mapOpsOf
+  rw [wideAppend_constraints]
+  unfold rotV3WideLookups commitPins
+  simp [Function.comp_def]
+
+/-- ...so the gathered memory log is `h`'s, op-for-op. -/
+theorem wideAppend_memLog (h : EffectVmDescriptor2) (bb ab : Nat)
+    (t : Dregg2.Circuit.DescriptorIR2.VmTrace) :
+    Dregg2.Circuit.DescriptorIR2.memLog (wideAppend h bb ab) t
+      = Dregg2.Circuit.DescriptorIR2.memLog h t := by
+  simp [Dregg2.Circuit.DescriptorIR2.memLog, wideAppend_memOpsOf]
+
+/-- ...and the gathered map log is `h`'s. -/
+theorem wideAppend_mapLog (h : EffectVmDescriptor2) (bb ab : Nat)
+    (t : Dregg2.Circuit.DescriptorIR2.VmTrace) :
+    Dregg2.Circuit.DescriptorIR2.mapLog (wideAppend h bb ab) t
+      = Dregg2.Circuit.DescriptorIR2.mapLog h t := by
+  simp [Dregg2.Circuit.DescriptorIR2.mapLog, wideAppend_mapOpsOf]
+
+/-! ### §7.1 — the appended-block membership lemmas (for `rowConstraints` extraction). -/
+
+theorem wideAppend_before_mem (h : EffectVmDescriptor2) (bb ab : Nat) :
+    ∀ c ∈ rotV3WideLookups bb (wideBeforeCBase h.traceWidth),
+      c ∈ (wideAppend h bb ab).constraints := by
+  intro c hc
+  rw [wideAppend_constraints]
+  simp only [List.append_assoc, List.mem_append]
+  exact Or.inr (Or.inl hc)
+
+theorem wideAppend_after_mem (h : EffectVmDescriptor2) (bb ab : Nat) :
+    ∀ c ∈ rotV3WideLookups ab (wideAfterCBase h.traceWidth),
+      c ∈ (wideAppend h bb ab).constraints := by
+  intro c hc
+  rw [wideAppend_constraints]
+  simp only [List.append_assoc, List.mem_append]
+  exact Or.inr (Or.inr (Or.inl hc))
+
+theorem wideAppend_beforePin_mem (h : EffectVmDescriptor2) (bb ab : Nat) (k : Nat) (hk : k < 8) :
+    (VmConstraint2.base (.piBinding .first
+      ((carrierCols (wideBeforeCBase h.traceWidth) 12).getD k 0)
+      (h.piCount + k))) ∈ (wideAppend h bb ab).constraints := by
+  rw [wideAppend_constraints]
+  simp only [List.append_assoc, List.mem_append]
+  refine Or.inr (Or.inr (Or.inr (Or.inl ?_)))
+  unfold commitPins
+  rw [List.mem_map]
+  refine ⟨((carrierCols (wideBeforeCBase h.traceWidth) 12).getD k 0, k), ?_, rfl⟩
+  rw [List.mem_iff_getElem]
+  refine ⟨k, ?_, ?_⟩
+  · rw [List.length_zipIdx, carrierCols_length]; exact hk
+  · rw [List.getElem_zipIdx]
+    have hk' : k < (carrierCols (wideBeforeCBase h.traceWidth) 12).length := by
+      rw [carrierCols_length]; exact hk
+    simp [List.getD_eq_getElem?_getD, List.getElem?_eq_getElem hk']
+
+theorem wideAppend_afterPin_mem (h : EffectVmDescriptor2) (bb ab : Nat) (k : Nat) (hk : k < 8) :
+    (VmConstraint2.base (.piBinding .last
+      ((carrierCols (wideAfterCBase h.traceWidth) 12).getD k 0)
+      (h.piCount + 8 + k))) ∈ (wideAppend h bb ab).constraints := by
+  rw [wideAppend_constraints]
+  simp only [List.append_assoc, List.mem_append]
+  refine Or.inr (Or.inr (Or.inr (Or.inr ?_)))
+  unfold commitPins
+  rw [List.mem_map]
+  refine ⟨((carrierCols (wideAfterCBase h.traceWidth) 12).getD k 0, k), ?_, rfl⟩
+  rw [List.mem_iff_getElem]
+  refine ⟨k, ?_, ?_⟩
+  · rw [List.length_zipIdx, carrierCols_length]; exact hk
+  · rw [List.getElem_zipIdx]
+    have hk' : k < (carrierCols (wideAfterCBase h.traceWidth) 12).length := by
+      rw [carrierCols_length]; exact hk
+    simp [List.getD_eq_getElem?_getD, List.getElem?_eq_getElem hk']
+
+/-! ### §7.2 — the GATED-HOST keystone tower (the generalizations of §5 over an arbitrary host). -/
+
+/-- **`wideAppend_pins`** — a `Satisfied2` witness of `wideAppend h bb ab` forces the BEFORE/AFTER wide
+lookups on every row: each block's 8 state-commit carrier columns ARE `wireCommitR8` of the row's own
+37 limbs (at `bb`/`ab`) and iroot. REGARDLESS of `h`'s gates — the wide lookups are appended
+constraints of `wideAppend h bb ab`, extracted from `rowConstraints` independently of `h`'s
+constraints. -/
+theorem wideAppend_pins (hash : List ℤ → ℤ) (permW : List ℤ → List ℤ) (h : EffectVmDescriptor2)
+    (bb ab : Nat) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
+    (hchipN : ChipTableSoundN permW (t.tf .poseidon2))
+    (hsat : Satisfied2 hash (wideAppend h bb ab) minit mfin maddrs t)
+    (i : Nat) (hi : i < t.rows.length) :
+    carrierVals (wideBeforeCBase h.traceWidth) 12 (envAt t i).loc
+      = wireCommitR8 permW (preLimbsWide bb (envAt t i).loc) ((envAt t i).loc (bb + 37))
+    ∧ carrierVals (wideAfterCBase h.traceWidth) 12 (envAt t i).loc
+      = wireCommitR8 permW (preLimbsWide ab (envAt t i).loc) ((envAt t i).loc (ab + 37)) := by
+  have hrow := hsat.rowConstraints i hi
+  refine ⟨?_, ?_⟩
+  · apply rotV3WidePin permW (t.tf .poseidon2) hchipN (envAt t i) bb
+      (wideBeforeCBase h.traceWidth)
+    intro p hp
+    have hmem := wideAppend_before_mem h bb ab (.lookup (siteLookupN p.1 p.2))
+      (List.mem_map.mpr ⟨p, hp, rfl⟩)
+    have := hrow _ hmem
+    simpa [VmConstraint2.holdsAt, Lookup.holdsAt, siteLookupN] using this
+  · apply rotV3WidePin permW (t.tf .poseidon2) hchipN (envAt t i) ab
+      (wideAfterCBase h.traceWidth)
+    intro p hp
+    have hmem := wideAppend_after_mem h bb ab (.lookup (siteLookupN p.1 p.2))
+      (List.mem_map.mpr ⟨p, hp, rfl⟩)
+    have := hrow _ hmem
+    simpa [VmConstraint2.holdsAt, Lookup.holdsAt, siteLookupN] using this
+
+/-- **`wideAppend_publishes`** — the wide commits PUBLISH: first row binds the BEFORE commit's 8 columns
+to PI slots `h.piCount..+7`; last row binds the AFTER commit's 8 columns to `h.piCount+8..+15`.
+Independent of `h`'s gates. -/
+theorem wideAppend_publishes (hash : List ℤ → ℤ) (h : EffectVmDescriptor2) (bb ab : Nat)
+    (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
+    (hsat : Satisfied2 hash (wideAppend h bb ab) minit mfin maddrs t)
+    (i : Nat) (hi : i < t.rows.length) :
+    ((i == 0) = true → ∀ k, (hk : k < 8) →
+      (envAt t i).loc ((carrierCols (wideBeforeCBase h.traceWidth) 12).getD k 0)
+        = (envAt t i).pub (h.piCount + k))
+    ∧ ((i + 1 == t.rows.length) = true → ∀ k, (hk : k < 8) →
+      (envAt t i).loc ((carrierCols (wideAfterCBase h.traceWidth) 12).getD k 0)
+        = (envAt t i).pub (h.piCount + 8 + k)) := by
+  have hrow := hsat.rowConstraints i hi
+  refine ⟨?_, ?_⟩
+  · intro hf k hk
+    have := hrow _ (wideAppend_beforePin_mem h bb ab k hk)
+    simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm] at this
+    exact this hf
+  · intro hl k hk
+    have := hrow _ (wideAppend_afterPin_mem h bb ab k hk)
+    simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm] at this
+    exact this hl
+
+set_option maxHeartbeats 1600000 in
+/-- **`wideAppend_binds_published` — THE GATED-HOST WIDE END-TO-END KEYSTONE.** Two `Satisfied2`
+witnesses of `wideAppend h bb ab` publishing the SAME 8-felt BEFORE commit and the SAME 8-felt AFTER
+commit agree on the WHOLE before-block 37-limb list + iroot AND the WHOLE after-block 37-limb list +
+iroot — the GENUINE ~124-bit binding via the FAITHFUL `wireCommitR8_binds`, over an ARBITRARY gated
+host `h`. The host's gates constrain OTHER columns; the wide binding is over the appended carriers +
+the shared `preLimbsAt bb`/`ab` columns, so the gates neither weaken nor are weakened by it. -/
+theorem wideAppend_binds_published (hash : List ℤ → ℤ) (permW : List ℤ → List ℤ)
+    (hCR : Poseidon2WideCR permW) (hW : Poseidon2Width8 permW) (h : EffectVmDescriptor2) (bb ab : Nat)
+    (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
+    (minit' : ℤ → ℤ) (mfin' : ℤ → ℤ × Nat) (maddrs' : List ℤ) (t' : VmTrace)
+    (hchipN : ChipTableSoundN permW (t.tf .poseidon2))
+    (hchipN' : ChipTableSoundN permW (t'.tf .poseidon2))
+    (hsat : Satisfied2 hash (wideAppend h bb ab) minit mfin maddrs t)
+    (hsat' : Satisfied2 hash (wideAppend h bb ab) minit' mfin' maddrs' t')
+    (i j : Nat) (hi : i < t.rows.length) (hj : j < t'.rows.length)
+    (hfirst : (i == 0) = true) (hfirst' : (j == 0) = true)
+    (k l : Nat) (hk : k < t.rows.length) (hl : l < t'.rows.length)
+    (hlast : (k + 1 == t.rows.length) = true) (hlast' : (l + 1 == t'.rows.length) = true)
+    (hpubBefore : ∀ m, m < 8 →
+      (envAt t i).pub (h.piCount + m) = (envAt t' j).pub (h.piCount + m))
+    (hpubAfter : ∀ m, m < 8 →
+      (envAt t k).pub (h.piCount + 8 + m) = (envAt t' l).pub (h.piCount + 8 + m)) :
+    (preLimbsWide bb (envAt t i).loc = preLimbsWide bb (envAt t' j).loc
+      ∧ (envAt t i).loc (bb + 37) = (envAt t' j).loc (bb + 37))
+    ∧ (preLimbsWide ab (envAt t k).loc = preLimbsWide ab (envAt t' l).loc
+      ∧ (envAt t k).loc (ab + 37) = (envAt t' l).loc (ab + 37)) := by
+  have hp := wideAppend_pins hash permW h bb ab minit mfin maddrs t hchipN hsat
+  have hp' := wideAppend_pins hash permW h bb ab minit' mfin' maddrs' t' hchipN' hsat'
+  have hq := wideAppend_publishes hash h bb ab minit mfin maddrs t hsat
+  have hq' := wideAppend_publishes hash h bb ab minit' mfin' maddrs' t' hsat'
+  refine ⟨?_, ?_⟩
+  · have hcv : carrierVals (wideBeforeCBase h.traceWidth) 12 (envAt t i).loc
+        = carrierVals (wideBeforeCBase h.traceWidth) 12 (envAt t' j).loc :=
+      carrierVals_eq_of_pins _ _ _ _
+        (fun m => (envAt t i).pub (h.piCount + m))
+        (fun m => (envAt t' j).pub (h.piCount + m))
+        hpubBefore ((hq i hi).1 hfirst) ((hq' j hj).1 hfirst')
+    have hwire : wireCommitR8 permW (preLimbsWide bb (envAt t i).loc) ((envAt t i).loc (bb + 37))
+        = wireCommitR8 permW (preLimbsWide bb (envAt t' j).loc) ((envAt t' j).loc (bb + 37)) := by
+      rw [← (hp i hi).1, ← (hp' j hj).1]; exact hcv
+    exact wireCommitR8_binds permW hCR hW
+      (by rw [preLimbsWide_length, preLimbsWide_length]) hwire
+  · have hcv : carrierVals (wideAfterCBase h.traceWidth) 12 (envAt t k).loc
+        = carrierVals (wideAfterCBase h.traceWidth) 12 (envAt t' l).loc :=
+      carrierVals_eq_of_pins _ _ _ _
+        (fun m => (envAt t k).pub (h.piCount + 8 + m))
+        (fun m => (envAt t' l).pub (h.piCount + 8 + m))
+        hpubAfter ((hq k hk).2 hlast) ((hq' l hl).2 hlast')
+    have hwire : wireCommitR8 permW (preLimbsWide ab (envAt t k).loc) ((envAt t k).loc (ab + 37))
+        = wireCommitR8 permW (preLimbsWide ab (envAt t' l).loc) ((envAt t' l).loc (ab + 37)) := by
+      rw [← (hp k hk).2, ← (hp' l hl).2]; exact hcv
+    exact wireCommitR8_binds permW hCR hW
+      (by rw [preLimbsWide_length, preLimbsWide_length]) hwire
+
+/-! ### §7.3 — the host's gates are PRESERVED: `wideAppend h` reduces to a `Satisfied2` of `h`.
+
+`wideAppend h bb ab` appends ONLY `.lookup` and `.base (.piBinding …)` constraints, neither a mem/map
+op — so a trace satisfying `wideAppend h bb ab` satisfies `h` itself (the host's gates hold unchanged).
+This is the CONJUNCTION leg: the wide binding (§7.2) AND every soundness theorem `h` carries (its gates)
+both hold of any satisfying witness. The exact `withSelectorGate_satisfied2` argument, generalized. -/
+theorem wideAppend_satisfied2_host (hash : List ℤ → ℤ) (h : EffectVmDescriptor2) (bb ab : Nat)
+    (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
+    (hsat : Satisfied2 hash (wideAppend h bb ab) minit mfin maddrs t) :
+    Satisfied2 hash h minit mfin maddrs t :=
+  { rowConstraints := fun i hi c hc =>
+      hsat.rowConstraints i hi c (by
+        rw [wideAppend_constraints]
+        exact List.mem_append_left _ (List.mem_append_left _
+          (List.mem_append_left _ (List.mem_append_left _ hc))))
+    rowHashes := hsat.rowHashes
+    rowRanges := hsat.rowRanges
+    memAddrsNodup := hsat.memAddrsNodup
+    memClosed := by have := hsat.memClosed; rwa [wideAppend_memLog] at this
+    memDisciplined := by have := hsat.memDisciplined; rwa [wideAppend_memLog] at this
+    memBalanced := by have := hsat.memBalanced; rwa [wideAppend_memLog] at this
+    memTableFaithful := by have := hsat.memTableFaithful; rwa [wideAppend_memLog] at this
+    mapTableFaithful := by have := hsat.mapTableFaithful; rwa [wideAppend_mapLog] at this }
+
+#assert_axioms wideAppend_pins
+#assert_axioms wideAppend_publishes
+#assert_axioms wideAppend_binds_published
+#assert_axioms wideAppend_satisfied2_host
+
+/-! ### §7.4 — the ANTI-LAUNDERING tooth on a REPRESENTATIVE GATED host.
+
+`wideAppend` applied to a `withSelectorGate`-wrapped host (a genuinely gated live-shape descriptor)
+still publishes the GENUINE 8-felt binding: the wide commit over the shared limbs distinguishes two
+states differing ONLY beyond lane0 — the gate constrains a DIFFERENT column (the selector), so the
+8-felt width is untouched by it. The carriers/PIs land PAST the gated host's width/piCount. -/
+
+/-- A representative gated host: a bare graduated rotation WRAPPED in `withSelectorGate` (the live
+WAVE-shape — an already-gated `EffectVmDescriptor2`), with `wideAppend` layered on top. -/
+def wideAppendOverGated (d : EffectVmDescriptor) (s : Nat) : EffectVmDescriptor2 :=
+  wideAppend (withSelectorGate s (v3Of d)) d.traceWidth (d.traceWidth + 51)
+
+/-- The wide carriers/PIs of `wideAppendOverGated` land STRICTLY PAST the gated host's width/piCount:
+the gate's selector column and the host's columns are below `wideBeforeCBase host.traceWidth`, so the
+wide block cannot collide with the gate. (`withSelectorGate` does not change width/piCount, so the
+host width is the graduated rotation's — `wideAppend` bases past it.) -/
+theorem wideAppendOverGated_width (d : EffectVmDescriptor) (s : Nat) :
+    (wideAppendOverGated d s).traceWidth = (withSelectorGate s (v3Of d)).traceWidth + 208
+    ∧ (wideAppendOverGated d s).piCount = (withSelectorGate s (v3Of d)).piCount + 16 := by
+  unfold wideAppendOverGated wideAppend; exact ⟨rfl, rfl⟩
+
+-- The gated host's selector gate survives in `wideAppendOverGated` (it is among the appended-onto
+-- host's constraints, never disturbed): the appended wide block is a CONJUNCTION on top.
+theorem wideAppendOverGated_gate_survives (d : EffectVmDescriptor) (s : Nat) :
+    (VmConstraint2.base (selectorGate s)) ∈ (wideAppendOverGated d s).constraints := by
+  unfold wideAppendOverGated
+  rw [wideAppend_constraints]
+  refine List.mem_append_left _ (List.mem_append_left _
+    (List.mem_append_left _ (List.mem_append_left _ ?_)))
+  rw [withSelectorGate_constraints]
+  exact List.mem_append_right _ (by simp)
+
+-- The wide binding over the GATED host is genuinely 8-felt (the gate is on the selector column, NOT
+-- a lane): a high-limb flip (limb 30) moves the published 8-felt commit; lane0 alone would collapse.
+#guard wireCommitR8 refWide demoPre24 7 != wireCommitR8 refWide (demoPre24.set 30 999) 7
+-- the commit published by the gated-host wide block is 8 felts wide (NOT 1).
+#guard (wireCommitR8 refWide demoPre24 7).length == 8
+
 end Dregg2.Circuit.Emit.EffectVmEmitRotationWide
