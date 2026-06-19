@@ -32,10 +32,15 @@ refused to launder a partial):**
   `chipRowN_distinguishes_wide`). Additive Lean, axiom-clean. Commit `05d297503`. STEP-0 finding: the deployed
   `poseidon2_chip` AIR already constrains the full 16-lane permutation and exposes only `state[0]` — so exposing
   8 is "return more columns of an already-full AIR."
-- 🟡 **PHASE B-GATE — widen the SHARED `poseidon2_chip` table 1→8 outputs** (THE prerequisite; a system-wide
-  chip-AIR flag-day, NOT rotation-local). **RUST PROVIDER + MAP CONSUMERS + ANTI-LAUNDERING TEETH LANDED, GREEN,
-  uncommitted (2026-06-19); the Lean-emit + producer-fill half is the atomic remainder (NON-GREEN until it lands
-  — the migration cannot be partial, the validator now demands 17).** DONE: `poseidon2_permute_expr_lanes`
+- ✅ **PHASE B-GATE COMPLETE — the SHARED `poseidon2_chip` widened 1→8 lanes** (commit `0980aa151`, WHOLE TREE
+  GREEN: lake 4003 axiom-clean · drift PASS · circuit lib 887/0 · flip 12/12 · cell 16 · sovereign 19 · node 8).
+  The Lean-emit + producer-fill half (the atomic remainder) LANDED: `siteLookup→chipLookupTupleN`, the producer
+  weld `fill_chip_lanes`, all 67 JSONs re-emitted + 64 FPs re-pinned, discharged by `chip_lookup_sound_N`.
+  **The commitment is STILL 1-FELT (lane0) — no security gain yet; B-ROTATION delivers the ~124-bit trust.**
+  ⚠ WAVE-3 ENTANGLEMENT: built on the parked WAVE-3 base (NUM_PRE_LIMBS 37); reaching green REVERTED refusalV3's
+  fields-root weld → the record-digest pin (previously-red `rotated_audit_record_pin` now GREEN; WAVE-3 refusal
+  sub-close ROLLED BACK; mode/fields_root limbs remain → WAVE-3 refusal/makeSovereign/setFieldDyn need re-exam).
+  **RESUME AT PHASE B-ROTATION** (below). Rust-provider detail (still accurate): `poseidon2_permute_expr_lanes`
   (`plonky3_prover.rs`, returns the 8 final-state lanes; the legacy `poseidon2_permute_expr` delegates → lane0,
   every v1 inline site UNCHANGED); the chip AIR (`Ir2Air::Chip`) exposes `state[0..8]` and adds the 7 `assert_zero(
   local[CHIP_OUT+i] - lanes[i])` constraints (i=1..7) — REAL bindings (forged-lane UNSAT proven); `CHIP_OUT_LANES=8`,
