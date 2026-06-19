@@ -11,6 +11,46 @@ reason.)*
 Last sweep: 2026-06-13 (flagged-items burndown — removed ~14 landed/struck items,
 deduped the DreggDL/sel4/snapshot landings into git history, kept live tails).
 
+## 🖥 DEOS DESKTOP / MOLDABLE INSPECTOR (2026-06-19) — the live build-down
+
+The Pharo-moldable inspector epoch (`docs/deos/INSPECTOR-FRAMEWORK.md`, memory `moldable-inspector-epoch`).
+LANDED: L1 spine (`presentable.rs`, `800945db6`) + the liveness wave (`983ff76bc`) + lanes L2-L7
+(`04c275a85`, 411/411 green). Named follow-ups, each with its closure shape:
+
+- **Cockpit gpui TABS for the 9 new modules** — inspect_act/workspace/wonder + the 6 inspector lanes
+  are pure tested MODELS; none is wired into a `cockpit.rs` tab/panel yet. Named in every lane's report.
+  Closure: add a `Tab` variant + `match` arm + a `*_panel` renderer per module (the panel maps each
+  `PresentationBody` variant to a widget; gadgets drive `validate`→`predict`→`commit`). gpui, window-verified.
+- **Cap-crown membership PATH-opening** (`cap_inspector.rs` `cap_crown_view`) — carries the real
+  `capability_root` + leaves but `path` is unopened: `dregg_circuit::cap_root::{CanonicalCapTree,
+  recompose_membership}` isn't re-exported through `dregg_cell` (only the root + leaf-encoding are).
+  Closure: re-export those from `dregg_cell`, OR add `dregg-circuit` as a direct starbridge-v2 dep; swap is mechanical.
+- **MMR swap to `dregg-query`** (`receipts_inspector.rs` `ReceiptMmr`) — a faithful LOCAL blake3 MMR
+  (identical domain tags `dregg-query-mmr-v1:*`) stands in because `dregg-query` isn't a starbridge-v2 dep.
+  Closure: add the dep, swap to `Mmr::open_range`/`verify_range` (leaf bytes + hash identical → tests carry over).
+- **Heap-mutation Effect** (`cell_inspector.rs`) — there is NO `SetHeap`/`HeapSet` verb in the executor
+  (`turn/src/action.rs`), so a heap-ENTRY-editor commit-gadget has no semantic verb (census `HeapLeaf` true-zero).
+  Closure: add a heap-write Effect to the kernel verb set (Lean-emitted), THEN the editor gadget routes through it.
+- **Runtime program-install Effect** (`predicate_composer.rs`) — `CellProgram` install is genesis-path only
+  (`World::set_cell_program`, the trusted-root authority install); no in-turn caveat-authoring verb exists.
+  Closure: a new executor effect for in-turn program install (Lean-emitted) if in-turn authoring is wanted.
+- **`World::ledger_mut()` accessor** — private (`engine.ledger_mut()`); read-only inspection is fine, but
+  the editor-gadget halves (heap/permissions/field editors) need a semantic-verb route, not a raw mutator.
+- **NEXT inspector lanes (held for ember):** L8 federation/consensus · L9 circuit/commitment internals ·
+  L10 settlement-families + factory authoring (fuses L2+L3). Fan out on her word (one module each, on the spine).
+
+## 🏺 ARCHEOLOGY DIG (2026-06-19) — `docs/ARCHEOLOGY-LEDGER.md` (50 verified-still-open items)
+
+The full ledger is the durable record. Pulled here per the ledger's own process note (don't let leverage
+items idle), the highest-value NON-circuit-context rescue:
+- **Node recovery first-writer-wins bug** — `node/src/state.rs:699/:879` use strict `insert_cell` (silently
+  drops a post-checkpoint write to a cell the checkpoint already holds); the convergence-root mismatch at
+  `:702-733` only `tracing::error!`s ("STORE INTEGRITY EVENT") and falls through — no fail-closed. A silently-
+  wrong recovered ledger served as truth = a soundness event. Closure: `insert_cell`→`upsert_cell` (the verified
+  `CrashRecovery.upd` point-update) at both sites + make the convergence mismatch return `Err`/refuse to serve.
+  (The circuit-soundness-cluster items + the #1 phantom-commit file-set hazard live in ember's circuit context —
+  see the ledger HIGH tier; not re-filed here to avoid crossing that lane.)
+
 ## ✅✅ FAITHFUL STATE COMMITMENT (8-felt light-client floor) — **LIVE** (commit `9e5a83935`, 2026-06-19)
 
 **THE #1 SOUNDNESS FLOOR IS CLOSED.** The deployed per-cell state commitment is now a chip-faithful 8-felt
