@@ -185,6 +185,15 @@ pub mod predicate_composer;
 // (time-travel) · token_inspector (macaroon loop). See docs/deos/INSPECTOR-FRAMEWORK.md.
 #[cfg(feature = "embedded-executor")]
 pub mod turn_builder;
+#[cfg(feature = "embedded-executor")]
+pub mod settlement_inspector;
+// L8/L9 INSPECTORS: federation_inspector (consensus/blocklace/finality — wire-backed +
+// honest remote-path catalog) · circuit_inspector (the 8-felt commitment anti-omission
+// binding, nullifier non-membership, proof tiers). On the spine; see INSPECTOR-FRAMEWORK.md.
+#[cfg(feature = "embedded-executor")]
+pub mod federation_inspector;
+#[cfg(feature = "embedded-executor")]
+pub mod circuit_inspector;
 
 #[cfg(feature = "embedded-executor")]
 pub use presentable::{
