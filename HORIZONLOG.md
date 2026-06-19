@@ -76,8 +76,18 @@ refused to launder a partial):**
   carrier, not-laundered, chip-faithful) + producer-side authority-near-collision; three-layer twins cell≡turn≡
   Lean (`felt8_to_bytes32` 8×4=full slot). ADDITIVE — the live wire is UNTOUCHED, commitment STILL 1-felt, no
   FP/VK re-pin. The cryptographic heart EXISTS + is proven; NO live security gain yet.
-- ⬜ **PHASE B-ROTATION LIVE CUTOVER — flip the wire to 8-felt (THE VK flag-day = the actual ~124-bit trust;
-  multi-session atomic, ember-gated, resume HERE)**. ⚑ 2026-06-19 RE-SCOPE (5th agent STOPPED clean at green HEAD
+- ✅ **THE LEAN SIDE IS 100% COMPLETE** (commit `5fe15906b`): `v3RegistryWide` — all 36 live members wrapped
+  through the proven `wideAppend` with their per-member `bb` (= the v1 face `traceWidth`, SYMBOLIC), the fold
+  `v3RegistryWide_sound`/`_binds` lifting member-by-member, axiom-clean, additive (live `v3Registry` untouched).
+  Full proven stack: `chip_lookup_sound_N` · chip 8-out + 8-in · `wire_commit_8`/`wireCommitR8_binds` ·
+  `wideAppend` gated-host tower · `v3RegistryWide`. The live flip needs NO more Lean proof.
+- ⬜ **PHASE B-ROTATION LIVE CUTOVER — the pure Rust/executor flip (THE VK flag-day = the actual ~124-bit trust;
+  irreducibly-atomic coordinated push, ember-gated, resume HERE)**. Now a ONE-LINE Lean repoint (`v3Registry →
+  v3RegistryWide`) + the atomic Rust/executor: producer 8-felt carrier fill (+208) across 6 crates · executor
+  retire `dpis[34]/[35]` → bind 16 wide PIs (`felt8_to_bytes32`) · the hardcoded geometry consts (`ROT_WIDTH`/
+  `BEFORE_BASE`/`AFTER_BASE`/`ROT_PI_COUNT`) move together · differential-over-8 + LIVE tooth · re-emit + re-pin.
+  Six+ honest agent refusals = a focused multi-session deployed-cutover (a partial breaks the validator), NOT an
+  end-of-session dispatch. ⚑ 2026-06-19 RE-SCOPE (5th agent STOPPED clean at green HEAD
   `93fba7ee5`): the staged wide lane is NOT drop-in. Two real blockers: **(B1, Lean, new proof)** `rotateV3Wide`
   (`EffectVmEmitRotationWide.lean:286`) takes a BARE `EffectVmDescriptor` (`graduateV1 (rotateV3 d)`), but the live
   `v3Registry` is 36 ALREADY-GATED `EffectVmDescriptor2`s (v3OfFrozen/withSelectorGate/the WAVE disc+perms gates/
