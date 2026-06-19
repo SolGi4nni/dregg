@@ -2266,3 +2266,42 @@ every-row-vs-when_transition gap it exists to catch. It checks transcription-vs-
 Rust), NOT the real Lean `holdsVm`. FALSE CONFIDENCE. FIX (queue AFTER the #1 holdsVm fix lands, so it reflects
 the fixed Lean): un-mirror the `:553` loop to run REAL every-row `Satisfied2` semantics on the Lean side +
 add the boundary generator (row-counts 1/2, last-row mutations). This is the targeted differential checker.
+
+## ⚑⚑ FAITHFULNESS AUDIT MAP (2026-06-19, a5dd3457) — the close-out roadmap for the goal
+
+Lean trust-anchor vs deployed Rust Ir2Air::eval. THREE verdicts + the drive order:
+
+(i) gate/transition divergence = BENIGN FOR SOUNDNESS, completeness-vacuity is the real cost. The published
+   8-felt state_commit is pinned on the LAST row TWO ways that both fire there (where gate/transition don't):
+   a `.piBinding .last (saCol STATE_COMMIT) NEW_COMMIT` under when_last_row (EffectVmEmitTransfer.lean:123 ↔
+   descriptor_ir2.rs:1744) + the every-row Poseidon2 hash-site lookups over the last row's own state_after
+   (descriptor_ir2.rs:1797). NO commitment-malleability hole. (Tightening, not a hole: the NoOp pad's
+   last.after==last.before isn't forced — a `.boundary .last saCol==sbCol` would make it explicit.)
+
+(ii) ⚑⚑ THE PRIZE — YES the apex rungs are VACUOUS FOR REAL TRACES at HEAD. CircuitSoundness.lean:428 consumes
+   Satisfied2 t with t universal; the ONLY constructed inhabitants are degenerate (empty trace
+   CircuitCompletenessNonVacuity.lean:89; single-row all-zero-after nonce -1→0 ...Real.lean:141). NO witness has
+   the real shape (multi-row, interior active, nonce 0→1, NoOp-pad last), and NO Satisfied2 witness exists for
+   incNonceV3 or any non-transfer effect. So light-client unfoolability is TRUE-BUT-EMPTY for the real trace
+   family. Invisible to the byte-identity differential. THE close: finish the isLast-guard (#1) AND construct a
+   genuine multi-row nonce-0→1 NoOp-pad witness for Satisfied2 (per effect, not just transfer).
+
+(iii) FAIL-CLOSED: NONE relies on producer behavior for soundness (GOOD — satisfies "no unreachable things"):
+   setFieldDyn field_idx>=8 is VERIFIER-ENFORCED in-circuit (deg-8 product gate Π(field_index−k)=0,
+   effect_vm_p3_full_air.rs:1506 + the JSON gate) → UNSAT not just producer-panic; the #2 "multi-residue/#78"
+   degree bound is enforced symbolically by verify_batch. check_descriptor2 bounds-checks every producer index
+   FIRST (descriptor_ir2.rs:4445/1172). One cheap defense-in-depth tightening: proof_verify.rs:357/359/391/393
+   discard the ledger CAS Result with `let _ =` → should be `?`-propagated.
+
+OTHER divergences FAITHFUL/benign: lookup membership-vs-LogUp (chip AIR committed + every row pinned to genuine
+Poseidon2, out-lanes assert_zero descriptor_ir2.rs:2039) · mem/map ops (committed sub-AIRs + zero-summed buses).
+
+⚑ STANDING TCB GAP (#5, why #1 was invisible): the differential is BYTE-IDENTITY (JSON fingerprint), NOT
+denotational — Ir2Air::eval is trusted-by-inspection; no Lean proof it realizes Satisfied2. Durable closure =
+the differential checker / a Satisfied2 ⟺ Ir2Air::eval accept-set equivalence (acknowledged in-source
+InterpCore.lean:47).
+
+DRIVE ORDER: (1) #1 foundation — finish the isLast-guard port (tree RED at EffectVmEmitTransfer.lean:437,
+in-flight) + construct the real multi-row per-effect Satisfied2 witnesses → retires the vacuity AND divergence
+#1; (2) #6 conservation per-asset (separate off-AIR lane); (3) #5 the differential checker (the standing
+faithfulness guard); (4) the let_=→? + NoOp-pad-boundary tightenings; (5) the build-half live-wires once settled.
