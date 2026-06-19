@@ -2158,3 +2158,26 @@ redeploy point-of-no-return.)*
 - Transcendental-syntax S3 (substructural recovery from the dregg side) + S5 (stella instantiation).
 - UC-security / CryptHOL (#31) + research pillars (revocation/info-flow/metadata).
 - Hypersystem/simplicial joint turns (dregg4 vision).
+
+## ⚠ FAITHFULNESS FINDING (surfaced by the #8 real-trace task, 2026-06-19) — Lean gate/transition vs Rust when_transition
+
+The #8 "real non-empty inhabitant" task could NOT build a natural `nonce 0→1` transfer trace: the Lean
+`VmConstraint.holdsVm` evaluates `.gate` and `.transition` on EVERY row INCLUDING the last (no `isLast` guard —
+`EffectVmEmit.lean:410-411`), where `nxt` wraps to `zeroAsg` → forces the last row's STATE_AFTER = 0, propagating
+back to `before.nonce = -1`. The deployed Rust AIR evaluates BOTH `Gate` and `Transition` under
+`builder.when_transition()` (`descriptor_ir2.rs:1763-1772`) — every row BUT the last. So **Lean-Satisfied2 is
+STRICTER than Rust-accept on the last row**, and the byte-identity descriptor differential does NOT catch it (the
+emitted constraint JSON is identical; only the EVALUATION semantics diverge).
+
+DIRECTION = potential SOUNDNESS-COVERAGE gap: soundness apex proves `Lean-Sat ⟹ genuine`; the deployed claim
+needs `Rust-accept ⟹ Lean-Sat`, which FAILS if Lean is strictly stronger (a Rust-accepted trace with a last-row
+gate/transition violation isn't covered by the apex). LIKELY MITIGATED (unconfirmed) by Rust `when_last_row()`
+PI-bindings + boundary (`:1744`) pinning the last row's published state — but NEEDS the analysis: does any
+published commit/PI read from a row that could be an adversarial last row whose gate/transition Rust skips? If
+the last-row state is fully PI-pinned, benign; if not, a real hole.
+
+INVESTIGATE AT SETTLE: (1) confirm `.gate`/`.transition` faithful direction (Lean every-row vs Rust
+when_transition) across the rotated descriptor; (2) trace which row feeds the published 8-felt commit + whether
+when_last_row pins it; (3) decide — make Lean `.gate`/`.transition` `isLast`-guarded to MATCH Rust (faithful), OR
+prove the last-row divergence benign. This makes #8's empty/degenerate-single-row witness a SYMPTOM, not the
+gap. (#8's real-row lemma is kept as the jointly-satisfiable-arithmetic witness; the natural trace awaits this.)
