@@ -2244,3 +2244,25 @@ zeroed). So the apex may not be FULLY vacuous (commit reads the rotated block) �
 non-faithful regardless. FIX warranted either way: isLast-guard Lean `.gate`/`.transition` to match Rust
 `when_transition`, then re-verify every rung + that #8's natural trace becomes inhabitable. (The audit will
 resolve whether it was a live hole or "merely" non-faithful.)
+
+## ⚠ DIFFERENTIAL FUZZER spike (2026-06-19) — feasible + a META-finding: the existing faithfulness test is UNFAITHFUL
+
+FEASIBILITY: the Lean↔Rust differential constraint-satisfaction fuzzer is FEASIBLE + mostly-scaffolded. v1
+precedent exists (`effect_vm_descriptor_exhaustive_differential.rs` = generator-driven differential vs the REAL
+`p3 check_all_constraints`) + a kernel-PROVEN executable Lean oracle pattern (`Argus/InterpCore.lean::decideVm`
++ `decideVm_iff_satisfiedVm:301`, axiom-clean). Targeted checker = ~300-500 LOC / days. The ONLY undecidable leg
+of `Satisfied2` is the `mapOp` heap existential (`DescriptorIR2.lean:485` opensTo/writesTo = ∃ heap); everything
+else computes (the §10 `#guard decide(...)` goldens `:1374` prove it) → a `decideSatisfied2` +
+`decideSatisfied2_iff_Satisfied2` (mirroring v1's decideVm, mapOp arm oracle-parameterized) is the gold-standard
+faithful oracle (~1-2wk). Coverage-guided fuzzer = OVER-SCOPED (seams are few+structural; a domain-aware
+boundary mutator — row-counts 1/2/n, first/last/interior mutations, per-arm forge menu — hits them
+deterministically). Verdict: build the TARGETED checker; skip coverage-guidance.
+
+⚠ META-FINDING (laundering in the VERIFICATION layer — exactly the goal's "critical eye on how they are
+proved"): the EXISTING v2 differential `circuit/tests/ir2_denotation_eval_differential.rs` is UNFAITHFUL — its
+"Lean side" (`eval_enforces:553`) deliberately MIRRORS the Rust `when_transition` last-row skip (`for r in
+0..n-1`). So BOTH sides skip the last row → the test is GREEN but STRUCTURALLY CANNOT catch the gate/transition
+every-row-vs-when_transition gap it exists to catch. It checks transcription-vs-transcription (both bent to
+Rust), NOT the real Lean `holdsVm`. FALSE CONFIDENCE. FIX (queue AFTER the #1 holdsVm fix lands, so it reflects
+the fixed Lean): un-mirror the `:553` loop to run REAL every-row `Satisfied2` semantics on the Lean side +
+add the boundary generator (row-counts 1/2, last-row mutations). This is the targeted differential checker.
