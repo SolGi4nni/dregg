@@ -162,6 +162,22 @@ pub mod workspace;
 // gpui-free, `cargo test`-able. See `docs/deos/AOL-WONDER.md`.
 #[cfg(feature = "embedded-executor")]
 pub mod wonder;
+// THE PRESENTATION SPINE (L1) — the Pharo-moldable framework primitive: every protocol
+// object offers MULTIPLE named presentations (the 7 PresentationKinds; RawFields = the
+// existing reflect::Inspectable floor) + the Gadget/CommittingGadget traits (interactive
+// construction on the simulate→commit spine) + Spotter (universal search) + the
+// generalized Halo. The spine everything inherits. See docs/deos/INSPECTOR-FRAMEWORK.md.
+#[cfg(feature = "embedded-executor")]
+pub mod presentable;
+
+#[cfg(feature = "embedded-executor")]
+pub use presentable::{
+    CommittingGadget, FocusTarget, Gadget, GadgetError, GadgetField, GadgetInput, GadgetKind,
+    GadgetValidation, GaugeView, GraphView, Halo, HaloCommand, LatticeView, MerkleTreeView,
+    Presentable, PresentableExt, Presentation, PresentationBody, PresentationKind, PresentCtx,
+    ReflectedCell, Registry, SmState, SmTransition, Spotter, SpotterHit, StateMachineView,
+    TimelineEvent, TimelineView, TraceStep, TraceView,
+};
 
 #[cfg(feature = "embedded-executor")]
 pub use affordance::{
