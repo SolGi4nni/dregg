@@ -11,7 +11,51 @@ reason.)*
 Last sweep: 2026-06-13 (flagged-items burndown — removed ~14 landed/struck items,
 deduped the DreggDL/sel4/snapshot landings into git history, kept live tails).
 
-## FAITHFUL STATE COMMITMENT (8-felt light-client floor) — BLOCKED at the chip-output-arity seam (2026-06-19)
+## ⚑⚑ FAITHFUL STATE COMMITMENT (8-felt light-client floor) — THE #1 SOUNDNESS FLOOR, phased campaign IN FLIGHT (2026-06-19)
+
+**Why #1:** the deployed per-cell state commitment binds in-circuit by ONE BabyBear felt (~31-bit; `hash_many`
+squeezes `state[0]`); the 4-felt PI's positions 1..3 are bound OFF-circuit by the executor (`pi.rs
+AUDIT[stage1-trace-widen]`). So a light client's state binding is ~31-bit = collision in seconds — and EVERY
+value-close (WAVE 0/1/2 authority, fee, identity, selector, the movers) binds THROUGH it, so the whole goal's
+trust is 31-bit at the root until this lands. Target measured (not guessed): FRI `log_blowup=6`/19-query/16-PoW
+≈ ~130-bit soundness ⇒ commitment needs ~124-bit collision ⇒ **8 felts** (the reserved-4 = only ~62-bit, below
+the proof — do NOT ship 4). Design + security math: `docs/FAITHFUL-STATE-COMMITMENT.md`. (Scar that produced it:
+[[feedback-dont-launder-a-load-bearing-insecurity]] — I'd rationalized the 31-bit felt as "the existing audited
+floor.")
+
+**The phased campaign (ember chose full-permutation chip + sponge; two scoping agents in a row correctly
+refused to launder a partial):**
+- ✅ **STEP 1 — `hash_many_8`** wide-output primitive (`poseidon2.rs`, anti-laundering-tested: 8 distinct +
+  full-input avalanche), STANDALONE/unwired. Commit `ed8e88873`.
+- ✅ **PHASE A — the wide chip soundness LEVER** `chip_lookup_sound_N` (forces all W permutation-output cols;
+  legacy 1-felt lever re-derived as the W=1 corollary, zero downstream breakage; anti-laundering tooth
+  `chipRowN_distinguishes_wide`). Additive Lean, axiom-clean. Commit `05d297503`. STEP-0 finding: the deployed
+  `poseidon2_chip` AIR already constrains the full 16-lane permutation and exposes only `state[0]` — so exposing
+  8 is "return more columns of an already-full AIR."
+- ⬜ **PHASE B-GATE — widen the SHARED `poseidon2_chip` table 1→8 outputs** (THE prerequisite; a system-wide
+  chip-AIR flag-day, NOT rotation-local): the chip is shared on `BUS_P2` with a FROZEN 10-wide tuple
+  (`CHIP_TUPLE_LEN = CHIP_RATE+2 = 10`, `CHIP_OUT=9`, descriptor_ir2.rs) embedded in EVERY hashing descriptor's
+  JSON+fingerprint (cap-root, map-ops absorbs, fact bus, all non-rotation descriptors). Widen the chip AIR +
+  witness-gen (`row[CHIP_OUT]`→`[CHIP_OUT..+8]`) + codec + bus tuple 10→17 + the frozen chip JSON + its FP,
+  discharged by `chip_lookup_sound_N`, keeping single-output sites as the W=1 corollary. Then define a
+  `compress8` that BYTE-MIRRORS the widened chip's lane seeding (a single permutation exposing `state[0..8]`,
+  NOT `hash_many_8`'s squeeze-permute-squeeze).
+- ⬜ **PHASE B-ROTATION — the 8-wide sponge commitment + geometry**: `v9_wire_commit`/`wire_commit`/`fill_block`
+  rewritten so the chaining carrier `d8` is 8 felts THROUGHOUT (no 31-bit intermediate — THE anti-laundering
+  crux; a 1-felt-chain-with-wide-final-squeeze is the laundered version). `B_STATE_COMMIT` 1→8 + the 12 chain
+  carriers ×2 blocks (`ROT_WIDTH` 327→~509), `wireCommitR`/`chainFrom` carry an 8-felt accumulator,
+  `wireCommitR_binds`/`chainFrom_inj` re-proved over 8 via `chip_lookup_sound_N`, `RotatedCommitDifferential` +
+  the 3 `rotationProbe*` JSONs/FPs re-`#guard`ed at 8.
+- ⬜ **PHASE C — PI + executor + teeth**: `{OLD,NEW}_COMMIT_LEN` 4→8 (`pi.rs`), `rotPins` binds 8, RETIRE the
+  executor PI-matching loop for the commitment (`proof_verify.rs` `dpis[34/35]`→ranges; `felt_to_bytes32`→8×4
+  byte encoding into the 32-byte ledger slot), the commit differential to 8, + the COLLISION-DISTINGUISHING
+  tooth (two states differing only in a high position → 8-felt commits differ, proof for A REJECTED against B's
+  commit with NO executor) + the intermediate-carrier-propagation tooth. VK flag-day, ember-gated deploy.
+
+Each phase is ~a session; PHASE B-GATE is the riskiest (system-shared chip). The Lean lever (Phase A) is the
+proof-side foundation already in place. Resume at PHASE B-GATE.
+
+## (superseded detail below — see the phased campaign above) FAITHFUL STATE COMMITMENT — BLOCKED at the chip-output-arity seam (2026-06-19)
 
 `docs/FAITHFUL-STATE-COMMITMENT.md` asks to widen the in-circuit per-cell state commitment from 1
 squeezed felt (~31-bit, light-client-collidable in seconds) to a faithful 8-felt digest (~124-bit,
