@@ -11,6 +11,52 @@ reason.)*
 Last sweep: 2026-06-13 (flagged-items burndown — removed ~14 landed/struck items,
 deduped the DreggDL/sel4/snapshot landings into git history, kept live tails).
 
+## FAITHFUL STATE COMMITMENT (8-felt light-client floor) — BLOCKED at the chip-output-arity seam (2026-06-19)
+
+`docs/FAITHFUL-STATE-COMMITMENT.md` asks to widen the in-circuit per-cell state commitment from 1
+squeezed felt (~31-bit, light-client-collidable in seconds) to a faithful 8-felt digest (~124-bit,
+matching the proof's ~130-bit FRI soundness). I read the full spec + the live geometry and STOPPED before
+shipping, per the task's own "if the chip can't expose 8 cleanly, STOP and report" clause. Two grounded
+findings, both decisive:
+
+(1) **The deployed commitment is a Merkle-Damgård CHAIN of single-squeeze rate-4 compressions, NOT one
+sponge whose squeeze can be widened.** `cell/src/commitment.rs::v9_wire_commit` / Lean
+`EffectVmEmitRotationR.wireCommitR` / the 13 `EffectVmEmitRotationV3.rotV3SitesAt` sites each squeeze ONE
+~31-bit `hash_many` felt into one chain carrier. So a genuine ~124-bit light-client floor requires the
+ENTIRE chain accumulator to be 8 felts wide — every intermediate carrier too — else an adversary finds a
+31-bit collision on an INTERMEDIATE carrier (≈2^15.5 work) that propagates to an identical published final
+commit regardless of the final commit's width. Widening ONLY `B_STATE_COMMIT` 1→8 (the literal task-body
+reading) would be a LAUNDERED widening: 8 published felts that are a deterministic function of a
+31-bit-collidable accumulator. The task's own COLLISION-DISTINGUISHING TOOTH would (correctly) still find
+it collidable at ~31-bit, so shipping it would FAIL the anti-laundering bar.
+
+(2) **The IR-v2 Poseidon2 chip is hard-wired single-output and cannot expose 8 cleanly.**
+`DescriptorIR2.poseidon2ChipTableDef = ⟨.poseidon2, …, CHIP_RATE + 2⟩` (1 arity + 8 padded inputs + ONE
+output); `chipRow`/`chipLookupTuple` carry one output column; `chip_lookup_sound` proves that one column
+= `hash ins` for `hash : List ℤ → ℤ`. There is NO multi-output chip variant or 8-wide chained-commit
+helper anywhere in the tree (grep-confirmed). A faithful 8-wide accumulator therefore requires rewriting
+the IR-v2 chip soundness CORE: chip table `CHIP_RATE+2 → CHIP_RATE+9`, the chip exposing 8 squeezed felts
+(squeeze-permute-squeeze), `chipRow`/`chipLookupTuple`/`chip_lookup_sound` over an 8-tuple output,
+`HashInput.digest k` selecting one of 8 columns, `chainFrom`/`wireCommitR` threading an 8-vector
+accumulator, and `wireCommitR_binds`/`chainFrom_inj` re-proved under an 8-wide CR floor — PLUS the geometry
+octuples (`B_SPAN` ~51→~142, `ROT_WIDTH` 327→~1000+, every `rotV3SitesAt`/`caveatV3SitesAt`/`rotPins`/
+`weldsAt`/`pi.rs` offset, every producer in `cell`/`turn`, the differential, and the VK). This is a
+ground-up rewrite of the chip soundness lever, NOT the contained single-felt-limb cascade the mover
+flag-days (b3c058e31/aba1861ce) proved tractable — those never touched `chipRow`, `chip_lookup_sound`,
+`chainFrom`, or the `hash : List ℤ → ℤ` codomain. This one touches all of them.
+
+CLOSURE SHAPE (the real lane, ember-gated VK flag-day): (a) Lean — introduce a multi-squeeze chip
+(`hash8 : List ℤ → Fin 8 → ℤ` or `List ℤ → List ℤ` len-8), widen `poseidon2ChipTableDef`/`chipRow`/
+`chipLookupTuple`/`chip_lookup_sound`, thread an 8-vector accumulator through `chainFrom`/`wireCommitR`,
+re-prove `chainFrom_inj`/`wireCommitR_binds`/`rotV3SitesAt_pin` under the 8-wide `Poseidon2SpongeCR`
+(injectivity of the 8-felt squeeze — the genuinely-load-bearing floor at full width). (b) Rust — `hash_many_8`
+(squeeze-permute-squeeze, precedent at `circuit/src/schnorr_sig.rs:207`), the 8-wide chain in
+`poseidon2.rs`/`trace_rotated.rs`/`v9_wire_commit`, the geometry shift, `pi.rs` `{OLD,NEW}_COMMIT_LEN = 8` +
+executor-loop retirement, `proof_verify.rs`. (c) Teeth — the DISTINCTNESS unit test + the
+COLLISION-DISTINGUISHING tooth (now genuinely binding because the WHOLE chain is 8-wide). Named:
+faithful-state-commitment 8-felt floor, 2026-06-19. THE #1 SOUNDNESS FLOOR — every WAVE 0/1/2 value-close
+binds THROUGH this 31-bit door; until it is 8-wide-throughout, the light-client trust is ~31-bit.
+
 ## WAVE 2 PERMS/VK — the setPermissions/setVK mover light-client forgery CLOSED LIVE (2026-06-18)
 
 The authority movers setPermissions/setVK forced their AFTER perms/VK only via the off-circuit
