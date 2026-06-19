@@ -28,6 +28,7 @@
 //!     image; the federation view renders this image as one of many sovereign
 //!     ones.
 
+use std::cell::Cell as StdCell; // alias: `Cell` is taken by dregg_cell::Cell
 use std::collections::HashMap;
 
 use dregg_cell::{
@@ -120,6 +121,16 @@ pub struct World {
     /// owns the live registry but exposes no enumeration; this is the world's own
     /// record of what it deployed, kept in lock-step with every `deploy_factory`.)
     deployed_factories: Vec<dregg_cell::FactoryDescriptor>,
+    /// Memoized image root (`state_root`), valid while the witness tooth
+    /// `(height, receipt_head_or_zero)` is unchanged. Stored as
+    /// `(height, receipt_head_or_zero, root)`. A `std::cell::Cell` (not a
+    /// `RefCell`): the tuple is `Copy`, so `get`/`set` need no borrow, and
+    /// `state_root(&self)` stays a `&self` method (no `&mut` ripple through the
+    /// ~30 callers or the `Rc<RefCell<World>>` borrow discipline in cockpit).
+    /// Every height/receipt advance busts it automatically; the genesis-path
+    /// ledger writers (which mutate without a height bump) invalidate it with an
+    /// explicit `set(None)`.
+    state_root_memo: StdCell<Option<(u64, [u8; 32], [u8; 32])>>,
 }
 
 impl Default for World {
@@ -183,6 +194,7 @@ impl World {
             timestamp,
             turn_fee: 0,
             deployed_factories: Vec::new(),
+            state_root_memo: StdCell::new(None),
         }
     }
 
@@ -282,6 +294,30 @@ impl World {
     /// (BLAKE3 over the canonical postcard of every cell, sorted by id, folded
     /// with the height + receipt-chain head so the root advances with history.)
     pub fn state_root(&self) -> [u8; 32] {
+        // The cache key is exactly the witness tooth: the root is a pure function
+        // of (height, receipt_head, ledger-contents), and the ledger only changes
+        // when the height/receipt advances (genesis-path writers invalidate the
+        // memo explicitly). A `(height, receipt_head)` hit ⇒ skip the O(cells)
+        // postcard+BLAKE3 re-hash.
+        let head = self
+            .receipts
+            .last()
+            .map(|r| r.receipt_hash())
+            .unwrap_or([0u8; 32]);
+        if let Some((h, rh, root)) = self.state_root_memo.get() {
+            if h == self.height && rh == head {
+                return root;
+            }
+        }
+        let root = self.compute_state_root();
+        self.state_root_memo.set(Some((self.height, head, root)));
+        root
+    }
+
+    /// The actual image-root computation (BLAKE3 over the canonical postcard of
+    /// every cell, sorted by id, folded with the height + receipt-chain head).
+    /// Called by [`Self::state_root`] only on a memo miss.
+    fn compute_state_root(&self) -> [u8; 32] {
         let mut cells: Vec<(&CellId, &Cell)> = self.engine.ledger().iter().collect();
         cells.sort_by(|a, b| a.0.as_bytes().cmp(b.0.as_bytes()));
         let mut hasher = blake3::Hasher::new();
@@ -381,6 +417,7 @@ impl World {
             timestamp: self.timestamp,
             turn_fee: self.turn_fee,
             deployed_factories: self.deployed_factories.clone(),
+            state_root_memo: StdCell::new(None),
         }
     }
 
@@ -412,6 +449,9 @@ impl World {
             balance,
             genesis: true,
         });
+        // Genesis installs mutate the live ledger WITHOUT bumping height or pushing
+        // a receipt, so the witness tooth is unchanged — bust the state_root memo.
+        self.state_root_memo.set(None);
         id
     }
 
@@ -484,6 +524,8 @@ impl World {
         if let Some(c) = self.record_ledger.get_mut(cell) {
             c.program = program;
         }
+        // Genesis-path ledger mutation without a height bump — bust the memo.
+        self.state_root_memo.set(None);
         existed
     }
 
@@ -513,6 +555,8 @@ impl World {
         if let Some(c) = self.record_ledger.get_mut(holder) {
             let _ = c.capabilities.grant(target, AuthRequired::None);
         }
+        // Genesis-path ledger mutation without a height bump — bust the memo.
+        self.state_root_memo.set(None);
         slot
     }
 
@@ -540,6 +584,8 @@ impl World {
         if let Some(c) = self.record_ledger.get_mut(cell) {
             c.permissions = open_permissions();
         }
+        // Genesis-path ledger mutation without a height bump — bust the memo.
+        self.state_root_memo.set(None);
         existed
     }
 
@@ -1466,6 +1512,26 @@ mod tests {
         assert!(w.commit_turn(turn).is_committed());
         let r1 = w.state_root();
         assert_ne!(r0, r1, "the image commitment must move with history");
+    }
+
+    #[test]
+    fn state_root_memoized_within_same_height() {
+        // Within an unchanged witness tooth (no commit, no genesis write between),
+        // two reads return the identical root — the second is a memo hit (the body
+        // is byte-equal regardless; equality is the memo's contract).
+        let mut w = World::new();
+        let _a = w.genesis_cell(1, 1_000);
+        let _b = w.genesis_cell(2, 0);
+        let first = w.state_root();
+        let second = w.state_root();
+        assert_eq!(first, second, "the root is stable within a height (memo hit)");
+
+        // A genesis write busts the memo: a new cell ⇒ a different root.
+        let _c = w.genesis_cell(3, 5);
+        let third = w.state_root();
+        assert_ne!(first, third, "a genesis install must invalidate the memo");
+        // ... and the new root is itself stable on re-read.
+        assert_eq!(third, w.state_root());
     }
 
     #[test]

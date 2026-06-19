@@ -983,7 +983,7 @@ impl Cockpit {
     /// agent (the prior forest is cleared, since its actions referenced the old
     /// agent's intent); the prediction is invalidated.
     fn sim_cycle_agent(&mut self, cx: &mut Context<Self>) {
-        let cells = sorted_cells(&self.world.borrow());
+        let cells = &self.cells;
         if cells.is_empty() {
             return;
         }
@@ -998,7 +998,7 @@ impl Cockpit {
     /// Cycle the TARGET cell the next added effect will act on (the action's
     /// acting cell). Wraps over the live cells.
     fn sim_cycle_target(&mut self, cx: &mut Context<Self>) {
-        let cells = sorted_cells(&self.world.borrow());
+        let cells = &self.cells;
         if cells.is_empty() {
             return;
         }
@@ -1018,7 +1018,7 @@ impl Cockpit {
     /// `sim_effect_idx`. Order is the coverage display order.
     fn sim_effect_palette(&self) -> Vec<starbridge_v2::simulate::EffectKind> {
         use starbridge_v2::simulate::EffectKind as E;
-        let cells = sorted_cells(&self.world.borrow());
+        let cells = &self.cells;
         let target = cells.get(self.sim_target_idx).copied().unwrap_or(self.sim_draft.agent);
         // A "peer" distinct from the target where possible (for transfer/grant dests).
         let peer = cells
@@ -1046,7 +1046,7 @@ impl Cockpit {
     /// Append the currently-picked effect (on the currently-picked target) to the
     /// draft as a new action root. Invalidates the prior prediction.
     fn sim_add_effect(&mut self, cx: &mut Context<Self>) {
-        let cells = sorted_cells(&self.world.borrow());
+        let cells = &self.cells;
         let Some(target) = cells.get(self.sim_target_idx).copied() else {
             return;
         };
@@ -2347,7 +2347,7 @@ impl Cockpit {
     /// real executor, live world untouched), then COMMIT the identical turn.
     fn simulate_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
         use starbridge_v2::simulate::SimOutcome;
-        let cells = sorted_cells(&self.world.borrow());
+        let cells = &self.cells;
         let target = cells.get(self.sim_target_idx).copied().unwrap_or(self.sim_draft.agent);
         let palette = self.sim_effect_palette();
         let effect = palette.get(self.sim_effect_idx).cloned();
@@ -2676,7 +2676,7 @@ impl Cockpit {
     /// generic renderer, with the `Halo` ring + a `Spotter` search box that re-focuses.
     fn moldable_panel(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
         let w = self.world.borrow();
-        let cells = sorted_cells(&w);
+        let cells = &self.cells;
         let focus = self.moldable_focus.or_else(|| cells.first().copied());
         let mut col = div().flex().flex_col().gap_2().p_3().size_full().overflow_hidden();
         col = col.child(section_title(
@@ -2868,7 +2868,7 @@ impl Cockpit {
     /// understands (cap-badged), sending one as a REAL verified turn + re-inspecting.
     fn inspect_act_panel(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
         let w = self.world.borrow();
-        let cells = sorted_cells(&w);
+        let cells = &self.cells;
         let focus = self.inspect_act_focus.or_else(|| cells.first().copied());
         let mut col = div().flex().flex_col().gap_2().p_3().size_full().overflow_hidden();
         col = col.child(section_title("INSPECT-ACT · the messages it understands → send → re-inspect"));
@@ -2977,7 +2977,7 @@ impl Cockpit {
     /// (doIt = predict, never mutate), print the predicted receipt (printIt), inspect
     /// the predicted post-state as live objects (inspectIt), then commit-or-discard.
     fn workspace_panel(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
-        let cells = sorted_cells(&self.world.borrow());
+        let cells = &self.cells;
         let target = cells.get(self.workspace_target_idx).copied().unwrap_or(self.workspace.draft().agent);
         let mut col = div().flex().flex_col().gap_2().p_3().size_full().overflow_hidden();
         col = col.child(section_title("WORKSPACE · doIt · printIt · inspectIt"));
@@ -3081,7 +3081,7 @@ impl Cockpit {
 
         // the glowing-cell grid.
         let mut grid = div().flex().flex_wrap().gap_2().mt_1();
-        for id in &cells_of(&w) {
+        for id in &self.cells {
             let Some(gc) = room.cell(id) else { continue };
             let glowing = gc.is_glowing();
             let (border, text) = if glowing {
@@ -3374,7 +3374,7 @@ impl Cockpit {
     }
 
     fn moldable_cycle_focus(&mut self, cx: &mut Context<Self>) {
-        let cells = sorted_cells(&self.world.borrow());
+        let cells = &self.cells;
         if cells.is_empty() {
             return;
         }
@@ -3385,7 +3385,7 @@ impl Cockpit {
     }
 
     fn inspect_act_cycle_focus(&mut self, cx: &mut Context<Self>) {
-        let cells = sorted_cells(&self.world.borrow());
+        let cells = &self.cells;
         if cells.is_empty() {
             return;
         }
@@ -3398,7 +3398,7 @@ impl Cockpit {
     /// SEND a message through the REAL inspect→act loop (a verified turn), capturing
     /// the executor's verdict / the in-band refusal into the banner + refreshing.
     fn inspect_act_send(&mut self, message: &str, cx: &mut Context<Self>) {
-        let Some(focus) = self.inspect_act_focus.or_else(|| sorted_cells(&self.world.borrow()).first().copied()) else {
+        let Some(focus) = self.inspect_act_focus.or_else(|| self.cells.first().copied()) else {
             return;
         };
         let result = {
@@ -3422,13 +3422,13 @@ impl Cockpit {
     }
 
     fn workspace_cycle_target(&mut self, cx: &mut Context<Self>) {
-        let n = sorted_cells(&self.world.borrow()).len().max(1);
+        let n = self.cells.len().max(1);
         self.workspace_target_idx = (self.workspace_target_idx + 1) % n;
         cx.notify();
     }
 
     fn workspace_add_transfer(&mut self, cx: &mut Context<Self>) {
-        let cells = sorted_cells(&self.world.borrow());
+        let cells = &self.cells;
         let Some(target) = cells.get(self.workspace_target_idx).copied() else { return };
         let agent = self.workspace.draft().agent;
         let ai = self.workspace.draft_mut().add_action(agent);
@@ -6290,15 +6290,14 @@ impl Render for Cockpit {
 
 // --- small render helpers ---------------------------------------------------
 
+/// The sorted live cells, freshly collected from the ledger. Used ONLY to seed /
+/// refresh `Cockpit.cells` (construction + `refresh_cells`); every render-hot read
+/// site routes through that cached `self.cells` instead (the M1 re-sort weld), so
+/// the full `HashMap` drain+sort runs once per mutating handler, not per frame.
 fn sorted_cells(w: &World) -> Vec<CellId> {
     let mut ids: Vec<CellId> = w.ledger().iter().map(|(id, _)| *id).collect();
     ids.sort_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
     ids
-}
-
-/// The sorted live cells (alias used by the wonder-room grid for legibility).
-fn cells_of(w: &World) -> Vec<CellId> {
-    sorted_cells(w)
 }
 
 // ===========================================================================

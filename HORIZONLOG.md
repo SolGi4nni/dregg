@@ -17,6 +17,15 @@ The Pharo-moldable inspector epoch (`docs/deos/INSPECTOR-FRAMEWORK.md`, memory `
 LANDED: L1 spine (`presentable.rs`, `800945db6`) + the liveness wave (`983ff76bc`) + lanes L2-L7
 (`04c275a85`, 411/411 green). Named follow-ups, each with its closure shape:
 
+- **Per-viewer affordance authority (the membrane property)** — `presentable::ReflectedCell::present`
+  HARDCODES `viewer_rights = AuthRequired::Either`, so the Affordances lens uses a uniform rights tier
+  and the viewer `CellId` does NOT change the cap-badge verdicts. Surfaced by the M1-era full-suite run
+  (the `two_viewers_..._attenuated_differently` test had shipped cargo-checked-but-never-run, asserting
+  a per-viewer divergence the model doesn't deliver; corrected to honest camera-fidelity + this lane).
+  Closure: derive each viewer's ACTUAL authority over the focus cell (ownership / held c-list cap →
+  the rights tier), so the affordances lens genuinely divides per-viewer. Then restore the `assert_ne`
+  divergence in the test. (⚑ LESSON re-bit: never commit a module on a cargo-CHECK; the main loop MUST
+  run the real `--release` suite — it's the only thing that catches never-run tests.)
 - **Cockpit gpui TABS for the 9 new modules** — inspect_act/workspace/wonder + the 6 inspector lanes
   are pure tested MODELS; none is wired into a `cockpit.rs` tab/panel yet. Named in every lane's report.
   Closure: add a `Tab` variant + `match` arm + a `*_panel` renderer per module (the panel maps each
