@@ -76,7 +76,16 @@ refused to launder a partial):**
   carrier, not-laundered, chip-faithful) + producer-side authority-near-collision; three-layer twins cell≡turn≡
   Lean (`felt8_to_bytes32` 8×4=full slot). ADDITIVE — the live wire is UNTOUCHED, commitment STILL 1-felt, no
   FP/VK re-pin. The cryptographic heart EXISTS + is proven; NO live security gain yet.
-- ✅ **THE LEAN SIDE IS 100% COMPLETE** (commit `5fe15906b`): `v3RegistryWide` — all 36 live members wrapped
+- ⚠ **THE LEAN SIDE IS ~80% (36 of 45) — my "100% COMPLETE" claim (`5fe15906b`/`41e05faa4`) was an OVERCLAIM,
+  corrected here** (7th agent caught it): the deployed TSV emits from `v3RegistryCapOpen` (**45** members,
+  `CapOpenEmit.lean:814`; the `EmitRotationV3.lean:55` loop), NOT the 36-member `v3Registry`. `v3RegistryWide`
+  covers the 36 cohort; the **9 cap-open/`-eff`/TB/fee'd members (positions 36..44) are NOT wide** — and the
+  rotated geometry (`ROT_WIDTH`/`ROT_PI_COUNT`) is GLOBAL, so a mixed 8-felt-cohort / 1-felt-cap-open registry is
+  INCOHERENT (the forbidden state). CLOSURE LANE (additive, green-able — the generic `wideAppend` keystones
+  already discharge each): stage **`v3RegistryCapOpenWide`** (the 9 cap-open members through `wideAppend` with
+  their per-member `bb` + the fold `_sound`/`_binds`), making the Lean side GENUINELY 100%. THEN the atomic Rust
+  flip.
+- ✅ **THE 36-COHORT WIDE REGISTRY** (commit `5fe15906b`): `v3RegistryWide` — the 36 live `v3Registry` members wrapped
   through the proven `wideAppend` with their per-member `bb` (= the v1 face `traceWidth`, SYMBOLIC), the fold
   `v3RegistryWide_sound`/`_binds` lifting member-by-member, axiom-clean, additive (live `v3Registry` untouched).
   Full proven stack: `chip_lookup_sound_N` · chip 8-out + 8-in · `wire_commit_8`/`wireCommitR8_binds` ·
