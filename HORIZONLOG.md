@@ -11,6 +11,71 @@ reason.)*
 Last sweep: 2026-06-13 (flagged-items burndown — removed ~14 landed/struck items,
 deduped the DreggDL/sel4/snapshot landings into git history, kept live tails).
 
+## ◻ seL4 RENDER-PD — next lever after the __clone/TCB wall fell (2026-06-20, `5b91f5e79`)
+The submit-thread `__clone`/TCB wall is DOWN (real seL4 TCB #2 live; `vkCreateDevice`
+past the threading wall). The render now walls TWO layers deeper, MEASURED: LLVM JIT
+`selectTarget()` returns NULL → a NULL-vtable virtual call inside
+`lp_build_create_jit_compiler_for_module` = a **triple/target mismatch in the
+cross-built JIT** (the AArch64 target IS linked + registered; the module's triple is
+wrong). NEXT LEVER: set the JIT module's target triple to the registered
+`aarch64-…-musl` triple before `selectTarget`, OR drive `LLVMInitializeAArch64Target*`
+explicitly from the driver ahead of `vkCreateDevice`. One LLVM-JIT-config rung past the
+threading work. Full record: `sel4/render-pd/WIRING.md` + `docs/desktop-os-research/SEL4-RENDER-PATH.md`.
+
+## ⚠ PHANTOM — Human-Layer M1 recovery e2e test is UNCOMMITTED (found 2026-06-20)
+HORIZONLOG describes "the recovery e2e seam" (`sdk/tests/identity_social_recovery_e2e.rs`)
+as LANDED, and `trust_panel.rs` IS committed (`46f2ef4cc`) — but the e2e test file was
+NEVER committed (still `??` untracked). It can't land standalone (needs the
+`sdk/Cargo.toml` `[dev-dependencies]` add of `dregg-federation` + `hints`), and that
+Cargo.toml is co-mingled with ember's uncommitted circuit-soundness changes in `sdk/`
+(`cipherclerk.rs`/`full_turn_proof.rs`/`sovereign_rotated_c1.rs`). Closure: when the
+circuit lane quiesces, commit the test + ONLY its Cargo.toml dev-dep hunk by file-set,
+after a `cargo test -p dregg-sdk --test identity_social_recovery_e2e` green. NOT landed
+into the in-flux circuit lane tonight (don't blanket-commit over ember's work).
+
+## ◻ DOCUMENT LENS — reachability: headless half DONE, gpui focus-selection remains (2026-06-20)
+The `DocumentInspection` Presentable (rendered · patch-history · conflict-as-state ·
+commitment) is built + tested (`starbridge-v2/src/doc_lens.rs`, 7 green). The HEADLESS
+sourcing is DONE: `DocumentInspection::from_doc(&ExecutorDrivenDoc)` / `from_graph(&DocGraph)`
+source the lens straight off a LIVE document's folded graph (the DOCS tab's authoritative
+`ExecutorDrivenDoc`), trail degrading honestly. REMAINING (gpui, pairs with ember's visual
+loop): surface it from the DOCS tab as an INSPECT sub-view (or a `FocusTarget::Document`
+focus) so the inspector tab can FOCUS a live document. No reconstruction needed —
+`ExecutorDrivenDoc::graph()` exposes the `DocGraph` directly (`project_graph` is the
+forward graph→heap direction, not needed here).
+
+## ✅ M-REV-0 — FIRST-CLASS REVERSIBILITY (the un-turn) LANDED in turn/ (2026-06-19, this lane)
+`docs/deos/FIRST-CLASS-REVERSIBILITY.md` Milestone 0, the un-turn on the real substrate.
+NEW `turn/src/reversible.rs` (+ `Effect::invert`/`Turn::invert` additive, exhaustive match) +
+lib re-exports. 11/11 lib tests green (`cargo test -p dregg-turn --lib reversible`).
+- `Effect::invert(pre) -> Inversion::{Clean|Contextual|Committed}` — Transfer↔Transfer,
+  grant→revoke, seal→unseal CLEAN; SetField/SetPermissions/SetVerificationKey/unseal-reseal
+  CONTEXTUAL (pre-image from the ledger); Burn/NoteSpend/IncrementNonce/Revoke*/Destroy/
+  MakeSovereign/Attenuate/Create*/Bridge/Pipeline/Exercise COMMITTED (fail-closed). EXHAUSTIVE
+  (no `_=>`), like `Effect::linearity` — any new effect must answer reversibility.
+- `ReversibleHistory::undo_to(k)` — backward dual of `replay_to`; headline test: undo-backward ==
+  replay-forward on the SAME verified STATE for every k. CAVEAT made precise: the per-turn NONCE
+  ratchet cannot rewind, so equality holds MODULO the monotone nonce (`ledgers_agree_modulo_nonce`);
+  the executor re-applies the inverse as a fresh forward turn (advances nonce), value/state restored
+  exactly. Fail-closed across any committed step (`IrreversibleStep`).
+- `can_undo_isolated(idx)` — the causal-consistency frontier: `undo_to` reverses a CONTIGUOUS
+  SUFFIX most-recent-first (conservative = time-order-as-causal-order); a MIDDLE turn is reversible
+  iff no later turn touches a cell it wrote. RESIDUAL (named): a mutating `undo_isolated` that
+  splices a middle reversal = the §3.3 follow-up (the frontier is reported, not yet wired to mutate).
+- PARTIAL-TURN LIFT DECISION: executor-layer split (`Pipeline`/`TurnBatch`/`execute_pipeline`) is
+  CORRECT, not a batch-bearing `Effect` — "determination eager, witness lazy"; the one first-class
+  pipelining effect (`PipelinedSend`/`EventualRef`) is Committed (resolution is one-shot). Documented
+  in the module head.
+- CIRCUIT HANDOFF (NOT touched here — ember's live lane): an invertible effect needs NO new
+  descriptor (inverse emits ordinary effects, existing rungs); the one obligation is the BACKWARD
+  root tooth = the inverse turn's post-state commitment equals the recorded pre-cursor commitment
+  MODULO the monotone nonce. A batch-bearing effect, IF added, must satisfy `holeFill_binds_in_circuit`.
+  Closure shape: confirm the state-commitment binding admits the "value restored, nonce advanced"
+  post-state as a genuine transition (it is just another forward turn).
+- LEAN FOLLOW (allowed in `metatheory/Dregg2/Deos/` only): `EffectInvert.lean` — one round-trip lemma
+  per clean+contextual effect (`apply(invert e σ) (apply e σ) = σ` modulo nonce), committed tier as
+  the lemma's exclusion precondition. NOT yet written.
+
 ## ✅ IR2 DENOTATIONAL DIFFERENTIAL — REAL-EVALUATOR LEG LANDED; bus-arm residual NAMED (2026-06-19, this lane)
 The faithfulness differential's last by-inspection link (`eval_enforces ≡ real Ir2Air::eval`)
 is COLLAPSED for the ROW-LOCAL arms: `circuit/tests/ir2_denotational_differential.rs` now calls

@@ -352,16 +352,35 @@ impl TurnExecutor {
                     s_k = cell_state_after_run(&v1_trace, run_effects.len(), &s_k);
                 }
             }
-            // Commit update (step 8) — unchanged.
+            // Commit update (step 8). The CAS Result is PROPAGATED, not discarded: the
+            // registration update is a compare-and-swap against the stored `old_commitment`
+            // (the SAME value this function read at its top), so a `SovereignCommitmentMismatch`
+            // / `NotSovereign` here is a ledger-consistency divergence — the proof verified but
+            // the committed state did NOT advance. Returning `Ok(())` over a silent no-op would
+            // tell the caller the turn committed when it did not; surface it loudly instead.
             if ledger.is_sovereign(cell_id) {
-                let _ = ledger.update_sovereign_commitment(cell_id, new_commitment);
+                ledger
+                    .update_sovereign_commitment(cell_id, new_commitment)
+                    .map_err(|e| {
+                        TurnError::InvalidExecutionProof(format!(
+                            "rotated verify: sovereign commitment update failed after a valid \
+                             proof (ledger inconsistency): {e}"
+                        ))
+                    })?;
             } else {
-                let _ = ledger.update_sovereign_registration_commitment(
-                    cell_id,
-                    old_commitment,
-                    new_commitment,
-                    self.block_height,
-                );
+                ledger
+                    .update_sovereign_registration_commitment(
+                        cell_id,
+                        old_commitment,
+                        new_commitment,
+                        self.block_height,
+                    )
+                    .map_err(|e| {
+                        TurnError::InvalidExecutionProof(format!(
+                            "rotated verify: sovereign registration commitment CAS failed after a \
+                             valid proof (ledger inconsistency): {e}"
+                        ))
+                    })?;
             }
             return Ok(());
         }
@@ -386,16 +405,33 @@ impl TurnExecutor {
             &ir2_proof,
         )?;
 
-        // 8. Update commitment (legacy map first, then registrations) — unchanged.
+        // 8. Update commitment (legacy map first, then registrations). The CAS Result is
+        //    PROPAGATED (see the multi-cohort site above): a mismatch / not-sovereign after a
+        //    valid proof is a ledger-consistency divergence — the proof verified but the
+        //    committed state did NOT advance — so it must surface, not be silently dropped.
         if ledger.is_sovereign(cell_id) {
-            let _ = ledger.update_sovereign_commitment(cell_id, new_commitment);
+            ledger
+                .update_sovereign_commitment(cell_id, new_commitment)
+                .map_err(|e| {
+                    TurnError::InvalidExecutionProof(format!(
+                        "rotated verify: sovereign commitment update failed after a valid proof \
+                         (ledger inconsistency): {e}"
+                    ))
+                })?;
         } else {
-            let _ = ledger.update_sovereign_registration_commitment(
-                cell_id,
-                old_commitment,
-                new_commitment,
-                self.block_height,
-            );
+            ledger
+                .update_sovereign_registration_commitment(
+                    cell_id,
+                    old_commitment,
+                    new_commitment,
+                    self.block_height,
+                )
+                .map_err(|e| {
+                    TurnError::InvalidExecutionProof(format!(
+                        "rotated verify: sovereign registration commitment CAS failed after a \
+                         valid proof (ledger inconsistency): {e}"
+                    ))
+                })?;
         }
         Ok(())
     }
