@@ -159,6 +159,15 @@ story you can drive end-to-end. See [docs/ORGANS.md](docs/ORGANS.md).
   non-certifiable residue. Equivocation evidence is a wire value, and a slash is
   an ordinary move from the bond well.
 
+- **Shielded cells** — a cell can keep its balance, owner, and contents *hidden*
+  while still proving what matters: a transfer balances — no value created or
+  destroyed — without revealing a single amount. The direction this opens is the
+  point: a holder attests a *predicate* over its hidden state ("over 18",
+  "solvent", "in the allow-list") and a verifier learns only that the predicate
+  holds, nothing else. Privacy is the `shield`/`unshield` kernel verb, not a
+  bolt-on, so a shielded value is still conserved and a shielded spend still can't
+  double-spend.
+
 ## Why it's not a toy
 
 - **The verified executor *is* the executor.** The node's state producer is the
@@ -262,6 +271,13 @@ primitive reduces to a kernel theorem. See [docs/deos/DEOS.md](docs/deos/DEOS.md
   kernel theorem restated for the docuverse, no new mathematics
   ([`Deos/Transclusion.lean`](metatheory/Dregg2/Deos/Transclusion.lean)).
 
+- **A literate docuverse.** Beyond a quote, a whole *document* is a cell: writing
+  is a cap-gated turn, the text is the fold of its edit history, and — Pijul-style
+  — a **conflict is a first-class state you live in**, not a merge failure. When
+  two people edit the same passage, the compatible parts merge cleanly and the
+  genuine clash stays live as *both* alternatives, each attributed to who wrote it,
+  until a later edit resolves it ([docs/deos/DOCUMENT-LANGUAGE.md](docs/deos/DOCUMENT-LANGUAGE.md)).
+
 - **The powerbox (CapDesk).** Granting authority is *designate-then-attenuate*:
   you point at a resource and hand over a strictly weaker capability than you
   hold, never ambient authority ([`starbridge-v2/src/powerbox.rs`](starbridge-v2/src/powerbox.rs)).
@@ -278,6 +294,23 @@ primitive reduces to a kernel theorem. See [docs/deos/DEOS.md](docs/deos/DEOS.md
   through the membrane ([`Deos/Rehydration.lean`](metatheory/Dregg2/Deos/Rehydration.lean)).
   The membrane composes `is_attenuation` across reshare hops, so a forwarded
   view can never amplify.
+
+- **Recovery without a custodian.** Lose your device keys and you don't lose your
+  identity. You nominate a council of *guardians*; any quorum of them can authorize
+  a fresh key for you — they re-key your identity, they never reconstruct or hold
+  your old one, and no single guardian (nor a sub-quorum) can act alone. The
+  recovery is itself a verified turn, so anyone can check it was genuinely
+  quorum-authorized — not a support ticket, a theorem. The same council can hold a
+  *shared secret* no member individually knows and that only a quorum can ever open
+  — the basis for sealed ballots, sealed-bid auctions, and key escrow no insider
+  can peek at.
+
+- **Branch-and-stitch — collaborative time-travel.** Rewind a shared history,
+  *fork* a past moment into a private sandbox, try a different course of events,
+  then *merge* back the parts you want. The sandbox is confined by construction —
+  nothing it does touches the live world until you merge — and the merge re-checks
+  authority at the moment of merging, so a permission revoked while you were off in
+  the branch can't slip back in through it.
 
 The forcing-function exemplar is a **multiplayer fog-of-war game where the
 security property *is* the game mechanic**: what a player can see is exactly
