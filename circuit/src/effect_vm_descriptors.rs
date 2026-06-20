@@ -820,7 +820,7 @@ pub const V3_STAGED_CAVEAT_DESCRIPTORS: &[(&str, &str, &str)] = &[(
 pub const V3_STAGED_REGISTRY_TSV: &str =
     include_str!("../descriptors/rotation-v3-staged-registry.tsv");
 pub const V3_STAGED_REGISTRY_FP: &str =
-    "c0a824a9ee1dafc9ea780b913f3a09cf2ccd82a1146ec66c1768db0cad523808";
+    "1d8cb34849ad3a49828637e680b1f37fbe42a0611b05d34cc18df92f03bddf15";
 
 /// **THE FAITHFUL 8-FELT WIDE TRANSFER descriptor (STAGED-ADDITIVE slice).** The
 /// `v3RegistryWide` transfer member (`wideAppend transferV3 bb (bb+51)`, width 816 / PI 54) —
@@ -1769,8 +1769,18 @@ mod tests {
             // last-row after committed_height, last-row caveat commit. (The pins do NOT
             // ride `public_input_count - 4`: note-spend appends a FIFTH nullifier pin past
             // them, so the commit-pin base is the FIXED v1 prefix `V1_PI_COUNT = 34`.)
+            //
+            // heapWrite is the LONE exception: its base descriptor (`heapWriteVmDescriptor`)
+            // declares ZERO v1 PIs (its faithfulness rides the three recompute chip lookups,
+            // not a published-param prefix), so `rotateV3` lands the four commit pins at the
+            // FRONT (indices 0..=3). It carries no fifth pin, so `public_input_count == 4`.
+            let is_heap_write = key == "heapWriteVmDescriptor2R24";
             const V1_PI_COUNT: usize = 42;
-            let pi_base = V1_PI_COUNT;
+            let pi_base = if is_heap_write {
+                d.public_input_count - 4
+            } else {
+                V1_PI_COUNT
+            };
             let mut pins: Vec<(usize, usize)> = Vec::new(); // (col, pi_index)
             for c in &d.constraints {
                 if let VmConstraint2::Base(VmConstraint::PiBinding { col, pi_index, .. }) = c {
@@ -1934,6 +1944,18 @@ mod tests {
                     vec![(263, pi_base + 4)],
                     "setFieldDyn: the fifth pin welds the AFTER fields_root weld col (263) to PI[46]"
                 );
+            } else if is_heap_write {
+                // heapWrite: the base carries no v1 PIs, so the rotated descriptor publishes
+                // EXACTLY the four commit pins (indices 0..=3) — no fifth pin. The recompute is
+                // forced by the three base chip lookups, not a published param.
+                assert_eq!(
+                    d.public_input_count, 4,
+                    "heapWrite: the four rotated commit pins, no v1 PI prefix"
+                );
+                assert!(
+                    nullifier_pins.is_empty(),
+                    "heapWrite: carries no fifth pin (its recompute rides the base chip lookups)"
+                );
             } else {
                 assert_eq!(
                     d.public_input_count, 46,
@@ -1946,14 +1968,18 @@ mod tests {
             }
         }
         assert_eq!(
-            n, 46,
+            n, 51,
             "expected the 36-member rotated cohort (28 v2-graduated + 8 widened) + the 6 fan-out \
              cap-open members (delegate/introduce/grantCap/revoke/refreshDelegation/revokeCapability \
              — each *CapOpenVmDescriptor2R24) + the 2 LIVE effect-general legs \
              (transfer/attenuate *CapOpenEffVmDescriptor2R24) + the TURN-IDENTITY weld \
              (transferCapOpenTBVmDescriptor2R24, CapOpenTurnPins — the cap-open + 2 turn-identity \
              columns + 3 turn-identity PI pins welding src/actor/dst to the published turn) + the \
-             FEE-IN-PROOF transfer (transferFeeVmDescriptor2R24 — the fee debited in-proof, 47 PIs). \
+             FEE-IN-PROOF transfer (transferFeeVmDescriptor2R24 — the fee debited in-proof, 47 PIs) \
+             + THE WRITE-BEARING TAIL (`v3RegistryHeap` 45..49): heapWriteVmDescriptor2R24 (the \
+             Class-A heap-root recompute, `Rfix 56`) + the 4 write-forcing cap-open wrappers \
+             (delegate/introduce/delegateAtten/revokeDelegation *WriteCapOpenVmDescriptor2R24 — the \
+             apex's `Rfix 1/10/11/14` re-pointed, guarantee A: the cap-tree WRITE forced). \
              The Signature-pinned capOpenAttenuateV3/transferCapOpenV3 were DELETED (Stage D)."
         );
     }
