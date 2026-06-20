@@ -47,6 +47,7 @@ fn main() {
     let mesa_src = PathBuf::from(env::var("MESA_SRC").unwrap_or_else(|_| "/tmp/mesa-src".into()));
 
     println!("cargo:rerun-if-changed=scripts/driver-render.c");
+    println!("cargo:rerun-if-changed=scripts/llvm-target-diag.c");
     println!("cargo:rerun-if-changed=scripts/musl-compat.c");
     println!("cargo:rerun-if-changed=build.rs");
 
@@ -71,6 +72,26 @@ fn main() {
             }
             other => {
                 println!("cargo:warning=driver-render.c compile failed/absent ({other:?}); link will be incomplete");
+            }
+        }
+
+        // The LLVM-target-registration diagnostic/lever (scripts/llvm-target-diag.c):
+        // drives LLVMInitializeAArch64Target* explicitly + prints what the registry
+        // resolves for the process triple, right before vkCreateDevice. No headers
+        // needed (LLVM-C symbols forward-declared); compiled like the driver.
+        let diag_o = out.join("llvm-target-diag.o");
+        let status = Command::new(&cc)
+            .args(["-O2", "-ffreestanding", "-fno-stack-protector", "-c"])
+            .arg("-isystem").arg(musl_sel4.join("include"))
+            .arg("scripts/llvm-target-diag.c")
+            .arg("-o").arg(&diag_o)
+            .status();
+        match status {
+            Ok(s) if s.success() => {
+                println!("cargo:rustc-link-arg={}", diag_o.display());
+            }
+            other => {
+                println!("cargo:warning=llvm-target-diag.c compile failed/absent ({other:?}); the JIT-target lever will be absent");
             }
         }
     } else {

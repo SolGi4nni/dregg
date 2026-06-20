@@ -34,6 +34,11 @@ extern int   printf(const char *fmt, ...);
 extern size_t dregg_render_pd_jit_exec_maps(void);
 extern size_t dregg_render_pd_jit_wx_flips(void);
 
+// The LLVM JIT target-registration lever/diagnostic (scripts/llvm-target-diag.c):
+// drives LLVMInitializeAArch64Target* explicitly + prints the registry state the
+// JIT's selectTarget will see. Driven before vkCreateDevice (the JIT-init wall).
+extern int dregg_llvm_target_diag(void);
+
 // The ICD's single loader-less entry point (vk_icd.h type), defined in
 // libvulkan_lvp.so and linked in statically.
 extern PFN_vkVoidFunction vk_icdGetInstanceProcAddr(VkInstance instance, const char *pName);
@@ -133,6 +138,13 @@ int dregg_render_pd_run(void) {
     uint32_t qn = 0;
     pQF(phys[0], &qn, NULL);
     if (qn == 0) { puts("[driver] STAGE 3 FAIL: no queue families"); return 16; }
+
+    // THE JIT TARGET LEVER: register the AArch64 target explicitly + measure the
+    // registry state BEFORE vkCreateDevice triggers the JIT init
+    // (lp_build_create_jit_compiler_for_module -> EngineBuilder::selectTarget).
+    // The wall was selectTarget() returning NULL (a NULL-vtable virtual call); this
+    // tells us whether the process triple now resolves to a registered target.
+    (void) dregg_llvm_target_diag();
     float prio = 1.0f;
     VkDeviceQueueCreateInfo qci = {
         .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,

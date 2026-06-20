@@ -246,6 +246,50 @@ int __clone(int (*fn)(void *), void *stack, int flags, void *arg,
                              (long)ptid, (long)tls, (long)ctid);
 }
 
+// ── dlopen/dlsym/dlerror (THE JIT-init lever) ────────────────────────────────
+// LLVM's MCJIT engine creation (EngineBuilder::create, reached by gallivm's
+// lp_build_create_jit_compiler_for_module) calls
+// `sys::DynamicLibrary::LoadLibraryPermanently(nullptr)` → `::dlopen(NULL,
+// RTLD_LAZY|RTLD_GLOBAL)` to make THIS program's symbols resolvable by the JIT.
+// The seL4/musllibc fork ships a `dlopen` STUB that returns NULL with
+// dlerror()="Dynamic loading not supported" (measured via the llvm-target-diag
+// MCJIT probe: "MCJIT create FAILED: Dynamic loading not supported"). That NULL
+// makes create() return NULL, and gallivm then dereferences the NULL engine
+// (JIT->setObjectCache) → the vm-fault-at-0 wall.
+//
+// The process-handle dlopen is the ONLY thing LLVM needs here: a handle that
+// stands for "this image", against which it can dlsym runtime symbols. We override
+// (whole-archived ⇒ chosen over the libc's weak `dlopen.o`, exactly as `__clone`/
+// `getenv` above):
+//   * dlopen(NULL, …)  → a non-NULL sentinel (the process handle). The fully-static
+//     PD IS its own symbol space; there is nothing to actually load.
+//   * dlopen(name, …)  → NULL (no filesystem; LLVM never opens a named library on
+//     this path — it only ever asks for the process handle here).
+//   * dlsym(handle, …) → NULL. The seL4-musl image carries no runtime symbol table,
+//     so a process-handle lookup honestly finds nothing; LLVM's RuntimeDyld first
+//     consults its explicit-symbol map + the static special-symbols, so the empty
+//     compute shader (no external refs) resolves without dlsym. A real shader that
+//     needs an unregistered runtime symbol will surface as a PRECISE later wall
+//     (an unresolved-symbol relocation), not this fatal create() NULL.
+//   * dlerror() → NULL (no error pending after the successful process-handle open).
+static char dregg_process_handle; // a unique, stable, non-NULL sentinel address
+void *dlopen(const char *file, int flags) {
+    (void)flags;
+    if (file == NULL) return (void *)&dregg_process_handle; // the process handle
+    return NULL; // no named-library loading in a static PD
+}
+void *dlsym(void *handle, const char *symbol) {
+    (void)handle; (void)symbol;
+    return NULL; // no runtime symbol table; RuntimeDyld's other paths cover the rest
+}
+char *dlerror(void) {
+    return NULL; // no pending error after a successful process-handle dlopen
+}
+int dlclose(void *handle) {
+    (void)handle;
+    return 0; // the process handle is never really closed
+}
+
 // ── reallocarray ─────────────────────────────────────────────────────────────
 // realloc(ptr, nmemb*size) with multiplication-overflow protection (the BSD/glibc
 // extension util/ code uses). The seL4 musl ships realloc but not this wrapper.

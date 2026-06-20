@@ -180,3 +180,69 @@ The render now stops one layer deeper: `vkCreateDevice` faults in
 `EngineBuilder::selectTarget()` returning NULL (a triple/target mismatch in the
 cross-built JIT). The next lever is LLVM-JIT-config (resolve/set the JIT module
 target triple, or drive `LLVMInitializeAArch64Target*` explicitly), not threading.
+
+## UPDATE (2026-06-20) — THE JIT WALL IS DOWN: lavapipe JITs a shader IN-PD; the W→X flip FIRES
+
+The "selectTarget triple/target mismatch" hypothesis above is **REFUTED by
+measurement.** A diagnostic shim (`scripts/llvm-target-diag.c`, driven from
+`driver-render.c` right before `vkCreateDevice`) drove `LLVMInitializeAArch64*`
+explicitly and printed the registry: AArch64 IS registered (5 targets, all
+`hasJIT=1`), `LLVMGetDefaultTargetTriple()` = `aarch64-unknown-linux-musl`, and
+`lookupTarget("aarch64-unknown-linux-musl") => "aarch64" hasJIT=1 ✓`. So
+`selectTarget` would NOT return NULL — the triple resolves fine.
+
+The shim then **replicated gallivm's exact failing call** — an `LLVMCreateMCJITCompilerForModule`
+on a fresh empty module — to capture the error string gallivm itself discards
+(gallivm dereferences the NULL engine before reading `*OutError`). The measured
+string is the real wall:
+
+```
+[llvm-diag] MCJIT create FAILED (empty-triple module): Dynamic loading not supported
+```
+
+`EngineBuilder::create()` calls `sys::DynamicLibrary::LoadLibraryPermanently(nullptr)`
+→ `::dlopen(NULL, RTLD_LAZY|RTLD_GLOBAL)` to make the program's own symbols
+resolvable by the JIT. The seL4/musllibc fork ships a `dlopen` STUB that returns
+NULL with `dlerror()="Dynamic loading not supported"` → `create()` returns NULL →
+gallivm's `JIT->setObjectCache()` derefs the NULL engine → the `vm fault at 0`.
+
+**The fix (the named override pattern, like `__clone`/`getenv`):** `scripts/musl-compat.c`
+now overrides `dlopen`/`dlsym`/`dlerror`/`dlclose` (whole-archived ⇒ chosen over the
+libc's weak `dlfcn`): `dlopen(NULL,…)` returns a non-NULL sentinel (the process
+handle — the static PD IS its own symbol space), `dlsym(…)` returns NULL (no runtime
+symbol table; RuntimeDyld's explicit-symbol map + static special-symbols cover the
+empty compute shader, and a real shader needing an unregistered runtime symbol would
+surface as a precise later unresolved-relocation wall, not this fatal create-NULL),
+`dlerror()` returns NULL after the successful process-handle open.
+
+### MEASURED boot serial (`make build && make image && make run`, QEMU `-cpu cortex-a53`)
+```
+[llvm-diag] lookupTarget("aarch64-unknown-linux-musl") => "aarch64" hasJIT=1  ✓
+[llvm-diag] MCJIT engine CREATED for empty module (no triple) ✓ — the JIT init path is sound
+[render-pd] __clone -> seL4 TCB #2 live (fn=0x119c1d0 stack=0x5732360 tls=0x5732470)
+[driver] vkCreateDevice OK — logical device live
+[driver] vkCreateComputePipelines OK — lavapipe JIT'd a shader IN-PD
+[driver] W->X observed: 0 executable mmap(s), 8 PROT_EXEC mprotect flip(s)
+[driver] === lavapipe software-Vulkan RAN inside the seL4 PD ===
+[render-pd] <<< lavapipe ran INSIDE seL4 — software Vulkan on glass ( ◕‿◕ )
+```
+
+- **The JIT EXERCISE fired.** `vkCreateComputePipelines` succeeded — lavapipe drove
+  its NIR→LLVM→machine-code path and JIT'd the empty compute shader IN the seL4 PD.
+- **THE W→X FLIP FIRES — measured 8 `PROT_EXEC` mprotect flips.** The JIT took the
+  classic SectionMemoryManager path: `mmap(RW)` the code region, write machine code,
+  then `mprotect(…, PROT_EXEC)` — the handler counts each flip (a faithful no-op
+  success: the `--no-rosegment` image is already X). This is the W→X executable
+  mapping the whole render-PD was built to service, now exercised for real.
+- **Zero faults, zero unhandled syscalls, driver rc=0.** The full
+  instance→device→pipeline chain runs clean.
+
+### THE NEXT LEVER — the gpui Scene → RGBA → ramfb path (the Rust render layer)
+The C smoke proves the software-Vulkan + JIT substrate works in-PD. The remaining
+rung is `WIRING.md` §"The render call": link wgpu + gpui_wgpu and drive
+`WgpuRenderer::render_scene_to_image` on one cockpit `gpui::Scene` → RGBA → the
+`render_blit.rs` RGBA→XRGB8888→ramfb loop (the `cockpit_frame.rs` blit minus the
+`include_bytes!` bake), then byte-compare the first in-VM frame against the persvati
+bake `cockpit_frame.rgba` to prove parity. The hard substrate (LLVM JIT + lavapipe
++ W→X + the submit TCB) is now all GREEN in-VM; this last rung is Rust render wiring
+on top, not an OS-capability wall.

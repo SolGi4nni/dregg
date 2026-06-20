@@ -428,25 +428,58 @@ run` in QEMU `-cpu cortex-a53`); it currently stops in the LLVM JIT's target set
    implementer 0x41, part 0xd03, a `Features:` line) on a sentinel fd. LLVM now reads
    it cleanly (the message is gone, the fault advances past it).
 
-### The current wall (measured, stable)
+### The JIT wall is DOWN (2026-06-20): lavapipe JITs a shader IN-PD; the W→X flip FIRES
 
-`vkCreateDevice` faults inside `lp_build_create_jit_compiler_for_module` at a
-**NULL-vtable virtual call** (`ldr x2,[x19]; ldr x2,[x2,#184]` with `x19=0`), right
-after the cpuinfo read — i.e. a NULL `TargetMachine`/engine object dispatched
-virtually. This is the LLVM JIT's `EngineBuilder::selectTarget()` returning NULL: the
-AArch64 target is linked (`_GLOBAL__sub_I_AArch64TargetMachine.cpp` IS in
-`.init_array`, and instance/driver ctors ran — instance creation succeeds), so the
-likely cause is a **triple/target mismatch** in `selectTarget` (the module/host
-triple the cross-built JIT computes does not match the registered AArch64 target),
-not missing registration.
+The "selectTarget triple/target mismatch" hypothesis was **REFUTED by measurement.**
+A diagnostic shim (`sel4/render-pd/scripts/llvm-target-diag.c`, driven from
+`driver-render.c` just before `vkCreateDevice`) drove `LLVMInitializeAArch64*`
+explicitly and printed the registry — AArch64 IS registered (5 targets, all
+`hasJIT=1`), `LLVMGetDefaultTargetTriple()`=`aarch64-unknown-linux-musl`, and
+`lookupTarget("aarch64-unknown-linux-musl") => "aarch64" hasJIT=1 ✓`. The triple
+resolves; `selectTarget` was never the problem.
 
-**The next lever:** confirm via the module's target triple + `TargetRegistry::lookupTarget`
-error string (have the driver call `LLVMGetFirstTarget`/`lookupTarget` and print the
-triple it resolves), then either (a) set the JIT module's target triple explicitly to
-the registered `aarch64-...-musl` triple before `selectTarget`, or (b) drive
-`LLVMInitializeAArch64TargetInfo/Target/TargetMC` explicitly from the driver ahead of
-device creation. This is an LLVM-JIT-config rung, one layer past the threading work —
-the submit-thread/TCB lever this lane targeted is closed.
+The shim then **replicated gallivm's exact call** (`LLVMCreateMCJITCompilerForModule`
+on an empty module) to capture the error string gallivm discards. The real wall,
+measured:
 
-Touched only `sel4/render-pd/` (`src/thread.rs` new; `src/main.rs` + `scripts/musl-compat.c`
-extended) + this note.
+```
+[llvm-diag] MCJIT create FAILED: Dynamic loading not supported
+```
+
+`EngineBuilder::create()` calls `sys::DynamicLibrary::LoadLibraryPermanently(nullptr)`
+→ `::dlopen(NULL, …)` to expose the program's symbols to the JIT. The seL4/musllibc
+fork ships a `dlopen` STUB returning NULL with `dlerror()="Dynamic loading not
+supported"` → `create()` returns NULL → gallivm derefs the NULL engine
+(`JIT->setObjectCache`) → the `vm fault at 0`. NOT a triple/target/threading wall —
+a missing `dlopen` process-handle.
+
+**Fix (the named override pattern, like `__clone`/`getenv`):** `scripts/musl-compat.c`
+overrides `dlopen`/`dlsym`/`dlerror`/`dlclose` — `dlopen(NULL,…)` returns a non-NULL
+process-handle sentinel (the static PD is its own symbol space), `dlsym` returns NULL
+(no runtime symbol table; RuntimeDyld's explicit-symbol map covers the empty shader),
+`dlerror` returns NULL after success.
+
+### MEASURED RESULT — the full chain runs clean in-VM
+```
+[driver] vkCreateDevice OK — logical device live
+[driver] vkCreateComputePipelines OK — lavapipe JIT'd a shader IN-PD
+[driver] W->X observed: 0 executable mmap(s), 8 PROT_EXEC mprotect flip(s)
+[driver] === lavapipe software-Vulkan RAN inside the seL4 PD ===
+```
+- The JIT exercise fired: `vkCreateComputePipelines` JIT'd the compute shader IN the PD.
+- **THE W→X FLIP FIRES — 8 `PROT_EXEC` mprotect flips** (the classic SectionMemoryManager
+  `mmap(RW)`→write→`mprotect(PROT_EXEC)` path; the handler counts each, a faithful no-op
+  success on the `--no-rosegment` already-X image). This is the one genuinely-new OS
+  demand the render-PD was built for, now exercised for real.
+- Zero faults, zero unhandled syscalls, driver rc=0.
+
+### THE NEXT LEVER — the gpui Scene → RGBA → ramfb render layer
+The software-Vulkan + LLVM-JIT + W→X + submit-TCB substrate is all GREEN in-VM. The
+remaining rung (WIRING.md §"The render call"): link wgpu + gpui_wgpu, drive
+`WgpuRenderer::render_scene_to_image` on one cockpit `gpui::Scene` → RGBA → the
+`render_blit.rs` RGBA→XRGB8888→ramfb loop, then byte-compare the first in-VM frame
+against the persvati bake `cockpit_frame.rgba` to prove parity. This is Rust render
+wiring on top of a proven substrate, not an OS-capability wall.
+
+Touched only `sel4/render-pd/` (`scripts/llvm-target-diag.c` new + wired into
+`build.rs`/`driver-render.c`; `scripts/musl-compat.c` dl* overrides) + this note.
