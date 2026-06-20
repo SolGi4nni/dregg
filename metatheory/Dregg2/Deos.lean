@@ -159,6 +159,28 @@ import Dregg2.Deos.TransclusionChain
 -- nonvacuous + gates_agree_pointwise exhibit a concrete `memberOf "role"` program where surface-lights ⟺
 -- executor-admits and a wrong role darkens BOTH. 10 keystones #assert_all_clean.
 import Dregg2.Deos.FireProgramAgreement
+-- THE DOCUMENT MERGE IS THE LEAST-UPPER-BOUND JOIN (the colimit-by-union the Pijul pushout computes), and
+-- a conflict is a FIRST-CLASS STATE (the dreggverse document language, `docs/deos/DOCUMENT-LANGUAGE.md`
+-- §2.1-2.4 + §4.4 RESEARCH; differential = `dregg-doc/src/{merge,graph,content,atom}.rs`). A document is a
+-- Pijul graph-of-atoms (`DocGraph` = a KEYED atom map `AtomId → Option AtomVal` (the BTreeMap, ≤1 status
+-- per id) + order-edge Finset + field Finset); `merge` is componentwise — atoms join POINTWISE by the
+-- Dead-wins `Status.join` (the REAL `graph.rs::union_in_place`, not a struct-union), order/fields union.
+-- THE JOIN LAWS, about the real status-joining merge: merge_comm, merge_assoc, merge_idem, merge_total
+-- (always-defined), and merge_status_dead_wins (the status-join GENUINELY exercised — alive⊔dead = dead at
+-- a shared id; the proof the old Finset-Atom model could not even STATE). THE UNIVERSAL PROPERTY, stated
+-- HONESTLY as the LATTICE JOIN / LEAST UPPER BOUND in the document inclusion order ⊑ (NOT "the categorical
+-- pushout up to unique iso" — that residual, the category P / the span a←a⊓b→b / functoriality, is NAMED,
+-- not claimed): merge_is_lub (merge a b is the LEAST graph including both legs; merge_includes_left/right
+-- are the cocone legs, merge_least is leastness). CONFLICT-AS-STATE uses TRANSITIVE reachability
+-- (Reaches = Relation.ReflTransGen of the edge relation, matching content.rs::reachable — NOT a one-hop
+-- shadow): ConflictAt is two distinct live atoms after a shared p that are MUTUALLY non-reachable
+-- (a transitive antichain). merge_has_conflict exhibits a concrete two-fork conflict that is a WELL-FORMED
+-- merged DocGraph (not a failure); resolve_collapses — adding an order-edge (an additive Connect patch)
+-- makes one reach the other (the antichain collapses) and is additive (g ⊑ resolved). THE TWO-REGIME SPLIT
+-- (§2.4) connected to Confluence.IConfluent: prose_iconfluent (grow-only liveness survives merge — benign)
+-- vs field_not_iconfluent (a single-valued field clashes — the non-monotone boundary, a clashing pair
+-- CONSTRUCTED whose merge holds two values at one name). 18 keystones #assert_axioms-clean; 12 #guard teeth.
+import Dregg2.Deos.DocMerge
 
 namespace Dregg2.Deos
 
