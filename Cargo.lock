@@ -2218,6 +2218,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "dregg-doc"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "dregg-cell",
+ "dregg-turn",
+]
+
+[[package]]
 name = "dregg-dsl"
 version = "0.1.0"
 dependencies = [
@@ -2639,6 +2648,8 @@ dependencies = [
  "dregg-commit",
  "dregg-dsl-runtime",
  "dregg-dsl-tests",
+ "dregg-federation",
+ "dregg-hints",
  "dregg-intent",
  "dregg-lean-ffi",
  "dregg-lightclient",
@@ -7405,7 +7416,9 @@ dependencies = [
  "deos-web-cells",
  "dregg-cell",
  "dregg-coord",
+ "dregg-doc",
  "dregg-firmament",
+ "dregg-persist",
  "dregg-sdk",
  "dregg-token",
  "dregg-turn",

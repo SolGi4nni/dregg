@@ -117,6 +117,13 @@ unsafe-test-utils = []
 
 [dev-dependencies]
 x25519-dalek = { workspace = true }
+# The human-layer social-recovery e2e seam (`tests/identity_social_recovery_e2e.rs`):
+# the guardian M-of-N quorum is a REAL HINTS weighted-threshold BLS aggregate
+# (`hints`), assembled test-side via `dregg-federation`'s committee wrapper —
+# the SAME primitive `dregg-turn`'s already-default `ThresholdSigVerifier`
+# discharges. No new crypto; the test welds the green parts.
+dregg-federation = { path = "../federation" }
+hints = { path = "../hints", package = "dregg-hints" }
 
 [[example]]
 name = "agent_demo"

@@ -500,10 +500,33 @@ than as a prototype to be redone later.
   - Rhizomatic's `resolve`/query operators as the monotone document's read/merge face.
 
 - **RESEARCH (the load-bearing proofs and the open questions).**
-  - **The pushout/merge-correctness proof** for the document patch algebra — that the
-    `dregg-doc` `merge` *is* the categorical pushout, composing `LaceMerge.lean`'s join with
-    the conflict-antichain representation. This is the `BRANCH-AND-STITCH-PROTOCOL.md`
-    "stitch = pushout" criterion made a theorem for documents.
+  - **The merge-correctness proof** for the document patch algebra — that the `dregg-doc`
+    `merge` is the **least-upper-bound (the join)** in the document inclusion order `⊑`,
+    composing `LaceMerge.lean`'s join with the conflict-antichain representation. This is the
+    least-upper-bound join that the pushout *computes* in the Pijul model — the
+    `BRANCH-AND-STITCH-PROTOCOL.md` "stitch = pushout" criterion made an executable theorem for
+    documents. **LANDED** — `metatheory/Dregg2/Deos/DocMerge.lean` proves it: `DocGraph` is the
+    Pijul graph (a **keyed atom map** `AtomId → Option AtomVal` + order-edges + a single-valued
+    field store), and `merge` applies the **Dead-wins `Status.join` pointwise** over the atom map
+    (`merge_status_dead_wins` is the proof — this is the real status join, *not* a struct-union of
+    `Finset`s; the earlier draft modelled the wrong operation). The lattice laws read off the join
+    — `merge_comm`, `merge_assoc` (bracket-independent), `merge_idem`, `merge_total`
+    (always-defined, the catch the graph model fixes) — and the **universal property**
+    `merge_least` + `merge_is_lub` (`merge a b` is the *least* graph including both legs — the
+    genuine join; `merge_includes_left`/`merge_includes_right` are the cocone legs). Conflict-as-state
+    is a theorem too: `ConflictAt` is an antichain of ≥2 live atoms reachable at one position,
+    where the conflict relation uses **transitive reachability** (`Reaches`, the reflexive-transitive
+    closure — matching `content.rs::reachable`, not a one-hop shadow); `merge_has_conflict` exhibits
+    a concrete two-fork conflict that is a *well-formed* `DocGraph` (not a failure), and
+    `resolve_collapses` shows an additive `Connect` patch strictly removes the antichain. The
+    two-regime split (§2.4) is connected to `Confluence.IConfluent`: `prose_iconfluent` (grow-only
+    content always glues) vs `field_not_iconfluent` (a single-valued field clashes — a constructed
+    clashing pair). `#assert_axioms`-clean, `#guard` non-vacuity teeth; `lake build
+    Dregg2.Deos.DocMerge` is green. What is **not** built: the file does not construct the
+    categorical structure (the category `P`, the span `a ← a⊓b → b`, the functoriality) — so it does
+    not prove "THE categorical pushout up to unique iso." It proves the least-upper-bound join that
+    the pushout computes in the Pijul model; the full categorical-pushout construction is the named
+    residual.
   - **Conflict-as-state soundness** — that a stored conflict state binds, in the document
     cell's commitment, *both* live alternatives + their provenance, so a light client cannot
     be shown a conflict that hides a forged alternative (the `holeFill_binds_in_circuit`

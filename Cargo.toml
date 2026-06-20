@@ -222,6 +222,25 @@ opt-level = 3
 lto = "thin"
 codegen-units = 1
 
+# Incremental compilation is OFF for dev/test. The default-on incremental
+# partitioner interacts badly with the opt-level asymmetry below: the
+# `dregg-circuit` lib is opt-level 3 (rustc disables `share-generics` export at
+# opt>=2, so the rlib does NOT emit shared generic monomorphizations), while the
+# integration-test binaries are opt-level 0 (`share-generics` import ON, so they
+# emit only *references* to those upstream instantiations). Under incremental,
+# rustc's stale-CGU reuse drops the object that would define a referenced p3
+# generic (e.g. `BinomialExtensionField::from_ext_basis_coefficients`,
+# `p3_uni_stark::verifier::recompose_quotient_from_chunks`,
+# `p3_batch_stark::symbolic::get_max_constraint_degree`) while keeping the
+# reference in a sibling `.rcgu.o` — yielding undefined-symbol link failures on
+# the prover-feature test umbrella (`anon.*`/`.llvm.<hash>` dangling locals).
+# Disabling incremental forces a clean per-build partition so every monomorph is
+# emitted. Cheap here: all packages + deps already compile at opt-level 3 below,
+# so incremental's reuse buys little, and a green link is the floor everything
+# rides on. (Witness: `CARGO_INCREMENTAL=0 cargo build … --tests` links clean.)
+[profile.dev]
+incremental = false
+
 # Fast dev/test builds with FAST crypto: keep our own crates cheap to compile
 # (opt-level 0, quick iteration) but build all DEPENDENCIES optimized so the
 # crypto primitives (plonky3 p3-*, poseidon2, BLS12-381, FRI) don't run
