@@ -111,7 +111,7 @@ use std::collections::BTreeMap;
 
 use p3_air::{Air, AirBuilder, BaseAir, PermutationAirBuilder, WindowAccess};
 use p3_baby_bear::BabyBear as P3BabyBear;
-use p3_field::{PrimeCharacteristicRing, PrimeField32};
+use p3_field::{Field, PrimeCharacteristicRing, PrimeField32};
 use p3_lookup::InteractionBuilder;
 use p3_lookup::bus::{LookupBus, PermutationCheckBus};
 // Prover-only (`to_matrix` builds the LDE input matrix): `recursion`.
@@ -1290,6 +1290,223 @@ fn check_descriptor2(desc: &EffectVmDescriptor2) -> Result<MainLayout, String> {
         }
     }
     MainLayout::build(desc)
+}
+
+// ============================================================================
+// The REAL-evaluator row-local accept oracle (the faithfulness-differential leg)
+// ============================================================================
+
+/// A row window over a borrowed `(local, next)` pair, replaying the deployed
+/// `Ir2Air::Main::eval` ROW-LOCALLY against a real witness so a differential can call the
+/// ACTUAL deployed evaluator (not a hand transcription) for the row-local constraint arms.
+///
+/// `assert_zero` checks the constraint vanishes (recording a failure if not); the cross-table
+/// LogUp bus pushes (`InteractionBuilder::push_interaction` / `push_local_interaction`) are
+/// SWALLOWED — exactly the semantics of the deployed debug constraint check, which evaluates a
+/// single AIR's row-local algebra and leaves the multiset balance to the batch assembly. The
+/// pattern mirrors p3-lookup's own `MiniLookupBuilder`/`DebugConstraintBuilder`: those swallow
+/// the bus sends too. So `ir2_eval_accepts` is FAITHFUL on the row-local arms (Gate /
+/// Transition / WindowGate / range-recomposition / submask bit gates) and SILENT on the bus
+/// arms (chip/byte lookups, mem/map/umem log sends) — the precise split a caller must respect.
+struct Ir2RowLocalBuilder<'a> {
+    local: &'a [P3BabyBear],
+    next: &'a [P3BabyBear],
+    public_values: &'a [P3BabyBear],
+    /// An empty preprocessed window (the IR-v2 Main AIR carries no preprocessed columns); held
+    /// here so `preprocessed()` can return a reference into it.
+    empty_prep: p3_air::RowWindow<'a, P3BabyBear>,
+    row: usize,
+    height: usize,
+    /// Set once any row-local `assert_zero` body is non-zero.
+    failed: bool,
+}
+
+impl<'a> p3_air::AirBuilder for Ir2RowLocalBuilder<'a> {
+    type F = P3BabyBear;
+    type Expr = P3BabyBear;
+    type Var = P3BabyBear;
+    type PreprocessedWindow = p3_air::RowWindow<'a, P3BabyBear>;
+    type MainWindow = p3_air::RowWindow<'a, P3BabyBear>;
+    type PublicVar = P3BabyBear;
+    type PeriodicVar = P3BabyBear;
+
+    fn main(&self) -> Self::MainWindow {
+        p3_air::RowWindow::from_two_rows(self.local, self.next)
+    }
+
+    fn preprocessed(&self) -> &Self::PreprocessedWindow {
+        // The IR-v2 Main AIR carries no preprocessed columns; an empty window suffices.
+        &self.empty_prep
+    }
+
+    fn is_first_row(&self) -> Self::Expr {
+        P3BabyBear::from_bool(self.row == 0)
+    }
+
+    fn is_last_row(&self) -> Self::Expr {
+        P3BabyBear::from_bool(self.row + 1 == self.height)
+    }
+
+    fn is_transition_window(&self, size: usize) -> Self::Expr {
+        assert!(size <= 2, "only two-row windows are supported, got {size}");
+        P3BabyBear::from_bool(self.row + 1 < self.height)
+    }
+
+    fn assert_zero<I: Into<Self::Expr>>(&mut self, x: I) {
+        // The DebugConstraintBuilder semantics: under a `when_*` filter, the selector has been
+        // folded into the expression already (FilteredAirBuilder multiplies the body by the
+        // condition before delegating here), so a vanishing selector makes the body zero and
+        // this passes — exactly the `when_transition`/`when_first_row`/`when_last_row` domains.
+        if !x.into().is_zero() {
+            self.failed = true;
+        }
+    }
+
+    fn public_values(&self) -> &[Self::PublicVar] {
+        self.public_values
+    }
+}
+
+impl<'a> p3_air::ExtensionBuilder for Ir2RowLocalBuilder<'a> {
+    type EF = P3BabyBear;
+    type ExprEF = P3BabyBear;
+    type VarEF = P3BabyBear;
+
+    fn assert_zero_ext<I: Into<Self::ExprEF>>(&mut self, x: I) {
+        if !x.into().is_zero() {
+            self.failed = true;
+        }
+    }
+}
+
+impl<'a> PermutationAirBuilder for Ir2RowLocalBuilder<'a> {
+    type MP = p3_air::RowWindow<'a, P3BabyBear>;
+    type RandomVar = P3BabyBear;
+    type PermutationVar = P3BabyBear;
+
+    fn permutation(&self) -> Self::MP {
+        p3_air::RowWindow::from_two_rows(&[], &[])
+    }
+
+    fn permutation_randomness(&self) -> &[Self::RandomVar] {
+        &[]
+    }
+
+    fn permutation_values(&self) -> &[Self::PermutationVar] {
+        &[]
+    }
+}
+
+impl<'a> InteractionBuilder for Ir2RowLocalBuilder<'a> {
+    fn push_interaction<E: Into<Self::Expr>>(
+        &mut self,
+        _bus_name: &str,
+        fields: impl IntoIterator<Item = E>,
+        _count: impl Into<Self::Expr>,
+        _count_weight: u32,
+    ) {
+        // Bus sends/receives are the cross-table multiset leg — not row-local algebra. Drain
+        // the iterator (matching the deployed debug builder) and otherwise ignore.
+        fields.into_iter().for_each(drop);
+    }
+
+    fn push_local_interaction(
+        &mut self,
+        tuples: impl IntoIterator<Item = (Vec<Self::Expr>, Self::Expr)>,
+    ) {
+        tuples.into_iter().for_each(drop);
+    }
+}
+
+/// **THE REAL-EVALUATOR ROW-LOCAL ACCEPT ORACLE.** Build the DEPLOYED `Ir2Air::Main` AIR for
+/// `desc`, fill the per-table layout columns over `base_rows`, and run the ACTUAL
+/// `Ir2Air::eval` (the deployed verifier's constraint evaluator) ROW-BY-ROW. Returns `true` iff
+/// every ROW-LOCAL constraint vanishes on every row.
+///
+/// This is the v2 analog of [`crate::lean_descriptor_air::descriptor_air_accepts`] — but where
+/// the v1 helper drives the WHOLE single AIR through `check_all_constraints`, the v2 Main AIR
+/// also emits cross-table LogUp bus messages (`PermutationCheckBus` / `LookupBus` sends for the
+/// chip / byte / memory / map-ops tables) that no single-AIR row-local check can evaluate. Those
+/// bus pushes are SWALLOWED (see [`Ir2RowLocalBuilder`]); the multiset balance is the batch
+/// assembly's job (`prove_batch`/`verify_batch`). So this oracle is FAITHFUL on the row-local
+/// arms — `Base(Gate)`, `Base(Transition)`, `WindowGate{on_transition}`, the every-row
+/// `WindowGate`, plus the range-recomposition + submask bit gates — and SILENT on the bus arms.
+///
+/// `base_rows` are the `desc.trace_width`-column main rows. The layout columns (range limbs,
+/// submask bits) appended past `trace_width` are NOT filled here: callers that exercise the
+/// row-local arms use descriptors with NO range/submask lookups (so `MainLayout` adds no
+/// columns and the recomposition gates are absent). A descriptor that DOES declare such lookups
+/// will see those gates fire over zero-filled limb columns; that path is out of this oracle's
+/// row-local-faithful scope and the caller must not rely on it.
+pub fn ir2_eval_accepts(
+    desc: &EffectVmDescriptor2,
+    base_rows: &[Vec<P3BabyBear>],
+    public_inputs: &[P3BabyBear],
+) -> bool {
+    let layout = match check_descriptor2(desc) {
+        Ok(l) => l,
+        Err(_) => return false,
+    };
+    if base_rows.is_empty() || public_inputs.len() != desc.public_input_count {
+        return false;
+    }
+    let air = Ir2Air::Main {
+        desc: desc.clone(),
+        layout: MainLayoutPub(layout),
+    };
+    let width = match &air {
+        Ir2Air::Main { layout, .. } => layout.0.width,
+        _ => unreachable!(),
+    };
+    // Materialize the full-width rows (base columns + zero-filled layout columns).
+    let height = base_rows.len();
+    let mut rows: Vec<Vec<P3BabyBear>> = Vec::with_capacity(height);
+    for r in base_rows {
+        if r.len() > width {
+            return false;
+        }
+        let mut row = r.clone();
+        row.resize(width, P3BabyBear::ZERO);
+        rows.push(row);
+    }
+    for row_index in 0..height {
+        let next_index = (row_index + 1) % height;
+        let mut builder = Ir2RowLocalBuilder {
+            local: &rows[row_index],
+            next: &rows[next_index],
+            public_values: public_inputs,
+            empty_prep: p3_air::RowWindow::from_two_rows(&[], &[]),
+            row: row_index,
+            height,
+            failed: false,
+        };
+        air.eval(&mut builder);
+        if builder.failed {
+            return false;
+        }
+    }
+    true
+}
+
+/// `i64`-valued convenience wrapper over [`ir2_eval_accepts`] so callers (the faithfulness
+/// differential) need not depend on `p3-baby-bear` directly: the `(row, pi)` integers are lifted
+/// to canonical BabyBear felts (the same `i64_to_babybear` lowering the descriptor evaluator
+/// uses for its constants) and the REAL `Ir2Air::Main` row-local evaluator is run.
+#[cfg(feature = "prover")]
+pub fn ir2_eval_accepts_i64(
+    desc: &EffectVmDescriptor2,
+    base_rows: &[Vec<i64>],
+    public_inputs: &[i64],
+) -> bool {
+    let rows: Vec<Vec<P3BabyBear>> = base_rows
+        .iter()
+        .map(|r| r.iter().map(|&x| to_p3(i64_to_babybear(x))).collect())
+        .collect();
+    let pis: Vec<P3BabyBear> = public_inputs
+        .iter()
+        .map(|&x| to_p3(i64_to_babybear(x)))
+        .collect();
+    ir2_eval_accepts(desc, &rows, &pis)
 }
 
 // ============================================================================

@@ -11,6 +11,24 @@ reason.)*
 Last sweep: 2026-06-13 (flagged-items burndown — removed ~14 landed/struck items,
 deduped the DreggDL/sel4/snapshot landings into git history, kept live tails).
 
+## ✅ IR2 DENOTATIONAL DIFFERENTIAL — REAL-EVALUATOR LEG LANDED; bus-arm residual NAMED (2026-06-19, this lane)
+The faithfulness differential's last by-inspection link (`eval_enforces ≡ real Ir2Air::eval`)
+is COLLAPSED for the ROW-LOCAL arms: `circuit/tests/ir2_denotational_differential.rs` now calls
+the ACTUAL deployed evaluator via `descriptor_ir2::ir2_eval_accepts_i64` (a thin row-local driver
+over the real `Ir2Air::Main::eval`, `circuit/src/descriptor_ir2.rs`). 96/216 cases
+(Base(Gate)/Base(Transition)/WindowGate, both polarities incl. 42 forge-rejects) decided by the
+real evaluator, all agreeing with the Lean denotation — NO divergence. Test green; `--features
+prover` builds.
+- RESIDUAL (named floor): the CROSS-TABLE BUS-ASSEMBLY arms (chip/byte lookup MEMBERSHIP +
+  memory/map-ops/umem LogUp multiset balance) remain TRANSCRIBED in `eval_enforces` — a single-AIR
+  row-local evaluation cannot decide a cross-table multiset. Closure shape: drive the real
+  multi-table assembly (the `prove_batch`/`check_lookups` balance) from a deterministic differential
+  harness, OR pin the bus receives via the per-table sub-AIR row-local evaluators the same way.
+- ADJACENT (pre-existing, NOT this lane): `cargo build -p dregg-circuit --no-default-features
+  --features verifier` is RED at HEAD — `bilateral_aggregation_air.rs` calls prover-gated
+  `chip_absorb_all_lanes`/`cse2_fill_lanes`/`fold_fill_lanes` from non-gated code. Independent of
+  this change; flagged for the build-owner.
+
 ## ✅ HUMAN-LAYER M1 — SOCIAL RECOVERY SEAM + TRUST PANEL v1 (2026-06-19, this lane)
 `docs/deos/HUMAN-LAYER.md` Milestone 1, the "you cannot lose your own OS" weld.
 TWO pieces landed, both REUSING the green crypto (no parallel auth):

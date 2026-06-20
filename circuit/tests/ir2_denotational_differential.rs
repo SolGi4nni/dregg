@@ -83,7 +83,11 @@
 //! `Satisfied2 ≡ Lean-#guard ≡ ℤ-denotation ≈ eval-transcription`, with the remaining
 //! `≈` the ℤ→BabyBear representation (corpus values bounded ≪ p).
 
-use dregg_circuit::lean_descriptor_air::LeanExpr;
+use dregg_circuit::descriptor_ir2::{
+    self, EffectVmDescriptor2, VmConstraint2, WindowExpr as RealWindowExpr,
+    WindowGateSpec as RealWindowGateSpec,
+};
+use dregg_circuit::lean_descriptor_air::{LeanExpr, VmConstraint as RealVmConstraint};
 
 // ===========================================================================
 // PART A — the concrete v2 witness carriers (the Rust twins of Lean
@@ -634,6 +638,122 @@ fn eval_enforces(
 }
 
 // ===========================================================================
+// PART C2 — THE REAL-EVALUATOR ORACLE (collapses the last transcription link).
+//
+// `eval_enforces` above is a HAND TRANSCRIPTION of what `Ir2Air::eval` enforces. The bridge
+// chain to the kernel is `Satisfied2 ⟺ decideSatisfied2` [PROVEN] · decider-goldens ≡ denote
+// [ENUMERATED] · denote ≡ eval_enforces [ENUMERATED] · eval_enforces ≡ real `Ir2Air::eval`
+// [WAS: by-inspection]. This part collapses that LAST link for the ROW-LOCAL arms by calling
+// the ACTUAL deployed `Ir2Air::Main` evaluator (`descriptor_ir2::ir2_eval_accepts_i64`), which
+// runs the real `Ir2Air::eval` row-by-row.
+//
+// SPLIT (stated precisely, the NARROWED RESIDUAL):
+//   * ROW-LOCAL arms — `Base(Gate)`, `Base(Transition)`, `WindowGate{on_transition}`, the
+//     every-row `WindowGate` — are now decided by the REAL `Ir2Air::eval` (no transcription).
+//     `Ir2Air::Main::eval` asserts these via `when_transition()` / `assert_zero` row-local
+//     algebra, which the real evaluator runs faithfully here.
+//   * BUS arms — chip/byte lookups (`LookupBus`), the memory / map-ops / umem LOG SENDS
+//     (`PermutationCheckBus`) — are CROSS-TABLE LogUp multiset checks that a single-AIR
+//     row-local evaluation cannot decide (the receiving sub-AIR + the global balance live in
+//     the batch assembly). Those arms remain decided by `eval_enforces`'s transcription. So the
+//     residual NARROWS from "all of eval_enforces is transcribed" to "ONLY the bus-assembly
+//     arms (lookup membership + mem/map LogUp balance) are transcribed; the row-local arms call
+//     the real evaluator."
+//
+// `real_eval_eligible` is exactly the set of `Descriptor2`s with NO bus constraints (pure
+// Gate/Transition/WindowGate) — the arms whose `Ir2Air::eval` content is wholly row-local. For
+// those, the real evaluator's verdict is asserted to AGREE with the denotation (a genuine
+// real-evaluator ≡ decider-goldens check; a divergence is a real faithfulness finding).
+// ===========================================================================
+
+/// Lower the test `WinExpr` to the deployed `descriptor_ir2::WindowExpr` (arm-for-arm).
+fn to_real_window(e: &WinExpr) -> RealWindowExpr {
+    match e {
+        WinExpr::Loc(c) => RealWindowExpr::Loc(*c),
+        WinExpr::Nxt(c) => RealWindowExpr::Nxt(*c),
+        WinExpr::Const(k) => RealWindowExpr::Const(*k as i64),
+        WinExpr::Add(a, b) => {
+            RealWindowExpr::Add(Box::new(to_real_window(a)), Box::new(to_real_window(b)))
+        }
+        WinExpr::Mul(a, b) => {
+            RealWindowExpr::Mul(Box::new(to_real_window(a)), Box::new(to_real_window(b)))
+        }
+    }
+}
+
+/// True iff every constraint of `d` is a ROW-LOCAL arm (`Gate` / `Transition` / `WindowGate`)
+/// — i.e. the descriptor carries NO bus arm (lookup / memOp / mapOp), so `Ir2Air::eval`'s entire
+/// content for it is the row-local algebra the real evaluator runs faithfully.
+fn real_eval_eligible(d: &Descriptor2) -> bool {
+    d.constraints.iter().all(|c| {
+        matches!(
+            c,
+            Constraint::Gate(_) | Constraint::Transition { .. } | Constraint::WindowGate(_)
+        )
+    })
+}
+
+/// Build the DEPLOYED `EffectVmDescriptor2` for a row-local-only test `Descriptor2`. The trace
+/// width covers the transition arm's highest column (`STATE_AFTER_BASE + lo`); we use the same
+/// `BOUND_W` the generator pads its rows to, so the real Main AIR reads the exact columns the
+/// transcription does. NO tables are declared (the row-local arms need none), so `MainLayout`
+/// adds no limb/submask columns and the every-row recomposition gates are absent.
+fn to_real_descriptor2(d: &Descriptor2) -> EffectVmDescriptor2 {
+    let constraints: Vec<VmConstraint2> = d
+        .constraints
+        .iter()
+        .map(|c| match c {
+            Constraint::Gate(b) => VmConstraint2::Base(RealVmConstraint::Gate(b.clone())),
+            Constraint::Transition { hi, lo } => {
+                VmConstraint2::Base(RealVmConstraint::Transition { hi: *hi, lo: *lo })
+            }
+            Constraint::WindowGate(w) => VmConstraint2::WindowGate(RealWindowGateSpec {
+                body: to_real_window(&w.body),
+                on_transition: w.on_transition,
+            }),
+            // `real_eval_eligible` guards this conversion to the row-local arms only.
+            _ => unreachable!("to_real_descriptor2 called on a non-row-local constraint"),
+        })
+        .collect();
+    EffectVmDescriptor2 {
+        name: "ir2-real-eval-oracle".to_string(),
+        trace_width: BOUND_W,
+        public_input_count: 0,
+        tables: Vec::new(),
+        constraints,
+        hash_sites: Vec::new(),
+        ranges: Vec::new(),
+    }
+}
+
+/// THE REAL-EVALUATOR ORACLE: run the ACTUAL deployed `Ir2Air::Main` row-local evaluator over the
+/// trace. Returns `Some(verdict)` for a row-local-eligible descriptor, `None` when the descriptor
+/// carries a bus arm the single-AIR row-local evaluation cannot decide (the caller falls back to
+/// the transcription for those, and counts them as still-transcribed in the residual).
+fn real_eval_accepts(d: &Descriptor2, t: &VmTraceC) -> Option<bool> {
+    if !real_eval_eligible(d) {
+        return None;
+    }
+    let desc = to_real_descriptor2(d);
+    let rows: Vec<Vec<i64>> = t
+        .rows
+        .iter()
+        .map(|r| {
+            let mut row = vec![0i64; BOUND_W];
+            for (c, &v) in r.iter().enumerate() {
+                if c < BOUND_W {
+                    // The row-local arms plant values ≪ p (BOUND_V) and non-negative; lower
+                    // directly. (A larger/negative value would be the named ℤ→BabyBear residual.)
+                    row[c] = v as i64;
+                }
+            }
+            row
+        })
+        .collect();
+    Some(descriptor_ir2::ir2_eval_accepts_i64(&desc, &rows, &[]))
+}
+
+// ===========================================================================
 // PART D — a tiny deterministic PRNG (SplitMix64), zero new dependencies, fully
 // reproducible: the seed sweep replays the exact same corpus every run, so a failure
 // is a stable, debuggable witness.
@@ -730,6 +850,10 @@ struct Coverage {
     forge_map_table: usize,
     forge_window: usize,
     cases: usize,
+    // real-evaluator coverage: cases whose verdict was decided by the ACTUAL `Ir2Air::eval`
+    // (row-local arms), vs cases that fell back to the transcription (bus arms).
+    real_eval_cases: usize,
+    transcribed_only_cases: usize,
 }
 
 /// One generated case: the descriptor, the trace, the openings, the memory boundary, and
@@ -1334,6 +1458,29 @@ fn faithfulness_guard_eval_enforces_satisfied2() {
                             break;
                         }
                     }
+
+                    // THE REAL EVALUATOR: for a row-local-eligible case, run the ACTUAL deployed
+                    // `Ir2Air::eval` and assert it AGREES with the denotation (≡ the kernel
+                    // decideSatisfied2 goldens, via PART J). A divergence is a genuine
+                    // faithfulness finding, not a transcription artifact.
+                    match real_eval_accepts(&case.desc, &case.t) {
+                        Some(real) => {
+                            cov.real_eval_cases += 1;
+                            if real != den {
+                                disagreements.push(format!(
+                                    "seed {seed} (arm {:?}, h={h}, intended accept={}): \
+                                     REAL Ir2Air::eval={real} but Satisfied2-denotation={den} \
+                                     (a genuine row-local faithfulness DIVERGENCE)",
+                                    arm_name(arm),
+                                    case.intended_accept
+                                ));
+                                if disagreements.len() >= 12 {
+                                    break;
+                                }
+                            }
+                        }
+                        None => cov.transcribed_only_cases += 1,
+                    }
                 }
             }
         }
@@ -1384,6 +1531,9 @@ fn faithfulness_guard_eval_enforces_satisfied2() {
         ("forge:map-opening", cov.forge_map_opening),
         ("forge:map-table", cov.forge_map_table),
         ("forge:window", cov.forge_window),
+        // the real-evaluator leg is non-vacuous: at least one case was decided by the ACTUAL
+        // `Ir2Air::eval` (the row-local arms), not the transcription.
+        ("real-eval:row-local", cov.real_eval_cases),
     ]
     .into_iter()
     .filter(|(_, c)| *c == 0)
@@ -1398,13 +1548,19 @@ fn faithfulness_guard_eval_enforces_satisfied2() {
 
     eprintln!(
         "FAITHFULNESS GUARD PASS: {} cases, Ir2Air::eval ≡ Satisfied2 on ALL of them.\n\
-         THE STATED BOUND (the named residual): the two interpreters agree on every trace \
-         of width ≤ {BOUND_W}, height ≤ {BOUND_H}, and value bound ≤ {BOUND_V}. A divergence \
-         needing a larger trace, a wider row, or a larger field value escapes this \
-         enumeration (the empirical-but-exhaustive leg of the irreducible Lean↔Rust seam; \
-         the kernel-checked leg is DecideSatisfied2.lean).\n\
+         REAL-EVALUATOR LEG: {} cases decided by the ACTUAL deployed `Ir2Air::eval` (the \
+         row-local arms — Base(Gate)/Base(Transition)/WindowGate), all agreeing with the Lean \
+         denotation; {} cases (the bus arms — chip/byte lookups + mem/map/umem LogUp) fell back \
+         to the transcription `eval_enforces`.\n\
+         THE NARROWED RESIDUAL: the last transcription link (`eval_enforces ≡ real Ir2Air::eval`) \
+         is now COLLAPSED to the real evaluator for the ROW-LOCAL arms; only the CROSS-TABLE \
+         BUS-ASSEMBLY arms (lookup membership + memory/map-ops LogUp multiset balance) remain \
+         transcribed (a single-AIR row-local evaluation cannot decide a cross-table multiset).\n\
+         THE STATED STRUCTURAL BOUND: the interpreters agree on every trace of width ≤ {BOUND_W}, \
+         height ≤ {BOUND_H}, value bound ≤ {BOUND_V}; a divergence needing a larger trace/row/value \
+         escapes (the empirical-but-exhaustive leg; the kernel-checked leg is DecideSatisfied2.lean).\n\
          coverage = {:?}",
-        cov.cases, cov
+        cov.cases, cov.real_eval_cases, cov.transcribed_only_cases, cov
     );
 }
 
@@ -1667,9 +1823,12 @@ fn pinned_against_decideSatisfied2_goldens() {
         ],
     };
     let mem_table: Table = vec![vec![5, 9, 7, 0, 1], vec![5, 9, 9, 1, 0]];
-    let mem_minit = || Box::new(|a: i128| if a == 5 { 7 } else { 0 }) as Box<dyn Fn(i128) -> i128>;
-    let mem_mfin =
-        || Box::new(|a: i128| if a == 5 { (9, 2) } else { (0, 0) }) as Box<dyn Fn(i128) -> (i128, i128)>;
+    let mem_minit =
+        || Box::new(|a: i128| if a == 5 { 7i128 } else { 0i128 }) as Box<dyn Fn(i128) -> i128>;
+    let mem_mfin = || {
+        Box::new(|a: i128| if a == 5 { (9i128, 2i128) } else { (0i128, 0i128) })
+            as Box<dyn Fn(i128) -> (i128, i128)>
+    };
 
     // map-op descriptors.
     let mw_cs = || Descriptor2 {
