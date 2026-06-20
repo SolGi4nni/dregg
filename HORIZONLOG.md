@@ -3081,3 +3081,13 @@ STILL OPEN (the real remaining gaps — all named, none faked):
 NEXT: (a) wire the new *_descriptorRefines_sat into the apex fanout (ClosureFanoutGenuine — MAIN LOOP owns, serial);
 (b) the VK JSON descriptor regen + drift-gate for the cap-write changes; (c) the 3 frozen-face cutover; (d)
 receiptArchive + heapWrite decisions. The recovery/durability floor (node first-writer-wins) is a parallel lane.
+
+## ⚑ RECOVERY FLOOR — durability core ALREADY SOUND (verified a5c2a0e0); one parity follow-up
+The node recovery first-writer-wins bug was already fixed (279033535, ancestor): upsert_cell (= CrashRecovery.upd
+remove-then-insert, last-write-wins) at both overlay sites (state.rs:717,910); the new_with_key_file convergence
+root-mismatch FAILS CLOSED (state.rs:732, returns Err "refusing to serve a divergent ledger"); 3 reproduction tests
+green (post-checkpoint write wins, mismatch-refuses-to-start, control). So post-checkpoint writes survive recovery +
+the node won't serve divergent state — the "you cannot lose your own OS" durability core HOLDS.
+⚠ FOLLOW-UP (parity, not a regression): the SECONDARY with_cclerk recovery path (state.rs:910) does the upsert but
+has NO fail-closed convergence check (only new_with_key_file does). Mirror the convergence Err-on-mismatch into
+with_cclerk for parity. Small, node/-only, non-colliding — drive when convenient.
