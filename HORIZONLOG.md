@@ -3091,3 +3091,25 @@ the node won't serve divergent state — the "you cannot lose your own OS" durab
 ⚠ FOLLOW-UP (parity, not a regression): the SECONDARY with_cclerk recovery path (state.rs:910) does the upsert but
 has NO fail-closed convergence check (only new_with_key_file does). Mirror the convergence Err-on-mismatch into
 with_cclerk for parity. Small, node/-only, non-colliding — drive when convenient.
+
+## ⚑⚑ GENESIS REFRAME (ember, 2026-06-20) — the smell is a CATEGORY ERROR; the fix is EPIC + dissolves the bug
+The genesis-path durability bug is a confusion, not a bug. There are THREE things, one illegitimate:
+1. IMAGE GENESIS (build-time) = an EROS-style FACTORY: an offline verified constructor assembling a cell-graph +
+   caps + programs into a SEALED, ATTESTABLE image ("customize your deos download ISO" + a proof of what it can't
+   do = the Hatchery prove-once-hold-forever yield). Timeless because sealed BEFORE any turn. Booting = loading it.
+2. NETWORK GENESIS (runtime) = COORDINATION: computers coming online, discovering each other, DECIDING to coordinate
+   — an ordered ceremony of TURNS, NOT a pre-declared validator/committee manifest. (This is where the docuverse/
+   branch-stitch/settlement brain plays — network formation = consensual history-stitching.)
+3. ❌ "genesis-path mutation reachable mid-session" = runtime customization MASQUERADING as build-time genesis = THE
+   CATEGORY ERROR producing the smell (a post-turn write filed as a pre-turn timeless fact -> replay-from-genesis
+   applies it out of order -> image won't reopen).
+THE FIX dissolves the bug: build-time customization -> the IMAGE (factory, sealed); runtime customization -> a TURN
+(ordered, replayable). #3 can't exist. set_cell_program/genesis_grant_cap/genesis_open_permissions mid-session were
+NEVER genesis — they're turns. (= the earlier "option 2: route through real turns", arrived at from FIRST PRINCIPLES.)
+BRAIN SPLIT: regular executor brain fixes the smell for free (mid-session genesis calls -> turns); factory/image brain
+builds genesis-as-ISO (EROS factory + attestation, snaps onto createCellFromFactory + sdk/factories.rs + Hatchery +
+the seL4 boot image); docuverse brain designs network-genesis-as-coordination (houyhnhnm/branch-stitch). EPIC payoff:
+attestable reproducible deos images ("here's my OS + a proof of its confinement"), the real download-and-customize
+story, federations forming by coordination not config — collapses a special case into 2 clean primitives (build
+artifact + turns), same instinct as 52->8 verbs. SCOUT RUNNING (a4414e6f) for the terrain map -> ember scopes.
+The persist bug stays FAIL-CLOSED/GUARDED meanwhile (no data corruption); this reframe is its sound full closure.
