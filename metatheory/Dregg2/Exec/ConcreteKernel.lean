@@ -77,17 +77,18 @@ structure ConcreteKernelState where
   revoked     : Std.HashSet Nat := ∅
   /-- Efficient commitment set — replaces `commitments : List Nat`. -/
   commitments : Std.HashSet Nat := ∅
-  -- Cold side-tables, carried verbatim from the abstract spec (not the refinement focus):
-  escrows     : List EscrowRecord := []
-  queues      : List QueueRecord := []
-  swiss       : List SwissRecord := []
-  factories   : List (Nat × FactoryEntry) := []
-  sealedBoxes : List SealedBoxRecord := []
+  -- Cold side-tables, carried verbatim from the abstract spec (not the refinement focus). These
+  -- mirror `RecordKernelState`'s remaining (non-hot) fields exactly, so abstraction is the identity
+  -- on them and the refinement square stays local to the hot path.
   slotCaveats : CellId → List SlotCaveat := fun _ => []
+  factories   : List (Nat × FactoryEntry) := []
   lifecycle   : CellId → Nat := fun _ => 0
   deathCert   : CellId → Nat := fun _ => 0
   delegate    : CellId → Option CellId := fun _ => none
   delegations : CellId → List Cap := fun _ => []
+  delegationEpoch   : CellId → Nat := fun _ => 0
+  delegationEpochAt : CellId → Nat := fun _ => 0
+  heaps : CellId → List (ℤ × ℤ) := fun _ => []
 
 /-! ## §2 — The REFINEMENT MAP `toAbstract`.
 
@@ -107,16 +108,15 @@ def toAbstract (cs : ConcreteKernelState) : RecordKernelState where
   nullifiers  := cs.nullifiers.toList
   revoked     := cs.revoked.toList
   commitments := cs.commitments.toList
-  escrows     := cs.escrows
-  queues      := cs.queues
-  swiss       := cs.swiss
-  factories   := cs.factories
-  sealedBoxes := cs.sealedBoxes
   slotCaveats := cs.slotCaveats
+  factories   := cs.factories
   lifecycle   := cs.lifecycle
   deathCert   := cs.deathCert
   delegate    := cs.delegate
   delegations := cs.delegations
+  delegationEpoch   := cs.delegationEpoch
+  delegationEpochAt := cs.delegationEpochAt
+  heaps := cs.heaps
 
 /-- Reading the abstract `cell` of `toAbstract cs` at `c` is exactly the concrete map lookup. The
 definitional bridge the squares rewrite by. -/

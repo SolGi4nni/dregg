@@ -78,49 +78,57 @@ open Dregg2.Exec (RecordKernelState CellId AssetId mintAuthorizedB)
 -- The per-asset privileged supply kernel step the bridgeMint arm refines to (`recKMintAsset`) + its
 -- ledger-credit helper (`recBalCredit`) live in `TurnExecutorFull`. `mintAuthorizedB` is the
 -- privileged-supply gate (`Dregg2.Exec.Generators`, reached via `open Dregg2.Exec`).
-open Dregg2.Exec.TurnExecutorFull (recKMintAsset recBalCredit)
+open Dregg2.Exec.TurnExecutorFull (recKMintAsset)
+open Dregg2.Exec (recTransferBal)
 
 -- The bridge-mint gate is asset-AGNOSTIC (it checks privileged supply authority over the cell, not the
 -- asset), so the asset arg `a` is deliberately unread in `bridgeMintGuard` — it is the credit BODY that
 -- writes `(cell, a)`. Match the descriptor module's convention rather than rename the faithful signature.
 set_option linter.unusedVariables false
 
-/-! ## §1 — the gate + the body (the per-asset credit shape: gate, then a `setBal` ledger credit).
+/-! ## §1 — the gate + the body (the per-asset ISSUER-MOVE shape: gate, then a `setBal` ledger move).
 
-`recKMintAsset k actor cell a value` (`TurnExecutorFull.lean:686`) commits IFF the privileged-supply gate
-holds (a `node`/`control` mint cap over `cell`, non-negative `value`, `cell` live), and on commit credits
-the per-ASSET ledger entry `(cell, a)` by `value` (`bal := recBalCredit k.bal cell a value`). We render the
-gate as a `Bool` over `k` and the credit as the §A `setBal` primitive (the per-asset write, exactly the
-shape createEscrow/refund use) — NOT the record-cell `setCell` mint/burn use. -/
+`recKMintAsset k actor cell a value` (`TurnExecutorFull.lean:726`) is the W1 ISSUER-MOVE (DREGG3 §2.2):
+`AssetId := CellId`, the asset IS its issuer cell `a`. It commits IFF the privileged-supply gate holds —
+mint authority is control of the ISSUER cell `a` (`mintAuthorizedB k.caps actor a`), non-negative `value`,
+both issuer `a` and recipient `cell` live, and `a ≠ cell` (self-mint is a no-move) — and on commit moves
+`value` from the issuer's well `(a, a)` (which goes NEGATIVE, `bal := −supply`) to the recipient `(cell, a)`
+(which rises), via `bal := recTransferBal k.bal a cell a value`, keeping `Σ_c bal c a` UNCHANGED (exactly
+zero stays zero). We render the gate as a `Bool` over `k` and the move as the §A `setBal` primitive (the
+per-asset write, the shape createEscrow/refund use) — NOT the record-cell `setCell` mint/burn use. -/
 
-/-- The bridge-mint admissibility gate as a `Bool` — exactly `recKMintAsset`'s `if` (the privileged supply
-gate: a `node`/`control` mint cap over `cell`, non-negative `value`, `cell` a live account). Identical to
-the scalar `mintGuard`, because `recKMintAsset` checks the SAME conjunction as `recKMint` — the bridge
-inbound credit is privileged supply. The foreign-finality portal is NOT a row of this gate (it is the
-executor-admission/conservation-keystone hypothesis the descriptor flags). -/
+/-- The bridge-mint admissibility gate as a `Bool` — exactly `recKMintAsset`'s `if` (the W1 issuer-move
+gate: mint authority over the ISSUER cell `a`, non-negative `value`, issuer + recipient live, `a ≠ cell`).
+Authority to mint IS control of the issuer cell (the E2 production law). The foreign-finality portal is NOT
+a row of this gate (it is the executor-admission/conservation-keystone hypothesis the descriptor flags). -/
 def bridgeMintGuard (actor cell : CellId) (a : AssetId) (value : ℤ) (k : RecordKernelState) : Bool :=
-  mintAuthorizedB k.caps actor cell
+  mintAuthorizedB k.caps actor a
     && decide (0 ≤ value)
+    && decide (a ∈ k.accounts)
     && decide (cell ∈ k.accounts)
+    && decide (a ≠ cell)
 
-/-- The bridgeMint effect as an IR term: gate, then CREDIT the per-asset ledger entry `(cell, a)` by
-`value` (a single `setBal` write). The per-asset analog of `mintStmt` — gate, then credit — but the move
-writes the `bal` ledger (`recBalCredit`), the surface the descriptor's `cellProjA` reads. -/
+/-- The bridgeMint effect as an IR term: gate, then ISSUER-MOVE `value` of asset `a` from the issuer well
+`(a, a)` to the recipient `(cell, a)` (a single `setBal` write of `recTransferBal k.bal a cell a value`).
+The per-asset analog of `mintStmt`, but the move writes the `bal` ledger (`recTransferBal`, the conserving
+issuer-move) — the recipient surface the descriptor's `cellProjA k cell a` reads. -/
 def bridgeMintStmt (actor cell : CellId) (a : AssetId) (value : ℤ) : RecStmt :=
   RecStmt.seq (RecStmt.guard (bridgeMintGuard actor cell a value))
-    (RecStmt.setBal (fun k => recBalCredit k.bal cell a value))
+    (RecStmt.setBal (fun k => recTransferBal k.bal a cell a value))
 
 /-! ## §2 — the gate decodes to `recKMintAsset`'s admission, and `interp` of the term IS `recKMintAsset`.
 
 Two ingredients, exactly as the mint cornerstone: (a) the `Bool` gate equals the kernel step's `if`
 condition, and (b) the single-component `setBal` body reduces to the kernel's commit post-state
-`{ k with bal := recBalCredit k.bal cell a value }`. -/
+`{ k with bal := recTransferBal k.bal a cell a value }`. -/
 
-/-- The bridge-mint `Bool` gate decodes to `recKMintAsset`'s admissibility proposition (the SAME
-conjunction `recKMint`/`mintGuard` use — privileged supply authority ∧ non-negativity ∧ cell-liveness). -/
+/-- The bridge-mint `Bool` gate decodes to `recKMintAsset`'s admissibility proposition (the W1 issuer-move
+conjunction — mint authority over the ISSUER `a` ∧ non-negativity ∧ issuer + recipient liveness ∧
+`a ≠ cell`). -/
 theorem bridgeMintGuard_iff (actor cell : CellId) (a : AssetId) (value : ℤ) (k : RecordKernelState) :
     bridgeMintGuard actor cell a value k = true ↔
-      (mintAuthorizedB k.caps actor cell = true ∧ 0 ≤ value ∧ cell ∈ k.accounts) := by
+      (mintAuthorizedB k.caps actor a = true ∧ 0 ≤ value
+        ∧ a ∈ k.accounts ∧ cell ∈ k.accounts ∧ a ≠ cell) := by
   simp only [bridgeMintGuard, Bool.and_eq_true, decide_eq_true_eq]
   tauto
 
@@ -130,8 +138,9 @@ transfer/mint/burn cornerstones, now over the per-ASSET ledger (the surface the 
 `execFullA_bridgeMintA = recCMintAsset` projects, whose kernel step is `recKMintAsset`).
 
 The proof opens the gate `if` on the IR side and `recKMintAsset`'s `if` on the executor side against the
-SAME decoded conjunction (`bridgeMintGuard_iff`): on admit, the `setBal` body writes `bal := recBalCredit
-k.bal cell a value`, exactly the kernel's commit post-state; on reject, both sides are `none`. -/
+SAME decoded conjunction (`bridgeMintGuard_iff`): on admit, the `setBal` body writes
+`bal := recTransferBal k.bal a cell a value`, exactly the kernel's commit post-state; on reject, both
+sides are `none`. -/
 theorem interp_bridgeMintStmt_eq_recKMintAsset
     (actor cell : CellId) (a : AssetId) (value : ℤ) (k : RecordKernelState) :
     interp (bridgeMintStmt actor cell a value) k = recKMintAsset k actor cell a value := by
@@ -147,35 +156,40 @@ theorem interp_bridgeMintStmt_eq_recKMintAsset
 
 #assert_axioms interp_bridgeMintStmt_eq_recKMintAsset
 
-/-! ## §3 — NON-VACUITY of the cornerstone: the bridge-mint term CREDITS the ledger.
+/-! ## §3 — NON-VACUITY of the cornerstone: the bridge-mint term CREDITS the recipient ledger entry.
 
-The cornerstone would be hollow if `bridgeMintStmt` never committed, or if the credit were a no-op. We
-witness BOTH valences on a one-account kernel that grants account `0` a privileged mint cap over itself:
-a `value = 30` inbound bridge of asset `0` commits and raises `(0, 0)`'s ledger entry `0 → 30`, while an
-UNAUTHORIZED actor (no mint cap) rejects (`none`) — non-vacuous, two-valued. -/
+The cornerstone would be hollow if `bridgeMintStmt` never committed, or if the credit were a no-op. The
+W1 step is an ISSUER-MOVE: mint authority is control of the ISSUER cell `a`, and a commit moves `value`
+from the issuer's well (`(a, a)`, which goes negative) to the recipient `(cell, a)` (which rises), keeping
+`Σ_c bal c a` fixed. We witness BOTH valences on a two-account kernel — issuer asset `a = 0`, recipient
+`cell = 1` — that grants account `0` a privileged `node`-mint cap over the ISSUER cell `0`: a `value = 30`
+inbound bridge of asset `0` to recipient `1` commits and raises `(1, 0)`'s ledger entry `0 → 30` (while
+the well `(0,0)` goes `0 → -30`), and an UNAUTHORIZED actor (no mint cap over the issuer) rejects (`none`)
+— non-vacuous, two-valued. -/
 
-/-- A one-account kernel (account `0` Live) that grants account `0` a privileged `node`-mint cap over
-ITSELF (`Cap.node 0`, the supply authority `mintAuthorizedB` accepts), with an empty per-asset ledger. So
-a bridge-mint authorized by `0` commits; the `bal` move is the only thing the witness exercises. -/
+/-- A two-account kernel (cells `0` and `1` Live) that grants account `0` a privileged `node`-mint cap
+over the ISSUER cell `0` (`Cap.node 0`, the supply authority `mintAuthorizedB` accepts over the issuer),
+with an empty per-asset ledger. So a bridge-mint of issuer-asset `0` to recipient `1`, authorized by `0`,
+commits; the `bal` issuer-move is the only thing the witness exercises. -/
 def kBM : RecordKernelState :=
-  { accounts := {0}, cell := fun _ => .record [("balance", .int 0)]
+  { accounts := {0, 1}, cell := fun _ => .record [("balance", .int 0)]
     caps := fun l => if l = 0 then [Dregg2.Authority.Cap.node 0] else [] }
 
 /-- **`bridgeMintStmt_credits` — the inbound credit is OBSERVABLE.** Running the bridgeMint term for an
-authorized `value = 30` inbound of asset `0` on `kBM` commits and raises the `(0, 0)` per-asset ledger
-entry from `0` to `30` (via `recBalCredit`): the ledger credit is a real, observable state edit, not a
-no-op. -/
+authorized `value = 30` inbound of issuer-asset `0` to recipient cell `1` on `kBM` commits and raises the
+`(1, 0)` per-asset ledger entry from `0` to `30` (the issuer-move's dst credit): the ledger credit is a
+real, observable state edit, not a no-op. -/
 theorem bridgeMintStmt_credits :
-    (interp (bridgeMintStmt 0 0 0 30) kBM).map (fun k => k.bal 0 0) = some 30 := by
+    (interp (bridgeMintStmt 0 1 0 30) kBM).map (fun k => k.bal 1 0) = some 30 := by
   rw [interp_bridgeMintStmt_eq_recKMintAsset]
   decide
 
 /-- **`bridgeMintStmt_rejects_unauthorized` — fail-closed without supply authority.** A bridge-mint
-attempted by an UNAUTHORIZED actor (account `1`, which holds no mint cap over cell `0`) rejects (`none`):
-the privileged-supply gate fails closed (the cornerstone's two-valued, non-vacuous reject side
+attempted by an UNAUTHORIZED actor (account `1`, which holds no mint cap over the issuer cell `0`) rejects
+(`none`): the privileged-supply gate fails closed (the cornerstone's two-valued, non-vacuous reject side
 — the bridge inbound is gated, the foreign half is the carried portal). -/
 theorem bridgeMintStmt_rejects_unauthorized :
-    interp (bridgeMintStmt 1 0 0 30) kBM = none := by
+    interp (bridgeMintStmt 1 1 0 30) kBM = none := by
   rw [interp_bridgeMintStmt_eq_recKMintAsset]
   decide
 
@@ -224,22 +238,28 @@ theorem compileBridgeMint_eq : compileBridgeMint = bridgeMintVmDescriptor := rfl
 The §2 cornerstone refines the IR term to `recKMintAsset` (the `RecordKernelState → Option
 RecordKernelState` per-asset kernel step). We need its projection onto the descriptor's own
 `cellProjA … cell a` — the `recKMintAsset` analog of mint's `recKMint_proj_balLo`: a committed per-asset
-mint CREDITS the projected `(cell, a)` ledger entry by exactly `value` (`cellProjA.balLo` reads
-`k.bal c a`, the measure `recBalCredit` moves). The frozen frame (balHi/nonce/fields/capRoot/reserved) is
+mint CREDITS the projected RECIPIENT `(cell, a)` ledger entry by exactly `value` (`cellProjA.balLo` reads
+`k.bal c a`, the issuer-move's DST credit). The frozen frame (balHi/nonce/fields/capRoot/reserved) is
 `0 = 0` on both projections (`cellProjA` sends every non-`balLo` limb to `0`, definitional). -/
 
-/-- **`recKMintAsset_proj_balLo`.** A committed per-asset mint credits the affected `(cell, a)` entry's
-projected balance by exactly `value` (`cellProjA`'s `balLo` reads `k.bal c a`, the measure `recBalCredit`
-moves). The per-(cell,asset) conserved leg the weld pins. -/
+/-- **`recKMintAsset_proj_balLo`.** A committed per-asset mint credits the affected RECIPIENT `(cell, a)`
+entry's projected balance by exactly `value` (`cellProjA`'s `balLo` reads `k.bal c a`, the issuer-move's
+DST credit). The W1 step is the issuer-move `recTransferBal k.bal a cell a value` — at the recipient
+`(cell, a)` (dst, with `a ≠ cell` forced by the gate) this is `k.bal cell a + value`. The per-(cell,asset)
+credited leg the weld pins; the well `(a, a)` going `-value` is the conservation keystone, cited. -/
 theorem recKMintAsset_proj_balLo {k k' : RecordKernelState} {actor cell : CellId} {a : AssetId} {value : ℤ}
     (h : recKMintAsset k actor cell a value = some k') :
     (cellProjA k' cell a).balLo = (cellProjA k cell a).balLo + value := by
   unfold recKMintAsset at h
-  by_cases hg : mintAuthorizedB k.caps actor cell = true ∧ 0 ≤ value ∧ cell ∈ k.accounts
+  by_cases hg : mintAuthorizedB k.caps actor a = true ∧ 0 ≤ value
+      ∧ a ∈ k.accounts ∧ cell ∈ k.accounts ∧ a ≠ cell
   · rw [if_pos hg] at h; simp only [Option.some.injEq] at h; subst h
-    -- `(cellProjA { k with bal := recBalCredit … } cell a).balLo = recBalCredit k.bal cell a value cell a`
-    show recBalCredit k.bal cell a value cell a = k.bal cell a + value
-    unfold recBalCredit; rw [if_pos ⟨rfl, rfl⟩]
+    obtain ⟨_, _, _, _, hac⟩ := hg
+    -- `(cellProjA { k with bal := recTransferBal k.bal a cell a value } cell a).balLo`
+    --   = `recTransferBal k.bal a cell a value cell a` = the DST credit `k.bal cell a + value`.
+    show recTransferBal k.bal a cell a value cell a = k.bal cell a + value
+    unfold recTransferBal
+    rw [if_pos rfl, if_neg (Ne.symm hac), if_pos rfl]
   · rw [if_neg hg] at h; exact absurd h (by simp)
 
 #assert_axioms recKMintAsset_proj_balLo

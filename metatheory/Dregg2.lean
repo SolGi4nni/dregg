@@ -637,11 +637,13 @@ import Dregg2.Circuit.SettlementSoundness -- THE SETTLEMENT SOUNDNESS KEYSTONE (
 import Dregg2.Circuit.EngineSoundOfApex -- THE ENGINESOUND WELD: discharge RecursiveAggregation.EngineSound.leaf_sound BY the single-turn apex (lightclient_unfoolable_circuit_sound), so the multi-turn / finalized-history / distributed stack rests on circuit soundness, not on leaf_sound as a free sibling. ApexLeafBundle = per-leaf datum (batch pi/π + accepting verdict + the single ClosedWitness floor ⟹ apex FIRES) + the NAMED lowering apexLowers (the apex's kstepAll pi.effect, per-asset bal ledger, single FullActionA, ANY effect → the step's recCexec, legacy balOf-cell ledger, transfer Turn). engineSound_of_apex BUILDS EngineSound: leaf_sound DISCHARGED via leafStep_of_bundle∘the apex; recursive_sound/binding_sound = the two FRI legs (outside Lean) passed through. PAYOFF: multiTurn_rests_on_apex / finalized_rests_on_apex. THE RESIDUAL apexLowers is the THREE reconciliation mismatches NAMED (endpoint-binding · transfer-arm-only pi.effect=0 · cross-ledger bal-vs-balOf-cell, RingFFI projAsset agreement is column-only); realizable on honestStep (transfer arm) — honestStep_lowers. #assert_axioms-clean.
 import Dregg2.Deos.BranchStitch -- BRANCH-AND-STITCH: nesting=firmament-capability-confinement (a Virtual branch holds no cap to main ⇒ side-effects imaginary) + stitch=pushout-correctness; the operable protocol of distributed time-travel.
 
--- ── ENMESHMENT: 72 formerly-orphan modules pulled into the root build graph so their
+-- ── ENMESHMENT: formerly-orphan modules pulled into the root build graph so their
 -- #assert_axioms / #assert_namespace_axioms hygiene pins run by default under `lake build Dregg2`.
--- (8 orphans EXCLUDED as genuinely broken at this HEAD — see report/HORIZONLOG; their pins
---  fire sorryAx or they fail to compile against drifted APIs. Re-add once fixed. Also excluded:
---  Dregg2.Circuit.Argus (imports 3 broken Effects); Dregg2.Claims (imports root = build cycle).)
+-- (A few orphans remain EXCLUDED as genuinely broken at this HEAD — see report/HORIZONLOG; their
+--  pins fire sorryAx or they fail to compile against drifted APIs. Re-add once fixed. Also excluded:
+--  Dregg2.Circuit.Argus (imports the still-broken CreateCellFromFactory + NoteSpend Effects);
+--  Dregg2.Claims (imports root = build cycle). BridgeMint + Exec.ConcreteKernel are now repaired
+--  and re-enmeshed here — their hygiene pins are GUARDED by the root build.)
 import Dregg2.Agent.Mandate
 import Dregg2.Authority.CSpace
 import Dregg2.Circuit.Argus.Coeffect
@@ -650,6 +652,7 @@ import Dregg2.Circuit.Argus.CompileFold
 import Dregg2.Circuit.Argus.Disclose
 import Dregg2.Circuit.Argus.Effects.Attenuate
 import Dregg2.Circuit.Argus.Effects.BalanceA
+import Dregg2.Circuit.Argus.Effects.BridgeMint
 import Dregg2.Circuit.Argus.Effects.Burn
 import Dregg2.Circuit.Argus.Effects.CellDestroy
 import Dregg2.Circuit.Argus.Effects.CellSeal
@@ -713,6 +716,7 @@ import Dregg2.Exec.CapTPSettlement
 import Dregg2.Exec.CapTPStoreForward
 import Dregg2.Exec.CellCarryG
 import Dregg2.Exec.CellGated
+import Dregg2.Exec.ConcreteKernel
 import Dregg2.Paco.UpTo.Guarded
 import Dregg2.Substrate.IssuerLedger
 import Dregg2.Verify.ContractG
