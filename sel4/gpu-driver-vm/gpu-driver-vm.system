@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  gpu-driver-vm.system : REFERENCE shape for the seL4 Microkit GPU driver VM.
+
+  This file is NOT the build artifact — the canonical M-a build links the
+  Microkit image from libvmm's own generated .system (see the Makefile, which
+  delegates to au-ts/libvmm examples/simple). This file DOCUMENTS the shape for
+  the dregg reader and is the SEED for the dregg-owned consumer wiring at M-b.
+  docs/desktop-os-research/SEL4-GPU-DRIVER-VM.md.
+
+  The shape (Microkit 2.2.0 schema — manual §7.1; the SDK kernel has
+  CONFIG_ARM_HYPERVISOR_SUPPORT=1, so a PD may parent a <virtual_machine>):
+
+    vmm_pd        : an ordinary PD running the libvmm VMM. It parents ONE
+                    <virtual_machine> (the Linux guest) with one <vcpu id=0>.
+                    The guest's RAM is a memory_region mapped into the VM; the
+                    guest kernel + initrd are loaded into it (prefill_path at
+                    link time, or copied by the VMM at init). Guest accesses to
+                    unmapped / virtio addresses FAULT to this PD, which emulates
+                    them — this is how virtio device backends are served.
+
+  For M-a (THIS rung) the guest has serial in/out ONLY — no virtio-gpu yet.
+  The virtio-gpu backend (M-b) and the cockpit consumer PD (M-d) are added on
+  top; libvmm ships Console/Block/Sound/Net backends but NO GPU backend, so the
+  GPU device is net-new VMM code (the honest hard part — see the doc §4).
+
+  Board: qemu_virt_aarch64. Boot: make -C sel4/gpu-driver-vm run.
+-->
+<system>
+
+    <!-- The guest's RAM. libvmm's example sizes/places this for the fetched
+         guest kernel; the kernel + initrd blobs are loaded into it. The guest
+         sees this as its physical memory. -->
+    <memory_region name="guest_ram" size="0x10000000" page_size="0x200000" />
+
+    <!-- ====================================================================
+         vmm_pd : the VMM. Parents the Linux guest VM. (libvmm provides the PD
+         program; this element documents how it is declared.)
+         ==================================================================== -->
+    <protection_domain name="vmm_pd" priority="100">
+        <program_image path="vmm.elf" />
+
+        <!-- The Linux guest, as a child virtual machine of this PD. One vCPU.
+             Microkit enforces at most ONE virtual_machine per PD (the isolation
+             boundary). -->
+        <virtual_machine name="linux_guest" priority="100">
+            <vcpu id="0" />
+
+            <!-- The guest's RAM, mapped into the VM's address space. The VMM
+                 loads the kernel/initrd here; the guest executes from it. -->
+            <map mr="guest_ram" vaddr="0x40000000" perms="rwx" cached="true" />
+
+            <!-- M-b ADDS HERE: the virtio-gpu device's mmio window + its shared
+                 scanout/blob DMA region (region_paddr, framebuffer-scale), once
+                 libvmm grows a virtio-gpu backend. M-c adds the virgl/venus host
+                 path. (Not present at M-a.) -->
+        </virtual_machine>
+
+        <!-- The VMM also maps the guest RAM into ITS OWN space (to load the
+             kernel/initrd and to emulate faulting guest accesses). -->
+        <map mr="guest_ram" vaddr="0x40000000" perms="rw" cached="true"
+             setvar_vaddr="guest_ram_vaddr" />
+    </protection_domain>
+
+</system>

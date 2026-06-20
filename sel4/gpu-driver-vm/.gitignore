@@ -1,0 +1,4 @@
+# M-a fetches au-ts/libvmm and links a guest image here; both are reproducible
+# from `make fetch-libvmm` + `make build` and must not be committed.
+/libvmm/
+/build/
