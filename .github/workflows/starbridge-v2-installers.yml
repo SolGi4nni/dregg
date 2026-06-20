@@ -54,10 +54,36 @@ env:
   FORK_REF: "update-plonky3-rev"
 
 jobs:
-  # ── macOS (Apple Silicon) — .app + .dmg + .tar.gz ──────────────────────────
-  macos:
-    name: macOS installer (.app/.dmg)
-    runs-on: macos-14   # Apple Silicon (arm64); Xcode + Metal.framework present
+  # ── macOS (universal) — per-arch native builds ─────────────────────────────
+  # WHY TWO NATIVE BUILDS, NOT ONE CROSS-COMPILE: the embedded executor links
+  # `dregg-lean-ffi/libdregg_lean.a`, a HOST-NATIVE Mach-O archive of objects the
+  # Lean compiler emits, spliced/linked by `build.rs` via `cargo:rustc-link-lib=
+  # static=dregg_lean` into the rustc *target* binary. The git-tracked seed is
+  # arm64-only and `bootstrap.sh` re-splices it against the runner's own Lean
+  # toolchain (which emits the runner's host arch). So a plain
+  # `cargo build --target x86_64-apple-darwin` on the arm64 runner would link an
+  # arm64-only `libdregg_lean.a` into an x86_64 binary and FAIL. The honest fix:
+  # build each arch on its OWN native runner (elan installs the matching-arch
+  # Lean, bootstrap.sh seeds a matching-arch archive), upload each arch's raw
+  # binary, then `lipo -create` them into one universal Mach-O in the fuse job.
+  # That fused binary is what the single `starbridge-v2-macos-universal.dmg`
+  # carries — one artifact for every Mac (Apple Silicon + Intel).
+  macos-build:
+    name: macOS ${{ matrix.arch }} binary
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Apple Silicon (arm64); Xcode + Metal.framework present.
+          - arch: arm64
+            runner: macos-14
+            target: aarch64-apple-darwin
+          # Intel (x86_64); the last Intel-host GitHub-hosted macOS runner. Builds
+          # the x86_64 Lean archive + binary natively (no cross-compile).
+          - arch: x86_64
+            runner: macos-13
+            target: x86_64-apple-darwin
     steps:
       - uses: actions/checkout@v4
 
@@ -71,7 +97,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: starbridge-v2 -> target
-          key: starbridge-v2-macos
+          key: starbridge-v2-macos-${{ matrix.arch }}
 
       # Reconstruct the local plonky3-recursion fork checkout the standalone
       # workspace [patch]es at `../../plonky3-recursion` (a sibling of the repo
@@ -112,7 +138,10 @@ jobs:
           path: |
             dregg-lean-ffi/libdregg_lean.a
             metatheory/.lake/build
-          key: libdregg-lean-${{ runner.os }}-${{ hashFiles('metatheory/lean-toolchain', 'metatheory/lakefile.toml') }}-${{ hashFiles('metatheory/Dregg2/**/*.lean', 'metatheory/Metatheory/**/*.lean') }}
+          # arch IS in the key: libdregg_lean.a is an arch-native Mach-O archive,
+          # so the arm64 and x86_64 caches MUST NOT collide (runner.os is "macOS"
+          # for both runners).
+          key: libdregg-lean-${{ runner.os }}-${{ matrix.arch }}-${{ hashFiles('metatheory/lean-toolchain', 'metatheory/lakefile.toml') }}-${{ hashFiles('metatheory/Dregg2/**/*.lean', 'metatheory/Metatheory/**/*.lean') }}
 
       - name: Install elan (Lean toolchain manager)
         if: steps.lean-cache.outputs.cache-hit != 'true'
@@ -157,25 +186,94 @@ jobs:
           xcodebuild -downloadComponent MetalToolchain 2>/dev/null || \
             echo "Metal Toolchain unavailable; runtime_shaders path is used (see docs/STARBRIDGE-V2.md §Window)."
 
+      # Each runner is its OWN native arch, so the default host target IS
+      # matrix.target — no `--target` cross-compile (which would mismatch the
+      # arch-native libdregg_lean.a). Assert the produced Mach-O arch to catch a
+      # runner/target drift loudly.
       - name: Build native-full (--release)
         working-directory: starbridge-v2
         run: cargo build --release   # default features == native-full (embedded + gpui)
 
-      - name: Headless self-check (the embedded executor boots + killer demo)
-        working-directory: starbridge-v2
-        # `--headless` boots the live image, runs the four-surface killer demo,
-        # and EXITS NON-ZERO on a headline-contract regression. No display needed.
-        run: ./target/release/starbridge-v2 --headless
-
-      - name: Package .app + .dmg + .tar.gz
+      - name: Assert the binary is the expected arch
         working-directory: starbridge-v2
         run: |
           set -euo pipefail
           BIN=target/release/starbridge-v2
           test -x "$BIN"
+          GOT="$(lipo -archs "$BIN")"
+          echo "built arch(s): $GOT (expected ${{ matrix.arch }})"
+          case "${{ matrix.arch }}" in
+            arm64)  echo "$GOT" | grep -qw arm64  || { echo "::error::expected arm64 Mach-O, got '$GOT'"; exit 1; } ;;
+            x86_64) echo "$GOT" | grep -qw x86_64 || { echo "::error::expected x86_64 Mach-O, got '$GOT'"; exit 1; } ;;
+          esac
+
+      - name: Headless self-check (the embedded executor boots + killer demo)
+        working-directory: starbridge-v2
+        # `--headless` boots the live image, runs the four-surface killer demo,
+        # and EXITS NON-ZERO on a headline-contract regression. No display needed.
+        # Each runner runs its OWN native arch, so this exercises both binaries.
+        run: ./target/release/starbridge-v2 --headless
+
+      # Upload the RAW per-arch binary; the `macos-universal` fuse job downloads
+      # both and `lipo -create`s them into one universal Mach-O it packages.
+      - name: Stage the per-arch binary
+        working-directory: starbridge-v2
+        run: |
+          set -euo pipefail
+          rm -rf binout && mkdir -p binout
+          cp target/release/starbridge-v2 "binout/starbridge-v2-${{ matrix.arch }}"
+          ls -la binout
+
+      - name: Upload per-arch binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: starbridge-v2-macos-binary-${{ matrix.arch }}
+          path: starbridge-v2/binout/starbridge-v2-${{ matrix.arch }}
+          if-no-files-found: error
+          retention-days: 7
+
+  # ── macOS (universal) — fuse the two arch binaries → .app + .dmg ────────────
+  # The single artifact covering EVERY Mac. Downloads both per-arch binaries from
+  # `macos-build`, `lipo -create`s them into one universal Mach-O, wraps it in the
+  # .app bundle (same Info.plist/ad-hoc-sign as before), and produces
+  # `starbridge-v2-macos-universal.dmg` (+ a raw universal .tar.gz). Runs on
+  # macos-14 (arm64) — hdiutil/codesign/lipo are arch-agnostic; the OUTPUT binary
+  # is universal regardless of which runner fuses it.
+  macos-universal:
+    name: macOS installer (universal .app/.dmg)
+    needs: macos-build
+    runs-on: macos-14
+    steps:
+      - name: Download arm64 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: starbridge-v2-macos-binary-arm64
+          path: arm64
+
+      - name: Download x86_64 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: starbridge-v2-macos-binary-x86_64
+          path: x86_64
+
+      - name: Fuse → universal Mach-O, package .app + .dmg + .tar.gz
+        run: |
+          set -euo pipefail
+          ARM=arm64/starbridge-v2-arm64
+          X86=x86_64/starbridge-v2-x86_64
+          test -f "$ARM"; test -f "$X86"
+          chmod +x "$ARM" "$X86"
+          # lipo -create fuses the two single-arch Mach-Os into one fat (universal)
+          # binary that the loader runs as arm64 on Apple Silicon and x86_64 on
+          # Intel — one file, every Mac.
+          mkdir -p dist
+          lipo -create -output dist/starbridge-v2 "$ARM" "$X86"
+          echo "universal arch(s): $(lipo -archs dist/starbridge-v2)"
+          lipo -archs dist/starbridge-v2 | grep -qw arm64
+          lipo -archs dist/starbridge-v2 | grep -qw x86_64
           APP="Starbridge v2.app"
-          rm -rf dist && mkdir -p "dist/$APP/Contents/MacOS" "dist/$APP/Contents/Resources"
-          cp "$BIN" "dist/$APP/Contents/MacOS/starbridge-v2"
+          rm -rf "dist/$APP" && mkdir -p "dist/$APP/Contents/MacOS" "dist/$APP/Contents/Resources"
+          cp dist/starbridge-v2 "dist/$APP/Contents/MacOS/starbridge-v2"
           cat > "dist/$APP/Contents/Info.plist" <<'PLIST'
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -200,18 +298,18 @@ jobs:
             echo "ad-hoc codesign unavailable; shipping unsigned .app (user may need to allow it in System Settings)."
           # .dmg via hdiutil (always present on macOS runners).
           hdiutil create -volname "Starbridge v2" -srcfolder "dist/$APP" \
-            -ov -format UDZO dist/starbridge-v2-macos-arm64.dmg
-          # Raw-binary tarball fallback.
-          tar -C target/release -czf dist/starbridge-v2-macos-arm64.tar.gz starbridge-v2
+            -ov -format UDZO dist/starbridge-v2-macos-universal.dmg
+          # Raw universal-binary tarball fallback.
+          tar -C dist -czf dist/starbridge-v2-macos-universal.tar.gz starbridge-v2
           ls -la dist
 
-      - name: Upload macOS installers
+      - name: Upload macOS universal installers
         uses: actions/upload-artifact@v4
         with:
-          name: starbridge-v2-macos-arm64
+          name: starbridge-v2-macos-universal
           path: |
-            starbridge-v2/dist/*.dmg
-            starbridge-v2/dist/*.tar.gz
+            dist/*.dmg
+            dist/*.tar.gz
           if-no-files-found: error
           retention-days: 30
 
@@ -220,8 +318,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            starbridge-v2/dist/*.dmg
-            starbridge-v2/dist/*.tar.gz
+            dist/*.dmg
+            dist/*.tar.gz
           fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -381,25 +479,53 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # ── Windows — intentionally NOT built (honest skip) ────────────────────────
-  # Windows is NOT packaged, and that is a deliberate, honest decision rather
-  # than a faked artifact:
-  #   1. gpui's mature backends are Metal (macOS) and the Linux (vulkan/wayland/
-  #      x11) path; the Windows backend at the pinned zed rev (fca2ccd4) is the
-  #      least-exercised, and `runtime_shaders` (our load-bearing Metal escape
-  #      hatch) is a macOS concept with no Windows analogue here.
-  #   2. The embedded executor links `libdregg_lean.a` — the Lean→Rust archive
-  #      build + the plonky3-recursion fork [patch] are wired for unix hosts;
-  #      there is no Windows Lean-archive build path in this repo.
-  # Faking a Windows installer would violate green-or-bust. When gpui-on-Windows
-  # + a Windows libdregg_lean.a build are real, add a `windows-latest` job here
-  # mirroring the macos/linux jobs (build native-full, --headless smoke, package
-  # an .msi/.zip). Until then: documented skip, no artifact.
+  # ── Windows — intentionally NOT built (honest skip; one HARD blocker) ───────
+  # Windows is NOT packaged, and that is a deliberate, honest decision rather than
+  # a faked artifact. The native-full (default) build CANNOT compile-and-link on
+  # Windows today. The decisive, code-level blocker:
+  #
+  #   THE LEAN ARCHIVE HARD-SKIPS WINDOWS (the load-bearing one). The default
+  #   `native-full` build pulls `embedded-executor`, which links the REAL verified
+  #   executor against `dregg-lean-ffi/libdregg_lean.a`. That archive is a
+  #   HOST-NATIVE Mach-O/ELF archive of objects the Lean compiler emits, and
+  #   `dregg-lean-ffi/build.rs` explicitly returns early when
+  #   `CARGO_CFG_TARGET_OS == "windows"` (build.rs ~L1045, alongside wasm32/zkvm):
+  #   the archive members are the wrong object format for MSVC (COFF / link.exe)
+  #   and the unix binutils trio (nm/ar/leanc + -fPIC + libc++/gmp/uv) it splices
+  #   with is absent. On Windows the crate degrades to MARSHAL-ONLY stubs with
+  #   `lean_available() == false` — i.e. it does NOT embed the verified executor,
+  #   so a "native-full Windows installer" would not be the real verified cockpit.
+  #   There is no Windows `libdregg_lean.a` build path in this repo.
+  #
+  #   (Secondary, smaller:) gpui's Windows backend at the pinned zed rev
+  #   (gpui_platform @ 407a6ffd) is the least-exercised path, and `runtime_shaders`
+  #   — the load-bearing escape hatch the macOS build leans on — is a Metal concept
+  #   with no Windows analogue. This alone might be surmountable; the Lean archive
+  #   skip is not, without new build infrastructure.
+  #
+  # Faking a Windows installer would violate green-or-bust. THE PRECISE PATH TO
+  # ENABLE (both are required, in order):
+  #   1. Build a native Windows `libdregg_lean.a` (or `.lib`): `lake build`
+  #      Dregg2.Exec.FFI on a windows runner against an MSVC Lean toolchain, then
+  #      lift the `gate_os == "windows"` early-return in dregg-lean-ffi/build.rs
+  #      and teach its splice/link path the MSVC object/linker commands (ar→lib,
+  #      leanc→cl/link, the libc++/gmp/uv equivalents). This is a real chunk of
+  #      build work, NOT a flag flip.
+  #   2. Confirm gpui's windows backend compiles at the pinned rev under
+  #      `native-full` features (no runtime_shaders dependency on Windows).
+  # Once BOTH hold, add a `windows-latest` job mirroring the macos/linux jobs
+  # (reconstruct the plonky3 fork, build the Windows Lean archive, build
+  # native-full --release, run the --headless smoke, package an .msi or .zip).
+  # Until then: documented skip, no artifact.
   windows-skipped:
     name: Windows installer (skipped — see comment)
     runs-on: ubuntu-latest
     steps:
       - run: |
           echo "Windows installer intentionally skipped (honest gap)."
-          echo "gpui Windows backend immaturity + no Windows libdregg_lean.a build path."
-          echo "See this workflow's 'windows' comment block for the re-enable conditions."
+          echo "HARD blocker: dregg-lean-ffi/build.rs hard-skips target_os=windows"
+          echo "  (~L1045: gate_os == \"windows\" early-return) — no Windows libdregg_lean.a,"
+          echo "  so native-full degrades to marshal-only stubs (lean_available()==false)"
+          echo "  and would NOT embed the real verified executor."
+          echo "Secondary: gpui windows backend untested at the pinned rev; no runtime_shaders analogue."
+          echo "See this workflow's 'Windows' comment block for the precise enable path."
