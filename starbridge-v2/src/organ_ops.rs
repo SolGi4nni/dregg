@@ -219,6 +219,12 @@ impl OrganDriver {
             CommitOutcome::Rejected { reason, .. } => {
                 return Err(OrganOpError::ExecutorRejected { op: OrganOp::Open, reason });
             }
+            CommitOutcome::Queued { .. } => {
+                return Err(OrganOpError::ExecutorRejected {
+                    op: OrganOp::Open,
+                    reason: "world suspended: turn queued, not committed".to_string(),
+                });
+            }
         }
 
         // Install the REAL per-line program — from here the executor enforces the
@@ -449,6 +455,12 @@ impl OrganDriver {
             CommitOutcome::Rejected { reason, .. } => {
                 return Err(OrganOpError::ExecutorRejected { op: OrganOp::Open, reason });
             }
+            CommitOutcome::Queued { .. } => {
+                return Err(OrganOpError::ExecutorRejected {
+                    op: OrganOp::Open,
+                    reason: "world suspended: turn queued, not committed".to_string(),
+                });
+            }
         }
         world.set_cell_program(&well, program);
         // Write terms + prime the ratchet at rung 1 (the priming quantum = fee, the
@@ -630,6 +642,10 @@ impl OrganDriver {
             CommitOutcome::Rejected { reason, .. } => {
                 Err(OrganOpError::ExecutorRejected { op, reason })
             }
+            CommitOutcome::Queued { .. } => Err(OrganOpError::ExecutorRejected {
+                op,
+                reason: "world suspended: turn queued, not committed".to_string(),
+            }),
         }
     }
 }

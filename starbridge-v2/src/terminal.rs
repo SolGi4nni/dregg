@@ -347,6 +347,15 @@ impl TerminalCell {
                 let _ = line;
                 Err(err)
             }
+            // The world is suspended (meta-debug): the command's turn staged, did
+            // not run. Surfaced as a refused line (fail-closed, never faked ok).
+            crate::CommitOutcome::Queued { .. } => {
+                let err = CommandError::ExecutorRejected(
+                    "world suspended: turn queued, not committed".to_string(),
+                );
+                let _ = self.push_refused(&line_text, &err);
+                Err(err)
+            }
         }
     }
 

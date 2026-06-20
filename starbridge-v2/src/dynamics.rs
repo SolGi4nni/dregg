@@ -36,6 +36,14 @@ pub enum WorldEvent {
     /// The real executor REJECTED a turn — an ocap/verification guarantee
     /// firing (recorded so the cockpit can show WHY authority was denied).
     TurnRejected { agent: CellId, reason: String },
+    /// A turn was QUEUED rather than committed because the world is SUSPENDED
+    /// (the meta-debug Suspend gate, `docs/deos/FIRMAMENT-REFLEXIVE-SUBSTRATE.md`
+    /// §3.2). The live loop is halted: the turn lands in the pending queue, in
+    /// arrival order, and does NOT advance the head. It commits on `resume(drain)`,
+    /// at which point it emits the normal `TurnCommitted` events. Emitting THIS
+    /// event keeps the dynamics stream complete under suspension (Seam 3: a
+    /// silently-queued turn would be a stale-projection bug).
+    TurnQueued { agent: CellId },
     /// Value flowed into/out of a cell as a result of a committed turn.
     BalanceFlowed {
         cell: CellId,
@@ -117,6 +125,10 @@ impl WorldEvent {
                 ..
             } => format!("turn committed @h{height} ({action_count} actions)"),
             WorldEvent::TurnRejected { reason, .. } => format!("turn REJECTED: {reason}"),
+            WorldEvent::TurnQueued { agent } => format!(
+                "turn QUEUED (suspended): {}",
+                crate::reflect::short_hex(agent.as_bytes())
+            ),
             WorldEvent::BalanceFlowed { before, after, .. } => {
                 let d = after - before;
                 let sign = if d >= 0 { "+" } else { "" };

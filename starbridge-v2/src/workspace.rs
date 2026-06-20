@@ -418,6 +418,7 @@ mod tests {
         let real = match outcome {
             CommitOutcome::Committed { receipt, .. } => receipt.receipt_hash(),
             CommitOutcome::Rejected { reason, .. } => panic!("real commit rejected: {reason}"),
+            CommitOutcome::Queued { .. } => panic!("unexpected queue (world not suspended)"),
         };
         assert_eq!(predicted, real, "the real receipt matches the predicted one");
 

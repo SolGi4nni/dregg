@@ -302,6 +302,10 @@ impl Powerbox {
             // The executor's OWN no-amplification / authority gate fired — surfaced,
             // never hidden. The user's designation conferred NOTHING.
             CommitOutcome::Rejected { reason, .. } => PowerboxOutcome::Denied { reason },
+            // The world is suspended (meta-debug): the grant staged, conferred nothing.
+            CommitOutcome::Queued { .. } => PowerboxOutcome::Denied {
+                reason: "world suspended: grant turn queued, not committed".to_string(),
+            },
         }
     }
 

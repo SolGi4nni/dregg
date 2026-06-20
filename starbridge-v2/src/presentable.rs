@@ -855,13 +855,45 @@ fn lifecycle_state_machine(cell: &Cell) -> StateMachineView {
 pub enum FocusTarget {
     /// A live ledger cell (resolves to [`ReflectedCell`]).
     Cell(CellId),
+    /// A UI **view cell** — the inspector's own `(focus, present_idx)` camera-aim,
+    /// self-hosted as a real cell (`docs/deos/REFLEXIVE-MIGRATION.md` §3). Anchored
+    /// on the view's backing cell id, it resolves to a
+    /// [`ViewCell`](crate::view_cell::ViewCell) `impl Presentable` — so the
+    /// inspector can focus on ITSELF (inspect the inspector). The keystone reflexive
+    /// arm: "new object kinds add one arm."
+    ViewCell(CellId),
+    /// A **meta-debug frame** — a suspended/frozen world AS AN OBJECT, at a level in
+    /// the reflective tower (`docs/deos/FIRMAMENT-REFLEXIVE-SUBSTRATE.md` §2.3,
+    /// `docs/deos/REFLEXIVE-MIGRATION.md` §4.2). Resolves to a
+    /// [`MetaDebugView`](crate::meta_debug::MetaDebugView) `impl Presentable` looked
+    /// up in the cockpit's [`MetaStack`](crate::meta_debug::MetaStack) — so
+    /// "debug the debugger" is focusing the inspector on a meta-level's own view,
+    /// recursion through the SAME `present()` dispatch. The fractal meta-debug arm.
+    DebugFrame(crate::meta_debug::MetaLevelId),
+    /// The whole live **World** AS AN OBJECT (a `ReadState` mirror over the World) —
+    /// the frozen-but-live head a Suspend inspection points at. Resolves to a
+    /// [`MetaDebugView`](crate::meta_debug::MetaDebugView) at the base level.
+    World,
+    /// The running **Cockpit** AS AN OBJECT — the desktop image reflected on itself.
+    /// Resolves (like `World`) to a base meta-debug view over the live world the
+    /// cockpit drives. The third meta-arm scoped in §2.3.
+    Cockpit,
 }
 
 impl FocusTarget {
-    /// The cell id this focus anchors on (every focus kind anchors on a cell today).
+    /// The cell id this focus anchors on (every focus kind anchors on a cell-shaped
+    /// id — a real ledger cell for `Cell`/`ViewCell`, a stable synthetic anchor for
+    /// the meta arms, which are frame-objects not ledger cells). The anchor is the
+    /// memo key; the meta arms' anchors are never in the ledger.
     pub fn cell(&self) -> CellId {
         match self {
             FocusTarget::Cell(id) => *id,
+            FocusTarget::ViewCell(id) => *id,
+            FocusTarget::DebugFrame(level) => level.debug_frame_anchor(),
+            // The World/Cockpit-as-object both anchor on the base meta-level.
+            FocusTarget::World | FocusTarget::Cockpit => {
+                crate::meta_debug::MetaLevelId::BASE.debug_frame_anchor()
+            }
         }
     }
 }
@@ -873,12 +905,44 @@ impl FocusTarget {
 /// to the right newtype [`Presentable`]; new object kinds add one arm.
 pub struct Registry<'w> {
     world: &'w World,
+    /// The reflective tower the meta-debug arms ([`FocusTarget::DebugFrame`] /
+    /// `::World` / `::Cockpit`) resolve through. `None` when no meta-debug session
+    /// is open (the common case — the cockpit passes its live
+    /// [`MetaStack`](crate::meta_debug::MetaStack) when one is). A meta arm with no
+    /// stack resolves to `None` (a dangling meta-focus, surfaced honestly).
+    meta_stack: Option<&'w crate::meta_debug::MetaStack>,
 }
 
 impl<'w> Registry<'w> {
-    /// Build a registry over the live world.
+    /// Build a registry over the live world (no meta-debug session — the meta arms
+    /// resolve to `None`).
     pub fn new(world: &'w World) -> Self {
-        Registry { world }
+        Registry { world, meta_stack: None }
+    }
+
+    /// Build a registry that ALSO resolves the meta-debug arms through `meta_stack`
+    /// — the fractal meta-debug dispatch. A [`FocusTarget::DebugFrame(level)`] looks
+    /// the level up here and projects its [`MetaDebugView`](crate::meta_debug::MetaDebugView).
+    pub fn with_meta_stack(
+        world: &'w World,
+        meta_stack: &'w crate::meta_debug::MetaStack,
+    ) -> Self {
+        Registry { world, meta_stack: Some(meta_stack) }
+    }
+
+    /// Resolve the meta arms (`DebugFrame`/`World`/`Cockpit`) to a
+    /// [`MetaDebugView`](crate::meta_debug::MetaDebugView), if a meta-stack is held
+    /// and the level is materialized. `World`/`Cockpit` resolve to the base level;
+    /// `DebugFrame(level)` to that exact level. The shared tail of the three meta
+    /// arms — pure lookup, no projection here.
+    fn meta_view_for(&self, target: FocusTarget) -> Option<crate::meta_debug::MetaDebugView> {
+        let stack = self.meta_stack?;
+        let level = match target {
+            FocusTarget::DebugFrame(level) => level,
+            FocusTarget::World | FocusTarget::Cockpit => crate::meta_debug::MetaLevelId::BASE,
+            _ => return None,
+        };
+        stack.get(level).copied()
     }
 
     /// Resolve `target` to its presentation set, projected for `viewer`. `None`
@@ -890,6 +954,25 @@ impl<'w> Registry<'w> {
             FocusTarget::Cell(id) => {
                 ReflectedCell::from_world(self.world, id).map(|c| c.present(&ctx))
             }
+            // THE REFLEXIVE ARM — resolve a view cell from its WITNESSED (committed)
+            // state on the live ledger, then project it. The Registry holds only
+            // `&world`, so it reconstructs the `ViewCell` from the backing cell's
+            // committed camera-aim (the prior-frame state the projector reads — the
+            // unit-delay that breaks the self-cycle). `None` iff the backing cell is
+            // absent (a dangling view focus, surfaced honestly).
+            FocusTarget::ViewCell(id) => {
+                let view = crate::view_cell::ViewCell::from_world(self.world, id)?;
+                Some(view.present(&ctx))
+            }
+            // THE FRACTAL META-DEBUG ARM — resolve a meta-level from the reflective
+            // tower (the MetaStack) and project the suspended world AS AN OBJECT. The
+            // recursion (debug the debugger) is this SAME dispatch at a higher level.
+            // `None` iff no meta-stack is held or the level is unmaterialized (a
+            // dangling meta-focus, surfaced honestly).
+            FocusTarget::DebugFrame(_) | FocusTarget::World | FocusTarget::Cockpit => {
+                let view = self.meta_view_for(target)?;
+                Some(view.present(&ctx))
+            }
         }
     }
 
@@ -897,6 +980,11 @@ impl<'w> Registry<'w> {
     pub fn object_kind(&self, target: FocusTarget) -> ObjectKind {
         match target {
             FocusTarget::Cell(_) => ObjectKind::Cell,
+            FocusTarget::ViewCell(_) => ObjectKind::Cell,
+            // A meta-debug frame is an image-shaped object (a whole world-as-object).
+            FocusTarget::DebugFrame(_) | FocusTarget::World | FocusTarget::Cockpit => {
+                ObjectKind::Image
+            }
         }
     }
 

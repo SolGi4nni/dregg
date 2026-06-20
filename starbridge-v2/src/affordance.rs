@@ -370,6 +370,11 @@ impl AffordanceIntent {
             CommitOutcome::Rejected { reason, at_action } => {
                 FireOutcome::Refused { reason, at_action }
             }
+            // The world is suspended (meta-debug): the turn staged, it did not fire.
+            CommitOutcome::Queued { .. } => FireOutcome::Refused {
+                reason: "world suspended: turn queued, not fired".to_string(),
+                at_action: vec![],
+            },
         }
     }
 }

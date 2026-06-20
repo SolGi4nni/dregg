@@ -612,6 +612,9 @@ pub fn describe_forest_deploy(dep: &ForestDeploy) -> String {
                 "static PASS but executor REJECTED (the dynamic guarantees fired): {reason} \
                  @ action {at_action:?}\n(a static Pass is necessary, NOT sufficient)"
             ),
+            CommitOutcome::Queued { .. } => {
+                "world suspended (meta-debug): turn queued, not committed".to_string()
+            }
         },
     }
 }

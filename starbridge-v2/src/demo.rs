@@ -405,6 +405,11 @@ impl HeadlineDemo {
             crate::world::CommitOutcome::Rejected { reason, .. } => {
                 return Err(DemoError::MintFailed(reason));
             }
+            crate::world::CommitOutcome::Queued { .. } => {
+                return Err(DemoError::MintFailed(
+                    "world suspended: mint turn queued, not committed".to_string(),
+                ));
+            }
         };
 
         // Recover the freshly-born child: the one id in the after-set not in `before`.

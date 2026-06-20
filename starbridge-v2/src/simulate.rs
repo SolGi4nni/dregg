@@ -473,6 +473,14 @@ pub fn simulate(world: &World, draft: &IntentDraft) -> SimOutcome {
             at_action,
             static_refusal: false,
         },
+        // A prediction fork is never suspended (forks run freely), so this is
+        // unreachable in practice; surfaced as a refusal for total honesty.
+        CommitOutcome::Queued { .. } => SimOutcome::Refused {
+            verdict,
+            reason: "fork suspended (unexpected): turn queued, not predicted".to_string(),
+            at_action: vec![],
+            static_refusal: false,
+        },
     }
 }
 
@@ -691,6 +699,7 @@ mod tests {
         let real = match commit(&mut w, &draft) {
             CommitOutcome::Committed { receipt, .. } => receipt.receipt_hash(),
             CommitOutcome::Rejected { reason, .. } => panic!("real reject: {reason}"),
+            CommitOutcome::Queued { .. } => panic!("unexpected queue (world not suspended)"),
         };
         assert_eq!(predicted, real, "the predicted receipt must equal the real commit's");
         // And the live world now reflects the committed turn.

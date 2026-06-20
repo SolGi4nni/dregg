@@ -40,9 +40,19 @@ use starbridge_v2::surface::{SurfaceCapability, SurfaceId};
 use starbridge_v2::world::{self, CommitOutcome, World};
 // The L1 PRESENTATION SPINE + the moldable inspector framework primitives.
 use starbridge_v2::presentable::{
-    FocusTarget, GaugeView, GraphView, Halo, LatticeView, MerkleTreeView, PresentMemo,
-    PresentationBody, Registry, Spotter, SpotterHit, StateMachineView, TimelineView, TraceView,
+    FocusTarget, GaugeView, GraphView, Halo, LatticeView, MerkleTreeView, PresentCtx, PresentMemo,
+    Presentable, Presentation, PresentationBody, Registry, Spotter, SpotterHit, StateMachineView,
+    TimelineView, TraceView,
 };
+// The newer inspector LANES (L4–L10) — each a real `Presentable` over a live
+// protocol object. The moldable inspector reaches them through its lens-family
+// picker, projecting each through the SAME generic `render_presentation_body`.
+use starbridge_v2::cell_inspector::DeepCell;
+use starbridge_v2::circuit_inspector::StateCommitmentBinding;
+use starbridge_v2::federation_inspector::FederationSurvey;
+use starbridge_v2::receipts_inspector::{ReflectedReceipt, ReflectedReceiptChain};
+use starbridge_v2::settlement_inspector::SettlementFamily;
+use starbridge_v2::token_inspector::InspectedToken;
 // The standalone moldable surfaces + the lane gadgets — each drives its real model
 // methods (validate→predict→commit), surfacing refusals as features.
 use starbridge_v2::inspect_act::{InspectAct, InspectFocus, SendResult};
@@ -71,6 +81,78 @@ pub enum Selection {
     Receipt(usize),
     Image,
 }
+
+/// Which **lens family** the moldable inspector is focused through. The default
+/// `Cell` lens rides the `Registry`/`Spotter`/memo dispatch (the established
+/// spine); the remaining variants make the newer inspector lanes (L4–L10)
+/// REACHABLE — each builds its real `Presentable` off the focused cell / the
+/// live world and renders its presentation SET through the SAME generic
+/// `render_presentation_body`, so a lane needs NO new gpui code to become
+/// clickable. The picker cycles the family; the focus cell (and the
+/// receipt/slot ordinal) come from the inspector's own camera-aim.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum MoldableLens {
+    /// L1 — the live ledger cell (the `Registry`/`Spotter`/memo spine).
+    Cell,
+    /// L4 — the focused cell's held capabilities (its c-list), each a
+    /// [`HeldCapability`] presentation set.
+    Capability,
+    /// L5 — the focused cell's DEEP reflection ([`DeepCell`]).
+    DeepCell,
+    /// L6 — the live receipt chain ([`ReflectedReceiptChain`]) + the latest
+    /// receipt ([`ReflectedReceipt`]).
+    Receipt,
+    /// L7 — a real minted macaroon, decoded ([`InspectedToken`]).
+    Token,
+    /// L9 — the focused cell's canonical state-commitment binding
+    /// ([`StateCommitmentBinding`]).
+    Circuit,
+    /// L10 — a proven settlement family (escrow), its deal-terms +
+    /// state-machine ([`SettlementFamily`]).
+    Settlement,
+    /// L8 — the federation survey (the captp-only remote-path catalog in the
+    /// embedded image, surfaced honestly via [`FederationSurvey`]).
+    Federation,
+}
+
+impl MoldableLens {
+    /// The lens families in picker order (Cell first — the established spine).
+    const ALL: [MoldableLens; 8] = [
+        MoldableLens::Cell,
+        MoldableLens::Capability,
+        MoldableLens::DeepCell,
+        MoldableLens::Receipt,
+        MoldableLens::Token,
+        MoldableLens::Circuit,
+        MoldableLens::Settlement,
+        MoldableLens::Federation,
+    ];
+
+    /// The operator-legible lens label + lane tag.
+    fn label(self) -> &'static str {
+        match self {
+            MoldableLens::Cell => "cell (L1)",
+            MoldableLens::Capability => "cap (L4)",
+            MoldableLens::DeepCell => "deep-cell (L5)",
+            MoldableLens::Receipt => "receipts (L6)",
+            MoldableLens::Token => "token (L7)",
+            MoldableLens::Circuit => "circuit (L9)",
+            MoldableLens::Settlement => "settlement (L10)",
+            MoldableLens::Federation => "federation (L8)",
+        }
+    }
+
+    /// The next family in the cycle (the picker chip's click).
+    fn next(self) -> MoldableLens {
+        let i = MoldableLens::ALL.iter().position(|l| *l == self).unwrap_or(0);
+        MoldableLens::ALL[(i + 1) % MoldableLens::ALL.len()]
+    }
+}
+
+/// The service root key the moldable inspector's Token lens mints against — the
+/// SAME key the cockpit's `lane_token` gadget is built with (so the L7 lens
+/// decodes the minted macaroon against the right service key).
+const MOLDABLE_TOKEN_ROOT_KEY: [u8; 32] = [0x11u8; 32];
 
 /// Which workspace tab the right-hand pane presents. The master interface
 /// surfaces the composer alongside the four feature panels.
@@ -470,16 +552,28 @@ pub struct Cockpit {
     sim_commit_banner: Option<String>,
 
     // --- THE MOLDABLE INSPECTOR (the Pharo moldable inspector) ---------------
-    /// The cell the moldable inspector is focused on (the [`FocusTarget`] anchors
-    /// on a cell). `None` focuses the first sorted cell. The [`Registry`] resolves
-    /// it to its presentation SET fresh each render off the live world.
-    moldable_focus: Option<CellId>,
-    /// Which presentation in the resolved SET the tab-strip has open (an index into
-    /// the `Registry::present` vector; clamped each render so it survives re-focus).
-    moldable_present_idx: usize,
+    /// M3 — THE INSPECTOR'S OWN VIEW CELL (`docs/deos/REFLEXIVE-MIGRATION.md` §3).
+    /// The moldable inspector's `(focus, present_idx)` camera-aim is self-hosted as
+    /// a REAL cell (the [`BufferCell`] two-tier split, generalized): the visible
+    /// draft (`inspector_view.doc()`) is free to re-aim; its WITNESSED state rides
+    /// the backing cell, advanced by an occasional [`ViewCell::commit`]. So the
+    /// inspector's camera-aim is a witnessed dregg graph, the panel reads its focus
+    /// FROM the cell, and the inspector is itself inspectable
+    /// ([`FocusTarget::ViewCell`]) — *inspect the inspector*. The `moldable_focus` /
+    /// `moldable_present_idx` Rust fields are SUBSUMED into this view cell.
+    inspector_view: starbridge_v2::view_cell::ViewCell,
+    /// Whether the inspector is turned ON ITSELF — the reflexive toggle. When true,
+    /// the panel focuses [`FocusTarget::ViewCell`] on the inspector's own backing
+    /// cell (the inspector inspects its own view state); when false, it focuses the
+    /// drafted domain cell. This is the live "inspect the inspector" switch.
+    inspector_reflexive: bool,
     /// The [`Spotter`] search query (the ⌘K-style box). Each typed char re-runs the
     /// universal search; a hit click re-focuses the inspector.
     moldable_query: String,
+    /// Which **lens family** the moldable inspector is focused through (the
+    /// picker that makes the L4–L10 inspector lanes reachable; `Cell` rides the
+    /// `Registry` spine, the rest build their lane `Presentable` off the focus).
+    moldable_lens: MoldableLens,
 
     // --- THE INSPECT→ACT loop -----------------------------------------------
     /// The cell the inspect→act loop is focused on. `None` focuses the first cell.
@@ -591,6 +685,25 @@ impl Cockpit {
             "// a cap-confined buffer — its digest rides a real cell.\n\
              // editing is free; COMMIT is a cap-gated verified turn.\n",
         );
+
+        // M3 — THE INSPECTOR'S OWN VIEW CELL (the reflexive migration §3): the
+        // moldable inspector's camera-aim (focus + present-idx) is self-hosted as a
+        // REAL cell (the BufferCell two-tier split, generalized). A fresh dedicated
+        // cell backs it; the draft is aimed at the treasury and committed once so the
+        // witnessed (prior-frame) aim is populated. A re-focus mutates the free draft
+        // and lands an occasional witnessed SetField commit (the §3.5 stream weight
+        // class). The inspector is now itself inspectable (FocusTarget::ViewCell).
+        let inspector_view_backing = world.borrow_mut().genesis_cell(0x5E, 0);
+        let inspector_view = {
+            let v = starbridge_v2::view_cell::ViewCell::focused(
+                inspector_view_backing,
+                "INSPECTOR",
+                treasury,
+            );
+            // Land the initial aim so the witnessed state matches the boot draft.
+            let _ = v.commit(&mut world.borrow_mut());
+            v
+        };
 
         // The POWERBOX (CapDesk) demo: birth a fresh CONFINED app-cell that holds
         // NO ambient authority (a freshly-launched app-as-cell), and seed the user
@@ -748,10 +861,12 @@ impl Cockpit {
 
             // THE MOLDABLE INSPECTOR boots focused on the treasury (a populated
             // presentation set: RawFields + Affordances + Provenance + Graph +
-            // Lifecycle), on its first sub-tab, with an empty spotter box.
-            moldable_focus: Some(treasury),
-            moldable_present_idx: 0,
+            // Lifecycle), on its first sub-tab, with an empty spotter box. The
+            // focus/present-idx now ride `inspector_view` (the M3 view cell).
+            inspector_view,
+            inspector_reflexive: false,
             moldable_query: String::new(),
+            moldable_lens: MoldableLens::Cell,
 
             // THE INSPECT→ACT loop boots on the treasury too.
             inspect_act_focus: Some(treasury),
@@ -869,6 +984,12 @@ impl Cockpit {
             E::TurnCommitted { .. } => {}
             // Nothing moved — only the outcome banner (already a Rust field).
             E::TurnRejected { .. } => {}
+            // A turn was STAGED while the world is suspended (the meta-debug
+            // Suspend gate). The head is frozen — nothing in the ledger moved —
+            // but the staged continuation grew, which a `DebugFrame` view reads
+            // off the world directly. Drop any cached meta-frame projection so a
+            // re-present picks up the new pending count.
+            E::TurnQueued { .. } => {}
         }
     }
 
@@ -1216,6 +1337,12 @@ impl Cockpit {
             ),
             CommitOutcome::Rejected { reason, at_action } => {
                 format!("REJECTED by the live executor: {reason} @ {at_action:?}")
+            }
+            // The world is suspended (meta-debug Suspend gate): the turn was staged,
+            // not run, so the prediction is neither confirmed nor refused — it waits
+            // on resume. Surface the halt honestly rather than claim an outcome.
+            CommitOutcome::Queued { agent } => {
+                format!("QUEUED — world suspended; the staged turn from {} commits on resume", world::short(agent))
             }
         });
         // The committed turn changed the image; also drop the stale prediction (the
@@ -2151,6 +2278,11 @@ impl Cockpit {
                 format!("committed · receipt {}", reflect::short_hex(&receipt.receipt_hash()))
             }
             CommitOutcome::Rejected { reason, .. } => format!("REJECTED by executor: {reason}"),
+            // Suspended: the turn was staged in the pending queue, not run. The
+            // live loop is halted (meta-debug Suspend gate); it commits on resume.
+            CommitOutcome::Queued { agent } => {
+                format!("queued · world suspended · {}", world::short(&agent))
+            }
         });
     }
 
@@ -2763,17 +2895,128 @@ impl Cockpit {
     // THE MOLDABLE INSPECTOR panel — the Pharo moldable inspector made visible.
     // =======================================================================
 
+    /// Build the presentation SET for a NON-`Cell` lens family, off the focused
+    /// cell / the live world. Each arm constructs the lane's real `Presentable`
+    /// and returns its `present(ctx)` set — the SAME `Vec<Presentation>` the
+    /// `Cell` lens yields, rendered through the SAME generic body widget. This is
+    /// what makes the L4–L10 inspector lanes reachable WITHOUT any new gpui code.
+    /// `None` iff the lane has nothing to present over this focus (a held-cap-less
+    /// cell, an empty receipt chain) — surfaced honestly, never faked.
+    fn lens_present_set(&self, w: &World, focus: CellId) -> Option<Vec<Presentation>> {
+        let ctx = PresentCtx::new(w, focus);
+        match self.moldable_lens {
+            // Already handled by the Registry/memo spine in the caller.
+            MoldableLens::Cell => Registry::new(w)
+                .present(FocusTarget::Cell(focus), focus),
+
+            // L4 — the focused cell's FIRST held capability (its c-list head).
+            MoldableLens::Capability => {
+                let held = HeldCapability::all_for(w, focus);
+                held.into_iter().next().map(|h| h.present(&ctx))
+            }
+
+            // L5 — the focused cell's DEEP reflection.
+            MoldableLens::DeepCell => {
+                DeepCell::from_world(w, focus).map(|d| d.present(&ctx))
+            }
+
+            // L6 — the live receipt chain + (when present) the latest receipt.
+            // The chain is always presentable (empty chain ⟹ an empty timeline,
+            // which is still an honest presentation set, so this never `None`s
+            // on an empty image).
+            MoldableLens::Receipt => {
+                let chain = ReflectedReceiptChain::from_world(w);
+                let mut set = chain.present(&ctx);
+                if let Some(last) = w.receipts().last() {
+                    set.extend(ReflectedReceipt::new(last.clone()).present(&ctx));
+                }
+                Some(set)
+            }
+
+            // L7 — a real minted macaroon, decoded. The cockpit's own
+            // `lane_token` gadget mints against its service root key; we re-derive
+            // a fresh clerk (it is not Clone) and mint the root token, then wrap it
+            // as the decoded `InspectedToken`. Real HMAC chain, real caveats.
+            MoldableLens::Token => {
+                let mut clerk = self.lane_token.fresh_clerk();
+                let token = self.lane_token.mint_root(&mut clerk);
+                Some(InspectedToken::new(token, MOLDABLE_TOKEN_ROOT_KEY).present(&ctx))
+            }
+
+            // L9 — the focused cell's canonical state-commitment binding (the
+            // 8-felt commitment + the anti-omission readout + the absorb trace).
+            MoldableLens::Circuit => {
+                StateCommitmentBinding::from_world(w, focus).map(|s| s.present(&ctx))
+            }
+
+            // L10 — a proven settlement family (a sample escrow deal), its
+            // deal-terms + real lifecycle state machine + the genuine descriptor's
+            // perpetual-constraint invariant. The terms are a concrete legible
+            // deal (the lane is reachable; the SIMULATE/LANES tabs author real
+            // ones).
+            MoldableLens::Settlement => {
+                let escrow = SettlementFamily::Escrow(dregg_cell::blueprint::EscrowTerms {
+                    amount: 100,
+                    depositor: dregg_cell::field_from_u64(2222),
+                    beneficiary: dregg_cell::field_from_u64(1111),
+                    condition: dregg_cell::field_from_u64(99),
+                    timeout_height: 50,
+                });
+                Some(escrow.present(&ctx))
+            }
+
+            // L8 — the federation survey. In the embedded image no consensus node
+            // is connected, so the survey is `disconnected()` — but it still
+            // surfaces the captp-only remote-path catalog as a real RawFields
+            // presentation (honest about the remote-only reach), so the lane is
+            // never blank.
+            MoldableLens::Federation => {
+                let survey = FederationSurvey::disconnected();
+                Some(vec![survey.remote_presentation()])
+            }
+        }
+    }
+
     /// THE MOLDABLE INSPECTOR — pick a focused object, render its `Registry`-resolved
     /// presentation SET as a tab-strip (one sub-tab per `Presentation`) through the
     /// generic renderer, with the `Halo` ring + a `Spotter` search box that re-focuses.
     fn moldable_panel(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
         let w = self.world.borrow();
         let cells = &self.cells;
-        let focus = self.moldable_focus.or_else(|| cells.first().copied());
+        // M3: the camera-aim is read FROM the inspector's own view cell (the §3.4
+        // `render(workspace_subgraph)` selector move — the focus is a cell read, not
+        // a Rust field). The free in-memory draft is the live aim.
+        let focus = self.inspector_view.doc().focus().or_else(|| cells.first().copied());
         let mut col = div().flex().flex_col().gap_2().p_3().size_full().overflow_hidden();
         col = col.child(section_title(
             "INSPECTOR · the moldable presentation set (Registry · Spotter · Halo)",
         ));
+        // The reflexive toggle — turn the inspector ON ITSELF (inspect the inspector).
+        {
+            let reflexive = self.inspector_reflexive;
+            let backing_short = reflect::short_hex(self.inspector_view.backing().as_bytes());
+            let rev = self.inspector_view.revision(&w);
+            col = col.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .child(div().text_xs().text_color(theme::muted()).child(
+                        "self-host: the inspector's (focus, present-idx) IS a witnessed cell — ",
+                    ))
+                    .child(cycle_chip(
+                        cx,
+                        "mold-reflexive",
+                        if reflexive {
+                            format!("⟲ inspecting ITSELF (view cell {backing_short} · rev {rev})")
+                        } else {
+                            "⟲ inspect the inspector".to_string()
+                        },
+                        if reflexive { theme::accent() } else { theme::good() },
+                        Cockpit::moldable_toggle_reflexive,
+                    )),
+            );
+        }
         col = col.child(div().text_xs().text_color(theme::muted()).child(
             "Every protocol object offers a SET of named presentations (the 7 kinds; \
              RawFields is the universal floor). Pick an object, browse its lenses across \
@@ -2853,9 +3096,7 @@ impl Cockpit {
                             .on_mouse_down(
                                 MouseButton::Left,
                                 cx.listener(move |this, _ev, _w, cx| {
-                                    this.moldable_focus = Some(hit_cell);
-                                    this.moldable_present_idx = 0;
-                                    cx.notify();
+                                    this.moldable_refocus(Some(hit_cell), cx);
                                 }),
                             )
                             .child(div().text_xs().text_color(theme::text()).child(format!(
@@ -2898,18 +3139,65 @@ impl Cockpit {
                 })),
         );
 
+        // --- the LENS-FAMILY picker — makes the newer inspector lanes (L4–L10)
+        // reachable. `Cell` rides the Registry/memo spine; each other family
+        // builds its real lane `Presentable` off the focused cell / the live
+        // world and renders its set through the SAME generic body widget. ---
+        col = col.child(
+            div()
+                .flex()
+                .flex_wrap()
+                .items_center()
+                .gap_1()
+                .child(div().text_xs().text_color(theme::muted()).child("lens:"))
+                .child(cycle_chip(
+                    cx,
+                    "mold-lens",
+                    format!("⌖ {} (cycle)", self.moldable_lens.label()),
+                    theme::accent(),
+                    Cockpit::moldable_cycle_lens,
+                )),
+        );
+
         // --- the presentation SET as a tab-strip + the rendered body ---
-        // M2: project through the memo (valid while the live head is unchanged;
-        // the delta fold drops touched cells). Same `Presentation` set as the pure
-        // `reg.present`, now cached (EFFICIENCY-WELD-PLAN §2.3).
-        let Some(set) = self.present_memo.present(&w, FocusTarget::Cell(focus), focus) else {
-            return col
-                .child(div().text_xs().text_color(theme::bad()).child(
-                    "(the focused object is absent from the live image — a dangling focus)",
-                ))
-                .into_any_element();
+        // M2: the `Cell` lens projects through the memo (valid while the live head
+        // is unchanged; the delta fold drops touched cells). Same `Presentation`
+        // set as the pure `reg.present`, now cached (EFFICIENCY-WELD-PLAN §2.3).
+        // M3: when the reflexive toggle is on, the camera-aim is the inspector's
+        // OWN view cell (FocusTarget::ViewCell) — *inspect the inspector* through
+        // the SAME memo + Registry dispatch. The non-`Cell` lenses build their
+        // lane `Presentable` directly off the focus / the live world (the L4–L10
+        // reach), rendered through the SAME generic body widget below.
+        let set: Vec<Presentation> = if self.moldable_lens == MoldableLens::Cell {
+            let target = if self.inspector_reflexive {
+                FocusTarget::ViewCell(self.inspector_view.backing())
+            } else {
+                FocusTarget::Cell(focus)
+            };
+            match self.present_memo.present(&w, target, focus) {
+                Some(s) => s,
+                None => {
+                    return col
+                        .child(div().text_xs().text_color(theme::bad()).child(
+                            "(the focused object is absent from the live image — a dangling focus)",
+                        ))
+                        .into_any_element();
+                }
+            }
+        } else {
+            match self.lens_present_set(&w, focus) {
+                Some(s) => s,
+                None => {
+                    return col
+                        .child(div().text_xs().text_color(theme::warn()).child(format!(
+                            "(the {} lens has nothing to present over the focused object yet)",
+                            self.moldable_lens.label()
+                        )))
+                        .into_any_element();
+                }
+            }
         };
-        let idx = self.moldable_present_idx.min(set.len().saturating_sub(1));
+        let idx = self.inspector_view.doc().present_idx().min(set.len().saturating_sub(1));
         // the tab-strip (one sub-tab per Presentation).
         let mut strip = div().flex().flex_wrap().gap_1().mt_1();
         for (i, p) in set.iter().enumerate() {
@@ -2929,8 +3217,7 @@ impl Cockpit {
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |this, _ev, _w, cx| {
-                            this.moldable_present_idx = i;
-                            cx.notify();
+                            this.moldable_set_present_idx(i, cx);
                         }),
                     )
                     .child(format!("{} · {}", p.kind.slug(), p.label)),
@@ -3204,11 +3491,11 @@ impl Cockpit {
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |this, _ev, _w, cx| {
-                            // poke = inspect: re-focus the moldable inspector on it.
-                            this.moldable_focus = Some(cell_id);
-                            this.moldable_present_idx = 0;
+                            // poke = inspect: re-focus the moldable inspector on it
+                            // (a witnessed re-aim of the inspector's own view cell).
+                            this.inspector_reflexive = false;
                             this.tab = Tab::Moldable;
-                            cx.notify();
+                            this.moldable_refocus(Some(cell_id), cx);
                         }),
                     )
                     .child(div().text_lg().text_color(if glowing { theme::accent() } else { theme::muted() }).child(if glowing { "✦" } else { "○" }))
@@ -3468,14 +3755,58 @@ impl Cockpit {
         cx.notify();
     }
 
+    /// Cycle the moldable inspector's LENS FAMILY (the L4–L10 reach). Resets the
+    /// present-idx to the new lens's first presentation so the tab-strip lands on
+    /// a valid sub-tab; the witnessed camera-aim catches up on the next re-aim.
+    fn moldable_cycle_lens(&mut self, cx: &mut Context<Self>) {
+        self.moldable_lens = self.moldable_lens.next();
+        self.inspector_view.doc_mut().set_present_idx(0);
+        let _ = self.inspector_view.commit(&mut self.world.borrow_mut());
+        cx.notify();
+    }
+
     fn moldable_cycle_focus(&mut self, cx: &mut Context<Self>) {
         let cells = &self.cells;
         if cells.is_empty() {
             return;
         }
-        let cur = self.moldable_focus.and_then(|f| cells.iter().position(|c| *c == f)).unwrap_or(0);
-        self.moldable_focus = Some(cells[(cur + 1) % cells.len()]);
-        self.moldable_present_idx = 0;
+        let cur = self
+            .inspector_view
+            .doc()
+            .focus()
+            .and_then(|f| cells.iter().position(|c| *c == f))
+            .unwrap_or(0);
+        let next = cells[(cur + 1) % cells.len()];
+        self.moldable_refocus(Some(next), cx);
+    }
+
+    /// M3 — RE-AIM the inspector's camera (a witnessed UI mutation). Re-focus the
+    /// FREE in-memory draft (the §3.5 stream weight class: free edit), then land an
+    /// occasional witnessed `SetField` commit so the inspector's camera-aim is a
+    /// real, rewindable dregg-graph mutation (the BufferCell commit discipline,
+    /// generalized). A commit failure leaves the free draft moved (the panel still
+    /// reflects the operator's aim); the witnessed state catches up on the next
+    /// successful commit.
+    fn moldable_refocus(&mut self, focus: Option<CellId>, cx: &mut Context<Self>) {
+        self.inspector_view.doc_mut().set_focus(focus);
+        let _ = self.inspector_view.commit(&mut self.world.borrow_mut());
+        cx.notify();
+    }
+
+    /// M3 — open presentation `idx` (a tab-strip click). Re-aim the free draft's
+    /// lens, then witness it with an occasional commit (the same discipline as a
+    /// re-focus).
+    fn moldable_set_present_idx(&mut self, idx: usize, cx: &mut Context<Self>) {
+        self.inspector_view.doc_mut().set_present_idx(idx);
+        let _ = self.inspector_view.commit(&mut self.world.borrow_mut());
+        cx.notify();
+    }
+
+    /// M3 — toggle the inspector ON ITSELF (inspect the inspector). When on, the
+    /// panel focuses [`FocusTarget::ViewCell`] on the inspector's own backing cell —
+    /// the reflexive loop through the SAME `Registry::present` dispatch.
+    fn moldable_toggle_reflexive(&mut self, cx: &mut Context<Self>) {
+        self.inspector_reflexive = !self.inspector_reflexive;
         cx.notify();
     }
 

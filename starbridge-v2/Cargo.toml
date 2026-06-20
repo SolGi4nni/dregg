@@ -131,7 +131,7 @@ live-node = ["dep:reqwest"]
 # async) deps out of this headless, `cargo test`-able build: the cipherclerk +
 # token surface we surface (identities, mint/attenuate/delegate, cell_id) is in
 # the SDK's un-gated core.
-embedded-executor = ["dep:dregg-turn", "dep:dregg-cell", "dep:dregg-types", "dep:dregg-sdk", "dep:dregg-coord", "dep:dregg-token", "dep:dregg-userspace-verify", "dep:dregg-firmament", "dep:starbridge-web-surface", "dep:deos-web-cells"]
+embedded-executor = ["dep:dregg-turn", "dep:dregg-cell", "dep:dregg-types", "dep:dregg-sdk", "dep:dregg-coord", "dep:dregg-token", "dep:dregg-userspace-verify", "dep:dregg-firmament", "dep:starbridge-web-surface", "dep:deos-web-cells", "dep:dregg-persist"]
 
 # OPT-IN real-content rendering. `servo` pulls `servo-render` (the SWGL software
 # rasterizer + the cap-gated `render_dregg_page` content-tile entry) so the
@@ -304,6 +304,17 @@ starbridge-web-surface = { path = "../starbridge-web-surface", optional = true }
 # transclusion — the rich EDL span model welded into the cockpit's docuverse.
 # Gated on `embedded-executor` (the gpui-free, `cargo test`-able surface).
 deos-web-cells = { path = "../deos-web-cells", optional = true }
+# THE NODE'S DURABLE STORE (M4 native World persistence — the durable image).
+# `dregg-persist` is the SAME redb commit log + checkpoint⊕overlay recovery spine
+# the node uses (`node/src/state.rs`): wiring it onto the World's single
+# `commit_turn` seam makes the image durable + rewindable by REUSE — never a
+# parallel persistence — so the World inherits `CrashRecovery.lean::recover_eq_replay`.
+# A pure-Rust embedded ACID store (redb + serde + postcard); no networking, no
+# Lean link, no async. Gated on `embedded-executor` (the gpui-free, test-able
+# surface). It path-deps the SAME `../cell`/`../types`/`../circuit` this crate
+# already pulls, so cargo resolves IDENTICAL crate instances (its `Cell` IS our
+# `Cell`, its `CommitRecord.touched_cells` ARE our ledger cells).
+dregg-persist = { path = "../persist", optional = true }
 # THE SERVO RENDER LANE — the HOST SWGL render path that IS deos's compositor
 # render pass (Stage A of docs/desktop-os-research/SERVO-ON-SEL4.md). Default
 # `swgl-standalone` features ONLY (swgl's CPU-only C++ rasterizer + gleam + the real

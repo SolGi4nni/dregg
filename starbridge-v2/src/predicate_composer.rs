@@ -928,6 +928,10 @@ impl PredicateComposer {
                 receipt_hash: receipt.receipt_hash(),
             },
             CommitOutcome::Rejected { reason, .. } => EnforcementOutcome::Refused { reason },
+            // The world is suspended (meta-debug): the turn staged, not enforced.
+            CommitOutcome::Queued { .. } => EnforcementOutcome::Refused {
+                reason: "world suspended: turn queued, not committed".to_string(),
+            },
         })
     }
 }

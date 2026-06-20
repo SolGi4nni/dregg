@@ -447,6 +447,15 @@ impl VerifiedScene {
                 let tooth = self.diagnose(&owner, &p, new_digest);
                 PresentVerdict::Refused { tooth, reason }
             }
+            // The world is suspended (meta-debug): the present staged, did not advance
+            // the frame. Surfaced as a refusal carrying the same diagnostic tooth.
+            CommitOutcome::Queued { .. } => {
+                let tooth = self.diagnose(&owner, &p, new_digest);
+                PresentVerdict::Refused {
+                    tooth,
+                    reason: "world suspended: present turn queued, not committed".to_string(),
+                }
+            }
         }
     }
 

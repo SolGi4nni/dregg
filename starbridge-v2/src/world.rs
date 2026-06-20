@@ -30,6 +30,7 @@
 
 use std::cell::Cell as StdCell; // alias: `Cell` is taken by dregg_cell::Cell
 use std::collections::HashMap;
+use std::collections::VecDeque;
 
 use dregg_cell::{
     lifecycle::{DeathCertificate, DeathReason},
@@ -44,6 +45,7 @@ use dregg_turn::{
 };
 
 use crate::dynamics::{Dynamics, WorldEvent};
+use crate::persistence::{OpenError, RecoveredImage, WorldPersist};
 use crate::replay::History;
 
 /// The outcome of attempting to commit a turn against the embedded executor.
@@ -57,12 +59,37 @@ pub enum CommitOutcome {
     /// non-conservation, broken receipt chain). This is a FEATURE: it is the
     /// ocap/verification guarantees firing.
     Rejected { reason: String, at_action: Vec<usize> },
+    /// The world is SUSPENDED (the meta-debug Suspend gate halts the live loop,
+    /// `docs/deos/FIRMAMENT-REFLEXIVE-SUBSTRATE.md` §3): the turn was NOT run
+    /// against the executor — it was STAGED in the pending queue, in arrival
+    /// order, and the head is frozen. It will commit (or be edited) on
+    /// `resume`. This is DISTINCT from `Rejected`: nothing was refused; the turn
+    /// is honest and will run when the loop resumes. The agent that staged it is
+    /// carried so the caller can correlate the eventual commit.
+    Queued { agent: CellId },
 }
 
 impl CommitOutcome {
     pub fn is_committed(&self) -> bool {
         matches!(self, CommitOutcome::Committed { .. })
     }
+
+    /// `true` iff the turn was STAGED while the world is suspended (the live loop
+    /// is halted; the head is frozen). It will commit on `resume(drain)`.
+    pub fn is_queued(&self) -> bool {
+        matches!(self, CommitOutcome::Queued { .. })
+    }
+}
+
+/// How a suspended world RESUMES its halted loop (meta-debug §3.4).
+pub enum ResumeMode {
+    /// Commit the staged pending queue, in arrival order, through the normal
+    /// `commit_turn` gate (the loop continues as if it had never paused).
+    Drain,
+    /// Replace the staged continuation with an EDITED batch (drop/insert/reorder)
+    /// and run THAT instead — each turn still passing the full executor gate. The
+    /// previously-staged queue is discarded.
+    Modified(Vec<Turn>),
 }
 
 /// A live local dregg world: the REAL embedded engine
@@ -131,6 +158,30 @@ pub struct World {
     /// ledger writers (which mutate without a height bump) invalidate it with an
     /// explicit `set(None)`.
     state_root_memo: StdCell<Option<(u64, [u8; 32], [u8; 32])>>,
+    /// THE SUSPEND GATE (meta-debug, `docs/deos/FIRMAMENT-REFLEXIVE-SUBSTRATE.md`
+    /// §3.2). When `true`, the live loop is HALTED: [`World::commit_turn`] stages
+    /// every submitted turn in `pending` instead of running the executor, and the
+    /// head is FROZEN at the height suspension hit (NOT a replayed past — the real
+    /// live head, paused). `suspend()`/`resume(..)` flip it. This is the missing
+    /// sibling of Snapshot (which freezes a *cursor* while the loop keeps running);
+    /// Suspend freezes the *head* itself.
+    suspended: bool,
+    /// The pending-turn queue: turns staged while `suspended`, in ARRIVAL order.
+    /// `resume(Drain)` re-submits them through the normal `commit_turn` gate (each
+    /// re-passes the full executor/conservation/authority check at fill time — the
+    /// continuation editing stays shape-eager, Seam 5). Empty whenever the world
+    /// is running.
+    pending: VecDeque<Turn>,
+    /// THE DURABLE IMAGE (M4 — `docs/deos/WORLD-PERSISTENCE-PLAN.md`). `None` for
+    /// an EPHEMERAL world (`new`/`with_costs`/`fork` — the demo/test/what-if path,
+    /// which stays purely in-RAM; a fork MUST never persist). `Some` only for a
+    /// world produced by [`World::open`]: every successful `commit_turn` then
+    /// dual-writes the turn into the redb commit log + input-turn table (the weld
+    /// onto the node's already-built durability spine), and the genesis path
+    /// mirrors each install into the durable genesis table. The store is the
+    /// single source of truth for the commit cursor (its torn-state guard
+    /// re-checks it).
+    persist: Option<WorldPersist>,
 }
 
 impl Default for World {
@@ -195,6 +246,118 @@ impl World {
             turn_fee: 0,
             deployed_factories: Vec::new(),
             state_root_memo: StdCell::new(None),
+            suspended: false,
+            pending: VecDeque::new(),
+            persist: None,
+        }
+    }
+
+    // --- THE DURABLE IMAGE (M4 — World::open boot-recovery) ------------------
+
+    /// **Open a durable World image** from the redb store at `path`, recovering it
+    /// to exactly where it was closed (`docs/deos/WORLD-PERSISTENCE-PLAN.md` A.3).
+    ///
+    /// Runs the EXACT node boot-recovery (`node/src/state.rs:676-767`):
+    /// checkpoint-load → durable commit-log overlay via last-writer-wins
+    /// `upsert_cell` → FAIL-CLOSED convergence check (the reconstructed canonical
+    /// root MUST equal the root the last committed turn durably recorded, else
+    /// [`OpenError::Divergent`] — refuse to open). Because the overlay semantics
+    /// are byte-identical, the recovered ledger inherits
+    /// `CrashRecovery.lean::recover_eq_replay`: it equals the genesis replay.
+    ///
+    /// Then it rebuilds the in-RAM view spine (engine / [`History`] / receipts /
+    /// dynamics / per-agent chain heads) by REINSTALLING the durable genesis cells
+    /// and RE-EXECUTING the durable input turns through the same embedded executor
+    /// — re-deriving the real receipts and re-priming each chain head for free.
+    /// The store is attached LAST (with the cursor mirror), so the rebuild itself
+    /// never re-persists. `costs` must match the costs the image was created with
+    /// (the receipts re-derive bit-identically only under the same cost model).
+    ///
+    /// First run on an empty store returns an empty durable World (no genesis, no
+    /// turns); the caller seeds the demo genesis, which then persists.
+    pub fn open(path: &std::path::Path, costs: ComputronCosts) -> Result<World, OpenError> {
+        Self::open_with_timestamp(path, costs, now_unix())
+    }
+
+    /// [`World::open`] with the wall-clock PINNED to `timestamp` (the value the
+    /// image was created under). The receipts re-derive bit-identically only when
+    /// the timestamp matches the live world's that produced the durable turns, so
+    /// a deterministic image (tests, the houyhnhnm-clock semihost) pins it here.
+    pub fn open_with_timestamp(
+        path: &std::path::Path,
+        costs: ComputronCosts,
+        timestamp: i64,
+    ) -> Result<World, OpenError> {
+        let persist = WorldPersist::open(path)?;
+        let RecoveredImage {
+            ledger: recovered,
+            genesis_cells,
+            committed,
+            cursor,
+        } = persist.recover()?;
+
+        // Build a fresh EPHEMERAL world (no store yet) and rebuild the spine on it
+        // by re-running the durable genesis installs + input turns through the
+        // normal (non-persisting) paths. `persist` is None here, so neither the
+        // genesis mirror nor the dual-write fires during rebuild — we attach the
+        // store only AFTER, so the rebuild never duplicates the durable log.
+        let mut world = Self::with_costs_and_timestamp(costs, timestamp);
+
+        // Reinstall the durable genesis cells (genesis-time content), in order.
+        for cell in genesis_cells {
+            let balance = cell.state.balance();
+            world.install_genesis(cell, balance);
+        }
+        // Re-execute the durable input turns: this rebuilds History (verified root
+        // teeth), the receipts provenance log, the engine ledger, AND re-primes
+        // every agent's receipt-chain head — the real receipt is re-derived, never
+        // carried across the durable boundary.
+        for turn in committed {
+            // Re-executing a recorded committed turn must commit again (the
+            // `recover_eq_replay` determinism). A rejection here would mean the
+            // durable turn does not re-derive — a real integrity event.
+            let outcome = world.commit_turn(turn);
+            if !outcome.is_committed() {
+                return Err(OpenError::Store(dregg_persist::StoreError::Integrity(
+                    "a durable committed turn did NOT re-commit on recovery — \
+                     image is non-deterministic or corrupt"
+                        .to_string(),
+                )));
+            }
+        }
+
+        // FAIL-CLOSED cross-check: the rebuilt engine ledger MUST equal the
+        // checkpoint⊕overlay recovered ledger (both are `recover_eq_replay`). This
+        // catches any genesis/turn divergence the per-turn replay would miss.
+        if crate::persistence::canonical_ledger_root(world.engine.ledger())
+            != crate::persistence::canonical_ledger_root(&recovered)
+        {
+            return Err(OpenError::Divergent {
+                got: crate::persistence::canonical_ledger_root(world.engine.ledger()),
+                expected: crate::persistence::canonical_ledger_root(&recovered),
+            });
+        }
+
+        // Attach the durable store LAST, with the cursor mirror primed, so every
+        // FUTURE commit_turn dual-writes from the correct ordinal.
+        debug_assert_eq!(world.height, cursor, "rebuilt height must equal the durable commit cursor");
+        world.persist = Some(persist);
+        Ok(world)
+    }
+
+    /// The path-backed durable World is durable iff this is `true` (it is `false`
+    /// for `new`/`with_costs`/`fork`, and flips to `false` if a durable write ever
+    /// failed — the loud degrade-to-ephemeral path in `commit_turn`).
+    pub fn is_durable(&self) -> bool {
+        self.persist.is_some()
+    }
+
+    /// Force a durable full-ledger checkpoint at the current height (C.1) — the
+    /// on-close flush so the latest image is always covered and recovery's overlay
+    /// stays short. No-op on an ephemeral world.
+    pub fn checkpoint_now(&self) {
+        if let Some(p) = self.persist.as_ref() {
+            p.checkpoint(self.engine.ledger(), self.height);
         }
     }
 
@@ -440,6 +603,15 @@ impl World {
             turn_fee: self.turn_fee,
             deployed_factories: self.deployed_factories.clone(),
             state_root_memo: StdCell::new(None),
+            // A fork is a throwaway DIVERGENT copy used to PREDICT the next turn; it
+            // runs freely (never inherits the live world's suspension), and a
+            // suspended live world can still fork to simulate what a queued turn
+            // WOULD do without resuming.
+            suspended: false,
+            pending: VecDeque::new(),
+            // A fork is a what-if COPY: it MUST never persist (committing on the
+            // fork would otherwise corrupt the live image's durable log).
+            persist: None,
         }
     }
 
@@ -465,7 +637,16 @@ impl World {
             .expect("genesis insert is into a fresh slot");
         // Mirror into the replay tape (its own ledger), capturing the root
         // tooth. Same cell, same order → the recorded root equals the engine's.
-        self.history.record_genesis(&mut self.record_ledger, cell);
+        self.history.record_genesis(&mut self.record_ledger, cell.clone());
+        // DURABLE genesis mirror (SEAM §2): a genesis install emits no
+        // `CommitRecord`, so the durable image would miss this cell on reopen
+        // unless we record it here. Last-writer-wins by id (so a later in-place
+        // genesis mutation overwrites). Fail-closed: a durable error refuses the
+        // install rather than leaving RAM ahead of disk.
+        if let Some(p) = self.persist.as_ref() {
+            p.record_genesis(&cell)
+                .expect("durable genesis record must not fail on a healthy image");
+        }
         self.dynamics.emit(WorldEvent::CellBorn {
             cell: id,
             balance,
@@ -475,6 +656,19 @@ impl World {
         // a receipt, so the witness tooth is unchanged — bust the state_root memo.
         self.state_root_memo.set(None);
         id
+    }
+
+    /// Re-record a cell's current post-state into the durable genesis table (the
+    /// in-place genesis-path mutators call this when the image is durable, so a
+    /// `set_cell_program`/`genesis_grant_cap`/`genesis_open_permissions` survives
+    /// a reopen). No-op on an ephemeral world.
+    fn durable_regenesis(&self, id: &CellId) {
+        if let Some(p) = self.persist.as_ref() {
+            if let Some(cell) = self.engine.ledger().get(id) {
+                p.record_genesis(cell)
+                    .expect("durable genesis re-record must not fail on a healthy image");
+            }
+        }
     }
 
     /// Install the genesis cell for an identity at its REAL derived id.
@@ -546,6 +740,11 @@ impl World {
         if let Some(c) = self.record_ledger.get_mut(cell) {
             c.program = program;
         }
+        // Durable genesis re-record (SEAM §2): the in-place program change carries
+        // no `CommitRecord`, so persist the cell's new post-state for reopen.
+        if existed {
+            self.durable_regenesis(cell);
+        }
         // Genesis-path ledger mutation without a height bump — bust the memo.
         self.state_root_memo.set(None);
         existed
@@ -577,6 +776,11 @@ impl World {
         if let Some(c) = self.record_ledger.get_mut(holder) {
             let _ = c.capabilities.grant(target, AuthRequired::None);
         }
+        // Durable genesis re-record (SEAM §2): the in-place cap grant carries no
+        // `CommitRecord`, so persist the holder's new post-state for reopen.
+        if slot.is_some() {
+            self.durable_regenesis(holder);
+        }
         // Genesis-path ledger mutation without a height bump — bust the memo.
         self.state_root_memo.set(None);
         slot
@@ -605,6 +809,11 @@ impl World {
         };
         if let Some(c) = self.record_ledger.get_mut(cell) {
             c.permissions = open_permissions();
+        }
+        // Durable genesis re-record (SEAM §2): the in-place permissions change
+        // carries no `CommitRecord`, so persist the cell's new post-state.
+        if existed {
+            self.durable_regenesis(cell);
         }
         // Genesis-path ledger mutation without a height bump — bust the memo.
         self.state_root_memo.set(None);
@@ -637,6 +846,17 @@ impl World {
     /// head, advances the height, appends the receipt to the provenance log, and
     /// derives + emits the dynamics events for the transition.
     pub fn commit_turn(&mut self, mut turn: Turn) -> CommitOutcome {
+        // THE SUSPEND GATE (meta-debug §3.2): if the live loop is halted, the turn
+        // is STAGED, not run. The head freezes; the turn lands in `pending` in
+        // arrival order and emits a `TurnQueued` event (so the dynamics stream stays
+        // complete under suspension — Seam 3). It will commit on `resume(drain)`.
+        if self.suspended {
+            let agent = turn.agent;
+            self.pending.push_back(turn);
+            self.dynamics.emit(WorldEvent::TurnQueued { agent });
+            return CommitOutcome::Queued { agent };
+        }
+
         // Thread the chain head the engine's executor will check.
         turn.previous_receipt_hash = self.engine.executor().get_last_receipt_hash(&turn.agent);
 
@@ -661,6 +881,38 @@ impl World {
                 // recorder's own ledger/executor, capturing the post-state root).
                 self.history.record_commit(&self.record_exec, &mut self.record_ledger, turn.clone());
                 self.height += 1;
+
+                // THE DURABLE DUAL-WRITE (M4, A.2) — O(change). When the image is
+                // durable, record this turn into the redb commit log (post-state of
+                // the touched cells + the canonical post-state root, ONE ACID txn)
+                // and persist the input turn (A.4, for rewind). FAIL-CLOSED (A.2.1,
+                // *Green Or Bust*): a durable-write error is NOT swallowed — the
+                // World refuses a commit it could not durably record, keeping RAM
+                // and disk in lock-step (the node's discipline). The in-RAM engine
+                // already advanced, so on a durable failure we surface it as a hard
+                // rejection AND drop the store to ephemeral (loud, not silent).
+                if self.persist.is_some() {
+                    let height = self.height;
+                    // Split the borrows: take `persist` out, write through the
+                    // disjoint `engine` borrow, then put it back (or drop it on a
+                    // durable failure — the loud degrade-to-ephemeral path).
+                    let mut p = self.persist.take().expect("checked is_some");
+                    let result = p.dual_write(height, self.engine.ledger(), &touched, &receipt, &turn);
+                    match result {
+                        Ok(()) => self.persist = Some(p),
+                        Err(e) => {
+                            // `p` dropped → image degraded to ephemeral, loudly named.
+                            let reason = format!(
+                                "durable image write failed (image no longer durable): {e}"
+                            );
+                            self.dynamics.emit(WorldEvent::TurnRejected {
+                                agent: turn.agent,
+                                reason: reason.clone(),
+                            });
+                            return CommitOutcome::Rejected { reason, at_action: vec![] };
+                        }
+                    }
+                }
 
                 let mut events = Vec::new();
                 events.push(WorldEvent::TurnCommitted {
@@ -715,6 +967,95 @@ impl World {
                 CommitOutcome::Rejected { reason, at_action: vec![] }
             }
         }
+    }
+
+    // --- THE SUSPEND PRIMITIVE (halt-the-live-loop, meta-debug §3) -----------
+
+    /// **SUSPEND** — halt the live loop. After this, every turn submitted through
+    /// [`World::commit_turn`] is STAGED in the pending queue (returning
+    /// [`CommitOutcome::Queued`]) instead of being run; the head is FROZEN at the
+    /// current height. Inspection during suspension uses the ordinary mirror
+    /// machinery (a `FocusTarget::World` projection) over the frozen-but-live head.
+    ///
+    /// This is the missing sibling of Snapshot (`ui_snapshot.rs`): Snapshot freezes
+    /// a *cursor* (a past height) while the loop keeps running; Suspend freezes the
+    /// *head* (turn-application) itself. Idempotent: suspending an already-suspended
+    /// world is a no-op.
+    pub fn suspend(&mut self) {
+        self.suspended = true;
+    }
+
+    /// `true` iff the live loop is currently HALTED (turns queue instead of commit).
+    pub fn is_suspended(&self) -> bool {
+        self.suspended
+    }
+
+    /// How many turns are STAGED in the pending queue (0 when running or drained).
+    pub fn pending_len(&self) -> usize {
+        self.pending.len()
+    }
+
+    /// A read-only view of the staged continuation — the queued turns, in arrival
+    /// order. This is the inspectable "continuation" of the suspended loop (the
+    /// partial turn whose holes are the not-yet-committed turns, §3.3); the
+    /// meta-debugger walks it without committing.
+    pub fn pending_turns(&self) -> impl Iterator<Item = &Turn> {
+        self.pending.iter()
+    }
+
+    /// **RESUME** — un-halt the live loop and apply the continuation.
+    ///
+    ///   * [`ResumeMode::Drain`] commits the queued turns, in arrival order,
+    ///     through the normal `commit_turn` gate (each re-passes the full
+    ///     executor/conservation/authority check at fill time — Seam 5: continuation
+    ///     editing stays shape-eager).
+    ///   * [`ResumeMode::Modified`] DRAINS the existing queue and re-submits the
+    ///     caller's edited batch instead — dropping/inserting/reordering turns
+    ///     before they run. Each turn in the edited batch STILL passes the full
+    ///     `commit_turn` gate, so a modified continuation cannot smuggle in
+    ///     unauthorized or non-conserving work — the edit is to *which* turns run,
+    ///     never to the per-turn invariant.
+    ///
+    /// Returns the per-turn outcomes, in application order. The live loop is running
+    /// again on return (`is_suspended()` is false), so any turn submitted after this
+    /// commits directly.
+    pub fn resume(&mut self, mode: ResumeMode) -> Vec<CommitOutcome> {
+        // Un-halt FIRST so the drained turns flow through the normal commit path
+        // (not back into the queue).
+        self.suspended = false;
+        let batch: Vec<Turn> = match mode {
+            ResumeMode::Drain => self.pending.drain(..).collect(),
+            ResumeMode::Modified(edited) => {
+                // The operator hands an edited continuation: discard the staged
+                // queue and run the edit instead. The drained turns are dropped (the
+                // edit's job is to decide which work proceeds).
+                self.pending.clear();
+                edited
+            }
+        };
+        batch
+            .into_iter()
+            .map(|mut turn| {
+                // FILL-TIME NONCE RE-STAMP. A staged (or operator-edited) turn was
+                // built against the FROZEN head, so several turns from one agent all
+                // carry the same baked-in nonce (`next_nonce` could not advance under
+                // suspension). The continuation commits them IN SEQUENCE, so each must
+                // carry the agent's then-current nonce — exactly as `commit_turn`
+                // already re-threads `previous_receipt_hash` at fill time. We re-stamp
+                // here, the moment before the gate runs, so the queue drains in order
+                // without nonce reuse. This binds the nonce later (fill time), never
+                // weakens it: the executor still enforces the re-stamped value, and
+                // conservation/authority are checked on the turn as it actually runs.
+                turn.nonce = self.next_nonce(&turn.agent);
+                self.commit_turn(turn)
+            })
+            .collect()
+    }
+
+    /// **RESUME (DRAIN)** — the common case: un-halt and commit the staged queue in
+    /// arrival order. Shorthand for `resume(ResumeMode::Drain)`.
+    pub fn resume_drain(&mut self) -> Vec<CommitOutcome> {
+        self.resume(ResumeMode::Drain)
     }
 
     // --- ergonomic turn constructors (the typed verbs, embedded-local) -------
@@ -1315,6 +1656,11 @@ impl dregg_firmament::TurnRunner for WorldRunner {
             CommitOutcome::Committed { receipt, .. } => postcard::to_stdvec(&receipt)
                 .map_err(|e| format!("receipt encode failed: {e}")),
             CommitOutcome::Rejected { reason, .. } => Err(reason),
+            // A suspended world stages the turn instead of running it; the PD wire
+            // surfaces that as an error (the caller retries after resume).
+            CommitOutcome::Queued { agent } => {
+                Err(format!("world suspended: turn from {} queued, not run", short(&agent)))
+            }
         }
     }
 }
@@ -1910,6 +2256,7 @@ mod tests {
         let receipt = match outcome {
             CommitOutcome::Committed { receipt, .. } => receipt,
             CommitOutcome::Rejected { reason, .. } => panic!("unexpected reject: {reason}"),
+            CommitOutcome::Queued { .. } => panic!("unexpected queue (world not suspended)"),
         };
         assert_eq!(receipt.action_count, 1, "the receipt the executor-PD wrote describes the turn");
 
@@ -1969,6 +2316,7 @@ mod tests {
         let direct_receipt = match direct.commit_turn(t_direct) {
             CommitOutcome::Committed { receipt, .. } => receipt,
             CommitOutcome::Rejected { reason, .. } => panic!("direct reject: {reason}"),
+            CommitOutcome::Queued { .. } => panic!("unexpected queue (world not suspended)"),
         };
 
         // Semihost path (a fresh, identically-seeded world).
@@ -1979,6 +2327,7 @@ mod tests {
         let semi_receipt = match cockpit.commit_turn_via_semihost(t_semi) {
             CommitOutcome::Committed { receipt, .. } => receipt,
             CommitOutcome::Rejected { reason, .. } => panic!("semihost reject: {reason}"),
+            CommitOutcome::Queued { .. } => panic!("unexpected queue (world not suspended)"),
         };
 
         // The receipt hashes match — the heart over the EmulatedKernel produced
@@ -2030,7 +2379,9 @@ mod tests {
             | WorldEvent::SurfaceDamaged { cell, .. }
             | WorldEvent::EventEmitted { cell, .. } => *cell,
             WorldEvent::CapabilityGranted { from, .. } => *from,
-            WorldEvent::TurnCommitted { .. } | WorldEvent::TurnRejected { .. } => return None,
+            WorldEvent::TurnCommitted { .. }
+            | WorldEvent::TurnRejected { .. }
+            | WorldEvent::TurnQueued { .. } => return None,
         })
     }
 
@@ -2170,7 +2521,12 @@ mod tests {
         (w, focus.expect("at least one cell"), mover_a, mover_b)
     }
 
+    // A microbench (builds up to a 16384-cell ledger, runs thousands of present
+    // iterations) — minutes-long and NOT a correctness gate, so it is `#[ignore]`d
+    // off the default `cargo test` path. Run it deliberately with
+    // `cargo test --release ... -- --ignored projection_cost_is_flat_in_cell_count`.
     #[test]
+    #[ignore = "microbench (16384-cell ledger × thousands of iters); minutes-long, not a correctness gate — run with --ignored"]
     fn projection_cost_is_flat_in_cell_count() {
         use crate::presentable::{FocusTarget, PresentMemo};
         use std::time::Instant;

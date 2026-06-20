@@ -1791,6 +1791,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "790eea4361631c5e7d22598ecd5723ff611904e3344ce8720784c93e3d83d40b"
 
 [[package]]
+name = "crossbeam-channel"
+version = "0.5.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "82b8f8f868b36967f9606790d1903570de9ceaf870a7bf9fbbd3016d636a2cb2"
+dependencies = [
+ "crossbeam-utils",
+]
+
+[[package]]
 name = "crossbeam-deque"
 version = "0.8.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2326,6 +2335,7 @@ dependencies = [
  "ark-serialize",
  "ark-std",
  "blake3",
+ "crossbeam-channel",
  "curve25519-dalek",
  "dregg-blocklace",
  "dregg-captp",
@@ -2342,6 +2352,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "tokio",
  "tracing",
 ]
 
@@ -2431,6 +2442,24 @@ dependencies = [
  "subtle",
  "thiserror 2.0.18",
  "zeroize",
+]
+
+[[package]]
+name = "dregg-persist"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "dregg-blocklace",
+ "dregg-cell",
+ "dregg-circuit",
+ "dregg-commit",
+ "dregg-federation",
+ "dregg-types",
+ "ed25519-dalek",
+ "postcard",
+ "redb",
+ "serde",
+ "tracing",
 ]
 
 [[package]]
@@ -6745,6 +6774,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "redb"
+version = "2.6.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8eca1e9d98d5a7e9002d0013e18d5a9b000aee942eb134883a82f06ebffb6c01"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "redox_syscall"
 version = "0.2.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7770,6 +7808,7 @@ dependencies = [
  "dregg-cell",
  "dregg-coord",
  "dregg-firmament",
+ "dregg-persist",
  "dregg-sdk",
  "dregg-token",
  "dregg-turn",
@@ -8296,7 +8335,19 @@ dependencies = [
  "mio",
  "pin-project-lite",
  "socket2",
+ "tokio-macros",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "tokio-macros"
+version = "2.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "385a6cb71ab9ab790c5fe8d67f1645e6c450a7ce006a33de03daa956cf70a496"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
 ]
 
 [[package]]

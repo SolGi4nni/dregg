@@ -372,6 +372,10 @@ impl BufferCell {
             crate::CommitOutcome::Rejected { reason, .. } => {
                 Err(BufferError::ExecutorRejected(reason))
             }
+            // The world is suspended (meta-debug): the commit staged, did not land.
+            crate::CommitOutcome::Queued { .. } => Err(BufferError::ExecutorRejected(
+                "world suspended: turn queued, not committed".to_string(),
+            )),
         }
     }
 }

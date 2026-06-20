@@ -813,6 +813,23 @@ impl Swarm {
                 self.action_log.push(ao.clone());
                 Err(SwarmError::ExecutorRejected { member: agent, reason })
             }
+            // The world is suspended (meta-debug): the member's turn staged, did not
+            // commit. Surfaced as an executor rejection (fail-closed).
+            CommitOutcome::Queued { .. } => {
+                let reason = "world suspended: turn queued, not committed".to_string();
+                let ao = SwarmActionOutcome {
+                    member: agent,
+                    committed: false,
+                    receipt_hash: None,
+                    height: None,
+                    computrons: 0,
+                    notify_edges: Vec::new(),
+                    notify_refused: Vec::new(),
+                    summary: format!("REFUSED — {reason}"),
+                };
+                self.action_log.push(ao.clone());
+                Err(SwarmError::ExecutorRejected { member: agent, reason })
+            }
         }
     }
 
@@ -1075,6 +1092,22 @@ impl Swarm {
                 self.action_log.push(ao.clone());
                 Err(SwarmError::ExecutorRejected { member: agent, reason })
             }
+            // The world is suspended (meta-debug): the bundle staged, did not commit.
+            CommitOutcome::Queued { .. } => {
+                let reason = "world suspended: bundle queued, not committed".to_string();
+                let ao = SwarmActionOutcome {
+                    member: agent,
+                    committed: false,
+                    receipt_hash: None,
+                    height: None,
+                    computrons: 0,
+                    notify_edges: Vec::new(),
+                    notify_refused: Vec::new(),
+                    summary: format!("ATOMIC bundle REFUSED — {reason}"),
+                };
+                self.action_log.push(ao.clone());
+                Err(SwarmError::ExecutorRejected { member: agent, reason })
+            }
         }
     }
 
@@ -1166,6 +1199,11 @@ impl Swarm {
             CommitOutcome::Rejected { reason, .. } => {
                 Err(SwarmError::ExecutorRejected { member: agent, reason })
             }
+            // The world is suspended (meta-debug): the drain turn staged, not run.
+            CommitOutcome::Queued { .. } => Err(SwarmError::ExecutorRejected {
+                member: agent,
+                reason: "world suspended: drain turn queued, not committed".to_string(),
+            }),
         }
     }
 

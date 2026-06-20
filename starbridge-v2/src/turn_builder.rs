@@ -672,6 +672,7 @@ mod tests {
         let committed = match outcome {
             CommitOutcome::Committed { receipt, .. } => receipt.receipt_hash(),
             CommitOutcome::Rejected { reason, .. } => panic!("commit rejected: {reason}"),
+            CommitOutcome::Queued { .. } => panic!("unexpected queue (world not suspended)"),
         };
         assert_eq!(predicted, committed, "the predicted receipt equals the committed one");
 

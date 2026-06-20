@@ -203,6 +203,11 @@ impl DragValue {
                 // The prediction committed but the live commit did not — surface the
                 // executor's own reason (this is the verification axis, fail-closed).
                 CommitOutcome::Rejected { reason, .. } => DragOutcome::Refused { reason },
+                // The world is suspended (meta-debug): the drag's turn staged, did
+                // not move. Surfaced as a refusal (fail-closed, never faked moved).
+                CommitOutcome::Queued { .. } => DragOutcome::Refused {
+                    reason: "world suspended: turn queued, not committed".to_string(),
+                },
             },
             SimOutcome::Refused { reason, .. } => DragOutcome::Refused { reason },
         }
@@ -433,6 +438,8 @@ fn event_touches(ev: &WorldEvent, id: &CellId) -> bool {
         // turn just moved the image), so the actor of a turn glows too.
         WorldEvent::TurnCommitted { agent, .. } => agent == id,
         WorldEvent::TurnRejected { agent, .. } => agent == id,
+        // A queued turn (suspended world) names its agent — count it as touched.
+        WorldEvent::TurnQueued { agent } => agent == id,
     }
 }
 

@@ -681,6 +681,10 @@ impl FactoryAuthor {
                 child: self.child_id(),
             },
             CommitOutcome::Rejected { reason, .. } => AuthoringOutcome::Refused { reason },
+            // The world is suspended (meta-debug): the turn staged, nothing was born.
+            CommitOutcome::Queued { .. } => AuthoringOutcome::Refused {
+                reason: "world suspended: authoring turn queued, not committed".to_string(),
+            },
         }
     }
 }

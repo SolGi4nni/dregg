@@ -145,6 +145,11 @@ pub mod terminal;
 pub mod token_inspector;
 #[cfg(feature = "embedded-executor")]
 pub mod world;
+// NATIVE WORLD PERSISTENCE (M4 — docs/deos/WORLD-PERSISTENCE-PLAN.md): the
+// durable-image weld onto the node's already-built `dregg-persist` spine (redb
+// commit log + checkpoint⊕overlay recovery). gpui-free, `cargo test`-able.
+#[cfg(feature = "embedded-executor")]
+pub mod persistence;
 
 // THE LIVE INSPECT→ACT LOOP — the Smalltalk inspect→act→inspect keystone: an
 // inspected object shows the messages it understands (its cap-gated affordances)
@@ -177,6 +182,23 @@ pub mod presentable;
 // ReconstructedApproximate). The screenshot keeps the angle, drops the frame. See REHYDRATABLE-SURFACES.md.
 #[cfg(feature = "embedded-executor")]
 pub mod ui_snapshot;
+// THE UI-CELL SUBSTRATE (M3 · reflexive migration §3) — the cockpit's own view-state
+// self-hosted as real dregg cells via the proven BufferCell two-tier split: ViewCell
+// (a view's focus/present-idx camera-aim, free in-memory draft + occasional witnessed
+// SetField commit, revision = backing nonce) is itself Presentable (FocusTarget::ViewCell)
+// so the inspector can inspect ITSELF; WorkspaceCell carries the active-tab selector.
+// `present` stays PURE and reads the COMMITTED (prior-frame) aim — the unit-delay that
+// breaks the reflexive self-cycle. See docs/deos/{REFLEXIVE-MIGRATION,STRATIFIED-FIXPOINT}.md.
+#[cfg(feature = "embedded-executor")]
+pub mod view_cell;
+// THE FRACTAL META-DEBUG (M5 · reflexive migration §4) — suspend the live system,
+// inspect it as an object, recursively (debug the debugger). Suspend=halt-the-live-loop
+// (the World gate + pending queue, distinct from Snapshot=freeze-a-cursor); MetaDebugView
+// impl Presentable over the suspended world (FocusTarget::DebugFrame/World/Cockpit — the
+// one-arm reflexivity); the MetaStack is the lazily-materialized 3-Lisp tower, grounded at
+// the gpui loop. See docs/deos/{FIRMAMENT-REFLEXIVE-SUBSTRATE,REFLEXIVE-MIGRATION,STRATIFIED-FIXPOINT}.md.
+#[cfg(feature = "embedded-executor")]
+pub mod meta_debug;
 #[cfg(feature = "embedded-executor")]
 pub mod cell_inspector;
 #[cfg(feature = "embedded-executor")]
@@ -185,6 +207,14 @@ pub mod receipts_inspector;
 pub mod cap_inspector;
 #[cfg(feature = "embedded-executor")]
 pub mod predicate_composer;
+// THE TRUST PANEL (human-layer M1 · docs/deos/HUMAN-LAYER.md §3) — the WHO-I-AM face
+// (identity card: devices = the current key set, guardians-as-faces = the recovery
+// council with its M-of-N threshold drawn, the KEL/rotation timeline) + the recovery
+// UX (set guardians, "ask your guardians" quorum progress, the cooling window as a
+// safety feature). A gpui-free Presentable over the REAL `dregg_sdk::identity`
+// reflection + cipherclerk, the same shape as the other inspector lanes.
+#[cfg(feature = "embedded-executor")]
+pub mod trust_panel;
 // L1-LANE INSPECTORS/GADGETS (the moldable-inspector multiplicity, all on the spine):
 // turn_builder (effect/call-forest/turn) · predicate_composer (the caveat-language uplift) ·
 // cap_inspector (attenuation/cap-crown) · cell_inspector (deep state) · receipts_inspector
@@ -200,6 +230,12 @@ pub mod settlement_inspector;
 pub mod federation_inspector;
 #[cfg(feature = "embedded-executor")]
 pub mod circuit_inspector;
+// THE CV-BRIDGE (milestone #1): "blame this cell" — ClusterVision's provenance
+// (`cv blame`) wired into the inspector as a Presentable. Bridges EXTERNALLY (cv
+// as the read/query face; no substrate change), degrades honestly when cv is
+// absent. See docs/deos/REFLEXIVE-DISTRIBUTED-IMAGE.md §2.5/§3.3.
+#[cfg(feature = "embedded-executor")]
+pub mod cv_provenance;
 
 #[cfg(feature = "embedded-executor")]
 pub use presentable::{
@@ -209,6 +245,8 @@ pub use presentable::{
     ReflectedCell, Registry, SmState, SmTransition, Spotter, SpotterHit, StateMachineView,
     TimelineEvent, TimelineView, TraceStep, TraceView,
 };
+#[cfg(feature = "embedded-executor")]
+pub use view_cell::{ViewCell, ViewDoc, ViewError, WorkspaceCell};
 
 #[cfg(feature = "embedded-executor")]
 pub use affordance::{
