@@ -84,7 +84,7 @@ pub const DREGG_EFFECTVM_ATTENUATEA_V1_FP: &str =
 pub const DREGG_EFFECTVM_BRIDGEMINT_V1_JSON: &str =
     include_str!("../descriptors/dregg-effectvm-bridgemint-v1.json");
 pub const DREGG_EFFECTVM_BRIDGEMINT_V1_FP: &str =
-    "1e5eae26f6362cb651ea8749e817ad6dd9ad9142c6b2a18cb940b703f5fb6d32";
+    "7fd4ed0d7021982a771030a86d53fa5b3539b0c75a88fbdb25bc33b370853db8";
 pub const DREGG_EFFECTVM_BURN_V1_JSON: &str =
     include_str!("../descriptors/dregg-effectvm-burn-v1.json");
 pub const DREGG_EFFECTVM_BURN_V1_FP: &str =
