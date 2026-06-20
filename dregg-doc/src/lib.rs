@@ -118,6 +118,8 @@ mod threeway;
 mod substrate;
 #[cfg(feature = "substrate")]
 mod doccell;
+#[cfg(feature = "substrate")]
+mod executor_drive;
 
 pub use atom::{Atom, AtomId, Author, PatchId, Provenance, Status};
 pub use blame::{BlameLine, blame, blame_summary};
@@ -129,6 +131,8 @@ pub use depend::{
 pub use substrate::{COLL_ATOMS, COLL_EDGES, COLL_FIELDS, substrate_commit, to_heap_map};
 #[cfg(feature = "substrate")]
 pub use doccell::{DocCell, decode_index, desugar_op_kind, encode_index, project_graph};
+#[cfg(feature = "substrate")]
+pub use executor_drive::{ExecutorDrivenDoc, field_key};
 pub use content::{Alternative, ConflictRegion, Rendered, Segment, content, walk_atoms};
 pub use doc::{Doc, Granularity};
 pub use graph::{DocGraph, FieldAssign};

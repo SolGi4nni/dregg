@@ -52,15 +52,18 @@
 //! path; the receipt is a real `TurnReceipt` whose hashes are the real cell
 //! commitment; provenance is that receipt.
 //!
-//! THE NAMED RESIDUAL (the seam this round does not finish, kept staged-additive
-//! so nothing is half-broken): the edit is assembled directly rather than driven
-//! through the full federated `dregg_turn::TurnExecutor` — so it does NOT yet go
-//! through the executor's permission gate (`check_cross_cell_permission`), the
-//! federation quorum / finality, capability consumption, or the `LedgerJournal`.
-//! That is the cap-gated-editing leg (§3.3) and the finality leg; it is a *drive
-//! the seam* follow-up, not a wall. The receipt's `finality` is therefore
-//! honestly [`Finality::default`] (tentative), and `consumed_capabilities` is
-//! empty (self-sovereign authoring).
+//! SELF-SOVEREIGN vs EXECUTOR-DRIVEN: [`DocCell::edit`] is the *self-sovereign
+//! authoring* path — the author owns the document cell, assembles the receipt
+//! directly, and the receipt's `finality` is honestly `Tentative`,
+//! `consumed_capabilities` empty. The cap-gated-editing leg (§3.3) and the
+//! finality leg are NOT bypassed by hand-waving; they are CLOSED in
+//! [`crate::ExecutorDrivenDoc`] (`executor_drive.rs`), where an edit is built
+//! into a real `dregg_turn::Turn` and run through the genuine
+//! `dregg_turn::TurnExecutor` — cap-gated (`check_cross_cell_permission` refuses
+//! an editor without the per-region cap, in-band), finalized
+//! (`Finality::Final`), and journaled (the executor's `LedgerJournal`). The
+//! remaining tail is the cross-node BFT quorum / federation finality (the
+//! node-layer's job, NOT `dregg-doc`'s).
 
 use crate::atom::{Author, PatchId, Provenance};
 use crate::graph::DocGraph;
