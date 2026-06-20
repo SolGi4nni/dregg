@@ -609,6 +609,38 @@ mod tests {
         assert!(reopened.is_durable());
     }
 
+    /// The same fail-fast guard covers the OTHER two genesis-path mutators
+    /// (`genesis_grant_cap` + `genesis_open_permissions`) — they too would make the
+    /// durable image non-reopenable on a turn-touched cell, so they refuse it.
+    #[test]
+    fn the_sibling_genesis_path_mutators_are_also_guarded_on_a_touched_cell() {
+        let path = scratch_path();
+        let mut w = World::open_with_timestamp(&path, ComputronCosts::zero(), TS)
+            .expect("fresh open of an empty store");
+        let treasury = w.genesis_cell(0x11, 1_000);
+        let sink = w.genesis_cell(0x33, 0);
+        let nonce = w.ledger().get(&treasury).map(|c| c.state.nonce()).unwrap_or(0);
+        let t = bare_turn(treasury, nonce, vec![transfer(treasury, sink, 100)]);
+        assert!(w.commit_turn(t).is_committed(), "the mid-session turn commits");
+        // treasury was TOUCHED by the transfer → both genesis-path mutators refuse.
+        assert_eq!(
+            w.genesis_grant_cap(&treasury, sink),
+            None,
+            "genesis_grant_cap on a turn-touched holder is refused (durable image)"
+        );
+        assert!(
+            !w.genesis_open_permissions(&treasury),
+            "genesis_open_permissions on a turn-touched cell is refused (durable image)"
+        );
+        // A FRESH cell (never touched by a turn) is still mutable at setup — the guard
+        // is narrow (only the unsafe post-turn case), not a blanket refusal.
+        let fresh = w.genesis_cell(0x44, 0);
+        assert!(
+            w.genesis_grant_cap(&fresh, sink).is_some(),
+            "a fresh untouched cell can still receive a genesis grant"
+        );
+    }
+
     #[test]
     fn fork_of_a_durable_world_never_persists() {
         let path = scratch_path();
