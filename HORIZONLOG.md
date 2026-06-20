@@ -11,6 +11,68 @@ reason.)*
 Last sweep: 2026-06-13 (flagged-items burndown — removed ~14 landed/struck items,
 deduped the DreggDL/sel4/snapshot landings into git history, kept live tails).
 
+## ⚡ THE EFFICIENCY WELD — M2 DELTA LOOP (2026-06-19) — LANDED, gate held
+
+`docs/deos/EFFICIENCY-WELD-PLAN.md` §2-§4. The producer (`dynamics().since(cursor)`)
+↔ consumer (gpui render) JOIN is wired: `Cockpit.dynamics_cursor` + `fold_dynamics`
++ the §2.2 variant→invalidation table; a `PresentMemo` (`presentable.rs`, RefCell
+interior-mut) wraps the unchanged-pure `Registry::present` keyed `(focus,viewer)`,
+valid while the live head is unchanged. Per-render projection of an UNCHANGED focus
+is now a cache HIT (O(changed), not the old per-frame O(ledger) `present` rebuild).
+Dynamics-completeness CLOSED: new `WorldEvent::CellMutated{cell}` emitted for
+`IncrementNonce`/`MakeSovereign`/`SetPermissions`/`SetVerificationKey`/
+`AttenuateCapability` (+ `ExerciseViaCapability` recursion) so every committed
+write names its cell (the cache-soundness obligation, §4.1) — proven by the
+`every_cell_naming_effect_names_its_cell` per-effect audit test. GATE: the
+`projection_cost_is_flat_in_cell_count` microbench (n∈{16,256,4096,65536}). Named
+residuals, each with its closure shape:
+
+- **The Entity sub-view split (§2.5) — M2-TAIL, deferred.** gpui still re-runs the
+  whole `Cockpit::render` closure on any `cx.notify()`; splitting into
+  `CellWorldView`/`RailHeaderView`/`InspectorView` Entities (one notify → one pane)
+  is gpui-render granularity, gpui-check-only, NOT headless-benchable. Closure: do it
+  in the cockpit-tabs pass (it does not block the projection gate, which is proven).
+- **The §4.3 residual: `World::state_root` is O(ledger) per height bump.** The BLAKE3
+  view-root re-folds every cell on a commit (the M1 memo only de-dups reads WITHIN a
+  height), so the rail-header root display stays O(ledger) per committing frame.
+  Closure: the `Ledger` already maintains an incremental Merkle `root()`
+  (`ledger.rs`) + a sorted `leaf_positions` index; the view-root can defer to the
+  canonical incremental root when the World adopts `canonical_ledger_root` (M4 root
+  unification). The M2 memo key `(height, receipt_head)` is forward-compatible.
+- **Bench-build O(n²) genesis (test-only seam).** `install_genesis` calls the record
+  tape's per-cell `Ledger::root()` (a full rebuild on each insert), so a sequence of
+  `n` genesis installs is O(n²). The microbench sidesteps it with a `#[cfg(test)]`
+  `World::bench_install_cell` (engine-ledger insert, no tape mirror — sound because
+  the bench never replays). NOT a production gap; the live genesis path is correct.
+- **⚑ TRULY-LAZY / BATCHED LEDGER — LANDED (ember's call, 2026-06-19).** The M2
+  diagnostic exposed it: `Ledger::root()` forced a FULL O(n) Merkle `rebuild_tree()`
+  on every `dirty` read, and a `get_mut` mutation marked dirty — so every internal/UI
+  turn (and `commit_turn`, which roots TWICE for pre/post state hash,
+  `turn/src/executor/execute.rs`) paid O(ledger) hashing even though deos only needs
+  real crypto receipts ON-DEMAND at the network boundary. FIX (`cell/src/ledger.rs`):
+  replaced the coarse `dirty: bool` with a `Pending` enum (`Clean` / `Values(BTreeSet
+  <CellId>)` / `Structural`). A mutation now does ZERO tree work — it only RECORDS
+  what changed (value-touch vs structural-touch). The tree materializes lazily ONLY on
+  `root()`/`membership_proof()` (the publish boundary), with the MINIMAL recompute: a
+  batch of O(k·log n) `update_leaf` when only values changed, a single O(n) rebuild
+  only when the leaf set shifted. `apply_delta` likewise defers (no eager rebuild/
+  update). VERIFIED: `ledger_incremental_root_matches_full_rebuild` (root() ==
+  from-scratch oracle across create→update→create→transfer) + **all 660 `dregg-cell`
+  lib tests green** (Merkle / membership-proof / witness-diff / migration / sovereign
+  paths all exercise the rewired materialize). An internal turn that never publishes a
+  root now pays no hashing. REMAINING (executor side): make `commit_turn`'s pre/post
+  `state_hash` lazy too — a turn "mode" gating whether the receipt/root path runs at
+  all for purely-internal turns (`World`-level seam, the next slice).
+- **SALSA integration — spike, don't blind-adopt (ember asked, 2026-06-19).** Salsa
+  (incremental-recompute: inputs → memoized `#[tracked]` queries → fine-grained
+  auto-invalidation) is a STRONG fit for the PROJECTION/derivation layer — `PresentMemo`
+  + the variant→invalidation table + the M3 self-projection/stratification worry are
+  all hand-rolled Salsa. Porting the projection tree (`present`/`ocap_graph`/
+  `provenance`) to Salsa queries gets auto-invalidation + cycle handling for free.
+  NOT for the executor/ledger (the authoritative, soundness-load-bearing transition
+  stays explicit/verifiable). Closure: a spike porting the moldable-inspector
+  projection tree to Salsa; the hand-rolled memo proves the shape first.
+
 ## 🖥 DEOS DESKTOP / MOLDABLE INSPECTOR (2026-06-19) — the live build-down
 
 The Pharo-moldable inspector epoch (`docs/deos/INSPECTOR-FRAMEWORK.md`, memory `moldable-inspector-epoch`).
@@ -2387,3 +2449,81 @@ faithfulness by careful HUMAN correspondence; there is still no `Satisfied2 ⟺ 
 denotational differential is what makes the human reviews machine-checked + regression-proof). Climb-out unchanged
 in shape, sharper in content: fix legs #1/#2/#3 (memTableFaithful / DeployedCapTree / isLast templates) → build
 the bridge → re-verify rungs. Serious (proofs don't establish deployed soundness until done) but BOUNDED.
+
+---
+
+## DOCUMENT LANGUAGE — the dreggverse patch-theory document core (2026-06-19)
+
+NEW: the `dregg-doc` crate (`dregg-doc/`, standalone workspace, dependency-free) — the Pijul-shaped
+patch-theory core of the document language (`docs/deos/DOCUMENT-LANGUAGE.md`). A document is a
+`DocGraph` of alive/dead content atoms (+ provenance) with order-edges + a single-valued field store;
+a `Patch` is `Add`/`Delete`(tombstone)/`Connect`/`SetField` with `apply`/`compose`/`invert` (RCCS
+reversibility); `merge` is the total join/LUB (the colimit-by-union the pushout computes); a conflict is a first-class `ConflictRegion`
+(prose antichain OR field clash) carrying provenance; `History` is content-as-patch-fold with
+`replay`/`replay_to` (time-travel) + `branch`/`stitch` (the pushout into the shared doc); the `Regime`
+classifier splits illusory (prose) from real (field/authority) conflicts. 31 unit tests + 1 doctest
+green; clippy clean.
+
+LANDED (the §4.4 RESEARCH #1 proof, in LEAN): `metatheory/Dregg2/Deos/DocMerge.lean` —
+**the document `merge` IS the least-upper-bound (the JOIN) in the document inclusion order `⊑`** —
+the least-upper-bound join that the pushout *computes* in the Pijul model (NOT "the categorical
+pushout"; see the MINTED audit lesson below): `merge_comm`/`merge_assoc`/`merge_idem`/`merge_total`
++ the universal property `merge_least`/`merge_is_lub` (the least graph including both legs;
+`merge_includes_left`/`merge_includes_right` = the cocone legs); conflict-as-state (`ConflictAt`
+antichain over **transitive reachability** `Reaches` = the refl-trans closure matching
+`content.rs::reachable`, `merge_has_conflict` concrete witness, `resolve_collapses`); the two-regime
+split connected to `Confluence.IConfluent` (`prose_iconfluent` vs `field_not_iconfluent`).
+`#assert_axioms`-clean, `#guard` teeth; `lake build Dregg2.Deos.DocMerge` green; registered in the
+`Dregg2.Deos` crown (`lake build Dregg2.Deos` green).
+
+MINTED (audit lesson, "rise to meet the claim"): the earlier DocMerge OVERCLAIMED ("THE categorical
+pushout up to unique iso") and modelled the atom merge as a naive **Finset struct-union** — the WRONG
+operation: it never applied the Dead-wins status join, so a deleted atom could resurrect on merge. The
+AUDIT caught it. The FIX: the atom store is now a KEYED MAP (`AtomId → Option AtomVal`) and `merge`
+applies `Status.join` POINTWISE (`merge_status_dead_wins` is the proof). Two corrections in one breath:
+(1) honest framing — it proves the LUB/join the pushout computes, NOT the categorical construction (the
+category `P`, the span, functoriality = the named residual); (2) the conflict relation now uses
+transitive reachability (`Reaches`), not a one-hop shadow.
+
+LANDED (this session, Rust — `dregg-doc/`): the §4.4 RESEARCH #2 conflict-as-state SOUNDNESS is now
+BUILT, plus the substrate ride and the authoring path. 56 tests + 1 doctest green with
+`--features substrate`.
+- (a) **The conflict-as-state COMMITMENT** (`dregg-doc/src/commit.rs`): `commit()` binds atoms + edges
+  + fields WITH provenance into the document commitment. The anti-forge tooth is TESTED — forging or
+  dropping a conflict alternative changes the commitment (a light client can't be shown a conflict that
+  hides a forged/omitted alternative).
+- (b) **The REAL substrate ride** (`dregg-doc/src/substrate.rs`, behind the `substrate` feature):
+  projects the `DocGraph` into a real cell `heap_map` and commits via the production sorted-Poseidon2
+  `compute_heap_root` — the anti-forge tooth RE-PROVEN against the REAL root, not the `DefaultHasher`
+  stand-in.
+- (c) **The ergonomic authoring path** (`dregg-doc/src/doc.rs`): `Doc::edit(author, text)` diffs
+  text → patches via token-LCS at Line/Word granularity, with the duplicate-token stable-id fix
+  (inserted atoms are predecessor-seeded so repeated tokens stay distinct).
+
+RESIDUALS / next:
+- The DocMerge full categorical-pushout construction (the category `P`, the span `a ← a⊓b → b`,
+  functoriality, unique-iso) is the named residual; the Lean proves the executable consequence — the
+  least-upper-bound / colimit object the pushout computes.
+
+## 🟥 LIVE HOLE CONFIRMED (2026-06-19, a17f3278) — scalar conservation forges value ACROSS ASSETS (fail-open)
+
+The HORIZONLOG ~2267 CONFIRM-AT-SETTLE resolves: multi-asset atomic turns ARE reachable → LIVE HOLE.
+VERIFIED at source (atomic.rs:610 read directly): `let net_excess: i64 = proven_deltas.iter().sum(); if
+net_excess != 0 {Err}`. ZERO asset keying. The deltas come from extract_net_delta (trace.rs:1429) = a bare i64
+from one (NET_DELTA_MAG, NET_DELTA_SIGN) PI pair — NO asset field in the PI. atomic.rs has zero token_id refs.
+- REACHABLE: AtomicSovereignTurn/MixedAtomicTurn carry Vec<AtomicProofEntry> with unconstrained per-entry
+  cell_id; no guard requires shared token_id; multi-cell atomic turns are tested (atomic.rs:2019).
+- FORGING TURN: entry A (asset 7, NET_DELTA −10, individually valid) + entry B (asset 8, +10, valid) →
+  proven_deltas=[−10,+10], net_excess=0 → ACCEPTED. Asset 7 destroyed, asset 8 minted from nothing.
+- FAIL-OPEN: the check is OFF-AIR (plain Rust executor arithmetic, NOT a verified constraint) → a light client
+  verifying the published per-cell proofs cannot detect it; nothing in-circuit re-derives Σδ=0 per asset.
+- The correct per-asset machinery EXISTS but is UNWIRED: block_conservation.rs (untracked ??, its own doc says
+  "NOT invoked by the deployed verifier") + cross_cell_conservation_air.rs (the proven per-asset Σδ=0 AIR, asset
+  pinned in PI). Lean Spec/Conservation.lean:21-46 is per-domain-independent — the deployed Rust collapses it to
+  one asset-blind scalar. The conservation≠correctness trap, literally (a PROJECTION mistaken for soundness).
+FIX (driving): replace the scalar sum at atomic.rs:609-612 + the mixed site ~890-897 with a per-asset collector
+keyed by entry.cell_id's AssetId (:=issuer-cell), feeding PerCellContribution + declared mint/burn rows into
+BlockConservation::prove_and_verify so each asset's Σδ=0 is IN-AIR + independent; same handoff at
+proof_verify.rs::verify_proof_carrying_turn_bundle + the FullTurnWitness.conservation:None slot
+(turn_proving.rs:843/1101/2244). Prereq: COMMIT block_conservation.rs + add asset class to the per-cell PI (or
+derive trustworthily from cell_id at the collector) so the partition pin is genuine not an off-AIR annotation.
