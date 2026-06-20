@@ -115,9 +115,22 @@ transfer fallback). -/
 def v3RegistryHeap : List (String × EffectVmDescriptor2) :=
   Dregg2.Circuit.Emit.CapOpenEmit.v3RegistryCapOpen
     ++ [("heapWriteVmDescriptor2R24",
-         Dregg2.Circuit.RotatedKernelRefinementExercise.heapWriteV3)]
+         Dregg2.Circuit.RotatedKernelRefinementExercise.heapWriteV3),
+        -- The WRITE-FORCING cap-open wrappers (positions 46..49): the fan-out cap-open authority
+        -- appendix over the MOVING write base (`grantCapWriteV3`/`introduceWriteV3`/`delegateAttenV3`/
+        -- `revokeDelegationWriteV3`), so the DEPLOYED descriptor FORCES the cap-tree write (guarantee A),
+        -- not just the authority read. `actionTagToPos` re-keys tags 1/10/11/14 here; the authority-only
+        -- wrappers at positions 36..38 + the shared 39 stay for tag 2 (revoke) + the live prover route.
+        ("delegateWriteCapOpenVmDescriptor2R24",
+         Dregg2.Circuit.Emit.CapOpenEmit.delegateWriteCapOpenV3),
+        ("introduceWriteCapOpenVmDescriptor2R24",
+         Dregg2.Circuit.Emit.CapOpenEmit.introduceWriteCapOpenV3),
+        ("delegateAttenWriteCapOpenVmDescriptor2R24",
+         Dregg2.Circuit.Emit.CapOpenEmit.delegateAttenWriteCapOpenV3),
+        ("revokeDelegationWriteCapOpenVmDescriptor2R24",
+         Dregg2.Circuit.Emit.CapOpenEmit.revokeDelegationWriteCapOpenV3)]
 
-theorem v3RegistryHeap_length : v3RegistryHeap.length = 46 := by
+theorem v3RegistryHeap_length : v3RegistryHeap.length = 50 := by
   simp [v3RegistryHeap, Dregg2.Circuit.Emit.CapOpenEmit.v3RegistryCapOpen_length]
 
 /-- The heapWrite member lands at tail position 45 — `Rfix 56` resolves THERE. -/
@@ -131,10 +144,10 @@ declaration order (which is NOT `actionTag` order). Effects with no own rotated 
 (→ the transfer fallback in `Rfix`). -/
 def actionTagToPos : EffectIdx → Nat
   | 0  => 0    -- transfer        → transferVmDescriptor2R24
-  | 1  => 36   -- delegate        → delegateCapOpenVmDescriptor2R24 (FAN-OUT: the LIVE cap-open authority
-               --                   descriptor — delegateAtten base + the EFF_DELEGATION_OPS submask
-               --                   appendix; the deployed prover routes it AND the apex authority leg
-               --                   forces authorizedFacetEffB … (1 <<< EFF_DELEGATION_OPS))
+  | 1  => 46   -- delegate        → delegateWriteCapOpenVmDescriptor2R24 (FAN-OUT WRITE: the cap-open
+               --                   authority appendix over the MOVING `grantCapWriteV3` base, so the
+               --                   DEPLOYED descriptor FORCES the cap-tree insert write — guarantee A —
+               --                   AND the authority leg forces authorizedFacetEffB … (1 <<< EFF_DELEGATION_OPS))
   | 2  => 39   -- revoke          → revokeCapOpenVmDescriptor2R24 (FAN-OUT: revokeDelegation base +
                --                   EFF_DELEGATION_OPS appendix)
   | 3  => 2    -- mint            → mintVmDescriptor2R24
@@ -144,14 +157,18 @@ def actionTagToPos : EffectIdx → Nat
   | 7  => 13   -- incrementNonce  → incrementNonceVmDescriptor2R24
   | 8  => 8    -- setPermissions  → setPermsVmDescriptor2R24
   | 9  => 9    -- setVK           → setVKVmDescriptor2R24
-  | 10 => 37   -- introduce       → introduceCapOpenVmDescriptor2R24 (FAN-OUT: introduce base +
-               --                   EFF_INTRODUCE appendix; the BEACHHEAD — clean single bit)
-  | 11 => 38   -- delegateAtten   → grantCapCapOpenVmDescriptor2R24 (FAN-OUT: grantCap base [=
-               --                   attenuate/delegateAtten base] + EFF_GRANT_CAPABILITY appendix)
+  | 10 => 47   -- introduce       → introduceWriteCapOpenVmDescriptor2R24 (FAN-OUT WRITE: introduce
+               --                   WRITE base `introduceWriteV3` + EFF_INTRODUCE appendix; the cap-tree
+               --                   insert FORCED on the moving genuine face — guarantee A circuit-forced)
+  | 11 => 48   -- delegateAtten   → delegateAttenWriteCapOpenVmDescriptor2R24 (FAN-OUT WRITE:
+               --                   `delegateAttenV3` write base + EFF_GRANT_CAPABILITY appendix; the
+               --                   insert + the `granted ⊑ held` non-amp FORCED — guarantee A circuit-forced)
   | 12 => 43   -- attenuate       → attenuateCapOpenEffVmDescriptor2R24 (F5: the LIVE IN-CIRCUIT
                --                   authority descriptor — the genuine-submask + decoded-tier cap-open
                --                   the deployed prover routes AND the apex authority leg refines)
-  | 14 => 39   -- revokeDelegation→ revokeCapOpenVmDescriptor2R24 (FAN-OUT: shares the revoke fan-out)
+  | 14 => 49   -- revokeDelegation→ revokeDelegationWriteCapOpenVmDescriptor2R24 (FAN-OUT WRITE:
+               --                   `revokeDelegationWriteV3` remove base + EFF_DELEGATION_OPS appendix;
+               --                   the cap-tree REMOVE FORCED on the moving genuine face — guarantee A)
   | 16 => 10   -- exercise        → exerciseVmDescriptor2R24
   | 17 => 22   -- createCell      → createCellVmDescriptor2R24
   | 18 => 23   -- factory         → factoryVmDescriptor2R24
@@ -231,17 +248,21 @@ tag's VALUE/`ClosedLog` rung — carried `Satisfied2 hash (Rfix <tag>)`-parametr
 `ClosureFanoutGenuine` — composes verbatim over the re-keyed descriptor (the base columns the readout
 reads are unchanged; the trace merely carries the extra appendix columns). -/
 
-/-- delegate (tag 1) routes to the LIVE delegate fan-out cap-open (`delegateCapOpenV3`, position 36). -/
-theorem Rfix_delegate_capOpen : Rfix 1 = Dregg2.Circuit.Emit.CapOpenEmit.delegateCapOpenV3 := rfl
+/-- delegate (tag 1) routes to the WRITE-FORCING delegate fan-out cap-open (`delegateWriteCapOpenV3`,
+position 46) — the cap-tree insert FORCED, guarantee A circuit-bound. -/
+theorem Rfix_delegate_capOpen : Rfix 1 = Dregg2.Circuit.Emit.CapOpenEmit.delegateWriteCapOpenV3 := rfl
 /-- revoke (tag 2) routes to the LIVE revoke fan-out cap-open (`revokeCapOpenV3`, position 39). -/
 theorem Rfix_revoke_capOpen : Rfix 2 = Dregg2.Circuit.Emit.CapOpenEmit.revokeCapOpenV3 := rfl
-/-- introduce (tag 10) routes to the LIVE introduce fan-out cap-open (`introduceCapOpenV3`, position 37);
-the BEACHHEAD. -/
-theorem Rfix_introduce_capOpen : Rfix 10 = Dregg2.Circuit.Emit.CapOpenEmit.introduceCapOpenV3 := rfl
-/-- delegateAtten (tag 11) routes to the LIVE grantCap fan-out cap-open (`grantCapCapOpenV3`, pos 38). -/
-theorem Rfix_grantCap_capOpen : Rfix 11 = Dregg2.Circuit.Emit.CapOpenEmit.grantCapCapOpenV3 := rfl
-/-- revokeDelegation (tag 14) shares the revoke fan-out cap-open (`revokeCapOpenV3`, position 39). -/
-theorem Rfix_revokeDelegation_capOpen : Rfix 14 = Dregg2.Circuit.Emit.CapOpenEmit.revokeCapOpenV3 := rfl
+/-- introduce (tag 10) routes to the WRITE-FORCING introduce fan-out cap-open (`introduceWriteCapOpenV3`,
+position 47); the cap-tree insert FORCED on the moving genuine face. -/
+theorem Rfix_introduce_capOpen : Rfix 10 = Dregg2.Circuit.Emit.CapOpenEmit.introduceWriteCapOpenV3 := rfl
+/-- delegateAtten (tag 11) routes to the WRITE-FORCING delegateAtten fan-out cap-open
+(`delegateAttenWriteCapOpenV3`, pos 48) — the insert + `granted ⊑ held` non-amp FORCED. -/
+theorem Rfix_grantCap_capOpen : Rfix 11 = Dregg2.Circuit.Emit.CapOpenEmit.delegateAttenWriteCapOpenV3 := rfl
+/-- revokeDelegation (tag 14) routes to the WRITE-FORCING revokeDelegation fan-out cap-open
+(`revokeDelegationWriteCapOpenV3`, position 49) — the cap-tree REMOVE FORCED on the moving genuine face. -/
+theorem Rfix_revokeDelegation_capOpen :
+    Rfix 14 = Dregg2.Circuit.Emit.CapOpenEmit.revokeDelegationWriteCapOpenV3 := rfl
 /-- refreshDelegation (tag 55) routes to the LIVE refresh fan-out cap-open (`refreshDelegationCapOpenV3`,
 position 40). -/
 theorem Rfix_refreshDelegation_capOpen :
