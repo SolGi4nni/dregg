@@ -104,6 +104,7 @@ pub mod lean_apply;
 pub mod lean_shadow;
 pub mod pending;
 pub mod presence_discharge;
+pub mod reversible;
 pub mod rotation_witness;
 pub mod routing;
 pub mod turn;
@@ -169,6 +170,10 @@ pub use dregg_cell::{Precondition, Preconditions, PreconditionsBuilder};
 pub use presence_discharge::{
     PresenceCaveat as PresenceCapCaveat, PresenceClaimRequirement, PresenceDischarge,
     PresenceDischargeError, verify_presence_discharge,
+};
+pub use reversible::{
+    changed_cells, ledgers_agree_modulo_nonce, CommittedReason, Inversion, InvertError,
+    ReversibleError, ReversibleHistory, ReversibleStep,
 };
 pub use routing::{IntroductionExport, RoutingDirective};
 pub use turn::{

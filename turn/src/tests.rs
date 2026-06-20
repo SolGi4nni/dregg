@@ -7856,24 +7856,24 @@ fn setup_sovereign_cell_for_proof_test() -> (Ledger, CellId, CellId, [u8; 32]) {
     // Create a cell, then make it sovereign.
     let (sovereign_cell, _) = make_open_cell(10, 5000);
     let sovereign_id = sovereign_cell.id();
-    // Compute the 4-felt Poseidon2 CellState commitment and pack it into 32 bytes.
-    // This matches the format that TurnExecutor::commitment_to_4bb reads back, and
-    // matches what EffectVmAir puts into PI[OLD_COMMIT_BASE..+4] via
-    // CellState::compute_commitment_4 (resolves Silver-Vision bug #99).
+    // Compute the 8-felt Poseidon2 CellState commitment and pack it into 32 bytes
+    // (Phase C: 4->8 felts, ~62 -> ~124-bit collision floor). This matches the
+    // format that TurnExecutor::commitment_to_8bb reads back, and what EffectVmAir
+    // puts into PI[OLD_COMMIT_BASE..+8] via CellState::compute_commitment_8.
     let vm_state = dregg_circuit::CellState::new(
         // signed-wells (ac01f9b7b): cell balance is i64; the circuit VM domain
         // takes u64. This sovereign cell is ordinary (non-negative) — checked.
         u64::try_from(sovereign_cell.state.balance()).unwrap(),
         sovereign_cell.state.nonce() as u32,
     );
-    let commit_4bb = dregg_circuit::CellState::compute_commitment_4(
+    let commit_8bb = dregg_circuit::CellState::compute_commitment_8(
         vm_state.balance,
         vm_state.nonce,
         &vm_state.fields,
         vm_state.capability_root,
         vm_state.record_digest,
     );
-    let commitment = TurnExecutor::commitment_4bb_to_bytes(commit_4bb);
+    let commitment = TurnExecutor::commitment_8bb_to_bytes(commit_8bb);
     ledger.insert_cell(sovereign_cell).unwrap();
     // Override the stored commitment with the 4-felt-packed Poseidon2 value.
     let _ = ledger.make_sovereign(&sovereign_id).unwrap();
@@ -7907,9 +7907,9 @@ fn generate_valid_sovereign_proof(
 /// Generate a valid Effect VM proof and return (proof_bytes, new_commitment_bytes).
 ///
 /// The `old_commitment` is a 32-byte value previously stored via
-/// `TurnExecutor::commitment_4bb_to_bytes` (4 LE u32 felts in bytes 0..15).
-/// The returned `new_commitment` is in the same format, ready to be stored in the
-/// ledger and verified by `TurnExecutor::commitment_to_4bb`.
+/// `TurnExecutor::commitment_8bb_to_bytes` (8 LE u32 felts across all 32 bytes,
+/// Phase C). The returned `new_commitment` is in the same format, ready to be
+/// stored in the ledger and verified by `TurnExecutor::commitment_to_8bb`.
 // V1 hand-AIR proof helper (`EffectVmAir`): consumed only by the `not(prover)`-gated v1
 // sovereign tests. Compiled out under `prover` (the tower proves rotated).
 #[cfg(not(feature = "prover"))]
@@ -7958,14 +7958,15 @@ fn generate_sovereign_transfer_proof_for_turn(
     use dregg_circuit::stark::{proof_to_bytes, prove};
     use dregg_circuit::{EffectVmAir, generate_effect_vm_trace};
 
-    // Decode the old 4-felt commitment from the stored 32 bytes.
-    // The stored format is 4 LE u32 values in bytes 0..15 (written by commitment_4bb_to_bytes).
-    // We create a CellState with the correct balance/nonce so that compute_commitment_4
-    // reproduces the same 4 felts — the AIR will then accept them as the old-state PI.
-    // NOTE: we do NOT override state_commitment directly; instead we construct the CellState
-    // so that CellState::compute_commitment_4 matches old_commitment's packed felts.
-    // For the test (balance=5000, nonce=0, all fields ZERO), the default CellState::new
-    // is already consistent.
+    // Decode the old 8-felt commitment from the stored 32 bytes (Phase C).
+    // The stored format is 8 LE u32 values across all 32 bytes (written by
+    // commitment_8bb_to_bytes). We create a CellState with the correct
+    // balance/nonce so that compute_commitment_8 reproduces the same 8 felts —
+    // the AIR will then accept them as the old-state PI. NOTE: we do NOT override
+    // state_commitment directly; instead we construct the CellState so that
+    // CellState::compute_commitment_8 matches old_commitment's packed felts.
+    // For the test (balance=5000, nonce=0, all fields ZERO), the default
+    // CellState::new is already consistent.
     let initial_state = CellState::new(initial_balance, 0);
 
     // Generate a transfer of 100 outgoing.
@@ -7976,15 +7977,13 @@ fn generate_sovereign_transfer_proof_for_turn(
 
     let (_shape_trace, shape_public_inputs) = generate_effect_vm_trace(&initial_state, &effects);
 
-    // Extract the 4-felt new commitment from PI[NEW_COMMIT_BASE..+4] and pack
-    // into 32 bytes using the same format as commitment_4bb_to_bytes.
-    let new_commit_4 = [
-        shape_public_inputs[pi::NEW_COMMIT_BASE],
-        shape_public_inputs[pi::NEW_COMMIT_BASE + 1],
-        shape_public_inputs[pi::NEW_COMMIT_BASE + 2],
-        shape_public_inputs[pi::NEW_COMMIT_BASE + 3],
-    ];
-    let new_commitment = TurnExecutor::commitment_4bb_to_bytes(new_commit_4);
+    // Extract the 8-felt new commitment from PI[NEW_COMMIT_BASE..+8] and pack
+    // into 32 bytes using the same format as commitment_8bb_to_bytes (Phase C).
+    let mut new_commit_8 = [dregg_circuit::field::BabyBear::ZERO; 8];
+    for (i, slot) in new_commit_8.iter_mut().enumerate() {
+        *slot = shape_public_inputs[pi::NEW_COMMIT_BASE + i];
+    }
+    let new_commitment = TurnExecutor::commitment_8bb_to_bytes(new_commit_8);
 
     let mut proof_turn = turn.clone();
     proof_turn.execution_proof = None;

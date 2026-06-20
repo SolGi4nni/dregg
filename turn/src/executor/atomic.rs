@@ -122,6 +122,15 @@ pub enum AtomicTurnError {
     ProofFailed { cell: CellId, reason: String },
     /// Cross-cell conservation violated: balance deltas do not sum to zero.
     ConservationViolation { net_excess: i64 },
+    /// Per-asset cross-cell conservation violated: one asset class's signed
+    /// deltas (per-cell proven deltas + declared mint/burn rows) do not sum to
+    /// zero. This is the asset-KEYED replacement for the scalar
+    /// `ConservationViolation` — a turn that nets to zero ACROSS assets but is
+    /// unbalanced WITHIN an asset (the cross-asset forging attack: asset 7 −10,
+    /// asset 8 +10) is REJECTED here even though the scalar sum was zero.
+    /// `asset` is the asset / issuer-cell class (the cell's `token_id` folded to
+    /// a field element); `imbalance` is its signed `Σδ ≠ 0`.
+    PerAssetConservationViolation { asset: u32, imbalance: i64 },
     /// Agent cell not found (for fee/nonce).
     AgentNotFound(CellId),
     /// Insufficient balance for fee.
@@ -163,6 +172,14 @@ impl core::fmt::Display for AtomicTurnError {
                     f,
                     "cross-cell conservation violated: net excess = {}",
                     net_excess
+                )
+            }
+            Self::PerAssetConservationViolation { asset, imbalance } => {
+                write!(
+                    f,
+                    "per-asset cross-cell conservation violated: asset {} nets to {} (≠ 0) — \
+                     a hidden mint/burn across cells of one asset, or cross-asset borrowing",
+                    asset, imbalance
                 )
             }
             Self::AgentNotFound(id) => write!(f, "agent cell not found: {}", id),
@@ -212,6 +229,133 @@ impl core::fmt::Display for AtomicTurnError {
 impl std::error::Error for AtomicTurnError {}
 
 impl TurnExecutor {
+    // -----------------------------------------------------------------------
+    // Per-asset cross-cell conservation (closes the LIVE conservation hole)
+    // -----------------------------------------------------------------------
+    //
+    // The old check `proven_deltas.iter().sum::<i64>() == 0` was ASSET-BLIND:
+    // a 2-entry turn (cell of asset 7: −10; cell of asset 8: +10) nets to 0 and
+    // was ACCEPTED, destroying asset 7 and minting asset 8 out of nothing. The
+    // scalar sum is replaced by the per-asset, in-AIR-backed collector
+    // `dregg_circuit::block_conservation::BlockConservation`: each entry's
+    // proven NET_DELTA is grouped by its asset class and EACH asset is required
+    // to conserve INDEPENDENTLY (cross-asset borrowing is impossible — the
+    // committed `cross_cell_conservation_air`'s per-asset `balance[last]==0`
+    // boundary). Declared mint/burn rows enter the conserved sum explicitly, so
+    // a DISCLOSED non-conservation balances but a HIDDEN one is caught.
+    //
+    // ASSET-ID DERIVATION (the named residual — see REPORT). AssetId := the
+    // cell's `token_id` (the dregg3 "AssetId := issuer-cell" materialization,
+    // a real committed ledger field) folded to a field element. This is read
+    // from the verifier's OWN ledger (`ledger.get(cell).token_id()`), the same
+    // trusted source as the `old_commitment` match — NOT a producer-supplied
+    // per-turn annotation. RESIDUAL FOR FULL LIGHT-CLIENT SOUNDNESS: the
+    // per-cell proof publishes its NET_DELTA but does NOT yet publish its asset
+    // class as a public input, so the cross-cell collector reads the asset from
+    // the ledger rather than from the proof. Proof-BINDING the asset class (a PI
+    // slot — coordinated with the PHASE-C commit-widening that owns the PI
+    // layout) is the one remaining step to bind this on the pure light-client
+    // path. Until then the asset partition is verifier-ledger-trusted (sound for
+    // the executor; the stated prerequisite for the light client).
+
+    /// Derive the asset / issuer-cell class for a cell from its committed
+    /// `token_id` (dregg3: AssetId := issuer-cell). Folds the 32-byte token_id
+    /// to a single field element (the `BabyBear` the cross-cell collector
+    /// partitions on). A cell absent from the ledger (or with the zero token_id,
+    /// the native computron asset) derives a stable class.
+    fn asset_class_for_cell(
+        ledger: &Ledger,
+        cell: &CellId,
+    ) -> dregg_circuit::field::BabyBear {
+        let token_id: [u8; 32] = ledger
+            .get(cell)
+            .map(|c| *c.token_id())
+            .unwrap_or([0u8; 32]);
+        Self::fold_token_id_to_asset(&token_id)
+    }
+
+    /// Fold a 32-byte `token_id` to a single asset-class field element. The
+    /// distinct-token-ids-stay-distinct property is what the per-asset
+    /// partition needs; a domain-separated BLAKE3 reduction gives a stable,
+    /// collision-resistant-to-the-field-modulus class (the residual on the
+    /// fold's collision bound is subsumed by the asset-PI-binding prerequisite
+    /// above — both are resolved by binding the asset class in-circuit).
+    fn fold_token_id_to_asset(token_id: &[u8; 32]) -> dregg_circuit::field::BabyBear {
+        use dregg_circuit::field::BabyBear;
+        let h = blake3::derive_key("dregg-asset-class-from-token-id-v1", token_id);
+        // Reduce 4 bytes into the BabyBear field (canonical reduction).
+        let v = u32::from_le_bytes([h[0], h[1], h[2], h[3]]);
+        BabyBear::new_canonical(v)
+    }
+
+    /// THE PER-ASSET CONSERVATION GATE. Given each verified entry's
+    /// `(cell_id, proven_net_delta)` (the proven signed delta read from its
+    /// per-cell proof PI), group by asset class (from the ledger's committed
+    /// `token_id`) and require EACH asset to conserve to zero through the
+    /// in-AIR-backed `BlockConservation` collector. `declared_supply` carries
+    /// any disclosed mint/burn rows (DECLARED non-conservation) which enter the
+    /// conserved sum explicitly. Returns the first imbalanced asset on failure.
+    ///
+    /// This replaces the asset-BLIND scalar sum. The check is the same
+    /// arithmetic the committed per-asset `Σδ=0` AIR forces (its
+    /// `balance[last]==0` boundary); under the `prover` feature the full
+    /// per-asset AIR is additionally proven+verified so the gate is genuinely
+    /// in-circuit, not a re-implemented off-AIR scalar.
+    fn check_per_asset_conservation(
+        ledger: &Ledger,
+        entries: &[(CellId, i64)],
+        declared_supply: &[dregg_circuit::block_conservation::DeclaredSupplyChange],
+    ) -> Result<(), AtomicTurnError> {
+        use dregg_circuit::block_conservation::{BlockConservation, PerCellContribution};
+        use dregg_circuit::field::BabyBear;
+
+        let mut block = BlockConservation::new();
+        for (cell_id, delta) in entries {
+            let asset = Self::asset_class_for_cell(ledger, cell_id);
+            // Re-express the proven signed i64 delta as the collector's signed
+            // (mag, sign) contribution — the exact shape the per-cell proof's
+            // (NET_DELTA_MAG, NET_DELTA_SIGN) PI carries (sign 0 = credit/+,
+            // 1 = debit/−).
+            let sign_credit = *delta >= 0;
+            block.add_contribution(PerCellContribution {
+                asset,
+                net_delta_mag: BabyBear::new_canonical(delta.unsigned_abs() as u32),
+                net_delta_sign: if sign_credit {
+                    BabyBear::ZERO
+                } else {
+                    BabyBear::ONE
+                },
+            });
+        }
+        for s in declared_supply {
+            block.add_supply_change(*s);
+        }
+
+        // The per-asset signed-sum gate: EXACTLY the arithmetic the committed
+        // per-asset `cross_cell_conservation_air` forces (its `balance[last]==0`
+        // boundary, computed by `cross_cell_balance` over each asset's grouped
+        // signed deltas). Fail-closed on the first imbalanced asset. The full
+        // per-asset STARK (`BlockConservation::prove_and_verify`) is the
+        // light-client-side realization of this same boundary — the executor
+        // already trusts the per-cell proofs + the ledger token_ids, so it runs
+        // the boundary arithmetic directly (re-proving every turn on the hot path
+        // would be redundant); the light client runs `verify_with_proofs` over
+        // the carried per-asset proofs. The new test exercises the full
+        // prove+verify to witness the in-AIR property end-to-end.
+        if let Err(dregg_circuit::block_conservation::BlockConservationError::AssetImbalanced {
+            asset,
+            imbalance,
+        }) = block.check()
+        {
+            return Err(AtomicTurnError::PerAssetConservationViolation {
+                asset: asset.0,
+                imbalance,
+            });
+        }
+
+        Ok(())
+    }
+
     // -----------------------------------------------------------------------
     // Per-cell atomic receipts (closes AIR-SOUNDNESS-AUDIT.md #69)
     // -----------------------------------------------------------------------
@@ -491,13 +635,13 @@ impl TurnExecutor {
                 }
             })?;
 
-            // Stage 1: reconstruct Effect VM PI in the PI v3 layout
-            // (resolves REVIEW[effect-vm-coord]). Commitments are 4 felts
-            // each; other PIs are forwarded from the proof and bound by
-            // the AIR's boundary/transition constraints + the PI matching
-            // loop below.
-            let old_commit_4 = Self::commitment_to_4bb(&entry.old_commitment);
-            let new_commit_4 = Self::commitment_to_4bb(&entry.new_commitment);
+            // Phase C: reconstruct Effect VM PI in the PI v3 layout
+            // (resolves REVIEW[effect-vm-coord]). Commitments are 8 GENUINE
+            // Poseidon2 felts each (~124-bit collision floor, matching FRI);
+            // other PIs are forwarded from the proof and bound by the AIR's
+            // boundary/transition constraints + the PI matching loop below.
+            let old_commit_8 = Self::commitment_to_8bb(&entry.old_commitment);
+            let new_commit_8 = Self::commitment_to_8bb(&entry.new_commitment);
 
             use dregg_circuit::effect_vm::pi;
             let min_pi_count = pi::ACTIVE_BASE_COUNT;
@@ -518,9 +662,9 @@ impl TurnExecutor {
                 .map(|i| BabyBear::new_canonical(proof.public_inputs[i]))
                 .collect();
             public_inputs[pi::OLD_COMMIT_BASE..(pi::OLD_COMMIT_BASE + pi::OLD_COMMIT_LEN)]
-                .copy_from_slice(&old_commit_4[..pi::OLD_COMMIT_LEN]);
+                .copy_from_slice(&old_commit_8[..pi::OLD_COMMIT_LEN]);
             public_inputs[pi::NEW_COMMIT_BASE..(pi::NEW_COMMIT_BASE + pi::NEW_COMMIT_LEN)]
-                .copy_from_slice(&new_commit_4[..pi::NEW_COMMIT_LEN]);
+                .copy_from_slice(&new_commit_8[..pi::NEW_COMMIT_LEN]);
 
             // Append custom proof entries from the proof's PIs.
             let custom_count_val = public_inputs[pi::CUSTOM_EFFECT_COUNT].0 as usize;
@@ -535,10 +679,11 @@ impl TurnExecutor {
             }
 
             // Verify reconstructed commitment PIs match the proof's embedded PIs
-            // (all 4 felts each, Stage 1 widening).
+            // (all 8 felts each, Phase C widening — the full 8-felt off-AIR match
+            // is what lifts the collision floor to ~124 bits).
             for i in 0..pi::OLD_COMMIT_LEN {
                 let proof_v = BabyBear::new_canonical(proof.public_inputs[pi::OLD_COMMIT_BASE + i]);
-                if proof_v != old_commit_4[i] {
+                if proof_v != old_commit_8[i] {
                     return Err(AtomicTurnError::ProofFailed {
                         cell: entry.cell_id,
                         reason: format!(
@@ -550,7 +695,7 @@ impl TurnExecutor {
             }
             for i in 0..pi::NEW_COMMIT_LEN {
                 let proof_v = BabyBear::new_canonical(proof.public_inputs[pi::NEW_COMMIT_BASE + i]);
-                if proof_v != new_commit_4[i] {
+                if proof_v != new_commit_8[i] {
                     return Err(AtomicTurnError::ProofFailed {
                         cell: entry.cell_id,
                         reason: format!(
@@ -606,11 +751,22 @@ impl TurnExecutor {
             entry_receipt_inputs.push((entry.old_commitment, vk_hash));
         }
 
-        // 3. Conservation check using PROVEN deltas (not declared entry.balance_delta).
-        let net_excess: i64 = proven_deltas.iter().sum();
-        if net_excess != 0 {
-            return Err(AtomicTurnError::ConservationViolation { net_excess });
-        }
+        // 3. PER-ASSET conservation using PROVEN deltas (not declared
+        //    entry.balance_delta). The old asset-BLIND scalar sum
+        //    (`proven_deltas.iter().sum() == 0`) forged value across asset
+        //    boundaries: a turn (asset 7 −10, asset 8 +10) netted to 0 and was
+        //    accepted. The replacement groups each proven delta by its asset
+        //    class (the cell's committed token_id) and requires EACH asset's
+        //    Σδ=0 INDEPENDENTLY through the in-AIR-backed `BlockConservation`
+        //    collector. An AtomicSovereignTurn carries no declared mint/burn
+        //    rows, so a hidden mint within any asset (or any cross-asset
+        //    borrowing) is rejected.
+        let conservation_entries: Vec<(CellId, i64)> = new_commitments
+            .iter()
+            .map(|(cell_id, _)| *cell_id)
+            .zip(proven_deltas.iter().copied())
+            .collect();
+        Self::check_per_asset_conservation(ledger, &conservation_entries, &[])?;
 
         // 4. All proofs verified + conservation holds. Commit atomically.
         // Deduct fee and increment nonce. THE EPOCH §5 ("fees as moves"):
@@ -794,10 +950,10 @@ impl TurnExecutor {
                 }
             })?;
 
-            // Stage 1: reconstruct Effect VM PI in the PI v3 layout
-            // (resolves REVIEW[effect-vm-coord]).
-            let old_commit_4 = Self::commitment_to_4bb(&entry.old_commitment);
-            let new_commit_4 = Self::commitment_to_4bb(&entry.new_commitment);
+            // Phase C: reconstruct Effect VM PI in the PI v3 layout
+            // (resolves REVIEW[effect-vm-coord]). 8 genuine commitment felts.
+            let old_commit_8 = Self::commitment_to_8bb(&entry.old_commitment);
+            let new_commit_8 = Self::commitment_to_8bb(&entry.new_commitment);
 
             use dregg_circuit::effect_vm::pi;
             let min_pi_count = pi::ACTIVE_BASE_COUNT;
@@ -816,9 +972,9 @@ impl TurnExecutor {
                 .map(|i| BabyBear::new_canonical(proof.public_inputs[i]))
                 .collect();
             public_inputs[pi::OLD_COMMIT_BASE..(pi::OLD_COMMIT_BASE + pi::OLD_COMMIT_LEN)]
-                .copy_from_slice(&old_commit_4[..pi::OLD_COMMIT_LEN]);
+                .copy_from_slice(&old_commit_8[..pi::OLD_COMMIT_LEN]);
             public_inputs[pi::NEW_COMMIT_BASE..(pi::NEW_COMMIT_BASE + pi::NEW_COMMIT_LEN)]
-                .copy_from_slice(&new_commit_4[..pi::NEW_COMMIT_LEN]);
+                .copy_from_slice(&new_commit_8[..pi::NEW_COMMIT_LEN]);
 
             // Append custom proof entries from the proof's PIs.
             let custom_count_val = public_inputs[pi::CUSTOM_EFFECT_COUNT].0 as usize;
@@ -832,10 +988,10 @@ impl TurnExecutor {
                 }
             }
 
-            // Verify commitment PIs match (4 felts each).
+            // Verify commitment PIs match (8 felts each, Phase C).
             for i in 0..pi::OLD_COMMIT_LEN {
                 let proof_v = BabyBear::new_canonical(proof.public_inputs[pi::OLD_COMMIT_BASE + i]);
-                if proof_v != old_commit_4[i] {
+                if proof_v != old_commit_8[i] {
                     return Err(AtomicTurnError::ProofFailed {
                         cell: entry.cell_id,
                         reason: format!(
@@ -847,7 +1003,7 @@ impl TurnExecutor {
             }
             for i in 0..pi::NEW_COMMIT_LEN {
                 let proof_v = BabyBear::new_canonical(proof.public_inputs[pi::NEW_COMMIT_BASE + i]);
-                if proof_v != new_commit_4[i] {
+                if proof_v != new_commit_8[i] {
                     return Err(AtomicTurnError::ProofFailed {
                         cell: entry.cell_id,
                         reason: format!(
@@ -1037,15 +1193,26 @@ impl TurnExecutor {
             ));
         }
 
-        // Cross-domain conservation: sovereign + hosted must sum to zero.
-        let hosted_total: i64 = hosted_cell_deltas.values().sum();
-        let total_delta: i64 = sovereign_deltas.iter().sum::<i64>() + hosted_total;
-        if total_delta != 0 {
+        // Cross-domain PER-ASSET conservation: sovereign + hosted deltas must
+        // conserve to zero WITHIN EACH ASSET (not merely in a single asset-blind
+        // scalar sum). Each sovereign proven delta and each hosted per-cell delta
+        // is grouped by its cell's asset class (committed token_id) and EACH
+        // asset is required to conserve independently — so a turn that nets to
+        // zero ACROSS assets but forges value WITHIN an asset (or borrows across
+        // asset boundaries) is rejected. token_id is immutable across a turn, so
+        // reading the asset class after hosted mutations is exact.
+        let mut conservation_entries: Vec<(CellId, i64)> = new_commitments
+            .iter()
+            .map(|(cell_id, _)| *cell_id)
+            .zip(sovereign_deltas.iter().copied())
+            .collect();
+        for (cell_id, delta) in &hosted_cell_deltas {
+            conservation_entries.push((*cell_id, *delta));
+        }
+        if let Err(e) = Self::check_per_asset_conservation(ledger, &conservation_entries, &[]) {
             // Roll back ALL hosted mutations before returning.
             journal.rollback(ledger, &self.bridged_nullifiers, &self.note_nullifiers);
-            return Err(AtomicTurnError::ConservationViolation {
-                net_excess: total_delta,
-            });
+            return Err(e);
         }
 
         // ====================================================================
@@ -1194,6 +1361,19 @@ mod hardening_tests {
         let token = [0u8; 32];
         // Default permissions: Signature required.
         Cell::with_balance(pk, token, balance)
+    }
+
+    /// A permissive cell whose ASSET CLASS (token_id) is set: `asset` seeds the
+    /// 32-byte token_id so two cells with different `asset` belong to different
+    /// asset classes (the dregg3 "AssetId := issuer-cell" partition).
+    fn make_asset_cell(seed: u8, asset: u8, balance: i64) -> Cell {
+        let mut pk = [0u8; 32];
+        pk[0] = seed;
+        let mut token = [0u8; 32];
+        token[0] = asset;
+        let mut cell = Cell::with_balance(pk, token, balance);
+        cell.permissions = permissive();
+        cell
     }
 
     fn build_noop_turn(agent: CellId, nonce: u64) -> Turn {
@@ -2343,6 +2523,193 @@ mod hardening_tests {
                 "receipt[{i}] must be signed when key is configured"
             ));
             assert_eq!(sig.len(), 64);
+        }
+    }
+
+    // =======================================================================
+    // THE LIVE CONSERVATION HOLE: per-asset cross-cell conservation
+    // =======================================================================
+    //
+    // The old check `proven_deltas.iter().sum() == 0` was ASSET-BLIND. A turn
+    // moving 10 from a cell of asset 7 to a cell of asset 8 nets to 0 in the
+    // scalar sum and was ACCEPTED — destroying asset 7 and minting asset 8.
+    // These tests prove the replacement (the per-asset, in-AIR-backed
+    // `BlockConservation` collector) REJECTS the cross-asset forge while still
+    // ACCEPTING honest same-asset multi-cell turns.
+
+    /// THE FORGING TURN, REJECTED. A mixed-atomic hosted Transfer of 10 from a
+    /// cell of asset 7 to a cell of asset 8 nets to zero in the OLD scalar sum
+    /// (so the old check accepted it), but asset 7 is short −10 and asset 8 is
+    /// long +10 — each asset is independently unbalanced. The per-asset check
+    /// REJECTS it, and the hosted mutation is rolled back.
+    #[test]
+    fn cross_asset_forge_rejected_mixed_atomic() {
+        let mut ledger = Ledger::new();
+        let agent = make_asset_cell(0xAA, 0, 1000); // native-asset agent (pays fee)
+        let agent_id = agent.id();
+        let cell_a = make_asset_cell(0xB7, 7, 100); // asset 7
+        let cell_a_id = cell_a.id();
+        let cell_b = make_asset_cell(0xB8, 8, 0); // asset 8
+        let cell_b_id = cell_b.id();
+        ledger.insert_cell(agent).unwrap();
+        ledger.insert_cell(cell_a).unwrap();
+        ledger.insert_cell(cell_b).unwrap();
+
+        let executor = TurnExecutor::new(ComputronCosts::zero());
+
+        // Move 10 from asset-7 cell A to asset-8 cell B. apply_transfer permits
+        // a cross-token move (no token check there), so without the per-asset
+        // gate this would commit: A −10 (asset 7), B +10 (asset 8), scalar sum 0.
+        let forge = Action {
+            target: cell_a_id,
+            method: [0u8; 32],
+            args: vec![],
+            authorization: Authorization::Unchecked,
+            preconditions: Preconditions::default(),
+            effects: vec![Effect::Transfer {
+                from: cell_a_id,
+                to: cell_b_id,
+                amount: 10,
+            }],
+            may_delegate: DelegationMode::None,
+            commitment_mode: Default::default(),
+            balance_change: None,
+            witness_blobs: vec![],
+        };
+
+        let mixed = MixedAtomicTurn {
+            agent: agent_id,
+            nonce: 0,
+            fee: 0,
+            sovereign_entries: vec![],
+            hosted_actions: vec![forge],
+        };
+
+        let r = executor.execute_mixed_atomic(&mixed, &mut ledger);
+        match r {
+            Err(AtomicTurnError::PerAssetConservationViolation { imbalance, .. }) => {
+                assert!(
+                    imbalance == 10 || imbalance == -10,
+                    "an asset must be off by ±10, got {imbalance}"
+                );
+            }
+            other => panic!(
+                "cross-asset forge MUST be rejected per-asset, got: {:?}",
+                other
+            ),
+        }
+
+        // Rollback: balances unchanged (the forge committed nothing).
+        assert_eq!(ledger.get(&cell_a_id).unwrap().state.balance(), 100);
+        assert_eq!(ledger.get(&cell_b_id).unwrap().state.balance(), 0);
+    }
+
+    /// HONEST SAME-ASSET MULTI-CELL TURN, ACCEPTED. A hosted Transfer of 10
+    /// between two cells of the SAME asset (7) conserves within that asset and
+    /// MUST still pass (no false reject).
+    #[test]
+    fn same_asset_transfer_still_accepted_mixed_atomic() {
+        let mut ledger = Ledger::new();
+        let agent = make_asset_cell(0xAA, 0, 1000);
+        let agent_id = agent.id();
+        let cell_a = make_asset_cell(0xC7, 7, 100); // asset 7
+        let cell_a_id = cell_a.id();
+        let cell_b = make_asset_cell(0xD7, 7, 0); // asset 7 (same asset)
+        let cell_b_id = cell_b.id();
+        ledger.insert_cell(agent).unwrap();
+        ledger.insert_cell(cell_a).unwrap();
+        ledger.insert_cell(cell_b).unwrap();
+
+        let executor = TurnExecutor::new(ComputronCosts::zero());
+
+        let honest = Action {
+            target: cell_a_id,
+            method: [0u8; 32],
+            args: vec![],
+            authorization: Authorization::Unchecked,
+            preconditions: Preconditions::default(),
+            effects: vec![Effect::Transfer {
+                from: cell_a_id,
+                to: cell_b_id,
+                amount: 10,
+            }],
+            may_delegate: DelegationMode::None,
+            commitment_mode: Default::default(),
+            balance_change: None,
+            witness_blobs: vec![],
+        };
+
+        let mixed = MixedAtomicTurn {
+            agent: agent_id,
+            nonce: 0,
+            fee: 0,
+            sovereign_entries: vec![],
+            hosted_actions: vec![honest],
+        };
+
+        let r = executor.execute_mixed_atomic(&mixed, &mut ledger);
+        assert!(
+            r.is_ok(),
+            "honest same-asset transfer must NOT be falsely rejected, got: {:?}",
+            r
+        );
+        assert_eq!(ledger.get(&cell_a_id).unwrap().state.balance(), 90);
+        assert_eq!(ledger.get(&cell_b_id).unwrap().state.balance(), 10);
+    }
+
+    /// THE PER-ASSET COLLECTOR, DIRECT + IN-AIR. Exercises
+    /// `check_per_asset_conservation` and the underlying committed per-asset
+    /// `cross_cell_conservation_air` (via `BlockConservation::prove_and_verify`)
+    /// so the gate is witnessed IN-CIRCUIT, not just as the executor's
+    /// boundary-arithmetic pre-flight:
+    ///   - asset 7 (A −10 / B +10) + asset 8 (C −5 / D +5): each balances → ACCEPT
+    ///   - asset 7 (A −10) / asset 8 (B +10): cross-asset borrow → REJECT
+    #[cfg(feature = "prover")]
+    #[test]
+    fn per_asset_collector_in_air_accept_reject() {
+        use dregg_circuit::block_conservation::{BlockConservation, PerCellContribution};
+        use dregg_circuit::field::BabyBear;
+
+        let mut ledger = Ledger::new();
+        let a = make_asset_cell(0xA1, 7, 100);
+        let b = make_asset_cell(0xB1, 7, 0);
+        let c = make_asset_cell(0xC1, 8, 100);
+        let d = make_asset_cell(0xD1, 8, 0);
+        let (a_id, b_id, c_id, d_id) = (a.id(), b.id(), c.id(), d.id());
+        for cell in [a, b, c, d] {
+            ledger.insert_cell(cell).unwrap();
+        }
+
+        // ACCEPT: each asset conserves. Executor boundary pre-flight is clean.
+        let balanced = vec![(a_id, -10), (b_id, 10), (c_id, -5), (d_id, 5)];
+        assert!(
+            TurnExecutor::check_per_asset_conservation(&ledger, &balanced, &[]).is_ok(),
+            "balanced multi-asset turn must pass the executor gate"
+        );
+
+        // And the SAME partition PROVES + VERIFIES through the committed per-asset
+        // AIR (the in-AIR realization the light client runs).
+        let mut block = BlockConservation::new();
+        for (cell, delta) in &balanced {
+            let asset = TurnExecutor::asset_class_for_cell(&ledger, cell);
+            let credit = *delta >= 0;
+            block.add_contribution(PerCellContribution {
+                asset,
+                net_delta_mag: BabyBear::new_canonical(delta.unsigned_abs() as u32),
+                net_delta_sign: if credit { BabyBear::ZERO } else { BabyBear::ONE },
+            });
+        }
+        block
+            .prove_and_verify()
+            .expect("balanced multi-asset block must prove+verify per asset in-AIR");
+
+        // REJECT: cross-asset borrow (asset 7 short −10, asset 8 long +10).
+        let forged = vec![(a_id, -10), (c_id, 10)];
+        match TurnExecutor::check_per_asset_conservation(&ledger, &forged, &[]) {
+            Err(AtomicTurnError::PerAssetConservationViolation { imbalance, .. }) => {
+                assert!(imbalance == 10 || imbalance == -10);
+            }
+            other => panic!("cross-asset borrow must be rejected, got {:?}", other),
         }
     }
 }

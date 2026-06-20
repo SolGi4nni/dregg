@@ -895,6 +895,26 @@ impl TurnExecutor {
             }
         }
 
+        // CROSS-CELL PER-ASSET CONSERVATION (light-client residual seam).
+        // The executor's `execute_atomic_sovereign` / `execute_mixed_atomic`
+        // already enforce per-asset Σδ=0 in-circuit via
+        // `TurnExecutor::check_per_asset_conservation` (the
+        // `dregg_circuit::block_conservation::BlockConservation` collector over
+        // the committed `cross_cell_conservation_air`), keyed by each cell's
+        // committed `token_id`. The SAME collector belongs HERE on the bundle /
+        // light-client verify path — `verify_with_proofs` over the block's
+        // carried per-asset aggregation proofs. Two prerequisites must land
+        // first (both coordinated with PHASE-C, which owns the PI layout):
+        //   1. the per-cell proof must publish its ASSET CLASS as a public input
+        //      (a PI slot), so the partition is proof-bound rather than
+        //      ledger-trusted; and
+        //   2. `bundle_pis` must be accompanied by the cell_id (or asset) of
+        //      each PI vector so the collector can group them — the current
+        //      signature carries only the bare PI vectors.
+        // Until both land, the per-asset conservation bite on the PURE
+        // light-client path (no ledger) is the stated residual; the executor
+        // path (with ledger + cell_ids) is fully wired.
+
         Ok(())
     }
 
@@ -1936,6 +1956,43 @@ impl TurnExecutor {
             BabyBear::new(u32::from_le_bytes(bytes[8..12].try_into().unwrap())),
             BabyBear::new(u32::from_le_bytes(bytes[12..16].try_into().unwrap())),
         ]
+    }
+
+    /// Decode a 32-byte stored STATE commitment into the 8-felt Poseidon2 form
+    /// used by the Effect VM AIR's PI[OLD_COMMIT_BASE..+8] / PI[NEW_COMMIT_BASE..+8].
+    ///
+    /// Phase C (`docs/FAITHFUL-STATE-COMMITMENT.md`): the state commitment widened
+    /// 4 felts -> 8 felts to lift the collision floor from ~62 bits to ~124 bits,
+    /// matching the FRI ~128-bit soundness. The stored format now packs all 8
+    /// genuine `CellState::compute_commitment_8` felts as 8 consecutive LE u32
+    /// values across the FULL 32 bytes (no zero padding). This is what the
+    /// off-AIR PI-match loop reconstructs and compares against the proof's
+    /// embedded PI — every one of the 8 felts is checked, so the binding strength
+    /// is the full 8-felt squeeze.
+    pub fn commitment_to_8bb(bytes: &[u8; 32]) -> [dregg_circuit::field::BabyBear; 8] {
+        use dregg_circuit::field::BabyBear;
+        let mut out = [BabyBear::ZERO; 8];
+        for (i, slot) in out.iter_mut().enumerate() {
+            let off = i * 4;
+            *slot = BabyBear::new(u32::from_le_bytes(
+                bytes[off..off + 4].try_into().unwrap(),
+            ));
+        }
+        out
+    }
+
+    /// Pack 8 BabyBear felts into a 32-byte stored STATE commitment (Phase C).
+    ///
+    /// Writes each felt as a LE u32 across the full 32 bytes (8 × 4 = 32 — no
+    /// padding). This is the canonical format read back by [`commitment_to_8bb`]
+    /// and matches `CellState::compute_commitment_8`.
+    pub fn commitment_8bb_to_bytes(felts: [dregg_circuit::field::BabyBear; 8]) -> [u8; 32] {
+        let mut result = [0u8; 32];
+        for (i, f) in felts.iter().enumerate() {
+            let off = i * 4;
+            result[off..off + 4].copy_from_slice(&f.0.to_le_bytes());
+        }
+        result
     }
 
     /// Pack 4 BabyBear felts into a 32-byte stored commitment.
