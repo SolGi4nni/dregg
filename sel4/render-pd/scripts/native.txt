@@ -1,0 +1,8 @@
+# native.txt — meson native file: the HOST (macOS arm64) build tools Mesa's
+# codegen runs at build time. Mesa cross-builds run python/mako/bison/flex/glslang
+# NATIVELY (per docs.mesa3d.org: "you do not need cross-compiled build tools").
+[binaries]
+python3          = '/tmp/mesa-build-venv/bin/python'
+bison            = '/opt/homebrew/opt/bison/bin/bison'
+flex             = '/opt/homebrew/opt/flex/bin/flex'
+glslangValidator = '/opt/homebrew/bin/glslangValidator'
