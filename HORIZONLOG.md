@@ -2886,3 +2886,35 @@ Circuit soundness propagates up EXACTLY ONE RUNG (into Settlement), then stops a
   CapTPPipeline/Await, ~real content, axiom-clean; the "promise-hole IS a nullifier" weld NOT yet realized).
 DISTRIBUTED protocols (consensus/finality/lace-merge/catchup) PROVEN + thread real kernel types, but their
 per-turn fact is the EngineSound sibling, not the apex — same missing weld.
+
+## ⚑⚑ ENMESHMENT CENSUS layer 4/4: GLOBAL TOPOLOGY (aa129798) + THE SYNTHESIS
+GLOBAL: the spine is PRISTINE. ZERO real sorry/admit/sorryAx in 758 modules (all hits = docstring prose / a fn
+named `admit`). EXACTLY 2 axiom decls, both deliberate test fixtures (Widget/Basic.lean:298 tier-classifier) — NO
+smuggled axioms. Floors = 8 named *Kernel crypto carriers (ed25519/STARK-FRI-extractability/Poseidon2-CR/BLAKE3/
+nullifier/seal/HMAC, PortalFloor.lean) as typeclass Prop-fields (invisible to collectAxioms) + injectivity portals
++ PostGSTProgress. Kernel triple only {propext,Classical.choice,Quot.sound}. native_decide's ofReduceBool is NOT
+whitelisted -> hygiene SELF-ENFORCING (#assert_axioms across ~645 files). Apex deployed_system_secure
+(AssuranceCase.lean:835) names the REAL gated executor execFullForestG, concludes A∧B∧C∧D∧E, pinned.
+⚑ THE REFRAMING FINDING: 87 modules (11.5%) are ORPHANS — outside lake build Dregg2 (real, sorry-free, but their
+hygiene pins DON'T RUN by default). Clusters = Circuit.SettlementSoundness (!! the "one true weld" itself),
+36/46 Circuit.Argus.* per-effect refinement subtree, 24 EffectVmEmit*FullState, Exec.ConcreteKernel (the hard
+kernel-bridge gate), 3 Distributed (FinalityGate/MembershipSafety/CrashRecovery). NOT broken — UNENMESHED.
+
+### THE SYNTHESIZED TOPOLOGY (the answer to "one tower or islands?")
+ONE SOLID TOWER + a third-of-a-circle of real-but-unorbited moons. Two-axis truth:
+- SPEC-edit -> proofs RED: reliable for ALL 30 effects (executor<->spec WELDED, 43 keystones; circuit<->spec
+  discharged for all 30).
+- CIRCUIT-edit -> proofs RED: reliable for 6/30 (transfer/mint/burn/setField/incNonce/bridgeMint, Satisfied2-bound);
+  24/30 DECOUPLED (encode discards Satisfied2).
+- Circuit soundness PROPAGATES UP one rung (Settlement, welded), then stops at the EngineSound.leaf_sound sibling
+  axiom (multi-turn/IVC/joint/promises all proven-but-parallel).
+
+### RANKED FRONTIER (the next campaigns, by leverage)
+1. ENMESH THE 87 ORPHANS into the root build (esp. SettlementSoundness + the Argus subtree) — cheapest, highest
+   trust/effort: theorems exist + clean, just need importing so their pins run in CI. Until then welds are true
+   but UNGUARDED against regression.
+2. THE EngineSound.leaf_sound WELD — discharge the sibling axiom by lightclient_unfoolable_circuit_sound ->
+   circuit soundness flows through the WHOLE multi-turn/distributed stack. ~1 bridging theorem, largest blast radius.
+3. THE 24 CLASS-B CIRCUIT SLOTS — make each <e>Encodes consume Satisfied2(Rfix e) (transfer's
+   closedLogExtract_transfer_closed = template) so circuit-constraint edits propagate red for ALL effects, not 6.
+Plus: joint-turn aggregation AIR; promise-hole-as-nullifier weld; the stale "Stated sorry" docstring Boundary.lean:217.
