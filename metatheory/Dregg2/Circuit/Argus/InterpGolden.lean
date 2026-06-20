@@ -29,8 +29,9 @@ transcription drift caught at test time. The golden-oracle cascade is then:
     flag settings, including the single-row window `isFirst ∧ isLast` (n = 1, the classic
     boundary wrap edge) and the off-row vacuity legs (`boundary`/`piBinding` ACCEPT when their
     flag is off, however broken the cells are). One case pins that `gate`/`transition` are
-    UNGUARDED in `decideVm` even at `isLast = true` — the `when_transition` factoring belongs to
-    the multi-row LIFT (the AIR's domain choice), not to the single-window reference.
+    VACUOUS at `isLast = true` in `decideVm` — the `when_transition` factoring (gate/transition
+    enforced on windows `r < n−1`, not on the last row) lives IN the single-window reference, so
+    it faithfully matches the multi-row AIR's domain choice.
   * Every `EmittedExpr` form (`var`/`const` incl. negative/`add`/`mul`, nested), every
     `HashInput` form (`col`/`digest`/`zero`), arity 2 AND 4, the ORDERED digest-accumulator
     chain (site 1 reading site 0's RESOLVED digest), and `VmRange` teeth including the
@@ -132,10 +133,11 @@ def corpus : List GoldenCase :=
       [(2, 3), (3, 4), (4, 10), (7, 70)] false false
   , mkCase "gate-nested-reject" [.gate (sub (.mul (.add (v 2) (v 3)) (v 4)) (v 7))]
       [(2, 3), (3, 4), (4, 10), (7, 71)] false false
-    -- transition continuity (unguarded in decideVm — including at isLast = true)
+    -- transition continuity (guarded at isLast in decideVm — the `when_transition` factoring
+    -- lives in the reference: gate/transition are enforced on windows r < n−1, vacuous at isLast)
   , mkCase "transition-accept" [.transition 3 5] [(81, 9)] false false (nxt := [(57, 9)])
   , mkCase "transition-reject" [.transition 3 5] [(81, 8)] false false (nxt := [(57, 9)])
-  , mkCase "transition-unguarded-at-last-reject" [.transition 3 5]
+  , mkCase "transition-vacuous-at-last" [.transition 3 5]
       [(81, 8)] false true (nxt := [(57, 9)])
     -- boundary .first (R1): on-row accept/reject + off-row vacuity
   , mkCase "boundary-first-accept-on-row" [.boundary .first (sub (v 100) (v 101))]
@@ -243,7 +245,7 @@ way the verified reference says. Each pin evaluates `decideVm` THROUGH `GoldenCa
 -- R1 edges: the boundary arm accepts on-row, rejects on-row, and is VACUOUS off-row
 #guard (corpus.map GoldenCase.verdict) =
   [ true, false, true, false, true, true, false,        -- gates
-    true, false, false,                                 -- transitions (incl. unguarded-at-last)
+    true, false, true,                                  -- transitions (incl. vacuous-at-last)
     true, false, true,                                  -- boundary .first
     true, false, true,                                  -- boundary .last
     true, false,                                        -- single-row window
@@ -257,5 +259,8 @@ way the verified reference says. Each pin evaluates `decideVm` THROUGH `GoldenCa
 end Dregg2.Circuit.Argus.InterpGolden
 
 /-- Regenerate the Rust-embedded golden:
-`lake env lean --run Dregg2/Circuit/Argus/InterpGolden.lean`. -/
-def main : IO Unit := IO.println Dregg2.Circuit.Argus.InterpGolden.goldenText
+`lake env lean --run Dregg2/Circuit/Argus/InterpGolden.lean`. Namespaced so importing this
+module into the `Dregg2` aggregator does not collide with another module's root `main`
+(the regen `--run` still resolves the qualified `main`). -/
+def Dregg2.Circuit.Argus.InterpGolden.main : IO Unit :=
+  IO.println Dregg2.Circuit.Argus.InterpGolden.goldenText

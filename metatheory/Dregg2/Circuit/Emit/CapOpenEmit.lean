@@ -224,6 +224,80 @@ theorem effCapOpenV3_constraints_mem (base : EffectVmDescriptor2) (name : String
     c ∈ (effCapOpenV3 base name n).constraints :=
   List.mem_append_right _ hc
 
+/-! ### The cap-open APPENDIX-STRIP bridge (`capOpen_satisfied2_strips_to_base`).
+
+The cap-open APPENDIX (`capOpenConstraintsEff`) is all `.lookup`/`.base (.gate …)` — it surfaces NO map/mem
+op. So a `Satisfied2` witness of `effCapOpenV3 base name n` restricts to a `Satisfied2` of the bare `base`
+(the appendix reads no base column and contributes no offline-checking op), exactly as `withSelectorGate`
+strips. This is the analog of `withSelectorGate_satisfied2` for the cap-open wrapper: it lets the per-effect
+CLASS-A `_descriptorRefines_sat` rungs — stated over `<slot>WriteV3` — lift to the DEPLOYED cap-open-wrapped
+descriptor the apex fan-out selects (`Rfix tag = capOpenWrapper base`, which is NOT defeq to `base`). -/
+
+/-- `effCapOpenV3` gathers exactly `base`'s map ops (the appendix is all lookups + base gates). -/
+theorem effCapOpenV3_mapOpsOf (base : EffectVmDescriptor2) (name : String) (n : Nat) :
+    Dregg2.Circuit.DescriptorIR2.mapOpsOf (effCapOpenV3 base name n)
+      = Dregg2.Circuit.DescriptorIR2.mapOpsOf base := by
+  simp [Dregg2.Circuit.DescriptorIR2.mapOpsOf, effCapOpenV3, capOpenConstraintsEff,
+    nodeLookups, dirBoolGates, maskBitGates, List.filterMap_append, List.filterMap_map,
+    List.filterMap_cons]
+
+/-- `effCapOpenV3` gathers exactly `base`'s mem ops. -/
+theorem effCapOpenV3_memOpsOf (base : EffectVmDescriptor2) (name : String) (n : Nat) :
+    Dregg2.Circuit.DescriptorIR2.memOpsOf (effCapOpenV3 base name n)
+      = Dregg2.Circuit.DescriptorIR2.memOpsOf base := by
+  simp [Dregg2.Circuit.DescriptorIR2.memOpsOf, effCapOpenV3, capOpenConstraintsEff,
+    nodeLookups, dirBoolGates, maskBitGates, List.filterMap_append, List.filterMap_map,
+    List.filterMap_cons]
+
+/-- ...so the gathered memory log is `base`'s, op-for-op. -/
+theorem effCapOpenV3_memLog (base : EffectVmDescriptor2) (name : String) (n : Nat)
+    (t : Dregg2.Circuit.DescriptorIR2.VmTrace) :
+    Dregg2.Circuit.DescriptorIR2.memLog (effCapOpenV3 base name n) t
+      = Dregg2.Circuit.DescriptorIR2.memLog base t := by
+  simp [Dregg2.Circuit.DescriptorIR2.memLog, effCapOpenV3_memOpsOf]
+
+/-- ...and the gathered map log is `base`'s. -/
+theorem effCapOpenV3_mapLog (base : EffectVmDescriptor2) (name : String) (n : Nat)
+    (t : Dregg2.Circuit.DescriptorIR2.VmTrace) :
+    Dregg2.Circuit.DescriptorIR2.mapLog (effCapOpenV3 base name n) t
+      = Dregg2.Circuit.DescriptorIR2.mapLog base t := by
+  simp [Dregg2.Circuit.DescriptorIR2.mapLog, effCapOpenV3_mapOpsOf]
+
+/-- **`effCapOpenV3_satisfied2_strips_to_base`** — a `Satisfied2` of the cap-open-widened descriptor
+restricts to a `Satisfied2` of the bare `base` (constraint-subset monotonicity + the appendix contributing
+no map/mem op). The cap-open analog of `withSelectorGate_satisfied2`. -/
+theorem effCapOpenV3_satisfied2_strips_to_base (hash : List ℤ → ℤ) (base : EffectVmDescriptor2)
+    (name : String) (n : Nat) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ)
+    (t : Dregg2.Circuit.DescriptorIR2.VmTrace)
+    (h : Satisfied2 hash (effCapOpenV3 base name n) minit mfin maddrs t) :
+    Satisfied2 hash base minit mfin maddrs t :=
+  { rowConstraints := fun i hi c hc =>
+      h.rowConstraints i hi c (by
+        show c ∈ base.constraints ++ capOpenConstraintsEff base.traceWidth n
+        exact List.mem_append_left _ hc)
+    rowHashes := h.rowHashes
+    rowRanges := h.rowRanges
+    memAddrsNodup := h.memAddrsNodup
+    memClosed := by have := h.memClosed; rwa [effCapOpenV3_memLog] at this
+    memDisciplined := by have := h.memDisciplined; rwa [effCapOpenV3_memLog] at this
+    memBalanced := by have := h.memBalanced; rwa [effCapOpenV3_memLog] at this
+    memTableFaithful := by have := h.memTableFaithful; rwa [effCapOpenV3_memLog] at this
+    mapTableFaithful := by have := h.mapTableFaithful; rwa [effCapOpenV3_mapLog] at this }
+
+/-- **`capOpen_satisfied2_strips_to_base`** — THE FULL APEX BRIDGE: a `Satisfied2` of the DEPLOYED cap-open
+WRAPPER `withSelectorGate s (effCapOpenV3 base name n)` (the shape `Rfix tag` returns for the cap effects)
+restricts to a `Satisfied2` of the bare `base`. Composes the selector-gate strip
+(`withSelectorGate_satisfied2`) with the cap-open appendix strip. The cap-open authority appendix + selector
+tooth are ADDITIVE — stripping them preserves the base descriptor's satisfaction, so the base
+`<slot>WriteV3`-level `_forces_write` keystones lift to the apex's wrapped descriptor. -/
+theorem capOpen_satisfied2_strips_to_base (hash : List ℤ → ℤ) (s : Nat) (base : EffectVmDescriptor2)
+    (name : String) (n : Nat) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ)
+    (t : Dregg2.Circuit.DescriptorIR2.VmTrace)
+    (h : Satisfied2 hash (withSelectorGate s (effCapOpenV3 base name n)) minit mfin maddrs t) :
+    Satisfied2 hash base minit mfin maddrs t :=
+  effCapOpenV3_satisfied2_strips_to_base hash base name n minit mfin maddrs t
+    (withSelectorGate_satisfied2 hash s (effCapOpenV3 base name n) minit mfin maddrs t h)
+
 /-- **`effCapOpenV3_satisfiedEff`** — a `Satisfied2` witness of `effCapOpenV3 base name n` rebuilds
 `DeployedCapOpen.SatisfiedEff … n` on every row (the appendix constraints are satisfied regardless of the
 base — they read no base column). The fan-out analog of `transferCapOpenV3_satisfied`. -/
@@ -369,6 +443,61 @@ def refreshDelegationCapOpenV3 : EffectVmDescriptor2 :=
 def revokeCapabilityCapOpenV3 : EffectVmDescriptor2 :=
   withSelectorGate Dregg2.Circuit.Emit.EffectVmEmit.sel.REVOKE_CAPABILITY
     (effCapOpenV3 revokeCapabilityBaseV3 "dregg-effectvm-revokeCapability-v1-rot24-v3-capopen" EFF_REVOKE_CAPABILITY)
+
+/-! ### The WRITE-FORCING fan-out cap-open wrappers (the frozen-face close — guarantee A circuit-forced).
+
+The wrappers above ride the FROZEN bases (`introduceV3`/`revokeDelegationV3` = `v3Of …` with `gCapPass`),
+which force the authority READ but FREEZE the cap-tree WRITE off-row. These two ride the MOVING write bases
+(`introduceWriteV3`/`revokeDelegationWriteV3` = `v3OfWith …Genuine [heldReadOp, insert/removeWriteOp]`), so
+the deployed descriptor itself FORCES the cap-tree write (`Rfix tag` re-points here; the main loop wires).
+Same `EFFECT_VM_WIDTH + APPENDIX_SPAN` base width, so the `CAP_OPEN_SPAN`-widened width is unchanged; the
+authority appendix + `_authorizes` keystones apply verbatim (the appendix reads no base column). -/
+
+/-- **`introduceWriteCapOpenV3`** — introduce-via-cap on the WRITE-FORCING base (`introduceWriteV3`): the
+authority READ appendix + the deployed `insertWriteOp` (the cap-tree write FORCED, not frozen off-row). -/
+def introduceWriteCapOpenV3 : EffectVmDescriptor2 :=
+  withSelectorGate Dregg2.Circuit.Emit.EffectVmEmit.sel.INTRODUCE
+    (effCapOpenV3 EffectVmEmitRotationV3.introduceWriteV3
+      "dregg-effectvm-introduce-v1-rot24-v3-write-capopen" EFF_INTRODUCE)
+
+/-- **`revokeDelegationWriteCapOpenV3`** — revoke(Delegation)-via-cap on the WRITE-FORCING base
+(`revokeDelegationWriteV3`): the authority READ appendix + the deployed `removeWriteOp` (the cap-tree REMOVE
+FORCED, not frozen off-row). -/
+def revokeDelegationWriteCapOpenV3 : EffectVmDescriptor2 :=
+  withSelectorGate Dregg2.Circuit.Emit.EffectVmEmit.sel.REVOKE_DELEGATION
+    (effCapOpenV3 EffectVmEmitRotationV3.revokeDelegationWriteV3
+      "dregg-effectvm-revoke-v1-rot24-v3-write-capopen" EFF_DELEGATION_OPS)
+
+/-- **`delegateWriteCapOpenV3`** — delegate-via-cap on the WRITE-FORCING base (`grantCapWriteV3` = the moving
+attenuate-A face + `[heldReadOp, insertWriteOp]`): the authority READ appendix + the deployed `insertWriteOp`.
+Unlike `delegateCapOpenV3` (base `grantCapV3`, no write leg, authority-only), THIS carries BOTH the authority
+appendix AND the cap-tree write — the apex (`Rfix 1` re-pointed) wires it for the FULL guarantee A. -/
+def delegateWriteCapOpenV3 : EffectVmDescriptor2 :=
+  withSelectorGate Dregg2.Circuit.Emit.EffectVmEmit.sel.GRANT_CAP
+    (effCapOpenV3 EffectVmEmitRotationV3.grantCapWriteV3
+      "dregg-effectvm-delegate-v1-rot24-v3-write-capopen" EFF_DELEGATION_OPS)
+
+/-- **`grantCapWriteCapOpenV3`** — grantCap-via-cap on the WRITE-FORCING base (`grantCapWriteV3`): authority
+appendix + the deployed `insertWriteOp`. The apex (`Rfix` for grantCap re-pointed) wires it. -/
+def grantCapWriteCapOpenV3 : EffectVmDescriptor2 :=
+  withSelectorGate Dregg2.Circuit.Emit.EffectVmEmit.sel.GRANT_CAP
+    (effCapOpenV3 EffectVmEmitRotationV3.grantCapWriteV3
+      "dregg-effectvm-grantCap-v1-rot24-v3-write-capopen" EFF_GRANT_CAPABILITY)
+
+/-- **`delegateAttenWriteCapOpenV3`** — delegateAtten-via-cap on the WRITE-FORCING base (`delegateAttenV3` =
+the moving attenuate-A face + `[heldReadOp, insertWriteOp, submaskLookup]`): authority appendix + the deployed
+`insertWriteOp` + the `granted ⊑ held` submask (non-amplification). The apex (`Rfix 11` re-pointed) wires it. -/
+def delegateAttenWriteCapOpenV3 : EffectVmDescriptor2 :=
+  withSelectorGate Dregg2.Circuit.Emit.EffectVmEmit.sel.GRANT_CAP
+    (effCapOpenV3 EffectVmEmitRotationV3.delegateAttenV3
+      "dregg-effectvm-delegateAtten-v1-rot24-v3-write-capopen" EFF_GRANT_CAPABILITY)
+
+-- The write-forcing wrappers add the SAME +71 constraints (70 appendix + selector tooth) over their
+-- write base + `CAP_OPEN_SPAN` cols; the write base adds 2 map-ops over the frozen/genuine base.
+#guard introduceWriteCapOpenV3.traceWidth == EffectVmEmitRotationV3.introduceWriteV3.traceWidth + CAP_OPEN_SPAN
+#guard revokeDelegationWriteCapOpenV3.traceWidth == EffectVmEmitRotationV3.revokeDelegationWriteV3.traceWidth + CAP_OPEN_SPAN
+#guard introduceWriteCapOpenV3.constraints.length == EffectVmEmitRotationV3.introduceWriteV3.constraints.length + 71
+#guard revokeDelegationWriteCapOpenV3.constraints.length == EffectVmEmitRotationV3.revokeDelegationWriteV3.constraints.length + 71
 
 /-- **`transferCapOpenEffV3`** (residual (a) — THE LIVE transfer cap-open) — the transfer base + the
 effect-GENERAL appendix at `EFF_TRANSFER` (bit 1). Carries `capOpenConstraintsEff 1`: the genuine SUBMASK facet gate
