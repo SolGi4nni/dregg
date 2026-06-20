@@ -3113,3 +3113,25 @@ attestable reproducible deos images ("here's my OS + a proof of its confinement"
 story, federations forming by coordination not config — collapses a special case into 2 clean primitives (build
 artifact + turns), same instinct as 52->8 verbs. SCOUT RUNNING (a4414e6f) for the terrain map -> ember scopes.
 The persist bug stays FAIL-CLOSED/GUARDED meanwhile (no data corruption); this reframe is its sound full closure.
+
+## ⚑⚑ IMAGE-BUILDER (Phase 2) landed in isolation (a02bfba) — bank HELD for genesis Phase-1 to settle turn/
+The EROS image-builder = the build-time IMAGE GENESIS half ("here's my OS + a proof of what it can't do").
+persist/src/image_builder.rs (854 lines, NEW) + lib.rs re-export. NOT yet banked — verified green via a throwaway
+git worktree (8/8 tests) because the shared tree's dregg-turn is mid-edit by the genesis Phase-1 agent (SetProgram
+non-exhaustive match arms in pipeline/reversible/journal) -> persist->federation->turn won't compile in place.
+WHAT IT IS:
+- ImageManifest: declarative "what's in my ISO" — EROS FactoryDescriptors (each carrying program-for-life
+  state_constraints) + CellSpecs (factory-by-content-hash + creation params + signed balance). serde/postcard.
+- build_image: manifest -> ImageArtifact. Runs the REAL FactoryDescriptor::validate_creation, constructs
+  genuinely factory-born Cells (CellProgram::Predicate(state_constraints) installed for life), real Ledger::root,
+  sealed Snapshot (reuses snapshot.rs:80 fail-closed root tooth) + ImageAttestation.
+- verify_image: FAIL-CLOSED, no builder trust — 5 re-derived checks (manifest binding, root binding +
+  reconstruct tooth, conservation Σ=0, factory provenance, program-for-life binding so a cell can't be smuggled
+  under a factory it wasn't born from). 8/8 tests incl. 5 tamper-rejections.
+- HONEST seams (reserved Option slots, NOT silent): hatchery_invariant_proof (the Hatchery hpres prove-once-
+  holds-forever proof attaches here — today carries DECLARED invariants, not the proof they hold) + seal (builder
+  signature — self-verifying but unsigned).
+FOLLOW-UPS: (a) bank when Phase-1 settles turn/; (b) wire hatchery hpres proofs into the attestation; (c) the
+seL4 boot-wire (generate sel4 image_data.rs from a manifest via the builder, replacing the hand-built 6-cell const
+gen_image_snapshot.rs — a render-from-artifact codegen pass since the viewer PD is no_std, can't link persist).
+The conserving_manifest test already reproduces that const's exact Σ=0 shape -> ready to drive it.
