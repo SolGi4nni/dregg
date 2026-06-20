@@ -813,16 +813,24 @@ fn write_ledger_markdown(
     rows: &[String],
     per_effect: &BTreeMap<String, EffectStat>,
 ) {
-    // metatheory/docs/rebuild/ relative to the workspace root. CARGO_MANIFEST_DIR is `turn/`.
-    let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let Some(root) = manifest.parent() else {
-        return;
+    // The ledger doc `metatheory/docs/rebuild/_RUST-LEAN-DIVERGENCE-LEDGER.md` is GIT-TRACKED, so
+    // overwriting it on every test run dirties the working tree (and blocks pushes). By default we
+    // write to a gitignored tmp path; set `DREGG_WRITE_DIVERGENCE_LEDGER=1` to regenerate the tracked
+    // doc on purpose. CARGO_MANIFEST_DIR is `turn/`; the tracked doc lives at the workspace root.
+    let write_tracked = std::env::var_os("DREGG_WRITE_DIVERGENCE_LEDGER").is_some();
+    let path = if write_tracked {
+        let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let Some(root) = manifest.parent() else {
+            return;
+        };
+        let dir = root.join("metatheory").join("docs").join("rebuild");
+        if std::fs::create_dir_all(&dir).is_err() {
+            return;
+        }
+        dir.join("_RUST-LEAN-DIVERGENCE-LEDGER.md")
+    } else {
+        std::env::temp_dir().join("dregg_rust_lean_divergence_ledger.md")
     };
-    let dir = root.join("metatheory").join("docs").join("rebuild");
-    if std::fs::create_dir_all(&dir).is_err() {
-        return;
-    }
-    let path = dir.join("_RUST-LEAN-DIVERGENCE-LEDGER.md");
 
     let mut md = String::new();
     md.push_str("# Rust↔Lean Divergence Ledger\n\n");

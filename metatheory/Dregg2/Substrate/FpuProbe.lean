@@ -851,7 +851,7 @@ theorem move_is_fpu (st st' : RecChainedState) (t : Turn) (a : AssetId)
        (.mk (some ⟨confRights (heldCapTo st'.kernel.caps t.actor t.src)⟩) 0),
        (.mk (some ⟨st'.kernel.nullifiers.toFinset⟩) 0),
        Heap.emp) := by
-  obtain ⟨_, _, _, _, _, hcaps, _, hnul, _⟩ := (recCexecAsset_iff_spec st t a st').mp h
+  obtain ⟨_, _, _, _, _, hcaps, hnul, _⟩ := (recCexecAsset_iff_spec st t a st').mp h
   refine fpu_prod (move_value_fpu st st' t a h s0) (fpu_prod ?_ (fpu_prod ?_ (Fpu.refl _)))
   · rw [hcaps]; exact Fpu.refl _
   · rw [hnul]; exact Fpu.refl _

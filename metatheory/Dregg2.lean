@@ -237,6 +237,7 @@ import Dregg2.Apps.CompartmentWorkflowMandateGated -- production mandate: cwm_sa
 import Dregg2.Apps.CompartmentWorkflowMandate.CrossVatBridge -- Phase B: mandate commitment_anchor ↔ CrossVatCharter covenant; cwm_charter_refines_mandate_forest
 import Dregg2.Apps.StorageGatewayMandate -- storage gateway mandate (ungated): op/prefix/clearance/volume rejection teeth + sgm_volume_legal_forever + sgm_pay_supply_forever on trajA; Stingray slice demo
 import Dregg2.Apps.StorageGatewayMandateGated -- production storage gateway: sgm_safety_forever = step-legal ∩ pay-conserved ∩ revoked-dead ∩ bucket on trajG; execFullForestG setField/emit gated ops
+import Dregg2.Apps.ToolAccessDelegation -- THE INTEGRATOR HEADLINE: delegated tool/MCP access as a verified mandate cell on the production caveat-gated executor (execFullA = stateStepGuarded). delegAdmit folds SCOPE (allowlisted toolId) ∧ DEADLINE ∧ single-step ∧ RATE (new ≤ rateLimit); tool_invocation_commit_iff_admit (commits IFF the delegated policy admits AND the worker held authority) + the §5 TEETH (tool_invocation_over_rate_rejected / _past_deadline_rejected / _out_of_scope_rejected — a worker can NEVER drive an invocation past the granted rate/deadline/scope) + §6 kernel keystones (conserves / no_amplify / authorized / counts_one). #assert_axioms-clean
 import Dregg2.Apps.Trustline           -- ORGANS §1 bilateral line of credit (mutual credit): draw = attenuated-cap exercise debiting the Stingray counter (draw_slice_tracks_tryDebit = literally Slice.tryDebit) — within-line forever (SGM boundedBy pattern) + bilateral signed-well conservation (holderAcct+issuerWell=0 forever, issuer-move) + no-double-draw (digest nodup forever) + settlement restores the line (draw_repay_roundtrip; settleAll_clears conserves the hard pair) + the attenuation pun (holder_credit_le_line_forever, granted⊆held made quantitative) + the DEPLOYED node semantics (§9+: monotone settled register w/ settled-floor repay + solvency settled≤drawn≤ceiling=escrow + the Collateral axis — fullReserve=the Rust point, pureCredit=settlePay, settleC_conserves_hard parametric + derived-view faithfulness + the epoch-slice weld; draw_replay_refused_across_epochs = the TrustlineRegistry forever-carrier law); init/settle weld design = docs/TRUSTLINES.md
 import Dregg2.Apps.ChannelGroup        -- ORGANS §4 channel-group cell program (the group-key epoch lift, blueprint twin of cell/src/blueprint.rs:838 / commit 72d43dc64): the epoch unification TRIPLE proved — membership_change_steps_epoch + epoch_step_rewrites_key + remove_without_rekey_unsat (THE keystone, both polarities) + epoch_never_rewinds (AdmittedChain forever) + admin_gates (consumes the proven actorBound_* polis binding) + remove_darkens_both (forward-key darkness ∧ R7 capability staleness in ONE epoch step, UNDER the NAMED interface premise DelegationEpochTie — the executor-side delegation_epoch tie the Rust builders carry fail-closed; closure lane = the program-readable executor atom, executor lane)
 import Dregg2.Apps.VerificationToolkit -- REUSABLE app-verification toolkit: an author supplies an AppSpec (slot/cell/admit predicate/grid) and GETS generically — app_commit_iff_admit (executor caveat gate commits IFF admit, proven ONCE over any predicate), app_violation_rejected (anti-ghost tooth), app_commit_{conserves,no_amplify,authorized} (kernel keystones re-exported), AppDiffPinned (Rust-mirror drift corpus). DEMO: CompartmentWorkflowMandate (cursor) + StorageGatewayMandate op-leg (last_op) RE-DERIVED through it (cwm/sgm_*_via_toolkit). #assert_axioms-clean, non-vacuous (#guard teeth bite)
@@ -527,6 +528,7 @@ import Dregg2.AssuranceCase              -- W5: the five guarantees (Authority/C
 -- REFINEMENT wave R2 (2026-06-11): THE HEAP's Lean foundation (REFINEMENT-DESIGN Decision 1).
 import Dregg2.Substrate.Heap              -- R2 keystone: the openable sorted-map semantics — the cap_root machinery generalized to a generic leaf (get/set/sorted-insert/non-membership via the REUSED sorted_gap_excludes; ext_get canonicity; root_deterministic + root_injective under the ONE named Poseidon2SpongeCR floor)
 import Dregg2.Substrate.HeapKernel        -- R2 kernel face, SPLICED (phase 2): heapStepGuarded reads/writes the RecordKernelState.heaps field (a write-verb instance ON stateStepGuarded: atoms→authority→membership→lifecycle→caveats, fail-closed) + heap_contains/heap_get guard atoms (RelCaveat shape); PROVED balance-neutral (scalar + per-asset + ExactConservation), framed (cells/fields/keys), register-binds-heap (heap_root = Heap.root of the spliced leaf list); the wire/circuit binding rides THE ONE ROTATION
+import Dregg2.Substrate.FpuProbe           -- §9 product apex: the three verbs (move/grant/write/spend) as Fpu frame-preserving updates in the 4-substance product camera (Sub4 = value × authority × evidence × state); each verb's moving leg by the §5–§8 corner theorems, untouched legs by Fpu.refl off the recCexecAsset_iff_spec frame clauses
 import Dregg2.Substrate.VerbCompression   -- R2 investigation (the rotation question, ANSWERED): under the universal map the kernel is create · guarded-write · move (compressed_kernel_three) — grant/revoke/lifecycle/shieldUnshield PROVABLY dissolve into guarded writes (lifecycle/revoke in the landed local class; unshield needs the absence atom — freshness_not_positive separates it from the landed positive HeapAtom algebra; grant needs the order-relational guard — grant_guard_not_literal/not_local) while move SEPARATES (conservation is not a guard in ANY class: gwrite_conservation_trivializes + move_not_single_write) and create separates by birth-arity
 
 -- EPOCH foundations (2026-06-11): boundary/interior proving — Blum memory-checking + descriptor IR v2 + the v2 re-anchor (docs/EPOCH-DESIGN.md).
@@ -636,16 +638,17 @@ import Dregg2.Circuit.CouncilCommit -- RECOVERY circuit-binding: the guardian CO
 import Dregg2.Circuit.SettlementSoundness -- THE SETTLEMENT SOUNDNESS KEYSTONE (compose): verifyBatch accept ⟹ genuine kstepAll transition (apex) AND authority-live-AT-SETTLEMENT (Revocation at the settlement coordinate, NOT branch time). Teeth: settlement_gap_real; n=1 collapses the window. #assert_axioms-clean.
 import Dregg2.Circuit.EngineSoundOfApex -- THE ENGINESOUND WELD: discharge RecursiveAggregation.EngineSound.leaf_sound BY the single-turn apex (lightclient_unfoolable_circuit_sound), so the multi-turn / finalized-history / distributed stack rests on circuit soundness, not on leaf_sound as a free sibling. ApexLeafBundle = per-leaf datum (batch pi/π + accepting verdict + the single ClosedWitness floor ⟹ apex FIRES) + the NAMED lowering apexLowers (the apex's kstepAll pi.effect, per-asset bal ledger, single FullActionA, ANY effect → the step's recCexec, legacy balOf-cell ledger, transfer Turn). engineSound_of_apex BUILDS EngineSound: leaf_sound DISCHARGED via leafStep_of_bundle∘the apex; recursive_sound/binding_sound = the two FRI legs (outside Lean) passed through. PAYOFF: multiTurn_rests_on_apex / finalized_rests_on_apex. THE RESIDUAL apexLowers is the THREE reconciliation mismatches NAMED (endpoint-binding · transfer-arm-only pi.effect=0 · cross-ledger bal-vs-balOf-cell, RingFFI projAsset agreement is column-only); realizable on honestStep (transfer arm) — honestStep_lowers. #assert_axioms-clean.
 import Dregg2.Deos.BranchStitch -- BRANCH-AND-STITCH: nesting=firmament-capability-confinement (a Virtual branch holds no cap to main ⇒ side-effects imaginary) + stitch=pushout-correctness; the operable protocol of distributed time-travel.
+import Dregg2.Deos.DocPatch -- THE PATCH-COMMUTATION law (Pijul heart, DOCUMENT-LANGUAGE.md §2.2): the three additive op effects (addAtom/addEdge/tombstone, faithful to dregg-doc graph.rs) COMMUTE on disjoint parts (the addAtom/tombstone SAME-id non-commutation is the load-bearing §2.2 boundary, witnessed), are each INFLATIONARY in the DocMerge ⊑ order (even tombstone, since alive≤dead), and APPLY-IS-MERGE-with-a-singleton (addEdge_is_merge / tombstone_is_merge_on_present) so commutation is merge_comm specialised. Built on Dregg2.Deos.DocMerge. #assert_axioms-clean.
 
 -- ── ENMESHMENT: formerly-orphan modules pulled into the root build graph so their
 -- #assert_axioms / #assert_namespace_axioms hygiene pins run by default under `lake build Dregg2`.
--- (A few orphans remain EXCLUDED as genuinely broken at this HEAD — see report/HORIZONLOG; their
---  pins fire sorryAx or they fail to compile against drifted APIs. Re-add once fixed. Also excluded:
---  Dregg2.Circuit.Argus (imports the still-broken CreateCellFromFactory + NoteSpend Effects);
---  Dregg2.Claims (imports root = build cycle). BridgeMint + Exec.ConcreteKernel are now repaired
---  and re-enmeshed here — their hygiene pins are GUARDED by the root build.)
+-- (Excluded: Dregg2.Claims (imports root = build cycle) — a separately-buildable top-of-graph
+--  target. BridgeMint, Exec.ConcreteKernel, CreateCellFromFactory, NoteSpend, and the
+--  Dregg2.Circuit.Argus aggregator are all repaired and re-enmeshed here — their hygiene pins are
+--  GUARDED by the root build.)
 import Dregg2.Agent.Mandate
 import Dregg2.Authority.CSpace
+import Dregg2.Authority.CredentialAttenuation
 import Dregg2.Circuit.Argus.Coeffect
 import Dregg2.Circuit.Argus.CompileE
 import Dregg2.Circuit.Argus.CompileFold
@@ -658,6 +661,7 @@ import Dregg2.Circuit.Argus.Effects.CellDestroy
 import Dregg2.Circuit.Argus.Effects.CellSeal
 import Dregg2.Circuit.Argus.Effects.CellUnseal
 import Dregg2.Circuit.Argus.Effects.CreateCell
+import Dregg2.Circuit.Argus.Effects.CreateCellFromFactory
 import Dregg2.Circuit.Argus.Effects.Delegate
 import Dregg2.Circuit.Argus.Effects.DelegateAtten
 import Dregg2.Circuit.Argus.Effects.EmitEvent
@@ -668,6 +672,7 @@ import Dregg2.Circuit.Argus.Effects.MakeSovereign
 import Dregg2.Circuit.Argus.Effects.Mint
 import Dregg2.Circuit.Argus.Effects.Noop
 import Dregg2.Circuit.Argus.Effects.NoteCreate
+import Dregg2.Circuit.Argus.Effects.NoteSpend
 import Dregg2.Circuit.Argus.Effects.NoteSpendCompose
 import Dregg2.Circuit.Argus.Effects.PipelinedSend
 import Dregg2.Circuit.Argus.Effects.ReceiptArchive
@@ -678,7 +683,9 @@ import Dregg2.Circuit.Argus.Effects.SetField
 import Dregg2.Circuit.Argus.Effects.SetPermissions
 import Dregg2.Circuit.Argus.Effects.SetVerificationKey
 import Dregg2.Circuit.Argus.EmitRoundtrip
+import Dregg2.Circuit.Argus.InterpGolden
 import Dregg2.Circuit.Argus.Joint
+import Dregg2.Circuit.Argus -- THE ARGUS AGGREGATOR: re-enmeshed (its CreateCellFromFactory + NoteSpend Effects are repaired; the heaps-field extensionality drift fixed). Pulls every per-effect Argus weld + its hygiene pins under the root build.
 import Dregg2.Circuit.DecideSatisfied2Golden
 import Dregg2.Circuit.Emit.EffectVmEmitBridge
 import Dregg2.Circuit.Emit.EffectVmEmitBridgeMint

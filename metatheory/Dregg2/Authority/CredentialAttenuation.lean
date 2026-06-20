@@ -129,8 +129,13 @@ def Window.unbounded : Window := { lo := ⊥, hi := ⊤ }
 `not_before ≤ now ≤ not_after` check, with the bottom/top extremes meaning "unbounded"). -/
 def Window.contains (w : Window) (t : Int) : Prop := w.lo ≤ (t : WithBot Int) ∧ (t : WithTop Int) ≤ w.hi
 
-instance (w : Window) (t : Int) : Decidable (w.contains t) := by
-  unfold Window.contains; exact inferInstance
+instance (w : Window) (t : Int) : Decidable (w.contains t) :=
+  -- Resolve the `≤` decidability through `WithBot`/`WithTop`'s OWN computable `decidableLE`
+  -- (the ambient `inferInstance` would route through the noncomputable
+  -- `instConditionallyCompleteLinearOrder`, costing us the runnable oracle below).
+  @instDecidableAnd _ _
+    (WithBot.decidableLE w.lo (t : WithBot Int))
+    (WithTop.decidableLE (t : WithTop Int) w.hi)
 
 /-- The meet (∩) of two windows: `[max lo, min hi]` — the TIGHTER interval. Stacking two validity
 caveats keeps the latest `not_before` and the earliest `not_after`. -/

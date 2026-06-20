@@ -125,7 +125,6 @@ theorem addAtom_addAtom_comm (i j : AtomId) (g : DocGraph) :
     · -- k = i = j: same id, idempotent both sides.
       subst hki; subst hkj
       simp only [addAtom_atoms_self]
-      cases g.atoms i <;> rfl
     · subst hki
       rw [addAtom_atoms_self, addAtom_atoms_other hkj, addAtom_atoms_other (by simpa using hkj),
         addAtom_atoms_self]
@@ -143,7 +142,7 @@ theorem addEdge_addEdge_comm (e f : AtomId × AtomId) (g : DocGraph) :
     addEdge e (addEdge f g) = addEdge f (addEdge e g) := by
   apply DocGraph.ext
   · intro k; simp only [addEdge_atoms]
-  · simp only [addEdge_order, Finset.Insert.comm]
+  · simp only [addEdge_order, Finset.insert_comm]
   · intro n; simp only [addEdge_fields]
 
 /-- **`addAtom_addEdge_comm` (an atom-insert and an edge-insert commute, UNCONDITIONALLY).** They
@@ -166,7 +165,7 @@ theorem tombstone_addEdge_comm (i : AtomId) (e : AtomId × AtomId) (g : DocGraph
   apply DocGraph.ext
   · intro k
     by_cases hki : k = i
-    · subst hki; simp only [addEdge_atoms, tombstone, if_pos rfl]
+    · subst hki; simp only [addEdge_atoms, tombstone]
     · simp only [tombstone_atoms_other hki, addEdge_atoms]
   · simp only [tombstone_order, addEdge_order]
   · intro n; simp only [tombstone_fields, addEdge_fields]
@@ -182,15 +181,11 @@ theorem addAtom_tombstone_comm {i j : AtomId} (h : i ≠ j) (g : DocGraph) :
   · intro k
     by_cases hki : k = i
     · subst hki
-      rw [addAtom_atoms_self, tombstone_atoms_other h, addAtom_atoms_self]
-      simp only [tombstone, if_neg (Ne.symm h)]
+      simp only [addAtom, tombstone, if_neg h]
     · by_cases hkj : k = j
       · subst hkj
-        rw [addAtom_atoms_other (by simpa using hki), tombstone, if_pos rfl,
-          addAtom_atoms_other (by simpa using hki)]
-        simp only [tombstone, if_pos rfl]
-      · rw [addAtom_atoms_other hki, tombstone_atoms_other hkj, tombstone_atoms_other hkj,
-          addAtom_atoms_other hki]
+        simp only [addAtom, tombstone, if_neg (Ne.symm h)]
+      · simp only [addAtom, tombstone, if_neg hki, if_neg hkj]
   · simp only [addAtom_order, tombstone_order]
   · intro n; simp only [addAtom_fields, tombstone_fields]
 
@@ -201,15 +196,10 @@ theorem tombstone_tombstone_comm (i j : AtomId) (g : DocGraph) :
   apply DocGraph.ext
   · intro k
     by_cases hki : k = i <;> by_cases hkj : k = j
-    · subst hki; subst hkj; simp only [tombstone, if_pos rfl]; cases g.atoms i <;> rfl
-    · subst hki
-      rw [tombstone_atoms_other hkj]
-      simp only [tombstone, if_pos rfl, if_neg hkj]
-    · subst hkj
-      rw [tombstone_atoms_other hki]
-      simp only [tombstone, if_pos rfl, if_neg hki]
-    · rw [tombstone_atoms_other hki, tombstone_atoms_other hkj, tombstone_atoms_other hkj,
-        tombstone_atoms_other hki]
+    · subst hki; subst hkj; simp only [tombstone]
+    · subst hki; simp only [tombstone, if_neg hkj]
+    · subst hkj; simp only [tombstone, if_neg hki]
+    · simp only [tombstone, if_neg hki, if_neg hkj]
   · simp only [tombstone_order]
   · intro n; simp only [tombstone_fields]
 
@@ -246,7 +236,7 @@ theorem tombstone_inflationary (i : AtomId) (g : DocGraph) : g ⊑ tombstone i g
     by_cases hji : j = i
     · subst hji
       refine ⟨.dead, ?_, ?_⟩
-      · simp only [tombstone, if_pos rfl, hv]
+      · simp only [tombstone, if_true, hv]
       · cases v <;> trivial
     · rw [tombstone_atoms_other hji]; exact ⟨v, hv, Status.le_refl v⟩
   · rw [tombstone_order]
@@ -299,8 +289,8 @@ theorem tombstone_is_merge_on_present (i : AtomId) (g : DocGraph) (hpres : g.ato
   · intro j
     by_cases hji : j = i
     · subst hji
-      rw [merge_atoms]; simp only [singletonDead, if_pos rfl, tombstone, if_pos rfl]
-      cases hgi : g.atoms i with
+      rw [merge_atoms]; simp only [singletonDead, if_true, tombstone]
+      cases hgi : g.atoms j with
       | none => exact absurd hgi hpres
       | some v => simp only [atomJoin, Status.join_dead_right]
     · rw [tombstone_atoms_other hji, merge_atoms]

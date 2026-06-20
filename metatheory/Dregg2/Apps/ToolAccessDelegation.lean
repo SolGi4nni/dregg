@@ -225,9 +225,9 @@ theorem tool_invocation_over_rate_rejected (g : Grant) (cell worker : CellId)
     execFullA s (.setFieldA worker cell callsMadeSlot (c + 1)) = none := by
   refine tool_invocation_rejected g g.deadline g.toolId cell worker s c hprog hcur hold hnew ?_
   unfold delegAdmit
-  have : decide ((c + 1) ≤ g.rateLimit) = false := by
+  have hrate : decide ((c + 1) ≤ g.rateLimit) = false := by
     rw [decide_eq_false_iff_not]; omega
-  simp [this]
+  rw [hrate, Bool.and_false]
 
 /-- **`tool_invocation_past_deadline_rejected` — the DEADLINE tooth.** An invocation presented
 after the granted deadline (`now > deadline`) is rejected — EVEN with the correct tool and head-room on
