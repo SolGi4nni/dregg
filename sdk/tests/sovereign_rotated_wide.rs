@@ -11,7 +11,7 @@
 //!     the chip-faithful 8-felt commit (`poseidon2::wire_commit_8_chip` — the byte-twin of the
 //!     circuit's `fill_wide_block`) over each cell's `compute_rotated_pre_limbs`, OVERRIDES the 16
 //!     wide PIs with those trusted commits, and `verify_vm_descriptor2` ACCEPTS — exactly the wide
-//!     analog of the live executor's `dpis[34]/[35]` override (the 1-felt-retire the flip performs).
+//!     analog of the live executor's `dpis[42]/[43]` override (the 1-felt-retire the flip performs).
 //!   * **THE FORGERY TOOTH**: a forged trusted commit (a state the kernel never produced) makes the
 //!     anchored 16 wide PIs disagree with the proof's bound carrier ⇒ `verify_vm_descriptor2` UNSAT.
 //!
@@ -47,9 +47,11 @@ fn sovereign_transfer_cells(balance: i64, amount: i64) -> (Cell, Cell) {
     (before, after)
 }
 
-/// Where the 16 wide PIs start (the wide descriptor's host piCount — 38 for the transfer-shape
-/// cohort; PIs 38..45 = BEFORE 8-felt commit, 46..53 = AFTER 8-felt commit).
-const WIDE_PI_BASE: usize = 38;
+/// Where the 16 wide PIs start (the wide descriptor's host piCount — 46 for the transfer-shape
+/// cohort, the rotated `ROT_PI_COUNT`; PIs 46..53 = BEFORE 8-felt commit, 54..61 = AFTER 8-felt
+/// commit). Post-Phase-C the v1 prefix grew 34→42, so the rotated prefix is 46 (= 42 + 4 commit
+/// pins).
+const WIDE_PI_BASE: usize = 46;
 
 /// The chip-faithful 8-felt commit of a cell + turn-context (the executor's anchoring primitive).
 fn cell_chip_commit8(cell: &Cell, ctx: &V9RotationContext) -> [BabyBear; 8] {
@@ -108,7 +110,7 @@ fn wide_sovereign_pipeline_proves_and_anchored_verify_accepts() {
     assert_eq!(producer_dpis.len(), desc.public_input_count, "wide PI count");
 
     // -- EXECUTOR LEG: anchor the 16 wide PIs to the TRUSTED before/after cell chip-commits (the wide
-    //    analog of the live `dpis[34]/[35]` override — the 1-felt-retire the flip performs). --
+    //    analog of the live `dpis[42]/[43]` override — the 1-felt-retire the flip performs). --
     let before_ctx = V9RotationContext {
         cells_root: before_w.pre_limbs[0],
         nullifier_root,

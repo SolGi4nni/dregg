@@ -1460,3 +1460,132 @@ mod wall_a {
         );
     }
 }
+
+// ===========================================================================
+// THE MULTI-RESIDUE RECORD-PIN ANCHOR — #2 completeness gap: UNREACHABLE (the producer
+// fails-closed). The verifier's record-pin anchor (`verify_one_cohort_run`'s PI-38 override)
+// projects from the GLOBAL before-cell + the FIRST matching record-pin kernel effect (lead
+// only). The concern was that a turn carrying TWO residue-moving record-pin effects on ONE
+// cell would force the anchor to diverge from the producer's after-block:
+//   * within-run multi-effect: `[SetPermissions(A), SetPermissions(B)]` — ONE cohort run
+//     (same descriptor), the producer's after-block reflects BOTH perms (= B), the lead-only
+//     anchor would project only the first (= A).
+//   * cross-run residue: `[SetPermissions, CellSeal]` — TWO runs, the CellSeal leg's record-pin
+//     cell would need the post-SetPermissions residue.
+//
+// STEP-1 (model-finds-the-bug) shows BOTH turns are UNPRODUCIBLE by the deployed `cipherclerk`
+// producer: the WIDE record-pin trace's in-circuit gate (`Ir2Air` constraint #78, row 0) is
+// VIOLATED at PROVE time — the panic backtrace lands in `descriptor_ir2::prove_vm_descriptor2`
+// ← `prove_effect_vm_rotated_wide` ← `prove_sovereign_turn_rotated`, NEVER reaching the executor
+// verifier. The deployed record-pin descriptor binds EXACTLY ONE record-pin row per cohort run;
+// a second record-pin row on the same cell (a second SetPermissions, or a lifecycle move stacked
+// on a record-digest move) cannot close the proof. The producer therefore CANNOT mint a turn
+// that confronts the verifier's lead-only/global-cell anchor with a multi-residue run.
+//
+// CONCLUSION: the gap is UNREACHABLE — there is NOTHING for the deployed verifier to fix, and a
+// fix would be untestable (no positive case can exist) AND would risk the live single-cohort
+// fleet. The verifier (`turn/src/executor/proof_verify.rs`) is left UNCHANGED. These tests pin
+// the fail-closed boundary so a future producer that lifts the one-record-pin-row limit must
+// re-open the verifier anchor question (and add the positive coverage) deliberately.
+// ===========================================================================
+mod multi_residue_record_pin {
+    use dregg_cell::{Cell, CellId, CellMode, Ledger, Permissions};
+    use dregg_sdk::AgentCipherclerk;
+    use dregg_turn::rotation_witness as rw;
+    use dregg_turn::Effect;
+
+    /// Register a sovereign cell; return the live cipherclerk, the sovereign cell id, the ledger.
+    fn setup() -> (AgentCipherclerk, CellId, Ledger) {
+        let cclerk = AgentCipherclerk::new();
+        let pub_key = cclerk.public_key().0;
+        let token_id = *blake3::hash(b"c1-domain").as_bytes();
+        let mut cell = Cell::with_balance(pub_key, token_id, 1000);
+        cell.mode = CellMode::Sovereign;
+        let cell_id = cell.id();
+
+        let nullifier_root = [0u8; 32];
+        let commitments_root = [0u8; 32];
+        let mut ctx_ledger = Ledger::new();
+        let _ = ctx_ledger.insert_cell(cell.clone());
+        let cells_root = rw::cells_root(&ctx_ledger);
+        let iroot = rw::iroot(&[]);
+        let v9_ctx = dregg_cell::commitment::V9RotationContext {
+            cells_root,
+            nullifier_root,
+            commitments_root,
+            iroot,
+        };
+        let commitment =
+            dregg_cell::commitment::compute_canonical_state_commitment_v9_8(&cell, &v9_ctx);
+
+        let mut cclerk = cclerk;
+        cclerk.store_sovereign_state(cell.clone());
+
+        let mut ledger = Ledger::new();
+        ledger.register_sovereign_cell(cell_id, commitment).unwrap();
+        let _ = ledger.insert_cell(cell);
+
+        (cclerk, cell_id, ledger)
+    }
+
+    /// Drive the deployed producer over `effects` and assert it FAILS-CLOSED — either an `Err`
+    /// return OR a prove-time `check_constraints` panic (the debug prover asserts on an unsatisfied
+    /// constraint). A non-failing producer would mean the multi-residue turn IS minted and the
+    /// verifier's lead-only/global-cell record-pin anchor would then be confronted — re-opening the
+    /// #2 gap, which this test would catch.
+    fn assert_producer_fails_closed(effects: Vec<Effect>, height: u64, what: &str) {
+        let (mut cclerk, cell_id, _ledger) = setup();
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            cclerk.execute_sovereign_turn_with_proof(&cell_id, effects, 0, height)
+        }));
+        match outcome {
+            // Caught the prove-time `check_constraints` panic (the observed STEP-1 fail-closed).
+            Err(_) => {}
+            // Returned `Err` (a softer fail-closed) — also acceptable.
+            Ok(Err(_)) => {}
+            Ok(Ok(_)) => panic!(
+                "{what}: the deployed producer MINTED a multi-residue record-pin turn — the #2 gap \
+                 is now REACHABLE and the verifier's lead-only/global-cell anchor (\
+                 verify_one_cohort_run) must be revisited (it would diverge from the producer's \
+                 after-block). Re-open the per-run kernel-effect anchor + add positive coverage."
+            ),
+        }
+    }
+
+    /// within-run multi-effect: `[SetPermissions(zkapp), SetPermissions(frozen)]` is ONE cohort run
+    /// (same descriptor). STEP-1 shows the deployed producer fails-closed (Ir2Air constraint #78 at
+    /// prove time — the record-pin descriptor binds one record-pin row per run). UNREACHABLE.
+    #[test]
+    fn within_run_two_set_permissions_is_unproducible() {
+        let (_c, cell_id, _l) = setup();
+        let effects = vec![
+            Effect::SetPermissions {
+                cell: cell_id,
+                new_permissions: Permissions::zkapp(),
+            },
+            Effect::SetPermissions {
+                cell: cell_id,
+                new_permissions: Permissions::frozen(),
+            },
+        ];
+        assert_producer_fails_closed(effects, 0, "within-run 2×SetPermissions");
+    }
+
+    /// cross-run residue: `[SetPermissions, CellSeal]` is TWO cohort runs. STEP-1 shows the deployed
+    /// producer fails-closed at prove time (the same record-pin row constraint). UNREACHABLE.
+    #[test]
+    fn cross_run_set_permissions_then_seal_is_unproducible() {
+        let (_c, cell_id, _l) = setup();
+        let effects = vec![
+            Effect::SetPermissions {
+                cell: cell_id,
+                new_permissions: Permissions::zkapp(),
+            },
+            Effect::CellSeal {
+                target: cell_id,
+                reason: [9u8; 32],
+            },
+        ];
+        assert_producer_fails_closed(effects, 42, "cross-run [SetPermissions, CellSeal]");
+    }
+}
