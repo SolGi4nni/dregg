@@ -37,7 +37,7 @@
 //! the re-inspected object reflects, and that firing an unauthorized one is refused
 //! in-band. The cockpit renders exactly this model.
 
-use dregg_cell::{AuthRequired, CellId};
+use dregg_cell::{is_attenuation, AuthRequired, CellId};
 use dregg_firmament::Capability;
 use dregg_turn::action::{Effect, Event};
 use dregg_turn::turn::TurnReceipt;
@@ -383,6 +383,47 @@ fn message_surface_for(cell: CellId, viewer: CellId) -> AffordanceSurface {
 /// is fine — the gate is on the firmament authority, not the handle.)
 fn window_cap(cell: CellId, rights: AuthRequired) -> SurfaceCapability {
     SurfaceCapability::new(SurfaceId(1), Capability::surface(cell, rights))
+}
+
+/// **Derive the viewer's GENUINE authority over the focus cell**, read off the live
+/// ledger — the membrane property: the affordances lens divides per-viewer because the
+/// authority does. This is what `ReflectedCell::present` (and any caller projecting the
+/// fused loop for a real viewer) must feed [`InspectAct::build`] as `viewer_rights`, in
+/// place of a uniform guess. It reuses ONLY the real ocap primitives:
+///
+///   1. **the cell's OWN principal** (`viewer == cell` — the viewer IS / owns the cell):
+///      [`AuthRequired::None`], the root tier that clears EVERY affordance (incl. the
+///      strongest, `grant`, which requires `None`). A cell is its own root authority.
+///   2. **a viewer holding a c-list cap reaching the cell**: that cap's rights. If the
+///      viewer holds several caps to the cell, the WIDEST is the authority it can wield —
+///      folded by the REAL [`is_attenuation`] (a cap of rights `r` is wider than the
+///      running `best` iff `best ⊆ r`, i.e. `is_attenuation(&r, &best)`).
+///   3. **otherwise** (a foreign viewer with no cap reaching the cell): the weakest tier
+///      [`AuthRequired::Impossible`] — refused every authority-bearing affordance (it is
+///      narrower-or-equal to all tiers, so it clears nothing the gate requires).
+///
+/// Read straight off `world.ledger()` (ownership = id equality · c-list = the viewer
+/// cell's genuine `capabilities` set) — never a parallel authority model.
+pub fn viewer_authority_over(world: &World, viewer: CellId, cell: CellId) -> AuthRequired {
+    // (1) The cell's own principal IS its root authority — clears every affordance.
+    if viewer == cell {
+        return AuthRequired::None;
+    }
+
+    // (2) The widest c-list cap the viewer holds reaching the cell. Fold by the REAL
+    //     is_attenuation: keep the wider whenever a cap's rights dominate the running best.
+    let mut best = AuthRequired::Impossible;
+    if let Some(viewer_cell) = world.ledger().get(&viewer) {
+        for cap in viewer_cell.capabilities.iter() {
+            if cap.target == cell && is_attenuation(&cap.permissions, &best) {
+                best = cap.permissions.clone();
+            }
+        }
+    }
+
+    // (3) No cap reached the cell ⟹ best is still Impossible (the weakest tier) —
+    //     a foreign viewer is refused the authority-bearing affordances.
+    best
 }
 
 /// A stable, human label for a real [`Effect`] (the `Effect` enum is not

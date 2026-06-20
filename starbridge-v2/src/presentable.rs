@@ -37,7 +37,7 @@
 
 use std::collections::BTreeSet;
 
-use dregg_cell::{AuthRequired, Cell, CellId};
+use dregg_cell::{Cell, CellId};
 
 use crate::graph::OcapGraph;
 use crate::inspect_act::{InspectAct, InspectFocus};
@@ -665,12 +665,18 @@ impl Presentable for ReflectedCell {
         });
 
         // (2) Affordances — "the messages it understands", the genuine InspectAct
-        //     surface projected for the viewer (full vocabulary + cap badges).
+        //     surface projected for the viewer (full vocabulary + cap badges). The
+        //     viewer's authority is DERIVED off the live ledger (the membrane property:
+        //     the lens divides per-viewer because the authority does) — ownership →
+        //     root `None`, else the widest c-list cap reaching the cell, else the
+        //     weakest `Impossible`. Never a uniform guess.
+        let viewer_rights =
+            crate::inspect_act::viewer_authority_over(ctx.world, ctx.viewer, self.id);
         let ia = InspectAct::build(
             ctx.world,
             InspectFocus::Cell(self.id),
             ctx.viewer,
-            AuthRequired::Either,
+            viewer_rights,
         );
         let aff_text = ia
             .messages
@@ -897,6 +903,111 @@ impl<'w> Registry<'w> {
     /// The halo ring for a focus (the universal three + the per-kind commands).
     pub fn halo(&self, target: FocusTarget) -> Halo {
         Halo::for_kind(self.object_kind(target))
+    }
+}
+
+// ===========================================================================
+// M2 — THE PROJECTION MEMO around the UNCHANGED-pure `Registry::present`.
+//
+// `Registry::present(target, viewer)` is a pure function of `(target, viewer,
+// world-state)`. This wraps it — it does NOT rewrite it — in a memo valid
+// exactly while the live head (`WitnessCursor`) is unchanged. A new receipt
+// advances the head; the cockpit's delta fold (`world.dynamics().since(cursor)`)
+// drops every cell the delta named, so a cell the turn did NOT touch reuses its
+// cached projection across the head advance. The ONLY way a stale entry survives
+// is a state change with no naming `WorldEvent` — the cache-soundness =
+// dynamics-completeness obligation closed by `world::collect_effect_events`'s
+// completeness arms (`docs/deos/EFFICIENCY-WELD-PLAN.md` §4.1, §2.3).
+//
+// Interior mutability (`RefCell`) so the cockpit's `&self` moldable render path
+// can read-through-and-fill without threading `&mut self` through the whole
+// render closure (mirrors `World::state_root_memo`'s `Cell` memo, M1).
+// ===========================================================================
+
+use std::cell::RefCell;
+use std::collections::HashMap;
+
+use crate::ui_snapshot::WitnessCursor;
+
+/// A `(focus-cell, viewer) -> projected presentation set` memo, valid while the
+/// live head is unchanged. Wraps the pure [`Registry::present`].
+#[derive(Default)]
+pub struct PresentMemo {
+    inner: RefCell<PresentMemoInner>,
+}
+
+#[derive(Default)]
+struct PresentMemoInner {
+    /// The live head the cached entries were projected at. When the head moves,
+    /// entries the delta fold did NOT invalidate are still valid (a cell the turn
+    /// didn't touch projects identically); a touched cell's entry was already
+    /// dropped by the fold, so this recomputes on miss.
+    cursor: Option<WitnessCursor>,
+    /// (focus-cell, viewer) -> projected presentation set at `cursor`.
+    entries: HashMap<(CellId, CellId), Vec<Presentation>>,
+}
+
+impl PresentMemo {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The memoized projector. On a head advance the cursor is recorded but
+    /// entries are KEPT (the fold dropped the dirty ones). On a hit the cached set
+    /// is cloned; on a miss the pure [`Registry`] recomputes and fills.
+    ///
+    /// `None` iff the focused object is absent from the live world (a dangling
+    /// focus — surfaced honestly, never cached as `Some`).
+    pub fn present(
+        &self,
+        world: &World,
+        target: FocusTarget,
+        viewer: CellId,
+    ) -> Option<Vec<Presentation>> {
+        let head = WitnessCursor::at_head(world);
+        let key = (target.cell(), viewer);
+        {
+            let mut inner = self.inner.borrow_mut();
+            // If the head advanced, drop the whole cache ONLY when the caller did
+            // not feed deltas (defensive); normal operation: the cockpit's fold
+            // already invalidated the dirty cells, so keep clean entries.
+            if inner.cursor != Some(head) {
+                inner.cursor = Some(head);
+            }
+            if let Some(hit) = inner.entries.get(&key) {
+                return Some(hit.clone());
+            }
+        }
+        let set = Registry::new(world).present(target, viewer)?;
+        self.inner.borrow_mut().entries.insert(key, set.clone());
+        Some(set)
+    }
+
+    /// Drop a single cell's cached projections (every viewer) — the per-cell
+    /// delta invalidation the fold drives.
+    pub fn invalidate_cell(&self, cell: CellId) {
+        self.inner.borrow_mut().entries.retain(|(c, _), _| *c != cell);
+    }
+
+    /// Cap-edge deltas reach OTHER cells' affordance badges (viewer-non-local,
+    /// §4.2): drop everything. Coarse but correct.
+    pub fn invalidate_affordances_all(&self) {
+        self.inner.borrow_mut().entries.clear();
+    }
+
+    /// Drop the entire cache — used when `self.cells` is rebuilt from a
+    /// ZERO-sentinel `CellBorn` (a new child whose id we don't yet know).
+    pub fn invalidate_all(&self) {
+        self.inner.borrow_mut().entries.clear();
+    }
+
+    /// Test/instrumentation: how many entries are cached right now.
+    pub fn len(&self) -> usize {
+        self.inner.borrow().entries.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 }
 
