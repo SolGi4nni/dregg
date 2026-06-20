@@ -23,7 +23,7 @@ the cutover commit consumes this module's shape, `docs/ROTATION-CUTOVER.md`):
     vectors bound to the same commitment agree on the height; the temporal gate's
     prover-chosen-height note closes at the flag-day by THIS pin. `PiV3` declares the v3 tail
     (committed-height column + rateBound/challengeWindow caveat tags) appended after the frozen
-    v2 prefix (`V2_BASE_COUNT = 201` — drift-guarded by the Rust twin test
+    v2 prefix (`V2_BASE_COUNT = 209` — drift-guarded by the Rust twin test
     `pi_v3_offsets_match_lean` in `circuit/src/effect_vm/pi.rs`).
   * **the anti-ghost keystone** (`rotatedCommit_binds`): under the ONE named CR floor, equal
     commits force equal limb structures AND equal receipt logs — tampering ANY limb (a register
@@ -318,7 +318,7 @@ theorem rotatedCommit_binds_named_field (hash : List ℤ → ℤ) (hCR : Poseido
 
 /-! ## §4 — PI v3: the staged public-input tail (committed height + caveat tags).
 
-The v3 tail appends THREE slots after the frozen v2 prefix (`pi.rs` `BASE_COUNT = 201` — the
+The v3 tail appends THREE slots after the frozen v2 prefix (`pi.rs` `BASE_COUNT = 209` — the
 Rust drift-guard test `pi_v3_offsets_match_lean` pins these numbers against this module, so a
 v2-prefix drift fails loudly before the flag-day):
 
@@ -333,8 +333,12 @@ v2-prefix drift fails loudly before the flag-day):
 namespace PiV3
 
 /-- The frozen v2 PI prefix length (`circuit/src/effect_vm/pi.rs` `BASE_COUNT`). Drift-guarded
-by the Rust twin test — if the live layout grows before the flag-day, the pin fails there. -/
-def V2_BASE_COUNT : Nat := 201
+by the Rust twin test — if the live layout grows before the flag-day, the pin fails there.
+
+Phase C (`docs/FAITHFUL-STATE-COMMITMENT.md`): re-anchored 201 → 209 when the
+OLD/NEW state commitment widened 4 → 8 felts each (+8 prefix shift) to lift the
+collision floor ~62 → ~124 bits, matching FRI ~128-bit soundness. -/
+def V2_BASE_COUNT : Nat := 209
 
 /-- The committed-height PI column: the `committedHeight` limb's public face. -/
 def COMMITTED_HEIGHT : Nat := V2_BASE_COUNT

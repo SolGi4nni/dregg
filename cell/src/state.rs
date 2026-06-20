@@ -601,6 +601,17 @@ impl CellState {
         true
     }
 
+    /// Public re-export of the cell's field-commitment function — `BLAKE3(value
+    /// || nonce)`, byte-identical to what [`set_field_visibility`](Self::set_field_visibility)
+    /// stores in [`commitments`](Self::commitments). Exposed (additively) so the
+    /// read-cap layer ([`crate::read_cap`]) can compute the SAME commitment for an
+    /// encrypted slot — the binding the circuit sees is unchanged; only the
+    /// ciphertext is new. Does NOT alter the commitment shape.
+    #[inline]
+    pub fn compute_commitment_pub(value: &FieldElement, nonce: u64) -> [u8; 32] {
+        Self::compute_commitment(value, nonce)
+    }
+
     /// Compute a BLAKE3 commitment: H(value || nonce_bytes).
     fn compute_commitment(value: &FieldElement, nonce: u64) -> [u8; 32] {
         let mut hasher = blake3::Hasher::new();

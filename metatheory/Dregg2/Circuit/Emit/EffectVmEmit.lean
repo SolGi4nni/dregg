@@ -211,15 +211,24 @@ witnesses `0` here, so the absorption is byte-identical to the legacy `…, 0)` 
 def STATE_RECORD_DIGEST : Nat := 96
 end aux_off
 
-/-! Public-input slot indices (`pi::*`). -/
+/-! Public-input slot indices (`pi::*`).
+
+Phase C (`docs/FAITHFUL-STATE-COMMITMENT.md`): the OLD/NEW state commitment
+widened from 4 felts to 8 felts each (~62-bit → ~124-bit collision floor,
+matching FRI), shifting the whole PI prefix by +8. The slot indices below are
+the Rust twin (`effect_vm/pi.rs`); the commit-binding lemmas (`saCol STATE_COMMIT
+→ NEW_COMMIT`, etc.) are width-agnostic — they pin slot 0 of each commitment to
+the in-trace continuity column, and the off-AIR PI match over all 8 felts is
+what raises the floor. -/
 namespace pi
 def OLD_COMMIT : Nat := 0
-def NEW_COMMIT : Nat := 4
-def INIT_BAL_LO : Nat := 12
-def INIT_BAL_HI : Nat := 13
-def FINAL_BAL_LO : Nat := 14
-def FINAL_BAL_HI : Nat := 15
-def ACTOR_NONCE : Nat := 33
+/-- New commitment base: OLD_COMMIT + 8 (Phase C 8-felt commitment). -/
+def NEW_COMMIT : Nat := 8
+def INIT_BAL_LO : Nat := 20
+def INIT_BAL_HI : Nat := 21
+def FINAL_BAL_LO : Nat := 22
+def FINAL_BAL_HI : Nat := 23
+def ACTOR_NONCE : Nat := 41
 end pi
 
 /-- Absolute column index of `state_before[off]`. -/

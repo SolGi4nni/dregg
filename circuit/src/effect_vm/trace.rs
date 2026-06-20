@@ -1103,15 +1103,15 @@ pub fn generate_effect_vm_trace_ext(
     let pi_len = pi::ACTIVE_BASE_COUNT + custom_count * pi::CUSTOM_ENTRY_SIZE;
     let mut public_inputs = vec![BabyBear::ZERO; pi_len];
 
-    // ---- Commitments (4 felts each) ----
-    let old_commit_4 = CellState::compute_commitment_4(
+    // ---- Commitments (8 genuine Poseidon2 felts each, Phase C ~124-bit) ----
+    let old_commit_8 = CellState::compute_commitment_8(
         initial_state.balance,
         initial_state.nonce,
         &initial_state.fields,
         initial_state.capability_root,
         initial_state.record_digest,
     );
-    let new_commit_4 = CellState::compute_commitment_4(
+    let new_commit_8 = CellState::compute_commitment_8(
         current_state.balance,
         current_state.nonce,
         &current_state.fields,
@@ -1119,9 +1119,9 @@ pub fn generate_effect_vm_trace_ext(
         current_state.record_digest,
     );
     public_inputs[pi::OLD_COMMIT_BASE..pi::OLD_COMMIT_BASE + pi::OLD_COMMIT_LEN]
-        .copy_from_slice(&old_commit_4[..pi::OLD_COMMIT_LEN]);
+        .copy_from_slice(&old_commit_8[..pi::OLD_COMMIT_LEN]);
     public_inputs[pi::NEW_COMMIT_BASE..pi::NEW_COMMIT_BASE + pi::NEW_COMMIT_LEN]
-        .copy_from_slice(&new_commit_4[..pi::NEW_COMMIT_LEN]);
+        .copy_from_slice(&new_commit_8[..pi::NEW_COMMIT_LEN]);
 
     // ---- Effects hash (4 felts) ----
     let effects_hash_4 = compute_effects_hash_4(effects);

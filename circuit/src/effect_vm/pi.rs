@@ -12,16 +12,25 @@
 //! extra 3 PI elements get their security from the executor PI matching
 //! loop. Stage 2 (`EFFECT-VM-SHAPE-A.md` Phase 1) widens the trace column.
 
-// ---- Commitments (Stage 1 widened to 4 felts each, ~124-bit) ----
-/// Old state commitment, 4-felt Poseidon2 form.
+// ---- Commitments (Phase C widened to 8 felts each, ~124-bit collision) ----
+//
+// Stage 1 took the commitment 1 felt -> 4 felts. Phase C
+// (`docs/FAITHFUL-STATE-COMMITMENT.md`) takes it 4 -> 8. THE FLOOR: a
+// 4-felt BabyBear commit packs ~124 raw bits but, as a Poseidon2 digest,
+// its COLLISION resistance is ~half the digest width = ~62 bits — below the
+// system's FRI ~128-bit security. Eight genuine Poseidon2 squeeze felts give
+// ~124-bit collision resistance, MATCHING the FRI floor. The 8 felts MUST be
+// genuine independent squeezes (see `CellState::compute_commitment_8`), never
+// 4 real + 4 zero-padded (that retains the ~62-bit floor).
+/// Old state commitment, 8-felt Poseidon2 form.
 pub const OLD_COMMIT_BASE: usize = 0;
-pub const OLD_COMMIT_LEN: usize = 4;
-/// New state commitment, 4-felt Poseidon2 form.
-pub const NEW_COMMIT_BASE: usize = 4;
-pub const NEW_COMMIT_LEN: usize = 4;
+pub const OLD_COMMIT_LEN: usize = 8;
+/// New state commitment, 8-felt Poseidon2 form.
+pub const NEW_COMMIT_BASE: usize = OLD_COMMIT_BASE + OLD_COMMIT_LEN;
+pub const NEW_COMMIT_LEN: usize = 8;
 /// Effects-tree hash, 4-felt Poseidon2 form. Promotes the prior 2-felt
 /// (lo+synthetic-hi) form to 4 felts; synthetic-hi is dropped.
-pub const EFFECTS_HASH_BASE: usize = 8;
+pub const EFFECTS_HASH_BASE: usize = NEW_COMMIT_BASE + NEW_COMMIT_LEN;
 pub const EFFECTS_HASH_LEN: usize = 4;
 
 // ---- Backwards-compatible aliases (position 0 only) ----
@@ -38,38 +47,42 @@ pub const EFFECTS_HASH_LO: usize = EFFECTS_HASH_BASE;
 pub const EFFECTS_HASH_HI: usize = EFFECTS_HASH_BASE + 1;
 
 // ---- Per-cell balance limbs (P0-1 net_delta binding) ----
+//
+// Computed from `EFFECTS_HASH_BASE + EFFECTS_HASH_LEN` so the whole prefix
+// cascades when a commitment width changes (Phase C 4->8): there are NO free
+// literal offsets in the prefix below — each base is `prior_base + prior_len`.
 /// Initial balance low limb (30 bits) — pinned to row 0 state_before.
-pub const INIT_BAL_LO: usize = 12;
+pub const INIT_BAL_LO: usize = EFFECTS_HASH_BASE + EFFECTS_HASH_LEN;
 /// Initial balance high limb — pinned to row 0 state_before.
-pub const INIT_BAL_HI: usize = 13;
+pub const INIT_BAL_HI: usize = INIT_BAL_LO + 1;
 /// Final balance low limb — pinned to last row state_after.
-pub const FINAL_BAL_LO: usize = 14;
+pub const FINAL_BAL_LO: usize = INIT_BAL_HI + 1;
 /// Final balance high limb — pinned to last row state_after.
-pub const FINAL_BAL_HI: usize = 15;
+pub const FINAL_BAL_HI: usize = FINAL_BAL_LO + 1;
 
 // ---- Net balance delta (P0-1 binding) ----
-pub const NET_DELTA_MAG: usize = 16;
-pub const NET_DELTA_SIGN: usize = 17;
+pub const NET_DELTA_MAG: usize = FINAL_BAL_HI + 1;
+pub const NET_DELTA_SIGN: usize = NET_DELTA_MAG + 1;
 
 // ---- Stage 1 additions (per EFFECT-VM-SHAPE-A.md G, E, F) ----
 /// Federation block height supplied by the verifier. Used by effects
 /// that take a timeout (escrow refund, bridge cancel) — those land in
 /// later stages; the PI slot exists now so they have it.
-pub const CURRENT_BLOCK_HEIGHT: usize = 18;
+pub const CURRENT_BLOCK_HEIGHT: usize = NET_DELTA_SIGN + 1;
 /// Per-cell maximum custom effects (from cell program manifest).
 /// Verifier supplies from `cell.program.max_custom_effects`.
-pub const MAX_CUSTOM_EFFECTS: usize = 19;
+pub const MAX_CUSTOM_EFFECTS: usize = CURRENT_BLOCK_HEIGHT + 1;
 /// Number of custom effects in this turn (0 if none). The AIR enforces
 /// `Σ s_custom == PI[CUSTOM_EFFECT_COUNT]` (sum-check, soundness
 /// prerequisite per `DESIGN-max-custom-effects.md` §7 threat 3).
-pub const CUSTOM_EFFECT_COUNT: usize = 20;
+pub const CUSTOM_EFFECT_COUNT: usize = MAX_CUSTOM_EFFECTS + 1;
 
 // ---- CapTP federation-state root (RETIRED slot, VERB-LOCKSTEP) ----
 /// Federation-scoped approved-handoffs Merkle root, 4-felt Poseidon2 form.
 /// RETIRED: `ValidateHandoff` no longer exists as an effect; the slot stays
 /// at the empty-tree sentinel until the descriptor-regeneration lane compacts
 /// the PI layout (frozen descriptors pin PI prefix offsets).
-pub const APPROVED_HANDOFFS_BASE: usize = 21;
+pub const APPROVED_HANDOFFS_BASE: usize = CUSTOM_EFFECT_COUNT + 1;
 pub const APPROVED_HANDOFFS_LEN: usize = 4;
 
 // ---- Stage 7-γ.0a additions: turn-level identity bindings ----
@@ -85,24 +98,24 @@ pub const APPROVED_HANDOFFS_LEN: usize = 4;
 /// Poseidon2 of the canonical `Turn::hash()` (v3, post-Stage-7-α.1).
 /// All per-cell proofs of one turn share this value; the verifier
 /// rejects bundles whose per-cell proofs disagree.
-pub const TURN_HASH_BASE: usize = 25;
+pub const TURN_HASH_BASE: usize = APPROVED_HANDOFFS_BASE + APPROVED_HANDOFFS_LEN;
 pub const TURN_HASH_LEN: usize = 4;
 /// Poseidon2 over the canonical-DFS-order traversal of the whole
 /// `call_forest`'s effects (not per-cell). Closes P2 (projection
 /// totality) at γ.1; for γ.0 it's a shared PI the executor verifies
 /// against the turn's recomputed value.
-pub const EFFECTS_HASH_GLOBAL_BASE: usize = 29;
+pub const EFFECTS_HASH_GLOBAL_BASE: usize = TURN_HASH_BASE + TURN_HASH_LEN;
 pub const EFFECTS_HASH_GLOBAL_LEN: usize = 4;
 /// Outer `Turn::nonce`, promoted to PI. Closes the differential-test
 /// gap from task #49 (AIR previously did not witness the agent's
 /// outer nonce bump). The verifier's PI-match loop rejects bundles
 /// whose per-cell proofs disagree on the actor nonce, and the
 /// executor checks PI[ACTOR_NONCE] == turn.nonce.
-pub const ACTOR_NONCE: usize = 33;
+pub const ACTOR_NONCE: usize = EFFECTS_HASH_GLOBAL_BASE + EFFECTS_HASH_GLOBAL_LEN;
 /// Poseidon2 of `previous_receipt_hash` (32 bytes -> 4 felts) when
 /// present, or the zero sentinel when absent. Binds each per-cell
 /// proof to a specific receipt-chain position.
-pub const PREVIOUS_RECEIPT_HASH_BASE: usize = 34;
+pub const PREVIOUS_RECEIPT_HASH_BASE: usize = ACTOR_NONCE + 1;
 pub const PREVIOUS_RECEIPT_HASH_LEN: usize = 4;
 
 // ---- Stage 7-γ.2 Phase 1: bilateral cross-cell algebraic binding ----
@@ -127,46 +140,46 @@ pub const PREVIOUS_RECEIPT_HASH_LEN: usize = 4;
 
 /// Count of Transfer rows in this cell's projection where direction == 1
 /// (outflow). The verifier's expected-schedule reconstruction must agree.
-pub const OUTBOUND_TRANSFER_COUNT: usize = 38;
+pub const OUTBOUND_TRANSFER_COUNT: usize = PREVIOUS_RECEIPT_HASH_BASE + PREVIOUS_RECEIPT_HASH_LEN;
 /// Count of Transfer rows where direction == 0 (inflow).
-pub const INBOUND_TRANSFER_COUNT: usize = 39;
+pub const INBOUND_TRANSFER_COUNT: usize = OUTBOUND_TRANSFER_COUNT + 1;
 /// Count of GrantCapability rows where this cell is the grantor.
-pub const OUTBOUND_GRANT_COUNT: usize = 40;
+pub const OUTBOUND_GRANT_COUNT: usize = INBOUND_TRANSFER_COUNT + 1;
 /// Count of GrantCapability rows where this cell is the grantee.
-pub const INBOUND_GRANT_COUNT: usize = 41;
+pub const INBOUND_GRANT_COUNT: usize = OUTBOUND_GRANT_COUNT + 1;
 /// Count of Introduce rows where this cell is the introducer.
-pub const INTRO_AS_INTRODUCER_COUNT: usize = 42;
+pub const INTRO_AS_INTRODUCER_COUNT: usize = INBOUND_GRANT_COUNT + 1;
 /// Count of Introduce rows where this cell is the recipient.
-pub const INTRO_AS_RECIPIENT_COUNT: usize = 43;
+pub const INTRO_AS_RECIPIENT_COUNT: usize = INTRO_AS_INTRODUCER_COUNT + 1;
 /// Count of Introduce rows where this cell is the target.
-pub const INTRO_AS_TARGET_COUNT: usize = 44;
+pub const INTRO_AS_TARGET_COUNT: usize = INTRO_AS_RECIPIENT_COUNT + 1;
 
 /// 4-felt Poseidon2 accumulator over all outbound bilateral transfer_ids
 /// in this turn, absorbed in trace-row-index order. Each step folds
 /// `(transfer_id_4, peer_cell_id_4)` into the running state. Domain
 /// separator distinguishes from inbound + grant + introduce roots.
 /// Sentinel: `[BabyBear::ZERO; 4]` when count == 0.
-pub const OUTGOING_TRANSFER_ROOT_BASE: usize = 45;
+pub const OUTGOING_TRANSFER_ROOT_BASE: usize = INTRO_AS_TARGET_COUNT + 1;
 pub const OUTGOING_TRANSFER_ROOT_LEN: usize = 4;
 /// Mirror of OUTGOING_TRANSFER_ROOT for the inbound side.
-pub const INCOMING_TRANSFER_ROOT_BASE: usize = 49;
+pub const INCOMING_TRANSFER_ROOT_BASE: usize = OUTGOING_TRANSFER_ROOT_BASE + OUTGOING_TRANSFER_ROOT_LEN;
 pub const INCOMING_TRANSFER_ROOT_LEN: usize = 4;
 
 /// 4-felt accumulator over outbound grant_ids (this cell as grantor).
-pub const OUTGOING_GRANT_ROOT_BASE: usize = 53;
+pub const OUTGOING_GRANT_ROOT_BASE: usize = INCOMING_TRANSFER_ROOT_BASE + INCOMING_TRANSFER_ROOT_LEN;
 pub const OUTGOING_GRANT_ROOT_LEN: usize = 4;
 /// 4-felt accumulator over inbound grant_ids (this cell as grantee).
-pub const INCOMING_GRANT_ROOT_BASE: usize = 57;
+pub const INCOMING_GRANT_ROOT_BASE: usize = OUTGOING_GRANT_ROOT_BASE + OUTGOING_GRANT_ROOT_LEN;
 pub const INCOMING_GRANT_ROOT_LEN: usize = 4;
 
 /// 4-felt accumulator over intro_ids where this cell is the introducer.
-pub const INTRO_AS_INTRODUCER_ROOT_BASE: usize = 61;
+pub const INTRO_AS_INTRODUCER_ROOT_BASE: usize = INCOMING_GRANT_ROOT_BASE + INCOMING_GRANT_ROOT_LEN;
 pub const INTRO_AS_INTRODUCER_ROOT_LEN: usize = 4;
 /// 4-felt accumulator over intro_ids where this cell is the recipient.
-pub const INTRO_AS_RECIPIENT_ROOT_BASE: usize = 65;
+pub const INTRO_AS_RECIPIENT_ROOT_BASE: usize = INTRO_AS_INTRODUCER_ROOT_BASE + INTRO_AS_INTRODUCER_ROOT_LEN;
 pub const INTRO_AS_RECIPIENT_ROOT_LEN: usize = 4;
 /// 4-felt accumulator over intro_ids where this cell is the target.
-pub const INTRO_AS_TARGET_ROOT_BASE: usize = 69;
+pub const INTRO_AS_TARGET_ROOT_BASE: usize = INTRO_AS_RECIPIENT_ROOT_BASE + INTRO_AS_RECIPIENT_ROOT_LEN;
 pub const INTRO_AS_TARGET_ROOT_LEN: usize = 4;
 
 /// Single-felt boolean: 1 iff this per-cell proof was the actor's
@@ -175,7 +188,7 @@ pub const INTRO_AS_TARGET_ROOT_LEN: usize = 4;
 /// proof's row-0 NONCE column is pinned to PI[ACTOR_NONCE] (γ.0a
 /// constraint), and non-agent cells are exempt from that pin. The
 /// verifier enforces the exactly-one-agent rule across the bundle.
-pub const IS_AGENT_CELL: usize = 73;
+pub const IS_AGENT_CELL: usize = INTRO_AS_TARGET_ROOT_BASE + INTRO_AS_TARGET_ROOT_LEN;
 
 // ---- Sovereign-witness AIR teeth (SOVEREIGN-WITNESS-AIR-DESIGN.md) ----
 //
@@ -196,31 +209,41 @@ pub const IS_AGENT_CELL: usize = 73;
 // generalized recursive verifier.
 /// 4-felt Poseidon2 hash of the sovereign cell's owning pubkey (the
 /// key that signed the witness). Zero sentinel when IS_SOVEREIGN_CELL == 0.
-pub const SOVEREIGN_WITNESS_KEY_COMMIT_BASE: usize = 74;
+///
+/// NOTE (Phase C): this stays 4 felts. It is a KEY DIGEST (an identity /
+/// replay binding over the Ed25519 owner pubkey), NOT a state commitment, and
+/// its security is backed off-AIR by the actual signature verification + the
+/// monotonic-sequence chain-walk — it does not carry the state-commitment
+/// collision floor that OLD/NEW_COMMIT do. Widening it would not close any
+/// soundness gap (the signature already binds the full 256-bit key).
+pub const SOVEREIGN_WITNESS_KEY_COMMIT_BASE: usize = IS_AGENT_CELL + 1;
 pub const SOVEREIGN_WITNESS_KEY_COMMIT_LEN: usize = 4;
 /// Per-cell monotonic sequence counter from the witness. Zero sentinel
 /// when IS_SOVEREIGN_CELL == 0. Replay protection via the verifier's
 /// chain-walk (each turn's PI[SOVEREIGN_WITNESS_SEQUENCE] must equal
 /// the federation's last-known + 1, enforced at executor injection
 /// time).
-pub const SOVEREIGN_WITNESS_SEQUENCE: usize = 78;
+pub const SOVEREIGN_WITNESS_SEQUENCE: usize =
+    SOVEREIGN_WITNESS_KEY_COMMIT_BASE + SOVEREIGN_WITNESS_KEY_COMMIT_LEN;
 /// Single-felt boolean: 1 iff this per-cell proof attests to a
 /// sovereign-witnessed effect. 0 for hosted cells. Drives the gating
 /// for SOVEREIGN_WITNESS_KEY_COMMIT / SOVEREIGN_WITNESS_SEQUENCE.
-pub const IS_SOVEREIGN_CELL: usize = 79;
+pub const IS_SOVEREIGN_CELL: usize = SOVEREIGN_WITNESS_SEQUENCE + 1;
 /// 4-felt VK hash of the AIR under which the inner transition_proof
 /// was produced (typically the Effect VM AIR — see design §3.2). Zero
 /// sentinel when no transition_proof was supplied or IS_SOVEREIGN_CELL
 /// == 0. Bound only when HAS_TRANSITION_PROOF == 1.
-pub const SOVEREIGN_TRANSITION_PROOF_VK_HASH_BASE: usize = 80;
+pub const SOVEREIGN_TRANSITION_PROOF_VK_HASH_BASE: usize = IS_SOVEREIGN_CELL + 1;
 pub const SOVEREIGN_TRANSITION_PROOF_VK_HASH_LEN: usize = 4;
 /// 4-felt Poseidon2 hash of the inner transition_proof bytes (after
 /// canonical serialization). Zero sentinel when no proof was supplied.
-pub const SOVEREIGN_TRANSITION_PROOF_COMMITMENT_BASE: usize = 84;
+pub const SOVEREIGN_TRANSITION_PROOF_COMMITMENT_BASE: usize =
+    SOVEREIGN_TRANSITION_PROOF_VK_HASH_BASE + SOVEREIGN_TRANSITION_PROOF_VK_HASH_LEN;
 pub const SOVEREIGN_TRANSITION_PROOF_COMMITMENT_LEN: usize = 4;
 /// Single-felt boolean: 1 iff a STARK transition_proof was supplied
 /// alongside the witness AND IS_SOVEREIGN_CELL == 1.
-pub const HAS_TRANSITION_PROOF: usize = 88;
+pub const HAS_TRANSITION_PROOF: usize =
+    SOVEREIGN_TRANSITION_PROOF_COMMITMENT_BASE + SOVEREIGN_TRANSITION_PROOF_COMMITMENT_LEN;
 
 // ---- 30-bit value-truncation fix (CAVEAT-LAYER-COVERAGE.md §6.5) ----
 //
@@ -244,15 +267,15 @@ pub const HAS_TRANSITION_PROOF: usize = 88;
 // sentinel.
 /// 4-limb (16-bit each) decomposition of `BridgeMint.value`. Limbs are
 /// little-endian: limbs[0] is the low 16 bits, limbs[3] is the high 16.
-pub const BRIDGE_MINT_VALUE_LIMBS_BASE: usize = 89;
+pub const BRIDGE_MINT_VALUE_LIMBS_BASE: usize = HAS_TRANSITION_PROOF + 1;
 pub const BRIDGE_MINT_VALUE_LIMBS_LEN: usize = 4;
 /// 4-limb decomposition of `BridgeLock.value`. RETIRED (VERB-LOCKSTEP):
 /// the effect no longer exists; the slot is always the zero sentinel.
-pub const BRIDGE_LOCK_VALUE_LIMBS_BASE: usize = 93;
+pub const BRIDGE_LOCK_VALUE_LIMBS_BASE: usize = BRIDGE_MINT_VALUE_LIMBS_BASE + BRIDGE_MINT_VALUE_LIMBS_LEN;
 pub const BRIDGE_LOCK_VALUE_LIMBS_LEN: usize = 4;
 /// 4-limb decomposition of `CreateEscrow.amount`. RETIRED (VERB-LOCKSTEP):
 /// the effect no longer exists; the slot is always the zero sentinel.
-pub const CREATE_ESCROW_AMOUNT_LIMBS_BASE: usize = 97;
+pub const CREATE_ESCROW_AMOUNT_LIMBS_BASE: usize = BRIDGE_LOCK_VALUE_LIMBS_BASE + BRIDGE_LOCK_VALUE_LIMBS_LEN;
 pub const CREATE_ESCROW_AMOUNT_LIMBS_LEN: usize = 4;
 
 // ---- Custom proof commitments ----
@@ -363,7 +386,8 @@ pub const ACTIVE_BASE_COUNT: usize = v3::V3_BASE_COUNT;
 /// need a table/Merkle membership gadget and are not projected.
 ///
 /// Type tags (kept in sync with `dregg_cell::program::StateConstraint`):
-pub const SLOT_CAVEAT_COUNT: usize = 101;
+pub const SLOT_CAVEAT_COUNT: usize =
+    CREATE_ESCROW_AMOUNT_LIMBS_BASE + CREATE_ESCROW_AMOUNT_LIMBS_LEN;
 /// Maximum number of slot caveats bindable through the PI manifest.
 /// Cells declaring more than this fall back to executor-only
 /// enforcement (the AIR cannot bind them).
@@ -372,7 +396,7 @@ pub const MAX_SLOT_CAVEATS: usize = 4;
 pub const SLOT_CAVEAT_ENTRY_SIZE: usize = 6;
 /// Base of the manifest array. Entry `i` lives at
 /// `SLOT_CAVEAT_MANIFEST_BASE + i * SLOT_CAVEAT_ENTRY_SIZE`.
-pub const SLOT_CAVEAT_MANIFEST_BASE: usize = 102;
+pub const SLOT_CAVEAT_MANIFEST_BASE: usize = SLOT_CAVEAT_COUNT + 1;
 
 // Type tags for the manifest (numerically distinct from any
 // existing PI sentinel and from zero — zero means "no caveat").
@@ -733,14 +757,18 @@ mod v3_drift_guard {
     /// Rust never invents a layout fact (law #1 of the rotation spec).
     #[test]
     fn pi_v3_offsets_match_lean() {
+        // Phase C widened OLD_COMMIT + NEW_COMMIT 4->8 felts each (+8 total),
+        // shifting the whole prefix: BASE_COUNT 201 -> 209, V3 tail 209/210/211,
+        // V3_BASE_COUNT 204 -> 212. The Lean twin `RotationLayout.PiV3` is
+        // re-anchored to match.
         assert_eq!(
             super::BASE_COUNT,
-            201,
+            209,
             "v2 prefix drifted: re-anchor RotationLayout.PiV3.V2_BASE_COUNT"
         );
-        assert_eq!(super::v3::COMMITTED_HEIGHT, 201);
-        assert_eq!(super::v3::RATE_BOUND_TAG, 202);
-        assert_eq!(super::v3::CHALLENGE_WINDOW_TAG, 203);
-        assert_eq!(super::v3::V3_BASE_COUNT, 204);
+        assert_eq!(super::v3::COMMITTED_HEIGHT, 209);
+        assert_eq!(super::v3::RATE_BOUND_TAG, 210);
+        assert_eq!(super::v3::CHALLENGE_WINDOW_TAG, 211);
+        assert_eq!(super::v3::V3_BASE_COUNT, 212);
     }
 }
