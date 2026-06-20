@@ -2820,3 +2820,26 @@ HYGIENE: --features verifier (light-client build) un-broken; wide-descriptor wid
 NET: the v2 deployed apex went from 'ungrounded against a phantom' to faithful + kernel-bridged + real-machinery-
   differential-guarded + non-vacuous + the lone soundness hole closed. Deploy parked (box lost); all green +
   committed, push-to-origin/main when a box returns.
+
+## ⚑ ENMESHMENT TOPOLOGY CENSUS (2026-06-20) — layer 2/4: EXECUTOR↔SPEC = WELDED (the strong result)
+The user's holistic "is it end-to-end enmeshed / would edits turn proofs red" census. Executor↔spec verdict
+(ada583f6, grounded file:line):
+- WELDED + axiom-clean + EFFECT-COMPLETE. `fullActionStep_exec_iff` (ActionDispatch.lean:328) is a PROVEN iff
+  `execFullA st fa = some st' ↔ fullActionStep st fa st'` naming BOTH real objects (no hypothesis abstraction);
+  #assert_axioms-pinned (:512). `execFullTurnA_iff_turnSpec` (:481) lifts to whole-turn. Covers ALL 57 action
+  arms via 43 per-effect `execFullA_*_iff_spec` keystones, each #assert_axioms-pinned in its Circuit/Spec/*.lean
+  leaf. No effect spec-only or executor-only. exerciseA R4 facet-gate enforced on BOTH sides.
+- The Lean executor IS production: @[export dregg_exec_full_forest_auth] (FFI.lean:3325) is the sole prod turn
+  entry; Rust runs it over the C-ABI (turn/src/lean_apply.rs, lean_shadow.rs). The legacy Rust apply.rs is the
+  thing being RETIRED, NOT an oracle — its parity is EMPIRICAL differential (rust_lean_divergence_finder,
+  lean_state_producer_*), not a Lean proof.
+- WELD TEST: editing any fullActionStep arm / execFullA arm / *_iff_spec keystone / turnSpec fold / the R4 gate /
+  the circuit *Spec post-state -> RED (apex rebuilds them via CircuitSoundness.lean:494,829 rw
+  execFullTurnA_iff_turnSpec). NOT caught by Lean (the accepted seam): legacy Rust apply.rs parity (empirical) +
+  FFI marshalling (below the proved execFullA layer).
+- THE 3-CORNER TRIANGLE CLOSED: (a) executor⟺spec = the 43 keystones + FunctionalRefinement.lean intent triangles
+  (mint/burn/delegate/attenuate/revoke/noteCreate/noteSpend, #assert_axioms-pinned, anti-ghost teeth); (b)
+  circuit⟺spec = CircuitSpecTriangle.lean *_circuit_pins_intent + _rejects_wrong_ledger + _intent_is_circuit_acceptable
+  for ~13 effects against INTENT oracles; whole-turn WholeTurnTriangle.lean binds the composed turnSpec post to one
+  authenticated root. Terminal seams = named CR carriers (Injective D, logHashInjective) + the distributed Σδ=0
+  consensus binding — typeclass params, never sorry.
