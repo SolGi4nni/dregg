@@ -11,6 +11,24 @@ reason.)*
 Last sweep: 2026-06-13 (flagged-items burndown — removed ~14 landed/struck items,
 deduped the DreggDL/sel4/snapshot landings into git history, kept live tails).
 
+## ◻ dregg-doc — the doc-on-cell encoding seam, CHARACTERIZED (ember's architectural call) (2026-06-20)
+The section-1 "executor writes fields_map not heap_map" tail, pinned precisely (guard:
+`doccell.rs::the_two_doc_on_cell_index_encodings_diverge_by_state_slots`). TWO doc-on-cell
+encodings exist and DIVERGE by exactly `STATE_SLOTS` (16):
+- **`ExecutorDrivenDoc`** (executor_drive.rs) — `field_key(coll,key) = STATE_SLOTS + ((coll<<32)|key)`
+  → writes the committed `fields_map` overflow region through the REAL executor's `apply_set_field`.
+  COHERENT + CANONICAL — the path the cockpit drives. ✓
+- **`DocCell`** (doccell.rs) — `encode_index(coll,key) = (coll<<32)|key` (NO offset) → writes `heap_map`
+  via `set_heap`, and records `Effect::SetField{index: encode_index}`. INCOHERENT: a small `(coll,key)`
+  (e.g. `encode_index(COLL_ATOMS,0)==0`) is a REGISTER slot (< STATE_SLOTS), so the effect-record would
+  hit the cell's BALANCE if run through the real executor — AND it writes `heap_map`, a different map than
+  the executor's `fields_map`. `DocCell` is used ONLY by its own tests (superseded by ExecutorDrivenDoc);
+  `project_graph` (the shared graph→`(coll,key)` projection) is fine, used by both.
+DECISION (ember): retire `DocCell`/`heap_map` + `substrate.rs::to_heap_map`, OR re-key `DocCell` onto
+`field_key`/`fields_map` so its effect-records round-trip through the real executor. NOT a quick fix —
+it's a doc-substrate architectural unification, on the document language you parked to breathe. The guard
+prevents silent drift meanwhile.
+
 ## ◻ WINDOWS native-full — one-command reproducibility follow-up (2026-06-20)
 native-full x86_64 Windows is BUILT + RUNS with the REAL verified executor (the GNU lever, not MSVC —
 `dregg-lean-ffi/build.rs` windows-gnu splice + `WINDOWS-PORT.md`). The build still needs a small

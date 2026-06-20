@@ -417,6 +417,47 @@ mod tests {
         assert_eq!(resolved.agent, doc.cell_id());
     }
 
+    /// CHARACTERIZATION GUARD — the two doc-on-cell index encodings + the canonical
+    /// path (the named `fields_map`-vs-`heap_map` seam, pinned).
+    ///
+    /// A document leaf's `(collection, key)` is mapped onto a cell two ways:
+    ///   - [`encode_index`] (this module / [`DocCell`]): `(coll << 32) | key` — NO offset.
+    ///   - `field_key` (`executor_drive` / [`crate::ExecutorDrivenDoc`]):
+    ///     `STATE_SLOTS + ((coll << 32) | key)`.
+    /// They differ by EXACTLY `STATE_SLOTS`. `ExecutorDrivenDoc` (`field_key` → the
+    /// committed `fields_map` overflow region, written through the REAL executor's
+    /// `apply_set_field`) is the COHERENT, canonical path the cockpit drives.
+    /// `encode_index` lacks the offset, so a small `(coll, key)` lands in the cell's
+    /// FIXED register file (slot 0 = balance), NOT the overflow map — `DocCell`'s
+    /// `Effect::SetField` records therefore do NOT round-trip through the real
+    /// executor (and `DocCell` writes `heap_map` via `set_heap`, a different map than
+    /// the executor's `fields_map`). `DocCell` is used only by its own tests,
+    /// superseded by `ExecutorDrivenDoc`. This guard pins the relationship so a
+    /// change to either encoding is caught, and records which path is canonical.
+    /// (Reconciliation — retire `DocCell`/heap_map or re-key it onto `field_key`/
+    /// `fields_map` — is the named HORIZONLOG architectural decision.)
+    #[test]
+    fn the_two_doc_on_cell_index_encodings_diverge_by_state_slots() {
+        use crate::executor_drive::field_key;
+        use dregg_cell::state::STATE_SLOTS;
+        for (coll, key) in [(COLL_ATOMS, 0u32), (COLL_EDGES, 5u32), (COLL_FIELDS, 3u32)] {
+            // The exact relationship: field_key = STATE_SLOTS + encode_index.
+            assert_eq!(
+                field_key(coll, key),
+                STATE_SLOTS as u64 + encode_index(coll, key) as u64,
+                "field_key must be encode_index offset past the register file"
+            );
+        }
+        // The load-bearing consequence: encode_index(COLL_ATOMS, 0) == 0 is a
+        // REGISTER slot (< STATE_SLOTS) — DocCell's raw effect index collides with
+        // the cell's balance; field_key offsets past the register file into fields_map.
+        assert!(encode_index(COLL_ATOMS, 0) < STATE_SLOTS, "encode_index hits a register slot");
+        assert!(
+            field_key(COLL_ATOMS, 0) >= STATE_SLOTS as u64,
+            "field_key lands in the fields_map overflow region (canonical)"
+        );
+    }
+
     #[test]
     fn the_heap_is_the_real_setfield_heap() {
         // The edit lands genuine `Effect::SetField` writes in the document's heap
