@@ -156,14 +156,20 @@ pub const AFTER_BASE: usize = V1_WIDTH + B_SPAN; // 237
 /// Absolute base column of the widened-caveat region.
 pub const CAVEAT_BASE: usize = V1_WIDTH + 2 * B_SPAN; // 287
 
-/// The number of v1 public inputs the rotated PI vector prefixes (`ACTIVE_BASE_COUNT`).
-pub const V1_PI_COUNT: usize = 34;
-/// The rotated public-input count (34 v1 + 4 appended).
-pub const ROT_PI_COUNT: usize = 38;
-/// The rotated NOTE-SPEND public-input count (the 38-PI rotated prefix + the appended
-/// nullifier slot at index 38 — `EffectVmEmitRotationV3.noteSpendV3`, the C4 last-flip-gate
-/// close). Only the note-spend cohort member carries this fifth pin.
-pub const ROT_NULLIFIER_PI_COUNT: usize = 39;
+/// The number of v1 public inputs the rotated PI vector prefixes. This is the
+/// length of the v1 PI window the descriptors pin into — it MUST cover every v1
+/// pin, the highest of which is `pi::ACTOR_NONCE`. Phase C
+/// (`FAITHFUL-STATE-COMMITMENT.md`) widened OLD/NEW_COMMIT 4→8 each (+8 prefix),
+/// pushing `ACTOR_NONCE` 33→41, so the window grew 34→42 to keep the nonce pin in
+/// range (`42 = pi::ACTOR_NONCE + 1`). A window of 34 would slice the nonce OFF the
+/// rotated PI vector, leaving the row-0 nonce boundary pin reading past the slice.
+pub const V1_PI_COUNT: usize = 42;
+/// The rotated public-input count (42 v1 + 4 appended commit/height/caveat pins).
+pub const ROT_PI_COUNT: usize = V1_PI_COUNT + 4;
+/// The rotated NOTE-SPEND public-input count (the rotated prefix + the appended
+/// nullifier slot at index `ROT_PI_COUNT` — `EffectVmEmitRotationV3.noteSpendV3`, the
+/// C4 last-flip-gate close). Only the note-spend cohort member carries this fifth pin.
+pub const ROT_NULLIFIER_PI_COUNT: usize = ROT_PI_COUNT + 1;
 /// The rotated PI slot carrying the spend row's folded nullifier (the C4 weld). Equals
 /// `ROT_PI_COUNT` — the first slot past the four rotated commit pins.
 pub const ROT_NULLIFIER_PI: usize = ROT_PI_COUNT;
@@ -323,10 +329,10 @@ pub fn generate_rotated_effect_vm_trace(
     let r0 = &trace[0];
     let last = &trace[trace.len() - 1];
     let mut dpis: Vec<BabyBear> = pis[..V1_PI_COUNT].to_vec();
-    dpis.push(r0[BEFORE_BASE + B_STATE_COMMIT]); // PI 34: rotated OLD commit (col 218)
-    dpis.push(last[AFTER_BASE + B_STATE_COMMIT]); // PI 35: rotated NEW commit (col 261)
-    dpis.push(last[AFTER_BASE + B_COMMITTED_HEIGHT]); // PI 36: committed height (col 259)
-    dpis.push(last[CAVEAT_BASE + C_SPAN - 1]); // PI 37: caveat commit (col 310)
+    dpis.push(r0[BEFORE_BASE + B_STATE_COMMIT]); // PI 42 (V1_PI_COUNT): rotated OLD commit (col 218)
+    dpis.push(last[AFTER_BASE + B_STATE_COMMIT]); // PI 43: rotated NEW commit (col 261)
+    dpis.push(last[AFTER_BASE + B_COMMITTED_HEIGHT]); // PI 44: committed height (col 259)
+    dpis.push(last[CAVEAT_BASE + C_SPAN - 1]); // PI 45: caveat commit (col 310)
     debug_assert_eq!(dpis.len(), ROT_PI_COUNT);
 
     // THE C4 LAST-FLIP-GATE (note-spend nullifier weld): a NoteSpend turn rotates against the
@@ -556,17 +562,18 @@ pub fn generate_rotated_effect_vm_trace_with_fee(
         }
     }
 
-    // Re-read the 39-PI vector from the post-fee trace carriers so producer + verifier agree.
+    // Re-read the rotated PI vector from the post-fee trace carriers so producer + verifier agree.
     let last = &trace[trace.len() - 1];
     let mut dpis: Vec<BabyBear> = base_pis[..ROT_PI_COUNT].to_vec();
-    // The witness-INDEPENDENT v1 prefix PIs that moved with the post-fee override (PI 4 / 14 / 15
-    // ride the LAST row's after-block, the post-fee final state).
-    dpis[4] = last[STATE_AFTER_BASE + state::STATE_COMMIT]; // v1 after STATE_COMMIT
-    dpis[14] = last[STATE_AFTER_BASE + state::BALANCE_LO]; // v1 after bal_lo
-    dpis[15] = last[STATE_AFTER_BASE + state::BALANCE_HI]; // v1 after bal_hi
-    dpis[35] = last[AFTER_BASE + B_STATE_COMMIT]; // rotated NEW_COMMIT (post-fee)
-    // (PI 34 / 36 / 37 are unaffected by the fee; they ride the base vector unchanged.)
-    dpis.push(fee_felt); // PI 38: the published fee (col 89, last-row pinned).
+    // The witness-INDEPENDENT v1 prefix PIs that moved with the post-fee override (the after-block
+    // NEW_COMMIT / FINAL_BAL limbs) ride the LAST row's after-block (the post-fee final state).
+    // These are the FULL-layout pi.rs offsets (NEW_COMMIT = 8, FINAL_BAL_LO/HI = 22/23 post-Phase-C).
+    dpis[super::pi::NEW_COMMIT] = last[STATE_AFTER_BASE + state::STATE_COMMIT]; // v1 after STATE_COMMIT
+    dpis[super::pi::FINAL_BAL_LO] = last[STATE_AFTER_BASE + state::BALANCE_LO]; // v1 after bal_lo
+    dpis[super::pi::FINAL_BAL_HI] = last[STATE_AFTER_BASE + state::BALANCE_HI]; // v1 after bal_hi
+    dpis[V1_PI_COUNT + 1] = last[AFTER_BASE + B_STATE_COMMIT]; // rotated NEW_COMMIT (post-fee)
+    // (the rotated OLD_COMMIT / height / caveat pins are unaffected by the fee; ride the base vector.)
+    dpis.push(fee_felt); // PI ROT_PI_COUNT: the published fee (col 89, last-row pinned).
     debug_assert_eq!(dpis.len(), ROT_PI_COUNT + 1);
 
     Ok((trace, dpis))
@@ -1645,10 +1652,13 @@ pub fn patch_attenuate_base_for_cap_open(
     let r0 = &trace[0];
     let last = &trace[trace.len() - 1];
     let mut dpis: Vec<BabyBear> = pis[..ROT_PI_COUNT].to_vec();
-    dpis[34] = r0[BEFORE_BASE + B_STATE_COMMIT]; // rotated OLD commit
-    dpis[35] = last[AFTER_BASE + B_STATE_COMMIT]; // rotated NEW commit
-    dpis[36] = last[AFTER_BASE + B_COMMITTED_HEIGHT]; // committed height (unchanged)
-    dpis[37] = last[CAVEAT_BASE + C_SPAN - 1]; // caveat commit (unchanged)
+    // The four rotated commit pins sit at the v1 prefix count `V1_PI_COUNT..+4` (the same slots
+    // `rotPins` / `generate_rotated_effect_vm_trace` append them to). Indexing off `V1_PI_COUNT`
+    // keeps these aligned when the v1 prefix grows (e.g. Phase C pushed it 34→42).
+    dpis[V1_PI_COUNT] = r0[BEFORE_BASE + B_STATE_COMMIT]; // rotated OLD commit
+    dpis[V1_PI_COUNT + 1] = last[AFTER_BASE + B_STATE_COMMIT]; // rotated NEW commit
+    dpis[V1_PI_COUNT + 2] = last[AFTER_BASE + B_COMMITTED_HEIGHT]; // committed height
+    dpis[V1_PI_COUNT + 3] = last[CAVEAT_BASE + C_SPAN - 1]; // caveat commit
     Ok(dpis)
 }
 
@@ -1958,15 +1968,16 @@ pub fn append_wide_carriers(
         fill_wide_block(row, cb_after, AFTER_BASE);
     }
     let mut dpis = base_pis;
-    // STAGE-1 PIN RETIREMENT: the 1-felt rotated OLD/NEW commit pins (PI 34/35) were DROPPED from the
+    // STAGE-1 PIN RETIREMENT: the 1-felt rotated OLD/NEW commit pins (the first two of the four
+    // appended rotated commit pins, at `V1_PI_COUNT` and `V1_PI_COUNT + 1`) were DROPPED from the
     // wide descriptor — the 8-felt wide commit (PIs past the base) is the SOLE binding. Those two base
     // slots are now DEAD/unbound, but Fiat–Shamir still absorbs EVERY public input, so a
     // witness-dependent value there (the producer's real carrier vs the executor's placeholder
     // reconstruction) would diverge the transcript ⇒ `InvalidPowWitness`. ZERO them so producer +
-    // executor agree on these dead slots regardless of witness. (PI 34/35 exist on every wide family —
-    // the rotated commit carriers ride the bare 38-PI shape every member shares.)
-    const RETIRED_COMMIT_PI_OLD: usize = 34;
-    const RETIRED_COMMIT_PI_NEW: usize = 35;
+    // executor agree on these dead slots regardless of witness. (They exist on every wide family —
+    // the rotated commit carriers ride the bare rotated prefix every member shares.)
+    const RETIRED_COMMIT_PI_OLD: usize = V1_PI_COUNT;
+    const RETIRED_COMMIT_PI_NEW: usize = V1_PI_COUNT + 1;
     if dpis.len() > RETIRED_COMMIT_PI_NEW {
         dpis[RETIRED_COMMIT_PI_OLD] = BabyBear::ZERO;
         dpis[RETIRED_COMMIT_PI_NEW] = BabyBear::ZERO;

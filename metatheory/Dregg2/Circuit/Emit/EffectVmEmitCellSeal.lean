@@ -94,7 +94,7 @@ sites and the 2 balance-limb range checks. -/
 def cellSealVmDescriptor : EffectVmDescriptor :=
   { name := cellSealVmAirName
   , traceWidth := EFFECT_VM_WIDTH
-  , piCount := 34
+  , piCount := 42
   , constraints := cellSealRowGates ++ transitionAll ++ boundaryFirstPins ++ boundaryLastPins
                      ++ selectorGates 49
   , hashSites := cellSealHashSites

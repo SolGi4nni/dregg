@@ -130,7 +130,7 @@ hash sites (REUSED — binding the frozen block) and the 2 balance-limb range ch
 def noteSpendVmDescriptor : EffectVmDescriptor :=
   { name := noteSpendVmAirName
   , traceWidth := EFFECT_VM_WIDTH
-  , piCount := 34
+  , piCount := 42
   , constraints := noteSpendRowGates ++ transitionAll ++ boundaryFirstPins ++ boundaryLastPins
                      ++ selectorGates 4
   , hashSites := transferHashSites
@@ -633,7 +633,7 @@ PLUS the `nullifiers`-root-update gate, with the digest-absorbing GROUP-4 sites.
 def noteSpendVmDescriptorFull : EffectVmDescriptor :=
   { name := noteSpendVmAirName ++ "-rootbound"
   , traceWidth := EFFECT_VM_WIDTH
-  , piCount := 34
+  , piCount := 42
   , constraints := (noteSpendRowGates ++ [.gate gNullifierRootUpdate])
                      ++ transitionAll ++ boundaryFirstPins ++ boundaryLastPins
   , hashSites := noteSpendRootHashSites
@@ -873,7 +873,7 @@ wideHashSites`. The `system_roots`-absorbing analog of `transferVmDescriptorWide
 def noteSpendVmDescriptorWide : EffectVmDescriptor :=
   { name := noteSpendVmAirName ++ "-sysroots"
   , traceWidth := EFFECT_VM_WIDTH_SYSROOTS
-  , piCount := 34
+  , piCount := 42
   , constraints := (noteSpendRowGates ++ [.gate gNullifierRootUpdateWide])
                      ++ transitionAll ++ boundaryFirstPins ++ boundaryLastPins
                      ++ selectorGates SEL_NOTE_SPEND

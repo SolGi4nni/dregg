@@ -945,7 +945,7 @@ theorem withSelectorGate_satisfied2 (hash : List ℤ → ℤ) (s : Nat) (d : Eff
 def setFieldDynV1Face : EffectVmDescriptor :=
   { name        := "dregg-effectvm-setfield-dyn-v2"
   , traceWidth  := EFFECT_VM_WIDTH
-  , piCount     := 34
+  , piCount     := 42
   , constraints := [ .gate gSlotRange, selectorGate EffectVmEmitSetField.SEL_SET_FIELD ]
   , hashSites   := []
   , ranges      := [] }
@@ -985,27 +985,27 @@ from the binding proof's `fields[0]` and `verify_full_turn` step 8 cross-checks 
 non-revocation proof's queried item == PI[198]).
 
 That cross-binding tooth lives ONLY in the v1 hand-AIR — `noteSpendVmDescriptor` (the Lean
-per-effect descriptor) does NOT bind the nullifier to any PI (its `piCount = 34` is the v1
-prefix only). So when the rotated leg retires the hand-AIR, the rotated 38-PI omits the
+per-effect descriptor) does NOT bind the nullifier to any PI (its `piCount = 42` is the v1
+prefix only). So when the rotated leg retires the hand-AIR, the rotated 46-PI omits the
 nullifier and a note-spending turn with a freshness binding CANNOT rotate (it falls back to
 v1 — the documented C4 boundary, `verify_full_turn` step 8 REFUSES the rotated leg).
 
 `noteSpendV3` CLOSES that gate: it appends a FIFTH PI pin past the four rotated commit pins
-(`rotateV3` produces `piCount = 34 + 4 = 38`), binding the spend row's `param0` (the folded
-nullifier) to the new rotated PI slot 38 on the FIRST row. The note-spend turn lays the spend
+(`rotateV3` produces `piCount = 42 + 4 = 46`), binding the spend row's `param0` (the folded
+nullifier) to the new rotated PI slot 46 on the FIRST row. The note-spend turn lays the spend
 on row 0 (`generate_effect_vm_trace`'s `Effect::NoteSpend` arm + the trace generator's
 `row[PARAM_BASE + param::NULLIFIER]` write are on row 0; `boundaryFirstPins` pins the first
 row), so the first-row pin is the rotated analog of the v1 per-row gate. The SOUNDNESS TOOTH
 (`noteSpendV3_rejects_nullifier_tamper`): a row whose `param0` differs from the published
-PI[38] FAILS the pin and is UNSAT — exactly the v1 `rejects_swap` adversarial test, now at the
-rotated boundary. The Rust `verify_full_turn` step 8 reads PI[38] of the rotated leg instead
+PI[46] FAILS the pin and is UNSAT — exactly the v1 `rejects_swap` adversarial test, now at the
+rotated boundary. The Rust `verify_full_turn` step 8 reads PI[46] of the rotated leg instead
 of refusing, so the no-double-spend cross-check (`queried_item == nullifier`) fires on the
 rotated note-spend turn. -/
 
 /-- The rotated nullifier-PI slot: the FIRST slot past the four rotated commit pins
 (`rotateV3` appends OLD/NEW commit · height · caveat commit at `piCount..piCount+3`). For the
-note-spend cohort member this is `34 + 4 = 38`. -/
-def ROT_NULLIFIER_PI : Nat := 38
+note-spend cohort member this is `42 + 4 = 46`. -/
+def ROT_NULLIFIER_PI : Nat := 46
 
 /-- The folded-nullifier parameter column (`param::NULLIFIER = param0`, `prmCol 0`) — the
 spend row's single folded `fold_bytes32_to_bb(nullifier)` felt the v1 hand-AIR cross-binds. -/
@@ -1035,9 +1035,9 @@ claiming a smaller fee PI than the balance moved is then UNSAT — no trusted re
 
 /-- The rotated fee-PI slot: the FIRST slot past the four rotated commit pins (`rotateV3` appends
 OLD/NEW commit · height · caveat commit at `piCount..piCount+3`). For the transfer cohort member
-this is `34 + 4 = 38` — the same arithmetic as `ROT_NULLIFIER_PI` (transfer and note-spend never
+this is `42 + 4 = 46` — the same arithmetic as `ROT_NULLIFIER_PI` (transfer and note-spend never
 co-occur on one descriptor, so sharing the slot index is sound). -/
-def ROT_FEE_PI : Nat := 38
+def ROT_FEE_PI : Nat := 46
 
 /-- The fee column (the after-block `RESERVED` state limb of the v1 sub-trace). The v1 columns sit
 at fixed offsets inside `[0, EFFECT_VM_WIDTH)`, so this is `traceWidth`-independent. -/
@@ -1093,7 +1093,7 @@ per-row IR "cannot express":
 
 Both gated by the noteSpend selector (`SEL_NOTE_SPEND = 4`), so non-spend / NoOp pad rows (where
 the selector is 0) contribute nothing. The published nullifier `param0` (`NULLIFIER_PARAM_COL`)
-is ALREADY the spend row's folded nullifier (cross-bound to PI[38] by `rotateV3WithNullifierPin`),
+is ALREADY the spend row's folded nullifier (cross-bound to PI[46] by `rotateV3WithNullifierPin`),
 so the gate's key IS the same nullifier the apex reads. -/
 
 /-- The DOUBLE-SPEND tooth (the deployed `GapOpen` face): the published nullifier `param0` is a
@@ -1177,7 +1177,7 @@ theorem graduable_rotateV3WithNullifierPin {d : EffectVmDescriptor}
   simpa using hr
 
 /-- **The nullifier weld holds on a satisfying first row**: a row satisfying `noteSpendV3`
-carries the spend row's folded nullifier (`prmCol 0`) EQUAL to the published rotated PI[38].
+carries the spend row's folded nullifier (`prmCol 0`) EQUAL to the published rotated PI[46].
 This is the rotated re-statement of the v1 D5 cross-binding (`param0 == PI[NOTESPEND_NULLIFIER]`),
 now a first-row pin of the rotated descriptor. -/
 theorem noteSpendV3_pins_nullifier (hash : List ℤ → ℤ)
@@ -1190,7 +1190,7 @@ theorem noteSpendV3_pins_nullifier (hash : List ℤ → ℤ)
   simpa only [VmConstraint.holdsVm] using hpin rfl
 
 /-- **ANTI-GHOST (nullifier tamper ⇒ UNSAT)** — the C4 soundness tooth. A first row whose
-folded nullifier `param0` does NOT equal the published rotated PI[38] does NOT satisfy
+folded nullifier `param0` does NOT equal the published rotated PI[46] does NOT satisfy
 `noteSpendV3`: the appended pin REJECTS it. This is the rotated boundary's analog of the v1
 `test_notespend_nullifier_cross_binding_rejects_swap` ("prove N, spend M" ⇒ STARK rejects):
 the rotated leg can no longer publish a nullifier different from the one the spend row carries,
@@ -1222,12 +1222,12 @@ theorem noteSpendV3_satisfiedVm_v1 (hash : List ℤ → ℤ)
 #assert_axioms noteSpendV3_rejects_nullifier_tamper
 #assert_axioms noteSpendV3_satisfiedVm_v1
 
--- The nullifier pin lands at PI slot 38 (one past the four rotated commit pins 34..37) and
+-- The nullifier pin lands at PI slot 46 (one past the four rotated commit pins 34..37) and
 -- the rotated note-spend publishes 39 PIs.
-#guard ROT_NULLIFIER_PI == 34 + 4
+#guard ROT_NULLIFIER_PI == 42 + 4
 #guard NULLIFIER_PARAM_COL == 68          -- PARAM_BASE (54+14) + param::NULLIFIER (0)
-#guard noteSpendV3.piCount == 39
-#guard (rotateV3WithNullifierPin EffectVmEmitNoteSpend.noteSpendVmDescriptor).piCount == 39
+#guard noteSpendV3.piCount == 47
+#guard (rotateV3WithNullifierPin EffectVmEmitNoteSpend.noteSpendVmDescriptor).piCount == 47
 -- Graduation survives the appended pin.
 #guard graduable (rotateV3WithNullifierPin EffectVmEmitNoteSpend.noteSpendVmDescriptor)
 -- The rotated commit pins are UNDISTURBED at 34..37 (the fifth pin is strictly appended);
@@ -1238,11 +1238,11 @@ theorem noteSpendV3_satisfiedVm_v1 (hash : List ℤ → ℤ)
 -- The grow-gate map-ops ARE present on `noteSpendV3` (the live wire now carries the set-insert).
 #guard (mapOpsOf noteSpendV3).length == 2
 -- BOTH POLARITIES of the soundness tooth, executable on the toy environment: a row whose
--- param0 equals PI[38] PASSES the pin; a tampered one FAILS it. (`decEnv` toy: param col 68
--- carries `n`, PI 38 carries `p`.)
-#guard (let env : VmRowEnv := ⟨fun c => if c == 68 then 5 else 0, fun _ => 0, fun k => if k == 38 then 5 else 0⟩;
+-- param0 equals PI[46] PASSES the pin; a tampered one FAILS it. (`decEnv` toy: param col 68
+-- carries `n`, PI 46 carries `p`.)
+#guard (let env : VmRowEnv := ⟨fun c => if c == 68 then 5 else 0, fun _ => 0, fun k => if k == 46 then 5 else 0⟩;
         decide (env.loc NULLIFIER_PARAM_COL = env.pub ROT_NULLIFIER_PI))   -- match ⇒ pin holds
-#guard (let env : VmRowEnv := ⟨fun c => if c == 68 then 5 else 0, fun _ => 0, fun k => if k == 38 then 9 else 0⟩;
+#guard (let env : VmRowEnv := ⟨fun c => if c == 68 then 5 else 0, fun _ => 0, fun k => if k == 46 then 9 else 0⟩;
         decide (env.loc NULLIFIER_PARAM_COL ≠ env.pub ROT_NULLIFIER_PI))   -- mismatch ⇒ pin REJECTS
 
 /-! ## §5.NC — the noteCreate KERNEL-SET GROW-GATE (the deployment-real COMMITMENTS set-insert).
@@ -1271,9 +1271,9 @@ nothing. The note value (`param::NOTE_VALUE_LO = param1`) rides as the leaf valu
 commitment carries its note datum. -/
 
 /-- The rotated published-PI slot the note commitment (`param0`) welds to — the FIRST slot past the
-four rotated commit pins (`piCount = 34 + 4 = 38`), the same arithmetic as `ROT_NULLIFIER_PI`
-(noteCreate and noteSpend never co-occur on one row, so sharing slot 38 is sound). -/
-def ROT_COMMITMENT_KEY_PI : Nat := 38
+four rotated commit pins (`piCount = 42 + 4 = 46`), the same arithmetic as `ROT_NULLIFIER_PI`
+(noteCreate and noteSpend never co-occur on one row, so sharing slot 46 is sound). -/
+def ROT_COMMITMENT_KEY_PI : Nat := 46
 
 /-- The note-commitment key parameter column (`param0`, `prmCol 0`) — the noteCreate row's
 single published note-commitment felt (`Effect::NoteCreate { commitment }` ⇒ `row[PARAM_BASE+0]`). -/
@@ -1344,11 +1344,11 @@ theorem noteCreateV3_grow_gate_forces_set_insert (hash : List ℤ → ℤ)
 
 #assert_axioms noteCreateV3_grow_gate_forces_set_insert
 
--- The commitment pin lands at PI slot 38; the rotated noteCreate publishes 39 PIs and carries the
+-- The commitment pin lands at PI slot 46; the rotated noteCreate publishes 39 PIs and carries the
 -- single grow-gate map-op on the new commitments_root limb (27).
-#guard ROT_COMMITMENT_KEY_PI == 34 + 4
+#guard ROT_COMMITMENT_KEY_PI == 42 + 4
 #guard COMMITMENT_KEY_PARAM_COL == 68
-#guard noteCreateV3.piCount == 39
+#guard noteCreateV3.piCount == 47
 #guard (mapOpsOf noteCreateV3).length == 1
 #guard beforeCommitmentsRootCol EFFECT_VM_WIDTH == EFFECT_VM_WIDTH + 27
 #guard afterCommitmentsRootCol EFFECT_VM_WIDTH == EFFECT_VM_WIDTH + 51 + 27
@@ -1382,9 +1382,9 @@ delegation snapshot) is ORTHOGONAL to this accounts-set insert — it rides spaw
 `gCapMove`/delegation legs and is NOT closed here (the named spawn residual). -/
 
 /-- The rotated published-PI slot the new-cell key (`param0`) welds to — the FIRST slot past the
-four rotated commit pins (`piCount = 34 + 4 = 38`), the same arithmetic as `ROT_NULLIFIER_PI`
-(these descriptors and noteSpend never co-occur on one row, so sharing slot 38 is sound). -/
-def ROT_NEW_CELL_KEY_PI : Nat := 38
+four rotated commit pins (`piCount = 42 + 4 = 46`), the same arithmetic as `ROT_NULLIFIER_PI`
+(these descriptors and noteSpend never co-occur on one row, so sharing slot 46 is sound). -/
+def ROT_NEW_CELL_KEY_PI : Nat := 46
 
 /-- The new-cell key parameter column (`param0`, `prmCol 0`) — the create/factory/spawn row's
 single folded new-cell identity felt (`create_hash[0]`). -/
@@ -1542,12 +1542,12 @@ theorem spawnV3_grow_gate_forces_set_insert (hash : List ℤ → ℤ)
 #assert_axioms factoryV3_grow_gate_forces_set_insert
 #assert_axioms spawnV3_grow_gate_forces_set_insert
 
--- The new-cell-key pin lands at PI slot 38; each rotated create-family descriptor publishes 39 PIs.
-#guard ROT_NEW_CELL_KEY_PI == 34 + 4
+-- The new-cell-key pin lands at PI slot 46; each rotated create-family descriptor publishes 39 PIs.
+#guard ROT_NEW_CELL_KEY_PI == 42 + 4
 #guard NEW_CELL_KEY_PARAM_COL == 68
-#guard createCellV3.piCount == 39
-#guard factoryV3.piCount == 39
-#guard spawnV3.piCount == 39
+#guard createCellV3.piCount == 47
+#guard factoryV3.piCount == 47
+#guard spawnV3.piCount == 47
 -- Each carries the four rotated commit pins + one new-cell-key pin + the two grow-gate map-ops.
 #guard createCellV3.constraints.length == (v3Of EffectVmEmitCreateCell.createCellActorVmDescriptor).constraints.length + 1 + 2
 #guard (mapOpsOf createCellV3).length == 2
@@ -1800,9 +1800,9 @@ constraints, no new column), so every width/graduability `#guard` and the per-ef
 lift verbatim (via `rotV3Frozen_sound_v1` below); it ADDS the authority-frame forcing. -/
 def v3OfFrozen (d : EffectVmDescriptor) : EffectVmDescriptor2 := graduateV1 (rotateV3FrozenAuthority d)
 
--- The fee pin lands at PI slot 38 (one past the four rotated commit pins 34..37) and the rotated
+-- The fee pin lands at PI slot 46 (one past the four rotated commit pins 34..37) and the rotated
 -- fee'd transfer publishes 39 PIs over the SAME rotated width as the unfee'd transfer.
-#guard (rotateV3WithFeePin (rotateV3FrozenAuthority EffectVmEmitTransfer.transferFeeVmDescriptor)).piCount == 39
+#guard (rotateV3WithFeePin (rotateV3FrozenAuthority EffectVmEmitTransfer.transferFeeVmDescriptor)).piCount == 47
 #guard (rotateV3WithFeePin (rotateV3FrozenAuthority EffectVmEmitTransfer.transferFeeVmDescriptor)).traceWidth
         == EffectVmEmitTransfer.transferVmDescriptor.traceWidth + APPENDIX_SPAN
 
@@ -1816,7 +1816,7 @@ transfer − fee`), so NEW_COMMIT binds the POST-fee balance and a ledgerless cl
 def transferFeeV3 : EffectVmDescriptor2 :=
   graduateV1 (rotateV3WithFeePin (rotateV3FrozenAuthority EffectVmEmitTransfer.transferFeeVmDescriptor))
 
-#guard transferFeeV3.piCount == 39
+#guard transferFeeV3.piCount == 47
 -- Phase B-GATE: graduation appends `7 · n_sites` lane columns past the rotated width
 -- (`graduateV1 g` width = `g.traceWidth + 7·g.hashSites.length`).
 #guard transferFeeV3.traceWidth ==
@@ -2020,8 +2020,8 @@ theorem mintP1_rejects_wrong_credit (hash : List ℤ → ℤ) (env : VmRowEnv) (
 #guard mintV3.traceWidth ==
   EFFECT_VM_WIDTH + APPENDIX_SPAN + (CHIP_OUT_LANES - 1) *
     (rotateV3FrozenAuthority mintTickFace).hashSites.length
-#guard (setFieldV3 0).piCount == 34 + 4
-#guard mintV3.piCount == 34 + 4
+#guard (setFieldV3 0).piCount == 42 + 4
+#guard mintV3.piCount == 42 + 4
 -- The swap is a ONE-gate change: the tick-faced constraint list has the SAME length as the
 -- per-effect descriptor's (a gate replaced a gate, none added or removed).
 #guard (setFieldTickFace 0).constraints.length
@@ -2140,11 +2140,11 @@ deployed verifier (`turn/src/executor/proof_verify.rs verify_and_commit_proof_ro
 for its after-cell, so honest proofs are NOT rejected), and overrides
 `dpis[38] = compute_authority_digest_felt(post_cell)`. `compute_authority_digest_felt` FOLDS both the cell's
 `permissions` and `verification_key.hash`, so a genuine setPermissions / setVK MOVES the AFTER r23 residue and
-a forged after-residue disagrees with the anchored PI 38 ⇒ `verify_vm_descriptor2` UNSAT. Tests
+a forged after-residue disagrees with the anchored PI 46 ⇒ `verify_vm_descriptor2` UNSAT. Tests
 (`sdk/tests/sovereign_rotated_c1.rs record_pin_anchor`):
 `{rotated_sovereign_set_permissions_proves_and_verifies, rotated_sovereign_forged_after_permissions_is_rejected,
 rotated_sovereign_set_vk_proves_and_verifies, rotated_sovereign_forged_after_vk_is_rejected}` — the honest
-accept BITES (without the anchor PI 38 stays at the placeholder and the honest proof is rejected), and the
+accept BITES (without the anchor PI 46 stays at the placeholder and the honest proof is rejected), and the
 forged-after proof is rejected by the anchor mismatch.
 
 CLOSED FOR THE WHOLE RECORD-PIN FAMILY (the fan-out fixed the 3 bugs the vacuous pin had masked — the
@@ -2168,7 +2168,7 @@ The verifier (`verify_and_commit_proof_rotated`, step 6b) clones the trusted bef
 effect through the SHARED `dregg_turn::rotation_witness::apply_effect_to_cell` weld (the SAME projection the
 cipherclerk producer uses for its after-cell, so honest proofs are NOT rejected), and overrides `dpis[38]`
 from the trusted post-cell (`compute_authority_digest_felt` for the record-digest class, `lifecycle_felt_cell`
-for the lifecycle class) — so a forged after-residue disagrees with the anchored PI 38 ⇒ UNSAT. The record-pin
+for the lifecycle class) — so a forged after-residue disagrees with the anchored PI 46 ⇒ UNSAT. The record-pin
 is now a genuine forcing gate across the family, not a published-value binding. -/
 theorem rotateV3WithRecordPin_rejects_wrong_post (off : Nat) (hash : List ℤ → ℤ)
     (d : EffectVmDescriptor) (env : VmRowEnv) (isFirst : Bool)
@@ -2545,7 +2545,7 @@ the BEFORE disc limb is force-pinned to `Live(0)` and the AFTER disc limb to `Se
 `SEL_CELLSEAL`). A frozen-lifecycle (un-sealed, after-disc stays Live) AFTER block is now UNSAT via the
 in-circuit disc gate ALONE — no trusted post-cell (`rotateV3WithDiscGate_rejects_wrong_after`), the LIVE
 realization of `RotatedKernelRefinementLifecycleDisc.cellSeal_disc_rejects_frozen`. The record pin on
-`B_LIFECYCLE` (PI 38) stays as belt-and-suspenders for the opaque payload felt. -/
+`B_LIFECYCLE` (PI 46) stays as belt-and-suspenders for the opaque payload felt. -/
 def cellSealV3 : EffectVmDescriptor2 :=
   graduateV1 (rotateV3WithDiscGate EffectVmEmitCellSeal.SEL_CELLSEAL (some discLive) discSealed
     EffectVmEmitCellSeal.cellSealVmDescriptor)
@@ -2573,7 +2573,7 @@ in-circuit declared-param column `prmCol 0` (= `permsHash[0]`, anchored to a lig
 `effects_hash`), selector-gated on `SEL_SET_PERMS`. A forged post-permissions (committed perms-digest ≠
 declared param) is now UNSAT via the in-circuit weld ALONE — no trusted post-cell
 (`rotateV3WithPermsVKGate_rejects_forged`), the LIVE realization of
-`RotatedKernelRefinementPermsVK.setPermissions_slot_forced`. The record pin on `B_RECORD_DIGEST` (PI 38)
+`RotatedKernelRefinementPermsVK.setPermissions_slot_forced`. The record pin on `B_RECORD_DIGEST` (PI 46)
 stays as belt-and-suspenders for the opaque full authority residue. -/
 def setPermsV3 : EffectVmDescriptor2 :=
   graduateV1 (rotateV3WithPermsVKGate EffectVmEmitSetPermissions.SEL_SET_PERMS
@@ -2597,7 +2597,7 @@ arm sets the cell record's `"refusal"` audit slot to `1` (`TurnExecutorFull.refu
 (the named-field map — NOT one of the welded `fields[0..7]` indexed slots), which
 `compute_authority_digest_felt` FOLDS into the r23 authority residue (`B_RECORD_DIGEST = 24`). So a
 genuine refusal MOVES the AFTER `record_digest` limb. The record pin (`rotateV3WithRecordPin
-B_RECORD_DIGEST`) welds that limb to PI 38; the verifier anchors PI 38 to
+B_RECORD_DIGEST`) welds that limb to PI 46; the verifier anchors PI 46 to
 `compute_authority_digest_felt(post_cell)` (`cipherclerk`/`full_turn_proof`), so a frozen-audit-slot
 refusal forgery (the AFTER `record_digest` unchanged from the PRE) FAILS the pin and is UNSAT for a
 ledgerless client — the field-NOT-bound deployment gap is closed via the verifier-anchored pin.
@@ -2615,7 +2615,7 @@ def refusalV3 : EffectVmDescriptor2 :=
 block's committed MODE sub-limb (`B_MODE = 35`) is force-pinned to `Sovereign(1)` as a CONSTANT,
 selector-gated on `SEL_MAKE_SOVEREIGN_RT`. A makeSovereign whose committed AFTER mode stays `Hosted(0)`
 (an un-promoted sovereign) is now UNSAT via the in-circuit mode gate ALONE — no trusted post-cell
-(`rotateV3WithModeGate_rejects_unpromoted`). The record pin on `B_RECORD_DIGEST` (PI 38) stays as
+(`rotateV3WithModeGate_rejects_unpromoted`). The record pin on `B_RECORD_DIGEST` (PI 46) stays as
 belt-and-suspenders for the opaque authority residue. -/
 def makeSovereignV3 : EffectVmDescriptor2 :=
   graduateV1 (rotateV3WithModeGate EffectVmEmitMakeSovereign.SEL_MAKE_SOVEREIGN_RT modeSovereign
@@ -2636,7 +2636,7 @@ def setFieldDynForcedV3 : EffectVmDescriptor2 :=
 `B_LIFECYCLE = 29`). The DEPLOYED `apply_receipt_archive` writes the cell LIFECYCLE (`Archived`) via
 `c.archive(checkpoint)` — NOT a `fields_root` record slot — so the genuine mover is `lifecycle_felt`
 (`rotation_witness.rs::lifecycle_felt`, AFTER limb 29), which folds the archival checkpoint into a
-distinct `Archived` felt. Pinning that limb to PI `38` forces it; the verifier anchors PI 38 to
+distinct `Archived` felt. Pinning that limb to PI `38` forces it; the verifier anchors PI 46 to
 `lifecycle_felt_cell(post_cell)` (the Class-2 path), so a frozen-lifecycle archive forgery (claiming
 an archive that did not move the lifecycle) FAILS the pin and is UNSAT
 (`rotateV3WithRecordPin_rejects_wrong_post`). This MATCHES the deployed apply (which moves the
@@ -2806,16 +2806,16 @@ theorem setFieldDynV3_rejects_forged (hash : List ℤ → ℤ) (env : VmRowEnv) 
 #assert_axioms rotateV3WithRecordPin_rejects_wrong_post
 #assert_axioms rotateV3WithRecordPin_satisfiedVm_v1
 
--- The record pin lands at PI slot 38 (one past the four rotated commit pins 34..37); each forced
+-- The record pin lands at PI slot 46 (one past the four rotated commit pins 34..37); each forced
 -- descriptor publishes 39 PIs, and graduation survives the appended pin.
-#guard (rotateV3 EffectVmEmitCellSeal.cellSealVmDescriptor).piCount == 38
-#guard cellSealV3.piCount == 39
-#guard cellUnsealV3.piCount == 39
-#guard cellDestroyV3.piCount == 39
-#guard setPermsV3.piCount == 39
-#guard setVKV3.piCount == 39
-#guard refusalV3.piCount == 39
-#guard receiptArchiveV3.piCount == 39
+#guard (rotateV3 EffectVmEmitCellSeal.cellSealVmDescriptor).piCount == 46
+#guard cellSealV3.piCount == 47
+#guard cellUnsealV3.piCount == 47
+#guard cellDestroyV3.piCount == 47
+#guard setPermsV3.piCount == 47
+#guard setVKV3.piCount == 47
+#guard refusalV3.piCount == 47
+#guard receiptArchiveV3.piCount == 47
 #guard graduable (rotateV3WithRecordPin B_RECORD_DIGEST EffectVmEmitRefusal.refusalVmDescriptor)
 #guard graduable (rotateV3WithRecordPin B_LIFECYCLE
         EffectVmEmitReceiptArchive.receiptArchiveActorVmDescriptor)
@@ -2878,14 +2878,14 @@ theorem setFieldDynV3_rejects_forged (hash : List ℤ → ℤ) (env : VmRowEnv) 
 #guard B_LIFECYCLE == 29
 #guard B_RECORD_DIGEST == 24
 -- BOTH POLARITIES of the deployment tooth, executable on a toy LAST row (AFTER lifecycle limb at col
--- tw+47+29; with tw = 186 that is col 262; PI 38 carries the recomputed post felt). A row whose AFTER
--- limb equals PI[38] PASSES the pin; a frozen / wrong one FAILS it (the forgery is rejected).
+-- tw+47+29; with tw = 186 that is col 262; PI 46 carries the recomputed post felt). A row whose AFTER
+-- limb equals PI[46] PASSES the pin; a frozen / wrong one FAILS it (the forgery is rejected).
 #guard (let off := B_LIFECYCLE; let tw := (186 : Nat);
-        let env : VmRowEnv := ⟨fun c => if c == tw + 51 + off then 1 else 0, fun _ => 0, fun k => if k == 38 then 1 else 0⟩;
-        decide (env.loc (tw + 51 + off) = env.pub 38))   -- sealed (1) == PI[38] ⇒ pin holds
+        let env : VmRowEnv := ⟨fun c => if c == tw + 51 + off then 1 else 0, fun _ => 0, fun k => if k == 46 then 1 else 0⟩;
+        decide (env.loc (tw + 51 + off) = env.pub 46))   -- sealed (1) == PI[46] ⇒ pin holds
 #guard (let off := B_LIFECYCLE; let tw := (186 : Nat);
-        let env : VmRowEnv := ⟨fun c => if c == tw + 51 + off then 0 else 0, fun _ => 0, fun k => if k == 38 then 1 else 0⟩;
-        decide (env.loc (tw + 51 + off) ≠ env.pub 38))   -- frozen-Live (0) ≠ sealed PI[38] ⇒ pin REJECTS
+        let env : VmRowEnv := ⟨fun c => if c == tw + 51 + off then 0 else 0, fun _ => 0, fun k => if k == 46 then 1 else 0⟩;
+        decide (env.loc (tw + 51 + off) ≠ env.pub 46))   -- frozen-Live (0) ≠ sealed PI[46] ⇒ pin REJECTS
 
 /-- **`v3Registry`** — the full 35-member cohort at the rotated block (the 27 v2-graduated members
 + the 8 STEP-1-widened; keys = the v2 keys suffixed `R24`; wire strings via `emitVmJson2`; driver
@@ -2949,7 +2949,7 @@ def v3Registry : List (String × EffectVmDescriptor2) :=
 -- The rotated transfer: the v1 graduation's constraints + 24 welds + 4 pins + 36 chip sites.
 #guard (v3Of EffectVmEmitTransfer.transferVmDescriptor).constraints.length
         == transferVmDescriptor2.constraints.length + 24 + 4 + 36
-#guard (v3Of EffectVmEmitTransfer.transferVmDescriptor).piCount == 34 + 4
+#guard (v3Of EffectVmEmitTransfer.transferVmDescriptor).piCount == 42 + 4
 -- The graduation side conditions hold on every v1-faced member (per-instance witnesses of
 -- the parametric `graduable_rotateV3`; attenuate/setFieldDyn ride `v3OfWith` over faces
 -- checked here too).

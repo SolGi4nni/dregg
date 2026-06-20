@@ -110,7 +110,7 @@ cell is not the actor; its `state_before` is unconstrained by the turn-identity 
 def createCellVmDescriptor : EffectVmDescriptor :=
   { name := createCellVmAirName
   , traceWidth := EFFECT_VM_WIDTH
-  , piCount := 34
+  , piCount := 42
   , constraints := createCellRowGates
   , hashSites := createCellHashSites
   , ranges := [ ⟨saCol state.BALANCE_LO, 30⟩, ⟨saCol state.BALANCE_HI, 30⟩ ] }
@@ -404,7 +404,7 @@ the selector gate differ. The born-empty CHILD face stays `createCellVmDescripto
 def createCellActorVmDescriptor : EffectVmDescriptor :=
   { name := createCellActorVmAirName
   , traceWidth := EFFECT_VM_WIDTH
-  , piCount := 34
+  , piCount := 42
   , constraints := revokeRowGates ++ transitionAll ++ boundaryFirstPins ++ boundaryLastPins
                      ++ selectorGates SEL_CREATE_CELL_RT
   , hashSites := transferHashSites

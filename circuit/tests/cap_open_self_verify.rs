@@ -84,7 +84,7 @@ fn bridge(w: &rw::RotationWitness) -> RotatedBlockWitness {
     RotatedBlockWitness::new(w.pre_limbs.clone(), w.iroot).expect("31 pre-iroot limbs")
 }
 
-/// Build the proven 311-wide rotated AttenuateCapability base trace + 38 PIs from real
+/// Build the proven 311-wide rotated AttenuateCapability base trace + 46 PIs from real
 /// before/after producer witnesses (the path the rotation flip test proves green).
 fn build_attenuate_base() -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
     let before_balance: i64 = 100_000;
@@ -117,7 +117,7 @@ fn build_attenuate_base() -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
     )
     .expect("rotated AttenuateCapability base trace must generate");
     // Wire the attenuate phase-B bindings the bare generator does not carry (nonce passthrough +
-    // cap-root advance binding); returns the corrected 38-PI vector.
+    // cap-root advance binding); returns the corrected 46-PI vector.
     let dpis = patch_attenuate_base_for_cap_open(&mut trace, &pis)
         .expect("attenuate base phase-B wiring");
     (trace, dpis)
@@ -162,10 +162,10 @@ fn cap_open_witness() -> CapOpenWitness {
 fn cap_open_witness_and_appendix_are_genuine() {
     let desc = parse_vm_descriptor2(reg_json(CAP_OPEN_KEY)).expect("cap-open descriptor parses");
     assert_eq!(desc.trace_width, CAP_OPEN_WIDTH, "cap-open width");
-    assert_eq!(desc.public_input_count, 38, "cap-open carries the rotated 38 PIs");
+    assert_eq!(desc.public_input_count, 46, "cap-open carries the rotated 46 PIs");
 
     let (mut trace, pis) = build_attenuate_base();
-    assert_eq!(pis.len(), 38);
+    assert_eq!(pis.len(), 46);
 
     let w = cap_open_witness();
     assert_eq!(
@@ -379,9 +379,9 @@ fn cap_open_wide_proves_verifies_and_executor_anchors() {
     let host_width = CAP_OPEN_WIDTH; // 818
     let wide_width = host_width + 208; // 1026
     assert_eq!(desc.trace_width, wide_width, "cap-open wide width 1026");
-    assert_eq!(desc.public_input_count, 54, "cap-open wide 54 PIs (38 + 16)");
+    assert_eq!(desc.public_input_count, 62, "cap-open wide 62 PIs (46 + 16)");
 
-    // The genuine cap-open base trace (818-wide) + 38 PIs.
+    // The genuine cap-open base trace (818-wide) + 46 PIs.
     let (mut trace, pis) = build_attenuate_base();
     let w = cap_open_witness();
     widen_to_cap_open(&mut trace, &w).expect("widen to cap-open (818)");
@@ -391,25 +391,25 @@ fn cap_open_wide_proves_verifies_and_executor_anchors() {
     // width, NOT 608 — the distinct cap-open producer shape).
     let dpis = append_wide_carriers_cap_open(&mut trace, pis).expect("cap-open wide widener");
     assert_eq!(trace[0].len(), wide_width, "cap-open wide trace width 1026");
-    assert_eq!(dpis.len(), 54, "cap-open wide 38 base + 16 wide PIs");
+    assert_eq!(dpis.len(), 62, "cap-open wide 46 base + 16 wide PIs");
 
     // The BEFORE 8-felt commit carrier (carrier 12) at the cap-open host base (818).
     let before_commit_base = host_width + 8 * 12; // 914
     for j in 0..8 {
         assert_eq!(
-            dpis[38 + j], trace[0][before_commit_base + j],
-            "cap-open wide PI {} = BEFORE 8-felt commit felt {j}", 38 + j
+            dpis[46 + j], trace[0][before_commit_base + j],
+            "cap-open wide PI {} = BEFORE 8-felt commit felt {j}", 46 + j
         );
     }
 
     let mem_boundary = MemBoundaryWitness::default();
     let map_heaps: Vec<Vec<HeapLeaf>> = vec![];
     let proof = prove_vm_descriptor2(&desc, &trace, &dpis, &mem_boundary, &map_heaps)
-        .expect("CAP-OPEN WIDE must prove end-to-end (1026 / 54-PI)");
+        .expect("CAP-OPEN WIDE must prove end-to-end (1026 / 62-PI)");
     verify_vm_descriptor2(&desc, &proof, &dpis)
         .expect("CAP-OPEN WIDE proof must verify independently");
     eprintln!(
-        "CAP-OPEN WIDE (attenuate-eff, R=24, width 1026, 54 PIs, FAITHFUL 8-felt commit): \
+        "CAP-OPEN WIDE (attenuate-eff, R=24, width 1026, 62 PIs, FAITHFUL 8-felt commit): \
          PROVED + VERIFIED — the cap-open producer shape (carrier base 818) is closed wide."
     );
 

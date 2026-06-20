@@ -150,7 +150,7 @@ bound at the RECORD layer via the `DELEG` system-root (§7+), not as a base-trac
 def refreshVmDescriptor : EffectVmDescriptor :=
   { name := refreshVmAirName
   , traceWidth := EFFECT_VM_WIDTH
-  , piCount := 34
+  , piCount := 42
   , constraints := refreshRowGates ++ transitionAll ++ boundaryFirstPins ++ boundaryLastPins
                      ++ selectorGates selR.REFRESH
   , hashSites := transferHashSites

@@ -90,7 +90,7 @@ the 2 balance-limb range checks. -/
 def refusalVmDescriptor : EffectVmDescriptor :=
   { name := refusalVmAirName
   , traceWidth := EFFECT_VM_WIDTH
-  , piCount := 34
+  , piCount := 42
   , constraints := refusalRowGates ++ transitionAll ++ boundaryFirstPins ++ boundaryLastPins
                      ++ selectorGates 52
   , hashSites := refusalHashSites

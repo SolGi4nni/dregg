@@ -89,7 +89,7 @@ boundary PI pins, the 4 ordered GROUP-4 hash sites and the 2 balance-limb range 
 def exerciseVmDescriptor : EffectVmDescriptor :=
   { name := exerciseVmAirName
   , traceWidth := EFFECT_VM_WIDTH
-  , piCount := 34
+  , piCount := 42
   , constraints := exerciseRowGates ++ transitionAll ++ boundaryFirstPins ++ boundaryLastPins
                      ++ selectorGates 34
   , hashSites := exerciseHashSites

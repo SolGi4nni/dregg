@@ -192,7 +192,7 @@ move). -/
 def attenuateVmDescriptor : EffectVmDescriptor :=
   { name := attenuateVmAirName
   , traceWidth := EFFECT_VM_WIDTH
-  , piCount := 34
+  , piCount := 42
   , constraints := attenuateRowGates ++ transitionAll ++ boundaryFirstPins
   , hashSites := attenuateHashSites
   , ranges := [] }
@@ -577,7 +577,7 @@ post-`cap_root` is now a FORCED recomputation, not an opaque parameter. -/
 def attenuateVmDescriptorGenuine : EffectVmDescriptor :=
   { name := attenuateVmAirName ++ "-genuine"
   , traceWidth := EFFECT_VM_WIDTH
-  , piCount := 34
+  , piCount := 42
   , constraints := attenuateGenuineRowGates ++ transitionAll ++ boundaryFirstPins
   , hashSites := attenuateGenuineHashSites
   , ranges := [] }

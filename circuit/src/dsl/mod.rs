@@ -35,6 +35,7 @@ pub mod fold;
 pub mod garbled;
 pub mod membership;
 pub mod note_spending;
+pub mod openable_fields_insertion;
 pub mod predicates;
 pub mod revocation;
 pub mod temporal_absence;

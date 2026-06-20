@@ -205,12 +205,12 @@ pub mod outer_pi_v2 {
     pub const COUNT: usize = 23;
 }
 
-/// The v1 PI offsets of the bilateral-schedule contract — the 49-felt window `[25, 74)` inside
+/// The v1 PI offsets of the bilateral-schedule contract — the 49-felt window `[33, 82)` inside
 /// the legacy `effect_vm::pi` vector that the decoupled `sched` block re-bases to 0. The WR
 /// carries the schedule independently; this is the ONE coupling to the v1 PI module, retired
 /// when the WR is restructured to emit `sched` natively (see `schedule_block_from_inner_pi`).
 #[cfg(any(feature = "prover", feature = "verifier"))]
-pub const SCHEDULE_PI_BASE: usize = inner_pi::TURN_HASH_BASE; // == 25
+pub const SCHEDULE_PI_BASE: usize = inner_pi::TURN_HASH_BASE; // == 33
 
 /// Extract the 49-felt decoupled schedule block from a per-cell inner-PI vector. The block is
 /// `inner_pi[SCHEDULE_PI_BASE .. SCHEDULE_PI_BASE + Sched::WIDTH)` — a pure projection (the
@@ -1371,13 +1371,13 @@ mod tests {
         );
     }
 
-    /// The decoupled `sched` block re-bases the v1 bilateral-schedule PI window `[25, 74)` to 0.
+    /// The decoupled `sched` block re-bases the v1 bilateral-schedule PI window `[33, 82)` to 0.
     /// Pin the contiguity assumption `schedule_block_from_inner_pi` relies on: every schedule
     /// field sits at `inner_pi::<field> == SCHEDULE_PI_BASE + sched::<field>`.
     #[cfg(any(feature = "prover", feature = "verifier"))]
     #[test]
     fn schedule_block_offsets_match_v1_pi_window() {
-        assert_eq!(SCHEDULE_PI_BASE, 25);
+        assert_eq!(SCHEDULE_PI_BASE, 33);
         assert_eq!(sched::WIDTH, 49);
         assert_eq!(
             inner_pi::TURN_HASH_BASE,
@@ -1404,7 +1404,7 @@ mod tests {
             inner_pi::IS_AGENT_CELL,
             SCHEDULE_PI_BASE + sched::IS_AGENT_CELL
         );
-        // The window is exactly the 49 felts [25, 74) — nothing else lives in it.
+        // The window is exactly the 49 felts [33, 82) — nothing else lives in it.
         assert_eq!(SCHEDULE_PI_BASE + sched::WIDTH, inner_pi::IS_AGENT_CELL + 1);
     }
 

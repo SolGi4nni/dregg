@@ -1,16 +1,16 @@
 //! # THE FAITHFUL 8-FELT WIDE ROUNDTRIPS — the cohort FANNED OUT past slice-1's transfer.
 //!
-//! Slice 1 proved ONE real `prove/verify_vm_descriptor2` wide roundtrip (transfer, width 816 / PI 54)
+//! Slice 1 proved ONE real `prove/verify_vm_descriptor2` wide roundtrip (transfer, width 816 / PI 62)
 //! in `effect_vm_rotation_flip.rs`. THIS file fans the wide producers out to the rest of the
 //! emit-source cohort, one real wide prove+verify roundtrip per distinct PRODUCER SHAPE:
 //!
-//!   * **transfer-shape** (burn) — the bare-38-PI cohort, wide member width 816 / PI 54, the same
+//!   * **transfer-shape** (burn) — the bare-46-PI cohort, wide member width 816 / PI 62, the same
 //!     carrier shape as transfer (`generate_rotated_transfer_shape_wide`).
-//!   * **grow-gate noteSpend** — limb-26 nullifier accumulator, wide width 816 / PI 55
+//!   * **grow-gate noteSpend** — limb-26 nullifier accumulator, wide width 816 / PI 63
 //!     (`generate_rotated_note_spend_wide`).
-//!   * **grow-gate noteCreate** — limb-27 commitments accumulator, wide width 816 / PI 55
+//!   * **grow-gate noteCreate** — limb-27 commitments accumulator, wide width 816 / PI 63
 //!     (`generate_rotated_note_create_wide`).
-//!   * **grow-gate createCell** — limb-0 accounts accumulator, wide width 816 / PI 55
+//!   * **grow-gate createCell** — limb-0 accounts accumulator, wide width 816 / PI 63
 //!     (`generate_rotated_create_cell_wide`).
 //!
 //! PLUS the **EXECUTOR ANCHORING differential** (the wide analog of slice-1's G3 cell≡circuit check):
@@ -99,7 +99,7 @@ fn before_commit_8(trace: &[Vec<BabyBear>]) -> [BabyBear; 8] {
 }
 
 /// The wide member's wide-PI offset (where the 16 wide PIs START): the base PI count.
-/// transfer-shape = 38 (bare 38-PI vector); the grow-gate families carry an extra PI[38] so the
+/// transfer-shape = 46 (bare 46-PI vector); the grow-gate families carry an extra PI[46] so the
 /// wide PIs start at 39.
 fn assert_roundtrip(
     name: &str,
@@ -229,8 +229,8 @@ fn assert_executor_anchor_grow_gate(name: &str, trace: &[Vec<BabyBear>]) {
     );
 }
 
-/// **TRANSFER-SHAPE (burn) wide roundtrip.** Burn carries the bare 38-PI vector exactly as transfer;
-/// its wide member is the SAME carrier shape (816 / PI 54). PROVES + VERIFIES + executor-anchors.
+/// **TRANSFER-SHAPE (burn) wide roundtrip.** Burn carries the bare 46-PI vector exactly as transfer;
+/// its wide member is the SAME carrier shape (816 / PI 62). PROVES + VERIFIES + executor-anchors.
 #[test]
 fn wide_burn_transfer_shape_proves_verifies_and_executor_anchors() {
     let name = "burnVmDescriptor2R24";
@@ -259,12 +259,12 @@ fn wide_burn_transfer_shape_proves_verifies_and_executor_anchors() {
         &st, &effects, &bridge(&before_w), &bridge(&after_w), &empty_caveat_manifest(),
     )
     .expect("wide burn producer");
-    assert_roundtrip(name, &desc, &trace, &dpis, &[], 38);
+    assert_roundtrip(name, &desc, &trace, &dpis, &[], 46);
     assert_executor_anchor(name, &before_cell, &before_w, nullifier_root, commitments_root, &trace);
 }
 
 /// **NOTESPEND grow-gate wide roundtrip.** The nullifier accumulator (limb 26) grow-gate; wide member
-/// 816 / PI 55 (the extra nullifier PI[38] before the 16 wide PIs). PROVES + VERIFIES + anchors.
+/// 816 / PI 63 (the extra nullifier PI[46] before the 16 wide PIs). PROVES + VERIFIES + anchors.
 #[test]
 fn wide_note_spend_grow_gate_proves_verifies_and_executor_anchors() {
     let name = "noteSpendVmDescriptor2R24";
@@ -297,12 +297,12 @@ fn wide_note_spend_grow_gate_proves_verifies_and_executor_anchors() {
         &before_nullifiers,
     )
     .expect("wide noteSpend producer");
-    assert_roundtrip(name, &desc, &trace, &dpis, &map_heaps, 39);
+    assert_roundtrip(name, &desc, &trace, &dpis, &map_heaps, 47);
     assert_executor_anchor_grow_gate(name, &trace);
 }
 
 /// **NOTECREATE grow-gate wide roundtrip.** The commitments accumulator (limb 27) grow-gate; wide
-/// member 816 / PI 55. PROVES + VERIFIES + executor-anchors.
+/// member 816 / PI 63. PROVES + VERIFIES + executor-anchors.
 #[test]
 fn wide_note_create_grow_gate_proves_verifies_and_executor_anchors() {
     let name = "noteCreateVmDescriptor2R24";
@@ -333,12 +333,12 @@ fn wide_note_create_grow_gate_proves_verifies_and_executor_anchors() {
         &before_commitments,
     )
     .expect("wide noteCreate producer");
-    assert_roundtrip(name, &desc, &trace, &dpis, &map_heaps, 39);
+    assert_roundtrip(name, &desc, &trace, &dpis, &map_heaps, 47);
     assert_executor_anchor_grow_gate(name, &trace);
 }
 
 /// **CREATECELL grow-gate wide roundtrip.** The accounts accumulator (limb 0) grow-gate; wide member
-/// 816 / PI 55. PROVES + VERIFIES + executor-anchors.
+/// 816 / PI 63. PROVES + VERIFIES + executor-anchors.
 #[test]
 fn wide_create_cell_grow_gate_proves_verifies_and_executor_anchors() {
     let name = "createCellVmDescriptor2R24";
@@ -368,6 +368,6 @@ fn wide_create_cell_grow_gate_proves_verifies_and_executor_anchors() {
         &before_accounts,
     )
     .expect("wide createCell producer");
-    assert_roundtrip(name, &desc, &trace, &dpis, &map_heaps, 39);
+    assert_roundtrip(name, &desc, &trace, &dpis, &map_heaps, 47);
     assert_executor_anchor_grow_gate(name, &trace);
 }

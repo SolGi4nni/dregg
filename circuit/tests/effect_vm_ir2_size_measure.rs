@@ -80,8 +80,8 @@ fn ir2_vs_v1_transfer_proof_size() {
     let (base_trace, pis) = generate_effect_vm_trace(&state, &effects);
     assert_eq!(
         base_trace[0].len(),
-        187,
-        "canonical 186-col EffectVM layout"
+        188,
+        "canonical 188-col EffectVM layout (186 + record-digest + asset-class)"
     );
 
     // ---- v1: the LIVE single-table descriptor-interpreter path (the SDK cutover prover). ----
@@ -108,8 +108,8 @@ fn ir2_vs_v1_transfer_proof_size() {
     let v2_json = descriptor2_for_key("transferVmDescriptor2").expect("v2 transfer descriptor");
     let v2_desc = parse_vm_descriptor2(v2_json).expect("v2 transfer descriptor parses");
     assert_eq!(
-        v2_desc.trace_width, 215,
-        "graduated transfer = 187 base + 7·4 chip lane cols (Phase B-GATE: 4 hash sites)"
+        v2_desc.trace_width, 216,
+        "graduated transfer = 188 base + 7·4 chip lane cols (Phase B-GATE: 4 hash sites)"
     );
     assert_eq!(v2_desc.tables.len(), 5, "the five EPOCH tables");
     let v2_dpis: Vec<BabyBear> = pis[..v2_desc.public_input_count].to_vec();

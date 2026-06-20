@@ -131,7 +131,7 @@ range checks. -/
 def noteCreateVmDescriptor : EffectVmDescriptor :=
   { name := noteCreateVmAirName
   , traceWidth := EFFECT_VM_WIDTH
-  , piCount := 34
+  , piCount := 42
   , constraints := noteCreateRowGates ++ transitionAll ++ boundaryFirstPins ++ boundaryLastPins
                      ++ selectorGates 5
   , hashSites := transferHashSites
@@ -624,7 +624,7 @@ now writes the advanced `system_roots` digest and binds it into `state_commit`. 
 def noteCreateVmDescriptorFull : EffectVmDescriptor :=
   { name := noteCreateVmAirName ++ "-rootbound"
   , traceWidth := EFFECT_VM_WIDTH
-  , piCount := 34
+  , piCount := 42
   , constraints := (noteCreateRowGates ++ [.gate gCommitRootUpdate])
                      ++ transitionAll ++ boundaryFirstPins ++ boundaryLastPins
   , hashSites := noteCreateRootHashSites
@@ -856,7 +856,7 @@ boundary PI pins ++ the selector-binding gate, with `traceWidth := EFFECT_VM_WID
 def noteCreateVmDescriptorWide : EffectVmDescriptor :=
   { name := noteCreateVmAirName ++ "-sysroots"
   , traceWidth := EFFECT_VM_WIDTH_SYSROOTS
-  , piCount := 34
+  , piCount := 42
   , constraints := (noteCreateRowGates ++ [.gate gCommitRootUpdateWide])
                      ++ transitionAll ++ boundaryFirstPins ++ boundaryLastPins
                      ++ selectorGates SEL_NOTE_CREATE

@@ -138,7 +138,7 @@ sites. No balance range checks (the child balance is the literal `0`). -/
 def spawnVmDescriptor : EffectVmDescriptor :=
   { name := spawnVmAirName
   , traceWidth := EFFECT_VM_WIDTH
-  , piCount := 34
+  , piCount := 42
   , constraints := spawnRowGates ++ transitionAll ++ boundaryFirstPins
   , hashSites := spawnHashSites
   , ranges := [] }
@@ -494,7 +494,7 @@ name and the selector gate differ. The born-empty CHILD face stays `spawnVmDescr
 def spawnActorVmDescriptor : EffectVmDescriptor :=
   { name := spawnActorVmAirName
   , traceWidth := EFFECT_VM_WIDTH
-  , piCount := 34
+  , piCount := 42
   , constraints := revokeRowGates ++ transitionAll ++ boundaryFirstPins ++ boundaryLastPins
                      ++ selectorGates SEL_SPAWN_RT
   , hashSites := transferHashSites

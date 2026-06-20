@@ -44,7 +44,7 @@ pub const GENUINE_NONAMP_JSON: &str =
 /// SHA-256 cache-freshness pin for the committed bytes (re-pinned by the emit script; NOT a
 /// faithfulness check — the Lean↔JSON gate is generate-fresh `scripts/check-descriptor-drift.sh`).
 pub const GENUINE_NONAMP_FP: &str =
-    "0af7917a00213ab458a29be0c9e96d9facdd13b055b8d0030933c039b2afd227";
+    "5cdb03f341ed0b0f33af193f15827c536195d929ad94fe3c22a48cfc3c456e58";
 
 /// The descriptor name (the canonical wire identity — shared across the six cap-graph effects).
 pub const GENUINE_NONAMP_NAME: &str = "dregg-effectvm-attenuateA-v1-genuine-nonamp";

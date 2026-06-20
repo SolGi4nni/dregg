@@ -95,16 +95,16 @@ fn record_descriptor_binds_fields_root_and_rejects_map_tamper() {
     let (base_trace, pis) = generate_effect_vm_trace(&st, &effects);
     assert_eq!(
         base_trace[0].len(),
-        187,
-        "canonical 186-col layout (width-neutral)"
+        188,
+        "canonical 188-col layout (width-neutral)"
     );
 
     let json = descriptor_for_name("dregg-effectvm-record-v1")
         .expect("record descriptor must be registered");
     let desc = parse_vm_descriptor(json).expect("record descriptor must parse");
     assert_eq!(
-        desc.trace_width, 187,
-        "record descriptor is width-neutral (186)"
+        desc.trace_width, 188,
+        "record descriptor is width-neutral (188)"
     );
     let dpis = &pis[..desc.public_input_count];
     let last = base_trace.len() - 1;

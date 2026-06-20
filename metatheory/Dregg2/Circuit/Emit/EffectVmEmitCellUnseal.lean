@@ -96,7 +96,7 @@ selector. -/
 def cellUnsealVmDescriptor : EffectVmDescriptor :=
   { name := cellUnsealVmAirName
   , traceWidth := EFFECT_VM_WIDTH
-  , piCount := 34
+  , piCount := 42
   , constraints := cellUnsealRowGates ++ transitionAll ++ boundaryFirstPins ++ boundaryLastPins
                      ++ selectorGates 50
   , hashSites := cellUnsealHashSites

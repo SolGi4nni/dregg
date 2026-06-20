@@ -230,6 +230,11 @@ def INIT_BAL_LO : Nat := 20
 def INIT_BAL_HI : Nat := 21
 def FINAL_BAL_LO : Nat := 22
 def FINAL_BAL_HI : Nat := 23
+/-- `pi.rs` `ACTOR_NONCE` (the full v3 layout offset): post-Phase-C the OLD/NEW
+state commitments widened 4→8 each (+8 prefix), shifting `INIT_BAL_LO` 12→20 AND the
+later blocks, so `APPROVED_HANDOFFS_BASE = 29`, `TURN_HASH_BASE = 33`,
+`EFFECTS_HASH_GLOBAL_BASE = 37`, and `ACTOR_NONCE = 41`. The descriptor PI window
+must therefore be wide enough to address index 41 (see `PI_COUNT = 42`). -/
 def ACTOR_NONCE : Nat := 41
 end pi
 

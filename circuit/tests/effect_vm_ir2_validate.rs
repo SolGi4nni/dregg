@@ -46,8 +46,8 @@ fn ir2_validate_transfer_proves_verifies_and_refuses_ghost() {
         .expect("transfer v2 descriptor must be registered");
     let desc = parse_vm_descriptor2(json).expect("transfer v2 descriptor must parse");
     assert_eq!(
-        desc.trace_width, 215,
-        "graduated transfer = 187 base + 7·4 chip lane cols (Phase B-GATE: 4 hash sites)"
+        desc.trace_width, 216,
+        "graduated transfer = 188 base + 7·4 chip lane cols (Phase B-GATE: 4 hash sites)"
     );
     assert_eq!(desc.tables.len(), 5, "the five EPOCH tables");
     // Transfer is a graduated v1 face: chip + range lookups only, no mem/map ops.
@@ -86,8 +86,8 @@ fn ir2_validate_transfer_proves_verifies_and_refuses_ghost() {
         let (base_trace, pis) = generate_effect_vm_trace(&st, &effects);
         assert_eq!(
             base_trace[0].len(),
-            187,
-            "[{label}] canonical 186-col EffectVM layout"
+            188,
+            "[{label}] canonical 188-col EffectVM layout (186 + record-digest + asset-class)"
         );
         let dpis: Vec<BabyBear> = pis[..desc.public_input_count].to_vec();
 

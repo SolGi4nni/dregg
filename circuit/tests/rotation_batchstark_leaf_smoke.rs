@@ -88,7 +88,7 @@ fn rotated_transfer_leaf_folds_as_batchstark() {
     let desc =
         parse_vm_descriptor2(rotated_transfer_json()).expect("rotated transfer descriptor parses");
     assert_eq!(desc.trace_width, GRAD_ROT_WIDTH, "graduated rotated width 608");
-    assert_eq!(desc.public_input_count, 38, "34 v1 PIs + 4 appended");
+    assert_eq!(desc.public_input_count, 46, "42 v1 PIs + 4 appended");
 
     // -- a real transfer-out (the validated v1 reference witness). --
     let before_balance: i64 = 100_000;

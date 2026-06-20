@@ -90,7 +90,7 @@ pins, the 4 ordered GROUP-4 hash sites and the 2 balance-limb range checks. -/
 def setPermsVmDescriptor : EffectVmDescriptor :=
   { name := setPermsVmAirName
   , traceWidth := EFFECT_VM_WIDTH
-  , piCount := 34
+  , piCount := 42
   , constraints := setPermsRowGates ++ transitionAll ++ boundaryFirstPins ++ boundaryLastPins
                      ++ selectorGates 26
   , hashSites := setPermsHashSites

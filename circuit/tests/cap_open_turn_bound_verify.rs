@@ -1,12 +1,12 @@
 //! # THE TURN-IDENTITY WELD (#225) — the LEDGERLESS LIGHT CLIENT'S forcing tooth.
 //!
 //! The Lean keystone `Dregg2.Circuit.Emit.CapOpenTurnPins.effCapOpenV3TB` (descriptor
-//! `transferCapOpenTBVmDescriptor2R24`, trace_width 409, public_input_count 41) is the LIVE transfer
+//! `transferCapOpenTBVmDescriptor2R24`, trace_width 409, public_input_count 49) is the LIVE transfer
 //! cap-open PLUS two turn-identity columns (`actor`/`dst`) and three appended `.piBinding .last` gates
-//! welding the cap-open `src`/`actor`/`dst` columns to NEW public-input slots (`src → PI[38]`, `actor →
-//! PI[39]`, `dst → PI[40]`). The verifier ANCHORS those three PIs to the TRUSTED turn it holds
+//! welding the cap-open `src`/`actor`/`dst` columns to NEW public-input slots (`src → PI[46]`, `actor →
+//! PI[47]`, `dst → PI[48]`). The verifier ANCHORS those three PIs to the TRUSTED turn it holds
 //! (`anchor_cap_open_turn_pins`, the deployment realization of the named `TurnIdentityAnchored`
-//! predicate), exactly as the record-pin family anchors `dpis[38]` from the trusted post-cell.
+//! predicate), exactly as the record-pin family anchors `dpis[46]` from the trusted post-cell.
 //!
 //! THE FORCING (the light-client-relevant tooth): a ledgerless light client, holding only the trusted
 //! turn, can conclude the published turn's `actor`/`src`/`dst` MATCH the proven transition. This test
@@ -90,7 +90,7 @@ fn bridge(w: &rw::RotationWitness) -> RotatedBlockWitness {
     RotatedBlockWitness::new(w.pre_limbs.clone(), w.iroot).expect("31 pre-iroot limbs")
 }
 
-/// Build a proven rotated TRANSFER base trace + 38 PIs (a debit transfer — `direction = 1`), the live
+/// Build a proven rotated TRANSFER base trace + 46 PIs (a debit transfer — `direction = 1`), the live
 /// rotated cohort path the deployed transfer cap-open widens. NO attenuate phase-B patch (transfer is
 /// directly valid), the two-domain transfer caveat manifest (matching the live route).
 fn build_transfer_base() -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
@@ -155,7 +155,7 @@ fn cap_open_witness() -> CapOpenWitness {
 fn cap_open_turn_bound_verifier_forces_published_identity() {
     let desc = parse_vm_descriptor2(reg_json(CAP_OPEN_TB_KEY)).expect("TB cap-open descriptor parses");
     assert_eq!(desc.trace_width, CAP_OPEN_TB_WIDTH, "TB width 409");
-    assert_eq!(desc.public_input_count, 41, "TB carries 41 PIs (38 rotated + 3 turn-identity)");
+    assert_eq!(desc.public_input_count, 49, "TB carries 49 PIs (46 rotated + 3 turn-identity)");
 
     // The TRUSTED turn the light client holds. `src` IS the cap-leaf target the targetBind roots; the
     // owner arm publishes `actor == dst == src` (the cap is a member of the actor's own c-list).
@@ -164,12 +164,12 @@ fn cap_open_turn_bound_verifier_forces_published_identity() {
     let trusted_dst = trusted_src;
 
     // The HONEST prover: build the transfer base, widen with the TB cap-open (fills src/actor/dst
-    // columns), publish the 41-PI vector with the prover's OWN (honest) identity.
+    // columns), publish the 49-PI vector with the prover's OWN (honest) identity.
     let (mut trace, base_pis) = build_transfer_base();
     let w = cap_open_witness();
     widen_to_cap_open_tb(&mut trace, &w, trusted_actor, trusted_dst).expect("TB widen");
     let honest_pis = cap_open_tb_dpis(&base_pis, trusted_src, trusted_actor, trusted_dst);
-    assert_eq!(honest_pis.len(), 41);
+    assert_eq!(honest_pis.len(), 49);
     // The published columns are pinned on the last row; sanity-check the fill landed.
     assert_eq!(trace[0][CAP_OPEN_TB_ACTOR_COL], trusted_actor);
     assert_eq!(trace[0][CAP_OPEN_TB_DST_COL], trusted_dst);
@@ -187,12 +187,12 @@ fn cap_open_turn_bound_verifier_forces_published_identity() {
         .expect("honest TB cap-open verifies under the trusted-turn anchor");
     eprintln!(
         "TURN-IDENTITY ANCHOR ACCEPT: honest transfer TB cap-open verified; the verifier recomputed \
-         src/actor/dst PIs (38/39/40) from the trusted turn and they MATCH the proven transition."
+         src/actor/dst PIs (46/47/48) from the trusted turn and they MATCH the proven transition."
     );
 
     // (B) THE NEGATIVE TOOTH — a FORGED published SRC is rejected by the VERIFIER ALONE. The trusted
-    //     turn's src is `trusted_src`; the verifier anchors PI[38] to it. The proof was bound to the
-    //     honest src column (== trusted_src). We now anchor PI[38] to a DIFFERENT (forged) src the
+    //     turn's src is `trusted_src`; the verifier anchors PI[46] to it. The proof was bound to the
+    //     honest src column (== trusted_src). We now anchor PI[46] to a DIFFERENT (forged) src the
     //     trusted turn does NOT carry → the last-row src pin disagrees with the bound column → UNSAT.
     {
         let mut forged = honest_pis.clone();
@@ -207,7 +207,7 @@ fn cap_open_turn_bound_verifier_forces_published_identity() {
         );
     }
 
-    // (C) THE NEGATIVE TOOTH — a FORGED published ACTOR is rejected by the VERIFIER ALONE (PI[39]).
+    // (C) THE NEGATIVE TOOTH — a FORGED published ACTOR is rejected by the VERIFIER ALONE (PI[47]).
     {
         let mut forged = honest_pis.clone();
         let forged_actor = BabyBear::new(0xDEAD);
@@ -220,7 +220,7 @@ fn cap_open_turn_bound_verifier_forces_published_identity() {
         );
     }
 
-    // (D) THE NEGATIVE TOOTH — a FORGED published DST is rejected by the VERIFIER ALONE (PI[40]).
+    // (D) THE NEGATIVE TOOTH — a FORGED published DST is rejected by the VERIFIER ALONE (PI[48]).
     {
         let mut forged = honest_pis.clone();
         let forged_dst = BabyBear::new(0xBEEF_BEEF & 0x7FFF_FFFF);

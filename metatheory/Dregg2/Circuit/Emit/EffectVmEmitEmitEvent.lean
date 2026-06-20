@@ -249,7 +249,7 @@ pins ++ the selector-binding gate, the 4 ordered GROUP-4 hash sites and the 2 ba
 def emitEventVmDescriptor : EffectVmDescriptor :=
   { name := emitVmAirName
   , traceWidth := EFFECT_VM_WIDTH
-  , piCount := 34
+  , piCount := 42
   , constraints := emitTickRowGates ++ transitionAll ++ boundaryFirstPins ++ boundaryLastPins
                      ++ selectorGates SEL_EMIT_EVENT
   , hashSites := transferHashSites

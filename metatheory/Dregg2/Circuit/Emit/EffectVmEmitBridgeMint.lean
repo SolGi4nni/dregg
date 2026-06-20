@@ -119,7 +119,7 @@ def bridgeMintVmAirName : String := "dregg-effectvm-bridgemint-v1"
 def bridgeMintVmDescriptor : EffectVmDescriptor :=
   { name := bridgeMintVmAirName
   , traceWidth := EFFECT_VM_WIDTH
-  , piCount := 34
+  , piCount := 42
   , constraints := bridgeMintRowGates ++ transitionAll ++ boundaryFirstPins ++ boundaryLastPins
                      ++ selectorGates 40
   , hashSites := transferHashSites

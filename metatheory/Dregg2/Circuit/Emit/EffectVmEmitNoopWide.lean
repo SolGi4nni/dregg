@@ -92,7 +92,7 @@ wideHashSites` (so the published `state_commit` absorbs the — frozen — side-
 def noopVmDescriptorWide : EffectVmDescriptor :=
   { name := "dregg-effectvm-noop-sysroots"
   , traceWidth := EFFECT_VM_WIDTH_SYSROOTS
-  , piCount := 34
+  , piCount := 42
   , constraints := emitRowGates ++ transitionAll ++ boundaryFirstPins ++ boundaryLastPins
   , hashSites := wideHashSites
   , ranges := [] }

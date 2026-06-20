@@ -7526,7 +7526,7 @@ mod tests {
     /// 14 transfer-row gates + 14 transition-continuity + 7 boundary PI pins, the 4
     /// ordered GROUP-4 H4 state-commit hash sites, and the 2 balance-limb range checks.
     /// Copied verbatim from the Lean toolchain output.
-    const TRANSFER_VM_DESCRIPTOR_JSON: &str = r#"{"name":"dregg-effectvm-transfer-v1","trace_width":188,"public_input_count":34,"constraints":[{"t":"gate","body":{"t":"add","l":{"t":"add","l":{"t":"var","v":76},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":54}}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":68}},"r":{"t":"mul","l":{"t":"const","v":2},"r":{"t":"mul","l":{"t":"var","v":69},"r":{"t":"var","v":68}}}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":77},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":55}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":69},"r":{"t":"add","l":{"t":"var","v":69},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"add","l":{"t":"add","l":{"t":"var","v":78},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":56}}},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"add","l":{"t":"const","v":1},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":0}}}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":87},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":65}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":89},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":67}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":79},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":57}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":80},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":58}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":81},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":59}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":82},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":60}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":83},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":61}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":84},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":62}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":85},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":63}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":86},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":64}}}},{"t":"transition","hi":0,"lo":0},{"t":"transition","hi":1,"lo":1},{"t":"transition","hi":2,"lo":2},{"t":"transition","hi":3,"lo":3},{"t":"transition","hi":4,"lo":4},{"t":"transition","hi":5,"lo":5},{"t":"transition","hi":6,"lo":6},{"t":"transition","hi":7,"lo":7},{"t":"transition","hi":8,"lo":8},{"t":"transition","hi":9,"lo":9},{"t":"transition","hi":10,"lo":10},{"t":"transition","hi":11,"lo":11},{"t":"transition","hi":12,"lo":12},{"t":"transition","hi":13,"lo":13},{"t":"pi_binding","row":"first","col":56,"pi_index":33},{"t":"pi_binding","row":"first","col":54,"pi_index":12},{"t":"pi_binding","row":"first","col":55,"pi_index":13},{"t":"pi_binding","row":"first","col":66,"pi_index":0},{"t":"pi_binding","row":"last","col":88,"pi_index":4},{"t":"pi_binding","row":"last","col":76,"pi_index":14},{"t":"pi_binding","row":"last","col":77,"pi_index":15},{"t":"gate","body":{"t":"mul","l":{"t":"add","l":{"t":"const","v":1},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":0}}},"r":{"t":"add","l":{"t":"const","v":1},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":1}}}}}],"hash_sites":[{"digest_col":98,"arity":4,"inputs":[{"t":"col","c":76},{"t":"col","c":77},{"t":"col","c":78},{"t":"col","c":79}]},{"digest_col":99,"arity":4,"inputs":[{"t":"col","c":80},{"t":"col","c":81},{"t":"col","c":82},{"t":"col","c":83}]},{"digest_col":100,"arity":4,"inputs":[{"t":"col","c":84},{"t":"col","c":85},{"t":"col","c":86},{"t":"col","c":87}]},{"digest_col":88,"arity":4,"inputs":[{"t":"digest","k":0},{"t":"digest","k":1},{"t":"digest","k":2},{"t":"col","c":186}]}],"ranges":[{"wire":76,"bits":30},{"wire":77,"bits":30}]}"#;
+    const TRANSFER_VM_DESCRIPTOR_JSON: &str = r#"{"name":"dregg-effectvm-transfer-v1","trace_width":188,"public_input_count":42,"constraints":[{"t":"gate","body":{"t":"add","l":{"t":"add","l":{"t":"var","v":76},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":54}}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":68}},"r":{"t":"mul","l":{"t":"const","v":2},"r":{"t":"mul","l":{"t":"var","v":69},"r":{"t":"var","v":68}}}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":77},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":55}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":69},"r":{"t":"add","l":{"t":"var","v":69},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"add","l":{"t":"add","l":{"t":"var","v":78},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":56}}},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"add","l":{"t":"const","v":1},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":0}}}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":87},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":65}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":89},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":67}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":79},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":57}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":80},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":58}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":81},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":59}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":82},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":60}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":83},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":61}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":84},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":62}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":85},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":63}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":86},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":64}}}},{"t":"transition","hi":0,"lo":0},{"t":"transition","hi":1,"lo":1},{"t":"transition","hi":2,"lo":2},{"t":"transition","hi":3,"lo":3},{"t":"transition","hi":4,"lo":4},{"t":"transition","hi":5,"lo":5},{"t":"transition","hi":6,"lo":6},{"t":"transition","hi":7,"lo":7},{"t":"transition","hi":8,"lo":8},{"t":"transition","hi":9,"lo":9},{"t":"transition","hi":10,"lo":10},{"t":"transition","hi":11,"lo":11},{"t":"transition","hi":12,"lo":12},{"t":"transition","hi":13,"lo":13},{"t":"pi_binding","row":"first","col":56,"pi_index":41},{"t":"pi_binding","row":"first","col":54,"pi_index":20},{"t":"pi_binding","row":"first","col":55,"pi_index":21},{"t":"pi_binding","row":"first","col":66,"pi_index":0},{"t":"pi_binding","row":"last","col":88,"pi_index":8},{"t":"pi_binding","row":"last","col":76,"pi_index":22},{"t":"pi_binding","row":"last","col":77,"pi_index":23},{"t":"gate","body":{"t":"mul","l":{"t":"add","l":{"t":"const","v":1},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":0}}},"r":{"t":"add","l":{"t":"const","v":1},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":1}}}}}],"hash_sites":[{"digest_col":98,"arity":4,"inputs":[{"t":"col","c":76},{"t":"col","c":77},{"t":"col","c":78},{"t":"col","c":79}]},{"digest_col":99,"arity":4,"inputs":[{"t":"col","c":80},{"t":"col","c":81},{"t":"col","c":82},{"t":"col","c":83}]},{"digest_col":100,"arity":4,"inputs":[{"t":"col","c":84},{"t":"col","c":85},{"t":"col","c":86},{"t":"col","c":87}]},{"digest_col":88,"arity":4,"inputs":[{"t":"digest","k":0},{"t":"digest","k":1},{"t":"digest","k":2},{"t":"col","c":186}]}],"ranges":[{"wire":76,"bits":30},{"wire":77,"bits":30}]}"#;
 
     /// The parser faithfully decodes the EffectVM grammar: the 35 constraints split
     /// 14 gates / 14 transitions / 7 pi-bindings, the 4 ordered hash sites (site 3
@@ -7537,7 +7537,7 @@ mod tests {
             .expect("Lean-emitted EffectVM transfer descriptor must parse");
         assert_eq!(d.name, "dregg-effectvm-transfer-v1");
         assert_eq!(d.trace_width, 188);
-        assert_eq!(d.public_input_count, 34);
+        assert_eq!(d.public_input_count, 42);
         // 14 per-row gates + 14 transitions + 7 boundary PI pins + 1 selector-binding gate.
         assert_eq!(d.constraints.len(), 14 + 14 + 7 + 1);
         assert_eq!(d.hash_sites.len(), 4);
@@ -7562,18 +7562,18 @@ mod tests {
         assert_eq!((gates, transitions, pis), (15, 14, 7));
 
         // The actor-nonce pin (the #49 anti-ghost tooth): state_before.nonce (col 56)
-        // == PI[ACTOR_NONCE] (index 33), on the first row.
+        // == PI[ACTOR_NONCE] (index 41 post-Phase-C, the v1 prefix's last pin), first row.
         assert!(d.constraints.contains(&VmConstraint::PiBinding {
             row: VmRow::First,
             col: 56,
-            pi_index: 33,
+            pi_index: 41,
         }));
         // The published-commitment pin: state_after.state_commit (col 88) == PI[NEW_COMMIT]
-        // (index 4), on the last row.
+        // (index 8 post-Phase-C — OLD_COMMIT widened to 8 felts), on the last row.
         assert!(d.constraints.contains(&VmConstraint::PiBinding {
             row: VmRow::Last,
             col: 88,
-            pi_index: 4,
+            pi_index: 8,
         }));
 
         // Site 3 (the root H4) binds state_after.state_commit (col 88) and reads the three
@@ -7610,8 +7610,10 @@ mod tests {
 
         // ---- Honest transfer: cell with balance 100, nonce 5, outgoing transfer of 30. ----
         // `generate_effect_vm_trace` builds the genuine 186-col base trace (transfer row 0,
-        // NoOp pad rows) and the 201-entry PI vector. We truncate the PI vector to the 34
-        // slots the descriptor pins (indices 0..33 are unchanged by truncation).
+        // NoOp pad rows) and the full ACTIVE_BASE_COUNT PI vector. We truncate the PI vector to
+        // the descriptor's `public_input_count` (42 — the v1 prefix through `ACTOR_NONCE` at
+        // index 41; indices 0..41 are unchanged by truncation, so the row-0 nonce boundary pin
+        // at PI 41 stays in range).
         let initial = CellState::new(100, 5);
         let effects = vec![Effect::Transfer {
             amount: 30,
@@ -7623,12 +7625,12 @@ mod tests {
             desc.trace_width,
             "base trace is 188-col"
         );
-        let pi34: Vec<crate::field::BabyBear> = full_pi[..desc.public_input_count].to_vec();
+        let pi_window: Vec<crate::field::BabyBear> = full_pi[..desc.public_input_count].to_vec();
 
         // The honest turn proves + verifies through the Lean-descriptor-sourced AIR.
-        let proof = prove_vm_descriptor(&desc, &base_trace, &pi34)
+        let proof = prove_vm_descriptor(&desc, &base_trace, &pi_window)
             .expect("honest transfer must prove+verify through the Lean EffectVM descriptor AIR");
-        verify_vm_descriptor(&desc, &proof, &pi34)
+        verify_vm_descriptor(&desc, &proof, &pi_window)
             .expect("re-verify of the honest EffectVM transfer proof must succeed");
 
         // ---- ANTI-GHOST 1: forge the published post-state commitment (last-row
@@ -7642,8 +7644,8 @@ mod tests {
             forged[last][STATE_AFTER_BASE_T + state_commit_off()] =
                 honest_commit + crate::field::BabyBear::new(1);
             let rejected = std::panic::catch_unwind(|| {
-                let p = prove_vm_descriptor(&desc, &forged, &pi34)?;
-                verify_vm_descriptor(&desc, &p, &pi34)
+                let p = prove_vm_descriptor(&desc, &forged, &pi_window)?;
+                verify_vm_descriptor(&desc, &p, &pi_window)
             });
             match rejected {
                 Err(_) => {} // prover panicked on the broken hash-binding gate: rejected
@@ -7660,7 +7662,7 @@ mod tests {
         //      a different ACTOR_NONCE makes the boundary pin UNSAT (#49 nonce-invisibility
         //      tooth). ----
         {
-            let mut bad_pi = pi34.clone();
+            let mut bad_pi = pi_window.clone();
             bad_pi[evm_pi::ACTOR_NONCE] =
                 bad_pi[evm_pi::ACTOR_NONCE] + crate::field::BabyBear::new(7);
             // The honest trace + tampered PI: the row-0 nonce pin can no longer hold.
@@ -7684,8 +7686,8 @@ mod tests {
             let honest_bal = forged[0][STATE_AFTER_BASE_T + 0]; // balance_lo offset 0
             forged[0][STATE_AFTER_BASE_T + 0] = honest_bal + crate::field::BabyBear::new(11);
             let rejected = std::panic::catch_unwind(|| {
-                let p = prove_vm_descriptor(&desc, &forged, &pi34)?;
-                verify_vm_descriptor(&desc, &p, &pi34)
+                let p = prove_vm_descriptor(&desc, &forged, &pi_window)?;
+                verify_vm_descriptor(&desc, &p, &pi_window)
             });
             match rejected {
                 Err(_) => {}
@@ -7864,7 +7866,7 @@ mod tests {
             direction: 1,
         }];
         let (base_trace, full_pi) = generate_effect_vm_trace(&initial, &effects);
-        let pi34: Vec<crate::field::BabyBear> = full_pi[..desc.public_input_count].to_vec();
+        let pi_window: Vec<crate::field::BabyBear> = full_pi[..desc.public_input_count].to_vec();
 
         // The audited-prover accept oracle: prove (self-verifies) then re-verify; a
         // prover panic (broken constraint in debug) counts as reject.
@@ -7908,7 +7910,7 @@ mod tests {
         }
 
         // ---- HONEST: both accept. ----
-        check(&desc, "honest", &base_trace, &pi34, true);
+        check(&desc, "honest", &base_trace, &pi_window, true);
 
         // ---- Forge the published post-state commitment (last-row state_commit):
         //      site-3 hash binding rejects; denotation's hash-site clause is false. ----
@@ -7917,12 +7919,12 @@ mod tests {
             let last = t.len() - 1;
             t[last][STATE_AFTER_BASE_T + state_commit_off()] =
                 t[last][STATE_AFTER_BASE_T + state_commit_off()] + crate::field::BabyBear::new(1);
-            check(&desc, "forged_commitment", &t, &pi34, false);
+            check(&desc, "forged_commitment", &t, &pi_window, false);
         }
 
         // ---- Tamper the ACTOR_NONCE public input: row-0 boundary pin rejects. ----
         {
-            let mut bad_pi = pi34.clone();
+            let mut bad_pi = pi_window.clone();
             bad_pi[evm_pi::ACTOR_NONCE] =
                 bad_pi[evm_pi::ACTOR_NONCE] + crate::field::BabyBear::new(7);
             check(&desc, "tampered_actor_nonce", &base_trace, &bad_pi, false);
@@ -7934,7 +7936,7 @@ mod tests {
             let mut t = base_trace.clone();
             t[0][STATE_AFTER_BASE_T + 0] =
                 t[0][STATE_AFTER_BASE_T + 0] + crate::field::BabyBear::new(11);
-            check(&desc, "forged_post_balance", &t, &pi34, false);
+            check(&desc, "forged_post_balance", &t, &pi_window, false);
         }
 
         // ---- Break transition continuity: poke the next row's state_before.nonce so
@@ -7945,7 +7947,7 @@ mod tests {
             // state_before.nonce of row 1 is column 54 + state::NONCE(2) = 56.
             t[1][EFFECTVM_STATE_BEFORE_BASE + 2] =
                 t[1][EFFECTVM_STATE_BEFORE_BASE + 2] + crate::field::BabyBear::new(1);
-            check(&desc, "broken_transition_continuity", &t, &pi34, false);
+            check(&desc, "broken_transition_continuity", &t, &pi_window, false);
         }
 
         // ---- Out-of-range balance: set state_after.balance_lo to a value with a bit
@@ -7956,7 +7958,7 @@ mod tests {
         {
             let mut t = base_trace.clone();
             t[0][STATE_AFTER_BASE_T + 0] = crate::field::BabyBear::new(1u32 << 30);
-            check(&desc, "out_of_range_balance", &t, &pi34, false);
+            check(&desc, "out_of_range_balance", &t, &pi_window, false);
         }
     }
 

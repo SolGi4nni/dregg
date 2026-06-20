@@ -145,6 +145,72 @@ pub fn verify_turn_auth_sig(
     schnorr_air::verify_schnorr_via_trace(trace, public_inputs)
 }
 
+/// The committed-authority binding for the DUAL-SCHEME proven (curve) path.
+///
+/// # The dual scheme (additive model; the live cell-format change is serialized separately)
+///
+/// The agent's authority is committed in the cell with a SCHEME TAG (`Ed25519` = the off-circuit
+/// RECEIPT path, `Curve` = this in-circuit PROVEN path, `Both`). Ed25519 NEVER enters a circuit.
+/// On the PROVEN path the cell commits the Curve public key as authority; a proven-mode turn must
+/// bind its FORCED curve key (the pubkey the AIR's PI layout pins, `auth_pi::AGENT_PK_{X,Y}`) to
+/// THAT committed key. Without this binding, a verifying turn-auth proof shows only "SOME curve key
+/// signed THIS turn", not "the cell's RIGHTFUL committed key signed it" — a downgrade/substitution
+/// footgun (present any key you hold a signature for).
+///
+/// `CommittedCurveAuthority` is the committed Curve-authority PI slot pair: the x/y limbs of the
+/// curve pubkey the cell committed as its proven-path authority. In the live system these come from
+/// the cell's committed authority field (the live-wire handoff: `cell/src/commitment.rs`'s
+/// `compute_authority_digest_felt` would fold the scheme tag + this curve pubkey into the 8-felt
+/// commit, and the executor's dual-dispatch would supply them as PIs). Here they are an additive
+/// descriptor input so the binding tooth is testable with NO executor.
+#[derive(Clone, Debug)]
+pub struct CommittedCurveAuthority {
+    /// The curve pubkey the cell committed as its proven-path (Curve/Both) authority.
+    pub committed_pubkey: SchnorrPublicKey,
+}
+
+/// **THE CURVE-KEY BINDING CHECK (dual-scheme proven path).** The forced curve key — read off the
+/// turn-auth proof's `AGENT_PK_{X,Y}` PI slots — MUST equal the cell's committed Curve authority.
+///
+/// This is the in-circuit content of `dualscheme_no_downgrade` (`Dregg2.Crypto.DualSchemeAuthority`):
+/// a proven turn whose forced `cpk` differs from the committed Curve authority is REJECTED. Combined
+/// with `verify_turn_auth_sig` (which forces "the holder of the bound pubkey signed THIS turn"), the
+/// conjunction gives the dual-scheme bite: "the cell's RIGHTFUL committed curve key authorized THIS
+/// turn". Returns `true` iff the forced key in the PIs equals the committed authority.
+pub fn bind_curve_key_to_committed_authority(
+    public_inputs: &[BabyBear],
+    committed: &CommittedCurveAuthority,
+) -> bool {
+    if public_inputs.len() != auth_pi::TOTAL {
+        return false;
+    }
+    for i in 0..8 {
+        if public_inputs[auth_pi::AGENT_PK_X + i] != committed.committed_pubkey.0.x.0[i] {
+            return false;
+        }
+        if public_inputs[auth_pi::AGENT_PK_Y + i] != committed.committed_pubkey.0.y.0[i] {
+            return false;
+        }
+    }
+    true
+}
+
+/// **THE DUAL-SCHEME PROVEN-PATH GATE.** A proven-mode turn is authorized iff (1) the curve-constrained
+/// signature verifies over the descriptor's bound pubkey + turn hash (`verify_turn_auth_sig`), AND
+/// (2) the forced curve key is BOUND to the cell's committed Curve authority
+/// (`bind_curve_key_to_committed_authority`). The conjunction is downgrade-proof: an attacker cannot
+/// substitute a different curve key (it fails the binding) nor forge a signature (it fails the curve
+/// equation). Ed25519 is NOT here — the receipt path is verified off-circuit.
+pub fn verify_proven_turn_against_committed(
+    desc: &TurnAuthSigDescriptor,
+    committed: &CommittedCurveAuthority,
+    trace: &[Vec<BabyBear>],
+    public_inputs: &[BabyBear],
+) -> bool {
+    verify_turn_auth_sig(desc, trace, public_inputs)
+        && bind_curve_key_to_committed_authority(public_inputs, committed)
+}
+
 /// Sign a turn hash that is ALREADY the 8-felt message hash (the in-circuit form): the signer
 /// and verifier both use `compute_challenge_from_elements(R, pk, turn_hash)`, so the challenge
 /// matches with no byte-encoding round-trip.
@@ -330,6 +396,56 @@ mod tests {
         assert!(
             !verify_turn_auth_sig(&desc, &trace, &pis),
             "a corrupted curve witness must be UNSAT — the gate forces the curve math, not a bit"
+        );
+    }
+
+    /// DUAL-SCHEME HONEST PROVEN PATH: the cell commits the agent's curve key as its proven-path
+    /// authority; the agent signs THIS turn under that key. Both legs pass — the curve equation
+    /// verifies AND the forced key binds to the committed authority. The light client concludes "the
+    /// cell's RIGHTFUL committed curve key authorized this turn".
+    #[test]
+    fn dual_scheme_proven_turn_against_committed_accepts() {
+        let th = turn_hash(0x77);
+        let desc = sign_turn_prehashed(&[0x77; 32], &th);
+        let committed = CommittedCurveAuthority {
+            committed_pubkey: desc.agent_pubkey.clone(),
+        };
+        let (trace, pis) = generate_turn_auth_trace(&desc);
+        assert!(
+            verify_proven_turn_against_committed(&desc, &committed, &trace, &pis),
+            "honest proven turn under the committed curve authority must verify"
+        );
+    }
+
+    /// TOOTH (downgrade / key substitution): a VALID signature under key A, but the cell committed a
+    /// DIFFERENT curve key B as its proven authority. The curve equation still verifies (the sig is
+    /// genuine under A) — but the binding to the committed authority FAILS, so the dual-scheme proven
+    /// gate is UNSAT. This is the in-circuit `dualscheme_no_downgrade`: an attacker holding ANY valid
+    /// signature cannot authorize a turn against a cell whose committed curve key differs. No executor.
+    #[test]
+    fn dual_scheme_forced_key_not_committed_unsat() {
+        let th = turn_hash(0x88);
+        // The agent signs honestly under its OWN key A.
+        let desc = sign_turn_prehashed(&[0x88; 32], &th);
+        let (trace, pis) = generate_turn_auth_trace(&desc);
+        // The cell committed a DIFFERENT curve key B as its proven-path authority.
+        let other = sign_turn_prehashed(&[0xAB; 32], &th);
+        let committed = CommittedCurveAuthority {
+            committed_pubkey: other.agent_pubkey.clone(),
+        };
+        // The bare curve check passes (the signature IS valid under A)...
+        assert!(
+            verify_turn_auth_sig(&desc, &trace, &pis),
+            "the signature is genuinely valid under its own key"
+        );
+        // ...but the binding to the committed authority B fails, so the dual-scheme gate rejects.
+        assert!(
+            !bind_curve_key_to_committed_authority(&pis, &committed),
+            "forced curve key A must NOT bind to committed authority B"
+        );
+        assert!(
+            !verify_proven_turn_against_committed(&desc, &committed, &trace, &pis),
+            "a proven turn whose forced curve key != committed authority must be UNSAT (no downgrade)"
         );
     }
 

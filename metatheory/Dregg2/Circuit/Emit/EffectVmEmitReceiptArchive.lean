@@ -149,7 +149,7 @@ boundary pins, with the 4 ordered GROUP-4 hash sites. No balance range checks (n
 def receiptArchiveVmDescriptor : EffectVmDescriptor :=
   { name := receiptArchiveVmAirName
   , traceWidth := EFFECT_VM_WIDTH
-  , piCount := 34
+  , piCount := 42
   , constraints := archiveRowGates ++ transitionAll ++ boundaryFirstPins
   , hashSites := archiveHashSites
   , ranges := [] }
@@ -522,7 +522,7 @@ only the name and the selector gate differ. The lifecycle-SET face stays
 def receiptArchiveActorVmDescriptor : EffectVmDescriptor :=
   { name := receiptArchiveActorVmAirName
   , traceWidth := EFFECT_VM_WIDTH
-  , piCount := 34
+  , piCount := 42
   , constraints := revokeRowGates ++ transitionAll ++ boundaryFirstPins ++ boundaryLastPins
                      ++ selectorGates SEL_RECEIPT_ARCHIVE_RT
   , hashSites := transferHashSites
