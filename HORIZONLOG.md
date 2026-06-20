@@ -2843,3 +2843,22 @@ The user's holistic "is it end-to-end enmeshed / would edits turn proofs red" ce
   for ~13 effects against INTENT oracles; whole-turn WholeTurnTriangle.lean binds the composed turnSpec post to one
   authenticated root. Terminal seams = named CR carriers (Injective D, logHashInjective) + the distributed Σδ=0
   consensus binding — typeclass params, never sorry.
+
+## ⚑ ENMESHMENT CENSUS layer 1/4: CIRCUIT effect-slot discharge (adc53df9) — the real frontier
+ALL 30 live effect families DISCHARGED (the ∀ e hyp is NOT an open hole — closedLogExtract_all_genuine
+ClosureFanoutGenuine.lean:828 is a 36-way split, every slot a proven <e>_descriptorRefines concluding the real
+fullActionStep arm, axiom-clean). So SPEC-edit -> red holds for ALL 30. BUT the CIRCUIT-edit -> red property
+splits them:
+- CLASS A (circuit-descriptor-bound, edit propagates RED): 6 effects — transfer, mint, burn, setField,
+  incrementNonce, bridgeMint. Their rung CONSUMES Satisfied2(Rfix e) via the *_forced limb lemmas. (= the memory's
+  "5/36 VALUE rungs" + bridgeMint.) transfer is the DEEPEST (closedLogExtract_transfer_closed ClosureTransfer.lean:293
+  reduces to 4 crypto floors + TransferAuthorityWitness, no opaque extract residual — the template).
+- CLASS B (circuit-DECOUPLED, edit does NOT reliably propagate): 24 effects — cap family, lifecycle, perms/vk,
+  birth, notes, exercise, heapWrite. Their <e>Encodes carries a NAMED internal gate (prover-supplied commitment
+  fact) but the readout TAKES Satisfied2(Rfix e) AND DISCARDS IT — encode derived from its own gate, not the
+  circuit denotation. Spec-edit still reds them (they refine real Spec); circuit-descriptor-edit does NOT.
+  Worst: heapWrite(56) Rfix 56 = the WRONG descriptor (transfer fallback), descriptor-abstract by design.
+- No sorry; all keystones #assert_axioms-clean ⊆ {propext, Classical.choice, Quot.sound} + named floors.
+THE NEXT CAMPAIGN (precise): close the 24 Class-B slots — make each <e>Encodes a FUNCTION of Satisfied2(Rfix e)
+the way transfer's is (closedLogExtract_transfer_closed = the template), so a circuit-constraint bug in any effect
+propagates red. The spec<->proof weld is COMPLETE; the circuit<->proof weld is deep for 6, shallow for 24.
