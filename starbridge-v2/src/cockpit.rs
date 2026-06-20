@@ -3241,21 +3241,16 @@ impl Cockpit {
                 Some(CvProvenance::dial(focus, CV_BLAME_SOURCE_PATH).present(&ctx))
             }
 
-            // 🔒 READ-CAP / PRIVACY — the read-confidentiality WELD placeholder. The
-            // cell's read-confidentiality view (who may READ it, the encrypted-field
-            // membrane) is not yet present in this image; the lens is REACHABLE now
-            // and lights up the moment the privacy weld commits. Degrade honestly.
-            MoldableLens::ReadCap => Some(weld_pending_presentation(
-                focus,
-                "read-cap / privacy",
-                "READ-CONFIDENTIALITY — who may READ this cell",
-                "The read-cap / privacy weld is not yet available in this image. When \
-                 it lands, this lens shows the cell's read-confidentiality membrane: \
-                 which principals' caps admit a READ, the encrypted-field set, and the \
-                 selective-disclosure boundary. The lens is reachable now so it lights \
-                 up the instant the weld commits — no new gpui code, no new lens \
-                 framework (the same generic presentation renderer).",
-            )),
+            // 🔒 READ-CAP / PRIVACY — the read-confidentiality membrane, WELDED onto
+            // the landed `dregg_cell::read_cap` organ (the privacy M0 weld commit):
+            // the encrypted-field set read off the live field-visibility, the
+            // `granted ⊆ held` read-lattice (the real `ReadCap::attenuate`), and the
+            // byte-identical-commitment invariant demonstrated live. The lens is real
+            // now; a cell with no committed slots degrades honestly inside `present`.
+            MoldableLens::ReadCap => {
+                crate::read_cap_lens::ReadConfidentiality::from_world(w, focus)
+                    .map(|v| v.present(&ctx))
+            }
 
             // ⟲ HISTORY / UNDO — the reversibility WELD placeholder. The cell's
             // reversible history (the rewind/undo timeline, RCCS reversibility) is

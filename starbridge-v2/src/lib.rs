@@ -229,6 +229,13 @@ pub mod meta_debug;
 pub mod time_travel;
 #[cfg(feature = "embedded-executor")]
 pub mod cell_inspector;
+// THE READ-CAP / PRIVACY lens — the read-confidentiality membrane, welded onto the
+// landed `dregg_cell::read_cap` organ (docs/deos/PRIVACY-CONFIDENTIALITY.md M0): the
+// encrypted-field set off live field-visibility, the `granted ⊆ held` read-lattice
+// (real ReadCap::attenuate), and the byte-identical-commitment invariant demonstrated
+// live. Lights up the cockpit's "🔒 read-cap / privacy" lens (was a weld placeholder).
+#[cfg(feature = "embedded-executor")]
+pub mod read_cap_lens;
 #[cfg(feature = "embedded-executor")]
 pub mod receipts_inspector;
 #[cfg(feature = "embedded-executor")]
