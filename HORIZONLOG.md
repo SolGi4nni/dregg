@@ -2997,3 +2997,34 @@ entirely: re-base ChainStep/recCexec onto the genuine per-asset recCexecAsset/ex
 whole-turn over bal, matching the apex), retiring legacy recKExec -> then apexLowers becomes
 execFullA_balanceA_iff_spec-shaped + provable outright. (= a real distributed-layer modernization, own campaign.)
 BANK STATUS: hold until the parallel cellSeal agent settles the shared ClosureFanoutGenuine closure (tree was mid-edit).
+
+## ⚑⚑⚑ CLASS-B TRIAGE COMPLETE (2026-06-20, a93b40505) — 5 REAL SOUNDNESS GAPS found (+ heapWrite), 14 LAZY, the fix shapes
+Of the 24 census Class-B slots (apex ranges over v3RegistryCapOpen, CapOpenEmit.lean:799, NOT plain v3Registry):
+- 14 LAZY-join (non-VK, the cellSeal recipe fans them — committed-limb gate + axiom-clean force-lemma already
+  deployed, only the Lean join missing): cellSeal, cellUnseal, cellDestroy, refusal, receiptArchive, setPerms,
+  setVK, setFieldDyn, createCell, factory, spawn, noteSpend, noteCreate, makeSovereign, ATTENUATE
+  (attenuateV3_non_amp RotV3:3023 proves writesTo CAP_ROOT in-circuit — LAZY, NOT a gap; the framing-correction:
+  the write-leg discriminator is the keepWrite/removeWrite/insertWrite map-op in the deployed base, not whether
+  the bare weld pins cap_root).
+- 3 NO-WRITE (not gaps): emitEvent, pipelinedSend, exercise (frozen frame + nonce tick).
+- 1 UNCERTAIN->likely LAZY: revokeCapability (base carries [heldReadOp,removeWriteOp] RotV3:962 like attenuate,
+  but NO force-lemma yet — confirm removeWriteOp is in the CapOpen constraint set, then mirror attenuateV3_non_amp).
+- 🔴 5 REAL (b)-GAPS — VK-AFFECTING (the deployed circuit does NOT force the cap-tree WRITE): DELEGATE, INTRODUCE,
+  DELEGATEATTEN, REVOKEDELEGATION, REFRESHDELEGATION. Root cause: the cap-open descriptor forces the authority
+  READ (the 70-gate capOpenConstraintsEff appendix) but FREEZES the on-row cap_root/delegations limb; the write
+  (new root) rides only an off-row effects_hash decode (*CapsTreeEncodes.SpineCommits = a PROVER-SUPPLIED
+  hypothesis), unanchored to any deployed write gate. closedLogExtract_{delegate,...}_closed
+  (ClosureFanoutGenuine.lean:246-349) takes the move as that free decode. So these 5 rungs are genuinely
+  false-but-hidden at the deployed descriptor: a prover can publish a wrong post-cap-root and the circuit won't
+  catch it. FIX (VK-affecting, Lean-now/deploy-ember-gated): add the in-circuit cap-tree write map-op mirroring
+  attenuate's [heldReadOp,keepWriteOp] (RotV3:955) — insertWriteOp (delegate/introduce/delegateAtten),
+  removeWriteOp (revokeDelegation), updateAtKeyWriteOp vs delegations root (refreshDelegation) — each forcing
+  writesTo cap_root_before key value cap_root_after vs the committed B_CAP_ROOT/delegations limb + a <slot>V3_non_amp
+  lemma. Converts REAL->LAZY.
+- +1 heapWrite (different gap kind): ABSENT from every registry (Rfix 56 -> transfer fallback,
+  CircuitSoundnessAssembled.lean:155); machinery (EffectVmEmitHeapRoot heapRoot_binds_write) + spec proof
+  (heapWrite_newRoot_forced) EXIST — fix = construct heapWriteVmDescriptor2R24 registry entry + point actionTagToPos
+  56 at it. VK-affecting "constructible assembly".
+NEXT WAVE: (a) fan the cellSeal recipe across the 13 other LAZY slots [non-VK, parallelizable]; (b) the 5 cap-write
+descriptor gaps [VK, mirror attenuate's keepWriteOp + _non_amp]; (c) revokeCapability force-lemma; (d) heapWrite
+registry entry. The "garbage" was 14 missing-joins + 5 genuine soundness holes — now mapped with fix shapes.
