@@ -40,7 +40,12 @@
 //!     `check_all_constraints`, so the bus arms become the global multiset / membership
 //!     checks the receiving sub-AIR performs (memTableFaithful + Disciplined + MemCheck;
 //!     mapTableFaithful + the read/write/absent opening), exactly as the audited
-//!     assembly emits them.
+//!     assembly emits them. **The bus arms are additionally driven through the REAL
+//!     deployed assembly** by `faithfulness_guard_real_assembly_bus` (PART K): it
+//!     assembles + proves the deployed multi-table batch STARK and runs the real
+//!     verifier (`verify_global_sum`, the cross-table LogUp grand-product), so the
+//!     bus-arm faithfulness is witnessed by the genuine deployed reconciliation, not
+//!     only the transcription.
 //!
 //! The test asserts the two oracles decide accept/reject IDENTICALLY on every case of
 //! a GENERATED corpus that covers every constraint arm, both row-position boundaries,
@@ -751,6 +756,209 @@ fn real_eval_accepts(d: &Descriptor2, t: &VmTraceC) -> Option<bool> {
         })
         .collect();
     Some(descriptor_ir2::ir2_eval_accepts_i64(&desc, &rows, &[]))
+}
+
+// ===========================================================================
+// PART C3 — THE REAL MULTI-TABLE BATCH-ASSEMBLY ORACLE (collapses the BUS link).
+//
+// PART C2 collapses the last transcription link for the ROW-LOCAL arms (Gate/Transition/
+// WindowGate) by calling the real `Ir2Air::Main` row evaluator. This part collapses the link
+// for the CROSS-TABLE BUS arms — chip/range lookup MEMBERSHIP and memory/map-ops LogUp
+// multiset BALANCE — by driving the DEPLOYED multi-table batch system: assemble the present
+// sub-AIRs (Main + poseidon2-chip + byte + memory + boundary + map-ops, each with its
+// `PermutationCheckBus`), PROVE the batch STARK, and run the REAL verifier — whose
+// `verify_global_sum` discharges the LogUp grand-product cumulative-sum-zero check across all
+// tables. This is the EXACT mechanism `verify_vm_descriptor2` uses; a row-local single-AIR
+// `eval` cannot decide it (the receiving sub-AIR + the global balance live in the assembly).
+//
+// `bus_assembly_accepts` runs `prove_vm_descriptor2` (which sets `check = true`: the honest
+// pre-flight replay refuses a forged witness eagerly) followed by `verify_vm_descriptor2` (the
+// real batch verifier: FRI + `verify_global_sum` over every bus). The verdict is ACCEPT iff a
+// proof both assembles AND verifies; a forged witness is REJECTED — either the pre-flight
+// replay returns `Err`, the batch prover's debug LogUp checker panics on the unbalanced bus
+// (caught), or the proof fails `verify_global_sum`. So the bus verdict is the genuine
+// deployed-assembly decision, NOT a transcription.
+//
+// THE FAITHFULNESS ASSERTION: the real-assembly verdict must equal the Lean golden verdict
+// (`decideSatisfied2`, the membership/balance legs of `Satisfied2`) on every bus-arm case. A
+// divergence is a genuine Lean↔Rust faithfulness finding.
+//
+// Coverage = the bus arms reachable through the real assembly's supported table sems
+// (`TableSem::{Range, Poseidon2Chip, Memory, MapOps}`):
+//   * range lookup  — limb decomposition into the byte-table bus;
+//   * chip lookup   — the poseidon2 (`TID_P2`) absorb membership on the chip bus (the faithful
+//                     realization of the abstract "committed-table membership" arm — the real
+//                     deployed system has NO free-standing committed cap table; cap/chip-family
+//                     membership rides the hash chip bus);
+//   * memory transfer (read+write) — the offline-memory `mem_log` / `mem_check` buses;
+//   * map read / write / absent     — the sorted-heap map-ops / map-absent + chip + byte buses.
+// ===========================================================================
+
+use dregg_circuit::descriptor_ir2::{
+    LookupSpec, MapKind as RealMapKind, MapOpSpec, MemBoundaryWitness, MemKind as RealMemKind,
+    MemOpSpec, TableDef2, TableSem, TID_P2, TID_RANGE as REAL_TID_RANGE,
+};
+use dregg_circuit::field::BabyBear as Bb;
+use dregg_circuit::heap_root::{CanonicalHeapTree, HeapLeaf, HEAP_TREE_DEPTH};
+
+fn bb(v: i128) -> Bb {
+    Bb::new(v as u32)
+}
+
+/// THE REAL BATCH-ASSEMBLY ORACLE: assemble + prove the deployed multi-table batch STARK for
+/// `(desc, base_trace, mem_boundary, map_heaps)`, then run the REAL verifier. Returns the
+/// deployed accept/reject verdict — `true` iff a proof BOTH assembles AND verifies through
+/// `verify_vm_descriptor2` (its `verify_global_sum` is the cross-table LogUp grand-product
+/// check). A forged witness rejects via the pre-flight replay `Err`, a caught debug-prover
+/// panic on the unbalanced bus, or a failed verification. This is NOT a transcription.
+fn bus_assembly_accepts(
+    desc: &EffectVmDescriptor2,
+    base_trace: &[Vec<Bb>],
+    mem_boundary: &MemBoundaryWitness,
+    map_heaps: &[Vec<HeapLeaf>],
+) -> bool {
+    // The prover (and its debug LogUp consistency checker) can panic on an unbalanced bus; that
+    // is a hard REJECT, so we catch it rather than letting it abort the test.
+    let proven = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        descriptor_ir2::prove_vm_descriptor2(desc, base_trace, &[], mem_boundary, map_heaps)
+    }));
+    match proven {
+        Ok(Ok(proof)) => {
+            // A proof assembled; the REAL verifier (FRI + verify_global_sum over every bus)
+            // decides the final verdict.
+            descriptor_ir2::verify_vm_descriptor2(desc, &proof, &[]).is_ok()
+        }
+        // prove returned Err (pre-flight replay refused) or panicked (unbalanced bus) ⇒ REJECT.
+        Ok(Err(_)) | Err(_) => false,
+    }
+}
+
+/// The genuine arity-2 chip absorb digest (lane0 / out0) for a `[a, b]` leaf — the value a
+/// chip-lookup base row plants in its `out0` column. The prover fills lanes 1..7 itself
+/// (`fill_chip_lanes`), so the base row needs only this digest.
+fn chip_digest2(a: Bb, b: Bb) -> Bb {
+    descriptor_ir2::chip_absorb_all_lanes(2, &[a, b])[0]
+}
+
+/// A descriptor with a single RANGE lookup (`var0 ∈ [0, 2^bits)`). The range leg rides the
+/// limb-decomposition byte bus — a real cross-table arm.
+fn real_range_desc(bits: usize) -> EffectVmDescriptor2 {
+    EffectVmDescriptor2 {
+        name: "ir2-bus-range".to_string(),
+        trace_width: 4,
+        public_input_count: 0,
+        tables: vec![TableDef2 {
+            id: REAL_TID_RANGE,
+            name: "range".to_string(),
+            arity: 1,
+            sem: TableSem::Range { bits },
+        }],
+        constraints: vec![VmConstraint2::Lookup(LookupSpec {
+            table: REAL_TID_RANGE,
+            tuple: vec![LeanExpr::Var(0)],
+        })],
+        hash_sites: vec![],
+        ranges: vec![],
+    }
+}
+
+/// A descriptor with a single arity-2 CHIP lookup — the absorb `hash[var0, var1]` whose
+/// declared tuple is `[2, a, b, 0×(CHIP_RATE-2), out0, lane1..lane7]`. The membership rides the
+/// poseidon2 chip bus; a forged digest/leaf has no chip row, so the LogUp is unsatisfiable.
+fn real_chip_desc() -> EffectVmDescriptor2 {
+    // CHIP_RATE = 11, CHIP_OUT_LANES = 8. tuple = arity tag, a, b, 9 zeros, out0, 7 lanes.
+    let chip_rate = 11usize;
+    let out_lanes = 8usize;
+    let mut tuple = vec![LeanExpr::Const(2), LeanExpr::Var(0), LeanExpr::Var(1)];
+    for _ in 0..(chip_rate - 2) {
+        tuple.push(LeanExpr::Const(0));
+    }
+    // out0 (digest) at col 2, lanes 1..7 at cols 3..9.
+    tuple.push(LeanExpr::Var(2));
+    for i in 0..(out_lanes - 1) {
+        tuple.push(LeanExpr::Var(3 + i));
+    }
+    EffectVmDescriptor2 {
+        name: "ir2-bus-chip".to_string(),
+        trace_width: 2 + 1 + (out_lanes - 1), // a,b, out0, 7 lanes = 10 cols
+        public_input_count: 0,
+        tables: vec![],
+        constraints: vec![VmConstraint2::Lookup(LookupSpec {
+            table: TID_P2,
+            tuple,
+        })],
+        hash_sites: vec![],
+        ranges: vec![],
+    }
+}
+
+/// A descriptor with a write-then-read memOp pair over the same address (the transfer shape),
+/// plus the range lookup pinning the address in-bound. Mirrors the Lean `mem_cs` golden:
+/// cols [addr, w_val, w_prev, w_serial, r_val, r_prev, r_serial], guards = 1.
+fn real_mem_desc() -> EffectVmDescriptor2 {
+    EffectVmDescriptor2 {
+        name: "ir2-bus-mem".to_string(),
+        trace_width: 8,
+        public_input_count: 0,
+        tables: vec![TableDef2 {
+            id: REAL_TID_RANGE,
+            name: "range".to_string(),
+            arity: 1,
+            sem: TableSem::Range { bits: 8 },
+        }],
+        constraints: vec![
+            VmConstraint2::Lookup(LookupSpec {
+                table: REAL_TID_RANGE,
+                tuple: vec![LeanExpr::Var(0)],
+            }),
+            VmConstraint2::MemOp(MemOpSpec {
+                guard: LeanExpr::Const(1),
+                addr: LeanExpr::Var(0),
+                value: LeanExpr::Var(1),
+                prev_value: LeanExpr::Var(2),
+                prev_serial: LeanExpr::Var(3),
+                kind: RealMemKind::Write,
+            }),
+            VmConstraint2::MemOp(MemOpSpec {
+                guard: LeanExpr::Const(1),
+                addr: LeanExpr::Var(0),
+                value: LeanExpr::Var(4),
+                prev_value: LeanExpr::Var(5),
+                prev_serial: LeanExpr::Var(6),
+                kind: RealMemKind::Read,
+            }),
+        ],
+        hash_sites: vec![],
+        ranges: vec![],
+    }
+}
+
+/// A descriptor with a single map op of the given kind: cols [root, key, value, new_root],
+/// guard = 1. Mirrors the Lean `mw_cs`/`mr_cs`/`ma_cs` goldens. The `absent` op pins its value
+/// to the canonical `const 0` (the deployed checker `check_descriptor2` REQUIRES it — the
+/// non-membership read has no value), exactly as the Lean `ma_cs`/`absent_desc` shape.
+fn real_map_desc(op: RealMapKind) -> EffectVmDescriptor2 {
+    let value = if op == RealMapKind::Absent {
+        LeanExpr::Const(0)
+    } else {
+        LeanExpr::Var(2)
+    };
+    EffectVmDescriptor2 {
+        name: "ir2-bus-map".to_string(),
+        trace_width: 4,
+        public_input_count: 0,
+        tables: vec![],
+        constraints: vec![VmConstraint2::MapOp(MapOpSpec {
+            guard: LeanExpr::Const(1),
+            root: LeanExpr::Var(0),
+            key: LeanExpr::Var(1),
+            value,
+            new_root: LeanExpr::Var(3),
+            op,
+        })],
+        hash_sites: vec![],
+        ranges: vec![],
+    }
 }
 
 // ===========================================================================
@@ -1553,9 +1761,13 @@ fn faithfulness_guard_eval_enforces_satisfied2() {
          denotation; {} cases (the bus arms — chip/byte lookups + mem/map/umem LogUp) fell back \
          to the transcription `eval_enforces`.\n\
          THE NARROWED RESIDUAL: the last transcription link (`eval_enforces ≡ real Ir2Air::eval`) \
-         is now COLLAPSED to the real evaluator for the ROW-LOCAL arms; only the CROSS-TABLE \
-         BUS-ASSEMBLY arms (lookup membership + memory/map-ops LogUp multiset balance) remain \
-         transcribed (a single-AIR row-local evaluation cannot decide a cross-table multiset).\n\
+         is now COLLAPSED to the real evaluator for the ROW-LOCAL arms here; and the CROSS-TABLE \
+         BUS-ASSEMBLY arms (lookup membership + memory/map-ops LogUp multiset balance) are driven \
+         through the DEPLOYED multi-table batch STARK by `faithfulness_guard_real_assembly_bus` \
+         (assemble + prove + the real `verify_global_sum`), agreeing with the same Lean goldens. \
+         So the bus arms in THIS guard remain a transcription, but their faithfulness is \
+         independently witnessed by the real-assembly differential (a single-AIR row-local \
+         evaluation cannot decide a cross-table multiset — the assembly can, and does).\n\
          THE STATED STRUCTURAL BOUND: the interpreters agree on every trace of width ≤ {BOUND_W}, \
          height ≤ {BOUND_H}, value bound ≤ {BOUND_V}; a divergence needing a larger trace/row/value \
          escapes (the empirical-but-exhaustive leg; the kernel-checked leg is DecideSatisfied2.lean).\n\
@@ -1957,6 +2169,325 @@ fn pinned_against_decideSatisfied2_goldens() {
     eprintln!(
         "KERNEL-DECIDER PIN PASS: {} cases ({accepts} accept, {rejects} reject) — Rust \
          denote_satisfied2 ≡ kernel-proven decideSatisfied2 goldens, case-for-case.",
+        cases.len()
+    );
+}
+
+// ===========================================================================
+// PART K — THE REAL BATCH-ASSEMBLY BUS DIFFERENTIAL: the CROSS-TABLE bus arms run the
+// DEPLOYED multi-table batch STARK (assemble + prove + `verify_global_sum`), and the verdict
+// is asserted to AGREE with the Lean `decideSatisfied2` golden — collapsing the last
+// transcription link for the bus arms (lookup membership + memory/map LogUp balance).
+//
+// Each case mirrors a verdict pinned in `DecideSatisfied2Golden.lean` (the membership / balance
+// legs of `Satisfied2`), realized over REAL traces: genuine chip digests, genuine sorted-heap
+// roots, the genuine offline-memory replay. The accept cases must prove + verify through the
+// real assembly; the forged cases must be REJECTED by the real assembly (pre-flight replay
+// refusal, a caught unbalanced-bus prover panic, or a failed `verify_global_sum`).
+// ===========================================================================
+
+/// One real-assembly bus case: a label, the deployed descriptor, a real BabyBear base trace,
+/// the memory boundary + witness heaps, and the verdict the Lean `decideSatisfied2` golden pins
+/// for the structurally-corresponding case.
+struct BusCase {
+    label: &'static str,
+    desc: EffectVmDescriptor2,
+    base: Vec<Vec<Bb>>,
+    mem_boundary: MemBoundaryWitness,
+    heaps: Vec<Vec<HeapLeaf>>,
+    /// The verdict the corresponding Lean golden (`decideSatisfied2`) decides.
+    lean_verdict: bool,
+}
+
+/// Build the real-assembly bus corpus: range / chip / memory / map(read,write,absent), each in
+/// both polarities, mirroring the Lean golden verdicts over GENUINE traces.
+fn bus_corpus() -> Vec<BusCase> {
+    let mut cases = Vec::new();
+
+    // ---- RANGE lookup (limb→byte bus). bits=8 ⇒ [0,256). ----
+    {
+        let d = real_range_desc(8);
+        // accept: in-range; reject: out-of-range (no limb decomposition exists).
+        cases.push(BusCase {
+            label: "range:in-bound",
+            desc: d.clone(),
+            base: vec![vec![bb(9), bb(0), bb(0), bb(0)]],
+            mem_boundary: MemBoundaryWitness::default(),
+            heaps: vec![],
+            lean_verdict: true,
+        });
+        cases.push(BusCase {
+            label: "range:out-of-bound",
+            desc: d,
+            base: vec![vec![bb(300), bb(0), bb(0), bb(0)]], // 300 ∉ [0,256)
+            mem_boundary: MemBoundaryWitness::default(),
+            heaps: vec![],
+            lean_verdict: false,
+        });
+    }
+
+    // ---- CHIP lookup (poseidon2 absorb membership on the chip bus). ----
+    {
+        let d = real_chip_desc();
+        let (a, b) = (bb(11), bb(22));
+        let digest = chip_digest2(a, b);
+        // accept: the base row carries the GENUINE digest (lanes 1..7 filled by the prover).
+        let mut row = vec![bb(0); d.trace_width];
+        row[0] = a;
+        row[1] = b;
+        row[2] = digest;
+        cases.push(BusCase {
+            label: "chip:genuine-digest",
+            desc: d.clone(),
+            base: vec![row.clone()],
+            mem_boundary: MemBoundaryWitness::default(),
+            heaps: vec![],
+            lean_verdict: true,
+        });
+        // reject: a FORGED out0 digest — no chip row provides it, the LogUp is unsatisfiable.
+        let mut forged = row;
+        forged[2] = digest + bb(1);
+        cases.push(BusCase {
+            label: "chip:forged-digest",
+            desc: d,
+            base: vec![forged],
+            mem_boundary: MemBoundaryWitness::default(),
+            heaps: vec![],
+            lean_verdict: false,
+        });
+    }
+
+    // ---- MEMORY transfer (write 9 over (init 7,0), read 9 over (9,1) ⇒ final (9,2)). ----
+    {
+        let d = real_mem_desc();
+        let addr = 5i128;
+        // cols: [addr, w_val, w_prev, w_serial, r_val, r_prev, r_serial].
+        let honest = vec![bb(addr), bb(9), bb(7), bb(0), bb(9), bb(9), bb(1)];
+        let boundary = MemBoundaryWitness {
+            addrs: vec![addr as u32],
+            init_vals: vec![7],
+        };
+        cases.push(BusCase {
+            label: "mem:honest-transfer",
+            desc: d.clone(),
+            base: vec![honest.clone()],
+            mem_boundary: boundary.clone(),
+            heaps: vec![],
+            lean_verdict: true,
+        });
+        // reject: discipline break — the read returns 8 ≠ its claimed prev_value 9.
+        let mut bad_read = honest.clone();
+        bad_read[4] = bb(8); // read value 8 ≠ prev_value 9
+        cases.push(BusCase {
+            label: "mem:read-discipline-break",
+            desc: d.clone(),
+            base: vec![bad_read],
+            mem_boundary: boundary,
+            heaps: vec![],
+            lean_verdict: false,
+        });
+        // reject: balance break — the boundary claims init 99 the log never produces from.
+        cases.push(BusCase {
+            label: "mem:balance-break",
+            desc: d,
+            base: vec![honest],
+            mem_boundary: MemBoundaryWitness {
+                addrs: vec![addr as u32],
+                init_vals: vec![99], // the write claims prev 7, not 99
+            },
+            heaps: vec![],
+            lean_verdict: false,
+        });
+    }
+
+    // ---- MAP READ (membership, root preserved). ----
+    {
+        let d = real_map_desc(RealMapKind::Read);
+        let key = bb(100);
+        let val = bb(77);
+        let leaves = vec![
+            HeapLeaf { addr: key, value: val },
+            HeapLeaf { addr: bb(200), value: bb(88) },
+        ];
+        let tree = CanonicalHeapTree::new(leaves.clone(), HEAP_TREE_DEPTH);
+        let root = tree.root();
+        // accept: [root, key, genuine value, root].
+        cases.push(BusCase {
+            label: "map-read:genuine",
+            desc: d.clone(),
+            base: vec![vec![root, key, val, root]],
+            mem_boundary: MemBoundaryWitness::default(),
+            heaps: vec![leaves.clone()],
+            lean_verdict: true,
+        });
+        // reject: the read claims value 78 where the heap holds 77.
+        cases.push(BusCase {
+            label: "map-read:forged-value",
+            desc: d,
+            base: vec![vec![root, key, val + bb(1), root]],
+            mem_boundary: MemBoundaryWitness::default(),
+            heaps: vec![leaves],
+            lean_verdict: false,
+        });
+    }
+
+    // ---- MAP WRITE (in-place value update over the SAME sorted position). ----
+    {
+        let d = real_map_desc(RealMapKind::Write);
+        let key = bb(100);
+        let old_val = bb(77);
+        let new_val = bb(123);
+        let leaves = vec![
+            HeapLeaf { addr: key, value: old_val },
+            HeapLeaf { addr: bb(200), value: bb(88) },
+        ];
+        let tree = CanonicalHeapTree::new(leaves.clone(), HEAP_TREE_DEPTH);
+        let root = tree.root();
+        let w = tree
+            .update_witness(HeapLeaf { addr: key, value: new_val })
+            .expect("present key has an update witness");
+        let new_root = w.new_root;
+        // accept: [root, key, new_val, genuine new_root].
+        cases.push(BusCase {
+            label: "map-write:genuine",
+            desc: d.clone(),
+            base: vec![vec![root, key, new_val, new_root]],
+            mem_boundary: MemBoundaryWitness::default(),
+            heaps: vec![leaves.clone()],
+            lean_verdict: true,
+        });
+        // reject: a FORGED new_root the genuine sorted write does not produce.
+        cases.push(BusCase {
+            label: "map-write:forged-new-root",
+            desc: d,
+            base: vec![vec![root, key, new_val, new_root + bb(1)]],
+            mem_boundary: MemBoundaryWitness::default(),
+            heaps: vec![leaves],
+            lean_verdict: false,
+        });
+    }
+
+    // ---- MAP ABSENT (bracketed-gap non-membership, root preserved, value 0). ----
+    {
+        let d = real_map_desc(RealMapKind::Absent);
+        let present_key = bb(100);
+        let absent_key = bb(150); // between 100 and 200 — bracketed by the two real leaves.
+        let leaves = vec![
+            HeapLeaf { addr: present_key, value: bb(77) },
+            HeapLeaf { addr: bb(200), value: bb(88) },
+        ];
+        let tree = CanonicalHeapTree::new(leaves.clone(), HEAP_TREE_DEPTH);
+        let root = tree.root();
+        // accept: [root, absent_key, 0, root].
+        cases.push(BusCase {
+            label: "map-absent:genuine-gap",
+            desc: d.clone(),
+            base: vec![vec![root, absent_key, bb(0), root]],
+            mem_boundary: MemBoundaryWitness::default(),
+            heaps: vec![leaves.clone()],
+            lean_verdict: true,
+        });
+        // reject: claim a key absent that IS present — no bracketing witness exists.
+        cases.push(BusCase {
+            label: "map-absent:present-key",
+            desc: d,
+            base: vec![vec![root, present_key, bb(0), root]],
+            mem_boundary: MemBoundaryWitness::default(),
+            heaps: vec![leaves],
+            lean_verdict: false,
+        });
+    }
+
+    cases
+}
+
+/// **THE REAL BATCH-ASSEMBLY BUS DIFFERENTIAL.** Every cross-table bus arm runs the DEPLOYED
+/// multi-table batch STARK — assemble the present sub-AIRs + their `PermutationCheckBus`es,
+/// prove the batch, and run the REAL verifier whose `verify_global_sum` discharges the LogUp
+/// grand-product cumulative-sum-zero check across every bus. The real-assembly accept/reject
+/// verdict is asserted to AGREE with the Lean `decideSatisfied2` golden (the membership /
+/// balance legs of `Satisfied2`). This collapses the LAST transcription link for the bus arms:
+/// they are no longer decided by `eval_enforces`'s hand transcription but by the genuine
+/// deployed bus reconciliation.
+#[test]
+fn faithfulness_guard_real_assembly_bus() {
+    let cases = bus_corpus();
+    let mut disagreements: Vec<String> = Vec::new();
+    let mut accepts = 0usize;
+    let mut rejects = 0usize;
+    // per-arm coverage so the agreement is provably non-vacuous.
+    let mut saw_range = false;
+    let mut saw_chip = false;
+    let mut saw_mem = false;
+    let mut saw_map_read = false;
+    let mut saw_map_write = false;
+    let mut saw_map_absent = false;
+
+    for c in &cases {
+        if c.label.starts_with("range:") {
+            saw_range = true;
+        } else if c.label.starts_with("chip:") {
+            saw_chip = true;
+        } else if c.label.starts_with("mem:") {
+            saw_mem = true;
+        } else if c.label.starts_with("map-read:") {
+            saw_map_read = true;
+        } else if c.label.starts_with("map-write:") {
+            saw_map_write = true;
+        } else if c.label.starts_with("map-absent:") {
+            saw_map_absent = true;
+        }
+        if c.lean_verdict {
+            accepts += 1;
+        } else {
+            rejects += 1;
+        }
+        let real = bus_assembly_accepts(&c.desc, &c.base, &c.mem_boundary, &c.heaps);
+        if real != c.lean_verdict {
+            disagreements.push(format!(
+                "bus case {:?}: REAL batch assembly (prove+verify_global_sum) decided {real} but \
+                 the Lean decideSatisfied2 golden pins {} — a genuine bus-arm faithfulness DIVERGENCE",
+                c.label, c.lean_verdict
+            ));
+        }
+    }
+
+    assert!(
+        disagreements.is_empty(),
+        "LEAN↔RUST BUS DRIFT — the deployed multi-table batch assembly decided differently from \
+         the Lean decideSatisfied2 goldens on {} bus case(s) (a genuine faithfulness failure):\n{}",
+        disagreements.len(),
+        disagreements.join("\n")
+    );
+
+    // non-vacuity: every bus arm exercised, both polarities present.
+    let missing: Vec<&str> = [
+        ("range", saw_range),
+        ("chip", saw_chip),
+        ("memory", saw_mem),
+        ("map-read", saw_map_read),
+        ("map-write", saw_map_write),
+        ("map-absent", saw_map_absent),
+    ]
+    .into_iter()
+    .filter(|(_, seen)| !seen)
+    .map(|(n, _)| n)
+    .collect();
+    assert!(
+        missing.is_empty(),
+        "BUS COVERAGE GAP — the real-assembly corpus never exercised: {missing:?}"
+    );
+    assert!(
+        accepts > 0 && rejects > 0,
+        "the real-assembly bus differential must carry BOTH polarities (accept {accepts}, reject {rejects})"
+    );
+
+    eprintln!(
+        "REAL BATCH-ASSEMBLY BUS DIFFERENTIAL PASS: {} cases ({accepts} accept, {rejects} reject) — \
+         the CROSS-TABLE bus arms (range/chip lookup membership + memory/map-ops LogUp balance) now \
+         run the DEPLOYED multi-table batch STARK (assemble + prove + the real `verify_global_sum` \
+         grand-product check), agreeing with the Lean `decideSatisfied2` goldens case-for-case. The \
+         last transcription link for the bus arms is COLLAPSED to the real assembly.",
         cases.len()
     );
 }
