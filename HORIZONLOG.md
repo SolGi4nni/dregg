@@ -3135,3 +3135,23 @@ FOLLOW-UPS: (a) bank when Phase-1 settles turn/; (b) wire hatchery hpres proofs 
 seL4 boot-wire (generate sel4 image_data.rs from a manifest via the builder, replacing the hand-built 6-cell const
 gen_image_snapshot.rs — a render-from-artifact codegen pass since the viewer PD is no_std, can't link persist).
 The conserving_manifest test already reproduces that const's exact Σ=0 shape -> ready to drive it.
+
+## ⚑⚑⚑ AUTHORITY FLOOR — near-complete (2026-06-20, VK-freedom era; banked 7bccf2b68+239037ad2)
+Guarantee A (Authority) circuit-FORCED (a circuit-descriptor edit reds the rung, mutation-confirmed) status by effect:
+FORCED (the deployed circuit forces the write from Satisfied2):
+- 6 originally Class-A: transfer/mint/burn/setField/incNonce/bridgeMint
+- 13 LAZY-fanned lifecycle/state/birth/notes: cellSeal/cellUnseal/cellDestroy/refusal/setPerms/setVK/setFieldDyn/
+  makeSovereign/createCell/factory/spawn/noteSpend/noteCreate
+- 6 cap slots: attenuate + delegate/grantCap/delegateAtten/introduce/revokeDelegation + revokeCapability
+- receiptArchive (disc gate -> lifecycle:=Archived) + heapWrite (registry entry built, hashSites=heapRecomputeSites)
+= ~28 of 30 effects FORCED.
+REMAINING (all NAMED, not faked):
+- refreshDelegation: writes the DELEGATIONS tree (DELEG system-root, record-bound), NOT cap_root — needs a new
+  deleg-tree map-op + runtime column (delegRoot_runtime_column_pending). The one genuine descriptor-architecture
+  extension left in the cap family.
+- 3 NO-WRITE (not gaps): emitEvent/pipelinedSend/exercise (frozen frame + nonce tick).
+SERIAL TAIL (main-loop owned, queued): (a) wire the new _descriptorRefines_sat + the capOpenSat rungs into the apex
+fanout ClosureFanoutGenuine (13 already wired; +receiptArchive/heapWrite/5 cap slots to add); (b) the JSON
+descriptor regen for the new/changed descriptors (introduceWriteV3/CapOpen wrappers/heapWriteV3 — widths recorded);
+(c) re-pin the drift gate. THEN guarantee A is forced AND apex-wired for ~28/30 — the authority floor of
+"safely live within dregg" essentially COMPLETE.
