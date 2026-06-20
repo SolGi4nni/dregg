@@ -14,32 +14,35 @@ transfer row and proves `Satisfied2 hash transferV3 minit mfin maddrs realTransf
 `completeness_genuinely_nonvacuous` is the strictly-stronger statement: the gates are jointly
 satisfiable by a NON-EMPTY real-row transfer (`∃ a trace with `rows ≠ []` satisfying `Satisfied2`).
 
-## The concrete row (a genuine debit + nonce tick)
+## The concrete row (a genuine NATURAL debit + nonce tick — no `-1`, no full-drain)
 
 `transferV3 = graduateV1 (rotateV3FrozenAuthority transferVmDescriptor)`. The Lean per-row
-`transition` constraint is UNCONDITIONAL (`env.nxt (sbCol hi) = env.loc (saCol lo)` on EVERY row,
-including the last — distinct from the Rust STARK transition polynomial which excludes the last row).
-On a SINGLE-row trace `env.nxt = zeroAsg`, so the transition forces the after-state block to be
-ALL-ZERO. A genuine transfer row must therefore land its after-state on zero. The honest, non-trivial
-row that does this:
+`transition` constraint is UNCONDITIONAL on row 0 (`env.nxt (sbCol i) = env.loc (saCol i)` on the
+ACTIVE row, since `isLast = false` there): it ties row 0's AFTER-state to the WRAP row's BEFORE-state.
+The earlier (degenerate) witness used a zero wrap row, which forced row 0's after-state to ALL-ZERO and
+so demanded a full-drain `bal 10 → 0` with a `nonce -1 → 0`. THIS witness carries row 0's REAL
+after-state in the WRAP row's before block, so a NATURAL transfer is the active-row-0 witness:
 
-  * `s_transfer = 1`, `s_noop = 0` (a real transfer row, not a pad);
-  * BEFORE: `bal_lo = 10`, `nonce = -1`, all other state limbs `0`;
-  * AFTER: every state limb `0` (so the single unconditional transition `0 = after[i]` holds);
-  * params: `amount = 10`, `direction = 1` (an OUTGOING transfer — a debit).
+  * row 0 (`isFirst = true`, `isLast = false`): the GENUINE transfer row.
+    * `s_transfer = 1`, `s_noop = 0` (a real transfer row, not a pad);
+    * BEFORE: `bal_lo = 100`, `nonce = 0`, all other state limbs `0`;
+    * AFTER: `bal_lo = 90`, `nonce = 1`, all other state limbs `0`;
+    * params: `amount = 10`, `direction = 1` (an OUTGOING transfer — a debit).
+  * row 1 (`isLast = true`): the WRAP row. Its per-row `.gate`/`.transition`/weld constraints are
+    VACUOUS; it CARRIES row 0's after-state in its BEFORE block (`sbCol BALANCE_LO = 90`,
+    `sbCol NONCE = 1`) so row 0's transition `wrap.before[i] = row0.after[i]` holds; its OWN after /
+    rotated-after limbs are `0` (the boundary-LAST pins read those, matching `realPub` there).
 
-Then the transfer arithmetic is GENUINELY exercised, not zeroed away:
-  * `gBalLo`: `after.bal_lo (0) = before.bal_lo (10) + amount (10)·(1 - 2·dir (1)) = 10 + 10·(-1) = 0` ✓
-    — a real debit of `10`, balance `10 → 0`;
-  * `gNonce` (active, `s_noop = 0`): `after.nonce (0) = before.nonce (-1) + 1` ✓ — a real nonce tick;
+Then the transfer arithmetic is GENUINELY exercised on row 0:
+  * `gBalLo`: `after.bal_lo (90) = before.bal_lo (100) + amount (10)·(1 - 2·dir (1)) = 100 - 10 = 90` ✓
+    — a real debit of `10`, balance `100 → 90`;
+  * `gNonce` (active, `s_noop = 0`): `after.nonce (1) = before.nonce (0) + 1` ✓ — a real nonce tick
+    `0 → 1`;
   * `gDirBool`: `dir (1)·(dir - 1) = 0` ✓;
   * `gBalHi`/`gCapPass`/`gResPass`/the 8 `gFieldPass`: `0 = 0` (frame frozen at zero) ✓.
 
-(`nonce` is unconstrained by any range tooth — only the two after-balance limbs are range-checked, and
-both are `0 ∈ [0, 2^30)`. A `-1` starting nonce is unusual but it is a genuine ℤ transfer move; the
-SINGLE-row unconditional-transition obstruction makes a `0 → 1` natural-nonce single-row trace
-unsatisfiable, see the report. The point is that the gate SET is jointly satisfied by a real,
-non-zero-amount debit.)
+Both after-balance limbs are range-checked: `bal_lo = 90 ∈ [0, 2^30)`, `bal_hi = 0 ∈ [0, 2^30)` ✓.
+This demonstrates a REAL transfer is inhabitable: no `-1` nonce, no full drain.
 
 ## The auxiliary tables (lookups by literal membership; NO chip-soundness needed)
 
@@ -140,41 +143,49 @@ rotated welded limbs `r0 ↔ bal_lo` (col 188) and `r1 ↔ nonce` (col 189) carr
 balance/nonce (so the `weldsAt` `colEq` ties hold); the after block and all other rotated/caveat
 limbs are `0`. -/
 
-/-- The concrete real transfer row (`Assignment`): `s_transfer = 1`, before-`bal_lo = 10`,
-before-`nonce = -1`, `amount = 10`, `direction = 1`; after-state and all rotated limbs `0`, except the
-two welded BEFORE limbs `r0`(col 188)`= bal_lo = 10` and `r1`(col 189)`= nonce = -1`. -/
+/-- The concrete real NATURAL transfer row (`Assignment`): `s_transfer = 1`, before-`bal_lo = 100`,
+before-`nonce = 0`, after-`bal_lo = 90`, after-`nonce = 1`, `amount = 10`, `direction = 1`; the
+two welded BEFORE rotated limbs `r0`(col 188)`= bal_lo = 100` and `r1`(col 189)`= nonce = 0`; all
+other limbs `0`. (`after.nonce = 1` rides `saCol NONCE`; `after.bal_lo = 90` rides `saCol BALANCE_LO`.) -/
 def realRow : Assignment := fun v =>
   if v = sel.TRANSFER then 1                    -- col 1
-  else if v = sbCol state.BALANCE_LO then 10    -- col 54
-  else if v = sbCol state.NONCE then -1         -- col 56
+  else if v = sbCol state.BALANCE_LO then 100   -- col 54 (before bal_lo)
+  else if v = saCol state.BALANCE_LO then 90    -- col 76 (after bal_lo)
+  else if v = saCol state.NONCE then 1          -- col 78 (after nonce)
   else if v = prmCol param.AMOUNT then 10       -- col 68
   else if v = prmCol param.DIRECTION then 1     -- col 69
-  else if v = 188 then 10                        -- rotated BEFORE r0 (welded to bal_lo)
-  else if v = 189 then -1                        -- rotated BEFORE r1 (welded to nonce)
-  else 0
+  else if v = 188 then 100                       -- rotated BEFORE r0 (welded to bal_lo = 100)
+  else if v = 239 then 90                        -- rotated AFTER r0 (welded to after bal_lo = 90)
+  else if v = 240 then 1                         -- rotated AFTER r1 (welded to after nonce = 1)
+  else 0                                          -- before-nonce 0, everything else 0
 
 /-- The public inputs forced by the boundary/rotated PI pins. The v1 first-row pins
 (`nonce → ACTOR_NONCE`, `bal_lo → INIT_BAL_LO`, `bal_hi → INIT_BAL_HI`, `state_commit → OLD_COMMIT`)
-and the last-row pins (`state_commit → NEW_COMMIT`, `bal_lo/bal_hi → FINAL_*`) plus the four rotated
-commit pins — all read columns that are `0` on `realRow` except `ACTOR_NONCE (= before nonce = -1)`
-and `INIT_BAL_LO (= before bal_lo = 10)`. -/
+read columns that are `0` on `realRow` except `INIT_BAL_LO (= before bal_lo = 100)` (and
+`ACTOR_NONCE = before nonce = 0`). The last-row pins (`state_commit → NEW_COMMIT`,
+`bal_lo/bal_hi → FINAL_*`) plus the four rotated commit pins read the WRAP row's after / rotated-after
+limbs, all `0` there. -/
 def realPub : Assignment := fun k =>
-  if k = pi.ACTOR_NONCE then -1     -- = realRow (sbCol NONCE)
-  else if k = pi.INIT_BAL_LO then 10 -- = realRow (sbCol BALANCE_LO)
+  if k = pi.INIT_BAL_LO then 100 -- = realRow (sbCol BALANCE_LO); ACTOR_NONCE = 0 = realRow (sbCol NONCE)
   else 0
 
-/-- The WRAP/PAD last row: the zero assignment. Under the deployed `when_transition()` denotation the
-per-row gates are vacuous on the last row, so the wrap row carries only the boundary-LAST pins (all of
-which read columns that are `0` here, matching `realPub = 0` there). The real transfer row therefore
-rides the ACTIVE (first) row, where the gates GENUINELY bite. -/
-def lastRow : Assignment := zeroAsg
+/-- The WRAP last row: CARRIES row 0's REAL after-state in its BEFORE block (`sbCol BALANCE_LO = 90`,
+`sbCol NONCE = 1`) so row 0's transition `wrap.before[i] = row0.after[i]` holds with a NATURAL after-
+state. Under the deployed `when_transition()` denotation the wrap row's OWN per-row `.gate`/
+`.transition`/weld constraints are VACUOUS (`isLast = true`); its OWN after / rotated-after limbs are
+`0` (the boundary-LAST pins read those, matching `realPub = 0` there). The real transfer rides the
+ACTIVE (first) row, where the gates GENUINELY bite — and the after-state is a genuine `90 / nonce 1`. -/
+def lastRow : Assignment := fun v =>
+  if v = sbCol state.BALANCE_LO then 90    -- = realRow (saCol BALANCE_LO); transition continuity
+  else if v = sbCol state.NONCE then 1     -- = realRow (saCol NONCE); transition continuity
+  else 0
 
-/-- The TWO-ROW REAL transfer trace: the genuine transfer row `realRow` (the ACTIVE/first row, where the
-per-row gates fire) followed by the zero wrap row `lastRow` (the last row, where gates are vacuous and
-the boundary-last pins read 0). The auxiliary table is the union of both rows' evaluated lookup tuples
-(`tfOf2`), so every chip / range lookup hits on whichever row carries it. This is the HONEST shape: a
-single-row trace would make `realRow` itself the last row, where the new `holdsVm` makes every gate
-vacuous — so the witness would not actually exercise the gates. The active first row does. -/
+/-- The TWO-ROW REAL transfer trace: the genuine NATURAL transfer row `realRow` (the ACTIVE/first row,
+where the per-row gates fire, `bal 100 → 90`, `nonce 0 → 1`) followed by the wrap row `lastRow` (the
+last row, where gates are vacuous; it carries row 0's after-state in its before block). The auxiliary
+table is the union of both rows' evaluated lookup tuples (`tfOf2`), so every chip / range lookup hits
+on whichever row carries it. The active first row exercises the real transfer; the wrap row makes the
+unconditional row-0 transition land on the GENUINE after-state, not on zero. -/
 def realTransferTrace : VmTrace where
   rows := [realRow, lastRow]
   pub  := realPub
@@ -183,34 +194,36 @@ def realTransferTrace : VmTrace where
 @[simp] theorem realTransferTrace_rows : realTransferTrace.rows = [realRow, lastRow] := rfl
 @[simp] theorem realTransferTrace_rows_ne : realTransferTrace.rows ≠ [] := by simp
 
-/-- The ACTIVE (first) row window: `loc = realRow`, `nxt = lastRow = zeroAsg`, `pub = realPub`,
-`isFirst = true`, `isLast = false` (two rows, so row 0 is not last). The gates GENUINELY bite here. -/
+/-- The ACTIVE (first) row window: `loc = realRow`, `nxt = lastRow` (carrying row 0's after-state),
+`pub = realPub`, `isFirst = true`, `isLast = false` (two rows, so row 0 is not last). The gates
+GENUINELY bite here, and the transition `nxt.before[i] = loc.after[i]` lands on the GENUINE after-state. -/
 theorem envAt_realTransferTrace_zero :
-    envAt realTransferTrace 0 = { loc := realRow, nxt := zeroAsg, pub := realPub } := by
-  simp [envAt, realTransferTrace, lastRow, List.getD]
+    envAt realTransferTrace 0 = { loc := realRow, nxt := lastRow, pub := realPub } := by
+  simp [envAt, realTransferTrace, List.getD]
 
-/-- The WRAP (last) row window: `loc = lastRow = zeroAsg`, `nxt = zeroAsg`, `pub = realPub`,
-`isFirst = false`, `isLast = true`. The per-row gates are vacuous here. -/
+/-- The WRAP (last) row window: `loc = lastRow`, `nxt = zeroAsg`, `pub = realPub`,
+`isFirst = false`, `isLast = true`. The per-row gates are vacuous here; `lastRow` carries row 0's
+after-state in its before block (read only by row 0's transition, never by a row-1 constraint). -/
 theorem envAt_realTransferTrace_one :
-    envAt realTransferTrace 1 = { loc := zeroAsg, nxt := zeroAsg, pub := realPub } := by
-  simp [envAt, realTransferTrace, lastRow, List.getD]
+    envAt realTransferTrace 1 = { loc := lastRow, nxt := zeroAsg, pub := realPub } := by
+  simp [envAt, realTransferTrace, List.getD]
 
 /-! ## §3 — the named column reads of `realRow` (the `if`-cascade resolved). -/
 
 /-- The named-column values of `realRow`, as a normal form. All state offsets are concrete naturals;
-the cascade resolves to the explicit value. -/
+the cascade resolves to the explicit value. The NATURAL transfer: `bal 100 → 90`, `nonce 0 → 1`. -/
 theorem realRow_vals :
     realRow sel.TRANSFER = 1
     ∧ realRow sel.NOOP = 0
-    ∧ realRow (sbCol state.BALANCE_LO) = 10
-    ∧ realRow (sbCol state.NONCE) = -1
+    ∧ realRow (sbCol state.BALANCE_LO) = 100
+    ∧ realRow (sbCol state.NONCE) = 0
     ∧ realRow (sbCol state.BALANCE_HI) = 0
     ∧ realRow (sbCol state.CAP_ROOT) = 0
     ∧ realRow (sbCol state.RESERVED) = 0
     ∧ realRow (prmCol param.AMOUNT) = 10
     ∧ realRow (prmCol param.DIRECTION) = 1
-    ∧ realRow (saCol state.BALANCE_LO) = 0
-    ∧ realRow (saCol state.NONCE) = 0
+    ∧ realRow (saCol state.BALANCE_LO) = 90
+    ∧ realRow (saCol state.NONCE) = 1
     ∧ realRow (saCol state.BALANCE_HI) = 0
     ∧ realRow (saCol state.CAP_ROOT) = 0
     ∧ realRow (saCol state.RESERVED) = 0 := by
@@ -222,15 +235,16 @@ theorem realRow_vals :
 
 /-! ## §4 — `realRow` is a transfer row realizing the transfer intent. -/
 
-/-- The row environment used throughout (the single window of `realTransferTrace`). -/
-def envReal : VmRowEnv := { loc := realRow, nxt := zeroAsg, pub := realPub }
+/-- The row environment used throughout (the ACTIVE/first window of `realTransferTrace`): `nxt` is the
+WRAP row `lastRow`, which carries row 0's after-state — so the row-0 transition lands naturally. -/
+def envReal : VmRowEnv := { loc := realRow, nxt := lastRow, pub := realPub }
 
 theorem isTransferRow_envReal : IsTransferRow envReal := by
   obtain ⟨ht, hn, _⟩ := realRow_vals
   exact ⟨ht, hn⟩
 
-/-- `realRow` realizes `TransferRowIntent`: bal_lo `10 → 0 = 10 + 10·(1 - 2·1)`, hi/frame fixed at
-`0`, nonce `-1 → 0`. A GENUINE debit of `10` with a real nonce tick. -/
+/-- `realRow` realizes `TransferRowIntent`: bal_lo `100 → 90 = 100 + 10·(1 - 2·1)`, hi/frame fixed at
+`0`, nonce `0 → 1`. A GENUINE NATURAL debit of `10` with a real nonce tick. -/
 theorem transferRowIntent_envReal : TransferRowIntent envReal := by
   obtain ⟨_, _, hblo, hbn, hbhi, hbcap, hbres, ham, hdir, halo, han, hahi, hacap, hares⟩ := realRow_vals
   unfold TransferRowIntent
@@ -250,34 +264,57 @@ theorem transferRowIntent_envReal : TransferRowIntent envReal := by
         state.FIELD_BASE, param.AMOUNT, param.DIRECTION]
       have e1 : ¬ (76 + (3 + i) = 1) := by omega
       have e2 : ¬ (76 + (3 + i) = 54) := by omega
-      have e3 : ¬ (76 + (3 + i) = 56) := by omega
-      have e4 : ¬ (76 + (3 + i) = 68) := by omega
-      have e5 : ¬ (76 + (3 + i) = 69) := by omega
-      have e6 : ¬ (76 + (3 + i) = 188) := by omega
-      have e7 : ¬ (76 + (3 + i) = 189) := by omega
-      simp only [if_neg e1, if_neg e2, if_neg e3, if_neg e4, if_neg e5, if_neg e6, if_neg e7]
+      have e3 : ¬ (76 + (3 + i) = 76) := by omega
+      have e4 : ¬ (76 + (3 + i) = 78) := by omega
+      have e5 : ¬ (76 + (3 + i) = 68) := by omega
+      have e6 : ¬ (76 + (3 + i) = 69) := by omega
+      have e7 : ¬ (76 + (3 + i) = 188) := by omega
+      have e8 : ¬ (76 + (3 + i) = 239) := by omega
+      have e9 : ¬ (76 + (3 + i) = 240) := by omega
+      simp only [if_neg e1, if_neg e2, if_neg e3, if_neg e4, if_neg e5, if_neg e6, if_neg e7,
+        if_neg e8, if_neg e9]
     have hb : realRow (sbCol (state.FIELD_BASE + i)) = 0 := by
       simp only [realRow, sel.TRANSFER, sbCol, saCol, prmCol, STATE_BEFORE_BASE, STATE_AFTER_BASE,
         PARAM_BASE, NUM_EFFECTS, STATE_SIZE, NUM_PARAMS, state.BALANCE_LO, state.NONCE,
         state.FIELD_BASE, param.AMOUNT, param.DIRECTION]
       have e1 : ¬ (54 + (3 + i) = 1) := by omega
       have e2 : ¬ (54 + (3 + i) = 54) := by omega
-      have e3 : ¬ (54 + (3 + i) = 56) := by omega
-      have e4 : ¬ (54 + (3 + i) = 68) := by omega
-      have e5 : ¬ (54 + (3 + i) = 69) := by omega
-      have e6 : ¬ (54 + (3 + i) = 188) := by omega
-      have e7 : ¬ (54 + (3 + i) = 189) := by omega
-      simp only [if_neg e1, if_neg e2, if_neg e3, if_neg e4, if_neg e5, if_neg e6, if_neg e7]
+      have e3 : ¬ (54 + (3 + i) = 76) := by omega
+      have e4 : ¬ (54 + (3 + i) = 78) := by omega
+      have e5 : ¬ (54 + (3 + i) = 68) := by omega
+      have e6 : ¬ (54 + (3 + i) = 69) := by omega
+      have e7 : ¬ (54 + (3 + i) = 188) := by omega
+      have e8 : ¬ (54 + (3 + i) = 239) := by omega
+      have e9 : ¬ (54 + (3 + i) = 240) := by omega
+      simp only [if_neg e1, if_neg e2, if_neg e3, if_neg e4, if_neg e5, if_neg e6, if_neg e7,
+        if_neg e8, if_neg e9]
     rw [ha, hb]
 
 /-! ## §5 — `realRow` is `0` off the seven named columns (the bulk evaluator). -/
 
-/-- Off the seven named columns (`1, 54, 56, 68, 69, 188, 189`), `realRow` is `0`. -/
-theorem realRow_zero_of {v : Nat} (h1 : v ≠ 1) (h54 : v ≠ 54) (h56 : v ≠ 56)
-    (h68 : v ≠ 68) (h69 : v ≠ 69) (h188 : v ≠ 188) (h189 : v ≠ 189) : realRow v = 0 := by
-  simp only [realRow, sel.TRANSFER, sbCol, prmCol, STATE_BEFORE_BASE, PARAM_BASE, NUM_EFFECTS,
-    STATE_SIZE, state.BALANCE_LO, state.NONCE, param.AMOUNT, param.DIRECTION]
-  rw [if_neg h1, if_neg h54, if_neg h56, if_neg h68, if_neg h69, if_neg h188, if_neg h189]
+/-- Off the nine named columns (`1, 54, 76, 78, 68, 69, 188, 239, 240`), `realRow` is `0`. -/
+theorem realRow_zero_of {v : Nat} (h1 : v ≠ 1) (h54 : v ≠ 54) (h76 : v ≠ 76)
+    (h78 : v ≠ 78) (h68 : v ≠ 68) (h69 : v ≠ 69) (h188 : v ≠ 188) (h239 : v ≠ 239)
+    (h240 : v ≠ 240) : realRow v = 0 := by
+  simp only [realRow, sel.TRANSFER, sbCol, saCol, prmCol, STATE_BEFORE_BASE, STATE_AFTER_BASE,
+    PARAM_BASE, NUM_EFFECTS, STATE_SIZE, NUM_PARAMS, state.BALANCE_LO, state.NONCE, param.AMOUNT,
+    param.DIRECTION]
+  rw [if_neg h1, if_neg h54, if_neg h76, if_neg h78, if_neg h68, if_neg h69, if_neg h188,
+    if_neg h239, if_neg h240]
+
+/-- Off the two named columns (`54, 56` — the carried after-state), `lastRow` is `0`. The wrap row
+carries row 0's after-state in its before block: `sbCol BALANCE_LO (54) = 90`, `sbCol NONCE (56) = 1`. -/
+theorem lastRow_zero_of {v : Nat} (h54 : v ≠ 54) (h56 : v ≠ 56) : lastRow v = 0 := by
+  simp only [lastRow, sbCol, STATE_BEFORE_BASE, NUM_EFFECTS, state.BALANCE_LO, state.NONCE]
+  rw [if_neg h54, if_neg h56]
+
+/-- The named-column values of `lastRow`: it carries row 0's after-state in its before block. -/
+theorem lastRow_vals :
+    lastRow (sbCol state.BALANCE_LO) = 90
+    ∧ lastRow (sbCol state.NONCE) = 1 := by
+  refine ⟨?_, ?_⟩ <;>
+    simp only [lastRow, sbCol, STATE_BEFORE_BASE, NUM_EFFECTS, state.BALANCE_LO, state.NONCE] <;>
+    norm_num
 
 /-! ## §6 — the base constraints of the rotated frozen-authority transfer descriptor all hold. -/
 
@@ -303,10 +340,10 @@ theorem base_constraints_hold :
       simpa only [VmConstraint.holdsVm] using this
   -- `realRow C = V` for the named first-row pin columns; `realPub K = V` likewise.
   obtain ⟨ht, _, _, _, _, _, _, _, _, _, _, _, _, _⟩ := realRow_vals
-  have hrowNonce : realRow (sbCol state.NONCE) = -1 := realRow_vals.2.2.2.1
-  have hrowBalLo : realRow (sbCol state.BALANCE_LO) = 10 := realRow_vals.2.2.1
-  have hpubNonce : realPub pi.ACTOR_NONCE = -1 := rfl
-  have hpubBalLo : realPub pi.INIT_BAL_LO = 10 := rfl
+  have hrowNonce : realRow (sbCol state.NONCE) = 0 := realRow_vals.2.2.2.1
+  have hrowBalLo : realRow (sbCol state.BALANCE_LO) = 100 := realRow_vals.2.2.1
+  have hpubNonce : realPub pi.ACTOR_NONCE = 0 := rfl
+  have hpubBalLo : realPub pi.INIT_BAL_LO = 100 := rfl
   rw [rotateV3FrozenAuthority_constraints]
   intro c hc
   rw [List.mem_append] at hc
@@ -316,19 +353,32 @@ theorem base_constraints_hold :
             ++ selectorGates sel.TRANSFER from rfl, List.mem_append] at hrot
     rcases hrot with (((((hg | htr) | hbf) | hbl) | hsel) | ((hwb | hwa) | hpins))
     · exact hgates c hg
-    · -- transition i i : `0 = realRow (saCol i)` and `saCol i ∈ [76, 89]` ⇒ off the named cols.
+    · -- transition i i : `lastRow (sbCol i) = realRow (saCol i)`. The wrap row CARRIES row 0's
+      -- after-state: i = 0 (BALANCE_LO) `90 = 90`; i = 2 (NONCE) `1 = 1`; else `0 = 0`.
       unfold transitionAll at htr
       simp only [List.mem_map, List.mem_range] at htr
       obtain ⟨i, hi, rfl⟩ := htr
       have hi' : i < 14 := by simpa [STATE_SIZE] using hi
       show envReal.nxt (sbCol i) = envReal.loc (saCol i)
-      show (0 : ℤ) = realRow (saCol i)
-      have : realRow (saCol i) = 0 := by
-        apply realRow_zero_of <;>
-          · simp only [saCol, STATE_AFTER_BASE, PARAM_BASE, STATE_BEFORE_BASE, NUM_EFFECTS,
-              STATE_SIZE, NUM_PARAMS]; omega
-      rw [this]
-    · -- boundaryFirstPins.
+      show lastRow (sbCol i) = realRow (saCol i)
+      -- `lastRow` carries row 0's after-state in its before block; for the two moved cells the
+      -- carried value equals row 0's after value, else both sides are 0.
+      have haBalLo : realRow (saCol state.BALANCE_LO) = 90 := realRow_vals.2.2.2.2.2.2.2.2.2.1
+      have haNonce : realRow (saCol state.NONCE) = 1 := realRow_vals.2.2.2.2.2.2.2.2.2.2.1
+      interval_cases i
+      · -- BALANCE_LO (offset 0): lastRow (sbCol 0 = 54) = 90 = realRow (saCol 0 = 76).
+        show lastRow (sbCol state.BALANCE_LO) = realRow (saCol state.BALANCE_LO)
+        rw [lastRow_vals.1, haBalLo]
+      all_goals (
+        first
+        | (-- NONCE (offset 2): lastRow (sbCol 2 = 56) = 1 = realRow (saCol 2 = 78).
+           show lastRow (sbCol state.NONCE) = realRow (saCol state.NONCE)
+           rw [lastRow_vals.2, haNonce])
+        | (-- every other state cell: both `0`.
+           rw [lastRow_zero_of (by decide) (by decide),
+             realRow_zero_of (by decide) (by decide) (by decide) (by decide) (by decide)
+               (by decide) (by decide) (by decide) (by decide)]))
+    · -- boundaryFirstPins: nonce → ACTOR_NONCE (0), bal_lo → INIT_BAL_LO (100), the rest read 0 cols.
       unfold boundaryFirstPins at hbf
       simp only [List.mem_cons, List.not_mem_nil, or_false] at hbf
       rcases hbf with rfl | rfl | rfl | rfl <;>
@@ -338,37 +388,29 @@ theorem base_constraints_hold :
           | rw [hrowNonce, hpubNonce]
           | rw [hrowBalLo, hpubBalLo]
           | (rw [realRow_zero_of (by decide) (by decide) (by decide) (by decide) (by decide)
-               (by decide) (by decide)]; rfl)
-    · -- boundaryLastPins (all read 0 columns; realPub = 0 there).
+               (by decide) (by decide) (by decide) (by decide)]; rfl)
+    · -- boundaryLastPins (`.piBinding .last`): VACUOUS on the ACTIVE row (`isLast = false`); the
+      -- `saCol bal_lo` pin would read the moved after-value, but the pin only binds on the last row.
       unfold boundaryLastPins at hbl
       simp only [List.mem_cons, List.not_mem_nil, or_false] at hbl
-      rcases hbl with rfl | rfl | rfl <;>
-        · refine fun _ => ?_
-          simp only [envReal]
-          rw [realRow_zero_of (by decide) (by decide) (by decide) (by decide) (by decide)
-            (by decide) (by decide)]; rfl
+      rcases hbl with rfl | rfl | rfl <;> exact fun h => absurd h (by decide)
     · -- selectorGates sel.TRANSFER.
       unfold selectorGates at hsel
       simp only [List.mem_cons, List.not_mem_nil, or_false] at hsel
       rw [hsel]
       exact selectorGate_holds_of_active sel.TRANSFER envReal true false ht
-    · -- before-block welds: r0(188)=bal_lo(54)=10, r1(189)=nonce(56)=-1, else 0 = 0.
+    · -- before-block welds: r0(188)=bal_lo(54)=100; r1(189)=nonce(56)=0; every other welded pair
+      -- `0 = 0` — all reduce by computation (`realRow` evaluates each column to its literal).
       unfold weldsAt at hwb
       simp only [List.mem_cons, List.not_mem_nil, or_false] at hwb
-      -- r0(188)=bal_lo(54)=10, r1(189)=nonce(56)=-1, and every other welded pair `0 = 0` — all
-      -- reduce by computation (`realRow` evaluates each column to its literal).
       rcases hwb with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;>
         · rw [colEq_holds_iff _ _ _ _ _ rfl]; rfl
-    · -- after-block welds: base 238, all 0 = 0.
+    · -- after-block welds: base 238. r0(239)=after bal_lo(76)=90; r1(240)=after nonce(78)=1; the
+      -- rest `0 = 0`. All reduce by computation.
       unfold weldsAt at hwa
       simp only [List.mem_cons, List.not_mem_nil, or_false] at hwa
       rcases hwa with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;>
-        · rw [colEq_holds_iff _ _ _ _ _ rfl]
-          simp only [envReal]
-          rw [realRow_zero_of (by decide) (by decide) (by decide) (by decide) (by decide)
-            (by decide) (by decide),
-            realRow_zero_of (by decide) (by decide) (by decide) (by decide) (by decide)
-            (by decide) (by decide)]
+        · rw [colEq_holds_iff _ _ _ _ _ rfl]; rfl
     · -- rotPins (all read 0 columns; realPub = 0 there).
       unfold rotPins at hpins
       simp only [List.mem_cons, List.not_mem_nil, or_false] at hpins
@@ -376,16 +418,17 @@ theorem base_constraints_hold :
         · refine fun _ => ?_
           simp only [envReal]
           rw [realRow_zero_of (by decide) (by decide) (by decide) (by decide) (by decide)
-            (by decide) (by decide)]; rfl
-  · -- the 6 frozen-authority colEqs: before vs after, all 0 = 0.
+            (by decide) (by decide) (by decide) (by decide)]; rfl
+  · -- the 6 frozen-authority colEqs: before vs after, all read 0 columns (record-digest / lifecycle
+    -- / perms / vk / mode / fields-root — none of which the natural transfer touches), so `0 = 0`.
     simp only [List.mem_cons, List.not_mem_nil, or_false] at hfrozen
     rcases hfrozen with rfl | rfl | rfl | rfl | rfl | rfl <;>
       · rw [colEq_holds_iff _ _ _ _ _ rfl]
         simp only [envReal]
         rw [realRow_zero_of (by decide) (by decide) (by decide) (by decide) (by decide)
-          (by decide) (by decide),
+          (by decide) (by decide) (by decide) (by decide),
           realRow_zero_of (by decide) (by decide) (by decide) (by decide) (by decide)
-          (by decide) (by decide)]
+          (by decide) (by decide) (by decide) (by decide)]
 
 /-! ## §7 — the per-row constraint discharge for `transferV3` (base ∨ lookup).
 
@@ -428,14 +471,14 @@ theorem row1_constraints_hold (hash : List ℤ → ℤ) :
   intro c hc
   rw [envAt_realTransferTrace_one]
   show c.holdsAt hash (tfOf2 transferV3 realRow lastRow)
-    { loc := zeroAsg, nxt := zeroAsg, pub := realPub } false true
+    { loc := lastRow, nxt := zeroAsg, pub := realPub } false true
   rw [show transferV3 = graduateV1 (rotateV3FrozenAuthority transferVmDescriptor) from rfl] at hc ⊢
   have hc' := hc
   rw [graduateV1] at hc'
   simp only [List.mem_append, List.mem_map, List.mem_mapIdx] at hc'
   rcases hc' with (⟨c₀, hc₀, rfl⟩ | ⟨i, s, hs, rfl⟩) | ⟨r, hr, rfl⟩
   · -- a re-anchored base constraint, on the LAST row (`false true`).
-    show c₀.holdsVm { loc := zeroAsg, nxt := zeroAsg, pub := realPub } false true
+    show c₀.holdsVm { loc := lastRow, nxt := zeroAsg, pub := realPub } false true
     -- on the last row every `.gate`/`.transition` is vacuous (`True`); the boundary-LAST pins read
     -- zero columns (= `realPub 0`); the first-row pins are vacuous. Discharge by constraint shape.
     rw [rotateV3FrozenAuthority_constraints] at hc₀
@@ -491,10 +534,10 @@ theorem row1_constraints_hold (hash : List ℤ → ℤ) :
       rcases hfrozen with rfl | rfl | rfl | rfl | rfl | rfl <;> exact trivial
   · -- a chip lookup: hits the `lastRow` (zero-row) summand of the union table.
     exact lookup_holdsAt_tfOf2_right (graduateV1 (rotateV3FrozenAuthority transferVmDescriptor))
-      realRow lastRow { loc := zeroAsg, nxt := zeroAsg, pub := realPub } rfl _ hc
+      realRow lastRow { loc := lastRow, nxt := zeroAsg, pub := realPub } rfl _ hc
   · -- a range lookup: same.
     exact lookup_holdsAt_tfOf2_right (graduateV1 (rotateV3FrozenAuthority transferVmDescriptor))
-      realRow lastRow { loc := zeroAsg, nxt := zeroAsg, pub := realPub } rfl _ hc
+      realRow lastRow { loc := lastRow, nxt := zeroAsg, pub := realPub } rfl _ hc
 
 /-! ## §8 — the full `Satisfied2` for the NON-EMPTY real transfer trace. -/
 
