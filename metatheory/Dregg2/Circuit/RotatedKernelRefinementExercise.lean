@@ -70,6 +70,8 @@
 -/
 import Dregg2.Circuit.ActionDispatch
 import Dregg2.Circuit.Emit.EffectVmEmitHeapRoot
+import Dregg2.Circuit.Emit.EffectVmEmitRotationV3
+import Dregg2.Circuit.RotatedKernelRefinement
 
 namespace Dregg2.Circuit.RotatedKernelRefinementExercise
 
@@ -81,11 +83,16 @@ open Dregg2.Circuit.ActionDispatch
 open Dregg2.Circuit.Spec.HeapWrite
   (HeapWriteSpec heapWriteHeapsMap execFullA_heapWriteA_iff_spec)
 open Dregg2.Circuit.Spec.CellStateField (SetFieldGuard setFieldCellMap)
-open Dregg2.Circuit.Emit.EffectVmEmit (VmRowEnv prmCol)
+open Dregg2.Circuit.Emit.EffectVmEmit (VmRowEnv prmCol satisfiedVm)
 open Dregg2.Circuit.Emit.EffectVmEmitHeapRoot
   (heapRootHolds heapRootAdvance_forced heapRoot_binds_write heapAdvanceOf leafOf addrOf
-   HEAP_ROOT_AFTER HEAP_ROOT_BEFORE)
+   HEAP_ROOT_AFTER HEAP_ROOT_BEFORE heapWriteVmDescriptor heapWriteVmDescriptor_hashSites
+   heapRecomputeSites)
 open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
+open Dregg2.Circuit.DescriptorIR2 (VmTrace Satisfied2 envAt EffectVmDescriptor2)
+open Dregg2.Circuit.Emit.EffectVmEmitV2 (graduateV1 graduateV1_sound graduable)
+open Dregg2.Circuit.Emit.EffectVmEmitRotationV3 (rotateV3 rotateV3_satisfiedVm_v1 graduable_rotateV3)
+open Dregg2.Circuit.RotatedKernelRefinement (RotTableSide)
 
 set_option autoImplicit false
 set_option linter.unusedVariables false
@@ -319,6 +326,151 @@ private def cN' : List ℤ → ℤ := Dregg2.Circuit.Emit.EffectVmEmitCapRoot.cN
 -- ...and a different (coll,key) lands a different root (the address is bound too).
 #guard decide (heapWriteNewRoot cN' 3 4 42 1000 = heapWriteNewRoot cN' 5 6 42 1000) == false
 
+/-! ## §3.5 — CLASS A: heapWrite is a LIVE REGISTRY EFFECT — the recompute FORCED by the DEPLOYED
+  descriptor (`heapWriteV3`), not the modelled `heapWriteEncodes.recompute` field of §3.
+
+GAP-2 CLOSE. §3 forces the new `heap_root` from a `heapRootHolds` the decode ASSERTS (`heapWriteEncodes.
+recompute`); editing the LIVE descriptor does NOT break that. Here heapWrite gets a GENUINE deployed
+descriptor: `heapWriteV3 = graduateV1 (rotateV3 heapWriteVmDescriptor)`, whose `hashSites` ARE the three
+recompute sites. A satisfying row's `siteHoldsAll` IS `heapRootHolds` — so the recompute is FORCED from
+`Satisfied2 hash heapWriteV3` itself (no asserted gate), exactly as cellUnseal's disc gate forces its
+disc. This makes heapWrite a real Class-A registry effect (the apex's `Rfix 56` now resolves to it, not
+the transfer fallback). -/
+
+/-- **`heapWriteV3`** — the LIVE rotated+graduated heapWrite descriptor. Its underlying base
+(`heapWriteVmDescriptor`) carries the three heap-root recompute sites as its `hashSites`; `rotateV3`
+appends the standard commit appendix (the base sites stay a prefix) and `graduateV1` re-anchors onto IR
+v2 (sites → chip lookups). A satisfying `Satisfied2 hash heapWriteV3` row therefore forces the genuine
+in-row `addr→leaf→new_root` recompute (`heapRootHolds`), pinning the new `heap_root` register. -/
+def heapWriteV3 : EffectVmDescriptor2 :=
+  graduateV1 (rotateV3 heapWriteVmDescriptor)
+
+/-- `heapWriteV3`'s underlying rotated descriptor is graduable (the base sites are reference-WF, chip-fit,
+no ranges; `rotateV3` preserves graduability). -/
+theorem heapWrite_graduable : graduable (rotateV3 heapWriteVmDescriptor) = true :=
+  graduable_rotateV3 (by decide)
+
+/-- **`heapWrite_recompute_forced` — the in-row heap-root recompute is FORCED by the DEPLOYED
+`heapWriteV3`.** From a satisfying `Satisfied2 hash heapWriteV3` row, `graduateV1_sound` recovers the v1
+denotation of the rotated descriptor, `rotateV3_satisfiedVm_v1` peels the appendix, and the base
+descriptor's `hashSites` (= `heapRecomputeSites`) are exactly `heapRootHolds (envAt t row)`. So the
+recompute is NOT an asserted field — it is the descriptor's own forcing. -/
+theorem heapWrite_recompute_forced (hash : List ℤ → ℤ)
+    {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
+    {permOut : List ℤ → List ℤ} (hside : RotTableSide permOut hash t)
+    (hsat : Satisfied2 hash heapWriteV3 minit mfin maddrs t)
+    (row : Nat) (hrow : row < t.rows.length) :
+    heapRootHolds hash (envAt t row) := by
+  have hv1 : satisfiedVm hash (rotateV3 heapWriteVmDescriptor) (envAt t row)
+      (row == 0) (row + 1 == t.rows.length) :=
+    graduateV1_sound hash _ minit mfin maddrs t hside.chip hside.range heapWrite_graduable
+      hsat row hrow
+  have hbase : satisfiedVm hash heapWriteVmDescriptor (envAt t row)
+      (row == 0) (row + 1 == t.rows.length) :=
+    rotateV3_satisfiedVm_v1 hash heapWriteVmDescriptor (envAt t row) _ _ hv1
+  -- the base descriptor's site denotation IS `heapRootHolds` (its hashSites ARE the recompute sites).
+  have hsites := hbase.2.1
+  rw [heapWriteVmDescriptor_hashSites] at hsites
+  exact hsites
+
+/-- **`HeapWriteTraceReadout`** — the realizable circuit-witness extraction for heapWrite, the
+`heapWriteEncodes` decode with the recompute leg REMOVED (it is FORCED from `Satisfied2`, not asserted).
+It exhibits the active row + its bound `newRoot` (= the new-root register column, `newRootIsAfter`), the
+register write / heap splice / guard / log / 14-field frame as the named decode residual. -/
+structure HeapWriteTraceReadout (hash : List ℤ → ℤ)
+    (t : VmTrace) (pre post : RecChainedState) (actor target : CellId) (addr v newRoot : Int) : Type where
+  row : Nat
+  hrow : row < t.rows.length
+  /-- the carried `newRoot` IS the new-root register column of the active row (the prover cannot carry a
+  `newRoot` other than the column the descriptor's recompute forces). -/
+  newRootIsAfter : newRoot = (envAt t row).loc HEAP_ROOT_AFTER
+  cellMapMove : post.kernel.cell
+    = setFieldCellMap pre.kernel.cell target Dregg2.Substrate.HeapKernel.heapRootField newRoot
+  heapsSplice : post.kernel.heaps = heapWriteHeapsMap pre.kernel.heaps target addr v
+  guard : SetFieldGuard pre actor target Dregg2.Substrate.HeapKernel.heapRootField newRoot
+  logAdv : post.log = { actor := actor, src := target, dst := target, amt := 0 } :: pre.log
+  frAccounts : post.kernel.accounts = pre.kernel.accounts
+  frCaps : post.kernel.caps = pre.kernel.caps
+  frNullifiers : post.kernel.nullifiers = pre.kernel.nullifiers
+  frRevoked : post.kernel.revoked = pre.kernel.revoked
+  frCommitments : post.kernel.commitments = pre.kernel.commitments
+  frBal : post.kernel.bal = pre.kernel.bal
+  frSlotCaveats : post.kernel.slotCaveats = pre.kernel.slotCaveats
+  frFactories : post.kernel.factories = pre.kernel.factories
+  frLifecycle : post.kernel.lifecycle = pre.kernel.lifecycle
+  frDeathCert : post.kernel.deathCert = pre.kernel.deathCert
+  frDelegate : post.kernel.delegate = pre.kernel.delegate
+  frDelegations : post.kernel.delegations = pre.kernel.delegations
+  frDelegationEpoch : post.kernel.delegationEpoch = pre.kernel.delegationEpoch
+  frDelegationEpochAt : post.kernel.delegationEpochAt = pre.kernel.delegationEpochAt
+
+/-- **`heapWriteEncodes_of_readout` — ASSEMBLE the §3 decode from the DEPLOYED-forced recompute.** The
+recompute leg is supplied by `heapWrite_recompute_forced` (from `Satisfied2 hash heapWriteV3`), not
+asserted — so the resulting `heapWriteEncodes` is Class-A. -/
+def heapWriteEncodes_of_readout (hash : List ℤ → ℤ)
+    {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
+    {permOut : List ℤ → List ℤ} (hside : RotTableSide permOut hash t)
+    (hsat : Satisfied2 hash heapWriteV3 minit mfin maddrs t)
+    (pre post : RecChainedState) (actor target : CellId) (addr v newRoot : Int)
+    (rd : HeapWriteTraceReadout hash t pre post actor target addr v newRoot) :
+    heapWriteEncodes hash pre post actor target addr v newRoot :=
+  { env := envAt t rd.row
+  , recompute := heapWrite_recompute_forced hash hside hsat rd.row rd.hrow
+  , newRootIsAfter := rd.newRootIsAfter
+  , cellMapMove := rd.cellMapMove
+  , heapsSplice := rd.heapsSplice
+  , guard := rd.guard
+  , logAdv := rd.logAdv
+  , frAccounts := rd.frAccounts
+  , frCaps := rd.frCaps
+  , frNullifiers := rd.frNullifiers
+  , frRevoked := rd.frRevoked
+  , frCommitments := rd.frCommitments
+  , frBal := rd.frBal
+  , frSlotCaveats := rd.frSlotCaveats
+  , frFactories := rd.frFactories
+  , frLifecycle := rd.frLifecycle
+  , frDeathCert := rd.frDeathCert
+  , frDelegate := rd.frDelegate
+  , frDelegations := rd.frDelegations
+  , frDelegationEpoch := rd.frDelegationEpoch
+  , frDelegationEpochAt := rd.frDelegationEpochAt }
+
+/-- **`heapWrite_descriptorRefines_sat` — THE CLASS-A CIRCUIT→KERNEL REFINEMENT for heapWrite.** A
+satisfying DEPLOYED `heapWriteV3` witness + the realizable `HeapWriteTraceReadout` forces
+`HeapWriteSpec`: the new `heap_root` recompute is FORCED from the descriptor's own `Satisfied2`
+(`heapWrite_recompute_forced` ⟹ `heapWrite_newRoot_forced`), the register write / splice / guard / log /
+14-field frame are the named decode residual. Editing `heapWriteV3`'s recompute sites turns this RED.
+heapWrite is now a LIVE registry effect (`Rfix 56 = heapWriteV3`), no longer the transfer fallback. -/
+theorem heapWrite_descriptorRefines_sat (hash : List ℤ → ℤ)
+    {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
+    {permOut : List ℤ → List ℤ} (hside : RotTableSide permOut hash t)
+    (hsat : Satisfied2 hash heapWriteV3 minit mfin maddrs t)
+    (pre post : RecChainedState) (actor target : CellId) (addr v newRoot : Int)
+    (rd : HeapWriteTraceReadout hash t pre post actor target addr v newRoot) :
+    HeapWriteSpec pre actor target addr v newRoot post :=
+  heapWrite_descriptorRefines hash pre post actor target addr v newRoot
+    (heapWriteEncodes_of_readout hash hside hsat pre post actor target addr v newRoot rd)
+
+/-- **CLASS-A TOOTH — a forged `newRoot` heapWrite witness is rejected by the recompute.** Two satisfying
+`heapWriteV3` rows pinning the same `newRoot` register wrote the SAME value at the same `(coll, key)` —
+the descriptor's recompute binds WHAT was written (`heapRoot_binds_write`), so a prover cannot publish one
+`heap_root` for two different values. -/
+theorem heapWrite_sat_rejects_wrong_value (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+    {minit₁ : ℤ → ℤ} {mfin₁ : ℤ → ℤ × Nat} {maddrs₁ : List ℤ} {t₁ : VmTrace}
+    {permOut₁ : List ℤ → List ℤ} (hside₁ : RotTableSide permOut₁ hash t₁)
+    (hsat₁ : Satisfied2 hash heapWriteV3 minit₁ mfin₁ maddrs₁ t₁)
+    {minit₂ : ℤ → ℤ} {mfin₂ : ℤ → ℤ × Nat} {maddrs₂ : List ℤ} {t₂ : VmTrace}
+    {permOut₂ : List ℤ → List ℤ} (hside₂ : RotTableSide permOut₂ hash t₂)
+    (hsat₂ : Satisfied2 hash heapWriteV3 minit₂ mfin₂ maddrs₂ t₂)
+    (row₁ row₂ : Nat) (hrow₁ : row₁ < t₁.rows.length) (hrow₂ : row₂ < t₂.rows.length)
+    (hroot : (envAt t₁ row₁).loc HEAP_ROOT_AFTER = (envAt t₂ row₂).loc HEAP_ROOT_AFTER) :
+    (envAt t₁ row₁).loc (prmCol Dregg2.Circuit.Emit.EffectVmEmitHeapRoot.hp.VALUE)
+      = (envAt t₂ row₂).loc (prmCol Dregg2.Circuit.Emit.EffectVmEmitHeapRoot.hp.VALUE) :=
+  (heapRoot_binds_write hash hCR (envAt t₁ row₁) (envAt t₂ row₂)
+    (heapWrite_recompute_forced hash hside₁ hsat₁ row₁ hrow₁)
+    (heapWrite_recompute_forced hash hside₂ hsat₂ row₂ hrow₂) hroot).2.2.2
+
 /-! ## §5 — axiom-hygiene tripwires. -/
 
 #assert_axioms exercise_descriptorRefines
@@ -332,5 +484,10 @@ private def cN' : List ℤ → ℤ := Dregg2.Circuit.Emit.EffectVmEmitCapRoot.cN
 #assert_axioms heapWrite_descriptorRefines_execFullA
 #assert_axioms heapWrite_descriptorRefines_rejects_wrong_value
 #assert_axioms heapWrite_descriptorRefines_rejects_wrong_splice
+-- CLASS-A (DEPLOYED-descriptor-forced) tripwires.
+#assert_axioms heapWrite_graduable
+#assert_axioms heapWrite_recompute_forced
+#assert_axioms heapWrite_descriptorRefines_sat
+#assert_axioms heapWrite_sat_rejects_wrong_value
 
 end Dregg2.Circuit.RotatedKernelRefinementExercise

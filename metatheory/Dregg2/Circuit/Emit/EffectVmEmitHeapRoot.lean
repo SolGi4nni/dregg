@@ -109,6 +109,34 @@ def siteHeapRootAdvance : VmHashSite :=
 /-- The three heap-root recompute sites, in order (address → leaf → advance). -/
 def heapRecomputeSites : List VmHashSite := [ siteHeapAddr, siteHeapLeaf, siteHeapRootAdvance ]
 
+/-! ## §2.D — the BASE heapWrite VM descriptor (the genuine in-row recompute as a registry effect).
+
+The heap write's deployed circuit IS the three recompute sites: a row that satisfies it carries the
+genuine `addr/leaf/new_root` chain (`heapRootHolds`), so the new `heap_root` register is FORCED to the
+deterministic recompute of the bound `(coll, key, value, old_root)` — no free digest. `heapWriteVmDescriptor`
+bundles them as a base `EffectVmDescriptor`: NO extra gate/range/PI (the recompute sites alone do the
+forcing — the cap-root Phase-A discipline with a generic leaf). Rotated (`rotateV3`) + graduated
+(`graduateV1`) it is `RotatedKernelRefinementExercise.heapWriteV3`, the LIVE registry member. The trace
+width is `EFFECT_VM_WIDTH` (188 — the deployed effect-VM width; every recompute column the sites read
+[`prmCol 0..2`, the cap-root carriers 65/87/102/103] lands `< 188`). -/
+
+/-- **`heapWriteVmDescriptor`** — the base heapWrite circuit: its `hashSites` ARE the three heap-root
+recompute sites (`heapRecomputeSites`), so a satisfying row's `siteHoldsAll` IS `heapRootHolds` — the
+in-row recompute that FORCES the new `heap_root`. No extra constraints/ranges (the recompute is the whole
+forcing content; the splice/guard/frame ride the decode residual in `heapWriteEncodes`). -/
+def heapWriteVmDescriptor : EffectVmDescriptor :=
+  { name        := "dregg-effectvm-heapWrite-v1"
+  , traceWidth  := EFFECT_VM_WIDTH
+  , piCount     := 0
+  , constraints := []
+  , hashSites   := heapRecomputeSites
+  , ranges      := [] }
+
+/-- The base heapWrite descriptor's `hashSites` ARE exactly the heap recompute sites (the bridge that
+makes a satisfying row's `siteHoldsAll` equal `heapRootHolds`). -/
+theorem heapWriteVmDescriptor_hashSites :
+    heapWriteVmDescriptor.hashSites = heapRecomputeSites := rfl
+
 /-! ## §3 — the recomputed values as pure functions (what the sites FORCE). -/
 
 /-- The address as a function of `(coll, key)` (the unique `hash` image the address site forces). -/

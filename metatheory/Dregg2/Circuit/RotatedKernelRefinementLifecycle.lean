@@ -62,8 +62,8 @@ open Dregg2.Circuit.DescriptorIR2 (VmTrace Satisfied2 envAt)
 open Dregg2.Circuit.Emit.EffectVmEmit (satisfiedVm VmRowEnv VmConstraint)
 open Dregg2.Circuit.Emit.EffectVmEmitV2 (graduateV1 graduateV1_sound graduable)
 open Dregg2.Circuit.Emit.EffectVmEmitRotationV3
-  (cellUnsealV3 cellDestroyV3 refusalV3
-   afterDiscCol discLive discSealed discDestroyed AFTER_BLOCK_OFF B_RECORD_DIGEST
+  (cellUnsealV3 cellDestroyV3 refusalV3 receiptArchiveV3
+   afterDiscCol discLive discSealed discDestroyed discArchived AFTER_BLOCK_OFF B_RECORD_DIGEST
    rotateV3WithDiscGate rotateV3WithRecordPin rotateV3
    rotateV3WithDiscGate_forces_after rotateV3WithRecordPin_pins
    rotateV3WithRecordPin_constraints
@@ -978,6 +978,170 @@ theorem refusal_sat_rejects_unwritten (compressN : List FieldElem → FieldElem)
     False :=
   hwrong (refusal_forced compressN hN hash hside hsat pre post actor cell rd)
 
+/-! ### receiptArchive — Class A from the DEPLOYED disc gate (`receiptArchiveV3`, AFTER disc = Archived).
+
+GAP-1 RECONCILIATION. The deployed `apply_receipt_archive` moves the cell LIFECYCLE side-table to
+`Archived` (`c.archive(checkpoint)`, `rotation_witness.rs::lifecycle_felt`); `receiptArchiveV3` realizes
+this as a LIVE disc gate forcing the AFTER disc limb to `discArchived (= 4)` — NO trusted post-cell. The
+spec the LIGHT CLIENT is owed is therefore the lifecycle-SIDE move (`lifecycle[cell] := Archived`),
+EXACTLY the cellUnseal/cellDestroy shape — NOT the record-slot write `Spec.CellStateAudit.
+ReceiptArchiveSpec` models for the toy executor (that spec stays as the executor's own bespoke fact;
+the DEPLOYED disc is what `PI[38]`/`verify_vm_descriptor2` carries). `ReceiptArchiveLifecycleSpec` is
+the reconciled deployed semantics; `receiptArchive_descriptorRefines_sat` forces it from
+`Satisfied2 hash receiptArchiveV3` through the disc gate, the LIVE realization of
+`RotatedKernelRefinementLifecycleDisc.receiptArchive_disc_forced`. -/
+
+/-- The deployed `Archived` lifecycle discriminant (`u8 4`; `EffectVmEmitRotationV3.discArchived = 4`,
+`RotatedKernelRefinementLifecycleDisc.lcArchived`). The reconciled receiptArchive lifecycle target. -/
+def lcArchived : Nat := 4
+
+/-- The declarative post-`lifecycle` map of a committed deployed receiptArchive: flip `cell` to
+`Archived`, every other cell unchanged (the `cellUnseal`/`cellDestroy` side-table-move shape). -/
+def archiveLifecycleMap (k : RecordKernelState) (cell : CellId) : CellId → Nat :=
+  (setLifecycle k cell lcArchived).lifecycle
+
+/-- **`ReceiptArchiveLifecycleSpec` — the reconciled DEPLOYED full-state spec of `receiptArchive`.** The
+deployed `apply_receipt_archive` moves the LIFECYCLE side-table to `Archived` (NOT a record slot); the
+guard is the three-leg `auditGuard` (the deployed receiptArchive's authority/membership/liveness gate);
+every non-`lifecycle` kernel component is frozen (INCLUDING the `cell` record map — the deployed archive
+touches only the side-table). The light-client-meaningful spec the disc gate forces. -/
+def ReceiptArchiveLifecycleSpec (s : RecChainedState) (actor cell : CellId)
+    (s' : RecChainedState) : Prop :=
+  auditGuard s actor cell
+  ∧ s'.kernel.lifecycle = archiveLifecycleMap s.kernel cell
+  ∧ s'.log = { actor := actor, src := cell, dst := cell, amt := 0 } :: s.log
+  ∧ s'.kernel.accounts = s.kernel.accounts ∧ s'.kernel.cell = s.kernel.cell
+  ∧ s'.kernel.caps = s.kernel.caps
+  ∧ s'.kernel.nullifiers = s.kernel.nullifiers ∧ s'.kernel.revoked = s.kernel.revoked
+  ∧ s'.kernel.commitments = s.kernel.commitments ∧ s'.kernel.bal = s.kernel.bal
+  ∧ s'.kernel.slotCaveats = s.kernel.slotCaveats ∧ s'.kernel.factories = s.kernel.factories
+  ∧ s'.kernel.deathCert = s.kernel.deathCert ∧ s'.kernel.delegate = s.kernel.delegate
+  ∧ s'.kernel.delegations = s.kernel.delegations
+  ∧ s'.kernel.delegationEpoch = s.kernel.delegationEpoch
+  ∧ s'.kernel.delegationEpochAt = s.kernel.delegationEpochAt
+  ∧ s'.kernel.heaps = s.kernel.heaps
+
+/-- **`ReceiptArchiveTraceReadout`** — the realizable circuit-witness extraction for receiptArchive, the
+`cellUnseal` `CellUnsealTraceReadout` analog: the designated ACTIVE receiptArchive row + its selector
+fact + the realizable disc-limb decode (the committed AFTER disc limb IS the post lifecycle discriminant
+felt) + the whole-map / guard / log / 16-field residual. The disc GATE is NOT a field — it is FORCED from
+`Satisfied2 hash receiptArchiveV3` (`receiptArchive_forced`). -/
+structure ReceiptArchiveTraceReadout (hash : List ℤ → ℤ)
+    (t : VmTrace) (pre post : RecChainedState) (actor cell : CellId) : Type where
+  row : Nat
+  hrow : row < t.rows.length
+  hrowNotLast : row + 1 ≠ t.rows.length
+  hsel : (envAt t row).loc Dregg2.Circuit.Emit.EffectVmEmitReceiptArchive.SEL_RECEIPT_ARCHIVE_RT = 1
+  -- the realizable seam: the committed AFTER disc TRACE limb IS the post lifecycle discriminant cast to ℤ.
+  discLimbDecodes :
+    (envAt t row).loc
+      (afterDiscCol
+        Dregg2.Circuit.Emit.EffectVmEmitReceiptArchive.receiptArchiveActorVmDescriptor.traceWidth)
+      = ((post.kernel.lifecycle cell : Nat) : ℤ)
+  frameOther : ∀ c, c ≠ cell → post.kernel.lifecycle c = pre.kernel.lifecycle c
+  guard : auditGuard pre actor cell
+  logAdv : post.log = { actor := actor, src := cell, dst := cell, amt := 0 } :: pre.log
+  frAccounts : post.kernel.accounts = pre.kernel.accounts
+  frCell : post.kernel.cell = pre.kernel.cell
+  frCaps : post.kernel.caps = pre.kernel.caps
+  frNullifiers : post.kernel.nullifiers = pre.kernel.nullifiers
+  frRevoked : post.kernel.revoked = pre.kernel.revoked
+  frCommitments : post.kernel.commitments = pre.kernel.commitments
+  frBal : post.kernel.bal = pre.kernel.bal
+  frSlotCaveats : post.kernel.slotCaveats = pre.kernel.slotCaveats
+  frFactories : post.kernel.factories = pre.kernel.factories
+  frDeathCert : post.kernel.deathCert = pre.kernel.deathCert
+  frDelegate : post.kernel.delegate = pre.kernel.delegate
+  frDelegations : post.kernel.delegations = pre.kernel.delegations
+  frDelegationEpoch : post.kernel.delegationEpoch = pre.kernel.delegationEpoch
+  frDelegationEpochAt : post.kernel.delegationEpochAt = pre.kernel.delegationEpochAt
+  frHeaps : post.kernel.heaps = pre.kernel.heaps
+
+/-- `receiptArchiveV3`'s underlying disc-gated descriptor is graduable. -/
+theorem receiptArchive_disc_graduable :
+    graduable (rotateV3WithDiscGate
+      Dregg2.Circuit.Emit.EffectVmEmitReceiptArchive.SEL_RECEIPT_ARCHIVE_RT none discArchived
+      Dregg2.Circuit.Emit.EffectVmEmitReceiptArchive.receiptArchiveActorVmDescriptor) = true := by decide
+
+/-- **`receiptArchive_forced` — the archive (`lifecycle := Archived`) is FORCED by `receiptArchiveV3`.**
+The committed AFTER disc limb is pinned to `discArchived (= 4)` by the LIVE disc gate, and the readout's
+`discLimbDecodes` identifies that limb with the post lifecycle discriminant — so the discriminant is
+`4 = lcArchived`. Editing `receiptArchiveV3`'s disc gate turns this RED. -/
+theorem receiptArchive_forced (hash : List ℤ → ℤ)
+    {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
+    {permOut : List ℤ → List ℤ} (hside : RotTableSide permOut hash t)
+    (hsat : Satisfied2 hash receiptArchiveV3 minit mfin maddrs t)
+    (pre post : RecChainedState) (actor cell : CellId)
+    (rd : ReceiptArchiveTraceReadout hash t pre post actor cell) :
+    post.kernel.lifecycle cell = lcArchived := by
+  have hv1 : satisfiedVm hash
+      (rotateV3WithDiscGate Dregg2.Circuit.Emit.EffectVmEmitReceiptArchive.SEL_RECEIPT_ARCHIVE_RT none
+        discArchived Dregg2.Circuit.Emit.EffectVmEmitReceiptArchive.receiptArchiveActorVmDescriptor)
+      (envAt t rd.row) (rd.row == 0) (rd.row + 1 == t.rows.length) :=
+    graduateV1_sound hash _ minit mfin maddrs t hside.chip hside.range receiptArchive_disc_graduable
+      hsat rd.row rd.hrow
+  have hlastf : (rd.row + 1 == t.rows.length) = false := by
+    simp only [beq_eq_false_iff_ne]; exact rd.hrowNotLast
+  rw [hlastf] at hv1
+  have hlimb : (envAt t rd.row).loc
+      (afterDiscCol
+        Dregg2.Circuit.Emit.EffectVmEmitReceiptArchive.receiptArchiveActorVmDescriptor.traceWidth)
+        = discArchived :=
+    rotateV3WithDiscGate_forces_after _ _ _ hash _ (envAt t rd.row) (rd.row == 0) false rfl rd.hsel hv1
+  have hcast : ((post.kernel.lifecycle cell : Nat) : ℤ) = ((lcArchived : Nat) : ℤ) := by
+    rw [← rd.discLimbDecodes, hlimb]; rfl
+  exact_mod_cast hcast
+
+/-- **`receiptArchive_forced_map` — the post lifecycle MAP is `archiveLifecycleMap` (Class A, whole
+map).** -/
+theorem receiptArchive_forced_map (hash : List ℤ → ℤ)
+    {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
+    {permOut : List ℤ → List ℤ} (hside : RotTableSide permOut hash t)
+    (hsat : Satisfied2 hash receiptArchiveV3 minit mfin maddrs t)
+    (pre post : RecChainedState) (actor cell : CellId)
+    (rd : ReceiptArchiveTraceReadout hash t pre post actor cell) :
+    post.kernel.lifecycle = archiveLifecycleMap pre.kernel cell := by
+  have hcell : post.kernel.lifecycle cell = lcArchived :=
+    receiptArchive_forced hash hside hsat pre post actor cell rd
+  funext c
+  show post.kernel.lifecycle c = (setLifecycle pre.kernel cell lcArchived).lifecycle c
+  show post.kernel.lifecycle c = (if c = cell then lcArchived else pre.kernel.lifecycle c)
+  by_cases hc : c = cell
+  · subst hc; rw [if_pos rfl]; exact hcell
+  · rw [if_neg hc]; exact rd.frameOther c hc
+
+/-- **`receiptArchive_descriptorRefines_sat` — THE CLASS-A CIRCUIT→KERNEL REFINEMENT for receiptArchive.**
+A satisfying DEPLOYED `receiptArchiveV3` witness + the realizable `ReceiptArchiveTraceReadout` forces the
+reconciled `ReceiptArchiveLifecycleSpec` (`lifecycle := Archived` side-table move). The write is forced
+from the DEPLOYED disc gate's `Satisfied2` (`receiptArchive_forced_map`) — editing `receiptArchiveV3`
+turns this RED. This is the deployed-semantics reconciliation of GAP 1: the spec the light client is owed
+is the lifecycle-side move the disc gate enforces, NOT the toy executor's record-slot write. -/
+theorem receiptArchive_descriptorRefines_sat (hash : List ℤ → ℤ)
+    {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
+    {permOut : List ℤ → List ℤ} (hside : RotTableSide permOut hash t)
+    (hsat : Satisfied2 hash receiptArchiveV3 minit mfin maddrs t)
+    (pre post : RecChainedState) (actor cell : CellId)
+    (rd : ReceiptArchiveTraceReadout hash t pre post actor cell) :
+    ReceiptArchiveLifecycleSpec pre actor cell post := by
+  refine ⟨rd.guard, ?_, rd.logAdv, rd.frAccounts, rd.frCell, rd.frCaps,
+    rd.frNullifiers, rd.frRevoked, rd.frCommitments, rd.frBal, rd.frSlotCaveats,
+    rd.frFactories, rd.frDeathCert, rd.frDelegate, rd.frDelegations,
+    rd.frDelegationEpoch, rd.frDelegationEpochAt, rd.frHeaps⟩
+  exact receiptArchive_forced_map hash hside hsat pre post actor cell rd
+
+/-- **CLASS-A TOOTH — a wrong-after-disc receiptArchive forgery is UNSAT.** A readout whose post `cell`
+lifecycle is NOT `lcArchived` (a frozen disc, a wrong-disc claim) cannot ride a satisfying
+`receiptArchiveV3` witness — the DEPLOYED disc gate pins the archive. -/
+theorem receiptArchive_sat_rejects_wrong_after (hash : List ℤ → ℤ)
+    {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
+    {permOut : List ℤ → List ℤ} (hside : RotTableSide permOut hash t)
+    (hsat : Satisfied2 hash receiptArchiveV3 minit mfin maddrs t)
+    (pre post : RecChainedState) (actor cell : CellId)
+    (rd : ReceiptArchiveTraceReadout hash t pre post actor cell)
+    (hwrong : post.kernel.lifecycle cell ≠ lcArchived) :
+    False :=
+  hwrong (receiptArchive_forced hash hside hsat pre post actor cell rd)
+
 /-! ## §4 — NON-VACUITY: the new roots + gates are load-bearing (no carrier secretly `True`). -/
 
 private def cNC : List ℤ → ℤ := fun xs => xs.foldl (fun acc x => acc * 1000003 + x) (xs.length : ℤ)
@@ -992,6 +1156,16 @@ private def cell0 : CellId := 0
 -- ...and the Live (unseal target) root DIFFERS from the Sealed root.
 #guard decide (lifecycleRoot cNC (setLifecycle liveK cell0 lcLive) cell0
              = lifecycleRoot cNC (setLifecycle liveK cell0 lcSealed) cell0) == false
+
+-- ARCHIVE (receiptArchive): the Archived(4) lifecycle DIFFERS from Live and Sealed (the disc move is
+-- not a no-op — a frozen-disc archive forgery moves the discriminant off the gate's mandated value).
+#guard decide ((setLifecycle liveK cell0 lcArchived).lifecycle cell0
+             = (setLifecycle liveK cell0 lcLive).lifecycle cell0) == false
+#guard decide ((setLifecycle liveK cell0 lcArchived).lifecycle cell0
+             = (setLifecycle liveK cell0 lcSealed).lifecycle cell0) == false
+-- the reconciled deployed disc target IS the LifecycleDisc/RotationV3 Archived constant (anti-drift).
+#guard lcArchived == 4
+#guard decide ((discArchived : ℤ) = ((lcArchived : Nat) : ℤ))
 
 -- DEATH-CERT: binding a cert (4242) MOVES the death-cert root (a `:= 0` stub would collapse this).
 #guard decide (deathCertRoot cNC
@@ -1049,5 +1223,10 @@ private def cell0 : CellId := 0
 #assert_axioms refusal_forced
 #assert_axioms refusal_descriptorRefines_sat
 #assert_axioms refusal_sat_rejects_unwritten
+#assert_axioms receiptArchive_disc_graduable
+#assert_axioms receiptArchive_forced
+#assert_axioms receiptArchive_forced_map
+#assert_axioms receiptArchive_descriptorRefines_sat
+#assert_axioms receiptArchive_sat_rejects_wrong_after
 
 end Dregg2.Circuit.RotatedKernelRefinementLifecycle

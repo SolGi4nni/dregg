@@ -68,6 +68,7 @@ plus the standard crypto/extraction floors — NOT an opaque carried `∀`.
 import Dregg2.Circuit.CircuitSoundness
 import Dregg2.Circuit.RotatedKernelRefinementFacet
 import Dregg2.Circuit.Emit.EffectVmEmitRotationV3
+import Dregg2.Circuit.RotatedKernelRefinementExercise
 
 namespace Dregg2.Circuit.CircuitSoundnessAssembled
 
@@ -95,14 +96,34 @@ genuine `v3Registry` descriptor for the effect whose `ActionDispatch.actionTag` 
 declaration order). `Rfix e` looks up `v3Registry` at `actionTagToPos e`. Tags with no own rotated
 descriptor (the `Scap`/`compressN`-parametric rungs — delegate, revoke, the lifecycle/birth/note family)
 point at the `v3Registry` entry their effect family rides (introduce for delegate, the cap revoke for
-revoke, …), so `vkOfRegistry Rfix` ranges over exactly the deployed descriptor set; `heapWrite` (tag 56,
-no `v3Registry` entry) falls back to the transfer slot (its rung is descriptor-abstract). Off-range tags
-fall back to transfer too, so `Rfix` is total. The key correspondence — `Rfix 0 = transferV3` — is
-preserved by `rfl` (position `0`), so `closedLogExtract_transfer` lands at its genuine descriptor. -/
+revoke, …), so `vkOfRegistry Rfix` ranges over exactly the deployed descriptor set; `heapWrite` (tag 56)
+NOW has its OWN LIVE Class-A descriptor `heapWriteV3` (the heap-root recompute), at `v3RegistryHeap` tail
+position 45 — `Rfix 56 = heapWriteV3` (GAP-2 close). Off-range tags fall back to transfer, so `Rfix` is
+total. The key correspondence — `Rfix 0 = transferV3` — is preserved by `rfl` (position `0`), so
+`closedLogExtract_transfer` lands at its genuine descriptor. -/
 
-/-- The transfer descriptor (the fallback for tags with no own `v3Registry` entry; tag `0`). -/
+/-- The transfer descriptor (the fallback for off-range tags; tag `0`). -/
 def transferDescr : EffectVmDescriptor2 :=
   Dregg2.Circuit.RotatedKernelRefinement.transferV3
+
+/-- **`v3RegistryHeap`** — the deployed registry EXTENDED with heapWrite at the tail (position 45). The
+45-member `v3RegistryCapOpen` (the cap-fanout + LIVE effect-general legs) is the cap cluster's; heapWrite
+is the LAST registry effect, its genuine Class-A descriptor `heapWriteV3` (the three heap-root recompute
+sites, rotated+graduated). Positions 0..44 are UNCHANGED, so every `Rfix_*` rfl-correspondence is
+preserved; `actionTagToPos 56` re-keys to 45 so `Rfix 56` resolves to `heapWriteV3` (no longer the
+transfer fallback). -/
+def v3RegistryHeap : List (String × EffectVmDescriptor2) :=
+  Dregg2.Circuit.Emit.CapOpenEmit.v3RegistryCapOpen
+    ++ [("heapWriteVmDescriptor2R24",
+         Dregg2.Circuit.RotatedKernelRefinementExercise.heapWriteV3)]
+
+theorem v3RegistryHeap_length : v3RegistryHeap.length = 46 := by
+  simp [v3RegistryHeap, Dregg2.Circuit.Emit.CapOpenEmit.v3RegistryCapOpen_length]
+
+/-- The heapWrite member lands at tail position 45 — `Rfix 56` resolves THERE. -/
+theorem v3RegistryHeap_heapWrite :
+    (v3RegistryHeap[45]?.map (·.2))
+      = some Dregg2.Circuit.RotatedKernelRefinementExercise.heapWriteV3 := rfl
 
 /-- **`actionTagToPos` — the `actionTag ↦ v3Registry-position` table.** The inverse of the registry's
 declaration order (which is NOT `actionTag` order). Effects with no own rotated descriptor map to the
@@ -152,7 +173,9 @@ def actionTagToPos : EffectIdx → Nat
   | 54 => 6    -- cellDestroy     → cellDestroyVmDescriptor2R24
   | 55 => 40   -- refreshDelegation→ refreshDelegationCapOpenVmDescriptor2R24 (FAN-OUT: refresh base +
                --                   EFF_DELEGATION_OPS appendix)
-  | _  => 1000 -- heapWrite (56) + off-range: past the registry → transfer fallback
+  | 56 => 45   -- heapWrite        → heapWriteVmDescriptor2R24 (the LIVE Class-A heap-root recompute
+               --                   descriptor, `v3RegistryHeap` tail; `Rfix 56 = heapWriteV3`)
+  | _  => 1000 -- off-range: past the registry → transfer fallback
 
 /-- **`Rfix` — the live registry as a total, `actionTag`-keyed lookup.** `Rfix e` is the rotated
 `v3Registry` descriptor for the effect whose `ActionDispatch.actionTag` is `e` (NOT the descriptor at
@@ -161,7 +184,7 @@ no own descriptor (heapWrite, off-range) fall back to the transfer descriptor, s
 lands each per-effect rung (stated at `actionTag`) at its GENUINE descriptor — in particular
 `Rfix 0 = transferV3` by `rfl`. -/
 def Rfix : Registry := fun e =>
-  match Dregg2.Circuit.Emit.CapOpenEmit.v3RegistryCapOpen[actionTagToPos e]? with
+  match v3RegistryHeap[actionTagToPos e]? with
   | some (_, d) => d
   | none => transferDescr
 
@@ -175,6 +198,14 @@ theorem Rfix_total (e : EffectIdx) : ∃ d : EffectVmDescriptor2, Rfix e = d := 
 transfer descriptor `v3OfFrozen transferVmDescriptor = transferV3`. So `Rfix 0` IS the genuine transfer
 descriptor — the rung at the transfer tag discharges its refinement about the right descriptor. -/
 theorem Rfix_transfer : Rfix 0 = Dregg2.Circuit.RotatedKernelRefinement.transferV3 := rfl
+
+/-- **`Rfix_heapWrite` — GAP-2: heapWrite (tag 56) ranges over its OWN LIVE descriptor.** `actionTagToPos
+56 = 45` and `v3RegistryHeap`'s position-45 entry is the genuine Class-A `heapWriteV3` (the heap-root
+recompute, `RotatedKernelRefinementExercise.heapWrite_descriptorRefines_sat`). So `Rfix 56` is no longer
+the transfer fallback: `vkOfRegistry Rfix` / the apex's `StarkSound hash Rfix` now quantify over the
+deployed heapWrite descriptor, and the heapWrite rung discharges its refinement about the RIGHT one. -/
+theorem Rfix_heapWrite :
+    Rfix 56 = Dregg2.Circuit.RotatedKernelRefinementExercise.heapWriteV3 := rfl
 
 /-- **`Rfix_capOpen` — F5: the apex's registry RANGES OVER the LIVE in-circuit authority descriptor.**
 The attenuate tag (`12`) re-keys to `v3RegistryCapOpen` position `43` — the LIVE cap-open authority
@@ -442,6 +473,9 @@ theorem revokeCapabilityArm_nonvacuous (fcaps : FacetCaps) (provided : AuthProvi
 
 #assert_axioms Rfix_total
 #assert_axioms Rfix_transfer
+#assert_axioms Rfix_heapWrite
+#assert_axioms v3RegistryHeap_length
+#assert_axioms v3RegistryHeap_heapWrite
 #assert_axioms Rfix_capOpen
 #assert_axioms Rfix_delegate_capOpen
 #assert_axioms Rfix_revoke_capOpen
