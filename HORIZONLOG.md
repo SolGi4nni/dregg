@@ -11,6 +11,22 @@ reason.)*
 Last sweep: 2026-06-13 (flagged-items burndown — removed ~14 landed/struck items,
 deduped the DreggDL/sel4/snapshot landings into git history, kept live tails).
 
+## 🟥 PERSIST BUG — genesis-path mutation AFTER a turn makes the image non-reopenable (FOUND + reproduced 2026-06-20)
+The M4 "mid-session genesis set_cell_program rebuild tail" — investigated, and it's a REAL bug, not done.
+A genesis-path mutation (`World::set_cell_program` / `genesis_grant_cap` / `genesis_open_permissions` —
+reachable MID-SESSION via the interactive predicate composer `predicate_composer.rs:880` + organ setup
+`organ_ops.rs:232,465`) on a cell that a COMMITTED TURN already touched makes the durable image
+NON-REOPENABLE: `durable_regenesis` (world.rs:665) records the post-mutation cell as timeless "genesis",
+so recovery re-executes the earlier turn against the poisoned base, diverges from the recorded root, and
+the fail-closed integrity check REFUSES the image (`Integrity("a durable committed turn did NOT re-commit
+on recovery")`). SAFE (fail-closed — never serves corruption) but data-loss-on-close. The persistence.rs
+SEAM §2 comment OVERCLAIMED handling — corrected. Reproduction banked: `persistence.rs::
+a_mid_session_set_cell_program_survives_reopen` (`#[ignore]`d, asserts the DESIRED fixed behavior).
+CLOSURE (sound, not a 5am quick-fix on load-bearing recovery): split pre-chain vs post-chain genesis-path
+mutations in the durable log — record a post-chain mutation as an ORDERED durable event applied AFTER turn
+re-execution (or route mid-session genesis-path mutations through a real ordered turn). Until then,
+`set_cell_program` etc. are genesis-SETUP-only (before the cell's first turn).
+
 ## ◻ dregg-doc — the doc-on-cell encoding seam, CHARACTERIZED (ember's architectural call) (2026-06-20)
 The section-1 "executor writes fields_map not heap_map" tail, pinned precisely (guard:
 `doccell.rs::the_two_doc_on_cell_index_encodings_diverge_by_state_slots`). TWO doc-on-cell
