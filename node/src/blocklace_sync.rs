@@ -5302,35 +5302,16 @@ pub(crate) fn provision_transfer_destinations(
     }
 }
 
-pub(crate) fn canonical_ledger_root(ledger: &dregg_cell::Ledger) -> [u8; 32] {
-    let mut entries: Vec<(dregg_types::CellId, [u8; 32])> = ledger
-        .iter()
-        .map(|(id, cell)| {
-            // Hash the WHOLE cell via postcard serialization, not only its
-            // `state`. Postcard is canonical for our types (deterministic field
-            // order, fixed encoding), so this is a stable commitment. Committing
-            // the whole cell (public_key, token_id, capabilities, lifecycle, …)
-            // makes the attested root a real WITNESS of full-ledger uniformity:
-            // two nodes that finalized the same turns but ended with divergent
-            // cell CONTENT (not just balance/nonce) now produce different roots,
-            // so their quorum signatures fail to aggregate — the divergence is
-            // loud, not silent. With deterministic cross-node provisioning
-            // (`provision_transfer_destinations`) honest nodes always agree.
-            let bytes = postcard::to_stdvec(cell).unwrap_or_default();
-            let h = *blake3::hash(&bytes).as_bytes();
-            (*id, h)
-        })
-        .collect();
-    entries.sort_by_key(|a| a.0.0);
-    // v2: domain bumped when the commitment widened from `cell.state` to the
-    // whole `cell` (above). A persisted v1 root is height-only-consumed
-    // (`attested_block_height` reads `.height`, never the hash), so the bump is a
-    // clean break with no stale-root comparison.
-    let mut hasher = blake3::Hasher::new_derive_key("dregg-ledger-root-v2");
-    hasher.update(&(entries.len() as u64).to_le_bytes());
-    for (id, h) in &entries {
-        hasher.update(id.as_bytes());
-        hasher.update(h);
-    }
-    *hasher.finalize().as_bytes()
-}
+// The canonical full-ledger convergence root now lives ONCE in dregg-persist (the
+// M4 "shared pub fn lift" — was duplicated here as `pub(crate)` + a byte-for-byte
+// replica in starbridge-v2). Re-exported so node's callers
+// (`crate::blocklace_sync::canonical_ledger_root`) are unchanged.
+//
+// BYTE-IDENTICAL to the prior in-module impl (verified by inspection — load-bearing
+// for attested-root quorum convergence): the prior impl built `Vec<(CellId,[u8;32])>`,
+// sorted by `CellId.0`, hashed `id.as_bytes()`; the shared fn builds
+// `Vec<([u8;32],[u8;32])>` sorting/hashing `*id.as_bytes()`. Since
+// `CellId(pub [u8;32])` derives `Ord` (sorts by `.0`) and `as_bytes()` returns
+// `&self.0`, the sort order and the hashed id bytes are identical — same domain
+// (`dregg-ledger-root-v2`), same length prefix, same whole-cell postcard leaves.
+pub(crate) use dregg_persist::canonical_ledger_root;

@@ -11,17 +11,18 @@ reason.)*
 Last sweep: 2026-06-13 (flagged-items burndown — removed ~14 landed/struck items,
 deduped the DreggDL/sel4/snapshot landings into git history, kept live tails).
 
-## 🟩 M4 — canonical_ledger_root SHARED-LIFT half done (2026-06-20)
-The M4 "shared pub fn lift" tail: `canonical_ledger_root` now lives ONCE in
-`dregg_persist::canonical_ledger_root` (persist/ was clean, disjoint from ember's parked
-circuit work). starbridge's byte-for-byte REPLICA (the "toy disease") is RETIRED — its
-`persistence.rs` now re-exports the shared fn; byte-identity preserved (the
-`close_and_reopen_restores_the_exact_image` convergence test passes; the construction —
-domain `dregg-ledger-root-v2`, sort-by-id, length-prefix, whole-cell postcard leaves — is
-unchanged). REMAINING (node lane): node's own `pub(crate)` copy in
-`blocklace_sync.rs::canonical_ledger_root` is the last caller to migrate onto the shared fn
-— a node edit (building node pulls circuit + ember's uncommitted descriptors, so left for
-when that lane quiesces); the byte-pin is unchanged so it's a verbatim swap.
+## ✅ M4 — canonical_ledger_root SHARED-LIFT COMPLETE (2026-06-20)
+The M4 "shared pub fn lift" tail, DONE: `canonical_ledger_root` lives ONCE in
+`dregg_persist::canonical_ledger_root`; BOTH callers migrated — starbridge's byte-for-byte
+REPLICA (the "toy disease") retired, and node's `pub(crate)` copy in `blocklace_sync.rs`
+re-exports the shared fn. The duplication is eliminated. BYTE-IDENTITY (load-bearing for
+attested-root quorum convergence) verified three ways: (1) by inspection — `CellId(pub
+[u8;32])` derives `Ord`-by-`.0` and `as_bytes()` returns `&self.0`, so node's
+sort-by-`CellId.0`/hash-`as_bytes` == the shared fn's sort/hash-`[u8;32]`, same domain +
+length-prefix + whole-cell postcard leaves; (2) starbridge's `close_and_reopen` convergence
+test passes; (3) node's `ledger_root_witnesses_full_cell_divergence` test passes (node
+compiled clean + ran green despite ember's uncommitted circuit work — the entanglement
+concern was empirically refuted).
 
 ## 🟧 PERSIST BUG — GUARDED (fail-fast); sound full fix queued (2026-06-20)
 UPDATE: a FAIL-FAST GUARD now landed (`World::genesis_mutation_would_break_reopen` +
