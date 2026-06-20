@@ -1,6 +1,6 @@
 # REORIENT — read this first after any context loss
 
-*(maintained for session continuity; update at every major landing. Last: 2026-06-14 — flip NOT-yet-ready (walls A/B/C + the wasm-prover decision) + overnight wide-safe wave)*
+*(maintained for session continuity; update at every major landing. Last: 2026-06-20 — THE ASSURANCE EPOCH: soundness ground-truthed, goal = "safely live within dregg", VK-freedom era)*
 
 ## What this project is, in one breath
 
@@ -57,7 +57,34 @@ not durable across compaction; the log is the burn-down. Sweep it at every Conve
 - **Memory**: `~/.claude/projects/-Users-ember-dev-breadstuffs/memory/` —
   `project-refinement-epoch.md` is the live resume file; MEMORY.md is the index.
 
-## ⚑⚑⚑ CURRENT STATE (2026-06-14 — head `6fb9e8087`, Opus 1M; THE FLIP IS NOT YET READY (walls A/B/C + the wasm-prover decision) + ~16 overnight wide-safe commits)
+## ⚑⚑⚑ CURRENT STATE (2026-06-20 — Opus 4.8 1M; THE ASSURANCE EPOCH — soundness ground-truthed, the goal = "safely live within dregg")
+
+THE FLIP LANDED long ago (the 2026-06-14 block below is dead history). The work since is a deep ASSURANCE epoch:
+the circuit-soundness reckoning closed (the byte-identity "differential" was hiding that `Satisfied2` didn't
+denote the deployed verifier — now it does: kernel bridge `decideSatisfied2_iff`, the mapDec oracle DISCHARGED,
+the differential runs REAL deployed machinery `Ir2Air::eval` + `verify_global_sum`, the floors proven non-vacuous,
+the keystone made whole). A live cross-asset CONSERVATION hole was found + closed (executor path; light-client
+bundle PI residual named). The ENMESHMENT CENSUS mapped the whole tower: executor↔spec is WELDED (43 keystones,
+all 57 arms; the Lean executor IS production, Rust runs it via FFI), all 30 effects spec-welded, settlement welded
+to the apex (one rung), the multi-turn stack now rests on the apex too (EngineSound weld). 72 orphans enmeshed
+(their #assert_axioms pins now run); 8 rotted-but-hidden modules found, 2+6 being repaired.
+
+THE LIVE GOAL: **"safely live within dregg"** (ember moving Claude into an autonomous harness inside dregg/deos).
+Decomposes into two floors: (1) AUTHORITY — guarantee A circuit-FORCED (a circuit-descriptor edit reds the apex)
+for ~26/30 effects + apex-wired for 13; the tail (3 frozen-face cap slots + receiptArchive + heapWrite) is
+DRIVING NOW (VK-FREEDOM ERA — VK changes are no longer deploy-gated, just ship the truthful fix). (2) HUMAN/
+RECOVERY ("cannot lose your OS") — durability core SOUND (upsert + fail-closed, both paths); the recovery→circuit
+binding is the remaining weld. THE GENESIS REFRAME (ember): the persist durability "bug" is a CATEGORY ERROR —
+build-time customization → the IMAGE (EROS factory, sealed+attestable ISO), runtime → a TURN; mid-session genesis
+mutation can't exist. Phase 1 (dissolve) + Phase 2 (image-builder) building now.
+
+⚑ THE DURABLE RECORD: HORIZONLOG.md top ~400 lines = the true frontier (the rest is closed-but-logged, sweepable).
+The memory index + its flagged files. NOT the block below (dead epoch). The frontier is SMALL and fully named:
+the soundness tail above + 6 peripheral rotted orphans + the l4v marshal translation-validation (own multi-week
+lane) + the apexLowers distributed-modernization (own lane). Devnet redeploy: the SSH box was LOST (2026-06-20);
+keep the artifact green + pushed to origin/main, redeploy when a box returns.
+
+## ⚑⚑⚑ (SUPERSEDED ↑ 2026-06-20) CURRENT STATE (2026-06-14 — head `6fb9e8087`, Opus 1M; THE FLIP IS NOT YET READY (walls A/B/C + the wasm-prover decision) + ~16 overnight wide-safe commits)
 
 **THE ROTATION DESCRIPTORS ARE CORRECT + GREEN — the magnesium PROOF work is DONE.** Every cohort effect's
 rotated descriptor rotates, source-coherent, axiom-clean (lake `Dregg2` 3922 jobs axiom-clean; the
