@@ -129,12 +129,12 @@ pub enum MoldableLens {
     /// cv is absent from PATH — never a fabricated provenance edge.
     Blame,
     /// 🔒 READ-CAP / PRIVACY — the focused cell's read-confidentiality membrane,
-    /// welded onto the `dregg_cell::read_cap` organ ([`crate::read_cap_lens`]): the
+    /// welded onto the `dregg_cell::read_cap` organ ([`starbridge_v2::read_cap_lens`]): the
     /// encrypted-field set off the live field-visibility, the `granted ⊆ held`
     /// read-lattice, and the byte-identical-commitment invariant demonstrated live.
     ReadCap,
     /// ⟲ HISTORY / UNDO — the cell's per-cell reversibility, welded onto the
-    /// `dregg_turn::reversible` organ ([`crate::history_lens`]): the reversibility
+    /// `dregg_turn::reversible` organ ([`starbridge_v2::history_lens`]): the reversibility
     /// map (each change-kind classified by the real `Effect::invert` over the live
     /// ledger) + the cell's lifecycle posture + the un-turn model.
     History,
@@ -327,11 +327,20 @@ pub enum Tab {
     /// built Nelson pieces (`web_cells` / `links_here`). See
     /// [`starbridge_v2::doc_editor`].
     Docs,
+    /// THE ⚷ TRUST surface — the human-layer "you cannot lose your own OS" face
+    /// ([`starbridge_v2::trust_panel`], human-layer M1): WHO-I-AM (your devices,
+    /// your guardians-as-faces with the K-of-N threshold drawn, the KEL rotation
+    /// timeline) + the recovery UX ("ask your guardians" quorum gauge mirroring the
+    /// executor's threshold floor, the cooling window as a safety feature). Built off
+    /// the REAL `dregg_sdk::identity::inspect_identity` decode (a representative
+    /// identity until an on-ledger identity cell is wired — HORIZONLOG).
+    Trust,
 }
 
 impl Tab {
-    const ALL: [Tab; 27] = [
+    const ALL: [Tab; 28] = [
         Tab::Docs,
+        Tab::Trust,
         Tab::Home,
         Tab::Wonder,
         Tab::Time,
@@ -392,6 +401,7 @@ impl Tab {
             Tab::Time => "⏳ TIME",
             Tab::Share => "⤳ SHARE",
             Tab::Docs => "📄 DOCS",
+            Tab::Trust => "⚷ TRUST",
             Tab::Buffer => "BUFFER",
             Tab::Terminal => "TERMINAL",
             Tab::Composer => "COMPOSER",
@@ -3207,7 +3217,7 @@ impl Cockpit {
             // byte-identical-commitment invariant demonstrated live. The lens is real
             // now; a cell with no committed slots degrades honestly inside `present`.
             MoldableLens::ReadCap => {
-                crate::read_cap_lens::ReadConfidentiality::from_world(w, focus)
+                starbridge_v2::read_cap_lens::ReadConfidentiality::from_world(w, focus)
                     .map(|v| v.present(&ctx))
             }
 
@@ -3218,7 +3228,7 @@ impl Cockpit {
             // posture + the un-turn model. The per-cell, lens-shaped view of the same
             // reversibility the REPLAY tab time-travels for the whole image.
             MoldableLens::History => {
-                crate::history_lens::CellReversibility::from_world(w, focus)
+                starbridge_v2::history_lens::CellReversibility::from_world(w, focus)
                     .map(|v| v.present(&ctx))
             }
         }
@@ -3483,6 +3493,58 @@ impl Cockpit {
                     .border_1()
                     .border_color(theme::border())
                     .bg(theme::panel())
+                    .child(Self::render_presentation_body(&p.body)),
+            );
+        }
+        col.into_any_element()
+    }
+
+    // =======================================================================
+    // THE ⚷ TRUST tab — the human-layer WHO-I-AM + recovery surface.
+    // =======================================================================
+
+    /// Render the TRUST tab: the WHO-I-AM identity card, the KEL rotation timeline,
+    /// and the "ask your guardians" recovery gauge — the human-layer face of "you
+    /// cannot lose your own OS" (human-layer M1). Built off the REAL `trust_panel`
+    /// model (a representative identity until a live identity cell is wired —
+    /// HORIZONLOG) and rendered through the SAME generic body widget every lens uses,
+    /// so it needs no bespoke gpui.
+    fn trust_tab(&self, _cx: &mut Context<Self>) -> gpui::AnyElement {
+        let panel = starbridge_v2::trust_panel::TrustPanel::demo();
+        let mut col = div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .p_3()
+            .size_full()
+            .overflow_hidden()
+            .child(section_title(
+                "⚷ TRUST · who-i-am — your devices, your guardians, your recovery",
+            ))
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme::muted())
+                    .child(panel.summary()),
+            );
+        for p in panel.present() {
+            col = col.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .p_2()
+                    .mt_1()
+                    .rounded_md()
+                    .border_1()
+                    .border_color(theme::border())
+                    .bg(theme::panel())
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(theme::accent())
+                            .child(format!("{} · {}", p.kind.slug(), p.label)),
+                    )
                     .child(Self::render_presentation_body(&p.body)),
             );
         }
@@ -4707,6 +4769,7 @@ impl Cockpit {
             Tab::Time => self.time_panel(cx).into_any_element(),
             Tab::Share => self.share_panel(cx).into_any_element(),
             Tab::Docs => self.docs_panel(cx).into_any_element(),
+            Tab::Trust => self.trust_tab(cx).into_any_element(),
             Tab::Buffer => self.buffer_panel(cx).into_any_element(),
             Tab::Terminal => self.terminal_panel(cx).into_any_element(),
             Tab::Composer => self.composer(cx).into_any_element(),

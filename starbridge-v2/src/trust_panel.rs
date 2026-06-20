@@ -265,6 +265,62 @@ impl TrustPanel {
         self
     }
 
+    /// A representative WHO-I-AM panel for the cockpit's TRUST tab — a 3-of-5
+    /// guardian identity (2 devices, a short KEL) with a recovery-in-progress so the
+    /// "ask your guardians" gauge shows. Built off the SAME real `inspect_identity`
+    /// decode shape `from_cell` uses (not a parallel mock) — the standing surface for
+    /// the human-layer recovery weld until an on-ledger identity cell is wired into
+    /// the live image (HORIZONLOG). The cooling window is shown as the safety feature
+    /// it is.
+    pub fn demo() -> Self {
+        use dregg_cell::CellId;
+        use dregg_sdk::identity::{
+            key_set_commitment, next_keys_digest, COUNCIL_COMMIT_SLOT, CURRENT_KEYS_COMMIT_SLOT,
+            LAST_ROTATED_AT_SLOT, NEXT_KEYS_DIGEST_SLOT, STATE_ACTIVE, STATE_SLOT,
+        };
+        fn be_u64(v: u64) -> [u8; 32] {
+            let mut f = [0u8; 32];
+            f[24..32].copy_from_slice(&v.to_be_bytes());
+            f
+        }
+        let council =
+            CouncilCharter::new((1u8..=5).map(|i| CellId::from_bytes([i; 32])).collect(), 3);
+        let charter = IdentityCharter {
+            council: council.clone(),
+            cooling_period: 50,
+        };
+        let g0 = vec![[0x10u8; 32], [0x11u8; 32]];
+        let g1 = vec![[0x20u8; 32], [0x21u8; 32]];
+        let mut fields = [[0u8; 32]; 16];
+        fields[STATE_SLOT as usize] = be_u64(STATE_ACTIVE);
+        fields[CURRENT_KEYS_COMMIT_SLOT as usize] = key_set_commitment(&g0);
+        fields[NEXT_KEYS_DIGEST_SLOT as usize] = next_keys_digest(&key_set_commitment(&g1));
+        fields[COUNCIL_COMMIT_SLOT as usize] = council.members_commitment();
+        fields[LAST_ROTATED_AT_SLOT as usize] = be_u64(1_000);
+        let devices = vec![
+            Device::laptop("laptop", g0[0]),
+            Device::phone("phone", g0[1]),
+        ];
+        let kel = vec![
+            KeyEvent {
+                at: 0,
+                description: "Inception — you were born".to_string(),
+                installed_commit: key_set_commitment(&g0),
+            },
+            KeyEvent {
+                at: 1_000,
+                description: "You added your phone".to_string(),
+                installed_commit: key_set_commitment(&g0),
+            },
+        ];
+        // A recovery underway (2-of-5 approved) so the "ask your guardians" gauge
+        // shows the quorum climb + the cooling window.
+        let mut recovery = RecoveryProgress::begin(&council, 50);
+        recovery.approve(0);
+        recovery.approve(1);
+        TrustPanel::from_cell("ember", &charter, &fields, devices, kel).with_recovery(recovery)
+    }
+
     /// A one-line legible summary ("ember · Active · 2 devices · 3-of-5 guardians").
     pub fn summary(&self) -> String {
         format!(
@@ -496,6 +552,23 @@ mod tests {
         let kel = panel.kel_timeline();
         assert_eq!(kel.events.len(), 2);
         assert_eq!(kel.events[0].at, 0);
+    }
+
+    #[test]
+    fn demo_panel_surfaces_the_recovery_flow() {
+        // The cockpit TRUST tab's source: WHO-I-AM floor + the KEL timeline + the
+        // recovery gauge (a recovery is underway, so the DomainVisual gauge shows).
+        let panel = TrustPanel::demo();
+        assert_eq!(panel.guardians.len(), 5);
+        assert_eq!(panel.threshold, 3);
+        let set = panel.present();
+        assert!(set.iter().any(|p| p.kind == PresentationKind::RawFields), "WHO-I-AM floor");
+        assert!(set.iter().any(|p| p.kind == PresentationKind::Provenance), "the KEL");
+        assert!(
+            set.iter().any(|p| p.kind == PresentationKind::DomainVisual),
+            "the recovery gauge shows (a recovery is underway)"
+        );
+        assert!(panel.recovery_gauge().is_some(), "the ask-your-guardians gauge");
     }
 
     #[test]
