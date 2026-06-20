@@ -255,6 +255,13 @@ impl DocEditor {
         content(self.doc.graph())
     }
 
+    /// The live document's folded [`dregg_doc::DocGraph`] — the source the moldable
+    /// `DocumentInspection` reads (so the DOCS tab can surface the document as an
+    /// inspectable object, the same way every other lens inspects its target).
+    pub fn graph(&self) -> &dregg_doc::DocGraph {
+        self.doc.graph()
+    }
+
     /// The current CLEAN text (the fold's clean segments concatenated). A
     /// conflicted region renders separately via [`Self::conflicts`].
     pub fn clean_text(&self) -> String {

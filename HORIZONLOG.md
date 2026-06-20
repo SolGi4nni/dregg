@@ -44,16 +44,14 @@ circuit lane quiesces, commit the test + ONLY its Cargo.toml dev-dep hunk by fil
 after a `cargo test -p dregg-sdk --test identity_social_recovery_e2e` green. NOT landed
 into the in-flux circuit lane tonight (don't blanket-commit over ember's work).
 
-## ◻ DOCUMENT LENS — reachability: headless half DONE, gpui focus-selection remains (2026-06-20)
-The `DocumentInspection` Presentable (rendered · patch-history · conflict-as-state ·
-commitment) is built + tested (`starbridge-v2/src/doc_lens.rs`, 7 green). The HEADLESS
-sourcing is DONE: `DocumentInspection::from_doc(&ExecutorDrivenDoc)` / `from_graph(&DocGraph)`
-source the lens straight off a LIVE document's folded graph (the DOCS tab's authoritative
-`ExecutorDrivenDoc`), trail degrading honestly. REMAINING (gpui, pairs with ember's visual
-loop): surface it from the DOCS tab as an INSPECT sub-view (or a `FocusTarget::Document`
-focus) so the inspector tab can FOCUS a live document. No reconstruction needed —
-`ExecutorDrivenDoc::graph()` exposes the `DocGraph` directly (`project_graph` is the
-forward graph→heap direction, not needed here).
+## ✅ DOCUMENT LENS — reachable + clickable (2026-06-20, the DOCS tab surfaces it)
+CLOSED: the `DocumentInspection` (rendered · patch-history · conflict-as-state · commitment)
+is now surfaced as a "◆ moldable inspection" section in the DOCS tab (`docs_panel`), off the
+live document's folded graph (`DocEditor::graph()` → `DocumentInspection::from_graph`), rendered
+through the same generic `render_presentation_body` every lens uses. The editor surface now BOTH
+authors AND inspects the document. gpui build clean (`cargo check --features native-full`). A
+dedicated `FocusTarget::Document` for the moldable inspector's own focus picker is a further
+nicety but no longer load-bearing (the lens is reachable + clickable from the editor).
 
 ## ✅ M-REV-0 — FIRST-CLASS REVERSIBILITY (the un-turn) LANDED in turn/ (2026-06-19, this lane)
 `docs/deos/FIRST-CLASS-REVERSIBILITY.md` Milestone 0, the un-turn on the real substrate.

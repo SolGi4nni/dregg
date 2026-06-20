@@ -8633,6 +8633,48 @@ impl Cockpit {
                 )),
         );
 
+        // ── THE MOLDABLE INSPECTION — the document AS an inspectable object ──
+        // The doc lens (rendered · patch-history · conflict-as-state · commitment)
+        // reachable straight from the editor: the same generic body widget every
+        // lens uses, off the live document's folded graph. Closes the doc-lens
+        // reachability gap (the editor surface now BOTH authors AND inspects).
+        {
+            use starbridge_v2::doc_lens::DocumentInspection;
+            use starbridge_v2::presentable::{Presentable, PresentCtx};
+            let w = self.world.borrow();
+            let ctx = PresentCtx::new(&w, viewer);
+            let inspection =
+                DocumentInspection::from_graph("the live document", self.doc_editor.graph());
+            col = col.child(
+                div()
+                    .text_xs()
+                    .text_color(theme::accent())
+                    .mt_1()
+                    .child("◆ moldable inspection — the document as an inspectable object"),
+            );
+            for p in inspection.present(&ctx) {
+                col = col.child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_1()
+                        .p_2()
+                        .mt_1()
+                        .rounded_md()
+                        .border_1()
+                        .border_color(theme::border())
+                        .bg(theme::panel())
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(theme::muted())
+                                .child(format!("{} · {}", p.kind.slug(), p.label)),
+                        )
+                        .child(Self::render_presentation_body(&p.body)),
+                );
+            }
+        }
+
         // ── THE EDIT VERBS (each an edit = a real cap-gated turn) ────────────
         col = col.child(
             div()
