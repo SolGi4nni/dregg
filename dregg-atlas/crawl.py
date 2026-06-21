@@ -40,18 +40,42 @@ def survey_snapshot(m):
     }
 
 
+TRANSFER_AMOUNT = int(os.environ.get("ATLAS_XFER", "1000"))
+
+
 def all_moves(m):
-    """Every affordance on every cell, as candidate moves (authorized or not)."""
+    """The candidate move set from a state: every self-affordance on every cell
+    (authorized or not), PLUS a representative cross-cell transfer between every
+    ordered pair (value flow + conservation). Raw-effect moves carry kind='effect'."""
+    cells = m.call("survey")["cells"]
     moves = []
-    for c in m.call("survey")["cells"]:
+    for c in cells:
         aff = m.call("affordances", cell=c["id"])
         for msg in aff["messages"]:
             moves.append({
-                "cell_id": c["id"], "cell": c["short"],
+                "kind": "affordance", "cell_id": c["id"], "cell": c["short"],
                 "message": msg["name"], "effect": msg["effect"],
                 "required": msg["required"], "authorized": msg["authorized"],
             })
+    # cross-cell transfers — the value-flow verb the self-affordance surface lacks
+    for a in cells:
+        for b in cells:
+            if a["id"] == b["id"]:
+                continue
+            moves.append({
+                "kind": "effect", "effect_kind": "transfer",
+                "cell_id": a["id"], "cell": a["short"], "to": b["id"], "to_short": b["short"],
+                "message": f"transfer {TRANSFER_AMOUNT}→{b['short']}",
+                "effect": "Transfer", "required": "Signature", "authorized": True,
+            })
     return moves
+
+
+def fire_move(m, mv):
+    """Fire a candidate move (affordance or raw effect) and return the MCP result."""
+    if mv.get("kind") == "effect" and mv.get("effect_kind") == "transfer":
+        return m.call("effect", kind="transfer", **{"from": mv["cell_id"]}, to=mv["to"], amount=TRANSFER_AMOUNT)
+    return m.call("act", cell=mv["cell_id"], message=mv["message"])
 
 
 def reconstruct(m, path):
@@ -85,11 +109,12 @@ def crawl_gametree(m):
                     bounds["edge_cap_hit"] = True
                     break
                 m.call("restore", id=snap)  # back to this node's state (instant)
-                res = m.call("act", cell=mv["cell_id"], message=mv["message"])
+                res = fire_move(m, mv)
                 edge = {
                     "from": parent_dig, "cell": mv["cell"], "message": mv["message"],
                     "effect": mv["effect"], "required": mv["required"],
                     "authorized": mv["authorized"], "outcome": res["outcome"],
+                    "verb": mv.get("kind", "affordance"),
                 }
                 if res["outcome"] == "committed":
                     child = res["receipt"]["post_state"]

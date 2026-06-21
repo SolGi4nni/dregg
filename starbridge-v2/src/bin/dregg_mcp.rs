@@ -644,6 +644,50 @@ fn tool_protocol(s: &Session) -> Value {
     })
 }
 
+/// Submit a RAW effect through the verified executor (beyond the self-affordance
+/// surface) — `transfer` (value flow, conservation), `create` (a new cell), or
+/// `grant` (a capability edge). Returns the same committed/refused shape as `act`,
+/// so the game-tree crawl can include the full verb vocabulary.
+fn tool_effect(s: &mut Session, kind: &str, args: &Value) -> Result<Value, String> {
+    use starbridge_v2::world::{self, CommitOutcome};
+    let resolve_arg = |k: &str| args.get(k).and_then(|v| v.as_str()).and_then(|h| s.resolve(h));
+    let from = resolve_arg("from").ok_or("effect needs a resolvable `from` cell")?;
+    let amount = args.get("amount").and_then(|v| v.as_u64()).unwrap_or(100);
+    let slot = args.get("slot").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+
+    let (eff, label) = match kind {
+        "transfer" => {
+            let to = resolve_arg("to").ok_or("transfer needs a resolvable `to` cell")?;
+            (world::transfer(from, to, amount), format!("transfer {amount} → {}", short(to.as_bytes())))
+        }
+        "grant" => {
+            let to = resolve_arg("to").ok_or("grant needs a resolvable `to` cell")?;
+            (world::grant_capability(from, to, from, slot), format!("grant cap(→{}) to {}", short(from.as_bytes()), short(to.as_bytes())))
+        }
+        "create" => {
+            let seed = args.get("seed").and_then(|v| v.as_u64()).unwrap_or(0xA0) as u8;
+            (world::create_cell(seed), format!("create cell (seed {seed:#x})"))
+        }
+        other => return Err(format!("unknown effect kind `{other}` (transfer|grant|create)")),
+    };
+
+    let turn = s.world.turn(from, vec![eff]);
+    match s.world.commit_turn(turn) {
+        CommitOutcome::Committed { receipt, .. } => Ok(json!({
+            "outcome": "committed", "kind": kind, "label": label,
+            "from": short(from.as_bytes()),
+            "receipt": { "post_state": short(&receipt.post_state_hash), "computrons": receipt.computrons_used, "actions": receipt.action_count },
+        })),
+        CommitOutcome::Rejected { reason, at_action } => Ok(json!({
+            "outcome": "refused", "kind": kind, "label": label,
+            "by_executor": true, "at_action": at_action,
+            "reason": reason,
+            "site": "the verified executor rejected the turn (a guarantee fired: conservation / authority / lifecycle)",
+        })),
+        _ => Ok(json!({ "outcome": "staged", "kind": kind, "label": label, "note": "world suspended — turn queued, not run" })),
+    }
+}
+
 fn tool_view(s: &Session) -> Value {
     json!({
         "image": "starbridge-v2 live verified ocap world",
@@ -691,6 +735,8 @@ fn tool_schemas() -> Value {
           "inputSchema": { "type": "object", "properties": { "out": str_prop("output .json path") } } },
         { "name": "protocol", "description": "The protocol reference: the AuthRequired lattice, the effect/verb vocabulary seen live, and the refusal taxonomy (cap-gate vs executor).",
           "inputSchema": { "type": "object", "properties": {} } },
+        { "name": "effect", "description": "Submit a RAW effect through the verified executor (beyond self-affordances). kind: transfer (from→to, amount — value flow + conservation) | grant (from→to a cap, slot) | create (a new cell, seed). Returns committed/refused like act. Mutates the live world.",
+          "inputSchema": { "type": "object", "properties": { "kind": str_prop("transfer|grant|create"), "from": str_prop("source cell"), "to": str_prop("target cell"), "amount": { "type": "integer" }, "slot": { "type": "integer" }, "seed": { "type": "integer" } }, "required": ["kind", "from"] } },
         { "name": "view", "description": "Describe the current session: cell count, anchors, acts committed, cells visited.",
           "inputSchema": { "type": "object", "properties": {} } },
     ])
@@ -737,6 +783,7 @@ fn dispatch(s: &mut Session, name: &str, args: &Value) -> Result<Value, String> 
         }
         "export" => tool_export(s, str_arg("out")),
         "protocol" => Ok(tool_protocol(s)),
+        "effect" => tool_effect(s, str_arg("kind").ok_or("missing `kind`")?, args),
         "view" => Ok(tool_view(s)),
         other => Err(format!("unknown tool `{other}`")),
     }
