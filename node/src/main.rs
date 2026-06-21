@@ -27,6 +27,8 @@ mod identity_export;
 #[cfg(test)]
 mod mailbox_crank_e2e;
 mod mcp;
+#[cfg(test)]
+mod node_integrator_e2e;
 pub mod metrics;
 pub mod multi_group;
 mod pg_mirror;
