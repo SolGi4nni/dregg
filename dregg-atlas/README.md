@@ -48,6 +48,7 @@ python3 shoot.py    # screenshot the 28 cockpit surfaces
 # the UI tree: BFS-walk the cockpit's UI state-space, screenshot each state
 ( cd ../starbridge-v2 && ZED_OFFSCREEN_PREFER_CPU=1 \
   ATLAS_UI_NODES=260 target/release/starbridge-v2 --explore-ui ../dregg-atlas/ui-explore )
+python3 verify.py   # ORACLE: assert conservation + well-formedness across the crawled state-space
 python3 build.py    # assemble the site
 open site/index.html
 ```
