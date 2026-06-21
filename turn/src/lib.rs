@@ -108,6 +108,7 @@ pub mod reactive;
 pub mod reversible;
 pub mod rotation_witness;
 pub mod routing;
+pub mod script;
 pub mod turn;
 pub mod umem;
 pub mod verify;
