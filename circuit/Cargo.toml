@@ -81,6 +81,11 @@ prover = [
 criterion = { workspace = true }
 dregg-bridge = { path = "../bridge", features = ["test-utils"] }
 dregg-cell = { path = "../cell" }
+# Test-layer ONLY: the shielded both-polarity tests construct a wrapped-negative
+# value commitment to exercise the per-output range-proof inflation gate. The
+# circuit crate stays upstream of the curve stack (value commitments ride as
+# opaque bytes); this dep is confined to integration tests at the cell/test seam.
+curve25519-dalek = { version = "4", features = ["alloc"] }
 dregg-trace = { path = "../trace" }
 dregg-token = { path = "../token", default-features = false, features = ["macaroon", "rand-deps"] }
 dregg-turn = { path = "../turn" }

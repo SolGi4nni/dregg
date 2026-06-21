@@ -9,8 +9,9 @@
 //!
 //! - [`ShieldedInputProof`] — one hidden note-spend proof: it proves, with the
 //!   note **owner** and **spending key** in the (hidden) witness, that the input
-//!   note is a member of the commitment tree at `merkle_root` and that
-//!   `nullifier` is its correct derivation, all through `HidingFriPcs`.
+//!   note is a member of the commitment tree at `merkle_root`, that `nullifier`
+//!   is its correct derivation, and that the published `value_binding` is a
+//!   hiding commitment to exactly the leaf's value — all through `HidingFriPcs`.
 //! - [`ShieldedTransfer`] — the published shielded action: the per-input hidden
 //!   proofs + the revealed `(nullifiers, merkle_root)` + the opaque
 //!   value-commitment transcript bytes the Pedersen side conserves.
@@ -56,20 +57,32 @@ pub struct ShieldedValueLeg {
 pub struct ShieldedInputProof {
     /// The revealed nullifier (the chain's double-spend tag for this input).
     pub nullifier: BabyBear,
-    /// The hiding (zero-knowledge) shielded-spend proof (membership + nullifier,
-    /// owner/leaf/key/path all blind). The note's value/asset are NOT bound here
-    /// — they live in the Pedersen value commitment (the transfer's other half).
+    /// The published **value-binding** of this input's note: a hiding Poseidon2
+    /// commitment `hash_fact(value, [randomness, 0, 0])` over exactly the value
+    /// the spend's membership leaf is built from (the spend circuit's C7 PI). It
+    /// reveals nothing about the value (value+randomness hidden behind the hash)
+    /// but ties the STARK-witnessed leaf value to the published Pedersen value-
+    /// commitment leg: the downstream
+    /// [`dregg_cell::value_commitment::verify_value_link`] re-derives this from the
+    /// leg's `(value, randomness)` opening and rejects a leg whose value differs.
+    /// Bound into [`ShieldedTransfer::transfer_message`] so the two halves cannot
+    /// be spliced.
+    pub value_binding: BabyBear,
+    /// The hiding (zero-knowledge) shielded-spend proof (membership + nullifier +
+    /// value-binding; owner/leaf/key/path/value all blind). The note's value is
+    /// hidden but bound (via `value_binding`) to the Pedersen leg that carries it.
     pub proof: DslZkProof,
 }
 
 impl ShieldedInputProof {
     /// The public-input vector this input's proof is checked against, pinned to
     /// the shared `merkle_root`. Layout matches the shielded-spend circuit's PI:
-    /// `[nullifier, merkle_root]`.
+    /// `[nullifier, merkle_root, value_binding]`.
     fn public_inputs(&self, merkle_root: BabyBear) -> Vec<BabyBear> {
-        let mut pis = vec![BabyBear::ZERO; 2];
+        let mut pis = vec![BabyBear::ZERO; 3];
         pis[pi::NULLIFIER] = self.nullifier;
         pis[pi::MERKLE_ROOT] = merkle_root;
+        pis[pi::VALUE_BINDING] = self.value_binding;
         pis
     }
 }
@@ -94,6 +107,22 @@ pub struct ShieldedTransfer {
     pub input_legs: Vec<ShieldedValueLeg>,
     /// Output value-commitment legs (the minted notes' Pedersen commitments).
     pub output_legs: Vec<ShieldedValueLeg>,
+    /// One serialized Bulletproof **range proof** per output leg (same order as
+    /// `output_legs`), each attesting the committed value is in `[0, 2^64)`.
+    ///
+    /// This is the toothed inflation gate: the Pedersen conservation proof alone
+    /// only certifies `Σ C_in − Σ C_out = r_excess·R` in the GROUP, which is
+    /// satisfiable with an output committed to a value OUTSIDE `[0, 2^64)` (a
+    /// scalar-field-wrapped "negative" amount). Without these, an attacker mints
+    /// unbounded value from a balanced-looking transcript. The complete shielded
+    /// acceptance is `verify_stark_side()` AND
+    /// `dregg_cell::value_commitment::verify_full_conservation_bytes` over these
+    /// legs+range proofs (composed downstream — `circuit` is upstream of the curve
+    /// crate, so the range proofs ride as opaque bytes here and are verified at the
+    /// `cell`/test layer). Carried in the [`transfer_message`] so the STARK side,
+    /// the conservation proof, and the range proofs are all Fiat-Shamir-bound
+    /// together and cannot be spliced across transfers.
+    pub output_range_proofs: Vec<Vec<u8>>,
 }
 
 impl ShieldedTransfer {
@@ -155,6 +184,10 @@ impl ShieldedTransfer {
         m.extend_from_slice(&(self.inputs.len() as u64).to_le_bytes());
         for input in &self.inputs {
             m.extend_from_slice(&input.nullifier.as_u32().to_le_bytes());
+            // Bind each input's value-binding into the transcript so the Pedersen
+            // conservation/range proofs are Fiat-Shamir-tied to the STARK leaf
+            // values (the leaf↔leg VALUE LINK cannot be spliced across transfers).
+            m.extend_from_slice(&input.value_binding.as_u32().to_le_bytes());
         }
         m.extend_from_slice(&(self.input_legs.len() as u64).to_le_bytes());
         for leg in &self.input_legs {
@@ -166,7 +199,43 @@ impl ShieldedTransfer {
             m.extend_from_slice(&leg.asset_type.to_le_bytes());
             m.extend_from_slice(&leg.commitment_bytes);
         }
+        // Bind the range proofs into the same transcript so they cannot be spliced
+        // from another transfer onto these output commitments.
+        m.extend_from_slice(&(self.output_range_proofs.len() as u64).to_le_bytes());
+        for rp in &self.output_range_proofs {
+            m.extend_from_slice(&(rp.len() as u64).to_le_bytes());
+            m.extend_from_slice(rp);
+        }
         m
+    }
+
+    /// The structural inflation gate that must hold BEFORE the downstream Pedersen
+    /// `verify_full_conservation_bytes` is even consulted: there must be exactly one
+    /// range proof per output leg. A transfer that drops (or pads) range proofs so
+    /// some output escapes the `[0, 2^64)` bound is rejected here — closing the
+    /// "no range proof ⇒ negative/wrapped output value ⇒ hidden inflation" hole at
+    /// the structural level. The cryptographic check of each proof is
+    /// `dregg_cell::value_commitment::verify_full_conservation_bytes`.
+    pub fn check_range_proof_shape(&self) -> Result<(), ShieldedError> {
+        if self.output_range_proofs.len() != self.output_legs.len() {
+            return Err(ShieldedError::RangeProofCountMismatch {
+                outputs: self.output_legs.len(),
+                range_proofs: self.output_range_proofs.len(),
+            });
+        }
+        Ok(())
+    }
+
+    /// The output value commitments, in order, for the downstream range/conservation
+    /// verifier (`[u8; 32]` compressed Ristretto encodings).
+    pub fn output_commitment_bytes(&self) -> Vec<[u8; 32]> {
+        self.output_legs.iter().map(|l| l.commitment_bytes).collect()
+    }
+
+    /// The input value commitments, in order, for the downstream conservation
+    /// verifier.
+    pub fn input_commitment_bytes(&self) -> Vec<[u8; 32]> {
+        self.input_legs.iter().map(|l| l.commitment_bytes).collect()
     }
 }
 
@@ -193,6 +262,7 @@ pub fn prove_shielded_input(
         .map_err(|e| ShieldedError::ProveFailed { reason: format!("{e}") })?;
     Ok(ShieldedInputProof {
         nullifier: pis[pi::NULLIFIER],
+        value_binding: pis[pi::VALUE_BINDING],
         proof,
     })
 }
@@ -205,9 +275,16 @@ pub fn prove_shielded_transfer(
     merkle_root: BabyBear,
     witnesses: &[ShieldedTransferWitness],
     output_legs: Vec<ShieldedValueLeg>,
+    output_range_proofs: Vec<Vec<u8>>,
 ) -> Result<ShieldedTransfer, ShieldedError> {
     if witnesses.is_empty() {
         return Err(ShieldedError::NoInputs);
+    }
+    if output_range_proofs.len() != output_legs.len() {
+        return Err(ShieldedError::RangeProofCountMismatch {
+            outputs: output_legs.len(),
+            range_proofs: output_range_proofs.len(),
+        });
     }
     let mut inputs = Vec::with_capacity(witnesses.len());
     let mut input_legs = Vec::with_capacity(witnesses.len());
@@ -223,6 +300,7 @@ pub fn prove_shielded_transfer(
         inputs,
         input_legs,
         output_legs,
+        output_range_proofs,
     })
 }
 
@@ -237,6 +315,13 @@ pub enum ShieldedError {
     InputProofRejected { input_index: usize, reason: String },
     /// Two inputs carry the same nullifier (in-transfer double-spend).
     DuplicateNullifier { a: usize, b: usize },
+    /// The number of output range proofs does not equal the number of output
+    /// legs — some output would escape the `[0, 2^64)` bound (the negative-value
+    /// inflation hole). The shielded transfer is structurally rejected.
+    RangeProofCountMismatch {
+        outputs: usize,
+        range_proofs: usize,
+    },
 }
 
 impl core::fmt::Display for ShieldedError {
@@ -256,6 +341,14 @@ impl core::fmt::Display for ShieldedError {
             Self::DuplicateNullifier { a, b } => write!(
                 f,
                 "shielded inputs {a} and {b} share a nullifier (double-spend)"
+            ),
+            Self::RangeProofCountMismatch {
+                outputs,
+                range_proofs,
+            } => write!(
+                f,
+                "shielded transfer has {outputs} outputs but {range_proofs} range \
+                 proofs (every output must carry an in-range proof)"
             ),
         }
     }

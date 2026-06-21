@@ -1520,6 +1520,125 @@ impl core::fmt::Display for FullConservationError {
 
 impl std::error::Error for FullConservationError {}
 
+// ─── Leaf↔leg value link (STARK value-binding ↔ Pedersen leg) ────────────────
+//
+// The shielded-spend STARK (`dregg_circuit::shielded::spend_circuit`) publishes a
+// hiding Poseidon2 **value-binding** `value_binding = hash_fact(value, [randomness,
+// 0, 0])` (its C7 public input), computed in-circuit from the SAME value/randomness
+// cells the membership leaf is built from. The transfer's value balance is carried
+// by a SEPARATE Pedersen value commitment `commit(value, blinding) = value·V +
+// blinding·R` over that value. Without a tie, a spender could prove membership of a
+// note worth V in the STARK while the Pedersen leg balances a DIFFERENT value V'.
+//
+// This bridge closes that link. It lives in `cell` (not `circuit`) because it needs
+// BOTH `dregg_circuit::poseidon2::hash_fact` (to recompute the STARK binding) AND
+// the Ristretto Pedersen commitment (to recompute the leg) — and `cell` is the
+// downstream crate that depends on `circuit` and the curve stack.
+//
+// # Soundness
+//
+// Given the STARK's published `value_binding` felt and the published leg bytes, the
+// verifier accepts only if the prover exhibits ONE opening `(value, randomness)`
+// that satisfies BOTH:
+//   (1) `hash_fact(felt(value), [felt(randomness), 0, 0]) == value_binding`, and
+//   (2) `commit(value, blinding) == leg`.
+// Because the SAME `value` drives both equations, a leg committing to V' ≠ the
+// STARK leaf's V cannot satisfy (2) under any opening that also satisfies (1) (the
+// Poseidon2 commitment is binding on `value`, so (1) pins `value` to the leaf's V;
+// the Pedersen commitment is binding on `value`, so (2) then forces the leg to V).
+// The leaf↔leg value mismatch is rejected.
+//
+// # Residual (named precisely)
+//
+// This is the FULL-DISCLOSURE link: it requires the prover to reveal `value` (and
+// the note `randomness`) to the link verifier. That is sound but NOT zero-knowledge
+// over the value at the link step — fine for the executor/full-node path (which
+// already learns the opening to check conservation in many flows), but it does NOT
+// give a light client a ZK leaf↔leg tie. The zero-knowledge version needs a
+// cross-system equality-of-committed-value argument (a sigma protocol proving the
+// Poseidon-felt binding and the Pedersen commitment open to the same scalar WITHOUT
+// revealing it) — a genuinely new primitive, since a Poseidon hash is not a
+// homomorphic commitment a Schnorr/Chaum-Pedersen extractor can range over. That ZK
+// linker is the remaining unbuilt piece; the in-circuit binding (the STARK C7 PI +
+// the transcript binding) and this disclosed verifier are the closed half.
+
+/// Re-derive the shielded-spend STARK's value-binding PI from a `(value,
+/// randomness)` opening: `hash_fact(felt(value), [felt(randomness), 0, 0])`.
+///
+/// This MUST match the felt the spend circuit publishes as `pi::VALUE_BINDING`
+/// (`dregg_circuit::shielded::ShieldedSpendWitness::value_binding`). The mapping of
+/// the u64 value / 32-byte randomness into BabyBear felts matches the spend
+/// circuit's witness (the value as a single felt, the randomness as a single felt).
+pub fn value_link_binding(
+    value: u64,
+    randomness: dregg_circuit::field::BabyBear,
+) -> dregg_circuit::field::BabyBear {
+    use dregg_circuit::field::{BABYBEAR_P, BabyBear};
+    use dregg_circuit::poseidon2::hash_fact;
+    let value_felt = BabyBear::new((value % (BABYBEAR_P as u64)) as u32);
+    hash_fact(value_felt, &[randomness, BabyBear::ZERO, BabyBear::ZERO])
+}
+
+/// Errors from the leaf↔leg value-link check.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ValueLinkError {
+    /// The supplied opening does not reproduce the STARK's published value-binding
+    /// (the `(value, randomness)` does not hash to `value_binding`).
+    BindingMismatch,
+    /// The Pedersen leg bytes are not a valid Ristretto point.
+    MalformedLeg,
+    /// The supplied opening's commitment does not equal the published Pedersen leg
+    /// (the leg commits to a DIFFERENT value/blinding than the STARK leaf — the
+    /// leaf↔leg value mismatch this check exists to reject).
+    LegMismatch,
+}
+
+impl core::fmt::Display for ValueLinkError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::BindingMismatch => write!(
+                f,
+                "value-link: opening does not reproduce the STARK value-binding"
+            ),
+            Self::MalformedLeg => write!(f, "value-link: malformed Pedersen leg encoding"),
+            Self::LegMismatch => write!(
+                f,
+                "value-link: Pedersen leg commits to a different value than the STARK leaf"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for ValueLinkError {}
+
+/// Verify the leaf↔leg value link: the STARK's published `value_binding` felt and
+/// the published Pedersen `leg_bytes` open to the SAME `value`.
+///
+/// The prover supplies the opening `(value, randomness, blinding)`. Returns `Ok(())`
+/// iff BOTH (1) `hash_fact(felt(value), [randomness,0,0]) == value_binding` and
+/// (2) `commit(value, blinding) == leg`. See the module section "Leaf↔leg value
+/// link" for the soundness argument and the named ZK residual.
+pub fn verify_value_link(
+    value_binding: dregg_circuit::field::BabyBear,
+    leg_bytes: &[u8; 32],
+    value: u64,
+    randomness: dregg_circuit::field::BabyBear,
+    blinding: &Scalar,
+) -> Result<(), ValueLinkError> {
+    // (1) The opening must reproduce the STARK's published binding (pins `value` to
+    //     the leaf's value, since the spend circuit's C7 binds that felt).
+    if value_link_binding(value, randomness) != value_binding {
+        return Err(ValueLinkError::BindingMismatch);
+    }
+    // (2) The same `value` must commit to the published Pedersen leg.
+    let leg = ValueCommitment::from_bytes(&ValueCommitmentBytes(*leg_bytes))
+        .ok_or(ValueLinkError::MalformedLeg)?;
+    if ValueCommitment::commit(value, blinding) != leg {
+        return Err(ValueLinkError::LegMismatch);
+    }
+    Ok(())
+}
+
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]

@@ -68,6 +68,8 @@ pub mod stealth;
 pub mod unilateral;
 #[cfg(feature = "crypto")]
 pub mod value_commitment;
+#[cfg(feature = "crypto")]
+pub mod value_link_zk;
 pub mod vk_v2;
 
 #[cfg(test)]
@@ -186,5 +188,11 @@ pub use value_commitment::{
     prove_conservation, prove_conservation_with_range, verify_asset_conservation,
     verify_asset_equality, verify_asset_equality_with_message, verify_conservation,
     verify_conservation_with_range,
+};
+#[cfg(feature = "crypto")]
+pub use value_link_zk::{
+    LinkLegBindingProof, VALUE_BITS, ZkLeafLegLink, ZkValueLinkError, ZkValueLinkProof,
+    prove_link_leg_binding, prove_zk_leaf_leg_link, prove_zk_value_link, value_binding_pi_bytes,
+    verify_link_leg_binding, verify_zk_leaf_leg_link, verify_zk_value_link,
 };
 pub use vk_v2::{ProvingSystemId, VerifierFingerprint, VkComponents, canonical_vk_v2};

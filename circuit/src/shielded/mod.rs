@@ -66,9 +66,12 @@
 //! - **M2-c:** general shielded *transition* (any kernel action over hidden
 //!   state) — the hiding layer applies uniformly because every transition is
 //!   already proven in-circuit.
-//! - **M2-d:** ZK attestations — a private cell program issuing a public
-//!   verifiable claim ("this hidden cell satisfies P"), the privacy-preserving
-//!   verifiable-credential jewel.
+//! - **M2-d ([`attest`]):** ZK attestations — a private cell program issuing a
+//!   public verifiable claim ("this hidden cell satisfies predicate P") over its
+//!   committed state, the privacy-preserving verifiable-credential jewel. Built
+//!   here: [`attest::Predicate`] (`Threshold`/`Positive`/`Membership`/`Equality`)
+//!   over a `hash_fact` cell-state commitment, proven through the same
+//!   `HidingFriPcs` path. Prove-over-18 / prove-solvent are the worked examples.
 //!
 //! # M2 privacy ↔ recovery bridge (the common-secret modality)
 //!
@@ -83,6 +86,8 @@
 //! (hide) and M2 recovery (threshold-reveal) are one modality dialed to
 //! different `K`.
 
+pub mod attest;
+pub mod pool;
 pub mod spend_circuit;
 mod transfer;
 
@@ -93,4 +98,10 @@ pub use spend_circuit::{
 pub use transfer::{
     ShieldedError, ShieldedInputProof, ShieldedTransfer, ShieldedTransferWitness, ShieldedValueLeg,
     prove_shielded_input, prove_shielded_transfer as transfer_from_witnesses,
+};
+pub use pool::{
+    HiddenAssetLeg, MultiAssetPoolTransfer, PoolBalanceMode, PoolInputWitness, prove_pool_transfer,
+};
+pub use attest::{
+    AttestWitness, Predicate, attest_circuit, attest_descriptor, generate_attest_trace,
 };
