@@ -1,0 +1,18 @@
+{
+  "name": "minecraft-polis-harness",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A Mineflayer + Claude agent loop whose every action passes through the verified polis governor (admit / refuse) before it touches the world.",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "governor:stub": "node src/governor/server.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.40.0",
+    "mineflayer": "^4.23.0"
+  }
+}

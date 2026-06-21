@@ -20,3 +20,12 @@ name = "Dregg2"
 [[lean_lib]]
 name = "Metatheory"
 globs = ["Metatheory.+"]
+
+# A CALLABLE GOVERNOR: the verified `Metatheory.PolisSandbox.govStep` as a
+# stdin/stdout service. Reads `<d0> <d1> <actor> <action> [victim]` per line,
+# applies the SAME envelope `sandbox_governed_safe` proves keeps the floor, and
+# prints ADMIT/REFUSE + the resulting world. (Root module: PolisGovernor,
+# file ./PolisGovernor.lean.)
+[[lean_exe]]
+name = "polis_governor"
+root = "PolisGovernor"
