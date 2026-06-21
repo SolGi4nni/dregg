@@ -18,8 +18,30 @@ import Dregg2.Tactics
 import Dregg2.Deos.Transclusion
 import Dregg2.Exec.FullForestAuth
 import Dregg2.Circuit.RotatedKernelRefinementNotesFresh
+import Dregg2.AssuranceCase
+import Metatheory.Dynamics.Production
 
 namespace Metatheory.PolisNonConfusion
+
+/-! ## The authority floor as the REAL substance discipline (the deployed `Auth` camera).
+
+The polis authority floor (`held ⊆ bound`, `DreggPolis §2`) is the deployed `granted ⊆ held`
+shadow; its substance-camera form is the Iris frame-preserving update on `Auth M`:
+authorized production is an `Fpu` (no third-party holding invalidated), and UNAUTHORIZED
+amplification is provably NOT a production step. Re-pinned here as the constitution's
+authority floor. -/
+
+#assert_axioms Metatheory.Dynamics.production_step_fpu
+#assert_axioms Metatheory.Dynamics.unauthorized_amplification_not_production
+
+/-! ## The foundational defensive floor: deployed light-client unfoolability (anti-Mythos).
+
+The polis's whole premise — "a stranger can check your OS can't exceed what it holds, nor be
+shown a forged history" — IS the deployed `unfoolability_guarantee` (whole-history
+attestation conjoined with conservation). Re-pinned here as the constitution's foundational
+floor: the multi-agent constitution rides on top of this single-system guarantee. -/
+
+#assert_axioms Dregg2.AssuranceCase.unfoolability_guarantee
 
 /-! ## The deployed non-confusion family (re-pinned as the constitutional sanity floor).
 
