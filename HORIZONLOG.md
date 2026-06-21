@@ -11,6 +11,25 @@ reason.)*
 Last sweep: 2026-06-13 (flagged-items burndown — removed ~14 landed/struck items,
 deduped the DreggDL/sel4/snapshot landings into git history, kept live tails).
 
+## ⚑ delegateAtten SUBMASK+INSERT PROVE-THROUGH — the LogUp obstruction, 2026-06-21
+WELD closed the delegateAtten ROUTING SIGNAL (`is_attenuated_grant`: granted ⊊ held selects the submask
+wrapper `delegateAttenWriteCapOpenVmDescriptor2R24`, not plain `delegateWriteCapOpen`) + the submask-witness
+fill (HELD_MASK col 72 = anchor held mask, in `trace_rotated.rs` Insert arm) — both GREEN
+(`cap_write_delegate_atten_routes_to_submask_wrapper`, `…_descriptor_carries_insert_and_submask`). NAMED
+residual = the GENUINE end-to-end prove (`cap_write_delegate_atten_proves_and_verifies_light_client`,
+currently `#[ignore]` with the precise reason inline): constraints #106/#108 (membership-crown poseidon
+chip lookups) fail to balance under the p3 LogUp gadget ONLY when the custom submask table (id 5) coexists
+with the sorted-INSERT map_op on the `prove_effect_vm_cap_open` path. PROVEN-ADJACENT working cases bound it:
+SAME submask + UPDATE map_op proves end-to-end (`cap_open_attenuate_leg_proves_and_verifies_end_to_end`);
+SAME INSERT without submask proves end-to-end (`cap_write_delegate_proves_and_verifies_light_client`). The
+crown trace columns are BYTE-IDENTICAL to the passing plain-delegate run and the submask operands are valid
+(0x52 ⊑ 0xFF) on every row — so the obstruction is a LogUp/permutation-column interaction between the realized
+submask table and the INSERT openings, a circuit (plonky3-level) fix. NOT a soundness gap: an attenuated grant
+that cannot prove under the submask wrapper fail-closes (never laundered to the plain wrapper — the route is
+descriptor-bound). Closure shape: trace the p3 LogUp bus/permutation allocation for the submask+INSERT
+descriptor vs submask+UPDATE; likely the chip-table multiplicity or a permutation-challenge column the submask
+realization perturbs only when an INSERT opening is also present.
+
 ## ⚑ REACT CIRCUIT WITNESS — the `reactSpendA` descriptor (the in-circuit grow-gate for `Effect::React`), 2026-06-21
 The first-class reactive effect landed at the EXECUTOR layer (Track 2): `Effect::Promise/Notify/React`
 (`turn/src/action.rs`) dispatch through `TurnExecutor::apply_react` (`turn/src/executor/apply.rs`), which
@@ -3854,13 +3873,22 @@ refused).
 ### source-commitment membership witnesses + Lean rung (verifyBatch accept => derived.claimed = f(sources)).
 
 ### ⟳ SWARM PROGRESS (2026-06-21, post-compact integration):
-### ✅ BANKED 34ef4a048: derived cells (cell/src/derived.rs, 8/8) + membrane/forwarder (cell/src/membrane.rs, 13/13)
-###   — two Track-2 verifiable-view capacities, each with a genuine both-polarity forge-detector. Commit also carries
-###   the reactive agent's additive EFFECT_REACTIVE_OPS bit (facet 1<<25) + lib re-export (its turn/circuit work builds on it).
-### ⏸ HELD (done, blocked on link): HATCHERY abstraction-mint (a45ee057) — sdk/src/hatchery_mint.rs is green at the CELL
-###   level (13/13 via isolated harness) but dregg-sdk cannot LINK until the reactive agent (a695bfc7) makes turn/ exhaustive
-###   again (its Effect::{Promise,Notify,React} variants are mid-flight). MintedKind = FactoryDescriptor + Invariant +
-###   HpresProof slot; violating-turn REFUSED via the real CellProgram gate; forge = ProgramMissingInvariant. BANKS on reactive-land.
-### 🔵 NEW STRAND (a7443826, launched): sealed conditional escrow / atomic 2-party swap (cell/src/escrow_sealed.rs, isolated).
-### STILL RUNNING: a695bfc7 (reactive, the keystone unblocking Hatchery + the payload-anchor floor) · ae15d66a (cap-slots) ·
-###   a90a132e (blind-test harden) · a9e74dae (TraceReadout non-vacuity). Drive revokeCapability #1 the moment ae15d66a frees the cap region.
+### ✅ SWARM FULLY SETTLED + INTEGRATED. 6 Track-2 HOUSE capacities banked, each with a genuine both-polarity
+###   forge-detector (honest-accept + forge-reject share ONE verify core -> non-vacuous by construction):
+###   - reactive Effect::{Promise,Notify,React} lifted to first-class executor vocab (5c4bd17e1) — React spends
+###     pending_id into the SAME production note_nullifiers set as NoteSpend -> react-twice = double-spend. 10/10.
+###   - derived/relational cells + membrane/forwarder (34ef4a048, 8/8 + 13/13).
+###   - sealed escrow — atomic 2-of-2 value swap (4c20cf700, 15/15).
+###   - Hatchery abstraction-mint — user-defined verified kinds (5b99f27ab, 13/13).
+###   - standing/recurring obligation — owe AMOUNT every PERIOD, one-shot cursor + audit tooth (f675969b3, 13/13).
+###   ALL six name their in-circuit-witness next slice (effect descriptor + Lean rung) — the light-client-soundness deepening.
+### ✅ Track-1 FLOOR banked: token-caveat hardening (409886b6e) · turn anti-ghost+v3-sig honest-model (477420f1f) ·
+###   circuit blind-rejection honest-model (22ed73d3f) · the LEAN APEX (eb4910086, lake Dregg2 GREEN 4115 jobs, axiom-clean):
+###   revoke(tag-2) frozen-face -> WRITE-BEARING (Rfix 2 => revokeDelegationWriteCapOpenV3, forge-detector mutation-confirmed) +
+###   18 *TraceReadout carriers proven INHABITED (no critical vacuity bug) + SetProgram FullActionA weld.
+### ✅ VERIFIED GREEN at HEAD: cap suite 39/0/1 (the 1 ignore = delegateAtten LogUp residual, fail-closed, NOT a soundness gap) ·
+###   descriptor-drift PASS (Lean emit == checked-in JSON) · circuit lib 941/0 · dregg-turn lib green · dregg-cell 714+ green.
+### REMAINING TO BANK (cap region, verifying): trace_rotated.rs + full_turn_proof.rs cap-routing + descriptors + vk_epoch
+###   light-client-binding tests. THEN Track-1 QUEUE #1 = revokeCapability ROUTE-FORGE (now ae15d66a freed the cap region).
+### NOT-MINE-TONIGHT (other-session work in the shared tree, left untouched): cell/predicate.rs AuthContext · dregg-atlas/ ·
+###   Cargo.{lock,toml} · sdk/cipherclerk.rs · turn/executor/{authorize,membership_verifier,proof_verify}.rs · wasm/runtime.rs.
