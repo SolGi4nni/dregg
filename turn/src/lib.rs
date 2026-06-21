@@ -104,6 +104,7 @@ pub mod lean_apply;
 pub mod lean_shadow;
 pub mod pending;
 pub mod presence_discharge;
+pub mod reactive;
 pub mod reversible;
 pub mod rotation_witness;
 pub mod routing;
