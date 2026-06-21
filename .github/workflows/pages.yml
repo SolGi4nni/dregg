@@ -141,31 +141,25 @@ jobs:
       - name: Bundle THE LIVE WEB COCKPIT
         # The verified cockpit MODEL compiled to wasm, served LIVE at /dregg/cockpit/
         # (Path C): the executor runs in the visitor's own browser tab — no server.
-        # Best-effort: starbridge-v2 [patch]es the plonky3-recursion fork to a local
-        # sibling for dev, so fetch it at the pinned rev for the build. If the wasm
-        # build can't complete, ship a placeholder so /cockpit/ resolves and the
-        # atlas/site deploy is never blocked by this (the heaviest) step.
+        # GREEN-OR-BUST: a real wasm build, no placeholder fallback — a degraded
+        # /cockpit/ would break the live wasm experience, so we fail loudly instead.
+        # starbridge-v2 [patch]es the plonky3-recursion fork to a local sibling for
+        # dev; fetch it at the pinned Cargo rev (../plonky3-recursion from the repo
+        # root == ../../plonky3-recursion from starbridge-v2/). The fork is public and
+        # the fetch sequence is verified.
         run: |
-          set -uo pipefail
+          set -euo pipefail
+          if [ ! -d ../plonky3-recursion/.git ]; then
+            git clone --no-checkout https://github.com/emberian/plonky3-recursion ../plonky3-recursion
+            git -C ../plonky3-recursion fetch --depth 1 origin 72ffc5646e90af9324ab17248b4beed31c036db3
+            git -C ../plonky3-recursion checkout 72ffc5646e90af9324ab17248b4beed31c036db3
+          fi
+          ( cd starbridge-v2 && wasm-pack build web --target web --out-dir pkg --release )
           mkdir -p site/dist/cockpit
-          # the plonky3-recursion fork the [patch] needs (../plonky3-recursion from the
-          # repo root == ../../plonky3-recursion from starbridge-v2/), at the Cargo rev.
-          if [ ! -d ../plonky3-recursion ]; then
-            git clone --no-checkout https://github.com/emberian/plonky3-recursion ../plonky3-recursion 2>/dev/null \
-              && git -C ../plonky3-recursion fetch --depth 1 origin 72ffc5646e90af9324ab17248b4beed31c036db3 2>/dev/null \
-              && git -C ../plonky3-recursion checkout 72ffc5646e90af9324ab17248b4beed31c036db3 2>/dev/null || true
-          fi
-          if ( cd starbridge-v2 && wasm-pack build web --target web --out-dir pkg --release ) \
-             && [ -s starbridge-v2/web/pkg/starbridge_web_bg.wasm ]; then
-            cp starbridge-v2/web/cockpit.html site/dist/cockpit/index.html
-            cp -r starbridge-v2/web/pkg site/dist/cockpit/pkg
-            echo "live web cockpit bundled at /dregg/cockpit/ ($(du -sh site/dist/cockpit | cut -f1))"
-          else
-            # graceful floor: a placeholder so the /cockpit/ link resolves (nav-coherence)
-            # and the atlas deploy proceeds; the wasm cockpit ships once the fork builds in CI.
-            printf '%s' '<!DOCTYPE html><meta charset=utf-8><title>dregg live cockpit</title><body style="background:#0d1117;color:#c9d1d9;font:14px monospace;padding:2rem"><h1>the live web cockpit</h1><p>build pending in CI (the verified executor compiled to wasm). Meanwhile, explore <a style="color:#58a6ff" href="../atlas/">THE DREGG ATLAS</a>.</p></body>' > site/dist/cockpit/index.html
-            echo "::warning::cockpit wasm build did not complete — shipped placeholder at /dregg/cockpit/"
-          fi
+          cp starbridge-v2/web/cockpit.html site/dist/cockpit/index.html
+          cp -r starbridge-v2/web/pkg site/dist/cockpit/pkg
+          test -s site/dist/cockpit/pkg/starbridge_web_bg.wasm
+          echo "live web cockpit bundled at /dregg/cockpit/ ($(du -sh site/dist/cockpit | cut -f1))"
 
       - name: Site tests (built output)
         # Static checks against dist/: nav coherence (every internal link
