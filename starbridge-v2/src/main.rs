@@ -68,6 +68,25 @@ fn main() {
         }
     }
 
+    // `--serve-ie6 <port>`: THE LIVE IE6 COCKPIT SERVER — Path B. A single-threaded
+    // blocking server (gpui is !Send, so one accept→apply→render→respond loop on the
+    // gpui thread is exactly right) that holds a LIVE cockpit, renders it to a PNG per
+    // request, and serves it as image-map HTML. Clicking a region / link hits the
+    // server, which applies the interaction to the live world and re-renders. Frame-
+    // streaming for any user-agent back to 1996 — the real thing, not a flip-through.
+    #[cfg(feature = "headless-render")]
+    {
+        if let Some(port) = serve_ie6_arg(&args) {
+            match serve_ie6_headless(port) {
+                Ok(()) => std::process::exit(0),
+                Err(e) => {
+                    eprintln!("serve-ie6 FAILED: {e:#}");
+                    std::process::exit(1);
+                }
+            }
+        }
+    }
+
     #[cfg(feature = "headless-render")]
     {
         if let Some(out) = render_cockpit_arg(&args) {
@@ -477,6 +496,226 @@ fn explore_ui_arg(args: &[String]) -> Option<String> {
         }
     }
     None
+}
+
+/// Parse `--serve-ie6 <port>` (default 8600).
+#[cfg(feature = "headless-render")]
+fn serve_ie6_arg(args: &[String]) -> Option<u16> {
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        if a == "--serve-ie6" {
+            return Some(it.next().and_then(|p| p.parse().ok()).unwrap_or(8600));
+        }
+        if let Some(rest) = a.strip_prefix("--serve-ie6=") {
+            return Some(rest.parse().unwrap_or(8600));
+        }
+    }
+    None
+}
+
+/// THE LIVE IE6 COCKPIT SERVER (Path B). Holds a live cockpit, renders it per
+/// request, and serves it as image-map HTML so any browser back to 1996 can drive
+/// the real verified cockpit — server-side state, a round-trip per click.
+#[cfg(feature = "headless-render")]
+fn serve_ie6_headless(port: u16) -> anyhow::Result<()> {
+    use gpui::{px, size, AppContext, HeadlessAppContext, PlatformTextSystem};
+    use gpui_wgpu::CosmicTextSystem;
+    use std::borrow::Cow;
+    use std::cell::RefCell;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::rc::Rc;
+    use std::sync::Arc;
+
+    const W: f32 = 1280.0;
+    const H: f32 = 832.0;
+    // The navigable surfaces (the 4 live-animated tabs stall headless stepping; they
+    // are reachable in the native cockpit + the UI atlas, just not the IE6 server loop).
+    const TABS: &[&str] = &[
+        "home", "inspector", "inspect-act", "graph", "web-of-cells", "objects", "proofs",
+        "lanes", "powerbox", "links-here", "organs", "cipherclerk", "editor", "composer",
+        "simulate", "shell", "terminal", "buffer", "trust", "docs", "replay",
+    ];
+
+    static LILEX: &[u8] = include_bytes!("../assets/fonts/Lilex-Regular.ttf");
+    static IBM_PLEX: &[u8] = include_bytes!("../assets/fonts/IBMPlexSans-Regular.ttf");
+    let text_system: Arc<dyn PlatformTextSystem> =
+        Arc::new(CosmicTextSystem::new_without_system_fonts("Lilex"));
+    text_system.add_fonts(vec![Cow::Borrowed(LILEX), Cow::Borrowed(IBM_PLEX)])?;
+    let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(()), || {
+        gpui_platform::current_headless_renderer()
+    });
+    let (world, anchors) = world::demo_world();
+    let shared = Rc::new(RefCell::new(world));
+    let window = cx.open_window(size(px(W), px(H)), |window, cx| {
+        let view = cx.new(|cx| {
+            let focus = cx.focus_handle();
+            cockpit::Cockpit::with_node(shared.clone(), anchors, focus, None, None)
+        });
+        view.update(cx, |c, cx| c.focus_on_open(window, cx));
+        view
+    })?;
+    let wh = window.into();
+    window.update(&mut cx, |c, _w, _cx| {
+        c.select_tab_named("home");
+    })?;
+
+    let listener = TcpListener::bind(("127.0.0.1", port))?;
+    println!("IE6 cockpit server: http://127.0.0.1:{port}/   (the live verified cockpit, for timetravelers)");
+
+    fn qget(q: &str, key: &str) -> Option<String> {
+        q.split('&').find_map(|kv| {
+            let (k, v) = kv.split_once('=')?;
+            if k == key {
+                Some(v.replace('+', " "))
+            } else {
+                None
+            }
+        })
+    }
+    fn respond(stream: &mut std::net::TcpStream, ctype: &str, body: &[u8]) {
+        let head = format!(
+            "HTTP/1.0 200 OK\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        );
+        let _ = stream.write_all(head.as_bytes());
+        let _ = stream.write_all(body);
+    }
+    fn redirect(stream: &mut std::net::TcpStream, to: &str) {
+        let _ = stream.write_all(
+            format!("HTTP/1.0 302 Found\r\nLocation: {to}\r\nConnection: close\r\n\r\n").as_bytes(),
+        );
+    }
+
+    for stream in listener.incoming() {
+        let mut stream = match stream {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        let mut buf = [0u8; 2048];
+        let n = stream.read(&mut buf).unwrap_or(0);
+        let req = String::from_utf8_lossy(&buf[..n]);
+        let line = req.lines().next().unwrap_or("");
+        let path = line.split_whitespace().nth(1).unwrap_or("/");
+        let (route, query) = path.split_once('?').unwrap_or((path, ""));
+
+        match route {
+            "/frame.png" => {
+                cx.run_until_parked();
+                let _ = cx.update_window(wh, |_, w, _| w.refresh());
+                cx.run_until_parked();
+                match cx.capture_screenshot(wh) {
+                    Ok(img) => {
+                        let mut png = Vec::new();
+                        if image::DynamicImage::ImageRgba8(img)
+                            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+                            .is_ok()
+                        {
+                            respond(&mut stream, "image/png", &png);
+                        }
+                    }
+                    Err(_) => respond(&mut stream, "text/plain", b"render error"),
+                }
+            }
+            "/tab" => {
+                if let Some(name) = qget(query, "name") {
+                    let _ = window.update(&mut cx, |c, _w, _cx| {
+                        c.select_tab_named(&name);
+                    });
+                }
+                redirect(&mut stream, "/");
+            }
+            "/nav" => {
+                let i: usize = qget(query, "i").and_then(|s| s.parse().ok()).unwrap_or(0);
+                let _ = window.update(&mut cx, |c, _w, cx| {
+                    let navs = c.available_nav();
+                    if let Some((_, act)) = navs.get(i) {
+                        let act = *act;
+                        c.apply_nav(&act, cx);
+                    }
+                });
+                redirect(&mut stream, "/");
+            }
+            _ => {
+                // render-reconcile: select_tab_named sets the visible tab, but the
+                // WITNESSED active_tab() (what nav_key reads) only catches up on a
+                // render/witness — drive one so the page text matches the live frame.
+                let _ = cx.update_window(wh, |_, w, _| w.refresh());
+                cx.run_until_parked();
+                let (tab, navs): (String, Vec<String>) = window
+                    .update(&mut cx, |c, _w, _cx| {
+                        let key = c.nav_key();
+                        let tab = key.split('|').next().unwrap_or("").to_string();
+                        (tab, c.available_nav().into_iter().map(|(l, _)| l).collect())
+                    })
+                    .unwrap_or_default();
+                let html = ie6_page(&tab, &navs, TABS);
+                respond(&mut stream, "text/html", html.as_bytes());
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The IE6 page: HTML 4.01, the LIVE frame as an `<img usemap>`, a `<map>` of
+/// `<area>` regions over it for the in-surface interactions, and a text tab/nav bar.
+#[cfg(feature = "headless-render")]
+fn ie6_page(tab: &str, navs: &[String], tabs: &[&str]) -> String {
+    // image-map regions: a row of equal cells across the bottom strip of the frame,
+    // one per available interaction (the live frame is 1000px wide as displayed).
+    let iw = 1000;
+    let areas: String = navs
+        .iter()
+        .enumerate()
+        .map(|(i, label)| {
+            let n = navs.len().max(1);
+            let x0 = i * iw / n;
+            let x1 = (i + 1) * iw / n;
+            format!(
+                "<area shape=\"rect\" coords=\"{x0},560,{x1},650\" href=\"/nav?i={i}\" alt=\"{l}\" title=\"{l}\">",
+                l = html_escape(label)
+            )
+        })
+        .collect();
+    let tab_links: String = tabs
+        .iter()
+        .map(|t| {
+            let on = tab.to_lowercase().contains(&t.replace('-', "").to_lowercase())
+                || tab.to_lowercase().replace(['-', ' ', '⏳', '⤳', '📄', '⚷'], "").contains(&t.replace('-', ""));
+            if on {
+                format!("<b>[{}]</b> ", html_escape(t))
+            } else {
+                format!("<a href=\"/tab?name={t}\">{}</a> ", html_escape(t))
+            }
+        })
+        .collect();
+    let nav_links: String = navs
+        .iter()
+        .enumerate()
+        .map(|(i, l)| format!("<a href=\"/nav?i={i}\">[{}]</a> ", html_escape(l)))
+        .collect();
+    format!(
+        "<!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 4.01 Transitional//EN\">\n\
+<html><head><title>dregg - live cockpit (IE6 floor)</title></head>\n\
+<body bgcolor=\"#0a0e14\" text=\"#c9d1d9\" link=\"#58a6ff\" vlink=\"#bc8cff\">\n\
+<font face=\"monospace\" size=\"2\">\n\
+<b><font color=\"#58a6ff\">dregg</font></b> - the live verified cockpit, server-rendered for any user-agent (no script, no canvas, no wasm). \
+You are at: <b>{tab}</b>. Each click is a round-trip: the server applies it to the live world and re-renders.\n\
+<p><img src=\"/frame.png\" width=\"1000\" usemap=\"#m\" border=\"1\" alt=\"the live cockpit\"></p>\n\
+<map name=\"m\">{areas}</map>\n\
+<p><b>surfaces:</b> {tab_links}</p>\n\
+<p><b>here you can:</b> {nav_links}</p>\n\
+<p><font color=\"#8b949e\" size=\"1\">The image-map regions along the lower band of the frame map to the in-surface \
+interactions; the text links do the same. Refresh-free navigation by clicking the rendered frame - the way a remote \
+screen was driven before canvas existed.</font></p>\n\
+</font></body></html>",
+        tab = html_escape(tab),
+    )
+}
+
+#[cfg(feature = "headless-render")]
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
 }
 
 /// THE UI-EXPLORATION CRAWL — BFS-walk the cockpit's navigation state-space by
