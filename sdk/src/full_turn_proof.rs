@@ -1339,7 +1339,30 @@ fn cap_open_route_for_run(run_effects: &[VmEffectKind]) -> Option<CapOpenRoute> 
             needs_attenuate_patch: false,
             transfer_caveat: false,
             turn_bound: false,
-            write: None,
+            // DELEG-tree WRITE light-client axis (THE DELEG-FORGE CLOSED — Stage E): a refreshDelegation IS a
+            // DELEGATIONS-tree UPDATE-AT-KEY (the child's snapshot re-armed at the child key). The
+            // authority-only `refreshDelegationCapOpenVmDescriptor2R24` (write:None) left the post-DELEG-root
+            // host-trusted — a light client accepted a forged after-deleg-root (the refreshed snapshot
+            // fabricated/omitted). The deployed `refreshDelegationWriteCapOpenVmDescriptor2R24` binds the AFTER
+            // DELEG-root (the rotated cap-root limb 25 — refresh FREEZES `caps`, so that limb carries the DELEG
+            // accumulator, exactly as Lean `beforeDelegRootCol = beforeCapRootCol`) via an `Update` map_op
+            // against the membership-opened BEFORE root: `after = update(before, child_key, refreshed_snapshot)`.
+            // When the node supplies the cell's delegations leaf-set (`cap.clist_leaves` non-empty) the prover
+            // proves the write wrapper and the genuine post-DELEG-root is on-the-wire light-client-verifiable (a
+            // wrong post-root is UNSAT — `writesTo` is FUNCTIONAL under CR). An empty leaf-set falls back to the
+            // authority-only `key` (named, not a silent forge); the verifier tooth forces the write route. Refresh
+            // re-arms an existing delegation (`granted = held`, non-amplification reflexive — Lean
+            // `refreshDelegationWriteV3`), so the Update VALUE is the held snapshot mask the membership read opens.
+            // This is the LIVE realization of `RotatedKernelRefinementCapFamily.refreshDelegation_descriptorRefines_sat`,
+            // threaded to the apex `lightclient_unfoolable_closed_final_genuine` (Rfix 55). Liveness note: the
+            // current `VmEffect::RefreshDelegation` is a unit variant (no child/snapshot payload), so an honest
+            // refresh threads the leaf-set only when the producer supplies the cell's delegations c-list; a
+            // payload-less refresh falls back to the authority-only route.
+            write: Some((
+                "refreshDelegationWriteCapOpenVmDescriptor2R24",
+                dregg_circuit::effect_vm::trace_rotated::CapTreeWriteOp::Update,
+                EFFECT_DELEGATION_OPS,
+            )),
         }),
         [VmEffectKind::RevokeCapability { .. }] => Some(CapOpenRoute {
             key: "revokeCapabilityCapOpenVmDescriptor2R24",
@@ -1395,7 +1418,6 @@ fn cap_insert_payload_for(
     effects: &[VmEffectKind],
     cap: &CapMembershipWitness,
 ) -> Option<(BabyBear, BabyBear)> {
-    let _ = cap; // the anchor identity rides `cap.leaf.slot_hash` at the call site.
     match effects {
         // delegate / attenuated-delegate (GrantCapability): the new cap entry. The granter confers
         // `cap_entry[0]` (the new slot felt, AIR `params[0]`) holding the conferred mask `cap_entry[1]`.
@@ -1408,6 +1430,15 @@ fn cap_insert_payload_for(
         [VmEffectKind::AttenuateCapability { narrower_commitment, .. }] => {
             Some((narrower_commitment[0], narrower_commitment[1]))
         }
+        // refreshDelegation (the DELEG-tree UPDATE-AT-KEY): an in-place re-arm of the child's delegation
+        // snapshot. The genuine move REBINDS the SAME child key (`cap.leaf.slot_hash`, the membership-opened
+        // present key the bridge anchors at) to the refreshed snapshot. Refresh is reflexive
+        // (`granted = held`, non-amplification — Lean `refreshDelegationWriteV3`), so the Update VALUE is the
+        // held snapshot mask the membership read opened (`cap.leaf.mask_lo`): re-arm writes back the held
+        // value. The bridge ignores this tuple's KEY and rebinds at the anchor; the VALUE is the KEEP_MASK.
+        // (`VmEffect::RefreshDelegation` is a unit variant carrying no snapshot of its own, so the held mask
+        // IS the refreshed value — a payload-less refresh re-arms in place.)
+        [VmEffectKind::RefreshDelegation] => Some((cap.leaf.slot_hash, cap.leaf.mask_lo)),
         _ => None,
     }
 }
@@ -2133,6 +2164,9 @@ fn is_forbidden_authority_only_cap_write_descriptor(name: &str) -> bool {
             | "introduceCapOpenVmDescriptor2R24" // Introduce — the INSERT write wrapper proves
             | "revokeCapabilityCapOpenVmDescriptor2R24" // RevokeCapability — the REMOVE write wrapper proves
                                                         // (`cap_write_revoke_cap_route_proves_and_verifies_light_client`)
+            | "refreshDelegationCapOpenVmDescriptor2R24" // RefreshDelegation — the DELEG-tree UPDATE write
+                                                         // wrapper proves (`refresh_deleg_write_proves_and_verifies_light_client`);
+                                                         // the authority-only route leaves the post-DELEG-root host-trusted
     )
 }
 
@@ -5238,6 +5272,190 @@ mod tests {
             verify_effect_vm_rotated_with_cutover(&proof_ao_bytes, &dpis_ao, &vk_ao).is_err(),
             "the AUTHORITY-only revokeCapability cap-open is now light-client-REJECTED (the tooth is ON) — \
              the post-cap-root is host-trusted; the producer must prove the on-the-wire WRITE wrapper",
+        );
+    }
+
+    /// **THE ROUTE-LEVEL FORGE DETECTOR for refreshDelegation (the DELEG-FORGE close — Stage E).** The
+    /// genuine move of `refreshDelegation` is a DELEGATIONS-tree UPDATE-AT-KEY (the `DELEG` system-root,
+    /// NOT `caps`): the child's delegation snapshot is re-armed (`granted = held`, reflexive
+    /// non-amplification) at the child key. Before this close the route selected the AUTHORITY-only
+    /// `refreshDelegationCapOpenVmDescriptor2R24` (write:None), so the DELEG-tree write rode UNBOUND on the
+    /// light-client wire — a forged after-DELEG-root (the refreshed snapshot fabricated/omitted) was
+    /// ACCEPTED by a light client (a full node re-running the executor caught it; a light client did not).
+    ///
+    /// The fix (mirroring revokeDelegation/revokeCapability): the route now carries
+    /// `write: Some((refreshDelegationWriteCapOpenVmDescriptor2R24, Update, EFFECT_DELEGATION_OPS))`, and the
+    /// authority-only wrapper is light-client-REJECTED (`is_forbidden_authority_only_cap_write_descriptor`).
+    /// The deleg accumulator rides the rotated cap-root limb 25 (refresh FREEZES `caps`, so that limb is free
+    /// to carry the DELEG before→after root — Lean `beforeDelegRootCol = beforeCapRootCol`). THREE arms
+    /// against the SAME light-client verify:
+    ///   (1) the GENUINE write route PROVES + light-client-VERIFIES (non-vacuity — the honest path works);
+    ///   (2) a FORGED post-DELEG-root (a leaf-set MISSING the re-armed key) FAILS CLOSED at the prover (the
+    ///       `Update` map_op has no membership witness for the key — a wrong post-root is UNSAT);
+    ///   (3) the AUTHORITY-only route (empty leaf-set) still PROVES but the light-client verifier now
+    ///       REJECTS it (the tooth is ON — the producer MUST prove the on-the-wire WRITE wrapper).
+    /// This is the LIVE realization of Lean `refreshDelegation_descriptorRefines_sat` /
+    /// `refreshDelegationWriteV3_forces_write`, threaded to the apex
+    /// `lightclient_unfoolable_closed_final_genuine` (Rfix 55). RED before the route fix (authority-only was
+    /// the effective key + accepted); GREEN after.
+    #[cfg(feature = "prover")]
+    #[test]
+    fn refresh_deleg_write_proves_and_verifies_light_client() {
+        use dregg_circuit::cap_root::CapLeaf;
+        use dregg_circuit::effect_vm::trace_rotated::{
+            CapOpenWitness, FACET_MASK_HI, SIGNATURE_AUTH_TAG,
+        };
+        use dregg_circuit::heap_root::HeapLeaf;
+        use dregg_turn::rotation_witness as rw;
+
+        const EFFECT_DELEGATION_OPS: u32 = 1 << 16;
+
+        // The child delegation being re-armed: slot_hash 0xDE16, target 7_777 (== src), delegation facet.
+        // mask_lo is the HELD snapshot mask the membership read opens; refresh re-arms it in place
+        // (`granted = held`), so the UPDATE writes the SAME value back at the SAME key (the key set is
+        // preserved — the update-at-key shadow).
+        let chosen: [BabyBear; 7] = [
+            BabyBear::new(0xDE16),
+            BabyBear::new(7_777),
+            BabyBear::new(SIGNATURE_AUTH_TAG),
+            BabyBear::new(EFFECT_DELEGATION_OPS),
+            BabyBear::new(FACET_MASK_HI),
+            BabyBear::new(0x00FF_FFFF),
+            BabyBear::new(42),
+        ];
+        let other: [BabyBear; 7] = [
+            BabyBear::new(0xBEEF),
+            BabyBear::new(123),
+            BabyBear::new(1),
+            BabyBear::new(EFFECT_DELEGATION_OPS),
+            BabyBear::new(0),
+            BabyBear::new(9),
+            BabyBear::new(0),
+        ];
+        let leaf_cl = |l: &[BabyBear; 7]| CapLeaf {
+            slot_hash: l[0],
+            target: l[1],
+            auth_tag: l[2],
+            mask_lo: l[3],
+            mask_hi: l[4],
+            expiry: l[5],
+            breadstuff: l[6],
+        };
+        let built = CapOpenWitness::build_for(&[other, chosen], 1, EFFECT_DELEGATION_OPS)
+            .expect("cap-open path builds");
+
+        // THE GENUINE delegations leaf-set — the re-armed child key (0xDE16) IS present (the UPDATE has a
+        // membership witness; refresh is an update-at-key, so the key stays present).
+        let clist_leaves = vec![
+            HeapLeaf { addr: chosen[0], value: chosen[1] },
+            HeapLeaf { addr: other[0], value: other[1] },
+        ];
+        let cap = CapMembershipWitness {
+            leaf: leaf_cl(&chosen),
+            siblings: built.siblings.to_vec(),
+            directions: built.directions.to_vec(),
+            clist_leaves: clist_leaves.clone(),
+        };
+
+        // A real RefreshDelegation turn (the genuine moving face; nonce-tick passthrough, caps frozen).
+        let before_balance: u64 = 100_000;
+        let initial = CellState::new(before_balance, 0);
+        let effects = vec![VmEffect::RefreshDelegation];
+        let mut pk = [0u8; 32];
+        pk[0] = 7;
+        let mut before_cell = dregg_cell::Cell::with_balance(pk, [0u8; 32], before_balance as i64);
+        before_cell.permissions = dregg_cell::Permissions {
+            send: dregg_cell::AuthRequired::None,
+            receive: dregg_cell::AuthRequired::None,
+            set_state: dregg_cell::AuthRequired::None,
+            set_permissions: dregg_cell::AuthRequired::None,
+            set_verification_key: dregg_cell::AuthRequired::None,
+            increment_nonce: dregg_cell::AuthRequired::None,
+            delegate: dregg_cell::AuthRequired::None,
+            access: dregg_cell::AuthRequired::None,
+        };
+        let mut after_cell = before_cell.clone();
+        let _ = after_cell.state.increment_nonce();
+        let mut ledger = dregg_cell::Ledger::new();
+        ledger.insert_cell(after_cell.clone()).unwrap();
+        let receipt_log: Vec<[u8; 32]> = vec![[3u8; 32], [4u8; 32]];
+        let before_w = rw::produce(&before_cell, &ledger, &[0u8; 32], &[0u8; 32], &receipt_log);
+        let after_w = rw::produce(&after_cell, &ledger, &[0u8; 32], &[0u8; 32], &receipt_log);
+
+        // THE RE-POINT IS ON: the refreshDelegation route now carries `write: Some((...WriteCapOpen..., Update))`.
+        let route =
+            cap_open_route_for_run(&effects).expect("refreshDelegation is a wired cap-open route");
+        assert!(
+            route.write.is_some(),
+            "the refreshDelegation route MUST carry the DELEG-tree write wrapper (the DELEG-forge close)"
+        );
+        let effective_key = cap_open_effective_key(&route, &cap);
+        assert_eq!(
+            effective_key, "refreshDelegationWriteCapOpenVmDescriptor2R24",
+            "with a genuine delegations leaf-set the EFFECTIVE descriptor is the DELEG-tree WRITE wrapper"
+        );
+
+        // (1) NON-VACUITY: the WRITE-bearing refreshDelegation cap-open MUST GENUINELY prove + the
+        // LIGHT-CLIENT verifier MUST accept the genuine post-DELEG-root (the DELEG-tree UPDATE bound on the
+        // wire). NO catch_unwind: a refusal/rejection FAILS the test (the honest signal).
+        let (proof, dpis) =
+            prove_effect_vm_cap_open(&initial, &effects, &before_w, &after_w, &cap, &route, None)
+                .expect(
+                    "the WRITE-bearing refreshDelegation cap-open MUST genuinely prove — the DELEG-root \
+                     UPDATE on the rotated limb 25 (beforeDelegRootCol) over the real leaf-set, caps frozen, \
+                     nonce ticks",
+                );
+        let proof_bytes = postcard::to_allocvec(&proof).expect("serialize write cap-open leg");
+        let vk_hash = cap_open_vk_hash_by_key(effective_key).expect("write wrapper vk_hash");
+        verify_effect_vm_rotated_with_cutover(&proof_bytes, &dpis, &vk_hash).expect(
+            "the WRITE-bearing refreshDelegation cap-open MUST verify on the light-client path — the genuine \
+             post-DELEG-root is on-the-wire light-client-verifiable",
+        );
+
+        // (2) THE FORGE IS REJECTED: a leaf-set that does NOT contain the re-armed key (0xDE16). The write
+        // wrapper's `Update` map_op has no membership witness → the prover FAILS CLOSED. A wrong
+        // post-DELEG-root CANNOT be proven (no silent forge — the DELEG-forge antibody).
+        let forged_clist = vec![
+            HeapLeaf { addr: other[0], value: other[1] }, // only the OTHER edge; the re-armed key is ABSENT
+        ];
+        let cap_forged = CapMembershipWitness {
+            leaf: leaf_cl(&chosen),
+            siblings: built.siblings.to_vec(),
+            directions: built.directions.to_vec(),
+            clist_leaves: forged_clist,
+        };
+        assert!(
+            prove_effect_vm_cap_open(&initial, &effects, &before_w, &after_w, &cap_forged, &route, None)
+                .is_err(),
+            "a leaf-set MISSING the re-armed key MUST fail closed — a fabricated post-DELEG-root is NOT provable"
+        );
+
+        // (3) THE AUTHORITY-ONLY ROUTE IS LIGHT-CLIENT-REJECTED (the tooth is ON): an empty leaf-set falls
+        // back to `refreshDelegationCapOpenVmDescriptor2R24` (write:None). It still PROVES (the membership
+        // crown is valid) BUT the light-client verifier now REJECTS it — the producer MUST prove the
+        // on-the-wire WRITE wrapper. This is the verifier half of the FORCED DELEG-write routing.
+        let cap_authority_only = CapMembershipWitness {
+            leaf: leaf_cl(&chosen),
+            siblings: built.siblings.to_vec(),
+            directions: built.directions.to_vec(),
+            clist_leaves: Vec::new(),
+        };
+        assert_eq!(
+            cap_open_effective_key(&route, &cap_authority_only),
+            "refreshDelegationCapOpenVmDescriptor2R24",
+            "an empty leaf-set falls back to the authority-only route"
+        );
+        let (proof_ao, dpis_ao) = prove_effect_vm_cap_open(
+            &initial, &effects, &before_w, &after_w, &cap_authority_only, &route, None,
+        )
+        .expect("the authority-only refreshDelegation cap-open still PROVES (the membership crown is valid)");
+        let proof_ao_bytes = postcard::to_allocvec(&proof_ao).expect("serialize authority-only leg");
+        let vk_ao = cap_open_vk_hash_by_key("refreshDelegationCapOpenVmDescriptor2R24")
+            .expect("authority-only vk_hash");
+        assert!(
+            verify_effect_vm_rotated_with_cutover(&proof_ao_bytes, &dpis_ao, &vk_ao).is_err(),
+            "the AUTHORITY-only refreshDelegation cap-open is now light-client-REJECTED (the tooth is ON) — \
+             the post-DELEG-root is host-trusted; the producer must prove the on-the-wire WRITE wrapper",
         );
     }
 
