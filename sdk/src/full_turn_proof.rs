@@ -1386,6 +1386,39 @@ fn cap_open_route_for_run(run_effects: &[VmEffectKind]) -> Option<CapOpenRoute> 
                 EFFECT_REVOKE_CAPABILITY,
             )),
         }),
+        [VmEffectKind::SpawnWithDelegation { .. }] => Some(CapOpenRoute {
+            key: "spawnCapOpenVmDescriptor2R24",
+            // The parent confers a held cap PERMITTING delegation — exactly like `delegate`, the cap binds
+            // DELEGATION_OPS (1<<16), not a spawn-specific bit.
+            eff_bit: EFFECT_DELEGATION_OPS,
+            // spawn rides the nonce-TICK actor face (`spawnActorVmDescriptor`'s `revokeRowGates` template
+            // ticks the nonce, `trace_rotated.rs` `new_state.nonce += 1`), like revoke/introduce — directly
+            // valid, NO attenuate-freeze patch.
+            needs_attenuate_patch: false,
+            transfer_caveat: false,
+            turn_bound: false,
+            // cap-WRITE light-client axis (THE SPAWN CAP-HANDOFF CLOSED): a spawn IS a parent→child
+            // CAPABILITY HANDOFF — an INSERT into the cap-tree of the conferred edge at the child key. The
+            // authority-only `spawnCapOpenVmDescriptor2R24` (write:None) left the post-cap-root host-trusted
+            // — a light client accepted a forged cap handoff (the conferred edge fabricated/omitted, the
+            // child cap_root FROZEN). The deployed `spawnWriteCapOpenVmDescriptor2R24` binds the AFTER
+            // cap-root (rotated limb 264) via an `Insert` map_op against the membership-opened BEFORE root:
+            // the parent's held cap to `target` is the ANCHOR (read), the fresh conferred edge (`spawn_hash`)
+            // is sorted-INSERTed (`after = insert(before, child_key)`). When the node supplies the parent's
+            // c-list (`cap.clist_leaves` non-empty) the prover proves the write wrapper and the genuine
+            // post-cap-root is on-the-wire light-client-verifiable (a wrong post-root is UNSAT). An empty
+            // c-list falls back to the authority-only `key` (named, not a silent forge); the verifier tooth
+            // forces the cap-open route. The cells-tree accounts insert (the child id grown into accounts)
+            // rides limb 0 in PARALLEL — distinct from this cap-tree limb 25. Mirrors delegate's INSERT
+            // wrapper EXACTLY (same crown facet bit). This is the LIVE realization of
+            // `RotatedKernelRefinementBirth.spawnWrite_descriptorRefines_capOpenSat`, threaded to the apex
+            // `lightclient_unfoolable_closed_final_genuine` (Rfix 19).
+            write: Some((
+                "spawnWriteCapOpenVmDescriptor2R24",
+                dregg_circuit::effect_vm::trace_rotated::CapTreeWriteOp::Insert,
+                EFFECT_DELEGATION_OPS,
+            )),
+        }),
         _ => None,
     }
 }
@@ -1439,16 +1472,21 @@ fn cap_insert_payload_for(
         // (`VmEffect::RefreshDelegation` is a unit variant carrying no snapshot of its own, so the held mask
         // IS the refreshed value — a payload-less refresh re-arms in place.)
         [VmEffectKind::RefreshDelegation] => Some((cap.leaf.slot_hash, cap.leaf.mask_lo)),
+        // spawn (the parent→child CAPABILITY HANDOFF): the conferred cap entry. The parent confers
+        // `spawn_hash[0]` (the new child cap slot felt, the AIR child key in `params[0]` / cap-write
+        // `CAP_KEY`) holding the conferred rights mask `spawn_hash[1]`. The held parent cap to `target`
+        // (`cap.leaf.slot_hash`) is the ANCHOR (read); this insert grafts the fresh child edge.
+        [VmEffectKind::SpawnWithDelegation { spawn_hash }] => Some((spawn_hash[0], spawn_hash[1])),
         _ => None,
     }
 }
 
 /// **`cap_open_supported_for_run`** (F1) — does a cap-open descriptor exist for this single-effect
 /// run's effect-kind? Maps the run to its `<effect>CapOpenVmDescriptor2R24` via `cap_open_route_for_run`.
-/// Transfer + attenuate + the 6 fan-out effects (grantCap, introduce, revoke(Delegation),
-/// refreshDelegation, revokeCapability) are WIRED — each binds the cap to its OWN effect-kind bit. Any
-/// other cap-authorized effect-kind (notably `ExerciseViaCapability` — its inner-fold base does not take
-/// the appendix cleanly) fails CLOSED here with a precise error (the remaining NAMED residual).
+/// Transfer + attenuate + the 7 fan-out effects (grantCap, introduce, revoke(Delegation),
+/// refreshDelegation, revokeCapability, spawn) are WIRED — each binds the cap to its OWN effect-kind bit.
+/// Any other cap-authorized effect-kind (notably `ExerciseViaCapability` — its inner-fold base does not
+/// take the appendix cleanly) fails CLOSED here with a precise error (the remaining NAMED residual).
 #[cfg(feature = "prover")]
 fn cap_open_supported_for_run(run_effects: &[VmEffectKind]) -> Result<(), SdkError> {
     if run_effects.len() != 1 {
@@ -1461,8 +1499,8 @@ fn cap_open_supported_for_run(run_effects: &[VmEffectKind]) -> Result<(), SdkErr
     } else {
         Err(SdkError::InvalidWitness(format!(
             "cap-open routing: a cap witness was threaded for a {:?} run, but no cap-open \
-             descriptor is emitted for that effect-kind (transfer/attenuate + the 6 fan-out \
-             grantCap/introduce/revoke/refreshDelegation/revokeCapability are wired; \
+             descriptor is emitted for that effect-kind (transfer/attenuate + the 7 fan-out \
+             grantCap/introduce/revoke/refreshDelegation/revokeCapability/spawn are wired; \
              ExerciseViaCapability is the NAMED residual — its inner-fold base does not take the \
              appendix). Drop the cap witness to prove the base cohort descriptor.",
             run_effects[0]
@@ -1709,9 +1747,39 @@ fn prove_effect_vm_cap_open(
     } else {
         empty_caveat_manifest()
     };
-    let (mut trace, pis) =
-        generate_rotated_effect_vm_trace(initial_state, effects, &before, &after, &caveat)
-            .map_err(|e| SdkError::InvalidWitness(format!("cap-open base trace ({}): {e}", route.key)))?;
+    // spawn is the ONLY cap-fanout effect that ALSO grows the accounts set (the birth leg): its
+    // descriptor (`spawnWriteV3`) carries the cells-tree accounts INSERT (limb 0) ALONGSIDE the cap-tree
+    // handoff INSERT (limb 25). So when the write wrapper is active, the base trace is built by the
+    // accounts grow-gate wiring (`generate_rotated_create_cell_trace_with_accounts_tree`, which overrides
+    // limb 0 with the openable accounts accumulator + returns the BEFORE accounts leaf-set as its map-op
+    // heap), and the cap-write base runs OVER it (overriding limb 25 + recomputing the rotated commit,
+    // which preserves the limb-0 override). The two map-op heaps are concatenated; the map-op table
+    // matches each op to its heap by ROOT (the accounts root for limb 0, the c-list root for limb 25).
+    let spawn_dual_tree =
+        cap_write.is_some() && matches!(effects.first(), Some(VmEffectKind::SpawnWithDelegation { .. }));
+    let (mut trace, pis, accounts_heaps): (Vec<Vec<BabyBear>>, Vec<BabyBear>, Vec<Vec<dregg_circuit::heap_root::HeapLeaf>>) =
+        if spawn_dual_tree {
+            // The genuine spawn producer supplies the actor's BEFORE accounts leaf-set as the cap witness's
+            // accounts witness; here the child key is fresh against the (possibly empty) before-set — the
+            // `.absent` freshness op brackets via the sentinel range, and a re-spawn of an existing cell id
+            // has no bracketing witness and is REFUSED.
+            let before_accounts: Vec<dregg_circuit::heap_root::HeapLeaf> = Vec::new();
+            let (trace, pis, heaps) =
+                dregg_circuit::effect_vm::trace_rotated::generate_rotated_create_cell_trace_with_accounts_tree(
+                    initial_state, effects, &before, &after, &caveat, &before_accounts,
+                )
+                .map_err(|e| {
+                    SdkError::InvalidWitness(format!("cap-open spawn accounts base ({}): {e}", route.key))
+                })?;
+            (trace, pis, heaps)
+        } else {
+            let (trace, pis) =
+                generate_rotated_effect_vm_trace(initial_state, effects, &before, &after, &caveat)
+                    .map_err(|e| {
+                        SdkError::InvalidWitness(format!("cap-open base trace ({}): {e}", route.key))
+                    })?;
+            (trace, pis, Vec::new())
+        };
 
     // Attenuate-family bases need the phase-B nonce-FREEZE + cap-root advance wiring; transfer is
     // directly valid (its 38-PI vector is correct as generated). BUT the WRITE-bearing wrappers ALL
@@ -1805,8 +1873,15 @@ fn prove_effect_vm_cap_open(
         dpis
     };
 
+    // The map-op witness heaps: the cap-tree c-list (limb 25) ALWAYS, PLUS the accounts leaf-set (limb 0)
+    // for the spawn dual-tree descriptor. The map-op table matches each op to its heap by ROOT, so order
+    // is irrelevant; concatenating yields one heap per distinct tree the descriptor opens.
+    let all_heaps: Vec<Vec<dregg_circuit::heap_root::HeapLeaf>> = cap_write_heaps
+        .into_iter()
+        .chain(accounts_heaps)
+        .collect();
     let proof =
-        prove_vm_descriptor2(&desc, &trace, &dpis, &MemBoundaryWitness::default(), &cap_write_heaps)
+        prove_vm_descriptor2(&desc, &trace, &dpis, &MemBoundaryWitness::default(), &all_heaps)
             .map_err(|e| {
                 SdkError::InvalidWitness(format!("cap-open IR-v2 proof ({effective_key}): {e}"))
             })?;
@@ -2167,6 +2242,9 @@ fn is_forbidden_authority_only_cap_write_descriptor(name: &str) -> bool {
             | "refreshDelegationCapOpenVmDescriptor2R24" // RefreshDelegation — the DELEG-tree UPDATE write
                                                          // wrapper proves (`refresh_deleg_write_proves_and_verifies_light_client`);
                                                          // the authority-only route leaves the post-DELEG-root host-trusted
+            | "spawnCapOpenVmDescriptor2R24"             // SpawnWithDelegation — the cap-handoff INSERT write
+                                                         // wrapper proves (`cap_write_spawn_proves_and_verifies_light_client`);
+                                                         // the authority-only route leaves the child cap_root host-trusted (frozen handoff)
     )
 }
 
@@ -5703,6 +5781,35 @@ mod tests {
             fresh,
             EFFECT_INTRODUCE,
             "introduceWriteCapOpenVmDescriptor2R24",
+        );
+    }
+
+    /// **spawn — genuine prove + verify + forge (THE CAP-HANDOFF CLOSE).** `SpawnWithDelegation { spawn_hash }`
+    /// routes to `spawnWriteCapOpenVmDescriptor2R24`; the parent→child CAPABILITY HANDOFF is the conferred
+    /// edge `spawn_hash[0..2]` (the child cap key + the conferred mask), INSERTed into the cap-tree (limb 25)
+    /// against the parent's held-cap ANCHOR — ALONGSIDE the accounts grow-gate INSERT of the child id (limb
+    /// 0, the birth leg). The deployed prover threads BOTH map-op witness heaps (the accounts leaf-set + the
+    /// cap-tree c-list). BEFORE: the authority-only `spawnCapOpenVmDescriptor2R24` left the child cap_root
+    /// host-trusted (the handoff frozen/forged). AFTER: the genuine handoff PROVES + light-client-VERIFIES,
+    /// and a forged after-cap-root / missing-anchor / colliding-child-key is REJECTED (the generic helper
+    /// exercises all three forge poles + the non-vacuous genuine pole). The cap binds DELEGATION_OPS (1<<16)
+    /// — the parent confers a cap PERMITTING delegation, exactly like `delegate`.
+    #[cfg(feature = "prover")]
+    #[test]
+    fn cap_write_spawn_proves_and_verifies_light_client() {
+        const EFFECT_DELEGATION_OPS: u32 = 1 << 16;
+        // child key + conferred mask — distinct from the anchor (0xA0C0) and other (0xBEEF) c-list keys.
+        let fresh = (BabyBear::new(0x59A0), BabyBear::new(0x0F));
+        run_insert_cap_write_prove_verify_forge(
+            VmEffect::SpawnWithDelegation {
+                spawn_hash: [
+                    fresh.0, fresh.1, BabyBear::ZERO, BabyBear::ZERO,
+                    BabyBear::ZERO, BabyBear::ZERO, BabyBear::ZERO, BabyBear::ZERO,
+                ],
+            },
+            fresh,
+            EFFECT_DELEGATION_OPS,
+            "spawnWriteCapOpenVmDescriptor2R24",
         );
     }
 

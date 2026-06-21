@@ -1819,6 +1819,38 @@ def spawnV3 : EffectVmDescriptor2 :=
       ++ [.mapOp (cellsFreshOp EffectVmEmitSpawn.SEL_SPAWN_RT NEW_CELL_KEY_PARAM_COL),
           .mapOp (cellsInsertOp EffectVmEmitSpawn.SEL_SPAWN_RT NEW_CELL_KEY_PARAM_COL)] }
 
+/-- **`rotateV3WithNewCellKeyPinCapWrite`** — `rotateV3CapWrite` PLUS the new-cell-key PI weld (the
+fifth appended PI pin binding column `keyCol` to `ROT_NEW_CELL_KEY_PI = 46` on the FIRST row).
+Structurally identical to `rotateV3WithNewCellKeyPin` (line 1753) but built over `rotateV3CapWrite`
+(the cap-root weld DROPPED — limb 25 freed for `insertWriteOpRot`) instead of `rotateV3`. The cells-tree
+limb (limb 0) stays WELDED (`weldsAtNoCapRoot` drops ONLY the cap-root weld), so the accounts grow-gate
+coexists with the cap-tree insert — they live on DISTINCT limbs (limb 0 vs limb 25). -/
+def rotateV3WithNewCellKeyPinCapWrite (keyCol : Nat) (d : EffectVmDescriptor) : EffectVmDescriptor :=
+  let r := rotateV3CapWrite d
+  { r with
+    piCount     := r.piCount + 1
+    constraints := r.constraints ++ [.piBinding .first keyCol ROT_NEW_CELL_KEY_PI] }
+
+/-- **`spawnWriteV3`** — `spawnV3` REBASED onto the cap-WRITE rotation (`rotateV3WithNewCellKeyPinCapWrite`,
+cap-root limb 25 freed) PLUS the cap-tree INSERT handoff. The genuine `spawn` confers the parent's held
+cap to the child (`spawnCapsMap k actor child target := child ↦ [heldCapTo k.caps actor target]`, the
+INSERT into the cap-tree). This descriptor FORCES that handoff in-circuit on TWO limbs that coexist:
+- limb 0 (cells-tree): the accounts grow-gate (`cellsFreshOp` + `cellsInsertOp`) — the child id INSERTed
+  into accounts, EXACTLY as `spawnV3` (the cells-tree weld is untouched by `weldsAtNoCapRoot`);
+- limb 25 (cap-tree): the cap handoff (`anchorReadOpRot` + `insertWriteOpRot`) — the parent's held cap to
+  `target` membership-read at a PRESENT anchor, then the conferred edge sorted-INSERTed at the child key.
+
+The cap handoff (the parent→child CAPABILITY confer) was the named PHASE-D residual on `spawnV3` (frozen
+`cap_root`/gCapPass); freeing limb 25 and driving the insert FORCES it, exactly as `delegateV3`. -/
+def spawnWriteV3 : EffectVmDescriptor2 :=
+  let base := graduateV1 (rotateV3WithNewCellKeyPinCapWrite NEW_CELL_KEY_PARAM_COL
+    EffectVmEmitSpawn.spawnActorVmDescriptor)
+  { base with constraints := base.constraints
+      ++ [.mapOp (cellsFreshOp EffectVmEmitSpawn.SEL_SPAWN_RT NEW_CELL_KEY_PARAM_COL),
+          .mapOp (cellsInsertOp EffectVmEmitSpawn.SEL_SPAWN_RT NEW_CELL_KEY_PARAM_COL),
+          .mapOp (anchorReadOpRot EffectVmEmitSpawn.SEL_SPAWN_RT),
+          .mapOp (insertWriteOpRot EffectVmEmitSpawn.SEL_SPAWN_RT)] }
+
 /-- **`createCellV3_grow_gate_forces_set_insert` — the live descriptor FORCES the accounts
 set-insert + freshness.** On a satisfying `createCellV3` witness whose createCell selector fires, the
 two appended map-ops hold: (1) the published new-cell key is ABSENT from the BEFORE cells tree (limb
@@ -1884,9 +1916,56 @@ theorem spawnV3_grow_gate_forces_set_insert (hash : List ℤ → ℤ)
     NEW_CELL_KEY_PARAM_COL)) (by simp [spawnV3])
   exact ⟨(hfresh hspawn).1, hins hspawn⟩
 
+/-- **`spawnWriteV3_grow_gate_forces_set_insert`** — `spawnV3_grow_gate_forces_set_insert` transported to
+the cap-WRITE-rebased `spawnWriteV3`. The accounts set-insert (cells-tree limb 0) STILL fires: the
+cells-tree weld is untouched by `weldsAtNoCapRoot` (only cap-root limb 25 was freed), so the
+`cellsFreshOp` + `cellsInsertOp` map-ops bind exactly as on `spawnV3`. -/
+theorem spawnWriteV3_grow_gate_forces_set_insert (hash : List ℤ → ℤ)
+    {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
+    (hsat : Satisfied2 hash spawnWriteV3 minit mfin maddrs t)
+    (i : Nat) (hi : i < t.rows.length)
+    (hspawn : (envAt t i).loc EffectVmEmitSpawn.SEL_SPAWN_RT = 1) :
+    (opensTo hash ((envAt t i).loc (beforeCellsRootCol EFFECT_VM_WIDTH))
+        ((envAt t i).loc NEW_CELL_KEY_PARAM_COL) none)
+    ∧ writesTo hash ((envAt t i).loc (beforeCellsRootCol EFFECT_VM_WIDTH))
+        ((envAt t i).loc NEW_CELL_KEY_PARAM_COL)
+        ((envAt t i).loc NEW_CELL_KEY_PARAM_COL)
+        ((envAt t i).loc (afterCellsRootCol EFFECT_VM_WIDTH)) := by
+  have hrowc := hsat.rowConstraints i hi
+  have hfresh := hrowc (.mapOp (cellsFreshOp EffectVmEmitSpawn.SEL_SPAWN_RT
+    NEW_CELL_KEY_PARAM_COL)) (by simp [spawnWriteV3])
+  have hins := hrowc (.mapOp (cellsInsertOp EffectVmEmitSpawn.SEL_SPAWN_RT
+    NEW_CELL_KEY_PARAM_COL)) (by simp [spawnWriteV3])
+  exact ⟨(hfresh hspawn).1, hins hspawn⟩
+
+/-- **`spawnWriteV3_forces_write` — the spawn parent→child cap-tree INSERT is FORCED in-circuit.** On an
+active spawn row of a `Satisfied2 spawnWriteV3` witness: the parent's held cap to `target` is
+membership-read against the before cap-root (a PRESENT anchor at `param[ANCHOR_KEY]` → `param[ANCHOR_MASK]`),
+and the post `cap_root` is the GENUINE sorted insert of the conferred edge (`param[KEEP_MASK]`) at the
+child key (`param[CAP_KEY]`). Mirrors `delegateV3_forces_write` EXACTLY over the spawn selector — this is
+the cap handoff that was the named PHASE-D residual, now FORCED. -/
+theorem spawnWriteV3_forces_write (hash : List ℤ → ℤ)
+    (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
+    (hsat : Satisfied2 hash spawnWriteV3 minit mfin maddrs t)
+    (i : Nat) (hi : i < t.rows.length)
+    (hactive : (envAt t i).loc EffectVmEmitSpawn.SEL_SPAWN_RT = 1) :
+    opensTo hash ((envAt t i).loc (beforeCapRootCol EFFECT_VM_WIDTH))
+        ((envAt t i).loc (prmCol ANCHOR_KEY)) (some ((envAt t i).loc (prmCol ANCHOR_MASK)))
+    ∧ writesTo hash ((envAt t i).loc (beforeCapRootCol EFFECT_VM_WIDTH))
+        ((envAt t i).loc (prmCol CAP_KEY)) ((envAt t i).loc (prmCol KEEP_MASK))
+        ((envAt t i).loc (afterCapRootCol EFFECT_VM_WIDTH)) := by
+  have hrowc := hsat.rowConstraints i hi
+  have hread := hrowc (.mapOp (anchorReadOpRot EffectVmEmitSpawn.SEL_SPAWN_RT))
+    (by simp [spawnWriteV3])
+  have hwrite := hrowc (.mapOp (insertWriteOpRot EffectVmEmitSpawn.SEL_SPAWN_RT))
+    (by simp [spawnWriteV3])
+  exact ⟨(hread hactive).1, hwrite hactive⟩
+
 #assert_axioms createCellV3_grow_gate_forces_set_insert
 #assert_axioms factoryV3_grow_gate_forces_set_insert
 #assert_axioms spawnV3_grow_gate_forces_set_insert
+#assert_axioms spawnWriteV3_grow_gate_forces_set_insert
+#assert_axioms spawnWriteV3_forces_write
 
 -- The new-cell-key pin lands at PI slot 46; each rotated create-family descriptor publishes 39 PIs.
 #guard ROT_NEW_CELL_KEY_PI == 42 + 4

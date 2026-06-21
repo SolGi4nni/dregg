@@ -444,6 +444,17 @@ def revokeCapabilityCapOpenV3 : EffectVmDescriptor2 :=
   withSelectorGate Dregg2.Circuit.Emit.EffectVmEmit.sel.REVOKE_CAPABILITY
     (effCapOpenV3 revokeCapabilityBaseV3 "dregg-effectvm-revokeCapability-v1-rot24-v3-capopen" EFF_REVOKE_CAPABILITY)
 
+/-- **`spawnCapOpenV3`** — the AUTHORITY-ONLY spawn cap-open (the FROZEN `spawnV3` base + the
+EFF_DELEGATION_OPS authority appendix). The membership crown is forced, but the cap handoff (cap-tree
+write) rides the FROZEN `cap_root` (`gCapPass`) — the post child cap_root is host-trusted. This is the
+spawn ROUTE-FORGE the verifier tooth (`is_forbidden_authority_only_cap_write_descriptor`) REJECTS: the
+producer must prove the WRITE wrapper `spawnWriteCapOpenV3` (where the handoff is FORCED on the wire). The
+genuine spawn route ALWAYS supplies the parent's c-list (a spawn confers a held cap), so the write wrapper
+is the live route; THIS is the named, light-client-rejected fallback. Mirrors `revokeCapabilityCapOpenV3`. -/
+def spawnCapOpenV3 : EffectVmDescriptor2 :=
+  withSelectorGate Dregg2.Circuit.Emit.EffectVmEmitSpawn.SEL_SPAWN_RT
+    (effCapOpenV3 EffectVmEmitRotationV3.spawnV3 "dregg-effectvm-spawn-v1-rot24-v3-capopen" EFF_DELEGATION_OPS)
+
 /-! ### The WRITE-FORCING fan-out cap-open wrappers (the frozen-face close — guarantee A circuit-forced).
 
 The wrappers above ride the FROZEN bases (`introduceV3`/`revokeDelegationV3` = `v3Of …` with `gCapPass`),
@@ -501,6 +512,19 @@ def delegateWriteCapOpenV3 : EffectVmDescriptor2 :=
     (effCapOpenV3 EffectVmEmitRotationV3.grantCapWriteV3
       "dregg-effectvm-delegate-v1-rot24-v3-write-capopen" EFF_DELEGATION_OPS)
 
+/-- **`spawnWriteCapOpenV3`** — spawn-via-cap on the WRITE-FORCING base (`spawnWriteV3` = the spawn actor
+face REBASED onto the cap-WRITE rotation + the cells grow-gate INSERT + the cap-tree handoff INSERT). The
+authority READ appendix (at `EFF_DELEGATION_OPS` — the parent confers a held cap PERMITTING delegation,
+exactly like `delegate`) + the deployed cap-tree `insertWriteOpRot` (the parent→child cap handoff FORCED
+in-circuit on the rotated AFTER cap-root limb, NOT frozen off-row). Unlike the authority-only spawn route,
+THIS carries BOTH the authority appendix AND the cap-tree INSERT in the SINGLE descriptor the light client
+verifies — so a forged after-cap-root / missing-anchor / colliding-child-key is REJECTED. Mirrors
+`delegateWriteCapOpenV3` EXACTLY. -/
+def spawnWriteCapOpenV3 : EffectVmDescriptor2 :=
+  withSelectorGate Dregg2.Circuit.Emit.EffectVmEmitSpawn.SEL_SPAWN_RT
+    (effCapOpenV3 EffectVmEmitRotationV3.spawnWriteV3
+      "dregg-effectvm-spawn-v1-rot24-v3-write-capopen" EFF_DELEGATION_OPS)
+
 /-- **`grantCapWriteCapOpenV3`** — grantCap-via-cap on the WRITE-FORCING base (`grantCapWriteV3`): authority
 appendix + the deployed `insertWriteOp`. The apex (`Rfix` for grantCap re-pointed) wires it. -/
 def grantCapWriteCapOpenV3 : EffectVmDescriptor2 :=
@@ -524,6 +548,8 @@ def delegateAttenWriteCapOpenV3 : EffectVmDescriptor2 :=
 #guard introduceWriteCapOpenV3.constraints.length == EffectVmEmitRotationV3.introduceWriteV3.constraints.length + 71
 #guard revokeDelegationWriteCapOpenV3.constraints.length == EffectVmEmitRotationV3.revokeDelegationWriteV3.constraints.length + 71
 #guard revokeCapabilityWriteCapOpenV3.constraints.length == EffectVmEmitRotationV3.revokeCapabilityV3.constraints.length + 71
+#guard spawnWriteCapOpenV3.traceWidth == EffectVmEmitRotationV3.spawnWriteV3.traceWidth + CAP_OPEN_SPAN
+#guard spawnWriteCapOpenV3.constraints.length == EffectVmEmitRotationV3.spawnWriteV3.constraints.length + 71
 
 /-- **`transferCapOpenEffV3`** (residual (a) — THE LIVE transfer cap-open) — the transfer base + the
 effect-GENERAL appendix at `EFF_TRANSFER` (bit 1). Carries `capOpenConstraintsEff 1`: the genuine SUBMASK facet gate

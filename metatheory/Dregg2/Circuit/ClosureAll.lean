@@ -1288,12 +1288,14 @@ theorem createCellFromFactory_closedLog_sat
       exact Dregg2.Circuit.RotatedKernelRefinementBirth.createCellFromFactory_descriptorRefines_sat
         hash hsat pre post actor newCell vk (logNeeds hadv))
 
-/-- spawn (tag 19), CLASS A — forced from `spawnV3`. -/
+/-- spawn (tag 19), CLASS A — forced from `spawnWriteCapOpenV3` (`= Rfix 19`). The cap handoff is now
+FORCED: the wrapper's `Satisfied2` strips to the base `spawnWriteV3`, whose cap-tree INSERT pins the
+parent→child cap edge (the readout's `capsMoveDecodes` seam) AND the accounts insert. -/
 theorem spawn_closedLog_sat
     (hash : List ℤ → ℤ)
     {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : Dregg2.Circuit.DescriptorIR2.VmTrace}
     (hsat : Dregg2.Circuit.DescriptorIR2.Satisfied2 hash
-      Dregg2.Circuit.Emit.EffectVmEmitRotationV3.spawnV3 minit mfin maddrs t)
+      Dregg2.Circuit.Emit.CapOpenEmit.spawnWriteCapOpenV3 minit mfin maddrs t)
     (pre post : RecChainedState) (actor child target : CellId)
     (pc : PublishedCommit) (pubLogPre pubLogPost : ℤ)
     (hdec : StateDecodeLog Slive LH pc pubLogPre pubLogPost pre post)
@@ -1309,7 +1311,7 @@ theorem spawn_closedLog_sat
     (fun hadv => by
       show fullActionStep pre (.spawnA actor child target) post
       simp only [fullActionStep]
-      exact Dregg2.Circuit.RotatedKernelRefinementBirth.spawn_descriptorRefines_sat
+      exact Dregg2.Circuit.RotatedKernelRefinementBirth.spawnWrite_descriptorRefines_capOpenSat
         hash hsat pre post actor child target (logNeeds hadv))
 
 /-- noteSpend (tag 27), CLASS A — forced from `noteSpendV3`. -/

@@ -820,7 +820,7 @@ pub const V3_STAGED_CAVEAT_DESCRIPTORS: &[(&str, &str, &str)] = &[(
 pub const V3_STAGED_REGISTRY_TSV: &str =
     include_str!("../descriptors/rotation-v3-staged-registry.tsv");
 pub const V3_STAGED_REGISTRY_FP: &str =
-    "6caa6df30e9723615c05ccc1a2bb8bb9417ed40610bc9d98252677fbcd84d7fb";
+    "f2298686728bf16278d7d61fb45ff363dfda74726284668cb3e3fae2e1f4862a";
 
 /// **THE FAITHFUL 8-FELT WIDE TRANSFER descriptor (STAGED-ADDITIVE slice).** The
 /// `v3RegistryWide` transfer member (`wideAppend transferV3 bb (bb+51)`, width 816 / PI 54) —
@@ -1625,7 +1625,13 @@ mod tests {
                 // PIs. The cap-membership chip-lookup count (1 leaf + 16 node) is unchanged.
                 let is_tb = key.contains("CapOpenTB");
                 let extra_cols = if is_tb { 2 } else { 0 };
-                let extra_pis = if is_tb { 3 } else { 0 };
+                // The spawn cap-open members (`spawnCapOpen`/`spawnWriteCapOpen`) are the ONLY cap-fanout
+                // members built over a BIRTH base (`spawnV3`/`spawnWriteV3`): spawn carries the extra
+                // new-cell-key PI weld (`ROT_NEW_CELL_KEY_PI = 46`, the child id pinned on row 0), so its
+                // rotated base publishes 47 PIs (the 46-PI vector + 1), not 46. So the cap-open wrapper
+                // inherits 47 PIs. Every other cap-open member rides a non-birth base (46 PIs).
+                let is_spawn = key.starts_with("spawn");
+                let extra_pis = if is_tb { 3 } else { 0 } + if is_spawn { 1 } else { 0 };
                 // Phase B-GATE: the rotated base graduation appends `7·n_rot_sites` lane columns,
                 // and the cap-open appendix is now 210 (91 base+mask + 7·17 lane cols for the leaf
                 // + 16 node absorbs). Both surpluses are multiples of 7; the concrete widths are
@@ -1968,7 +1974,7 @@ mod tests {
             }
         }
         assert_eq!(
-            n, 53,
+            n, 55,
             "expected the 36-member rotated cohort (28 v2-graduated + 8 widened) + the 6 fan-out \
              cap-open members (delegate/introduce/grantCap/revoke/refreshDelegation/revokeCapability \
              — each *CapOpenVmDescriptor2R24) + the 2 LIVE effect-general legs \
@@ -1976,12 +1982,16 @@ mod tests {
              (transferCapOpenTBVmDescriptor2R24, CapOpenTurnPins — the cap-open + 2 turn-identity \
              columns + 3 turn-identity PI pins welding src/actor/dst to the published turn) + the \
              FEE-IN-PROOF transfer (transferFeeVmDescriptor2R24 — the fee debited in-proof, 47 PIs) \
-             + THE WRITE-BEARING TAIL (`v3RegistryHeap` 45..51): heapWriteVmDescriptor2R24 (the \
+             + THE WRITE-BEARING TAIL (`v3RegistryHeap` 45..52): heapWriteVmDescriptor2R24 (the \
              Class-A heap-root recompute, `Rfix 56`) + the SIX write-forcing cap-open wrappers \
              (delegate/introduce/delegateAtten/revokeDelegation/revokeCapability/refreshDelegation \
              *WriteCapOpenVmDescriptor2R24 — the apex's `Rfix 1/10/11/14/55` re-pointed plus the \
              revokeCapability cap-tree REMOVE route-forge close, guarantee A: the cap-tree / \
-             deleg-tree WRITE forced into the commitment). \
+             deleg-tree WRITE forced into the commitment) + the SPAWN cap-handoff close (the \
+             authority-only spawnCapOpenVmDescriptor2R24 + the WRITE-forcing \
+             spawnWriteCapOpenVmDescriptor2R24, `Rfix 19` re-pointed — the parent→child CAPABILITY \
+             HANDOFF cap-tree INSERT forced ALONGSIDE the accounts grow-gate; both carry spawn's \
+             extra birth new-cell-key PI so 47 PIs). \
              The Signature-pinned capOpenAttenuateV3/transferCapOpenV3 were DELETED (Stage D)."
         );
     }

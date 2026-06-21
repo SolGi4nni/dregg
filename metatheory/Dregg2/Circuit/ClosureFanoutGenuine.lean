@@ -655,7 +655,10 @@ theorem closedLogExtract_createCellFromFactory_closed
   obtain ⟨actor, newCell, vk, hpub, logNeeds⟩ := readout minit mfin maddrs t pubLogPost pre post hsat
   exact createCellFromFactory_closedLog_sat hash hsat' pre post actor newCell vk pc pubLogPre pubLogPost hdecLog hpub.down logNeeds
 
-/-- **spawn (19).** Receipt is `createReceipt actor child`. -/
+/-- **spawn (19).** Receipt is `createReceipt actor child`. `Rfix 19 = spawnWriteCapOpenV3` (the
+WRITE-FORCING cap-open wrapper): the spawn cap handoff is FORCED — the readout's `capsMoveDecodes` seam
+is pinned by the LIVE cap-tree insert write. Editing `spawnWriteV3`'s insert op turns this — and the
+apex — RED. -/
 theorem closedLogExtract_spawn_closed
     (readout : ∀ (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
       (pubLogPost : ℤ) (pre post : RecChainedState),
@@ -667,7 +670,7 @@ theorem closedLogExtract_spawn_closed
             hash minit mfin maddrs t pre post actor child target)) :
     ClosedLogExtract Slive LH hash Rfix 19 := by
   intro _hCR minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
-  have hsat' : Satisfied2 hash Dregg2.Circuit.Emit.EffectVmEmitRotationV3.spawnV3
+  have hsat' : Satisfied2 hash Dregg2.Circuit.Emit.CapOpenEmit.spawnWriteCapOpenV3
       minit mfin maddrs t := hsat
   obtain ⟨actor, child, target, hpub, logNeeds⟩ := readout minit mfin maddrs t pubLogPost pre post hsat
   exact spawn_closedLog_sat hash hsat' pre post actor child target pc pubLogPre pubLogPost hdecLog hpub.down logNeeds

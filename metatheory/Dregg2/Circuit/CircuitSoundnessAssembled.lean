@@ -140,9 +140,18 @@ def v3RegistryHeap : List (String × EffectVmDescriptor2) :=
         -- SetProgram rides the setVK runtime row but pins the cell `program` slot into the authority
         -- residue (B_RECORD_DIGEST). `actionTagToPos 13` re-keys HERE so `Rfix 13 = setProgramV3`.
         ("setProgramVmDescriptor2R24",
-         Dregg2.Circuit.Emit.EffectVmEmitRotationV3.setProgramV3)]
+         Dregg2.Circuit.Emit.EffectVmEmitRotationV3.setProgramV3),
+        -- The spawn WRITE-FORCING cap-open wrapper (position 52): the spawn actor face REBASED onto the
+        -- cap-WRITE rotation (`spawnWriteV3`: cap-root limb 25 freed) + the cells grow-gate INSERT (the
+        -- accounts insert, limb 0) + the cap-tree handoff INSERT (the parent→child cap edge, limb 25) +
+        -- the EFF_DELEGATION_OPS authority appendix. So the DEPLOYED descriptor FORCES the parent→child
+        -- CAPABILITY HANDOFF (guarantee A) — the close of the spawn cap-handoff residual. `actionTagToPos
+        -- 19` re-keys HERE so `Rfix 19 = spawnWriteCapOpenV3`; the authority-only spawn descriptor stays
+        -- for the live prover route, light-client-REJECTED.
+        ("spawnWriteCapOpenVmDescriptor2R24",
+         Dregg2.Circuit.Emit.CapOpenEmit.spawnWriteCapOpenV3)]
 
-theorem v3RegistryHeap_length : v3RegistryHeap.length = 52 := by
+theorem v3RegistryHeap_length : v3RegistryHeap.length = 53 := by
   simp [v3RegistryHeap, Dregg2.Circuit.Emit.CapOpenEmit.v3RegistryCapOpen_length]
 
 /-- The heapWrite member lands at tail position 45 — `Rfix 56` resolves THERE. -/
@@ -188,7 +197,11 @@ def actionTagToPos : EffectIdx → Nat
   | 16 => 10   -- exercise        → exerciseVmDescriptor2R24
   | 17 => 22   -- createCell      → createCellVmDescriptor2R24
   | 18 => 23   -- factory         → factoryVmDescriptor2R24
-  | 19 => 24   -- spawn           → spawnVmDescriptor2R24
+  | 19 => 52   -- spawn           → spawnWriteCapOpenVmDescriptor2R24 (FAN-OUT WRITE: the spawn actor
+               --                   face on the cap-WRITE rotation `spawnWriteV3` + the cells grow-gate
+               --                   INSERT + the cap-tree handoff INSERT + EFF_DELEGATION_OPS appendix;
+               --                   the parent→child CAPABILITY HANDOFF FORCED in-circuit — guarantee A,
+               --                   the spawn cap-handoff close)
   | 20 => 2    -- bridgeMint      → mintVmDescriptor2R24 (refines MintASpec)
   | 24 => 41   -- revokeCapability→ revokeCapabilityCapOpenVmDescriptor2R24 (FAN-OUT: revokeCapability
                --                   base + EFF_REVOKE_CAPABILITY appendix; bit 1<<3, DISTINCT from the
@@ -307,6 +320,13 @@ ranges over the position-41 descriptor the deployed prover routes (`cap_open_rou
 previously-unreachable keystone is now in the apex's registry image. -/
 theorem Rfix_revokeCapability_capOpen :
     Rfix 24 = Dregg2.Circuit.Emit.CapOpenEmit.revokeCapabilityCapOpenV3 := rfl
+/-- spawn (tag 19) routes to the WRITE-FORCING spawn fan-out cap-open (`spawnWriteCapOpenV3`, position 52)
+— the parent→child CAPABILITY HANDOFF cap-tree INSERT FORCED in-circuit (the spawn cap-handoff close),
+no longer the frozen-`cap_root` `spawnVmDescriptor2R24`. So `vkOfRegistry Rfix` / the apex's `StarkSound
+hash Rfix` quantify over the descriptor that FORCES the handoff — removing the cap-insert gate REDS the
+apex spawn rung. -/
+theorem Rfix_spawn_capOpen :
+    Rfix 19 = Dregg2.Circuit.Emit.CapOpenEmit.spawnWriteCapOpenV3 := rfl
 
 /-! ## §2 — `kstepAll`: the assembled dispatcher arm.
 
