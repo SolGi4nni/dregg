@@ -37,14 +37,14 @@
 //!     arm to `record_pin_offset` (→ `Some(B_AUTHORITY_DIGEST)`, or a dedicated `B_MODE` pin) so the
 //!     generator feeds the 47th PI the descriptor declares.
 //!
-//!   * **`setFieldDyn` — UNREACHABLE via the live generator (missing weld).** The dynamic
-//!     `SetField` (`field_idx > 7`) routes to `setFieldDynVmDescriptor2R24`, but the V1 trace
-//!     generator HARD-ASSERTS `field_idx < 8` (`trace.rs::generate_effect_vm_trace`), so
-//!     `generate_rotated_effect_vm_trace` PANICS before producing any trace for an overflow write.
-//!     The fields-root weld (PI[46] → the AFTER authority-digest limb folding `fields_root`) is
-//!     declared in the descriptor but exercised by NO live path. THE NAMED RESIDUAL: the dynamic
-//!     overflow `SetField` needs a generator path (lift the `field_idx < 8` assert into a
-//!     dyn-routing branch that writes the `fields_root` map and feeds the fields-root pin).
+//!   * **`setFieldDyn` — the dynamic overflow write PROVES (the residual is CLOSED).** The dynamic
+//!     `SetField` (`field_idx > 7`) routes to `setFieldDynVmDescriptor2R24`, a DISTINCT 581-wide
+//!     V1Face geometry the standard generator could not produce (it panicked on `field_idx < 8` and
+//!     laid the 608-wide host). `generate_rotated_set_field_dyn_base` now builds it from scratch: the
+//!     Blum write→read pair (`addr = value = col 69`, `prev_value = col 70`, `prev_serial = col 74`,
+//!     `readback = col 75`) over a `MemBoundaryWitness`, the fields-root weld (col 275 == col 68), and
+//!     the fifth pin (col 263 → PI[46]). The honest dynamic write PROVES + light-client VERIFIES; a
+//!     forged read-back is REJECTED.
 //!
 //! Each test below is GREEN: the confirmable bindings (the no-cell-write state/commit) prove + the
 //! discriminator bites; the residuals are asserted as residuals (the precise broken seam / the
@@ -65,7 +65,8 @@ use dregg_circuit::lean_descriptor_air::VmConstraint;
 use dregg_circuit::effect_vm::columns::PARAM_BASE;
 use dregg_circuit::effect_vm::trace_rotated::{
     AFTER_BASE, B_AUTHORITY_DIGEST, B_MODE, ROT_WIDTH, RotatedBlockWitness, empty_caveat_manifest,
-    generate_rotated_effect_vm_trace, rotated_descriptor_name_for_effect,
+    generate_rotated_effect_vm_trace, generate_rotated_set_field_dyn_base,
+    rotated_descriptor_name_for_effect,
 };
 use dregg_circuit::effect_vm::{CellState, Effect};
 use dregg_circuit::effect_vm_descriptors::V3_STAGED_REGISTRY_TSV;
@@ -485,35 +486,33 @@ fn makesovereign_forced_on_wire_rejects_forged_authority_digest_anchor_disabled(
 }
 
 // ============================================================================
-// setFieldDyn — UNREACHABLE via the live generator (a DEEPER obstruction than a missing routing
-// branch: a whole missing GENERATOR for the 263-wide V1Face geometry).
+// setFieldDyn — the DYNAMIC overflow-field write PROVES (the residual is CLOSED).
+//
+// HISTORY (the residual that this test now CLOSES): the dynamic `SetField` (`field_idx >= 8`) routes
+// to `setFieldDynVmDescriptor2R24`, a DISTINCT 581-wide V1Face geometry the standard
+// `generate_rotated_effect_vm_trace` could not produce — it (a) hard-panicked on the v1
+// `field_idx < 8` assert and (b) laid the standard 608-wide host (40 chip sites), while setFieldDyn's
+// face carries four FEWER chip sites (581 = 328 ungraduated + 7·36 + 1 reserved). So the dynamic
+// overflow SetField was UNREACHABLE: its declared fields-root weld + Blum write→read pair were
+// exercised by no live path.
+//
+// `generate_rotated_set_field_dyn_base` now builds the geometry from scratch: the Blum linear-memory
+// write+read pair (`addr = value = col 69`, `prev_value = col 70`, `prev_serial = col 74`,
+// `readback = col 75`) over a `MemBoundaryWitness`, the fields-root weld (gate 31: col 275 == col 68),
+// and the fifth pin (col 263 → PI[46]). An honest dynamic SetField now PROVES + light-client VERIFIES.
 // ============================================================================
 
-/// **setFieldDyn — the dynamic overflow `SetField` is UNREACHABLE via the live generator (the
-/// deeper residual: no generator builds its 581-wide V1Face geometry).**
+/// **setFieldDyn — the dynamic overflow `SetField` PROVES against its deployed 581-wide descriptor
+/// (the missing-generator residual is CLOSED), and a forged readback is REJECTED.**
 ///
-/// `Effect::SetField { field_idx > 7 }` routes to `setFieldDynVmDescriptor2R24`. The proximate
-/// symptom is a panic: the V1 trace generator hard-asserts `field_idx < 8`
-/// (`trace.rs::generate_effect_vm_trace`), so `generate_rotated_effect_vm_trace` PANICS before
-/// producing a trace.
-///
-/// BUT the residual is DEEPER than lifting that assert — it is a whole missing generator. The
-/// `setFieldDynVmDescriptor2R24` descriptor is a DISTINCT, WIDER geometry: it is built on the
-/// `setFieldDynV1Face` (traceWidth 263) — which folds the in-circuit `fields_root` insertion
-/// sub-circuit (`dsl::openable_fields_insertion`: `post_root = insert(pre_root, key→value)`) into a
-/// 263-column V1 base — and rotates to **581** columns. The standard `generate_rotated_effect_vm_trace`
-/// produces the **188-base → 328-wide** rotated geometry (and its wide twin 608/816); it can NEVER
-/// satisfy the 581-wide setFieldDyn descriptor. Lifting the `field_idx < 8` assert would (a) silently
-/// clamp `fields[idx.min(7)]` (a WRONG-field correctness bug) and (b) still produce a 328/608-wide
-/// trace the 581-wide descriptor rejects on geometry. So the close is NOT a routing branch (as
-/// noteCreate/makeSovereign were) — it is a from-scratch generator for the 263-wide V1Face that runs
-/// the openable fields_root insertion in-circuit and feeds the fields-root pin (col 263 → PI[46]).
-///
-/// We assert: the descriptor DECLARES the fields-root pin (47 PIs); its rotated width is 581 (a
-/// DIFFERENT geometry from the 328 standard rotated trace — the structural source of the deeper
-/// residual); and the live generator PANICS on the overflow index (the proximate symptom).
+/// BEFORE: the live generator panicked on `field_idx >= 8` and produced only the 328/608-wide standard
+/// geometry — the 581-wide setFieldDyn descriptor was unprovable, so the effect did not exist in the
+/// living protocol. AFTER: `generate_rotated_set_field_dyn_base` builds the 581-wide V1Face geometry
+/// with the Blum write→read transport; the honest dynamic-field write PROVES + VERIFIES. The FORGE
+/// pole holds: a tampered read-back column (the read no longer transports the write's value) has no
+/// satisfying memory replay and is REJECTED.
 #[test]
-fn setfielddyn_unreachable_via_live_generator_missing_weld() {
+fn setfielddyn_dynamic_overflow_proves_against_deployed_descriptor() {
     let name = "setFieldDynVmDescriptor2R24";
     let desc =
         parse_vm_descriptor2(rotated_descriptor_json(name)).expect("setFieldDyn descriptor parses");
@@ -521,23 +520,19 @@ fn setfielddyn_unreachable_via_live_generator_missing_weld() {
         desc.public_input_count, 47,
         "setFieldDyn descriptor DECLARES the fields-root weld pin (47 PIs)"
     );
-    // THE DEEPER OBSTRUCTION (the structural source): the setFieldDyn descriptor is a DISTINCT,
-    // WIDER geometry (581 cols, built on the 263-wide `setFieldDynV1Face`) — NOT the 328-wide
-    // standard rotated trace the live `generate_rotated_effect_vm_trace` produces. No live generator
-    // builds the 581-wide V1Face, so the close is a whole missing generator, not a routing branch.
+    // The DISTINCT geometry the generator now produces from scratch: 581-wide V1Face, NOT the 328-wide
+    // standard rotated trace (the structural reason the standard generator cannot satisfy it).
     assert_eq!(
         desc.trace_width, 581,
-        "setFieldDyn is a DISTINCT 581-wide V1Face geometry (263-base + fields_root insertion + \
-         rotation), NOT the 328-wide standard rotated trace — the deeper residual is a missing \
-         generator for this geometry, not merely the field_idx < 8 assert"
+        "setFieldDyn is a DISTINCT 581-wide V1Face geometry (four fewer chip sites than the standard \
+         608-wide host), NOT the 328-wide standard rotated trace"
     );
     assert_ne!(
         desc.trace_width, ROT_WIDTH,
-        "setFieldDyn's width (581) != the standard rotated width (328) — the standard generator \
-         cannot produce its trace"
+        "setFieldDyn's width (581) != the standard rotated width (328)"
     );
 
-    // The dynamic SetField routes to the dyn descriptor by name...
+    // The dynamic SetField (field_idx > 7) routes to the dyn descriptor by name.
     let effect = Effect::SetField {
         field_idx: 9,
         value: BabyBear::new(424_242),
@@ -548,44 +543,58 @@ fn setfielddyn_unreachable_via_live_generator_missing_weld() {
         "field_idx > 7 routes to setFieldDynVmDescriptor2R24"
     );
 
-    // ...but the live generator PANICS on the overflow index (the V1 `field_idx < 8` assert) — so
-    // no trace is ever produced for the dyn fields-root write.
+    // Build the honest 581-wide trace. The in-circuit overflow-memory slot (0..7) is the address the
+    // Blum write+read pair operate on; the previous value at that address is 0 (a fresh overflow cell).
     let balance: i64 = 50_000;
     let st = CellState::new(balance as u64, 0);
     let before_cell = producer_cell(balance, 0);
-    let after_cell = producer_cell(balance, 1);
+    let after_cell = producer_cell(balance, 1); // a SetField bumps the nonce
     let mut ledger = Ledger::new();
     ledger.insert_cell(after_cell.clone()).unwrap();
     let before_w = rw::produce(&before_cell, &ledger, &NULL_ROOT, &COMMIT_ROOT, &receipt_log());
     let after_w = rw::produce(&after_cell, &ledger, &NULL_ROOT, &COMMIT_ROOT, &receipt_log());
     let caveat = empty_caveat_manifest();
+    let slot = 4u32;
+    let prev_value = BabyBear::new(0);
 
-    let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        generate_rotated_effect_vm_trace(
-            &st,
-            &[effect],
-            &bridge(&before_w),
-            &bridge(&after_w),
-            &caveat,
-        )
-    }))
-    .is_err();
+    let (trace, dpis, mem_boundary) = generate_rotated_set_field_dyn_base(
+        &st,
+        &bridge(&before_w),
+        &bridge(&after_w),
+        &caveat,
+        slot,
+        prev_value,
+    )
+    .expect("setFieldDyn base producer");
+    assert_eq!(dpis.len(), desc.public_input_count, "dpis length matches the 47-PI descriptor");
+
+    // THE PROVABILITY GATE: the honest dynamic-field write PROVES + light-client VERIFIES against the
+    // DEPLOYED 581-wide descriptor — no catch_unwind. The residual is CLOSED.
+    let proof = prove_vm_descriptor2(&desc, &trace, &dpis, &mem_boundary, &[])
+        .unwrap_or_else(|e| panic!("setFieldDyn must PROVE against its deployed descriptor (581): {e}"));
+    verify_vm_descriptor2(&desc, &proof, &dpis)
+        .unwrap_or_else(|e| panic!("setFieldDyn proof must light-client VERIFY: {e}"));
+
+    // THE FORGE POLE: tamper the read-back column (col 75 = PARAM_BASE + READBACK) on the active row so
+    // the read no longer transports the write's value. The Blum memory replay (read's claimed prev !=
+    // the write's stored value) has no satisfying assembly — the forged dynamic write is REJECTED.
+    const READBACK_PARAM: usize = 7; // PARAM_BASE + 7 = col 75
+    let mut forged = trace.clone();
+    for row in forged.iter_mut() {
+        // Only perturb the active (selector-firing) row; col 2 = SEL_SET_FIELD.
+        if row[2] == BabyBear::ONE {
+            row[PARAM_BASE + READBACK_PARAM] += BabyBear::ONE;
+        }
+    }
     assert!(
-        panicked,
-        "MISSING GENERATOR (deeper than the assert): the live generator hard-asserts field_idx < 8 \
-         AND — even were the assert lifted — produces only the 328-wide standard rotated geometry, \
-         which the 581-wide setFieldDyn V1Face descriptor rejects. The dynamic overflow SetField is \
-         UNREACHABLE; the declared fields-root weld is exercised by no live path. NAMED RESIDUAL: a \
-         from-scratch generator for the 263-wide V1Face that runs the openable fields_root insertion \
-         in-circuit (post_root = insert(pre_root, key→value)) and feeds the fields-root pin (col 263 \
-         → PI[46]) — NOT merely lifting the field_idx < 8 assert."
+        refused(&desc, &forged, &dpis, &mem_boundary, &[]),
+        "a forged read-back (the read no longer transports the write's value) has no satisfying Blum \
+         memory replay and is REJECTED"
     );
 
     eprintln!(
-        "VK-EPOCH setFieldDyn: the descriptor DECLARES the fields-root weld (47 PIs) at a DISTINCT \
-         581-wide V1Face geometry; the live generator produces only the 328-wide standard rotated \
-         trace (and panics on field_idx >= 8). DEEPER RESIDUAL (reported, not faked green): a whole \
-         missing generator for the 263-wide setFieldDyn V1Face — the close is from-scratch, not a \
-         routing branch like noteCreate/makeSovereign."
+        "VK-EPOCH setFieldDyn: the DYNAMIC overflow-field write PROVES + light-client VERIFIES against \
+         the deployed 581-wide descriptor (the Blum write→read transport over the V1Face geometry), \
+         and a forged read-back is REJECTED. The missing-generator residual is CLOSED."
     );
 }

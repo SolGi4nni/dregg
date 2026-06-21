@@ -34,10 +34,10 @@ use dregg_circuit::descriptor_ir2::{
 };
 use dregg_circuit::effect_vm::trace_rotated::{
     GRAD_ROT_WIDTH, RotatedBlockWitness, WIDE_BEFORE_CBASE, WIDE_COMMIT_CARRIER,
-    empty_caveat_manifest, generate_rotated_create_cell_wide,
+    SET_FIELD_DYN_HOST_WIDTH, empty_caveat_manifest, generate_rotated_create_cell_wide,
     generate_rotated_create_from_factory_wide, generate_rotated_note_create_wide,
-    generate_rotated_note_spend_wide, generate_rotated_spawn_wide,
-    generate_rotated_transfer_shape_wide,
+    generate_rotated_note_spend_wide, generate_rotated_set_field_dyn_wide,
+    generate_rotated_spawn_wide, generate_rotated_transfer_shape_wide,
 };
 use dregg_circuit::effect_vm::{CellState, Effect};
 use dregg_circuit::effect_vm_descriptors::WIDE_REGISTRY_STAGED_TSV;
@@ -263,6 +263,56 @@ fn wide_burn_transfer_shape_proves_verifies_and_executor_anchors() {
     .expect("wide burn producer");
     assert_roundtrip(name, &desc, &trace, &dpis, &[], 46);
     assert_executor_anchor(name, &before_cell, &before_w, nullifier_root, commitments_root, &trace);
+}
+
+/// **setFieldDyn wide roundtrip — the DYNAMIC overflow-field write PROVES (the residual CLOSED).**
+///
+/// The dynamic `SetField` (`field_idx >= 8`) routes to `setFieldDynVmDescriptor2R24`, a DISTINCT
+/// 581-wide V1Face geometry (wide member 789 / PI 63) the standard generator cannot produce (it panics
+/// on `field_idx >= 8` and lays the 608-wide host). `generate_rotated_set_field_dyn_wide` builds it
+/// from scratch: the Blum write+read pair (`addr = value = col 69`, `prev_value = col 70`,
+/// `prev_serial = col 74`, `readback = col 75`) over a `MemBoundaryWitness`, the fields-root weld
+/// (col 275 == col 68), and the fifth pin (col 263 → PI[46]). This PROVES + light-client VERIFIES —
+/// no `catch_unwind`. The forge pole (a tampered readback) is exercised in `vk_epoch_misc`.
+#[test]
+fn wide_set_field_dyn_dynamic_overflow_proves_and_verifies() {
+    let name = "setFieldDynVmDescriptor2R24";
+    let desc = wide_desc(name);
+    assert_eq!(desc.trace_width, SET_FIELD_DYN_HOST_WIDTH + 208, "setFieldDyn wide width 789");
+    assert_eq!(desc.public_input_count, 63, "setFieldDyn wide carries 47 base + 16 wide PIs");
+
+    let balance: i64 = 50_000;
+    let st = CellState::new(balance as u64, 0);
+    let mut ledger = Ledger::new();
+    // A SetField bumps the nonce; the after-cell carries nonce 1.
+    let before_cell = producer_cell(balance, 0);
+    let after_cell = producer_cell(balance, 1);
+    ledger.insert_cell(after_cell.clone()).unwrap();
+    let nullifier_root = [0u8; 32];
+    let commitments_root = [0u8; 32];
+    let receipt_log: Vec<[u8; 32]> = vec![[5u8; 32]];
+    let before_w = rw::produce(&before_cell, &ledger, &nullifier_root, &commitments_root, &receipt_log);
+    let after_w = rw::produce(&after_cell, &ledger, &nullifier_root, &commitments_root, &receipt_log);
+
+    // slot 3 (the overflow-memory address 0..7), previous value 0 at that address.
+    let slot = 3u32;
+    let prev_value = BabyBear::new(0);
+    let (trace, dpis, mem_boundary) = generate_rotated_set_field_dyn_wide(
+        &st, &bridge(&before_w), &bridge(&after_w), &empty_caveat_manifest(), slot, prev_value,
+    )
+    .expect("wide setFieldDyn producer");
+    assert_eq!(trace[0].len(), desc.trace_width, "setFieldDyn wide trace width matches descriptor");
+    assert_eq!(dpis.len(), desc.public_input_count, "setFieldDyn wide PI count matches descriptor");
+
+    let proof = prove_vm_descriptor2(&desc, &trace, &dpis, &mem_boundary, &[])
+        .unwrap_or_else(|e| panic!("setFieldDyn wide proof must prove (789): {e}"));
+    verify_vm_descriptor2(&desc, &proof, &dpis)
+        .unwrap_or_else(|e| panic!("setFieldDyn wide proof must verify: {e}"));
+    eprintln!(
+        "WIDE setFieldDyn: the DYNAMIC overflow-field write PROVED + VERIFIED at width 789 (the Blum \
+         write→read transport over the 581-wide V1Face geometry — the missing-generator residual is \
+         CLOSED)."
+    );
 }
 
 /// **NOTESPEND grow-gate wide roundtrip.** The nullifier accumulator (limb 26) grow-gate; wide member

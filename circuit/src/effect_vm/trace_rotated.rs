@@ -2763,6 +2763,176 @@ pub fn generate_rotated_refusal_wide(
     Ok((trace, dpis, map_heaps))
 }
 
+// ============================================================================
+// setFieldDyn — the DYNAMIC overflow-field write (the 581-wide V1Face geometry).
+// ============================================================================
+
+/// The graduated host width of the `setFieldDynVmDescriptor2R24` 1-felt descriptor: the
+/// `setFieldDynV1Face` carries FOUR fewer chip sites than the standard rotated host (36 vs 40 — the
+/// setField face does not fire the economic balance-hash sites), so its graduated width is
+/// `ROT_WIDTH + 7·36 = 328 + 252 = 580`… +1 reserved = **581** (the committed
+/// `setFieldDynVmDescriptor2R24.trace_width`, distinct from `GRAD_ROT_WIDTH = 608`). The wide
+/// carriers (the `setFieldDynVmDescriptor2R24Wide` member) land at THIS host width.
+pub const SET_FIELD_DYN_HOST_WIDTH: usize = 581;
+
+/// The slot-index param column the dynamic setField indexes the 8-cell overflow memory by
+/// (`prmCol SLOT = prmCol VALUE = param1`, col 69 — both addr AND value of the Blum write, the
+/// post-flag-day `addr = value = param1` identity). It MUST be `0..7` (the slot-range gate).
+const SET_FIELD_DYN_SLOT_COL: usize = 1; // PARAM_BASE + 1 = col 69
+/// The previous-value witness param column (`PREV_VAL = param2`, col 70).
+const SET_FIELD_DYN_PREV_VAL_COL: usize = 2; // PARAM_BASE + 2 = col 70
+/// The previous-serial witness param column (`PREV_SERIAL = param6`, col 74).
+const SET_FIELD_DYN_PREV_SERIAL_COL: usize = 6; // PARAM_BASE + 6 = col 74
+/// The read-back param column (`READBACK = param7`, col 75) the read op transports the write to.
+const SET_FIELD_DYN_READBACK_COL: usize = 7; // PARAM_BASE + 7 = col 75
+
+/// **THE DYNAMIC-FIELD setField base trace generator (`setFieldDynVmDescriptor2R24`, the 581-wide
+/// V1Face geometry).**
+///
+/// The overflow `SetField` (`field_idx >= 8`) routes to `setFieldDynVmDescriptor2R24`, a DISTINCT
+/// geometry the standard [`generate_rotated_effect_vm_trace`] cannot produce: it (a) hard-panics on
+/// `field_idx >= 8` (the v1 `field_idx < 8` assert), and (b) lays the standard 40-chip-site host.
+/// This generator builds the geometry from scratch.
+///
+/// THE BLUM LINEAR MEMORY (the descriptor's two `mem_op` rows, NOT a fields-tree `map_op`): the 8
+/// overflow user-field cells are memory addresses `0..7`. The dynamic write picks a `slot` (`0..7`,
+/// the slot-range gate on col 69) and the deployed `addr = value = param1` identity collapses the
+/// slot AND the written value into col 69. The honest trace lays:
+///   * col 69 (`SLOT`/`VALUE`, param1) = `slot` — the addr AND value of the write (slot-range gated);
+///   * col 70 (`PREV_VAL`, param2) = `prev_value` — the value at that address BEFORE the write
+///     (= the declared boundary init image, replayed as the write's prev tuple);
+///   * col 74 (`PREV_SERIAL`, param6) = `0` — the write opens against the INIT serial (the
+///     `MemBoundaryWitness` declares serial 0 for the touched address);
+///   * col 75 (`READBACK`, param7) = `slot` — the read op transports the write's value (the read's
+///     `value = prev_value = col 75`, `prev_serial = const 1` ties it to the write at serial 1).
+/// The write is the FIRST mem op (serial 1), so the read's `prev_serial = 1` matches the write's
+/// position — the Blum write→read transport with ZERO hashing (`satisfied2_mem_consistent`).
+///
+/// THE FIELDS-ROOT WELD (gate 31): the AFTER `fields_root` limb (col `AFTER_BASE + B_FIELDS_ROOT` =
+/// 275) is welded to `FIELD_INDEX` (col 68) on the active row; we force the AFTER fields_root limb to
+/// `slot` and recompute the AFTER block commitment so the published NEW commit binds it. The fifth
+/// pin (col `AFTER_BASE + B_RECORD_DIGEST` = 263 → PI[46]) welds the AFTER authority/record-digest
+/// limb to the published PI — `record_pin_offset` returns `None` for `SetField`, so we push it here.
+///
+/// `slot` is the in-circuit overflow-memory address (`0..7`), distinct from the effect's raw
+/// `field_idx >= 8`. We thread it as a v1 `SetField { field_idx: slot, value: slot }` lead so the v1
+/// economic sub-trace + the rotated welds are laid by the standard machinery WITHOUT the panic, then
+/// override the dyn-specific columns. Returns `(trace, dpis, mem_boundary)` ready for
+/// `prove_vm_descriptor2(&desc, &trace, &dpis, &mem_boundary, &[])`.
+#[cfg(feature = "prover")]
+#[allow(clippy::missing_panics_doc)]
+pub fn generate_rotated_set_field_dyn_base(
+    initial_state: &CellState,
+    before_w: &RotatedBlockWitness,
+    after_w: &RotatedBlockWitness,
+    caveat: &RotatedCaveatManifest,
+    slot: u32,
+    prev_value: BabyBear,
+) -> Result<
+    (
+        Vec<Vec<BabyBear>>,
+        Vec<BabyBear>,
+        crate::descriptor_ir2::MemBoundaryWitness,
+    ),
+    String,
+> {
+    use super::columns::PARAM_BASE;
+
+    if slot >= 8 {
+        return Err(format!(
+            "setFieldDyn: the in-circuit overflow-memory slot must be 0..7 (the slot-range gate on \
+             col 69); got {slot}. The overflow field maps to an 8-cell Blum memory (addresses 0..7), \
+             NOT the raw effect field_idx."
+        ));
+    }
+
+    // Lay the v1 economic sub-trace + the rotated welds via the standard machinery using a SAFE
+    // in-bounds SetField (slot 0..7 dodges the `field_idx < 8` panic). The v1 value carrier (col 69)
+    // is forced to `slot` below to honour the deployed `addr = value = param1` identity, so we seed
+    // the v1 SetField value with `slot` directly (the slot-range gate then passes on col 69).
+    let slot_felt = BabyBear::new(slot);
+    let lead = Effect::SetField {
+        field_idx: slot,
+        value: slot_felt,
+    };
+    let (mut trace, base_pis) =
+        generate_rotated_effect_vm_trace(initial_state, &[lead], before_w, after_w, caveat)?;
+    if base_pis.len() != ROT_PI_COUNT {
+        return Err(format!(
+            "setFieldDyn base generator: expected the bare {ROT_PI_COUNT}-PI rotated vector, got {} \
+             (SetField carries no record-pin offset)",
+            base_pis.len()
+        ));
+    }
+
+    // Fill the dynamic-field param columns on EVERY row (the params are row-uniform; the selector
+    // makes them inert on padding rows). col 68 (FIELD_INDEX) = slot for gate 31's weld; col 69
+    // (SLOT/VALUE) = slot (addr = value of the write); col 70 (PREV_VAL) = prev_value; col 74
+    // (PREV_SERIAL) = 0 (the boundary init serial); col 75 (READBACK) = slot (the write's value).
+    for row in trace.iter_mut() {
+        row[PARAM_BASE + super::columns::param::FIELD_INDEX] = slot_felt;
+        row[PARAM_BASE + SET_FIELD_DYN_SLOT_COL] = slot_felt;
+        row[PARAM_BASE + SET_FIELD_DYN_PREV_VAL_COL] = prev_value;
+        row[PARAM_BASE + SET_FIELD_DYN_PREV_SERIAL_COL] = BabyBear::ZERO;
+        row[PARAM_BASE + SET_FIELD_DYN_READBACK_COL] = slot_felt;
+    }
+
+    // THE FIELDS-ROOT WELD (gate 31): force the AFTER fields_root limb (col 275) to `slot` (= col 68)
+    // on EVERY row, then recompute the AFTER block commitment so the published NEW commit binds it.
+    for row in trace.iter_mut() {
+        row[AFTER_BASE + B_FIELDS_ROOT] = slot_felt;
+        recompute_block_commit(row, AFTER_BASE);
+    }
+
+    // Re-derive the rotated NEW commit PI the AFTER-limb override moved (PI 43, last row). The OLD
+    // commit (PI 42, row-0 BEFORE block) is untouched by the AFTER override.
+    let last_idx = trace.len() - 1;
+    let mut dpis = base_pis;
+    dpis[V1_PI_COUNT + 1] = trace[last_idx][AFTER_BASE + B_STATE_COMMIT]; // PI 43: NEW commit
+
+    // THE FIFTH PIN (col 263 = AFTER_BASE + B_RECORD_DIGEST → PI[46]): SetField has no
+    // `record_pin_offset`, so push the AFTER record-digest limb here (the descriptor pins it last row).
+    dpis.push(trace[last_idx][AFTER_BASE + B_RECORD_DIGEST]); // PI 46
+    debug_assert_eq!(dpis.len(), ROT_PI_COUNT + 1, "setFieldDyn carries the rotated 46-PI + PI[46]");
+
+    // THE BLUM BOUNDARY: ONE declared address (the slot, init value = prev_value, init serial 0). The
+    // write (serial 1) opens against (prev_value, 0); the read (serial 2) opens against (slot, 1) —
+    // the write's own (value, serial). A wrong prev_value / a forged readback has no satisfying replay.
+    let mem_boundary = crate::descriptor_ir2::MemBoundaryWitness {
+        addrs: vec![slot],
+        init_vals: vec![prev_value.as_u32()],
+    };
+
+    Ok((trace, dpis, mem_boundary))
+}
+
+/// **THE WIDE setFieldDyn trace generator (`setFieldDynVmDescriptor2R24Wide`, 789-wide / 63 PI).**
+/// The 581-wide V1Face base ([`generate_rotated_set_field_dyn_base`]) + `append_wide_carriers` at the
+/// `SET_FIELD_DYN_HOST_WIDTH = 581` host (NOT `GRAD_ROT_WIDTH = 608` — the setField face has four
+/// fewer chip sites). Returns `(trace, dpis, mem_boundary)` ready for the wide descriptor.
+#[cfg(feature = "prover")]
+pub fn generate_rotated_set_field_dyn_wide(
+    initial_state: &CellState,
+    before_w: &RotatedBlockWitness,
+    after_w: &RotatedBlockWitness,
+    caveat: &RotatedCaveatManifest,
+    slot: u32,
+    prev_value: BabyBear,
+) -> Result<
+    (
+        Vec<Vec<BabyBear>>,
+        Vec<BabyBear>,
+        crate::descriptor_ir2::MemBoundaryWitness,
+    ),
+    String,
+> {
+    let (mut trace, base_pis, mem_boundary) =
+        generate_rotated_set_field_dyn_base(initial_state, before_w, after_w, caveat, slot, prev_value)?;
+    let dpis = append_wide_carriers(&mut trace, base_pis, SET_FIELD_DYN_HOST_WIDTH);
+    debug_assert_eq!(trace[0].len(), SET_FIELD_DYN_HOST_WIDTH + 208); // 789
+    Ok((trace, dpis, mem_boundary))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
