@@ -51,6 +51,23 @@ fn main() {
     // framebuffer. See `render_cockpit_headless`. Builds only under the
     // `headless-render` feature (which pulls gpui's `test-support` headless
     // window + capture API). Mutually independent of the windowed `run_window`.
+    // `--explore-ui <outdir>`: the UI-EXPLORATION crawl — BFS-walk the cockpit's
+    // navigation state-space (drive the real interaction handlers), screenshot
+    // each distinct UI state, and emit `<outdir>/ui-graph.json` + `states/*.png`.
+    // The atlas's "UI tree": exploring inside and through the surfaces.
+    #[cfg(feature = "headless-render")]
+    {
+        if let Some(dir) = explore_ui_arg(&args) {
+            match explore_ui_headless(&dir) {
+                Ok(()) => std::process::exit(0),
+                Err(e) => {
+                    eprintln!("explore-ui FAILED: {e:#}");
+                    std::process::exit(1);
+                }
+            }
+        }
+    }
+
     #[cfg(feature = "headless-render")]
     {
         if let Some(out) = render_cockpit_arg(&args) {
@@ -445,6 +462,151 @@ fn render_tab_arg(args: &[String]) -> Option<String> {
         }
     }
     None
+}
+
+/// Parse `--explore-ui <outdir>`.
+#[cfg(feature = "headless-render")]
+fn explore_ui_arg(args: &[String]) -> Option<String> {
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        if a == "--explore-ui" {
+            return it.next().cloned();
+        }
+        if let Some(rest) = a.strip_prefix("--explore-ui=") {
+            return Some(rest.to_string());
+        }
+    }
+    None
+}
+
+/// THE UI-EXPLORATION CRAWL — BFS-walk the cockpit's navigation state-space by
+/// driving the real interaction handlers, screenshot each distinct UI state, and
+/// emit a graph of states + interaction edges. The atlas's "UI tree".
+#[cfg(feature = "headless-render")]
+fn explore_ui_headless(outdir: &str) -> anyhow::Result<()> {
+    use cockpit::NavAction;
+    use gpui::{px, size, AppContext, HeadlessAppContext, PlatformTextSystem};
+    use gpui_wgpu::CosmicTextSystem;
+    use std::borrow::Cow;
+    use std::cell::RefCell;
+    use std::collections::{HashSet, VecDeque};
+    use std::rc::Rc;
+    use std::sync::Arc;
+
+    const W: f32 = 1280.0;
+    const H: f32 = 832.0;
+    let max_nodes: usize = std::env::var("ATLAS_UI_NODES").ok().and_then(|s| s.parse().ok()).unwrap_or(220);
+
+    let states_dir = format!("{outdir}/states");
+    std::fs::create_dir_all(&states_dir)?;
+
+    static LILEX: &[u8] = include_bytes!("../assets/fonts/Lilex-Regular.ttf");
+    static IBM_PLEX: &[u8] = include_bytes!("../assets/fonts/IBMPlexSans-Regular.ttf");
+    let text_system: Arc<dyn PlatformTextSystem> =
+        Arc::new(CosmicTextSystem::new_without_system_fonts("Lilex"));
+    text_system.add_fonts(vec![Cow::Borrowed(LILEX), Cow::Borrowed(IBM_PLEX)])?;
+    let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(()), || {
+        gpui_platform::current_headless_renderer()
+    });
+
+    let (world, anchors) = world::demo_world();
+    let shared = Rc::new(RefCell::new(world));
+    let window = cx.open_window(size(px(W), px(H)), |window, cx| {
+        let view = cx.new(|cx| {
+            let focus = cx.focus_handle();
+            cockpit::Cockpit::with_node(shared.clone(), anchors, focus, None, None)
+        });
+        view.update(cx, |c, cx| c.focus_on_open(window, cx));
+        view
+    })?;
+    let wh = window.into();
+
+    // root at HOME; capture the initial nav state to restore between nodes
+    let initial = window.update(&mut cx, |c, _window, cx| {
+        c.select_tab_named("home");
+        c.capture_nav()
+    })?;
+
+    let sanitize = |k: &str| -> String {
+        k.chars().map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' }).collect::<String>()
+    };
+
+    let mut visited: HashSet<String> = HashSet::new();
+    let mut queue: VecDeque<Vec<NavAction>> = VecDeque::new();
+    let mut nodes: Vec<(String, String, String)> = Vec::new(); // (key, tab, png)
+    let mut edges: Vec<(String, String, String)> = Vec::new(); // (from, label, to)
+    queue.push_back(Vec::new());
+
+    while let Some(path) = queue.pop_front() {
+        if nodes.len() >= max_nodes {
+            eprintln!("explore-ui: node cap {max_nodes} hit ({} queued)", queue.len());
+            break;
+        }
+        // reconstruct to `path`, read key + children (all inside one update)
+        let dbg = std::env::var("ATLAS_UI_DEBUG").is_ok();
+        let (key, tab, children) = window.update(&mut cx, |c, _window, cx| {
+            if dbg { eprintln!("  reconstruct: restore_initial"); }
+            c.restore_nav(&initial, cx);
+            for (i, a) in path.iter().enumerate() {
+                if dbg { eprintln!("  reconstruct: apply path[{i}] {a:?}"); }
+                c.apply_nav(a, cx);
+            }
+            let key = c.nav_key();
+            let tab = key.split('|').next().unwrap_or("").to_string();
+            let node_state = c.capture_nav();
+            let mut kids = Vec::new();
+            for (label, action) in c.available_nav() {
+                if dbg { eprintln!("  child: apply {action:?} ({label})"); }
+                c.apply_nav(&action, cx);
+                kids.push((label, action, c.nav_key()));
+                if dbg { eprintln!("  child: restore"); }
+                c.restore_nav(&node_state, cx);
+            }
+            (key, tab, kids)
+        })?;
+
+        if visited.contains(&key) {
+            continue;
+        }
+        visited.insert(key.clone());
+        eprintln!("explore-ui: [{}] visiting {key}", nodes.len());
+
+        // drive a fully-laid-out frame + capture
+        cx.run_until_parked();
+        cx.update_window(wh, |_, window, _cx| window.refresh())?;
+        cx.run_until_parked();
+        let captured = cx.capture_screenshot(wh)?;
+        let png = format!("states/{}.png", sanitize(&key));
+        captured.save(format!("{outdir}/{png}"))?;
+        nodes.push((key.clone(), tab, png));
+
+        for (label, action, child_key) in children {
+            edges.push((key.clone(), label, child_key.clone()));
+            if !visited.contains(&child_key) {
+                let mut p = path.clone();
+                p.push(action);
+                queue.push_back(p);
+            }
+        }
+    }
+
+    // emit ui-graph.json
+    let nodes_json: Vec<_> = nodes.iter().map(|(k, t, p)| {
+        serde_json::json!({ "key": k, "tab": t, "png": p })
+    }).collect();
+    let edges_json: Vec<_> = edges.iter().map(|(f, l, t)| {
+        serde_json::json!({ "from": f, "label": l, "to": t })
+    }).collect();
+    let blob = serde_json::json!({
+        "node_count": nodes.len(),
+        "edge_count": edges.len(),
+        "max_nodes": max_nodes,
+        "nodes": nodes_json,
+        "edges": edges_json,
+    });
+    std::fs::write(format!("{outdir}/ui-graph.json"), serde_json::to_string_pretty(&blob)?)?;
+    println!("OK explore-ui -> {outdir}/ui-graph.json ({} states, {} edges)", nodes.len(), edges.len());
+    Ok(())
 }
 
 /// THE HEADLESS COCKPIT BAKE — render the REAL `cockpit::Cockpit` element tree

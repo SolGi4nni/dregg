@@ -13,5 +13,10 @@
     "title": "The issuer well (negative balance) cannot initiate any turn",
     "body": "In the game-tree crawl, every turn AUTHORED by the issuer-well cell (3cc026, balance -1000000) is refused with InsufficientBalance \u2014 including peek (EmitEvent) and touch (IncrementNonce), which mutate no value. The well cannot pay the per-turn computron fee from a negative balance, so it can never be a turn's agent. This is arguably correct (an issuer well is a passive supply sink that only moves when OTHER cells transact against it), but it means a fee-charged turn is gated on positive balance even for value-neutral verbs. Surfaced by the crawl, not previously noted.",
     "repro": "effect from=service(the well) kind=transfer \u2192 refused; act on the well \u2192 InsufficientBalance"
+  },
+  {
+    "title": "Four live tabs stall headless step-rendering (Wonder/Swarm/Agent/Time)",
+    "body": "The UI-exploration crawl drives the cockpit headlessly, stepping window.update + capture between states. Four tabs hang this loop because their render schedules self-rescheduling/perpetual work that window.update's effect-flush never drains: Wonder (the glow animation), Swarm (boots the metered killer-demo on tab-enter), Agent (live activity feed), Time (the time-travel/suspend machinery). They render fine in the windowed app and are captured in the UI Atlas surface screenshots, but are excluded from the UI tree. Worth knowing: any future headless cockpit automation must either disable these tabs' live timers or bound the effect-flush.",
+    "repro": "starbridge-v2 --explore-ui without skipping Wonder/Swarm/Agent/Time \u2192 hangs on the first of them"
   }
 ]

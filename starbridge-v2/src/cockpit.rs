@@ -763,7 +763,247 @@ pub struct Cockpit {
     share_outcome: Option<String>,
 }
 
+/// A navigation action over the cockpit's pure-navigation controls — the edge
+/// vocabulary of the atlas's UI-exploration tree.
+#[derive(Clone, Copy, Debug)]
+pub enum NavAction {
+    Tab(usize),
+    CycleFocus, CycleLens, ToggleReflexive, CyclePresent,
+    CycleInspectFocus,
+    CycleSimTarget, CycleSimEffect,
+    SetLane(usize),
+    ToggleWebViewer, OpenWebCell,
+    CycleLinksDepth, ToggleLinksViewer, CycleLinksFocus,
+    CyclePowerboxConfer,
+    ToggleSharePreview,
+    ReplayNext, ReplayPrev, TimeNext, TimePrev,
+}
+
+/// A captured snapshot of the cockpit's navigation-relevant UI state — enough to
+/// restore the rendered view exactly (the explorer's backtrack token).
+#[derive(Clone)]
+pub struct CockpitNavState {
+    tab_idx: usize,
+    selection: Selection,
+    moldable_lens: MoldableLens,
+    inspector_reflexive: bool,
+    iv_focus: Option<CellId>,
+    iv_present: usize,
+    inspect_act_focus: Option<CellId>,
+    sim_target_idx: usize,
+    sim_effect_idx: usize,
+    lane_idx: usize,
+    web_viewer: dregg_cell::AuthRequired,
+    web_opened: Option<CellId>,
+    links_focus: Option<CellId>,
+    links_depth: usize,
+    links_viewer: dregg_cell::AuthRequired,
+    powerbox_confer: dregg_cell::AuthRequired,
+    share_wide: bool,
+    replay_cursor: usize,
+    time_cursor: usize,
+}
+
 impl Cockpit {
+    // === UI-EXPLORATION NAV API ===========================================
+    // A programmatic view of the cockpit's pure-navigation controls, so a
+    // headless driver can BFS-walk the UI state-space (screenshot each state,
+    // record the interaction edges) — the atlas's "UI tree". Navigation only
+    // touches view-cell nonces (invisible to the render), so a captured
+    // `CockpitNavState` fully restores the renderable state with no world fork.
+
+    /// Capture the navigation-relevant UI state (cheap — scalars + the view
+    /// cell's focus/present aim).
+    pub fn capture_nav(&self) -> CockpitNavState {
+        CockpitNavState {
+            tab_idx: Tab::ALL.iter().position(|t| *t == self.active_tab()).unwrap_or(0),
+            selection: self.selection.clone(),
+            moldable_lens: self.moldable_lens,
+            inspector_reflexive: self.inspector_reflexive,
+            iv_focus: self.inspector_view.doc().focus(),
+            iv_present: self.inspector_view.doc().present_idx(),
+            inspect_act_focus: self.inspect_act_focus,
+            sim_target_idx: self.sim_target_idx,
+            sim_effect_idx: self.sim_effect_idx,
+            lane_idx: self.lane_idx,
+            web_viewer: self.web_cells_viewer_rights.clone(),
+            web_opened: self.web_cells_opened,
+            links_focus: self.links_here_focus,
+            links_depth: self.links_here_depth,
+            links_viewer: self.links_here_viewer_rights.clone(),
+            powerbox_confer: self.powerbox_confer_rights.clone(),
+            share_wide: self.share_preview_wide,
+            replay_cursor: self.replay_cursor,
+            time_cursor: self.time_cursor,
+        }
+    }
+
+    /// Restore a captured navigation state (re-commits the witnessed view cells
+    /// so the rendered tab/focus/lens match; the nonce drift is invisible).
+    pub fn restore_nav(&mut self, s: &CockpitNavState, cx: &mut Context<Self>) {
+        self.selection = s.selection.clone();
+        self.moldable_lens = s.moldable_lens;
+        self.inspector_reflexive = s.inspector_reflexive;
+        self.inspect_act_focus = s.inspect_act_focus;
+        self.sim_target_idx = s.sim_target_idx;
+        self.sim_effect_idx = s.sim_effect_idx;
+        self.lane_idx = s.lane_idx;
+        self.web_cells_viewer_rights = s.web_viewer.clone();
+        self.web_cells_opened = s.web_opened;
+        self.links_here_focus = s.links_focus;
+        self.links_here_depth = s.links_depth;
+        self.links_here_viewer_rights = s.links_viewer.clone();
+        self.powerbox_confer_rights = s.powerbox_confer.clone();
+        self.share_preview_wide = s.share_wide;
+        self.replay_cursor = s.replay_cursor;
+        self.time_cursor = s.time_cursor;
+        let dbg = std::env::var_os("ATLAS_UI_DEBUG").is_some();
+        if dbg { eprintln!("    RN: inspector_view.commit"); }
+        self.inspector_view.doc_mut().set_focus(s.iv_focus);
+        self.inspector_view.doc_mut().set_present_idx(s.iv_present);
+        let _ = self.inspector_view.commit(&mut self.world.borrow_mut());
+        if dbg { eprintln!("    RN: set_tab {}", Tab::ALL[s.tab_idx].label()); }
+        self.set_tab(Tab::ALL[s.tab_idx], cx);
+        if dbg { eprintln!("    RN: done"); }
+    }
+
+    /// A compact, dedup-able key for the current UI state — the tab plus the
+    /// sub-coordinates that tab actually renders.
+    pub fn nav_key(&self) -> String {
+        let tab = self.active_tab();
+        let sh = |o: Option<CellId>| o.map(|c| reflect::short_hex(c.as_bytes())).unwrap_or_else(|| "-".into());
+        let sub = match tab {
+            Tab::Moldable => format!("focus={};lens={};refl={};face={}", sh(self.inspector_view.doc().focus()), self.moldable_lens.label(), self.inspector_reflexive, self.inspector_view.doc().present_idx()),
+            Tab::InspectAct => format!("focus={}", sh(self.inspect_act_focus)),
+            Tab::Simulate => format!("tgt={};eff={}", self.sim_target_idx, self.sim_effect_idx),
+            Tab::Lanes => format!("lane={}", self.lane_idx),
+            Tab::WebOfCells => format!("viewer={:?};open={}", self.web_cells_viewer_rights, sh(self.web_cells_opened)),
+            Tab::LinksHere => format!("depth={};viewer={:?};focus={}", self.links_here_depth, self.links_here_viewer_rights, sh(self.links_here_focus)),
+            Tab::Powerbox => format!("confer={:?}", self.powerbox_confer_rights),
+            Tab::Share => format!("wide={}", self.share_preview_wide),
+            Tab::Replay => format!("cursor={}", self.replay_cursor),
+            Tab::Time => format!("cursor={}", self.time_cursor),
+            _ => String::new(),
+        };
+        format!("{}|{}", tab.label(), sub)
+    }
+
+    /// The navigation actions available from the current state. Rooted at HOME
+    /// (which offers the 28 tab-spokes); inside a tab, only that tab's internal
+    /// navigations (so the UI tree is a clean rooted DAG, not a mesh).
+    pub fn available_nav(&self) -> Vec<(String, NavAction)> {
+        let tab = self.active_tab();
+        if tab == Tab::Home {
+            // Skip the live-animated / perpetual-task tabs (their self-rescheduling
+            // render work stalls headless stepping; they live in the UI-atlas
+            // screenshots instead): Wonder (glow animation), Swarm (boots the
+            // killer-demo), Agent (live activity feed).
+            let skip = |t: Tab| matches!(t, Tab::Home | Tab::Wonder | Tab::Swarm | Tab::Agent | Tab::Time);
+            return Tab::ALL.iter().enumerate()
+                .filter(|(_, t)| !skip(**t))
+                .map(|(i, t)| (format!("open {}", t.label()), NavAction::Tab(i)))
+                .collect();
+        }
+        let mut v: Vec<(String, NavAction)> = Vec::new();
+        match tab {
+            Tab::Moldable => {
+                v.push(("cycle focus".into(), NavAction::CycleFocus));
+                v.push(("cycle lens".into(), NavAction::CycleLens));
+                v.push(("toggle reflexive".into(), NavAction::ToggleReflexive));
+                v.push(("next face".into(), NavAction::CyclePresent));
+            }
+            Tab::InspectAct => v.push(("cycle focus".into(), NavAction::CycleInspectFocus)),
+            Tab::Simulate => {
+                v.push(("cycle target".into(), NavAction::CycleSimTarget));
+                v.push(("cycle effect".into(), NavAction::CycleSimEffect));
+            }
+            Tab::Lanes => for i in 0..4 { v.push((format!("lane {i}"), NavAction::SetLane(i))); },
+            Tab::WebOfCells => {
+                v.push(("toggle viewer".into(), NavAction::ToggleWebViewer));
+                v.push(("open next cell".into(), NavAction::OpenWebCell));
+            }
+            Tab::LinksHere => {
+                v.push(("cycle depth".into(), NavAction::CycleLinksDepth));
+                v.push(("toggle viewer".into(), NavAction::ToggleLinksViewer));
+                v.push(("cycle focus".into(), NavAction::CycleLinksFocus));
+            }
+            Tab::Powerbox => v.push(("cycle confer".into(), NavAction::CyclePowerboxConfer)),
+            Tab::Share => v.push(("toggle preview".into(), NavAction::ToggleSharePreview)),
+            Tab::Replay => {
+                v.push(("scrub +1".into(), NavAction::ReplayNext));
+                v.push(("scrub -1".into(), NavAction::ReplayPrev));
+            }
+            Tab::Time => {
+                v.push(("scrub +1".into(), NavAction::TimeNext));
+                v.push(("scrub -1".into(), NavAction::TimePrev));
+            }
+            _ => {}
+        }
+        v
+    }
+
+    /// Apply a navigation action — drives the REAL interaction handlers (so the
+    /// explorer exercises the genuine UI paths).
+    pub fn apply_nav(&mut self, a: &NavAction, cx: &mut Context<Self>) {
+        let cells = self.cells.clone();
+        let cycle = |cur: Option<CellId>| -> Option<CellId> {
+            if cells.is_empty() { return None; }
+            let i = cur.and_then(|c| cells.iter().position(|x| *x == c)).map(|p| (p + 1) % cells.len()).unwrap_or(0);
+            Some(cells[i])
+        };
+        match a {
+            NavAction::Tab(i) => self.set_tab(Tab::ALL[*i], cx),
+            NavAction::CycleFocus => self.moldable_cycle_focus(cx),
+            NavAction::CycleLens => self.moldable_cycle_lens(cx),
+            NavAction::ToggleReflexive => self.moldable_toggle_reflexive(cx),
+            NavAction::CyclePresent => {
+                let n = self.inspector_view.doc().present_idx();
+                self.moldable_set_present_idx((n + 1) % 7, cx);
+            }
+            NavAction::CycleInspectFocus => {
+                self.inspect_act_focus = cycle(self.inspect_act_focus);
+                self.inspect_act_outcome = None;
+                cx.notify();
+            }
+            NavAction::CycleSimTarget => self.sim_cycle_target(cx),
+            NavAction::CycleSimEffect => self.sim_cycle_effect(cx),
+            NavAction::SetLane(i) => { self.lane_idx = *i; self.lane_outcome = None; cx.notify(); }
+            NavAction::ToggleWebViewer => {
+                self.web_cells_viewer_rights = match self.web_cells_viewer_rights {
+                    dregg_cell::AuthRequired::None => dregg_cell::AuthRequired::Either,
+                    _ => dregg_cell::AuthRequired::None,
+                };
+                cx.notify();
+            }
+            NavAction::OpenWebCell => { self.web_cells_opened = cycle(self.web_cells_opened); cx.notify(); }
+            NavAction::CycleLinksDepth => {
+                self.links_here_depth = match self.links_here_depth { 0 | 1 => 2, 2 => 3, _ => 1 };
+                cx.notify();
+            }
+            NavAction::ToggleLinksViewer => {
+                self.links_here_viewer_rights = match self.links_here_viewer_rights {
+                    dregg_cell::AuthRequired::None => dregg_cell::AuthRequired::Signature,
+                    _ => dregg_cell::AuthRequired::None,
+                };
+                cx.notify();
+            }
+            NavAction::CycleLinksFocus => { self.links_here_focus = cycle(self.links_here_focus); cx.notify(); }
+            NavAction::CyclePowerboxConfer => {
+                self.powerbox_confer_rights = match self.powerbox_confer_rights {
+                    dregg_cell::AuthRequired::Signature => dregg_cell::AuthRequired::Either,
+                    dregg_cell::AuthRequired::Either => dregg_cell::AuthRequired::None,
+                    _ => dregg_cell::AuthRequired::Signature,
+                };
+                cx.notify();
+            }
+            NavAction::ToggleSharePreview => { self.share_preview_wide = !self.share_preview_wide; cx.notify(); }
+            NavAction::ReplayNext => self.replay_step_forward(cx),
+            NavAction::ReplayPrev => self.replay_step_back(cx),
+            NavAction::TimeNext => self.time_step_forward(cx),
+            NavAction::TimePrev => self.time_step_back(cx),
+        }
+    }
+
     /// Select the active tab by (case-insensitive) name — matched against each
     /// [`Tab::label`] with separators/symbols stripped (so `"inspector"`,
     /// `"inspect-act"`, `"web-of-cells"`, `"proofs"` all resolve). Used by the

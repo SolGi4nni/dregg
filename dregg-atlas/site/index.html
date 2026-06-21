@@ -12,6 +12,7 @@
     <h1>THE DREGG ATLAS <small>— the live verified ocap image, mapped</small></h1>
     <nav class=tabs id=tabs>
       <button data-v=gametree class=on>Game Tree</button>
+      <button data-v=uitree>UI Tree</button>
       <button data-v=ocap>Ocap Web</button>
       <button data-v=atlas>UI Atlas</button>
       <button data-v=protocol>Protocol</button>
@@ -35,6 +36,18 @@
         fired through the verified executor — green committed, red refused (with
         the reason: cap-gate before any turn, or a kernel guarantee). Click a node
         for its cell snapshot; click an edge for the action + outcome.</p>
+      </div>
+    </div>
+    <!-- UI TREE -->
+    <div class=view data-v=uitree>
+      <div id=cyui></div>
+      <div class=panel id=uiPanel><h2>UI tree</h2>
+        <p class=muted>Exploring <em>inside and through</em> the cockpit surfaces — a
+        DAG of UI states reached by real interactions (cycling focus chips, picking
+        lenses, toggling, navigating). Each node is a distinct rendered UI state
+        (screenshot); each edge is the interaction that reaches it. Rooted at HOME →
+        the 28 surfaces → each surface's internal navigations. Click a state for its
+        screenshot + the interactions out of it.</p>
       </div>
     </div>
     <!-- OCAP WEB -->

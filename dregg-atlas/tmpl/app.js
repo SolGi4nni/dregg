@@ -13,6 +13,7 @@
     document.querySelectorAll(".view").forEach(x => x.classList.toggle("on", x.dataset.v === v));
     if (v === "gametree" && gt) { gt.resize(); gt.fit(null, 40); }
     if (v === "ocap" && oc) { oc.resize(); oc.fit(null, 40); }
+    if (v === "uitree" && ut) { ut.resize(); ut.fit(null, 40); }
   }
   $("#tabs").addEventListener("click", e => {
     const b = e.target.closest("button"); if (!b) return;
@@ -21,8 +22,9 @@
   window.addEventListener("hashchange", () => activate(location.hash.slice(1) || "gametree"));
 
   const gtm = (A.gametree && A.gametree.meta) || {};
+  const uic = (A.uitree && A.uitree.node_count) || 0;
   $("#stat").textContent =
-    `${gtm.node_count || 0} states · ${gtm.committed_edges || 0} committed · ${gtm.refused_edges || 0} refused · ${(A.cells.cells || []).length} cells`;
+    `${gtm.node_count || 0} states · ${gtm.committed_edges || 0} committed · ${gtm.refused_edges || 0} refused · ${uic} UI states · ${(A.cells.cells || []).length} cells`;
 
   // ---- GAME TREE ----------------------------------------------------------
   let gt = null;
@@ -152,6 +154,56 @@
     $("#gtPanel").innerHTML = h;
   }
 
+  // ---- UI TREE ------------------------------------------------------------
+  let ut = null;
+  function buildUiTree() {
+    const U = A.uitree || { nodes: [], edges: [] };
+    if (!U.nodes.length) { $("#cyui").innerHTML = '<p class=muted style="padding:18px">No UI-exploration crawl yet — run --explore-ui.</p>'; return; }
+    const byKey = {}; U.nodes.forEach(n => byKey[n.key] = n);
+    const els = [];
+    U.nodes.forEach(n => {
+      const tab = n.tab || (n.key.split("|")[0]);
+      const isBase = (n.key.split("|")[1] || "") === "";
+      els.push({ data: { id: n.key, label: isBase ? tab : (n.key.split("|")[1] || tab), tab, png: n.png, base: isBase } });
+    });
+    let ei = 0;
+    U.edges.forEach(e => {
+      if (!byKey[e.from] || !byKey[e.to]) return;
+      if (e.from === e.to) return;
+      els.push({ data: { id: "u" + (ei++), source: e.from, target: e.to, label: e.label } });
+    });
+    ut = cytoscape({
+      container: $("#cyui"), elements: els,
+      style: [
+        { selector: "node", style: { "background-color": "#1f6feb", "label": "data(label)", "color": "#8b949e", "font-size": 8, "width": 12, "height": 12, "border-width": 1, "border-color": "#30363d", "text-valign": "bottom", "text-margin-y": 2, "min-zoomed-font-size": 6 } },
+        { selector: 'node[?base]', style: { "background-color": "#3fb950", "border-color": "#56d364", "width": 20, "height": 20, "color": "#c9d1d9", "font-size": 10, "shape": "round-rectangle" } },
+        { selector: 'node[id = "HOME|"]', style: { "background-color": "#f0883e", "border-color": "#f0883e", "width": 28, "height": 28, "font-size": 12 } },
+        { selector: "edge", style: { "width": 1.1, "curve-style": "bezier", "target-arrow-shape": "triangle", "arrow-scale": 0.6, "line-color": "#30363d", "target-arrow-color": "#484f58", "font-size": 6, "color": "#6e7681", "label": "data(label)", "text-rotation": "autorotate", "min-zoomed-font-size": 9 } },
+        { selector: ".sel", style: { "border-color": "#f0883e", "border-width": 4, "background-color": "#f0883e" } },
+        { selector: ".faded", style: { "opacity": 0.1 } },
+      ],
+      layout: { name: "breadthfirst", roots: ["HOME|"], circle: true, spacingFactor: 1.4, avoidOverlap: true, animate: false },
+      wheelSensitivity: 0.3,
+    });
+    ut.on("tap", "node", ev => showUiState(ev.target));
+    ut.on("tap", ev => { if (ev.target === ut) ut.elements().removeClass("faded sel"); });
+    ut.ready(() => ut.fit(null, 40));
+    ut.one("layoutstop", () => ut.fit(null, 40));
+  }
+
+  function showUiState(node) {
+    ut.elements().removeClass("sel faded"); node.addClass("sel");
+    const out = node.outgoers("edge");
+    let h = `<h2>${esc(node.data("tab"))}</h2><p class=muted>${esc(node.id())}</p>`;
+    if (node.data("png")) h += `<img src="${esc(node.data("png"))}" loading=lazy>`;
+    h += `<h3>Interactions from here</h3>`;
+    if (!out.length) h += `<p class=muted>(leaf — no further navigation explored)</p>`;
+    out.forEach(e => {
+      h += `<div class=kv><span class=badge>${esc(e.data("label"))}</span> <span>→ ${esc((e.target().data("key") || e.target().id()).split("|")[1] || e.target().data("tab"))}</span></div>`;
+    });
+    $("#uiPanel").innerHTML = h;
+  }
+
   // ---- OCAP WEB -----------------------------------------------------------
   let oc = null;
   function buildOcap() {
@@ -276,8 +328,14 @@
   }
 
   // ---- boot ---------------------------------------------------------------
-  buildGameTree(); buildOcap(); buildGallery(); buildProtocol(); buildAnomalies(); buildAbout();
+  buildGameTree(); buildUiTree(); buildOcap(); buildGallery(); buildProtocol(); buildAnomalies(); buildAbout();
   activate(location.hash.slice(1) || "gametree");
+  // deep-link a UI state: ?uistate=<index> (verification / sharing)
+  const uiIdx = new URLSearchParams(location.search).get("uistate");
+  if (uiIdx != null && ut) {
+    const n = ut.nodes()[parseInt(uiIdx, 10) || 0];
+    if (n) { activate("uitree"); ut.fit(n.closedNeighborhood(), 80); showUiState(n); }
+  }
   // deep-link a selected state: ?select=<digest|genesis>
   const sel = new URLSearchParams(location.search).get("select");
   if (sel && gt) {

@@ -21,6 +21,34 @@ SITE = os.path.join(ROOT, "site")
 SHOTS = os.path.join(ROOT, "screenshots")
 EXPL = os.path.join(ROOT, "explainers")
 PAGES = os.path.join(SITE, "pages")
+UIEXPLORE = os.path.join(ROOT, "ui-explore")
+
+
+def build_uitree():
+    """Ingest the UI-exploration crawl (ui-explore/ui-graph.json + states/*.png):
+    copy + downscale each UI-state screenshot into the site, return the graph."""
+    import subprocess
+    gj = os.path.join(UIEXPLORE, "ui-graph.json")
+    if not os.path.exists(gj):
+        return {"nodes": [], "edges": [], "node_count": 0, "edge_count": 0}
+    g = json.load(open(gj))
+    dst = os.path.join(SITE, "ui-states")
+    os.makedirs(dst, exist_ok=True)
+    for n in g.get("nodes", []):
+        src = os.path.join(UIEXPLORE, n["png"])
+        base = os.path.basename(n["png"]).rsplit(".", 1)[0] + ".jpg"
+        out = os.path.join(dst, base)
+        if os.path.exists(src):
+            # downscale + JPEG (sips, macOS) — screenshots compress ~4x vs PNG,
+            # keeping the committed site light.
+            try:
+                subprocess.run(["sips", "-s", "format", "jpeg", "-s", "formatOptions", "58",
+                                "-Z", "860", src, "--out", out],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+            except Exception:
+                shutil.copy(src, out)
+        n["png"] = "ui-states/" + base
+    return g
 
 
 def load(name, default):
@@ -129,6 +157,7 @@ def build_data_js():
         "anomalies": load("anomalies.json", []),
         "explainers": load_explainers(),
         "sections": sections_html,
+        "uitree": build_uitree(),
     }
     with open(os.path.join(SITE, "data.js"), "w") as f:
         f.write("window.ATLAS = " + json.dumps(data) + ";\n")
