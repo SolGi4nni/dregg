@@ -1,7 +1,14 @@
 #!/usr/bin/env bash
+# Synthesized cross llvm-config: answers Mesa's queries from the aarch64-musl
+# LLVM build tree ($CROSS_BUILD) without executing the target ELF binary.
 CB="/tmp/llvm-cross-musl"
 SRC_INC="/tmp/llvm-20.1.8.src/include"
 HOST_LLVM_CONFIG='/opt/homebrew/opt/llvm@20/bin/llvm-config'
+# Strategy: TARGET-INDEPENDENT metadata (--version, --components, module->lib name
+# resolution) comes from the HOST llvm@20 (also 20.1.8, identical component model).
+# TARGET paths (--prefix/--includedir/--libdir/--libs/--libfiles) point at the
+# CROSS aarch64-musl build tree. So meson sees every module as PRESENT (host knows
+# the component graph) but links the aarch64 .a files (cross libdir).
 libdir="$CB/lib"; incdir="$CB/include"
 H="$HOST_LLVM_CONFIG"
 ver() { grep -m1 'LLVM_VERSION_STRING' "$CB/include/llvm/Config/llvm-config.h" 2>/dev/null | sed -E 's/.*"([0-9.]+)".*/\1/'; }

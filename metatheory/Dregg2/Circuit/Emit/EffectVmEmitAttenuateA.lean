@@ -615,6 +615,49 @@ theorem attenuateGenuineNoRecompute_drops_recompute :
     ∧ attenuateVmDescriptorGenuineNoRecompute.traceWidth = EFFECT_VM_WIDTH :=
   ⟨rfl, rfl, rfl, rfl⟩
 
+/-- The genuine cap-graph per-row gates with the nonce FREEZE (`gNonceFix`: `after.nonce == before.nonce`)
+swapped for the transfer/noteSpend TICK gate (`EffectVmEmitTransfer.gNonce`:
+`after.nonce − before.nonce − (1 − s_noop) = 0` ⇒ the nonce ADVANCES by one on a non-NoOp row, holds
+trivially on a NoOp pad). EVERY OTHER gate (the two balance freezes, the reserved freeze, the eight field
+freezes) is `attenuateGenuineRowGates` verbatim.
+
+This is the face the cap-tree WRITE descriptors (`…WriteV3`) must ride: the cap-family effects
+(delegate / introduce / delegateAtten / grantCap / revokeDelegation) all TICK the agent nonce in the
+genuine executor (the per-turn prologue bump — `post.nonce = pre.nonce + 1`), so the FREEZE gate
+(`gNonceFix`) is jointly UNSAT with every honest cap-write trace and the wrapper is UNPROVABLE on the wire.
+Mirror of `EffectVmEmitRotationV3.setFieldRowGatesTick` (the setField tick face), which fixed exactly this
+class — a nonce-freeze gate pasted onto a moving effect. -/
+def attenuateGenuineRowGatesTick : List VmConstraint :=
+  [ .gate gBalLoFix, .gate gBalHiFix, .gate EffectVmEmitTransfer.gNonce, .gate gResFix ] ++ gFieldFixAll
+
+/-- **`attenuateVmDescriptorGenuineNoRecomputeTick`** — the no-recompute genuine cap-graph face on the
+nonce-TICK gate set (`attenuateGenuineRowGatesTick`). Identical to `attenuateVmDescriptorGenuineNoRecompute`
+in name/width/PI/hashSites/ranges; only the single nonce gate moves freeze → tick, so the cap-WRITE wrappers
+that ride it admit the honest nonce-advancing trace. The bare GROUP-4 commitment chain
+(`attenuateHashSites`) is kept verbatim, so `site2` still folds the post `cap_root` (col 87) into
+`state_commit` as an input (the cap-write map-op is what FORCES that root). -/
+def attenuateVmDescriptorGenuineNoRecomputeTick : EffectVmDescriptor :=
+  { name := attenuateVmAirName ++ "-genuine-norecompute-tick"
+  , traceWidth := EFFECT_VM_WIDTH
+  , piCount := 42
+  , constraints := attenuateGenuineRowGatesTick ++ transitionAll ++ boundaryFirstPins
+  , hashSites := attenuateHashSites
+  , ranges := [] }
+
+/-- The tick face shares the no-recompute face's hashSites / traceWidth / PI count (only the nonce gate
+moves freeze → tick in the constraint list). The cap-write wrappers' `_forces_write` lemmas read ONLY the
+appended cap-write map-ops (via `List.mem_append_right`), never the nonce gate, so the gate swap is
+invisible to them — this lemma records the shape parity the registry / drift checks lean on. -/
+theorem attenuateGenuineNoRecomputeTick_shape :
+    attenuateVmDescriptorGenuineNoRecomputeTick.hashSites
+        = attenuateVmDescriptorGenuineNoRecompute.hashSites
+    ∧ attenuateVmDescriptorGenuineNoRecomputeTick.traceWidth = EFFECT_VM_WIDTH
+    ∧ attenuateVmDescriptorGenuineNoRecomputeTick.piCount
+        = attenuateVmDescriptorGenuineNoRecompute.piCount
+    ∧ attenuateVmDescriptorGenuineNoRecomputeTick.ranges
+        = attenuateVmDescriptorGenuineNoRecompute.ranges :=
+  ⟨rfl, rfl, rfl, rfl⟩
+
 /-- **`CapCellSpecGenuine hash pre post`** — the GENUINE per-cell cap-graph spec: `post.capRoot` is the
 RECOMPUTED advance `hash[ hash[holder,target,rights,op], pre.capRoot ]` (a function of the bound edge +
 old root — NOT an opaque parameter), the balance limbs / nonce / 8 fields / reserved frozen. The edge

@@ -902,6 +902,19 @@ def CAP_KEY : Nat := 3
 def HELD_MASK : Nat := 4
 /-- The kept (granted) rights-mask parameter column (written to the post `cap_root`). -/
 def KEEP_MASK : Nat := 5
+/-- The held/anchor MEMBERSHIP-read key parameter column for the INSERT cap-write wrappers
+(delegate / introduce / delegateAtten / grantCap). The held-authority read MUST authenticate a key
+DISTINCT from the inserted `CAP_KEY`: the read requires the key PRESENT (`opensTo … some`), while a
+fresh INSERT requires the inserted key ABSENT (the deployed `insert_witness` refuses an already-present
+key). Binding the read and the insert to the SAME `CAP_KEY` is JOINTLY UNSAT on the wire, so the read
+opens against this distinct anchor — the existing held leaf the delegator's authority lives at (the
+already-present sorted-tree leaf the fresh edge inserts alongside). For REVOKE (a `write`/remove) the
+read and write share `CAP_KEY` (both require it present — consistent), so revoke does NOT use this. -/
+def ANCHOR_KEY : Nat := 6
+/-- The anchor (held) rights-mask parameter column the INSERT wrappers' membership-read authenticates
+at `ANCHOR_KEY` (the value the present anchor leaf opens to). Distinct from `HELD_MASK` (param 4), which
+the non-amplification submask lookup compares against the conferred `KEEP_MASK`. -/
+def ANCHOR_MASK : Nat := 7
 /-- The effect-mask width (the deployed mask width; the deployed AIR splits this into
 `mask_lo`/`mask_hi` limbs — same relation, two-limb wire layout). -/
 def MASK_BITS : Nat := 30

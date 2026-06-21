@@ -115,10 +115,13 @@ use sel4_musl::{
 };
 use sel4_root_task_with_std::{debug_print, debug_println, declare_root_task};
 
-// The final rung — RGBA (from the in-PD gpui render) → XRGB8888 → ramfb. Staged
-// (not yet exercised: the render stops at the submit-thread wall before any in-PD
-// RGBA exists), ready for when the `__clone`/TCB lever unblocks the render.
-#[allow(dead_code)]
+// The final rung — RGBA (from the in-PD lavapipe render) → XRGB8888 → the PD
+// framebuffer. LIVE on the boot path: `main` reads the driver's staged RGBA
+// (`dregg_render_pd_rgba`, written by driver-render.c STAGE 5) and drives
+// `render_blit::blit_rgba_to_framebuffer` into `PD_FRAMEBUFFER` below. (The
+// PD-owned static framebuffer stands in for the ramfb scanout region until the
+// device-cap fb mapping lands — the seam render_blit.rs documents; the
+// RGBA→XRGB8888 blit itself is exercised for real here.)
 mod render_blit;
 
 // Real seL4 thread bring-up: services musl's `__clone` (which lavapipe's
@@ -134,6 +137,69 @@ declare_root_task!(main = main);
 // wired, JIT'd + rendered); nonzero with a stage code otherwise.
 unsafe extern "C" {
     fn dregg_render_pd_run() -> c_int;
+    // The in-PD lavapipe render staging buffer (driver-render.c STAGE 5):
+    // dregg_render_pd_render rasterizes one 800×600 RGBA frame into it; these
+    // accessors expose it to the Rust render_blit weld.
+    fn dregg_render_pd_rgba() -> *const u8;
+    fn dregg_render_pd_rgba_len() -> usize;
+    fn dregg_render_pd_rgba_ready() -> c_int;
+    fn dregg_render_pd_rgba_checksum() -> u32;
+}
+
+// ───────────────────── the PD-owned framebuffer (ramfb stand-in) ─────────────
+//
+// The XRGB8888 surface render_blit blits into. In the deos-image PD this is the
+// fw_cfg/ramfb-mapped scanout region; in this raw root task the device-cap fb
+// mapping is a separate OS rung (render_blit.rs §"the framebuffer-mapping half"),
+// so the blit's RECEIVING end is this PD-owned static buffer — exercising the
+// real RGBA→XRGB8888 conversion. Wiring it to the ramfb scanout frames is the
+// thin device-cap seam on top (same "give the root task the device caps" rung as
+// the `__clone` TCB work).
+const FB_PIXELS: usize = (render_blit::WIDTH * render_blit::HEIGHT) as usize;
+#[used]
+static mut PD_FRAMEBUFFER: [u32; FB_PIXELS] = [0u32; FB_PIXELS];
+
+/// FNV-1a over the XRGB8888 framebuffer's RGB (matching the C side's RGBA FNV-1a
+/// over the source bytes is NOT identical — different inputs; this is the blit's
+/// OWN output checksum, printed so the serial shows the blit ran and produced a
+/// stable result, and so a regression changes it).
+fn fb_checksum(fb: &[u32]) -> u32 {
+    let mut h: u32 = 2166136261;
+    for &px in fb {
+        for b in [(px >> 16) as u8, (px >> 8) as u8, px as u8] {
+            h ^= b as u32;
+            h = h.wrapping_mul(16777619);
+        }
+    }
+    h
+}
+
+/// THE RENDER WELD (Rust half): take the driver's in-PD-rendered RGBA and blit it
+/// RGBA→XRGB8888 into the PD framebuffer via the LIVE `render_blit`. Returns the
+/// pixel count written (0 if no frame / a geometry mismatch — render_blit's
+/// fail-closed contract). Prints the C-side source checksum + the blit's own
+/// output checksum so the serial witnesses the bytes flowed end to end.
+fn weld_render_to_framebuffer() -> usize {
+    let ready = unsafe { dregg_render_pd_rgba_ready() } != 0;
+    if !ready {
+        debug_println!("[render-pd] no in-PD frame staged (render STAGE 5 did not complete) — framebuffer left blank");
+        return 0;
+    }
+    let len = unsafe { dregg_render_pd_rgba_len() };
+    let ptr = unsafe { dregg_render_pd_rgba() };
+    if ptr.is_null() || len == 0 {
+        debug_println!("[render-pd] staged RGBA is empty — framebuffer left blank");
+        return 0;
+    }
+    let rgba: &[u8] = unsafe { core::slice::from_raw_parts(ptr, len) };
+    let fb: &mut [u32] = unsafe { &mut *core::ptr::addr_of_mut!(PD_FRAMEBUFFER) };
+    let written = render_blit::blit_rgba_to_framebuffer(rgba, fb);
+    let src_sum = unsafe { dregg_render_pd_rgba_checksum() };
+    debug_println!(
+        "[render-pd] render_blit: {written} px RGBA->XRGB8888 (src RGBA fnv=0x{src_sum:08x}, fb out fnv=0x{:08x})",
+        fb_checksum(fb)
+    );
+    written
 }
 
 // THE ORDERING FIX (executor-rootserver WALL-roottask.md §"the __sysinfo-null
@@ -187,6 +253,18 @@ fn main(bootinfo: &sel4::BootInfoPtr) -> ! {
     debug_println!("");
 
     let rc = unsafe { dregg_render_pd_run() };
+
+    // THE RENDER WELD: blit the in-PD-rendered RGBA → XRGB8888 → the PD
+    // framebuffer (render_blit, now live on the boot path, not dead code).
+    debug_println!("");
+    debug_println!("[render-pd] >>> render_blit weld: in-PD RGBA -> XRGB8888 -> PD framebuffer");
+    let blit_px = weld_render_to_framebuffer();
+    let want_px = FB_PIXELS;
+    if blit_px == want_px {
+        debug_println!("[render-pd] render_blit OK — {blit_px} px on the PD framebuffer (a real in-VM frame, not the bake)");
+    } else {
+        debug_println!("[render-pd] render_blit wrote {blit_px}/{want_px} px (no frame or geometry mismatch — fail-closed)");
+    }
 
     debug_println!("");
     if rc == 0 {
