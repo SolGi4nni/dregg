@@ -868,11 +868,20 @@ mod tests {
             encode_name_actions("my-app", "rw"),
         ));
 
-        let request = AuthRequest {
-            app_id: Some("other-app".into()),
+        // HONEST-ACCEPT FIRST: a request naming the RIGHT app passes against this
+        // exact caveat set, so the reject below is provably caused by the app_id
+        // mismatch — not a malformed caveat that fails verification anyway.
+        let honest = AuthRequest {
+            app_id: Some("my-app".into()),
             action: Some("r".into()),
             now: Some(1700000000),
             ..Default::default()
+        };
+        verify_caveats(&set, &honest).expect("matching app must pass");
+
+        let request = AuthRequest {
+            app_id: Some("other-app".into()),
+            ..honest
         };
         assert!(verify_caveats(&set, &request).is_err());
     }
@@ -882,11 +891,19 @@ mod tests {
         let mut set = CaveatSet::new();
         set.push(WireCaveat::new(CAV_APP, encode_name_actions("my-app", "r")));
 
-        let request = AuthRequest {
+        // HONEST-ACCEPT FIRST: the granted action ("r") passes, so the reject is
+        // provably caused by requesting "w" (an action the caveat doesn't grant).
+        let honest = AuthRequest {
             app_id: Some("my-app".into()),
-            action: Some("w".into()),
+            action: Some("r".into()),
             now: Some(1700000000),
             ..Default::default()
+        };
+        verify_caveats(&set, &honest).expect("granted action must pass");
+
+        let request = AuthRequest {
+            action: Some("w".into()),
+            ..honest
         };
         assert!(verify_caveats(&set, &request).is_err());
     }
@@ -919,6 +936,17 @@ mod tests {
             encode_validity_window(None, Some(1000)),
         ));
 
+        // HONEST-ACCEPT FIRST: a `now` inside the window passes, so the reject is
+        // provably caused by `now` being past the expiry (not a malformed window).
+        verify_caveats(
+            &set,
+            &AuthRequest {
+                now: Some(500),
+                ..Default::default()
+            },
+        )
+        .expect("now before expiry must pass");
+
         let request = AuthRequest {
             now: Some(2000),
             ..Default::default()
@@ -933,6 +961,17 @@ mod tests {
             CAV_VALIDITY_WINDOW,
             encode_validity_window(Some(5000), None),
         ));
+
+        // HONEST-ACCEPT FIRST: a `now` at/after the not-before bound passes, so
+        // the reject is provably caused by `now` being before it.
+        verify_caveats(
+            &set,
+            &AuthRequest {
+                now: Some(6000),
+                ..Default::default()
+            },
+        )
+        .expect("now after the not-before bound must pass");
 
         let request = AuthRequest {
             now: Some(2000),
@@ -991,10 +1030,18 @@ mod tests {
         let mut set = CaveatSet::new();
         set.push(WireCaveat::new(CAV_CONFINE_USER, encode_string("alice")));
 
-        let request = AuthRequest {
-            user_id: Some("bob".into()),
+        // HONEST-ACCEPT FIRST: the confined user passes, so the reject is provably
+        // caused by the user_id mismatch.
+        let honest = AuthRequest {
+            user_id: Some("alice".into()),
             now: Some(1700000000),
             ..Default::default()
+        };
+        verify_caveats(&set, &honest).expect("confined user must pass");
+
+        let request = AuthRequest {
+            user_id: Some("bob".into()),
+            ..honest
         };
         assert!(verify_caveats(&set, &request).is_err());
     }
@@ -1024,6 +1071,20 @@ mod tests {
             CAV_APP,
             encode_name_actions("my-app", "rw"),
         ));
+
+        // HONEST-ACCEPT FIRST: an app-dimension request the token DOES restrict
+        // passes, so the reject below is provably caused by asking for an
+        // unrestricted dimension (service) — not a malformed caveat.
+        verify_caveats(
+            &set,
+            &AuthRequest {
+                app_id: Some("my-app".into()),
+                action: Some("r".into()),
+                now: Some(1700000000),
+                ..Default::default()
+            },
+        )
+        .expect("app-dimension request must pass against an app-scoped token");
 
         let request = AuthRequest {
             service: Some("http".into()),
@@ -1200,6 +1261,18 @@ mod tests {
             encode_feature_glob(&["src/components/**".into()], &[]),
         ));
 
+        // HONEST-ACCEPT FIRST: a feature path INSIDE the include glob passes, so
+        // the reject below is provably caused by the path falling outside it.
+        verify_caveats(
+            &set,
+            &AuthRequest {
+                features: vec!["src/components/nav.tsx".into()],
+                now: Some(1700000000),
+                ..Default::default()
+            },
+        )
+        .expect("an included path must pass");
+
         let request = AuthRequest {
             features: vec!["src/config/settings.ts".into()],
             now: Some(1700000000),
@@ -1319,7 +1392,25 @@ mod tests {
             encode_budget("agent:daily", None, "api_calls", 100, Some("1d")),
         ));
 
+        // HONEST-ACCEPT FIRST: `budget_states` holds the REMAINING budget (see
+        // `test_budget_enforcement_denies_spoofed_remaining`). With 50 remaining
+        // and a cost of 10, the request fits — so the reject below is provably
+        // caused by insufficient remaining, not a malformed caveat.
+        let mut ok_states = std::collections::HashMap::new();
+        ok_states.insert("agent:daily".into(), 50u64);
+        verify_caveats(
+            &set,
+            &AuthRequest {
+                now: Some(1700000000),
+                budget_states: ok_states,
+                request_cost: Some(10),
+                ..Default::default()
+            },
+        )
+        .expect("a request whose cost fits the remaining budget must pass");
+
         let mut budget_states = std::collections::HashMap::new();
+        // Only 5 remaining, cost 10 > 5 → exhausted.
         budget_states.insert("agent:daily".into(), 5u64);
 
         let request = AuthRequest {
@@ -1358,6 +1449,22 @@ mod tests {
             CAV_BUDGET,
             encode_budget("agent:daily", None, "api_calls", 500, Some("1d")),
         ));
+
+        // HONEST-ACCEPT FIRST: a claimed-remaining AT the token limit (500) is the
+        // honest fresh-issue case and passes, so the reject below is provably
+        // caused by the claimed-remaining EXCEEDING the limit (a spoof).
+        let mut honest_states = std::collections::HashMap::new();
+        honest_states.insert("agent:daily".into(), 500u64);
+        verify_caveats(
+            &set,
+            &AuthRequest {
+                now: Some(1700000000),
+                budget_states: honest_states,
+                request_cost: Some(1),
+                ..Default::default()
+            },
+        )
+        .expect("claimed remaining at the token limit must pass");
 
         let mut budget_states = std::collections::HashMap::new();
         budget_states.insert("agent:daily".into(), 600u64); // exceeds limit of 500
