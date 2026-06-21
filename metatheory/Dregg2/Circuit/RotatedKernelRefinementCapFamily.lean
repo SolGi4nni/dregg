@@ -82,12 +82,13 @@ open Dregg2.Circuit.Spec.AuthorityRevocation
 open Dregg2.Circuit.Spec.RefreshDelegation
   (RefreshDelegationSpec RefreshDelegationGuard refreshDelegationsMap refreshDelegationReceipt)
 open Dregg2.Circuit.DescriptorIR2 (VmTrace Satisfied2 envAt opensTo writesTo)
-open Dregg2.Circuit.Emit.EffectVmEmit (prmCol sbCol saCol)
+open Dregg2.Circuit.Emit.EffectVmEmit (prmCol sbCol saCol EFFECT_VM_WIDTH)
 open Dregg2.Circuit.Emit.EffectVmEmit.state (CAP_ROOT)
 open Dregg2.Circuit.Emit.EffectVmEmitV2 (heldReadOp removeWriteOp CAP_KEY KEEP_MASK HELD_MASK)
 open Dregg2.Circuit.Emit.EffectVmEmitRotationV3
   (revokeCapabilityV3 delegateV3 delegateAttenV3 grantCapWriteV3 attenuateV3
    introduceWriteV3 revokeDelegationWriteV3
+   beforeCapRootCol afterCapRootCol
    delegateV3_forces_write grantCapWriteV3_forces_write delegateAttenV3_non_amp attenuateV3_non_amp
    introduceWriteV3_forces_write revokeDelegationWriteV3_forces_write)
 open Dregg2.Circuit.Emit.CapOpenEmit
@@ -288,6 +289,8 @@ structure AttenuateWriteAnchor {State : Type} (S : CapHashScheme State)
   row : Nat
   hrow : row < tr.rows.length
   hactive : (envAt tr row).loc Dregg2.Circuit.Emit.EffectVmEmitAttenuateA.selA.ATTENUATE = 1
+  -- attenuate is the IN-PLACE update-at-key on the V1-STATE cap-root column (`keepWriteOp`, NOT a
+  -- write wrapper): the decode's sorted-tree roots anchor to the committed v1-state CAP_ROOT limbs.
   oldAnchored : henc.oldRoot = (envAt tr row).loc (sbCol CAP_ROOT)
   newAnchored : henc.newRoot = (envAt tr row).loc (saCol CAP_ROOT)
 
@@ -606,8 +609,10 @@ structure DelegateWriteAnchor {State : Type} (S : CapHashScheme State)
   hrow : row < tr.rows.length
   hactive : (envAt tr row).loc Dregg2.Circuit.Emit.EffectVmEmitAttenuateA.selA.ATTENUATE = 1
   -- the WitnessDecodes seam: the decode's sorted-tree roots ARE the committed cap-root limbs.
-  oldAnchored : henc.oldRoot = (envAt tr row).loc (sbCol CAP_ROOT)
-  newAnchored : henc.newRoot = (envAt tr row).loc (saCol CAP_ROOT)
+  -- the cap-root advance now lives on the ROTATED before/after limbs (note-spend-shaped — the
+  -- v1-state continuity collision dodged); the decode's sorted-tree roots ARE those committed limbs.
+  oldAnchored : henc.oldRoot = (envAt tr row).loc (beforeCapRootCol EFFECT_VM_WIDTH)
+  newAnchored : henc.newRoot = (envAt tr row).loc (afterCapRootCol EFFECT_VM_WIDTH)
 
 /-- **`delegate_forces_committed_write` — the post cap-root is FORCED to the genuine sorted insert.** From
 `Satisfied2 hash delegateV3` (via the DEPLOYED `insertWriteOp`, `delegateV3_forces_write`) the committed
@@ -672,8 +677,10 @@ structure DelegateAttenWriteAnchor {State : Type} (S : CapHashScheme State)
   row : Nat
   hrow : row < tr.rows.length
   hactive : (envAt tr row).loc Dregg2.Circuit.Emit.EffectVmEmitAttenuateA.selA.ATTENUATE = 1
-  oldAnchored : henc.oldRoot = (envAt tr row).loc (sbCol CAP_ROOT)
-  newAnchored : henc.newRoot = (envAt tr row).loc (saCol CAP_ROOT)
+  -- the cap-root advance now lives on the ROTATED before/after limbs (note-spend-shaped — the
+  -- v1-state continuity collision dodged); the decode's sorted-tree roots ARE those committed limbs.
+  oldAnchored : henc.oldRoot = (envAt tr row).loc (beforeCapRootCol EFFECT_VM_WIDTH)
+  newAnchored : henc.newRoot = (envAt tr row).loc (afterCapRootCol EFFECT_VM_WIDTH)
 
 /-- **`delegateAtten_descriptorRefines_sat` — THE DELEGATEATTEN CLASS-A REFINEMENT (write FORCED + non-amp).**
 From `Satisfied2 hash delegateAttenV3` (via `delegateAttenV3_non_amp` — the DEPLOYED held-read + insert-write
@@ -721,8 +728,10 @@ structure IntroduceWriteAnchor {State : Type} (S : CapHashScheme State)
   row : Nat
   hrow : row < tr.rows.length
   hactive : (envAt tr row).loc Dregg2.Circuit.Emit.EffectVmEmitAttenuateA.selA.ATTENUATE = 1
-  oldAnchored : henc.oldRoot = (envAt tr row).loc (sbCol CAP_ROOT)
-  newAnchored : henc.newRoot = (envAt tr row).loc (saCol CAP_ROOT)
+  -- the cap-root advance now lives on the ROTATED before/after limbs (note-spend-shaped — the
+  -- v1-state continuity collision dodged); the decode's sorted-tree roots ARE those committed limbs.
+  oldAnchored : henc.oldRoot = (envAt tr row).loc (beforeCapRootCol EFFECT_VM_WIDTH)
+  newAnchored : henc.newRoot = (envAt tr row).loc (afterCapRootCol EFFECT_VM_WIDTH)
 
 /-- **`introduce_descriptorRefines_sat` — THE INTRODUCE CLASS-A REFINEMENT (write FORCED, frozen-face
 close).** From `Satisfied2 hash introduceWriteV3` (via `introduceWriteV3_forces_write` on the MOVING genuine
@@ -752,8 +761,10 @@ structure RevokeDelegationWriteAnchor {State : Type} (S : CapHashScheme State)
   row : Nat
   hrow : row < tr.rows.length
   hactive : (envAt tr row).loc Dregg2.Circuit.Emit.EffectVmEmitAttenuateA.selA.ATTENUATE = 1
-  oldAnchored : henc.oldRoot = (envAt tr row).loc (sbCol CAP_ROOT)
-  newAnchored : henc.newRoot = (envAt tr row).loc (saCol CAP_ROOT)
+  -- the cap-root advance now lives on the ROTATED before/after limbs (note-spend-shaped — the
+  -- v1-state continuity collision dodged); the decode's sorted-tree roots ARE those committed limbs.
+  oldAnchored : henc.oldRoot = (envAt tr row).loc (beforeCapRootCol EFFECT_VM_WIDTH)
+  newAnchored : henc.newRoot = (envAt tr row).loc (afterCapRootCol EFFECT_VM_WIDTH)
 
 /-- **`revokeDelegation_descriptorRefines_sat` — THE REVOKEDELEGATION CLASS-A REFINEMENT (write FORCED,
 frozen-face close).** From `Satisfied2 hash revokeDelegationWriteV3` (via
