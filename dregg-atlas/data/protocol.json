@@ -1,0 +1,39 @@
+{
+  "auth_required_lattice": {
+    "order": "Impossible \u228f {Signature, Proof} \u228f Either \u228f None (None is the TOP/widest)",
+    "tiers": [
+      "None",
+      "Signature",
+      "Proof",
+      "Either",
+      "Impossible",
+      "Custom{vk_hash}"
+    ],
+    "note": "is_attenuation(held, req) = req.is_narrower_or_equal(held); see the None cap-badge anomaly in HORIZONLOG"
+  },
+  "effects_seen": [
+    "EmitEvent",
+    "GrantCapability",
+    "IncrementNonce",
+    "SetField(slot 1)"
+  ],
+  "required_tiers_seen": [
+    "Either",
+    "None",
+    "Signature"
+  ],
+  "refusal_taxonomy": {
+    "cap_gate": "by_executor=false \u2014 required \u2284 held, refused before any turn (the anti-ghost tooth)",
+    "executor": "by_executor=true \u2014 a kernel guarantee fired (conservation, non-amplification, a permissions gate)"
+  },
+  "the_eight_verbs": [
+    "Transfer",
+    "SetField",
+    "GrantCapability",
+    "RevokeCapability",
+    "IncrementNonce/touch",
+    "EmitEvent/peek",
+    "CreateCell",
+    "the cap-write family (attenuate/revoke/delegate)"
+  ]
+}

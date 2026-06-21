@@ -1,0 +1,26 @@
+<!doctype html><html><head><meta charset=utf-8>
+<title>Protocol · dregg atlas</title><link rel=stylesheet href="../atlas.css"></head>
+<body class=page><nav class=crumb><a href="../index.html">← atlas</a> / protocol</nav>
+<main class=doc><h2>Protocol reference</h2>
+<h3>The AuthRequired lattice</h3>
+<p class=mono>Impossible ⊏ {Signature, Proof} ⊏ Either ⊏ None (None is the TOP/widest)</p>
+<p>Tiers: None · Signature · Proof · Either · Impossible · Custom{vk_hash}</p>
+<p class=muted>is_attenuation(held, req) = req.is_narrower_or_equal(held); see the None cap-badge anomaly in HORIZONLOG</p>
+<h3>The eight verbs</h3><ul>
+<li>Transfer</li>
+<li>SetField</li>
+<li>GrantCapability</li>
+<li>RevokeCapability</li>
+<li>IncrementNonce/touch</li>
+<li>EmitEvent/peek</li>
+<li>CreateCell</li>
+<li>the cap-write family (attenuate/revoke/delegate)</li>
+</ul><h3>Effects seen live</h3><ul>
+<li><code>EmitEvent</code></li>
+<li><code>GrantCapability</code></li>
+<li><code>IncrementNonce</code></li>
+<li><code>SetField(slot 1)</code></li>
+</ul><h3>Refusal taxonomy</h3><ul>
+<li><strong>cap_gate</strong>: by_executor=false — required ⊄ held, refused before any turn (the anti-ghost tooth)</li>
+<li><strong>executor</strong>: by_executor=true — a kernel guarantee fired (conservation, non-amplification, a permissions gate)</li>
+</ul></main></body></html>

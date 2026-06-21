@@ -1,0 +1,12 @@
+[
+  {
+    "title": "AuthRequired::None cap-badge inversion",
+    "body": "The affordances panel shows the `grant` message with required=None yet authorized=false, and firing it is refused with 'does not satisfy None'. The cap badge is is_attenuation(held, req) = req.is_narrower_or_equal(held); the lattice models None as the TOP (widest), so a None-required affordance (documented 'always allowed') reports unauthorized for every holder whose rights are not exactly None. Correct for the middle tiers, inverted for None.",
+    "repro": "affordances user → grant shows required=None/authorized=false; act user grant → refused by the cap-gate"
+  },
+  {
+    "title": "Cell census 4 vs 8 — reflexive UI cells (resolved, not a bug)",
+    "body": "The cockpit header shows 8 cells; the raw demo_world ledger has 4. Cockpit::with_node installs reflexive UI-scaffolding cells (buffer/inspector-view/workspace backings) on top of demo_world's 4 protocol cells. The atlas crawls the 4-cell protocol substrate; the +4 are documented in the UI atlas.",
+    "repro": "dregg-mcp survey → 4 cells; cockpit GRAPH tab → 8 cells"
+  }
+]

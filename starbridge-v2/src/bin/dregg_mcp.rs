@@ -51,6 +51,11 @@ struct Session {
     /// The cells inspected this session, in order — the navigation trail the
     /// interaction map draws.
     visited: Vec<CellId>,
+    /// Cheap state snapshots (a deep-cloned `World` via `World::fork`, ~ms) keyed
+    /// by id — the game-tree crawl checkpoints here instead of paying a 3s reboot
+    /// per backtrack. Each holds the forked world + the act-trail at that point.
+    snaps: std::collections::HashMap<u64, (World, Vec<(CellId, String)>)>,
+    next_snap: u64,
 }
 
 impl Session {
@@ -67,7 +72,11 @@ impl Session {
             // "demo" (default) — the fully-seeded sovereign image.
             _ => world::demo_world(),
         };
-        Session { world, anchors, image: image.to_string(), acts: Vec::new(), visited: Vec::new() }
+        Session {
+            world, anchors, image: image.to_string(),
+            acts: Vec::new(), visited: Vec::new(),
+            snaps: std::collections::HashMap::new(), next_snap: 0,
+        }
     }
 
     /// Fire a committed act as `cell`-over-itself with the `Either` tier (the
@@ -670,8 +679,14 @@ fn tool_schemas() -> Value {
           "inputSchema": { "type": "object", "properties": { "cell": str_prop("cell handle"), "out": str_prop("output .html path") }, "required": ["cell"] } },
         { "name": "screenshot", "description": "Bake the REAL gpui Cockpit element tree (over this session's driven state — replays the committed act-trail) to a PNG via the headless render subprocess. size: logical WxH (default 1280x832 = full cockpit, no truncation; 800x600 = seL4 framebuffer geometry). tab: which surface (home|inspector|graph|proofs|objects|debugger|replay|web-of-cells|wonder|workspace|inspect-act|trust|docs|…). Returns the PNG path.",
           "inputSchema": { "type": "object", "properties": { "out": str_prop("output path stem (default /tmp/dregg-cockpit)"), "size": str_prop("logical WxH, e.g. 1280x832 or 1600x1000"), "tab": str_prop("cockpit surface name") } } },
-        { "name": "rewind", "description": "Backtrack the world to a prefix of the act-trail (reboot + replay the first `to` committed acts). The game-tree backtracking primitive: try an action, rewind, try the next. `to`=0 fully resets.",
+        { "name": "rewind", "description": "Backtrack the world to a prefix of the act-trail (reboot + replay the first `to` committed acts). Slow (~3s reboot); prefer snapshot/restore for crawls. `to`=0 fully resets.",
           "inputSchema": { "type": "object", "properties": { "to": { "type": "integer", "description": "keep the first N committed acts (0 = reset)" } } } },
+        { "name": "snapshot", "description": "Checkpoint the current world state cheaply (a fork-based deep clone, ~ms — no reboot). Returns an id. The game-tree crawl's fast backtracking primitive.",
+          "inputSchema": { "type": "object", "properties": {} } },
+        { "name": "restore", "description": "Restore a world state captured by `snapshot` (reusable — the snapshot survives restore). Cheap.",
+          "inputSchema": { "type": "object", "properties": { "id": { "type": "integer", "description": "snapshot id" } }, "required": ["id"] } },
+        { "name": "forget", "description": "Drop a snapshot to free memory.",
+          "inputSchema": { "type": "object", "properties": { "id": { "type": "integer" } }, "required": ["id"] } },
         { "name": "export", "description": "Dump the FULL crawl (meta + every cell's faces/affordances/halo + the ocap graph + the act-trail) as one JSON file for the atlas site-builder.",
           "inputSchema": { "type": "object", "properties": { "out": str_prop("output .json path") } } },
         { "name": "protocol", "description": "The protocol reference: the AuthRequired lattice, the effect/verb vocabulary seen live, and the refusal taxonomy (cap-gate vs executor).",
@@ -697,6 +712,29 @@ fn dispatch(s: &mut Session, name: &str, args: &Value) -> Result<Value, String> 
         "render" => tool_render_html(s, str_arg("cell").ok_or("missing `cell`")?, str_arg("out")),
         "screenshot" => tool_screenshot(s, str_arg("out"), str_arg("size"), str_arg("tab")),
         "rewind" => Ok(tool_rewind(s, args.get("to").and_then(|v| v.as_u64()).unwrap_or(0) as usize)),
+        "snapshot" => {
+            let id = s.next_snap;
+            s.next_snap += 1;
+            s.snaps.insert(id, (s.world.fork(), s.acts.clone()));
+            Ok(json!({ "id": id, "live_snapshots": s.snaps.len(), "note": "cheap fork-based checkpoint (no reboot)" }))
+        }
+        "restore" => {
+            let id = args.get("id").and_then(|v| v.as_u64()).ok_or("missing `id`")?;
+            let snap = s.snaps.get(&id).map(|(w, a)| (w.fork(), a.clone()));
+            match snap {
+                Some((w, a)) => {
+                    s.world = w;
+                    s.acts = a;
+                    Ok(json!({ "restored": id, "cell_count": s.world.ledger().iter().count(), "acts": s.acts.len() }))
+                }
+                None => Err(format!("no snapshot {id} (live: {:?})", s.snaps.keys().collect::<Vec<_>>())),
+            }
+        }
+        "forget" => {
+            let id = args.get("id").and_then(|v| v.as_u64()).ok_or("missing `id`")?;
+            s.snaps.remove(&id);
+            Ok(json!({ "forgotten": id, "live_snapshots": s.snaps.len() }))
+        }
         "export" => tool_export(s, str_arg("out")),
         "protocol" => Ok(tool_protocol(s)),
         "view" => Ok(tool_view(s)),

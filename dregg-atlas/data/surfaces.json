@@ -1,0 +1,170 @@
+[
+  {
+    "tab": "home",
+    "file": "home.png",
+    "size": "1280x832",
+    "explainer": "The at-rest landing \u2014 what the live verified image IS, in prose, with its headline stats."
+  },
+  {
+    "tab": "inspector",
+    "file": "inspector.png",
+    "size": "1280x832",
+    "explainer": "The moldable inspector (Registry \u00b7 Spotter \u00b7 Halo): every object's seven presentation faces; the inspector is itself inspectable."
+  },
+  {
+    "tab": "inspect-act",
+    "file": "inspect-act.png",
+    "size": "1280x832",
+    "explainer": "The inspect\u2192act loop: a cell's reflected state on the left, the messages it understands on the right, each with its cap badge; firing one commits a real turn."
+  },
+  {
+    "tab": "graph",
+    "file": "graph.png",
+    "size": "1280x832",
+    "explainer": "The ocap delegation graph \u2014 cells as nodes, capability grants as directed edges, laid out by multi-hop delegation depth."
+  },
+  {
+    "tab": "web-of-cells",
+    "file": "web-of-cells.png",
+    "size": "1280x832",
+    "explainer": "The cells as a navigable web \u2014 the distributed-attestation view of the image."
+  },
+  {
+    "tab": "objects",
+    "file": "objects.png",
+    "size": "1280x832",
+    "explainer": "The object browser \u2014 every protocol object by kind."
+  },
+  {
+    "tab": "proofs",
+    "file": "proofs.png",
+    "size": "1280x832",
+    "explainer": "The STARK/verification axis \u2014 the proof status of turns."
+  },
+  {
+    "tab": "debugger",
+    "file": "debugger.png",
+    "size": "1280x832",
+    "explainer": "Step + explain a turn against the live world \u2014 the time-aware debugger."
+  },
+  {
+    "tab": "replay",
+    "file": "replay.png",
+    "size": "1280x832",
+    "explainer": "Deterministic replay / time-travel over the canonical history."
+  },
+  {
+    "tab": "workspace",
+    "file": "workspace.png",
+    "size": "1280x832",
+    "explainer": "The DOIT/PRINTIT evaluator \u2014 a Smalltalk-style workspace over the live image."
+  },
+  {
+    "tab": "wonder",
+    "file": "wonder.png",
+    "size": "1280x832",
+    "explainer": "The AOL-wonder direct-manipulation surface \u2014 click around and absorb, no comprehension required."
+  },
+  {
+    "tab": "lanes",
+    "file": "lanes.png",
+    "size": "1280x832",
+    "explainer": "The moldable-inspector gadgets (L2\u2013L10): predicate/turn/cap/token construction."
+  },
+  {
+    "tab": "powerbox",
+    "file": "powerbox.png",
+    "size": "1280x832",
+    "explainer": "The capability powerbox \u2014 granting/brokering authority."
+  },
+  {
+    "tab": "links-here",
+    "file": "links-here.png",
+    "size": "1280x832",
+    "explainer": "What-links-here \u2014 the inbound reference graph for the focused object."
+  },
+  {
+    "tab": "organs",
+    "file": "organs.png",
+    "size": "1280x832",
+    "explainer": "The organ survey \u2014 the image's specialized verified-program cells."
+  },
+  {
+    "tab": "cipherclerk",
+    "file": "cipherclerk.png",
+    "size": "1280x832",
+    "explainer": "The sovereign cipherclerk vault \u2014 HD-derived identities, macaroon signing."
+  },
+  {
+    "tab": "editor",
+    "file": "editor.png",
+    "size": "1280x832",
+    "explainer": "The conserving forest editor \u2014 build a turn, validate it, commit."
+  },
+  {
+    "tab": "composer",
+    "file": "composer.png",
+    "size": "1280x832",
+    "explainer": "The predicate/caveat composer."
+  },
+  {
+    "tab": "simulate",
+    "file": "simulate.png",
+    "size": "1280x832",
+    "explainer": "Simulate a turn against a fork before committing."
+  },
+  {
+    "tab": "agent",
+    "file": "agent.png",
+    "size": "1280x832",
+    "explainer": "The agent surface \u2014 autonomous loops over the image."
+  },
+  {
+    "tab": "swarm",
+    "file": "swarm.png",
+    "size": "1280x832",
+    "explainer": "The swarm orchestration surface."
+  },
+  {
+    "tab": "shell",
+    "file": "shell.png",
+    "size": "1280x832",
+    "explainer": "The command shell over the image."
+  },
+  {
+    "tab": "terminal",
+    "file": "terminal.png",
+    "size": "1280x832",
+    "explainer": "The terminal surface."
+  },
+  {
+    "tab": "buffer",
+    "file": "buffer.png",
+    "size": "1280x832",
+    "explainer": "The text buffer surface."
+  },
+  {
+    "tab": "trust",
+    "file": "trust.png",
+    "size": "1280x832",
+    "explainer": "The trust panel \u2014 identity, guardians, the K-of-N recovery threshold, the KEL timeline."
+  },
+  {
+    "tab": "docs",
+    "file": "docs.png",
+    "size": "1280x832",
+    "explainer": "The document lens \u2014 the Pijul-shaped patch-theory document object."
+  },
+  {
+    "tab": "time",
+    "file": "time.png",
+    "size": "1280x832",
+    "explainer": "The time/history scrubber."
+  },
+  {
+    "tab": "share",
+    "file": "share.png",
+    "size": "1280x832",
+    "explainer": "The sharing/membrane surface."
+  }
+]

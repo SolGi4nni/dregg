@@ -1,0 +1,101 @@
+<!doctype html><html><head><meta charset=utf-8>
+<title>Cell 2a6969…ab90 · dregg atlas</title><link rel=stylesheet href="../atlas.css"></head>
+<body class=page><nav class=crumb><a href="../index.html">← atlas</a> / cells / 2a6969…ab90</nav>
+<main class=doc><h2>Cell <span class=id>2a6969…ab90</span></h2>
+<p class=muted>2a6969a63df11a7d51aac1f9fcb50dd3c3cbdb78e0e3a945eaaadecb486bab90</p>
+<p>Halo: inspect · grab · explain</p>
+<h3>Affordances — messages it understands</h3><table>
+<tr><td class=k>peek</td><td>EmitEvent <span class=muted>(Signature)</span></td><td><span class=ok>● may send</span></td></tr>
+<tr><td class=k>touch</td><td>IncrementNonce <span class=muted>(Signature)</span></td><td><span class=ok>● may send</span></td></tr>
+<tr><td class=k>write</td><td>SetField(slot 1) <span class=muted>(Either)</span></td><td><span class=ok>● may send</span></td></tr>
+<tr><td class=k>grant</td><td>GrantCapability <span class=muted>(None)</span></td><td><span class=no>○ refused</span></td></tr>
+</table><h3>Presentation faces</h3>
+<div class=face><h4>raw-fields · Cell State</h4>
+<table>
+<tr><td class=k>id</td><td><span class=id title="2a6969a63df11a7d51aac1f9fcb50dd3c3cbdb78e0e3a945eaaadecb486bab90">2a6969…ab90</span></td></tr>
+<tr><td class=k>balance</td><td><span class=bal>54000</span></td></tr>
+<tr><td class=k>nonce</td><td>1</td></tr>
+<tr><td class=k>public_key</td><td><span class=id title="330000000000000000000000000000000000000000000000000000000000005f">330000…005f</span></td></tr>
+<tr><td class=k>token_id</td><td><span class=id title="0000000000000000000000000000000000000000000000000000000000000000">000000…0000</span></td></tr>
+<tr><td class=k>capabilities</td><td>0</td></tr>
+<tr><td class=k>has_delegate</td><td>False</td></tr>
+<tr><td class=k>has_program</td><td>False</td></tr>
+<tr><td class=k>lifecycle</td><td>Live</td></tr>
+<tr><td class=k>mode</td><td>Hosted</td></tr>
+<tr><td class=k>delegation_epoch</td><td>0</td></tr>
+</table>
+</div>
+<div class=face><h4>affordances · Messages Understood</h4>
+<table>
+<tr><td class=k>peek</td><td>EmitEvent · requires Signature · you may send</td></tr>
+<tr><td class=k>touch</td><td>IncrementNonce · requires Signature · you may send</td></tr>
+<tr><td class=k>write</td><td>SetField(slot 1) · requires Either · you may send</td></tr>
+<tr><td class=k>grant</td><td>GrantCapability · requires None · you may send</td></tr>
+</table>
+</div>
+<div class=face><h4>provenance · Receipt Lineage</h4>
+<table>
+<tr><td class=k>@2</td><td>receipt 764c38…6160 · 1 action(s) · 0 computrons</td></tr>
+</table>
+</div>
+<div class=face><h4>graph · ocap Graph</h4>
+<table>
+<tr><td class=id>ccfc99…899a</td><td>→ <span class=id>2a6969…ab90</span> slot 0 · None</td></tr>
+<tr><td class=id>ccfc99…899a</td><td>→ <span class=id>2a6969…ab90</span> slot 1 · None</td></tr>
+</table>
+</div>
+<div class=face><h4>domain-visual · Lifecycle</h4>
+<div class=prose>{
+ &quot;shape&quot;: &quot;state-machine&quot;,
+ &quot;current&quot;: &quot;Live&quot;,
+ &quot;states&quot;: [
+  {
+   &quot;name&quot;: &quot;Live&quot;,
+   &quot;terminal&quot;: false
+  },
+  {
+   &quot;name&quot;: &quot;Sealed&quot;,
+   &quot;terminal&quot;: false
+  },
+  {
+   &quot;name&quot;: &quot;Destroyed&quot;,
+   &quot;terminal&quot;: true
+  },
+  {
+   &quot;name&quot;: &quot;Migrated&quot;,
+   &quot;terminal&quot;: true
+  },
+  {
+   &quot;name&quot;: &quot;Archived&quot;,
+   &quot;terminal&quot;: false
+  }
+ ],
+ &quot;transitions&quot;: [
+  {
+   &quot;from&quot;: &quot;Live&quot;,
+   &quot;to&quot;: &quot;Sealed&quot;,
+   &quot;verb&quot;: &quot;Seal&quot;
+  },
+  {
+   &quot;from&quot;: &quot;Sealed&quot;,
+   &quot;to&quot;: &quot;Live&quot;,
+   &quot;verb&quot;: &quot;Unseal&quot;
+  },
+  {
+   &quot;from&quot;: &quot;Live&quot;,
+   &quot;to&quot;: &quot;Destroyed&quot;,
+   &quot;verb&quot;: &quot;Destroy&quot;
+  },
+  {
+   &quot;from&quot;: &quot;Live&quot;,
+   &quot;to&quot;: &quot;Migrated&quot;,
+   &quot;verb&quot;: &quot;Migrate&quot;
+  },
+  {
+   &quot;from&quot;: &quot;Live&quot;,
+   &quot;to&quot;: &quot;Archived&quot;,
+   &quot;verb&quot;: &quot;Archive&quot;
+  }
+ ]
+}</div>
+</div></main></body></html>

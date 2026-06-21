@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang=en>
+<head>
+<meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<title>THE DREGG ATLAS</title>
+<link rel=stylesheet href="atlas.css">
+</head>
+<body>
+<div class=app>
+  <header>
+    <h1>THE DREGG ATLAS <small>— the live verified ocap image, mapped</small></h1>
+    <nav class=tabs id=tabs>
+      <button data-v=gametree class=on>Game Tree</button>
+      <button data-v=ocap>Ocap Web</button>
+      <button data-v=atlas>UI Atlas</button>
+      <button data-v=protocol>Protocol</button>
+      <button data-v=anomalies>Anomalies</button>
+      <button data-v=about>About</button>
+    </nav>
+    <span class=stat id=stat></span>
+  </header>
+  <div class=main>
+    <!-- GAME TREE -->
+    <div class="view on" data-v=gametree>
+      <div id=cy></div>
+      <div class=legend>
+        <span><i class=dot style="background:#3fb950"></i>committed turn</span>
+        <span><i class=dot style="background:#f85149"></i>refused (cap-gate / executor)</span>
+        <span><i class=dot style="background:#58a6ff"></i>world-state</span>
+      </div>
+      <div class=panel id=gtPanel><h2>Game tree</h2>
+        <p class=muted>The reachable state-space of the live image. Each node is a
+        world-state (keyed by its post-state Merkle root); each edge is a turn
+        fired through the verified executor — green committed, red refused (with
+        the reason: cap-gate before any turn, or a kernel guarantee). Click a node
+        for its cell snapshot; click an edge for the action + outcome.</p>
+      </div>
+    </div>
+    <!-- OCAP WEB -->
+    <div class=view data-v=ocap>
+      <div id=cyo></div>
+      <div class=panel id=ocapPanel><h2>Ocap web</h2>
+        <p class=muted>Cells and the capability grants between them — the
+        object-capability graph read off the live ledger. Click a cell for its
+        seven presentation faces, affordances, and screenshot.</p>
+      </div>
+    </div>
+    <!-- UI ATLAS -->
+    <div class=view data-v=atlas><div class=gallery id=gallery></div></div>
+    <!-- PROTOCOL -->
+    <div class=view data-v=protocol><div class=scroll id=protocol></div></div>
+    <!-- ANOMALIES -->
+    <div class=view data-v=anomalies><div class=scroll id=anomalies></div></div>
+    <!-- ABOUT -->
+    <div class=view data-v=about><div class="scroll doc" id=about></div></div>
+  </div>
+</div>
+<script src="assets/cytoscape.min.js"></script>
+<script src="assets/dagre.min.js"></script>
+<script src="assets/cytoscape-dagre.js"></script>
+<script src="data.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

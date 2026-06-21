@@ -1,0 +1,3 @@
+data/_export_raw.json
+*.rgba
+__pycache__/

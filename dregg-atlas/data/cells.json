@@ -1,0 +1,1186 @@
+{
+  "image": "demo",
+  "cell_count": 4,
+  "anchors": {
+    "treasury": "87a55eb57cfd50fb071c495c094cd6f2759886ba1f6f29ef9231fb2d8b2156cb",
+    "service": "ccfc9955bdc00352d51a0f096caeb339dc534338a076681e048ef4da6ffa899a",
+    "user": "2a6969a63df11a7d51aac1f9fcb50dd3c3cbdb78e0e3a945eaaadecb486bab90"
+  },
+  "cells": [
+    {
+      "id": "3cc026241cb8123afed80e589a30d1b487514b4fe469484c8387d6e4b89c2fa6",
+      "short": "3cc026\u20262fa6",
+      "halo": [
+        "inspect",
+        "grab",
+        "explain"
+      ],
+      "faces": [
+        {
+          "kind": "raw-fields",
+          "label": "Cell State",
+          "body": {
+            "shape": "fields",
+            "fields": {
+              "kind": "Cell",
+              "title": "Cell 3cc026\u20262fa6",
+              "subtitle": "-1000000 computrons \u00b7 0 caps",
+              "fields": [
+                {
+                  "key": "id",
+                  "value": {
+                    "t": "id",
+                    "v": "3cc026241cb8123afed80e589a30d1b487514b4fe469484c8387d6e4b89c2fa6",
+                    "short": "3cc026\u20262fa6"
+                  }
+                },
+                {
+                  "key": "balance",
+                  "value": {
+                    "t": "balance",
+                    "v": -1000000
+                  }
+                },
+                {
+                  "key": "nonce",
+                  "value": {
+                    "t": "count",
+                    "v": 0
+                  }
+                },
+                {
+                  "key": "public_key",
+                  "value": {
+                    "t": "id",
+                    "v": "ee00000000000000000000000000000000000000000000000000000000000066",
+                    "short": "ee0000\u20260066"
+                  }
+                },
+                {
+                  "key": "token_id",
+                  "value": {
+                    "t": "id",
+                    "v": "0000000000000000000000000000000000000000000000000000000000000000",
+                    "short": "000000\u20260000"
+                  }
+                },
+                {
+                  "key": "capabilities",
+                  "value": {
+                    "t": "count",
+                    "v": 0
+                  }
+                },
+                {
+                  "key": "has_delegate",
+                  "value": {
+                    "t": "bool",
+                    "v": false
+                  }
+                },
+                {
+                  "key": "has_program",
+                  "value": {
+                    "t": "bool",
+                    "v": false
+                  }
+                },
+                {
+                  "key": "lifecycle",
+                  "value": {
+                    "t": "text",
+                    "v": "Live"
+                  }
+                },
+                {
+                  "key": "mode",
+                  "value": {
+                    "t": "text",
+                    "v": "Hosted"
+                  }
+                },
+                {
+                  "key": "delegation_epoch",
+                  "value": {
+                    "t": "text",
+                    "v": "0"
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "kind": "affordances",
+          "label": "Messages Understood",
+          "body": {
+            "shape": "fields",
+            "fields": {
+              "kind": "Cell",
+              "title": "Messages \u00b7 Cell 3cc026\u20262fa6",
+              "subtitle": "4 message(s) understood",
+              "fields": [
+                {
+                  "key": "peek",
+                  "value": {
+                    "t": "text",
+                    "v": "EmitEvent \u00b7 requires Signature \u00b7 you may send"
+                  }
+                },
+                {
+                  "key": "touch",
+                  "value": {
+                    "t": "text",
+                    "v": "IncrementNonce \u00b7 requires Signature \u00b7 you may send"
+                  }
+                },
+                {
+                  "key": "write",
+                  "value": {
+                    "t": "text",
+                    "v": "SetField(slot 1) \u00b7 requires Either \u00b7 you may send"
+                  }
+                },
+                {
+                  "key": "grant",
+                  "value": {
+                    "t": "text",
+                    "v": "GrantCapability \u00b7 requires None \u00b7 you may send"
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "kind": "provenance",
+          "label": "Receipt Lineage",
+          "body": {
+            "shape": "timeline",
+            "events": []
+          }
+        },
+        {
+          "kind": "graph",
+          "label": "ocap Graph",
+          "body": {
+            "shape": "graph",
+            "focus": "3cc026\u20262fa6",
+            "nodes": [
+              {
+                "cell": "3cc026\u20262fa6",
+                "id": "3cc026241cb8123afed80e589a30d1b487514b4fe469484c8387d6e4b89c2fa6",
+                "balance": -1000000,
+                "lifecycle": "Live",
+                "out": 0,
+                "in": 0
+              }
+            ],
+            "edges": []
+          }
+        },
+        {
+          "kind": "domain-visual",
+          "label": "Lifecycle",
+          "body": {
+            "shape": "state-machine",
+            "current": "Live",
+            "states": [
+              {
+                "name": "Live",
+                "terminal": false
+              },
+              {
+                "name": "Sealed",
+                "terminal": false
+              },
+              {
+                "name": "Destroyed",
+                "terminal": true
+              },
+              {
+                "name": "Migrated",
+                "terminal": true
+              },
+              {
+                "name": "Archived",
+                "terminal": false
+              }
+            ],
+            "transitions": [
+              {
+                "from": "Live",
+                "to": "Sealed",
+                "verb": "Seal"
+              },
+              {
+                "from": "Sealed",
+                "to": "Live",
+                "verb": "Unseal"
+              },
+              {
+                "from": "Live",
+                "to": "Destroyed",
+                "verb": "Destroy"
+              },
+              {
+                "from": "Live",
+                "to": "Migrated",
+                "verb": "Migrate"
+              },
+              {
+                "from": "Live",
+                "to": "Archived",
+                "verb": "Archive"
+              }
+            ]
+          }
+        }
+      ],
+      "affordances": [
+        {
+          "name": "peek",
+          "effect": "EmitEvent",
+          "required": "Signature",
+          "authorized": true
+        },
+        {
+          "name": "touch",
+          "effect": "IncrementNonce",
+          "required": "Signature",
+          "authorized": true
+        },
+        {
+          "name": "write",
+          "effect": "SetField(slot 1)",
+          "required": "Either",
+          "authorized": true
+        },
+        {
+          "name": "grant",
+          "effect": "GrantCapability",
+          "required": "None",
+          "authorized": false
+        }
+      ]
+    },
+    {
+      "id": "ccfc9955bdc00352d51a0f096caeb339dc534338a076681e048ef4da6ffa899a",
+      "short": "ccfc99\u2026899a",
+      "halo": [
+        "inspect",
+        "grab",
+        "explain"
+      ],
+      "faces": [
+        {
+          "kind": "raw-fields",
+          "label": "Cell State",
+          "body": {
+            "shape": "fields",
+            "fields": {
+              "kind": "Cell",
+              "title": "Cell ccfc99\u2026899a",
+              "subtitle": "251000 computrons \u00b7 2 caps",
+              "fields": [
+                {
+                  "key": "id",
+                  "value": {
+                    "t": "id",
+                    "v": "ccfc9955bdc00352d51a0f096caeb339dc534338a076681e048ef4da6ffa899a",
+                    "short": "ccfc99\u2026899a"
+                  }
+                },
+                {
+                  "key": "balance",
+                  "value": {
+                    "t": "balance",
+                    "v": 251000
+                  }
+                },
+                {
+                  "key": "nonce",
+                  "value": {
+                    "t": "count",
+                    "v": 2
+                  }
+                },
+                {
+                  "key": "public_key",
+                  "value": {
+                    "t": "id",
+                    "v": "22000000000000000000000000000000000000000000000000000000000000ea",
+                    "short": "220000\u202600ea"
+                  }
+                },
+                {
+                  "key": "token_id",
+                  "value": {
+                    "t": "id",
+                    "v": "0000000000000000000000000000000000000000000000000000000000000000",
+                    "short": "000000\u20260000"
+                  }
+                },
+                {
+                  "key": "capabilities",
+                  "value": {
+                    "t": "count",
+                    "v": 2
+                  }
+                },
+                {
+                  "key": "has_delegate",
+                  "value": {
+                    "t": "bool",
+                    "v": false
+                  }
+                },
+                {
+                  "key": "has_program",
+                  "value": {
+                    "t": "bool",
+                    "v": false
+                  }
+                },
+                {
+                  "key": "lifecycle",
+                  "value": {
+                    "t": "text",
+                    "v": "Live"
+                  }
+                },
+                {
+                  "key": "mode",
+                  "value": {
+                    "t": "text",
+                    "v": "Hosted"
+                  }
+                },
+                {
+                  "key": "delegation_epoch",
+                  "value": {
+                    "t": "text",
+                    "v": "0"
+                  }
+                },
+                {
+                  "key": "cap[0]",
+                  "value": {
+                    "t": "cap-edge",
+                    "target": "2a6969a63df11a7d51aac1f9fcb50dd3c3cbdb78e0e3a945eaaadecb486bab90",
+                    "short": "2a6969\u2026ab90",
+                    "slot": 0
+                  }
+                },
+                {
+                  "key": "cap[1]",
+                  "value": {
+                    "t": "cap-edge",
+                    "target": "2a6969a63df11a7d51aac1f9fcb50dd3c3cbdb78e0e3a945eaaadecb486bab90",
+                    "short": "2a6969\u2026ab90",
+                    "slot": 1
+                  }
+                },
+                {
+                  "key": "state[0]",
+                  "value": {
+                    "t": "slot",
+                    "index": 0,
+                    "hex": "0707070707070707070707070707070707070707070707070707070707070707"
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "kind": "affordances",
+          "label": "Messages Understood",
+          "body": {
+            "shape": "fields",
+            "fields": {
+              "kind": "Cell",
+              "title": "Messages \u00b7 Cell ccfc99\u2026899a",
+              "subtitle": "4 message(s) understood",
+              "fields": [
+                {
+                  "key": "peek",
+                  "value": {
+                    "t": "text",
+                    "v": "EmitEvent \u00b7 requires Signature \u00b7 you may send"
+                  }
+                },
+                {
+                  "key": "touch",
+                  "value": {
+                    "t": "text",
+                    "v": "IncrementNonce \u00b7 requires Signature \u00b7 you may send"
+                  }
+                },
+                {
+                  "key": "write",
+                  "value": {
+                    "t": "text",
+                    "v": "SetField(slot 1) \u00b7 requires Either \u00b7 you may send"
+                  }
+                },
+                {
+                  "key": "grant",
+                  "value": {
+                    "t": "text",
+                    "v": "GrantCapability \u00b7 requires None \u00b7 you may send"
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "kind": "provenance",
+          "label": "Receipt Lineage",
+          "body": {
+            "shape": "timeline",
+            "events": [
+              {
+                "at": 3,
+                "label": "receipt 583f1c\u20268404 \u00b7 1 action(s) \u00b7 0 computrons",
+                "hash": "583f1c\u20268404"
+              },
+              {
+                "at": 4,
+                "label": "receipt da926a\u20269054 \u00b7 1 action(s) \u00b7 0 computrons",
+                "hash": "da926a\u20269054"
+              }
+            ]
+          }
+        },
+        {
+          "kind": "graph",
+          "label": "ocap Graph",
+          "body": {
+            "shape": "graph",
+            "focus": "ccfc99\u2026899a",
+            "nodes": [
+              {
+                "cell": "2a6969\u2026ab90",
+                "id": "2a6969a63df11a7d51aac1f9fcb50dd3c3cbdb78e0e3a945eaaadecb486bab90",
+                "balance": 54000,
+                "lifecycle": "Live",
+                "out": 0,
+                "in": 2
+              },
+              {
+                "cell": "ccfc99\u2026899a",
+                "id": "ccfc9955bdc00352d51a0f096caeb339dc534338a076681e048ef4da6ffa899a",
+                "balance": 251000,
+                "lifecycle": "Live",
+                "out": 2,
+                "in": 0
+              }
+            ],
+            "edges": [
+              {
+                "from": "ccfc99\u2026899a",
+                "to": "2a6969\u2026ab90",
+                "slot": 0,
+                "rights": "None",
+                "faceted": false
+              },
+              {
+                "from": "ccfc99\u2026899a",
+                "to": "2a6969\u2026ab90",
+                "slot": 1,
+                "rights": "None",
+                "faceted": false
+              }
+            ]
+          }
+        },
+        {
+          "kind": "domain-visual",
+          "label": "Lifecycle",
+          "body": {
+            "shape": "state-machine",
+            "current": "Live",
+            "states": [
+              {
+                "name": "Live",
+                "terminal": false
+              },
+              {
+                "name": "Sealed",
+                "terminal": false
+              },
+              {
+                "name": "Destroyed",
+                "terminal": true
+              },
+              {
+                "name": "Migrated",
+                "terminal": true
+              },
+              {
+                "name": "Archived",
+                "terminal": false
+              }
+            ],
+            "transitions": [
+              {
+                "from": "Live",
+                "to": "Sealed",
+                "verb": "Seal"
+              },
+              {
+                "from": "Sealed",
+                "to": "Live",
+                "verb": "Unseal"
+              },
+              {
+                "from": "Live",
+                "to": "Destroyed",
+                "verb": "Destroy"
+              },
+              {
+                "from": "Live",
+                "to": "Migrated",
+                "verb": "Migrate"
+              },
+              {
+                "from": "Live",
+                "to": "Archived",
+                "verb": "Archive"
+              }
+            ]
+          }
+        }
+      ],
+      "affordances": [
+        {
+          "name": "peek",
+          "effect": "EmitEvent",
+          "required": "Signature",
+          "authorized": true
+        },
+        {
+          "name": "touch",
+          "effect": "IncrementNonce",
+          "required": "Signature",
+          "authorized": true
+        },
+        {
+          "name": "write",
+          "effect": "SetField(slot 1)",
+          "required": "Either",
+          "authorized": true
+        },
+        {
+          "name": "grant",
+          "effect": "GrantCapability",
+          "required": "None",
+          "authorized": false
+        }
+      ]
+    },
+    {
+      "id": "2a6969a63df11a7d51aac1f9fcb50dd3c3cbdb78e0e3a945eaaadecb486bab90",
+      "short": "2a6969\u2026ab90",
+      "halo": [
+        "inspect",
+        "grab",
+        "explain"
+      ],
+      "faces": [
+        {
+          "kind": "raw-fields",
+          "label": "Cell State",
+          "body": {
+            "shape": "fields",
+            "fields": {
+              "kind": "Cell",
+              "title": "Cell 2a6969\u2026ab90",
+              "subtitle": "54000 computrons \u00b7 0 caps",
+              "fields": [
+                {
+                  "key": "id",
+                  "value": {
+                    "t": "id",
+                    "v": "2a6969a63df11a7d51aac1f9fcb50dd3c3cbdb78e0e3a945eaaadecb486bab90",
+                    "short": "2a6969\u2026ab90"
+                  }
+                },
+                {
+                  "key": "balance",
+                  "value": {
+                    "t": "balance",
+                    "v": 54000
+                  }
+                },
+                {
+                  "key": "nonce",
+                  "value": {
+                    "t": "count",
+                    "v": 1
+                  }
+                },
+                {
+                  "key": "public_key",
+                  "value": {
+                    "t": "id",
+                    "v": "330000000000000000000000000000000000000000000000000000000000005f",
+                    "short": "330000\u2026005f"
+                  }
+                },
+                {
+                  "key": "token_id",
+                  "value": {
+                    "t": "id",
+                    "v": "0000000000000000000000000000000000000000000000000000000000000000",
+                    "short": "000000\u20260000"
+                  }
+                },
+                {
+                  "key": "capabilities",
+                  "value": {
+                    "t": "count",
+                    "v": 0
+                  }
+                },
+                {
+                  "key": "has_delegate",
+                  "value": {
+                    "t": "bool",
+                    "v": false
+                  }
+                },
+                {
+                  "key": "has_program",
+                  "value": {
+                    "t": "bool",
+                    "v": false
+                  }
+                },
+                {
+                  "key": "lifecycle",
+                  "value": {
+                    "t": "text",
+                    "v": "Live"
+                  }
+                },
+                {
+                  "key": "mode",
+                  "value": {
+                    "t": "text",
+                    "v": "Hosted"
+                  }
+                },
+                {
+                  "key": "delegation_epoch",
+                  "value": {
+                    "t": "text",
+                    "v": "0"
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "kind": "affordances",
+          "label": "Messages Understood",
+          "body": {
+            "shape": "fields",
+            "fields": {
+              "kind": "Cell",
+              "title": "Messages \u00b7 Cell 2a6969\u2026ab90",
+              "subtitle": "4 message(s) understood",
+              "fields": [
+                {
+                  "key": "peek",
+                  "value": {
+                    "t": "text",
+                    "v": "EmitEvent \u00b7 requires Signature \u00b7 you may send"
+                  }
+                },
+                {
+                  "key": "touch",
+                  "value": {
+                    "t": "text",
+                    "v": "IncrementNonce \u00b7 requires Signature \u00b7 you may send"
+                  }
+                },
+                {
+                  "key": "write",
+                  "value": {
+                    "t": "text",
+                    "v": "SetField(slot 1) \u00b7 requires Either \u00b7 you may send"
+                  }
+                },
+                {
+                  "key": "grant",
+                  "value": {
+                    "t": "text",
+                    "v": "GrantCapability \u00b7 requires None \u00b7 you may send"
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "kind": "provenance",
+          "label": "Receipt Lineage",
+          "body": {
+            "shape": "timeline",
+            "events": [
+              {
+                "at": 2,
+                "label": "receipt 764c38\u20266160 \u00b7 1 action(s) \u00b7 0 computrons",
+                "hash": "764c38\u20266160"
+              }
+            ]
+          }
+        },
+        {
+          "kind": "graph",
+          "label": "ocap Graph",
+          "body": {
+            "shape": "graph",
+            "focus": "2a6969\u2026ab90",
+            "nodes": [
+              {
+                "cell": "2a6969\u2026ab90",
+                "id": "2a6969a63df11a7d51aac1f9fcb50dd3c3cbdb78e0e3a945eaaadecb486bab90",
+                "balance": 54000,
+                "lifecycle": "Live",
+                "out": 0,
+                "in": 2
+              },
+              {
+                "cell": "ccfc99\u2026899a",
+                "id": "ccfc9955bdc00352d51a0f096caeb339dc534338a076681e048ef4da6ffa899a",
+                "balance": 251000,
+                "lifecycle": "Live",
+                "out": 2,
+                "in": 0
+              }
+            ],
+            "edges": [
+              {
+                "from": "ccfc99\u2026899a",
+                "to": "2a6969\u2026ab90",
+                "slot": 0,
+                "rights": "None",
+                "faceted": false
+              },
+              {
+                "from": "ccfc99\u2026899a",
+                "to": "2a6969\u2026ab90",
+                "slot": 1,
+                "rights": "None",
+                "faceted": false
+              }
+            ]
+          }
+        },
+        {
+          "kind": "domain-visual",
+          "label": "Lifecycle",
+          "body": {
+            "shape": "state-machine",
+            "current": "Live",
+            "states": [
+              {
+                "name": "Live",
+                "terminal": false
+              },
+              {
+                "name": "Sealed",
+                "terminal": false
+              },
+              {
+                "name": "Destroyed",
+                "terminal": true
+              },
+              {
+                "name": "Migrated",
+                "terminal": true
+              },
+              {
+                "name": "Archived",
+                "terminal": false
+              }
+            ],
+            "transitions": [
+              {
+                "from": "Live",
+                "to": "Sealed",
+                "verb": "Seal"
+              },
+              {
+                "from": "Sealed",
+                "to": "Live",
+                "verb": "Unseal"
+              },
+              {
+                "from": "Live",
+                "to": "Destroyed",
+                "verb": "Destroy"
+              },
+              {
+                "from": "Live",
+                "to": "Migrated",
+                "verb": "Migrate"
+              },
+              {
+                "from": "Live",
+                "to": "Archived",
+                "verb": "Archive"
+              }
+            ]
+          }
+        }
+      ],
+      "affordances": [
+        {
+          "name": "peek",
+          "effect": "EmitEvent",
+          "required": "Signature",
+          "authorized": true
+        },
+        {
+          "name": "touch",
+          "effect": "IncrementNonce",
+          "required": "Signature",
+          "authorized": true
+        },
+        {
+          "name": "write",
+          "effect": "SetField(slot 1)",
+          "required": "Either",
+          "authorized": true
+        },
+        {
+          "name": "grant",
+          "effect": "GrantCapability",
+          "required": "None",
+          "authorized": false
+        }
+      ]
+    },
+    {
+      "id": "87a55eb57cfd50fb071c495c094cd6f2759886ba1f6f29ef9231fb2d8b2156cb",
+      "short": "87a55e\u202656cb",
+      "halo": [
+        "inspect",
+        "grab",
+        "explain"
+      ],
+      "faces": [
+        {
+          "kind": "raw-fields",
+          "label": "Cell State",
+          "body": {
+            "shape": "fields",
+            "fields": {
+              "kind": "Cell",
+              "title": "Cell 87a55e\u202656cb",
+              "subtitle": "700000 computrons \u00b7 0 caps",
+              "fields": [
+                {
+                  "key": "id",
+                  "value": {
+                    "t": "id",
+                    "v": "87a55eb57cfd50fb071c495c094cd6f2759886ba1f6f29ef9231fb2d8b2156cb",
+                    "short": "87a55e\u202656cb"
+                  }
+                },
+                {
+                  "key": "balance",
+                  "value": {
+                    "t": "balance",
+                    "v": 700000
+                  }
+                },
+                {
+                  "key": "nonce",
+                  "value": {
+                    "t": "count",
+                    "v": 2
+                  }
+                },
+                {
+                  "key": "public_key",
+                  "value": {
+                    "t": "id",
+                    "v": "1100000000000000000000000000000000000000000000000000000000000075",
+                    "short": "110000\u20260075"
+                  }
+                },
+                {
+                  "key": "token_id",
+                  "value": {
+                    "t": "id",
+                    "v": "0000000000000000000000000000000000000000000000000000000000000000",
+                    "short": "000000\u20260000"
+                  }
+                },
+                {
+                  "key": "capabilities",
+                  "value": {
+                    "t": "count",
+                    "v": 0
+                  }
+                },
+                {
+                  "key": "has_delegate",
+                  "value": {
+                    "t": "bool",
+                    "v": false
+                  }
+                },
+                {
+                  "key": "has_program",
+                  "value": {
+                    "t": "bool",
+                    "v": false
+                  }
+                },
+                {
+                  "key": "lifecycle",
+                  "value": {
+                    "t": "text",
+                    "v": "Live"
+                  }
+                },
+                {
+                  "key": "mode",
+                  "value": {
+                    "t": "text",
+                    "v": "Hosted"
+                  }
+                },
+                {
+                  "key": "delegation_epoch",
+                  "value": {
+                    "t": "text",
+                    "v": "0"
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "kind": "affordances",
+          "label": "Messages Understood",
+          "body": {
+            "shape": "fields",
+            "fields": {
+              "kind": "Cell",
+              "title": "Messages \u00b7 Cell 87a55e\u202656cb",
+              "subtitle": "4 message(s) understood",
+              "fields": [
+                {
+                  "key": "peek",
+                  "value": {
+                    "t": "text",
+                    "v": "EmitEvent \u00b7 requires Signature \u00b7 you may send"
+                  }
+                },
+                {
+                  "key": "touch",
+                  "value": {
+                    "t": "text",
+                    "v": "IncrementNonce \u00b7 requires Signature \u00b7 you may send"
+                  }
+                },
+                {
+                  "key": "write",
+                  "value": {
+                    "t": "text",
+                    "v": "SetField(slot 1) \u00b7 requires Either \u00b7 you may send"
+                  }
+                },
+                {
+                  "key": "grant",
+                  "value": {
+                    "t": "text",
+                    "v": "GrantCapability \u00b7 requires None \u00b7 you may send"
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "kind": "provenance",
+          "label": "Receipt Lineage",
+          "body": {
+            "shape": "timeline",
+            "events": [
+              {
+                "at": 0,
+                "label": "receipt 1d37b3\u2026017a \u00b7 1 action(s) \u00b7 0 computrons",
+                "hash": "1d37b3\u2026017a"
+              },
+              {
+                "at": 1,
+                "label": "receipt 090367\u20268e06 \u00b7 1 action(s) \u00b7 0 computrons",
+                "hash": "090367\u20268e06"
+              }
+            ]
+          }
+        },
+        {
+          "kind": "graph",
+          "label": "ocap Graph",
+          "body": {
+            "shape": "graph",
+            "focus": "87a55e\u202656cb",
+            "nodes": [
+              {
+                "cell": "87a55e\u202656cb",
+                "id": "87a55eb57cfd50fb071c495c094cd6f2759886ba1f6f29ef9231fb2d8b2156cb",
+                "balance": 700000,
+                "lifecycle": "Live",
+                "out": 0,
+                "in": 0
+              }
+            ],
+            "edges": []
+          }
+        },
+        {
+          "kind": "domain-visual",
+          "label": "Lifecycle",
+          "body": {
+            "shape": "state-machine",
+            "current": "Live",
+            "states": [
+              {
+                "name": "Live",
+                "terminal": false
+              },
+              {
+                "name": "Sealed",
+                "terminal": false
+              },
+              {
+                "name": "Destroyed",
+                "terminal": true
+              },
+              {
+                "name": "Migrated",
+                "terminal": true
+              },
+              {
+                "name": "Archived",
+                "terminal": false
+              }
+            ],
+            "transitions": [
+              {
+                "from": "Live",
+                "to": "Sealed",
+                "verb": "Seal"
+              },
+              {
+                "from": "Sealed",
+                "to": "Live",
+                "verb": "Unseal"
+              },
+              {
+                "from": "Live",
+                "to": "Destroyed",
+                "verb": "Destroy"
+              },
+              {
+                "from": "Live",
+                "to": "Migrated",
+                "verb": "Migrate"
+              },
+              {
+                "from": "Live",
+                "to": "Archived",
+                "verb": "Archive"
+              }
+            ]
+          }
+        }
+      ],
+      "affordances": [
+        {
+          "name": "peek",
+          "effect": "EmitEvent",
+          "required": "Signature",
+          "authorized": true
+        },
+        {
+          "name": "touch",
+          "effect": "IncrementNonce",
+          "required": "Signature",
+          "authorized": true
+        },
+        {
+          "name": "write",
+          "effect": "SetField(slot 1)",
+          "required": "Either",
+          "authorized": true
+        },
+        {
+          "name": "grant",
+          "effect": "GrantCapability",
+          "required": "None",
+          "authorized": false
+        }
+      ]
+    }
+  ],
+  "ocap": {
+    "nodes": [
+      {
+        "id": "2a6969\u2026ab90",
+        "balance": 54000,
+        "lifecycle": "Live",
+        "out": 0,
+        "in": 2
+      },
+      {
+        "id": "3cc026\u20262fa6",
+        "balance": -1000000,
+        "lifecycle": "Live",
+        "out": 0,
+        "in": 0
+      },
+      {
+        "id": "87a55e\u202656cb",
+        "balance": 700000,
+        "lifecycle": "Live",
+        "out": 0,
+        "in": 0
+      },
+      {
+        "id": "ccfc99\u2026899a",
+        "balance": 251000,
+        "lifecycle": "Live",
+        "out": 2,
+        "in": 0
+      }
+    ],
+    "edges": [
+      {
+        "from": "ccfc99\u2026899a",
+        "to": "2a6969\u2026ab90",
+        "slot": 0,
+        "rights": "None"
+      },
+      {
+        "from": "ccfc99\u2026899a",
+        "to": "2a6969\u2026ab90",
+        "slot": 1,
+        "rights": "None"
+      }
+    ]
+  },
+  "acts": []
+}
