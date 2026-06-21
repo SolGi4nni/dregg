@@ -3423,3 +3423,24 @@ effect's forge consequence). LIVE:
 INTEGRATION HAZARD: all 4 touch the shared EffectVmEmitRotationV3.lean + Dregg2.lean; tree transiently RED while
 SetProgram's new module compiles. HOLD for settle, then ONE clean integrated verify; bank cap-family work ONLY
 after the forge-detector flips GREEN (no banking onto the dead-binding state).
+
+## ⚑⚑🟩 PARALLEL-FAMILY WAVE LANDED (2026-06-21) — forge closed + 3 families, verified green
+The 4-strand wave converged green together (lake 4108 axiom-clean, forge-detector flipped GREEN). Banked:
+- 5a98dbb39 🟩 THE SILENT FORGE CLOSED: cap-write map_op guards re-pointed var2(SET_FIELD)->firing per-effect
+  selectors. forge-detector write_cap_open_wrapper_requires_cap_tree_write_witness_no_silent_forge RED->GREEN (a
+  genuine cap-root change with empty witness now REJECTED). cap_write_revoke_proves_and_verifies GENUINELY green
+  (live binding). + refreshDelegation CLASS-A (deleg-tree write column, delegRoot_runtime_column_pending CLOSED).
+- d58545a5f VK EPOCH family 1: setPermissions/setVK FORCED-ON-WIRE light-client-verifiable (the in-circuit weld #64
+  binds; SDK light-client verify is anchor-free; anchor-disabled discriminator test 2/2 green, forged perms/vk
+  UNSAT=[#64]). The off-cell anchor is redundant for these 2. VK-EPOCH FAN-OUT template established: the shared
+  proof_verify.rs off-cell block serves 7 effects; conversion = weld the dedicated sub-limb; remaining riders =
+  Refusal (fields_root weld) + lifecycle payload (reason_hash/deathCert; DISC limb 32 already in-circuit). STAGE F
+  = retire the PI-46 pin (the anchor-cutover flag-day), last.
+- SetProgram (a0b89245): setProgram_descriptorRefines_sat present (RotatedKernelRefinementProgram.lean:143), in the
+  green build, but files untracked + action.rs modified + agent report pending -> HOLD bank for the report.
+SOUNDNESS WIN: the new-goal discipline caught a real silent forge ONE CHECKMARK before it shipped (the green
+prove-through passed because the binding was DEAD). Now closed + the forge-detector guards it permanently.
+CHECKLIST boxes now genuinely green: attenuate · resolvers · receiptArchive · cap-write-revoke (forge closed) ·
+refreshDelegation · setPerms · setVK. STILL OPEN: cap-write Inserts (delegate/introduce/delegateAtten — descriptors
+forge-fixed but Rust CapTreeWriteOp::Insert unwired) · the verifier authority-only tooth (needs 3 tests reconciled) ·
+revoke(tag-2) frozen-face · SetProgram bank · VK-epoch families 2-N (Refusal/lifecycle-payload + STAGE F).
