@@ -715,6 +715,9 @@ pub struct Cockpit {
     nav_cursor: usize,
     /// Suppresses history recording while a back/forward restore is in flight.
     nav_jumping: bool,
+    /// PINNED VIEWS (bookmarks): saved `(label, captured-state)` the operator can
+    /// jump back to with one click (the ☆ in the nav bar). Session-scoped.
+    nav_pins: Vec<(String, CockpitNavState)>,
     /// The [`Spotter`] search query (the ⌘K-style box). Each typed char re-runs the
     /// universal search; a hit click re-focuses the inspector.
     moldable_query: String,
@@ -1072,9 +1075,37 @@ impl Cockpit {
         cx.notify();
     }
 
+    /// A compact label for a nav_key (the tab plus its first sub-coordinate) —
+    /// used on the pinned-view chips.
+    fn nav_short_label(key: &str) -> String {
+        let (tab, sub) = key.split_once('|').unwrap_or((key, ""));
+        let first = sub.split(';').next().unwrap_or("");
+        if first.is_empty() {
+            tab.to_string()
+        } else {
+            format!("{tab}/{}", first.split('=').next_back().unwrap_or(first))
+        }
+    }
+
+    /// Pin (bookmark) the current view, or unpin it if already pinned (the ☆
+    /// toggle). Session-scoped, capped.
+    fn pin_current(&mut self, cx: &mut Context<Self>) {
+        let key = self.nav_key();
+        if self.nav_pins.iter().any(|p| p.0 == key) {
+            self.nav_pins.retain(|p| p.0 != key);
+        } else {
+            let cap = self.capture_nav();
+            self.nav_pins.push((key, cap));
+            if self.nav_pins.len() > 12 {
+                self.nav_pins.remove(0);
+            }
+        }
+        cx.notify();
+    }
+
     /// THE NAVIGATION BAR — browser-style back/forward + a "you are here"
-    /// breadcrumb + a live "what can I do here" quick-nav strip (the available
-    /// navigations as one-click chips). The programmatic nav API, surfaced.
+    /// breadcrumb + a ☆ pin + a live "what can I do here" quick-nav strip + the
+    /// pinned views. The programmatic nav API, surfaced as delight.
     fn nav_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let back_color = if self.can_nav_back() { theme::accent() } else { theme::muted() };
         let fwd_color = if self.can_nav_forward() { theme::accent() } else { theme::muted() };
@@ -1089,6 +1120,9 @@ impl Cockpit {
         // the within-surface navigations available right now, as one-click chips
         let actions = self.available_nav();
         let show_chips = self.active_tab() != Tab::Home && !actions.is_empty();
+        let is_pinned = self.nav_pins.iter().any(|p| p.0 == here);
+        let pin_glyph = if is_pinned { "★" } else { "☆" };
+        let pin_color = if is_pinned { theme::accent() } else { theme::muted() };
 
         let mut bar = div()
             .flex()
@@ -1101,6 +1135,7 @@ impl Cockpit {
             .bg(theme::panel())
             .child(small_button(cx, "nav-back", "←", back_color, Cockpit::nav_back))
             .child(small_button(cx, "nav-fwd", "→", fwd_color, Cockpit::nav_forward))
+            .child(small_button(cx, "nav-pin", pin_glyph, pin_color, Cockpit::pin_current))
             .child(
                 div()
                     .text_xs()
@@ -1138,6 +1173,38 @@ impl Cockpit {
                 );
             }
             bar = bar.child(strip);
+        }
+
+        // PINNED VIEWS — one-click jump-back bookmarks (right-aligned).
+        if !self.nav_pins.is_empty() {
+            let mut pins = div().flex().items_center().gap_1().ml_auto();
+            pins = pins.child(div().text_xs().text_color(theme::muted()).child("★"));
+            for (i, (key, _)) in self.nav_pins.iter().enumerate() {
+                let st = self.nav_pins[i].1.clone();
+                pins = pins.child(
+                    div()
+                        .id(("nav-pin-chip", i))
+                        .px_2()
+                        .py_0p5()
+                        .rounded_md()
+                        .bg(theme::panel_hi())
+                        .border_1()
+                        .border_color(theme::border())
+                        .text_xs()
+                        .text_color(theme::accent())
+                        .cursor_pointer()
+                        .hover(|s| s.bg(theme::border()))
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |this, _ev, _w, cx| {
+                                this.restore_nav(&st, cx);
+                                cx.notify();
+                            }),
+                        )
+                        .child(Self::nav_short_label(key)),
+                );
+            }
+            bar = bar.child(pins);
         }
         bar
     }
@@ -1465,6 +1532,7 @@ impl Cockpit {
             nav_hist: Vec::new(),
             nav_cursor: 0,
             nav_jumping: false,
+            nav_pins: Vec::new(),
             moldable_query: String::new(),
             moldable_lens: MoldableLens::Cell,
 
