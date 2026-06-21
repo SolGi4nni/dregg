@@ -3888,7 +3888,21 @@ refused).
 ###   18 *TraceReadout carriers proven INHABITED (no critical vacuity bug) + SetProgram FullActionA weld.
 ### ✅ VERIFIED GREEN at HEAD: cap suite 39/0/1 (the 1 ignore = delegateAtten LogUp residual, fail-closed, NOT a soundness gap) ·
 ###   descriptor-drift PASS (Lean emit == checked-in JSON) · circuit lib 941/0 · dregg-turn lib green · dregg-cell 714+ green.
-### REMAINING TO BANK (cap region, verifying): trace_rotated.rs + full_turn_proof.rs cap-routing + descriptors + vk_epoch
-###   light-client-binding tests. THEN Track-1 QUEUE #1 = revokeCapability ROUTE-FORGE (now ae15d66a freed the cap region).
+### ✅ cap region BANKED (5d6184f3b): trace_rotated.rs + full_turn_proof.rs cap-routing + descriptors + vk_epoch
+###   light-client-binding tests (20/0). Apps honest-model sweep BANKED (6495c0ae6, +1 u64->usize fix).
+### ✅ Track-1 QUEUE #1 CLOSED (f458b5258): revokeCapability ROUTE-FORGE — the SDK cap-open route bound the
+###   AUTHORITY-ONLY revokeCapabilityCapOpen (write:None) so the cap-tree REMOVE rode UNBOUND on the light-client wire
+###   (forged post-cap-root accepted; base-level forge-detector was a LAUNDERED GREEN testing the BASE not the ROUTE).
+###   FIX mirrors revokeDelegation tag-2: write-bearing wrapper revokeCapabilityWriteCapOpenV3 (authority crown AND
+###   cap-tree REMOVE in ONE descriptor) + route re-pointed write:Some(...,Remove) + authority-only FORBIDDEN +
+###   Lean rungs (descriptorRefines_capOpenSat + forge tooth + apex rung, axiom-clean) + route-level antibody
+###   cap_write_revoke_cap_route_proves_and_verifies (RED before at route.write.is_some(), GREEN after, mutation-confirmed).
+###   Verified at HEAD: lake 4115 green axiom-clean · cap suite 40/0/1 (+1) · drift PASS, FP re-pinned. VK-affecting -> ember-gated.
+### ⚠ FINDING (named, not a fake green): the dregg-tests __wip_tests crate has ~258 PRE-EXISTING compile errors (API drift:
+###   Cell.id went private, Turn gained 9 fields) — so the blind-test agent's tests/src/adversarial_boundaries.rs honest-model
+###   edit is UNVERIFIABLE through it and is LEFT UNCOMMITTED (no green check for an edit that can't compile). Rehab of the
+###   __wip_tests crate is its own project (out of tonight's scope), not a quick-fix.
+### THE 1 REMAINING CAP RESIDUAL (named, fail-closed, NOT a soundness gap): delegateAtten genuine prove-through #[ignore]'d —
+###   a plonky3 LogUp submask+INSERT permutation-column interaction (see the delegateAtten note at the top of this log).
 ### NOT-MINE-TONIGHT (other-session work in the shared tree, left untouched): cell/predicate.rs AuthContext · dregg-atlas/ ·
 ###   Cargo.{lock,toml} · sdk/cipherclerk.rs · turn/executor/{authorize,membership_verifier,proof_verify}.rs · wasm/runtime.rs.
