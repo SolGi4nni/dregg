@@ -70,14 +70,17 @@ def main : IO Unit := do
       Dregg2.Circuit.Emit.CapOpenEmit.transferV3
       "dregg-effectvm-transfer-v1-rot24-v3-capopen-eff-tb" Dregg2.Circuit.Emit.CapOpenEmit.EFF_TRANSFER
   IO.println s!"v3rot\ttransferCapOpenTBVmDescriptor2R24\t{transferCapOpenTB.name}\t{emitVmJson2 transferCapOpenTB}"
-  -- THE WRITE-BEARING TAIL (`v3RegistryHeap` positions 45..49): the apex-proven, registry-deployed
-  -- descriptors that FORCE guarantee A (the cap-tree / heap-root WRITE), now on the wire so the deployed
-  -- Rust interpreter parses exactly what the soundness apex proves about. heapWrite is the Class-A
-  -- heap-root recompute descriptor (`Rfix 56`); the four `…WriteCapOpenV3` wrappers carry the authority
-  -- appendix over the MOVING write base (the apex's `Rfix 1/10/11/14` re-pointed off the authority-only
-  -- wrappers at positions 36..38). Keys match `v3RegistryHeap`'s declared names.
+  -- THE WRITE-BEARING TAIL (`v3RegistryHeap` positions 45..50): the apex-proven, registry-deployed
+  -- descriptors that FORCE guarantee A (the cap-tree / heap-root / DELEG-tree WRITE), now on the wire so the
+  -- deployed Rust interpreter parses exactly what the soundness apex proves about. heapWrite is the Class-A
+  -- heap-root recompute descriptor (`Rfix 56`); the four `…WriteCapOpenV3` cap-tree wrappers carry the
+  -- authority appendix over the MOVING write base (the apex's `Rfix 1/10/11/14` re-pointed off the
+  -- authority-only wrappers at positions 36..38); `refreshDelegationWriteCapOpenV3` (position 50, `Rfix 55`
+  -- re-pointed) carries the DELEGATIONS-tree UPDATE-write (the `delegRoot_runtime_column_pending` close).
+  -- Keys match `v3RegistryHeap`'s declared names.
   IO.println s!"v3rot\theapWriteVmDescriptor2R24\t{Dregg2.Circuit.RotatedKernelRefinementExercise.heapWriteV3.name}\t{emitVmJson2 Dregg2.Circuit.RotatedKernelRefinementExercise.heapWriteV3}"
   IO.println s!"v3rot\tdelegateWriteCapOpenVmDescriptor2R24\t{Dregg2.Circuit.Emit.CapOpenEmit.delegateWriteCapOpenV3.name}\t{emitVmJson2 Dregg2.Circuit.Emit.CapOpenEmit.delegateWriteCapOpenV3}"
   IO.println s!"v3rot\tintroduceWriteCapOpenVmDescriptor2R24\t{Dregg2.Circuit.Emit.CapOpenEmit.introduceWriteCapOpenV3.name}\t{emitVmJson2 Dregg2.Circuit.Emit.CapOpenEmit.introduceWriteCapOpenV3}"
   IO.println s!"v3rot\tdelegateAttenWriteCapOpenVmDescriptor2R24\t{Dregg2.Circuit.Emit.CapOpenEmit.delegateAttenWriteCapOpenV3.name}\t{emitVmJson2 Dregg2.Circuit.Emit.CapOpenEmit.delegateAttenWriteCapOpenV3}"
   IO.println s!"v3rot\trevokeDelegationWriteCapOpenVmDescriptor2R24\t{Dregg2.Circuit.Emit.CapOpenEmit.revokeDelegationWriteCapOpenV3.name}\t{emitVmJson2 Dregg2.Circuit.Emit.CapOpenEmit.revokeDelegationWriteCapOpenV3}"
+  IO.println s!"v3rot\trefreshDelegationWriteCapOpenVmDescriptor2R24\t{Dregg2.Circuit.Emit.CapOpenEmit.refreshDelegationWriteCapOpenV3.name}\t{emitVmJson2 Dregg2.Circuit.Emit.CapOpenEmit.refreshDelegationWriteCapOpenV3}"

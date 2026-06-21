@@ -84,11 +84,14 @@ open Dregg2.Circuit.Spec.RefreshDelegation
 open Dregg2.Circuit.DescriptorIR2 (VmTrace Satisfied2 envAt opensTo writesTo)
 open Dregg2.Circuit.Emit.EffectVmEmit (prmCol sbCol saCol EFFECT_VM_WIDTH)
 open Dregg2.Circuit.Emit.EffectVmEmit.state (CAP_ROOT)
-open Dregg2.Circuit.Emit.EffectVmEmitV2 (heldReadOp removeWriteOp CAP_KEY KEEP_MASK HELD_MASK)
+open Dregg2.Circuit.Emit.EffectVmEmitV2 (CAP_KEY KEEP_MASK HELD_MASK)
+open Dregg2.Circuit.Emit.EffectVmEmit
+  (sel.ATTENUATE_CAPABILITY sel.REVOKE_CAPABILITY)
 open Dregg2.Circuit.Emit.EffectVmEmitRotationV3
   (revokeCapabilityV3 delegateV3 delegateAttenV3 grantCapWriteV3 attenuateV3
    introduceWriteV3 revokeDelegationWriteV3 refreshDelegationWriteV3
    beforeCapRootCol afterCapRootCol beforeDelegRootCol afterDelegRootCol
+   heldReadOpRot keepWriteOpRot removeWriteOpRot
    delegateV3_forces_write grantCapWriteV3_forces_write delegateAttenV3_non_amp attenuateV3_non_amp
    introduceWriteV3_forces_write revokeDelegationWriteV3_forces_write
    refreshDelegationWriteV3_forces_write)
@@ -290,11 +293,13 @@ structure AttenuateWriteAnchor {State : Type} (S : CapHashScheme State)
     (henc : AttenuateCapsTreeEncodes S pre post actor idx keep) : Type where
   row : Nat
   hrow : row < tr.rows.length
-  hactive : (envAt tr row).loc Dregg2.Circuit.Emit.EffectVmEmit.sel.ATTENUATE_CAPABILITY = 1
-  -- attenuate is the IN-PLACE update-at-key on the V1-STATE cap-root column (`keepWriteOp`, NOT a
-  -- write wrapper): the decode's sorted-tree roots anchor to the committed v1-state CAP_ROOT limbs.
-  oldAnchored : henc.oldRoot = (envAt tr row).loc (sbCol CAP_ROOT)
-  newAnchored : henc.newRoot = (envAt tr row).loc (saCol CAP_ROOT)
+  hactive : (envAt tr row).loc sel.ATTENUATE_CAPABILITY = 1
+  -- attenuate is the IN-PLACE update-at-key on the ROTATED cap-root limb (`keepWriteOpRot`, the
+  -- silent-forge close — note-spend-shaped, witness-carried): the decode's sorted-tree roots anchor to
+  -- the rotated BEFORE/AFTER cap-root limbs (`beforeCapRootCol`/`afterCapRootCol`, var 213/264), NOT the
+  -- v1-state CAP_ROOT cols (65/87, which FREEZE pass-through and are not commitment inputs).
+  oldAnchored : henc.oldRoot = (envAt tr row).loc (beforeCapRootCol EFFECT_VM_WIDTH)
+  newAnchored : henc.newRoot = (envAt tr row).loc (afterCapRootCol EFFECT_VM_WIDTH)
 
 /-- **`attenuate_descriptorRefines_sat` — THE ATTENUATE CLASS-A REFINEMENT (write FORCED).** From
 `Satisfied2 hash attenuateV3` (via `attenuateV3_non_amp` on the MOVING write face, with the submask
@@ -1061,20 +1066,20 @@ theorem revokeCapabilityV3_non_amp (hash : List ℤ → ℤ)
     {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
     (hsat : Satisfied2 hash revokeCapabilityV3 minit mfin maddrs t)
     (i : Nat) (hi : i < t.rows.length)
-    (hactive : (envAt t i).loc Dregg2.Circuit.Emit.EffectVmEmit.sel.REVOKE_CAPABILITY = 1) :
-    opensTo hash ((envAt t i).loc (sbCol CAP_ROOT))
+    (hactive : (envAt t i).loc sel.REVOKE_CAPABILITY = 1) :
+    opensTo hash ((envAt t i).loc (beforeCapRootCol EFFECT_VM_WIDTH))
         ((envAt t i).loc (prmCol CAP_KEY))
         (some ((envAt t i).loc (prmCol HELD_MASK)))
-    ∧ writesTo hash ((envAt t i).loc (sbCol CAP_ROOT))
+    ∧ writesTo hash ((envAt t i).loc (beforeCapRootCol EFFECT_VM_WIDTH))
         ((envAt t i).loc (prmCol CAP_KEY)) 0
-        ((envAt t i).loc (saCol CAP_ROOT)) := by
+        ((envAt t i).loc (afterCapRootCol EFFECT_VM_WIDTH)) := by
   have hrowc := hsat.rowConstraints i hi
-  have hmem : ∀ c ∈ ([.mapOp (heldReadOp Dregg2.Circuit.Emit.EffectVmEmit.sel.REVOKE_CAPABILITY),
-      .mapOp (removeWriteOp Dregg2.Circuit.Emit.EffectVmEmit.sel.REVOKE_CAPABILITY)] :
+  have hmem : ∀ c ∈ ([.mapOp (heldReadOpRot sel.REVOKE_CAPABILITY),
+      .mapOp (removeWriteOpRot sel.REVOKE_CAPABILITY)] :
       List Dregg2.Circuit.DescriptorIR2.VmConstraint2), c ∈ revokeCapabilityV3.constraints :=
     fun c hc => List.mem_append_right _ hc
-  have hread := hrowc (.mapOp (heldReadOp Dregg2.Circuit.Emit.EffectVmEmit.sel.REVOKE_CAPABILITY)) (hmem _ (by simp))
-  have hwrite := hrowc (.mapOp (removeWriteOp Dregg2.Circuit.Emit.EffectVmEmit.sel.REVOKE_CAPABILITY)) (hmem _ (by simp))
+  have hread := hrowc (.mapOp (heldReadOpRot sel.REVOKE_CAPABILITY)) (hmem _ (by simp))
+  have hwrite := hrowc (.mapOp (removeWriteOpRot sel.REVOKE_CAPABILITY)) (hmem _ (by simp))
   exact ⟨(hread hactive).1, hwrite hactive⟩
 
 /-- **`RevokeCapabilityTraceReadout` — the realizable circuit-witness extraction for revokeCapability.** The
@@ -1085,11 +1090,11 @@ structure RevokeCapabilityTraceReadout (hash : List ℤ → ℤ)
     (pre post : RecChainedState) (holder target : CellId) : Type where
   row : Nat
   hrow : row < t.rows.length
-  hsel : (envAt t row).loc Dregg2.Circuit.Emit.EffectVmEmit.sel.REVOKE_CAPABILITY = 1
+  hsel : (envAt t row).loc sel.REVOKE_CAPABILITY = 1
   capsMoveDecodes :
-    writesTo hash ((envAt t row).loc (sbCol CAP_ROOT))
+    writesTo hash ((envAt t row).loc (beforeCapRootCol EFFECT_VM_WIDTH))
         ((envAt t row).loc (prmCol CAP_KEY)) 0
-        ((envAt t row).loc (saCol CAP_ROOT))
+        ((envAt t row).loc (afterCapRootCol EFFECT_VM_WIDTH))
       → post.kernel.caps = removeEdgeCaps pre.kernel.caps holder target
   logAdv : post.log = authReceipt holder :: pre.log
   frame : KernelFrameExceptCaps pre post

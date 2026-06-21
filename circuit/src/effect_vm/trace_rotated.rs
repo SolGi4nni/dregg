@@ -891,6 +891,23 @@ pub fn generate_rotated_note_create_trace_with_commitments_tree(
 pub enum CapTreeWriteOp {
     /// The revoke (`read` the leaf, then `write` value 0 in place). Key present in BEFORE.
     Remove,
+    /// The grant/delegate/introduce (`read` a DISTINCT already-present ANCHOR leaf — the
+    /// delegator's held authority cap — then `insert` a FRESH key). The map_op's `read` opens
+    /// the anchor (`ANCHOR_KEY`/`ANCHOR_MASK` = params 6/7, cols `PARAM_BASE+6`/`+7`) and the
+    /// `insert` advances the cap-root with the fresh edge (`CAP_KEY`/`KEEP_MASK` = params 3/5,
+    /// cols `PARAM_BASE+3`/`+5`, BEFORE cap-root limb 213 → AFTER cap-root limb 264). The anchor
+    /// MUST be present (else the `read` has no membership witness) and the inserted key MUST be
+    /// ABSENT + distinct from the anchor (else `insert_witness` returns `None`) — both fail closed
+    /// (no fabricated post-root). Lean `EffectVmEmitV2.{insertWriteOp, heldReadOp, ANCHOR_KEY}`.
+    Insert,
+    /// The attenuate (in-place UPDATE-AT-KEY: `read` the held key's mask, then `write` the narrowed
+    /// `KEEP_MASK` at the SAME key). The map_op's `read` opens `CAP_KEY` (param 3, col `PARAM_BASE+3`)
+    /// to `HELD_MASK` (param 4, col `PARAM_BASE+4`), then the `write` rebinds the SAME key to
+    /// `KEEP_MASK` (param 5, col `PARAM_BASE+5`), advancing BEFORE cap-root limb 213 → AFTER cap-root
+    /// limb 264. The key MUST be present (else `update_witness` returns `None` — fail closed, no
+    /// fabricated post-root). The KEY-SET is PRESERVED (the in-place narrow's sorted-tree shadow).
+    /// Lean `EffectVmEmitV2.{keepWriteOp, heldReadOp, CAP_KEY, KEEP_MASK}`.
+    Update,
 }
 
 /// **THE DEPLOYMENT-REAL cap-tree WRITE wiring (the cap-WRITE light-client axis's witness).** The
@@ -922,15 +939,20 @@ pub enum CapTreeWriteOp {
 /// c-list leaf-set as the single `map_heaps` entry the prover threads into `prove_vm_descriptor2`.
 ///
 /// SOUNDNESS: `clist_leaves` MUST be the cell's GENUINE c-list (the prover threads it from the real
-/// ledger). `revoked_key` MUST be present in it (else `update_witness` returns `None` and this
-/// fails closed — NO fabricated post-root). The post-root is the genuine in-place write of value 0.
+/// ledger). For `Remove`, `anchor_key` is the REMOVEd key (read+write the SAME present key) and
+/// MUST be present (else `update_witness` returns `None` and this fails closed); `inserted` MUST be
+/// `None`. For `Insert`, `anchor_key` is the held-authority ANCHOR leaf (read-only) and MUST be
+/// present, while `inserted = Some((fresh_key, value))` MUST be ABSENT and distinct from the anchor
+/// (else `insert_witness` returns `None` and this fails closed). In every case the post-root is the
+/// GENUINE sorted-tree write — NO fabricated post-root.
 #[allow(clippy::too_many_arguments)]
 pub fn generate_rotated_cap_write_base(
     trace: &mut Vec<Vec<BabyBear>>,
     dpis: &mut [BabyBear],
     op: CapTreeWriteOp,
     clist_leaves: &[crate::heap_root::HeapLeaf],
-    revoked_key: BabyBear,
+    anchor_key: BabyBear,
+    inserted: Option<(BabyBear, BabyBear)>,
 ) -> Result<Vec<Vec<crate::heap_root::HeapLeaf>>, String> {
     use super::columns::PARAM_BASE;
     use crate::heap_root::{CanonicalHeapTree, HEAP_TREE_DEPTH, HeapLeaf};
@@ -952,43 +974,184 @@ pub fn generate_rotated_cap_write_base(
     // freezing the v1-state cap-root satisfies the v1-state continuity weld hi=11,lo=11 trivially).
     let before_cap_root_limb = BEFORE_BASE + B_CAP_ROOT; // 213 (descriptor var 213)
     let after_cap_root_limb = AFTER_BASE + B_CAP_ROOT; // 264 (descriptor var 264)
-    let key_col = PARAM_BASE + 3; // 71 (the map_op key)
-    let value_col = PARAM_BASE + 4; // 72 (the map_op read value)
+    // Param-column layout (Lean `EffectVmEmitV2.{CAP_KEY,HELD_MASK,KEEP_MASK,ANCHOR_KEY,ANCHOR_MASK}`):
+    //   CAP_KEY = 3   → col PARAM_BASE+3 (the FRESH inserted key / the REMOVEd key)
+    //   HELD_MASK = 4 → col PARAM_BASE+4 (the Remove `read` value column)
+    //   KEEP_MASK = 5 → col PARAM_BASE+5 (the inserted value)
+    //   ANCHOR_KEY = 6 → col PARAM_BASE+6 (the Insert `read` anchor key)
+    //   ANCHOR_MASK = 7 → col PARAM_BASE+7 (the Insert `read` anchor value)
+    let cap_key_col = PARAM_BASE + 3; // 71 (Remove read+write key / Insert insert key)
+    let remove_value_col = PARAM_BASE + 4; // 72 (Remove read value)
+    let keep_mask_col = PARAM_BASE + 5; // 73 (Insert inserted value)
+    let anchor_key_col = PARAM_BASE + 6; // 74 (Insert read anchor key)
+    let anchor_value_col = PARAM_BASE + 7; // 75 (Insert read anchor value)
 
     // The BEFORE cap-tree (the deployed openable accumulator before the write) over the cell's
-    // FULL c-list. The written key MUST be present — `update_witness` returns `None` otherwise, and
-    // this fails closed (no fabricated post-root).
+    // FULL c-list. The written/anchor key MUST be present — the witness builders return `None`
+    // otherwise, and this fails closed (no fabricated post-root).
     let before_tree = CanonicalHeapTree::new(clist_leaves.to_vec(), HEAP_TREE_DEPTH);
     let before_root = before_tree.root();
 
-    let (after_root, read_value) = match op {
+    // Each op fills its OWN param columns; the columns it does not drive are zeroed (the unfired
+    // map_op for the other op kind never reads them).
+    enum CapWriteCols {
+        /// Remove: read+write the SAME present key at `cap_key_col`; publish its stored value at
+        /// `remove_value_col`.
+        Remove { key: BabyBear, read_value: BabyBear },
+        /// Insert: read the present ANCHOR key/value (anchor cols), insert the FRESH key/value
+        /// (cap_key / keep_mask cols).
+        Insert {
+            anchor_key: BabyBear,
+            anchor_value: BabyBear,
+            inserted_key: BabyBear,
+            inserted_value: BabyBear,
+        },
+        /// Update (attenuate): read the present key at `cap_key_col` to its HELD_MASK (`remove_value_col`),
+        /// rebind the SAME key to KEEP_MASK (`keep_mask_col`).
+        Update {
+            key: BabyBear,
+            held_value: BabyBear,
+            keep_mask: BabyBear,
+        },
+    }
+
+    let (after_root, cols) = match op {
         CapTreeWriteOp::Remove => {
             // The deployed `removeWriteOp`: an in-place WRITE of value 0 at the present key (the
-            // `read` first opens its stored value, which the row publishes at col 72).
+            // `read` first opens its stored value, which the row publishes at col 72). `anchor_key`
+            // is the removed key (the consumed cap's slot_hash); `inserted` is unused.
+            if inserted.is_some() {
+                return Err(
+                    "cap-write Remove: an inserted (key,value) was supplied — Remove reads+writes the \
+                     SAME present key and takes no insert payload"
+                        .into(),
+                );
+            }
+            let removed_key = anchor_key;
             let stored = before_tree
                 .sorted_leaves()
                 .iter()
-                .find(|l| l.addr == revoked_key)
+                .find(|l| l.addr == removed_key)
                 .map(|l| l.value)
                 .ok_or_else(|| {
                     format!(
                         "cap-write Remove: revoked key {} is NOT in the BEFORE c-list — the cap-tree \
                          read op has no membership witness and refuses the turn (no silent forge)",
-                        revoked_key.as_u32()
+                        removed_key.as_u32()
                     )
                 })?;
             let w = before_tree
                 .update_witness(HeapLeaf {
-                    addr: revoked_key,
+                    addr: removed_key,
                     value: BabyBear::ZERO,
                 })
                 .ok_or_else(|| {
                     format!(
                         "cap-write Remove: update witness for key {} failed",
-                        revoked_key.as_u32()
+                        removed_key.as_u32()
                     )
                 })?;
-            (w.new_root, stored)
+            (
+                w.new_root,
+                CapWriteCols::Remove {
+                    key: removed_key,
+                    read_value: stored,
+                },
+            )
+        }
+        CapTreeWriteOp::Insert => {
+            // The deployed `insertWriteOp` + `heldReadOp`: a `read` of a DISTINCT already-present
+            // ANCHOR leaf (the delegator's held-authority cap), then a fresh sorted INSERT. The
+            // anchor MUST be present (the read has a membership witness); the inserted key MUST be
+            // ABSENT and distinct from the anchor (the sorted `insert_witness` refuses an
+            // already-present key) — both fail closed (no fabricated post-root).
+            let (inserted_key, inserted_value) = inserted.ok_or_else(|| {
+                "cap-write Insert: no inserted (key,value) supplied — the fresh edge to grant"
+                    .to_string()
+            })?;
+            if inserted_key == anchor_key {
+                return Err(format!(
+                    "cap-write Insert: the inserted key {} EQUALS the anchor key — the `read` requires \
+                     the key PRESENT while the `insert` requires it ABSENT, so they MUST be distinct \
+                     (else the pair is jointly UNSAT on the wire)",
+                    inserted_key.as_u32()
+                ));
+            }
+            let anchor_value = before_tree
+                .sorted_leaves()
+                .iter()
+                .find(|l| l.addr == anchor_key)
+                .map(|l| l.value)
+                .ok_or_else(|| {
+                    format!(
+                        "cap-write Insert: anchor key {} is NOT in the BEFORE c-list — the held-authority \
+                         read op has no membership witness and refuses the turn (no silent forge)",
+                        anchor_key.as_u32()
+                    )
+                })?;
+            let w = before_tree
+                .insert_witness(HeapLeaf {
+                    addr: inserted_key,
+                    value: inserted_value,
+                })
+                .ok_or_else(|| {
+                    format!(
+                        "cap-write Insert: insert witness for fresh key {} failed (already present or \
+                         collides with the sentinel range) — no fabricated post-root",
+                        inserted_key.as_u32()
+                    )
+                })?;
+            (
+                w.new_root,
+                CapWriteCols::Insert {
+                    anchor_key,
+                    anchor_value,
+                    inserted_key,
+                    inserted_value,
+                },
+            )
+        }
+        CapTreeWriteOp::Update => {
+            // The deployed `keepWriteOp` + `heldReadOp` (attenuate): an in-place UPDATE-AT-KEY. The
+            // `read` opens `CAP_KEY` (= `anchor_key`) to its stored HELD_MASK (col 72); the `write`
+            // rebinds the SAME key to `KEEP_MASK` (the narrowed value, `inserted`'s value). The key
+            // MUST be present (else `update_witness` returns `None` — fail closed). The key set is
+            // preserved (the in-place narrow's sorted-tree shadow).
+            let (_unused_key, keep_mask) = inserted.ok_or_else(|| {
+                "cap-write Update: no (key,KEEP_MASK) supplied — the narrowed value to write".to_string()
+            })?;
+            let updated_key = anchor_key;
+            let held_value = before_tree
+                .sorted_leaves()
+                .iter()
+                .find(|l| l.addr == updated_key)
+                .map(|l| l.value)
+                .ok_or_else(|| {
+                    format!(
+                        "cap-write Update: held key {} is NOT in the BEFORE c-list — the held-authority \
+                         read op has no membership witness and refuses the turn (no silent forge)",
+                        updated_key.as_u32()
+                    )
+                })?;
+            let w = before_tree
+                .update_witness(HeapLeaf {
+                    addr: updated_key,
+                    value: keep_mask,
+                })
+                .ok_or_else(|| {
+                    format!(
+                        "cap-write Update: update witness for key {} failed",
+                        updated_key.as_u32()
+                    )
+                })?;
+            (
+                w.new_root,
+                CapWriteCols::Update {
+                    key: updated_key,
+                    held_value,
+                    keep_mask,
+                },
+            )
         }
     };
 
@@ -1000,8 +1163,36 @@ pub fn generate_rotated_cap_write_base(
     for row in trace.iter_mut() {
         row[before_cap_root_limb] = before_root;
         row[after_cap_root_limb] = after_root;
-        row[key_col] = revoked_key;
-        row[value_col] = read_value;
+        match cols {
+            CapWriteCols::Remove { key, read_value } => {
+                row[cap_key_col] = key;
+                row[remove_value_col] = read_value;
+            }
+            CapWriteCols::Insert {
+                anchor_key,
+                anchor_value,
+                inserted_key,
+                inserted_value,
+            } => {
+                // The `read` map_op opens the anchor (cols 74/75); the `insert` map_op inserts the
+                // fresh key/value (cols 71/73). The read's value column (col 72) is unused by Insert.
+                row[anchor_key_col] = anchor_key;
+                row[anchor_value_col] = anchor_value;
+                row[cap_key_col] = inserted_key;
+                row[keep_mask_col] = inserted_value;
+            }
+            CapWriteCols::Update {
+                key,
+                held_value,
+                keep_mask,
+            } => {
+                // The `read` opens CAP_KEY (col 71) to HELD_MASK (col 72); the `write` rebinds the SAME
+                // key to KEEP_MASK (col 73). No anchor columns (the read/write share the key).
+                row[cap_key_col] = key;
+                row[remove_value_col] = held_value;
+                row[keep_mask_col] = keep_mask;
+            }
+        }
         recompute_block_commit(row, BEFORE_BASE);
         recompute_block_commit(row, AFTER_BASE);
     }
