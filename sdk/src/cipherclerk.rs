@@ -5359,6 +5359,41 @@ impl AgentCipherclerk {
         let before_w = rw::produce(&before_cell, &ctx_ledger, &nullifier_root, &commitments_root, &receipt_hashes);
         let after_w = rw::produce(&after_cell, &ctx_ledger, &nullifier_root, &commitments_root, &receipt_hashes);
 
+        // THE REFUSAL `fields_root` WRITE-GATE CONTEXT (the light-client close's deployed prover wire).
+        // A Refusal lead's `refusalVmDescriptor2R24` carries an in-circuit `.write` map-op forcing
+        // `after_fields_root == write(before_fields_root, REFUSAL_AUDIT_KEY → audit_felt)`; the wide
+        // refusal producer needs the BEFORE-cell's fields-tree leaf set (the openable accumulator the
+        // limb-36 root opens against, with the reserved audit slot) + the audit felt the refusal writes
+        // (light-client-recomputable from the published params; the post-cell carries it at
+        // `fields_map[REFUSAL_AUDIT_EXT_KEY]`). An EMPTY fields tree is UNSAT against the gate — so we
+        // thread the real BEFORE leaves so the HONEST refusal proves on the deployed path. (The witness
+        // carries the `fields_root` DIGEST limb only, NOT the leaf set — mirrors the NoteSpend
+        // `before_nullifiers` plumbing.)
+        let refusal_fields: Option<(Vec<dregg_circuit::heap_root::HeapLeaf>, BabyBear)> =
+            if matches!(
+                vm_effects.first(),
+                Some(dregg_circuit::effect_vm::Effect::Refusal { .. })
+            ) {
+                let before_leaves =
+                    dregg_cell::state::fields_root_leaves(&before_cell.state.fields_map);
+                let audit_bytes = after_cell
+                    .state
+                    .fields_map
+                    .get(&dregg_cell::state::REFUSAL_AUDIT_EXT_KEY)
+                    .copied()
+                    .ok_or_else(|| {
+                        SdkError::InvalidWitness(
+                            "refusal after-cell carries no audit slot in fields_map — apply_refusal \
+                             did not write REFUSAL_AUDIT_EXT_KEY (the `.write` gate has no value)"
+                                .into(),
+                        )
+                    })?;
+                let audit_value = dregg_circuit::cap_root::fold_bytes32(&audit_bytes);
+                Some((before_leaves, audit_value))
+            } else {
+                None
+            };
+
         // 5. Bridge the producer witnesses into the circuit generator's block witnesses.
         //    Carry the per-cell asset class (the fold of the before-cell's token_id) so the
         //    proof commits to its genuine asset class (PI[v3::ASSET_CLASS]).
@@ -5423,6 +5458,52 @@ impl AgentCipherclerk {
             (t, d)
         } else if matches!(
             vm_effects.first(),
+            Some(dregg_circuit::effect_vm::Effect::NoteCreate { .. })
+        ) {
+            // NoteCreate routes through the COMMITMENTS-SET grow-gate wide producer (limb-27
+            // accumulator) — the append-only twin of note-spend. This path threads no commitments-set
+            // context, so the empty set is the grow-gate's BEFORE.
+            let (t, d, _heaps) =
+                dregg_circuit::effect_vm::trace_rotated::generate_rotated_note_create_wide(
+                    &initial_vm_state,
+                    &vm_effects,
+                    &before_bw,
+                    &after_bw,
+                    &caveat,
+                    &[],
+                )
+                .map_err(|e| {
+                    SdkError::InvalidWitness(format!("wide note-create trace generation: {e}"))
+                })?;
+            (t, d)
+        } else if matches!(
+            vm_effects.first(),
+            Some(dregg_circuit::effect_vm::Effect::Refusal { .. })
+        ) {
+            // REFUSAL routes through the `fields_root` WRITE-gate wide producer (limb-36 accumulator) —
+            // the light-client close. This precompute MUST route refusal identically to
+            // `prove_effect_vm_rotated_wide` below (which re-derives the SAME trace + wide PIs), or the
+            // bound 16 wide PIs would not match `public_inputs[n_pi-16..]`. The genuine fields-tree write
+            // is threaded so the honest refusal proves; an empty tree would be UNSAT against the gate.
+            let (leaves, audit_value) = refusal_fields.as_ref().map(|(l, a)| (l.as_slice(), *a)).ok_or_else(|| {
+                SdkError::InvalidWitness(
+                    "refusal precompute: missing fields-tree context (refusal_fields)".into(),
+                )
+            })?;
+            let (t, d, _heaps) =
+                dregg_circuit::effect_vm::trace_rotated::generate_rotated_refusal_wide(
+                    &initial_vm_state,
+                    &vm_effects,
+                    &before_bw,
+                    &after_bw,
+                    &caveat,
+                    leaves,
+                    audit_value,
+                )
+                .map_err(|e| SdkError::InvalidWitness(format!("wide refusal trace generation: {e}")))?;
+            (t, d)
+        } else if matches!(
+            vm_effects.first(),
             Some(
                 dregg_circuit::effect_vm::Effect::SetPermissions { .. }
                     | dregg_circuit::effect_vm::Effect::SetVerificationKey { .. }
@@ -5430,10 +5511,12 @@ impl AgentCipherclerk {
                     | dregg_circuit::effect_vm::Effect::CellUnseal { .. }
                     | dregg_circuit::effect_vm::Effect::CellDestroy { .. }
                     | dregg_circuit::effect_vm::Effect::ReceiptArchive { .. }
-                    | dregg_circuit::effect_vm::Effect::Refusal { .. }
+                    | dregg_circuit::effect_vm::Effect::MakeSovereign
             )
         ) {
             // The record-pin family carries the 39-PI base (the record/lifecycle pin at PI 38).
+            // MakeSovereign joins (its record pin welds the AFTER authority-digest limb folding the
+            // flipped mode byte — see `record_pin_offset`).
             dregg_circuit::effect_vm::trace_rotated::generate_rotated_record_pin_wide(
                 &initial_vm_state,
                 &vm_effects,
@@ -5541,6 +5624,10 @@ impl AgentCipherclerk {
                 // against an EMPTY before nullifier accumulator (the grow-gate inserts into empty). The
                 // full-turn chained path threads the real freshness leaves from the non-revocation witness.
                 None,
+                // The refusal `fields_root` WRITE-gate context (built above from before/after cells when
+                // the lead is a Refusal) — threaded so the honest refusal proves through the `.write`
+                // map-op gate. This MUST match the precompute's refusal route (same trace + wide PIs).
+                refusal_fields.as_ref().map(|(l, a)| (l.as_slice(), *a)),
             )?
         };
         let proof_bytes = postcard::to_allocvec(&proof)
@@ -5700,6 +5787,10 @@ impl AgentCipherclerk {
                 &before_w,
                 after_block_w,
                 &caveat,
+                None,
+                // The whole-turn forest path threads no per-run fields context; a Refusal run here would
+                // fail closed against the `.write` gate (the live sovereign refusal lead is the single-leg
+                // path above). Heterogeneous-forest refusal is out of this wire's scope.
                 None,
             )?;
             let n_pi = dpis.len();

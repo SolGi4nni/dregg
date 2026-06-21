@@ -789,6 +789,7 @@ pub fn prove_effect_vm_rotated_wide(
     after_w: &dregg_turn::rotation_witness::RotationWitness,
     caveat: &dregg_circuit::effect_vm::trace_rotated::RotatedCaveatManifest,
     before_nullifiers: Option<&[BabyBear]>,
+    refusal_fields: Option<(&[dregg_circuit::heap_root::HeapLeaf], BabyBear)>,
 ) -> Result<
     (
         dregg_circuit::descriptor_ir2::Ir2BatchProof<dregg_circuit::descriptor_ir2::DreggStarkConfig>,
@@ -801,8 +802,8 @@ pub fn prove_effect_vm_rotated_wide(
     };
     use dregg_circuit::effect_vm::trace_rotated::{
         RotatedBlockWitness, generate_rotated_note_create_wide, generate_rotated_note_spend_wide,
-        generate_rotated_record_pin_wide, generate_rotated_transfer_shape_wide,
-        rotated_descriptor_name_for_effect,
+        generate_rotated_record_pin_wide, generate_rotated_refusal_wide,
+        generate_rotated_transfer_shape_wide, rotated_descriptor_name_for_effect,
     };
     use dregg_circuit::effect_vm_descriptors::WIDE_REGISTRY_STAGED_TSV;
 
@@ -875,6 +876,27 @@ pub fn prove_effect_vm_rotated_wide(
                 initial_state, effects, &before, &after, caveat, &[],
             )
             .map_err(|e| SdkError::InvalidWitness(format!("wide note-create generation: {e}")))?
+        } else if matches!(lead, dregg_circuit::effect_vm::Effect::Refusal { .. }) {
+            // REFUSAL routes through the `fields_root` WRITE-gate wide producer (the limb-36
+            // accumulator) — the LIGHT-CLIENT close: `refusalVmDescriptor2R24` now carries an in-circuit
+            // `.write` map-op forcing `after_fields_root == write(before_fields_root, REFUSAL_AUDIT_KEY →
+            // audit_felt)`. The record-pin generator with an EMPTY `map_heaps` is UNSAT against that gate
+            // (the honest refusal would fail-close); the caller threads the BEFORE-cell's fields-tree
+            // leaf set + the audit felt so the genuine sorted write opens. (Exemplar: the NoteSpend leg
+            // above — the witness carries the digest limb only, NOT the leaf set, so the caller supplies
+            // it.) Without `refusal_fields`, the deployed prover cannot mint an honest refusal.
+            let (leaves, audit_value) = refusal_fields.ok_or_else(|| {
+                SdkError::InvalidWitness(
+                    "wide refusal prover: a Refusal lead requires `refusal_fields` (the BEFORE-cell \
+                     fields-tree leaf set + the audit felt) to satisfy the in-circuit `fields_root` \
+                     `.write` map-op gate; an empty fields tree is UNSAT (the honest refusal fails closed)"
+                        .into(),
+                )
+            })?;
+            generate_rotated_refusal_wide(
+                initial_state, effects, &before, &after, caveat, leaves, audit_value,
+            )
+            .map_err(|e| SdkError::InvalidWitness(format!("wide refusal generation: {e}")))?
         } else if matches!(
             lead,
             dregg_circuit::effect_vm::Effect::SetPermissions { .. }
@@ -883,7 +905,6 @@ pub fn prove_effect_vm_rotated_wide(
                 | dregg_circuit::effect_vm::Effect::CellUnseal { .. }
                 | dregg_circuit::effect_vm::Effect::CellDestroy { .. }
                 | dregg_circuit::effect_vm::Effect::ReceiptArchive { .. }
-                | dregg_circuit::effect_vm::Effect::Refusal { .. }
                 | dregg_circuit::effect_vm::Effect::MakeSovereign
         ) {
             // The record-pin family carries the 39-PI base (record/lifecycle pin at PI 38).
@@ -945,7 +966,7 @@ pub fn prove_effect_vm_rotated_wide_with_fee(
     // Non-Transfer leads carry no fee-in-proof descriptor — defer to the unfee'd wide prover.
     if !matches!(lead, dregg_circuit::effect_vm::Effect::Transfer { .. }) {
         return prove_effect_vm_rotated_wide(
-            initial_state, effects, before_w, after_w, caveat, None,
+            initial_state, effects, before_w, after_w, caveat, None, None,
         );
     }
     let name = rotated_descriptor_name_for_effect_fee(lead).ok_or_else(|| {

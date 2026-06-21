@@ -90,7 +90,7 @@ fn wide_sovereign_pipeline_proves_and_anchored_verify_accepts() {
 
     // -- PRODUCER LEG: mint a real wide proof + the 16 published wide PIs. --
     let (proof, producer_dpis) =
-        prove_effect_vm_rotated_wide(&initial_vm_state, &effects, &before_w, &after_w, &caveat, None)
+        prove_effect_vm_rotated_wide(&initial_vm_state, &effects, &before_w, &after_w, &caveat, None, None)
             .expect("wide sovereign producer must mint a proof");
 
     // Resolve the wide descriptor (the executor pulls the same WIDE registry).
@@ -172,7 +172,7 @@ fn wide_sovereign_forged_anchor_is_rejected() {
     let effects = vec![VmEffect::Transfer { amount: 100, direction: 1 }];
     let caveat = dregg_circuit::effect_vm::trace_rotated::transfer_caveat_manifest();
     let (proof, producer_dpis) =
-        prove_effect_vm_rotated_wide(&initial_vm_state, &effects, &before_w, &after_w, &caveat, None)
+        prove_effect_vm_rotated_wide(&initial_vm_state, &effects, &before_w, &after_w, &caveat, None, None)
             .expect("wide sovereign producer must mint a proof");
 
     let json = WIDE_REGISTRY_STAGED_TSV
@@ -198,4 +198,218 @@ fn wide_sovereign_forged_anchor_is_rejected() {
          (verify_vm_descriptor2 ALONE, no executor reconstruction)"
     );
     eprintln!("WIDE FORGERY TOOTH BITES: a forged 8-felt commit PI is UNSAT.");
+}
+
+// ============================================================================================
+// THE DEPLOYED REFUSAL PROVE-THROUGH (the refusal light-client forge's close, the LIVENESS pole).
+// ============================================================================================
+//
+// `refusalVmDescriptor2R24` (wide) now carries an in-circuit `fields_root` `.write` map-op gate
+// forcing `after_fields_root == write(before_fields_root, REFUSAL_AUDIT_KEY → audit_felt)` (the
+// banked gate/apex close, commit 9625645d8). Until this wire, the DEPLOYED wide prove path
+// (`prove_effect_vm_rotated_wide`) lumped Refusal into the record-pin branch with an EMPTY
+// `map_heaps` — UNSAT against the `.write` gate, so an HONEST refusal FAILED TO PROVE on the live
+// path (fail-closed). This test is the RED→GREEN liveness pole: an honest refusal turn now PROVES
+// through the deployed wide producer (threading the BEFORE-cell fields tree + the audit felt) AND
+// VERIFIES against the executor-anchored wide refusal descriptor. A prover refusal or a verifier
+// rejection FAILS the test (no catch_unwind — unambiguous).
+//
+// The refusal wide geometry is the record-pin geometry: 39 base PIs (the record/lifecycle pin at PI
+// 38) + 16 wide = 55; the wide refusal descriptor carries 63 PIs total — wait, the v1 prefix grew
+// 34→42, so the refusal rotated prefix is 47 (= 42 + 4 commit pins + 1 record pin) and the wide
+// descriptor carries 47 + 16 = 63. So the 16 wide commit PIs start at `REFUSAL_WIDE_PI_BASE = 47`.
+
+/// Where the 16 wide commit PIs start for the REFUSAL cohort (the record-pin family carries the
+/// record pin at the rotated `ROT_PI_COUNT`, so the wide commit PIs sit one slot past the
+/// transfer-shape base — `refusalVmDescriptor2R24` wide = 63 PIs = 47 base + 16 wide).
+const REFUSAL_WIDE_PI_BASE: usize = 47;
+
+/// A sovereign refusal before/after cell pair: the after-cell carries the refusal audit slot written
+/// into `fields_map[REFUSAL_AUDIT_EXT_KEY]` (via the shared `apply_effect_to_cell` weld — the SAME
+/// projection the producer/executor use), so its committed `fields_root` (limb 36) is the genuine
+/// sorted write the `.write` map-op gate forces.
+fn sovereign_refusal_cells(balance: i64, block_height: u64) -> (Cell, Cell, dregg_turn::Effect) {
+    let token_id = *blake3::hash(b"wide-refusal-domain").as_bytes();
+    let mut before = Cell::with_balance([7u8; 32], token_id, balance);
+    before.mode = CellMode::Sovereign;
+    let cell_id = before.id();
+    let kernel_effect = dregg_turn::Effect::Refusal {
+        cell: cell_id,
+        offered_action_commitment: [11u8; 32],
+        refusal_reason: dregg_turn::action::RefusalReason::Declined,
+        proof_witness_index: 0,
+    };
+    let mut after = before.clone();
+    rw::apply_effect_to_cell(&mut after, &cell_id, &kernel_effect, block_height);
+    (before, after, kernel_effect)
+}
+
+/// **THE DEPLOYED REFUSAL PROVE-THROUGH: an honest refusal PROVES on the live wide path + VERIFIES.**
+/// BEFORE this wire the deployed prover routed Refusal through the record-pin generator with an empty
+/// `map_heaps` (UNSAT vs the `.write` gate — the honest refusal could not be proven). AFTER: the
+/// wide refusal producer threads the BEFORE fields-tree leaf set + the audit felt, the `.write` gate
+/// opens the genuine sorted write, and the proof verifies against the executor-anchored wide refusal
+/// descriptor. NO catch_unwind: a prover refusal or verify rejection fails the test.
+#[test]
+fn wide_sovereign_refusal_proves_and_anchored_verify_accepts() {
+    let balance: i64 = 50_000;
+    let block_height: u64 = 100;
+    let (before_cell, after_cell, _kernel) = sovereign_refusal_cells(balance, block_height);
+    let cell_id = before_cell.id();
+
+    // The audit MUST have moved the fields_map (non-vacuity — the write is genuine).
+    let audit_bytes = after_cell
+        .state
+        .fields_map
+        .get(&dregg_cell::state::REFUSAL_AUDIT_EXT_KEY)
+        .copied()
+        .expect("a refused cell carries the audit slot in fields_map (apply_refusal wrote it)");
+
+    // The turn-context (single-cell ledger, empty maps, empty receipt iroot) — the producer's context.
+    let nullifier_root = [0u8; 32];
+    let commitments_root = [0u8; 32];
+    let receipt_hashes: Vec<[u8; 32]> = vec![];
+    let mut ctx_ledger = Ledger::new();
+    let _ = ctx_ledger.insert_cell(before_cell.clone());
+
+    let before_w = rw::produce(&before_cell, &ctx_ledger, &nullifier_root, &commitments_root, &receipt_hashes);
+    let after_w = rw::produce(&after_cell, &ctx_ledger, &nullifier_root, &commitments_root, &receipt_hashes);
+
+    // The refusal moves the AFTER record-digest / fields_root limbs (the genuine write — non-vacuity).
+    assert_ne!(
+        before_w.pre_limbs[36], after_w.pre_limbs[36],
+        "the refusal audit MOVES the AFTER fields_root limb (limb 36) — a genuine write"
+    );
+
+    let initial_vm_state = CellState::with_capability_root_and_record_digest(
+        balance as u64,
+        before_cell.state.nonce() as u32,
+        dregg_cell::compute_canonical_capability_root_felt(&before_cell.capabilities),
+        dregg_cell::compute_authority_digest_felt(&before_cell),
+    );
+    let effects = vec![VmEffect::Refusal {
+        target: dregg_circuit::effect_vm::bytes32_to_8_limbs(blake3::hash(cell_id.as_bytes()).as_bytes()),
+        reason_hash: dregg_circuit::effect_vm::bytes32_to_8_limbs(&[0u8; 32]),
+    }];
+    let caveat = dregg_circuit::effect_vm::trace_rotated::empty_caveat_manifest();
+
+    // THE DEPLOYED PROVER WIRE: the BEFORE fields-tree leaf set + the audit felt the refusal writes.
+    // These are what the live cipherclerk builds from the before/after cells; without them the wide
+    // prover REFUSES (the `.write` gate has no witness).
+    let before_leaves = dregg_cell::state::fields_root_leaves(&before_cell.state.fields_map);
+    let audit_value = dregg_circuit::cap_root::fold_bytes32(&audit_bytes);
+
+    // -- PRODUCER LEG (the deployed wide path): mint a real wide refusal proof + the 63 published PIs.
+    // BEFORE this wire, `refusal_fields = None` would FAIL CLOSED here (the record-pin route with empty
+    // map_heaps is UNSAT vs the `.write` gate). We pass the genuine fields context so it PROVES.
+    let (proof, producer_dpis) = prove_effect_vm_rotated_wide(
+        &initial_vm_state,
+        &effects,
+        &before_w,
+        &after_w,
+        &caveat,
+        None,
+        Some((&before_leaves, audit_value)),
+    )
+    .expect(
+        "DEPLOYED REFUSAL PROVE-THROUGH (liveness pole): the honest refusal MUST prove on the wide path \
+         via the fields-tree route (an empty map_heaps would be UNSAT vs the `.write` gate)",
+    );
+
+    // Resolve the WIDE refusal descriptor (the executor pulls the same WIDE registry).
+    let json = WIDE_REGISTRY_STAGED_TSV
+        .lines()
+        .find_map(|l| {
+            let mut it = l.splitn(3, '\t');
+            if it.next() == Some("refusalVmDescriptor2R24") {
+                let _ = it.next();
+                it.next()
+            } else {
+                None
+            }
+        })
+        .expect("wide refusal member in WIDE_REGISTRY_STAGED_TSV");
+    let desc = parse_vm_descriptor2(json).expect("wide refusal descriptor parses");
+    assert_eq!(
+        producer_dpis.len(),
+        desc.public_input_count,
+        "wide refusal PI count (47 base + 16 wide = 63)"
+    );
+    assert_eq!(desc.public_input_count, 63, "refusal wide descriptor carries 63 PIs");
+
+    // -- EXECUTOR LEG: anchor the 16 wide commit PIs to the TRUSTED before/after cell chip-commits
+    //    (the wide analog of the live executor's 1-felt-retire override). --
+    let before_ctx = V9RotationContext {
+        cells_root: before_w.pre_limbs[0],
+        nullifier_root,
+        commitments_root,
+        iroot: before_w.iroot,
+    };
+    let after_ctx = V9RotationContext {
+        cells_root: after_w.pre_limbs[0],
+        nullifier_root,
+        commitments_root,
+        iroot: after_w.iroot,
+    };
+    let trusted_before8 = cell_chip_commit8(&before_cell, &before_ctx);
+    let trusted_after8 = cell_chip_commit8(&after_cell, &after_ctx);
+
+    let mut anchored = producer_dpis.clone();
+    for j in 0..8 {
+        anchored[REFUSAL_WIDE_PI_BASE + j] = trusted_before8[j];
+        anchored[REFUSAL_WIDE_PI_BASE + 8 + j] = trusted_after8[j];
+    }
+    // The honest pipeline coheres: the trusted commits equal the producer's published 16 wide PIs.
+    assert_eq!(
+        anchored, producer_dpis,
+        "the trusted chip-8-felt commits equal the producer's published 16 wide refusal PIs (honest \
+         pipeline — the fields_root write is bound into the 8-felt commit)"
+    );
+
+    // THE VERIFY POLE: the deployed light-client verifier (verify_vm_descriptor2 against the wide
+    // refusal descriptor, the executor-anchored 16 wide PIs). It ACCEPTS the honest refusal.
+    verify_vm_descriptor2(&desc, &proof, &anchored)
+        .expect("the honest wide refusal proof VERIFIES against the executor-anchored 63 PIs");
+
+    // THE FORGE TOOTH (deployed-prover route): a forged after-`fields_root` audit is UNSAT. We forge by
+    // recomputing the proof against a DIFFERENT audit value (a producer trying to publish an after-root
+    // that is NOT write(before_root, AUDIT_KEY, genuine_audit)). The `.write` gate has no satisfying
+    // assignment for the forged after-root vs the genuine before-tree, so the wide prover REFUSES.
+    let forged_audit = audit_value + BabyBear::new(0x5151);
+    let forged = prove_effect_vm_rotated_wide(
+        &initial_vm_state,
+        &effects,
+        &before_w,
+        &after_w,
+        &caveat,
+        None,
+        Some((&before_leaves, forged_audit)),
+    );
+    // NOTE: a different audit value yields a DIFFERENT (but still genuine) write — so this proves with a
+    // SELF-CONSISTENT after-root. The forge that the GATE rejects is an after-root that is NOT the write
+    // of the witnessed before-tree; that is the circuit forge-detector's job (the column override). Here
+    // we assert the deployed producer is at least DETERMINISTIC + that the genuine audit's proof is the
+    // one that anchors to the trusted after-cell (a forged audit anchors to a DIFFERENT after-commit, so
+    // the executor's trusted-after override would REJECT it).
+    if let Ok((forged_proof, forged_dpis)) = forged {
+        // The forged-audit proof's published AFTER commit differs from the trusted after-cell's commit
+        // (the trusted after-cell carries the GENUINE audit) ⇒ the executor's anchored verify REJECTS it.
+        let mut forged_anchored = forged_dpis.clone();
+        for j in 0..8 {
+            forged_anchored[REFUSAL_WIDE_PI_BASE + j] = trusted_before8[j];
+            forged_anchored[REFUSAL_WIDE_PI_BASE + 8 + j] = trusted_after8[j];
+        }
+        assert!(
+            verify_vm_descriptor2(&desc, &forged_proof, &forged_anchored).is_err(),
+            "a refusal proven with a FORGED audit value publishes an after-`fields_root` commit that \
+             disagrees with the trusted after-cell (genuine audit) ⇒ the executor-anchored verify \
+             REJECTS it (the 8-felt commit binds the written fields_root)"
+        );
+    }
+
+    eprintln!(
+        "DEPLOYED REFUSAL PROVE-THROUGH GREEN: the honest refusal PROVED on the deployed wide path via \
+         the fields-tree route (BEFORE: empty map_heaps was UNSAT vs the `.write` gate; AFTER: proves + \
+         verifies). The light-client refusal forge is closed gate→apex→deployed-prover end-to-end."
+    );
 }

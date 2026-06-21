@@ -2624,6 +2624,42 @@ pub fn generate_rotated_create_cell_wide(
     Ok((trace, dpis, map_heaps))
 }
 
+/// **THE WIDE REFUSAL trace generator (record-pin cohort + the `fields_root` WRITE gate).** Wraps the
+/// deployment-real fields-tree generator ([`generate_rotated_refusal_trace_with_fields_tree`], which
+/// overrides limb 36 = `B_FIELDS_ROOT` with the openable accumulator roots + recomputes the block
+/// commits so the `.write` map-op opens the genuine sorted write), then appends the wide carriers at
+/// `GRAD_ROT_WIDTH = 608`. The refusal lead carries the extra PI[38] (the record/lifecycle pin) before
+/// the 16 wide PIs (wide member width 816 / PI 55) — the SAME 39-base+16-wide geometry the record-pin
+/// wide producer lays, so a refusal proven here verifies through the same wide descriptor path. This is
+/// the wide twin of the non-wide fields-tree generator the forge-detector exercises; threading a
+/// NON-empty `map_heaps` (the BEFORE fields-tree leaf set + the reserved audit slot) is what makes an
+/// HONEST refusal PROVABLE on the deployed path (an EMPTY `map_heaps` is UNSAT against the `.write`
+/// gate). Mirrors [`generate_rotated_note_spend_wide`]. Returns `(trace, dpis, map_heaps)`.
+#[cfg(feature = "prover")]
+pub fn generate_rotated_refusal_wide(
+    initial_state: &CellState,
+    effects: &[Effect],
+    before_w: &RotatedBlockWitness,
+    after_w: &RotatedBlockWitness,
+    caveat: &RotatedCaveatManifest,
+    before_fields_leaves: &[crate::heap_root::HeapLeaf],
+    audit_value: BabyBear,
+) -> Result<(Vec<Vec<BabyBear>>, Vec<BabyBear>, Vec<Vec<crate::heap_root::HeapLeaf>>), String> {
+    let (mut trace, base_pis, map_heaps) = generate_rotated_refusal_trace_with_fields_tree(
+        initial_state,
+        effects,
+        before_w,
+        after_w,
+        caveat,
+        before_fields_leaves,
+        audit_value,
+    )?;
+    let dpis = append_wide_carriers(&mut trace, base_pis, GRAD_ROT_WIDTH);
+    debug_assert_eq!(trace[0].len(), WIDE_WIDTH);
+    debug_assert_eq!(dpis.len(), WIDE_PI_COUNT + 1); // 39 base + 16 wide = 55
+    Ok((trace, dpis, map_heaps))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
