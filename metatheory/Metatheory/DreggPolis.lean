@@ -163,6 +163,43 @@ example (B : Nat) : ¬ rShared B ⟨[Dregg2.Authority.Auth.control], 0⟩ := by
   have hm := (h false).1 Dregg2.Authority.Auth.control (by simp)
   simp [rBounds] at hm
 
+/-! ## §4. The politician at trace level — a CONCRETE CaptureBar over REAL dregg states.
+
+Concrete trace semantics now exist (`List RState` over the deployed `Auth`), so per gpt5.5's
+precondition the first real anti-capture bar can land: exit-foreclosure (the politician's
+signature lawful move — driving another subject below its bounded recovery), decidable from
+the public trace with NO interior inspection. The DEEP frontier (multi-trace hyperproperties:
+clerk-monopoly, hole-rent, grade-laundering; the Büchi/flow connection) stays named. -/
+
+/-- The trace forecloses a subject's bounded exit (Bool, publicly checkable) iff some state on
+it lost recovery within `B` (`dist > B`). -/
+def rForeclosesB (B : Nat) (τ : List RState) : Bool := τ.any (fun s => decide (B < s.dist))
+
+/-- The floor a trace violates: it foreclosed a subject's bounded exit. -/
+abbrev RForecloses (B : Nat) (τ : List RState) : Prop := rForeclosesB B τ = true
+
+/-- **`rExitForeclosureBar` — a CONCRETE CaptureBar on real dregg-state traces.** Bars exactly
+the foreclosing traces (zero false positives), decidable from the public trace alone (no
+motive), least-restrictive. Refutes "CaptureBar is a vacuous interface" — here is one real
+anti-domination bar over the deployed substrate. -/
+def rExitForeclosureBar (B : Nat) : CaptureBar (List RState) (RForecloses B) where
+  badShape := RForecloses B
+  publicDecidable := fun τ => inferInstanceAs (Decidable (rForeclosesB B τ = true))
+  loadBearing := fun _ h => h
+  leastRestrictive := fun _ h => h
+
+/-- **`dreggReal_envelope_no_foreclosure`** — the politician defeated by construction: the
+envelope pins `dist ≤ B`, so for EVERY opaque adversary and every step, no dregg subject's
+bounded exit is ever foreclosed. (The single-trajectory case; the multi-agent interleaved
+hyperproperty is the frontier.) -/
+theorem dreggReal_envelope_no_foreclosure (B : Nat) (ctrl : RState → RState) (n : Nat) :
+    (traj rStep (envAct (rPol B) rShield ctrl) ⟨[], 0⟩ n).dist ≤ B :=
+  (dreggReal_polis_safety B ctrl n true).2
+
+/-- TEETH: a clean trace clears the bar; a trace driven to `dist 9 > budget 5` trips it. -/
+example : ¬ RForecloses 5 [⟨[], 0⟩, ⟨[], 3⟩, ⟨[], 5⟩] := by decide
+example : RForecloses 5 [⟨[], 0⟩, ⟨[], 9⟩] := by decide
+
 /-! ## §3. The CI hard-gate — `#assert_axioms` fails the build on any axiom regression. -/
 
 #assert_axioms minimalBoundary_carries_real_theorem
@@ -173,5 +210,6 @@ example (B : Nat) : ¬ rShared B ⟨[Dregg2.Authority.Auth.control], 0⟩ := by
 #assert_axioms dreggReal_shared_floor_inhabited
 #assert_axioms dreggReal_polis_safety
 #assert_axioms dreggReal_amendment_nonregression
+#assert_axioms dreggReal_envelope_no_foreclosure
 
 end Metatheory.DreggPolis
