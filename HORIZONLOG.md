@@ -11,6 +11,32 @@ reason.)*
 Last sweep: 2026-06-13 (flagged-items burndown — removed ~14 landed/struck items,
 deduped the DreggDL/sel4/snapshot landings into git history, kept live tails).
 
+## ⚑ DEMO-WORLD CELL CENSUS DIVERGES BY FEATURE SET — 4 cells (embedded-executor) vs 8 (native-full) (found by dregg-mcp, 2026-06-21)
+`world::demo_world()` produces a DIFFERENT world depending on the build's feature set. Under
+`--no-default-features --features embedded-executor` (the lean dregg-mcp build) it seeds **4 cells /
+height 5**; under `native-full`/`headless-render` (the cockpit) it seeds **8 cells / height 9** (the
+cockpit GRAPH tab shows "8 cells · 4 capability edges" with roots 0ce097/494266/bf34db absent from the
+4-cell view). MECHANISM (hypothesis, to confirm): the seed turns include `CreateCell` /
+`CreateCellFromFactory` / factory-birth effects (`world.rs:1222,1250,1427,1529`) whose success depends on
+prover/sdk features (`dregg-sdk` is pulled with `features=["embed-core","prover"]` in the lean build;
+`native-full` adds more) — so several seed turns are REJECTED under the lean build, yielding fewer cells.
+IMPACT: any tool reading `ledger().iter()` inspects HALF the image. ⚠ UPDATE (2026-06-21): the
+feature-gating hypothesis is REFUTED — dregg-mcp rebuilt at `native-full` STILL shows 4 cells via
+`ledger().iter()`. So the gap is NOT seed divergence; it is `World::cell_count()` (=`engine.ledger().len()`)
+or the cockpit's display counting MORE than `ledger().iter()` yields (candidate: sovereign-cell /
+registration store, or view/meta objects counted in the header, or a `Ledger::len()` vs `iter()`
+inconsistency). CLOSURE: find where the other 4 cells live — check `Ledger::len()` vs `self.cells.iter()`,
+the sovereign-registration store, and what the cockpit GRAPH tab's "8 cells" actually enumerates — then
+make the harness (and any cell census) see the SAME complete set the protocol does.
+
+## ✅ dregg-mcp SCREENSHOT — responsive size + tab selection (the 800x600 truncation fixed, 2026-06-21)
+The bake (`render_cockpit_headless`) now takes `--render-size WxH` + `--render-tab NAME`; only the seL4
+800x600 geometry downscales + writes `.rgba` (PD-blit unchanged), every other size renders the full 2x
+capture (no `overflow_hidden` truncation). Confirmed: 1280x832 reflows the full cockpit (the right
+"Welcome to the live verified image" panel + complete tab bar now show); `select_tab_named`
+(`cockpit.rs`) screenshots any of the 28 surfaces (INSPECTOR/GRAPH/etc verified). MCP `screenshot` tool
+defaults to 1280x832, accepts `size`+`tab`.
+
 ## ⚑ AFFORDANCE CAP-BADGE — `AuthRequired::None` reports UNAUTHORIZED for non-None holders (found by dregg-mcp, 2026-06-21)
 The new dregg-mcp driving harness (`starbridge-v2/src/bin/dregg_mcp.rs`) surfaced this on its first
 drive. `affordances user` shows the `grant` message with `required: None` yet `authorized: false`, and
@@ -3741,3 +3767,45 @@ SWARM STATUS: only ae15d66a (delegateAtten + revoke-tag2) still running. When it
 verify + bank coherent groups (SetProgram weld + payload-Lean + a72bf75a's 2 welds + ae15d66a, all held). THEN drive
 the post-settle queue: revokeCapability #1 route-forge · payload Rust verifier-anchor · setFieldDyn 263-wide
 generator · ~65 blind-test hardening · TraceReadout non-vacuity · FloorsNonVacuous extension · HORIZONLOG compaction.
+
+## ⚑⚑⚑ POST-COMPACT ORIENTATION (2026-06-21, ~3am) — the TWO-TRACK swarm + integration plan
+GOAL (the /goal hook, two tracks, SAME bar = verified-working not named): TRACK 1 FLOOR (soundness, audited by
+docs/SAFELY-LIVE-CHECKLIST.md — closed+verified OR irreducible-floor-with-non-vacuity-proof, board red-free) +
+TRACK 2 HOUSE (capacity — grow what an agent needs to LIVE; a capacity counts ONLY genuinely-working end-to-end +
+inheriting the floor's forge-detector bar). Designed-but-unbuilt = a named gap (Law #6).
+
+### THE LIVE SWARM (8 agents — the harness notifies on each completion, post-compact too):
+TRACK 1: ae15d66a (delegateAtten routing + revoke-tag2 frozen-face, the LAST cap-weld) · a90a132e (harden ~65 blind
+is_err() laundered-green tests to the membership_verifier honest-accept-then-tamper model; NOT full_turn_proof.rs) ·
+a9e74dae (prove ~17 TraceReadout carriers INHABITED/non-vacuous + extend FloorsNonVacuous to new-wave floors).
+TRACK 2: a695bfc7 (reactive effect-variant LIFT into Effect vocab + React circuit witness pending_id-as-nullifier) ·
+a795f994 (DERIVED/relational cells — verifiable views, forged-derivation rejected) · a737e46c (MEMBRANE/forwarder —
+caps compose up, non-amp tooth) · a45ee057 (HATCHERY abstraction-MINT — user-defined verified kinds, violating-turn
+refused).
+
+### HELD WORK TO BANK (when the swarm settles — ONE clean integrated verify, then coherent groups, NO partial
+### sweeps / provenance-leak): SetProgram FullActionA apex-weld (lake 4109, mutation-confirmed) · payload-column
+### primitive Lean (axiom-clean, no VK change) · noteCreate+makeSovereign on-wire welds (a72bf75a) · revoke-tag2 +
+### delegateAtten (ae15d66a, pending). These touch shared apex Closure*/EffectVmEmitRotationV3 — bank together.
+### INTEGRATION = lake axiom-clean + ALL forge-detectors green + the 6 vk_epoch discriminators + cap suite + drift.
+
+### TRACK-1 QUEUE (drive after swarm-settle, in priority order):
+1. 🟥 revokeCapability #1 ROUTE-FORGE (the sin-map's dropped live forge): route write:None -> revokeCapabilityCapOpen
+   (no map_op, not in forbidden-authority-only list) -> cap-REMOVE rides UNBOUND, LC accepts forged post-root. Its
+   forge-detector cap_write_revoke_cap_no_silent_forge is a LAUNDERED GREEN (tests the BASE not the ROUTE). FIX:
+   emit revokeCapabilityWriteCapOpen wrapper + write:Some(...,Remove) + forbid the authority-only + a ROUTE-level
+   forge-detector (RED today). Remove machinery exists (revokeDelegation). CONTENDED with ae15d66a -> drive when it frees.
+2. payload Rust verifier-anchor (full_turn_proof.rs verify_effect_vm_rotated_with_cutover: override dpis[46] with the
+   recomputed anchor — refusal=compute_authority_digest_felt, lifecycle=lifecycle_felt_cell+block_height). The payload
+   is proven-in-Lean-NOT-on-wire (goal does NOT accept). Contended with ae15d66a.
+3. setFieldDyn 263-wide V1Face generator (a from-scratch generator, NOT a branch — agent refused the wrong-field clamp).
+
+### 3 IRREDUCIBLE FLOORS (goal-acceptable WITH non-vacuity proof): noteSpend/noteCreate canonical-set-root
+### (client-input binding, verify_full_turn_bound 8a/8b; the .absent tooth is non-vacuous) · exercise actor->target
+### cross-turn causal link · refusal fields_root (closeable once payload-anchor lands -> a named-floor-with-closure-lane).
+### THE FORGE-DETECTOR ANTIBODY: every tree-write effect gets a non-vacuous forge-detector (overwrite the post-root,
+### assert rejected) — the dormant-guard class is closed by census (forge-sweep ac5553da: 4 instances, all fixed).
+
+### TRACK-2 STATUS: reactive effect BANKED 727b9a800 (sound-by-construction — react-twice = the noteSpend nullifier
+### gate; 6 green tests incl. genuine react_twice_rejected). 4 more capacities in flight (above). Next after these:
+### bank each genuine-working slice; the reactive Effect-vocab lift + circuit witness is the deepening.
