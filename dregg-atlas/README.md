@@ -9,13 +9,21 @@ mocked.
 ## Open it
 
 Open **`site/index.html`** in any browser (it is fully offline — JS is vendored,
-data is inlined). Six views:
+data is inlined). Seven views:
 
-- **Game Tree** — the reachable state-space as a radial starburst (genesis at the
-  centre, depth as colour-graded rings). Each node is a world-state (keyed by its
-  post-state Merkle root); each edge a turn fired through the verified executor.
-  Click a state for its cell snapshot and its committed/refused turns; click a
-  state to highlight its reachable subtree.
+- **Game Tree** — the reachable PROTOCOL state-space as a radial starburst
+  (genesis at the centre, depth as colour-graded rings). Each node is a
+  world-state (keyed by its post-state Merkle root); each edge a turn fired
+  through the verified executor. Click a state for its cell snapshot and its
+  committed/refused turns; click to highlight its reachable subtree.
+- **UI Tree** — the UI INTERACTION state-space: exploring inside and through the
+  cockpit surfaces. A radial DAG (HOME → the 28 surfaces → each surface's internal
+  navigations: cycling focus chips, picking lenses, toggling, scrubbing). Each
+  node is a distinct *rendered* UI state (screenshot); each edge the interaction
+  that reaches it. Click a state for its screenshot + the interactions out of it.
+  (Driving the real cockpit headlessly this way also shakes out render bugs —
+  260 states rendered with zero panics; four live-animated tabs are excluded, see
+  the Anomalies page.)
 - **Ocap Web** — cells + the capability grants between them; click a cell for its
   seven presentation faces.
 - **UI Atlas** — all 28 cockpit surfaces screenshotted, each with a
@@ -35,8 +43,11 @@ cd dregg-atlas
 ( cd ../starbridge-v2 && cargo build --release --features native-full --bin dregg-mcp \
                        && cargo build --release --features headless-render --bin starbridge-v2 )
 
-python3 crawl.py    # walk the state-space (DFS, snapshot/restore backtracking)
+python3 crawl.py    # walk the protocol state-space (DFS, snapshot/restore backtracking)
 python3 shoot.py    # screenshot the 28 cockpit surfaces
+# the UI tree: BFS-walk the cockpit's UI state-space, screenshot each state
+( cd ../starbridge-v2 && ZED_OFFSCREEN_PREFER_CPU=1 \
+  ATLAS_UI_NODES=260 target/release/starbridge-v2 --explore-ui ../dregg-atlas/ui-explore )
 python3 build.py    # assemble the site
 open site/index.html
 ```

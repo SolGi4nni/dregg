@@ -146,6 +146,18 @@ capture (no `overflow_hidden` truncation). Confirmed: 1280x832 reflows the full 
 (`cockpit.rs`) screenshots any of the 28 surfaces (INSPECTOR/GRAPH/etc verified). MCP `screenshot` tool
 defaults to 1280x832, accepts `size`+`tab`.
 
+## ◻ FOUR LIVE TABS STALL HEADLESS STEP-RENDERING (Wonder/Swarm/Agent/Time) (found by the atlas UI-explorer, 2026-06-22)
+The atlas `--explore-ui` driver (`starbridge-v2/src/main.rs`) BFS-walks the cockpit's UI state-space by
+stepping `window.update` + `capture_screenshot` between states. Four tabs HANG `window.update`'s effect-flush
+because their render schedules self-rescheduling / perpetual work that never drains: Wonder (the glow
+animation), Swarm (boots the metered killer-demo on tab-enter, `set_tab` `cockpit.rs`), Agent (the live
+activity feed), Time (the time-travel/suspend machinery). They render fine in the WINDOWED app (a real
+event loop drives them) and are captured in the UI-atlas surface screenshots, but are excluded from the UI
+tree (`Cockpit::available_nav` skip-set). CLOSURE (if a fuller headless UI tree is wanted): gate these tabs'
+live timers / async subscriptions behind a `headless` flag, or bound the effect-flush. Not a correctness
+bug — a headless-automation limitation, now mapped. The UI explorer otherwise rendered 260 states with ZERO
+panics.
+
 ## ◻ ISSUER WELL (negative balance) CANNOT INITIATE ANY TURN — fee-gated even for value-neutral verbs (found by dregg-atlas crawl, 2026-06-21)
 The atlas game-tree crawl found that EVERY turn authored by the issuer-well cell (balance −1000000) is
 refused with `InsufficientBalance` — including `peek` (EmitEvent) and `touch` (IncrementNonce), which

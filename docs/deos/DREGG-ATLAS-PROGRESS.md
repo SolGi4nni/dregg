@@ -81,3 +81,18 @@ Commits: 586d15a22 (harness) · 7ea0c5438 (first atlas) · 34ce6539e (explainers
 - undo-based DFS in the MCP (currently snapshot/restore — already fast) for depth 6+.
 - per-effect and per-state-class static pages.
 - richer verb coverage (grant/create wired into the crawl move set).
+
+## (2026-06-22) — THE UI TREE pillar added (exploring inside the surfaces)
+
+ember's morning ask: a DAG of exploring INSIDE and THROUGH the UI, not just
+surface screenshots. Delivered:
+- `Cockpit` nav API (`cockpit.rs`): `NavAction` / `CockpitNavState` +
+  `capture_nav`/`restore_nav`/`available_nav`/`apply_nav`/`nav_key` — drives the
+  REAL interaction handlers (cycle focus/lens, toggles, scrubbers, navigations).
+- `--explore-ui <dir>` (`main.rs`): a headless BFS driver that walks the UI
+  state-space, screenshots each distinct rendered state, records interaction edges.
+- Atlas "UI Tree" view: a radial DAG (HOME → 28 surfaces → each surface's internal
+  states); click a state → its screenshot + interactions out. 260 states / 857
+  edges, ZERO render panics.
+- Finding: 4 live tabs (Wonder/Swarm/Agent/Time) stall headless stepping (logged).
+Commit: 6e64cdcd5.
