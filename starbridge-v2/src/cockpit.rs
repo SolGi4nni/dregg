@@ -718,6 +718,15 @@ pub struct Cockpit {
     /// PINNED VIEWS (bookmarks): saved `(label, captured-state)` the operator can
     /// jump back to with one click (the ☆ in the nav bar). Session-scoped.
     nav_pins: Vec<(String, CockpitNavState)>,
+    /// MACRO recording (⏺▶): when `Some`, the `(history-length, world-snapshot)` at
+    /// record start. The recorded turn-sequence becomes a `dregg_turn::script::Script`
+    /// (a macro = a recorded replayable turn-sequence; see docs/deos/MACRO-AS-CUSTOM-VK.md).
+    macro_recording: Option<(usize, World)>,
+    /// The last recorded macro — the captured `Script` + the world state it was
+    /// recorded from. Replay re-runs it on a FORK of that start state (the live
+    /// world is never touched; this is a verified preview of the macro).
+    last_macro: Option<(dregg_turn::script::Script, World)>,
+    macro_outcome: Option<String>,
     /// The [`Spotter`] search query (the ⌘K-style box). Each typed char re-runs the
     /// universal search; a hit click re-focuses the inspector.
     moldable_query: String,
@@ -1103,6 +1112,67 @@ impl Cockpit {
         cx.notify();
     }
 
+    // === MACRO RECORD / REPLAY (⏺▶) ========================================
+    // A macro = a recorded replayable turn-sequence (a `Script` over the proven
+    // Pipeline carrier). ⏺ snapshots the world; you act (committing real turns);
+    // ⏹ captures the turns since as a Script; ▶ replays it on a FORK of the start
+    // state — a verified preview, the live world untouched.
+
+    /// ⏺ — begin recording: snapshot the world + mark the history cursor.
+    fn macro_record(&mut self, cx: &mut Context<Self>) {
+        let w = self.world.borrow();
+        self.macro_recording = Some((w.recorded_turns().len(), w.fork()));
+        drop(w);
+        self.macro_outcome = Some("● recording — act, then ⏹ to capture the turn-sequence".into());
+        cx.notify();
+    }
+
+    /// ⏹ — stop + capture the committed turns since ⏺ as a `Script`.
+    fn macro_stop(&mut self, cx: &mut Context<Self>) {
+        if let Some((start, start_fork)) = self.macro_recording.take() {
+            let turns: Vec<_> = {
+                let w = self.world.borrow();
+                w.recorded_turns().steps()[start.min(w.recorded_turns().len())..]
+                    .iter()
+                    .filter_map(|s| match s {
+                        starbridge_v2::replay::RecordedStep::Committed { turn, .. } => Some(turn.clone()),
+                        _ => None,
+                    })
+                    .collect()
+            };
+            let script = dregg_turn::script::Script::record("cockpit-macro", turns);
+            let id = reflect::short_hex(&script.id());
+            self.macro_outcome = Some(if script.is_empty() {
+                "⏹ nothing recorded (no turns committed while recording)".into()
+            } else {
+                format!("⏹ captured {} turns as script {} — ▶ to replay", script.len(), id)
+            });
+            self.last_macro = Some((script, start_fork));
+            cx.notify();
+        }
+    }
+
+    /// ▶ — replay the last macro on a FORK of its start state (live world untouched).
+    fn macro_replay(&mut self, cx: &mut Context<Self>) {
+        if let Some((script, start_fork)) = &self.last_macro {
+            let mut w = start_fork.fork();
+            let (mut committed, mut refused) = (0u32, 0u32);
+            for t in &script.pipeline.turns {
+                match w.commit_turn(t.clone()) {
+                    CommitOutcome::Committed { .. } => committed += 1,
+                    _ => refused += 1,
+                }
+            }
+            self.macro_outcome = Some(format!(
+                "▶ replayed script {} on a fork: {committed} committed, {refused} refused (live world untouched)",
+                reflect::short_hex(&script.id())
+            ));
+        } else {
+            self.macro_outcome = Some("no macro recorded yet — ⏺ to start".into());
+        }
+        cx.notify();
+    }
+
     /// THE NAVIGATION BAR — browser-style back/forward + a "you are here"
     /// breadcrumb + a ☆ pin + a live "what can I do here" quick-nav strip + the
     /// pinned views. The programmatic nav API, surfaced as delight.
@@ -1136,6 +1206,22 @@ impl Cockpit {
             .child(small_button(cx, "nav-back", "←", back_color, Cockpit::nav_back))
             .child(small_button(cx, "nav-fwd", "→", fwd_color, Cockpit::nav_forward))
             .child(small_button(cx, "nav-pin", pin_glyph, pin_color, Cockpit::pin_current))
+            // MACRO record/replay (⏺▶) — record a turn-sequence as a Script, replay on a fork.
+            .child(small_button(
+                cx,
+                "macro-rec",
+                if self.macro_recording.is_some() { "●rec" } else { "⏺" },
+                if self.macro_recording.is_some() { theme::bad() } else { theme::muted() },
+                Cockpit::macro_record,
+            ))
+            .child(small_button(cx, "macro-stop", "⏹", theme::muted(), Cockpit::macro_stop))
+            .child(small_button(
+                cx,
+                "macro-play",
+                "▶",
+                if self.last_macro.is_some() { theme::accent() } else { theme::muted() },
+                Cockpit::macro_replay,
+            ))
             .child(
                 div()
                     .text_xs()
@@ -1143,6 +1229,16 @@ impl Cockpit {
                     .px_2()
                     .child(format!("⌖ {crumb}")),
             );
+
+        if let Some(o) = &self.macro_outcome {
+            bar = bar.child(
+                div()
+                    .text_xs()
+                    .text_color(theme::accent())
+                    .px_2()
+                    .child(o.clone()),
+            );
+        }
 
         if show_chips {
             let mut strip = div().flex().items_center().gap_1().flex_1();
@@ -1533,6 +1629,9 @@ impl Cockpit {
             nav_cursor: 0,
             nav_jumping: false,
             nav_pins: Vec::new(),
+            macro_recording: None,
+            last_macro: None,
+            macro_outcome: None,
             moldable_query: String::new(),
             moldable_lens: MoldableLens::Cell,
 
