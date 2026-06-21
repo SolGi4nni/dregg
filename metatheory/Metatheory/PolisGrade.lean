@@ -124,6 +124,14 @@ theorem graded_amendment_nonregression {Q Trace : Type u} [GradeAlgebra Q]
   | zero => exact h₀
   | succ k ih => exact ih.trans' (mono k _)
 
+/-- **`gradedOf` — the bridge from a Boolean `CaptureBar` to a graded bar.** A capture-shape
+contributes grade `g` exactly when it fires (`unit`/0 otherwise) — assign each shape its severity,
+then `⊔`-aggregate (worst shape) or `⊗`-accumulate (rent over epochs). Connects the decidable
+Boolean politician floor (`PolisTrace`/`PolisPolitician`) to the graded one. -/
+def gradedOf {Q : Type} [GradeAlgebra Q] {Trace : Type} {v : Trace → Prop}
+    (b : Metatheory.Polis.CaptureBar Trace v) (g : Q) : GradedBar Q Trace :=
+  ⟨fun τ => letI := b.publicDecidable τ; if b.badShape τ then g else GradeAlgebra.unit⟩
+
 /-! ### Non-vacuity — the grade really accumulates, branches worst-case, and never weakens. -/
 
 /-- HOLE-RENT: severity ACCUMULATES over epochs (`⊗ = +`) — a hole open 3 epochs grades `3`. -/
