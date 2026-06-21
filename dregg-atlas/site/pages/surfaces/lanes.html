@@ -1,0 +1,9 @@
+<!doctype html><html><head><meta charset=utf-8>
+<title>lanes · dregg atlas</title><link rel=stylesheet href="../atlas.css"></head>
+<body class=page><nav class=crumb><a href="../index.html">← atlas</a> / surfaces / lanes</nav>
+<main class=doc><h2>lanes <span class=muted>surface</span></h2>
+<img src="../../screenshots/lanes.png" style="width:100%;border:1px solid #21262d;border-radius:8px;margin:8px 0">
+<p class=muted>The moldable-inspector gadgets (L2–L10): predicate/turn/cap/token construction.</p>
+<p>The LANES tab (<code>lanes_panel</code>, <code>cockpit.rs:3870</code>) is the home of the moldable *gadgets* — interactive value-construction widgets that ride the proven <code>validate → predict → commit</code> spine. A <code>Gadget</code> (<code>presentable.rs:485</code>) builds a real protocol value with a live fail-closed <code>validate()</code>; a <code>CommittingGadget</code> adds <code>predict()</code> (simulate on a fork) and <code>commit()</code>, reusing <code>simulate.rs</code> verbatim.</p>
+<p>The four gadgets: <strong>predicate composer</strong> — compose a caveat from real atoms; a vacuous or proof-strippable caveat is REFUSED. <strong>turn builder</strong> — build a call-forest, <code>predict()</code> its consequences in a fork. <strong>attenuation dial</strong> — pick a narrower rights tier; <code>build()</code> runs the real <code>is_attenuation</code>, refusing any tier that would AMPLIFY. <strong>token loop</strong> — mint → attenuate → delegate → discharge through the real cipherclerk macaroon crypto.</p>
+<p>How you use it: pick a lane, construct a value, read the live fail-closed verdict. Gadgets are the L2/L3 interactive faces of the L1 presentation spine; their checks are the genuine protocol checks, and a committing gadget&#x27;s <code>commit</code> is the identical turn its prediction previewed.</p></main></body></html>

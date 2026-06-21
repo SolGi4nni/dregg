@@ -1,0 +1,9 @@
+<!doctype html><html><head><meta charset=utf-8>
+<title>organs · dregg atlas</title><link rel=stylesheet href="../atlas.css"></head>
+<body class=page><nav class=crumb><a href="../index.html">← atlas</a> / surfaces / organs</nav>
+<main class=doc><h2>organs <span class=muted>surface</span></h2>
+<img src="../../screenshots/organs.png" style="width:100%;border:1px solid #21262d;border-radius:8px;margin:8px 0">
+<p class=muted>The organ survey — the image&#x27;s specialized verified-program cells.</p>
+<p>The ORGANS tab (<code>organs_panel</code>, <code>cockpit.rs:5843</code>) reflects each dregg *organ*&#x27;s live cell-state. Organs are dregg&#x27;s higher-order primitives — cells whose installed program enforces a quantitative invariant: a trustline (<code>drawn ≤ ceiling</code> forever), a flash well (the net-floor flash-loan invariant), a channel, a mailbox, a court. Surveyed via <code>OrganSurvey::build</code> (<code>organs.rs:1-11</code>).</p>
+<p>The honest split (<code>organs.rs:13-39</code>): trustline and flash well are *embed-core* — their entire enforcement is the cell&#x27;s executor-installed program, re-evaluated on every touching turn, so their position is fully readable from the embedded ledger, decoded from the published blueprint slot constants. Channel, mailbox, and court are *node-service* organs whose full operation lives behind <code>captp</code>, which the headless build deliberately does not link — so they are shown as remote-path, NOT faked local state.</p>
+<p>How you use it: read the live organs to see real bilateral-credit and flash-loan positions decoded off the ledger, and read the remote-path section to know honestly which organs need a connected node. This is the matrix row made real — trustline/flashwell enforced in embed-core (the cell program IS the invariant), channel/mailbox/court behind the network surface.</p></main></body></html>

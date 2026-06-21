@@ -39,6 +39,33 @@ def load_explainers():
     return out
 
 
+def parse_sections(md_text):
+    """Split a `## slug` markdown doc into {slug: section_markdown}."""
+    sections, cur, buf = {}, None, []
+    for ln in md_text.split("\n"):
+        if ln.startswith("## "):
+            if cur is not None:
+                sections[cur] = "\n".join(buf).strip()
+            cur = ln[3:].strip()
+            buf = []
+        else:
+            buf.append(ln)
+    if cur is not None:
+        sections[cur] = "\n".join(buf).strip()
+    return sections
+
+
+def all_sections():
+    """Every explainer section across all files, flattened by slug."""
+    merged = {}
+    for name, text in load_explainers().items():
+        if name == "about":
+            continue
+        for slug, body in parse_sections(text).items():
+            merged[slug] = body
+    return merged
+
+
 def md_to_html(text):
     """A tiny, dependency-free markdown subset (headings, code, lists, bold,
     inline code, paragraphs) — enough for the explainers."""
@@ -87,17 +114,25 @@ def inline(s):
 # ---------------------------------------------------------------------------
 
 def build_data_js():
+    sections = all_sections()
+    # render each section's markdown to html once, for the SPA
+    sections_html = {slug: md_to_html(body) for slug, body in sections.items()}
+    surfaces = load("surfaces.json", [])
+    # attach the full explainer html to each surface (matched by tab slug)
+    for s in surfaces:
+        s["explainer_html"] = sections_html.get(s["tab"], "")
     data = {
         "gametree": load("gametree.json", {"meta": {}, "nodes": [], "edges": []}),
         "cells": load("cells.json", {"cells": [], "ocap": {"nodes": [], "edges": []}}),
         "protocol": load("protocol.json", {}),
-        "surfaces": load("surfaces.json", []),
+        "surfaces": surfaces,
         "anomalies": load("anomalies.json", []),
         "explainers": load_explainers(),
+        "sections": sections_html,
     }
     with open(os.path.join(SITE, "data.js"), "w") as f:
         f.write("window.ATLAS = " + json.dumps(data) + ";\n")
-    return data
+    return data, sections_html
 
 
 # ---------------------------------------------------------------------------
@@ -192,6 +227,41 @@ def build_protocol_page(data):
         PAGE_TMPL.format(title="Protocol", crumb="protocol", body="\n".join(body)))
 
 
+def build_surface_pages(data, sections_html):
+    os.makedirs(os.path.join(PAGES, "surfaces"), exist_ok=True)
+    for s in data["surfaces"]:
+        tab = s["tab"]
+        body = [f'<h2>{html.escape(tab)} <span class=muted>surface</span></h2>',
+                f'<img src="../../screenshots/{html.escape(s["file"])}" style="width:100%;border:1px solid #21262d;border-radius:8px;margin:8px 0">',
+                f'<p class=muted>{html.escape(s.get("explainer",""))}</p>',
+                sections_html.get(tab, "<p class=muted>(no deep explainer yet)</p>")]
+        open(os.path.join(PAGES, "surfaces", tab + ".html"), "w").write(
+            PAGE_TMPL.format(title=tab, crumb=f"surfaces / {tab}", body="\n".join(body)))
+
+
+def build_faces_page(sections_html):
+    faces = ["framework", "raw-fields", "graph", "domain-visual", "affordances", "provenance", "invariant", "source"]
+    body = ["<h2>The seven presentation faces</h2>",
+            "<p class=muted>Every protocol object is <code>Presentable</code> and offers this set of named lenses.</p>"]
+    for slug in faces:
+        if slug in sections_html:
+            body.append(f'<h3 id="{slug}">{slug}</h3>')
+            body.append(sections_html[slug])
+    open(os.path.join(PAGES, "faces.html"), "w").write(
+        PAGE_TMPL.format(title="Faces", crumb="faces", body="\n".join(body)))
+
+
+def build_protocol_deep_page(sections_html):
+    order = ["thesis", "verbs", "substances", "auth-lattice", "refusal", "receipts"]
+    body = ["<h2>Protocol — deep reference</h2>"]
+    for slug in order:
+        if slug in sections_html:
+            body.append(f'<h3 id="{slug}">{slug}</h3>')
+            body.append(sections_html[slug])
+    open(os.path.join(PAGES, "protocol-deep.html"), "w").write(
+        PAGE_TMPL.format(title="Protocol (deep)", crumb="protocol-deep", body="\n".join(body)))
+
+
 def main():
     os.makedirs(SITE, exist_ok=True)
     os.makedirs(PAGES, exist_ok=True)
@@ -200,9 +270,12 @@ def main():
     if os.path.isdir(SHOTS):
         shutil.rmtree(dst, ignore_errors=True)
         shutil.copytree(SHOTS, dst)
-    data = build_data_js()
+    data, sections_html = build_data_js()
     build_cell_pages(data)
     build_protocol_page(data)
+    build_surface_pages(data, sections_html)
+    build_faces_page(sections_html)
+    build_protocol_deep_page(sections_html)
     # the SPA shell + app + css are written by separate template files that
     # this script copies verbatim (kept as real files for easy editing).
     for fn in ("index.html", "app.js", "atlas.css"):

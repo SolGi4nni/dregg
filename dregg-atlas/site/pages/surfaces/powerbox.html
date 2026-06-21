@@ -1,0 +1,8 @@
+<!doctype html><html><head><meta charset=utf-8>
+<title>powerbox · dregg atlas</title><link rel=stylesheet href="../atlas.css"></head>
+<body class=page><nav class=crumb><a href="../index.html">← atlas</a> / surfaces / powerbox</nav>
+<main class=doc><h2>powerbox <span class=muted>surface</span></h2>
+<img src="../../screenshots/powerbox.png" style="width:100%;border:1px solid #21262d;border-radius:8px;margin:8px 0">
+<p class=muted>The capability powerbox — granting/brokering authority.</p>
+<p>The POWERBOX tab (<code>powerbox_panel</code>, <code>cockpit.rs:6826</code>) is CapDesk — the trusted designation flow. An ocap system has no ambient authority: a confined app-cell holds exactly the caps in its c-list. The powerbox is the &quot;open-file-dialog as grant ceremony&quot;: the app *requests* a cap it lacks, the trusted UI (the cockpit, NOT the app) presents a picker of what the USER holds, the user designates one, and the trusted UI mints a fresh attenuated cap into the app&#x27;s c-list via a real grant turn (<code>powerbox.rs:1-13</code>).</p>
+<p>How you use it: optionally launch a fresh confined app (it holds nothing — it can only ask), cycle the confer tier, then click a target to designate it. The app never sees the namespace; it gets precisely what you pointed at, narrowed. Three proven facts made tangible: the trusted UI holds no ambient authority of its own; the grant is strictly attenuating (<code>granted ⊆ held</code>, the anti-ghost tooth); and the mint is a real verified turn (the executor&#x27;s no-amplification rule is the second gate).</p></main></body></html>

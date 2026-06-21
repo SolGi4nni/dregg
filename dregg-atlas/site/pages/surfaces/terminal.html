@@ -1,0 +1,9 @@
+<!doctype html><html><head><meta charset=utf-8>
+<title>terminal · dregg atlas</title><link rel=stylesheet href="../atlas.css"></head>
+<body class=page><nav class=crumb><a href="../index.html">← atlas</a> / surfaces / terminal</nav>
+<main class=doc><h2>terminal <span class=muted>surface</span></h2>
+<img src="../../screenshots/terminal.png" style="width:100%;border:1px solid #21262d;border-radius:8px;margin:8px 0">
+<p class=muted>The terminal surface.</p>
+<p>The <strong>terminal</strong> is a command surface as a cap-confined Surface cell — and the place the ADOS tool-call seam lives: an agent&#x27;s <code>Bash</code>/command routed through a terminal-cell&#x27;s capability. There is no bearer secret; the command is gated by real capability membership. The <code>TerminalCell</code> struct is at <code>terminal.rs:212</code>.</p>
+<p>It shows the terminal name, the backing cell id (the command-authority anchor), the <strong>mandate</strong> (the target cells this terminal may reach — itself plus every cap in its c-list), and the append-only output history (the command line, committed/REFUSED, the receipt hash, the computrons, the reason).</p>
+<p>A user runs a command via <code>run(world, cmd)</code>, where two gates fire in order: first the <strong>command cap-gate</strong> (is the target within the mandate? out-of-mandate returns <code>OutOfMandate</code> and appends a REFUSED line before any turn), then the <strong>executor gate</strong> (the authorized command runs as a real verified turn). It maps to the protocol because each typed command lowers to a real <code>Effect</code>, the two-gate composition mirrors <code>shell::present</code>, and the receipt *is* the output line — it never lies. The cockpit render is <code>terminal_panel()</code> (<code>cockpit.rs:7287</code>).</p></main></body></html>

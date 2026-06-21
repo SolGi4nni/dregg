@@ -1,0 +1,9 @@
+<!doctype html><html><head><meta charset=utf-8>
+<title>buffer · dregg atlas</title><link rel=stylesheet href="../atlas.css"></head>
+<body class=page><nav class=crumb><a href="../index.html">← atlas</a> / surfaces / buffer</nav>
+<main class=doc><h2>buffer <span class=muted>surface</span></h2>
+<img src="../../screenshots/buffer.png" style="width:100%;border:1px solid #21262d;border-radius:8px;margin:8px 0">
+<p class=muted>The text buffer surface.</p>
+<p>The <strong>buffer</strong> is a text editor backed by a real cell, with cap-gated writes — a buffer is a cap-confined view of a cell whose state *is* the buffer, so *who may edit it* is an ocap question the verified executor answers. The <code>BufferCell</code> struct is at <code>buffer.rs:225</code>.</p>
+<p>It shows the buffer name, the backing cell id, whether the buffer is READ-ONLY under the held cap (an attenuated surface cap cannot promote itself to write), whether it is CLEAN or DIRTY, the revision (the cell&#x27;s nonce), and the two digests (visible-doc BLAKE3 vs stored).</p>
+<p>A user types freely into the view (in-memory, no ledger touch), then lands it with <code>commit(world, cap)</code>, where two gates fire: the <strong>buffer-cap gate</strong> (the cap must name this surface and carry full write authority <code>AuthRequired::None</code>; a read-only mirror is refused before any turn), then the <strong>executor gate</strong> (the <code>SetField</code> turn runs; the cell&#x27;s nonce advances). It maps to the protocol because the content digest lives in the cell&#x27;s state at a fixed slot, so a commit advances the source-state-root like a balance move, and a read-only mirror (obtained by a real <code>share()</code> narrowing) cannot write — no-amplification firing at the editor. The cockpit render is <code>buffer_panel()</code> (<code>cockpit.rs:7200</code>).</p></main></body></html>

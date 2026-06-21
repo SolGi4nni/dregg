@@ -1,0 +1,9 @@
+<!doctype html><html><head><meta charset=utf-8>
+<title>web-of-cells · dregg atlas</title><link rel=stylesheet href="../atlas.css"></head>
+<body class=page><nav class=crumb><a href="../index.html">← atlas</a> / surfaces / web-of-cells</nav>
+<main class=doc><h2>web-of-cells <span class=muted>surface</span></h2>
+<img src="../../screenshots/web-of-cells.png" style="width:100%;border:1px solid #21262d;border-radius:8px;margin:8px 0">
+<p class=muted>The cells as a navigable web — the distributed-attestation view of the image.</p>
+<p>The WEB-OF-CELLS tab (<code>web_of_cells_panel</code>, <code>cockpit.rs:5952</code>) is the cockpit as a native browser of the <code>dregg://</code> docuverse. A <code>dregg://&lt;cell&gt;</code> link is a *capability into a cell*; &quot;fetching&quot; it is a verified, attested cross-cell read (a receipt plus a quorum-signed <code>AttestedRoot</code>).</p>
+<p>What it shows: a &quot;view as ROOT / view as EDITOR&quot; toggle, then addressable cells as <code>dregg://</code> rows — each with its trusted-path origin chrome drawn from the LEDGER (never the page — the structural anti-phishing badge) and an <code>✓ attested</code> / <code>⚠ unattested</code> flag. Opening a cell reveals its per-viewer affordance surface (&quot;you see N of M declared affordances — the rest are ATTENUATED away by your caps&quot;).</p>
+<p>How you use it: toggle root/editor to watch the membrane reveal or attenuate affordances live; click a cell to open it; fire an affordance — which runs through this crate&#x27;s embedded executor (<code>fire_affordance</code> lifts the projected web effect to <code>World::commit_turn</code>). The addressing is the genuine <code>WebOfCells</code>/<code>DreggUri</code>; the per-viewer rows are <code>AffordanceSurface::project_for</code> gated by <code>is_attenuation</code> (progressive enhancement → progressive attenuation).</p></main></body></html>

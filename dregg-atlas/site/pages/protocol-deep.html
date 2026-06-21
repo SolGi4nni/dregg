@@ -1,0 +1,71 @@
+<!doctype html><html><head><meta charset=utf-8>
+<title>Protocol (deep) · dregg atlas</title><link rel=stylesheet href="../atlas.css"></head>
+<body class=page><nav class=crumb><a href="../index.html">← atlas</a> / protocol-deep</nav>
+<main class=doc><h2>Protocol — deep reference</h2>
+<h3 id="thesis">thesis</h3>
+<p>&gt; *A turn is the exercise of an attenuable, proof-carrying token over owned state, leaving a verifiable receipt.* — <code>docs/DREGG3.md:19-21</code></p>
+<p>Each clause is concrete code, not slogan:</p>
+<ul>
+<li><strong>&quot;a turn&quot;</strong> — a <code>Turn</code> (<code>turn/src/turn.rs:241</code>) is <code>auth ∘ body ∘ receipt</code>: a forest of <code>Action</code>s, each targeting one cell with a <code>method</code>, <code>args</code>, an <code>Authorization</code>, <code>Preconditions</code>, and a list of <code>Effect</code>s (<code>turn/src/action.rs:73-122</code>). The turn is the unit the executor admits or rejects atomically.</li>
+<li><strong>&quot;the exercise of … a token&quot;</strong> — the actor does not *describe* what it wants; it *presents* authority. <code>Authorization</code> (<code>turn/src/action.rs:215-443</code>) is that presentation: an Ed25519 <code>Signature</code>, a <code>Proof</code>, a <code>Bearer</code> capability proof, a <code>Token</code> (biscuit/macaroon), a <code>Custom</code> witnessed predicate. Exercising a held capability is <code>Effect::ExerciseViaCapability</code> (<code>turn/src/action.rs:1117</code>).</li>
+<li><strong>&quot;attenuable&quot;</strong> — every token narrows monotonically and never widens. The gate is <code>is_attenuation(held, granted) := granted.is_narrower_or_equal(held)</code> (<code>cell/src/capability.rs:603-605</code>). A delegated capability can only restrict the holder&#x27;s authority.</li>
+<li><strong>&quot;proof-carrying&quot;</strong> — where authority is not a bare signature, the actor carries a proof the executor *checks deterministically*: STARK delegation proofs, witnessed predicates resolved via a <code>WitnessedPredicateRegistry</code>, token caveats verified against this call&#x27;s <code>(action, resource, effects, nonce, federation, block_height)</code> (<code>turn/src/action.rs:412-442</code>).</li>
+<li><strong>&quot;over owned state&quot;</strong> — state is never ownerless. A cell gathers the four substances + program + operator (<code>docs/DREGG3.md:128-132</code>); &quot;Nothing is ownerless. Every object IS a cell or lives in one.&quot; Mutation is guarded by the cell&#x27;s own permissions.</li>
+<li><strong>&quot;leaving a verifiable receipt&quot;</strong> — every committed turn emits a <code>TurnReceipt</code> (<code>turn/src/turn.rs:768</code>) binding pre/post state, effects, cost, and the prior receipt into a hash chain. A light client verifies only the receipt chain, never re-executes.</li>
+</ul>
+<p>The lineage: macaroon → biscuit → capability is the deepest stratum — biscuit&#x27;s Datalog *became* the derivation circuit, so &quot;the token became the proof system&quot; (<code>docs/DREGG3.md:23-25</code>).</p>
+<h3 id="verbs">verbs</h3>
+<p>DREGG3 collapses the historical 52-variant <code>Effect</code> enum to <strong>eight kernel verbs</strong> (<code>docs/DREGG3.md:151-157</code>): <code>create · write · move · grant · revoke · shield/unshield · lifecycle</code>. These are the *structural rules* of the four-substance logic: <code>move</code> is exchange for the linear substance (Value); <code>grant</code> is authorized production for Authority; <code>shield</code>/nullifiers are Evidence-monotonicity; <code>write</code> is heap-update under the frame. Everything else among the 52 is a <strong>cell-program pattern</strong> — queues, inboxes, escrows, auctions, namespaces, bridges are factory + <code>Pred</code> + these verbs.</p>
+<p>The live Rust <code>Effect</code> enum (<code>turn/src/action.rs:950-1365</code>) maps onto these eight:</p>
+<ul>
+<li><strong>create</strong> — <code>CreateCell</code>, <code>CreateCellFromFactory</code>, <code>NoteCreate</code>, <code>SpawnWithDelegation</code>, <code>Promise</code>/<code>Notify</code> (create a hole)</li>
+<li><strong>write</strong> — <code>SetField</code>, <code>SetPermissions</code>, <code>SetVerificationKey</code>, <code>SetProgram</code>, <code>EmitEvent</code></li>
+<li><strong>move</strong> — <code>Transfer</code>, the signed <code>Action::balance_change</code> delta, <code>BridgeMint</code>, <code>Burn</code> (asymmetric move to the well)</li>
+<li><strong>grant</strong> — <code>GrantCapability</code>, <code>Introduce</code>, <code>ExerciseViaCapability</code>, <code>AttenuateCapability</code>, <code>RefreshDelegation</code></li>
+<li><strong>revoke</strong> — <code>RevokeCapability</code>, <code>RevokeDelegation</code>, <code>React</code> (terminal spend of a hole)</li>
+<li><strong>shield/unshield</strong> — <code>NoteSpend</code>, <code>NoteCreate</code> (reveal a nullifier / add a commitment)</li>
+<li><strong>lifecycle</strong> — <code>CellSeal</code>, <code>CellUnseal</code>, <code>CellDestroy</code>, <code>MakeSovereign</code>, <code>ReceiptArchive</code></li>
+</ul>
+<p><code>IncrementNonce</code> is the prologue, not a verb; <code>Refusal</code> is an outcome made first-class. Every variant must declare its conservation discipline through the exhaustive <code>Effect::linearity</code> match (<code>turn/src/action.rs:1607</code>) — no <code>_ =&gt;</code> arm, so <code>rustc</code> forces every new effect to answer the conservation question.</p>
+<h3 id="substances">substances</h3>
+<p>The kernel governs <strong>four substances</strong>, each with its own discipline (<code>docs/DREGG3.md:56-62</code>):</p>
+<ul>
+<li><strong>Value</strong> (balance) — linear; moves, never copies or vanishes. Law: <code>Σδ = 0</code>, exact.</li>
+<li><strong>Authority</strong> (capabilities) — non-forgeable *production*; grows only by authorized construction, narrows freely. Only connectivity begets connectivity.</li>
+<li><strong>Evidence</strong> (nullifiers/commitments/nonce) — monotone; once known, never unknown. Grow-only.</li>
+<li><strong>State</strong> (fields/slots) — guarded-mutable; changes only under <code>Pred</code>, by its owner. The frame.</li>
+</ul>
+<p><strong>Conservation, <code>BALANCE_SUM = 0</code>.</strong> Value is strictly linear. A signed <code>balance_change</code> (<code>turn/src/action.rs:93-102</code>) withdraws or deposits; at turn end the executor demands the running <code>excess == 0</code> and rolls the whole turn back otherwise — <code>TurnError::ExcessNotZero</code> (<code>turn/src/executor/execute.rs:998-1013</code>).</p>
+<p><strong>Issuer wells with negative balance.</strong> The &quot;no creation from nothing&quot; law is made literal: <code>AssetId := CellId of the issuer; the issuer carries −supply, so ∀a. Σ_c bal(c,a) = 0 ALWAYS</code> (<code>docs/DREGG3.md:133-138</code>). Mint and burn are not non-conserving verbs — they are the issuer *moving from/to its own well under its own program*. <code>Burn</code> is the one disclosed exception — its receipt&#x27;s <code>was_burn</code> flag is bound into <code>receipt_hash</code> so an executor cannot strip the disclosure.</p>
+<h3 id="auth-lattice">auth-lattice</h3>
+<p>A cell&#x27;s <code>Permissions</code> (<code>cell/src/permissions.rs:84-102</code>) maps each operation to an <code>AuthRequired</code> (<code>cell/src/permissions.rs:4-22</code>): <code>None</code> (always allowed), <code>Signature</code>, <code>Proof</code>, <code>Either</code> (sig or proof), <code>Impossible</code> (permanently locked), <code>Custom { vk_hash }</code> (app-defined witnessed predicate).</p>
+<p><strong>The partial order</strong> is <code>is_narrower_or_equal</code> (<code>cell/src/permissions.rs:52-71</code>):</p>
+<ul>
+<li><code>Impossible</code> is the <strong>bottom</strong> (most restrictive): <code>(Impossible, _) =&gt; true</code>.</li>
+<li><strong><code>None</code> is the TOP — the widest, least restrictive</strong>: <code>(_, None) =&gt; true</code>, <code>(None, _) =&gt; false</code>. This is the subtlety that catches readers: <code>None</code> does not mean &quot;no authority&quot;; it means &quot;authority that satisfies *every* requirement.&quot; A holder of <code>None</code> rights clears every gate.</li>
+<li><code>Proof</code> and <code>Signature</code> are each narrower than <code>Either</code>; they are incomparable with each other.</li>
+<li>two distinct <code>Custom</code>s are <strong>incomparable</strong>.</li>
+</ul>
+<p><strong>Attenuation</strong> is this order read for delegation: <code>is_attenuation(held, granted) := granted.is_narrower_or_equal(held)</code> (<code>cell/src/capability.rs:603-605</code>). You may grant only what is as restrictive as, or more restrictive than, what you hold — never amplification. The adversarial tests pin the no-widening property exactly (<code>cell/src/capability.rs:640-651</code>).</p>
+<h3 id="refusal">refusal</h3>
+<p>A turn can be refused at two structurally distinct sites. The cockpit&#x27;s <code>SendResult::Refused { reason, by_executor }</code> (<code>starbridge-v2/src/inspect_act.rs:111-117</code>) makes the distinction first-class:</p>
+<p><strong><code>by_executor = false</code> — the object-capability gate, BEFORE any turn (the anti-ghost tooth).</strong> The affordance surface runs the *real* <code>is_attenuation</code> (<code>required ⊆ held</code>) and refuses an unauthorized send in-band, before the executor ever runs (<code>inspect_act.rs:227-247</code>). A viewer who lacks the rights cannot even form the turn; there is no phantom path where an unauthorized action &quot;almost&quot; runs.</p>
+<p><strong><code>by_executor = true</code> — a kernel guarantee fired INSIDE the executor.</strong> The cap-gate admitted the send, but the verified executor rejected the turn because a substance law fired. The actual sites:</p>
+<ul>
+<li><strong>Authorization / permission gate</strong> — <code>verify_authorization</code> → <code>TurnError::PermissionDenied</code> / <code>InvalidAuthorization</code> (<code>turn/src/executor/authorize.rs:241-298</code>).</li>
+<li><strong>Non-amplification</strong> — <code>GrantCapability</code> runs <code>is_attenuation</code> and refuses widening with <code>TurnError::DelegationDenied</code> (<code>turn/src/executor/apply.rs:479-488</code>); bearer caps reject <code>BearerCapAmplification</code>.</li>
+<li><strong>Conservation</strong> — <code>ExcessNotZero</code> at turn end, <code>NoteConservationViolation</code>, <code>CommittedConservationFailed</code>, <code>PerAssetConservationViolation</code>.</li>
+<li><strong>Freshness / replay</strong> — <code>NonceReplay</code>, <code>CapabilityRevoked</code>/<code>Stale</code>, <code>ReceiptChainMismatch</code>, <code>Expired</code>.</li>
+</ul>
+<p>The first site refuses *the formation of authority*; the second refuses *a turn that violates what the substances are*. Both are surfaced, never swallowed.</p>
+<h3 id="receipts">receipts</h3>
+<p>A committed turn produces a <code>TurnReceipt</code> (<code>turn/src/turn.rs:768-840</code>) — the cryptographic evidence the light client trusts in lieu of re-execution. Its hash-bound core (<code>receipt_hash</code>, domain-separated <code>&quot;dregg-receipt-v3&quot;</code>):</p>
+<ul>
+<li><strong><code>turn_hash</code></strong> — the hash of the <code>Turn</code> that produced this receipt; plus <code>forest_hash</code> binding the call-forest shape.</li>
+<li><strong><code>pre_state_hash</code> / <code>post_state_hash</code></strong> — the agent&#x27;s committed state before and after. This pair IS the transition.</li>
+<li><strong><code>effects_hash</code></strong> — the committed digest of the effects applied.</li>
+<li><strong><code>computrons_used</code></strong> — the metered cost (the gas analogue); <code>action_count</code> records the forest size.</li>
+<li><strong>the chain — <code>previous_receipt_hash</code></strong> — links this receipt to the agent&#x27;s prior one. The whole protocol is &quot;one growing proof object&quot;; causal ordering is non-malleable. A light client verifies only these Q-chains.</li>
+</ul>
+<p>Bound into the same hash so a malicious executor cannot strip them: <code>federation_id</code>, <code>was_burn</code> (the disclosed non-conservation), <code>consumed_capabilities</code> (cap-witnesses with sorted-Merkle membership paths), and <code>derivation_records</code> (capabilities the turn creates). The optional <code>executor_signature</code> attests every bound field to a known executor.</p>
+<p>*Two honest edges the atlas flags:* <code>SetProgram</code> (<code>action.rs:1019</code>) has an executor path but no circuit descriptor rung yet (a documented VK-affecting follow-up), and DelegationMode <code>ParentsOwn</code>/<code>Inherit</code> are typed-but-unimplemented, rejected fail-closed with <code>DelegationModeUnimplemented</code> (<code>action.rs:831-847</code>).</p></main></body></html>

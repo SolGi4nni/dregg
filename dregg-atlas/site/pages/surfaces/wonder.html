@@ -1,0 +1,9 @@
+<!doctype html><html><head><meta charset=utf-8>
+<title>wonder · dregg atlas</title><link rel=stylesheet href="../atlas.css"></head>
+<body class=page><nav class=crumb><a href="../index.html">← atlas</a> / surfaces / wonder</nav>
+<main class=doc><h2>wonder <span class=muted>surface</span></h2>
+<img src="../../screenshots/wonder.png" style="width:100%;border:1px solid #21262d;border-radius:8px;margin:8px 0">
+<p class=muted>The AOL-wonder direct-manipulation surface — click around and absorb, no comprehension required.</p>
+<p><strong>Wonder</strong> is the warm front door — the live ledger projected as glowing, pokeable cells a newcomer clicks around with no manual (the 1999-AOL-as-a-four-year-old half of the deos UX, where wonder precedes comprehension). The <code>WonderRoom</code> (<code>wonder.rs:265</code>) holds every live cell as a <code>GlowingCell</code> carrying its real balance, capability count, and a <code>liveliness ∈ [0,1]</code> glow, rebuilt fresh every frame via <code>WonderRoom::build(&amp;world)</code>.</p>
+<p>The glow is real: <code>liveliness</code> is derived from the live dynamics stream, counting how many recent events touched the cell, decaying toward zero for older activity. Each cell carries a <code>Halo</code> with three real actions — Inspect (project through <code>reflect::reflect_cell</code>), Grab (arm a drag), and Explain (a warm plain sentence from the cell&#x27;s real fields + recent dynamics).</p>
+<p>A user clicks a glowing cell to inspect it in the moldable INSPECTOR; the brightest cell explains itself in prose. A drag is a real conserving turn: arm → drop_on → predict (fork-the-world; an over-drag surfaces as <code>Refused</code>) → resolve (predicted-first — never commits something the prediction refused), producing a real <code>TurnReceipt</code>. The cockpit render is <code>wonder_panel()</code> (<code>cockpit.rs:3797</code>).</p></main></body></html>

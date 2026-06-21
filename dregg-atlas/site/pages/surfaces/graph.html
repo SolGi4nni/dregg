@@ -1,0 +1,9 @@
+<!doctype html><html><head><meta charset=utf-8>
+<title>graph · dregg atlas</title><link rel=stylesheet href="../atlas.css"></head>
+<body class=page><nav class=crumb><a href="../index.html">← atlas</a> / surfaces / graph</nav>
+<main class=doc><h2>graph <span class=muted>surface</span></h2>
+<img src="../../screenshots/graph.png" style="width:100%;border:1px solid #21262d;border-radius:8px;margin:8px 0">
+<p class=muted>The ocap delegation graph — cells as nodes, capability grants as directed edges, laid out by multi-hop delegation depth.</p>
+<p>The <code>graph</code> face is the node/edge view — <code>PresentationKind::Graph</code> (<code>presentable.rs:60-61</code>), carried by <code>PresentationBody::Graph(GraphView)</code>. A <code>GraphView</code> is <code>nodes</code>, directed <code>edges</code>, and an optional <code>focus</code> cell (<code>presentable.rs:186-194</code>). Critically, the nodes and edges are the genuine <code>graph.rs</code> primitives read off the live ledger — never a parallel node model.</p>
+<p>The object data it shows is any relation structure: the ocap web (who holds a capability reaching whom), an effect DAG, a Merkle tree, an attenuation lineage. For a cell, <code>cell_ocap_view</code> (<code>presentable.rs:792-815</code>) runs <code>OcapGraph::build(world)</code> over the whole image, then restricts to the edges that touch this cell.</p>
+<p>It exists because the protocol is fundamentally a graph of authority and causation, and a field-tree cannot show reachability. The <code>graph</code> face answers &quot;what does this object connect to, and how.&quot;</p></main></body></html>

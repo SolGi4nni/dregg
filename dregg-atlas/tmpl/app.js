@@ -40,7 +40,8 @@
     });
     G.nodes.forEach(n => {
       seen.add(n.digest);
-      els.push({ data: { id: n.digest, label: n.digest === "genesis" ? "genesis" : n.digest.slice(0, 8), depth: n.depth, snap: n.snapshot, refused: refusedBy[n.digest] || [], committed: committedBy[n.digest] || [] } });
+      const committed = committedBy[n.digest] || [];
+      els.push({ data: { id: n.digest, label: n.digest === "genesis" ? "genesis" : n.digest.slice(0, 8), depth: n.depth, snap: n.snapshot, refused: refusedBy[n.digest] || [], committed, leaf: committed.length === 0 } });
     });
     let ei = 0;
     G.edges.forEach(e => {
@@ -54,21 +55,55 @@
       container: $("#cy"),
       elements: els,
       style: [
-        { selector: "node", style: { "background-color": "#1f6feb", "label": "data(label)", "color": "#c9d1d9", "font-size": 9, "width": 16, "height": 16, "border-width": 2, "border-color": "#58a6ff", "text-valign": "bottom", "text-margin-y": 3 } },
-        { selector: 'node[depth = 0]', style: { "background-color": "#3fb950", "border-color": "#3fb950", "width": 22, "height": 22 } },
-        { selector: "edge", style: { "width": 1.6, "curve-style": "bezier", "target-arrow-shape": "triangle", "arrow-scale": 0.8, "font-size": 7, "color": "#8b949e", "text-rotation": "autorotate" } },
-        { selector: 'edge[outcome = "committed"]', style: { "line-color": "#3fb950", "target-arrow-color": "#3fb950" } },
-        { selector: 'edge[outcome = "refused"]', style: { "line-color": "#f85149", "target-arrow-color": "#f85149", "line-style": "dashed", "curve-style": "bezier", "loop-direction": "0deg" } },
-        { selector: ".sel", style: { "border-color": "#f0883e", "border-width": 4 } },
-        { selector: "edge.sel", style: { "width": 3.5, "line-color": "#f0883e", "target-arrow-color": "#f0883e" } },
+        // nodes coloured by depth so the tree's strata read at a glance
+        { selector: "node", style: { "background-color": "#1f6feb", "label": "data(label)", "color": "#8b949e", "font-size": 8, "width": 15, "height": 15, "border-width": 1.5, "border-color": "#30363d", "text-valign": "bottom", "text-margin-y": 2, "min-zoomed-font-size": 7 } },
+        { selector: 'node[depth = 0]', style: { "background-color": "#3fb950", "border-color": "#56d364", "width": 26, "height": 26, "color": "#c9d1d9", "font-size": 11 } },
+        { selector: 'node[depth = 1]', style: { "background-color": "#2ea043" } },
+        { selector: 'node[depth = 2]', style: { "background-color": "#1f6feb" } },
+        { selector: 'node[depth = 3]', style: { "background-color": "#8957e5" } },
+        { selector: 'node[depth = 4]', style: { "background-color": "#bc8cff" } },
+        { selector: 'node[depth >= 5]', style: { "background-color": "#db61a2" } },
+        { selector: 'node[?leaf]', style: { "shape": "diamond" } },
+        { selector: "edge", style: { "width": 1.3, "curve-style": "bezier", "target-arrow-shape": "triangle", "arrow-scale": 0.7, "font-size": 6, "color": "#6e7681", "text-rotation": "autorotate", "line-color": "#3fb95066", "target-arrow-color": "#3fb950", "min-zoomed-font-size": 8 } },
+        { selector: ".sel", style: { "border-color": "#f0883e", "border-width": 4, "color": "#f0883e" } },
+        { selector: "edge.sel", style: { "width": 3.5, "line-color": "#f0883e", "target-arrow-color": "#f0883e", "label": "data(label)", "color": "#f0883e", "z-index": 99 } },
+        { selector: ".faded", style: { "opacity": 0.12 } },
       ],
-      layout: { name: "dagre", rankDir: "TB", nodeSep: 22, rankSep: 90, edgeSep: 8, animate: false, spacingFactor: 1.1 },
+      layout: {
+        name: "concentric",
+        concentric: n => 100 - (n.data("depth") || 0),   // genesis (depth 0) at the centre
+        levelWidth: () => 1,
+        minNodeSpacing: 14,
+        spacingFactor: 1.0,
+        animate: false,
+      },
       wheelSensitivity: 0.3,
     });
-    gt.on("tap", "node", ev => showState(ev.target));
+    gt.on("tap", "node", ev => { showState(ev.target); highlightSubtree(ev.target); });
     gt.on("tap", "edge", ev => showTransition(ev.target));
+    gt.on("tap", ev => { if (ev.target === gt) { gt.elements().removeClass("faded sel"); } });
     gt.ready(() => gt.fit(null, 40));
     gt.one("layoutstop", () => gt.fit(null, 40));
+  }
+
+  // highlight a state's reachable subtree (committed descendants), fade the rest
+  function highlightSubtree(root) {
+    const keep = new Set([root.id()]);
+    let frontier = [root];
+    while (frontier.length) {
+      const next = [];
+      frontier.forEach(n => n.outgoers("edge").forEach(e => {
+        const t = e.target();
+        if (!keep.has(t.id())) { keep.add(t.id()); next.push(t); }
+      }));
+      frontier = next;
+    }
+    gt.batch(() => {
+      gt.elements().addClass("faded").removeClass("sel");
+      gt.nodes().forEach(n => { if (keep.has(n.id())) n.removeClass("faded"); });
+      gt.edges().forEach(e => { if (keep.has(e.source().id()) && keep.has(e.target().id())) e.removeClass("faded"); });
+      root.addClass("sel").removeClass("faded");
+    });
   }
 
   function showState(node) {
@@ -184,9 +219,10 @@
     if (!surf.length) { g.innerHTML = `<p class=muted style="padding:18px">No surface screenshots yet — run shoot.py.</p>`; return; }
     g.innerHTML = surf.map(s => `
       <div class=card>
-        <img src="screenshots/${esc(s.file)}" loading=lazy alt="${esc(s.tab)}">
+        <a href="pages/surfaces/${esc(s.tab)}.html" target=_blank><img src="screenshots/${esc(s.file)}" loading=lazy alt="${esc(s.tab)}"></a>
         <div class=cap><b>${esc(s.tab)}</b> <span class=muted>${esc(s.size || "")}</span>
-        <div>${esc(s.explainer || "")}</div></div>
+        <div>${esc(s.explainer || "")}</div>
+        <div style="margin-top:6px"><a href="pages/surfaces/${esc(s.tab)}.html" target=_blank>read the full explainer →</a></div></div>
       </div>`).join("");
   }
 
@@ -201,7 +237,13 @@
     h += "<h3>The eight verbs</h3><ul>" + (p.the_eight_verbs || []).map(v => `<li>${esc(v)}</li>`).join("") + "</ul>";
     h += "<h3>Effects seen live</h3><ul>" + (p.effects_seen || []).map(e => `<li><code>${esc(e)}</code></li>`).join("") + "</ul>";
     h += "<h3>Refusal taxonomy</h3><ul>" + Object.entries(p.refusal_taxonomy || {}).map(([k, v]) => `<li><strong>${esc(k)}</strong>: ${esc(v)}</li>`).join("") + "</ul>";
-    h += `<p><a href="pages/protocol.html" target=_blank>static protocol page ↗</a></p>`;
+    // the deep, code-grounded explainers (rendered inline, from explainers/protocol.md)
+    const sec = A.sections || {};
+    ["thesis", "verbs", "substances", "auth-lattice", "refusal", "receipts"].forEach(slug => {
+      if (sec[slug]) { h += `<h3 id="${slug}">${slug}</h3>` + sec[slug]; }
+    });
+    h += `<hr style="border-color:#21262d;margin:20px 0">`;
+    h += `<p><a href="pages/faces.html" target=_blank>↗ the seven presentation faces (deep)</a> &nbsp;·&nbsp; <a href="pages/protocol-deep.html" target=_blank>↗ protocol (deep, standalone)</a> &nbsp;·&nbsp; <a href="pages/protocol.html" target=_blank>↗ protocol summary</a></p>`;
     $("#protocol").innerHTML = h;
   }
 

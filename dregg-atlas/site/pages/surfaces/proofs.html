@@ -1,0 +1,9 @@
+<!doctype html><html><head><meta charset=utf-8>
+<title>proofs · dregg atlas</title><link rel=stylesheet href="../atlas.css"></head>
+<body class=page><nav class=crumb><a href="../index.html">← atlas</a> / surfaces / proofs</nav>
+<main class=doc><h2>proofs <span class=muted>surface</span></h2>
+<img src="../../screenshots/proofs.png" style="width:100%;border:1px solid #21262d;border-radius:8px;margin:8px 0">
+<p class=muted>The STARK/verification axis — the proof status of turns.</p>
+<p>The PROOFS tab (<code>proofs_panel</code>, <code>cockpit.rs:5898</code>) is the proof-attach and STARK verification-status board, surfaced as <code>ProofBoard::build(&amp;world, 16)</code> (<code>proofs.rs:1-8</code>).</p>
+<p>What it shows: a tally of three honest verification tiers, then per-turn entries tagged with the tier and an upgrade route. The tiers (<code>proofs.rs:55-67</code>): <strong>Verified-by-construction</strong> — the default in the embedded single-custody world; <code>commit_turn</code> runs the real verified executor inline, so the receipt&#x27;s existence IS the proof. <strong>Executor-signed</strong> — the receipt carries the producer&#x27;s Ed25519 signature over its hash. <strong>STARK-attached</strong> — an explicit succinct STARK over the whole-turn statement, so a light client verifies with NO trust in the producer.</p>
+<p>How you use it: read it to know exactly what assurance a turn carries and what it would take to upgrade. The board never claims a higher tier than the receipt holds — and deliberately does NOT mint a multi-second STARK inside a panel build (that is the heavy <code>dregg_sdk::full_turn_proof</code> lane). This is the pale-ghost question answered honestly.</p></main></body></html>

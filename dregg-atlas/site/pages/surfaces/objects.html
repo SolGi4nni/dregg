@@ -1,0 +1,9 @@
+<!doctype html><html><head><meta charset=utf-8>
+<title>objects · dregg atlas</title><link rel=stylesheet href="../atlas.css"></head>
+<body class=page><nav class=crumb><a href="../index.html">← atlas</a> / surfaces / objects</nav>
+<main class=doc><h2>objects <span class=muted>surface</span></h2>
+<img src="../../screenshots/objects.png" style="width:100%;border:1px solid #21262d;border-radius:8px;margin:8px 0">
+<p class=muted>The object browser — every protocol object by kind.</p>
+<p>The OBJECTS tab (<code>objects_panel</code>, <code>cockpit.rs:5714</code>) is the object browser organized around the protocol&#x27;s accounting axes: cell lifecycle, turn proofs, and nullifiers. It is a direct reflection of the live <code>World</code> ledger and receipt log, no model of its own.</p>
+<p>What it shows: a CELL LIFECYCLE column listing every cell with its lifecycle badge (<code>live</code>/<code>sealed</code>/<code>destroyed</code>, read from <code>cell.lifecycle</code>); then TURN PROOFS for recent receipts via <code>reflect::reflect_proof_status</code>; and under each receipt, its nullifiers via <code>reflect::reflect_nullifiers</code>.</p>
+<p>How you use it: scan it to see the lifecycle posture of every object and the proof/nullifier state of recent turns. Nullifiers are the one-shot linearity record — a spend appears here as a nullifier under the receipt that consumed it, the same non-membership the circuit&#x27;s note-spend gate enforces.</p></main></body></html>

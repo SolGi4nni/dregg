@@ -1,0 +1,9 @@
+<!doctype html><html><head><meta charset=utf-8>
+<title>swarm · dregg atlas</title><link rel=stylesheet href="../atlas.css"></head>
+<body class=page><nav class=crumb><a href="../index.html">← atlas</a> / surfaces / swarm</nav>
+<main class=doc><h2>swarm <span class=muted>surface</span></h2>
+<img src="../../screenshots/swarm.png" style="width:100%;border:1px solid #21262d;border-radius:8px;margin:8px 0">
+<p class=muted>The swarm orchestration surface.</p>
+<p>The <strong>swarm</strong> surface extends single-agent activity to N agents coordinating as confined Surface cells. Members coordinate via an async notify-edge model — one member emits an event (a receipted turn) depositing a pending &quot;wake&quot; in another&#x27;s inbox; the recipient drains it in its own separate future turn (two independent receipts, two heights — async, not a joint turn). The render model is <code>SwarmView</code> (<code>swarm.rs:1351</code>).</p>
+<p>It shows a swarm-wide header (members, total actions, pending wakes); per-member rows (name, id, balance, inbox with ⚡ pending / ✓ drained entries); an activity feed; and a budget strip (per-member spent/ceiling meter, aggregate headroom, optional shared-pool meter with a verified conservation bound).</p>
+<p>A user drives member actions: a coordinator emits a task to a worker (an <code>EmitEvent</code> turn; a wake lands if the recipient admits the topic via its <code>NotifyCap</code> badge mask), a worker drains its inbox, or a coordinator bundles transfer + wake in one seam. It maps to the protocol because each member is an agent cell with a held mandate, each action is a real turn, the notify edge is a real async chain gated by a real <code>dregg_firmament::NotifyCap</code> badge mask, and budgets are floor meters enforced fail-closed. The async model is *visible*: two receipts, two heights, two agents. The cockpit render is <code>swarm_panel()</code> (<code>cockpit.rs:5319</code>).</p></main></body></html>
