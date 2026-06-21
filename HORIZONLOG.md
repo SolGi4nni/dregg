@@ -3658,3 +3658,20 @@ HEADLINE TALLY (30 effects):
 NEXT-WAVE PICKUPS (driveable, the dropped set + the proof-level audit items): revokeCapability route-forge (#1) +
 its honest route-detector · refresh/spawn write-routing · the ~65 blind-is_err() test hardening · the ~17
 TraceReadout carrier-inhabitation non-vacuity · FloorsNonVacuous extension. All under the goal; none parked.
+
+## ⚑ SetProgram APEX-MEMBERSHIP WELD DONE (aef70ac7) — held for swarm-settle
+The ~30-file FullActionA weld CLOSED GREEN: FullActionA.setProgramA constructor (the setVKA analog) + the
+setProgramA arm in EVERY exhaustive match (ledgerDelta/execFullA/conservation/receipt/fairness/authority/actionTag=13/
+fullActionStep->SetProgramSpec/the commitment frames/HandlerExecutor/FFI/codec); execFullA_setProgram_iff_spec
+re-proves fullActionStep_exec_iff; a NEW Inst/setProgramA.lean v1 encoder track (apex_iff_setProgramSpec, the deep
+leaf arms built not skipped). APEX MEMBERSHIP: v3RegistryHeap pos 51 (52 total), actionTagToPos 13=>51,
+Rfix_setProgram rfl, closedLogExtract_setProgram_closed via setProgram_descriptorRefines_sat, the |13=> dispatch arm
+before the fallback. MUTATION-CONFIRMED (wrong registry pos OR dropped record-pin binding reds the apex). lake 4109
+axiom-clean, no sorry. SetProgram now a GENUINE apex leg — editing setProgramV3 reds the apex.
+HELD: its apex edits (ClosureFanoutGenuine/ClosureAll/CircuitSoundnessAssembled) are SHARED with ae15d66a's
+revoke-tag2 apex re-point -> bank in the final integrated pass when ae15d66a + a72bf75a settle, not mid-edit.
+RESIDUAL-WELD WAVE STATUS: 7 welds — SetProgram ✅(held), payload-Lean ✅(held, Rust verifier-anchor queued),
+refresh ✅(in 5a98dbb39 earlier), receiptArchive ✅, attenuate/revokeCap forge ✅; DRIVING: noteCreate/makeSovereign/
+setFieldDyn seams (a72bf75a), delegateAtten+revoke-tag2 (ae15d66a). NEXT (post-settle): revokeCapability route-forge
+(#1, the sin-map's dropped forge) + the payload Rust verifier-anchor + the ~65 blind-test hardening + TraceReadout
+non-vacuity.
