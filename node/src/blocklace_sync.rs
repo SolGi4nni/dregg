@@ -2909,6 +2909,14 @@ async fn execute_finalized_turn(
                                 }
                                 _ => None,
                             };
+                            // cap-WRITE light-client axis: thread the actor's FULL pre-state c-list
+                            // (the cap-tree write witness) so a write-bearing cap effect (e.g.
+                            // RevokeDelegation) proves the post-cap-root on the wire. Empty when the
+                            // before-cell is unavailable (the authority-only route still proves).
+                            let clist_leaves = full_turn_pre_cell
+                                .as_ref()
+                                .map(crate::turn_proving::cap_write_clist_leaves)
+                                .unwrap_or_default();
                             crate::turn_proving::prove_and_verify_finalized_turn_capability(
                                 &signed_turn.turn.agent,
                                 pre_balance,
@@ -2920,6 +2928,7 @@ async fn execute_finalized_turn(
                                 spent_nullifier,
                                 &full_turn_previously_spent,
                                 rotation,
+                                clist_leaves,
                             )
                         }
                         (None, Some((consumed, holder_cap_root)), spent_nullifier) => {
@@ -2964,6 +2973,10 @@ async fn execute_finalized_turn(
                                 spent_nullifier,
                                 &full_turn_previously_spent,
                                 rotation,
+                                // BEARER path: the cap-tree write witness is the DELEGATOR's c-list
+                                // (not the actor's) — the bearer write wrapper is the named fan-out
+                                // residual; the authority-only route proves until it lands.
+                                Vec::new(),
                             )
                         }
                         (None, None, Some(spent_nullifier)) => {

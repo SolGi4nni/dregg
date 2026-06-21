@@ -914,6 +914,7 @@ pub fn prove_and_verify_finalized_turn_capability(
     spent_nullifier: Option<&[u8; 32]>,
     previously_spent: &[[u8; 32]],
     rotation: Option<dregg_sdk::RotationTurnWitness>,
+    clist_leaves: Vec<dregg_circuit::heap_root::HeapLeaf>,
 ) -> Result<ProvenFinalizedTurn, FullTurnProvingError> {
     // BREADSTUFF (actor-held) path: the cap's HOLDER is the actor, so the
     // AUTHORITY leg binds against the ACTOR's own canonical pre-state cap root —
@@ -931,7 +932,30 @@ pub fn prove_and_verify_finalized_turn_capability(
         spent_nullifier,
         previously_spent,
         rotation,
+        clist_leaves,
     )
+}
+
+/// **(cap-WRITE light-client axis)** Build the openable cap-tree leaf-set for a cell's FULL c-list —
+/// the sorted-Poseidon2 `HeapLeaf` set the WRITE-bearing cap-open wrappers' `map_op` opens against
+/// (BEFORE cap-root → AFTER cap-root). Each ACTIVE capability becomes a leaf keyed by its
+/// `slot_hash` (the SAME felt the cap-leaf carries) with its `target` as the presence value (the
+/// revoke `map_op` reads this value then writes 0 in place). Tombstoned (revoked) slots are omitted.
+/// This is the cell's GENUINE c-list — the prover threads it as the cap-tree write witness so a
+/// wrong post-root is UNSAT (the no-silent-forge guardrail).
+pub fn cap_write_clist_leaves(
+    cell: &dregg_cell::Cell,
+) -> Vec<dregg_circuit::heap_root::HeapLeaf> {
+    cell.capabilities
+        .iter()
+        .map(|cap| {
+            let leaf = dregg_cell::cap_ref_to_leaf(cap);
+            dregg_circuit::heap_root::HeapLeaf {
+                addr: leaf.slot_hash,
+                value: leaf.target,
+            }
+        })
+        .collect()
 }
 
 /// Prove a finalized CAPABILITY-GATED turn binding the AUTHORITY (cap-membership)
@@ -970,6 +994,7 @@ pub fn prove_and_verify_finalized_turn_capability_holder(
     spent_nullifier: Option<&[u8; 32]>,
     previously_spent: &[[u8; 32]],
     rotation: Option<dregg_sdk::RotationTurnWitness>,
+    clist_leaves: Vec<dregg_circuit::heap_root::HeapLeaf>,
 ) -> Result<ProvenFinalizedTurn, FullTurnProvingError> {
     // Defence in depth: the receipt witness must be internally consistent AND
     // open to the CANONICAL pre-state capability root the node itself derived for
@@ -1101,7 +1126,14 @@ pub fn prove_and_verify_finalized_turn_capability_holder(
         conservation: None,
         non_revocation: non_revocation
             .map(|(tree, item_hash)| NonRevocationWitness { tree, item_hash }),
-        cap_membership: Some(CapMembershipWitness::from_consumed(consumed)),
+        // cap-WRITE light-client axis: thread the holder's FULL c-list as the cap-tree write witness.
+        // When non-empty AND the effect routes a write wrapper (e.g. RevokeDelegation → the cap-tree
+        // REMOVE), the SDK proves the `…WriteCapOpenVmDescriptor2R24` so the post-cap-root is on the
+        // wire (light-client-verifiable). Empty ⇒ the authority-only cap-open (current behavior).
+        cap_membership: Some(CapMembershipWitness::from_consumed_with_clist(
+            consumed,
+            clist_leaves,
+        )),
         turn_hash,
         rotation,
         cap_turn_identity,
@@ -2472,6 +2504,7 @@ mod tests {
             None,
             &[],
             rotation,
+            vec![],
         )
         .expect("honest capability-gated turn must prove + cap-bound-verify");
 
@@ -2536,6 +2569,7 @@ mod tests {
             None,
             &[],
             rotation(),
+            vec![],
         );
         assert!(
             matches!(
@@ -2558,6 +2592,7 @@ mod tests {
             None,
             &[],
             rotation(),
+            vec![],
         )
         .expect("honest proof");
         let wrong_root = pre_cap_root + BabyBear::new(1);
@@ -2637,6 +2672,7 @@ mod tests {
             None,
             &[],
             rotation(),
+            vec![],
         );
         assert!(
             matches!(
@@ -2659,6 +2695,7 @@ mod tests {
             None,
             &[],
             rotation(),
+            vec![],
         )
         .expect("honest proof");
         let mut inflated_leaf = consumed.cap_leaf();
@@ -2724,6 +2761,7 @@ mod tests {
             None,
             &[],
             None,
+            vec![],
         );
         assert!(
             matches!(
@@ -2754,6 +2792,7 @@ mod tests {
             None,
             &[],
             rotation,
+            vec![],
         )
         .expect("honest proof");
         let expectation = dregg_sdk::CapMembershipExpectation {
@@ -2954,6 +2993,7 @@ mod tests {
             None,
             &[],
             rotation,
+            vec![],
         )
         .expect("the rotated capability-gated turn must prove + cap-bound-verify");
 
@@ -3055,6 +3095,7 @@ mod tests {
             None,
             &[],
             rotation,
+            vec![],
         );
         assert!(
             matches!(
@@ -3088,6 +3129,7 @@ mod tests {
             None,
             &[],
             rotation2,
+            vec![],
         )
         .expect("honest ROTATED cap proof");
         // Confirm it really IS the rotated leg carrying the cap tooth.
@@ -3433,6 +3475,7 @@ mod tests {
             None,
             &[],
             rotation,
+            vec![],
         )
         .expect("honest bearer-delegated turn must prove + authority-bound-verify");
 
@@ -3527,6 +3570,7 @@ mod tests {
             None,
             &[],
             rotation(),
+            vec![],
         );
         assert!(
             matches!(
@@ -3554,6 +3598,7 @@ mod tests {
             None,
             &[],
             rotation(),
+            vec![],
         )
         .expect("honest bearer proof (bound to the real delegator root)");
         let expectation = dregg_sdk::CapMembershipExpectation {
@@ -3742,6 +3787,7 @@ mod tests {
             None,
             &[],
             rotation,
+            vec![],
         )
         .expect("honest cross-vat cap-gated transfer must prove + authority-bound-verify");
         assert!(

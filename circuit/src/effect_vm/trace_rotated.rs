@@ -878,6 +878,131 @@ pub fn generate_rotated_note_create_trace_with_commitments_tree(
     Ok((trace, dpis, vec![before_commitments.to_vec()]))
 }
 
+/// The cap-tree write-op kind a write-bearing cap-open wrapper carries (the `map_op` on the
+/// BEFORE cap-root (col 65 = `STATE_BEFORE_BASE + state::CAP_ROOT`) → AFTER cap-root (col 87 =
+/// `STATE_AFTER_BASE + state::CAP_ROOT`)). Mirrors the descriptor's two `map_op` rows:
+///   * [`CapTreeWriteOp::Remove`] — `revokeDelegationWriteCapOpenVmDescriptor2R24`: a `read`
+///     (key present, opens to its stored value) followed by a `write` of value `0` at the SAME
+///     key (the in-place tombstone the deployed `removeWriteOp` forces). The key MUST be present.
+///   * [`CapTreeWriteOp::Insert`] — `delegate/introduce/delegateAttenWriteCapOpenVmDescriptor2R24`:
+///     a `read` (of a DIFFERENT, already-present anchor key) followed by an `insert` of the fresh
+///     key. The inserted key MUST be absent. (Fan-out: see `generate_rotated_cap_write_base`.)
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CapTreeWriteOp {
+    /// The revoke (`read` the leaf, then `write` value 0 in place). Key present in BEFORE.
+    Remove,
+}
+
+/// **THE DEPLOYMENT-REAL cap-tree WRITE wiring (the cap-WRITE light-client axis's witness).** The
+/// clone of [`generate_rotated_note_spend_trace_with_nullifier_tree`] for the openable cap-tree
+/// accumulator the write-bearing cap-open wrappers carry as a `map_op` binding BEFORE cap-root (col
+/// 65 = `STATE_BEFORE_BASE + state::CAP_ROOT`) → AFTER cap-root (col 87). The c-list leaf-set
+/// `clist_leaves` is the cell's FULL sorted-Poseidon2 `CanonicalHeapTree` over its capability
+/// slots; the BEFORE cap-root IS that tree's root, the AFTER cap-root is the genuine post-WRITE
+/// root (a wrong post-root is UNSAT — the `map_op` checks `after = op(before, key)`).
+///
+/// This OVERRIDES the v1 STATE cap-root column (col 65 BEFORE, col 87 AFTER) AND the rotated block
+/// cap-root weld (`BEFORE_BASE + B_CAP_ROOT`, welded `== col 65` by the descriptor's `213 == 65`
+/// gate; the AFTER mirror `== col 87`) on EVERY row with the openable tree roots, fills the
+/// `map_op` key/value param columns (col 71 = `PARAM_BASE + 3`, col 72 = `PARAM_BASE + 4`), and
+/// recomputes the rotated block commitments + re-derives the rotated OLD/NEW commit PIs so the
+/// published commitment binds the WRITTEN cap-tree. (The cap-open leg's published commitment is the
+/// ROTATED commit, PIs `V1_PI_COUNT..+2`; this descriptor carries NO v1-state-commit chain over the
+/// cap-root limb, so the v1 8-felt commit is untouched.)
+///
+/// The base trace MUST already be the `ROT_WIDTH`-wide rotated base for the write wrapper's effect
+/// (e.g. a `RevokeDelegation` turn from [`generate_rotated_effect_vm_trace`]). The cap-open
+/// membership appendix is widened on TOP (`widen_to_cap_open`) AFTER this. Returns the BEFORE
+/// c-list leaf-set as the single `map_heaps` entry the prover threads into `prove_vm_descriptor2`.
+///
+/// SOUNDNESS: `clist_leaves` MUST be the cell's GENUINE c-list (the prover threads it from the real
+/// ledger). `revoked_key` MUST be present in it (else `update_witness` returns `None` and this
+/// fails closed — NO fabricated post-root). The post-root is the genuine in-place write of value 0.
+#[allow(clippy::too_many_arguments)]
+pub fn generate_rotated_cap_write_base(
+    trace: &mut Vec<Vec<BabyBear>>,
+    dpis: &mut [BabyBear],
+    op: CapTreeWriteOp,
+    clist_leaves: &[crate::heap_root::HeapLeaf],
+    revoked_key: BabyBear,
+) -> Result<Vec<Vec<crate::heap_root::HeapLeaf>>, String> {
+    use super::columns::{PARAM_BASE, state};
+    use crate::heap_root::{CanonicalHeapTree, HEAP_TREE_DEPTH, HeapLeaf};
+
+    if trace.is_empty() {
+        return Err("cap-write base: empty trace".into());
+    }
+    if trace[0].len() != ROT_WIDTH {
+        return Err(format!(
+            "cap-write base: trace width {} != {ROT_WIDTH} (call before widen_to_cap_open)",
+            trace[0].len()
+        ));
+    }
+
+    let before_cap_root_col = STATE_BEFORE_BASE + state::CAP_ROOT; // 65
+    let after_cap_root_col = STATE_AFTER_BASE + state::CAP_ROOT; // 87
+    let key_col = PARAM_BASE + 3; // 71 (the map_op key)
+    let value_col = PARAM_BASE + 4; // 72 (the map_op read value)
+
+    // The BEFORE cap-tree (the deployed openable accumulator before the write) over the cell's
+    // FULL c-list. The written key MUST be present — `update_witness` returns `None` otherwise, and
+    // this fails closed (no fabricated post-root).
+    let before_tree = CanonicalHeapTree::new(clist_leaves.to_vec(), HEAP_TREE_DEPTH);
+    let before_root = before_tree.root();
+
+    let (after_root, read_value) = match op {
+        CapTreeWriteOp::Remove => {
+            // The deployed `removeWriteOp`: an in-place WRITE of value 0 at the present key (the
+            // `read` first opens its stored value, which the row publishes at col 72).
+            let stored = before_tree
+                .sorted_leaves()
+                .iter()
+                .find(|l| l.addr == revoked_key)
+                .map(|l| l.value)
+                .ok_or_else(|| {
+                    format!(
+                        "cap-write Remove: revoked key {} is NOT in the BEFORE c-list — the cap-tree \
+                         read op has no membership witness and refuses the turn (no silent forge)",
+                        revoked_key.as_u32()
+                    )
+                })?;
+            let w = before_tree
+                .update_witness(HeapLeaf {
+                    addr: revoked_key,
+                    value: BabyBear::ZERO,
+                })
+                .ok_or_else(|| {
+                    format!(
+                        "cap-write Remove: update witness for key {} failed",
+                        revoked_key.as_u32()
+                    )
+                })?;
+            (w.new_root, stored)
+        }
+    };
+
+    // Override the cap-root columns (v1 STATE block + the rotated block weld) on EVERY row, fill
+    // the map_op key/value params, then recompute the rotated block commitments. The descriptor's
+    // `213 == 65` / `264 == 87` welds keep the rotated cap-root limb == the v1 state cap-root, so
+    // we set BOTH; `recompute_block_commit` re-chains the rotated commit over the written limbs.
+    for row in trace.iter_mut() {
+        row[before_cap_root_col] = before_root;
+        row[after_cap_root_col] = after_root;
+        row[BEFORE_BASE + B_CAP_ROOT] = before_root;
+        row[AFTER_BASE + B_CAP_ROOT] = after_root;
+        row[key_col] = revoked_key;
+        row[value_col] = read_value;
+        recompute_block_commit(row, BEFORE_BASE);
+        recompute_block_commit(row, AFTER_BASE);
+    }
+
+    // Re-derive the OLD/NEW rotated commit PIs (the cap-root override moved the rotated commit).
+    dpis[V1_PI_COUNT] = trace[0][BEFORE_BASE + B_STATE_COMMIT]; // rotated OLD commit
+    dpis[V1_PI_COUNT + 1] = trace[trace.len() - 1][AFTER_BASE + B_STATE_COMMIT]; // rotated NEW commit
+
+    Ok(vec![clist_leaves.to_vec()])
+}
+
 /// The in-AFTER-block limb offset the record-forcing pin welds for a given lead effect, or
 /// `None` for the 35 cohort members that carry no record pin. The lifecycle flips force the
 /// per-cell `lifecycle` felt (limb 29); the permissions/VK writes force the per-cell

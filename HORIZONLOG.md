@@ -11,6 +11,88 @@ reason.)*
 Last sweep: 2026-06-13 (flagged-items burndown — removed ~14 landed/struck items,
 deduped the DreggDL/sel4/snapshot landings into git history, kept live tails).
 
+## ⚑ CAP-WRITE WIRE GAP — REFINED: data-availability CLOSED; the REAL block is a DESCRIPTOR over-determination (2026-06-20)
+The data-availability half is now CLOSED end-to-end (was the previously-suspected blocker): the witness type
+carries the cell's FULL c-list (`CapMembershipWitness::clist_leaves`), the node plumbs it
+(`node/src/turn_proving.rs::cap_write_clist_leaves` from `before_cell.capabilities`, threaded through
+`prove_and_verify_finalized_turn_capability` → `from_consumed_with_clist`), and the cap-tree→map_heaps bridge
+(`circuit/.../trace_rotated.rs::generate_rotated_cap_write_base`, mirroring the note-spend nullifier-tree
+generator) builds the openable sorted-Poseidon2 `CanonicalHeapTree` + the GENUINE post-WRITE root (a c-list
+missing the revoked key fails closed — no fabricated post-root). The prove-threading (`prove_effect_vm_cap_open`
+passes real `map_heaps`) + the route plumbing (`CapOpenRoute.write`) are wired.
+THE ACTUAL BLOCK (newly diagnosed, the re-point is GATED OFF `write: None`): the deployed
+`revokeDelegationWriteCapOpenVmDescriptor2R24` OVER-DETERMINES the AFTER cap-root (col 87 =
+STATE_AFTER_BASE+CAP_ROOT). It binds col 87 TWO incompatible ways — (1) the `map_op` `new_root = var87` (a
+sorted depth-16 CanonicalHeapTree REMOVE), AND (2) a poseidon OUTPUT `var87 = hash2(hash4(param0..3),
+before_root)` (descriptor constraint #59, col 102 = `hash4(param0..3)`). A depth-16 sorted REMOVE recomputes 16
+node hashes along the path; the `hash2(hash4(...), before_root)` is a 2-level absorption — DIFFERENT functions
+that disagree for an honest c-list (matching them = inverting Poseidon). Contrast note-spend, where the AFTER
+nullifier root is map_op-DEFINED and only FOLDED into the commitment (an INPUT, never a poseidon output) —
+PROVABLE. So routing to the write wrapper is UNPROVABLE-as-emitted. CLOSURE = a descriptor-EMIT fix (VK-affecting,
+Lean-now): re-emit the 4 `…WriteCapOpenVmDescriptor2R24` wrappers to bind col 87 ONLY via the `map_op` (drop the
+hash2 chain on col 87; let the sorted tree BE the cap-tree write, note-spend-shaped). PIN:
+`sdk/.../full_turn_proof.rs::cap_write_revoke_descriptor_over_determines_after_root` (GREEN — asserts the two
+bindings disagree, non-vacuous). FAN-OUT: the other 3 wrappers (delegate/introduce/delegateAtten) are read+INSERT
+(same over-determination); delegate/introduce/delegateAtten + the verifier tooth (`is_forbidden_plain_cap_descriptor`
+write-arm) land WITH the descriptor re-emit. The bearer-path write witness = the DELEGATOR's c-list (separate fan-out).
+--- (superseded data-availability framing kept below for the record) ---
+The cap-WRITE light-client axis (post-cap-root on-the-wire-verifiable) is BLOCKED by a data-availability
+gap, NOT by producer wiring or a WIDE-registry gap. Audited the SDK producer/verifier seam:
+- The write-bearing wrappers (`delegate/introduce/delegateAtten/revokeDelegationWriteCapOpenVmDescriptor2R24`)
+  ARE in `V3_STAGED_REGISTRY_TSV` — the registry the SDK cap-open route (`cap_open_descriptor_json_by_key`,
+  full_turn_proof.rs:1261) AND the light-client verifier (`verify_effect_vm_rotated_with_cutover`:1796) both
+  resolve against. Registry-availability concern RESOLVED FAVORABLY (the WIDE registry is the separate 8-felt
+  faithful-commit path, NOT this seam — the earlier residue (b) framing was imprecise).
+- Each write wrapper carries a genuine `map_op` read+insert/write (guard = selector marker var2, NOT vacuous)
+  binding BEFORE cap-root (col 65 = STATE_BEFORE_BASE+CAP_ROOT) → AFTER cap-root (col 87) via a sorted-
+  Poseidon2 cap-tree write. The IR-v2 prover realizes it against a witness HEAP whose root == BEFORE cap-root
+  (`prove_vm_descriptor2`'s `map_heaps`, exactly as note_spend threads its nullifier tree) and CHECKS the
+  genuine post-write root == claimed AFTER cap-root (wrong post-root = UNSAT, NOT fakeable).
+- `prove_effect_vm_cap_open` (full_turn_proof.rs:1449) threads NO map_heaps (passes `&[]`). The data to build
+  one — the cell's FULL sorted c-list leaf-set — is NOT carried by `CapMembershipWitness` (one leaf+path only)
+  nor available at `node/src/turn_proving.rs:1104` (`CapMembershipWitness::from_consumed` = the consumed cap's
+  path, not the cell's whole c-list). So routing to the write wrapper = an UNPROVABLE proof.
+- PROVEN no-silent-forge: the write wrapper FAIL-CLOSES with empty map_heaps ("no witness heap with root …"),
+  does NOT launder a fabricated post-cap-root. Test `write_cap_open_wrapper_requires_cap_tree_write_witness_no_silent_forge`
+  (sdk lib, GREEN, asserts the precise map_op-witness-heap error).
+- The task's "re-point `rotated_descriptor_name`" target is the WRONG seam (that's the non-cap BASE 36-cohort,
+  EXCLUDES all `…CapOpen…` by `resolvers_cover_exactly`); the cap-effect seam is `cap_open_route_for_run.route.key`.
+- CLOSURE (data-availability, the 5-step shape): (1) extend ConsumedCapWitness/CapMembershipWitness to carry
+  the target cell's full sorted c-list leaf-set; (2) plumb from turn_proving.rs; (3) cap-tree→map_heaps bridge
+  generator (mirror generate_rotated_note_spend_trace_with_nullifier_tree); (4) thread through
+  prove_effect_vm_cap_open → prove_vm_descriptor2; (5) re-point cap_open_route_for_run + add the verifier
+  write-tooth (extend is_forbidden_plain_cap_descriptor) IN THE SAME BREATH (adding the tooth before (1-4)
+  reds the honest cap_open_fanout_revoke_* path with no provable write route). Tracked in SAFELY-LIVE (A).
+
+## ⚑ REVOKE (tag-2) FROZEN-FACE — the modelled-floor apex slot still rides `revoke_closedLog` (2026-06-20)
+attenuate(12) closed CLASS-A this session (`attenuate_descriptorRefines_capOpenSat` over the deployed
+`attenuateCapOpenEffV3` base `attenuateV3`, the MOVING write face). revoke(tag-2) is the residual: its apex
+slot (`closedLogExtract_revoke_closed`, ClosureFanoutGenuine.lean:361) still calls the MODELLED
+`revoke_closedLog`, because `Rfix 2 = revokeCapOpenV3 = effCapOpenV3 revokeDelegationV3` and
+`revokeDelegationV3 = v3Of revokeVmDescriptor` is the FROZEN base (`.gate gCapPass` freezes `cap_root`
+on-row, no write map-op) — so `Satisfied2 revokeCapOpenV3` CANNOT force the cap-tree REMOVE. Same moving-face
+issue the cap-write fix handled for tags 1/10/11/14. CLOSURE: re-point `actionTagToPos 2` (→ a new
+`revokeWriteCapOpenV3` riding the MOVING `revokeDelegationWriteV3` base, which carries `[heldReadOp,
+removeWriteOp]` and HAS `revokeDelegationWriteV3_forces_write`), then wire a `revoke_closedLog_sat` over it
+(mirroring `revokeDelegation_closedLog_sat`). VK-AFFECTING (registry re-point) + crosses the producer seam
+(`rotated_descriptor_name`/`cap_open_route_for_run`) — coordinate with the cap-write lane above.
+
+## ⚑ receiptArchive(40) GAP-1 — dispatch arm vs deployed disc unreconciled (2026-06-20)
+The Class-A machinery EXISTS (`ReceiptArchiveLifecycleSpec`, `receiptArchive_descriptorRefines_sat`,
+`receiptArchive_forced` — RotatedKernelRefinementLifecycle.lean:1003-1130; disc gate forces
+`lifecycle := Archived`). But the apex slot (`closedLogExtract_receiptArchive_closed`,
+ClosureFanoutGenuine.lean:486) still rides the MODELLED `receiptArchive_closedLog` because the dispatch arm
+`fullActionStep (.receiptArchiveA) post` reduces to `ReceiptArchiveSpec` (the toy RECORD-slot write,
+`stateStep lifecycleField (.int 1)`, executor TurnExecutorFull.lean:2409) while `receiptArchiveV3` forces
+the lifecycle SIDE-TABLE move (`ReceiptArchiveLifecycleSpec`). These are DIFFERENT state components — the
+executor and the deployed circuit genuinely disagree on what receiptArchive writes. Reconciling the arm to
+the lifecycle semantics requires ALSO changing the executor arm + re-welding `execFullA_receiptArchiveA_iff_spec`
++ ~50 load-bearing `ReceiptArchiveSpec` refs across 8+ files (CircuitCompletenessLifecycle, EffectEmitted-
+Refinement, EffectRefinementBatch2, Argus/Effects/ReceiptArchive, Witness/ReceiptArchiveWitness, …) — a deep
+consumer chain (>3 files), NOT a local arm swap. CLOSURE: a careful GAP-1 executor-reconciliation pass
+(executor side-table move + weld + consumer re-prove), then wire `receiptArchive_closedLog_sat` via the
+existing `receiptArchive_descriptorRefines_sat` disc gate (like cellSeal/cellUnseal/cellDestroy).
+
 ## ✅ ENMESHMENT STRIKE — 72 orphans pulled into the root build graph (2026-06-20)
 84 `Dregg2/*` modules were unreachable from `Dregg2.lean` (their `#assert_axioms` hygiene
 pins never ran under the default `lake build Dregg2`). 72 now enmeshed CLEAN (an import
