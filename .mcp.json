@@ -6,6 +6,13 @@
       "env": {
         "RUST_LOG": "dregg_node=info"
       }
+    },
+    "dregg-image": {
+      "command": "starbridge-v2/scripts/dregg-mcp.sh",
+      "args": [],
+      "env": {
+        "ZED_OFFSCREEN_PREFER_CPU": "1"
+      }
     }
   }
 }

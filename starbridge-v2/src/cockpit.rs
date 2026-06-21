@@ -764,6 +764,28 @@ pub struct Cockpit {
 }
 
 impl Cockpit {
+    /// Select the active tab by (case-insensitive) name — matched against each
+    /// [`Tab::label`] with separators/symbols stripped (so `"inspector"`,
+    /// `"inspect-act"`, `"web-of-cells"`, `"proofs"` all resolve). Used by the
+    /// headless bake to screenshot a specific surface. Returns whether a tab
+    /// matched (the active tab is left unchanged on a miss).
+    pub fn select_tab_named(&mut self, name: &str) -> bool {
+        let norm = |s: &str| {
+            s.chars()
+                .filter(|c| c.is_ascii_alphanumeric())
+                .flat_map(|c| c.to_lowercase())
+                .collect::<String>()
+        };
+        let want = norm(name);
+        for &t in Tab::ALL.iter() {
+            if norm(t.label()) == want {
+                self.tab = t;
+                return true;
+            }
+        }
+        false
+    }
+
     /// Construct the cockpit, optionally connecting to a LIVE remote node at
     /// `node_url` (the master interface ALSO watching a running federation). When
     /// present, the SSE receipt stream is opened immediately so the live receipt

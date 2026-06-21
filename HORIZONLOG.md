@@ -11,6 +11,19 @@ reason.)*
 Last sweep: 2026-06-13 (flagged-items burndown — removed ~14 landed/struck items,
 deduped the DreggDL/sel4/snapshot landings into git history, kept live tails).
 
+## ✅ CELL CENSUS 4-vs-8 — RESOLVED: NOT a bug (cockpit installs reflexive UI cells), 2026-06-21
+The cockpit shows 8 cells, the raw `demo_world` ledger has 4. RESOLVED: `Cockpit::with_node`
+(`cockpit.rs:~860-911`) installs extra UI-scaffolding cells via `genesis_cell` on top of demo_world's 4 —
+`buffer_backing (0x5B)`, `inspector_view_backing (0x5E)` (the reflexive `ViewCell`, so the inspector is
+itself inspectable), `workspace_cell_backing (0x5F)` (the `WorkspaceCell`), etc. So the cockpit world = 4
+PROTOCOL cells + ~4 cockpit-WIDGET backing cells. `Ledger::len()` and `iter()` agree (both read
+`self.cells`); the "divergence" was raw-`demo_world` (dregg-mcp) vs `with_node`-scaffolded (cockpit). The
+dregg-mcp's clean 4-cell `demo_world` is the correct PROTOCOL substrate for the atlas game-tree crawl; the
++4 reflexive UI cells are documented in the atlas UI pillar. No code change needed. (The original
+"feature-gated seeds" hypothesis below was wrong and is struck.)
+
+<details><summary>(struck) original feature-gating hypothesis</summary>
+
 ## ⚑ DEMO-WORLD CELL CENSUS DIVERGES BY FEATURE SET — 4 cells (embedded-executor) vs 8 (native-full) (found by dregg-mcp, 2026-06-21)
 `world::demo_world()` produces a DIFFERENT world depending on the build's feature set. Under
 `--no-default-features --features embedded-executor` (the lean dregg-mcp build) it seeds **4 cells /
@@ -28,6 +41,7 @@ registration store, or view/meta objects counted in the header, or a `Ledger::le
 inconsistency). CLOSURE: find where the other 4 cells live — check `Ledger::len()` vs `self.cells.iter()`,
 the sovereign-registration store, and what the cockpit GRAPH tab's "8 cells" actually enumerates — then
 make the harness (and any cell census) see the SAME complete set the protocol does.
+</details>
 
 ## ✅ dregg-mcp SCREENSHOT — responsive size + tab selection (the 800x600 truncation fixed, 2026-06-21)
 The bake (`render_cockpit_headless`) now takes `--render-size WxH` + `--render-tab NAME`; only the seL4

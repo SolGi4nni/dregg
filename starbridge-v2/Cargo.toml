@@ -101,6 +101,15 @@ path = "src/lib.rs"
 name = "starbridge-v2"
 path = "src/main.rs"
 
+# dregg-mcp — the MCP server that drives the live verified image (inspect / act /
+# map / screenshot). gpui-free: build it under `embedded-executor` alone (it
+# shells out to the headless-render `starbridge-v2` binary for screenshots).
+#   cargo build --release --no-default-features --features embedded-executor --bin dregg-mcp
+[[bin]]
+name = "dregg-mcp"
+path = "src/bin/dregg_mcp.rs"
+required-features = ["embedded-executor"]
+
 [features]
 # DEFAULT = the master interface: embedded verified executor + gpui window.
 default = ["native-full"]

@@ -54,7 +54,18 @@ fn main() {
     #[cfg(feature = "headless-render")]
     {
         if let Some(out) = render_cockpit_arg(&args) {
-            match render_cockpit_headless(&out) {
+            // `--replay <cell>:<msg>` (repeatable) — apply a recorded act-trail to
+            // the demo image BEFORE rendering, so a screenshot reflects a driven
+            // session's state (the dregg-mcp server passes its committed act log
+            // here). Each act fires through the SAME real executor the cockpit uses.
+            let replays = render_replay_args(&args);
+            // `--render-size WxH` (logical) defaults to the seL4 framebuffer 800x600
+            // (which still downscales + writes the .rgba the PD blits); any other
+            // size renders the full-resolution cockpit (no truncation, PNG only).
+            // `--render-tab NAME` selects a surface (inspector/graph/proofs/…).
+            let (w, h) = render_size_arg(&args).unwrap_or((800.0, 600.0));
+            let tab = render_tab_arg(&args);
+            match render_cockpit_headless(&out, &replays, w, h, tab.as_deref()) {
                 Ok(()) => std::process::exit(0),
                 Err(e) => {
                     eprintln!("render-cockpit FAILED: {e:#}");
@@ -373,6 +384,69 @@ fn render_cockpit_arg(args: &[String]) -> Option<String> {
     None
 }
 
+/// Parse repeatable `--replay <cell>:<message>` arguments (the act-trail the
+/// dregg-mcp server records and hands to the bake so a screenshot reflects the
+/// driven session). `<cell>` is a hex-id prefix (matched against the live
+/// ledger); `<message>` is an affordance verb (`peek`/`touch`/`write`/…).
+#[cfg(feature = "headless-render")]
+fn render_replay_args(args: &[String]) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        let spec = if a == "--replay" {
+            it.next().cloned()
+        } else {
+            a.strip_prefix("--replay=").map(|s| s.to_string())
+        };
+        if let Some(spec) = spec {
+            if let Some((cell, msg)) = spec.split_once(':') {
+                out.push((cell.to_string(), msg.to_string()));
+            }
+        }
+    }
+    out
+}
+
+/// Parse `--render-size <W>x<H>` (logical pixels) for the cockpit bake. `None`
+/// keeps the seL4 framebuffer default (800x600). e.g. `--render-size 1280x832`.
+#[cfg(feature = "headless-render")]
+fn render_size_arg(args: &[String]) -> Option<(f32, f32)> {
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        let spec = if a == "--render-size" {
+            it.next().cloned()
+        } else {
+            a.strip_prefix("--render-size=").map(|s| s.to_string())
+        };
+        if let Some(spec) = spec {
+            if let Some((w, h)) = spec.split_once(['x', 'X', '*']) {
+                if let (Ok(w), Ok(h)) = (w.trim().parse::<f32>(), h.trim().parse::<f32>()) {
+                    if w >= 320.0 && h >= 240.0 {
+                        return Some((w, h));
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Parse `--render-tab <name>` — the cockpit surface to screenshot (matched
+/// against [`cockpit::Cockpit::select_tab_named`]). `None` keeps the default.
+#[cfg(feature = "headless-render")]
+fn render_tab_arg(args: &[String]) -> Option<String> {
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        if a == "--render-tab" {
+            return it.next().cloned();
+        }
+        if let Some(rest) = a.strip_prefix("--render-tab=") {
+            return Some(rest.to_string());
+        }
+    }
+    None
+}
+
 /// THE HEADLESS COCKPIT BAKE — render the REAL `cockpit::Cockpit` element tree
 /// to an 800x600 RGBA8 frame with no GPU and no window, for the seL4 deos-image
 /// PD to blit onto its ramfb framebuffer.
@@ -400,7 +474,13 @@ fn render_cockpit_arg(args: &[String]) -> Option<String> {
 /// The geometry MUST equal the framebuffer's (`sel4/.../fb.rs` = 800x600) so the
 /// PD's blit is a straight RGBA→XRGB8888 copy.
 #[cfg(feature = "headless-render")]
-fn render_cockpit_headless(out: &str) -> anyhow::Result<()> {
+fn render_cockpit_headless(
+    out: &str,
+    replays: &[(String, String)],
+    w: f32,
+    h: f32,
+    tab: Option<&str>,
+) -> anyhow::Result<()> {
     use gpui::{px, size, AppContext, HeadlessAppContext, PlatformTextSystem};
     use gpui_wgpu::CosmicTextSystem;
     use std::borrow::Cow;
@@ -409,8 +489,10 @@ fn render_cockpit_headless(out: &str) -> anyhow::Result<()> {
     use std::sync::Arc;
 
     // The seL4 deos-image framebuffer geometry (sel4/dregg-pd/deos-image/src/fb.rs).
-    const W: f32 = 800.0;
-    const H: f32 = 600.0;
+    // When the bake is asked for EXACTLY this size we downscale the 2x capture to
+    // it and write the `.rgba` the PD blits; any other size renders the full-res
+    // cockpit (no downscale, no truncation, PNG only).
+    let sel4_geometry = (w as u32, h as u32) == (800, 600);
 
     // Vendored OFL fonts (the cockpit uses "Menlo"; unknown families fall back
     // to the system_font_fallback — here Lilex — inside CosmicTextSystem).
@@ -431,71 +513,89 @@ fn render_cockpit_headless(out: &str) -> anyhow::Result<()> {
 
     // 3. The fully-seeded demo image — the same `World` the windowed cockpit runs,
     //    with every verified executor turn already committed (eager seeding).
-    let (world, anchors) = world::demo_world();
-    let shared = Rc::new(RefCell::new(world));
+    let (mut world, anchors) = world::demo_world();
 
-    // 4. Open an 800x600 headless window whose ROOT IS the real Cockpit. No node,
-    //    no pending seed (the image is already fully seeded above).
-    let window = cx.open_window(size(px(W), px(H)), |window, cx| {
+    // 3b. Apply any recorded act-trail (`--replay <cell>:<msg>`) through the REAL
+    //     executor so the rendered frame reflects a driven session (dregg-mcp).
+    //     Each act is fired as the cell upon itself with the `Either` tier — the
+    //     same self-operator projection the inspect→act panel uses; a refusal is
+    //     reported to stderr and skipped (the screenshot stays honest).
+    for (cell_pfx, msg) in replays {
+        let resolved = world
+            .ledger()
+            .iter()
+            .map(|(id, _)| *id)
+            .find(|id| hex::encode(id.as_bytes()).starts_with(cell_pfx.trim_start_matches("0x")));
+        match resolved {
+            Some(cell) => {
+                let ia = starbridge_v2::inspect_act::InspectAct::build(
+                    &world,
+                    starbridge_v2::inspect_act::InspectFocus::Cell(cell),
+                    cell,
+                    dregg_cell::permissions::AuthRequired::Either,
+                );
+                match ia.send(&mut world, msg, dregg_cell::permissions::AuthRequired::Either) {
+                    starbridge_v2::inspect_act::SendResult::Committed { .. } => {}
+                    starbridge_v2::inspect_act::SendResult::Refused { reason, .. } => {
+                        eprintln!("replay {cell_pfx}:{msg} refused: {reason}");
+                    }
+                }
+            }
+            None => eprintln!("replay {cell_pfx}:{msg} — no cell matched prefix"),
+        }
+    }
+
+    let shared = Rc::new(RefCell::new(world));
+    let tab_owned = tab.map(|s| s.to_string());
+
+    // 4. Open a headless window (logical w×h) whose ROOT IS the real Cockpit, on
+    //    the requested surface (`--render-tab`). No node, no pending seed.
+    let window = cx.open_window(size(px(w), px(h)), |window, cx| {
         let view = cx.new(|cx| {
             let focus = cx.focus_handle();
-            cockpit::Cockpit::with_node(shared.clone(), anchors, focus, None, None)
+            let mut c = cockpit::Cockpit::with_node(shared.clone(), anchors, focus, None, None);
+            if let Some(t) = &tab_owned {
+                if !c.select_tab_named(t) {
+                    eprintln!("render-tab: no tab named `{t}` — keeping default");
+                }
+            }
+            c
         });
         view.update(cx, |c, cx| c.focus_on_open(window, cx));
         view
     })?;
 
-    // 5. Drive to a fully-rendered frame, then capture the resolved gpui Scene
-    //    to RGBA (the canonical visual-capture sequence).
+    // 5. Drive to a fully-rendered frame, then capture the resolved gpui Scene.
     cx.run_until_parked();
     cx.update_window(window.into(), |_, window, _cx| window.refresh())?;
     cx.run_until_parked();
     let captured = cx.capture_screenshot(window.into())?;
 
-    // gpui's headless `TestWindow` reports a FIXED 2.0 scale factor (HiDPI), so
-    // an 800x600 LOGICAL window resolves to a 1600x1200 DEVICE-pixel render — the
-    // full cockpit layout (the 800-logical-wide three-column shape) at 2x. We
-    // downscale that to the framebuffer's exact 800x600 with a high-quality
-    // Lanczos3 filter, so the seL4 PD's blit stays a straight copy AND the live
-    // layout (not a cramped 400-logical one) is what reaches glass.
+    // gpui's headless `TestWindow` reports a FIXED 2.0 scale factor (HiDPI), so a
+    // logical w×h window resolves to a 2w×2h DEVICE-pixel render. For the seL4
+    // geometry we Lanczos3-downscale to the framebuffer's exact 800x600 (the PD's
+    // blit stays a straight copy); for any other size we keep the crisp 2x capture
+    // (full layout, no truncation).
     let (cw, ch) = (captured.width(), captured.height());
-    let img = if cw == W as u32 && ch == H as u32 {
-        captured
+    let img = if sel4_geometry && !(cw == 800 && ch == 600) {
+        image::imageops::resize(&captured, 800, 600, image::imageops::FilterType::Lanczos3)
     } else {
-        image::imageops::resize(
-            &captured,
-            W as u32,
-            H as u32,
-            image::imageops::FilterType::Lanczos3,
-        )
+        captured
     };
-
     let (ww, hh) = (img.width(), img.height());
-    anyhow::ensure!(
-        ww == W as u32 && hh == H as u32,
-        "headless cockpit resolved to {ww}x{hh} (captured {cw}x{ch}), expected {}x{}",
-        W as u32,
-        H as u32
-    );
-    let rgba = img.into_raw();
-    anyhow::ensure!(
-        rgba.len() == (ww * hh * 4) as usize,
-        "RGBA buffer is {} bytes, expected {}",
-        rgba.len(),
-        ww * hh * 4
-    );
 
-    // (a) the raw RGBA the seL4 deos-image PD bakes in (`cockpit_frame.rgba`).
-    std::fs::write(format!("{out}.rgba"), &rgba)?;
-    // (b) a PNG for a visual check.
-    image::RgbaImage::from_raw(ww, hh, rgba)
-        .ok_or_else(|| anyhow::anyhow!("failed to rebuild RgbaImage for PNG"))?
-        .save(format!("{out}.png"))?;
+    // (a) the raw RGBA the seL4 deos-image PD bakes in (only at framebuffer geometry).
+    if sel4_geometry {
+        std::fs::write(format!("{out}.rgba"), img.as_raw())?;
+    }
+    // (b) the PNG (always).
+    img.save(format!("{out}.png"))?;
 
     println!(
-        "OK headless cockpit render -> {out}.rgba + {out}.png \
-         (captured {cw}x{ch} @2x -> {ww}x{hh}); LIVE cockpit::Cockpit element tree, \
-         gpui Scene via lavapipe offscreen."
+        "OK headless cockpit render -> {out}.png ({ww}x{hh}, logical {w}x{h}{}{}); \
+         LIVE cockpit::Cockpit element tree, gpui Scene via lavapipe offscreen.",
+        if sel4_geometry { " + .rgba" } else { "" },
+        tab.map(|t| format!(", tab={t}")).unwrap_or_default()
     );
     Ok(())
 }
