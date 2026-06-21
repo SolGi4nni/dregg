@@ -3823,3 +3823,22 @@ refused).
 ### TRACK-2 STATUS: reactive effect BANKED 727b9a800 (sound-by-construction — react-twice = the noteSpend nullifier
 ### gate; 6 green tests incl. genuine react_twice_rejected). 4 more capacities in flight (above). Next after these:
 ### bank each genuine-working slice; the reactive Effect-vocab lift + circuit witness is the deepening.
+### TRACK-2 DERIVED/RELATIONAL CELL (built, uncommitted): cell/src/derived.rs — a cell whose committed state IS a
+### verifiable function of OTHER cells (sum/sumField/count/filtered-sum view). Binding rides the committed heap
+### (DERIVATION_COLL) -> folded into canonical commitment, no VK bump. bind_derivation = re-derive; verify_derivation
+### = the forge detector (claimed != f(sources) -> ValueMismatch; staleness = same rejection). 8 green tests incl.
+### genuine forged_value_is_rejected + stale_after_source_change_is_rejected. Doc docs/deos/DERIVED-CELLS.md.
+### NEXT SLICE (named): DeriveCell effect descriptor whose gate binds claimed==f(sources) into the commitment +
+### source-commitment membership witnesses + Lean rung (verifyBatch accept => derived.claimed = f(sources)).
+
+### ⟳ SWARM PROGRESS (2026-06-21, post-compact integration):
+### ✅ BANKED 34ef4a048: derived cells (cell/src/derived.rs, 8/8) + membrane/forwarder (cell/src/membrane.rs, 13/13)
+###   — two Track-2 verifiable-view capacities, each with a genuine both-polarity forge-detector. Commit also carries
+###   the reactive agent's additive EFFECT_REACTIVE_OPS bit (facet 1<<25) + lib re-export (its turn/circuit work builds on it).
+### ⏸ HELD (done, blocked on link): HATCHERY abstraction-mint (a45ee057) — sdk/src/hatchery_mint.rs is green at the CELL
+###   level (13/13 via isolated harness) but dregg-sdk cannot LINK until the reactive agent (a695bfc7) makes turn/ exhaustive
+###   again (its Effect::{Promise,Notify,React} variants are mid-flight). MintedKind = FactoryDescriptor + Invariant +
+###   HpresProof slot; violating-turn REFUSED via the real CellProgram gate; forge = ProgramMissingInvariant. BANKS on reactive-land.
+### 🔵 NEW STRAND (a7443826, launched): sealed conditional escrow / atomic 2-party swap (cell/src/escrow_sealed.rs, isolated).
+### STILL RUNNING: a695bfc7 (reactive, the keystone unblocking Hatchery + the payload-anchor floor) · ae15d66a (cap-slots) ·
+###   a90a132e (blind-test harden) · a9e74dae (TraceReadout non-vacuity). Drive revokeCapability #1 the moment ae15d66a frees the cap region.
