@@ -74,6 +74,32 @@ smaller)** redirect the refusal audit into `heap_root` (limb 28, ALREADY a Posei
 the `heapWrite`-not-in-v3Registry gap. The lifecycle PAYLOAD (cellSeal limb 29 opaque felt) is the Stage-C twin (in-circuit
 hash gate over the light-client-known reason_hash+block_height; the safety-critical DISC is already in-circuit-forced).
 
+## ⚑⚑ OBLIGATION-TABLE DISCHARGE — VERIFIED sweep (2026-06-22): NO surprise light-client forges
+A 16-effect read-only assessment workflow (wor23yy6e) classified each live effect's light-client binding. RAW
+output flagged 4 GENUINE_FORGE (cellSeal/receiptArchive/spawn/refreshDelegation) — but the assessment is REASONING,
+not running, so I VERIFIED each (ran the discriminator / read the DEPLOYED descriptor). RESULT:
+- ❌ cellSeal FALSE POSITIVE: `cellSealV3` (EffectVmEmitRotationV3.lean:3059) HAS the LIVE disc gate
+  (`rotateV3WithDiscGate`); `rotated_cellseal_record_pin_forces_lifecycle_and_rejects_frozen_forgery` GREEN — the
+  frozen-seal forge is UNSAT via the disc gate ALONE (no trusted post-cell). The assessor read an UNDEPLOYED Lean
+  file (RotatedKernelRefinementLifecycleDisc) + missed the live descriptor; conflated the forced DISC with the
+  low-severity opaque PAYLOAD felt.
+- ❌ receiptArchive FALSE POSITIVE: `receiptArchiveV3` (line 3311) = `rotateV3WithDiscGate ... discArchived` — disc
+  forced in-circuit (light-client). Opaque payload (archival checkpoint) rides the anchor = low-severity, same as cellSeal.
+- ✅ spawn CONFIRMED but NAMED: the cap HANDOFF is NOT forced (`RotatedKernelRefinementBirth.lean:37` "HONEST scope:
+  the cap handoff is the NAMED phase-D residual, NOT forced … VALUE_PARTIAL"); the accounts-set grow-gate IS forced
+  (`spawnV3_grow_gate_forces_set_insert`). Close = the cap-tree insert map-op on spawnV3 (phase-D cap-reshape).
+- ✅ refreshDelegation CONFIRMED but NAMED: its move is on the DELEGATIONS tree (DELEG system-root), NOT cap_root;
+  `RotatedKernelRefinementCapFamily.lean:1248+` is BUILDING the in-circuit DELEG-tree write op (Stage E), not yet deployed.
+- 10 ALREADY_FORCED (cellUnseal/cellDestroy/makeSovereign/createCell/noteCreate/delegate/introduce/delegateAtten/
+  grantCap/exerciseViaCapability — the in-circuit map-op/disc/weld gates bind; delegateAtten's LogUp is a separate
+  LIVENESS prove-through, not a forge). 2 NOT_LIVE_LEAD (setFieldDyn, createCellFromFactory — completeness).
+THE LESSON (re-banked): the assessment workflow is READ-ONLY REASONING = NOISY (2 of 4 high-severity "forges" were
+FALSE). Verification (run the §6 discriminator / read the DEPLOYED descriptor) is MANDATORY before acting. NET: no
+surprise forges; the genuine residuals (spawn cap-handoff, refreshDelegation deleg-tree) are KNOWN + named + Lean-in-flight;
+the low-severity lifecycle-payload (opaque felt for cellSeal/cellDestroy/receiptArchive) + 2 completeness leads remain.
+FINISH-ALL WORKLIST (sequential on the shared descriptor surface): refreshDelegation deleg-tree (closest) · spawn
+cap-handoff (phase-D) · lifecycle-payload hash gate · setFieldDyn + createCellFromFactory live leads.
+
 ## ⚑ delegateAtten SUBMASK+INSERT PROVE-THROUGH — the LogUp obstruction, 2026-06-21
 WELD closed the delegateAtten ROUTING SIGNAL (`is_attenuated_grant`: granted ⊊ held selects the submask
 wrapper `delegateAttenWriteCapOpenVmDescriptor2R24`, not plain `delegateWriteCapOpen`) + the submask-witness
