@@ -1907,9 +1907,14 @@ fn prove_cohort_run_chain(
 /// nonce-freeze is dropped, return `name == "revokeCapOpenVmDescriptor2R24"` here to force the write route.
 #[cfg(feature = "prover")]
 fn is_forbidden_authority_only_cap_write_descriptor(_name: &str) -> bool {
-    // GATED OFF: the write wrapper does not yet prove (the descriptor's spurious nonce-freeze gate
-    // `var78 == var56` contradicts revoke's nonce-tick). Forbidding the authority-only route now would
-    // break the honest revoke path before its provable alternative exists.
+    // The WRITE-bearing revokeDelegationWriteCapOpen now GENUINELY proves (the nonce-freeze gate dropped for
+    // the tick face; `cap_write_revoke_proves_and_verifies_light_client` is a genuine prove+verify). So the
+    // forcing tooth CAN flip ON for revoke — BUT doing so rejects the authority-only revoke route that 3
+    // existing tests (cap_open_fanout_revoke_*, write_cap_open_wrapper_requires_cap_tree_write_witness,
+    // cap_write_revoke_forge_rejected) deliberately exercise. Flipping the tooth is its own step: it needs
+    // those 3 tests reconciled to the new "authority-only revoke is light-client-rejected" semantics (they
+    // currently assert the authority-only route is acceptable). GATED OFF until that reconciliation lands —
+    // the genuine prove-through (the box-closer) does not depend on it.
     false
 }
 
@@ -3991,12 +3996,21 @@ mod tests {
     /// and CHECKS the genuine post-write root equals the claimed AFTER cap-root — a wrong post-root is
     /// UNSAT.
     ///
-    /// This test exercises the GUARDRAIL directly at the descriptor level: when the write wrapper is
-    /// proven with EMPTY `map_heaps` (no cap-tree write witness), the `map_op` cannot find a heap whose
-    /// root equals the BEFORE cap-root, so the proof FAIL-CLOSES — it does NOT launder a fabricated
-    /// post-cap-root into a passing proof. (The honest, witness-bearing route is now provable + verifiable
-    /// end-to-end; see `cap_write_revoke_proves_and_verifies_light_client`. This test pins that a MISSING
-    /// witness still fails closed — the no-silent-forge floor under the closed loop.)
+    /// This test exercises the GUARDRAIL directly at the descriptor level AGAINST THE NEW DESCRIPTOR
+    /// (cap-root on the rotated limb 213/264, nonce-tick face): build a trace with a GENUINE cap-root
+    /// CHANGE (a real sorted-Poseidon2 REMOVE advances the rotated cap-root, 213 != 264) via the
+    /// cap-tree→`map_heaps` bridge, then prove the write wrapper with EMPTY `map_heaps` (no cap-tree
+    /// write witness). The `map_op` cannot find a heap whose root equals the BEFORE cap-root, so the
+    /// proof FAIL-CLOSES — it does NOT launder a fabricated post-cap-root into a passing proof. A
+    /// PASSING proof of a real cap-root change with no witness would be a CRITICAL silent forge; this
+    /// test pins that it never happens.
+    ///
+    /// (This SUPERSEDES the older vacuous shape, which widened with `widen_to_cap_open` ALONE — that
+    /// leaves the rotated cap-root unchanged, a NO-OP `map_op` that is trivially provable WITHOUT a
+    /// witness and therefore exercises nothing. The route-level twin is `cap_write_revoke_forge_rejected`
+    /// (a c-list MISSING the revoked key); the honest, witness-bearing route is provable + verifiable
+    /// end-to-end in `cap_write_revoke_proves_and_verifies_light_client`. Together they are the
+    /// no-silent-forge floor under the closed loop.)
     #[cfg(feature = "prover")]
     #[test]
     fn write_cap_open_wrapper_requires_cap_tree_write_witness_no_silent_forge() {
@@ -4114,42 +4128,93 @@ mod tests {
         let caveat = empty_caveat_manifest();
         let (mut trace, dpis) =
             generate_rotated_effect_vm_trace(&initial, &effects, &before, &after, &caveat).unwrap();
-        widen_to_cap_open(&mut trace, &cap_w).unwrap();
+        // The base trace built by `widen_to_cap_open` ALONE leaves the rotated cap-root limbs
+        // (`BEFORE_BASE + B_CAP_ROOT` / `AFTER_BASE + B_CAP_ROOT`, descriptor vars 213/264) EQUAL —
+        // `fill_block` copies BOTH from this row's v1-state cap-root, and `widen_to_cap_open` never
+        // advances them (that is `generate_rotated_cap_write_base`'s job). So a trace widened this way
+        // carries a NO-OP `map_op` (before_root == after_root), which is trivially satisfiable WITHOUT
+        // a witness heap — NOT a forge, just "no cap-root write happened". This is the structural
+        // reason the no-op trace built here does not exercise the no-silent-forge property; the GENUINE
+        // guardrail (below) needs a REAL cap-root change (213 != 264).
+        {
+            use dregg_circuit::effect_vm::trace_rotated::{AFTER_BASE, BEFORE_BASE, B_CAP_ROOT};
+            assert_eq!(
+                trace[0][BEFORE_BASE + B_CAP_ROOT],
+                trace[0][AFTER_BASE + B_CAP_ROOT],
+                "widen_to_cap_open alone leaves the rotated cap-root unchanged (a no-op map_op) — the \
+                 no-silent-forge property is exercised by the GENUINE-change trace below, not this one"
+            );
+        }
 
-        // THE WRITE WRAPPER WITH EMPTY map_heaps FAIL-CLOSES (it cannot resolve the cap-tree write
-        // op's witness heap), it does NOT silently accept a fabricated post-cap-root. This is the
-        // load-bearing assertion: the gap is a data-availability gap, and there is NO silent forge.
+        // THE GENUINE NO-SILENT-FORGE GUARDRAIL (descriptor level, against the NEW descriptor): build a
+        // trace with a REAL cap-root CHANGE on the rotated limb (213 != 264) via the cap-tree→map_heaps
+        // bridge over a real c-list, then prove the write wrapper with EMPTY map_heaps. The genuine
+        // sorted-Poseidon2 REMOVE produced a post-root the descriptor's `map_op` now BINDS; with no
+        // witness heap whose root equals the BEFORE cap-root, the prover CANNOT realize that map_op —
+        // it must FAIL CLOSED. A real cap-root change is NOT provable without the genuine cap-tree
+        // write witness: there is NO silent forge of a fabricated post-cap-root.
+        //
+        // (The route-level twin of this property is `cap_write_revoke_forge_rejected` (a c-list MISSING
+        // the revoked key → the bridge itself refuses); the witness-bearing honest route proves +
+        // light-client-verifies in `cap_write_revoke_proves_and_verifies_light_client`.)
+        use dregg_circuit::effect_vm::trace_rotated::{
+            generate_rotated_cap_write_base, AFTER_BASE, BEFORE_BASE, B_CAP_ROOT, CapTreeWriteOp,
+        };
+        use dregg_circuit::heap_root::HeapLeaf;
+
+        let revoked_key = chosen[0]; // the consumed cap's slot_hash (the key the REMOVE targets)
+        let clist_leaves = vec![
+            HeapLeaf { addr: revoked_key, value: chosen[1] }, // the revoked cap MUST be present
+            HeapLeaf { addr: other[0], value: other[1] },
+        ];
+        let (mut wtrace, mut wdpis) =
+            generate_rotated_effect_vm_trace(&initial, &effects, &before, &after, &caveat).unwrap();
+        let heaps = generate_rotated_cap_write_base(
+            &mut wtrace,
+            &mut wdpis,
+            CapTreeWriteOp::Remove,
+            &clist_leaves,
+            revoked_key,
+        )
+        .expect("the cap-tree->map_heaps bridge builds the genuine BEFORE/AFTER roots");
+
+        // CONFIRM the change is GENUINE (non-vacuous): the rotated cap-root limbs now DIFFER (a real
+        // sorted-tree REMOVE advanced the accumulator), so a passing proof with NO witness would be a
+        // genuine forge, not a no-op laundering.
+        assert_ne!(
+            wtrace[0][BEFORE_BASE + B_CAP_ROOT],
+            wtrace[0][AFTER_BASE + B_CAP_ROOT],
+            "the cap-write bridge MUST advance the rotated cap-root (213 != 264) — a genuine REMOVE; \
+             else this guardrail would be vacuous (a no-op map_op needs no witness)"
+        );
+        assert_eq!(heaps, vec![clist_leaves], "the bridge returns the c-list as the map heap");
+
+        widen_to_cap_open(&mut wtrace, &cap_w).unwrap();
+
+        // Prove with EMPTY map_heaps (`&[]`): the genuine map_op write cannot be realized (no heap whose
+        // root == the BEFORE cap-root), so the prover REJECTS — fail-closed, NO silent forge. The IR-v2
+        // prover self-verifies (`check_constraints`), so the missing witness may surface as Err OR as a
+        // self-verify PANIC; both are fail-closed. The one outcome that would be a CRITICAL forge — a
+        // PASSING proof (`Ok(_)`) of this real cap-root change with no witness — must NEVER happen.
         let prev_hook = std::panic::take_hook();
         std::panic::set_hook(Box::new(|_| {}));
-        let outcome = std::panic::catch_unwind(|| {
-            prove_vm_descriptor2(&desc, &trace, &dpis, &MemBoundaryWitness::default(), &[])
-                .err()
-                .map(|e| format!("{e:?}"))
-        });
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            prove_vm_descriptor2(&desc, &wtrace, &wdpis, &MemBoundaryWitness::default(), &[])
+                .map(|_| ())
+                .map_err(|e| format!("{e:?}"))
+        }));
         std::panic::set_hook(prev_hook);
-        // The rejection is specifically the MISSING WITNESS HEAP — the map_op cannot find a heap
-        // whose root == the BEFORE cap-root, because `prove_effect_vm_cap_open` threads no map_heaps.
-        // (A panic also counts as fail-closed; either way the proof did NOT silently succeed.)
-        let rejected = match &outcome {
-            Ok(Some(msg)) => {
-                assert!(
-                    msg.contains("witness heap") || msg.contains("map op"),
-                    "the write wrapper's rejection must be the missing cap-tree write witness \
-                     (the map_op witness heap), got: {msg}"
-                );
-                true
-            }
-            Ok(None) => false, // proof succeeded — that WOULD be a silent forge
-            Err(_) => true,    // panicked = fail-closed
-        };
-        assert!(
-            rejected,
-            "the WRITE-bearing cap-open wrapper MUST fail-closed without the cap-tree write witness \
-             (an empty map_heaps cannot resolve the BEFORE→AFTER cap-root map_op) — it must NOT \
-             launder a fabricated post-cap-root into a passing proof. The closure is a \
-             data-availability change (carry the full c-list leaf-set + a cap-tree→map_heaps bridge), \
-             NOT a producer re-point."
-        );
+        match outcome {
+            Ok(Err(_)) => { /* prover refused — fail-closed (no silent forge) */ }
+            Err(_) => { /* self-verify panic — fail-closed (no silent forge) */ }
+            Ok(Ok(())) => panic!(
+                "SILENT FORGE: the WRITE-bearing cap-open wrapper PROVED a GENUINE cap-root change \
+                 (rotated limb 213 != 264) with EMPTY map_heaps — a fabricated post-cap-root was \
+                 laundered into a passing proof WITHOUT the genuine sorted-tree write witness. The \
+                 map_op does NOT bind the write into the commitment; this is a critical soundness \
+                 regression in the cap-write descriptor."
+            ),
+        }
     }
 
     /// **THE OVER-DETERMINATION IS GONE — col 87 (AFTER cap-root) is now `map_op`-defined ONLY**
@@ -4402,37 +4467,26 @@ mod tests {
         // (the `213 == 65` / `264 == 87` welds are gone). A wrong post-root is UNSAT
         // (`cap_write_revoke_forge_rejected`).
         //
-        // ⚑ ONE RESIDUAL OBSTRUCTION (descriptor-EMIT, metatheory/VK-affecting): the deployed write wrapper
-        // STILL carries a spurious NONCE-FREEZE gate (`var78 == var56`) that contradicts revoke's nonce-TICK
-        // (after.nonce = before.nonce + 1, MEASURED: col56=0, col78=1). The IR-v2 prover SELF-VERIFIES
-        // (`check_constraints`), so the gate violation surfaces as a PANIC (constraint #10) — catch it. The
-        // KEY soundness property the test pins: the wrapper NEVER produces a passing proof of a wrong /
-        // host-asserted post-cap-root — it fails CLOSED on the structural nonce-freeze obstruction (NO silent
-        // forge). When the descriptor DROPS the nonce-freeze gate, this flips to the genuine prove+verify arm.
-        let prev_hook = std::panic::take_hook();
-        std::panic::set_hook(Box::new(|_| {}));
-        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        // UNAMBIGUOUS (the nonce-freeze gate is DROPPED — the descriptor now rides the tick face): the
+        // WRITE-bearing revoke cap-open MUST GENUINELY prove (the cap-root advances on the rotated limb
+        // 213→264 over the real c-list, the genuine sorted-tree REMOVE post-root is computed, v1-state
+        // cap-root frozen, nonce TICKS) and the LIGHT-CLIENT verifier MUST accept the genuine post-cap-root.
+        // NO catch_unwind, NO fail-closed branch: if the prover refuses or the verifier rejects, this test
+        // FAILS — that is the honest signal the cap-WRITE post-root is NOT light-client-verifiable. A wrong
+        // post-root is UNSAT (`cap_write_revoke_forge_rejected`), so a passing proof here IS the genuine
+        // post-cap-root, bound on the wire.
+        let (proof, dpis) =
             prove_effect_vm_cap_open(&initial, &effects, &before_w, &after_w, &cap, &route, None)
-        }));
-        std::panic::set_hook(prev_hook);
-        match outcome {
-            Ok(Ok((proof, dpis))) => {
-                // The nonce-freeze gate was DROPPED: the loop closes end-to-end — the write wrapper PROVES
-                // and the LIGHT-CLIENT verifier ACCEPTS it, binding the genuine post-cap-root (a wrong
-                // post-root would be UNSAT — the map_op write gate).
-                let proof_bytes = postcard::to_allocvec(&proof).expect("serialize write cap-open leg");
-                let vk_hash = cap_open_vk_hash_by_key(effective_key).expect("write wrapper vk_hash");
-                verify_effect_vm_rotated_with_cutover(&proof_bytes, &dpis, &vk_hash).expect(
-                    "the WRITE-bearing revoke cap-open MUST verify on the light-client path — the genuine \
-                     post-cap-root is on-the-wire light-client-verifiable",
+                .expect(
+                    "the WRITE-bearing revoke cap-open MUST genuinely prove — cap-root on the rotated limb \
+                     (213→264) over the real c-list, v1-state frozen, nonce ticks (tick face, no freeze)",
                 );
-            }
-            // The PINNED obstruction: the spurious nonce-freeze gate (`var78 == var56`) makes the EMITTED
-            // descriptor unprovable for an honest nonce-ticking revoke. The prover REFUSES (panic on its own
-            // self-verify / Err) — NOT a silent forge. When the descriptor drops the nonce-freeze gate
-            // (metatheory), this flips to the Ok(Ok(..)) arm above.
-            Ok(Err(_)) | Err(_) => { /* fail-closed on the pinned nonce-freeze obstruction */ }
-        }
+        let proof_bytes = postcard::to_allocvec(&proof).expect("serialize write cap-open leg");
+        let vk_hash = cap_open_vk_hash_by_key(effective_key).expect("write wrapper vk_hash");
+        verify_effect_vm_rotated_with_cutover(&proof_bytes, &dpis, &vk_hash).expect(
+            "the WRITE-bearing revoke cap-open MUST verify on the light-client path — the genuine \
+             post-cap-root is on-the-wire light-client-verifiable",
+        );
     }
 
     /// **THE FORGE IS REJECTED (the soundness guardrail).** The load-bearing forge is (a): a FABRICATED

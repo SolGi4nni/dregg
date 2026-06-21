@@ -3372,3 +3372,22 @@ cap-open-routing semantics (which write-bearing/cap-open descriptors are now res
 not to bump 36→37 blindly (which could mask a real coverage gap). Follow-up, careful, in the dregg-circuit
 registry-census owner's lane. The authority-floor soundness (the light-client forge closure) does NOT depend on
 this — it's a registry-completeness census assertion, currently stale vs the new routing.
+
+## 🟥🟥🟥 CRITICAL SILENT FORGE FOUND (2026-06-21, ac39a343) — cap-write map_op guarded on the WRONG selector
+The cap-WRITE descriptor fix (8275b3711, moving the cap-root to rotated limbs 213/264) left the map_op GUARD on
+Var(2) = the SET_FIELD selector, but the effect is RevokeDelegation = selector 30. The two are NEVER both 1 -> BOTH
+map_ops (read + write) NEVER FIRE -> NOTHING constrains the AFTER cap-root (var 264). PROVEN EMPIRICALLY: overwrote
+var 264 with 0xBADF00D, recomputed the commitment self-consistently -> prove_vm_descriptor2 returned Ok AND the
+light-client verifier ACCEPTED it. A malicious producer can publish a FABRICATED post-cap-root with no sorted-tree
+witness and it verifies on the wire. THE cap-WRITE LIGHT-CLIENT AXIS IS NOT CLOSED — the post-cap-root is unbound
+in-circuit, host-trusted.
+⚑ WHY THE GREEN BOARD MISSED IT: cap_write_revoke_proves_and_verifies_light_client passes BECAUSE the binding is
+DEAD (the map_op dormant -> the cap-root rides only the host-trusted commitment fold). Its greenness was the SYMPTOM
+of the forge, not proof of soundness. Had the box been checked on that green prove-through, a FORGE would have
+shipped as 'light-client-verifiable'. THIS IS THE GOAL VINDICATED: 'a green test only counts if it goes red when the
+thing it guards breaks'; the new forge-detector test's assert_ne!(213,264) non-vacuity guard is what caught it.
+THE FORGE-DETECTOR (write_cap_open_wrapper_requires_cap_tree_write_witness_no_silent_forge) is RED with a precise
+SILENT FORGE diagnostic — banked deliberately as the honest signal; it MUST stay until the fix lands.
+THE FIX (VK-affecting Lean re-emit): re-point the cap-write map_op guard from var 2 (SET_FIELD) to var 30
+(REVOKE_DELEGATION) — and analogously delegate/introduce/delegateAtten on THEIR selectors. Until then the cap-write
+box is NOT closed; the prior 'genuine prove-through' green is illusory (passes because the binding is dead).
