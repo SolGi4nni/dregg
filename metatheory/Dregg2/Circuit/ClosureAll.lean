@@ -923,6 +923,34 @@ theorem revoke_closedLog_sat
       exact Dregg2.Circuit.RotatedKernelRefinementCapFamily.revokeCapability_descriptorRefines_sat
         hash hsat pre post holder target (logNeeds hadv))
 
+/-- revokeCapability (tag 2 via `.revoke`), CLASS A — LIGHT-CLIENT routed from the WRITE-bearing
+`revokeCapabilityWriteCapOpenV3` (`= Rfix` for the revokeCapability SDK route). The SINGLE descriptor the
+light client verifies carries BOTH the cap-membership authority crown AND the cap-tree REMOVE: the wrapper's
+`Satisfied2` strips through `capOpen_satisfied2_strips_to_base` to `revokeCapabilityV3`, whose
+`revokeCapability_descriptorRefines_capOpenSat` forces `RevokeSpec` AND the cap-tree REMOVE in-circuit. This
+closes the ROUTE-FORGE: the authority-only `revokeCapabilityCapOpenV3` (write:None) left the post-cap-root
+host-trusted; THIS binds it. Editing `revokeCapabilityV3`'s `removeWriteOpRot` turns this RED. -/
+theorem revokeCapability_closedLog_capOpenSat
+    (hash : List ℤ → ℤ)
+    {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : Dregg2.Circuit.DescriptorIR2.VmTrace}
+    (hsat : Dregg2.Circuit.DescriptorIR2.Satisfied2 hash
+      Dregg2.Circuit.Emit.CapOpenEmit.revokeCapabilityWriteCapOpenV3 minit mfin maddrs t)
+    (pre post : RecChainedState) (holder target : CellId)
+    (pc : PublishedCommit) (pubLogPre pubLogPost : ℤ)
+    (hdec : StateDecodeLog Slive LH pc pubLogPre pubLogPost pre post)
+    (hpub : pubLogPost = LH (Dregg2.Exec.TurnExecutorFull.authReceipt holder :: pre.log))
+    (logNeeds : post.log = Dregg2.Exec.TurnExecutorFull.authReceipt holder :: pre.log →
+      Dregg2.Circuit.RotatedKernelRefinementCapFamily.RevokeCapabilityTraceReadout
+        hash minit mfin maddrs t pre post holder target) :
+    kstepAll 2 pre post :=
+  closedLog_of_encode (.revoke holder target)
+    (Dregg2.Exec.TurnExecutorFull.authReceipt holder) hdec hpub rfl
+    (fun hadv => by
+      show fullActionStep pre (.revoke holder target) post
+      simp only [fullActionStep]
+      exact Dregg2.Circuit.RotatedKernelRefinementCapFamily.revokeCapability_descriptorRefines_capOpenSat
+        hash hsat pre post holder target (logNeeds hadv))
+
 /-! ### cap family CLASS A — delegate (1) / introduce (10) / delegateAtten (11) / revokeDelegation (14),
 forced from the WRITE-FORCING cap-open WRAPPER (`Rfix tag` re-pointed to `…WriteCapOpenV3`). The wrapper's
 `Satisfied2` strips through `capOpen_satisfied2_strips_to_base` to the base CLASS-A `_descriptorRefines_sat`,

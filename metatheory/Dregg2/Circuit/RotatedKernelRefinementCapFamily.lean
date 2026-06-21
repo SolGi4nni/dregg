@@ -1184,9 +1184,48 @@ theorem revokeCapability_sat_rejects_wrong_caps (hash : List ℤ → ℤ)
     False :=
   hwrong (revokeCapability_forced_sat hash hsat pre post holder target rd)
 
+/-- **`revokeCapability_descriptorRefines_capOpenSat` — the apex-wirable, LIGHT-CLIENT revokeCapability
+rung (the ROUTE-FORGE close).** Consumes `Satisfied2 hash revokeCapabilityWriteCapOpenV3` — the SINGLE
+descriptor that carries BOTH the cap-membership authority crown AND the cap-tree REMOVE — by stripping the
+cap-open authority appendix + selector tooth to the base `revokeCapabilityV3` (via
+`capOpen_satisfied2_strips_to_base`) and applying `revokeCapability_descriptorRefines_sat`. This is the
+revokeCapability twin of `revokeDelegation_descriptorRefines_capOpenSat`: it makes the cap-tree REMOVE
+light-client-verifiable IN the descriptor the SDK route proves+verifies, NOT a SEPARATE
+`revokeCapabilityV3` rung the apex composes off-wire. Editing `revokeCapabilityV3`'s `removeWriteOpRot`
+turns this — and the SDK route — RED. -/
+theorem revokeCapability_descriptorRefines_capOpenSat (hash : List ℤ → ℤ)
+    {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
+    (hsat : Satisfied2 hash Dregg2.Circuit.Emit.CapOpenEmit.revokeCapabilityWriteCapOpenV3 minit mfin maddrs t)
+    (pre post : RecChainedState) (holder target : CellId)
+    (rd : RevokeCapabilityTraceReadout hash minit mfin maddrs t pre post holder target) :
+    RevokeSpec pre holder target post :=
+  revokeCapability_descriptorRefines_sat hash
+    (Dregg2.Circuit.Emit.CapOpenEmit.capOpen_satisfied2_strips_to_base hash _ revokeCapabilityV3 _ _
+      minit mfin maddrs t hsat)
+    pre post holder target rd
+
+/-- **CLASS-A ROUTE TOOTH (revokeCapability) — a forged wrong-caps post-root on the WRITE-CAPOPEN wrapper is
+UNSAT.** The route-level twin of `revokeCapability_sat_rejects_wrong_caps`: over the LIVE
+`revokeCapabilityWriteCapOpenV3` (the descriptor the SDK route verifies), a post-state whose caps are NOT the
+genuine `removeEdgeCaps` move cannot arise from a `Satisfied2` witness — the stripped `removeWriteOpRot` FORCES
+the REMOVE. Perturbing `removeWriteOpRot`'s value (the REMOVE sentinel) breaks the strip and reds this. -/
+theorem revokeCapability_capOpenSat_rejects_forged_postroot (hash : List ℤ → ℤ)
+    {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
+    (hsat : Satisfied2 hash Dregg2.Circuit.Emit.CapOpenEmit.revokeCapabilityWriteCapOpenV3 minit mfin maddrs t)
+    (pre post : RecChainedState) (holder target : CellId)
+    (rd : RevokeCapabilityTraceReadout hash minit mfin maddrs t pre post holder target)
+    (hwrong : post.kernel.caps ≠ removeEdgeCaps pre.kernel.caps holder target) :
+    False :=
+  hwrong (revokeCapability_forced_sat hash
+    (Dregg2.Circuit.Emit.CapOpenEmit.capOpen_satisfied2_strips_to_base hash _ revokeCapabilityV3 _ _
+      minit mfin maddrs t hsat)
+    pre post holder target rd)
+
 #assert_axioms revokeCapabilityV3_non_amp
 #assert_axioms revokeCapability_forced_sat
 #assert_axioms revokeCapability_descriptorRefines_sat
+#assert_axioms revokeCapability_descriptorRefines_capOpenSat
+#assert_axioms revokeCapability_capOpenSat_rejects_forged_postroot
 #assert_axioms revokeCapability_execFullA_sat
 #assert_axioms revokeCapability_sat_rejects_wrong_caps
 

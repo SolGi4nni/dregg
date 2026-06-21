@@ -468,6 +468,20 @@ def revokeDelegationWriteCapOpenV3 : EffectVmDescriptor2 :=
     (effCapOpenV3 EffectVmEmitRotationV3.revokeDelegationWriteV3
       "dregg-effectvm-revoke-v1-rot24-v3-write-capopen" EFF_DELEGATION_OPS)
 
+/-- **`revokeCapabilityWriteCapOpenV3`** — revokeCapability-via-cap on the WRITE-FORCING base
+(`revokeCapabilityV3` = the MOVING `…GenuineNoRecomputeTick` face + `[heldReadOpRot, removeWriteOpRot]`): the
+authority READ appendix AT `EFF_REVOKE_CAPABILITY` + the deployed `removeWriteOpRot` (the cap-tree REMOVE
+FORCED in-circuit on the rotated AFTER cap-root limb, var 264 — NOT frozen off-row). Unlike
+`revokeCapabilityCapOpenV3` (base `revokeCapabilityBaseV3`, the FROZEN `v3Of` authority-ONLY leg whose
+cap-root REMOVE rides UNBOUND on the light-client wire — the ROUTE-FORGE), THIS carries BOTH the authority
+appendix AND the cap-tree REMOVE in the SINGLE descriptor the light client verifies. The SDK cap-open route
+re-points here when the node supplies the c-list (the write witness); the authority-only wrapper is then
+light-client-REJECTED. Mirrors `revokeDelegationWriteCapOpenV3` EXACTLY. -/
+def revokeCapabilityWriteCapOpenV3 : EffectVmDescriptor2 :=
+  withSelectorGate Dregg2.Circuit.Emit.EffectVmEmit.sel.REVOKE_CAPABILITY
+    (effCapOpenV3 EffectVmEmitRotationV3.revokeCapabilityV3
+      "dregg-effectvm-revokeCapability-v1-rot24-v3-write-capopen" EFF_REVOKE_CAPABILITY)
+
 /-- **`refreshDelegationWriteCapOpenV3`** — refreshDelegation-via-cap on the WRITE-FORCING base
 (`refreshDelegationWriteV3`): the authority READ appendix + the deployed DELEG-tree UPDATE-write op (the
 DELEGATIONS-tree write FORCED in-circuit, not the `delegRoot_runtime_column_pending` supplied digest). The
@@ -506,8 +520,10 @@ def delegateAttenWriteCapOpenV3 : EffectVmDescriptor2 :=
 -- write base + `CAP_OPEN_SPAN` cols; the write base adds 2 map-ops over the frozen/genuine base.
 #guard introduceWriteCapOpenV3.traceWidth == EffectVmEmitRotationV3.introduceWriteV3.traceWidth + CAP_OPEN_SPAN
 #guard revokeDelegationWriteCapOpenV3.traceWidth == EffectVmEmitRotationV3.revokeDelegationWriteV3.traceWidth + CAP_OPEN_SPAN
+#guard revokeCapabilityWriteCapOpenV3.traceWidth == EffectVmEmitRotationV3.revokeCapabilityV3.traceWidth + CAP_OPEN_SPAN
 #guard introduceWriteCapOpenV3.constraints.length == EffectVmEmitRotationV3.introduceWriteV3.constraints.length + 71
 #guard revokeDelegationWriteCapOpenV3.constraints.length == EffectVmEmitRotationV3.revokeDelegationWriteV3.constraints.length + 71
+#guard revokeCapabilityWriteCapOpenV3.constraints.length == EffectVmEmitRotationV3.revokeCapabilityV3.constraints.length + 71
 
 /-- **`transferCapOpenEffV3`** (residual (a) — THE LIVE transfer cap-open) — the transfer base + the
 effect-GENERAL appendix at `EFF_TRANSFER` (bit 1). Carries `capOpenConstraintsEff 1`: the genuine SUBMASK facet gate

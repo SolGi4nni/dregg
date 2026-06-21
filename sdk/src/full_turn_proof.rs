@@ -1326,7 +1326,21 @@ fn cap_open_route_for_run(run_effects: &[VmEffectKind]) -> Option<CapOpenRoute> 
             needs_attenuate_patch: true,
             transfer_caveat: false,
             turn_bound: false,
-            write: None,
+            // cap-WRITE light-client axis (THE ROUTE-FORGE CLOSED): a revokeCapability IS a cap-tree
+            // REMOVE. The authority-only `revokeCapabilityCapOpenVmDescriptor2R24` (write:None) left the
+            // post-cap-root host-trusted — a light client accepted a forged post-cap-root (the removed cap
+            // fabricated/omitted). The deployed `revokeCapabilityWriteCapOpenVmDescriptor2R24` binds the
+            // AFTER cap-root (rotated limb 264) ONLY via the `map_op` REMOVE against the membership-opened
+            // BEFORE root: when the node supplies the c-list (`cap.clist_leaves` non-empty) the prover
+            // proves the write wrapper and the genuine post-cap-root is on-the-wire light-client-verifiable
+            // (a wrong post-root is UNSAT). An empty c-list falls back to the authority-only `key` (named,
+            // not a silent forge); the verifier tooth (`is_forbidden_plain_cap_descriptor`) forces the
+            // cap-open route. Mirrors revokeDelegation's REMOVE wrapper EXACTLY (same crown facet bit).
+            write: Some((
+                "revokeCapabilityWriteCapOpenVmDescriptor2R24",
+                dregg_circuit::effect_vm::trace_rotated::CapTreeWriteOp::Remove,
+                EFFECT_REVOKE_CAPABILITY,
+            )),
         }),
         _ => None,
     }
@@ -2096,6 +2110,8 @@ fn is_forbidden_authority_only_cap_write_descriptor(name: &str) -> bool {
         "revokeCapOpenVmDescriptor2R24"        // RevokeDelegation — the REMOVE write wrapper proves
             | "grantCapCapOpenVmDescriptor2R24" // delegate / delegateAtten — the INSERT write wrapper proves
             | "introduceCapOpenVmDescriptor2R24" // Introduce — the INSERT write wrapper proves
+            | "revokeCapabilityCapOpenVmDescriptor2R24" // RevokeCapability — the REMOVE write wrapper proves
+                                                        // (`cap_write_revoke_cap_route_proves_and_verifies_light_client`)
     )
 }
 
@@ -5024,6 +5040,183 @@ mod tests {
             verify_effect_vm_rotated_with_cutover(&proof_ao_bytes, &dpis_ao, &vk_ao).is_err(),
             "the AUTHORITY-only revoke cap-open is now light-client-REJECTED (the tooth is ON) — the \
              post-cap-root is host-trusted; the producer must prove the on-the-wire WRITE wrapper",
+        );
+    }
+
+    /// **THE ROUTE-LEVEL FORGE DETECTOR for revokeCapability (the ROUTE-FORGE close).** The
+    /// pre-existing `cap_write_revoke_cap_no_silent_forge` tests the BASE descriptor
+    /// (`revokeCapabilityVmDescriptor2R24`), NOT the LIVE SDK cap-open route — it passed without
+    /// guarding the route. The bug: the revokeCapability route selected the AUTHORITY-only
+    /// `revokeCapabilityCapOpenVmDescriptor2R24` (write:None), so the cap-tree REMOVE rode UNBOUND on
+    /// the light-client wire — a forged post-cap-root (removed cap fabricated/omitted) was ACCEPTED by
+    /// a light client (a full node re-running the executor caught it; a light client did not).
+    ///
+    /// The fix (mirroring revokeDelegation): the route now carries
+    /// `write: Some((revokeCapabilityWriteCapOpenVmDescriptor2R24, Remove, EFFECT_REVOKE_CAPABILITY))`,
+    /// and the authority-only wrapper is light-client-REJECTED (`is_forbidden_authority_only_cap_write_descriptor`).
+    /// THREE arms against the SAME verify:
+    ///   (1) the GENUINE write route PROVES + light-client-VERIFIES (non-vacuity — the honest path works);
+    ///   (2) a FORGED post-cap-root (c-list MISSING the revoked key) FAILS CLOSED at the prover (no
+    ///       silent forge — a wrong post-root is UNSAT);
+    ///   (3) the AUTHORITY-only route (empty c-list) still PROVES but the light-client verifier now
+    ///       REJECTS it (the tooth is ON — the producer MUST prove the on-the-wire WRITE wrapper).
+    /// This is RED before the route fix (the authority-only route was the effective key + accepted) and
+    /// GREEN after.
+    #[cfg(feature = "prover")]
+    #[test]
+    fn cap_write_revoke_cap_route_proves_and_verifies_light_client() {
+        use dregg_circuit::cap_root::CapLeaf;
+        use dregg_circuit::effect_vm::trace_rotated::{
+            CapOpenWitness, FACET_MASK_HI, SIGNATURE_AUTH_TAG,
+        };
+        use dregg_circuit::heap_root::HeapLeaf;
+        use dregg_turn::rotation_witness as rw;
+
+        const EFFECT_REVOKE_CAPABILITY: u32 = 1 << 3;
+
+        // The cap being revoked: slot_hash 0xCA9, target 7_777 (== src), revokeCapability facet.
+        let chosen: [BabyBear; 7] = [
+            BabyBear::new(0xCA9),
+            BabyBear::new(7_777),
+            BabyBear::new(SIGNATURE_AUTH_TAG),
+            BabyBear::new(EFFECT_REVOKE_CAPABILITY),
+            BabyBear::new(FACET_MASK_HI),
+            BabyBear::new(0x00FF_FFFF),
+            BabyBear::new(42),
+        ];
+        let other: [BabyBear; 7] = [
+            BabyBear::new(0xBEEF),
+            BabyBear::new(123),
+            BabyBear::new(1),
+            BabyBear::new(EFFECT_REVOKE_CAPABILITY),
+            BabyBear::new(0),
+            BabyBear::new(9),
+            BabyBear::new(0),
+        ];
+        let leaf_cl = |l: &[BabyBear; 7]| CapLeaf {
+            slot_hash: l[0],
+            target: l[1],
+            auth_tag: l[2],
+            mask_lo: l[3],
+            mask_hi: l[4],
+            expiry: l[5],
+            breadstuff: l[6],
+        };
+        let built = CapOpenWitness::build_for(&[other, chosen], 1, EFFECT_REVOKE_CAPABILITY)
+            .expect("cap-open path builds");
+
+        // THE GENUINE c-list — the revoked cap's slot_hash (0xCA9) IS present (the REMOVE has a witness).
+        let clist_leaves = vec![
+            HeapLeaf { addr: chosen[0], value: chosen[1] },
+            HeapLeaf { addr: other[0], value: other[1] },
+        ];
+        let cap = CapMembershipWitness {
+            leaf: leaf_cl(&chosen),
+            siblings: built.siblings.to_vec(),
+            directions: built.directions.to_vec(),
+            clist_leaves: clist_leaves.clone(),
+        };
+
+        // A real RevokeCapability turn (the cap-crown remove base; nonce-tick passthrough).
+        let before_balance: u64 = 100_000;
+        let initial = CellState::new(before_balance, 0);
+        let effects = vec![VmEffect::RevokeCapability {
+            slot_hash: [BabyBear::new(0xCA9); 8],
+            phase_b: None,
+        }];
+        let mut pk = [0u8; 32];
+        pk[0] = 7;
+        let mut before_cell = dregg_cell::Cell::with_balance(pk, [0u8; 32], before_balance as i64);
+        before_cell.permissions = dregg_cell::Permissions {
+            send: dregg_cell::AuthRequired::None,
+            receive: dregg_cell::AuthRequired::None,
+            set_state: dregg_cell::AuthRequired::None,
+            set_permissions: dregg_cell::AuthRequired::None,
+            set_verification_key: dregg_cell::AuthRequired::None,
+            increment_nonce: dregg_cell::AuthRequired::None,
+            delegate: dregg_cell::AuthRequired::None,
+            access: dregg_cell::AuthRequired::None,
+        };
+        let mut after_cell = before_cell.clone();
+        let _ = after_cell.state.increment_nonce();
+        let mut ledger = dregg_cell::Ledger::new();
+        ledger.insert_cell(after_cell.clone()).unwrap();
+        let receipt_log: Vec<[u8; 32]> = vec![[3u8; 32], [4u8; 32]];
+        let before_w = rw::produce(&before_cell, &ledger, &[0u8; 32], &[0u8; 32], &receipt_log);
+        let after_w = rw::produce(&after_cell, &ledger, &[0u8; 32], &[0u8; 32], &receipt_log);
+
+        // THE RE-POINT IS ON: the revokeCapability route now carries `write: Some((...WriteCapOpen..., Remove))`.
+        let route = cap_open_route_for_run(&effects).expect("revokeCapability is a wired cap-open route");
+        assert!(
+            route.write.is_some(),
+            "the revokeCapability route MUST carry the write wrapper (route-forge close)"
+        );
+        let effective_key = cap_open_effective_key(&route, &cap);
+        assert_eq!(
+            effective_key, "revokeCapabilityWriteCapOpenVmDescriptor2R24",
+            "with a genuine c-list witness the EFFECTIVE descriptor is the WRITE wrapper"
+        );
+
+        // (1) NON-VACUITY: the WRITE-bearing revokeCapability cap-open MUST GENUINELY prove + the
+        // LIGHT-CLIENT verifier MUST accept the genuine post-cap-root (the cap-tree REMOVE bound on the
+        // wire). NO catch_unwind: a refusal/rejection FAILS the test (the honest signal).
+        let (proof, dpis) =
+            prove_effect_vm_cap_open(&initial, &effects, &before_w, &after_w, &cap, &route, None)
+                .expect(
+                    "the WRITE-bearing revokeCapability cap-open MUST genuinely prove — the cap-root REMOVE \
+                     on the rotated limb (213→264) over the real c-list, v1-state frozen, nonce ticks",
+                );
+        let proof_bytes = postcard::to_allocvec(&proof).expect("serialize write cap-open leg");
+        let vk_hash = cap_open_vk_hash_by_key(effective_key).expect("write wrapper vk_hash");
+        verify_effect_vm_rotated_with_cutover(&proof_bytes, &dpis, &vk_hash).expect(
+            "the WRITE-bearing revokeCapability cap-open MUST verify on the light-client path — the genuine \
+             post-cap-root is on-the-wire light-client-verifiable",
+        );
+
+        // (2) THE FORGE IS REJECTED: a c-list that does NOT contain the revoked key (0xCA9). The write
+        // wrapper's map_op REMOVE has no membership witness → the prover FAILS CLOSED. A wrong
+        // post-cap-root CANNOT be proven (no silent forge — the route-forge antibody).
+        let forged_clist = vec![
+            HeapLeaf { addr: other[0], value: other[1] }, // only the OTHER cap; the revoked key is ABSENT
+        ];
+        let cap_forged = CapMembershipWitness {
+            leaf: leaf_cl(&chosen),
+            siblings: built.siblings.to_vec(),
+            directions: built.directions.to_vec(),
+            clist_leaves: forged_clist,
+        };
+        assert!(
+            prove_effect_vm_cap_open(&initial, &effects, &before_w, &after_w, &cap_forged, &route, None)
+                .is_err(),
+            "a c-list MISSING the revoked key MUST fail closed — a fabricated post-cap-root is NOT provable"
+        );
+
+        // (3) THE AUTHORITY-ONLY ROUTE IS LIGHT-CLIENT-REJECTED (the tooth is ON): an empty c-list falls
+        // back to `revokeCapabilityCapOpenVmDescriptor2R24` (write:None). It still PROVES (the membership
+        // crown is valid) BUT the light-client verifier now REJECTS it — the producer MUST prove the
+        // on-the-wire WRITE wrapper. This is the verifier half of the FORCED write routing.
+        let cap_authority_only = CapMembershipWitness {
+            leaf: leaf_cl(&chosen),
+            siblings: built.siblings.to_vec(),
+            directions: built.directions.to_vec(),
+            clist_leaves: Vec::new(),
+        };
+        assert_eq!(
+            cap_open_effective_key(&route, &cap_authority_only),
+            "revokeCapabilityCapOpenVmDescriptor2R24",
+            "an empty c-list falls back to the authority-only route"
+        );
+        let (proof_ao, dpis_ao) = prove_effect_vm_cap_open(
+            &initial, &effects, &before_w, &after_w, &cap_authority_only, &route, None,
+        )
+        .expect("the authority-only revokeCapability cap-open still PROVES (the membership crown is valid)");
+        let proof_ao_bytes = postcard::to_allocvec(&proof_ao).expect("serialize authority-only leg");
+        let vk_ao = cap_open_vk_hash_by_key("revokeCapabilityCapOpenVmDescriptor2R24")
+            .expect("authority-only vk_hash");
+        assert!(
+            verify_effect_vm_rotated_with_cutover(&proof_ao_bytes, &dpis_ao, &vk_ao).is_err(),
+            "the AUTHORITY-only revokeCapability cap-open is now light-client-REJECTED (the tooth is ON) — \
+             the post-cap-root is host-trusted; the producer must prove the on-the-wire WRITE wrapper",
         );
     }
 

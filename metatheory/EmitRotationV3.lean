@@ -83,4 +83,5 @@ def main : IO Unit := do
   IO.println s!"v3rot\tintroduceWriteCapOpenVmDescriptor2R24\t{Dregg2.Circuit.Emit.CapOpenEmit.introduceWriteCapOpenV3.name}\t{emitVmJson2 Dregg2.Circuit.Emit.CapOpenEmit.introduceWriteCapOpenV3}"
   IO.println s!"v3rot\tdelegateAttenWriteCapOpenVmDescriptor2R24\t{Dregg2.Circuit.Emit.CapOpenEmit.delegateAttenWriteCapOpenV3.name}\t{emitVmJson2 Dregg2.Circuit.Emit.CapOpenEmit.delegateAttenWriteCapOpenV3}"
   IO.println s!"v3rot\trevokeDelegationWriteCapOpenVmDescriptor2R24\t{Dregg2.Circuit.Emit.CapOpenEmit.revokeDelegationWriteCapOpenV3.name}\t{emitVmJson2 Dregg2.Circuit.Emit.CapOpenEmit.revokeDelegationWriteCapOpenV3}"
+  IO.println s!"v3rot\trevokeCapabilityWriteCapOpenVmDescriptor2R24\t{Dregg2.Circuit.Emit.CapOpenEmit.revokeCapabilityWriteCapOpenV3.name}\t{emitVmJson2 Dregg2.Circuit.Emit.CapOpenEmit.revokeCapabilityWriteCapOpenV3}"
   IO.println s!"v3rot\trefreshDelegationWriteCapOpenVmDescriptor2R24\t{Dregg2.Circuit.Emit.CapOpenEmit.refreshDelegationWriteCapOpenV3.name}\t{emitVmJson2 Dregg2.Circuit.Emit.CapOpenEmit.refreshDelegationWriteCapOpenV3}"
