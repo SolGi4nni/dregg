@@ -55,7 +55,7 @@ fn main() {
     // navigation state-space (drive the real interaction handlers), screenshot
     // each distinct UI state, and emit `<outdir>/ui-graph.json` + `states/*.png`.
     // The atlas's "UI tree": exploring inside and through the surfaces.
-    #[cfg(feature = "headless-render")]
+    #[cfg(feature = "render-capture")]
     {
         if let Some(dir) = explore_ui_arg(&args) {
             match explore_ui_headless(&dir) {
@@ -74,7 +74,7 @@ fn main() {
     // request, and serves it as image-map HTML. Clicking a region / link hits the
     // server, which applies the interaction to the live world and re-renders. Frame-
     // streaming for any user-agent back to 1996 — the real thing, not a flip-through.
-    #[cfg(feature = "headless-render")]
+    #[cfg(feature = "render-capture")]
     {
         if let Some(port) = serve_ie6_arg(&args) {
             match serve_ie6_headless(port) {
@@ -87,7 +87,7 @@ fn main() {
         }
     }
 
-    #[cfg(feature = "headless-render")]
+    #[cfg(feature = "render-capture")]
     {
         if let Some(out) = render_cockpit_arg(&args) {
             // `--replay <cell>:<msg>` (repeatable) — apply a recorded act-trail to
@@ -420,7 +420,7 @@ fn run_window(
 /// the output base path for the headless cockpit bake. Returns `None` when
 /// absent. `<out>` names the file stem; `<out>.rgba` (the raw 800x600 RGBA8 the
 /// seL4 PD bakes) and `<out>.png` (a visual check) are written.
-#[cfg(feature = "headless-render")]
+#[cfg(feature = "render-capture")]
 fn render_cockpit_arg(args: &[String]) -> Option<String> {
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -438,7 +438,7 @@ fn render_cockpit_arg(args: &[String]) -> Option<String> {
 /// dregg-mcp server records and hands to the bake so a screenshot reflects the
 /// driven session). `<cell>` is a hex-id prefix (matched against the live
 /// ledger); `<message>` is an affordance verb (`peek`/`touch`/`write`/…).
-#[cfg(feature = "headless-render")]
+#[cfg(feature = "render-capture")]
 fn render_replay_args(args: &[String]) -> Vec<(String, String)> {
     let mut out = Vec::new();
     let mut it = args.iter();
@@ -459,7 +459,7 @@ fn render_replay_args(args: &[String]) -> Vec<(String, String)> {
 
 /// Parse `--render-size <W>x<H>` (logical pixels) for the cockpit bake. `None`
 /// keeps the seL4 framebuffer default (800x600). e.g. `--render-size 1280x832`.
-#[cfg(feature = "headless-render")]
+#[cfg(feature = "render-capture")]
 fn render_size_arg(args: &[String]) -> Option<(f32, f32)> {
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -483,7 +483,7 @@ fn render_size_arg(args: &[String]) -> Option<(f32, f32)> {
 
 /// Parse `--render-tab <name>` — the cockpit surface to screenshot (matched
 /// against [`cockpit::Cockpit::select_tab_named`]). `None` keeps the default.
-#[cfg(feature = "headless-render")]
+#[cfg(feature = "render-capture")]
 fn render_tab_arg(args: &[String]) -> Option<String> {
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -498,7 +498,7 @@ fn render_tab_arg(args: &[String]) -> Option<String> {
 }
 
 /// Parse `--explore-ui <outdir>`.
-#[cfg(feature = "headless-render")]
+#[cfg(feature = "render-capture")]
 fn explore_ui_arg(args: &[String]) -> Option<String> {
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -513,7 +513,7 @@ fn explore_ui_arg(args: &[String]) -> Option<String> {
 }
 
 /// Parse `--serve-ie6 <port>` (default 8600).
-#[cfg(feature = "headless-render")]
+#[cfg(feature = "render-capture")]
 fn serve_ie6_arg(args: &[String]) -> Option<u16> {
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -530,7 +530,7 @@ fn serve_ie6_arg(args: &[String]) -> Option<u16> {
 /// THE LIVE IE6 COCKPIT SERVER (Path B). Holds a live cockpit, renders it per
 /// request, and serves it as image-map HTML so any browser back to 1996 can drive
 /// the real verified cockpit — server-side state, a round-trip per click.
-#[cfg(feature = "headless-render")]
+#[cfg(feature = "render-capture")]
 fn serve_ie6_headless(port: u16) -> anyhow::Result<()> {
     use gpui::{px, size, AppContext, HeadlessAppContext, PlatformTextSystem};
     use gpui_wgpu::CosmicTextSystem;
@@ -673,7 +673,7 @@ fn serve_ie6_headless(port: u16) -> anyhow::Result<()> {
 
 /// The IE6 page: HTML 4.01, the LIVE frame as an `<img usemap>`, a `<map>` of
 /// `<area>` regions over it for the in-surface interactions, and a text tab/nav bar.
-#[cfg(feature = "headless-render")]
+#[cfg(feature = "render-capture")]
 fn ie6_page(tab: &str, navs: &[String], tabs: &[&str]) -> String {
     // image-map regions: a row of equal cells across the bottom strip of the frame,
     // one per available interaction (the live frame is 1000px wide as displayed).
@@ -727,7 +727,7 @@ screen was driven before canvas existed.</font></p>\n\
     )
 }
 
-#[cfg(feature = "headless-render")]
+#[cfg(feature = "render-capture")]
 fn html_escape(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
 }
@@ -735,7 +735,7 @@ fn html_escape(s: &str) -> String {
 /// THE UI-EXPLORATION CRAWL — BFS-walk the cockpit's navigation state-space by
 /// driving the real interaction handlers, screenshot each distinct UI state, and
 /// emit a graph of states + interaction edges. The atlas's "UI tree".
-#[cfg(feature = "headless-render")]
+#[cfg(feature = "render-capture")]
 fn explore_ui_headless(outdir: &str) -> anyhow::Result<()> {
     use cockpit::NavAction;
     use gpui::{px, size, AppContext, HeadlessAppContext, PlatformTextSystem};
@@ -888,7 +888,7 @@ fn explore_ui_headless(outdir: &str) -> anyhow::Result<()> {
 ///
 /// The geometry MUST equal the framebuffer's (`sel4/.../fb.rs` = 800x600) so the
 /// PD's blit is a straight RGBA→XRGB8888 copy.
-#[cfg(feature = "headless-render")]
+#[cfg(feature = "render-capture")]
 fn render_cockpit_headless(
     out: &str,
     replays: &[(String, String)],

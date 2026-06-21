@@ -117,7 +117,7 @@ default = ["native-full"]
 # native-full pulls the embedded executor (`embedded-executor`) AND the gpui
 # renderer (`gpui-ui`) AND the LIVE-NODE connection (`live-node`, so the master
 # interface can ALSO connect to a remote node/federation). This is the headline build.
-native-full = ["embedded-executor", "gpui-ui", "live-node"]
+native-full = ["embedded-executor", "gpui-ui", "live-node", "render-capture"]
 
 # The LIVE-NODE connection — the real HTTP+SSE link to a running dregg node
 # (`NodeClient::Http` + the `/api/events/stream` reader). Pulls `reqwest` (its
@@ -195,14 +195,22 @@ sel4-thin = ["live-node"]
 # Run where software Vulkan (lavapipe) exists, e.g. persvati:
 #   ZED_OFFSCREEN_PREFER_CPU=1 VK_ICD_FILENAMES=…/lvp_icd.json \
 #     cargo run --release --features headless-render -- --render-cockpit OUT
-headless-render = [
-    "native-full",
+# RENDER-CAPTURE — the offscreen output-buffer capture (Window::render_to_image +
+# the wgpu offscreen renderer). This is INTRINSIC to the default build: the cockpit
+# must ALWAYS be able to bake its own output buffer to a frame (the MCP screenshot,
+# the seL4 framebuffer blit, the atlas/UI-tree crawl). It is NOT an opt-in toggle —
+# `native-full` (the default) pulls it. (gpui exposes the offscreen path under its
+# `test-support` flag; the name is gpui's, the capability is first-class for us.)
+render-capture = [
     "gpui/test-support",
     "gpui_platform/test-support",
     "dep:gpui_wgpu",
     "gpui_wgpu/test-support",
     "dep:image",
 ]
+# Back-compat alias: existing `--features headless-render` invocations still work,
+# but capture is already in the default build, so you rarely need it.
+headless-render = ["native-full"]
 
 [dependencies]
 # --- wire contract (always available: remote-node + sel4-thin + wasm paths) --
