@@ -959,9 +959,13 @@ theorem subsetTable_mem_iff (bits : Nat) (x y : ℤ) :
 #guard ¬ (([3, 1] : List ℤ) ∈ subsetTable 2)
 
 /-- The held-capability MEMBERSHIP read: the before `cap_root` opens at `param[CAP_KEY]` to
-`param[HELD_MASK]` (root unchanged — a read). Guarded by the attenuate selector. -/
-def heldReadOp : MapOp :=
-  { guard   := .var EffectVmEmitAttenuateA.selA.ATTENUATE
+`param[HELD_MASK]` (root unchanged — a read). **Guarded by the per-effect runtime selector column `s`**
+— the column the trace generator sets to `1` on THIS effect's active row (`sel.ATTENUATE_CAPABILITY = 48`
+for attenuate, `sel.REVOKE_CAPABILITY = 24` for revokeCapability). The forge close (`bd7ba0bf9`): the
+guard MUST be the selector that fires on the row, NOT the never-firing `selA.ATTENUATE = 2` faithfulness
+name, else the map_op never fires and the cap-root write is unbound. -/
+def heldReadOp (s : Nat) : MapOp :=
+  { guard   := .var s
   , root    := .var (sbCol state.CAP_ROOT)
   , key     := .var (prmCol CAP_KEY)
   , value   := .var (prmCol HELD_MASK)
@@ -969,9 +973,10 @@ def heldReadOp : MapOp :=
   , op      := .read }
 
 /-- The attenuated WRITE: the post `cap_root` is the genuine sorted insert-or-update of
-`param[KEEP_MASK]` at the same key. -/
-def keepWriteOp : MapOp :=
-  { guard   := .var EffectVmEmitAttenuateA.selA.ATTENUATE
+`param[KEEP_MASK]` at the same key. **Guarded by the per-effect runtime selector column `s`**
+(`sel.ATTENUATE_CAPABILITY = 48`); the forge close re-points it off the never-firing `selA.ATTENUATE = 2`. -/
+def keepWriteOp (s : Nat) : MapOp :=
+  { guard   := .var s
   , root    := .var (sbCol state.CAP_ROOT)
   , key     := .var (prmCol CAP_KEY)
   , value   := .var (prmCol KEEP_MASK)
@@ -990,7 +995,8 @@ def attenuateVmDescriptor2 : EffectVmDescriptor2 :=
   { graduateV1 EffectVmEmitAttenuateA.attenuateVmDescriptor with
     constraints :=
       (graduateV1 EffectVmEmitAttenuateA.attenuateVmDescriptor).constraints
-        ++ [.mapOp heldReadOp, .mapOp keepWriteOp, .lookup submaskLookup] }
+        ++ [.mapOp (heldReadOp sel.ATTENUATE_CAPABILITY),
+            .mapOp (keepWriteOp sel.ATTENUATE_CAPABILITY), .lookup submaskLookup] }
 
 /-- **`attenuateV2_non_amp` — cap-crown phase B, the circuit leg.** On an active attenuate row
 of a `Satisfied2` witness (subset table faithful): (1) the held capability IS in the before
@@ -1002,7 +1008,7 @@ theorem attenuateV2_non_amp (hash : List ℤ → ℤ)
     (hsub : t.tf (.custom SUBMASK_TID) = subsetTable MASK_BITS)
     (hsat : Satisfied2 hash attenuateVmDescriptor2 minit mfin maddrs t)
     (i : Nat) (hi : i < t.rows.length)
-    (hactive : (envAt t i).loc EffectVmEmitAttenuateA.selA.ATTENUATE = 1) :
+    (hactive : (envAt t i).loc sel.ATTENUATE_CAPABILITY = 1) :
     opensTo hash ((envAt t i).loc (sbCol state.CAP_ROOT))
         ((envAt t i).loc (prmCol CAP_KEY)) (some ((envAt t i).loc (prmCol HELD_MASK)))
     ∧ writesTo hash ((envAt t i).loc (sbCol state.CAP_ROOT))
@@ -1011,8 +1017,8 @@ theorem attenuateV2_non_amp (hash : List ℤ → ℤ)
     ∧ ∃ a b : Nat, (envAt t i).loc (prmCol KEEP_MASK) = (a : ℤ)
         ∧ (envAt t i).loc (prmCol HELD_MASK) = (b : ℤ) ∧ a &&& b = a := by
   have hrowc := hsat.rowConstraints i hi
-  have hread := hrowc (.mapOp heldReadOp) (by simp [attenuateVmDescriptor2])
-  have hwrite := hrowc (.mapOp keepWriteOp) (by simp [attenuateVmDescriptor2])
+  have hread := hrowc (.mapOp (heldReadOp sel.ATTENUATE_CAPABILITY)) (by simp [attenuateVmDescriptor2])
+  have hwrite := hrowc (.mapOp (keepWriteOp sel.ATTENUATE_CAPABILITY)) (by simp [attenuateVmDescriptor2])
   have hlook := hrowc (.lookup submaskLookup) (by simp [attenuateVmDescriptor2])
   have hr := hread hactive
   have hw := hwrite hactive
@@ -1032,7 +1038,7 @@ theorem attenuateV2_held_determined (hash : List ℤ → ℤ)
     (hsub : t.tf (.custom SUBMASK_TID) = subsetTable MASK_BITS)
     (hsat : Satisfied2 hash attenuateVmDescriptor2 minit mfin maddrs t)
     (i : Nat) (hi : i < t.rows.length)
-    (hactive : (envAt t i).loc EffectVmEmitAttenuateA.selA.ATTENUATE = 1)
+    (hactive : (envAt t i).loc sel.ATTENUATE_CAPABILITY = 1)
     (v : ℤ)
     (hclaim : opensTo hash ((envAt t i).loc (sbCol state.CAP_ROOT))
         ((envAt t i).loc (prmCol CAP_KEY)) (some v)) :
@@ -1064,9 +1070,11 @@ strictly below any held mask). Both map ops fire on the abstract cap-graph-row s
 Rust registry's job. -/
 
 /-- The revoke WRITE: the post `cap_root` is the genuine sorted write of the ZERO sentinel value at
-the held key (the slot's rights removed). Guarded by the cap-graph-row selector. -/
-def removeWriteOp : MapOp :=
-  { guard   := .var EffectVmEmitAttenuateA.selA.ATTENUATE
+the held key (the slot's rights removed). **Guarded by the per-effect runtime selector column `s`**
+(`sel.REVOKE_CAPABILITY = 24` on the revokeCapability row); the forge close re-points it off the
+never-firing `selA.ATTENUATE = 2`. -/
+def removeWriteOp (s : Nat) : MapOp :=
+  { guard   := .var s
   , root    := .var (sbCol state.CAP_ROOT)
   , key     := .var (prmCol CAP_KEY)
   , value   := .const 0
@@ -1080,7 +1088,7 @@ def revokeCapabilityVmDescriptor2 : EffectVmDescriptor2 :=
   { graduateV1 EffectVmEmitRevokeCapability.revokeCapabilityVmDescriptor with
     constraints :=
       (graduateV1 EffectVmEmitRevokeCapability.revokeCapabilityVmDescriptor).constraints
-        ++ [.mapOp heldReadOp, .mapOp removeWriteOp] }
+        ++ [.mapOp (heldReadOp sel.REVOKE_CAPABILITY), .mapOp (removeWriteOp sel.REVOKE_CAPABILITY)] }
 
 /-- **`revokeV2_removes` — cap-crown revoke, the circuit leg.** On an active cap-graph row of a
 `Satisfied2` witness: (1) the revoked capability IS in the before cap-map — some sorted heap behind
@@ -1090,15 +1098,15 @@ theorem revokeV2_removes (hash : List ℤ → ℤ)
     (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
     (hsat : Satisfied2 hash revokeCapabilityVmDescriptor2 minit mfin maddrs t)
     (i : Nat) (hi : i < t.rows.length)
-    (hactive : (envAt t i).loc EffectVmEmitAttenuateA.selA.ATTENUATE = 1) :
+    (hactive : (envAt t i).loc sel.REVOKE_CAPABILITY = 1) :
     opensTo hash ((envAt t i).loc (sbCol state.CAP_ROOT))
         ((envAt t i).loc (prmCol CAP_KEY)) (some ((envAt t i).loc (prmCol HELD_MASK)))
     ∧ writesTo hash ((envAt t i).loc (sbCol state.CAP_ROOT))
         ((envAt t i).loc (prmCol CAP_KEY)) 0
         ((envAt t i).loc (saCol state.CAP_ROOT)) := by
   have hrowc := hsat.rowConstraints i hi
-  have hread := hrowc (.mapOp heldReadOp) (by simp [revokeCapabilityVmDescriptor2])
-  have hwrite := hrowc (.mapOp removeWriteOp) (by simp [revokeCapabilityVmDescriptor2])
+  have hread := hrowc (.mapOp (heldReadOp sel.REVOKE_CAPABILITY)) (by simp [revokeCapabilityVmDescriptor2])
+  have hwrite := hrowc (.mapOp (removeWriteOp sel.REVOKE_CAPABILITY)) (by simp [revokeCapabilityVmDescriptor2])
   have hr := hread hactive
   have hw := hwrite hactive
   -- The write op's `value` is the constant 0; its evaluated value is `0`.
@@ -1113,7 +1121,7 @@ theorem revokeV2_held_determined (hash : List ℤ → ℤ)
     (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
     (hsat : Satisfied2 hash revokeCapabilityVmDescriptor2 minit mfin maddrs t)
     (i : Nat) (hi : i < t.rows.length)
-    (hactive : (envAt t i).loc EffectVmEmitAttenuateA.selA.ATTENUATE = 1)
+    (hactive : (envAt t i).loc sel.REVOKE_CAPABILITY = 1)
     (v : ℤ)
     (hclaim : opensTo hash ((envAt t i).loc (sbCol state.CAP_ROOT))
         ((envAt t i).loc (prmCol CAP_KEY)) (some v)) :
@@ -1129,7 +1137,7 @@ theorem revokeV2_post_determined (hash : List ℤ → ℤ)
     (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
     (hsat : Satisfied2 hash revokeCapabilityVmDescriptor2 minit mfin maddrs t)
     (i : Nat) (hi : i < t.rows.length)
-    (hactive : (envAt t i).loc EffectVmEmitAttenuateA.selA.ATTENUATE = 1)
+    (hactive : (envAt t i).loc sel.REVOKE_CAPABILITY = 1)
     (r' : ℤ)
     (hclaim : writesTo hash ((envAt t i).loc (sbCol state.CAP_ROOT))
         ((envAt t i).loc (prmCol CAP_KEY)) 0 r') :

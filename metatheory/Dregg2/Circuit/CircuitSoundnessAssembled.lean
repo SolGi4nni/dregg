@@ -128,9 +128,15 @@ def v3RegistryHeap : List (String × EffectVmDescriptor2) :=
         ("delegateAttenWriteCapOpenVmDescriptor2R24",
          Dregg2.Circuit.Emit.CapOpenEmit.delegateAttenWriteCapOpenV3),
         ("revokeDelegationWriteCapOpenVmDescriptor2R24",
-         Dregg2.Circuit.Emit.CapOpenEmit.revokeDelegationWriteCapOpenV3)]
+         Dregg2.Circuit.Emit.CapOpenEmit.revokeDelegationWriteCapOpenV3),
+        -- The refreshDelegation WRITE-FORCING wrapper (position 50): the DELEGATIONS-tree UPDATE-write
+        -- FORCED on the moving genuine face (the `delegRoot_runtime_column_pending` close — guarantee A).
+        -- `actionTagToPos 55` re-keys here; the authority-only `refreshDelegationCapOpenV3` (pos 40) stays
+        -- for the live prover route.
+        ("refreshDelegationWriteCapOpenVmDescriptor2R24",
+         Dregg2.Circuit.Emit.CapOpenEmit.refreshDelegationWriteCapOpenV3)]
 
-theorem v3RegistryHeap_length : v3RegistryHeap.length = 50 := by
+theorem v3RegistryHeap_length : v3RegistryHeap.length = 51 := by
   simp [v3RegistryHeap, Dregg2.Circuit.Emit.CapOpenEmit.v3RegistryCapOpen_length]
 
 /-- The heapWrite member lands at tail position 45 — `Rfix 56` resolves THERE. -/
@@ -188,8 +194,10 @@ def actionTagToPos : EffectIdx → Nat
   | 52 => 5    -- cellSeal        → cellSealVmDescriptor2R24
   | 53 => 26   -- cellUnseal      → cellUnsealVmDescriptor2R24
   | 54 => 6    -- cellDestroy     → cellDestroyVmDescriptor2R24
-  | 55 => 40   -- refreshDelegation→ refreshDelegationCapOpenVmDescriptor2R24 (FAN-OUT: refresh base +
-               --                   EFF_DELEGATION_OPS appendix)
+  | 55 => 50   -- refreshDelegation→ refreshDelegationWriteCapOpenVmDescriptor2R24 (FAN-OUT WRITE:
+               --                   `refreshDelegationWriteV3` DELEG-tree UPDATE base + EFF_DELEGATION_OPS
+               --                   appendix; the DELEGATIONS-tree write FORCED in-circuit — guarantee A,
+               --                   the `delegRoot_runtime_column_pending` close)
   | 56 => 45   -- heapWrite        → heapWriteVmDescriptor2R24 (the LIVE Class-A heap-root recompute
                --                   descriptor, `v3RegistryHeap` tail; `Rfix 56 = heapWriteV3`)
   | _  => 1000 -- off-range: past the registry → transfer fallback
@@ -263,10 +271,11 @@ theorem Rfix_grantCap_capOpen : Rfix 11 = Dregg2.Circuit.Emit.CapOpenEmit.delega
 (`revokeDelegationWriteCapOpenV3`, position 49) — the cap-tree REMOVE FORCED on the moving genuine face. -/
 theorem Rfix_revokeDelegation_capOpen :
     Rfix 14 = Dregg2.Circuit.Emit.CapOpenEmit.revokeDelegationWriteCapOpenV3 := rfl
-/-- refreshDelegation (tag 55) routes to the LIVE refresh fan-out cap-open (`refreshDelegationCapOpenV3`,
-position 40). -/
+/-- refreshDelegation (tag 55) routes to the WRITE-FORCING refresh fan-out cap-open
+(`refreshDelegationWriteCapOpenV3`, position 50) — the DELEGATIONS-tree UPDATE-write FORCED on the moving
+genuine face (the `delegRoot_runtime_column_pending` close, guarantee A circuit-forced). -/
 theorem Rfix_refreshDelegation_capOpen :
-    Rfix 55 = Dregg2.Circuit.Emit.CapOpenEmit.refreshDelegationCapOpenV3 := rfl
+    Rfix 55 = Dregg2.Circuit.Emit.CapOpenEmit.refreshDelegationWriteCapOpenV3 := rfl
 /-- revokeCapability (tag 24 = the wire `sel::REVOKE_CAPABILITY`) routes to the LIVE revokeCapability
 fan-out cap-open (`revokeCapabilityCapOpenV3`, position 41) — DISTINCT from the revoke(Delegation)
 fan-out (pos 39), binding the cap to its OWN bit `EFF_REVOKE_CAPABILITY = 3`. So `vkOfRegistry Rfix`

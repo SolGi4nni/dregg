@@ -87,12 +87,14 @@ open Dregg2.Circuit.Emit.EffectVmEmit.state (CAP_ROOT)
 open Dregg2.Circuit.Emit.EffectVmEmitV2 (heldReadOp removeWriteOp CAP_KEY KEEP_MASK HELD_MASK)
 open Dregg2.Circuit.Emit.EffectVmEmitRotationV3
   (revokeCapabilityV3 delegateV3 delegateAttenV3 grantCapWriteV3 attenuateV3
-   introduceWriteV3 revokeDelegationWriteV3
-   beforeCapRootCol afterCapRootCol
+   introduceWriteV3 revokeDelegationWriteV3 refreshDelegationWriteV3
+   beforeCapRootCol afterCapRootCol beforeDelegRootCol afterDelegRootCol
    delegateV3_forces_write grantCapWriteV3_forces_write delegateAttenV3_non_amp attenuateV3_non_amp
-   introduceWriteV3_forces_write revokeDelegationWriteV3_forces_write)
+   introduceWriteV3_forces_write revokeDelegationWriteV3_forces_write
+   refreshDelegationWriteV3_forces_write)
 open Dregg2.Circuit.Emit.CapOpenEmit
-  (introduceWriteCapOpenV3 revokeDelegationWriteCapOpenV3 delegateWriteCapOpenV3 grantCapWriteCapOpenV3
+  (introduceWriteCapOpenV3 revokeDelegationWriteCapOpenV3 refreshDelegationWriteCapOpenV3
+   delegateWriteCapOpenV3 grantCapWriteCapOpenV3
    delegateAttenWriteCapOpenV3 attenuateCapOpenEffV3 capOpen_satisfied2_strips_to_base)
 
 set_option autoImplicit false
@@ -288,7 +290,7 @@ structure AttenuateWriteAnchor {State : Type} (S : CapHashScheme State)
     (henc : AttenuateCapsTreeEncodes S pre post actor idx keep) : Type where
   row : Nat
   hrow : row < tr.rows.length
-  hactive : (envAt tr row).loc Dregg2.Circuit.Emit.EffectVmEmitAttenuateA.selA.ATTENUATE = 1
+  hactive : (envAt tr row).loc Dregg2.Circuit.Emit.EffectVmEmit.sel.ATTENUATE_CAPABILITY = 1
   -- attenuate is the IN-PLACE update-at-key on the V1-STATE cap-root column (`keepWriteOp`, NOT a
   -- write wrapper): the decode's sorted-tree roots anchor to the committed v1-state CAP_ROOT limbs.
   oldAnchored : henc.oldRoot = (envAt tr row).loc (sbCol CAP_ROOT)
@@ -607,7 +609,7 @@ structure DelegateWriteAnchor {State : Type} (S : CapHashScheme State)
     (henc : DelegateCapsTreeEncodes S pre post del rec t) : Type where
   row : Nat
   hrow : row < tr.rows.length
-  hactive : (envAt tr row).loc Dregg2.Circuit.Emit.EffectVmEmitAttenuateA.selA.ATTENUATE = 1
+  hactive : (envAt tr row).loc Dregg2.Circuit.Emit.EffectVmEmit.sel.GRANT_CAP = 1
   -- the WitnessDecodes seam: the decode's sorted-tree roots ARE the committed cap-root limbs.
   -- the cap-root advance now lives on the ROTATED before/after limbs (note-spend-shaped — the
   -- v1-state continuity collision dodged); the decode's sorted-tree roots ARE those committed limbs.
@@ -676,7 +678,7 @@ structure DelegateAttenWriteAnchor {State : Type} (S : CapHashScheme State)
     (henc : DelegateAttenCapsTreeEncodes S pre post del rec t keep) : Type where
   row : Nat
   hrow : row < tr.rows.length
-  hactive : (envAt tr row).loc Dregg2.Circuit.Emit.EffectVmEmitAttenuateA.selA.ATTENUATE = 1
+  hactive : (envAt tr row).loc Dregg2.Circuit.Emit.EffectVmEmit.sel.GRANT_CAP = 1
   -- the cap-root advance now lives on the ROTATED before/after limbs (note-spend-shaped — the
   -- v1-state continuity collision dodged); the decode's sorted-tree roots ARE those committed limbs.
   oldAnchored : henc.oldRoot = (envAt tr row).loc (beforeCapRootCol EFFECT_VM_WIDTH)
@@ -727,7 +729,7 @@ structure IntroduceWriteAnchor {State : Type} (S : CapHashScheme State)
     (henc : DelegateCapsTreeEncodes S pre post del rec t) : Type where
   row : Nat
   hrow : row < tr.rows.length
-  hactive : (envAt tr row).loc Dregg2.Circuit.Emit.EffectVmEmitAttenuateA.selA.ATTENUATE = 1
+  hactive : (envAt tr row).loc Dregg2.Circuit.Emit.EffectVmEmit.sel.INTRODUCE = 1
   -- the cap-root advance now lives on the ROTATED before/after limbs (note-spend-shaped — the
   -- v1-state continuity collision dodged); the decode's sorted-tree roots ARE those committed limbs.
   oldAnchored : henc.oldRoot = (envAt tr row).loc (beforeCapRootCol EFFECT_VM_WIDTH)
@@ -760,7 +762,7 @@ structure RevokeDelegationWriteAnchor {State : Type} (S : CapHashScheme State)
     (henc : RevokeCapsTreeEncodes S pre post holder t) : Type where
   row : Nat
   hrow : row < tr.rows.length
-  hactive : (envAt tr row).loc Dregg2.Circuit.Emit.EffectVmEmitAttenuateA.selA.ATTENUATE = 1
+  hactive : (envAt tr row).loc Dregg2.Circuit.Emit.EffectVmEmit.sel.REVOKE_DELEGATION = 1
   -- the cap-root advance now lives on the ROTATED before/after limbs (note-spend-shaped — the
   -- v1-state continuity collision dodged); the decode's sorted-tree roots ARE those committed limbs.
   oldAnchored : henc.oldRoot = (envAt tr row).loc (beforeCapRootCol EFFECT_VM_WIDTH)
@@ -898,6 +900,95 @@ theorem revokeDelegation_descriptorRefines_capOpenSat {State : Type} (S : CapHas
   revokeDelegation_descriptorRefines_sat S pre post holder t hash mi mf ma tr
     (capOpen_satisfied2_strips_to_base hash _ revokeDelegationWriteV3 _ _ mi mf ma tr hsat) henc anc
 
+/-! ## §3.5R — CLASS A for refreshDelegation: the DELEGATIONS-tree WRITE is FORCED (the LAST cap-family
+residual, `delegRoot_runtime_column_pending`, CLOSED).
+
+`refreshDelegation` is the ONE cap-family effect whose genuine move is on the DELEGATIONS tree (the `DELEG`
+system-root), NOT `caps`: `delegations := refreshDelegationsMap k child` is an in-place UPDATE-AT-KEY. The
+record-layer §7 binding (`delegRoot_moves_under_spec`) tied that move to the `DELEG` system-root, but the
+WRITE was a prover-supplied `SpineCommits` hypothesis (`RefreshDelegationCapsTreeEncodes.hold`/`.hnew`),
+unanchored to any in-circuit write gate — `EffectVmEmitRefreshDelegation.delegRoot_runtime_column_pending`.
+
+The close mirrors the cap-write rebase exactly, on the DELEG tree: the DEPLOYED `refreshDelegationWriteV3`
+(`v3OfWithCapWrite …Genuine [delegReadOpRot, delegUpdateWriteOpRot]`) carries the in-row DELEG-tree
+UPDATE-write on the ROTATED before/after limbs (note-spend-shaped — refresh FREEZES `caps` on the v1
+column, so the rotated cap-root limb is free to carry the DELEG accumulator). `refreshDelegationWriteV3_forces_write`
+FORCES `writesTo deleg_root_before child_key snapshot deleg_root_after` from `Satisfied2`; `writesTo` is
+FUNCTIONAL under CR — a forged post-deleg-root is UNSAT. With this rung the apex consumes `Satisfied2` of a
+descriptor that FORCES the delegations-tree write — refreshDelegation reaches CLASS A. -/
+
+/-- **`RefreshDelegationWriteAnchor` — the realizable trace seam for refreshDelegation** (the DELEG-tree
+UPDATE on the moving genuine face). The decode's DELEG sorted-tree roots (`RefreshDelegationCapsTreeEncodes`'s
+`oldRoot`/`newRoot` over the delegations tree) ARE the committed ROTATED deleg-root limbs (the `WitnessDecodes`
+trace-fill identity). The child key is read at `prmCol CAP_KEY`. -/
+structure RefreshDelegationWriteAnchor {State : Type} (S : CapHashScheme State)
+    (pre post : RecChainedState) (actor child : CellId)
+    (hash : List ℤ → ℤ) (mi : ℤ → ℤ) (mf : ℤ → ℤ × Nat) (ma : List ℤ) (tr : VmTrace)
+    (henc : RefreshDelegationCapsTreeEncodes S pre post actor child) : Type where
+  row : Nat
+  hrow : row < tr.rows.length
+  hactive : (envAt tr row).loc Dregg2.Circuit.Emit.EffectVmEmit.sel.REFRESH_DELEGATION = 1
+  -- the WitnessDecodes seam: the decode's DELEG sorted-tree roots ARE the committed rotated deleg-root
+  -- limbs (the rotated cap-root limb 25 carries the DELEG accumulator on a refresh row; refresh freezes caps).
+  oldAnchored : henc.oldRoot = (envAt tr row).loc (beforeDelegRootCol EFFECT_VM_WIDTH)
+  newAnchored : henc.newRoot = (envAt tr row).loc (afterDelegRootCol EFFECT_VM_WIDTH)
+
+/-- **`refreshDelegation_descriptorRefines_sat` — THE REFRESHDELEGATION CLASS-A REFINEMENT (DELEG write
+FORCED).** From `Satisfied2 hash refreshDelegationWriteV3` (via `refreshDelegationWriteV3_forces_write` on
+the moving genuine face), the kernel `RefreshDelegationSpec` HOLDS AND the post DELEG-root is the
+DEPLOYED-FORCED genuine sorted UPDATE-AT-KEY of the child's snapshot at the child key against the
+membership-opened before DELEG-root. The `delegRoot_runtime_column_pending` supplied-digest gap is GONE —
+guarantee A circuit-forced over the delegations tree. The `refreshDelegationsMap` overwrite + frame + log
+ride the §2.c decode residual. -/
+theorem refreshDelegation_descriptorRefines_sat {State : Type} (S : CapHashScheme State)
+    (pre post : RecChainedState) (actor child : CellId)
+    (hash : List ℤ → ℤ) (mi : ℤ → ℤ) (mf : ℤ → ℤ × Nat) (ma : List ℤ) (tr : VmTrace)
+    (hsat : Satisfied2 hash refreshDelegationWriteV3 mi mf ma tr)
+    (henc : RefreshDelegationCapsTreeEncodes S pre post actor child)
+    (anc : RefreshDelegationWriteAnchor S pre post actor child hash mi mf ma tr henc) :
+    RefreshDelegationSpec pre actor child post
+    ∧ writesTo hash henc.oldRoot
+        ((envAt tr anc.row).loc (prmCol CAP_KEY)) ((envAt tr anc.row).loc (prmCol KEEP_MASK))
+        henc.newRoot := by
+  refine ⟨refreshDelegation_descriptorRefines S pre post actor child henc, ?_⟩
+  rw [anc.oldAnchored, anc.newAnchored]
+  exact (refreshDelegationWriteV3_forces_write hash mi mf ma tr hsat anc.row anc.hrow anc.hactive).2
+
+/-- **CLASS-A TOOTH (refreshDelegation) — a forged wrong post-deleg-root is UNSAT.** Mutation: dropping
+`delegUpdateWriteOpRot` from `refreshDelegationWriteV3` removes the forced `writesTo`, so this conclusion
+can no longer be drawn — editing the deleg-write descriptor reds the apex. -/
+theorem refreshDelegation_sat_forces_delegroot {State : Type} (S : CapHashScheme State)
+    (pre post : RecChainedState) (actor child : CellId)
+    (hash : List ℤ → ℤ) (mi : ℤ → ℤ) (mf : ℤ → ℤ × Nat) (ma : List ℤ) (tr : VmTrace)
+    (hsat : Satisfied2 hash refreshDelegationWriteV3 mi mf ma tr)
+    (henc : RefreshDelegationCapsTreeEncodes S pre post actor child)
+    (anc : RefreshDelegationWriteAnchor S pre post actor child hash mi mf ma tr henc) :
+    writesTo hash henc.oldRoot
+      ((envAt tr anc.row).loc (prmCol CAP_KEY)) ((envAt tr anc.row).loc (prmCol KEEP_MASK))
+      henc.newRoot :=
+  (refreshDelegation_descriptorRefines_sat S pre post actor child hash mi mf ma tr hsat henc anc).2
+
+/-- **`refreshDelegation_descriptorRefines_capOpenSat` — the apex-wirable refreshDelegation rung.** Consumes
+`Satisfied2 hash refreshDelegationWriteCapOpenV3` (base `refreshDelegationWriteV3`) by stripping the cap-open
+authority appendix + selector tooth to the base and applying `refreshDelegation_descriptorRefines_sat`. The
+apex (`Rfix 55` re-pointed) wires this. -/
+theorem refreshDelegation_descriptorRefines_capOpenSat {State : Type} (S : CapHashScheme State)
+    (pre post : RecChainedState) (actor child : CellId)
+    (hash : List ℤ → ℤ) (mi : ℤ → ℤ) (mf : ℤ → ℤ × Nat) (ma : List ℤ) (tr : VmTrace)
+    (hsat : Satisfied2 hash refreshDelegationWriteCapOpenV3 mi mf ma tr)
+    (henc : RefreshDelegationCapsTreeEncodes S pre post actor child)
+    (anc : RefreshDelegationWriteAnchor S pre post actor child hash mi mf ma tr henc) :
+    RefreshDelegationSpec pre actor child post
+    ∧ writesTo hash henc.oldRoot
+        ((envAt tr anc.row).loc (prmCol CAP_KEY)) ((envAt tr anc.row).loc (prmCol KEEP_MASK))
+        henc.newRoot :=
+  refreshDelegation_descriptorRefines_sat S pre post actor child hash mi mf ma tr
+    (capOpen_satisfied2_strips_to_base hash _ refreshDelegationWriteV3 _ _ mi mf ma tr hsat) henc anc
+
+#assert_axioms refreshDelegation_descriptorRefines_sat
+#assert_axioms refreshDelegation_sat_forces_delegroot
+#assert_axioms refreshDelegation_descriptorRefines_capOpenSat
+
 /-! `revokeCapability` (tag 24) needs NO strip bridge: its DEPLOYED write rides `revokeCapabilityV3` directly
 (`v3OfWith … [heldReadOp, removeWriteOp]`), whose `revokeCapability_descriptorRefines_sat` (§3.A) already
 carries the `Satisfied2 revokeCapabilityV3` write leg. The apex wires that rung over `revokeCapabilityV3`; the
@@ -970,7 +1061,7 @@ theorem revokeCapabilityV3_non_amp (hash : List ℤ → ℤ)
     {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
     (hsat : Satisfied2 hash revokeCapabilityV3 minit mfin maddrs t)
     (i : Nat) (hi : i < t.rows.length)
-    (hactive : (envAt t i).loc Dregg2.Circuit.Emit.EffectVmEmitAttenuateA.selA.ATTENUATE = 1) :
+    (hactive : (envAt t i).loc Dregg2.Circuit.Emit.EffectVmEmit.sel.REVOKE_CAPABILITY = 1) :
     opensTo hash ((envAt t i).loc (sbCol CAP_ROOT))
         ((envAt t i).loc (prmCol CAP_KEY))
         (some ((envAt t i).loc (prmCol HELD_MASK)))
@@ -978,11 +1069,12 @@ theorem revokeCapabilityV3_non_amp (hash : List ℤ → ℤ)
         ((envAt t i).loc (prmCol CAP_KEY)) 0
         ((envAt t i).loc (saCol CAP_ROOT)) := by
   have hrowc := hsat.rowConstraints i hi
-  have hmem : ∀ c ∈ ([.mapOp heldReadOp, .mapOp removeWriteOp] :
+  have hmem : ∀ c ∈ ([.mapOp (heldReadOp Dregg2.Circuit.Emit.EffectVmEmit.sel.REVOKE_CAPABILITY),
+      .mapOp (removeWriteOp Dregg2.Circuit.Emit.EffectVmEmit.sel.REVOKE_CAPABILITY)] :
       List Dregg2.Circuit.DescriptorIR2.VmConstraint2), c ∈ revokeCapabilityV3.constraints :=
     fun c hc => List.mem_append_right _ hc
-  have hread := hrowc (.mapOp heldReadOp) (hmem _ (by simp))
-  have hwrite := hrowc (.mapOp removeWriteOp) (hmem _ (by simp))
+  have hread := hrowc (.mapOp (heldReadOp Dregg2.Circuit.Emit.EffectVmEmit.sel.REVOKE_CAPABILITY)) (hmem _ (by simp))
+  have hwrite := hrowc (.mapOp (removeWriteOp Dregg2.Circuit.Emit.EffectVmEmit.sel.REVOKE_CAPABILITY)) (hmem _ (by simp))
   exact ⟨(hread hactive).1, hwrite hactive⟩
 
 /-- **`RevokeCapabilityTraceReadout` — the realizable circuit-witness extraction for revokeCapability.** The
@@ -993,7 +1085,7 @@ structure RevokeCapabilityTraceReadout (hash : List ℤ → ℤ)
     (pre post : RecChainedState) (holder target : CellId) : Type where
   row : Nat
   hrow : row < t.rows.length
-  hsel : (envAt t row).loc Dregg2.Circuit.Emit.EffectVmEmitAttenuateA.selA.ATTENUATE = 1
+  hsel : (envAt t row).loc Dregg2.Circuit.Emit.EffectVmEmit.sel.REVOKE_CAPABILITY = 1
   capsMoveDecodes :
     writesTo hash ((envAt t row).loc (sbCol CAP_ROOT))
         ((envAt t row).loc (prmCol CAP_KEY)) 0

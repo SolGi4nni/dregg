@@ -468,6 +468,16 @@ def revokeDelegationWriteCapOpenV3 : EffectVmDescriptor2 :=
     (effCapOpenV3 EffectVmEmitRotationV3.revokeDelegationWriteV3
       "dregg-effectvm-revoke-v1-rot24-v3-write-capopen" EFF_DELEGATION_OPS)
 
+/-- **`refreshDelegationWriteCapOpenV3`** — refreshDelegation-via-cap on the WRITE-FORCING base
+(`refreshDelegationWriteV3`): the authority READ appendix + the deployed DELEG-tree UPDATE-write op (the
+DELEGATIONS-tree write FORCED in-circuit, not the `delegRoot_runtime_column_pending` supplied digest). The
+cap must permit `EFFECT_DELEGATION_OPS`. The apex (`Rfix 55` re-pointed) wires this for the FULL guarantee
+A — refreshDelegation reaches Class-A. -/
+def refreshDelegationWriteCapOpenV3 : EffectVmDescriptor2 :=
+  withSelectorGate Dregg2.Circuit.Emit.EffectVmEmit.sel.REFRESH_DELEGATION
+    (effCapOpenV3 EffectVmEmitRotationV3.refreshDelegationWriteV3
+      "dregg-effectvm-refresh-v1-rot24-v3-write-capopen" EFF_DELEGATION_OPS)
+
 /-- **`delegateWriteCapOpenV3`** — delegate-via-cap on the WRITE-FORCING base (`grantCapWriteV3` = the moving
 attenuate-A face + `[heldReadOp, insertWriteOp]`): the authority READ appendix + the deployed `insertWriteOp`.
 Unlike `delegateCapOpenV3` (base `grantCapV3`, no write leg, authority-only), THIS carries BOTH the authority

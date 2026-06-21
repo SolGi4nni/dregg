@@ -1038,6 +1038,38 @@ theorem revokeDelegation_closedLog_sat
       exact (Dregg2.Circuit.RotatedKernelRefinementCapFamily.revokeDelegation_descriptorRefines_capOpenSat
         Scap pre post holder tt hash minit mfin maddrs t hsat henc anc).1)
 
+/-- refreshDelegation (tag 55), CLASS A — forced from `refreshDelegationWriteCapOpenV3` (`= Rfix 55`);
+the DELEGATIONS-tree UPDATE-write is FORCED in-circuit (the `delegRoot_runtime_column_pending` supplied
+digest is GONE). The cap-open wrapper strips to `refreshDelegationWriteV3` and applies
+`refreshDelegation_descriptorRefines_sat`, forcing `RefreshDelegationSpec` AND the deleg-root write.
+Editing the deleg-write descriptor turns this — and the apex — RED. -/
+theorem refreshDelegation_closedLog_sat
+    {State : Type} (Scap : Dregg2.Circuit.DeployedCapTree.CapHashScheme State)
+    (hash : List ℤ → ℤ)
+    {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : Dregg2.Circuit.DescriptorIR2.VmTrace}
+    (hsat : Dregg2.Circuit.DescriptorIR2.Satisfied2 hash
+      Dregg2.Circuit.Emit.CapOpenEmit.refreshDelegationWriteCapOpenV3 minit mfin maddrs t)
+    (pre post : RecChainedState) (actor child : CellId)
+    (pc : PublishedCommit) (pubLogPre pubLogPost : ℤ)
+    (hdec : StateDecodeLog Slive LH pc pubLogPre pubLogPost pre post)
+    (hpub : pubLogPost
+      = LH (Dregg2.Circuit.Spec.RefreshDelegation.refreshDelegationReceipt actor child :: pre.log))
+    (logNeeds : post.log
+        = Dregg2.Circuit.Spec.RefreshDelegation.refreshDelegationReceipt actor child :: pre.log →
+      Σ' (henc : Dregg2.Circuit.RotatedKernelRefinementCapFamily.RefreshDelegationCapsTreeEncodes
+            Scap pre post actor child),
+        Dregg2.Circuit.RotatedKernelRefinementCapFamily.RefreshDelegationWriteAnchor
+          Scap pre post actor child hash minit mfin maddrs t henc) :
+    kstepAll 55 pre post :=
+  closedLog_of_encode (.refreshDelegationA actor child)
+    (Dregg2.Circuit.Spec.RefreshDelegation.refreshDelegationReceipt actor child) hdec hpub rfl
+    (fun hadv => by
+      obtain ⟨henc, anc⟩ := logNeeds hadv
+      show fullActionStep pre (.refreshDelegationA actor child) post
+      simp only [fullActionStep]
+      exact (Dregg2.Circuit.RotatedKernelRefinementCapFamily.refreshDelegation_descriptorRefines_capOpenSat
+        Scap pre post actor child hash minit mfin maddrs t hsat henc anc).1)
+
 /-- attenuate (tag 12), CLASS A — forced from the DEPLOYED `attenuateCapOpenEffV3` (`= Rfix 12`, base
 `attenuateV3` — the MOVING write face, no `gCapPass` freeze). The cap-tree UPDATE-AT-KEY (the in-place
 slot-narrow recompute of `cap_root`) is FORCED from `attenuateV3`'s `keepWriteOp` via

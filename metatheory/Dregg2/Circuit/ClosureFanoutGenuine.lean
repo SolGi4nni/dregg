@@ -385,7 +385,14 @@ theorem closedLogExtract_revoke_closed {State : Type}
   obtain ⟨holder, tt, hpub, logNeeds⟩ := readout minit mfin maddrs t pubLogPost pre post hsat
   exact revoke_closedLog Scap pre post holder tt pc pubLogPre pubLogPost hdecLog hpub.down logNeeds
 
-/-- **refreshDelegation (55).** Receipt is `refreshDelegationReceipt actor child`. -/
+/-- **refreshDelegation (55) — CLASS A.** The DELEGATIONS-tree UPDATE-write is forced from the DEPLOYED
+descriptor `refreshDelegationWriteCapOpenV3` (`= Rfix 55` by `rfl`): the readout extracts the actor/child,
+the published receipt-prepend, and the `RefreshDelegationCapsTreeEncodes` decode + the realizable
+`RefreshDelegationWriteAnchor` trace seam. `refreshDelegation_closedLog_sat` then forces
+`RefreshDelegationSpec` via the LIVE deleg-write op (`refreshDelegation_descriptorRefines_sat`). Editing
+`refreshDelegationWriteV3`'s `delegUpdateWriteOpRot` turns this RED. NO modelled `RefreshDelegationCapsTreeEncodes.gate`
+ride; the deleg WRITE is in-circuit-bound (the `delegRoot_runtime_column_pending` close). Receipt is
+`refreshDelegationReceipt actor child`. -/
 theorem closedLogExtract_refreshDelegation_closed {State : Type}
     (Scap : Dregg2.Circuit.DeployedCapTree.CapHashScheme State)
     (readout : ∀ (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
@@ -395,11 +402,17 @@ theorem closedLogExtract_refreshDelegation_closed {State : Type}
         PLift (pubLogPost
           = LH (Dregg2.Circuit.Spec.RefreshDelegation.refreshDelegationReceipt actor child :: pre.log)) ×'
         (post.log = Dregg2.Circuit.Spec.RefreshDelegation.refreshDelegationReceipt actor child :: pre.log →
-          Dregg2.Circuit.RotatedKernelRefinementCapFamily.RefreshDelegationCapsTreeEncodes Scap pre post actor child)) :
+          Σ' (henc : Dregg2.Circuit.RotatedKernelRefinementCapFamily.RefreshDelegationCapsTreeEncodes
+                Scap pre post actor child),
+            Dregg2.Circuit.RotatedKernelRefinementCapFamily.RefreshDelegationWriteAnchor
+              Scap pre post actor child hash minit mfin maddrs t henc)) :
     ClosedLogExtract Slive LH hash Rfix 55 := by
   intro _hCR minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
+  have hsat' : Satisfied2 hash Dregg2.Circuit.Emit.CapOpenEmit.refreshDelegationWriteCapOpenV3
+      minit mfin maddrs t := hsat
   obtain ⟨actor, child, hpub, logNeeds⟩ := readout minit mfin maddrs t pubLogPost pre post hsat
-  exact refreshDelegation_closedLog Scap pre post actor child pc pubLogPre pubLogPost hdecLog hpub.down logNeeds
+  exact refreshDelegation_closedLog_sat Scap hash hsat' pre post actor child
+    pc pubLogPre pubLogPost hdecLog hpub.down logNeeds
 
 /-! ## §3 — the compressN-family readouts (carry `compressN2` + `hN` + receipt + encode-minus-log).
 
@@ -822,7 +835,10 @@ structure ClosureReadouts
     Σ' (actor child : CellId),
       PLift (pubLogPost = LH (Dregg2.Circuit.Spec.RefreshDelegation.refreshDelegationReceipt actor child :: pre.log)) ×'
       (post.log = Dregg2.Circuit.Spec.RefreshDelegation.refreshDelegationReceipt actor child :: pre.log →
-        Dregg2.Circuit.RotatedKernelRefinementCapFamily.RefreshDelegationCapsTreeEncodes Scap pre post actor child)
+        Σ' (henc : Dregg2.Circuit.RotatedKernelRefinementCapFamily.RefreshDelegationCapsTreeEncodes
+              Scap pre post actor child),
+          Dregg2.Circuit.RotatedKernelRefinementCapFamily.RefreshDelegationWriteAnchor
+            Scap pre post actor child hash minit mfin maddrs t henc)
   rdCellSeal : ∀ minit mfin maddrs t pubLogPost pre post,
     Satisfied2 hash (Rfix 52) minit mfin maddrs t →
     Σ' (actor cell : CellId) (permOut : List ℤ → List ℤ),
