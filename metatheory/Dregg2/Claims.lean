@@ -256,12 +256,41 @@ parked (same reason as §12). Re-enable after rebuild. -/
 -- #assert_axioms Dregg2.Upgrade.upgradeGenealogy_sound
 -- #assert_axioms Dregg2.Upgrade.signatureVouchUnbrickable
 
-/-! ## §17 — Proof.Refine: Exec ⊑ Abstract refinement (full simulation diagram OPEN). -/
+/-! ## §17 — Proof.Refine: Exec ⊑ Abstract refinement (full per-step simulation diagram CLOSED).
+
+The conservation/integrity projections (always proved). The OPERATIONAL forward-simulation square
+— "every concrete step is matched by a genuine abstract STEP preserving the refinement relation" —
+is now ASSEMBLED on all three transition axes, each citing its proven square and carrying teeth:
+  * `refine_step` (intra-vat single-cell) — a committed scalar `exec` step is a genuine
+    `ExecRefinementFull.AbsStep` (the `conserveIdentity` arm: total conserved + caps framed), NOT
+    the former degenerate `cc' = cc` identity. `refine_step_square` bundles `Refines k' a' ∧ AbsStep`.
+  * `refine_cross_vat_step` / `refine_cross_vat_run` (cross-vat / inter-cell) — a committed N-ary
+    forest transition under the CG-5 Σ=0 binding is matched by `ForestLTS.forestAbsStep`; lifts to
+    whole forest runs. (Relay of `ForestLTS.forestAbsStep_forward` / `forestAbsRun_forward`.)
+  * `refine_async_run` (async / promise paths) — a committed conditional/EventualRef batch
+    (Kahn-topo, conservative regime) is matched by a CHAIN of genuine `CondAbsStep`s. (Relay of
+    `ConditionalTurn.condTurn_forward_sim`.)
+Non-vacuity (the relation BITES): `refine_step_bites` (a balance-moved pair is no `conserveIdentity`
+step), `refine_cross_vat_bites` (an unauthorized leg is no `forestAbsStep`), `refine_async_bites`
+(`CondAbsStep a a' ↔ a' = a`).
+
+RESIDUAL (precise, NAMED — run-level/coinductive, orthogonal to the per-step square): the
+whole-history connectivity closure (`ExecRefinementFull.OnlyConnectivityCloses`, a `def`-prop over
+runs); the contended adversary-scheduler interleaving (`ForestLTS §11`); the unbounded
+coinductive-νF batch (`ConditionalTurn §1`). The finite/non-contended/per-step cases are all closed. -/
 #assert_axioms Dregg2.Proof.refine_conservation
 #assert_axioms Dregg2.Proof.refine_conservation_measure
 #assert_axioms Dregg2.Proof.refine_run_conservation
 #assert_axioms Dregg2.Proof.refine_integrity
 #assert_axioms Dregg2.Proof.refine_integrity_intra
+#assert_axioms Dregg2.Proof.refine_step
+#assert_axioms Dregg2.Proof.refine_step_square
+#assert_axioms Dregg2.Proof.refine_cross_vat_step
+#assert_axioms Dregg2.Proof.refine_cross_vat_run
+#assert_axioms Dregg2.Proof.refine_async_run
+#assert_axioms Dregg2.Proof.refine_step_bites
+#assert_axioms Dregg2.Proof.refine_cross_vat_bites
+#assert_axioms Dregg2.Proof.refine_async_bites
 
 /-! ## §18 — VCG/WP program logic, operational LTS, Pedersen §8 discharge, first-app Spec.
 
