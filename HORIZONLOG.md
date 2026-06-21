@@ -92,6 +92,16 @@ capture (no `overflow_hidden` truncation). Confirmed: 1280x832 reflows the full 
 (`cockpit.rs`) screenshots any of the 28 surfaces (INSPECTOR/GRAPH/etc verified). MCP `screenshot` tool
 defaults to 1280x832, accepts `size`+`tab`.
 
+## ◻ ISSUER WELL (negative balance) CANNOT INITIATE ANY TURN — fee-gated even for value-neutral verbs (found by dregg-atlas crawl, 2026-06-21)
+The atlas game-tree crawl found that EVERY turn authored by the issuer-well cell (balance −1000000) is
+refused with `InsufficientBalance` — including `peek` (EmitEvent) and `touch` (IncrementNonce), which
+mutate no value. The well cannot pay the per-turn computron fee from a negative balance, so it can never be
+a turn's `agent`. Arguably CORRECT (an issuer well is a passive supply sink that only moves when other
+cells transact against it — `docs/DREGG3.md:133-138`), but it means a fee-charged turn is gated on positive
+balance even for value-neutral verbs. CLOSURE (decide): if wells are meant to be strictly passive this is
+fine (document it); if a well should be able to emit/tick, the fee path needs a zero-fee or
+well-exempt branch. Repro: dregg-mcp `effect from=<well> kind=transfer` → refused. Not a soundness issue.
+
 ## ⚑ AFFORDANCE CAP-BADGE — `AuthRequired::None` reports UNAUTHORIZED for non-None holders (found by dregg-mcp, 2026-06-21)
 The new dregg-mcp driving harness (`starbridge-v2/src/bin/dregg_mcp.rs`) surfaced this on its first
 drive. `affordances user` shows the `grant` message with `required: None` yet `authorized: false`, and

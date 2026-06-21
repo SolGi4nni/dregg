@@ -53,3 +53,31 @@ substrate). HORIZONLOG carries the findings.
 - `AuthRequired::None` cap-badge inversion (a None-required affordance reports
   unauthorized for all non-None holders).
 - Cell census 4-vs-8 (resolved: reflexive UI cells).
+
+## (2026-06-21) — ATLAS COMPLETE (all three pillars deep, explorable)
+
+The site (`dregg-atlas/site/index.html`, offline) is genuinely explorable, verified
+by headless Chrome end-to-end including interaction (`?select=<state>` deep-links a
+game-tree state; clicking a state highlights its reachable subtree and shows its cell
+snapshot + every committed/refused turn).
+
+- GAME TREE — 700 world-states / 2464 turns (1584 committed, 880 refused), radial
+  starburst, depth 5/4. Move set = every self-affordance per cell + a cross-cell
+  transfer per ordered pair, so value flow + conservation are visible (an overspend is
+  refused InsufficientBalance; the issuer well can't initiate). Honestly node-capped.
+- OCAP WEB — cells + capability edges; click → faces.
+- UI ATLAS — 28 cockpit surfaces, each a high-res screenshot + a deep code-grounded
+  (file:line) explainer, with per-surface static pages.
+- PROTOCOL — deep reference (thesis/verbs/substances/auth-lattice/refusal/receipts),
+  rendered inline + standalone pages.
+- ANOMALIES — 3 findings (None cap-badge inversion; cell census resolved; issuer-well
+  fee gating).
+- README + fully regenerable: `crawl.py && shoot.py && build.py`.
+
+Commits: 586d15a22 (harness) · 7ea0c5438 (first atlas) · 34ce6539e (explainers + radial)
+· fb84d91ed (raw effects). Findings in HORIZONLOG.
+
+### Remaining deepening (optional, if the night continues)
+- undo-based DFS in the MCP (currently snapshot/restore — already fast) for depth 6+.
+- per-effect and per-state-class static pages.
+- richer verb coverage (grant/create wired into the crawl move set).

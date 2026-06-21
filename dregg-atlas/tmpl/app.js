@@ -278,4 +278,11 @@
   // ---- boot ---------------------------------------------------------------
   buildGameTree(); buildOcap(); buildGallery(); buildProtocol(); buildAnomalies(); buildAbout();
   activate(location.hash.slice(1) || "gametree");
+  // deep-link a selected state: ?select=<digest|genesis>
+  const sel = new URLSearchParams(location.search).get("select");
+  if (sel && gt) {
+    const n = gt.getElementById(sel) || gt.nodes(`[label = "${sel}"]`).first();
+    const node = (n && n.length) ? n : gt.getElementById("genesis");
+    if (node && node.length) { gt.fit(node.closedNeighborhood(), 80); showState(node); highlightSubtree(node); }
+  }
 })();
