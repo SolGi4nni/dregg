@@ -271,32 +271,80 @@ pub fn empty_system_roots_digest() -> [u8; 32] {
 /// context so a map root can never be confused with a full-cell commitment.
 pub const FIELDS_ROOT_CONTEXT: &str = "dregg-cell:fields-root v1";
 
-/// The digest of the **empty** user-field map — the fixed `fields_root`
-/// constant a legacy (no-overflow) cell carries. Because every legacy cell has
-/// the same empty map, this constant is cell-independent: folding it into the
-/// canonical commitment is a no-op for legacy cells (the Stage 0 backward-compat
-/// keystone, mirrored in Lean by `FieldsMap.fieldsRoot_empty_legacy`).
+/// The sorted-tree leaf set committing a user-field map, in the OPENABLE
+/// scheme. Each overflow entry `(key, value)` becomes a [`HeapLeaf`] keyed by
+/// the domain-tagged sort-key felt [`field_key_hash`] and valued by the folded
+/// 32-byte field value. The cell that can refuse carries the
+/// [`REFUSAL_AUDIT_EXT_KEY`] slot RESERVED (a position-stable value-ZERO leaf)
+/// so the in-circuit refusal map-op is a value WRITE at a present key (the
+/// noteSpend `.write` discipline) rather than a re-indexing insert.
+///
+/// This is the SINGLE leaf set both the cell-side root and the in-circuit
+/// map-op (`prove_vm_descriptor2`'s `map_heaps`) build their
+/// [`dregg_circuit::heap_root::CanonicalHeapTree`] over — so the committed
+/// `fields_root` limb is the OPENABLE Poseidon2 root the refusal map-op WRITE
+/// gate constrains in-circuit (`EffectVmEmitRotationV3.refusalFieldsWriteV3`),
+/// NOT an opaque `poseidon2(blake3(map))` no gate could bind.
+pub fn fields_root_leaves(map: &BTreeMap<u64, FieldElement>) -> Vec<HeapLeaf> {
+    let mut leaves: Vec<HeapLeaf> = map
+        .iter()
+        .map(|(key, value)| HeapLeaf {
+            addr: field_key_hash(*key),
+            value: fold_bytes32(value),
+        })
+        .collect();
+    // RESERVE the protocol-reserved refusal-audit slot (position-stable, value
+    // ZERO) when the map does not already carry it — so a refusal WRITE opens
+    // the slot's existing path rather than re-indexing the sorted tree.
+    let audit_addr = field_key_hash(REFUSAL_AUDIT_EXT_KEY);
+    if !leaves.iter().any(|l| l.addr == audit_addr) {
+        leaves.push(HeapLeaf {
+            addr: audit_addr,
+            value: BabyBear::ZERO,
+        });
+    }
+    leaves
+}
+
+/// The canonical sort-key felt for an overflow user-field key. A
+/// domain-tagged Poseidon2 image of the unbounded `u64` key (both 32-bit limbs
+/// fold, so [`REFUSAL_AUDIT_EXT_KEY`] = `2^32` binds its high limb). Mirrors
+/// `dregg_circuit::openable_fields_root::field_key_hash` — pinned equal by the
+/// differential — so the cell-side root and the in-circuit map-op address the
+/// same sorted positions.
+pub fn field_key_hash(key: u64) -> BabyBear {
+    dregg_circuit::openable_fields_root::field_key_hash(key)
+}
+
+/// The OPENABLE root of the **empty** user-field map — the fixed `fields_root`
+/// constant a legacy (no-overflow) cell carries: the sorted-tree root over the
+/// sentinels PLUS the reserved (value-ZERO) refusal-audit slot. Cell-independent
+/// (the Stage 0 backward-compat keystone, mirrored in Lean by
+/// `FieldsMap.fieldsRoot_empty_legacy` — every legacy cell shares ONE constant,
+/// so absorbing it into the canonical commitment is a uniform no-op across
+/// legacy cells).
 pub fn empty_fields_root() -> [u8; 32] {
     compute_fields_root(&BTreeMap::new())
 }
 
-/// Compute the keyed digest committing a user-field map.
+/// Compute the OPENABLE root committing a user-field map.
 ///
-/// The Rust shadow of the Lean `FieldsMap.fieldsRoot`
-/// (`ListCommit.listDigest` over the user tail): a length-seeded BLAKE3 sponge
-/// over the canonically-ordered `(key, value)` leaves. `BTreeMap` iteration is
-/// already sorted by key, so the digest is order-canonical and injective enough
-/// that two distinct maps cannot share a root (the anti-vacuity guarantee — a
-/// `:= 0` stub is forbidden). An empty map yields the fixed [`empty_fields_root`].
+/// The Rust realization of the Lean `FieldsMap.fieldsRoot` openable digest: the
+/// sorted Poseidon2 binary Merkle root (the SAME `dregg_circuit::heap_root`
+/// scheme the nullifier / accounts / heap roots use) over the
+/// [`fields_root_leaves`]. Sorted by sort-key (`field_key_hash`), sentinel-
+/// bracketed, so the root is order-canonical and injective (two distinct maps
+/// cannot share a root — the anti-vacuity guarantee, a `:= 0` stub is
+/// forbidden). An empty map yields the fixed [`empty_fields_root`].
+///
+/// Because the root is an OPENABLE sorted-Poseidon2 tree (not a BLAKE3 sponge),
+/// the deployed committed `fields_root` limb (36) is the root a ledgerless
+/// light client can constrain via the refusal map-op WRITE gate: a forged
+/// post-`fields_root` is UNSAT vs the genuine `insert(pre_root, AUDIT_KEY,
+/// audit_felt)` (`circuit/tests/vk_epoch_refusal_lifecycle_light_client_binding.rs`).
 pub fn compute_fields_root(map: &BTreeMap<u64, FieldElement>) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new_derive_key(FIELDS_ROOT_CONTEXT);
-    // Length prefix (seed): pins the entry count so a drop is rejected.
-    hasher.update(&(map.len() as u64).to_le_bytes());
-    for (key, value) in map.iter() {
-        hasher.update(&key.to_le_bytes());
-        hasher.update(value);
-    }
-    *hasher.finalize().as_bytes()
+    let root = compute_heap_root_felt(fields_root_leaves(map));
+    babybear_to_bytes32(root)
 }
 
 /// The canonical 32-byte encoding of a BabyBear felt: the felt's 4

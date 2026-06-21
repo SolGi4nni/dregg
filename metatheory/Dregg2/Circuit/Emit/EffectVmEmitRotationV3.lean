@@ -3135,6 +3135,122 @@ theorem refusalPayloadV3_eq_refusalV3 : refusalPayloadV3 = refusalV3 := rfl
 
 #assert_axioms refusalPayloadV3_eq_refusalV3
 
+/-! ## §5.RF — the refusal FIELDS-ROOT MAP-OP WRITE GATE (the deployment-real audit-slot WRITE,
+mirroring the noteSpend nullifier-tree grow-gate exactly — `.write` not `.insert`).
+
+`refusalV3` closes the refusal forgery on the FULL-NODE leg (the record-digest PI 46 anchor folds the
+`fields_root` audit write through the r23 residue, verifier-recomputed from the trusted post-cell). But
+on the LIGHT-CLIENT leg the verifier takes PI 46 PRODUCER-FREE, so a forged post-`fields_root` (one whose
+audit slot was NOT written) holds the record pin vacuously — the SAME light-client gap §5.N closed for
+noteSpend's limb 26 by repointing it from a turn-invariant witness limb into a FORCED map-op write.
+
+This `MapOp` CLOSES the refusal `fields_root` (limb `B_FIELDS_ROOT = 36`) on the live wire, CLONING the
+noteSpend grow-gate onto limb 36 but with `op := .write` (a sorted insert-or-update at an EXISTING,
+RESERVED key — the `"refusal"` audit slot is a position-stable reserved key in the named-field map, so a
+refusal is a value WRITE, not a fresh insert):
+
+  * **`refusalFieldsWriteOp`** (`.write`) — the AUDIT-SLOT WRITE: the AFTER `fields_root` (limb 36 of the
+    after block) IS the genuine sorted write of `(refusalAuditKeyFelt → auditFelt)` into the BEFORE
+    `fields_root`. Under CR (`writesTo_functional`) the after-root column cannot be frozen or forged — a
+    frozen-audit-slot refusal (AFTER `fields_root` == PRE, the slot un-written) has NO `writesTo` witness
+    that produces an UNCHANGED root for a non-trivial write, so the light-client descriptor is UNSAT.
+
+Gated by the refusal selector (`SEL_REFUSAL = 52`), so non-refusal / NoOp pad rows contribute nothing. -/
+
+/-- The rotated BEFORE-block `fields_root` limb column (limb `B_FIELDS_ROOT = 36` of the before block at
+`base = traceWidth`). The deployed named-field map's PRE root — the openable sorted-Poseidon2 root the
+write-gate opens against. (The AFTER analog `afterFieldsRootCol` is defined in §5.MF.) -/
+def beforeFieldsRootCol (w : Nat) : Nat := w + B_FIELDS_ROOT
+
+/-- **`refusalAuditKeyFelt`** — the sort-key felt of the `"refusal"` audit slot in the named-field map.
+OPAQUE in Lean: its concrete value is the Rust `field_key_hash(REFUSAL_AUDIT_EXT_KEY)` (with
+`REFUSAL_AUDIT_EXT_KEY = 2^32`), PINNED by the trace differential, NOT recomputed here. The light-client
+recomputes the SAME constant from the protocol's fixed audit-key schema, so the key is a CONSTANT column,
+not a producer-supplied one. -/
+def refusalAuditKeyFelt : ℤ := 529176517  -- = Rust `field_key_hash(REFUSAL_AUDIT_EXT_KEY)`; differential-pinned (`fields_root_key_felt_matches_lean`).
+
+/-- The in-circuit declared-param column carrying the refusal AUDIT FELT (the leaf value the audit slot
+is written to — light-client-recomputable from the refusal params `offered_action_commitment` + `reason`).
+The deployed refusal row uses ONLY `param0 = REFUSAL_TARGET` and `param1 = REFUSAL_REASON_HASH`; `param2`
+(`prmCol 2 = 70`) is a SPARE param slot. The rotated trace generator must fill `row[PARAM_BASE + 2]` with
+`auditFelt(params)` for the refusal row — that is the value the map-op write inserts. -/
+def REFUSAL_AUDIT_FELT_COL : Nat := prmCol 2
+
+/-- **`refusalFieldsWriteOp`** — the AUDIT-SLOT WRITE map-op (mirrors `nullifierInsertOp` but `.write`,
+since the audit slot is a RESERVED, present key — an update, not a fresh insert). The AFTER `fields_root`
+(limb 36 of the after block) IS the genuine sorted write of `(refusalAuditKeyFelt → REFUSAL_AUDIT_FELT_COL)`
+into the BEFORE `fields_root`. -/
+def refusalFieldsWriteOp : MapOp :=
+  { guard   := .var EffectVmEmitRefusal.SEL_REFUSAL
+  , root    := .var (beforeFieldsRootCol EFFECT_VM_WIDTH)
+  , key     := .const refusalAuditKeyFelt
+  , value   := .var REFUSAL_AUDIT_FELT_COL
+  , newRoot := .var (afterFieldsRootCol EFFECT_VM_WIDTH)
+  , op      := .write }
+
+/-- **`refusalFieldsWriteV3`** — the LIVE rotated refusal WITH the record-digest pin (belt) AND the
+FIELDS-ROOT WRITE GATE (suspenders): the deployment-real audit-slot WRITE forced on the live wire. Past
+the graduated `rotateV3WithRecordPin` descriptor (the `refusalV3` base) it appends the single map-op that
+FORCES the audit write on limb 36, repointing it from a record-pin-only (light-client-vacuous) limb into a
+FORCED, written `fields_root`. -/
+def refusalFieldsWriteV3 : EffectVmDescriptor2 :=
+  let base := graduateV1 (rotateV3WithRecordPin B_RECORD_DIGEST EffectVmEmitRefusal.refusalVmDescriptor)
+  { base with
+    constraints := base.constraints ++ [.mapOp refusalFieldsWriteOp] }
+
+/-- **`refusalFieldsWriteV3_forces_write` — the live descriptor FORCES the audit-slot write (the
+deployment-real tooth).** On a satisfying `refusalFieldsWriteV3` witness whose refusal selector fires, the
+appended map-op holds: the AFTER `fields_root` (limb 36 of the after block) IS the genuine sorted write of
+`(refusalAuditKeyFelt → auditFelt)` into the BEFORE `fields_root` (`writesTo`). Under CR this is FUNCTIONAL
+(`writesTo_functional`), so a frozen or forged after-`fields_root` cannot satisfy the descriptor — the
+light-client refusal forgery the record pin held only vacuously is now REJECTED in-circuit. -/
+theorem refusalFieldsWriteV3_forces_write (hash : List ℤ → ℤ)
+    {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
+    (hsat : Satisfied2 hash refusalFieldsWriteV3 minit mfin maddrs t)
+    (i : Nat) (hi : i < t.rows.length)
+    (hrefuse : (envAt t i).loc EffectVmEmitRefusal.SEL_REFUSAL = 1) :
+    writesTo hash ((envAt t i).loc (beforeFieldsRootCol EFFECT_VM_WIDTH))
+        refusalAuditKeyFelt
+        ((envAt t i).loc REFUSAL_AUDIT_FELT_COL)
+        ((envAt t i).loc (afterFieldsRootCol EFFECT_VM_WIDTH)) := by
+  have hrowc := hsat.rowConstraints i hi
+  have hwrite := hrowc (.mapOp refusalFieldsWriteOp) (by simp [refusalFieldsWriteV3])
+  exact hwrite hrefuse
+
+/-- The audit-write gate does NOT disturb graduation: the hash sites + ranges are the record-pinned
+descriptor's verbatim (the map-op is a CONSTRAINT, and `graduable` reads only sites/ranges). -/
+theorem graduable_rotateV3WithRecordPin_refusal :
+    graduable (rotateV3WithRecordPin B_RECORD_DIGEST EffectVmEmitRefusal.refusalVmDescriptor) = true :=
+  graduable_rotateV3WithRecordPin B_RECORD_DIGEST (by decide)
+
+/-- The v1 denotation survives the record pin (the per-effect refusal faithfulness / anti-ghost theorems
+compose through, exactly as for bare `rotateV3`). -/
+theorem refusalFieldsWriteV3_satisfiedVm_v1 (hash : List ℤ → ℤ)
+    (env : VmRowEnv) (isFirst isLast : Bool)
+    (h : satisfiedVm hash (rotateV3WithRecordPin B_RECORD_DIGEST
+      EffectVmEmitRefusal.refusalVmDescriptor) env isFirst isLast) :
+    satisfiedVm hash EffectVmEmitRefusal.refusalVmDescriptor env isFirst isLast :=
+  rotateV3WithRecordPin_satisfiedVm_v1 B_RECORD_DIGEST hash
+    EffectVmEmitRefusal.refusalVmDescriptor env isFirst isLast h
+
+#assert_axioms refusalFieldsWriteV3_forces_write
+#assert_axioms graduable_rotateV3WithRecordPin_refusal
+#assert_axioms refusalFieldsWriteV3_satisfiedVm_v1
+
+-- The audit-write gate is the ONLY constraint past `refusalV3`'s, and it is a `.write` map-op on limb 36.
+#guard refusalFieldsWriteV3.constraints.length == refusalV3.constraints.length + 1
+#guard (mapOpsOf refusalFieldsWriteV3).length == 1
+#guard refusalFieldsWriteOp.op == MapOpKind.write
+#guard REFUSAL_AUDIT_FELT_COL == 70                          -- PARAM_BASE (68) + param2 (spare)
+#guard beforeFieldsRootCol EFFECT_VM_WIDTH == EFFECT_VM_WIDTH + 36
+#guard afterFieldsRootCol EFFECT_VM_WIDTH == EFFECT_VM_WIDTH + 51 + 36
+-- BOTH POLARITIES of the write tooth's GUARD on the toy environment: the write fires under the refusal
+-- selector (col 52 = 1) and is inert without it (the gate contributes nothing on a non-refusal pad row).
+#guard (let env : VmRowEnv := ⟨fun c => if c == 52 then 1 else 0, fun _ => 0, fun _ => 0⟩;
+        decide (refusalFieldsWriteOp.guard.eval env.loc = 1))    -- selector fires ⇒ write asserted
+#guard (let env : VmRowEnv := ⟨fun _ => 0, fun _ => 0, fun _ => 0⟩;
+        decide (refusalFieldsWriteOp.guard.eval env.loc ≠ 1))    -- no selector ⇒ map-op inert
+
 /-- **`setProgramV3`** — the LIVE rotated SetProgram (the ordered mid-session program-install effect, the
 genesis-reframe escape hatch) WITH the record-digest-forcing pin (the record-pin shape, `refusalV3`'s
 family). The DEPLOYED `apply_set_program` (`turn/src/executor/apply.rs apply_set_program`) writes the
@@ -3447,7 +3563,7 @@ def v3Registry : List (String × EffectVmDescriptor2) :=
   , ("noteCreateVmDescriptor2R24", noteCreateV3)
   , ("cellSealVmDescriptor2R24", cellSealV3)
   , ("cellDestroyVmDescriptor2R24", cellDestroyV3)
-  , ("refusalVmDescriptor2R24", refusalV3)
+  , ("refusalVmDescriptor2R24", refusalFieldsWriteV3)
   , ("setPermsVmDescriptor2R24", setPermsV3)
   , ("setVKVmDescriptor2R24", setVKV3)
   , ("exerciseVmDescriptor2R24", v3Of EffectVmEmitExercise.exerciseVmDescriptor)

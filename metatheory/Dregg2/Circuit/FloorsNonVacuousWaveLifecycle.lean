@@ -199,7 +199,13 @@ audit-slot root over `refusalField` is `0` (matching the zero record limb), and 
 the `cell` map (`cellMapMove`); every other field is framed `rfl`. Guard: self-authority + membership +
 liveness at the live account `0`. -/
 
-open Dregg2.Circuit.Emit.EffectVmEmitRefusal (refusalVmDescriptor)
+open Dregg2.Circuit.Emit.EffectVmEmitRefusal (refusalVmDescriptor SEL_REFUSAL)
+
+/-- The active-row assignment for refusal: hot at `SEL_REFUSAL (= 52)` — the row the appended
+audit-slot `.write` map-op gate fires on. (The committed record-pin seams read the LAST/wrap row 1,
+which is all-zero independent of this active row.) -/
+def refusalRow0 : Dregg2.Circuit.Assignment :=
+  fun c => if c = SEL_REFUSAL then 1 else 0
 
 /-- The pre-boundary for refusal: `0` is a live account. -/
 def refusalPre : RecChainedState :=
@@ -213,13 +219,16 @@ def refusalPost : RecChainedState :=
 /-- **`RefusalTraceReadout` is INHABITED.** (`compressN := cZero`.) -/
 def refusal_readout :
     RefusalTraceReadout cZero (fun ins => (permOutZ ins).headD 0)
-      (readoutTrace zeroAsg) refusalPre refusalPost 0 0 where
+      (readoutTrace refusalRow0) refusalPre refusalPost 0 0 where
   lastRow := 1
   hlastRow := by rw [readoutTrace_rows_len]; omega
   hlastRowIsLast := by rw [readoutTrace_rows_len]
+  row := 0
+  hrow := by rw [readoutTrace_rows_len]; omega
+  hsel := by rw [readoutTrace_loc0]; simp [refusalRow0]
   recordLimbDecodes := by rw [readoutTrace_loc1]; rfl
   piAnchored := by rw [readoutTrace_pub]; rfl
-  cellMapMove := rfl
+  cellMapMoveDecodes := fun _ => rfl
   guard := by refine ⟨by decide, ?_, by decide⟩; decide
   logAdv := rfl
   frAccounts := rfl
@@ -240,7 +249,7 @@ def refusal_readout :
 
 theorem refusal_readout_inhabited :
     Nonempty (RefusalTraceReadout cZero (fun ins => (permOutZ ins).headD 0)
-      (readoutTrace zeroAsg) refusalPre refusalPost 0 0) :=
+      (readoutTrace refusalRow0) refusalPre refusalPost 0 0) :=
   ⟨refusal_readout⟩
 
 #assert_axioms refusal_readout

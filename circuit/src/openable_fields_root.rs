@@ -572,6 +572,24 @@ mod tests {
         assert_ne!(a, other, "distinct audits fold to distinct values");
     }
 
+    /// THE LEAN DIFFERENTIAL PIN: the refusal map-op's KEY constant
+    /// (`EffectVmEmitRotationV3.refusalAuditKeyFelt`, emitted into the
+    /// `refusalVmDescriptor2R24` JSON as `{"t":"const","v":529176517}`) IS the
+    /// Rust `field_key_hash(REFUSAL_AUDIT_EXT_KEY)`. The in-circuit `.write`
+    /// map-op opens the audit slot at THIS sort key; the cell-side openable
+    /// `fields_root` (`cell::state::compute_fields_root`) reserves the slot at
+    /// the SAME key. A drift here would float the gate (the map-op would look
+    /// for an absent key and the honest refusal would fail to prove).
+    #[test]
+    fn fields_root_key_felt_matches_lean() {
+        assert_eq!(
+            field_key_hash(REFUSAL_AUDIT_EXT_KEY).as_u32(),
+            529_176_517,
+            "the refusal-audit sort key felt must equal the Lean `refusalAuditKeyFelt` constant \
+             emitted into the descriptor JSON (529176517) — else the .write map-op opens an absent key"
+        );
+    }
+
     /// The refusal insertion witness forces the post-`fields_root` from the
     /// public audit at the refusal-audit key — no trusted post-cell.
     #[test]

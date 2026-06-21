@@ -1395,7 +1395,7 @@ theorem refusal_closedLog_sat
     {permOut : List ℤ → List ℤ}
     (hside : Dregg2.Circuit.RotatedKernelRefinement.RotTableSide permOut hash t)
     (hsat : Dregg2.Circuit.DescriptorIR2.Satisfied2 hash
-      Dregg2.Circuit.Emit.EffectVmEmitRotationV3.refusalV3 minit mfin maddrs t)
+      Dregg2.Circuit.Emit.EffectVmEmitRotationV3.refusalFieldsWriteV3 minit mfin maddrs t)
     (pre post : RecChainedState) (actor cell : CellId)
     (pc : PublishedCommit) (pubLogPre pubLogPost : ℤ)
     (hdec : StateDecodeLog Slive LH pc pubLogPre pubLogPost pre post)

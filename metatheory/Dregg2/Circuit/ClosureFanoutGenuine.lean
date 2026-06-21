@@ -513,7 +513,7 @@ theorem closedLogExtract_refusal_closed
             compressN2 hash t pre post actor cell)) :
     ClosedLogExtract Slive LH hash Rfix 39 := by
   intro _hCR minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
-  have hsat' : Satisfied2 hash Dregg2.Circuit.Emit.EffectVmEmitRotationV3.refusalV3
+  have hsat' : Satisfied2 hash Dregg2.Circuit.Emit.EffectVmEmitRotationV3.refusalFieldsWriteV3
       minit mfin maddrs t := hsat
   obtain ⟨actor, cell, permOut, hside, hpub, logNeeds⟩ := readout minit mfin maddrs t pubLogPost pre post hsat
   exact refusal_closedLog_sat compressN2 hN hash hside hsat' pre post actor cell pc pubLogPre pubLogPost hdecLog hpub.down logNeeds

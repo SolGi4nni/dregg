@@ -931,7 +931,7 @@ pub fn compute_rotated_pre_limbs(
     // makeSovereign mode CONSTANT-force limb and the setFieldDyn / refusal fields-root weld limb, the
     // NEW LAST pre-iroot limbs). Byte-identical to `rotation_witness::{mode_felt,fields_root_felt}`.
     pre[35] = mode_felt(&cell.mode);
-    pre[36] = hash_bytes(&cell.state.fields_root);
+    pre[36] = fields_root_felt(&cell.state.fields_root);
     pre
 }
 
@@ -947,15 +947,20 @@ pub fn mode_felt(mode: &crate::cell::CellMode) -> dregg_circuit::field::BabyBear
     })
 }
 
-/// The committed `fields_root` digest sub-limb (`B_FIELDS_ROOT = 36`, WAVE-3 flag-day). The overflow
-/// named-field map root `compute_authority_digest_felt` folds (`hash_bytes(cell.state.fields_root)`,
-/// the SAME byte-root→felt the cap_root / nullifier_root / commitments_root limbs use). The in-circuit
-/// setFieldDyn / refusal weld (`EffectVmEmitRotationV3.rotateV3WithFieldsRootGate`) FORCES the AFTER
-/// fields_root limb to the declared post-`fields_root` param (verifier-anchored), so a forged
-/// post-`fields_root` is UNSAT for a ledgerless client. CANONICAL; `turn::rotation_witness::
-/// fields_root_felt` calls it.
+/// The committed `fields_root` digest sub-limb (`B_FIELDS_ROOT = 36`, WAVE-3 flag-day). Now the OPENABLE
+/// sorted-Poseidon2 map root itself (`crate::state::compute_fields_root` IS a felt root, byte-encoded by
+/// `babybear_to_bytes32`): this recovers that felt from the low 4 bytes — the committed limb IS the
+/// openable root a ledgerless client can OPEN, NOT an opaque `hash_bytes(blake3_sponge)` no gate could
+/// constrain. The in-circuit refusal map-op WRITE gate
+/// (`EffectVmEmitRotationV3.refusalFieldsWriteV3`) FORCES the AFTER fields_root limb to
+/// `insert(before_root, REFUSAL_AUDIT_KEY, audit_felt)`, so a forged post-`fields_root` is UNSAT for a
+/// ledgerless client. CANONICAL; `turn::rotation_witness::fields_root_felt` calls it.
 pub fn fields_root_felt(fields_root: &[u8; 32]) -> dregg_circuit::field::BabyBear {
-    dregg_circuit::poseidon2::hash_bytes(fields_root)
+    // The openable root is a single BabyBear felt encoded into the low 4 bytes
+    // (`state::babybear_to_bytes32`); recover it canonically.
+    let mut limb = [0u8; 4];
+    limb.copy_from_slice(&fields_root[0..4]);
+    dregg_circuit::field::BabyBear::new(u32::from_le_bytes(limb))
 }
 
 /// The committed PERMISSIONS-DIGEST sub-limb (`B_PERMS = 33`, WAVE-2 perms/VK flag-day). BYTE-IDENTICAL
@@ -1778,8 +1783,8 @@ mod tests {
         assert_eq!(pre[35], mode_felt(&cell.mode), "mode rides limb 35");
         assert_eq!(
             pre[36],
-            dregg_circuit::poseidon2::hash_bytes(&cell.state.fields_root),
-            "fields_root rides limb 36 (WAVE-3 flag-day)"
+            fields_root_felt(&cell.state.fields_root),
+            "fields_root rides limb 36 (WAVE-3 flag-day; the openable sorted-Poseidon2 root felt)"
         );
     }
 

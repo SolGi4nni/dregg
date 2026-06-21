@@ -878,6 +878,129 @@ pub fn generate_rotated_note_create_trace_with_commitments_tree(
     Ok((trace, dpis, vec![before_commitments.to_vec()]))
 }
 
+/// The declared-param column the refusal row carries the audit FELT in (`prmCol 2 = PARAM_BASE + 2`).
+/// The deployed refusal row uses only `param0 = REFUSAL_TARGET` and `param1 = REFUSAL_REASON_HASH`;
+/// this previously-spare `param2` now carries the in-circuit map-op's inserted value (the audit felt),
+/// which a ledgerless client recomputes from the published refusal params. Lean
+/// `EffectVmEmitRotationV3.REFUSAL_AUDIT_FELT_COL`.
+pub const REFUSAL_AUDIT_FELT_PARAM: usize = 2;
+
+/// **THE DEPLOYMENT-REAL refusal fields-root WRITE wiring (the refusal light-client forge's close).**
+/// The clone of [`generate_rotated_note_spend_trace_with_nullifier_tree`] for the `fields_root` limb
+/// (limb 36 = `B_FIELDS_ROOT`): it makes limb 36 the openable user-field-MAP accumulator for a
+/// refusal turn, so the in-circuit `refusalFieldsWriteOp` (`.write`) FORCES
+/// `after_fields_root == write(before_fields_root, REFUSAL_AUDIT_KEY → audit_felt)` — a forged
+/// post-`fields_root` (committed ≠ the genuine write) is UNSAT for a ledgerless client through
+/// `verify_vm_descriptor2` ALONE.
+///
+///   * `before_fields_leaves` are the cell's PRE-refusal overflow `fields_map` entries, encoded as
+///     `dregg_circuit::heap_root::HeapLeaf` (key = `field_key_hash(key)`, value = `fold_bytes32(v)`) —
+///     the SAME leaf set `cell::state::compute_fields_root` builds its root over. The refusal-audit
+///     slot is RESERVED (value-ZERO, present) so the write opens its existing path (a position-stable
+///     in-place value update, NOT a re-indexing insert);
+///   * `audit_value` is the audit felt the refusal writes (`fold_bytes32` of the post-cell's
+///     `fields_map[REFUSAL_AUDIT_EXT_KEY]`) — light-client-recomputable from the published refusal
+///     params; it rides `PARAM_BASE + REFUSAL_AUDIT_FELT_PARAM` (col 70) so the map-op's value column
+///     is the row's own published column;
+///   * limb 36 of every before-block is overwritten with the BEFORE tree's root, and limb 36 of every
+///     after-block with the root of the BEFORE tree with the audit slot WRITTEN to `audit_value` (the
+///     position-stable value update the `.write` op forces);
+///   * the affected `wireCommitR` chain + `STATE_COMMIT` carriers are recomputed in place, and the
+///     OLD/NEW rotated commit PIs are re-derived so the published commitment binds the written map;
+///   * the BEFORE tree's leaves (incl. the reserved audit slot) are returned as the single `map_heaps`
+///     entry the prover threads into `prove_vm_descriptor2` to resolve the `.write` op.
+///
+/// Returns `(trace, dpis, map_heaps)`.
+pub fn generate_rotated_refusal_trace_with_fields_tree(
+    initial_state: &CellState,
+    effects: &[Effect],
+    before_w: &RotatedBlockWitness,
+    after_w: &RotatedBlockWitness,
+    caveat: &RotatedCaveatManifest,
+    before_fields_leaves: &[crate::heap_root::HeapLeaf],
+    audit_value: BabyBear,
+) -> Result<(Vec<Vec<BabyBear>>, Vec<BabyBear>, Vec<Vec<crate::heap_root::HeapLeaf>>), String> {
+    use super::columns::PARAM_BASE;
+    use crate::heap_root::{CanonicalHeapTree, HEAP_TREE_DEPTH, HeapLeaf};
+
+    if !matches!(effects.first(), Some(Effect::Refusal { .. })) {
+        return Err("fields-root write wiring is only for a Refusal lead effect".into());
+    }
+
+    // The base rotated trace (carries the welds, the v1 economic block, the record pin PI[46]).
+    let (mut trace, mut dpis) =
+        generate_rotated_effect_vm_trace(initial_state, effects, before_w, after_w, caveat)?;
+
+    // The refusal-audit slot's sort key (a CONSTANT — `field_key_hash(REFUSAL_AUDIT_EXT_KEY)`, the
+    // Lean `refusalAuditKeyFelt`). RESERVE it in the BEFORE leaf set (value ZERO, present) so the
+    // `.write` op opens its existing path — a position-stable in-place value update.
+    let audit_key = crate::openable_fields_root::field_key_hash(
+        crate::openable_fields_root::REFUSAL_AUDIT_EXT_KEY,
+    );
+    let mut before_leaves = before_fields_leaves.to_vec();
+    if !before_leaves.iter().any(|l| l.addr == audit_key) {
+        before_leaves.push(HeapLeaf {
+            addr: audit_key,
+            value: BabyBear::ZERO,
+        });
+    }
+
+    // The BEFORE fields tree (the openable accumulator before the refusal) and the AFTER tree
+    // (= BEFORE with the audit slot's value WRITTEN to `audit_value` — the in-place update the
+    // `.write` op forces). The audit slot MUST be present in BEFORE (we reserve it above), else the
+    // `.write` op has no `update_witness` and the prover REFUSES.
+    let before_tree = CanonicalHeapTree::new(before_leaves.clone(), HEAP_TREE_DEPTH);
+    if before_tree.position_of(audit_key).is_none() {
+        return Err(
+            "refusal fields-root write: the audit slot is not present in the BEFORE tree — the \
+             in-circuit `.write` op has no update witness and refuses the turn"
+                .into(),
+        );
+    }
+    let before_root = before_tree.root();
+    let after_leaves: Vec<HeapLeaf> = before_tree
+        .sorted_leaves()
+        .iter()
+        .filter(|l| {
+            l.addr != crate::heap_root::SENTINEL_MIN && l.addr != crate::heap_root::SENTINEL_MAX
+        })
+        .map(|l| {
+            if l.addr == audit_key {
+                HeapLeaf {
+                    addr: audit_key,
+                    value: audit_value,
+                }
+            } else {
+                *l
+            }
+        })
+        .collect();
+    let after_root = CanonicalHeapTree::new(after_leaves, HEAP_TREE_DEPTH).root();
+
+    // Fill the declared audit-felt param column (col 70) with the written value on EVERY row, so the
+    // map-op's value column is the row's own published column (the noteSpend pattern — the gate reads
+    // `prmCol 2`).
+    for row in trace.iter_mut() {
+        row[PARAM_BASE + REFUSAL_AUDIT_FELT_PARAM] = audit_value;
+    }
+
+    // Override limb 36 of BOTH blocks on EVERY row with the openable accumulator roots, then recompute
+    // the dependent chained commitments so the published `STATE_COMMIT` binds the written map.
+    for row in trace.iter_mut() {
+        row[BEFORE_BASE + B_FIELDS_ROOT] = before_root;
+        row[AFTER_BASE + B_FIELDS_ROOT] = after_root;
+        recompute_block_commit(row, BEFORE_BASE);
+        recompute_block_commit(row, AFTER_BASE);
+    }
+
+    // Re-derive the OLD/NEW rotated commit PIs (the limb-36 override + the audit-felt param fill moved
+    // the commitments).
+    dpis[V1_PI_COUNT] = trace[0][BEFORE_BASE + B_STATE_COMMIT]; // PI 34: rotated OLD commit
+    dpis[V1_PI_COUNT + 1] = trace[trace.len() - 1][AFTER_BASE + B_STATE_COMMIT]; // PI 35: NEW commit
+
+    Ok((trace, dpis, vec![before_leaves]))
+}
+
 /// The cap-tree write-op kind a write-bearing cap-open wrapper carries (the `map_op` on the
 /// BEFORE cap-root (col 65 = `STATE_BEFORE_BASE + state::CAP_ROOT`) → AFTER cap-root (col 87 =
 /// `STATE_AFTER_BASE + state::CAP_ROOT`)). Mirrors the descriptor's two `map_op` rows:

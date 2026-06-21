@@ -63,6 +63,7 @@ open Dregg2.Circuit.Emit.EffectVmEmit (satisfiedVm VmRowEnv VmConstraint)
 open Dregg2.Circuit.Emit.EffectVmEmitV2 (graduateV1 graduateV1_sound graduable)
 open Dregg2.Circuit.Emit.EffectVmEmitRotationV3
   (cellUnsealV3 cellDestroyV3 refusalV3 receiptArchiveV3
+   refusalFieldsWriteV3 refusalFieldsWriteV3_forces_write
    afterDiscCol discLive discSealed discDestroyed discArchived AFTER_BLOCK_OFF B_RECORD_DIGEST
    rotateV3WithDiscGate rotateV3WithRecordPin rotateV3
    rotateV3WithDiscGate_forces_after rotateV3WithRecordPin_pins
@@ -884,6 +885,11 @@ structure RefusalTraceReadout (compressN : List FieldElem → FieldElem) (hash :
   lastRow : Nat
   hlastRow : lastRow < t.rows.length
   hlastRowIsLast : lastRow + 1 = t.rows.length
+  -- the prover-designated ACTIVE row where the refusal selector fires (the row the appended
+  -- `refusalFieldsWriteOp` audit-slot write gate is asserted on).
+  row : Nat
+  hrow : row < t.rows.length
+  hsel : (envAt t row).loc Dregg2.Circuit.Emit.EffectVmEmitRefusal.SEL_REFUSAL = 1
   -- the committed AFTER record-digest limb IS the post audit-slot root over `refusalField`.
   recordLimbDecodes :
     (envAt t lastRow).loc (Dregg2.Circuit.Emit.EffectVmEmitRefusal.refusalVmDescriptor.traceWidth
@@ -894,8 +900,19 @@ structure RefusalTraceReadout (compressN : List FieldElem → FieldElem) (hash :
     (envAt t lastRow).pub
       (rotateV3 Dregg2.Circuit.Emit.EffectVmEmitRefusal.refusalVmDescriptor).piCount
       = listDigest auditLeaf compressN [(1 : Int)]
-  -- the WHOLE `cell`-map move (the residual the per-slot committed root cannot certify).
-  cellMapMove : post.kernel.cell = auditCellMap pre.kernel cell refusalField
+  -- the WHOLE `cell`-map move (the residual the per-slot committed root cannot certify), GATED on
+  -- the live descriptor's FORCED audit-slot write: the deployed `refusalFieldsWriteOp` `.write` map-op
+  -- on limb 36 (the AFTER `fields_root` IS the genuine sorted write of the audit slot) is what realizes
+  -- the move. Removing the gate makes its `writesTo` antecedent underivable, RED-ing the apex.
+  cellMapMoveDecodes :
+    Dregg2.Circuit.DescriptorIR2.writesTo hash
+        ((envAt t row).loc (Dregg2.Circuit.Emit.EffectVmEmitRotationV3.beforeFieldsRootCol
+          Dregg2.Circuit.Emit.EffectVmEmit.EFFECT_VM_WIDTH))
+        Dregg2.Circuit.Emit.EffectVmEmitRotationV3.refusalAuditKeyFelt
+        ((envAt t row).loc Dregg2.Circuit.Emit.EffectVmEmitRotationV3.REFUSAL_AUDIT_FELT_COL)
+        ((envAt t row).loc (Dregg2.Circuit.Emit.EffectVmEmitRotationV3.afterFieldsRootCol
+          Dregg2.Circuit.Emit.EffectVmEmit.EFFECT_VM_WIDTH))
+      → post.kernel.cell = auditCellMap pre.kernel cell refusalField
   guard : auditGuard pre actor cell
   logAdv : post.log = { actor := actor, src := cell, dst := cell, amt := 0 } :: pre.log
   frAccounts : post.kernel.accounts = pre.kernel.accounts
@@ -958,11 +975,15 @@ theorem refusal_descriptorRefines_sat (compressN : List FieldElem → FieldElem)
     (hN : compressNInjective compressN) (hash : List ℤ → ℤ)
     {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
     {permOut : List ℤ → List ℤ} (hside : RotTableSide permOut hash t)
-    (hsat : Satisfied2 hash refusalV3 minit mfin maddrs t)
+    (hsat : Satisfied2 hash refusalFieldsWriteV3 minit mfin maddrs t)
     (pre post : RecChainedState) (actor cell : CellId)
     (rd : RefusalTraceReadout compressN hash t pre post actor cell) :
     RefusalSpec pre actor cell post :=
-  ⟨rd.guard, rd.cellMapMove, rd.logAdv, rd.frAccounts, rd.frCaps,
+  -- the LIVE descriptor's appended `.write` map-op FORCES the audit-slot write on the designated
+  -- refusal row; that forced `writesTo` is what realizes the `cell`-map move (`cellMapMoveDecodes`).
+  -- Remove `refusalFieldsWriteOp` and this `writesTo` is no longer derivable → the apex REDS.
+  have hwrite := refusalFieldsWriteV3_forces_write hash hsat rd.row rd.hrow rd.hsel
+  ⟨rd.guard, rd.cellMapMoveDecodes hwrite, rd.logAdv, rd.frAccounts, rd.frCaps,
     rd.frNullifiers, rd.frRevoked, rd.frCommitments, rd.frBal, rd.frSlotCaveats,
     rd.frFactories, rd.frLifecycle, rd.frDeathCert, rd.frDelegate, rd.frDelegations,
     rd.frDelegationEpoch, rd.frDelegationEpochAt, rd.frHeaps⟩

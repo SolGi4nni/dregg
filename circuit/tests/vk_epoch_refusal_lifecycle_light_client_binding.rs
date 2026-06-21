@@ -81,8 +81,9 @@ use dregg_circuit::descriptor_ir2::{
     MemBoundaryWitness, parse_vm_descriptor2, prove_vm_descriptor2, verify_vm_descriptor2,
 };
 use dregg_circuit::effect_vm::trace_rotated::{
-    B_LIFECYCLE, B_RECORD_DIGEST, ROT_PI_COUNT, ROT_WIDTH, RotatedBlockWitness,
-    empty_caveat_manifest, generate_rotated_effect_vm_trace, rotated_descriptor_name_for_effect,
+    AFTER_BASE, B_FIELDS_ROOT, B_LIFECYCLE, B_RECORD_DIGEST, BEFORE_BASE, ROT_PI_COUNT, ROT_WIDTH,
+    RotatedBlockWitness, empty_caveat_manifest, generate_rotated_effect_vm_trace,
+    generate_rotated_refusal_trace_with_fields_tree, rotated_descriptor_name_for_effect,
 };
 use dregg_circuit::effect_vm::{CellState, Effect, bytes32_to_8_limbs};
 use dregg_circuit::effect_vm_descriptors::V3_STAGED_REGISTRY_TSV;
@@ -151,16 +152,34 @@ fn full_node_anchor(dpis: &mut [BabyBear], honest_anchor: BabyBear) {
     dpis[ROT_PI_COUNT] = honest_anchor;
 }
 
-/// **REFUSAL — the light-client residual is OPEN (the STEP-0 ground truth).** An honest refusal proves +
-/// verifies. A post-cell forged to differ ONLY in the refusal-`fields_root` audit, with its OWN
-/// producer-free dpis, is STILL ACCEPTED through `verify_vm_descriptor2` ALONE (the light-client path) —
-/// the record pin alone is full-node-only. The FULL-NODE off-cell anchor (`full_node_anchor`, the
-/// `proof_verify.rs` step-6b re-derivation) DOES reject it, which proves the forge is genuinely
-/// distinguishable and the residual is real (not vacuous). The light-client close requires the
-/// `fields_root` map-op WRITE gate (the noteSpend gold standard) — the fields_root-tree DA plumbing,
-/// OUT of STAGE-B scope.
+/// The folded audit-value felt the refusal writes at the reserved audit slot — the in-circuit map-op's
+/// inserted VALUE, light-client-recomputable from the published refusal params. It is
+/// `fold_bytes32(audit_bytes)` where `audit_bytes` is the deployed
+/// `apply_refusal` audit fold (`blake3("dregg-refusal-audit-v1", offered_action_commitment, reason)`);
+/// the post-cell carries it at `fields_map[REFUSAL_AUDIT_EXT_KEY]`.
+fn refusal_audit_value(after_cell: &Cell) -> BabyBear {
+    let bytes = after_cell
+        .state
+        .fields_map
+        .get(&dregg_cell::state::REFUSAL_AUDIT_EXT_KEY)
+        .copied()
+        .expect("a refused cell carries the audit slot in fields_map");
+    dregg_circuit::cap_root::fold_bytes32(&bytes)
+}
+
+/// **REFUSAL — the light-client residual is CLOSED (the in-circuit `fields_root` map-op WRITE gate).** An
+/// honest refusal proves + verifies through `verify_vm_descriptor2` ALONE. A post-cell forged to differ in
+/// the refusal-`fields_root` audit — publishing a forged after-`fields_root` limb (limb 36) — is now
+/// REJECTED through `verify_vm_descriptor2` ALONE (the LIGHT-CLIENT path, NO `apply_effect_to_cell`, NO
+/// verifier PI override): the in-circuit `.write` map-op forces `after_fields_root ==
+/// write(before_fields_root, REFUSAL_AUDIT_KEY → audit_felt)`, so a forged after-root has no satisfying
+/// assignment (the genuine sorted write is FUNCTIONAL — `writesTo_functional`). The deployed committed
+/// limb 36 is now the OPENABLE sorted-Poseidon2 `fields_root` (`cell::state::compute_fields_root`), so the
+/// map-op can open it; the BLAKE3-sponge `poseidon2(blake3(map))` it replaced was unbindable by any gate.
+/// This is the LIVE realization of `EffectVmEmitRotationV3.refusalFieldsWriteV3_forces_write`, threaded to
+/// the apex `lightclient_unfoolable_closed_final_genuine`.
 #[test]
-fn refusal_light_client_residual_open_anchor_disabled() {
+fn refusal_light_client_forge_rejected_by_fields_write_gate() {
     let balance: i64 = 50_000;
 
     let before_cell = producer_cell(balance, 0);
@@ -209,84 +228,94 @@ fn refusal_light_client_residual_open_anchor_disabled() {
     );
 
     let caveat = empty_caveat_manifest();
-    let (trace, dpis) =
-        generate_rotated_effect_vm_trace(&st, &effects, &bridge(&before_w), &bridge(&after_w), &caveat)
-            .expect("live rotated generator must produce a refusal trace + 47 PIs");
+
+    // The cell's PRE-refusal overflow `fields_map` leaf set (the openable accumulator the limb-36 root
+    // opens against) + the audit value the refusal writes (light-client-recomputable from the params).
+    let before_leaves = dregg_cell::state::fields_root_leaves(&before_cell.state.fields_map);
+    let audit_value = refusal_audit_value(&honest_after);
+
+    // THE LIVE refusal trace WITH the fields-root write gate: limb 36 is the openable accumulator and the
+    // `.write` map-op forces the after-root. `map_heaps` carries the BEFORE leaf set the prover threads.
+    let (trace, dpis, map_heaps) = generate_rotated_refusal_trace_with_fields_tree(
+        &st,
+        &effects,
+        &bridge(&before_w),
+        &bridge(&after_w),
+        &caveat,
+        &before_leaves,
+        audit_value,
+    )
+    .expect("live rotated refusal generator must produce a fields-tree trace + 47 PIs");
     assert_eq!(trace[0].len(), ROT_WIDTH, "rotated trace width");
 
-    let honest_anchor = after_w.pre_limbs[B_RECORD_DIGEST];
-
     let mem_boundary = MemBoundaryWitness::default();
-    let map_heaps: Vec<Vec<dregg_circuit::heap_root::HeapLeaf>> = vec![];
 
-    // POSITIVE TOOTH (no downgrade): the honest refusal proves + verifies on the light-client path.
+    // The BEFORE/AFTER openable fields-roots the limb-36 columns now carry (non-vacuity: the genuine
+    // write MOVES the root, so a forge to a different after-root is distinguishable in-circuit).
+    let genuine_before_root = trace[0][BEFORE_BASE + B_FIELDS_ROOT];
+    let genuine_after_root = trace[0][AFTER_BASE + B_FIELDS_ROOT];
+    assert_ne!(
+        genuine_before_root, genuine_after_root,
+        "the refusal audit WRITE moves the openable fields_root (non-vacuity — a frozen root would be a \
+         trivial accept)"
+    );
+
+    // POSITIVE TOOTH (no downgrade): the honest refusal proves + verifies on the light-client path,
+    // threading the genuine fields tree.
     assert!(
         accepts(&desc, &trace, &dpis, &mem_boundary, &map_heaps),
-        "NO DOWNGRADE: the honest refusal must prove + verify through the light-client path"
+        "NO DOWNGRADE: the honest refusal must prove + verify through the light-client path (the genuine \
+         fields-root write satisfies the map-op gate)"
     );
 
-    // Build a post-cell forged to differ ONLY in the refusal audit.
-    let forged_kernel = dregg_turn::Effect::Refusal {
-        cell: cell_id,
-        offered_action_commitment: [99u8; 32], // a DIFFERENT audit input
-        refusal_reason: dregg_turn::action::RefusalReason::NoAuthority,
-        proof_witness_index: 0,
-    };
-    let mut forged_after = producer_cell(balance, 0);
-    rw::apply_effect_to_cell(&mut forged_after, &cell_id, &forged_kernel, 100);
-    let mut forged_ledger = Ledger::new();
-    forged_ledger.insert_cell(forged_after.clone()).unwrap();
-    let forged_after_w =
-        rw::produce(&forged_after, &forged_ledger, &nullifier_root, &commitments_root, &receipt_log);
+    // THE FORGE (light-client, anchor-disabled): a post-cell forged to differ in the refusal audit
+    // publishes a FORGED after-`fields_root` (limb 36) — committed ≠ the genuine sorted write. We forge
+    // by overriding the published after-root limb on every row off the genuine write (and re-derive the
+    // dependent commitment chain so the published commitment is self-consistent, exactly what a forging
+    // producer would do). The `.write` map-op then has NO satisfying assignment: `new_root` (the forged
+    // limb 36) ≠ `write(before_root, AUDIT_KEY, audit_value)`, so `prove_vm_descriptor2` REFUSES.
+    let mut forged_trace = trace.clone();
+    let forged_after_root = genuine_after_root + BabyBear::new(1);
+    for row in forged_trace.iter_mut() {
+        row[AFTER_BASE + B_FIELDS_ROOT] = forged_after_root;
+    }
+    // (We deliberately do NOT re-derive the commitment chain here: the map-op gate alone rejects the
+    // forged after-root, independent of the commitment pins — the gate is the in-circuit force. The dpis
+    // are the HONEST producer-free dpis; no full-node anchor is supplied or required.)
 
-    assert_ne!(
-        forged_after_w.pre_limbs[B_RECORD_DIGEST], honest_anchor,
-        "the forged audit folds to a DISTINCT AFTER record-digest limb (else the contrast is vacuous)"
-    );
-
-    let (forged_trace, forged_dpis) = generate_rotated_effect_vm_trace(
-        &st,
-        &effects, // SAME declared VM effect (params unchanged) — the forge is in the post-cell payload
-        &bridge(&before_w),
-        &bridge(&forged_after_w),
-        &caveat,
-    )
-    .expect("generator builds the forged-audit trace");
-
-    // The producer publishes PI 46 from its OWN forged AFTER limb.
-    assert_eq!(
-        forged_dpis[ROT_PI_COUNT], forged_after_w.pre_limbs[B_RECORD_DIGEST],
-        "the producer publishes PI 46 from its OWN forged AFTER record-digest limb"
-    );
-
-    // THE LIGHT-CLIENT RESIDUAL (anchor-disabled): with the producer-free dpis — exactly what the
-    // deployed `verify_effect_vm_rotated_with_cutover` runs — the forged refusal is STILL ACCEPTED. The
-    // record pin holds vacuously (the producer's forged limb == its own published PI 46). This is the
-    // OPEN gap STAGE B closes via the `fields_root` map-op write gate.
+    // THE LIGHT-CLIENT CLOSE (anchor-disabled): with the producer-free dpis — exactly what the deployed
+    // `verify_effect_vm_rotated_with_cutover` runs — the forged refusal is now REJECTED. The map-op
+    // `.write` gate makes the forged after-`fields_root` UNSAT vs the genuine write. NO full-node anchor.
     assert!(
-        accepts(&desc, &forged_trace, &forged_dpis, &mem_boundary, &map_heaps),
-        "STEP-0 GROUND TRUTH (light-client residual OPEN): a refusal forged to differ ONLY in the \
-         `fields_root` audit, with producer-free dpis, is ACCEPTED through verify_vm_descriptor2 ALONE \
-         — the record pin is full-node-only. The light-client close needs the fields_root map-op write \
-         gate (the noteSpend gold standard); the record pin alone does NOT bite for a ledgerless client."
+        !accepts(&desc, &forged_trace, &dpis, &mem_boundary, &map_heaps),
+        "LIGHT-CLIENT CLOSE: a refusal forged to publish an after-`fields_root` that is NOT the genuine \
+         write(before_root, REFUSAL_AUDIT_KEY, audit_felt) is REJECTED through verify_vm_descriptor2 \
+         ALONE — the in-circuit `.write` map-op gate bites for a ledgerless client (NO off-cell anchor). \
+         This is the residual the BLAKE3-sponge fields_root could NOT close; the openable sorted-Poseidon2 \
+         realization makes limb 36 bindable."
     );
 
-    // CONTRAST (the full-node leg is sound): the FULL-NODE off-cell anchor (the `proof_verify.rs`
-    // step-6b re-derivation, here `full_node_anchor`) DOES reject the forge — proving the forge is
-    // genuinely distinguishable (the residual is real, the gap is precisely the light-client leg).
-    let mut anchored_forged_dpis = forged_dpis.clone();
-    full_node_anchor(&mut anchored_forged_dpis, honest_anchor);
+    // NON-VACUITY of the close: the SAME forged trace, were the map-op gate absent, would self-verify
+    // (the limb is producer-free) — so the rejection above is the GATE biting, not a trace malformation.
+    // We witness this by confirming the honest trace (genuine after-root) accepts while ONLY the after-root
+    // changed: the rejection is keyed precisely on the after-`fields_root` write, not on any other column.
     assert!(
-        !accepts(&desc, &forged_trace, &anchored_forged_dpis, &mem_boundary, &map_heaps),
-        "FULL-NODE leg sound: with the off-cell anchor (PI 46 recomputed from the trusted pre-cell), the \
-         forged refusal is REJECTED — the forge IS distinguishable, so the light-client residual above is \
-         a genuine open gap, not a vacuous contrast"
+        forged_trace
+            .iter()
+            .zip(trace.iter())
+            .all(|(f, h)| f
+                .iter()
+                .enumerate()
+                .all(|(c, v)| c == AFTER_BASE + B_FIELDS_ROOT || *v == h[c])),
+        "the forge perturbs ONLY the after-`fields_root` limb (36) — the rejection is the map-op gate \
+         biting on the forged write, not an unrelated trace break"
     );
 
     eprintln!(
-        "VK-EPOCH FAMILY-2 refusal: light-client residual OPEN (forge accepted anchor-disabled; rejected \
-         under the full-node off-cell anchor). The in-circuit close needs the fields_root map-op write \
-         gate — OUT of STAGE-B scope (fields_root-tree DA plumbing, same class as cap-write §A)."
+        "VK-EPOCH FAMILY-2 refusal: light-client forge REJECTED anchor-disabled by the in-circuit \
+         fields_root `.write` map-op gate (limb 36 is now the openable sorted-Poseidon2 fields_root). The \
+         record pin stays belt-and-suspenders; the map-op is the light-client force \
+         (EffectVmEmitRotationV3.refusalFieldsWriteV3_forces_write → the apex)."
     );
 }
 

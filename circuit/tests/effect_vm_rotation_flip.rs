@@ -44,7 +44,7 @@ use dregg_circuit::effect_vm::columns::{PARAM_BASE, STATE_AFTER_BASE, STATE_BEFO
 use dregg_circuit::effect_vm::trace_rotated::{
     AFTER_BASE, B_COMMITTED_HEIGHT, B_IROOT, B_STATE_COMMIT, BEFORE_BASE, C_SPAN, CAVEAT_BASE,
     GRAD_ROT_WIDTH, ROT_WIDTH, RotatedBlockWitness, empty_caveat_manifest,
-    generate_rotated_effect_vm_trace,
+    generate_rotated_effect_vm_trace, generate_rotated_refusal_trace_with_fields_tree,
     rotated_descriptor_name_for_effect, transfer_caveat_manifest,
 };
 use dregg_circuit::effect_vm::{CellState, Effect, fold_bytes32_to_bb};
@@ -1800,7 +1800,10 @@ fn rotated_audit_record_pin_forces_record_digest_and_rejects_frozen_forgery() {
     // `fields_root` (the named-field map), exactly where the `"refusal"` audit slot lives — so the
     // after cell's authority digest (r23, `B_RECORD_DIGEST`) genuinely moves. (Used only by the
     // refusal arm; receiptArchive's genuine mover is the lifecycle limb, not `fields_root`.)
-    const AUDIT_KEY: u64 = 4096;
+    // The protocol-reserved refusal-audit ext key — the slot the deployed `apply_refusal` writes AND
+    // the in-circuit `.write` map-op gate (`refusalFieldsWriteV3`) constrains. Writing here moves the
+    // openable `fields_root` (limb 36) AND its fold into the r23 authority residue.
+    const AUDIT_KEY: u64 = dregg_cell::state::REFUSAL_AUDIT_EXT_KEY;
 
     // The two audit effects. `record_pin_offset` routes them to DIFFERENT committed limbs (post
     // #218/#219): a genuine `Refusal` moves `fields_root` → folds into the r23 authority residue
@@ -1889,14 +1892,45 @@ fn rotated_audit_record_pin_forces_record_digest_and_rejects_frozen_forgery() {
         );
 
         let caveat = empty_caveat_manifest();
-        let (trace, dpis) = generate_rotated_effect_vm_trace(
-            &st,
-            &effects,
-            &bridge(&before_w),
-            &bridge(&after_w),
-            &caveat,
-        )
-        .unwrap_or_else(|e| panic!("live rotated generator must produce a {name} trace + 47 PIs: {e}"));
+        // Refusal now carries the in-circuit `fields_root` `.write` map-op (the light-client close):
+        // its trace must thread the openable fields tree + the audit value, and the prover threads the
+        // BEFORE leaf set as `map_heaps`. ReceiptArchive rides the bare generator (no fields write).
+        let mut refusal_map_heaps: Vec<Vec<dregg_circuit::heap_root::HeapLeaf>> = vec![];
+        let (trace, dpis) = if expect_name == "refusalVmDescriptor2R24" {
+            let before_leaves =
+                dregg_cell::state::fields_root_leaves(&before_cell.state.fields_map);
+            let audit_value = dregg_circuit::cap_root::fold_bytes32(
+                &after_cell
+                    .state
+                    .fields_map
+                    .get(&AUDIT_KEY)
+                    .copied()
+                    .expect("the refused after-cell carries the audit slot"),
+            );
+            let (t, d, mh) = generate_rotated_refusal_trace_with_fields_tree(
+                &st,
+                &effects,
+                &bridge(&before_w),
+                &bridge(&after_w),
+                &caveat,
+                &before_leaves,
+                audit_value,
+            )
+            .unwrap_or_else(|e| panic!("live rotated refusal fields-tree generator: {e}"));
+            refusal_map_heaps = mh;
+            (t, d)
+        } else {
+            generate_rotated_effect_vm_trace(
+                &st,
+                &effects,
+                &bridge(&before_w),
+                &bridge(&after_w),
+                &caveat,
+            )
+            .unwrap_or_else(|e| {
+                panic!("live rotated generator must produce a {name} trace + 47 PIs: {e}")
+            })
+        };
         assert_eq!(trace[0].len(), ROT_WIDTH, "315-col rotated trace");
 
         // THE FIFTH PI: 47 elements, and PI[46] == the LAST row's AFTER record-digest limb.
@@ -1915,7 +1949,7 @@ fn rotated_audit_record_pin_forces_record_digest_and_rejects_frozen_forgery() {
         assert_eq!(dpis[42], trace[0][BEFORE_BASE + B_STATE_COMMIT], "PI 42 = rotated OLD commit");
 
         let mem_boundary = MemBoundaryWitness::default();
-        let map_heaps: Vec<Vec<dregg_circuit::heap_root::HeapLeaf>> = vec![];
+        let map_heaps = refusal_map_heaps;
 
         // PROVE + VERIFY the honest audit turn end-to-end.
         let proof = prove_vm_descriptor2(&desc, &trace, &dpis, &mem_boundary, &map_heaps)

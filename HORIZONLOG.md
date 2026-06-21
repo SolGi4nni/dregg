@@ -31,17 +31,24 @@ THE STAGES (VK-EPOCH-PLAN §5, family-at-a-time, each independently provable+dep
 descriptor surface — NOT a 10-way fan-out, concurrent edits to EffectVmEmitRotationV3.lean/trace_rotated.rs/proof_verify.rs/
 ClosureAll clobber in the shared tree): A cap-write DA (partly closed by tonight's revoke/revokeCapability — assess) ·
 **B authority off-cell→in-circuit force gate — STEP-0 SPLIT (2026-06-22): setPermissions/setVK are ALREADY
-light-client-forced (Family 1, in-circuit `permsVKWeldGate` — deployed `setPermsVmDescriptor2R24` = 107 constraints
-= bare 106 + the ONE weld; `vk_epoch_perms_vk_light_client_binding` GREEN, anchor not in the loop). refusal + the
-lifecycle PAYLOAD are the GENUINE residual (deployed `refusalVmDescriptor2R24` = 106 constraints, the bare record-pin,
-NO force gate). They CANNOT take the perms/VK weld: refusal's write is `fields_root' = sorted_insert(fields_root,
-REFUSAL_AUDIT_KEY, audit_felt(params))` — a MAP ROOT depending on the pre-`fields_root`, with no single declared
-param equal to it; committing `audit_felt` in a NEW sub-limb would diverge the wire commit from the cell-side commit
-(breaks §1b no-migration). Genuine close = a `fields_root` MAP-OP WRITE GATE (the noteSpend gold standard,
-`after_root == sorted_insert(before_root, KEY, val)` in-circuit with a `fields_root` tree witness in `map_heaps`) —
-but `RotationWitness` carries only the fields_root DIGEST limb (pre_limbs[36]), NOT the leaf-set, and NO prove path
-threads a fields_root `map_heaps`. SAME data-availability class as the cap-write §A gap — witness-plumbing, OUT of
-STAGE-B scope (feeds STAGE D's map-op work). Lifecycle-payload twin: the DISC (safety-critical) IS in-circuit-forced
+light-client-forced (Family 1, in-circuit `permsVKWeldGate`; `vk_epoch_perms_vk_light_client_binding` GREEN).
+✅ REFUSAL CLOSED (2026-06-22): the refusal light-client forge is now REJECTED in-circuit. THE DIVERGENCE FIXED —
+`cell::state::compute_fields_root` was `poseidon2(blake3(map))` (unbindable by any gate) ⇒ now the OPENABLE
+sorted-Poseidon2 `CanonicalHeapTree` root (the SAME `heap_root` scheme nullifier/accounts use), realizing the Lean
+`FieldsMap.fieldsRoot` openable digest; the committed limb 36 IS that openable root (`fields_root_felt` recovers the
+felt; `pre_limbs_from_cell` + `rotation_witness` agree). THE GATE — `EffectVmEmitRotationV3.refusalFieldsWriteV3` appends
+a `.write` map-op (`after_fields_root == write(before_root, refusalAuditKeyFelt=field_key_hash(REFUSAL_AUDIT_EXT_KEY)
+=529176517, audit_felt@prmCol2=col70)`), gated on `SEL_REFUSAL`; apex `refusalFieldsWriteV3_forces_write` threaded
+through `refusal_descriptorRefines_sat → closedLogExtract_refusal_closed → lightclient_unfoolable_closed_final_genuine`
+(axiom-clean, MUTATION-CONFIRMED reds the apex). THE GENERATOR — `generate_rotated_refusal_trace_with_fields_tree`
+(mirrors noteSpend's nullifier-tree generator) overrides limb 36 + threads the BEFORE leaf set as `map_heaps`; the
+audit slot is RESERVED position-stable so a refusal is a value WRITE. FORGE-DETECTOR FLIPPED:
+`vk_epoch_refusal_lifecycle_light_client_binding.rs::refusal_light_client_forge_rejected_by_fields_write_gate` —
+honest accept + forged-after-root REJECTED anchor-disabled (no full-node anchor) + non-vacuity. Descriptors re-emitted,
+FP re-pinned, drift-check GREEN. NAMED FOLLOW-UP (SDK routing): `sdk/src/full_turn_proof.rs` routes
+noteSpend/noteCreate/cap-write through their tree generators but NOT yet refusal — the DEPLOYED prover path must call
+`generate_rotated_refusal_trace_with_fields_tree` + thread `map_heaps` for a refusal lead effect (a wire, not a build;
+the gate + generator + cell realization are done). Lifecycle-payload twin (STILL OPEN): the DISC (safety-critical) IS in-circuit-forced
 (`rotateV3WithDiscGate`, cellSeal = 108 constraints); only the opaque `lifecycle_felt(reason_hash, sealed_at)`
 payload felt rides the record pin (needs an in-circuit hash gate over the light-client-known (reason_hash,
 block_height) — STAGE C). DISCRIMINATOR (BEFORE/AFTER, both poles, non-vacuous):

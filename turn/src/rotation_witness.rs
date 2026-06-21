@@ -218,11 +218,13 @@ pub fn mode_felt(mode: &dregg_cell::CellMode) -> BabyBear {
 }
 
 /// The committed `fields_root` digest limb (`B_FIELDS_ROOT = 36`, the WAVE-3 flag-day). Delegates to
-/// the canonical `dregg_cell::commitment::fields_root_felt`: `hash_bytes(fields_root)` (the SAME
-/// byte-root→felt the cap_root / nullifier_root / commitments_root limbs use). The setFieldDyn /
-/// refusal weld (`EffectVmEmitRotationV3.rotateV3WithFieldsRootGate`) FORCES the AFTER fields_root limb
-/// to the declared post-`fields_root` param (verifier-anchored), so a forged post-`fields_root` is
-/// UNSAT for a ledgerless light client.
+/// the canonical `dregg_cell::commitment::fields_root_felt`, which now recovers the OPENABLE
+/// sorted-Poseidon2 `fields_root` (`cell::state::compute_fields_root` IS a felt root) — NOT the opaque
+/// `hash_bytes(blake3_sponge)` it replaced. The refusal `.write` map-op gate
+/// (`EffectVmEmitRotationV3.refusalFieldsWriteV3`) opens this limb and FORCES the AFTER fields_root to
+/// `write(before_root, REFUSAL_AUDIT_KEY → audit_felt)`, so a forged post-`fields_root` is UNSAT for a
+/// ledgerless light client through `verify_vm_descriptor2` ALONE (the refusal map-op generator
+/// `generate_rotated_refusal_trace_with_fields_tree` threads the BEFORE leaf set as `map_heaps`).
 pub fn fields_root_felt(fields_root: &[u8; 32]) -> BabyBear {
     dregg_cell::commitment::fields_root_felt(fields_root)
 }
