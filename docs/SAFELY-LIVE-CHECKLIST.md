@@ -57,10 +57,10 @@ gap — it is the cap-tree WRITE WITNESS (`map_heaps`) data availability. Findin
       registry member with no resolver arm + no live HeapWrite Effect variant. Reconcile (add the
       Effect+selector+resolver if heapWrite is live, OR exclude it as separately-routed) — NOT a blind bump.
       **green:** `cargo test -p dregg-circuit resolvers_cover_exactly_the_rotated_registry`.
-- [ ] receiptArchive(40) spec-bridge — the dispatch arm reduces to the toy record-slot `ReceiptArchiveSpec`;
+- [x] receiptArchive(40) spec-bridge — the dispatch arm reduces to the toy record-slot `ReceiptArchiveSpec`;
       reconcile the arm to `ReceiptArchiveLifecycleSpec` (what the deployed disc gate forces) + a `_sat` discharger.
       **green:** editing `receiptArchiveV3`'s disc gate reds the apex (a mutation test).
-- [ ] attenuate(12) + revoke(tag-2) `_sat` — the apex calls the modelled `attenuate_closedLog`/`revoke_closedLog`
+- [x] attenuate(12) + revoke(tag-2) `_sat` — the apex calls the modelled `attenuate_closedLog`/`revoke_closedLog`
       (encode-consuming), not a deployed-descriptor force-lemma. Wire `_sat` dischargers.
       **green:** editing the attenuate/revoke descriptor reds the apex.
 - [ ] SetProgram circuit witness — SetProgram reuses EFFECT_SET_VERIFICATION_KEY's tag (action.rs:2191), no own rung.
@@ -86,3 +86,21 @@ gap — it is the cap-tree WRITE WITNESS (`map_heaps`) data availability. Findin
 ## HEADLINE GREEN-TEST (the goal is met when this is true)
 30/30 effects FORCED-ON-WIRE + light-client-verifiable: every cap/write effect's producer selects + verifier
 checks the authority-AND-write-bearing descriptor; (A)+(B)+(C) boxes checked; the INVARIANTS green; the board red-free.
+
+## PROGRESS LOG (genuine green only — verified at source/by unambiguous test)
+- ✅ attenuate(12) Class-A (b2ef6e23e) · resolvers_cover_exactly GREEN (b2ef6e23e) · receiptArchive(40) Class-A
+  (56178b050, executor↔spec weld preserved) · cap-write descriptors nonce-TICK + Insert anchor-key (in 0f0921092
+  — MISATTRIBUTED to a parallel seL4 commit by the shared-index hazard; work is safe in HEAD, lake green 4106).
+- ✅ cap_write_revoke_proves_and_verifies_light_client GENUINELY passes (no catch_unwind) — the revoke cap-WRITE
+  post-root proves + light-client-verifies. BUT the cap-write BOX stays UNCHECKED pending the no-silent-forge
+  resolution (the empty-map_heaps test went green=success where it expected fail-closed — forge-vs-vacuous under
+  resolution by ac39a343; a forge here = critical, must resolve before the box checks).
+- ⬜ STILL OPEN: the no-silent-forge resolution (BLOCKING the cap-write box) · the verifier authority-only tooth
+  (flips ON but breaks 3 existing tests that exercise the authority-only route — needs them reconciled) · the 3
+  Insert Rust wiring (CapTreeWriteOp::Insert) · revoke(tag-2) frozen-face · refreshDelegation deleg-column ·
+  SetProgram witness · the VK epoch (staged plan, docs/VK-EPOCH-PLAN.md).
+
+## ⚠ PROVENANCE LESSON (2026-06-21): the shared-index hazard
+A parallel agent's `git commit` swept up MY staged cap-write descriptor files into commit 0f0921092 (a seL4 commit).
+The work is safe (in HEAD, green) but misattributed. LESSON: in a multi-agent swarm, do NOT leave files `git add`-staged
+across a window where parallel agents may commit — stage-and-commit atomically in one shell, or the shared index leaks.
