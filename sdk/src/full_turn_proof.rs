@@ -5917,6 +5917,272 @@ mod tests {
         );
     }
 
+    /// **grantCapability — genuine prove + light-client verify + forge + authority-only rejection
+    /// (THE GRANTCAP CLOSE).** A `GrantCapability` turn confers a capability the granter holds; its
+    /// DEPLOYED light-client-VERIFYING route is the INSERT write wrapper (`delegateWriteCapOpen` — a
+    /// grant IS a delegation op, so the cap-tree INSERT binds the DELEGATION_OPS facet 1<<16 and the
+    /// fresh conferred edge is grafted on the rotated cap-root limb 213→264). The grant's OWN
+    /// AUTHORITY-only descriptor `grantCapCapOpenVmDescriptor2R24` (binding GRANT_CAPABILITY 1<<2)
+    /// proves the membership crown but leaves the post-cap-root host-trusted, so the light-client tooth
+    /// (`is_forbidden_authority_only_cap_write_descriptor`) FORCES the write wrapper. FOUR arms:
+    ///   (1) NON-VACUITY — the WRITE wrapper genuinely PROVES + light-client-VERIFIES (the honest grant
+    ///       binds the conferred edge on the wire);
+    ///   (2) FORGE — a c-list MISSING the anchor (the granter's held authority) FAILS CLOSED (no
+    ///       membership witness for the anchor read → a fabricated post-cap-root is UNPROVABLE);
+    ///   (3) WRONG FACET — a held cap that does NOT permit the delegation op the write wrapper binds is
+    ///       refused at witness build (`from_membership_for` requires `mask_lo == eff_bit`);
+    ///   (4) AUTHORITY-ONLY — an empty c-list falls back to `grantCapCapOpenVmDescriptor2R24` (the grant's
+    ///       own GRANT_CAPABILITY-bound crown). It still PROVES (the membership crown is valid) BUT the
+    ///       light-client verifier REJECTS it (the tooth is ON — the producer MUST prove the on-the-wire
+    ///       write wrapper). BEFORE: grantCapability had no NAMED genuine prove-through; AFTER: it proves +
+    ///       light-client-verifies through its deployed route, and the authority-only forge is rejected.
+    #[cfg(feature = "prover")]
+    #[test]
+    fn cap_write_grant_proves_and_verifies_light_client() {
+        use dregg_circuit::cap_root::CapLeaf;
+        use dregg_circuit::effect_vm::AttenuateWitness;
+        use dregg_circuit::effect_vm::trace_rotated::{
+            CapOpenWitness, FACET_MASK_HI, SIGNATURE_AUTH_TAG,
+        };
+        use dregg_circuit::heap_root::HeapLeaf;
+        use dregg_turn::rotation_witness as rw;
+
+        // The grant's DEPLOYED write wrapper binds the DELEGATION_OPS facet (1<<16); its OWN authority-only
+        // descriptor binds GRANT_CAPABILITY (1<<2). The two membership crowns demand different anchor facets.
+        const EFFECT_DELEGATION_OPS: u32 = 1 << 16;
+        const EFFECT_GRANT_CAPABILITY: u32 = 1 << 2;
+
+        let leaf_cl = |l: &[BabyBear; 7]| CapLeaf {
+            slot_hash: l[0],
+            target: l[1],
+            auth_tag: l[2],
+            mask_lo: l[3],
+            mask_hi: l[4],
+            expiry: l[5],
+            breadstuff: l[6],
+        };
+
+        // The fresh conferred edge (the new cap slot felt + its conferred mask) — distinct from the
+        // anchor (0xA0C0) and other (0xBEEF) c-list keys.
+        let fresh_key = BabyBear::new(0x67A7);
+        let fresh_value = BabyBear::new(0x0F);
+        let zero_leaf = CapLeaf {
+            slot_hash: BabyBear::ZERO,
+            target: BabyBear::ZERO,
+            auth_tag: BabyBear::ZERO,
+            mask_lo: BabyBear::ZERO,
+            mask_hi: BabyBear::ZERO,
+            expiry: BabyBear::ZERO,
+            breadstuff: BabyBear::ZERO,
+        };
+        // A NON-attenuating grant (no phase-B narrowing) → the plain `delegateWriteCapOpen` wrapper.
+        let mk_effect = || VmEffect::GrantCapability {
+            cap_entry: [
+                fresh_key, fresh_value, BabyBear::ZERO, BabyBear::ZERO,
+                BabyBear::ZERO, BabyBear::ZERO, BabyBear::ZERO, BabyBear::ZERO,
+            ],
+            phase_b: Some(Box::new(AttenuateWitness {
+                held: zero_leaf,
+                granted: zero_leaf,
+                siblings: Vec::new(),
+                directions: Vec::new(),
+                held_tier: 0,
+                granted_tier: 0,
+                held_expiry_height: None,
+                granted_expiry_height: None,
+            })),
+        };
+        let effects = vec![mk_effect()];
+
+        // A real granting turn (nonce-tick passthrough base, all permissions open).
+        let before_balance: u64 = 100_000;
+        let initial = CellState::new(before_balance, 0);
+        let mut pk = [0u8; 32];
+        pk[0] = 7;
+        let mut before_cell = dregg_cell::Cell::with_balance(pk, [0u8; 32], before_balance as i64);
+        before_cell.permissions = dregg_cell::Permissions {
+            send: dregg_cell::AuthRequired::None,
+            receive: dregg_cell::AuthRequired::None,
+            set_state: dregg_cell::AuthRequired::None,
+            set_permissions: dregg_cell::AuthRequired::None,
+            set_verification_key: dregg_cell::AuthRequired::None,
+            increment_nonce: dregg_cell::AuthRequired::None,
+            delegate: dregg_cell::AuthRequired::None,
+            access: dregg_cell::AuthRequired::None,
+        };
+        let mut after_cell = before_cell.clone();
+        let _ = after_cell.state.increment_nonce();
+        let mut ledger = dregg_cell::Ledger::new();
+        ledger.insert_cell(after_cell.clone()).unwrap();
+        let receipt_log: Vec<[u8; 32]> = vec![[3u8; 32], [4u8; 32]];
+        let before_w = rw::produce(&before_cell, &ledger, &[0u8; 32], &[0u8; 32], &receipt_log);
+        let after_w = rw::produce(&after_cell, &ledger, &[0u8; 32], &[0u8; 32], &receipt_log);
+
+        // The grant routes through `grantCapCapOpenVmDescriptor2R24` (authority-only `.key`) PLUS the
+        // INSERT write wrapper (`delegateWriteCapOpen`, DELEGATION_OPS). With a genuine c-list the
+        // EFFECTIVE descriptor is the write wrapper.
+        let route = cap_open_route_for_run(&effects).expect("a wired cap-open route for the grant");
+        assert_eq!(
+            route.key, "grantCapCapOpenVmDescriptor2R24",
+            "the grant's authority-only descriptor is grantCapCapOpen (binds GRANT_CAPABILITY 1<<2)"
+        );
+        assert!(
+            matches!(
+                route.write,
+                Some((
+                    "delegateWriteCapOpenVmDescriptor2R24",
+                    dregg_circuit::effect_vm::trace_rotated::CapTreeWriteOp::Insert,
+                    EFFECT_DELEGATION_OPS
+                ))
+            ),
+            "a NON-attenuating grant routes to the plain delegate INSERT write wrapper (DELEGATION_OPS), got {:?}",
+            route.write
+        );
+
+        // ── ARM (1): NON-VACUITY. The write wrapper's anchor cap permits DELEGATION_OPS (the facet the
+        // INSERT crown binds). The genuine c-list carries the anchor (present, opened by the crown) + one
+        // other held cap; the fresh conferred edge key is ABSENT and distinct.
+        let anchor_deleg: [BabyBear; 7] = [
+            BabyBear::new(0xA0C0), // slot_hash (the anchor key)
+            BabyBear::new(7_777),  // target (== src)
+            BabyBear::new(SIGNATURE_AUTH_TAG),
+            BabyBear::new(EFFECT_DELEGATION_OPS), // facet == the write wrapper's eff_bit
+            BabyBear::new(FACET_MASK_HI),
+            BabyBear::new(0x00FF_FFFF),
+            BabyBear::new(99),
+        ];
+        let other_deleg: [BabyBear; 7] = [
+            BabyBear::new(0xBEEF),
+            BabyBear::new(123),
+            BabyBear::new(1),
+            BabyBear::new(EFFECT_DELEGATION_OPS),
+            BabyBear::new(0),
+            BabyBear::new(9),
+            BabyBear::new(0),
+        ];
+        assert_ne!(fresh_key, anchor_deleg[0], "the fresh edge MUST be distinct from the anchor key");
+        assert_ne!(fresh_key, other_deleg[0], "the fresh edge MUST be absent from the c-list");
+        let built_deleg = CapOpenWitness::build_for(&[other_deleg, anchor_deleg], 1, EFFECT_DELEGATION_OPS)
+            .expect("the DELEGATION_OPS membership path builds for the anchor");
+        let clist_leaves = vec![
+            HeapLeaf { addr: anchor_deleg[0], value: anchor_deleg[1] },
+            HeapLeaf { addr: other_deleg[0], value: other_deleg[1] },
+        ];
+        let cap = CapMembershipWitness {
+            leaf: leaf_cl(&anchor_deleg),
+            siblings: built_deleg.siblings.to_vec(),
+            directions: built_deleg.directions.to_vec(),
+            clist_leaves,
+        };
+        let effective_key = cap_open_effective_key(&route, &cap);
+        assert_eq!(
+            effective_key, "delegateWriteCapOpenVmDescriptor2R24",
+            "with a genuine c-list the EFFECTIVE grant descriptor is the INSERT write wrapper"
+        );
+        // The fresh edge the write wrapper grafts is the conferred `cap_entry[0..2]`.
+        assert_eq!(
+            cap_insert_payload_for(&effects, &cap),
+            Some((fresh_key, fresh_value)),
+            "the fresh conferred edge derived from the grant must match the test's expectation"
+        );
+
+        let (proof, dpis) =
+            prove_effect_vm_cap_open(&initial, &effects, &before_w, &after_w, &cap, &route, None)
+                .expect(
+                    "the WRITE-bearing grant cap-open MUST genuinely prove — anchor read + fresh \
+                     sorted-INSERT on the rotated cap-root limb (213→264) over the real c-list, \
+                     v1-state frozen, nonce ticks",
+                );
+        let proof_bytes = postcard::to_allocvec(&proof).expect("serialize grant write cap-open leg");
+        let vk_hash = cap_open_vk_hash_by_key(effective_key).expect("grant write wrapper vk_hash");
+        verify_effect_vm_rotated_with_cutover(&proof_bytes, &dpis, &vk_hash).expect(
+            "the WRITE-bearing grant cap-open MUST verify on the light-client path — the genuine \
+             post-cap-root (the conferred edge) is on-the-wire light-client-verifiable",
+        );
+
+        // ── ARM (2): FORGE. A c-list MISSING the anchor key — the held-authority `read` op has no
+        // membership witness, so the bridge FAILS CLOSED. A fabricated post-cap-root is NOT provable.
+        let forged_clist = vec![HeapLeaf { addr: other_deleg[0], value: other_deleg[1] }];
+        let cap_forged = CapMembershipWitness {
+            leaf: leaf_cl(&anchor_deleg),
+            siblings: built_deleg.siblings.to_vec(),
+            directions: built_deleg.directions.to_vec(),
+            clist_leaves: forged_clist,
+        };
+        assert!(
+            prove_effect_vm_cap_open(&initial, &effects, &before_w, &after_w, &cap_forged, &route, None)
+                .is_err(),
+            "a c-list MISSING the granter's held-authority anchor MUST fail closed — a fabricated \
+             post-cap-root is NOT provable (no silent forge)"
+        );
+
+        // ── ARM (3): WRONG FACET. A held cap whose facet permits a DIFFERENT effect (transfer, not the
+        // delegation op the write wrapper binds) is refused at witness build (`from_membership_for`
+        // requires `mask_lo == eff_bit`).
+        const EFFECT_TRANSFER: u32 = 1 << 1;
+        let wrong_facet = CapMembershipWitness {
+            leaf: CapLeaf { mask_lo: BabyBear::new(EFFECT_TRANSFER), ..leaf_cl(&anchor_deleg) },
+            siblings: cap.siblings.clone(),
+            directions: cap.directions.clone(),
+            clist_leaves: cap.clist_leaves.clone(),
+        };
+        assert!(
+            prove_effect_vm_cap_open(&initial, &effects, &before_w, &after_w, &wrong_facet, &route, None)
+                .is_err(),
+            "a held cap permitting a DIFFERENT effect (transfer, not the delegation op the grant write \
+             wrapper binds) MUST be refused (fail-closed at the membership crown)"
+        );
+
+        // ── ARM (4): AUTHORITY-ONLY ROUTE IS LIGHT-CLIENT-REJECTED (the tooth is ON). An empty c-list
+        // falls back to `grantCapCapOpenVmDescriptor2R24` — the grant's OWN authority-only crown, which
+        // binds GRANT_CAPABILITY (1<<2). So its anchor cap permits GRANT_CAPABILITY. It PROVES (the
+        // membership crown is valid) BUT the light-client verifier REJECTS it (the post-cap-root is
+        // host-trusted; the producer MUST prove the on-the-wire write wrapper).
+        let anchor_grant: [BabyBear; 7] = [
+            BabyBear::new(0xA0C0),
+            BabyBear::new(7_777),
+            BabyBear::new(SIGNATURE_AUTH_TAG),
+            BabyBear::new(EFFECT_GRANT_CAPABILITY), // facet == the authority-only route's eff_bit (1<<2)
+            BabyBear::new(FACET_MASK_HI),
+            BabyBear::new(0x00FF_FFFF),
+            BabyBear::new(99),
+        ];
+        let other_grant: [BabyBear; 7] = [
+            BabyBear::new(0xBEEF),
+            BabyBear::new(123),
+            BabyBear::new(1),
+            BabyBear::new(EFFECT_GRANT_CAPABILITY),
+            BabyBear::new(0),
+            BabyBear::new(9),
+            BabyBear::new(0),
+        ];
+        let built_grant = CapOpenWitness::build_for(&[other_grant, anchor_grant], 1, EFFECT_GRANT_CAPABILITY)
+            .expect("the GRANT_CAPABILITY membership path builds for the anchor");
+        let cap_authority_only = CapMembershipWitness {
+            leaf: leaf_cl(&anchor_grant),
+            siblings: built_grant.siblings.to_vec(),
+            directions: built_grant.directions.to_vec(),
+            clist_leaves: Vec::new(),
+        };
+        assert_eq!(
+            cap_open_effective_key(&route, &cap_authority_only),
+            "grantCapCapOpenVmDescriptor2R24",
+            "an empty c-list falls back to the grant's authority-only route"
+        );
+        let (proof_ao, dpis_ao) = prove_effect_vm_cap_open(
+            &initial, &effects, &before_w, &after_w, &cap_authority_only, &route, None,
+        )
+        .expect("the authority-only grant cap-open still PROVES (the GRANT_CAPABILITY membership crown is valid)");
+        let proof_ao_bytes = postcard::to_allocvec(&proof_ao).expect("serialize authority-only grant leg");
+        let vk_ao = cap_open_vk_hash_by_key("grantCapCapOpenVmDescriptor2R24")
+            .expect("authority-only grant vk_hash");
+        assert!(
+            verify_effect_vm_rotated_with_cutover(&proof_ao_bytes, &dpis_ao, &vk_ao).is_err(),
+            "the AUTHORITY-only grant cap-open is light-client-REJECTED (the tooth is ON) — the \
+             post-cap-root is host-trusted; the producer must prove the on-the-wire WRITE wrapper",
+        );
+    }
+
     /// **introduce — genuine prove + verify + forge.** `Introduce { intro_hash }` routes to
     /// `introduceWriteCapOpenVmDescriptor2R24`; the fresh edge is `intro_hash[0..2]`.
     #[cfg(feature = "prover")]

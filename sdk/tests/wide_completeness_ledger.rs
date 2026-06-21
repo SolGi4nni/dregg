@@ -686,9 +686,24 @@ const CAP_OPEN_ROUTE_EFFECTS: &[&str] =
 
 /// `custom` carries a DISTINCT trace geometry (`customVmDescriptor2R24` = 789-wide, the
 /// recursion-bound `proof_bind`): the wide transfer-shape producer lays an 817-wide row, so it is
-/// UNSAT against the custom descriptor on the bare wide path. Its receipt is minted via the
-/// recursion-bound custom route (the external sub-proof + `proof_bind`), not the sovereign wide
-/// producer.
+/// UNSAT against the custom descriptor on the bare wide path. Its receipt would be minted via the
+/// recursion-bound custom route (the external sub-proof bound by `proof_bind`), NOT the sovereign
+/// wide producer.
+///
+/// HONEST RESIDUAL STATE (the recursion-bound prove-through route is NOT YET BUILT). The descriptor
+/// + the `proof_bind` IR constraint EXIST and are deployed (`custom_descriptor_carries_proof_bind`
+/// pins them non-vacuously), and the proof-bind DENOTATION is proven at the descriptor-semantic level
+/// (`circuit/src/descriptor_ir2.rs`: `proof_bind_honest_commitment_verifies` /
+/// `proof_bind_forged_commitment_refuses`, against a toy recursion engine). But NO deployed,
+/// SDK-reachable prover wires an ACTUAL external sub-proof into the recursion argument: `prove_vm_
+/// descriptor2`'s `ProofBind` handling only bounds-checks its columns (`descriptor_ir2.rs:1270`) — it
+/// does not verify a real bound STARK; the turn-builder `Turn.custom_program_proofs` field
+/// (`turn/src/turn.rs:304`) is `None` at every construction; and there is no `prove_effect_vm_custom`
+/// that consumes a `CustomProgramProof` and emits a light-client-verifiable receipt. So `custom` is a
+/// genuine UNPROVABLE-on-any-deployed-path residual: closing it needs the recursion-bound prover built
+/// (thread the external sub-proof through `joint_turn_recursive.rs` / `ivc_turn_chain.rs`, verify it,
+/// and bind its PI commitment + program VK to the row's `commit`/`vk` columns), then a genuine
+/// prove-through test — NOT faked here.
 const CUSTOM_ROUTE_EFFECT: &str = "custom";
 
 /// **THE PROVABILITY SCOREBOARD (the living completeness measure).** Drive EVERY `VmEffect` cohort
@@ -812,5 +827,91 @@ fn provability_scoreboard_deployed_wide_path() {
         got_unprovable, expected_unprovable,
         "the UNPROVABLE-ON-WIDE set must be exactly the cap-write family + custom (the NAMED \
          residuals, each with its own route); got {got_unprovable:?}, expected {expected_unprovable:?}"
+    );
+}
+
+/// **THE custom RESIDUAL, NAMED NON-VACUOUSLY (the recursion-bound prove-through route is NOT built).**
+/// `custom` is the one effect with NO deployed prove-through path: its receipt would be minted by a
+/// recursion-bound prover that VERIFIES an external sub-proof and binds it via the descriptor's
+/// `proof_bind` op, but no such SDK-reachable prover exists yet (see the `CUSTOM_ROUTE_EFFECT` note).
+///
+/// What DOES exist, and what this test PINS so the residual is named non-vacuously (a regression
+/// dropping the proof-bind or its column binding FAILS here):
+///   * the deployed `customVmDescriptor2R24` carries EXACTLY ONE `proof_bind` IR constraint;
+///   * it is GUARDED on the Custom selector (`sel::CUSTOM` = var 8) — so it fires only on a custom row;
+///   * it binds the `custom_proof_commitment` column (var 72) and the `custom_program_vk_hash` column
+///     (var 68) — the two columns a recursion verifier would pin to a verifying sub-proof's PI
+///     commitment + program VK.
+///
+/// The proof-bind DENOTATION (an honest commitment verifies, a forged one is UNSAT) is proven at the
+/// descriptor-semantic level in `circuit/src/descriptor_ir2.rs`
+/// (`proof_bind_honest_commitment_verifies` / `proof_bind_forged_commitment_refuses`, against a toy
+/// recursion engine). The remaining work to make `custom` PROVE-THROUGH on a deployed path: wire an
+/// actual external STARK sub-proof into the recursion argument (`joint_turn_recursive.rs` /
+/// `ivc_turn_chain.rs`), verify it, and bind its PI commitment + VK to these columns — then a genuine
+/// prove + light-client-verify + forged-sub-proof-reject test. NOT faked here.
+#[test]
+fn custom_descriptor_carries_proof_bind_residual_named() {
+    use dregg_circuit::descriptor_ir2::VmConstraint2;
+    use dregg_circuit::lean_descriptor_air::LeanExpr;
+
+    // sel::CUSTOM = 8 (the Custom selector column the proof_bind guard fires on).
+    const SEL_CUSTOM: usize = 8;
+    // The deployed custom-row PI columns the recursion verifier pins (per the descriptor JSON).
+    const CUSTOM_PROOF_COMMITMENT_COL: usize = 72;
+    const CUSTOM_PROGRAM_VK_HASH_COL: usize = 68;
+
+    let json = WIDE_REGISTRY_STAGED_TSV
+        .lines()
+        .find_map(|line| {
+            let mut it = line.splitn(3, '\t');
+            if it.next() == Some("customVmDescriptor2R24") {
+                let _display = it.next();
+                it.next()
+            } else {
+                None
+            }
+        })
+        .expect("customVmDescriptor2R24 IS in the deployed wide staged registry");
+    let desc = parse_vm_descriptor2(json).expect("the custom rotated descriptor parses");
+
+    // EXACTLY ONE proof_bind op — the recursion binding the residual route would discharge.
+    let binds: Vec<&dregg_circuit::descriptor_ir2::ProofBindSpec> = desc
+        .constraints
+        .iter()
+        .filter_map(|c| match c {
+            VmConstraint2::ProofBind(m) => Some(m),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        binds.len(),
+        1,
+        "the custom descriptor MUST carry EXACTLY ONE proof_bind op (the recursion binding the \
+         residual prove-through route would discharge) — descriptor: {}",
+        desc.name
+    );
+    let bind = binds[0];
+
+    // The guard fires on the Custom selector (var 8) — the op is custom-row-local.
+    assert!(
+        matches!(bind.guard, LeanExpr::Var(SEL_CUSTOM)),
+        "the proof_bind MUST be GUARDED on the Custom selector (sel::CUSTOM = var {SEL_CUSTOM}); \
+         got guard {:?}",
+        bind.guard
+    );
+    // It binds the proof_commitment column (the verifying sub-proof's PI commitment lands here).
+    assert!(
+        matches!(bind.commit, LeanExpr::Var(CUSTOM_PROOF_COMMITMENT_COL)),
+        "the proof_bind MUST bind the custom_proof_commitment column (var {CUSTOM_PROOF_COMMITMENT_COL}); \
+         got commit {:?}",
+        bind.commit
+    );
+    // It binds the program_vk_hash column (the sub-proof's program VK lands here).
+    assert!(
+        matches!(bind.vk, LeanExpr::Var(CUSTOM_PROGRAM_VK_HASH_COL)),
+        "the proof_bind MUST bind the custom_program_vk_hash column (var {CUSTOM_PROGRAM_VK_HASH_COL}); \
+         got vk {:?}",
+        bind.vk
     );
 }
