@@ -11,6 +11,32 @@ reason.)*
 Last sweep: 2026-06-13 (flagged-items burndown — removed ~14 landed/struck items,
 deduped the DreggDL/sel4/snapshot landings into git history, kept live tails).
 
+## ⚑⚑ VK-EPOCH REFRAMED (2026-06-22, devnet TORN DOWN ⇒ genuine VK-freedom, no redeploy gate)
+The "VK epoch keystone" (checklist C: "compute_commitment absorbs the roots") is STALE FRAMING of an
+ALREADY-MOSTLY-CLOSED gap — verified EMPIRICALLY at HEAD (the verify-before-believing discipline; a read-only
+scope gave a plausible-but-WRONG plan built on the RETIRED v1 lossy `record_digest` path; the keystone agent
+RAN the live rotated path and found the truth). GROUND TRUTH (see `docs/VK-EPOCH-PLAN.md` §1, the authoritative
+file:line reframe): there are THREE commitment surfaces. The BINDING wire commitment the light client pins —
+`compute_canonical_state_commitment` (cell/src/commitment.rs:192) — ALREADY absorbs lifecycle/perms/vk/deathCert/
+fields_root/the 8 system_roots (nullifier/commitment/deleg/…)/heap_root. The wide rotated v9 (commitment.rs:1020,
+37 named limbs: authorityDigest@24 capRoot@25 nullifierRoot@26 commitmentsRoot@27 heapRoot@28 lifecycle@29
+lifecycleDisc@32 permsDigest@33 vkDigest@34 mode@35 fieldsRoot@36) is computed IN-TRACE. cellSeal is ALREADY
+forced-on-wire (rotateV3WithDiscGate forces lifecycleDisc in-circuit; forge-detector `effect_vm_rotation_flip.rs:1536`
+honest-accept + freeze-AFTER-to-PRE reject + mutation-confirm — EXISTS + GREEN). recStateCommit byte-unchanged.
+⇒ THE REAL VK-EPOCH = NOT "teach the commitment new columns" (done) but **convert the remaining OFF-CELL ANCHORS
+to IN-CIRCUIT FORCE GATES** — the light-client-vs-full-node discriminator: setPermissions/setVK/refusal + the
+lifecycle PAYLOAD ride the off-cell anchor (proof_verify.rs ~718-735 re-derives the post-cell via apply_effect_to_cell
+on the TRUSTED pre-cell — a FULL NODE can; a LEDGERLESS LIGHT CLIENT CANNOT) ⇒ NOT light-client-bound yet.
+THE STAGES (VK-EPOCH-PLAN §5, family-at-a-time, each independently provable+deployable, SEQUENTIAL on the shared
+descriptor surface — NOT a 10-way fan-out, concurrent edits to EffectVmEmitRotationV3.lean/trace_rotated.rs/proof_verify.rs/
+ClosureAll clobber in the shared tree): A cap-write DA (partly closed by tonight's revoke/revokeCapability — assess) ·
+**B authority off-cell→in-circuit force gate (setPermissions/setVK/refusal) — THE key gap, IN FLIGHT (agent a55e3aa3)** ·
+C lifecycle-payload in-circuit force · D note-create grow-gate (commitmentsRoot, mirror noteSpend) · E deleg-tree column
+(refreshDelegation/revokeDelegation — cap_root is the wrong primitive) · F v1-lossy-anchor RETIREMENT (the one true
+flag-day, LAST, touches the shared PI prefix). KEY DE-SCOPE: the cell-side commitment bytes DON'T change ⇒ **NO ledger
+migration** (confirm via a one-cell round-trip before F). Green-check per family (§6): light-client REJECTS a forged post
+differing ONLY in the column WITH the off-cell anchor block DISABLED (the discriminator) + both poles + non-vacuous.
+
 ## ⚑ delegateAtten SUBMASK+INSERT PROVE-THROUGH — the LogUp obstruction, 2026-06-21
 WELD closed the delegateAtten ROUTING SIGNAL (`is_attenuated_grant`: granted ⊊ held selects the submask
 wrapper `delegateAttenWriteCapOpenVmDescriptor2R24`, not plain `delegateWriteCapOpen`) + the submask-witness
