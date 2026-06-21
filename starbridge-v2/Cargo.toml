@@ -205,6 +205,26 @@ headless-render = [
 ]
 
 [dependencies]
+# --- wire contract (always available: remote-node + sel4-thin + wasm paths) --
+# Target-AGNOSTIC deps (the model + wire contract). `reqwest`/`image` are
+# `optional` and gated on the `live-node`/`headless-render` features, which the
+# wasm `embedded-executor` build never enables — so cargo never pulls them on
+# wasm32. `serde`/`blake3`/`postcard` are all wasm32-safe and used by the model.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# HTTP client against the node's routes — needed by the thin path and by the
+# master interface's optional remote-federation connection. Gated on `live-node`.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream", "blocking"], optional = true }
+hex = "0.4"
+anyhow = "1"
+# Used by the embedded `World` for the image-commitment root + cell snapshots.
+blake3 = "1"
+postcard = { version = "1", features = ["use-std"] }
+# The headless cockpit bake re-encodes the captured RGBA to a PNG visual check
+# (the raw `.rgba` the seL4 PD bakes is written directly). Gated on
+# `headless-render`. 0.25 matches gpui_wgpu's `image` (one resolved version).
+image = { version = "0.25", default-features = false, features = ["png"], optional = true }
+
 # --- gpui (gated on `gpui-ui`) ----------------------------------------------
 # DREGG-OWNED FORK: `emberian/zed@dregg-offscreen` is `zed-industries/zed`'s
 # `fca2ccd` (the previously-pinned rev — gpui/gpui_platform are byte-identical to
@@ -238,6 +258,14 @@ gpui_wgpu = { git = "https://github.com/emberian/zed", rev = "407a6ffd977d82b828
 # --- the embedded verified executor (gated on `embedded-executor`) ----------
 # These link libdregg_lean.a on native. `default-features = true` keeps the
 # Lean shadow/gate path compiled in (the verified producer).
+#
+# TARGET-SPLIT (wasm cockpit, the in-browser skin): these NATIVE declarations are
+# Lean-linked (the verified producer); the wasm32 re-declarations live in a mirror
+# `[target.'cfg(target_arch = "wasm32")'.dependencies]` block at the END of this
+# file (`default-features = false` + `no-lean-link`, mirroring `wasm/Cargo.toml`),
+# so wasm32 compiles the Rust fallback paths — a statement about wasm32's linker
+# (it cannot link libdregg_lean.a), never about which guarantees native has.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 dregg-turn = { path = "../turn", optional = true }
 dregg-cell = { path = "../cell", optional = true }
 dregg-types = { path = "../types", optional = true }
@@ -367,21 +395,45 @@ dregg-captp = { path = "../captp", optional = true }
 # servo-render, NOT a new seam here.
 servo-render = { path = "../servo-render", optional = true }
 
-# --- wire contract (always available: remote-node + sel4-thin paths) --------
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-
-# HTTP client against the node's routes — needed by the thin path and by the
-# master interface's optional remote-federation connection.
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream", "blocking"], optional = true }
-
-hex = "0.4"
-anyhow = "1"
-# Used by the embedded `World` for the image-commitment root + cell snapshots.
-blake3 = "1"
-postcard = { version = "1", features = ["use-std"] }
-
-# The headless cockpit bake re-encodes the captured RGBA to a PNG visual check
-# (the raw `.rgba` the seL4 PD bakes is written directly). Gated on
-# `headless-render`. 0.25 matches gpui_wgpu's `image` (one resolved version).
-image = { version = "0.25", default-features = false, features = ["png"], optional = true }
+# THE WASM COCKPIT MIRROR — the in-browser skin (one model, three skins). These
+# re-declare the SAME executor crates the native block above pulls, but
+# `default-features = false` + `no-lean-link` (the platform gate: wasm32 cannot
+# link libdregg_lean.a, so the Rust fallback paths compile). Features mirror
+# `wasm/Cargo.toml`'s exact per-crate set. EXCLUDED from this mirror:
+#   * `dregg-persist` — pulls `redb` (native-only embedded store); the browser
+#     image is always ephemeral (`src/persistence_wasm.rs` stub supplies the
+#     `WorldPersist`/`OpenError`/`RecoveredImage`/`canonical_ledger_root` surface
+#     `world.rs` imports).
+#   * `servo-render` — the C++ SWGL rasterizer (non-wasm32).
+# The `getrandom` shims below are the wasm32 entropy backend (mirrors wasm/).
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+dregg-turn = { path = "../turn", optional = true, default-features = false, features = ["no-lean-link"] }
+dregg-cell = { path = "../cell", optional = true, default-features = false }
+dregg-types = { path = "../types", optional = true }
+dregg-sdk = { path = "../sdk", optional = true, default-features = false, features = ["no-lean-link", "embed-core", "prover"] }
+dregg-coord = { path = "../coord", optional = true, default-features = false, features = ["no-lean-link"] }
+dregg-token = { path = "../token", optional = true, default-features = false, features = ["macaroon", "rand-deps"] }
+dregg-doc = { path = "../dregg-doc", optional = true, features = ["substrate"] }
+dregg-userspace-verify = { path = "../dregg-userspace-verify", optional = true }
+dregg-firmament = { path = "../sel4/dregg-firmament", optional = true }
+starbridge-web-surface = { path = "../starbridge-web-surface", optional = true, default-features = false }
+deos-web-cells = { path = "../deos-web-cells", optional = true }
+dregg-captp = { path = "../captp", optional = true, default-features = false, features = ["no-lean-link"] }
+# wasm32 entropy backend (mirrors wasm/Cargo.toml lines 18-20): the three
+# getrandom majors the dep tree pulls, each forced onto its js/wasm_js backend.
+getrandom = { version = "0.3", features = ["wasm_js"] }
+getrandom02 = { package = "getrandom", version = "0.2", features = ["js"] }
+getrandom04 = { package = "getrandom", version = "0.4", features = ["wasm_js"] }
+# THE THREE WASM-UNIFICATION FORCINGS (mirrors wasm/Cargo.toml lines 119-131) —
+# indirect deps the executor tree pulls that need a wasm32-specific feature flip,
+# forced here so cargo feature-unification applies it to the transitive copy:
+#   * `clear_on_drop` (via bulletproofs/cell crypto) — default build invokes a C
+#     compiler (cc → clang --target=wasm32) with no working wasm32 toolchain; the
+#     `no_cc` feature switches to a pure-Rust impl.
+clear_on_drop = { version = "0.2", features = ["no_cc"] }
+#   * `lockstitch` (via federation → hints) — uses x86_64/aarch64 AES intrinsics
+#     unless `portable` is on; wasm32 has neither.
+lockstitch = { version = "0.29", features = ["portable"] }
+#   * `biscuit-auth` (via dregg-token's `biscuit` feature) — its wasm32 `Instant`
+#     shim + `TryInto` are gated behind the crate's own `wasm` feature.
+biscuit-auth = { version = "6.0.0", features = ["wasm"] }

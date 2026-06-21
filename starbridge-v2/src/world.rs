@@ -45,7 +45,12 @@ use dregg_turn::{
 };
 
 use crate::dynamics::{Dynamics, WorldEvent};
-use crate::persistence::{OpenError, RecoveredImage, WorldPersist};
+use crate::persistence::WorldPersist;
+// `OpenError`/`RecoveredImage` are used only by the durable `open`/
+// `open_with_timestamp` paths, which are `not(wasm32)`-gated (no `dregg-persist`
+// on wasm — the browser image is always ephemeral).
+#[cfg(not(target_arch = "wasm32"))]
+use crate::persistence::{OpenError, RecoveredImage};
 use crate::replay::History;
 
 /// The outcome of attempting to commit a turn against the embedded executor.
@@ -275,6 +280,7 @@ impl World {
     ///
     /// First run on an empty store returns an empty durable World (no genesis, no
     /// turns); the caller seeds the demo genesis, which then persists.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn open(path: &std::path::Path, costs: ComputronCosts) -> Result<World, OpenError> {
         Self::open_with_timestamp(path, costs, now_unix())
     }
@@ -283,6 +289,7 @@ impl World {
     /// image was created under). The receipts re-derive bit-identically only when
     /// the timestamp matches the live world's that produced the durable turns, so
     /// a deterministic image (tests, the houyhnhnm-clock semihost) pins it here.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn open_with_timestamp(
         path: &std::path::Path,
         costs: ComputronCosts,

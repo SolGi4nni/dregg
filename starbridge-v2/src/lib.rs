@@ -190,7 +190,13 @@ pub mod pipeline_continuation;
 // NATIVE WORLD PERSISTENCE (M4 — docs/deos/WORLD-PERSISTENCE-PLAN.md): the
 // durable-image weld onto the node's already-built `dregg-persist` spine (redb
 // commit log + checkpoint⊕overlay recovery). gpui-free, `cargo test`-able.
-#[cfg(feature = "embedded-executor")]
+#[cfg(all(feature = "embedded-executor", not(target_arch = "wasm32")))]
+pub mod persistence;
+// On wasm32 there is no `dregg-persist` (it pulls `redb`, native-only). The
+// browser image is always ephemeral; this stub supplies exactly what `world.rs`
+// imports (`WorldPersist`/`OpenError`/`RecoveredImage` + `canonical_ledger_root`).
+#[cfg(all(feature = "embedded-executor", target_arch = "wasm32"))]
+#[path = "persistence_wasm.rs"]
 pub mod persistence;
 
 // THE LIVE INSPECT→ACT LOOP — the Smalltalk inspect→act→inspect keystone: an
