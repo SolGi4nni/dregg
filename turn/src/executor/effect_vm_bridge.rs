@@ -253,10 +253,16 @@ pub(super) fn convert_turn_effects_to_vm(
                         spawn_hash: hash_to_8(spawn_hash_bytes.as_bytes()),
                     });
                 }
-                Effect::RefreshDelegation => {
-                    // Stage 3: real AIR coverage. No params on the
-                    // runtime side; selector alone records intent.
-                    vm_effects.push(VmEffect::RefreshDelegation);
+                Effect::RefreshDelegation { child, snapshot } => {
+                    // The DELEG-tree UPDATE-at-key: child_hash binds WHICH
+                    // delegation is re-armed, snapshot_value binds the new
+                    // commitment, both into effects_hash (the deployed cap-write
+                    // wrapper proves the genuine post-DELEG-root). MUST match the
+                    // SDK projector (`cipherclerk::convert_effects_to_vm`) byte-for-byte.
+                    vm_effects.push(VmEffect::RefreshDelegation {
+                        child_hash: hash_to_8(child.as_bytes()),
+                        snapshot_value: hash_to_8(snapshot),
+                    });
                 }
                 Effect::RevokeDelegation { child } => {
                     // Stage 3: real AIR coverage. child_hash binds the

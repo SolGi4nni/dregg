@@ -201,7 +201,10 @@ fn all_effect_variants() -> Vec<Variant> {
         },
         Variant {
             label: "RefreshDelegation",
-            effect: Effect::RefreshDelegation,
+            effect: Effect::RefreshDelegation {
+                child: CellId::from_bytes([0x19; 32]),
+                snapshot: [0x19; 32],
+            },
         },
         Variant {
             label: "RevokeDelegation",
@@ -396,7 +399,7 @@ fn assert_variant_coverage(e: &Effect) -> &'static str {
         Effect::NoteSpend { .. } => "NoteSpend",
         Effect::NoteCreate { .. } => "NoteCreate",
         Effect::SpawnWithDelegation { .. } => "SpawnWithDelegation",
-        Effect::RefreshDelegation => "RefreshDelegation",
+        Effect::RefreshDelegation { .. } => "RefreshDelegation",
         Effect::RevokeDelegation { .. } => "RevokeDelegation",
         Effect::BridgeMint { .. } => "BridgeMint",
         Effect::Introduce { .. } => "Introduce",

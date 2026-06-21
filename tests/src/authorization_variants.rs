@@ -106,22 +106,22 @@ impl WitnessedPredicateVerifier for ExpectedCustomAuthVerifier {
         input: &PredicateInput<'_>,
         proof_bytes: &[u8],
     ) -> Result<(), WitnessedPredicateError> {
-        match input {
-            PredicateInput::SigningMessage(bytes) if *bytes == self.expected_message.as_slice() => {
-            }
-            PredicateInput::SigningMessage(_) => {
-                return Err(WitnessedPredicateError::Rejected {
-                    kind_name: self.name(),
-                    reason: "signing message mismatch".into(),
-                });
-            }
+        let bytes: &[u8] = match input {
+            PredicateInput::AuthContext { signing_message, .. } => signing_message,
+            PredicateInput::SigningMessage(bytes) => bytes,
             _ => {
                 return Err(WitnessedPredicateError::InputShapeMismatch {
                     kind_name: self.name(),
-                    expected: "SigningMessage",
+                    expected: "AuthContext / SigningMessage",
                     actual: "non-SigningMessage",
                 });
             }
+        };
+        if bytes != self.expected_message.as_slice() {
+            return Err(WitnessedPredicateError::Rejected {
+                kind_name: self.name(),
+                reason: "signing message mismatch".into(),
+            });
         }
         if proof_bytes != self.expected_proof {
             return Err(WitnessedPredicateError::Rejected {

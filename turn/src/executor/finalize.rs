@@ -26,7 +26,7 @@ impl TurnExecutor {
 
             Effect::Introduce { .. } => self.costs.effect_base,
             Effect::SpawnWithDelegation { .. } => self.costs.create_cell,
-            Effect::RefreshDelegation => self.costs.effect_base,
+            Effect::RefreshDelegation { .. } => self.costs.effect_base,
             Effect::RevokeDelegation { .. } => self.costs.effect_base,
 
             Effect::ExerciseViaCapability { inner_effects, .. } => {

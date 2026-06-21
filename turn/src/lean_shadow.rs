@@ -313,7 +313,7 @@ pub fn effect_kind(eff: &Effect) -> &'static str {
         Effect::NoteCreate { .. } => "NoteCreate",
 
         Effect::SpawnWithDelegation { .. } => "SpawnWithDelegation",
-        Effect::RefreshDelegation => "RefreshDelegation",
+        Effect::RefreshDelegation { .. } => "RefreshDelegation",
         Effect::RevokeDelegation { .. } => "RevokeDelegation",
         Effect::BridgeMint { .. } => "BridgeMint",
 
@@ -789,7 +789,7 @@ fn effect_is_mappable(eff: &Effect, id_map: &HashMap<CellId, u64>) -> bool {
         Effect::Refusal { cell, .. } => has(cell),
         // ReceiptArchive / RefreshDelegation target the action's own cell (always in the map).
         Effect::ReceiptArchive { .. } => true,
-        Effect::RefreshDelegation => true,
+        Effect::RefreshDelegation { child, .. } => has(child),
         Effect::CellSeal { target, .. } => has(target),
         Effect::CellUnseal { target } => has(target),
         Effect::CellDestroy { target, .. } => has(target),
@@ -1160,9 +1160,9 @@ fn effect_to_wire(
         // RefreshDelegation: the child refreshes its delegation snapshot from its parent
         // (self-refresh — the actor IS the child). `.refreshDelegationA` routes to the chained
         // refresh step. The action target is the refreshing child cell.
-        Effect::RefreshDelegation => WireAction::RefreshDelegation {
+        Effect::RefreshDelegation { child, .. } => WireAction::RefreshDelegation {
             actor,
-            child: actor,
+            child: id(child)?,
         },
         // ─── GAP-shrink batch (was the swap surface) ─────────────────────────────────────
         //

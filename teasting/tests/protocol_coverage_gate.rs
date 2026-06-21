@@ -36,7 +36,7 @@ fn effect_executor_coverage(e: &Effect) -> bool {
         Effect::CreateCell { .. } => true, // ledger/create tests
         Effect::SetVerificationKey { .. } => true, // VK integrity tests
         Effect::SpawnWithDelegation { .. } => true, // delegation suite
-        Effect::RefreshDelegation => true, // delegation suite
+        Effect::RefreshDelegation { .. } => true, // delegation suite
         Effect::RevokeDelegation { .. } => true, // delegation suite
         Effect::BridgeMint { .. } => true, // bridge tests
         // bridge tests
@@ -91,7 +91,10 @@ fn effect_coverage_ratchet_only_shrinks() {
         MAX_UNCOVERED_EFFECTS
     );
     // Touch the forcing function so adding a variant breaks the build here.
-    assert!(effect_executor_coverage(&Effect::RefreshDelegation));
+    assert!(effect_executor_coverage(&Effect::RefreshDelegation {
+        child: dregg_cell::CellId::from_bytes([0u8; 32]),
+        snapshot: [0u8; 32],
+    }));
 }
 
 // ============================================================================

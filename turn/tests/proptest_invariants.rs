@@ -719,6 +719,15 @@ proptest! {
             }
 
             let nonce = ledger.get(&child_id).unwrap().state.nonce();
+            // The genuine refreshed snapshot: the commitment over the parent's
+            // live capabilities (what the executor re-arms from); the effect
+            // declares it and the executor refuses a mismatch.
+            let refresh_snapshot = {
+                let parent = ledger.get(&parent_id).unwrap();
+                let snap: Vec<CapabilityRef> = parent.capabilities.iter().cloned().collect();
+                let bytes = postcard::to_allocvec(&snap).unwrap_or_default();
+                dregg_cell::DelegatedRef::compute_clist_commitment(&bytes)
+            };
             let mut forest = CallForest::new();
             let action = Action {
                 target: child_id,
@@ -726,7 +735,10 @@ proptest! {
                 args: vec![],
                 authorization: Authorization::Unchecked,
                 preconditions: Default::default(),
-                effects: vec![Effect::RefreshDelegation],
+                effects: vec![Effect::RefreshDelegation {
+                    child: child_id,
+                    snapshot: refresh_snapshot,
+                }],
                 may_delegate: DelegationMode::None,
                 commitment_mode: Default::default(),
                 balance_change: None,

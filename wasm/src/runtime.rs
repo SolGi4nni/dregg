@@ -2661,11 +2661,12 @@ impl dregg_cell::WitnessedPredicateVerifier for EdThresholdVerifier {
         use dregg_types::{PublicKey, Signature, verify};
 
         let message = match input {
+            dregg_cell::PredicateInput::AuthContext { signing_message, .. } => *signing_message,
             dregg_cell::PredicateInput::SigningMessage(bytes) => *bytes,
             _ => {
                 return Err(E::InputShapeMismatch {
                     kind_name: "wasm-ed25519-threshold",
-                    expected: "SigningMessage",
+                    expected: "AuthContext / SigningMessage",
                     actual: "other",
                 });
             }

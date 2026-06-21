@@ -801,9 +801,10 @@ pub fn prove_effect_vm_rotated_wide(
         MemBoundaryWitness, parse_vm_descriptor2, prove_vm_descriptor2,
     };
     use dregg_circuit::effect_vm::trace_rotated::{
-        RotatedBlockWitness, generate_rotated_note_create_wide, generate_rotated_note_spend_wide,
-        generate_rotated_record_pin_wide, generate_rotated_refusal_wide,
-        generate_rotated_transfer_shape_wide, rotated_descriptor_name_for_effect,
+        RotatedBlockWitness, generate_rotated_create_cell_wide, generate_rotated_note_create_wide,
+        generate_rotated_note_spend_wide, generate_rotated_record_pin_wide,
+        generate_rotated_refusal_wide, generate_rotated_transfer_shape_wide,
+        rotated_descriptor_name_for_effect,
     };
     use dregg_circuit::effect_vm_descriptors::WIDE_REGISTRY_STAGED_TSV;
 
@@ -915,6 +916,20 @@ pub fn prove_effect_vm_rotated_wide(
             )
             .map_err(|e| SdkError::InvalidWitness(format!("wide record-pin generation: {e}")))?;
             (t, d, vec![])
+        } else if matches!(lead, dregg_circuit::effect_vm::Effect::CreateCell { .. }) {
+            // createCell routes through the ACCOUNTS-SET grow-gate wide producer (the limb-0
+            // accumulator) — the sibling of note-create's commitments-set grow-gate. The new cell's
+            // commitment is inserted into the BEFORE accounts tree; the `.write` map-op forces the
+            // AFTER accounts-root (limb 0) to be the genuine sorted insert, so the createCell wide
+            // descriptor (which carries the extra grow-gate PI the transfer-shape cohort lacks) is
+            // SAT. This standalone wrapper threads no accounts-set context, so the empty set is the
+            // grow-gate's BEFORE (the live sovereign producer threads the real accounts set), exactly
+            // as note-create above. WITHOUT this route createCell fell through to the transfer-shape
+            // producer (bare-38-PI) and was UNSAT (PI-count mismatch) — i.e. NOT PROVABLE.
+            generate_rotated_create_cell_wide(
+                initial_state, effects, &before, &after, caveat, &[],
+            )
+            .map_err(|e| SdkError::InvalidWitness(format!("wide create-cell generation: {e}")))?
         } else {
             let (t, d) = generate_rotated_transfer_shape_wide(
                 initial_state, effects, &before, &after, caveat,
@@ -1333,7 +1348,7 @@ fn cap_open_route_for_run(run_effects: &[VmEffectKind]) -> Option<CapOpenRoute> 
                 EFFECT_DELEGATION_OPS,
             )),
         }),
-        [VmEffectKind::RefreshDelegation] => Some(CapOpenRoute {
+        [VmEffectKind::RefreshDelegation { .. }] => Some(CapOpenRoute {
             key: "refreshDelegationCapOpenVmDescriptor2R24",
             eff_bit: EFFECT_DELEGATION_OPS,
             needs_attenuate_patch: false,
@@ -1352,12 +1367,16 @@ fn cap_open_route_for_run(run_effects: &[VmEffectKind]) -> Option<CapOpenRoute> 
             // wrong post-root is UNSAT — `writesTo` is FUNCTIONAL under CR). An empty leaf-set falls back to the
             // authority-only `key` (named, not a silent forge); the verifier tooth forces the write route. Refresh
             // re-arms an existing delegation (`granted = held`, non-amplification reflexive — Lean
-            // `refreshDelegationWriteV3`), so the Update VALUE is the held snapshot mask the membership read opens.
-            // This is the LIVE realization of `RotatedKernelRefinementCapFamily.refreshDelegation_descriptorRefines_sat`,
-            // threaded to the apex `lightclient_unfoolable_closed_final_genuine` (Rfix 55). Liveness note: the
-            // current `VmEffect::RefreshDelegation` is a unit variant (no child/snapshot payload), so an honest
-            // refresh threads the leaf-set only when the producer supplies the cell's delegations c-list; a
-            // payload-less refresh falls back to the authority-only route.
+            // `refreshDelegationWriteV3`), so the Update VALUE is the genuine refreshed snapshot the effect now
+            // carries (`snapshot_value`, bound into effects_hash) — the membership read opens the held key, the
+            // write rebinds it to the on-the-wire snapshot. This is the LIVE realization of
+            // `RotatedKernelRefinementCapFamily.refreshDelegation_descriptorRefines_sat`, threaded to the apex
+            // `lightclient_unfoolable_closed_final_genuine` (Rfix 55). LIVE LEAD: `VmEffect::RefreshDelegation`
+            // now carries the genuine `(child_hash, snapshot_value)` of the SPECIFIC delegation re-armed (the
+            // executor derives + binds them; a forged snapshot is refused at apply and changes effects_hash), so
+            // an honest refresh of a specific delegation threads its genuine snapshot through the DELEG-tree
+            // UPDATE — not the reflexive held-mask re-arm. A producer that omits the cell's delegations c-list
+            // (empty leaf-set) still falls back to the authority-only route (named, not a silent forge).
             write: Some((
                 "refreshDelegationWriteCapOpenVmDescriptor2R24",
                 dregg_circuit::effect_vm::trace_rotated::CapTreeWriteOp::Update,
@@ -1463,15 +1482,17 @@ fn cap_insert_payload_for(
         [VmEffectKind::AttenuateCapability { narrower_commitment, .. }] => {
             Some((narrower_commitment[0], narrower_commitment[1]))
         }
-        // refreshDelegation (the DELEG-tree UPDATE-AT-KEY): an in-place re-arm of the child's delegation
-        // snapshot. The genuine move REBINDS the SAME child key (`cap.leaf.slot_hash`, the membership-opened
-        // present key the bridge anchors at) to the refreshed snapshot. Refresh is reflexive
-        // (`granted = held`, non-amplification — Lean `refreshDelegationWriteV3`), so the Update VALUE is the
-        // held snapshot mask the membership read opened (`cap.leaf.mask_lo`): re-arm writes back the held
-        // value. The bridge ignores this tuple's KEY and rebinds at the anchor; the VALUE is the KEEP_MASK.
-        // (`VmEffect::RefreshDelegation` is a unit variant carrying no snapshot of its own, so the held mask
-        // IS the refreshed value — a payload-less refresh re-arms in place.)
-        [VmEffectKind::RefreshDelegation] => Some((cap.leaf.slot_hash, cap.leaf.mask_lo)),
+        // refreshDelegation (the DELEG-tree UPDATE-AT-KEY): an in-place re-arm of a SPECIFIC child's
+        // delegation snapshot. The genuine move REBINDS the membership-opened present key
+        // (`cap.leaf.slot_hash`, the anchor) to the GENUINE refreshed snapshot the effect now carries
+        // (`snapshot_value[0]` — bound into effects_hash; the executor derives it from the parent's live
+        // c-list and refuses a forged value at apply). The bridge ignores this tuple's KEY and rebinds at
+        // the anchor; the VALUE (the snapshot felt) is the KEEP_MASK the `Update` map_op writes — so the
+        // on-the-wire post-DELEG-root binds the SPECIFIC snapshot, not the reflexive held-mask re-arm.
+        [VmEffectKind::RefreshDelegation { child_hash, snapshot_value }] => {
+            let _ = child_hash; // child binds via effects_hash + params[0]; the anchor key is the membership-opened slot_hash
+            Some((cap.leaf.slot_hash, snapshot_value[0]))
+        }
         // spawn (the parent→child CAPABILITY HANDOFF): the conferred cap entry. The parent confers
         // `spawn_hash[0]` (the new child cap slot felt, the AIR child key in `params[0]` / cap-write
         // `CAP_KEY`) holding the conferred rights mask `spawn_hash[1]`. The held parent cap to `target`
@@ -3783,7 +3804,10 @@ mod tests {
             (
                 "refreshDelegationCapOpenVmDescriptor2R24",
                 EFFECT_DELEGATION_OPS,
-                vec![VmEffect::RefreshDelegation],
+                vec![VmEffect::RefreshDelegation {
+                    child_hash: [BabyBear::new(7); 8],
+                    snapshot_value: [BabyBear::new(8); 8],
+                }],
             ),
             (
                 "revokeCapabilityCapOpenVmDescriptor2R24",
@@ -3821,7 +3845,10 @@ mod tests {
         assert!(
             cap_open_route_for_run(&[
                 VmEffect::Transfer { amount: 1, direction: 1 },
-                VmEffect::RefreshDelegation,
+                VmEffect::RefreshDelegation {
+                    child_hash: [BabyBear::new(7); 8],
+                    snapshot_value: [BabyBear::new(8); 8],
+                },
             ])
             .is_none(),
             "a multi-effect run must NOT route a single cap-open descriptor"
@@ -5388,10 +5415,15 @@ mod tests {
 
         const EFFECT_DELEGATION_OPS: u32 = 1 << 16;
 
+        // THE GENUINE SNAPSHOT VALUE the refresh re-arms to (the SPECIFIC delegation's new commitment felt,
+        // bound into effects_hash via `VmEffect::RefreshDelegation { snapshot_value }`). DISTINCT from the
+        // held c-list value (7_777) and from the cap facet mask (EFFECT_DELEGATION_OPS): the live lead writes
+        // THIS value at the re-armed key, proving the genuine-params path — NOT the reflexive held-mask re-arm.
+        let genuine_snapshot = BabyBear::new(0x5A57_0001);
+
         // The child delegation being re-armed: slot_hash 0xDE16, target 7_777 (== src), delegation facet.
-        // mask_lo is the HELD snapshot mask the membership read opens; refresh re-arms it in place
-        // (`granted = held`), so the UPDATE writes the SAME value back at the SAME key (the key set is
-        // preserved — the update-at-key shadow).
+        // mask_lo is the HELD facet the membership read opens; the UPDATE rebinds the present key to the
+        // genuine refreshed snapshot value (the key set is preserved — the update-at-key shadow).
         let chosen: [BabyBear; 7] = [
             BabyBear::new(0xDE16),
             BabyBear::new(7_777),
@@ -5436,9 +5468,19 @@ mod tests {
         };
 
         // A real RefreshDelegation turn (the genuine moving face; nonce-tick passthrough, caps frozen).
+        // LIVE LEAD: the effect carries the GENUINE `(child_hash, snapshot_value)` of the SPECIFIC delegation
+        // re-armed — the DELEG-tree UPDATE writes `snapshot_value[0]` (the genuine snapshot felt) at the
+        // re-armed key, NOT the reflexive held mask. `child_hash` binds WHICH delegation; both fold into
+        // effects_hash so a light client sees the specific re-arm.
         let before_balance: u64 = 100_000;
         let initial = CellState::new(before_balance, 0);
-        let effects = vec![VmEffect::RefreshDelegation];
+        let mut snapshot_value = [BabyBear::ZERO; 8];
+        snapshot_value[0] = genuine_snapshot;
+        let effects = vec![VmEffect::RefreshDelegation {
+            child_hash: [chosen[0], BabyBear::ZERO, BabyBear::ZERO, BabyBear::ZERO,
+                         BabyBear::ZERO, BabyBear::ZERO, BabyBear::ZERO, BabyBear::ZERO],
+            snapshot_value,
+        }];
         let mut pk = [0u8; 32];
         pk[0] = 7;
         let mut before_cell = dregg_cell::Cell::with_balance(pk, [0u8; 32], before_balance as i64);
@@ -5488,6 +5530,48 @@ mod tests {
         verify_effect_vm_rotated_with_cutover(&proof_bytes, &dpis, &vk_hash).expect(
             "the WRITE-bearing refreshDelegation cap-open MUST verify on the light-client path — the genuine \
              post-DELEG-root is on-the-wire light-client-verifiable",
+        );
+
+        // (1b) THE LIVE LEAD (genuine params, NOT the reflexive re-arm): the DELEG-tree UPDATE writes the
+        // effect's carried `snapshot_value[0]` (the SPECIFIC re-armed snapshot) — distinct from the held
+        // c-list value AND the cap facet mask. `cap_insert_payload_for` derives the (anchor key, KEEP_MASK)
+        // the `Update` map_op rebinds: the KEEP_MASK MUST be the genuine snapshot, confirming the on-the-wire
+        // post-DELEG-root binds the specific snapshot the producer claims (a forged snapshot would write a
+        // different value → a different effects_hash + post-root, light-client-distinguishable).
+        let (_anchor_key, keep_mask) =
+            cap_insert_payload_for(&effects, &cap).expect("refresh derives a (key, snapshot) payload");
+        assert_eq!(
+            keep_mask, genuine_snapshot,
+            "the live lead writes the GENUINE snapshot value (the carried `snapshot_value[0]`), NOT the \
+             reflexive held mask — this is the genuine-params path, not the old unit re-arm"
+        );
+        assert_ne!(
+            keep_mask, cap.leaf.mask_lo,
+            "the genuine snapshot is DISTINCT from the held facet mask — a real refresh is not a reflexive re-arm"
+        );
+
+        // (1c) THE SNAPSHOT-FORGE IS REJECTED: a turn whose carried `snapshot_value` differs from the one the
+        // honest proof bound writes a DIFFERENT keep_mask → a DIFFERENT effects_hash + post-DELEG-root. The
+        // light-client verifier (anchored to the honest turn's effects_hash) rejects the forged-snapshot proof.
+        let mut forged_snapshot_value = [BabyBear::ZERO; 8];
+        forged_snapshot_value[0] = BabyBear::new(0xBAD0_F00D);
+        let forged_snapshot_effects = vec![VmEffect::RefreshDelegation {
+            child_hash: [chosen[0], BabyBear::ZERO, BabyBear::ZERO, BabyBear::ZERO,
+                         BabyBear::ZERO, BabyBear::ZERO, BabyBear::ZERO, BabyBear::ZERO],
+            snapshot_value: forged_snapshot_value,
+        }];
+        let (proof_forge, dpis_forge) = prove_effect_vm_cap_open(
+            &initial, &forged_snapshot_effects, &before_w, &after_w, &cap, &route, None,
+        )
+        .expect("the forged-snapshot turn still PROVES its OWN (forged) transition — the forge is caught at VERIFY");
+        let proof_forge_bytes =
+            postcard::to_allocvec(&proof_forge).expect("serialize forged-snapshot leg");
+        assert!(
+            verify_effect_vm_rotated_with_cutover(&proof_forge_bytes, &dpis_forge, &vk_hash).is_err()
+                || dpis_forge != dpis,
+            "a forged-snapshot refresh binds a DIFFERENT effects_hash / post-DELEG-root than the honest turn — \
+             the light client (anchored to the honest effects_hash) cannot be fooled into accepting it as the \
+             genuine re-arm",
         );
 
         // (2) THE FORGE IS REJECTED: a leaf-set that does NOT contain the re-armed key (0xDE16). The write

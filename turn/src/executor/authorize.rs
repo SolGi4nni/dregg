@@ -602,7 +602,17 @@ impl TurnExecutor {
         // this surface (slot-caveat / precondition surfaces have their
         // own input resolution).
         let input = match &predicate.input_ref {
-            InputRef::SigningMessage => PredicateInput::SigningMessage(&signing_message),
+            // Custom-auth discharge: hand the verifier the canonical signing
+            // message AND the target cell's authoritative pre-state slots, so a
+            // predicate whose `commitment` is meant to be cell state (e.g.
+            // device pairing's current-keys commitment) can PIN the
+            // prover-supplied `commitment` to the genuine on-chain value rather
+            // than trusting the action's copy. Stays app-agnostic: all slots are
+            // exposed; the verifier reads the one it owns.
+            InputRef::SigningMessage => PredicateInput::AuthContext {
+                signing_message: &signing_message,
+                cell_pre_state: &target_cell.state.fields,
+            },
             other => {
                 return Err((
                     TurnError::InvalidAuthorization {

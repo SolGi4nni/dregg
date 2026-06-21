@@ -58,7 +58,7 @@ pub fn effect_selector(effect: &Effect) -> usize {
         Effect::EmitEvent { .. } => sel::EMIT_EVENT,
         Effect::SetPermissions { .. } => sel::SET_PERMISSIONS,
         Effect::SetVerificationKey { .. } => sel::SET_VERIFICATION_KEY,
-        Effect::RefreshDelegation => sel::REFRESH_DELEGATION,
+        Effect::RefreshDelegation { .. } => sel::REFRESH_DELEGATION,
         Effect::IncrementNonce => sel::INCREMENT_NONCE,
         Effect::RevokeDelegation { .. } => sel::REVOKE_DELEGATION,
         Effect::CreateCell { .. } => sel::CREATE_CELL,
@@ -663,8 +663,10 @@ pub fn generate_effect_vm_trace_ext(
                 new_state.nonce += 1;
             }
 
-            Effect::RefreshDelegation => {
-                // No params; selector alone records the intent.
+            Effect::RefreshDelegation { child_hash, .. } => {
+                // 32-byte widening: anchor the refreshed child key limb[0]; all
+                // 16 limbs (child + snapshot) bind via compute_effects_hash.
+                row[PARAM_BASE + 0] = child_hash[0];
                 new_state.nonce += 1;
             }
             Effect::IncrementNonce => {

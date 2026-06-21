@@ -238,8 +238,17 @@ pub fn compute_effects_hash(effects: &[Effect]) -> (BabyBear, BabyBear) {
                 hasher_inputs.extend_from_slice(vk_hash);
             }
 
-            Effect::RefreshDelegation => {
+            Effect::RefreshDelegation {
+                child_hash,
+                snapshot_value,
+            } => {
                 hasher_inputs.push(BabyBear::new(29));
+                // 32-byte widening: absorb all 8 limbs of the refreshed child
+                // key AND all 8 of the new snapshot commitment, so the public
+                // encoding binds WHICH delegation was re-armed and to WHAT value
+                // (no reflexive ambiguity — a forged snapshot/child changes the hash).
+                hasher_inputs.extend_from_slice(child_hash);
+                hasher_inputs.extend_from_slice(snapshot_value);
             }
             Effect::IncrementNonce => {
                 hasher_inputs.push(BabyBear::new(53));

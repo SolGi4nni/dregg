@@ -5809,13 +5809,25 @@ fn test_refresh_delegation_updates_snapshot() {
         .set_balance(100_000);
     executor.set_timestamp(2000);
 
+    // The genuine refreshed snapshot: the commitment over the PARENT's live
+    // capabilities (what `apply_refresh_delegation` re-arms from). The effect
+    // declares it; the executor refuses a mismatch.
+    let refresh_snapshot = {
+        let parent = ledger.get(&parent_id).unwrap();
+        let snap: Vec<dregg_cell::CapabilityRef> = parent.capabilities.iter().cloned().collect();
+        let bytes = postcard::to_allocvec(&snap).unwrap_or_default();
+        dregg_cell::DelegatedRef::compute_clist_commitment(&bytes)
+    };
     let refresh = Action {
         target: child_id,
         method: symbol("refresh"),
         args: vec![],
         authorization: Authorization::Unchecked,
         preconditions: Default::default(),
-        effects: vec![Effect::RefreshDelegation],
+        effects: vec![Effect::RefreshDelegation {
+            child: child_id,
+            snapshot: refresh_snapshot,
+        }],
         may_delegate: DelegationMode::None,
         commitment_mode: CommitmentMode::Full,
         balance_change: None,
@@ -10456,22 +10468,24 @@ mod authorization_custom_tests {
             input: &PredicateInput<'_>,
             _proof_bytes: &[u8],
         ) -> Result<(), WitnessedPredicateError> {
-            match input {
-                PredicateInput::SigningMessage(bytes) => {
-                    if *bytes == self.expected.as_slice() {
-                        Ok(())
-                    } else {
-                        Err(WitnessedPredicateError::Rejected {
-                            kind_name: "test-expected-message",
-                            reason: "signing message did not match expected bytes".into(),
-                        })
-                    }
+            let bytes: &[u8] = match input {
+                PredicateInput::AuthContext { signing_message, .. } => signing_message,
+                PredicateInput::SigningMessage(bytes) => bytes,
+                _ => {
+                    return Err(WitnessedPredicateError::InputShapeMismatch {
+                        kind_name: "test-expected-message",
+                        expected: "AuthContext / SigningMessage",
+                        actual: "other",
+                    });
                 }
-                _ => Err(WitnessedPredicateError::InputShapeMismatch {
+            };
+            if bytes == self.expected.as_slice() {
+                Ok(())
+            } else {
+                Err(WitnessedPredicateError::Rejected {
                     kind_name: "test-expected-message",
-                    expected: "SigningMessage",
-                    actual: "other",
-                }),
+                    reason: "signing message did not match expected bytes".into(),
+                })
             }
         }
     }

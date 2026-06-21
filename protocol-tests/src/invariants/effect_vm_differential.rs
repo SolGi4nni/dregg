@@ -266,8 +266,11 @@ fn project_turn_to_vm(cell_id: &CellId, turn: &Turn) -> Vec<VmEffect> {
                         spawn_hash: hash_to_8(h.finalize().as_bytes()),
                     });
                 }
-                Effect::RefreshDelegation => {
-                    out.push(VmEffect::RefreshDelegation);
+                Effect::RefreshDelegation { child, snapshot } => {
+                    out.push(VmEffect::RefreshDelegation {
+                        child_hash: hash_to_8(child.as_bytes()),
+                        snapshot_value: hash_to_8(snapshot),
+                    });
                 }
                 Effect::RevokeDelegation { child } => {
                     out.push(VmEffect::RevokeDelegation {
@@ -853,7 +856,11 @@ fn differential_refresh_delegation_passthrough() {
     let before = CellSnapshot::of(actor_cell);
     let nonce = actor_cell.state.nonce();
 
-    let turn = one_effect_turn(actor, nonce, Effect::RefreshDelegation);
+    let turn = one_effect_turn(
+        actor,
+        nonce,
+        Effect::RefreshDelegation { child: actor, snapshot: [0u8; 32] },
+    );
     let claim = air_claim(actor_cell, &turn);
 
     let executor = TurnExecutor::new(ComputronCosts::zero());

@@ -805,8 +805,13 @@ impl<S> ActionBuilder<S> {
         self
     }
 
-    pub fn effect_refresh_delegation(mut self) -> Self {
-        self.effects.push(Effect::RefreshDelegation);
+    /// Refresh `child`'s delegation snapshot from its parent. `snapshot` is the
+    /// refreshed c-list commitment the caller asserts; the executor DERIVES the
+    /// genuine value and refuses a mismatch (the forge antibody). For a
+    /// self-refresh, `child` is the acting cell itself.
+    pub fn effect_refresh_delegation(mut self, child: CellId, snapshot: [u8; 32]) -> Self {
+        self.effects
+            .push(Effect::RefreshDelegation { child, snapshot });
         self
     }
 

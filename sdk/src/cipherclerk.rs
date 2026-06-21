@@ -6204,8 +6204,15 @@ impl AgentCipherclerk {
                         spawn_hash: hash_to_8(spawn_hash_bytes.as_bytes()),
                     });
                 }
-                Effect::RefreshDelegation => {
-                    vm_effects.push(VmEffect::RefreshDelegation);
+                Effect::RefreshDelegation { child, snapshot } => {
+                    // MUST match the executor bridge
+                    // (`turn::executor::effect_vm_bridge::convert_turn_effects_to_vm`)
+                    // byte-for-byte (the differential invariant): child_hash +
+                    // snapshot_value via the SAME 8-limb fold.
+                    vm_effects.push(VmEffect::RefreshDelegation {
+                        child_hash: hash_to_8(child.as_bytes()),
+                        snapshot_value: hash_to_8(snapshot),
+                    });
                 }
                 Effect::RevokeDelegation { child } => {
                     vm_effects.push(VmEffect::RevokeDelegation {

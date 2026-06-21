@@ -1076,7 +1076,17 @@ pub enum Effect {
     },
     /// Child refreshes its delegation snapshot from its parent.
     /// The actor must be the child cell (self-refresh).
-    RefreshDelegation,
+    RefreshDelegation {
+        /// The child cell whose delegation snapshot is re-armed (self-refresh:
+        /// `child == action target`).
+        child: CellId,
+        /// The refreshed delegation snapshot commitment (the c-list commitment
+        /// re-armed from the parent). The executor DERIVES the genuine value at
+        /// apply time and refuses a mismatching declaration (the forge antibody);
+        /// both `child` and `snapshot` bind into `effects_hash` so a light client
+        /// knows WHICH delegation was re-armed and to WHAT value.
+        snapshot: [u8; 32],
+    },
     /// Parent revokes delegation to a child by bumping its own epoch.
     /// The child's snapshot becomes stale relative to the new epoch.
     RevokeDelegation {
@@ -1716,7 +1726,7 @@ impl Effect {
             Effect::SetPermissions { .. } => LinearityClass::Neutral,
             Effect::SetVerificationKey { .. } => LinearityClass::Neutral,
             Effect::SetProgram { .. } => LinearityClass::Neutral,
-            Effect::RefreshDelegation => LinearityClass::Neutral,
+            Effect::RefreshDelegation { .. } => LinearityClass::Neutral,
             Effect::PipelinedSend { .. } => LinearityClass::Neutral,
             Effect::ExerciseViaCapability { .. } => LinearityClass::Neutral,
         }
@@ -1950,8 +1960,10 @@ impl Effect {
                 hasher.update(child_token_id);
                 hasher.update(&max_staleness.to_le_bytes());
             }
-            Effect::RefreshDelegation => {
+            Effect::RefreshDelegation { child, snapshot } => {
                 hasher.update(&[19u8]);
+                hasher.update(child.as_bytes());
+                hasher.update(snapshot);
             }
             Effect::RevokeDelegation { child } => {
                 hasher.update(&[20u8]);
@@ -2230,7 +2242,7 @@ impl Effect {
             Effect::PipelinedSend { .. } => 32 + 4 + 32,
             Effect::Introduce { .. } => 97,
             Effect::SpawnWithDelegation { .. } => 32 + 32 + 8,
-            Effect::RefreshDelegation => 0,
+            Effect::RefreshDelegation { .. } => 32 + 32, // child + snapshot
             Effect::RevokeDelegation { .. } => 32,
 
             Effect::ExerciseViaCapability { inner_effects, .. } => {
@@ -2345,7 +2357,7 @@ impl Effect {
             Effect::Introduce { .. } | Effect::PipelinedSend { .. } => dregg_cell::EFFECT_INTRODUCE,
             Effect::BridgeMint { .. } => dregg_cell::EFFECT_BRIDGE_OPS,
             Effect::SpawnWithDelegation { .. }
-            | Effect::RefreshDelegation
+            | Effect::RefreshDelegation { .. }
             | Effect::RevokeDelegation { .. } => dregg_cell::EFFECT_DELEGATION_OPS,
             Effect::ExerciseViaCapability { .. } => dregg_cell::EFFECT_ALL,
             Effect::MakeSovereign { .. } => dregg_cell::EFFECT_SOVEREIGN_OPS,

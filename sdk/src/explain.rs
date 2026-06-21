@@ -149,9 +149,10 @@ fn effect_body(effect: &Effect) -> String {
             "spawn a child cell (owner 0x{}) with a delegation snapshot (max staleness {max_staleness}s)",
             hx32(child_public_key)
         ),
-        Effect::RefreshDelegation => {
-            "refresh this cell's delegation snapshot from its parent".to_string()
-        }
+        Effect::RefreshDelegation { child, .. } => format!(
+            "refresh cell {}'s delegation snapshot from its parent",
+            hx32(child.as_bytes())
+        ),
         Effect::RevokeDelegation { child } => format!(
             "revoke delegation to child cell {} (by bumping the parent epoch)",
             hx32(child.as_bytes())
@@ -424,7 +425,10 @@ mod tests {
                 child_token_id: [2u8; 32],
                 max_staleness: 60,
             },
-            Effect::RefreshDelegation,
+            Effect::RefreshDelegation {
+                child: cid(1),
+                snapshot: [7u8; 32],
+            },
             Effect::RevokeDelegation { child: cid(2) },
             Effect::BridgeMint {
                 portable_proof: portable_proof(),

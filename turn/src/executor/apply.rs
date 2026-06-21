@@ -181,8 +181,8 @@ impl TurnExecutor {
                 child_token_id,
                 *max_staleness,
             ),
-            Effect::RefreshDelegation => {
-                self.apply_refresh_delegation(ledger, path, action_target, journal)
+            Effect::RefreshDelegation { child, snapshot } => {
+                self.apply_refresh_delegation(ledger, path, action_target, journal, child, snapshot)
             }
             Effect::RevokeDelegation { child } => {
                 self.apply_revoke_delegation(ledger, path, action_target, journal, child)
@@ -1842,7 +1842,21 @@ impl TurnExecutor {
         path: &[usize],
         action_target: &CellId,
         journal: &mut LedgerJournal,
+        child: &CellId,
+        declared_snapshot: &[u8; 32],
     ) -> Result<(), (TurnError, Vec<usize>)> {
+        // Self-refresh: the declared child MUST be the acting cell. The effect
+        // binds `child` into effects_hash, so a light client sees WHICH
+        // delegation is re-armed; a mismatch is a forged target.
+        if child != action_target {
+            return Err((
+                TurnError::InvalidEffect {
+                    reason: "RefreshDelegation child must equal the action target (self-refresh)"
+                        .into(),
+                },
+                path.to_vec(),
+            ));
+        }
         let child_cell = ledger.get(action_target).ok_or_else(|| {
             (
                 TurnError::CellNotFound { id: *action_target },
@@ -1872,10 +1886,24 @@ impl TurnExecutor {
         let new_epoch = parent_cell_data.state.delegation_epoch();
         let now = self.current_timestamp as u64;
 
-        let child_mut = ledger.get_mut(action_target).unwrap();
-        journal.record_set_delegation(*action_target, old_delegation);
         let clist_bytes = postcard::to_allocvec(&new_snapshot).unwrap_or_default();
         let clist_commitment = dregg_cell::DelegatedRef::compute_clist_commitment(&clist_bytes);
+        // THE FORGE ANTIBODY: the snapshot the effect DECLARES (bound into
+        // effects_hash, so a light client trusts it) MUST equal the genuine
+        // commitment derived from the parent's live c-list. A refresh claiming a
+        // fabricated snapshot is refused — the on-the-wire value is forced honest.
+        if &clist_commitment != declared_snapshot {
+            return Err((
+                TurnError::InvalidEffect {
+                    reason: "RefreshDelegation snapshot does not match the parent's live c-list \
+                             commitment (forged refresh)"
+                        .into(),
+                },
+                path.to_vec(),
+            ));
+        }
+        let child_mut = ledger.get_mut(action_target).unwrap();
+        journal.record_set_delegation(*action_target, old_delegation);
         child_mut.delegation = Some(dregg_cell::DelegatedRef::new(
             parent_id,
             *action_target,

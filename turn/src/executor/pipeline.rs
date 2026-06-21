@@ -265,7 +265,7 @@ fn rewrite_effect_targets(effects: &mut [Effect], placeholder: &CellId, resolved
             | Effect::BridgeMint { .. }
             | Effect::PipelinedSend { .. }
             | Effect::SpawnWithDelegation { .. }
-            | Effect::RefreshDelegation
+            | Effect::RefreshDelegation { .. }
             | Effect::RevokeDelegation { .. }
             | Effect::MakeSovereign { .. }
             | Effect::CreateCellFromFactory { .. } => {} // These effects don't have mutable CellId fields needing rewrite:

@@ -107,47 +107,68 @@ proptest! {
 
     #[test]
     fn verify_rejects_corrupted_proofs(tamper_pos in 0usize..500, tamper_byte in 0u8..255) {
-        // Generate a valid proof, then corrupt a single byte.
-        // The verifier must not produce a false positive (accept garbage).
-        // It MAY panic on malformed data — that's still a rejection.
-        let result = std::panic::catch_unwind(|| {
-            let siblings = [
-                [100u32, 200, 300],
-                [400, 500, 600],
-                [700, 800, 900],
-                [1000, 1100, 1200],
-            ];
-            let positions = [0u32, 1, 2, 3];
-            let (trace, public_inputs) = generate_merkle_trace(12345, &siblings, &positions);
-            let air = MerkleStarkAir;
-            let proof = prove(&air, &trace, &public_inputs);
-            let mut bytes = proof_to_bytes(&proof);
+        // HONEST-ACCEPT FIRST, OUTSIDE the catch: the un-tampered proof MUST
+        // verify. If this panics or fails, that is a real bug (the test must not
+        // launder a setup failure as "the tamper was rejected").
+        let siblings = [
+            [100u32, 200, 300],
+            [400, 500, 600],
+            [700, 800, 900],
+            [1000, 1100, 1200],
+        ];
+        let positions = [0u32, 1, 2, 3];
+        let (trace, public_inputs) = generate_merkle_trace(12345, &siblings, &positions);
+        let air = MerkleStarkAir;
+        let honest_proof = prove(&air, &trace, &public_inputs);
+        prop_assert!(
+            verify(&air, &honest_proof, &public_inputs).is_ok(),
+            "the un-tampered proof must verify — the accept path is what makes the reject meaningful"
+        );
+        let honest_bytes = proof_to_bytes(&honest_proof);
 
-            if tamper_pos < bytes.len() {
-                bytes[tamper_pos] ^= tamper_byte.wrapping_add(1);
-                match proof_from_bytes(&bytes) {
-                    Err(_) => false, // detected
-                    Ok(tampered_proof) => {
-                        verify(&air, &tampered_proof, &public_inputs).is_ok()
+        // Now corrupt a single byte. The verifier may panic on malformed data
+        // (crash = rejection). We only forbid the genuine FORGE: a tampered proof
+        // that deserializes to a DIFFERENT proof yet still verifies-true.
+        let mut bytes = honest_bytes.clone();
+        if tamper_pos >= bytes.len() {
+            return Ok(()); // out of bounds for this proof — nothing to tamper
+        }
+        bytes[tamper_pos] ^= tamper_byte.wrapping_add(1);
+
+        let public_inputs2 = public_inputs.clone();
+        let air2 = MerkleStarkAir;
+        let verdict = std::panic::catch_unwind(move || {
+            match proof_from_bytes(&bytes) {
+                Err(_) => Outcome::Detected, // parse failure = rejection
+                Ok(tampered_proof) => {
+                    let same = proof_to_bytes(&tampered_proof) == honest_bytes;
+                    if verify(&air2, &tampered_proof, &public_inputs2).is_ok() {
+                        if same { Outcome::NoOpFlip } else { Outcome::Forged }
+                    } else {
+                        Outcome::Detected
                     }
                 }
-            } else {
-                false // out of bounds, not a false positive
             }
         });
 
-        // A panic is acceptable (crash = rejection, not a false positive).
-        // Only a successful Ok(true) (verify passed) would be a real problem.
-        match result {
-            Err(_) => {} // panic = rejection = fine
-            Ok(false) => {} // correctly rejected
-            Ok(true) => {
-                // This would be a soundness bug, but due to FRI redundancy some
-                // positions may not affect verification. We allow it for proptest
-                // but the proof_single_bit_flip_detected test checks the rate.
-            }
+        match verdict {
+            Err(_) => {}                        // panic = rejection = fine
+            Ok(Outcome::Detected) => {}         // tampered proof rejected = fine
+            Ok(Outcome::NoOpFlip) => {}         // flip hit serialization padding; canonicalized away — not a forge
+            Ok(Outcome::Forged) => prop_assert!(
+                false,
+                "FORGE: a byte-tampered proof deserialized to a DIFFERENT proof yet still verified-true \
+                 (tamper_pos={tamper_pos}, tamper_byte={tamper_byte}) — a soundness break"
+            ),
         }
     }
+}
+
+#[derive(Debug)]
+enum Outcome {
+    Detected,
+    NoOpFlip,
+    Forged,
 }
 
 // =============================================================================

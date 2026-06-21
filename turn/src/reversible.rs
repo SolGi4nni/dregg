@@ -331,7 +331,12 @@ impl Effect {
             // RefreshDelegation re-snapshots from the parent; it is idempotent
             // bookkeeping with no resource delta. Re-refreshing restores the
             // same snapshot (Contextual on the parent epoch in `pre`).
-            Effect::RefreshDelegation => Inversion::Contextual(Effect::RefreshDelegation),
+            Effect::RefreshDelegation { child, snapshot } => {
+                Inversion::Contextual(Effect::RefreshDelegation {
+                    child: *child,
+                    snapshot: *snapshot,
+                })
+            }
 
             // ── COMMITTED: no inverse, by design (the irreversible boundary). ─
 

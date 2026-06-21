@@ -183,10 +183,22 @@ pub enum Effect {
     /// 32-byte widening: `vk_hash` is the full 32-byte hash projected into 8
     /// BabyBear limbs (see [`Effect::GrantCapability`]).
     SetVerificationKey { vk_hash: [BabyBear; 8] },
-    /// RefreshDelegation: bump the delegation epoch. No params (the cell's
-    /// epoch lives off-trace); selector alone records the intent. State
-    /// passthrough.
-    RefreshDelegation,
+    /// RefreshDelegation: re-arm a SPECIFIC child cell's delegation snapshot
+    /// from its parent (self-refresh — the child IS the actor). State
+    /// passthrough; `child_hash` binds the refreshed child cell and
+    /// `snapshot_value` binds the new snapshot commitment into effects_hash, so
+    /// a light client knows WHICH delegation was re-armed and to WHAT value (the
+    /// DELEG-tree UPDATE-at-key the cap-write wrapper proves). The genuine move
+    /// is non-amplifying (`granted = held` shape; the value is the parent's
+    /// fresh c-list commitment).
+    ///
+    /// 32-byte widening: both are full 32-byte hashes projected into 8 BabyBear
+    /// limbs (see [`Effect::GrantCapability`]); the AIR anchors `child_hash[0]`
+    /// into `params[0]`, and all 16 limbs bind via `compute_effects_hash`.
+    RefreshDelegation {
+        child_hash: [BabyBear; 8],
+        snapshot_value: [BabyBear; 8],
+    },
     /// IncrementNonce: explicit runtime nonce bump. The nonce transition is
     /// the global non-NoOp row invariant; this selector binds that the row is
     /// specifically an IncrementNonce effect rather than padding or another

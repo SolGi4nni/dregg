@@ -131,6 +131,13 @@ impl WitnessedPredicateVerifier for MerkleMembershipStarkVerifier {
                     actual: "SigningMessage",
                 });
             }
+            PredicateInput::AuthContext { .. } => {
+                return Err(WitnessedPredicateError::InputShapeMismatch {
+                    kind_name: KIND_NAME,
+                    expected: "Slot/Sender/Bytes (32-byte candidate)",
+                    actual: "AuthContext",
+                });
+            }
         };
 
         let leaf = compress(&candidate);
@@ -1244,17 +1251,20 @@ impl WitnessedPredicateVerifier for ThresholdSigVerifier {
         // message; that is the *only* shape this verifier accepts (the message
         // binds federation_id + nonce + action shape, which is what authorizes).
         let message: &[u8] = match input {
+            // The executor's custom-auth seam supplies `AuthContext` (message +
+            // cell pre-state); this verifier only needs the message.
+            PredicateInput::AuthContext { signing_message, .. } => signing_message,
             PredicateInput::SigningMessage(m) => m,
             PredicateInput::Bytes(b) => b,
             other => {
                 return Err(WitnessedPredicateError::InputShapeMismatch {
                     kind_name: "ThresholdSig",
-                    expected: "SigningMessage (canonical custom-auth message bytes)",
+                    expected: "AuthContext / SigningMessage (canonical custom-auth message bytes)",
                     actual: match other {
                         PredicateInput::Slot(_) => "Slot",
                         PredicateInput::PublicInput(_) => "PublicInput",
                         PredicateInput::Sender(_) => "Sender",
-                        // SigningMessage / Bytes handled above.
+                        // AuthContext / SigningMessage / Bytes handled above.
                         _ => "unexpected",
                     },
                 });
