@@ -7,8 +7,9 @@ property, classically reduced to a single-trace property on a **self-composed pr
 product is a counterfactual pair of public configs (`actual` vs `actual with the dominator's public
 events causally-closed-erased`); both viability sides are the `PolisViability` bounded public game,
 so `Dominated` is **decidable** and **interior-free**, and `dominationBar` is an ordinary
-`CaptureBar` on the product. (The causally-closed erasure `actual ↦ without` is supplied as the
-public intervention; constructing it over the blocklace config lattice is the deployment step.)
+`CaptureBar` on the product. (The causally-closed erasure `actual ↦ without` is CONSTRUCTED over the
+deployed blocklace in `Metatheory.PolisEraseBlocklace.eraseAuthor`, and the bounded domination bar is
+instantiated on real blocklace counterfactual-pairs in `Metatheory.PolisDominationDregg`.)
 -/
 import Metatheory.PolisViability
 

@@ -9,10 +9,12 @@ file re-pins the ALREADY-DEPLOYED, kernel-clean dregg theorems as constitutional
 invariants: a regression in any of them fails THIS build too, so the non-confusion floor is
 CI-enforced as part of the polis subtree (`lake build Metatheory.*`).
 
-Three of the five non-confusion legs are deployed (pinned below); the schema is
-"linear event · persistent trace · authorized re-entry" (`Metatheory.Polis`). The two OPEN
-legs — `certificate ↛ capability` (the dereliction guard) and `observation ↛ resolution`
-(the one-shot promise resolver) — remain the named frontier; red is honest.
+All five non-confusion legs are now deployed and pinned; the schema is
+"linear event · persistent trace · authorized re-entry" (`Metatheory.Polis`). The two once-open
+legs are CLOSED below: `certificate ↛ capability` (the dereliction guard) by
+`transclusion_is_observed_finalized_read` / `transclusion_grants_no_unheld_authority`, and
+`observation ↛ resolution` (the one-shot promise resolver) by the `Await.{one_shot_is_static,
+commit_resumes_once, …}` pins.
 -/
 import Dregg2.Tactics
 import Dregg2.Deos.Transclusion

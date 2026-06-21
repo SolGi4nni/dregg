@@ -195,7 +195,7 @@ theorem polisFloorProp_inhabited (Impl : TurnCoalg Obs AdmissibleTurn) (x : Impl
     polisFloorProp (fun _ => True) (carrier Impl x s) :=
   fun _ => trivial
 
-/-! ## §6 — The named frontier (honest residual).
+/-! ## §6 — Carrier bound; the monitor is CLOSED.
 
 What is BOUND here: the carrier (deployed `obsStream`), and the two distinct stream predicates over
 it, with their deployed discharge lemmas (`circuitSoundnessProp_of_bisim` from
@@ -203,10 +203,12 @@ it, with their deployed discharge lemmas (`circuitSoundnessProp_of_bisim` from
 non-collapse record (`not_identified`), and the shared decision fragment
 (`shared_decision_machinery`).
 
-What is NOT solved (the frontier, not faked): a `Monitorable` witness for the GENUINE temporal
-polis floor over the REAL deployed `Obs` lattice — the public bad-prefix predicate for true
-temporal capture. That is the open research the `Metatheory.Polis.CaptureBar` interface names
-(connect to `FlowRefine.decideRefines` / the Büchi game). This file delivers the honest binding of
-the carrier and the two predicates, not the full anti-capture monitor. -/
+What WAS the frontier, now CLOSED (`Metatheory.PolisMonitor`): `polisFloorMonitor floor :
+Monitorable (polisFloorProp floor)` — every violation of the temporal floor over the deployed
+`obsStream` has a FINITE public bad-prefix witness (`polisFloor_violation_has_finite_witness`); and
+the flow-policy floor's bad-prefix is DECIDED by the deployed Büchi game `FlowRefine.decideRefines`
+(`PolisMonitor.flowBad_iff_decide`). The ONLY thing left is genuinely TERMINAL, not a TODO:
+unbounded liveness is *proven* non-monitorable (`PolisMonitor.liveness_not_prefix_refutable`) and
+belongs to charters/appeal, not the kernel. -/
 
 end Metatheory.PolisStreamCarrier
