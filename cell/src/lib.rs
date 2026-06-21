@@ -34,6 +34,7 @@ pub mod custom_effect;
 pub mod delegation;
 pub mod derivation;
 pub mod derived;
+pub mod escrow_sealed;
 pub mod facet;
 pub mod factory;
 pub mod id;
@@ -108,6 +109,10 @@ pub use derivation::{
 pub use derived::{
     Aggregate, DerivationError, DerivationSpec, bind_derivation, bound_claimed_value,
     bound_spec_digest, is_derived, verify_derivation,
+};
+pub use escrow_sealed::{
+    Claim, EscrowError, EscrowState, EscrowTerms as SealedEscrowTerms, Leg, LegRequirement,
+    LegStatus, Side as EscrowSide, deposit_leg, is_escrow, open_escrow, reclaim_leg, settle,
 };
 pub use facet::{
     EFFECT_ALL, EFFECT_ATTENUATE_CAPABILITY, EFFECT_BRIDGE_OPS, EFFECT_BURN, EFFECT_CAPTP_OPS,
