@@ -55,20 +55,26 @@ Zero `sorry`, zero `:= True` load-bearing.
 † `noteSpendFresh_rejects_double` lives in the `PolisNonConfusionCircuit` sidecar (pulls the
 circuit-emit tree); builds when that tree is green.
 
-## Not proven / frontier (named, not faked)
+## The interleaved-multi-agent hyperproperty — FRAMEWORK BUILT (gpt5.5's design reply)
 
-Both censuses (`wihlga2r4`, `w9p6ffrrn`) found the local non-confusion / floor legs AND the
-politician capture-shape catalog already DEPLOYED and pinnable — all now closed (above), and the
-flow/policy capture is governed by the deployed sound+complete Büchi decision procedure. What
-genuinely remains is **one** deep object, the next research phase, not a cleanup task:
+The deep object is no longer "open research" — its full construction is built, green, decidable,
+`∀`-opaque, with models (`docs/POLIS-HYPERPROPERTY-FRONTIER.md` + gpt5.5's 5-file plan):
 
-- **the interleaved-multi-agent hyperproperty** — composing the per-shape bars into a *single*
-  floor over one multi-agent trace lattice (the politician who interleaves several lawful
-  strategies across subjects). Each shape is pinned/decidable in isolation; unifying them needs
-  a `Trace DreggState DreggAction` lattice and the hyperproperty (set-of-traces) semantics over
-  it. The single-trajectory bars (`rExitForeclosureBar`, `flowCaptureBar`) are the landed seeds.
-  (The deeper executor-camera refinement of the `held ⊆ bound` floor is a tightening, not a hole:
-  the shadow *is* the real `fits` by `USet.fits_iff`, and the camera `Fpu` is pinned.)
+| axis | file | what's proven |
+|---|---|---|
+| unification (heterogeneous → one trace) | `Polis.CaptureBar.pullback`, `PolisTrace` | bars transport along public projections; `multiAgentExitFloor` / `politicianFloor` compose over subjects ∧ shapes |
+| option-space (`∀`-opaque) | `PolisViability` | `viableWithinB` = B's bounded **public winning game** (∃-move/∀-response), decidable; `viabilityBar` |
+| relational domination (2-safety) | `PolisSelfCompose` | `Dominated` = viable-without ∧ ¬viable-with on the counterfactual product; `dominationBar`, decidable |
+| monotone composition | `PolisHyperBars` | `NoWeaken.or_mono` + `amendment_stream_nonregression_hyper` — the floor is monotone-amendable |
+| shared carrier | `PolisCrossCell` | `Monitorable` + `violation_has_finite_witness`; polis-floor ∥ circuit-soundness kept **separate** |
+
+What remains is **deployment wiring**, not new theory: a concrete `projConfig : UTrace → Config`
+over the blocklace lattice; the causally-closed A-erasure (`CounterfactualWithout`); instantiating
+the two `StreamProp`s (polis-floor from `dominationBar` lifted to streams; circuit-soundness from
+the deployed `CoinductiveAdversary` confluence — possibly the same carrier). The framework is
+decidable and `∀`-opaque throughout; binding it to the deployed multi-agent substrate is the step.
+(The executor-camera refinement of `held ⊆ bound` is a tightening, not a hole: the shadow *is* the
+real `fits` by `USet.fits_iff`, camera `Fpu` pinned.)
 
 ## The grounding insight (`~/dev/svenvs`)
 
