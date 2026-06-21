@@ -216,7 +216,7 @@ mutual
     | .refusalA actor cell =>
         RefusalSpec st actor cell st'
     | .receiptArchiveA actor cell =>
-        ReceiptArchiveSpec st actor cell st'
+        ReceiptArchiveLifecycleSpec st actor cell st'
     -- dregg3 F2b: the queue-family constructors are GONE (the behavior is the verified
     -- `Dregg2/Apps/QueueFactory` et al — the factory story).
     | .pipelinedSendA actor =>
@@ -422,7 +422,7 @@ mutual
       exact execFullA_refusalA_iff_spec st actor cell st'
     | .receiptArchiveA actor cell => by
       simp only [fullActionStep, execFullA]
-      exact execFullA_receiptArchiveA_iff_spec st actor cell st'
+      exact execFullA_receiptArchiveA_iff_lifecycleSpec st actor cell st'
     | .pipelinedSendA actor => by
       simp only [fullActionStep, execFullA]
       exact execFullA_pipelinedSend_iff_spec st actor st'

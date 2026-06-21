@@ -176,10 +176,11 @@ def toClosedEffect : FullActionA → ClosedEffect
   -- §note (F1b: the escrow/obligation/committed-escrow/bridge-LFC constructors are GONE)
   | .noteSpendA nf actor _spendProof  => noteSpendEffect actor nf
   | .noteCreateA cm actor             => noteCreateEffect actor cm
-  -- §flag/lifecycle writes (makeSovereign / refusal / receiptArchive) → generic live-gated write
+  -- §flag/lifecycle writes (makeSovereign / refusal → generic live-gated write); receiptArchive →
+  -- the DEPLOYED lifecycle side-table archive handler (the `c.archive(checkpoint)` move).
   | .makeSovereignA actor cell    => makeSovereignEffect actor cell
   | .refusalA actor cell          => refusalEffect actor cell
-  | .receiptArchiveA actor cell   => receiptArchiveEffect actor cell 1
+  | .receiptArchiveA actor cell   => cellArchiveEffect actor cell
   | .pipelinedSendA actor               => pipelinedSendEffect actor
   -- §lifecycle (cell seal/unseal/destroy + refresh-delegation) → real side-table handlers
   | .cellSealA actor cell          => cellSealEffect actor cell
@@ -716,35 +717,31 @@ theorem hole_handler_makeSovereign (s s' : RecChainedState) (actor cell : CellId
     · rw [← hstep]
   · rw [if_neg hg] at hstep; exact absurd hstep (by simp)
 
-/-- **`handler_refines_execFullA_receiptArchive` — CLOSED.** A committed handler receipt-archive commits
-in `execFullA` to the SAME kernel: both write the `"lifecycle"` record slot to `1`. The handler gate
-(`acceptsEffects && authorizedB`) implies `execFullA`'s `stateStep` gate (authority + membership +
-liveness) given `cell ∈ accounts`. -/
+/-- **`handler_refines_execFullA_receiptArchive` — CLOSED (DEPLOYED).** A committed handler
+receipt-archive commits in `execFullA` to the SAME kernel: both move the `lifecycle` SIDE-TABLE to
+`Archived` (the deployed `c.archive(checkpoint)` move). The handler gate (`stateAuthB &&
+acceptsEffects`) plus `cell ∈ accounts` IS `execFullA`'s `receiptArchiveChainA` three-leg gate. -/
 theorem hole_handler_receiptArchive (s s' : RecChainedState) (actor cell : CellId)
     (hmem : cell ∈ s.kernel.accounts)
     (h : execHandlerOne (.receiptArchiveA actor cell) s = some s') :
     ∃ s'', execFullA s (.receiptArchiveA actor cell) = some s'' ∧ s''.kernel = s'.kernel := by
   have hstep := execHandlerOne_kernel (.receiptArchiveA actor cell) s s' h
   rw [toClosedEffect] at hstep
-  change stateWriteStep s.kernel
-    { actor := actor, target := cell,
-      field := Dregg2.Exec.Handlers.StateSupply.receiptArchiveField, value := 1 }
+  change Dregg2.Exec.Handlers.Lifecycle.cellArchiveStep s.kernel { actor := actor, cell := cell }
     = some s'.kernel at hstep
-  unfold stateWriteStep at hstep
-  by_cases hg : acceptsEffects s.kernel cell
-      && authorizedB s.kernel.caps { actor := actor, src := cell, dst := cell, amt := 0 }
+  unfold Dregg2.Exec.Handlers.Lifecycle.cellArchiveStep at hstep
+  by_cases hg : stateAuthB s.kernel.caps actor cell && acceptsEffects s.kernel cell
   · rw [if_pos hg] at hstep
-    simp only [Bool.and_eq_true] at hg
-    simp only [Option.some.injEq] at hstep
-    have hlive : cellLive s.kernel cell = true := hg.1
-    have hfield : Dregg2.Exec.Handlers.StateSupply.receiptArchiveField =
-        Dregg2.Exec.TurnExecutorFull.lifecycleField := rfl
-    refine ⟨{ kernel := writeField s.kernel Dregg2.Exec.Handlers.StateSupply.receiptArchiveField cell (.int 1),
-              log := { actor := actor, src := cell, dst := cell, amt := 0 } :: s.log }, ?_, ?_⟩
-    · show Dregg2.Exec.EffectsState.stateStep s Dregg2.Exec.TurnExecutorFull.lifecycleField actor cell (.int 1) = _
-      unfold Dregg2.Exec.EffectsState.stateStep Dregg2.Exec.EffectsState.stateAuthB
-      rw [if_pos ⟨hg.2, hmem, hlive⟩, hfield]
-    · rw [← hstep]
+    have hg' : stateAuthB s.kernel.caps actor cell = true ∧ acceptsEffects s.kernel cell = true := by
+      simp only [Bool.and_eq_true] at hg; exact ⟨hg.1, hg.2⟩
+    have hlive : cellLive s.kernel cell = true := hg'.2
+    have hk : setLifecycle s.kernel cell Dregg2.Exec.TurnExecutorFull.lcArchived = s'.kernel := by
+      simpa only [Option.some.injEq] using hstep
+    refine ⟨{ kernel := s'.kernel,
+              log := { actor := actor, src := cell, dst := cell, amt := 0 } :: s.log }, ?_, rfl⟩
+    show Dregg2.Exec.TurnExecutorFull.receiptArchiveChainA s actor cell = _
+    unfold Dregg2.Exec.TurnExecutorFull.receiptArchiveChainA
+    rw [if_pos ⟨hg'.1, hmem, hlive⟩, hk]
   · rw [if_neg hg] at hstep; exact absurd hstep (by simp)
 
 /-- **`handler_refines_execFullA_makeSovereign`** — the strengthening (now PROVED, alias). -/

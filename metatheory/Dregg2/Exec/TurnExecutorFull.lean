@@ -858,10 +858,13 @@ theorem recKBurnAsset_issuer_live (k k' : RecordKernelState) (actor cell : CellI
   · exact hg.2.2.2.2.1
   · rw [if_neg hg] at h; exact absurd h (by simp)
 
-/-- The three lifecycle discriminants (full §MA-lifecycle commentary below). -/
+/-- The lifecycle discriminants (full §MA-lifecycle commentary below). `lcArchived` is the receipt-archive
+terminal-ish marker the DEPLOYED `apply_receipt_archive` (`c.archive(checkpoint)`) moves the side-table to
+(NOT a cell record-slot write — the prior record-slot model was superseded by the V3 disc gate). -/
 def lcLive      : Nat := 0
 def lcSealed    : Nat := 1
 def lcDestroyed : Nat := 3
+def lcArchived  : Nat := 4
 
 /-- **`acceptsEffects`** — dregg1's `CellLifecycle::accepts_effects`: `true` only for Live. -/
 def acceptsEffects (k : RecordKernelState) (cell : CellId) : Bool := k.lifecycle cell == lcLive
@@ -1779,6 +1782,19 @@ def cellDestroyChainA (s : RecChainedState) (actor cell : CellId) (certHash : Na
            log    := { actor := actor, src := cell, dst := cell, amt := 0 } :: s.log }
   else none
 
+/-- **Chained receipt ARCHIVE** (`apply_receipt_archive` → `Cell::archive(checkpoint)`): the DEPLOYED
+archive moves the LIFECYCLE side-table to `Archived` (`4`) — the cellSeal/cellDestroy side-table shape,
+NOT a `cell` record-slot write (the prior record-slot model was a MIS-ROUTE the V3 disc gate superseded;
+see `receiptArchiveV3`). FAIL-CLOSED on the three-leg `auditGuard`: self-authority (`stateAuthB`),
+membership (`cell ∈ accounts`), and liveness (`cellLive` — only a Live cell may be archived). On commit,
+flip the discriminant to `Archived` and extend the chain by one self-targeted row. bal-NEUTRAL. -/
+def receiptArchiveChainA (s : RecChainedState) (actor cell : CellId) : Option RecChainedState :=
+  if stateAuthB s.kernel.caps actor cell = true ∧ cell ∈ s.kernel.accounts
+      ∧ Dregg2.Exec.EffectsState.cellLive s.kernel cell = true then
+    some { kernel := setLifecycle s.kernel cell lcArchived,
+           log    := { actor := actor, src := cell, dst := cell, amt := 0 } :: s.log }
+  else none
+
 /-- **`setLifecycle` is balance-NEUTRAL (`rfl`-grade).** Editing the `lifecycle` side-table
 leaves `bal`/`accounts`/`escrows` fixed, so `recTotalAsset` is unchanged for EVERY asset. -/
 theorem setLifecycle_balNeutral (k : RecordKernelState) (cell : CellId) (lc : Nat) (b : AssetId) :
@@ -1817,6 +1833,20 @@ theorem cellDestroyChainA_factors {s s' : RecChainedState} {actor cell : CellId}
              log := { actor := actor, src := cell, dst := cell, amt := 0 } :: s.log } := by
   unfold cellDestroyChainA at h
   by_cases hg : stateAuthB s.kernel.caps actor cell = true ∧ (s.kernel.lifecycle cell != lcDestroyed) = true
+  · rw [if_pos hg] at h; simp only [Option.some.injEq] at h; exact ⟨hg, h.symm⟩
+  · rw [if_neg hg] at h; exact absurd h (by simp)
+
+/-- **`receiptArchiveChainA` factors.** A committed archive was authorized (`auditGuard`: self-authority,
+membership, liveness) and produced exactly the `Archived`-flip side-table post-state + a one-row chain. -/
+theorem receiptArchiveChainA_factors {s s' : RecChainedState} {actor cell : CellId}
+    (h : receiptArchiveChainA s actor cell = some s') :
+    (stateAuthB s.kernel.caps actor cell = true ∧ cell ∈ s.kernel.accounts
+        ∧ Dregg2.Exec.EffectsState.cellLive s.kernel cell = true) ∧
+      s' = { kernel := setLifecycle s.kernel cell lcArchived,
+             log := { actor := actor, src := cell, dst := cell, amt := 0 } :: s.log } := by
+  unfold receiptArchiveChainA at h
+  by_cases hg : stateAuthB s.kernel.caps actor cell = true ∧ cell ∈ s.kernel.accounts
+      ∧ Dregg2.Exec.EffectsState.cellLive s.kernel cell = true
   · rw [if_pos hg] at h; simp only [Option.some.injEq] at h; exact ⟨hg, h.symm⟩
   · rw [if_neg hg] at h; exact absurd h (by simp)
 
@@ -2406,7 +2436,7 @@ def execFullA (s : RecChainedState) : FullActionA → Option RecChainedState
   -- AEAD crypto is the §8 chain-layer portal; the WHICH-cap binding + c-list grant are REAL.
   | .makeSovereignA actor cell    => makeSovereignStep s actor cell
   | .refusalA actor cell          => stateStep s refusalField actor cell (.int 1)
-  | .receiptArchiveA actor cell   => stateStep s lifecycleField actor cell (.int 1)
+  | .receiptArchiveA actor cell   => receiptArchiveChainA s actor cell
   -- pipelinedSend's apply-time effect is NEUTRAL (a clock row, the resolved action already ran —
   -- dregg1's apply-time no-op, the resolution is `ConditionalTurn`).
   | .pipelinedSendA actor               => some { kernel := s.kernel, log := escrowReceiptA actor :: s.log }
@@ -2627,9 +2657,8 @@ theorem execFullA_ledger_per_asset (s s' : RecChainedState) (fa : FullActionA) (
       rw [writeField_recTotalAsset s.kernel refusalField cell (.int 1) b]; ring
   | receiptArchiveA actor cell =>
       simp only [execFullA, ledgerDeltaAsset] at h ⊢
-      obtain ⟨_, hs'⟩ := stateStep_factors h; subst hs'
-      show recTotalAsset (writeField s.kernel lifecycleField cell (.int 1)) b = recTotalAsset s.kernel b + 0
-      rw [writeField_recTotalAsset s.kernel lifecycleField cell (.int 1) b]; ring
+      rw [show recTotalAsset s'.kernel b = recTotalAsset s.kernel b from by
+            obtain ⟨_, hs'⟩ := receiptArchiveChainA_factors h; subst hs'; rfl]; ring
   -- pipelined-send is combined-NEUTRAL (it leaves the kernel UNCHANGED — only a clock row),
   -- and `ledgerDeltaAsset = 0`.
   | pipelinedSendA actor =>
@@ -2960,7 +2989,7 @@ theorem execFullA_chainlinkExact (s s' : RecChainedState) (fa : FullActionA)
       obtain ⟨_, hs'⟩ := stateStep_factors h; subst hs'; rfl
   | receiptArchiveA actor cell =>
       simp only [execFullA, fullReceiptA] at h ⊢
-      obtain ⟨_, hs'⟩ := stateStep_factors h; subst hs'; rfl
+      obtain ⟨_, hs'⟩ := receiptArchiveChainA_factors h; subst hs'; rfl
   -- pipelinedSend appends the `actor` clock row.
   | pipelinedSendA actor =>
       simp only [execFullA, fullReceiptA, Option.some.injEq] at h ⊢; subst h; rfl
@@ -3339,7 +3368,7 @@ checkpoint cell_id = action_target gate). The archive is a lifecycle/log write. 
 theorem execFullA_receiptArchiveA_authorized (s s' : RecChainedState) (actor cell : CellId)
     (h : execFullA s (.receiptArchiveA actor cell) = some s') :
     stateAuthB s.kernel.caps actor cell = true :=
-  state_authorized (by simpa only [execFullA] using h)
+  (receiptArchiveChainA_factors (by simpa only [execFullA] using h)).1.1
 
 /-! ### §MA-lifecycle authority obligations (Wave-3) — the cell lifecycle + refresh effects carry their
 REAL `stateAuthB actor cell` self-lifecycle gate. The state-machine guard (Live↔Sealed/Destroyed) +
@@ -4484,11 +4513,14 @@ def fmaW3 : RecChainedState :=
         (fun s => (recTotalAsset s.kernel 0, recTotalAsset s.kernel 1))) == some (105, 7)  --  some (105, 7)
 #guard ((execFullA fmaS (.refusalA 9 0)).isSome) == false  --  false (FAIL-CLOSED)
 
--- ReceiptArchive: transition the `lifecycle` field to Archived (a log/prune op), balance-neutral:
-#guard ((execFullA fmaS (.receiptArchiveA 0 0)).map (fun s => fieldOf "lifecycle" (s.kernel.cell 0))) == some 1  --  some 1
+-- ReceiptArchive (DEPLOYED semantics): move the `lifecycle` SIDE-TABLE to Archived (4) — the
+--   cellSeal/cellDestroy shape (`c.archive(checkpoint)`), NOT a `cell` record-slot write — balance-neutral:
+#guard ((execFullA fmaS (.receiptArchiveA 0 0)).map (fun s => s.kernel.lifecycle 0)) == some lcArchived  --  some 4
 #guard ((execFullA fmaS (.receiptArchiveA 0 0)).map
         (fun s => (recTotalAsset s.kernel 0, recTotalAsset s.kernel 1))) == some (105, 7)  --  some (105, 7)
-#guard ((execFullA fmaS (.receiptArchiveA 9 0)).isSome) == false  --  false (FAIL-CLOSED)
+#guard ((execFullA fmaS (.receiptArchiveA 9 0)).isSome) == false  --  false (FAIL-CLOSED, unauthorized)
+-- ...and a NON-Live (sealed) cell cannot be archived (the liveness leg of auditGuard fails):
+#guard ((execFullA { fmaS with kernel := setLifecycle fmaS.kernel 0 lcSealed } (.receiptArchiveA 0 0)).isSome) == false  --  false (FAIL-CLOSED, non-live)
 
 -- Every lifecycle/refresh effect's per-asset ledgerDelta is 0 at every asset (balance-NEUTRAL):
 #guard ((ledgerDeltaAsset (.cellSealA 0 0) 1,

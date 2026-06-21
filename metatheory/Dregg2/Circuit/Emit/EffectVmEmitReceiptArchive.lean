@@ -353,7 +353,8 @@ makes the projected post-`lifecycle` of the touched `cell` EXACTLY `1` — the c
 pins. -/
 
 open Dregg2.Circuit.Spec.CellStateAudit
-  (ReceiptArchiveSpec auditCellMap auditCellWrite_correct execFullA_receiptArchiveA_iff_spec)
+  (ReceiptArchiveSpec auditCellMap auditCellWrite_correct receiptArchiveRecordStep
+   receiptArchiveRecordStep_iff_spec)
 
 /-- **`lifeProj k c`** — the EffectVM `field[1]` column value for cell `c` of kernel state `k`: the
 `lifecycle` record-slot scalar (`fieldOf lifecycleField`). -/
@@ -375,14 +376,15 @@ theorem unify_archive (s : RecChainedState) (actor cell : CellId) (s' : RecChain
   exact (auditCellWrite_correct s.kernel cell lifecycleField lifecycle_ne_balance).1
 
 /-- **`unify_archive_via_exec` — the runnable column move inherits the VALIDATED guarantee.** Chaining
-universe-A's `execFullA_receiptArchiveA_iff_spec` (a committed executor write ⟹ `ReceiptArchiveSpec`)
-with `unify_archive`: a committed `receiptArchiveA` forces the projected post-`lifecycle` to `1` — the
-EXACT column value the runnable descriptor pins. So the runnable `field[1]` set is universe-A's
-validated `lifecycle` write, not a fourth spec. -/
+universe-A's `receiptArchiveRecordStep_iff_spec` (a committed MODELLED record-slot write ⟹
+`ReceiptArchiveSpec`) with `unify_archive`: a committed record-slot `receiptArchive` forces the projected
+post-`lifecycle` to `1` — the EXACT column value the runnable descriptor pins. (The record-slot model is
+keyed off `receiptArchiveRecordStep`, NOT the deployed `execFullA` arm — which moves the lifecycle
+side-table; see `cellstateaudit.§5`.) -/
 theorem unify_archive_via_exec (s : RecChainedState) (actor cell : CellId) (s' : RecChainedState)
-    (h : execFullA s (.receiptArchiveA actor cell) = some s') :
+    (h : receiptArchiveRecordStep s actor cell = some s') :
     lifeProj s'.kernel cell = 1 :=
-  unify_archive s actor cell s' ((execFullA_receiptArchiveA_iff_spec s actor cell s').mp h)
+  unify_archive s actor cell s' ((receiptArchiveRecordStep_iff_spec s actor cell s').mp h)
 
 /-! ## §9 — NON-VACUITY: a concrete audit-write row that satisfies the intent, and one that does not. -/
 

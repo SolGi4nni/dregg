@@ -496,13 +496,15 @@ theorem receiptArchive_descriptorRefines (compressN : List FieldElem → FieldEl
     henc.frFactories, henc.frLifecycle, henc.frDeathCert, henc.frDelegate, henc.frDelegations,
     henc.frDelegationEpoch, henc.frDelegationEpochAt, henc.frHeaps⟩
 
-/-- The refinement against `execFullA` directly (via `execFullA_receiptArchiveA_iff_spec`). -/
-theorem receiptArchive_descriptorRefines_execFullA (compressN : List FieldElem → FieldElem)
+/-- The MODELLED record-slot refinement against the record-write `receiptArchiveRecordStep` (via
+`receiptArchiveRecordStep_iff_spec`). Keyed off the record write, NOT the deployed `execFullA` arm
+(which moves the lifecycle side-table). -/
+theorem receiptArchive_descriptorRefines_recordStep (compressN : List FieldElem → FieldElem)
     (hN : compressNInjective compressN)
     (pre post : RecChainedState) (actor cell : CellId)
     (henc : auditEncodes compressN pre post actor cell lifecycleField) :
-    execFullA pre (.receiptArchiveA actor cell) = some post :=
-  (Dregg2.Circuit.Spec.CellStateAudit.execFullA_receiptArchiveA_iff_spec pre actor cell post).mpr
+    Dregg2.Circuit.Spec.CellStateAudit.receiptArchiveRecordStep pre actor cell = some post :=
+  (Dregg2.Circuit.Spec.CellStateAudit.receiptArchiveRecordStep_iff_spec pre actor cell post).mpr
     (receiptArchive_descriptorRefines compressN hN pre post actor cell henc)
 
 /-- **TOOTH — `audit_descriptorRefines_rejects_unwritten`.** A decode asserting a post whose `cell`
@@ -991,35 +993,24 @@ the reconciled deployed semantics; `receiptArchive_descriptorRefines_sat` forces
 `Satisfied2 hash receiptArchiveV3` through the disc gate, the LIVE realization of
 `RotatedKernelRefinementLifecycleDisc.receiptArchive_disc_forced`. -/
 
-/-- The deployed `Archived` lifecycle discriminant (`u8 4`; `EffectVmEmitRotationV3.discArchived = 4`,
-`RotatedKernelRefinementLifecycleDisc.lcArchived`). The reconciled receiptArchive lifecycle target. -/
-def lcArchived : Nat := 4
+/-- The deployed `Archived` lifecycle discriminant. Reuses `TurnExecutorFull.lcArchived (= 4)` — the
+SAME constant the executor's `receiptArchiveChainA` moves to (anti-drift; matches `discArchived`). -/
+abbrev lcArchived : Nat := Dregg2.Exec.TurnExecutorFull.lcArchived
 
-/-- The declarative post-`lifecycle` map of a committed deployed receiptArchive: flip `cell` to
-`Archived`, every other cell unchanged (the `cellUnseal`/`cellDestroy` side-table-move shape). -/
-def archiveLifecycleMap (k : RecordKernelState) (cell : CellId) : CellId → Nat :=
-  (setLifecycle k cell lcArchived).lifecycle
+/-- The declarative post-`lifecycle` map of a committed deployed receiptArchive. Reuses the
+cellstateaudit `archiveLifecycleMap` (so the disc-gate refinement lands EXACTLY the spec
+`fullActionStep`/the executor weld consume). -/
+abbrev archiveLifecycleMap (k : RecordKernelState) (cell : CellId) : CellId → Nat :=
+  Dregg2.Circuit.Spec.CellStateAudit.archiveLifecycleMap k cell
 
-/-- **`ReceiptArchiveLifecycleSpec` — the reconciled DEPLOYED full-state spec of `receiptArchive`.** The
-deployed `apply_receipt_archive` moves the LIFECYCLE side-table to `Archived` (NOT a record slot); the
-guard is the three-leg `auditGuard` (the deployed receiptArchive's authority/membership/liveness gate);
-every non-`lifecycle` kernel component is frozen (INCLUDING the `cell` record map — the deployed archive
-touches only the side-table). The light-client-meaningful spec the disc gate forces. -/
-def ReceiptArchiveLifecycleSpec (s : RecChainedState) (actor cell : CellId)
+/-- **`ReceiptArchiveLifecycleSpec` — the reconciled DEPLOYED full-state spec of `receiptArchive`.**
+Reuses the cellstateaudit `ReceiptArchiveLifecycleSpec` (where the executor weld
+`execFullA_receiptArchiveA_iff_lifecycleSpec` lives). The deployed `apply_receipt_archive` moves the
+LIFECYCLE side-table to `Archived` (NOT a record slot); the three-leg `auditGuard`; every non-`lifecycle`
+kernel component frozen (INCLUDING the `cell` record map). The spec the disc gate forces. -/
+abbrev ReceiptArchiveLifecycleSpec (s : RecChainedState) (actor cell : CellId)
     (s' : RecChainedState) : Prop :=
-  auditGuard s actor cell
-  ∧ s'.kernel.lifecycle = archiveLifecycleMap s.kernel cell
-  ∧ s'.log = { actor := actor, src := cell, dst := cell, amt := 0 } :: s.log
-  ∧ s'.kernel.accounts = s.kernel.accounts ∧ s'.kernel.cell = s.kernel.cell
-  ∧ s'.kernel.caps = s.kernel.caps
-  ∧ s'.kernel.nullifiers = s.kernel.nullifiers ∧ s'.kernel.revoked = s.kernel.revoked
-  ∧ s'.kernel.commitments = s.kernel.commitments ∧ s'.kernel.bal = s.kernel.bal
-  ∧ s'.kernel.slotCaveats = s.kernel.slotCaveats ∧ s'.kernel.factories = s.kernel.factories
-  ∧ s'.kernel.deathCert = s.kernel.deathCert ∧ s'.kernel.delegate = s.kernel.delegate
-  ∧ s'.kernel.delegations = s.kernel.delegations
-  ∧ s'.kernel.delegationEpoch = s.kernel.delegationEpoch
-  ∧ s'.kernel.delegationEpochAt = s.kernel.delegationEpochAt
-  ∧ s'.kernel.heaps = s.kernel.heaps
+  Dregg2.Circuit.Spec.CellStateAudit.ReceiptArchiveLifecycleSpec s actor cell s'
 
 /-- **`ReceiptArchiveTraceReadout`** — the realizable circuit-witness extraction for receiptArchive, the
 `cellUnseal` `CellUnsealTraceReadout` analog: the designated ACTIVE receiptArchive row + its selector
@@ -1204,7 +1195,7 @@ private def cell0 : CellId := 0
 #assert_axioms refusal_descriptorRefines
 #assert_axioms refusal_descriptorRefines_execFullA
 #assert_axioms receiptArchive_descriptorRefines
-#assert_axioms receiptArchive_descriptorRefines_execFullA
+#assert_axioms receiptArchive_descriptorRefines_recordStep
 #assert_axioms audit_descriptorRefines_rejects_unwritten
 -- CLASS-A (DEPLOYED-descriptor-forced) tripwires.
 #assert_axioms cellUnseal_disc_graduable

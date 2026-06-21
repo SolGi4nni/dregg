@@ -131,6 +131,13 @@ private theorem restIffNoLifecycle_seal_to_unseal (RH : RecordKernelState → �
     Dregg2.Circuit.Inst.CellUnsealA.RestIffNoLifecycle]
   exact h
 
+private theorem restIffNoLifecycle_seal_to_archive (RH : RecordKernelState → ℤ)
+    (h : Dregg2.Circuit.Inst.CellSealA.RestIffNoLifecycle RH) :
+    Dregg2.Circuit.Inst.ReceiptArchiveLifecycleA.RestIffNoLifecycle RH := by
+  dsimp [Dregg2.Circuit.Inst.CellSealA.RestIffNoLifecycle,
+    Dregg2.Circuit.Inst.ReceiptArchiveLifecycleA.RestIffNoLifecycle]
+  exact h
+
 /-- **`fullActionCircuitStep`** — dispatches each `FullActionA` constructor to its v2 effect
 `CircuitStep`. F1b: the dispatch is TOTAL — every surviving constructor has a mapped circuit arm
 (no spec-as-circuit fallback remains). -/
@@ -210,8 +217,7 @@ def fullActionCircuitStep
       AccountsWF st.kernel ∧ AccountsWF st'.kernel ∧
       refusalCircuitStep CS st ⟨actor, cell⟩ st'
   | .receiptArchiveA actor cell =>
-      AccountsWF st.kernel ∧ AccountsWF st'.kernel ∧
-      receiptArchiveCircuitStep CS st ⟨actor, cell⟩ st'
+      receiptArchiveLifecycleCircuitStep S DLife hDLife st ⟨actor, cell⟩ st'
   | .pipelinedSendA actor =>
       AccountsWF st.kernel ∧ AccountsWF st'.kernel ∧
       pipelinedSendCircuitStep CS st ⟨actor⟩ st'
@@ -427,8 +433,8 @@ theorem fullAction_circuit_refines_spec
       exact refusal_circuit_refines_spec CS hCSN hCSL hRestFrame hLogCS st _ st' hwf hwf' hc
   | .receiptArchiveA actor cell =>
       simp only [fullActionStep]
-      rcases h with ⟨hwf, hwf', hc⟩
-      exact receiptArchive_circuit_refines_spec CS hCSN hCSL hRestFrame hLogCS st _ st' hwf hwf' hc
+      exact receiptArchiveLifecycle_circuit_refines_spec S DLife hDLife
+        (restIffNoLifecycle_seal_to_archive S.RH hRestLifecycle) hLog st _ st' h
   -- dregg3 F2b: the queue-family constructors are GONE — the circuit dispatch is TOTAL over the
   -- 38 survivors (no hole-portal arm left).
   -- the portal fallback (the constructors die in F2b).

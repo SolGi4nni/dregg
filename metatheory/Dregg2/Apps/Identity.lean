@@ -210,7 +210,7 @@ theorem execFullA_revoked_eq (s s' : RecChainedState) (fa : FullActionA)
       obtain ⟨_, hs'⟩ := stateStep_factors h; subst hs'; rfl
   | receiptArchiveA actor cell =>
       simp only [execFullA] at h
-      obtain ⟨_, hs'⟩ := stateStep_factors h; subst hs'; rfl
+      obtain ⟨_, hs'⟩ := receiptArchiveChainA_factors h; subst hs'; rfl
   -- §swiss — four CapTP swiss-table effects, each `if stateAuthB … then match swissK … | some k' => …`
   -- (kernel updates `swiss`, never `revoked`). Gate-peel the outer `if`, then cases the kernel op.
   -- §lifecycle (Wave-3) — seal/unseal/destroy edit `lifecycle`/`deathCert`; refresh edits `delegations`

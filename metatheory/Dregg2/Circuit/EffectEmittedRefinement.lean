@@ -41,6 +41,7 @@ import Dregg2.Circuit.Inst.refusalA
 import Dregg2.Circuit.Inst.receiptArchiveA
 import Dregg2.Circuit.Inst.pipelinedSendA
 import Dregg2.Circuit.Inst.cellSealA
+import Dregg2.Circuit.Inst.receiptArchiveLifecycleA
 import Dregg2.Circuit.Inst.cellUnsealA
 import Dregg2.Circuit.Inst.cellDestroyA
 import Dregg2.Circuit.Inst.heapWriteA
@@ -555,6 +556,8 @@ open Dregg2.Circuit.Inst.MakeSovereignA
 open Dregg2.Circuit.Inst.RefusalA (refusalE refusalAAirName RefusalArgs refusalA_full_sound)
 open Dregg2.Circuit.Inst.ReceiptArchiveA
   (receiptArchiveE receiptArchiveAAirName ReceiptArchiveArgs receiptArchiveA_full_sound)
+open Dregg2.Circuit.Inst.ReceiptArchiveLifecycleA
+  (receiptArchiveLifecycleE receiptArchiveLifecycleAAirName receiptArchiveLifecycleA_full_sound)
 open Dregg2.Circuit.Inst.PipelinedSendA
   (pipelinedSendE pipelinedSendAAirName PipelinedSendArgs pipelinedSendA_full_sound)
 open Dregg2.Circuit.Inst.CellSealA (cellSealE cellSealAAirName CellSealArgs cellSealA_full_sound)
@@ -860,6 +863,38 @@ theorem cellSealA_emitted_refines_spec (S : Surface2) (DLife : (CellId → Nat) 
     (fun pre args post => CellSealSpec pre args.actor args.cell post)
     (fun pre args post hc => cellSealA_full_sound S DLife hDLife hRest hLog pre args post hc)
     (fun pre args post => cellSealA_emitted_equiv_circuit S DLife hDLife pre args post)
+    s args s' h
+
+def receiptArchiveLifecycleAEmittedStep (S : Surface2) (DLife : (CellId → Nat) → ℤ)
+    (hDLife : Function.Injective DLife) (s : RecChainedState)
+    (args : Dregg2.Circuit.Inst.ReceiptArchiveLifecycleA.ReceiptArchiveArgs) (s' : RecChainedState) : Prop :=
+  effect2EmittedStepLocal S (receiptArchiveLifecycleE DLife hDLife) receiptArchiveLifecycleAAirName s args s'
+
+theorem receiptArchiveLifecycleA_emitted_equiv_circuit (S : Surface2) (DLife : (CellId → Nat) → ℤ)
+    (hDLife : Function.Injective DLife) (s : RecChainedState)
+    (args : Dregg2.Circuit.Inst.ReceiptArchiveLifecycleA.ReceiptArchiveArgs) (s' : RecChainedState) :
+    receiptArchiveLifecycleAEmittedStep S DLife hDLife s args s' ↔
+      effect2CircuitStep S (receiptArchiveLifecycleE DLife hDLife) s args s' :=
+  effect2_emitted_equiv_circuit_local S (receiptArchiveLifecycleE DLife hDLife)
+    receiptArchiveLifecycleAAirName s args s'
+
+theorem receiptArchiveLifecycleA_emitted_refines_spec (S : Surface2) (DLife : (CellId → Nat) → ℤ)
+    (hDLife : Function.Injective DLife)
+    (hRest : Dregg2.Circuit.Inst.ReceiptArchiveLifecycleA.RestIffNoLifecycle S.RH)
+    (hLog : logHashInjective S.LH)
+    (s : RecChainedState) (args : Dregg2.Circuit.Inst.ReceiptArchiveLifecycleA.ReceiptArchiveArgs)
+    (s' : RecChainedState)
+    (h : receiptArchiveLifecycleAEmittedStep S DLife hDLife s args s') :
+    Dregg2.Circuit.Spec.CellStateAudit.ReceiptArchiveLifecycleSpec s args.actor args.cell s' :=
+  effect2_emitted_refines_bespoke_spec S (receiptArchiveLifecycleE DLife hDLife)
+    receiptArchiveLifecycleAAirName
+    (fun pre args post =>
+      satisfiedE2 S (receiptArchiveLifecycleE DLife hDLife)
+        (encodeE2 S (receiptArchiveLifecycleE DLife hDLife) pre args post))
+    (fun pre args post =>
+      Dregg2.Circuit.Spec.CellStateAudit.ReceiptArchiveLifecycleSpec pre args.actor args.cell post)
+    (fun pre args post hc => receiptArchiveLifecycleA_full_sound S DLife hDLife hRest hLog pre args post hc)
+    (fun pre args post => receiptArchiveLifecycleA_emitted_equiv_circuit S DLife hDLife pre args post)
     s args s' h
 
 def cellUnsealAEmittedStep (S : Surface2) (DLife : (CellId → Nat) → ℤ)

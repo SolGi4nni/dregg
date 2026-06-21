@@ -18,6 +18,7 @@ import Dregg2.Circuit.Inst.createCellFromFactoryA
 import Dregg2.Circuit.Inst.makeSovereignA
 import Dregg2.Circuit.Inst.refusalA
 import Dregg2.Circuit.Inst.receiptArchiveA
+import Dregg2.Circuit.Inst.receiptArchiveLifecycleA
 import Dregg2.Circuit.Inst.pipelinedSendA
 import Dregg2.Circuit.Inst.cellSealA
 import Dregg2.Circuit.Inst.cellUnsealA
@@ -64,7 +65,7 @@ open Dregg2.Circuit.Spec.CellStateVK (SetVKSpec)
 open Dregg2.Circuit.Spec.AuthorityAttenuation (AttenuateSpec DelegateAttenSpec)
 open Dregg2.Circuit.Spec.FactoryCreation (CreateFromFactorySpec)
 open Dregg2.Circuit.Spec.SovereignCommitment (MakeSovereignSpec)
-open Dregg2.Circuit.Spec.CellStateAudit (RefusalSpec ReceiptArchiveSpec)
+open Dregg2.Circuit.Spec.CellStateAudit (RefusalSpec ReceiptArchiveSpec ReceiptArchiveLifecycleSpec)
 open Dregg2.Circuit.Spec.QueuePipelinedSend (PipelinedSendSpec)
 open Dregg2.Circuit.Spec.CellLifecycle (CellSealSpec CellUnsealSpec CellDestroySpec)
 open Dregg2.Circuit.Spec.RefreshDelegation (RefreshDelegationSpec)
@@ -174,6 +175,30 @@ theorem receiptArchive_circuit_refines_spec (CS : CommitSurface)
     (h : receiptArchiveCircuitStep CS s args s') :
     ReceiptArchiveSpec s args.actor args.cell s' :=
   receiptArchiveA_full_sound CS hN hL hRest hLog s args s' hwf hwf' h
+
+/-- The DEPLOYED receipt-archive v2 circuit step — the Surface2 LIFECYCLE side-table archive circuit
+(`receiptArchiveLifecycleE`, the `cellSealE` analog), distinct from the superseded record-slot
+`receiptArchiveCircuitStep`. -/
+def receiptArchiveLifecycleCircuitStep (S : Surface2) (DLife : (CellId → Nat) → ℤ)
+    (hDLife : Function.Injective DLife)
+    (s : RecChainedState) (args : Dregg2.Circuit.Inst.ReceiptArchiveLifecycleA.ReceiptArchiveArgs)
+    (s' : RecChainedState) : Prop :=
+  effect2CircuitStep S (Dregg2.Circuit.Inst.ReceiptArchiveLifecycleA.receiptArchiveLifecycleE DLife hDLife)
+    s args s'
+
+/-- **The DEPLOYED receipt-archive v2 refinement** — the Surface2 archive circuit forces
+`ReceiptArchiveLifecycleSpec` (the `lifecycle := Archived` side-table move). The deployed-semantics
+analog of `cellSeal_circuit_refines_spec`. -/
+theorem receiptArchiveLifecycle_circuit_refines_spec (S : Surface2) (DLife : (CellId → Nat) → ℤ)
+    (hDLife : Function.Injective DLife)
+    (hRest : Dregg2.Circuit.Inst.ReceiptArchiveLifecycleA.RestIffNoLifecycle S.RH)
+    (hLog : logHashInjective S.LH)
+    (s : RecChainedState) (args : Dregg2.Circuit.Inst.ReceiptArchiveLifecycleA.ReceiptArchiveArgs)
+    (s' : RecChainedState)
+    (h : receiptArchiveLifecycleCircuitStep S DLife hDLife s args s') :
+    ReceiptArchiveLifecycleSpec s args.actor args.cell s' :=
+  Dregg2.Circuit.Inst.ReceiptArchiveLifecycleA.receiptArchiveLifecycleA_full_sound
+    S DLife hDLife hRest hLog s args s' h
 
 def pipelinedSendCircuitStep (CS : CommitSurface) (s : RecChainedState) (args : PipelinedSendArgs)
     (s' : RecChainedState) : Prop :=

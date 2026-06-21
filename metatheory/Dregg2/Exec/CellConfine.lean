@@ -373,7 +373,8 @@ theorem execFullA_confine {U : List Auth} (hctrl : Auth.control ∈ U)
   | refusalA actor cell =>
       exact CapsConfined.of_caps_eq (state_caps_unchanged (by simpa only [execFullA] using h)) hpre
   | receiptArchiveA actor cell =>
-      exact CapsConfined.of_caps_eq (state_caps_unchanged (by simpa only [execFullA] using h)) hpre
+      obtain ⟨_, hs'⟩ := receiptArchiveChainA_factors (by simpa only [execFullA] using h)
+      exact CapsConfined.of_caps_eq (by rw [hs']; rfl) hpre
   | pipelinedSendA actor =>
       refine CapsConfined.of_caps_eq ?_ hpre
       simp only [execFullA, Option.some.injEq] at h; subst h; rfl

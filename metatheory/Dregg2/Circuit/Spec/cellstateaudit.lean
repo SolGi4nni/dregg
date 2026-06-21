@@ -217,19 +217,88 @@ theorem execFullA_refusalA_iff_spec (s : RecChainedState) (actor cell : CellId)
   unfold RefusalSpec auditGuard auditCellMap
   rfl
 
-/-! ## §5 — VARIANT 2: `receiptArchiveA` — the FULL-STATE declarative spec + ⟺.
+/-! ## §5 — VARIANT 2: `receiptArchiveA`.
 
-The `.receiptArchiveA` arm writes the `"lifecycle"` RECORD slot to `1` — a receipt-archive lifecycle
-commitment. (Recall: this is the record FIELD inside the `cell` map, NOT the `k.lifecycle`
-side-table — the spec's `s'.kernel.lifecycle = s.kernel.lifecycle` frame clause confirms the
-side-table is untouched.) `ReceiptArchiveSpec` is the COMPLETE state transition, written
-INDEPENDENTLY of the executor, enumerating all 17 kernel fields + the `log`. -/
+### §5a — the DEPLOYED semantics: `receiptArchiveA` moves the LIFECYCLE side-table to `Archived`.
 
-/-- **`ReceiptArchiveSpec` — the full-state declarative spec of a committed `receiptArchiveA`.** The
+The live `execFullA s (.receiptArchiveA actor cell)` arm is `receiptArchiveChainA` — the DEPLOYED
+`apply_receipt_archive` (`Cell::archive(checkpoint)`): a `lifecycle[cell] := Archived (4)` SIDE-TABLE
+move, the cellSeal/cellDestroy shape, NOT a `cell` record-slot write. `ReceiptArchiveLifecycleSpec`
+is the COMPLETE declarative transition the deployed disc gate (`receiptArchiveV3`) forces, enumerating
+all 17 kernel fields + the `log`. This is the spec `fullActionStep`/the apex consume.
+
+### §5b — the MODELLED (superseded) record-slot semantics: `ReceiptArchiveSpec`.
+
+`ReceiptArchiveSpec` is the OLD record-slot model: the `"lifecycle"` RECORD slot (inside the `cell` map,
+a DISTINCT object from the side-table) set to `1`. The pre-V3 arithmetization universe (`receiptArchiveE`,
+`receiptArchiveA_full_sound`, the Argus/Emit weld) carries this as its own bespoke modelled fact, keyed off
+the RECORD write `receiptArchiveRecordStep` (NOT the deployed `execFullA` arm, which now moves the
+side-table). The two are independent: the deployed wire carries the lifecycle move; the record-slot model
+is the superseded scaffolding kept for its self-contained soundness. -/
+
+/-- **`archiveLifecycleMap` — the deployed post-`lifecycle` map: flip `cell` to `Archived (4)`.** -/
+def archiveLifecycleMap (k : RecordKernelState) (cell : CellId) : CellId → Nat :=
+  (setLifecycle k cell lcArchived).lifecycle
+
+/-- **`ReceiptArchiveLifecycleSpec` — the DEPLOYED full-state declarative spec of a committed
+`receiptArchiveA`.** The three-leg `auditGuard` holds; the `lifecycle` SIDE-TABLE moves `cell` to
+`Archived`; the `log` extends by one self-targeted row; every other kernel component — INCLUDING the
+`cell` RECORD map (the deployed archive touches only the side-table) — is frozen. No frame clause
+mentions the executor. The light-client-meaningful spec the disc gate forces (the `cellUnseal`/
+`cellDestroy` side-table-move shape). -/
+def ReceiptArchiveLifecycleSpec (s : RecChainedState) (actor cell : CellId)
+    (s' : RecChainedState) : Prop :=
+  auditGuard s actor cell
+  ∧ s'.kernel.lifecycle = archiveLifecycleMap s.kernel cell
+  ∧ s'.log = { actor := actor, src := cell, dst := cell, amt := 0 } :: s.log
+  ∧ s'.kernel.accounts = s.kernel.accounts ∧ s'.kernel.cell = s.kernel.cell
+  ∧ s'.kernel.caps = s.kernel.caps
+  ∧ s'.kernel.nullifiers = s.kernel.nullifiers ∧ s'.kernel.revoked = s.kernel.revoked
+  ∧ s'.kernel.commitments = s.kernel.commitments ∧ s'.kernel.bal = s.kernel.bal
+  ∧ s'.kernel.slotCaveats = s.kernel.slotCaveats ∧ s'.kernel.factories = s.kernel.factories
+  ∧ s'.kernel.deathCert = s.kernel.deathCert ∧ s'.kernel.delegate = s.kernel.delegate
+  ∧ s'.kernel.delegations = s.kernel.delegations
+  ∧ s'.kernel.delegationEpoch = s.kernel.delegationEpoch
+  ∧ s'.kernel.delegationEpochAt = s.kernel.delegationEpochAt
+  ∧ s'.kernel.heaps = s.kernel.heaps
+
+/-- The `.receiptArchiveA` arm of `execFullA` is DEFINITIONALLY the DEPLOYED `receiptArchiveChainA`
+(the `lifecycle := Archived` side-table move). -/
+theorem execFullA_receiptArchiveA_eq (s : RecChainedState) (actor cell : CellId) :
+    execFullA s (.receiptArchiveA actor cell) = receiptArchiveChainA s actor cell := rfl
+
+/-- **`execFullA_receiptArchiveA_iff_lifecycleSpec` — EXECUTOR ⟺ DEPLOYED SPEC (full state, both
+directions).** The live executor commits a receipt-archive into `s'` IFF `s'` is EXACTLY the deployed
+`lifecycle := Archived` side-table move. The `→` direction VALIDATES the executor; the `←` reconstructs. -/
+theorem execFullA_receiptArchiveA_iff_lifecycleSpec (s : RecChainedState) (actor cell : CellId)
+    (s' : RecChainedState) :
+    execFullA s (.receiptArchiveA actor cell) = some s' ↔ ReceiptArchiveLifecycleSpec s actor cell s' := by
+  rw [execFullA_receiptArchiveA_eq]
+  unfold receiptArchiveChainA ReceiptArchiveLifecycleSpec auditGuard archiveLifecycleMap setLifecycle
+  by_cases hg : stateAuthB s.kernel.caps actor cell = true ∧ cell ∈ s.kernel.accounts
+      ∧ cellLive s.kernel cell = true
+  · rw [if_pos hg]
+    constructor
+    · intro h
+      simp only [Option.some.injEq] at h; subst h
+      refine ⟨hg, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+    · rintro ⟨_, hlif, hlog, h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, h12, h13, h14, h15⟩
+      obtain ⟨k', l'⟩ := s'
+      obtain ⟨a, ce, ca, nu, re, co, ba, sl, fa, li, dc, de, dg, dge, dgea, hp⟩ := k'
+      simp only at hlif hlog h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14 h15
+      subst hlif hlog h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14 h15
+      rfl
+  · rw [if_neg hg]
+    constructor
+    · intro h; exact absurd h (by simp)
+    · rintro ⟨hg', _⟩; exact absurd hg' hg
+
+/-- **`ReceiptArchiveSpec` — the MODELLED (superseded) record-slot spec of `receiptArchiveA`.** The
 guard holds; the `cell` map is the `"lifecycle" := 1` RECORD-slot write (every other cell whole,
 `cell`'s other fields kept); the `log` is the one-row self-targeted extension; every non-`cell`
 kernel component unchanged — INCLUDING the `lifecycle` SIDE-TABLE (a distinct object from the record
-slot). No frame clause mentions the executor. -/
+slot). The pre-V3 record-slot model the `receiptArchiveE` arithmetization universe pins; keyed off the
+RECORD write `receiptArchiveRecordStep`, NOT the deployed `execFullA` arm. No clause mentions the executor. -/
 def ReceiptArchiveSpec (s : RecChainedState) (actor cell : CellId) (s' : RecChainedState) : Prop :=
   auditGuard s actor cell
   ∧ s'.kernel.cell = auditCellMap s.kernel cell lifecycleField
@@ -245,18 +314,23 @@ def ReceiptArchiveSpec (s : RecChainedState) (actor cell : CellId) (s' : RecChai
   ∧ s'.kernel.delegationEpochAt = s.kernel.delegationEpochAt
   ∧ s'.kernel.heaps = s.kernel.heaps
 
-/-- The `.receiptArchiveA` arm of `execFullA` is DEFINITIONALLY the bare authority-gated lifecycle-slot
-write. -/
-theorem execFullA_receiptArchiveA_eq (s : RecChainedState) (actor cell : CellId) :
-    execFullA s (.receiptArchiveA actor cell) = stateStep s lifecycleField actor cell (.int 1) := rfl
+/-- **`receiptArchiveRecordStep`** — the MODELLED record-slot write (the bare authority-gated
+`"lifecycle"` RECORD-slot set-to-`1`). The semantics the `receiptArchiveE` arithmetization universe
+models — DISTINCT from the deployed `execFullA` arm (which moves the side-table). -/
+def receiptArchiveRecordStep (s : RecChainedState) (actor cell : CellId) : Option RecChainedState :=
+  stateStep s lifecycleField actor cell (.int 1)
 
-/-- **`execFullA_receiptArchiveA_iff_spec` — EXECUTOR ⟺ SPEC (FULL state, both directions).** Mirrors
-`execFullA_refusalA_iff_spec` for the lifecycle-slot audit write. The `→` direction VALIDATES the
-executor against the independent spec; the `←` reconstructs the committed state. -/
-theorem execFullA_receiptArchiveA_iff_spec (s : RecChainedState) (actor cell : CellId)
+/-- The modelled record-slot write IS the bare lifecycle-slot `stateStep` (definitional). -/
+theorem receiptArchiveRecordStep_eq (s : RecChainedState) (actor cell : CellId) :
+    receiptArchiveRecordStep s actor cell = stateStep s lifecycleField actor cell (.int 1) := rfl
+
+/-- **`receiptArchiveRecordStep_iff_spec` — MODELLED RECORD WRITE ⟺ `ReceiptArchiveSpec` (both
+directions).** The record-slot write commits into `s'` IFF `s'` is EXACTLY the record-slot spec. The
+modelled circuit universe (`receiptArchiveA_full_sound`) routes through THIS, not `execFullA`. -/
+theorem receiptArchiveRecordStep_iff_spec (s : RecChainedState) (actor cell : CellId)
     (s' : RecChainedState) :
-    execFullA s (.receiptArchiveA actor cell) = some s' ↔ ReceiptArchiveSpec s actor cell s' := by
-  rw [execFullA_receiptArchiveA_eq, auditStateStep_iff_spec]
+    receiptArchiveRecordStep s actor cell = some s' ↔ ReceiptArchiveSpec s actor cell s' := by
+  rw [receiptArchiveRecordStep_eq, auditStateStep_iff_spec]
   unfold ReceiptArchiveSpec auditGuard auditCellMap
   rfl
 
@@ -275,13 +349,15 @@ theorem refusalA_slotWritten {s s' : RecChainedState} {actor cell : CellId}
   rw [hspec.2.1]
   exact (auditCellWrite_correct s.kernel cell refusalField (by decide)).1
 
-/-- **`receiptArchiveA_slotWritten` — the `"lifecycle"` RECORD slot is set to exactly `1`.** -/
-theorem receiptArchiveA_slotWritten {s s' : RecChainedState} {actor cell : CellId}
+/-- **`receiptArchiveA_lifecycleMoved` — the `lifecycle` SIDE-TABLE moves `cell` to `Archived`.** The
+DEPLOYED archive (`c.archive(checkpoint)`) flips the liveness discriminant, NOT a record slot. -/
+theorem receiptArchiveA_lifecycleMoved {s s' : RecChainedState} {actor cell : CellId}
     (h : execFullA s (.receiptArchiveA actor cell) = some s') :
-    fieldOf lifecycleField (s'.kernel.cell cell) = 1 := by
-  have hspec := (execFullA_receiptArchiveA_iff_spec s actor cell s').mp h
+    s'.kernel.lifecycle cell = lcArchived := by
+  have hspec := (execFullA_receiptArchiveA_iff_lifecycleSpec s actor cell s').mp h
   rw [hspec.2.1]
-  exact (auditCellWrite_correct s.kernel cell lifecycleField (by decide)).1
+  show (setLifecycle s.kernel cell lcArchived).lifecycle cell = lcArchived
+  simp only [setLifecycle, if_pos]
 
 /-- **`refusalA_balFrame` — BALANCE LEDGER untouched (the regime balance-Δ=0).** -/
 theorem refusalA_balFrame {s s' : RecChainedState} {actor cell : CellId}
@@ -295,14 +371,12 @@ theorem refusalA_capFrame {s s' : RecChainedState} {actor cell : CellId}
     s'.kernel.caps = s.kernel.caps :=
   ((execFullA_refusalA_iff_spec s actor cell s').mp h).2.2.2.2.1
 
-/-- **`receiptArchiveA_lifecycleSideTableFrame` — the `lifecycle` SIDE-TABLE untouched.** The audit
-write moves only the RECORD slot `"lifecycle"`, NOT the `CellId → Int` liveness discriminant — so the
-cell's liveness (`cellLive`) is preserved. This is the load-bearing confirmation that the name
-collision hides no frame interaction. -/
-theorem receiptArchiveA_lifecycleSideTableFrame {s s' : RecChainedState} {actor cell : CellId}
+/-- **`receiptArchiveA_cellRecordFrame` — the `cell` RECORD map untouched.** The DEPLOYED archive moves
+only the `lifecycle` SIDE-TABLE, NOT any `cell` record slot — so every cell's whole record is preserved. -/
+theorem receiptArchiveA_cellRecordFrame {s s' : RecChainedState} {actor cell : CellId}
     (h : execFullA s (.receiptArchiveA actor cell) = some s') :
-    s'.kernel.lifecycle = s.kernel.lifecycle :=
-  ((execFullA_receiptArchiveA_iff_spec s actor cell s').mp h).2.2.2.2.2.2.2.2.2.2.2.1
+    s'.kernel.cell = s.kernel.cell :=
+  ((execFullA_receiptArchiveA_iff_lifecycleSpec s actor cell s').mp h).2.2.2.2.1
 
 /-- **`refusalA_otherCellsFrame` — every OTHER cell's whole record untouched.** -/
 theorem refusalA_otherCellsFrame {s s' : RecChainedState} {actor cell : CellId}
@@ -323,7 +397,7 @@ theorem refusalA_admits_guard {s s' : RecChainedState} {actor cell : CellId}
 theorem receiptArchiveA_admits_guard {s s' : RecChainedState} {actor cell : CellId}
     (h : execFullA s (.receiptArchiveA actor cell) = some s') :
     auditGuard s actor cell :=
-  ((execFullA_receiptArchiveA_iff_spec s actor cell s').mp h).1
+  ((execFullA_receiptArchiveA_iff_lifecycleSpec s actor cell s').mp h).1
 
 /-! ## §7 — NON-VACUITY: the guard REJECTS bad inputs (fail-closed teeth).
 
@@ -369,18 +443,27 @@ theorem receiptArchiveA_rejects_unauthorized (s : RecChainedState) (actor cell :
     (hbad : stateAuthB s.kernel.caps actor cell = false) :
     execFullA s (.receiptArchiveA actor cell) = none := by
   rw [execFullA_receiptArchiveA_eq]
-  unfold stateStep
+  unfold receiptArchiveChainA
   rw [if_neg]
   rintro ⟨hauth, _, _⟩
   rw [hbad] at hauth; exact absurd hauth (by simp)
 
+/-- **`receiptArchiveA_rejects_nonaccount`.** A receipt-archive cannot target a non-account. -/
+theorem receiptArchiveA_rejects_nonaccount (s : RecChainedState) (actor cell : CellId)
+    (hbad : cell ∉ s.kernel.accounts) :
+    execFullA s (.receiptArchiveA actor cell) = none := by
+  rw [execFullA_receiptArchiveA_eq]
+  unfold receiptArchiveChainA
+  rw [if_neg]
+  rintro ⟨_, hmem, _⟩; exact hbad hmem
+
 /-- **`receiptArchiveA_rejects_nonlive`.** A receipt-archive commitment cannot be stamped
-into a sealed/destroyed cell. -/
+into a sealed/destroyed cell (only a Live cell may be archived). -/
 theorem receiptArchiveA_rejects_nonlive (s : RecChainedState) (actor cell : CellId)
     (hbad : cellLive s.kernel cell = false) :
     execFullA s (.receiptArchiveA actor cell) = none := by
   rw [execFullA_receiptArchiveA_eq]
-  unfold stateStep
+  unfold receiptArchiveChainA
   rw [if_neg]
   rintro ⟨_, _, hlive⟩
   rw [hbad] at hlive; exact absurd hlive (by simp)
@@ -413,11 +496,21 @@ def sAUD0 : RecChainedState :=
    | some s' => decide (fieldOf "balance" (s'.kernel.cell 0) = 42)
    | none    => false)  -- true
 
--- the executor COMMITS the good self-authored receipt-archive write:
+-- the executor COMMITS the good self-authored receipt-archive (DEPLOYED: lifecycle side-table move):
 #guard (execFullA sAUD0 (.receiptArchiveA 0 0)).isSome  -- true
--- ...and the committed `"lifecycle"` RECORD slot reads back exactly 1:
+-- ...and the committed `lifecycle` SIDE-TABLE reads back exactly `Archived (4)`:
 #guard
   (match execFullA sAUD0 (.receiptArchiveA 0 0) with
+   | some s' => decide (s'.kernel.lifecycle 0 = lcArchived)
+   | none    => false)  -- true
+-- ...while the `cell` RECORD map is FROZEN (the deployed archive touches only the side-table):
+#guard
+  (match execFullA sAUD0 (.receiptArchiveA 0 0) with
+   | some s' => decide (fieldOf "lifecycle" (s'.kernel.cell 0) = 0)
+   | none    => false)  -- true (record slot untouched)
+-- the MODELLED record-slot write (the superseded pre-V3 model) DOES set the record slot to 1:
+#guard
+  (match receiptArchiveRecordStep sAUD0 0 0 with
    | some s' => decide (fieldOf "lifecycle" (s'.kernel.cell 0) = 1)
    | none    => false)  -- true
 
@@ -436,12 +529,14 @@ Whitelist exactly `{propext, Classical.choice, Quot.sound}` — no `sorryAx`/`ad
 #assert_axioms execFullA_refusalA_eq
 #assert_axioms execFullA_refusalA_iff_spec
 #assert_axioms execFullA_receiptArchiveA_eq
-#assert_axioms execFullA_receiptArchiveA_iff_spec
+#assert_axioms execFullA_receiptArchiveA_iff_lifecycleSpec
+#assert_axioms receiptArchiveRecordStep_eq
+#assert_axioms receiptArchiveRecordStep_iff_spec
 #assert_axioms refusalA_slotWritten
-#assert_axioms receiptArchiveA_slotWritten
+#assert_axioms receiptArchiveA_lifecycleMoved
 #assert_axioms refusalA_balFrame
 #assert_axioms refusalA_capFrame
-#assert_axioms receiptArchiveA_lifecycleSideTableFrame
+#assert_axioms receiptArchiveA_cellRecordFrame
 #assert_axioms refusalA_otherCellsFrame
 #assert_axioms refusalA_admits_guard
 #assert_axioms receiptArchiveA_admits_guard
@@ -449,6 +544,7 @@ Whitelist exactly `{propext, Classical.choice, Quot.sound}` — no `sorryAx`/`ad
 #assert_axioms refusalA_rejects_nonaccount
 #assert_axioms refusalA_rejects_nonlive
 #assert_axioms receiptArchiveA_rejects_unauthorized
+#assert_axioms receiptArchiveA_rejects_nonaccount
 #assert_axioms receiptArchiveA_rejects_nonlive
 
 end Dregg2.Circuit.Spec.CellStateAudit

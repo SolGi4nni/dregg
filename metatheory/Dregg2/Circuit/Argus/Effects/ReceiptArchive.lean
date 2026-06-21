@@ -117,8 +117,8 @@ open Dregg2.Circuit.StateCommit
 open Dregg2.Circuit.EffectCommit (CommitSurface EffectSpec satisfiedE encodeE)
 -- The independent full-state spec + executor⟺spec corner.
 open Dregg2.Circuit.Spec.CellStateAudit
-  (auditGuard auditCellMap auditCellMap_eq_writeField ReceiptArchiveSpec execFullA_receiptArchiveA_eq
-   execFullA_receiptArchiveA_iff_spec)
+  (auditGuard auditCellMap auditCellMap_eq_writeField ReceiptArchiveSpec receiptArchiveRecordStep
+   receiptArchiveRecordStep_eq receiptArchiveRecordStep_iff_spec)
 -- The audited v1 instance: the `EffectSpec`, its args, and the crown-jewel full soundness.
 open Dregg2.Circuit.Inst.ReceiptArchiveA (ReceiptArchiveArgs receiptArchiveE receiptArchiveA_full_sound)
 
@@ -216,24 +216,24 @@ def archiveReceipt (actor cell : CellId) : Turn :=
   { actor := actor, src := cell, dst := cell, amt := 0 }
 
 /-- **`interp_receiptArchiveStmt_chained` — the IR term's KERNEL executor, lifted to the chained
-`execFullA`.** When the §2 cornerstone commits on the kernel (`interp (receiptArchiveStmt actor cell)
-s.kernel = some k'`), the unified action executor `execFullA s (.receiptArchiveA actor cell)` commits to
-the chained state `⟨k', { actor, src := cell, dst := cell, amt := 0 } :: s.log⟩`. So the Argus term's
-KERNEL meaning lifts to the chained executor the standalone descriptor speaks about, with the runtime
-receipt-log row (which the kernel `interp` does not model) re-attached HERE — the explicit
-kernel-vs-runtime bridge. -/
+MODELLED record write `receiptArchiveRecordStep`.** When the §2 cornerstone commits on the kernel
+(`interp (receiptArchiveStmt actor cell) s.kernel = some k'`), the modelled record-slot chained write
+`receiptArchiveRecordStep s actor cell` commits to `⟨k', { actor, src := cell, dst := cell, amt := 0 } ::
+s.log⟩`. (Keyed off `receiptArchiveRecordStep`, NOT the deployed `execFullA` arm — which moves the
+lifecycle side-table; this record-slot universe is the superseded pre-V3 model.) The runtime receipt-log
+row (which the kernel `interp` does not model) is re-attached HERE — the kernel-vs-runtime bridge. -/
 theorem interp_receiptArchiveStmt_chained
     (s : RecChainedState) (actor cell : CellId) (k' : RecordKernelState)
     (hexec : interp (receiptArchiveStmt actor cell) s.kernel = some k') :
-    execFullA s (.receiptArchiveA actor cell)
+    receiptArchiveRecordStep s actor cell
       = some { kernel := k',
                log := { actor := actor, src := cell, dst := cell, amt := 0 } :: s.log } := by
   -- the §2 cornerstone turns the IR term into the kernel-side write, gated on `receiptArchiveGuard`.
   rw [interp_receiptArchiveStmt_eq_kernel] at hexec
-  -- `execFullA s (.receiptArchiveA actor cell)` reduces to `stateStep s lifecycleField actor cell
+  -- `receiptArchiveRecordStep s actor cell` reduces to `stateStep s lifecycleField actor cell
   -- (.int 1)`. Open BOTH on the same `receiptArchiveGuard` (its decoded 3-conjunct guard IS `stateStep`'s
   -- `if` condition).
-  rw [execFullA_receiptArchiveA_eq]
+  rw [receiptArchiveRecordStep_eq]
   unfold stateStep
   by_cases hg : receiptArchiveGuard actor cell s.kernel = true
   · -- ADMIT: `hexec` names `k' = writeField s.kernel lifecycleField cell (.int 1)`; the chained step
@@ -278,10 +278,10 @@ injective. This is exactly the sense in which `ReceiptArchiveSpec` is functional
 post-state — so the circuit-side and executor-side spec facts collapse to one welded post-state. -/
 theorem receiptArchiveSpec_unique {s s₁ s₂ : RecChainedState} {actor cell : CellId}
     (h₁ : ReceiptArchiveSpec s actor cell s₁) (h₂ : ReceiptArchiveSpec s actor cell s₂) : s₁ = s₂ := by
-  have e₁ : execFullA s (.receiptArchiveA actor cell) = some s₁ :=
-    (execFullA_receiptArchiveA_iff_spec s actor cell s₁).mpr h₁
-  have e₂ : execFullA s (.receiptArchiveA actor cell) = some s₂ :=
-    (execFullA_receiptArchiveA_iff_spec s actor cell s₂).mpr h₂
+  have e₁ : receiptArchiveRecordStep s actor cell = some s₁ :=
+    (receiptArchiveRecordStep_iff_spec s actor cell s₁).mpr h₁
+  have e₂ : receiptArchiveRecordStep s actor cell = some s₂ :=
+    (receiptArchiveRecordStep_iff_spec s actor cell s₂).mpr h₂
   exact Option.some.injEq _ _ ▸ (e₁.symm.trans e₂)
 
 /-- **`receiptArchive_compile_sound` — the welded soundness (receipt-archive slice), against
@@ -318,12 +318,12 @@ theorem receiptArchive_compile_sound
   -- `(s, ⟨actor,cell⟩, s')`.
   have hspec : ReceiptArchiveSpec s actor cell s' :=
     receiptArchiveA_full_sound S hN hL hRest hLog s ⟨actor, cell⟩ s' hwf hwf' hcirc
-  -- executor side: the §3 chained lift gives `execFullA s (.receiptArchiveA actor cell) = some
-  -- ⟨k', receipt::log⟩`, and the independent executor⟺spec corner turns THAT into `ReceiptArchiveSpec
+  -- record-slot side: the §3 chained lift gives `receiptArchiveRecordStep s actor cell = some
+  -- ⟨k', receipt::log⟩`, and the record-write⟺spec corner turns THAT into `ReceiptArchiveSpec
   -- s actor cell ⟨k', receipt::log⟩`.
   have hspec' : ReceiptArchiveSpec s actor cell
       { kernel := k', log := { actor := actor, src := cell, dst := cell, amt := 0 } :: s.log } :=
-    (execFullA_receiptArchiveA_iff_spec s actor cell _).mp
+    (receiptArchiveRecordStep_iff_spec s actor cell _).mp
       (interp_receiptArchiveStmt_chained s actor cell k' hexec)
   -- both states satisfy the SAME spec ⇒ they are the same state (the spec pins every kernel field + log).
   exact receiptArchiveSpec_unique hspec hspec'

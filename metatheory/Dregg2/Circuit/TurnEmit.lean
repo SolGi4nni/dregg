@@ -260,6 +260,13 @@ private theorem restIffNoLifecycle_seal_to_unseal (RH : RecordKernelState → �
     Dregg2.Circuit.Inst.CellUnsealA.RestIffNoLifecycle]
   exact h
 
+private theorem restIffNoLifecycle_seal_to_archive (RH : RecordKernelState → ℤ)
+    (h : Dregg2.Circuit.Inst.CellSealA.RestIffNoLifecycle RH) :
+    Dregg2.Circuit.Inst.ReceiptArchiveLifecycleA.RestIffNoLifecycle RH := by
+  dsimp [Dregg2.Circuit.Inst.CellSealA.RestIffNoLifecycle,
+    Dregg2.Circuit.Inst.ReceiptArchiveLifecycleA.RestIffNoLifecycle]
+  exact h
+
 
 def stepEmittedEncodeAgrees
     (S : Surface2)
@@ -541,9 +548,9 @@ theorem step_emitted_refines_fullActionStep
         ((effect1_emitted_equiv_circuit_local CS refusalE refusalAAirName st ⟨actor, cell⟩ st').mpr hc)
   | .receiptArchiveA actor cell =>
       simp only [fullActionStep]
-      rcases hcircuit with ⟨hwf, hwf', hc⟩
-      exact receiptArchiveA_emitted_refines_spec CS hCSN hCSL hRestFrame hLogCS st ⟨actor, cell⟩ st' hwf hwf'
-        ((effect1_emitted_equiv_circuit_local CS receiptArchiveE receiptArchiveAAirName st ⟨actor, cell⟩ st').mpr hc)
+      exact receiptArchiveLifecycleA_emitted_refines_spec S DLife hDLife
+        (restIffNoLifecycle_seal_to_archive S.RH hRestLifecycle) hLog st ⟨actor, cell⟩ st'
+        ((receiptArchiveLifecycleA_emitted_equiv_circuit S DLife hDLife st ⟨actor, cell⟩ st').mpr hcircuit)
   | .pipelinedSendA actor =>
       simp only [fullActionStep]
       rcases hcircuit with ⟨hwf, hwf', hc⟩

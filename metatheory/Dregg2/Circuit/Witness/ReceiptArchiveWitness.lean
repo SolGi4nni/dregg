@@ -30,15 +30,17 @@ set_option linter.dupNamespace false
 
 /-! ## §1 — THE WITNESS GENERATOR: `execute → satisfying assignment`. -/
 
-/-- **`receiptArchiveWitnessVec s args`** — runs `execFullA s (.receiptArchiveA …)`; on commit lays out
-the full-state witness for the executor's post-state, digest columns from the concrete surface. -/
+/-- **`receiptArchiveWitnessVec s args`** — runs the MODELLED record-slot write
+`receiptArchiveRecordStep s …` (the `receiptArchiveE` arithmetization's semantics — NOT the deployed
+`execFullA` arm, which moves the lifecycle side-table); on commit lays out the full-state witness for the
+record-slot post-state, digest columns from the concrete surface. -/
 def receiptArchiveWitnessVec (s : RecChainedState) (args : ReceiptArchiveArgs) : List Int :=
-  match execFullA s (.receiptArchiveA args.actor args.cell) with
+  match receiptArchiveRecordStep s args.actor args.cell with
   | some s' => layoutE receiptArchiveE s args s'
   | none    => layoutE receiptArchiveE s args s
 
 theorem receiptArchiveWitnessVec_commit {s s' : RecChainedState} {args : ReceiptArchiveArgs}
-    (h : execFullA s (.receiptArchiveA args.actor args.cell) = some s') :
+    (h : receiptArchiveRecordStep s args.actor args.cell = some s') :
     receiptArchiveWitnessVec s args = layoutE receiptArchiveE s args s' := by
   unfold receiptArchiveWitnessVec; rw [h]
 
@@ -47,10 +49,10 @@ theorem receiptArchiveWitnessVec_commit {s s' : RecChainedState} {args : Receipt
 theorem execute_produces_satisfying_witness
     (S : CommitSurface) (hRest : RestHashIffFrame S.RH)
     {s s' : RecChainedState} {args : ReceiptArchiveArgs}
-    (h : execFullA s (.receiptArchiveA args.actor args.cell) = some s') :
+    (h : receiptArchiveRecordStep s args.actor args.cell = some s') :
     satisfiedE S receiptArchiveE (encodeE S receiptArchiveE s args s') := by
   have hspec : ReceiptArchiveSpec s args.actor args.cell s' :=
-    (execFullA_receiptArchiveA_iff_spec s args.actor args.cell s').mp h
+    (receiptArchiveRecordStep_iff_spec s args.actor args.cell s').mp h
   have hapex : receiptArchiveE.apex s args s' := (apex_iff_ReceiptArchiveSpec s args s').mpr hspec
   exact effect_circuit_full_complete S receiptArchiveE hRest receiptArchiveGuardEncodes s args s' hapex
 

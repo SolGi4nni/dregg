@@ -20,7 +20,7 @@ open Dregg2.Authority Dregg2.Execution
 open Dregg2.Exec
 open Dregg2.Exec.Handler
 open Dregg2.Exec.TurnExecutorFull
-  (acceptsEffects lcLive lcSealed lcDestroyed setLifecycle setLifecycle_balNeutral parentClist)
+  (acceptsEffects lcLive lcSealed lcDestroyed lcArchived setLifecycle setLifecycle_balNeutral parentClist)
 open Dregg2.Exec.EffectsState (stateAuthB)
 
 /-! ## §1 — Kernel steps mirroring the chained lifecycle arms (balance-neutral). -/
@@ -54,6 +54,13 @@ def cellSealStep (k : RecordKernelState) (a : CellLifecycleArgs) : Option Record
 def cellUnsealStep (k : RecordKernelState) (a : CellLifecycleArgs) : Option RecordKernelState :=
   if stateAuthB k.caps a.actor a.cell && (k.lifecycle a.cell == lcSealed) then
     some (setLifecycle k a.cell lcLive)
+  else none
+
+/-- **Receipt ARCHIVE** — Live→Archived via the `lifecycle` side-table (`setLifecycle`), the deployed
+`apply_receipt_archive` (`c.archive(checkpoint)`). Only a LIVE cell may be archived (`acceptsEffects`). -/
+def cellArchiveStep (k : RecordKernelState) (a : CellLifecycleArgs) : Option RecordKernelState :=
+  if stateAuthB k.caps a.actor a.cell && acceptsEffects k a.cell then
+    some (setLifecycle k a.cell lcArchived)
   else none
 
 /-- **Cell DESTROY** — bind `certHash` into `deathCert` and flip to Destroyed (non-terminal only). -/
@@ -92,6 +99,15 @@ theorem cellUnsealStep_balNeutral {k k' : RecordKernelState} {a : CellLifecycleA
   by_cases hg : stateAuthB k.caps a.actor a.cell && (k.lifecycle a.cell == lcSealed)
   · rw [if_pos hg] at h; simp only [Option.some.injEq] at h; subst h
     exact setLifecycle_balNeutral k a.cell lcLive b
+  · rw [if_neg hg] at h; exact absurd h (by simp)
+
+theorem cellArchiveStep_balNeutral {k k' : RecordKernelState} {a : CellLifecycleArgs}
+    (h : cellArchiveStep k a = some k') (b : AssetId) :
+    recTotalAsset k' b = recTotalAsset k b := by
+  unfold cellArchiveStep at h
+  by_cases hg : stateAuthB k.caps a.actor a.cell && acceptsEffects k a.cell
+  · rw [if_pos hg] at h; simp only [Option.some.injEq] at h; subst h
+    exact setLifecycle_balNeutral k a.cell lcArchived b
   · rw [if_neg hg] at h; exact absurd h (by simp)
 
 theorem cellDestroyStep_balNeutral {k k' : RecordKernelState} {a : CellDestroyArgs}
@@ -143,6 +159,29 @@ def cellSealH : EffectHandler CellLifecycleArgs where
   conserves := by
     intro s a s' h b
     have hbal := cellSealStep_balNeutral h b
+    rw [hbal]; ring
+
+def cellArchiveH : EffectHandler CellLifecycleArgs where
+  step := cellArchiveStep
+  delta := fun _ _ => 0
+  auth := fun k a => stateAuthB k.caps a.actor a.cell
+  admission := fun k a => acceptsEffects k a.cell
+  trace := fun a => { actor := a.actor, src := a.cell, dst := a.cell, amt := 0 }
+  auth_gated := by
+    intro s a s' h
+    unfold cellArchiveStep at h
+    by_cases hg : stateAuthB s.caps a.actor a.cell && acceptsEffects s a.cell
+    · simp only [Bool.and_eq_true] at hg; exact hg.1
+    · rw [if_neg hg] at h; exact absurd h (by simp)
+  admission_gated := by
+    intro s a s' h
+    unfold cellArchiveStep at h
+    by_cases hg : stateAuthB s.caps a.actor a.cell && acceptsEffects s a.cell
+    · simp only [Bool.and_eq_true] at hg; exact hg.2
+    · rw [if_neg hg] at h; exact absurd h (by simp)
+  conserves := by
+    intro s a s' h b
+    have hbal := cellArchiveStep_balNeutral h b
     rw [hbal]; ring
 
 def cellUnsealH : EffectHandler CellLifecycleArgs where
@@ -253,6 +292,11 @@ def cellUnsealEffect (actor cell : CellId) : ClosedEffect :=
 def cellDestroyEffect (actor cell : CellId) (certHash : Nat) : ClosedEffect :=
   { tag := 2, Args := CellDestroyArgs,
     args := { actor := actor, cell := cell, certHash := certHash }, handler := cellDestroyH }
+
+/-- The DEPLOYED receipt-archive closed effect — the `lifecycle := Archived` side-table move. -/
+def cellArchiveEffect (actor cell : CellId) : ClosedEffect :=
+  { tag := 5, Args := CellLifecycleArgs, args := { actor := actor, cell := cell },
+    handler := cellArchiveH }
 
 def refreshDelegationEffect (actor child : CellId) : ClosedEffect :=
   { tag := 3, Args := RefreshDelegationArgs, args := { actor := actor, child := child },

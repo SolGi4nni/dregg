@@ -495,23 +495,27 @@ theorem closedLogExtract_refusal_closed
   obtain ⟨actor, cell, permOut, hside, hpub, logNeeds⟩ := readout minit mfin maddrs t pubLogPost pre post hsat
   exact refusal_closedLog_sat compressN2 hN hash hside hsat' pre post actor cell pc pubLogPre pubLogPost hdecLog hpub.down logNeeds
 
-/-- **receiptArchive (40).** Receipt is `{ actor, src:=cell, dst:=cell, amt:=0 }`. -/
+/-- **receiptArchive (40) — CLASS A.** Forced from the DEPLOYED `receiptArchiveV3` (`= Rfix 40` by `rfl`)
+via `receiptArchive_descriptorRefines_sat` (the disc-gate `lifecycle := Archived` side-table move): the
+readout extracts the chip/range `RotTableSide`, the published receipt-prepend, and the
+`ReceiptArchiveTraceReadout`-minus-log. Editing `receiptArchiveV3`'s disc gate turns this — and the apex —
+RED. Receipt is `{ actor, src:=cell, dst:=cell, amt:=0 }`. -/
 theorem closedLogExtract_receiptArchive_closed
-    (compressN2 : List Dregg2.Circuit.RotatedKernelRefinementLifecycle.FieldElem
-      → Dregg2.Circuit.RotatedKernelRefinementLifecycle.FieldElem)
-    (hN : compressNInjective compressN2)
     (readout : ∀ (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
       (pubLogPost : ℤ) (pre post : RecChainedState),
       Satisfied2 hash (Rfix 40) minit mfin maddrs t →
-      Σ' (actor cell : CellId),
+      Σ' (actor cell : CellId) (permOut : List ℤ → List ℤ),
+        Dregg2.Circuit.RotatedKernelRefinement.RotTableSide permOut hash t ×'
         PLift (pubLogPost = LH ({ actor := actor, src := cell, dst := cell, amt := (0 : ℤ) } :: pre.log)) ×'
         (post.log = { actor := actor, src := cell, dst := cell, amt := (0 : ℤ) } :: pre.log →
-          Dregg2.Circuit.RotatedKernelRefinementLifecycle.auditEncodes
-            compressN2 pre post actor cell Dregg2.Exec.TurnExecutorFull.lifecycleField)) :
+          Dregg2.Circuit.RotatedKernelRefinementLifecycle.ReceiptArchiveTraceReadout
+            hash t pre post actor cell)) :
     ClosedLogExtract Slive LH hash Rfix 40 := by
   intro _hCR minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
-  obtain ⟨actor, cell, hpub, logNeeds⟩ := readout minit mfin maddrs t pubLogPost pre post hsat
-  exact receiptArchive_closedLog compressN2 hN pre post actor cell pc pubLogPre pubLogPost hdecLog hpub.down logNeeds
+  have hsat' : Satisfied2 hash Dregg2.Circuit.Emit.EffectVmEmitRotationV3.receiptArchiveV3
+      minit mfin maddrs t := hsat
+  obtain ⟨actor, cell, permOut, hside, hpub, logNeeds⟩ := readout minit mfin maddrs t pubLogPost pre post hsat
+  exact receiptArchive_closedLog_sat hash hside hsat' pre post actor cell pc pubLogPre pubLogPost hdecLog hpub.down logNeeds
 
 /-- **setPermissions (8) — CLASS A.** The perms write is forced from the DEPLOYED `setPermsV3`
 (`= Rfix 8` by `rfl`) via `setPermissions_descriptorRefines_sat`: the readout extracts the chip/range
@@ -850,11 +854,12 @@ structure ClosureReadouts
         Dregg2.Circuit.RotatedKernelRefinementLifecycle.RefusalTraceReadout cnLife hash t pre post actor cell)
   rdReceiptArchive : ∀ minit mfin maddrs t pubLogPost pre post,
     Satisfied2 hash (Rfix 40) minit mfin maddrs t →
-    Σ' (actor cell : CellId),
+    Σ' (actor cell : CellId) (permOut : List ℤ → List ℤ),
+      Dregg2.Circuit.RotatedKernelRefinement.RotTableSide permOut hash t ×'
       PLift (pubLogPost = LH ({ actor := actor, src := cell, dst := cell, amt := (0 : ℤ) } :: pre.log)) ×'
       (post.log = { actor := actor, src := cell, dst := cell, amt := (0 : ℤ) } :: pre.log →
-        Dregg2.Circuit.RotatedKernelRefinementLifecycle.auditEncodes
-          cnLife pre post actor cell Dregg2.Exec.TurnExecutorFull.lifecycleField)
+        Dregg2.Circuit.RotatedKernelRefinementLifecycle.ReceiptArchiveTraceReadout
+          hash t pre post actor cell)
   rdSetPermissions : ∀ minit mfin maddrs t pubLogPost pre post,
     Satisfied2 hash (Rfix 8) minit mfin maddrs t →
     Σ' (actor cell : CellId) (p : ℤ) (permOut : List ℤ → List ℤ),
@@ -967,7 +972,7 @@ theorem closedLogExtract_all_genuine
   | 28 => exact closedLogExtract_noteCreate_closed rds.rdNoteCreate
   | 38 => exact closedLogExtract_makeSovereign_closed rds.rdMakeSovereign
   | 39 => exact closedLogExtract_refusal_closed cnLife rds.hNLife rds.rdRefusal
-  | 40 => exact closedLogExtract_receiptArchive_closed cnLife rds.hNLife rds.rdReceiptArchive
+  | 40 => exact closedLogExtract_receiptArchive_closed rds.rdReceiptArchive
   | 47 => exact closedLogExtract_pipelinedSend_closed rds.rdPipelinedSend
   | 52 => exact closedLogExtract_cellSeal_closed rds.rdCellSeal
   | 53 => exact closedLogExtract_cellUnseal_closed rds.rdCellUnseal

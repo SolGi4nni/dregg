@@ -234,7 +234,7 @@ theorem execFullA_nullifiers_grow (s s' : RecChainedState) (fa : FullActionA)
       obtain ⟨_, hs'⟩ := stateStep_factors h; subst hs'; exact List.Subset.refl _
   | receiptArchiveA actor cell =>
       simp only [execFullA] at h
-      obtain ⟨_, hs'⟩ := stateStep_factors h; subst hs'; exact List.Subset.refl _
+      obtain ⟨_, hs'⟩ := receiptArchiveChainA_factors h; subst hs'; exact List.Subset.refl _
   -- §lifecycle (Wave-3) — seal/unseal/destroy edit `lifecycle`/`deathCert`; refresh edits `delegations`
   -- — none touch `nullifiers` (frame: `rfl`).
   | cellSealA actor cell =>

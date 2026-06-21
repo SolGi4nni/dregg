@@ -250,8 +250,8 @@ theorem execFullA_commitments_grow (s s' : RecChainedState) (fa : FullActionA)
       simp only [execFullA] at h; obtain ⟨_, hs'⟩ := stateStep_factors h; subst hs'
       exact subset_of_commitments_eq (writeField_commitments _ _ _ _)
   | receiptArchiveA actor cell =>
-      simp only [execFullA] at h; obtain ⟨_, hs'⟩ := stateStep_factors h; subst hs'
-      exact subset_of_commitments_eq (writeField_commitments _ _ _ _)
+      simp only [execFullA] at h; obtain ⟨_, hs'⟩ := receiptArchiveChainA_factors h; subst hs'
+      exact subset_of_commitments_eq rfl
   | pipelinedSendA actor =>
       simp only [execFullA, Option.some.injEq] at h; subst h; exact subset_of_commitments_eq rfl
   -- §lifecycle (Wave-3) — seal/unseal/destroy edit `lifecycle`/`deathCert`; refresh edits `delegations`

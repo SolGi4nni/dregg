@@ -409,28 +409,34 @@ theorem refusal_closedLog
       exact Dregg2.Circuit.RotatedKernelRefinementLifecycle.refusal_descriptorRefines
         compressN2 hN pre post actor cell (logNeeds hadv))
 
-/-- receiptArchive (tag 40). Receipt is `{ actor, src:=cell, dst:=cell, amt:=0 }`. -/
-theorem receiptArchive_closedLog
-    (compressN2 : List Dregg2.Circuit.RotatedKernelRefinementLifecycle.FieldElem
-      → Dregg2.Circuit.RotatedKernelRefinementLifecycle.FieldElem)
-    (hN : Dregg2.Circuit.StateCommit.compressNInjective compressN2)
+/-- receiptArchive (tag 40), CLASS A — forced from the DEPLOYED `receiptArchiveV3` disc gate (the
+`lifecycle := Archived` side-table move). Mirrors `cellUnseal_closedLog_sat`/`refusal_closedLog_sat`:
+the readout extracts the chip/range `RotTableSide`, the published receipt-prepend, and the
+`ReceiptArchiveTraceReadout`-minus-log. Editing `receiptArchiveV3`'s disc gate turns this — and the
+apex — RED. Receipt is `{ actor, src:=cell, dst:=cell, amt:=0 }`. -/
+theorem receiptArchive_closedLog_sat
+    (hash : List ℤ → ℤ)
+    {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : Dregg2.Circuit.DescriptorIR2.VmTrace}
+    {permOut : List ℤ → List ℤ}
+    (hside : Dregg2.Circuit.RotatedKernelRefinement.RotTableSide permOut hash t)
+    (hsat : Dregg2.Circuit.DescriptorIR2.Satisfied2 hash
+      Dregg2.Circuit.Emit.EffectVmEmitRotationV3.receiptArchiveV3 minit mfin maddrs t)
     (pre post : RecChainedState) (actor cell : CellId)
     (pc : PublishedCommit) (pubLogPre pubLogPost : ℤ)
     (hdec : StateDecodeLog Slive LH pc pubLogPre pubLogPost pre post)
     (hpub : pubLogPost
       = LH ({ actor := actor, src := cell, dst := cell, amt := (0 : ℤ) } :: pre.log))
     (logNeeds : post.log = { actor := actor, src := cell, dst := cell, amt := (0 : ℤ) } :: pre.log →
-      Dregg2.Circuit.RotatedKernelRefinementLifecycle.auditEncodes
-        compressN2 pre post actor cell
-        Dregg2.Exec.TurnExecutorFull.lifecycleField) :
+      Dregg2.Circuit.RotatedKernelRefinementLifecycle.ReceiptArchiveTraceReadout
+        hash t pre post actor cell) :
     kstepAll 40 pre post :=
   closedLog_of_encode (.receiptArchiveA actor cell)
     { actor := actor, src := cell, dst := cell, amt := (0 : ℤ) } hdec hpub rfl
     (fun hadv => by
       show fullActionStep pre (.receiptArchiveA actor cell) post
       simp only [fullActionStep]
-      exact Dregg2.Circuit.RotatedKernelRefinementLifecycle.receiptArchive_descriptorRefines
-        compressN2 hN pre post actor cell (logNeeds hadv))
+      exact Dregg2.Circuit.RotatedKernelRefinementLifecycle.receiptArchive_descriptorRefines_sat
+        hash hside hsat pre post actor cell (logNeeds hadv))
 
 /-! ### perms/vk/emit (compressN or value-forced) — setPermissions (8) / setVK (9) / emitEvent (6). -/
 

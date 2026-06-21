@@ -230,7 +230,7 @@ theorem dispatchArm_refusal (pre post : RecChainedState)
 theorem dispatchArm_receiptArchive (pre post : RecChainedState)
     (h : kstepAll 40 pre post) :
     ∃ (actor cell : CellId),
-      Dregg2.Circuit.Spec.CellStateAudit.ReceiptArchiveSpec pre actor cell post := by
+      Dregg2.Circuit.Spec.CellStateAudit.ReceiptArchiveLifecycleSpec pre actor cell post := by
   obtain ⟨fa, htag, hstep⟩ := h
   cases fa <;> simp only [actionTag] at htag <;>
     first | (rw [fullActionStep] at hstep; exact ⟨_, _, hstep⟩) | omega
@@ -391,9 +391,9 @@ structure CompletenessWitnesses (S : CommitSurface) (hash : List ℤ → ℤ)
     ∃ (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace),
       Satisfied2 hash (Rfix 39) minit mfin maddrs t ∧
       tracePublishedCommit t = commitOf S pre post turn
-  /-- receiptArchive (tag 40). -/
+  /-- receiptArchive (tag 40) — the DEPLOYED lifecycle-move spec (`lifecycle := Archived`). -/
   bwReceiptArchive : ∀ (pre post : RecChainedState) (actor cell : CellId) (turn : BoundaryTurn),
-    Dregg2.Circuit.Spec.CellStateAudit.ReceiptArchiveSpec pre actor cell post →
+    Dregg2.Circuit.Spec.CellStateAudit.ReceiptArchiveLifecycleSpec pre actor cell post →
     ∃ (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace),
       Satisfied2 hash (Rfix 40) minit mfin maddrs t ∧
       tracePublishedCommit t = commitOf S pre post turn

@@ -392,7 +392,9 @@ theorem execFullA_progLive_preserved (s s' : RecChainedState) (fa : FullActionA)
       obtain ⟨_, hs'⟩ := stateStep_factors h; subst hs'; exact ⟨hlive, hprog⟩
   | receiptArchiveA actor cell =>
       simp only [execFullA] at h
-      obtain ⟨_, hs'⟩ := stateStep_factors h; subst hs'; exact ⟨hlive, hprog⟩
+      obtain ⟨_, hs'⟩ := receiptArchiveChainA_factors h; subst hs'
+      show c ∈ (setLifecycle s.kernel cell lcArchived).accounts ∧ (setLifecycle s.kernel cell lcArchived).slotCaveats c = cav
+      exact ⟨hlive, hprog⟩
   | cellSealA actor cell =>
       simp only [execFullA] at h
       obtain ⟨_, hs'⟩ := cellSealChainA_factors h; subst hs'
@@ -766,9 +768,10 @@ theorem execFullA_anchorVal_preserved (s s' : RecChainedState) (fa : FullActionA
         (writeField_field_ne s.kernel refusalField commitmentAnchorSlot cell c (.int 1) (by decide))
   | receiptArchiveA actor cell =>
       simp only [execFullA] at h
-      obtain ⟨_, hs'⟩ := stateStep_factors h; subst hs'
-      exact fieldOf_of_field_eq
-        (writeField_field_ne s.kernel lifecycleField commitmentAnchorSlot cell c (.int 1) (by decide))
+      obtain ⟨_, hs'⟩ := receiptArchiveChainA_factors h; subst hs'
+      show fieldOf commitmentAnchorSlot ((setLifecycle s.kernel cell lcArchived).cell c)
+            = fieldOf commitmentAnchorSlot (s.kernel.cell c)
+      unfold setLifecycle; rfl
   | cellSealA actor cell =>
       simp only [execFullA] at h
       obtain ⟨_, hs'⟩ := cellSealChainA_factors h; subst hs'
