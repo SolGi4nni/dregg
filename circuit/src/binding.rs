@@ -92,6 +92,34 @@ impl WideHash {
         &self.0
     }
 
+    /// Decompose into the canonical 4-felt on-wire representation.
+    ///
+    /// A `WideHash` IS its four BabyBear elements: the felt representation is the
+    /// array itself, matching the squeeze in [`WideHash::from_poseidon2`] and the
+    /// `ACTION_BINDING_WIDTH`/`PRESENTATION_TAG_WIDTH` 4-felt commitment encoding.
+    /// This is the exact inverse of [`WideHash::from_felts`]: for any `h`,
+    /// `WideHash::from_felts(&h.to_felts()) == Ok(h)`.
+    pub fn to_felts(&self) -> [BabyBear; Self::WIDTH] {
+        self.0
+    }
+
+    /// Reconstruct from the canonical felt representation.
+    ///
+    /// The exact inverse of [`WideHash::to_felts`]. Requires exactly `WIDTH` (4)
+    /// elements — the same width the on-wire commitment carries — and errors
+    /// otherwise so a malformed felt buffer fails closed rather than silently
+    /// truncating or zero-padding.
+    pub fn from_felts(felts: &[BabyBear]) -> Result<Self, String> {
+        if felts.len() != Self::WIDTH {
+            return Err(format!(
+                "WideHash::from_felts expects {} felts, got {}",
+                Self::WIDTH,
+                felts.len()
+            ));
+        }
+        Ok(Self([felts[0], felts[1], felts[2], felts[3]]))
+    }
+
     /// Compress to single element (for contexts that need narrow representation).
     /// Returns `BabyBear::ZERO` when the hash is zero (preserves zero-identity).
     pub fn to_narrow(&self) -> BabyBear {
@@ -282,6 +310,28 @@ mod tests {
         let a = compute_action_binding("read", "api/v1/users");
         let b = compute_action_binding("read", "api/v1/users");
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn wide_hash_to_felts_from_felts_round_trip() {
+        // to_felts is the exact inverse of from_felts.
+        let h = WideHash::from_poseidon2("dregg-test-widehash", &[BabyBear::new(7), BabyBear::new(11)]);
+        let felts = h.to_felts();
+        assert_eq!(felts.len(), WideHash::WIDTH);
+        assert_eq!(WideHash::from_felts(&felts).expect("4-felt buffer decodes"), h);
+
+        // The felt decomposition is literally the underlying array.
+        assert_eq!(&felts, h.as_slice());
+
+        // ZERO round-trips too.
+        assert_eq!(
+            WideHash::from_felts(&WideHash::ZERO.to_felts()).expect("zero decodes"),
+            WideHash::ZERO
+        );
+
+        // Wrong width fails closed (no truncate / zero-pad).
+        assert!(WideHash::from_felts(&[BabyBear::ZERO; 3]).is_err());
+        assert!(WideHash::from_felts(&[BabyBear::ZERO; 5]).is_err());
     }
 
     #[test]
