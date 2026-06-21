@@ -11,6 +11,34 @@ reason.)*
 Last sweep: 2026-06-13 (flagged-items burndown — removed ~14 landed/struck items,
 deduped the DreggDL/sel4/snapshot landings into git history, kept live tails).
 
+## ⚑ CAP-WRITE LOOP — re-point FLIPPED ON; over-determination CLOSED; NEW block = v1-STATE cap-root CONTINUITY collision + spurious nonce-freeze (2026-06-20)
+The col-87 over-determination is CLOSED (commit 0c2b0704c — col 87 is now `map_op` `new_root` ONLY, folded into
+the commitment as an INPUT, note-spend-shaped). The producer re-point is now FLIPPED ON:
+`cap_open_route_for_run` RevokeDelegation carries `write: Some(("revokeDelegationWriteCapOpenVmDescriptor2R24",
+Remove))`; `cap_open_effective_key` selects the WRITE wrapper when the node supplies the c-list
+(`cap.clist_leaves` non-empty). The data-availability + map_op-witness + forge-reject halves are GREEN
+(`sdk/.../full_turn_proof.rs`): `cap_write_revoke_forge_rejected` proves a c-list MISSING the revoked key
+FAILS CLOSED (no fabricated post-root), and `cap_write_revoke_descriptor_after_root_is_map_op_defined_only`
+pins col 87 = EXACTLY ONE `map_op new_root` (non-vacuous structure guard, replaces the stale over-determination pin).
+NEW OBSTRUCTION (surfaced by flipping the re-point ON — diagnosed precisely, fail-closed, NOT a silent forge):
+the deployed `revokeDelegationWriteCapOpenVmDescriptor2R24` advances the cap-root at the V1-STATE cap-root COLUMN
+(col 65 → col 87, which IS state col `CAP_ROOT = 11`), so its `map_op` write COLLIDES with the v1-state CONTINUITY
+transition `Transition { hi: 11, lo: 11 }` (`next.before.cap_root == local.after.cap_root`): a genuine REMOVE
+advances before_root (887984798) ≠ after_root (1054833182) on every uniform row, so the per-row continuity weld can
+NEVER hold (verified live: a 64-row revoke trace fails this transition). The descriptor ALSO carries a SPURIOUS
+nonce-FREEZE gate (`after.nonce == before.nonce`, col 78 == col 56) that contradicts revoke's nonce-TICK base
+(after.nonce=1, before.nonce=0). Contrast note-spend (the model): its accumulator (`nullifier_root`) lives on a
+ROTATED-BLOCK limb (col 214 → 265), NOT a v1-state col — so its advance DODGES the v1-state continuity transitions.
+CLOSURE (metatheory descriptor-EMIT, VK-affecting): emit the 4 `…WriteCapOpenVmDescriptor2R24` wrappers to advance
+the cap-root as a ROTATED-BLOCK limb (note-spend-shaped) — escaping the v1-state continuity transition (hi=11) —
+AND drop the spurious nonce-freeze (revoke is a nonce-tick passthrough). PIN:
+`cap_write_revoke_proves_and_verifies_light_client` (GREEN, forward-compatible: fail-closed arm TODAY, flips to the
+prove+verify Ok arm when the descriptor re-emit lands). The verifier-half tooth
+(`is_forbidden_authority_only_cap_write_descriptor`) is GATED OFF (`false`) — forbidding the authority-only revoke
+cap-open NOW (with no provable alternative) would BREAK the honest revoke path; flip it on WITH the descriptor
+re-emit. STATE: the cap-WRITE post-root is NOT YET light-client-verifiable end-to-end — the precise remaining
+obstruction is the v1-state-col continuity + nonce-freeze, a metatheory descriptor shape, NOT a producer gap.
+
 ## ⚑ CAP-WRITE WIRE GAP — REFINED: data-availability CLOSED; the REAL block is a DESCRIPTOR over-determination (2026-06-20)
 The data-availability half is now CLOSED end-to-end (was the previously-suspected blocker): the witness type
 carries the cell's FULL c-list (`CapMembershipWitness::clist_leaves`), the node plumbs it

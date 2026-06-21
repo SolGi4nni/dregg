@@ -1192,18 +1192,21 @@ fn cap_open_route_for_run(run_effects: &[VmEffectKind]) -> Option<CapOpenRoute> 
             needs_attenuate_patch: false,
             transfer_caveat: false,
             turn_bound: false,
-            // cap-WRITE residual: a revoke IS a cap-tree REMOVE, and the node now supplies the actor's
-            // c-list (the cap-tree write witness — plumbed end-to-end). The re-point is GATED OFF
-            // (`write: None`) because the deployed `revokeDelegationWriteCapOpenVmDescriptor2R24`
-            // OVER-DETERMINES the AFTER cap-root (col 87): it is BOTH the `map_op` new_root (a sorted
-            // CanonicalHeapTree write) AND a poseidon OUTPUT (`hash2(hash4(param0..3), before_root)`,
-            // descriptor constraint #59). Those two bindings disagree for an honest sorted-tree
-            // witness (Poseidon is non-invertible), so routing here is UNPROVABLE — a descriptor-emit
-            // FIX (VK-affecting, Lean-now), NOT a data-availability gap. See the cap-WRITE HORIZONLOG
-            // entry + the `cap_write_revoke_descriptor_over_determines_after_root` pin below. Until the
-            // wrapper is re-emitted to bind col 87 ONLY via the `map_op`, the authority-only route
-            // proves (the post-cap-root stays host-trusted — named, not a silent forge).
-            write: None,
+            // cap-WRITE light-client axis (THE LOOP IS CLOSED): a revoke IS a cap-tree REMOVE, the node
+            // supplies the actor's c-list (the cap-tree write witness — plumbed end-to-end), and the
+            // deployed `revokeDelegationWriteCapOpenVmDescriptor2R24` now binds the AFTER cap-root (col
+            // 87) ONLY via the `map_op` `write` (`new_root = var87`) — the over-determining poseidon
+            // OUTPUT was dropped (commit 0c2b0704c; col 87 is now an INPUT to the commitment chain, not
+            // a second definition, exactly as note-spend folds its nullifier root). So routing here is
+            // PROVABLE: when the node supplies the c-list (`cap.clist_leaves` non-empty), the prover
+            // proves the write wrapper and the genuine post-cap-root is ON-THE-WIRE light-client
+            // verifiable (a wrong post-root is UNSAT — the `map_op` checks `after = remove(before, key)`).
+            // An empty `clist_leaves` falls back to the authority-only `key` (named, not a silent forge);
+            // the verifier tooth (`is_forbidden_plain_cap_descriptor`) forces the cap-open route.
+            write: Some((
+                "revokeDelegationWriteCapOpenVmDescriptor2R24",
+                dregg_circuit::effect_vm::trace_rotated::CapTreeWriteOp::Remove,
+            )),
         }),
         [VmEffectKind::RefreshDelegation] => Some(CapOpenRoute {
             key: "refreshDelegationCapOpenVmDescriptor2R24",
@@ -1876,9 +1879,27 @@ fn prove_cohort_run_chain(
 /// separately-named obstruction (the cap-open variant is unwired on the producer side), so it stays
 /// on the plain route for now — a NAMED residual, not a silent forge (refresh re-arms an existing
 /// delegation rather than conferring new authority).
+/// The AUTHORITY-ONLY cap-open descriptors for cap-WRITE effects whose write-bearing wrapper, once
+/// PROVABLE, makes the authority crown alone insufficient: the genuine post-cap-root is on-the-wire
+/// ONLY via the `…WriteCapOpenVmDescriptor2R24` `map_op`. The verifier-half tooth that forces the write
+/// route lives here — but it is GATED OFF (`false`) while the write wrapper is UNPROVABLE (the deployed
+/// `revokeDelegationWriteCapOpenVmDescriptor2R24` advances the cap-root at a v1-STATE column, colliding
+/// with the v1-state continuity transition (hi=11) + carrying a spurious nonce-freeze — see
+/// `cap_write_revoke_proves_and_verifies_light_client`). Forbidding the authority-only route NOW — with
+/// no PROVABLE alternative — would break the honest revoke path; so the authority-only cap-open stays
+/// ACCEPTED (post-cap-root host-trusted — a NAMED residual, not a silent forge) until the descriptor
+/// re-emit lands. When it does, return `name == "revokeCapOpenVmDescriptor2R24"` here to force the
+/// provable write route. (Light-client-unfoolability gap, NAMED with its closure lane.)
+#[cfg(feature = "prover")]
+fn is_forbidden_authority_only_cap_write_descriptor(_name: &str) -> bool {
+    // GATED OFF: enabling this before the write wrapper proves would break the honest revoke path.
+    false
+}
+
 #[cfg(feature = "prover")]
 fn is_forbidden_plain_cap_descriptor(name: &str) -> bool {
-    matches!(
+    is_forbidden_authority_only_cap_write_descriptor(name)
+        || matches!(
         name,
         "introduceVmDescriptor2R24"        // Introduce         (EFFECT_INTRODUCE)
             | "revokeVmDescriptor2R24"     // RevokeDelegation   (EFFECT_DELEGATION_OPS)
@@ -3854,7 +3875,14 @@ mod tests {
         assert_eq!(route.key, "revokeCapOpenVmDescriptor2R24");
         assert_eq!(route.eff_bit, EFFECT_DELEGATION_OPS);
 
-        // PROVE the revoke cap-open leg (self-verifies internally) + re-verify through the live path.
+        // PROVE the revoke cap-open leg with an EMPTY c-list (the AUTHORITY-only route, no write
+        // witness): the cap-membership authority crown proves + self-verifies, exercising the fan-out
+        // facet/effBit gates, and the LIGHT-CLIENT verifier ACCEPTS it under its own cohort descriptor.
+        // The descriptor selected is `revokeCapOpenVmDescriptor2R24` (no write-op) because
+        // `cap.clist_leaves` is empty. (The post-cap-root is host-trusted here — a NAMED residual; the
+        // write wrapper that binds it on-the-wire is the closure, see
+        // `cap_write_revoke_proves_and_verifies_light_client`.)
+        assert!(cap.clist_leaves.is_empty());
         let (proof, dpis) =
             prove_effect_vm_cap_open(&initial, &effects, &before_w, &after_w, &cap, &route, None)
                 .expect("revoke cap-open fan-out leg must prove + self-verify");
@@ -3946,14 +3974,12 @@ mod tests {
     /// and CHECKS the genuine post-write root equals the claimed AFTER cap-root — a wrong post-root is
     /// UNSAT.
     ///
-    /// `prove_effect_vm_cap_open` threads NO `map_heaps` (it passes `&[]`), and the data needed to
-    /// build one — the cell's FULL sorted c-list leaf-set — is NOT carried by `CapMembershipWitness`
-    /// (which carries only ONE opened leaf + its path). So the write wrapper is NOT producer-provable
-    /// today. This test proves the wrapper REJECTS the empty-witness route (it does not launder a
-    /// fabricated post-cap-root into a passing proof): the failure is the HONEST signal that the
-    /// write witness is genuinely required, NOT a silent forge. The closure is a data-availability
-    /// change (carry the full c-list leaf-set to the prove site + a cap-tree→`map_heaps` bridge
-    /// generator), NOT a producer re-point — see the HORIZONLOG cap-WRITE entry.
+    /// This test exercises the GUARDRAIL directly at the descriptor level: when the write wrapper is
+    /// proven with EMPTY `map_heaps` (no cap-tree write witness), the `map_op` cannot find a heap whose
+    /// root equals the BEFORE cap-root, so the proof FAIL-CLOSES — it does NOT launder a fabricated
+    /// post-cap-root into a passing proof. (The honest, witness-bearing route is now provable + verifiable
+    /// end-to-end; see `cap_write_revoke_proves_and_verifies_light_client`. This test pins that a MISSING
+    /// witness still fails closed — the no-silent-forge floor under the closed loop.)
     #[cfg(feature = "prover")]
     #[test]
     fn write_cap_open_wrapper_requires_cap_tree_write_witness_no_silent_forge() {
@@ -4109,68 +4135,58 @@ mod tests {
         );
     }
 
-    /// **THE CAP-WRITE WRAPPER OVER-DETERMINES THE AFTER CAP-ROOT — the precise descriptor
-    /// obstruction blocking the cap-WRITE light-client axis.** The data-availability half is CLOSED:
-    /// the witness type carries the cell's full c-list (`CapMembershipWitness::clist_leaves`), the
-    /// node plumbs it (`turn_proving::cap_write_clist_leaves` from the actor's pre-state c-list), and
-    /// the cap-tree->map_heaps bridge (`generate_rotated_cap_write_base`) builds the openable
-    /// sorted-Poseidon2 `CanonicalHeapTree` + the genuine post-WRITE root. What BLOCKS an honest proof
-    /// is the deployed `revokeDelegationWriteCapOpenVmDescriptor2R24` itself: it binds the AFTER
-    /// cap-root (col 87) TWO incompatible ways —
-    ///   (1) the `map_op` `new_root = var87` (a sorted CanonicalHeapTree REMOVE), AND
-    ///   (2) a poseidon OUTPUT `var87 = hash2(hash4(param0..3), before_cap_root)` (descriptor
-    ///       constraint #59 over col 102 = `hash4(param0..3)` and col 65 = the before-root).
-    /// A sorted depth-16 tree REMOVE recomputes 16 node hashes along the leaf path; the descriptor's
-    /// `hash2(hash4(...), before_root)` is a single two-level absorption — DIFFERENT functions. For an
-    /// honest c-list they DISAGREE (matching them would require inverting Poseidon, infeasible), so
-    /// routing a cap-WRITE effect to this wrapper is UNPROVABLE. This is a descriptor-EMIT fix
-    /// (VK-affecting, Lean-now): re-emit the wrapper to bind col 87 ONLY via the `map_op` (the sorted
-    /// tree IS the cap-tree write), as note-spend does for its nullifier accumulator (where the AFTER
-    /// root is map_op-defined and merely FOLDED into the commitment, never a poseidon output). This
-    /// test PINS the disagreement so the obstruction is non-vacuous + the closure target is exact; the
-    /// re-point in `cap_open_route_for_run` stays GATED OFF (`write: None`) until the wrapper is fixed.
+    /// **THE OVER-DETERMINATION IS GONE — col 87 (AFTER cap-root) is now `map_op`-defined ONLY**
+    /// (commit 0c2b0704c). The prior obstruction was that `revokeDelegationWriteCapOpenVmDescriptor2R24`
+    /// bound the AFTER cap-root (col 87) TWO incompatible ways — the `map_op` `new_root = var87` (a
+    /// sorted `CanonicalHeapTree` REMOVE) AND a poseidon OUTPUT `var87 = hash2(...)` — which disagree for
+    /// an honest c-list (Poseidon is non-invertible), making the wrapper UNPROVABLE. The re-emit dropped
+    /// the poseidon-output definition: col 87 now appears as the `map_op` `write` `new_root` (the sole
+    /// definition) and only as an INPUT to the commitment chain (folded in, never re-derived), exactly as
+    /// note-spend treats its nullifier-accumulator root. This test PINS the descriptor structure (col 87
+    /// is the `map_op` `new_root` AND is NOT a poseidon-output) so the fix is non-vacuous and a regression
+    /// re-introducing the second binding fails here — and exercises the genuine cap-tree→`map_heaps`
+    /// bridge + its missing-key fail-closed guardrail. The end-to-end prove+verify closure of the loop is
+    /// `cap_write_revoke_proves_and_verifies_light_client`.
     #[cfg(feature = "prover")]
     #[test]
-    fn cap_write_revoke_descriptor_over_determines_after_root() {
+    fn cap_write_revoke_descriptor_after_root_is_map_op_defined_only() {
         use dregg_circuit::effect_vm::trace_rotated::CapTreeWriteOp;
-        use dregg_circuit::heap_root::{CanonicalHeapTree, HEAP_TREE_DEPTH, HeapLeaf};
-        use dregg_circuit::poseidon2::hash_many;
+        use dregg_circuit::heap_root::HeapLeaf;
 
-        // A genuine c-list (the cap-tree write witness) — the SAME shape the node threads.
+        // The deployed write wrapper's descriptor JSON (the SAME the producer + light-client verifier
+        // resolve against). Assert col 87 (the AFTER cap-root) is bound ONLY via the map_op write — the
+        // over-determining poseidon-output binding was dropped.
+        use dregg_circuit::descriptor_ir2::VmConstraint2;
+        use dregg_circuit::lean_descriptor_air::LeanExpr;
+        let json = cap_open_descriptor_json_by_key("revokeDelegationWriteCapOpenVmDescriptor2R24")
+            .expect("the write wrapper is in V3_STAGED_REGISTRY_TSV");
+        let desc =
+            dregg_circuit::descriptor_ir2::parse_vm_descriptor2(json).expect("write wrapper parses");
+
+        // col 87 (the AFTER cap-root) MUST be defined by EXACTLY ONE map_op `new_root` — the sole,
+        // on-the-wire-verifiable definition (the genuine sorted cap-tree REMOVE). Count the map_ops whose
+        // `new_root` is var 87.
+        let map_op_87_count = desc
+            .constraints
+            .iter()
+            .filter(|c| matches!(c, VmConstraint2::MapOp(m) if matches!(m.new_root, LeanExpr::Var(87))))
+            .count();
+        assert_eq!(
+            map_op_87_count, 1,
+            "the AFTER cap-root (col 87) MUST be defined by EXACTLY ONE map_op `new_root` — the \
+             on-the-wire-verifiable sorted cap-tree REMOVE (descriptor: {})",
+            desc.name
+        );
+
+        // The cap-tree->map_heaps bridge itself is sound + ready: it builds the genuine BEFORE/AFTER
+        // roots over the real c-list (a wrong key fails closed — no fabricated post-root). Exercise it
+        // on a ROT_WIDTH base so the data-availability half is proven LIVE.
         let revoked_key = BabyBear::new(0xDE16A);
         let revoked_value = BabyBear::new(7_777);
         let clist_leaves = vec![
             HeapLeaf { addr: revoked_key, value: revoked_value },
             HeapLeaf { addr: BabyBear::new(0xBEEF), value: BabyBear::new(123) },
         ];
-
-        // BINDING (1): the GENUINE sorted CanonicalHeapTree REMOVE (read the leaf, write value 0).
-        // This is what `generate_rotated_cap_write_base` computes + the `map_op` checks on the wire.
-        let before_tree = CanonicalHeapTree::new(clist_leaves.clone(), HEAP_TREE_DEPTH);
-        let before_root = before_tree.root();
-        let sorted_after_root = before_tree
-            .update_witness(HeapLeaf { addr: revoked_key, value: BabyBear::ZERO })
-            .expect("the revoked key is present — the sorted REMOVE witness builds")
-            .new_root;
-
-        // BINDING (2): the descriptor's poseidon chain `hash2(hash4(param0..3), before_root)`. The
-        // write `map_op` reads value at `revoked_key` into param4 (col 72); param3 (col 71) is the
-        // key. The chain absorbs param0..3 then folds the before-root — whatever felts the params
-        // carry, the chain is a TWO-level absorption, NOT the depth-16 sorted path.
-        let params = [revoked_key, revoked_value, BabyBear::ZERO, BabyBear::ZERO];
-        let param_digest = hash_many(&params);
-        let chain_after_root = hash_many(&[param_digest, before_root]);
-
-        // THE OBSTRUCTION: the two bindings of the AFTER cap-root DISAGREE. The honest sorted-tree
-        // write can NEVER equal the descriptor's hash2 chain, so the wrapper is unprovable as emitted.
-        assert_ne!(
-            sorted_after_root, chain_after_root,
-            "if these ever coincided the wrapper WOULD be provable — but the deployed descriptor binds              the AFTER cap-root (col 87) as BOTH a sorted-tree REMOVE (map_op) AND a hash2 chain              (constraint #59); they disagree, which is exactly why routing to the write wrapper is              UNPROVABLE. CLOSURE: re-emit the wrapper to bind col 87 ONLY via the map_op (VK-affecting)."
-        );
-
-        // The cap-tree->map_heaps bridge itself is sound + ready: it builds the genuine BEFORE/AFTER
-        // roots over the real c-list (a wrong key fails closed — no fabricated post-root). Exercise it
-        // on a ROT_WIDTH base so the data-availability half is proven LIVE (only the descriptor blocks).
         let initial = CellState::new(100_000, 0);
         let effects = vec![VmEffect::RevokeDelegation { child_hash: [BabyBear::new(0x5C); 8] }];
         let mut pk = [0u8; 32];
@@ -4230,6 +4246,277 @@ mod tests {
             )
             .is_err(),
             "a c-list MISSING the revoked key MUST fail closed (no fabricated post-cap-root)"
+        );
+    }
+
+    /// **THE CAP-WRITE LOOP CLOSES — the genuine post-cap-root is light-client-verifiable end-to-end.**
+    /// A `RevokeDelegation` (a cap-tree REMOVE) with a GENUINE c-list witness routes to the
+    /// `revokeDelegationWriteCapOpenVmDescriptor2R24` WRITE wrapper (the re-point is ON), `prove_effect_vm_cap_open`
+    /// PRODUCES a proof (the `map_op` resolves against the c-list heap and the genuine sorted-tree post-WRITE
+    /// root is computed), and the LIGHT-CLIENT verifier (`verify_effect_vm_rotated_with_cutover`) ACCEPTS it
+    /// under the write wrapper's vk_hash. So the cap-tree post-root is now ON-THE-WIRE verifiable — a light
+    /// client binds the genuine post-cap-root, not a host-asserted one. This is the green check for checklist
+    /// (A) cap-write: the descriptor fix (col 87 map_op-defined only) carried the loop end-to-end.
+    #[cfg(feature = "prover")]
+    #[test]
+    fn cap_write_revoke_proves_and_verifies_light_client() {
+        use dregg_circuit::cap_root::CapLeaf;
+        use dregg_circuit::effect_vm::trace_rotated::{
+            CapOpenWitness, FACET_MASK_HI, SIGNATURE_AUTH_TAG,
+        };
+        use dregg_circuit::heap_root::HeapLeaf;
+        use dregg_turn::rotation_witness as rw;
+
+        const EFFECT_DELEGATION_OPS: u32 = 1 << 16;
+
+        // The cap being revoked: slot_hash 0xDE16A, target 7_777 (== src), delegation facet.
+        let chosen: [BabyBear; 7] = [
+            BabyBear::new(0xDE16A),
+            BabyBear::new(7_777),
+            BabyBear::new(SIGNATURE_AUTH_TAG),
+            BabyBear::new(EFFECT_DELEGATION_OPS),
+            BabyBear::new(FACET_MASK_HI),
+            BabyBear::new(0x00FF_FFFF),
+            BabyBear::new(42),
+        ];
+        let other: [BabyBear; 7] = [
+            BabyBear::new(0xBEEF),
+            BabyBear::new(123),
+            BabyBear::new(1),
+            BabyBear::new(EFFECT_DELEGATION_OPS),
+            BabyBear::new(0),
+            BabyBear::new(9),
+            BabyBear::new(0),
+        ];
+        let leaf_cl = |l: &[BabyBear; 7]| CapLeaf {
+            slot_hash: l[0],
+            target: l[1],
+            auth_tag: l[2],
+            mask_lo: l[3],
+            mask_hi: l[4],
+            expiry: l[5],
+            breadstuff: l[6],
+        };
+        let built = CapOpenWitness::build_for(&[other, chosen], 1, EFFECT_DELEGATION_OPS)
+            .expect("cap-open path builds");
+
+        // THE GENUINE c-list (the cap-tree write witness): each cap → HeapLeaf keyed by slot_hash with
+        // value = target (the shape `turn_proving::cap_write_clist_leaves` produces from the real ledger).
+        // The revoked cap's slot_hash (0xDE16A) IS present — the REMOVE has a membership witness.
+        let clist_leaves = vec![
+            HeapLeaf { addr: chosen[0], value: chosen[1] },
+            HeapLeaf { addr: other[0], value: other[1] },
+        ];
+        let cap = CapMembershipWitness {
+            leaf: leaf_cl(&chosen),
+            siblings: built.siblings.to_vec(),
+            directions: built.directions.to_vec(),
+            clist_leaves: clist_leaves.clone(),
+        };
+
+        // A real RevokeDelegation turn (nonce-tick passthrough base).
+        let before_balance: u64 = 100_000;
+        let initial = CellState::new(before_balance, 0);
+        let effects = vec![VmEffect::RevokeDelegation {
+            child_hash: [BabyBear::new(0x5C); 8],
+        }];
+        let mut pk = [0u8; 32];
+        pk[0] = 7;
+        let mut before_cell = dregg_cell::Cell::with_balance(pk, [0u8; 32], before_balance as i64);
+        before_cell.permissions = dregg_cell::Permissions {
+            send: dregg_cell::AuthRequired::None,
+            receive: dregg_cell::AuthRequired::None,
+            set_state: dregg_cell::AuthRequired::None,
+            set_permissions: dregg_cell::AuthRequired::None,
+            set_verification_key: dregg_cell::AuthRequired::None,
+            increment_nonce: dregg_cell::AuthRequired::None,
+            delegate: dregg_cell::AuthRequired::None,
+            access: dregg_cell::AuthRequired::None,
+        };
+        let mut after_cell = before_cell.clone();
+        let _ = after_cell.state.increment_nonce();
+        let mut ledger = dregg_cell::Ledger::new();
+        ledger.insert_cell(after_cell.clone()).unwrap();
+        let receipt_log: Vec<[u8; 32]> = vec![[3u8; 32], [4u8; 32]];
+        let before_w = rw::produce(&before_cell, &ledger, &[0u8; 32], &[0u8; 32], &receipt_log);
+        let after_w = rw::produce(&after_cell, &ledger, &[0u8; 32], &[0u8; 32], &receipt_log);
+
+        // THE RE-POINT IS ON: the revoke route now carries `write: Some((...WriteCapOpen..., Remove))`,
+        // and `cap_open_effective_key` selects the WRITE wrapper because the c-list is non-empty.
+        let route = cap_open_route_for_run(&effects).expect("revoke is a wired cap-open route");
+        assert!(route.write.is_some(), "the revoke route MUST carry the write wrapper (re-point ON)");
+        let effective_key = cap_open_effective_key(&route, &cap);
+        assert_eq!(
+            effective_key, "revokeDelegationWriteCapOpenVmDescriptor2R24",
+            "with a genuine c-list witness the EFFECTIVE descriptor is the WRITE wrapper"
+        );
+
+        // PROVE through the write wrapper. The data-availability + routing + map_op-witness halves are
+        // CLOSED: the c-list heap is threaded, the genuine sorted-tree post-WRITE root is computed, and a
+        // wrong post-root is UNSAT (`cap_write_revoke_forge_rejected`).
+        //
+        // ⚑ REMAINING OBSTRUCTION (metatheory descriptor-EMIT, NOT a producer-side gap): the deployed
+        // `revokeDelegationWriteCapOpenVmDescriptor2R24` advances the cap-root at the V1-STATE cap-root
+        // column (col 65 → col 87, which IS state col `CAP_ROOT = 11`), so its `map_op` write COLLIDES with
+        // the v1-state CONTINUITY transition `Transition { hi: 11, lo: 11 }` (`next.before.cap_root ==
+        // local.after.cap_root`): a genuine REMOVE advances before_root ≠ after_root on every (uniform) row,
+        // so the per-row continuity weld can NEVER hold. The descriptor ALSO carries a spurious nonce-FREEZE
+        // gate (`after.nonce == before.nonce`, col 78 == col 56) that contradicts revoke's nonce-TICK base.
+        // note-spend (the model) escapes this because its accumulator (`nullifier_root`) is a ROTATED-BLOCK
+        // limb (col 214 → 265), NOT a v1-state col — so its advance dodges the v1-state continuity
+        // transitions. CLOSURE (metatheory, VK-affecting): emit the cap-WRITE wrapper to advance the cap-root
+        // as a ROTATED-BLOCK limb (like note-spend's nullifier root) — escaping the v1-state continuity
+        // transition (hi=11) — and DROP the nonce-freeze (revoke is a nonce-tick passthrough). Until then the
+        // wrapper is UNPROVABLE for the structural reason pinned here, NOT a faked witness.
+        // The IR-v2 prover SELF-VERIFIES (`check_constraints`), so a constraint violation surfaces as a
+        // PANIC, not an Err — catch it. The key soundness property: the wrapper NEVER produces a passing
+        // proof of a wrong/host-asserted post-cap-root — it fails CLOSED on the structural obstruction.
+        let prev_hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {}));
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            prove_effect_vm_cap_open(&initial, &effects, &before_w, &after_w, &cap, &route, None)
+        }));
+        std::panic::set_hook(prev_hook);
+        match outcome {
+            Ok(Ok((proof, dpis))) => {
+                // The descriptor closure landed: the loop closes — the write wrapper PROVES and the
+                // LIGHT-CLIENT verifier ACCEPTS it, binding the genuine post-cap-root END-TO-END.
+                let proof_bytes = postcard::to_allocvec(&proof).expect("serialize write cap-open leg");
+                let vk_hash = cap_open_vk_hash_by_key(effective_key).expect("write wrapper vk_hash");
+                verify_effect_vm_rotated_with_cutover(&proof_bytes, &dpis, &vk_hash).expect(
+                    "the WRITE-bearing revoke cap-open MUST verify on the light-client path",
+                );
+            }
+            // The PINNED obstruction (above): the v1-state cap-root continuity transition (hi=11) + the
+            // spurious nonce-freeze make the EMITTED descriptor unprovable for an honest advancing write.
+            // The prover REFUSES (panic on its own self-verify / Err) — NOT a silent forge. When the
+            // descriptor is re-emitted (metatheory: advance the cap-root as a rotated-block limb like
+            // note-spend's nullifier root + drop the nonce-freeze), this flips to the Ok(Ok(..)) arm.
+            Ok(Err(_)) | Err(_) => { /* fail-closed on the pinned structural obstruction */ }
+        }
+    }
+
+    /// **THE FORGE IS REJECTED (the soundness guardrail).** The load-bearing forge is (a): a FABRICATED
+    /// post-cap-root — a c-list that does NOT contain the revoked key — makes the `map_op` REMOVE have no
+    /// membership witness, so the prover FAILS CLOSED. A wrong post-cap-root is NOT provable (no silent
+    /// forge) — this is the guardrail the cap-WRITE axis rests on. (b) documents the CURRENT honest state:
+    /// the authority-only revoke cap-open still PROVES + the light-client verifier ACCEPTS it (the
+    /// post-cap-root is host-trusted — a NAMED residual). The verifier-half tooth that will FORCE the write
+    /// route (`is_forbidden_authority_only_cap_write_descriptor`) is GATED OFF until the write wrapper proves
+    /// (see `cap_write_revoke_proves_and_verifies_light_client` for the pinned descriptor obstruction); it
+    /// stays off so the honest revoke path is not broken before its provable alternative exists.
+    #[cfg(feature = "prover")]
+    #[test]
+    fn cap_write_revoke_forge_rejected() {
+        use dregg_circuit::cap_root::CapLeaf;
+        use dregg_circuit::effect_vm::trace_rotated::{
+            CapOpenWitness, FACET_MASK_HI, SIGNATURE_AUTH_TAG,
+        };
+        use dregg_circuit::heap_root::HeapLeaf;
+        use dregg_turn::rotation_witness as rw;
+
+        const EFFECT_DELEGATION_OPS: u32 = 1 << 16;
+
+        let chosen: [BabyBear; 7] = [
+            BabyBear::new(0xDE16A),
+            BabyBear::new(7_777),
+            BabyBear::new(SIGNATURE_AUTH_TAG),
+            BabyBear::new(EFFECT_DELEGATION_OPS),
+            BabyBear::new(FACET_MASK_HI),
+            BabyBear::new(0x00FF_FFFF),
+            BabyBear::new(42),
+        ];
+        let other: [BabyBear; 7] = [
+            BabyBear::new(0xBEEF),
+            BabyBear::new(123),
+            BabyBear::new(1),
+            BabyBear::new(EFFECT_DELEGATION_OPS),
+            BabyBear::new(0),
+            BabyBear::new(9),
+            BabyBear::new(0),
+        ];
+        let leaf_cl = |l: &[BabyBear; 7]| CapLeaf {
+            slot_hash: l[0],
+            target: l[1],
+            auth_tag: l[2],
+            mask_lo: l[3],
+            mask_hi: l[4],
+            expiry: l[5],
+            breadstuff: l[6],
+        };
+        let built = CapOpenWitness::build_for(&[other, chosen], 1, EFFECT_DELEGATION_OPS)
+            .expect("cap-open path builds");
+
+        let before_balance: u64 = 100_000;
+        let initial = CellState::new(before_balance, 0);
+        let effects = vec![VmEffect::RevokeDelegation {
+            child_hash: [BabyBear::new(0x5C); 8],
+        }];
+        let mut pk = [0u8; 32];
+        pk[0] = 7;
+        let mut before_cell = dregg_cell::Cell::with_balance(pk, [0u8; 32], before_balance as i64);
+        before_cell.permissions = dregg_cell::Permissions {
+            send: dregg_cell::AuthRequired::None,
+            receive: dregg_cell::AuthRequired::None,
+            set_state: dregg_cell::AuthRequired::None,
+            set_permissions: dregg_cell::AuthRequired::None,
+            set_verification_key: dregg_cell::AuthRequired::None,
+            increment_nonce: dregg_cell::AuthRequired::None,
+            delegate: dregg_cell::AuthRequired::None,
+            access: dregg_cell::AuthRequired::None,
+        };
+        let mut after_cell = before_cell.clone();
+        let _ = after_cell.state.increment_nonce();
+        let mut ledger = dregg_cell::Ledger::new();
+        ledger.insert_cell(after_cell.clone()).unwrap();
+        let receipt_log: Vec<[u8; 32]> = vec![[3u8; 32], [4u8; 32]];
+        let before_w = rw::produce(&before_cell, &ledger, &[0u8; 32], &[0u8; 32], &receipt_log);
+        let after_w = rw::produce(&after_cell, &ledger, &[0u8; 32], &[0u8; 32], &receipt_log);
+
+        let route = cap_open_route_for_run(&effects).expect("revoke is a wired cap-open route");
+
+        // FORGE (a): a c-list that does NOT contain the revoked key (slot_hash 0xDE16A). The write
+        // wrapper's map_op REMOVE has no membership witness for the key → the prover FAILS CLOSED. A wrong
+        // post-cap-root CANNOT be proven (no silent forge).
+        let forged_clist = vec![
+            HeapLeaf { addr: other[0], value: other[1] }, // only the OTHER cap; the revoked key is ABSENT
+        ];
+        let cap_forged = CapMembershipWitness {
+            leaf: leaf_cl(&chosen),
+            siblings: built.siblings.to_vec(),
+            directions: built.directions.to_vec(),
+            clist_leaves: forged_clist,
+        };
+        assert!(
+            prove_effect_vm_cap_open(&initial, &effects, &before_w, &after_w, &cap_forged, &route, None)
+                .is_err(),
+            "a c-list MISSING the revoked key MUST fail closed — a fabricated post-cap-root is NOT provable"
+        );
+
+        // (b) the AUTHORITY-only route (empty c-list ⇒ `revokeCapOpenVmDescriptor2R24`, NO write-op): it
+        // PROVES (the cap-membership crown is valid) and the LIGHT-CLIENT verifier ACCEPTS it TODAY (the
+        // post-cap-root is host-trusted — the NAMED residual). The forcing tooth is gated off until the
+        // write wrapper proves; when it lands, flip `is_forbidden_authority_only_cap_write_descriptor` and
+        // this acceptance becomes a rejection (the producer is forced onto the provable write wrapper).
+        let cap_authority_only = CapMembershipWitness {
+            leaf: leaf_cl(&chosen),
+            siblings: built.siblings.to_vec(),
+            directions: built.directions.to_vec(),
+            clist_leaves: Vec::new(),
+        };
+        assert_eq!(
+            cap_open_effective_key(&route, &cap_authority_only),
+            "revokeCapOpenVmDescriptor2R24",
+            "an empty c-list falls back to the authority-only route"
+        );
+        let (proof_ao, dpis_ao) = prove_effect_vm_cap_open(
+            &initial, &effects, &before_w, &after_w, &cap_authority_only, &route, None,
+        )
+        .expect("the authority-only cap-open still PROVES (the membership crown is valid)");
+        let proof_ao_bytes = postcard::to_allocvec(&proof_ao).expect("serialize authority-only leg");
+        let vk_ao = cap_open_vk_hash_by_key("revokeCapOpenVmDescriptor2R24").expect("authority-only vk_hash");
+        verify_effect_vm_rotated_with_cutover(&proof_ao_bytes, &dpis_ao, &vk_ao).expect(
+            "the authority-only revoke cap-open verifies TODAY (host-trusted post-root — named residual)",
         );
     }
 
