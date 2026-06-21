@@ -683,6 +683,24 @@ impl TurnExecutor {
         // PI-46 pin itself is a VK-affecting descriptor change deferred to the anchor-cutover flag-day
         // (VK-EPOCH-PLAN STAGE F). `Refusal` still rides this anchor genuinely (its `fields_root` audit
         // is NOT yet welded on the record-digest path).
+        //
+        // VK-EPOCH FAMILY 2 (the HONEST CONTRAST to family-1's setPerms/setVK close). `Refusal` and the
+        // lifecycle PAYLOAD are FULL-NODE-FORCED (this off-cell anchor bites) but NOT LIGHT-CLIENT-FORCED.
+        // The record-pin welds the AFTER limb to PI ROT_PI_COUNT (46), but on the light-client path
+        // (`verify_vm_descriptor2` ALONE, what `full_turn_proof::verify_effect_vm_rotated_with_cutover`
+        // runs) PI 46 is a PRODUCER-SUPPLIED free PI — the generator fills it from the producer's OWN
+        // after-witness AFTER limb (`trace_rotated.rs:394`), so the record-pin holds vacuously for any
+        // self-consistent forged post-cell. ONLY this anchor recomputes PI 46 from the trusted pre-cell +
+        // effect. Refusal CANNOT get a perms/VK-style weld: its post-value is `fields_root_felt(fields_root')`
+        // (a Merkle-MAP root depending on the pre-`fields_root`; its deployed params are `target` / `reason_hash`,
+        // NEITHER is the post-`fields_root`). The lifecycle DISC (limb 32) IS forced in-circuit (a frozen seal /
+        // resurrection IS light-client-rejected); only the OPAQUE payload felt (limb 29: `reason_hash`/`deathCert`/
+        // `sealed_at`) rides this anchor — and `sealed_at = block_height` is the HOST height, carried by NO effect
+        // param. So families 2 are a REAL RESIDUAL: converting them to light-client-forced needs a NEW primitive (a
+        // verifier-anchored declared-PAYLOAD column, like the deleg-tree column was for refresh — STAGE B/C), not a
+        // setPerms-style weld. Witness: `circuit/tests/vk_epoch_refusal_lifecycle_light_client_binding.rs` — a
+        // forged-audit / forged-payload post-cell is ACCEPTED through `verify_vm_descriptor2` ALONE (the residual
+        // poles), while the honest turn proves+verifies (the no-downgrade poles).
         //   * LIFECYCLE limb 29 (`lifecycle_felt_cell`): `CellSeal` / `CellUnseal` / `CellDestroy` (the
         //     lifecycle separates Live/Sealed/Destroyed + folds the death-cert) AND `ReceiptArchive`
         //     (the deployed `apply_receipt_archive` moves the lifecycle to `Archived`; the pin is
