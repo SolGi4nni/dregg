@@ -11,6 +11,26 @@ reason.)*
 Last sweep: 2026-06-13 (flagged-items burndown — removed ~14 landed/struck items,
 deduped the DreggDL/sel4/snapshot landings into git history, kept live tails).
 
+## ⚑ AFFORDANCE CAP-BADGE — `AuthRequired::None` reports UNAUTHORIZED for non-None holders (found by dregg-mcp, 2026-06-21)
+The new dregg-mcp driving harness (`starbridge-v2/src/bin/dregg_mcp.rs`) surfaced this on its first
+drive. `affordances user` shows the `grant` message with `required: None` yet `authorized: false`, and
+`act user grant` is refused `by_executor:false` ("does not satisfy None"). MECHANISM: the cap badge is
+`InspectAct::build` → `Affordance::authorized_for(&held) = is_attenuation(held.rights, required_rights)`
+(`starbridge-v2/src/affordance.rs:100`), and `is_attenuation(held, req) = req.is_narrower_or_equal(held)`
+(`cell/src/capability.rs:604`). The lattice (`cell/src/permissions.rs:52`) models `None` as the TOP
+(widest): `(None, _) => false`, `(_, None) => true`. So a `None`-REQUIRED affordance — documented as
+"Always allowed, no authorization needed" (`permissions.rs:6`) — yields `None.is_narrower_or_equal(held)
+= false` for any `held ≠ None`, i.e. it reports UNAUTHORIZED for everyone. The formula is correct for the
+middle tiers (a `Signature` requirement clears under an `Either` holder) but INVERTS for `None`: an
+always-allowed action shows refused. TWO-WAY CLOSURE (needs ember's intent): (a) if `grant`'s
+`required_rights` was set to `None` MEANING "always allowed", the badge formula must special-case the
+always-satisfiable bottom — an action requiring `None` is authorized for ALL holders (today it is the
+opposite); OR (b) if `grant` is meant to require the OWNER/root tier, its `required_rights` is mis-set to
+`None` (the apex-vs-open overload of `None`) and should be a real strong tier, and the `None` doc-comment
+("always allowed") then disagrees with its lattice-top role — pick one meaning for `None`. REPRO is the
+harness itself: `act user grant` on the demo image. This is a candidate authorization-display/logic bug,
+not yet a confirmed kernel hole (the executor was never reached — the cap-gate refused first).
+
 VK-EPOCH STAGE B (setPermissions/setVK) — LANDED on-wire light-client-verifiable. The in-circuit
 perms/VK weld (`permsVKWeldGate`, descriptor constraint #64, limbs B_PERMS=33/B_VK=34) FORCES the
 committed AFTER perms/vk-digest sub-limb == the declared param (PI-anchored via effects_hash) and is
@@ -25,6 +45,32 @@ pin (would red honest full-node placeholder-reconstruction proofs). FAN-OUT: the
 anchor families (Refusal record-digest via fields_root; lifecycle-PAYLOAD reason_hash/deathCert) ride
 the SAME `proof_verify.rs` block + the SAME conversion shape (weld the dedicated committed sub-limb to
 the declared/forced value, then the anchor becomes redundant).
+
+## ⚑ VK-EPOCH ROUTING WELDS — noteCreate + makeSovereign FORCED-ON-WIRE; setFieldDyn = deeper residual (2026-06-21)
+Two of the three big-wave residual welds CLOSED on-wire (VK-FREEDOM ERA — generator-side, NO descriptor/VK
+change; drift PASS, no silent forge):
+  * **noteCreate** — the in-circuit commitments-root grow-gate (`.insert`, limb 27) was SOUND but the LIVE
+    producer/verifier ROUTING was unwired (NoteCreate fell through to `generate_rotated_transfer_shape_wide`,
+    which carries the bare 46-PI base and ERRORS on NoteCreate's 47-PI commitment-pinned base — fail-closed,
+    UN-PROVABLE). WELD: a NoteCreate branch → `generate_rotated_note_create_wide` in `proof_verify.rs`
+    (verifier) + `full_turn_proof::prove_effect_vm_rotated_wide` + `cipherclerk` (provers). Witness:
+    `vk_epoch_notes::notecreate_forced_on_wire_through_live_wide_producer` (honest proves+verifies through the
+    LIVE wide producer at 8-felt/63-PI geometry; forged commitments-root UNSAT).
+  * **makeSovereign** — `record_pin_offset` had NO MakeSovereign arm, so the live generator emitted 46 dpis vs
+    the descriptor's declared 47 → UN-PROVABLE. WELD: `Some(Effect::MakeSovereign) => Some(B_AUTHORITY_DIGEST)`
+    (the mode-byte folds into the r23 authority residue) + MakeSovereign joins the record-pin family in all
+    three prover/verifier routers. Witness:
+    `vk_epoch_misc::makesovereign_forced_on_wire_rejects_forged_authority_digest_anchor_disabled` (honest
+    promotion proves+verifies; forged committed authority residue UNSAT, anchor-disabled).
+NAMED RESIDUAL (DEEPER — reported, not faked green): **setFieldDyn** is NOT a routing weld. Its
+`setFieldDynVmDescriptor2R24` is a DISTINCT 581-wide geometry (built on the 263-wide `setFieldDynV1Face`, which
+folds the openable fields_root insertion sub-circuit `post_root = insert(pre_root, key→value)`); the standard
+`generate_rotated_effect_vm_trace` produces only the 188-base → 328-wide rotated trace and can NEVER satisfy it.
+Lifting the `field_idx < 8` assert would (a) silently clamp `fields[idx.min(7)]` (WRONG-field bug) and (b) still
+emit a 328-wide trace the 581-wide descriptor rejects. CLOSURE = a from-scratch generator for the 263-wide
+V1Face (run the openable fields_root insertion in-circuit, feed the fields-root pin col 263 → PI[46]) — NOT a
+branch. Witness asserts the geometry mismatch precisely:
+`vk_epoch_misc::setfielddyn_unreachable_via_live_generator_missing_weld`.
 
 ## ⚑ CAP-WRITE SILENT-FORGE GUARD — CLOSED (the map_op fired on the WRONG selector; re-pointed) (2026-06-21)
 THE FORGE (banked RED at `bd7ba0bf9`): the cap-WRITE map_ops (`insertWriteOpRot`/`removeWriteOpRot`/
@@ -3675,3 +3721,23 @@ refresh ✅(in 5a98dbb39 earlier), receiptArchive ✅, attenuate/revokeCap forge
 setFieldDyn seams (a72bf75a), delegateAtten+revoke-tag2 (ae15d66a). NEXT (post-settle): revokeCapability route-forge
 (#1, the sin-map's dropped forge) + the payload Rust verifier-anchor + the ~65 blind-test hardening + TraceReadout
 non-vacuity.
+
+## ⚑ a72bf75a DONE (held for swarm-settle) — noteCreate + makeSovereign CLOSED on-wire; setFieldDyn = deeper residual
+- noteCreate -> FORCED-ON-WIRE: the in-circuit commitments-root .insert grow-gate was SOUND; gap was live routing
+  (fell to transfer-shape 46-PI, errored on the 47-PI commitment base). Added NoteCreate branch ->
+  generate_rotated_note_create_wide in proof_verify.rs + the 2 prover sites. Discriminator
+  notecreate_forced_on_wire_through_live_wide_producer green (honest proves+LC-verifies at 816-wide/63-PI; forged
+  commitments-root UNSAT via .insert).
+- makeSovereign -> FORCED-ON-WIRE: record_pin_offset had no MakeSovereign arm (46 vs declared 47 -> un-provable).
+  Added Some(MakeSovereign)=>Some(B_RECORD_DIGEST) (the flipped mode byte folds into r23 authority residue) + the
+  record-pin family in all 3 routers. Discriminator flipped residual->FORCED (forged authority residue UNSAT,
+  anchor-disabled). Generator-side only, drift PASS.
+- setFieldDyn = DEEPER RESIDUAL (named at true depth, NOT faked): setFieldDynVmDescriptor2R24 is a distinct 581-wide
+  geometry (263-wide setFieldDynV1Face folding the openable fields_root insert sub-circuit). The standard generator
+  makes 188->328-wide and can NEVER satisfy 581-wide; lifting field_idx<8 would silently clamp to the wrong field
+  (correctness bug). CLOSURE = a from-scratch 263-wide V1Face generator (a real weld, not a branch). Test
+  setfielddyn_unreachable_via_live_generator_missing_weld asserts the geometry mismatch (581 != ROT_WIDTH).
+SWARM STATUS: only ae15d66a (delegateAtten + revoke-tag2) still running. When it lands -> ONE clean integrated
+verify + bank coherent groups (SetProgram weld + payload-Lean + a72bf75a's 2 welds + ae15d66a, all held). THEN drive
+the post-settle queue: revokeCapability #1 route-forge · payload Rust verifier-anchor · setFieldDyn 263-wide
+generator · ~65 blind-test hardening · TraceReadout non-vacuity · FloorsNonVacuous extension · HORIZONLOG compaction.
