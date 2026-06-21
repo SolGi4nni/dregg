@@ -34,8 +34,10 @@ This is the **BOUNDED / PUBLIC / DECIDABLE** domination over a FINITE public abs
   temporal hyperproperty, NOT coercion economics, NOT "is the council honest");
 * the counterfactual side is the purely structural causal erasure on the public ack DAG (NO hidden
   interior, NO controller motive);
-* `viewOf` is a public abstraction of the blocklace into a small recovery view — a deliberate,
-  named finitization, not the full unbounded politician.
+* `viewOf` is a public abstraction of the blocklace into a small recovery view; it is GENERALIZED to
+  arbitrary configs (real decidable author-membership, no fixed poles) in
+  `Metatheory.PolisViewFunctor` (`viewOfConfig`, with `viewOfConfig_generalizes` proving these two
+  poles are its restriction). Not the full unbounded politician.
 
 It is NOT "politics solved". What it captures faithfully: under the deployed `rotateStep` semantics
 and the deployed blocklace causal order, whether author `A`'s lawful public contribution removed a

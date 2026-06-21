@@ -28,10 +28,12 @@ model where one holds and the other fails — they are genuinely different strea
 This is a **BOUNDED / PUBLIC / DECIDABLE** binding: each predicate is a property of the public
 observation stream `obsStream`, and the shared decision fragment is the finite-prefix
 `Monitorable` witness (`violation_has_finite_witness`) — a finite public bad-prefix governs a
-violation. It is NOT "full politics solved": exhibiting a `Monitorable` witness for the genuine
-temporal polis floor over the real deployed `Obs` lattice remains the open frontier
-(`Metatheory.Polis.CaptureBar` interface; the Büchi-game `FlowRefine.decideRefines` connection).
-What is delivered here is the honest binding — the two distinct predicates over the deployed
+violation. It is NOT "full politics solved", but the temporal monitor IS now built: a `Monitorable`
+witness for the polis floor over the deployed `Obs` is `Metatheory.PolisMonitor.polisFloorMonitor`,
+and the flow floor's bad-prefix is decided by the Büchi game `FlowRefine.decideRefines`
+(`PolisMonitor.flowBad_iff_decide`). The only TERMINAL item is unbounded liveness, *proven*
+non-monitorable (`PolisMonitor.liveness_not_prefix_refutable`). What is delivered here is the
+binding — the two distinct predicates over the deployed
 carrier, plus a non-vacuity model and the shared-machinery / non-collapse record.
 
 Imports the deployed `Dregg2.Proof.CoinductiveAdversary` and the framework
@@ -188,8 +190,8 @@ theorem circuitSoundnessProp_inhabited (Impl : TurnCoalg Obs AdmissibleTurn) (x 
   circuitSoundnessProp_of_bisim (bisim_eq Impl) rfl s
 
 /-- `polisFloorProp` is inhabited on the deployed carrier: the trivial floor `fun _ => True` holds
-at every tick of any `obsStream`. (A non-trivial floor needs the substrate's `Obs` lattice — that
-is the named frontier, §6.) -/
+at every tick of any `obsStream`. (A non-trivial floor's monitor is `PolisMonitor.polisFloorMonitor`,
+§6.) -/
 theorem polisFloorProp_inhabited (Impl : TurnCoalg Obs AdmissibleTurn) (x : Impl.Carrier)
     (s : Sched AdmissibleTurn) :
     polisFloorProp (fun _ => True) (carrier Impl x s) :=

@@ -13,7 +13,8 @@ We give the (binary) `GradeAlgebra` class, the **max-plus / tropical** model on 
 and graded non-regression (`GradedNoWeaken`: severity only ever increases — "no legal rewrite closes
 the door, even with numeric costs / finality tiers / time-locks"), and the graded amendment-stream
 theorem. The deployed `Dregg2.Finality.Tier` is the intended *finality* grade instance (its rank is
-the severity order); wiring that instance is the deployment step.
+the severity order); that instance is wired in `Metatheory.PolisGradeTier` (`instTierGrade`), and
+`Tier × ℕ` (laundering × rent) follows for free via `instProd`.
 
 Pure Lean 4 core (imports only the import-free `Metatheory.Polis`; `ℕ` + `omega`); no `sorry`.
 -/

@@ -25,9 +25,11 @@ gpt5.5's "make Polis real":
 The human floor here is the candidate-independent recovery shadow (`dist ≤ B`, svenvs
 corrigibility / non-lock-in); its deployed form is the KERI identity floor
 `Dregg2.Apps.PreRotation.rotChain_pinned_by_commitments` ("compromise of the current key
-cannot rewrite the past" — you cannot lose your identity), whose full chain binding is the
-named follow-up. The executor-coupled authority floor (`gateOK`'s `granted ⊆ held` /
-`confinement_preserved`) likewise refines this list-subset shadow.
+cannot rewrite the past" — you cannot lose your identity); the live register-carrier recovery game
+over `rotateWrite` (incl. the multi-link bridge `writeStep_commits_target`) is built in
+`Metatheory.PolisRecoveryWrite`. The executor-coupled authority floor refines this list-subset
+shadow only as a TIGHTENING, not a gap: `held ⊆ bound` IS the deployed `fits` relation by
+`Dregg2.Authority.USet.fits_iff`, and the camera `Fpu` form is pinned in `PolisNonConfusion`.
 -/
 import Metatheory.Polis
 import Metatheory.EpistemicDial
