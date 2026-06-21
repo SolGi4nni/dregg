@@ -157,6 +157,15 @@ surprise forges; the genuine residuals (spawn cap-handoff, refreshDelegation del
 the low-severity lifecycle-payload (opaque felt for cellSeal/cellDestroy/receiptArchive) + 2 completeness leads remain.
 FINISH-ALL WORKLIST (sequential on the shared descriptor surface): refreshDelegation deleg-tree (closest) · spawn
 cap-handoff (phase-D) · lifecycle-payload hash gate · setFieldDyn + createCellFromFactory live leads.
+✅✅ SOUNDNESS MILESTONE (2026-06-22): EVERY CHARACTERIZED LIGHT-CLIENT FORGE IS NOW CLOSED (gate→apex, mutation-confirmed):
+revokeCapability (f458b5258) · refusal gate→apex→deployed-prover (9625645d8+4b45fa33e) · refreshDelegation deleg-tree
+(fbc571533) · spawn cap-handoff (6211509c3) · lifecycle-payload (5fde9dd29). Plus delegateAtten LogUp #[ignore] REMOVED
+— it was a one-token FACET copy-paste bug (EFF_GRANT_CAPABILITY vs EFF_DELEGATION_OPS), NOT a plonky3 issue (found by
+instrumenting+RUNNING). The obligation-table sweep found NO surprise forges; all genuine residuals are closed. The REMAINING
+worklist (#3 live-lead routing, #4 setFieldDyn, #6 refreshDelegation enrichment) is COMPLETENESS/LIVENESS — making effects
+PROVABLE on the deployed sovereign path — NOT open holes. NOTE: another session is concurrently doing NoteCreate live-lead
+routing in turn/src/executor/proof_verify.rs (stay out of that file). The prover surface (full_turn_proof.rs) is a chokepoint
+that sequences the live-lead work.
 
 ## ⚑ delegateAtten SUBMASK+INSERT PROVE-THROUGH — the LogUp obstruction, 2026-06-21
 WELD closed the delegateAtten ROUTING SIGNAL (`is_attenuated_grant`: granted ⊊ held selects the submask
