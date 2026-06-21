@@ -3597,3 +3597,31 @@ the payload force is proven-in-Lean but verify_full_turn is still producer-free 
 INTEGRATION DISCIPLINE (6 agents on shared ActionDispatch/full_turn_proof/EffectVmEmitRotationV3): HOLD banking until
 the swarm settles, then ONE clean integrated verify + coherent banks. Do NOT surgically extract slices mid-edit
 (provenance-leak risk). lake green 4109 at this snapshot.
+
+## ⚑⚑ PROOF-LEVEL SIN AUDIT (a6f7fa16, read-only) — spine sin-free; 3 real laundered-green items found
+VERDICT: the Lean spine is genuinely sin-free — ZERO sorry/admit/sorryAx/native_decide in tactic/term position
+(all hits = docstring prose or the `admit` upgrade-policy VERB identifier); only 2 benign labeled demo axioms
+(Widget/Basic.lean:298, prove 1=1/2=2 for the tier-classifier, never used by real proofs); every crypto floor is a
+typeclass/Prop portal not a bare axiom; the apex (19 load-bearing theorems incl. lightclient_unfoolable_*,
+engineSound_of_apex) is #assert_axioms-pinned IN-FILE (7223 enmeshed decl pins); the orphan Claims is PROVABLY
+REDUNDANT (0 of its 171 pins are Claims-only). The foil can't slip a sorry or smuggled axiom past the spine.
+⚑ 3 REAL LAUNDERED-GREEN ITEMS (the burn-down the goal must close — passing-by-wrong-reason, not forges):
+1. ~65 BLIND is_err() RUST TESTS — reject but NOT provably for the right reason (a setup error passes them). Same
+   sin-class as catch_unwind. Heaviest: full_turn_proof.rs (14 light-client/path-preserve teeth, lines 3831…6846),
+   aggregate_bilateral_prover.rs (14 #133 anti-ghost, 1348…1943), macaroon-caveat (11), orchestration/governance
+   (16), swallow-pattern is_err()||matches!(Ok(Err)) (11). FIX MODEL = membership_verifier.rs (31 sites, 0 sins:
+   honest-ACCEPT the same object BEFORE every tamper, so the rejection is provably caused by the tamper). + 2 RISKY
+   catch_unwind (adversarial_boundaries.rs:113 also tolerates Ok(true)!; body_membership.rs:525).
+2. TREE-WIDE *TraceReadout CARRIER-INHABITATION gap (~17 rungs) — *_descriptorRefines_sat takes a TraceReadout
+   premise with NO inhabitation witness; if the readout type is uninhabitable the REFINEMENT rung is vacuously
+   satisfiable (the tooth-theorems themselves ARE non-vacuous, but the readout-repackaging door is open). The
+   readouts are realizable (WitnessDecodes-class) but un-witnessed. Per the goal's non-vacuity clause: prove each
+   TraceReadout INHABITED (the FloorsNonVacuous pattern). Pre-existing; SetProgram inherits from refusal.
+3. FloorsNonVacuous.lean covers 5 apex carriers but NOT the new-wave floors (SetProgram/SetVK/RefreshDelegation/
+   ReceiptArchive spec-carriers + the TraceReadouts) — extend it.
+ALSO: 9 substantive #[ignore]'d security obligations (γ.2 bilateral-binding x6, sovereign-witness AIR teeth,
+cap_open_self_verify.rs:224/317/377 the attenuate UPDATE-AT-KEY handoff — NOW being closed by ae15d66a) — named
+parked obligations, each a burn-down item. 3 honest residual-asserting tests (vk_epoch_misc, names its closure lane).
+QUEUED (drive when the swarm settles, all 3 are real non-vacuity/no-laundered-green obligations the goal requires):
+(a) harden the ~65 blind-reject tests to the membership_verifier honest-accept-then-tamper model; (b) prove the
+~17 TraceReadout carriers inhabited; (c) extend FloorsNonVacuous to the new-wave floors.
