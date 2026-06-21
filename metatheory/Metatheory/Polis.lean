@@ -40,6 +40,24 @@ printed below (`#print axioms`) — kernel-clean (`propext`/`Classical.choice`/`
 
 namespace Metatheory.Polis
 
+/-!
+## Theorem map (philosophy → theorem name) — so this is read as a constitution, not a bag
+of abstract predicates. (Full one-pager: `docs/POLIS.md`.)
+
+  "Verify the cage, not the animal":      `polis_safety`  (∀ ctrl — the gate cannot
+                                          psychometrically classify the inhabitant)
+  "Least restrictive — every bar bears":  `envelope_least_restrictive` / `override_only_unsafe`
+  "Structural means theorem-bearing":     `structural_requires_proof`
+  "Legitimacy as non-regression":         `amendment_stream_nonregression` /
+                                          `regressive_amendment_inert`
+  "Empty meet is schism":                 `disjoint_floors_no_polis`
+  "Non-vacuous on the substrate":         `dregg_shared_floor_inhabited`
+  "Politician lives in traces":           `CaptureBar` (+ `DreggPolis.rExitForeclosureBar`)
+
+Real-substrate welds live in `Metatheory.DreggPolis` (disclosure = EpistemicDial; authority =
+l4v `Auth`) and `Metatheory.PolisNonConfusion` (non-confusion + unfoolability, deployed pins).
+-/
+
 attribute [local instance] Classical.propDecidable
 
 variable {State Action Agent Trace : Type}
