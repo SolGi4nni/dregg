@@ -113,7 +113,12 @@ jobs:
           BASE_PATH: /dregg
         run: |
           cd site
-          npm install
+          # The committed package-lock.json is generated on macOS and pins
+          # platform-specific binaries (e.g. lightningcss-darwin-arm64), which the
+          # linux runner cannot install (EBADPLATFORM). Drop it so npm re-resolves
+          # the right binaries for THIS platform (lightningcss-linux-x64-gnu).
+          rm -f package-lock.json
+          npm install --no-audit --no-fund
           npm run build
 
       - name: Bundle THE DREGG ATLAS
