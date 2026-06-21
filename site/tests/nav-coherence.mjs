@@ -34,6 +34,8 @@ const COPY_DIRS = new Set([
   // the self-built interactive atlas (bundled by pages.yml at /dregg/atlas/) —
   // a self-contained app surface with its own structure, not authored pages.
   'atlas',
+  // the live web cockpit (the verified executor in wasm, /dregg/cockpit/).
+  'cockpit',
 ]);
 
 // Detect BASE_PATH from the built nav brand link (href="{BASE}/").

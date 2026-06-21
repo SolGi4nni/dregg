@@ -133,6 +133,19 @@ jobs:
             && (echo "ERROR: atlas image is an unmaterialized LFS pointer — checkout needs lfs:true" && exit 1) || true
           echo "atlas bundled at /dregg/atlas/ ($(find site/dist/atlas -type f | wc -l) files)"
 
+      - name: Bundle THE LIVE WEB COCKPIT
+        # The verified cockpit MODEL compiled to wasm, served LIVE at /dregg/cockpit/
+        # (Path C): the executor runs in the visitor's own browser tab — no server.
+        # Built release (~7MB wasm). `cockpit` is registered in nav-coherence COPY_DIRS.
+        run: |
+          set -euo pipefail
+          ( cd starbridge-v2 && wasm-pack build web --target web --out-dir pkg --release )
+          mkdir -p site/dist/cockpit
+          cp starbridge-v2/web/cockpit.html site/dist/cockpit/index.html
+          cp -r starbridge-v2/web/pkg site/dist/cockpit/pkg
+          test -f site/dist/cockpit/index.html && test -s site/dist/cockpit/pkg/starbridge_web_bg.wasm
+          echo "live web cockpit bundled at /dregg/cockpit/ ($(du -sh site/dist/cockpit | cut -f1))"
+
       - name: Site tests (built output)
         # Static checks against dist/: nav coherence (every internal link
         # resolves; no orphan pages) and the living-docs drift check.
