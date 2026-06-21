@@ -1,0 +1,26 @@
+[package]
+name = "starbridge-first-room"
+version = "0.1.0"
+edition = "2024"
+description = "THE FIRST ROOM of the living world — a room containing an inhabitant (a cell holding a workflow-mandate = its JOB) and a payer (who escrows the reward from a conserved pool). The inhabitant does its mandated job step-by-step (each a receipted turn), finishes, the escrow releases, it is paid (a conserving transfer). Then the headline: a try-to-cheat battery — skip a prerequisite, overspend the budget, reach outside its compartment, take an ungranted verb, release the escrow without approval — each REFUSED in-band by the real executor, rendered in-room with the receipt-why. Welds the five room organs (the mandate law, the colonist-job instance, the escrow economy, the gateway, the room model) into ONE runnable, cargo-testable scenario. gpui-free."
+
+# This crate does NOT rebuild any organ. It DEPENDS on the proven/landed organs
+# and WELDS them at the room level:
+#   - starbridge-compartment-workflow-mandate :: the COLONIST'S JOB (gather→make→hand-off,
+#     the three biting legs: DAG/no-skip, clearance, spend-budget).
+#   - starbridge-escrow-market               :: the ESCROW ECONOMY (list→fund→ship→settle,
+#     conserving: released + refunded == escrowed).
+# Both drive the SAME real EmbeddedExecutor (one ledger), so a cheat is a real
+# executor refusal, never an unhandled case.
+
+[dependencies]
+dregg-app-framework = { path = "../../app-framework" }
+dregg-cell = { path = "../../cell", default-features = false }
+dregg-types = { path = "../../types" }
+starbridge-compartment-workflow-mandate = { path = "../compartment-workflow-mandate" }
+starbridge-escrow-market = { path = "../escrow-market" }
+
+blake3 = "1"
+
+[lints]
+workspace = true

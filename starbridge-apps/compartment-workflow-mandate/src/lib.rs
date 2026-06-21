@@ -17,6 +17,11 @@
 
 #![forbid(unsafe_code)]
 
+/// ORGAN 2 — the colonist's JOB (gather → make → hand-off) as an executable workflow-mandate,
+/// mirror of `metatheory/Dregg2/Apps/ColonistJob.lean`. DAG ∧ clearance ∧ SPEND-BUDGET, all three
+/// biting through the real embedded executor.
+pub mod colonist_job;
+
 use dregg_app_framework::{
     Action, AppCipherclerk, AuthRequired, CapTarget, CapTemplate, CellAffordance, CellId, CellMode,
     CellProgram, ChildVkStrategy, ConstantsModule, DeosApp, DeosCell, Effect, EmbeddedExecutor,

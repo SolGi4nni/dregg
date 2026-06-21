@@ -137,6 +137,7 @@ pub mod factories;
 pub mod flashwell;
 pub mod full_turn_proof;
 pub mod identity;
+pub mod job_escrow;
 // TEMP-DISABLED-FOR-DEVICE-PAIRING-VERIFY: sibling draft, Cargo deps not yet wired
 pub mod hints_onboarding;
 #[cfg(feature = "captp")]
@@ -151,6 +152,12 @@ pub mod profiles;
 pub mod program;
 pub mod raw;
 pub mod receipt;
+// ORGAN 4 — THE GATEWAY: an inbound tool-call → a cap-gated, metered, receipted
+// DELEGATED turn (admitted IFF the proven `delegAdmit` policy admits it) or an
+// in-band refusal. Welds the verified `Dregg2/Apps/ToolAccessDelegation.lean`
+// crown to the `AgentRuntime`/`SubAgent` cap-gated executor path. Usable by ANY
+// external loop (a buildr/hermes agent) via `ToolGateway::invoke`.
+pub mod tool_gateway;
 #[cfg(feature = "federation-client")]
 pub mod remote;
 pub mod runtime;
@@ -211,6 +218,14 @@ pub use dregg_turn::Effect;
 pub use dregg_types::{PublicKey, Signature};
 pub use error::SdkError;
 pub use runtime::{AgentRuntime, SubAgent};
+
+// ORGAN 4 — THE GATEWAY surface: the delegated tool-access seam for a live
+// tool-calling agent loop (the proven `delegAdmit` mandate over the cap-gated
+// executor).
+pub use tool_gateway::{
+    deleg_admit, mandate_program, GatewayRefusal, ToolCallError, ToolGateway, ToolGrant,
+    ToolReceipt, CALLS_MADE_SLOT,
+};
 
 // Receipt-chain verification (the chain the Receipt noun links into).
 pub use dregg_turn::{

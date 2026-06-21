@@ -145,6 +145,13 @@ pub mod proofs;
 pub mod reflect;
 #[cfg(feature = "embedded-executor")]
 pub mod replay;
+// THE ROOM + INHABITANT (ORGAN 5): a room is a place that CONTAINS inhabitants;
+// an inhabitant is a cell + a held MANDATE + presence; the room view renders each
+// inhabitant's mandate + live actions, surfacing every in-room REFUSAL with the
+// receipt-why (the anti-ghost tooth, visible). Welds the `agent` activity model.
+// gpui-free, `cargo test`-able (pure room model over the World, like `web_cells`).
+#[cfg(feature = "embedded-executor")]
+pub mod room;
 #[cfg(feature = "embedded-executor")]
 pub mod scene;
 // WHAT-IF SIMULATION — compose any intent over any cell + an exhaustive effect
