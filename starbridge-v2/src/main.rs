@@ -313,6 +313,20 @@ fn run_window(
     let shared = Rc::new(RefCell::new(world));
 
     application().run(move |cx: &mut App| {
+        // Register the embedded UI fonts. The windowed app uses the native platform
+        // text system (CoreText), which does NOT have "Lilex" (the cockpit's default
+        // font) — without this, every panel renders with BLANK text (the chrome lays
+        // out, but no glyphs). The headless render paths load these the same way.
+        {
+            static LILEX: &[u8] = include_bytes!("../assets/fonts/Lilex-Regular.ttf");
+            static IBM_PLEX: &[u8] = include_bytes!("../assets/fonts/IBMPlexSans-Regular.ttf");
+            if let Err(e) = cx.text_system().add_fonts(vec![
+                std::borrow::Cow::Borrowed(LILEX),
+                std::borrow::Cow::Borrowed(IBM_PLEX),
+            ]) {
+                eprintln!("warning: failed to register embedded UI fonts: {e}");
+            }
+        }
         let bounds = Bounds::centered(None, size(px(1280.), px(820.)), cx);
         // Move the seed into the window builder (it is installed onto the cockpit,
         // which drives it after first paint). `Option` so it is consumed exactly once.
