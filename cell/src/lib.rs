@@ -71,6 +71,7 @@ pub mod stealth;
 /// `peer_exchange` to ship per-cell self-attestations. PI / accumulator
 /// logic lives in `dregg_turn::bilateral_schedule`.
 pub mod unilateral;
+pub mod vault;
 #[cfg(feature = "crypto")]
 pub mod value_commitment;
 #[cfg(feature = "crypto")]
@@ -206,6 +207,11 @@ pub use state::{
 #[cfg(feature = "crypto")]
 pub use stealth::{StealthAddress, StealthAnnouncement, StealthKeys, StealthMetaAddress};
 pub use unilateral::{UnilateralAttestation, UnilateralAttestationKind};
+pub use vault::{
+    Claim as VaultClaim, ClaimOutcome as VaultClaimOutcome, Condition as VaultCondition,
+    VaultError, VaultState, VaultTerms, claim as claim_vault, is_claimable_at as vault_claimable_at,
+    is_vault, open_vault,
+};
 #[cfg(feature = "crypto")]
 pub use value_commitment::{
     AssetEqualityError, AssetEqualityProof, BulletproofRangeProof, CommittedNote,
