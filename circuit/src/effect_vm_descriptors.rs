@@ -1968,7 +1968,7 @@ mod tests {
             }
         }
         assert_eq!(
-            n, 52,
+            n, 53,
             "expected the 36-member rotated cohort (28 v2-graduated + 8 widened) + the 6 fan-out \
              cap-open members (delegate/introduce/grantCap/revoke/refreshDelegation/revokeCapability \
              — each *CapOpenVmDescriptor2R24) + the 2 LIVE effect-general legs \
@@ -1976,11 +1976,12 @@ mod tests {
              (transferCapOpenTBVmDescriptor2R24, CapOpenTurnPins — the cap-open + 2 turn-identity \
              columns + 3 turn-identity PI pins welding src/actor/dst to the published turn) + the \
              FEE-IN-PROOF transfer (transferFeeVmDescriptor2R24 — the fee debited in-proof, 47 PIs) \
-             + THE WRITE-BEARING TAIL (`v3RegistryHeap` 45..50): heapWriteVmDescriptor2R24 (the \
-             Class-A heap-root recompute, `Rfix 56`) + the FIVE write-forcing cap-open wrappers \
-             (delegate/introduce/delegateAtten/revokeDelegation/refreshDelegation \
-             *WriteCapOpenVmDescriptor2R24 — the apex's `Rfix 1/10/11/14/55` re-pointed, guarantee A: \
-             the cap-tree / deleg-tree WRITE forced into the commitment). \
+             + THE WRITE-BEARING TAIL (`v3RegistryHeap` 45..51): heapWriteVmDescriptor2R24 (the \
+             Class-A heap-root recompute, `Rfix 56`) + the SIX write-forcing cap-open wrappers \
+             (delegate/introduce/delegateAtten/revokeDelegation/revokeCapability/refreshDelegation \
+             *WriteCapOpenVmDescriptor2R24 — the apex's `Rfix 1/10/11/14/55` re-pointed plus the \
+             revokeCapability cap-tree REMOVE route-forge close, guarantee A: the cap-tree / \
+             deleg-tree WRITE forced into the commitment). \
              The Signature-pinned capOpenAttenuateV3/transferCapOpenV3 were DELETED (Stage D)."
         );
     }
