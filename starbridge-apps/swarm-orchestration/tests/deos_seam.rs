@@ -263,6 +263,21 @@ fn the_executor_re_enforces_a_replayed_epoch_is_refused() {
     let board = cclerk.cell_id();
     let worker = birth_worker(&executor, &cclerk, b"worker");
 
+    // HONEST-ACCEPT FIRST: a dispatch that ADVANCES the epoch (1 -> 2) is admitted
+    // — so the reject below is provably caused by the epoch NOT advancing (a
+    // replay), not a setup error that fails every dispatch.
+    fire_dispatch(
+        &board_app(&cclerk, &executor),
+        &AuthRequired::None,
+        &cclerk,
+        &executor,
+        Worker::A,
+        worker,
+        100,
+        "a-task",
+    )
+    .expect("an epoch-advancing dispatch (1 -> 2) must be admitted");
+
     // A STALE dispatch: meter advances (a within-budget 100) but epoch stays 1 (not 2).
     let stale = dispatch_effects(board, Worker::A, worker, 100, 1, 100, "a-task");
     let action = cclerk.make_action(board, "dispatch", stale);
@@ -280,12 +295,13 @@ fn the_executor_re_enforces_a_replayed_epoch_is_refused() {
         "the executor refuses on the StrictMonotonic(EPOCH) caveat, got: {msg}"
     );
 
-    // The meter did NOT move (anti-ghost — the whole turn aborts on the refused caveat).
+    // The meter did NOT move past the honest dispatch's 100 (anti-ghost — the
+    // refused replay aborts the whole turn, committing nothing on top of it).
     let after = executor.cell_state(board).unwrap();
     assert_eq!(
         after.fields[SPENT_A_SLOT as usize],
-        field_from_u64(0),
-        "the refused replay committed nothing"
+        field_from_u64(100),
+        "the refused replay committed nothing — the meter still holds the honest dispatch's 100"
     );
 }
 

@@ -360,6 +360,21 @@ fn commit_with_under_threshold_sig_refused() {
         proposer.federation_id(),
         turn_nonce,
     );
+    // HONEST-ACCEPT FIRST: aggregating K (= COMMITTEE_K) honest shares over the
+    // SAME message DOES produce a valid QC — so the reject below is provably
+    // caused by being under threshold, not by a bad message/committee setup.
+    let k_shares: Vec<(usize, PartialSignature)> = members
+        .iter()
+        .take(COMMITTEE_K as usize)
+        .map(|m| (m.index, committee.sign_share(m, &message)))
+        .collect();
+    let honest_qc = committee
+        .aggregate(&k_shares, &message)
+        .expect("K honest shares must aggregate into a valid QC");
+    committee
+        .verify(&honest_qc, &message)
+        .expect("the honest K-share QC must verify against this message");
+
     let one_share: Vec<(usize, PartialSignature)> = vec![(
         members[0].index,
         committee.sign_share(&members[0], &message),

@@ -239,6 +239,33 @@ fn the_executor_re_enforces_a_rewound_pending_root_on_propose_is_refused() {
         }
     });
 
+    // HONEST-ACCEPT FIRST: an authorized member's propose that ADVANCES the
+    // pending root (5 -> 6, monotone-forward) is accepted — so the reject below
+    // is provably caused by the rewind (5 -> 1), not the membership tooth or any
+    // setup error.
+    let mut forward = cclerk.make_action(
+        cell,
+        "propose_table_update",
+        vec![dregg_app_framework::Effect::SetField {
+            cell,
+            index: PENDING_PROPOSAL_ROOT_SLOT as usize,
+            value: field_from_u64(6),
+        }],
+    );
+    forward.witness_blobs = vec![dregg_turn::action::WitnessBlob::merkle_path(
+        dregg_turn::executor::single_member_membership_proof(&cclerk.public_key().0),
+    )];
+    executor
+        .submit_action(&cclerk, forward)
+        .expect("a monotone-forward propose by an authorized member must be accepted");
+    // Restore the baseline pending root for the rewind attempt.
+    executor.with_ledger_mut(|ledger| {
+        if let Some(c) = ledger.get_mut(&cell) {
+            c.state
+                .set_field(PENDING_PROPOSAL_ROOT_SLOT as usize, field_from_u64(5));
+        }
+    });
+
     // A REWOUND pending root on a propose turn: pending 5 -> 1. `Monotonic` refuses.
     let mut rewind = cclerk.make_action(
         cell,
@@ -291,6 +318,26 @@ fn the_executor_re_enforces_a_vote_that_swaps_the_table_is_refused() {
                 .set_field(PENDING_PROPOSAL_ROOT_SLOT as usize, field_from_u64(1));
         }
     });
+
+    // HONEST-ACCEPT FIRST: the SAME vote WITHOUT the route-table swap (it only
+    // tallies, advancing the pending root) is accepted — so the reject below is
+    // provably caused by the added route-table swap, not the membership tooth or
+    // a setup error.
+    let mut honest_vote = cclerk.make_action(
+        cell,
+        "vote_on_proposal",
+        vec![dregg_app_framework::Effect::SetField {
+            cell,
+            index: PENDING_PROPOSAL_ROOT_SLOT as usize,
+            value: field_from_u64(2),
+        }],
+    );
+    honest_vote.witness_blobs = vec![dregg_turn::action::WitnessBlob::merkle_path(
+        dregg_turn::executor::single_member_membership_proof(&cclerk.public_key().0),
+    )];
+    executor
+        .submit_action(&cclerk, honest_vote)
+        .expect("a vote that only tallies (no route-table swap) must be accepted");
 
     let mut forged = cclerk.make_action(
         cell,
@@ -354,6 +401,36 @@ fn a_non_member_signer_is_refused_at_the_real_sender_authorized_stark() {
     let (cclerk, executor) = agent(0x6b);
     seed(&executor);
     let cell = cclerk.cell_id();
+
+    // HONEST-ACCEPT FIRST: with the committee root set to the FIRING SIGNER's own
+    // membership root, the SAME propose (carrying the signer's own membership
+    // proof) is ACCEPTED — so the reject below is provably caused by the signer
+    // falling outside the authorized set, not a malformed proof/action.
+    executor.with_ledger_mut(|ledger| {
+        if let Some(c) = ledger.get_mut(&cell) {
+            c.state.set_field(
+                2, // GOVERNANCE_COMMITTEE_ROOT_SLOT
+                dregg_turn::executor::single_member_authorized_root(&cclerk.public_key().0),
+            );
+            c.state
+                .set_field(PENDING_PROPOSAL_ROOT_SLOT as usize, field_from_u64(0));
+        }
+    });
+    let mut honest = cclerk.make_action(
+        cell,
+        "propose_table_update",
+        vec![dregg_app_framework::Effect::SetField {
+            cell,
+            index: PENDING_PROPOSAL_ROOT_SLOT as usize,
+            value: field_from_u64(1),
+        }],
+    );
+    honest.witness_blobs = vec![dregg_turn::action::WitnessBlob::merkle_path(
+        dregg_turn::executor::single_member_membership_proof(&cclerk.public_key().0),
+    )];
+    executor
+        .submit_action(&cclerk, honest)
+        .expect("a member signer's propose (root = own membership root) must be accepted");
 
     // A stranger's pk (NOT the firing signer's). Seed slot 2 to the stranger's membership
     // root so the firing signer is provably outside the authorized set.
