@@ -131,7 +131,7 @@ live-node = ["dep:reqwest"]
 # async) deps out of this headless, `cargo test`-able build: the cipherclerk +
 # token surface we surface (identities, mint/attenuate/delegate, cell_id) is in
 # the SDK's un-gated core.
-embedded-executor = ["dep:dregg-turn", "dep:dregg-cell", "dep:dregg-types", "dep:dregg-sdk", "dep:dregg-coord", "dep:dregg-token", "dep:dregg-userspace-verify", "dep:dregg-firmament", "dep:starbridge-web-surface", "dep:deos-web-cells", "dep:dregg-persist", "dep:dregg-doc"]
+embedded-executor = ["dep:dregg-turn", "dep:dregg-cell", "dep:dregg-types", "dep:dregg-sdk", "dep:dregg-coord", "dep:dregg-token", "dep:dregg-userspace-verify", "dep:dregg-firmament", "dep:starbridge-web-surface", "dep:deos-web-cells", "dep:dregg-persist", "dep:dregg-doc", "dep:dregg-captp"]
 
 # OPT-IN real-content rendering. `servo` pulls `servo-render` (the SWGL software
 # rasterizer + the cap-gated `render_dregg_page` content-tile entry) so the
@@ -328,6 +328,17 @@ deos-web-cells = { path = "../deos-web-cells", optional = true }
 # already pulls, so cargo resolves IDENTICAL crate instances (its `Cell` IS our
 # `Cell`, its `CommitRecord.touched_cells` ARE our ledger cells).
 dregg-persist = { path = "../persist", optional = true }
+# THE CapTP NETLAYER — the REAL wire the reflexive distributed image (n>1) dials.
+# `dregg-captp`'s `netlayer::{InProcessNetlayer, NetConnection, NetSession}` (the
+# OCapN/Goblins transport abstraction + its in-process instance) is what
+# `src/netlayer_image.rs` resolves a `RemoteImage` over: a `MirrorFrame` request/
+# response (FetchCell/CellSnapshot) carried on `NetConnection::send`/`recv`, served
+# by an `ImageResponder` at the inbound mirror-cap's authorized depth (never
+# amplifying). captp path-deps the SAME `../types`/`../cell` this crate already
+# pulls (its `CellId`/`PeerId` UNIFY with ours) and is wire-free (no tokio/quinn;
+# blake3 + x25519 + dregg-lean-ffi, the SAME Lean link `dregg-sdk` already brings).
+# Gated on `embedded-executor` (the gpui-free, `cargo test`-able surface).
+dregg-captp = { path = "../captp", optional = true }
 # THE SERVO RENDER LANE — the HOST SWGL render path that IS deos's compositor
 # render pass (Stage A of docs/desktop-os-research/SERVO-ON-SEL4.md). Default
 # `swgl-standalone` features ONLY (swgl's CPU-only C++ rasterizer + gleam + the real

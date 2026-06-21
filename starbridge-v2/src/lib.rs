@@ -60,6 +60,20 @@ pub mod affordance;
 #[cfg(feature = "embedded-executor")]
 pub mod web_cells;
 
+// WHOLE-CELL TRANSCLUSION — a document/desktop embeds an ENTIRE peer cell as a
+// per-viewer attenuated VIEW (vs `web_cells`'s field-VALUE quote). The concrete
+// substrate-backed `ChildResolver` for the composition algebra
+// (`dregg_doc::composition`): `WholeCellTransclusion::{embed, project_for,
+// reshare_to}` over the REAL `TranscludedField` (provenance/anti-forge/no-rot) +
+// `Membrane` (per-viewer meet, reshare non-amp) + `AffordanceSurface::project_for`.
+// `ComposedCellDocument::resolve_for` resolves a document COMPOSED FROM whole cells
+// per-viewer — the runtime resolution sibling of the patch-core `composition.rs`
+// structural operator (they meet at the §2.3 resolver seam). gpui-free,
+// `cargo test`-able (pure model over the membrane, like `web_cells`).
+// See docs/deos/DOC-CELL-COMPOSITION.md §3.4.
+#[cfg(feature = "embedded-executor")]
+pub mod cell_transclusion;
+
 // The DREGGVERSE navigation — "what links here", the verified per-viewer query on
 // the witness-graph. VENDORED byte-identical from the committed
 // `dregg_app_framework::dreggverse_map` (a thin pure navigation over the REAL
@@ -302,6 +316,45 @@ pub mod circuit_inspector;
 #[cfg(feature = "embedded-executor")]
 pub mod cv_provenance;
 
+// THE REFLEXIVE DISTRIBUTED IMAGE (n > 1) — one dregg image inspects/debugs/branches
+// a REMOTE one across distance (docs/deos/REFLEXIVE-DISTRIBUTED-IMAGE.md +
+// FIRMAMENT-REFLEXIVE-SUBSTRATE.md §4). `remote_mirror` is the static read face (a
+// `MirrorCap` = a real `dregg_firmament::Capability` over a `Target::Distributed`
+// cell × a `MirrorDepth` attenuation axis; the read/write split is
+// `viewSurface_confers_no_edge`). `remote_mirror_live` is the live face (a `Live`
+// mirror follows the remote dynamics tail; a `ReadState` mirror is refused —
+// `viewState_confers_no_dynamics`). `netlayer_image` is the WELD that makes n > 1 a
+// WIRE FACT: a `RemoteImage` resolved over a REAL `dregg_captp` `NetConnection` (the
+// `MirrorFrame` request/response over `send`/`recv`, served by an `ImageResponder`
+// at the inbound mirror-cap's authorized depth — never amplifying). gpui-free,
+// `cargo test`-able (the in-process netlayer fabric, no sockets).
+#[cfg(feature = "embedded-executor")]
+pub mod remote_mirror;
+#[cfg(feature = "embedded-executor")]
+pub mod remote_mirror_live;
+#[cfg(feature = "embedded-executor")]
+pub mod netlayer_image;
+
+// BRANCH-AND-STITCH — distributed time-travel as two first-class effects:
+// `EnterVirtualization` (a cap-confined fork of a PAST config whose side-effects are
+// structurally imaginary — `branch_cannot_drain_main`) and `Stitch` (the
+// pushout-correct, explicitly-lossy settlement gated by Settlement Soundness —
+// authority read at the SETTLEMENT TIP). The operable Rust face of the proven Lean
+// `Dregg2.Deos.BranchStitch` + `Dregg2.Circuit.SettlementSoundness` keystones.
+// `distributed_timetravel` is the runnable two-party collaborative-rewind scenario
+// over a `SharedTimeline`. gpui-free, `cargo test`-able. See
+// docs/deos/{DISTRIBUTED-TIMETRAVEL-SEMANTICS,BRANCH-AND-STITCH-PROTOCOL}.md.
+#[cfg(feature = "embedded-executor")]
+pub mod branch_stitch;
+#[cfg(feature = "embedded-executor")]
+pub mod distributed_timetravel;
+// THE TWO-IMAGE FIRMAMENT runnable — TWO in-process dregg images on ONE
+// `InProcessNetlayer` that mirror+reflect each other's cells over a DIALED captp
+// session, REFUSE the write edge across the wire, and branch+stitch a shared past
+// with the settlement gate read at the dialed tip. n > 1 made a wire fact.
+#[cfg(feature = "embedded-executor")]
+pub mod two_image_firmament;
+
 #[cfg(feature = "embedded-executor")]
 pub use presentable::{
     CommittingGadget, FocusTarget, Gadget, GadgetError, GadgetField, GadgetInput, GadgetKind,
@@ -398,3 +451,24 @@ pub use shell::{Layout, Scene, SceneItem, Shell, ShellError};
 pub use surface::{Rect, Surface, SurfaceCapability, SurfaceId, SurfaceKind};
 #[cfg(feature = "embedded-executor")]
 pub use world::{demo_genesis, demo_world, CommitOutcome, DemoSeed, World};
+
+// THE REFLEXIVE DISTRIBUTED IMAGE (n > 1) re-exports.
+#[cfg(feature = "embedded-executor")]
+pub use remote_mirror::{
+    FixtureImage, MirrorCap, MirrorDepth, MirrorRefusal, RemoteImage, RemoteMirror, RemoteReflection,
+};
+#[cfg(feature = "embedded-executor")]
+pub use remote_mirror_live::{LiveMirror, LiveRefusal, LiveStep, LiveTail};
+#[cfg(feature = "embedded-executor")]
+pub use netlayer_image::{ImageResponder, MirrorFrame, NetlayerImage, ResponderError};
+#[cfg(feature = "embedded-executor")]
+pub use branch_stitch::{
+    Atom, BranchCap, BranchDebit, CrossPartyResolution, DocGraph, MainFrontier, SettleOutcome,
+    Stitch, StitchCap, VirtualBranch,
+};
+#[cfg(feature = "embedded-executor")]
+pub use distributed_timetravel::{
+    run_collaborative_rewind, AlternateHistory, BranchEdit, Party, RewindRun, SharedTimeline, Tick,
+};
+#[cfg(feature = "embedded-executor")]
+pub use two_image_firmament::{run_two_image_firmament, TwoImageOutcome, TwoImageRefusal};

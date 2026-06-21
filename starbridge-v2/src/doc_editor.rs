@@ -45,7 +45,7 @@ use dregg_cell::CellId;
 use dregg_doc::{
     Alternative, Author, ConflictRegion, ExecutorDrivenDoc, Op, Patch, RegionResolutions, Regime,
     Rendered, ResolutionChoice, Segment, content, resolutions, resolve_connect_by, resolve_field,
-    resolve_keep_by, walk_atoms, AtomId,
+    resolve_keep_in, walk_atoms, AtomId,
 };
 use dregg_turn::TurnError;
 
@@ -425,15 +425,17 @@ impl DocEditor {
     }
 
     /// **RESOLVE a prose conflict by CHOOSING** one alternative (`keep`) and
-    /// tombstoning the heads of the others. Commits the resolving patch as a real
-    /// cap-gated turn.
+    /// tombstoning each dropped alternative WHOLE (head + its exclusively-owned
+    /// tail, via the graph-aware `resolve_keep_in`). Commits the resolving patch as
+    /// a real cap-gated turn — so a dropped multi-atom branch cannot leak its tail
+    /// and re-form a fresh antichain.
     pub fn resolve_prose_keep(
         &mut self,
         keep: AtomId,
         drop: &[AtomId],
         author: DocAuthor,
     ) -> EditOutcome {
-        let patch = resolve_keep_by(author.author(), keep, drop);
+        let patch = resolve_keep_in(self.doc.graph(), author.author(), keep, drop);
         self.commit_edit(patch, author)
     }
 
@@ -467,7 +469,8 @@ impl DocEditor {
     /// `resolver` authors any chosen resolution (its receipt is under that author).
     pub fn conflict_views(&self, resolver: DocAuthor) -> Vec<InlineConflict> {
         let rendered = self.rendered();
-        let menu: Vec<RegionResolutions> = resolutions(&rendered, resolver.author());
+        let menu: Vec<RegionResolutions> =
+            resolutions(self.doc.graph(), &rendered, resolver.author());
         rendered
             .conflicts()
             .zip(menu.into_iter())

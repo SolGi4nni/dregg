@@ -36,7 +36,7 @@ pub struct NodeStatus {
 }
 
 /// `GET /api/cells` entry. Mirrors `api::CellListEntry`.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct CellListEntry {
     pub id: String,
     /// THE EPOCH: signed (issuer wells carry −supply).
