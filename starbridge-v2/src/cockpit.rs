@@ -707,6 +707,14 @@ pub struct Cockpit {
     /// cell (the inspector inspects its own view state); when false, it focuses the
     /// drafted domain cell. This is the live "inspect the inspector" switch.
     inspector_reflexive: bool,
+    /// Browser-style navigation HISTORY of the cockpit's UI state (the nav-API
+    /// `capture_nav` snapshot + its `nav_key`). Every navigation appends; the
+    /// back/forward controls (← → and ⌘[ / ⌘]) restore through it. The
+    /// programmatic nav API made interactive.
+    nav_hist: Vec<(String, CockpitNavState)>,
+    nav_cursor: usize,
+    /// Suppresses history recording while a back/forward restore is in flight.
+    nav_jumping: bool,
     /// The [`Spotter`] search query (the ⌘K-style box). Each typed char re-runs the
     /// universal search; a hit click re-focuses the inspector.
     moldable_query: String,
@@ -1002,6 +1010,136 @@ impl Cockpit {
             NavAction::TimeNext => self.time_step_forward(cx),
             NavAction::TimePrev => self.time_step_back(cx),
         }
+    }
+
+    // === NAVIGATION HISTORY (browser-style back/forward over the UI state) ===
+
+    /// Record the current UI state into the navigation history (called once per
+    /// render, after `witness_tab`). Appends only when the `nav_key` changed,
+    /// truncating any forward history — exactly like a browser's back-stack.
+    fn record_nav(&mut self) {
+        if self.nav_jumping {
+            return;
+        }
+        let key = self.nav_key();
+        if self.nav_hist.is_empty() {
+            self.nav_hist.push((key, self.capture_nav()));
+            self.nav_cursor = 0;
+            return;
+        }
+        if self.nav_hist[self.nav_cursor].0 != key {
+            self.nav_hist.truncate(self.nav_cursor + 1);
+            self.nav_hist.push((key, self.capture_nav()));
+            self.nav_cursor = self.nav_hist.len() - 1;
+            if self.nav_hist.len() > 128 {
+                self.nav_hist.remove(0);
+                self.nav_cursor = self.nav_cursor.saturating_sub(1);
+            }
+        }
+    }
+
+    fn can_nav_back(&self) -> bool {
+        self.nav_cursor > 0
+    }
+    fn can_nav_forward(&self) -> bool {
+        self.nav_cursor + 1 < self.nav_hist.len()
+    }
+
+    /// Step back to the previous UI state (← / ⌘[). Restores the captured nav
+    /// state; the `nav_jumping` guard keeps the restore out of the history.
+    fn nav_back(&mut self, cx: &mut Context<Self>) {
+        if !self.can_nav_back() {
+            return;
+        }
+        self.nav_cursor -= 1;
+        let st = self.nav_hist[self.nav_cursor].1.clone();
+        self.nav_jumping = true;
+        self.restore_nav(&st, cx);
+        self.nav_jumping = false;
+        cx.notify();
+    }
+
+    /// Step forward to the next UI state (→ / ⌘]).
+    fn nav_forward(&mut self, cx: &mut Context<Self>) {
+        if !self.can_nav_forward() {
+            return;
+        }
+        self.nav_cursor += 1;
+        let st = self.nav_hist[self.nav_cursor].1.clone();
+        self.nav_jumping = true;
+        self.restore_nav(&st, cx);
+        self.nav_jumping = false;
+        cx.notify();
+    }
+
+    /// THE NAVIGATION BAR — browser-style back/forward + a "you are here"
+    /// breadcrumb + a live "what can I do here" quick-nav strip (the available
+    /// navigations as one-click chips). The programmatic nav API, surfaced.
+    fn nav_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let back_color = if self.can_nav_back() { theme::accent() } else { theme::muted() };
+        let fwd_color = if self.can_nav_forward() { theme::accent() } else { theme::muted() };
+        // the current location as a legible breadcrumb (tab · sub-coords)
+        let here = self.nav_key();
+        let (tab, sub) = here.split_once('|').unwrap_or((here.as_str(), ""));
+        let crumb = if sub.is_empty() {
+            tab.to_string()
+        } else {
+            format!("{tab} · {}", sub.replace(';', " · "))
+        };
+        // the within-surface navigations available right now, as one-click chips
+        let actions = self.available_nav();
+        let show_chips = self.active_tab() != Tab::Home && !actions.is_empty();
+
+        let mut bar = div()
+            .flex()
+            .items_center()
+            .gap_1()
+            .px_2()
+            .py_1()
+            .border_b_1()
+            .border_color(theme::border())
+            .bg(theme::panel())
+            .child(small_button(cx, "nav-back", "←", back_color, Cockpit::nav_back))
+            .child(small_button(cx, "nav-fwd", "→", fwd_color, Cockpit::nav_forward))
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme::muted())
+                    .px_2()
+                    .child(format!("⌖ {crumb}")),
+            );
+
+        if show_chips {
+            let mut strip = div().flex().items_center().gap_1().flex_1();
+            strip = strip.child(div().text_xs().text_color(theme::muted()).child("·"));
+            for (i, (label, action)) in actions.into_iter().enumerate() {
+                let act = action;
+                strip = strip.child(
+                    div()
+                        .id(("nav-here", i))
+                        .px_2()
+                        .py_0p5()
+                        .rounded_md()
+                        .bg(theme::panel_hi())
+                        .border_1()
+                        .border_color(theme::border())
+                        .text_xs()
+                        .text_color(theme::text())
+                        .cursor_pointer()
+                        .hover(|s| s.bg(theme::border()))
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |this, _ev, _w, cx| {
+                                this.apply_nav(&act, cx);
+                                cx.notify();
+                            }),
+                        )
+                        .child(label),
+                );
+            }
+            bar = bar.child(strip);
+        }
+        bar
     }
 
     /// Select the active tab by (case-insensitive) name — matched against each
@@ -1324,6 +1462,9 @@ impl Cockpit {
             // focus/present-idx now ride `inspector_view` (the M3 view cell).
             inspector_view,
             inspector_reflexive: false,
+            nav_hist: Vec::new(),
+            nav_cursor: 0,
+            nav_jumping: false,
             moldable_query: String::new(),
             moldable_lens: MoldableLens::Cell,
 
@@ -2723,6 +2864,16 @@ impl Cockpit {
         if cmd && key == "k" {
             self.palette.toggle();
             cx.notify();
+            return;
+        }
+
+        // ⌘[ / ⌘] — browser-style navigation back/forward through the UI history.
+        if cmd && key == "[" {
+            self.nav_back(cx);
+            return;
+        }
+        if cmd && key == "]" {
+            self.nav_forward(cx);
             return;
         }
 
@@ -7697,6 +7848,9 @@ impl Render for Cockpit {
         // (`active_tab()`) — the §3.4 `render(workspace_subgraph)` selector is now
         // cell-driven, not a Rust field. Clean ⟹ no commit (idempotent).
         self.witness_tab();
+        // NAV HISTORY: record this frame's UI state so back/forward (← → / ⌘[ ⌘])
+        // can step through wherever you've been (the nav API made navigable).
+        self.record_nav();
         let palette_open = self.palette.is_open();
         div()
             .id("cockpit-root")
@@ -7758,6 +7912,7 @@ impl Render for Cockpit {
                     .flex_col()
                     .flex_1()
                     .h_full()
+                    .child(self.nav_bar(cx))
                     .child(self.tab_bar(cx))
                     .child(div().flex_1().overflow_hidden().child(self.workspace(cx))),
             )
