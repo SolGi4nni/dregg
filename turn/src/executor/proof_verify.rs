@@ -660,6 +660,29 @@ impl TurnExecutor {
         //     `SetVerificationKey` (permissions / vk.hash folded into r23) AND `Refusal` (the deployed
         //     `apply_refusal` now writes the audit into the EXT `fields_root`, which
         //     `compute_authority_digest_felt` folds — `REFUSAL_AUDIT_EXT_KEY`).
+        //
+        // SETPERMS/SETVK NOW IN-CIRCUIT (the VK-epoch STAGE B perms/VK weld, `B_PERMS = 33` /
+        // `B_VK = 34`): the setPermissions / setVK writes are no longer anchored off-cell for a light
+        // client. The deployed `setPermsVmDescriptor2R24` / `setVKVmDescriptor2R24` carry the LIVE
+        // perms/VK weld (`EffectVmEmitRotationV3.rotateV3WithPermsVKGate` → `permsVKWeldGate`) FORCING
+        // the committed AFTER perms/vk-digest sub-limb (33/34) EQUAL to the in-circuit declared param
+        // (`params[0]`, PI-anchored via `effects_hash`). That sub-limb is absorbed by `wire_commit`
+        // into the published `B_STATE_COMMIT` → the wide v9 NEW_COMMIT, so a forged post-perms/post-VK
+        // (a post-cell differing ONLY in perms/vk) is UNSAT through `verify_vm_descriptor2` ALONE — NO
+        // trusted post-cell, NO `apply_effect_to_cell` re-derivation. The SDK light-client verify
+        // (`full_turn_proof::verify_effect_vm_rotated_with_cutover`) runs exactly that descriptor check
+        // and NEVER reaches this off-cell anchor, so setPerms/setVK are FORCED-ON-WIRE light-client-
+        // verifiable. (Witness: `circuit/tests/vk_epoch_perms_vk_light_client_binding.rs` — a perms-/
+        // vk-only forged post-cell rejects with `failed constraints = [#64]`, the weld, the anchor not
+        // in the loop.) For setPerms/setVK the PI-`ROT_PI_COUNT` (46) authority-digest pin below — limb
+        // 24, which folds the SAME perms/vk plus the unchanged-by-these-effects residue — is therefore
+        // REDUNDANT BELT-AND-SUSPENDERS on the full-node leg only; `apply_effect_to_cell` for these two
+        // effects writes ONLY `cell.permissions` / `cell.verification_key`, exactly the sub-limbs the
+        // weld already binds. The pin stays (the descriptor still pins PI 46 over a placeholder-witness
+        // reconstruction, so dropping the override here would red honest full-node proofs); retiring the
+        // PI-46 pin itself is a VK-affecting descriptor change deferred to the anchor-cutover flag-day
+        // (VK-EPOCH-PLAN STAGE F). `Refusal` still rides this anchor genuinely (its `fields_root` audit
+        // is NOT yet welded on the record-digest path).
         //   * LIFECYCLE limb 29 (`lifecycle_felt_cell`): `CellSeal` / `CellUnseal` / `CellDestroy` (the
         //     lifecycle separates Live/Sealed/Destroyed + folds the death-cert) AND `ReceiptArchive`
         //     (the deployed `apply_receipt_archive` moves the lifecycle to `Archived`; the pin is
