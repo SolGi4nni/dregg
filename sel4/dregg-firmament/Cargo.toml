@@ -65,6 +65,18 @@ description = "The local↔distributed cap-gradation bridge — one (target, rig
 # parallel mock; the v0 thread kernel stays the default.
 process-pd = ["dep:libc"]
 
+# `process-pd-sandbox` adds the cross-platform OS-SANDBOXED confinement on top of
+# `process-pd` (Phase-0 of the sandboxed firmament, `docs/DREGG-DESKTOP-OS.md
+# §3`): a forked child PD, right after `fork()` and BEFORE its body runs, closes
+# every non-granted fd and drops ambient OS authority — macOS via a `(deny
+# default)` Seatbelt/`sandbox_init` profile (enforced + smoke-tested), Linux via
+# `unshare` namespaces + `prctl(NO_NEW_PRIVS)` + a default-deny seccomp-bpf
+# allow-list + Landlock (cfg-gated; compiles on macOS as a stub, runs on Linux).
+# It implies `process-pd`. OFF by default (the fast `cargo test` keeps the plain
+# thread/process backings). The Linux crates are pulled in ONLY on Linux via the
+# target-specific dependency table, so a macOS build never sees them.
+process-pd-sandbox = ["process-pd", "dep:seccompiler", "dep:landlock"]
+
 [dependencies]
 # The REAL dregg capability + attenuation semantics. Not reinvented.
 dregg-cell  = { path = "../../cell" }
@@ -76,6 +88,15 @@ dregg-types = { path = "../../types" }
 # the default thread-backed build gains no new dependency. It is ALREADY a
 # transitive dependency of the real dregg crates (no new lockfile surface).
 libc = { version = "0.2", optional = true }
+
+# The Linux confinement backend (`process-pd-sandbox`): a default-deny
+# seccomp-bpf allow-list + Landlock path-rules. Pulled in ONLY on Linux (the
+# target table), so a macOS build never resolves them; the macOS backend uses
+# the system `sandbox_init` FFI and needs no extra crate. These are optional and
+# gated on the `process-pd-sandbox` feature so a plain build adds nothing.
+[target.'cfg(target_os = "linux")'.dependencies]
+seccompiler = { version = "0.4", optional = true }
+landlock = { version = "0.4", optional = true }
 
 [dev-dependencies]
 # (tests live inline + in tests/)

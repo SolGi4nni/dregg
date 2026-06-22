@@ -1228,6 +1228,48 @@ impl ProcessKernel {
     where
         F: FnOnce(KernelClient, Vec<CapHandle>) -> i32,
     {
+        self.spawn_pd_inner(granted, body, false)
+    }
+
+    /// SPAWN a CONFINED PD — the SANDBOXED FIRMAMENT spawn (Phase-0). Identical
+    /// to [`Self::spawn_pd`] EXCEPT the child, right after `fork()` and BEFORE
+    /// running `body`, drops ambient OS authority: it closes every fd but its
+    /// control socket and self-applies the host sandbox (macOS Seatbelt / Linux
+    /// namespaces+seccomp+Landlock) via [`crate::sandbox::confine_child`]. After
+    /// confinement the child's ONLY channel is the firmament Endpoint (the
+    /// control socket) — it cannot `open` files, `socket` the network, or
+    /// `execve`. The MMU isolation of [`Self::spawn_pd`] is unchanged; this ADDS
+    /// the ambient-authority confinement [`Self::ISOLATION_FIDELITY`] named as
+    /// the remaining gap.
+    ///
+    /// If confinement fails (the sandbox could not be applied), the child
+    /// `_exit`s with [`CONFINE_FAILED_EXIT`] WITHOUT running `body` — fail-closed:
+    /// we NEVER run the payload un-confined.
+    ///
+    /// # Safety / fork discipline
+    /// Same as [`Self::spawn_pd`]; confinement runs in the child only, before
+    /// `body`, and is irreversible.
+    #[cfg(all(feature = "process-pd-sandbox", unix))]
+    pub fn spawn_pd_confined<F>(
+        &self,
+        granted: Vec<CapHandle>,
+        body: F,
+    ) -> Result<PdProcess, SpawnError>
+    where
+        F: FnOnce(KernelClient, Vec<CapHandle>) -> i32,
+    {
+        self.spawn_pd_inner(granted, body, true)
+    }
+
+    fn spawn_pd_inner<F>(
+        &self,
+        granted: Vec<CapHandle>,
+        body: F,
+        confine: bool,
+    ) -> Result<PdProcess, SpawnError>
+    where
+        F: FnOnce(KernelClient, Vec<CapHandle>) -> i32,
+    {
         // socketpair(AF_UNIX, SOCK_STREAM) — the bidirectional control channel.
         let mut fds = [0 as RawFd; 2];
         let rc = unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, fds.as_mut_ptr()) };
@@ -1251,6 +1293,26 @@ impl ProcessKernel {
             // ── CHILD (the PD process) ──
             // Close the parent's socket end; keep ours.
             unsafe { libc::close(parent_fd) };
+
+            // THE CONFINEMENT — Phase-0 of the sandboxed firmament. Applied
+            // BEFORE the body so the payload never runs un-confined. After this
+            // returns, the ONLY channel the child holds is `child_fd` (the
+            // firmament Endpoint): no file/network/exec ambient authority.
+            #[cfg(all(feature = "process-pd-sandbox", unix))]
+            if confine {
+                let c = crate::sandbox::Confinement::endpoint_only(child_fd);
+                if let Err(e) = crate::sandbox::confine_child(&c) {
+                    // Fail-closed: confinement is the WHOLE point. If it could
+                    // not be applied we refuse to run the body un-confined.
+                    eprintln!("[pd] CONFINEMENT FAILED — refusing to run body: {e}");
+                    use std::io::Write as _;
+                    let _ = std::io::stderr().flush();
+                    unsafe { libc::_exit(CONFINE_FAILED_EXIT) };
+                }
+            }
+            #[cfg(not(all(feature = "process-pd-sandbox", unix)))]
+            let _ = confine; // no sandbox feature → no confinement available.
+
             let client = unsafe { KernelClient::from_raw_fd(child_fd) };
             // Run the PD body with its granted handles. Its return is the exit
             // code. We `_exit` to avoid running the parent's atexit/destructors
@@ -1269,6 +1331,11 @@ impl ProcessKernel {
         Ok(PdProcess { pid, kernel_sock })
     }
 }
+
+/// The exit code a child `_exit`s with when [`ProcessKernel::spawn_pd_confined`]
+/// could NOT apply the OS confinement — fail-closed, the body never ran.
+#[cfg(all(feature = "process-pd-sandbox", unix))]
+pub const CONFINE_FAILED_EXIT: i32 = 99;
 
 #[cfg(test)]
 mod tests {

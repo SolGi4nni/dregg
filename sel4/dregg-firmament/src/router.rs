@@ -14,8 +14,8 @@
 use dregg_types::CellId;
 
 use crate::{
-    Backing, Capability, DistributedBacking, LocalBacking, Resolution, ResolveError, Rights,
-    SurfaceBacking, Target,
+    Backing, Capability, DistributedBacking, HostPdBacking, LocalBacking, Resolution, ResolveError,
+    Rights, SurfaceBacking, Target,
 };
 
 /// The router interface an app sees. ONE handle in, a resolution out — the
@@ -71,6 +71,10 @@ pub struct FirmamentRouter {
     /// renders as windows. A surface IS a cell, so this backing is the same
     /// real-executor machinery as [`Self::distributed`], aimed at the glass.
     pub surface: SurfaceBacking,
+    /// The host process-PD backing (the SANDBOXED-FIRMAMENT leg) — the registry
+    /// of confined forked-child endpoints a [`Target::HostPd`] cap is invoked
+    /// against over its firmament Endpoint.
+    pub host: HostPdBacking,
     /// For a distributed OR surface handle, which cell HOLDS the cap being
     /// invoked / delegated. (The app's own cell — the firmament knows it; the
     /// app does not pass it, keeping the handle a pure `(target, rights)`.)
@@ -86,8 +90,17 @@ impl FirmamentRouter {
             local,
             distributed,
             surface: SurfaceBacking::new(),
+            host: HostPdBacking::new(),
             holder_cell: None,
         }
+    }
+
+    /// Install the host process-PD backing (the seeded registry of confined
+    /// forked-child endpoints). Mirrors [`Self::with_surface`]: the firmament
+    /// supplies the registry; the app names only a `HostPd(id)` target.
+    pub fn with_host(mut self, host: HostPdBacking) -> Self {
+        self.host = host;
+        self
     }
 
     /// Bind the app's own cell (the holder of distributed / surface caps). The
@@ -125,6 +138,12 @@ impl Router for FirmamentRouter {
                     .holder_cell
                     .ok_or_else(|| ResolveError::Unauthorized("no holder cell bound".into()))?;
                 self.surface.invoke(holder, *cell, &cap.rights)
+            }
+            Target::HostPd { pd } => {
+                // A confined forked-child PD reached over its firmament Endpoint
+                // (the control socket) — a validated round-trip through the SAME
+                // `granted ⊆ held` gate the kernel's ValidityTable enforces.
+                self.host.invoke(*pd, &cap.rights)
             }
         }
     }
@@ -202,6 +221,18 @@ impl Router for FirmamentRouter {
                 // The recipient's handle is the same surface with narrowed rights.
                 Ok(Capability::surface(*cell, narrowed.rights))
             }
+            Target::HostPd { pd } => {
+                // Hand a confined host-PD's Endpoint to another holder with
+                // NARROWED rights: the backing-agnostic `Capability::attenuate`
+                // above already enforced `granted ⊆ held` (the SAME gate the
+                // kernel's ValidityTable re-checks at every invocation — defense
+                // in depth). Phase 0 reuses that attenuation: the recipient's
+                // handle is the same host-PD with the narrowed rights. (A
+                // separate-recipient SCM_RIGHTS fd-pass of the Endpoint is the
+                // next slice; Phase 0 covers the in-process attenuated grant.)
+                let _ = recipient; // Endpoint-only Phase 0 keeps the same addressee.
+                Ok(Capability::host_pd(*pd, narrowed.rights))
+            }
         }
     }
 }
@@ -214,6 +245,9 @@ impl FirmamentRouter {
     pub fn backing_of(cap: &Capability) -> Backing {
         if cap.target.is_local() {
             Backing::LocalKernel
+        } else if cap.target.is_host_pd() {
+            // A confined forked-child PD over its firmament Endpoint.
+            Backing::HostPdEndpoint
         } else {
             // Distributed cell or Surface — both go through the executor turn.
             Backing::DistributedTurn

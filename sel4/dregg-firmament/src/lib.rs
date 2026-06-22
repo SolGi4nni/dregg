@@ -88,6 +88,7 @@ use std::string::String;
 
 pub mod distributed;
 pub mod emulated_kernel;
+pub mod host_pd;
 pub mod local;
 pub mod microkit_facade;
 pub mod router;
@@ -130,12 +131,23 @@ pub mod executor_pd;
 #[cfg(all(feature = "process-pd", unix))]
 pub mod process_kernel;
 
+// The OS-SANDBOX confinement (Phase-0 of the cross-platform sandboxed
+// firmament). It closes the ambient-authority gap the process backing's MMU
+// isolation leaves open: a forked child PD, right after `fork()` and before its
+// body runs, closes every non-granted fd and drops ambient OS authority (macOS
+// Seatbelt / Linux namespaces+seccomp+Landlock), so its ONLY channel is the
+// firmament Endpoint. Unix-only, behind `process-pd-sandbox` (implies
+// `process-pd`); see `docs/DREGG-DESKTOP-OS.md §3`.
+#[cfg(all(feature = "process-pd-sandbox", unix))]
+pub mod sandbox;
+
 pub use compositor_pd::{
     cell_seed, decode_present, encode_present, label_of, CompositorPd, FrameCommit, Present,
     Refusal, RegionId, Scene, Surface, FRAMEBUFFER_TILES, LABEL_PRESENT, LABEL_PRESENT_OK,
     LABEL_PRESENT_REFUSED,
 };
 pub use distributed::DistributedBacking;
+pub use host_pd::HostPdBacking;
 pub use emulated_kernel::{
     EmulatedKernel, IpcError, Message, NotifyCap, ObjectId, ObjectType, ReplyToken, RetypeError,
 };
@@ -160,6 +172,12 @@ pub use process_kernel::{
     ObjectKind, PdProcess, ProcessKernel, ShmRegion, SpawnError, ValidityTable,
 };
 
+// The Phase-0 sandbox confinement surface (Unix + `process-pd-sandbox`).
+#[cfg(all(feature = "process-pd-sandbox", unix))]
+pub use sandbox::{confine_child, ConfineError, Confinement};
+#[cfg(all(feature = "process-pd-sandbox", unix))]
+pub use process_kernel::CONFINE_FAILED_EXIT;
+
 // Re-export the REAL dregg rights lattice and id so app code names the genuine
 // types, not a parallel model.
 pub use dregg_cell::{is_attenuation, AuthRequired};
@@ -172,6 +190,17 @@ pub use dregg_types::CellId;
 /// order (`is_attenuation` / `AuthRequired::is_narrower_or_equal`), which is
 /// the whole point: one rights model, two backings.
 pub type Rights = AuthRequired;
+
+/// The identity of a host PROCESS-backed PD (a confined forked child) — the
+/// addressee of a [`Target::HostPd`] capability.
+///
+/// On the v1 process backing a PD is a forked, OS-sandboxed child whose only
+/// channel is its control [`process_kernel`] socket. A host-PD cap names which
+/// such PD it reaches; the router resolves it by invoking that PD over the
+/// existing socketpair wire. The id is opaque (a kernel-assigned index), exactly
+/// like a [`Target::Local`] slot but for a process-PD rather than a CNode slot.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct HostPdId(pub u64);
 
 /// What a capability points at — the *target*, which determines the distance
 /// `n` and therefore the backing the router dispatches to.
@@ -208,6 +237,18 @@ pub enum Target {
         /// state the compositor renders.
         cell: CellId,
     },
+    /// A HOST PROCESS-backed PD — a forked, OS-sandboxed child whose ONLY
+    /// channel is the firmament Endpoint (the [`process_kernel`] control
+    /// socket). This is the SANDBOXED FIRMAMENT target: an invocation is a
+    /// validated round-trip over that socket; the child cannot open files /
+    /// reach the network / exec, so the Endpoint is the sole authority surface.
+    /// Attenuation reuses the same `granted ⊆ held` gate (the kernel's
+    /// `ValidityTable`); the bounds are strong-local (`n = 1`, one box). Only a
+    /// `HostPdId`, exactly like a [`Target::Local`] slot but for a process-PD.
+    HostPd {
+        /// Which host process-PD this capability reaches.
+        pd: HostPdId,
+    },
 }
 
 impl Target {
@@ -226,9 +267,21 @@ impl Target {
         Target::Surface { cell }
     }
 
+    /// A HOST PROCESS-PD target — a confined forked child reached over its
+    /// firmament Endpoint (the sandboxed-firmament target).
+    pub fn host_pd(pd: HostPdId) -> Self {
+        Target::HostPd { pd }
+    }
+
     /// Is this target local (resolves via the kernel/stub path)?
     pub fn is_local(&self) -> bool {
         matches!(self, Target::Local { .. })
+    }
+
+    /// Is this target a host process-PD (resolves via the firmament Endpoint /
+    /// control-socket path)?
+    pub fn is_host_pd(&self) -> bool {
+        matches!(self, Target::HostPd { .. })
     }
 
     /// Is this target a surface (a window — resolves via the executor turn
@@ -278,6 +331,18 @@ impl Capability {
     pub fn surface(cell: CellId, rights: Rights) -> Self {
         Capability {
             target: Target::surface(cell),
+            rights,
+        }
+    }
+
+    /// Mint a handle to a HOST PROCESS-PD (a confined forked child reached only
+    /// over its firmament Endpoint) with `rights`. Attenuates / delegates
+    /// through the SAME [`Capability::attenuate`] and router gates as every
+    /// other handle — the sandboxed-firmament target rides the generic
+    /// backing-agnostic machinery.
+    pub fn host_pd(pd: HostPdId, rights: Rights) -> Self {
+        Capability {
+            target: Target::host_pd(pd),
             rights,
         }
     }
@@ -371,6 +436,9 @@ pub enum Backing {
     LocalKernel,
     /// Resolved via the executor→net path (a real dregg turn).
     DistributedTurn,
+    /// Resolved via a HOST PROCESS-PD's firmament Endpoint (the sandboxed-
+    /// firmament control socket — a validated round-trip to a confined child).
+    HostPdEndpoint,
 }
 
 /// Errors a router can return when resolving a capability.
