@@ -21,6 +21,24 @@ abort = discard it (never resume). See `turnAsRollbackHandler`.
 The proof-carrying resolution of a `zkpromise` (binding/extractability of the
 underlying STARK) is a circuit obligation and is NOT merged into this Lean law
 (cf. `Boundary.lean` §8 caveat).
+
+**Scope of THIS module (read before citing it).** What is proved *here* is the
+one-shot/rollback-handler content: `commit_resumes_once`, `rollback_discards_continuation`,
+`one_shot_is_static`, `runtime_guard_is_double_spend`, and the `rfl`-level
+`four_faces_unify` (the four faces are interconvertible *views* of one `AwaitCore` —
+an extraction identity, not a deep theorem). This module does **not** by itself
+establish the CapTP promise-pipelining *soundness* claims. Those live in siblings and
+are what a "pipelining is verified" citation must point at:
+  * `Dregg2.Spec.Await` — the dataflow half: `PromiseGraph` acyclicity ⇒ topological
+    resolution (`pipeline_topological`, via Szpilrajn) and failure propagation
+    (`broken_promise_propagates[_trans]`); plus the temporal half
+    (`conditional_is_temporal_guard`, `resolve_monotone`, `expired_stays_expired`).
+  * `Dregg2.Exec.CapTP` — the *authority-not-bypassed* keystone
+    (`pipelining_preserves_seam` / `pipelining_undischarged_stays_undischarged`): a
+    queued eventual-send's authorization `Guard` survives promise resolution unchanged.
+The **distributed/multi-vat liveness** of pipelining (cross-vat GC of exported
+promises) is OPEN — see `Exec.CapTP` §4 (`-- OPEN: distributed_gc_liveness`), a
+documented residue, not a `sorry`.
 -/
 import Dregg2.Core
 import Dregg2.Laws
