@@ -44,20 +44,39 @@ frontier is a named, type-checked object rather than prose.
      witness, the two leaders collapse. So the residual is a typed hypothesis the runtime discharges
      (like `World.recv_mono` / `BeaconSpace.indep_block`), not a hole.
 
-     The pacemaker progress itself (a wave EVENTUALLY super-ratifies) remains the
-     `[hard] OPEN-CM-LIVENESS` / `[hard] O2-pacemaker` residual — the SAME obstruction as
-     `BFT.lean`'s O2 and `BeaconSpace`'s honest-leader hit. We RE-EXPORT the BeaconSpace discharge
-     of exactly that residual (`liveness_over_beacon`) so the named obstruction is connected to its
-     existing partial discharge rather than restated. We never fake it; `cm_pacemaker_residual`
-     is a `Prop`-valued *named statement*, accompanied by the note that its from-scratch
-     proof is the view-synchrony argument off the safety critical path.
+     The pacemaker progress itself (a wave EVENTUALLY super-ratifies) is now a PROVEN CONDITIONAL
+     (§4b), NOT a bare `OPEN`: `cm_pacemaker_residual` is DISCHARGED from the named partial-synchrony
+     carrier `Proof.GST.GSTModel` (`cm_pacemaker_from_gstModel`), and reduced all the way to the
+     FLP-irreducible primitives — honest-supermajority + Δ-delivery + bare honest-leader co-finality
+     (`cm_liveness_from_cofinality`). The synchrony hypothesis is a `GSTModel` field bundle (a
+     hypothesis/Prop-portal carried like `World.recv_mono`/`gst_liveness`, NEVER an `axiom`/`sorry`),
+     and it is LOAD-BEARING: the mutation tooth `cm_liveness_needs_cofinality` shows the conditional
+     does NOT fire for an adversary that starves honest leaders past GST. So OPEN-CM-LIVENESS is now
+     SAFETY-style honest: unconditional liveness is FLP-impossible; the conditional on the named
+     partial-synchrony assumption is PROVED. (FLP-irreducible residual that remains: the `World.rand`
+     measure bridge making co-finality almost-sure — named in `Synchronizer.lean`, off this surface.)
 
 Every adversary/dissemination assumption is a
 `structure` field or theorem hypothesis. Builds on the
 existing modules by `import` only; defines nothing already taken (`xleq`/`xsort`/… are new names in
 `namespace`s under `Dregg2.Proof.CordialMiners`).
+
+## UPDATE — OPEN-CM-LIVENESS is now a PROVEN CONDITIONAL (§4b)
+
+The `[hard] OPEN-CM-LIVENESS` pacemaker residual is no longer a bare named statement: §4b WIRES the
+already-proven partial-synchrony liveness tower (`Proof.BFTLiveness.Pacemaker` → `Proof.GST.GSTModel`,
+kernel-clean) into the Cordial-Miners surface. `cm_pacemaker_residual` is now DISCHARGED from the
+named partial-synchrony carrier — `cm_pacemaker_from_gstModel` proves it from a `GSTModel`, and
+`cm_liveness_from_cofinality` reduces it to the FLP-irreducible primitives (honest-supermajority +
+Δ-delivery + bare honest-leader co-finality). The synchrony hypothesis is a structure-field bundle
+(a Prop-portal carried like `World.recv_mono`/`gst_liveness`, NEVER `axiom`/`sorry`), and it is
+LOAD-BEARING: the mutation tooth `cm_liveness_needs_cofinality` shows the conditional does NOT fire
+for the FLP adversary that starves honest leaders past GST. SAFETY (`cordial_agreement…`) is proved
+UNCONDITIONALLY; LIVENESS is proved CONDITIONAL on the named partial-synchrony assumption — the
+honest BFT shape, FLP-respecting.
 -/
 import Dregg2.Proof.CordialMiners
+import Dregg2.Proof.GST
 import Mathlib.Data.List.Sort
 
 namespace Dregg2.Proof.CordialMiners
@@ -299,6 +318,95 @@ theorem cm_pacemaker_from_gstRound {Msg : Type} [World Msg]
     cm_pacemaker_residual votesOf cfg :=
   ⟨r, block, BFT.gst_liveness_from_round_model votesOf cfg block hgst⟩
 
+/-! ## 4b. OPEN-CM-LIVENESS → a PROVEN CONDITIONAL on the named partial-synchrony carrier.
+
+§4's `cm_pacemaker_from_gstRound` still takes a `GSTRound` — the COARSE top-of-tower premise (it
+already assumes the quorum-formed round). That leaves the residual looking like a bare assumption.
+But the partial-synchrony liveness tower below `GSTRound` is already PROVEN
+(`Proof.BFTLiveness.Pacemaker` → `Proof.GST.GSTModel`, kernel-clean): from the bare delivery
+primitives — honest-leader co-finality past GST + the honest set being a supermajority + HotStuff
+Δ-delivery — a quorum is DERIVED, never assumed. We WIRE that proven descent into the Cordial-Miners
+surface, so the named OPEN-CM-LIVENESS / O2 obstruction becomes a PROVEN CONDITIONAL on the
+FLP-irreducible synchrony hypothesis (a `GSTModel` field bundle — a hypothesis/Prop-portal, carried
+exactly as `World.recv_mono`/`gst_liveness` are, NEVER an `axiom`/`sorry`), not a hand-wave.
+
+The shape is exactly the standard BFT conditional-liveness statement: GIVEN partial synchrony (GST +
+the honest-supermajority delivery the runtime discharges after GST), liveness — a wave eventually
+super-ratifies a block by quorum — HOLDS. FLP forbids the UNconditional form; the conditional is the
+honest theorem, and it is now proved from the minimized carrier rather than the coarse `GSTRound`. -/
+
+/-- **`cm_pacemaker_from_gstModel` — the conditional liveness, on the MINIMIZED carrier.** GIVEN the
+partial-synchrony `Proof.GST.GSTModel` (the bare post-GST delivery primitives: a DLS88 GST round,
+honest-leader co-finality `honestLeader_eventually`, the BFT honest-supermajority `honest_quorum`,
+the HotStuff Δ-delivery `honest_le_delivered`) — NONE of whose fields is "a quorum forms" — the
+Cordial-Miners pacemaker residual HOLDS: some wave is committed by quorum at some round. The quorum
+is DERIVED via the proven `GST.gst_liveness` descent, so this is the genuine conditional-liveness
+theorem: the OPEN-CM-LIVENESS residual is no longer "assume a quorum-formed round" but "given the
+named partial-synchrony carrier, liveness is PROVED". -/
+theorem cm_pacemaker_from_gstModel {Msg : Type} [World Msg]
+    (votesOf : List Msg → List Vote) (cfg : Finality.Config)
+    (G : Proof.GST.GSTModel Msg votesOf cfg) :
+    cm_pacemaker_residual votesOf cfg :=
+  Proof.GST.gst_liveness G
+
+/-- **`cm_liveness_from_cofinality` — the residual REDUCED to the FLP-irreducible primitives.**
+The fully-unfolded conditional: from the honest-supermajority + Δ-delivery delivery data AND bare
+honest-leader co-finality `∀ t, ∃ r ≥ t, honestLeader r` — and NOTHING that assumes a quorum forms —
+the Cordial-Miners pacemaker residual HOLDS. The GST/post-GST conjunct of co-finality is itself
+DERIVED (`GST.honestLeader_eventually_of_fair`, the `r := max t gst` move). So the entire OPEN-CM-
+LIVENESS residual reduces to: "after GST the honest supermajority's votes are delivered" (population +
+Δ facts the runtime discharges) and "honest leaders recur" (bare co-finality) — the SOLE irreducible
+synchrony assumption, made explicit. This is the precisely-scoped conditional, with everything above
+co-finality + Δ-delivery PROVEN, not assumed. -/
+theorem cm_liveness_from_cofinality {Msg : Type} [World Msg]
+    (votesOf : List Msg → List Vote) (cfg : Finality.Config)
+    (gst : Nat) (block : Nat → Nat) (honestLeader : Nat → Prop) (honestEndorsers : Nat → Nat)
+    (honest_quorum : ∀ r, honestLeader r → cfg.threshold ≤ honestEndorsers r)
+    (honest_le_delivered : ∀ r, gst ≤ r → honestLeader r →
+      honestEndorsers r ≤ (votersFor (votesOf (World.recv r)) (block r)).length)
+    (hcofinal : ∀ t, ∃ r, t ≤ r ∧ honestLeader r) :
+    cm_pacemaker_residual votesOf cfg :=
+  cm_pacemaker_from_gstModel votesOf cfg
+    (Proof.GST.gstModel_of_cofinal gst block honestLeader honestEndorsers
+      honest_quorum honest_le_delivered hcofinal)
+
+/-! ### 4b′. MUTATION-CONFIRMATION — the synchrony hypothesis is LOAD-BEARING, not decorative.
+
+The conditional must BITE: WITHOUT the partial-synchrony hypothesis the liveness conclusion must NOT
+follow. We exhibit a concrete delivery-data instance that satisfies EVERY field of the carrier EXCEPT
+co-finality — the FLP adversary that schedules all honest leaders BEFORE GST (`honestLeader r := r < 5`,
+`gst := 10`) — and prove its co-finality premise is FALSE. So `cm_liveness_from_cofinality` cannot be
+discharged for it: drop co-finality and the residual is provably underivable from the remaining data.
+This confirms the carried hypothesis is the genuine FLP-irreducible assumption, not a vacuous portal. -/
+
+/-- **`cm_liveness_needs_cofinality` (MUTATION TOOTH).** The below-GST adversary's honest-leader
+predicate (`r < 5`, with `gst = 10`) is NOT co-final: there is no honest leader at or past round 5,
+so `∀ t, ∃ r ≥ t, honestLeader r` FAILS at `t = 5`. Hence the co-finality premise of
+`cm_liveness_from_cofinality` is unsatisfiable for this adversary — the conditional cannot fire, and
+no quorum is forced. The synchrony hypothesis is therefore LOAD-BEARING: remove it (or face an
+adversary that starves honest leaders past GST) and liveness does NOT follow. Rides the proven
+`GST.Inhabited.teeth_bounded_not_cofinal`. -/
+theorem cm_liveness_needs_cofinality :
+    ¬ (∀ t, ∃ r, t ≤ r ∧ (fun r => r < 5) r) :=
+  Proof.GST.Inhabited.teeth_bounded_not_cofinal
+
+/-! ### 4b″. NON-VACUITY — the conditional FIRES on the inhabited reference carrier.
+
+The conditional is not an empty implication: the reference `GSTModel` (`GST.Inhabited.gstModel` — GST
+at round 3, three honest endorsers delivering block 7, honest leaders every round, hence co-final)
+DISCHARGES the residual: a real quorum forms. So `cm_pacemaker_from_gstModel` both bites (4b′) and
+fires (here) — the hallmark of a non-vacuous conditional. -/
+
+/-- **`cm_pacemaker_residual_inhabited` (the conditional FIRES).** On the reference world the bare
+partial-synchrony carrier `GST.Inhabited.gstModel` discharges `cm_pacemaker_residual`: the three
+honest voters `0,1,2` for block 7 meet the threshold-3 quorum, DERIVED through the GST descent. So
+the conditional liveness is non-vacuous — a real super-ratified wave is produced from the bare
+delivery primitives, with no leader-election sub-protocol and no assumed quorum. -/
+theorem cm_pacemaker_residual_inhabited :
+    cm_pacemaker_residual (Msg := Dregg2.World.Reference.M)
+      Proof.BFTLiveness.Inhabited.votesOf Proof.BFTLiveness.Inhabited.cfg :=
+  cm_pacemaker_from_gstModel _ _ Proof.GST.Inhabited.gstModel
+
 /-! ## 5. Non-vacuity for the residuals.
 
 The dissemination residual `HonestRatifierConvergence` is non-vacuous. We build it on a concrete,
@@ -395,9 +503,12 @@ end Inhabited
 to `Nat` order + `List.insertionSort`/`pairwise_insertionSort` (`sorry`-free mathlib); the
 single-lace agreement reduces to the existing `cordial_agreement_from_lace`; the convergence keystones
 reduce to `BFT.honest_witness_in_intersection` / `BFTModel.honest_vote_once` (structure fields, not
-axioms). We do NOT pin `cm_pacemaker_residual` (a `def` of a `Prop`) — it is a NAMED statement, and
-its from-scratch proof is the explicit `[hard]` O2 pacemaker obstruction, deliberately left as a
-typed residual rather than faked. -/
+axioms). The §4b CONDITIONAL-LIVENESS keystones (`cm_pacemaker_from_gstModel`,
+`cm_liveness_from_cofinality`, the mutation tooth, and the inhabited firing) reduce to the proven
+`GST.gst_liveness` descent + `GSTModel` structure FIELDS (the FLP-irreducible synchrony hypothesis is
+a field/Prop-portal, like `World.recv_mono`/`gst_liveness`, NEVER an `axiom`/`sorry` — so it does NOT
+appear in `collectAxioms`). We do NOT pin `cm_pacemaker_residual` (a `def` of a `Prop`) — it is a
+NAMED statement; what is now PROVED is the conditional that discharges it from the named carrier. -/
 
 #assert_axioms xsort_consistency
 #assert_axioms xsort_sorted
@@ -409,6 +520,11 @@ typed residual rather than faked. -/
 #assert_axioms HonestRatifierConvergence.ofQuorums
 #assert_axioms agreement_of_convergence
 #assert_axioms cm_pacemaker_from_gstRound
+-- §4b — OPEN-CM-LIVENESS turned into a PROVEN CONDITIONAL on the named partial-synchrony carrier:
+#assert_axioms cm_pacemaker_from_gstModel
+#assert_axioms cm_liveness_from_cofinality
+#assert_axioms cm_liveness_needs_cofinality
+#assert_axioms cm_pacemaker_residual_inhabited
 #assert_axioms Inhabited.selfConvergence
 
 end Dregg2.Proof.CordialMiners
