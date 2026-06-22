@@ -433,7 +433,10 @@ impl AttenuationDial {
     pub fn target_cell(&self) -> Option<CellId> {
         match &self.held.target {
             Target::Distributed { cell } | Target::Surface { cell } => Some(*cell),
-            Target::Local { .. } => None,
+            // A local kernel-slot handle and a confined HOST-PD handle (an OS-
+            // sandboxed subprocess reached over the firmament Endpoint) are not
+            // dregg cells, so they carry no cell target.
+            Target::Local { .. } | Target::HostPd { .. } => None,
         }
     }
 
