@@ -12,6 +12,20 @@ Last sweep: 2026-06-13 (flagged-items burndown — removed ~14 landed/struck ite
 deduped the DreggDL/sel4/snapshot landings into git history, kept live tails).
 
 
+### ✅ SETTLEMENT SOUNDNESS — the lone open construction (2026-06-22): CLOSED.
+Named by THREE frontiers (`KeyLeak.lean` "the settlement seam", `DISTRIBUTED-TIMETRAVEL §6.3`
+settlement-time-authority, `SHARED-FORK-CONSENT`/`BRANCH-AND-STITCH` the linear DROP). Now a
+kernel-clean Lean theorem: `metatheory/Metatheory/SettlementSoundness.lean`. `settlement_soundness`
+(a settled turn exercised LIVE-at-tip authority = `granted⊆held` ∧ `honors`-at-tip) + the
+contrapositive `revoke_before_tip_unsettleable` (a revoke propagated to the tip ⇒ unsettleable,
+fail-closed; n=1 ⇒ immediate). Composed from `KeyLeak.reaches`/`isAttenuation` + `revoke_kills_leak`
+(= `Revocation.eventual_bounded_revocation`); the §4.4.1 binding obligation is a TYPED hypothesis
+(`BindsLiveAuthority`), never an axiom, with canonical inhabitant `liveSettlement` + non-vacuity
+(same cap settles inside the stale window, unsettleable past the propagation bound). Corollaries
+close each frontier: `leaked_then_revoked_cannot_settle`, `stitch_drops_revoked_authority`,
+`settled_root_attests_live_authority` (extends light-client unfoolability → authority-live-at-settlement).
+Axioms = exactly {propext, Classical.choice, Quot.sound} (keystone depends on NONE); `#assert_axioms` CI-gated.
+
 ### ⚑⚑⚑ DESKTOP EPOCH — THE COMPLETION GOAL (2026-06-22, autonomous): finish ALL of it.
 GOAL (ember, stop-hook): hermes/ados/zed integration · atlas refreshed w/ new screenshots · cockpit overhauled
 with gpui-component · document language+editor+viewer built out · matrix chat kickass+dregg-pilled · rehydratable
