@@ -485,3 +485,10 @@ pub use distributed_timetravel::{
 };
 #[cfg(feature = "embedded-executor")]
 pub use two_image_firmament::{run_two_image_firmament, TwoImageOutcome, TwoImageRefusal};
+
+// THE COCKPIT DOCK ENGINE — Zed's resizable-split + dock engine, vendored-and-
+// adapted (gpui-only, no `workspace`/`project`/collab). Hosts cockpit surfaces in
+// resizable/splittable/dockable panes. Not yet wired into `cockpit.rs`; see
+// `dock::` for the migration note. gpui-gated (it builds an `Element` tree).
+#[cfg(feature = "gpui-ui")]
+pub mod dock;
