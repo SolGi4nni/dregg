@@ -301,6 +301,211 @@ impl Cockpit {
         cx.notify();
     }
 
+    // === THE SELF-HOSTING DEV PANES (edit/build deos INSIDE deos) =========
+    // The deos EDITOR + TERMINAL, mounted on-demand as their own split panes.
+    // A dev surface is spawned FRESH on invocation (a live window) — never in
+    // `build_seed_pane` (which also runs in the headless bake), so the bake
+    // never spawns a PTY or touches disk. Each opens in its OWN single-surface
+    // pane grafted beside the active pane, with a self-contained tab bar (it
+    // does NOT sync the cockpit's witnessed `active_tab`, since these surfaces
+    // are not [`Tab`]s — their ids live in a high range, away from the 0..27
+    // tab ids).
+
+    /// The id base for the on-demand dev surfaces (editor/terminal), kept far
+    /// above the `0..27` [`Tab`] ids so a dev surface never collides with a
+    /// `TabSurface`. [`Self::next_dev_surface_id`] offsets it by the live pane
+    /// count so two terminals/editors open side by side with distinct ids.
+    const DEV_SURFACE_ID_BASE: u64 = 1000;
+
+    /// Defer an open (`open_terminal_pane` / `open_editor_pane`) so it runs with
+    /// a live `&mut Window` AFTER the current Context update unwinds. `dispatch`
+    /// is driven from the key/palette handler with only a `Context` in hand;
+    /// re-entering the cockpit's own window synchronously here would find its
+    /// window box already taken (we are inside its update). Deferring lets the
+    /// window return to its slot first, then [`App::with_window`] re-enters it
+    /// (the cockpit↔window mapping is already registered by render) and hands the
+    /// open method the `(&mut Window, &mut Context)` it needs.
+    #[cfg(feature = "dev-surfaces")]
+    pub(crate) fn open_dev_pane_deferred(
+        &mut self,
+        cx: &mut Context<Self>,
+        open: fn(&mut Cockpit, &mut Window, &mut Context<Cockpit>),
+    ) {
+        let weak = cx.entity().downgrade();
+        let entity_id = cx.entity_id();
+        cx.defer(move |app: &mut App| {
+            app.with_window(entity_id, |window, app| {
+                let _ = weak.update(app, |this, cx| open(this, window, cx));
+            });
+        });
+    }
+
+    /// Open a LIVE TERMINAL pane: spawn `$SHELL` on a real PTY and graft it as a
+    /// split beside the active pane. The terminal half of the self-hosting dev
+    /// loop — run cargo/git INSIDE deos. Spawn happens only here (a live window),
+    /// never in the headless bake. A spawn failure logs and is a no-op.
+    #[cfg(feature = "dev-surfaces")]
+    pub(crate) fn open_terminal_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        use starbridge_v2::dock::terminal_surface::TerminalPane;
+
+        let id = self.next_dev_surface_id();
+        let surface: Box<dyn CockpitSurface> = match TerminalPane::spawn_shell(id, cx) {
+            Ok(pane) => Box::new(pane),
+            Err(e) => {
+                // Fail-soft: a missing $SHELL / PTY error must not take down the
+                // cockpit — log and leave the workspace untouched.
+                eprintln!("open_terminal_pane: could not spawn shell: {e:#}");
+                self.last_outcome = Some(format!("could not open terminal: {e}"));
+                cx.notify();
+                return;
+            }
+        };
+        self.graft_dev_pane(surface, window, cx);
+    }
+
+    /// Open a LIVE EDITOR pane: a deos-zed editor rooted at the repo cwd, grafted
+    /// as a split beside the active pane. The editor half of the self-hosting dev
+    /// loop — edit deos's own sources INSIDE deos. Built only here (a live
+    /// window), never in the headless bake.
+    #[cfg(feature = "dev-surfaces")]
+    pub(crate) fn open_editor_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        use starbridge_v2::dock::editor_surface::EditorPane;
+
+        let id = self.next_dev_surface_id();
+        let root = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+        let fs = deos_zed::fs::RealFs::arc();
+        let surface: Box<dyn CockpitSurface> =
+            Box::new(EditorPane::new(id, fs, root, window, cx));
+        self.graft_dev_pane(surface, window, cx);
+    }
+
+    /// Mint a dev-surface id in the high range (away from the `0..27` tab ids).
+    /// Derived from the live pane count so repeated opens get distinct ids
+    /// without a persistent counter field; a dev surface lives alone in its own
+    /// pane, so uniqueness only needs to hold across simultaneously-open dev
+    /// panes, which a growing pane count provides.
+    #[cfg(feature = "dev-surfaces")]
+    fn next_dev_surface_id(&self) -> u64 {
+        let panes = self
+            .pane_group
+            .as_ref()
+            .map(|g| g.panes().len() as u64)
+            .unwrap_or(0);
+        Self::DEV_SURFACE_ID_BASE + panes
+    }
+
+    /// Build a single-surface pane holding `surface`, install the dev-pane tab
+    /// bar, and graft it as a right split beside the active pane (mirroring
+    /// [`Self::split_pane`]'s `PaneGroup::split` + active-pane + notify). Seeds
+    /// the pane group first if the window has not rendered yet.
+    #[cfg(feature = "dev-surfaces")]
+    fn graft_dev_pane(
+        &mut self,
+        surface: Box<dyn CockpitSurface>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // The dev pane grafts beside an existing pane, so make sure the base
+        // group exists (normally seeded on first render; this covers an open
+        // dispatched before the first paint).
+        self.ensure_pane_group(window, cx);
+
+        let weak = cx.entity().downgrade();
+        let new_pane = cx.new(|cx| {
+            let mut pane = Pane::with_items(vec![surface], window, cx);
+            Self::install_dev_pane_tab_bar(&mut pane, weak.clone());
+            pane
+        });
+
+        // Graft beside the current active pane (or the group root if none).
+        let anchor = self
+            .active_pane
+            .clone()
+            .or_else(|| self.pane_group.as_ref().map(|g| g.root.first_pane()));
+        if let (Some(group), Some(anchor)) = (self.pane_group.as_mut(), anchor) {
+            group.split(&anchor, &new_pane, SplitDirection::Right);
+        } else if self.pane_group.is_none() {
+            // No group at all (shouldn't happen after ensure) — make this pane
+            // the root so the surface is still reachable.
+            self.pane_group = Some(PaneGroup::new(new_pane.clone()));
+        }
+        self.active_pane = Some(new_pane);
+        cx.notify();
+    }
+
+    /// The dev pane's tab strip: the surface's own live label + a ⊞ split
+    /// control. Unlike [`Self::install_pane_tab_bar`], it does NOT sync the
+    /// cockpit's witnessed `active_tab` (a dev surface is not a [`Tab`]); its ⊞
+    /// splits this pane (seeding the new pane on the next tab, like elsewhere).
+    #[cfg(feature = "dev-surfaces")]
+    fn install_dev_pane_tab_bar(pane: &mut Pane, weak: WeakEntity<Cockpit>) {
+        pane.set_render_tab_bar(move |pane: &mut Pane, window, cx| {
+            let active = pane.active_item_index();
+            let mut row = div()
+                .flex()
+                .flex_wrap()
+                .items_center()
+                .gap_1()
+                .p_2()
+                .border_b_1()
+                .border_color(theme::border());
+
+            // The ⊞ SPLIT control — graft a fresh tab pane beside this one.
+            {
+                let weak = weak.clone();
+                let this_pane = cx.entity().downgrade();
+                row = row.child(
+                    div()
+                        .id("dev-pane-split")
+                        .px_2()
+                        .py_1()
+                        .rounded_md()
+                        .bg(theme::panel())
+                        .text_xs()
+                        .text_color(theme::accent())
+                        .cursor_pointer()
+                        .hover(|s| s.bg(theme::border()))
+                        .on_mouse_down(MouseButton::Left, move |_ev, window, app| {
+                            if let Some(src) = this_pane.upgrade() {
+                                let _ = weak.update(app, |cockpit, cx| {
+                                    cockpit.split_pane(&src, SplitDirection::Right, window, cx);
+                                });
+                            }
+                        })
+                        .child("⊞ split"),
+                );
+            }
+
+            // One clickable tab per surface (the dev pane holds one, but a later
+            // graft could add more) — activating just switches the body; it never
+            // stomps the cockpit's witnessed tab.
+            for (ix, item) in pane.items().iter().enumerate() {
+                let is_active = ix == active;
+                let label = item.tab_content(window, cx);
+                row = row.child(
+                    div()
+                        .id(("dev-pane-tab", ix))
+                        .px_2()
+                        .py_1()
+                        .rounded_md()
+                        .bg(if is_active { theme::panel_hi() } else { theme::panel() })
+                        .text_xs()
+                        .text_color(if is_active { theme::accent() } else { theme::muted() })
+                        .cursor_pointer()
+                        .hover(|s| s.bg(theme::border()))
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |pane: &mut Pane, _ev, window, cx| {
+                                pane.activate_item(ix, window, cx);
+                            }),
+                        )
+                        .child(label),
+                );
+            }
+            row.into_any_element()
+        });
+    }
+
     /// THE HOME panel — the warm LANDING portal (the boot view). Renders the
     /// [`LandingPortal`](starbridge_v2::landing::LandingPortal) text model
     /// (built fresh from the live [`World`], so its numbers are the running

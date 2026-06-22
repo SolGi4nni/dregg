@@ -85,6 +85,16 @@ pub enum CommandId {
     /// terminal-cell's caps; the command cap-gate REFUSES it (confined Bash).
     TerminalRunOutOfMandate,
 
+    // --- the SELF-HOSTING DEV PANES (edit/build deos INSIDE deos) ---
+    /// Open a LIVE TERMINAL pane — spawn `$SHELL` on a real PTY in its own split
+    /// pane (run cargo/git inside deos). The terminal half of the self-hosting
+    /// dev loop. (Spawns only in a live window; a no-op if dev-surfaces is off.)
+    OpenTerminalPane,
+    /// Open a LIVE EDITOR pane — a deos-zed editor rooted at the repo cwd in its
+    /// own split pane (edit deos's own sources inside deos). The editor half of
+    /// the self-hosting dev loop. (A no-op if dev-surfaces is off.)
+    OpenEditorPane,
+
     // --- the cap-first SHELL / compositor (surfaces over real cells) ---
     /// Open a cap-confined surface (window) viewing the selected cell.
     ShellOpenSelected,
@@ -175,7 +185,7 @@ impl CommandId {
             | GoEditor | GoShell | GoAgent | GoBuffer | GoTerminal | GoSwarm | GoGraph | GoOrgans
             | GoProofs | GoPowerbox => Category::Navigate,
             BufferType | BufferCommit | BufferReadOnlyWrite | TerminalRunInMandate
-            | TerminalRunOutOfMandate
+            | TerminalRunOutOfMandate | OpenTerminalPane | OpenEditorPane
             | SwarmCoordinatorEmitA | SwarmWorkerADrain | SwarmCoordinatorTransferAndWake
             | KillerDemoAdvance | KillerDemoRunAll | KillerDemoOverShare | KillerDemoReset => {
                 Category::Ide
@@ -242,6 +252,8 @@ impl CommandId {
             BufferReadOnlyWrite => "Buffer: ⚠ write a read-only mirror (watch it REFUSE)",
             TerminalRunInMandate => "Terminal: run an in-mandate command (COMMITS)",
             TerminalRunOutOfMandate => "Terminal: ⚠ run an out-of-mandate command (REFUSE)",
+            OpenTerminalPane => "Open Terminal pane (live $SHELL on a PTY · build deos inside deos)",
+            OpenEditorPane => "Open Editor pane (live deos-zed editor · edit deos inside deos)",
             ShellOpenSelected => "Shell: open the selected cell as a surface",
             ShellFocusFront => "Shell: focus the front surface (cap-gated)",
             ShellCloseFocused => "Shell: close the focused surface (cap-gated)",
@@ -325,6 +337,8 @@ impl CommandId {
             BufferReadOnlyWrite => "read-only refuse attenuate mirror no-amplify buffer write guard",
             TerminalRunInMandate => "command run terminal bash mandate commit receipt authorized",
             TerminalRunOutOfMandate => "command refuse terminal bash mandate out-of-reach confined guard",
+            OpenTerminalPane => "open terminal pane shell pty bash zsh cargo git build dev self-hosting live split console run command spawn",
+            OpenEditorPane => "open editor pane code edit deos-zed file source dev self-hosting live split ide author write text",
             ShellOpenSelected => "open window surface cell app spawn view",
             ShellFocusFront => "focus raise front bring forward window",
             ShellCloseFocused => "close window surface dismiss",
@@ -419,6 +433,8 @@ pub fn all_commands() -> Vec<Command> {
         // the A1 IDE developer surfaces (editor buffer + terminal)
         BufferType, BufferCommit, BufferReadOnlyWrite,
         TerminalRunInMandate, TerminalRunOutOfMandate,
+        // the self-hosting dev panes (edit/build deos INSIDE deos)
+        OpenTerminalPane, OpenEditorPane,
         // the A2 SWARM surface (multi-agent cap-coordination + notify-edge inbox)
         SwarmCoordinatorEmitA, SwarmWorkerADrain, SwarmCoordinatorTransferAndWake,
         // the four-surface KILLER DEMO (N5) — the pug-handoff artifact

@@ -59,6 +59,24 @@ impl Cockpit {
             CommandId::TerminalRunInMandate => self.terminal_run_in_mandate(cx),
             CommandId::TerminalRunOutOfMandate => self.terminal_run_out_of_mandate(cx),
 
+            // The self-hosting dev panes. Opening one needs a live `&mut Window`
+            // (a fresh surface mounts into the pane group), but `dispatch` runs
+            // from the key/palette handler with only a `Context`. So defer the
+            // open to re-enter the cockpit's window AFTER the current update
+            // unwinds (the window box is back in its slot) — then build + graft
+            // the pane with the window in hand. When `dev-surfaces` is off these
+            // are commands without a body (the palette stays comprehensive).
+            #[cfg(feature = "dev-surfaces")]
+            CommandId::OpenTerminalPane => {
+                self.open_dev_pane_deferred(cx, Cockpit::open_terminal_pane)
+            }
+            #[cfg(feature = "dev-surfaces")]
+            CommandId::OpenEditorPane => {
+                self.open_dev_pane_deferred(cx, Cockpit::open_editor_pane)
+            }
+            #[cfg(not(feature = "dev-surfaces"))]
+            CommandId::OpenTerminalPane | CommandId::OpenEditorPane => {}
+
             CommandId::SwarmCoordinatorEmitA => self.swarm_coordinator_emit_a(cx),
             CommandId::SwarmWorkerADrain => self.swarm_worker_a_drain(cx),
             CommandId::SwarmCoordinatorTransferAndWake => {
