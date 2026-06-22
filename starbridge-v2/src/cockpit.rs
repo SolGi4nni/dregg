@@ -3398,7 +3398,7 @@ impl Cockpit {
         let n_effects = self.sim_draft.effect_count();
         let predicted_ok = matches!(self.sim_outcome, Some(SimOutcome::Predicted { .. }));
 
-        let mut col = div().flex().flex_col().gap_2().p_3().size_full().overflow_hidden();
+        let mut col = div().flex().flex_col().gap_2().p_3().size_full().overflow_y_scroll();
         col = col.child(section_title(
             "SIMULATE · compose any intent · PREDICT before committing",
         ));
@@ -3837,7 +3837,7 @@ impl Cockpit {
         // `render(workspace_subgraph)` selector move — the focus is a cell read, not
         // a Rust field). The free in-memory draft is the live aim.
         let focus = self.inspector_view.doc().focus().or_else(|| cells.first().copied());
-        let mut col = div().flex().flex_col().gap_2().p_3().size_full().overflow_hidden();
+        let mut col = div().flex().flex_col().gap_2().p_3().size_full().overflow_y_scroll();
         col = col.child(section_title(
             "INSPECTOR · the moldable presentation set (Registry · Spotter · Halo)",
         ));
@@ -4154,7 +4154,7 @@ impl Cockpit {
         let w = self.world.borrow();
         let cells = &self.cells;
         let focus = self.inspect_act_focus.or_else(|| cells.first().copied());
-        let mut col = div().flex().flex_col().gap_2().p_3().size_full().overflow_hidden();
+        let mut col = div().flex().flex_col().gap_2().p_3().size_full().overflow_y_scroll();
         col = col.child(section_title("INSPECT-ACT · the messages it understands → send → re-inspect"));
         col = col.child(div().text_xs().text_color(theme::muted()).child(
             "The Smalltalk inspect→act→inspect loop: an inspected object shows the messages \
@@ -4263,7 +4263,7 @@ impl Cockpit {
     fn workspace_panel(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
         let cells = &self.cells;
         let target = cells.get(self.workspace_target_idx).copied().unwrap_or(self.workspace.draft().agent);
-        let mut col = div().flex().flex_col().gap_2().p_3().size_full().overflow_hidden();
+        let mut col = div().flex().flex_col().gap_2().p_3().size_full().overflow_y_scroll();
         col = col.child(section_title("WORKSPACE · doIt · printIt · inspectIt"));
         col = col.child(div().text_xs().text_color(theme::muted()).child(
             "The live evaluator: compose an expression (a turn), doIt to evaluate it in a \
@@ -4330,7 +4330,7 @@ impl Cockpit {
             let inspected = eval.inspect_it();
             if !inspected.is_empty() {
                 col = col.child(section_title("inspectIt · predicted post-state"));
-                let mut ibox = div().flex().flex_col().gap_1().max_h(px(260.)).overflow_hidden();
+                let mut ibox = div().flex().flex_col().gap_1();
                 for ins in inspected.iter().take(8) {
                     ibox = ibox.child(inspectable_row(ins));
                 }
@@ -4355,7 +4355,7 @@ impl Cockpit {
     fn wonder_panel(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
         let w = self.world.borrow();
         let room = WonderRoom::build(&w);
-        let mut col = div().flex().flex_col().gap_2().p_3().size_full().overflow_hidden();
+        let mut col = div().flex().flex_col().gap_2().p_3().size_full().overflow_y_scroll();
         col = col.child(section_title("WONDER · every cell a glowing pokeable object"));
         col = col.child(div().text_xs().text_color(theme::muted()).child(
             "The AOL-wonder front door: click around, absorb, no comprehension needed. Every \
@@ -4426,7 +4426,7 @@ impl Cockpit {
     /// composer, the turn builder, the attenuation dial, and the macaroon token loop.
     /// Each drives its REAL model methods; a refusal is surfaced as a feature.
     fn lanes_panel(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
-        let mut col = div().flex().flex_col().gap_2().p_3().size_full().overflow_hidden();
+        let mut col = div().flex().flex_col().gap_2().p_3().size_full().overflow_y_scroll();
         col = col.child(section_title("LANES · the moldable gadgets (validate → predict → commit)"));
         // the lane selector.
         let names = ["predicate composer", "turn builder", "attenuation dial", "token loop"];
@@ -4658,7 +4658,7 @@ impl Cockpit {
     /// rehydratable artifact. The GitHub-org-settings cap UX over the sound substrate
     /// (`docs/desktop-os-research/REHYDRATABLE-SURFACES.md`). gpui-free model below.
     fn share_panel(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
-        let mut col = div().flex().flex_col().gap_2().p_3().size_full().overflow_hidden();
+        let mut col = div().flex().flex_col().gap_2().p_3().size_full().overflow_y_scroll();
         col = col.child(section_title(
             "⤳ SHARE · sculpt → pare → verify → extend a revocable attenuated right to re-view",
         ));
@@ -4874,7 +4874,7 @@ impl Cockpit {
         // ── the audit trail of minted artifacts (members of the org) ─────────
         if !self.share_artifacts.is_empty() {
             col = col.child(section_title("shared artifacts (the audit trail — revocable per recipient)"));
-            let mut list = div().flex().flex_col().gap_1().max_h(px(220.)).overflow_hidden();
+            let mut list = div().flex().flex_col().gap_1();
             for (i, art) in self.share_artifacts.iter().enumerate() {
                 let live = art.is_live();
                 let id = SharedString::from(format!("share-revoke-{i}"));
@@ -5308,7 +5308,7 @@ impl Cockpit {
 
     /// The tab strip that switches the right-pane workspace.
     fn tab_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let mut row = div().flex().gap_1().p_2().border_b_1().border_color(theme::border());
+        let mut row = div().flex().flex_wrap().gap_1().p_2().border_b_1().border_color(theme::border());
         // M3 WIDEN — the active-tab highlight reads the witnessed cell selector too.
         let active_tab = self.active_tab();
         for t in Tab::ALL {
@@ -5422,7 +5422,7 @@ impl Cockpit {
             .gap_3()
             .p_4()
             .size_full()
-            .overflow_hidden()
+            .overflow_y_scroll()
             .child(masthead);
 
         for section in &portal.sections {
@@ -5473,7 +5473,7 @@ impl Cockpit {
         let layout = scene.layout;
         let focused = scene.focused;
 
-        let mut col = div().flex().flex_col().gap_2().p_3().size_full();
+        let mut col = div().flex().flex_col().gap_2().p_3().size_full().overflow_y_scroll();
         col = col.child(section_title("SHELL · cap-first compositor over real cells").mb_1());
         col = col.child(div().text_xs().text_color(theme::muted()).child(
             "Each dregg CELL is a cap-confined SURFACE. Every window op (focus · close · \
@@ -5702,7 +5702,7 @@ impl Cockpit {
         let w = self.world.borrow();
         let act = self.agent_surface.activity(&w, 24);
 
-        let mut col = div().flex().flex_col().gap_2().p_3().size_full();
+        let mut col = div().flex().flex_col().gap_2().p_3().size_full().overflow_y_scroll();
         col = col.child(section_title("AGENT · the grounded loop (provable activity as a surface)").mb_1());
         col = col.child(div().text_xs().text_color(theme::muted()).child(
             "An agent is an intricate LOOP; dregg grounds the ONE seam that matters — its ACTIONS, \
@@ -5879,7 +5879,7 @@ impl Cockpit {
         let view = SwarmView::build(&self.swarm, &w);
         drop(w);
 
-        let mut col = div().flex().flex_col().gap_2().p_3().size_full();
+        let mut col = div().flex().flex_col().gap_2().p_3().size_full().overflow_y_scroll();
         col = col.child(section_title("SWARM (A2) · multi-agent cap-coordination · notify-edge inbox").mb_1());
         col = col.child(div().text_xs().text_color(theme::muted()).child(
             "N agent cells coordinating as confined Surface cells. Every action is a cap-gated, \
@@ -6119,7 +6119,7 @@ impl Cockpit {
         let w = self.world.borrow();
         let panel = debug::render(&w, &self.debug_turn, &self.breakpoints);
 
-        let mut col = div().flex().flex_col().gap_1().p_3().size_full();
+        let mut col = div().flex().flex_col().gap_1().p_3().size_full().overflow_y_scroll();
         col = col.child(section_title("DEBUGGER · step · inspect · explain").mb_1());
         col = col.child(div().text_color(theme::text()).child(panel.title.clone()));
         col = col.child(div().text_xs().text_color(theme::muted()).mb_2().child(panel.subtitle.clone()));
@@ -6194,7 +6194,7 @@ impl Cockpit {
     /// onto the cockpit's shared inspector rows.
     fn cipherclerk_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let panel = cipherclerk::render(&self.clerk);
-        let mut col = div().flex().flex_col().gap_1().p_3().size_full();
+        let mut col = div().flex().flex_col().gap_1().p_3().size_full().overflow_y_scroll();
         col = col.child(section_title("CIPHERCLERK · identities · tokens · delegations").mb_1());
 
         // The REAL macaroon action loop (mint → attenuate → delegate → discharge),
@@ -6271,7 +6271,7 @@ impl Cockpit {
     /// `reflect` from the live world — never a parallel schema.
     fn objects_panel(&self) -> impl IntoElement {
         let w = self.world.borrow();
-        let mut col = div().flex().flex_col().gap_1().p_3().size_full();
+        let mut col = div().flex().flex_col().gap_1().p_3().size_full().overflow_y_scroll();
         col = col.child(section_title("OBJECTS · proofs · nullifiers · lifecycle").mb_1());
 
         // Lifecycle column: every cell's lifecycle state (the seal/destroy axis).
@@ -6315,7 +6315,7 @@ impl Cockpit {
     fn graph_panel(&self) -> impl IntoElement {
         let w = self.world.borrow();
         let g = starbridge_v2::graph::OcapGraph::build(&w);
-        let mut col = div().flex().flex_col().gap_1().p_3().size_full();
+        let mut col = div().flex().flex_col().gap_1().p_3().size_full().overflow_y_scroll();
         col = col.child(section_title("GRAPH · ocap delegation (multi-hop)").mb_1());
         col = col.child(
             div().text_xs().text_color(theme::muted()).child(format!(
@@ -6401,7 +6401,7 @@ impl Cockpit {
     fn organs_panel(&self) -> impl IntoElement {
         let w = self.world.borrow();
         let survey = starbridge_v2::organs::OrganSurvey::build(&w);
-        let mut col = div().flex().flex_col().gap_1().p_3().size_full();
+        let mut col = div().flex().flex_col().gap_1().p_3().size_full().overflow_y_scroll();
         col = col.child(section_title("ORGANS · live organ cell-state").mb_1());
         col = col.child(
             div().text_xs().text_color(theme::muted()).child(format!(
@@ -6456,7 +6456,7 @@ impl Cockpit {
     fn proofs_panel(&self) -> impl IntoElement {
         let w = self.world.borrow();
         let board = starbridge_v2::proofs::ProofBoard::build(&w, 16);
-        let mut col = div().flex().flex_col().gap_1().p_3().size_full();
+        let mut col = div().flex().flex_col().gap_1().p_3().size_full().overflow_y_scroll();
         col = col.child(section_title("PROOFS · attach + STARK verification status").mb_1());
         col = col.child(
             div().text_xs().text_color(theme::muted()).child(format!(
@@ -6521,7 +6521,7 @@ impl Cockpit {
         };
         let is_root = matches!(rights, dregg_cell::AuthRequired::None);
 
-        let mut col = div().flex().flex_col().gap_1().p_3().size_full().overflow_hidden();
+        let mut col = div().flex().flex_col().gap_1().p_3().size_full().overflow_y_scroll();
         col = col.child(
             section_title("WEB-OF-CELLS · browse the dregg:// docuverse natively").mb_1(),
         );
@@ -7129,7 +7129,7 @@ impl Cockpit {
         };
         let is_root = matches!(rights, dregg_cell::AuthRequired::None);
 
-        let mut col = div().flex().flex_col().gap_1().p_3().size_full().overflow_hidden();
+        let mut col = div().flex().flex_col().gap_1().p_3().size_full().overflow_y_scroll();
         col = col.child(
             section_title("WHAT-LINKS-HERE · Ted Nelson's two-way link, navigable").mb_1(),
         );
@@ -7413,7 +7413,7 @@ impl Cockpit {
         };
         let launched_count = self.launched_apps.len();
 
-        let mut col = div().flex().flex_col().gap_1().p_3().size_full().overflow_hidden();
+        let mut col = div().flex().flex_col().gap_1().p_3().size_full().overflow_y_scroll();
         col = col.child(
             section_title("POWERBOX · CapDesk — designate a held cap into a confined app").mb_1(),
         );
@@ -7760,7 +7760,7 @@ impl Cockpit {
         let v = BufferView::build(&self.editor_buffer, &w, Some(&self.editor_buffer_cap));
         drop(w);
 
-        let mut col = div().flex().flex_col().gap_2().p_3().size_full();
+        let mut col = div().flex().flex_col().gap_2().p_3().size_full().overflow_y_scroll();
         col = col.child(section_title("EDITOR · a text buffer as a cap-confined Surface cell").mb_1());
         col = col.child(div().text_xs().text_color(theme::muted()).child(
             "The buffer is backed by a REAL cell: its content DIGEST rides the cell's state, and \
@@ -7847,7 +7847,7 @@ impl Cockpit {
         let v = TerminalView::build(&self.terminal, &w);
         drop(w);
 
-        let mut col = div().flex().flex_col().gap_2().p_3().size_full();
+        let mut col = div().flex().flex_col().gap_2().p_3().size_full().overflow_y_scroll();
         col = col.child(section_title("TERMINAL · a command surface as a cap-confined Surface cell").mb_1());
         col = col.child(div().text_xs().text_color(theme::muted()).child(
             "A command is a CAP-GATED action: the terminal-cell holds the cap for what it may run / \
@@ -7939,7 +7939,7 @@ impl Cockpit {
     /// cockpit presents it line-by-line.
     fn editor_panel(&self) -> impl IntoElement {
         let text = edit::render_panel(&self.editor);
-        let mut col = div().flex().flex_col().p_3().size_full();
+        let mut col = div().flex().flex_col().p_3().size_full().overflow_y_scroll();
         col = col.child(section_title("LIVE EDITOR · author · validate · deploy").mb_1());
         for line in text.lines() {
             col = col.child(div().text_xs().text_color(theme::text()).font_family("Menlo").child(line.to_string()));
@@ -8061,10 +8061,11 @@ impl Render for Cockpit {
                     .h_full()
                     .border_r_1()
                     .border_color(theme::border())
-                    .child(div().flex_1().child(self.inspector()))
+                    .child(div().flex_1().overflow_y_scroll().child(self.inspector()))
                     .child(
                         div()
-                            .h(px(260.))
+                            .flex_1()
+                            .overflow_y_scroll()
                             .border_t_1()
                             .border_color(theme::border())
                             .bg(theme::panel())
@@ -8745,7 +8746,7 @@ impl Cockpit {
             TimeCockpitModel::build(&w, self.time_cursor, &self.meta_stack)
         };
 
-        let mut col = div().flex().flex_col().gap_2().p_3().size_full().overflow_hidden();
+        let mut col = div().flex().flex_col().gap_2().p_3().size_full().overflow_y_scroll();
         col = col.child(section_title(
             "⏳ TEMPORAL COCKPIT · time-travel · suspend · fractal meta-debug",
         ));
