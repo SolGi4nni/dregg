@@ -877,6 +877,7 @@ pub struct Cockpit {
     /// target + the active-pane border anchor. Kept in sync as panes are
     /// activated/split. `None` until the group is seeded.
     active_pane: Option<Entity<Pane>>,
+}
 
 /// A navigation action over the cockpit's pure-navigation controls — the edge
 /// vocabulary of the atlas's UI-exploration tree.

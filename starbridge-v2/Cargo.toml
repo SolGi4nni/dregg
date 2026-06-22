@@ -322,6 +322,11 @@ gpui-component = { path = "../../gpui-component/crates/ui", default-features = f
 # file (`default-features = false` + `no-lean-link`, mirroring `wasm/Cargo.toml`),
 # so wasm32 compiles the Rust fallback paths — a statement about wasm32's linker
 # (it cannot link libdregg_lean.a), never about which guarantees native has.
+# Test-only: shared_fork's consent-resolution test builds a signed executor receipt
+# (the ConditionProof) directly, matching conditional.rs's own TurnExecuted test.
+[dev-dependencies]
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 dregg-turn = { path = "../turn", optional = true }
 dregg-cell = { path = "../cell", optional = true }
