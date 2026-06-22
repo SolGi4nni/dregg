@@ -307,24 +307,17 @@ PROVABLE on the deployed sovereign path — NOT open holes. NOTE: another sessio
 routing in turn/src/executor/proof_verify.rs (stay out of that file). The prover surface (full_turn_proof.rs) is a chokepoint
 that sequences the live-lead work.
 
-## ⚑ delegateAtten SUBMASK+INSERT PROVE-THROUGH — the LogUp obstruction, 2026-06-21
-WELD closed the delegateAtten ROUTING SIGNAL (`is_attenuated_grant`: granted ⊊ held selects the submask
-wrapper `delegateAttenWriteCapOpenVmDescriptor2R24`, not plain `delegateWriteCapOpen`) + the submask-witness
-fill (HELD_MASK col 72 = anchor held mask, in `trace_rotated.rs` Insert arm) — both GREEN
-(`cap_write_delegate_atten_routes_to_submask_wrapper`, `…_descriptor_carries_insert_and_submask`). NAMED
-residual = the GENUINE end-to-end prove (`cap_write_delegate_atten_proves_and_verifies_light_client`,
-currently `#[ignore]` with the precise reason inline): constraints #106/#108 (membership-crown poseidon
-chip lookups) fail to balance under the p3 LogUp gadget ONLY when the custom submask table (id 5) coexists
-with the sorted-INSERT map_op on the `prove_effect_vm_cap_open` path. PROVEN-ADJACENT working cases bound it:
-SAME submask + UPDATE map_op proves end-to-end (`cap_open_attenuate_leg_proves_and_verifies_end_to_end`);
-SAME INSERT without submask proves end-to-end (`cap_write_delegate_proves_and_verifies_light_client`). The
-crown trace columns are BYTE-IDENTICAL to the passing plain-delegate run and the submask operands are valid
-(0x52 ⊑ 0xFF) on every row — so the obstruction is a LogUp/permutation-column interaction between the realized
-submask table and the INSERT openings, a circuit (plonky3-level) fix. NOT a soundness gap: an attenuated grant
-that cannot prove under the submask wrapper fail-closes (never laundered to the plain wrapper — the route is
-descriptor-bound). Closure shape: trace the p3 LogUp bus/permutation allocation for the submask+INSERT
-descriptor vs submask+UPDATE; likely the chip-table multiplicity or a permutation-challenge column the submask
-realization perturbs only when an INSERT opening is also present.
+## ✅ delegateAtten SUBMASK+INSERT PROVE-THROUGH — CLOSED (the "LogUp obstruction" was REFUTED), 2026-06-21
+The diagnosis once written here was WRONG: there was no p3 LogUp/permutation-column bug. The real cause was a
+one-bit FACET COPY-PASTE — `delegateAttenWriteCapOpenV3` carried `EFF_GRANT_CAPABILITY (1<<2)` where it needed
+`EFF_DELEGATION_OPS (1<<16)`. Fixed in `5fde9dd29`; the `#[ignore]` is gone and
+`cap_write_delegate_atten_proves_and_verifies_light_client` PROVES + light-client-VERIFIES at HEAD (re-verified
+2026-06-22). Lesson re-banked: a "plonky3-level" obstruction claim needs the column-level diff before it is
+believed — a mislabelled selector bit reads as a balance failure. (Unrelated, still `#[ignore]`'d with an
+accurate reason: the 3 `cap_open_self_verify.rs` attenuate CIRCUIT twins are redundant lower-level coverage
+that pass an EMPTY `map_heaps` against the now-firing Update map_op; the capability is GREEN at the SDK level
+via `cap_open_attenuate_leg_proves_and_verifies_end_to_end` — re-enable needs the BEFORE cap-tree map_heaps
+plumbed into their hand-built trace.)
 
 ## ⚑ REACT CIRCUIT WITNESS — the `reactSpendA` descriptor (the in-circuit grow-gate for `Effect::React`), 2026-06-21
 The first-class reactive effect landed at the EXECUTOR layer (Track 2): `Effect::Promise/Notify/React`

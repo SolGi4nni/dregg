@@ -221,8 +221,11 @@ fn cap_open_witness_and_appendix_are_genuine() {
 // (`generate_rotated_cap_write_base` over a real c-list) via an UPDATE-AT-KEY `CapTreeWriteOp` in
 // `circuit/src/effect_vm/trace_rotated.rs` (the parallel cap-write-Inserts agent's owned region). Re-enable
 // once that Update bridge lands. The descriptor (on-wire) + the forge floor are CLOSED.
-#[ignore = "RUST HANDOFF: attenuate cap-write needs UPDATE-AT-KEY CapTreeWriteOp + c-list in \
-            trace_rotated.rs (cap-write-Inserts agent's region). Descriptor + forge-detector CLOSED."]
+#[ignore = "REDUNDANT circuit-level twin: this hand-built-trace test passes an EMPTY map_heaps, but \
+            the attenuate UPDATE-AT-KEY map_op now FIRES (the `CapTreeWriteOp::Update` bridge landed in \
+            trace_rotated.rs) → 'no witness heap' UNSAT. To re-enable, plumb the BEFORE cap-tree leaf \
+            set as map_heaps (mirror sdk `cap_open_attenuate_leg_proves_and_verifies_end_to_end`). The \
+            capability itself is GREEN at the SDK level via that test; this twin is lower-level coverage."]
 #[test]
 fn cap_open_attenuate_self_verifies() {
     let desc = parse_vm_descriptor2(reg_json(CAP_OPEN_KEY)).expect("cap-open descriptor parses");
@@ -314,8 +317,11 @@ fn cap_open_attenuate_self_verifies() {
 // baseline prove at the top now requires the rotated cap-root advance witness (the attenuate map_op fires
 // on sel 48 after the silent-forge close). Re-enable with the UPDATE-AT-KEY `CapTreeWriteOp` route in
 // trace_rotated.rs (cap-write-Inserts agent's region). The descriptor + forge floor are CLOSED.
-#[ignore = "RUST HANDOFF: attenuate cap-write needs UPDATE-AT-KEY CapTreeWriteOp + c-list in \
-            trace_rotated.rs (cap-write-Inserts agent's region). Descriptor + forge-detector CLOSED."]
+#[ignore = "REDUNDANT circuit-level twin: this hand-built-trace test passes an EMPTY map_heaps, but \
+            the attenuate UPDATE-AT-KEY map_op now FIRES (the `CapTreeWriteOp::Update` bridge landed in \
+            trace_rotated.rs) → 'no witness heap' UNSAT. To re-enable, plumb the BEFORE cap-tree leaf \
+            set as map_heaps (mirror sdk `cap_open_attenuate_leg_proves_and_verifies_end_to_end`). The \
+            capability itself is GREEN at the SDK level via that test; this twin is lower-level coverage."]
 #[test]
 fn cap_open_attenuate_foreign_selector_row_is_unsat() {
     let desc = parse_vm_descriptor2(reg_json(CAP_OPEN_KEY)).expect("cap-open descriptor parses");
@@ -374,8 +380,11 @@ fn cap_open_attenuate_foreign_selector_row_is_unsat() {
 // attenuate cap-open also fires the rotated-limb map_op (sel 48) after the silent-forge close, so the
 // prove-through needs the rotated cap-root advance witness via the UPDATE-AT-KEY `CapTreeWriteOp` route in
 // trace_rotated.rs (cap-write-Inserts agent's region). The descriptor + forge floor are CLOSED.
-#[ignore = "RUST HANDOFF: attenuate cap-write needs UPDATE-AT-KEY CapTreeWriteOp + c-list in \
-            trace_rotated.rs (cap-write-Inserts agent's region). Descriptor + forge-detector CLOSED."]
+#[ignore = "REDUNDANT circuit-level twin: this hand-built-trace test passes an EMPTY map_heaps, but \
+            the attenuate UPDATE-AT-KEY map_op now FIRES (the `CapTreeWriteOp::Update` bridge landed in \
+            trace_rotated.rs) → 'no witness heap' UNSAT. To re-enable, plumb the BEFORE cap-tree leaf \
+            set as map_heaps (mirror sdk `cap_open_attenuate_leg_proves_and_verifies_end_to_end`). The \
+            capability itself is GREEN at the SDK level via that test; this twin is lower-level coverage."]
 #[test]
 fn cap_open_wide_proves_verifies_and_executor_anchors() {
     use dregg_circuit::descriptor_ir2::verify_vm_descriptor2;
