@@ -58,6 +58,40 @@ workspace. Six threads, each grounded by a 2026-06-22 explore-agent report (read
 ROADMAP (felt-wins-first): Phase-0 scroll + the async tab/act decoupling (immediate) → symbolic WitnessMode
 (the foundation, careful: touches executor+storage, ember-gated soundness) → dockable workspace (vendor Zed
 pane_group/dock) → Zed-in-deos (FirmamentFs) + terminal + Hermes (the desktop buildout).
+### DESKTOP EPOCH — grounded findings (the explore reports, 2026-06-22):
+- WM/LOGIN: the L5-L8 stack is ALREADY DOCUMENTED (docs/DREGG-DESKTOP-OS.md:33-90): L5 compositor-PD = "THE ONLY
+  NEW TCB" (sole framebuffer/HID caps, scene=verified cell, T1/T2/T3 teeth: non-overlap/label-bind/focus-route
+  — EXISTS compositor_pd.rs + gpui-free mirror compositor.rs); L6 shell+WM cells (untrusted; a WM = a
+  compositor-client that is ALSO a compositor to the apps it frames, Genode recursive-stacking; powerbox lives
+  here); L7 app cells + web surfaces; L8 cockpit = the master INTERFACE, a client NOT the root. Running code
+  collapses L6/L7/L8 into one process — the reframe = REALIZE the doc. NEW: the WM-arranging-FOREIGN-surfaces,
+  the session/login MANAGER (login=derive_raw root cell + powerbox grant root-cap-template; session=the c-list;
+  logout=revoke; polis=multi-user legitimacy floor), cockpit-as-app demotion. dock/{pane,surface}.rs vendored,
+  unwired = the WM layout-tree home. Phases: 2 app-PDs composited → WM arranges foreign surfaces (dock + grant_input
+  routing) → login hands root cap → demote cockpit. TCB stays tiny: compositor-PD + trusted-path SAK + login mgr.
+- SERVO: the "mozjs elephant" wall is PASSED — libservo BUILDS+LINKS on this host (63MB rlib, SpiderMonkey static
+  libs, fingerprints Jun 19); the docs' "remaining wall = mozjs build" is STALE. "always-servo" = a deos-full
+  feature flip (libservo-on for the windowed app, swgl-standalone for headless lanes; do NOT flip the bare crate
+  default → forces the whole workspace to grind mozjs). Web-shell render path EXISTS end-to-end (render_url_to_frame
+  → RgbaFrame → present_frame → compositor content-digest gate); NEVER-executed step = rasterize a real page +
+  a URL bar (gpui here has NO text input but the palette char-accumulator). Fetch/nav cap-gate REAL (allowlist +
+  no-amp); the net SOCKET (captp Netlayer::dial) + fs/cache-cap = named gaps. webview.rs:133 glow_gl_api stub.
+- SANDBOXING (the jail): the seam EXISTS + is HALF-BUILT. process_kernel.rs (process-pd feature) ALREADY forks
+  MMU-isolated child PDs + a socketpair Endpoint + ShmRegion + a ValidityTable (cap-unforgeability). Honest gap
+  (its own ISOLATION_FIDELITY:822): the fork gets memory isolation but NO ambient-authority confinement (inherits
+  fds, can open/socket/execve). THE WHOLE FIX = one site (process_kernel.rs:1250, between fork and body): close
+  all fds but the control socket, then OS-sandbox; + a Target::HostPd router variant (lib.rs:182, router.rs:111)
+  reusing the existing wire. LINUX (cleanest, FIRST): namespaces (NEWUSER|NEWNET=empty-net|NEWNS|NEWPID) +
+  seccomp-bpf + Landlock + close_range + SCM_RIGHTS (crates: nix/seccompiler/landlock/birdcage); gated only by
+  distro userns policy. MACOS: posix_spawn+CLOEXEC_DEFAULT + child-SELF-sandbox_init((deny default) SBPL; crate
+  gaol) — deprecated but works, child must self-sandbox. WINDOWS: Job-object+handle-list (easy) → restricted-token
+  → AppContainer (hard, raw FFI). CAP→OS: file-cap→Landlock rule; net-cap→passed socket (SCM_RIGHTS = an ocap);
+  surface-cap→ShmRegion; Endpoint→the one inherited fd. Two gates agree (dregg is_attenuation + OS sandbox).
+  PHASE 0 = "a sandboxed child reaching ONLY a firmament Endpoint" = ~one file + one test. The n=1 jail is NEAR.
+THE META-PATTERN across all reports: deos is WELD-NOT-BUILD — the desktop L5-L8 stack is documented, the sandbox
+seam half-built, the servo elephant compiled, the dock vendored, symbolic mode over already-lazy machinery. The
+epoch is REALIZING a designed system, not inventing one. OPEN (ember's call): polis-depth in v1 login (thin
+authenticate→root-cap that grows into the polis, vs full legitimacy-floor now).
 
 ## ✅ ATLAS ANOMALIES ALL RESOLVED — tab removed (2026-06-22)
 The atlas's crawl-found anomalies are closed; the Anomalies tab is removed (the live finder is now
