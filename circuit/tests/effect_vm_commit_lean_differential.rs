@@ -1,4 +1,21 @@
-//! # THE COMMITMENT DIFFERENTIAL — deployed Rust `compute_commitment` ⟺ Lean model.
+//! # THE COMMITMENT-CONSTRUCTION DIFFERENTIAL — deployed Rust `compute_commitment` ⟺ Lean model.
+//!
+//! ## SCOPE (read first — what this is and is NOT)
+//!
+//! This is a STRUCTURAL differential on the per-cell COMMITMENT CONSTRUCTION: it checks that the
+//! deployed `CellState::compute_commitment` hash-tree (limb order, nesting, binding, non-vacuity)
+//! matches an INDEPENDENT re-fold over the Lean `effectVmLimbs` order. The "byte-identical" claims
+//! below are byte-identity of the COMMITMENT HASH TREE against that independent Lean-limb re-fold —
+//! NOT a serialization round-trip, and NOT executor EVAL AGREEMENT.
+//!
+//! It is NOT the Lean↔Rust EXECUTOR eval-agreement check. That faithfulness — the verified Lean
+//! executor and the deployed Rust circuit/executor computing the SAME post-state on the SAME input —
+//! is the CANONICAL denotational differential `ir2_denotational_differential.rs` (descriptor IR-v2
+//! denotation `Satisfied2` ⟺ deployed `Ir2Air::eval`) and the turn-side
+//! `dregg-turn/tests/lean_state_producer_differential.rs` (full post-state ledger `.root()` agreement
+//! on a real turn). This file grounds ONE leg those rely on: that the commitment the post-state root
+//! is built from has the proven limb shape. It does not, and does not claim to, witness eval
+//! agreement.
 //!
 //! The closed circuit-soundness crown (`metatheory/Dregg2/Circuit/StateCommit.lean`
 //! `lightclient_unfoolable_circuit_sound`) is over the abstract per-cell leaf and the

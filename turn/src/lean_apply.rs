@@ -1022,6 +1022,50 @@ pub fn execute_via_lean(
     Ok((ledger, committed))
 }
 
+/// THE DENOTATIONAL DIFFERENTIAL leg used by [`crate::lean_shadow::maybe_shadow_turn`]: reconstitute
+/// the verified Lean executor's FULL post-state from an already-run [`ShadowState`] and return its
+/// `.root()` — the per-cell-state digest (balance / nonce / 8 fields / cap_root / lifecycle residue)
+/// the shadow compares against the Rust executor's `post_state_hash`.
+///
+/// Unlike [`execute_via_lean`] this takes the pre-state as the captured [`lean_shadow::ShadowPreLedger`]
+/// snapshot (the only pre-state the live shadow path retains; the mutable `ledger` it has is already
+/// the POST-state) and the ALREADY-EXECUTED `ShadowState`, so it does NOT re-run the FFI. It builds a
+/// template `Ledger` from the snapshotted pre-state cells, then runs the SAME reconstitution
+/// (`wire_state_to_ledger` with the turn's deterministic cap/state ops) that `execute_via_lean` and
+/// `produce_via_lean` use — so the root it returns is the genuine verified post-state root.
+#[cfg(not(feature = "no-lean-link"))]
+pub(crate) fn lean_post_state_root(
+    turn: &Turn,
+    pre: &lean_shadow::ShadowPreLedger,
+    host: &ShadowHostCtx,
+    shadow_state: &dregg_lean_ffi::ShadowState,
+) -> Result<[u8; 32], ExtractError> {
+    // The template ledger the reconstitution starts from = the snapshotted PRE-state cells (so
+    // identity / permissions / c-list / program survive into the produced post-state, exactly as
+    // `wire_state_to_ledger`'s template contract requires).
+    let mut template = Ledger::new();
+    for cell in pre.cells.values() {
+        // A duplicate id cannot occur (the snapshot is keyed by CellId); ignore the (impossible)
+        // already-exists error rather than fail the whole comparison.
+        let _ = template.insert_cell(cell.clone());
+    }
+
+    let inv = invert_id_map(&pre.id_map);
+    let committed = shadow_state.verdict.committed;
+    let intro_expiry = host.block_height.saturating_add(host.intro_lifetime);
+    let cap_ops = collect_cap_ops(turn, intro_expiry);
+    let state_ops = collect_state_ops(turn, host.block_height);
+    let mut ledger = wire_state_to_ledger(
+        &shadow_state.state,
+        &inv,
+        &template,
+        &cap_ops,
+        &state_ops,
+        committed,
+    )?;
+    Ok(ledger.root())
+}
+
 /// Which executor produced the committed state, plus the verified-vs-Rust differential, for one
 /// producer-mode commit.
 #[derive(Debug, Clone)]

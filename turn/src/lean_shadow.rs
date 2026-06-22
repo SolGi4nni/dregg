@@ -138,6 +138,51 @@ pub fn capture_pre_state_if_eligible(turn: &Turn, ledger: &Ledger, host: ShadowH
     SHADOW_HOST.with(|slot| *slot.borrow_mut() = Some(host));
 }
 
+/// The STRENGTH of the agreement a shadow comparison actually established — so the harness never
+/// labels a commit-bit check as full executor agreement.
+///
+/// THE DENOTATIONAL DIFFERENTIAL (the directive's bar): a turn in the root-agreeing (swap-safe) set
+/// compares the FULL post-state — the verified Lean executor's reconstituted `.root()` against the
+/// Rust executor's `post_state_hash`, which both bind the whole per-cell commitment (balance / nonce
+/// / 8 fields / cap_root / lifecycle residue). Agreement on that root is genuine eval agreement
+/// (the two executors computed the SAME post-state on the SAME input), NOT a commit-bit coincidence.
+///
+/// For a turn OUTSIDE the root-agreeing set (a characterized root-GAP effect, or one that did not
+/// commit on both sides) the Lean-reconstituted root provably CANNOT byte-match Rust's (the wire
+/// model is lossier than the cell commitment — see [`producer_root_gap_effects`]), so the strongest
+/// HONEST claim there is commit-bit agreement. `CommitBitOnly` names that weaker check explicitly;
+/// it is never reported as full agreement.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ShadowAgreement {
+    /// Genuine DENOTATIONAL agreement: both executors committed AND the Lean-reconstituted post-state
+    /// `.root()` equals the Rust executor's `post_state_hash` (full per-cell-state agreement, not a
+    /// commit-bit coincidence). The `bool` is whether they agreed.
+    FullState { agreed: bool },
+    /// Commit-bit agreement ONLY — the weaker check. Used when the turn is outside the root-agreeing
+    /// set (a characterized root-gap effect) or did not commit on both sides, where the post-state
+    /// root cannot byte-match by construction. `agreed` is the commit-bit agreement.
+    ///
+    /// NAMED RESIDUAL: to upgrade these to `FullState` the root-gap effects need their lossy wire
+    /// fields bound into the commitment (the cap-reshape / descriptor-fix work tracked in
+    /// `docs/CIRCUIT-FUNCTIONAL-CORRECTNESS.md`); until then a commit-bit check is the honest claim.
+    CommitBitOnly { agreed: bool },
+}
+
+impl ShadowAgreement {
+    /// Whether the comparison agreed (at whatever strength it ran).
+    pub fn agreed(&self) -> bool {
+        match self {
+            ShadowAgreement::FullState { agreed } | ShadowAgreement::CommitBitOnly { agreed } => {
+                *agreed
+            }
+        }
+    }
+    /// Whether this was a genuine full post-state (denotational) comparison.
+    pub fn is_full_state(&self) -> bool {
+        matches!(self, ShadowAgreement::FullState { .. })
+    }
+}
+
 /// Shadow-execute eligible turns against the Lean kernel and log divergences.
 ///
 /// Uses the pre-execution snapshot stored by [`capture_pre_state_if_eligible`].
@@ -148,6 +193,19 @@ pub fn capture_pre_state_if_eligible(turn: &Turn, ledger: &Ledger, host: ShadowH
 /// verdict lets the caller (boundary-P1 / THE SWAP) treat a Lean REJECTION as a binding VETO under
 /// strict mode (`lean_vetoes` below) — the Lean kernel can only TIGHTEN the commit decision (reject
 /// what Rust accepts), never loosen it (it never launders a Rust rejection to a commit).
+///
+/// # The comparison is DENOTATIONAL where it can be (no laundered "agreement")
+///
+/// For a turn in the root-agreeing (swap-safe) set that BOTH executors commit, the shadow does NOT
+/// stop at the commit bit: it reconstitutes the verified Lean executor's FULL post-state ledger
+/// (`run_shadow_state` → `lean_apply::wire_state_to_ledger`) and compares its `.root()` to the Rust
+/// executor's `post_state_hash` — genuine eval agreement (the SAME post-state on the SAME input).
+/// A FULL-STATE divergence (commit bits match but the post-state roots differ) is a real finding the
+/// commit bit alone would MISS, logged at `dregg::lean_shadow::divergence`. Outside that set (a
+/// characterized root-gap effect, or a turn that did not commit on both sides) the post-state root
+/// cannot byte-match by construction, so the comparison is HONESTLY a commit-bit check (logged as
+/// such, [`ShadowAgreement::CommitBitOnly`]). The veto path is unaffected — it keys on the commit
+/// verdict, which this still returns.
 pub fn maybe_shadow_turn(
     turn: &Turn,
     ledger: &Ledger,
@@ -186,29 +244,25 @@ pub fn maybe_shadow_turn(
         }
 
         let kinds = turn_effect_kinds(turn).join("+");
-        match run_shadow(turn, &pre, &host) {
-            Ok(lean_committed) => {
-                let rust_committed = result.is_committed();
-                if lean_committed != rust_committed {
-                    // A live RUST↔LEAN divergence. Logged with the effect kinds so the operator
-                    // can map it straight to the divergence ledger / a marshaller gap.
-                    tracing::warn!(
-                        target: "dregg::lean_shadow::divergence",
-                        agent = ?turn.agent,
-                        effects = %kinds,
-                        lean_committed,
-                        rust_committed,
-                        "RUST↔LEAN divergence: commit-bit mismatch (apply.rs vs verified Lean executor)"
-                    );
-                } else {
-                    tracing::debug!(
-                        target: "dregg::lean_shadow",
-                        agent = ?turn.agent,
-                        effects = %kinds,
-                        committed = lean_committed,
-                        "lean shadow agrees"
-                    );
-                }
+        let rust_committed = result.is_committed();
+        // The Rust post-state root the committed receipt attests (the full per-cell-state digest).
+        // `None` when Rust did not commit (no receipt root to compare against).
+        let rust_post_root = match result {
+            TurnResult::Committed { receipt, .. } => Some(receipt.post_state_hash),
+            _ => None,
+        };
+
+        match run_shadow_state(turn, &pre, &host) {
+            Ok(shadow_state) => {
+                let lean_committed = shadow_state.verdict.committed;
+                // DENOTATIONAL leg: when the turn is root-agreeing and BOTH committed, reconstitute
+                // the verified executor's FULL post-state and compare its `.root()` to Rust's — the
+                // genuine eval-agreement check (not a commit-bit coincidence). Otherwise the post-state
+                // root cannot byte-match by construction, so we honestly fall back to the commit bit.
+                let agreement = compare_post_state(
+                    turn, &pre, &host, &shadow_state, lean_committed, rust_committed, rust_post_root,
+                );
+                log_shadow_outcome(turn, &kinds, lean_committed, rust_committed, agreement);
                 Some(lean_committed)
             }
             Err(e) => {
@@ -230,6 +284,88 @@ pub fn maybe_shadow_turn(
         SHADOW_HOST.with(|slot| slot.borrow_mut().take());
         let _ = (turn, result);
         None
+    }
+}
+
+/// Decide the STRENGTH of agreement and whether the executors agreed at that strength. A root-agreeing
+/// turn that both executors commit gets the genuine FULL post-state (denotational) comparison: the
+/// Lean executor's reconstituted `.root()` vs the Rust `post_state_hash`. Anything else is honestly a
+/// commit-bit comparison (the post-state root cannot byte-match by construction).
+#[cfg(not(feature = "no-lean-link"))]
+fn compare_post_state(
+    turn: &Turn,
+    pre: &ShadowPreLedger,
+    host: &ShadowHostCtx,
+    shadow_state: &dregg_lean_ffi::ShadowState,
+    lean_committed: bool,
+    rust_committed: bool,
+    rust_post_root: Option<[u8; 32]>,
+) -> ShadowAgreement {
+    // The full denotational comparison is meaningful only when (a) the turn is root-agreeing — the
+    // swap-safe set where the Lean-reconstituted root provably tracks Rust's — and (b) BOTH executors
+    // committed (so both produced a real post-state root). Off that set, fall back to commit-bit.
+    if !(forest_is_root_agreeing(turn) && lean_committed && rust_committed) {
+        return ShadowAgreement::CommitBitOnly {
+            agreed: lean_committed == rust_committed,
+        };
+    }
+    let Some(rust_root) = rust_post_root else {
+        return ShadowAgreement::CommitBitOnly { agreed: true };
+    };
+    // Reconstitute the verified executor's FULL post-state ledger and take its `.root()`. If
+    // reconstitution fails (a marshaller gap the eligibility gate did not catch), we cannot make the
+    // full-state claim — downgrade honestly to the commit-bit comparison rather than overclaim.
+    match crate::lean_apply::lean_post_state_root(turn, pre, host, shadow_state) {
+        Ok(lean_root) => ShadowAgreement::FullState {
+            agreed: lean_root == rust_root,
+        },
+        Err(_) => ShadowAgreement::CommitBitOnly {
+            agreed: lean_committed == rust_committed,
+        },
+    }
+}
+
+/// Log the shadow outcome at the right strength — a FULL-STATE divergence (commit bits agree but the
+/// post-state roots differ) is a real finding the commit bit alone would miss, so it is logged as a
+/// divergence even though the commit bits matched.
+#[cfg(not(feature = "no-lean-link"))]
+fn log_shadow_outcome(
+    turn: &Turn,
+    kinds: &str,
+    lean_committed: bool,
+    rust_committed: bool,
+    agreement: ShadowAgreement,
+) {
+    if lean_committed != rust_committed {
+        tracing::warn!(
+            target: "dregg::lean_shadow::divergence",
+            agent = ?turn.agent,
+            effects = %kinds,
+            lean_committed,
+            rust_committed,
+            full_state = agreement.is_full_state(),
+            "RUST↔LEAN divergence: commit-bit mismatch (apply.rs vs verified Lean executor)"
+        );
+    } else if !agreement.agreed() {
+        // Commit bits AGREE but the FULL post-state diverges — exactly the divergence a commit-bit
+        // check launders away. Only reachable on the denotational (FullState) leg.
+        tracing::warn!(
+            target: "dregg::lean_shadow::divergence",
+            agent = ?turn.agent,
+            effects = %kinds,
+            committed = lean_committed,
+            "RUST↔LEAN divergence: post-state ROOT mismatch despite matching commit bit \
+             (full-state denotational divergence — the commit bit alone would MISS this)"
+        );
+    } else {
+        tracing::debug!(
+            target: "dregg::lean_shadow",
+            agent = ?turn.agent,
+            effects = %kinds,
+            committed = lean_committed,
+            full_state = agreement.is_full_state(),
+            "lean shadow agrees (full_state = genuine post-state agreement; else commit-bit only)"
+        );
     }
 }
 

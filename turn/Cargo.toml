@@ -65,6 +65,15 @@ threshold-sig = ["dep:hints", "dep:ark-serialize", "dep:ark-ff"]
 # execution path IN PLACE OF the Lean shadow/gate executor — a statement about the target's
 # linker, never about which guarantees this dregg has.
 no-lean-link = ["dregg-lean-ffi/no-lean-link", "dregg-captp/no-lean-link"]
+# Compile-gate for the GENUINE denotational state-producer differentials (the
+# `lean_state_producer_*` integration tests). They drive a real turn through BOTH the verified
+# Lean FFI executor (reconstituting its FULL produced post-state) and the legacy Rust executor,
+# and assert the two ledgers AGREE on balances / nonces / the 8 state fields AND `.root()` — the
+# canonical Lean↔Rust EVAL-agreement check (not a commit-bit or serialization round-trip). The
+# tests need the linked Lean archive (the default, non-`no-lean-link` build); they self-skip at
+# runtime when `lean_available()` is false. This marker feature only flips their `#![cfg(...)]` on
+# so they compile and run under `cargo test --features lean-shadow`.
+lean-shadow = []
 
 [dev-dependencies]
 proptest = { workspace = true }
