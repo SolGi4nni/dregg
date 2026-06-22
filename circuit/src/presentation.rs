@@ -432,6 +432,18 @@ pub struct PresentationAir {
 }
 
 impl PresentationAir {
+    /// Width of the summary trace / public-input vector:
+    ///   federation_root (1)
+    /// + request_predicate (`ACTION_BINDING_WIDTH` = 8)
+    /// + timestamp (1)
+    /// + presentation_tag (narrow, 1)
+    /// + revealed_facts_commitment (`WideHash::WIDTH` = 8)
+    pub const SUMMARY_WIDTH: usize = 1
+        + crate::binding::ACTION_BINDING_WIDTH
+        + 1
+        + 1
+        + crate::binding::WideHash::WIDTH;
+
     pub fn new(witness: PresentationWitness) -> Self {
         Self { witness }
     }
@@ -781,68 +793,31 @@ impl PresentationAir {
 /// The trace is a summary of the sub-proofs' public inputs.
 impl Air for PresentationAir {
     fn trace_width(&self) -> usize {
-        // Width of the "summary" trace (just public inputs as columns)
-        // federation_root, request_predicate[0..4], timestamp, presentation_tag,
-        // revealed_facts_commitment[0..4]
-        // = 1 + 4 + 1 + 1 + 4 = 11
-        11
+        // Summary trace (public inputs as columns), laid out as:
+        //   federation_root (1)
+        //   request_predicate[0..ACTION_BINDING_WIDTH]   (8)
+        //   timestamp (1)
+        //   presentation_tag (narrow, 1)
+        //   revealed_facts_commitment[0..PRESENTATION/WideHash::WIDTH] (8)
+        // = 1 + 8 + 1 + 1 + 8 = 19
+        Self::SUMMARY_WIDTH
     }
 
     fn num_public_inputs(&self) -> usize {
-        // federation_root, request_predicate[0..4], timestamp, presentation_tag,
-        // revealed_facts_commitment[0..4]
-        11
+        Self::SUMMARY_WIDTH
     }
 
     fn constraints(&self) -> Vec<Constraint> {
-        // The presentation AIR's constraints are just consistency checks
-        // on the public inputs. The real work is done by sub-AIRs.
-        vec![
-            Constraint {
-                name: "federation_root_match".to_string(),
-                eval: Box::new(|row, _, public_inputs| row[0] - public_inputs[0]),
-            },
-            Constraint {
-                name: "request_predicate_0_match".to_string(),
-                eval: Box::new(|row, _, public_inputs| row[1] - public_inputs[1]),
-            },
-            Constraint {
-                name: "request_predicate_1_match".to_string(),
-                eval: Box::new(|row, _, public_inputs| row[2] - public_inputs[2]),
-            },
-            Constraint {
-                name: "request_predicate_2_match".to_string(),
-                eval: Box::new(|row, _, public_inputs| row[3] - public_inputs[3]),
-            },
-            Constraint {
-                name: "request_predicate_3_match".to_string(),
-                eval: Box::new(|row, _, public_inputs| row[4] - public_inputs[4]),
-            },
-            Constraint {
-                name: "timestamp_match".to_string(),
-                eval: Box::new(|row, _, public_inputs| row[5] - public_inputs[5]),
-            },
-            Constraint {
-                name: "presentation_tag_match".to_string(),
-                eval: Box::new(|row, _, public_inputs| row[6] - public_inputs[6]),
-            },
-            Constraint {
-                name: "revealed_facts_commitment_0_match".to_string(),
-                eval: Box::new(|row, _, public_inputs| row[7] - public_inputs[7]),
-            },
-            Constraint {
-                name: "revealed_facts_commitment_1_match".to_string(),
-                eval: Box::new(|row, _, public_inputs| row[8] - public_inputs[8]),
-            },
-            Constraint {
-                name: "revealed_facts_commitment_2_match".to_string(),
-                eval: Box::new(|row, _, public_inputs| row[9] - public_inputs[9]),
-            },
-            Constraint {
-                name: "revealed_facts_commitment_3_match".to_string(),
-                eval: Box::new(|row, _, public_inputs| row[10] - public_inputs[10]),
-            },
-        ]
+        // The presentation AIR's constraints are just consistency checks on the
+        // public inputs (`row[i] == public_inputs[i]`). The real work is done by
+        // sub-AIRs. Generated from the layout so the full collision-resistant
+        // binding width is bound, not just the first 4 felts.
+        (0..Self::SUMMARY_WIDTH)
+            .map(|i| Constraint {
+                name: format!("summary_col_{i}_match"),
+                eval: Box::new(move |row, _, public_inputs| row[i] - public_inputs[i]),
+            })
+            .collect()
     }
 
     fn generate_trace(&self) -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
@@ -860,33 +835,15 @@ impl Air for PresentationAir {
             w.verifier_nonce,
         );
 
-        let row = vec![
-            w.federation_root,
-            w.request_predicate[0],
-            w.request_predicate[1],
-            w.request_predicate[2],
-            w.request_predicate[3],
-            w.timestamp,
-            presentation_tag,
-            w.revealed_facts_commitment[0],
-            w.revealed_facts_commitment[1],
-            w.revealed_facts_commitment[2],
-            w.revealed_facts_commitment[3],
-        ];
+        let mut row = Vec::with_capacity(Self::SUMMARY_WIDTH);
+        row.push(w.federation_root);
+        row.extend_from_slice(&w.request_predicate); // 8 felts (ACTION_BINDING_WIDTH)
+        row.push(w.timestamp);
+        row.push(presentation_tag);
+        row.extend_from_slice(w.revealed_facts_commitment.as_slice()); // 8 felts
+        debug_assert_eq!(row.len(), Self::SUMMARY_WIDTH);
 
-        let public_inputs = vec![
-            w.federation_root,
-            w.request_predicate[0],
-            w.request_predicate[1],
-            w.request_predicate[2],
-            w.request_predicate[3],
-            w.timestamp,
-            presentation_tag,
-            w.revealed_facts_commitment[0],
-            w.revealed_facts_commitment[1],
-            w.revealed_facts_commitment[2],
-            w.revealed_facts_commitment[3],
-        ];
+        let public_inputs = row.clone();
 
         (vec![row], public_inputs)
     }
@@ -1882,12 +1839,11 @@ mod tests {
     #[test]
     fn presentation_builder() {
         let federation_root = BabyBear::new(1000);
-        let request = [
-            BabyBear::new(42),
-            BabyBear::ZERO,
-            BabyBear::ZERO,
-            BabyBear::ZERO,
-        ];
+        let request = {
+            let mut rp = [BabyBear::ZERO; crate::binding::ACTION_BINDING_WIDTH];
+            rp[0] = BabyBear::new(42);
+            rp
+        };
         let timestamp = BabyBear::new(12345);
 
         let fold = FoldWitness {

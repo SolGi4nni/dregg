@@ -533,12 +533,16 @@ pub fn verify_private_threshold(
     }
 
     // Verify the STARK proof.
+    // The deprecated GarbledEvaluationAir reserves 4-felt columns for each
+    // commitment, so bind only the first 4 felts of each WideHash (matching
+    // `GarbledEvaluationAir::generate_trace`). The struct-level WideHash equality
+    // checks above already enforce the full 8-felt binding.
     let mut public_inputs = Vec::with_capacity(8);
-    for &elem in expected_circuit_commitment.as_slice() {
-        public_inputs.push(elem);
+    for i in 0..4 {
+        public_inputs.push(expected_circuit_commitment[i]);
     }
-    for &elem in true_output_label_hash.as_slice() {
-        public_inputs.push(elem);
+    for i in 0..4 {
+        public_inputs.push(true_output_label_hash[i]);
     }
     let dummy_air = super::garbled_air::GarbledEvaluationAir::new(
         vec![], // dummy trace for verification shape

@@ -2861,12 +2861,11 @@ mod tests {
             derivation_proof,
             issuer_membership_proof: issuer_proof,
             federation_root,
-            request_predicate: [
-                BabyBear::new(999),
-                BabyBear::ZERO,
-                BabyBear::ZERO,
-                BabyBear::ZERO,
-            ],
+            request_predicate: {
+                let mut rp = [BabyBear::ZERO; crate::binding::ACTION_BINDING_WIDTH];
+                rp[0] = BabyBear::new(999);
+                rp
+            },
             timestamp: BabyBear::new(1716000000),
             revealed_facts_commitment: crate::binding::WideHash::ZERO,
         };

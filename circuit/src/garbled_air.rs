@@ -388,12 +388,20 @@ impl Air for GarbledEvaluationAir {
             trace.push(row);
         }
 
+        // This DEPRECATED AIR has a fixed 4-felt column reservation for each of
+        // circuit_commitment / output_label_hash (see `col::CIRCUIT_COMMITMENT` /
+        // `col::OUTPUT_LABEL_HASH`). It is superseded by the DSL garbled circuit and
+        // is NOT on the trusted authorization path, so it stays at its original
+        // 4-felt binding width: bind only the first 4 felts of each WideHash (which
+        // are byte-identical to the pre-8-felt-WideHash value). The action /
+        // presentation / composition bindings carry the full 8 felts; this AIR's
+        // 4-felt garbled-eval columns are tracked as remaining surface.
         let mut public_inputs = Vec::with_capacity(8);
-        for &elem in self.circuit_commitment.as_slice() {
-            public_inputs.push(elem);
+        for i in 0..4 {
+            public_inputs.push(self.circuit_commitment[i]);
         }
-        for &elem in self.output_label_hash.as_slice() {
-            public_inputs.push(elem);
+        for i in 0..4 {
+            public_inputs.push(self.output_label_hash[i]);
         }
         (trace, public_inputs)
     }

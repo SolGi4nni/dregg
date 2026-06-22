@@ -60,17 +60,33 @@ use crate::field::BabyBear;
 /// confused with (or replayed as) any other binding hash.
 pub const CUSTOM_PROOF_PI_DOMAIN: &str = "dregg-custom-proof-bind-pi-v1";
 
+/// The EffectVM `custom_proof_commitment` column is a DEPLOYED 4-felt descriptor
+/// column (`customVmDescriptor2R24`, vars 68..72). It is its OWN binding surface,
+/// distinct from the action/presentation binding, and is NOT widened to 8 here:
+/// doing so is VK-affecting in the effect-VM AIR (re-emit the descriptor, shift
+/// the column layout, re-pin the FP, touch the Lean descriptor). At 4 felts it
+/// carries ~62-bit birthday collision resistance — the SAME class of exposure the
+/// action binding had, and a forged sub-proof's public inputs are adversary-
+/// chosen, so it IS collision-relevant. This 4-felt column is the precise
+/// remaining surface to rotate in a dedicated effect-VM descriptor pass.
+pub type ProofBindCommitment = [BabyBear; 4];
+
 /// The canonical commitment to a custom sub-proof's public inputs — the value
 /// that lands in the Custom row's `custom_proof_commitment` column.
 ///
 /// Prover and verifier MUST agree on this derivation: the prover writes it into
-/// the EffectVM Custom row + PI, and [`verify_proof_bind`] recomputes it from
-/// the verified sub-proof's public inputs and requires equality. A 124-bit
-/// `WideHash` (matching the four-felt column width) rather than a single felt:
-/// the column is four felts wide precisely so the binding carries 124-bit
-/// collision resistance, not the ~15.5-bit birthday bound of one felt.
-pub fn custom_proof_pi_commitment(public_inputs: &[BabyBear]) -> WideHash {
-    WideHash::from_poseidon2(CUSTOM_PROOF_PI_DOMAIN, public_inputs)
+/// the EffectVM Custom row + PI, and [`verify_proof_bind`] recomputes it from the
+/// verified sub-proof's public inputs and requires equality.
+///
+/// Derived as the first 4 felts of the canonical [`WideHash::from_poseidon2`]
+/// squeeze under [`CUSTOM_PROOF_PI_DOMAIN`]. Because the first squeeze block of
+/// `from_poseidon2` is independent of the (newer) second block, these 4 felts are
+/// byte-identical to the pre-8-felt-`WideHash` value — the deployed descriptor FP
+/// is unchanged. See [`ProofBindCommitment`] for why this stays at 4 felts.
+pub fn custom_proof_pi_commitment(public_inputs: &[BabyBear]) -> ProofBindCommitment {
+    let wide = WideHash::from_poseidon2(CUSTOM_PROOF_PI_DOMAIN, public_inputs);
+    let felts = wide.to_felts();
+    [felts[0], felts[1], felts[2], felts[3]]
 }
 
 /// A custom effect's external program proof, fully witnessed: the program it
@@ -99,7 +115,7 @@ impl BoundCustomProof {
     }
 
     /// The 4-felt `custom_proof_commitment` column value this proof binds.
-    pub fn proof_commitment(&self) -> WideHash {
+    pub fn proof_commitment(&self) -> ProofBindCommitment {
         custom_proof_pi_commitment(&self.public_inputs)
     }
 }
@@ -138,7 +154,7 @@ pub struct ClaimedProofBind {
     /// The Custom row's `custom_program_vk_hash` column (8 felts, var 68).
     pub vk_hash: [BabyBear; 8],
     /// The Custom row's `custom_proof_commitment` column (4 felts, var 72).
-    pub commitment: WideHash,
+    pub commitment: ProofBindCommitment,
 }
 
 /// Why a `proof_bind` verification failed — every variant is a forged or
@@ -155,7 +171,7 @@ pub enum ProofBindError {
     },
     /// The sub-proof's public-input commitment does not match the bound
     /// `custom_proof_commitment` column.
-    CommitmentMismatch { claimed: WideHash, recomputed: WideHash },
+    CommitmentMismatch { claimed: ProofBindCommitment, recomputed: ProofBindCommitment },
     /// The external STARK sub-proof did not verify under the program's AIR.
     SubProofVerifyFailed(String),
     /// The sub-proof could not be proven (prove side only).

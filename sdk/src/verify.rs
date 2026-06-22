@@ -137,7 +137,7 @@ pub fn verify_authorization_proof(
     }
 
     // SECURITY: Verify action/resource binding.
-    // The action binding occupies pi[2..6] (4 elements, 124-bit collision resistance).
+    // The action binding occupies pi[2..2+ACTION_BINDING_WIDTH] (8 elements, ~124-bit birthday).
     // Recompute the expected binding from the caller-supplied action and resource strings,
     // then compare against the proof's committed binding. This ensures a proof generated
     // for action A cannot be accepted when action B is requested.
@@ -166,27 +166,29 @@ pub fn verify_authorization_proof(
     }
 
     // SECURITY: A valid Merkle STARK proof only proves federation membership — it does NOT
-    // prove the authorization concluded "Allow". The composition commitment (pi[6..10]) binds
-    // the issuer membership proof to the multi-step derivation proof which enforces that the
-    // Datalog evaluation derived the ALLOW_PREDICATE. Without this binding, a federation
-    // member could present a valid membership proof even when their authorization was DENIED.
+    // prove the authorization concluded "Allow". The composition commitment binds the issuer
+    // membership proof to the multi-step derivation proof which enforces that the Datalog
+    // evaluation derived the ALLOW_PREDICATE. Without this binding, a federation member could
+    // present a valid membership proof even when their authorization was DENIED.
     //
     // The public inputs layout is:
-    //   pi[0]    = leaf_hash (issuer identity)
-    //   pi[1]    = federation_root
-    //   pi[2..6] = action_binding (4 elements, 124-bit collision resistance)
-    //   pi[6..10] = composition_commitment (4 elements, binds derivation proof)
+    //   pi[0]                   = leaf_hash (issuer identity)
+    //   pi[1]                   = federation_root
+    //   pi[2..2+ABW]            = action_binding (ACTION_BINDING_WIDTH = 8 elements, ~124-bit)
+    //   pi[2+ABW..2+ABW+WHW]    = composition_commitment (WideHash::WIDTH = 8, binds derivation)
     //
-    // If there is no composition commitment (pi.len() < 7) or it is all zeros, the proof
-    // only demonstrates membership — not authorization. Reject it.
-    if pi.len() < 7 {
+    // If there is no composition commitment present or it is all zeros, the proof only
+    // demonstrates membership — not authorization. Reject it.
+    const COMP_PI_START: usize = 2 + dregg_circuit::ACTION_BINDING_WIDTH;
+    const COMP_PI_END: usize = COMP_PI_START + dregg_circuit::binding::WideHash::WIDTH;
+    if pi.len() <= COMP_PI_START {
         // No composition commitment present — proof does not bind an authorization conclusion.
         return Ok(false);
     }
 
-    // Check that the composition commitment (pi[6..]) is non-zero.
+    // Check that the composition commitment is non-zero.
     // A zeroed commitment means no derivation proof is bound to this membership proof.
-    let composition_slice = &pi[6..pi.len().min(10)];
+    let composition_slice = &pi[COMP_PI_START..pi.len().min(COMP_PI_END)];
     let has_nonzero_composition = composition_slice.iter().any(|&v| v != BabyBear::ZERO);
     if !has_nonzero_composition {
         return Ok(false);
@@ -257,7 +259,7 @@ pub fn verify_selective_disclosure(
         return Ok(false);
     }
 
-    // 2b. Verify action/resource binding (pi[2..6]).
+    // 2b. Verify action/resource binding (pi[2..2+ACTION_BINDING_WIDTH]).
     if pi.len() < 2 + dregg_circuit::ACTION_BINDING_WIDTH {
         return Ok(false);
     }
@@ -280,9 +282,10 @@ pub fn verify_selective_disclosure(
     }
 
     // 4. Verify the revealed facts commitment.
-    // The revealed_facts_commitment is a WideHash (4 BabyBear elements) embedded in the
-    // STARK proof's public inputs at indices [10..13]:
-    //   PI layout: [leaf/blinded_leaf, root, action[4], composition[4], revealed_facts[4]]
+    // The revealed_facts_commitment is a WideHash (8 BabyBear elements) embedded in the
+    // STARK proof's public inputs after the leaf, root, action binding, and composition
+    // commitment:
+    //   PI layout: [leaf/blinded_leaf, root, action[8], composition[8], revealed_facts[8]]
     // We recompute the commitment from the plaintext revealed_facts and compare it to the
     // value cryptographically bound in the proof. If they don't match, the prover lied
     // about which facts were revealed (presented different facts than what the circuit proved).
@@ -300,12 +303,15 @@ pub fn verify_selective_disclosure(
     }
 
     // SECURITY: Extract the revealed_facts_commitment from the proof's public inputs
-    // and compare to the recomputed value. The commitment occupies PI indices [10..13]
-    // (4 BabyBear elements = 124-bit WideHash). If the proof doesn't contain the
-    // commitment at these indices, it was not generated in selective disclosure mode
-    // and MUST be rejected.
-    const RFC_PI_START: usize = 10;
-    const RFC_PI_END: usize = 14;
+    // and compare to the recomputed value. The commitment is a `WideHash::WIDTH`-felt
+    // (~124-bit birthday) digest sitting after the leaf, root, action binding, and
+    // composition commitment. If the proof doesn't contain the commitment at these
+    // indices, it was not generated in selective disclosure mode and MUST be rejected.
+    //   leaf(1) + root(1) + action_binding(ACTION_BINDING_WIDTH) + composition(WideHash::WIDTH)
+    const RFC_PI_START: usize = 2
+        + dregg_circuit::ACTION_BINDING_WIDTH
+        + dregg_circuit::binding::WideHash::WIDTH;
+    const RFC_PI_END: usize = RFC_PI_START + dregg_circuit::binding::WideHash::WIDTH;
 
     if pi.len() < RFC_PI_END {
         // Proof public inputs are too short — no revealed_facts_commitment is bound.
@@ -313,12 +319,10 @@ pub fn verify_selective_disclosure(
         return Ok(false);
     }
 
-    let proof_commitment = dregg_circuit::binding::WideHash([
-        pi[RFC_PI_START],
-        pi[RFC_PI_START + 1],
-        pi[RFC_PI_START + 2],
-        pi[RFC_PI_START + 3],
-    ]);
+    let proof_commitment = dregg_circuit::binding::WideHash::from_felts(
+        &pi[RFC_PI_START..RFC_PI_END],
+    )
+    .expect("RFC slice is exactly WideHash::WIDTH felts by construction");
 
     // Compare the recomputed commitment to what's in the proof's public inputs.
     // If they don't match, the caller passed different facts than what the prover committed to.
@@ -943,7 +947,7 @@ mod tests {
 
     /// Build a synthetic StarkProof that reaches the circuit-dispatch step of
     /// `verify_authorization_proof` / `verify_selective_disclosure`: correct
-    /// federation root at pi[1] and the ("","") action binding at pi[2..6].
+    /// federation root at pi[1] and the ("","") action binding at pi[2..2+ACTION_BINDING_WIDTH].
     fn dispatch_reaching_proof(
         air_name: &str,
         federation_root: dregg_circuit::BabyBear,

@@ -13,11 +13,26 @@
 //!
 //! # Security
 //!
-//! The binding commitment uses 4 BabyBear field elements (124 bits), providing
-//! a birthday bound of ~2^62. This follows the same pattern as
-//! `AccumulatedHash` in ivc.rs. A single BabyBear element (~31 bits) would only
-//! give ~2^15.5 collision resistance, which is uncomfortably low even though
-//! exploiting a collision requires a valid token for the colliding action.
+//! The binding commitment uses 8 BabyBear field elements (~248 bits of preimage),
+//! providing a birthday collision bound of ~2^124 — matching the system's own
+//! 128-bit FRI soundness and clearing the 120-bit floor.
+//!
+//! Width matters here because the action binding is **collision-exposed**, not
+//! merely second-preimage-protected. The attacker controls BOTH preimages: it
+//! picks a benign `(action_A, resource_A)` (for which an issuer willingly grants
+//! a token) and a malicious `(action_B, resource_B)`, and searches for a birthday
+//! collision `binding(A) == binding(B)`. A token legitimately issued for A is then
+//! presentable wherever a verifier authorizes B (the verifier recomputes
+//! `compute_action_binding(B)` and the committed binding matches) — a privilege
+//! escalation. At a 4-felt width the search costs only ~2^62, HALF the FRI
+//! soundness and below the floor; at 8 felts it costs ~2^124.
+//!
+//! The same reasoning applies to `WideHash` wherever an attacker controls the
+//! hashed preimage (`revealed_facts_commitment`, `composition_commitment`,
+//! presentation tags) — all are widened to 8 felts. A use where one side is fixed
+//! by a prior commitment the adversary cannot choose would be second-preimage-only
+//! (~2^248, fine at any width), but the binding/commitment surface here is not
+//! that case, so it carries the full collision-resistant width.
 
 use crate::field::BabyBear;
 use crate::poseidon2;
@@ -30,29 +45,41 @@ const ACTION_BINDING_DSK: &str = "dregg-action-binding-v1";
 const PRESENTATION_TAG_DSK: &str = "dregg-presentation-tag-v1";
 
 /// Number of BabyBear elements in an action binding commitment.
-/// 4 elements * 31 bits each = 124 bits of collision resistance,
-/// requiring ~2^62 work for a birthday attack (well beyond practical).
-pub const ACTION_BINDING_WIDTH: usize = 4;
+/// 8 elements * ~31 bits each = ~248 bits of preimage, giving a birthday
+/// collision bound of ~2^124 (matching the 128-bit FRI soundness, above the
+/// 120-bit floor). The action binding is collision-exposed (the attacker chooses
+/// both `(action, resource)` preimages), so the full collision-resistant width
+/// is required here, not just second-preimage protection.
+pub const ACTION_BINDING_WIDTH: usize = 8;
 
 /// Number of BabyBear elements in a presentation tag.
-/// 4 elements * 31 bits each = 124 bits of collision resistance,
-/// birthday bound ~2^62. A single element (~31 bits) only provides ~2^15.5
-/// collision resistance, creating a linkability risk at ~46K presentations.
-pub const PRESENTATION_TAG_WIDTH: usize = 4;
+/// 8 elements * ~31 bits each = ~248 bits of preimage, birthday bound ~2^124.
+/// A narrower tag exposes a linkability collision (two presentations colliding to
+/// the same blinded tag); 8 felts keep that probability negligible at any
+/// realistic presentation count.
+pub const PRESENTATION_TAG_WIDTH: usize = 8;
 
-/// A 124-bit hash digest over BabyBear, providing ~62-bit birthday collision resistance.
-/// Used wherever a single BabyBear element's ~15.5-bit birthday bound is insufficient.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
-pub struct WideHash(pub [BabyBear; 4]);
+/// A ~248-bit hash digest over BabyBear, providing ~124-bit birthday collision
+/// resistance (matching the 128-bit FRI soundness, above the 120-bit floor).
+/// Used wherever an adversary controls the hashed preimage and a collision would
+/// be load-bearing (action/composition/revealed-facts bindings).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct WideHash(pub [BabyBear; 8]);
+
+impl Default for WideHash {
+    fn default() -> Self {
+        Self::ZERO
+    }
+}
 
 impl WideHash {
-    pub const WIDTH: usize = 4;
-    pub const ZERO: Self = Self([BabyBear::ZERO; 4]);
+    pub const WIDTH: usize = 8;
+    pub const ZERO: Self = Self([BabyBear::ZERO; 8]);
 
     /// Compute a wide hash from inputs with domain separation.
     ///
     /// Absorbs domain separator (via BLAKE3) + inputs through Poseidon2 sponge,
-    /// then squeezes 4 elements for 124-bit collision resistance.
+    /// then squeezes 8 elements for ~124-bit birthday collision resistance.
     pub fn from_poseidon2(domain: &str, inputs: &[BabyBear]) -> Self {
         use crate::poseidon2::Poseidon2State;
 
@@ -75,28 +102,34 @@ impl WideHash {
             state.permute();
         }
 
-        // Squeeze 4 elements (124-bit security)
-        Self([
-            state.state[0],
-            state.state[1],
-            state.state[2],
-            state.state[3],
-        ])
+        // Squeeze 8 elements (~124-bit birthday security): rate-4 block,
+        // permute, rate-4 block again (mirrors `poseidon2::hash_many_8`).
+        let mut out = [BabyBear::ZERO; 8];
+        out[0] = state.state[0];
+        out[1] = state.state[1];
+        out[2] = state.state[2];
+        out[3] = state.state[3];
+        state.permute();
+        out[4] = state.state[0];
+        out[5] = state.state[1];
+        out[6] = state.state[2];
+        out[7] = state.state[3];
+        Self(out)
     }
 
     pub fn is_zero(&self) -> bool {
-        self.0 == [BabyBear::ZERO; 4]
+        self.0 == [BabyBear::ZERO; 8]
     }
 
-    pub fn as_slice(&self) -> &[BabyBear; 4] {
+    pub fn as_slice(&self) -> &[BabyBear; 8] {
         &self.0
     }
 
     /// Decompose into the canonical 4-felt on-wire representation.
     ///
-    /// A `WideHash` IS its four BabyBear elements: the felt representation is the
+    /// A `WideHash` IS its eight BabyBear elements: the felt representation is the
     /// array itself, matching the squeeze in [`WideHash::from_poseidon2`] and the
-    /// `ACTION_BINDING_WIDTH`/`PRESENTATION_TAG_WIDTH` 4-felt commitment encoding.
+    /// `ACTION_BINDING_WIDTH`/`PRESENTATION_TAG_WIDTH` 8-felt commitment encoding.
     /// This is the exact inverse of [`WideHash::from_felts`]: for any `h`,
     /// `WideHash::from_felts(&h.to_felts()) == Ok(h)`.
     pub fn to_felts(&self) -> [BabyBear; Self::WIDTH] {
@@ -105,7 +138,7 @@ impl WideHash {
 
     /// Reconstruct from the canonical felt representation.
     ///
-    /// The exact inverse of [`WideHash::to_felts`]. Requires exactly `WIDTH` (4)
+    /// The exact inverse of [`WideHash::to_felts`]. Requires exactly `WIDTH` (8)
     /// elements — the same width the on-wire commitment carries — and errors
     /// otherwise so a malformed felt buffer fails closed rather than silently
     /// truncating or zero-padding.
@@ -117,7 +150,9 @@ impl WideHash {
                 felts.len()
             ));
         }
-        Ok(Self([felts[0], felts[1], felts[2], felts[3]]))
+        let mut arr = [BabyBear::ZERO; Self::WIDTH];
+        arr.copy_from_slice(felts);
+        Ok(Self(arr))
     }
 
     /// Compress to single element (for contexts that need narrow representation).
@@ -146,24 +181,26 @@ impl<'a> IntoIterator for &'a WideHash {
     }
 }
 
-/// A multi-element action binding commitment providing 124-bit security.
+/// A multi-element action binding commitment providing ~124-bit birthday security.
 ///
-/// A single BabyBear element only provides ~31 bits, making birthday attacks
-/// trivial at 2^15.5 (~46K attempts). Using 4 elements raises this to 2^62.
+/// The action binding is collision-exposed (the attacker chooses both
+/// `(action, resource)` preimages), so it carries the full collision-resistant
+/// width: 8 elements (~248-bit preimage, birthday bound ~2^124, matching the
+/// 128-bit FRI soundness). A 4-felt width would expose a ~2^62 collision — below
+/// the 120-bit floor — and a single element would be trivially attackable.
 pub type ActionBinding = [BabyBear; ACTION_BINDING_WIDTH];
 
-/// A multi-element presentation tag providing 124-bit collision resistance.
+/// A multi-element presentation tag providing ~124-bit collision resistance.
 ///
-/// Previously a single BabyBear element (~31 bits), which had a non-negligible
-/// collision probability at the birthday bound (~46K presentations). Widened to
-/// 4 elements (124 bits) so that collision probability remains negligible even
-/// at billions of presentations.
+/// A narrower tag exposes a linkability collision; 8 elements (~248-bit preimage,
+/// birthday bound ~2^124) keep that probability negligible at any realistic
+/// presentation count.
 pub type PresentationTag = [BabyBear; PRESENTATION_TAG_WIDTH];
 
 /// Compute a deterministic action-binding commitment from `(action, resource)`.
 ///
-/// This is the canonical binding domain for STARK proofs. The result is 4
-/// BabyBear field elements (124-bit collision resistance) that are:
+/// This is the canonical binding domain for STARK proofs. The result is 8
+/// BabyBear field elements (~124-bit birthday collision resistance) that are:
 /// - Included as public inputs of the STARK proof by the prover
 /// - Recomputed by verifiers from the request fields and checked against the proof
 ///
@@ -180,10 +217,12 @@ pub type PresentationTag = [BabyBear; PRESENTATION_TAG_WIDTH];
 ///
 /// # Security
 ///
-/// The commitment uses 4 BabyBear elements (124 bits of collision resistance,
-/// birthday bound ~2^62). The BLAKE3 keyed hash provides domain separation from
-/// other protocol uses of the same strings, and Poseidon2 squeezing ensures the
-/// values are in-circuit verifiable.
+/// The commitment uses 8 BabyBear elements (~248 bits of preimage, birthday
+/// collision bound ~2^124, matching the 128-bit FRI soundness and above the
+/// 120-bit floor). The action binding is collision-exposed (the attacker chooses
+/// both preimages), so the full collision-resistant width is required. The BLAKE3
+/// keyed hash provides domain separation from other protocol uses of the same
+/// strings, and Poseidon2 squeezing ensures the values are in-circuit verifiable.
 pub fn compute_action_binding(action: &str, resource: &str) -> ActionBinding {
     use crate::poseidon2::Poseidon2State;
 
@@ -201,7 +240,7 @@ pub fn compute_action_binding(action: &str, resource: &str) -> ActionBinding {
     // Encode the 32-byte digest as 8 BabyBear elements.
     let limbs = BabyBear::encode_hash(digest.as_bytes());
 
-    // Absorb all 8 limbs through Poseidon2 sponge and squeeze 4 elements.
+    // Absorb all 8 limbs through Poseidon2 sponge and squeeze 8 elements.
     let mut state = Poseidon2State::new();
     // Domain separation: encode input length in capacity
     state.state[4] = BabyBear::new(8);
@@ -218,13 +257,19 @@ pub fn compute_action_binding(action: &str, resource: &str) -> ActionBinding {
     state.state[3] += limbs[7];
     state.permute();
 
-    // Squeeze 4 elements (124-bit security)
-    [
-        state.state[0],
-        state.state[1],
-        state.state[2],
-        state.state[3],
-    ]
+    // Squeeze 8 elements (~124-bit birthday security): rate-4 block, permute,
+    // rate-4 block again (mirrors `WideHash::from_poseidon2`).
+    let mut out = [BabyBear::ZERO; ACTION_BINDING_WIDTH];
+    out[0] = state.state[0];
+    out[1] = state.state[1];
+    out[2] = state.state[2];
+    out[3] = state.state[3];
+    state.permute();
+    out[4] = state.state[0];
+    out[5] = state.state[1];
+    out[6] = state.state[2];
+    out[7] = state.state[3];
+    out
 }
 
 /// Compute the legacy single-element action binding (31-bit security).
@@ -252,8 +297,8 @@ pub fn compute_action_binding_narrow(action: &str, resource: &str) -> BabyBear {
 /// - `presentation_randomness`: fresh randomness per presentation (private)
 /// - `verifier_nonce`: challenge from the verifier (public)
 ///
-/// Returns 4 BabyBear elements squeezed from a Poseidon2 sponge, providing
-/// 124-bit collision resistance (birthday bound ~2^62).
+/// Returns 8 BabyBear elements squeezed from a Poseidon2 sponge, providing
+/// ~124-bit birthday collision resistance.
 pub fn compute_presentation_tag(
     final_root: BabyBear,
     presentation_randomness: BabyBear,
@@ -275,13 +320,19 @@ pub fn compute_presentation_tag(
     state.state[2] = verifier_nonce;
     state.permute();
 
-    // Squeeze 4 elements (124-bit security)
-    [
-        state.state[0],
-        state.state[1],
-        state.state[2],
-        state.state[3],
-    ]
+    // Squeeze 8 elements (~124-bit birthday security): rate-4 block, permute,
+    // rate-4 block again.
+    let mut out = [BabyBear::ZERO; PRESENTATION_TAG_WIDTH];
+    out[0] = state.state[0];
+    out[1] = state.state[1];
+    out[2] = state.state[2];
+    out[3] = state.state[3];
+    state.permute();
+    out[4] = state.state[0];
+    out[5] = state.state[1];
+    out[6] = state.state[2];
+    out[7] = state.state[3];
+    out
 }
 
 /// Compute the legacy single-element presentation tag (31-bit security).
@@ -318,7 +369,9 @@ mod tests {
         let h = WideHash::from_poseidon2("dregg-test-widehash", &[BabyBear::new(7), BabyBear::new(11)]);
         let felts = h.to_felts();
         assert_eq!(felts.len(), WideHash::WIDTH);
-        assert_eq!(WideHash::from_felts(&felts).expect("4-felt buffer decodes"), h);
+        // The collision-resistant width is 8 felts (~124-bit birthday).
+        assert_eq!(WideHash::WIDTH, 8);
+        assert_eq!(WideHash::from_felts(&felts).expect("8-felt buffer decodes"), h);
 
         // The felt decomposition is literally the underlying array.
         assert_eq!(&felts, h.as_slice());
@@ -335,12 +388,13 @@ mod tests {
     }
 
     #[test]
-    fn returns_four_elements() {
+    fn returns_collision_resistant_width() {
         let binding = compute_action_binding("read", "api/v1/users");
         assert_eq!(binding.len(), ACTION_BINDING_WIDTH);
-        // All elements should be non-zero (extremely unlikely to have a zero element
-        // from Poseidon2, but we mainly check the structure)
-        assert_eq!(binding.len(), 4);
+        // 8 felts ≈ 124-bit birthday collision resistance (matching the 128-bit FRI
+        // soundness, above the 120-bit floor). The action binding is collision-exposed
+        // (adversary chooses both preimages), so the full width is load-bearing.
+        assert_eq!(binding.len(), 8);
     }
 
     #[test]
@@ -371,7 +425,7 @@ mod tests {
     fn empty_strings_valid() {
         // Should not panic
         let binding = compute_action_binding("", "");
-        assert_eq!(binding.len(), 4);
+        assert_eq!(binding.len(), ACTION_BINDING_WIDTH);
     }
 
     #[test]

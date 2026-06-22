@@ -1068,8 +1068,8 @@ impl PresentationBackend for Plonky3Backend {
         let derivation_proof = Self::prove_derivation(&input.derivation)?;
         let derivation_output = Self::verify_derivation(&derivation_proof)?;
 
-        // 3. Compute presentation tag (unlinkability) - returns [BabyBear; 4].
-        let tag: [BabyBear; 4] = compute_presentation_tag(
+        // 3. Compute presentation tag (unlinkability) - returns [BabyBear; PRESENTATION_TAG_WIDTH].
+        let tag: crate::binding::PresentationTag = compute_presentation_tag(
             BabyBear::new(input.federation_root as u32),
             BabyBear::new(input.presentation_randomness as u32),
             BabyBear::new(input.blinding_factor as u32),

@@ -2044,8 +2044,8 @@ pub fn verify_presentation_full(
     }
 
     // 4. Verify composition commitment (sub-proof binding).
-    //    If the STARK proof contains a composition_commitment (pi[3] for blinded,
-    //    pi[3] for non-blinded), verify it matches the locally recomputed value
+    //    If the STARK proof contains a composition_commitment (at
+    //    pi[2 + ACTION_BINDING_WIDTH ..]), verify it matches the locally recomputed value
     //    from the fold chain and derivation sub-proofs. This prevents an attacker
     //    from attaching a valid membership STARK from one token to a forged fold
     //    chain from another.
@@ -2088,12 +2088,13 @@ pub fn verify_presentation_full(
         }
 
         // Also verify the composition_commitment is present in the STARK's public inputs.
-        // Public input layout: [leaf, root, action[4], composition[4]]
-        let expected_cc_idx = 6; // After leaf, root, action[4]
-        if pi.len() <= expected_cc_idx + 3 {
+        // Layout: [leaf, root, action[ACTION_BINDING_WIDTH], composition[WideHash::WIDTH]].
+        let expected_cc_idx = 2 + dregg_circuit::ACTION_BINDING_WIDTH;
+        let cc_width = WideHash::WIDTH;
+        if pi.len() < expected_cc_idx + cc_width {
             return false;
         }
-        for i in 0..4 {
+        for i in 0..cc_width {
             if pi[expected_cc_idx + i] != proof.composition_commitment[i] {
                 return false;
             }
@@ -2422,11 +2423,13 @@ pub fn verify_proof_complete(
         }
 
         // Verify the composition_commitment is present in the STARK's public inputs.
-        let expected_cc_idx = 6; // After leaf, root, action[4]
-        if pi.len() <= expected_cc_idx + 3 {
+        // Layout: [leaf, root, action[ACTION_BINDING_WIDTH], composition[WideHash::WIDTH]].
+        let expected_cc_idx = 2 + dregg_circuit::ACTION_BINDING_WIDTH;
+        let cc_width = WideHash::WIDTH;
+        if pi.len() < expected_cc_idx + cc_width {
             return Err(VerifyError::MalformedPublicInputs);
         }
-        for i in 0..4 {
+        for i in 0..cc_width {
             if pi[expected_cc_idx + i] != wire_proof.composition_commitment[i] {
                 return Err(VerifyError::CompositionMismatch);
             }
@@ -2742,18 +2745,19 @@ pub fn verify_presentation_complete(
     }
 
     // Verify the composition_commitment is present in the STARK's public inputs.
-    // Public input layout: [leaf, root, action[4], composition[4]]
+    // Layout: [leaf, root, action[ACTION_BINDING_WIDTH], composition[WideHash::WIDTH]].
     let pi: Vec<BabyBear> = real
         .issuer_membership_stark_proof
         .public_inputs
         .iter()
         .map(|&v| BabyBear::new(v))
         .collect();
-    let expected_cc_idx = 6; // After leaf, root, action[4]
-    if pi.len() <= expected_cc_idx + 3 {
+    let expected_cc_idx = 2 + dregg_circuit::ACTION_BINDING_WIDTH;
+    let cc_width = WideHash::WIDTH;
+    if pi.len() < expected_cc_idx + cc_width {
         return false;
     }
-    for i in 0..4 {
+    for i in 0..cc_width {
         if pi[expected_cc_idx + i] != proof.composition_commitment[i] {
             return false;
         }

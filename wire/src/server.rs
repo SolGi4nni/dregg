@@ -67,9 +67,9 @@ impl ProofVerifier for StarkVerifier {
             .collect();
 
         // Verify action binding: public_inputs[2..6] must be the canonical commitment
-        // to (action, resource) via compute_action_binding (4 elements, 124-bit security).
-        // Layout: [leaf_hash, merkle_root, action_binding[0..4], composition_commitment[0..4]]
-        // The bridge verifier (bridge/src/verifier.rs) also uses pi[2..6].
+        // to (action, resource) via compute_action_binding (8 elements, ~124-bit birthday).
+        // Layout: [leaf_hash, merkle_root, action_binding[0..8], composition_commitment[0..8]]
+        // The bridge verifier (bridge/src/verifier.rs) uses the same ACTION_BINDING_WIDTH offset.
         let expected_binding = dregg_circuit::compute_action_binding(action, resource);
         if public_inputs.len() < 2 + dregg_circuit::ACTION_BINDING_WIDTH {
             return Ok(false);
@@ -81,15 +81,17 @@ impl ProofVerifier for StarkVerifier {
         }
 
         // SECURITY: Verify composition commitment is present and non-zero.
-        // The composition commitment occupies pi[6..10] (4 elements). It binds the
-        // issuer membership STARK to the derivation proof that concluded "Allow".
-        // Without this check, a federation member could present a valid membership
-        // proof even when their authorization was DENIED.
-        let composition_start = 2 + dregg_circuit::ACTION_BINDING_WIDTH; // index 6
-        if public_inputs.len() < composition_start + 4 {
+        // The composition commitment occupies pi[2+ABW .. 2+ABW+WHW] (WideHash::WIDTH = 8
+        // elements). It binds the issuer membership STARK to the derivation proof that
+        // concluded "Allow". Without this check, a federation member could present a valid
+        // membership proof even when their authorization was DENIED.
+        let composition_start = 2 + dregg_circuit::ACTION_BINDING_WIDTH;
+        let composition_width = dregg_circuit::binding::WideHash::WIDTH;
+        if public_inputs.len() < composition_start + composition_width {
             return Ok(false); // No composition commitment present
         }
-        let has_nonzero_composition = public_inputs[composition_start..composition_start + 4]
+        let has_nonzero_composition = public_inputs
+            [composition_start..composition_start + composition_width]
             .iter()
             .any(|&v| v != dregg_circuit::field::BabyBear::ZERO);
         if !has_nonzero_composition {

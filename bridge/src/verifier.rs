@@ -120,7 +120,7 @@ impl ProofVerifier for StarkProofVerifier {
             .map(|&v| BabyBear::new_canonical(v))
             .collect();
 
-        // Expect at least [leaf_hash, merkle_root, action_binding[0..4]]
+        // Expect at least [leaf_hash, merkle_root, action_binding[0..ACTION_BINDING_WIDTH]]
         if pi.len() < 2 + dregg_circuit::ACTION_BINDING_WIDTH {
             return false;
         }
@@ -164,11 +164,11 @@ impl ProofVerifier for StarkProofVerifier {
         }
 
         // 5. Timestamp freshness check (if configured).
-        // The timestamp is after the 4-element action binding: pi[6] (index 2+4=6).
+        // The timestamp is after the action binding: pi[2 + ACTION_BINDING_WIDTH].
         // SECURITY: When freshness is required (max_proof_age_secs > 0), the proof
         // MUST include a timestamp. Rejecting proofs without timestamps prevents a
         // prover from stripping the timestamp to bypass freshness enforcement.
-        let timestamp_idx = 2 + dregg_circuit::ACTION_BINDING_WIDTH; // = 6
+        let timestamp_idx = 2 + dregg_circuit::ACTION_BINDING_WIDTH;
         if self.max_proof_age_secs > 0 {
             if pi.len() <= timestamp_idx {
                 // Timestamp required but proof does not include one — reject.
@@ -280,7 +280,7 @@ impl DslAwareProofVerifier {
             .map(|&v| BabyBear::new_canonical(v))
             .collect();
 
-        // Expect at least [leaf_hash, merkle_root, action_binding[0..4]]
+        // Expect at least [leaf_hash, merkle_root, action_binding[0..ACTION_BINDING_WIDTH]]
         if pi.len() < 2 + dregg_circuit::ACTION_BINDING_WIDTH {
             return false;
         }
@@ -345,7 +345,7 @@ impl DslAwareProofVerifier {
     /// # Action Binding Convention for DSL Programs
     ///
     /// DSL programs follow the same public input convention as known AIRs:
-    /// the action binding (4 BabyBear elements) occupies `pi[0..4]`, and the
+    /// the action binding (ACTION_BINDING_WIDTH BabyBear elements) occupies `pi[0..ACTION_BINDING_WIDTH]`, and the
     /// optional timestamp occupies `pi[4]`. Programs that declare fewer than
     /// 5 public inputs cannot pass freshness checks when `max_proof_age_secs > 0`.
     ///
@@ -378,7 +378,7 @@ impl DslAwareProofVerifier {
             .map(|&v| BabyBear::new_canonical(v))
             .collect();
 
-        // Action binding check: pi[0..4] must match the expected action binding.
+        // Action binding check: pi[0..ACTION_BINDING_WIDTH] must match the expected action binding.
         // This prevents replay of a valid proof to authorize a different action.
         if pi.len() < dregg_circuit::ACTION_BINDING_WIDTH {
             return false;
@@ -441,7 +441,7 @@ impl ProofVerifier for DslAwareProofVerifier {
             .collect();
 
         // 3. Action binding check (standard convention: pi[2..6] for known circuits,
-        //    pi[0..4] for custom programs).
+        //    pi[0..ACTION_BINDING_WIDTH] for custom programs).
         let (binding_offset, has_root_check) =
             if dregg_dsl_runtime::descriptors::is_known_dsl_air(&stark_proof.air_name) {
                 (2, true) // Standard circuits: [leaf, root, binding...]
