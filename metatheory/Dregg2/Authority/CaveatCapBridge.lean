@@ -439,6 +439,155 @@ theorem deleg_amp_capAuthority_false :
 
 end DeVacuified
 
+/-! ## §6 — THE MAP-LEVEL CONVERGENCE: the two narrowings are ONE permitted-action map (arbitrary chain).
+
+`§3`/`§5` proved the gate-to-gate arrow on a node whose macaroon caveat is *hand-built* to read the
+SAME `(granted, held)` pair the cap mode consumes. What that does NOT establish is the structural
+claim the lead named — that the macaroon caveat-CHAIN narrowing and the kernel cap `granted ≤ held`
+narrowing are **the same map** for an ARBITRARY chain of rights-narrowing caveats, not just a
+single hand-wired one. This section closes that: it proves the permitted-action SETS AGREE, by
+induction on the chain, in the literal `chainGate ch a ↔ capAuthority (capOf ch) a` shape.
+
+The setup is the honest macaroon semantics, untouched: a chain link is a rights-narrowing caveat
+`actionCaveat m := .local (fun a => decide (a ≤ m))` reading the action `a : ExecAuth` it gates against
+the link's kept-rights mask `m`. The chain admits `a` iff EVERY link passes — `∀ m ∈ masks, a ≤ m`.
+The cap side: the chain's conferred authority is `caveatChainAuthority ⊤ masks` (the §1 fold from the
+top cap), and the cap CONFERS `a` iff `a ≤ caveatChainAuthority ⊤ masks` (the kernel `granted ≤ held`
+order with `granted := a`). The convergence is the meet/GLB identity
+
+    (∀ m ∈ masks, a ≤ m)  ↔  a ≤ caveatChainAuthority ⊤ masks
+
+— a macaroon chain admits exactly the actions the cap it folds to confers. Both narrowings are one
+map `caveatChainAuthority ⊤ masks`; the macaroon "satisfies-all-caveats" set IS the cap's
+conferred-authority down-set. Proved for ANY mask list, reusing `append_narrows`'s monotonicity in
+spirit but stated at the rights-order level where the cap leg lives. -/
+
+section MapConvergence
+
+open Dregg2.Authority.CaveatChain
+open Dregg2.Authority.CaveatChain (Chain Link seed)
+open Dregg2.Exec (ExecAuth)
+
+/-- **`actionCaveat m`** — the rights-narrowing caveat the macaroon link carries: a first-party
+(`local`) check reading the gated action `a : ExecAuth` and passing iff `a ≤ m` (the action stays
+within the link's kept-rights mask `m`). This is the honest "a key may only narrow" caveat, one mask
+per link; the action `a` IS the chain context. -/
+def actionCaveat (m : ExecAuth) : Caveat ExecAuth Gw :=
+  .local (fun a => decide (a ≤ m))
+
+/-- **`actionLinks masks`** — render a list of kept-rights masks as macaroon links (encoded bytes
+`0`, immaterial to the admit semantics; the HMAC carries integrity, the caveat carries narrowing). -/
+def actionLinks (masks : List ExecAuth) : List (Link ExecAuth Gw Bt) :=
+  masks.map (fun m => { caveat := actionCaveat m, encoded := (0 : Nat) })
+
+/-- **`actionChainAdmits masks a`** — the macaroon caveat-chain narrowing as a `Prop`: the action `a`
+passes EVERY rights-narrowing link (`Chain.admits` over `actionLinks`, the meet of all link caveats).
+Stated on a chain built from `actionLinks masks` over any root/nonce — `Chain.admits` reads only the
+links, so it is `(actionLinks masks).all (·.caveat.ok a d) = true`. -/
+def actionChainAdmits (masks : List ExecAuth) (a : ExecAuth) (d : Discharges Gw) : Bool :=
+  ((seed (Ctx := ExecAuth) (Gateway := Gw) (0 : Nat) (0 : Nat)).links ++ actionLinks masks).all
+    (fun l => l.caveat.ok a d)
+
+/-- **`actionChainAdmits_iff_forall` — the macaroon side, unfolded.** The chain admits `a` iff `a ≤ m`
+for every mask `m` in the chain. Pure `List.all`/`Caveat.ok` reduction over `actionCaveat`. -/
+theorem actionChainAdmits_iff_forall (masks : List ExecAuth) (a : ExecAuth) (d : Discharges Gw) :
+    actionChainAdmits masks a d = true ↔ ∀ m ∈ masks, a ≤ m := by
+  unfold actionChainAdmits actionLinks
+  simp only [seed, List.nil_append, List.all_map, List.all_eq_true, Function.comp,
+    Caveat.ok, actionCaveat, decide_eq_true_eq]
+
+/-- **`le_caveatChainAuthority_top_iff_forall` — the cap side, as the SAME `∀`.** Folding the masks
+down from the TOP cap (`caveatChainAuthority ⊤ masks`, the §1 conferred-authority), the cap confers
+`a` (i.e. `a ≤` the conferred rights, the kernel `granted ≤ held` with `granted := a`) IFF `a ≤ m` for
+every mask. The meet/GLB identity: `a ≤ ⨅ masks ↔ ∀ m, a ≤ m`. Proved by induction on the masks. -/
+theorem le_caveatChainAuthority_top_iff_forall (masks : List ExecAuth) (a : ExecAuth) :
+    a ≤ caveatChainAuthority ⊤ masks ↔ ∀ m ∈ masks, a ≤ m := by
+  -- Generalize the accumulator `held` to make the induction go through, then specialize to `⊤`.
+  suffices h : ∀ (held : ExecAuth), a ≤ caveatChainAuthority held masks ↔ (a ≤ held ∧ ∀ m ∈ masks, a ≤ m) by
+    rw [h ⊤]; simp
+  intro held
+  induction masks generalizing held with
+  | nil => simp [caveatChainAuthority]
+  | cons m rest ih =>
+      rw [caveatChainAuthority_cons, ih (held ⊓ m)]
+      constructor
+      · rintro ⟨hle, hrest⟩
+        refine ⟨le_trans hle inf_le_left, ?_⟩
+        intro m' hm'
+        rcases List.mem_cons.mp hm' with rfl | hin
+        · exact le_trans hle inf_le_right
+        · exact hrest m' hin
+      · rintro ⟨hheld, hall⟩
+        refine ⟨le_inf hheld (hall m (List.mem_cons_self ..)), ?_⟩
+        intro m' hm'
+        exact hall m' (List.mem_cons_of_mem _ hm')
+
+/-- **`chain_narrowing_eq_cap_narrowing` — THE MAP-LEVEL CONVERGENCE (arbitrary chain).** For ANY list
+of kept-rights masks and ANY action `a`, the macaroon caveat-CHAIN admits `a` IF AND ONLY IF the
+kernel cap folded from those masks (`caveatChainAuthority ⊤ masks`) CONFERS `a` (`a ≤` the conferred
+rights). The two narrowings — appending caveats (macaroon) and `granted ≤ held` (kernel cap) — are the
+SAME permitted-action map: `{a | chain admits a} = {a | a ≤ caveatChainAuthority ⊤ masks}`. Not a
+hand-built coincidence on one node (§3/§5) — a structural identity over every chain. This is the lead's
+`chainGateG ch a ↔ capAuthorityG (capOf ch) a` with `capOf ch := caveatChainAuthority ⊤ masks`. -/
+theorem chain_narrowing_eq_cap_narrowing (masks : List ExecAuth) (a : ExecAuth) (d : Discharges Gw) :
+    actionChainAdmits masks a d = true ↔ a ≤ caveatChainAuthority ⊤ masks := by
+  rw [actionChainAdmits_iff_forall, le_caveatChainAuthority_top_iff_forall]
+
+/-- **`chain_admit_set_eq_cap_confer_set`** — the SET face of the convergence: the macaroon chain's
+admissible-action set is EXACTLY the cap's conferred-authority down-set. The "permitted-action sets
+AGREE" the lead asked for, as a set equality over `ExecAuth`. -/
+theorem chain_admit_set_eq_cap_confer_set (masks : List ExecAuth) (d : Discharges Gw) :
+    {a | actionChainAdmits masks a d = true} = {a | a ≤ caveatChainAuthority ⊤ masks} := by
+  ext a; exact chain_narrowing_eq_cap_narrowing masks a d
+
+/-! ### §6.1 — Non-vacuity / mutation-confirmation: the convergence BITES (both polarities). -/
+
+/-- The full rights `{read, write}` and a narrowing mask `{read}` reused for the witnesses. -/
+def mvHeld : ExecAuth := {Auth.read, Auth.write}
+def mvKeep : ExecAuth := {Auth.read}
+
+-- A chain of one `{read}` mask folds to the cap `{read}`; the convergence is the SAME set on both ends.
+-- `{read}` (the action) PASSES (it is ≤ the {read} mask AND ≤ the folded cap {read}):
+#guard (actionChainAdmits [mvKeep] mvKeep (fun _ => false))
+#guard (decide (mvKeep ≤ caveatChainAuthority ⊤ [mvKeep]))
+-- `{read, write}` (an OVER-BROAD action) is REJECTED by the chain AND is NOT ≤ the folded cap:
+#guard (actionChainAdmits [mvKeep] mvHeld (fun _ => false)) == false
+#guard (decide (mvHeld ≤ caveatChainAuthority ⊤ [mvKeep])) == false
+-- The folded cap of the `{read}` chain IS `{read}` (the §1 narrowing and the macaroon chain coincide):
+#guard (decide (caveatChainAuthority ⊤ [mvKeep] = mvKeep))
+
+/-- **MUTATION-CONFIRM (positive):** an action WITHIN every mask passes the chain — and the convergence
+forces it to be cap-conferred too (`mvKeep ≤ folded cap`). The arrow has content. -/
+theorem mv_inRange_passes_both :
+    actionChainAdmits [mvKeep] mvKeep (fun _ => false) = true
+    ∧ mvKeep ≤ caveatChainAuthority ⊤ [mvKeep] :=
+  ⟨by decide, (chain_narrowing_eq_cap_narrowing [mvKeep] mvKeep (fun _ => false)).mp (by decide)⟩
+
+/-- **MUTATION-CONFIRM (negative tooth — the convergence BITES):** an OVER-BROAD action (`{read,write}`
+against a `{read}` chain) is REJECTED by the macaroon chain, AND — via the convergence — is provably
+NOT cap-conferred (`¬ {read,write} ≤ folded cap {read}`). A caveat-chain that narrows MUST correspond to
+a strictly-smaller cap: the rejected action is cap-unauthorized, exactly as the equality demands.
+Neither gate admits the over-broad action — refuted on both ends by ONE theorem. -/
+theorem mv_overBroad_rejected_both :
+    actionChainAdmits [mvKeep] mvHeld (fun _ => false) = false
+    ∧ ¬ (mvHeld ≤ caveatChainAuthority ⊤ [mvKeep]) := by
+  refine ⟨by decide, ?_⟩
+  intro hle
+  have hadm : actionChainAdmits [mvKeep] mvHeld (fun _ => false) = true :=
+    (chain_narrowing_eq_cap_narrowing [mvKeep] mvHeld (fun _ => false)).mpr hle
+  have hrej : actionChainAdmits [mvKeep] mvHeld (fun _ => false) = false := by decide
+  rw [hadm] at hrej
+  exact Bool.noConfusion hrej
+
+end MapConvergence
+
+#assert_axioms actionChainAdmits_iff_forall
+#assert_axioms le_caveatChainAuthority_top_iff_forall
+#assert_axioms chain_narrowing_eq_cap_narrowing
+#assert_axioms chain_admit_set_eq_cap_confer_set
+#assert_axioms mv_inRange_passes_both
+#assert_axioms mv_overBroad_rejected_both
+
 #assert_axioms chainGateG_emits_granted_le_held
 #assert_axioms chainGateG_implies_capAuthorityG_devac
 #assert_axioms capAuthorityG_reads_same_atom
