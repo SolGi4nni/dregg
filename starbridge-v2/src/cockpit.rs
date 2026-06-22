@@ -452,6 +452,14 @@ pub struct Cockpit {
     /// witnessed cell read. A tab switch advances the cell's nonce (the rewindable
     /// UI history), conserving nothing.
     workspace_cell: starbridge_v2::view_cell::WorkspaceCell,
+    /// OPTIMISTIC NAV — `true` while a deferred [`Self::witness_tab`] commit is
+    /// already queued on the foreground async executor. A tab click moves the free
+    /// draft (`self.tab`) + repaints IMMEDIATELY, then schedules the witnessed
+    /// `SetField` commit OFF the paint path. This flag coalesces a burst of rapid
+    /// tab-flips: the first click queues the task, the rest just move the draft, and
+    /// the single queued task commits the LATEST `self.tab` (one turn per burst, not
+    /// one per click — so the witnessed UI-history does not balloon either).
+    tab_witness_pending: bool,
 
     // --- DEBUGGER panel state ----------------------------------------------
     /// The turn the debugger inspects (a demo transfer the operator can run);
@@ -1545,6 +1553,7 @@ impl Cockpit {
             // other rooms are one click (or ⌘K) away.
             tab: Tab::Home,
             workspace_cell,
+            tab_witness_pending: false,
             debug_turn,
             breakpoints: vec![debug::Breakpoint::OnRefusal, debug::Breakpoint::OnConservationBreak],
             replay_cursor,
@@ -2975,22 +2984,59 @@ impl Cockpit {
         if matches!(tab, Tab::Swarm) {
             let _ = self.killer_demo();
         }
+        // OPTIMISTIC NAV — move the free draft + repaint AT ONCE. `active_tab()`
+        // prefers the draft while a witness is pending, so the panel switches on this
+        // very frame; the witnessed `SetField` commit (the slow part — a real executor
+        // turn) is deferred OFF the paint path below.
         self.tab = tab;
-        // M3 WIDEN — witness the tab move into the workspace cell (the §3.4 selector
-        // is now a rewindable dregg-graph mutation). The free draft (`self.tab`)
-        // already moved; this lands the occasional `SetField` commit so the cell
-        // read `render()` dispatches on catches up.
-        self.witness_tab();
         cx.notify();
+        self.schedule_witness_tab(cx);
+    }
+
+    /// OPTIMISTIC NAV — queue the witnessed-tab commit on the foreground async
+    /// executor (gpui is `!Send`; this is a foreground [`Context::spawn`] task, not a
+    /// thread — the `&mut self` witness work runs back on the main loop via the weak
+    /// entity, just deferred past the current paint). Coalesces: a burst of rapid
+    /// tab-flips queues ONE task (guarded by `tab_witness_pending`), which commits the
+    /// LATEST `self.tab` once — so neither the click nor the witnessed UI-history
+    /// balloons. A no-op (other than the eventual commit) when one is already queued.
+    fn schedule_witness_tab(&mut self, cx: &mut Context<Self>) {
+        if self.tab_witness_pending {
+            return;
+        }
+        // Cheap no-op guard: the witnessed selector already matches the draft, so
+        // there is nothing to commit — don't queue a task (and don't churn the
+        // ledger) every frame. `None` (cell never witnessed) still schedules once.
+        if self.workspace_cell.committed_tab(&self.world.borrow()) == Some(self.tab.index()) {
+            return;
+        }
+        self.tab_witness_pending = true;
+        cx.spawn(async move |this, cx| {
+            // A short beat: let the optimistic repaint land first, and let a burst of
+            // flips collapse so we witness only the settled tab.
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(16))
+                .await;
+            // Re-enter the entity on the foreground loop and land the (latest) commit.
+            let _ = this.update(cx, |this, _cx| {
+                this.tab_witness_pending = false;
+                this.witness_tab();
+            });
+        })
+        .detach();
     }
 
     /// M3 WIDEN — THE WITNESSED ACTIVE TAB (`render(workspace_subgraph)`, §3.4). The
-    /// tab `render()` dispatches on, read FROM the [`WorkspaceCell`]'s committed
-    /// (prior-frame) selector index — the whole cockpit selector is cell-driven, not
-    /// a Rust field. The free draft (`self.tab`) is the *visible* aim; the committed
-    /// cell index is the *witnessed* one. They agree after [`Self::witness_tab`]; a
-    /// dangling cell (gone from the ledger) degrades to the live draft.
+    /// tab `render()` dispatches on. While a witness commit is pending (OPTIMISTIC
+    /// NAV), the FREE DRAFT (`self.tab`) is the visible aim — so a click repaints at
+    /// once. Otherwise it reads the [`WorkspaceCell`]'s committed (witnessed) selector
+    /// index — the whole cockpit selector is cell-driven, not a Rust field. A dangling
+    /// cell (gone from the ledger) degrades to the live draft.
     fn active_tab(&self) -> Tab {
+        // The optimistic aim wins until the deferred commit catches the cell up.
+        if self.tab_witness_pending {
+            return self.tab;
+        }
         match self.workspace_cell.committed_tab(&self.world.borrow()) {
             Some(idx) => Tab::from_index(idx),
             // The backing cell is absent (never in the boot path) — fall to the free
@@ -8010,12 +8056,15 @@ impl Render for Cockpit {
         // the projection memo reflects exactly the cells that changed (O(changed),
         // not O(ledger)) — the producer↔consumer JOIN (EFFICIENCY-WELD-PLAN §2.1).
         self.fold_dynamics();
-        // M3 WIDEN: witness the active tab into the workspace cell. The scattered free
-        // `self.tab = …` draft writes (the §3.5 stream weight class) catch up here with
-        // an occasional `SetField` commit, so `render()` dispatches on the cell read
-        // (`active_tab()`) — the §3.4 `render(workspace_subgraph)` selector is now
-        // cell-driven, not a Rust field. Clean ⟹ no commit (idempotent).
-        self.witness_tab();
+        // M3 WIDEN + OPTIMISTIC NAV: witness the active tab into the workspace cell —
+        // but OFF the paint path. The scattered free `self.tab = …` draft writes (the
+        // §3.5 stream weight class) and the `set_tab` clicks both reconcile here, but
+        // the `SetField` commit (a real executor turn) is DEFERRED + coalesced onto the
+        // foreground async executor rather than run synchronously in this frame. While
+        // it is pending, `active_tab()` dispatches on the optimistic draft, so the panel
+        // is correct this very frame; the cell catches up a beat later. Clean ⟹ the
+        // guard inside makes this a cheap bool/compare (no task, no commit).
+        self.schedule_witness_tab(cx);
         // NAV HISTORY: record this frame's UI state so back/forward (← → / ⌘[ ⌘])
         // can step through wherever you've been (the nav API made navigable).
         self.record_nav();
