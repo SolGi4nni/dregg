@@ -46,6 +46,22 @@ cockpit-surface = []
 [dependencies]
 anyhow = "1"
 
+# The Pijul-shaped document language core, with the rope<->patch bridge enabled.
+# The editor's buffer IS a `dregg_doc::RopeDoc`: open a file -> a Document, each
+# save -> a `Patch` (via `RopeDoc::edit_rope`), the durable form is the patch
+# history (blame/timeline/conflicts), not flat bytes. `rope` pins `ropey` to the
+# SAME version gpui-component's `Input` uses, so the seam takes the editor's real
+# buffer with no stringification. Standalone (no substrate); the firmament ride
+# stays a stub. See dregg-doc/src/rope.rs.
+dregg-doc = { path = "../dregg-doc", features = ["rope"] }
+
+# The rope buffer type at the editor<->document seam. The editor reads its
+# gpui-component `Input` buffer into a `ropey::Rope` and hands it to
+# `RopeDoc::edit_rope`. Pinned to the SAME version gpui-component's `Input` and
+# dregg-doc's `rope` feature use, so it's ONE `ropey` in the graph (the seam is
+# the same type on both sides, no stringify).
+ropey = "2.0.0-beta.1"
+
 # Same gpui fork rev as starbridge-v2/Cargo.toml and gpui-component/Cargo.toml so
 # the whole graph resolves to ONE gpui. See the workspace-comment above.
 gpui = { git = "https://github.com/emberian/zed", rev = "407a6ffd977d82b828e392f92db5cb34edea9549" }

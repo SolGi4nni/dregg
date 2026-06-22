@@ -16,6 +16,18 @@
 //! * [`file_tree`] — the [`FileTree`](file_tree::FileTree) affordance: browse a
 //!   directory (via the seam) and click a file to open it into the editor.
 //!
+//! ## The editor buffer IS a document-language document
+//!
+//! The editor's buffer is the materialized fold of a [`dregg_doc::RopeDoc`] — a
+//! Pijul-shaped patch [`History`](dregg_doc::History). Opening a file starts a
+//! document; each save accrues a verifiable [`Patch`](dregg_doc::Patch) (not an
+//! overwrite of bytes), so the durable form is the provenance-bearing patch
+//! history. [`doc_viewer`] is the inspecting face: it renders a document's BLAME /
+//! timeline and its CONFLICT OBJECTS (two pens at one tail shown as both
+//! alternatives + authorship, never a `<<<<<<<` text wound). See
+//! [`Editor::document`](editor::Editor::document), [`Editor::blame`](editor::Editor::blame),
+//! and [`DocViewer`](doc_viewer::DocViewer).
+//!
 //! ## Mounting in deos
 //!
 //! [`cockpit_surface`] holds the adapter that lets the editor live as a tab in
@@ -32,6 +44,7 @@
 //! open/edit/save/highlight + a file tree + a dock out of the box, on the SAME
 //! gpui fork the cockpit pins, so one gpui resolves across the whole graph.
 
+pub mod doc_viewer;
 pub mod editor;
 pub mod file_tree;
 pub mod fs;
@@ -39,6 +52,7 @@ pub mod fs;
 #[cfg(feature = "cockpit-surface")]
 pub mod cockpit_surface;
 
+pub use doc_viewer::DocViewer;
 pub use editor::Editor;
 pub use file_tree::FileTree;
 pub use fs::{DirEntry, FirmamentFs, Fs, Metadata, RealFs};

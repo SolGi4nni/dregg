@@ -41,7 +41,8 @@
 //! dependency-free.
 
 use crate::atom::{Author, PatchId};
-use crate::content::content;
+use crate::blame::{BlameLine, blame};
+use crate::content::{Rendered, content};
 use crate::doc::{Granularity, diff_history_to_ops};
 use crate::history::History;
 use crate::patch::{Op, Patch};
@@ -100,6 +101,64 @@ impl RopeDoc {
     /// merging with a co-author's branch (the buffer is a cache; THIS is durable).
     pub fn history(&self) -> &History {
         &self.history
+    }
+
+    /// The granularity this rope-document tokenizes at (line/word).
+    pub fn granularity(&self) -> Granularity {
+        self.granularity
+    }
+
+    /// Fork a draft branch off the current tip — a co-author's offline copy that
+    /// shares this document's history as its prefix and then diverges. The branch
+    /// is later reconciled with [`RopeDoc::merge_branch`] (the pushout). This is
+    /// the BRANCH face of branch-and-stitch for the editor buffer.
+    pub fn branch(&self) -> RopeDoc {
+        RopeDoc {
+            history: self.history.branch(),
+            granularity: self.granularity,
+        }
+    }
+
+    /// The full rendered content of the document — clean runs AND first-class
+    /// [`crate::ConflictRegion`]s (each alternative tagged with who wrote it). This
+    /// is what the document VIEWER inspects: not a flat string, but the structure,
+    /// so a conflict shows as both alternatives + authorship rather than a `<<<<<<`
+    /// text wound.
+    pub fn rendered(&self) -> Rendered {
+        content(&self.history.replay())
+    }
+
+    /// Per-atom blame in document order: who authored each live span, in which
+    /// patch — correct-by-construction (the attribution rides the content-addressed
+    /// atom, not a line position, so it never smears when surrounding text moves).
+    pub fn blame(&self) -> Vec<BlameLine> {
+        blame(&self.history.replay())
+    }
+
+    /// Whether the document currently carries an unresolved conflict.
+    pub fn has_conflict(&self) -> bool {
+        self.rendered().has_conflict()
+    }
+
+    /// Reconcile a co-author's `branch` into this document: the categorical
+    /// pushout/union of the two patch-folds (clean where the edits are disjoint, a
+    /// first-class conflict object where they genuinely clash). The merged content
+    /// is returned as a [`Rendered`]; the branch's new patches are folded into this
+    /// history (via [`History::stitch`]) so the merged document is reproducible and
+    /// continues to edit/blame correctly.
+    ///
+    /// THE multi-author weld for the editor: two `RopeDoc`s, each edited offline
+    /// from a shared genesis, become one document with conflicts surfaced as
+    /// inspectable objects.
+    pub fn merge_branch(&mut self, branch: &RopeDoc) -> Rendered {
+        // Fold the branch's new patches into our durable history. The stitch is
+        // the pushout via replay of the combined patches — equal to `merge` of the
+        // two folds (the colimit seen two ways; history.rs), commutative /
+        // associative / idempotent (proven in metatheory/Dregg2/Deos/DocMerge.lean).
+        // Folding (rather than only merging the snapshots) keeps the merged
+        // document editable and blame-correct going forward.
+        self.history.stitch(&branch.history);
+        self.rendered()
     }
 }
 
@@ -269,6 +328,79 @@ mod tests {
         assert!(authors.contains(&Author(1)) && authors.contains(&Author(2)));
         // The clean prefix is still usable while the conflict stands.
         assert!(r.to_marked_string().starts_with("shared\n"));
+    }
+
+    // ── Real multi-line edits: insert + delete + replace in ONE save ─────────
+
+    #[test]
+    fn multiline_mixed_edit_round_trips() {
+        // A single save that simultaneously: keeps line 1, replaces line 2,
+        // deletes line 3, and inserts two new lines. The diff->patch alignment
+        // must produce the exact new buffer back through the fold.
+        let mut d = RopeDoc::new(Granularity::Line);
+        d.edit_rope(Author(1), &rope("keep1\nold2\ndrop3\nkeep4\n"));
+        d.edit_rope(
+            Author(2),
+            &rope("keep1\nnew2\nkeep4\ninserted5\ninserted6\n"),
+        );
+        assert_eq!(
+            d.rope().to_string(),
+            "keep1\nnew2\nkeep4\ninserted5\ninserted6\n"
+        );
+        // No conflict — it's a single linear author chain.
+        assert!(!d.has_conflict());
+    }
+
+    #[test]
+    fn blame_attributes_each_line_to_its_real_author() {
+        let mut d = RopeDoc::new(Granularity::Line);
+        d.edit_rope(Author(1), &rope("alpha\nbeta\n"));
+        d.edit_rope(Author(2), &rope("alpha\nbeta\ngamma\n")); // 2 appends gamma
+        let lines = d.blame();
+        let by_content = |c: &str| {
+            lines
+                .iter()
+                .find(|b| b.content == c)
+                .map(|b| b.author)
+                .unwrap()
+        };
+        assert_eq!(by_content("alpha\n"), Author(1));
+        assert_eq!(by_content("beta\n"), Author(1));
+        assert_eq!(by_content("gamma\n"), Author(2), "appender is credited");
+    }
+
+    #[test]
+    fn merge_branch_clean_then_conflict() {
+        // Disjoint edits merge clean; concurrent same-tail edits surface a
+        // conflict object — all through the RopeDoc::merge_branch face.
+        let mut base = RopeDoc::new(Granularity::Line);
+        base.edit_rope(Author(1), &rope("intro\nbody\n"));
+
+        // Disjoint: A edits intro, B appends footer.
+        let mut a = base.branch();
+        let mut b = base.branch();
+        a.edit_rope(Author(1), &rope("INTRO\nbody\n"));
+        b.edit_rope(Author(2), &rope("intro\nbody\nfooter\n"));
+        let mut merged = a.branch();
+        let r = merged.merge_branch(&b);
+        assert!(!r.has_conflict(), "disjoint edits merge clean");
+        assert!(r.to_marked_string().contains("INTRO\n"));
+        assert!(r.to_marked_string().contains("footer\n"));
+
+        // Concurrent same-tail: a genuine conflict object.
+        let mut base2 = RopeDoc::new(Granularity::Line);
+        base2.edit_rope(Author(1), &rope("shared\n"));
+        let mut c = base2.branch();
+        let mut e = base2.branch();
+        c.edit_rope(Author(1), &rope("shared\nfrom-C\n"));
+        e.edit_rope(Author(2), &rope("shared\nfrom-E\n"));
+        let mut m2 = c.branch();
+        let r2 = m2.merge_branch(&e);
+        assert!(r2.has_conflict(), "concurrent tail edits clash");
+        let region = r2.conflicts().next().unwrap();
+        let authors: Vec<Author> =
+            region.alternatives.iter().map(|a| a.provenance.author).collect();
+        assert!(authors.contains(&Author(1)) && authors.contains(&Author(2)));
     }
 
     #[test]

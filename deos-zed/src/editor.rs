@@ -12,12 +12,14 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::Result;
+use dregg_doc::{Author, BlameLine, Granularity, Rendered, RopeDoc};
 use gpui::{
     div, px, App, AppContext as _, Context, Entity, FocusHandle, Focusable, IntoElement,
     ParentElement as _, Render, SharedString, Styled as _, Subscription, Window,
 };
 use gpui_component::input::{Input, InputEvent, InputState, TabSize};
 use gpui_component::{ActiveTheme as _, StyledExt as _};
+use ropey::Rope;
 
 use crate::fs::Fs;
 
@@ -62,6 +64,19 @@ pub fn language_for_path(path: &Path) -> &'static str {
 
 /// A live document open in the editor: the rope-backed input state plus the path
 /// it was loaded from and whether it has unsaved edits.
+///
+/// ## The buffer IS a document-language document
+///
+/// The visible `input` rope is the FAST interactive cache; the *durable* form of
+/// what's open is a [`dregg_doc::RopeDoc`] — a patch [`History`](dregg_doc::History)
+/// whose fold materializes the buffer. [`Editor::open`] starts a `RopeDoc` from the
+/// loaded content; every [`Editor::save`] hands the current buffer to
+/// `RopeDoc::edit_rope`, which diffs it against the document's content and accrues
+/// the minimal `Add`/`Delete`/`Connect` [`Patch`](dregg_doc::Patch). So saves do
+/// not overwrite bytes — they EXTEND a verifiable patch history, queryable for
+/// [`Editor::blame`] and [`Editor::rendered`] (conflicts as first-class objects).
+/// The `Fs` save still writes the materialized bytes (so disk stays readable);
+/// the patch history is the document's real, provenance-bearing form.
 pub struct Editor {
     /// The rope-backed code input (gpui-component). Holds the actual text,
     /// cursor, selection, undo history, highlighting.
@@ -76,6 +91,15 @@ pub struct Editor {
     dirty: bool,
     /// A short status message shown under the editor (last save result, errors).
     status: SharedString,
+    /// The durable document: a patch [`History`](dregg_doc::History) of which the
+    /// buffer is the materialized fold. `None` until a file is opened. Each save
+    /// commits a [`Patch`](dregg_doc::Patch) here; blame/timeline/conflicts are
+    /// read off it.
+    doc: Option<RopeDoc>,
+    /// The authoring identity stamped onto patches this editor commits (who wrote
+    /// what). Distinct editors (co-authors) use distinct ids so blame + conflict
+    /// attribution are real.
+    author: Author,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -112,8 +136,50 @@ impl Editor {
             path: None,
             dirty: false,
             status: SharedString::from(format!("ready — {label}")),
+            doc: None,
+            author: Author(1),
             _subscriptions: subs,
         }
+    }
+
+    /// Set the authoring identity stamped onto the patches this editor commits.
+    /// Co-authoring editors use distinct ids so blame + conflict attribution are
+    /// real ("who wrote which alternative" is a fact, not a guess).
+    pub fn with_author(mut self, author: Author) -> Self {
+        self.author = author;
+        self
+    }
+
+    /// The authoring identity this editor stamps onto its patches.
+    pub fn author(&self) -> Author {
+        self.author
+    }
+
+    /// The durable document (a patch [`History`](dregg_doc::History)) open in the
+    /// editor, if any. The buffer is its materialized fold; this is the real,
+    /// provenance-bearing form — query it for blame/timeline/conflicts.
+    pub fn document(&self) -> Option<&RopeDoc> {
+        self.doc.as_ref()
+    }
+
+    /// Per-atom blame for the open document, in document order: who authored each
+    /// live span, in which patch. Empty if no document is open. Correct by
+    /// construction (attribution rides the content-addressed atom, never a line
+    /// position — it does not smear when surrounding text moves).
+    pub fn blame(&self) -> Vec<BlameLine> {
+        self.doc.as_ref().map(|d| d.blame()).unwrap_or_default()
+    }
+
+    /// The full rendered structure of the open document: clean runs AND
+    /// first-class conflict regions (each alternative tagged with its author).
+    /// `None` if no document is open. This is what the document VIEWER inspects.
+    pub fn rendered(&self) -> Option<Rendered> {
+        self.doc.as_ref().map(|d| d.rendered())
+    }
+
+    /// How many patches the open document's history holds (the save/edit count).
+    pub fn patch_count(&self) -> usize {
+        self.doc.as_ref().map(|d| d.history().len()).unwrap_or(0)
     }
 
     /// The path currently open, if any.
@@ -159,8 +225,15 @@ impl Editor {
         let lang = language_for_path(&path);
         self.input.update(cx, |state, cx| {
             state.set_highlighter(lang, cx);
-            state.set_value(content, window, cx);
+            state.set_value(content.clone(), window, cx);
         });
+        // Start the durable document: a fresh patch-history whose genesis patch
+        // is the loaded content (authored by this editor). The buffer the user
+        // sees is exactly this document's fold. Line granularity is the spec's
+        // span-coarse default (§4.4).
+        let mut doc = RopeDoc::new(Granularity::Line);
+        doc.edit_rope(self.author, &Rope::from_str(&content));
+        self.doc = Some(doc);
         let name = path
             .file_name()
             .and_then(|n| n.to_str())
@@ -168,7 +241,7 @@ impl Editor {
             .to_string();
         self.path = Some(path);
         self.dirty = false;
-        self.status = SharedString::from(format!("opened {name} [{lang}]"));
+        self.status = SharedString::from(format!("opened {name} [{lang}] — 1 patch"));
         cx.notify();
         Ok(())
     }
@@ -183,6 +256,15 @@ impl Editor {
             anyhow::bail!("no file open");
         };
         let content = self.text(cx);
+        // The save ACCRUES A PATCH: diff the current buffer against the durable
+        // document's content and commit the minimal patch (the editor edit -> a
+        // verifiable, provenance-bearing patch over the document history). This is
+        // the editor-buffer-as-document weld — the durable form is the history,
+        // not the bytes we also write to disk for readability.
+        if let Some(doc) = self.doc.as_mut() {
+            doc.edit_rope(self.author, &Rope::from_str(&content));
+        }
+        let patches = self.patch_count();
         match self.fs.save(&path, &content) {
             Ok(()) => {
                 self.dirty = false;
@@ -191,8 +273,10 @@ impl Editor {
                     .and_then(|n| n.to_str())
                     .unwrap_or("file")
                     .to_string();
-                self.status =
-                    SharedString::from(format!("saved {name} ({} bytes)", content.len()));
+                self.status = SharedString::from(format!(
+                    "saved {name} ({} bytes) — {patches} patches",
+                    content.len()
+                ));
                 cx.notify();
                 Ok(())
             }
