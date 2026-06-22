@@ -49,6 +49,17 @@ use crate::ir::{ConstraintIr, MutateOp, ParamType, RequirementKind, Statement};
 /// decomposed values stay in the small non-negative half of the field.
 const RANGE_CHECK_BITS: usize = 30;
 
+/// Number of bits each inequality OPERAND is range-checked to. Mirrors
+/// `emit_stark_impl::OPERAND_RANGE_BITS`. The operand bound closes the field
+/// wrap-around: without it a malicious prover sets `left = p - 1`, `right = 0`
+/// (a genuine `left > right` violation) so `diff = right - left ≡ 1`, a tiny
+/// value the diff range-check would accept. Constraining each operand to
+/// `< 2^29` makes `left = p - 1` UNSATISFIABLE and forces the diff to stay in a
+/// range where a violation's wrapped representative exceeds the 30-bit diff
+/// window and is rejected. THE DOCUMENTED DOMAIN: these inequalities are sound
+/// for operands in `[0, 2^29)`; larger operands are out of the provable domain.
+const OPERAND_RANGE_BITS: usize = 29;
+
 /// Check if the IR contains membership constraints (unsupported for native P3).
 fn has_membership(statements: &[Statement]) -> bool {
     for stmt in statements {
@@ -187,8 +198,11 @@ fn count_p3_aux(statements: &[Statement], width: &mut usize) {
         match stmt {
             Statement::Require(req) => match &req.kind {
                 RequirementKind::LessEqual { .. } | RequirementKind::GreaterEqual { .. } => {
-                    // diff_col + RANGE_CHECK_BITS bit columns (genuine decomposition).
+                    // diff_col + RANGE_CHECK_BITS bit columns (genuine decomposition),
+                    // PLUS two operand range-check blocks (left, right) that close
+                    // the field wrap-around (see OPERAND_RANGE_BITS).
                     *width += 1 + RANGE_CHECK_BITS;
+                    *width += 2 * (1 + RANGE_CHECK_BITS);
                 }
                 RequirementKind::Equal { .. } => {}
                 RequirementKind::NotEqual { .. } => {
@@ -322,7 +336,10 @@ fn emit_p3_requirement(
                     r - l
                 }
             };
-            emit_p3_range_check(diff_col, bits_start, RANGE_CHECK_BITS, &diff_def)
+            let mut out = emit_p3_range_check(diff_col, bits_start, RANGE_CHECK_BITS, &diff_def);
+            // Operand range-checks close the wrap-around (see OPERAND_RANGE_BITS).
+            out.extend(emit_p3_operand_range_checks(layout, aux_idx, left_col, right_col));
+            out
         }
         RequirementKind::GreaterEqual { left, right } => {
             // left - right >= 0, proven via a genuine bit decomposition.
@@ -338,7 +355,9 @@ fn emit_p3_requirement(
                     l - r
                 }
             };
-            emit_p3_range_check(diff_col, bits_start, RANGE_CHECK_BITS, &diff_def)
+            let mut out = emit_p3_range_check(diff_col, bits_start, RANGE_CHECK_BITS, &diff_def);
+            out.extend(emit_p3_operand_range_checks(layout, aux_idx, left_col, right_col));
+            out
         }
         RequirementKind::Equal { left, right } => {
             let left_col = find_p3_col(layout, &quote::quote!(#left).to_string());
@@ -633,6 +652,37 @@ fn emit_p3_range_check(
         });
     }
 
+    out
+}
+
+/// Emit the operand range-check sub-constraints for an inequality: both `left`
+/// and `right` are constrained to `< 2^OPERAND_RANGE_BITS`, closing the field
+/// wrap-around (see `OPERAND_RANGE_BITS`). Advances `aux_idx` past the two
+/// RangeCheck blocks reserved in `count_p3_aux`.
+fn emit_p3_operand_range_checks(
+    layout: &P3Layout,
+    aux_idx: &mut usize,
+    left_col: usize,
+    right_col: usize,
+) -> Vec<TokenStream> {
+    let mut out = Vec::new();
+    for operand_col in [left_col, right_col] {
+        let op_diff_col = layout.aux_start + *aux_idx;
+        let op_bits_start = layout.aux_start + *aux_idx + 1;
+        *aux_idx += 1 + RANGE_CHECK_BITS;
+        let value_def = quote! {
+            {
+                let v: AB::Expr = local[#operand_col].into();
+                v
+            }
+        };
+        out.extend(emit_p3_range_check(
+            op_diff_col,
+            op_bits_start,
+            OPERAND_RANGE_BITS,
+            &value_def,
+        ));
+    }
     out
 }
 

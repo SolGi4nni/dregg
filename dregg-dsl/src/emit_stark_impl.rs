@@ -30,6 +30,37 @@ use crate::ir::{ConstraintIr, MutateOp, ParamType, RequirementKind, Statement};
 /// gadget in `circuit/src/committed_threshold.rs` (`COMMITTED_DIFF_BITS = 30`).
 const RANGE_CHECK_BITS: usize = 30;
 
+/// Number of bits each inequality OPERAND is range-checked to.
+///
+/// ## The operand-domain assumption (load-bearing for soundness)
+///
+/// The inequality predicates (`<=`, `>=`) are proven via a diff range-check:
+/// `right - left` (resp. `left - right`) is decomposed into bits and shown to be
+/// a "small non-negative" field element. That is sound **only if the operands are
+/// themselves small enough that the difference cannot WRAP around the field
+/// modulus**. Without an operand bound a malicious prover picks `left = p - 1`,
+/// `right = 0` (a genuine violation, `left > right`); then
+/// `diff = right - left = -(p-1) ≡ 1 (mod p)`, a tiny value that passes the diff
+/// range-check — the violation is accepted. (`committed_threshold.rs` is safe
+/// because its values are bounded by their commitment context; the general DSL
+/// caveat operands have no such guarantee.)
+///
+/// We close the wrap-around by range-checking **each operand** to `< 2^OPERAND_RANGE_BITS`.
+/// With `OPERAND_RANGE_BITS = 29` and operands `left, right ∈ [0, 2^29)`:
+///   - an honest diff lies in `[0, 2^29) ⊂ [0, 2^30)`, so it passes the 30-bit
+///     diff range-check, and
+///   - a genuine violation has true diff in `(-2^29, 0)`, whose canonical field
+///     representative is `≥ p - 2^29 + 1 = 1_476_395_010 > 2^30`, so it CANNOT
+///     fit the 30-bit diff window and is REJECTED.
+/// Picking `left = p - 1` is now UNSATISFIABLE outright: `p - 1` does not fit in
+/// 29 bits, so its operand range-check fails — the wrap-around is dead.
+///
+/// THE DOCUMENTED DOMAIN: these inequality predicates are sound for operands in
+/// `[0, 2^29)`. A caveat that compares values `≥ 2^29` is OUT OF the provable
+/// domain — the macro will emit constraints that are UNSATISFIABLE for such
+/// operands (the proof simply cannot be produced), never silently unsound.
+const OPERAND_RANGE_BITS: usize = 29;
+
 /// Column layout computed at macro time.
 struct TraceLayout {
     /// Total number of columns.
@@ -110,6 +141,7 @@ fn count_aux_from_statements(
         match stmt {
             Statement::Require(req) => match &req.kind {
                 RequirementKind::LessEqual { .. } | RequirementKind::GreaterEqual { .. } => {
+                    // Diff range-check (right-left >= 0 / left-right >= 0).
                     let diff_col = *width;
                     let bits_start = *width + 1;
                     *width += 1 + RANGE_CHECK_BITS;
@@ -117,6 +149,18 @@ fn count_aux_from_statements(
                         diff_col,
                         bits_start,
                     });
+                    // Operand range-checks (close the wrap-around): each operand
+                    // is constrained to < 2^OPERAND_RANGE_BITS so the diff cannot
+                    // wrap the field modulus. Two RangeCheck blocks: left, right.
+                    for _ in 0..2 {
+                        let op_diff_col = *width;
+                        let op_bits_start = *width + 1;
+                        *width += 1 + RANGE_CHECK_BITS;
+                        aux_cols.push(AuxCol::RangeCheck {
+                            diff_col: op_diff_col,
+                            bits_start: op_bits_start,
+                        });
+                    }
                 }
                 RequirementKind::Equal { .. } => {
                     // No auxiliary columns needed for equality.
@@ -451,7 +495,13 @@ fn emit_requirement_constraints(
             let bits_start = layout.aux_start + *aux_idx + 1;
             *aux_idx += 1 + RANGE_CHECK_BITS;
             let diff_def = quote! { local[#right_col] - local[#left_col] };
-            emit_range_check_constraints(diff_col, bits_start, RANGE_CHECK_BITS, &diff_def)
+            let mut out =
+                emit_range_check_constraints(diff_col, bits_start, RANGE_CHECK_BITS, &diff_def);
+            // Operand range-checks close the wrap-around (see OPERAND_RANGE_BITS):
+            // each operand must fit in OPERAND_RANGE_BITS bits, so the diff cannot
+            // wrap the field modulus and a violation's wrapped diff stays > p/2.
+            out.extend(emit_operand_range_checks(layout, aux_idx, left_col, right_col));
+            out
         }
         RequirementKind::GreaterEqual { left, right } => {
             // Range check: left - right >= 0. Same gadget, diff = left - right.
@@ -461,7 +511,10 @@ fn emit_requirement_constraints(
             let bits_start = layout.aux_start + *aux_idx + 1;
             *aux_idx += 1 + RANGE_CHECK_BITS;
             let diff_def = quote! { local[#left_col] - local[#right_col] };
-            emit_range_check_constraints(diff_col, bits_start, RANGE_CHECK_BITS, &diff_def)
+            let mut out =
+                emit_range_check_constraints(diff_col, bits_start, RANGE_CHECK_BITS, &diff_def);
+            out.extend(emit_operand_range_checks(layout, aux_idx, left_col, right_col));
+            out
         }
         RequirementKind::Equal { left, right } => {
             let left_col = find_param_col(layout, &quote::quote!(#left).to_string());
@@ -572,6 +625,32 @@ fn emit_range_check_constraints(
         out.push(quote! { (local[#col]) });
     }
 
+    out
+}
+
+/// Emit the operand range-check sub-constraints for an inequality: both `left`
+/// and `right` are constrained to `< 2^OPERAND_RANGE_BITS`, which closes the
+/// field wrap-around (see `OPERAND_RANGE_BITS`). Advances `aux_idx` past the two
+/// RangeCheck blocks reserved in `count_aux_from_statements`.
+fn emit_operand_range_checks(
+    layout: &TraceLayout,
+    aux_idx: &mut usize,
+    left_col: usize,
+    right_col: usize,
+) -> Vec<TokenStream> {
+    let mut out = Vec::new();
+    for operand_col in [left_col, right_col] {
+        let op_diff_col = layout.aux_start + *aux_idx;
+        let op_bits_start = layout.aux_start + *aux_idx + 1;
+        *aux_idx += 1 + RANGE_CHECK_BITS;
+        let value_def = quote! { local[#operand_col] };
+        out.extend(emit_range_check_constraints(
+            op_diff_col,
+            op_bits_start,
+            OPERAND_RANGE_BITS,
+            &value_def,
+        ));
+    }
     out
 }
 
@@ -773,6 +852,25 @@ fn emit_range_check_fill(
     }
 }
 
+/// Fill the two operand range-check blocks for an inequality: decompose each
+/// operand (`left`, `right`) into its `RANGE_CHECK_BITS` little-endian bits.
+/// Advances `aux_idx` to match `emit_operand_range_checks` exactly.
+fn emit_operand_range_check_fill(
+    layout: &TraceLayout,
+    aux_idx: &mut usize,
+    left_col: usize,
+    right_col: usize,
+    stmts: &mut Vec<TokenStream>,
+) {
+    for operand_col in [left_col, right_col] {
+        let op_diff_col = layout.aux_start + *aux_idx;
+        let op_bits_start = layout.aux_start + *aux_idx + 1;
+        *aux_idx += 1 + RANGE_CHECK_BITS;
+        let value_def = quote! { row[#operand_col] };
+        stmts.push(emit_range_check_fill(op_diff_col, op_bits_start, &value_def));
+    }
+}
+
 /// Emit code to fill auxiliary columns (diff, bit, inverse) in the trace row.
 fn emit_aux_fill(ir: &ConstraintIr, layout: &TraceLayout) -> TokenStream {
     let mut stmts = Vec::new();
@@ -800,6 +898,7 @@ fn emit_aux_fill_statements(
                     *aux_idx += 1 + RANGE_CHECK_BITS;
                     let diff_def = quote! { row[#right_col] - row[#left_col] };
                     stmts.push(emit_range_check_fill(diff_col, bits_start, &diff_def));
+                    emit_operand_range_check_fill(layout, aux_idx, left_col, right_col, stmts);
                 }
                 RequirementKind::GreaterEqual { left, right } => {
                     let left_col = find_param_col(layout, &quote::quote!(#left).to_string());
@@ -809,6 +908,7 @@ fn emit_aux_fill_statements(
                     *aux_idx += 1 + RANGE_CHECK_BITS;
                     let diff_def = quote! { row[#left_col] - row[#right_col] };
                     stmts.push(emit_range_check_fill(diff_col, bits_start, &diff_def));
+                    emit_operand_range_check_fill(layout, aux_idx, left_col, right_col, stmts);
                 }
                 RequirementKind::Equal { .. } => {
                     // No auxiliary columns.
