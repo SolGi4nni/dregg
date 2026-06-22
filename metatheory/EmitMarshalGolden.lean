@@ -77,7 +77,10 @@ def stateFull : WState :=
              , { swiss := 6, exporter := 1, target := 2, rights := [], refcount := 0, cert := none } ]
     revoked := [7, 8]
     lifecycle := [(0, 1), (2, 3)]
-    deathCert := [(2, 42)] }
+    deathCert := [(2, 42)]
+    -- delegate: cell 2's parent is cell 0 (`[child,parent]`) — exercises the new parent-pointer
+    -- side-table multi-element (mirrors the Rust `state_full`).
+    delegate := [(2, 0)] }
 
 /-- The wide demo state (mirrors `marshal_roundtrip.rs::wide_demo_state` / FFI `wideDemoState`), the
 shape the existing single golden uses — included so the new suite SUBSUMES the old hard-coded one. -/

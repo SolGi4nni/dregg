@@ -9,7 +9,7 @@
       "Impossible",
       "Custom{vk_hash}"
     ],
-    "note": "is_attenuation(held, req) = req.is_narrower_or_equal(held); see the None cap-badge anomaly in HORIZONLOG"
+    "note": "is_attenuation(held, req) = req.is_narrower_or_equal(held); None is the lattice TOP \u2014 always-satisfiable; the affordance badge special-cases it (fixed)"
   },
   "effects_seen": [
     "EmitEvent",

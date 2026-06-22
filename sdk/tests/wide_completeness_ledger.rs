@@ -297,7 +297,7 @@ fn set_field_dyn_proves_on_deployed_wide_path() {
 /// 789-wide custom descriptor, so a custom turn minted NO wide receipt (the LAST liveness gap). AFTER
 /// routing it to `generate_rotated_custom_wide`: it proves + verifies. The Custom row's `(vk, commit)`
 /// columns (68 / 72) carry the verifying `BoundCustomProof`'s exposed binding
-/// (`vk_hash_felts()` / `proof_commitment().0`), threaded onto the wire via
+/// (`vk_hash_felts()` / `proof_commitment()`), threaded onto the wire via
 /// `Turn::with_custom_program_proofs`; the light client re-runs `verify_proof_bind` against that same
 /// binding. This is the deployed, end-to-end path: the wide receipt AND the sub-proof bind the SAME
 /// verifying STARK.
@@ -361,7 +361,7 @@ fn custom_proves_on_deployed_wide_path() {
     //    68 / 72 then hold exactly what `verify_proof_bind` re-derives.
     let effects = vec![VmEffect::Custom {
         program_vk_hash: bound.vk_hash_felts(),
-        proof_commitment: bound.proof_commitment().0,
+        proof_commitment: bound.proof_commitment(),
     }];
 
     // ── PROVE-THROUGH the deployed wide path + VERIFY the wide receipt (liveness: a custom turn now

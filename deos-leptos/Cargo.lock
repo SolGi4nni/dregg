@@ -1465,6 +1465,10 @@ dependencies = [
 name = "dregg-sdk"
 version = "0.1.0"
 dependencies = [
+ "ark-ec",
+ "ark-ff",
+ "ark-serialize",
+ "ark-std",
  "async-trait",
  "base64 0.22.1",
  "blake3",
@@ -1477,6 +1481,8 @@ dependencies = [
  "dregg-commit",
  "dregg-dsl-runtime",
  "dregg-dsl-tests",
+ "dregg-federation",
+ "dregg-hints",
  "dregg-intent",
  "dregg-lean-ffi",
  "dregg-lightclient",

@@ -267,6 +267,7 @@ impl TurnExecutor {
             stored_head,
             budget,
             intro_lifetime: self.max_introduction_lifetime,
+            current_timestamp: self.current_timestamp as u64,
             federation_id: self.local_federation_id,
         }
     }

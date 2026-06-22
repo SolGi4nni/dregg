@@ -974,7 +974,7 @@ pub fn prove_effect_vm_rotated_wide(
             // program-correctness recursion is the SDK-reachable `custom_proof_bind` engine (threaded
             // via `Turn.custom_program_proofs`), NOT a row-local poly. The `Effect::Custom`'s
             // `(program_vk_hash, proof_commitment)` MUST be a verifying `BoundCustomProof`'s exposed
-            // binding (`bound.vk_hash_felts()` / `bound.proof_commitment().0`) for the wide receipt to
+            // binding (`bound.vk_hash_felts()` / `bound.proof_commitment()`) for the wide receipt to
             // bind the genuine sub-proof.
             generate_rotated_custom_wide(initial_state, effects, &before, &after, caveat)
                 .map(|(t, d)| (t, d, vec![]))

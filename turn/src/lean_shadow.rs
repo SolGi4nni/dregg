@@ -90,6 +90,12 @@ pub struct ShadowHostCtx {
     /// the cap-fidelity reconstitution (`lean_apply::collect_cap_ops`) needs the SAME value to
     /// rebuild the introduced cap's leaf byte-exactly. Defaults to the executor default (1000).
     pub intro_lifetime: u64,
+    /// The executor's wall-clock (`self.current_timestamp`, as `u64`). `apply_refresh_delegation`
+    /// stamps the re-armed delegation snapshot's `refreshed_at` with this value, and `refreshed_at`
+    /// FOLDS INTO the cell commitment (`hash_delegation_into`), so the refresh reconstitution
+    /// (`lean_apply::StateOp::RefreshDelegation`) must stamp the SAME value for the reconstituted
+    /// `.root()` to match Rust. Defaults to `0` (the test/round-trip clock).
+    pub current_timestamp: u64,
     /// The executor's local federation id (`self.local_federation_id`). The `Authorization::Signature`
     /// WHO leg binds the ed25519 signing message to THIS federation
     /// (`compute_signing_message`/`compute_partial_signing_message`), so the producer marshaller must
@@ -110,6 +116,7 @@ impl ShadowHostCtx {
             stored_head: None,
             budget: 1_000_000_000,
             intro_lifetime: 1000,
+            current_timestamp: 0,
             federation_id: [0u8; 32],
         }
     }
@@ -1081,13 +1088,38 @@ const FRESH_ID_BASE: u64 = 1_000_000;
 // ===================================================================
 
 pub(crate) fn build_pre_ledger(turn: &Turn, ledger: &Ledger) -> ShadowPreLedger {
-    let id_map = collect_id_map(turn);
+    let mut id_map = collect_id_map(turn);
     let mut cells = HashMap::new();
     for id in id_map.keys() {
         if let Some(cell) = ledger.get(id) {
             cells.insert(*id, cell.clone());
         }
     }
+
+    // DELEGATION-PARENT CLOSURE (the refresh-residual fix). The verified `refreshDelegationChainA`
+    // reads BOTH `(delegate child).isSome` AND the parent's CURRENT c-list (`parentClist`) to install
+    // the fresh snapshot. A refresh turn references only the `child`, so the parent is otherwise
+    // absent from the wire — leaving `delegate` unpopulated (its parent id is not in the id_map) and
+    // the verified gate rejecting a refresh the Rust producer commits. Pull each snapshotted cell's
+    // delegation parent into the id_map + snapshot so the parent-pointer table can name it and the
+    // verified refresh reads the real parent c-list. (Closed at one level: a parent's own parent is
+    // not needed — `refreshDelegationChainA` reads only the immediate parent's caps.)
+    let parents: Vec<CellId> = cells
+        .values()
+        .filter_map(|c| c.delegate)
+        .filter(|p| !id_map.contains_key(p) && ledger.get(p).is_some())
+        .collect();
+    for parent in parents {
+        if id_map.contains_key(&parent) {
+            continue;
+        }
+        let nat = id_map.len() as u64;
+        id_map.insert(parent, nat);
+        if let Some(cell) = ledger.get(&parent) {
+            cells.insert(parent, cell.clone());
+        }
+    }
+
     ShadowPreLedger { cells, id_map }
 }
 
@@ -1503,6 +1535,11 @@ fn ledger_to_wire_state(
     // so the verified executor's post-state lifecycle reconstitutes onto the Rust cell.
     let mut lifecycle: Vec<(u64, u64)> = Vec::new();
     let mut death_cert: Vec<(u64, u64)> = Vec::new();
+    // The PER-CELL DELEGATION PARENT-POINTER table (`[child,parent]`). The verified
+    // `refreshDelegationChainA` reads `(delegate child).isSome` as a precondition, so a cell with an
+    // established delegation parent must carry it on the wire for the verified executor to commit a
+    // refresh the Rust producer commits (the commit-bit residual this closes).
+    let mut delegate: Vec<(u64, u64)> = Vec::new();
 
     let mut sorted: Vec<_> = pre.id_map.iter().collect();
     sorted.sort_by_key(|(_, nat)| *nat);
@@ -1563,6 +1600,15 @@ fn ledger_to_wire_state(
         {
             death_cert.push((*nat, low_u64_be(death_certificate_hash)));
         }
+
+        // Carry the cell's delegation PARENT pointer (`Cell::delegate`) so the verified refresh gate
+        // sees `(delegate child).isSome`. Drop a parent whose id is not in the turn's id map (it
+        // cannot be referenced; keeps the table closed) — the verified gate only needs `isSome`.
+        if let Some(parent) = &cell.delegate {
+            if let Some(p_nat) = id_map_lookup(pre, parent) {
+                delegate.push((*nat, p_nat));
+            }
+        }
     }
 
     Ok(WireState {
@@ -1577,6 +1623,7 @@ fn ledger_to_wire_state(
         revoked: vec![],
         lifecycle,
         death_cert,
+        delegate,
     })
 }
 

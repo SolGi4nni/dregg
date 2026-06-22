@@ -2502,6 +2502,26 @@ def funOfCellNats (entries : List (CellId × Nat)) : CellId → Nat :=
            | some p => p.2
            | none   => 0
 
+/-- Read the per-cell DELEGATE parent-pointer side-table BACK out of a `CellId → Option CellId`
+kernel function at the listed cell ids, dropping the `none` (no-parent) entries so a never-delegated
+cell contributes nothing (the wire stays minimal; an all-`none` kernel round-trips to `[]`). A cell
+WITH a parent emits a `[child,parent]` pair. The parent-pointer analog of `cellNatsOfFun`; the wire
+shape is identical (`[cell,val]` Nat pairs, since `CellId = Nat`), so it reuses the `encodeCellNats`
+/ `parseCellNats` codec. THE FIX (refresh-delegation residual): `delegate` was never carried, so the
+verified `refreshDelegationChainA`'s `(delegate child).isSome` precondition could never be met from a
+reconstituted pre-state — carrying it closes the commit-bit divergence. -/
+def delegateEntriesOfFun (cellIds : List CellId) (f : CellId → Option CellId) :
+    List (CellId × Nat) :=
+  cellIds.filterMap (fun c => match f c with | some p => some (c, p) | none => none)
+
+/-- Reconstruct a `CellId → Option CellId` parent pointer from a decoded `[child,parent]` side-table
+(listed entry ⇒ `some parent`, else `none`). The inverse of `delegateEntriesOfFun` on the listed
+support. -/
+def delegateFunOfEntries (entries : List (CellId × Nat)) : CellId → Option CellId :=
+  fun c => match entries.find? (fun p => p.1 == c) with
+           | some p => some p.2
+           | none   => none
+
 /-! ### QueueRecord codec. -/
 
 /-- Encode one `QueueRecord` `[id,owner,capacity,buffer]`. -/
@@ -2641,6 +2661,13 @@ structure WState where
   binds the death-cert payload of a Destroyed cell, so it too crosses the wire. Additive; DEFAULTS
   EMPTY. -/
   deathCert   : List (CellId × Nat) := []
+  /-- The PER-CELL DELEGATION PARENT-POINTER side-table (the kernel's `delegate : CellId → Option
+  CellId`): a `[child,parent]` pair per cell that HAS a parent. Established at birth by `spawn`
+  (`apply.rs` snapshot+refresh), it is the precondition the verified `refreshDelegationChainA` gate
+  reads (`(delegate child).isSome`). It was previously DROPPED at the wire, so a reconstituted
+  pre-state with an established delegation could never refresh — the commit-bit residual this field
+  closes. Additive; DEFAULTS EMPTY (a never-delegated cell carries no entry). -/
+  delegate    : List (CellId × Nat) := []
 
 /-- Reconstruct a `RecordKernelState` from a decoded `WState`. `accounts` is exactly the listed cell
 ids; `cell`/`caps`/`bal` are the "listed slot, else default" reconstructions; the five side-tables are
@@ -2659,7 +2686,9 @@ def stateOfWState (w : WState) : RecordKernelState :=
     commitments := w.commitments
     revoked := w.revoked
     lifecycle := funOfCellNats w.lifecycle
-    deathCert := funOfCellNats w.deathCert }
+    deathCert := funOfCellNats w.deathCert
+    -- THE FIX: populate the parent-pointer the verified refresh gate reads (`(delegate child).isSome`).
+    delegate := delegateFunOfEntries w.delegate }
 
 /-- Encode a `WState` to the wide STATE JSON (eleven fields, in a fixed order). -/
 def encodeWState (w : WState) : String :=
@@ -2673,7 +2702,8 @@ def encodeWState (w : WState) : String :=
     ++ ",\"swiss\":" ++ encodeSwissTable w.swiss
     ++ ",\"revoked\":" ++ encodeNats w.revoked
     ++ ",\"lifecycle\":" ++ encodeCellNats w.lifecycle
-    ++ ",\"deathCert\":" ++ encodeCellNats w.deathCert ++ "}"
+    ++ ",\"deathCert\":" ++ encodeCellNats w.deathCert
+    ++ ",\"delegate\":" ++ encodeCellNats w.delegate ++ "}"
 
 /-- Parse the wide STATE `{"cells":…,"caps":…,"bal":…,"escrows":…,"nullifiers":…,
 "commitments":…,"queues":…,"swiss":…}`. Strict on field ORDER and the closing `}`; the caller
@@ -2701,10 +2731,12 @@ def parseWState (fuel : Nat) (cs : PState) : Option (WState × PState) := do
   let (lifecycle, r19) ← parseCellNats r18
   let r20 ← lit ",\"deathCert\":" r19
   let (deathCert, r21) ← parseCellNats r20
-  let r22 ← lit "}" r21
+  let r22 ← lit ",\"delegate\":" r21
+  let (delegate, r23) ← parseCellNats r22
+  let r24 ← lit "}" r23
   some ({ cells := cells, caps := caps, bal := bal, escrows := escrows, nullifiers := nullifiers,
           commitments := commitments, queues := queues, swiss := swiss, revoked := revoked,
-          lifecycle := lifecycle, deathCert := deathCert }, r22)
+          lifecycle := lifecycle, deathCert := deathCert, delegate := delegate }, r24)
 
 /-- Read a `WState` BACK OUT of a `RecordKernelState`, at the SAME cell-id / label order the input
 listed (so the wire is positionally deterministic for the Rust reference). `cellIds`/`capLabels`/
@@ -2724,7 +2756,10 @@ def wstateOfState (cellIds : List CellId) (capLabels : List CellId)
     swiss := []
     revoked := k.revoked
     lifecycle := cellNatsOfFun cellIds k.lifecycle
-    deathCert := cellNatsOfFun cellIds k.deathCert }
+    deathCert := cellNatsOfFun cellIds k.deathCert
+    -- Echo the parent-pointer at the input's cell order (refresh leaves `delegate` unchanged; a
+    -- committing spawn would extend it — either way the OUTPUT carries it for a stable round-trip).
+    delegate := delegateEntriesOfFun cellIds k.delegate }
 
 /-! ## §W7 — the Turn ENVELOPE + the COMPLETE-TURN export `dregg_exec_full_turn_wide`.
 
@@ -3052,7 +3087,7 @@ def wideRollbackTurn : WTurn :=
 
 -- Malformed wire ⇒ fail-closed empty state, ok:0.
 #guard (execFullTurnWide "garbage" ==
-  "{\"state\":{\"cells\":[],\"caps\":[],\"bal\":[],\"escrows\":[],\"nullifiers\":[],\"commitments\":[],\"queues\":[],\"swiss\":[],\"revoked\":[],\"lifecycle\":[],\"deathCert\":[]},\"loglen\":0,\"ok\":0}")
+  "{\"state\":{\"cells\":[],\"caps\":[],\"bal\":[],\"escrows\":[],\"nullifiers\":[],\"commitments\":[],\"queues\":[],\"swiss\":[],\"revoked\":[],\"lifecycle\":[],\"deathCert\":[],\"delegate\":[]},\"loglen\":0,\"ok\":0}")
 
 /-- A heterogeneous state for the full round-trip guard (every side-table NON-empty + populated). -/
 def wideRoundtripState : WState :=
@@ -3431,7 +3466,7 @@ def forgedGatedInput : String := encodeWWire { state := wideDemoState, turn := f
 #guard (portalVerify (liftAuthW (.signature 7 8 : AuthW))) == false  --  false (forged ⇒ rollback)
 -- malformed wire ⇒ fail-closed empty state, status:0 (rejected), ok:0:
 #guard (execFullForestAuthStep "garbage" ==
-  "{\"state\":{\"cells\":[],\"caps\":[],\"bal\":[],\"escrows\":[],\"nullifiers\":[],\"commitments\":[],\"queues\":[],\"swiss\":[],\"revoked\":[],\"lifecycle\":[],\"deathCert\":[]},\"loglen\":0,\"status\":0,\"ok\":0}")
+  "{\"state\":{\"cells\":[],\"caps\":[],\"bal\":[],\"escrows\":[],\"nullifiers\":[],\"commitments\":[],\"queues\":[],\"swiss\":[],\"revoked\":[],\"lifecycle\":[],\"deathCert\":[],\"delegate\":[]},\"loglen\":0,\"status\":0,\"ok\":0}")
 
 /-! ### §WG-eval-admission — the ADMISSION prologue has teeth over the export.
 
@@ -3907,7 +3942,7 @@ def execHandlerTurnStep (input : String) : String :=
 
 -- malformed wire ⇒ fail-closed empty state, status:0/ok:0:
 #guard (execHandlerTurnStep "garbage" ==
-  "{\"state\":{\"cells\":[],\"caps\":[],\"bal\":[],\"escrows\":[],\"nullifiers\":[],\"commitments\":[],\"queues\":[],\"swiss\":[],\"revoked\":[],\"lifecycle\":[],\"deathCert\":[]},\"loglen\":0,\"status\":0,\"ok\":0}")
+  "{\"state\":{\"cells\":[],\"caps\":[],\"bal\":[],\"escrows\":[],\"nullifiers\":[],\"commitments\":[],\"queues\":[],\"swiss\":[],\"revoked\":[],\"lifecycle\":[],\"deathCert\":[],\"delegate\":[]},\"loglen\":0,\"status\":0,\"ok\":0}")
 
 /-! ### §WG-eval-hostexpiry — ★ BUG-1 TOOTH ★ host-fed clock REJECTS a past-expiry turn.
 

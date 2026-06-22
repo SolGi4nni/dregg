@@ -2959,7 +2959,7 @@ pub const CUSTOM_HOST_WIDTH: usize = 581;
 ///
 /// The `Effect::Custom`'s `(program_vk_hash, proof_commitment)` MUST be the
 /// genuine values a verifying [`crate::custom_proof_bind::BoundCustomProof`]
-/// exposes — `bound.vk_hash_felts()` / `bound.proof_commitment().0` — so the row
+/// exposes — `bound.vk_hash_felts()` / `bound.proof_commitment()` — so the row
 /// the deployed prover mints carries exactly the binding the SDK-reachable
 /// `verify_proof_bind` engine (the light client's recursion) re-derives from the
 /// verified STARK. The `proof_bind` in-AIR op is a bounds/declaration check; the

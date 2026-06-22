@@ -271,6 +271,12 @@ pub struct WireState {
     /// The PER-CELL DEATH-CERTIFICATE side-table: `(cell, certHash)` pairs a `cellDestroy` binds.
     /// Additive; defaults empty. Mirrors `FFI.lean WState.deathCert`.
     pub death_cert: Vec<(u64, u64)>,
+    /// The PER-CELL DELEGATION PARENT-POINTER side-table: `(child, parent)` pairs for cells that have
+    /// a delegation parent (`Cell::delegate`). The verified `refreshDelegationChainA` gate reads
+    /// `(delegate child).isSome` as a precondition, so this MUST cross the wire for the verified
+    /// executor to commit a refresh the Rust producer commits (it was previously dropped — the
+    /// commit-bit residual this closes). Additive; defaults empty. Mirrors `FFI.lean WState.delegate`.
+    pub delegate: Vec<(u64, u64)>,
 }
 
 impl WireState {
@@ -289,6 +295,7 @@ impl WireState {
             && self.revoked.is_empty()
             && self.lifecycle.is_empty()
             && self.death_cert.is_empty()
+            && self.delegate.is_empty()
     }
 }
 
@@ -1527,6 +1534,9 @@ fn encode_wstate(w: &WireState, out: &mut String) -> Result<(), MarshalError> {
     // deathCert (11th, per-cell `[cell,val]` side-table — FFI.lean WState.deathCert)
     out.push_str(",\"deathCert\":");
     encode_cell_nats(&w.death_cert, out);
+    // delegate (12th, per-cell `[child,parent]` side-table — FFI.lean WState.delegate)
+    out.push_str(",\"delegate\":");
+    encode_cell_nats(&w.delegate, out);
     out.push('}');
     Ok(())
 }
@@ -1862,6 +1872,7 @@ fn conf_state_demo() -> WireState {
         revoked: vec![],
         lifecycle: vec![],
         death_cert: vec![],
+        delegate: vec![],
     }
 }
 
@@ -1957,6 +1968,9 @@ fn conf_state_full() -> WireState {
         revoked: vec![7, 8],
         lifecycle: vec![(0, 1), (2, 3)],
         death_cert: vec![(2, 42)],
+        // delegate: cell 2's parent is cell 0 (a `[child,parent]` pair) — exercises the new
+        // parent-pointer side-table multi-element (mirrors EmitMarshalGolden.stateFull).
+        delegate: vec![(2, 0)],
     }
 }
 
@@ -2766,6 +2780,9 @@ fn parse_wstate(p: &mut Parser) -> Result<WireState, UnmarshalError> {
     // deathCert (11th, per-cell `[cell,val]` side-table)
     p.lit(",\"deathCert\":").map_err(|e| p.err(e))?;
     let death_cert = parse_cell_nats(p).map_err(|e| map(e, p))?;
+    // delegate (12th, per-cell `[child,parent]` side-table)
+    p.lit(",\"delegate\":").map_err(|e| p.err(e))?;
+    let delegate = parse_cell_nats(p).map_err(|e| map(e, p))?;
     // close
     p.lit("}").map_err(|e| p.err(e))?;
     Ok(WireState {
@@ -2780,6 +2797,7 @@ fn parse_wstate(p: &mut Parser) -> Result<WireState, UnmarshalError> {
         revoked,
         lifecycle,
         death_cert,
+        delegate,
     })
 }
 

@@ -36,11 +36,12 @@
 //!     `glow`. This is used by the OFFSCREEN-context blit path
 //!     (`OffscreenRenderingContext::blit_framebuffer`), NOT by the page→buffer
 //!     render or the pixel readback. For a DRAW-compositor SWGL context that owns
-//!     the whole default framebuffer we do not take the offscreen blit path, so
-//!     the honest options are: (a) a `glow::Context` built from a SWGL proc-loader
-//!     shim, or (b) a panicking stub guarded to the offscreen path we never hit.
-//!     This module takes (b) and documents it; closing (a) is a small follow-up
-//!     (a `glow::Context::from_loader_function` over swgl's entry points).
+//!     the whole default framebuffer we do not take the offscreen blit path. It is
+//!     nonetheless CLOSED honestly via option (a): a real
+//!     `glow::Context::from_loader_function` over SWGL's statically-linked bare GL
+//!     symbols (`swgl_proc_loader` strips glow's `gl` prefix and `dlsym`s the bare
+//!     symbol from the process image, e.g. `glClear` → SWGL's `Clear`). No panicking
+//!     stub remains.
 //!
 //! ## Build status
 //!
@@ -131,17 +132,58 @@ impl ServoRenderingContext for ServoSwglContext {
     }
 
     fn glow_gl_api(&self) -> Arc<glow::Context> {
-        // SEE THE MODULE DOCS: SWGL does not implement `glow`. This is the
-        // OFFSCREEN-blit path only, which a DRAW-compositor SWGL context does not
-        // take. Closing this honestly is a `glow::Context::from_loader_function`
-        // over swgl's GL entry points (follow-up (a)). Until then this path is
-        // unreached for the page→buffer render + readback Stage A exercises.
-        unimplemented!(
-            "SWGL provides gleam::Gl (the render + readback path); glow is only the \
-             offscreen-blit path a DRAW-compositor SWGL context does not take. \
-             Follow-up: glow::Context::from_loader_function over swgl entry points."
-        )
+        // Follow-up (a), CLOSED: a real `glow::Context` over SWGL's GL entry points.
+        //
+        // SWGL exports its GL functions as BARE C symbols statically linked into
+        // the final binary (`swgl/src/gl.cc`'s `extern "C" { void Clear(..); void
+        // ActiveTexture(..); const char* GetString(..); .. }` — the SAME symbols
+        // `swgl_fns.rs`'s `extern "C"` block binds, e.g. `ActiveTexture`,
+        // `BindTexture`, `ReadPixels`, `GetString`). It exposes NO surfman-style
+        // `get_proc_address`, so we build the glow loader ourselves: glow asks for
+        // the GL-prefixed name (`glActiveTexture`); we strip the `gl` prefix and
+        // resolve the bare symbol from the current process image
+        // (`dlsym(RTLD_DEFAULT, ..)`) — exactly the symbols SWGL linked in.
+        //
+        // The context must be current for `from_loader_function`'s immediate
+        // `GetString(GL_VERSION)` probe (and any subsequent draw) to read SWGL's
+        // global `ctx`; SWGL's current context is a process-global (`gl.cc:898`),
+        // so we make ours current first.
+        use crate::swgl_context::RenderingContext as _;
+        self.inner.make_current();
+        let ctx = unsafe { glow::Context::from_loader_function(swgl_proc_loader) };
+        Arc::new(ctx)
     }
+}
+
+/// Resolve a GL function `glow` requests against SWGL's statically-linked bare C
+/// symbols. glow asks for the canonical GL name (e.g. `glClear`, `glReadPixels`,
+/// `glGetString`); SWGL exports them WITHOUT the `gl` prefix (`Clear`,
+/// `ReadPixels`, `GetString` — `swgl/src/gl.cc`'s `extern "C"` blocks), so we strip
+/// a leading `gl` and `dlsym` the bare symbol from the running image
+/// (`RTLD_DEFAULT`), into which SWGL is linked under the `libservo` feature.
+/// Returns null for a name SWGL does not export (glow tolerates a null entry —
+/// that function is simply unavailable, the same as an unsupported extension).
+fn swgl_proc_loader(name: &str) -> *const std::os::raw::c_void {
+    // `RTLD_DEFAULT` (0 on macOS, the special handle on glibc) — search the whole
+    // process image, where SWGL's bare GL symbols live once `libservo` links it.
+    #[cfg(target_os = "macos")]
+    const RTLD_DEFAULT: *mut std::os::raw::c_void = std::ptr::null_mut::<std::os::raw::c_void>().wrapping_offset(-2);
+    #[cfg(not(target_os = "macos"))]
+    const RTLD_DEFAULT: *mut std::os::raw::c_void = std::ptr::null_mut();
+
+    extern "C" {
+        fn dlsym(
+            handle: *mut std::os::raw::c_void,
+            symbol: *const std::os::raw::c_char,
+        ) -> *mut std::os::raw::c_void;
+    }
+
+    // SWGL's symbols are the GL name minus the `gl` prefix (`glClear` → `Clear`).
+    let bare = name.strip_prefix("gl").unwrap_or(name);
+    let Ok(c_name) = std::ffi::CString::new(bare) else {
+        return std::ptr::null();
+    };
+    unsafe { dlsym(RTLD_DEFAULT, c_name.as_ptr()) as *const std::os::raw::c_void }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -330,4 +372,99 @@ pub fn render_url_to_frame(
     let rect = crate::swgl_context::ReadRect::whole(w, h);
     let frame = rendering_context.inner().read_to_image(rect)?;
     Some(frame)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dregg_firmament::emulated_kernel::EmulatedKernel;
+    use dregg_firmament::{cell_seed, label_of, CompositorPd, Scene, Surface};
+    use starbridge_web_surface::AuthRequired;
+
+    use crate::compositor_seam::{present_frame, FramePresentation};
+
+    /// **THE FIRST REAL RENDER (Stage-A step 3, never previously executed): a real
+    /// Servo `WebView` rasterizes a page into a SWGL `RgbaFrame`, which then lands on
+    /// the compositor-PD's glass through the genuine T1/T2/T3 gate.**
+    ///
+    /// This is the page→glass flow with the *page content rendered by the real
+    /// engine* (not the clear-to-color stand-in): `render_url_to_frame` builds a real
+    /// `Servo` (`ServoBuilder`), points a real `WebView` (`WebViewBuilder`) at our
+    /// [`ServoSwglContext`] (the SWGL software rasterizer — no GPU/EGL/surfman),
+    /// installs the [`CapGate`] delegate (so the held [`SurfaceCapability`] mediates
+    /// every fetch/navigation), loads an in-memory `data:` HTML page, spins the actor
+    /// threads until load+paint, and reads the RGBA8 back via the genuine
+    /// `RenderingContext::read_to_image`. We then carry that REAL frame through
+    /// [`present_frame`] — the SAME unchanged compositor gate the standalone build
+    /// drives — closing F3 with genuine page pixels.
+    ///
+    /// A wildcard [`SurfaceCapability::root`] cap backs the surface so the inline
+    /// `data:` page (whose origin serializes to `"null"`) is permitted; the cap model
+    /// is exercised identically to the `cap_gated_pipeline` tests, only with the real
+    /// engine in between. The frame is bounded by `max_spins` so a non-painting page
+    /// cannot hang the test.
+    #[test]
+    fn first_real_render_data_page_through_the_compositor_gate() {
+        // An in-memory HTML page — no network, no filesystem; the engine lays it out
+        // and paints it into our SWGL framebuffer. A solid background so the rendered
+        // pixels are deterministic enough to bind to a digest.
+        const PAGE: &str =
+            "data:text/html,<html><body style='margin:0;background:%23ff0000'>\
+             <h1>dregg</h1></body></html>";
+        const W: u32 = 64;
+        const H: u32 = 48;
+
+        let presenter = cell_seed(11);
+        // The wildcard root surface authority — the `data:` page's null origin is
+        // permitted; the cap that authorizes the surface is the cap that presents.
+        let surface = SurfaceCapability::root(presenter, AuthRequired::Either);
+
+        // THE NEVER-EXECUTED STEP: drive the real Servo engine to rasterize the page.
+        // Serialized on the process-wide SWGL current-context lock (SWGL's `ctx` is a
+        // global) for the whole engine-drive → readback sequence.
+        let frame = crate::swgl_context::with_gl(|| {
+            render_url_to_frame(PAGE, surface, W, H, 4096)
+        })
+        .expect("the real Servo WebView produced a frame for the data: page");
+
+        // It is a REAL RGBA8 frame of the requested size.
+        assert_eq!(frame.width, W);
+        assert_eq!(frame.height, H);
+        assert_eq!(frame.bytes.len(), (W * H * 4) as usize, "real RGBA8, 4 bytes/pixel");
+
+        // Carry the real page's pixels through the GENUINE compositor gate.
+        let scene = Scene {
+            surfaces: vec![Surface {
+                owner: presenter,
+                regions: vec![3],
+                content_digest: 0,
+                source_state_root: 7,
+                z_layer: 0,
+                focus_flag: true,
+            }],
+        };
+        let mut compositor = CompositorPd::boot(EmulatedKernel::new(), scene);
+
+        let commit = present_frame(
+            &mut compositor,
+            &frame,
+            &FramePresentation {
+                presenter,
+                target_regions: vec![3],
+                source_state_root: 7,
+                claims_focus: true,
+            },
+        )
+        .expect("the real page's frame is admitted by the gate");
+
+        // The commit carries the REAL page pixels' digest + the genuine owner-binding.
+        assert_eq!(commit.digest, frame.content_digest(), "the real page's digest is committed");
+        assert_eq!(commit.label, label_of(&presenter, 7), "T2: the genuine owner-binding");
+        // The glass shows the rendered page's digest byte in the authorized tile.
+        assert_eq!(
+            compositor.framebuffer_snapshot()[3],
+            (frame.content_digest() & 0xFF) as u8,
+            "the real Servo-rendered page composited to the glass through the gate"
+        );
+    }
 }

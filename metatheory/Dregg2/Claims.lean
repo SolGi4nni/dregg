@@ -343,8 +343,12 @@ quorum-intersection (honest union-cardinality bound), and GST-liveness (from a
 #assert_namespace_axioms Dregg2.Crypto.NonMembership
 #assert_namespace_axioms Dregg2.Coordination
 #assert_namespace_axioms Dregg2.Hyperedge
--- The macaroon↔kernel-cap convergence arrow (`caveatChainAuthority` shared narrowing,
--- `chainGateG_implies_capAuthorityG` on a coherent node).
+-- The macaroon↔kernel-cap convergence: the two narrowings are ONE map. `caveatChainAuthority` is the
+-- shared narrowing; `chainGateG_implies_capAuthorityG`/`…_devac` give the gate-to-gate arrow on a
+-- coherent / de-vacuified node; and `chain_narrowing_eq_cap_narrowing` (§6) PROVES, for an ARBITRARY
+-- rights-caveat chain, that the macaroon "satisfies-all-caveats" admit-set EQUALS the cap's
+-- conferred-authority down-set (`{a | chain admits a} = {a | a ≤ caveatChainAuthority ⊤ masks}`) —
+-- the structural `chainGate ch a ↔ capAuthority (capOf ch) a`, not a hand-wired single node.
 #assert_namespace_axioms Dregg2.Authority.CaveatCapBridge
 
 /-! ## §21 — 4th/5th §8 discharges + BFT safety/liveness + cross-cell LTS + WP catalog.

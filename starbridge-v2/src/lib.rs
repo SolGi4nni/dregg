@@ -111,6 +111,18 @@ pub mod doc_editor;
 #[cfg(feature = "embedded-executor")]
 pub mod powerbox;
 
+// SHARED CONFINED FORK WITH GRADUATED CONSENT — "invite someone to my computer":
+// a `World::fork` handed to another principal, confined (firmament sandbox) so they
+// cannot escape it, whose culled cap-subgraph is graduated into three tiers —
+// EMBEDDED (exercised locally, no consent), STUDYREF (a read-only `ReadCap`; exercise
+// needs an upgrade request), NETWORKBOUNDARY (exercise = a `ConditionalTurn` whose
+// `ProofCondition` is the owner's grant; resolves on consent, fail-closed otherwise).
+// The authority/consent TYPING of the membrane (the deos-chat lane owns transport).
+// See docs/deos/SHARED-FORK-CONSENT.md. Welds over powerbox + read_cap + conditional +
+// branch_stitch; reinvents none of them.
+#[cfg(feature = "embedded-executor")]
+pub mod shared_fork;
+
 #[cfg(feature = "embedded-executor")]
 pub mod agent;
 #[cfg(feature = "embedded-executor")]

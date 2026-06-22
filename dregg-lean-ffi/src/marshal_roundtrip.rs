@@ -120,6 +120,7 @@ fn wide_demo_state() -> WireState {
         revoked: vec![],   // wideDemoState omits `revoked` => defaults empty
         lifecycle: vec![], // wideDemoState omits lifecycle => defaults empty (all Live)
         death_cert: vec![],
+        delegate: vec![], // wideDemoState omits delegate => defaults empty (no parent pointers)
     }
 }
 

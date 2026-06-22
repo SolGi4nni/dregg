@@ -1,6 +1,6 @@
 /* THE DREGG ATLAS — the SPA. Renders the game tree + ocap web as live cytoscape
    graphs over the crawl data (window.ATLAS), with click-through detail panels,
-   a screenshot gallery, the protocol reference, and the anomalies list. */
+   a screenshot gallery and the protocol reference. */
 (function () {
   const A = window.ATLAS || {};
   const $ = (s, r) => (r || document).querySelector(s);
@@ -299,19 +299,6 @@
     $("#protocol").innerHTML = h;
   }
 
-  // ---- ANOMALIES ----------------------------------------------------------
-  function buildAnomalies() {
-    const a = A.anomalies || [];
-    let h = "<h2>Anomalies — what the crawl found</h2>";
-    if (!a.length) h += "<p class=muted>None recorded yet.</p>";
-    a.forEach(x => {
-      h += `<div class=anom><h3>${esc(x.title)}</h3><p>${esc(x.body)}</p>`;
-      if (x.repro) h += `<p class=muted>repro: <code>${esc(x.repro)}</code></p>`;
-      h += "</div>";
-    });
-    $("#anomalies").innerHTML = h;
-  }
-
   // ---- ABOUT --------------------------------------------------------------
   function buildAbout() {
     const ex = (A.explainers && A.explainers.about) || "The Dregg Atlas — a self-built map of the live verified ocap image.";
@@ -328,7 +315,7 @@
   }
 
   // ---- boot ---------------------------------------------------------------
-  buildGameTree(); buildUiTree(); buildOcap(); buildGallery(); buildProtocol(); buildAnomalies(); buildAbout();
+  buildGameTree(); buildUiTree(); buildOcap(); buildGallery(); buildProtocol(); buildAbout();
   activate(location.hash.slice(1) || "gametree");
   // deep-link a UI state: ?uistate=<index> (verification / sharing)
   const uiIdx = new URLSearchParams(location.search).get("uistate");

@@ -2797,6 +2797,50 @@ theorem execFullTurnA_conserves_exact (s s' : RecChainedState) (tt : List FullAc
     recTotalAsset s'.kernel b = recTotalAsset s.kernel b :=
   execFullTurnA_conserves_per_asset s s' tt b h (turnLedgerDeltaAsset_eq_zero tt b)
 
+/-! ### §MA-scalar — the SINGLE-ASSET projection the DEPLOYED scalar model realizes.
+
+The deployed Rust executor (`cell/src/state.rs`: one scalar `i64 balance` per cell;
+`apply.rs`: per-asset is "future expansion", NOT deployed) is the SINGLE-ASSET restriction of this
+per-asset spec: there is exactly one live `AssetId` `a₀`, and a cell's deployed scalar balance IS
+its `bal · a₀` column entry. The deployed system's conservation obligation ("the sum of every
+cell's scalar balance is preserved across a committed turn") is therefore *exactly* the `a₀`
+specialization of `recTotalAsset`.
+
+`execFullTurnA_conserves_scalar` discharges that obligation with NO new hypothesis: it is the
+`b := a₀` instance of `execFullTurnA_conserves_exact`. The per-asset soundness genuinely TRANSFERS
+to the deployed scalar model — the deployed model is sound *because* it is one column of the proven
+per-asset executor, not a separate artifact that happens to agree.
+
+`scalarTotal` names the deployed model's conserved scalar as the `a₀` column sum, so the transfer is
+read off definitionally (`scalarTotal k a₀ = recTotalAsset k a₀` by `rfl`); the theorem is then
+stated directly on `scalarTotal` to make the deployed obligation textually literal. -/
+
+/-- The DEPLOYED scalar model's total supply: with a single live asset `a₀`, it is the `a₀` column
+sum of the per-asset ledger — i.e. the sum, over live accounts, of each cell's one deployed scalar
+balance (`bal c a₀`). Definitionally equal to `recTotalAsset k a₀`. -/
+def scalarTotal (k : RecordKernelState) (a₀ : AssetId) : ℤ := recTotalAsset k a₀
+
+@[simp] theorem scalarTotal_eq_recTotalAsset (k : RecordKernelState) (a₀ : AssetId) :
+    scalarTotal k a₀ = recTotalAsset k a₀ := rfl
+
+/-- **`execFullTurnA_conserves_scalar` (the deployed-model conservation, transferred).** Fix the
+single live asset `a₀` of the deployed scalar deployment. EVERY committed per-asset transaction
+preserves the deployed scalar total (`∑_c bal c a₀`) — the conservation the scalar `i64 balance`
+deployment needs, obtained as the `b := a₀` specialization of the per-asset
+`execFullTurnA_conserves_exact`. Axiom-clean: no zero-delta or single-asset hypothesis is required;
+the per-asset law already holds at every `b`, so it holds at the deployed `a₀`. -/
+theorem execFullTurnA_conserves_scalar (s s' : RecChainedState) (tt : List FullActionA) (a₀ : AssetId)
+    (h : execFullTurnA s tt = some s') :
+    scalarTotal s'.kernel a₀ = scalarTotal s.kernel a₀ :=
+  execFullTurnA_conserves_exact s s' tt a₀ h
+
+/-- The per-action twin (`execFullA`-level): the deployed scalar total is a STEP invariant of the
+per-asset executor, again read off `execFullA_conserves_exact` at the deployed asset `a₀`. -/
+theorem execFullA_conserves_scalar (s s' : RecChainedState) (fa : FullActionA) (a₀ : AssetId)
+    (h : execFullA s fa = some s') :
+    scalarTotal s'.kernel a₀ = scalarTotal s.kernel a₀ :=
+  execFullA_conserves_exact s s' fa a₀ h
+
 /-! ## §MB — `execFullTurnA_append` + the per-asset PER-NODE attestation carrier.
 
 The forest lift in `Exec/FullForest.lean` rests on the same `execTurn_append` shape `TurnForest.lean`

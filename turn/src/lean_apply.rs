@@ -272,6 +272,19 @@ pub enum StateOp {
     /// `RevokeDelegation { child }` — bump the PARENT (= the action target) `delegation_epoch`
     /// and clear the child's `delegation` snapshot.
     RevokeDelegation { parent: CellId, child: CellId },
+    /// `RefreshDelegation { child, snapshot }` — a SELF-refresh (`child == action target`):
+    /// re-arm the child's `delegation` snapshot from its PARENT's CURRENT c-list. The mutation is
+    /// fully deterministic from the pre-state (parent = `child.delegate`, the snapshot = the parent's
+    /// live capabilities), gated on the verified commit. Mirrors `apply_refresh_delegation`.
+    RefreshDelegation {
+        child: CellId,
+        /// The snapshot commitment the effect DECLARES (bound into `effects_hash`). The replay
+        /// derives the genuine commitment from the parent's live c-list and only installs the
+        /// snapshot when they match — the same forge antibody `apply_refresh_delegation` enforces.
+        declared_snapshot: [u8; 32],
+        /// The host wall-clock the snapshot's `refreshed_at` is stamped with (`self.current_timestamp`).
+        now: u64,
+    },
 }
 
 impl StateOp {
@@ -285,6 +298,8 @@ impl StateOp {
             | StateOp::SetVerificationKey { cell, .. }
             | StateOp::MakeSovereign { cell } => vec![*cell],
             StateOp::RevokeDelegation { parent, child } => vec![*parent, *child],
+            // Only the CHILD's `delegation` snapshot moves; the parent's c-list is READ, not written.
+            StateOp::RefreshDelegation { child, .. } => vec![*child],
         }
     }
 }
@@ -299,8 +314,8 @@ impl StateOp {
 /// is rejected before any state moves), so an effect violating it is NOT collected: Rust rolls the
 /// turn back, and if the verified kernel nevertheless commits, the commit-bit mismatch surfaces as
 /// a `CoveredDivergence` (conservative, keeps Rust) rather than a fabricated replay.
-fn collect_state_ops(turn: &Turn, seal_height: u64) -> Vec<StateOp> {
-    fn walk(tree: &CallTree, seal_height: u64, out: &mut Vec<StateOp>) {
+fn collect_state_ops(turn: &Turn, seal_height: u64, refresh_now: u64) -> Vec<StateOp> {
+    fn walk(tree: &CallTree, seal_height: u64, refresh_now: u64, out: &mut Vec<StateOp>) {
         let action_target = tree.action.target;
         for eff in &tree.action.effects {
             match eff {
@@ -347,16 +362,26 @@ fn collect_state_ops(turn: &Turn, seal_height: u64) -> Vec<StateOp> {
                         child: *child,
                     });
                 }
+                // Self-refresh only (`child == action target`); a cross-cell refresh is rejected by
+                // both executors, so it is not collected (Rust rolls back; a verified commit would
+                // surface as a commit-bit divergence, never a fabricated snapshot).
+                Effect::RefreshDelegation { child, snapshot } if *child == action_target => {
+                    out.push(StateOp::RefreshDelegation {
+                        child: *child,
+                        declared_snapshot: *snapshot,
+                        now: refresh_now,
+                    });
+                }
                 _ => {}
             }
         }
         for c in &tree.children {
-            walk(c, seal_height, out);
+            walk(c, seal_height, refresh_now, out);
         }
     }
     let mut out = Vec::new();
     for r in &turn.call_forest.roots {
-        walk(r, seal_height, &mut out);
+        walk(r, seal_height, refresh_now, &mut out);
     }
     out
 }
@@ -741,6 +766,51 @@ fn apply_state_ops(
                     c.delegation = None;
                 }
             }
+            StateOp::RefreshDelegation {
+                child,
+                declared_snapshot,
+                now,
+            } => {
+                // `apply_refresh_delegation`: a SELF-refresh re-arms the child's `delegation`
+                // snapshot from the PARENT's CURRENT c-list. Resolve the parent from the pre-state
+                // `child.delegate`; a child with no parent is rejected by Rust (the verified commit
+                // would then surface a commit-bit divergence), so skip.
+                let Some(parent_id) = template.get(child).and_then(|c| c.delegate) else {
+                    continue;
+                };
+                let Some(parent_cell) = template.get(&parent_id) else {
+                    continue; // parent absent from the pre-state — Rust rolls back (CellNotFound).
+                };
+                let new_snapshot: Vec<dregg_cell::CapabilityRef> =
+                    parent_cell.capabilities.iter().cloned().collect();
+                let new_epoch = parent_cell.state.delegation_epoch();
+                // THE FORGE ANTIBODY (mirrors apply_refresh_delegation): the declared snapshot MUST
+                // equal the genuine commitment over the parent's live c-list, else Rust refuses — so
+                // the replay refuses too (no fabricated snapshot).
+                let clist_bytes = postcard::to_allocvec(&new_snapshot).unwrap_or_default();
+                let clist_commitment =
+                    dregg_cell::DelegatedRef::compute_clist_commitment(&clist_bytes);
+                if &clist_commitment != declared_snapshot {
+                    continue;
+                }
+                // `max_staleness` is carried forward from the child's existing snapshot (or 0).
+                let max_staleness = template
+                    .get(child)
+                    .and_then(|c| c.delegation.as_ref().map(|d| d.max_staleness))
+                    .unwrap_or(0);
+                if let Some(c) = out_cells.get_mut(child) {
+                    c.delegation = Some(dregg_cell::DelegatedRef::new(
+                        parent_id,
+                        *child,
+                        new_snapshot,
+                        new_epoch,
+                        *now,
+                        max_staleness,
+                        clist_commitment,
+                        [0u8; 64],
+                    ));
+                }
+            }
         }
     }
     Ok(())
@@ -1010,7 +1080,7 @@ pub fn execute_via_lean(
     // The deterministic non-cap commitment-field mutations (lifecycle/permissions/vk/sovereign/
     // revoke-epoch — the SURVIVOR-effect root-gap close). A `CellSeal` stamps
     // `sealed_at = block_height` (the host clock), matching `apply_cell_seal`.
-    let state_ops = collect_state_ops(turn, host.block_height);
+    let state_ops = collect_state_ops(turn, host.block_height, host.current_timestamp);
     let ledger = wire_state_to_ledger(
         &shadow_state.state,
         &inv,
@@ -1054,7 +1124,7 @@ pub(crate) fn lean_post_state_root(
     let committed = shadow_state.verdict.committed;
     let intro_expiry = host.block_height.saturating_add(host.intro_lifetime);
     let cap_ops = collect_cap_ops(turn, intro_expiry);
-    let state_ops = collect_state_ops(turn, host.block_height);
+    let state_ops = collect_state_ops(turn, host.block_height, host.current_timestamp);
     let mut ledger = wire_state_to_ledger(
         &shadow_state.state,
         &inv,

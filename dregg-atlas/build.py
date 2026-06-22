@@ -154,7 +154,6 @@ def build_data_js():
         "cells": load("cells.json", {"cells": [], "ocap": {"nodes": [], "edges": []}}),
         "protocol": load("protocol.json", {}),
         "surfaces": surfaces,
-        "anomalies": load("anomalies.json", []),
         "explainers": load_explainers(),
         "sections": sections_html,
         "uitree": build_uitree(),
@@ -319,7 +318,7 @@ def main():
     gt = data["gametree"]["meta"]
     print(f"atlas built → {SITE}/index.html")
     print(f"  game tree: {gt.get('node_count','?')} states / {gt.get('edge_count','?')} transitions")
-    print(f"  cells: {len(data['cells'].get('cells', []))} · surfaces: {len(data['surfaces'])} · anomalies: {len(data['anomalies'])}")
+    print(f"  cells: {len(data['cells'].get('cells', []))} · surfaces: {len(data['surfaces'])} ")
 
 
 if __name__ == "__main__":
