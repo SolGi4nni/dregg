@@ -31,6 +31,16 @@ pub(crate) use gpui::{
 
 pub(crate) use dregg_cell::CellId;
 
+// THE COMPONENT KIT — the vendored gpui-component widgets the cockpit's panels
+// migrate onto for a coherent, real-component look (buttons/rows/lists). `Button`
+// carries the kit's variants + sizing; `ButtonVariants`/`Sizable` are the traits
+// that enable `.primary()`/`.ghost()`/`.small()`; `Size` for explicit sizing;
+// `ClickEvent` is the `on_click` event the `cx.listener` consumes. The kit is
+// already `gpui_component::init(cx)`-booted in `main.rs`.
+pub(crate) use gpui::ClickEvent;
+pub(crate) use gpui_component::button::{Button, ButtonVariants};
+pub(crate) use gpui_component::{Selectable, Sizable};
+
 // THE L6 PANED WORKSPACE — the vendored resizable-split/dock engine. The right
 // pane's flat 28-tab list is hosted as a `PaneGroup` of `Pane`s, each holding the
 // tabs as `TabSurface`s (the adapter below). Splitting a pane puts two surfaces

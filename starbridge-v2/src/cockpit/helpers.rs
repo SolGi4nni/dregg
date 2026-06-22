@@ -303,7 +303,32 @@ pub(crate) fn field_row(f: &Field) -> impl IntoElement {
         .child(div().text_xs().text_color(color).child(val))
 }
 
-/// A verb button that runs a `&mut Cockpit` method through the listener.
+/// Map a cockpit theme color onto the closest gpui-component [`Button`] semantic
+/// variant. The cockpit speaks in `theme::good/warn/bad/accent/muted`; the kit
+/// speaks in `.success()/.warning()/.danger()/.primary()/.ghost()`. This is the
+/// ONE place the two vocabularies meet, so every migrated button reads in the
+/// kit's coherent style while preserving the caller's semantic intent.
+pub(crate) fn button_variant(b: Button, color: Hsla) -> Button {
+    if color == theme::good() {
+        b.success()
+    } else if color == theme::warn() {
+        b.warning()
+    } else if color == theme::bad() {
+        b.danger()
+    } else if color == theme::accent() {
+        b.primary()
+    } else {
+        // muted / text / anything else → the quiet ghost (a real component, not
+        // a styled div), so a dimmed/disabled affordance still reads as a button.
+        b.ghost()
+    }
+}
+
+/// A verb button that runs a `&mut Cockpit` method through the listener — now a
+/// real [`gpui_component::button::Button`] (the kit's variant + medium sizing),
+/// so the COMPOSER's prominent verbs read like a component kit, not styled divs.
+/// The click behavior is preserved exactly (it calls the same `&mut Cockpit`
+/// method through `cx.listener`).
 pub(crate) fn verb_button(
     cx: &mut Context<Cockpit>,
     label: &str,
@@ -311,28 +336,15 @@ pub(crate) fn verb_button(
     handler: fn(&mut Cockpit, &mut Context<Cockpit>),
 ) -> impl IntoElement {
     let id = SharedString::from(format!("verb-{label}"));
-    div()
-        .id(id)
-        .px_3()
-        .py_2()
-        .rounded_md()
-        .bg(theme::panel_hi())
-        .border_1()
-        .border_color(theme::border())
-        .text_color(color)
-        .cursor_pointer()
-        .hover(|s| s.bg(theme::border()))
-        .on_mouse_down(
-            MouseButton::Left,
-            cx.listener(move |this, _ev, _window, cx| {
-                handler(this, cx);
-            }),
-        )
-        .child(label.to_string())
+    button_variant(Button::new(id).label(label.to_string()), color).on_click(cx.listener(
+        move |this, _ev: &ClickEvent, _window, cx| {
+            handler(this, cx);
+        },
+    ))
 }
 
 /// A compact cipherclerk action button (smaller than a composer verb; the
-/// clerk panel has four in a wrap row).
+/// clerk panel has four in a wrap row) — a small kit `Button`.
 pub(crate) fn clerk_button(
     cx: &mut Context<Cockpit>,
     label: &str,
@@ -340,29 +352,16 @@ pub(crate) fn clerk_button(
     handler: fn(&mut Cockpit, &mut Context<Cockpit>),
 ) -> impl IntoElement {
     let id = SharedString::from(format!("clerk-{label}"));
-    div()
-        .id(id)
-        .px_2()
-        .py_1()
-        .rounded_md()
-        .bg(theme::panel_hi())
-        .border_1()
-        .border_color(theme::border())
-        .text_xs()
-        .text_color(color)
-        .cursor_pointer()
-        .hover(|s| s.bg(theme::border()))
-        .on_mouse_down(
-            MouseButton::Left,
-            cx.listener(move |this, _ev, _window, cx| {
-                handler(this, cx);
-            }),
-        )
-        .child(label.to_string())
+    button_variant(Button::new(id).label(label.to_string()), color)
+        .small()
+        .on_click(cx.listener(move |this, _ev: &ClickEvent, _window, cx| {
+            handler(this, cx);
+        }))
 }
 
 /// A compact action button with an EXPLICIT element id (so two buttons that share
-/// a label don't collide) — the SIMULATE panel's build/run/commit verbs.
+/// a label don't collide) — the SIMULATE panel's build/run/commit verbs. A small
+/// kit `Button`.
 pub(crate) fn small_button(
     cx: &mut Context<Cockpit>,
     id: &'static str,
@@ -370,29 +369,17 @@ pub(crate) fn small_button(
     color: Hsla,
     handler: fn(&mut Cockpit, &mut Context<Cockpit>),
 ) -> impl IntoElement {
-    div()
-        .id(id)
-        .px_2()
-        .py_1()
-        .rounded_md()
-        .bg(theme::panel_hi())
-        .border_1()
-        .border_color(theme::border())
-        .text_xs()
-        .text_color(color)
-        .cursor_pointer()
-        .hover(|s| s.bg(theme::border()))
-        .on_mouse_down(
-            MouseButton::Left,
-            cx.listener(move |this, _ev, _window, cx| {
-                handler(this, cx);
-            }),
-        )
-        .child(label.to_string())
+    button_variant(Button::new(id).label(label.to_string()), color)
+        .small()
+        .on_click(cx.listener(move |this, _ev: &ClickEvent, _window, cx| {
+            handler(this, cx);
+        }))
 }
 
-/// A clickable "cycle" chip — a small pill that runs `handler` on click (the
-/// SIMULATE panel's agent/target/effect pickers cycle their selection).
+/// A clickable "cycle" chip — the SIMULATE panel's agent/target/effect pickers
+/// cycle their selection. An xsmall ghost-outline kit `Button` so it reads as a
+/// compact pickable chip (lighter than the action verbs) while staying a real
+/// component.
 pub(crate) fn cycle_chip(
     cx: &mut Context<Cockpit>,
     id: &'static str,
@@ -400,25 +387,12 @@ pub(crate) fn cycle_chip(
     color: Hsla,
     handler: fn(&mut Cockpit, &mut Context<Cockpit>),
 ) -> impl IntoElement {
-    div()
-        .id(id)
-        .px_2()
-        .py_0p5()
-        .rounded_md()
-        .bg(theme::panel_hi())
-        .border_1()
-        .border_color(theme::border())
-        .text_xs()
-        .text_color(color)
-        .cursor_pointer()
-        .hover(|s| s.bg(theme::border()))
-        .on_mouse_down(
-            MouseButton::Left,
-            cx.listener(move |this, _ev, _window, cx| {
-                handler(this, cx);
-            }),
-        )
-        .child(label)
+    button_variant(Button::new(id).label(label), color)
+        .xsmall()
+        .outline()
+        .on_click(cx.listener(move |this, _ev: &ClickEvent, _window, cx| {
+            handler(this, cx);
+        }))
 }
 
 /// Map a landing-portal [`Tone`](starbridge_v2::landing::Tone) (a semantic role,
@@ -464,7 +438,7 @@ pub(crate) fn identity_badge(lifecycle: &str) -> (&'static str, Hsla) {
 }
 
 /// A compact shell-toolbar button (the cap-first compositor's window ops). Same
-/// shape as a clerk button; runs a `&mut Cockpit` method through the listener.
+/// shape as a clerk button; a small kit `Button` running a `&mut Cockpit` method.
 pub(crate) fn shell_button(
     cx: &mut Context<Cockpit>,
     label: &str,
@@ -472,25 +446,11 @@ pub(crate) fn shell_button(
     handler: fn(&mut Cockpit, &mut Context<Cockpit>),
 ) -> impl IntoElement {
     let id = SharedString::from(format!("shell-{label}"));
-    div()
-        .id(id)
-        .px_2()
-        .py_1()
-        .rounded_md()
-        .bg(theme::panel_hi())
-        .border_1()
-        .border_color(theme::border())
-        .text_xs()
-        .text_color(color)
-        .cursor_pointer()
-        .hover(|s| s.bg(theme::border()))
-        .on_mouse_down(
-            MouseButton::Left,
-            cx.listener(move |this, _ev, _window, cx| {
-                handler(this, cx);
-            }),
-        )
-        .child(label.to_string())
+    button_variant(Button::new(id).label(label.to_string()), color)
+        .small()
+        .on_click(cx.listener(move |this, _ev: &ClickEvent, _window, cx| {
+            handler(this, cx);
+        }))
 }
 
 /// Convert a servo-render [`servo_render::RgbaFrame`] (RGBA8, row-major) into a

@@ -94,40 +94,26 @@ impl Cockpit {
                 ))
                 .child(pill(format!("holds {}", browser.viewer_tier), theme::good()))
                 .child(
-                    div()
-                        .id("web-cells-tier-toggle")
-                        .px_2()
-                        .py_0p5()
-                        .rounded_md()
-                        .bg(theme::panel_hi())
-                        .border_1()
-                        .border_color(theme::border())
-                        .text_xs()
-                        .text_color(theme::accent())
-                        .cursor_pointer()
-                        .hover(|s| s.bg(theme::border()))
-                        .child(if is_root {
+                    Button::new("web-cells-tier-toggle")
+                        .label(if is_root {
                             "view as EDITOR (attenuate)"
                         } else {
                             "view as ROOT (reveal all)"
                         })
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(|this, _ev, _w, cx| {
-                                this.web_cells_viewer_rights = match this.web_cells_viewer_rights {
-                                    dregg_cell::AuthRequired::None => {
-                                        dregg_cell::AuthRequired::Either
-                                    }
-                                    _ => dregg_cell::AuthRequired::None,
-                                };
-                                // The conferred tier of a ⚡ upgrade is the viewer's
-                                // tier; changing it invalidates a prior grant — drop
-                                // the upgrade so re-pressing ⚡ confers the new tier.
-                                this.web_cells_upgraded = None;
-                                this.web_cells_transclusion_outcome = None;
-                                cx.notify();
-                            }),
-                        ),
+                        .primary()
+                        .xsmall()
+                        .on_click(cx.listener(|this, _ev: &ClickEvent, _w, cx| {
+                            this.web_cells_viewer_rights = match this.web_cells_viewer_rights {
+                                dregg_cell::AuthRequired::None => dregg_cell::AuthRequired::Either,
+                                _ => dregg_cell::AuthRequired::None,
+                            };
+                            // The conferred tier of a ⚡ upgrade is the viewer's
+                            // tier; changing it invalidates a prior grant — drop
+                            // the upgrade so re-pressing ⚡ confers the new tier.
+                            this.web_cells_upgraded = None;
+                            this.web_cells_transclusion_outcome = None;
+                            cx.notify();
+                        })),
                 ),
         );
         col = col.child(div().text_xs().text_color(theme::muted()).child(
@@ -254,22 +240,12 @@ impl Cockpit {
                         .child(
                             // THE FIRE BUTTON — fires the affordance through the
                             // REAL embedded executor (the closed seam).
-                            div()
-                                .id(SharedString::from(format!("web-fire-{name}")))
-                                .px_2()
-                                .py_0p5()
-                                .rounded_md()
-                                .bg(theme::panel_hi())
-                                .border_1()
-                                .border_color(theme::border())
-                                .text_xs()
-                                .text_color(theme::good())
-                                .cursor_pointer()
-                                .hover(|s| s.bg(theme::border()))
-                                .child("▶ fire")
-                                .on_mouse_down(
-                                    MouseButton::Left,
-                                    cx.listener(move |this, _ev, _w, cx| {
+                            Button::new(SharedString::from(format!("web-fire-{name}")))
+                                .label("▶ fire")
+                                .success()
+                                .xsmall()
+                                .on_click(
+                                    cx.listener(move |this, _ev: &ClickEvent, _w, cx| {
                                         let banner = {
                                             let mut w = this.world.borrow_mut();
                                             match starbridge_v2::web_cells::WebCellsBrowser::fire_affordance(
@@ -364,23 +340,13 @@ impl Cockpit {
                         );
                         let fire_name_btn = fire_name.clone();
                         col = col.child(
-                            div()
-                                .id("web-transclusion-fire")
-                                .mt_1()
-                                .px_2()
-                                .py_0p5()
-                                .rounded_md()
-                                .bg(theme::panel_hi())
-                                .border_1()
-                                .border_color(theme::border())
-                                .text_xs()
-                                .text_color(theme::good())
-                                .cursor_pointer()
-                                .hover(|s| s.bg(theme::border()))
-                                .child(format!("▶ fire `{fire_name}` on the source"))
-                                .on_mouse_down(
-                                    MouseButton::Left,
-                                    cx.listener(move |this, _ev, _w, cx| {
+                            div().mt_1().child(
+                            Button::new("web-transclusion-fire")
+                                .label(format!("▶ fire `{fire_name}` on the source"))
+                                .success()
+                                .xsmall()
+                                .on_click(
+                                    cx.listener(move |this, _ev: &ClickEvent, _w, cx| {
                                         let banner = match this.web_cells_upgraded.clone() {
                                             Some(up) => {
                                                 let mut w = this.world.borrow_mut();
@@ -408,6 +374,7 @@ impl Cockpit {
                                         cx.notify();
                                     }),
                                 ),
+                            ),
                         );
                     }
                     // READ-ONLY: offer the ⚡ upgrade. Pressing it runs the real
@@ -424,23 +391,13 @@ impl Cockpit {
                         let finalized = t.source_finalized;
                         let confer = rights.clone();
                         col = col.child(
-                            div()
-                                .id("web-transclusion-make-interactive")
-                                .mt_1()
-                                .px_2()
-                                .py_0p5()
-                                .rounded_md()
-                                .bg(theme::panel_hi())
-                                .border_1()
-                                .border_color(theme::accent())
-                                .text_xs()
-                                .text_color(theme::accent())
-                                .cursor_pointer()
-                                .hover(|s| s.bg(theme::border()))
-                                .child("⚡ make interactive (powerbox-grant a source affordance)")
-                                .on_mouse_down(
-                                    MouseButton::Left,
-                                    cx.listener(move |this, _ev, _w, cx| {
+                            div().mt_1().child(
+                            Button::new("web-transclusion-make-interactive")
+                                .label("⚡ make interactive (powerbox-grant a source affordance)")
+                                .primary()
+                                .xsmall()
+                                .on_click(
+                                    cx.listener(move |this, _ev: &ClickEvent, _w, cx| {
                                         // Reconstruct the read-only quote for the
                                         // currently-shown transclusion + UPGRADE it via
                                         // the POWERBOX: confer the viewer's tier over the
@@ -478,6 +435,7 @@ impl Cockpit {
                                         cx.notify();
                                     }),
                                 ),
+                            ),
                         );
                     }
                 }
@@ -714,64 +672,38 @@ impl Cockpit {
                 // are visible; dropping to the INCOMPARABLE Signature tier FOGS them
                 // (the membrane refuses the lineage) — the property made tangible.
                 .child(
-                    div()
-                        .id("links-here-tier-toggle")
-                        .px_2()
-                        .py_0p5()
-                        .rounded_md()
-                        .bg(theme::panel_hi())
-                        .border_1()
-                        .border_color(theme::border())
-                        .text_xs()
-                        .text_color(theme::accent())
-                        .cursor_pointer()
-                        .hover(|s| s.bg(theme::border()))
-                        .child(if is_root {
+                    Button::new("links-here-tier-toggle")
+                        .label(if is_root {
                             "view as SIGNATURE (fog the gated links)"
                         } else {
                             "view as ROOT (reveal all)"
                         })
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(|this, _ev, _w, cx| {
-                                this.links_here_viewer_rights = match this.links_here_viewer_rights {
-                                    dregg_cell::AuthRequired::None => {
-                                        dregg_cell::AuthRequired::Signature
-                                    }
-                                    _ => dregg_cell::AuthRequired::None,
-                                };
-                                cx.notify();
-                            }),
-                        ),
+                        .primary()
+                        .xsmall()
+                        .on_click(cx.listener(|this, _ev: &ClickEvent, _w, cx| {
+                            this.links_here_viewer_rights = match this.links_here_viewer_rights {
+                                dregg_cell::AuthRequired::None => dregg_cell::AuthRequired::Signature,
+                                _ => dregg_cell::AuthRequired::None,
+                            };
+                            cx.notify();
+                        })),
                 )
                 // The depth toggle (1 ⇄ 2 ⇄ 3): how many hops of backlinks-of-backlinks
                 // the transitive walk reaches. The walk is cycle-safe + depth-bounded.
                 .child(
-                    div()
-                        .id("links-here-depth-toggle")
-                        .px_2()
-                        .py_0p5()
-                        .rounded_md()
-                        .bg(theme::panel_hi())
-                        .border_1()
-                        .border_color(theme::border())
-                        .text_xs()
-                        .text_color(theme::accent())
-                        .cursor_pointer()
-                        .hover(|s| s.bg(theme::border()))
-                        .child("cycle depth")
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(|this, _ev, _w, cx| {
-                                // 1 → 2 → 3 → 1 (a small, finite, demonstrable range).
-                                this.links_here_depth = match this.links_here_depth {
-                                    0 | 1 => 2,
-                                    2 => 3,
-                                    _ => 1,
-                                };
-                                cx.notify();
-                            }),
-                        ),
+                    Button::new("links-here-depth-toggle")
+                        .label("cycle depth")
+                        .primary()
+                        .xsmall()
+                        .on_click(cx.listener(|this, _ev: &ClickEvent, _w, cx| {
+                            // 1 → 2 → 3 → 1 (a small, finite, demonstrable range).
+                            this.links_here_depth = match this.links_here_depth {
+                                0 | 1 => 2,
+                                2 => 3,
+                                _ => 1,
+                            };
+                            cx.notify();
+                        })),
                 ),
         );
 
@@ -788,26 +720,14 @@ impl Cockpit {
                     panel.focus_uri
                 )))
                 .child(
-                    div()
-                        .id("links-here-refocus-user")
-                        .px_2()
-                        .py_0p5()
-                        .rounded_md()
-                        .bg(theme::panel_hi())
-                        .border_1()
-                        .border_color(theme::border())
-                        .text_xs()
-                        .text_color(theme::muted())
-                        .cursor_pointer()
-                        .hover(|s| s.bg(theme::border()))
-                        .child("↺ focus the user principal")
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(|this, _ev, _w, cx| {
-                                this.links_here_focus = None; // None = the user anchor
-                                cx.notify();
-                            }),
-                        ),
+                    Button::new("links-here-refocus-user")
+                        .label("↺ focus the user principal")
+                        .ghost()
+                        .xsmall()
+                        .on_click(cx.listener(|this, _ev: &ClickEvent, _w, cx| {
+                            this.links_here_focus = None; // None = the user anchor
+                            cx.notify();
+                        })),
                 ),
         );
 
@@ -990,63 +910,37 @@ impl Cockpit {
                 // grant is ≤ the user's held authority; the powerbox refuses to amplify
                 // past the held ceiling, so a wider tier than the user holds is refused.
                 .child(
-                    div()
-                        .id("powerbox-tier-toggle")
-                        .px_2()
-                        .py_0p5()
-                        .rounded_md()
-                        .bg(theme::panel_hi())
-                        .border_1()
-                        .border_color(theme::border())
-                        .text_xs()
-                        .text_color(theme::accent())
-                        .cursor_pointer()
-                        .hover(|s| s.bg(theme::border()))
-                        .child(format!("confer: {confer:?} (cycle)"))
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(|this, _ev, _w, cx| {
-                                // Cycle Signature → Either → None → Signature: from the
-                                // narrowest (a strong attenuation) up through the wider
-                                // tiers (still gated by the held ceiling + the executor).
-                                this.powerbox_confer_rights = match this.powerbox_confer_rights {
-                                    dregg_cell::AuthRequired::Signature => {
-                                        dregg_cell::AuthRequired::Either
-                                    }
-                                    dregg_cell::AuthRequired::Either => {
-                                        dregg_cell::AuthRequired::None
-                                    }
-                                    _ => dregg_cell::AuthRequired::Signature,
-                                };
-                                cx.notify();
-                            }),
-                        ),
+                    Button::new("powerbox-tier-toggle")
+                        .label(format!("confer: {confer:?} (cycle)"))
+                        .primary()
+                        .xsmall()
+                        .on_click(cx.listener(|this, _ev: &ClickEvent, _w, cx| {
+                            // Cycle Signature → Either → None → Signature: from the
+                            // narrowest (a strong attenuation) up through the wider
+                            // tiers (still gated by the held ceiling + the executor).
+                            this.powerbox_confer_rights = match this.powerbox_confer_rights {
+                                dregg_cell::AuthRequired::Signature => {
+                                    dregg_cell::AuthRequired::Either
+                                }
+                                dregg_cell::AuthRequired::Either => dregg_cell::AuthRequired::None,
+                                _ => dregg_cell::AuthRequired::Signature,
+                            };
+                            cx.notify();
+                        })),
                 )
                 // THE RUNTIME APP-LAUNCHER button — birth a fresh confined app (no
                 // ambient authority) and route ITS request through this powerbox. The
                 // powerbox's missing first half: spawn the confined requester on demand.
                 .child(
-                    div()
-                        .id("powerbox-launch-app")
-                        .px_2()
-                        .py_0p5()
-                        .rounded_md()
-                        .bg(theme::panel_hi())
-                        .border_1()
-                        .border_color(theme::accent())
-                        .text_xs()
-                        .text_color(theme::good())
-                        .cursor_pointer()
-                        .hover(|s| s.bg(theme::border()))
-                        .child("+ launch confined app")
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(|this, _ev, _w, cx| {
-                                // Births a fresh confined app-cell + routes its request
-                                // through the existing powerbox (sets it as powerbox_app).
-                                this.run_launch_confined_app(cx);
-                            }),
-                        ),
+                    Button::new("powerbox-launch-app")
+                        .label("+ launch confined app")
+                        .success()
+                        .xsmall()
+                        .on_click(cx.listener(|this, _ev: &ClickEvent, _w, cx| {
+                            // Births a fresh confined app-cell + routes its request
+                            // through the existing powerbox (sets it as powerbox_app).
+                            this.run_launch_confined_app(cx);
+                        })),
                 ),
         );
         col = col.child(div().text_xs().text_color(theme::muted()).child(

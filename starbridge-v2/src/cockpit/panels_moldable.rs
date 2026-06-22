@@ -231,23 +231,14 @@ impl Cockpit {
             let active = i == idx;
             let id = SharedString::from(format!("mold-sub-{i}"));
             strip = strip.child(
-                div()
-                    .id(id)
-                    .px_2()
-                    .py_0p5()
-                    .rounded_md()
-                    .bg(if active { theme::panel_hi() } else { theme::panel() })
-                    .text_xs()
-                    .text_color(if active { theme::accent() } else { theme::muted() })
-                    .cursor_pointer()
-                    .hover(|s| s.bg(theme::border()))
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |this, _ev, _w, cx| {
-                            this.moldable_set_present_idx(i, cx);
-                        }),
-                    )
-                    .child(format!("{} · {}", p.kind.slug(), p.label)),
+                Button::new(id)
+                    .label(format!("{} · {}", p.kind.slug(), p.label))
+                    .ghost()
+                    .xsmall()
+                    .selected(active)
+                    .on_click(cx.listener(move |this, _ev: &ClickEvent, _w, cx| {
+                        this.moldable_set_present_idx(i, cx);
+                    })),
             );
         }
         col = col.child(strip);
@@ -399,25 +390,13 @@ impl Cockpit {
                         .when(m.authorized, |d| {
                             let send_name = name.clone();
                             d.child(
-                                div()
-                                    .id(id)
-                                    .px_2()
-                                    .py_0p5()
-                                    .rounded_md()
-                                    .bg(theme::panel_hi())
-                                    .border_1()
-                                    .border_color(theme::border())
-                                    .text_xs()
-                                    .text_color(theme::accent())
-                                    .cursor_pointer()
-                                    .hover(|s| s.bg(theme::border()))
-                                    .on_mouse_down(
-                                        MouseButton::Left,
-                                        cx.listener(move |this, _ev, _w, cx| {
-                                            this.inspect_act_send(&send_name, cx);
-                                        }),
-                                    )
-                                    .child("send"),
+                                Button::new(id)
+                                    .label("send")
+                                    .primary()
+                                    .xsmall()
+                                    .on_click(cx.listener(move |this, _ev: &ClickEvent, _w, cx| {
+                                        this.inspect_act_send(&send_name, cx);
+                                    })),
                             )
                         }),
                 );
@@ -612,25 +591,16 @@ impl Cockpit {
             let active = i == self.lane_idx;
             let id = SharedString::from(format!("lane-sel-{i}"));
             strip = strip.child(
-                div()
-                    .id(id)
-                    .px_2()
-                    .py_0p5()
-                    .rounded_md()
-                    .bg(if active { theme::panel_hi() } else { theme::panel() })
-                    .text_xs()
-                    .text_color(if active { theme::accent() } else { theme::muted() })
-                    .cursor_pointer()
-                    .hover(|s| s.bg(theme::border()))
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |this, _ev, _w, cx| {
-                            this.lane_idx = i;
-                            this.lane_outcome = None;
-                            cx.notify();
-                        }),
-                    )
-                    .child(*name),
+                Button::new(id)
+                    .label(*name)
+                    .ghost()
+                    .xsmall()
+                    .selected(active)
+                    .on_click(cx.listener(move |this, _ev: &ClickEvent, _w, cx| {
+                        this.lane_idx = i;
+                        this.lane_outcome = None;
+                        cx.notify();
+                    })),
             );
         }
         col = col.child(strip);
