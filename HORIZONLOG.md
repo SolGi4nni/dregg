@@ -268,7 +268,31 @@ The atlas's crawl-found anomalies are closed; the Anomalies tab is removed (the 
   protocol/cockpit bug (the tabs work in the app). Kept as a follow-up here: a bounded run_until_parked /
   a `headless` cockpit flag would let the UI-tree + --serve-ie6 cover all 28 tabs.
 
-## ✅✅ emberian.github.io/dregg IS LIVE — atlas + the real wasm cockpit (2026-06-22, green-or-bust)
+
+### ✅✅✅ DESKTOP EPOCH — COMPLETE (2026-06-22): deos grows deos from within, green across the board.
+The completion goal is MET — every strand implemented, integrated, tested, and the atlas refreshed:
+- HERMES/ADOS: deos-hermes a working confined agent — ACP client↔ToolGateway loop (live-capable + faithful mock),
+  tool side-effects ride the metered turn, per-tool grants + a mandate inspector (1de5c0ed; 3+4 tests).
+- ZED/dev-loop: editor + terminal mount as on-demand cockpit DOCK PANES (⌘K → real $SHELL PTY / deos-zed editor
+  in a split; a3f7ce07) — the self-hosting loop. deos-zed editor-buffer-as-document (f8184fbe).
+- DOCUMENT LANGUAGE: dregg-doc Pijul patch core + ropey↔patch bridge; editor buffer = patch history; a doc VIEWER
+  (blame + conflict-objects-as-cards); multi-author merge (f8184fbe, 119+ tests; DocMerge.lean proven).
+- COCKPIT OVERHAUL: panels migrated to gpui-component Button kit + semantic variants (7e7990ae); the dock paned
+  workspace; gpui_component::init wired into ALL headless render paths (30b04a3e — also restores the seL4 bake).
+- MATRIX CHAT kickass+dregg-pilled: rooms=cells, identity=cells, send=turn, and THE STAR — a message carries a
+  rehydratable MEMBRANE (a cap-bounded world-fork the recipient drives + stitches back fail-closed). Reactions/
+  replies/edits-as-state/trust badges (f17b0d15; 19 tests). Verified render.
+- REHYDRATABLE MEMBRANE tested+worked: mint→rehydrate→drive→stitch round-trip; graduated rights (embedded/
+  studyref/networkboundary-with-signed-consent) each enforced; consent-signing-domain CLOSED; anti-amplification
+  a fail-closed gate (7414c820; 12 shared_fork + 13 powerbox + 134+4 web-surface tests).
+- ATLAS refreshed: 28 cockpit surfaces re-baked w/ the new widgets + 3 NEW app surfaces (deos-chat/editor/
+  docviewer) via fresh offscreen --screenshot modes (2b3073dc, 3199a6d1, cb4ad22b; 31 surfaces).
+- TESTED: every app-crate suite green; fixed the world_collapse nondeterminism test (2c63e72e). Full cockpit bin
+  builds green with ALL lanes integrated. Main-loop integration seams resolved: public first_pane, headless theme-
+  init, ed25519 regular dep.
+WITNESS: commits a3f7ce07·f8184fbe·7e7990ae·1de5c0ed·f17b0d15·7414c820·2b3073dc·3199a6d1·cb4ad22b·2c63e72e
++ the integration fixes. THE LINE: every app is a VIEW over the one cell graph; every screenshot a rehydratable
+fork; every agent action a receipted turn; deos edits/builds/operates itself, confined, from within.## ✅✅ emberian.github.io/dregg IS LIVE — atlas + the real wasm cockpit (2026-06-22, green-or-bust)
 The Pages deploy is GREEN and serving (verified from the public URL):
 - /dregg/ + /dregg/atlas/ (interactive atlas; LFS images materialize via Actions — the lfs:true path works)
 - /dregg/cockpit/ — THE LIVE WASM COCKPIT: starbridge_web_bg.wasm = 6.96 MB of the REAL verified executor,
