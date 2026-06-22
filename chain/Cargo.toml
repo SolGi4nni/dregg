@@ -49,9 +49,13 @@ hex = "0.4"
 sp1-build = { version = "6", optional = true }
 
 [features]
-default = ["mock"]
-# Mock mode: stubs out SP1 proving for development without the SP1 toolchain.
-# All APIs are available but produce simulated proofs.
+# NO default feature. With neither `mock` nor `prove`, the withdrawal/credential proof
+# functions return `ChainError::ToolchainMissing` (fail-closed) — a build NEVER silently
+# substitutes a SIMULATED proof for a real one. A real build wires `prove` (SP1); a dev/
+# test build opts into `mock` explicitly (`--features mock`).
+default = []
+# Mock mode: stubs out SP1 proving for development/tests without the SP1 toolchain.
+# Produces SIMULATED proofs — must be opted into, never the default.
 mock = []
 # Enable real SP1 proving (requires `sp1up` toolchain installed).
 # Pulls in sp1-sdk and its full dependency tree.

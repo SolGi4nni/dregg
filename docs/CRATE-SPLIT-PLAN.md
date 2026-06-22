@@ -154,10 +154,22 @@ lib.** Real — but it is a *platform boundary*, so it belongs at a **crate** bo
 
 ## Migration order (cheapest, highest-leverage first)
 
-1. **cell → cell-types + cell-crypto** (split #2). Biggest win (kills 29 strippers + the
-   `crypto` feature), cleanest cut (37 of 40 modules already crypto-free). Grow
-   `dregg-types` rather than birth a new crate. De-risks the pattern.
-2. **chain `mock` → cfg(test)** (split #4, footgun). Tiny, removes a real foot-gun.
+1. ✅ **DONE (`d137cb6c`) — cell → cell + `dregg-cell-crypto`.** The `crypto` feature is
+   deleted; `dregg-cell` has zero crypto deps; the 10 crypto modules + the 2 crypto
+   type-methods live in `dregg-cell-crypto` (free-fn shims `note::new_note`,
+   `delegation::verify_parent_signature`). ~36 consumer files migrated to
+   `dregg_cell_crypto::`. Pure move; workspace green; 169 + 583 tests pass. (Chose a
+   sibling `dregg-cell-crypto` crate over growing `dregg-types`, since the cut was crypto-
+   *out* not types-out — cleaner.) RESIDUAL (cosmetic): the ~29 `default-features = false`
+   lines are now harmless no-ops; sweep them out in a later tidy pass.
+2. ✅ **DONE — chain `mock` no longer default.** `chain/Cargo.toml` `default = ["mock"]`
+   → `default = []`. The default build now FAIL-CLOSES (`ChainError::ToolchainMissing`)
+   instead of silently substituting a simulated proof; `mock` is opt-in
+   (`--features mock`), `prove` wires real SP1. (chain is a standalone sub-workspace —
+   excluded from the main one over SP1 dep conflicts; verified via
+   `cargo check/test --manifest-path chain/Cargo.toml`: default builds fail-closed, mock
+   tests 12+2 pass.) The mock-dependent tests were already `cfg(feature="mock")`, so no
+   coverage lost — they run under the opt-in.
 3. **no-lean-link → exec crates** (split #3). 9-crate cascade; medium.
 4. **sdk core-gates → direct deps** (split #4).
 5. **prover cascade → circuit-verify + circuit-prove** (split #1). Hardest (159 sites);
