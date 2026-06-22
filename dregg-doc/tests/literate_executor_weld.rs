@@ -15,7 +15,13 @@
 //! `Patch`, and the patch is driven through the **real executor** onto a real
 //! cell. So the full chain a reader cares about — `text -> patch -> turn ->
 //! committed cell -> receipt` — is exercised end to end, not just its two halves
-//! in isolation. (Reconciliation note: [`ExecutorDrivenDoc`] is the ONE canonical
+//! in isolation.
+//!
+//! SUBSTRATE-GATED: this weld exercises the real `dregg_turn::TurnExecutor` and
+//! [`ExecutorDrivenDoc`], both of which live behind `--features substrate` (the
+//! `../cell` / `../turn` ride). With the feature OFF the standalone core builds
+//! and tests in isolation, so this whole file is `#![cfg(feature = "substrate")]`.
+//! (Reconciliation note: [`ExecutorDrivenDoc`] is the ONE canonical
 //! doc-on-cell model; the former hand-assembled `DocCell`/`heap_map` path —
 //! which landed document leaves in the cell's fixed register file rather than the
 //! committed `fields_map` overflow region, and never round-tripped through the
@@ -36,6 +42,8 @@
 //!   committed replicas' witness graphs surfaces a `<<<`-block [`ConflictRegion`]
 //!   that round-trips through the literate parser — a conflict is a legible,
 //!   first-class STATE carried over the real substrate, never a merge failure.
+
+#![cfg(feature = "substrate")]
 
 use dregg_doc::{
     Author, AtomId, ExecutorDrivenDoc, LiterateDoc, content, merge, parsed_conflicts_of,

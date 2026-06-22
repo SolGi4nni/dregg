@@ -49,7 +49,20 @@ repository = "https://github.com/emberian/dregg"
 # That is why `dregg-turn` is pulled in here.
 substrate = ["dep:dregg-cell", "dep:dregg-turn", "dep:blake3"]
 
+# `rope` welds the patch core onto a `ropey::Rope`-backed editor buffer — the
+# rope<->patch BRIDGE the editor needs (DOCUMENT-LANGUAGE.md §4.1, APPS-AS-CELLS.md
+# §1: "the rope buffer <-> patch graph impedance is the genuine engineering
+# question"). It is OPTIONAL and OFF by default so the core stays dependency-free
+# ("let it breathe"). `ropey` is pinned to the SAME `2.0.0-beta.1` deos-zed's
+# editor (`deos-zed/src/editor.rs`) uses, so a `RopeDoc` plugs that real buffer in
+# directly — no stringification at the seam. See `src/rope.rs`.
+rope = ["dep:ropey"]
+
 [dependencies]
+# The rope-backed editor buffer (optional, behind `rope`): the SAME crate +
+# version deos-zed's `Editor` holds, so the bridge consumes the editor's real
+# buffer type. With the feature OFF this pulls in nothing.
+ropey = { version = "2.0.0-beta.1", optional = true }
 # The REAL substrate (optional, behind `substrate`): a path dep into the parent
 # dregg workspace's `cell` crate. Cargo resolves `dregg-cell`'s workspace
 # inheritance (`version.workspace`, etc.) from ITS OWN workspace root (the parent

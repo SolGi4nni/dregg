@@ -111,28 +111,33 @@ impl Doc {
     /// [`PatchId`]. If the text is unchanged the patch is empty (a no-op commit
     /// whose tip is the empty-patch id).
     pub fn edit(&mut self, author: Author, new_text: &str) -> PatchId {
-        let graph = self.history.replay();
-        // The current alive atoms in document order — one atom per token by
-        // construction, so `cur_ids[i]` is the atom holding `cur_tokens[i]`.
-        let walked = walk_atoms(&graph);
-        let cur_ids: Vec<AtomId> = walked.iter().map(|(id, _)| *id).collect();
-        let cur_text: String = walked.iter().map(|(_, c)| c.as_str()).collect();
-
-        let cur_tokens = tokenize(&cur_text, self.granularity);
-        let new_tokens = tokenize(new_text, self.granularity);
-
-        // Sanity: the walked atom sequence must align 1:1 with the tokenization
-        // of the text it renders (it does, because we always author one atom per
-        // token). If it ever didn't, mapping kept tokens to ids would be wrong.
-        debug_assert_eq!(
-            cur_tokens.len(),
-            cur_ids.len(),
-            "one atom per token invariant"
-        );
-
-        let ops = diff_to_ops(&cur_tokens, &cur_ids, &new_tokens);
+        let ops = diff_history_to_ops(&self.history, new_text, self.granularity);
         self.history.commit(Patch::by(author, ops))
     }
+}
+
+/// THE shared diff-to-patch core: diff a [`History`]'s current rendered content
+/// against `new_text` (tokenized at `g`) and return the minimal `Add`/`Delete`/
+/// `Connect` ops. Both [`Doc::edit`] and the `ropey` bridge ([`crate::rope`])
+/// ride this — the rope bridge feeds `new_text = new_rope.to_string()`, so the
+/// editor's real buffer becomes a patch through exactly the same alignment.
+pub(crate) fn diff_history_to_ops(history: &History, new_text: &str, g: Granularity) -> Vec<Op> {
+    let graph = history.replay();
+    // The current alive atoms in document order — one atom per token by
+    // construction, so `cur_ids[i]` is the atom holding `cur_tokens[i]`.
+    let walked = walk_atoms(&graph);
+    let cur_ids: Vec<AtomId> = walked.iter().map(|(id, _)| *id).collect();
+    let cur_text: String = walked.iter().map(|(_, c)| c.as_str()).collect();
+
+    let cur_tokens = tokenize(&cur_text, g);
+    let new_tokens = tokenize(new_text, g);
+
+    // Sanity: the walked atom sequence must align 1:1 with the tokenization of
+    // the text it renders (it does, because we always author one atom per token).
+    // If it ever didn't, mapping kept tokens to ids would be wrong.
+    debug_assert_eq!(cur_tokens.len(), cur_ids.len(), "one atom per token invariant");
+
+    diff_to_ops(&cur_tokens, &cur_ids, &new_tokens)
 }
 
 /// Split `text` into tokens, keeping the delimiters so the tokens concatenate
@@ -143,7 +148,7 @@ impl Doc {
 /// - [`Granularity::Word`]: each token is a run of non-whitespace *followed by*
 ///   the run of whitespace up to the next word, so the whitespace travels with
 ///   the word before it (leading whitespace forms its own token).
-fn tokenize(text: &str, g: Granularity) -> Vec<String> {
+pub(crate) fn tokenize(text: &str, g: Granularity) -> Vec<String> {
     match g {
         Granularity::Line => split_keep_newlines(text),
         Granularity::Word => split_words_keep_ws(text),
@@ -244,7 +249,11 @@ fn seed_from(pred: AtomId) -> u64 {
 /// `Connect` from it to the successor chain so the insertion threads in — and
 /// becomes the new predecessor (so a run of inserts chains, and identical
 /// inserted tokens stay distinct). Current tokens not in the LCS are deleted.
-fn diff_to_ops(cur_tokens: &[String], cur_ids: &[AtomId], new_tokens: &[String]) -> Vec<Op> {
+pub(crate) fn diff_to_ops(
+    cur_tokens: &[String],
+    cur_ids: &[AtomId],
+    new_tokens: &[String],
+) -> Vec<Op> {
     let pairs = lcs_pairs(cur_tokens, new_tokens);
 
     // Which new-index is matched to which current-id (kept tokens).

@@ -36,6 +36,13 @@
 //!   patch — kept tokens reuse their existing atom ids; inserted tokens get
 //!   predecessor-seeded ids so repeated tokens stay distinct. [`walk_atoms`] is
 //!   the per-atom linearization this rides on.
+//! - **The rope<->patch bridge** (`rope` feature, `rope` module) — `RopeDoc` welds the
+//!   patch core onto a `ropey::Rope` editor buffer: `edit_rope(new_rope)` diffs the
+//!   editor's rope into the minimal patch (the editor edit -> a verifiable patch),
+//!   and `rope()` materializes the patch-fold back into a `Rope` (the buffer the
+//!   editor displays). This is the impedance-match APPS-AS-CELLS.md §1 flags as the
+//!   real engineering question; `ropey` is pinned to deos-zed's exact version so its
+//!   real `Editor` buffer plugs in at the seam.
 //! - [`merge`] — the pushout/union: total, commutative, associative, idempotent.
 //! - [`content`] — the fold/linearization, with conflicts surfaced as
 //!   [`ConflictRegion`]s ([`Segment::Conflict`]), each [`Alternative`] tagged
@@ -124,6 +131,11 @@ mod patch;
 mod regime;
 mod resolve;
 mod resolution;
+// The rope<->patch bridge (`ropey::Rope` text <-> the patch graph) — the editor
+// keystone of APPS-AS-CELLS.md §1. Behind the OFF-by-default `rope` feature so
+// the standalone core stays dependency-free. See src/rope.rs.
+#[cfg(feature = "rope")]
+pub mod rope;
 mod threeway;
 #[cfg(feature = "substrate")]
 mod substrate;
@@ -149,6 +161,8 @@ pub use content::{Alternative, ConflictRegion, Rendered, Segment, content, walk_
 pub use doc::{Doc, Granularity};
 pub use graph::{DocGraph, FieldAssign};
 pub use history::History;
+#[cfg(feature = "rope")]
+pub use rope::{RopeDoc, graph_to_rope, rope_diff};
 pub use literate::{
     LiterateDoc, Parsed, ParsedAlternative, ParsedConflict, ParsedField, author_graph, parse,
     parsed_conflicts_of, parsed_shape, render, render_with_fields,
