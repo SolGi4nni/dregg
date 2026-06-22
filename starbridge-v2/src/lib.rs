@@ -123,6 +123,19 @@ pub mod powerbox;
 #[cfg(feature = "embedded-executor")]
 pub mod shared_fork;
 
+// The deos SESSION / LOGIN MANAGER — login = receiving your ROOT CAPABILITY, a
+// session = the cap-tree you hold, logout = revoking it. The L6-adjacent trusted
+// piece the WM/login investigation found missing. Authenticate (a key proof) →
+// derive the identity cell (`CellId::derive_raw(pubkey, ROOT_TOKEN)`) → grant the
+// per-user `CapTemplate` into it FROM the system principal via the REAL grant
+// turn (so mint_needs_held_factory + attenuation bite) → the root-cell c-list IS
+// the session → logout revokes it (synchronous, the whole tree dark at n=1). An
+// agent (Hermes) login is the SAME ceremony with a narrower template — a
+// cap-bounded inhabitant of the deos polis. See docs/deos/SESSION-LOGIN.md.
+// Welds over powerbox + derive_raw + Grant/RevokeCapability; reinvents none.
+#[cfg(feature = "embedded-executor")]
+pub mod session;
+
 #[cfg(feature = "embedded-executor")]
 pub mod agent;
 #[cfg(feature = "embedded-executor")]
