@@ -68,6 +68,13 @@ workspace. Six threads, each grounded by a 2026-06-22 explore-agent report (read
    acp_adapter/acp_registry, skills/learning-loop, multi-platform gateway). Integrate as a deos agent via ACP
    (Zed speaks ACP — acp_thread) + ToolGateway: every Hermes tool call → a cap-gated receipted dregg turn.
    THE ADOS realization with a REAL agent instead of a toy.
+   ✅ SEAM BUILT (deos-hermes/, own workspace): ACP analysis done (the gate sits on session/request_permission +
+   the tool_call kind taxonomy); HermesGateway routes a ToolCallRequest → ToolGateway::invoke per kind → a real
+   receipted turn on the verified executor OR an in-band Reject. `cargo build` + 4 both-polarity seam tests green
+   (real turn_hash receipts; over-rate/past-deadline refused). DESIGN.md carries the bridge + the 5-step roadmap.
+   RESIDUE (the roadmap): (1) the live ACP-client↔`hermes acp` subprocess wiring (JSON-RPC transport — slice uses
+   a mocked ACP source); (2) tool side-effects riding the metered turn (today work=∅); (3) per-tool (not per-kind)
+   grants + a mandate inspector; (4) the sandbox-PD (firmament/seL4) confinement; (5) the chat/agent dock surface.
 ROADMAP (felt-wins-first): Phase-0 scroll + the async tab/act decoupling (immediate) → symbolic WitnessMode
 (the foundation, careful: touches executor+storage, ember-gated soundness) → dockable workspace (vendor Zed
 pane_group/dock) → Zed-in-deos (FirmamentFs) + terminal + Hermes (the desktop buildout).

@@ -1,0 +1,9 @@
+# deos-hermes is a STANDALONE workspace (excluded from the repo root), so it
+# does NOT inherit the root `../rust-toolchain.toml`. Pin the SAME dated nightly
+# the repo root pins — `dregg-sdk` and its deep dep tree (which this crate
+# depends on with default features, embedding the verified Lean executor)
+# compile under exactly this toolchain in the main workspace.
+[toolchain]
+channel = "nightly-2026-01-01"
+profile = "default"
+components = ["cargo", "clippy", "rustc", "rustfmt"]
