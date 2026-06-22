@@ -243,7 +243,21 @@ seam half-built, the servo elephant compiled, the dock vendored, symbolic mode o
 epoch is REALIZING a designed system, not inventing one. OPEN (ember's call): polis-depth in v1 login (thin
 authenticate→root-cap that grows into the polis, vs full legitimacy-floor now).
 
-## ✅ ATLAS ANOMALIES ALL RESOLVED — tab removed (2026-06-22)
+
+### DESKTOP EPOCH — INTEGRATION CHECKPOINT (2026-06-22): the full cockpit is GREEN with all lanes.
+The 6-lane swarm landed + integrated; `cargo build --release --bin starbridge-v2` GREEN with: dev-loop panes
+(A) + document-language/editor-as-document (B) + dregg-pilled chat (C) + hermes/ados live (E) + gpui-component
+widget overhaul (F), and lane D (membrane) compiling green (its tests finishing). Integration fixes by main loop:
+PaneGroup::first_pane (public) for the dev-pane graft; gpui_component::init(cx) in ALL THREE headless render paths
+(render_cockpit_headless/explore_ui/serve_ie6 — else the kit widgets panic "no Theme global" in the bake, which
+also restores the seL4 framebuffer render); ed25519-dalek → a regular native dep (the consent-signing domain wires
+world.rs to sign a grant receipt). Commits: 7e7990ae/30b04a3e (F+headless-init), a3f7ce07 (A), f8184fbe (B),
+f17b0d15 (C), 1de5c0ed (E), 1e29a206 (ed25519 integ), + the FFI lane's no-lean-link refactor committed (separate).
+ATLAS REFRESH underway: 28 cockpit surfaces re-shot with the new widgets; offscreen --screenshot modes being added
+to the deos-matrix chat demo + deos-zed editor/doc-viewer demos (the app GUIs are windowed-only + screencapture is
+blocked here, so they need a HeadlessAppContext offscreen bake like render_cockpit_headless) → then append to
+surfaces.json + build.py + commit. REMAINING: commit lane D (membrane tests); finish atlas (app surfaces); final
+verification pass.## ✅ ATLAS ANOMALIES ALL RESOLVED — tab removed (2026-06-22)
 The atlas's crawl-found anomalies are closed; the Anomalies tab is removed (the live finder is now
 `dregg-atlas/verify.py`, the oracle, which fails CI on any invariant break).
 - AuthRequired::None cap-badge inversion — REAL BUG, FIXED (`750d0d07c`, native + live-web).
