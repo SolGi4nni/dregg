@@ -116,7 +116,35 @@ fn verify() -> anyhow::Result<()> {
 }
 
 fn main() -> anyhow::Result<()> {
-    let headless = std::env::args().any(|a| a == "--verify" || a == "--headless");
+    use std::path::PathBuf;
+    let mut args = std::env::args().skip(1);
+    let mut screenshot_out: Option<PathBuf> = None;
+    let mut headless = false;
+    while let Some(a) = args.next() {
+        match a.as_str() {
+            "--verify" | "--headless" => headless = true,
+            "--screenshot" => {
+                screenshot_out = Some(PathBuf::from(
+                    args.next()
+                        .ok_or_else(|| anyhow::anyhow!("--screenshot needs an <out.png> path"))?,
+                ));
+            }
+            _ => {}
+        }
+    }
+
+    if let Some(out) = screenshot_out {
+        #[cfg(feature = "screenshot")]
+        {
+            return shot::run(&out);
+        }
+        #[cfg(not(feature = "screenshot"))]
+        {
+            let _ = out;
+            anyhow::bail!("built without the `screenshot` feature; rebuild with --features screenshot");
+        }
+    }
+
     if headless {
         return verify();
     }
@@ -133,6 +161,76 @@ fn main() -> anyhow::Result<()> {
              `cargo run --bin merge_demo -- --verify` for the headless merge proof."
         );
         verify()
+    }
+}
+
+/// Offscreen screenshot mode: render the DocViewer over the merged document (blame
+/// timeline + the first-class conflict object showing both alternatives + authorship)
+/// to a PNG with no window. Mirrors `gui::run`'s layout via the headless capture.
+#[cfg(feature = "screenshot")]
+mod shot {
+    use super::build_merge;
+    use deos_zed::screenshot::capture_surface;
+    use deos_zed::DocViewer;
+    use gpui::{
+        div, px, App, AppContext as _, Context, Entity, FocusHandle, Focusable,
+        InteractiveElement as _, IntoElement, ParentElement as _, Render, Styled as _, Window,
+    };
+    use gpui_component::{h_flex, v_flex, ActiveTheme as _, Root, TitleBar};
+    use std::path::Path;
+
+    struct ShotDemo {
+        viewer: Entity<DocViewer>,
+        focus: FocusHandle,
+    }
+
+    impl ShotDemo {
+        fn new(_window: &mut Window, cx: &mut Context<Self>) -> Self {
+            let merged = build_merge();
+            let viewer = cx.new(|cx| DocViewer::from_doc(&merged, "Project Plan (merged)", cx));
+            Self { viewer, focus: cx.focus_handle() }
+        }
+    }
+
+    impl Focusable for ShotDemo {
+        fn focus_handle(&self, _: &App) -> FocusHandle {
+            self.focus.clone()
+        }
+    }
+
+    impl Render for ShotDemo {
+        fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            v_flex()
+                .size_full()
+                .track_focus(&self.focus)
+                .child(TitleBar::new().child(
+                    "deos-zed — two authors merged: blame timeline + the conflict object",
+                ))
+                .child(
+                    h_flex().flex_1().min_h(px(0.)).child(
+                        div()
+                            .flex_1()
+                            .h_full()
+                            .border_l_1()
+                            .border_color(cx.theme().border)
+                            .child(self.viewer.clone()),
+                    ),
+                )
+        }
+    }
+
+    pub fn run(out: &Path) -> anyhow::Result<()> {
+        let (w, h) = (900.0_f32, 680.0_f32);
+        let (cw, ch) = capture_surface(out, w, h, |window, cx| {
+            let view = cx.new(|cx| ShotDemo::new(window, cx));
+            cx.new(|cx| Root::new(view, window, cx))
+        })?;
+        println!(
+            "OK headless doc-viewer screenshot -> {} ({cw}x{ch}, logical {w}x{h}); \
+             blame timeline + conflict object via offscreen wgpu.",
+            out.display()
+        );
+        Ok(())
     }
 }
 

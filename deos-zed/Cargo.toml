@@ -25,7 +25,7 @@ name = "deos_zed"
 # By default the editor builds with rust/json/toml/markdown tree-sitter grammars
 # so a real source file highlights out of the box. The editor is fully usable
 # WITHOUT any grammar (just no colour) — highlighting is purely additive.
-default = ["highlight-common", "gui-demo", "cockpit-surface"]
+default = ["highlight-common", "gui-demo", "cockpit-surface", "screenshot"]
 # json is a non-optional grammar in gpui-component (always compiled), so it
 # needs no feature here. rust/toml/markdown are opt-in.
 highlight-common = [
@@ -42,9 +42,23 @@ gui-demo = []
 # The CockpitSurface adapter (mounts the editor in starbridge-v2's dock). Pure
 # Rust, no extra deps — gated only so the lib's minimal surface stays clear.
 cockpit-surface = []
+# OFFSCREEN SCREENSHOT capture — drive a surface to a painted frame in a headless
+# gpui app over the offscreen wgpu renderer (lavapipe on Linux) + a no-system-fonts
+# CosmicTextSystem, then write the captured RGBA out as a PNG. This is the headless
+# path the atlas calls so a windowed-only demo can be captured where screencapture
+# is blocked. Mirrors starbridge-v2's `render-capture` (render_cockpit_headless).
+# On by default so `cargo run --bin demo -- --screenshot <out.png>` just works.
+screenshot = ["dep:image", "dep:gpui_wgpu", "gpui_wgpu/test-support", "gpui_platform/test-support"]
 
 [dependencies]
 anyhow = "1"
+
+# Offscreen-capture deps (the `screenshot` feature). `image 0.25` matches
+# gpui_wgpu's `image` (one resolved version, same as starbridge-v2). `gpui_wgpu`
+# supplies the `CosmicTextSystem` platform text system + the offscreen
+# `WgpuHeadlessRenderer` wired into `current_headless_renderer` on Linux.
+image = { version = "0.25", default-features = false, features = ["png"], optional = true }
+gpui_wgpu = { git = "https://github.com/emberian/zed", rev = "407a6ffd977d82b828e392f92db5cb34edea9549", optional = true }
 
 # The Pijul-shaped document language core, with the rope<->patch bridge enabled.
 # The editor's buffer IS a `dregg_doc::RopeDoc`: open a file -> a Document, each

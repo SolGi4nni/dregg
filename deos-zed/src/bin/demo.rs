@@ -72,8 +72,54 @@ fn verify() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Seed a real sample file so the screenshot shows syntax-highlighted code (not an
+/// empty buffer). We copy this very demo's source so the capture is a real,
+/// multi-line, rust-highlighted file. Returns `(root_dir, file_to_open)`.
+#[cfg(feature = "screenshot")]
+fn seed_sample(fs: &std::sync::Arc<dyn Fs>) -> anyhow::Result<(PathBuf, PathBuf)> {
+    let scratch = scratch_path();
+    // Use this binary's own source if we can find it, else a representative snippet.
+    let body = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/editor.rs"))
+        .unwrap_or_else(|_| {
+            "//! deos-zed sample buffer.\n\nuse std::sync::Arc;\n\nfn main() {\n    \
+             let xs: Vec<i32> = (0..10).map(|x| x * x).collect();\n    \
+             println!(\"squares: {xs:?}\");\n}\n"
+                .to_string()
+        });
+    fs.save(&scratch, &body)?;
+    let root = scratch.parent().unwrap().to_path_buf();
+    Ok((root, scratch))
+}
+
 fn main() -> anyhow::Result<()> {
-    let headless = std::env::args().any(|a| a == "--verify" || a == "--headless");
+    let mut args = std::env::args().skip(1);
+    let mut screenshot_out: Option<PathBuf> = None;
+    let mut headless = false;
+    while let Some(a) = args.next() {
+        match a.as_str() {
+            "--verify" | "--headless" => headless = true,
+            "--screenshot" => {
+                screenshot_out = Some(PathBuf::from(
+                    args.next()
+                        .ok_or_else(|| anyhow::anyhow!("--screenshot needs an <out.png> path"))?,
+                ));
+            }
+            _ => {}
+        }
+    }
+
+    if let Some(out) = screenshot_out {
+        #[cfg(feature = "screenshot")]
+        {
+            return shot::run(&out);
+        }
+        #[cfg(not(feature = "screenshot"))]
+        {
+            let _ = out;
+            anyhow::bail!("built without the `screenshot` feature; rebuild with --features screenshot");
+        }
+    }
+
     if headless {
         return verify();
     }
@@ -90,6 +136,100 @@ fn main() -> anyhow::Result<()> {
              `cargo run --bin demo -- --verify` for the headless edit+save proof."
         );
         verify()
+    }
+}
+
+/// Offscreen screenshot mode: render the Editor surface (file tree + syntax-
+/// highlighted code + line numbers) to a PNG with no window. Mirrors the windowed
+/// `gui::run` layout but drives the headless capture in `deos_zed::screenshot`.
+#[cfg(feature = "screenshot")]
+mod shot {
+    use std::path::{Path, PathBuf};
+    use std::sync::Arc;
+
+    use deos_zed::editor::Editor;
+    use deos_zed::file_tree::FileTree;
+    use deos_zed::fs::{Fs, RealFs};
+    use deos_zed::screenshot::capture_surface;
+    use gpui::{
+        div, px, App, AppContext as _, Context, Entity, FocusHandle, Focusable,
+        InteractiveElement as _, IntoElement, ParentElement as _, Render, Styled as _, Window,
+    };
+    use gpui_component::{h_flex, v_flex, ActiveTheme as _, Root, TitleBar};
+
+    struct ShotApp {
+        editor: Entity<Editor>,
+        tree: FileTree,
+        focus: FocusHandle,
+    }
+
+    impl ShotApp {
+        fn new(
+            fs: Arc<dyn Fs>,
+            root: PathBuf,
+            open: PathBuf,
+            window: &mut Window,
+            cx: &mut Context<Self>,
+        ) -> Self {
+            let editor = cx.new(|cx| Editor::new(fs.clone(), window, cx));
+            let tree = FileTree::new(fs, root, cx);
+            editor.update(cx, |ed, cx| {
+                let _ = ed.open(open, window, cx);
+            });
+            Self { editor, tree, focus: cx.focus_handle() }
+        }
+    }
+
+    impl Focusable for ShotApp {
+        fn focus_handle(&self, _: &App) -> FocusHandle {
+            self.focus.clone()
+        }
+    }
+
+    impl Render for ShotApp {
+        fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let editor = self.editor.clone();
+            let tree_el = self.tree.render(
+                cx.entity(),
+                |_this: &mut ShotApp, _path, _window, _cx| {},
+                cx,
+            );
+            v_flex()
+                .size_full()
+                .track_focus(&self.focus)
+                .child(TitleBar::new().child("deos-zed — editor over the Fs seam"))
+                .child(
+                    h_flex()
+                        .flex_1()
+                        .min_h(px(0.))
+                        .child(div().w(px(240.)).h_full().child(tree_el))
+                        .child(
+                            div()
+                                .flex_1()
+                                .h_full()
+                                .border_l_1()
+                                .border_color(cx.theme().border)
+                                .child(editor),
+                        ),
+                )
+        }
+    }
+
+    pub fn run(out: &Path) -> anyhow::Result<()> {
+        let fs: Arc<dyn Fs> = RealFs::arc();
+        let (root, open) = super::seed_sample(&fs)?;
+        let (w, h) = (1100.0_f32, 720.0_f32);
+        let (cw, ch) = capture_surface(out, w, h, move |window, cx| {
+            let view = cx.new(|cx| ShotApp::new(fs, root, open, window, cx));
+            cx.new(|cx| Root::new(view, window, cx))
+        })?;
+        let _ = std::fs::remove_file(super::scratch_path());
+        println!(
+            "OK headless editor screenshot -> {} ({cw}x{ch}, logical {w}x{h}); \
+             file tree + syntax-highlighted code via offscreen wgpu.",
+            out.display()
+        );
+        Ok(())
     }
 }
 

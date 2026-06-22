@@ -52,6 +52,9 @@ pub mod fs;
 #[cfg(feature = "cockpit-surface")]
 pub mod cockpit_surface;
 
+#[cfg(feature = "screenshot")]
+pub mod screenshot;
+
 pub use doc_viewer::DocViewer;
 pub use editor::Editor;
 pub use file_tree::FileTree;
