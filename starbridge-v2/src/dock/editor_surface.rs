@@ -30,7 +30,7 @@
 //! `deos-zed/FIRMAMENT-FS-SEAM.md`.
 
 use deos_zed::cockpit_surface::EditorSurface;
-use gpui::{AnyElement, App, FocusHandle, SharedString, Window};
+use gpui::{AnyElement, App, FocusHandle, IntoElement, SharedString, Window};
 
 use super::surface::{CockpitSurface, SurfaceId};
 

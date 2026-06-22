@@ -37,7 +37,7 @@
 //! terminal runs under a real capability.)
 
 use deos_terminal::cockpit_surface::TerminalSurface;
-use gpui::{AnyElement, App, FocusHandle, SharedString, Window};
+use gpui::{AnyElement, App, FocusHandle, IntoElement, SharedString, Window};
 
 use super::surface::{CockpitSurface, SurfaceId};
 

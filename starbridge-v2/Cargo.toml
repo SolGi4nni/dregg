@@ -131,7 +131,13 @@ default = ["native-full"]
 # native-full pulls the embedded executor (`embedded-executor`) AND the gpui
 # renderer (`gpui-ui`) AND the LIVE-NODE connection (`live-node`, so the master
 # interface can ALSO connect to a remote node/federation). This is the headline build.
-native-full = ["embedded-executor", "gpui-ui", "live-node", "render-capture", "web-shell"]
+native-full = ["embedded-executor", "gpui-ui", "live-node", "render-capture", "web-shell", "dev-surfaces"]
+
+# dev-surfaces — mount the real editor + terminal as dock panes (the self-hosting
+# dev loop: edit deos's own repos in deos-zed, run cargo/git in deos-terminal,
+# all INSIDE deos). Pulls the deos-zed + deos-terminal crates (own workspaces,
+# same gpui fork @407a6ff so one gpui resolves). gpui-ui-gated via dock/mod.rs.
+dev-surfaces = ["dep:deos-zed", "dep:deos-terminal"]
 
 # The LIVE-NODE connection — the real HTTP+SSE link to a running dregg node
 # (`NodeClient::Http` + the `/api/events/stream` reader). Pulls `reqwest` (its
@@ -328,6 +334,11 @@ gpui-component = { path = "../../gpui-component/crates/ui", default-features = f
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# The self-hosting dev-loop surfaces (pulled by `dev-surfaces`). Own workspaces,
+# same gpui fork @407a6ff → one gpui resolves across the graph. deos-zed rides
+# gpui-component (vendored); deos-terminal rides alacritty_terminal.
+deos-zed = { path = "../deos-zed", default-features = false, features = ["cockpit-surface", "highlight-common"], optional = true }
+deos-terminal = { path = "../deos-terminal", features = ["cockpit-surface"], optional = true }
 dregg-turn = { path = "../turn", optional = true }
 dregg-cell = { path = "../cell", optional = true }
 dregg-cell-crypto = { path = "../cell-crypto", optional = true }

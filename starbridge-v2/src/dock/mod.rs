@@ -30,6 +30,15 @@ pub mod pane;
 pub mod pane_group;
 pub mod surface;
 
+// The self-hosting dev-loop surfaces (the light, gpui-native ones): a real editor
+// + a real terminal as dock panes, so deos development happens INSIDE deos. Chat
+// (matrix-rust-sdk's heavy async tree) is deliberately NOT statically linked here —
+// per docs/deos/DEOS-DISTRIBUTION.md it belongs in a lazily-launched confined PD.
+#[cfg(feature = "dev-surfaces")]
+pub mod editor_surface;
+#[cfg(feature = "dev-surfaces")]
+pub mod terminal_surface;
+
 pub use dock::{Dock, DockPanel, DockPosition, DraggedDock};
 pub use pane::Pane;
 pub use pane_group::{
