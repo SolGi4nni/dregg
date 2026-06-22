@@ -421,7 +421,7 @@ impl Cockpit {
         let anchor = self
             .active_pane
             .clone()
-            .or_else(|| self.pane_group.as_ref().map(|g| g.root.first_pane()));
+            .or_else(|| self.pane_group.as_ref().map(|g| g.first_pane()));
         if let (Some(group), Some(anchor)) = (self.pane_group.as_mut(), anchor) {
             group.split(&anchor, &new_pane, SplitDirection::Right);
         } else if self.pane_group.is_none() {
