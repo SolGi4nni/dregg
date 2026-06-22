@@ -234,6 +234,38 @@ impl Powerbox {
     ///
     /// On success the app's c-list gains EXACTLY one cap: `target`, narrowed to
     /// `confer_rights`. The receipt is the executor's own.
+    /// Build (but do NOT commit) the exact grant [`dregg_turn::turn::Turn`] that
+    /// [`Powerbox::grant`] would run: a single attenuated
+    /// [`Effect::GrantCapability`] from `principal` to `app_cell` into the app's
+    /// next free c-list slot, stamped with the principal's current nonce via
+    /// [`World::turn`]. The ONE construction path the actual grant commits — so a
+    /// caller can PREDICT the grant turn's `hash()` (e.g. to bind a
+    /// [`crate::shared_fork::NetworkBoundary`] consent to this specific grant)
+    /// while the executor remains the authority that decides whether it commits.
+    pub fn grant_turn(
+        world: &World,
+        principal: CellId,
+        app_cell: CellId,
+        target: CellId,
+        confer_rights: AuthRequired,
+    ) -> dregg_turn::turn::Turn {
+        let slot = next_free_slot(world, &app_cell);
+        let effect = Effect::GrantCapability {
+            from: principal,
+            to: app_cell,
+            cap: CapabilityRef {
+                target,
+                slot,
+                permissions: confer_rights,
+                breadstuff: None,
+                expires_at: None,
+                allowed_effects: None,
+                stored_epoch: None,
+            },
+        };
+        world.turn(principal, vec![effect])
+    }
+
     pub fn grant(
         world: &mut World,
         principal: CellId,
@@ -273,22 +305,11 @@ impl Powerbox {
 
         // (2) THE REAL MINT: a genuine Effect::GrantCapability from the principal to
         //     the app-cell, attenuated to confer_rights, into a fresh slot in the
-        //     APP's c-list. The executor is the authority; we only designate.
+        //     APP's c-list. The executor is the authority; we only designate. Built
+        //     through the SAME `grant_turn` constructor a caller can use to PREDICT
+        //     the grant turn's hash (so a consent boundary can bind to it).
+        let turn = Self::grant_turn(world, principal, app_cell, target, confer_rights.clone());
         let slot = next_free_slot(world, &app_cell);
-        let effect = Effect::GrantCapability {
-            from: principal,
-            to: app_cell,
-            cap: CapabilityRef {
-                target,
-                slot,
-                permissions: confer_rights.clone(),
-                breadstuff: None,
-                expires_at: None,
-                allowed_effects: None,
-                stored_epoch: None,
-            },
-        };
-        let turn = world.turn(principal, vec![effect]);
         match world.commit_turn(turn) {
             CommitOutcome::Committed { receipt, .. } => PowerboxOutcome::Granted {
                 receipt,

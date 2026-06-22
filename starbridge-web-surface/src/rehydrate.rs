@@ -500,14 +500,20 @@ impl Membrane {
             },
         };
 
-        // Anti-amplification assertion (the meet IS an attenuation of both inputs).
-        // This is the proven-lattice tooth made explicit: a violation is a bug in
-        // the meet, caught here, not a silently-amplified cap shipped to a viewer.
-        debug_assert!(
-            is_attenuation(&self.held.window.rights, &surface.window.rights)
-                && is_attenuation(&lineage.window.rights, &surface.window.rights),
-            "projection must attenuate BOTH the held authority and the lineage"
-        );
+        // ANTI-AMPLIFICATION TOOTH (always on, fail-closed). The minted projection
+        // MUST attenuate BOTH the held authority and the lineage on EVERY axis —
+        // window rights (the REAL `is_attenuation`) AND the fetch/navigate/permission
+        // sets (`⊆` both inputs). If for any reason the meet did not (a bug in
+        // `meet_rights`/`intersect_allow`), we REFUSE rather than ship an amplified
+        // cap to a viewer. A `debug_assert` would let a release build leak it; this
+        // hard gate is the anti-ghost tooth the membrane is for. The honest path
+        // (`meet_rights` returning the narrower, the sets intersecting) always
+        // satisfies this — the gate only ever bites a genuine amplification.
+        if !surface_attenuates_both(&self.held, &surface)
+            || !surface_attenuates_both(lineage, &surface)
+        {
+            return Err(RehydrateError::Amplification);
+        }
         Ok(surface)
     }
 
@@ -655,6 +661,18 @@ fn allow_is_subset(parent: &Option<BTreeSet<String>>, child: &Option<BTreeSet<St
         (Some(_), None) => false, // concrete parent does NOT admit a wildcard child.
         (Some(p), Some(c)) => c.is_subset(p),
     }
+}
+
+/// Does `child` attenuate `parent` on EVERY surface-authority axis? Window rights
+/// via the REAL `is_attenuation` (`child ⊆ parent`), fetch/navigate allowlists +
+/// permissions via `⊆`. The always-on anti-amplification tooth the membrane's
+/// [`Membrane::project`] applies to its minted projection against BOTH inputs:
+/// a projection that fails this on either input is a leak and is REFUSED.
+fn surface_attenuates_both(parent: &SurfaceCapability, child: &SurfaceCapability) -> bool {
+    is_attenuation(&parent.window.rights, &child.window.rights)
+        && allow_is_subset(&parent.fetch_allow, &child.fetch_allow)
+        && allow_is_subset(&parent.navigate_allow, &child.navigate_allow)
+        && child.permissions.is_subset(&parent.permissions)
 }
 
 #[cfg(test)]
@@ -1005,6 +1023,60 @@ mod tests {
         let p = rehydrate(&sturdyref, &b, &web).expect("B rehydrates");
         assert!(p.surface.may_fetch("https://a.example.com"));
         assert!(!p.surface.may_fetch("https://b.example.com")); // narrowed at the reshare.
+    }
+
+    #[test]
+    fn the_membrane_round_trip_holds_the_anti_amplification_tooth_on_every_hop() {
+        // THE MEMBRANE ROUND-TRIP at the surface-cap layer (the companion to
+        // shared_fork's World-layer round-trip): mint a sturdyref behind a membrane
+        // → A rehydrates a per-viewer projection → A reshares to C → C rehydrates.
+        // The always-on anti-amplification tooth holds on EVERY hop: each minted
+        // projection attenuates BOTH its held authority AND the lineage, on EVERY
+        // axis (window rights, fetch/navigate allowlists, permissions). The honest
+        // path never trips the hardened gate.
+        let lineage = SurfaceCapability::scoped(
+            cid(150),
+            AuthRequired::Either,
+            origins(&["https://a.example.com", "https://b.example.com", "https://c.example.com"]),
+            [PermissionKind::Geolocation, PermissionKind::Clipboard],
+        );
+        let (web, sturdyref) =
+            published_sturdyref(150, lineage.clone(), InteractionLog::new(), false);
+
+        // Hop 1 — A (holds a narrower fetch set + one permission) rehydrates.
+        let a = Membrane::new(SurfaceCapability::scoped(
+            cid(151),
+            AuthRequired::Either,
+            origins(&["https://a.example.com", "https://b.example.com"]),
+            [PermissionKind::Geolocation],
+        ));
+        let pa = rehydrate(&sturdyref, &a, &web).expect("A rehydrates");
+        // The projection attenuates BOTH A's held authority AND the lineage.
+        assert!(surface_attenuates_both(a.held(), &pa.surface), "A's projection ⊆ A held");
+        assert!(surface_attenuates_both(&lineage, &pa.surface), "A's projection ⊆ lineage");
+        // Concretely: the fetch set is the intersection, the permission set the meet.
+        assert!(pa.surface.may_fetch("https://a.example.com"));
+        assert!(!pa.surface.may_fetch("https://c.example.com")); // A never held it.
+        assert!(pa.surface.has_permission(PermissionKind::Geolocation));
+        assert!(!pa.surface.has_permission(PermissionKind::Clipboard)); // A never held it.
+
+        // Hop 2 — A reshares to C (a strict attenuation: drop a fetch origin + the
+        // permission), then C rehydrates the SAME sturdyref.
+        let c = a
+            .reshare(SurfaceCapability::scoped(
+                cid(152),
+                AuthRequired::Either,
+                origins(&["https://a.example.com"]),
+                [],
+            ))
+            .expect("A->C reshare admitted (strict attenuation)");
+        let pc = rehydrate(&sturdyref, &c, &web).expect("C rehydrates");
+        assert!(surface_attenuates_both(c.held(), &pc.surface), "C's projection ⊆ C held");
+        assert!(surface_attenuates_both(&lineage, &pc.surface), "C's projection ⊆ lineage");
+        // C is strictly narrower than A on every axis (the chain attenuates).
+        assert!(pc.surface.may_fetch("https://a.example.com"));
+        assert!(!pc.surface.may_fetch("https://b.example.com")); // dropped at the reshare.
+        assert!(!pc.surface.has_permission(PermissionKind::Geolocation)); // dropped at the reshare.
     }
 
     // ── The fetch is a verified turn: an unattested scene yields NO projection. ──

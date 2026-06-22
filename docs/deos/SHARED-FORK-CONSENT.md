@@ -227,28 +227,57 @@ the consent-touching work re-clears the boundary at the settlement tip.
   `admits_debit` (no-drain), `Stitch::settle` (pushout, explicit drop, settlement
   gate). The merge-back path.
 
-**Roadmap (the WIRING this design names; not yet built as one capability):**
+**Real now (the WIRING this design named, now built + tested):**
 
 * The `SharedFork` value type that *partitions* a culled subgraph into the three
-  tiers as a first-class object (the sketch below is the first slice — types +
-  the consent-as-conditional-turn shape, compile-checked; the construction/act
-  loop is still assembled by hand from the pieces).
-* **FINDING — the consent signing domain (must close before the boundary is
-  real).** `resolve_condition`'s `TurnExecuted` arm verifies the receipt's
-  `executor_signature` against `receipt.receipt_hash()` (`conditional.rs:478`),
-  but the embedded executor signs `canonical_executor_signed_message()`
-  (`executor/mod.rs:1212`) — a DIFFERENT message. Worse, the `starbridge-v2`
-  `World` never configures an executor signing key at all, so its receipts carry
-  `executor_signature: None` and the `TurnExecuted` arm would reject them
-  outright. So wiring `SharedFork::resolve_consent` to a real `World`-grant
-  receipt requires (a) configuring the `World` executor with the owner's signing
-  key (`with_executor_signing_key`), AND (b) reconciling the two signing domains —
-  either teach the `TurnExecuted` arm to accept `canonical_executor_signed_message`,
-  or shape the consent condition as a `LocalProof` over the grant's public inputs
-  instead of `TurnExecuted`. The sketch's resolution test exercises the condition
-  machinery directly with a domain-matched signed receipt (as `conditional.rs`'s
-  own `test_turn_executed_resolved` does), so the one-shot consent shape is proven;
-  the `World`-receipt wiring is the gated follow-up.
+  tiers is a first-class object: `SharedFork::construct` mints the embedded caps
+  through real powerbox turns, records the studyrefs + boundaries, and the
+  **mint → rehydrate → drive → stitch round-trip** is tested end-to-end
+  (`mint_rehydrate_drive_stitch_round_trip`): a live world is forked (the
+  snapshot), the in-view subgraph partitioned (docs embedded / peer
+  networkboundary), the rehydrated fork holds ONLY the granted subgraph
+  (anti-amplification asserted), the guest DRIVES a real turn over its embedded
+  cap, and the work STITCHES back via `branch_stitch` — clean where disjoint
+  (the pushout/LUB), REFUSED where it would confer authority the owner does not
+  hold at the settlement tip (the settlement gate, an over-authorized cap = a
+  linear DROP). Each graduated tier is enforced + tested:
+  `embedded_tier_is_exercisable_locally_with_no_consent` (drive, no consent),
+  `studyref_tier_inspects_but_refuses_exercise_without_an_upgrade` (inspect ok,
+  no write cap, exercise = upgrade request), and the networkboundary consent
+  tests above.
+* The surface-cap-layer membrane (`starbridge-web-surface`) carries the
+  per-viewer projection with an **always-on anti-amplification tooth**:
+  `Membrane::project` now REFUSES (fail-closed) any projection that fails to
+  attenuate BOTH the held authority and the lineage on EVERY axis (window rights
+  via the real `is_attenuation`; fetch/navigate/permission sets via `⊆`) — a
+  hard gate, not a `debug_assert` (a release build can no longer ship an
+  amplified cap). Proven across hops by
+  `the_membrane_round_trip_holds_the_anti_amplification_tooth_on_every_hop`.
+
+**Still roadmap (named, with the lane that finishes it):**
+* **FINDING — the consent signing domain (CLOSED).** `resolve_condition`'s
+  `TurnExecuted` arm verified the receipt's `executor_signature` against
+  `receipt.receipt_hash()` (`conditional.rs:478`), but the embedded executor signs
+  `canonical_executor_signed_message()` (the `v3` domain,
+  `b"executor-receipt-sig-v3:" || receipt_hash`; `turn.rs:1003`) — a DIFFERENT
+  message — and the `starbridge-v2` `World` configured no executor signing key, so
+  its receipts carried `executor_signature: None`. A real `World`-grant receipt
+  therefore could not resolve a `TurnExecuted` consent. **Closed** by: (a)
+  `World::with_executor_signing_key` / `set_executor_signing_key` /
+  `executor_public_key` (`world.rs`), with `World::fork` carrying the key, so a
+  committed receipt is a real signed witness; (b) `SharedFork::resolve_consent`
+  now verifies the witness in the executor's OWN signing domain via
+  `verify_consent_witness` (`shared_fork.rs`) — applying the IDENTICAL three checks
+  the generic arm applies (turn-hash binding to the SPECIFIC grant, signature
+  authenticity under a trusted key, the one-shot proof nullifier) but over
+  `canonical_executor_signed_message`. The grant turn whose hash the boundary binds
+  to is built through the single `Powerbox::grant_turn` constructor (the same turn
+  `grant` commits), so the consent binds a SPECIFIC grant. Proven end-to-end:
+  `networkboundary_resolves_against_a_real_world_grant_and_fires_once` (a real
+  signed grant resolves + fires once), `consent_rejects_a_fabricated_or_untrusted_witness`
+  (untrusted key → fail-closed), `consent_rejects_a_witness_bound_to_a_different_grant`
+  (binding → fail-closed). The earlier `resolve_condition`-direct keystone test is
+  retained as the generic one-shot-shape proof.
 
 * A **boundary descriptor** on the fork that intercepts an exercise of a marked
   target and turns it into a `ConsentRequest` + a pending `ConditionalTurn`
@@ -260,10 +289,15 @@ the consent-touching work re-clears the boundary at the settlement tip.
 * The chat lane's binding of a real recipient key to the guest principal, and the
   delivery of `SharedFork` / `ConsentRequest` / `ConsentGrant` envelopes.
 
-The honest line: **every primitive exists and is proven/tested; the capability is
-a WELD, not a build** — the new value is the three-tier graduation typing and the
-fail-closed boundary interception, which the sketch begins and the roadmap above
-finishes.
+The honest line: **the capability is a WELD over proven primitives, and the weld
+is now built + tested** — the three-tier graduation typing, the mint → rehydrate
+→ drive → stitch round-trip, the consent-signing-domain resolution, and the
+always-on anti-amplification tooth are live code with passing tests
+(`cargo test -p starbridge-web-surface`; `cd starbridge-v2 && cargo test
+--features embedded-executor --lib shared_fork`). What remains is the *automatic*
+fail-closed boundary interception (today the guest chooses to raise the consent
+request; making the fork's executor force it is the genuine next gate) and the
+chat lane's transport binding — both named above.
 
 ---
 
