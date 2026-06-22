@@ -58,6 +58,18 @@ workspace. Six threads, each grounded by a 2026-06-22 explore-agent report (read
 ROADMAP (felt-wins-first): Phase-0 scroll + the async tab/act decoupling (immediate) → symbolic WitnessMode
 (the foundation, careful: touches executor+storage, ember-gated soundness) → dockable workspace (vendor Zed
 pane_group/dock) → Zed-in-deos (FirmamentFs) + terminal + Hermes (the desktop buildout).
+
+### DESKTOP EPOCH — apps + component substrate (ember 2026-06-22):
+- gpui-component (longbridge/gpui-component): FORK+VENDOR — a rich gpui UI kit (Input/TextInput [fills the
+  NO-text-input gap the servo report found], Button/List/Table/Tree/Tabs/Dropdown/Modal/DatePicker/rich-text +
+  its own Dock). Scout running (agent adcdb678): THE CRUX = gpui-version compat with our fork emberian/zed @
+  407a6ff (re-point its gpui dep at our fork + fix API drift) + how its dock relates to the Zed pane_group we
+  vendored (likely: gpui-component for WIDGETS, Zed pane_group for the WM arranging FOREIGN surfaces). License
+  check (AGPL-vendor compat).
+- MATRIX CLIENT (future): fork nhecko-reborn (nheko-lineage Matrix client) → rewrite into deos as a fully-native,
+  richly-integrated comms app. Becomes natural once the substrate lands (app-framework + dock + sandbox-PD +
+  identity-cells): a confined comms app whose identity = a deos identity cell, E2E keys = caps, surfaces dockable
+  in the WM, integrated with Hermes's multi-platform gateway + the polis (comms between inhabitants). Roadmap app.
 ### DESKTOP EPOCH — grounded findings (the explore reports, 2026-06-22):
 - WM/LOGIN: the L5-L8 stack is ALREADY DOCUMENTED (docs/DREGG-DESKTOP-OS.md:33-90): L5 compositor-PD = "THE ONLY
   NEW TCB" (sole framebuffer/HID caps, scene=verified cell, T1/T2/T3 teeth: non-overlap/label-bind/focus-route
