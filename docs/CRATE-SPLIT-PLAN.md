@@ -121,6 +121,59 @@ lib.** Real — but it is a *platform boundary*, so it belongs at a **crate** bo
   `dregg-cell-zkvm` (or the sp1-guest depends on the types crate + a zkvm shim), not a
   feature on the host crate.
 
+## Split #3 design — `no-lean-link` → `dregg-exec-lean` (DESIGN, awaiting review before carve)
+
+**The cluster.** The Lean-FFI coupling is `turn/src/lean_shadow.rs` (2539 L, 41 of the 43
+turn cfg-sites) + `turn/src/lean_apply.rs` (the live SWAP state-producer) — mutually
+dependent, FFI-coupled to `dregg-lean-ffi`. `lean_shadow` is the differential/observer
+(*"compares Rust commit decisions against the verified Lean kernel without affecting
+`TurnResult`"*); `lean_apply` is the authoritative producer (`produce_via_lean` installs
+the verified Lean post-state unconditionally in the node's producer mode).
+
+**The one cycle.** turn's core calls the cluster at exactly one production site:
+`turn/src/executor/execute.rs:179` → `lean_shadow::maybe_shadow_turn(...)`. That call is a
+**shadow observer** (side-effecting diagnostics, does not change the commit). `produce_via_lean`
+is invoked by the **node** (top-level), not turn's core — no cycle there.
+
+**The split.**
+- **NEW `dregg-exec-lean`** (native-only crate): move `lean_shadow.rs` + `lean_apply.rs`
+  into it. Depends on `dregg-turn` (for `Turn`/`Ledger`/`Effect`/`TurnResult`) +
+  `dregg-lean-ffi` + the FFI deps. This crate holds *all* the Lean-FFI executor code.
+- **Break the cycle by dependency inversion (the one hook):** in `turn`, define
+  `pub trait ShadowObserver { fn observe(&self, turn:&Turn, ledger:&Ledger,
+  result:&TurnResult, block_height:u64); }` with a **no-op default**. `turn`'s executor
+  holds an injected `Option<&dyn ShadowObserver>` (or generic param) and calls
+  `obs.observe(...)` where it now calls `maybe_shadow_turn`. `dregg-exec-lean` provides
+  `LeanShadowObserver` implementing it (wrapping the real `maybe_shadow_turn`). The node /
+  sdk inject the Lean observer when they wire the executor.
+- **The node** depends on `dregg-exec-lean` directly for `produce_via_lean` (producer mode)
+  — top-level, no inversion needed.
+- **The smaller cfg-sites** in coord (7), captp (6), sdk (3), federation (3), intent (2):
+  audit each — each either calls the cluster (→ depend on `dregg-exec-lean` or take the
+  observer) or has a local FFI fallback (→ per-target dep). Expect most to just drop the
+  flag once the cluster is a real dep.
+- **`no-lean-link` feature DELETED everywhere.** wasm builds compose `turn` WITHOUT
+  `dregg-exec-lean` (no-op observer + the pure-Rust producer that the `cfg(no-lean-link)`
+  arms currently provide — those arms become the unconditional `turn` code); native builds
+  depend on `dregg-exec-lean`.
+
+**Faithfulness-gate follow-through:** the `lean_state_producer_*` differential tests move
+to `dregg-exec-lean/tests`; `scripts/check-lean-marshal.sh` (the gate I wired) must change
+its leg-2 invocation from `cargo test -p dregg-turn --features lean-shadow …` to
+`cargo test -p dregg-exec-lean …`. (And `lean-shadow` as a feature dies too — it was only
+gating these FFI tests, which now live in the always-FFI `dregg-exec-lean`.)
+
+**Gates for the carve:** native `cargo build --workspace` green · the wasm build green
+(the pure-Rust path) · the denotational differential green (relocated) · turn/sdk/node
+executor tests green.
+
+**Open risk to weigh:** the no-op-default `ShadowObserver` means a build that forgets to
+inject the Lean observer silently runs WITHOUT the shadow differential (loses the
+Rust↔Lean cross-check at runtime, though not at test time). Mitigation: the node's
+executor construction takes the observer as a **required** argument (not defaulted) on
+native, so only the wasm/no-FFI path gets the no-op — making "no shadow" a visible
+platform fact, not an accident.
+
 ## The full feature verdict table
 
 | crate | feature | verdict |
