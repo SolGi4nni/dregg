@@ -1,0 +1,13 @@
+# deos-terminal pins the ROLLING `nightly` channel, OVERRIDING the repo root's
+# `nightly-2026-01-01` pin (../rust-toolchain.toml) for this crate only — the
+# same stance as starbridge-v2/rust-toolchain.toml, and for the same reason.
+#
+# gpui at the pinned zed rev (407a6ff) uses `std::hint::cold_path` (an unstable
+# library feature) that stabilized in nightly after 2026-01-01, so the repo's
+# pinned `nightly-2026-01-01` is just-too-old to compile gpui's `profiler.rs`.
+# The rolling `nightly` has it. This is purely a "newer compiler for a newer
+# dep" bump for this standalone workspace; it changes no protocol-crate toolchain.
+[toolchain]
+channel = "nightly"
+profile = "default"
+components = ["cargo", "clippy", "rustc", "rustfmt"]
