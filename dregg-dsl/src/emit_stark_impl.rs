@@ -21,6 +21,15 @@ use quote::{format_ident, quote};
 
 use crate::ir::{ConstraintIr, MutateOp, ParamType, RequirementKind, Statement};
 
+/// Number of bits used for range-check decomposition.
+///
+/// BabyBear has p = 2^31 - 2^27 + 1 ≈ 2^30.9, so p/2 ≈ 2^29.96. A value whose
+/// bit-decomposition fits in `RANGE_CHECK_BITS` bits with the top bit forced to
+/// zero is strictly less than 2^(RANGE_CHECK_BITS-1) = 2^29 < p/2, hence lies in
+/// the "small non-negative" half of the field. This mirrors the sound range-check
+/// gadget in `circuit/src/committed_threshold.rs` (`COMMITTED_DIFF_BITS = 30`).
+const RANGE_CHECK_BITS: usize = 30;
+
 /// Column layout computed at macro time.
 struct TraceLayout {
     /// Total number of columns.
@@ -43,8 +52,12 @@ struct ParamLayout {
 /// An auxiliary column assigned during constraint compilation.
 #[derive(Clone)]
 enum AuxCol {
-    /// Range check: diff_col and high_bit_col.
-    RangeCheck { diff_col: usize, bit_col: usize },
+    /// Range check: a `diff_col` (the quantity proven non-negative / in range)
+    /// followed by `RANGE_CHECK_BITS` contiguous bit columns starting at
+    /// `bits_start`. The bits are the little-endian binary decomposition of
+    /// `diff_col`; the most significant bit (`bits_start + RANGE_CHECK_BITS - 1`)
+    /// is forced to zero so that `diff_col < 2^(RANGE_CHECK_BITS-1) < p/2`.
+    RangeCheck { diff_col: usize, bits_start: usize },
     /// Inverse witness for NotEqual.
     Inverse { inv_col: usize },
     /// Selector column for match arms.
@@ -98,9 +111,12 @@ fn count_aux_from_statements(
             Statement::Require(req) => match &req.kind {
                 RequirementKind::LessEqual { .. } | RequirementKind::GreaterEqual { .. } => {
                     let diff_col = *width;
-                    let bit_col = *width + 1;
-                    *width += 2;
-                    aux_cols.push(AuxCol::RangeCheck { diff_col, bit_col });
+                    let bits_start = *width + 1;
+                    *width += 1 + RANGE_CHECK_BITS;
+                    aux_cols.push(AuxCol::RangeCheck {
+                        diff_col,
+                        bits_start,
+                    });
                 }
                 RequirementKind::Equal { .. } => {
                     // No auxiliary columns needed for equality.
@@ -124,9 +140,12 @@ fn count_aux_from_statements(
                 }
                 RequirementKind::BitRange { .. } => {
                     let diff_col = *width;
-                    let bit_col = *width + 1;
-                    *width += 2;
-                    aux_cols.push(AuxCol::RangeCheck { diff_col, bit_col });
+                    let bits_start = *width + 1;
+                    *width += 1 + RANGE_CHECK_BITS;
+                    aux_cols.push(AuxCol::RangeCheck {
+                        diff_col,
+                        bits_start,
+                    });
                 }
             },
             Statement::Mutate(_) => {
@@ -322,13 +341,14 @@ fn emit_constraints_from_statements(
     for stmt in statements {
         match stmt {
             Statement::Require(req) => {
-                let expr = emit_requirement_expr(req, layout, aux_idx);
-                let gated = if let Some(sel_col) = gating_selector {
-                    quote! { (local[#sel_col] * (#expr)) }
-                } else {
-                    expr
-                };
-                out.push(gated);
+                for expr in emit_requirement_constraints(req, layout, aux_idx) {
+                    let gated = if let Some(sel_col) = gating_selector {
+                        quote! { (local[#sel_col] * (#expr)) }
+                    } else {
+                        expr
+                    };
+                    out.push(gated);
+                }
             }
             Statement::Mutate(mutation) => {
                 let expr = emit_mutation_expr(mutation, layout);
@@ -362,8 +382,9 @@ fn emit_constraints_from_statements(
                     for s in &arms[0].body {
                         match s {
                             Statement::Require(req) => {
-                                let expr = emit_requirement_expr(req, layout, aux_idx);
-                                out.push(quote! { (#inv_sel * (#expr)) });
+                                for expr in emit_requirement_constraints(req, layout, aux_idx) {
+                                    out.push(quote! { (#inv_sel * (#expr)) });
+                                }
                             }
                             Statement::Mutate(mutation) => {
                                 let expr = emit_mutation_expr(mutation, layout);
@@ -379,8 +400,9 @@ fn emit_constraints_from_statements(
                     for s in &arms[1].body {
                         match s {
                             Statement::Require(req) => {
-                                let expr = emit_requirement_expr(req, layout, aux_idx);
-                                out.push(quote! { (local[#sel_col] * (#expr)) });
+                                for expr in emit_requirement_constraints(req, layout, aux_idx) {
+                                    out.push(quote! { (local[#sel_col] * (#expr)) });
+                                }
                             }
                             Statement::Mutate(mutation) => {
                                 let expr = emit_mutation_expr(mutation, layout);
@@ -407,68 +429,46 @@ fn emit_constraints_from_statements(
     }
 }
 
-fn emit_requirement_expr(
+/// Emit the constraint polynomial(s) for one requirement.
+///
+/// Returns a `Vec` of INDEPENDENT sub-constraints, each of which the AIR forces
+/// to zero under its own random `alpha` power. This independence is load-bearing:
+/// a range check is sound only if its bit-decomposition sub-constraints cannot
+/// cancel one another. A single summed polynomial would let a malicious prover
+/// trade a non-zero binary violation against a reconstruction error; separate
+/// alpha-weighted constraints make every sub-constraint vanish independently.
+fn emit_requirement_constraints(
     req: &crate::ir::Requirement,
     layout: &TraceLayout,
     aux_idx: &mut usize,
-) -> TokenStream {
+) -> Vec<TokenStream> {
     match &req.kind {
         RequirementKind::LessEqual { left, right } => {
-            // Range check: right - left >= 0, proven via bit decomposition.
-            //
-            // Constraints emitted (combined into a single polynomial for alpha composition):
-            //   1. diff_col == right_col - left_col  (diff consistency)
-            //   2. bit_col * (bit_col - 1) == 0  (binary constraint on sign bit)
-            //   3. bit_col == 0  (high bit must be zero => non-negative in BabyBear)
-            //
-            // The prover fills diff_col = right - left, bit_col = 0 for valid witnesses.
-            // If diff is negative (wraps in the field), the prover cannot satisfy bit_col=0
-            // because the field representation of a negative number has its high bit set.
+            // Range check: right - left >= 0, proven via a genuine bit decomposition.
             let left_col = find_param_col(layout, &quote::quote!(#left).to_string());
             let right_col = find_param_col(layout, &quote::quote!(#right).to_string());
             let diff_col = layout.aux_start + *aux_idx;
-            let bit_col = layout.aux_start + *aux_idx + 1;
-            *aux_idx += 2;
-            quote! {
-                {
-                    // Constraint 1: diff_col == right - left
-                    let diff_check = local[#diff_col] - local[#right_col] + local[#left_col];
-                    // Constraint 2: bit_col is binary (sign bit)
-                    let bit_binary = local[#bit_col] * (local[#bit_col] - BabyBear::ONE);
-                    // Constraint 3: bit_col == 0 (high bit must be zero for non-negative diff)
-                    let bit_zero = local[#bit_col];
-                    // Combine: all three must be zero
-                    diff_check + bit_binary + bit_zero
-                }
-            }
+            let bits_start = layout.aux_start + *aux_idx + 1;
+            *aux_idx += 1 + RANGE_CHECK_BITS;
+            let diff_def = quote! { local[#right_col] - local[#left_col] };
+            emit_range_check_constraints(diff_col, bits_start, RANGE_CHECK_BITS, &diff_def)
         }
         RequirementKind::GreaterEqual { left, right } => {
-            // Range check: left - right >= 0, proven via bit decomposition.
-            // Same structure as LessEqual but diff = left - right.
+            // Range check: left - right >= 0. Same gadget, diff = left - right.
             let left_col = find_param_col(layout, &quote::quote!(#left).to_string());
             let right_col = find_param_col(layout, &quote::quote!(#right).to_string());
             let diff_col = layout.aux_start + *aux_idx;
-            let bit_col = layout.aux_start + *aux_idx + 1;
-            *aux_idx += 2;
-            quote! {
-                {
-                    // Constraint 1: diff_col == left - right
-                    let diff_check = local[#diff_col] - local[#left_col] + local[#right_col];
-                    // Constraint 2: bit_col is binary (sign bit)
-                    let bit_binary = local[#bit_col] * (local[#bit_col] - BabyBear::ONE);
-                    // Constraint 3: bit_col == 0 (high bit must be zero for non-negative diff)
-                    let bit_zero = local[#bit_col];
-                    // Combine: all three must be zero
-                    diff_check + bit_binary + bit_zero
-                }
-            }
+            let bits_start = layout.aux_start + *aux_idx + 1;
+            *aux_idx += 1 + RANGE_CHECK_BITS;
+            let diff_def = quote! { local[#left_col] - local[#right_col] };
+            emit_range_check_constraints(diff_col, bits_start, RANGE_CHECK_BITS, &diff_def)
         }
         RequirementKind::Equal { left, right } => {
             let left_col = find_param_col(layout, &quote::quote!(#left).to_string());
             let right_col = find_param_col(layout, &quote::quote!(#right).to_string());
-            quote! {
+            vec![quote! {
                 (local[#left_col] - local[#right_col])
-            }
+            }]
         }
         RequirementKind::NotEqual { left, right } => {
             // (a - b) * inv == 1, expressed as: (a - b) * inv - 1
@@ -476,9 +476,9 @@ fn emit_requirement_expr(
             let right_col = find_param_col(layout, &quote::quote!(#right).to_string());
             let inv_col = layout.aux_start + *aux_idx;
             *aux_idx += 1;
-            quote! {
+            vec![quote! {
                 ((local[#left_col] - local[#right_col]) * local[#inv_col] - BabyBear::ONE)
-            }
+            }]
         }
         RequirementKind::Membership { .. } => {
             // Membership constraints require explicit Merkle path witness columns.
@@ -486,32 +486,93 @@ fn emit_requirement_expr(
             // when membership constraints are present, but emit a compile_error as a
             // safety net in case the early-return check is bypassed.
             *aux_idx += 1;
-            quote! {
+            vec![quote! {
                 compile_error!(
                     "Membership constraints cannot be compiled to a STARK AIR automatically. \
                      Use explicit Merkle path columns with Hash and Binary constraints."
                 )
-            }
+            }]
         }
         RequirementKind::MerkleAtPosition { .. } => {
-            quote! { BabyBear::ZERO }
+            vec![quote! { BabyBear::ZERO }]
         }
         RequirementKind::Poseidon2Hash { .. } => {
-            quote! { BabyBear::ZERO }
+            vec![quote! { BabyBear::ZERO }]
         }
-        RequirementKind::BitRange { .. } => {
+        RequirementKind::BitRange { value, bits } => {
+            // `in_range!(value, N)` asserts `value < 2^N`: decompose `value` into
+            // `RANGE_CHECK_BITS` bits, bind the reconstruction, and force every bit
+            // at index >= N to zero.
+            let value_col = find_param_col(layout, &quote::quote!(#value).to_string());
             let diff_col = layout.aux_start + *aux_idx;
-            let bit_col = layout.aux_start + *aux_idx + 1;
-            *aux_idx += 2;
-            quote! {
-                {
-                    let diff_check = local[#diff_col];
-                    let bit_binary = local[#bit_col] * (local[#bit_col] - BabyBear::ONE);
-                    diff_check + bit_binary
-                }
-            }
+            let bits_start = layout.aux_start + *aux_idx + 1;
+            *aux_idx += 1 + RANGE_CHECK_BITS;
+            let active_bits = (*bits as usize).min(RANGE_CHECK_BITS);
+            let value_def = quote! { local[#value_col] };
+            emit_range_check_constraints(diff_col, bits_start, active_bits, &value_def)
         }
     }
+}
+
+/// Emit the INDEPENDENT sub-constraints of a range check forcing `value_def` to
+/// be a non-negative integer representable in `active_bits` bits.
+///
+/// The sub-constraints (each forced to zero under its own alpha power) are:
+///   1. `diff_col == value_def`                  (bind the witness column)
+///   2. `sum_i(bit_i * 2^i) == diff_col`         (reconstruction)
+///   3. `bit_i * (bit_i - 1) == 0` for every i   (one constraint per bit — binary)
+///   4. `bit_i == 0` for every i >= active_bits  (top bits forced zero)
+///
+/// (2)+(3)+(4) force `diff_col` to equal a sum of `active_bits` genuine bits, so
+/// `0 <= diff_col < 2^active_bits`. With `active_bits <= RANGE_CHECK_BITS (=30)`,
+/// `2^active_bits <= 2^30 < p`, so a field-wrapped negative `value_def` (which
+/// has a canonical representation >= p/2) is UNSATISFIABLE: its decomposition
+/// would require bits above the allowed range. The bit constraints are emitted
+/// SEPARATELY (not summed) so no two can cancel.
+fn emit_range_check_constraints(
+    diff_col: usize,
+    bits_start: usize,
+    active_bits: usize,
+    value_def: &TokenStream,
+) -> Vec<TokenStream> {
+    let mut out = Vec::new();
+
+    // (1) bind the diff/value column.
+    out.push(quote! { (local[#diff_col] - (#value_def)) });
+
+    // (2) reconstruction: sum_i bit_i * 2^i == diff_col.
+    let mut recon_terms = Vec::new();
+    for i in 0..RANGE_CHECK_BITS {
+        let col = bits_start + i;
+        recon_terms.push(quote! {
+            recomposed = recomposed + local[#col] * pow2;
+            pow2 = pow2 + pow2;
+        });
+    }
+    out.push(quote! {
+        {
+            let mut recomposed = BabyBear::ZERO;
+            let mut pow2 = BabyBear::ONE;
+            #(#recon_terms)*
+            recomposed - local[#diff_col]
+        }
+    });
+
+    // (3) each bit binary — one independent constraint per bit.
+    for i in 0..RANGE_CHECK_BITS {
+        let col = bits_start + i;
+        out.push(quote! {
+            (local[#col] * (local[#col] - BabyBear::ONE))
+        });
+    }
+
+    // (4) every bit at index >= active_bits forced to zero.
+    for i in active_bits..RANGE_CHECK_BITS {
+        let col = bits_start + i;
+        out.push(quote! { (local[#col]) });
+    }
+
+    out
 }
 
 fn emit_mutation_expr(mutation: &crate::ir::Mutation, layout: &TraceLayout) -> TokenStream {
@@ -688,6 +749,30 @@ fn emit_trace_generation(ir: &ConstraintIr, layout: &TraceLayout) -> TokenStream
     }
 }
 
+/// Emit trace-generation code that fills a range-check's `diff_col` with
+/// `value_def` and decomposes its canonical u32 into the `RANGE_CHECK_BITS`
+/// little-endian bit columns starting at `bits_start`. Bit indices beyond the
+/// active range simply come out zero for honest witnesses (the constraint forces
+/// that anyway).
+fn emit_range_check_fill(
+    diff_col: usize,
+    bits_start: usize,
+    value_def: &TokenStream,
+) -> TokenStream {
+    let n = RANGE_CHECK_BITS;
+    quote! {
+        {
+            let __rc_val = #value_def;
+            row[#diff_col] = __rc_val;
+            let __rc_bits = __rc_val.as_u32();
+            for __rc_i in 0..#n {
+                let __rc_bit = (__rc_bits >> __rc_i) & 1;
+                row[#bits_start + __rc_i] = BabyBear::new(__rc_bit);
+            }
+        }
+    }
+}
+
 /// Emit code to fill auxiliary columns (diff, bit, inverse) in the trace row.
 fn emit_aux_fill(ir: &ConstraintIr, layout: &TraceLayout) -> TokenStream {
     let mut stmts = Vec::new();
@@ -711,27 +796,19 @@ fn emit_aux_fill_statements(
                     let left_col = find_param_col(layout, &quote::quote!(#left).to_string());
                     let right_col = find_param_col(layout, &quote::quote!(#right).to_string());
                     let diff_col = layout.aux_start + *aux_idx;
-                    let bit_col = layout.aux_start + *aux_idx + 1;
-                    *aux_idx += 2;
-                    stmts.push(quote! {
-                        // diff = right - left (must be non-negative for valid witness)
-                        row[#diff_col] = row[#right_col] - row[#left_col];
-                        // bit_col = 0 (sign bit; must be zero for non-negative diff)
-                        row[#bit_col] = BabyBear::ZERO;
-                    });
+                    let bits_start = layout.aux_start + *aux_idx + 1;
+                    *aux_idx += 1 + RANGE_CHECK_BITS;
+                    let diff_def = quote! { row[#right_col] - row[#left_col] };
+                    stmts.push(emit_range_check_fill(diff_col, bits_start, &diff_def));
                 }
                 RequirementKind::GreaterEqual { left, right } => {
                     let left_col = find_param_col(layout, &quote::quote!(#left).to_string());
                     let right_col = find_param_col(layout, &quote::quote!(#right).to_string());
                     let diff_col = layout.aux_start + *aux_idx;
-                    let bit_col = layout.aux_start + *aux_idx + 1;
-                    *aux_idx += 2;
-                    stmts.push(quote! {
-                        // diff = left - right (must be non-negative for valid witness)
-                        row[#diff_col] = row[#left_col] - row[#right_col];
-                        // bit_col = 0 (sign bit; must be zero for non-negative diff)
-                        row[#bit_col] = BabyBear::ZERO;
-                    });
+                    let bits_start = layout.aux_start + *aux_idx + 1;
+                    *aux_idx += 1 + RANGE_CHECK_BITS;
+                    let diff_def = quote! { row[#left_col] - row[#right_col] };
+                    stmts.push(emit_range_check_fill(diff_col, bits_start, &diff_def));
                 }
                 RequirementKind::Equal { .. } => {
                     // No auxiliary columns.
@@ -756,14 +833,13 @@ fn emit_aux_fill_statements(
                 RequirementKind::Poseidon2Hash { inputs, .. } => {
                     *aux_idx += inputs.len().max(1);
                 }
-                RequirementKind::BitRange { .. } => {
+                RequirementKind::BitRange { value, .. } => {
+                    let value_col = find_param_col(layout, &quote::quote!(#value).to_string());
                     let diff_col = layout.aux_start + *aux_idx;
-                    let bit_col = layout.aux_start + *aux_idx + 1;
-                    *aux_idx += 2;
-                    stmts.push(quote! {
-                        row[#diff_col] = BabyBear::ZERO;
-                        row[#bit_col] = BabyBear::ZERO;
-                    });
+                    let bits_start = layout.aux_start + *aux_idx + 1;
+                    *aux_idx += 1 + RANGE_CHECK_BITS;
+                    let value_def = quote! { row[#value_col] };
+                    stmts.push(emit_range_check_fill(diff_col, bits_start, &value_def));
                 }
             },
             Statement::Mutate(_) => {}

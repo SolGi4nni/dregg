@@ -2,26 +2,39 @@
 //!
 //! # Mission
 //!
-//! Given the same caveat predicate expressed once via `#[dregg_caveat]`, all
-//! seven `gen_*` backends in `dregg-dsl/src/` must produce verifiers that agree
-//! on accept/reject for any given input. This crate emits a battery of
-//! canonical predicates, drives a curated input set through every backend it
-//! can run in-process, and asserts that every runnable backend reports the
-//! same verdict.
+//! Given the same caveat predicate expressed once via `#[dregg_caveat]`, the DSL
+//! emits EIGHT backends. FIVE of them — `gen_rust`, `gen_datalog`, `gen_air`,
+//! `gen_kimchi`, `gen_plonky3` — are run in-process and must AGREE on
+//! accept/reject for any given input; this is the cross-validated **agreement
+//! set**. This crate emits a battery of canonical predicates, drives a curated
+//! input set through every agreement-set backend, and asserts they all report
+//! the same verdict.
+//!
+//! The remaining three emitted backends are deliberately NOT in the agreement
+//! set, and are NOT counted as cross-validated:
+//!
+//! - `gen_midnight` and `gen_sp1` are STRING emitters whose execution needs an
+//!   external toolchain (a Midnight proof server / the SP1 RISC-V toolchain).
+//!   The harness lint-checks their output and records `Skip` — they cast no
+//!   Accept/Reject vote and contribute nothing to agreement.
+//! - `emit_stark` emits a `dregg_circuit::stark::StarkAir` impl. It is exercised
+//!   by the prove/verify tests in `dregg-dsl-tests`, not by this differential
+//!   harness, so it is not in the agreement matrix either.
 //!
 //! # Backend Roster
 //!
-//! The DSL has seven code generators:
+//! The DSL has eight code generators (5 cross-validated here + 3 not):
 //!
-//! | Backend     | Emits                              | Runtime verifiable in this crate?               |
+//! | Backend     | Emits                              | In the agreement set?                           |
 //! |-------------|------------------------------------|-------------------------------------------------|
-//! | `gen_rust`     | `{name}_check(...)` evaluator   | YES — call the function directly.               |
+//! | `gen_rust`     | `{name}_check(...)` evaluator   | YES — call the function directly. (Oracle.)     |
 //! | `gen_datalog`  | `{name}_datalog() -> &'static str` Datalog rule string | YES — mini in-crate Datalog evaluator. |
 //! | `gen_air`      | `{name}_air_constraints() -> AirConstraintSet` topology descriptor | YES — re-derive accept/reject via the IR-aligned `dregg_dsl_runtime::diff_witness` primitives, sanity-checked against the descriptor's column accounting. |
 //! | `gen_kimchi`   | `{name}_kimchi() -> KimchiCircuitDescriptor` gate descriptor | YES — Generic-gate simulator that fills the canonical witness per IR shape and asserts every gate's `c_i * w_i` polynomial evaluates to zero. Poseidon gates (membership-only) are checked structurally. |
 //! | `gen_plonky3`  | `{Name}P3Air` native Plonky3 AIR struct | YES (subset) — for the predicate shapes we can build a generic `CircuitDescriptor` over (arithmetic comparisons, equalities), we round-trip through `prove_dsl_plonky3` + `verify_dsl_plonky3`. Membership shapes require Poseidon2 gadgets and are marked SKIP. |
-//! | `gen_midnight` | `{name}_midnight_zkir() -> &'static str` ZKIR v3 JSON | NO — Midnight ZKIR is consumed by an off-chain proof server. We lint the emitted JSON (parses, mentions every param, terminates with an `output` instruction) but do not execute it. |
-//! | `gen_sp1`      | `{name}_sp1_guest() -> &'static str` SP1 guest source | NO — running the guest requires the SP1 RISC-V toolchain (`sp1-prove`/`cargo prove build`). We lint the source (has `main`, declares each input via `sp1_zkvm::io::read`) but do not execute it. |
+//! | `emit_stark`   | `{Name}Circuit` `impl StarkAir` (compile-time-baked AIR) | NO — exercised by the prove/verify tests in `dregg-dsl-tests`, not by this harness. Inequality/`in_range` range checks use a genuine bit-decomposition (see `emit_stark_impl::emit_range_check_constraints`); equalities and `!=` are sound. |
+//! | `gen_midnight` | `{name}_midnight_zkir() -> &'static str` ZKIR v3 JSON | NO — emit-only/lint-only. Midnight ZKIR is consumed by an off-chain proof server; we lint the emitted JSON (parses, mentions every param, terminates with an `output` instruction) and record `Skip`. Casts no agreement vote. |
+//! | `gen_sp1`      | `{name}_sp1_guest() -> &'static str` SP1 guest source | NO — emit-only/lint-only. Running the guest requires the SP1 RISC-V toolchain (`sp1-prove`/`cargo prove build`); we lint the source (has `main`, declares each input via `sp1_zkvm::io::read`) and record `Skip`. Casts no agreement vote. |
 //!
 //! # Predicate Suite
 //!

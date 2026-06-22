@@ -44,6 +44,11 @@ use quote::{format_ident, quote};
 
 use crate::ir::{ConstraintIr, MutateOp, ParamType, RequirementKind, Statement};
 
+/// Number of bits used for range-check decomposition on BabyBear (p ≈ 2^30.9).
+/// Mirrors `emit_stark_impl::RANGE_CHECK_BITS`; the top bit is forced to zero so
+/// decomposed values stay in the small non-negative half of the field.
+const RANGE_CHECK_BITS: usize = 30;
+
 /// Check if the IR contains membership constraints (unsupported for native P3).
 fn has_membership(statements: &[Statement]) -> bool {
     for stmt in statements {
@@ -182,7 +187,8 @@ fn count_p3_aux(statements: &[Statement], width: &mut usize) {
         match stmt {
             Statement::Require(req) => match &req.kind {
                 RequirementKind::LessEqual { .. } | RequirementKind::GreaterEqual { .. } => {
-                    *width += 2; // diff_col + bit_col
+                    // diff_col + RANGE_CHECK_BITS bit columns (genuine decomposition).
+                    *width += 1 + RANGE_CHECK_BITS;
                 }
                 RequirementKind::Equal { .. } => {}
                 RequirementKind::NotEqual { .. } => {
@@ -244,13 +250,14 @@ fn emit_p3_statements(
     for stmt in statements {
         match stmt {
             Statement::Require(req) => {
-                let expr = emit_p3_requirement(&req.kind, layout, aux_idx);
-                let constrained = if let Some(ref sel) = selector {
-                    quote! { builder.assert_zero(#sel * (#expr)); }
-                } else {
-                    quote! { builder.assert_zero(#expr); }
-                };
-                out.push(constrained);
+                for expr in emit_p3_requirement(&req.kind, layout, aux_idx) {
+                    let constrained = if let Some(ref sel) = selector {
+                        quote! { builder.assert_zero(#sel * (#expr)); }
+                    } else {
+                        quote! { builder.assert_zero(#expr); }
+                    };
+                    out.push(constrained);
+                }
             }
             Statement::Mutate(mutation) => {
                 let expr = emit_p3_mutation(mutation, layout);
@@ -290,66 +297,60 @@ fn emit_p3_statements(
     }
 }
 
+/// Emit the INDEPENDENT sub-constraints of one requirement for the native
+/// Plonky3 backend. Each returned expression is asserted to zero on its own via
+/// a separate `builder.assert_zero(...)`, so range-check sub-constraints cannot
+/// cancel one another (the soundness flaw that a single summed polynomial — or a
+/// sum-of-squares fold, which is NOT injective over F_p — would admit).
 fn emit_p3_requirement(
     kind: &RequirementKind,
     layout: &P3Layout,
     aux_idx: &mut usize,
-) -> TokenStream {
+) -> Vec<TokenStream> {
     match kind {
         RequirementKind::LessEqual { left, right } => {
+            // right - left >= 0, proven via a genuine bit decomposition.
             let left_col = find_p3_col(layout, &quote::quote!(#left).to_string());
             let right_col = find_p3_col(layout, &quote::quote!(#right).to_string());
             let diff_col = layout.aux_start + *aux_idx;
-            let bit_col = layout.aux_start + *aux_idx + 1;
-            *aux_idx += 2;
-
-            // Three sub-constraints combined:
-            // 1. diff == right - left
-            // 2. bit is binary
-            // 3. bit == 0 (non-negative)
-            quote! {
+            let bits_start = layout.aux_start + *aux_idx + 1;
+            *aux_idx += 1 + RANGE_CHECK_BITS;
+            let diff_def = quote! {
                 {
-                    let left_val: AB::Expr = local[#left_col].into();
-                    let right_val: AB::Expr = local[#right_col].into();
-                    let diff_val: AB::Expr = local[#diff_col].into();
-                    let bit_val: AB::Expr = local[#bit_col].into();
-                    // diff consistency + bit binary + bit zero
-                    (diff_val.clone() - right_val + left_val)
-                        + bit_val.clone() * (bit_val.clone() - AB::Expr::ONE)
-                        + bit_val
+                    let r: AB::Expr = local[#right_col].into();
+                    let l: AB::Expr = local[#left_col].into();
+                    r - l
                 }
-            }
+            };
+            emit_p3_range_check(diff_col, bits_start, RANGE_CHECK_BITS, &diff_def)
         }
         RequirementKind::GreaterEqual { left, right } => {
+            // left - right >= 0, proven via a genuine bit decomposition.
             let left_col = find_p3_col(layout, &quote::quote!(#left).to_string());
             let right_col = find_p3_col(layout, &quote::quote!(#right).to_string());
             let diff_col = layout.aux_start + *aux_idx;
-            let bit_col = layout.aux_start + *aux_idx + 1;
-            *aux_idx += 2;
-
-            quote! {
+            let bits_start = layout.aux_start + *aux_idx + 1;
+            *aux_idx += 1 + RANGE_CHECK_BITS;
+            let diff_def = quote! {
                 {
-                    let left_val: AB::Expr = local[#left_col].into();
-                    let right_val: AB::Expr = local[#right_col].into();
-                    let diff_val: AB::Expr = local[#diff_col].into();
-                    let bit_val: AB::Expr = local[#bit_col].into();
-                    (diff_val.clone() - left_val + right_val)
-                        + bit_val.clone() * (bit_val.clone() - AB::Expr::ONE)
-                        + bit_val
+                    let l: AB::Expr = local[#left_col].into();
+                    let r: AB::Expr = local[#right_col].into();
+                    l - r
                 }
-            }
+            };
+            emit_p3_range_check(diff_col, bits_start, RANGE_CHECK_BITS, &diff_def)
         }
         RequirementKind::Equal { left, right } => {
             let left_col = find_p3_col(layout, &quote::quote!(#left).to_string());
             let right_col = find_p3_col(layout, &quote::quote!(#right).to_string());
 
-            quote! {
+            vec![quote! {
                 {
                     let left_val: AB::Expr = local[#left_col].into();
                     let right_val: AB::Expr = local[#right_col].into();
                     left_val - right_val
                 }
-            }
+            }]
         }
         RequirementKind::NotEqual { left, right } => {
             let left_col = find_p3_col(layout, &quote::quote!(#left).to_string());
@@ -357,125 +358,36 @@ fn emit_p3_requirement(
             let inv_col = layout.aux_start + *aux_idx;
             *aux_idx += 1;
 
-            quote! {
+            vec![quote! {
                 {
                     let left_val: AB::Expr = local[#left_col].into();
                     let right_val: AB::Expr = local[#right_col].into();
                     let inv_val: AB::Expr = local[#inv_col].into();
                     (left_val - right_val) * inv_val - AB::Expr::ONE
                 }
-            }
+            }]
         }
         RequirementKind::Membership { .. } => {
             // Should be unreachable (guarded by has_membership check)
             *aux_idx += 1;
-            quote! { AB::Expr::ZERO }
+            vec![quote! { AB::Expr::ZERO }]
         }
         RequirementKind::BitRange { value, bits } => {
-            // Real bit-decomposition range check.
-            //
-            // Allocate N aux bit columns. The constraint enforces:
-            //   1. Each bit_i * (bit_i - 1) == 0       (boolean)
-            //   2. sum_{i<N}(bit_i * 2^i) == value     (reconstruction)
-            //
-            // Soundness: this proves value < 2^N as long as 2^N fits in the
-            // field. For BabyBear (p ~ 2^31), N must be <= 30 to be sound;
-            // larger N admits aliasing under field-modular reduction. Callers
-            // requesting N > 30 SHOULD lift to a multi-row layout — this
-            // single-row emission flags the issue via a debug-time check at
-            // the prover; the verifier accepts wrap-arounds, so this is a
-            // KNOWN SOUNDNESS LIMITATION for N > 30 on BabyBear.
+            // in_range!(value, N): decompose into RANGE_CHECK_BITS bits, bind the
+            // reconstruction, and force every bit at index >= N to zero. Each
+            // sub-constraint is independent.
             let value_col = find_p3_col(layout, &quote::quote!(#value).to_string());
-            let n = *bits as usize;
-            let bit_start = layout.aux_start + *aux_idx;
-            *aux_idx += n;
-
-            // Build the boolean sum expression and the reconstruction sum.
-            // We emit `bool_sum + (recon - value)` where:
-            //   bool_sum = sum_i(bit_i * (bit_i - 1))
-            //   recon    = sum_i(bit_i * 2^i)
-            // All three (per-bit binary, and recon - value) must be zero
-            // individually; we combine them into one polynomial because the
-            // surrounding `builder.assert_zero` is summing them.
-            //
-            // Note on soundness of the combined-into-one-poly trick: a single
-            // assert_zero on `bool_sum + (recon - value)` is NOT sufficient
-            // because individual binary violations could cancel against
-            // reconstruction errors. So instead we emit a separate gated
-            // chain: bool_sum is squared+summed via a degree-2 trick.
-            //
-            // Simpler sound approach: enforce bit_i ∈ {0,1} via the squared
-            // identity (each term is a non-negative square in characteristic
-            // not 2 — but BabyBear is prime so this still doesn't give
-            // non-negativity). The TRUE sound approach is multiple
-            // assert_zero calls; we cannot emit those from this expression
-            // builder which returns a single TokenStream.
-            //
-            // Workaround: we emit a polynomial that is provably zero IFF
-            // every bit is boolean AND the reconstruction holds, by using:
-            //   sum_i(bit_i * (bit_i - 1))^2 + (recon - value)^2 == 0
-            // over a prime field, x^2 == 0 implies x == 0, and a sum of
-            // squares being zero implies each summand is zero. This is
-            // sound on BabyBear (characteristic != 2 trivially since p odd).
-            let mut bool_terms: Vec<TokenStream> = Vec::new();
-            let mut recon_terms: Vec<TokenStream> = Vec::new();
-            for i in 0..n {
-                let col = bit_start + i;
-                bool_terms.push(quote! {
-                    {
-                        let b: AB::Expr = local[#col].into();
-                        let t = b.clone() * (b - AB::Expr::ONE);
-                        t.clone() * t
-                    }
-                });
-                // 2^i as a field element via repeated doubling at compile time.
-                // We construct it as a TokenStream using AB::Expr arithmetic at
-                // eval time, since AB::Expr::from(u64) may not exist on all
-                // builders. Use from_u8/from_u64 if available; we use a
-                // doubling chain from ONE.
-                if i == 0 {
-                    recon_terms.push(quote! {
-                        {
-                            let b: AB::Expr = local[#col].into();
-                            b
-                        }
-                    });
-                } else {
-                    // 2^i = ONE doubled i times. Emit `i` doubling statements.
-                    let doubling_stmts: Vec<TokenStream> = (0..i)
-                        .map(|_| quote! { acc = acc.clone() + acc.clone(); })
-                        .collect();
-                    recon_terms.push(quote! {
-                        {
-                            let b: AB::Expr = local[#col].into();
-                            let mut acc: AB::Expr = AB::Expr::ONE;
-                            #(#doubling_stmts)*
-                            b * acc
-                        }
-                    });
-                }
-            }
-            // Build recon = sum of recon_terms
-            let recon_expr = if recon_terms.is_empty() {
-                quote! { AB::Expr::ZERO }
-            } else {
-                quote! { ( #(#recon_terms)+* ) }
-            };
-            let bool_expr = if bool_terms.is_empty() {
-                quote! { AB::Expr::ZERO }
-            } else {
-                quote! { ( #(#bool_terms)+* ) }
-            };
-            quote! {
+            let diff_col = layout.aux_start + *aux_idx;
+            let bits_start = layout.aux_start + *aux_idx + 1;
+            *aux_idx += 1 + RANGE_CHECK_BITS;
+            let active_bits = (*bits as usize).min(RANGE_CHECK_BITS);
+            let value_def = quote! {
                 {
-                    let value_val: AB::Expr = local[#value_col].into();
-                    let bool_sum: AB::Expr = #bool_expr;
-                    let recon: AB::Expr = #recon_expr;
-                    let diff = recon - value_val;
-                    // sum-of-squares: zero iff each component zero (BabyBear is prime, char != 2)
-                    bool_sum + diff.clone() * diff
+                    let v: AB::Expr = local[#value_col].into();
+                    v
                 }
-            }
+            };
+            emit_p3_range_check(diff_col, bits_start, active_bits, &value_def)
         }
         RequirementKind::MerkleAtPosition {
             root,
@@ -569,7 +481,7 @@ fn emit_p3_requirement(
             } else {
                 quote! { ( #(#recon_terms)+* ) }
             };
-            quote! {
+            vec![quote! {
                 {
                     let leaf_val: AB::Expr = local[#leaf_col].into();
                     let root_val: AB::Expr = local[#root_col].into();
@@ -587,7 +499,7 @@ fn emit_p3_requirement(
                         + pos_diff.clone() * pos_diff
                         + bool_sum
                 }
-            }
+            }]
         }
         RequirementKind::Poseidon2Hash { inputs, output } => {
             // Per-row Poseidon2 absorption check.
@@ -638,7 +550,7 @@ fn emit_p3_requirement(
             } else {
                 quote! { ( #(#binding_terms)+* ) }
             };
-            quote! {
+            vec![quote! {
                 {
                     let out_val: AB::Expr = local[#out_col].into();
                     let claimed: AB::Expr = local[#claimed_col].into();
@@ -646,9 +558,82 @@ fn emit_p3_requirement(
                     let out_diff = claimed - out_val;
                     out_diff.clone() * out_diff + bindings
                 }
-            }
+            }]
         }
     }
+}
+
+/// Emit the independent range-check sub-constraints for the native Plonky3
+/// backend: bind `diff_col == value_def`, the bit reconstruction, each bit's
+/// binary constraint, and the forced-zero high bits. Mirrors
+/// `emit_stark_impl::emit_range_check_constraints`.
+fn emit_p3_range_check(
+    diff_col: usize,
+    bits_start: usize,
+    active_bits: usize,
+    value_def: &TokenStream,
+) -> Vec<TokenStream> {
+    let mut out = Vec::new();
+
+    // (1) bind the diff/value column.
+    out.push(quote! {
+        {
+            let d: AB::Expr = local[#diff_col].into();
+            let v: AB::Expr = #value_def;
+            d - v
+        }
+    });
+
+    // (2) reconstruction: sum_i bit_i * 2^i == diff_col.
+    let mut recon_terms = Vec::new();
+    for i in 0..RANGE_CHECK_BITS {
+        let col = bits_start + i;
+        if i == 0 {
+            recon_terms.push(quote! {
+                { let b: AB::Expr = local[#col].into(); b }
+            });
+        } else {
+            let doublings: Vec<TokenStream> = (0..i)
+                .map(|_| quote! { acc = acc.clone() + acc.clone(); })
+                .collect();
+            recon_terms.push(quote! {
+                {
+                    let b: AB::Expr = local[#col].into();
+                    let mut acc: AB::Expr = AB::Expr::ONE;
+                    #(#doublings)*
+                    b * acc
+                }
+            });
+        }
+    }
+    out.push(quote! {
+        {
+            let d: AB::Expr = local[#diff_col].into();
+            let recon: AB::Expr = ( #(#recon_terms)+* );
+            recon - d
+        }
+    });
+
+    // (3) each bit binary — one independent constraint per bit.
+    for i in 0..RANGE_CHECK_BITS {
+        let col = bits_start + i;
+        out.push(quote! {
+            {
+                let b: AB::Expr = local[#col].into();
+                b.clone() * (b - AB::Expr::ONE)
+            }
+        });
+    }
+
+    // (4) every bit at index >= active_bits forced to zero.
+    for i in active_bits..RANGE_CHECK_BITS {
+        let col = bits_start + i;
+        out.push(quote! {
+            { let b: AB::Expr = local[#col].into(); b }
+        });
+    }
+
+    out
 }
 
 fn emit_p3_mutation(mutation: &crate::ir::Mutation, layout: &P3Layout) -> TokenStream {

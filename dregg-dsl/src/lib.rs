@@ -1,18 +1,32 @@
 //! Dregg Constraint DSL — proc macro crate.
 //!
-//! Provides `#[dregg_caveat]` and `#[dregg_effect]` which compile constraint functions into:
-//! - A Rust evaluator (`{name}_check`)
-//! - An AIR constraint descriptor (`{name}_air_constraints`)
-//! - A Datalog rule fragment (`{name}_datalog`)
-//! - A Kimchi circuit descriptor (`{name}_kimchi`)
-//! - A compile-time STARK AIR impl (`{Name}Circuit`)
-//! - A Midnight ZKIR v3 program (`{name}_midnight_zkir`)
-//! - A native Plonky3 Air impl (`{Name}P3Air`)
-//! - An SP1 guest program (`{name}_sp1_guest`)
+//! Provides `#[dregg_caveat]` and `#[dregg_effect]` which compile one constraint
+//! function into EIGHT backends:
+//! - `gen_rust`     — a Rust evaluator (`{name}_check`)              [agreement set]
+//! - `gen_air`      — an AIR constraint descriptor (`{name}_air_constraints`) [agreement set]
+//! - `gen_datalog`  — a Datalog rule fragment (`{name}_datalog`)    [agreement set]
+//! - `gen_kimchi`   — a Kimchi circuit descriptor (`{name}_kimchi`) [agreement set]
+//! - `gen_plonky3`  — a native Plonky3 Air impl (`{Name}P3Air`)     [agreement set, subset]
+//! - `emit_stark`   — a compile-time STARK AIR impl (`{Name}Circuit`)
+//! - `gen_midnight` — a Midnight ZKIR v3 program (`{name}_midnight_zkir`) [emit-only/lint-only]
+//! - `gen_sp1`      — an SP1 guest program (`{name}_sp1_guest`)      [emit-only/lint-only]
 //!
-//! Phase 3: adds Midnight ZKIR v3, native Plonky3, and SP1 backends alongside
-//! the existing effects, Kimchi codegen, multi-constraint composition,
-//! set membership, and permission annotations.
+//! ## Cross-validation status
+//!
+//! Five backends (`gen_rust`, `gen_air`, `gen_datalog`, `gen_kimchi`,
+//! `gen_plonky3`) form the **agreement set** cross-checked by
+//! `dregg-dsl-differential` (gen_rust is the oracle). `emit_stark` is exercised
+//! separately by the prove/verify tests in `dregg-dsl-tests`. `gen_midnight` and
+//! `gen_sp1` are STRING emitters validated by lint only (their proof systems need
+//! external toolchains); they cast no agreement vote.
+//!
+//! ## Range-check soundness
+//!
+//! `<=`, `>=` and `in_range!` compile to a genuine bit-decomposition range check
+//! in both `emit_stark` and `gen_plonky3`: the difference (or value) is bound to
+//! `RANGE_CHECK_BITS` binary witness columns, the reconstruction is enforced, and
+//! the top bits are forced to zero — so a field-wrapped negative difference is
+//! UNSATISFIABLE. Each sub-constraint is asserted independently (no cancellation).
 
 extern crate proc_macro;
 

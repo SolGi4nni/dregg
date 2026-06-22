@@ -118,7 +118,8 @@ mod tests {
         let circuit = NotAfterCircuit;
 
         // Verify baked-in constants
-        assert_eq!(circuit.width(), 4); // 2 params + 2 aux (diff + bit)
+        // 2 params + (1 diff + RANGE_CHECK_BITS bit columns) = 2 + 1 + 30 = 33
+        assert_eq!(circuit.width(), 33);
         assert_eq!(circuit.constraint_degree(), 2);
         assert_eq!(circuit.air_name(), "dregg-not_after-v1");
 
@@ -177,7 +178,8 @@ mod tests {
     fn test_minimum_balance_stark_prove_verify() {
         // MinimumBalanceCircuit: require!(balance >= threshold)
         let circuit = MinimumBalanceCircuit;
-        assert_eq!(circuit.width(), 4); // 2 params + 2 aux
+        // 2 params + (1 diff + RANGE_CHECK_BITS bit columns) = 2 + 1 + 30 = 33
+        assert_eq!(circuit.width(), 33);
         assert_eq!(circuit.constraint_degree(), 2);
 
         let trace = circuit.generate_trace(100, 50);
@@ -213,7 +215,9 @@ mod tests {
     fn test_compound_check_stark_prove_verify() {
         // CompoundCheckCircuit: require!(balance >= threshold); require!(sender != receiver)
         let circuit = CompoundCheckCircuit;
-        assert_eq!(circuit.width(), 7); // 4 params + 2 range + 1 inv
+        // 4 params + (1 diff + RANGE_CHECK_BITS bit columns) range check + 1 inverse
+        // = 4 + 31 + 1 = 36
+        assert_eq!(circuit.width(), 36);
         assert_eq!(circuit.constraint_degree(), 2);
 
         let trace = circuit.generate_trace(100, 50, 1, 2);
@@ -253,6 +257,111 @@ mod tests {
             result.is_ok(),
             "DecrementCircuit prove/verify failed: {:?}",
             result.err()
+        );
+    }
+
+    // --- FORGE DETECTOR: the emit_stark inequality range check ---
+    //
+    // Before the bit-decomposition fix, the LessEqual/GreaterEqual range check
+    // emitted only: (diff == right - left) + (bit binary) + (bit == 0), with NO
+    // constraint tying `bit` to the high bit of `diff`. The trace-gen set bit = 0
+    // unconditionally, so an inequality VIOLATION (left > right => diff wraps
+    // negative in BabyBear) satisfied all three terms and was ACCEPTED.
+    //
+    // These tests pin the fixed behavior at both poles:
+    //   - an honest witness (left <= right) is ACCEPTED, and
+    //   - the exact malicious witness the old code accepted is now REJECTED.
+
+    /// Build the `NotAfterCircuit` AIR verdict for an explicit witness row.
+    ///
+    /// Layout: col 0 = token_expiry, col 1 = current_time, col 2 = diff,
+    /// cols 3..33 = the 30 little-endian bits of diff. Predicate is
+    /// `require!(current_time <= token_expiry)`, i.e. diff = token_expiry - current_time.
+    fn not_after_air_is_zero(
+        token_expiry: u64,
+        current_time: u64,
+        diff: BabyBear,
+        bits: &[u32; 30],
+    ) -> bool {
+        let circuit = NotAfterCircuit;
+        let width = circuit.width();
+        let mut row = vec![BabyBear::ZERO; width];
+        row[0] = BabyBear::from_u64(token_expiry);
+        row[1] = BabyBear::from_u64(current_time);
+        row[2] = diff;
+        for (i, b) in bits.iter().enumerate() {
+            row[3 + i] = BabyBear::new(*b);
+        }
+        let pi = vec![
+            BabyBear::from_u64(token_expiry),
+            BabyBear::from_u64(current_time),
+        ];
+        // The AIR accepts the row iff the constraint polynomial is zero for ALL
+        // alpha challenges; a single random alpha suffices to expose a nonzero
+        // sub-constraint with overwhelming probability, and we additionally test
+        // a second alpha to be sure no aliasing hides the violation.
+        let a1 = circuit.eval_constraints(&row, &row, &pi, BabyBear::new(7));
+        let a2 = circuit.eval_constraints(&row, &row, &pi, BabyBear::new(31));
+        a1 == BabyBear::ZERO && a2 == BabyBear::ZERO
+    }
+
+    /// Honest decomposition of `v` into 30 little-endian bits.
+    fn bits30(v: u32) -> [u32; 30] {
+        let mut out = [0u32; 30];
+        for (i, b) in out.iter_mut().enumerate() {
+            *b = (v >> i) & 1;
+        }
+        out
+    }
+
+    #[test]
+    fn forge_detector_le_honest_accepts() {
+        // current_time = 50 <= token_expiry = 100. diff = 50, bits = decomp(50).
+        let diff = BabyBear::from_u64(100) - BabyBear::from_u64(50);
+        assert!(
+            not_after_air_is_zero(100, 50, diff, &bits30(50)),
+            "honest witness (50 <= 100) must be ACCEPTED"
+        );
+        // Boundary: equality also accepts (diff = 0).
+        let diff0 = BabyBear::ZERO;
+        assert!(
+            not_after_air_is_zero(100, 100, diff0, &bits30(0)),
+            "boundary witness (100 <= 100) must be ACCEPTED"
+        );
+    }
+
+    #[test]
+    fn forge_detector_le_violation_rejected() {
+        // VIOLATION: current_time = 60 > token_expiry = 40. The OLD circuit
+        // accepted this with the malicious witness (diff = right - left wrapped
+        // negative, all bits = 0): diff_check = 0, bit_binary = 0, bit_zero = 0.
+        // Replay EXACTLY that witness; the fixed circuit must REJECT it because
+        // the bit reconstruction can no longer match the wrapped-negative diff
+        // while keeping the high bits zero.
+        let wrapped_neg = BabyBear::from_u64(40) - BabyBear::from_u64(60); // = -20 mod p
+        let all_zero_bits = [0u32; 30];
+        assert!(
+            !not_after_air_is_zero(40, 60, wrapped_neg, &all_zero_bits),
+            "the old vacuity: diff=right-left wrapped negative with all-zero bits \
+             must now be REJECTED"
+        );
+
+        // The honest decomposition of a violation is ALSO rejected: the canonical
+        // u32 of -20 mod p is ~2^31, whose true bit-decomposition needs bits above
+        // index 29 — forced to zero — so reconstruction is unsatisfiable.
+        let canon = wrapped_neg.as_u32();
+        assert!(
+            !not_after_air_is_zero(40, 60, wrapped_neg, &bits30(canon)),
+            "honest decomposition of a wrapped-negative diff must be REJECTED \
+             (high bits required but forced zero)"
+        );
+
+        // And the prover cannot rescue it by feeding a fake small diff: binding
+        // diff_col to a value != (token_expiry - current_time) trips the diff
+        // consistency sub-constraint.
+        assert!(
+            !not_after_air_is_zero(40, 60, BabyBear::ZERO, &all_zero_bits),
+            "fake diff = 0 (!= -20) must be REJECTED by the diff-binding constraint"
         );
     }
 
