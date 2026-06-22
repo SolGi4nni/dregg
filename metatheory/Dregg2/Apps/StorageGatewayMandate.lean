@@ -931,16 +931,16 @@ enforced on the cell for its WHOLE life, along EVERY adversarial `trajG`. Carrie
 def sgmWF (k : RecordKernelState) : Prop :=
   mandateCell ∈ k.accounts ∧ sgmMandateProgramOK k
 
-/-- **`sgmInBucket` — NON-VACUOUS bucket-binding invariant (program-live, UNCONDITIONAL).** Carries the
-program-live core (mandate cell live + its published per-slot caveat program installed) along EVERY
-forest. The `bucket` tag is the binding's domain: the binding to `bucket` is ENFORCED for life by the
-persisted `.immutable commitmentAnchorSlot` caveat inside `mandateCaveats`. Carried by
-`execFullForestA_progLive_preserved`. The LITERAL anchor-VALUE conjunct (`sgmAnchor = bucket`) is the
-STRONGER predicate `sgmInBucketStrong`, now carried along anchor-safe schedules by
-`sgmBucketStrong_traj_carries` / `sgm_bucket_strong_forever` (the second cell-record frame
-`execFullForestA_anchorOf_preserved`, excluding the one un-caveat-gated `makeSovereign` rebind). -/
-def sgmInBucket (_k : RecordKernelState) (_bucket : Int) : Prop :=
-  mandateCell ∈ _k.accounts ∧ sgmMandateProgramOK _k
+/-- **`sgmInBucket` — NON-VACUOUS bucket-binding invariant (GENUINELY TAG-BINDING).** Holds iff the
+mandate cell is a live account, its published per-slot caveat program is installed, AND its commitment
+anchor is EXACTLY `bucket` (`sgmAnchorIs k bucket = true`, i.e. `sgmAnchor k = bucket`). This last
+conjunct is the genuine binding: a state whose anchor drifts to a different bucket is REJECTED (the
+predicate is value-dependent on `bucket`, not constant in it). The binding is ENFORCED for life by the
+persisted `.immutable commitmentAnchorSlot` caveat inside `mandateCaveats`; the sole residual is
+`makeSovereign` aimed at the cell, which is why the carry is along anchor-safe schedules
+(`sgmBucket_traj_carries`). -/
+def sgmInBucket (k : RecordKernelState) (bucket : Int) : Prop :=
+  mandateCell ∈ k.accounts ∧ sgmMandateProgramOK k ∧ sgmAnchorIs k bucket = true
 
 instance sgmWFStrongDecidable (k : RecordKernelState) : Decidable (sgmWFStrong k) := by
   unfold sgmWFStrong sgmMandateProgramOK; infer_instance
@@ -948,6 +948,10 @@ instance sgmWFStrongDecidable (k : RecordKernelState) : Decidable (sgmWFStrong k
 instance sgmInBucketStrongDecidable (k : RecordKernelState) (bucket : Int) :
     Decidable (sgmInBucketStrong k bucket) := by
   unfold sgmInBucketStrong sgmMandateProgramOK; infer_instance
+
+instance sgmInBucketDecidable (k : RecordKernelState) (bucket : Int) :
+    Decidable (sgmInBucket k bucket) := by
+  unfold sgmInBucket sgmMandateProgramOK; infer_instance
 
 theorem sgmWFStrong_of_mandate_cell_eq {k k' : RecordKernelState}
     (hc : k'.cell mandateCell = k.cell mandateCell) (hcav : k'.slotCaveats mandateCell = k.slotCaveats mandateCell)
@@ -979,14 +983,6 @@ theorem sgmWF_traj_carries (s s' : RecChainedState) (cf : FullForestA)
   obtain ⟨hlive, hprog⟩ := hwf
   exact execFullForestA_progLive_preserved s s' cf mandateCell mandateCaveats h hlive hprog
 
-/-- **`sgmBucket_traj_carries` — NON-VACUOUS carry.** Same generic frame: the bucket binding's
-enforcement (live cell + installed immutable-anchor caveat program) persists along every forest. -/
-theorem sgmBucket_traj_carries (s s' : RecChainedState) (cf : FullForestA) (bucket : Int)
-    (h : execFullForestA s cf = some s') (hb : sgmInBucket s.kernel bucket) :
-    sgmInBucket s'.kernel bucket := by
-  obtain ⟨hlive, hprog⟩ := hb
-  exact execFullForestA_progLive_preserved s s' cf mandateCell mandateCaveats h hlive hprog
-
 /-- The mandate program installs the `.immutable commitmentAnchorSlot` caveat — so a cell carrying
 `mandateCaveats` carries the immutable-anchor caveat (the precondition of the anchor-value frame). -/
 theorem mandateCaveats_has_immutable_anchor :
@@ -1015,6 +1011,22 @@ theorem sgmBucketStrong_traj_carries (s s' : RecChainedState) (cf : FullForestA)
   refine ⟨?_, hprog'⟩
   unfold sgmAnchorIs sgmAnchor at hanchor ⊢
   rw [hanchorEq]; exact hanchor
+
+/-- **`sgmBucket_traj_carries` — NON-VACUOUS carry of the GENUINE binding.** An anchor-safe committed
+forest preserves all three conjuncts: live cell + installed immutable-anchor caveat program + the LITERAL
+anchor value `sgmAnchor = bucket`. The program-live legs use `execFullForestA_progLive_preserved`; the
+anchor-value leg uses the value-pinning `sgmBucketStrong_traj_carries` (gated by the installed immutable
+caveat, excluding only the un-caveat-gated `makeSovereign` rebind, whence `anchorForestOK`). -/
+theorem sgmBucket_traj_carries (s s' : RecChainedState) (cf : FullForestA) (bucket : Int)
+    (h : execFullForestA s cf = some s') (hok : anchorForestOK mandateCell cf)
+    (hb : sgmInBucket s.kernel bucket) :
+    sgmInBucket s'.kernel bucket := by
+  obtain ⟨hlive, hprog, hanchor⟩ := hb
+  obtain ⟨hlive', hprog'⟩ :=
+    execFullForestA_progLive_preserved s s' cf mandateCell mandateCaveats h hlive hprog
+  obtain ⟨hanchor', _⟩ :=
+    sgmBucketStrong_traj_carries s s' cf bucket h ⟨hanchor, hprog⟩ hok hlive
+  exact ⟨hlive', hprog', hanchor'⟩
 
 /-! ## §C — Stingray volume-budget demo (PUT debits exhaust slice). -/
 

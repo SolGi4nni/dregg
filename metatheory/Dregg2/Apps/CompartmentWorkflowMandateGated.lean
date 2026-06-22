@@ -275,45 +275,18 @@ noncomputable def cwmStepLegalContractKF : KFContract where
     | some a' => simp only [Option.getD_some]; exact cwmWF_traj_carries a a' cf.1 hc h
   shape := .other
 
-noncomputable def cwmCompartmentContractKF (comp : Int) : KFContract where
-  Inv s := cwmInCompartment s.kernel comp
-  step_ob a cf h := by
-    rw [CellExecutor.kernelForest_next_eq]; unfold cellNextA
-    cases hc : execFullForestA a cf.1 with
-    | none => simp only [Option.getD_none]; exact h
-    | some a' => simp only [Option.getD_some]; exact cwmCompartment_traj_carries a a' cf.1 comp hc h
-  shape := .membership
-
 noncomputable def cwmStepLegalContract : Contract := liftFromKernelForest cwmStepLegalContractKF
-noncomputable def cwmCompartmentContract (comp : Int) : Contract := liftFromKernelForest (cwmCompartmentContractKF comp)
 
 noncomputable def cwmPayConserved (s0 : RecChainedState) : Contract := assetConserved s0 payAsset
 noncomputable def cwmRevokedDead (nul : Nat) : Contract := gateRevoked nul
 
-noncomputable def cwmSafetyContract (s0 : RecChainedState) (nul : Nat) (comp : Int) : Contract :=
-  composeContracts
-    (composeContracts (composeContracts cwmStepLegalContract (cwmPayConserved s0)) (cwmRevokedDead nul))
-    (cwmCompartmentContract comp)
-
-theorem cwm_safety_forever (s0 : RecChainedState) (nul : Nat) (comp : Int) (s : RecChainedState)
-    (hstep : cwmWF s.kernel) (hpay : cellObsA s payAsset = cellObsA s0 payAsset)
-    (hrev : nul ∈ s.kernel.revoked) (hcomp : cwmInCompartment s.kernel comp) (sched : SchedG) :
-    ∀ n,
-      cwmWF (trajG s sched n).kernel ∧
-        cellObsA (trajG s sched n) payAsset = cellObsA s0 payAsset ∧
-          nul ∈ (trajG s sched n).kernel.revoked ∧
-            cwmInCompartment (trajG s sched n).kernel comp := by
-  intro n
-  have h := (cwmSafetyContract s0 nul comp).forever
-    (And.intro (And.intro (And.intro hstep hpay) hrev) hcomp) sched n
-  rcases h with ⟨⟨⟨hstep', hpay'⟩, hrev'⟩, hcomp'⟩
-  exact And.intro hstep' (And.intro hpay' (And.intro hrev' hcomp'))
-
-/-! ### §strong — the VALUE-PINNING compartment invariant along an anchor-safe schedule.
-
-As for the storage gateway, `cwmInCompartment` (program-live) carries unconditionally, but the literal
-binding `cwmAnchor = comp` can be broken ONLY by `makeSovereign` aimed at the mandate cell. The strong
-forever quantifies over anchor-safe schedules (`SchedAnchorSafe`) and carries `cwmInCompartmentStrong`. -/
+/-- **`cwmSafetyContract`** — the unconditional-carry legs (step-legal program-live + pay conserved +
+revoked-dead). The genuine compartment binding `cwmInCompartment` (which pins the anchor value) is NOT a
+contract leg: its `cwmAnchor = comp` conjunct is breakable by a `makeSovereign` aimed at the mandate
+cell, so it cannot satisfy the contract's EVERY-step `step_ob`. It is carried separately by the
+anchor-safe induction `cwm_compartment_strong_forever` and threaded into `cwm_safety_forever`. -/
+noncomputable def cwmSafetyContract (s0 : RecChainedState) (nul : Nat) : Contract :=
+  composeContracts (composeContracts cwmStepLegalContract (cwmPayConserved s0)) (cwmRevokedDead nul)
 
 open Dregg2.Exec (cellNextG)
 open Dregg2.Apps.StorageGatewayMandate (anchorForestOK)
@@ -362,6 +335,31 @@ theorem cwm_compartment_strong_forever (comp : Int) (s : RecChainedState)
             ∧ cwmMandateProgramOK (cellNextG (trajG s sched k) (sched k)).kernel
             ∧ cwmInCompartmentStrong (cellNextG (trajG s sched k) (sched k)).kernel comp
       exact cwmStrong_cellNextG_carries comp (trajG s sched k) (sched k) (hsafe k) ih
+
+/-- **`cwm_safety_forever` — the per-app PRODUCTION CROWN with the GENUINE compartment binding.**
+Along every anchor-safe `trajG`: the mandate stays step-legal/program-live (`cwmWF`), pay is conserved,
+the revoked credential stays dead, AND the agent stays in the SPECIFIC compartment `comp` —
+`cwmInCompartment (trajG …) comp`, whose `cwmAnchor = comp` conjunct genuinely pins the tag. The first
+three legs ride the unconditional `cwmSafetyContract`; the genuine compartment leg rides the anchor-safe
+induction `cwm_compartment_strong_forever`. The `SchedAnchorSafe` hypothesis is the precise, stated
+residual: the ONE behaviour (`makeSovereign` aimed at the cell) the immutable-anchor caveat cannot reject
+inline. -/
+theorem cwm_safety_forever (s0 : RecChainedState) (nul : Nat) (comp : Int) (s : RecChainedState)
+    (hstep : cwmWF s.kernel) (hpay : cellObsA s payAsset = cellObsA s0 payAsset)
+    (hrev : nul ∈ s.kernel.revoked) (hcomp : cwmInCompartment s.kernel comp)
+    (sched : SchedG) (hsafe : SchedAnchorSafe sched) :
+    ∀ n,
+      cwmWF (trajG s sched n).kernel ∧
+        cellObsA (trajG s sched n) payAsset = cellObsA s0 payAsset ∧
+          nul ∈ (trajG s sched n).kernel.revoked ∧
+            cwmInCompartment (trajG s sched n).kernel comp := by
+  intro n
+  obtain ⟨hlive, hprog, hanchor⟩ := hcomp
+  have h := (cwmSafetyContract s0 nul).forever
+    (And.intro (And.intro hstep hpay) hrev) sched n
+  rcases h with ⟨⟨hstep', hpay'⟩, hrev'⟩
+  have hgen := cwm_compartment_strong_forever comp s hlive hprog hanchor sched hsafe n
+  exact And.intro hstep' (And.intro hpay' (And.intro hrev' hgen))
 
 /-- A drifted genesis: anchor rebound to a DIFFERENT compartment tag (`cwmCompartmentTag + 1`). -/
 def cwmDriftCell : CellId → Value := fun c =>
@@ -418,6 +416,11 @@ def cwmGSigned : Option RecChainedState :=
 #guard (decide (cwmInCompartmentStrong ({ cwmG0 with kernel := { cwmG0.kernel with cell := cwmDriftCell } }).kernel cwmCompartmentTag)) == false  -- drift REJECTED
 #guard (decide (cwmInCompartmentStrong ({ cwmG0 with kernel := { cwmG0.kernel with cell := cwmDriftCell } }).kernel (cwmCompartmentTag + 1)))      -- drift IS in its own compartment
 #guard (cwmAnchor ({ cwmG0 with kernel := { cwmG0.kernel with cell := cwmDriftCell } }).kernel == cwmAnchor cwmG0.kernel) == false               -- anchors differ
+-- GENUINE BINDING NON-VACUITY (the crown predicate itself, both poles): the in-compartment predicate now
+-- USES its `comp` tag — it ACCEPTS the correctly-tagged state and REJECTS the wrong tag.
+#guard (decide (cwmInCompartment cwmG0.kernel cwmCompartmentTag))                          -- right tag ACCEPTED  (not False)
+#guard (decide (cwmInCompartment cwmG0.kernel (cwmCompartmentTag + 1))) == false           -- wrong tag REJECTED  (not True)
+#guard (decide (cwmInCompartment ({ cwmG0 with kernel := { cwmG0.kernel with cell := cwmDriftCell } }).kernel cwmCompartmentTag)) == false  -- drifted anchor REJECTED at the bound tag
 #guard ((execFullForestG cwmG0 (cwmRefreshNode goodCred)).isSome)
 #guard ((execFullForestG cwmG0 (cwmRefreshNode goodCred)).map
         (fun s => (s.kernel.delegations cwmMonitorCell).length)) == some 2

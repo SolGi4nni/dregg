@@ -252,16 +252,23 @@ generic `StorageGatewayMandate.execFullForestA_progLive_preserved` frame (no `Tr
 def cwmWF (k : RecordKernelState) : Prop :=
   mandateCell ∈ k.accounts ∧ cwmMandateProgramOK k
 
-/-- **`cwmInCompartment` — NON-VACUOUS compartment-binding invariant (program-live, UNCONDITIONAL).**
-Carries the program-live core along EVERY forest. The `comp` tag is the binding's domain: the binding to
-`comp` is ENFORCED for life by the persisted `.immutable commitmentAnchorSlot` caveat in `mandateCaveats`
-(any later anchor rewrite is rejected). The LITERAL anchor-VALUE conjunct (`cwmAnchor = comp`) is the
-STRONGER predicate `cwmInCompartmentStrong`, now carried along anchor-safe schedules by
-`cwmCompartmentStrong_traj_carries` / `cwm_compartment_strong_forever` (the shared
-`StorageGatewayMandate.execFullForestA_anchorOf_preserved` frame, excluding the one un-caveat-gated
-`makeSovereign` rebind). -/
-def cwmInCompartment (_k : RecordKernelState) (_comp : Int) : Prop :=
-  mandateCell ∈ _k.accounts ∧ cwmMandateProgramOK _k
+/-- **`cwmInCompartment` — NON-VACUOUS compartment-binding invariant (GENUINELY TAG-BINDING).**
+Holds iff the mandate cell is a live account, its published per-slot caveat program is installed, AND its
+commitment anchor is EXACTLY `comp` (`cwmAnchor k = comp`). This last conjunct is the genuine binding: a
+state whose anchor drifts to a different compartment is REJECTED (the predicate is value-dependent on
+`comp`, not constant in it). The binding is ENFORCED for life by the persisted
+`.immutable commitmentAnchorSlot` caveat in `mandateCaveats` (any later anchor rewrite is rejected); the
+sole residual is `makeSovereign` aimed at the cell, which is why the carry is along anchor-safe schedules
+(`cwmCompartment_traj_carries`). -/
+def cwmInCompartment (k : RecordKernelState) (comp : Int) : Prop :=
+  mandateCell ∈ k.accounts ∧ cwmMandateProgramOK k ∧ cwmAnchor k = comp
+
+instance cwmMandateProgramOKDecidable (k : RecordKernelState) : Decidable (cwmMandateProgramOK k) := by
+  unfold cwmMandateProgramOK; infer_instance
+
+instance cwmInCompartmentDecidable (k : RecordKernelState) (comp : Int) :
+    Decidable (cwmInCompartment k comp) := by
+  unfold cwmInCompartment; infer_instance
 
 /-- Clearance at the current cursor (predicate-layer; gated demos exercise via `cwmAdvanceM`). -/
 def cwmClearanceOK (k : RecordKernelState) : Bool :=
@@ -277,15 +284,6 @@ AND its published caveat program installed. The generic frame
 theorem cwmWF_traj_carries (s s' : RecChainedState) (cf : FullForestA)
     (h : execFullForestA s cf = some s') (hwf : cwmWF s.kernel) : cwmWF s'.kernel := by
   obtain ⟨hlive, hprog⟩ := hwf
-  exact Dregg2.Apps.StorageGatewayMandate.execFullForestA_progLive_preserved
-    s s' cf mandateCell mandateCaveats h hlive hprog
-
-/-- **`cwmCompartment_traj_carries` — NON-VACUOUS carry.** Same generic frame: the compartment
-binding's enforcement (live cell + installed immutable-anchor caveat program) persists along every forest. -/
-theorem cwmCompartment_traj_carries (s s' : RecChainedState) (cf : FullForestA) (comp : Int)
-    (h : execFullForestA s cf = some s') (hcomp : cwmInCompartment s.kernel comp) :
-    cwmInCompartment s'.kernel comp := by
-  obtain ⟨hlive, hprog⟩ := hcomp
   exact Dregg2.Apps.StorageGatewayMandate.execFullForestA_progLive_preserved
     s s' cf mandateCell mandateCaveats h hlive hprog
 
@@ -314,6 +312,24 @@ theorem cwmCompartmentStrong_traj_carries (s s' : RecChainedState) (cf : FullFor
       s s' cf mandateCell h hlive himm hok
   unfold cwmInCompartmentStrong cwmAnchor at hcomp ⊢
   rw [hanchorEq]; exact hcomp
+
+/-- **`cwmCompartment_traj_carries` — NON-VACUOUS carry of the GENUINE binding.** An anchor-safe
+committed forest preserves all three conjuncts: live cell + installed immutable-anchor caveat program +
+the LITERAL anchor value `cwmAnchor = comp`. The program-live legs use the generic
+`execFullForestA_progLive_preserved` frame; the anchor-value leg uses
+`execFullForestA_anchorOf_preserved` (gated by the installed `.immutable commitmentAnchorSlot` caveat,
+excluding only the un-caveat-gated `makeSovereign` rebind, whence `anchorForestOK`). -/
+theorem cwmCompartment_traj_carries (s s' : RecChainedState) (cf : FullForestA) (comp : Int)
+    (h : execFullForestA s cf = some s')
+    (hok : Dregg2.Apps.StorageGatewayMandate.anchorForestOK mandateCell cf)
+    (hcomp : cwmInCompartment s.kernel comp) :
+    cwmInCompartment s'.kernel comp := by
+  obtain ⟨hlive, hprog, hanchor⟩ := hcomp
+  obtain ⟨hlive', hprog'⟩ := Dregg2.Apps.StorageGatewayMandate.execFullForestA_progLive_preserved
+    s s' cf mandateCell mandateCaveats h hlive hprog
+  have hstrong' : cwmInCompartmentStrong s'.kernel comp :=
+    cwmCompartmentStrong_traj_carries s s' cf comp h hanchor hprog hok hlive
+  exact ⟨hlive', hprog', hstrong'⟩
 
 theorem cwmWFStrong_of_cursor_unchanged {k k' : RecordKernelState}
     (hcur : cwmCursor k' = cwmCursor k) (hwf : cwmWFStrong k) : cwmWFStrong k' := by

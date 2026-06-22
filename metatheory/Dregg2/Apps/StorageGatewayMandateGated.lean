@@ -205,47 +205,18 @@ noncomputable def sgmStepLegalContractKF : KFContract where
     | some a' => simp only [Option.getD_some]; exact sgmWF_traj_carries a a' cf.1 hc h
   shape := .other
 
-noncomputable def sgmBucketContractKF (bucket : Int) : KFContract where
-  Inv s := sgmInBucket s.kernel bucket
-  step_ob a cf h := by
-    rw [CellExecutor.kernelForest_next_eq]; unfold cellNextA
-    cases hc : execFullForestA a cf.1 with
-    | none => simp only [Option.getD_none]; exact h
-    | some a' => simp only [Option.getD_some]; exact sgmBucket_traj_carries a a' cf.1 bucket hc h
-  shape := .membership
-
 noncomputable def sgmStepLegalContract : Contract := liftFromKernelForest sgmStepLegalContractKF
-noncomputable def sgmBucketContract (bucket : Int) : Contract := liftFromKernelForest (sgmBucketContractKF bucket)
 
 noncomputable def sgmPayConserved (s0 : RecChainedState) : Contract := assetConserved s0 payAsset
 noncomputable def sgmRevokedDead (nul : Nat) : Contract := gateRevoked nul
 
-noncomputable def sgmSafetyContract (s0 : RecChainedState) (nul : Nat) (bucket : Int) : Contract :=
-  composeContracts
-    (composeContracts (composeContracts sgmStepLegalContract (sgmPayConserved s0)) (sgmRevokedDead nul))
-    (sgmBucketContract bucket)
-
-theorem sgm_safety_forever (s0 : RecChainedState) (nul : Nat) (bucket : Int) (s : RecChainedState)
-    (hstep : sgmWF s.kernel) (hpay : cellObsA s payAsset = cellObsA s0 payAsset)
-    (hrev : nul ∈ s.kernel.revoked) (hbucket : sgmInBucket s.kernel bucket) (sched : SchedG) :
-    ∀ n,
-      sgmWF (trajG s sched n).kernel ∧
-        cellObsA (trajG s sched n) payAsset = cellObsA s0 payAsset ∧
-          nul ∈ (trajG s sched n).kernel.revoked ∧
-            sgmInBucket (trajG s sched n).kernel bucket := by
-  intro n
-  have h := (sgmSafetyContract s0 nul bucket).forever
-    (And.intro (And.intro (And.intro hstep hpay) hrev) hbucket) sched n
-  rcases h with ⟨⟨⟨hstep', hpay'⟩, hrev'⟩, hbucket'⟩
-  exact And.intro hstep' (And.intro hpay' (And.intro hrev' hbucket'))
-
-/-! ### §strong — the VALUE-PINNING bucket invariant along an anchor-safe schedule.
-
-The Hatchery `Contract` machinery carries `sgmInBucket` (program-live) unconditionally, but the LITERAL
-bucket binding `sgmAnchor = bucket` can be broken by exactly one un-caveat-gated action: `makeSovereign`
-aimed at the mandate cell (it rebinds the record behind a state commitment, dropping every field). So
-the value-pinning forever quantifies over schedulers whose every (erased) forest is anchor-safe for the
-mandate cell — `SchedAnchorSafe` — and carries the STRONG predicate `sgmInBucketStrong`. -/
+/-- **`sgmSafetyContract`** — the unconditional-carry legs (step-legal program-live + pay conserved +
+revoked-dead). The genuine bucket binding `sgmInBucket` (which pins the anchor value) is NOT a contract
+leg: its `sgmAnchor = bucket` conjunct is breakable by a `makeSovereign` aimed at the mandate cell, so it
+cannot satisfy the contract's EVERY-step `step_ob`. It is carried separately by the anchor-safe induction
+`sgm_bucket_strong_forever` and threaded into `sgm_safety_forever`. -/
+noncomputable def sgmSafetyContract (s0 : RecChainedState) (nul : Nat) : Contract :=
+  composeContracts (composeContracts sgmStepLegalContract (sgmPayConserved s0)) (sgmRevokedDead nul)
 
 open Dregg2.Exec (cellNextG conservingGated_erase)
 open Dregg2.Exec.StarbridgeGated (eraseForestG execForestG execForestG_erases)
@@ -290,6 +261,31 @@ theorem sgm_bucket_strong_forever (bucket : Int) (s : RecChainedState)
             ∧ sgmInBucketStrong (cellNextG (trajG s sched k) (sched k)).kernel bucket
       exact sgmStrong_cellNextG_carries bucket (trajG s sched k) (sched k) (hsafe k) ih
 
+/-- **`sgm_safety_forever` — the per-app PRODUCTION CROWN with the GENUINE bucket binding.**
+Along every anchor-safe `trajG`: the mandate stays step-legal/program-live (`sgmWF`), pay is conserved,
+the revoked credential stays dead, AND the agent stays in the SPECIFIC bucket `bucket` —
+`sgmInBucket (trajG …) bucket`, whose `sgmAnchor = bucket` conjunct genuinely pins the tag. The first
+three legs ride the unconditional `sgmSafetyContract`; the genuine bucket leg rides the anchor-safe
+induction `sgm_bucket_strong_forever`. The `SchedAnchorSafe` hypothesis is the precise, stated residual:
+the ONE behaviour (`makeSovereign` aimed at the cell) the immutable-anchor caveat cannot reject inline. -/
+theorem sgm_safety_forever (s0 : RecChainedState) (nul : Nat) (bucket : Int) (s : RecChainedState)
+    (hstep : sgmWF s.kernel) (hpay : cellObsA s payAsset = cellObsA s0 payAsset)
+    (hrev : nul ∈ s.kernel.revoked) (hbucket : sgmInBucket s.kernel bucket)
+    (sched : SchedG) (hsafe : SchedAnchorSafe sched) :
+    ∀ n,
+      sgmWF (trajG s sched n).kernel ∧
+        cellObsA (trajG s sched n) payAsset = cellObsA s0 payAsset ∧
+          nul ∈ (trajG s sched n).kernel.revoked ∧
+            sgmInBucket (trajG s sched n).kernel bucket := by
+  intro n
+  obtain ⟨hlive, hprog, hanchor⟩ := hbucket
+  have h := (sgmSafetyContract s0 nul).forever
+    (And.intro (And.intro hstep hpay) hrev) sched n
+  rcases h with ⟨⟨hstep', hpay'⟩, hrev'⟩
+  obtain ⟨hlive', hanchor', hprog'⟩ :=
+    sgm_bucket_strong_forever bucket s hlive ⟨hanchor, hprog⟩ sched hsafe n
+  exact And.intro hstep' (And.intro hpay' (And.intro hrev' ⟨hlive', hprog', hanchor'⟩))
+
 /-! ### §strong-teeth — the value-pinning predicate is NON-VACUOUS: drift REJECTED, honest ADMITTED. -/
 
 def sgmG0 : RecChainedState :=
@@ -329,6 +325,11 @@ def sgmGPutEmit : Option RecChainedState :=
 #guard (sgmInBucketStrong sgmDriftG0.kernel (demoMandate.anchor : Int)) == false            -- drift REJECTED
 #guard (sgmAnchor sgmDriftG0.kernel == sgmAnchor sgmG0.kernel) == false                     -- anchors differ
 #guard (sgmInBucketStrong sgmDriftG0.kernel (demoMandate.anchor + 1 : Int))                 -- drift IS in its own bucket
+-- GENUINE BINDING NON-VACUITY (the crown predicate itself, both poles): the in-bucket predicate now
+-- USES its `bucket` tag — it ACCEPTS the correctly-tagged state and REJECTS the wrong tag.
+#guard (decide (sgmInBucket sgmG0.kernel (demoMandate.anchor : Int)))                       -- right tag ACCEPTED  (not False)
+#guard (decide (sgmInBucket sgmG0.kernel (demoMandate.anchor + 1 : Int))) == false          -- wrong tag REJECTED  (not True)
+#guard (decide (sgmInBucket sgmDriftG0.kernel (demoMandate.anchor : Int))) == false         -- drifted anchor REJECTED at the bound tag
 
 #guard (gateOK (mkAuth goodCred []) sgmG0)
 #guard (sgmAdmitM demoMandate (SgmRuntime.init demoMandate) demoPutReq).isSome

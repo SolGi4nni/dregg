@@ -153,14 +153,15 @@ theorem cwm_safety_foreverG_via_contract (s0 : RecChainedState) (nul : Nat) (com
     (hpay : cellObsA s Dregg2.Apps.CompartmentWorkflowMandate.payAsset =
             cellObsA s0 Dregg2.Apps.CompartmentWorkflowMandate.payAsset)
     (hrev : nul ∈ s.kernel.revoked)
-    (hcomp : Dregg2.Apps.CompartmentWorkflowMandate.cwmInCompartment s.kernel comp) (sched : SchedG) :
+    (hcomp : Dregg2.Apps.CompartmentWorkflowMandate.cwmInCompartment s.kernel comp) (sched : SchedG)
+    (hsafe : Dregg2.Apps.CompartmentWorkflowMandateGated.SchedAnchorSafe sched) :
     ∀ n,
       Dregg2.Apps.CompartmentWorkflowMandate.cwmWF (trajG s sched n).kernel ∧
         cellObsA (trajG s sched n) Dregg2.Apps.CompartmentWorkflowMandate.payAsset =
           cellObsA s0 Dregg2.Apps.CompartmentWorkflowMandate.payAsset ∧
             nul ∈ (trajG s sched n).kernel.revoked ∧
               Dregg2.Apps.CompartmentWorkflowMandate.cwmInCompartment (trajG s sched n).kernel comp :=
-  Dregg2.Apps.CompartmentWorkflowMandateGated.cwm_safety_forever s0 nul comp s hstep hpay hrev hcomp sched
+  Dregg2.Apps.CompartmentWorkflowMandateGated.cwm_safety_forever s0 nul comp s hstep hpay hrev hcomp sched hsafe
 
 example (s0 : RecChainedState) (nul : Nat) (comp : Int) (s : RecChainedState)
     (hstep : Dregg2.Apps.CompartmentWorkflowMandate.cwmWF s.kernel)
@@ -168,14 +169,14 @@ example (s0 : RecChainedState) (nul : Nat) (comp : Int) (s : RecChainedState)
             cellObsA s0 Dregg2.Apps.CompartmentWorkflowMandate.payAsset)
     (hrev : nul ∈ s.kernel.revoked)
     (hcomp : Dregg2.Apps.CompartmentWorkflowMandate.cwmInCompartment s.kernel comp)
-    (sched : SchedG) :
+    (sched : SchedG) (hsafe : Dregg2.Apps.CompartmentWorkflowMandateGated.SchedAnchorSafe sched) :
     ∀ n,
       Dregg2.Apps.CompartmentWorkflowMandate.cwmWF (trajG s sched n).kernel ∧
         cellObsA (trajG s sched n) Dregg2.Apps.CompartmentWorkflowMandate.payAsset =
           cellObsA s0 Dregg2.Apps.CompartmentWorkflowMandate.payAsset ∧
             nul ∈ (trajG s sched n).kernel.revoked ∧
               Dregg2.Apps.CompartmentWorkflowMandate.cwmInCompartment (trajG s sched n).kernel comp :=
-  cwm_safety_foreverG_via_contract s0 nul comp s hstep hpay hrev hcomp sched
+  cwm_safety_foreverG_via_contract s0 nul comp s hstep hpay hrev hcomp sched hsafe
 
 example (s0 : RecChainedState) (nul : Nat) (comp : Int) (s : RecChainedState)
     (hstep : Dregg2.Apps.CompartmentWorkflowMandate.cwmWF s.kernel)
@@ -183,14 +184,14 @@ example (s0 : RecChainedState) (nul : Nat) (comp : Int) (s : RecChainedState)
             cellObsA s0 Dregg2.Apps.CompartmentWorkflowMandate.payAsset)
     (hrev : nul ∈ s.kernel.revoked)
     (hcomp : Dregg2.Apps.CompartmentWorkflowMandate.cwmInCompartment s.kernel comp)
-    (sched : SchedG) :
+    (sched : SchedG) (hsafe : Dregg2.Apps.CompartmentWorkflowMandateGated.SchedAnchorSafe sched) :
     ∀ n,
       Dregg2.Apps.CompartmentWorkflowMandate.cwmWF (trajG s sched n).kernel ∧
         cellObsA (trajG s sched n) Dregg2.Apps.CompartmentWorkflowMandate.payAsset =
           cellObsA s0 Dregg2.Apps.CompartmentWorkflowMandate.payAsset ∧
             nul ∈ (trajG s sched n).kernel.revoked ∧
               Dregg2.Apps.CompartmentWorkflowMandate.cwmInCompartment (trajG s sched n).kernel comp :=
-  Dregg2.Apps.CompartmentWorkflowMandateGated.cwm_safety_forever s0 nul comp s hstep hpay hrev hcomp sched
+  Dregg2.Apps.CompartmentWorkflowMandateGated.cwm_safety_forever s0 nul comp s hstep hpay hrev hcomp sched hsafe
 
 /-! ## §5e — StorageGatewayMandate: `sgm_safety_forever` on `trajG`. -/
 
@@ -199,27 +200,29 @@ theorem sgm_safety_foreverG_via_contract (s0 : RecChainedState) (nul : Nat) (buc
     (hstep : Dregg2.Apps.StorageGatewayMandate.sgmWF s.kernel)
     (hpay : cellObsA s Dregg2.Apps.StorageGatewayMandate.payAsset = cellObsA s0 Dregg2.Apps.StorageGatewayMandate.payAsset)
     (hrev : nul ∈ s.kernel.revoked)
-    (hbucket : Dregg2.Apps.StorageGatewayMandate.sgmInBucket s.kernel bucket) (sched : SchedG) :
+    (hbucket : Dregg2.Apps.StorageGatewayMandate.sgmInBucket s.kernel bucket) (sched : SchedG)
+    (hsafe : Dregg2.Apps.StorageGatewayMandateGated.SchedAnchorSafe sched) :
     ∀ n,
       Dregg2.Apps.StorageGatewayMandate.sgmWF (trajG s sched n).kernel ∧
         cellObsA (trajG s sched n) Dregg2.Apps.StorageGatewayMandate.payAsset =
           cellObsA s0 Dregg2.Apps.StorageGatewayMandate.payAsset ∧
             nul ∈ (trajG s sched n).kernel.revoked ∧
               Dregg2.Apps.StorageGatewayMandate.sgmInBucket (trajG s sched n).kernel bucket :=
-  Dregg2.Apps.StorageGatewayMandateGated.sgm_safety_forever s0 nul bucket s hstep hpay hrev hbucket sched
+  Dregg2.Apps.StorageGatewayMandateGated.sgm_safety_forever s0 nul bucket s hstep hpay hrev hbucket sched hsafe
 
 example (s0 : RecChainedState) (nul : Nat) (bucket : Int) (s : RecChainedState)
     (hstep : Dregg2.Apps.StorageGatewayMandate.sgmWF s.kernel)
     (hpay : cellObsA s Dregg2.Apps.StorageGatewayMandate.payAsset = cellObsA s0 Dregg2.Apps.StorageGatewayMandate.payAsset)
     (hrev : nul ∈ s.kernel.revoked)
-    (hbucket : Dregg2.Apps.StorageGatewayMandate.sgmInBucket s.kernel bucket) (sched : SchedG) :
+    (hbucket : Dregg2.Apps.StorageGatewayMandate.sgmInBucket s.kernel bucket) (sched : SchedG)
+    (hsafe : Dregg2.Apps.StorageGatewayMandateGated.SchedAnchorSafe sched) :
     ∀ n,
       Dregg2.Apps.StorageGatewayMandate.sgmWF (trajG s sched n).kernel ∧
         cellObsA (trajG s sched n) Dregg2.Apps.StorageGatewayMandate.payAsset =
           cellObsA s0 Dregg2.Apps.StorageGatewayMandate.payAsset ∧
             nul ∈ (trajG s sched n).kernel.revoked ∧
               Dregg2.Apps.StorageGatewayMandate.sgmInBucket (trajG s sched n).kernel bucket :=
-  sgm_safety_foreverG_via_contract s0 nul bucket s hstep hpay hrev hbucket sched
+  sgm_safety_foreverG_via_contract s0 nul bucket s hstep hpay hrev hbucket sched hsafe
 
 /-! ## §5f — Cross-app composition: `agent_mandate_safety_forever` on `trajG`. -/
 
@@ -233,7 +236,7 @@ theorem agent_mandate_safety_foreverG_via_contract (s0 : RecChainedState) (nul :
     (hsgmPay : cellObsA s Dregg2.Apps.StorageGatewayMandate.payAsset =
                cellObsA s0 Dregg2.Apps.StorageGatewayMandate.payAsset)
     (hsgmBucket : Dregg2.Apps.StorageGatewayMandate.sgmInBucket s.kernel bucket)
-    (hrev : nul ∈ s.kernel.revoked) (sched : SchedG) :
+    (hrev : nul ∈ s.kernel.revoked) (sched : SchedG) (hsafe : DualSchedAnchorSafe sched) :
     ∀ n,
       Dregg2.Apps.CompartmentWorkflowMandate.cwmWF (trajG s sched n).kernel ∧
         cellObsA (trajG s sched n) Dregg2.Apps.CompartmentWorkflowMandate.payAsset =
@@ -242,7 +245,7 @@ theorem agent_mandate_safety_foreverG_via_contract (s0 : RecChainedState) (nul :
               Dregg2.Apps.CompartmentWorkflowMandate.cwmInCompartment (trajG s sched n).kernel comp ∧
                 Dregg2.Apps.StorageGatewayMandate.sgmWF (trajG s sched n).kernel ∧
                   Dregg2.Apps.StorageGatewayMandate.sgmInBucket (trajG s sched n).kernel bucket :=
-  agent_mandate_safety_forever s0 nul comp bucket s hcwm hcwmPay hcwmComp hsgm hsgmPay hsgmBucket hrev sched
+  agent_mandate_safety_forever s0 nul comp bucket s hcwm hcwmPay hcwmComp hsgm hsgmPay hsgmBucket hrev sched hsafe
 
 example (s0 : RecChainedState) (nul : Nat) (comp bucket : Int) (s : RecChainedState)
     (hcwm : Dregg2.Apps.CompartmentWorkflowMandate.cwmWF s.kernel)
@@ -253,7 +256,7 @@ example (s0 : RecChainedState) (nul : Nat) (comp bucket : Int) (s : RecChainedSt
     (hsgmPay : cellObsA s Dregg2.Apps.StorageGatewayMandate.payAsset =
                cellObsA s0 Dregg2.Apps.StorageGatewayMandate.payAsset)
     (hsgmBucket : Dregg2.Apps.StorageGatewayMandate.sgmInBucket s.kernel bucket)
-    (hrev : nul ∈ s.kernel.revoked) (sched : SchedG) :
+    (hrev : nul ∈ s.kernel.revoked) (sched : SchedG) (hsafe : DualSchedAnchorSafe sched) :
     ∀ n,
       Dregg2.Apps.CompartmentWorkflowMandate.cwmWF (trajG s sched n).kernel ∧
         cellObsA (trajG s sched n) Dregg2.Apps.CompartmentWorkflowMandate.payAsset =
@@ -263,7 +266,7 @@ example (s0 : RecChainedState) (nul : Nat) (comp bucket : Int) (s : RecChainedSt
                 Dregg2.Apps.StorageGatewayMandate.sgmWF (trajG s sched n).kernel ∧
                   Dregg2.Apps.StorageGatewayMandate.sgmInBucket (trajG s sched n).kernel bucket :=
   agent_mandate_safety_foreverG_via_contract s0 nul comp bucket s hcwm hcwmPay hcwmComp hsgm hsgmPay
-    hsgmBucket hrev sched
+    hsgmBucket hrev sched hsafe
 
 /-! ## §6 — Log monotonicity: tactics + contract on `trajG`. -/
 
