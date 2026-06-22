@@ -27,6 +27,19 @@ workspace. Six threads, each grounded by a 2026-06-22 explore-agent report (read
    heap/ext-field roots) + the light-client semantics of a deferred-witness turn (the known gap). SOUNDNESS:
    symbolic = structurally local/unpublishable (no verifyBatch artifact) — safe by inexpressibility; collapse
    is the ONLY witness path, and refinement guarantees it reproduces exactly what Full would witness.
+   ✅ BUILT (commit 2ee5b6be): turn/src/collapse.rs (WitnessMode{Full,Symbolic} + DEFERRED_STATE_HASH sentinel +
+   is_deferred + collapse/collapse_with + CollapseResult); TurnExecutor.witness_mode (AtomicU8, &self set/get,
+   default Full) + set_witness_mode/is_symbolic; execute.rs classical forest path defers pre/post Ledger::root()
+   under Symbolic (EXCEPT the proof-carrying sovereign path — its STARK binds the commitment, never deferred);
+   World (world.rs) gains witness_mode + a symbolic_turns buffer, commit_turn skips the replay-tape double-exec
+   AND the durable dual-write under Symbolic, World::collapse() materializes the buffer via the Full record path
+   + replaces deferred receipts with real ones + FAIL-CLOSED asserts collapsed-recorder-root == live-engine-root.
+   TESTS GREEN: turn/tests/integration_symbolic_collapse.rs 4/4 (applies-w/o-witness · collapse-reproduces-Full ·
+   Full-byte-identical · admission-NOT-relaxed soundness guard). RESIDUALS: (a) state.rs heap/ext-field eager
+   roots (set_field_ext/set_heap) NOT yet deferred — needs a Ledger::Pending-style mark-dirty refactor in the
+   `cell` crate (out of the turn/world file-set; noted in collapse.rs); fires only for ext-key/heap writes, not
+   the common transfer/cap path. (b) the cockpit runtime toggle (cockpit agent owns it). (c) the light-client
+   semantics of a deferred-witness turn = the known architectural gap (collapse before the publish boundary).
 2. UI ASYNC DECOUPLING. TIME-tab hang FIXED (this commit): was O(N²) replay_to-per-step on the paint path
    every frame → O(N) single-pass History::reversibility_classification. FOLLOW-UPS: cache TimeCockpitModel
    by (history.len,cursor,meta-depth); make tab-switch optimistic (move self.tab+notify now, defer witness_tab
