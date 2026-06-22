@@ -246,6 +246,24 @@ batches, then delete the feature once nobody references it. **Green at every ste
 - The pgrx `pg13`–`pg18` family is the one irreducible feature set — pgrx's ABI selection
   is forced by the framework; it stays.
 
+## POST-REORG MILESTONE — the Lean↔Rust FFI: JSON → binary → generated-direct
+
+Sequenced AFTER the cuts (it needs its single home first; not on the poison critical
+path). Today `dregg-lean-ffi/src/marshal.rs` (2800 L) hand-rolls **JSON strings** both
+directions (string-build + escape on one side, alloc + parse on the other) — maximally
+inefficient. The A-with-B reorg puts the ENTIRE FFI in one boundary crate, which is what
+makes fixing it tractable + careful (one audited place, not 9). The ladder:
+  1. **JSON → binary serde** (postcard over Lean `ByteArray`): ~5–20× cheaper, low risk
+     (serde both sides, layout-robust). The cheap first win.
+  2. **binary → generated-direct** (`lean_object*` walking — read Lean's real heap
+     representation via the runtime C API `lean_ctor_get`/`lean_unbox`/…; zero
+     serialization). The endgame. The two hazards (constructor-layout drift → UB; refcount
+     `inc`/`dec` safety) are mitigated by GENERATING the Rust accessors from the Lean type
+     defs (the compiler knows the layout) so they can't drift, all confined to the one
+     boundary crate.
+Honest note: the FFI boundary existing AT ALL is friction; this milestone makes it *cheap
+and careful*, not gone. Removing it entirely is a separate, much larger question.
+
 ## What "done" looks like
 
 No feature anywhere answers *"which part of dregg / which guarantee."* The surviving
