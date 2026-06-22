@@ -81,6 +81,31 @@ pane_group/dock) → Zed-in-deos (FirmamentFs) + terminal + Hermes (the desktop 
 
 
 
+
+### DESKTOP EPOCH — the FORWARD-DESIGN trilogy (2026-06-22, docs landed while the repo churns):
+Three design docs map "what's ahead", and ALL converge on one truth: THE HARD PARTS ALREADY EXIST — it's welds,
+not new foundations. deos is a DESIGNED system being realized, not invented.
+- docs/deos/APPS-AS-CELLS.md — DE-SILO: each app's durable core becomes a CELL, mutations become TURNS (cap-gated/
+  conserved/receipted/replayable), apps become Presentable VIEWS over ONE graph. Editor file=cell = a one-file
+  FirmamentFs fill-in; terminal "can't pay a witness per keystroke" = the ALREADY-BUILT WitnessMode::Symbolic +
+  collapse; hermes = the closed reference (tool-call→cap-gated turn); chat = membrane.rs (room=cell the gap);
+  buffer=Pijul-patch-graph with the DocMerge correctness theorem ALREADY LANDED (metatheory/Dregg2/Deos/DocMerge.lean).
+  The membrane spans apps because it's a generic world-fork frustum, not a chat type.
+- docs/deos/DEOS-DISTRIBUTION.md — SELF-CONTAINED: YES. One bundle = cockpit+ide+terminal+chat+hermes+web-shell+
+  executor+firmament+compositor+a durable redb image. Two targets, one codebase: (a) host app-bundle (confined
+  host-PDs via sandbox.rs) + (b) seL4 deos.img (PD set + CapDL). The CockpitSurface adapters already exist
+  (editor/terminal/chat); an app-as-confined-host-PD IS the seL4 PD's host stub (same model). "the image IS your
+  world" — portable; persistence weld = WORLD-PERSISTENCE-PLAN.md. Two native Windows bundles already shipped by hand.
+- docs/deos/HOST-AND-CONTAINER-BRIDGES.md — ADVANCED NON-SEL4 FIRMAMENT: a host bridge = the Phase-0 sandbox
+  mechanism READ BACKWARDS (deny-per-PD → grant-per-cap; "the sandbox said no to the whole host — the bridge says
+  yes, but only this, and signed"). 4 new Target kinds (HostFile/Socket/Device/Process) + a HostBridgeBacking
+  sibling of HostPdBacking; a CONTAINER = a cell, lifecycle = cap-gated turns (youki/bollard runtimes). A
+  seL4-trailblaze table: every Target swaps its backing, cap model UNCHANGED. Phased H0(host-dir read-cap)→C2.
+THE deos PICTURE these complete: ONE cap-secure cell graph (executor) + firmament (caps across distance + OS-
+enforced isolation + host/container bridges) + compositor/WM (the desktop) + apps as confined-PD VIEWS over the
+graph + membrane/merge (multiplayer time-travel) + symbolic mode (speed) = a self-contained, portable, verifiable,
+multiplayer, self-hosting OS. Integration pass (wire terminal/zed/chat panes + shared_fork + full build + shot)
+GATED on dregg-cell churn + the cockpit.rs split settling.
 ### DESKTOP EPOCH — deos-chat: the rehydratable-membrane multiplayer layer (ember 2026-06-22):
 THE VISION (ember→spwashi): a screenshot/message embeds a "frustum-culled rehydratable MEMBRANE" = a cap-bounded
 FORK of the deos world at the capture moment; recipients rehydrate it + drive real turns (live MULTIPLAYER);
