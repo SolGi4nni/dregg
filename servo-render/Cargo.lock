@@ -8919,8 +8919,6 @@ dependencies = [
 [[package]]
 name = "stylo_derive"
 version = "0.15.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "338d14b4375657058b395afcf11bee2fc22a77e9d80f66ee863b617b38d4319a"
 dependencies = [
  "darling 0.20.11",
  "proc-macro2",

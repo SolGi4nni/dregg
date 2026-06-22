@@ -159,6 +159,17 @@ glow = { version = "0.16", optional = true }
 ark-serialize = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
 ark-serialize-derive = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
 
+# THE stylo FORK PATCH — stylo's `ToCss` derive (`stylo_derive`) emits a `to_css`
+# body whose `?` operators rely on an implicit `From` into `core::fmt::Error`. On
+# recent nightlies, a coherently-in-scope `From<_> for core::fmt::Error` (here
+# `serde_fmt::Error`, pulled transitively via `value-bag-serde1` ← log/tracing in
+# the cockpit's graph) makes that residual-source type ambiguous → ~30
+# E0282/E0283 in every `#[derive(ToCss)]` generic type. The fork pins the
+# residual error type to `core::fmt::Error`, defeating the ambiguity. Same crate
+# version (0.15.0) so it unifies with servo's pinned stylo family. Reverts once
+# upstream stylo carries the fix. See `emberian/stylo@ember-nightly-fix`.
+stylo_derive = { path = "../../stylo/style_derive" }
+
 [patch."https://github.com/emberian/plonky3-recursion"]
 p3-recursion = { path = "../../plonky3-recursion/recursion" }
 p3-circuit = { path = "../../plonky3-recursion/circuit" }

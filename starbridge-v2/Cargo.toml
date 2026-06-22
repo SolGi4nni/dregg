@@ -63,6 +63,20 @@ pathfinder_simd = { path = "vendor/pathfinder_simd" }
 ark-serialize = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
 ark-serialize-derive = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
 
+# THE stylo FORK PATCH — load-bearing for `web-shell` (→ servo-render/libservo →
+# servo → stylo). stylo's `ToCss` derive (`stylo_derive`) emits a `to_css` body
+# whose `?` operators rely on an implicit `From` into `core::fmt::Error`. THIS
+# workspace's dep graph pulls `serde_fmt` (via `value-bag-serde1` ← log/tracing),
+# whose `impl From<serde_fmt::Error> for core::fmt::Error` makes the `?` residual
+# source type ambiguous on recent nightlies → ~30 E0282/E0283 in every
+# `#[derive(ToCss)]` generic stylo type (servo-render alone does NOT pull
+# serde_fmt, so its libservo build is unaffected — only the full cockpit graph
+# trips it). The fork pins the residual error type to `core::fmt::Error`,
+# defeating the ambiguity. Same version (0.15.0) so it unifies with servo's
+# pinned stylo family. Reverts once upstream stylo carries the fix. Fork:
+# `emberian/stylo@ember-nightly-fix`. (servo-render/Cargo.toml replicates this.)
+stylo_derive = { path = "../../stylo/style_derive" }
+
 # THE PLONKY3-RECURSION FORK PATCH — load-bearing for the `embedded-executor`
 # feature. `dregg-circuit` (pulled transitively via dregg-turn/dregg-sdk)
 # references the recursion-fork-only `NativeBatchStark` variant + the

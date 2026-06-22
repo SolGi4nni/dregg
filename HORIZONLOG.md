@@ -144,9 +144,12 @@ timeline/composer-as-real-Input); design the membrane+merge seam. The chat is th
   `ToCss`-derive `?`-residual source type ambiguous on rolling nightly (rustc 1.98, 2026-06-12) → ~30
   E0282/E0283 across `#[derive(ToCss)]` generic types. NOTE servo-render's libservo build alone does NOT
   trip it (no serde_fmt in its graph) — only the full native-full cockpit does; and it does NOT reproduce on
-  the root nightly-2026-01-01. FIX = fork `emberian/stylo@ember-nightly-fix` (off v0.15.0, commit 3f869dfb2):
-  wrap each generated `to_css` body in a closure with explicit `Result<(), core::fmt::Error>` so the residual
-  is pinned (no semantic change). Wired as `[patch.crates-io] stylo_derive = { path = "../../stylo/style_derive" }`
+  the root nightly-2026-01-01. ROOT CAUSE = the `ToCss` derive emits inner blocks
+  `{ let mut writer = SequenceWriter::new(..); ...; Ok(()) }?;` whose trailing `Ok(())` has an UNCONSTRAINED
+  error type; the enclosing `?` then can't infer its residual source under the foreign From-impl. FIX = fork
+  `emberian/stylo@ember-nightly-fix` (off v0.15.0, commit abc53ac61): pin the two `?`-consumed `Ok(())` sites
+  in `style_derive/to_css.rs` to `Ok::<(), core::fmt::Error>(())` (no semantic change — same success value,
+  explicit error type). Wired as `[patch.crates-io] stylo_derive = { path = "../../stylo/style_derive" }`
   in BOTH servo-render/Cargo.toml and starbridge-v2/Cargo.toml (each is its own workspace; stylo_derive is the
   only stylo-family crate the macro lives in, so one patch suffices — same 0.15.0 version unifies with servo's
   pin). CLOSURE = drop the `[patch]` lines + the fork when upstream stylo carries the fix (or the toolchain
@@ -4283,3 +4286,34 @@ refused).
 ###   dregg-firmament's Target enum; non-exhaustive match, E0004) — NOT my file-set, not caused by this change. The
 ###   cockpit-integration agent owns cockpit.rs; Input API in the handoff: InputState (Entity model) .placeholder()/
 ###   .masked(true) + TextInput::new(&state) element, InputEvent::{Change,PressEnter} for submit.
+
+### EXECUTOR⟺SPEC COVENANT widened (the SUBSTANTIAL_FAKERY audit fulcrum). Three strands, all green:
+###   (1) THE DENOTATIONAL CENSUS — `turn/tests/lean_state_producer_denotational_census.rs`: one honest
+###   committing turn per root-agreeing effect through BOTH producers, asserting full ledger agreement
+###   (balances/nonces/state-fields/cap_root/.root()) AND the conservation invariant (scalar total supply
+###   = deployed projection of §MA-scalar) on BOTH ledgers. 19 census tests (was a 2-effect spot-check):
+###   Transfer/SetField/IncrementNonce/EmitEvent/SetPermissions/SetVerificationKey/NoteCreate/CellSeal/
+###   CellUnseal/CellDestroy/MakeSovereign/GrantCapability/AttenuateCapability/Introduce/RevokeDelegation/
+###   RefreshDelegation/RevokeCapability + a non-vacuous conservation tooth. NAMED RESIDUALS (each WHY):
+###   NoteSpend (needs a real STARK proof — only the proofless reject agreement exists), Burn (W1
+###   issuer-supply has no conserving scalar image — verified producer refuses until the well migration).
+###   (2) SCALAR↔PER-ASSET refinement PROVED axiom-clean (`Dregg2/Exec/TurnExecutorFull.lean §MA-scalar`):
+###   `execFullTurnA_conserves_scalar`/`execFullA_conserves_scalar` — the deployed single-asset scalar
+###   conservation is the `b := a₀` specialization of the per-asset `execFullTurnA_conserves_exact`; the
+###   deployed scalar model is sound BECAUSE it is one column of the proven per-asset executor (propext/
+###   Classical.choice/Quot.sound only; `#assert_namespace_axioms Dregg2.Exec.TurnExecutorFull` still clean).
+###   (3) THE REFRESH-DELEGATION RESIDUAL the census surfaced is now CLOSED (not just named). Root cause:
+###   the kernel `delegate` parent-pointer was NEVER carried on the wire, so the verified
+###   `refreshDelegationChainA` `(delegate child).isSome` precondition could never be met from a
+###   reconstituted pre-state. FIX = a new 12th WState field `delegate` (`WState.delegate` /
+###   `WireState.delegate`, `[child,parent]` pairs) ACROSS the FFI seam — FFI.lean (struct/encode/parse/
+###   stateOfWState/wstateOfState) + Rust marshal.rs (struct/sentinel/encode/parse) + the golden
+###   regenerated from the proved Lean codec (`marshal_conformance` GREEN byte-for-byte incl. the non-empty
+###   `[[2,0]]` case) + `build_pre_ledger` parent-closure (pull each cell's delegation parent into the wire)
+###   + `lean_apply::StateOp::RefreshDelegation` (replay `apply_refresh_delegation`'s DelegatedRef install,
+###   forge-antibody + `current_timestamp`-stamped `refreshed_at` so the commitment-bound field matches).
+###   `ShadowHostCtx` gained `current_timestamp`. VERIFIED GREEN: census 19/19, differential/widen/coverage,
+###   rust_lean_divergence_finder (5), proptest (1), dregg-lean-ffi suite, Dregg2.Claims (4116 jobs, FFI
+###   wire-codec refinement theorems still prove). NOTE concurrent swarm WIP broke circuit/src/binding.rs
+###   (8-felt presentation-tag campaign, NOT my file-set) — blocks the dregg-node build only; my dregg-turn/
+###   dregg-lean-ffi/Lean scope is clean. NOT committed (per directive).
