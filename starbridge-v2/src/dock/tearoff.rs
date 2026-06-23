@@ -280,3 +280,85 @@ impl WindowRegistry {
         before - self.torn.len()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The LOGIC-LEVEL invariants of the tear-off registry that do NOT need a live
+    /// window: a fresh registry is empty, reports no surface torn off, and hands
+    /// back no handle. These are the migration's bookkeeping pre-conditions — the
+    /// state the `tear_off` → `pop_back` cycle moves through — and they compile +
+    /// run in the headless suite (no gpui `App`/`Window` required).
+    #[test]
+    fn fresh_registry_is_empty_and_holds_no_surface() {
+        let reg = WindowRegistry::new();
+        assert_eq!(reg.len(), 0);
+        assert!(reg.is_empty());
+        assert!(!reg.is_torn_off(SurfaceId(0)));
+        assert!(!reg.is_torn_off(SurfaceId(7)));
+        assert!(reg.handle(SurfaceId(7)).is_none());
+    }
+
+    /// The FULL tear-off cycle over a live (headless) gpui `App`: `tear_off` an id
+    /// registers a 2nd window handle keyed by the SAME `SurfaceId`; a second
+    /// `tear_off` of that id is idempotent (re-activates, does NOT duplicate —
+    /// `len` stays 1, the handle is the same window); `pop_back` removes it and the
+    /// registry is empty again, with identity (the `SurfaceId`) preserved
+    /// throughout. Gated on `render-capture` (gpui `test-support`'s
+    /// `HeadlessAppContext` — the same headless app the cockpit bake uses), so it
+    /// runs wherever the offscreen renderer is available.
+    #[cfg(feature = "render-capture")]
+    #[test]
+    fn tear_off_registers_pop_back_removes_identity_preserved() {
+        use gpui::{AppContext, HeadlessAppContext, PlatformTextSystem};
+        use gpui_wgpu::CosmicTextSystem;
+        use std::borrow::Cow;
+        use std::sync::Arc;
+
+        // The headless text system needs real font bytes registered (the same weld
+        // the cockpit bake does at `main.rs`), else shaping the torn-off chrome
+        // label panics resolving `.SystemUIFont`.
+        static LILEX: &[u8] = include_bytes!("../../assets/fonts/Lilex-Regular.ttf");
+        static IBM_PLEX: &[u8] = include_bytes!("../../assets/fonts/IBMPlexSans-Regular.ttf");
+        let text_system: Arc<dyn PlatformTextSystem> =
+            Arc::new(CosmicTextSystem::new_without_system_fonts("Lilex"));
+        text_system
+            .add_fonts(vec![Cow::Borrowed(LILEX), Cow::Borrowed(IBM_PLEX)])
+            .expect("register headless fonts");
+        let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(()), || {
+            gpui_platform::current_headless_renderer()
+        });
+
+        let id = SurfaceId(42);
+
+        cx.update(|cx| {
+            let mut reg = WindowRegistry::new();
+            assert!(reg.is_empty());
+
+            // TEAR OFF: a fresh OS window is minted, keyed by `id` (the identity).
+            let h1 = reg
+                .tear_off(id, "the torn-off surface", |_w, _cx| div().into_any_element(), cx)
+                .expect("headless tear-off opens a window");
+            assert_eq!(reg.len(), 1);
+            assert!(reg.is_torn_off(id));
+            assert_eq!(reg.handle(id), Some(h1));
+
+            // IDEMPOTENT: a 2nd tear-off of the SAME id does not duplicate — the
+            // surface identity is one-window; the same handle comes back.
+            let h2 = reg
+                .tear_off(id, "the torn-off surface", |_w, _cx| div().into_any_element(), cx)
+                .expect("re-tear-off re-activates");
+            assert_eq!(reg.len(), 1, "no duplicate window for the same surface id");
+            assert_eq!(h1, h2, "the same window handle (identity preserved)");
+
+            // POP BACK: the window closes, the entry drops; identity unchanged
+            // (the same `id` keyed it in and out).
+            assert!(reg.pop_back(id, cx), "pop_back closes the torn-off window");
+            assert_eq!(reg.len(), 0);
+            assert!(!reg.is_torn_off(id));
+            // A second pop-back is a no-op (nothing to close).
+            assert!(!reg.pop_back(id, cx));
+        });
+    }
+}

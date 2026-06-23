@@ -36,6 +36,16 @@ pub mod surface;
 // dependency); the cockpit drives it through a stored render callback.
 pub mod tearoff;
 
+// SURFACE MIGRATION (the `migrate(surface_cap, target)` verb): relocate a surface
+// CAP along the firmament distance axis — the Local→HostPd leg of
+// `docs/deos/SURFACE-MIGRATION.md` §2(b). The re-mint + the attenuating gate are
+// real here; the live present re-home is the named remaining compositor seam.
+// gpui-free in body (depends only on the firmament + the surface cap), but lives
+// under `dock/` next to its tear-off sibling; gated on `embedded-executor`, which
+// brings in `crate::surface::SurfaceCapability` + the `dregg_firmament` cap types.
+#[cfg(feature = "embedded-executor")]
+pub mod migrate;
+
 // The self-hosting dev-loop surfaces (the light, gpui-native ones): a real editor
 // + a real terminal as dock panes, so deos development happens INSIDE deos. Chat
 // (matrix-rust-sdk's heavy async tree) is deliberately NOT statically linked here —
@@ -55,5 +65,7 @@ pub use pane_group::{
     ActivePaneDecorator, Member, PaneAxis, PaneGroup, PaneLeaderDecorator, SplitDirection,
     HANDLE_HITBOX_SIZE,
 };
+#[cfg(feature = "embedded-executor")]
+pub use migrate::{migrate, MigrateError, MigrationTarget};
 pub use surface::{CockpitSurface, SurfaceId};
 pub use tearoff::{TornOffWindow, TornSurfaceId, WindowRegistry};
