@@ -34,8 +34,8 @@ use crate::cockpit::Cockpit;
 use crate::views::theme;
 use starbridge_v2::reflect;
 use starbridge_v2::session::{
-    demo_identities, provision_system_principal, DemoIdentity, IdentityKind, LoginManager,
-    LoginOutcome, Session,
+    demo_identities, open_session_world, provision_system_principal, session_base_dir, DemoIdentity,
+    IdentityKind, LoginManager, LoginOutcome, Session,
 };
 use starbridge_v2::world::{self, World};
 
@@ -103,15 +103,35 @@ impl LoginSurface {
             return;
         };
 
-        // LOGIN — derive the root cell (mint on first login) + grant the template
-        // FROM the system principal, each a real attenuating turn the executor
-        // re-checks. The resulting root-cell c-list IS the session.
-        let template = identity.template(self.anchors);
-        let outcome = {
-            let mut w = self.world.borrow_mut();
-            self.manager.login(&mut w, principal, &template)
-        };
-        let session = match outcome {
+        // OPEN THE PER-USER DURABLE WORLD — SESSION RESUME (Houyhnhnm orthogonal
+        // persistence). The session runs over the principal's OWN durable image
+        // (`deos-session-<root>.redb`), not the shared boot/demo world: on first
+        // login it is provisioned (anchors + system principal, durably mirrored);
+        // on a relaunch `World::open` recovers the exact cell graph + balances +
+        // history. The shared `Rc<RefCell<World>>` the cockpit renders is swapped
+        // to it, so the cockpit renders the resumed image.
+        let base_dir = session_base_dir();
+        // The demo / desktop image meters free (matching `World::new`), so the
+        // per-user durable image opens under the same zero-cost model (the receipts
+        // re-derive bit-identically only under the cost model the image was made
+        // with — zero here, the demo desktop's).
+        let costs = dregg_turn::ComputronCosts::zero();
+        let (mut user_world, anchors, manager, fresh) =
+            match open_session_world(&base_dir, &principal, costs) {
+                Ok(t) => t,
+                Err(e) => {
+                    self.message = Some(format!("could not open your durable image: {e}"));
+                    cx.notify();
+                    return;
+                }
+            };
+
+        // LOGIN, RESUMABLE — resume a live durable session if the image carries
+        // one (no re-grant), else run the full grant ceremony FROM the per-user
+        // system principal and persist the session record. A revoked record does
+        // NOT resume (it re-runs the ceremony — the logout darkening is honored).
+        let template = identity.template(anchors);
+        let session = match manager.login_resumable(&mut user_world, principal, &template) {
             LoginOutcome::Session(s) => s,
             LoginOutcome::Denied { reason } => {
                 self.message = Some(format!("login refused: {reason}"));
@@ -120,19 +140,23 @@ impl LoginSurface {
             }
         };
 
+        // Swap the shared world to the principal's durable image — the cockpit the
+        // session shell builds renders THIS image (resumed or freshly provisioned).
+        *self.world.borrow_mut() = user_world;
+
         // SUCCESS — transition to the session. Swap the window root to the cockpit
-        // over the SAME shared world, wrapped in the session shell (the logout
-        // action + the principal banner). Hand the pending seed + node into the
-        // cockpit, and the manager/identity so logout can re-open this surface.
+        // over the (now per-user durable) shared world, wrapped in the session
+        // shell. The demo seed turns run ONLY on a FRESH image (a relaunch resumes
+        // its real history, so the illustrative seed must not re-run / mismatch the
+        // per-user anchors); carry the base dir so logout writes the revoked record.
         let world = self.world.clone();
-        let anchors = self.anchors;
-        let seed = self.seed.take();
+        let seed = if fresh { self.seed.take() } else { None };
         let node_url = self.node_url.clone();
-        let manager = self.manager.clone();
         let identities = self.identities.clone();
 
         SessionShell::open(
             window, cx, world, anchors, seed, node_url, manager, identities, session, identity,
+            base_dir,
         );
     }
 
@@ -258,6 +282,9 @@ pub struct SessionShell {
     identities: Vec<DemoIdentity>,
     session: Session,
     identity: DemoIdentity,
+    /// The deos image root dir — where the principal's durable session image lives,
+    /// so logout can write the REVOKED record into it (SESSION RESUME).
+    base_dir: std::path::PathBuf,
     focus: FocusHandle,
 }
 
@@ -278,6 +305,7 @@ impl SessionShell {
         identities: Vec<DemoIdentity>,
         session: Session,
         identity: DemoIdentity,
+        base_dir: std::path::PathBuf,
     ) {
         let world_for_root = world.clone();
         let node_for_root = node_url.clone();
@@ -285,6 +313,7 @@ impl SessionShell {
         let identities_for_root = identities.clone();
         let session_for_root = session.clone();
         let identity_for_root = identity.clone();
+        let base_dir_for_root = base_dir.clone();
 
         let shell = window.replace_root(cx, |window, cx| {
             // Build the cockpit over the SAME shared world the login provisioned —
@@ -311,6 +340,7 @@ impl SessionShell {
                 identities: identities_for_root,
                 session: session_for_root,
                 identity: identity_for_root,
+                base_dir: base_dir_for_root,
                 focus,
             }
         });
@@ -361,7 +391,18 @@ impl SessionShell {
     fn logout(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         {
             let mut w = self.world.borrow_mut();
-            self.manager.logout(&mut w, &self.session);
+            // DURABLE LOGOUT — revoke the cap-tree AND stamp the durable session
+            // record REVOKED, so a relaunch does NOT silently resume this session
+            // (SESSION RESUME's load-bearing security property). Then flush a
+            // checkpoint so the revoked record + the darkened tree are on disk.
+            self.manager.logout_durable(&mut w, &self.session);
+            w.checkpoint_now();
+            // RELEASE THE DURABLE HANDLE — redb is single-writer per file, so the
+            // per-user image must be closed before a re-login (same identity) can
+            // reopen it. Swap in a fresh ephemeral world; the next `login_as` opens
+            // the durable image afresh (which then RESUMES the revoked→re-granted
+            // session). The committed history stays on disk; this only drops RAM.
+            *w = World::new();
         }
         let world = self.world.clone();
         let anchors = self.anchors;

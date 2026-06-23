@@ -346,6 +346,187 @@ impl LoginManager {
 }
 
 // ===========================================================================
+// SESSION RESUME — Houyhnhnm orthogonal persistence: a logged-in session is
+// DURABLE. Login persists a SESSION RECORD (the principal + the granted c-list
+// snapshot) into the per-user image's redb store; a relaunch RESTORES it without
+// re-running the full grant ceremony. Logout overwrites the record with a REVOKED
+// marker — so a revoked session must NOT silently resume.
+// (`docs/deos/SESSION-LOGIN.md`; the persistence spine is `crate::persistence`.)
+// ===========================================================================
+
+/// **The durable SESSION RECORD** — the snapshot login writes into the per-user
+/// image's redb store so a relaunch can RESTORE the session without re-running the
+/// grant ceremony. It is the session's identity (principal + root cell) + its
+/// c-list snapshot (`granted`), plus a `revoked` flag logout sets.
+///
+/// Serialized with postcard (the same codec the durable commit log + genesis
+/// table use). It is NOT the authority — the authority is the live cap-tree on the
+/// root cell in the recovered ledger. The record is the lookup that says "this
+/// image belongs to principal P, whose session held these caps"; resume
+/// CROSS-CHECKS it against the live ledger (a revoked-or-dark tree does not
+/// resume), so a tampered record cannot manufacture authority.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SessionRecord {
+    /// The authenticated principal's public key (the identity; the root cell is
+    /// its content-address under [`ROOT_TOKEN`]).
+    pub pubkey: [u8; 32],
+    /// The session root — the principal's identity cell.
+    pub root_cell: CellId,
+    /// The c-list snapshot the login ceremony left (`(target, slot, rights)`).
+    pub granted: Vec<(CellId, u32, AuthRequired)>,
+    /// `true` once LOGOUT revoked the session — a revoked record does NOT resume.
+    pub revoked: bool,
+}
+
+impl SessionRecord {
+    /// Capture the durable record for a freshly-established (live) session.
+    pub fn of(session: &Session) -> Self {
+        SessionRecord {
+            pubkey: session.principal.pubkey,
+            root_cell: session.root_cell,
+            granted: session.granted.clone(),
+            revoked: false,
+        }
+    }
+
+    /// Encode to the opaque blob stored in the image (postcard).
+    pub fn encode(&self) -> Vec<u8> {
+        // A hand-rolled, dependency-free postcard-equivalent is avoided: the codec
+        // must round-trip exactly, so use the workspace `postcard` the rest of the
+        // persistence spine uses.
+        postcard::to_stdvec(&Encodable::from(self)).unwrap_or_default()
+    }
+
+    /// Decode from the opaque blob (returns `None` on a corrupt/empty record —
+    /// fail-closed: a record that does not decode does NOT resume).
+    pub fn decode(bytes: &[u8]) -> Option<Self> {
+        postcard::from_bytes::<Encodable>(bytes).ok().map(Into::into)
+    }
+
+    /// Reconstruct the in-RAM [`Session`] this record describes (no receipts —
+    /// they are durable in the image's commit log, not carried in the record).
+    pub fn to_session(&self) -> Session {
+        Session {
+            principal: Principal { pubkey: self.pubkey },
+            root_cell: self.root_cell,
+            granted: self.granted.clone(),
+            receipts: Vec::new(),
+        }
+    }
+}
+
+/// The on-disk shape of a [`SessionRecord`] — a plain serde struct over the
+/// already-`Serialize` field types (`AuthRequired`/`CellId` derive it), so the
+/// record codec is exactly the workspace postcard the rest of persistence uses.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct Encodable {
+    pubkey: [u8; 32],
+    root_cell: CellId,
+    granted: Vec<(CellId, u32, AuthRequired)>,
+    revoked: bool,
+}
+
+impl From<&SessionRecord> for Encodable {
+    fn from(r: &SessionRecord) -> Self {
+        Encodable {
+            pubkey: r.pubkey,
+            root_cell: r.root_cell,
+            granted: r.granted.clone(),
+            revoked: r.revoked,
+        }
+    }
+}
+
+impl From<Encodable> for SessionRecord {
+    fn from(e: Encodable) -> Self {
+        SessionRecord {
+            pubkey: e.pubkey,
+            root_cell: e.root_cell,
+            granted: e.granted,
+            revoked: e.revoked,
+        }
+    }
+}
+
+// SESSION RESUME is a NATIVE desktop feature — the durable per-user image lives in
+// redb (`dregg-persist`, native-only). The browser/wasm image is always ephemeral
+// (no `World::session_blob`/`put_session_blob`), so the resumable surface is gated
+// off wasm; the plain `login`/`logout` ceremony above is unconditional.
+#[cfg(not(target_arch = "wasm32"))]
+impl LoginManager {
+    /// **LOGIN, RESUMABLE** — the SESSION-RESUME ceremony over a DURABLE image.
+    ///
+    /// The Houyhnhnm property, made operable: a logged-in session survives a
+    /// relaunch. This wraps [`LoginManager::login`] / resume with the per-user
+    /// image's durable session record:
+    ///
+    /// 1. If the image carries a LIVE (non-revoked) session record for this
+    ///    principal whose cap-tree is STILL reachable in the recovered ledger →
+    ///    RESUME it: reconstruct the [`Session`] from the record, run NO grant
+    ///    ceremony (the caps are already durably in the ledger). This is the
+    ///    second-login / relaunch path.
+    /// 2. Otherwise (fresh image, a record for a different principal, a revoked
+    ///    record, or a dark tree) → run the full [`LoginManager::login`] ceremony,
+    ///    then PERSIST the resulting session record. This is the first login.
+    ///
+    /// A REVOKED record never resumes (`revoked == true` ⟹ re-run the ceremony,
+    /// which re-grants a fresh live tree) — the load-bearing security property:
+    /// logout darkened the tree, and a relaunch must not silently bring it back
+    /// without a fresh authenticated grant.
+    pub fn login_resumable(
+        &self,
+        world: &mut World,
+        principal: Principal,
+        template: &CapTemplate,
+    ) -> LoginOutcome {
+        let root_cell = principal.root_cell();
+
+        // RESUME path: a durable session record present, for THIS principal, NOT
+        // revoked, whose granted tree is still live in the recovered ledger.
+        if let Some(record) = world.session_blob().and_then(|b| SessionRecord::decode(&b)) {
+            if record.pubkey == principal.pubkey && record.root_cell == root_cell && !record.revoked
+            {
+                let session = record.to_session();
+                // Cross-check against the live ledger: the resume is only legitimate
+                // if the cap-tree the record describes is STILL held. A dark tree
+                // (e.g. an out-of-band revoke) falls through to a fresh ceremony.
+                if session.is_live(world) {
+                    return LoginOutcome::Session(session);
+                }
+            }
+        }
+
+        // FIRST-LOGIN (or revoked / dark / foreign record) path: run the real grant
+        // ceremony (the mint + per-entry grant turns dual-write into the durable
+        // image, so the cap-tree itself SURVIVES a reopen — recovery re-executes
+        // them), then persist the session RECORD so the NEXT launch resumes it.
+        // Persistence is the default for a logged-in durable session — no save button.
+        match self.login(world, principal, template) {
+            LoginOutcome::Session(session) => {
+                world.put_session_blob(&SessionRecord::of(&session).encode());
+                LoginOutcome::Session(session)
+            }
+            denied => denied,
+        }
+    }
+
+    /// **LOGOUT, DURABLE** — revoke the session root (the cap-tree goes dark) AND
+    /// write a REVOKED session record into the durable image, so a relaunch does
+    /// NOT silently resume the revoked session ([`LoginManager::login_resumable`]
+    /// skips a revoked record). Returns the number of caps revoked.
+    pub fn logout_durable(&self, world: &mut World, session: &Session) -> usize {
+        // The revoke turns dual-write durably (the darkened cap-tree survives a
+        // reopen — recovery re-executes the revokes), AND the durable session record
+        // is stamped REVOKED so `login_resumable` will not resume it on a relaunch.
+        let revoked = self.logout(world, session);
+        let mut record = SessionRecord::of(session);
+        record.revoked = true;
+        world.put_session_blob(&record.encode());
+        revoked
+    }
+}
+
+// ===========================================================================
 // THE DEOS LOGIN CEREMONY — the provisioning + identity seeds the RUNNING login
 // surface drives. These are gpui-free so `cargo test` exercises the EXACT flow
 // the (gpui-gated) `crate::login` surface runs on click: a real grant turn from
@@ -372,6 +553,125 @@ pub fn provision_system_principal(world: &mut World, resources: &[CellId]) -> Ce
             .expect("the system principal's c-list has a free slot per resource");
     }
     world.genesis_install(sys)
+}
+
+// ===========================================================================
+// THE PER-USER DURABLE SESSION WORLD — the boot wire for SESSION RESUME.
+// ===========================================================================
+
+/// The fixed genesis seeds the per-user session world provisions its anchor cells
+/// at. They are CONSTANT (not random) so the anchor ids are DETERMINISTIC across
+/// launches — the same content-addressed `[treasury, service, user]` ids every
+/// time — which is what lets a relaunch recover the SAME anchors from the durable
+/// store and reconstruct the SAME session cap-tree.
+const ANCHOR_SEEDS: [u8; 3] = [0x11, 0x22, 0x33];
+
+/// The deos image ROOT directory — where per-user session images live. Honors
+/// `$DREGG_DEOS_DIR` (the deployment / test override), else `$XDG_DATA_HOME/deos`,
+/// else `$HOME/.local/share/deos`, else the OS temp dir. Created on first use.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn session_base_dir() -> std::path::PathBuf {
+    if let Ok(dir) = std::env::var("DREGG_DEOS_DIR") {
+        return std::path::PathBuf::from(dir);
+    }
+    if let Ok(xdg) = std::env::var("XDG_DATA_HOME") {
+        return std::path::PathBuf::from(xdg).join("deos");
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        return std::path::PathBuf::from(home).join(".local/share/deos");
+    }
+    std::env::temp_dir().join("deos")
+}
+
+/// The durable image FILE for `principal` under the deos image root `base_dir`:
+/// `base_dir/deos-session-<root-cell-hex>.redb`, keyed by the principal's root
+/// cell id (its content-address). Each inhabitant gets their OWN sovereign image
+/// — distinct keys → distinct files → independent resume, never crossed.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn session_world_path(base_dir: &std::path::Path, principal: &Principal) -> std::path::PathBuf {
+    let hex: String = principal
+        .root_cell()
+        .as_bytes()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    base_dir.join(format!("deos-session-{hex}.redb"))
+}
+
+/// **Open (or create) a principal's DURABLE per-user session world**, provisioning
+/// its desktop anchors + system principal on first launch and recovering them on a
+/// relaunch — the boot half of SESSION RESUME.
+///
+/// On a FRESH image (first ever launch for this principal) it installs the three
+/// deterministic anchor cells `[treasury, service, user]` + an issuer well + the
+/// **system principal** holding full caps over the anchors, all via the genesis
+/// path (which the durable image MIRRORS, so they survive a reopen). On a RELAUNCH
+/// it [`World::open`]s the image — the anchors, system principal and any committed
+/// turns recover to exactly where they were closed (the Houyhnhnm property) — and
+/// the deterministic seeds re-derive the SAME anchor ids, so the recovered
+/// `LoginManager` + anchors line up with the durable cap-tree.
+///
+/// Returns the opened world, the `[treasury, service, user]` anchors, the
+/// [`LoginManager`] over the (recovered or freshly-provisioned) system principal,
+/// and `fresh` = whether this launch provisioned a brand-new image (so the caller
+/// knows whether to run the demo seed turns — only on a fresh image).
+#[cfg(not(target_arch = "wasm32"))]
+pub fn open_session_world(
+    base_dir: &std::path::Path,
+    principal: &Principal,
+    costs: dregg_turn::ComputronCosts,
+) -> Result<(World, [CellId; 3], LoginManager, bool), crate::persistence::OpenError> {
+    let path = session_world_path(base_dir, principal);
+    let _ = std::fs::create_dir_all(base_dir);
+    let mut world = World::open(&path, costs)?;
+
+    // The deterministic anchor ids — content-addresses of the fixed seeds, the
+    // SAME on a fresh provision and on a recovered image.
+    let [s_treasury, s_service, s_user] = ANCHOR_SEEDS;
+    let anchors = [anchor_id(s_treasury), anchor_id(s_service), anchor_id(s_user)];
+
+    // FRESH iff the recovered image has no anchor cells yet (an empty store opens
+    // to a genesis-empty World). On a relaunch every cell (anchors + the
+    // cap-carrying system principal + the session's granted root cell) is RECOVERED
+    // from the durable image — the Houyhnhnm property: exactly where it was closed.
+    let fresh = world.ledger().get(&anchors[0]).is_none();
+    if fresh {
+        // FIRST LAUNCH: provision the desktop anchors (value cells) + the system
+        // principal (the cap-holder a session is granted FROM) via the genesis path
+        // — all durably mirrored, so a relaunch recovers them rather than
+        // re-provisioning. Their ids are content-addresses of the fixed seeds, so a
+        // recovered image lines up with the deterministic `anchors` /
+        // `system_principal` here.
+        world.genesis_install(crate::world::make_open_cell(s_treasury, 1_000_000));
+        world.genesis_install(crate::world::make_open_cell(s_service, 0));
+        world.genesis_install(crate::world::make_open_cell(s_user, 5_000));
+        let system_principal = provision_system_principal(&mut world, &anchors);
+        debug_assert_eq!(system_principal, anchor_id(SYSTEM_PRINCIPAL_SEED));
+        Ok((world, anchors, LoginManager::new(system_principal), true))
+    } else {
+        // RELAUNCH: the system principal is already in the recovered ledger at the
+        // content-address of its fixed seed — do NOT re-provision (that would land a
+        // duplicate). Re-derive its id deterministically.
+        let system_principal = anchor_id(SYSTEM_PRINCIPAL_SEED);
+        debug_assert!(
+            world.ledger().get(&system_principal).is_some(),
+            "the system principal must be recovered from the durable image on relaunch"
+        );
+        Ok((world, anchors, LoginManager::new(system_principal), false))
+    }
+}
+
+/// The fixed seed the per-user session world's system principal is provisioned at
+/// (matches [`provision_system_principal`]'s `make_open_cell(0x55, 0)`), so its id
+/// re-derives deterministically on a relaunch.
+const SYSTEM_PRINCIPAL_SEED: u8 = 0x55;
+
+/// The deterministic [`CellId`] a genesis anchor seeded at `seed` lands at — the
+/// content-address `make_open_cell(seed, _)` computes (balance does not enter the
+/// id). Used to re-derive the anchor / system-principal ids on a relaunch without
+/// re-installing them.
+fn anchor_id(seed: u8) -> CellId {
+    crate::world::make_open_cell(seed, 0).id()
 }
 
 /// The **default human-user `CapTemplate`** over the deos desktop's anchor cells
@@ -772,5 +1072,203 @@ mod tests {
         // to act on the desktop goes dark in one turn.
         assert_eq!(mgr.logout(&mut w, &session), 1, "the agent's one cap revoked");
         assert!(!session.is_live(&w), "the agent session is dark — the kill switch");
+    }
+
+    // =======================================================================
+    // SESSION RESUME — the Houyhnhnm property, tested (durable per-user image).
+    // =======================================================================
+
+    use dregg_turn::ComputronCosts;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static RESUME_COUNTER: AtomicU64 = AtomicU64::new(0);
+    const RTS: i64 = 1_700_000_000;
+
+    /// A unique throwaway base DIR for a per-user session image (cleaned up).
+    fn scratch_dir() -> PathBuf {
+        let n = RESUME_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let pid = std::process::id();
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        std::env::temp_dir().join(format!("sbv2-session-{pid}-{nanos}-{n}"))
+    }
+
+    /// Open a per-user durable session world deterministically at a pinned clock
+    /// (so the recovered receipts re-derive bit-identically across reopens). Mirrors
+    /// `open_session_world` exactly but pins the test timestamp.
+    fn open_resume(dir: &std::path::Path, principal: &Principal) -> (World, [CellId; 3], LoginManager, bool) {
+        let path = session_world_path(dir, principal);
+        let _ = std::fs::create_dir_all(dir);
+        let mut world = World::open_with_timestamp(&path, ComputronCosts::zero(), RTS)
+            .expect("open per-user session image");
+        let [st, ss, su] = ANCHOR_SEEDS;
+        let anchors = [anchor_id(st), anchor_id(ss), anchor_id(su)];
+        let fresh = world.ledger().get(&anchors[0]).is_none();
+        let system_principal = if fresh {
+            world.genesis_install(make_open_cell(st, 1_000_000));
+            world.genesis_install(make_open_cell(ss, 0));
+            world.genesis_install(make_open_cell(su, 5_000));
+            provision_system_principal(&mut world, &anchors)
+        } else {
+            // The system principal is recovered from the durable image on relaunch.
+            anchor_id(SYSTEM_PRINCIPAL_SEED)
+        };
+        (world, anchors, LoginManager::new(system_principal), fresh)
+    }
+
+    #[test]
+    fn the_session_record_round_trips_through_postcard() {
+        let (mut w, mgr, home, app) = login_world();
+        let p = mgr.authenticate([7u8; 32], true).unwrap();
+        let session = mgr.login(&mut w, p, &user_template(home, app)).session().unwrap().clone();
+        let record = SessionRecord::of(&session);
+        let decoded = SessionRecord::decode(&record.encode()).expect("record decodes");
+        assert_eq!(decoded, record, "the session record round-trips byte-exactly");
+        assert!(!decoded.revoked, "a fresh login record is live, not revoked");
+        // The reconstructed session has the same root + c-list (receipts are durable
+        // in the commit log, not carried in the record).
+        let rebuilt = decoded.to_session();
+        assert_eq!(rebuilt.root_cell, session.root_cell);
+        assert_eq!(rebuilt.granted, session.granted);
+    }
+
+    #[test]
+    fn a_logged_in_session_dual_writes_and_resumes_after_a_reopen() {
+        // (b) THE HOUYHNHNM PROPERTY: a logged-in session's turns dual-write to the
+        // durable image, and a RELAUNCH resumes the EXACT image — the cell graph +
+        // balances + the SESSION CAP-TREE itself — without re-running the grant
+        // ceremony. (Not a fresh demo.)
+        let dir = scratch_dir();
+        let p = Principal { pubkey: [0xE3u8; 32] };
+
+        let (root, treasury_after, user_after, granted_len) = {
+            let (mut w, anchors, mgr, fresh) = open_resume(&dir, &p);
+            assert!(fresh, "first launch provisions a fresh image");
+            assert!(w.is_durable(), "the per-user session world is durable");
+            let template = default_user_template(anchors);
+
+            // FIRST LOGIN: runs the ceremony (the mint + 2 grant turns dual-write
+            // durably) + persists the session record.
+            let session = match mgr.login_resumable(&mut w, p, &template) {
+                LoginOutcome::Session(s) => s,
+                LoginOutcome::Denied { reason } => panic!("first login: {reason}"),
+            };
+            assert!(session.is_live(&w), "the session is live after first login");
+            assert_eq!(session.receipts.len(), 2, "first login ran the 2-entry grant ceremony");
+
+            // A SESSION VALUE TURN: treasury → user, a real committed turn dual-written.
+            let [treasury, _service, user] = anchors;
+            let nonce = w.ledger().get(&treasury).map(|c| c.state.nonce()).unwrap_or(0);
+            let t = crate::world::bare_turn(treasury, nonce, vec![crate::world::transfer(treasury, user, 1234)]);
+            assert!(w.commit_turn(t).is_committed(), "the session value turn commits + dual-writes");
+            w.checkpoint_now();
+            (
+                session.root_cell,
+                w.ledger().get(&treasury).unwrap().state.balance(),
+                w.ledger().get(&user).unwrap().state.balance(),
+                session.granted.len(),
+            )
+            // w dropped → the redb image persists, the handle releases.
+        };
+
+        // RELAUNCH: reopen the SAME per-user image — the WHOLE image resumes, the
+        // cap-tree included, and `login_resumable` RESUMES (no re-grant ceremony).
+        {
+            let (mut w, anchors, mgr, fresh) = open_resume(&dir, &p);
+            assert!(!fresh, "the relaunch recovers the existing image (not fresh)");
+            let [treasury, _service, user] = anchors;
+
+            // The VALUE substrate resumed exactly (the Houyhnhnm property).
+            assert_eq!(
+                w.ledger().get(&treasury).unwrap().state.balance(),
+                treasury_after,
+                "the treasury balance resumed exactly"
+            );
+            assert_eq!(
+                w.ledger().get(&user).unwrap().state.balance(),
+                user_after,
+                "the user balance resumed exactly"
+            );
+
+            // The CAP-TREE resumed too: the granted root cell still reaches its
+            // template targets in the RECOVERED ledger, BEFORE any re-login.
+            let recovered_root = w.ledger().get(&root).expect("the root cell resumed");
+            assert!(
+                anchors[1..].iter().all(|t| recovered_root.capabilities.has_access(t)),
+                "the session cap-tree resumed from the durable image"
+            );
+
+            // RESUME: a re-login finds the live record + live tree and RESUMES it —
+            // no grant ceremony re-ran (no new receipts).
+            let template = default_user_template(anchors);
+            let resumed = match mgr.login_resumable(&mut w, p, &template) {
+                LoginOutcome::Session(s) => s,
+                LoginOutcome::Denied { reason } => panic!("resume login: {reason}"),
+            };
+            assert!(resumed.receipts.is_empty(), "a RESUMED session ran NO grant ceremony");
+            assert_eq!(resumed.root_cell, root, "the resumed session is the same root");
+            assert_eq!(resumed.granted.len(), granted_len, "the same c-list resumed");
+            assert!(resumed.is_live(&w), "the resumed session is live");
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn logout_then_relaunch_does_not_resume_a_revoked_session() {
+        // (c) THE SECURITY PROPERTY: after a DURABLE logout, a relaunch must NOT
+        // silently resume the revoked session — the cap-tree stays dark (the revokes
+        // are durable) AND the durable record carries REVOKED, so `login_resumable`
+        // re-runs the ceremony (a fresh authenticated grant) rather than resuming.
+        let dir = scratch_dir();
+        let p = Principal { pubkey: [0x67u8; 32] };
+
+        // FIRST LOGIN then DURABLE LOGOUT.
+        {
+            let (mut w, anchors, mgr, _fresh) = open_resume(&dir, &p);
+            let template = default_user_template(anchors);
+            let session = match mgr.login_resumable(&mut w, p, &template) {
+                LoginOutcome::Session(s) => s,
+                LoginOutcome::Denied { reason } => panic!("login: {reason}"),
+            };
+            assert!(session.is_live(&w), "live after login");
+            let revoked = mgr.logout_durable(&mut w, &session);
+            assert_eq!(revoked, 2, "logout revoked both session caps");
+            assert!(!session.is_live(&w), "the cap-tree is dark after logout");
+            let rec = SessionRecord::decode(&w.session_blob().expect("a record was written")).unwrap();
+            assert!(rec.revoked, "the durable session record is marked revoked");
+            w.checkpoint_now();
+        }
+
+        // RELAUNCH: the revoked cap-tree stays dark across the reopen, and the
+        // revoked record does NOT silently resume.
+        {
+            let (mut w, anchors, mgr, _fresh) = open_resume(&dir, &p);
+            let rec = SessionRecord::decode(&w.session_blob().unwrap()).unwrap();
+            assert!(rec.revoked, "the revoked record persisted across the reopen");
+            // The recovered cap-tree is dark (the durable revokes resumed too).
+            let dark = rec.to_session();
+            assert!(
+                !dark.is_live(&w),
+                "the revoked session does NOT silently resume — the tree is dark on reopen"
+            );
+
+            // A fresh, explicit login re-runs the ceremony (not a resume) — the
+            // authenticated way back in — and writes a fresh LIVE record.
+            let template = default_user_template(anchors);
+            let session = match mgr.login_resumable(&mut w, p, &template) {
+                LoginOutcome::Session(s) => s,
+                LoginOutcome::Denied { reason } => panic!("re-login: {reason}"),
+            };
+            assert_eq!(session.receipts.len(), 2, "the re-login re-ran the grant ceremony (not a resume)");
+            assert!(session.is_live(&w), "the freshly re-granted session is live again");
+            let rec2 = SessionRecord::decode(&w.session_blob().unwrap()).unwrap();
+            assert!(!rec2.revoked, "the re-login wrote a fresh LIVE record");
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

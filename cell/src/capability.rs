@@ -67,7 +67,16 @@ pub struct CapabilityRef {
     ///
     /// Facets compose with attenuation: a delegated faceted capability can only
     /// further restrict (bitwise subset), never amplify.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    ///
+    /// SERDE: `#[serde(default)]` only (NOT `skip_serializing_if`). A skipped field
+    /// cannot round-trip through the non-self-describing `postcard` codec the
+    /// durable image (commit log / checkpoint / `canonical_ledger_root`) uses — the
+    /// deserializer reads the next field's bytes for the absent one and desyncs
+    /// ("end of buffer" / "Option discriminant"). Emitting the `None` discriminant
+    /// makes a cap-carrying cell durable (SESSION RESUME needs this — a logged-in
+    /// session's cap-tree must survive a reopen). `#[serde(default)]` still decodes
+    /// a legacy blob that lacks the field as `None`.
+    #[serde(default)]
     pub allowed_effects: Option<EffectMask>,
     /// R7 (epoch-at-retrieval): the grantor's `delegation_epoch` captured when
     /// this capability was STORED (delegation-snapshot time). `None` = a
@@ -113,7 +122,9 @@ pub struct AttenuatedCap {
     #[serde(default)]
     pub expires_at: Option<u64>,
     /// Optional facet mask (same semantics as CapabilityRef::allowed_effects).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// SERDE: `#[serde(default)]` only — see `CapabilityRef::allowed_effects` (a
+    /// skipped field cannot round-trip the durable `postcard` codec).
+    #[serde(default)]
     pub allowed_effects: Option<EffectMask>,
     /// R7 stored-epoch (same semantics as `CapabilityRef::stored_epoch`).
     /// Attenuation PRESERVES freshness metadata — narrowing never refreshes.
@@ -872,11 +883,25 @@ mod revoke_tombstone_tests {
     }
 
     #[test]
+    fn capabilities_round_trip_through_postcard() {
+        // The durable image (commit log / checkpoint / `canonical_ledger_root`) uses
+        // the non-self-describing `postcard` codec, so a cap-carrying cell must
+        // round-trip through it (SESSION RESUME needs a logged-in session's cap-tree
+        // to survive a reopen). This is the regression pin for dropping
+        // `skip_serializing_if` on `allowed_effects` (a skipped field desyncs
+        // postcard's sequential decode).
+        let mut caps = CapabilitySet::new();
+        let _ = caps.grant(cid(3), AuthRequired::None).unwrap(); // allowed_effects: None
+        let s = caps.grant(cid(4), AuthRequired::Signature).unwrap();
+        assert!(caps.revoke(s)); // exercise a tombstone too
+        let bytes = postcard::to_stdvec(&caps).expect("postcard serialize");
+        let back: CapabilitySet = postcard::from_bytes(&bytes).expect("postcard round-trip");
+        assert_eq!(back, caps, "a cap-carrying c-list round-trips through postcard");
+    }
+
+    #[test]
     fn tombstone_survives_serde_round_trip() {
-        // The codebase persists cells via the self-describing `serde_json`
-        // (postcard cannot round-trip `CapabilityRef`'s `skip_serializing_if`
-        // fields — a pre-existing constraint, unrelated to tombstones). The
-        // `#[serde(default)]` on `tombstones` decodes legacy (no-`tombstones`)
+        // The `#[serde(default)]` on `tombstones` decodes legacy (no-`tombstones`)
         // JSON as an empty set, and a post-revoke set carries its tombstones.
         let mut caps = CapabilitySet::new();
         let s1 = caps.grant(cid(1), AuthRequired::Signature).unwrap();

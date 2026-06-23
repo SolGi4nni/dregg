@@ -390,6 +390,26 @@ impl World {
         }
     }
 
+    /// Persist the opaque durable SESSION RECORD blob into this image's redb store
+    /// (SESSION RESUME — `docs/deos/SESSION-LOGIN.md`). No-op on an ephemeral world
+    /// (a not-logged-in / demo image keeps no session). Returns `true` iff the
+    /// write landed durably (so the caller knows the session will resume).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn put_session_blob(&self, bytes: &[u8]) -> bool {
+        match self.persist.as_ref() {
+            Some(p) => p.put_session(bytes).is_ok(),
+            None => false,
+        }
+    }
+
+    /// The durable SESSION RECORD blob for this image, if one was written by a
+    /// prior login. `None` on an ephemeral world or a fresh image never logged
+    /// into. The bytes are opaque here; [`crate::session`] decodes them.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn session_blob(&self) -> Option<Vec<u8>> {
+        self.persist.as_ref().and_then(|p| p.get_session().ok().flatten())
+    }
+
     /// The wall-clock this world pinned at construction (folded into every
     /// receipt). Exposed so a second world can be pinned to the SAME instant for a
     /// byte-for-byte equivalence check (e.g. direct vs. semihost executor-PD).

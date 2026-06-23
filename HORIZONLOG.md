@@ -12,6 +12,31 @@ Last sweep: 2026-06-13 (flagged-items burndown — removed ~14 landed/struck ite
 deduped the DreggDL/sel4/snapshot landings into git history, kept live tails).
 
 
+### SESSION RESUME — deos resumes the exact image on login (2026-06-22): LANDED · tails.
+The Houyhnhnm orthogonal-persistence wound ("in-session state doesn't survive reboot") is
+closed for the windowed desktop: login OPENS the principal's per-user durable image
+(`<deos-dir>/deos-session-<root-hex>.redb`) via `World::open` — first launch provisions +
+persists (value anchors + system principal + the granted cap-tree, all dual-written), a
+relaunch RECOVERS the whole image (balances + history + the SESSION CAP-TREE) and
+`LoginManager::login_resumable` RESUMES it with no re-grant. Logout (`logout_durable`) revokes
+durably AND stamps the durable `SessionRecord` REVOKED (a revoked session does not silently
+resume). Files: `starbridge-v2/src/{session,world,persistence,login}.rs`.
+- ROOT-CAUSE FIX (cross-crate, deliberate): `cell/src/capability.rs` dropped
+  `skip_serializing_if` on `CapabilityRef`/`AttenuatedCap::allowed_effects` — a skipped field
+  could not round-trip the durable `postcard` codec, so NO cap-carrying cell was durable
+  (commit log / checkpoint / `canonical_ledger_root` all broke; cell-crate tests had documented
+  this and routed around it via serde_json). Now postcard-clean; `#[serde(default)]` keeps legacy
+  decode. Verified: `dregg-cell` + `dregg-persist` full suites GREEN (636 tests, 0 regressions),
+  the 8 pre-existing sbv2 `persistence::tests` GREEN. NOTE: this changes the byte-form (hence
+  `canonical_ledger_root`) of any ledger holding a cap cell with `allowed_effects: None` — a
+  fresh-image change only; a pre-existing on-disk node/devnet image would need re-init (build
+  artifacts already reset per AGPL note). No golden/circuit-leaf encoding touched
+  (`cap_ref_to_leaf` is separate).
+- TAILS: (a) per-user path policy is `$DREGG_DEOS_DIR` / `$XDG_DATA_HOME/deos` / `~/.local/share/deos`
+  — fine for single-user; multi-user-on-one-host wants a real account→dir policy.
+  (b) encrypted-at-rest: the redb image is plaintext; a session image holding value/keys wants
+  at-rest encryption (the cipherclerk seam). (c) the headless/bake paths stay ephemeral by design.
+
 ### ✅ SETTLEMENT SOUNDNESS — the lone open construction (2026-06-22): CLOSED.
 Named by THREE frontiers (`KeyLeak.lean` "the settlement seam", `DISTRIBUTED-TIMETRAVEL §6.3`
 settlement-time-authority, `SHARED-FORK-CONSENT`/`BRANCH-AND-STITCH` the linear DROP). Now a

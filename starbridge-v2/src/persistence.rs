@@ -94,6 +94,14 @@ const GENESIS_KEY_PREFIX: &str = "sbv2_genesis:";
 /// The config key holding the ordered list of durable genesis cell ids (postcard
 /// `Vec<[u8;32]>`) — install order, so recovery reinstalls deterministically.
 const GENESIS_ORDER_KEY: &str = "sbv2_genesis_order";
+/// The config key holding the durable SESSION RECORD (postcard bytes) for this
+/// image — the principal + the granted cap-template / c-list snapshot the login
+/// ceremony left, so a relaunch restores the session without re-running the full
+/// grant ceremony (SESSION RESUME — Houyhnhnm orthogonal persistence). The session
+/// is keyed to the image (one root cell per per-user image), so a single key
+/// suffices; logout overwrites it with a REVOKED marker so a revoked session does
+/// not silently resume.
+const SESSION_KEY: &str = "sbv2_session";
 
 fn turn_key(ordinal: u64) -> String {
     format!("{TURN_KEY_PREFIX}{ordinal:020}")
@@ -205,6 +213,20 @@ impl WorldPersist {
         }
         self.store.set_config(&genesis_key(&id), &bytes)?;
         Ok(())
+    }
+
+    /// Persist the opaque durable SESSION RECORD blob for this image (SESSION
+    /// RESUME). Overwrites any prior record (last-writer-wins) — login writes the
+    /// granted c-list snapshot; logout overwrites it with a REVOKED marker so a
+    /// relaunch does not silently resume a revoked session.
+    pub fn put_session(&self, bytes: &[u8]) -> Result<(), StoreError> {
+        self.store.set_config(SESSION_KEY, bytes)
+    }
+
+    /// The durable SESSION RECORD blob for this image, if one was ever written
+    /// (`None` on a fresh image that has never been logged into).
+    pub fn get_session(&self) -> Result<Option<Vec<u8>>, StoreError> {
+        self.store.get_config(SESSION_KEY)
     }
 
     fn genesis_order(&self) -> Result<Vec<[u8; 32]>, StoreError> {
