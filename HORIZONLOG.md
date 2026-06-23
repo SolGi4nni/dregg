@@ -11,6 +11,29 @@ reason.)*
 Last sweep: 2026-06-13 (flagged-items burndown — removed ~14 landed/struck items,
 deduped the DreggDL/sel4/snapshot landings into git history, kept live tails).
 
+### ONE UNIFIED BOOT landed; editor→node WRITE-BACK is the seam (2026-06-23).
+`ff7a0da0c` (`starbridge-v2/src/unified_boot.rs` + `--render-unified-boot`). One headless frame =
+live-node pane (real `dregg-node` /status+cells+receipt over the wire) + FirmamentFs editor + live PTY,
+proven by running against a node on :8775 → `deos-unified-boot.png`. CLOSURE LANE (the named seam): an
+editor save is LOCAL-ONLY (the empirical probe: node receipts 1→1) — `EditorPane::firmament_over` commits
+to the cockpit's `World` (`WorldSpine`→`World::commit_turn`); the `--node` attach is read-only-synced.
+To make a save a real over-the-wire self-hosting write-back, route the FirmamentFs save through
+`NodeClient::submit_turn` (the designed-pending write surface) + local key custody to sign. Shape =
+WIRE not build (the submit surface exists; the editor's `LedgerSpine` would gain a node-routing arm).
+
+### BUG — "pop out" (tear-off) CRASHES the windowed cockpit (2026-06-23, ember-reported).
+Found by ember clicking the workspace pane's ↗ pop-out in the live debug app. `tear_off_tab`
+(`starbridge-v2/src/cockpit/panels_workspace.rs:662`) opens a 2nd OS window whose `TornOffWindow::render`
+(`src/dock/tearoff.rs:120`) re-enters the cockpit via `weak.update(app, |c| c.panel_for_tab(tab, cx))`.
+Suspected mechanism: rendering a LIVE pane body (editor/terminal hold focus-tracked gpui `Entity`s
+already painted in the main window) a SECOND time in the torn window same-frame → a re-entrant
+`Entity::update` / double `track_focus` / a `world.borrow()`↔`borrow_mut()` conflict → gpui panic. The
+headless tear-off test (HORIZONLOG below / `tearoff.rs` tests) exercises the REGISTRY logic (tear→re-tear
+→pop, identity preserved) but NOT a live editor/terminal body rendered into the second window — that is
+the gap. CLOSURE: repro in a windowed run, capture the panic, then make the torn body render-safe (most
+likely: a torn surface must be MOVED not MIRRORED for entity-bearing panes, or guard the re-entrant
+update). NOT quick-fixed (multi-window, needs interactive verify).
+
 ### deos-js SPIKE — JS (real mozjs) drives the substance, by running (2026-06-23).
 `38acc2fc` (new `deos-js/` crate, in the repo-root `exclude` list like servo-render/wasm). Real
 SpiderMonkey (`mozjs_sys` 140.x static archive; `evaluate_script("40+2")=42` — no stub). Tests pass:
