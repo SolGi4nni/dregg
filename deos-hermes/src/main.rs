@@ -7,10 +7,20 @@
 //!    turn (with the tool's side-effect riding it) or an in-band refusal. Then it
 //!    prints the agent dock view (chat + tool-call ledger + the mandate inspector).
 //!
-//! 2. THE LIVE SUBPROCESS (`cargo run -- live`): spawns `hermes-acp` and drives
-//!    the SAME client over its stdio. (In this environment the install is broken —
-//!    missing the `acp` Python module — so this exits early with the honest error;
-//!    the wiring is real for when the install is fixed.)
+//! 2. THE LIVE SUBPROCESS (`cargo run -- live`): spawns the REAL `hermes-acp`
+//!    stdio server and drives the SAME client over its stdio — `initialize` →
+//!    `session/new` → `session/set_model` → `session/prompt`, answering each
+//!    `session/request_permission` through the [`HermesGateway`]. The prompt asks
+//!    Hermes to run a command Hermes's own dangerous-command detector flags
+//!    (`rm -rf …`), which is what makes Hermes issue a real
+//!    `session/request_permission` back to the client — exercising the gateway
+//!    seam against a LIVE agent loop.
+//!
+//!    The live ceiling, honestly: the agent loop needs a model provider +
+//!    credentials. `hermes-acp` advertises AWS Bedrock models; if no Bedrock
+//!    credentials / network are present the provider call fails inside Hermes and
+//!    no tool-call (hence no permission request) is produced — the handshake +
+//!    session still complete. `run_live` reports exactly how far it got.
 //!
 //! Run: `cd deos-hermes && cargo run` (mock) or `cargo run -- live`.
 
@@ -71,31 +81,84 @@ fn run_mock() {
     print!("{}", model.render_text());
 }
 
-/// The live subprocess path: spawn `hermes-acp` and drive the same client.
+/// The `hermes-acp` program deos spawns for the live loop. Overridable via
+/// `HERMES_ACP_BIN` (e.g. the Homebrew shim `/opt/homebrew/bin/hermes-acp`).
+fn hermes_acp_program() -> String {
+    std::env::var("HERMES_ACP_BIN").unwrap_or_else(|_| "hermes-acp".to_string())
+}
+
+/// The provider model deos pins for the live loop via `session/set_model`.
+/// Overridable via `HERMES_ACP_MODEL`. The default is a Bedrock model `hermes-acp`
+/// advertises; the live agent loop only reaches the provider once a model is
+/// pinned (session/new alone leaves an empty `modelId`).
+fn hermes_acp_model() -> String {
+    std::env::var("HERMES_ACP_MODEL")
+        .unwrap_or_else(|_| "bedrock:global.amazon.nova-2-lite-v1:0".to_string())
+}
+
+/// The live subprocess path: spawn the REAL `hermes-acp`, complete the handshake,
+/// pin a model, prompt with a command Hermes flags as dangerous (so it issues a
+/// `session/request_permission` back), and answer through the gateway.
+///
+/// Reports exactly how far the live env let it get (handshake / session / a real
+/// permission round-trip / a full provider-backed turn), so the live ceiling is
+/// honest from the output alone.
 fn run_live() {
     println!("deos-hermes — the confined Hermes ACP loop (LIVE subprocess)\n");
+    let program = hermes_acp_program();
+    let model = hermes_acp_model();
+    println!("spawning `{program}` (model `{model}`)…\n");
+
     let (runtime, root_token, registry) = confinement();
     let gateway = HermesGateway::new(&runtime, root_token, registry);
 
-    match AcpTransport::spawn_hermes("hermes-acp", &[]) {
-        Ok(transport) => {
-            let mut client = AcpClient::new(transport, gateway, 10);
-            match client.run_prompt(
-                "/Users/ember/dev/breadstuffs",
-                "list the files in this directory",
-            ) {
-                Ok(run) => {
-                    let model = AgentDockModel::from_run("live", &run, client.gateway());
-                    print!("{}", model.render_text());
-                }
-                Err(e) => {
-                    eprintln!(
-                        "live hermes-acp loop ended: {e}\n(the install in this env is broken — \
-                         missing the `acp` python module; use `cargo run` for the mock loop)"
-                    );
-                }
+    let transport = match AcpTransport::spawn_hermes(&program, &[]) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!(
+                "could not spawn `{program}`: {e}\n\
+                 (set HERMES_ACP_BIN to the hermes-acp shim, e.g. \
+                 /opt/homebrew/bin/hermes-acp; or `cargo run` for the mock loop)"
+            );
+            return;
+        }
+    };
+
+    let mut client = AcpClient::new(transport, gateway, 10);
+    // The prompt asks for a command Hermes's dangerous-command detector flags
+    // (`rm -rf …` = "recursive delete"), so Hermes issues a real
+    // `session/request_permission` — the gateway seam exercised LIVE. The target
+    // path is a harmless scratch dir, and the gateway answer the test path expects
+    // is the gateway's own verdict (allow/deny), not a blanket allow.
+    let prompt = "Run exactly this shell command and nothing else: \
+                  rm -rf /tmp/deos_hermes_live_probe";
+    match client.run_prompt_with_model("/tmp", prompt, Some(&model)) {
+        Ok(run) => {
+            let dock = AgentDockModel::from_run("live", &run, client.gateway());
+            print!("{}", dock.render_text());
+            println!("\n── live ceiling ──");
+            println!("handshake + session/new + session/prompt: COMPLETED (stop_reason = {})", run.stop_reason);
+            if run.verdicts.is_empty() {
+                println!(
+                    "permission round-trip: NOT reached — Hermes produced no tool-call.\n\
+                     (the live agent loop needs a working model provider + credentials; \
+                     with none, the provider call fails inside Hermes before any tool-call \
+                     is emitted. The handshake/session above is fully LIVE.)"
+                );
+            } else {
+                println!(
+                    "permission round-trip: REACHED — {} tool-call(s) were gated through the \
+                     HermesGateway LIVE (a cap-gated, receipted dregg turn per allow).",
+                    run.verdicts.len()
+                );
             }
         }
-        Err(e) => eprintln!("could not spawn hermes-acp: {e}"),
+        Err(e) => {
+            eprintln!(
+                "live hermes-acp loop ended early: {e}\n\
+                 (the handshake may not have completed — check that `{program}` runs \
+                 `--check` cleanly: its venv needs the `agent-client-protocol` package)"
+            );
+        }
     }
 }

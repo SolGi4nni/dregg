@@ -10,22 +10,35 @@
 //!
 //! ## Live vs. mock — what runs end-to-end here, honestly
 //!
-//! The transport ([`AcpTransport`]) is REAL ndjson JSON-RPC and can speak to a
-//! live `hermes-acp` subprocess (see [`AcpTransport::spawn_hermes`]). But the
-//! live Hermes ACP install in this environment is broken (its venv is missing
-//! the `acp` Python module — `python -m acp_adapter.entry` raises
-//! `ModuleNotFoundError: No module named 'acp'`), and even a working one needs a
-//! model provider + credentials to run an agent loop. So the END-TO-END loop
-//! that runs in `cargo test` drives the same client against a [`MockHermesPeer`]
-//! that replays the REAL ACP message shapes Hermes's `acp_adapter` emits
-//! (`initialize` response, `session/new` response, `session/update`
-//! `tool_call` events, the `session/request_permission` request with a real
-//! `ToolCallUpdate` payload, and a `PromptResponse` with a `stop_reason`).
+//! The transport ([`AcpTransport`]) is REAL ndjson JSON-RPC and speaks to a live
+//! `hermes-acp` subprocess (see [`AcpTransport::spawn_hermes`]). The live path is
+//! WORKING: with a `hermes-acp` whose venv carries the `agent-client-protocol`
+//! package, this client completes `initialize` → `session/new` →
+//! `session/set_model` → `session/prompt` against the real Hermes ACP server, and
+//! — when a model provider is reachable — Hermes issues a real
+//! `session/request_permission` back, which [`AcpClient`] answers through the
+//! [`HermesGateway`] (a cap-gated, receipted dregg turn). The
+//! `tests/live_acp.rs` test (`--ignored`) and `cargo run -- live` drive exactly
+//! this; `main.rs::run_live` reports how far the env let it get.
+//!
+//! The LIVE CEILING is the model provider: the Hermes agent loop needs provider
+//! credentials (the install here advertises AWS Bedrock). With none, the provider
+//! call fails inside Hermes before any tool-call is emitted — the
+//! handshake/session still complete live, but no permission round-trip is
+//! produced. With Bedrock credentials present, the full loop runs and the gateway
+//! seam fires on the real `rm -rf` dangerous-command permission request.
+//!
+//! The default `cargo test` stays hermetic by driving the same client against a
+//! [`MockHermesPeer`] that replays the REAL ACP message shapes Hermes's
+//! `acp_adapter` emits (`initialize` response, `session/new` response,
+//! `session/update` `tool_call` events, the `session/request_permission` request
+//! with a real `ToolCallUpdate` payload, and a `PromptResponse` with a
+//! `stop_reason`).
 //!
 //! The client half ([`AcpClient::run_prompt`]) is transport-agnostic: it drives
-//! a [`AcpPeer`], so the SAME driver runs over the mock today and over the live
-//! subprocess the moment the install is fixed. The seam (permission → gateway
-//! verdict) is exercised identically in both.
+//! a [`AcpPeer`], so the SAME driver runs over the mock and over the live
+//! subprocess. The seam (permission → gateway verdict) is exercised identically
+//! in both.
 
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
@@ -167,10 +180,12 @@ impl AcpTransport {
     /// `acp_registry/agent.json` distribution `uvx hermes-agent[acp] hermes-acp`,
     /// or a `hermes-acp` on `PATH`) and open the ndjson transport.
     ///
-    /// NOTE (this environment): the installed `hermes-acp` is currently broken
-    /// (`ModuleNotFoundError: No module named 'acp'`), so this will spawn but the
-    /// peer will exit; the END-TO-END tested loop uses [`MockHermesPeer`]. This
-    /// path is the real wiring for when the install is fixed.
+    /// This is the REAL live wiring: `hermes-acp` reaches `initialize` and a full
+    /// session. The only env requirement is that its venv carries the
+    /// `agent-client-protocol` package (`hermes-acp --check` prints "check OK");
+    /// the agent loop additionally needs model-provider credentials to produce a
+    /// tool-call (see the module docs on the live ceiling). `main.rs::run_live`
+    /// and `tests/live_acp.rs` drive this path.
     pub fn spawn_hermes(program: &str, args: &[&str]) -> Result<AcpTransport, AcpError> {
         let mut child = Command::new(program)
             .args(args)
@@ -375,6 +390,25 @@ impl<'rt, P: AcpPeer> AcpClient<'rt, P> {
     /// Drive a full prompt turn: `initialize` → `session/new` → `session/prompt`,
     /// answering every permission request via the gateway, returning the run.
     pub fn run_prompt(&mut self, cwd: &str, prompt: &str) -> Result<PromptRun, AcpError> {
+        self.run_prompt_with_model(cwd, prompt, None)
+    }
+
+    /// As [`AcpClient::run_prompt`], but selecting an explicit model before the
+    /// prompt via `session/set_model` (the ACP unstable model-selection method).
+    ///
+    /// This matters for the LIVE `hermes-acp` subprocess: the model advertised at
+    /// `session/new` does not always propagate to the provider call (the live
+    /// adapter sends an empty `modelId` to Bedrock otherwise — `Invalid length
+    /// for parameter modelId`), so an explicit `session/set_model` is what makes
+    /// the live agent loop actually reach the provider. The mock peer answers
+    /// `session/set_model` as a benign no-op result, so passing a model is
+    /// harmless there. Pass `None` to skip model selection (the default).
+    pub fn run_prompt_with_model(
+        &mut self,
+        cwd: &str,
+        prompt: &str,
+        model_id: Option<&str>,
+    ) -> Result<PromptRun, AcpError> {
         let mut run = PromptRun::default();
 
         // 1. initialize — advertise the client + protocol version.
@@ -400,6 +434,17 @@ impl<'rt, P: AcpPeer> AcpClient<'rt, P> {
             .and_then(|v| v.as_str())
             .unwrap_or("sess-0")
             .to_string();
+
+        // 2b. session/set_model — pin the provider model for the live loop. Best
+        //     effort: a peer that does not support it answers with a JSON-RPC
+        //     error, which we tolerate (the mock answers a benign result).
+        if let Some(model_id) = model_id {
+            let _ = self.request_blocking(
+                "session/set_model",
+                json!({ "sessionId": session_id, "modelId": model_id }),
+                &mut run,
+            );
+        }
 
         // 3. session/prompt — send the user's prompt; Hermes streams updates and
         //    issues permission requests, which the blocking loop services.

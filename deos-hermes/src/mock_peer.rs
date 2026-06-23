@@ -257,6 +257,14 @@ impl AcpPeer for MockHermesPeer {
                 self.phase = Phase::Prompt;
                 Ok(())
             }
+            (_, "session/set_model") => {
+                // The ACP unstable model-selection method. The live adapter
+                // answers it with a benign `{}` result (and a session/update);
+                // the mock mirrors that so `run_prompt_with_model` works against
+                // either peer. Phase is unchanged (set_model is pre-prompt).
+                self.outbox.push_back(RpcMessage::response(id, json!({})));
+                Ok(())
+            }
             (Phase::Prompt, "session/prompt") => {
                 // Stream an opening message chunk, then begin the scripted calls.
                 self.outbox.push_back(RpcMessage::notification(
