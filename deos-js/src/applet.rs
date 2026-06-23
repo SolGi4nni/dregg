@@ -136,6 +136,12 @@ pub struct Applet {
     prev_receipt: Option<[u8; 32]>,
     /// Every committed receipt hash, in order (the audit tape).
     receipts: Vec<[u8; 32]>,
+    /// The full committed receipts (the provenance lineage the `present()`
+    /// Provenance face reads). Parallel to `receipts`.
+    full_receipts: Vec<TurnReceipt>,
+    /// Whether the LAST committed turn deferred its witness (Symbolic mode) —
+    /// `is_deferred(receipt)`. A Symbolic receipt carries `DEFERRED_STATE_HASH`.
+    last_deferred: bool,
 }
 
 impl Applet {
@@ -152,6 +158,16 @@ impl Applet {
         held: AuthRequired,
     ) -> Self {
         let mut engine = DreggEngine::new(EngineConfig::for_testing());
+
+        // THE DRIVE PATH RUNS SYMBOLIC BY DEFAULT (§7). A local applet turn defers the
+        // WITNESS (the `pre/post_state_hash` Merkle commitments → the `DEFERRED_STATE_HASH`
+        // sentinel) but the state transition fully applies and every GATE
+        // (authority/conservation/freshness) runs identically. The witness collapses to
+        // real commitments only at a publish boundary. This is the Φ×WitnessMode spectrum's
+        // cheap local end. `set_full_witness()` reaches the publishable mode on demand.
+        engine
+            .executor()
+            .set_witness_mode(dregg_turn::collapse::WitnessMode::Symbolic);
 
         // Seed the applet-cell with a balance (so a metered turn has a fee source) and
         // OPEN permissions (single-custody embedded world), then write the genesis
@@ -182,6 +198,8 @@ impl Applet {
             view: ViewState::default(),
             prev_receipt: None,
             receipts: Vec::new(),
+            full_receipts: Vec::new(),
+            last_deferred: false,
         }
     }
 
@@ -196,9 +214,64 @@ impl Applet {
         self.engine.ledger()
     }
 
+    /// Switch the drive path to **Full** witness mode (the publishable default): every
+    /// turn materializes its real `pre/post_state_hash` Merkle commitments. Use at a
+    /// publish boundary (a handoff / a cross-trust-root crossing).
+    pub fn set_full_witness(&self) {
+        self.engine
+            .executor()
+            .set_witness_mode(dregg_turn::collapse::WitnessMode::Full);
+    }
+
+    /// Switch the drive path back to **Symbolic** (the local fast path, the default).
+    pub fn set_symbolic_witness(&self) {
+        self.engine
+            .executor()
+            .set_witness_mode(dregg_turn::collapse::WitnessMode::Symbolic);
+    }
+
+    /// Whether the drive path currently DEFERS the witness (Symbolic mode).
+    pub fn is_symbolic(&self) -> bool {
+        self.engine.executor().witness_mode().is_symbolic()
+    }
+
     /// The receipt tape (the provenance lineage the reflective `present()` reads).
     pub fn receipts(&self) -> &[[u8; 32]] {
         &self.receipts
+    }
+
+    /// The registered affordance specs (name + the authority each requires) — the
+    /// cap-gated message surface the reflective `affordances(viewer)` projects.
+    pub fn affordance_specs(&self) -> Vec<(String, AuthRequired)> {
+        let mut specs: Vec<(String, AuthRequired)> = self
+            .affordances
+            .values()
+            .map(|a| (a.name.clone(), a.required.clone()))
+            .collect();
+        specs.sort_by(|a, b| a.0.cmp(&b.0));
+        specs
+    }
+
+    /// **Snapshot** the live ledger (cheap fork-based time-travel): the integrity-
+    /// hashed bytes of the whole ledger state. Restore with [`Applet::restore`].
+    pub fn snapshot(&self) -> Vec<u8> {
+        self.engine
+            .state_snapshot()
+            .expect("snapshot the embedded ledger")
+    }
+
+    /// **Restore** the ledger to a prior [`Applet::snapshot`] (the `rewind`). The
+    /// integrity hash is checked; a tampered snapshot is refused. The receipt tape is
+    /// truncated to `keep_receipts` (the count at snapshot time) so the audit tape
+    /// matches the restored state — time-travel that does not leave phantom receipts.
+    pub fn restore(&mut self, snapshot: &[u8], keep_receipts: usize) -> Result<(), String> {
+        self.engine
+            .load_state(snapshot)
+            .map_err(|e| e.to_string())?;
+        self.receipts.truncate(keep_receipts);
+        self.full_receipts.truncate(keep_receipts);
+        self.prev_receipt = self.receipts.last().copied();
+        Ok(())
     }
 
     /// A witnessed read of the live model off the embedded ledger (the SAME read the
@@ -291,7 +364,22 @@ impl Applet {
         let rh = receipt.receipt_hash();
         self.prev_receipt = Some(rh);
         self.receipts.push(rh);
+        // Record whether this turn deferred its witness (Symbolic): the receipt's
+        // state-hash fields are the DEFERRED sentinel. The state still applied + every
+        // gate still ran — only the publishable commitment is deferred.
+        self.last_deferred = dregg_turn::collapse::is_deferred(&receipt);
+        self.full_receipts.push(receipt.clone());
         Ok(receipt)
+    }
+
+    /// The full committed receipts (the provenance lineage).
+    pub fn full_receipts(&self) -> &[TurnReceipt] {
+        &self.full_receipts
+    }
+
+    /// Whether the LAST committed turn deferred its witness (Symbolic mode).
+    pub fn last_receipt_deferred(&self) -> bool {
+        self.last_deferred
     }
 
     /// The number of verified turns that have committed (= the audit tape length).

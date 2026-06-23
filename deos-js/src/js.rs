@@ -43,6 +43,9 @@ thread_local! {
     static LAST_NATIVE_ERROR: RefCell<Option<String>> = const { RefCell::new(None) };
     /// A scratch string for the UTF-8-encode callback to deposit into.
     static SCRATCH: RefCell<String> = const { RefCell::new(String::new()) };
+    /// Snapshot store for `deos.world.snapshot()`/`.rewind(token)`: token → (bytes,
+    /// receipt-count-at-snapshot). A snapshot is the integrity-hashed ledger state.
+    static SNAPSHOTS: RefCell<Vec<(Vec<u8>, usize)>> = const { RefCell::new(Vec::new()) };
 }
 
 /// Install the applet the native functions drive.
@@ -96,9 +99,41 @@ const PRELUDE: &str = r#"
             cells: function() { return JSON.parse(__deos_world_cells()); },
             cellCount: function() { return this.cells().length; },
             // the capability web (nodes + edges)
-            ocap: function() { return JSON.parse(__deos_world_ocap()); }
+            ocap: function() { return JSON.parse(__deos_world_ocap()); },
+            // cheap fork-based time-travel: snapshot returns a token; rewind(token)
+            // restores the ledger to it (a READ-restore — receipts truncate to match).
+            snapshot: function() { return __deos_snapshot() | 0; },
+            rewind: function(token) { return __deos_rewind(token | 0) | 0; }
         },
-        // a reflective handle on ONE cell: its four substances + per-viewer frustum.
+        // fuzzy spotter over every cell's faces → [{cell, score, snippet}], best-first.
+        search: function(q) { return JSON.parse(__deos_search(String(q))); },
+        // ── THE VIEW LANGUAGE (slice 3) — a serializable element-tree (data, NOT gpui) ─
+        // `deos.ui.*` build a view-tree describing gpui-component widgets; a button's
+        // onClick is `{turn:"<affordance>", arg:N}` (a real turn when rendered+fired);
+        // a `bind(() => expr)` node re-reads its value on demand (fine-grained signal).
+        // deos-js stays GPUI-FREE: this produces DATA; a separate renderer draws it.
+        ui: (function() {
+            function node(kind, props, children) {
+                var n = { kind: kind, props: props || {} };
+                if (children !== undefined) n.children = children;
+                return n;
+            }
+            return {
+                vstack: function() { return node("vstack", {}, Array.prototype.slice.call(arguments)); },
+                row:    function() { return node("row", {}, Array.prototype.slice.call(arguments)); },
+                text:   function(s) { return node("text", { text: String(s) }); },
+                // a bound value node: re-evaluates `fn()` each read (signal binding).
+                bind:   function(fn) { var n = node("bind", {}); n.read = fn; return n; },
+                // a button whose onClick fires affordance `aff` with `arg` — a real turn.
+                button: function(label, aff, arg) {
+                    return node("button", { label: String(label), onClick: { turn: String(aff), arg: (arg | 0) } });
+                },
+                input:  function(viewKey) { return node("input", { bindView: String(viewKey) }); },
+                list:   function(items) { return node("list", {}, items || []); },
+                table:  function(rows) { return node("table", {}, rows || []); }
+            };
+        })(),
+        // a reflective handle on ONE cell: its substances · faces · affordances · frustum.
         cell: function(id) {
             var cid = String(id);
             return {
@@ -115,6 +150,17 @@ const PRELUDE: &str = r#"
                     for (var i = 0; i < r.fields.length; i++)
                         if (r.fields[i].key === key) return r.fields[i].value;
                     return null;
+                },
+                // the moldable faces (RawFields · Graph · DomainVisual · Provenance) —
+                // each a distinct obs-projection of the SAME cell.
+                present: function() {
+                    var j = __deos_present(cid);
+                    return j === "null" ? null : JSON.parse(j);
+                },
+                // the cap-gated message list a holder of `viewer`'s authority may fire.
+                // `viewer` is an authority label: "none"/"signature"/"proof"/"either".
+                affordances: function(viewer) {
+                    return JSON.parse(__deos_affordances(String(viewer || "none")));
                 },
                 // .as(viewer) → the cap-bounded view: which cells `viewer` may crawl,
                 // and a reflect() that yields null for an unobservable target.
@@ -191,6 +237,12 @@ impl JsRuntime {
                 (c"__deos_cell", native_cell as RawNative, 1),
                 (c"__deos_frustum", native_frustum as RawNative, 1),
                 (c"__deos_frustum_reflect", native_frustum_reflect as RawNative, 2),
+                // fan-out — present faces · affordances · snapshot/rewind · spotter
+                (c"__deos_present", native_present as RawNative, 1),
+                (c"__deos_affordances", native_affordances as RawNative, 1),
+                (c"__deos_snapshot", native_snapshot as RawNative, 0),
+                (c"__deos_rewind", native_rewind as RawNative, 1),
+                (c"__deos_search", native_search as RawNative, 1),
             ] {
                 let defined = JS_DefineFunction(realm_cx, g, name.as_ptr(), Some(f), nargs, 0);
                 if defined.is_null() {
@@ -488,4 +540,119 @@ unsafe extern "C" fn native_frustum_reflect(context: *mut RawJSContext, argc: u3
         }
     });
     return_string(&mut cx, &args, &json)
+}
+
+// ── THE FAN-OUT natives (present · affordances · snapshot/rewind · spotter) ────────
+
+/// `__deos_present(id)` → the moldable faces JSON (RawFields/Graph/DomainVisual/
+/// Provenance), or `"null"` if the cell is absent.
+unsafe extern "C" fn native_present(context: *mut RawJSContext, argc: u32, vp: *mut Value) -> bool {
+    let mut cx = SmContext::from_ptr(NonNull::new(context).unwrap());
+    let args = CallArgs::from_vp(vp, argc);
+    let id_hex = if args.argc_ >= 1 { arg_string(&mut cx, args.get(0)) } else { String::new() };
+    let json = CURRENT_APPLET.with(|c| {
+        let guard = c.borrow();
+        let applet = match guard.as_ref() {
+            Some(a) => a,
+            None => return "null".to_string(),
+        };
+        match reflect_binding::parse_cell_id(&id_hex) {
+            Some(id) => reflect_binding::cell_present_json(applet.ledger(), &id, applet.full_receipts())
+                .unwrap_or_else(|| "null".to_string()),
+            None => "null".to_string(),
+        }
+    });
+    return_string(&mut cx, &args, &json)
+}
+
+/// `__deos_affordances(viewerAuthLabel)` → the cap-gated message list the holder of
+/// that authority may fire, as JSON. The label is "none"/"signature"/"proof"/"either".
+unsafe extern "C" fn native_affordances(context: *mut RawJSContext, argc: u32, vp: *mut Value) -> bool {
+    let mut cx = SmContext::from_ptr(NonNull::new(context).unwrap());
+    let args = CallArgs::from_vp(vp, argc);
+    let label = if args.argc_ >= 1 { arg_string(&mut cx, args.get(0)) } else { "none".into() };
+    let held = parse_auth_label(&label);
+    let json = CURRENT_APPLET.with(|c| {
+        let guard = c.borrow();
+        match guard.as_ref() {
+            Some(a) => reflect_binding::cell_affordances_json(&a.cell(), &a.affordance_specs(), &held),
+            None => "[]".to_string(),
+        }
+    });
+    return_string(&mut cx, &args, &json)
+}
+
+/// `__deos_snapshot()` → an integer token denoting the saved ledger state (for rewind).
+unsafe extern "C" fn native_snapshot(_context: *mut RawJSContext, argc: u32, vp: *mut Value) -> bool {
+    let args = CallArgs::from_vp(vp, argc);
+    let token = CURRENT_APPLET.with(|c| {
+        let guard = c.borrow();
+        match guard.as_ref() {
+            Some(a) => {
+                let bytes = a.snapshot();
+                let count = a.receipt_count();
+                SNAPSHOTS.with(|s| {
+                    let mut v = s.borrow_mut();
+                    v.push((bytes, count));
+                    (v.len() - 1) as i32
+                })
+            }
+            None => -1,
+        }
+    });
+    args.rval().set(Int32Value(token));
+    true
+}
+
+/// `__deos_rewind(token)` → restore the ledger to snapshot `token`. Returns 1 on
+/// success, -1 on a bad token or restore failure. The audit tape truncates to match —
+/// time-travel that leaves no phantom receipts.
+unsafe extern "C" fn native_rewind(context: *mut RawJSContext, argc: u32, vp: *mut Value) -> bool {
+    let _cx = SmContext::from_ptr(NonNull::new(context).unwrap());
+    let args = CallArgs::from_vp(vp, argc);
+    let token = if args.argc_ >= 1 { arg_i32(args.get(0)) } else { -1 };
+    let ok = CURRENT_APPLET.with(|c| {
+        let mut guard = c.borrow_mut();
+        let applet = match guard.as_mut() {
+            Some(a) => a,
+            None => return false,
+        };
+        let snap = SNAPSHOTS.with(|s| {
+            s.borrow().get(token as usize).cloned()
+        });
+        match snap {
+            Some((bytes, count)) => applet.restore(&bytes, count).is_ok(),
+            None => false,
+        }
+    });
+    args.rval().set(Int32Value(if ok { 1 } else { -1 }));
+    true
+}
+
+/// `__deos_search(q)` → the spotter hits JSON (fuzzy over every cell's faces).
+unsafe extern "C" fn native_search(context: *mut RawJSContext, argc: u32, vp: *mut Value) -> bool {
+    let mut cx = SmContext::from_ptr(NonNull::new(context).unwrap());
+    let args = CallArgs::from_vp(vp, argc);
+    let q = if args.argc_ >= 1 { arg_string(&mut cx, args.get(0)) } else { String::new() };
+    let json = CURRENT_APPLET.with(|c| {
+        let guard = c.borrow();
+        match guard.as_ref() {
+            Some(a) => reflect_binding::spotter_json(a.ledger(), &q),
+            None => "[]".to_string(),
+        }
+    });
+    return_string(&mut cx, &args, &json)
+}
+
+/// Parse an authority label from JS into an `AuthRequired` (the held authority for
+/// affordance projection). Unknown → `None` (the broadest — sees everything).
+fn parse_auth_label(label: &str) -> dregg_cell::AuthRequired {
+    use dregg_cell::AuthRequired;
+    match label.to_lowercase().as_str() {
+        "signature" | "sig" => AuthRequired::Signature,
+        "proof" => AuthRequired::Proof,
+        "either" => AuthRequired::Either,
+        "impossible" => AuthRequired::Impossible,
+        _ => AuthRequired::None,
+    }
 }

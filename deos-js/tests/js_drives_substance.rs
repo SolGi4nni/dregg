@@ -205,6 +205,164 @@ fn js_spike_body() {
         1,
         "reflection is a READ: the crawl committed NO turns"
     );
+
+    // ── (e) THE REFLECTION FAN-OUT — faces · affordances · snapshot/rewind · spotter ─
+    let mut fanout = counter_applet(0xE8);
+    fanout.fire("inc", 5).unwrap(); // model = 5, 1 receipt
+    let fan_hex = fanout
+        .cell()
+        .as_bytes()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<String>();
+    set_current_applet(fanout);
+
+    // (e.1) present() → the moldable faces; every face is a distinct obs-projection.
+    let js_present = format!(
+        r#"
+        var faces = deos.cell("{fan_hex}").present();
+        var kinds = faces.map(function(f) {{ return f.kind; }});
+        var has_raw = kinds.indexOf("raw-fields") >= 0;
+        var has_graph = kinds.indexOf("graph") >= 0;
+        var has_dv = kinds.indexOf("domain-visual") >= 0;
+        var has_prov = kinds.indexOf("provenance") >= 0;
+        // the DomainVisual face is the lifecycle SM, current = Live
+        var dv = faces.filter(function(f){{return f.kind==="domain-visual";}})[0];
+        var live = dv.body.current === "Live";
+        // the Provenance face has 1 event (the one inc turn)
+        var prov = faces.filter(function(f){{return f.kind==="provenance";}})[0];
+        var one_event = prov.body.events.length === 1;
+        (has_raw && has_graph && has_dv && has_prov && live && one_event) ? 1 : 0;
+    "#
+    );
+    assert_eq!(
+        rt.eval(&js_present).expect("eval (e.1)"),
+        Some(1),
+        "present() emits the four faces; DomainVisual=Live; Provenance has the inc turn"
+    );
+
+    // (e.2) affordances(viewer) → cap-gated message list. inc/dec require Signature;
+    // reset requires Proof. A "signature" viewer sees inc+dec but NOT reset
+    // (Proof incomparable to Signature); a "proof" viewer sees reset.
+    let js_aff = r#"
+        var c = deos.cell("CELL");
+        var sig = c.affordances("signature").map(function(a){ return a.name; });
+        var proof = c.affordances("proof").map(function(a){ return a.name; });
+        var sig_ok = sig.indexOf("inc") >= 0 && sig.indexOf("dec") >= 0 && sig.indexOf("reset") < 0;
+        var proof_ok = proof.indexOf("reset") >= 0;
+        (sig_ok && proof_ok) ? 1 : 0;
+    "#
+    .replace("CELL", &fan_hex);
+    assert_eq!(
+        rt.eval(&js_aff).expect("eval (e.2)"),
+        Some(1),
+        "affordances(viewer) is cap-gated: a Signature viewer cannot see the Proof affordance"
+    );
+
+    // (e.3) snapshot / rewind — time-travel. Snapshot at model=5, advance to 15,
+    // rewind, model is back to 5; the audit tape truncates (no phantom receipts).
+    let js_tt = format!(
+        r#"
+        var app2 = deos.applet({{ affordances: ["inc"] }}); // re-bind the driver
+        var snap = deos.world.snapshot();   // save model=5 (1 receipt)
+        app2.inc(10);                        // model=15 (2 receipts)
+        var mid = deos.cell("{fan_hex}").field("balance");
+        deos.world.rewind(snap);             // restore model=5
+        var after = deos.cell("{fan_hex}").field("balance");
+        // mid had the inc's state-field at slot 0 = 15; after rewind slot0 = 5
+        (mid !== null && after !== null) ? 1 : 0;
+    "#
+    );
+    assert_eq!(rt.eval(&js_tt).expect("eval (e.3)"), Some(1), "snapshot/rewind round-trip");
+
+    let fanout = take_current_applet().expect("fanout applet");
+    // After the rewind the audit tape is back to the snapshot's receipt count (1).
+    assert_eq!(
+        fanout.receipt_count(),
+        1,
+        "rewind truncates the audit tape — time-travel leaves no phantom receipts"
+    );
+    assert_eq!(fanout.get_u64(0), 5, "the model rewound to the snapshot (5)");
+
+    // (e.4) spotter — fuzzy search over every cell's faces finds the applet cell.
+    set_current_applet(counter_applet(0xE9));
+    let js_search = r#"
+        var hits = deos.search("Cell");   // every cell's title is "Cell …"
+        (hits.length >= 1 && hits[0].cell.length === 64) ? 1 : 0;
+    "#;
+    assert_eq!(
+        rt.eval(js_search).expect("eval (e.4)"),
+        Some(1),
+        "the spotter finds cells by their reflective text"
+    );
+    let searched = take_current_applet().expect("search applet");
+    assert_eq!(searched.receipt_count(), 0, "search is a READ: no turns committed");
+
+    // ── (f) THE DRIVE PATH RUNS SYMBOLIC BY DEFAULT — defers the WITNESS, never a GATE ─
+    let sym = counter_applet(0xF1);
+    assert!(sym.is_symbolic(), "the applet drive path is Symbolic by default");
+    set_current_applet(sym);
+    let js_sym = r#"
+        var app = deos.applet({ affordances: ["inc", "reset"] });
+        app.inc(8);            // a Symbolic turn — witness deferred, state applies
+        app.fire("reset", 0);  // reset requires Proof; held=Signature → REFUSED (gate runs)
+        app.get(0);            // model = 8 (the Symbolic inc applied; reset refused)
+    "#;
+    assert_eq!(
+        rt.eval(js_sym).expect("eval (f)"),
+        Some(8),
+        "Symbolic applies state (inc=8) AND still refuses the over-reach (reset)"
+    );
+    let sym = take_current_applet().expect("symbolic applet");
+    assert!(
+        sym.last_receipt_deferred(),
+        "the committed turn DEFERRED its witness (DEFERRED_STATE_HASH) — Symbolic"
+    );
+    assert_eq!(sym.get_u64(0), 8, "the model is correct under Symbolic (witness deferred only)");
+    assert_eq!(
+        sym.receipt_count(),
+        1,
+        "exactly one turn committed (inc); the Proof-gated reset was refused — the GATE still ran"
+    );
+
+    // ── (g) THE VIEW LANGUAGE (slice 3) — a serializable element-tree (data, not gpui) ─
+    set_current_applet(counter_applet(0xF2));
+    let js_view = r#"
+        var app = deos.applet({ affordances: ["inc"] });
+        // a counter view: a column of [the count, a +1 button].
+        var tree = deos.ui.vstack(
+            deos.ui.text("Counter"),
+            deos.ui.bind(function() { return app.get(0); }),  // signal binding → the model
+            deos.ui.button("+1", "inc", 1)                     // onClick = a real turn
+        );
+        // assert the tree SHAPE
+        var shape_ok = tree.kind === "vstack"
+            && tree.children.length === 3
+            && tree.children[0].kind === "text"
+            && tree.children[1].kind === "bind"
+            && tree.children[2].kind === "button"
+            && tree.children[2].props.onClick.turn === "inc";
+        // the bound value re-reads the model: 0 before, then fire the button's turn,
+        // then 1 after (a real verified turn, then the binding re-reads).
+        var before = tree.children[1].read();           // 0
+        var handler = tree.children[2].props.onClick;
+        app.fire(handler.turn, handler.arg);            // a REAL turn (model 0 -> 1)
+        var after = tree.children[1].read();            // 1
+        (shape_ok && before === 0 && after === 1) ? 1 : 0;
+    "#;
+    assert_eq!(
+        rt.eval(js_view).expect("eval (g)"),
+        Some(1),
+        "the view-tree has the right shape; firing a bound handler commits a real turn; \
+         the bound value re-reads correctly"
+    );
+    let viewed = take_current_applet().expect("view applet");
+    assert_eq!(
+        viewed.receipt_count(),
+        1,
+        "building the view-tree committed NOTHING; only firing the button's handler did (1 turn)"
+    );
+    assert_eq!(viewed.get_u64(0), 1, "the bound model reflects the fired turn");
 }
 
 #[test]

@@ -13,9 +13,11 @@
 //! Reflection is a READ that confers no authority — distinct from driving (a turn).
 //! All JSON is hand-built (no serde dep) to keep the binding lean.
 
+use deos_reflect::present::{PresentationBody, PresentationKind};
 use deos_reflect::substance::{hex_encode, FieldValue};
-use deos_reflect::{reflect_cell, Frustum, OcapGraph};
-use dregg_cell::Ledger;
+use deos_reflect::{reflect_cell, AffordanceSurface, Frustum, OcapGraph, ReflectedCell};
+use dregg_cell::{AuthRequired, Ledger};
+use dregg_turn::action::Effect;
 use dregg_types::CellId;
 
 /// Parse a 64-hex-char cell id from JS. Returns `None` on a malformed id.
@@ -176,5 +178,212 @@ fn field_value_json(v: &FieldValue) -> (&'static str, String) {
                 hex_encode(commitment)
             ),
         ),
+    }
+}
+
+// ── present() — the moldable faces ────────────────────────────────────────────────
+
+/// `deos.cell(id).present()` → the moldable faces (RawFields · Graph · DomainVisual ·
+/// Provenance) as a JSON array. Each face is a distinct `obs`-projection of the same
+/// cell; the gpui render maps each to a widget. `receipts` feeds the Provenance face.
+pub fn cell_present_json(
+    ledger: &Ledger,
+    id: &CellId,
+    receipts: &[dregg_turn::turn::TurnReceipt],
+) -> Option<String> {
+    let reflected = ReflectedCell::from_ledger(ledger, *id)?;
+    let faces = reflected.present(ledger, receipts);
+    let items: Vec<String> = faces
+        .iter()
+        .map(|p| {
+            format!(
+                "{{\"kind\":\"{}\",\"label\":\"{}\",\"body\":{}}}",
+                face_kind_slug(p.kind),
+                esc(&p.label),
+                face_body_json(&p.body),
+            )
+        })
+        .collect();
+    Some(format!("[{}]", items.join(",")))
+}
+
+fn face_kind_slug(k: PresentationKind) -> &'static str {
+    k.slug()
+}
+
+/// Serialize a face body to JSON (each is pure data the view layer renders).
+fn face_body_json(body: &PresentationBody) -> String {
+    match body {
+        PresentationBody::Fields(insp) => format!("{{\"type\":\"fields\",\"value\":{}}}", inspectable_json(insp)),
+        PresentationBody::Graph(gv) => {
+            let nodes: Vec<String> = gv
+                .nodes
+                .iter()
+                .map(|n| format!("\"{}\"", id_hex(&n.cell)))
+                .collect();
+            let edges: Vec<String> = gv
+                .edges
+                .iter()
+                .map(|e| {
+                    format!(
+                        "{{\"holder\":\"{}\",\"target\":\"{}\",\"rights\":\"{}\"}}",
+                        id_hex(&e.holder),
+                        id_hex(&e.target),
+                        e.rights_label()
+                    )
+                })
+                .collect();
+            format!(
+                "{{\"type\":\"graph\",\"nodes\":[{}],\"edges\":[{}]}}",
+                nodes.join(","),
+                edges.join(",")
+            )
+        }
+        PresentationBody::StateMachine(sm) => {
+            let states: Vec<String> = sm
+                .states
+                .iter()
+                .map(|s| format!("{{\"name\":\"{}\",\"terminal\":{}}}", esc(&s.name), s.terminal))
+                .collect();
+            let trans: Vec<String> = sm
+                .transitions
+                .iter()
+                .map(|t| {
+                    format!(
+                        "{{\"from\":\"{}\",\"to\":\"{}\",\"verb\":\"{}\"}}",
+                        esc(&t.from),
+                        esc(&t.to),
+                        esc(&t.verb)
+                    )
+                })
+                .collect();
+            format!(
+                "{{\"type\":\"stateMachine\",\"current\":\"{}\",\"states\":[{}],\"transitions\":[{}]}}",
+                esc(&sm.current),
+                states.join(","),
+                trans.join(",")
+            )
+        }
+        PresentationBody::Timeline(tv) => {
+            let events: Vec<String> = tv
+                .events
+                .iter()
+                .map(|e| {
+                    let hash = e
+                        .hash
+                        .map(|h| format!("\"{}\"", hex_encode(&h)))
+                        .unwrap_or_else(|| "null".to_string());
+                    format!("{{\"at\":{},\"label\":\"{}\",\"hash\":{}}}", e.at, esc(&e.label), hash)
+                })
+                .collect();
+            format!("{{\"type\":\"timeline\",\"events\":[{}]}}", events.join(","))
+        }
+    }
+}
+
+// ── affordances(viewer) — the cap-gated message list ──────────────────────────────
+
+/// `deos.cell(id).affordances(viewer)` → the cap-gated affordance list a holder of
+/// `held` may see/fire, as JSON. Built from the registered `specs` (name + required
+/// authority); projected by `is_attenuation` (`required ⊆ held`). A weaker viewer
+/// receives a strictly smaller set — the frustum's affordance half.
+pub fn cell_affordances_json(cell: &CellId, specs: &[(String, AuthRequired)], held: &AuthRequired) -> String {
+    let mut surface = AffordanceSurface::new(*cell);
+    for (name, required) in specs {
+        // A representative effect template (the real turn an affordance fires touches
+        // the cell's state); the *projection* is by `required` vs `held`.
+        surface = surface.declare(deos_reflect::Affordance::new(
+            name.clone(),
+            required.clone(),
+            Effect::IncrementNonce { cell: *cell },
+        ));
+    }
+    let visible: Vec<String> = surface
+        .project_for(held)
+        .into_iter()
+        .map(|a| {
+            format!(
+                "{{\"name\":\"{}\",\"required\":\"{}\"}}",
+                esc(&a.name),
+                auth_label(&a.required)
+            )
+        })
+        .collect();
+    format!("[{}]", visible.join(","))
+}
+
+fn auth_label(a: &AuthRequired) -> &'static str {
+    match a {
+        AuthRequired::None => "none",
+        AuthRequired::Signature => "signature",
+        AuthRequired::Proof => "proof",
+        AuthRequired::Either => "either",
+        AuthRequired::Impossible => "impossible",
+        AuthRequired::Custom { .. } => "custom",
+    }
+}
+
+// ── spotter — fuzzy search over every object's faces ──────────────────────────────
+
+/// `deos.search(q)` → a fuzzy search over every cell's reflective text (id, lifecycle,
+/// field keys), as a JSON array of hits `{cell, score, snippet}`. A simple
+/// substring+subsequence scorer (no UI-palette dep): score = matched-chars / query-len,
+/// scaled. Hits sorted best-first.
+pub fn spotter_json(ledger: &Ledger, query: &str) -> String {
+    let q = query.to_lowercase();
+    let mut hits: Vec<(i64, String, String)> = Vec::new();
+    let mut ids: Vec<CellId> = ledger.iter().map(|(id, _)| *id).collect();
+    ids.sort_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
+    for id in &ids {
+        if let Some(cell) = ledger.get(id) {
+            let insp = reflect_cell(id, cell);
+            // The searchable text: id + title + subtitle + every field key.
+            let mut text = format!("{} {} {}", id_hex(id), insp.title, insp.subtitle);
+            for f in &insp.fields {
+                text.push(' ');
+                text.push_str(&f.key);
+            }
+            let lower = text.to_lowercase();
+            if let Some(score) = fuzzy_score(&q, &lower) {
+                hits.push((score, id_hex(id), insp.title.clone()));
+            }
+        }
+    }
+    hits.sort_by(|a, b| b.0.cmp(&a.0));
+    let items: Vec<String> = hits
+        .iter()
+        .map(|(score, cell, title)| {
+            format!("{{\"cell\":\"{}\",\"score\":{},\"snippet\":\"{}\"}}", cell, score, esc(title))
+        })
+        .collect();
+    format!("[{}]", items.join(","))
+}
+
+/// A simple fuzzy score: contiguous-substring match scores highest; otherwise an
+/// in-order subsequence match scores lower; no match → `None`. (No palette dep.)
+fn fuzzy_score(query: &str, text: &str) -> Option<i64> {
+    if query.is_empty() {
+        return Some(0);
+    }
+    if text.contains(query) {
+        return Some(1000 - (text.len() as i64).min(900));
+    }
+    // subsequence: every query char appears in order
+    let mut qi = query.chars();
+    let mut want = qi.next();
+    let mut matched = 0i64;
+    for c in text.chars() {
+        if Some(c) == want {
+            matched += 1;
+            want = qi.next();
+            if want.is_none() {
+                break;
+            }
+        }
+    }
+    if want.is_none() {
+        Some(100 + matched)
+    } else {
+        None
     }
 }
