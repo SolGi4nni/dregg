@@ -212,6 +212,23 @@ web-shell = ["servo", "servo-render/libservo"]
 # old target block did.
 gpui-ui = ["dep:gpui", "dep:gpui_platform", "dep:gpui-component", "gpui_platform/runtime_shaders", "gpui_platform/x11", "gpui_platform/wayland"]
 
+# WEB DEOS — the gpui cockpit IN THE BROWSER (wasm32 + WebGPU canvas).
+#
+# Pulls `gpui` + `gpui_platform` for the SAME element-tree rendering the native
+# cockpit uses, but on wasm32 `gpui_platform` forwards to the `gpui_web` backend
+# (a full Platform: dispatcher/display/events/keyboard/window over WgpuRenderer →
+# WebGPU; see ~/.cargo/git/checkouts/zed-.../crates/gpui_web). It does NOT pull
+# the native-only sub-features (`runtime_shaders` = macOS Metal, `x11`/`wayland`
+# = Linux windowing — all inert on wasm but kept out of the web feature for
+# clarity) and does NOT pull web-shell (servo/libservo — native-only), dev-surfaces
+# (alacritty PTY / RealFs — native-only), or render-capture (gpui test-support
+# offscreen wgpu — native bake). The in-browser executor (`embedded-executor`,
+# already wasm-clean per starbridge-v2/web) is the data plane; gpui_web is the
+# presentation plane. This is THE FULL COCKPIT PATH, not a lesser skin — the first
+# slice (starbridge-v2/web `gpui-web` feature) proves gpui renders to a canvas
+# driving the live `World`. See docs/deos/WEB-DEOS.md.
+gpui-web = ["embedded-executor", "dep:gpui", "dep:gpui_platform"]
+
 # The Lean-free thin-client / verifier path for the seL4 component end-state.
 # Mutually exclusive with native-full at the linker level (no executor, no
 # gpui); selected with `--no-default-features --features sel4-thin`. It speaks the
@@ -500,6 +517,14 @@ getrandom02 = { package = "getrandom", version = "0.2", features = ["js"] }
 getrandom04 = { package = "getrandom", version = "0.4", features = ["wasm_js"] }
 # The browser clock for `world::now_unix` (wasm32 has no `SystemTime::now()`).
 js-sys = "0.3"
+# ed25519 signing — `world.rs` (grant-receipt signing) + `shared_fork.rs` (the
+# consent-resolution ConditionProof) call `ed25519_dalek::` UNCONDITIONALLY, so
+# the wasm lib build needs it here too (the native copy is under the
+# `cfg(not(wasm32))` block above). `default-features = false` drops `rand_core`'s
+# OS-rng pull (the wasm build only uses `from_bytes` / verify, never `generate`);
+# `alloc` keeps `to_bytes`. Without this the wasm lib fails E0433 "unlinked crate
+# ed25519_dalek" — which broke the existing atlas skin's wasm build too.
+ed25519-dalek = { version = "2", default-features = false, features = ["alloc"] }
 # THE THREE WASM-UNIFICATION FORCINGS (mirrors wasm/Cargo.toml lines 119-131) —
 # indirect deps the executor tree pulls that need a wasm32-specific feature flip,
 # forced here so cargo feature-unification applies it to the transitive copy:

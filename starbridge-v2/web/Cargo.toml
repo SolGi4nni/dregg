@@ -7,14 +7,34 @@ description = "The dregg cockpit MODEL in the browser — the gpui-free Presenta
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[features]
+default = []
+# WEB DEOS — the gpui cockpit in the browser (wasm32 + WebGPU canvas via
+# gpui_web). Pulls starbridge-v2's `gpui-web` feature (gpui + gpui_platform,
+# which forwards to gpui_web on wasm32) and the gpui crates directly so this
+# crate's `cockpit_web` view can build an element tree. The JSON/atlas skin
+# (the default build, `WebImage`) is unaffected — `gpui-web` is purely additive.
+gpui-web = [
+    "starbridge-v2/gpui-web",
+    "dep:gpui",
+    "dep:gpui_platform",
+]
+
 [dependencies]
 # The gpui-free model + the embedded executor, wasm-configured (no gpui, no Lean
 # link, no redb) — the SAME crate the native cockpit renders, compiled for wasm.
+# `gpui-web` (opt-in) ADDS the gpui renderer on top (default-features stays off).
 starbridge-v2 = { path = "..", default-features = false, features = ["embedded-executor"] }
 dregg-cell = { path = "../../cell", default-features = false }
 wasm-bindgen = "0.2"
 serde_json = "1"
 hex = "0.4"
+
+# gpui + gpui_platform, gated on `gpui-web`. Same fork rev as starbridge-v2 pins
+# so cargo resolves ONE gpui instance. On wasm32, gpui_platform's wasm target
+# block forwards to the gpui_web backend (no native windowing in the graph).
+gpui = { git = "https://github.com/emberian/zed", rev = "407a6ffd977d82b828e392f92db5cb34edea9549", optional = true }
+gpui_platform = { git = "https://github.com/emberian/zed", rev = "407a6ffd977d82b828e392f92db5cb34edea9549", optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.3", features = ["wasm_js"] }

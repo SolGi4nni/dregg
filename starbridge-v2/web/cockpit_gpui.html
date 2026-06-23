@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang=en>
+<head>
+<meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<title>dregg · the gpui cockpit, live in your browser</title>
+<style>
+html,body{margin:0;height:100%;background:#0d1117;color:#c9d1d9;font:13px/1.5 ui-monospace,Menlo,monospace;overflow:hidden}
+#status{position:fixed;top:8px;right:12px;z-index:10;color:#8b949e;font-size:11px}
+#status .live{color:#3fb950}
+#status .err{color:#f85149}
+/* gpui_web appends its <canvas> to <body>; it sizes itself to the window. */
+canvas{display:block}
+#fallback{padding:24px;max-width:760px}
+#fallback h1{color:#58a6ff;font-size:16px}
+#fallback code{color:#f0883e}
+</style>
+</head>
+<body>
+<div id=status><span class=live id=live>● booting the gpui cockpit (wasm + WebGPU)…</span></div>
+<div id=fallback>
+  <h1>dregg · the gpui cockpit, in the browser</h1>
+  <p>This boots the <b>real gpui renderer</b> (the same one the native deos cockpit
+  draws with) on the <code>gpui_web</code> backend — wasm32 + a WebGPU canvas —
+  driving the <b>same in-browser verified executor</b>. Every affordance you click
+  fires a real cap-gated turn through the verified executor, in this tab, no server.</p>
+  <p id=note>If you see this text and no cockpit, your browser may lack
+  <b>WebGPU</b> (needed by gpui's wgpu renderer). Try a recent Chrome/Edge, or
+  Firefox/Safari with WebGPU enabled. The canvas replaces this once it paints.</p>
+</div>
+<script type=module>
+// wasm-bindgen `--target web` output. Build with:
+//   cd starbridge-v2/web
+//   cargo build --release --target wasm32-unknown-unknown -p starbridge-web --features gpui-web
+//   wasm-bindgen --target web --out-dir pkg-gpui \
+//       ../target/wasm32-unknown-unknown/release/starbridge_web.wasm
+//   (then `wasm-opt -Oz` the bundle — the debug wasm is ~900MB; release+opt is far smaller.)
+import init, { boot_cockpit } from './pkg-gpui/starbridge_web.js';
+const live = document.getElementById('live');
+try {
+  if (!('gpu' in navigator)) {
+    live.className = 'err';
+    live.textContent = '✗ WebGPU unavailable — the gpui renderer needs it';
+  } else {
+    await init();
+    // boot_cockpit() seeds the demo image, boots a single-threaded web gpui app,
+    // opens a window (creating + appending the WebGPU canvas), mounts the cockpit
+    // slice. The gpui run-loop drives paints/events thereafter.
+    boot_cockpit();
+    live.textContent = '● live — gpui cockpit running';
+    // the gpui canvas now owns the surface; the fallback prose is behind it.
+  }
+} catch (e) {
+  live.className = 'err';
+  live.textContent = '✗ wasm error';
+  const f = document.getElementById('fallback');
+  f.insertAdjacentHTML('beforeend', '<pre style="color:#f85149">'+String(e)+'\n'+(e.stack||'')+'</pre>');
+}
+</script>
+</body>
+</html>

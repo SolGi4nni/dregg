@@ -20,6 +20,14 @@ use starbridge_v2::presentable::{FocusTarget, Presentation, PresentationBody, Re
 use starbridge_v2::reflect::{FieldValue, Inspectable};
 use starbridge_v2::world::{self, World};
 
+// THE GPUI COCKPIT, IN THE BROWSER (first slice) — the REAL gpui element-tree
+// renderer on the `gpui_web` backend (wasm32 + WebGPU canvas), driving the same
+// embedded `World`. Gated on `gpui-web` (pulls gpui + gpui_platform → gpui_web).
+// This is the FULL-COCKPIT path, not the JSON/atlas skin above; see
+// `cockpit_web::boot_cockpit` and docs/deos/WEB-DEOS.md.
+#[cfg(all(target_arch = "wasm32", feature = "gpui-web"))]
+pub mod cockpit_web;
+
 #[wasm_bindgen]
 pub struct WebImage {
     world: World,
