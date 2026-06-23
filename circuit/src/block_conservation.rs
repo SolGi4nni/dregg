@@ -267,7 +267,6 @@ impl BlockConservation {
     /// This is the in-circuit realization of the block-level `Σδ=0`: the trust is ONLY the per-cell
     /// proofs (whose published `NET_DELTA` PIs feed the trace) plus the per-asset AIR — no off-AIR
     /// reconstruction of the cross-cell pairing.
-    #[cfg(feature = "prover")]
     pub fn prove_and_verify(&self) -> Result<(), BlockConservationError> {
         use crate::cross_cell_conservation_air::prove_cross_cell_conservation;
 
@@ -306,7 +305,6 @@ impl BlockConservation {
     /// client runs THIS over the block's accompanying per-asset conservation proofs. `proofs` is the
     /// asset → proof map the prover published; an asset with no proof, or whose proof does not
     /// verify, REJECTS the block.
-    #[cfg(any(feature = "prover", feature = "verifier"))]
     pub fn verify_with_proofs(
         &self,
         proofs: &BTreeMap<
@@ -466,7 +464,6 @@ mod tests {
     /// two-cell transfer block PROVES + VERIFIES per asset through the committed Lean descriptor; the
     /// forged-mint block is REJECTED (the per-asset `balance[last]==0` boundary is unsatisfiable). NO
     /// trust beyond the per-cell proofs + the proven AIR.
-    #[cfg(feature = "prover")]
     #[test]
     fn block_collector_proves_honest_rejects_forged() {
         let asset = BabyBear::new(7);
@@ -515,7 +512,6 @@ mod tests {
     /// MULTI-ASSET: a block touching asset 7 (A −10 / B +10) AND asset 8 (C −5 / D +5), each
     /// balanced, PROVES + VERIFIES — one per-asset AIR run per asset (the
     /// `multi_domain_independent` conjunction). NO declared supply rows needed.
-    #[cfg(feature = "prover")]
     #[test]
     fn multi_asset_balanced_block_conserves() {
         let asset7 = BabyBear::new(7);

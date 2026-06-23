@@ -239,7 +239,6 @@ pub fn generate_cap_membership_trace(
 /// root]` where `root` is the path's recomputed top — the COMPOSING verifier is
 /// responsible for pinning that root to the canonical pre-state
 /// `capability_root` (the non-vacuity tooth).
-#[cfg(feature = "prover")]
 pub fn prove_cap_membership_p3(
     leaf_digest: BabyBear,
     siblings: &[BabyBear],
@@ -256,7 +255,6 @@ pub fn prove_cap_membership_p3(
 /// supplies the `leaf_digest` AND `root` it expects this proof to attest; both
 /// are bound in-circuit (row-0 / last-row boundaries), so a proof for a
 /// different leaf or against a different tree is rejected.
-#[cfg(feature = "prover")]
 pub fn verify_cap_membership_p3(
     proof: &crate::dsl::dsl_p3_air::DslP3Proof,
     leaf_digest: BabyBear,
@@ -268,7 +266,7 @@ pub fn verify_cap_membership_p3(
         .map_err(|e| format!("cap-membership p3 verification failed: {e}"))
 }
 
-#[cfg(all(test, feature = "prover"))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::cap_root::{

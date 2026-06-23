@@ -29,7 +29,7 @@
 #![cfg(feature = "prover")]
 
 use dregg_circuit::field::BabyBear;
-use dregg_circuit::shielded::{
+use dregg_circuit_prove::shielded::{
     HiddenAssetLeg, PoolBalanceMode, PoolInputWitness, ShieldedError, ShieldedSpendWitness,
     prove_pool_transfer,
 };

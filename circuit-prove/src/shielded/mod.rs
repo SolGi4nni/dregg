@@ -15,14 +15,14 @@
 //!
 //! 1. **Owner / membership / no-double-spend — the hidden STARK side.**
 //!    For every input note we reuse the production DSL note-spend circuit
-//!    ([`crate::dsl::note_spending::note_spending_dsl_circuit`]), which proves
+//!    ([`dregg_circuit::dsl::note_spending::note_spending_dsl_circuit`]), which proves
 //!    in-circuit: (b) the input note's commitment is a *member* of the
 //!    commitment tree at a public `merkle_root`, and (c) the nullifier is
 //!    correctly *derived* from the note + the spender's key (so reusing a note
 //!    yields the same nullifier and is rejected by the nullifier set). The
 //!    note **owner** and the **spending key** live only in the witness. We run
 //!    this circuit through the **hiding** uni-STARK path
-//!    ([`crate::dsl::dsl_p3_air::prove_dsl_zk`], `HidingFriPcs`, `ZK = true`),
+//!    ([`dregg_circuit::dsl::dsl_p3_air::prove_dsl_zk`], `HidingFriPcs`, `ZK = true`),
 //!    so the proof's openings reveal nothing about the witness beyond the
 //!    public `(nullifier, merkle_root, …)`. *Owner is blind.*
 //!

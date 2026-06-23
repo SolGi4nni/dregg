@@ -201,8 +201,8 @@ pub(crate) use helpers::{fill_balance_limb_bits, fill_reserved_bits};
 
 // ---- Re-export AIR ----
 pub use air::AIR_DESCRIPTOR;
-#[cfg(not(feature = "prover"))]
-pub use air::EffectVmAir;
+// `EffectVmAir` (v1 hand-AIR) is RETIRED — the rotated IR-v2 descriptor is the
+// sole effect-VM circuit.
 
 // ---- Re-export trace generation ----
 pub use trace::{

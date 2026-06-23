@@ -65,10 +65,10 @@
 //! `DslP3Air`, hiding config swapped in. This module assembles witnesses and
 //! composes proofs; it emits no AIR of its own.
 
-use crate::field::BabyBear;
+use dregg_circuit::field::BabyBear;
 use crate::shielded::transfer::{ShieldedError, ShieldedInputProof, prove_shielded_input};
 use crate::shielded::{ShieldedTransferWitness, shielded_spend_circuit};
-use crate::dsl::dsl_p3_air::verify_dsl_zk;
+use dregg_circuit::dsl::dsl_p3_air::verify_dsl_zk;
 use crate::shielded::spend_circuit::{PUBLIC_INPUT_COUNT, pi};
 
 /// One asset-hiding value-commitment leg of a multi-asset pool transfer.

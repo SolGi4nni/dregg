@@ -303,7 +303,7 @@ fn set_field_dyn_proves_on_deployed_wide_path() {
 /// verifying STARK.
 #[test]
 fn custom_proves_on_deployed_wide_path() {
-    use dregg_circuit::custom_proof_bind::{
+    use dregg_circuit_prove::custom_proof_bind::{
         BoundCustomProof, ProofBindError, prove_custom_program, verify_bound_custom_proof,
     };
     use dregg_circuit::dsl::circuit::{
@@ -401,14 +401,14 @@ fn custom_proves_on_deployed_wide_path() {
 /// wire form carries everything the light-client recursion needs (proof bytes + public inputs;
 /// the program is resolved by the bound VK in the registry).
 fn bound_to_wire_and_back(
-    bound: &dregg_circuit::custom_proof_bind::BoundCustomProof,
-) -> dregg_circuit::custom_proof_bind::BoundCustomProof {
+    bound: &dregg_circuit_prove::custom_proof_bind::BoundCustomProof,
+) -> dregg_circuit_prove::custom_proof_bind::BoundCustomProof {
     use dregg_circuit::field::BabyBear;
     let turn_carrier = dregg_turn::CustomProgramProof {
         proof_bytes: bound.proof_bytes.clone(),
         public_inputs: bound.public_inputs.iter().map(|f| f.as_u32()).collect(),
     };
-    dregg_circuit::custom_proof_bind::BoundCustomProof {
+    dregg_circuit_prove::custom_proof_bind::BoundCustomProof {
         program: bound.program.clone(),
         proof_bytes: turn_carrier.proof_bytes,
         public_inputs: turn_carrier
@@ -825,7 +825,7 @@ const CAP_OPEN_ROUTE_EFFECTS: &[&str] =
 // closed.
 //
 // SOUNDNESS (closed earlier, verified end-to-end here): the `proof_bind` gate genuinely VERIFIES the
-// external sub-proof via the deployed, SDK-reachable `dregg_circuit::custom_proof_bind`: resolve the
+// external sub-proof via the deployed, SDK-reachable `dregg_circuit_prove::custom_proof_bind`: resolve the
 // program by the bound 8-felt VK, VERIFY the external STARK under its AIR (the recursion), and require
 // the sub-proof's PI commitment to equal the bound `commit` column. A FORGED sub-proof (non-verifying
 // STARK / mismatched commitment / unknown VK) is REJECTED. The in-AIR `proof_bind` op is a
@@ -967,7 +967,7 @@ fn provability_scoreboard_deployed_wide_path() {
 /// **THE custom proof_bind DESCRIPTOR PIN (the columns the genuine engine binds).**
 /// `custom` is the effect whose receipt rides an EXTERNAL program sub-proof, bound via the
 /// descriptor's `proof_bind` op. The genuine engine that VERIFIES that sub-proof (not a bounds
-/// check) is `dregg_circuit::custom_proof_bind` — exercised end-to-end in
+/// check) is `dregg_circuit_prove::custom_proof_bind` — exercised end-to-end in
 /// `custom_proof_bind_honest_verifies_forged_rejected` below. This test pins the descriptor columns
 /// that engine binds, so a regression dropping the `proof_bind` op or its column binding FAILS here:
 ///   * the deployed `customVmDescriptor2R24` carries EXACTLY ONE `proof_bind` IR constraint;
@@ -1055,7 +1055,7 @@ fn custom_descriptor_carries_proof_bind_residual_named() {
 /// a prover could supply any commitment/VK without a verifying sub-proof, so `custom`'s
 /// program-correctness was NOT enforced on the wire (its `descriptorRefines` was vacuous).
 ///
-/// `dregg_circuit::custom_proof_bind` makes the gate MEAN "the bound proof verified":
+/// `dregg_circuit_prove::custom_proof_bind` makes the gate MEAN "the bound proof verified":
 ///   1. resolve the program by the bound 8-felt VK hash (unknown ⇒ fail closed);
 ///   2. confirm the program's self-computed VK equals the bound column (tampered registry ⇒ reject);
 ///   3. VERIFY the external STARK sub-proof under the program's AIR (THE recursion — forged ⇒ reject);
@@ -1066,7 +1066,7 @@ fn custom_descriptor_carries_proof_bind_residual_named() {
 /// the SDK's dependency on `dregg-circuit`, both poles, NO catch_unwind.
 #[test]
 fn custom_proof_bind_honest_verifies_forged_rejected() {
-    use dregg_circuit::custom_proof_bind::{
+    use dregg_circuit_prove::custom_proof_bind::{
         ClaimedProofBind, ProofBindError, custom_proof_pi_commitment, prove_custom_program,
         verify_bound_custom_proof, verify_proof_bind,
     };

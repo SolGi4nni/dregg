@@ -24,7 +24,7 @@ path = "src/main.rs"
 # every_variant_roundtrip / executor_honesty_threats) are the wasm floor; under `prover` (default)
 # they compile out and the rotated stack is the live one.
 default = ["prover"]
-prover = ["dregg-circuit/prover"]
+prover = []
 __legacy_tests = ["dep:dregg-bridge"]
 __wip_tests = ["dep:dregg-bridge"]
 

@@ -408,11 +408,11 @@ pub fn produce(
 }
 
 /// **THE ROTATED-LEG MINTING RECIPE (Bucket-F / PATH-PRESERVE Phase 5a).** Build a
-/// [`RotatedParticipantLeg`](dregg_circuit::joint_turn_aggregation::RotatedParticipantLeg) for a
+/// [`RotatedParticipantLeg`](dregg_circuit_prove::joint_turn_aggregation::RotatedParticipantLeg) for a
 /// single homogeneous-cohort turn from the real before/after actor `Cell`s: run [`produce`] over
 /// each cell to derive its rotated block witness (`pre_limbs` + `iroot`), then hand those to the
 /// pure-circuit
-/// [`RotatedParticipantLeg::mint_from_block_witnesses`](dregg_circuit::joint_turn_aggregation::RotatedParticipantLeg::mint_from_block_witnesses),
+/// [`RotatedParticipantLeg::mint_from_block_witnesses`](dregg_circuit_prove::joint_turn_aggregation::RotatedParticipantLeg::mint_from_block_witnesses),
 /// which generates the 311-column rotated trace + 38-PI vector and proves it through the IR-v2
 /// batch prover under the leaf-wrap config (so the minted `Ir2BatchProof` folds directly as a
 /// `NativeBatchStark` recursion leaf). The proof self-verifies natively before return.
@@ -441,9 +441,9 @@ pub fn mint_rotated_participant_leg(
     commitments_root: &[u8; 32],
     receipt_log: &[[u8; 32]],
     turn_id: Option<BabyBear>,
-) -> Result<dregg_circuit::joint_turn_aggregation::RotatedParticipantLeg, String> {
+) -> Result<dregg_circuit_prove::joint_turn_aggregation::RotatedParticipantLeg, String> {
     use dregg_circuit::effect_vm::trace_rotated::RotatedBlockWitness;
-    use dregg_circuit::joint_turn_aggregation::RotatedParticipantLeg;
+    use dregg_circuit_prove::joint_turn_aggregation::RotatedParticipantLeg;
 
     // The turn-context ledger snapshot: a single-cell ledger holding the after-cell (the
     // cells_root shape `produce` reads).

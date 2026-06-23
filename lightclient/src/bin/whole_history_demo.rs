@@ -21,8 +21,8 @@ use std::time::Instant;
 
 use dregg_circuit::effect_vm::{CellState, Effect};
 use dregg_circuit::field::BabyBear;
-use dregg_circuit::ivc_turn_chain::FinalizedTurn;
-use dregg_circuit::joint_turn_aggregation::DescriptorParticipant;
+use dregg_circuit_prove::ivc_turn_chain::FinalizedTurn;
+use dregg_circuit_prove::joint_turn_aggregation::DescriptorParticipant;
 use dregg_turn::rotation_witness::mint_rotated_participant_leg;
 
 use dregg_lightclient::{FinalityCert, fold_and_attest, verify_finalized_history, verify_history};

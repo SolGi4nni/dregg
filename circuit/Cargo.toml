@@ -8,30 +8,31 @@ license.workspace = true
 description = "Zero-knowledge proof circuits for dregg authorization token chains"
 
 [dependencies]
-# Plonky3 core (workspace-pinned)
-p3-field = { workspace = true, optional = true }
-p3-baby-bear = { workspace = true, optional = true }
-p3-air = { workspace = true, optional = true }
-p3-matrix = { workspace = true, optional = true }
-p3-uni-stark = { workspace = true, optional = true }
-p3-challenger = { workspace = true, optional = true }
-p3-commit = { workspace = true, optional = true }
-p3-fri = { workspace = true, optional = true }
-p3-symmetric = { workspace = true, optional = true }
-p3-dft = { workspace = true, optional = true }
-p3-poseidon2 = { workspace = true, optional = true }
-p3-mds = { workspace = true, optional = true }
-p3-monty-31 = { workspace = true, optional = true }
-p3-merkle-tree = { workspace = true, optional = true }
-p3-util = { workspace = true, optional = true }
-
-# Plonky3-recursion (workspace-pinned)
-p3-recursion = { workspace = true, optional = true }
-p3-circuit = { workspace = true, optional = true }
-p3-circuit-prover = { workspace = true, optional = true }
-p3-batch-stark = { workspace = true, optional = true }
-p3-lookup = { workspace = true, optional = true }
-p3-poseidon2-circuit-air = { workspace = true, optional = true }
+# Plonky3 core (workspace-pinned). THE VERIFY FLOOR (split policy 2): these are
+# the prover-FREE batch-STARK VERIFY surface deps + the recursion-free batch
+# prover (`p3-batch-stark`'s `prove_batch`/`verify_batch`, `p3-uni-stark`). They
+# are ALWAYS-ON — `dregg-circuit` is the verify-level floor. The three
+# RECURSION-ONLY crates (`p3-recursion` / `p3-circuit` / `p3-circuit-prover`) are
+# NOT here; they moved with the recursion tower to `dregg-circuit-prove`, which
+# keeps `cargo tree -p dregg-circuit` free of the recursion prover.
+p3-field = { workspace = true }
+p3-baby-bear = { workspace = true }
+p3-air = { workspace = true }
+p3-matrix = { workspace = true }
+p3-uni-stark = { workspace = true }
+p3-challenger = { workspace = true }
+p3-commit = { workspace = true }
+p3-fri = { workspace = true }
+p3-symmetric = { workspace = true }
+p3-dft = { workspace = true }
+p3-poseidon2 = { workspace = true }
+p3-mds = { workspace = true }
+p3-monty-31 = { workspace = true }
+p3-merkle-tree = { workspace = true }
+p3-util = { workspace = true }
+p3-batch-stark = { workspace = true }
+p3-lookup = { workspace = true }
+p3-poseidon2-circuit-air = { workspace = true }
 
 # Dregg DSL proc-macro — the temporal_predicate_dsl module is the manually-expanded
 # equivalent of the #[dregg_circuit] macro output (the macro cannot self-reference
@@ -43,39 +44,23 @@ postcard = { version = "1", features = ["alloc"] }
 blake3 = "1"
 getrandom = { workspace = true }
 serde = { version = "1", features = ["derive"] }
-tracing = { version = "0.1", optional = true }
-itertools = { version = "0.14", optional = true }
-rand = { version = "0.10", optional = true }
-rmp-serde = { version = "1.2", optional = true }
+tracing = { version = "0.1" }
+itertools = { version = "0.14" }
+rand = { version = "0.10" }
+rmp-serde = { version = "1.2" }
 
-# PLATFORM gates only: `plonky3`/`prover` gate the NATIVE prover stack (off for
-# wasm32, which compiles the crate's always-present pure logic). The old `mock = []`
-# and `dev = []` features gated NOTHING (zero cfg uses) and were deleted.
-# See docs/FEATURE-HYGIENE.md.
+# THE VERIFY-LEVEL FLOOR (split policy 2). `dregg-circuit` is unconditionally the
+# prover-FREE batch-STARK VERIFY surface PLUS the recursion-free `prove_batch`
+# provers; all its p3 deps are non-optional. The recursion prover
+# (`p3-recursion`/`p3-circuit`/`p3-circuit-prover`) lives in `dregg-circuit-prove`.
+#
+# `plonky3` is RETAINED as an always-on no-op feature (default-on) so the existing
+# `#[cfg(feature = "plonky3")]` sites resolve true on the floor. The old `verifier`
+# and `prover` features are GONE (their items are now unconditional or moved); a
+# consumer that wants the prove surface depends on `dregg-circuit-prove`.
 [features]
-default = ["plonky3", "prover"]
-plonky3 = [
-    "p3-field", "p3-baby-bear", "p3-air", "p3-matrix", "p3-uni-stark",
-    "p3-challenger", "p3-commit", "p3-fri", "p3-symmetric", "p3-dft",
-    "p3-poseidon2", "p3-mds", "p3-monty-31", "p3-merkle-tree", "p3-util",
-    "rand", "tracing", "itertools", "rmp-serde",
-]
-# `verifier` = the PROVER-FREE batch-STARK VERIFY surface (cutover C2). It pulls the
-# multi-table batch deps the verify path needs (`p3-batch-stark`'s `verify_batch` is
-# prover-free per the p3-batch-stark audit; `from_airs_and_degrees(..).common` builds
-# only the symbolic `Lookups` + empty preprocessed for the IR-v2 AIRs, no DFT/`prove_batch`)
-# but NOT the recursion-prover crates. It gates the VERIFY half of `descriptor_ir2`
-# (`verify_vm_descriptor2{,_with_config}`, the AIRs, `ir2_config`) so the wasm /
-# no-lean-link verifier can verify rotated proofs under `--no-default-features
-# --features verifier` without monomorphizing the prover DFT or linking `prove_batch`.
-verifier = [
-    "plonky3",
-    "dep:p3-batch-stark", "dep:p3-lookup", "dep:p3-poseidon2-circuit-air",
-]
-prover = [
-    "verifier",
-    "dep:p3-recursion", "dep:p3-circuit", "dep:p3-circuit-prover",
-]
+default = ["plonky3"]
+plonky3 = []
 
 [dev-dependencies]
 criterion = { workspace = true }

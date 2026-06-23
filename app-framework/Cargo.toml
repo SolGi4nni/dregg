@@ -14,6 +14,9 @@ dregg-sdk = { path = "../sdk" }
 dregg-turn = { path = "../turn" }
 dregg-intent = { path = "../intent" }
 dregg-circuit = { path = "../circuit" }
+# `stark_rehydrate` verifies the recursive IVC aggregate (the recursion tower),
+# so it depends on the heavy prove crate.
+dregg-circuit-prove = { path = "../circuit-prove" }
 dregg-cell = { path = "../cell" }
 dregg-types = { path = "../types" }
 dregg-storage = { path = "../storage" }

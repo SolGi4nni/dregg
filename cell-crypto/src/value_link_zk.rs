@@ -681,7 +681,7 @@ mod tests {
 
     use crate::value_commitment::value_link_binding;
     use dregg_circuit::field::BabyBear;
-    use dregg_circuit::shielded::spend_circuit::ShieldedSpendWitness;
+    use dregg_circuit_prove::shielded::spend_circuit::ShieldedSpendWitness;
 
     /// Build a real shielded-spend witness and return its genuine `(value,
     /// value_binding felt)` — the SAME felt the STARK publishes as PI[VALUE_BINDING].

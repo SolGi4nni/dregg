@@ -106,7 +106,6 @@
 //!     prove_vm_descriptor` untouched — both registries live until the flag-day.
 
 // Prover-only (the trace-assembly histograms): `recursion`.
-#[cfg(feature = "prover")]
 use std::collections::BTreeMap;
 
 use p3_air::{Air, AirBuilder, BaseAir, PermutationAirBuilder, WindowAccess};
@@ -115,7 +114,6 @@ use p3_field::{Field, PrimeCharacteristicRing, PrimeField32};
 use p3_lookup::InteractionBuilder;
 use p3_lookup::bus::{LookupBus, PermutationCheckBus};
 // Prover-only (`to_matrix` builds the LDE input matrix): `recursion`.
-#[cfg(feature = "prover")]
 use p3_matrix::dense::RowMajorMatrix;
 
 // VERIFY surface (compiles under the prover-free `verifier` feature): `verify_batch`
@@ -124,17 +122,13 @@ use p3_matrix::dense::RowMajorMatrix;
 // no `prove_batch`. The PROVE surface (`prove_batch` + `StarkInstance` trace assembly)
 // is `recursion`-only.
 use p3_batch_stark::{BatchProof, ProverData, verify_batch};
-#[cfg(feature = "prover")]
 use p3_batch_stark::{StarkInstance, prove_batch};
 // Generic-config (SIDESTEP) prove/verify surface: lets the rotated leaf-wrap mint/verify an
 // IR-v2 batch under an arbitrary `SC` (e.g. the recursion config with retargeted FRI knobs)
 // rather than only `DreggStarkConfig`. The bounds mirror `prove_batch`/`verify_batch`'s own.
 // On both the prover (`recursion`) and verify (`verifier`) surfaces, like `verify_batch`.
-#[cfg(any(feature = "prover", feature = "verifier"))]
 use p3_commit::PolynomialSpace;
-#[cfg(any(feature = "prover", feature = "verifier"))]
 use p3_field::Algebra;
-#[cfg(any(feature = "prover", feature = "verifier"))]
 use p3_uni_stark::{Domain, StarkGenericConfig, SymbolicExpressionExt, Val};
 
 /// Re-export the IR-v2 wire proof type + its STARK config so external crates (the sdk's
@@ -147,7 +141,6 @@ use crate::field::{BABYBEAR_P, BabyBear};
 // `HEAP_TREE_DEPTH` indexes the map-absent AIR column layout (verify-needed); the tree
 // type / leaf / sentinels are prover-only (the witness map openings live in `build_traces`).
 use crate::heap_root::HEAP_TREE_DEPTH;
-#[cfg(feature = "prover")]
 use crate::heap_root::{CanonicalHeapTree, HeapLeaf, SENTINEL_MAX, SENTINEL_MIN};
 use crate::lean_descriptor_air::{
     EFFECTVM_STATE_AFTER_BASE, EFFECTVM_STATE_BEFORE_BASE, JsonCursor, LeanExpr, VmConstraint,
@@ -155,7 +148,6 @@ use crate::lean_descriptor_air::{
     parse_vm_constraint_body,
 };
 // `i64_to_babybear` is the concrete-eval constant lowering (prover-only, `eval_c`).
-#[cfg(feature = "prover")]
 use crate::lean_descriptor_air::i64_to_babybear;
 use crate::lean_descriptor_air::{EffectVmDescriptor, RangeSpec};
 use crate::plonky3_prover::{
@@ -163,7 +155,6 @@ use crate::plonky3_prover::{
     to_p3,
 };
 // The concrete permutation aux-witness fill is prover-only (`perm_aux`).
-#[cfg(feature = "prover")]
 use crate::plonky3_prover::poseidon2_permute_aux_witness;
 
 // ============================================================================
@@ -246,7 +237,6 @@ pub const BYTE_TABLE_HEIGHT: usize = 1 << LIMB_BITS;
 
 /// Minimum height for the auxiliary tables (chip / memory / boundary / map-ops).
 /// Prover-only: it floors the witness table heights in `next_pow2` / `build_traces`.
-#[cfg(feature = "prover")]
 const MIN_TABLE_HEIGHT: usize = 8;
 
 // The shared bus names (namespaced so sibling modules' buses never collide).
@@ -1492,7 +1482,6 @@ pub fn ir2_eval_accepts(
 /// differential) need not depend on `p3-baby-bear` directly: the `(row, pi)` integers are lifted
 /// to canonical BabyBear felts (the same `i64_to_babybear` lowering the descriptor evaluator
 /// uses for its constants) and the REAL `Ir2Air::Main` row-local evaluator is run.
-#[cfg(feature = "prover")]
 pub fn ir2_eval_accepts_i64(
     desc: &EffectVmDescriptor2,
     base_rows: &[Vec<i64>],
@@ -2934,13 +2923,11 @@ where
 // ============================================================================
 
 /// Concrete evaluation of a `LeanExpr` over one main row (diagnostic/producer helper).
-#[cfg(feature = "prover")]
 pub fn eval_lean_expr(e: &LeanExpr, row: &[BabyBear]) -> BabyBear {
     eval_c(e, row)
 }
 
 /// Concrete evaluation of a `LeanExpr` over one main row.
-#[cfg(feature = "prover")]
 fn eval_c(e: &LeanExpr, row: &[BabyBear]) -> BabyBear {
     match e {
         LeanExpr::Var(i) => row[*i],
@@ -2952,7 +2939,6 @@ fn eval_c(e: &LeanExpr, row: &[BabyBear]) -> BabyBear {
 
 /// Concrete permutation: full aux block (`poseidon2_permute_expr`'s committed
 /// round-state layout) + the squeezed digest (`state[0]` of the last round block).
-#[cfg(feature = "prover")]
 fn perm_aux(st: [BabyBear; POSEIDON2_WIDTH]) -> (Vec<BabyBear>, BabyBear) {
     let aux = poseidon2_permute_aux_witness(st);
     let digest = aux[aux.len() - POSEIDON2_WIDTH];
@@ -2962,7 +2948,6 @@ fn perm_aux(st: [BabyBear; POSEIDON2_WIDTH]) -> (Vec<BabyBear>, BabyBear) {
 /// The 8 exposed output lanes `state[0..8]` of the final permutation block — the
 /// genuine distinct lanes the chip's widened bus tuple carries (Phase B-GATE).
 /// `perm_lanes(st)[0]` equals `perm_aux(st).1` (the squeezed digest).
-#[cfg(feature = "prover")]
 fn perm_lanes(st: [BabyBear; POSEIDON2_WIDTH]) -> [BabyBear; CHIP_OUT_LANES] {
     let aux = poseidon2_permute_aux_witness(st);
     let base = aux.len() - POSEIDON2_WIDTH;
@@ -2975,7 +2960,6 @@ fn perm_lanes(st: [BabyBear; POSEIDON2_WIDTH]) -> [BabyBear; CHIP_OUT_LANES] {
 /// returns `perm_lanes(seed)[1..8]` — `state[1..8]` of the SINGLE final permutation. This is the
 /// fill every chip-bearing producer writes into a hash site's lane columns so the 17-wide chip
 /// lookup matches (`out[i] == lane[i]`); a forged lane is UNSAT. `arity ≤ CHIP_RATE`.
-#[cfg(feature = "prover")]
 pub(crate) fn chip_absorb_lanes(arity: usize, inputs: &[BabyBear]) -> [BabyBear; CHIP_OUT_LANES - 1] {
     debug_assert!(arity <= CHIP_RATE && inputs.len() >= arity.min(CHIP_RATE));
     let big = arity == 7;
@@ -3016,7 +3000,6 @@ pub(crate) fn chip_absorb_lanes(arity: usize, inputs: &[BabyBear]) -> [BabyBear;
 /// `chip_absorb_lanes` it ALWAYS seeds the wide tail (matching the chip gather's
 /// `for i in 7..CHIP_WIDE_ARITY { st[i] = in_i }`), so the arity-9 final (which seeds genuine
 /// in7/in8) is faithful. `arity ≤ CHIP_RATE`; `inputs` is read up to `CHIP_RATE`, zero-padded.
-#[cfg(feature = "prover")]
 pub fn chip_absorb_all_lanes(arity: usize, inputs: &[BabyBear]) -> [BabyBear; CHIP_OUT_LANES] {
     debug_assert!(arity <= CHIP_RATE);
     let big = arity == 7;
@@ -3049,7 +3032,6 @@ pub fn chip_absorb_all_lanes(arity: usize, inputs: &[BabyBear]) -> [BabyBear; CH
 /// misalign with the emitted tuple; out0 (the digest) is assumed already filled by the caller's
 /// hash chain. This is the exact column fill the AIR's `out[i] == lane[i]` equality demands — a
 /// forged lane is UNSAT (`ir2_forged_output_lane_refuses`). Idempotent on the lane columns.
-#[cfg(feature = "prover")]
 pub fn fill_chip_lanes(desc: &EffectVmDescriptor2, row: &mut [BabyBear]) {
     for k in &desc.constraints {
         let VmConstraint2::Lookup(l) = k else { continue };
@@ -3069,7 +3051,6 @@ pub fn fill_chip_lanes(desc: &EffectVmDescriptor2, row: &mut [BabyBear]) {
     }
 }
 
-#[cfg(feature = "prover")]
 fn hash2_state_c(a: BabyBear, b: BabyBear) -> [BabyBear; POSEIDON2_WIDTH] {
     let mut st = [BabyBear::ZERO; POSEIDON2_WIDTH];
     st[0] = a;
@@ -3078,7 +3059,6 @@ fn hash2_state_c(a: BabyBear, b: BabyBear) -> [BabyBear; POSEIDON2_WIDTH] {
     st
 }
 
-#[cfg(feature = "prover")]
 fn fact_state_c(l: BabyBear, r: BabyBear) -> [BabyBear; POSEIDON2_WIDTH] {
     let mut st = [BabyBear::ZERO; POSEIDON2_WIDTH];
     st[0] = l;
@@ -3090,7 +3070,6 @@ fn fact_state_c(l: BabyBear, r: BabyBear) -> [BabyBear; POSEIDON2_WIDTH] {
 
 /// Fill one `bits`-wide decomposition (limbs + top bits) of `val`, counting the byte-bus
 /// queries into `hist`. `val` must already be `< 2^bits`.
-#[cfg(feature = "prover")]
 fn fill_decomp(
     val: u32,
     bits: usize,
@@ -3114,12 +3093,10 @@ fn fill_decomp(
     }
 }
 
-#[cfg(feature = "prover")]
 fn next_pow2(n: usize) -> usize {
     n.next_power_of_two().max(MIN_TABLE_HEIGHT)
 }
 
-#[cfg(feature = "prover")]
 fn to_matrix(rows: &[Vec<BabyBear>]) -> RowMajorMatrix<P3BabyBear> {
     let width = rows[0].len();
     let values: Vec<P3BabyBear> = rows
@@ -3153,7 +3130,6 @@ pub struct UMemBoundaryWitness {
 }
 
 impl UMemBoundaryWitness {
-    #[cfg(feature = "prover")]
     fn is_empty(&self) -> bool {
         self.addrs.is_empty() && self.init_vals.is_empty()
     }
@@ -3217,7 +3193,6 @@ impl Presence {
 
 /// One fully assembled multi-table witness (the PRESENT instance traces; absent tables
 /// are not built — and so contribute no byte-bus pad queries and no committed matrix).
-#[cfg(feature = "prover")]
 struct Ir2Traces {
     main: Vec<Vec<BabyBear>>,
     chip: Option<Vec<Vec<BabyBear>>>,
@@ -3232,7 +3207,6 @@ struct Ir2Traces {
 
 /// Witness fill of one canonical decomposition block `[hi4, lo27 limbs, is15, inv15]` of a
 /// canonical (`< p`) value. `real` gates the is15-forcing leg exactly as the AIR's `gate`.
-#[cfg(feature = "prover")]
 fn fill_canon(v: u32, real: bool, out: &mut Vec<BabyBear>, hist: &mut [u64; BYTE_TABLE_HEIGHT]) {
     let hi4 = v >> KEY_LO_BITS;
     let lo27 = v & ((1u32 << KEY_LO_BITS) - 1);
@@ -3254,7 +3228,6 @@ fn fill_canon(v: u32, real: bool, out: &mut Vec<BabyBear>, hist: &mut [u64; BYTE
 
 /// Witness fill of one lexicographic strict-lt comparator block `[s, dhi, dlo, dlo limbs]`
 /// for `a < b` (both canonical), gated by `active`.
-#[cfg(feature = "prover")]
 fn fill_lex_lt(
     a: u32,
     b: u32,
@@ -3281,7 +3254,6 @@ fn fill_lex_lt(
 /// Assemble the PRESENT instance traces from the base main trace + the boundary witness +
 /// the map heaps. `check` controls the prover-side pre-flight replay (the test harness
 /// disables it to exercise the in-circuit refusals).
-#[cfg(feature = "prover")]
 #[allow(clippy::too_many_lines)]
 #[allow(clippy::too_many_arguments)]
 fn build_traces(
@@ -4326,7 +4298,6 @@ fn ir2_config() -> DreggStarkConfig {
     create_config_with_fri(6, 0, 3, 19, 16)
 }
 
-#[cfg(feature = "prover")]
 #[allow(clippy::too_many_arguments)]
 fn prove_vm_descriptor2_inner<SC>(
     desc: &EffectVmDescriptor2,
@@ -4450,7 +4421,6 @@ where
 /// 1..7 to this descriptor-driven weld, so no producer needs per-site lane knowledge. The
 /// adversarial teeth use [`prove_vm_descriptor2_inner`] DIRECTLY (no lane fill), so a forged lane
 /// stays forged and is REJECTED. Idempotent: re-deriving genuine lanes is a no-op.
-#[cfg(feature = "prover")]
 fn trace_with_chip_lanes(
     desc: &EffectVmDescriptor2,
     base_trace: &[Vec<BabyBear>],
@@ -4480,7 +4450,6 @@ fn trace_with_chip_lanes(
 /// a tampered memory read, a forged map opening, an out-of-range limb, an amplified
 /// submask — has no satisfying assembly (the pre-flight replay refuses it eagerly; with
 /// the replay bypassed the batch prover/verifier rejects).
-#[cfg(feature = "prover")]
 pub fn prove_vm_descriptor2(
     desc: &EffectVmDescriptor2,
     base_trace: &[Vec<BabyBear>],
@@ -4505,7 +4474,6 @@ pub fn prove_vm_descriptor2(
 /// (`UMemBoundaryWitness`, Lean's `(uinit, ufin, uaddrs)` with `ufin` replayed). Everything
 /// else is identical — and a umem-only descriptor commits NO chip table: the one-multiset
 /// memory argument hashes nothing, intra-proof.
-#[cfg(feature = "prover")]
 pub fn prove_vm_descriptor2_umem(
     desc: &EffectVmDescriptor2,
     base_trace: &[Vec<BabyBear>],
@@ -4530,7 +4498,6 @@ pub fn prove_vm_descriptor2_umem(
 /// (`tests/effect_vm_ir2_size_measure.rs` proves the SAME statement across the
 /// `(log_blowup, num_queries)` grid). Proofs from non-default configs must never leak
 /// onto the wire — the production IR-v2 config is `ir2_config` alone.
-#[cfg(feature = "prover")]
 #[doc(hidden)]
 pub fn prove_vm_descriptor2_with_config(
     desc: &EffectVmDescriptor2,
@@ -4560,7 +4527,6 @@ pub fn prove_vm_descriptor2_with_config(
 /// `ir2_config` (log_blowup 6, 19 queries, 16 query-PoW) so the proof has the same FRI shape
 /// the deployed descriptor proofs do — only the config TYPE differs (a newtype wrapper that
 /// also impls `FriRecursionConfig`). Self-verifies before return.
-#[cfg(feature = "prover")]
 pub fn prove_vm_descriptor2_for_config<SC>(
     desc: &EffectVmDescriptor2,
     base_trace: &[Vec<BabyBear>],
@@ -4597,7 +4563,6 @@ where
 /// `BatchProof<SC>`. The `common` is built by the SAME
 /// `ProverData::from_airs_and_degrees(config, ..)` path the inner prover/verifier use, so it
 /// is the canonical common for this batch under `SC`.
-#[cfg(feature = "prover")]
 pub fn ir2_airs_and_common_for_config<SC>(
     desc: &EffectVmDescriptor2,
     proof: &BatchProof<SC>,
@@ -4701,7 +4666,7 @@ where
 // The IR-v2 test suite proves AND verifies (it mints proofs via `prove_batch` / the
 // trace assembly), so it is gated on `recursion` — the prover-free `verifier`-only
 // build compiles the verify surface without these prover-coupled tests.
-#[cfg(all(test, feature = "prover"))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::poseidon2::hash_many;
@@ -5205,7 +5170,6 @@ mod tests {
     /// The seeded full-permutation state of a wide (arity-`CHIP_WIDE_ARITY`) absorb of `ins`
     /// (8-felt carrier ‖ 3 limbs) — the SAME seeding the AIR/witness-gen perform (in0..in10 read
     /// directly into state lanes 0..10). Used by the wide-arity anti-laundering teeth.
-    #[cfg(feature = "prover")]
     fn wide_seed(ins: &[BabyBear; CHIP_WIDE_ARITY]) -> [BabyBear; POSEIDON2_WIDTH] {
         let mut st = [BabyBear::ZERO; POSEIDON2_WIDTH];
         st[..CHIP_WIDE_ARITY].copy_from_slice(ins);
@@ -5215,7 +5179,6 @@ mod tests {
     /// A descriptor with a SINGLE wide (arity-11) chip lookup binding ALL 8 output lanes to
     /// columns. trace_width = 1 (arity tag) + 11 (inputs) + 8 (outputs) = 20; the lookup tuple is
     /// `[11, var1..var11, var12..var19]`. (No other tables — a minimal wide-absorb subject.)
-    #[cfg(feature = "prover")]
     fn wide_test_desc() -> EffectVmDescriptor2 {
         let mut tuple = vec![LeanExpr::Const(CHIP_WIDE_ARITY as i64)];
         for i in 0..CHIP_WIDE_ARITY {
@@ -5239,7 +5202,6 @@ mod tests {
     }
 
     /// An honest wide-absorb trace: 11 distinct inputs, all 8 genuine output lanes filled.
-    #[cfg(feature = "prover")]
     fn wide_test_trace() -> Vec<Vec<BabyBear>> {
         let ins: [BabyBear; CHIP_WIDE_ARITY] =
             core::array::from_fn(|i| BabyBear::new(100 + i as u32));

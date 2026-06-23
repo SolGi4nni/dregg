@@ -29,7 +29,7 @@
 //! - [`produce_external_history_envelope`] — the PRODUCER: fold a real chain and
 //!   emit the [`ExternalHistoryEnvelope`] JSON with `proof_bytes_b64` populated
 //!   from the proof's versioned byte envelope
-//!   ([`dregg_circuit::ivc_turn_chain::WholeChainProofBytes`]). The whole
+//!   ([`dregg_circuit_prove::ivc_turn_chain::WholeChainProofBytes`]). The whole
 //!   round-trip (fold → serialize → bytes → deserialize → verify) runs in-tab.
 //! - [`verify_devnet_history`] — verify an EXTERNALLY-produced aggregate
 //!   (a versioned envelope of proof bytes + carried publics) against a
@@ -155,7 +155,7 @@ pub fn verify_history_against_anchor(
     step: u64,
     anchor_hex: &str,
 ) -> Result<JsValue, JsError> {
-    use dregg_circuit::ivc_turn_chain::RecursionVk;
+    use dregg_circuit_prove::ivc_turn_chain::RecursionVk;
     use dregg_lightclient::{verify_history, LightClientError};
 
     // Parse the CONFIG anchor from the caller (never from the artifact).
@@ -209,7 +209,7 @@ pub fn verify_history_against_anchor(
 /// transport a node/relayer serializes a `WholeChainProof` into and a tab
 /// deserializes. It is the OUTER wrapper: `proof_bytes_b64` is the base64 of the
 /// circuit's INNER versioned byte envelope
-/// ([`dregg_circuit::ivc_turn_chain::WholeChainProofBytes`]), which carries the
+/// ([`dregg_circuit_prove::ivc_turn_chain::WholeChainProofBytes`]), which carries the
 /// verify-sufficient subset of the proof (the root `BatchStarkProof`, the binding
 /// `Proof`, the four publics) — everything the recursion verify reads, and nothing
 /// of the prover-only `root.1`.
@@ -232,7 +232,7 @@ pub struct ExternalHistoryEnvelope {
     /// from the proof bytes during verify.
     pub vk_fingerprint_hex: String,
     /// Base64 of the proof's inner versioned byte envelope
-    /// ([`dregg_circuit::ivc_turn_chain::WholeChainProofBytes`]). Populated by
+    /// ([`dregg_circuit_prove::ivc_turn_chain::WholeChainProofBytes`]). Populated by
     /// [`produce_external_history_envelope`]; an empty value fails closed at verify
     /// (nothing to cryptographically check).
     #[serde(default)]
@@ -268,7 +268,7 @@ pub struct ExternalHistoryEnvelope {
 ///    tampered proof, a foreign circuit, or a relabeled public is refused.
 ///
 /// THE BYTE PATH (closed): `proof_bytes_b64` carries the base64 of the proof's
-/// versioned byte envelope ([`dregg_circuit::ivc_turn_chain::WholeChainProofBytes`]),
+/// versioned byte envelope ([`dregg_circuit_prove::ivc_turn_chain::WholeChainProofBytes`]),
 /// produced by [`produce_external_history_envelope`]. The whole [`WholeChainProof`]
 /// is not byte-encodable — its `root.1` (`Rc<CircuitProverData>`) is prover-only —
 /// but the VERIFY-sufficient subset (the root `BatchStarkProof`, the binding
@@ -281,7 +281,7 @@ pub fn verify_devnet_history(
     config_anchor_hex: &str,
 ) -> Result<JsValue, JsError> {
     use base64::Engine as _;
-    use dregg_circuit::ivc_turn_chain::RecursionVk;
+    use dregg_circuit_prove::ivc_turn_chain::RecursionVk;
     use dregg_lightclient::{verify_history_bytes, LightClientError};
 
     // (1) Parse + version-check the envelope.
@@ -431,14 +431,14 @@ fn fold_demo_chain(
     step: u64,
 ) -> Result<
     (
-        dregg_circuit::ivc_turn_chain::WholeChainProof,
+        dregg_circuit_prove::ivc_turn_chain::WholeChainProof,
         dregg_lightclient::AttestedHistory,
     ),
     JsError,
 > {
     use dregg_circuit::effect_vm::{CellState, Effect};
-    use dregg_circuit::ivc_turn_chain::FinalizedTurn;
-    use dregg_circuit::joint_turn_aggregation::DescriptorParticipant;
+    use dregg_circuit_prove::ivc_turn_chain::FinalizedTurn;
+    use dregg_circuit_prove::joint_turn_aggregation::DescriptorParticipant;
     use dregg_lightclient::fold_and_attest;
     use dregg_turn::rotation_witness::mint_rotated_participant_leg;
 

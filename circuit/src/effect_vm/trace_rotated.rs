@@ -2204,7 +2204,6 @@ pub fn widen_to_cap_open(trace: &mut [Vec<BabyBear>], w: &CapOpenWitness) -> Res
 /// appendix. The cap-open host constraints / membership columns are CARRIED UNCHANGED; the wide
 /// carriers re-absorb the SAME `BEFORE_BASE`/`AFTER_BASE` limbs. Returns the appended `dpis`. The
 /// trace is resized in place to `CAP_OPEN_WIDTH + 208 = 1026`.
-#[cfg(feature = "prover")]
 pub fn append_wide_carriers_cap_open(
     trace: &mut [Vec<BabyBear>],
     base_pis: Vec<BabyBear>,
@@ -2358,7 +2357,6 @@ pub const WIDE_PI_COUNT: usize = ROT_PI_COUNT + 16; // 54
 /// lane[i]` equalities hold and the published 8-felt commit binds the 37 limbs + iroot. The chain
 /// shape (4-wide head, eleven 3-wide arity-11 body groups, arity-9 iroot final) is the byte twin of
 /// `poseidon2::wire_commit_8` and the Lean `wireCommitR8` — but seeded through the chip's arity tag.
-#[cfg(feature = "prover")]
 fn fill_wide_block(row: &mut [BabyBear], cbase: usize, limb_base: usize) {
     use crate::descriptor_ir2::chip_absorb_all_lanes;
     // head: arity-4 absorb of limbs l0..l3 → carrier 0.
@@ -2416,7 +2414,6 @@ fn fill_wide_block(row: &mut [BabyBear], cbase: usize, limb_base: usize) {
 /// (re-absorbing the rotated limbs the 1-felt block already lays) and the 16 wide commit PIs. The
 /// live 1-felt carriers/PIs (cols < 608, PIs 0..37) are CARRIED UNCHANGED — this is purely
 /// additive. Returns `(trace, dpis)` ready for `prove_vm_descriptor2` against the wide descriptor.
-#[cfg(feature = "prover")]
 pub fn generate_rotated_transfer_wide(
     initial_state: &CellState,
     effects: &[Effect],
@@ -2457,7 +2454,6 @@ pub fn generate_rotated_transfer_wide(
 /// land STRICTLY PAST the host's columns + gates (the appendix is purely additive), member-uniform
 /// because `BEFORE_BASE`/`AFTER_BASE` (187/238) are uniform across the cohort. The number of base
 /// PIs is preserved (the grow-gate families carry an extra PI[38]); the 16 wide PIs append after.
-#[cfg(feature = "prover")]
 pub fn append_wide_carriers(
     trace: &mut [Vec<BabyBear>],
     base_pis: Vec<BabyBear>,
@@ -2504,7 +2500,6 @@ pub fn append_wide_carriers(
 /// member is `wideAppend burn 187 238` (width 816 / PI 54), the SAME carrier shape as transfer. This
 /// wraps the LIVE base generator ([`generate_rotated_effect_vm_trace`], which proves any cohort
 /// member's real turn) + the generic widener at `GRAD_ROT_WIDTH = 608`. Returns `(trace, dpis)`.
-#[cfg(feature = "prover")]
 pub fn generate_rotated_transfer_shape_wide(
     initial_state: &CellState,
     effects: &[Effect],
@@ -2530,7 +2525,6 @@ pub fn generate_rotated_transfer_shape_wide(
 /// ([`generate_rotated_effect_vm_trace`]) pushes the record/lifecycle pin as PI 38 for these leads (39
 /// base PIs); this appends the wide carriers at `GRAD_ROT_WIDTH = 608` (so the published 8-felt commit
 /// rides PIs 39..54, after the record pin at 38). Returns `(trace, dpis)`.
-#[cfg(feature = "prover")]
 pub fn generate_rotated_record_pin_wide(
     initial_state: &CellState,
     effects: &[Effect],
@@ -2562,7 +2556,6 @@ pub fn generate_rotated_record_pin_wide(
 /// laid, the published 8-felt commit (PIs 39..54, after the fee's PI 38) binds the post-fee state at
 /// ~124 bits. The live sovereign transfer IS fee'd — this is its wide producer leg. Returns
 /// `(trace, dpis)` ready for `prove_vm_descriptor2` against the wide fee descriptor.
-#[cfg(feature = "prover")]
 pub fn generate_rotated_transfer_shape_with_fee_wide(
     initial_state: &CellState,
     effects: &[Effect],
@@ -2593,7 +2586,6 @@ pub fn generate_rotated_transfer_shape_with_fee_wide(
 /// with the openable accumulator roots + recomputes the block commits), then appends the wide
 /// carriers at `GRAD_ROT_WIDTH = 608`. The grow-gate member carries the extra PI[38] (the nullifier
 /// pin) before the 16 wide PIs (wide member width 816 / PI 55). Returns `(trace, dpis, map_heaps)`.
-#[cfg(feature = "prover")]
 pub fn generate_rotated_note_spend_wide(
     initial_state: &CellState,
     effects: &[Effect],
@@ -2617,7 +2609,6 @@ pub fn generate_rotated_note_spend_wide(
 /// **THE WIDE NOTECREATE trace generator (grow-gate cohort).** Wraps the commitments-tree generator
 /// ([`generate_rotated_note_create_trace_with_commitments_tree`], limb-27 override + recompute), then
 /// appends the wide carriers at `GRAD_ROT_WIDTH = 608` (wide member width 816 / PI 55).
-#[cfg(feature = "prover")]
 pub fn generate_rotated_note_create_wide(
     initial_state: &CellState,
     effects: &[Effect],
@@ -2641,7 +2632,6 @@ pub fn generate_rotated_note_create_wide(
 /// **THE WIDE CREATECELL/FACTORY/SPAWN trace generator (grow-gate cohort).** Wraps the accounts-tree
 /// generator ([`generate_rotated_create_cell_trace_with_accounts_tree`], limb-0 override + recompute),
 /// then appends the wide carriers at `GRAD_ROT_WIDTH = 608` (wide member width 816 / PI 55).
-#[cfg(feature = "prover")]
 pub fn generate_rotated_create_cell_wide(
     initial_state: &CellState,
     effects: &[Effect],
@@ -2672,7 +2662,6 @@ pub fn generate_rotated_create_cell_wide(
 /// opens against the threaded BEFORE accounts leaf set. A NON-factory lead is REFUSED (the accounts-tree
 /// generator's own `new_cell_key_param_col` guard). Returns `(trace, dpis, map_heaps)` ready for
 /// `prove_vm_descriptor2` against the wide `factoryVmDescriptor2R24`.
-#[cfg(feature = "prover")]
 pub fn generate_rotated_create_from_factory_wide(
     initial_state: &CellState,
     effects: &[Effect],
@@ -2708,7 +2697,6 @@ pub fn generate_rotated_create_from_factory_wide(
 /// accounts-birth column only, and the cap-handoff is the cap-open path's job (already wired). A NON-spawn
 /// lead is REFUSED. Returns `(trace, dpis, map_heaps)` ready for `prove_vm_descriptor2` against the wide
 /// `spawnVmDescriptor2R24`.
-#[cfg(feature = "prover")]
 pub fn generate_rotated_spawn_wide(
     initial_state: &CellState,
     effects: &[Effect],
@@ -2738,7 +2726,6 @@ pub fn generate_rotated_spawn_wide(
 /// NON-empty `map_heaps` (the BEFORE fields-tree leaf set + the reserved audit slot) is what makes an
 /// HONEST refusal PROVABLE on the deployed path (an EMPTY `map_heaps` is UNSAT against the `.write`
 /// gate). Mirrors [`generate_rotated_note_spend_wide`]. Returns `(trace, dpis, map_heaps)`.
-#[cfg(feature = "prover")]
 pub fn generate_rotated_refusal_wide(
     initial_state: &CellState,
     effects: &[Effect],
@@ -2819,7 +2806,6 @@ const SET_FIELD_DYN_READBACK_COL: usize = 7; // PARAM_BASE + 7 = col 75
 /// economic sub-trace + the rotated welds are laid by the standard machinery WITHOUT the panic, then
 /// override the dyn-specific columns. Returns `(trace, dpis, mem_boundary)` ready for
 /// `prove_vm_descriptor2(&desc, &trace, &dpis, &mem_boundary, &[])`.
-#[cfg(feature = "prover")]
 #[allow(clippy::missing_panics_doc)]
 pub fn generate_rotated_set_field_dyn_base(
     initial_state: &CellState,
@@ -2910,7 +2896,6 @@ pub fn generate_rotated_set_field_dyn_base(
 /// The 581-wide V1Face base ([`generate_rotated_set_field_dyn_base`]) + `append_wide_carriers` at the
 /// `SET_FIELD_DYN_HOST_WIDTH = 581` host (NOT `GRAD_ROT_WIDTH = 608` — the setField face has four
 /// fewer chip sites). Returns `(trace, dpis, mem_boundary)` ready for the wide descriptor.
-#[cfg(feature = "prover")]
 pub fn generate_rotated_set_field_dyn_wide(
     initial_state: &CellState,
     before_w: &RotatedBlockWitness,
@@ -2970,7 +2955,6 @@ pub const CUSTOM_HOST_WIDTH: usize = 581;
 /// Returns `(trace, dpis)` ready for `prove_vm_descriptor2` against the wide
 /// custom descriptor (the witness is `map_heaps = []` and `mem_boundary =
 /// default` — custom carries no grow-gate / Blum-memory leg).
-#[cfg(feature = "prover")]
 pub fn generate_rotated_custom_wide(
     initial_state: &CellState,
     effects: &[Effect],
@@ -3010,7 +2994,6 @@ mod tests {
     /// after `fill_chip_lanes` — for each `TID_P2` lookup, `out0..out7 == chip_absorb_all_lanes(
     /// arity, in0..in10)` evaluated off the row. A mismatch pinpoints a carrier-base / seeding bug
     /// WITHOUT the slow prove. Checks BOTH an active row (0) and a padding row (40).
-    #[cfg(feature = "prover")]
     #[test]
     fn wide_chip_lookups_are_self_consistent_after_lane_fill() {
         use crate::descriptor_ir2::{

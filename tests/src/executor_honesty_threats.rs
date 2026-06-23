@@ -80,32 +80,6 @@ fn one_action_turn(agent: CellId, nonce: u64, effects: Vec<Effect>) -> Turn {
     }
 }
 
-// v1-only: builds the bespoke `EffectVmAir` (recursion-absent) and asserts a
-// control proof verifies before PI tampering. Used by T4/T5/T12/T15 below.
-#[cfg(not(feature = "prover"))]
-fn effect_vm_rejects_tampered_pi(pi_index: usize, label: &str) {
-    let initial_state = dregg_circuit::CellState::new(1_000, 7);
-    let effects = vec![dregg_circuit::effect_vm::Effect::Transfer {
-        amount: 1,
-        direction: 1,
-    }];
-    let (trace, public_inputs) =
-        dregg_circuit::effect_vm::generate_effect_vm_trace(&initial_state, &effects);
-    let air = dregg_circuit::EffectVmAir::new(trace.len());
-    let proof = dregg_circuit::stark::prove(&air, &trace, &public_inputs);
-
-    dregg_circuit::stark::verify(&air, &proof, &public_inputs)
-        .expect("control Effect VM proof must verify before PI tampering");
-
-    let mut tampered = public_inputs.clone();
-    tampered[pi_index] = tampered[pi_index] + dregg_circuit::field::BabyBear::ONE;
-
-    assert!(
-        dregg_circuit::stark::verify(&air, &proof, &tampered).is_err(),
-        "Effect VM verifier accepted a proof after tampering PI[{pi_index}] ({label})"
-    );
-}
-
 fn sample_receipt(
     agent: CellId,
     turn_hash: [u8; 32],
@@ -311,24 +285,6 @@ fn t3_receipt_signature_binds_effect_omission() {
 // T4 — Lie about pre/post state hash
 // ===========================================================================
 
-#[cfg(not(feature = "prover"))]
-#[test]
-fn t4_air_binds_pre_state_hash_to_trace() {
-    effect_vm_rejects_tampered_pi(
-        dregg_circuit::effect_vm::pi::OLD_COMMIT_BASE,
-        "OLD_COMMIT_BASE",
-    );
-}
-
-#[cfg(not(feature = "prover"))]
-#[test]
-fn t4_air_binds_post_state_hash_to_trace() {
-    effect_vm_rejects_tampered_pi(
-        dregg_circuit::effect_vm::pi::NEW_COMMIT_BASE,
-        "NEW_COMMIT_BASE",
-    );
-}
-
 // ===========================================================================
 // T5 — Reuse a nonce
 // ===========================================================================
@@ -358,12 +314,6 @@ fn t5_executor_rejects_replayed_nonce() {
         matches!(r_replay, TurnResult::Rejected { .. }),
         "expected nonce-replay reject, got: {r_replay:?}"
     );
-}
-
-#[cfg(not(feature = "prover"))]
-#[test]
-fn t5_air_rejects_proof_with_wrong_nonce_pi() {
-    effect_vm_rejects_tampered_pi(dregg_circuit::effect_vm::pi::ACTOR_NONCE, "ACTOR_NONCE");
 }
 
 // ===========================================================================
@@ -648,16 +598,6 @@ fn t11_stale_proof_replay_rejected_by_verifier() {
 // T12 — Lie about balance deltas
 // ===========================================================================
 
-#[cfg(not(feature = "prover"))]
-#[test]
-fn t12_balance_delta_must_match_transfer_amounts() {
-    effect_vm_rejects_tampered_pi(dregg_circuit::effect_vm::pi::NET_DELTA_MAG, "NET_DELTA_MAG");
-    effect_vm_rejects_tampered_pi(
-        dregg_circuit::effect_vm::pi::NET_DELTA_SIGN,
-        "NET_DELTA_SIGN",
-    );
-}
-
 // ===========================================================================
 // T13 — Cross-cell aliasing (same cell_id in two federations)
 // ===========================================================================
@@ -721,17 +661,6 @@ fn t14_malformed_proof_bytes_rejected() {
 // ===========================================================================
 // T15 — Forge the effects_hash → AIR pass over a different effect list
 // ===========================================================================
-
-#[cfg(not(feature = "prover"))]
-#[test]
-fn t15_trace_effects_must_match_pi_effects_hash() {
-    for i in 0..dregg_circuit::effect_vm::pi::EFFECTS_HASH_LEN {
-        effect_vm_rejects_tampered_pi(
-            dregg_circuit::effect_vm::pi::EFFECTS_HASH_BASE + i,
-            "EFFECTS_HASH_BASE",
-        );
-    }
-}
 
 // ===========================================================================
 // Cross-cutting (audit §"Cross-cutting open questions")

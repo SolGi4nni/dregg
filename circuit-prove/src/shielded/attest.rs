@@ -13,7 +13,7 @@
 //! proves a fact about its own hidden field. It reuses the M2 machinery exactly:
 //! the sorted-Poseidon2 `hash_fact` commitment (same primitive the commitment
 //! tree and `shielded_spend` leaf use), and the **hiding** uni-STARK path
-//! ([`crate::dsl::dsl_p3_air::prove_dsl_zk`], `HidingFriPcs`), so the openings
+//! ([`dregg_circuit::dsl::dsl_p3_air::prove_dsl_zk`], `HidingFriPcs`), so the openings
 //! reveal nothing about the witness beyond the public `(commitment, predicate
 //! parameters)`.
 //!
@@ -71,12 +71,12 @@
 //! - **prove-solvent**: a cell committing `attr = balance` issues a `Positive`
 //!   attestation (`balance >= 1`) that verifies; a zero-balance cell cannot.
 
-use crate::dsl::circuit::{
+use dregg_circuit::dsl::circuit::{
     BoundaryDef, BoundaryRow, CircuitDescriptor, ColumnDef, ColumnKind, ConstraintExpr, DslCircuit,
     PolyTerm,
 };
-use crate::field::{BABYBEAR_P, BabyBear};
-use crate::poseidon2::hash_fact;
+use dregg_circuit::field::{BABYBEAR_P, BabyBear};
+use dregg_circuit::poseidon2::hash_fact;
 
 /// Number of bits a threshold-predicate `diff = attr - threshold` is range-proven
 /// to lie within: `diff ∈ [0, 2^RANGE_BITS)`. **Must be < 31** so the honest
@@ -474,7 +474,7 @@ pub fn generate_attest_trace(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dsl::dsl_p3_air::{DslP3Air, prove_dsl_zk, verify_dsl_zk};
+    use dregg_circuit::dsl::dsl_p3_air::{DslP3Air, prove_dsl_zk, verify_dsl_zk};
 
     /// Treat both "prover returns Err" and "debug constraint check panics" as
     /// rejection — the soundness property is "no verifying proof is produced".

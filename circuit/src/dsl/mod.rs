@@ -22,14 +22,12 @@ pub mod committed_threshold;
 pub mod derivation;
 pub mod dfa_routing;
 // `dsl_p3_air` routes DSL circuits through the audited Plonky3 batch-STARK
-// prover; it requires `p3-air` / `p3-batch-stark` (the `recursion` feature) and
-// `crate::plonky3_prover` (gated on `plonky3`). Its only consumers
-// (`revocation::*_p3`, `derivation::*_p3`) are all `#[cfg(feature = "prover")]`,
-// so the module is gated to match — without this, a `mock`-only build of the
-// crate (e.g. transitively via `dregg-cell` on wasm32) fails to find
-// `AirBuilder::{Expr,Var}`.
+// prover/verifier; it requires `p3-air` / `p3-batch-stark` — both verify-floor
+// deps, now always-on. Its prove/verify functions (`revocation::*_p3`,
+// `derivation::*_p3`) ride it; the recursion-free batch STARK is part of the
+// verify floor (`p3-batch-stark`'s `verify_batch` is prover-free), so this module
+// is unconditional.
 pub mod descriptors;
-#[cfg(feature = "prover")]
 pub mod dsl_p3_air;
 pub mod fold;
 pub mod garbled;

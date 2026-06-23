@@ -27,9 +27,11 @@
 
 use dregg_verifier::{
     CommitteeDescriptor, JsonRequest, ReplayEntry, VerifierOutput, exit_code,
-    parse_public_inputs_json, replay_chain, replay_chain_recursive, verify_aggregated_bundle_json,
+    parse_public_inputs_json, replay_chain, verify_aggregated_bundle_json,
     verify_bilateral_bundle_json, verify_cross_fed_bundle, verify_effect_vm_proof,
 };
+#[cfg(feature = "prover")]
+use dregg_verifier::replay_chain_recursive;
 use std::{
     env,
     io::{self, Read},
@@ -43,6 +45,7 @@ fn main() {
     if args.len() >= 2 && args[1] == "replay-chain" {
         run_replay_chain(&args[2..]);
     }
+    #[cfg(feature = "prover")]
     if args.len() >= 2 && args[1] == "scope-recursive" {
         run_scope_recursive(&args[2..]);
     }
@@ -383,6 +386,7 @@ fn run_bilateral_pair(args: &[String]) -> ! {
 ///
 /// If a WR carries no `recursive_proof`, it is rejected by this
 /// subcommand — fall back to `replay-chain` (Silver Vision) for those.
+#[cfg(feature = "prover")]
 fn run_scope_recursive(args: &[String]) -> ! {
     let path = match args.first() {
         Some(p) => p,

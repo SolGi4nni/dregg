@@ -36,7 +36,6 @@ pub struct SovereignCohortChain {
 /// single-leg path); a `[Transfer, SetPermissions]` turn yields two. `None`-resolving (non-cohort)
 /// effects form their own singleton runs; the rotated verifier rejects such a run at descriptor
 /// resolution (fail-closed), matching the producer.
-#[cfg(feature = "prover")]
 pub(super) fn split_into_cohort_runs(
     effects: &[dregg_circuit::effect_vm::Effect],
 ) -> Vec<core::ops::Range<usize>> {
@@ -69,7 +68,6 @@ pub(super) fn split_into_cohort_runs(
 /// — the executor-local twin of `sdk::full_turn_proof::cell_state_after_run`. Used to thread the
 /// per-run circuit pre-state across cohort runs WITHOUT a hand-replay of effect semantics (the SAME
 /// `STATE_AFTER` columns the producer threads), so the verifier reproduces each interior run's PIs.
-#[cfg(feature = "prover")]
 pub(super) fn cell_state_after_run(
     trace: &[Vec<dregg_circuit::field::BabyBear>],
     n_effects: usize,
@@ -142,20 +140,10 @@ impl TurnExecutor {
         // THE ROTATION (cutover C1): the matched producer
         // (`sdk::cipherclerk::execute_sovereign_turn_with_proof`) mints a rotated
         // R=24 `Ir2BatchProof` over the cohort descriptor, carrying the v9 felt
-        // commitment. When that producer is compiled (native default,
-        // `dregg-circuit/prover`), verify through `verify_vm_descriptor2` (the
-        // multi-table batch verifier), NOT the weak hand-AIR `EffectVmAir`. The
-        // rotated wire is a postcard-serialized `BatchProof` (no `DREG` magic), so
-        // it would (correctly) fail the v1 `stark::proof_from_bytes` — the two
-        // halves move together.
-        #[cfg(feature = "prover")]
-        {
-            self.verify_and_commit_proof_rotated(cell_id, proof_bytes, turn, ledger)
-        }
-        #[cfg(not(feature = "prover"))]
-        {
-            self.verify_and_commit_proof_v1(cell_id, proof_bytes, turn, ledger)
-        }
+        // commitment. Sovereign transitions verify through `verify_vm_descriptor2`
+        // (the multi-table batch verifier) — the SOLE path. The weak hand-AIR
+        // `EffectVmAir` v1 floor is RETIRED.
+        self.verify_and_commit_proof_rotated(cell_id, proof_bytes, turn, ledger)
     }
 
     /// THE ROTATED sovereign verify (cutover C1, decision #1's verify leg). The
@@ -181,7 +169,6 @@ impl TurnExecutor {
     /// the verifier takes from trusted storage/claim. A tampered post-state commitment
     /// makes PI 35 disagree with the trace's bound carrier ⇒ UNSAT (the anti-ghost
     /// tooth, exercised in `tests/src/sovereign_proof.rs`).
-    #[cfg(feature = "prover")]
     pub(super) fn verify_and_commit_proof_rotated(
         &self,
         cell_id: &CellId,
@@ -442,7 +429,6 @@ impl TurnExecutor {
     /// circuit pre-state; `before8`/`after8` are the TRUSTED/CHAINED 8-felt commit anchors for
     /// this run's pre/post (the chain layer pins them to stored-OLD / claimed-NEW / adjacency).
     /// `record_pin_cell` is the trusted before-CELL the run's record-pin anchor projects from.
-    #[cfg(feature = "prover")]
     #[allow(clippy::too_many_arguments)]
     pub(super) fn verify_one_cohort_run(
         &self,
@@ -818,46 +804,10 @@ impl TurnExecutor {
         Ok(())
     }
 
-    /// RETIRED (v1 hand-AIR sovereign verify): the `EffectVmAir` verify+commit leg is
-    /// gone. The live path verifies sovereign transitions through the rotated
-    /// proof-carrying turn (`verify_and_commit_proof` → `verify_and_commit_proof_rotated`,
-    /// `prover`-gated). On a `not(prover)` build the sovereign verify fails closed.
-    #[cfg(not(feature = "prover"))]
-    pub(super) fn verify_and_commit_proof_v1(
-        &self,
-        cell_id: &CellId,
-        proof_bytes: &[u8],
-        turn: &Turn,
-        _ledger: &mut Ledger,
-    ) -> Result<(), TurnError> {
-        let _ = (cell_id, proof_bytes, turn);
-        Err(TurnError::InvalidExecutionProof(
-            "v1 hand-AIR sovereign verify is retired; sovereign transitions verify through the \
-             rotated proof-carrying turn"
-                .to_string(),
-        ))
-    }
-
-    /// RETIRED (v1 sovereign-witness STARK verify): the `EffectVmAir` witness-STARK verify
-    /// is gone. The recursion tower verifies sovereign transitions through the rotated
-    /// proof-carrying turn; a v1 `transition_proof` is rejected at the `execute.rs` call
-    /// site rather than verified here.
-    #[cfg(not(feature = "prover"))]
-    pub(super) fn verify_sovereign_witness_stark(
-        &self,
-        _cell_id: &CellId,
-        old_commitment: &[u8; 32],
-        new_commitment: &[u8; 32],
-        effects_hash: &[u8; 32],
-        proof_bytes: &[u8],
-    ) -> Result<(), TurnError> {
-        let _ = (old_commitment, new_commitment, effects_hash, proof_bytes);
-        Err(TurnError::InvalidExecutionProof(
-            "v1 sovereign-witness STARK verify is retired; sovereign transitions verify through \
-             the rotated proof-carrying turn"
-                .to_string(),
-        ))
-    }
+    // RETIRED: `verify_and_commit_proof_v1` (v1 hand-AIR sovereign verify) and
+    // `verify_sovereign_witness_stark` (v1 witness-STARK verify) are GONE. The
+    // rotated proof-carrying turn (`verify_and_commit_proof_rotated`) is the sole
+    // sovereign verify path.
 
     /// Stage 7-γ.0d: cross-proof PI matching for a bundle of per-cell proofs
     /// from one turn.
@@ -1606,10 +1556,10 @@ impl TurnExecutor {
     /// and as the source for the felt we ultimately return, so the value is
     /// byte-identical to the trace's `param0`.
     ///
-    /// V1-only: consumed exclusively by `verify_and_commit_proof_v1` (the rotated
+    /// V1-only (DEAD: the v1 hand-AIR verify was retired; kept only as historical
     /// verifier reconstructs PIs from the trace generator, not these per-effect
     /// cross-binding helpers). Dead under `prover`; deleted with the v1 leg at C7.
-    #[cfg_attr(feature = "prover", allow(dead_code))]
+    #[allow(dead_code)]
     fn expected_notespend_nullifier_bb(
         &self,
         _cell_id: &CellId,
@@ -1663,7 +1613,7 @@ impl TurnExecutor {
     ///      `verify_effect_binding_proofs` STARK-verifies + PI-matches against
     ///      its value/asset/range opening); failing that
     ///   2. the runtime NoteCreate effect's own commitment (backwards compat).
-    #[cfg_attr(feature = "prover", allow(dead_code))]
+    #[allow(dead_code)]
     fn expected_notecreate_commitment_bb(
         &self,
         turn: &Turn,
@@ -1705,7 +1655,7 @@ impl TurnExecutor {
     ///      balance arithmetic `verify_effect_binding_proofs_with_ledger`
     ///      validates against the ledger snapshot); failing that
     ///   2. the runtime Burn effect's own target (backwards compat).
-    #[cfg_attr(feature = "prover", allow(dead_code))]
+    #[allow(dead_code)]
     fn expected_burn_target_bb(
         &self,
         turn: &Turn,
@@ -1960,7 +1910,6 @@ impl TurnExecutor {
     /// multi-cell aggregation callers (Stage 7-γ.1+) a stable entry point.
     ///
     /// v1 floor only (takes a v1 `EffectVmAir` `StarkProof` bundle).
-    #[cfg(not(feature = "prover"))]
     pub fn verify_bundle_with_stark(
         bundle: &[(
             dregg_circuit::stark::StarkProof,
@@ -1976,7 +1925,6 @@ impl TurnExecutor {
     /// who carry a Burn binding proof in `turn.effect_binding_proofs`.
     ///
     /// v1 floor only (takes a v1 `EffectVmAir` `StarkProof` bundle).
-    #[cfg(not(feature = "prover"))]
     pub fn verify_bundle_with_stark_and_ledger(
         bundle: &[(
             dregg_circuit::stark::StarkProof,
@@ -2007,9 +1955,9 @@ impl TurnExecutor {
     /// field (added in this stage). Stage 8 may move the source of truth into
     /// `cell::CellProgram::max_custom_effects` directly.
     ///
-    /// V1-only (consumed by `verify_and_commit_proof_v1`'s PI reconstruction);
+    /// V1-only (DEAD: the v1 verify was retired);
     /// dead under `prover`, deleted with the v1 leg at C7.
-    #[cfg_attr(feature = "prover", allow(dead_code))]
+    #[allow(dead_code)]
     pub(super) fn read_cell_max_custom_effects(&self, cell_id: &CellId, ledger: &Ledger) -> u8 {
         if let Some(reg) = ledger.get_sovereign_registration(cell_id) {
             if let Some(m) = reg.max_custom_effects {
@@ -2025,9 +1973,9 @@ impl TurnExecutor {
     /// Stage 7 populates this from federation state when CapTP runtime
     /// emitters land. Per `DESIGN-captp-integration.md` §4.2.
     ///
-    /// V1-only (consumed by `verify_and_commit_proof_v1`'s PI reconstruction);
+    /// V1-only (DEAD: the v1 verify was retired);
     /// dead under `prover`, deleted with the v1 leg at C7.
-    #[cfg_attr(feature = "prover", allow(dead_code))]
+    #[allow(dead_code)]
     pub(super) fn read_approved_handoffs_root(&self) -> [dregg_circuit::field::BabyBear; 4] {
         [dregg_circuit::field::BabyBear::ZERO; 4]
     }
@@ -2055,7 +2003,7 @@ impl TurnExecutor {
     /// Convert 4 BabyBear elements to a 16-byte array (for custom proof commitment matching).
     /// V1-only (the rotated verify path reconstructs PIs from the trace generator); dead under
     /// `prover`.
-    #[cfg_attr(feature = "prover", allow(dead_code))]
+    #[allow(dead_code)]
     pub(super) fn babybear4_to_bytes16(elems: &[dregg_circuit::field::BabyBear; 4]) -> [u8; 16] {
         let mut result = [0u8; 16];
         for (i, elem) in elems.iter().enumerate() {
@@ -2071,7 +2019,7 @@ impl TurnExecutor {
     /// `expand_vk_hash_16_to_32` (zero-padded upper 16 bytes), giving 80-bit
     /// effective security in a 128-bit system. The full 32-byte form
     /// distinguishes VK hashes whose lower 16 bytes collide.
-    #[cfg_attr(feature = "prover", allow(dead_code))]
+    #[allow(dead_code)]
     pub(super) fn babybear8_to_bytes32(elems: &[dregg_circuit::field::BabyBear; 8]) -> [u8; 32] {
         let mut result = [0u8; 32];
         for (i, elem) in elems.iter().enumerate() {
@@ -2081,7 +2029,7 @@ impl TurnExecutor {
     }
 
     /// Hash custom proof bytes to produce a 16-byte commitment (matching BabyBear[4]).
-    #[cfg_attr(feature = "prover", allow(dead_code))]
+    #[allow(dead_code)]
     pub(super) fn hash_custom_proof(proof_bytes: &[u8]) -> [u8; 16] {
         let h = blake3::hash(proof_bytes);
         let bytes = h.as_bytes();
@@ -2323,7 +2271,7 @@ impl TurnExecutor {
     }
 
     /// Encode two BabyBear elements as a [u8; 32] for error reporting.
-    #[cfg_attr(feature = "prover", allow(dead_code))]
+    #[allow(dead_code)]
     pub(super) fn babybear_pair_to_bytes32(
         lo: dregg_circuit::field::BabyBear,
         hi: dregg_circuit::field::BabyBear,
@@ -2439,7 +2387,7 @@ impl TurnExecutor {
     /// sign=1 means negative/outgoing.
     /// V1-only (the rotated verify reconstructs balance PIs from the trace generator);
     /// dead under `prover`, deleted with the v1 leg at C7.
-    #[cfg_attr(feature = "prover", allow(dead_code))]
+    #[allow(dead_code)]
     pub(super) fn compute_balance_delta_from_effects(cell_id: &CellId, turn: &Turn) -> (u32, u32) {
         fn walk_delta(tree: &CallTree, cell_id: &CellId, net: &mut i64) {
             for effect in &tree.action.effects {

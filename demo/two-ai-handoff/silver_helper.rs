@@ -615,132 +615,6 @@ fn cmd_verify_captp_delivered_tampered(state_dir: &PathBuf) -> bool {
     !accepted
 }
 
-/// Subcommand: `make-captp-delivered-chain` — wraps the CapTpDelivered Turn
-/// (from `silver.captp-delivered.json`) in a minimal Effect VM STARK proof
-/// and writes a single-entry `WitnessedReceipt` chain to
-/// `silver.captp-delivered-chain.json`.
-///
-/// This closes the gap flagged in the meta-audit: previously charlie verified
-/// the CapTpDelivered cert via a standalone `silver-helper verify-captp-delivered`
-/// call (off-band from the witnessed chain). With this chain entry, charlie can
-/// include the CapTpDelivered Turn in the same `dregg-verifier replay-chain` call
-/// that verifies the grant + exercise proofs, making the cert verification
-/// in-chain rather than off-band.
-///
-/// The STARK proof is a NoOp Effect VM execution (the same minimal shape the
-/// `make-recursive-witness` command uses). The `turn_hash` slot in the receipt
-/// is set from the CapTpDelivered turn's content-addressed hash so that
-/// `check_receipt_pi_binding` sees consistent zeros (the NoOp context also
-/// uses an all-zero turn_hash, matching the proof's PI[TURN_HASH_BASE..+4]).
-/// The authorization (CapTpDelivered) is in the Turn itself — the STARK proof
-/// covers the effect execution, and `verify-captp-delivered` covers the auth.
-// v1 FLOOR ONLY: mints a v1 hand-AIR (`EffectVmAir`) NoOp STARK proof for the
-// CapTpDelivered receipt-linkage chain. Under `recursion` the v1 hand-AIR is
-// retired (no single-proof analog — the rotated unit is an `"effect-vm-rotated"`
-// IR-v2 chain leg verified via `descriptor_ir2::verify_vm_descriptor2`), so this
-// is compiled out and the dispatch arm reports the retirement honestly.
-#[cfg(not(feature = "prover"))]
-fn cmd_make_captp_delivered_chain(state_dir: &PathBuf) {
-    use dregg_circuit::effect_vm::{
-        self as evm, CellState as VmCellState, EffectVmAir, EffectVmContext,
-    };
-    use dregg_circuit::field::BabyBear;
-    use dregg_circuit::stark;
-
-    // Load the CapTpDelivered Turn artifact.
-    let art: CapTpDeliveredArtifact = serde_json::from_str(
-        &fs::read_to_string(state_dir.join("silver.captp-delivered.json"))
-            .expect("run make-captp-delivered first"),
-    )
-    .expect("parse captp-delivered json");
-
-    let turn_bytes = hex::decode(&art.turn_bytes_hex).expect("hex");
-    let turn: Turn = postcard::from_bytes(&turn_bytes).expect("turn parse");
-    let turn_hash = turn.hash();
-
-    // Build a minimal NoOp Effect VM trace. The CapTpDelivered Turn carries
-    // a Transfer effect but we prove a NoOp here: the STARK proof covers
-    // the effect execution layer, while the CapTpDelivered cryptographic
-    // auth check is covered by `verify-captp-delivered`. Using a NoOp keeps
-    // the proof compact and avoids re-implementing the full effect VM state
-    // transitions for Transfer in the demo helper.
-    let initial_state = VmCellState::new(0, 0);
-    let effects = vec![evm::Effect::NoOp];
-
-    let mut ctx = EffectVmContext::default();
-    ctx.actor_nonce = turn.nonce;
-    // Leave ctx.turn_hash as all-zero (BabyBear::ZERO) to match the receipt's
-    // all-zero turn_hash — the verifier's check_receipt_pi_binding will agree.
-
-    let (trace, mut public_inputs) =
-        evm::generate_effect_vm_trace_ext(&initial_state, &effects, ctx);
-
-    // Tag as agent cell so the verifier's single-proof-per-WR check passes.
-    public_inputs[dregg_circuit::effect_vm::pi::IS_AGENT_CELL] = BabyBear::ONE;
-
-    let air = EffectVmAir::new(trace.len());
-    let proof = stark::prove(&air, &trace, &public_inputs);
-    let proof_bytes = stark::proof_to_bytes(&proof);
-    let pi_u32: Vec<u32> = public_inputs.iter().map(|f| f.as_u32()).collect();
-
-    // Build a receipt whose turn_hash matches the CapTpDelivered turn's
-    // content-addressed hash. This is the linkage: the receipt identifies
-    // the specific turn; the STARK proof covers the effect VM execution;
-    // the separate `verify-captp-delivered` check covers the auth path.
-    // The turn_hash in the PI is still all-zero (matching ctx.turn_hash
-    // above) because we don't re-run the full turn hashing in the proof
-    // context — that gap is already documented in the PI binding comment
-    // in `cmd_make_recursive_witness`.
-    let receipt = TurnReceipt {
-        turn_hash: [0u8; 32], // matches ctx.turn_hash (all-zero) in the proof's PI
-        forest_hash: [0u8; 32],
-        pre_state_hash: [0u8; 32],
-        post_state_hash: [0u8; 32],
-        timestamp: 0,
-        effects_hash: [0u8; 32],
-        computrons_used: 0,
-        action_count: 1,
-        previous_receipt_hash: None,
-        agent: turn.agent,
-        federation_id: [0u8; 32],
-        routing_directives: vec![],
-        introduction_exports: vec![],
-        derivation_records: vec![],
-        emitted_events: vec![],
-        executor_signature: None,
-        finality: Default::default(),
-        was_encrypted: false,
-        was_burn: false,
-        consumed_capabilities: vec![],
-    };
-
-    let wr = WitnessedReceipt::from_components_with_compression(
-        receipt,
-        proof_bytes,
-        pi_u32,
-        Some(&trace),
-        false, // no recursive compression needed for this entry
-    );
-
-    let chain = vec![wr];
-    let chain_path = state_dir.join("silver.captp-delivered-chain.json");
-    let chain_json = WitnessedReceipt::chain_to_json(&chain)
-        .expect("captp-delivered chain serialise must succeed");
-    fs::write(&chain_path, &chain_json).unwrap();
-
-    let summary = CapTpDeliveredChainArtifact {
-        turn_hash_hex: hex::encode(turn_hash),
-        chain_path: chain_path.display().to_string(),
-        chain_built: true,
-    };
-    fs::write(
-        state_dir.join("silver.captp-delivered-chain-summary.json"),
-        serde_json::to_string_pretty(&summary).unwrap(),
-    )
-    .unwrap();
-    println!("{}", serde_json::to_string(&summary).unwrap());
-}
-
 /// Subcommand: `make-sovereign-witness` — Alice produces a canonical
 /// `SovereignCellWitness` for her own sovereign cell, demonstrating the
 /// post-soundness-sweep shape (Ed25519 sig over signing_message + sequence
@@ -1363,175 +1237,6 @@ fn cmd_make_introduce(
     println!("{}", serde_json::to_string(&art).unwrap());
 }
 
-/// Subcommand: `make-recursive-witness` — exercise the Golden Vision
-/// recursive-compression path end-to-end.
-///
-/// This is the missing artifact that the `RecursiveWitnessArtifact` struct
-/// at the top of this file has long anticipated but no callsite produced.
-/// It runs three checks:
-///
-///   1. **Best-effort compression attaches**: build a real (small) Effect VM
-///      proof + trace, then call
-///      `WitnessedReceipt::from_components_with_compression(.., recursive_compress: true)`
-///      and confirm the resulting `WitnessBundle` carries a
-///      `RecursiveProofVariant`. Hard-failure here would mean the recursion
-///      substrate silently regressed.
-///
-///   2. **Strict-recursive constructor succeeds**: call
-///      `WitnessedReceipt::from_components_strict_recursive(..)` on the same
-///      inputs and confirm it returns `Ok`. The strict variant hard-fails
-///      on producer error, so a `false` here means recursive proving
-///      itself broke.
-///
-///   3. **Chain JSON for the verifier**: emit a single-entry chain to
-///      `silver.recursive-chain.json` for charlie / `dregg-verifier
-///      scope-recursive` to consume. Also emit a tampered variant
-///      (`recursive_vk_hash` corrupted) so the verifier's registry-lookup
-///      gate is exercised as `must_not_pass`.
-///
-/// Why this matters: the `RecursiveProofVariant` wiring landed structurally
-/// — types, hashing, registry lookup — but until this command no
-/// substrate-honest artifact existed for the verifier's
-/// `scope-recursive` subcommand to consume.
-///
-/// v1 FLOOR ONLY: mints a v1 hand-AIR (`EffectVmAir`) NoOp STARK. Under
-/// `recursion` the v1 hand-AIR is retired; this compiles out and the dispatch
-/// arm reports the retirement honestly (the rotated leaf is minted via
-/// `dregg_turn::rotation_witness::mint_rotated_participant_leg`).
-#[cfg(not(feature = "prover"))]
-fn cmd_make_recursive_witness(state_dir: &PathBuf, turn_nonce: u64) {
-    use dregg_circuit::effect_vm::{
-        self as evm, CellState as VmCellState, EffectVmAir, EffectVmContext,
-    };
-    use dregg_circuit::field::BabyBear;
-    use dregg_circuit::stark;
-
-    // Build a minimal real Effect VM trace. A single NoOp at `actor_nonce =
-    // turn_nonce` yields a trace of length 2 (the AIR pads to the next
-    // power of two ≥ 2). The receipt-side `turn_hash` / `previous_receipt_hash`
-    // fields default to all-zero and we keep the context's analogues
-    // zero too, so the verifier's `check_receipt_pi_binding` will see
-    // matching zeros on both sides for those slots.
-    let initial_state = VmCellState::new(0, 0);
-    let effects = vec![evm::Effect::NoOp];
-
-    let mut ctx = EffectVmContext::default();
-    ctx.actor_nonce = turn_nonce;
-
-    let (trace, mut public_inputs) =
-        evm::generate_effect_vm_trace_ext(&initial_state, &effects, ctx);
-
-    // The verifier's `check_receipt_pi_binding` requires
-    // `PI[IS_AGENT_CELL] == 1` for the single-proof-per-WR replay shape.
-    // `generate_effect_vm_trace_ext` leaves this slot at zero; set it
-    // explicitly before proving so the prover commits to the agent-cell
-    // tag the verifier expects. The AIR itself does not constrain this
-    // slot (it is an executor-asserted bundle tag), so the proof remains
-    // valid.
-    public_inputs[dregg_circuit::effect_vm::pi::IS_AGENT_CELL] = BabyBear::ONE;
-
-    let air = EffectVmAir::new(trace.len());
-    let proof = stark::prove(&air, &trace, &public_inputs);
-    let proof_bytes = stark::proof_to_bytes(&proof);
-    let pi_u32: Vec<u32> = public_inputs.iter().map(|f| f.as_u32()).collect();
-
-    // Build the receipt. Carry `actor_nonce` through to make the receipt
-    // self-consistent for the verifier; the chain has length 1 so
-    // `previous_receipt_hash = None`. `turn_hash` is left as all-zero
-    // to match `ctx.turn_hash = [BabyBear::ZERO; 4]` and the PI's
-    // `canonical_32_to_felts_4([0; 32])`-derived TURN_HASH slots.
-    let agent_cell = dregg_types::CellId::from_bytes([0u8; 32]);
-    let receipt = TurnReceipt {
-        turn_hash: [0u8; 32],
-        forest_hash: [0u8; 32],
-        pre_state_hash: [0u8; 32],
-        post_state_hash: [0u8; 32],
-        timestamp: 0,
-        effects_hash: [0u8; 32],
-        computrons_used: 0,
-        action_count: 1,
-        previous_receipt_hash: None,
-        agent: agent_cell,
-        federation_id: [0u8; 32],
-        routing_directives: vec![],
-        introduction_exports: vec![],
-        derivation_records: vec![],
-        emitted_events: vec![],
-        executor_signature: None,
-        finality: Default::default(),
-        was_encrypted: false,
-        // Recursive-witness fabrication turn carries no Burn.
-        was_burn: false,
-        consumed_capabilities: vec![],
-    };
-
-    // Step 1: best-effort compression. Should attach a recursive proof.
-    let wr_compress = WitnessedReceipt::from_components_with_compression(
-        receipt.clone(),
-        proof_bytes.clone(),
-        pi_u32.clone(),
-        Some(&trace),
-        true,
-    );
-    let recursive_compression_attached = wr_compress
-        .witness_bundle
-        .as_ref()
-        .map(|wb| wb.has_recursive_proof())
-        .unwrap_or(false);
-
-    // Step 2: strict-recursive constructor. Hard-fails on producer error.
-    let strict_result = WitnessedReceipt::from_components_strict_recursive(
-        receipt.clone(),
-        proof_bytes.clone(),
-        pi_u32.clone(),
-        &trace,
-    );
-    let strict_recursive_built = strict_result.is_ok();
-
-    // Write the strict-recursive WR as a single-entry chain for the
-    // verifier's `scope-recursive` subcommand. If strict failed (it
-    // shouldn't), fall back to the best-effort one — but only if its
-    // recursive variant did attach.
-    let wr_for_chain = match strict_result {
-        Ok(wr) => wr,
-        Err(_) => wr_compress.clone(),
-    };
-    let chain = vec![wr_for_chain.clone()];
-    let chain_path = state_dir.join("silver.recursive-chain.json");
-    let chain_json = WitnessedReceipt::chain_to_json(&chain).expect("chain serialise must succeed");
-    fs::write(&chain_path, &chain_json).unwrap();
-
-    // Tampered variant: corrupt the recursive_vk_hash so the verifier's
-    // registry-lookup step rejects with `UnknownVkHash` before any
-    // cryptographic work. The outer EffectVm proof is still valid; this
-    // exercises the recursive-side gate specifically.
-    let mut tampered = wr_for_chain.clone();
-    if let Some(bundle) = tampered.witness_bundle.as_mut() {
-        if let Some(rp) = bundle.recursive_proof.as_mut() {
-            rp.recursive_vk_hash[0] ^= 0xFF;
-            rp.recursive_vk_hash[31] ^= 0xFF;
-        }
-    }
-    let tampered_chain = vec![tampered];
-    let chain_path_tampered = state_dir.join("silver.recursive-chain.tampered.json");
-    let tampered_json = WitnessedReceipt::chain_to_json(&tampered_chain)
-        .expect("tampered chain serialise must succeed");
-    fs::write(&chain_path_tampered, &tampered_json).unwrap();
-
-    let art = RecursiveWitnessArtifact {
-        recursive_compression_attached,
-        strict_recursive_built,
-        chain_path: chain_path.display().to_string(),
-        chain_path_tampered: chain_path_tampered.display().to_string(),
-    };
-    fs::write(
-        state_dir.join("silver.recursive-witness.json"),
-        serde_json::to_string_pretty(&art).unwrap(),
-    )
-    .unwrap();
-    println!("{}", serde_json::to_string(&art).unwrap());
-}
-
 /// Subcommand: `make-bilateral-bundle` — assemble a γ.2 bilateral bundle
 /// for the canonical Transfer turn (alice -> bob, 100). Build one
 /// `WitnessedReceipt` per cell with the γ.2 PI layout computed from the
@@ -1758,21 +1463,12 @@ fn run(cmd: &str, rest: &[String], state_dir: &PathBuf) -> Result<bool, String> 
             Ok(true)
         }
         "make-captp-delivered-chain" => {
-            #[cfg(not(feature = "prover"))]
-            {
-                cmd_make_captp_delivered_chain(state_dir);
-                Ok(true)
-            }
-            #[cfg(feature = "prover")]
-            {
-                let _ = state_dir;
-                Err(
-                    "make-captp-delivered-chain mints a v1 hand-AIR (EffectVmAir) NoOp STARK, \
-                     retired under the recursion build; rebuild with --no-default-features for the \
-                     v1 floor, or mint a rotated \"effect-vm-rotated\" IR-v2 leg instead"
-                        .to_string(),
-                )
-            }
+            let _ = state_dir;
+            Err(
+                "make-captp-delivered-chain minted a v1 hand-AIR NoOp STARK; the v1 floor is \
+                 retired. Mint a rotated \"effect-vm-rotated\" IR-v2 leg instead."
+                    .to_string(),
+            )
         }
         "verify-captp-delivered" => Ok(cmd_verify_captp_delivered(state_dir)),
         "verify-captp-delivered-tampered" => Ok(cmd_verify_captp_delivered_tampered(state_dir)),
@@ -1804,21 +1500,12 @@ fn run(cmd: &str, rest: &[String], state_dir: &PathBuf) -> Result<bool, String> 
         }
         "make-recursive-witness" => {
             let turn_nonce = need_u64("--turn-nonce", Some("1"))?;
-            #[cfg(not(feature = "prover"))]
-            {
-                cmd_make_recursive_witness(state_dir, turn_nonce);
-                Ok(true)
-            }
-            #[cfg(feature = "prover")]
-            {
-                let _ = (state_dir, turn_nonce);
-                Err(
-                    "make-recursive-witness mints a v1 hand-AIR (EffectVmAir) NoOp STARK, retired \
-                     under the recursion build; rebuild with --no-default-features for the v1 \
-                     floor, or mint a rotated leaf via mint_rotated_participant_leg instead"
-                        .to_string(),
-                )
-            }
+            let _ = (state_dir, turn_nonce);
+            Err(
+                "make-recursive-witness minted a v1 hand-AIR NoOp STARK; the v1 floor is \
+                 retired. Mint a rotated leaf via mint_rotated_participant_leg instead."
+                    .to_string(),
+            )
         }
         "make-bilateral-bundle" => {
             let a = need("--alice-cell")?;

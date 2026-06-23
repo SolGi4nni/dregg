@@ -1054,19 +1054,14 @@ pub fn compute_canonical_state_commitment_v9_felt8(
     ctx: &V9RotationContext,
 ) -> [dregg_circuit::field::BabyBear; 8] {
     let pre = compute_rotated_pre_limbs(cell, ctx);
-    // THE FLIP (`prover`): the deployed wide carrier the circuit PUBLISHES is the CHIP chain
-    // (`fill_wide_block` → `chip_absorb_all_lanes`), and the plain `wire_commit_8` DIVERGES from it
-    // (no arity-tag seeding). So the live registration / executor anchor MUST be the chip chain —
-    // otherwise an honest wide proof's BEFORE carrier would not equal the stored 8-felt commit. Under
-    // `prover` we compute the chip-faithful commit; a bare build (carrier never published) keeps plain.
-    #[cfg(feature = "prover")]
-    {
-        dregg_circuit::poseidon2::wire_commit_8_chip(&pre, ctx.iroot)
-    }
-    #[cfg(not(feature = "prover"))]
-    {
-        dregg_circuit::poseidon2::wire_commit_8(&pre, ctx.iroot)
-    }
+    // The deployed wide carrier the circuit PUBLISHES is the CHIP chain
+    // (`fill_wide_block` → `chip_absorb_all_lanes`); the plain `wire_commit_8` DIVERGES from it (no
+    // arity-tag seeding). So the live registration / executor anchor MUST be the chip chain —
+    // otherwise an honest wide proof's BEFORE carrier would not equal the stored 8-felt commit.
+    // `wire_commit_8_chip` is verify-level in `dregg-circuit` (the chip absorb is part of the
+    // verify floor), so this faithful commit is unconditional — the divergent plain-chain floor is
+    // retired.
+    dregg_circuit::poseidon2::wire_commit_8_chip(&pre, ctx.iroot)
 }
 
 /// The 32-byte encoding of the faithful 8-felt commitment: the 8 felts packed as 8×4 LE bytes

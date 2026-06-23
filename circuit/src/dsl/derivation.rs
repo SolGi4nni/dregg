@@ -935,7 +935,6 @@ pub fn verify_derivation_dsl(proof: &StarkProof, public_inputs: &[BabyBear]) -> 
 /// Returns `None` if the witness is internally inconsistent (degenerate
 /// ConditionalNonzero inverse — should not happen for honest witnesses), or the
 /// `DslP3Error` if the audited prover/verifier rejects.
-#[cfg(feature = "prover")]
 pub fn prove_derivation_p3(
     witness: &DerivationWitness,
 ) -> Result<crate::dsl::dsl_p3_air::DslP3Proof, String> {
@@ -946,7 +945,6 @@ pub fn prove_derivation_p3(
 }
 
 /// Verify a derivation proof on the AUDITED Plonky3 verifier (`p3-batch-stark`).
-#[cfg(feature = "prover")]
 pub fn verify_derivation_p3(
     proof: &crate::dsl::dsl_p3_air::DslP3Proof,
     public_inputs: &[BabyBear],
@@ -1254,7 +1252,6 @@ mod tests {
     /// AUDITED p3 path: an honest derivation proves+verifies through the real
     /// Plonky3 verifier (`p3-batch-stark`) — including the in-circuit Poseidon2
     /// arithmetization of the `derived_hash` `hash_fact` sponge.
-    #[cfg(feature = "prover")]
     #[test]
     fn p3_prove_and_verify_roundtrip() {
         let witness = create_test_derivation();
@@ -1268,7 +1265,6 @@ mod tests {
     /// (PI[1]) MUST be rejected. The in-circuit Poseidon2 binds `derived_hash`
     /// to the genuine `hash_fact` digest of the head, so a tampered PI cannot
     /// pass — this is the soundness the migration off bespoke `stark` preserves.
-    #[cfg(feature = "prover")]
     #[test]
     fn p3_rejects_forged_derived_hash() {
         let witness = create_test_derivation();
@@ -1286,7 +1282,6 @@ mod tests {
 
     /// ANTI-GHOST: a forged `state_root` public input (PI[0]) MUST be rejected
     /// on the audited p3 path (the body roots are PI-bound to state_root).
-    #[cfg(feature = "prover")]
     #[test]
     fn p3_rejects_forged_state_root() {
         let witness = create_test_derivation();

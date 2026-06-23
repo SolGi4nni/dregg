@@ -25,8 +25,8 @@
 //! Pedersen half (`dregg_cell_crypto::value_commitment::verify_full_conservation_bytes`),
 //! composed downstream.
 
-use crate::dsl::dsl_p3_air::{DslZkProof, prove_dsl_zk, verify_dsl_zk};
-use crate::field::BabyBear;
+use dregg_circuit::dsl::dsl_p3_air::{DslZkProof, prove_dsl_zk, verify_dsl_zk};
+use dregg_circuit::field::BabyBear;
 use crate::shielded::spend_circuit::{
     ShieldedSpendWitness, generate_shielded_spend_trace, pi, shielded_spend_circuit,
 };

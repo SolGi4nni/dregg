@@ -46,6 +46,10 @@ dregg-captp = { path = "../captp", optional = true }
 # proofs for, no reimplementation.
 dregg-storage = { path = "../storage", optional = true }
 dregg-circuit = { path = "../circuit" }
+# The SDK's producer path mints rotated proofs and binds custom sub-proofs
+# (`dregg_circuit_prove::custom_proof_bind`), so it depends on the heavy prove
+# crate. (The SDK's light-client VERIFY path uses only `dregg-circuit` symbols.)
+dregg-circuit-prove = { path = "../circuit-prove" }
 dregg-commit = { path = "../commit" }
 # The light-client artifact (`AttestedHistory`) — the SDK's second
 # user-facing noun. Pure verifier; rides the dregg-circuit prover
@@ -125,12 +129,11 @@ no-lean-link = [
     "dregg-lean-ffi/no-lean-link",
 ]
 dev = []
-# STAGED-ADDITIVE (G1): compile the rotated IR-v2 (R=24) turn-proof route beside the live
-# v1 path. OFF by default — the live v1 path stays the byte-identical default. Forwards to
-# `dregg-circuit/prover` (which compiles `descriptor_ir2`, the rotated prover). Combined
-# with the runtime gate `DREGG_ROTATED_PROVER=1` (precedent: `DREGG_DESCRIPTOR_PROVER`); the
-# default keeps the v1 route. The flag-day cutover (default → rotated) is G2, a separate act.
-prover = ["dregg-circuit/prover", "dregg-turn/prover", "dregg-cell/prover"]
+# The SDK PRODUCER cluster. The rotated prover surface (`descriptor_ir2` prove,
+# the `*_wide` generators) is unconditional in `dregg-circuit`; the recursion
+# tower + custom-proof-bind ride the unconditional `dregg-circuit-prove` dep. This
+# feature now forwards the producer features of the turn/cell deps.
+prover = ["dregg-turn/prover", "dregg-cell/prover"]
 # Enables `DelegationAuthority::Open`, which accepts any well-signed envelope
 # without an authority check. This is a footgun in production and is gated
 # behind a feature flag so that production builds cannot construct it at all.

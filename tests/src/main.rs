@@ -53,9 +53,6 @@ mod dsl_pipeline;
 // DFA routing proven in circuit: transition table commitment + STARK proof of classification
 pub mod dfa_circuit;
 
-// End-to-end service mesh: CAS, splice, mount, governance vote + route table
-pub mod service_mesh_e2e;
-
 // End-to-end protocol soundness: exhaustively round-trip every Effect variant
 // through executor + projection + AIR. See dev-philosophy/02-testing.md section 3.
 pub mod every_variant_roundtrip;

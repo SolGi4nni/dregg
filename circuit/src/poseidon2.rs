@@ -517,7 +517,6 @@ pub fn wire_commit_8(pre_limbs: &[BabyBear], iroot: BabyBear) -> [BabyBear; 8] {
 /// chip chain (`chip_absorb_all_lanes` per `fill_wide_block` step), so the deployed executor MUST
 /// anchor the 8 wide PIs against THIS primitive — the flip's cell-side cutover repoints
 /// `compute_canonical_state_commitment_v9_felt8` here.
-#[cfg(feature = "prover")]
 pub fn wire_commit_8_chip(pre_limbs: &[BabyBear], iroot: BabyBear) -> [BabyBear; 8] {
     use crate::descriptor_ir2::chip_absorb_all_lanes;
     let n = pre_limbs.len();

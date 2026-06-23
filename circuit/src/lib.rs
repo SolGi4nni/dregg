@@ -238,17 +238,11 @@ pub mod plonky3_recursion;
 #[cfg(feature = "plonky3")]
 pub mod plonky3_verifier_air;
 
-#[cfg(feature = "prover")]
-pub mod plonky3_recursion_impl;
-
-/// LogUp-style range-check lookups for the Lean-emitted descriptor path — the
-/// first concrete efficiency win for the verified extraction circuit. Replaces
-/// the `lean_descriptor_air` bit-decomposition range gates (30 aux columns / 30
-/// booleanity constraints per 30-bit wire) with a shared `[0,256)` byte-table
-/// LogUp bus (4 byte-limb columns per 30-bit wire, table shared across all
-/// wires), proved via `p3-batch-stark`. See module docs.
-#[cfg(feature = "prover")]
-pub mod lean_lookup_air;
+// `plonky3_recursion_impl`, `lean_lookup_air`, `effect_vm_p3_air`, `shielded`,
+// `custom_proof_bind`, `recursive_witness_bundle`, `ivc_turn_chain`,
+// `joint_turn_aggregation`, and `joint_turn_recursive` moved to the
+// `dregg-circuit-prove` crate (the heavy recursion/prove surface). This crate is
+// the verify floor; a producer depends on `dregg-circuit-prove`.
 
 /// Descriptor IR v2 — THE EPOCH multi-table batch-STARK interpreter
 /// (`docs/EPOCH-DESIGN.md`). Parses the versioned `"ir":2` wire emitted by Lean
@@ -262,26 +256,14 @@ pub mod lean_lookup_air;
 /// map-ops. v1 descriptors keep proving through `lean_descriptor_air` until the
 /// flag-day. See module docs.
 ///
-/// Gated on `any(recursion, verifier)`: the PROVE surface (`prove_vm_descriptor2*`,
-/// trace assembly, `prove_batch`) is `recursion`-only, but the VERIFY surface
-/// (`verify_vm_descriptor2{,_with_config}`, the AIRs, `ir2_config`) compiles under the
-/// prover-free `verifier` feature so the wasm / no-lean-link verifier can verify
-/// rotated proofs without the prover DFT (cutover C2).
-#[cfg(any(feature = "prover", feature = "verifier"))]
+/// THE EPOCH multi-table batch-STARK interpreter. Both the VERIFY surface
+/// (`verify_vm_descriptor2{,_with_config}`, the AIRs, `ir2_config`) and the
+/// recursion-free PROVE surface (`prove_vm_descriptor2*`, trace assembly,
+/// `prove_batch`) live here — all on verify-floor p3 deps (`p3-batch-stark` /
+/// `p3-uni-stark`), so the whole module is unconditional in the verify floor.
 pub mod descriptor_ir2;
 
-/// The genuine `proof_bind` engine for the `custom` effect: a REAL external
-/// STARK sub-proof verification (not a bounds check). Makes the deployed
-/// `customVmDescriptor2R24` `proof_bind` op MEAN "the bound proof verified" —
-/// a custom effect carrying a forged sub-proof is rejected. See module docs.
-// The module's own inner `#![cfg(feature = "prover")]` provides the gate.
-pub mod custom_proof_bind;
-
-/// Recursive (Golden Vision) compression bridge for `dregg_turn::WitnessedReceipt`
-/// scope-2 replay. See the module docs for the Silver→Golden mapping and
-/// the VK v2 layered encoding of the recursive VK hash.
-// The module's own inner `#![cfg(feature = "prover")]` provides the gate.
-pub mod recursive_witness_bundle;
+// `custom_proof_bind` and `recursive_witness_bundle` moved to `dregg-circuit-prove`.
 
 /// Stage 7-γ.2 Phase 2 joint bilateral aggregation AIR. Consumes N per-cell
 /// γ.2 PI vectors and the schedule-derived projection; emits a single outer
@@ -304,12 +286,7 @@ pub mod cross_cell_conservation_air;
 /// the `verify_proof_carrying_turn_bundle` handoff seam).
 pub mod block_conservation;
 
-/// Effect-VM-shape bridge AIR for the `p3-recursion` path. See module
-/// docs — this is a *shape* mirror of `effect_vm::EffectVmAir` used to
-/// measure that the recursion library accepts the Effect VM's column and
-/// PI counts (Block 1/2 of the Golden Vision recursion lane).
-#[cfg(feature = "prover")]
-pub mod effect_vm_p3_air;
+// `effect_vm_p3_air` moved to `dregg-circuit-prove`.
 
 /// Sorted-set neighbor-adjacency STARK: proves two leaves are *consecutive*
 /// under a committed binary Merkle root, closing the Silver non-membership
@@ -318,20 +295,12 @@ pub mod effect_vm_p3_air;
 pub mod membership_adjacency_air;
 
 pub mod backends;
-// `ivc_turn_chain`'s inner `#![cfg(feature = "prover")]` provides the gate.
-pub mod ivc_turn_chain;
-pub mod joint_turn_aggregation;
-// `joint_turn_recursive`'s inner `#![cfg(feature = "prover")]` provides the gate.
-pub mod joint_turn_recursive;
+// `ivc_turn_chain`, `joint_turn_aggregation`, `joint_turn_recursive` moved to
+// `dregg-circuit-prove`.
 pub mod proof_forest;
 pub mod proof_tier;
 
-/// Shielded actions — privacy M2 (single-asset shielded transfer toehold). Its
-/// own composed proof object over the existing notes / nullifiers / commitment
-/// tree + the p3 `HidingFriPcs` ZK path; NOT woven into `effect_vm`. Gated on
-/// `prover` (it rides the `dsl::dsl_p3_air` hiding seam). See module docs.
-#[cfg(feature = "prover")]
-pub mod shielded;
+// `shielded` moved to `dregg-circuit-prove`.
 
 #[cfg(test)]
 #[allow(deprecated)]
@@ -377,8 +346,8 @@ pub use cross_state_derivation::{
     CombiningRule, CrossStateDerivationProof, SourceDerivation, SourceInput,
     prove_cross_state_derivation, verify_cross_state_derivation,
 };
-#[cfg(not(feature = "prover"))]
-pub use effect_vm::EffectVmAir;
+// `EffectVmAir` (the v1 hand-AIR) is RETIRED; the rotated IR-v2 descriptor path
+// is the sole effect-VM circuit.
 pub use effect_vm::{
     CellState, EFFECT_VM_WIDTH, Effect, NUM_EFFECTS, compute_effects_hash, encode_net_delta,
     extract_asset_class, extract_custom_proof_commitments, extract_net_delta,

@@ -89,9 +89,8 @@
 //!
 //! See `cell/src/vk_v2.rs` for the canonical encoder.
 
-#![cfg(feature = "prover")]
 
-use crate::field::BabyBear;
+use dregg_circuit::field::BabyBear;
 
 // ---------------------------------------------------------------------------
 // VK v2 layered hash
@@ -135,7 +134,7 @@ pub fn recursive_verifier_source_hash() -> [u8; 32] {
 /// to a call through `dregg_cell::vk_v2::canonical_vk_v2` with the
 /// equivalent `VkComponents`.
 pub fn compute_recursive_vk_hash() -> [u8; 32] {
-    let air_fp = crate::air_descriptor::fingerprint(&crate::effect_vm::AIR_DESCRIPTOR);
+    let air_fp = dregg_circuit::air_descriptor::fingerprint(&dregg_circuit::effect_vm::AIR_DESCRIPTOR);
     let verifier_fp = recursive_verifier_source_hash();
 
     // BLAKE3 keyed under "dregg-vk-v2" — same domain as
@@ -235,7 +234,7 @@ impl RecursiveProofProducer {
         public_inputs: &[BabyBear],
     ) -> Result<RecursiveProofOutput, String> {
         use crate::effect_vm_p3_air::EffectVmShapeAir;
-        use crate::plonky3_prover::to_p3;
+        use dregg_circuit::plonky3_prover::to_p3;
         use crate::plonky3_recursion_impl::recursive::{
             prove_inner_for_air, prove_recursive_layer_for_air, verify_inner_for_air,
         };
@@ -410,7 +409,7 @@ pub fn verify_recursive_proof_variant(
 mod tests {
     use super::*;
     use crate::effect_vm_p3_air::EffectVmShapeAir;
-    use crate::field::BabyBear;
+    use dregg_circuit::field::BabyBear;
 
     /// Borrow the existing minimal-shape-trace witness factory from
     /// `effect_vm_p3_air`. 4 rows; satisfies booleanity, sum-to-one,
@@ -470,7 +469,7 @@ mod tests {
         // tampered trace and shipped that to the verifier; here we
         // shortcut to the resulting cross-binding violation.)
         let mut tampered_pi_u32: Vec<u32> = public_inputs.iter().map(|x| x.as_u32()).collect();
-        use crate::effect_vm::pi;
+        use dregg_circuit::effect_vm::pi;
         tampered_pi_u32[pi::OLD_COMMIT] ^= 0xDEAD_BEEF;
 
         let verdict = verify_recursive_proof_variant(

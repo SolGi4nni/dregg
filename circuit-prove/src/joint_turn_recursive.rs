@@ -79,7 +79,6 @@
 //! the same precise fork follow-up (thread `table_public_inputs` up the tree +
 //! host-check the circuit public vector).
 
-#![cfg(feature = "prover")]
 
 use p3_baby_bear::BabyBear as P3BabyBear;
 use p3_field::PrimeCharacteristicRing as _;
@@ -87,7 +86,7 @@ use p3_recursion::ProveNextLayerParams;
 use p3_recursion::build_and_prove_next_layer;
 use p3_recursion::{BatchOnly, RecursionInput, RecursionOutput};
 
-use crate::field::BabyBear;
+use dregg_circuit::field::BabyBear;
 use crate::joint_turn_aggregation::{
     DescriptorParticipant, JointAggError, JointTurnAggregationAir, verify_descriptor_participant,
 };
@@ -112,7 +111,7 @@ fn to_p3(v: BabyBear) -> P3BabyBear {
 /// 186-column execution trace the proof attests — the prover-side witness from
 /// which the in-circuit leaf is re-proven. Identical in shape and recipe to
 /// the whole-chain fold's per-turn input; the joint aggregator additionally
-/// reads [`pi::TURN_HASH_BASE`](crate::effect_vm::pi) (the shared turn id)
+/// reads [`pi::TURN_HASH_BASE`](dregg_circuit::effect_vm::pi) (the shared turn id)
 /// out of the PI prefix, which the descriptor leaf's wrap binds in-circuit.
 pub type JointCell = crate::ivc_turn_chain::FinalizedTurn;
 

@@ -1,0 +1,59 @@
+[package]
+name = "dregg-circuit-prove"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Heavy PROVE surface for dregg circuits: the p3-recursion tower (IVC, joint-turn aggregation, recursive witness bundles), the custom proof-bind engine, the shielded-action prover, and the LogUp lookup AIR. Depends on dregg-circuit (the verify floor) and the three recursion-only Plonky3 crates."
+
+[dependencies]
+dregg-circuit = { path = "../circuit" }
+
+# Plonky3 core (workspace-pinned). The prove surface needs the full STARK + DFT
+# stack plus the three RECURSION-ONLY crates (p3-recursion / p3-circuit /
+# p3-circuit-prover) that the verify floor (`dregg-circuit`) deliberately does NOT
+# pull — the prove/verify partition that keeps `cargo tree -p dregg-circuit` free
+# of the recursion prover.
+p3-field = { workspace = true }
+p3-baby-bear = { workspace = true }
+p3-air = { workspace = true }
+p3-matrix = { workspace = true }
+p3-uni-stark = { workspace = true }
+p3-challenger = { workspace = true }
+p3-commit = { workspace = true }
+p3-fri = { workspace = true }
+p3-symmetric = { workspace = true }
+p3-dft = { workspace = true }
+p3-merkle-tree = { workspace = true }
+p3-batch-stark = { workspace = true }
+p3-lookup = { workspace = true }
+p3-poseidon2-circuit-air = { workspace = true }
+
+# The THREE recursion-only crates — the heavy half of the split.
+p3-recursion = { workspace = true }
+p3-circuit = { workspace = true }
+p3-circuit-prover = { workspace = true }
+
+postcard = { version = "1", features = ["alloc"] }
+blake3 = "1"
+serde = { version = "1", features = ["derive"] }
+tracing = { version = "0.1" }
+itertools = { version = "0.14" }
+rand = { version = "0.10" }
+rmp-serde = { version = "1.2" }
+getrandom = { workspace = true }
+
+[dev-dependencies]
+dregg-cell = { path = "../cell" }
+dregg-cell-crypto = { path = "../cell-crypto" }
+# The recursion/shielded integration tests (moved from circuit/tests/) build real
+# turns. dev-dep cycle (turn → circuit-prove) is permitted by Cargo.
+dregg-turn = { path = "../turn" }
+curve25519-dalek = { version = "4", features = ["alloc"] }
+getrandom = { workspace = true }
+serde_json = { workspace = true }
+blake3 = "1"
+
+[lints]
+workspace = true

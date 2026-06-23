@@ -2,7 +2,7 @@
 //!
 //! ## Why this file exists
 //!
-//! `crate::effect_vm::EffectVmAir` implements dregg's local `StarkAir` trait,
+//! `dregg_circuit::effect_vm::EffectVmAir` implements dregg's local `StarkAir` trait,
 //! which evaluates folded constraints as a concrete `BabyBear` value. The
 //! `p3-recursion` library (via its blanket `RecursiveAir` impl) requires an
 //! AIR that implements `p3-air::Air<AB>` — i.e. one that emits *symbolic*
@@ -65,10 +65,10 @@
 use p3_air::{Air, AirBuilder, BaseAir, WindowAccess};
 use p3_field::PrimeCharacteristicRing;
 
-use crate::effect_vm::{
+use dregg_circuit::effect_vm::{
     EFFECT_VM_WIDTH, NUM_EFFECTS, PARAM_BASE, STATE_AFTER_BASE, STATE_BEFORE_BASE, pi, sel, state,
 };
-use crate::field::BabyBear;
+use dregg_circuit::field::BabyBear;
 
 /// AIR with the Effect VM's column/PI shape but a deliberately minimal
 /// constraint set. See module docs for scope and intent.
@@ -252,8 +252,8 @@ pub fn build_minimal_shape_trace(n_rows: usize) -> (Vec<Vec<BabyBear>>, Vec<Baby
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::field::BabyBear;
-    use crate::stark::StarkAir;
+    use dregg_circuit::field::BabyBear;
+    use dregg_circuit::stark::StarkAir;
 
     /// Sanity: the shape AIR reports the same width and PI count as the
     /// real Effect VM AIR's published constants. If this drifts, the
@@ -276,7 +276,6 @@ mod tests {
     /// Done by running the trace through the real Plonky3 prover/verifier
     /// pair (via the recursion-compatible config); a failing trace would
     /// be caught by `verify`.
-    #[cfg(feature = "prover")]
     #[test]
     fn minimal_trace_inner_proof_round_trips() {
         use crate::plonky3_recursion_impl::recursive::{prove_inner_for_air, verify_inner_for_air};
@@ -288,7 +287,7 @@ mod tests {
         // Lift to p3-baby-bear.
         let flat: Vec<P3BabyBear> = trace
             .iter()
-            .flat_map(|row| row.iter().map(|&v| crate::plonky3_prover::to_p3(v)))
+            .flat_map(|row| row.iter().map(|&v| dregg_circuit::plonky3_prover::to_p3(v)))
             .collect();
         let matrix = RowMajorMatrix::new(flat, EFFECT_VM_WIDTH);
 

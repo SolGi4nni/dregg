@@ -25,11 +25,6 @@
 //! proof was valid, which transitively binds every fold proof's PI vector
 //! into the chain commitment.
 
-#[cfg(feature = "prover")]
-use p3_baby_bear::BabyBear as P3BabyBear;
-#[cfg(feature = "prover")]
-use p3_matrix::dense::RowMajorMatrix;
-
 use crate::field::BabyBear;
 use crate::plonky3_prover::DreggProof;
 
@@ -65,10 +60,6 @@ pub struct RecursiveIvcStep {
     pub proof: DreggProof,
     pub public_inputs: Vec<BabyBear>,
     pub step_number: u32,
-    /// Postcard-serialized outer recursive proof bytes, set when the
-    /// `recursion` feature is enabled. `None` in pure-`plonky3` builds.
-    #[cfg(feature = "prover")]
-    pub recursive_layer_bytes: Option<Vec<u8>>,
 }
 
 /// Build a recursive IVC chain over `fold_proofs`.
@@ -134,107 +125,16 @@ pub fn build_recursive_ivc_chain(
     let public_inputs = vec![BabyBear::ZERO, recursive_proof.final_accumulator];
     let step_number = recursive_proof.num_proofs as u32;
 
-    #[cfg(feature = "prover")]
-    let recursive_layer_bytes = {
-        // Wrap the aggregation_proof in the real recursive layer. The
-        // aggregation_proof was produced with create_config() — a different
-        // STARK config from the recursion-compatible one — so we cannot
-        // feed it directly through prove_recursive_layer_for_air. Instead,
-        // we re-prove the AggregationAir trace with the recursion config
-        // (cheap: width-4, degree-1 AIR), then wrap that.
-        //
-        // The Block 1 measurement (`recursive_aggregation_air_smoke`)
-        // already validates that AggregationAir flows through the
-        // recursion path cleanly, so this code path is exercised.
-        use crate::plonky3_prover::to_p3;
-        use crate::plonky3_recursion::AggregationAir;
-        use crate::plonky3_recursion_impl::recursive::{
-            prove_inner_for_air, prove_recursive_layer_for_air, verify_inner_for_air,
-        };
-
-        // Rebuild the aggregation trace exactly as plonky3_recursion does,
-        // but with the recursion-compatible config. The PI shape stays:
-        // [initial_acc=0, final_acc=recursive_proof.final_accumulator].
-        let trace = rebuild_aggregation_trace(fold_proofs, recursive_proof.final_accumulator)?;
-        let flat: Vec<P3BabyBear> = trace
-            .iter()
-            .flat_map(|row| row.iter().map(|&v| to_p3(v)))
-            .collect();
-        let width = trace[0].len();
-        let matrix = RowMajorMatrix::new(flat, width);
-
-        let air = AggregationAir;
-        let inner = prove_inner_for_air(&air, matrix, &public_inputs);
-        // Defense in depth: verify the inner before wrapping.
-        verify_inner_for_air(&air, &inner, &public_inputs).map_err(|e| {
-            format!("recursive_layer_bytes: aggregation inner-proof verify failed: {e}")
-        })?;
-        let output = prove_recursive_layer_for_air(&air, &inner, &public_inputs).map_err(|e| {
-            format!("recursive_layer_bytes: outer recursive layer prove failed: {e}")
-        })?;
-        // The outer recursive layer's serialized form lives in `output.0`
-        // (a BatchStarkProof); postcard-encode it for transmission.
-        Some(
-            postcard::to_allocvec(&output.0)
-                .map_err(|e| format!("recursive_layer_bytes: postcard encode failed: {e}"))?,
-        )
-    };
-
+    // The outer recursive-layer wrap (`recursive_layer_bytes`) lived in the
+    // recursion-prove surface (`plonky3_recursion_impl`), now in
+    // `dregg-circuit-prove`. This convenience entry returns the aggregation proof;
+    // the outer recursive layer is produced through the prove crate's recursion
+    // tower (`ivc_turn_chain` / `joint_turn_recursive`).
     Ok(RecursiveIvcStep {
         proof: recursive_proof.aggregation_proof,
         public_inputs,
         step_number,
-        #[cfg(feature = "prover")]
-        recursive_layer_bytes,
     })
-}
-
-/// Helper: rebuild the AggregationAir trace deterministically from the
-/// same inputs `plonky3_recursion::prove_recursive` saw, sized to the next
-/// power of two so the recursion-compatible STARK config accepts it. This
-/// is the same algorithm that lives inside `plonky3_recursion`, lifted
-/// here so the recursive-layer wrapper can re-prove with a different
-/// config without restructuring the original entrypoint.
-#[cfg(feature = "prover")]
-fn rebuild_aggregation_trace(
-    fold_proofs: &[(&DreggProof, &[BabyBear])],
-    expected_final: BabyBear,
-) -> Result<Vec<Vec<BabyBear>>, String> {
-    use crate::poseidon2::hash_4_to_1;
-
-    let n = fold_proofs.len();
-    if n < 2 {
-        return Err(format!("need ≥2 fold proofs (got {n})"));
-    }
-    let padded_len = n.next_power_of_two();
-    let mut trace = Vec::with_capacity(padded_len);
-    let mut accumulator = BabyBear::ZERO;
-
-    for (i, (_proof, pi)) in fold_proofs.iter().enumerate() {
-        let leaf = pi[0];
-        let root = pi[1];
-        let step_idx = BabyBear::new(i as u32);
-        let acc_out = hash_4_to_1(&[accumulator, leaf, root, step_idx]);
-        trace.push(vec![accumulator, leaf, root, acc_out]);
-        accumulator = acc_out;
-    }
-
-    for i in n..padded_len {
-        let step_idx = BabyBear::new(i as u32);
-        let acc_out = hash_4_to_1(&[accumulator, BabyBear::ZERO, BabyBear::ZERO, step_idx]);
-        trace.push(vec![accumulator, BabyBear::ZERO, BabyBear::ZERO, acc_out]);
-        accumulator = acc_out;
-    }
-
-    let actual_final = trace.last().unwrap()[3];
-    if actual_final != expected_final {
-        return Err(format!(
-            "aggregation-trace reconstruction drift: expected {:?}, got {:?}",
-            expected_final, actual_final
-        ));
-    }
-
-    Ok(trace)
 }
 
 #[cfg(test)]

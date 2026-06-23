@@ -18,7 +18,7 @@
 //! That independent verification is what this module makes a deployed,
 //! SDK-reachable, light-client-runnable check. It is the REAL engine the
 //! descriptor-semantic toy (`descriptor_ir2.rs::ToyEngine`) modeled: the proof
-//! carrier is a genuine [`crate::dsl::circuit::CellProgram`] STARK, the verifier
+//! carrier is a genuine [`dregg_circuit::dsl::circuit::CellProgram`] STARK, the verifier
 //! accepts exactly the proofs that the program's AIR accepts, and a verifying
 //! proof's exposed `(commit, vk)` are the canonical PI-commitment and the
 //! program's VK hash.
@@ -37,7 +37,7 @@
 //! * `custom_program_vk_hash` (8 felts, EffectVM PI `CUSTOM_PROOFS_BASE + i*12 +
 //!   0..8`; column 68 in the rotated descriptor) — the program identity, the
 //!   32-byte [`CellProgram::vk_hash`] mapped through
-//!   [`crate::effect_vm::bytes32_to_8_limbs`]. The verifier looks the
+//!   [`dregg_circuit::effect_vm::bytes32_to_8_limbs`]. The verifier looks the
 //!   program up by this hash; an unknown program fails closed.
 //! * `custom_proof_commitment` (4 felts, EffectVM PI `... + 8..12`; column 72)
 //!   — [`custom_proof_pi_commitment`] of the sub-proof's public inputs. The
@@ -48,12 +48,11 @@
 //! `custom_program_proofs`, so the sub-proof bytes + PI cannot be swapped after
 //! the fact without changing the turn identity.
 
-#![cfg(feature = "prover")]
 
-use crate::binding::WideHash;
-use crate::dsl::circuit::{CellProgram, ProgramRegistry};
-use crate::effect_vm::bytes32_to_8_limbs;
-use crate::field::BabyBear;
+use dregg_circuit::binding::WideHash;
+use dregg_circuit::dsl::circuit::{CellProgram, ProgramRegistry};
+use dregg_circuit::effect_vm::bytes32_to_8_limbs;
+use dregg_circuit::field::BabyBear;
 
 /// Domain separator for the custom sub-proof's public-input commitment. Distinct
 /// from every other `WideHash` domain so a commitment minted here cannot be
@@ -292,7 +291,7 @@ pub fn verify_bound_custom_proof(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dsl::circuit::{
+    use dregg_circuit::dsl::circuit::{
         CircuitDescriptor, ColumnDef, ColumnKind, ConstraintExpr, PolyTerm,
     };
     use std::collections::HashMap;
@@ -301,7 +300,7 @@ mod tests {
     /// polynomial (the sovereign-transfer shape). Its STARK is genuine; a proof
     /// that fails the AIR does not verify.
     fn demo_program() -> CellProgram {
-        let p_minus_1 = BabyBear::new(crate::field::BABYBEAR_P - 1);
+        let p_minus_1 = BabyBear::new(dregg_circuit::field::BABYBEAR_P - 1);
         let descriptor = CircuitDescriptor {
             name: "dregg-custom-demo-v1".to_string(),
             trace_width: 4,

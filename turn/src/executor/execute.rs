@@ -810,34 +810,18 @@ impl TurnExecutor {
             //    RETIRED; a sovereign witness carrying a v1 `transition_proof` fails closed on
             //    every build (the rotated proof-carrying turn is the sovereign attestation path).
             if let Some(proof_bytes) = &witness.transition_proof {
-                #[cfg(not(feature = "prover"))]
-                if let Err(e) = self.verify_sovereign_witness_stark(
-                    cell_id,
-                    &witness.old_commitment,
-                    &witness.new_commitment,
-                    &witness.effects_hash,
-                    proof_bytes,
-                ) {
-                    return TurnResult::Rejected {
-                        reason: e,
-                        at_action: vec![],
-                    };
-                }
-                // Recursion tower: the v1 witness-STARK verify is retired. A sovereign witness
-                // carrying a v1 `transition_proof` cannot be verified here — fail closed (the
-                // rotated proof-carrying turn is the sovereign attestation path).
-                #[cfg(feature = "prover")]
-                {
-                    let _ = proof_bytes;
-                    return TurnResult::Rejected {
-                        reason: TurnError::InvalidExecutionProof(
-                            "sovereign witness carries a v1 transition_proof, which the recursion \
-                             build does not verify (use the rotated proof-carrying turn)"
-                                .into(),
-                        ),
-                        at_action: vec![],
-                    };
-                }
+                // The v1 hand-AIR witness-STARK verify is RETIRED. A sovereign witness carrying a
+                // v1 `transition_proof` cannot be verified here — fail closed (the rotated
+                // proof-carrying turn is the sole sovereign attestation path).
+                let _ = proof_bytes;
+                return TurnResult::Rejected {
+                    reason: TurnError::InvalidExecutionProof(
+                        "sovereign witness carries a v1 transition_proof, which is no longer \
+                         verified (use the rotated proof-carrying turn)"
+                            .into(),
+                    ),
+                    at_action: vec![],
+                };
             }
             // Temporarily inject the witnessed cell into the ledger for execution.
             // If the cell already exists in the hosted table (e.g., because the

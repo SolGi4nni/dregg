@@ -60,7 +60,7 @@ curve25519-dalek = { version = "4", features = ["alloc"] }
 # would never compile out yet `EffectVmAir` would be absent. Under `prover` (default) they
 # compile out and the rotated stack is the live one. Mirrors the `tests/` crate's feature forward.
 default = ["prover"]
-prover = ["dregg-circuit/prover"]
+prover = []
 
 [lints]
 workspace = true

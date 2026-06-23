@@ -9,7 +9,7 @@
 //!
 //! This test produces a real `transferVmDescriptor2R24` `Ir2BatchProof` (the SAME fixture as
 //! `effect_vm_rotation_flip.rs`) and hands it to
-//! `dregg_circuit::ivc_turn_chain::prove_descriptor_leaf_rotated` (THREAD 1's BatchStark
+//! `dregg_circuit_prove::ivc_turn_chain::prove_descriptor_leaf_rotated` (THREAD 1's BatchStark
 //! leaf-wrap). If it folds, OPTION (a) is confirmed bounded end-to-end; if it does not, the
 //! exact failure is the re-estimate signal.
 //!
@@ -28,8 +28,8 @@ use dregg_circuit::effect_vm::trace_rotated::{
 };
 use dregg_circuit::effect_vm::{CellState, Effect};
 use dregg_circuit::effect_vm_descriptors::V3_STAGED_REGISTRY_TSV;
-use dregg_circuit::ivc_turn_chain::ir2_leaf_wrap_config;
-use dregg_circuit::plonky3_recursion_impl::recursive::{
+use dregg_circuit_prove::ivc_turn_chain::ir2_leaf_wrap_config;
+use dregg_circuit_prove::plonky3_recursion_impl::recursive::{
     DreggRecursionConfig, verify_recursive_batch_proof_with_config,
 };
 use dregg_turn::rotation_witness as rw;
@@ -161,7 +161,7 @@ fn rotated_transfer_leaf_folds_as_batchstark() {
     //      `WitnessId(0)` two bus creators (the zero `Const` + a `Public`). The fork now demotes
     //      the duplicate `Public` to a bus reader (`PreprocessedColumns::dup_public_outputs`),
     //      restoring one-creator-per-witness; upstream's debug `check_lookups` passes.
-    let wrapped = dregg_circuit::ivc_turn_chain::prove_descriptor_leaf_rotated_with_config(
+    let wrapped = dregg_circuit_prove::ivc_turn_chain::prove_descriptor_leaf_rotated_with_config(
         &desc,
         &proof,
         &dpis,
@@ -186,7 +186,7 @@ fn rotated_transfer_leaf_folds_as_batchstark() {
 /// config). If it fails, the wall is real and needs a config-lift re-wrap or a fork change.
 #[test]
 fn two_rotated_leaves_aggregate_at_wrap_config() {
-    use dregg_circuit::plonky3_recursion_impl::recursive::create_recursion_backend;
+    use dregg_circuit_prove::plonky3_recursion_impl::recursive::create_recursion_backend;
     use p3_recursion::{BatchOnly, ProveNextLayerParams, build_and_prove_aggregation_layer};
 
     let desc =
@@ -234,7 +234,7 @@ fn two_rotated_leaves_aggregate_at_wrap_config() {
             &wrap_config,
         )
         .expect("rotated transfer proves under wrap config");
-        dregg_circuit::ivc_turn_chain::prove_descriptor_leaf_rotated_with_config(
+        dregg_circuit_prove::ivc_turn_chain::prove_descriptor_leaf_rotated_with_config(
             &desc,
             &proof,
             &dpis,

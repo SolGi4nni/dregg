@@ -785,7 +785,6 @@ pub fn verify_non_revocation_dsl(
 /// Prove `item_hash` is NOT revoked through the AUDITED Plonky3 prover
 /// (`p3-batch-stark`). Returns `Err` if the item IS in the tree (cannot prove
 /// non-membership) or the audited prover/verifier rejects.
-#[cfg(feature = "prover")]
 pub fn prove_non_revocation_p3(
     tree: &DslRevocationTree,
     item_hash: BabyBear,
@@ -806,7 +805,6 @@ pub fn prove_non_revocation_p3(
 /// inputs (`[revocation_root, queried_item]`) bound in-circuit. A proof of
 /// freshness for a DIFFERENT item publishes a different `pi[1]` and is rejected
 /// by the row-0 QUERIED_ITEM boundary.
-#[cfg(feature = "prover")]
 pub fn verify_non_revocation_p3(
     proof: &crate::dsl::dsl_p3_air::DslP3Proof,
     root: BabyBear,
@@ -832,7 +830,7 @@ pub fn revocation_hash_to_field(hash: &[u8; 32]) -> BabyBear {
     hash_many(&elements)
 }
 
-#[cfg(all(test, feature = "prover"))]
+#[cfg(test)]
 mod p3_tests {
     use super::*;
 

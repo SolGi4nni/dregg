@@ -129,9 +129,9 @@ pub struct WitnessBundle {
 /// AIR's constraints.
 ///
 /// The proof is produced by
-/// `dregg_circuit::recursive_witness_bundle::RecursiveProofProducer` and
+/// `dregg_circuit_prove::recursive_witness_bundle::RecursiveProofProducer` and
 /// verified by
-/// `dregg_circuit::recursive_witness_bundle::verify_recursive_proof_variant`.
+/// `dregg_circuit_prove::recursive_witness_bundle::verify_recursive_proof_variant`.
 /// Both sides share a registry of `recursive_vk_hash` values (VK v2
 /// layered encoding) so an unknown hash → reject at registry lookup.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -202,7 +202,7 @@ impl WitnessBundle {
 /// receipt's public inputs.
 ///
 /// Thin wrapper around
-/// [`dregg_circuit::recursive_witness_bundle::RecursiveProofProducer::produce`]
+/// [`dregg_circuit_prove::recursive_witness_bundle::RecursiveProofProducer::produce`]
 /// so [`WitnessedReceipt::from_components_with_compression`] does not have
 /// to thread `BabyBear` through its signature. Returns the compressed
 /// variant on success; on failure returns the error string from the
@@ -218,7 +218,7 @@ fn produce_recursive_variant(
     public_inputs_u32: &[u32],
 ) -> Result<RecursiveProofVariant, String> {
     use dregg_circuit::field::BabyBear;
-    use dregg_circuit::recursive_witness_bundle::RecursiveProofProducer;
+    use dregg_circuit_prove::recursive_witness_bundle::RecursiveProofProducer;
 
     let pi: Vec<BabyBear> = public_inputs_u32
         .iter()
@@ -406,7 +406,7 @@ impl WitnessedReceipt {
     /// recursive compression flag.
     ///
     /// When `recursive_compress` is `true` AND `trace` is `Some`, this
-    /// runs `dregg_circuit::recursive_witness_bundle::RecursiveProofProducer`
+    /// runs `dregg_circuit_prove::recursive_witness_bundle::RecursiveProofProducer`
     /// on the trace + public inputs and attaches a [`RecursiveProofVariant`]
     /// to the resulting [`WitnessBundle`]. The inline trace is kept
     /// alongside, so downstream replayers may pick *either* mode (re-run

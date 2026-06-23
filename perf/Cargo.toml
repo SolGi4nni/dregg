@@ -26,10 +26,12 @@ publish = false
 # `prove_turn_self_sovereign` (the real node turn) + the descriptor-interpreter (`prove_vm_descriptor`),
 # NOT the v1 hand-AIR `prove_effect_vm_p3` (which is the `not(prover)` wasm floor, retired here).
 default = ["prover"]
-prover = ["dregg-circuit/prover", "dregg-sdk/prover", "dregg-turn/prover"]
+prover = ["dregg-sdk/prover", "dregg-turn/prover"]
 
 [dependencies]
 dregg-circuit = { path = "../circuit" }
+# perf measures the recursion-prove surface (effect_vm_p3_air etc.).
+dregg-circuit-prove = { path = "../circuit-prove" }
 dregg-sdk = { path = "../sdk" }
 dregg-intent = { path = "../intent" }
 dregg-token = { path = "../token" }
@@ -138,6 +140,22 @@ harness = false
 # (gpui-free; the GPU first-paint is on persvati). Gap (e).
 [[bench]]
 name = "ui_projection"
+harness = false
+
+# SYMBOLIC vs FULL + COLLAPSE: THE HEADLINE INTERACTIVITY NUMBER — a batch of N
+# real transfer turns through the embedded `World` in WitnessMode::Symbolic (no
+# per-turn `Ledger::root()`) vs Full, then `World::collapse(N)`. The per-turn
+# symbolic speedup + the amortized deferred-witness collapse cost, one group.
+[[bench]]
+name = "symbolic_collapse"
+harness = false
+
+# MEMBRANE: the shared-fork "invite someone to my computer" round-trip —
+# `World::fork` (the snapshot/rehydrate substrate) + `SharedFork::construct` (mint
+# the embedded cap) + `commit_turn_gated` (drive an embedded turn through the
+# fail-closed gate) + `Stitch::settle` (the merge-back), plus the end-to-end roundtrip.
+[[bench]]
+name = "membrane"
 harness = false
 
 [[bin]]

@@ -323,7 +323,6 @@ pub fn generate_insertion_trace(
 /// new_leaf, pre_root, post_root]`. The COMPOSING verifier pins `pre_root` to
 /// the canonical pre-state `fields_root` and recomputes `new_leaf` from the
 /// PUBLIC `(key, value)` — then reads `post_root` from the proof.
-#[cfg(feature = "prover")]
 pub fn prove_insertion_p3(
     old_leaf: BabyBear,
     new_leaf: BabyBear,
@@ -342,7 +341,6 @@ pub fn prove_insertion_p3(
 /// The caller supplies the four public inputs it expects; all are bound
 /// in-circuit (row-0 / last-row boundaries), so a proof for a different leaf,
 /// against a different pre-root, or claiming a different post-root is rejected.
-#[cfg(feature = "prover")]
 pub fn verify_insertion_p3(
     proof: &crate::dsl::dsl_p3_air::DslP3Proof,
     old_leaf: BabyBear,
@@ -356,7 +354,7 @@ pub fn verify_insertion_p3(
         .map_err(|e| format!("openable-fields insertion p3 verification failed: {e}"))
 }
 
-#[cfg(all(test, feature = "prover"))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::openable_fields_root::{

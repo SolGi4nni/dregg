@@ -241,7 +241,7 @@ pub enum ReplayWitnessAvailability {
 
 /// Mirror of `dregg_turn::RecursiveProofVariant`. When present in a
 /// [`ReplayWitnessBundle`], a verifier may dispatch through
-/// [`dregg_circuit::recursive_witness_bundle::verify_recursive_proof_variant`]
+/// [`dregg_circuit_prove::recursive_witness_bundle::verify_recursive_proof_variant`]
 /// instead of re-running the AIR over the inline trace.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ReplayRecursiveProofVariant {
@@ -626,7 +626,7 @@ fn replay_one_with_prev(
 // re-does the prover's algebraic work locally.
 //
 // With the now-working `plonky3-recursion` path (see
-// `dregg_circuit::plonky3_recursion_impl`), a producer can instead ship
+// `dregg_circuit_prove::plonky3_recursion_impl`), a producer can instead ship
 // a *recursive proof* attesting that the inner trace was valid. The
 // verifier then just runs `verify_recursive_layer` on the recursive
 // proof; no row-by-row replay needed. This trades a one-time recursive
@@ -650,6 +650,7 @@ fn replay_one_with_prev(
 /// inner-proof commitment mismatch) that don't map cleanly onto the
 /// trust-and-replay vocabulary.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg(feature = "prover")]
 pub enum RecursiveReplayVerdict {
     /// The recursive proof verified — by transitive soundness, the inner
     /// trace satisfied the Effect VM AIR constraints.
@@ -669,17 +670,18 @@ pub enum RecursiveReplayVerdict {
 ///    the recursive proof would otherwise verify).
 /// 2. Decode `recursive_layer_bytes` (postcard-encoded
 ///    `BatchStarkProof<DreggRecursionConfig>`) and verify via
-///    [`dregg_circuit::plonky3_recursion_impl::recursive::verify_recursive_layer_bytes`].
+///    [`dregg_circuit_prove::plonky3_recursion_impl::recursive::verify_recursive_layer_bytes`].
 ///
 /// Returns `Verified` only when *both* checks pass. The trust-and-replay
 /// path (`replay_one_with_prev`) remains the default; this function is
 /// only invoked when the caller explicitly opts in.
+#[cfg(feature = "prover")]
 pub fn verify_recursive_replay(
     wr: &ReplayEntry,
     recursive_layer_bytes: &[u8],
     prev_receipt_hash: Option<[u8; 32]>,
 ) -> RecursiveReplayVerdict {
-    use dregg_circuit::plonky3_recursion_impl::recursive::verify_recursive_layer_bytes;
+    use dregg_circuit_prove::plonky3_recursion_impl::recursive::verify_recursive_layer_bytes;
 
     // Step 1: scope-1 STARK verification.
     let (proof_verdict, code) =
@@ -714,17 +716,18 @@ pub fn verify_recursive_replay(
 /// 2. Pull `recursive_proof` out of the entry's witness bundle. If
 ///    absent → `InnerProofRejected` ("no recursive proof attached").
 /// 3. Dispatch through
-///    [`dregg_circuit::recursive_witness_bundle::verify_recursive_proof_variant`],
+///    [`dregg_circuit_prove::recursive_witness_bundle::verify_recursive_proof_variant`],
 ///    cross-binding the variant's public inputs against the receipt's
 ///    `public_inputs` (so a swapped recursive proof from a different
 ///    receipt is caught).
 ///
 /// Returns `Verified` only when every step passes.
+#[cfg(feature = "prover")]
 pub fn verify_recursive_replay_from_bundle(
     wr: &ReplayEntry,
     prev_receipt_hash: Option<[u8; 32]>,
 ) -> RecursiveReplayVerdict {
-    use dregg_circuit::recursive_witness_bundle::{
+    use dregg_circuit_prove::recursive_witness_bundle::{
         RecursiveVariantVerdict, verify_recursive_proof_variant,
     };
 
@@ -793,6 +796,7 @@ pub fn verify_recursive_replay_from_bundle(
 /// Chain-level Golden Vision replay: run
 /// [`verify_recursive_replay_from_bundle`] over a slice of entries,
 /// honoring the chain-walk invariant.
+#[cfg(feature = "prover")]
 pub fn replay_chain_recursive(entries: &[ReplayEntry]) -> ReplayChainOutput {
     let mut per_entry = Vec::with_capacity(entries.len());
     let mut first_failure: Option<usize> = None;

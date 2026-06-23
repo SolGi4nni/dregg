@@ -28,6 +28,9 @@ serde_json = { workspace = true }
 
 [dev-dependencies]
 proptest = { workspace = true }
+# The value-link tests build a real shielded-spend witness
+# (`dregg_circuit_prove::shielded::spend_circuit`), which lives in the prove crate.
+dregg-circuit-prove = { path = "../circuit-prove" }
 
 [lints]
 workspace = true

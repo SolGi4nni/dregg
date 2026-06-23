@@ -55,8 +55,8 @@ use p3_lookup::InteractionBuilder;
 use p3_lookup::bus::LookupBus;
 use p3_matrix::dense::RowMajorMatrix;
 
-use crate::field::{BABYBEAR_P, BabyBear};
-use crate::plonky3_prover::{create_config, to_p3};
+use dregg_circuit::field::{BABYBEAR_P, BabyBear};
+use dregg_circuit::plonky3_prover::{create_config, to_p3};
 
 /// Bits per range-table limb. A `[0, 2^8) = [0, 256)` byte table is the standard
 /// choice: small table, few limbs. A 30-bit wire needs `ceil(30/8) = 4` limbs.
@@ -331,10 +331,10 @@ pub fn build_query_trace(
     // The single row.
     let mut row: Vec<P3BabyBear> = vec![to_p3(BabyBear::ZERO); *width];
     for (i, &v) in base_assignment.iter().enumerate() {
-        row[i] = to_p3(crate::lean_descriptor_air::i64_to_babybear(v));
+        row[i] = to_p3(dregg_circuit::lean_descriptor_air::i64_to_babybear(v));
     }
     for r in ranges {
-        let field_val = crate::lean_descriptor_air::i64_to_babybear(base_assignment[r.query_col])
+        let field_val = dregg_circuit::lean_descriptor_air::i64_to_babybear(base_assignment[r.query_col])
             .as_u32() as u64;
         let n = num_limbs(r.bits);
         for i in 0..n {

@@ -13,7 +13,7 @@ edition.workspace = true
 # subcommands compile out and report the retirement honestly. Every other silver-helper subcommand
 # (handoff, sovereign-witness, slot-caveats, bilateral-bundle, …) is unaffected.
 default = ["prover"]
-prover = ["dregg-circuit/prover"]
+prover = []
 
 [dependencies]
 blake3 = "1"

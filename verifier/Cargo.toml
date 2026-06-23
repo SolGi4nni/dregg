@@ -14,15 +14,13 @@ name = "dregg-verifier"
 path = "src/main.rs"
 
 [dependencies]
-# `default-features = false`: the verifier never needs the circuit's PROVER stack
-# (DFT / `prove_batch` / the p3-recursion prover crates). The crate's own `prover`
-# / `verifier` features (below) forward the matching circuit feature, so a default
-# build carries `dregg-circuit/prover` and the floor build (`no-lean-link`) carries
-# only `dregg-circuit/verifier` — the prover-free batch-STARK VERIFY surface that
-# `descriptor_ir2::verify_vm_descriptor2` (the rotated replay verify) rides. Without
-# this, the circuit's own default `prover` was always unified ON, so the floor's
-# `not(prover)` legs referenced the `prover`-deleted `EffectVmAir` (E0432).
-dregg-circuit = { path = "../circuit", default-features = false }
+# `dregg-circuit` is the prover-FREE VERIFY FLOOR (the batch-STARK verify surface
+# `descriptor_ir2::verify_vm_descriptor2` the rotated replay rides) — exactly what
+# the seL4 verifier-PD floor needs, with NO recursion prover. The RECURSION-replay
+# entries (`verify_recursive_replay{,_from_bundle}`) need the recursion tower
+# (`dregg-circuit-prove`), pulled only by this crate's `prover` feature below.
+dregg-circuit = { path = "../circuit" }
+dregg-circuit-prove = { path = "../circuit-prove", optional = true }
 dregg-types = { path = "../types" }
 dregg-commit = { path = "../commit" }
 # Federation primitives (cross-fed bundle, FederationReceipt verify path).
@@ -45,13 +43,13 @@ postcard = { version = "1", features = ["alloc"] }
 # (`#[cfg(feature = "verifier")]`) — the `"effect-vm-rotated"` IR-v2 legs verified
 # via the audited `descriptor_ir2::verify_vm_descriptor2` — is the LIVE replay-chain
 # verify on the seL4 verifier-PD floor, with NO prover linked.
-verifier = ["dregg-circuit/verifier"]
-# `prover` carries the full STARK prover (DFT / `prove_batch` / p3-recursion). It
-# implies `verifier` so the rotated verify is present under the prover too. The v1
-# single-proof / replay-chain entries (`verify_effect_vm_proof`, `replay_chain`)
-# are RETIRED — they fail closed under every config (the v1 hand-AIR `EffectVmAir`
-# is gone); a rotated chain is verified through `rotated_replay`.
-prover = ["verifier", "dregg-circuit/prover"]
+verifier = []
+# `prover` pulls the RECURSION tower (`dregg-circuit-prove`) so the recursive-replay
+# entries (`verify_recursive_replay{,_from_bundle}`) compile. It implies `verifier`
+# so the rotated verify is present too. The v1 single-proof / replay-chain entries
+# (`verify_effect_vm_proof`, `replay_chain`) are RETIRED (the v1 hand-AIR
+# `EffectVmAir` is gone); a rotated chain is verified through `rotated_replay`.
+prover = ["verifier", "dep:dregg-circuit-prove"]
 default = ["prover"]
 
 # The seL4 protection-domain floor selector (see docs/FEATURE-HYGIENE.md §Lean and
@@ -69,8 +67,8 @@ no-lean-link = [
 
 [dev-dependencies]
 # Verify-surface only (the v1 hand-AIR integration tests are retired/ported to the
-# rotated path). `default cargo test` unifies this with the crate's `prover` default.
-dregg-circuit = { path = "../circuit", default-features = false, features = ["verifier"] }
+# rotated path).
+dregg-circuit = { path = "../circuit" }
 dregg-cell = { path = "../cell" }
 tempfile = { workspace = true }
 serde_json = { workspace = true }

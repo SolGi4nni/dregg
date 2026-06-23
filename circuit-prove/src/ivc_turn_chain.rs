@@ -2,7 +2,7 @@
 //!
 //! ## What this is
 //!
-//! [`ivc`](crate::ivc) accumulates an *attenuation* fold-chain (delegation
+//! [`ivc`](dregg_circuit::ivc) accumulates an *attenuation* fold-chain (delegation
 //! depth) into one proof. [`joint_turn_recursive`](crate::joint_turn_recursive)
 //! folds the N **per-cell** proofs of a *single* shared turn (the hyperedge
 //! apex) into one recursive proof. Neither is the whole-chain accumulator.
@@ -151,7 +151,6 @@
 //! (`running ∘ next_turn -> new_running`); see its docs for what the unbounded
 //! driver still needs.
 
-#![cfg(feature = "prover")]
 
 use p3_air::{Air, AirBuilder, BaseAir, WindowAccess};
 use p3_baby_bear::BabyBear as P3BabyBear;
@@ -162,15 +161,14 @@ use p3_recursion::{
     build_and_prove_aggregation_layer, build_and_prove_next_layer,
 };
 
-#[cfg(feature = "prover")]
-use crate::descriptor_ir2::Ir2BatchProof;
-use crate::field::BabyBear;
+use dregg_circuit::descriptor_ir2::Ir2BatchProof;
+use dregg_circuit::field::BabyBear;
 use crate::joint_turn_aggregation::{DescriptorParticipant, verify_descriptor_participant};
 use crate::plonky3_recursion_impl::recursive::{
     DreggRecursionConfig, RecursionCompatibleProof, create_recursion_backend,
     recursion_vk_fingerprint, verify_recursive_batch_proof_with_config,
 };
-use crate::poseidon2::hash_4_to_1;
+use dregg_circuit::poseidon2::hash_4_to_1;
 
 // Re-exported so chain consumers (the light client) name the trust-anchor type
 // from the module that defines the verification discipline around it.
@@ -503,13 +501,9 @@ fn generate_chain_trace_rotated(
 /// SIDESTEP (C3 PART 2a): the inner proof keeps its production FRI engine; only the
 /// recursion verifier's params are retargeted. The leaf-wrap OUTPUT is a standard
 /// recursion-config (`log_blowup = 3`, 38-query) proof.
-#[cfg(feature = "prover")]
 const IR2_INNER_LOG_BLOWUP: usize = 6;
-#[cfg(feature = "prover")]
 const IR2_INNER_LOG_FINAL_POLY_LEN: usize = 0;
-#[cfg(feature = "prover")]
 const IR2_INNER_COMMIT_POW_BITS: usize = 0;
-#[cfg(feature = "prover")]
 const IR2_INNER_QUERY_POW_BITS: usize = 16;
 
 /// THREAD 1 (C3 cutover) — the rotated multi-table `Ir2BatchProof` native-batch leaf-wrap.
@@ -558,16 +552,15 @@ const IR2_INNER_QUERY_POW_BITS: usize = 16;
 ///
 /// **The inner proof is a `BatchProof<DreggRecursionConfig>` (SIDESTEP option a):** the
 /// rotated prover mints the IR-v2 batch under the recursion config TYPE (with `ir2`'s FRI
-/// knobs, via [`crate::descriptor_ir2::prove_vm_descriptor2_for_config`] +
+/// knobs, via [`dregg_circuit::descriptor_ir2::prove_vm_descriptor2_for_config`] +
 /// [`create_recursion_config_for_inner_fri`]) so the in-circuit verifier consumes it with no
 /// cross-config type mismatch. `RecursionInput::NativeBatchStark.proof` is
 /// `&p3_batch_stark::BatchProof<SC>` with `SC = DreggRecursionConfig`, so the inner proof and
 /// the recursion pipeline share one config type. Use
-/// [`ir2_airs_and_common_for_config`](crate::descriptor_ir2::ir2_airs_and_common_for_config)
+/// [`ir2_airs_and_common_for_config`](dregg_circuit::descriptor_ir2::ir2_airs_and_common_for_config)
 /// to obtain the matching `(airs, table_public_inputs, common)` triple.
-#[cfg(feature = "prover")]
 pub fn prove_descriptor_leaf_rotated(
-    desc: &crate::descriptor_ir2::EffectVmDescriptor2,
+    desc: &dregg_circuit::descriptor_ir2::EffectVmDescriptor2,
     proof: &Ir2BatchProof<DreggRecursionConfig>,
     descriptor_pis: &[BabyBear],
 ) -> Result<RecursionOutput<DreggRecursionConfig>, String> {
@@ -581,7 +574,6 @@ pub fn prove_descriptor_leaf_rotated(
 /// the verifier circuit allocates match the siblings the inner proof carries. The inner proof
 /// fed to [`prove_descriptor_leaf_rotated`] must be minted under THIS config (see
 /// `descriptor_ir2::prove_vm_descriptor2_for_config`).
-#[cfg(feature = "prover")]
 pub fn ir2_leaf_wrap_config() -> DreggRecursionConfig {
     crate::plonky3_recursion_impl::recursive::create_recursion_config_for_inner_fri(
         IR2_INNER_LOG_BLOWUP,
@@ -594,9 +586,8 @@ pub fn ir2_leaf_wrap_config() -> DreggRecursionConfig {
 /// [`prove_descriptor_leaf_rotated`] under an explicit recursion config (the inner proof must
 /// have been minted under the SAME config — same FRI engine). Exposed so the smoke test +
 /// future chain wiring share one config object for mint + wrap + output-verify.
-#[cfg(feature = "prover")]
 pub fn prove_descriptor_leaf_rotated_with_config(
-    desc: &crate::descriptor_ir2::EffectVmDescriptor2,
+    desc: &dregg_circuit::descriptor_ir2::EffectVmDescriptor2,
     proof: &Ir2BatchProof<DreggRecursionConfig>,
     descriptor_pis: &[BabyBear],
     config: &DreggRecursionConfig,
@@ -606,9 +597,9 @@ pub fn prove_descriptor_leaf_rotated_with_config(
     // empty elsewhere), and the canonical symbolic `CommonData<DreggRecursionConfig>` (the
     // IR-v2 AIRs have NO preprocessed columns, so `common` is config-value-independent).
     let (airs, table_public_inputs, common) =
-        crate::descriptor_ir2::ir2_airs_and_common_for_config(desc, proof, descriptor_pis, config)?;
+        dregg_circuit::descriptor_ir2::ir2_airs_and_common_for_config(desc, proof, descriptor_pis, config)?;
 
-    let input: RecursionInput<'_, DreggRecursionConfig, crate::descriptor_ir2::Ir2Air> =
+    let input: RecursionInput<'_, DreggRecursionConfig, dregg_circuit::descriptor_ir2::Ir2Air> =
         RecursionInput::NativeBatchStark {
             airs: &airs,
             proof,
@@ -618,7 +609,7 @@ pub fn prove_descriptor_leaf_rotated_with_config(
 
     let backend = create_recursion_backend();
 
-    build_and_prove_next_layer::<DreggRecursionConfig, crate::descriptor_ir2::Ir2Air, _, D>(
+    build_and_prove_next_layer::<DreggRecursionConfig, dregg_circuit::descriptor_ir2::Ir2Air, _, D>(
         &input,
         config,
         &backend,

@@ -64,7 +64,6 @@ use crate::field::BabyBear;
 /// legacy range carrier (the magnitude bound is inherited from the per-cell proof). Re-emit via
 /// `lake env lean --run EmitCrossCellConservation.lean`; the shape is pinned by
 /// `cross_cell_conservation_descriptor_matches_lean_pinned_shape`.
-#[cfg(any(feature = "prover", feature = "verifier"))]
 pub const CROSS_CELL_CONSERVATION_DESCRIPTOR_JSON: &str =
     include_str!("../descriptors/dregg-cross-cell-conservation-v1.json");
 
@@ -96,7 +95,6 @@ pub const CCC_PI_COUNT: usize = 1;
 /// Parse the byte-pinned Lean descriptor into an [`crate::descriptor_ir2::EffectVmDescriptor2`].
 /// The prover/verifier route through `descriptor_ir2::{prove,verify}_vm_descriptor2` against THIS
 /// descriptor — no Rust-authored constraint semantics (law #1). Fail-closed on any parse error.
-#[cfg(any(feature = "prover", feature = "verifier"))]
 pub fn cross_cell_conservation_descriptor() -> crate::descriptor_ir2::EffectVmDescriptor2 {
     crate::descriptor_ir2::parse_vm_descriptor2(CROSS_CELL_CONSERVATION_DESCRIPTOR_JSON)
         .expect("pinned cross-cell-conservation descriptor JSON must parse (Lean golden)")
@@ -208,7 +206,6 @@ pub fn build_cross_cell_conservation_trace(
 /// trace satisfies `cross_cell_conservation_descriptor()` against the `[asset]` PI, via the
 /// multi-table batch STARK. No tables/memory/maps are committed (the descriptor is pure row-window
 /// arithmetic). Fail-closed on prove error.
-#[cfg(feature = "prover")]
 pub fn prove_cross_cell_conservation(
     trace: &[Vec<BabyBear>],
     pi: &[BabyBear],
@@ -225,7 +222,6 @@ pub fn prove_cross_cell_conservation(
 
 /// Verify a cross-cell-conservation proof against the Lean descriptor + the `[asset]` PI.
 /// Prover-free (`verifier` feature). Fail-closed on verify error.
-#[cfg(any(feature = "prover", feature = "verifier"))]
 pub fn verify_cross_cell_conservation(
     proof: &crate::descriptor_ir2::Ir2BatchProof<crate::descriptor_ir2::DreggStarkConfig>,
     pi: &[BabyBear],
@@ -258,7 +254,6 @@ mod tests {
     /// `CrossCellConservation.lean`): width 5, PI 1, NO tables, EXACTLY one window gate, an empty
     /// range carrier, name `dregg-cross-cell-conservation-v1`. Law-#1 tooth: the Rust aggregation
     /// reads ONLY this descriptor; a drift from the Lean golden is a hard failure.
-    #[cfg(any(feature = "prover", feature = "verifier"))]
     #[test]
     fn cross_cell_conservation_descriptor_matches_lean_pinned_shape() {
         use crate::descriptor_ir2::VmConstraint2;
@@ -327,7 +322,6 @@ mod tests {
 
     /// END-TO-END (law #1): an honest conserving turn proves + verifies through the LEAN descriptor
     /// batch prover; a tampered asset PI does NOT verify (the per-asset `pi_binding` partition).
-    #[cfg(feature = "prover")]
     #[test]
     fn cross_cell_conservation_proves_honest_rejects_wrong_asset() {
         // Honest transfer A −10, B +10 over asset 7: balance[last] == 0, proves + verifies.
@@ -353,7 +347,6 @@ mod tests {
     /// has a nonzero last-row balance, so the `balance[last] == 0` boundary is violated: the trace
     /// is UNSATISFIABLE. The honest transfer A −10, B +10 proves. This is the in-circuit
     /// realization of the Lean `ccc_forged_mint_unsat`.
-    #[cfg(feature = "prover")]
     #[test]
     fn forged_mint_turn_is_unsat() {
         let forged = vec![delta(7, 10, false), delta(7, 999, true)];

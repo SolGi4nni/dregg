@@ -101,7 +101,7 @@ tokio-postgres = { version = "0.7", optional = true, features = ["with-serde_jso
 # gates (the mcp.rs v1-demo-tool fences) align with the circuit's prover state. A `not(prover)`
 # node build keeps the v1 floor (the MCP standalone-effect-VM demo tools).
 default = ["prover"]
-prover = ["dregg-circuit/prover", "dregg-sdk/prover", "dregg-turn/prover", "dregg-cell/prover"]
+prover = ["dregg-sdk/prover", "dregg-turn/prover", "dregg-cell/prover"]
 
 # Off by default: the node ships verified-turn MirrorBatches to a live pg18 ONLY when
 # this is on AND DREGG_PG_MIRROR_URL is set. With it off, the pg-mirror module still

@@ -1,7 +1,7 @@
 //! M2-a: single-asset shielded transfer — both-polarity acceptance tests.
 //!
 //! The shielded transfer is a two-sided composite (see
-//! `dregg_circuit::shielded`):
+//! `dregg_circuit_prove::shielded`):
 //!   1. the **hidden STARK side** (`ShieldedTransfer::verify_stark_side`):
 //!      per-input membership in the commitment tree + nullifier derivation,
 //!      proved through `HidingFriPcs` so the owner/key/path are blind;
@@ -11,7 +11,7 @@
 //!
 //! These tests live here (a `dregg-circuit` integration test, where
 //! `dregg-cell` is a dev-dependency) because `circuit` is *upstream* of `cell`:
-//! the circuit-side STARK half is library code in `dregg_circuit::shielded`,
+//! the circuit-side STARK half is library code in `dregg_circuit_prove::shielded`,
 //! and the Pedersen value-balance half is composed at this layer.
 //!
 //! Both polarities, per half:
@@ -24,7 +24,7 @@
 #![cfg(feature = "prover")]
 
 use dregg_circuit::field::BabyBear;
-use dregg_circuit::shielded::{
+use dregg_circuit_prove::shielded::{
     ShieldedError, ShieldedSpendWitness, ShieldedTransfer, ShieldedTransferWitness,
     ShieldedValueLeg,
 };
@@ -119,7 +119,7 @@ fn balanced_transfer() -> (ShieldedTransfer, ValueCommitment, ValueCommitment) {
     }];
     let output_range_proofs = vec![range_proof_bytes(amount as u64, &out_blinding)];
 
-    let transfer = dregg_circuit::shielded::transfer_from_witnesses(
+    let transfer = dregg_circuit_prove::shielded::transfer_from_witnesses(
         merkle_root,
         &[w],
         output_legs,
@@ -274,7 +274,7 @@ fn negative_output_value_wraps_and_is_caught_by_range_proof() {
     let output_range_proofs =
         vec![range_proof_bytes(amount + steal, &bo_big), forged_neg_rp];
 
-    let transfer = dregg_circuit::shielded::transfer_from_witnesses(
+    let transfer = dregg_circuit_prove::shielded::transfer_from_witnesses(
         merkle_root,
         &[w],
         output_legs,
@@ -327,7 +327,7 @@ fn missing_output_range_proof_rejects() {
     let output_legs = vec![ShieldedValueLeg { asset_type: ASSET, commitment_bytes: out_c.to_bytes().0 }];
 
     // Build with the proof present (valid), then strip it to model the attack.
-    let mut transfer = dregg_circuit::shielded::transfer_from_witnesses(
+    let mut transfer = dregg_circuit_prove::shielded::transfer_from_witnesses(
         merkle_root,
         &[w],
         output_legs,
@@ -371,7 +371,7 @@ fn duplicate_nullifier_in_transfer_rejects() {
 
     let out_rps = vec![range_proof_bytes((2 * amount) as u64, &[9u8; 32])];
     let transfer =
-        dregg_circuit::shielded::transfer_from_witnesses(merkle_root, &[w1, w2], out_leg, out_rps)
+        dregg_circuit_prove::shielded::transfer_from_witnesses(merkle_root, &[w1, w2], out_leg, out_rps)
             .expect("STARK proofs build even for a double-spend (caught at verify)");
 
     let res = transfer.verify_stark_side();
@@ -383,7 +383,7 @@ fn duplicate_nullifier_in_transfer_rejects() {
 
 #[test]
 fn no_inputs_rejects() {
-    let res = dregg_circuit::shielded::transfer_from_witnesses(BabyBear::ZERO, &[], vec![], vec![]);
+    let res = dregg_circuit_prove::shielded::transfer_from_witnesses(BabyBear::ZERO, &[], vec![], vec![]);
     assert!(matches!(res, Err(ShieldedError::NoInputs)));
 }
 
@@ -417,7 +417,7 @@ fn leaf_leg_value_link_matches_verifies_mismatch_rejects() {
         commitment_bytes: out_commit.to_bytes().0,
     }];
     let output_range_proofs = vec![range_proof_bytes(amount as u64, &out_blinding)];
-    let transfer = dregg_circuit::shielded::transfer_from_witnesses(
+    let transfer = dregg_circuit_prove::shielded::transfer_from_witnesses(
         merkle_root,
         &[w],
         output_legs,
@@ -495,7 +495,7 @@ fn shielded_proof_is_hiding_independent_blinding() {
     // time) — if byte-identical, the blinding RNG would be deterministic and the
     // witness could leak via cross-proof comparison. Both still verify.
     use dregg_circuit::dsl::dsl_p3_air::prove_dsl_zk;
-    use dregg_circuit::shielded::{generate_shielded_spend_trace, shielded_spend_circuit};
+    use dregg_circuit_prove::shielded::{generate_shielded_spend_trace, shielded_spend_circuit};
 
     let w = make_input(99, 250_000, [5u8; 32], 0x2222, 4);
     let circuit = shielded_spend_circuit();

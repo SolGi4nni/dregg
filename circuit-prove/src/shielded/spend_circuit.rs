@@ -5,15 +5,15 @@
 //! only the constraint forms the audited `DslP3Air` symbolic arithmetization
 //! supports (`Hash`, `Transition`, `Polynomial`, `Binary`, boundary
 //! `PiBinding`), so it proves through the **hiding** uni-STARK path
-//! ([`crate::dsl::dsl_p3_air::prove_dsl_zk`], `HidingFriPcs`).
+//! ([`dregg_circuit::dsl::dsl_p3_air::prove_dsl_zk`], `HidingFriPcs`).
 //!
 //! # Why not reuse `dsl::note_spending` directly
 //!
-//! `note_spending`'s DSL trace is designed for the hand-rolled `crate::stark`
+//! `note_spending`'s DSL trace is designed for the hand-rolled `dregg_circuit::stark`
 //! prover: its commitment-preimage row and power-of-two PADDING rows do not
 //! satisfy the chain-continuity `Transition` under p3's `when_transition`
 //! gating (which fires on row0→row1 and on interior padding rows). That is why
-//! `note_spending` is `crate::stark`-only. Rather than perturb that shared
+//! `note_spending` is `dregg_circuit::stark`-only. Rather than perturb that shared
 //! circuit, this lane authors a membership chain whose padding **forward-chains**
 //! (`pad.current = prev.parent`, `pad.parent = hash_fact(pad.current,[0,0,0,0])`)
 //! so the `Transition` holds on every checked row, and whose leaf IS the input
@@ -44,12 +44,12 @@
 //! `dregg_cell_crypto::value_commitment::verify_value_link` ties this binding to the
 //! Pedersen leg (closing the leaf↔leg VALUE LINK residual).
 
-use crate::dsl::circuit::{
+use dregg_circuit::dsl::circuit::{
     BoundaryDef, BoundaryRow, CircuitDescriptor, ColumnDef, ColumnKind, ConstraintExpr, DslCircuit,
     PolyTerm,
 };
-use crate::field::{BABYBEAR_P, BabyBear};
-use crate::poseidon2::hash_fact;
+use dregg_circuit::field::{BABYBEAR_P, BabyBear};
+use dregg_circuit::poseidon2::hash_fact;
 
 /// Trace column layout (width 11), one row per Merkle level (leaf→root).
 pub mod col {
@@ -492,7 +492,7 @@ pub fn generate_shielded_spend_trace(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dsl::dsl_p3_air::{prove_dsl_zk, verify_dsl_zk};
+    use dregg_circuit::dsl::dsl_p3_air::{prove_dsl_zk, verify_dsl_zk};
 
     /// A bad trace makes the self-verifying prover EITHER return `Err` OR (in a
     /// debug build) panic in p3's `check_constraints` debug assertion. Either way
@@ -548,7 +548,7 @@ mod tests {
         let dsl = shielded_spend_circuit();
         // Every constraint must be an algebraic / supported form (Hash forms
         // included); `try_from_dsl` errors on MerkleHash / Lookup / cross-row.
-        crate::dsl::dsl_p3_air::DslP3Air::try_from_dsl(&dsl)
+        dregg_circuit::dsl::dsl_p3_air::DslP3Air::try_from_dsl(&dsl)
             .expect("shielded-spend descriptor must be DslP3Air-clean");
     }
 

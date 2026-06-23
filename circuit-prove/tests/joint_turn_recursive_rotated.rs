@@ -29,11 +29,11 @@
 
 use dregg_circuit::effect_vm::{CellState, Effect};
 use dregg_circuit::field::BabyBear;
-use dregg_circuit::ivc_turn_chain::FinalizedTurn;
-use dregg_circuit::joint_turn_aggregation::{
+use dregg_circuit_prove::ivc_turn_chain::FinalizedTurn;
+use dregg_circuit_prove::joint_turn_aggregation::{
     DescriptorParticipant, JointAggError, RotatedParticipantLeg,
 };
-use dregg_circuit::joint_turn_recursive::{
+use dregg_circuit_prove::joint_turn_recursive::{
     JointCell, RecursiveJointTurnProof, prove_joint_turn_recursive,
     prove_joint_turn_recursive_without_host_gate, verify_joint_turn_recursive,
 };
@@ -45,7 +45,7 @@ use dregg_circuit::effect_vm::sel;
 // `RecursiveJointTurnProof` is named via the `prove_*` return types only; keep it
 // imported for doc clarity without tripping the unused-import lint.
 #[allow(unused_imports)]
-use dregg_circuit::joint_turn_recursive::RecursiveJointTurnProof as _RecursiveJointTurnProof;
+use dregg_circuit_prove::joint_turn_recursive::RecursiveJointTurnProof as _RecursiveJointTurnProof;
 
 // ============================================================================
 // THE CANONICAL ROTATED MINT FIXTURE (copied from `circuit/tests/proof_economics.rs`,

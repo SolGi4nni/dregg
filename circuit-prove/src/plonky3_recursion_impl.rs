@@ -28,7 +28,6 @@
 //!   — the same blowup is reused for lower-degree AIRs; it costs a little prover
 //!   work but the resulting recursion config is shared.
 
-#[cfg(feature = "prover")]
 pub mod recursive {
     use std::sync::Arc;
 
@@ -57,8 +56,8 @@ pub mod recursive {
     use p3_symmetric::{PaddingFreeSponge, TruncatedPermutation};
     use p3_uni_stark::{Proof, StarkConfig, StarkGenericConfig, Val, prove, verify};
 
-    use crate::field::BabyBear;
-    use crate::plonky3_prover::{
+    use dregg_circuit::field::BabyBear;
+    use dregg_circuit::plonky3_prover::{
         P3MerklePoseidon2Air, generate_sound_merkle_trace, to_p3, trace_to_matrix,
     };
 
@@ -741,7 +740,7 @@ pub mod recursive {
     #[cfg(test)]
     mod tests {
         use super::*;
-        use crate::poseidon2_air::create_poseidon2_test_witness;
+        use dregg_circuit::poseidon2_air::create_poseidon2_test_witness;
 
         #[test]
         fn inner_proof_recursion_compatible() {
@@ -778,7 +777,7 @@ pub mod recursive {
         /// `p3-air::Air<AB>` family flows through unmodified.
         #[test]
         fn recursive_aggregation_air_smoke() {
-            use crate::plonky3_recursion::AggregationAir;
+            use dregg_circuit::plonky3_recursion::AggregationAir;
             use p3_field::PrimeCharacteristicRing;
             use p3_matrix::dense::RowMajorMatrix;
 

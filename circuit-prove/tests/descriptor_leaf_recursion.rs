@@ -21,7 +21,7 @@ use dregg_circuit::effect_vm_descriptors::descriptor_for_selector;
 use dregg_circuit::lean_descriptor_air::{
     EffectVmDescriptorAir, descriptor_recursion_matrix, parse_vm_descriptor,
 };
-use dregg_circuit::plonky3_recursion_impl::recursive::{
+use dregg_circuit_prove::plonky3_recursion_impl::recursive::{
     DreggRecursionConfig, create_recursion_backend, create_recursion_config, prove_inner_for_air,
     verify_inner_for_air, verify_recursive_batch_proof,
 };

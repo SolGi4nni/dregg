@@ -32,13 +32,13 @@
 
 use dregg_circuit::effect_vm::{CellState, Effect};
 use dregg_circuit::field::BabyBear;
-use dregg_circuit::ivc_turn_chain::{
+use dregg_circuit_prove::ivc_turn_chain::{
     FinalizedTurn, TurnChainError, WholeChainProof, WholeChainProofBytes, fold_two_turns,
     prove_turn_chain_recursive, prove_turn_chain_recursive_without_host_gate,
     verify_turn_chain_recursive, verify_turn_chain_recursive_from_blobs,
     verify_whole_chain_proof_bytes,
 };
-use dregg_circuit::joint_turn_aggregation::{DescriptorParticipant, RotatedParticipantLeg};
+use dregg_circuit_prove::joint_turn_aggregation::{DescriptorParticipant, RotatedParticipantLeg};
 use dregg_turn::rotation_witness::mint_rotated_participant_leg;
 
 // A transfer's effect selector (`effect_vm::columns::sel::TRANSFER`), the selector
@@ -48,7 +48,7 @@ use dregg_circuit::effect_vm::sel;
 // `WholeChainProof` is imported for type clarity even though it is only named via the
 // `prove_*` return types; silence the unused-import lint without dropping the doc value.
 #[allow(unused_imports)]
-use dregg_circuit::ivc_turn_chain::WholeChainProof as _WholeChainProof;
+use dregg_circuit_prove::ivc_turn_chain::WholeChainProof as _WholeChainProof;
 
 // ============================================================================
 // THE CANONICAL ROTATED MINT FIXTURE (copied verbatim from
@@ -486,7 +486,7 @@ fn ungated_prover_with_forged_post_commit_cannot_produce_a_root() {
 #[ignore = "SLOW: real recursion fold (~minutes); run with --ignored"]
 fn foreign_circuit_root_is_refused_by_vk_pin() {
     use dregg_circuit::plonky3_recursion::AggregationAir;
-    use dregg_circuit::plonky3_recursion_impl::recursive::{
+    use dregg_circuit_prove::plonky3_recursion_impl::recursive::{
         prove_inner_for_air, prove_recursive_layer_for_air, verify_recursive_batch_proof,
     };
     use p3_baby_bear::BabyBear as P3BabyBear;

@@ -31,10 +31,8 @@ pub use crate::merkle_types::{
     compute_parent_poseidon2, create_test_witness,
 };
 
-#[cfg(feature = "prover")]
 pub use membership_p3::*;
 
-#[cfg(feature = "prover")]
 mod membership_p3 {
     use p3_batch_stark::{BatchProof, ProverData, StarkInstance, prove_batch, verify_batch};
 

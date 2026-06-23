@@ -64,8 +64,8 @@ use dregg_circuit::descriptor_ir2::{
 };
 use dregg_circuit::effect_vm::{CellState as VmCellState, Effect as VmEffect};
 use dregg_circuit::field::BabyBear;
-use dregg_circuit::ivc_turn_chain::ir2_leaf_wrap_config;
-use dregg_circuit::plonky3_recursion_impl::recursive::DreggRecursionConfig;
+use dregg_circuit_prove::ivc_turn_chain::ir2_leaf_wrap_config;
+use dregg_circuit_prove::plonky3_recursion_impl::recursive::DreggRecursionConfig;
 use dregg_types::CellId;
 
 use crate::affordance::AffordanceSurface;
@@ -74,7 +74,7 @@ use crate::rehydration::{Membrane, RehydrateError, RehydratedSurface, Rehydratio
 /// The rotated participant leg the snapshot carries: the real `Ir2BatchProof` + the
 /// descriptor it satisfies + the 38-PI vector it attests. Re-exported from the circuit
 /// so a downstream snapshot consumer names one type.
-pub use dregg_circuit::joint_turn_aggregation::RotatedParticipantLeg;
+pub use dregg_circuit_prove::joint_turn_aggregation::RotatedParticipantLeg;
 
 /// The rotated NEW-state commitment lives at PI index 35 (`V1_PI_COUNT + 1`): the
 /// genuine Poseidon2 post-state commitment the descriptor's hash sites bind. Tampering
@@ -348,10 +348,10 @@ pub fn witness_replay_is_genuine(turn_hashes: &[[u8; 32]]) -> bool {
 ///
 /// A [`StarkSnapshot`] gates on ONE turn's rotated `Ir2BatchProof` (seconds to
 /// prove+verify, the runnable demo). The *whole-chain* analogue gates on a
-/// [`dregg_circuit::ivc_turn_chain::WholeChainProof`] — the recursive fold of K
+/// [`dregg_circuit_prove::ivc_turn_chain::WholeChainProof`] — the recursive fold of K
 /// finalized turns into ONE root batch-STARK proof (~502 KiB, constant-time verify
 /// independent of K, the genuine light-client artifact). Opening such a snapshot would
-/// call [`dregg_circuit::ivc_turn_chain::verify_turn_chain_recursive`] against the
+/// call [`dregg_circuit_prove::ivc_turn_chain::verify_turn_chain_recursive`] against the
 /// caller-held VK fingerprint — the SAME weld (snapshot-carries-proof,
 /// rehydrate-verifies-proof), one proof up.
 ///
@@ -364,7 +364,7 @@ pub mod stark_chain_snapshot {
     // (`verify_turn_chain_recursive`) instead of a single `Ir2BatchProof`
     // (`verify_vm_descriptor2`) — the same snapshot-carries-proof /
     // rehydrate-verifies-proof weld, at the K-turn light-client ROOT.
-    pub use dregg_circuit::ivc_turn_chain::{WholeChainProof, verify_turn_chain_recursive};
+    pub use dregg_circuit_prove::ivc_turn_chain::{WholeChainProof, verify_turn_chain_recursive};
 }
 
 #[cfg(test)]

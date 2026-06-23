@@ -27,6 +27,10 @@ dregg-macaroon = { path = "../macaroon" }
 dregg-trace = { path = "../trace" }
 dregg-commit = { path = "../commit" }
 dregg-circuit = { path = "../circuit", default-features = false }
+# The whole-history light-client-in-the-tab (`bindings_lightclient`) verifies the
+# recursive IVC aggregate, so wasm pulls the recursion tower (already on this graph
+# transitively via dregg-sdk/prover + dregg-lightclient).
+dregg-circuit-prove = { path = "../circuit-prove" }
 dregg-cell = { path = "../cell", default-features = false }
 dregg-cell-crypto = { path = "../cell-crypto" }
 dregg-turn = { path = "../turn", default-features = false }

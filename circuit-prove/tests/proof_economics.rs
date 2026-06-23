@@ -18,10 +18,10 @@ use std::time::Instant;
 use dregg_circuit::effect_vm::{CellState, Effect, generate_effect_vm_trace, sel};
 use dregg_circuit::effect_vm_descriptors::descriptor_for_selector;
 use dregg_circuit::field::BabyBear;
-use dregg_circuit::ivc_turn_chain::{
+use dregg_circuit_prove::ivc_turn_chain::{
     FinalizedTurn, prove_turn_chain_recursive, verify_turn_chain_recursive,
 };
-use dregg_circuit::joint_turn_aggregation::DescriptorParticipant;
+use dregg_circuit_prove::joint_turn_aggregation::DescriptorParticipant;
 use dregg_circuit::lean_descriptor_air::{
     EffectVmDescriptorAir, descriptor_recursion_matrix, parse_vm_descriptor,
 };
@@ -186,7 +186,7 @@ fn census<T: serde::Serialize>(value: &T) -> (usize, usize) {
 #[test]
 fn t1_per_turn_descriptor_proof_size() {
     use dregg_circuit::descriptor_ir2::verify_vm_descriptor2_with_config;
-    use dregg_circuit::ivc_turn_chain::ir2_leaf_wrap_config;
+    use dregg_circuit_prove::ivc_turn_chain::ir2_leaf_wrap_config;
 
     let t0 = Instant::now();
     let (turn, _old, _new) = make_turn(1000, 0, 7);
@@ -422,7 +422,7 @@ fn t3_ivc_root_k3() {
 
 #[test]
 fn t4_joint_turn_aggregation_size() {
-    use dregg_circuit::joint_turn_aggregation::{
+    use dregg_circuit_prove::joint_turn_aggregation::{
         check_descriptor_joint_preconditions, verify_descriptor_participant,
     };
 

@@ -519,10 +519,10 @@ impl Turn {
 
     /// Thread the GENUINE custom sub-proofs into `custom_program_proofs` — the
     /// wire field a custom turn carries so the light client can run the deployed
-    /// `proof_bind` recursion (`dregg_circuit::custom_proof_bind::verify_proof_bind`)
+    /// `proof_bind` recursion (`dregg_circuit_prove::custom_proof_bind::verify_proof_bind`)
     /// against each effect's bound `(commit, vk)` columns.
     ///
-    /// Each [`dregg_circuit::custom_proof_bind::BoundCustomProof`] (minted by
+    /// Each [`dregg_circuit_prove::custom_proof_bind::BoundCustomProof`] (minted by
     /// `prove_custom_program`, the genuine STARK + its public inputs) is projected
     /// to the on-wire [`CustomProgramProof`] (proof bytes + raw-u32 public inputs),
     /// in effect order. Both are bound into [`Turn::hash`] so the sub-proof bytes /
@@ -534,7 +534,7 @@ impl Turn {
     #[cfg(feature = "prover")]
     pub fn with_custom_program_proofs(
         mut self,
-        bound: &[dregg_circuit::custom_proof_bind::BoundCustomProof],
+        bound: &[dregg_circuit_prove::custom_proof_bind::BoundCustomProof],
     ) -> Self {
         let proofs: Vec<CustomProgramProof> = bound
             .iter()

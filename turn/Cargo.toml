@@ -14,6 +14,12 @@ dregg-captp = { path = "../captp" }
 dregg-cell = { path = "../cell" }
 dregg-cell-crypto = { path = "../cell-crypto" }
 dregg-circuit = { path = "../circuit" }
+# The heavy prove crate is needed ONLY by turn's PRODUCER side (rotation_witness →
+# joint-turn aggregation / recursive witness bundle / custom proof-bind), all
+# `#[cfg(feature = "prover")]`. turn's executor VERIFY reconstructs PIs through the
+# `*_wide` generators, which are verify-level in `dregg-circuit` — so a verify-only
+# (`not(prover)`) turn build stays recursion-free (the seL4 verifier-PD floor).
+dregg-circuit-prove = { path = "../circuit-prove", optional = true }
 dregg-commit = { path = "../commit" }
 dregg-dsl-runtime = { path = "../dregg-dsl-runtime" }
 dregg-token = { path = "../token" }
@@ -42,16 +48,16 @@ ark-serialize = { version = "0.5.0", optional = true }
 ark-ff = { version = "0.5.0", optional = true }
 
 [features]
-# `prover` is in the DEFAULT set: native builds compile the ROTATED sovereign
-# verify leg (`executor::verify_and_commit_proof_rotated` →
-# `dregg-circuit::descriptor_ir2::verify_vm_descriptor2`, the cutover's target
-# path). The `not(prover)` build keeps the legacy hand-AIR sovereign verify
-# (`verify_and_commit_proof_v1`) — that is the wasm / zkvm VERIFIER path
-# (it passes `default-features = false`) until the prover-free rotated verify
-# surface lands (cutover C2, ROTATION-CUTOVER §EXEC). The feature forwards to
-# `dregg-circuit/prover` so `descriptor_ir2` is present when the branch is.
+# The ROTATED sovereign verify leg (`executor::verify_and_commit_proof_rotated`
+# → `dregg-circuit::descriptor_ir2::verify_vm_descriptor2`) is now the SOLE
+# sovereign verify path (the weak v1 hand-AIR floor is RETIRED). `descriptor_ir2`
+# is unconditional in `dregg-circuit` (the verify floor); the PI-reconstruction
+# `*_wide` generators ride `dregg-circuit-prove`, an unconditional dep above. The
+# `prover` feature now gates only turn's own PROVE side (rotation_witness produce,
+# aggregate-bilateral prover); it forwards to `dregg-cell/prover` for the faithful
+# 8-felt commitment.
 default = ["prover", "threshold-sig"]
-prover = ["dregg-circuit/prover", "dregg-cell/prover"]
+prover = ["dep:dregg-circuit-prove", "dregg-cell/prover"]
 # Real BLS12-381 + KZG weighted-threshold-signature verifier for
 # `Authorization::Custom { vk_hash }` discharges (the governed-namespace
 # `commit_table_update` `GOVERNANCE_VK` fire). ON in the default set; the
