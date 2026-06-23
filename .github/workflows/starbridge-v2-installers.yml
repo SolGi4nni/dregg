@@ -308,10 +308,17 @@ jobs:
             libx11-dev libx11-xcb-dev libxcb1-dev \
             libgl1-mesa-dev libvulkan1 libvulkan-dev mesa-vulkan-drivers \
             libssl-dev libdbus-1-dev \
-            wget file fuse libfuse2
+            wget file fuse libfuse2 patchelf desktop-file-utils
 
       - name: Install rolling Rust nightly
         uses: dtolnay/rust-toolchain@nightly
+
+      # dregg-node lives in the REPO-ROOT workspace, which pins nightly-2026-01-01
+      # (rust-toolchain.toml). Install it explicitly so the node build resolves a
+      # present toolchain (rustup would auto-install on demand, but this fails fast
+      # and pre-warms it before the heavy Lean-linked node compile).
+      - name: Install repo-root pinned nightly (for dregg-node)
+        run: rustup toolchain install "$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml | head -1)" --profile minimal
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -383,6 +390,24 @@ jobs:
         working-directory: starbridge-v2
         run: cargo build --release
 
+      # Build the LOCAL NODE too, so one AppImage = cockpit + a node you can
+      # `init` + `run` and `--node`-attach the cockpit to. `dregg-node` lives in
+      # the REPO-ROOT workspace (NOT starbridge-v2's standalone workspace) and
+      # links the same verified Lean archive (libdregg_lean.a, seeded above). Its
+      # toolchain is directory-scoped: building from the repo root resolves the
+      # root `rust-toolchain.toml` (nightly-2026-01-01), which rustup auto-installs
+      # on first use — distinct from starbridge-v2's rolling-nightly pin.
+      - name: Build dregg-node (--release)
+        run: cargo build --release -p dregg-node
+
+      - name: Assert dregg-node present
+        run: |
+          test -x target/release/dregg-node || {
+            echo "::error::target/release/dregg-node missing; the AppImage cannot bundle the node.";
+            exit 1;
+          }
+          ls -la target/release/dregg-node
+
       - name: Headless self-check (embedded executor + killer demo)
         working-directory: starbridge-v2
         run: ./target/release/starbridge-v2 --headless
@@ -391,36 +416,95 @@ jobs:
         working-directory: starbridge-v2
         run: |
           set -euo pipefail
-          BIN=target/release/starbridge-v2
-          test -x "$BIN"
-          rm -rf AppDir dist && mkdir -p AppDir/usr/bin dist
-          cp "$BIN" AppDir/usr/bin/starbridge-v2
-          # Minimal AppDir: desktop entry + a placeholder icon + AppRun.
+          COCKPIT=target/release/starbridge-v2
+          NODE="$GITHUB_WORKSPACE/target/release/dregg-node"
+          ICON="$GITHUB_WORKSPACE/assets/starbridge-v2.png"
+          test -x "$COCKPIT"
+          test -x "$NODE"
+          test -f "$ICON"
+          rm -rf AppDir dist && mkdir -p AppDir/usr/bin AppDir/usr/share/icons/hicolor/256x256/apps dist
+
+          # BOTH binaries — one download = cockpit + a local node. The cockpit is
+          # the default surface; the node can be init'd + run from the SAME image
+          # (see AppRun + the deos-node launcher below).
+          cp "$COCKPIT" AppDir/usr/bin/starbridge-v2
+          cp "$NODE"    AppDir/usr/bin/dregg-node
+
+          # A real icon (256x256, committed at assets/starbridge-v2.png) — not a
+          # 1x1 stub. linuxdeploy reads top-level AppDir/<name>.png AND the hicolor
+          # theme path; provide both so desktop integration is clean.
+          cp "$ICON" AppDir/starbridge-v2.png
+          cp "$ICON" AppDir/usr/share/icons/hicolor/256x256/apps/starbridge-v2.png
+
           cat > AppDir/starbridge-v2.desktop <<'DESK'
           [Desktop Entry]
           Type=Application
           Name=Starbridge v2
-          Comment=The dregg master interface — a live verified ocap world
+          Comment=The dregg master interface — a live verified ocap world (bundles a local dregg-node)
           Exec=starbridge-v2
           Icon=starbridge-v2
           Categories=Development;
           Terminal=false
           DESK
-          # 1x1 PNG placeholder icon (appimagetool requires an icon).
-          printf '\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\nIDATx\x9cc\x00\x01\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82' > AppDir/starbridge-v2.png
+
+          # AppRun dispatcher: default = cockpit. Run the bundled node instead via
+          # either  ./*.AppImage --run-node <args>  or  ARGV0=deos-node (symlink).
+          # Everything after --run-node (or all args under the deos-node name) is
+          # passed straight through to `dregg-node` (init / run / status / …).
+          # NOTE the dispatcher token is `--run-node`, NOT `--node`: the cockpit
+          # uses `--node <url>` itself (attach to a REMOTE node), so that flag must
+          # pass through to starbridge-v2 untouched.
           cat > AppDir/AppRun <<'RUN'
           #!/bin/sh
           HERE="$(dirname "$(readlink -f "$0")")"
+          export PATH="$HERE/usr/bin:$PATH"
+          export LD_LIBRARY_PATH="$HERE/usr/lib:${LD_LIBRARY_PATH:-}"
+          # Node entrypoint via a deos-node argv0 (symlink) or a leading --run-node flag.
+          case "${ARGV0:-$(basename "$0")}" in
+            deos-node|dregg-node) exec "$HERE/usr/bin/dregg-node" "$@" ;;
+          esac
+          if [ "${1:-}" = "--run-node" ]; then
+            shift
+            exec "$HERE/usr/bin/dregg-node" "$@"
+          fi
           exec "$HERE/usr/bin/starbridge-v2" "$@"
           RUN
           chmod +x AppDir/AppRun
-          # appimagetool (the official packager).
-          wget -q https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage -O appimagetool
-          chmod +x appimagetool
-          # FUSE is flaky on CI runners; --appimage-extract-and-run sidesteps it.
-          ARCH=x86_64 ./appimagetool --appimage-extract-and-run AppDir dist/starbridge-v2-linux-x86_64.AppImage
-          tar -C target/release -czf dist/starbridge-v2-linux-x86_64.tar.gz starbridge-v2
+          # deos-node convenience launcher inside the image (argv0 → node path).
+          ln -sf AppRun AppDir/deos-node
+
+          # linuxdeploy bundles the transitive NON-glibc native deps the gpui stack
+          # pulls (libxkbcommon / libwayland-client / libfontconfig / libfreetype),
+          # widening glibc reach back toward ~Ubuntu 18.04. GPU/Vulkan drivers are
+          # deliberately NOT bundled — those are host-provided (an AppImage cannot
+          # ship kernel/driver userspace); the host needs a working Vulkan loader.
+          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage -O linuxdeploy
+          chmod +x linuxdeploy
+          # FUSE is flaky on CI runners; extract-and-run sidesteps it for BOTH tools.
+          export APPIMAGE_EXTRACT_AND_RUN=1
+          ./linuxdeploy \
+            --appdir AppDir \
+            --executable AppDir/usr/bin/starbridge-v2 \
+            --executable AppDir/usr/bin/dregg-node \
+            --desktop-file AppDir/starbridge-v2.desktop \
+            --icon-file AppDir/starbridge-v2.png \
+            --output appimage
+          # linuxdeploy emits Starbridge_v2-x86_64.AppImage in CWD; normalize the name.
+          mv ./*-x86_64.AppImage dist/starbridge-v2-linux-x86_64.AppImage
+
+          # .tar.gz carries BOTH binaries too (cockpit + node). Stage them into one
+          # dir so a single archive holds both (you can't append to a gzip'd tar).
+          STAGE="$(mktemp -d)"
+          cp target/release/starbridge-v2 "$STAGE/"
+          cp "$GITHUB_WORKSPACE/target/release/dregg-node" "$STAGE/"
+          tar -C "$STAGE" -czf dist/starbridge-v2-linux-x86_64.tar.gz starbridge-v2 dregg-node
+          rm -rf "$STAGE"
           ls -la dist
+          # Smoke: the AppImage must contain BOTH binaries.
+          ./dist/starbridge-v2-linux-x86_64.AppImage --appimage-extract >/dev/null 2>&1 || true
+          test -x squashfs-root/usr/bin/starbridge-v2
+          test -x squashfs-root/usr/bin/dregg-node
+          echo "AppImage contains BOTH binaries: starbridge-v2 + dregg-node"
 
       - name: Upload Linux installers
         uses: actions/upload-artifact@v4

@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1a1530"/>
+      <stop offset="1" stop-color="#0b1024"/>
+    </linearGradient>
+    <linearGradient id="ring" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#7f5cff"/>
+      <stop offset="0.5" stop-color="#4ea8ff"/>
+      <stop offset="1" stop-color="#41e0c8"/>
+    </linearGradient>
+    <radialGradient id="core" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="0.45" stop-color="#9fd0ff"/>
+      <stop offset="1" stop-color="#4ea8ff"/>
+    </radialGradient>
+  </defs>
+  <rect x="0" y="0" width="512" height="512" rx="108" fill="url(#bg)"/>
+
+  <!-- the deck: a span across distance -->
+  <rect x="84" y="352" width="344" height="16" rx="8" fill="url(#ring)"/>
+
+  <!-- suspension cables -->
+  <g stroke="url(#ring)" stroke-linecap="round" opacity="0.9">
+    <line x1="160" y1="252" x2="160" y2="352" stroke-width="9"/>
+    <line x1="224" y1="216" x2="224" y2="352" stroke-width="9"/>
+    <line x1="288" y1="216" x2="288" y2="352" stroke-width="9"/>
+    <line x1="352" y1="252" x2="352" y2="352" stroke-width="9"/>
+  </g>
+
+  <!-- the bridge arc (firmament: one cap across distance) -->
+  <path d="M 96 352 Q 256 132 416 352" fill="none" stroke="url(#ring)" stroke-width="20" stroke-linecap="round"/>
+
+  <!-- towers -->
+  <g stroke="url(#ring)" stroke-width="20" stroke-linecap="round">
+    <line x1="96" y1="320" x2="96" y2="392"/>
+    <line x1="416" y1="320" x2="416" y2="392"/>
+  </g>
+
+  <!-- the verified core: a star at the keystone -->
+  <circle cx="256" cy="170" r="36" fill="url(#core)"/>
+  <path d="M 256 122 L 267 159 L 304 170 L 267 181 L 256 218 L 245 181 L 208 170 L 245 159 Z" fill="#ffffff" opacity="0.97"/>
+</svg>
