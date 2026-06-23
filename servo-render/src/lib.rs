@@ -69,6 +69,16 @@ pub mod content_tile;
 #[cfg(feature = "libservo")]
 pub mod webview;
 
+/// **THE NET-CAP CONNECTOR** — the page's outbound socket bound to the dregg `captp`
+/// [`Netlayer::dial`](dregg_captp::netlayer::Netlayer::dial) transport. Always
+/// present (it needs neither SWGL nor libservo): a fetch the held
+/// [`SurfaceCapability`](starbridge_web_surface::SurfaceCapability) does not authorize
+/// is refused AT the connector before any dial (the socket never opens); an authorized
+/// origin connects through the audited netlayer. See [`netcap_connector`].
+pub mod netcap_connector;
+
+pub use netcap_connector::{block_on as netcap_block_on, ConnectOutcome, NetcapConnector};
+
 #[cfg(feature = "swgl-standalone")]
 pub use swgl_context::{
     with_gl, ReadRect, RenderingContext, RgbaFrame, SwglRenderingContext, GL_LOCK,

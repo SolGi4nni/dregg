@@ -92,8 +92,14 @@ dregg-firmament = { path = "../sel4/dregg-firmament" }
 
 # Content-addressing: `content_digest = blake3(rgba8_bytes)` — the bind from real
 # pixels to the compositor's promised digest. The SAME blake3 the cell/types
-# crates use.
+# crates use. Also `origin_to_peer = blake3(origin)[..32]` (the netcap connector's
+# origin → federation-peer derivation).
 blake3 = "1"
+
+# Base58 for the net-cap connector's status line (the dialed-peer short id) — the
+# SAME `bs58 0.5` `dregg-captp` renders peer ids with, so the surfaced id matches the
+# federation's `ocapn://<id>` form.
+bs58 = "0.5"
 
 # The REAL cap-gate (the OTHER half of Stage A): `starbridge-web-surface` ships the
 # `WebSurfaceDelegate`/`CapGatedDelegate` (libservo's `WebViewDelegate`, shaped
@@ -107,6 +113,19 @@ blake3 = "1"
 # Stage-A steps 4+5 are joined here: the cap gate gates the render that reaches the
 # compositor.)
 starbridge-web-surface = { path = "../starbridge-web-surface" }
+
+# THE NET-CAP TRANSPORT (the AUDIT-named "open wire", now wired): `dregg-captp`
+# ships the OCapN `Netlayer` / `NetConnection` traits + `Netlayer::dial` — the SAME
+# audited byte-frame transport the federation dials over (InProcess + Relay
+# instances; no ambient OS socket). `src/netcap_connector.rs` binds a page's
+# outbound connection to THIS: an origin the held `SurfaceCapability` does not
+# authorize is refused AT the connector (the `dial` never happens — the socket is
+# never opened), an authorized origin connects through `Netlayer::dial`. Path-deps
+# resolve `version.workspace`/lints against the repo-root workspace the same way the
+# `dregg-firmament` / `dregg-cell` path-deps above already do (they path-resolve
+# their own nearest workspace root — verified: `starbridge-web-surface`, itself a
+# standalone workspace, path-deps these identically and builds green).
+dregg-captp = { path = "../captp" }
 
 # ── the libservo (real WebView) path — opt-in, pulls the mozjs elephant ──────────
 # The real libservo: `WebView` + `WebViewBuilder` + the `RenderingContext` trait

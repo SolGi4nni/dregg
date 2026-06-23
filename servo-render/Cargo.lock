@@ -1862,7 +1862,6 @@ dependencies = [
  "bs58",
  "chacha20poly1305",
  "dregg-cell",
- "dregg-lean-ffi",
  "dregg-types",
  "getrandom 0.3.4",
  "hkdf",
@@ -1878,9 +1877,22 @@ name = "dregg-cell"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "dregg-circuit",
+ "dregg-types",
+ "postcard",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "dregg-cell-crypto"
+version = "0.1.0"
+dependencies = [
+ "blake3",
  "bulletproofs",
  "chacha20poly1305",
  "curve25519-dalek",
+ "dregg-cell",
  "dregg-circuit",
  "dregg-types",
  "ed25519-dalek",
@@ -1905,8 +1917,6 @@ dependencies = [
  "p3-baby-bear",
  "p3-batch-stark",
  "p3-challenger",
- "p3-circuit",
- "p3-circuit-prover",
  "p3-commit",
  "p3-dft",
  "p3-field",
@@ -1918,10 +1928,41 @@ dependencies = [
  "p3-monty-31",
  "p3-poseidon2",
  "p3-poseidon2-circuit-air",
- "p3-recursion",
  "p3-symmetric",
  "p3-uni-stark",
  "p3-util",
+ "postcard",
+ "rand 0.10.1",
+ "rmp-serde",
+ "serde",
+ "tracing",
+]
+
+[[package]]
+name = "dregg-circuit-prove"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "dregg-circuit",
+ "getrandom 0.3.4",
+ "itertools 0.14.0",
+ "p3-air",
+ "p3-baby-bear",
+ "p3-batch-stark",
+ "p3-challenger",
+ "p3-circuit",
+ "p3-circuit-prover",
+ "p3-commit",
+ "p3-dft",
+ "p3-field",
+ "p3-fri",
+ "p3-lookup",
+ "p3-matrix",
+ "p3-merkle-tree",
+ "p3-poseidon2-circuit-air",
+ "p3-recursion",
+ "p3-symmetric",
+ "p3-uni-stark",
  "postcard",
  "rand 0.10.1",
  "rmp-serde",
@@ -2002,14 +2043,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dregg-lean-ffi"
-version = "0.1.0"
-dependencies = [
- "blake3",
- "cc",
-]
-
-[[package]]
 name = "dregg-macaroon"
 version = "0.1.0"
 dependencies = [
@@ -2076,11 +2109,12 @@ dependencies = [
  "curve25519-dalek",
  "dregg-captp",
  "dregg-cell",
+ "dregg-cell-crypto",
  "dregg-circuit",
+ "dregg-circuit-prove",
  "dregg-commit",
  "dregg-dsl-runtime",
  "dregg-hints",
- "dregg-lean-ffi",
  "dregg-token",
  "dregg-types",
  "ed25519-dalek",
@@ -8091,7 +8125,9 @@ name = "servo-render"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "bs58",
  "dpi",
+ "dregg-captp",
  "dregg-firmament",
  "gleam",
  "glow",
@@ -8751,6 +8787,7 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "dregg-cell",
+ "dregg-cell-crypto",
  "dregg-firmament",
  "dregg-query",
  "dregg-turn",

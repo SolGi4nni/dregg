@@ -34,12 +34,26 @@
 //! holds a real `SurfaceCapability` over the browser's own backing cell and renders
 //! through it.
 //!
-//! ⚠ THE NEXT WIRE (named, not laundered): the cap gate's allowlist is the authority
-//! boundary; the actual *outbound socket* the engine uses is libservo's own net
-//! stack. Binding that socket to the dregg `captp` `Netlayer::dial` path (so the
-//! browser's bytes traverse the SAME audited transport the federation does, not an
-//! ambient OS socket) is the open wire — surfaced in the status line, not hidden.
-//! The cap GATE is real today; the cap-bound SOCKET is the follow-up.
+//! ## The net-cap socket bind (the formerly-open wire, now wired)
+//!
+//! Every fetch's CONNECT DECISION is routed through
+//! [`servo_render::NetcapConnector`] backed by the dregg `captp`
+//! [`Netlayer::dial`](dregg_captp::netlayer::Netlayer::dial) transport — the SAME
+//! audited byte-frame transport the federation dials over (no ambient OS socket). An
+//! origin the held [`SurfaceCapability`] does not authorize is refused AT the
+//! connector before any `dial` (the socket never opens); a cap-admitted origin's
+//! connection IS a real audited `NetSession`. The status line reports which of the
+//! three an origin hit (dialed / refused-by-cap / unreachable), via
+//! [`render_url_to_frame_netcap`](servo_render::webview::render_url_to_frame_netcap).
+//!
+//! HONEST DEPTH: for `http(s)` the *bytes-on-the-wire* still ride servo's internal
+//! `net` (hyper) — servo forbids embedder `ProtocolHandler`s for `http`/`https`
+//! (`FORBIDDEN_SCHEMES`), so replacing the byte socket needs a fork of servo's `net`
+//! crate (out of one pass's reach). What IS bound, at the depth the embedder API
+//! allows, is the connect/authority decision → `Netlayer::dial`: the origin's
+//! reachability is the netlayer's to grant (gated by the cap), and a cap-denied origin
+//! is refused at the dial doorstep. A `dregg://` (cell) fetch — not http — rides the
+//! connector end-to-end with no such ceiling.
 //!
 //! ## Build gating
 //!
@@ -219,14 +233,23 @@ impl Cockpit {
             const MAX_SPINS: usize = 4096;
             let surface = self.webshell_surface_cap();
             // The render runs under the process-wide SWGL current-context lock (the
-            // global `ctx`), the same serialization the content-tile path uses.
-            let frame = servo_render::with_gl(|| {
-                servo_render::webview::render_url_to_frame(&url, surface, W, H, MAX_SPINS)
+            // global `ctx`), the same serialization the content-tile path uses. The
+            // `_netcap` variant ALSO routes every fetch's connect decision through the
+            // dregg captp `Netlayer::dial` connector and reports the outcome, so the
+            // status line tells the truth about the transport, not just the allowlist.
+            let (frame, net) = servo_render::with_gl(|| {
+                servo_render::webview::render_url_to_frame_netcap(&url, surface, W, H, MAX_SPINS)
             });
+            // The net-cap leg's truth: dialed through the audited netlayer, refused at
+            // the socket by the held cap, or unreachable on the transport.
+            let net_line = match &net {
+                Some(o) => o.status_line(),
+                None => "net-cap: (no socket fetch this navigation — e.g. an inline/data page)".to_string(),
+            };
             match frame {
                 Some(f) => {
                     self.webshell_status = format!(
-                        "rendered {}×{} of {url} · {} bytes RGBA8 · digest {:#x} · (cap gate: granted ⊆ held)",
+                        "rendered {}×{} of {url} · {} bytes RGBA8 · digest {:#x} · {net_line}",
                         f.width,
                         f.height,
                         f.bytes.len(),
@@ -235,11 +258,16 @@ impl Cockpit {
                     self.webshell_frame = Some(f);
                 }
                 None => {
-                    // FAIL-CLOSED — keep the old tile, show why (no paint within the
-                    // spin bound, a cap-denied origin, or an unparseable URL).
-                    self.webshell_status = format!(
-                        "⚠ no frame for {url} — the page did not paint within {MAX_SPINS} spins, the net-cap gate refused the origin, or the address is unparseable (tile kept)"
-                    );
+                    // FAIL-CLOSED — keep the old tile, show why. If the net-cap gate
+                    // refused the origin at the socket, SAY SO explicitly (that is the
+                    // most important fail-closed case: the cap bit at the transport).
+                    if net.as_ref().map(|o| o.refused_by_cap()).unwrap_or(false) {
+                        self.webshell_status = format!("⚠ {net_line} (tile kept)");
+                    } else {
+                        self.webshell_status = format!(
+                            "⚠ no frame for {url} — the page did not paint within {MAX_SPINS} spins or the address is unparseable · {net_line} (tile kept)"
+                        );
+                    }
                 }
             }
         }
@@ -402,12 +430,25 @@ impl Cockpit {
                     div()
                         .mt_1()
                         .text_xs()
-                        .text_color(theme::warn())
+                        .text_color(theme::good())
                         .child(
-                            "⚠ NEXT WIRE: the cap GATE is real today; binding the engine's \
-                             outbound SOCKET to the dregg captp Netlayer::dial transport \
-                             (so the browser's bytes traverse the audited transport, not an \
-                             ambient OS socket) is the open follow-up — named here, not hidden.",
+                            "NET-CAP SOCKET (wired): every fetch's connect decision routes \
+                             through the dregg captp Netlayer::dial connector — a cap-denied \
+                             origin is REFUSED at the socket (dial never called), a cap-admitted \
+                             origin opens a real audited NetSession. The status line above reports \
+                             dialed / refused-by-cap / unreachable.",
+                        ),
+                )
+                .child(
+                    div()
+                        .mt_0p5()
+                        .text_xs()
+                        .text_color(theme::muted())
+                        .child(
+                            "Depth (honest): for http(s) the bytes-on-the-wire still ride servo's \
+                             internal hyper (it forbids embedder ProtocolHandlers for http/https); \
+                             the CONNECT DECISION + reachability is the netlayer's, gated by the cap. \
+                             A dregg:// (cell) fetch rides the connector end-to-end.",
                         ),
                 ),
         );
