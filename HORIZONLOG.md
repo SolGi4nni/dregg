@@ -11,6 +11,31 @@ reason.)*
 Last sweep: 2026-06-13 (flagged-items burndown — removed ~14 landed/struck items,
 deduped the DreggDL/sel4/snapshot landings into git history, kept live tails).
 
+### NETWORK-PORTABLE PROCESS — cross-node CapTP cap handoff, by running (2026-06-23).
+`f0efdb39` (`captp/src/handoff_session.rs` + `node/src/captp_handoff_e2e.rs`). The `PresentHandoff` leg
+now routes over the node↔node transport: A frames an introducer-signed handoff, B receives + runs the
+proven `validate_handoff` against ITS OWN swiss table (`held` never read from the cert), resolves a live
+`SendCap`. Demonstrated 3 ways incl. node-grade over the REAL relay HTTP routes (A POSTs sealed frame →
+B drains/unseals/validates/uses it on a `Bus`). No-amplification PROVEN: over-broad handoffs + untrusted
+introducers refused before any cap installs; the `Bus` re-checks `admits` on every enqueue. 198 captp
+tests green. (Index race: this commit also swept the XANADU lane's byte-identical final files — benign.)
+
+### XANADU DOCUMENT LANGUAGE — usable, by running (2026-06-23).
+`f0efdb39` (`starbridge-v2/src/xanadu_e2e.rs`, 3 tests pass; `dregg-doc` 102/120 green). ONE braid:
+doc-as-Pijul-patches with branch + MERGE (disjoint composes clean; same-position yields ONE first-class
+`ConflictRegion` carrying both authors' alternatives w/ provenance — NOT silent overwrite; a `Connect`
+resolves keeping both) · TRANSCLUSION (a `WholeCellTransclusion` cites C + finalized commitment, visible
+to a capped reader, DARKENS for an under-capped one w/ provenance surviving, re-resolves LIVE) ·
+BIDIRECTIONAL links (the quote registers in the `Backlinks` witness-graph → C's "what links here" lists A).
+Plus an EXECUTOR-DRIVEN variant (`DocEditor`: each edit a cap-gated turn; unauthorized edit refused in-band).
+
+### SERVO REAL PAGE — surfman ceiling BROKEN, a real page rasterizes (2026-06-23).
+`d5af70e5` (servo-render). Cleared 3 nested blockers (surfman `connection()`=None, event-loop pacing,
+SWGL `DepthFunc` SIGABRT via a 1-field vendored servo-paint fork `clear_caches_with_quads:false`). 17/17
+green (the once-`#[ignore]`d render test RUNS). PNGs: `servo_real_page_render.png` (a laid-out `data:` page,
+CSS box measured 160×120) + `servo_real_text_render.png` ("dregg" as 212-color antialiased glyphs — SEEN).
+Remainder: http(s) bytes still ride servo's hyper (needs a `net` fork); the servo-paint fork reverts when
+upstream carries a SWGL `RenderingContext`.
 ### MULTIPLAYER MEMBRANE — the killer primitive, DEMONSTRATED by running (2026-06-23).
 `2bdb6ed2` (`shared_fork.rs`). ONE minted `MembraneFrustum` (the screenshot-of-the-moment, a cap-bounded
 `World::fork` cull) → carried over the postcard wire shape (the `MembraneEnvelope.snapshot` bytes) →
