@@ -987,4 +987,141 @@ mod tests {
         bus.enqueue(&cap, b, &name, AuthRequired::Signature, vec![9], 1).unwrap();
         assert_eq!(bus.poll_wake(&name, &b).unwrap().cursor, 4);
     }
+
+    // ── (8) THE SPINE: a real multi-party flow rides the Bus end to end ──────────
+    //
+    // One producer, TWO subscribers, ONE unauthorized send refused, three ordered
+    // publishes — and the four spine properties asserted with REAL receipts:
+    //
+    //   (a) receipt-identity: each admitted enqueue leaves a verifying CustodyReceipt
+    //       AND the chain is tamper-evident (mutating any committed field breaks the
+    //       signature) AND the inbox root chains old→new across the run;
+    //   (b) cap-gated enqueue: an over-authorized publish target is refused at the
+    //       `admits` seam — no box, no cursor tick, no receipt (no phantom work);
+    //   (c) ordered pub-sub delivery: each of the two subscribers receives every
+    //       payload, in causal (FIFO publish) order, by name;
+    //   (d) drain lockstep: lockstep `drain_one` hands boxes out one at a time with
+    //       no off-by-one and no double-delivery; a re-drain past empty yields none.
+    #[test]
+    fn bus_is_the_spine_multiparty_flow_with_four_properties() {
+        let (mut bus, _relay) = fresh_bus();
+        let topic = TopicName::new(b"orders");
+        let name = ChannelName::new(b"orders/feed");
+
+        // Two subscribers ride the Bus; each waits by name.
+        let sub_a = FederationId([0xA1; 32]);
+        let sub_b = FederationId([0xB2; 32]);
+        for s in [sub_a, sub_b] {
+            bus.subscribe(topic.clone(), s);
+            bus.wait(&name, s);
+        }
+        assert_eq!(bus.subscribers(&topic).len(), 2);
+        assert!(bus.poll_wake(&name, &sub_a).is_none(), "no wake before any publish");
+
+        // The producer holds a Signature-grant publish cap into this topic channel.
+        let cap = SendCap::grant(sub_a, name.clone(), AuthRequired::Signature);
+
+        // ── (b) CAP-GATED: an over-broad enqueue to a subscriber inbox is refused.
+        // We exercise the same `admits` seam `publish` rides, directly, to prove the
+        // refusal polarity is not vacuous and leaves NO phantom work.
+        let before = bus.pending_count(&sub_a);
+        let cursor_before = bus.cursor(&name);
+        let refused = bus.enqueue(&cap, sub_a, &name, AuthRequired::None, b"forge".to_vec(), 0);
+        assert!(
+            matches!(refused, Err(DataPlaneError::Unauthorized { .. })),
+            "(b) an over-authorized (None ⊋ Signature) send is refused at the seam"
+        );
+        assert_eq!(bus.pending_count(&sub_a), before, "(b) nothing queued for a refused send");
+        assert_eq!(bus.cursor(&name), cursor_before, "(b) no cursor tick for a refused send");
+
+        // ── PRODUCE: three ordered publishes fan to BOTH subscribers (6 deliveries).
+        // Keep each subscriber's receipts in publish order to check causal sequence.
+        let payloads: [&[u8]; 3] = [b"order-1", b"order-2", b"order-3"];
+        let mut recv: HashMap<FederationId, Vec<Delivery>> = HashMap::new();
+        for (i, p) in payloads.iter().enumerate() {
+            let deliveries = bus
+                .publish(&topic, &cap, AuthRequired::Signature, p.to_vec(), 100 + i as u64)
+                .expect("authorized publish fans out");
+            assert_eq!(deliveries.len(), 2, "each publish reaches both subscribers");
+            for (sub, d) in deliveries {
+                // ── (a) RECEIPT-IDENTITY: every receipt is a real, verifying signature.
+                assert!(d.receipt.sig_verifies(), "(a) the custody receipt VERIFIES");
+                recv.entry(sub).or_default().push(d);
+            }
+        }
+
+        // ── (a) TAMPER-EVIDENCE: mutate a committed field of a held receipt — its
+        // signature must STOP verifying (the chain is tamper-evident, not decorative).
+        {
+            let mut forged = recv[&sub_a][0].receipt.clone();
+            assert!(forged.sig_verifies(), "the pristine receipt verifies");
+            forged.content_hash[0] ^= 0xFF;
+            assert!(!forged.sig_verifies(), "(a) a tampered content_hash breaks the signature");
+            let mut forged_root = recv[&sub_a][0].receipt.clone();
+            forged_root.new_root[0] ^= 0xFF;
+            assert!(!forged_root.sig_verifies(), "(a) a tampered root breaks the signature");
+        }
+
+        // ── (a) ROOT-CHAINING: each subscriber's receipts chain old_root→new_root
+        // across the run (a monotone custody chain, never retreating).
+        for sub in [sub_a, sub_b] {
+            let chain = &recv[&sub];
+            assert_eq!(chain.len(), 3, "three deliveries to {sub:?}");
+            for w in chain.windows(2) {
+                assert_eq!(
+                    w[0].receipt.new_root, w[1].receipt.old_root,
+                    "(a) the custody chain links: each enqueue's new_root is the next's old_root"
+                );
+                assert_ne!(w[0].receipt.new_root, w[1].receipt.new_root, "(a) the root advances");
+            }
+            assert_eq!(
+                chain.last().unwrap().receipt.new_root,
+                bus.inbox_root(&sub),
+                "(a) the live inbox root is the head of the receipt chain"
+            );
+        }
+
+        // ── (c) ORDERED PUB-SUB: each subscriber is woken by name, and the boxes in
+        // its inbox carry causal_sequence 1,2,3 in publish order (FIFO, no reorder).
+        for sub in [sub_a, sub_b] {
+            assert_eq!(
+                bus.poll_wake(&name, &sub).expect("woken by name").cursor,
+                6,
+                "(c) the cursor reflects all 6 admitted enqueues (3 publishes × 2 subs)"
+            );
+            assert_eq!(bus.pending_count(&sub), 3, "(c) three boxes queued for {sub:?}");
+        }
+
+        // ── (d) DRAIN LOCKSTEP: hand boxes out ONE at a time. The order is FIFO
+        // publish order, no off-by-one, and the witness flips box-for-box.
+        for sub in [sub_a, sub_b] {
+            let mut got: Vec<Vec<u8>> = Vec::new();
+            for expected_pending in (0..3).rev() {
+                let m = bus.drain_one(&sub).expect("(d) a box is handed out");
+                got.push(m.encrypted_payload.clone());
+                assert_eq!(
+                    bus.pending_count(&sub),
+                    expected_pending,
+                    "(d) lockstep: pending drops by exactly one per drained box"
+                );
+            }
+            assert_eq!(
+                got,
+                payloads.iter().map(|p| p.to_vec()).collect::<Vec<_>>(),
+                "(d) delivery order is FIFO publish order (no reorder, no off-by-one)"
+            );
+            // (d) NO DOUBLE-DELIVERY: the inbox is empty; a re-drain yields nothing,
+            // and the witness log holds exactly the three distinct boxes once each.
+            assert!(bus.drain_one(&sub).is_none(), "(d) no double-delivery past empty");
+            let witnessed = bus.delivered_hashes(&sub);
+            assert_eq!(witnessed.len(), 3, "(d) exactly three boxes witnessed (no dup)");
+            // Every held receipt is now handled (the witness, not the promise).
+            for d in &recv[&sub] {
+                assert!(
+                    d.is_handled(witnessed),
+                    "(a/d) the held delivery is WITNESSED after its box drained"
+                );
+            }
+        }
+    }
 }
