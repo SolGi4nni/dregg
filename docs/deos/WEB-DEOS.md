@@ -1,11 +1,19 @@
 # WEB DEOS — the full gpui cockpit, in the browser
 
-Web deos is **the same cockpit as native, rendered in a browser tab**: the real
-`gpui` element-tree renderer running on the `gpui_web` platform backend (wasm32
-+ WebGPU canvas), driving the **same in-browser verified executor** the native
-desktop drives. It is *not* a lesser "web skin" reimplementation of the UI — it
-is one renderer, one model, two platforms (native windowing vs. a browser
-canvas).
+Web deos is the same cockpit as native, **bundled for and booted in a browser
+tab**: the real `gpui` element-tree renderer on the `gpui_web` platform backend
+(wasm32 + WebGPU canvas), driving the **same in-browser verified executor** the
+native desktop drives. It is *not* a lesser "web skin" reimplementation of the
+UI — it is one renderer, one model, two platforms (native windowing vs. a
+browser canvas).
+
+**State today (honest):** the gpui-web cockpit is bundled (`web/pkg-gpui/`) and
+runs in headless Chrome far enough to **initialize WebGPU and create the cockpit
+canvas**, but the `gpui_web` run-loop hits a closure-reentrancy error before the
+first paint — so it does *not yet render a cockpit frame in-browser*. The full
+honest ceiling, the bundle, the build script, and the verification are in
+"[The full cockpit](#the-full-cockpit-this-change)" and "[Honest verification
+(browser-run)](#honest-verification-browser-run)" below.
 
 This document states the architecture, the per-app backend map, the build
 story, and — honestly — what the first slice proves versus the distance to full
@@ -89,9 +97,29 @@ the live in-browser `World`:
   exactly as native boot does), opens a window (creating the WebGPU canvas), and
   mounts the cockpit.
 
-**What it proves:** the full gpui presentation plane — dock, surfaces,
-gpui-component widgets and all — renders to a browser canvas over the in-browser
-verified data plane. One renderer, one cockpit, two platforms.
+**What it proves (the BUNDLED + BROWSER-RUN state, honestly):** the gpui-web
+cockpit is **bundled** (`web/pkg-gpui/`, via `build-gpui.sh` → `wasm-bindgen
+--target web`, exporting `boot_cockpit`) and **runs in a real (headless-Chrome)
+browser**: `init()` resolves, `boot_cockpit()` is invoked, the `gpui_web`
+platform **initializes WebGPU successfully** (`gpui_wgpu::wgpu_context: Selected
+GPU adapter … WebGPU context initialized successfully`) and creates the cockpit
+`<canvas>`.
+
+It does **not yet paint a frame in headless Chrome.** After WebGPU init the
+`gpui_web` single-threaded run-loop throws `closure invoked recursively or after
+being dropped` (a wasm-bindgen `Closure` re-entrancy in the frame/event
+scheduler, from the `gpui_web` fork dependency) before the cockpit element tree
+paints — the canvas backing store stays 1×1 (never resized/painted). This
+reproduces in both Chrome headless modes (new + `chrome-headless-shell`), so it
+is a genuine gpui_web run-loop re-entrancy, not a flake. The honest ceiling
+today is therefore: **bundled + browser-loaded + boot_cockpit invoked + WebGPU
+context up — stops at a gpui_web run-loop closure-reentrancy before first
+paint.** The next gap is in the `gpui_web` fork's single-threaded scheduler, not
+in this crate's bundle/boot.
+
+(The gpui-free `WebImage` JSON skin — `web/pkg`, `web/pkg-release`, exports
+`webimage_*` — DOES paint+drive in headless Chrome, verified separately; that
+bar is what the real cockpit now partially clears.)
 
 ### The module lift (what made it reachable)
 
@@ -125,28 +153,66 @@ cockpit/views/dock gate is the union `any(gpui-ui, gpui-web)`, native-full enabl
 
 ## The build story
 
+One script bundles it — `starbridge-v2/web/build-gpui.sh`:
+
 ```
 cd starbridge-v2/web
-cargo build --target wasm32-unknown-unknown -p starbridge-web --features gpui-web
-# then bundle:  wasm-bindgen / wasm-pack / trunk  (the existing atlas skin uses wasm-pack)
+./build-gpui.sh                 # release (default)
+# = cargo build --release --target wasm32-unknown-unknown -p starbridge-web --features gpui-web
+#   then: wasm-bindgen --target web --out-dir pkg-gpui <…>/release/starbridge_web.wasm
+#   then: wasm-opt -Oz (if installed)
 ```
 
-The default build (`cargo build --target wasm32-unknown-unknown -p
-starbridge-web`, no features) is unchanged — it produces the gpui-free `WebImage`
-atlas skin. `gpui-web` is **purely additive**: it turns on a new
-`starbridge-v2/gpui-web` feature (gpui + gpui_platform + gpui-component, NO native
-sub-features) plus the gpui crates in the web crate, and compiles in `cockpit_web`.
+This produces `web/pkg-gpui/{starbridge_web.js, starbridge_web_bg.wasm, …}`,
+**exporting `boot_cockpit`** — which is exactly what `web/cockpit_gpui.html`
+imports (`import init, { boot_cockpit } from './pkg-gpui/starbridge_web.js'`).
+The default `web/pkg` and `web/pkg-release` bundles export only the gpui-free
+`webimage_*` skin; `pkg-gpui` is the bundle the gpui cockpit needs and is now
+produced.
 
-**Verified.** The `gpui-web` build is GREEN (`Finished dev profile`): the full
-`starbridge-v2` lib (the lifted cockpit + gpui-component widget tree) AND the
-`starbridge-web` cdylib (the `boot_cockpit` mount of the real `Cockpit`) both
-compile to `wasm32-unknown-unknown`. The debug artifact is large (debuginfo-
-dominated, ~1.1G raw / ~86M with debuginfo stripped); the shippable size is the
-release build through `wasm-opt` (the gpui-free skin's release wasm is ~9M — the
-gpui cockpit's release+opt figure lands in that order of magnitude once bundled).
+> wasm-bindgen-cli version must MATCH the resolved `wasm-bindgen` crate
+> (`starbridge-v2/Cargo.lock` → 0.2.125); a mismatched CLI fails with a schema-
+> version error. `cargo install -f wasm-bindgen-cli --version <that>`.
+
+The default build (`cargo build … -p starbridge-web`, no features) is unchanged —
+it produces the gpui-free `WebImage` atlas skin. `gpui-web` is **purely
+additive**: it turns on a new `starbridge-v2/gpui-web` feature (gpui +
+gpui_platform + gpui-component, NO native sub-features) plus the gpui crates in
+the web crate, and compiles in `cockpit_web`.
+
+**Compile + bundle: green.** The `gpui-web` release build is green (`Finished
+release profile in ~2m`): the full `starbridge-v2` lib (the lifted cockpit +
+gpui-component widget tree) AND the `starbridge-web` cdylib (the `boot_cockpit`
+mount of the real `Cockpit`) both compile to `wasm32-unknown-unknown`, and the
+`pkg-gpui` wasm-bindgen bundle is produced (release wasm ~28M unoptimized; far
+smaller through `wasm-opt -Oz`, not installed in this environment).
 gpui-component compiles with `default-features = false` (its tree-sitter syntax
 grammars are all opt-in features, none enabled) — no native font/clipboard/
 tree-sitter leaf force-pulls onto the wasm path.
+
+## Honest verification (browser-run)
+
+The bundle was loaded and run in **headless Chrome** (Chrome 151 dev, WebGPU via
+`--enable-unsafe-webgpu --use-angle=metal`), the same browser-run bar the
+gpui-free `WebImage` skin already passes. What was observed, in order:
+
+1. `./pkg-gpui/starbridge_web.js` + `_bg.wasm` fetch (200), `init()` resolves.
+2. `boot_cockpit()` is invoked (no synchronous throw).
+3. `[INFO] gpui_web::dispatcher` falls back to single-threaded (no
+   SharedArrayBuffer — expected without COOP/COEP headers).
+4. `[INFO] gpui_wgpu::wgpu_context: Selected GPU adapter … (BrowserWebGpu)`
+   then `[INFO] gpui_web::platform: WebGPU context initialized successfully`.
+   **WebGPU is up; the cockpit `<canvas>` is created.**
+5. The `gpui_web` run-loop then throws **`closure invoked recursively or after
+   being dropped`** (a wasm-bindgen `Closure` re-entrancy in the frame/event
+   scheduler) **before the first paint** — the canvas backing store stays 1×1.
+
+So the honest ceiling is: **bundled + browser-loaded + `boot_cockpit` invoked +
+WebGPU context initialized — stops at a `gpui_web` single-threaded run-loop
+closure-reentrancy before the cockpit paints its first frame.** It reproduces in
+both Chrome headless modes, so it is a genuine `gpui_web` (fork dependency) run-
+loop issue, not a flake and not a bundle/boot defect in this crate. The next
+work is in the `gpui_web` fork's single-threaded scheduler.
 
 ### The minimal feature set (what's ON / what's deliberately OFF)
 
@@ -191,8 +257,11 @@ Servo is the lone native-only holdout.
 
 ## Distance to full parity (honest)
 
-The full `cockpit::Cockpit` now renders in-browser. Two of the three former
-blockers are CLOSED; the remaining gap is the native-resource backends:
+The full `cockpit::Cockpit` is now **bundled and booted in-browser** (WebGPU
+initializes; first paint is blocked by a `gpui_web` run-loop reentrancy — see
+"Honest verification" above). Two of the three former blockers are CLOSED; the
+remaining gaps are (a) the `gpui_web` run-loop closure-reentrancy that precedes
+first paint, and (b) the native-resource backends:
 
 1. **`cockpit::Cockpit` is binary-private.** ✅ CLOSED. `cockpit`/`login`/`views`
    were lifted from `main.rs` into the library behind a gpui-gated `pub mod`
@@ -204,17 +273,23 @@ blockers are CLOSED; the remaining gap is the native-resource backends:
    with `default-features = false` (its tree-sitter syntax grammars are all
    opt-in features, none enabled). `gpui_component::init(cx)` is called at web
    boot exactly as native does.
-3. **The native-resource backends** (terminal PTY, editor Fs, web-shell servo) —
+3. **The `gpui_web` run-loop reentrancy (NEW, the live blocker).** ⏳ OPEN. After
+   WebGPU init, the single-threaded run-loop throws `closure invoked recursively
+   or after being dropped` before first paint (see "Honest verification"). This
+   is in the `gpui_web` fork's scheduler, not this crate; it is what stands
+   between "boots + WebGPU up" and "paints the cockpit".
+4. **The native-resource backends** (terminal PTY, editor Fs, web-shell servo) —
    each needs its wire per the app map. These surfaces are feature-gated OFF the
-   web build (`dev-surfaces`/`web-shell` are not in the `gpui-web` feature), so
-   the cockpit shell + its in-browser surfaces render; the dev-loop surfaces
-   that need a native resource are dark until their backend is wired. The UI for
-   terminal/editor/chat is already gpui and web-ready; the backends are the work.
+   web build (`dev-surfaces`/`web-shell` are not in the `gpui-web` feature). The
+   UI for terminal/editor/chat is already gpui and web-ready; the backends are
+   the work.
 
-None of these is "can gpui run in the browser" — that is settled (`gpui_web` is a
-complete platform and the full cockpit boots on it). The remaining work is
-**wire the three native-resource backends** (websocket / Fs / wasm-SDK), with
-servo noted as the single native-only surface.
+"Can gpui *boot* in the browser" is settled — `gpui_web` is a complete platform,
+the full cockpit bundle loads, and WebGPU initializes. "Does gpui *paint* the
+cockpit in the browser" is **not yet** settled: the run-loop reentrancy (#3)
+blocks the first frame in headless Chrome. The remaining work is that run-loop
+fix, then the three native-resource backends (websocket / Fs / wasm-SDK), with
+servo the single native-only surface.
 
 ## Files
 
@@ -232,5 +307,10 @@ servo noted as the single native-only surface.
   self as starbridge_v2`.
 - `starbridge-v2/src/main.rs` — `use starbridge_v2::{cockpit, login};` (the bin
   reaches the now-lib modules).
-- `starbridge-v2/web/cockpit_gpui.html` — boots the wasm bundle and calls
+- `starbridge-v2/web/cockpit_gpui.html` — boots the `pkg-gpui` bundle and calls
   `boot_cockpit()`.
+- `starbridge-v2/web/build-gpui.sh` — the one-command bundle: cargo build
+  (`--features gpui-web`, wasm32) → `wasm-bindgen --target web --out-dir
+  pkg-gpui` (exports `boot_cockpit`) → optional `wasm-opt -Oz`.
+- `starbridge-v2/web/pkg-gpui/` — the produced bundle (`starbridge_web.js` +
+  `_bg.wasm`, exporting `boot_cockpit`) that `cockpit_gpui.html` imports.
