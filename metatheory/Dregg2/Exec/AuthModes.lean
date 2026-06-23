@@ -441,7 +441,7 @@ local instance demoVerifiable : Verifiable S W := verifiableOfRegistry demoReg .
 /-- A root biscuit attenuated to a height window `[100, 200]` (no third-party caveats). -/
 def demoToken : Token Cx Gw :=
   { kind := .biscuit
-  , caveats := [ .local (fun h => decide (100 ≤ h)), .local (fun h => decide (h ≤ 200)) ] }
+  , caveats := [ .opaque (fun h => decide (100 ≤ h)), .opaque (fun h => decide (h ≤ 200)) ] }
 
 /-- The identity handoff cert: A=`true` introduces B=`false` to target `true`,
 conferring exactly what it holds (held = granted, the simplest non-amplifying case). -/

@@ -433,7 +433,7 @@ the verbs/window the worker may invoke. Its `admits` is the meet of both caveats
 `caveatCtx` (height). The starbridge `baseCapCtx.caveatCtx = 150` is INSIDE the window. -/
 def agentToken : Token Cx Gw :=
   { kind := .biscuit
-  , caveats := [ .local (fun h => decide (100 ≤ h)), .local (fun h => decide (h ≤ 200)) ] }
+  , caveats := [ .opaque (fun h => decide (100 ≤ h)), .opaque (fun h => decide (h ≤ 200)) ] }
 
 /-- The cap-context whose `caveatCtx` (height `150`) lands INSIDE the token's `[100,200]` window —
 the in-scope presentation. (Everything else mirrors `baseCapCtx`.) -/

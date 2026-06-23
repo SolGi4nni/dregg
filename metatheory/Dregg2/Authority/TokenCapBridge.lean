@@ -67,7 +67,7 @@ open Dregg2.Circuit.Argus (RecStmt interp interp_checkSubset checkSubset_admits_
 
 The cap-crown's non-amplification atom is `granted ⊆ held` over `ExecAuth = Finset Auth`
 (`Exec/Caps.lean`, `confRights`). We render it TWICE — once as an agent-layer token caveat
-(`capCaveat`, a `Authority.Caveat.local` check), once as the circuit's cell-program
+(`capCaveat`, a `Authority.Caveat.opaque` check), once as the circuit's cell-program
 (`capCrownStmt`, a `RecStmt.checkSubset` — the EXACT gate `Effects/Attenuate.lean` welds in-band) —
 and §2 proves the two renderings are the SAME Boolean. -/
 
@@ -85,11 +85,11 @@ structure RightsCtx where
 -- never `Repr`, so none is needed.)
 
 /-- **`capCaveat`** — the rights-narrowing token caveat (the `CapabilityCaveat` `Authority.Caveat`'s
-docstring names): a `Caveat.local` whose check is the genuine non-amplification decision
+docstring names): a `Caveat.opaque` whose check is the genuine non-amplification decision
 `decide (ctx.granted ⊆ ctx.held)` over `ExecAuth = Finset Auth`. This is the agent-layer (biscuit
 fact / macaroon 1st-party caveat) rendering of `granted ⊆ held` — fail-closed, decidable. -/
 def capCaveat : Caveat RightsCtx Unit :=
-  .local (fun ctx => decide (ctx.granted ≤ ctx.held))
+  .opaque (fun ctx => decide (ctx.granted ≤ ctx.held))
 
 /-- **`capToken granted held`** — a token bearing exactly one `capCaveat` (a capability-bearing
 verb's credential). Kind is `macaroon` (cell-scoped); the kind does not enter the rights decision.

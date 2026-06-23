@@ -586,7 +586,7 @@ def distAttenuationBound_derived (log : List RevEvent) (cred : VC Digest Proof)
 /-- A concrete narrowed pair for the teeth: a bare biscuit parent, narrowed by a refusing caveat
 (a REAL narrowing — the child admits nothing, the parent admitted everything). -/
 def demoTok : Token Unit Unit := { kind := .biscuit, caveats := [] }
-def demoCav : Caveat Unit Unit := .local (fun _ => false)
+def demoCav : Caveat Unit Unit := .opaque (fun _ => false)
 
 /-- **The derived attenuation fibre inherits the NEGATIVE TOOTH**: over the distributed base
 point its window is strictly positive AND the stale broad token is STILL HONORED inside it

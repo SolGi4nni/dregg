@@ -345,7 +345,7 @@ def inbox2 : Value :=
 /-- An authorized-sender biscuit: a root biscuit attenuated with "request height ≤ 1000" (a clean
 authorized-sender capability). A real inbox would bind it to `sender_set_root` (the `-- OPEN:`). -/
 def senderToken : Token SendCtx Unit :=
-  (Token.mk .biscuit []).attenuate (.local (fun h => decide (h ≤ 1000)))
+  (Token.mk .biscuit []).attenuate (.opaque (fun h => decide (h ≤ 1000)))
 
 /-- No third-party discharges needed. -/
 def noDischarges : Discharges Unit := fun _ => false

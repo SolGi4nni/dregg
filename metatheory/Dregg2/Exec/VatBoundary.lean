@@ -129,7 +129,7 @@ theorem vat_boundary_cross (s s' : ChainedState) (t : Turn)
 
 /-- A cell at chain-length 0; the cross-vat turn presents a biscuit caveated "actor = 0". -/
 def actorIs0 : Token Req Unit :=
-  { kind := .biscuit, caveats := [.local (fun r => decide (r.actor = 0))] }
+  { kind := .biscuit, caveats := [.opaque (fun r => decide (r.actor = 0))] }
 
 /-- A crossing turn `t1` (actor 0) presenting the `actorIs0` biscuit. -/
 def crossT1 : VatTurn := { turn := t1, crossing := true, token := actorIs0, discharges := fun _ => false }

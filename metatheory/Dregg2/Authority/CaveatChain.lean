@@ -436,8 +436,8 @@ def root5 : Chain H Unit Nat Nat Nat := seed (Ctx := H) (Gateway := Unit) 5 9
 
 /-- Attenuate with "height ≥ 100" (encoded as bytes `100`) then "height ≤ 200" (bytes `200`). -/
 def windowed : Chain H Unit Nat Nat Nat :=
-  (root5.append { caveat := .local (fun h => decide (100 ≤ h)), encoded := 100 }).append
-        { caveat := .local (fun h => decide (h ≤ 200)),  encoded := 200 }
+  (root5.append { caveat := .opaque (fun h => decide (100 ≤ h)), encoded := 100 }).append
+        { caveat := .opaque (fun h => decide (h ≤ 200)),  encoded := 200 }
 
 def noD : Discharges Unit := fun _ => false
 
@@ -457,7 +457,7 @@ def forgedDropped : Chain H Unit Nat Nat Nat :=
 
 /-- A FORGED chain: tamper the encoded bytes of a caveat (the `test_tampered_caveat_fails` attack). -/
 def forgedTampered : Chain H Unit Nat Nat Nat :=
-  { windowed with links := [{ caveat := .local (fun _ => true), encoded := 999 }] ++ windowed.links.tail }
+  { windowed with links := [{ caveat := .opaque (fun _ => true), encoded := 999 }] ++ windowed.links.tail }
 
 #guard forgedTampered.verify == false    -- replayed tail diverges from stored tail
 
@@ -472,7 +472,7 @@ theorem honest_unforgeable : honestMacKernel.unforgeable := by
 
 /-- The last caveat of `windowed` (`encoded := 200`), exhibiting the `dropLast ++ [last]` split. It is
 DEFINITIONALLY the second appended link, so the split holds by `rfl`. -/
-def windowedLast : Link H Unit Nat := { caveat := .local (fun h => decide (h ≤ 200)), encoded := 200 }
+def windowedLast : Link H Unit Nat := { caveat := .opaque (fun h => decide (h ≤ 200)), encoded := 200 }
 
 /-- `windowed.links = windowed.links.dropLast ++ [windowedLast]` — the non-empty split obligation.
 `windowed.links` is the concrete two-element list `[c₁, windowedLast]`, so it reduces by `rfl`. -/

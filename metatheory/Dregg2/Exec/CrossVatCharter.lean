@@ -110,7 +110,7 @@ theorem charter_no_toctou (ch : Charter) {A B A' B' : KernelState}
 
 /-- A biscuit caveated to a specific actor (the cross-vat leg authorizer). -/
 def actorBiscuit (n : Nat) : Token Req Unit :=
-  { kind := .biscuit, caveats := [.local (fun r => decide (r.actor = n))] }
+  { kind := .biscuit, caveats := [.opaque (fun r => decide (r.actor = n))] }
 
 /-- The standard HTLC-style covenant charter: `covenantCoord` + `goodBi` + per-leg actor biscuits. -/
 def demoCharter : Charter :=

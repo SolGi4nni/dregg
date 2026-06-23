@@ -164,8 +164,8 @@ def pvChainRoot : Chain Cx Gw (Key Tg) Bt Tg := seed (Ctx := Cx) (Gateway := Gw)
 /-- A GOOD voter macaroon chain: attenuated with `height ≥ 100` then `height ≤ 200` — admits
 `pvChainCtx = 150`. -/
 def pvGoodChain : Chain Cx Gw (Key Tg) Bt Tg :=
-  (pvChainRoot.append { caveat := .local (fun h => decide (100 ≤ h)), encoded := 100 }).append
-    { caveat := .local (fun h => decide (h ≤ 200)), encoded := 200 }
+  (pvChainRoot.append { caveat := .opaque (fun h => decide (100 ≤ h)), encoded := 100 }).append
+    { caveat := .opaque (fun h => decide (h ≤ 200)), encoded := 200 }
 
 /-- A FORGED voter chain: `windowed`'s tail with the last caveat dropped (the
 `test_removed_caveat_fails` attack) — `verify = false`. -/
@@ -174,7 +174,7 @@ def pvForgedChain : Chain Cx Gw (Key Tg) Bt Tg :=
 
 /-- A caveat-VIOLATION voter chain: verifies but does NOT admit `pvChainCtx = 150` (`height ≤ 50` only). -/
 def pvCaveatViolationChain : Chain Cx Gw (Key Tg) Bt Tg :=
-  pvChainRoot.append { caveat := .local (fun h => decide (h ≤ 50)), encoded := 50 }
+  pvChainRoot.append { caveat := .opaque (fun h => decide (h ≤ 50)), encoded := 50 }
 
 /-- `NodeAuth` carrying a macaroon chain (the token+chain voter decoration). -/
 def mkAuthWithChain (cred : Authorization Dg Pf) (chain : Chain Cx Gw (Key Tg) Bt Tg) : DNodeAuth :=

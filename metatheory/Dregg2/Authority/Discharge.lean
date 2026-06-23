@@ -45,8 +45,11 @@ theorem caveat_ok_mono (c : Caveat Ctx Gateway) (ctx : Ctx)
     {d d' : Discharges Gateway} (hle : Discharges.le d d')
     (h : c.ok ctx d = true) : c.ok ctx d' = true := by
   cases c with
-  | «local» check =>
-    -- the local check is independent of the discharges
+  | pred p view =>
+    -- a reified predicate caveat is independent of the discharges
+    simpa [Caveat.ok] using h
+  | «opaque» check =>
+    -- the opaque check is independent of the discharges
     simpa [Caveat.ok] using h
   | thirdParty g =>
     -- a discharged gateway stays discharged
@@ -151,8 +154,8 @@ inductive GW where
 turn that cannot become live until the oracle gateway discharges it. -/
 def suspendedTurn : Token Height GW :=
   ((({ kind := .biscuit, caveats := [] } : Token Height GW)
-      |>.attenuate (.local (fun h => decide (100 ≤ h))))
-      |>.attenuate (.local (fun h => decide (h ≤ 200))))
+      |>.attenuate (.opaque (fun h => decide (100 ≤ h))))
+      |>.attenuate (.opaque (fun h => decide (h ≤ 200))))
       |>.attenuate (.thirdParty .oracle)
 
 /-- No gateway discharged yet. -/

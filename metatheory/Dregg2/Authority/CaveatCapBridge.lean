@@ -276,7 +276,7 @@ abbrev BNodeAuth :=
 is, verbatim, the kernel's `is_attenuation(held, granted)` atom. Appending it to a chain renders the
 delegation's non-amplification *on the wire*. -/
 def delegCaveat : Caveat RPair Gw :=
-  .local (fun p => decide (p.1 ≤ p.2))
+  .opaque (fun p => decide (p.1 ≤ p.2))
 
 /-- **`delegChain granted held` — a verifying macaroon chain carrying exactly the delegation caveat.**
 `seed` then one honest `append` of the `delegCaveat` link (encoded bytes `0`, immaterial to the
@@ -449,7 +449,7 @@ single hand-wired one. This section closes that: it proves the permitted-action 
 induction on the chain, in the literal `chainGate ch a ↔ capAuthority (capOf ch) a` shape.
 
 The setup is the honest macaroon semantics, untouched: a chain link is a rights-narrowing caveat
-`actionCaveat m := .local (fun a => decide (a ≤ m))` reading the action `a : ExecAuth` it gates against
+`actionCaveat m := .opaque (fun a => decide (a ≤ m))` reading the action `a : ExecAuth` it gates against
 the link's kept-rights mask `m`. The chain admits `a` iff EVERY link passes — `∀ m ∈ masks, a ≤ m`.
 The cap side: the chain's conferred authority is `caveatChainAuthority ⊤ masks` (the §1 fold from the
 top cap), and the cap CONFERS `a` iff `a ≤ caveatChainAuthority ⊤ masks` (the kernel `granted ≤ held`
@@ -473,7 +473,7 @@ open Dregg2.Exec (ExecAuth)
 within the link's kept-rights mask `m`). This is the honest "a key may only narrow" caveat, one mask
 per link; the action `a` IS the chain context. -/
 def actionCaveat (m : ExecAuth) : Caveat ExecAuth Gw :=
-  .local (fun a => decide (a ≤ m))
+  .opaque (fun a => decide (a ≤ m))
 
 /-- **`actionLinks masks`** — render a list of kept-rights masks as macaroon links (encoded bytes
 `0`, immaterial to the admit semantics; the HMAC carries integrity, the caveat carries narrowing). -/
