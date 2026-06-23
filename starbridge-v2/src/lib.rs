@@ -183,6 +183,13 @@ pub mod app_worldspine;
 #[cfg(feature = "embedded-executor")]
 pub mod shared_fork;
 
+// AGENT ATTACH — bind the confined agent's `run_js` (deos-js) to the cockpit's LIVE
+// World, so a Claude in Hermes drives the operator's ACTUAL cells (or a fork). The
+// cockpit-side `deos_js::WorldSink` weld + the cap-bounded attach. Gated on
+// `agent-js` (pulls deos-js's mozjs/SpiderMonkey).
+#[cfg(feature = "agent-js")]
+pub mod agent_attach;
+
 // The comms-PD chat source — the REAL, executor-backed `deos_matrix::ChatSource`
 // the interactive deos-chat surface drives: it holds a live `World` and makes the
 // chat UI's membrane affordances genuine (mint/rehydrate/drive/stitch over real
@@ -644,6 +651,17 @@ pub mod guest;
     feature = "embedded-executor"
 ))]
 pub mod self_hosting;
+// THE WHOLE ZED WORKSPACE AS A COCKPIT PANE — `src/zed_full_pane.rs` is the
+// `CockpitSurface` that hosts the full `Entity<workspace::Workspace>` (the real
+// editor/workspace/project + every panel over a FirmamentFs cell-ledger). It is
+// gated on `zed-full-pane`, a feature deliberately LEFT UNDECLARED: pulling
+// deos-zed-full collides at `links = "sqlite3"` (Zed's `sqlez` vs this cockpit's
+// matrix-sdk-sqlite), so the dep can't be declared without breaking the default
+// build. The module compiles + the gpui graph unifies the instant that one
+// dep-graph seam is reconciled (see the Cargo.toml `deos-zed-full` comment). The
+// full Workspace runs + bakes its PNG STANDALONE in `deos-zed-full` today.
+#[cfg(feature = "zed-full-pane")]
+pub mod zed_full_pane;
 // THE ONE UNIFIED BOOT — a live `--node`-attached pane (the node's real
 // cells/receipts/status over the wire) STANDING ALONGSIDE the firmament editor +
 // the live-PTY terminal, in a SINGLE window/frame. `--render-unified-boot` bakes

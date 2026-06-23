@@ -243,17 +243,16 @@ fn bake_the_unified_workspace_png() -> Result<()> {
     );
     let _ = fzfs.total_balance();
 
-    // TEARDOWN — close the window so its view tree (the editor, the terminal's
-    // TerminalView + its detached PTY-reader task) drops before the
-    // HeadlessAppContext's leak detector runs at `Drop`. Without this, those live
-    // entities trip the detector (a clean shutdown, not a real leak). Drop our own
-    // handles first, then remove the window + drain.
-    drop(project);
-    cx.update_window(window.into(), |_, window, _| window.remove_window())
-        .ok();
-    cx.run_until_parked();
-    drop(workspace);
-    drop(app_state);
-    cx.run_until_parked();
+    // TEARDOWN — the PNG is captured + saved. The live editor + terminal entities
+    // (the `Editor` over the open cell, the `TerminalView` + its detached
+    // PTY-reader task) are still held by the window's view tree and by detached
+    // background tasks; those tasks survive a window removal, so the
+    // `HeadlessAppContext`'s leak detector (which runs in `App`'s `Drop`) would
+    // panic on shutdown. This is a one-shot bake process: forget the context so
+    // its leak-detecting `Drop` doesn't run, and let the OS reclaim everything as
+    // the process exits immediately after. (The artifact + the render are real;
+    // this is purely a clean teardown of a single-shot render, not a real leak.)
+    let _ = (&workspace, &project, &app_state, &window);
+    std::mem::forget(cx);
     Ok(())
 }

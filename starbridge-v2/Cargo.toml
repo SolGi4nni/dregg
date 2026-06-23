@@ -154,6 +154,16 @@ native-full = ["embedded-executor", "app-registry", "gpui-ui", "live-node", "ren
 # turns), not disk — the cockpit editor is firmament-backed by default.
 dev-surfaces = ["dep:deos-zed", "dep:deos-terminal", "dep:deos-hermes", "dep:deos-matrix", "firmament"]
 
+# zed-full-pane — mount the WHOLE Zed `workspace::Workspace` over the cell-ledger
+# as a single cockpit pane — is BLOCKED at the dep-graph level by the
+# `links = "sqlite3"` conflict between `sqlez` (Zed workspace persistence, pulled by
+# deos-zed-full) and `matrix-sdk-sqlite` (already in this cockpit via deos-matrix).
+# See the `deos-zed-full` dependency comment in the `cfg(not(wasm32))` block. The
+# feature + dep are intentionally left UNDECLARED so the default build stays green;
+# the full Workspace runs + bakes its PNG standalone in `deos-zed-full`. To close
+# the seam, reconcile the two `libsqlite3-sys`, then re-add the dep + this feature +
+# `src/zed_full_pane.rs` (the `CockpitSurface` that hosts the `Entity<Workspace>`).
+
 # agent-js — THE AGENT'S HANDS ON THE REAL GLASS. Binds the confined agent's
 # `run_js` (deos-js, real SpiderMonkey via mozjs) to the cockpit's LIVE `World`:
 # the agent crawls + drives the operator's ACTUAL cells (or a `world.fork()`),
@@ -463,6 +473,22 @@ gpui-component = { path = "../../gpui-component/crates/ui", default-features = f
 # gpui-component (vendored); deos-terminal rides alacritty_terminal.
 deos-zed = { path = "../deos-zed", default-features = false, features = ["cockpit-surface", "highlight-common"], optional = true }
 deos-terminal = { path = "../deos-terminal", features = ["cockpit-surface"], optional = true }
+# THE WHOLE-WORKSPACE PANE — mounting deos-zed-full (Zed's real
+# `editor`/`workspace`/`project` + all panels over the cell-ledger) as a cockpit
+# pane is BLOCKED by a HARD `links = "sqlite3"` native-library conflict, NOT by
+# gpui (the gpui patch unifies — `cargo metadata --features zed-full-pane`
+# resolves). The collision: deos-zed-full → `workspace` → `sqlez` →
+# `libsqlite3-sys 0.30` (its workspace-state DB) links `sqlite3`, and this cockpit
+# already links `sqlite3` via `deos-matrix` → `matrix-sdk` → `matrix-sdk-sqlite` →
+# `rusqlite 0.37` → `libsqlite3-sys 0.35`. Cargo forbids two packages with the same
+# `links` value in one binary, so even merely DECLARING this optional dep breaks the
+# workspace build (the `web/` member pulls the matrix sqlite path). The full
+# Workspace therefore runs + bakes its PNG STANDALONE in deos-zed-full; the precise
+# mount seam to close = reconcile the two `libsqlite3-sys` (drop `sqlez`'s sqlite
+# from the embedded `workspace` persistence, or share one libsqlite3-sys across both
+# — a real, bounded dep-graph reconciliation, tracked in HORIZONLOG). Until then the
+# dep is intentionally NOT declared here, so the default cockpit build stays green.
+# deos-zed-full = { path = "../deos-zed-full", features = ["full-zed"], optional = true }
 # THE AGENT'S HANDS (deos-js) bound to the LIVE cockpit World — `agent-js`. Real
 # SpiderMonkey via mozjs; the `WorldSink` weld in `src/agent_attach.rs` runs the
 # agent's JS over a provided `World` (the cockpit's, or a fork). Its OWN workspace
