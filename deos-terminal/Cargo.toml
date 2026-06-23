@@ -46,18 +46,54 @@ description = "A real terminal emulator (alacritty_terminal PTY + grid) rendered
 name = "deos_terminal"
 path = "src/lib.rs"
 
+# The native demo window (gpui). wasm32 has no native windowing — the gpui view
+# mounts on `gpui_web` from the cockpit-web crate, not from a standalone bin — so
+# this bin is native-only.
 [[bin]]
 name = "deos-terminal-demo"
 path = "src/bin/demo.rs"
+required-features = ["native-ui"]
+
+# The PTY-over-WebSocket dev backend: spawns `$SHELL` on a real PTY per WS
+# connection and bridges raw bytes both ways, so an in-browser terminal grid (no
+# PTY in a tab) can drive a real shell. Native-only (it IS the native resource the
+# browser reaches over the wire).
+[[bin]]
+name = "deos-terminal-pty-ws"
+path = "src/bin/pty_ws.rs"
+required-features = ["pty-ws-server"]
 
 [features]
-default = []
+# Default builds the native presentation stack (gpui view + alacritty grid) AND
+# the PTY-over-WS dev backend — `cargo build` (native) gives you the demo window
+# and the pty-ws server. On wasm32 these features must be turned OFF (alacritty's
+# PTY/`polling` and the native gpui platform don't link to wasm); the wasm build
+# is `cargo build --target wasm32-unknown-unknown --no-default-features` and gets
+# the `transport` module's WS client only.
+default = ["native-ui", "pty-ws-server"]
+
+# The gpui view + alacritty grid model + the native (PTY) transport. Native-only.
+native-ui = []
+
+# The PTY-over-WebSocket server bin + its native PTY/WS deps.
+pty-ws-server = ["dep:tokio", "dep:tokio-tungstenite", "dep:futures-util", "dep:portable-pty"]
+
 # Build the `cockpit_surface` adapter module (the dock-mountable `TerminalSurface`
 # handle). Off by default so the standalone demo doesn't pull it; starbridge-v2
-# enables it to mount the terminal as a dock pane.
-cockpit-surface = []
+# enables it to mount the terminal as a dock pane. Implies `native-ui` (the view).
+cockpit-surface = ["native-ui"]
 
 [dependencies]
+# ── all-target deps (the transport seam + its wire codec) ────────────────────
+anyhow = "1"
+log = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# ── native deps (the gpui view + alacritty grid + the PTY backend) ───────────
+# alacritty pulls `polling`/`home` which do NOT compile to wasm32; gpui here is
+# the NATIVE platform. Both are gated off the wasm build.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 # The terminal model: a real PTY + xterm/vt parser + grid, the exact fork+rev Zed
 # pins (and that our gpui fork's terminal crate compiled against), so the API
 # matches what we read out of Zed's `alacritty.rs`.
@@ -69,10 +105,38 @@ gpui = { git = "https://github.com/emberian/zed", rev = "407a6ffd977d82b828e392f
 gpui_platform = { git = "https://github.com/emberian/zed", rev = "407a6ffd977d82b828e392f92db5cb34edea9549", features = ["font-kit", "runtime_shaders"] }
 
 bitflags = "2"
-anyhow = "1"
-log = "0.4"
 parking_lot = "0.12"
 libc = "0.2"
+
+# The PTY-over-WS dev backend (a small tokio + tokio-tungstenite server + a real
+# PTY via portable-pty). Optional, pulled by the `pty-ws-server` feature.
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time"], optional = true }
+tokio-tungstenite = { version = "0.24", optional = true }
+futures-util = { version = "0.3", optional = true }
+portable-pty = { version = "0.8", optional = true }
+
+# ── wasm deps (the WebSocket transport the browser terminal speaks) ──────────
+# On wasm32 the transport is a `web_sys::WebSocket` to the pty-ws server: it sends
+# keystrokes/resize out and pushes PTY output bytes into a vte-parsed grid sink.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2"
+js-sys = "0.3"
+vte = { version = "0.15", default-features = false, features = ["std", "ansi"] }
+web-sys = { version = "0.3", features = [
+    "BinaryType",
+    "Event",
+    "MessageEvent",
+    "CloseEvent",
+    "WebSocket",
+    "Blob",
+] }
+
+# Native dev-deps for the end-to-end PTY-over-WS test: a real tungstenite WS
+# client that dials the `deos-terminal-pty-ws` server bin and proves the wire.
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "time"] }
+tokio-tungstenite = "0.24"
+futures-util = "0.3"
 
 # gpui → font-kit → pathfinder pulls `pathfinder_simd 0.5.6`, which fails to
 # compile on a modern toolchain (the `simd_{minimum,maximum}_number_nsz`

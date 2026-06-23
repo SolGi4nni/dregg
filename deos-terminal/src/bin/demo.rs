@@ -6,11 +6,22 @@
 //! view run a real shell; the same `TerminalView` mounts into the cockpit dock
 //! via `starbridge-v2/src/dock/terminal_surface.rs`.
 
+// Native-only: a gpui window over the native PTY. On wasm the gpui view mounts
+// via `gpui_web` from the cockpit-web crate, not a standalone bin — a stub `main`
+// keeps the bin target compiling (inert) there.
+#![cfg_attr(target_arch = "wasm32", allow(unused))]
+
+#[cfg(target_arch = "wasm32")]
+fn main() {}
+
+#[cfg(not(target_arch = "wasm32"))]
 use deos_terminal::view::TerminalView;
+#[cfg(not(target_arch = "wasm32"))]
 use gpui::{
     px, size, App, AppContext, Bounds, Focusable, TitlebarOptions, WindowBounds, WindowOptions,
 };
 
+#[cfg(not(target_arch = "wasm32"))]
 fn main() {
     // The windowing platform (metal/wgpu) is provided by `gpui_platform`, which
     // builds the concrete `Application` — the same entry starbridge-v2 uses.

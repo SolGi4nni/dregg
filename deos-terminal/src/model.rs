@@ -398,6 +398,34 @@ impl Drop for Terminal {
     }
 }
 
+/// The native local PTY behind the transport seam: the view writes keystrokes
+/// through this trait, the same one the wasm `WsTransport` implements. The grid
+/// (the alacritty `Term`) is the output sink the view snapshots via
+/// [`Terminal::content`]; the real resize (cell-metric-aware, `&mut`) is
+/// [`Terminal::resize`], which the trait's `&self` `resize` mirrors best-effort.
+impl crate::transport::TerminalTransport for Terminal {
+    fn write(&self, bytes: &[u8]) {
+        self.write(bytes.to_vec());
+    }
+
+    fn resize(&self, cols: u16, rows: u16) {
+        // Resize the grid (the lock path needs only `&self`); the PTY winsize is
+        // updated by the view's `&mut` `Terminal::resize` with real cell metrics.
+        self.term
+            .lock()
+            .resize(TermSize::new(cols as usize, rows as usize));
+        self.listener.bump();
+    }
+
+    fn has_exited(&self) -> bool {
+        self.listener.has_exited()
+    }
+
+    fn generation(&self) -> u64 {
+        self.listener.generation()
+    }
+}
+
 // The 16 ANSI colors (a standard dark palette) + default fg/bg. We resolve named
 // colors against this fixed palette and indexed colors against the xterm 256
 // ramp, rather than threading a full theme through — a self-contained, good-

@@ -16,6 +16,7 @@ use gpui::{
 
 use crate::keymap::to_esc_str;
 use crate::model::{RenderCell, Rgba, Terminal, TermSize, DEFAULT_BG, DEFAULT_FG};
+use crate::transport::TerminalTransport;
 
 /// Font size (px) and line-height multiple for the terminal grid.
 const FONT_SIZE: f32 = 13.0;
@@ -89,8 +90,11 @@ impl TerminalView {
         let content = self.terminal.content();
         let modes = content.key_modes();
 
+        // Keystrokes leave through the transport SEAM (`TerminalTransport::write`)
+        // — the same trait the wasm `WsTransport` implements. On native it lands
+        // in the local PTY; on web the identical call rides the WebSocket.
         if let Some(esc) = to_esc_str(&ev.keystroke, modes, self.option_as_meta) {
-            self.terminal.write_str(&esc);
+            TerminalTransport::write(&self.terminal, esc.as_bytes());
             cx.notify();
             return;
         }
@@ -98,7 +102,7 @@ impl TerminalView {
         // No escape sequence: send the typed character(s) verbatim.
         if let Some(text) = &ev.keystroke.key_char {
             if !text.is_empty() {
-                self.terminal.write_str(text);
+                TerminalTransport::write(&self.terminal, text.as_bytes());
                 cx.notify();
                 return;
             }
@@ -109,7 +113,7 @@ impl TerminalView {
         let key = &ev.keystroke.key;
         let m = &ev.keystroke.modifiers;
         if !m.control && !m.platform && !m.function && key.chars().count() == 1 {
-            self.terminal.write_str(key);
+            TerminalTransport::write(&self.terminal, key.as_bytes());
             cx.notify();
         }
     }
@@ -155,8 +159,14 @@ impl TerminalView {
             .unwrap_or(true);
         if changed {
             self.last_bounds = Some(bounds);
-            self.terminal
-                .resize(size, f32::from(cell_w) as u16, f32::from(cell_h) as u16);
+            // The inherent, cell-metric-aware resize (disambiguated from the
+            // `TerminalTransport::resize` seam method, which is in scope here).
+            Terminal::resize(
+                &mut self.terminal,
+                size,
+                f32::from(cell_w) as u16,
+                f32::from(cell_h) as u16,
+            );
         }
     }
 }
