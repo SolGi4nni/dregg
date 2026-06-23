@@ -368,5 +368,35 @@
     "explainer": "A real two-node dregg-node federation over QUIC gossip + blocklace consensus: a faucet turn on A gossips to B and both DAGs converge byte-identically to consensus-attested finality. (No committed PNG \u2014 the proof is the runbook + the named net/node tests.)",
     "file": null,
     "size": null
+  },
+  {
+    "id": "surface:unified-boot",
+    "tab": "unified-boot",
+    "label": "THE UNIFIED BOOT",
+    "bake": "external",
+    "deep": "unified-boot",
+    "explainer": "One window, three panes: a LIVE --node-attached pane (a real running dregg-node's /status + cells + latest receipt over the wire) beside a FirmamentFs editor and a live PTY terminal \u2014 the cockpit panes standing alongside a real node, not a mock. src `deos-unified-boot.png`. Honest seam: an editor save commits to the cockpit's LOCAL World (the node is read-only-synced); a real over-the-wire write-back is a separate lane (route the save through NodeClient::submit_turn).",
+    "file": "unified-boot.png",
+    "size": null
+  },
+  {
+    "id": "surface:scripting-js",
+    "tab": "scripting-js",
+    "label": "REFLECTIVE JS SCRIPTING",
+    "bake": "external",
+    "deep": "scripting-js",
+    "explainer": "Cap-gated Pharo: real SpiderMonkey (mozjs) where the JS objects you touch ARE live handles into the running image \u2014 deos.world.cells() crawls the ledger, deos.cell(id).reflect() reads the four substances, .as(viewer) is a cap-bounded frustum (unreachable = absent, never forged), and an applet's affordance fire is a real verified turn (a receipt). Reflection is a READ (no turns); interaction is production-under-non-forgeability. (No committed PNG \u2014 the proof is the deos-js + deos-reflect test suites.)",
+    "file": null,
+    "size": null
+  },
+  {
+    "id": "surface:deos-reflect",
+    "tab": "deos-reflect",
+    "label": "deos-reflect SUBSTRATE",
+    "bake": "external",
+    "deep": "deos-reflect",
+    "explainer": "The gpui-free cap-bounded reflective substrate, reusable off a bare dregg_cell::Ledger: substance (four substances + Inspectable, fields read PUBLICLY so Committed redacts) \u00b7 graph (OcapGraph: nodes/edges/reachability/layers/cycles) \u00b7 frustum (the per-viewer cap-bounded crawl) \u00b7 affordances (cap-gated projection by is_attenuation) \u00b7 present (substrate-pure faces: RawFields \u00b7 Graph \u00b7 DomainVisual \u00b7 Provenance). The shared shape under both dregg-mcp and the JS scripting env. (No committed PNG \u2014 the proof is the 5/5 deos-reflect test suite.)",
+    "file": null,
+    "size": null
   }
 ]

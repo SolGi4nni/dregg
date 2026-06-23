@@ -174,6 +174,29 @@ SURFACES = [
      "faucet turn on A gossips to B and both DAGs converge byte-identically to "
      "consensus-attested finality. (No committed PNG — the proof is the runbook + the "
      "named net/node tests.)"),
+    ("unified-boot", None, "THE UNIFIED BOOT", "external", "unified-boot",
+     "One window, three panes: a LIVE --node-attached pane (a real running dregg-node's "
+     "/status + cells + latest receipt over the wire) beside a FirmamentFs editor and a "
+     "live PTY terminal — the cockpit panes standing alongside a real node, not a mock. "
+     "src `deos-unified-boot.png`. Honest seam: an editor save commits to the cockpit's "
+     "LOCAL World (the node is read-only-synced); a real over-the-wire write-back is a "
+     "separate lane (route the save through NodeClient::submit_turn)."),
+    ("scripting-js", None, "REFLECTIVE JS SCRIPTING", "external", "scripting-js",
+     "Cap-gated Pharo: real SpiderMonkey (mozjs) where the JS objects you touch ARE live "
+     "handles into the running image — deos.world.cells() crawls the ledger, "
+     "deos.cell(id).reflect() reads the four substances, .as(viewer) is a cap-bounded "
+     "frustum (unreachable = absent, never forged), and an applet's affordance fire is a "
+     "real verified turn (a receipt). Reflection is a READ (no turns); interaction is "
+     "production-under-non-forgeability. (No committed PNG — the proof is the deos-js + "
+     "deos-reflect test suites.)"),
+    ("deos-reflect", None, "deos-reflect SUBSTRATE", "external", "deos-reflect",
+     "The gpui-free cap-bounded reflective substrate, reusable off a bare "
+     "dregg_cell::Ledger: substance (four substances + Inspectable, fields read PUBLICLY "
+     "so Committed redacts) · graph (OcapGraph: nodes/edges/reachability/layers/cycles) · "
+     "frustum (the per-viewer cap-bounded crawl) · affordances (cap-gated projection by "
+     "is_attenuation) · present (substrate-pure faces: RawFields · Graph · DomainVisual · "
+     "Provenance). The shared shape under both dregg-mcp and the JS scripting env. "
+     "(No committed PNG — the proof is the 5/5 deos-reflect test suite.)"),
 ]
 
 

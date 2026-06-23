@@ -37,6 +37,7 @@ EXTERNAL_SOURCES = {
     "self-hosting-loop": "starbridge-v2/self-hosting-loop-full.png",
     "web-deos":          "starbridge-v2/web/cockpit-gpui-web-painted.png",
     "servo-page":        "servo-render/servo_real_page_render.png",
+    "unified-boot":      "deos-unified-boot.png",
 }
 
 
