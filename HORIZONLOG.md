@@ -11,6 +11,29 @@ reason.)*
 Last sweep: 2026-06-13 (flagged-items burndown — removed ~14 landed/struck items,
 deduped the DreggDL/sel4/snapshot landings into git history, kept live tails).
 
+### FEDERATION QUORUM VOTES — landed, with a net/-layer delivery ceiling (2026-06-23).
+Phase 1 (REAL 2-node federation) is PROVEN by running: two `dregg-node` procs sharing a 2-validator genesis
+(`--federation-mode full`, gossip ports cross-pointing) form an n=2 committee, `peer_count:1`, mesh ready;
+a faucet turn on A propagates to B and BOTH DAGs converge byte-identically (6 blocks, the turn block
+super-ratified, `latest_height:1`, alice balance=5000 on both). Runbook: `docs/deos/DEV-NODE-RUNBOOK.md`
+("A REAL two-node federation").
+Phase 2 (quorum finalization votes) is BUILT + tested: `node/src/finalization_votes.rs` (`FinalizationVote`
+signed over domain‖block_id‖level, `VoteCollector` gating consensus-wide Attested on 2f+1 DISTINCT verified
+committee signers; 7 unit tests incl. a two-node exchange sim). Wired into `blocklace_sync.rs`: votes ride the
+blocklace topic as `BlocklaceGossipMessage::FinalizationVote`, emitted on local finalization, collected by
+`handle_finalization_vote`, exposed as `dregg_consensus_attested_total`. Anti-entropy added: per-emit nonce
+(defeats `seen`-dedup), cadence re-emit budget, Frontier vote-piggyback + frontier-reply, and a `net/`
+small-N eager-floor fix (`gossip.rs::demote_to_lazy` no longer prunes the sole peer to lazy; new test
+`prune_respects_small_n_eager_floor`).
+⚠ MEASURED CEILING (the closure lane): live, ONE direction reaches consensus-wide quorum every run, the
+OTHER never does — a per-boot DIRECTIONAL drop of SPONTANEOUS gossip in `net/src/gossip.rs`: a node receives
+its peer's BLOCKS (pulled by id via Frontier/Pull) but never its peer's spontaneous vote/Frontier pushes.
+None of the anti-entropy layers heal it because they all re-broadcast over the same dead spontaneous
+direction. CLOSURE: fix the net/ connection-routing so spontaneous `publish_eager`/Frontier reaches both
+directions at n=2 (inbound-vs-dialed link selection in `send_to_peers`), OR give votes an id-keyed PULL like
+blocks. Until then n=2 consensus-wide quorum is one-directional. The vote-collection LOGIC is correct and
+proven (tests + the working direction); the gap is purely transport delivery.
+
 ### WEB-DEOS PAINTS — the gpui cockpit now renders a real frame in the browser (2026-06-23).
 The `gpui_web` first-paint ceiling (`closure invoked recursively or after being dropped`, canvas stuck 1×1)
 is FIXED at root: it was a lifetime bug — `Application::run` dropped the owning `Rc<AppCell>` when it

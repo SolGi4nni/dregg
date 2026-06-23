@@ -48,6 +48,13 @@ pub fn inc_gossip(direction: &'static str) {
     counter!("dregg_gossip_messages_total", "direction" => direction).increment(1);
 }
 
+/// Increment the consensus-wide-attested counter: a block reached a quorum
+/// (2f+1) of distinct signed finalization votes, the cross-node AGREEMENT step
+/// beyond the per-node `tau` order. See `crate::finalization_votes`.
+pub fn inc_consensus_attested() {
+    counter!("dregg_consensus_attested_total").increment(1);
+}
+
 /// Increment the tau finalized-order prefix-shift counter: the previously
 /// computed finalized order was NOT a prefix of the newly computed one — a
 /// reorg-by-catchup (an honest late block sorted into the already-executed

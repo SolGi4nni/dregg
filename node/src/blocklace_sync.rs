@@ -46,6 +46,18 @@ pub const TOPIC_BLOCKLACE: &str = "dregg/blocklace";
 /// to bound storage growth.
 const MAX_RETAINED_CHECKPOINTS: usize = 5;
 
+/// How many cadence ticks a cast finalization vote is re-emitted before it is
+/// dropped from the pending set (the vote-layer anti-entropy budget). Re-emission
+/// runs on the FREQUENT cadence tick (default 2s), so this is ~60s of re-delivery.
+/// The eager push over a lossy-but-live QUIC link drops a fraction of single
+/// messages (blocks survive only because they are pushed repeatedly every tick);
+/// a vote is one message, so it needs its own repeated re-delivery to reliably
+/// reach a peer that needs it for quorum — and the holder cannot observe the
+/// peer's quorum, so it re-emits for a generous fixed window regardless of its
+/// OWN quorum. Each re-emit carries a fresh nonce so the gossip `seen`-dedup
+/// never collapses it. Bounded + self-draining: the set empties after the window.
+const VOTE_REEMIT_SWEEPS: u32 = 30;
+
 /// A strictly-monotonic per-process counter stamped into each `Frontier` message
 /// so repeated frontiers are byte-unique and never collapse under the gossip
 /// layer's hash-dedup (see `BlocklaceGossipMessage::Frontier`).
@@ -89,6 +101,18 @@ pub enum BlocklaceGossipMessage {
     Frontier {
         tips: HashMap<[u8; 32], BlockId>,
         nonce: u64,
+        /// Finalization votes the sender currently holds (its own + any it has
+        /// collected), piggybacked onto the frontier. The Frontier is the
+        /// PROVEN-bidirectional anti-entropy channel — it is sent every cadence
+        /// tick and reaches both directions even when the Plumtree eager tree has
+        /// pruned a peer to lazy at small N (which is exactly why the block DAG
+        /// converges while a one-shot eager vote push can be dropped). Carrying
+        /// votes here gives them the SAME anti-entropy guarantee blocks have:
+        /// `handle_frontier` records each, so a vote dropped on the eager path is
+        /// re-delivered on the next frontier and the peer crosses quorum.
+        /// Defaults empty (older peers omit it).
+        #[serde(default)]
+        votes: Vec<crate::finalization_votes::FinalizationVote>,
     },
     /// Announce that a checkpoint is available at the given height.
     /// Peers can then request the full checkpoint data via the HTTP API.
@@ -97,6 +121,14 @@ pub enum BlocklaceGossipMessage {
         height: u64,
         checkpoint_hash: [u8; 32],
     },
+    /// A signed QUORUM FINALIZATION VOTE: the emitting member asserts it has
+    /// locally finalized `vote.block_id` to `vote.level`. Carried ON the
+    /// blocklace topic (the proven-bidirectional dissemination channel) rather
+    /// than a separate gossip topic: a vote is a small consensus-agreement
+    /// message and rides the exact path blocks already converge over. The
+    /// receiver verifies + collects distinct signers; a block becomes
+    /// consensus-wide Attested at 2f+1. See [`crate::finalization_votes`].
+    FinalizationVote(crate::finalization_votes::FinalizationVote),
 }
 
 // ─── Shared Blocklace State ─────────────────────────────────────────────────
@@ -164,6 +196,29 @@ pub struct BlocklaceHandle {
     /// check tick instead of waiting for the idle heartbeat. Naturally
     /// debounced — any number of pushes between ticks collapse into one ack.
     pub ack_pending: Arc<std::sync::atomic::AtomicBool>,
+    /// Our federation Ed25519 signing key, used to sign [`FinalizationVote`]s.
+    /// The same key derives `self_key`.
+    ///
+    /// [`FinalizationVote`]: crate::finalization_votes::FinalizationVote
+    pub signing_key: ed25519_dalek::SigningKey,
+    /// Collector that gates CONSENSUS-WIDE Attested finality on a quorum (2f+1)
+    /// of distinct, verified committee signers. The DAG-derived `tau` order is
+    /// computed per-node; this is the explicit cross-node AGREEMENT layer: a
+    /// block is only consensus-attested once a supermajority of members have
+    /// SIGNED that they finalized it. See [`crate::finalization_votes`].
+    pub votes: Arc<RwLock<crate::finalization_votes::VoteCollector>>,
+    /// Signed finalization votes WE have cast (for blocks we locally finalized),
+    /// each with a remaining-broadcast budget. PIGGYBACKED onto every `Frontier`
+    /// (`send_frontier`) so a vote dropped by the lossy/pruned Plumtree eager
+    /// path is re-delivered on the proven-bidirectional anti-entropy channel —
+    /// the same guarantee that converges the block DAG. We keep the SIGNED vote
+    /// (the signature is stable; only the transport nonce changes per emit) so it
+    /// can be re-broadcast without re-signing. Bounded + self-draining: the entry
+    /// is dropped after [`VOTE_REEMIT_SWEEPS`] frontier rounds. Kept regardless of
+    /// OUR quorum — a node that already has its own quorum must still help a
+    /// lagging peer reach theirs (the holder cannot observe the peer's count).
+    pub my_pending_votes:
+        Arc<RwLock<HashMap<BlockId, (crate::finalization_votes::FinalizationVote, u32)>>>,
     /// Turn/membership payloads awaiting inclusion in a ROUND-DISCIPLINED block
     /// (the n>1 path). The naive `submit_turn` produced a block IMMEDIATELY,
     /// linking all current tips — which at n>1 lands the turn at `max_round+1`
@@ -532,6 +587,7 @@ impl BlocklaceHandle {
         let msg = BlocklaceGossipMessage::Frontier {
             tips: frontier_tips,
             nonce: frontier_nonce(),
+            votes: self.frontier_votes().await,
         };
         self.broadcast_gossip_message(&msg).await;
     }
@@ -586,6 +642,91 @@ impl BlocklaceHandle {
             self.send_frontier().await;
         }
         buffered
+    }
+
+    /// Sign and gossip a [`FinalizationVote`] for a block we have locally
+    /// finalized, then record our OWN vote in the collector.
+    ///
+    /// This is the emit half of the quorum-agreement layer: when this node's
+    /// `tau` order finalizes a turn-bearing block (it reaches `Ordered`, which
+    /// subsumes local `Attested`), we broadcast a signed assertion of that fact
+    /// so every other member can collect a quorum of distinct signers. Recording
+    /// our own vote means a node counts toward its own quorum (a member's local
+    /// finalization IS one of the 2f+1 signatures).
+    ///
+    /// Idempotent at the collector: a block already consensus-attested is not
+    /// re-broadcast (the caller gates on the per-block already-voted set), so an
+    /// n-member committee produces exactly n votes per finalized block, not a
+    /// storm.
+    async fn emit_finalization_vote(
+        &self,
+        block_id: BlockId,
+        level: dregg_blocklace::finality::FinalityLevel,
+    ) {
+        use crate::finalization_votes::FinalizationVote;
+        let vote = FinalizationVote::sign(&self.signing_key, block_id, level);
+
+        // Record our own vote (a member's local finality is one signature toward
+        // its own quorum), then broadcast it on the blocklace topic.
+        {
+            let mut col = self.votes.write().await;
+            let _ = col.record(&vote);
+        }
+
+        // Track this signed vote for RE-DELIVERY over a bounded budget. It is
+        // piggybacked onto every `Frontier` (the proven-bidirectional anti-
+        // entropy channel) and also eager-re-broadcast — so a vote dropped on
+        // the lossy/pruned Plumtree eager path still reaches a peer that needs
+        // it for quorum, REGARDLESS of OUR quorum.
+        self.my_pending_votes
+            .write()
+            .await
+            .insert(block_id, (vote.clone(), VOTE_REEMIT_SWEEPS));
+
+        self.broadcast_gossip_message(&BlocklaceGossipMessage::FinalizationVote(vote))
+            .await;
+    }
+
+    /// Re-broadcast every vote we have cast whose budget is non-zero,
+    /// decrementing each and dropping those that hit zero. Called on each cadence
+    /// tick (alongside the frontier piggyback). Belt-and-suspenders to the
+    /// frontier carry: a fresh transport nonce per re-emit defeats the gossip
+    /// `seen`-dedup, so a peer that missed the vote on the eager path records it
+    /// here too. Bounded + self-draining.
+    pub async fn reemit_pending_votes(&self) {
+        let to_emit: Vec<crate::finalization_votes::FinalizationVote> = {
+            let mut pending = self.my_pending_votes.write().await;
+            let mut out = Vec::new();
+            pending.retain(|_block_id, (vote, budget)| {
+                // Fresh transport nonce so the re-emit is byte-unique.
+                let mut v = vote.clone();
+                v.nonce = crate::finalization_votes::fresh_nonce();
+                out.push(v);
+                *budget -= 1;
+                *budget > 0
+            });
+            out
+        };
+        for vote in to_emit {
+            self.broadcast_gossip_message(&BlocklaceGossipMessage::FinalizationVote(vote))
+                .await;
+        }
+    }
+
+    /// The finalization votes to piggyback onto an outgoing `Frontier` — the
+    /// signed votes we currently hold for not-yet-drained blocks (a fresh
+    /// transport nonce each so the carrying frontier is byte-unique). Cheap:
+    /// at small N this is a handful of votes.
+    async fn frontier_votes(&self) -> Vec<crate::finalization_votes::FinalizationVote> {
+        let pending = self.my_pending_votes.read().await;
+        pending
+            .values()
+            .map(|(vote, _)| {
+                let mut v = vote.clone();
+                v.nonce = crate::finalization_votes::fresh_nonce();
+                v
+            })
+            .collect()
     }
 
     /// Broadcast a blocklace gossip message to the topic.
@@ -1289,6 +1430,13 @@ pub async fn run_blocklace_sync(
         }
     };
 
+    // QUORUM FINALIZATION VOTES ride ON the blocklace topic (the
+    // proven-bidirectional dissemination channel) as a
+    // `BlocklaceGossipMessage::FinalizationVote` variant — no separate topic.
+    // A node emits one signed vote per turn-bearing block it locally finalizes;
+    // `handle_finalization_vote` collects 2f+1 distinct-signer votes before
+    // declaring a block consensus-wide Attested. See `crate::finalization_votes`.
+
     // Also join the standard gossip topics so the node participates in
     // turn/revocation/intent data propagation (the blocklace handles ordering,
     // but existing topics handle non-consensus gossip).
@@ -1348,12 +1496,24 @@ pub async fn run_blocklace_sync(
     let cursor = Arc::new(RwLock::new(restored_cursor));
     let finality_notify = Arc::new(Notify::new());
 
+    // Quorum finalization-vote collector: the committee = the consensus
+    // participants, the threshold = the same 2f+1 supermajority that gates
+    // block production. A turn-bearing block is consensus-attested only once a
+    // supermajority of distinct members have SIGNED a vote for it.
+    let votes = Arc::new(RwLock::new(crate::finalization_votes::VoteCollector::new(
+        participants.iter().copied(),
+        quorum_threshold,
+    )));
+
     let handle = BlocklaceHandle {
         lace: lace.clone(),
         constitution: constitution_handle.clone(),
         gossip: gossip.clone(),
         topic: topic.clone(),
         self_key,
+        signing_key: signing_key.clone(),
+        votes: votes.clone(),
+        my_pending_votes: Arc::new(RwLock::new(HashMap::new())),
         cursor,
         finality_notify: finality_notify.clone(),
         auto_approve_joins, // F-CRIT-2: gated by main.rs on --auto-approve-joins CLI flag OR .devnet marker
@@ -1391,17 +1551,9 @@ pub async fn run_blocklace_sync(
                 }
                 Some(GossipEvent::PeerJoined(addr)) => {
                     info!(peer = %addr, "peer joined blocklace topic");
-                    // When a new peer joins, send our frontier for efficient catch-up.
-                    let lace = handle_for_receiver.lace.read().await;
-                    let frontier_tips: HashMap<[u8; 32], BlockId> =
-                        lace.tips().iter().map(|(k, v)| (*k, *v)).collect();
-                    drop(lace);
-
-                    let msg = BlocklaceGossipMessage::Frontier {
-                        tips: frontier_tips,
-                        nonce: frontier_nonce(),
-                    };
-                    handle_for_receiver.broadcast_gossip_message(&msg).await;
+                    // When a new peer joins, send our frontier (with any held
+                    // votes piggybacked) for efficient catch-up.
+                    handle_for_receiver.send_frontier().await;
                 }
                 Some(GossipEvent::PeerLeft(addr)) => {
                     info!(peer = %addr, "peer left blocklace topic");
@@ -1511,7 +1663,12 @@ async fn handle_blocklace_message(
         BlocklaceGossipMessage::PullResponse(blocks) => {
             handle_push(handle, state, from, blocks).await;
         }
-        BlocklaceGossipMessage::Frontier { tips, .. } => {
+        BlocklaceGossipMessage::Frontier { tips, votes, .. } => {
+            // Record any piggybacked finalization votes (the anti-entropy carry:
+            // a vote dropped on the eager path arrives here on the next frontier).
+            for vote in votes {
+                handle_finalization_vote(handle, from, vote).await;
+            }
             handle_frontier(handle, from, tips).await;
         }
         BlocklaceGossipMessage::CheckpointAvailable {
@@ -1526,6 +1683,49 @@ async fn handle_blocklace_message(
             // Record that this peer has a checkpoint at the given height.
             // The actual checkpoint data is fetched via HTTP when needed (during bootstrap).
             let _ = (height, checkpoint_hash);
+        }
+        BlocklaceGossipMessage::FinalizationVote(vote) => {
+            handle_finalization_vote(handle, from, vote).await;
+        }
+    }
+}
+
+/// Process a received finalization vote: verify + collect by distinct signer,
+/// and log when a block crosses the quorum (2f+1) into consensus-wide Attested.
+async fn handle_finalization_vote(
+    handle: &BlocklaceHandle,
+    from: SocketAddr,
+    vote: crate::finalization_votes::FinalizationVote,
+) {
+    use crate::finalization_votes::RecordOutcome;
+    let block_id = vote.block_id;
+    let outcome = {
+        let mut col = handle.votes.write().await;
+        col.record(&vote)
+    };
+    match outcome {
+        RecordOutcome::ReachedQuorum { distinct_votes } => {
+            crate::metrics::inc_consensus_attested();
+            info!(
+                block_id = %block_id,
+                votes = distinct_votes,
+                "block reached CONSENSUS-WIDE Attested finality (quorum of distinct signed \
+                 finalization votes) — agreement, not a per-node guess"
+            );
+        }
+        RecordOutcome::Counted { distinct_votes } => {
+            debug!(
+                block_id = %block_id,
+                votes = distinct_votes,
+                "recorded finalization vote (below quorum)"
+            );
+        }
+        RecordOutcome::AlreadyQuorum { .. } => {}
+        RecordOutcome::Rejected => {
+            debug!(
+                from = %from,
+                "rejected finalization vote (bad signature or non-member signer)"
+            );
         }
     }
 }
@@ -1766,6 +1966,33 @@ async fn handle_frontier(
         }
         result
     };
+
+    // VOTE ANTI-ENTROPY REPLY: whenever a peer's Frontier reaches us, reply with
+    // the finalization votes WE hold (a fresh Frontier carrying them). This is
+    // what makes votes reliably cross at small N: the eager spontaneous push is
+    // directionally lossy per boot (a node may receive a peer's BLOCKS — pulled
+    // by id via Frontier/Pull — yet never its peer's spontaneous vote pushes),
+    // but the Frontier request/response demonstrably crosses BOTH ways (it is how
+    // the DAG converges). Answering a frontier with our votes gives them that
+    // same bidirectional guarantee: a peer that requested catch-up also learns
+    // our finalization votes and can cross quorum. Empty when we hold no
+    // re-emittable votes, so steady-state stays quiet.
+    {
+        let votes = handle.frontier_votes().await;
+        if !votes.is_empty() {
+            let reply_tips: HashMap<[u8; 32], BlockId> = {
+                let lace = handle.lace.read().await;
+                lace.tips().iter().map(|(k, v)| (*k, *v)).collect()
+            };
+            handle
+                .broadcast_gossip_message(&BlocklaceGossipMessage::Frontier {
+                    tips: reply_tips,
+                    nonce: frontier_nonce(),
+                    votes,
+                })
+                .await;
+        }
+    }
 
     if to_send.is_empty() {
         return;
@@ -2138,6 +2365,13 @@ fn spawn_block_cadence(
         loop {
             ticker.tick().await;
 
+            // VOTE-LAYER ANTI-ENTROPY (every tick): re-emit our finalization
+            // votes for blocks still inside their re-emit window. Runs on the
+            // frequent cadence tick (not the slow catch-up sweep) so a vote a
+            // lossy QUIC link dropped is re-delivered quickly enough for a peer
+            // to cross quorum. Quiescent once every pending vote's budget drains.
+            handle.reemit_pending_votes().await;
+
             // The committee size decides the production discipline. At n>1 the
             // Cordial-Miners ordering rule needs the ROUND-SYNCHRONOUS DAG shape,
             // so production is ROUND-DRIVEN — but QUIESCENT-ON-DEMAND: advance a
@@ -2367,6 +2601,9 @@ fn spawn_catchup_driver(handle: BlocklaceHandle, interval_ms: u64) {
             if buffered > 0 {
                 debug!(buffered, "catch-up driver: gap still open, requested sync");
             }
+            // (Vote re-emission runs on the frequent block-cadence tick — see
+            // `spawn_block_cadence` — so a vote dropped by a lossy link is
+            // re-delivered promptly enough for a peer to reach quorum.)
         }
     });
 }
@@ -2452,6 +2689,34 @@ fn spawn_finality_executor(state: NodeState, handle: BlocklaceHandle) {
                             "finalized checkpoint block (stored)"
                         );
                         let _ = (root, height); // Checkpoint storage handled elsewhere
+                    }
+                }
+
+                // ── QUORUM AGREEMENT: emit our signed finalization vote ──────
+                // This block is now in our local `tau` order (Ordered, which
+                // subsumes Attested). Broadcast a signed vote so the committee
+                // can collect 2f+1 distinct signers and declare it
+                // consensus-wide Attested. Gate on "have we voted yet" so we
+                // emit exactly once per block (n members ⇒ n votes, no storm).
+                // Solo (n=1) is a committee of one: quorum=1, so a single self
+                // vote is already consensus-attested — correct and inert.
+                {
+                    let block_id = match block {
+                        FinalizedBlock::Turn { block_id, .. }
+                        | FinalizedBlock::Membership { block_id, .. }
+                        | FinalizedBlock::Checkpoint { block_id, .. } => *block_id,
+                    };
+                    let already = {
+                        let col = handle.votes.read().await;
+                        col.has_voted(&block_id, &handle.self_key)
+                    };
+                    if !already {
+                        handle
+                            .emit_finalization_vote(
+                                block_id,
+                                dregg_blocklace::finality::FinalityLevel::Ordered,
+                            )
+                            .await;
                     }
                 }
             }

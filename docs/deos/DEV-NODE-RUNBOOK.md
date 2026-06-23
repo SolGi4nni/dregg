@@ -140,3 +140,71 @@ cargo build -p dregg-node && \
 # wait for "HTTP API listening", then:
 ( cd starbridge-v2 && cargo run --features native-full --bin starbridge-v2 -- --node http://localhost:8771 )
 ```
+
+## A REAL two-node federation (n=2, proven by running)
+
+This stands up two `dregg-node` processes that form ONE federation (committee of
+two, threshold 2) over the live QUIC gossip + blocklace consensus, and shows a
+turn submitted on node A finalizing on node B. This is not a mock: both nodes run
+the verified Lean producer, exchange real Ed25519-signed blocks, and converge to a
+byte-identical DAG.
+
+The committee is established by a SHARED `genesis.json` carrying BOTH validators'
+public keys. The `genesis` subcommand mints that file plus the two node keys:
+
+```sh
+NODE=./target/debug/dregg-node
+cargo build -p dregg-node
+
+# 1. Mint a 2-validator genesis (shared genesis.json + node-0.key/node-1.key +
+#    the well/agent keys). Threshold is floor(2*2/3)+1 = 2.
+$NODE genesis --validators 2 --output /tmp/deos-fed/stage
+
+# 2. Build two data dirs sharing the SAME genesis + well/agent keys; give each
+#    its own identity key (node-0 -> A, node-1 -> B). The shared genesis.json is
+#    what makes both nodes the SAME federation (same committee -> same
+#    federation_id -> participants == {A, B}).
+for D in /tmp/deos-fed/nodeA /tmp/deos-fed/nodeB; do
+  mkdir -p "$D"
+  cp /tmp/deos-fed/stage/genesis.json /tmp/deos-fed/stage/.devnet "$D"/
+  cp /tmp/deos-fed/stage/{agent-alice,agent-bob,agent-carol,faucet,fee-well,issuer-well}.key "$D"/
+done
+cp /tmp/deos-fed/stage/node-0.key /tmp/deos-fed/nodeA/node.key
+cp /tmp/deos-fed/stage/node-1.key /tmp/deos-fed/nodeB/node.key
+chmod 600 /tmp/deos-fed/node{A,B}/node.key
+
+# 3. Run both, --federation-mode full, gossip ports cross-pointing.
+RUST_LOG=info $NODE run --data-dir /tmp/deos-fed/nodeA --enable-faucet \
+  --port 8801 --gossip-port 9801 --federation-peers 127.0.0.1:9802 \
+  --federation-mode full --consensus blocklace &
+RUST_LOG=info $NODE run --data-dir /tmp/deos-fed/nodeB --enable-faucet \
+  --port 8802 --gossip-port 9802 --federation-peers 127.0.0.1:9801 \
+  --federation-mode full --consensus blocklace &
+```
+
+Wait for both `HTTP API listening` lines. In each node's log you should see
+`initializing blocklace consensus participants=2 quorum_threshold=2 solo=false`
+and `consensus mesh ready ... connected=1 want=1` — the live QUIC link is up.
+`/status` on each reports `federation_mode:"full"` and `peer_count:1`.
+
+Submit a faucet turn on A (the recipient is
+`CellId::derive_raw(agent_pubkey, blake3("default"))`); it will gossip to B and
+both finalize it cross-node:
+
+```sh
+# (derive ALICE_PK / ALICE_CID from agent-alice.key as in §2 of the main runbook)
+curl -s -X POST http://127.0.0.1:8801/api/faucet -H 'Content-Type: application/json' \
+  -d "{\"recipient\":\"$ALICE_CID\",\"amount\":5000,\"public_key\":\"$ALICE_PK\"}"
+
+# Within ~5s both DAGs converge identically and the turn finalizes on BOTH:
+curl -s http://127.0.0.1:8801/status   # dag_height>0, latest_height=1
+curl -s http://127.0.0.1:8802/status   # SAME
+curl -s http://127.0.0.1:8801/api/cell/$ALICE_CID   # balance 5000
+curl -s http://127.0.0.1:8802/api/cell/$ALICE_CID   # balance 5000 (finalized cross-node)
+```
+
+Observed: both `/api/blocklace/blocks` return the IDENTICAL 6-block DAG (same
+block hashes; a round-2 `turn` block surrounded by round 1/2/3 attestation acks),
+`latest_height=1` on both (the turn-bearing block super-ratified cross-node), and
+alice's cell balance = 5000 on BOTH nodes — the faucet turn's effect applied
+deterministically through consensus finalization, not locally.

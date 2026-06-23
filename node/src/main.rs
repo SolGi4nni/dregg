@@ -21,6 +21,7 @@ mod equivocation_court_service;
 mod events;
 mod execution_cursor;
 mod executor_setup;
+mod finalization_votes;
 mod genesis;
 pub mod gossip;
 mod identity_export;

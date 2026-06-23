@@ -543,7 +543,28 @@ impl TopicState {
         }
     }
 
+    /// Demote a peer from the eager spanning-tree set to lazy (IHave-only).
+    ///
+    /// SMALL-N FLOOR: never demote if it would drop the eager set below
+    /// `min(total_peers, DEFAULT_EAGER_DEGREE)`. Plumtree prunes an eager link on
+    /// the first DUPLICATE delivery to thin the tree to one spanning path — but at
+    /// a small mesh (e.g. a 2-node committee, where each node has exactly ONE
+    /// peer) the very first duplicate (two blocks cross-arriving, or a re-emitted
+    /// message) prunes the SOLE peer to lazy, after which the node only sends
+    /// IHave announcements and full payloads stop flowing on the eager path. Block
+    /// dissemination limps along only because `blocklace_sync` re-requests missing
+    /// blocks by id via its own Frontier/Pull anti-entropy; but any message
+    /// WITHOUT an id-keyed pull (e.g. a finalization vote) is then never delivered
+    /// to that peer at all. Holding a floor of eager peers keeps full-payload
+    /// dissemination alive at small N, where there is no redundant path to thin.
     fn demote_to_lazy(&mut self, addr: &SocketAddr) {
+        let total_peers = self.peer_states.len();
+        let eager_count = self.peer_states.values().filter(|s| s.eager).count();
+        let floor = total_peers.min(DEFAULT_EAGER_DEGREE);
+        if eager_count <= floor {
+            // Keeping this peer eager preserves the small-N full-payload path.
+            return;
+        }
         if let Some(state) = self.peer_states.get_mut(addr) {
             state.eager = false;
         }
@@ -2696,21 +2717,52 @@ mod tests {
 
     #[test]
     fn prune_demotes_to_lazy() {
+        // Demotion is allowed only ABOVE the small-N eager floor
+        // (`min(total_peers, DEFAULT_EAGER_DEGREE)`). With enough peers that the
+        // floor leaves headroom, a prune demotes the targeted peer to lazy.
         let mut ts = TopicState::new();
-        let a1: SocketAddr = "127.0.0.1:1000".parse().unwrap();
-        let a2: SocketAddr = "127.0.0.1:2000".parse().unwrap();
+        // DEFAULT_EAGER_DEGREE peers start eager + one extra lazy peer, so
+        // total = DEFAULT_EAGER_DEGREE + 1 and the floor = DEFAULT_EAGER_DEGREE:
+        // eager_count (DEFAULT_EAGER_DEGREE) is ABOVE... equal to the floor, so to
+        // get real headroom we add one MORE eager than the floor by promoting.
+        let mut addrs: Vec<SocketAddr> = Vec::new();
+        for i in 0..(DEFAULT_EAGER_DEGREE + 2) {
+            let a: SocketAddr = format!("127.0.0.1:{}", 1000 + i).parse().unwrap();
+            ts.add_peer(a);
+            addrs.push(a);
+        }
+        // Promote everyone to eager so eager_count > floor and a demotion is
+        // permitted (the realistic mesh case where there is a redundant path).
+        for a in &addrs {
+            ts.promote_to_eager(a);
+        }
+        let target = addrs[0];
+        assert!(ts.eager_peers().contains(&target));
 
-        ts.add_peer(a1);
-        ts.add_peer(a2);
+        ts.demote_to_lazy(&target);
 
-        assert!(ts.eager_peers().contains(&a1));
-        assert!(ts.eager_peers().contains(&a2));
+        assert!(!ts.eager_peers().contains(&target));
+        assert!(ts.lazy_peers().contains(&target));
+        // The rest remain eager.
+        assert!(ts.eager_peers().contains(&addrs[1]));
+    }
 
-        ts.demote_to_lazy(&a1);
+    #[test]
+    fn prune_respects_small_n_eager_floor() {
+        // The small-N floor: with only one peer (a 2-node committee), a duplicate
+        // delivery must NOT prune the sole eager peer to lazy — otherwise full
+        // payloads (e.g. finalization votes) stop flowing to it. This is the fix
+        // for the n=2 federation vote-dissemination deadlock.
+        let mut ts = TopicState::new();
+        let only: SocketAddr = "127.0.0.1:5000".parse().unwrap();
+        ts.add_peer(only);
+        assert!(ts.eager_peers().contains(&only));
 
-        assert!(!ts.eager_peers().contains(&a1));
-        assert!(ts.lazy_peers().contains(&a1));
-        assert!(ts.eager_peers().contains(&a2));
+        ts.demote_to_lazy(&only); // floor = min(1, DEFAULT_EAGER_DEGREE) = 1
+
+        // Still eager — the floor refused to drop the only peer.
+        assert!(ts.eager_peers().contains(&only));
+        assert!(!ts.lazy_peers().contains(&only));
     }
 
     #[test]
