@@ -19,6 +19,17 @@ executor mint · web dev-pane backends · MUD presence). `dregg-atlas/` 30→37 
 self-hosting · full Zed · web-deos · Servo real page · MUD · membrane · federation; 3 with real PNGs);
 site regenerated, opens offline. Spot-verified 2 reproduce cmds green (captp data_plane, servo-render).
 
+### GIT-OVER-CELLS in the Zed Workspace — cell-ledger VCS, by running (2026-06-23).
+`ec7fe710` (`deos-zed-full/src/cell_git.rs` + `firmament_zed_fs.rs`). `CellLedgerGit` implements Zed's own
+`git::repository::GitRepository` with ALL history from the cell-ledger receipt chain + dregg-doc patch
+theory — NO host `.git`. 5 gpui tests: HEAD = patch-chain tip · `status` = modified-since-HEAD from the
+live cell · `blame` attributes each line to its authoring patch (save = commit) · `show` renders a patch as
+a `CommitDetails`+`CommitDiff` · branches/committed-text from history. `open_repo` now returns the
+cell-ledger repo; `record_git_save` commits a patch on every save (git log/blame in lockstep w/ receipts).
+SEAM: the `git_ui` PANEL auto-discovery needs a `.git` worktree entry (`project/src/git_store.rs:447`); the
+cell namespace has none → the test drives the `GitRepository` object directly. Closing the panel =
+synthesize a `.git` namespace entry / inject `UpdatedGitRepository`.
+
 ### HERMES AGENT PANEL in the Zed Workspace — live + receipted, by running (2026-06-23).
 `2d319930` (`deos-zed-full/src/hermes_panel.rs` + tiny `deos-hermes` pub exposures). A real `workspace::Panel`
 wrapping deos-hermes's live `AgentDockView` docks via `add_panel` alongside project/outline/terminal. Test:
