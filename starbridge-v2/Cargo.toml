@@ -144,7 +144,7 @@ default = ["native-full"]
 # native-full pulls the embedded executor (`embedded-executor`) AND the gpui
 # renderer (`gpui-ui`) AND the LIVE-NODE connection (`live-node`, so the master
 # interface can ALSO connect to a remote node/federation). This is the headline build.
-native-full = ["embedded-executor", "gpui-ui", "live-node", "render-capture", "web-shell", "dev-surfaces"]
+native-full = ["embedded-executor", "app-registry", "gpui-ui", "live-node", "render-capture", "web-shell", "dev-surfaces"]
 
 # dev-surfaces — mount the real editor + terminal as dock panes (the self-hosting
 # dev loop: edit deos's own repos in deos-zed, run cargo/git in deos-terminal,
@@ -184,7 +184,15 @@ live-node = ["dep:reqwest"]
 # async) deps out of this headless, `cargo test`-able build: the cipherclerk +
 # token surface we surface (identities, mint/attenuate/delegate, cell_id) is in
 # the SDK's un-gated core.
-embedded-executor = ["dep:dregg-turn", "dep:dregg-cell", "dep:dregg-cell-crypto", "dep:dregg-types", "dep:dregg-sdk", "dep:dregg-coord", "dep:dregg-token", "dep:dregg-userspace-verify", "dep:dregg-firmament", "dep:starbridge-web-surface", "dep:deos-web-cells", "dep:dregg-persist", "dep:dregg-doc", "dep:dregg-captp", "app-registry"]
+# NOTE: `app-registry` (the pre-built starbridge-apps wired into the cockpit) is
+# NOT pulled here — the app crates (`dregg-app-framework`/`starbridge-*`) are
+# declared ONLY in the non-wasm dependency table (they don't build on wasm32), so
+# pulling `app-registry` from the shared `embedded-executor` would make the wasm
+# web bundle (`gpui-web`) fail to resolve `dep:starbridge-gallery` &c. Native
+# builds get the registry via `native-full` (or pass `--features app-registry`
+# alongside `embedded-executor` for the gpui-free native test path); the wasm
+# build omits it cleanly.
+embedded-executor = ["dep:dregg-turn", "dep:dregg-cell", "dep:dregg-cell-crypto", "dep:dregg-types", "dep:dregg-sdk", "dep:dregg-coord", "dep:dregg-token", "dep:dregg-userspace-verify", "dep:dregg-firmament", "dep:starbridge-web-surface", "dep:deos-web-cells", "dep:dregg-persist", "dep:dregg-doc", "dep:dregg-captp"]
 
 # THE APP REGISTRY — wire `dregg-app-framework` + a STARTER SET of pre-built
 # starbridge-apps (gallery / tussle / sealed-auction / bounty-board) into the
@@ -197,7 +205,14 @@ embedded-executor = ["dep:dregg-turn", "dep:dregg-cell", "dep:dregg-cell-crypto"
 # cell + state is visible to a second reader of that same executor — the
 # inspector seam). The framework drags its server tree (axum/tokio/tower-http)
 # which is fine for the native desktop build; this is gpui-free + `cargo test`-able.
-app-registry = ["dep:dregg-app-framework", "dep:starbridge-gallery", "dep:starbridge-tussle", "dep:starbridge-sealed-auction", "dep:starbridge-bounty-board"]
+#
+# `app-registry` IMPLIES `embedded-executor` (it uses the same `dregg-sdk`/`-cell`/
+# `-types` surface `app_registry.rs` reaches for, and `app_worldspine.rs` bridges the
+# launched app onto `crate::world::World`). It is NOT the other way round: the shared
+# `embedded-executor` does NOT pull `app-registry`, so the wasm web bundle (`gpui-web`
+# → `embedded-executor`) never tries to resolve the non-wasm app crates. Native builds
+# turn it on via `native-full` (or `--features app-registry` for the gpui-free test path).
+app-registry = ["embedded-executor", "dep:dregg-app-framework", "dep:starbridge-gallery", "dep:starbridge-tussle", "dep:starbridge-sealed-auction", "dep:starbridge-bounty-board"]
 
 # OPT-IN real-content rendering. `servo` pulls `servo-render` (the SWGL software
 # rasterizer + the cap-gated `render_dregg_page` content-tile entry) so the

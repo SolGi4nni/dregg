@@ -139,6 +139,20 @@ pub mod mud;
 #[cfg(feature = "app-registry")]
 pub mod app_registry;
 
+// THE APP→WORLD COMMIT BRIDGE — re-point a launched starbridge-app's seed cell AND
+// its affordance turns onto the cockpit's LIVE `World` ledger (the SAME one the
+// cell inspector reads), exactly as the editor lane's `WorldSpine` mounts file-cells
+// onto the live World. `AppWorldSpine::seed` genesis-installs the app cell + program
+// + state on `World`; `AppWorldSpine::commit` runs each affordance through
+// `World::turn` → `World::commit_turn`, so the app's cells + receipts show in the
+// cockpit's own inspector, not the app framework's side-ledger. Used by
+// `app_registry::AppEntry::launch_on_world`. gpui-free + `cargo test`-able. Gated on
+// BOTH `embedded-executor` (for `crate::world::World`) AND `app-registry` (for the
+// `dregg-app-framework` types it bridges) — the app crates are non-wasm-only, so this
+// bridge is a native-only surface (the wasm web bundle carries neither).
+#[cfg(all(feature = "embedded-executor", feature = "app-registry"))]
+pub mod app_worldspine;
+
 // SHARED CONFINED FORK WITH GRADUATED CONSENT — "invite someone to my computer":
 // a `World::fork` handed to another principal, confined (firmament sandbox) so they
 // cannot escape it, whose culled cap-subgraph is graduated into three tiers —

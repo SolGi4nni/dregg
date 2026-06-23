@@ -42,6 +42,15 @@ use dregg_app_framework::{
 use dregg_sdk::AgentCipherclerk;
 use dregg_types::CellId;
 
+#[cfg(feature = "embedded-executor")]
+use crate::app_worldspine::{default_domain_token, AppWorldSpine, SeedField, WorldFireError};
+#[cfg(feature = "embedded-executor")]
+use crate::world::World;
+#[cfg(feature = "embedded-executor")]
+use std::cell::RefCell;
+#[cfg(feature = "embedded-executor")]
+use std::rc::Rc;
+
 /// One **app substrate** — an [`AppCipherclerk`] + [`EmbeddedExecutor`] pair (the
 /// app framework's SDK surface every verified-turn fire routes through). A launched
 /// registry app owns one; its backing cell, its seeded program, and every turn it
@@ -136,6 +145,20 @@ impl LaunchedRegistryApp {
 /// substrate's cipherclerk + executor.
 type DriveFn = fn(&DeosApp, &AppSubstrate) -> Result<TurnReceipt, FireExecuteError>;
 
+/// The per-app **World drive** closure — seed the app's cell onto the cockpit's LIVE
+/// [`World`] and commit one representative affordance THROUGH it (`World::turn` →
+/// `World::commit_turn`), so the app's cell + receipt land on `World::ledger()` /
+/// `World::receipts()` (the cockpit inspector path), NOT the framework side-ledger.
+///
+/// Receives the launched [`DeosApp`] (for its cap rights + the app cell) and the
+/// shared `World`. Returns the [`AppWorldSpine`] (already seeded, app cell installed)
+/// + the committed [`TurnReceipt`]. The closure uses the app crate's OWN public
+/// effect-builders + program, so the World path re-expresses the SAME turn the
+/// framework path fires — only the ledger is the cockpit's now.
+#[cfg(feature = "embedded-executor")]
+type WorldDriveFn =
+    fn(&DeosApp, Rc<RefCell<World>>) -> Result<(AppWorldSpine, TurnReceipt), WorldFireError>;
+
 /// The per-app ctor — builds the [`DeosApp`] over a substrate.
 type CtorFn = fn(&AppCipherclerk, &EmbeddedExecutor) -> DeosApp;
 
@@ -162,6 +185,15 @@ pub struct AppEntry {
     seed: SeedFn,
     /// Fire one representative affordance (a real verified turn) — the proof.
     drive: DriveFn,
+    /// Seed the app's cell onto the cockpit's LIVE [`World`] and commit one
+    /// representative affordance THROUGH it — so the app's cell + receipt show in
+    /// the cockpit's OWN inspector (`World::ledger()`/`receipts()`), not the
+    /// framework side-ledger. This is the shared-ledger seam the editor lane's
+    /// `WorldSpine` established, brought to launched apps. Gated on
+    /// `embedded-executor` (it carries `World` types); the registry's framework-only
+    /// build (`app-registry` without `embedded-executor`) omits this field.
+    #[cfg(feature = "embedded-executor")]
+    world_drive: WorldDriveFn,
 }
 
 impl AppEntry {
@@ -181,6 +213,63 @@ impl AppEntry {
             substrate,
             drive: self.drive,
         }
+    }
+
+    /// **Launch this app ONTO the cockpit's LIVE [`World`]** — the shared-ledger seam.
+    ///
+    /// Builds the [`DeosApp`] over a fresh framework substrate (the cipherclerk is the
+    /// app's identity), then SEEDS the app's primary cell + program + genesis state
+    /// onto `world` and COMMITS one representative affordance through `World::turn` →
+    /// `World::commit_turn`. The result: the app's cell + its receipt are on
+    /// `World::ledger()` / `World::receipts()` — the SAME reads the cockpit's cell
+    /// inspector makes. This is the editor lane's `WorldSpine` pattern brought to a
+    /// launched app: the app's turns are now in the cockpit's own world, not a side
+    /// ledger.
+    ///
+    /// Returns the seeded [`AppWorldSpine`] (so the host can fire MORE affordances onto
+    /// `World`) + the first committed receipt.
+    #[cfg(feature = "embedded-executor")]
+    pub fn launch_on_world(
+        &self,
+        federation: [u8; 32],
+        world: Rc<RefCell<World>>,
+    ) -> Result<LaunchedOnWorld, WorldFireError> {
+        let substrate = AppSubstrate::new(federation);
+        let app = (self.ctor)(substrate.cipherclerk(), substrate.executor());
+        let (spine, receipt) = (self.world_drive)(&app, world)?;
+        Ok(LaunchedOnWorld {
+            id: self.id,
+            app,
+            spine,
+            receipt,
+        })
+    }
+}
+
+/// A **launched-on-World app** — a [`DeosApp`] whose primary cell + first affordance
+/// receipt live on the cockpit's LIVE [`World`] ledger (the inspector path), via the
+/// [`AppWorldSpine`] bridge. Distinct from [`LaunchedRegistryApp`] (which runs on the
+/// framework's side-ledger): THIS one's cells + receipts are in the cockpit's own
+/// world. Gated on `embedded-executor` (it carries `World`-side types).
+#[cfg(feature = "embedded-executor")]
+pub struct LaunchedOnWorld {
+    /// The registry id of the app launched (e.g. `"gallery"`).
+    pub id: &'static str,
+    /// The composed deos app (cells × affordances).
+    pub app: DeosApp,
+    /// The seeded World bridge — the app cell is installed on `World`; fire MORE
+    /// affordances onto the live world with [`AppWorldSpine::commit`].
+    pub spine: AppWorldSpine,
+    /// The first affordance's receipt — committed through `World::commit_turn`, now
+    /// present in `World::receipts()`.
+    pub receipt: TurnReceipt,
+}
+
+#[cfg(feature = "embedded-executor")]
+impl LaunchedOnWorld {
+    /// The app's primary cell on the World ledger (the inspector's pointer).
+    pub fn primary_cell(&self) -> CellId {
+        self.spine.app_cell()
     }
 }
 
@@ -228,6 +317,46 @@ impl AppRegistry {
                             sub.executor(),
                         )
                     },
+                    #[cfg(feature = "embedded-executor")]
+                    world_drive: |app, world| {
+                        use starbridge_gallery as g;
+                        // SEED the gallery cell onto the live World: the program (so World
+                        // re-enforces the WriteOnce board + phase invariants) + the genesis
+                        // baseline `seed_gallery` lays (curator bound, PHASE = SUBMISSION).
+                        let app_cell = app.cells()[0].cell();
+                        let spine = AppWorldSpine::seed(
+                            world,
+                            app_cell,
+                            app.cipherclerk().public_key().0,
+                            default_domain_token(),
+                            g::gallery_program(),
+                            &[
+                                SeedField {
+                                    slot: g::CURATOR_SLOT,
+                                    value: dregg_app_framework::field_from_bytes(b"curator"),
+                                },
+                                SeedField {
+                                    slot: g::PHASE_SLOT,
+                                    value: dregg_app_framework::field_from_u64(g::PHASE_SUBMISSION),
+                                },
+                            ],
+                        );
+                        // COMMIT `submit` through World: the next free WriteOnce slot is read
+                        // from World's LIVE state (exactly as `fire_submit` reads the
+                        // framework state), so the submission lands on World's ledger.
+                        let seal = dregg_app_framework::field_from_u64(0xA17);
+                        let receipt = spine.commit(
+                            "submit",
+                            &g::ARTIST_RIGHTS,
+                            &g::ARTIST_RIGHTS,
+                            |live| {
+                                let slot = g::next_free_submit_slot(live)
+                                    .unwrap_or_else(|| g::submit_slot(0));
+                                g::submit_effects(app_cell, slot, &seal)
+                            },
+                        )?;
+                        Ok((spine, receipt))
+                    },
                 },
                 AppEntry {
                     id: "sealed-auction",
@@ -248,6 +377,44 @@ impl AppRegistry {
                             sub.cipherclerk(),
                             sub.executor(),
                         )
+                    },
+                    #[cfg(feature = "embedded-executor")]
+                    world_drive: |app, world| {
+                        use starbridge_sealed_auction as a;
+                        let app_cell = app.cells()[0].cell();
+                        // SEED onto World: program + `seed_auction` baseline (seller bound,
+                        // PHASE = COMMIT).
+                        let spine = AppWorldSpine::seed(
+                            world,
+                            app_cell,
+                            app.cipherclerk().public_key().0,
+                            default_domain_token(),
+                            a::auction_program(),
+                            &[
+                                SeedField {
+                                    slot: a::SELLER_SLOT,
+                                    value: dregg_app_framework::field_from_bytes(b"seller"),
+                                },
+                                SeedField {
+                                    slot: a::PHASE_SLOT,
+                                    value: dregg_app_framework::field_from_u64(a::PHASE_COMMIT),
+                                },
+                            ],
+                        );
+                        // COMMIT `commit_bid` through World: next free WriteOnce commit slot
+                        // read from World's live state.
+                        let seal = dregg_app_framework::field_from_u64(0xB1D);
+                        let receipt = spine.commit(
+                            "commit_bid",
+                            &a::BIDDER_RIGHTS,
+                            &a::BIDDER_RIGHTS,
+                            |live| {
+                                let slot = a::next_free_commit_slot(live)
+                                    .unwrap_or_else(|| a::commit_slot(0));
+                                a::commit_bid_effects(app_cell, slot, &seal)
+                            },
+                        )?;
+                        Ok((spine, receipt))
                     },
                 },
                 AppEntry {
@@ -270,6 +437,43 @@ impl AppRegistry {
                             sub.cipherclerk(),
                             sub.executor(),
                         )
+                    },
+                    #[cfg(feature = "embedded-executor")]
+                    world_drive: |app, world| {
+                        use starbridge_bounty_board as b;
+                        let app_cell = app.cells()[0].cell();
+                        // SEED onto World: program + `seed_bounty` baseline (title hash,
+                        // reward, STATE = OPEN).
+                        let spine = AppWorldSpine::seed(
+                            world,
+                            app_cell,
+                            app.cipherclerk().public_key().0,
+                            default_domain_token(),
+                            b::bounty_cell_program(),
+                            &[
+                                SeedField {
+                                    slot: b::TITLE_HASH_SLOT,
+                                    value: b::title_hash("ship the registry"),
+                                },
+                                SeedField {
+                                    slot: b::REWARD_SLOT,
+                                    value: b::reward_field(1_000),
+                                },
+                                SeedField {
+                                    slot: b::STATE_SLOT,
+                                    value: b::state_field(b::STATE_OPEN),
+                                },
+                            ],
+                        );
+                        // COMMIT `claim` through World: OPEN -> CLAIMED (StrictMonotonic
+                        // re-enforced by World's executor).
+                        let receipt = spine.commit(
+                            "claim",
+                            &b::WORKER_RIGHTS,
+                            &b::WORKER_RIGHTS,
+                            |_live| b::claim_effects(app_cell, "worker"),
+                        )?;
+                        Ok((spine, receipt))
                     },
                 },
                 AppEntry {
@@ -298,6 +502,74 @@ impl AppRegistry {
                             sub.executor(),
                         )
                     },
+                    #[cfg(feature = "embedded-executor")]
+                    world_drive: |app, world| {
+                        use starbridge_tussle as t;
+                        // Tussle backs its first figure on the agent's OWN cell.
+                        let figure = app.cells()[0].cell();
+                        // SEED the figure onto World: `figure_deos_program` + the genesis
+                        // pose `seed_figure` lays (joints = Relax, POSITION/SCORE = 0,
+                        // PHASE = COMMIT, COMMIT_SEAL = 0).
+                        let mut seed_fields = Vec::with_capacity(t::N_JOINTS + 4);
+                        for j in 0..t::N_JOINTS {
+                            seed_fields.push(SeedField {
+                                slot: t::slot::JOINT_BASE + j,
+                                value: dregg_app_framework::field_from_u64(
+                                    t::JointState::Relax.sym(),
+                                ),
+                            });
+                        }
+                        seed_fields.push(SeedField {
+                            slot: t::slot::POSITION,
+                            value: dregg_app_framework::field_from_u64(0),
+                        });
+                        seed_fields.push(SeedField {
+                            slot: t::slot::SCORE,
+                            value: dregg_app_framework::field_from_u64(0),
+                        });
+                        seed_fields.push(SeedField {
+                            slot: t::PHASE_SLOT,
+                            value: dregg_app_framework::field_from_u64(t::COMMIT),
+                        });
+                        seed_fields.push(SeedField {
+                            slot: t::COMMIT_SEAL_SLOT,
+                            value: dregg_app_framework::field_from_u64(0),
+                        });
+                        let spine = AppWorldSpine::seed(
+                            world,
+                            figure,
+                            app.cipherclerk().public_key().0,
+                            default_domain_token(),
+                            t::figure_deos_program(),
+                            &seed_fields,
+                        );
+                        // COMMIT `commit_move` through World: write the sealed-move slot
+                        // (the SAME seal `fire_commit_move` computes for the rest pose).
+                        let figure_id = figure.as_bytes()[0];
+                        let seal = t::MoveCommit::new(figure_id, t::REST_POSE, 0x33).seal();
+                        let receipt = spine.commit(
+                            "commit_move",
+                            &t::FIGHTER_RIGHTS,
+                            &t::FIGHTER_RIGHTS,
+                            |_live| {
+                                vec![
+                                    dregg_app_framework::Effect::SetField {
+                                        cell: figure,
+                                        index: t::COMMIT_SEAL_SLOT,
+                                        value: seal,
+                                    },
+                                    dregg_app_framework::Effect::EmitEvent {
+                                        cell: figure,
+                                        event: dregg_app_framework::Event::new(
+                                            dregg_app_framework::symbol("move-committed"),
+                                            vec![seal],
+                                        ),
+                                    },
+                                ]
+                            },
+                        )?;
+                        Ok((spine, receipt))
+                    },
                 },
             ],
         }
@@ -317,6 +589,20 @@ impl AppRegistry {
     /// entry point. `None` if no entry has that id.
     pub fn launch(&self, id: &str, federation: [u8; 32]) -> Option<LaunchedRegistryApp> {
         self.get(id).map(|e| e.launch(federation))
+    }
+
+    /// **Launch the app with id `id` ONTO the cockpit's LIVE [`World`]** — the
+    /// shared-ledger launcher. `None` if no entry has that id; otherwise the
+    /// [`AppEntry::launch_on_world`] result (the app's cell + first receipt land on
+    /// `world`'s ledger, visible to the cockpit's cell inspector).
+    #[cfg(feature = "embedded-executor")]
+    pub fn launch_on_world(
+        &self,
+        id: &str,
+        federation: [u8; 32],
+        world: Rc<RefCell<World>>,
+    ) -> Option<Result<LaunchedOnWorld, WorldFireError>> {
+        self.get(id).map(|e| e.launch_on_world(federation, world))
     }
 }
 
@@ -422,6 +708,107 @@ mod tests {
                 "{} advanced its cell state on the shared substrate ledger",
                 entry.id
             );
+        }
+    }
+
+    /// **THE SHARED-LEDGER PROOF (the cockpit World, not the side-ledger)** — launch
+    /// gallery ONTO a cockpit `World`, and assert the resulting `TurnReceipt` AND the
+    /// app's new cell are visible via `World::receipts()` / `World::ledger()` — the
+    /// REAL cockpit inspector path. DONE = this RAN.
+    #[cfg(feature = "embedded-executor")]
+    #[test]
+    fn launching_gallery_on_world_commits_its_turn_to_the_cockpit_world_ledger() {
+        let world = Rc::new(RefCell::new(World::new()));
+        let receipts_before = world.borrow().receipts().len();
+        let cells_before = world.borrow().cell_count();
+
+        let reg = AppRegistry::standard();
+        let launched = reg
+            .launch_on_world("gallery", [0xA6u8; 32], Rc::clone(&world))
+            .expect("gallery is in the standard registry")
+            .expect("gallery seeds + commits onto the live World");
+
+        let app_cell = launched.primary_cell();
+
+        // THE COCKPIT INSPECTOR PATH (World::ledger): the gallery cell is on the live
+        // World ledger, with the submission slot written by the committed turn.
+        let cell_on_world = world
+            .borrow()
+            .ledger()
+            .get(&app_cell)
+            .cloned()
+            .expect("the gallery cell is on the cockpit World ledger (genesis-installed)");
+        assert_eq!(
+            world.borrow().cell_count(),
+            cells_before + 1,
+            "the app cell was added to the cockpit World"
+        );
+
+        // The committed receipt is authored by the app cell + carried an action.
+        assert_eq!(
+            launched.receipt.agent, app_cell,
+            "the World-committed turn is authored by the gallery cell"
+        );
+        assert!(launched.receipt.action_count >= 1);
+
+        // THE COCKPIT INSPECTOR PATH (World::receipts): the receipt is in World's OWN
+        // provenance log — NOT a framework side-ledger.
+        let receipts_after = world.borrow().receipts().len();
+        assert_eq!(
+            receipts_after,
+            receipts_before + 1,
+            "the fire landed ONE receipt in World::receipts() (the cockpit inspector log)"
+        );
+        assert_eq!(
+            world.borrow().receipts().last().unwrap().agent,
+            app_cell,
+            "the World receipt log's last entry is the gallery turn"
+        );
+
+        // The submission slot was written on the World cell (slot 4 = SUBMIT_BASE).
+        let submit0 = starbridge_gallery::submit_slot(0);
+        assert_ne!(
+            cell_on_world.state.fields[submit0], [0u8; 32],
+            "the submission landed on the cockpit World cell (slot {submit0} written)"
+        );
+    }
+
+    /// EVERY wired app launches onto the cockpit `World` and lands its cell + first
+    /// receipt on `World::ledger()` / `World::receipts()` — the whole starter set is
+    /// on the shared cockpit ledger, not just gallery.
+    #[cfg(feature = "embedded-executor")]
+    #[test]
+    fn every_wired_app_launches_on_the_cockpit_world() {
+        let reg = AppRegistry::standard();
+        for entry in reg.entries() {
+            // A fresh World per app (each app backs its primary cell on its own derived
+            // id; one World holding two apps would still be fine, but a fresh world
+            // isolates the per-app assertion).
+            let world = Rc::new(RefCell::new(World::new()));
+            let receipts_before = world.borrow().receipts().len();
+
+            let launched = entry
+                .launch_on_world([0x5Eu8; 32], Rc::clone(&world))
+                .unwrap_or_else(|e| panic!("{} launches on World: {e}", entry.id));
+            let app_cell = launched.primary_cell();
+
+            assert!(
+                world.borrow().ledger().get(&app_cell).is_some(),
+                "{} cell is on the cockpit World ledger",
+                entry.id
+            );
+            assert_eq!(
+                world.borrow().receipts().len(),
+                receipts_before + 1,
+                "{} landed a receipt in World::receipts() (the inspector log)",
+                entry.id
+            );
+            assert_eq!(
+                launched.receipt.agent, app_cell,
+                "{} World receipt is authored by the app cell",
+                entry.id
+            );
+            assert!(launched.receipt.action_count >= 1, "{} fired an action", entry.id);
         }
     }
 }
