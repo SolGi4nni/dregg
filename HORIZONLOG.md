@@ -29,9 +29,14 @@ the SAME World ledger the cockpit inspects (status: "6 saves · on-ledger"); (2)
 real `cargo --version` INSIDE deos ("cargo 1.98.0-nightly"). Screenshot `starbridge-v2/self-hosting-loop.png`
 (3200×2000) shows both panes under the live image header (`h6 · 6 cells · 6 receipts · on-ledger`). The
 editor code-input body renders dark (established headless gpui-component `InputState` baseline; the save is
-proven by the status line + assertions, not painted glyphs). EXACT REMAINING SEAM for the FULL single loop
-(edit-the-very-file-cargo-compiles): a FirmamentFs↔disk DUAL-WRITE (cell = durable receipted form; disk =
-derived read-mirror the terminal's cargo reads). Both halves real today; that mirror is the one wire left.
+proven by the status line + assertions, not painted glyphs). FULL single loop CLOSED `a07e713e`:
+the FirmamentFs↔disk DUAL-WRITE is built (optional `mirror_root`, off by default, fail-loud, backfills
+genesis). `--render-self-hosting-full` bake (screenshot `self-hosting-loop-full.png`) drives + HARD-asserts
+all three: save → real `SetField` turn (receipts 5→6 on-ledger) · cell v2 content dual-written to
+`<dir>/main.rs` · a live `sh` PTY ran `rustc main.rs -o prog && ./prog` → printed `v2`, `cat main.rs` shows
+v2. Edit-a-source-file-inside-deos → receipted-save → disk-mirror → toolchain-compiles-the-edit, RUNS. (Cell
+= receipted source of truth; disk = derived read-mirror.) Residual: editor pane body renders dark headless
+(gpui-component `InputState` quirk — cosmetic; loop proven by terminal+receipts).
 
 ### CONFINED HERMES AGENT LOOP — RUNS, receipted, by running (2026-06-23).
 `7c58e4da` (`deos-hermes`). 18 green incl. the consolidated `agent_loop_acceptance` (5-prompt session,
