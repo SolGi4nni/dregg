@@ -11,7 +11,8 @@
 //! The panes (all REAL surfaces, seeded deterministically — no live PTY, no live
 //! node, no network):
 //!
-//!   * CHAT — `deos_matrix` over `MockSource::seeded`, with the MEMBRANE CARD
+//!   * CHAT — `deos_matrix` over the world-backed `WorldChatSource` (the chat IS
+//!     the dregg world: rooms are cells, send is a real turn), with the MEMBRANE CARD
 //!     prominent: a chat message that carries a cap-bounded fork of the world,
 //!     rehydratable, fail-closed on stitch. The thing post-urbit cannot have.
 //!   * EDITOR — `deos_zed` over a seeded in-memory document: real syntax-
@@ -116,11 +117,18 @@ impl ShowcaseView {
     pub fn build(world: Rc<RefCell<World>>, window: &mut Window, cx: &mut App) -> Self {
         let cells = CellWorld::read(&world.borrow());
 
-        // CHAT — the deos-pilled Matrix chat over the recorded sync. `seeded`
-        // already carries the membrane conversation + the membrane-bearing
-        // message (the rehydrate card renders from the real `MembraneEnvelope`).
-        let source: Arc<dyn deos_matrix::source::ChatSource> =
-            Arc::new(deos_matrix::source::MockSource::seeded());
+        // CHAT — fully REAL, no mock. The TRANSPORT is the dregg world itself
+        // (`WorldChatSource`: rooms are cells, send is a real verified turn, the
+        // timeline is real cell state), and the comms-PD wrapper snapshots a fork of
+        // the SAME chat world for the membrane affordances (mint/rehydrate/drive/
+        // stitch over genuine `Cell` frusta). Every button drives the real executor.
+        let world_chat = crate::world_chat::WorldChatSource::seeded("@ember:deos.local");
+        let membrane_world = world_chat.fork_world();
+        let focus = world_chat.me_cell();
+        let transport: Arc<dyn deos_matrix::source::ChatSource> = Arc::new(world_chat);
+        let source: Arc<dyn deos_matrix::source::ChatSource> = Arc::new(
+            crate::comms_pd_source::CommsPdSource::new(transport, membrane_world, focus, 3),
+        );
         let chat = ChatPane::new(1, source, window, cx);
 
         // EDITOR — a seeded in-memory document: a real, highlighted Rust slice
@@ -430,7 +438,7 @@ impl Render for ShowcaseView {
             .child(self.membrane_card())
             .child(Self::framed(
                 "chat · deos-matrix",
-                "membrane-bearing rooms · MockSource",
+                "membrane-bearing rooms · the chat IS the dregg world",
                 chat_body,
             ))
             .child(Self::framed(

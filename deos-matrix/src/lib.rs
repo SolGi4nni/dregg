@@ -75,6 +75,10 @@ pub enum Error {
     Io(#[from] std::io::Error),
     #[error("session (de)serialization error: {0}")]
     Session(#[from] serde_json::Error),
+    /// This source holds no deos executor, so it cannot mint/rehydrate/drive/
+    /// stitch a real membrane — fail-closed (NEVER a mock fallback).
+    #[error("no deos executor attached to this source — the real membrane operations are unavailable here")]
+    MembraneUnavailable,
     #[error("{0}")]
     Other(String),
 }

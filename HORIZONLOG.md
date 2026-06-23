@@ -81,17 +81,20 @@ the sync↔async facade). The earlier fixture path (`real_executor_membrane.json
 `deos-matrix`'s `live_two_user_real_executor_membrane_roundtrip`) stays as the
 deos-matrix-workspace-only proof of the SAME wire shape; the one-process loop is the true
 closure. Harness: `FULL_LOOP=1 ./deos-matrix/scripts/live-test.sh`.
-RESIDUAL (named, INTERACTIVE-UI only — the protocol/test path is fully real): the
-clickable deos-chat gpui UI is still MOCK. `deos-matrix/src/chat.rs:185`
-`attach_membrane` mints `MockMembraneHost::sample_envelope()` (not the real
-`ForkMembraneHost`); the "▶ rehydrate & drive" button (`chat.rs:745`) has NO click
-handler; `ChatPane` mounts with `MockSource` (`starbridge-v2/src/{guest,showcase}.rs`),
-never a live `MatrixHandle` or executor-backed host. Closure shape: thread a real
-`dyn MembraneHost` (= `ForkMembraneHost` over the cockpit's embedded `World`) + a live
-`MatrixHandle` into `ChatPane`; wire the mint/rehydrate/drive/stitch button handlers to
-it. Touches `cockpit/*` + `chat.rs` UI → needs the gpui build check
-(`cargo check --features native-full --bin starbridge-v2`). Ember-decision: greenlight
-the UI strand or keep the interactive surface a mock demo while the protocol loop is real.
+INTERACTIVE UI — NO MORE MOCK (closed 2026-06-23): the clickable deos-chat surface
+now drives the REAL executor, never a mock. (a) TRANSPORT: `starbridge-v2/src/`
+`world_chat.rs` `WorldChatSource` — the chat IS the dregg world: rooms are real
+cells, a sent message is a real verified turn (`World::commit_turn`, body packed into
+slot-cell fields), the timeline is read back from real cell state. (b) MEMBRANE:
+`starbridge-v2/src/comms_pd_source.rs` `CommsPdSource` wraps the world-chat over a fork
+of the SAME world and implements `ChatSource::{mint_membrane, rehydrate_drive_stitch,
+membrane_capable}` against genuine `Cell` frusta. (c) UI: `deos-matrix/src/chat.rs`
+`attach_membrane` mints a REAL envelope via the source; the "▶ rehydrate & drive" button
+is WIRED (`membrane_card` is now a method with a live `on_mouse_down` →
+`rehydrate_membrane`), live only when `membrane_capable`. (d) `ChatSource` gained the
+membrane seam + a fail-closed `Error::MembraneUnavailable` (a bare transport returns it —
+never a mock fallback). `guest.rs`/`showcase.rs` mount `WorldChatSource`+`CommsPdSource`,
+NO `MockSource`. `native-full` bin check green.
 
 ## ✅ EDITOR-SAVE WRITE-BACK TO THE NODE — the self-hosting seam CLOSED, by running (2026-06-23)
 The `--node`-attached cockpit editor save now lands on the NODE's ledger over the

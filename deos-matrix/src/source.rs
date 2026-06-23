@@ -18,6 +18,15 @@
 use std::sync::Mutex;
 
 use crate::cell::{IdentityCell, PersonTrust, RoomCell, SendReceipt};
+
+/// Parse a Matrix room id (`!room:server`) into the wire [`OwnedRoomId`] a
+/// [`RoomSummary`] carries. Re-exported so an out-of-crate [`ChatSource`] impl
+/// (e.g. `starbridge_v2::world_chat`, where the chat IS the dregg world) can build
+/// `RoomSummary`s WITHOUT depending on `matrix-sdk`/`ruma` directly — keeping that
+/// heavy transitive dep inside this crate.
+pub fn parse_room_id(s: &str) -> crate::Result<matrix_sdk::ruma::OwnedRoomId> {
+    matrix_sdk::ruma::RoomId::parse(s).map_err(Into::into)
+}
 use crate::client::{
     EventState, MessageKind, Reaction, ReplyTo, RoomSummary, TimelineMessage,
 };
@@ -126,6 +135,37 @@ pub trait ChatSource: Send + Sync + 'static {
     /// UI calls this on a timer so new messages appear.
     fn sync(&self) -> Result<()> {
         Ok(())
+    }
+
+    // --- the REAL membrane operations (the executor seam) --------------------
+    // These are the interactive "screenshot a moment → rehydrate → drive →
+    // stitch" affordances. They are executor-backed: a source that does NOT hold
+    // the deos executor (e.g. a bare `MatrixHandle` with no comms-PD world)
+    // returns `MembraneUnavailable`, fail-closed — it NEVER fabricates a mock
+    // envelope. The real impl is `starbridge_v2`'s comms-PD source, which holds
+    // a live `World` and mints/rehydrates/drives/stitches genuine `Cell` frusta.
+
+    /// **Mint a membrane from the live world** — the interactive "screenshot a
+    /// moment". Returns a genuine cap-bounded `MembraneEnvelope` (a frustum of
+    /// real cells) the caller then sends. Fail-closed `MembraneUnavailable` when
+    /// no executor is attached (NO mock fallback).
+    fn mint_membrane(&self, _room_id: &str) -> Result<MembraneEnvelope> {
+        Err(crate::Error::MembraneUnavailable)
+    }
+
+    /// **Rehydrate a received membrane, drive a real turn on it, and stitch it
+    /// back** — the interactive receive side. Returns a human summary of the
+    /// settled outcome (root + what merged / what dropped). Fail-closed
+    /// `MembraneUnavailable` when no executor is attached (NO mock fallback).
+    fn rehydrate_drive_stitch(&self, _membrane: &MembraneEnvelope) -> Result<String> {
+        Err(crate::Error::MembraneUnavailable)
+    }
+
+    /// Whether THIS source can drive the real membrane operations (it holds the
+    /// executor). The UI renders the mint/rehydrate affordances live only when
+    /// this is true; otherwise it shows them disabled (never a mock action).
+    fn membrane_capable(&self) -> bool {
+        false
     }
 
     /// A short human label for the backend (shown in the title bar). "matrix",

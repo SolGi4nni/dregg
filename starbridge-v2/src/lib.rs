@@ -174,6 +174,22 @@ pub mod app_worldspine;
 #[cfg(feature = "embedded-executor")]
 pub mod shared_fork;
 
+// The comms-PD chat source — the REAL, executor-backed `deos_matrix::ChatSource`
+// the interactive deos-chat surface drives: it holds a live `World` and makes the
+// chat UI's membrane affordances genuine (mint/rehydrate/drive/stitch over real
+// `Cell` frusta), never a mock envelope. Gated on `dev-surfaces` (where the
+// deos-matrix `ChatSource` trait is in scope).
+#[cfg(feature = "dev-surfaces")]
+pub mod comms_pd_source;
+
+// The world-backed chat TRANSPORT — "the chat IS the dregg world". Rooms are real
+// cells, a sent message is a real verified turn, the timeline is read back from
+// real cell state. No mock, no recorded sync — the in-process / nested real
+// transport (a live `MatrixHandle` is the federated alternative). Gated on
+// `dev-surfaces`.
+#[cfg(feature = "dev-surfaces")]
+pub mod world_chat;
+
 // The deos SESSION / LOGIN MANAGER — login = receiving your ROOT CAPABILITY, a
 // session = the cap-tree you hold, logout = revoking it. The L6-adjacent trusted
 // piece the WM/login investigation found missing. Authenticate (a key proof) →

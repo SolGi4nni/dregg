@@ -6,9 +6,11 @@
 //! composer (Enter=send, Shift-Enter=newline, ↑-to-edit-last).
 //!
 //! The view is pure presentation over the [`ChatSource`] seam — it does NOT know
-//! whether the backend is the live `matrix-rust-sdk` worker or the offline
-//! [`MockSource`](crate::source::MockSource), so the same UI renders against a
-//! recorded sync with no homeserver.
+//! whether the backend is the live `matrix-rust-sdk` worker, the world-backed
+//! transport (`starbridge_v2::world_chat`, where the chat IS the dregg world), or
+//! a recorded sync. The membrane affordances drive whatever the source exposes:
+//! an executor-backed source (`membrane_capable`) mints/rehydrates/drives/stitches
+//! REAL `Cell` frusta; a bare transport disables them — never a mock action.
 //!
 //! ## The dregg-pilling (the chat IS the dregg world, not a silo)
 //!
@@ -22,9 +24,9 @@
 //!     the status line ("turn N · cell:… · root …").
 //!   * **a message carries a membrane** — the STAR feature: a message can embed a
 //!     rehydratable cap-bounded fork of the deos world. The composer's "⬡ attach
-//!     membrane" mints one (via the source's offline `MockMembraneHost`) and sends
-//!     it; a membrane-bearing message renders as a card with a **rehydrate**
-//!     affordance.
+//!     membrane" mints a REAL one from the source's executor (the comms-PD's live
+//!     `World`) and sends it; a membrane-bearing message renders as a card with a
+//!     live **rehydrate & drive** affordance that runs a real turn + stitch.
 //!
 //! ## Patterns adopted from nheko (the "solves problems correctly" reference)
 //!
@@ -52,7 +54,6 @@ use gpui_component::{
 
 use crate::cell::PersonTrust;
 use crate::client::{EventState, MessageKind, RoomSummary, TimelineMessage};
-use crate::membrane::MockMembraneHost;
 use crate::source::ChatSource;
 
 /// How many recent messages to pull per room.
@@ -176,21 +177,49 @@ impl ChatView {
         }
     }
 
-    /// Attach + send a membrane — the STAR feature. Mints a cap-bounded fork of the
-    /// deos world (offline via `MockMembraneHost`) and sends it as a
-    /// membrane-bearing message.
+    /// Attach + send a membrane — the STAR feature. Mints a REAL cap-bounded fork
+    /// of the deos world from the live executor (the "screenshot a moment") and
+    /// sends it as a membrane-bearing message. Fail-closed if the source holds no
+    /// executor — NO mock fallback; the affordance is simply unavailable.
     fn attach_membrane(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         let Some(idx) = self.selected else { return };
         let room_id = self.rooms[idx].room_id.to_string();
-        let env = MockMembraneHost::sample_envelope();
+        // MINT from the real executor (the screenshot of the moment).
+        let env = match self.source.mint_membrane(&room_id) {
+            Ok(env) => env,
+            Err(e) => {
+                self.status = SharedString::from(format!("membrane mint unavailable: {e}"));
+                cx.notify();
+                return;
+            }
+        };
         let summary = env.text_fallback();
         match self.source.send_membrane(&room_id, "", env) {
             Ok(_id) => {
-                self.status = SharedString::from(format!("⬡ membrane sent — {summary}"));
+                self.status = SharedString::from(format!("⬡ membrane minted + sent — {summary}"));
                 self.refresh_timeline(cx);
             }
             Err(e) => {
                 self.status = SharedString::from(format!("membrane send failed: {e}"));
+                cx.notify();
+            }
+        }
+    }
+
+    /// **Rehydrate a received membrane, drive a real turn, stitch it back** — the
+    /// interactive receive side of the star feature. Calls through the source to
+    /// the real executor; shows the settled outcome in the status. Fail-closed if
+    /// the source holds no executor (NO mock).
+    fn rehydrate_membrane(&mut self, event_id: String, cx: &mut Context<Self>) {
+        let Some(m) = self.timeline.iter().find(|m| m.event_id == event_id) else { return };
+        let Some(env) = m.membrane.clone() else { return };
+        match self.source.rehydrate_drive_stitch(&env) {
+            Ok(summary) => {
+                self.status = SharedString::from(format!("▶ rehydrated + drove + stitched — {summary}"));
+                self.refresh_timeline(cx);
+            }
+            Err(e) => {
+                self.status = SharedString::from(format!("rehydrate unavailable: {e}"));
                 cx.notify();
             }
         }
@@ -424,7 +453,7 @@ impl ChatView {
                     .child("⌫ message removed")
                     .into_any_element(),
                 (_, MessageKind::Membrane) => {
-                    membrane_card(m, card_bg, border, accent, foreground, muted).into_any_element()
+                    self.membrane_card(m, card_bg, border, accent, foreground, muted, cx).into_any_element()
                 }
                 (_, MessageKind::Object(_)) => {
                     object_card(m, card_bg, border, accent, foreground, muted).into_any_element()
@@ -680,92 +709,115 @@ fn trust_badge(trust: PersonTrust, success: Hsla, warning: Hsla, danger: Hsla) -
 }
 
 /// The STAR feature card: a membrane-bearing message rendered as a rehydratable
-/// fork of the deos world, with the cut/cursor/root and a "rehydrate" affordance.
-fn membrane_card(
-    m: &TimelineMessage,
-    bg: Hsla,
-    border: Hsla,
-    accent: Hsla,
-    fg: Hsla,
-    muted: Hsla,
-) -> impl IntoElement {
-    let env = m.membrane.clone();
-    let (cells, depth, h, root, rehydratable) = match &env {
-        Some(e) => (
-            e.cut.cell_count,
-            e.cut.max_depth,
-            e.cursor.height,
-            hex8(&e.frustum_root),
-            e.is_rehydratable(),
-        ),
-        None => (0, 0, 0, String::new(), false),
-    };
-    v_flex()
-        .ml(px(36.))
-        .my_1()
-        .p_2()
-        .gap_1()
-        .rounded_lg()
-        .bg(bg)
-        .border_1()
-        .border_color(accent.opacity(0.5))
-        .max_w(px(420.))
-        .child(
-            h_flex()
-                .gap_2()
-                .items_center()
-                .child(div().text_color(accent).child("⬡"))
-                .child(
-                    div()
-                        .font_weight(gpui::FontWeight::BOLD)
-                        .text_color(fg)
-                        .child("deos membrane"),
-                )
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(muted)
-                        .child("a cap-bounded fork of the world"),
-                ),
-        )
-        .child(
-            div()
-                .text_xs()
-                .text_color(muted)
-                .child(format!(
-                    "{cells} cells · depth {depth} · cut@h{h} · root {root}…"
-                )),
-        )
-        .child(
-            h_flex()
-                .gap_2()
-                .items_center()
-                .child(
-                    div()
-                        .id("rehydrate")
-                        .px_2()
-                        .py_1()
-                        .rounded_md()
-                        .border_1()
-                        .border_color(border)
-                        .text_xs()
-                        .when(rehydratable, |d| {
-                            d.bg(accent)
-                                .text_color(gpui::white())
-                                .cursor_pointer()
-                                .child("▶ rehydrate & drive")
-                        })
-                        .when(!rehydratable, |d| {
-                            d.text_color(muted).child("⨯ newer membrane — update deos")
-                        }),
-                )
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(muted)
-                        .child("drives real turns · stitches back fail-closed"),
-                ),
-        )
+/// fork of the deos world, with the cut/cursor/root and a LIVE "rehydrate & drive"
+/// affordance. The rehydrate button is wired to the real executor through the
+/// source (`rehydrate_drive_stitch`); it is live only when the source holds the
+/// executor (`membrane_capable`) AND the envelope is rehydratable. Otherwise it is
+/// rendered disabled — never a mock action.
+impl ChatView {
+    fn membrane_card(
+        &self,
+        m: &TimelineMessage,
+        bg: Hsla,
+        border: Hsla,
+        accent: Hsla,
+        fg: Hsla,
+        muted: Hsla,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let env = m.membrane.clone();
+        let (cells, depth, h, root, rehydratable) = match &env {
+            Some(e) => (
+                e.cut.cell_count,
+                e.cut.max_depth,
+                e.cursor.height,
+                hex8(&e.frustum_root),
+                e.is_rehydratable(),
+            ),
+            None => (0, 0, 0, String::new(), false),
+        };
+        // The button is LIVE only when this source can drive the real executor AND
+        // the envelope is a supported wire version. A capable-but-newer membrane is
+        // disabled with the update prompt; an INCAPABLE source disables it with an
+        // honest "open in deos" prompt (the chat-only/no-executor case) — never mock.
+        let capable = self.source.membrane_capable();
+        let live = capable && rehydratable;
+        let event_id = m.event_id.clone();
+        let button_id = SharedString::from(format!("rehydrate-{}", m.event_id));
+        let (button_label, hint): (&str, &str) = if live {
+            ("▶ rehydrate & drive", "drives real turns · stitches back fail-closed")
+        } else if rehydratable && !capable {
+            ("⬡ open in deos to rehydrate", "this chat surface holds no executor")
+        } else {
+            ("⨯ newer membrane — update deos", "this build cannot rehydrate it")
+        };
+        let mut button = div()
+            .id(gpui::ElementId::Name(button_id))
+            .px_2()
+            .py_1()
+            .rounded_md()
+            .border_1()
+            .border_color(border)
+            .text_xs();
+        if live {
+            button = button
+                .bg(accent)
+                .text_color(gpui::white())
+                .cursor_pointer()
+                .child(button_label)
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |this, _ev, _win, cx| {
+                        this.rehydrate_membrane(event_id.clone(), cx)
+                    }),
+                );
+        } else {
+            button = button.text_color(muted).child(button_label);
+        }
+        v_flex()
+            .ml(px(36.))
+            .my_1()
+            .p_2()
+            .gap_1()
+            .rounded_lg()
+            .bg(bg)
+            .border_1()
+            .border_color(accent.opacity(0.5))
+            .max_w(px(420.))
+            .child(
+                h_flex()
+                    .gap_2()
+                    .items_center()
+                    .child(div().text_color(accent).child("⬡"))
+                    .child(
+                        div()
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .text_color(fg)
+                            .child("deos membrane"),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(muted)
+                            .child("a cap-bounded fork of the world"),
+                    ),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(muted)
+                    .child(format!(
+                        "{cells} cells · depth {depth} · cut@h{h} · root {root}…"
+                    )),
+            )
+            .child(
+                h_flex()
+                    .gap_2()
+                    .items_center()
+                    .child(button)
+                    .child(div().text_xs().text_color(muted).child(hint)),
+            )
+    }
 }
 
 /// Render a **dregg semantic object** card — the generalized membrane. Each kind

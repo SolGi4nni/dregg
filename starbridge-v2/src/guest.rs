@@ -231,9 +231,20 @@ impl GuestView {
         // TERMINAL — a recorded, friendly shell session (deterministic, no live PTY).
         let terminal = TerminalPane::seeded(3, 80, 18, GUEST_TERMINAL_SESSION.as_bytes(), cx);
 
-        // CHAT — the deos-matrix chat over the recorded sync (the warm, social face).
-        let source: Arc<dyn deos_matrix::source::ChatSource> =
-            Arc::new(deos_matrix::source::MockSource::seeded());
+        // CHAT — fully REAL, no mock anywhere. The TRANSPORT is the dregg world
+        // itself (`WorldChatSource`): rooms are real cells, a sent message is a real
+        // verified turn, the timeline is read back from real cell state. The MEMBRANE
+        // affordances are REAL too: the comms-PD source wraps the world-chat and
+        // snapshots a fork of the SAME chat world (the "screenshot a moment"),
+        // rehydrating/driving/stitching genuine `Cell` frusta. Every button drives
+        // the real executor — never a mock envelope, never a recorded sync.
+        let world_chat = crate::world_chat::WorldChatSource::seeded("@ember:deos.local");
+        let membrane_world = world_chat.fork_world();
+        let focus = world_chat.me_cell();
+        let transport: Arc<dyn deos_matrix::source::ChatSource> = Arc::new(world_chat);
+        let source: Arc<dyn deos_matrix::source::ChatSource> = Arc::new(
+            crate::comms_pd_source::CommsPdSource::new(transport, membrane_world, focus, 3),
+        );
         let chat = ChatPane::new(4, source, window, cx);
 
         // The wonder strip — the brightest few glowing cells off the live image.
@@ -738,7 +749,7 @@ impl Render for GuestView {
             .h_full()
             .child(Self::framed(
                 "chat · deos-matrix",
-                "rooms · MockSource",
+                "rooms · the chat IS the dregg world",
                 chat_body,
             ))
             .child(Self::framed(

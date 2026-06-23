@@ -42,6 +42,7 @@
 
 use crate::field::BabyBear;
 use crate::poseidon2::{hash_fact, hash_many};
+use std::sync::LazyLock;
 
 pub use crate::dsl::revocation::{SENTINEL_MAX, SENTINEL_MIN};
 
@@ -50,6 +51,38 @@ pub use crate::dsl::revocation::{SENTINEL_MAX, SENTINEL_MIN};
 /// `2^16 - 2 = 65534` entries (two positions reserved for the MIN/MAX
 /// sentinels). Per-cell heaps never re-rotate the tree in practice.
 pub const HEAP_TREE_DEPTH: usize = 16;
+
+/// The heap tree's internal node hash: `hash_fact(l, [r])` — the SAME node hash
+/// [`CanonicalHeapTree::new`] folds with and the witness paths recompose with.
+/// Factored out so the sparse fold and the empty-subtree precompute share it.
+fn heap_node(l: BabyBear, r: BabyBear) -> BabyBear {
+    hash_fact(l, &[r])
+}
+
+/// The precomputed **empty-subtree roots** for the canonical heap tree at every
+/// level `0..=HEAP_TREE_DEPTH`. `EMPTY_SUBTREE_ROOTS[0]` is the empty-leaf
+/// digest (`BabyBear::ZERO`, the padding marker [`CanonicalHeapTree::new`] uses);
+/// `EMPTY_SUBTREE_ROOTS[k]` is `heap_node(empty[k-1], empty[k-1])` — the root a
+/// node whose entire subtree is padding folds to.
+///
+/// These are the values the DENSE build placed at any node covering only
+/// padding positions. The sparse fold reads them in place of folding 65k zeros,
+/// and a membership path whose sibling subtree is all-padding reports the same
+/// constant the dense build would — so roots and witnesses stay byte-identical.
+static EMPTY_SUBTREE_ROOTS: LazyLock<[BabyBear; HEAP_TREE_DEPTH + 1]> = LazyLock::new(|| {
+    let mut roots = [BabyBear::ZERO; HEAP_TREE_DEPTH + 1];
+    for level in 1..=HEAP_TREE_DEPTH {
+        roots[level] = heap_node(roots[level - 1], roots[level - 1]);
+    }
+    roots
+});
+
+/// The empty-subtree root at `level` (`0` = the ZERO leaf digest, `depth` = the
+/// root of an all-padding tree). Used both by the sparse fold and by
+/// `prove_membership` to report all-padding siblings.
+fn heap_empty_subtree_root(level: usize) -> BabyBear {
+    EMPTY_SUBTREE_ROOTS[level]
+}
 
 /// The canonical heap ADDRESS of a `(collection_id, key)` pair: the arity-2
 /// Poseidon2 image `hash[coll, key]` — the sorted-tree sort key. This is the
@@ -96,8 +129,16 @@ fn sentinel_leaf(key: BabyBear) -> HeapLeaf {
 /// [`crate::cap_root::CanonicalCapTree`] with the generic 2-field leaf.
 #[derive(Clone, Debug)]
 pub struct CanonicalHeapTree {
-    /// All levels, bottom-up. `levels[0]` = leaf digests (padded);
-    /// `levels[depth]` = `[root]`.
+    /// All levels, bottom-up, stored **sparsely** as the non-empty PREFIX of
+    /// each level. `levels[k]` holds exactly the real-bearing nodes at level `k`
+    /// (positions `0..levels[k].len()`); every node at an index `>= levels[k].len()`
+    /// covers only padding and equals [`heap_empty_subtree_root`]`(k)`.
+    ///
+    /// The real leaves are placed contiguously at the start of the bottom level
+    /// (sorted, then padded), so each level's non-empty nodes are themselves a
+    /// contiguous prefix — this prefix is all the dense build ever computed to a
+    /// non-empty value. `node(level, idx)` reconstructs any position byte-
+    /// identically to the old dense `levels[level][idx]`.
     levels: Vec<Vec<BabyBear>>,
     /// The leaves in sorted-by-`addr` order, including sentinels (before
     /// padding). Retained for membership / non-membership witnessing.
@@ -129,17 +170,33 @@ impl CanonicalHeapTree {
             leaves.len()
         );
 
-        let mut leaf_digests: Vec<BabyBear> = leaves.iter().map(HeapLeaf::digest).collect();
-        // Pad with the zero felt (the empty-position marker), exactly like
-        // the cap + revocation trees.
-        leaf_digests.resize(capacity, BabyBear::ZERO);
+        let _ = capacity; // (asserted above; the sparse fold never materializes padding)
+        // The real leaf digests (positions `0..n`); every position `>= n` is the
+        // ZERO padding leaf the dense build `resize`d in. We never materialize
+        // those zeros — the sparse fold folds only this prefix against the
+        // precomputed empty-subtree roots.
+        let leaf_digests: Vec<BabyBear> = leaves.iter().map(HeapLeaf::digest).collect();
+        debug_assert!(leaf_digests.len() <= capacity);
 
-        let mut levels = vec![leaf_digests];
-        for _ in 0..depth {
+        // Fold ONLY the non-empty prefix at each level (see CanonicalCapTree::new
+        // for the contiguous-prefix argument): a parent at index `i` covers
+        // children `2i`, `2i+1`; a child outside the stored prefix is the
+        // empty-subtree root for the child's level. O(n·depth) node hashes for
+        // `n` real leaves, not the dense `2^depth - 1`.
+        let mut levels: Vec<Vec<BabyBear>> = Vec::with_capacity(depth + 1);
+        levels.push(leaf_digests);
+        for level in 0..depth {
             let prev = levels.last().unwrap();
-            let mut next_level = Vec::with_capacity(prev.len() / 2);
-            for chunk in prev.chunks(2) {
-                next_level.push(hash_fact(chunk[0], &[chunk[1]]));
+            let prev_len = prev.len();
+            let next_len = prev_len.div_ceil(2);
+            let mut next_level = Vec::with_capacity(next_len);
+            for i in 0..next_len {
+                let l = prev[2 * i];
+                let r = prev
+                    .get(2 * i + 1)
+                    .copied()
+                    .unwrap_or_else(|| heap_empty_subtree_root(level));
+                next_level.push(heap_node(l, r));
             }
             levels.push(next_level);
         }
@@ -151,9 +208,21 @@ impl CanonicalHeapTree {
         }
     }
 
-    /// The Merkle root.
+    /// The value at `(level, idx)`, reconstructing the dense node byte-
+    /// identically: the stored prefix value if `idx` is within it, else the
+    /// precomputed empty-subtree root for `level` (an all-padding node).
+    fn node(&self, level: usize, idx: usize) -> BabyBear {
+        self.levels[level]
+            .get(idx)
+            .copied()
+            .unwrap_or_else(|| heap_empty_subtree_root(level))
+    }
+
+    /// The Merkle root. `levels[depth]` always holds exactly the single root
+    /// node (the two sentinels guarantee `2 <= n <= 2^depth`, so the top-level
+    /// prefix length is `ceil(n / 2^depth) == 1`).
     pub fn root(&self) -> BabyBear {
-        self.levels[self.depth][0]
+        self.node(self.depth, 0)
     }
 
     /// The sorted leaves (including sentinels). For membership witnessing.
@@ -174,8 +243,11 @@ impl CanonicalHeapTree {
         self.depth
     }
 
-    /// All level vectors, bottom-up (`levels[0]` = padded leaf digests,
-    /// `levels[depth] = [root]`). Exposed for membership witnessing.
+    /// All level vectors, bottom-up, stored SPARSELY: `levels[k]` is the
+    /// non-empty PREFIX of level `k` (positions `0..levels[k].len()`); any node
+    /// at index `>= levels[k].len()` is the all-padding [`heap_empty_subtree_root`]`(k)`.
+    /// `levels[0]` is the real (unpadded) leaf-digest prefix; `levels[depth]` is
+    /// `[root]`. Exposed for membership witnessing.
     pub fn levels(&self) -> &[Vec<BabyBear>] {
         &self.levels
     }
@@ -201,7 +273,7 @@ impl CanonicalHeapTree {
         let mut idx = position;
         for level in 0..self.depth {
             let sibling_idx = idx ^ 1;
-            siblings.push(self.levels[level][sibling_idx]);
+            siblings.push(self.node(level, sibling_idx));
             directions.push((idx & 1) as u8);
             idx >>= 1;
         }
@@ -478,5 +550,124 @@ mod tests {
         assert_eq!(cur, w.new_root, "witness path must open to the new root");
         // A present address has no insert witness.
         assert!(tree.insert_witness(entry(1, 1, 99)).is_none());
+    }
+
+    // ---- SPARSE-FOLD BYTE-IDENTITY DIFFERENTIAL (temp; pins step 1 of INCREMENTAL-COMMITMENT.md) ----
+
+    struct Rng(u64);
+    impl Rng {
+        fn next_u64(&mut self) -> u64 {
+            let mut x = self.0;
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            self.0 = x;
+            x
+        }
+        fn below(&mut self, n: u32) -> u32 {
+            (self.next_u64() % n as u64) as u32
+        }
+    }
+
+    /// The OLD DENSE build, kept verbatim as the in-test oracle: assemble the
+    /// sorted/deduped leaf list EXACTLY as `new`, then `resize` to the full
+    /// `2^depth` with ZERO padding and fold ALL levels. Returns `(sorted_leaves,
+    /// levels)` so membership can be cross-checked against the dense arrays.
+    fn dense_build(leaves: Vec<HeapLeaf>, depth: usize) -> (Vec<HeapLeaf>, Vec<Vec<BabyBear>>) {
+        let mut leaves = leaves;
+        leaves.push(sentinel_leaf(SENTINEL_MIN));
+        leaves.push(sentinel_leaf(SENTINEL_MAX));
+        leaves.sort_by_key(|l| l.addr.as_u32());
+        leaves.dedup_by_key(|l| l.addr.as_u32());
+        let capacity = 1usize << depth;
+        assert!(leaves.len() <= capacity);
+        let mut leaf_digests: Vec<BabyBear> = leaves.iter().map(HeapLeaf::digest).collect();
+        leaf_digests.resize(capacity, BabyBear::ZERO);
+        let mut levels = vec![leaf_digests];
+        for _ in 0..depth {
+            let prev = levels.last().unwrap();
+            let mut next = Vec::with_capacity(prev.len() / 2);
+            for chunk in prev.chunks(2) {
+                next.push(hash_fact(chunk[0], &[chunk[1]]));
+            }
+            levels.push(next);
+        }
+        (leaves, levels)
+    }
+
+    fn rand_entry(rng: &mut Rng) -> HeapLeaf {
+        entry(rng.below(64), rng.below(64), rng.next_u64() as u32)
+    }
+
+    /// THE DIFFERENTIAL: 10k random heaps (varying size incl. empty); the SPARSE
+    /// `new` must produce the byte-identical root AND byte-identical membership
+    /// paths for every present leaf, vs the dense oracle. Small depth keeps the
+    /// dense oracle affordable; the fold is depth-independent.
+    #[test]
+    fn sparse_matches_dense_root_and_membership() {
+        const CASES: usize = 10_000;
+        const DEPTH: usize = 8;
+        let mut rng = Rng(0x4EAB_F00D_1234_0001);
+        let mut mismatches = 0usize;
+        let mut total_leaves = 0usize;
+        for _ in 0..CASES {
+            let n = rng.below(60) as usize;
+            let leaves: Vec<HeapLeaf> = (0..n).map(|_| rand_entry(&mut rng)).collect();
+            let sparse = CanonicalHeapTree::new(leaves.clone(), DEPTH);
+            let (oracle_leaves, oracle_levels) = dense_build(leaves, DEPTH);
+
+            if sparse.root() != oracle_levels[DEPTH][0] {
+                mismatches += 1;
+                continue;
+            }
+            assert_eq!(sparse.sorted_leaves(), oracle_leaves.as_slice());
+            for pos in 0..oracle_leaves.len() {
+                total_leaves += 1;
+                let (s_sib, s_dir) = sparse.prove_membership(pos).unwrap();
+                let mut d_sib = Vec::with_capacity(DEPTH);
+                let mut d_dir = Vec::with_capacity(DEPTH);
+                let mut idx = pos;
+                for level in 0..DEPTH {
+                    d_sib.push(oracle_levels[level][idx ^ 1]);
+                    d_dir.push((idx & 1) as u8);
+                    idx >>= 1;
+                }
+                if s_sib != d_sib || s_dir != d_dir {
+                    mismatches += 1;
+                    break;
+                }
+            }
+        }
+        assert_eq!(
+            mismatches, 0,
+            "sparse heap-tree fold must be byte-identical to the dense build over {CASES} cases ({total_leaves} membership paths checked)"
+        );
+    }
+
+    /// Byte-identity at the CANONICAL depth-16 too: root + every membership path
+    /// for a handful of heaps match the dense depth-16 oracle.
+    #[test]
+    fn sparse_matches_dense_at_depth_16() {
+        let cases: Vec<Vec<HeapLeaf>> = vec![
+            vec![],
+            vec![entry(3, 4, 42)],
+            vec![entry(1, 1, 10), entry(1, 2, 20), entry(2, 1, 30)],
+            (0..50).map(|i| entry(i, i + 1, i.wrapping_mul(11))).collect(),
+        ];
+        for leaves in cases {
+            let sparse = CanonicalHeapTree::new(leaves.clone(), HEAP_TREE_DEPTH);
+            let (oracle_leaves, oracle_levels) = dense_build(leaves, HEAP_TREE_DEPTH);
+            assert_eq!(sparse.root(), oracle_levels[HEAP_TREE_DEPTH][0], "depth-16 root");
+            assert_eq!(sparse.sorted_leaves(), oracle_leaves.as_slice());
+            for pos in 0..oracle_leaves.len() {
+                let (s_sib, s_dir) = sparse.prove_membership(pos).unwrap();
+                let mut idx = pos;
+                for level in 0..HEAP_TREE_DEPTH {
+                    assert_eq!(s_sib[level], oracle_levels[level][idx ^ 1], "sibling@{level} pos {pos}");
+                    assert_eq!(s_dir[level], (idx & 1) as u8);
+                    idx >>= 1;
+                }
+            }
+        }
     }
 }
