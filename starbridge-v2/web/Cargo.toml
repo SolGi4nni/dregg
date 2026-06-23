@@ -7,8 +7,21 @@ description = "The dregg cockpit MODEL in the browser — the gpui-free Presenta
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+# The web cockpit's TERMINAL BACKEND server (native): a PTY-over-WebSocket bridge
+# the in-browser terminal pane dials. Built with `--features pty-ws-server`; runs
+# the `starbridge-web-pty-ws` bin. Off the wasm build (which only needs the
+# `WsTransport` client half of `pty_ws`).
+[[bin]]
+name = "starbridge-web-pty-ws"
+path = "src/bin/pty-ws.rs"
+required-features = ["pty-ws-server"]
+
 [features]
 default = []
+# The native PTY-over-WS terminal backend (server bin + its deps). Native-only;
+# the deps below are gated `cfg(not(wasm32))`, so leaving this on in a wasm build
+# is harmless (the server module + bin compile to inert stubs there).
+pty-ws-server = []
 # WEB DEOS — the gpui cockpit in the browser (wasm32 + WebGPU canvas via
 # gpui_web). Pulls starbridge-v2's `gpui-web` feature (gpui + gpui_platform,
 # which forwards to gpui_web on wasm32) and the gpui crates directly so this
@@ -19,7 +32,6 @@ gpui-web = [
     "dep:gpui",
     "dep:gpui_platform",
     "dep:gpui-component",
-    "dep:web-sys",
 ]
 
 [dependencies]
@@ -29,8 +41,13 @@ gpui-web = [
 starbridge-v2 = { path = "..", default-features = false, features = ["embedded-executor"] }
 dregg-cell = { path = "../../cell", default-features = false }
 wasm-bindgen = "0.2"
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 hex = "0.4"
+# The terminal-backend wire codec (WireMsg) + the WS↔PTY bridge logging. All-target
+# (the codec is shared by the native server and the wasm WsTransport client).
+anyhow = "1"
+log = "0.4"
 
 # gpui + gpui_platform, gated on `gpui-web`. Same fork rev as starbridge-v2 pins
 # so cargo resolves ONE gpui instance. On wasm32, gpui_platform's wasm target
@@ -42,9 +59,36 @@ gpui_platform = { git = "https://github.com/emberian/zed", rev = "407a6ffd977d82
 # starbridge-v2 pins) so cargo resolves ONE gpui-component instance. Default
 # features OFF (no tree-sitter grammars), matching starbridge-v2's dep.
 gpui-component = { path = "../../../gpui-component/crates/ui", default-features = false, optional = true }
-# `web_sys::console` for the wasm warn path (the web platform has no stderr).
-web-sys = { version = "0.3", features = ["console"], optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.3", features = ["wasm_js"] }
 getrandom02 = { package = "getrandom", version = "0.2", features = ["js"] }
+# The browser terminal transport (`pty_ws::WsTransport`): a `web_sys::WebSocket`
+# whose PTY output bytes are parsed through `vte` into a small render grid.
+js-sys = "0.3"
+vte = { version = "0.15", default-features = false, features = ["std", "ansi"] }
+# `web_sys::console` (the wasm warn path — no stderr) + the WebSocket set the
+# terminal transport drives. One web-sys instance on wasm, all features here.
+web-sys = { version = "0.3", features = [
+    "console",
+    "BinaryType",
+    "MessageEvent",
+    "WebSocket",
+    "Event",
+    "CloseEvent",
+] }
+
+# The native PTY-over-WebSocket terminal backend server (`pty_ws::serve`). Gated
+# `cfg(not(wasm32))` so the wasm bundle never pulls a PTY/tokio/tungstenite tree.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time"] }
+tokio-tungstenite = "0.24"
+futures-util = "0.3"
+portable-pty = "0.8"
+
+# Native dev-deps for the end-to-end PTY-over-WS test (a tungstenite WS client
+# against the in-process server).
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "time"] }
+tokio-tungstenite = "0.24"
+futures-util = "0.3"
