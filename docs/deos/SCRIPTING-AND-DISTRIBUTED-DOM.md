@@ -197,3 +197,39 @@ the entire gpui-free reflective API (proven live via dregg-mcp).
   per-node↔coarse dial (§4.1) is a property of how you factor applets into cells.
 - **Throughout:** language-agnostic binding (JS-first; the binding is the artifact). Reflection
   stays cap-bounded + attested; interaction stays production-under-non-forgeability.
+
+## 7. The view language (slice 3) — decided
+
+The applet's `view` renders `obs` as a gpui element tree from JS. Decisions:
+
+- **Immediate-mode core + fine-grained signal bindings.** `view(s)` re-runs on state change (matches
+  gpui's immediate mode AND the coalgebra — `obs` *is* a function of state). For ergonomics, offer
+  reactive **signal bindings** — `bind(() => s.x)` re-renders ONLY that node, invalidation riding the
+  **`WorldEvent` dirty-set** (the same push stream `EFFICIENCY-WELD-PLAN.md` M1/M2 uses; SolidJS-shaped).
+  Immediate-mode simplicity + retained-binding efficiency, both off the stream we already emit — NOT a
+  pull-memoize framework (Salsa was considered + declined: native incrementality IS the dynamics stream
+  + dirty-set, and a third-party engine in a soundness-adjacent path isn't worth it).
+- **Vocabulary = `gpui-component`** (the native widget set / longbridge fork): `button/list/table/tree/
+  input/dropdown/tabs/dock/...` — full power, not spartan. The moldable `present()` faces render through
+  the SAME gpui-component vocabulary, so an applet's custom view and its inspector faces share one
+  widget language.
+- **The unification (the prize):** an applet's custom `view` is just ONE of the cell's seven
+  `obs`-faces — its `DomainVisual` face. RawFields · ocap Graph · Provenance · Affordances are always
+  there alongside. So every applet is a pretty custom view you can **halo down to its real cells/caps/
+  receipts** — a 5-year-old clicks the view, an adept inspects the substance, *same object*. The UI
+  toolkit and the inspector are not separate: the view is a face, the inspector is the other faces.
+- **State vs view-state:** `s` (cell state → turns) vs `view.*` (ephemeral, never a turn) — a `view.`
+  namespace makes the line explicit in JS.
+- **Drive path runs `WitnessMode::Symbolic` by default** for local turns: the witness defers (the gates
+  never do), collapse only at a boundary. The ledger's Merkle is already incremental — no symbolic-
+  frontier framework needed.
+
+## 8. Chat & comms — dregg-native, BRIDGED not bundled
+
+deos does NOT bundle a Matrix homeserver. The chat IS the dregg world (`deos-matrix/src/cell.rs`): a
+**room is a cell**, a **message is a turn** (it spends the sender's post-cap on the room cell + appends
+to history), and the data-plane Bus is the live delivery spine. `deos-matrix` is a **client/bridge**
+(matrix-sdk) federating deos rooms ↔ the Matrix world (dregg-objects ride as Matrix events; the membrane
+`MembraneEnvelope` rides the same wire). dregg is the substrate; Matrix is a rich bridge for interop —
+nothing to run. **deos-chat is the first real applet** (room=cell + the §7 view language, Matrix client
+as a bridge data-source).
