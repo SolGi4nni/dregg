@@ -34,15 +34,18 @@ launches a real `DeosApp` over a live `AppSubstrate`, fires one affordance → r
 (`receipt.agent == backing cell`), post-fire state visible to a second reader of the SAME ledger
 (inspector seam). Powerbox `RegistryLauncher` row per app. 4 tests + native-full green. (`polis` skipped —
 it doesn't use the framework, different shape.)
-- APP RE-POINT SEAM (solution pattern now KNOWN — NOT the DreggEngine refactor I'd guessed): apps run
-  on the app-framework's `EmbeddedExecutor` ledger (genuinely shared writer↔reader, but a DISTINCT
-  physical ledger from the cockpit's `World`). The editor lane `d11c72e9` solved the identical problem
-  WITHOUT changing `DreggEngine` ownership: a `LedgerSpine` trait (`deos-zed/src/fs/firmament.rs`, in
-  pure `dregg_cell`/`dregg_turn` terms) + a `WorldSpine` (`starbridge-v2/src/dock/editor_surface.rs`)
-  that commits via `World::turn`/`commit_turn` over `Rc<RefCell<World>>` — the SAME path the inspector
-  reads. FOLLOW-ON (firing): re-point `app_registry` `AppEntry::launch/drive` to commit app affordance-
-  turns through a WorldSpine-style path so app cells land on the live World the cockpit inspects. Honest
-  open question: whether `DeosApp`'s owned executor blocks a clean re-point — if so, that's the real work.
+- APP RE-POINT SEAM — CLOSED `6fddfc3b`. `starbridge-v2/src/app_worldspine.rs` `AppWorldSpine` mirrors
+  the editor's `WorldSpine`: `seed` genesis-installs the app's primary cell (carrying its `CellProgram`
+  so World's executor RE-ENFORCES app invariants — the state tooth) at its real derived id; `commit`
+  runs the cap-gate in-band then commits via `World::commit_turn` with the affordance METHOD SYMBOL
+  stamped (apps use method-dispatched `CellProgram::Cases`; a bare action default-denies). All 4 wired
+  apps land their cell on `World::ledger()` + receipt on `World::receipts()` (the inspector path); 7
+  tests ~59s. The `EmbeddedExecutor` path remains the headless fallback. WASM REGRESSION also closed:
+  `embedded-executor` no longer pulls `app-registry` (app crates native-only); `app-registry` implies
+  `embedded-executor`, rides `native-full`; wasm `gpui-web` build green. NOTE: registry tests now run
+  under `--features app-registry`/`native-full`, not bare `embedded-executor`. WIDER follow-on (firing):
+  wire the remaining 16 framework apps into the registry (identity/nameservice/privacy-voting/escrow-
+  market/compute-exchange/agent-+swarm-orchestration/…/first-room).
 
 ### EDITOR PANE ON THE LIVE WORLD LEDGER — LANDED (2026-06-23).
 `d11c72e9`. The cockpit editor now edits the SAME ledger the inspector shows: `LedgerSpine` trait +
