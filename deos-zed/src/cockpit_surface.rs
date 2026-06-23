@@ -263,10 +263,33 @@ impl EditorSurface {
         // runs in the editor's own context — no extra wiring.
         let _ = open_editor;
 
+        // `flex_1().min_h(0).min_w(0)` on the row (in addition to `size_full`) makes
+        // the body claim its parent's full measured height robustly whether the
+        // pane is laid out in a flex COLUMN (showcase) or directly in a flex ROW
+        // (self-hosting) — a bare `size_full` here left the editor body 0-height in
+        // the single-row self-hosting bake, so the InputState had no visible lines
+        // to paint (the dark/empty editor body). The tree + editor columns carry
+        // `min_h(0)` so they too resolve a definite height to fill.
         h_flex()
             .size_full()
-            .child(div().w(gpui::px(220.)).h_full().child(tree_el))
-            .child(div().flex_1().h_full().child(editor))
+            .flex_1()
+            .min_h(gpui::px(0.))
+            .min_w(gpui::px(0.))
+            .child(
+                div()
+                    .w(gpui::px(220.))
+                    .h_full()
+                    .min_h(gpui::px(0.))
+                    .child(tree_el),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .h_full()
+                    .min_h(gpui::px(0.))
+                    .min_w(gpui::px(0.))
+                    .child(editor),
+            )
             .into_any_element()
     }
 }
