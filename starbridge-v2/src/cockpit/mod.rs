@@ -924,6 +924,12 @@ pub struct Cockpit {
     /// single-window cockpit (the headless bake never tears off). See
     /// [`Self::tear_off_tab`].
     window_registry: WindowRegistry,
+    /// One-shot guard: whether the durable image's torn-off windows have been
+    /// re-opened yet (the crash-relaunch RESTORATION). A reopened image carries a
+    /// witnessed torn-off-tabs bitset on the [`WorkspaceCell`]; on the first render
+    /// the cockpit re-pops those windows ([`Self::restore_torn_windows`]) and sets
+    /// this so it runs exactly once (re-opening every frame would mint duplicates).
+    torn_restored: bool,
 
     // --- THE ⚙ DEVTOOLS surface ---------------------------------------------
     /// Which DEVTOOLS inspector sub-tab is open, as a `u8` index

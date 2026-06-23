@@ -53,7 +53,7 @@ use gpui::{
     Render, SharedString, TitlebarOptions, Window, WindowBounds, WindowHandle, WindowOptions,
 };
 
-use super::surface::SurfaceId;
+use super::surface::{CockpitSurface, SurfaceId};
 use super::theme;
 
 /// A stable identity for a torn-off surface as it moves between the dock and a
@@ -64,30 +64,60 @@ use super::theme;
 /// clarity at the tear-off seam.)
 pub type TornSurfaceId = SurfaceId;
 
-/// The root view of a TORN-OFF OS window: it renders one cockpit surface's body
-/// by re-entering the host through the stored `render` callback, exactly the body
-/// the surface showed in the dock. Cheap — it holds a label, a focus handle, and
-/// a boxed callback; the callback closes over the host's weak handle, so the
-/// window paints the live surface without owning any of its state.
+/// How a torn-off window obtains its body — the load-bearing distinction between a
+/// SAFE re-entry (a gpui-FREE body that may render in two windows the same frame)
+/// and a MOVED live entity (which must render in EXACTLY ONE window).
+///
+/// ## The re-entrant-render crash this enum exists to prevent
+///
+/// A [`CockpitSurface`] whose `render_body` paints a focus-tracked gpui
+/// [`Entity`](gpui::Entity) (the live editor/terminal panes) CANNOT be a
+/// [`Self::Mirror`]: re-entering the host to paint that SAME entity in a second
+/// window the same frame is a re-entrant `Entity::update` / a double `track_focus`,
+/// which panics gpui. The migration's invariant — a surface is in EXACTLY ONE place
+/// along the firmament distance axis at a time — is therefore made LITERAL for
+/// entity-bearing surfaces: they are [`Self::Owned`] (MOVED out of the dock pane
+/// into the torn-off window), so the live entity lives in one window, never two.
+enum TornBody {
+    /// A gpui-FREE body re-entered through the host each frame (a [`Tab`]'s text
+    /// panel). The host's dock pane keeps its copy; this is a safe live MIRROR
+    /// because re-building a text element tree twice the same frame touches no
+    /// shared live entity. The boxed callback closes over the host's weak handle.
+    #[allow(clippy::type_complexity)]
+    Mirror(Box<dyn Fn(&mut Window, &mut App) -> AnyElement + 'static>),
+    /// A surface MOVED out of the dock pane into this window — the crash fix. The
+    /// surface (and any live focus-tracked entity it owns) is now rendered HERE and
+    /// ONLY here (`render_body`), so there is no second same-frame render of its
+    /// entity. Pop-back moves it home.
+    Owned(Box<dyn CockpitSurface>),
+}
+
+/// The root view of a TORN-OFF OS window: it renders one cockpit surface's body —
+/// either by re-entering the host for a gpui-free [`Tab`] body (a live MIRROR), or
+/// by rendering a surface MOVED here (an [`TornBody::Owned`], the live entity in
+/// exactly one window — the crash fix). Cheap — a label, a focus handle, and the
+/// body source.
 pub struct TornOffWindow {
     /// The surface this window hosts (the identity the tear-off preserves).
     id: TornSurfaceId,
     /// The window title / the surface's operator-facing label.
     label: SharedString,
-    /// Renders the surface's body — the re-entry into the host (the cockpit's
-    /// `panel_for_tab`), the SAME seam [`TabSurface`](super) renders through. Boxed
-    /// so this module needs no knowledge of the host type.
-    #[allow(clippy::type_complexity)]
-    render: Box<dyn Fn(&mut Window, &mut App) -> AnyElement + 'static>,
+    /// The body source — a safe re-entry mirror, or a moved-here live surface.
+    body: TornBody,
     focus: FocusHandle,
 }
 
 impl TornOffWindow {
     /// Build a torn-off window root over `id`/`label` with a body `render`
-    /// callback. The callback is invoked each frame on the new window's thread
-    /// (gpui is single-threaded; all windows share the one [`App`]), so it sees
-    /// the live host state — the torn-off body advances with the world like the
-    /// in-dock one.
+    /// callback (the gpui-free [`Tab`] MIRROR path). The callback is invoked each
+    /// frame on the new window's thread (gpui is single-threaded; all windows share
+    /// the one [`App`]), so it sees the live host state — the torn-off body advances
+    /// with the world like the in-dock one.
+    ///
+    /// ⚠ Use [`Self::owning`] for any surface whose body paints a live
+    /// focus-tracked gpui [`Entity`](gpui::Entity) (editor/terminal panes); a
+    /// mirror of such a surface re-renders its entity twice the same frame and
+    /// PANICS gpui (see [`TornBody`]).
     pub fn new(
         id: TornSurfaceId,
         label: impl Into<SharedString>,
@@ -97,7 +127,25 @@ impl TornOffWindow {
         Self {
             id,
             label: label.into(),
-            render: Box::new(render),
+            body: TornBody::Mirror(Box::new(render)),
+            focus: cx.focus_handle(),
+        }
+    }
+
+    /// Build a torn-off window root that OWNS `surface` (moved out of the dock
+    /// pane) — the crash fix for entity-bearing surfaces. The surface's live
+    /// entity is now rendered ONLY in this window, so it never re-renders the same
+    /// frame the dock did. Pop-back moves the surface back ([`TornOffWindow::take_surface`]).
+    pub fn owning(
+        id: TornSurfaceId,
+        label: impl Into<SharedString>,
+        surface: Box<dyn CockpitSurface>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self {
+            id,
+            label: label.into(),
+            body: TornBody::Owned(surface),
             focus: cx.focus_handle(),
         }
     }
@@ -109,6 +157,29 @@ impl TornOffWindow {
     pub fn label(&self) -> &SharedString {
         &self.label
     }
+
+    /// Whether this window OWNS a moved surface (vs. mirroring a host re-entry) —
+    /// the body that must be moved HOME on pop-back rather than simply dropped.
+    pub fn owns_surface(&self) -> bool {
+        matches!(self.body, TornBody::Owned(_))
+    }
+
+    /// Take the OWNED surface back out (pop-back: move it home into the dock). The
+    /// window keeps rendering, now over an empty placeholder body, until it is
+    /// closed — but pop-back closes it immediately, so this is the move-home seam.
+    /// Returns `None` for a mirror window (nothing was moved out).
+    pub fn take_surface(&mut self) -> Option<Box<dyn CockpitSurface>> {
+        match std::mem::replace(
+            &mut self.body,
+            TornBody::Mirror(Box::new(|_, _| div().into_any_element())),
+        ) {
+            TornBody::Owned(s) => Some(s),
+            other => {
+                self.body = other;
+                None
+            }
+        }
+    }
 }
 
 impl Focusable for TornOffWindow {
@@ -119,16 +190,21 @@ impl Focusable for TornOffWindow {
 
 impl Render for TornOffWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // Re-enter the host to build the live body. Borrow the callback out of
-        // `self` across the call so the `&mut Context<Self>` (which derefs to
-        // `&mut App`) can be handed in — the same take-then-restore the pane uses
+        // Build the live body. For a MIRROR we re-enter the host through the boxed
+        // callback; for an OWNED surface we render its body HERE (the live entity
+        // lives in this window only — the crash fix). Either way we take the body
+        // source out of `self` across the call so `&mut Context<Self>` (which derefs
+        // to `&mut App`) can be handed in — the same take-then-restore the pane uses
         // for its surfaces' `render_body`.
-        let render = std::mem::replace(
-            &mut self.render,
-            Box::new(|_, _| div().into_any_element()),
+        let mut taken = std::mem::replace(
+            &mut self.body,
+            TornBody::Mirror(Box::new(|_, _| div().into_any_element())),
         );
-        let body = render(window, cx);
-        self.render = render;
+        let body = match &mut taken {
+            TornBody::Mirror(render) => render(window, cx),
+            TornBody::Owned(surface) => surface.render_body(window, cx),
+        };
+        self.body = taken;
 
         div()
             .track_focus(&self.focus)
@@ -195,6 +271,13 @@ impl WindowRegistry {
         self.torn.len()
     }
 
+    /// The ids of every currently-torn-off surface (for the cockpit to persist the
+    /// which-tab-popped-out set into its [`WorkspaceCell`], and to re-open them on a
+    /// crash-relaunch).
+    pub fn torn_ids(&self) -> impl Iterator<Item = TornSurfaceId> + '_ {
+        self.torn.keys().copied()
+    }
+
     pub fn is_empty(&self) -> bool {
         self.torn.is_empty()
     }
@@ -235,31 +318,114 @@ impl WindowRegistry {
         }
 
         let label: SharedString = label.into();
-        let title = label.clone();
+        let handle = self.open_torn_window(id, label.clone(), cx, |cx| {
+            cx.new(|cx| TornOffWindow::new(id, label.clone(), render, cx))
+        })?;
+        self.torn.insert(id, handle);
+        Ok(handle)
+    }
+
+    /// TEAR OFF `id` by MOVING `surface` into a fresh OS window — the crash fix for
+    /// entity-bearing surfaces (editor/terminal panes whose body paints a live
+    /// focus-tracked gpui [`Entity`](gpui::Entity)). The surface is rendered ONLY in
+    /// the new window (`render_body`), so its entity never re-renders the same frame
+    /// the dock did — the re-entrant `Entity::update` / double `track_focus` panic
+    /// that a [`Self::tear_off`] MIRROR of such a surface would hit cannot occur.
+    ///
+    /// The caller is responsible for having REMOVED `surface` from its dock pane
+    /// before this call (the move's source side); pop-back ([`Self::pop_back`])
+    /// hands the surface back so the caller can graft it home. If `id` is already
+    /// torn off, the surface is dropped and the existing window re-activated (the
+    /// migration is idempotent in identity; a duplicate move is rejected).
+    pub fn tear_off_surface(
+        &mut self,
+        id: TornSurfaceId,
+        label: impl Into<SharedString>,
+        surface: Box<dyn CockpitSurface>,
+        cx: &mut App,
+    ) -> anyhow::Result<WindowHandle<TornOffWindow>> {
+        if let Some(existing) = self.torn.get(&id).copied() {
+            cx.activate(false);
+            let _ = existing.update(cx, |_root, window, _cx| {
+                window.activate_window();
+            });
+            // `surface` is dropped — the live one is already in the existing window.
+            return Ok(existing);
+        }
+        let label: SharedString = label.into();
+        // `surface` is consumed by the window builder; an open failure drops it
+        // (fail-closed: nothing recorded, and the caller still holds the dock-pane
+        // removal it must undo — which it does, surfacing the error).
+        let mut slot = Some(surface);
+        let handle = self.open_torn_window(id, label.clone(), cx, |cx| {
+            let surface = slot.take().expect("window builder runs once");
+            cx.new(|cx| TornOffWindow::owning(id, label.clone(), surface, cx))
+        })?;
+        self.torn.insert(id, handle);
+        Ok(handle)
+    }
+
+    /// The shared OS-window open for both the mirror and the moved-surface tear-off:
+    /// a default-centered `720×560` window titled `deos — {label}` whose root is
+    /// built by `root`. Keeps the `WindowOptions` in one place so the two tear-off
+    /// paths stay byte-identical in their window chrome.
+    fn open_torn_window(
+        &self,
+        _id: TornSurfaceId,
+        label: SharedString,
+        cx: &mut App,
+        root: impl FnOnce(&mut App) -> gpui::Entity<TornOffWindow>,
+    ) -> anyhow::Result<WindowHandle<TornOffWindow>> {
         let bounds = Bounds::centered(None, gpui::size(px(720.), px(560.)), cx);
         let handle = cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 titlebar: Some(TitlebarOptions {
-                    title: Some(format!("deos — {title}").into()),
+                    title: Some(format!("deos — {label}").into()),
                     ..Default::default()
                 }),
                 ..Default::default()
             },
-            |_window, cx| cx.new(|cx| TornOffWindow::new(id, label.clone(), render, cx)),
+            |_window, cx| root(cx),
         )?;
-        self.torn.insert(id, handle);
         Ok(handle)
     }
 
     /// POP BACK `id`'s torn-off window: close the OS window and drop the registry
     /// entry (the surface is once again only in the dock). A no-op if the surface
-    /// is not torn off. Returns whether a window was closed.
+    /// is not torn off. Returns `Some(surface)` when the window OWNED a moved
+    /// surface (the caller must graft it back into the dock — the move-home side);
+    /// `Some(None)`/`false` distinctions are folded into the return: an owned
+    /// pop-back returns the surface, a mirror pop-back returns `None`.
     ///
-    /// This is the inverse migration (Surface-window → Surface-in-dock). Because
-    /// the tear-off was a non-destructive MIRROR (the dock pane was never removed),
-    /// pop-back is just closing the second window — the surface keeps its identity
-    /// and its in-dock seat throughout.
+    /// For a MIRROR window the dock pane was never removed, so pop-back is just
+    /// closing the second window. For an OWNED (moved) window the surface lived ONLY
+    /// in the window, so pop-back MUST hand it back — else the live entity is
+    /// destroyed with the window. The boolean "was anything closed" is
+    /// [`Self::pop_back`]; this richer form returns the moved surface for re-grafting.
+    pub fn pop_back_taking(
+        &mut self,
+        id: TornSurfaceId,
+        cx: &mut App,
+    ) -> Option<Box<dyn CockpitSurface>> {
+        let handle = self.torn.remove(&id)?;
+        // Take the owned surface OUT before the window is removed, so the move-home
+        // body survives the window's destruction.
+        let surface = handle
+            .update(cx, |root, window, _cx| {
+                let surface = root.take_surface();
+                window.remove_window();
+                surface
+            })
+            .ok()
+            .flatten();
+        surface
+    }
+
+    /// POP BACK `id`'s torn-off window and report whether one was closed (the
+    /// boolean form). A MIRROR pop-back is non-destructive (the dock pane kept its
+    /// copy); an OWNED pop-back here would DROP the moved surface — callers that
+    /// moved a surface out must use [`Self::pop_back_taking`] to graft it home.
     pub fn pop_back(&mut self, id: TornSurfaceId, cx: &mut App) -> bool {
         let Some(handle) = self.torn.remove(&id) else {
             return false;
@@ -360,5 +526,170 @@ mod tests {
             // A second pop-back is a no-op (nothing to close).
             assert!(!reg.pop_back(id, cx));
         });
+    }
+
+    // === THE RE-ENTRANT-RENDER CRASH (move-not-mirror) ====================
+    // The headless cockpit-style window bake never carried a LIVE entity-bearing
+    // body into a torn-off window — the test gap that let the editor/terminal
+    // tear-off panic ship. These tests close it: a real focus-tracked gpui
+    // `Entity` is torn off and the window is DRIVEN TO A DRAW. A MIRROR of such a
+    // surface re-renders its entity twice the same frame (re-entrant
+    // `Entity::update` / double `track_focus`) and panics gpui; the MOVE
+    // (`tear_off_surface`) renders it in exactly one window and does NOT.
+
+    #[cfg(feature = "render-capture")]
+    mod live_entity {
+        use super::*;
+        use crate::dock::surface::CockpitSurface;
+        use gpui::{
+            AppContext, Entity, HeadlessAppContext, PlatformTextSystem, Render,
+        };
+        use gpui_wgpu::CosmicTextSystem;
+        use std::borrow::Cow;
+        use std::sync::Arc;
+
+        /// A minimal LIVE body: a focus-tracked gpui `Entity` (exactly the shape an
+        /// editor/terminal pane holds). Its `render` calls `track_focus` — the op
+        /// that double-registers (and panics) if the SAME entity renders in two
+        /// windows the same frame.
+        struct LiveBody {
+            focus: FocusHandle,
+            paints: u32,
+        }
+        impl LiveBody {
+            fn new(cx: &mut Context<Self>) -> Self {
+                LiveBody { focus: cx.focus_handle(), paints: 0 }
+            }
+        }
+        impl Focusable for LiveBody {
+            fn focus_handle(&self, _cx: &App) -> FocusHandle {
+                self.focus.clone()
+            }
+        }
+        impl Render for LiveBody {
+            fn render(&mut self, _w: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+                self.paints += 1;
+                div().track_focus(&self.focus).size_full().child(SharedString::from("live"))
+            }
+        }
+
+        /// An entity-bearing `CockpitSurface` whose `render_body` paints the SAME
+        /// live `Entity<LiveBody>` each frame (the editor/terminal-pane shape: the
+        /// body IS a held gpui entity, `update`d to paint). Two same-frame renders
+        /// of this surface re-enter the one entity — the crash.
+        struct LiveSurface {
+            id: SurfaceId,
+            body: Entity<LiveBody>,
+        }
+        impl CockpitSurface for LiveSurface {
+            fn item_id(&self) -> SurfaceId {
+                self.id
+            }
+            fn tab_label(&self) -> SharedString {
+                SharedString::from("live")
+            }
+            fn render_body(&mut self, _w: &mut Window, _cx: &mut App) -> AnyElement {
+                // The pane renders a held entity by embedding it — gpui `update`s the
+                // entity to paint it. Rendering it in two windows the same frame is
+                // the re-entrant `Entity::update` / double `track_focus` the move fixes.
+                self.body.clone().into_any_element()
+            }
+            fn focus_handle(&self, cx: &App) -> FocusHandle {
+                self.body.read(cx).focus.clone()
+            }
+            fn boxed_clone(&self) -> Box<dyn CockpitSurface> {
+                Box::new(LiveSurface { id: self.id, body: self.body.clone() })
+            }
+        }
+
+        fn headless() -> HeadlessAppContext {
+            static LILEX: &[u8] = include_bytes!("../../assets/fonts/Lilex-Regular.ttf");
+            static IBM_PLEX: &[u8] = include_bytes!("../../assets/fonts/IBMPlexSans-Regular.ttf");
+            let text_system: Arc<dyn PlatformTextSystem> =
+                Arc::new(CosmicTextSystem::new_without_system_fonts("Lilex"));
+            text_system
+                .add_fonts(vec![Cow::Borrowed(LILEX), Cow::Borrowed(IBM_PLEX)])
+                .expect("register headless fonts");
+            HeadlessAppContext::with_platform(text_system, Arc::new(()), || {
+                gpui_platform::current_headless_renderer()
+            })
+        }
+
+        /// THE CRASH FIX, PROVEN BY DRAWING: tear a LIVE entity-bearing surface off
+        /// via the MOVE path (`tear_off_surface`) and DRIVE THE TORN-OFF WINDOW TO A
+        /// DRAW. The live entity now lives in exactly one window, so the draw does
+        /// NOT panic (a MIRROR would here re-render the entity twice the same frame).
+        /// This reproduces the editor/terminal tear-off panic in a test and asserts
+        /// the move fixes it.
+        #[test]
+        fn moving_a_live_entity_into_a_torn_window_renders_without_panic() {
+            let mut cx = headless();
+            let id = SurfaceId(7);
+
+            // Build the live body entity OUTSIDE any window (it is the surface's
+            // held entity, the thing the dock pane would have rendered).
+            let body: Entity<LiveBody> = cx.update(|cx| cx.new(LiveBody::new));
+
+            // Open a torn-off window OWNING the surface (the MOVE: the entity now
+            // lives only here, as if removed from the dock pane).
+            let handle = cx.update(|cx| {
+                let mut reg = WindowRegistry::new();
+                let surface: Box<dyn CockpitSurface> =
+                    Box::new(LiveSurface { id, body: body.clone() });
+                let h = reg
+                    .tear_off_surface(id, "live editor", surface, cx)
+                    .expect("headless move-tear-off opens a window");
+                assert!(reg.is_torn_off(id), "the surface is recorded torn off");
+                h
+            });
+
+            // DRIVE THE WINDOW TO A REAL DRAW — this is where the re-entrant render
+            // would panic if the entity were rendered twice the same frame. With the
+            // move it is rendered ONCE (in this one window), so the draw is clean.
+            cx.run_until_parked();
+            cx.update_window(handle.into(), |_, window, _cx| window.refresh())
+                .expect("refresh the torn-off window");
+            cx.run_until_parked();
+
+            // The body actually painted (the entity is live in the torn-off window).
+            let painted = cx.update(|cx| body.read(cx).paints);
+            assert!(painted >= 1, "the moved live entity painted in the torn-off window");
+        }
+
+        /// The MOVE is reversible: `pop_back_taking` hands the moved surface BACK
+        /// (so the cockpit can graft it home), and the live entity survives — it was
+        /// never destroyed with the window. Re-rendering it after pop-back (now as a
+        /// fresh torn-off window) still does not panic — one-window-at-a-time holds
+        /// across the whole tear-off ⇄ pop-back cycle.
+        #[test]
+        fn pop_back_hands_the_moved_surface_home_and_the_entity_survives() {
+            let mut cx = headless();
+            let id = SurfaceId(9);
+            let body: Entity<LiveBody> = cx.update(|cx| cx.new(LiveBody::new));
+
+            let recovered = cx.update(|cx| {
+                let mut reg = WindowRegistry::new();
+                let surface: Box<dyn CockpitSurface> =
+                    Box::new(LiveSurface { id, body: body.clone() });
+                reg.tear_off_surface(id, "live editor", surface, cx)
+                    .expect("move-tear-off opens a window");
+                assert_eq!(reg.len(), 1);
+
+                // POP BACK TAKING: the moved surface comes home (the window owned it,
+                // so it must be handed back — not dropped with the window).
+                let back = reg.pop_back_taking(id, cx);
+                assert!(back.is_some(), "an owned pop-back returns the moved surface");
+                assert_eq!(reg.len(), 0, "the window closed + the entry dropped");
+                assert!(!reg.is_torn_off(id));
+                back.unwrap()
+            });
+
+            // The recovered surface still points at the LIVE entity (it survived the
+            // window's destruction — the move was non-destructive of the body).
+            cx.update(|cx| {
+                assert_eq!(recovered.item_id(), id, "identity preserved across the move-home");
+                let _ = body.read(cx); // the entity is still alive (read would panic if dropped)
+            });
+        }
     }
 }

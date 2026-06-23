@@ -368,6 +368,17 @@ impl Presentable for ViewCell {
 /// the cockpit's [`Tab`] order).
 pub const WORKSPACE_TAB_SLOT: usize = 2;
 
+/// The state slot the workspace's TORN-OFF-TABS bitset rides in: bit `i` set ⟺ the
+/// tab at index `i` is currently popped out into its own OS window. A `u64` (the low
+/// 8 bytes of the field element, little-endian — the same [`pack_u64`] layout as the
+/// active tab) covers all 30-ish [`Tab`] indices with room to spare. This is the
+/// RESTORATION cell: it survives a crash-relaunch exactly as the active tab does
+/// (it lands a real `SetField` turn, replayed from the durable image), so a reopen
+/// re-pops the windows that were torn off. Bounds are not packed here — a reopen
+/// re-centers each window (the migration's `Bounds::centered` default); WHICH tabs
+/// were torn off is the durable state.
+pub const WORKSPACE_TORN_SLOT: usize = 4;
+
 /// THE WORKSPACE CELL — the cockpit's wider semantic UI state as a real cell:
 /// the active tab (the 24-arm `Tab` *selector*, §3.4). The same two-tier split as
 /// [`ViewCell`]: a free in-memory draft (`active_tab` index) + an occasional
@@ -382,12 +393,30 @@ pub struct WorkspaceCell {
     backing: CellId,
     /// The visible active-tab index (the free draft selector).
     active_tab: usize,
+    /// The visible TORN-OFF-TABS bitset (the free draft): bit `i` ⟺ tab `i` is
+    /// popped out into its own OS window. The witnessed copy rides
+    /// [`WORKSPACE_TORN_SLOT`]; a tear-off/pop-back sets a bit then [`Self::commit`]s
+    /// (the §3.5 stream weight class), so the pop-out set survives a crash-relaunch.
+    torn: u64,
 }
 
 impl WorkspaceCell {
-    /// Open a workspace cell over `backing` with `active_tab` selected.
+    /// Open a workspace cell over `backing` with `active_tab` selected and NO tabs
+    /// torn off.
     pub fn new(backing: CellId, active_tab: usize) -> Self {
-        WorkspaceCell { backing, active_tab }
+        WorkspaceCell { backing, active_tab, torn: 0 }
+    }
+
+    /// Open a workspace cell whose free draft is RESTORED from the backing cell's
+    /// witnessed state on `world` (the active tab + the torn-off-tabs bitset). The
+    /// crash-relaunch seam: a reopened image rebuilds the workspace cell from the
+    /// durable ledger, so the cockpit knows which tab is active AND which tabs were
+    /// popped out. Falls back to `(0, no tabs torn)` if the backing cell is absent.
+    pub fn from_world(world: &World, backing: CellId) -> Self {
+        let probe = WorkspaceCell { backing, active_tab: 0, torn: 0 };
+        let active_tab = probe.committed_tab(world).unwrap_or(0);
+        let torn = probe.committed_torn(world);
+        WorkspaceCell { backing, active_tab, torn }
     }
 
     /// The backing cell id (the authenticated anchor).
@@ -406,6 +435,37 @@ impl WorkspaceCell {
         self.active_tab = idx;
     }
 
+    /// The visible TORN-OFF-TABS bitset (the free draft): bit `i` ⟺ tab `i` is
+    /// popped out into its own window.
+    pub fn torn_bits(&self) -> u64 {
+        self.torn
+    }
+
+    /// Whether tab `idx` is marked torn off in the visible draft.
+    pub fn is_torn(&self, idx: usize) -> bool {
+        idx < 64 && (self.torn & (1u64 << idx)) != 0
+    }
+
+    /// FREE: mark/unmark tab `idx` as torn off (in-memory only — the ledger is
+    /// untouched until [`Self::commit`]). A tab index ≥ 64 is ignored (the bitset is
+    /// a `u64`; the [`Tab`] order is far smaller).
+    pub fn set_torn(&mut self, idx: usize, torn: bool) {
+        if idx >= 64 {
+            return;
+        }
+        if torn {
+            self.torn |= 1u64 << idx;
+        } else {
+            self.torn &= !(1u64 << idx);
+        }
+    }
+
+    /// The indices of every tab marked torn off in the visible draft (low→high),
+    /// the set a crash-relaunch re-pops.
+    pub fn torn_indices(&self) -> Vec<usize> {
+        (0..64).filter(|&i| self.is_torn(i)).collect()
+    }
+
     /// The COMMITTED (witnessed, prior-frame) active-tab index the backing cell
     /// stores. `None` iff the backing cell is gone.
     pub fn committed_tab(&self, world: &World) -> Option<usize> {
@@ -413,6 +473,24 @@ impl WorkspaceCell {
             .ledger()
             .get(&self.backing)
             .map(|c| unpack_u64(&c.state.fields[WORKSPACE_TAB_SLOT]) as usize)
+    }
+
+    /// The COMMITTED (witnessed) torn-off-tabs bitset the backing cell stores — the
+    /// durable pop-out set a reopen restores. `0` (nothing torn off) if the backing
+    /// cell is gone.
+    pub fn committed_torn(&self, world: &World) -> u64 {
+        world
+            .ledger()
+            .get(&self.backing)
+            .map(|c| unpack_u64(&c.state.fields[WORKSPACE_TORN_SLOT]))
+            .unwrap_or(0)
+    }
+
+    /// The committed (witnessed) torn-off tab indices — what a crash-relaunch
+    /// re-pops out into their own windows.
+    pub fn committed_torn_indices(&self, world: &World) -> Vec<usize> {
+        let bits = self.committed_torn(world);
+        (0..64).filter(|i| (bits & (1u64 << i)) != 0).collect()
     }
 
     /// The workspace's revision (the backing cell's nonce).
@@ -424,26 +502,32 @@ impl WorkspaceCell {
             .unwrap_or(0)
     }
 
-    /// Whether the visible selector matches the committed one (no uncommitted
-    /// tab move).
+    /// Whether the visible selector AND the torn-off-tabs bitset match the committed
+    /// ones (no uncommitted tab move and no uncommitted tear-off/pop-back).
     pub fn is_clean(&self, world: &World) -> bool {
         self.committed_tab(world) == Some(self.active_tab)
+            && self.committed_torn(world) == self.torn
     }
 
-    /// **COMMIT THE TAB MOVE** — write the active-tab index into the backing cell
-    /// through a REAL `Effect::SetField` turn (the §3.5 stream weight class:
-    /// witnessed, conserves nothing). Returns the new revision.
+    /// **COMMIT THE WORKSPACE STATE** — write the active-tab index AND the
+    /// torn-off-tabs bitset into the backing cell through a REAL `Effect::SetField`
+    /// turn (the §3.5 stream weight class: witnessed, conserves nothing). Both
+    /// fields land atomically in one turn, so the active tab and the pop-out set are
+    /// always consistent in the durable image. Returns the new revision.
     pub fn commit(&self, world: &mut World) -> Result<u64, ViewError> {
         if world.ledger().get(&self.backing).is_none() {
             return Err(ViewError::Unbacked);
         }
         let turn = world.turn(
             self.backing,
-            vec![world::set_field(
-                self.backing,
-                WORKSPACE_TAB_SLOT,
-                pack_u64(self.active_tab as u64),
-            )],
+            vec![
+                world::set_field(
+                    self.backing,
+                    WORKSPACE_TAB_SLOT,
+                    pack_u64(self.active_tab as u64),
+                ),
+                world::set_field(self.backing, WORKSPACE_TORN_SLOT, pack_u64(self.torn)),
+            ],
         );
         match world.commit_turn(turn) {
             crate::CommitOutcome::Committed { .. } => Ok(self.revision(world)),
@@ -638,6 +722,119 @@ mod tests {
         assert_eq!(w.height(), h0 + 1, "a real turn landed the tab move");
         assert_eq!(ws.committed_tab(&w), Some(5), "render() reads the tab from the cell");
         assert!(ws.is_clean(&w), "after commit the workspace is clean");
+    }
+
+    // ── RESTORATION: the torn-off-tabs bitset survives a relaunch ───────────
+
+    #[test]
+    fn the_torn_off_tabs_bitset_is_witnessed_and_restored_from_the_cell() {
+        // THE POP-OUT RESTORATION (in-world relaunch): tearing off tabs sets bits in
+        // the WorkspaceCell's torn-off bitset and commits them (the §3.5 stream weight
+        // class). Rebuilding the cell from the world (`from_world` — the relaunch seam)
+        // reads those bits back: the cockpit knows WHICH tabs to re-pop.
+        let (mut w, _treasury, _sink, ui) = world_with_ui_cell();
+        let mut ws = WorkspaceCell::new(ui, 0);
+        // Tear off tabs 3 and 21 (the editor/terminal indices in a real cockpit).
+        ws.set_torn(3, true);
+        ws.set_torn(21, true);
+        assert!(!ws.is_clean(&w), "an uncommitted tear-off is dirty");
+        ws.commit(&mut w).expect("the tear-off set commits");
+        assert!(ws.is_clean(&w), "after commit the workspace is clean");
+        assert_eq!(ws.committed_torn_indices(&w), vec![3, 21], "the witnessed pop-out set");
+
+        // RELAUNCH (rebuild from the durable cell): the torn set comes back.
+        let restored = WorkspaceCell::from_world(&w, ui);
+        assert_eq!(
+            restored.torn_indices(),
+            vec![3, 21],
+            "a relaunch restores the torn-off tabs from the cell"
+        );
+        assert!(restored.is_torn(3) && restored.is_torn(21));
+        assert!(!restored.is_torn(0), "tabs that were not torn off stay docked");
+    }
+
+    #[test]
+    fn popping_a_tab_back_clears_its_bit_and_the_relaunch_no_longer_re_pops_it() {
+        let (mut w, _treasury, _sink, ui) = world_with_ui_cell();
+        let mut ws = WorkspaceCell::new(ui, 0);
+        ws.set_torn(5, true);
+        ws.set_torn(9, true);
+        ws.commit(&mut w).expect("commit two pop-outs");
+
+        // Pop tab 5 back into the dock (clear its bit + witness).
+        ws.set_torn(5, false);
+        ws.commit(&mut w).expect("commit the pop-back");
+
+        let restored = WorkspaceCell::from_world(&w, ui);
+        assert_eq!(restored.torn_indices(), vec![9], "only the still-torn tab re-pops");
+    }
+
+    #[test]
+    fn a_genuine_durable_relaunch_restores_the_torn_off_windows() {
+        // THE REAL CRASH-RELAUNCH: build a DURABLE image, tear off tabs (a witnessed
+        // SetField turn dual-writes to the store), DROP the world (the "crash"), then
+        // REOPEN the image off disk and assert the torn-off tabs come back. This is the
+        // genuine restoration path — recovery replays the SetField turn, so the reopened
+        // WorkspaceCell carries the pop-out set. (Bounds default on reopen; WHICH tabs
+        // were torn off is the durable state.)
+        use crate::world::make_open_cell;
+        use dregg_turn::ComputronCosts;
+
+        // A deterministic scratch image path + a pinned clock (so recovery re-derives).
+        const RTS: i64 = 1_700_000_000;
+        let dir = std::env::temp_dir().join(format!(
+            "sbv2-tearoff-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&dir).expect("scratch dir");
+        let path = dir.join("image");
+
+        // The workspace backing cell's id is DERIVED from its genesis seed, so it is
+        // the SAME id across the first launch and the reopen — the cell the cockpit
+        // re-creates with `genesis_cell(0x5F, …)` each boot.
+        let backing = make_open_cell(0x5F, 0).id();
+
+        // FIRST LAUNCH: open a durable image, genesis the backing cell, tear off tabs
+        // 3 + 21, commit (dual-writes to the store).
+        {
+            let mut w = World::open_with_timestamp(&path, ComputronCosts::zero(), RTS)
+                .expect("open a fresh durable image");
+            assert!(w.is_durable(), "the image is durable");
+            let id = w.genesis_cell(0x5F, 0);
+            assert_eq!(id, backing, "the workspace backing id is seed-deterministic");
+            let mut ws = WorkspaceCell::new(backing, 0);
+            ws.set_active_tab(7);
+            ws.set_torn(3, true);
+            ws.set_torn(21, true);
+            ws.commit(&mut w).expect("the tear-off + active-tab commit dual-writes");
+            assert_eq!(ws.committed_torn_indices(&w), vec![3, 21]);
+            // …and the world drops here — the "crash".
+        }
+
+        // RELAUNCH: reopen the SAME image off disk; recovery replays the SetField turn.
+        {
+            let w = World::open_with_timestamp(&path, ComputronCosts::zero(), RTS)
+                .expect("reopen the durable image");
+            // Re-create the workspace cell over the SAME (re-genesis'd by recovery)
+            // backing id and restore from the recovered ledger.
+            let restored = WorkspaceCell::from_world(&w, backing);
+            assert_eq!(
+                restored.committed_tab(&w),
+                Some(7),
+                "the active tab survives the relaunch (as it did before)"
+            );
+            assert_eq!(
+                restored.torn_indices(),
+                vec![3, 21],
+                "the TORN-OFF WINDOWS are restored from the durable image after a relaunch"
+            );
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     // ── WIDEN: the cockpit's active-tab resolution path (cell-driven selector) ──

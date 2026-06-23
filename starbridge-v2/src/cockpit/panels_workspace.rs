@@ -688,9 +688,16 @@ impl Cockpit {
         match self.window_registry.tear_off(id, label, render, cx) {
             Ok(_handle) => {
                 let torn = self.window_registry.len();
+                // PERSIST the pop-out: mark this tab torn off in the WorkspaceCell and
+                // land the witnessed commit, so a crash-relaunch re-opens this window
+                // (the restoration gap, closed via the same cell-backed two-tier path
+                // the active tab rides). A commit failure leaves the in-memory bit set
+                // (the window IS open); the witness catches up on the next commit.
+                self.workspace_cell.set_torn(tab.index(), true);
+                let _ = self.workspace_cell.commit(&mut self.world.borrow_mut());
                 self.last_outcome = Some(format!(
                     "↗ tore off {label} into its own window — surface identity preserved \
-                     (Local→Surface migration; {torn} torn-off window{})",
+                     (Local→Surface migration; {torn} torn-off window{}; pop-out persisted)",
                     if torn == 1 { "" } else { "s" }
                 ));
             }
@@ -714,11 +721,50 @@ impl Cockpit {
         let id = DockSurfaceId(tab.index() as u64);
         let label = tab.label();
         if self.window_registry.pop_back(id, cx) {
+            // PERSIST the pop-back: clear this tab's torn-off bit + witness it, so a
+            // relaunch no longer re-pops a window the operator has docked again.
+            self.workspace_cell.set_torn(tab.index(), false);
+            let _ = self.workspace_cell.commit(&mut self.world.borrow_mut());
             self.last_outcome = Some(format!("↩ popped {label} back into the dock"));
         } else {
             self.last_outcome = Some(format!("{label} is not torn off (nothing to pop back)"));
         }
         cx.notify();
+    }
+
+    /// RESTORE the torn-off windows the durable image records (the crash-relaunch
+    /// seam). Reads the [`WorkspaceCell`]'s committed torn-off-tabs bitset and
+    /// re-opens an OS window for each tab that was popped out, re-establishing the
+    /// pop-out layout a reopened image had — the restoration half of the migration's
+    /// durability. Idempotent: a tab already torn off (its window already open) is
+    /// skipped (`tear_off` re-activates rather than duplicating). Bounds default to
+    /// the migration's `Bounds::centered` (WHICH tabs were popped out is the durable
+    /// state; per-window geometry is not yet packed — a reopen re-centers each).
+    ///
+    /// Driven once on first render (after the pane group is seeded), so the reopened
+    /// image's pop-out windows come back with the cockpit. A no-op when nothing was
+    /// torn off (the common single-window case).
+    pub(crate) fn restore_torn_windows(&mut self, cx: &mut Context<Self>) {
+        let want = self
+            .workspace_cell
+            .committed_torn_indices(&self.world.borrow());
+        if want.is_empty() {
+            return;
+        }
+        for idx in want {
+            let tab = Tab::from_index(idx);
+            // Mirror the in-memory draft to the committed set so a later witness does
+            // not clear the bit we are restoring.
+            self.workspace_cell.set_torn(idx, true);
+            if self.window_registry.is_torn_off(DockSurfaceId(idx as u64)) {
+                continue;
+            }
+            // DEFER the open: opening an OS window re-enters the app, so it must run
+            // with the cockpit at rest AFTER this render unwinds (the same reason
+            // `tear_off_active_tab` defers). `tear_off_tab_deferred` re-enters the
+            // cockpit on a later app pass.
+            self.tear_off_tab_deferred(tab, cx);
+        }
     }
 
     /// Whether `tab` is currently torn off into its own window (drives the pane

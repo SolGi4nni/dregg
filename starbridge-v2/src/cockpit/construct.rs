@@ -136,12 +136,29 @@ impl Cockpit {
         // tab becomes a rewindable dregg-graph mutation, conserving nothing.
         let workspace_cell_backing = world.borrow_mut().genesis_cell(0x5F, 0);
         let workspace_cell = {
-            let ws = starbridge_v2::view_cell::WorkspaceCell::new(
+            // RESTORE from the (possibly recovered) durable image first: a reopened
+            // image already carries the witnessed active-tab AND the torn-off-tabs
+            // bitset on this backing cell, replayed by recovery. `from_world` rebuilds
+            // the free draft from that committed state. On a fresh image the cell was
+            // just genesis-installed with no `SetField` turns, so the restore reads the
+            // boot defaults `(tab=0, torn=0)`.
+            let restored = starbridge_v2::view_cell::WorkspaceCell::from_world(
+                &world.borrow(),
                 workspace_cell_backing,
-                Tab::Home.index(),
             );
-            let _ = ws.commit(&mut world.borrow_mut());
-            ws
+            // Witness the boot default ONLY when the cell was never committed (a fresh
+            // image — nonce 0), so a relaunch does NOT clobber the restored tab/pop-out
+            // state with `(Home, nothing torn)`.
+            if restored.revision(&world.borrow()) == 0 {
+                let boot = starbridge_v2::view_cell::WorkspaceCell::new(
+                    workspace_cell_backing,
+                    Tab::Home.index(),
+                );
+                let _ = boot.commit(&mut world.borrow_mut());
+                boot
+            } else {
+                restored
+            }
         };
 
         // The POWERBOX (CapDesk) demo: birth a fresh CONFINED app-cell that holds
@@ -383,6 +400,7 @@ impl Cockpit {
             // SURFACE MIGRATION: no surfaces torn off at boot (the single-window
             // cockpit). The registry fills as the operator pops panes out.
             window_registry: WindowRegistry::new(),
+            torn_restored: false,
             // THE ⚙ DEVTOOLS surface boots on the NETWORK sub-tab with an empty
             // filter (the whole data plane in view).
             devtools_sub: 0,

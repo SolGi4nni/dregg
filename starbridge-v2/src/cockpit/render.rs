@@ -30,6 +30,15 @@ impl Render for Cockpit {
         // so flat-tab navigation (⌘K / the nav API) keeps driving the base pane.
         self.ensure_pane_group(window, cx);
         self.sync_base_pane_active(window, cx);
+        // CRASH-RELAUNCH RESTORATION: once (on the first render, after the pane group
+        // exists), re-open the OS windows the durable image records as torn off — the
+        // restoration half of the Local→Surface migration. A reopened image carries
+        // the witnessed torn-off-tabs bitset on the `WorkspaceCell`; this re-pops those
+        // windows (deferred opens). Guarded so it runs exactly once.
+        if !self.torn_restored {
+            self.torn_restored = true;
+            self.restore_torn_windows(cx);
+        }
         // THE WEB-SHELL URL BAR — seed the gpui-component text input entity on the
         // first paint (it needs a live `&mut Window` + the Enter subscription), so
         // the browser surface has its real address bar ready when navigated to.
