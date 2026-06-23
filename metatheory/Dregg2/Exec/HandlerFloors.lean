@@ -58,8 +58,12 @@ open Dregg2.Exec.EffectsState (reservedField stateStepDev stateStepDev_notReserv
 open Dregg2.Exec.TurnExecutorFull (spawnChainA refreshDelegationChainA parentEpoch
   spawnChainA_stamps_epoch spawnChainA_fresh_at_birth
   refreshDelegationChainA_restamps_epoch refreshDelegationChainA_fresh
-  refreshDelegationChainA_noParent_rejects)
+  refreshDelegationChainA_noParent_rejects
+  noteSpendChainA noteSpendChainA_requires_proof noteSpendChainA_fails_without_proof)
 open Dregg2.Exec (delegationStale)
+open Dregg2.Substrate.HeapKernel (heapStepGuardedW heapStepW_root_pinned heapStepW_heaps
+  heapRootField)
+open Dregg2.Substrate.Heap (set)
 
 /-! ## §1 — The uniform `FloorObligation` surface (`Prop`-valued).
 
@@ -430,6 +434,152 @@ theorem freshnessFloor_unstamped_is_stale (k : RecordKernelState) (child parent 
   simp only [delegationStale, hp, hstamp0]
   exact decide_eq_true (by omega)
 
+/-! ## §P4 — INDEX-MEMBERSHIP FLOORS: the noteSpend nullifier NON-MEMBERSHIP + the heap leaf-splice /
+root-pin, over the LIVE chained steps `noteSpendChainA` / `heapStepGuardedW`.
+
+THE FLAT-VS-FOREST FINDING (the load-bearing P4 verdict — verified in source, NOT assumed). The §P4
+prose in earlier waves WARNED that these floors might need discharge on the FOREST step because "the
+forest commitment binds a per-leaf path-membership STRONGER than the flat mirror". Reading the live
+executor REFUTES that for THIS model:
+
+  * `execFullForestA s f = execFullTurnA s (lowerForestA f)` (`FullForest.execFullForestA_eq_execFullTurnA`):
+    the forest is EXACTLY the linear per-asset turn over the pre-order node-actions. Every node runs
+    its action through `execFullA s a` — the SAME flat executor arm. The forest binds *which cell* each
+    node targets (`targetOf`), the per-asset ledger VECTOR, the ChainLink, and the executed delegation
+    HANDOFF between parent and child. It does NOT introduce a separate, stronger nullifier-set or
+    heap-leaf membership object.
+  * `execFullA`'s `.noteSpendA` arm IS `noteSpendChainA` (→ `noteSpendNullifier`), and its `.heapWriteA`
+    arm IS `heapStepGuardedW` — the very kernel steps. The nullifier set is the kernel `nullifiers :
+    List Nat` and the non-membership floor is the literal `nf ∉ k.nullifiers`, discharged from
+    `noteSpendNullifier`'s fail-closed `if nf ∈ k.nullifiers then none`. The heap is a sorted leaf LIST
+    (`Heap.set`), and the "leaf-index bound" floor is the post-condition pair the register-and-splice
+    BIND: the committed `heap_root` register EQUALS the carried `newRoot`, and the post-heap is the
+    sorted insert-or-update at the addressed leaf (`Heap.set _ addr v`).
+
+So the SOUND fact for BOTH floors lives on the FLAT/chained step the forest node runs — the
+`Circuit.SortedTreeNonMembership` gadget is the CIRCUIT-side realization of that SAME `nf ∉ set` fact
+(the gap-bracketing open of a sorted-Merkle root), not a stronger object the executor model omits. The
+forest INHERITS the floor for free because a forest node IS `execFullA (.noteSpendA …)` /
+`(.heapWriteA …)`. We therefore discharge on the LIVE chained step — and that IS the live forest path
+(the forest = `execFullTurnA` over these arms), so this is NOT the flat shadow: it is the genuine step
+the forest executes per node. -/
+
+/-- Args for a note-spend non-membership floor: the actor + the spent nullifier + the §8 spend-proof
+flag (the live `noteSpendChainA` carries all three). -/
+structure NoteSpendFloorArgs where
+  /-- The actor spending the note (the receipt subject). -/
+  actor : CellId
+  /-- The nullifier derived from the spent note (the SET-membership key). -/
+  nf : Nat
+  /-- The §8 spending-proof flag (a committed spend requires it `= true`). -/
+  spendProof : Bool
+
+/-- Args for a heap-write leaf/root floor: the actor + target + carried address, value, and post-root
+(the live `heapStepGuardedW` writes these). -/
+structure HeapFloorArgs where
+  /-- The actor performing the write (must hold authority over `target`). -/
+  actor : CellId
+  /-- The cell whose heap leaf list + `heap_root` register are written. -/
+  target : CellId
+  /-- The carried sorted-key address (the Poseidon2 image of `(coll, key)`). -/
+  addr : Int
+  /-- The written value. -/
+  value : Int
+  /-- The carried post-root pinned into the `heap_root` register. -/
+  newRoot : Int
+
+/-- The note-spend step lifted to `NoteSpendFloorArgs` (the LIVE chained `noteSpendChainA` — the very
+arm `execFullA`'s `.noteSpendA` runs, hence the arm the forest node runs). -/
+def noteSpendFloorStep (s : RecChainedState) (a : NoteSpendFloorArgs) : Option RecChainedState :=
+  noteSpendChainA s a.nf a.actor a.spendProof
+
+/-- The heap-write step lifted to `HeapFloorArgs` (the LIVE wire-face `heapStepGuardedW` — the very arm
+`execFullA`'s `.heapWriteA` runs, hence the arm the forest node runs). -/
+def heapFloorStep (s : RecChainedState) (a : HeapFloorArgs) : Option RecChainedState :=
+  heapStepGuardedW s a.actor a.target a.addr a.value a.newRoot
+
+/-- **`noteSpendNonMembershipFloor` — the NULLIFIER NON-MEMBERSHIP floor as a `FloorObligation`.**
+Floor: the spent nullifier was NOT already in the committed nullifier set (`nf ∉ s.kernel.nullifiers`) —
+the no-double-spend invariant, a relation over the pre-state's nullifier set, NOT a Bool gate over args
+alone (the same shape as monotone-nonce: it reads the state). Discharged on EVERY commit by
+`noteSpendChainA_requires_proof` (whose conclusion `spendProof = true ∧ nf ∉ s.kernel.nullifiers`
+delivers exactly this second conjunct). The live chained step already fail-closes on a present
+nullifier (`noteSpendNullifier`'s `if nf ∈ … then none`), so the floor reads OFF the commit with no
+re-route — the §4b/§P3 clean-discharge case: the handler was ALREADY strong enough, the obligation
+PROMOTES the latent non-membership to a typed floor. A `noteSpendChainA` variant that re-spent a
+present nullifier (the double-spend mutation) could NOT inhabit this structure. -/
+def noteSpendNonMembershipFloor : FloorObligation RecChainedState NoteSpendFloorArgs noteSpendFloorStep where
+  floor := fun s a => a.nf ∉ s.kernel.nullifiers
+  gated := by
+    intro s a s' h
+    exact (noteSpendChainA_requires_proof h).2
+
+/-- **`heapLeafSpliceFloor` — the HEAP LEAF-SPLICE / ROOT-PIN floor as a `PostFloorObligation`.** Floor:
+the committed post-state binds the heap write at the addressed leaf — the `heap_root` register reads
+back EXACTLY the carried `newRoot`, AND the target's post-heap is the sorted insert-or-update of `addr
+↦ value` (`Heap.set` at the addressed key; other cells untouched). A post-condition (the step WRITES
+both), so `PostFloorObligation`. This is the executor face of the "heap leaf-index bound": the model's
+heap is a SORTED leaf LIST keyed by the felt `addr` (no bounded index — `Heap.set` is the sorted
+insert), and what the step BINDS is precisely (a) the register equals the carried root, and (b) the
+addressed leaf was spliced. Discharged on EVERY commit by `heapStepW_root_pinned` (register = newRoot)
+and `heapStepW_heaps` (the splice) — the live wire step already pins both by construction, the §4b/§P3
+clean-discharge case. A heap step that wrote a DIFFERENT root than it carried, or spliced a different
+leaf, could NOT inhabit this. -/
+def heapLeafSpliceFloor : PostFloorObligation RecChainedState HeapFloorArgs heapFloorStep where
+  floor := fun s a s' =>
+    fieldOf heapRootField (s'.kernel.cell a.target) = a.newRoot ∧
+    (∀ c, s'.kernel.heaps c =
+      if c = a.target then set (s.kernel.heaps a.target) a.addr a.value
+      else s.kernel.heaps c)
+  gated := by
+    intro s a s' h
+    exact ⟨heapStepW_root_pinned h, heapStepW_heaps h⟩
+
+/-! ### §P4-DISCHARGE — the obligations SHED their side-hypotheses off the commit. -/
+
+/-- **`noteSpendNonMembershipFloor` DISCHARGES** — a committed note-spend SUPPLIES the non-membership
+`nf ∉ s.kernel.nullifiers` WITHOUT a side-hypothesis. This is the no-double-spend precondition a
+non-membership-aware refinement consumer USED to take as input; the obligation produces it from the
+commit (the index-membership floor shed, exactly as the monotone floor shed). -/
+theorem noteSpendNonMembershipFloor_discharges {s s' : RecChainedState} {a : NoteSpendFloorArgs}
+    (h : noteSpendFloorStep s a = some s') : a.nf ∉ s.kernel.nullifiers :=
+  noteSpendNonMembershipFloor.discharge h
+
+/-- **`heapLeafSpliceFloor` DISCHARGES** — a committed heap write SUPPLIES the root-pin AND the
+addressed leaf-splice WITHOUT a side-hypothesis. This is the leaf/root binding a heap-aware refinement
+consumer USED to take as input; the obligation produces it from the commit (the heap index/membership
+floor shed). -/
+theorem heapLeafSpliceFloor_discharges {s s' : RecChainedState} {a : HeapFloorArgs}
+    (h : heapFloorStep s a = some s') :
+    fieldOf heapRootField (s'.kernel.cell a.target) = a.newRoot ∧
+    (∀ c, s'.kernel.heaps c =
+      if c = a.target then set (s.kernel.heaps a.target) a.addr a.value
+      else s.kernel.heaps c) :=
+  heapLeafSpliceFloor.discharge h
+
+/-! ### §P4-TEETH — the floors BITE (a double-spend / a proof-less spend does not commit). -/
+
+/-- **THE DOUBLE-SPEND POLE (non-membership floor BITES).** A spend of a nullifier ALREADY in the
+committed set does NOT commit (`noteSpendChainA = none`) — the negation of the floor is a genuinely
+distinct, REJECTED step. This witnesses the non-membership floor is LOAD-BEARING, not vacuous: the only
+committing path spends a FRESH nullifier, so `gated` is never asked to prove a false non-membership. -/
+theorem noteSpendNonMembershipFloor_double_spend_rejected (s : RecChainedState)
+    (a : NoteSpendFloorArgs) (h : a.nf ∈ s.kernel.nullifiers) :
+    noteSpendFloorStep s a = none := by
+  unfold noteSpendFloorStep noteSpendChainA
+  by_cases hp : a.spendProof = true
+  · rw [if_pos hp, note_no_double_spend s.kernel a.nf h]
+  · rw [if_neg hp]
+
+/-- **THE PROOF-LESS POLE (non-membership floor's companion gate BITES).** A spend WITHOUT the §8
+spending proof (`spendProof = false`) does NOT commit — the live `noteSpendChainA` fail-closes on the
+proof flag, so a non-membership floor can never be reached on a forged spend. -/
+theorem noteSpendNonMembershipFloor_proofless_rejected (s : RecChainedState)
+    (a : NoteSpendFloorArgs) (h : a.spendProof = false) :
+    noteSpendFloorStep s a = none := by
+  unfold noteSpendFloorStep
+  exact noteSpendChainA_fails_without_proof h
+
 /-! ## §6 — Axiom-hygiene pins (the floor surface + all instances rest only on the kernel triple). -/
 
 #assert_axioms FloorObligation.discharge
@@ -450,8 +600,14 @@ theorem freshnessFloor_unstamped_is_stale (k : RecordKernelState) (child parent 
 #assert_axioms spawnFreshnessFloor_not_stale
 #assert_axioms refreshFreshnessFloor_not_stale
 #assert_axioms freshnessFloor_unstamped_is_stale
+#assert_axioms noteSpendNonMembershipFloor
+#assert_axioms heapLeafSpliceFloor
+#assert_axioms noteSpendNonMembershipFloor_discharges
+#assert_axioms heapLeafSpliceFloor_discharges
+#assert_axioms noteSpendNonMembershipFloor_double_spend_rejected
+#assert_axioms noteSpendNonMembershipFloor_proofless_rejected
 
-/-! ## §P1/§P2/§P3 — DONE (field-write · authority-non-amp · lifecycle-freshness migrated). §P4 — NEXT.
+/-! ## §P1/§P2/§P3/§P4 — DONE (field-write · authority-non-amp · lifecycle-freshness · index-membership).
 
 **P1 LANDED.** The developer `SetField` (`.setFieldA`) and the dedicated `IncrementNonce`
 (`.incrementNonceA`) now route through their OWN floor-carrying handlers (`Handlers/StateSupply.lean`,
@@ -514,14 +670,53 @@ certified internal). The mutation teeth (§5b): `spawnFreshnessFloor_not_stale` 
 stamp under a nonzero-epoch parent, the codex mutation = the floor's negation) IS stale-at-birth
 (`delegationStale = true`), the distinct REJECTED post the stamp refutes.
 
-**P4 — the next floor family: forest-path / index-membership** (the obligation table,
-`docs/CIRCUIT-FUNCTIONAL-CORRECTNESS.md`): the `noteSpend`/heap-membership floors — the spend's nullifier
-NON-MEMBERSHIP (no double-spend) + the heap leaf-INDEX bound. ⚑ NOTE: unlike the §P1–§P3 floors (which
-live over FLAT kernel/chained steps), these are FOREST-path floors — the LIVE executor routes spend +
-heap-write through the FOREST handler (`FullForest` / the forest fold), so the membership/index floors must
-be discharged on the FOREST step (the per-leaf path-membership the forest commitment binds), NOT the flat
-`noteSpendStep`/`heapWriteStep` handler mirror. So P4 likely needs the forest-handler refinement, not the
-flat-handler one — flag this before defining the floor (the flat mirror would discharge a WEAKER fact than
-the forest commitment actually binds). -/
+**P4 — DONE (index-membership migrated; the nullifier non-membership + heap leaf-splice/root-pin floors
+SHED). THE FLAT-VS-FOREST VERDICT (the load-bearing P4 finding — verified in source, see §P4).** The
+prior-wave warning ("these are FOREST-path floors; the forest commitment binds a per-leaf path-membership
+STRONGER than the flat mirror; discharge on the FOREST step, not `noteSpendStep`/`heapWriteStep`") is
+REFUTED for this model. The live forest IS `execFullTurnA` over the pre-order lowering
+(`FullForest.execFullForestA_eq_execFullTurnA`): each node runs `execFullA s a`, whose `.noteSpendA` arm
+IS `noteSpendChainA` (→ `noteSpendNullifier`) and whose `.heapWriteA` arm IS `heapStepGuardedW` — the
+very kernel steps. The forest binds *which cell* a node targets, the per-asset ledger vector, ChainLink,
+and the delegation handoff — it does NOT carry a separate, stronger nullifier-set / heap-leaf membership
+object. The nullifier set is the kernel `nullifiers : List Nat`; the non-membership floor is the literal
+`nf ∉ k.nullifiers`, discharged from `noteSpendNullifier`'s fail-closed membership check via
+`noteSpendChainA_requires_proof`. The heap is a SORTED leaf LIST (`Heap.set`, no bounded index); the
+"leaf-index bound" maps to the post-condition the register-and-splice BIND — the `heap_root` register
+equals the carried `newRoot` (`heapStepW_root_pinned`) AND the addressed leaf was sorted-spliced
+(`heapStepW_heaps`). The `Circuit.SortedTreeNonMembership` gadget is the CIRCUIT-side realization of the
+SAME `nf ∉ set` fact (gap-bracketing a sorted-Merkle root), NOT a stronger object the executor omits.
+
+So the floors discharge on the LIVE chained steps `noteSpendChainA` / `heapStepGuardedW` (§P4) — and
+because the forest is exactly `execFullTurnA` over those arms, this IS the live forest path, not the flat
+shadow. `noteSpendNonMembershipFloor` (a `FloorObligation`, the no-double-spend relation over the
+pre-state set) and `heapLeafSpliceFloor` (a `PostFloorObligation`, the root-pin + addressed-leaf splice)
+deliver their facts OFF the commit via `noteSpendNonMembershipFloor_discharges` /
+`heapLeafSpliceFloor_discharges` — the §4b/§P3 clean-discharge case (the steps were ALREADY strong
+enough; the obligations PROMOTE the latent facts to typed floors). The teeth (§P4-TEETH):
+`noteSpendNonMembershipFloor_double_spend_rejected` confirms a re-spent (present) nullifier produces NO
+commit (the floor is LOAD-BEARING — the double-spend pole), and `…_proofless_rejected` confirms the
+companion §8-proof gate fail-closes a forged spend.
+
+**HONEST COMPLETION VERDICT.** All SIX named floor families are now internalized as typed obligations on
+the uniform `FloorObligation` / `PostFloorObligation` surface (reserved-field · caveat · monotone-nonce ·
+non-amp · epoch-freshness · index-membership) — each discharged from the step's own commit, each with
+mutation teeth proving it bites, each `#assert_axioms`-clean. The FLAT/chained handler-executor floor
+coverage is therefore COMPLETE for the six families.
+
+For the LIVE FOREST PATH specifically: because `execFullForestA = execFullTurnA ∘ lowerForestA` and each
+node action runs the SAME `execFullA` arm carrying these floors, the forest INHERITS the structural
+immunity for free at the per-node level — there is no separate, stronger forest-leaf object these floors
+fail to cover (the load-bearing P4 finding). What the forest adds ON TOP — and what is NOT a HandlerFloors
+obligation — is the per-node membership-LIFT (`fullActionInvA`: the per-asset ledger vector ∧ ChainLink ∧
+ObsAdvance attest at every tree node, `FullForest §7`) and the executed delegation-handoff non-amplification
+(`FullForest §6.EXECUTED`). Those forest-structural laws are already PROVEN in `FullForest.lean`; they are
+not floor-shedding side-hypotheses of the kind this campaign retires. So the gate-hole class this campaign
+names — the silent missing-gate carried as a refinement SIDE-HYPOTHESIS — is RETIRED for all six flat
+families AND inherited by the forest path per node; it is NOT a remaining forest-specific campaign. (The
+genuinely-remaining circuit-soundness work — binding the `heaps` field into the state-commitment conjunct
+`Circuit/StateCommit.RestHashIffFrame`, and the in-circuit `SortedTreeNonMembership` ↔ executor-set
+agreement — is the CIRCUIT/descriptor frontier tracked in `docs/CIRCUIT-FUNCTIONAL-CORRECTNESS.md`, a
+distinct campaign from the handler-floor internalization this module completes.) -/
 
 end Dregg2.Exec.HandlerFloors
