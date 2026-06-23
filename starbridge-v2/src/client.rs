@@ -76,6 +76,34 @@ impl NodeClient {
         }
     }
 
+    /// A TOLERANT count of the node's committed receipts (`GET /api/receipts`,
+    /// parsed as a raw JSON array — that endpoint returns the FULL receipt shape
+    /// (`agent`/`pre_state`/`post_state`/`action_count`/…), a superset of the
+    /// SSE-summary [`ReceiptEvent`] [`Self::receipts`] decodes, so a typed parse
+    /// rejects it). This is the empirical write-back probe: re-read it after a
+    /// turn and see whether the node's ledger grew, without coupling to the exact
+    /// receipt schema.
+    pub fn receipts_count(&self) -> anyhow::Result<usize> {
+        match self {
+            NodeClient::Mock => Ok(mock::receipts().len()),
+            NodeClient::Http { base_url } => {
+                let arr: Vec<serde_json::Value> = http_get(base_url, "/api/receipts")?;
+                Ok(arr.len())
+            }
+        }
+    }
+
+    /// The RAW receipt array (`GET /api/receipts`) as untyped JSON values —
+    /// newest first. Used to reflect the chain head without coupling to the exact
+    /// receipt schema (the endpoint carries the full receipt shape, a superset of
+    /// the SSE-summary [`ReceiptEvent`]).
+    pub fn receipts_raw(&self) -> anyhow::Result<Vec<serde_json::Value>> {
+        match self {
+            NodeClient::Mock => Ok(Vec::new()),
+            NodeClient::Http { base_url } => http_get(base_url, "/api/receipts"),
+        }
+    }
+
     pub fn federations(&self) -> anyhow::Result<Vec<FederationInfo>> {
         match self {
             NodeClient::Mock => Ok(mock::federations()),

@@ -191,6 +191,37 @@ fn main() {
         }
     }
 
+    // `--render-unified-boot <out>`: THE ONE UNIFIED BOOT — a single window with
+    // THREE panes over a real running `dregg-node`: a LIVE-node pane (the node's
+    // own /status + cells + latest receipt, pulled over the wire), the firmament
+    // editor (a save = a receipted turn on the cockpit's LOCAL ledger), and a live
+    // PTY terminal. Pass `--node <url>` for the attach. The bake fires a real
+    // editor save, RE-READS the node's receipt count to settle the write-back
+    // question empirically (does an editor save reach the NODE ledger — yes/no),
+    // and bakes `<out>.png`. Default 1900x1000.
+    #[cfg(all(
+        feature = "render-capture",
+        feature = "gpui-ui",
+        feature = "dev-surfaces",
+        feature = "firmament",
+        feature = "embedded-executor",
+        feature = "live-node"
+    ))]
+    {
+        if let Some(out) = render_unified_boot_arg(&args) {
+            let (w, h) = render_size_arg(&args).unwrap_or((1900.0, 1000.0));
+            let node = node_url_arg(&args);
+            let cmd = self_hosting_cmd_arg(&args);
+            match render_unified_boot_headless(&out, w, h, node, cmd) {
+                Ok(()) => std::process::exit(0),
+                Err(e) => {
+                    eprintln!("render-unified-boot FAILED: {e:#}");
+                    std::process::exit(1);
+                }
+            }
+        }
+    }
+
     // `--render-login <out>`: render the LOGIN CEREMONY surface offscreen (the
     // boot front door) the same headless way the cockpit bakes — the MCP-
     // screenshottable proof that the login surface lays out (the identity picker
@@ -756,6 +787,29 @@ fn render_self_hosting_full_arg(args: &[String]) -> Option<String> {
             return it.next().cloned();
         }
         if let Some(rest) = a.strip_prefix("--render-self-hosting-full=") {
+            return Some(rest.to_string());
+        }
+    }
+    None
+}
+
+/// Parse `--render-unified-boot <out>` (or `=<out>`) — the UNIFIED-BOOT bake
+/// output base path. Returns `None` when absent.
+#[cfg(all(
+    feature = "render-capture",
+    feature = "gpui-ui",
+    feature = "dev-surfaces",
+    feature = "firmament",
+    feature = "embedded-executor",
+    feature = "live-node"
+))]
+fn render_unified_boot_arg(args: &[String]) -> Option<String> {
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        if a == "--render-unified-boot" {
+            return it.next().cloned();
+        }
+        if let Some(rest) = a.strip_prefix("--render-unified-boot=") {
             return Some(rest.to_string());
         }
     }
@@ -1614,6 +1668,208 @@ fn render_self_hosting_headless(
               the FULL single loop — editor edit → receipted turn → disk mirror → the terminal's \
               toolchain compiles THAT VERY EDIT — is built and proven by \
               `--render-self-hosting-full` (see docs/deos/SELF-HOSTING-LOOP.md).");
+    Ok(())
+}
+
+/// THE ONE UNIFIED BOOT — a SINGLE window over a real running `dregg-node`, with
+/// three panes in one frame: the live `--node`-attached pane (the node's own
+/// /status + cells + latest receipt, pulled over the wire), the firmament editor,
+/// and a live PTY terminal. RUN + capture, and answer the write-back question
+/// EMPIRICALLY.
+///
+///   1. Mount the unified view attached to the node at `node_url` (a real
+///      `LiveNode::sync` snapshot of /status + /api/cells + the latest receipt).
+///      ASSERT the node is reachable AND running the lean producer (the attach is
+///      LIVE, not a mock).
+///   2. Read the node's receipt count BEFORE an editor save. Fire a REAL editor
+///      save (a cap-gated `SetField` turn on the cockpit's LOCAL World ledger).
+///      Read the node's receipt count AGAIN, over the wire. REPORT whether it grew
+///      — the honest answer to "does an editor save write back to the node?". (It
+///      does NOT today: the save lands on the LOCAL ledger; the node is
+///      read-only-synced. This bake names that seam from a real measurement, never
+///      papers over it.)
+///   3. Park until the terminal's live PTY command output lands in the grid.
+///   4. Capture `<out>.png`.
+///
+/// The node-reachability + lean-producer checks are HARD (the bake errors if the
+/// node is down or not lean). The write-back result is REPORTED (not asserted) —
+/// it is the seam under examination.
+#[cfg(all(
+    feature = "render-capture",
+    feature = "gpui-ui",
+    feature = "dev-surfaces",
+    feature = "firmament",
+    feature = "embedded-executor",
+    feature = "live-node"
+))]
+fn render_unified_boot_headless(
+    out: &str,
+    w: f32,
+    h: f32,
+    node_url: Option<String>,
+    cmd: Option<(String, Vec<String>)>,
+) -> anyhow::Result<()> {
+    use gpui::{px, size, AppContext, HeadlessAppContext, PlatformTextSystem};
+    use gpui_wgpu::CosmicTextSystem;
+    use std::borrow::Cow;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    use std::sync::Arc;
+    use std::time::Instant;
+
+    static LILEX: &[u8] = include_bytes!("../assets/fonts/Lilex-Regular.ttf");
+    static IBM_PLEX: &[u8] = include_bytes!("../assets/fonts/IBMPlexSans-Regular.ttf");
+
+    let node_url = node_url.ok_or_else(|| {
+        anyhow::anyhow!(
+            "--render-unified-boot needs a running node: pass --node <url> \
+             (e.g. --node http://127.0.0.1:8775; see docs/deos/DEV-NODE-RUNBOOK.md)"
+        )
+    })?;
+
+    let text_system: Arc<dyn PlatformTextSystem> =
+        Arc::new(CosmicTextSystem::new_without_system_fonts("Lilex"));
+    text_system.add_fonts(vec![Cow::Borrowed(LILEX), Cow::Borrowed(IBM_PLEX)])?;
+
+    let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(()), || {
+        gpui_platform::current_headless_renderer()
+    });
+    cx.update(|cx| gpui_component::init(cx));
+    cx.update(|cx| apply_deos_theme(None, true, cx));
+    cx.allow_parking();
+
+    // The LOCAL cockpit World the editor saves into (the SAME ledger the local
+    // receipt proof reads). The live-node pane reflects a SEPARATE running node.
+    let (world, _anchors) = world::demo_world();
+    let shared = Rc::new(RefCell::new(world));
+
+    let cmd = cmd.unwrap_or_else(|| ("cargo".to_string(), vec!["--version".to_string()]));
+    let expect_token = cmd.0.rsplit('/').next().unwrap_or(&cmd.0).to_string();
+
+    let window = {
+        let shared = shared.clone();
+        let node_url = node_url.clone();
+        let cmd = cmd.clone();
+        cx.open_window(size(px(w), px(h)), |window, cx| {
+            starbridge_v2::unified_boot::build_root(
+                shared,
+                Some(node_url),
+                Some(cmd),
+                window,
+                cx,
+            )
+            .expect("unified-boot root mount")
+        })?
+    };
+
+    cx.run_until_parked();
+
+    // (1) ASSERT the attach is LIVE — the node is reachable and running the lean
+    // producer. (A `None` here means the node was unreachable at snapshot time.)
+    let lean = window.read_with(&cx, |v, _| v.node_lean_producer())?;
+    match lean {
+        Some(true) => {}
+        Some(false) => anyhow::bail!(
+            "NODE PROOF FAILED: node {node_url} is reachable but NOT running the lean \
+             producer (state_producer != lean)"
+        ),
+        None => anyhow::bail!(
+            "NODE PROOF FAILED: could not snapshot node {node_url} (unreachable / \
+             not yet listening). Stand it up first (see DEV-NODE-RUNBOOK.md)."
+        ),
+    }
+    let node_cells_before = window.read_with(&cx, |v, _| v.node_cell_count())?;
+    let node_receipts_before = window.read_with(&cx, |v, _| v.node_receipt_count())?;
+
+    // (2) Fire a REAL editor save on the LOCAL ledger, then re-read the NODE's
+    // receipt count over the wire — the empirical write-back probe.
+    let local_before = window.read_with(&cx, |v, _| v.world_receipt_count())?;
+    let new_content =
+        "// SAVED INSIDE deos (unified boot) — a cap-gated turn on the cockpit's LOCAL ledger.\n\
+         fn main() {\n    println!(\"a save is a verified turn on the local World\");\n}\n";
+    let local_after = window.update(&mut cx, |v, window, cx| v.fire_save(new_content, window, cx))??;
+    if local_after <= local_before {
+        anyhow::bail!(
+            "EDITOR PROOF FAILED: local receipt count did not grow on save \
+             (before={local_before}, after={local_after})"
+        );
+    }
+    let node_receipts_after = window.read_with(&cx, |v, _| v.node_receipt_count())?;
+
+    // (3) Park until the live PTY's child stdout lands in the grid.
+    let deadline = Instant::now() + std::time::Duration::from_secs(20);
+    let mut term_text = String::new();
+    let mut term_ok = false;
+    while Instant::now() < deadline {
+        cx.run_until_parked();
+        cx.update_window(window.into(), |_, window, _cx| window.refresh())?;
+        cx.run_until_parked();
+        term_text = window.read_with(&cx, |v, cx| v.terminal_text(cx))?;
+        if term_text.to_lowercase().contains(&expect_token.to_lowercase()) {
+            term_ok = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(150));
+    }
+    if !term_ok {
+        anyhow::bail!(
+            "TERMINAL PROOF FAILED: `{} {}` output never reached the grid (looked for `{expect_token}`).\nGrid was:\n{term_text}",
+            cmd.0,
+            cmd.1.join(" ")
+        );
+    }
+
+    // (4) Final lay-out + capture.
+    cx.update_window(window.into(), |_, window, _cx| window.refresh())?;
+    cx.run_until_parked();
+    let captured = cx.capture_screenshot(window.into())?;
+    let (ww, hh) = (captured.width(), captured.height());
+    captured.save(format!("{out}.png"))?;
+
+    let term_first = term_text
+        .lines()
+        .find(|l| l.to_lowercase().contains(&expect_token.to_lowercase()))
+        .unwrap_or("")
+        .trim()
+        .to_string();
+
+    let wrote_back = matches!((node_receipts_before, node_receipts_after), (Some(b), Some(a)) if a > b);
+
+    println!("OK headless UNIFIED-BOOT render -> {out}.png ({ww}x{hh}, logical {w}x{h})");
+    println!(
+        "  PANE (live node): attached to {node_url} — lean producer LIVE; \
+         {} cells · {} receipts on the NODE (pulled over /api/cells + /api/receipts).",
+        node_cells_before.map(|n| n.to_string()).unwrap_or_else(|| "?".into()),
+        node_receipts_before.map(|n| n.to_string()).unwrap_or_else(|| "?".into()),
+    );
+    println!(
+        "  PANE (editor): a real save fired — LOCAL receipts {local_before} -> {local_after} \
+         on the cockpit's OWN World ledger (a cap-gated SetField turn)."
+    );
+    println!(
+        "  PANE (terminal): live alacritty PTY ran `{} {}` INSIDE deos — grid shows: {term_first:?}",
+        cmd.0,
+        cmd.1.join(" ")
+    );
+    println!(
+        "  WRITE-BACK PROBE (empirical): node receipts {} -> {} after the editor save.",
+        node_receipts_before.map(|n| n.to_string()).unwrap_or_else(|| "?".into()),
+        node_receipts_after.map(|n| n.to_string()).unwrap_or_else(|| "?".into()),
+    );
+    if wrote_back {
+        println!(
+            "  => the editor save DID reach the NODE ledger (a real over-the-wire self-hosting write-back)."
+        );
+    } else {
+        println!(
+            "  => the editor save did NOT reach the node ledger — it is LOCAL-ONLY. THIS IS THE \
+             INTEGRATION SEAM: `EditorPane::firmament_over` commits to the cockpit's LOCAL World \
+             (a `WorldSpine` over `World::commit_turn`); the `--node` attach is READ-ONLY-SYNCED \
+             (LiveNode::sync + the SSE pump). To write back, the FirmamentFs save path would need \
+             to route the turn through `NodeClient::submit_turn` (a designed-pending write surface \
+             on the LiveNode) instead of (or in addition to) the local `WorldSpine`."
+        );
+    }
     Ok(())
 }
 

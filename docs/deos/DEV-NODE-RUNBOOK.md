@@ -141,6 +141,66 @@ cargo build -p dregg-node && \
 ( cd starbridge-v2 && cargo run --features native-full --bin starbridge-v2 -- --node http://localhost:8771 )
 ```
 
+## THE ONE UNIFIED BOOT — node + editor + terminal + live-node pane, one frame
+
+The cockpit struct already carries all the pieces at once (the live-node attach +
+the FirmamentFs editor + the live PTY terminal); they are normally on separate
+tabs. `--render-unified-boot` bakes a SINGLE headless frame that mounts THREE
+panes side by side over a real running node, drives a real editor save, and
+settles the editor-save write-back question EMPIRICALLY by re-reading the node's
+receipt count. (`starbridge-v2/src/unified_boot.rs` + the `--render-unified-boot`
+bake in `main.rs`.)
+
+```sh
+# 1. Stand up a node with the faucet (a known port + data dir).
+NODE=./target/debug/dregg-node
+$NODE init --data-dir /tmp/deos-unified-node
+$NODE run --data-dir /tmp/deos-unified-node --enable-faucet --port 8775 --gossip-port 9775 &
+# wait for "HTTP API listening"
+
+# 2. Faucet a real cell so the node ledger has a real verified receipt. The
+#    recipient cell is derive_raw(node_pubkey, H("default")) — read it off the node:
+ID=$(curl -s http://127.0.0.1:8775/api/node/identity)
+PK=$(echo "$ID" | python3 -c 'import sys,json;print(json.load(sys.stdin)["public_key"])')
+CID=$(echo "$ID" | python3 -c 'import sys,json;print(json.load(sys.stdin)["agent_cell"])')
+curl -s -X POST http://127.0.0.1:8775/api/faucet -H 'Content-Type: application/json' \
+  -d "{\"recipient\":\"$CID\",\"amount\":5000,\"public_key\":\"$PK\"}"
+# -> {"success":true,...}; /api/receipts now has one has_proof:true receipt.
+
+# 3. Bake the unified frame attached to that node.
+( cd starbridge-v2 && cargo build --features native-full --bin starbridge-v2 )
+./starbridge-v2/target/debug/starbridge-v2 \
+  --render-unified-boot /tmp/deos-unified-boot \
+  --node http://127.0.0.1:8775 --render-size 1900x1000
+```
+
+The bake prints (and writes `/tmp/deos-unified-boot.png`, 3800x2000):
+
+* **PANE (live node)** — attached to the node; lean producer LIVE; its cells +
+  the latest verified receipt, pulled over `/api/cells` + `/api/receipts`. This is
+  what proves the attach is LIVE, not embedded.
+* **PANE (editor)** — a real save fired: the local on-ledger receipt count grew (a
+  cap-gated `SetField` turn).
+* **PANE (terminal)** — a live alacritty PTY ran `cargo --version` INSIDE deos.
+* **WRITE-BACK PROBE** — the node's receipt count is re-read over the wire BEFORE
+  and AFTER the editor save.
+
+### The honest write-back seam (what the probe measures)
+
+The editor save does **NOT** reach the node ledger today — it is LOCAL-ONLY.
+`EditorPane::firmament_over` commits the `SetField` turn to the cockpit's OWN
+`World` (a `WorldSpine` over `World::commit_turn`); the `--node` attach is
+READ-ONLY-SYNCED (`LiveNode::sync` for the snapshot + the SSE pump for the live
+receipt feed). So the unified boot is real (one window, node-attached-live +
+editor + terminal), but the editor and the node are two ledgers: the node's
+receipt count is unchanged by an editor save.
+
+To make a save a self-hosting write-back to the NODE, the FirmamentFs save path
+would route the turn through `NodeClient::submit_turn` (the designed-pending write
+surface on `LiveNode`) instead of (or in addition to) the local `WorldSpine` —
+which also needs local key custody to sign the turn (or routing it through the
+node operator's cipherclerk). That is the named integration seam.
+
 ## A REAL two-node federation (n=2, proven by running)
 
 This stands up two `dregg-node` processes that form ONE federation (committee of

@@ -602,6 +602,20 @@ pub mod showcase;
     feature = "embedded-executor"
 ))]
 pub mod self_hosting;
+// THE ONE UNIFIED BOOT — a live `--node`-attached pane (the node's real
+// cells/receipts/status over the wire) STANDING ALONGSIDE the firmament editor +
+// the live-PTY terminal, in a SINGLE window/frame. `--render-unified-boot` bakes
+// the PNG; the editor-save write-back seam is exercised + reported by the bake.
+// Needs the live-node wire client (`live-node` + `embedded-executor`) plus the
+// firmament editor + live PTY (`firmament` + `dev-surfaces`).
+#[cfg(all(
+    feature = "gpui-ui",
+    feature = "dev-surfaces",
+    feature = "firmament",
+    feature = "embedded-executor",
+    feature = "live-node"
+))]
+pub mod unified_boot;
 // THE LOGIN CEREMONY surface — the boot front door; picking an identity runs the
 // real session ceremony (`crate::session`) and swaps the window root to the cockpit.
 // `gpui-ui` ONLY (native): the login surface drives the DURABLE-session-image path
