@@ -868,27 +868,31 @@ theorem setField_circuit_refines_spec (S : CommitSurface)
     (hN : compressNInjective S.compressN) (hL : cellLeafInjective S.CH)
     (hRest : RestHashIffFrame S.RH) (hLog : logHashInjective S.LH)
     (s : RecChainedState) (args : SetFieldArgs) (s' : RecChainedState)
+    (hnr : Dregg2.Exec.EffectsState.reservedField args.f = false)
     (hwf : AccountsWF s.kernel) (hwf' : AccountsWF s'.kernel)
     (h : setFieldCircuitStep S s args s') :
     setFieldSpecStep s args s' :=
-  setFieldE_full_sound S hN hL hRest hLog s args s' hwf hwf' h
+  setFieldE_full_sound S hN hL hRest hLog s args s' hnr hwf hwf' h
 
 theorem setField_spec_refines_circuit (S : CommitSurface) (hRest : RestHashIffFrame S.RH)
     (s : RecChainedState) (args : SetFieldArgs) (s' : RecChainedState)
     (h : setFieldSpecStep s args s') :
     setFieldCircuitStep S s args s' :=
+  -- §RESERVED-SLOT: the spec ALREADY carries `reservedField args.f = false` (its `.1` leg), so the
+  -- `apex_iff` hypothesis is discharged from `h` itself.
   effect_circuit_full_complete S setFieldE hRest setFieldGuardEncodes s args s'
-    ((apex_iff_setFieldSpec s args s').mpr h)
+    ((apex_iff_setFieldSpec s args s' h.1).mpr h)
 
 theorem setField_circuit_refines_exec (S : CommitSurface)
     (hN : compressNInjective S.compressN) (hL : cellLeafInjective S.CH)
     (hRest : RestHashIffFrame S.RH) (hLog : logHashInjective S.LH)
     (s : RecChainedState) (args : SetFieldArgs) (s' : RecChainedState)
+    (hnr : Dregg2.Exec.EffectsState.reservedField args.f = false)
     (hwf : AccountsWF s.kernel) (hwf' : AccountsWF s'.kernel)
     (h : setFieldCircuitStep S s args s') :
     setFieldExecStep s args s' :=
   (setField_exec_equiv_spec s args s').mpr
-    (setField_circuit_refines_spec S hN hL hRest hLog s args s' hwf hwf' h)
+    (setField_circuit_refines_spec S hN hL hRest hLog s args s' hnr hwf hwf' h)
 
 #assert_axioms setField_exec_equiv_spec
 #assert_axioms setField_circuit_refines_spec

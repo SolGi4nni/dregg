@@ -134,7 +134,7 @@ theorem execFullForestG_galNode (s : RecChainedState) (cred : Authorization Dg P
     (slot : FieldName) (value : Int) :
     execFullForestG s (galNode cred slot value)
       = (if gateOK (mkAuth cred []) s = true
-         then stateStepGuarded s slot galleryActor artworkCell value
+         then stateStepDev s slot galleryActor artworkCell value
          else none) := by
   rw [galNode, execFullForestG_leaf, execFullAGated]
   rfl
@@ -199,12 +199,12 @@ a contested (already-bound) slot makes `caveatsAdmit = false`, so `stateStepGuar
 
 /-- **`gallery_good_node_runs_write` — the gate-passing collapse for `goodCred`.** When the genuine
 credential admits, the gallery op IS its caveat-gated `SetField` — `execFullForestG s (galNode goodCred
-slot value) = stateStepGuarded s slot galleryActor artworkCell value`. The hinge for theorem 3: any
+slot value) = stateStepDev s slot galleryActor artworkCell value`. The hinge for theorem 3: any
 later caveat-rejection of the WRITE rejects the whole turn. -/
 theorem gallery_good_node_runs_write (s : RecChainedState) (slot : FieldName) (value : Int)
     (hgate : gateOK (mkAuth goodCred []) s = true) :
     execFullForestG s (galNode goodCred slot value)
-      = stateStepGuarded s slot galleryActor artworkCell value := by
+      = stateStepDev s slot galleryActor artworkCell value := by
   rw [execFullForestG_galNode, if_pos hgate]
 
 /-- **`gallery_item_immutable` (END-USER THEOREM 3).** If the artwork's `item` slot already
@@ -217,7 +217,7 @@ theorem gallery_item_immutable (s : RecChainedState) (value : Int)
     (hbound : caveatsAdmit s.kernel itemSlot galleryActor artworkCell value = false) :
     execFullForestG s (mintNode goodCred value) = none := by
   rw [mintNode, gallery_good_node_runs_write s itemSlot value hgate]
-  exact stateStepGuarded_caveat_violation_fails s itemSlot galleryActor artworkCell value hbound
+  exact stateStepDev_caveat_violation_fails s itemSlot galleryActor artworkCell value hbound
 
 /-! ## §8 — END-USER THEOREM 4: a committed gallery turn CONSERVES every asset.
 

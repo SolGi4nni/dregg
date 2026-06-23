@@ -142,7 +142,7 @@ theorem execFullForestG_nsNode (s : RecChainedState) (cred : Authorization Dg Pf
     (slot : FieldName) (value : Int) :
     execFullForestG s (nsNode cred slot value)
       = (if gateOK (mkAuth cred []) s = true
-         then stateStepGuarded s slot registryActor registryCell value
+         then stateStepDev s slot registryActor registryCell value
          else none) := by
   rw [nsNode, execFullForestG_leaf, execFullAGated]
   rfl
@@ -194,7 +194,7 @@ theorems 2–4: any later caveat-rejection of the WRITE rejects the whole turn. 
 theorem ns_good_node_runs_write (s : RecChainedState) (slot : FieldName) (value : Int)
     (hgate : gateOK (mkAuth goodCred []) s = true) :
     execFullForestG s (nsNode goodCred slot value)
-      = stateStepGuarded s slot registryActor registryCell value := by
+      = stateStepDev s slot registryActor registryCell value := by
   rw [execFullForestG_nsNode, if_pos hgate]
 
 /-- **`ns_name_squat_impossible` (END-USER THEOREM 2).** If the registry's `name` slot already
@@ -207,7 +207,7 @@ theorem ns_name_squat_impossible (s : RecChainedState) (value : Int)
     (hsquat : caveatsAdmit s.kernel nameSlot registryActor registryCell value = false) :
     execFullForestG s (registerNode goodCred value) = none := by
   rw [registerNode, ns_good_node_runs_write s nameSlot value hgate]
-  exact stateStepGuarded_caveat_violation_fails s nameSlot registryActor registryCell value hsquat
+  exact stateStepDev_caveat_violation_fails s nameSlot registryActor registryCell value hsquat
 
 /-- **`ns_rent_cannot_shorten` (END-USER THEOREM 3).** If the `Monotonic expiry` caveat rejects
 the new lease (`caveatsAdmit = false`, i.e. `newExpiry < old`), a renew is rejected —
@@ -218,7 +218,7 @@ theorem ns_rent_cannot_shorten (s : RecChainedState) (newExpiry : Int)
     (hshort : caveatsAdmit s.kernel expirySlot registryActor registryCell newExpiry = false) :
     execFullForestG s (renewNode goodCred newExpiry) = none := by
   rw [renewNode, ns_good_node_runs_write s expirySlot newExpiry hgate]
-  exact stateStepGuarded_caveat_violation_fails s expirySlot registryActor registryCell newExpiry hshort
+  exact stateStepDev_caveat_violation_fails s expirySlot registryActor registryCell newExpiry hshort
 
 /-- **`ns_revoke_permanent` (END-USER THEOREM 4).** If the `revoked` tombstone is already set
 (the `WriteOnce revoked` caveat rejects a second, different write: `caveatsAdmit = false`), a second
@@ -229,7 +229,7 @@ theorem ns_revoke_permanent (s : RecChainedState) (tombstone : Int)
     (hset : caveatsAdmit s.kernel revokedSlot registryActor registryCell tombstone = false) :
     execFullForestG s (revokeNode goodCred tombstone) = none := by
   rw [revokeNode, ns_good_node_runs_write s revokedSlot tombstone hgate]
-  exact stateStepGuarded_caveat_violation_fails s revokedSlot registryActor registryCell tombstone hset
+  exact stateStepDev_caveat_violation_fails s revokedSlot registryActor registryCell tombstone hset
 
 /-! ## §5b — END-USER THEOREM 5: a committed nameservice turn CONSERVES every asset.
 

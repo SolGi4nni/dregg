@@ -78,7 +78,11 @@ open Dregg2.Exec.TurnExecutor (Action)
 open Dregg2.Exec.EffectsState (setField fieldOf writeField stateAuthB stateStep stateStep_factors
   setField_balOf state_caps_unchanged state_authGraph_unchanged state_authorized state_obsadvance
   state_field_written stateStepGuarded stateStepGuarded_eq stateStepGuarded_admits
-  stateStepGuarded_caveat_violation_fails caveatsAdmit)
+  stateStepGuarded_caveat_violation_fails caveatsAdmit
+  reservedField stateStepDev stateStepDev_eq stateStepDev_notReserved stateStepDev_reserved_fails
+  stateStepDev_caveat_violation_fails
+  incrementNonceStep incrementNonceStep_eq incrementNonceStep_advances
+  incrementNonceStep_nonincreasing_fails)
 open scoped BigOperators
 open Dregg2.Tactics  -- the effect-arm combinators (`reject_none`/`commit_subst`/`gate_peel`/`bal_neutral`)
 
@@ -1454,6 +1458,15 @@ def permsField : FieldName := "permissions"
 def vkField    : FieldName := "verification_key"
 def programField : FieldName := "program"
 
+/-- The four protocol-managed slots are EXACTLY the `reservedField` set the developer `SetField`
+(`stateStepDev`) fails closed on — each has a dedicated effect (`incrementNonce`/`setPermissions`/
+`setVK`/`setProgram`) that owns it, and the kernel commitment binds it. Wiring `EffectsState`'s
+literal-string `reservedField` to the named constants. -/
+theorem reservedField_nonceField : reservedField nonceField = true := by decide
+theorem reservedField_permsField : reservedField permsField = true := by decide
+theorem reservedField_vkField    : reservedField vkField    = true := by decide
+theorem reservedField_programField : reservedField programField = true := by decide
+
 /-! ### §MA-seal — the 6 SIMPLE bal-neutral effects (Wave 6) on the per-asset dispatch.
 
 dregg1's `turn/src/executor/apply.rs` runs a cluster of SIMPLE effects that flip a cell flag, write a
@@ -2502,18 +2515,25 @@ def execFullA (s : RecChainedState) : FullActionA → Option RecChainedState
   | .burnA actor cell a amt   => recCBurnAsset s actor cell a amt
   -- §SLOT-CAVEAT: the developer-facing `SetField` is the one effect dregg1 routes through the cell's
   -- `RecordProgram::evaluate` per-slot caveats (`apply_set_field` → `cell/src/program.rs:1314`+). So
-  -- `setFieldA` dispatches to the CAVEAT-GATED write `stateStepGuarded` (NOT the bare `stateStep`):
-  -- a write violating an Immutable/MonotonicSequence/Monotonic/WriteOnce/SenderAuthorized/BoundedBy
-  -- caveat on slot `f` of `cell` is REJECTED (fail-closed). The other field writes (nonce/perms/vk —
-  -- protocol-managed slots, not developer SetField) stay on the bare authority-gated `stateStep`.
-  | .setFieldA actor cell f v        => stateStepGuarded s f actor cell v
+  -- `setFieldA` dispatches to the DEVELOPER write `stateStepDev` = the RESERVED-SLOT gate over the
+  -- CAVEAT-GATED write `stateStepGuarded` (NOT the bare `stateStep`): a write to a protocol-managed
+  -- slot (nonce/permissions/verification_key/program — each owned by its dedicated effect, and bound
+  -- by the kernel commitment) is REJECTED (closes the nonce-reset replay vector); then a write
+  -- violating an Immutable/MonotonicSequence/Monotonic/WriteOnce/SenderAuthorized/BoundedBy caveat on
+  -- slot `f` of `cell` is REJECTED (fail-closed). The other field writes (nonce/perms/vk/program —
+  -- protocol-managed slots, NOT developer SetField) stay on the bare authority-gated `stateStep`.
+  | .setFieldA actor cell f v        => stateStepDev s f actor cell v
   -- §LIVENESS-GATE (CLASS-1): an emit is admitted only when the target cell is a live account AND its
   -- lifecycle still `acceptsEffects` — a member-but-Destroyed/Sealed cell CANNOT post an observation
   -- ("Destroyed is terminal", the same membership-vs-liveness fix the mint/burn/transfer arms carry).
   | .emitEventA actor cell topic data =>
       if cell ∈ s.kernel.accounts ∧ acceptsEffects s.kernel cell = true then
         some (emitStep s actor cell topic data) else none
-  | .incrementNonceA actor cell n     => stateStep s nonceField actor cell (.int n)
+  -- §MONOTONE-NONCE: `incrementNonceA` routes through `incrementNonceStep` — the monotone gate over
+  -- the bare authority-gated `stateStep` on `nonceField`. A write that does NOT strictly advance the
+  -- stored nonce (a RESET or no-op) is REJECTED (closes the nonce-reset replay leg via the dedicated
+  -- effect — the SAME premise `setField "nonce"`'s reservation protects).
+  | .incrementNonceA actor cell n     => incrementNonceStep s actor cell n
   | .setPermissionsA actor cell p     => stateStep s permsField actor cell (.int p)
   | .setVKA actor cell vk             => stateStep s vkField actor cell (.int vk)
   | .setProgramA actor cell prog      => stateStep s programField actor cell (.int prog)
@@ -2675,11 +2695,12 @@ theorem execFullA_ledger_per_asset (s s' : RecChainedState) (fa : FullActionA) (
           show recTotalAsset k' b = recTotalAsset s.kernel b + _
           rw [recKBurnAsset_delta s.kernel k' actor cell a amt hb b]; ring
   | setFieldA actor cell f v =>
-      -- §SLOT-CAVEAT: `setFieldA` now routes through the caveat-gated write `stateStepGuarded`. A
-      -- committed guarded write commits exactly `stateStep`'s post-state (a named-field write), so it
-      -- leaves the COMBINED per-asset measure UNCHANGED — `ledgerDeltaAsset (.setFieldA …) = 0`.
+      -- §RESERVED-SLOT/§SLOT-CAVEAT: `setFieldA` routes through `stateStepDev` (reserved gate over the
+      -- caveat-gated `stateStepGuarded`). A committed developer write IS a committed guarded write
+      -- (`stateStepDev_eq`), which commits exactly `stateStep`'s post-state (a named-field write), so
+      -- it leaves the COMBINED per-asset measure UNCHANGED — `ledgerDeltaAsset (.setFieldA …) = 0`.
       simp only [execFullA, ledgerDeltaAsset] at h ⊢
-      rw [stateStepGuarded_recTotalAsset h b]; ring
+      rw [stateStepGuarded_recTotalAsset (stateStepDev_eq h) b]; ring
   | emitEventA actor cell topic data =>
       simp only [execFullA, ledgerDeltaAsset] at h ⊢
       by_cases hlive : cell ∈ s.kernel.accounts ∧ acceptsEffects s.kernel cell = true
@@ -2691,7 +2712,7 @@ theorem execFullA_ledger_per_asset (s s' : RecChainedState) (fa : FullActionA) (
         exact absurd h (by simp)
   | incrementNonceA actor cell n =>
       simp only [execFullA, ledgerDeltaAsset] at h ⊢
-      obtain ⟨_, hs'⟩ := stateStep_factors h; subst hs'
+      obtain ⟨_, hs'⟩ := stateStep_factors (incrementNonceStep_eq h); subst hs'
       show recTotalAsset (writeField s.kernel nonceField cell (.int n)) b = recTotalAsset s.kernel b + 0
       rw [writeField_recTotalAsset s.kernel nonceField cell (.int n) b]; ring
   | setPermissionsA actor cell p =>
@@ -3113,10 +3134,11 @@ theorem execFullA_chainlinkExact (s s' : RecChainedState) (fa : FullActionA)
       | some k' => rw [hb] at h; simp only [Option.some.injEq] at h; subst h; rfl
   -- §MA-state: each pure-state effect appends exactly the metadata clock row (`stateStep`/`emitStep`).
   | setFieldA actor cell f v =>
-      -- §SLOT-CAVEAT: `setFieldA` runs the caveat-gated write; a committed guarded write IS a
-      -- committed `stateStep` (`stateStepGuarded_eq`), so the chain-row factoring is identical.
+      -- §RESERVED-SLOT/§SLOT-CAVEAT: `setFieldA` runs the developer write; a committed developer write
+      -- IS a committed guarded write IS a committed `stateStep` (`stateStepDev_eq`/`stateStepGuarded_eq`),
+      -- so the chain-row factoring is identical.
       simp only [execFullA, fullReceiptA] at h ⊢
-      obtain ⟨_, hs'⟩ := stateStep_factors (stateStepGuarded_eq h); subst hs'; rfl
+      obtain ⟨_, hs'⟩ := stateStep_factors (stateStepGuarded_eq (stateStepDev_eq h)); subst hs'; rfl
   | emitEventA actor cell topic data =>
       simp only [execFullA, fullReceiptA] at h ⊢
       by_cases hlive : cell ∈ s.kernel.accounts ∧ acceptsEffects s.kernel cell = true
@@ -3127,7 +3149,7 @@ theorem execFullA_chainlinkExact (s s' : RecChainedState) (fa : FullActionA)
         exact absurd h (by simp)
   | incrementNonceA actor cell n =>
       simp only [execFullA, fullReceiptA] at h ⊢
-      obtain ⟨_, hs'⟩ := stateStep_factors h; subst hs'; rfl
+      obtain ⟨_, hs'⟩ := stateStep_factors (incrementNonceStep_eq h); subst hs'; rfl
   | setPermissionsA actor cell p =>
       simp only [execFullA, fullReceiptA] at h ⊢
       obtain ⟨_, hs'⟩ := stateStep_factors h; subst hs'; rfl
@@ -3518,15 +3540,17 @@ vacuous: an actor without authority over `cell` cannot commit a field write (see
 theorem execFullA_setFieldA_authorized (s s' : RecChainedState) (actor cell : CellId) (f : FieldName)
     (v : Int) (h : execFullA s (.setFieldA actor cell f v) = some s') :
     stateAuthB s.kernel.caps actor cell = true :=
-  -- §SLOT-CAVEAT: peel the caveat gate first (`stateStepGuarded_eq`), then the authority gate.
-  state_authorized (stateStepGuarded_eq (by simpa only [execFullA] using h))
+  -- §RESERVED-SLOT/§SLOT-CAVEAT: peel the reserved gate (`stateStepDev_eq`), then the caveat gate
+  -- (`stateStepGuarded_eq`), then the authority gate.
+  state_authorized (stateStepGuarded_eq (stateStepDev_eq (by simpa only [execFullA] using h)))
 
 /-- **`incrementNonceA` authorized.** Implies the actor held authority over `cell` (the
 `IncrementNonce` cross-cell / ownership gate). -/
 theorem execFullA_incrementNonceA_authorized (s s' : RecChainedState) (actor cell : CellId) (n : Int)
     (h : execFullA s (.incrementNonceA actor cell n) = some s') :
     stateAuthB s.kernel.caps actor cell = true :=
-  state_authorized (by simpa only [execFullA] using h)
+  -- §MONOTONE-NONCE: peel the monotone gate (`incrementNonceStep_eq`), then the authority gate.
+  state_authorized (incrementNonceStep_eq (by simpa only [execFullA] using h))
 
 /-- **`setPermissionsA` authorized.** Implies the actor held authority over `cell` (the
 `SetPermissions` gate; dregg1 applies the permission write LAST off the ORIGINAL snapshot, so the
@@ -4413,22 +4437,43 @@ def fmaS : RecChainedState :=
 -- The pre-state per-asset supply: asset 0 = 105, asset 1 = 7.
 #guard ((recTotalAsset fmaS.kernel 0, recTotalAsset fmaS.kernel 1)) == (105, 7)  --  (105, 7)
 
--- ★ THE KEYSTONE WITNESS: a `setFieldA` that changes cell 0's `nonce` field to 42 COMMITS,
+-- ★ THE RESERVED-SLOT TOOTH (the replay-vector closure, BOTH POLES): a developer `setFieldA` that
+--   tries to overwrite the PROTOCOL-managed `nonce` slot is now REJECTED (it used to COMMIT — the
+--   nonce-reset replay vector). Only `incrementNonceA` may write `nonce`.
+#guard ((execFullA fmaS (.setFieldA 0 0 "nonce" 42)).isNone)  --  true (REJECTED — was some, now none)
+-- ...the other three protocol slots are likewise reserved against developer SetField:
+#guard ((execFullA fmaS (.setFieldA 0 0 "permissions" 3)).isNone)        --  true (REJECTED)
+#guard ((execFullA fmaS (.setFieldA 0 0 "verification_key" 99)).isNone)  --  true (REJECTED)
+#guard ((execFullA fmaS (.setFieldA 0 0 "program" 1)).isNone)            --  true (REJECTED)
+-- ★ THE BALANCE-NEUTRALITY KEYSTONE on a DEVELOPER field (`status`, NOT reserved): it COMMITS,
 --   yet `recTotalAsset` is UNCHANGED at (105, 7) for BOTH assets (balance-NEUTRALITY):
-#guard ((execFullA fmaS (.setFieldA 0 0 "nonce" 42)).isSome)  --  true
-#guard ((execFullA fmaS (.setFieldA 0 0 "nonce" 42)).map
-        (fun s => fieldOf "nonce" (s.kernel.cell 0))) == some 42  --  some 42 (CHANGED)
-#guard ((execFullA fmaS (.setFieldA 0 0 "nonce" 42)).map
+#guard ((execFullA fmaS (.setFieldA 0 0 "status" 42)).isSome)  --  true (developer field still commits)
+#guard ((execFullA fmaS (.setFieldA 0 0 "status" 42)).map
+        (fun s => fieldOf "status" (s.kernel.cell 0))) == some 42  --  some 42 (CHANGED)
+#guard ((execFullA fmaS (.setFieldA 0 0 "status" 42)).map
         (fun s => (recTotalAsset s.kernel 0, recTotalAsset s.kernel 1))) == some (105, 7)  --  some (105, 7) (UNCHANGED)
 -- ...and grows the receipt chain by exactly one row (the metadata clock):
-#guard ((execFullA fmaS (.setFieldA 0 0 "nonce" 42)).map (fun s => s.log.length)) == some 1  --  some 1
+#guard ((execFullA fmaS (.setFieldA 0 0 "status" 42)).map (fun s => s.log.length)) == some 1  --  some 1
 -- An UNAUTHORIZED actor (9 owns nothing, empty caps) cannot write cell 0's field (fail-closed):
-#guard ((execFullA fmaS (.setFieldA 9 0 "nonce" 42)).isSome) == false  --  false
+#guard ((execFullA fmaS (.setFieldA 9 0 "status" 42)).isSome) == false  --  false
 
 -- IncrementNonce (Monotonic): bump cell 0's nonce 0→1, balance-neutral:
 #guard ((execFullA fmaS (.incrementNonceA 0 0 1)).map (fun s => fieldOf "nonce" (s.kernel.cell 0))) == some 1  --  some 1
 #guard ((execFullA fmaS (.incrementNonceA 0 0 1)).map
         (fun s => (recTotalAsset s.kernel 0, recTotalAsset s.kernel 1))) == some (105, 7)  --  some (105, 7)
+-- ★ THE MONOTONE-NONCE TOOTH (the second replay leg, BOTH POLES): cell 0's stored nonce is 0, so an
+--   `incrementNonceA` to a STRICTLY-greater value COMMITS, but a RESET (to 0) or a non-advancing
+--   value is REJECTED — the dedicated effect can only ADVANCE the nonce.
+#guard ((execFullA fmaS (.incrementNonceA 0 0 5)).isSome)   --  true (0 → 5 advances)
+#guard ((execFullA fmaS (.incrementNonceA 0 0 0)).isNone)   --  true (0 → 0 is a no-op/non-advance: REJECTED)
+#guard ((execFullA fmaS (.incrementNonceA 0 0 (-3))).isNone) --  true (0 → −3 is a RESET: REJECTED)
+-- ...and after an advance to 5, a later RESET back to 0 (or any value ≤ 5) is REJECTED (no cycling):
+#guard ((execFullA fmaS (.incrementNonceA 0 0 5)).bind
+          (fun s5 => execFullA s5 (.incrementNonceA 0 0 0))).isNone   --  true (5 → 0 RESET: REJECTED)
+#guard ((execFullA fmaS (.incrementNonceA 0 0 5)).bind
+          (fun s5 => execFullA s5 (.incrementNonceA 0 0 5))).isNone   --  true (5 → 5 no-op: REJECTED)
+#guard ((execFullA fmaS (.incrementNonceA 0 0 5)).bind
+          (fun s5 => execFullA s5 (.incrementNonceA 0 0 6))).isSome   --  true (5 → 6 advances)
 
 -- SetPermissions / SetVerificationKey (Neutral): field writes, balance-neutral:
 #guard ((execFullA fmaS (.setPermissionsA 0 0 3)).map (fun s => fieldOf "permissions" (s.kernel.cell 0))) == some 3  --  some 3
@@ -4459,8 +4504,8 @@ def fmaS : RecChainedState :=
 --   (the transfer conserves; the field writes/emit move no asset) ⇒ (105, 7) preserved:
 def stateMixedTurn : List FullActionA :=
   [ .setFieldA 0 0 "status" 5
-  , .balanceA ⟨0, 0, 1, 30⟩ 0     -- transfer 30 of asset 0, cell 0 → cell 1 (conserves)
-  , .incrementNonceA 0 0 1
+  , .balanceA ⟨0, 0, 1, 30⟩ 0     -- transfer 30 of asset 0, cell 0 → cell 1 (conserves; bumps nonce 0→1)
+  , .incrementNonceA 0 0 2        -- §MONOTONE-NONCE: must STRICTLY advance (1 → 2), not reset
   , .emitEventA 0 0 1 0
   , .setVKA 0 0 7 ]
 

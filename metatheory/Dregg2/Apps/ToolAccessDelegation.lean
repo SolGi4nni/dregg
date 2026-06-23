@@ -165,10 +165,17 @@ On a mandate cell carrying the delegated caveats, the PRODUCTION caveat-gated ex
 (`TurnExecutorFull.lean:3794`) — COMMITS (is `some`) IFF the delegated policy admits the invocation AND
 the worker holds authority over the cell. The whole `RecChainedState` post-state, not a projection. -/
 
-/-- **`setFieldA_is_stateStepGuarded`** — the production executor's `setFieldA` arm IS the caveat gate.
-The bridge that makes every toolkit theorem about `stateStepGuarded` a theorem about `execFullA`. -/
+/-- **`setFieldA_is_stateStepGuarded`** — the production executor's `setFieldA` arm IS the caveat gate
+over a NON-RESERVED field. The `execFullA` `setFieldA` arm is the reserved-slot-gated `stateStepDev`
+(`stateStepDev = if reservedField f then none else stateStepGuarded`); the mandate cell only ever writes
+the developer field `calls_made`, which is NOT a reserved protocol slot (`reservedField f = false`), so
+the dev gate passes through to `stateStepGuarded`. The bridge that makes every toolkit theorem about
+`stateStepGuarded` a theorem about `execFullA` for a non-reserved field. -/
 theorem setFieldA_is_stateStepGuarded (s : RecChainedState) (actor cell : CellId) (f : FieldName)
-    (v : Int) : execFullA s (.setFieldA actor cell f v) = stateStepGuarded s f actor cell v := rfl
+    (v : Int) (hnr : Dregg2.Exec.EffectsState.reservedField f = false) :
+    execFullA s (.setFieldA actor cell f v) = stateStepGuarded s f actor cell v := by
+  show Dregg2.Exec.EffectsState.stateStepDev s f actor cell v = stateStepGuarded s f actor cell v
+  unfold Dregg2.Exec.EffectsState.stateStepDev; rw [if_neg (by rw [hnr]; simp)]
 
 /-- **`tool_invocation_commit_iff_admit` — THE HEADLINE INVARIANT.** On a mandate cell
 carrying the delegated caveats, with the committed counter `c` and the next count `c+1` on the grant's
@@ -185,7 +192,8 @@ theorem tool_invocation_commit_iff_admit (g : Grant) (now tool : Int) (cell work
     (execFullA s (.setFieldA worker cell callsMadeSlot (c + 1))).isSome = true
       ↔ (delegAdmit g now tool c (c + 1) = true
           ∧ (stateStep s callsMadeSlot worker cell (.int (c + 1))).isSome = true) := by
-  rw [setFieldA_is_stateStepGuarded]
+  rw [setFieldA_is_stateStepGuarded _ _ _ _ _
+        (by decide : Dregg2.Exec.EffectsState.reservedField callsMadeSlot = false)]
   have h := app_commit_iff_admit (mandateSpec g now tool cell) s hprog worker (c + 1)
     (by rw [hcur]; exact hold) hnew
   rw [hcur] at h
@@ -208,7 +216,8 @@ theorem tool_invocation_rejected (g : Grant) (now tool : Int) (cell worker : Cel
     (hnew : (c + 1) ∈ (mandateSpec g now tool cell).newRange)
     (hbad : delegAdmit g now tool c (c + 1) = false) :
     execFullA s (.setFieldA worker cell callsMadeSlot (c + 1)) = none := by
-  rw [setFieldA_is_stateStepGuarded]
+  rw [setFieldA_is_stateStepGuarded _ _ _ _ _
+        (by decide : Dregg2.Exec.EffectsState.reservedField callsMadeSlot = false)]
   exact app_violation_rejected (mandateSpec g now tool cell) s hprog worker (c + 1)
     (by rw [hcur]; exact hold) hnew (by rw [hcur]; exact hbad)
 
@@ -275,7 +284,8 @@ the rate counter is not the `balance` field, so incrementing it moves no money. 
 theorem tool_invocation_conserves (cell worker : CellId) (s s' : RecChainedState) (c : Int)
     (h : execFullA s (.setFieldA worker cell callsMadeSlot (c + 1)) = some s') :
     recTotal s'.kernel = recTotal s.kernel := by
-  rw [setFieldA_is_stateStepGuarded] at h
+  rw [setFieldA_is_stateStepGuarded _ _ _ _ _
+        (by decide : Dregg2.Exec.EffectsState.reservedField callsMadeSlot = false)] at h
   exact app_commit_conserves (mandateSpec ⟨0,0,0⟩ 0 0 cell) s s' worker (c + 1)
     (by decide : callsMadeSlot ≠ balanceField) h
 
@@ -285,7 +295,8 @@ guarantee at the delegation boundary. -/
 theorem tool_invocation_no_amplify (cell worker : CellId) (s s' : RecChainedState) (c : Int)
     (h : execFullA s (.setFieldA worker cell callsMadeSlot (c + 1)) = some s') :
     execGraph s'.kernel.caps = execGraph s.kernel.caps := by
-  rw [setFieldA_is_stateStepGuarded] at h
+  rw [setFieldA_is_stateStepGuarded _ _ _ _ _
+        (by decide : Dregg2.Exec.EffectsState.reservedField callsMadeSlot = false)] at h
   exact app_commit_no_amplify (mandateSpec ⟨0,0,0⟩ 0 0 cell) s s' worker (c + 1) h
 
 /-- **`tool_invocation_authorized`.** A committed tool invocation implies the worker held
@@ -293,7 +304,8 @@ authority over the mandate cell — no unauthorized invocation ever commits. -/
 theorem tool_invocation_authorized (cell worker : CellId) (s s' : RecChainedState) (c : Int)
     (h : execFullA s (.setFieldA worker cell callsMadeSlot (c + 1)) = some s') :
     EffectsState.stateAuthB s.kernel.caps worker cell = true := by
-  rw [setFieldA_is_stateStepGuarded] at h
+  rw [setFieldA_is_stateStepGuarded _ _ _ _ _
+        (by decide : Dregg2.Exec.EffectsState.reservedField callsMadeSlot = false)] at h
   exact app_commit_authorized (mandateSpec ⟨0,0,0⟩ 0 0 cell) s s' worker (c + 1) h
 
 /-- **`tool_invocation_counts_one`.** After a committed invocation, the rate counter reads back
@@ -301,7 +313,8 @@ exactly `c+1` — the call was metered (the consumption is recorded, not merely 
 theorem tool_invocation_counts_one (cell worker : CellId) (s s' : RecChainedState) (c : Int)
     (h : execFullA s (.setFieldA worker cell callsMadeSlot (c + 1)) = some s') :
     fieldOf callsMadeSlot (s'.kernel.cell cell) = c + 1 := by
-  rw [setFieldA_is_stateStepGuarded] at h
+  rw [setFieldA_is_stateStepGuarded _ _ _ _ _
+        (by decide : Dregg2.Exec.EffectsState.reservedField callsMadeSlot = false)] at h
   exact app_commit_field_written (mandateSpec ⟨0,0,0⟩ 0 0 cell) s s' worker (c + 1) h
 
 /-! ## §7 — Axiom hygiene over the delegation core. -/

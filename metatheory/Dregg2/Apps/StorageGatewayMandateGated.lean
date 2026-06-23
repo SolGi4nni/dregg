@@ -83,7 +83,7 @@ theorem sgm_over_debit_rejected_gated (s : RecChainedState) (newSpent : Int)
     (hbound : caveatsAdmit s.kernel volumeSpentSlot sgmActor mandateCell newSpent = false) :
     execFullForestG s (sgmDebitVolumeNode goodCred newSpent) = none := by
   rw [sgmDebitVolumeNode, execFullForestG_leaf, execFullAGated, if_pos hgate]
-  exact stateStepGuarded_caveat_violation_fails s volumeSpentSlot sgmActor mandateCell newSpent hbound
+  exact stateStepDev_caveat_violation_fails s volumeSpentSlot sgmActor mandateCell newSpent hbound
 
 /-! ### §commit-iff — the gated executor COMMITS a `last_op` write IFF `sgmAdmitM`'s op-leg admits.
 
@@ -162,7 +162,7 @@ theorem sgm_guest_get_rejected :
   by_cases hg : gateOK (mkAuth goodCred []) guestSgmG0 = true
   · rw [if_pos hg]
     have hcav : caveatsAdmit guestSgmG0.kernel lastOpSlot sgmActor mandateCell (StorageOp.GET.toInt) = false := by decide
-    exact stateStepGuarded_caveat_violation_fails guestSgmG0 lastOpSlot sgmActor mandateCell (StorageOp.GET.toInt) hcav
+    exact stateStepDev_caveat_violation_fails guestSgmG0 lastOpSlot sgmActor mandateCell (StorageOp.GET.toInt) hcav
   · rw [if_neg (by simp [hg])]
 
 theorem sgmSetKeyNode_delta_zero (cred : Authorization Dg Pf) (key : Int) (b : AssetId) :

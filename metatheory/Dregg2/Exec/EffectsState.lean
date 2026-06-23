@@ -294,6 +294,127 @@ theorem stateStepGuarded_caveat_violation_fails (s : RecChainedState) (f : Field
     stateStepGuarded s f actor target n = none := by
   unfold stateStepGuarded; rw [if_neg (by rw [h]; simp)]
 
+/-! ## §1.6 — RESERVED PROTOCOL SLOTS: the developer `SetField` may NOT overwrite a protocol field.
+
+dregg1's `SetField` (`apply_set_field` → `RecordProgram::evaluate`) is the DEVELOPER-facing field
+write — application metadata. The protocol-managed slots (`nonce` / `permissions` /
+`verification_key` / `program`) each have a DEDICATED effect (`IncrementNonce` / `SetPermissions` /
+`SetVerificationKey` / `SetProgram`) and the kernel commitment BINDS them. A developer `SetField`
+that wrote the `nonce` slot would let an adversary RESET the agent nonce — cycling the kernel
+commitment and breaking the monotone-nonce premise `CrossTurnFreshness.no_replay` rests on. (Witness:
+a `SetField` of "nonce" used to commit; the freshness premise was FALSE.)
+
+`reservedField` names exactly the four protocol-managed slots; the developer `SetField` path
+(`stateStepDev`, below) FAILS CLOSED on any of them — only the dedicated effect may write its slot. -/
+
+/-- The protocol-managed record slots a developer `SetField` may NOT write (each has a dedicated
+effect that owns it, and the kernel commitment binds it). The four names match
+`TurnExecutorFull.{nonceField,permsField,vkField,programField}` (proved equal there). -/
+def reservedField (f : FieldName) : Bool :=
+  f == "nonce" || f == "permissions" || f == "verification_key" || f == "program"
+
+/-- **`stateStepDev` — the DEVELOPER-facing `SetField` write (computable).** First the reserved-slot
+gate (a protocol-managed slot is REJECTED — only its dedicated effect may write it), then the
+caveat+authority+membership+liveness gate (`stateStepGuarded`). Fail-closed on EITHER gate. On commit
+the post-state is EXACTLY `stateStepGuarded`'s (hence `stateStep`'s) — the reserved check only
+DECIDES the domain. The arm `execFullA` dispatches `.setFieldA` to. -/
+def stateStepDev (s : RecChainedState) (f : FieldName) (actor target : CellId) (n : Int) :
+    Option RecChainedState :=
+  if reservedField f = true then
+    none
+  else
+    stateStepGuarded s f actor target n
+
+/-- **`stateStepDev_eq`.** A committed developer write is EXACTLY the underlying `stateStepGuarded`
+write (the reserved gate only restricts the domain). Lifts every `stateStepGuarded`/`stateStep`
+keystone to the developer write verbatim. -/
+theorem stateStepDev_eq {s s' : RecChainedState} {f : FieldName} {actor target : CellId}
+    {n : Int} (h : stateStepDev s f actor target n = some s') :
+    stateStepGuarded s f actor target n = some s' := by
+  unfold stateStepDev at h
+  by_cases hr : reservedField f = true
+  · rw [if_pos hr] at h; exact absurd h (by simp)
+  · rw [if_neg hr] at h; exact h
+
+/-- **`stateStepDev_notReserved`.** A committed developer write means the written slot was NOT a
+protocol-managed slot (`reservedField = false`) — the witness the reserved gate was passed. -/
+theorem stateStepDev_notReserved {s s' : RecChainedState} {f : FieldName} {actor target : CellId}
+    {n : Int} (h : stateStepDev s f actor target n = some s') :
+    reservedField f = false := by
+  unfold stateStepDev at h
+  by_cases hr : reservedField f = true
+  · rw [if_pos hr] at h; exact absurd h (by simp)
+  · simpa using hr
+
+/-- **`stateStepDev_reserved_fails` (FAIL-CLOSED).** A developer `SetField` of a protocol-managed
+slot does NOT commit — the executor-level teeth that close the nonce-reset replay vector. -/
+theorem stateStepDev_reserved_fails (s : RecChainedState) (f : FieldName)
+    (actor target : CellId) (n : Int) (h : reservedField f = true) :
+    stateStepDev s f actor target n = none := by
+  unfold stateStepDev; rw [if_pos h]
+
+/-- **`stateStepDev_caveat_violation_fails` (FAIL-CLOSED, lifted).** A developer `SetField` whose
+slot caveat rejects the transition (`caveatsAdmit = false`) does NOT commit — the reserved gate only
+TIGHTENS `stateStepGuarded`, so the caveat fail-closed lifts to the developer write verbatim. -/
+theorem stateStepDev_caveat_violation_fails (s : RecChainedState) (f : FieldName)
+    (actor target : CellId) (n : Int) (h : caveatsAdmit s.kernel f actor target n = false) :
+    stateStepDev s f actor target n = none := by
+  unfold stateStepDev
+  by_cases hr : reservedField f = true
+  · rw [if_pos hr]
+  · rw [if_neg hr]; exact stateStepGuarded_caveat_violation_fails s f actor target n h
+
+/-! ## §1.7 — MONOTONE NONCE: `IncrementNonce` may only ADVANCE the nonce, never reset it.
+
+`IncrementNonce` is the dedicated effect that owns the `nonce` slot (dregg1 `cell_state.rs:17`
+"Monotonic"). The bare `stateStep s nonceField actor cell (.int n)` would write ANY `n` — including a
+DECREASE — which is the SAME replay vector as `setField "nonce"`: an adversary resets the nonce →
+the kernel commitment cycles → replay. `incrementNonceStep` gates the write on `old < n` (the nonce
+STRICTLY increases), fail-closed otherwise — so an accepted `incrementNonce` can only ADVANCE the
+nonce. The `old` is read as `fieldOf nonceField (cell)` (= `nonceOf`, dregg1's `FIELD_ZERO` default). -/
+
+/-- **`incrementNonceStep` — the MONOTONE nonce write (computable).** First the monotonicity gate
+(the new nonce `n` must STRICTLY exceed the cell's stored nonce), then the authority-gated field
+write (`stateStep` on `nonceField`). Fail-closed on either gate. On commit the post-state is EXACTLY
+`stateStep`'s — the monotone check only DECIDES the domain. The arm `execFullA` dispatches
+`.incrementNonceA` to. -/
+def incrementNonceStep (s : RecChainedState) (actor target : CellId) (n : Int) :
+    Option RecChainedState :=
+  if fieldOf "nonce" (s.kernel.cell target) < n then
+    stateStep s "nonce" actor target (.int n)
+  else
+    none
+
+/-- **`incrementNonceStep_eq`.** A committed monotone-nonce write is EXACTLY the underlying
+`stateStep` write (the monotone gate only restricts the domain). Lifts every `stateStep` keystone
+to the monotone write verbatim. -/
+theorem incrementNonceStep_eq {s s' : RecChainedState} {actor target : CellId} {n : Int}
+    (h : incrementNonceStep s actor target n = some s') :
+    stateStep s "nonce" actor target (.int n) = some s' := by
+  unfold incrementNonceStep at h
+  by_cases hmono : fieldOf "nonce" (s.kernel.cell target) < n
+  · rw [if_pos hmono] at h; exact h
+  · rw [if_neg hmono] at h; exact absurd h (by simp)
+
+/-- **`incrementNonceStep_advances`.** A committed monotone-nonce write means the new nonce `n`
+STRICTLY exceeded the stored nonce (`old < n`). The witness the monotone gate was passed — the
+agent nonce can only go UP. -/
+theorem incrementNonceStep_advances {s s' : RecChainedState} {actor target : CellId} {n : Int}
+    (h : incrementNonceStep s actor target n = some s') :
+    fieldOf "nonce" (s.kernel.cell target) < n := by
+  unfold incrementNonceStep at h
+  by_cases hmono : fieldOf "nonce" (s.kernel.cell target) < n
+  · exact hmono
+  · rw [if_neg hmono] at h; exact absurd h (by simp)
+
+/-- **`incrementNonceStep_nonincreasing_fails` (FAIL-CLOSED).** A non-advancing `IncrementNonce`
+(new nonce `n` not strictly above the stored nonce — a RESET or a no-op) does NOT commit. The
+executor-level teeth that close the nonce-reset replay leg via the dedicated effect. -/
+theorem incrementNonceStep_nonincreasing_fails (s : RecChainedState) (actor target : CellId)
+    (n : Int) (h : ¬ fieldOf "nonce" (s.kernel.cell target) < n) :
+    incrementNonceStep s actor target n = none := by
+  unfold incrementNonceStep; rw [if_neg h]
+
 /-! ## §2 — `state_conserves`: balance UNCHANGED ∧ authority UNCHANGED (the regime invariant).
 
 The Neutral/metadata regime's defining obligation: a non-balance effect's tri-domain reading is

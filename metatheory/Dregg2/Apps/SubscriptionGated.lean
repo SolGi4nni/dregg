@@ -111,7 +111,7 @@ theorem sub_nonsequential_rejected (s : RecChainedState) (value : Int)
     (hseq : caveatsAdmit s.kernel seqSlot subActor subCell value = false) :
     execFullForestG s (subNode goodCred value) = none := by
   rw [sub_good_runs_write s value hgate]
-  exact stateStepGuarded_caveat_violation_fails s seqSlot subActor subCell value hseq
+  exact stateStepDev_caveat_violation_fails s seqSlot subActor subCell value hseq
 
 /-- The per-asset turn delta of a consume is `0` (a `SetField` is balance-neutral), every asset. -/
 theorem subNode_delta_zero (cred : Authorization Dg Pf) (value : Int) (b : AssetId) :

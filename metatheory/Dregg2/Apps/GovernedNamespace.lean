@@ -27,7 +27,7 @@ open Dregg2.Exec
 open Dregg2.Exec.TurnExecutorFull
 open Dregg2.Exec.FullForest
 open Dregg2.Exec.EffectsState (stateStepGuarded caveatsAdmit fieldOf
-  stateStepGuarded_caveat_violation_fails)
+  stateStepGuarded_caveat_violation_fails stateStepDev_caveat_violation_fails)
 
 /-! ## §1 — The governed-namespace DOMAIN (cell, slots, constitutional caveats). -/
 
@@ -70,28 +70,28 @@ def amendThreshold (newThreshold : Int) : FullForestA :=
 theorem gn_committee_immutable (s : RecChainedState) (newRoot : Int)
     (hfix : caveatsAdmit s.kernel committeeRootSlot nsActor nsCell newRoot = false) :
     execFullForestA s (amendCommittee newRoot) = none := by
-  have hnone := stateStepGuarded_caveat_violation_fails s committeeRootSlot nsActor nsCell newRoot hfix
+  have hnone := stateStepDev_caveat_violation_fails s committeeRootSlot nsActor nsCell newRoot hfix
   rw [execFullForestA_eq_execFullTurnA]
   simp only [amendCommittee, gnOp, lowerForestA, lowerChildrenA, execFullTurnA, execFullA, hnone]
 
 theorem gn_threshold_immutable (s : RecChainedState) (newThreshold : Int)
     (hfix : caveatsAdmit s.kernel thresholdSlot nsActor nsCell newThreshold = false) :
     execFullForestA s (amendThreshold newThreshold) = none := by
-  have hnone := stateStepGuarded_caveat_violation_fails s thresholdSlot nsActor nsCell newThreshold hfix
+  have hnone := stateStepDev_caveat_violation_fails s thresholdSlot nsActor nsCell newThreshold hfix
   rw [execFullForestA_eq_execFullTurnA]
   simp only [amendThreshold, gnOp, lowerForestA, lowerChildrenA, execFullTurnA, execFullA, hnone]
 
 theorem gn_version_monotonic_seq (s : RecChainedState) (newVersion : Int)
     (hseq : caveatsAdmit s.kernel versionSlot nsActor nsCell newVersion = false) :
     execFullForestA s (versionBump newVersion) = none := by
-  have hnone := stateStepGuarded_caveat_violation_fails s versionSlot nsActor nsCell newVersion hseq
+  have hnone := stateStepDev_caveat_violation_fails s versionSlot nsActor nsCell newVersion hseq
   rw [execFullForestA_eq_execFullTurnA]
   simp only [versionBump, gnOp, lowerForestA, lowerChildrenA, execFullTurnA, execFullA, hnone]
 
 theorem gn_dispute_window_cannot_shrink (s : RecChainedState) (newHeight : Int)
     (hback : caveatsAdmit s.kernel disputeWindowSlot nsActor nsCell newHeight = false) :
     execFullForestA s (disputeWindowBump newHeight) = none := by
-  have hnone := stateStepGuarded_caveat_violation_fails s disputeWindowSlot nsActor nsCell newHeight hback
+  have hnone := stateStepDev_caveat_violation_fails s disputeWindowSlot nsActor nsCell newHeight hback
   rw [execFullForestA_eq_execFullTurnA]
   simp only [disputeWindowBump, gnOp, lowerForestA, lowerChildrenA, execFullTurnA, execFullA, hnone]
 

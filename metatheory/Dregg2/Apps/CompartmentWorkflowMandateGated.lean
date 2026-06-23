@@ -97,7 +97,7 @@ theorem cwm_illegal_dag_rejected_gated (s : RecChainedState) (target : Int)
     (hseq : caveatsAdmit s.kernel stepCursorSlot cwmActor mandateCell target = false) :
     execFullForestG s (cwmAdvanceNode goodCred target) = none := by
   rw [execFullForestG_advanceNode, if_pos hgate]
-  exact stateStepGuarded_caveat_violation_fails s stepCursorSlot cwmActor mandateCell target hseq
+  exact stateStepDev_caveat_violation_fails s stepCursorSlot cwmActor mandateCell target hseq
 
 /-- **`cwm_clearance_violation_rejected_gated`** — insufficient clearance at the current
 cursor is rejected at the predicate layer (`cwmAdvanceM`), independent of the executor gate. -/
@@ -185,7 +185,7 @@ theorem cwm_outofclearance_rejected :
   by_cases hg : gateOK (mkAuth goodCred []) clerkCwmG1 = true
   · rw [if_pos hg]
     have hcav : caveatsAdmit clerkCwmG1.kernel stepCursorSlot cwmActor mandateCell 2 = false := by decide
-    exact stateStepGuarded_caveat_violation_fails clerkCwmG1 stepCursorSlot cwmActor mandateCell 2 hcav
+    exact stateStepDev_caveat_violation_fails clerkCwmG1 stepCursorSlot cwmActor mandateCell 2 hcav
   · rw [if_neg (by simp [hg])]
 
 theorem execFullForestG_refreshNode (s : RecChainedState) (cred : Authorization Dg Pf) :

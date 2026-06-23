@@ -46,15 +46,25 @@ families). Proven: `sdk/tests/sovereign_rotated_wide.rs::flagday_wide_full_turn_
 (honest wide prove+verify + forged-8-felt reject) and `::flagday_rejects_one_felt_v3_full_turn_leg`
 (a 1-felt V3 transfer leg is REJECTED post-cutover). `cargo build -p dregg-sdk -p dregg-turn -p dregg-node` GREEN.
 
-**RESIDUALS (named):**
-1. **The cap-open tail stays at 1-felt.** The 11 V3-only `…CapOpen…`/`…WriteCapOpen…`/`heapWrite`
-   descriptors have NO wide twin in `WIDE_REGISTRY_STAGED_TSV`. The verifier FALLS BACK to V3 for
-   CAP-OPEN members only (a plain normal narrow leg is filtered out → rejected, so the normal-effect
-   floor is genuinely closed), binding their 1-felt commit (slot-0 broadcast). So a **capability-gated
-   turn** (`prove_and_verify_finalized_turn_capability_holder`, which threads `cap_membership`) is the
-   residual ~31-bit waist. CLOSURE: emit the wide cap-open descriptors (Lean `v3RegistryCapOpenWide`
-   extension) + route the cap-open producer/anchor wide. Until then the node cap path passes the
-   1-felt-in-slot-0 anchor (`wide_from_felt`), so honest cap turns still verify.
+### ✅ FOLLOW-ON (2026-06-23, ember-in-the-loop, VK-freedom): the AUTHORITY-CROWN cap-open tail is now WIDE too.
+The cap-open producer (`prove_effect_vm_cap_open`, new `wide: bool` arg) now appends the 8-felt wide
+carriers (`append_wide_carriers_cap_open`) + proves against the WIDE cap-open descriptor when the
+effective key has a PROVEN wide twin (`cap_open_key_has_wide_twin` — the 8 authority-crown non-Write,
+non-TB members). `prove_cohort_run_chain` routes `go_wide` per effective key + pins the wide vk_hash.
+The wide-first cutover verifier then binds the cap-open leg's 8-felt commit. PROVEN:
+`cap_open_attenuate_leg_proves_and_verifies_WIDE_8felt` (wide attenuate cap-open proves + verifies at
+~124-bit + forged-8-felt rejected). NO regression: the 13 `cap_write_*_proves_and_verifies_light_client`
++ the 6 `cap_open_*` tests stay green (write legs still verify via the V3-`CapOpen`-filtered fallback).
+
+**RESIDUALS (named — SHRUNK):**
+1. **Only the WRITE-bearing cap tail stays at 1-felt now.** The `…WriteCapOpen…` / `transferCapOpenTB`
+   (cross-vat) / `spawnCapOpen` route keys point at descriptors NOT in the proven `v3RegistryCapOpen`
+   (Lean) — that write-forcing sub-effort is the genuinely unbuilt part; its wide twin needs the Lean
+   emit+proof FIRST, then a Rust route+anchor flip. The wide-first cutover still accepts these narrow
+   write legs via the V3-`CapOpen`-filtered fallback (binding their 1-felt slot-0 commit), and the node
+   cap path (`prove_and_verify_finalized_turn_capability_holder`, which proves cross-vat transfer-via-cap
+   = `transferCapOpenTB` = narrow) passes the matching `wide_from_felt` anchor — so honest write-cap /
+   cross-vat turns still verify. This is the true bottom of the cap tail.
 2. **`wide_commit_anchors` fails-closed on the distinct-geometry families** (CreateCell / factory /
    spawn / setFieldDyn / Custom) — they thread extra grow-gate/V1Face witness the SDK chained
    full-turn path doesn't currently carry. They are NOT on that path today; a caller reaching one gets

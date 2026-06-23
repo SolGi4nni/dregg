@@ -170,8 +170,9 @@ structure rotatedEncodesIncNonce (hash : List ℤ → ℤ)
   hcellMove : post.kernel.cell = incNonceCellMap pre.kernel cell n
   -- the receipt log advance (off the per-row block — the record-layer commitment).
   logAdv : post.log = { actor := actor, src := cell, dst := cell, amt := 0 } :: pre.log
-  -- the 3-leg admissibility guard (the executor's domain restriction — the off-row guard).
-  guard : incNonceGuard pre actor cell
+  -- the 4-leg admissibility guard (the executor's domain restriction — the off-row guard, now
+  -- including the MONOTONE-NONCE leg `old < n`; for the forced tick `n = old + 1` it holds trivially).
+  guard : incNonceGuard pre actor cell n
   -- the 16 non-`cell` kernel frame fields (the full `IncrementNonceSpec` frame residual).
   frAccounts : post.kernel.accounts = pre.kernel.accounts
   frCaps : post.kernel.caps = pre.kernel.caps

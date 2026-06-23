@@ -532,10 +532,11 @@ theorem setField_emitted_refines_spec (S : CommitSurface)
     (hN : compressNInjective S.compressN) (hL : cellLeafInjective S.CH)
     (hRest : RestHashIffFrame S.RH) (hLog : logHashInjective S.LH)
     (s : RecChainedState) (args : SetFieldArgs) (s' : RecChainedState)
+    (hnr : Dregg2.Exec.EffectsState.reservedField args.f = false)
     (hwf : AccountsWF s.kernel) (hwf' : AccountsWF s'.kernel)
     (h : setFieldEmittedStep S s args s') :
     setFieldSpecStep s args s' :=
-  setField_circuit_refines_spec S hN hL hRest hLog s args s' hwf hwf'
+  setField_circuit_refines_spec S hN hL hRest hLog s args s' hnr hwf hwf'
     ((setField_emitted_equiv_circuit S s args s').mp h)
 
 /-! ## §17 — ExerciseA hold-gate (v1 EffectCommit). -/

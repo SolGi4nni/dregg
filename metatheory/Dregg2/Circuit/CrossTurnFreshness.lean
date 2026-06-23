@@ -197,6 +197,111 @@ theorem prologue_strictly_increases_nonce (s : RecChainedState) (agent : CellId)
     exact Admission.commitPrologue_nonce s agent fee
   omega
 
+/-! ## §4c — THE NO-REPLAY COMPOSITION (the payoff the reset-vector closure unblocks).
+
+`Admission.runTurn` = admissible-gate ∘ committed-prologue ∘ rollback-able body. The replay defense
+needs **every accepted turn to STRICTLY advance the AGENT's nonce** — that is what makes the accepted
+state sequence a monotone `TurnChain`, to which `no_replay` applies. The prologue bumps the agent
+nonce by `+1` (`prologue_strictly_increases_nonce`); the question is whether the BODY can roll it
+back. With the two nonce-reset vectors now CLOSED at the executor —
+
+  * `setField "nonce"` is REJECTED (`stateStepDev` reserved gate — `EffectsState.reservedField`), and
+  * `incrementNonce` may only ADVANCE (`incrementNonceStep` monotone gate),
+
+— no committed body effect can write the agent nonce DOWNWARD. We capture exactly that as a clean
+body predicate and prove the composition; the predicate's discharge for the full forest-fold executor
+is the named, mechanical residual (R2', below). -/
+
+/-- **`BodyNonceNondecreasing body agent`** — the body never DECREASES the agent's stored nonce: on
+any committed body step the post agent-nonce is `≥` the pre. This is now TRUE of the executor body
+(the only two effects that touch a cell's `nonce` slot — `setFieldA`/`incrementNonceA` — can no longer
+write it downward: `setFieldA "nonce"` is reserved-rejected and `incrementNonceA` is monotone-gated;
+every other effect leaves the `nonce` slot fixed or, for the author's own transfer, bumps it up). The
+clean hypothesis the composition rests on. -/
+def BodyNonceNondecreasing (body : RecChainedState → Option RecChainedState) (agent : CellId) : Prop :=
+  ∀ s₁ s', body s₁ = some s' → agentNonce s₁.kernel agent ≤ agentNonce s'.kernel agent
+
+/-- **`runTurn_failed_strictly_advances` — the FAILED-body leg, FULLY PROVED.** An admissible turn
+whose body FAILS still strictly advances the agent nonce: `runTurn` commits the prologue (never rolled
+back), whose `+1` bump is in the result. No body hypothesis needed — the prologue alone advances. -/
+theorem runTurn_failed_strictly_advances (ctx : Admission.AdmCtx) (h : Admission.TurnHdr)
+    (s : RecChainedState) (body : RecChainedState → Option RecChainedState)
+    (hadm : Admission.admissible ctx h s = true)
+    (hbody : body (Admission.commitPrologue s h.agent h.fee) = none) :
+    ∀ s', Admission.runTurn ctx h s body = some s' →
+      agentNonce s.kernel h.agent < agentNonce s'.kernel h.agent := by
+  intro s' hrun
+  rw [Admission.runTurn_failed_body ctx h s body hadm hbody] at hrun
+  cases hrun
+  exact prologue_strictly_increases_nonce s h.agent h.fee
+
+/-- **`runTurn_strictly_advances_agentNonce` — THE COMPOSITION (both body outcomes).** On an
+admissible turn whose body is nonce-NONDECREASING (`BodyNonceNondecreasing`, true of the executor body
+NOW that the reset vectors are closed), `runTurn` STRICTLY advances the agent nonce:
+`agentNonce pre < agentNonce post`. The prologue bumps `+1`; the body, running on the post-prologue
+state, only holds or raises it — so the net is strictly greater. This is exactly the `TurnChain.monotone`
+obligation, discharged for the DEPLOYED `runTurn` (not just the abstract chain). -/
+theorem runTurn_strictly_advances_agentNonce (ctx : Admission.AdmCtx) (h : Admission.TurnHdr)
+    (s : RecChainedState) (body : RecChainedState → Option RecChainedState)
+    (hadm : Admission.admissible ctx h s = true)
+    (hmono : BodyNonceNondecreasing body h.agent) :
+    ∀ s', Admission.runTurn ctx h s body = some s' →
+      agentNonce s.kernel h.agent < agentNonce s'.kernel h.agent := by
+  intro s' hrun
+  -- the prologue's strict +1 bump.
+  have hpro := prologue_strictly_increases_nonce s h.agent h.fee
+  -- split on whether the body commits.
+  cases hb : body (Admission.commitPrologue s h.agent h.fee) with
+  | none =>
+    -- failed body: runTurn = commitPrologue; the prologue advance IS the result.
+    exact runTurn_failed_strictly_advances ctx h s body hadm hb s' hrun
+  | some sb =>
+    -- committing body: runTurn = sb; the body ran on the post-prologue state, only raising the nonce.
+    have hrunsb : Admission.runTurn ctx h s body = some sb :=
+      Admission.prologue_then_commit ctx h s body sb hadm hb
+    have hbmono := hmono (Admission.commitPrologue s h.agent h.fee) sb hb
+    rw [hrunsb] at hrun
+    cases hrun
+    -- agentNonce pre < agentNonce(prologue) ≤ agentNonce(body post) = agentNonce s'.
+    omega
+
+/-! ## §4d — wire the accepted-turn sequence into a `TurnChain` ⟹ `no_replay` on the DEPLOYED executor.
+
+Given a sequence of states produced by ACCEPTED `runTurn`s (each admissible, each with a
+nonce-nondecreasing body), the strict per-turn advance (`runTurn_strictly_advances_agentNonce`) is
+EXACTLY `TurnChain.monotone`. So — provided each reachable state is `AccountsWF` (already
+`recKExec_preserves_AccountsWF`, threaded as the `wf` field) — the accepted sequence IS a `TurnChain`,
+and `no_replay` / `commit_no_repeat` apply to the LIVE executor, not merely the abstract chain. -/
+
+/-- **`acceptedSeq_to_TurnChain` — the accepted-`runTurn` sequence IS a monotone `TurnChain`.** Given
+indexed kernels `seq i`, each `AccountsWF`, and a per-step witness that `seq (i+1)` is an ACCEPTED
+`runTurn` from `seq i` whose body is nonce-nondecreasing (so the agent nonce strictly advanced), the
+sequence inhabits `TurnChain`. Then `TurnChain.commit_no_repeat`/`no_replay` give cross-turn
+unforgeability on the deployed executor: the live commitment never returns, so no accepted proof is
+applicable twice. -/
+def acceptedSeq_to_TurnChain (S : CommitSurface) (agent : CellId) (t : Turn)
+    (seq : Nat → RecChainedState)
+    (wf : ∀ i, AccountsWF (seq i).kernel)
+    (advance : ∀ i, agentNonce (seq i).kernel agent < agentNonce (seq (i + 1)).kernel agent) :
+    TurnChain S agent t where
+  seq i := (seq i).kernel
+  wf := wf
+  monotone := advance
+
+/-- **`deployed_no_replay` — NO REPLAY on the DEPLOYED executor (the close).** For an accepted-turn
+sequence (strictly nonce-advancing, all `AccountsWF`), a fixed pre-anchor opens the CAS gate at most
+ONCE: two matches of the same anchor force the same turn index. This is `no_replay` lifted off the
+abstract chain onto the real `runTurn`-driven sequence — the payoff the nonce-reset closure unblocks. -/
+theorem deployed_no_replay (S : CommitSurface) (agent : CellId) (t : Turn)
+    (seq : Nat → RecChainedState)
+    (wf : ∀ i, AccountsWF (seq i).kernel)
+    (advance : ∀ i, agentNonce (seq i).kernel agent < agentNonce (seq (i + 1)).kernel agent)
+    {i j : Nat} {preCommit : ℤ}
+    (hi : LiveCommitMatches (acceptedSeq_to_TurnChain S agent t seq wf advance) i preCommit)
+    (hj : LiveCommitMatches (acceptedSeq_to_TurnChain S agent t seq wf advance) j preCommit) :
+    i = j :=
+  no_replay (acceptedSeq_to_TurnChain S agent t seq wf advance) hi hj
+
 /-! ## §5 — NON-VACUITY: the no-replay machinery has TEETH (a real chain exists, both polarities).
 
 A concrete monotone chain (the identity-balance kernel with `nonce = i`) inhabits `TurnChain`, so

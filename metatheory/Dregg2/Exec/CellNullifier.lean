@@ -24,7 +24,7 @@ open Dregg2.Boundary
 open Dregg2.Exec.TurnExecutorFull
 open Dregg2.Exec.FullForest
 open Dregg2.Authority
-open Dregg2.Exec.EffectsState (stateStep stateStep_factors stateStepGuarded_eq)
+open Dregg2.Exec.EffectsState (stateStep stateStep_factors stateStepGuarded_eq stateStepDev_eq incrementNonceStep_eq)
 open Dregg2.Tactics
 
 /-! ## Step 0 — nullifier-frame lemmas for the DEEPLY-NESTED kernel ops (swiss).
@@ -108,7 +108,7 @@ theorem execFullA_nullifiers_grow (s s' : RecChainedState) (fa : FullActionA)
   | setFieldA actor cell f v =>
       -- §SLOT-CAVEAT: peel the caveat gate to the `stateStep` post-state (a `cell`-only write).
       simp only [execFullA] at h
-      obtain ⟨_, hs'⟩ := stateStep_factors (stateStepGuarded_eq h); subst hs'; exact List.Subset.refl _
+      obtain ⟨_, hs'⟩ := stateStep_factors (stateStepGuarded_eq (stateStepDev_eq h)); subst hs'; exact List.Subset.refl _
   | emitEventA actor cell topic data =>
       -- §LIVE-CELL: the emit append is now gated on `cell ∈ accounts`; peel the gate, then the
       -- committed `emitStep` post-state shares `s.kernel` (frame: `nullifiers` literally unchanged).
@@ -119,7 +119,7 @@ theorem execFullA_nullifiers_grow (s s' : RecChainedState) (fa : FullActionA)
       · exact absurd h (by simp)
   | incrementNonceA actor cell n =>
       simp only [execFullA] at h
-      obtain ⟨_, hs'⟩ := stateStep_factors h; subst hs'; exact List.Subset.refl _
+      obtain ⟨_, hs'⟩ := stateStep_factors (incrementNonceStep_eq h); subst hs'; exact List.Subset.refl _
   | setPermissionsA actor cell p =>
       simp only [execFullA] at h
       obtain ⟨_, hs'⟩ := stateStep_factors h; subst hs'; exact List.Subset.refl _

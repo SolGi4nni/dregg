@@ -131,7 +131,7 @@ theorem execFullForestG_provNode (s : RecChainedState) (cred : Authorization Dg 
     (slot : FieldName) (value : Int) :
     execFullForestG s (provNode cred slot value)
       = (if gateOK (mkAuth cred []) s = true
-         then stateStepGuarded s slot agentActor logCell value
+         then stateStepDev s slot agentActor logCell value
          else none) := by
   rw [provNode, execFullForestG_leaf, execFullAGated]
   rfl
@@ -142,7 +142,7 @@ caveat-rejection of the WRITE rejects the whole turn. -/
 theorem prov_good_node_runs_write (s : RecChainedState) (slot : FieldName) (value : Int)
     (hgate : gateOK (mkAuth goodCred []) s = true) :
     execFullForestG s (provNode goodCred slot value)
-      = stateStepGuarded s slot agentActor logCell value := by
+      = stateStepDev s slot agentActor logCell value := by
   rw [execFullForestG_provNode, if_pos hgate]
 
 /-! ## §4 — THEOREM 1: a write WITHOUT a valid capability is REJECTED (write-access requires the cap). -/
@@ -185,7 +185,7 @@ theorem prov_entry_writeonce (s : RecChainedState) (i : Nat) (digest : Int)
     (hfrozen : caveatsAdmit s.kernel (entrySlot i) agentActor logCell digest = false) :
     execFullForestG s (appendEntryRaw goodCred i digest) = none := by
   rw [appendEntryRaw, prov_good_node_runs_write s (entrySlot i) digest hgate]
-  exact stateStepGuarded_caveat_violation_fails s (entrySlot i) agentActor logCell digest hfrozen
+  exact stateStepDev_caveat_violation_fails s (entrySlot i) agentActor logCell digest hfrozen
 
 /-- **`prov_head_cannot_rewind` (THEOREM 3: NO REWIND / RE-ORDER).** If the `Monotonic head`
 caveat rejects the new cursor (`caveatsAdmit = false`, i.e. `newHead < old`), an advance is rejected —
@@ -196,7 +196,7 @@ theorem prov_head_cannot_rewind (s : RecChainedState) (newHead : Int)
     (hrewind : caveatsAdmit s.kernel headSlot agentActor logCell newHead = false) :
     execFullForestG s (advanceHeadNode goodCred newHead) = none := by
   rw [advanceHeadNode, prov_good_node_runs_write s headSlot newHead hgate]
-  exact stateStepGuarded_caveat_violation_fails s headSlot agentActor logCell newHead hrewind
+  exact stateStepDev_caveat_violation_fails s headSlot agentActor logCell newHead hrewind
 
 /-! ## §6 — THEOREM 4: a committed append READS BACK exactly what was written (faithful recording). -/
 
@@ -209,12 +209,14 @@ theorem prov_append_reads_back (s s' : RecChainedState) (cred : Authorization Dg
     (slot : FieldName) (value : Int)
     (h : execFullForestG s (provNode cred slot value) = some s') :
     fieldOf slot (s'.kernel.cell logCell) = value := by
-  -- The committed forest is its single gated node; that node's commit factors through stateStep.
-  have hguard : stateStepGuarded s slot agentActor logCell value = some s' := by
+  -- The committed forest is its single gated node; that node's commit factors through stateStepDev →
+  -- stateStepGuarded → stateStep (§RESERVED-SLOT: the dev write is the reserved gate over the guarded write).
+  have hdev : stateStepDev s slot agentActor logCell value = some s' := by
     by_cases hgate : gateOK (mkAuth cred []) s = true
     · rwa [execFullForestG_provNode, if_pos hgate] at h
     · rw [execFullForestG_provNode, if_neg hgate] at h; exact absurd h (by simp)
-  have hstep : stateStep s slot agentActor logCell (.int value) = some s' := stateStepGuarded_eq hguard
+  have hstep : stateStep s slot agentActor logCell (.int value) = some s' :=
+    stateStepGuarded_eq (stateStepDev_eq hdev)
   obtain ⟨_, hs'⟩ := stateStep_factors hstep
   subst hs'
   -- s'.kernel.cell logCell = setField slot (s.kernel.cell logCell) (.int value)  (writeField at target)
@@ -234,11 +236,12 @@ theorem prov_append_audited (s s' : RecChainedState) (cred : Authorization Dg Pf
     (slot : FieldName) (value : Int)
     (h : execFullForestG s (provNode cred slot value) = some s') :
     s'.log = { actor := agentActor, src := logCell, dst := logCell, amt := 0 } :: s.log := by
-  have hguard : stateStepGuarded s slot agentActor logCell value = some s' := by
+  have hdev : stateStepDev s slot agentActor logCell value = some s' := by
     by_cases hgate : gateOK (mkAuth cred []) s = true
     · rwa [execFullForestG_provNode, if_pos hgate] at h
     · rw [execFullForestG_provNode, if_neg hgate] at h; exact absurd h (by simp)
-  have hstep : stateStep s slot agentActor logCell (.int value) = some s' := stateStepGuarded_eq hguard
+  have hstep : stateStep s slot agentActor logCell (.int value) = some s' :=
+    stateStepGuarded_eq (stateStepDev_eq hdev)
   obtain ⟨_, hs'⟩ := stateStep_factors hstep
   rw [hs']
 

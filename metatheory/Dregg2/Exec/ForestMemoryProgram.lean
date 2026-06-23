@@ -52,7 +52,7 @@ namespace Dregg2.Exec.ForestMemoryProgram
 
 open Dregg2.Exec
 open Dregg2.Exec.TurnExecutorFull (FullActionA execFullA recCexecAsset acceptsEffects)
-open Dregg2.Exec.EffectsState (stateStepGuarded)
+open Dregg2.Exec.EffectsState (stateStepGuarded stateStepDev_eq)
 open Dregg2.Exec.EffectsSupply (createCellStep)
 open Dregg2.Authority
 open Dregg2.Exec.UniversalBridge (UCodec uproj UOp gwriteTrace moveTrace moveAssetTrace createTrace
@@ -409,7 +409,7 @@ theorem gwrite_step_memprog (C : UCodec) {s s' : RecChainedState}
   have h2 : execFullA s (FullActionA.setFieldA actor cell f v) = some s' :=
     (execFullAGated_some_iff s s' na (FullActionA.setFieldA actor cell f v)).mp h |>.2
   -- …and that step IS `stateStepGuarded` (the gwrite verb), definitionally.
-  have hg : stateStepGuarded s f actor cell v = some s' := h2
+  have hg : stateStepGuarded s f actor cell v = some s' := stateStepDev_eq h2
   exact memprog_of_gwrite C hg
 
 /-- **`balanceA_step_memprog`** — a committed GATED `balanceA` (per-asset transfer) step is a memory

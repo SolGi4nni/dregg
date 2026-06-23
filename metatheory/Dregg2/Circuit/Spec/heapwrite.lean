@@ -102,7 +102,7 @@ theorem heapStepGuardedW_iff_guard_and_post (s : RecChainedState) (actor target 
   · intro h
     obtain ⟨s₁, hw, hs''⟩ := Substrate.HeapKernel.heapStepGuardedW_factors h
     obtain ⟨hg, hs₁⟩ := (stateStepGuarded_iff_guard_and_post s actor target
-        Dregg2.Substrate.HeapKernel.heapRootField newRoot s₁).mp hw
+        Dregg2.Substrate.HeapKernel.heapRootField newRoot s₁ (by decide)).mp hw
     subst hs₁
     exact ⟨hg, hs''.trans rfl⟩
   · rintro ⟨hg, hs'⟩
@@ -110,7 +110,8 @@ theorem heapStepGuardedW_iff_guard_and_post (s : RecChainedState) (actor target 
         Dregg2.Substrate.HeapKernel.heapRootField newRoot
         { kernel := writeField s.kernel Dregg2.Substrate.HeapKernel.heapRootField target
                       (.int newRoot),
-          log := { actor := actor, src := target, dst := target, amt := 0 } :: s.log }).mpr
+          log := { actor := actor, src := target, dst := target, amt := 0 } :: s.log }
+        (by decide)).mpr
       ⟨hg, rfl⟩
     unfold Substrate.HeapKernel.heapStepGuardedW
     rw [hw, hs']

@@ -207,7 +207,7 @@ theorem execFullForestG_castNode (s : RecChainedState) (cred : Authorization Dg 
     (voterSlot : FieldName) (mark : Int) :
     execFullForestG s (castNode cred voterSlot mark)
       = (if gateOK (mkAuth cred []) s = true
-         then stateStepGuarded s voterSlot ballotActor ballotCell mark
+         then stateStepDev s voterSlot ballotActor ballotCell mark
          else none) := by
   rw [castNode, execFullForestG_leaf, execFullAGated]
   rfl
@@ -217,7 +217,7 @@ theorem execFullForestG_castNodeWithChain (s : RecChainedState) (cred : Authoriz
     (chain : Chain Cx Gw (Key Tg) Bt Tg) (voterSlot : FieldName) (mark : Int) :
     execFullForestG s (castNodeWithChain cred chain voterSlot mark)
       = (if gateOK (mkAuthWithChain cred chain) s = true
-         then stateStepGuarded s voterSlot ballotActor ballotCell mark
+         then stateStepDev s voterSlot ballotActor ballotCell mark
          else none) := by
   rw [castNodeWithChain, execFullForestG_leaf, execFullAGated]
   rfl
@@ -321,7 +321,7 @@ theorem pv_chain_caveat_violation_rejected (s : RecChainedState) (voterSlot : Fi
 theorem pv_token_good_cast_runs_write (s : RecChainedState) (voterSlot : FieldName) (mark : Int)
     (hgate : gateOK (mkAuthWithChain goodTokenCred pvGoodChain) s = true) :
     execFullForestG s (castNodeWithChain goodTokenCred pvGoodChain voterSlot mark)
-      = stateStepGuarded s voterSlot ballotActor ballotCell mark := by
+      = stateStepDev s voterSlot ballotActor ballotCell mark := by
   rw [execFullForestG_castNodeWithChain, if_pos hgate]
 
 /-! ## §6 — END-USER THEOREM 2 (a REVOKED voter): a revoked credential can NEVER vote.
@@ -357,12 +357,12 @@ enforced BY THE EXECUTOR. The first cast (`old = 0`) IS admitted; only the re-ca
 
 /-- **`pv_good_cast_runs_write` — the gate-passing collapse for `goodCred`.** When the genuine,
 non-revoked credential admits, a cast-vote IS its caveat-gated `SetField` — `execFullForestG s (castNode
-goodCred voterSlot mark) = stateStepGuarded s voterSlot ballotActor ballotCell mark`. The hinge for the
+goodCred voterSlot mark) = stateStepDev s voterSlot ballotActor ballotCell mark`. The hinge for the
 no-double-vote theorem: any caveat-rejection of the WRITE rejects the whole turn. -/
 theorem pv_good_cast_runs_write (s : RecChainedState) (voterSlot : FieldName) (mark : Int)
     (hgate : gateOK (mkAuth goodCred []) s = true) :
     execFullForestG s (castNode goodCred voterSlot mark)
-      = stateStepGuarded s voterSlot ballotActor ballotCell mark := by
+      = stateStepDev s voterSlot ballotActor ballotCell mark := by
   rw [execFullForestG_castNode, if_pos hgate]
 
 /-- **`pv_no_double_vote` (END-USER THEOREM 3, the anti-replay headline).** If a voter's ballot
@@ -378,7 +378,7 @@ theorem pv_no_double_vote (s : RecChainedState) (voterSlot : FieldName) (mark : 
     (hvoted : caveatsAdmit s.kernel voterSlot ballotActor ballotCell mark = false) :
     execFullForestG s (castNode goodCred voterSlot mark) = none := by
   rw [pv_good_cast_runs_write s voterSlot mark hgate]
-  exact stateStepGuarded_caveat_violation_fails s voterSlot ballotActor ballotCell mark hvoted
+  exact stateStepDev_caveat_violation_fails s voterSlot ballotActor ballotCell mark hvoted
 
 /-! ## §8 — END-USER THEOREM 4: a committed cast-vote CONSERVES every asset.
 

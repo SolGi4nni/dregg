@@ -297,6 +297,109 @@ def execDirect (host : WHostCtx) (state : WState) (turn : WTurn) : WStatusResult
       { state := wstateOfState cellIds capLabels balKeys s0.kernel, loglen := 0,
         status := turnStatusCode st }
 
+/-! ## MEASUREMENT instrumentation (additive, env-gated; zero exec-path change).
+
+Two purely-additive `@[export]`s used by `perf/benches/lean_ffi_turn.rs` to attribute the fixed
+per-call cost of the verified executor. NEITHER is on the production path (`run_direct` still calls
+the unchanged `execDirect`); they are only invoked by the bench under `DREGG_LEAN_PROFILE=1`.
+
+* `dregg_ffi_identity` — the BARE FFI-into-Lean floor: takes the same `WState` arg the executor takes
+  and returns immediately (no exec). Timing a loop over it isolates the pure cost of crossing the
+  C↔Lean boundary + the runtime/region/refcount setup, separate from any executor work.
+
+* `dregg_exec_full_forest_auth_direct_profiled` — `execDirect` with `IO.monoNanosNow` fences between
+  its four sub-phases (stateOfWState / liftForestG / runGatedForestTurnStatus / wstateOfState). The
+  per-phase nanos are printed to stderr ONLY when `DREGG_LEAN_PROFILE=1`; the returned result is the
+  identical `WStatusResult` the production `execDirect` returns (so the bench can also assert it). -/
+
+/-- The bare identity floor: take the boundary `WState` and hand it straight back. The C side passes
+the SAME built `WState` object the executor would consume; returning it (after the runtime's
+inc/dec dance the boundary always pays) measures the pure cross-into-Lean + region cost with NO
+executor work. -/
+@[export dregg_ffi_identity]
+def ffiIdentity (state : WState) : WState := state
+
+/-- Force a `WState` to a cheap `Nat` fingerprint so a timed phase that produced it cannot be
+elided / fused past the timestamp. Touches the list spines + scalar heads the projector built
+(cells/bal/caps lengths + the head ids), which is O(structure) but tiny. -/
+@[inline] private def wstateFingerprint (w : WState) : Nat :=
+  w.cells.length + w.bal.length + w.caps.length + w.nullifiers.length
+    + w.commitments.length + w.revoked.length
+    + (w.cells.head?.map (·.1)).getD 0
+
+/-- `execDirect` instrumented with monotonic-clock fences between the four sub-phases. Returns the
+SAME `WStatusResult` as `execDirect`. Prints `DREGG_LEAN_PROFILE` ns lines only when the env var is
+`1`. The phase results are forced (via `wstateFingerprint` / `.length` / a status read) between
+`IO.monoNanosNow` reads so the strict per-phase work lands inside its measured window. -/
+def execDirectProfiledIO (host : WHostCtx) (state : WState) (turn : WTurn) : IO WStatusResult := do
+  let on := (← IO.getEnv "DREGG_LEAN_PROFILE") == some "1"
+  -- pre-phase scalars the projector needs (kept out of the timed phases; cheap list maps)
+  let cellIds := state.cells.map Prod.fst
+  let capLabels := state.caps.map Prod.fst
+  let balKeys := balKeysOf state
+  let ctx := admCtxOfHost host
+  let hdr := turnHdrOf turn.agent (eraseAuth turn.root) turn.nonce turn.fee turn.validUntil turn.prevHash
+  -- (a) stateOfWState — rebuild the function-backed RecordKernelState from the wire.
+  let t0 ← IO.monoNanosNow
+  let k0 := stateOfWState state
+  let s0 : RecChainedState := { kernel := k0, log := [] }
+  -- force the kernel record to WHNF (allocates the closure-backed state record).
+  let _ := s0.log.length
+  let t1 ← IO.monoNanosNow
+  -- (b) liftForestG — lift the wire forest to the gated DForest.
+  let gforest : DForest := liftForestG turn.root
+  let _ ← (pure (sizeOf gforest) : IO Nat)  -- force the lifted tree fully (structural)
+  let t2 ← IO.monoNanosNow
+  -- (c) runGatedForestTurnStatus — admission predicate + prologue + the gated forest body.
+  -- ADDITIVE finer split (env-gated print only): attribute the gate's ~7µs to its REAL components.
+  -- NOTE the protocol fact this measures: the executor's admission/turn path computes NO Poseidon2 —
+  -- `admissible` is pure nonce/balance/freeze/chain-head COMPARISONS (the receipt-chain check is a
+  -- `Nat` equality `prevReceipt = storedHead`, where the hash `H : Receipt → Nat` is an ABSTRACT
+  -- §8-oracle parameter never evaluated here), and `commitPrologue`/`execFullForestG` touch records,
+  -- not a sponge. So this split has an `admissible` leg, a `commitPrologue` leg, and a `body` leg —
+  -- there is no Poseidon2 leg to attribute.
+  let c0 ← IO.monoNanosNow
+  let adm := Dregg2.Exec.Admission.admissible ctx hdr s0
+  let _ := decide (adm = true)  -- force the predicate
+  let c1 ← IO.monoNanosNow
+  let sP := Dregg2.Exec.Admission.commitPrologue s0 hdr.agent hdr.fee
+  let _ := sP.log.length  -- force the prologue state to WHNF
+  let c2 ← IO.monoNanosNow
+  let bodyRes := Dregg2.Exec.FullForestAuth.execFullForestG sP gforest
+  let _ := bodyRes.isSome  -- force the body
+  let c3 ← IO.monoNanosNow
+  let (st, res) := runGatedForestTurnStatus ctx hdr s0 gforest
+  let _ := turnStatusCode st  -- force the status
+  let t3 ← IO.monoNanosNow
+  -- (d) wstateOfState — project the post-kernel back out into the wire WState.
+  let result : WStatusResult :=
+    match res with
+    | some s' =>
+        { state := wstateOfState cellIds capLabels balKeys s'.kernel, loglen := s'.log.length,
+          status := turnStatusCode st }
+    | none =>
+        { state := wstateOfState cellIds capLabels balKeys s0.kernel, loglen := 0,
+          status := turnStatusCode st }
+  let _ := wstateFingerprint result.state  -- force the projected WState spine
+  let t4 ← IO.monoNanosNow
+  if on then
+    IO.eprintln s!"DREGG_LEAN_PROFILE stateOfWState={t1 - t0}ns liftForestG={t2 - t1}ns \
+runGatedForestTurnStatus={t3 - t2}ns wstateOfState={t4 - t3}ns total={t4 - t0}ns"
+    -- finer gate split: admissible (pure comparisons, NO Poseidon2) / commitPrologue / forest body.
+    IO.eprintln s!"DREGG_GATE_SPLIT admissible={c1 - c0}ns commitPrologue={c2 - c1}ns \
+body_execFullForestG={c3 - c2}ns poseidon2=0ns"
+  pure result
+
+/-- Pure-typed `@[export]` wrapper: runs the instrumented `execDirectProfiledIO` via `unsafeIO` so
+the Rust caller sees the SAME `WStatusResult → lean_object*` ABI as `execDirect` (no `IO` world
+token to thread). The `unsafeIO` only performs the env-read + timestamp reads + an optional
+`eprintln`; on any IO error it falls back to the pure `execDirect`. -/
+@[export dregg_exec_full_forest_auth_direct_profiled]
+unsafe def execDirectProfiled (host : WHostCtx) (state : WState) (turn : WTurn) : WStatusResult :=
+  match unsafeIO (execDirectProfiledIO host state turn) with
+  | .ok r => r
+  | .error _ => execDirect host state turn
+
 /-! ## RESULT readers (project `WStatusResult` + the post-`WState` back to C scalars).
 
 The C side reads the WHOLE post-state out while still inside the FFI call, then decrefs the result. The

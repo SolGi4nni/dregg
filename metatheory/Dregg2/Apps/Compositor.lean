@@ -259,10 +259,17 @@ post-state, not a projection: a committed present means BOTH the scene authority
 fired; any T1/T2/T3 violation means `= none`. So the post-state root a light client verifies can only
 ever reflect a scene the user cannot be fooled by. -/
 
-/-- **`setFieldA_is_stateStepGuarded`** — the production executor's `setFieldA` arm IS the caveat gate.
-The bridge that makes every toolkit theorem about `stateStepGuarded` a theorem about `execFullA`. -/
+/-- **`setFieldA_is_stateStepGuarded`** — the production executor's `setFieldA` arm IS the caveat gate
+over a NON-RESERVED field. The `execFullA` `setFieldA` arm is the reserved-slot-gated `stateStepDev`
+(`stateStepDev = if reservedField f then none else stateStepGuarded`); the compositor only ever writes
+the developer field `present_digest`, which is NOT a reserved protocol slot (`reservedField f = false`),
+so the dev gate passes through to `stateStepGuarded`. The bridge that makes every toolkit theorem about
+`stateStepGuarded` a theorem about `execFullA` for a non-reserved field. -/
 theorem setFieldA_is_stateStepGuarded (s : RecChainedState) (actor cell : CellId) (f : FieldName)
-    (v : Int) : execFullA s (.setFieldA actor cell f v) = stateStepGuarded s f actor cell v := rfl
+    (v : Int) (hnr : Dregg2.Exec.EffectsState.reservedField f = false) :
+    execFullA s (.setFieldA actor cell f v) = stateStepGuarded s f actor cell v := by
+  show Dregg2.Exec.EffectsState.stateStepDev s f actor cell v = stateStepGuarded s f actor cell v
+  unfold Dregg2.Exec.EffectsState.stateStepDev; rw [if_neg (by rw [hnr]; simp)]
 
 /-- **`output_integrity_eq_unfoolability_on_scene` — THE HEADLINE.** On the compositor cell carrying
 the scene caveats, with the committed frame digest `old` and the presented digest `new` on the grid,
@@ -281,7 +288,8 @@ theorem output_integrity_eq_unfoolability_on_scene
     (execFullA s (.setFieldA presenter cell presentDigestSlot new)).isSome = true
       ↔ (sceneAdmit sc presenter p old new = true
           ∧ (stateStep s presentDigestSlot presenter cell (.int new)).isSome = true) := by
-  rw [setFieldA_is_stateStepGuarded]
+  rw [setFieldA_is_stateStepGuarded _ _ _ _ _
+        (by decide : Dregg2.Exec.EffectsState.reservedField presentDigestSlot = false)]
   have h := app_commit_iff_admit (compositorSpec sc presenter p cell oldRange newRange) s hprog
     presenter new (by rw [hcur]; exact hold) hnew
   rw [hcur] at h
@@ -305,7 +313,8 @@ theorem present_rejected
     (hold : old ∈ oldRange) (hnew : new ∈ newRange)
     (hbad : sceneAdmit sc presenter p old new = false) :
     execFullA s (.setFieldA presenter cell presentDigestSlot new) = none := by
-  rw [setFieldA_is_stateStepGuarded]
+  rw [setFieldA_is_stateStepGuarded _ _ _ _ _
+        (by decide : Dregg2.Exec.EffectsState.reservedField presentDigestSlot = false)]
   exact app_violation_rejected (compositorSpec sc presenter p cell oldRange newRange) s hprog
     presenter new (by rw [hcur]; exact hold) hnew (by rw [hcur]; exact hbad)
 
@@ -394,7 +403,8 @@ the `balance` field, so compositing moves no money. -/
 theorem present_conserves (cell presenter : CellId) (s s' : RecChainedState) (new : Int)
     (h : execFullA s (.setFieldA presenter cell presentDigestSlot new) = some s') :
     recTotal s'.kernel = recTotal s.kernel := by
-  rw [setFieldA_is_stateStepGuarded] at h
+  rw [setFieldA_is_stateStepGuarded _ _ _ _ _
+        (by decide : Dregg2.Exec.EffectsState.reservedField presentDigestSlot = false)] at h
   exact app_commit_conserves (compositorSpec anyScene presenter anyPresent cell [] []) s s'
     presenter new (by decide : presentDigestSlot ≠ balanceField) h
 
@@ -404,7 +414,8 @@ authority over state. -/
 theorem present_no_amplify (cell presenter : CellId) (s s' : RecChainedState) (new : Int)
     (h : execFullA s (.setFieldA presenter cell presentDigestSlot new) = some s') :
     execGraph s'.kernel.caps = execGraph s.kernel.caps := by
-  rw [setFieldA_is_stateStepGuarded] at h
+  rw [setFieldA_is_stateStepGuarded _ _ _ _ _
+        (by decide : Dregg2.Exec.EffectsState.reservedField presentDigestSlot = false)] at h
   exact app_commit_no_amplify (compositorSpec anyScene presenter anyPresent cell [] []) s s'
     presenter new h
 
@@ -413,7 +424,8 @@ compositor cell — no unauthorized present ever commits. -/
 theorem present_authorized (cell presenter : CellId) (s s' : RecChainedState) (new : Int)
     (h : execFullA s (.setFieldA presenter cell presentDigestSlot new) = some s') :
     EffectsState.stateAuthB s.kernel.caps presenter cell = true := by
-  rw [setFieldA_is_stateStepGuarded] at h
+  rw [setFieldA_is_stateStepGuarded _ _ _ _ _
+        (by decide : Dregg2.Exec.EffectsState.reservedField presentDigestSlot = false)] at h
   exact app_commit_authorized (compositorSpec anyScene presenter anyPresent cell [] []) s s'
     presenter new h
 
@@ -422,7 +434,8 @@ exactly the presented value — the frame was actually committed (the present is
 theorem present_frame_advanced (cell presenter : CellId) (s s' : RecChainedState) (new : Int)
     (h : execFullA s (.setFieldA presenter cell presentDigestSlot new) = some s') :
     fieldOf presentDigestSlot (s'.kernel.cell cell) = new := by
-  rw [setFieldA_is_stateStepGuarded] at h
+  rw [setFieldA_is_stateStepGuarded _ _ _ _ _
+        (by decide : Dregg2.Exec.EffectsState.reservedField presentDigestSlot = false)] at h
   exact app_commit_field_written (compositorSpec anyScene presenter anyPresent cell [] []) s s'
     presenter new h
 

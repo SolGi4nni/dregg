@@ -64,10 +64,10 @@ def chainView : StateView RecChainedState :=
 
 /-- The increment-nonce guard as a `Prop` (the spec's `incNonceGuard`). -/
 def incrementNonceGuardProp (s : RecChainedState) (args : IncrementNonceArgs) : Prop :=
-  incNonceGuard s args.actor args.cell
+  incNonceGuard s args.actor args.cell args.n
 
 instance (s : RecChainedState) (args : IncrementNonceArgs) : Decidable (incrementNonceGuardProp s args) := by
-  unfold incrementNonceGuardProp incNonceGuard; exact inferInstanceAs (Decidable (_ ∧ _ ∧ _))
+  unfold incrementNonceGuardProp incNonceGuard; exact inferInstanceAs (Decidable (_ ∧ _ ∧ _ ∧ _))
 
 /-- The guard's witness generator: lay the single `propBit` column at wire `0`. -/
 def incrementNonceGuardEncode (s : RecChainedState) (args : IncrementNonceArgs) (_s' : RecChainedState) :

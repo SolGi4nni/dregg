@@ -343,7 +343,11 @@ mod tests {
         // matches is REFUSED before a single cell is trusted.
         let (source, room_id) = wired_source();
         let mut env = source.mint_membrane(&room_id).expect("mint");
-        env.snapshot.push(0xff); // tamper WITHOUT updating the root
+        // Substitute the frustum root to a value the snapshot does NOT reproduce —
+        // the anti-substitution tooth must refuse before trusting a single cell. (A
+        // trailing-byte append would be ignored by postcard and re-derive the same
+        // root, so we tamper the CLAIMED root directly: a substituted-snapshot proxy.)
+        env.frustum_root[0] ^= 0xff;
         let err = source.rehydrate_drive_stitch(&env).unwrap_err();
         assert!(
             err.to_string().contains("mismatch") || err.to_string().contains("malformed") || err.to_string().contains("frustum"),

@@ -35,7 +35,8 @@ open Dregg2.Exec
 open Dregg2.Exec.TurnExecutorFull
 open Dregg2.Exec.FullForest
 open Dregg2.Authority
-open Dregg2.Exec.EffectsState (stateStep stateStep_factors stateStepGuarded_eq)
+open Dregg2.Exec.EffectsState (stateStep stateStep_factors stateStepGuarded_eq
+  stateStepDev_eq incrementNonceStep_eq)
 open Dregg2.Tactics
 
 /-! ## Step 0 — registry-frame lemmas for the deeply-nested kernel ops (swiss).
@@ -103,9 +104,10 @@ theorem execFullA_revoked_eq (s s' : RecChainedState) (fa : FullActionA)
   -- §pure-state — `stateStep` (field write); factors through `stateStep_factors` (kernel = writeField,
   -- a `cell`-only update, `revoked` untouched ⇒ `rfl`). All four share the proof.
   | setFieldA actor cell f v =>
-      -- §SLOT-CAVEAT: peel the caveat gate (`stateStepGuarded_eq`); the field write never edits `revoked`.
+      -- §RESERVED-SLOT/§SLOT-CAVEAT: peel the reserved gate (`stateStepDev_eq`) then the caveat gate
+      -- (`stateStepGuarded_eq`); the field write never edits `revoked`.
       simp only [execFullA] at h
-      obtain ⟨_, hs'⟩ := stateStep_factors (stateStepGuarded_eq h); subst hs'; rfl
+      obtain ⟨_, hs'⟩ := stateStep_factors (stateStepGuarded_eq (stateStepDev_eq h)); subst hs'; rfl
   | emitEventA actor cell topic data =>
       -- Codex's emitStep is now live-cell guarded: peel the `if cell ∈ accounts`.
       simp only [execFullA] at h
@@ -113,8 +115,9 @@ theorem execFullA_revoked_eq (s s' : RecChainedState) (fa : FullActionA)
       · rw [if_pos hlive] at h; simp only [emitStep, Option.some.injEq] at h; subst h; rfl
       · rw [if_neg hlive] at h; exact absurd h (by simp)
   | incrementNonceA actor cell n =>
+      -- §MONOTONE-NONCE: peel the monotone gate (`incrementNonceStep_eq`); the field write never edits `revoked`.
       simp only [execFullA] at h
-      obtain ⟨_, hs'⟩ := stateStep_factors h; subst hs'; rfl
+      obtain ⟨_, hs'⟩ := stateStep_factors (incrementNonceStep_eq h); subst hs'; rfl
   | setPermissionsA actor cell p =>
       simp only [execFullA] at h
       obtain ⟨_, hs'⟩ := stateStep_factors h; subst hs'; rfl

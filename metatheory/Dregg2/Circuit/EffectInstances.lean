@@ -341,10 +341,13 @@ theorem setField_touchedCellMap_eq (base : CellId → Value) (cell : CellId) (f 
 `touchedCellMap` collapsed to `setFieldCellMap`; the log clause is the one-row chain extension; the
 frame `kernelFrame` REASSOCIATES to `SetFieldSpec`'s frame clauses (whose `bal` sits slots
 later than `kernelFrame` lists it — hence a genuine reassoc, not a defeq). -/
-theorem apex_iff_setFieldSpec (s : RecChainedState) (a : SetFieldArgs) (s' : RecChainedState) :
+theorem apex_iff_setFieldSpec (s : RecChainedState) (a : SetFieldArgs) (s' : RecChainedState)
+    (hnr : Dregg2.Exec.EffectsState.reservedField a.f = false) :
     setFieldE.apex s a s' ↔ SetFieldSpec s a.actor a.cell a.f a.v s' := by
   -- `setFieldE`'s view/touched/expectedLeaf/logUpdate reduce definitionally; the apex's post-cell
-  -- clause's `touchedCellMap` collapses to `setFieldCellMap`.
+  -- clause's `touchedCellMap` collapses to `setFieldCellMap`. §RESERVED-SLOT: the apex circuit does
+  -- not constrain the written slot, so the developer-path `reservedField a.f = false` leg of
+  -- `SetFieldSpec` is supplied by `hnr` (enforced at the executor's `stateStepDev`).
   show (SetFieldGuard s a.actor a.cell a.f a.v
         ∧ s'.kernel.cell
             = touchedCellMap s.kernel.cell {a.cell} (setFieldCellMap s.kernel.cell a.cell a.f a.v)
@@ -356,10 +359,10 @@ theorem apex_iff_setFieldSpec (s : RecChainedState) (a : SetFieldArgs) (s' : Rec
   · -- kernelFrame order: accounts caps bal nullifiers revoked commitments queues swiss …
     rintro ⟨hg, hcell, hlog, hAcc, hCaps, hBal, hNul, hRev, hCom, hQ, hSC, hFac, hLif,
       hDC, hDel, hDgs, hSB⟩
-    -- SetFieldSpec order: accounts caps nullifiers revoked commitments bal queues swiss …
-    exact ⟨hg, hcell, hlog, hAcc, hCaps, hNul, hRev, hCom, hBal, hQ, hSC, hFac, hLif,
+    -- SetFieldSpec order: reservedField ∧ guard ∧ … ∧ accounts caps nullifiers revoked commitments bal …
+    exact ⟨hnr, hg, hcell, hlog, hAcc, hCaps, hNul, hRev, hCom, hBal, hQ, hSC, hFac, hLif,
       hDC, hDel, hDgs, hSB⟩
-  · rintro ⟨hg, hcell, hlog, hAcc, hCaps, hNul, hRev, hCom, hBal, hQ, hSC, hFac, hLif,
+  · rintro ⟨_hnr, hg, hcell, hlog, hAcc, hCaps, hNul, hRev, hCom, hBal, hQ, hSC, hFac, hLif,
       hDC, hDel, hDgs, hSB⟩
     exact ⟨hg, hcell, hlog, hAcc, hCaps, hBal, hNul, hRev, hCom, hQ, hSC, hFac, hLif,
       hDC, hDel, hDgs, hSB⟩
@@ -380,13 +383,14 @@ theorem setFieldE_full_sound
     (hN : compressNInjective S.compressN) (hL : cellLeafInjective S.CH)
     (hRest : RestHashIffFrame S.RH) (hLog : logHashInjective S.LH)
     (s : RecChainedState) (a : SetFieldArgs) (s' : RecChainedState)
+    (hnr : Dregg2.Exec.EffectsState.reservedField a.f = false)
     (hwf : AccountsWF s.kernel) (hwf' : AccountsWF s'.kernel)
     (h : satisfiedE S setFieldE (encodeE S setFieldE s a s')) :
     SetFieldSpec s a.actor a.cell a.f a.v s' := by
   have hapex : setFieldE.apex s a s' :=
     effect_circuit_full_sound S setFieldE hN hL hRest hLog setFieldGuardDecodes s a s'
       hwf hwf' h
-  exact (apex_iff_setFieldSpec s a s').mp hapex
+  exact (apex_iff_setFieldSpec s a s' hnr).mp hapex
 
 #assert_axioms setFieldGuardLocal
 #assert_axioms setFieldGuardDecodes

@@ -58,11 +58,14 @@ open Dregg2.Authority (Caps)
 The exact conjunction in `stateStep`'s `if` (EffectsState.lean:209) — extracting it makes the
 spec⟺executor proof a clean re-assembly, mirroring `Transfer.admitGuard`. -/
 
-/-- **`incNonceGuard` — the three-leg admissibility gate** the executor checks before it commits an
-`incrementNonceA`: AUTHORITY over `cell`, `cell` is a live account (MEMBERSHIP), and `cell`'s
-lifecycle admits effects (LIVENESS — the R6 gate). Stated independently of the executor term. -/
-def incNonceGuard (s : RecChainedState) (actor cell : CellId) : Prop :=
-  stateAuthB s.kernel.caps actor cell = true
+/-- **`incNonceGuard` — the four-leg admissibility gate** the executor checks before it commits an
+`incrementNonceA`: the new nonce `n` STRICTLY EXCEEDS the stored nonce (MONOTONICITY — the nonce can
+only advance, closing the nonce-reset replay leg), AUTHORITY over `cell`, `cell` is a live account
+(MEMBERSHIP), and `cell`'s lifecycle admits effects (LIVENESS — the R6 gate). Stated independently of
+the executor term. -/
+def incNonceGuard (s : RecChainedState) (actor cell : CellId) (n : Int) : Prop :=
+  fieldOf "nonce" (s.kernel.cell cell) < n
+  ∧ stateAuthB s.kernel.caps actor cell = true
   ∧ cell ∈ s.kernel.accounts
   ∧ cellLive s.kernel cell = true
 
@@ -117,7 +120,7 @@ self-targeted extension; and every one of the 16 non-`cell` kernel components is
 clause mentions the executor. -/
 def IncrementNonceSpec (s : RecChainedState) (actor cell : CellId) (n : Int)
     (s' : RecChainedState) : Prop :=
-  incNonceGuard s actor cell
+  incNonceGuard s actor cell n
   -- the ONE touched component: cell `cell`'s `nonce` slot bumped, every other cell whole
   ∧ s'.kernel.cell = incNonceCellMap s.kernel cell n
   -- the log: extended by EXACTLY one self-targeted receipt row (the monotone metadata advance)
@@ -190,12 +193,20 @@ the cell-state-monotone family. -/
 theorem execFullA_incrementNonce_iff_spec (s : RecChainedState) (actor cell : CellId) (n : Int)
     (s' : RecChainedState) :
     execFullA s (.incrementNonceA actor cell n) = some s' ↔ IncrementNonceSpec s actor cell n s' := by
-  -- the arm IS `stateStep s nonceField actor cell (.int n)` definitionally
-  show stateStep s nonceField actor cell (.int n) = some s' ↔ IncrementNonceSpec s actor cell n s'
-  rw [stateStep_iff_spec]
-  unfold IncrementNonceSpec incNonceGuard incNonceCellMap
-  -- the two statements are the SAME conjunction modulo `nonceField`/`(.int n)` substitution
-  rfl
+  -- §MONOTONE-NONCE: the arm IS `incrementNonceStep s actor cell n` definitionally — the monotone gate
+  -- over the bare `stateStep` on `nonceField`. Peel the monotone gate, then reuse `stateStep_iff_spec`.
+  show incrementNonceStep s actor cell n = some s' ↔ IncrementNonceSpec s actor cell n s'
+  unfold incrementNonceStep IncrementNonceSpec incNonceGuard incNonceCellMap
+  by_cases hmono : fieldOf "nonce" (s.kernel.cell cell) < n
+  · rw [if_pos hmono, stateStep_iff_spec]
+    -- the residual is the SAME conjunction modulo the (now-discharged) monotone leg.
+    constructor
+    · rintro ⟨⟨ha, hm, hl⟩, rest⟩; exact ⟨⟨hmono, ha, hm, hl⟩, rest⟩
+    · rintro ⟨⟨_, ha, hm, hl⟩, rest⟩; exact ⟨⟨ha, hm, hl⟩, rest⟩
+  · rw [if_neg hmono]
+    constructor
+    · intro h; exact absurd h (by simp)
+    · rintro ⟨⟨hbad, _⟩, _⟩; exact absurd hbad hmono
 
 /-! ## §4 — corollaries: the projections onto the touched component + the balance/cap frame.
 
@@ -239,8 +250,16 @@ theorem execFullA_incrementNonce_otherCellsFrame {s s' : RecChainedState} {actor
 soundness projection: the arm commits IFF the three-leg admissibility gate is satisfied). -/
 theorem execFullA_incrementNonce_admits_guard {s s' : RecChainedState} {actor cell : CellId}
     {n : Int} (h : execFullA s (.incrementNonceA actor cell n) = some s') :
-    incNonceGuard s actor cell :=
+    incNonceGuard s actor cell n :=
   ((execFullA_incrementNonce_iff_spec s actor cell n s').mp h).1
+
+/-- **`execFullA_incrementNonce_advances` — the nonce STRICTLY ADVANCED.** A committed `incrementNonceA`
+means the new nonce `n` strictly exceeded the stored nonce: the agent nonce can only go UP, never
+reset. The replay-leg closure projected onto the spec. -/
+theorem execFullA_incrementNonce_advances {s s' : RecChainedState} {actor cell : CellId}
+    {n : Int} (h : execFullA s (.incrementNonceA actor cell n) = some s') :
+    fieldOf "nonce" (s.kernel.cell cell) < n :=
+  (execFullA_incrementNonce_admits_guard h).1
 
 /-! ## §5 — NON-VACUITY: the guard REJECTS bad inputs.
 
@@ -253,21 +272,24 @@ exhibit the arm as a genuine gate: an unauthorized actor, a non-account `cell`, 
 theorem incrementNonce_rejects_unauthorized (s : RecChainedState) (actor cell : CellId) (n : Int)
     (hbad : stateAuthB s.kernel.caps actor cell = false) :
     execFullA s (.incrementNonceA actor cell n) = none := by
-  show stateStep s nonceField actor cell (.int n) = none
-  unfold stateStep
-  rw [if_neg]
-  rintro ⟨hauth, _, _⟩
-  rw [hbad] at hauth; exact absurd hauth (by simp)
+  show incrementNonceStep s actor cell n = none
+  unfold incrementNonceStep
+  by_cases hmono : fieldOf "nonce" (s.kernel.cell cell) < n
+  · rw [if_pos hmono]; unfold stateStep; rw [if_neg]
+    rintro ⟨hauth, _, _⟩; rw [hbad] at hauth; exact absurd hauth (by simp)
+  · rw [if_neg hmono]
 
 /-- **`incrementNonce_rejects_nonaccount`.** If `cell` is not a live account, the arm fails
 closed. -/
 theorem incrementNonce_rejects_nonaccount (s : RecChainedState) (actor cell : CellId) (n : Int)
     (hbad : cell ∉ s.kernel.accounts) :
     execFullA s (.incrementNonceA actor cell n) = none := by
-  show stateStep s nonceField actor cell (.int n) = none
-  unfold stateStep
-  rw [if_neg]
-  rintro ⟨_, hmem, _⟩; exact hbad hmem
+  show incrementNonceStep s actor cell n = none
+  unfold incrementNonceStep
+  by_cases hmono : fieldOf "nonce" (s.kernel.cell cell) < n
+  · rw [if_pos hmono]; unfold stateStep; rw [if_neg]
+    rintro ⟨_, hmem, _⟩; exact hbad hmem
+  · rw [if_neg hmono]
 
 /-- **`incrementNonce_rejects_nonlive`.** If `cell`'s lifecycle does NOT admit effects
 (sealed/destroyed — the R6 gate), the arm fails closed. This is the executor-level lifecycle
@@ -275,11 +297,21 @@ enforcement: a nonce write into a sealed cell is REJECTED. -/
 theorem incrementNonce_rejects_nonlive (s : RecChainedState) (actor cell : CellId) (n : Int)
     (hbad : cellLive s.kernel cell = false) :
     execFullA s (.incrementNonceA actor cell n) = none := by
-  show stateStep s nonceField actor cell (.int n) = none
-  unfold stateStep
-  rw [if_neg]
-  rintro ⟨_, _, hlive⟩
-  rw [hbad] at hlive; exact absurd hlive (by simp)
+  show incrementNonceStep s actor cell n = none
+  unfold incrementNonceStep
+  by_cases hmono : fieldOf "nonce" (s.kernel.cell cell) < n
+  · rw [if_pos hmono]; unfold stateStep; rw [if_neg]
+    rintro ⟨_, _, hlive⟩; rw [hbad] at hlive; exact absurd hlive (by simp)
+  · rw [if_neg hmono]
+
+/-- **`incrementNonce_rejects_nonincreasing` (the MONOTONE-NONCE teeth).** If the new nonce `n` does
+NOT strictly exceed the stored nonce (a RESET or no-op), the arm fails closed — the dedicated effect
+cannot reset the agent nonce. The second replay leg, closed on the spec. -/
+theorem incrementNonce_rejects_nonincreasing (s : RecChainedState) (actor cell : CellId) (n : Int)
+    (hbad : ¬ fieldOf "nonce" (s.kernel.cell cell) < n) :
+    execFullA s (.incrementNonceA actor cell n) = none := by
+  show incrementNonceStep s actor cell n = none
+  exact incrementNonceStep_nonincreasing_fails s actor cell n hbad
 
 /-! ## §6 — Axiom-hygiene tripwires.
 
@@ -294,8 +326,10 @@ Whitelist exactly `{propext, Classical.choice, Quot.sound}`. -/
 #assert_axioms execFullA_incrementNonce_capFrame
 #assert_axioms execFullA_incrementNonce_otherCellsFrame
 #assert_axioms execFullA_incrementNonce_admits_guard
+#assert_axioms execFullA_incrementNonce_advances
 #assert_axioms incrementNonce_rejects_unauthorized
 #assert_axioms incrementNonce_rejects_nonaccount
 #assert_axioms incrementNonce_rejects_nonlive
+#assert_axioms incrementNonce_rejects_nonincreasing
 
 end Dregg2.Circuit.Spec.CellStateMonotone

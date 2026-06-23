@@ -483,8 +483,10 @@ theorem step_emitted_refines_fullActionStep
         ((revoke_emitted_equiv_circuit S D_caps hD_caps st ⟨holder, t⟩ st').mpr hcircuit)
   | .setFieldA actor cell f v =>
       simp only [fullActionStep]
-      rcases hcircuit with ⟨hwf, hwf', hc⟩
-      exact setField_emitted_refines_spec CS hCSN hCSL hRestFrame hLogCS st ⟨actor, cell, f, v⟩ st' hwf hwf'
+      -- §RESERVED-SLOT: the setField circuit relation now CARRIES the not-reserved leg (`hnr`).
+      rcases hcircuit with ⟨hnr, hwf, hwf', hc⟩
+      exact setField_emitted_refines_spec CS hCSN hCSL hRestFrame hLogCS st ⟨actor, cell, f, v⟩ st'
+        hnr hwf hwf'
         ((setField_emitted_equiv_circuit CS st ⟨actor, cell, f, v⟩ st').mpr hc)
   | .revokeDelegationA holder t =>
       simp only [fullActionStep]

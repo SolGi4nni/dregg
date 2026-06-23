@@ -35,7 +35,8 @@ open Dregg2.Exec (cellObsA)
 open Dregg2.Exec.TurnExecutorFull
 open Dregg2.Exec.FullForest
 open Dregg2.Exec.EffectsState (caveatsAdmit fieldOf writeField stateStepGuarded_eq stateStepGuarded_admits
-  stateStepGuarded_caveat_violation_fails stateStep_factors guarded_state_field_written setField_fieldOf)
+  stateStepGuarded_caveat_violation_fails stateStepDev_caveat_violation_fails
+  stateStep_factors guarded_state_field_written setField_fieldOf)
 open Dregg2.Authority.ClearanceGraph
 open Dregg2.Proof.Stingray
 
@@ -146,7 +147,7 @@ theorem cwm_step_legal_forever (m : WorkflowMandate) (s : CwmRuntime) (hinit : s
 theorem cwm_illegal_dag_rejected_exec (s : RecChainedState) (actor : CellId) (target : Int)
     (hseq : caveatsAdmit s.kernel stepCursorSlot actor mandateCell target = false) :
     execFullForestA s (cwmExecAdvance actor target) = none := by
-  have hnone := stateStepGuarded_caveat_violation_fails s stepCursorSlot actor mandateCell target hseq
+  have hnone := stateStepDev_caveat_violation_fails s stepCursorSlot actor mandateCell target hseq
   rw [execFullForestA_eq_execFullTurnA]
   simp only [cwmExecAdvance, lowerForestA, lowerChildrenA, execFullTurnA, execFullA, hnone]
 

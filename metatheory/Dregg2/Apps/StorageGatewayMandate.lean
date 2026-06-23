@@ -34,7 +34,7 @@ open Dregg2.Exec.TurnExecutorFull
 open Dregg2.Exec.FullForest
 open Dregg2.Exec.EffectsState (caveatsAdmit fieldOf writeField stateStepGuarded stateStepGuarded_admits
   stateStepGuarded_caveat_violation_fails stateStepGuarded_eq stateStep_factors guarded_state_field_written
-  setField_fieldOf setField)
+  setField_fieldOf setField stateStepDev_eq incrementNonceStep_eq stateStepDev_caveat_violation_fails)
 open Dregg2.Proof.Noninterference (writeField_cell_other writeField_field_ne field_setField_ne
   field_setField_eq execFullA_setFieldA_writeField)
 open Dregg2.Authority.ClearanceGraph
@@ -120,7 +120,7 @@ theorem sgm_volume_legal_forever (m : StorageMandate) (s : SgmRuntime) (hinit : 
 theorem sgm_over_debit_rejected_exec (s : RecChainedState) (actor : CellId) (newSpent : Int)
     (hbound : caveatsAdmit s.kernel volumeSpentSlot actor mandateCell newSpent = false) :
     execFullForestA s (sgmExecDebitVolume actor newSpent) = none := by
-  have hnone := stateStepGuarded_caveat_violation_fails s volumeSpentSlot actor mandateCell newSpent hbound
+  have hnone := stateStepDev_caveat_violation_fails s volumeSpentSlot actor mandateCell newSpent hbound
   rw [execFullForestA_eq_execFullTurnA]
   simp only [sgmExecDebitVolume, lowerForestA, lowerChildrenA, execFullTurnA, execFullA, hnone]
 
@@ -274,7 +274,7 @@ theorem execFullA_progLive_preserved (s s' : RecChainedState) (fa : FullActionA)
           rw [hn]; exact ⟨hlive, hprog⟩
   | setFieldA actor cell f v =>
       simp only [execFullA] at h
-      obtain ⟨_, hs'⟩ := stateStep_factors (stateStepGuarded_eq h); subst hs'; exact ⟨hlive, hprog⟩
+      obtain ⟨_, hs'⟩ := stateStep_factors (stateStepGuarded_eq (stateStepDev_eq h)); subst hs'; exact ⟨hlive, hprog⟩
   | emitEventA actor cell topic data =>
       simp only [execFullA] at h
       by_cases hl : cell ∈ s.kernel.accounts ∧ acceptsEffects s.kernel cell = true
@@ -282,7 +282,7 @@ theorem execFullA_progLive_preserved (s s' : RecChainedState) (fa : FullActionA)
       · rw [if_neg hl] at h; exact absurd h (by simp)
   | incrementNonceA actor cell n =>
       simp only [execFullA] at h
-      obtain ⟨_, hs'⟩ := stateStep_factors h; subst hs'; exact ⟨hlive, hprog⟩
+      obtain ⟨_, hs'⟩ := stateStep_factors (incrementNonceStep_eq h); subst hs'; exact ⟨hlive, hprog⟩
   | setPermissionsA actor cell p =>
       simp only [execFullA] at h
       obtain ⟨_, hs'⟩ := stateStep_factors h; subst hs'; exact ⟨hlive, hprog⟩
@@ -604,7 +604,7 @@ theorem execFullA_anchorVal_preserved (s s' : RecChainedState) (fa : FullActionA
           rw [hn]
   | setFieldA actor cell f v =>
       -- the caveat-GATED write: `field_setField_ne` for f ≠ anchor; the `.immutable` caveat for f = anchor.
-      have hstep : stateStepGuarded s f actor cell v = some s' := h
+      have hstep : stateStepGuarded s f actor cell v = some s' := stateStepDev_eq h
       have hadm : caveatsAdmit s.kernel f actor cell v = true := stateStepGuarded_admits hstep
       rw [execFullA_setFieldA_writeField h]
       by_cases hcell : c = cell
@@ -644,7 +644,7 @@ theorem execFullA_anchorVal_preserved (s s' : RecChainedState) (fa : FullActionA
       · rw [if_neg hl] at h; exact absurd h (by simp)
   | incrementNonceA actor cell n =>
       simp only [execFullA] at h
-      obtain ⟨_, hs'⟩ := stateStep_factors h; subst hs'
+      obtain ⟨_, hs'⟩ := stateStep_factors (incrementNonceStep_eq h); subst hs'
       exact fieldOf_of_field_eq
         (writeField_field_ne s.kernel nonceField commitmentAnchorSlot cell c (.int n) (by decide))
   | setPermissionsA actor cell p =>

@@ -55,7 +55,7 @@ namespace Dregg2.Proof.Noninterference
 open Dregg2.Exec
 open Dregg2.Exec.TurnExecutorFull
 open Dregg2.Exec.EffectsState (setField fieldOf writeField stateAuthB stateStep stateStep_factors
-  setField_balOf setField_fieldOf stateStepGuarded stateStepGuarded_eq)
+  setField_balOf setField_fieldOf stateStepGuarded stateStepGuarded_eq stateStepDev stateStepDev_eq)
 
 set_option linter.dupNamespace false
 
@@ -273,8 +273,10 @@ low-equal. HIGH inputs cannot perturb the LOW observation. -/
 theorem execFullA_setFieldA_writeField {s s' : RecChainedState} {actor cell : CellId}
     {f : FieldName} {n : Int} (h : execFullA s (.setFieldA actor cell f n) = some s') :
     s'.kernel = writeField s.kernel f cell (.int n) := by
-  -- `execFullA (.setFieldA …) = stateStepGuarded …`; lift to the bare `stateStep`, then factor.
-  have hstep : stateStepGuarded s f actor cell n = some s' := h
+  -- `execFullA (.setFieldA …) = stateStepDev …`; lift through the reserved gate (`stateStepDev_eq`)
+  -- to the caveat-gated write, then to the bare `stateStep`, then factor.
+  have hdev : stateStepDev s f actor cell n = some s' := h
+  have hstep : stateStepGuarded s f actor cell n = some s' := stateStepDev_eq hdev
   have hbare : stateStep s f actor cell (.int n) = some s' := stateStepGuarded_eq hstep
   obtain ⟨_, hs'⟩ := stateStep_factors hbare
   rw [hs']

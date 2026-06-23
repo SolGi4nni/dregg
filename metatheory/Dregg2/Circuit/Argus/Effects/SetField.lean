@@ -211,6 +211,7 @@ the full-state descriptor speaks about — the log row carried IN FULL (the name
 divergence), no extra side-condition needed (the four-conjunct guard is fully captured by the IR term). -/
 theorem interp_setFieldStmt_chained
     (s : RecChainedState) (actor cell : CellId) (f : FieldName) (v : Int) (k' : RecordKernelState)
+    (hnr : Dregg2.Exec.EffectsState.reservedField f = false)
     (hexec : interp (setFieldStmt actor cell f v) s.kernel = some k') :
     execFullA s (.setFieldA actor cell f v)
       = some { kernel := k', log := { actor := actor, src := cell, dst := cell, amt := 0 } :: s.log } := by
@@ -219,18 +220,24 @@ theorem interp_setFieldStmt_chained
   -- the guard FIRES (else `hexec : none = some k'` is absurd); extract the guard + the kernel post.
   by_cases hg : setFieldGuard actor cell f v s.kernel = true
   · rw [if_pos hg] at hexec
-    -- the chained arm reduces to `stateStepGuarded`; on the (decoded) guard it commits `writeField` + the row.
+    -- the chained arm reduces to `stateStepDev`; on the (decoded) guard + the non-reserved slot (`hnr`)
+    -- it commits `writeField` + the row.
     rw [execFullA_setFieldA_eq]
     have hguard : SetFieldGuard s actor cell f v := (setFieldGuard_iff actor cell f v s).mp hg
-    -- `stateStepGuarded` commits to `writeField`'s post + the receipt row when its guard holds.
-    have := (Dregg2.Circuit.Spec.CellStateField.stateStepGuarded_iff_guard_and_post
+    -- `stateStepGuarded` commits to `writeField`'s post + the receipt row when its guard holds; at a
+    -- non-reserved slot `stateStepDev` IS `stateStepGuarded`.
+    have hsg := (Dregg2.Circuit.Spec.CellStateField.stateStepGuarded_iff_guard_and_post
               s actor cell f v
               { kernel := writeField s.kernel f cell (.int v),
-                log := { actor := actor, src := cell, dst := cell, amt := 0 } :: s.log }).mpr
+                log := { actor := actor, src := cell, dst := cell, amt := 0 } :: s.log } hnr).mpr
               ⟨hguard, rfl⟩
+    have hdev : Dregg2.Exec.EffectsState.stateStepDev s f actor cell v
+        = Dregg2.Exec.EffectsState.stateStepGuarded s f actor cell v := by
+      unfold Dregg2.Exec.EffectsState.stateStepDev; rw [if_neg (by rw [hnr]; simp)]
+    rw [hdev]
     -- `hexec` names the kernel post as `k'`; rewrite it into the committed chained state.
     rw [← (Option.some.injEq _ _).mp hexec]
-    exact this
+    exact hsg
   · rw [if_neg hg] at hexec; exact absurd hexec (by simp)
 
 #assert_axioms interp_setFieldStmt_chained
@@ -297,21 +304,22 @@ theorem setField_compile_sound
     (hRest : StateCommit.RestHashIffFrame RH)
     (hLog : StateCommit.logHashInjective LH)
     (s s' : RecChainedState) (actor cell : CellId) (f : FieldName) (v : Int) (k' : RecordKernelState)
+    (hnr : Dregg2.Exec.EffectsState.reservedField f = false)
     (hwf : StateCommit.AccountsWF s.kernel) (hwf' : StateCommit.AccountsWF s'.kernel)
     (hcirc : setFieldCircuitSat CH RH cmb compressN LH s actor cell f v s')
     (hexec : interp (setFieldStmt actor cell f v) s.kernel = some k') :
     s' = { kernel := k', log := { actor := actor, src := cell, dst := cell, amt := 0 } :: s.log } := by
   -- circuit side: setFieldA's OWN audited FULL-STATE soundness forces the WHOLE `SetFieldSpec` on
-  -- `(s, actor, cell, f, v, s')`.
+  -- `(s, actor, cell, f, v, s')` — the reserved-slot leg carried by `hnr` (the developer-path precondition).
   have hspec : SetFieldSpec s actor cell f v s' :=
     setfield_circuit_full_sound CH RH cmb compressN LH hCompressN hLeaf hRest hLog
-      s actor cell f v s' hwf hwf' hcirc
+      s actor cell f v s' hnr hwf hwf' hcirc
   -- executor side: the §3 chained lift gives `execFullA s (.setFieldA …) = some ⟨k', receipt :: log⟩`, and
   -- the independent executor⟺spec corner turns THAT into `SetFieldSpec s actor cell f v ⟨k', receipt :: log⟩`.
   have hspec' : SetFieldSpec s actor cell f v
       { kernel := k', log := { actor := actor, src := cell, dst := cell, amt := 0 } :: s.log } :=
     (execFullA_setFieldA_iff_spec s actor cell f v _).mp
-      (interp_setFieldStmt_chained s actor cell f v k' hexec)
+      (interp_setFieldStmt_chained s actor cell f v k' hnr hexec)
   -- both states satisfy the SAME spec ⇒ they are the same chained state (the spec pins every kernel field +
   -- the log).
   exact setFieldSpec_unique hspec hspec'

@@ -25,7 +25,7 @@ open Dregg2.Exec
 open Dregg2.Exec.TurnExecutorFull
 open Dregg2.Exec.FullForest
 open Dregg2.Exec.EffectsState (stateStepGuarded caveatsAdmit fieldOf
-  stateStepGuarded_caveat_violation_fails)
+  stateStepGuarded_caveat_violation_fails stateStepDev_caveat_violation_fails)
 
 /-! ## §1 — The gallery DOMAIN (artwork cell, slots, WriteOnce item caveat). -/
 
@@ -58,7 +58,7 @@ def setMetadata (newMeta : Int) : FullForestA :=
 theorem gallery_item_immutable (s : RecChainedState) (value : Int)
     (hbound : caveatsAdmit s.kernel itemSlot galleryActor artworkCell value = false) :
     execFullForestA s (mint value) = none := by
-  have hnone := stateStepGuarded_caveat_violation_fails s itemSlot galleryActor artworkCell value hbound
+  have hnone := stateStepDev_caveat_violation_fails s itemSlot galleryActor artworkCell value hbound
   rw [execFullForestA_eq_execFullTurnA]
   simp only [mint, galOp, lowerForestA, lowerChildrenA, execFullTurnA, execFullA, hnone]
 

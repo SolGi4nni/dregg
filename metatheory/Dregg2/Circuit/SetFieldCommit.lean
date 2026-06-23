@@ -419,6 +419,7 @@ theorem setfield_circuit_full_sound
     (hRest : StateCommit.RestHashIffFrame RH)
     (hLog : StateCommit.logHashInjective LH)
     (s : RecChainedState) (actor cell : CellId) (f : FieldName) (v : Int) (s' : RecChainedState)
+    (hnr : Dregg2.Exec.EffectsState.reservedField f = false)
     (hwf : StateCommit.AccountsWF s.kernel) (hwf' : StateCommit.AccountsWF s'.kernel)
     (h : satisfiedSF cmb (encodeSF CH RH cmb compressN LH s actor cell f v s')) :
     SetFieldSpec s actor cell f v s' := by
@@ -483,8 +484,10 @@ theorem setfield_circuit_full_sound
         rw [hwf' c hk'acc]
         simp only [setFieldCellMap, if_neg hctgt]
         exact (hwf c hcacc).symm
-  -- assemble SetFieldSpec (guard ∧ cell map ∧ log ∧ the 16 frame clauses).
-  exact ⟨hguard, hcellmap, hlogspec,
+  -- assemble SetFieldSpec (§RESERVED-SLOT leg ∧ guard ∧ cell map ∧ log ∧ the 16 frame clauses). The
+  -- reserved-slot leg is the developer-path precondition (`hnr`) — the StateCommit circuit models the
+  -- developer write, whose reserved gate lives at the executor (`stateStepDev`), carried here as `hnr`.
+  exact ⟨hnr, hguard, hcellmap, hlogspec,
     hAcc, hCaps, hNul, hRev, hCom, hBal, hQ, hSC, hFac, hLif, hDC, hDel, hDgs, hSB⟩
 
 #assert_axioms setfield_circuit_full_sound
@@ -520,7 +523,7 @@ theorem setfield_circuit_full_complete
     (s : RecChainedState) (actor cell : CellId) (f : FieldName) (v : Int) (s' : RecChainedState)
     (hspec : SetFieldSpec s actor cell f v s') :
     satisfiedSF cmb (encodeSF CH RH cmb compressN LH s actor cell f v s') := by
-  obtain ⟨hguard, hcell, hlog, hAcc, hCaps, hNul, hRev, hCom, hBal, hQ, hSC, hFac, hLif,
+  obtain ⟨_hnr, hguard, hcell, hlog, hAcc, hCaps, hNul, hRev, hCom, hBal, hQ, hSC, hFac, hLif,
     hDC, hDel, hDgs, hSB⟩ := hspec
   obtain ⟨hcav, hauth, hmem, hlive⟩ := hguard
   -- frame-gate facts.

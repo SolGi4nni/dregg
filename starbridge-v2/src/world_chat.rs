@@ -30,7 +30,7 @@ use deos_matrix::Result;
 
 use dregg_cell::{CellId, FieldElement};
 
-use crate::world::{set_field, World};
+use crate::world::{make_open_cell, set_field, World};
 
 const BODY_SLOTS: usize = 15; // field[1..16]
 const MAX_BODY: usize = BODY_SLOTS * 32;
@@ -77,18 +77,21 @@ impl WorldChatSource {
     /// every message slot here is a genuine cell — all installed at genesis (before
     /// any turn), so a later post is a pure `SetField` turn (no genesis-after-turn).
     pub fn seeded(me: &str) -> Self {
+        use dregg_cell::AuthRequired;
         let mut world = World::new().with_executor_signing_key([0x42u8; 32]);
-        let me_cell = world.genesis_cell(0xE0, 0);
 
         let seed_rooms = [
             ("!deoslab:deos.local", "deos-lab", "the dregg-pilled workshop"),
             ("!membrane:deos.local", "membrane", "screenshot a moment, hand it over"),
             ("!firmament:deos.local", "firmament", "one cap across distance"),
         ];
+        // Build the room + slot cells FIRST (at genesis), collecting their ids, so
+        // the local user can be installed holding caps to every cell it will write —
+        // a post is then a real `SetField` turn the executor's ocap gate ADMITS
+        // (`me_cell` legitimately holds the slot cap), not refuses.
         let mut rooms = Vec::new();
         for (i, (mid, name, topic)) in seed_rooms.iter().enumerate() {
             let room = world.genesis_cell(0x10 + i as u8, 0);
-            // A ring of slot cells, each a real genesis cell, unique per (room, k).
             let mut slots = Vec::with_capacity(SLOTS_PER_ROOM);
             for k in 0..SLOTS_PER_ROOM {
                 // A unique slot cell per (room ‖ slot): a distinct pk so the id (which
@@ -111,6 +114,18 @@ impl WorldChatSource {
                 topic: topic.to_string(),
             });
         }
+
+        // The local user's principal cell, installed LAST holding caps to every room
+        // + slot cell (so its post turns are authorized). Built as an open cell with
+        // the caps grafted before genesis-install (no genesis-after-turn).
+        let mut me_open = make_open_cell(0xE0, 0);
+        for r in &rooms {
+            me_open.capabilities.grant(r.cell, AuthRequired::None);
+            for slot in &r.slots {
+                me_open.capabilities.grant(*slot, AuthRequired::None);
+            }
+        }
+        let me_cell = world.genesis_install(me_open);
 
         let mut senders = std::collections::HashMap::new();
         senders.insert(sender_tag(me), me.to_string());

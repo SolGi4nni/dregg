@@ -192,6 +192,11 @@ def fullActionCircuitStep
       -- (parent epoch bumped + child snapshot staled — commitment-bound, write-gate residual).
       revokeDelegationCircuitStep S D_caps hD_caps st ⟨holder, t⟩ st'
   | .setFieldA actor cell f v =>
+      -- §RESERVED-SLOT: a developer `SetField` circuit step CARRIES the not-reserved side-condition
+      -- (the written slot is NOT a protocol-managed nonce/perms/vk/program). The executor's
+      -- `stateStepDev` enforces it; here it is a relation conjunct the prover establishes (the
+      -- field-name-binding residual — closing it fully = a VK-affecting field-name column gate).
+      Dregg2.Exec.EffectsState.reservedField f = false ∧
       AccountsWF st.kernel ∧ AccountsWF st'.kernel ∧
       setFieldCircuitStep CS st ⟨actor, cell, f, v⟩ st'
   | .emitEventA actor cell topic data =>
@@ -374,8 +379,8 @@ theorem fullAction_circuit_refines_spec
         hLog st _ st' h
   | .setFieldA actor cell f v =>
       simp only [fullActionStep]
-      rcases h with ⟨hwf, hwf', hc⟩
-      exact setField_circuit_refines_spec CS hCSN hCSL hRestFrame hLogCS st _ st' hwf hwf' hc
+      rcases h with ⟨hnr, hwf, hwf', hc⟩
+      exact setField_circuit_refines_spec CS hCSN hCSL hRestFrame hLogCS st _ st' hnr hwf hwf' hc
   | .emitEventA actor cell topic data =>
       simp only [fullActionStep]
       rcases h with ⟨hwf, hwf', hc⟩

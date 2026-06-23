@@ -170,7 +170,7 @@ theorem execFullForestG_gnNode (s : RecChainedState) (cred : Authorization Dg Pf
     (slot : FieldName) (value : Int) :
     execFullForestG s (gnNode cred slot value)
       = (if gateOK (mkAuth cred []) s = true
-         then stateStepGuarded s slot nsActor nsCell value
+         then stateStepDev s slot nsActor nsCell value
          else none) := by
   rw [gnNode, execFullForestG_leaf, execFullAGated]
   rfl
@@ -232,12 +232,12 @@ a fully-authorized committee carrier. The committee cannot vote ITSELF out of it
 
 /-- **`gn_good_node_runs_write` — the gate-passing collapse for `goodCred`.** When the authorized
 committee carrier admits, the governed op IS its caveat-gated `SetField` — `execFullForestG s (gnNode
-goodCred slot value) = stateStepGuarded s slot nsActor nsCell value`. The hinge for theorems 3–6: any
+goodCred slot value) = stateStepDev s slot nsActor nsCell value`. The hinge for theorems 3–6: any
 later caveat-rejection of the WRITE rejects the whole turn. -/
 theorem gn_good_node_runs_write (s : RecChainedState) (slot : FieldName) (value : Int)
     (hgate : gateOK (mkAuth goodCred []) s = true) :
     execFullForestG s (gnNode goodCred slot value)
-      = stateStepGuarded s slot nsActor nsCell value := by
+      = stateStepDev s slot nsActor nsCell value := by
   rw [execFullForestG_gnNode, if_pos hgate]
 
 /-- **`gn_committee_immutable` (END-USER THEOREM 3).** If the `Immutable committee_root` caveat
@@ -250,7 +250,7 @@ theorem gn_committee_immutable (s : RecChainedState) (newRoot : Int)
     (hfix : caveatsAdmit s.kernel committeeRootSlot nsActor nsCell newRoot = false) :
     execFullForestG s (amendCommitteeNode goodCred newRoot) = none := by
   rw [amendCommitteeNode, gn_good_node_runs_write s committeeRootSlot newRoot hgate]
-  exact stateStepGuarded_caveat_violation_fails s committeeRootSlot nsActor nsCell newRoot hfix
+  exact stateStepDev_caveat_violation_fails s committeeRootSlot nsActor nsCell newRoot hfix
 
 /-- **`gn_threshold_immutable` (END-USER THEOREM 4).** If the `Immutable threshold` caveat
 rejects the rewrite (`caveatsAdmit = false`, i.e. a value ≠ the constitutional threshold), the change
@@ -261,7 +261,7 @@ theorem gn_threshold_immutable (s : RecChainedState) (newThreshold : Int)
     (hfix : caveatsAdmit s.kernel thresholdSlot nsActor nsCell newThreshold = false) :
     execFullForestG s (amendThresholdNode goodCred newThreshold) = none := by
   rw [amendThresholdNode, gn_good_node_runs_write s thresholdSlot newThreshold hgate]
-  exact stateStepGuarded_caveat_violation_fails s thresholdSlot nsActor nsCell newThreshold hfix
+  exact stateStepDev_caveat_violation_fails s thresholdSlot nsActor nsCell newThreshold hfix
 
 /-- **`gn_version_monotonic_seq` (END-USER THEOREM 5).** If the `MonotonicSequence version`
 caveat rejects the bump (`caveatsAdmit = false`, i.e. `new ≠ old + 1` — a replay or a skip), the commit
@@ -273,7 +273,7 @@ theorem gn_version_monotonic_seq (s : RecChainedState) (newVersion : Int)
     (hseq : caveatsAdmit s.kernel versionSlot nsActor nsCell newVersion = false) :
     execFullForestG s (versionBumpNode goodCred newVersion) = none := by
   rw [versionBumpNode, gn_good_node_runs_write s versionSlot newVersion hgate]
-  exact stateStepGuarded_caveat_violation_fails s versionSlot nsActor nsCell newVersion hseq
+  exact stateStepDev_caveat_violation_fails s versionSlot nsActor nsCell newVersion hseq
 
 /-- **`gn_dispute_window_cannot_shrink` (END-USER THEOREM 6).** If the `Monotonic
 dispute_window_height` caveat rejects the write (`caveatsAdmit = false`, i.e. `new < old`), the proposal
@@ -285,7 +285,7 @@ theorem gn_dispute_window_cannot_shrink (s : RecChainedState) (newHeight : Int)
     (hback : caveatsAdmit s.kernel disputeWindowSlot nsActor nsCell newHeight = false) :
     execFullForestG s (disputeWindowNode goodCred newHeight) = none := by
   rw [disputeWindowNode, gn_good_node_runs_write s disputeWindowSlot newHeight hgate]
-  exact stateStepGuarded_caveat_violation_fails s disputeWindowSlot nsActor nsCell newHeight hback
+  exact stateStepDev_caveat_violation_fails s disputeWindowSlot nsActor nsCell newHeight hback
 
 /-! ## §7 — END-USER THEOREM 7: a committee member ROTATED OUT (revoked) can NEVER act.
 

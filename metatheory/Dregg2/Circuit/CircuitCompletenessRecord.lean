@@ -474,25 +474,27 @@ def setFieldDyn_setFieldDynEncodes_construct (compressN : List ℤ → ℤ)
   postRoot := prover.postRoot
   hpost := prover.hpost
   gate := prover.gate
-  -- the whole-`cell`-map move IS the spec's `cell = setFieldCellMap …` clause.
-  cellMapMove         := hspec.2.1
-  guard               := hspec.1
-  logAdv              := hspec.2.2.1
-  frAccounts          := hspec.2.2.2.1
-  frCaps              := hspec.2.2.2.2.1
-  frNullifiers        := hspec.2.2.2.2.2.1
-  frRevoked           := hspec.2.2.2.2.2.2.1
-  frCommitments       := hspec.2.2.2.2.2.2.2.1
-  frBal               := hspec.2.2.2.2.2.2.2.2.1
-  frSlotCaveats       := hspec.2.2.2.2.2.2.2.2.2.1
-  frFactories         := hspec.2.2.2.2.2.2.2.2.2.2.1
-  frLifecycle         := hspec.2.2.2.2.2.2.2.2.2.2.2.1
-  frDeathCert         := hspec.2.2.2.2.2.2.2.2.2.2.2.2.1
-  frDelegate          := hspec.2.2.2.2.2.2.2.2.2.2.2.2.2.1
-  frDelegations       := hspec.2.2.2.2.2.2.2.2.2.2.2.2.2.2.1
-  frDelegationEpoch   := hspec.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2.1
-  frDelegationEpochAt := hspec.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2.1
-  frHeaps             := hspec.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2
+  -- §RESERVED-SLOT: `SetFieldSpec` now leads with `reservedField f = false` (`hspec.1`), so the
+  -- guard is `hspec.2.1` and every component below gains one `.2` (the whole-`cell`-map move IS the
+  -- spec's `cell = setFieldCellMap …` clause).
+  cellMapMove         := hspec.2.2.1
+  guard               := hspec.2.1
+  logAdv              := hspec.2.2.2.1
+  frAccounts          := hspec.2.2.2.2.1
+  frCaps              := hspec.2.2.2.2.2.1
+  frNullifiers        := hspec.2.2.2.2.2.2.1
+  frRevoked           := hspec.2.2.2.2.2.2.2.1
+  frCommitments       := hspec.2.2.2.2.2.2.2.2.1
+  frBal               := hspec.2.2.2.2.2.2.2.2.2.1
+  frSlotCaveats       := hspec.2.2.2.2.2.2.2.2.2.2.1
+  frFactories         := hspec.2.2.2.2.2.2.2.2.2.2.2.1
+  frLifecycle         := hspec.2.2.2.2.2.2.2.2.2.2.2.2.1
+  frDeathCert         := hspec.2.2.2.2.2.2.2.2.2.2.2.2.2.1
+  frDelegate          := hspec.2.2.2.2.2.2.2.2.2.2.2.2.2.2.1
+  frDelegations       := hspec.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2.1
+  frDelegationEpoch   := hspec.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2.1
+  frDelegationEpochAt := hspec.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2.1
+  frHeaps             := hspec.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2
 
 /-- **`setFieldDyn_descriptorComplete_genuine` — the constructed decode realizes the GENUINE dynamic
 write.** From `SetFieldSpec`, the written slot `f` of `cell` reads back exactly `v`
@@ -502,7 +504,7 @@ theorem setFieldDyn_descriptorComplete_genuine
     (pre post : RecChainedState) (actor cell : CellId) (f : FieldName) (v : Int)
     (hspec : SetFieldSpec pre actor cell f v post) :
     fieldOf f (post.kernel.cell cell) = v := by
-  rw [hspec.2.1]
+  rw [hspec.2.2.1]
   exact (writeFieldCellMap_correct pre.kernel.cell cell f v).1
 
 /-- **`setFieldDyn_descriptorComplete` — the setFieldDyn completeness rung (dual of

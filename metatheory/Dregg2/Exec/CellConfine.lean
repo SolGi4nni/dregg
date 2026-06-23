@@ -22,7 +22,7 @@ open Dregg2.Boundary
 open Dregg2.Exec.TurnExecutorFull
 open Dregg2.Exec.FullForest
 open Dregg2.Authority
-open Dregg2.Exec.EffectsState (state_caps_unchanged stateAuthB stateStepGuarded_eq stateStep_factors)
+open Dregg2.Exec.EffectsState (state_caps_unchanged stateAuthB stateStepGuarded_eq stateStep_factors stateStepDev_eq incrementNonceStep_eq)
 
 /-! ## Step 1 — `CapsConfined`: the seL4 `PasRefined` upper-bound shape, as a flat ceiling. -/
 
@@ -236,7 +236,7 @@ theorem execFullA_confine {U : List Auth} (hctrl : Auth.control ∈ U)
   | setFieldA actor cell f v =>
       -- §SLOT-CAVEAT: peel the caveat gate (`stateStepGuarded_eq`); the field write never edits `caps`.
       exact CapsConfined.of_caps_eq
-        (state_caps_unchanged (stateStepGuarded_eq (by simpa only [execFullA] using h))) hpre
+        (state_caps_unchanged (stateStepGuarded_eq (stateStepDev_eq (by simpa only [execFullA] using h)))) hpre
   | emitEventA actor cell topic data =>
       refine CapsConfined.of_caps_eq ?_ hpre
       simp only [execFullA] at h
@@ -248,7 +248,7 @@ theorem execFullA_confine {U : List Auth} (hctrl : Auth.control ∈ U)
       · rw [if_neg hlive] at h
         exact absurd h (by simp)
   | incrementNonceA actor cell n =>
-      exact CapsConfined.of_caps_eq (state_caps_unchanged (by simpa only [execFullA] using h)) hpre
+      exact CapsConfined.of_caps_eq (state_caps_unchanged (incrementNonceStep_eq (by simpa only [execFullA] using h))) hpre
   | setPermissionsA actor cell p =>
       exact CapsConfined.of_caps_eq (state_caps_unchanged (by simpa only [execFullA] using h)) hpre
   | setVKA actor cell vk =>

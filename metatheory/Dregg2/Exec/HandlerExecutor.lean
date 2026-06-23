@@ -568,6 +568,7 @@ commits a nonce write, `execFullA` ALSO commits it AND produces the SAME kernel.
 gate (`stateAuthB`) and the SAME `writeField nonceField` post-state make the kernels coincide. -/
 theorem handler_refines_execFullA_stateWrite (s s' : RecChainedState) (actor cell : CellId) (n : Int)
     (hmem : cell ∈ s.kernel.accounts)
+    (hmono : Dregg2.Exec.EffectsState.fieldOf "nonce" (s.kernel.cell cell) < n)
     (h : execHandlerOne (.incrementNonceA actor cell n) s = some s') :
     ∃ s'', execFullA s (.incrementNonceA actor cell n) = some s'' ∧ s''.kernel = s'.kernel := by
   have hstep := execHandlerOne_kernel (.incrementNonceA actor cell n) s s' h
@@ -582,19 +583,24 @@ theorem handler_refines_execFullA_stateWrite (s s' : RecChainedState) (actor cel
   · rw [if_pos hg] at hstep
     simp only [Bool.and_eq_true] at hg
     simp only [Option.some.injEq] at hstep
-    -- `execFullA`'s nonce arm = `stateStep s nonceField actor cell (.int n)`; it commits on the SAME
-    -- authority gate + membership (the honest-path `hmem`), producing the SAME `writeField` post-state.
+    -- §MONOTONE-NONCE: `execFullA`'s nonce arm = `incrementNonceStep s actor cell n` — the monotone
+    -- gate over `stateStep s nonceField actor cell (.int n)`. On the honest path (`hmono`, the verified
+    -- executor only commits a STRICTLY-advancing nonce) it commits on the SAME authority gate +
+    -- membership (`hmem`), producing the SAME `writeField` post-state.
     refine ⟨{ kernel := Dregg2.Exec.EffectsState.writeField s.kernel nonceField cell (.int n),
               log := { actor := actor, src := cell, dst := cell, amt := 0 } :: s.log }, ?_, ?_⟩
-    · show Dregg2.Exec.EffectsState.stateStep s nonceField actor cell (.int n) = _
+    · show Dregg2.Exec.EffectsState.incrementNonceStep s actor cell n = _
+      unfold Dregg2.Exec.EffectsState.incrementNonceStep
+      -- the monotone gate is discharged by `hmono` (`nonceField = "nonce"` definitionally).
+      rw [if_pos hmono]
       unfold Dregg2.Exec.EffectsState.stateStep Dregg2.Exec.EffectsState.stateAuthB
-      -- R6 NOW RECONCILED: `execFullA`'s bare `stateStep` ALSO consults lifecycle liveness
-      -- (`cellLive`, the R6 fix). `cellLive s.kernel cell` is DEFINITIONALLY `acceptsEffects s.kernel
-      -- cell` (both = `lifecycle cell == 0`), so the handler's liveness conjunct (`hg.1`) discharges
-      -- the executor's liveness conjunct directly — not just the membership leg.
+      -- R6 NOW RECONCILED: the bare `stateStep` ALSO consults lifecycle liveness (`cellLive`, the R6
+      -- fix). `cellLive s.kernel cell` is DEFINITIONALLY `acceptsEffects s.kernel cell` (both =
+      -- `lifecycle cell == 0`), so the handler's liveness conjunct (`hg.1`) discharges the executor's.
       have hlive : Dregg2.Exec.EffectsState.cellLive s.kernel cell = true := hg.1
-      -- `nonceField` is the SAME field name in both layers (`rfl`).
       rw [if_pos ⟨hg.2, hmem, hlive⟩]
+      -- `nonceField` is DEFINITIONALLY `"nonce"`, so the two `writeField` post-states coincide.
+      rfl
     · -- kernels agree: both are the `writeField` post-state at the nonce field.
       rw [← hstep]
   · rw [if_neg hg] at hstep; exact absurd hstep (by simp)
@@ -603,9 +609,10 @@ theorem handler_refines_execFullA_stateWrite (s s' : RecChainedState) (actor cel
 through `incrementNonceEffect` = `stateWriteEffect` at `nonceField`. -/
 theorem handler_refines_execFullA_incrementNonce (s s' : RecChainedState) (actor cell : CellId) (n : Int)
     (hmem : cell ∈ s.kernel.accounts)
+    (hmono : Dregg2.Exec.EffectsState.fieldOf "nonce" (s.kernel.cell cell) < n)
     (h : execHandlerOne (.incrementNonceA actor cell n) s = some s') :
     ∃ s'', execFullA s (.incrementNonceA actor cell n) = some s'' ∧ s''.kernel = s'.kernel :=
-  handler_refines_execFullA_stateWrite s s' actor cell n hmem h
+  handler_refines_execFullA_stateWrite s s' actor cell n hmem hmono h
 
 theorem handler_refines_execFullA_setPermissions (s s' : RecChainedState) (actor cell : CellId) (p : Int)
     (hmem : cell ∈ s.kernel.accounts)
@@ -789,6 +796,7 @@ theorem handler_refines_execFullA_receiptArchive (s s' : RecChainedState) (actor
 
 theorem handler_refines_execFullA_setField (s s' : RecChainedState) (actor cell : CellId)
     (f : FieldName) (v : Int) (hmem : cell ∈ s.kernel.accounts)
+    (hnr : Dregg2.Exec.EffectsState.reservedField f = false)
     (hcav : caveatsAdmit s.kernel f actor cell v = true)
     (h : execHandlerOne (.setFieldA actor cell f v) s = some s') :
     ∃ s'', execFullA s (.setFieldA actor cell f v) = some s'' ∧ s''.kernel = s'.kernel := by
@@ -805,7 +813,11 @@ theorem handler_refines_execFullA_setField (s s' : RecChainedState) (actor cell 
     have hlive : cellLive s.kernel cell = true := hg.1
     refine ⟨{ kernel := writeField s.kernel f cell (.int v),
               log := { actor := actor, src := cell, dst := cell, amt := 0 } :: s.log }, ?_, ?_⟩
-    · show Dregg2.Exec.EffectsState.stateStepGuarded s f actor cell v = _
+    -- §RESERVED-SLOT: `execFullA`'s setField arm = `stateStepDev` (reserved gate over `stateStepGuarded`).
+    -- On the honest path the written slot is a DEVELOPER field (`hnr`), so the reserved gate passes.
+    · show Dregg2.Exec.EffectsState.stateStepDev s f actor cell v = _
+      unfold Dregg2.Exec.EffectsState.stateStepDev
+      rw [if_neg (by rw [hnr]; simp)]
       unfold Dregg2.Exec.EffectsState.stateStepGuarded
       rw [if_pos hcav]
       unfold Dregg2.Exec.EffectsState.stateStep Dregg2.Exec.EffectsState.stateAuthB

@@ -161,7 +161,7 @@ theorem execFullA_commitments_grow (s s' : RecChainedState) (fa : FullActionA)
       | some k' => commit_subst h hk; exact subset_of_commitments_eq (recKBurnAsset_commitments hk)
   | setFieldA actor cell f v =>
       -- §SLOT-CAVEAT: `setFieldA` runs the caveat-gated write; peel it to the `stateStep` post-state.
-      simp only [execFullA] at h; obtain ⟨_, hs'⟩ := stateStep_factors (stateStepGuarded_eq h); subst hs'
+      simp only [execFullA] at h; obtain ⟨_, hs'⟩ := stateStep_factors (stateStepGuarded_eq (stateStepDev_eq h)); subst hs'
       exact subset_of_commitments_eq (writeField_commitments _ _ _ _)
   | emitEventA actor cell topic data =>
       -- §EMIT-LIVE: `emitStep` is now live-cell guarded — peel the `cell ∈ accounts` gate, then the
@@ -173,7 +173,7 @@ theorem execFullA_commitments_grow (s s' : RecChainedState) (fa : FullActionA)
         exact List.Subset.refl _
       · rw [if_neg hlive] at h; exact absurd h (by simp)
   | incrementNonceA actor cell n =>
-      simp only [execFullA] at h; obtain ⟨_, hs'⟩ := stateStep_factors h; subst hs'
+      simp only [execFullA] at h; obtain ⟨_, hs'⟩ := stateStep_factors (incrementNonceStep_eq h); subst hs'
       exact subset_of_commitments_eq (writeField_commitments _ _ _ _)
   | setPermissionsA actor cell p =>
       simp only [execFullA] at h; obtain ⟨_, hs'⟩ := stateStep_factors h; subst hs'

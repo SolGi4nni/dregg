@@ -407,7 +407,7 @@ theorem unify_setField_exec (s s' : RecChainedState) (actor cell : CellId) (slot
     -- the spec writes the target cell to `setField (slotName slot) (pre cell) (.int v)`; that slot
     -- is ≠ balanceField, so the conserved balance is frozen (`setField_balOf`).
     have htgt : s'.kernel.cell cell = setField (slotName slot) (s.kernel.cell cell) (.int v) := by
-      rw [hspec.2.1]; simp only [setFieldCellMap, if_pos]
+      rw [hspec.2.2.1]; simp only [setFieldCellMap, if_pos]
     rw [htgt]
     exact setField_balOf (slotName slot) (s.kernel.cell cell) (.int v) (slotName_ne_balance slot)
 
@@ -419,7 +419,7 @@ TRANSITION (the moved field + frozen frame), while the guard is the record-layer
 theorem setField_guard_is_offrow (s s' : RecChainedState) (actor cell : CellId) (f : FieldName)
     (v : Int) (h : execFullA s (.setFieldA actor cell f v) = some s') :
     SetFieldGuard s actor cell f v :=
-  ((execFullA_setFieldA_iff_spec s actor cell f v s').mp h).1
+  ((execFullA_setFieldA_iff_spec s actor cell f v s').mp h).2.1
 
 /-- **`setField_log_is_offrow` — the named LOG boundary.** A committed `setFieldA` prepends one
 self-targeted receipt row to the chain log. The receipt LOG is off the per-row 13-column state block
@@ -428,7 +428,7 @@ deployed EffectVM row carries). Cited, not papered. -/
 theorem setField_log_is_offrow (s s' : RecChainedState) (actor cell : CellId) (f : FieldName)
     (v : Int) (h : execFullA s (.setFieldA actor cell f v) = some s') :
     s'.log = { actor := actor, src := cell, dst := cell, amt := 0 } :: s.log :=
-  ((execFullA_setFieldA_iff_spec s actor cell f v s').mp h).2.2.1
+  ((execFullA_setFieldA_iff_spec s actor cell f v s').mp h).2.2.2.1
 
 /-- **`setFieldDescriptor_classA` — the per-cell class-A capstone (the transfer bar, per cell).**
 Satisfying the runnable descriptor under `RowEncodesSF`, for the written slot of a committed

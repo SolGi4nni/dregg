@@ -28,7 +28,7 @@ open Dregg2.Exec
 open Dregg2.Exec.TurnExecutorFull
 open Dregg2.Exec.FullForest
 open Dregg2.Exec.EffectsState (stateStepGuarded caveatsAdmit fieldOf
-  stateStepGuarded_caveat_violation_fails)
+  stateStepGuarded_caveat_violation_fails stateStepDev_caveat_violation_fails)
 
 /-! ## §1 — The ballot DOMAIN (cell, per-voter nullifier slots, WriteOnce caveats). -/
 
@@ -51,7 +51,9 @@ def castVote (voterSlot : FieldName) (mark : Int) : FullForestA :=
 theorem pv_no_double_vote (s : RecChainedState) (voterSlot : FieldName) (mark : Int)
     (hvoted : caveatsAdmit s.kernel voterSlot ballotActor ballotCell mark = false) :
     execFullForestA s (castVote voterSlot mark) = none := by
-  have hnone := stateStepGuarded_caveat_violation_fails s voterSlot ballotActor ballotCell mark hvoted
+  -- §RESERVED-SLOT: `setFieldA` now routes through `stateStepDev`; a caveat violation still fails it
+  -- closed (the reserved gate only tightens further) — `stateStepDev_caveat_violation_fails`.
+  have hnone := stateStepDev_caveat_violation_fails s voterSlot ballotActor ballotCell mark hvoted
   rw [execFullForestA_eq_execFullTurnA]
   simp only [castVote, lowerForestA, lowerChildrenA, execFullTurnA, execFullA, hnone]
 

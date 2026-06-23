@@ -403,28 +403,30 @@ def setField_rotatedEncodesSF_construct (slot : Fin 8) (hash : List ℤ → ℤ)
   hwiRow := prover.hwiRow
   hwiEnc := prover.hwiEnc
   hwval := prover.hwval
-  -- the whole-map move IS the spec's `cell = setFieldCellMap …` clause.
-  hcellMove := hspec.2.1
+  -- §RESERVED-SLOT: `SetFieldSpec` now leads with `reservedField = false` (`hspec.1`), so the guard
+  -- is `hspec.2.1` and every component below gains one `.2` (the whole-map move IS the spec's `cell =
+  -- setFieldCellMap …` clause).
+  hcellMove := hspec.2.2.1
   -- the receipt log advance IS the spec's `log` clause.
-  logAdv := hspec.2.2.1
-  -- the 4-leg admissibility guard IS the spec's `SetFieldGuard` (`hspec.1`).
-  guard := hspec.1
+  logAdv := hspec.2.2.2.1
+  -- the 4-leg admissibility guard IS the spec's `SetFieldGuard` (`hspec.2.1`).
+  guard := hspec.2.1
   -- the 16 frame fields come from the spec's frame clauses.
-  frAccounts          := hspec.2.2.2.1
-  frCaps              := hspec.2.2.2.2.1
-  frNullifiers        := hspec.2.2.2.2.2.1
-  frRevoked           := hspec.2.2.2.2.2.2.1
-  frCommitments       := hspec.2.2.2.2.2.2.2.1
-  frBal               := hspec.2.2.2.2.2.2.2.2.1
-  frSlotCaveats       := hspec.2.2.2.2.2.2.2.2.2.1
-  frFactories         := hspec.2.2.2.2.2.2.2.2.2.2.1
-  frLifecycle         := hspec.2.2.2.2.2.2.2.2.2.2.2.1
-  frDeathCert         := hspec.2.2.2.2.2.2.2.2.2.2.2.2.1
-  frDelegate          := hspec.2.2.2.2.2.2.2.2.2.2.2.2.2.1
-  frDelegations       := hspec.2.2.2.2.2.2.2.2.2.2.2.2.2.2.1
-  frDelegationEpoch   := hspec.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2.1
-  frDelegationEpochAt := hspec.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2.1
-  frHeaps             := hspec.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2
+  frAccounts          := hspec.2.2.2.2.1
+  frCaps              := hspec.2.2.2.2.2.1
+  frNullifiers        := hspec.2.2.2.2.2.2.1
+  frRevoked           := hspec.2.2.2.2.2.2.2.1
+  frCommitments       := hspec.2.2.2.2.2.2.2.2.1
+  frBal               := hspec.2.2.2.2.2.2.2.2.2.1
+  frSlotCaveats       := hspec.2.2.2.2.2.2.2.2.2.2.1
+  frFactories         := hspec.2.2.2.2.2.2.2.2.2.2.2.1
+  frLifecycle         := hspec.2.2.2.2.2.2.2.2.2.2.2.2.1
+  frDeathCert         := hspec.2.2.2.2.2.2.2.2.2.2.2.2.2.1
+  frDelegate          := hspec.2.2.2.2.2.2.2.2.2.2.2.2.2.2.1
+  frDelegations       := hspec.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2.1
+  frDelegationEpoch   := hspec.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2.1
+  frDelegationEpochAt := hspec.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2.1
+  frHeaps             := hspec.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2
 
 /-- **`setField_descriptorComplete_genuine` — the constructed decode realizes the GENUINE write.** From
 `SetFieldSpec`, the written slot `slotName slot` of `cell` reads back exactly `v`
@@ -434,7 +436,7 @@ theorem setField_descriptorComplete_genuine (slot : Fin 8)
     (pre post : RecChainedState) (actor cell : CellId) (v : Int)
     (hspec : SetFieldSpec pre actor cell (slotName slot) v post) :
     Dregg2.Exec.EffectsState.fieldOf (slotName slot) (post.kernel.cell cell) = v := by
-  rw [hspec.2.1]
+  rw [hspec.2.2.1]
   exact (writeFieldCellMap_correct pre.kernel.cell cell (slotName slot) v).1
 
 /-- **`setField_descriptorComplete` — the setField completeness rung (dual of

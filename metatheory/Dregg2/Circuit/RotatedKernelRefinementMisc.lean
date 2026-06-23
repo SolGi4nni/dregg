@@ -293,20 +293,24 @@ The kernel leaf is the EXISTING `SetFieldSpec` — `setFieldDyn` is the dynamic-
 same `setFieldA` effect. -/
 theorem setFieldDyn_descriptorRefines (compressN : List FieldElem → FieldElem)
     (pre post : RecChainedState) (actor cell : CellId) (f : FieldName) (v : Int)
+    (hnr : Dregg2.Exec.EffectsState.reservedField f = false)
     (henc : setFieldDynEncodes compressN pre post actor cell f v) :
     SetFieldSpec pre actor cell f v post :=
-  ⟨henc.guard, henc.cellMapMove, henc.logAdv, henc.frAccounts, henc.frCaps,
+  ⟨hnr, henc.guard, henc.cellMapMove, henc.logAdv, henc.frAccounts, henc.frCaps,
     henc.frNullifiers, henc.frRevoked, henc.frCommitments, henc.frBal, henc.frSlotCaveats,
     henc.frFactories, henc.frLifecycle, henc.frDeathCert, henc.frDelegate, henc.frDelegations,
     henc.frDelegationEpoch, henc.frDelegationEpochAt, henc.frHeaps⟩
 
-/-- The refinement against `execFullA` directly (via `execFullA_setFieldA_iff_spec`). -/
+/-- The refinement against `execFullA` directly (via `execFullA_setFieldA_iff_spec`). The dynamic
+SetField is the developer write — its `reservedField f = false` precondition (`hnr`) is the
+developer-path leg the executor enforces (`stateStepDev`). -/
 theorem setFieldDyn_descriptorRefines_execFullA (compressN : List FieldElem → FieldElem)
     (pre post : RecChainedState) (actor cell : CellId) (f : FieldName) (v : Int)
+    (hnr : Dregg2.Exec.EffectsState.reservedField f = false)
     (henc : setFieldDynEncodes compressN pre post actor cell f v) :
     execFullA pre (.setFieldA actor cell f v) = some post :=
   (Dregg2.Circuit.Spec.CellStateField.execFullA_setFieldA_iff_spec pre actor cell f v post).mpr
-    (setFieldDyn_descriptorRefines compressN pre post actor cell f v henc)
+    (setFieldDyn_descriptorRefines compressN pre post actor cell f v hnr henc)
 
 /-- **TOOTH — `setFieldDyn_descriptorRefines_rejects_wrong_value`.** A decode asserting a post whose
 `cell.f` slot is NOT `v` cannot ride a satisfying FIX witness (the dyn-field slot-root gate pins it —
@@ -595,9 +599,10 @@ theorem setFieldDyn_descriptorRefines_sat (hash : List ℤ → ℤ)
     {permOut : List ℤ → List ℤ} (hside : RotTableSide permOut hash t)
     (hsat : Satisfied2 hash setFieldDynForcedV3 minit mfin maddrs t)
     (pre post : RecChainedState) (actor cell : CellId) (f : FieldName) (v : Int)
+    (hnr : Dregg2.Exec.EffectsState.reservedField f = false)
     (rd : SetFieldDynTraceReadout hash minit mfin maddrs t pre post actor cell f v) :
     SetFieldSpec pre actor cell f v post :=
-  ⟨rd.guard, rd.cellMapMove, rd.logAdv, rd.frAccounts, rd.frCaps,
+  ⟨hnr, rd.guard, rd.cellMapMove, rd.logAdv, rd.frAccounts, rd.frCaps,
    rd.frNullifiers, rd.frRevoked, rd.frCommitments, rd.frBal, rd.frSlotCaveats,
    rd.frFactories, rd.frLifecycle, rd.frDeathCert, rd.frDelegate, rd.frDelegations,
    rd.frDelegationEpoch, rd.frDelegationEpochAt, rd.frHeaps⟩

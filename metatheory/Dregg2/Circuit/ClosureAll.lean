@@ -667,6 +667,7 @@ theorem setFieldDyn_closedLog
     (compressN2 : List Dregg2.Circuit.RotatedKernelRefinementMisc.FieldElem
       → Dregg2.Circuit.RotatedKernelRefinementMisc.FieldElem)
     (pre post : RecChainedState) (actor cell : CellId) (f : FieldName) (v : Int)
+    (hnr : Dregg2.Exec.EffectsState.reservedField f = false)
     (pc : PublishedCommit) (pubLogPre pubLogPost : ℤ)
     (hdec : StateDecodeLog Slive LH pc pubLogPre pubLogPost pre post)
     (hpub : pubLogPost
@@ -680,8 +681,10 @@ theorem setFieldDyn_closedLog
     (fun hadv => by
       show fullActionStep pre (.setFieldA actor cell f v) post
       simp only [fullActionStep]
+      -- §RESERVED-SLOT: the dynamic developer SetField carries `hnr` (non-reserved slot — the
+      -- developer-path precondition the executor enforces via `stateStepDev`).
       exact Dregg2.Circuit.RotatedKernelRefinementMisc.setFieldDyn_descriptorRefines
-        compressN2 pre post actor cell f v (logNeeds hadv))
+        compressN2 pre post actor cell f v hnr (logNeeds hadv))
 
 /-- pipelinedSend (tag 47). Receipt is `pipelinedSendReceipt actor`. -/
 theorem pipelinedSend_closedLog

@@ -222,22 +222,29 @@ chained executor the standalone descriptor speaks about, with the receipt-log pr
 one place the chained runtime does more than the bare-kernel Argus term (the carried divergence). -/
 theorem interp_incrementNonceStmt_chained
     (st : RecChainedState) (actor cell : CellId) (n : Int) (k' : RecordKernelState)
+    (hmono : Dregg2.Exec.EffectsState.fieldOf "nonce" (st.kernel.cell cell) < n)
     (hexec : interp (incrementNonceStmt actor cell n) st.kernel = some k') :
     execFullA st (.incrementNonceA actor cell n)
       = some { kernel := k', log := { actor := actor, src := cell, dst := cell, amt := 0 } :: st.log } := by
   -- the §2 cornerstone turns the IR term into the kernel step `incNonceKernel`.
   rw [interp_incrementNonceStmt_eq_incNonceKernel] at hexec
-  -- `execFullA st (.incrementNonceA …)` reduces to `stateStep st nonceField actor cell (.int n)`; unfold
-  -- both and split on the SAME 3-conjunct guard. On admit, `incNonceKernel` named the kernel post as
+  -- §MONOTONE-NONCE: `execFullA st (.incrementNonceA …)` reduces to `incrementNonceStep st actor cell n`
+  -- — the monotone gate over `stateStep st "nonce" actor cell (.int n)`. On the honest path (`hmono`,
+  -- the verified executor only commits a STRICTLY-advancing nonce) it reduces to the bare `stateStep`,
+  -- then splits on the SAME 3-conjunct guard. On admit, `incNonceKernel` named the kernel post as
   -- `some k'`, and the chained post adds exactly the receipt row; on reject both are `none`.
-  show stateStep st nonceField actor cell (.int n)
+  show Dregg2.Exec.EffectsState.incrementNonceStep st actor cell n
         = some { kernel := k', log := { actor := actor, src := cell, dst := cell, amt := 0 } :: st.log }
+  unfold Dregg2.Exec.EffectsState.incrementNonceStep
+  rw [if_pos hmono]
   unfold stateStep incNonceKernel at *
   by_cases hg : stateAuthB st.kernel.caps actor cell = true ∧ cell ∈ st.kernel.accounts
       ∧ cellLive st.kernel cell = true
   · rw [if_pos hg] at hexec ⊢
     simp only [Option.some.injEq] at hexec
     rw [← hexec]
+    -- `nonceField` is DEFINITIONALLY `"nonce"`, so the two `writeField` post-states coincide.
+    rfl
   · rw [if_neg hg] at hexec
     exact absurd hexec (by simp)
 
@@ -317,10 +324,14 @@ theorem incrementNonce_compile_sound
       ({ actor := actor, cell := cell, n := n } : IncrementNonceArgs) s' hwf hwf' hcirc
   -- executor side: the §3 chained lift gives `execFullA s (.incrementNonceA …) = some ⟨k', row :: log⟩`,
   -- and the independent executor⟺spec corner turns THAT into `IncrementNonceSpec s actor cell n ⟨k', …⟩`.
+  -- §MONOTONE-NONCE: the circuit's `IncrementNonceSpec` ALREADY establishes the monotone gate
+  -- (`incNonceGuard`'s first leg: the new nonce strictly exceeds the stored one), so the §3 lift's
+  -- monotone precondition is DISCHARGED by the circuit side — no extra hypothesis needed.
+  have hmono : Dregg2.Exec.EffectsState.fieldOf "nonce" (s.kernel.cell cell) < n := hspec.1.1
   have hspec' : IncrementNonceSpec s actor cell n
       { kernel := k', log := { actor := actor, src := cell, dst := cell, amt := 0 } :: s.log } :=
     (execFullA_incrementNonce_iff_spec s actor cell n _).mp
-      (interp_incrementNonceStmt_chained s actor cell n k' hexec)
+      (interp_incrementNonceStmt_chained s actor cell n k' hmono hexec)
   -- both states satisfy the SAME spec ⇒ they are the same state (the spec pins every kernel field + log).
   exact incrementNonceSpec_unique hspec hspec'
 
