@@ -62,9 +62,15 @@
 pub mod acp;
 pub mod acp_client;
 pub mod bridge;
+#[cfg(feature = "cockpit-surface")]
+pub mod cockpit_surface;
+#[cfg(unix)]
+pub mod confined;
 pub mod grant_registry;
 pub mod mandate;
 pub mod mock_peer;
+#[cfg(feature = "screenshot")]
+pub mod screenshot;
 pub mod surface;
 pub mod tool_effects;
 

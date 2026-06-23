@@ -45,6 +45,12 @@ impl ScriptedCall {
         }
     }
 
+    /// The ACP kind string Hermes's `tools.py::get_tool_kind` would assign
+    /// (public so the confined stand-in agent can emit the same wire shape).
+    pub fn acp_kind_str(&self) -> &'static str {
+        self.acp_kind()
+    }
+
     /// The ACP kind string Hermes's `tools.py::get_tool_kind` would assign.
     fn acp_kind(&self) -> &'static str {
         match crate::acp::ToolKind::of_tool(&self.name) {

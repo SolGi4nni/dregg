@@ -16,8 +16,11 @@
 #   cd deos-hermes && cargo build
 #   cd deos-hermes && cargo test
 #
-# The `rust-toolchain.toml` here pins the SAME dated nightly the repo root
-# pins, because `dregg-sdk` (and its deep dep tree) compiles under it.
+# The `rust-toolchain.toml` here pins the ROLLING `nightly` channel (same as
+# starbridge-v2 / deos-zed): the optional `cockpit-surface` feature links gpui at
+# the pinned zed rev, which needs `cold_path` (stabilized after the repo root's
+# `nightly-2026-01-01`). The verified Lean executor `dregg-sdk` drags compiles
+# fine under rolling nightly too (starbridge-v2 embeds the SAME executor there).
 
 [workspace]
 resolver = "3"
@@ -34,6 +37,18 @@ members = ["."]
 # fork the root patches in (root Cargo.toml §patch).
 ark-serialize = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
 ark-serialize-derive = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
+
+# THE GPUI FORK OVERRIDES (load-bearing only for the `cockpit-surface` /
+# `screenshot` features). The gpui dep tree carries `[patch.crates-io]` overrides
+# its host workspace must replicate (see starbridge-v2 / deos-zed): the vendored
+# pathfinder_simd 0.5.6 (current nightlies removed the portable-SIMD intrinsics;
+# the vendored build.rs selects the scalar path) and the two zed-forked async-*
+# crates gpui depends on. Replicated verbatim so the gpui graph resolves
+# identically; no effect when the gpui features are off (those crates are simply
+# absent from the graph then).
+async-process = { git = "https://github.com/zed-industries/async-process.git", rev = "0b6d6713570af61806e1e5cb40e0f757cb93fd9d" }
+async-task = { git = "https://github.com/smol-rs/async-task.git", rev = "b4486cd71e4e94fbda54ce6302444de14f4d190e" }
+pathfinder_simd = { path = "../starbridge-v2/vendor/pathfinder_simd" }
 
 # `dregg-circuit` (transitive via dregg-turn/dregg-sdk's default `prover`)
 # references recursion-fork-only items the PINNED git rev does not carry; point
@@ -68,5 +83,62 @@ dregg-sdk = { path = "../sdk" }
 dregg-turn = { path = "../turn" }
 dregg-cell = { path = "../cell" }
 
+# THE SANDBOXED-FIRMAMENT HOST-PD (the ambient-authority confinement face). A
+# confined Hermes runs INSIDE a forked, OS-sandboxed host-PD whose ONLY channel
+# is its firmament Endpoint: `spawn_pd_confined` (macOS Seatbelt / Linux
+# ns+seccomp+landlock) drops every ambient OS authority (no `open`, no `socket`,
+# no `execve`, no inherited fd) before the agent body runs. We pull the sandbox
+# wire features so `crate::confined` can launch the agent into a PD. dregg-firmament
+# is its OWN workspace; cargo resolves it (and its proof dep-tree) under THIS
+# workspace's `[patch]` tables, so the ark-serialize + plonky3-recursion forks
+# above apply to it identically to the rest of the graph. The sandbox path is
+# Unix-only; on a non-Unix host it cfg-compiles to a stub.
+dregg-firmament = { path = "../sel4/dregg-firmament", features = [
+    "process-pd",
+    "process-pd-sandbox",
+] }
+
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+
+# ── the agent dock cockpit surface (gpui), gated behind `cockpit-surface` ──
+# Same gpui fork rev as starbridge-v2 / deos-zed / gpui-component so the WHOLE
+# graph resolves to ONE gpui — the `Entity`/`Window` types are byte-identical to
+# the cockpit's, so the delivered `impl CockpitSurface` drops into starbridge-v2's
+# dock with no second gpui linkage. OFF by default (the SDK-only build stays
+# gpui-free; the heavy tree is only pulled with `--features cockpit-surface`).
+gpui = { git = "https://github.com/emberian/zed", rev = "407a6ffd977d82b828e392f92db5cb34edea9549", optional = true }
+gpui_platform = { git = "https://github.com/emberian/zed", rev = "407a6ffd977d82b828e392f92db5cb34edea9549", features = ["font-kit", "x11", "wayland", "runtime_shaders"], optional = true }
+gpui-component = { path = "../../gpui-component/crates/ui", default-features = false, optional = true }
+gpui-component-assets = { path = "../../gpui-component/crates/assets", optional = true }
+# Offscreen-capture deps (the `screenshot` feature). `image 0.25` matches
+# gpui_wgpu's `image` (one resolved version, same as starbridge-v2 / deos-zed).
+image = { version = "0.25", default-features = false, features = ["png"], optional = true }
+gpui_wgpu = { git = "https://github.com/emberian/zed", rev = "407a6ffd977d82b828e392f92db5cb34edea9549", optional = true }
+
+[features]
+default = []
+# THE AGENT DOCK COCKPIT SURFACE — the gpui `CockpitSurface` that mounts the
+# confined Hermes agent into starbridge-v2's moldable-inspector dock: a chat
+# pane (streamed agent text), the tool-call ledger (each receipt / refusal), and
+# the embedded mandate inspector. OFF by default so the SDK-only `cargo build` /
+# `cargo test` stays gpui-free (mirrors deos-zed / deos-terminal).
+cockpit-surface = ["dep:gpui", "dep:gpui_platform", "dep:gpui-component", "dep:gpui-component-assets"]
+# OFFSCREEN SCREENSHOT capture for the dock surface — drive it to a painted frame
+# in a headless gpui app over the offscreen wgpu renderer + a no-system-fonts
+# text system, then write the RGBA out as a PNG (mirrors deos-zed's `screenshot`).
+# Implies `cockpit-surface`.
+screenshot = [
+    "cockpit-surface",
+    "dep:image",
+    "dep:gpui_wgpu",
+    "gpui_wgpu/test-support",
+    "gpui_platform/test-support",
+]
+
+# `libc` backs the confined-launch fd plumbing (the fcntl/open/socket/connect
+# sandbox probes the stand-in agent runs INSIDE the PD, and the Endpoint-fd
+# recovery). Already a transitive dep of the dregg + firmament crates (no new
+# lockfile surface). Unix-only; on a non-Unix host `crate::confined` is cfg'd out.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

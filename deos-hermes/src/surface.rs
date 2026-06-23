@@ -66,17 +66,24 @@
 //! }
 //! ```
 //!
-//! ## Launching Hermes INTO a sandbox host-PD (face 2)
+//! ## Launching Hermes INTO a sandbox host-PD (face 2) — NOW REAL
 //!
-//! Today [`crate::AcpTransport::spawn_hermes`] spawns a bare `Command`. The
-//! sandbox lift replaces that spawn with the firmament host-PD launcher: the
-//! child runs in a PD whose root is a `FirmamentFs` scoped to the session cwd and
-//! whose only net-cap is the one deos's `Fetch` mandate corresponds to. The ACP
-//! stdio pipes become the PD's two endpoints. The `AcpClient` driver is
-//! UNCHANGED — it still speaks ndjson over the pipes; the difference is purely
-//! WHERE the peer runs. (Concretely: a `spawn_hermes_in_pd(host_pd, cwd_cap,
-//! net_cap)` constructor alongside `spawn_hermes`, returning the same
-//! `AcpTransport`.)
+//! [`crate::AcpTransport::spawn_hermes`] spawns a bare `Command` (no ambient
+//! confinement). The sandbox lift is implemented in [`crate::confined`]:
+//! [`spawn_hermes_in_pd`](crate::confined::spawn_hermes_in_pd) forks an
+//! OS-sandboxed firmament host-PD (`spawn_pd_confined` — macOS Seatbelt / Linux
+//! ns+seccomp+landlock) and runs the agent inside it, reachable ONLY over its
+//! firmament Endpoint. The `AcpClient` driver is UNCHANGED: it speaks ndjson over
+//! [`PdAcpTransport`](crate::confined::PdAcpTransport) (the Endpoint) exactly as
+//! it does over the in-process mock; the difference is purely WHERE the peer
+//! runs, and that it now runs with NO ambient OS authority.
+//!
+//! HONEST SCOPE: the confined child has no exec authority (the sandbox's whole
+//! point), so the agent body is a Rust ACP STAND-IN (the live `hermes acp` venv
+//! is broken here anyway), not an `execve`'d external binary. The confinement and
+//! the ACP wire are real; what is stood-in is the agent's brain. The cwd-cap /
+//! net-cap of the seam map to a `Confinement::with_read_path` + a passed socket
+//! fd (the next slice past Endpoint-only). See [`crate::confined`].
 //!
 //! This module's [`AgentDockModel`] is the bridge between the running client and
 //! whatever renders it — usable from the gpui dock, a TUI, or a test.
