@@ -45,6 +45,18 @@ p3-circuit = { path = "../../../plonky3-recursion/circuit" }
 p3-circuit-prover = { path = "../../../plonky3-recursion/circuit-prover" }
 p3-poseidon2-circuit-air = { path = "../../../plonky3-recursion/poseidon2-circuit-air" }
 
+# THE FORK SEAM (cont.) — replicated from the breadstuffs-root `Cargo.toml`
+# `[patch.crates-io]`. Because this crate is its OWN workspace root, the root
+# patch does NOT apply here — so the transitive `dregg-hints` (via `dregg-turn`)
+# would resolve the upstream crates.io `ark-serialize 0.5`, which lacks the
+# `serde_with` feature `dregg-hints` requests. The root redirects `ark-serialize`
+# to the `emberian/algebra` fork (`serde-integration` branch) that ADDS that
+# feature; we replicate it so this workspace resolves identically. Keep in sync
+# with the root block.
+[patch.crates-io]
+ark-serialize = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
+ark-serialize-derive = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
+
 [package]
 name = "dregg-firmament"
 version = "0.1.0"

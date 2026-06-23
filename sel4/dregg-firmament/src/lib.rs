@@ -94,6 +94,18 @@ pub mod microkit_facade;
 pub mod router;
 pub mod surface;
 
+// The HOUYHNHNM RECOVERY MONITOR — an external, simple-but-complete watcher that
+// reads the LIVE ARTIFACT (a host-PD's Endpoint round-trip, never a self-reported
+// "OK"), detects claimed-vs-actual divergence (`RecoveryNotHolding` — the council's
+// exact signal), guards the restart loop with an attempt counter (escalates rather
+// than looping forever), and can stop/inspect/restart a wedged subsystem
+// fail-closed. Recursive: a monitor is itself a `Subsystem`, so monitors watch
+// monitors (`docs/deos/HOUYHNHNM-CONVERGENCE.md`, fare's Houyhnhnm ch3/ch6). It
+// depends only on the public host-PD/Endpoint probe surface; the mock-driven tests
+// run in the default feature set (no `process-pd`), and the real `HostPdSubsystem`
+// adapter (the genuine live-Endpoint probe) is gated on `process-pd`.
+pub mod recovery_monitor;
+
 // The COMPOSITOR-PD — the minimal framebuffer/input multiplexer on the
 // EmulatedKernel (`docs/DREGG-DESKTOP-OS.md §2 L5` + `§6 R3 Stage D`, native-now
 // on the semihost). It is the SOLE holder of the framebuffer region, models its
@@ -156,6 +168,12 @@ pub use executor_pd::{
     LABEL_TURN_REJECTED,
 };
 pub use local::LocalBacking;
+pub use recovery_monitor::{
+    ActualState, Claim, Divergence, Escalation, MonitorPolicy, MonitorSubsystem, RecoveryMonitor,
+    Subsystem, Verdict,
+};
+#[cfg(all(feature = "process-pd", unix))]
+pub use recovery_monitor::HostPdSubsystem;
 pub use microkit_facade::{
     Channel, ChannelSet, ChannelTable, ChannelWiring, EventLoop, Handler, MessageInfo, NullHandler,
     ProtectionDomain, Region,
