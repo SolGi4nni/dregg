@@ -86,12 +86,32 @@ CLOSED fronts (verified by the closing theorem's existence; entries removed):
 What genuinely remains in the circuit lane: -/
 
 def openFronts : List OpenFront := [
-  -- §5c TurnEmit: the adversarial-witness EXTRACTOR (no dead whole-trace `hEnc`) is generic
-  -- (`WitnessExtract.effect2_extract*`) but instantiated per-effect only for mint
-  -- (`mintA_extract` / `mintA_extract_emitted` / `mintA_extract_rejects_wrong_supply`, the
-  -- validated reference). Lifting the PI-bound extraction to every v2 effect arm is open.
-  ⟨"per_effect_adversarial_extractors", .w5_turn_admission, none,
-    "WitnessExtract effect2_extract instantiated for mintA only; lift to all v2 effects"⟩
+  -- The adversarial-witness EXTRACTOR (an ARBITRARY satisfying trace, pinned ONLY by the verifier's
+  -- public-input check on the gate-relevant digest wires + guard region — NO dead whole-trace `hEnc` —
+  -- forces the genuine kernel step; a forged/hostile witness is refuted). This is now instantiated
+  -- per-effect for the SINGLE-component (`WitnessExtract.effect2_extract` / v1
+  -- `WitnessExtractV1.effect_extract`) AND DUAL-component (`WitnessExtractDual.effect2dual_extract`)
+  -- frameworks — 28 effects total (was mint-only):
+  --   * v2 single (17): mint [ref], transfer, balanceA, burnA, attenuate, delegate, delegateAtten,
+  --     introduce, revoke, revokeDelegation, noteCreate, noteSpend, bridgeMint, cellSeal, cellUnseal,
+  --     refreshDelegation, receiptArchiveLifecycle   (`WitnessExtractPerEffect`)
+  --   * v1 single (9): setPermissions, setVK, setProgram, incrementNonce, emitEvent, makeSovereign,
+  --     refusal, receiptArchive, pipelinedSend   (`WitnessExtractV1PerEffect`)
+  --   * dual (2): cellDestroy, heapWrite   (`WitnessExtractDual`)
+  -- Each has `*_extract` (hostile-witness closure) + anti-ghost `*_extract_rejects_*` teeth (a forged
+  -- component / frame / log has NO satisfying PI-bound witness), all `#assert_axioms`-clean.
+  --
+  -- PRECISE REMAINING GAP: the four effects on the TRIPLE / QUINT / COMPOSITE frameworks (a larger
+  -- witness space — more active components or a nested inner fold). They still have only their honest-
+  -- witness `*_full_sound` (`satisfiedE2{Quint} … (encodeE2{Quint} …)` / the composite hold∘inner-fold),
+  -- NOT a PI-bound hostile extractor:
+  --   * createCellA, spawnA  — the TRIPLE-circuit framework (`EffectCommit3`).
+  --   * createCellFromFactoryA — the QUINT framework (`EffectCommit5`, `effect2quint_circuit_full_sound`).
+  --   * exerciseA — the COMPOSITE (v1 hold-gate ∘ inner-turn CIRCUIT fold; the inner fold's witness space
+  --     is recursive). The closure pattern is identical (locality of the EQ gates over the digest wires),
+  --     so the lift is `WitnessExtract{3,5,Composite}`-shaped tractable work, not a foundational gap.
+  ⟨"per_effect_adversarial_extractors_triple_quint_composite", .w5_turn_admission, none,
+    "effect_extract instantiated for all SINGLE + DUAL component effects (28); the triple (createCell/spawn), quint (createCellFromFactory) and composite (exercise) frameworks still have honest-witness *_full_sound only"⟩
 ]
 
 def countOpenFronts : Nat := openFronts.length
