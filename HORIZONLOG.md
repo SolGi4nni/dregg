@@ -11,6 +11,22 @@ reason.)*
 Last sweep: 2026-06-13 (flagged-items burndown — removed ~14 landed/struck items,
 deduped the DreggDL/sel4/snapshot landings into git history, kept live tails).
 
+### CIRCUIT/KERNEL CONCORDANCE — codex review closed + 5 executor triangles + 32/32 extraction (2026-06-23).
+Full circuit/kernel concordance proven for all 32 effects, axiom-clean (lake Dregg2.Claims green, 4123 jobs):
+(1) commitment binds every kernel write (record_digest realizes RH, `548ac920`/`80ebce3d`); (2) hostile-witness
+extraction 32/32 — any PI-bound satisfying witness FORCES the apex (WitnessExtract/V1/Dual/3/5/Composite,
+`ba6c1e9a`/`92f3d05f`/`038d8239`); (3) executor genuinely enforces via the 5 codex triangles — B revoke-epoch
+`ee9bcfc0` · E attenuate-fail-closed `761af9a6` · D snapshot-stamp `85063e80` · C node-cap-narrow `72d51636` ·
+A lifecycle-terminal `5eda64a8`; (4) verifier anchors record-digest family (8) + value-forced (6) + map-op gates.
+codex's other findings banked: DreggPolis `6190a27e`, Settlement deployedSettle `6ff670fa`, CapTP attenuated-grant
+`b25e924e`, Handler `7172d167`, Forest confinement `85ebf257`.
+NAMED RESIDUALS (the "even if the gate doesn't bind the write" case — concordance PROVEN via commitment-bound
+residual + extraction; closure shape = the moving-face descriptor cutover that makes the deployed gate
+WRITE-GATE-FORCE, not merely commitment-bind): `RevokeDelegationEpochResidual` (B), `Spawn`/`RefreshEpochStampResidual`
+(D), `guardLifecycleLive` (A) — all ride `record_digest`. Plus the deeper executor-gate sweep (codex found 5 weak
+gates; a wider adversarial pass = ongoing verify-don't-trust hygiene). Crypto floors (`StarkSound`/`Poseidon2-CR`)
+= irreducible TCB, named not assumed.
+
 ### LEGIBILITY CAPSTONE — DEOS-RUNS reproduce-index + atlas refresh (2026-06-23).
 `d5471d05`. `docs/deos/DEOS-RUNS.md` — a sober what-runs index: every demonstration with its exact reproduce
 command, the proof it emits (receipt/bake/test), the screenshot path, + an honest "Not yet / needs X"
