@@ -47,7 +47,9 @@
 //! Gated on `prover` (compiles `descriptor_ir2`). Run with
 //! `cargo test -p dregg-circuit --features prover vk_epoch_perms_vk -- --nocapture`.
 
-#![cfg(feature = "prover")]
+// (formerly `#![cfg(feature = "prover")]` — that dregg-circuit feature is GONE; the
+// descriptor-level prove/verify (`prove_vm_descriptor2`/`verify_vm_descriptor2`) is
+// now unconditional in dregg-circuit, so this test compiles + runs by default.)
 
 use dregg_cell::{AuthRequired, Cell, Ledger, Permissions, VerificationKey};
 use dregg_circuit::descriptor_ir2::{

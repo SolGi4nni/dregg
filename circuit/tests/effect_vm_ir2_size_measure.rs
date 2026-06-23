@@ -24,7 +24,9 @@
 //! (debug prove times would be lies):
 //!   cargo test -p dregg-circuit --release --features recursion --test effect_vm_ir2_size_measure -- --nocapture
 
-#![cfg(feature = "prover")]
+// (formerly `#![cfg(feature = "prover")]` — that dregg-circuit feature is GONE; the
+// descriptor-level prove/verify (`prove_vm_descriptor2`/`verify_vm_descriptor2`) is
+// now unconditional in dregg-circuit, so this test compiles + runs by default.)
 
 use std::time::Instant;
 

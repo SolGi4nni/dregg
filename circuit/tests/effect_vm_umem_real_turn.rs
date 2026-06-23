@@ -30,7 +30,9 @@
 //! proof is a REAL memory-leg proof of the REAL turn's trace — with the address/value
 //! codecs named as the rotation's remaining realization step.
 
-#![cfg(feature = "prover")]
+// (formerly `#![cfg(feature = "prover")]` — that dregg-circuit feature is GONE; the
+// descriptor-level prove/verify (`prove_vm_descriptor2`/`verify_vm_descriptor2`) is
+// now unconditional in dregg-circuit, so this test compiles + runs by default.)
 
 use std::collections::BTreeMap;
 use std::sync::atomic::Ordering;

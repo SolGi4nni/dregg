@@ -33,7 +33,9 @@
 //! Gated on `recursion` (compiles `descriptor_ir2`). SLOW; run with
 //! `cargo test -p dregg-circuit --features recursion rotation_flip -- --nocapture`.
 
-#![cfg(feature = "prover")]
+// (formerly `#![cfg(feature = "prover")]` — that dregg-circuit feature is GONE; the
+// descriptor-level prove/verify (`prove_vm_descriptor2`/`verify_vm_descriptor2`) is
+// now unconditional in dregg-circuit, so this test compiles + runs by default.)
 
 use dregg_cell::commitment::{V9RotationContext, compute_canonical_state_commitment_v9_felt};
 use dregg_cell::{AuthRequired, Cell, Ledger, Permissions};

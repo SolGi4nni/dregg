@@ -22,7 +22,9 @@
 //! the verified Lean `CapOpenEmit.v3RegistryCapOpenWide` (`WIDE_REGISTRY_STAGED_TSV`). Gated on
 //! `prover`. SLOW.
 
-#![cfg(feature = "prover")]
+// (formerly `#![cfg(feature = "prover")]` — that dregg-circuit feature is GONE; the
+// descriptor-level prove/verify (`prove_vm_descriptor2`/`verify_vm_descriptor2`) is
+// now unconditional in dregg-circuit, so this test compiles + runs by default.)
 
 use dregg_cell::commitment::{
     V9RotationContext, compute_canonical_state_commitment_v9_felt8,

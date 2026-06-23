@@ -28,7 +28,9 @@
 //! Gated on `recursion` (the feature that compiles `descriptor_ir2`). SLOW (~20min cold compile);
 //! run ONCE: `cargo test -p dregg-circuit --features recursion ir2_validate -- --nocapture`.
 
-#![cfg(feature = "prover")]
+// (formerly `#![cfg(feature = "prover")]` — that dregg-circuit feature is GONE; the
+// descriptor-level prove/verify (`prove_vm_descriptor2`/`verify_vm_descriptor2`) is
+// now unconditional in dregg-circuit, so this test compiles + runs by default.)
 
 use dregg_circuit::descriptor_ir2::{
     MemBoundaryWitness, parse_vm_descriptor2, prove_vm_descriptor2, verify_vm_descriptor2,
