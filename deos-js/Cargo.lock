@@ -854,6 +854,9 @@ dependencies = [
  "dregg-turn",
  "dregg-types",
  "mozjs",
+ "postcard",
+ "serde",
+ "serde_json",
  "starbridge-web-surface",
 ]
 

@@ -50,6 +50,14 @@ deos-reflect = { path = "../deos-reflect" }
 # -> receipt-stream-root -> quorum). We reuse that genuine primitive directly.
 starbridge-web-surface = { path = "../starbridge-web-surface" }
 
+# THE PROGRAM-IN-CELL WELD — the applet manifest (its affordances + view source) is a
+# serializable blob stored in the cell heap, so a program becomes a portable cell-blob.
+# `serde`/`serde_json` serialize the manifest; `postcard` serializes the whole cell (the
+# SAME wire codec `dregg-cell` uses) for `to_cell_bytes`/`from_cell`.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+postcard = { version = "1", features = ["use-std"] }
+
 [dev-dependencies]
 blake3 = "1"
 

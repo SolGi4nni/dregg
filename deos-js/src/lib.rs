@@ -27,7 +27,9 @@
 
 pub mod applet;
 pub mod js;
+pub mod portable;
 pub mod reflect_binding;
 
 pub use applet::{Affordance, Applet, CellModel, FireError, Transclusion, TranscludeError};
 pub use js::JsRuntime;
+pub use portable::{AffordanceSpec, AppletManifest, ApplyOp, PortableApplet};

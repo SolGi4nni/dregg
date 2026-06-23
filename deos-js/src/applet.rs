@@ -203,6 +203,60 @@ impl Applet {
         }
     }
 
+    /// **Adopt an already-constructed cell** onto a fresh embedded executor, registering
+    /// `affordances` over it. The cell's loaded state (its model fields AND any program
+    /// blob in its heap) becomes the applet's live model — the load half of the
+    /// program-in-cell weld ([`crate::portable::PortableApplet::from_cell`]). The drive
+    /// path is Symbolic by default (as in [`Applet::mint`]); a subsequent `fire` is the
+    /// same cap-gated verified turn.
+    pub fn adopt_cell(cell: Cell, affordances: Vec<Affordance>, held: AuthRequired) -> Self {
+        let mut engine = DreggEngine::new(EngineConfig::for_testing());
+        engine
+            .executor()
+            .set_witness_mode(dregg_turn::collapse::WitnessMode::Symbolic);
+
+        let public_key = *cell.public_key();
+        let token_id = *cell.token_id();
+        let cell_id = cell.id();
+        engine
+            .ledger_mut()
+            .insert_cell(cell)
+            .expect("adopt the loaded cell onto a fresh embedded ledger");
+
+        let affordances = affordances
+            .into_iter()
+            .map(|a| (a.name.clone(), a))
+            .collect();
+
+        Applet {
+            engine,
+            cell: cell_id,
+            public_key,
+            token_id,
+            affordances,
+            held,
+            view: ViewState::default(),
+            prev_receipt: None,
+            receipts: Vec::new(),
+            full_receipts: Vec::new(),
+            last_deferred: false,
+        }
+    }
+
+    /// Mutate this applet's cell in place on its own ledger (integrity-checked via
+    /// `Ledger::update_with`). Used by the program-in-cell weld to persist the program
+    /// blob into the cell's committed heap at mint time.
+    pub fn with_cell_mut<F, R>(&mut self, f: F) -> R
+    where
+        F: FnOnce(&mut Cell) -> R,
+    {
+        let id = self.cell;
+        self.engine
+            .ledger_mut()
+            .update_with(&id, f)
+            .expect("mutate the applet cell on its own ledger")
+    }
+
     /// The applet's cell id (the sovereignty boundary).
     pub fn cell(&self) -> CellId {
         self.cell
