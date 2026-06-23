@@ -41,18 +41,27 @@ pub struct AgentPane(HermesDockSurface);
 
 impl AgentPane {
     /// Build an agent pane over a starting [`AgentDockModel`].
-    pub fn new(id: u64, model: AgentDockModel, cx: &mut App) -> Self {
-        AgentPane(HermesDockSurface::new(id, model, cx))
+    pub fn new(id: u64, model: AgentDockModel, window: &mut Window, cx: &mut App) -> Self {
+        AgentPane(HermesDockSurface::new(id, model, window, cx))
+    }
+
+    /// Build an INTERACTIVE agent pane: a live, typed-prompt → streamed-reply
+    /// agent chat over a persistent [`HermesGateway`] (every tool-call a cap-gated
+    /// receipted turn, budgets depleting turn-over-turn). This is what ⌘K → "Open
+    /// Agent pane" gives — the real ADOS sidebar, not a snapshot.
+    pub fn interactive(id: u64, session_id: &str, window: &mut Window, cx: &mut App) -> Self {
+        AgentPane(HermesDockSurface::new_interactive(id, session_id, window, cx))
     }
 
     /// Build a DEMO agent pane: seed a self-contained [`AgentDockModel`] from a
     /// real [`HermesGateway`] over the embedded cipherclerk, admitting a couple
     /// of tool-calls (one ALLOWED + receipted, one REFUSED) so the ledger + the
-    /// mandate inspector render without a live ACP session attached. The gateway
-    /// is local to this call — the produced `AgentDockModel` is a plain
-    /// (gpui-free, `Clone`) struct, so nothing of the runtime lifetime escapes.
-    pub fn demo(id: u64, cx: &mut App) -> Self {
-        AgentPane::new(id, demo_model(), cx)
+    /// mandate inspector render without a live ACP session attached. Used by the
+    /// headless showcase bake. The gateway is local to this call — the produced
+    /// `AgentDockModel` is a plain (gpui-free, `Clone`) struct, so nothing of the
+    /// runtime lifetime escapes.
+    pub fn demo(id: u64, window: &mut Window, cx: &mut App) -> Self {
+        AgentPane::new(id, demo_model(), window, cx)
     }
 
     /// The underlying surface handle (host-side: push live-session model deltas

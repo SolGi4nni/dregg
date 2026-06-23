@@ -147,7 +147,7 @@ impl ShowcaseView {
         // AGENT — the confined-Hermes tool-call ledger: a real `HermesGateway`
         // admitting one ALLOWED+receipted call and one REFUSED call, plus the
         // rendered mandate inspector.
-        let agent = AgentPane::demo(4, cx);
+        let agent = AgentPane::demo(4, window, cx);
 
         Self {
             chat,
