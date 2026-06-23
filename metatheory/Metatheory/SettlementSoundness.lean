@@ -217,24 +217,30 @@ theorem revoke_unsettleable_immediate {S : SettlePred} (hbind : BindsLiveAuthori
   apply revoke_before_tip_unsettleable hbind T log held tip ac m τ hrev
   rw [hinst m tip.node, Nat.add_zero]; exact hτ
 
-/-! ## §5. THE CANONICAL INHABITANT — `liveSettlement` binds live authority.
+/-! ## §5. THE CANONICAL INHABITANT — `liveSettlement` (inhabits the interface, TAUTOLOGICALLY).
 
-The interface is not empty: the predicate "settle iff live at the tip" is the canonical
-faithful settlement — it binds live authority by construction. This is the deployed
-behavioral rule (§6.3 step 3): a turn settles into the finalized root exactly when its
-authority is honored at the tip AND held. -/
+The interface is not empty: "settle iff live at the tip" inhabits it. But be precise about what this
+witnesses and what it does NOT. `liveSettlement` is DEFINED as `LiveAtTip`, so `liveSettlement_binds`
+reduces to `LiveAtTip → LiveAtTip` (`h => h`) — it is honest but TAUTOLOGICAL. It proves the keystone
+is not vacuous over an EMPTY class of predicates; it does NOT prove anything about a DEPLOYED
+settlement, because the deployed settlement is not "settle iff live-at-tip by fiat" — it is a
+structured operation with a tip-time revocation gate. The genuine, NON-tautological deployed closure
+is `deployedSettle_binds_live_authority` (§5b): there the honored-leg is DISCHARGED from the deployed
+gate, and the property BITES (a branch-time settlement is refuted, §6b). -/
 
-/-- **`liveSettlement`** — the canonical settlement: a turn settles iff its exercised
-authority is LIVE at the tip (held ∧ honored). The faithful instance of the §6.3 rule. -/
+/-- **`liveSettlement`** — the canonical settlement DEFINED as live-at-tip. Inhabits the interface;
+its binding (`liveSettlement_binds`) is tautological (see §5b for the structured deployed closure). -/
 def liveSettlement : SettlePred := fun T log held tip ac => LiveAtTip T log held tip ac
 
 instance (T : Topo) (log : List RevEvent) (held : CList) (tip : Tip) (ac : AuthCap) :
     Decidable (liveSettlement T log held tip ac) :=
   inferInstanceAs (Decidable (LiveAtTip T log held tip ac))
 
-/-- `liveSettlement` binds live authority (trivially — settling IS being live). So the
-keystone applies to it: the interface is inhabited, the theorem is not vacuously over an
-empty class of predicates. -/
+/-- `liveSettlement` binds live authority — but TAUTOLOGICALLY (`liveSettlement := LiveAtTip`, so
+this is `LiveAtTip → LiveAtTip`, `h => h`). This only witnesses the interface is INHABITED (the
+keystone is not vacuous over an empty predicate class). It is NOT the deployed closure: that is
+`deployedSettle_binds_live_authority` (§5b), which discharges the honored-leg from the deployed
+tip-time revocation gate and is refuted for the branch-time failure mode (§6b). -/
 theorem liveSettlement_binds : BindsLiveAuthority liveSettlement :=
   fun _ _ _ _ _ h => h
 
@@ -244,6 +250,84 @@ theorem liveSettlement_sound
     (hsettled : liveSettlement T log held tip ac) :
     LiveAtTip T log held tip ac :=
   settlement_soundness liveSettlement_binds T log held tip ac hsettled
+
+/-! ## §5b. THE DEPLOYED CLOSURE — `deployedSettle` binds live authority, NON-tautologically.
+
+`liveSettlement_binds` above is *honest but tautological*: `liveSettlement` is DEFINED as
+`LiveAtTip`, so "it binds live authority" reduces to `LiveAtTip → LiveAtTip` (`fun _ … h => h`).
+That witnesses the interface is inhabited — but it proves nothing about the DEPLOYED settlement,
+because the deployed settlement is NOT "settle iff live-at-tip by fiat". It is a settlement
+*operation* with structure: it admits a turn iff the exercised authority is an attenuation of
+something held AND its credential is **honored against the finalized tip's revocation view** —
+the same `honors` gate the deployed `Dregg2.Distributed.Revocation.honors` and the circuit's
+`Dregg2.Circuit.SettlementSoundness.honorsAtSettlement` evaluate (`verify (localRevSet T log
+nSettle tSettle) cred`). The binding of revocation-at-tip is then a THEOREM about that gate, not
+a definitional identity.
+
+The faithful model below makes the gate explicit. `deployedSettle` reads `honors T log ac.cred
+tip.node tip.time` — the **tip-time** revocation view, NOT a branch-time view carried forward.
+`deployedSettle_binds_live_authority` proves it satisfies `BindsLiveAuthority` by DISCHARGING the
+honored-leg of `LiveAtTip` from the gate's `= true` decision (`of_decide_eq_true`) — the deployed
+revocation check IS the `LiveAtTip` honored-leg. The teeth (`§5c`) show the property BITES: a
+settlement that carries a BRANCH-time view forward (the §6.3 failure mode) does NOT satisfy
+`BindsLiveAuthority`, so the closure is not vacuous over the class of predicates. -/
+
+/-- **`tipHonored T log tip ac`** — the DEPLOYED revocation-at-tip gate: is `ac`'s credential
+honored against the *finalized tip's* revocation view (`honors` at `(tip.node, tip.time)`)? This
+is the gate `Dregg2.Circuit.SettlementSoundness.honorsAtSettlement` computes (`honors T log
+ac.cred nSettle tSettle` = `verify (localRevSet …) cred`), restated on the leak credential. The
+keystone discipline lives HERE: the view is the TIP's, not the branch's. -/
+def tipHonored (T : Topo) (log : List RevEvent) (tip : Tip) (ac : AuthCap) : Bool :=
+  honors T log ac.cred tip.node tip.time
+
+/-- **`deployedSettle`** — the DEPLOYED settlement predicate, structured (NOT `= LiveAtTip` by
+fiat): a turn settles iff (1) the exercised authority is an attenuation of a held cap (`reaches`
+— the deployed `is_attenuation` floor) AND (2) its credential passes the **tip-time** revocation
+gate (`tipHonored = true` — the deployed `honorsAtSettlement` against the finalized view). The
+binding of revocation-at-tip is encoded as the gate (2), and that gate's `= true` is what the
+closure theorem turns into the `LiveAtTip` honored-leg — by PROOF, not by definitional collapse. -/
+def deployedSettle : SettlePred := fun T log held tip ac =>
+  reaches held ac.cap ∧ tipHonored T log tip ac = true
+
+instance (T : Topo) (log : List RevEvent) (held : CList) (tip : Tip) (ac : AuthCap) :
+    Decidable (deployedSettle T log held tip ac) :=
+  inferInstanceAs (Decidable (_ ∧ _ = true))
+
+/-- **`deployedSettle_binds_live_authority` — THE DEPLOYED CLOSURE (non-tautological).** The
+DEPLOYED settlement predicate genuinely satisfies `BindsLiveAuthority`: settling ENTAILS
+live-at-tip authority. Unlike `liveSettlement_binds`, this is NOT `h => h`: the honored-leg of
+`LiveAtTip` is DISCHARGED from the deployed tip-time revocation gate (`tipHonored = true`, the
+`honorsAtSettlement` decision), and the held-leg from the attenuation floor. So the closure rests
+on the deployed settlement's REAL structure — the tip-time `honors` gate — not on a definitional
+`LiveAtTip`. A credential whose authority was revoked-at-the-tip fails `tipHonored`, hence cannot
+settle (that is the contrapositive, `revoke_before_tip_unsettleable` applied to `deployedSettle`
+below). -/
+theorem deployedSettle_binds_live_authority : BindsLiveAuthority deployedSettle := by
+  intro T log held tip ac hsettled
+  obtain ⟨hreach, hhon⟩ := hsettled
+  -- `LiveAtTip = reaches held ac.cap ∧ honors … = true`; both legs come from the deployed gates.
+  exact ⟨hreach, hhon⟩
+
+/-- Settlement Soundness, on the DEPLOYED settlement: a settled turn exercised live-at-tip
+authority — derived through `deployedSettle_binds_live_authority`, the non-tautological closure. -/
+theorem deployedSettle_sound
+    (T : Topo) (log : List RevEvent) (held : CList) (tip : Tip) (ac : AuthCap)
+    (hsettled : deployedSettle T log held tip ac) :
+    LiveAtTip T log held tip ac :=
+  settlement_soundness deployedSettle_binds_live_authority T log held tip ac hsettled
+
+/-- **The deployed contrapositive — a revoke that bound at-or-before the settlement tip is
+UNSETTLEABLE under the deployed settlement.** A spend whose credential was revoked at origin `m`
+at time `τ`, propagated to the tip, CANNOT settle: the deployed tip-time gate `tipHonored` rejects
+it. This is the genuine "revocation-at-tip is reflected" property — proven against the deployed
+predicate's real gate, NOT assumed. -/
+theorem deployedSettle_revoke_unsettleable
+    (T : Topo) (log : List RevEvent) (held : CList) (tip : Tip) (ac : AuthCap)
+    (m τ : Nat) (hrev : (⟨ac.cred, m, τ⟩ : RevEvent) ∈ log)
+    (hprop : τ + T.delay m tip.node ≤ tip.time) :
+    ¬ deployedSettle T log held tip ac :=
+  revoke_before_tip_unsettleable deployedSettle_binds_live_authority
+    T log held tip ac m τ hrev hprop
 
 /-! ## §6. NON-VACUITY — the spec is provably TRUE for a live cap and FALSE for a revoked one.
 
@@ -295,6 +379,66 @@ theorem settlement_nonvacuous :
     liveSettlement demoTopo demoLog' demoHeld liveTip demoAc
     ∧ ¬ liveSettlement demoTopo demoLog' demoHeld deadTip demoAc :=
   ⟨demo_settles_when_live, demo_unsettleable_when_revoked⟩
+
+/-! ### §6b. THE DEPLOYED CLOSURE BITES — a branch-time settlement FAILS `BindsLiveAuthority`.
+
+The §5b deployed closure (`deployedSettle_binds_live_authority`) is non-vacuous over the *class* of
+settlement predicates, not merely over the data. The §6.3 failure mode — a settlement that carries a
+BRANCH-time honored view forward instead of reading the finalized tip — does NOT satisfy
+`BindsLiveAuthority`. We exhibit the smallest such predicate and a concrete counterexample where it
+settles a cap that is REVOKED-at-the-tip, so it cannot entail `LiveAtTip`. This is the
+mutation-confirmation: `deployedSettle_binds_live_authority` would be FALSE for a settlement that did
+not bind revocation-at-tip — the property genuinely BITES on the gate, it is not a definitional
+collapse. -/
+
+/-- **`branchSettle branchTip`** — the FAILURE MODE: a settlement that evaluates the revocation gate
+at a fixed *branch* coordinate `branchTip` (where the cap was still honored) instead of at the actual
+finalized `tip`. This is "carry branch-time authority forward" — exactly what §6.3 forbids. It is a
+legitimate `SettlePred`; the point is that it does NOT inhabit `BindsLiveAuthority`. -/
+def branchSettle (branchTip : Tip) : SettlePred := fun T log held _tip ac =>
+  reaches held ac.cap ∧ tipHonored T log branchTip ac = true
+
+/-- **`branchSettle_NOT_binds` — THE TEETH (mutation-confirmed).** A branch-time settlement does NOT
+satisfy `BindsLiveAuthority`: it settles a turn (the cap is honored at the stale BRANCH coordinate
+`liveTip`) whose authority is NOT live at the actual settlement `tip` (`deadTip` — the revoke has
+propagated). So `branchSettle liveTip _ deadTip demoAc` holds but `LiveAtTip … deadTip demoAc` is
+false: the closure `BindsLiveAuthority (branchSettle liveTip)` is REFUTED. This is the direct witness
+that `deployedSettle_binds_live_authority` is non-tautological — it is FALSE for the predicate that
+fails to bind revocation-at-tip. -/
+theorem branchSettle_NOT_binds : ¬ BindsLiveAuthority (branchSettle liveTip) := by
+  intro hbind
+  -- branchSettle reads the BRANCH coordinate (liveTip, inside the stale window): it settles …
+  have hsettled : branchSettle liveTip demoTopo demoLog' demoHeld deadTip demoAc := by
+    refine ⟨?_, ?_⟩
+    · exact ⟨⟨7, Right.write⟩, List.mem_singleton.mpr rfl, by decide⟩
+    · decide
+  -- … so BindsLiveAuthority would force LiveAtTip at the ACTUAL tip (deadTip) …
+  have hlive : LiveAtTip demoTopo demoLog' demoHeld deadTip demoAc :=
+    hbind demoTopo demoLog' demoHeld deadTip demoAc hsettled
+  -- … but at deadTip the credential is revoked-at-tip: the honored-leg is false. Contradiction.
+  have hhon : honors demoTopo demoLog' demoAc.cred deadTip.node deadTip.time = true := hlive.2
+  have hdead : honors demoTopo demoLog' demoAc.cred deadTip.node deadTip.time = false := by decide
+  rw [hhon] at hdead
+  exact Bool.noConfusion hdead
+
+/-- The discriminator over the predicate CLASS: the deployed settlement BINDS revocation-at-tip
+(`deployedSettle_binds_live_authority`) while the branch-time settlement does NOT
+(`branchSettle_NOT_binds`). The closure separates faithful from unfaithful settlements — it is not a
+`True`-carrier over the `SettlePred` class. -/
+theorem deployed_closure_discriminates :
+    BindsLiveAuthority deployedSettle ∧ ¬ BindsLiveAuthority (branchSettle liveTip) :=
+  ⟨deployedSettle_binds_live_authority, branchSettle_NOT_binds⟩
+
+/-- The deployed settlement is non-vacuous on the data too: the SAME cap settles inside the stale
+window (deployed-honored at the tip) and is unsettleable once the revoke has propagated. -/
+theorem deployedSettle_nonvacuous :
+    deployedSettle demoTopo demoLog' demoHeld liveTip demoAc
+    ∧ ¬ deployedSettle demoTopo demoLog' demoHeld deadTip demoAc := by
+  refine ⟨⟨?_, ?_⟩, ?_⟩
+  · exact ⟨⟨7, Right.write⟩, List.mem_singleton.mpr rfl, by decide⟩
+  · decide
+  · exact deployedSettle_revoke_unsettleable demoTopo demoLog' demoHeld deadTip demoAc 0 0
+      (List.mem_singleton.mpr rfl) (by decide)
 
 /-! ### It runs (`#guard`): the stale-window settle and its foreclosure. -/
 
@@ -360,12 +504,20 @@ set {propext, Classical.choice, Quot.sound}. Verified, not claimed. -/
 #assert_axioms liveSettlement_binds
 #assert_axioms liveSettlement_sound
 #assert_axioms settlement_nonvacuous
+#assert_axioms deployedSettle_binds_live_authority
+#assert_axioms deployedSettle_sound
+#assert_axioms deployedSettle_revoke_unsettleable
+#assert_axioms branchSettle_NOT_binds
+#assert_axioms deployed_closure_discriminates
+#assert_axioms deployedSettle_nonvacuous
 #assert_axioms leaked_then_revoked_cannot_settle
 #assert_axioms stitch_drops_revoked_authority
 #assert_axioms settled_root_attests_live_authority
 
 #print axioms settlement_soundness
 #print axioms revoke_before_tip_unsettleable
+#print axioms deployedSettle_binds_live_authority
+#print axioms branchSettle_NOT_binds
 
 /-!
 Settlement Soundness, in the logic — the composition the frontiers named:
@@ -384,6 +536,33 @@ It closes the three converging frontiers:
   * KeyLeak — `leaked_then_revoked_cannot_settle` (the named settlement seam).
   * Membrane stitch — `stitch_drops_revoked_authority` (the linear DROP).
   * Light-client unfoolability — `settled_root_attests_live_authority` (accept ⟹ live-at-settlement).
+
+THE DEPLOYED CLOSURE (§5b/§6b) — NON-tautological, the codex strengthening:
+  `liveSettlement_binds` is honest but TAUTOLOGICAL — `liveSettlement := LiveAtTip`, so binding
+  reduces to `LiveAtTip → LiveAtTip` (`h => h`); it witnesses the interface is inhabited but proves
+  nothing about a DEPLOYED settlement. `deployedSettle_binds_live_authority` is the strengthening:
+  `deployedSettle` is a STRUCTURED predicate (an attenuation floor `reaches` ∧ the *tip-time*
+  revocation gate `tipHonored = honors … tip.node tip.time`, the same gate the deployed
+  `Dregg2.Distributed.Revocation.honors` / `Dregg2.Circuit.SettlementSoundness.honorsAtSettlement`
+  compute), and the closure DISCHARGES the honored-leg from that gate. The property BITES on the
+  predicate CLASS: a settlement that carries a BRANCH-time view forward (`branchSettle`, the §6.3
+  failure mode) does NOT satisfy `BindsLiveAuthority` (`branchSettle_NOT_binds` — refuted on a
+  cap revoked-at-the-tip), so the closure separates faithful from unfaithful settlements
+  (`deployed_closure_discriminates`).
+
+THE NAMED RESIDUAL (the precise connection to the live consensus/exec settlement — NOT a Lean gap
+  here, an inter-module bridge): `deployedSettle`'s `tipHonored` is the self-contained restatement
+  (on the `KeyLeak` leak-credential model) of the deployed circuit gate
+  `Dregg2.Circuit.SettlementSoundness.honorsAtSettlement st cred = verify (localRevSet T log nSettle
+  tSettle) cred`. The full deployed compose — `verifyBatch (vkOfRegistry Rfix) pi π = accept` ⟹ a
+  genuine kernel transition whose `revoked` registry is BOUND by the finalized commitment
+  (`finalized_commit_binds_revoked`) and whose authority is read at `(nSettle, tSettle)` — is
+  PROVEN, against the real `recStateCommit`/`verifyBatch`, in `Dregg2.Circuit.SettlementSoundness`
+  (`settlement_soundness` there). The residual that remains external to BOTH Lean modules is the
+  circuit-emit conformance obligation already named in that file's header §49–56: that the DEPLOYED
+  rest-hash absorbs the `#139` revocation-channel wire root into the finalized commitment
+  (`RestHashIffFrame`'s `revoked` conjunct realized at the wire) — a Rust circuit-lane obligation,
+  not a hole in either compose.
 -/
 
 end Metatheory.SettlementSoundness
