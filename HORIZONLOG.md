@@ -85,8 +85,18 @@ native-full + wasm32 green; the non-wasm dep-table invariant preserved.
   principal as sender + witness blobs → unblocks all 3. · polis = no `DeosApp` ctor (builds charter
   `CellProgram`s directly, different shape; needs its own integration). · first-room = a scenario/weld
   shim, not a `DeosApp` (could become a launchable scenario, not an app).
-- ⚠ WATCH: a full `--lib` run showed 3 `cell_transclusion::tests` failures (file untouched since
-  `33c45079`); under investigation — verify real-vs-pre-existing, fix if a shared-dep regression.
+### CELL_TRANSCLUSION 3 RED — stale-test/lattice discrepancy (NOT a leak), fix lane firing (2026-06-23).
+3 `cell_transclusion::tests` fail (a per-viewer ordering + 2 embed-darkening). ROOT CAUSE traced: the
+`cell` auth lattice (`cell/src/permissions.rs:60-61`, tested `cell/src/tests.rs:212`) defines
+`Proof ⊆ Either` — COMPARABLE (Proof is a valid narrowing of Either). The transclusion tests + a stale
+comment (`app-framework/src/affordance.rs:1067`) assume Proof is INCOMPARABLE with Either → expect a
+darken. So `Membrane::project` correctly returns `Ok` (a Proof reader CAN see an Either-lineage embed) —
+the TESTS are stale, not a projection leak. Ordering bug is independent: `cell_transclusion.rs:393`
+`own_affordance_names` isn't sorted (vs its own documented "sorted-stable" intent + the embed-names
+precedent). CLOSURE (lane firing): align the 3 tests + the stale comment to the real lattice; demonstrate
+darkening with a GENUINELY incomparable pair (`Custom` vs Signature/Proof/Either, per permissions.rs:66);
+sort `own_affordance_names`; green the suite. DO NOT touch the `cell` lattice (load-bearing soundness
+primitive); if evidence shows the lattice itself is wrong, STOP + escalate to ember.
 
 ### EDITOR PANE ON THE LIVE WORLD LEDGER — LANDED (2026-06-23).
 `d11c72e9`. The cockpit editor now edits the SAME ledger the inspector shows: `LedgerSpine` trait +
