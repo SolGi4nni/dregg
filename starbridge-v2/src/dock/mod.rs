@@ -37,6 +37,8 @@ pub mod surface;
 #[cfg(feature = "dev-surfaces")]
 pub mod editor_surface;
 #[cfg(feature = "dev-surfaces")]
+pub mod hermes_surface;
+#[cfg(feature = "dev-surfaces")]
 pub mod terminal_surface;
 
 pub use dock::{Dock, DockPanel, DockPosition, DraggedDock};

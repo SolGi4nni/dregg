@@ -111,6 +111,11 @@ pub enum CommandId {
     /// own split pane (edit deos's own sources inside deos). The editor half of
     /// the self-hosting dev loop. (A no-op if dev-surfaces is off.)
     OpenEditorPane,
+    /// Open a LIVE AGENT pane — the confined Hermes agent dock in its own split
+    /// pane: a chat pane + the tool-call ledger (every tool-call a cap-gated
+    /// RECEIPTED turn or an in-band refusal) + the live mandate inspector. The
+    /// ADOS dev-loop made visible. (A no-op if dev-surfaces is off.)
+    OpenAgentPane,
 
     // --- the cap-first SHELL / compositor (surfaces over real cells) ---
     /// Open a cap-confined surface (window) viewing the selected cell.
@@ -203,7 +208,7 @@ impl CommandId {
             | GoProofs | GoPowerbox | GoDevtools | GoWebShell => Category::Navigate,
             WebShellGo | WebShellBack | WebShellForward | WebShellReload => Category::Web,
             BufferType | BufferCommit | BufferReadOnlyWrite | TerminalRunInMandate
-            | TerminalRunOutOfMandate | OpenTerminalPane | OpenEditorPane
+            | TerminalRunOutOfMandate | OpenTerminalPane | OpenEditorPane | OpenAgentPane
             | SwarmCoordinatorEmitA | SwarmWorkerADrain | SwarmCoordinatorTransferAndWake
             | KillerDemoAdvance | KillerDemoRunAll | KillerDemoOverShare | KillerDemoReset => {
                 Category::Ide
@@ -278,6 +283,7 @@ impl CommandId {
             TerminalRunOutOfMandate => "Terminal: ⚠ run an out-of-mandate command (REFUSE)",
             OpenTerminalPane => "Open Terminal pane (live $SHELL on a PTY · build deos inside deos)",
             OpenEditorPane => "Open Editor pane (live deos-zed editor · edit deos inside deos)",
+            OpenAgentPane => "Open Agent pane (confined Hermes · tool-call ledger + receipts + mandate inspector)",
             ShellOpenSelected => "Shell: open the selected cell as a surface",
             ShellFocusFront => "Shell: focus the front surface (cap-gated)",
             ShellCloseFocused => "Shell: close the focused surface (cap-gated)",
@@ -369,6 +375,7 @@ impl CommandId {
             TerminalRunOutOfMandate => "command refuse terminal bash mandate out-of-reach confined guard",
             OpenTerminalPane => "open terminal pane shell pty bash zsh cargo git build dev self-hosting live split console run command spawn",
             OpenEditorPane => "open editor pane code edit deos-zed file source dev self-hosting live split ide author write text",
+            OpenAgentPane => "open agent pane hermes confined ai llm tool-call ledger receipt refusal mandate inspector ados dev-loop cap-gated turn dock chat",
             ShellOpenSelected => "open window surface cell app spawn view",
             ShellFocusFront => "focus raise front bring forward window",
             ShellCloseFocused => "close window surface dismiss",
@@ -466,8 +473,8 @@ pub fn all_commands() -> Vec<Command> {
         // the A1 IDE developer surfaces (editor buffer + terminal)
         BufferType, BufferCommit, BufferReadOnlyWrite,
         TerminalRunInMandate, TerminalRunOutOfMandate,
-        // the self-hosting dev panes (edit/build deos INSIDE deos)
-        OpenTerminalPane, OpenEditorPane,
+        // the self-hosting dev panes (edit/build deos INSIDE deos) + the confined agent dock
+        OpenTerminalPane, OpenEditorPane, OpenAgentPane,
         // the A2 SWARM surface (multi-agent cap-coordination + notify-edge inbox)
         SwarmCoordinatorEmitA, SwarmWorkerADrain, SwarmCoordinatorTransferAndWake,
         // the four-surface KILLER DEMO (N5) — the pug-handoff artifact

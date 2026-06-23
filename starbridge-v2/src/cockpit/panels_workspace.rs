@@ -381,6 +381,22 @@ impl Cockpit {
         self.graft_dev_pane(surface, window, cx);
     }
 
+    /// Open a LIVE AGENT pane: the CONFINED HERMES agent dock, grafted as a split
+    /// beside the active pane. The ADOS dev-loop made visible — a chat pane, the
+    /// tool-call ledger (every tool-call a cap-gated RECEIPTED turn, or an in-band
+    /// refusal), and the live mandate inspector. Seeded with a self-contained demo
+    /// model (a real `HermesGateway` admitting an allowed + a refused tool-call) so
+    /// the ledger + inspector render without a live ACP session attached. Built
+    /// only here (a live window), never in the headless bake.
+    #[cfg(feature = "dev-surfaces")]
+    pub(crate) fn open_agent_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        use starbridge_v2::dock::hermes_surface::AgentPane;
+
+        let id = self.next_dev_surface_id();
+        let surface: Box<dyn CockpitSurface> = Box::new(AgentPane::demo(id, cx));
+        self.graft_dev_pane(surface, window, cx);
+    }
+
     /// Mint a dev-surface id in the high range (away from the `0..27` tab ids).
     /// Derived from the live pane count so repeated opens get distinct ids
     /// without a persistent counter field; a dev surface lives alone in its own

@@ -2522,6 +2522,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "deos-hermes"
+version = "0.1.0"
+dependencies = [
+ "dregg-cell",
+ "dregg-firmament",
+ "dregg-sdk",
+ "dregg-turn",
+ "gpui",
+ "gpui-component",
+ "gpui-component-assets",
+ "gpui_platform",
+ "libc",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "deos-terminal"
 version = "0.1.0"
 dependencies = [
@@ -3019,6 +3036,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "dregg-exec-lean"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "dregg-captp",
+ "dregg-cell",
+ "dregg-cell-crypto",
+ "dregg-coord",
+ "dregg-federation",
+ "dregg-intent",
+ "dregg-lean-ffi",
+ "dregg-turn",
+ "dregg-types",
+ "ed25519-dalek",
+ "postcard",
+ "serde",
+ "tracing",
+]
+
+[[package]]
 name = "dregg-federation"
 version = "0.1.0"
 dependencies = [
@@ -3055,6 +3092,9 @@ dependencies = [
  "dregg-cell",
  "dregg-turn",
  "dregg-types",
+ "landlock",
+ "libc",
+ "seccompiler",
 ]
 
 [[package]]
@@ -3186,6 +3226,7 @@ dependencies = [
  "dregg-commit",
  "dregg-dsl-runtime",
  "dregg-dsl-tests",
+ "dregg-exec-lean",
  "dregg-federation",
  "dregg-hints",
  "dregg-intent",
@@ -6429,6 +6470,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0de8b303297635ad57c9f5059fd9cee7a47f8e8daa09df0fcd07dd39fb22977f"
 dependencies = [
  "log",
+]
+
+[[package]]
+name = "landlock"
+version = "0.4.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "635839550ae8b90d9fd2571460a6645dc0aec070225956ca7a2831ed31d2795d"
+dependencies = [
+ "enumflags2",
+ "libc",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -10201,6 +10253,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "seccompiler"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "345a3e4dddf721a478089d4697b83c6c0a8f5bf16086f6c13397e4534eb6e2e5"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "security-framework"
 version = "3.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -12294,6 +12355,7 @@ dependencies = [
  "biscuit-auth",
  "blake3",
  "clear_on_drop",
+ "deos-hermes",
  "deos-terminal",
  "deos-web-cells",
  "deos-zed",
@@ -12337,11 +12399,13 @@ dependencies = [
  "getrandom 0.2.17",
  "getrandom 0.3.4",
  "gpui",
+ "gpui-component",
  "gpui_platform",
  "hex",
  "serde_json",
  "starbridge-v2",
  "wasm-bindgen",
+ "web-sys",
 ]
 
 [[package]]

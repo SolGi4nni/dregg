@@ -96,8 +96,12 @@ impl Cockpit {
             CommandId::OpenEditorPane => {
                 self.open_dev_pane_deferred(cx, Cockpit::open_editor_pane)
             }
+            #[cfg(feature = "dev-surfaces")]
+            CommandId::OpenAgentPane => {
+                self.open_dev_pane_deferred(cx, Cockpit::open_agent_pane)
+            }
             #[cfg(not(feature = "dev-surfaces"))]
-            CommandId::OpenTerminalPane | CommandId::OpenEditorPane => {}
+            CommandId::OpenTerminalPane | CommandId::OpenEditorPane | CommandId::OpenAgentPane => {}
 
             CommandId::SwarmCoordinatorEmitA => self.swarm_coordinator_emit_a(cx),
             CommandId::SwarmWorkerADrain => self.swarm_worker_a_drain(cx),
