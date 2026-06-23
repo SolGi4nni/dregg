@@ -378,6 +378,10 @@ fn run_window(
         // alongside the font registration. (See docs comment on the
         // `gpui-component` dep in Cargo.toml for the byte-identical-gpui rationale.)
         gpui_component::init(cx);
+        // Install the deos theme: gpui-component's `init` leaves the kit in its
+        // LIGHT default (the flashbang). Follow the OS appearance here (windowed),
+        // defaulting to Dark, and tune the kit palette to the cockpit's GitHub-dark.
+        apply_deos_theme(None, false, cx);
         let bounds = Bounds::centered(None, size(px(1280.), px(820.)), cx);
         // Move the seed into the LOGIN surface builder (the login surface hands it
         // to the cockpit at the post-login transition). `Option` so it is consumed
@@ -416,6 +420,209 @@ fn run_window(
         .expect("failed to open window");
         cx.activate(true);
     });
+}
+
+/// Install the deos theme on the gpui-component kit, the SINGLE call every init
+/// site makes immediately after `gpui_component::init(cx)`.
+///
+/// `gpui_component::init` ends with `Theme::change(ThemeMode::Light, …)` — it
+/// installs the kit's LIGHT theme by default. Left alone, kit widgets (`Button`,
+/// `Input`, list/table) render as bright patches against the cockpit's dark
+/// chrome — the "flashbang". This routes through the kit's own theme API to:
+///
+///  1. Pick the mode. Windowed: follow the OS appearance (`cx.window_appearance()`)
+///     so a user in OS dark mode gets dark deos and OS light mode gets light —
+///     defaulting to Dark when the platform is ambiguous. Headless bakes pass
+///     `force_dark = true` (the marketing shot is always the dark desktop).
+///  2. `Theme::change(mode, …)` to swap the kit to that mode's palette.
+///  3. In dark, re-tune the kit `ThemeColor` tokens to the cockpit's GitHub-dark
+///     palette (the same values as `views::theme` / `dock::theme` / `showcase`)
+///     so the kit widgets, the dock chrome, and the hand-rolled panels are ONE
+///     cohesive dark look — same backgrounds, borders, text, accent — instead of
+///     the kit's flat near-black neutral sitting next to the cockpit's blue-tinted
+///     slate.
+#[cfg(feature = "gpui-ui")]
+fn apply_deos_theme(window: Option<&mut gpui::Window>, force_dark: bool, cx: &mut gpui::App) {
+    use gpui::{rgb, Hsla};
+    use gpui_component::{Theme, ThemeMode};
+
+    let mode = if force_dark {
+        ThemeMode::Dark
+    } else {
+        // Follow the OS appearance, defaulting to Dark. `WindowAppearance ->
+        // ThemeMode` maps Dark/VibrantDark -> Dark and Light/VibrantLight -> Light.
+        ThemeMode::from(cx.window_appearance())
+    };
+
+    Theme::change(mode, window, cx);
+
+    if !mode.is_dark() {
+        // OS light mode: leave the kit's light theme as-is (no flashbang the other
+        // direction — the chrome the cockpit hand-rolls reads dark, but the kit
+        // surfaces stay coherent light; the windowed light path is the minority
+        // case a user explicitly opted into via their OS).
+        return;
+    }
+
+    // The cockpit's GitHub-dark palette — the single source of truth mirrored by
+    // `views::theme`, `dock::theme`, and `showcase::theme`.
+    let bg: Hsla = rgb(0x0e1116).into(); // surface
+    let panel: Hsla = rgb(0x161b22).into(); // raised card / popover / sidebar
+    let panel_hi: Hsla = rgb(0x1f2630).into(); // hover / active fill
+    let border: Hsla = rgb(0x2b3340).into();
+    let text: Hsla = rgb(0xd7dee8).into();
+    let muted: Hsla = rgb(0x7d8794).into();
+    let accent: Hsla = rgb(0x6cb6ff).into(); // the blue the cockpit accents with
+    let on_accent: Hsla = rgb(0x0e1116).into(); // dark text on the bright accent
+    // The status hues — the SAME values the cockpit hand-rolls in `views::theme`
+    // (good / warn / bad), so a kit `.success()`/`.warning()`/`.danger()` button
+    // matches a hand-rolled status pill exactly.
+    let good: Hsla = rgb(0x57d977).into();
+    let warn: Hsla = rgb(0xe3b341).into();
+    let bad: Hsla = rgb(0xe5534b).into();
+
+    // CRITICAL: kit `Button` variants read their FILL from `theme.tokens.button_*`,
+    // which derive 1:1 from the `colors.button_*` source fields. Start from the
+    // kit's own canonical DARK `ThemeColor` (every button_* already a correct dark
+    // value — no light field is left to flashbang), THEN overlay the cockpit
+    // palette, THEN regenerate the token table. (Setting only a handful of `colors`
+    // fields would leave the rest at whatever `apply_config` produced — that was
+    // the residual white-button bug.)
+    let mut c = *gpui_component::ThemeColor::dark();
+
+    // Surfaces.
+    c.background = bg;
+    c.foreground = text;
+    c.popover = panel;
+    c.popover_foreground = text;
+    c.border = border;
+    c.input = border;
+    c.ring = accent;
+    c.caret = accent;
+    c.selection = accent.opacity(0.30);
+    c.muted = panel;
+    c.muted_foreground = muted;
+    c.accordion = panel;
+    c.accordion_hover = panel_hi;
+    c.group_box = panel;
+    c.group_box_foreground = text;
+    c.scrollbar_thumb = border;
+    c.scrollbar_thumb_hover = muted;
+    c.link = accent;
+    c.link_hover = rgb(0x8cc6ff).into();
+    c.link_active = rgb(0x4f9fe6).into();
+
+    // Secondary fills (the quiet button family + ghost text).
+    c.secondary = panel;
+    c.secondary_foreground = text;
+    c.secondary_hover = panel_hi;
+    c.secondary_active = panel_hi;
+
+    // Accent (hover backgrounds on menu/list items).
+    c.accent = panel_hi;
+    c.accent_foreground = text;
+
+    // The plain (Default) + Secondary button families → read the surface, dark text.
+    c.button = panel;
+    c.button_hover = panel_hi;
+    c.button_active = panel_hi;
+    c.button_foreground = text;
+    c.button_secondary = panel;
+    c.button_secondary_hover = panel_hi;
+    c.button_secondary_active = panel_hi;
+    c.button_secondary_foreground = text;
+
+    // Primary = the cockpit's signature blue, dark text on it.
+    c.primary = accent;
+    c.primary_hover = rgb(0x8cc6ff).into();
+    c.primary_active = rgb(0x4f9fe6).into();
+    c.primary_foreground = on_accent;
+    c.button_primary = accent;
+    c.button_primary_hover = rgb(0x8cc6ff).into();
+    c.button_primary_active = rgb(0x4f9fe6).into();
+    c.button_primary_foreground = on_accent;
+    c.sidebar_primary = accent;
+    c.sidebar_primary_foreground = on_accent;
+
+    // Status button families — match the cockpit's good/warn/bad with dark text so
+    // they read as saturated chips, never bright-white panels.
+    c.success = good;
+    c.success_hover = rgb(0x6fe88c).into();
+    c.success_active = rgb(0x44c265).into();
+    c.success_foreground = on_accent;
+    c.button_success = good;
+    c.button_success_hover = rgb(0x6fe88c).into();
+    c.button_success_active = rgb(0x44c265).into();
+    c.button_success_foreground = on_accent;
+
+    c.warning = warn;
+    c.warning_hover = rgb(0xf0c662).into();
+    c.warning_active = rgb(0xc99a2f).into();
+    c.warning_foreground = on_accent;
+    c.button_warning = warn;
+    c.button_warning_hover = rgb(0xf0c662).into();
+    c.button_warning_active = rgb(0xc99a2f).into();
+    c.button_warning_foreground = on_accent;
+
+    c.danger = bad;
+    c.danger_hover = rgb(0xef6f68).into();
+    c.danger_active = rgb(0xc83f38).into();
+    c.danger_foreground = text;
+    c.button_danger = bad;
+    c.button_danger_hover = rgb(0xef6f68).into();
+    c.button_danger_active = rgb(0xc83f38).into();
+    c.button_danger_foreground = text;
+
+    c.info = accent;
+    c.info_hover = rgb(0x8cc6ff).into();
+    c.info_active = rgb(0x4f9fe6).into();
+    c.info_foreground = on_accent;
+    c.button_info = accent;
+    c.button_info_hover = rgb(0x8cc6ff).into();
+    c.button_info_active = rgb(0x4f9fe6).into();
+    c.button_info_foreground = on_accent;
+
+    // Lists.
+    c.list = bg;
+    c.list_even = bg;
+    c.list_head = panel;
+    c.list_hover = panel_hi;
+    c.list_active = panel_hi;
+    c.list_active_border = accent;
+
+    // Tables.
+    c.table = bg;
+    c.table_even = panel;
+    c.table_head = panel;
+    c.table_head_foreground = muted;
+    c.table_hover = panel_hi;
+    c.table_active = panel_hi;
+    c.table_active_border = accent;
+    c.table_row_border = border;
+
+    // Tabs.
+    c.tab = bg;
+    c.tab_bar = bg;
+    c.tab_foreground = muted;
+    c.tab_active = panel;
+    c.tab_active_foreground = text;
+
+    // Title bar / sidebar / status bar chrome.
+    c.title_bar = panel;
+    c.title_bar_border = border;
+    c.status_bar = panel;
+    c.status_bar_border = border;
+    c.sidebar = panel;
+    c.sidebar_foreground = text;
+    c.sidebar_border = border;
+    c.sidebar_accent = panel_hi;
+    c.sidebar_accent_foreground = text;
+
+    // Commit the tuned palette + regenerate the token table (the buttons, badges,
+    // and callouts read `tokens`, which is derived 1:1 from these `colors`).
+    let t = Theme::global_mut(cx);
+    t.colors = c;
+    t.tokens = gpui_component::ThemeTokens::from(&t.colors);
 }
 
 /// Parse the `--render-cockpit <out>` (or `--render-cockpit=<out>`) argument —
@@ -602,6 +809,9 @@ fn serve_ie6_headless(port: u16) -> anyhow::Result<()> {
     // kit `Theme`/global at render; without it they panic). See the same weld in
     // `render_cockpit_headless`.
     cx.update(|cx| gpui_component::init(cx));
+    // Force the deos DARK theme for the headless bake (the marketing/atlas shot
+    // is always the dark desktop) + tune the kit palette to the cockpit GitHub-dark.
+    cx.update(|cx| apply_deos_theme(None, true, cx));
     let (world, anchors) = world::demo_world();
     let shared = Rc::new(RefCell::new(world));
     let window = cx.open_window(size(px(W), px(H)), |window, cx| {
@@ -810,6 +1020,9 @@ fn explore_ui_headless(outdir: &str) -> anyhow::Result<()> {
     // (the windowed path does so at boot) or any kit widget panics on the missing
     // global. (See `render_cockpit_headless` for the same weld.)
     cx.update(|cx| gpui_component::init(cx));
+    // Force the deos DARK theme for the headless bake (the marketing/atlas shot
+    // is always the dark desktop) + tune the kit palette to the cockpit GitHub-dark.
+    cx.update(|cx| apply_deos_theme(None, true, cx));
 
     let (world, anchors) = world::demo_world();
     let shared = Rc::new(RefCell::new(world));
@@ -983,6 +1196,9 @@ fn render_cockpit_headless(
     //     `gpui_component::theme::Theme` global. This is what makes the seL4
     //     framebuffer bake + the dregg-mcp screenshot render the migrated buttons.
     cx.update(|cx| gpui_component::init(cx));
+    // Force the deos DARK theme for the headless bake (the marketing/atlas shot
+    // is always the dark desktop) + tune the kit palette to the cockpit GitHub-dark.
+    cx.update(|cx| apply_deos_theme(None, true, cx));
 
     // 3. The fully-seeded demo image — the same `World` the windowed cockpit runs,
     //    with every verified executor turn already committed (eager seeding).
@@ -1108,6 +1324,9 @@ fn render_showcase_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()> {
     // The surfaces use real gpui-component widgets (the editor's InputState, the
     // kit Buttons) which read the kit Theme global at render time — init it.
     cx.update(|cx| gpui_component::init(cx));
+    // Force the deos DARK theme for the headless bake (the marketing/atlas shot
+    // is always the dark desktop) + tune the kit palette to the cockpit GitHub-dark.
+    cx.update(|cx| apply_deos_theme(None, true, cx));
 
     // The fully-seeded demo image — the real cell world the chrome reads off.
     let (world, _anchors) = world::demo_world();
@@ -1160,6 +1379,9 @@ fn render_login_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()> {
         gpui_platform::current_headless_renderer()
     });
     cx.update(|cx| gpui_component::init(cx));
+    // Force the deos DARK theme for the headless bake (the marketing/atlas shot
+    // is always the dark desktop) + tune the kit palette to the cockpit GitHub-dark.
+    cx.update(|cx| apply_deos_theme(None, true, cx));
 
     // The at-rest genesis image — the login surface only needs the anchors to
     // provision the system principal; no seed turns need to have run.
