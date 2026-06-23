@@ -5288,6 +5288,21 @@ impl AgentCipherclerk {
                         block_height,
                     );
                 }
+                // makeSovereign (record-digest limb 24 via the folded MODE byte): project the
+                // Hosted→Sovereign promotion onto the after-cell through the SHARED
+                // `apply_effect_to_cell` weld (which sets `after_cell.mode = Sovereign`) so the
+                // producer's AFTER `B_RECORD_DIGEST` limb (= `compute_authority_digest_felt(after_cell)`,
+                // folding the flipped mode byte) MOVES to exactly the felt the verifier independently
+                // anchors PI 46 to (`verify_one_cohort_run`'s record-pin anchor, MakeSovereign arm).
+                // Both sides route through this one function, so an HONEST promotion proof verifies.
+                Effect::MakeSovereign { cell } if cell == cell_id => {
+                    dregg_turn::rotation_witness::apply_effect_to_cell(
+                        &mut after_cell,
+                        cell_id,
+                        effect,
+                        block_height,
+                    );
+                }
                 _ => {}
             }
         }

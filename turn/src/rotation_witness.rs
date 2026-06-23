@@ -590,6 +590,19 @@ pub fn apply_effect_to_cell(
         } if target == cell_id => {
             let _ = cell.destroy(certificate);
         }
+        // makeSovereign (record-digest limb 24 via the folded MODE byte): mirror the deployed
+        // `apply_make_sovereign` (`ledger.make_sovereign` moves the cell from the hosted leaf set to a
+        // sovereign registration). The CELL-LOCAL projection of that promotion is `cell.mode =
+        // Sovereign` — the mode byte `compute_authority_digest_felt` FOLDS (commitment.rs §"Mode",
+        // `Hosted=0/Sovereign=1`). The deployed `makeSovereignVmDescriptor2R24` welds the AFTER r23
+        // authority-digest limb (`B_RECORD_DIGEST`, folding the flipped mode) to PI 46, and the verifier
+        // anchors `compute_authority_digest_felt(post_cell)`. A frozen-mode AFTER block (a cell the
+        // promotion did NOT advance) makes the anchored PI 46 disagree with the proof's bound limb ⇒
+        // UNSAT. Both the producer (`cipherclerk::prove_sovereign_turn_rotated`'s after-cell) and this
+        // weld route the SAME mode flip, so an HONEST promotion's after-digest equals the anchor.
+        Effect::MakeSovereign { cell: target } if target == cell_id => {
+            cell.mode = dregg_cell::CellMode::Sovereign;
+        }
         _ => {}
     }
 }

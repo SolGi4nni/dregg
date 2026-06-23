@@ -753,7 +753,14 @@ impl TurnExecutor {
             let anchor = match lead {
                 VmEffect::SetPermissions { .. }
                 | VmEffect::SetVerificationKey { .. }
-                | VmEffect::Refusal { .. } => Anchor::RecordDigest,
+                | VmEffect::Refusal { .. }
+                // makeSovereign forces the AFTER r23 authority-digest limb (`B_RECORD_DIGEST`): the
+                // Hosted→Sovereign promotion folds the flipped mode byte into
+                // `compute_authority_digest_felt`. PI 46 is a producer-supplied free PI on the
+                // light-client path UNTIL this verifier independently re-derives it from the trusted
+                // pre-cell + the promotion (`apply_effect_to_cell`'s MakeSovereign arm), so the
+                // full-node anchor here is the force binding a forged-mode AFTER block to UNSAT.
+                | VmEffect::MakeSovereign => Anchor::RecordDigest,
                 VmEffect::CellSeal { .. }
                 | VmEffect::CellUnseal { .. }
                 | VmEffect::CellDestroy { .. }
@@ -772,6 +779,7 @@ impl TurnExecutor {
                         || matches!(e, Effect::CellUnseal { target } if target == cell_id)
                         || matches!(e, Effect::CellDestroy { target, .. } if target == cell_id)
                         || matches!(e, Effect::ReceiptArchive { checkpoint, .. } if checkpoint.cell_id == *cell_id)
+                        || matches!(e, Effect::MakeSovereign { cell } if cell == cell_id)
                 });
                 if let Some(lead_effect) = lead_effect {
                     let mut post_cell = record_pin_cell.clone();

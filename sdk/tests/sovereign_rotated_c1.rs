@@ -1098,6 +1098,108 @@ mod record_pin_anchor {
             "refusal forged-after (wrong audit)",
         );
     }
+
+    // ── makeSovereign (the mode-promotion record-digest residual, NEWLY anchored) ─────────────────
+    //
+    // makeSovereign flips the cell `mode` Hosted→Sovereign; `compute_authority_digest_felt` FOLDS the
+    // mode byte (`Hosted=0/Sovereign=1`), so the AFTER r23 authority-digest limb (`B_RECORD_DIGEST`)
+    // MOVES on a genuine promotion. The deployed `makeSovereignVmDescriptor2R24` welds that limb to PI
+    // 46, but PI 46 is a PRODUCER-SUPPLIED free PI on the light-client path UNTIL the full-node
+    // verifier independently re-derives it from the trusted pre-cell + the promotion. The record-pin
+    // anchor (`verify_one_cohort_run`, MakeSovereign arm) is that re-derivation: it sets PI 46 =
+    // `compute_authority_digest_felt(apply_effect_to_cell(before_cell))` (= digest with mode flipped),
+    // so a forged AFTER block claiming the cell stayed Hosted (the un-promoted residue) is UNSAT.
+    // makeSovereign carries NO in-circuit mode weld at prove time (the record-pin anchor IS the
+    // binding), so the forge proves and the rejection lands at VERIFY — no catch_unwind.
+
+    /// Re-derive `setup_with_cell` but leave the before-cell in `Hosted` mode, so a makeSovereign
+    /// promotion genuinely MOVES the folded mode byte (a Sovereign-before promotion is a no-op).
+    fn setup_hosted_cell(balance: u64) -> (AgentCipherclerk, dregg_cell::CellId, Ledger, Cell) {
+        let cclerk = AgentCipherclerk::new();
+        let pub_key = cclerk.public_key().0;
+        let token_id = *blake3::hash(b"c1-domain").as_bytes();
+
+        let mut cell = Cell::with_balance(pub_key, token_id, i64::try_from(balance).unwrap());
+        cell.mode = CellMode::Hosted;
+        let cell_id = cell.id();
+
+        let nullifier_root = [0u8; 32];
+        let commitments_root = [0u8; 32];
+        let mut ctx_ledger = Ledger::new();
+        let _ = ctx_ledger.insert_cell(cell.clone());
+        let cells_root = rw::cells_root(&ctx_ledger);
+        let iroot = rw::iroot(&[]);
+        let v9_ctx = dregg_cell::commitment::V9RotationContext {
+            cells_root,
+            nullifier_root,
+            commitments_root,
+            iroot,
+        };
+        let commitment =
+            dregg_cell::commitment::compute_canonical_state_commitment_v9_8(&cell, &v9_ctx);
+
+        let mut cclerk = cclerk;
+        cclerk.store_sovereign_state(cell.clone());
+
+        let mut ledger = Ledger::new();
+        ledger.register_sovereign_cell(cell_id, commitment).unwrap();
+        let _ = ledger.insert_cell(cell.clone());
+
+        (cclerk, cell_id, ledger, cell)
+    }
+
+    /// CONTROL + BITE: an HONEST sovereign `MakeSovereign` turn proves and verifies; the committed
+    /// authority digest reflects the flipped mode. Passes ONLY because the verifier anchors PI 46 to
+    /// the trusted post-cell digest (mode=Sovereign) — without the MakeSovereign anchor arm the
+    /// placeholder PI 46 would disagree with the honest after-limb and REJECT this honest turn.
+    #[test]
+    fn rotated_sovereign_make_sovereign_proves_and_verifies() {
+        let (cclerk, cell_id, ledger, before) = setup_hosted_cell(1000);
+        assert_eq!(before.mode, CellMode::Hosted, "before-cell must be Hosted");
+        // The promotion genuinely MOVES the folded mode byte (the bite witness).
+        let mut honest_after = before.clone();
+        honest_after.mode = CellMode::Sovereign;
+        assert_ne!(
+            dregg_cell::compute_authority_digest_felt(&honest_after),
+            dregg_cell::compute_authority_digest_felt(&before),
+            "the promotion must move the authority digest (the folded mode byte flips)"
+        );
+        let effects = vec![Effect::MakeSovereign { cell: cell_id }];
+        assert_honest_accept(cclerk, cell_id, ledger, effects, 0, "makeSovereign accept");
+    }
+
+    /// ANTI-GHOST (the makeSovereign forgery is REJECTED): a proof whose AFTER block claims the cell
+    /// stayed Hosted (the un-promoted authority residue) — which the promotion did NOT produce — is
+    /// rejected. makeSovereign carries an IN-CIRCUIT mode-transition gate (the deployed
+    /// `makeSovereignVmDescriptor2R24`'s first constraint forces `B_MODE_after = B_MODE_before + 256`,
+    /// i.e. Hosted→Sovereign), so a forged un-promoted after-block is UNSAT at PROVE time — the
+    /// STRONGEST rejection (unprovable for a ledgerless client, no trusted post-cell needed). The
+    /// PI-46 record-pin anchor I wired in `verify_one_cohort_run` is the BELT-AND-SUSPENDERS full-node
+    /// leg for the folded authority residue (parallel to setPerms/setVK): on the rare forge whose mode
+    /// disc IS satisfied but whose opaque residue differs, the anchor catches it at verify. The shared
+    /// `assert_forged_after_rejected` driver handles BOTH poles (prove-time-unprovable OR verify-time
+    /// anchor), so this uses it directly — matching the lifecycle/setVK forge tests.
+    #[test]
+    fn rotated_sovereign_forged_after_make_sovereign_is_rejected() {
+        let (_c, cell_id, ledger, before_cell) = setup_hosted_cell(1000);
+        let effects = vec![Effect::MakeSovereign { cell: cell_id }];
+        // Honest after: mode flipped to Sovereign (the folded authority residue moves).
+        let mut honest_after = before_cell.clone();
+        honest_after.mode = CellMode::Sovereign;
+        // Forged after: still Hosted (claims a promotion that did NOT move the mode/residue). The
+        // in-circuit mode gate makes this un-promoted after-block UNSAT at prove time.
+        let forged_after = before_cell.clone();
+        assert_forged_after_rejected(
+            cell_id,
+            &before_cell,
+            &effects,
+            &honest_after,
+            &forged_after,
+            AnchorFlavor::RecordDigest,
+            ledger,
+            "makeSovereign forged-after (un-promoted Hosted)",
+        );
+    }
 }
 
 // ===========================================================================
