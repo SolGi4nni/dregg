@@ -686,26 +686,36 @@ impl TurnExecutor {
         // weld already binds. The pin stays (the descriptor still pins PI 46 over a placeholder-witness
         // reconstruction, so dropping the override here would red honest full-node proofs); retiring the
         // PI-46 pin itself is a VK-affecting descriptor change deferred to the anchor-cutover flag-day
-        // (VK-EPOCH-PLAN STAGE F). `Refusal` still rides this anchor genuinely (its `fields_root` audit
-        // is NOT yet welded on the record-digest path).
+        // (VK-EPOCH-PLAN STAGE F). `Refusal` ALSO now carries an in-circuit force on the light-client
+        // path (below) — the PI-46 record-digest pin it keeps is belt-and-suspenders on the full-node leg.
         //
-        // VK-EPOCH FAMILY 2 (the HONEST CONTRAST to family-1's setPerms/setVK close). `Refusal` and the
-        // lifecycle PAYLOAD are FULL-NODE-FORCED (this off-cell anchor bites) but NOT LIGHT-CLIENT-FORCED.
-        // The record-pin welds the AFTER limb to PI ROT_PI_COUNT (46), but on the light-client path
-        // (`verify_vm_descriptor2` ALONE, what `full_turn_proof::verify_effect_vm_rotated_with_cutover`
-        // runs) PI 46 is a PRODUCER-SUPPLIED free PI — the generator fills it from the producer's OWN
-        // after-witness AFTER limb (`trace_rotated.rs:394`), so the record-pin holds vacuously for any
-        // self-consistent forged post-cell. ONLY this anchor recomputes PI 46 from the trusted pre-cell +
-        // effect. Refusal CANNOT get a perms/VK-style weld: its post-value is `fields_root_felt(fields_root')`
-        // (a Merkle-MAP root depending on the pre-`fields_root`; its deployed params are `target` / `reason_hash`,
-        // NEITHER is the post-`fields_root`). The lifecycle DISC (limb 32) IS forced in-circuit (a frozen seal /
-        // resurrection IS light-client-rejected); only the OPAQUE payload felt (limb 29: `reason_hash`/`deathCert`/
-        // `sealed_at`) rides this anchor — and `sealed_at = block_height` is the HOST height, carried by NO effect
-        // param. So families 2 are a REAL RESIDUAL: converting them to light-client-forced needs a NEW primitive (a
-        // verifier-anchored declared-PAYLOAD column, like the deleg-tree column was for refresh — STAGE B/C), not a
-        // setPerms-style weld. Witness: `circuit/tests/vk_epoch_refusal_lifecycle_light_client_binding.rs` — a
-        // forged-audit / forged-payload post-cell is ACCEPTED through `verify_vm_descriptor2` ALONE (the residual
-        // poles), while the honest turn proves+verifies (the no-downgrade poles).
+        // REFUSAL NOW IN-CIRCUIT (the `fields_root` `.write` map-op gate,
+        // `EffectVmEmitRotationV3.refusalFieldsWriteV3`). The deployed `refusalVmDescriptor2R24` (in BOTH
+        // the live 1-felt `V3_STAGED_REGISTRY_TSV` AND the wide `WIDE_REGISTRY_STAGED_TSV` this verifier
+        // reads) carries — BESIDE the record-digest pin — a single `.write` map-op (guard = `SEL_REFUSAL`
+        // col 52, key = the constant `refusalAuditKeyFelt = 529176517` = `field_key_hash(REFUSAL_AUDIT_EXT_KEY)`,
+        // value = the declared audit-felt param col, root = the openable limb-36 `fields_root`) that FORCES
+        // `after_fields_root == write(before_fields_root, REFUSAL_AUDIT_KEY → audit_felt(params))`. The
+        // audit felt is light-client-recomputable from the published refusal params
+        // (`offered_action_commitment`, `reason`), and limb 36 is now the OPENABLE sorted-Poseidon2
+        // `fields_root` (`cell::state::compute_fields_root`) the map-op can open. So a refusal forged to
+        // publish a self-consistent after-`fields_root` differing from the genuine sorted write is UNSAT
+        // through `verify_vm_descriptor2` ALONE — the LIGHT-CLIENT path (no `apply_effect_to_cell`, no
+        // verifier PI override) that `full_turn_proof::verify_effect_vm_rotated_with_cutover` runs. Under
+        // CR the sorted write is FUNCTIONAL (`writesTo_functional`), so a frozen or forged after-root has
+        // no satisfying assignment. The record-digest PI-46 pin below is therefore belt-and-suspenders on
+        // the full-node leg for refusal. (The single-map-op refusal row vs noteSpend's TWO map-ops
+        // `.absent`+`.insert` is the deployed structural witness: refusal `.write` updates a reserved
+        // present key, noteSpend grows a fresh kernel-set key.)
+        //
+        // The lifecycle DISC (limb 32) IS forced in-circuit (a frozen seal / resurrection IS
+        // light-client-rejected); the lifecycle PAYLOAD felt (limb 29) is ALSO now forced (STAGE C, the
+        // hash gate — see below). Witness for the whole family: `circuit/tests/
+        // vk_epoch_refusal_lifecycle_light_client_binding.rs` — a forged-audit refusal post-cell and a
+        // forged-payload cellSeal post-cell are both REJECTED through `verify_vm_descriptor2` ALONE
+        // (anchor-disabled), while the honest turns prove+verify; and the LIVE deployed-descriptor close
+        // `effect_vm_rotation_flip::rotated_audit_record_pin_forces_record_digest_and_rejects_frozen_forgery`
+        // threads the openable fields tree through the deployed `refusalVmDescriptor2R24` map-op.
         //   * LIFECYCLE limb 29 (`lifecycle_felt_cell`): `CellSeal` / `CellUnseal` / `CellDestroy` (the
         //     lifecycle separates Live/Sealed/Destroyed + folds the death-cert) AND `ReceiptArchive`
         //     (the deployed `apply_receipt_archive` moves the lifecycle to `Archived`; the pin is

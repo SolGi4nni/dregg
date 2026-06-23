@@ -100,12 +100,14 @@ def openFronts : List OpenFront := [
   --     over accounts + bal + born-empty-side; component-1/2/3/log reject teeth + mutation #guards)
   --   * quint (2): spawnA, createCellFromFactoryA   (`WitnessExtract5`, `effect2quint_extract` —
   --     PIBindsDigestsQuint over the 5 components; component-1..5/log reject teeth + mutation #guards)
-  --   * composite (1): exerciseA   (`WitnessExtractComposite`) — the v1 hold-gate leg is hostilely
-  --     extracted (`exerciseHold_extract`/`_authority` via `WitnessExtractV1.effect_extract`: an
-  --     ARBITRARY PI-bound satisfying hold witness FORCES `ExerciseHoldSpec`/`exerciseGuard`), composed
-  --     with the inner-turn refinement bridge (`exerciseA_extract` ⇒ `ExerciseSpec`). The inner fold is
-  --     NOT a new obligation: `exerciseA_extract_inner_refines` shows it reduces per-step to the banked
-  --     per-effect extractors (`exercise_inner_emitted_refines_turnSpec` ∘ the per-step refinement).
+  --   * composite (1): exerciseA   (`WitnessExtractComposite`) — BOTH legs forced from circuit evidence:
+  --     the v1 hold-gate leg is hostilely extracted (`exerciseHold_extract`/`_authority` via
+  --     `WitnessExtractV1.effect_extract`: an ARBITRARY PI-bound satisfying hold witness FORCES
+  --     `ExerciseHoldSpec`/`exerciseGuard`), AND the inner fold is forced from the inner EMITTED circuit
+  --     witness (`exerciseA_extract` threads an `exerciseInnerTurnWitness` — a `TurnEmittedChain` over the
+  --     inner forest — through `exercise_inner_emitted_refines_turnSpec` ∘ the per-step `hstep` extractor;
+  --     mutation-confirmed: dropping the inner witness type-fails). The inner conjunct is NOT a carried
+  --     `innerTurnH ↔ turnSpec` bridge. `exerciseA_extract_inner_refines` restates the inner closure.
   -- Each has `*_extract` (hostile-witness closure) + anti-ghost `*_extract_rejects_*` teeth (a forged
   -- component / frame / log has NO satisfying PI-bound witness), all `#assert_axioms`-clean.
   --

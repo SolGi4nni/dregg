@@ -1,6 +1,6 @@
-//! # THE VK-EPOCH FAMILY-2 DISCRIMINATOR — Refusal + the lifecycle PAYLOAD: the HONEST state.
+//! # THE VK-EPOCH FAMILY-2 LIGHT-CLIENT CLOSE — Refusal + the lifecycle PAYLOAD: the HONEST state.
 //!
-//! ## What this measures (`docs/VK-EPOCH-PLAN.md`, STAGE B/C, family 2 — STEP-0 ground truth)
+//! ## What this measures (`docs/VK-EPOCH-PLAN.md`, STAGE B/C, family 2 — the CLOSED state)
 //!
 //! Family 1 (`vk_epoch_perms_vk_light_client_binding.rs`) is GENUINELY closed: setPermissions / setVK
 //! carry an IN-CIRCUIT `permsVKWeldGate` welding the committed AFTER perms/vk sub-limb (limb 33/34) to
@@ -10,20 +10,26 @@
 //! deployed `setPermsVmDescriptor2R24` carries 107 constraints (the bare rotated 106 + the ONE weld);
 //! the forge test rejects with `failed constraints = [the weld]`, the anchor not in the loop.
 //!
-//! Family 2 — Refusal + the lifecycle PAYLOAD — is the HONEST CONTRAST and is **STILL OPEN** for a
-//! ledgerless light client. The deployed `refusalVmDescriptor2R24` carries 106 constraints — the bare
-//! `rotateV3WithRecordPin B_RECORD_DIGEST` with NO force gate (one fewer than setPerms). The record pin
-//! welds the committed AFTER record-digest limb (`B_RECORD_DIGEST = 24`) to the rotated PI slot
-//! `ROT_PI_COUNT = 46`, but `generate_rotated_effect_vm_trace` fills that PI from the producer's OWN
-//! AFTER limb (`trace_rotated.rs:393-395`). So on the LIGHT-CLIENT path — `verify_vm_descriptor2` over
-//! the producer-published dpis, which is EXACTLY what the deployed SDK verifier
-//! `full_turn_proof::verify_effect_vm_rotated_with_cutover` runs — the record pin holds VACUOUSLY: a
-//! forged-but-self-consistent post-cell publishes its OWN forged limb as PI 46 and the pin is satisfied
-//! by construction. ONLY the FULL-NODE off-cell anchor (`proof_verify.rs` step 6b,
-//! `compute_authority_digest_felt(apply_effect_to_cell(trusted pre, effect))`) recomputes PI 46 from the
-//! pre-cell and rejects the forge — and a ledgerless light client CANNOT run that re-derivation.
+//! Family 2 — Refusal + the lifecycle PAYLOAD — is now ALSO CLOSED for a ledgerless light client (a
+//! DIFFERENT in-circuit primitive than family-1's single-param weld: a map-op WRITE gate / a HASH gate).
+//! The deployed `refusalVmDescriptor2R24` carries — BESIDE the record-digest pin — a single `.write`
+//! map-op (guard = `SEL_REFUSAL` col 52, key = the constant `refusalAuditKeyFelt = 529176517` =
+//! `field_key_hash(REFUSAL_AUDIT_EXT_KEY)`, value = the declared audit-felt param col, root = the openable
+//! limb-36 `fields_root`). It is the LAST constraint past the `rotateV3WithRecordPin B_RECORD_DIGEST`
+//! base — so the deployed refusal row carries 107 constraints (the 1-felt registry) / 147 (the wide
+//! registry the verifier reads), exactly ONE map-op (vs noteSpend's TWO: `.absent` + `.insert`). The
+//! map-op FORCES `after_fields_root == write(before_fields_root, REFUSAL_AUDIT_KEY → audit_felt(params))`.
 //!
-//! ## WHY refusal cannot get the perms/VK-style weld (the obstruction, not a parking lot)
+//! So on the LIGHT-CLIENT path — `verify_vm_descriptor2` over the producer-published dpis, which is
+//! EXACTLY what the deployed SDK verifier `full_turn_proof::verify_effect_vm_rotated_with_cutover` runs —
+//! a refusal forged to publish a self-consistent post-cell differing ONLY in the refusal-`fields_root`
+//! audit is REJECTED: its forged after-`fields_root` (limb 36) ≠ the genuine sorted write, and under CR
+//! the write is FUNCTIONAL (`writesTo_functional`), so there is NO satisfying assignment — NO off-cell
+//! anchor required. The PI-46 record-digest pin the row also carries is now belt-and-suspenders on the
+//! FULL-NODE leg (the `proof_verify.rs` step-6b `compute_authority_digest_felt(apply_effect_to_cell(...))`
+//! anchor still bites, redundantly, exactly as it does for setPerms/setVK).
+//!
+//! ## WHY refusal needed the map-op write gate (not the perms/VK-style single-param weld)
 //!
 //! perms/VK weld the AFTER sub-limb to `prmCol 0`, an IN-CIRCUIT declared-param column whose value is a
 //! light-client-known function of the effect (`perms_digest_felt(P)` / `vk_digest_felt(VK)`, carried
@@ -37,39 +43,38 @@
 //! equal to it (`refusalVmDescriptor`'s params are `REFUSAL_TARGET` / `REFUSAL_REASON_HASH`, neither the
 //! post-root), and committing `audit_felt` in a NEW dedicated sub-limb would DIVERGE the wire commitment
 //! from the cell-side commitment (`compute_canonical_state_commitment`, which folds the audit INTO
-//! `fields_root`), breaking the §1b faithfulness that makes ledger state need NO migration.
+//! `fields_root`), breaking the §1b faithfulness that makes ledger state need NO migration. So the
+//! GENUINE force is a **`fields_root` map-op WRITE gate** (the noteSpend gold standard:
+//! `after_root == sorted_write(before_root, KEY, audit_felt(params))` checked in-circuit, with a
+//! `fields_root` tree witness threaded into `map_heaps`). That gate is now DEPLOYED: limb 36 carries the
+//! OPENABLE sorted-Poseidon2 `fields_root` (`cell::state::compute_fields_root`), and the prove path
+//! `generate_rotated_refusal_trace_with_fields_tree` threads the BEFORE leaf-set as `map_heaps` so the
+//! map-op can open it (the data-availability plumbing the prior framing had as out-of-scope is landed).
 //!
-//! The GENUINE in-circuit force is therefore a **`fields_root` map-op WRITE gate** (the noteSpend gold
-//! standard: `after_root == sorted_insert(before_root, KEY, audit_felt(params))` checked in-circuit,
-//! with a `fields_root` tree witness threaded into `map_heaps`). The `RotationWitness` carries only the
-//! `fields_root` DIGEST limb (`pre_limbs[36]`), NOT the leaf-set; no prove path threads a `fields_root`
-//! `map_heaps`. This is the SAME data-availability class as the cap-write §A gap — a witness-plumbing
-//! task explicitly OUT of STAGE-B scope (logged: `HORIZONLOG.md`, `docs/VK-EPOCH-PLAN.md` STAGE B/D).
+//! The lifecycle PAYLOAD (cellSeal limb 29) is closed by a sibling primitive: the DISC (the safety-
+//! critical transition) is in-circuit-forced (`rotateV3WithDiscGate`), AND the OPAQUE payload felt
+//! `lifecycle_felt(disc, reason_hash, sealed_at)` — a FELT-DOMAIN Poseidon2 hash of light-client-known
+//! inputs (`reason_hash` = effect param, `sealed_at = block_height`) — is now welded to the declared
+//! payload-hash column `prmCol 3` by the in-circuit `lifecyclePayloadHashGate`. So a forged payload
+//! (committed limb 29 ≠ the recomputed payload hash) is UNSAT anchor-disabled.
 //!
-//! The lifecycle PAYLOAD (cellSeal limb 29) has the SAME shape: the DISC (the safety-critical
-//! transition) IS already in-circuit-forced (`rotateV3WithDiscGate`, cellSeal = 108 constraints, the +1
-//! disc gate); only the OPAQUE payload felt `lifecycle_felt(reason_hash, sealed_at)` rides the record
-//! pin. It is a hash of light-client-known inputs (`reason_hash` = effect param, `sealed_at = block_height`
-//! = PI 44), so binding it needs an in-circuit HASH gate computing that felt — again NOT a single
-//! declared-param weld. The disc close already rejects every lifecycle-STATE forgery (frozen seal /
-//! resurrection / wrong-disc archive); the payload felt is a non-safety-critical residual.
-//!
-//! ## The discriminator (both poles — GREEN = it asserts the CURRENT TRUTH)
+//! ## The two poles (both teeth — GREEN = it asserts the CURRENT TRUTH)
 //!
 //! Run through `prove_vm_descriptor2` / `verify_vm_descriptor2` ALONE (the light-client path; NO
 //! `apply_effect_to_cell`, NO verifier PI override). For refusal:
 //!
-//!   * POSITIVE (no downgrade): an HONEST refusal turn proves + verifies.
-//!   * OPEN RESIDUAL (the anchor-disabled discriminator): a post-cell forged to differ ONLY in the
-//!     refusal-`fields_root` audit, with its OWN producer-free dpis, is STILL ACCEPTED through
-//!     `verify_vm_descriptor2` ALONE. This is the LIGHT-CLIENT gap STAGE B must close via the map-op
-//!     gate — the record pin alone is full-node-only (a verifier-anchored PI 46 is required to reject,
-//!     and the deployed light-client verifier does not anchor it).
+//!   * POSITIVE (no downgrade): an HONEST refusal turn proves + verifies (the genuine fields-root write
+//!     satisfies the map-op gate).
+//!   * LIGHT-CLIENT CLOSE (anchor-disabled): a post-cell forged to differ ONLY in the refusal-`fields_root`
+//!     audit, with its OWN producer-free dpis, is REJECTED through `verify_vm_descriptor2` ALONE — the
+//!     in-circuit `.write` map-op bites for a ledgerless client (NO verifier-anchored PI 46 needed).
 //!
-//! This corrects the prior framing of this file (which manually anchored PI 46 with the honest value and
-//! mislabeled the result "FORCED-ON-WIRE — residual CLOSED"): that anchor is the FULL-NODE step-6b
-//! re-derivation, NOT an in-circuit gate, so it does not measure the light-client property. The honest
-//! state is: refusal/lifecycle-payload ride the off-cell anchor and are NOT yet light-client-forced.
+//! This is the LIVE realization of `EffectVmEmitRotationV3.refusalFieldsWriteV3_forces_write` (refusal) /
+//! `cellSealV3_payload_rejects_forged_lightclient` (lifecycle payload), threaded to the apex
+//! `lightclient_unfoolable_closed_final_genuine`. The deployed-descriptor structural witness — the single
+//! refusal `.write` map-op — is checked by `effect_vm_descriptors`'s registry coverage tests; the LIVE
+//! deployed-descriptor prove/verify forge close is also exercised by
+//! `effect_vm_rotation_flip::rotated_audit_record_pin_forces_record_digest_and_rejects_frozen_forgery`.
 //!
 //! Gated on `prover`. Run with
 //! `cargo test -p dregg-circuit --features prover --test vk_epoch_refusal_lifecycle_light_client_binding -- --nocapture`.

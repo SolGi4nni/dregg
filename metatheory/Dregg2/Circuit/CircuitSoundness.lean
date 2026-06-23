@@ -407,7 +407,32 @@ Derivation chain: STARK extracts a witness `t` with `tracePublishedCommit t = pi
 `WitnessDecodes` produces `pre`/`post` with `StateDecode S pi.toPublished pre post` → `hrefines` turns
 the witness + decode into `kstep pi.effect pre post` → the decode's binding re-exports `pi.pre`/`pi.post`
 as the genuine endpoint commitments. The result is the honest headline: `(pi, π)` + named floors ⟹
-∃ a real kernel transition committing to `pi`. The light client RAN NOTHING. -/
+∃ a real kernel transition committing to `pi`. The light client RAN NOTHING.
+
+### SCOPE — what this apex proves, and what it does NOT (the freshness boundary).
+
+`lightclient_unfoolable` proves **SINGLE-TRANSITION soundness**: every accepted batch decodes to a
+GENUINE kernel step `pre ⟶ post` committing to `pi.pre`/`pi.post`. It takes `pi.turn` as a GIVEN.
+It establishes NOTHING about whether that transition is **FRESH** (not already applied), nor about
+its ORDERING relative to other turns. A light client verifying `(pi, π)` learns "this is a REAL
+transition", NOT "this is a fresh, unreplayed transition".
+
+Cross-turn FRESHNESS / NO-REPLAY / ordering is **NOT part of this theorem**. It rests on the DEPLOYED
+machinery, NOT modeled in this apex:
+  * the **commitment-chain CAS** (`proof_verify.rs`): the live stored commitment must equal the
+    proof's pre-anchor; applying the proof advances the live commitment to the post-anchor;
+  * **cell-nonce monotonicity** (`cell_state.rs` "Monotonic"): the agent nonce is bound INTO
+    `recStateCommit` (it lives in the agent cell's leaf) and strictly increases each turn, so the
+    commitment sequence never cycles — a consumed `pre` never recurs.
+
+A light client that wants freshness MUST additionally track the live stored commitment (the CAS) and
+reject any proof whose pre-anchor ≠ the live commitment. The proof `(pi, π)` ALONE does not establish
+freshness. The cross-turn close — `commit-chain + nonce-monotone ⟹ each proof applicable at most
+once` — is proved separately in `Dregg2.Circuit.CrossTurnFreshness` (`no_replay`,
+`replay_rejected_after_apply`), over the concrete `recStateCommit` surface where the nonce lives;
+that module names its precise residual (wiring the full `runTurn`-driven accepted sequence into a
+monotone `TurnChain`). Do NOT read "a light client that runs nothing cannot be fooled" as covering
+replay: it covers AUTHENTICITY of a single transition; FRESHNESS is the CAS's job. -/
 
 /-- **`WitnessDecodes hash R S pi` — the witness→kernel-state EXISTENCE rung (NAMED, not faked).**
 

@@ -20,6 +20,41 @@ The apex is **parametric in the per-effect kernel step relation `kstep`**, so th
 instantiated at the toy arm (`dispatchArm`) and the FAITHFUL arm (`dispatchArmFacet`). Its carried
 obligations are exactly the cryptographic floors (named below); the circuit-forcing content is proven.
 
+## Scope — single-transition soundness, NOT freshness
+
+`lightclient_unfoolable` proves **SINGLE-TRANSITION soundness**: every accepted batch decodes to a
+genuine kernel step committing to the published `(pre, post)`. It takes `pi.turn` as a **given**. It
+proves NOTHING about whether the transition is **FRESH** (not already applied) or correctly **ordered**
+across turns. A light client verifying `(pi, π)` learns "this is a REAL transition" — NOT "this is a
+fresh, unreplayed transition".
+
+Cross-turn FRESHNESS / NO-REPLAY / ordering is **not part of the apex**. It rests on the DEPLOYED
+machinery, which the apex does not model:
+
+- the **commitment-chain CAS** (`proof_verify.rs`): the live stored commitment must equal the proof's
+  pre-anchor; applying the proof advances the live commitment to the post-anchor;
+- **cell-nonce monotonicity** (`cell_state.rs` "Monotonic"): the agent nonce is bound into
+  `recStateCommit` (it lives in the agent cell's leaf hash) and strictly increases each turn, so the
+  committed state never cycles — a consumed `pre` never recurs.
+
+A light client that wants freshness **must additionally track the live stored commitment** (the CAS)
+and reject any proof whose pre-anchor ≠ the live commitment. The proof alone does not establish
+freshness; "a light client that runs nothing cannot be fooled" covers the **authenticity** of a single
+transition, not replay.
+
+The cross-turn close is proven separately in `Dregg2/Circuit/CrossTurnFreshness.lean` (axiom-clean):
+the genuinely-hard fact — **the commitment cannot hide a stale nonce** (`commit_inj_nonce`, from the CR
+set via `CommitSurface.commit_binds`) — drives `commit_no_repeat` (the live-commitment sequence never
+repeats under a strictly-monotone agent nonce) and hence `no_replay` (a fixed pre-anchor opens the CAS
+gate **at most once**) + `replay_rejected_after_apply` (every later turn rejects the same proof). The
+monotone-nonce hypothesis is grounded by `prologue_strictly_increases_nonce` (the deployed
+never-rolled-back fee/nonce prologue, `Admission.commitPrologue_nonce`). The named **residual** (neither
+an axiom nor a hole) is the mechanical composition that wires the full `Admission.runTurn`-driven
+accepted sequence into a monotone `TurnChain` (over the already-proved `recKExec_preserves_AccountsWF`
+and `admissible_links_to_head`) and proves the agent nonce strictly increases across the whole
+prologue+body. The replay defense is **modeled and proven at its core**, and the residual to the
+deployed CAS is named, not laundered.
+
 ## The four proven legs
 
 The soundness case rests on four things that are PROVEN in Lean (axiom-clean, pinned in
@@ -80,8 +115,11 @@ the component frameworks:
 - dual (2): `cellDestroy`, `heapWrite` (`WitnessExtractDual`).
 - triple (1): `createCellA` (`WitnessExtract3`, over accounts + bal + born-empty-side).
 - quint (2): `spawnA`, `createCellFromFactoryA` (`WitnessExtract5`, over the 5 components).
-- composite (1): `exerciseA` (`WitnessExtractComposite`) — the hold-gate leg is hostilely extracted and
-  composed with the inner-turn refinement bridge.
+- composite (1): `exerciseA` (`WitnessExtractComposite`) — BOTH legs forced from circuit evidence: the
+  hold-gate leg is hostilely extracted (an arbitrary PI-bound satisfying hold witness forces
+  `ExerciseHoldSpec`/`exerciseGuard`), AND the inner fold is forced from the inner emitted circuit witness
+  (`exerciseA_extract` threads an `exerciseInnerTurnWitness` — a `TurnEmittedChain` over the inner forest —
+  through `exercise_inner_emitted_refines_turnSpec` ∘ the per-step extractor; not a carried bridge).
 
 There is no remaining gap in the per-effect adversarial-extraction lane: 32 closed / 0 open.
 
@@ -127,13 +165,17 @@ Anchored families (both-polarity tests green — honest accept BITES, forged-aft
 - The **record-digest anchor family** (8 effects): `setPermissions`, `setVK`, `refusal`,
   `cellSeal`, `cellUnseal`, `cellDestroy`, `receiptArchive`, `makeSovereign`. Test:
   `sdk/tests/sovereign_rotated_c1.rs` `record_pin_anchor`; Lean: `rotateV3WithRecordPin_rejects_wrong_post`.
+  (For `setPermissions`/`setVK`/`refusal` and the lifecycle movers the anchor is now belt-and-suspenders:
+  each carries an in-circuit force — the perms/VK weld, the `refusal` `fields_root` `.write` map-op, the
+  disc + lifecycle-payload hash gates — so the move is light-client-forced without the off-cell anchor.)
 - The **value-forced effects** (6): `transfer`, `burn`, `mint`, `bridgeMint`, `setField`,
   `incrementNonce` — the effect writes a directly-named bound column (`bal`/`field[slot]`/`nonce`).
   The transfer path is sound through the live sovereign verifier (PI↔STATE_COMMIT, tamper test green).
-- The map-op effects (the note / capability families) via their own in-circuit gates: `noteSpend`'s
-  double-spend non-membership is FORCED in-circuit (`SortedTreeNonMembership.lean`), and the capability
-  family's exact key-set move is forced (`CapTreeUpdate.lean`; `attenuate` is set-exact, not
-  non-amp-only — the ARGUS non-amplification crown, #103).
+- The map-op effects (the note / capability / fields-root families) via their own in-circuit gates:
+  `noteSpend`'s double-spend non-membership is FORCED in-circuit (`SortedTreeNonMembership.lean`), the
+  capability family's exact key-set move is forced (`CapTreeUpdate.lean`; `attenuate` is set-exact, not
+  non-amp-only — the ARGUS non-amplification crown, #103), and `refusal`'s audit write is forced by a
+  `.write` map-op on the openable `fields_root` (`EffectVmEmitRotationV3.refusalFieldsWriteV3`).
 
 ## The named residuals (the honest fine print)
 
@@ -189,8 +231,8 @@ write is forced into it.
 | class | effects | what it means |
 |---|---|---|
 | **VALUE_FORCED** (gate pins a directly-named bound column) | `transfer`, `burn`, `mint`, `bridgeMint`, `setField`, `incrementNonce` | the gate pins the moved column (`bal`/`field[slot]`/`nonce`) into the commitment; forgery teeth bite |
-| **RECORD-DIGEST ANCHORED** (gate + verifier-anchor wired) | `setPermissions`, `setVK`, `refusal`, `cellSeal`, `cellUnseal`, `cellDestroy`, `receiptArchive`, `makeSovereign` | the write lands in the `record_digest`/lifecycle limb the commitment binds, the descriptor pins it, AND `proof_verify.rs` step 6b anchors the PI to `compute_authority_digest_felt`/`lifecycle_felt_cell(trusted post-cell)` — both-polarity tests green |
-| **MAP-OP FORCED** (in-circuit sorted-set / cap-tree gate) | `noteSpend`, `noteCreate`, the capability family (`attenuate`, `delegate`, `delegateAtten`, `introduce`, `grantCap`, `revokeCapability`), `spawn` (the cap handoff) | the exact sorted-set / cap-tree move is forced in-circuit (`SortedTreeNonMembership`/`CapTreeUpdate`); `noteSpend` double-spend non-membership FORCED; `attenuate` set-exact |
+| **RECORD-DIGEST ANCHORED** (gate + verifier-anchor wired) | `setPermissions`, `setVK`, `cellSeal`, `cellUnseal`, `cellDestroy`, `receiptArchive`, `makeSovereign` | the write lands in the `record_digest`/lifecycle limb the commitment binds, the descriptor pins it, AND `proof_verify.rs` step 6b anchors the PI to `compute_authority_digest_felt`/`lifecycle_felt_cell(trusted post-cell)` — both-polarity tests green. (`setPermissions`/`setVK` are ALSO light-client-forced by their in-circuit perms/VK weld; `cellSeal`/`cellUnseal`/`cellDestroy`/`receiptArchive` by the in-circuit disc gate + lifecycle-payload hash gate — the anchor is then belt-and-suspenders) |
+| **MAP-OP FORCED** (in-circuit sorted-set / cap-tree / fields-root gate) | `noteSpend`, `noteCreate`, the capability family (`attenuate`, `delegate`, `delegateAtten`, `introduce`, `grantCap`, `revokeCapability`), `spawn` (the cap handoff), `refusal` (the audit write) | the exact sorted-set / cap-tree / fields-root move is forced in-circuit (`SortedTreeNonMembership`/`CapTreeUpdate`); `noteSpend` double-spend non-membership FORCED (two map-ops, `.absent`+`.insert`); `attenuate` set-exact; `refusal` carries ONE `.write` map-op (guard `SEL_REFUSAL`, key `refusalAuditKeyFelt`) FORCING `after_fields_root == write(before_fields_root, REFUSAL_AUDIT_KEY → audit_felt(params))` on the openable limb-36 `fields_root` (`EffectVmEmitRotationV3.refusalFieldsWriteV3_forces_write`, deployed in both registry TSVs) — so refusal is light-client-forced, NOT anchor-only; its record-digest PI-46 pin is belt-and-suspenders |
 | **COMMITMENT-BOUND RESIDUAL** (commitment binds the field; write-gate is the §3.EPOCH cutover) | `revokeDelegation` (epoch step), `spawn` (birth epoch stamp), `refreshDelegation` (freshness-restore stamp) | the field folds into `record_digest` (bound), the extractor forces the gate, the executor performs the move; the FROZEN v1 face does not yet write-gate-force the epoch stamp — carried as the NAMED `*EpochStampResidual`, fail-closed, data-bearing |
 
 `emitEvent` is a log-only effect (forced; full kernel frame unchanged). `custom` is out of scope (no

@@ -23,14 +23,17 @@ closed legs:
      `innerTurnH ↔ turnSpec …` bridge — exactly the shape `exercise_circuit_refines_spec` uses.
 
 `exerciseA_extract` composes the two: a PI-bound satisfying HOLD witness (the adversary keeps the root
-wires `64/65` and every `w ≥ 74`) + the inner-turn refinement bridge + the facet mask FORCES the COMPLETE
-`ExerciseSpec`. This is the hostile-witness upgrade of `Inst.ExerciseA.exercise_circuit_refines_spec`
-(which consumed the honest `encodeE` hold witness via `exerciseA_full_sound`); we swap in
-`WitnessExtractV1.effect_extract` for the hold leg.
+wires `64/65` and every `w ≥ 74`) + the inner EMITTED circuit witness (`exerciseInnerTurnWitness`, a
+`TurnEmittedChain` over the inner forest) discharged per-step by the banked `hstep` extractor + the facet
+mask FORCES the COMPLETE `ExerciseSpec`. This is the hostile-witness upgrade of
+`Inst.ExerciseA.exercise_circuit_refines_spec` (which consumed the honest `encodeE` hold witness via
+`exerciseA_full_sound`); we swap in `WitnessExtractV1.effect_extract` for the hold leg.
 
-NO foundational residual: the inner fold's hostile extraction IS the per-step extractors composed (the
-`hstep` hypothesis the upstream inner-turn witness already supplies). The composite is a WIRE of two
-closed legs, not a new soundness obligation.
+NO foundational residual: BOTH legs are forced from circuit evidence — the hold authority from the
+satisfying PI-bound hold witness, and the inner fold from the inner emitted chain via
+`exercise_inner_emitted_refines_turnSpec` ∘ the per-step `hstep` extractors. The inner conjunct is NOT a
+carried `innerTurnH ↔ turnSpec` bridge; `exerciseA_extract` threads the emitted witness directly. The
+composite is a WIRE of two closed legs, not a new soundness obligation.
 
 ADDITIVE: imports `WitnessExtractV1` + `Inst/exerciseA` + `Inst/ExerciseInnerTurn`; edits none.
 -/
@@ -114,23 +117,32 @@ theorem exerciseHold_extract_rejects_log_forge
 
 This is the hostile-witness upgrade of `Inst.ExerciseA.exercise_circuit_refines_spec`. That theorem
 consumed the HONEST `encodeE` hold witness (via `exerciseA_full_sound`); here we consume an ARBITRARY
-PI-bound satisfying hold witness `a` (via `exerciseHold_extract`). The inner fold is carried as the same
-`innerTurnH ↔ turnSpec …` bridge the upstream `ExerciseInnerTurn` witness supplies — the inner emitted
-chain refines `turnSpec` per-step through the per-effect extractors already banked. -/
+PI-bound satisfying hold witness `a` (via `exerciseHold_extract`). The inner fold is FORCED from the
+inner EMITTED circuit witness `innerW : exerciseInnerTurnWitness …` (a `TurnEmittedChain` over the inner
+forest), NOT a free bridge: `exerciseA_extract_inner_refines` reduces the emitted chain to `turnSpec`
+per-step through the per-effect `hstep` extractor already banked. So BOTH legs are now forced from circuit
+evidence — the hold authority from `a`/`hPI`, the inner fold from `innerW`/`hstep`. -/
 
 /-- **`exerciseA_extract`** — THE composite adversarial-witness extractor. An ARBITRARY PI-bound
-satisfying HOLD witness `a` (the adversary keeps the roots `64/65` and `w ≥ 74`) + the inner-turn
-refinement bridge `hinnerBridge` (the inner emitted chain refines `turnSpec`, reducing to the per-effect
-extractors) + the facet mask `hfacet` FORCES the COMPLETE `ExerciseSpec` (facet-admitted ∧ held authority
-∧ inner fold from the hold post-state). The hold authority is EXTRACTED, not assumed. -/
+satisfying HOLD witness `a` (the adversary keeps the roots `64/65` and `w ≥ 74`) + the inner EMITTED
+circuit witness `innerW` (a `TurnEmittedChain` over the inner forest from the hold post-state) discharged
+per-step by the banked extractor `hstep` + the facet mask `hfacet` FORCES the COMPLETE `ExerciseSpec`
+(facet-admitted ∧ held authority ∧ inner fold from the hold post-state). BOTH the hold authority AND the
+inner fold are EXTRACTED from circuit evidence, not assumed: the inner conjunct is forced by
+`exerciseA_extract_inner_refines` (`exercise_inner_emitted_refines_turnSpec` ∘ the per-step refinement),
+not a carried `innerTurnH ↔ turnSpec` bridge. -/
 theorem exerciseA_extract
     (S : CommitSurface)
     (hN : compressNInjective S.compressN) (hL : cellLeafInjective S.CH)
     (hRest : RestHashIffFrame S.RH) (hLog : logHashInjective S.LH)
     (pre post : RecChainedState) (args : ExerciseFullArgs)
-    (innerTurnH : Prop)
-    (hinner : innerTurnH)
-    (hinnerBridge : innerTurnH ↔ turnSpec (exerciseHoldState pre args.actor) args.inner post)
+    -- The inner emitted circuit witness + the banked per-step refinement (the inner leg's circuit evidence):
+    (lookup : DescriptorLookup) (compress : ℤ → ℤ → ℤ) (stepRoot : StepWitness → ℤ)
+    (hstep :
+      ∀ (sw : StepWitness) (st st' : RecChainedState) (fa : FullActionA),
+        stepEmittedSat lookup sw st st' fa → fullActionStep st fa st')
+    (innerW : exerciseInnerTurnWitness lookup compress stepRoot
+        (exerciseHoldState pre args.actor) post args.inner)
     (hfacet : innerFacetsAdmittedA pre args.actor args.target args.inner = true)
     (hwf : AccountsWF pre.kernel)
     (a : Assignment)
@@ -142,19 +154,25 @@ theorem exerciseA_extract
     exerciseHold_extract_authority S hN hL hRest hLog pre ⟨args.actor, args.target⟩
       (exerciseHoldState pre args.actor) hwf
       (exerciseHoldState_accountsWF pre args.actor hwf) a hsat hPI
-  exact ⟨hfacet, hguard, hinnerBridge.mp hinner⟩
+  -- The inner fold is FORCED from the inner emitted chain (not a free bridge): the banked per-step
+  -- refinement `hstep` discharges the `TurnEmittedChain` in `innerW` to `turnSpec` (this is exactly
+  -- `exerciseA_extract_inner_refines` / `exercise_inner_emitted_refines_turnSpec`, §4).
+  have hinner : turnSpec (exerciseHoldState pre args.actor) args.inner post :=
+    exercise_inner_emitted_refines_turnSpec lookup compress stepRoot hstep
+      (exerciseHoldState pre args.actor) post args.inner innerW
+  exact ⟨hfacet, hguard, hinner⟩
 
-/-! ## §4 — the precise inner-fold residual (NAMED, not hidden).
+/-! ## §4 — the inner-fold leg, restated standalone (the lemma `exerciseA_extract` threads inline).
 
-The composite is closed MODULO the standard inner-turn bridge: `hinnerBridge` /
-`ExerciseInnerTurn.exercise_inner_emitted_refines_turnSpec` supplies `turnSpec` from an inner emitted
-chain, which the generic `TurnEmit.turn_emitted_refines_turnSpec` discharges per-step. That per-step
-hypothesis (`hstep : stepEmittedSat … fa → fullActionStep … fa`) IS the per-effect extractors composed —
-every inner `FullActionA` arm routes to a banked `*_extract` / `*_emitted_refines_*`. So the inner leg's
-hostile extraction is NOT a new foundational obligation; it is the SAME per-effect closure applied along
-the fold. The composite therefore has NO irreducible residual beyond the per-effect extractors this
-campaign already established. (See `Inst.ExerciseInnerTurn` for the bridge; the recursion is structural
-over `inner : List FullActionA`, terminating, and reuses the closed per-step refinement.) -/
+`exerciseA_extract` (§3) forces the inner conjunct of `ExerciseSpec` by threading the inner emitted chain
+through `exercise_inner_emitted_refines_turnSpec` — so the composite has NO carried inner-turn bridge.
+This §4 lemma restates that same inner-fold closure standalone (it is definitionally the body
+`exerciseA_extract` invokes): when the inner emitted chain is satisfied, the inner forest refines
+`turnSpec`, via the generic `TurnEmit.turn_emitted_refines_turnSpec` discharged per-step by `hstep`. That
+per-step hypothesis (`hstep : stepEmittedSat … fa → fullActionStep … fa`) IS the per-effect extractors
+composed — every inner `FullActionA` arm routes to a banked `*_extract` / `*_emitted_refines_*`. So the
+inner leg's hostile extraction is NOT a new foundational obligation; it is the SAME per-effect closure
+applied along the fold, terminating structurally over `inner : List FullActionA`. -/
 
 /-- **`exerciseA_extract_inner_refines`** — the inner-fold leg, restated as the per-step closure: when the
 inner emitted chain is satisfied (the upstream `exerciseInnerTurnWitness`), the inner forest refines
