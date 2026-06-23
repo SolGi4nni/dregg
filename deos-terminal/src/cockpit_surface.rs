@@ -36,8 +36,17 @@ impl TerminalSurface {
     /// Spawn `$SHELL` and wrap it as a surface. Returns an error if the PTY
     /// can't be opened.
     pub fn spawn_shell(id: u64, cx: &mut App) -> anyhow::Result<Self> {
+        Self::spawn(id, None, cx)
+    }
+
+    /// Spawn a SPECIFIC command (`program` + `args`) on a real PTY, or `$SHELL`
+    /// when `cmd` is `None`. The same live alacritty PTY as [`Self::spawn_shell`],
+    /// but with a deterministic one-shot program — so a headless bake/test can run
+    /// `cargo --version` / `git --version` and assert the genuine child-process
+    /// output landed in the grid. Returns an error if the PTY can't be opened.
+    pub fn spawn(id: u64, cmd: Option<(String, Vec<String>)>, cx: &mut App) -> anyhow::Result<Self> {
         let terminal = Terminal::spawn(
-            None,
+            cmd,
             std::env::current_dir().ok(),
             std::env::vars().collect(),
             TermSize::new(80, 24),

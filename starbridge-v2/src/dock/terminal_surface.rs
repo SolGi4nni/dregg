@@ -50,6 +50,16 @@ impl TerminalPane {
         Ok(TerminalPane(TerminalSurface::spawn_shell(id, cx)?))
     }
 
+    /// Spawn a SPECIFIC command (program + args) on a real PTY, or `$SHELL` when
+    /// `cmd` is `None` — the same live alacritty PTY as [`Self::spawn_shell`], but
+    /// running a deterministic one-shot (`cargo --version`, `git --version`) so a
+    /// headless bake/test can drive it and assert the genuine child-process output
+    /// landed in the cell grid. The self-hosting loop's terminal half, made
+    /// assertable.
+    pub fn spawn(id: u64, cmd: Option<(String, Vec<String>)>, cx: &mut App) -> anyhow::Result<Self> {
+        Ok(TerminalPane(TerminalSurface::spawn(id, cmd, cx)?))
+    }
+
     /// Wrap an already-built terminal view entity.
     pub fn from_view(id: u64, view: gpui::Entity<deos_terminal::TerminalView>) -> Self {
         TerminalPane(TerminalSurface::from_view(id, view))

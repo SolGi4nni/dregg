@@ -590,6 +590,18 @@ pub mod cockpit;
 // wrappers (`dev-surfaces`) + gpui. See `--render-showcase` in main.rs.
 #[cfg(all(feature = "gpui-ui", feature = "dev-surfaces"))]
 pub mod showcase;
+// THE SELF-HOSTING LOOP, DEMONSTRATED — both REAL halves in one view: a firmament
+// editor over the live World (a save = a real receipted turn) + a live-PTY
+// terminal running real cargo/git INSIDE deos. The host drives + asserts both
+// proofs; `--render-self-hosting` in main.rs bakes the PNG. Needs the firmament
+// editor (`firmament` + `embedded-executor`) + the live PTY pane (`dev-surfaces`).
+#[cfg(all(
+    feature = "gpui-ui",
+    feature = "dev-surfaces",
+    feature = "firmament",
+    feature = "embedded-executor"
+))]
+pub mod self_hosting;
 // THE LOGIN CEREMONY surface — the boot front door; picking an identity runs the
 // real session ceremony (`crate::session`) and swaps the window root to the cockpit.
 // `gpui-ui` ONLY (native): the login surface drives the DURABLE-session-image path

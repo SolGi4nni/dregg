@@ -137,6 +137,33 @@ fn main() {
         }
     }
 
+    // `--render-self-hosting <out>`: THE SELF-HOSTING LOOP, RUN + PROVEN. Mounts
+    // BOTH real halves in one cockpit view — a firmament editor over the LIVE
+    // World (fires a real receipted save) + a LIVE alacritty PTY running real
+    // `cargo --version` (or `--self-hosting-cmd <prog> <args…>`) INSIDE deos —
+    // drives them, ASSERTS the editor receipt grew AND the command output is in
+    // the terminal grid, then bakes `<out>.png`. Default 1600x1000.
+    #[cfg(all(
+        feature = "render-capture",
+        feature = "gpui-ui",
+        feature = "dev-surfaces",
+        feature = "firmament",
+        feature = "embedded-executor"
+    ))]
+    {
+        if let Some(out) = render_self_hosting_arg(&args) {
+            let (w, h) = render_size_arg(&args).unwrap_or((1600.0, 1000.0));
+            let cmd = self_hosting_cmd_arg(&args);
+            match render_self_hosting_headless(&out, w, h, cmd) {
+                Ok(()) => std::process::exit(0),
+                Err(e) => {
+                    eprintln!("render-self-hosting FAILED: {e:#}");
+                    std::process::exit(1);
+                }
+            }
+        }
+    }
+
     // `--render-login <out>`: render the LOGIN CEREMONY surface offscreen (the
     // boot front door) the same headless way the cockpit bakes — the MCP-
     // screenshottable proof that the login surface lays out (the identity picker
@@ -662,6 +689,47 @@ fn render_showcase_arg(args: &[String]) -> Option<String> {
         }
     }
     None
+}
+
+/// Parse the `--render-self-hosting <out>` (or `=<out>`) argument — the output
+/// base path for the SELF-HOSTING bake. Returns `None` when absent.
+#[cfg(all(
+    feature = "render-capture",
+    feature = "gpui-ui",
+    feature = "dev-surfaces",
+    feature = "firmament",
+    feature = "embedded-executor"
+))]
+fn render_self_hosting_arg(args: &[String]) -> Option<String> {
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        if a == "--render-self-hosting" {
+            return it.next().cloned();
+        }
+        if let Some(rest) = a.strip_prefix("--render-self-hosting=") {
+            return Some(rest.to_string());
+        }
+    }
+    None
+}
+
+/// Parse `--self-hosting-cmd <prog> [args…]` (everything after it, up to the next
+/// `--flag`, is the terminal command). `None` → the default (`cargo --version`).
+#[cfg(all(
+    feature = "render-capture",
+    feature = "gpui-ui",
+    feature = "dev-surfaces",
+    feature = "firmament",
+    feature = "embedded-executor"
+))]
+fn self_hosting_cmd_arg(args: &[String]) -> Option<(String, Vec<String>)> {
+    let pos = args.iter().position(|a| a == "--self-hosting-cmd")?;
+    let mut rest = args[pos + 1..]
+        .iter()
+        .take_while(|a| !a.starts_with("--"))
+        .cloned();
+    let prog = rest.next()?;
+    Some((prog, rest.collect()))
 }
 
 /// Parse the `--render-login <out>` (or `--render-login=<out>`) argument — the
@@ -1353,6 +1421,149 @@ fn render_showcase_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()> {
          LIVE deos desktop — chat+membrane / editor / terminal / agent over the real \
          cell world, gpui Scene via lavapipe offscreen."
     );
+    Ok(())
+}
+
+/// THE SELF-HOSTING BAKE — RUN + PROVE both real halves of the self-hosting loop,
+/// then capture the PNG. Mounts [`self_hosting::SelfHostingView`] over the live
+/// `demo_world` `World`, then DRIVES it:
+///
+///   * HALF (a) editor: `fire_save` sets the firmament editor's buffer and calls
+///     its real `save`, committing a cap-gated `SetField` turn through the
+///     verified executor. We ASSERT the live `TurnReceipt` count GREW (the world
+///     ledger the cockpit inspects gained a receipt) — a real edit → a real
+///     verified turn on the live ledger.
+///   * HALF (b) terminal: a live alacritty PTY runs `cmd` (default
+///     `cargo --version`). We park until its genuine stdout lands in the grid and
+///     ASSERT the expected token (`cargo`/`git`) is present — a real terminal
+///     running real cargo/git INSIDE deos.
+///
+/// Both assertions are HARD (the bake errors if either fails — DONE = ran +
+/// proven, never merely compiled), and the report prints both proofs + the exact
+/// remaining seam for the full edit-source-then-cargo loop.
+#[cfg(all(
+    feature = "render-capture",
+    feature = "gpui-ui",
+    feature = "dev-surfaces",
+    feature = "firmament",
+    feature = "embedded-executor"
+))]
+fn render_self_hosting_headless(
+    out: &str,
+    w: f32,
+    h: f32,
+    cmd: Option<(String, Vec<String>)>,
+) -> anyhow::Result<()> {
+    use gpui::{px, size, AppContext, HeadlessAppContext, PlatformTextSystem};
+    use gpui_wgpu::CosmicTextSystem;
+    use std::borrow::Cow;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    use std::sync::Arc;
+    use std::time::Instant;
+
+    static LILEX: &[u8] = include_bytes!("../assets/fonts/Lilex-Regular.ttf");
+    static IBM_PLEX: &[u8] = include_bytes!("../assets/fonts/IBMPlexSans-Regular.ttf");
+
+    let text_system: Arc<dyn PlatformTextSystem> =
+        Arc::new(CosmicTextSystem::new_without_system_fonts("Lilex"));
+    text_system.add_fonts(vec![Cow::Borrowed(LILEX), Cow::Borrowed(IBM_PLEX)])?;
+
+    let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(()), || {
+        gpui_platform::current_headless_renderer()
+    });
+    cx.update(|cx| gpui_component::init(cx));
+    cx.update(|cx| apply_deos_theme(None, true, cx));
+    // The live PTY's child runs on a REAL OS thread and writes the grid
+    // asynchronously; allow the test dispatcher to park on that real I/O so
+    // `run_until_parked` doesn't busy-fail while the command produces output.
+    cx.allow_parking();
+
+    // The live cell world the editor saves into (the SAME ledger the receipt proof
+    // reads). All five verified executor seed-turns already committed.
+    let (world, _anchors) = world::demo_world();
+    let shared = Rc::new(RefCell::new(world));
+
+    // Default terminal command: `cargo --version` — a deterministic one-shot whose
+    // genuine stdout we can assert. The expected token drives the grid assertion.
+    let cmd = cmd.unwrap_or_else(|| ("cargo".to_string(), vec!["--version".to_string()]));
+    let expect_token = cmd.0.rsplit('/').next().unwrap_or(&cmd.0).to_string();
+
+    let window = {
+        let shared = shared.clone();
+        let cmd = cmd.clone();
+        cx.open_window(size(px(w), px(h)), |window, cx| {
+            starbridge_v2::self_hosting::build_root(shared, Some(cmd), window, cx)
+                .expect("self-hosting root mount")
+        })?
+    };
+
+    cx.run_until_parked();
+
+    // HALF (a) — fire a REAL save and assert the live ledger gained a receipt.
+    let before = window.read_with(&cx, |v, _| v.editor_receipt_count())?;
+    let new_content =
+        "// SAVED INSIDE deos — this edit is a cap-gated turn on the LIVE ledger.\n\
+         fn main() {\n    println!(\"a save is a verified turn, not a disk write\");\n}\n";
+    let after = window.update(&mut cx, |v, window, cx| {
+        v.fire_save(new_content, window, cx)
+    })??;
+    let world_receipts = window.read_with(&cx, |v, _| v.world_receipt_count())?;
+    if after <= before {
+        anyhow::bail!(
+            "EDITOR PROOF FAILED: receipt count did not grow on save (before={before}, after={after})"
+        );
+    }
+
+    // HALF (b) — park until the live PTY's child stdout lands in the grid; assert
+    // the expected token is present (a real `cargo`/`git` ran INSIDE deos).
+    let deadline = Instant::now() + std::time::Duration::from_secs(20);
+    let mut term_text = String::new();
+    let mut term_ok = false;
+    while Instant::now() < deadline {
+        cx.run_until_parked();
+        cx.update_window(window.into(), |_, window, _cx| window.refresh())?;
+        cx.run_until_parked();
+        term_text = window.read_with(&cx, |v, cx| v.terminal_text(cx))?;
+        if term_text.to_lowercase().contains(&expect_token.to_lowercase()) {
+            term_ok = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(150));
+    }
+    if !term_ok {
+        anyhow::bail!(
+            "TERMINAL PROOF FAILED: `{} {}` output never reached the grid (looked for `{expect_token}`).\nGrid was:\n{term_text}",
+            cmd.0,
+            cmd.1.join(" ")
+        );
+    }
+
+    // Final lay-out + capture.
+    cx.update_window(window.into(), |_, window, _cx| window.refresh())?;
+    cx.run_until_parked();
+    let captured = cx.capture_screenshot(window.into())?;
+    let (ww, hh) = (captured.width(), captured.height());
+    captured.save(format!("{out}.png"))?;
+
+    // The genuine terminal first line (the command banner) for the report.
+    let term_first = term_text
+        .lines()
+        .find(|l| l.to_lowercase().contains(&expect_token.to_lowercase()))
+        .unwrap_or("")
+        .trim()
+        .to_string();
+
+    println!("OK headless SELF-HOSTING render -> {out}.png ({ww}x{hh}, logical {w}x{h})");
+    println!("  PROOF (a) editor: save fired a real turn — receipts {before} -> {after} on-ledger \
+              (world ledger now {world_receipts} receipts); the buffer was a sovereign CELL, \
+              the save a cap-gated SetField turn through the verified executor.");
+    println!("  PROOF (b) terminal: live alacritty PTY ran `{} {}` INSIDE deos — grid shows: {term_first:?}",
+             cmd.0, cmd.1.join(" "));
+    println!("  SEAM (full edit→cargo loop): the editor saves to CELLS (ledger turns) while \
+              cargo reads DISK. A true single-loop needs a FirmamentFs↔disk dual-write (mirror \
+              each save's cell content to the on-disk path the terminal's cargo compiles). Both \
+              halves are REAL here; the dual-write mirror is the one remaining wire.");
     Ok(())
 }
 
