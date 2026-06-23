@@ -11,6 +11,15 @@ reason.)*
 Last sweep: 2026-06-13 (flagged-items burndown — removed ~14 landed/struck items,
 deduped the DreggDL/sel4/snapshot landings into git history, kept live tails).
 
+### MUD MULTI-INHABITANT — physics IS the proof, by running (2026-06-23).
+`450b30b8` (`mud.rs`). 3 inhabitants / 2 connected rooms over the real embedded executor. 4 properties
+EXECUTOR-enforced (9 tests, ~76s real proving): movement cap-gated (`move_through` writes the dest room
+cell → `check_cross_cell_permission`; no door cap → `CapabilityNotHeld` — "a door is a cap you lack") ·
+item conserved across a multi-hop trade + exactly one contender wins (no dupe; `mint_needs_held_factory`
+grant/revoke) · authority-amplification on a `give` refused (`gen_conferral_is_attenuation`) · value
+Σδ=0 (`Effect::Transfer`, overdraft refused). Refusals are the executor's own gates via real receipts,
+not Rust bookkeeping. SEAM: presence is the door-cap-gated write (entry cap-gating proven; a fuller
+presence-token move/grant is future).
 ### NETWORK-PORTABLE PROCESS — cross-node CapTP cap handoff, by running (2026-06-23).
 `f0efdb39` (`captp/src/handoff_session.rs` + `node/src/captp_handoff_e2e.rs`). The `PresentHandoff` leg
 now routes over the node↔node transport: A frames an introducer-signed handoff, B receives + runs the
