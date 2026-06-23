@@ -2792,6 +2792,22 @@ impl TurnExecutor {
                 path.to_vec(),
             )
         })?;
+        // KERNEL ALIGNMENT: Lean's `receiptArchiveChainA` gates `cellLive` (Live-only,
+        // `TurnExecutorFull.lean:1870`) — a Sealed/Destroyed/already-Archived cell cannot
+        // be (re-)archived. Rust skipped this `is_live()` leg that every other lifecycle
+        // arm carries; adding it also makes `Cell::archive`'s monotone Archived→Archived
+        // path kernel-inaccessible (exercised by no flow — only the primitive's own unit
+        // test), restoring consistency with the verified spec + the sibling effect arms.
+        if !c.is_live() {
+            return Err((
+                TurnError::InvalidEffect {
+                    reason: format!(
+                        "ReceiptArchive on a non-Live cell {action_target:?} (lifecycle must be Live)"
+                    ),
+                },
+                path.to_vec(),
+            ));
+        }
         let old = c.lifecycle.clone();
         c.archive(checkpoint).map_err(|e| {
             (

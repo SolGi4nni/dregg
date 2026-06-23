@@ -158,7 +158,17 @@ def burnH : EffectHandler SupplyArgs where
 dregg1's `Effect::BridgeMint` reuses the per-asset mint step over the bare `bal` ledger. W1: the
 bridge cell IS the issuer of the bridged asset, so `bridgeMintH` is DEFINITIONALLY `mintH` (the
 same issuer-move, the same exact conservation); we register it under its own tag so the audit
-trail records the bridge provenance. -/
+trail records the bridge provenance.
+
+⚠ FAITHFULNESS SCOPE (Rust↔Lean kernel cross-check): this alias models ONLY the cell-backed
+bridged-asset case — where a bridge cell IS the issuer and the bridge mints a `bal` credit, so
+the issuer-liveness + per-asset conservation obligations of `mintH` apply verbatim. It is NOT
+faithful to the deployed Rust `apply_bridge_mint` (`turn/src/executor/apply.rs`), which is a
+NOTE-BRIDGE: it verifies a portable note STARK + inserts a nullifier and materializes value at
+the NOTE layer, touching no issuer/recipient cell at all. That path has no cell to carry a
+liveness gate; its soundness is CRYPTOGRAPHIC (federation-root binding + nullifier replay-
+protection), a category distinct from cell-mint. Modeling the note-bridge proof inside the
+verified surface is a separate note-layer spec, not this alias. -/
 
 /-- **`bridgeMintH` — `BridgeMint` registered as the mint alias.** Identical kernel step + obligations
 to `mintH` (`bridgeMint` reuses `recKMintAsset`); W1: exact conservation, the bridge well carries
