@@ -135,6 +135,12 @@ pub mod shared_fork;
 // Welds over powerbox + derive_raw + Grant/RevokeCapability; reinvents none.
 #[cfg(feature = "embedded-executor")]
 pub mod session;
+#[cfg(feature = "embedded-executor")]
+pub use session::{
+    agent_template, default_user_template, demo_identities, provision_system_principal, CapEntry,
+    CapTemplate, DemoIdentity, IdentityKind, LoginManager, LoginOutcome, Principal, Session,
+    ROOT_TOKEN,
+};
 
 #[cfg(feature = "embedded-executor")]
 pub mod agent;

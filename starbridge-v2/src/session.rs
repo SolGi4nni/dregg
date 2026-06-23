@@ -345,6 +345,127 @@ impl LoginManager {
     }
 }
 
+// ===========================================================================
+// THE DEOS LOGIN CEREMONY — the provisioning + identity seeds the RUNNING login
+// surface drives. These are gpui-free so `cargo test` exercises the EXACT flow
+// the (gpui-gated) `crate::login` surface runs on click: a real grant turn from
+// a real system principal that HOLDS the home/app caps, attenuated per identity.
+// ===========================================================================
+
+/// Provision the deos image's **system principal** over a set of resource cells
+/// (the desktop's home/app/surface cells a fresh session is drawn from). It is
+/// installed as an open genesis cell HOLDING a full-rights cap to each resource,
+/// so a later `Effect::GrantCapability` FROM it is legitimate (the executor's
+/// no-amplification rule: you can only grant what you hold). Returns its id — the
+/// `LoginManager::new` argument.
+///
+/// This is the one out-of-band step §5 of the design names: the image's own root
+/// identity, seeded at construction, is "what authority does this desktop have to
+/// hand out". The login surface grants the per-user `CapTemplate` from here.
+pub fn provision_system_principal(world: &mut World, resources: &[CellId]) -> CellId {
+    let mut sys = crate::world::make_open_cell(0x55, 0);
+    for r in resources {
+        // Full rights over each resource — the ceiling a session template
+        // attenuates from. (`AuthRequired::None` = unconditional hold.)
+        sys.capabilities
+            .grant(*r, AuthRequired::None)
+            .expect("the system principal's c-list has a free slot per resource");
+    }
+    world.genesis_install(sys)
+}
+
+/// The **default human-user `CapTemplate`** over the deos desktop's anchor cells
+/// `[treasury, service, user]`: full attenuatable authority over the `user` home
+/// cell, and an attenuated (Signature-tier) launch cap to the `service` app cell.
+/// This is policy — the one place "what does a fresh user get" lives.
+pub fn default_user_template(anchors: [CellId; 3]) -> CapTemplate {
+    let [_treasury, service, user] = anchors;
+    CapTemplate::empty()
+        .with(CapEntry::new(user, AuthRequired::None, true, "home"))
+        .with(CapEntry::new(service, AuthRequired::Signature, true, "launcher"))
+}
+
+/// The **agent `CapTemplate`** — the polis payoff. The SAME ceremony as a user,
+/// the ONLY difference being a deliberately narrower mandate: an agent (Hermes)
+/// is born holding a single, non-re-delegatable cap to its tool surface (the
+/// `service` app cell), and crucially NO cap to a user's home cell.
+pub fn agent_template(anchors: [CellId; 3]) -> CapTemplate {
+    let [_treasury, service, _user] = anchors;
+    CapTemplate::empty().with(CapEntry::new(
+        service,
+        AuthRequired::Signature,
+        false, // a tightly-bounded agent cannot re-delegate its mandate
+        "agent-tool-surface",
+    ))
+}
+
+/// Which kind of inhabitant a [`DemoIdentity`] is — selects the `CapTemplate`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IdentityKind {
+    /// A human user — born holding the full [`default_user_template`].
+    User,
+    /// An agent (Hermes-shaped) — born holding the narrower [`agent_template`].
+    Agent,
+}
+
+/// A **demo seed identity** the login surface offers to pick (the held-key
+/// stand-in: selecting it is "I possess this key"). Each carries a fixed pubkey
+/// (so its root cell is stable across logins) and the kind that selects its
+/// template. The live manager replaces the pick with a real key challenge.
+#[derive(Clone, Debug)]
+pub struct DemoIdentity {
+    /// The human-readable name shown in the login picker.
+    pub name: &'static str,
+    /// The identity's public key — its root cell is `derive_raw(pubkey, ROOT_TOKEN)`.
+    pub pubkey: [u8; 32],
+    /// User vs agent — selects the `CapTemplate` granted on login.
+    pub kind: IdentityKind,
+    /// A one-line description of what this inhabitant's session is born holding.
+    pub blurb: &'static str,
+}
+
+impl DemoIdentity {
+    /// The root identity cell this demo identity logs into.
+    pub fn root_cell(&self) -> CellId {
+        CellId::derive_raw(&self.pubkey, &ROOT_TOKEN)
+    }
+
+    /// The `CapTemplate` this identity's session is born holding, over `anchors`.
+    pub fn template(&self, anchors: [CellId; 3]) -> CapTemplate {
+        match self.kind {
+            IdentityKind::User => default_user_template(anchors),
+            IdentityKind::Agent => agent_template(anchors),
+        }
+    }
+}
+
+/// The deos image's seed identities — the login picker's roster. Two human users
+/// (each gets the full desktop) and one agent inhabitant (Hermes, cap-bounded to
+/// its tool surface — the kill-switch-on-logout polis frame). A real deployment
+/// authenticates keys; these are the demo's held-key stand-ins.
+pub fn demo_identities() -> Vec<DemoIdentity> {
+    vec![
+        DemoIdentity {
+            name: "ember",
+            pubkey: [0xE3u8; 32],
+            kind: IdentityKind::User,
+            blurb: "a human user — full home cell + a launchable app (attenuatable)",
+        },
+        DemoIdentity {
+            name: "guest",
+            pubkey: [0x67u8; 32],
+            kind: IdentityKind::User,
+            blurb: "a second human user — the same desktop, their own root cell",
+        },
+        DemoIdentity {
+            name: "Hermes (agent)",
+            pubkey: [0xA6u8; 32],
+            kind: IdentityKind::Agent,
+            blurb: "an agent inhabitant — ONLY its tool surface, no home cell, no re-delegate",
+        },
+    ]
+}
+
 /// Build the principal's root identity cell at its DERIVED id (mint-on-first-
 /// login). A confined cell — empty c-list, no ambient authority — that the login
 /// then grants the `CapTemplate` INTO. Built from the principal's pubkey under
@@ -516,6 +637,110 @@ mod tests {
             "a returning login retrieves the cell, it does not mint a new one"
         );
         assert!(second.session().unwrap().is_live(&w), "the re-granted session is live again");
+    }
+
+    #[test]
+    fn after_logout_a_session_exercise_is_refused_the_cap_tree_is_dark() {
+        // The teeth of logout: it is not just that `is_live` reports false — an
+        // attempt to EXERCISE the session's authority after logout is REFUSED by
+        // the executor, because the root cell no longer holds the cap to amplify.
+        let (mut w, mgr, home, app) = login_world();
+        let p = mgr.authenticate([7u8; 32], true).unwrap();
+        let session = match mgr.login(&mut w, p, &user_template(home, app)) {
+            LoginOutcome::Session(s) => s,
+            LoginOutcome::Denied { reason } => panic!("login: {reason}"),
+        };
+        let root = session.root_cell;
+
+        // WHILE LOGGED IN: the session can re-delegate its held home cap into a
+        // fresh slot — a real authorized exercise (it holds the cap to grant).
+        let live_slot = next_free_slot(&w, &root);
+        let exercise = |w: &mut World, slot: u32| {
+            let effect = Effect::GrantCapability {
+                from: root,
+                to: root,
+                cap: dregg_cell::CapabilityRef {
+                    target: home,
+                    slot,
+                    permissions: AuthRequired::None,
+                    breadstuff: None,
+                    expires_at: None,
+                    allowed_effects: None,
+                    stored_epoch: None,
+                },
+            };
+            let turn = w.turn(root, vec![effect]);
+            w.commit_turn(turn).is_committed()
+        };
+        assert!(exercise(&mut w, live_slot), "a live session can exercise its held cap");
+
+        // LOGOUT — revoke the session root. (Revoke the original template slots;
+        // the test then proves the WHOLE tree is dark for a fresh exercise.)
+        mgr.logout(&mut w, &session);
+        // Also revoke the slot the live exercise minted, so the root holds nothing
+        // reaching `home` at all (logout in the surface revokes the live c-list).
+        let sweep = Effect::RevokeCapability { cell: root, slot: live_slot };
+        let t = w.turn(root, vec![sweep]);
+        let _ = w.commit_turn(t);
+
+        // AFTER LOGOUT: the same exercise is REFUSED — the root holds no cap to
+        // `home` to amplify, so the grant cannot be authorized. The tree is dark.
+        let dark_slot = next_free_slot(&w, &root);
+        assert!(
+            !exercise(&mut w, dark_slot),
+            "after logout the session exercise is refused — the cap-tree is dark"
+        );
+        assert!(!session.reaches(&w, &home), "home unreachable after logout");
+    }
+
+    #[test]
+    fn provisioning_and_the_demo_identities_drive_the_real_ceremony() {
+        // The RUNNING-login provisioning path (what `crate::login` drives): a real
+        // system principal holding the anchor caps, the demo identities, and their
+        // per-kind templates — all granting through the real executor.
+        let mut w = World::new();
+        let treasury = w.genesis_cell(0x11, 1_000_000);
+        let svc_target = w.genesis_cell(0x33, 0);
+        let (service, _) = w.genesis_cell_with_cap(0x22, 0, svc_target);
+        let user = w.genesis_cell(0x44, 5_000);
+        let anchors = [treasury, service, user];
+
+        let system_principal = super::provision_system_principal(&mut w, &anchors);
+        let mgr = LoginManager::new(system_principal);
+
+        let ids = super::demo_identities();
+        assert_eq!(ids.len(), 3, "two users + one agent");
+
+        // A USER identity: full home + launchable app.
+        let ember = ids.iter().find(|i| i.name == "ember").unwrap();
+        let p = mgr.authenticate(ember.pubkey, true).unwrap();
+        assert_eq!(p.root_cell(), ember.root_cell(), "the picker shows the real root cell");
+        let user_session = match mgr.login(&mut w, p, &ember.template(anchors)) {
+            LoginOutcome::Session(s) => s,
+            LoginOutcome::Denied { reason } => panic!("user login: {reason}"),
+        };
+        assert!(user_session.reaches(&w, &user), "the user reaches their home cell");
+        assert!(user_session.reaches(&w, &service), "the user reaches the launchable app");
+
+        // The AGENT identity: the SAME ceremony, a strictly narrower mandate —
+        // ONLY the tool surface, no home cell (the polis controller-blind bound).
+        let hermes = ids.iter().find(|i| i.kind == super::IdentityKind::Agent).unwrap();
+        let pa = mgr.authenticate(hermes.pubkey, true).unwrap();
+        let agent_session = match mgr.login(&mut w, pa, &hermes.template(anchors)) {
+            LoginOutcome::Session(s) => s,
+            LoginOutcome::Denied { reason } => panic!("agent login: {reason}"),
+        };
+        assert!(agent_session.reaches(&w, &service), "the agent reaches its tool surface");
+        assert!(!agent_session.reaches(&w, &user), "the agent gets NO home cell — its mandate is narrower");
+        assert_ne!(
+            user_session.root_cell, agent_session.root_cell,
+            "distinct inhabitants, distinct root cells"
+        );
+
+        // Logout is the agent kill switch.
+        assert_eq!(mgr.logout(&mut w, &agent_session), 1, "the agent's one cap revoked");
+        assert!(!agent_session.is_live(&w), "the agent session is dark — the kill switch");
+        assert!(user_session.is_live(&w), "the user session is untouched by the agent's logout");
     }
 
     #[test]

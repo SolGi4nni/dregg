@@ -31,6 +31,12 @@ use starbridge_v2::client;
 
 #[cfg(feature = "gpui-ui")]
 mod cockpit;
+// THE LOGIN CEREMONY surface — the boot front door. deos boots into THIS (not the
+// cockpit directly); picking an identity runs the real session ceremony
+// (`starbridge_v2::session`) and swaps the window root to the cockpit, wrapped in
+// the session shell (the logout action). gpui-gated; references `cockpit::Cockpit`.
+#[cfg(feature = "gpui-ui")]
+mod login;
 #[cfg(feature = "gpui-ui")]
 mod views;
 // `views` (the older NodeClient-bound rail components) is also what a future
@@ -105,6 +111,24 @@ fn main() {
                 Ok(()) => std::process::exit(0),
                 Err(e) => {
                     eprintln!("render-cockpit FAILED: {e:#}");
+                    std::process::exit(1);
+                }
+            }
+        }
+    }
+
+    // `--render-login <out>`: render the LOGIN CEREMONY surface offscreen (the
+    // boot front door) the same headless way the cockpit bakes — the MCP-
+    // screenshottable proof that the login surface lays out (the identity picker
+    // for the demo seed identities). `<out>.png` is written.
+    #[cfg(all(feature = "render-capture", feature = "gpui-ui"))]
+    {
+        if let Some(out) = render_login_arg(&args) {
+            let (w, h) = render_size_arg(&args).unwrap_or((1280.0, 832.0));
+            match render_login_headless(&out, w, h) {
+                Ok(()) => std::process::exit(0),
+                Err(e) => {
+                    eprintln!("render-login FAILED: {e:#}");
                     std::process::exit(1);
                 }
             }
@@ -276,7 +300,6 @@ fn run_window(
     use gpui_platform::application;
     use std::cell::RefCell;
     use std::rc::Rc;
-    use std::time::Duration;
 
     // STARTUP PROOF (the no-blank-screen receipt): build the HOME landing
     // portal's text model from the live world and report how many real lines of
@@ -336,91 +359,42 @@ fn run_window(
         // `gpui-component` dep in Cargo.toml for the byte-identical-gpui rationale.)
         gpui_component::init(cx);
         let bounds = Bounds::centered(None, size(px(1280.), px(820.)), cx);
-        // Move the seed into the window builder (it is installed onto the cockpit,
-        // which drives it after first paint). `Option` so it is consumed exactly once.
+        // Move the seed into the LOGIN surface builder (the login surface hands it
+        // to the cockpit at the post-login transition). `Option` so it is consumed
+        // exactly once.
         let mut seed = Some(seed);
-        let window = cx
-            .open_window(
-                WindowOptions {
-                    window_bounds: Some(WindowBounds::Windowed(bounds)),
-                    titlebar: Some(TitlebarOptions {
-                        title: Some("Starbridge v2 — the live verified image".into()),
-                        ..Default::default()
-                    }),
+        // BOOT INTO THE LOGIN CEREMONY — the window root is the login surface, not
+        // the cockpit. Picking an identity runs the real session ceremony and swaps
+        // the root to the cockpit (wrapped in the session shell that owns logout +
+        // the post-paint seeding/live-node tasks). See `login::LoginSurface`.
+        cx.open_window(
+            WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(bounds)),
+                titlebar: Some(TitlebarOptions {
+                    title: Some("deos — login".into()),
                     ..Default::default()
-                },
-                |window, cx| {
-                    let node_url = node_url.clone();
-                    let pending_seed = seed.take();
-                    let view = cx.new(|cx| {
-                        let focus = cx.focus_handle();
-                        cockpit::Cockpit::with_node(
-                            shared.clone(),
-                            anchors,
-                            focus,
-                            node_url,
-                            pending_seed,
-                        )
-                    });
-                    // Focus the cockpit root so it receives ⌘K + palette keystrokes.
-                    view.update(cx, |c, cx| c.focus_on_open(window, cx));
-                    view
-                },
-            )
-            .expect("failed to open window");
+                }),
+                ..Default::default()
+            },
+            |window, cx| {
+                let node_url = node_url.clone();
+                let pending_seed = seed.take().expect("seed consumed once");
+                let view = cx.new(|cx| {
+                    let focus = cx.focus_handle();
+                    login::LoginSurface::boot(
+                        shared.clone(),
+                        anchors,
+                        pending_seed,
+                        node_url,
+                        focus,
+                    )
+                });
+                view.update(cx, |c, cx| c.focus_on_open(window, cx));
+                view
+            },
+        )
+        .expect("failed to open window");
         cx.activate(true);
-
-        // THE POST-PAINT SEEDING TASK — the window is now up (this runs on the
-        // FOREGROUND executor, after the first frame). Drive the demo seed turns
-        // one at a time, yielding a beat between each so the UI paints the new cell/
-        // receipt before the next verified turn runs. Each `seed_next_demo_turn`
-        // commits ONE real executor turn and `cx.notify()`s; the loop ends when the
-        // image is fully seeded. The window was alive the whole time.
-        cx.spawn(async move |cx| {
-            loop {
-                // A short beat so the just-committed turn paints (and the embedded
-                // executor's next turn doesn't monopolize the frame).
-                cx.background_executor()
-                    .timer(Duration::from_millis(60))
-                    .await;
-                let more = match window.update(cx, |cockpit, _window, cx| {
-                    cockpit.seed_next_demo_turn(cx)
-                }) {
-                    Ok(more) => more,
-                    // The window closed (or its root changed) — stop seeding.
-                    Err(_) => break,
-                };
-                if !more {
-                    break;
-                }
-            }
-        })
-        .detach();
-
-        // THE LIVE-NODE PUMP — drain the connected node's SSE receipt stream off
-        // gpui's async executor (the recovered cockpit-wire design). `render`'s
-        // top-of-frame drain only runs on `cx.notify()`/input; this foreground task
-        // ticks on a short timer so a remote node's receipts are drained — and the
-        // ReceiptInspector / live organ panels advance LIVE — even with NO user
-        // input. It stops itself immediately for the embedded-only image (no
-        // `--node`), so it costs the headline build nothing. (`window` is a `Copy`
-        // handle — the seeding task above and this pump each hold their own.)
-        cx.spawn(async move |cx| {
-            loop {
-                cx.background_executor()
-                    .timer(Duration::from_millis(120))
-                    .await;
-                let keep = match window.update(cx, |cockpit, _window, cx| cockpit.pump_live(cx)) {
-                    Ok(keep) => keep,
-                    // The window closed — stop the pump.
-                    Err(_) => break,
-                };
-                if !keep {
-                    break;
-                }
-            }
-        })
-        .detach();
     });
 }
 
@@ -436,6 +410,22 @@ fn render_cockpit_arg(args: &[String]) -> Option<String> {
             return it.next().cloned();
         }
         if let Some(rest) = a.strip_prefix("--render-cockpit=") {
+            return Some(rest.to_string());
+        }
+    }
+    None
+}
+
+/// Parse the `--render-login <out>` (or `--render-login=<out>`) argument — the
+/// output base path for the headless LOGIN-surface render. Returns `None` absent.
+#[cfg(all(feature = "render-capture", feature = "gpui-ui"))]
+fn render_login_arg(args: &[String]) -> Option<String> {
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        if a == "--render-login" {
+            return it.next().cloned();
+        }
+        if let Some(rest) = a.strip_prefix("--render-login=") {
             return Some(rest.to_string());
         }
     }
@@ -1038,6 +1028,57 @@ fn render_cockpit_headless(
          LIVE cockpit::Cockpit element tree, gpui Scene via lavapipe offscreen.",
         if sel4_geometry { " + .rgba" } else { "" },
         tab.map(|t| format!(", tab={t}")).unwrap_or_default()
+    );
+    Ok(())
+}
+
+/// THE HEADLESS LOGIN RENDER — render the real [`login::LoginSurface`] element
+/// tree (the boot front door's identity picker) offscreen to a PNG, no GPU and
+/// no window, the same gpui headless capture path the cockpit bake uses. The
+/// MCP-screenshottable proof that the login surface lays out. Provisions the
+/// system principal over the demo image's anchors and offers the seed identities.
+#[cfg(all(feature = "render-capture", feature = "gpui-ui"))]
+fn render_login_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()> {
+    use gpui::{px, size, AppContext, HeadlessAppContext, PlatformTextSystem};
+    use gpui_wgpu::CosmicTextSystem;
+    use std::borrow::Cow;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    use std::sync::Arc;
+
+    static LILEX: &[u8] = include_bytes!("../assets/fonts/Lilex-Regular.ttf");
+    static IBM_PLEX: &[u8] = include_bytes!("../assets/fonts/IBMPlexSans-Regular.ttf");
+    let text_system: Arc<dyn PlatformTextSystem> =
+        Arc::new(CosmicTextSystem::new_without_system_fonts("Lilex"));
+    text_system.add_fonts(vec![Cow::Borrowed(LILEX), Cow::Borrowed(IBM_PLEX)])?;
+    let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(()), || {
+        gpui_platform::current_headless_renderer()
+    });
+    cx.update(|cx| gpui_component::init(cx));
+
+    // The at-rest genesis image — the login surface only needs the anchors to
+    // provision the system principal; no seed turns need to have run.
+    let (world, anchors, seed) = world::demo_genesis();
+    let shared = Rc::new(RefCell::new(world));
+
+    let window = cx.open_window(size(px(w), px(h)), |window, cx| {
+        let view = cx.new(|cx| {
+            let focus = cx.focus_handle();
+            login::LoginSurface::boot(shared.clone(), anchors, seed, None, focus)
+        });
+        view.update(cx, |c, cx| c.focus_on_open(window, cx));
+        view
+    })?;
+
+    cx.run_until_parked();
+    cx.update_window(window.into(), |_, window, _cx| window.refresh())?;
+    cx.run_until_parked();
+    let captured = cx.capture_screenshot(window.into())?;
+    captured.save(format!("{out}.png"))?;
+    println!(
+        "OK headless login render -> {out}.png ({}x{}, logical {w}x{h}); LIVE login::LoginSurface.",
+        captured.width(),
+        captured.height()
     );
     Ok(())
 }
