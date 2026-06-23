@@ -110,6 +110,15 @@ pub mod links_here;
 #[cfg(feature = "embedded-executor")]
 pub mod doc_editor;
 
+// XANADU, END TO END — the dreggverse document language as ONE running demonstration
+// (`docs/deos/DOCUMENT-LANGUAGE.md`). The WELD over the built organs: a document of
+// patches branched + merged (clean + conflict-as-object + resolve, via the `dregg-doc`
+// patch core AND the real executor `DocEditor`), a live provenanced whole-cell
+// transclusion that darkens per-viewer, and the two-way link registered both directions
+// so the cited cell's "what links here" lists the document. gpui-free, `cargo test`-able.
+#[cfg(feature = "embedded-executor")]
+pub mod xanadu_e2e;
+
 // The interactive POWERBOX (CapDesk) — the trusted designation flow: an app-cell
 // requests a capability it lacks; the trusted UI (the cockpit principal, NOT the app)
 // presents a picker filtered to what the USER actually holds (mint_needs_held_factory

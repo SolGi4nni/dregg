@@ -85,6 +85,7 @@ pub mod custody;
 pub mod data_plane;
 pub mod gc;
 pub mod handoff;
+pub mod handoff_session;
 pub mod netlayer;
 pub mod ocapn;
 pub mod pipeline;

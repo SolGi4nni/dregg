@@ -26,6 +26,8 @@ mod genesis;
 pub mod gossip;
 mod identity_export;
 #[cfg(test)]
+mod captp_handoff_e2e;
+#[cfg(test)]
 mod mailbox_crank_e2e;
 mod mcp;
 #[cfg(test)]
