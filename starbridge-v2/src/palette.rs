@@ -64,6 +64,9 @@ pub enum CommandId {
     /// requests a cap it lacks; the user designates from what they hold; the powerbox
     /// mints a fresh attenuated cap via a real grant turn).
     GoPowerbox,
+    /// Navigate to the ⚙ DEVTOOLS tab (Firebug for a verified OS — the data plane,
+    /// the receipt console, the federation, as three inspector sub-tabs).
+    GoDevtools,
     /// LAUNCH a confined app at RUNTIME — birth a fresh app-cell holding NO ambient
     /// authority (a real confined app-as-cell) and route its capability request through
     /// the existing powerbox (the powerbox's missing first half). Switches to the
@@ -183,7 +186,7 @@ impl CommandId {
             | LaunchConfinedApp | SimRun | SimCommit | SimAddEffect => Category::Verb,
             GoHome | GoComposer | GoSimulate | GoObjects | GoDebugger | GoReplay | GoCipherclerk
             | GoEditor | GoShell | GoAgent | GoBuffer | GoTerminal | GoSwarm | GoGraph | GoOrgans
-            | GoProofs | GoPowerbox => Category::Navigate,
+            | GoProofs | GoPowerbox | GoDevtools => Category::Navigate,
             BufferType | BufferCommit | BufferReadOnlyWrite | TerminalRunInMandate
             | TerminalRunOutOfMandate | OpenTerminalPane | OpenEditorPane
             | SwarmCoordinatorEmitA | SwarmWorkerADrain | SwarmCoordinatorTransferAndWake
@@ -233,6 +236,7 @@ impl CommandId {
             GoOrgans => "Go to Organs (live trustline · flash-well cell-state)",
             GoProofs => "Go to Proofs (attach + STARK verification status)",
             GoPowerbox => "Go to Powerbox (CapDesk — designate a held cap into an app, attenuated)",
+            GoDevtools => "Go to Devtools (Firebug for a verified OS — network · receipts · federation)",
             LaunchConfinedApp => "Launch a confined app (no ambient authority → it requests via the powerbox)",
             SwarmCoordinatorEmitA => {
                 "Swarm: coordinator emits task/go → worker-a (notify edge, async)"
@@ -312,6 +316,7 @@ impl CommandId {
             GoOrgans => "organ trustline flashwell flash-well credit line channel mailbox court live cell-state",
             GoProofs => "proof stark verify attach tier verification signed by-construction light-client",
             GoPowerbox => "powerbox capdesk designate grant capability attenuate mint file dialog ocap pick picker confined app no-ambient-authority",
+            GoDevtools => "devtools firebug devtools network receipts log console federation inspector data-plane deliveries queue inbox wake notify topic pub-sub committee epoch checkpoint revocation bridge filter drill-down",
             LaunchConfinedApp => "launch spawn start run confined app birth new cell powerbox request capability no-ambient-authority sandbox open application capdesk",
             SwarmCoordinatorEmitA => {
                 "emit event notify wake inbox async turn receipt seam swarm coordinator worker"
@@ -443,6 +448,7 @@ pub fn all_commands() -> Vec<Command> {
         GoHome,
         GoComposer, GoSimulate, GoObjects, GoDebugger, GoReplay, GoCipherclerk, GoEditor, GoShell,
         GoAgent, GoBuffer, GoTerminal, GoSwarm, GoGraph, GoOrgans, GoProofs, GoPowerbox,
+        GoDevtools,
         // replay
         ReplayStepBack, ReplayStepForward, ReplayToGenesis, ReplayToHead,
         ReplayForkHere, ReplayClearFork,

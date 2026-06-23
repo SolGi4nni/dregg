@@ -380,6 +380,10 @@ impl Cockpit {
             // first render (`ensure_pane_group`).
             pane_group: None,
             active_pane: None,
+            // THE ⚙ DEVTOOLS surface boots on the NETWORK sub-tab with an empty
+            // filter (the whole data plane in view).
+            devtools_sub: 0,
+            devtools_filter: String::new(),
         }
     }
 

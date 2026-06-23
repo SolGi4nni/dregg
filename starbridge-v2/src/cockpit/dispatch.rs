@@ -51,6 +51,7 @@ impl Cockpit {
             CommandId::GoOrgans => self.set_tab(Tab::Organs, cx),
             CommandId::GoProofs => self.set_tab(Tab::Proofs, cx),
             CommandId::GoPowerbox => self.set_tab(Tab::Powerbox, cx),
+            CommandId::GoDevtools => self.set_tab(Tab::Devtools, cx),
             CommandId::LaunchConfinedApp => self.run_launch_confined_app(cx),
 
             CommandId::BufferType => self.buffer_type_demo(cx),

@@ -353,12 +353,20 @@ pub enum Tab {
     /// the REAL `dregg_sdk::identity::inspect_identity` decode (a representative
     /// identity until an on-ledger identity cell is wired — HORIZONLOG).
     Trust,
+    /// THE ⚙ DEVTOOLS surface — "Firebug for a verified OS": ONE tab with three
+    /// inspector sub-tabs over the live image — NETWORK (the data plane:
+    /// deliveries / inbox queues / wakes / notify edges, browser-Network-tab
+    /// style), LOG/RECEIPTS (the blocklace + receipt timeline as a filterable
+    /// drill-down console), and FEDERATION (committee · epoch · checkpoint ·
+    /// bridges · revocation). See [`super::panels_devtools`].
+    Devtools,
 }
 
 impl Tab {
-    const ALL: [Tab; 28] = [
+    const ALL: [Tab; 29] = [
         Tab::Docs,
         Tab::Trust,
+        Tab::Devtools,
         Tab::Home,
         Tab::Wonder,
         Tab::Time,
@@ -420,6 +428,7 @@ impl Tab {
             Tab::Share => "⤳ SHARE",
             Tab::Docs => "📄 DOCS",
             Tab::Trust => "⚷ TRUST",
+            Tab::Devtools => "⚙ DEVTOOLS",
             Tab::Buffer => "BUFFER",
             Tab::Terminal => "TERMINAL",
             Tab::Composer => "COMPOSER",
@@ -887,6 +896,15 @@ pub struct Cockpit {
     /// target + the active-pane border anchor. Kept in sync as panes are
     /// activated/split. `None` until the group is seeded.
     active_pane: Option<Entity<Pane>>,
+
+    // --- THE ⚙ DEVTOOLS surface ---------------------------------------------
+    /// Which DEVTOOLS inspector sub-tab is open, as a `u8` index
+    /// (0 = NETWORK · 1 = LOG/RECEIPTS · 2 = FEDERATION). A free in-memory
+    /// selector (conserves nothing); decoded by `DevtoolsSub::from_index`.
+    devtools_sub: u8,
+    /// The DEVTOOLS row filter (case-insensitive substring over the NETWORK /
+    /// LOG row text). Set by the filter-bar preset chips; empty = show all.
+    devtools_filter: String,
 }
 
 /// A navigation action over the cockpit's pure-navigation controls — the edge
@@ -951,6 +969,7 @@ mod actions;
 mod shell_ops;
 mod dispatch;
 mod panels_main;
+mod panels_devtools;
 mod panels_moldable;
 mod panels_workspace;
 mod panels_web;

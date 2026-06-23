@@ -96,6 +96,7 @@ impl Cockpit {
             Tab::Share => self.share_panel(cx).into_any_element(),
             Tab::Docs => self.docs_panel(cx).into_any_element(),
             Tab::Trust => self.trust_tab(cx).into_any_element(),
+            Tab::Devtools => self.devtools_panel(cx).into_any_element(),
             Tab::Buffer => self.buffer_panel(cx).into_any_element(),
             Tab::Terminal => self.terminal_panel(cx).into_any_element(),
             Tab::Composer => self.composer(cx).into_any_element(),
