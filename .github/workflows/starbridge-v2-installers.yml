@@ -308,7 +308,8 @@ jobs:
             libx11-dev libx11-xcb-dev libxcb1-dev \
             libgl1-mesa-dev libvulkan1 libvulkan-dev mesa-vulkan-drivers \
             libssl-dev libdbus-1-dev \
-            wget file fuse libfuse2 patchelf desktop-file-utils
+            wget file fuse libfuse2 patchelf desktop-file-utils \
+            zstd
 
       - name: Install rolling Rust nightly
         uses: dtolnay/rust-toolchain@nightly
@@ -412,6 +413,19 @@ jobs:
         working-directory: starbridge-v2
         run: ./target/release/starbridge-v2 --headless
 
+      # THE SELF-DESCRIBING VESSEL — assemble the dregg SOURCE PAYLOAD (the
+      # Rust/Lean/docs that DEFINE the system, NO build artifacts) into
+      # `dregg-src.tar.zst`, which the AppImage carries at usr/share/dregg-src/ so
+      # an agent inside deos (the embedded Hermes / the cockpit's SourceVessel) can
+      # READ the system it is trapped within. See docs/deos/SELF-DESCRIBING-VESSEL.md.
+      - name: Pack the dregg source payload (self-describing vessel)
+        run: |
+          set -euo pipefail
+          # Pack to a staging path OUTSIDE starbridge-v2/dist (the packaging step
+          # does `rm -rf dist`); the packaging step copies it into AppDir from here.
+          bash scripts/pack-dregg-src.sh "$GITHUB_WORKSPACE/dregg-src-payload/dregg-src.tar.zst"
+          ls -la "$GITHUB_WORKSPACE/dregg-src-payload/"
+
       - name: Package AppImage + .tar.gz
         working-directory: starbridge-v2
         run: |
@@ -429,6 +443,15 @@ jobs:
           # (see AppRun + the deos-node launcher below).
           cp "$COCKPIT" AppDir/usr/bin/starbridge-v2
           cp "$NODE"    AppDir/usr/bin/dregg-node
+
+          # THE SOURCE PAYLOAD — the self-describing vessel's carrier. The image
+          # carries the dregg source (the Rust/Lean/docs that DEFINE the system) at
+          # usr/share/dregg-src/ so a running agent/cockpit's SourceVessel finds it
+          # via the executable-relative search (AppDir/usr/bin → ../share/dregg-src).
+          SRC_PAYLOAD="$GITHUB_WORKSPACE/dregg-src-payload/dregg-src.tar.zst"
+          test -f "$SRC_PAYLOAD" || { echo "::error::source payload missing; the vessel cannot be bundled"; exit 1; }
+          mkdir -p AppDir/usr/share/dregg-src
+          cp "$SRC_PAYLOAD" AppDir/usr/share/dregg-src/dregg-src.tar.zst
 
           # A real icon (256x256, committed at assets/starbridge-v2.png) — not a
           # 1x1 stub. linuxdeploy reads top-level AppDir/<name>.png AND the hicolor
@@ -505,6 +528,13 @@ jobs:
           test -x squashfs-root/usr/bin/starbridge-v2
           test -x squashfs-root/usr/bin/dregg-node
           echo "AppImage contains BOTH binaries: starbridge-v2 + dregg-node"
+          # Smoke: the AppImage carries the SOURCE PAYLOAD (the self-describing
+          # vessel's carrier) at usr/share/dregg-src/, and it holds the real source.
+          test -f squashfs-root/usr/share/dregg-src/dregg-src.tar.zst
+          zstd -dc squashfs-root/usr/share/dregg-src/dregg-src.tar.zst \
+            | tar -tf - dregg-src/metatheory/CONSTRUCTIVE-KNOWLEDGE.md >/dev/null
+          echo "AppImage carries the dregg source payload (self-describing vessel): \
+            usr/share/dregg-src/dregg-src.tar.zst, incl. metatheory/CONSTRUCTIVE-KNOWLEDGE.md"
 
       - name: Upload Linux installers
         uses: actions/upload-artifact@v4

@@ -371,6 +371,14 @@ thiserror = "2"
 # Used by the embedded `World` for the image-commitment root + cell snapshots.
 blake3 = "1"
 postcard = { version = "1", features = ["use-std"] }
+# THE SELF-DESCRIBING VESSEL carrier codec (`src/source_vessel.rs`): the bundled
+# dregg source ships as a `dregg-src.tar.zst` tarball (scripts/pack-dregg-src.sh)
+# inside the AppImage; `SourceVessel` decodes it at runtime to read the source it
+# inhabits. Both already resolve in this workspace's graph (gpui/servo transitive),
+# so naming them directly pulls NO new crate — just makes the dep explicit. The
+# `tar` reader is pure-Rust; `zstd` is the same codec the carrier was packed with.
+zstd = "0.13"
+tar = "0.4"
 # The headless cockpit bake re-encodes the captured RGBA to a PNG visual check
 # (the raw `.rgba` the seL4 PD bakes is written directly). Gated on
 # `headless-render`. 0.25 matches gpui_wgpu's `image` (one resolved version).

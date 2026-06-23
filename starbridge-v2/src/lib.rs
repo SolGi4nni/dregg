@@ -59,6 +59,15 @@ pub mod live_node;
 #[cfg(feature = "embedded-executor")]
 pub mod affordance;
 
+// THE SELF-DESCRIBING VESSEL — a cap-bounded READ surface over a bundled copy of
+// the dregg SOURCE (the Rust/Lean/docs that DEFINE the system), shipped inside the
+// AppImage at `usr/share/dregg-src/dregg-src.tar.zst`. An agent put INTO deos (the
+// embedded Hermes, or the cockpit) can read the source it is trapped within — a
+// read cap, no write authority. Always available (zstd/tar only; the firmament
+// read-only mount helper is feature-gated inside). See
+// `docs/deos/SELF-DESCRIBING-VESSEL.md`.
+pub mod source_vessel;
+
 // The WEB-OF-CELLS browser — the cockpit as a native browser of the `dregg://`
 // docuverse: it lists the addressable cells (the real `WebOfCells` attested
 // fetch + ledger-drawn `OriginChrome`), opens one to its per-viewer affordance
