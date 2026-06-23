@@ -463,6 +463,24 @@ theorem handler_refines_execFullA_spawn (s s' : RecChainedState) (actor child ta
     rw [if_pos ⟨hg.1, hg.2⟩, hk]
   · rw [if_neg hg] at hstep; exact absurd hstep (by simp)
 
+/-- **`handler_refines_execFullA_spawn_fresh` — the BIRTH-FRESHNESS dimension certified (the §P3 spawn
+shed).** The born-empty `handler_refines_execFullA_spawn` refines `spawnA` against `createCellA`, which
+carries NO `delegationEpochAt` data — so the birth-stamp was `§DEFER`'d (latent in `spawnChainA`, never
+surfaced). Refined against the CHAINED, STAMPING `spawnChainA` (= `execFullA`'s arm), this delivers the
+birth-freshness OFF the commit (`HandlerFloors.spawnFreshnessFloor_discharges`): the child is stamped to the
+spawner-parent's CURRENT `delegationEpoch`, so it is NOT stale at birth. The freshness dimension the
+born-empty refinement left implicit is now internal and certified — the epoch metadata is no longer a
+silent `§DEFER`. -/
+theorem handler_refines_execFullA_spawn_fresh (s s' : RecChainedState) (actor child target : CellId)
+    (h : Dregg2.Exec.TurnExecutorFull.spawnChainA s actor child target = some s') :
+    (∃ s'', execFullA s (.spawnA actor child target) = some s'' ∧ s''.kernel = s'.kernel)
+      ∧ s'.kernel.delegationEpochAt child = s.kernel.delegationEpoch actor := by
+  refine ⟨⟨s', ?_, rfl⟩,
+    HandlerFloors.spawnFreshnessFloor_discharges
+      (a := { actor := actor, child := child, target := target }) h⟩
+  show Dregg2.Exec.TurnExecutorFull.spawnChainA s actor child target = some s'
+  exact h
+
 /-- **`handler_refines_execFullA_createCellFromFactory` — the born-empty create alias.**
 `toClosedEffect` maps `createCellFromFactoryA` onto `createCellFromFactoryH` (= `createCellH`).
 Refinement is against `createCellA` — not the full `createCellFromFactoryChainA` install (`§DEFER`). -/
@@ -916,10 +934,25 @@ theorem handler_refines_execFullA_cellDestroy (s s' : RecChainedState) (actor ce
     rw [if_pos hg', hk]
   · rw [if_neg hg] at hstep; exact absurd hstep (by simp)
 
-/-- The frozen-face handler `refreshDelegationStep` models the `delegations` snapshot only; the FAITHFUL
-chained executor ALSO re-stamps `delegationEpochAt` (the freshness-restore). So the executor post equals the
-handler post WITH the named epoch-stamp residual applied — kernel equality holds MODULO that one re-stamp. -/
-theorem handler_refines_execFullA_refreshDelegation (s s' : RecChainedState) (actor child : CellId)
+/-! ### §P3 — the lifecycle-FRESHNESS / delegation-epoch residual SHED.
+
+BEFORE — `..._refreshDelegation_residual`: the FROZEN-FACE handler `refreshDelegationStep` models the
+`delegations` snapshot only; the FAITHFUL chained executor ALSO re-stamps `delegationEpochAt` (the
+freshness-restore). So the refinement's conclusion carries the epoch-stamp as a NAMED kernel RESIDUAL
+(`s''.kernel = { s'.kernel with delegationEpochAt := … }`) — kernel equality holds only MODULO that
+re-stamp, the silent-gate hole in residual form.
+
+AFTER — `..._refreshDelegation`: refined against the CHAINED step `refreshDelegationChainA` (= `execFullA`'s
+arm, which STAMPS by construction). The conclusion is CLEAN kernel-agreement (`s''.kernel = s'.kernel`, NO
+residual) PLUS the freshness fact (`s'.delegationEpochAt child = parentEpoch child`) delivered OFF the
+commit via `HandlerFloors.refreshFreshnessFloor_discharges`. The epoch-stamp residual is GONE — produced
+internally by the floor, not carried as a structural escape. This is the §P3 shed (mirrors the §P2
+`..._nonAmp` shape: same closure, the post-condition floor instead of a side-hyp). -/
+
+/-- **BEFORE (the residual version).** The refresh refinement against the FROZEN-FACE handler, whose
+conclusion carries the epoch-stamp as a named `delegationEpochAt` kernel residual. The residual is the
+silent-gate hole the AFTER version sheds. -/
+theorem handler_refines_execFullA_refreshDelegation_residual (s s' : RecChainedState) (actor child : CellId)
     (h : execHandlerOne (.refreshDelegationA actor child) s = some s') :
     ∃ s'', execFullA s (.refreshDelegationA actor child) = some s''
       ∧ s''.kernel = { s'.kernel with
@@ -950,6 +983,20 @@ theorem handler_refines_execFullA_refreshDelegation (s s' : RecChainedState) (ac
       -- so applying the residual to `s'.kernel` recovers the executor post.
       rw [← hk]
   · rw [if_neg hg] at hstep; exact absurd hstep (by simp)
+
+/-- **AFTER (the epoch-stamp residual SHED).** Refined against the CHAINED, STAMPING step
+`refreshDelegationChainA` (= `execFullA`'s arm). CLEAN kernel-agreement — NO `delegationEpochAt` residual —
+PLUS the freshness fact read OFF the commit (`HandlerFloors.refreshFreshnessFloor_discharges`): the child's
+re-stamp EQUALS `parentEpoch child`. The epoch residual the BEFORE version carried is now internal: a
+committed refresh PRODUCES the freshness, the refinement no longer ESCAPES it through the conclusion. -/
+theorem handler_refines_execFullA_refreshDelegation (s s' : RecChainedState) (actor child : CellId)
+    (h : Dregg2.Exec.TurnExecutorFull.refreshDelegationChainA s actor child = some s') :
+    (∃ s'', execFullA s (.refreshDelegationA actor child) = some s'' ∧ s''.kernel = s'.kernel)
+      ∧ s'.kernel.delegationEpochAt child = parentEpoch s.kernel child := by
+  refine ⟨⟨s', ?_, rfl⟩,
+    HandlerFloors.refreshFreshnessFloor_discharges (a := { actor := actor, child := child }) h⟩
+  show Dregg2.Exec.TurnExecutorFull.refreshDelegationChainA s actor child = some s'
+  exact h
 
 theorem handler_refines_execFullA_emitEvent (s s' : RecChainedState) (actor cell : CellId)
     (topic data : Int) (h : execHandlerOne (.emitEventA actor cell topic data) s = some s') :
@@ -1271,7 +1318,9 @@ The derived global laws + the strengthening + the executor structure are all pin
 #assert_axioms handler_refines_execFullA_cellSeal
 #assert_axioms handler_refines_execFullA_cellUnseal
 #assert_axioms handler_refines_execFullA_cellDestroy
+#assert_axioms handler_refines_execFullA_refreshDelegation_residual
 #assert_axioms handler_refines_execFullA_refreshDelegation
+#assert_axioms handler_refines_execFullA_spawn_fresh
 #assert_axioms handler_refines_execFullA_emitEvent
 #assert_axioms handler_refines_execFullA_delegate
 #assert_axioms handler_refines_execFullA_delegateAtten

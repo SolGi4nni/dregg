@@ -55,6 +55,11 @@ open Dregg2.Exec (confRights heldCapTo attenuate recKDelegateAtten recKDelegateA
 open Dregg2.Exec.Handlers.Authority (DelegateArgs delegateAttenStep delegateAttenH)
 open Dregg2.Exec.EffectsState (reservedField stateStepDev stateStepDev_notReserved
   incrementNonceStep incrementNonceStep_advances fieldOf)
+open Dregg2.Exec.TurnExecutorFull (spawnChainA refreshDelegationChainA parentEpoch
+  spawnChainA_stamps_epoch spawnChainA_fresh_at_birth
+  refreshDelegationChainA_restamps_epoch refreshDelegationChainA_fresh
+  refreshDelegationChainA_noParent_rejects)
+open Dregg2.Exec (delegationStale)
 
 /-! ## §1 — The uniform `FloorObligation` surface (`Prop`-valued).
 
@@ -98,6 +103,27 @@ the commit itself — the side-hyp becomes a derived fact, not a caller obligati
 theorem FloorObligation.discharge {St Args : Type} {step : St → Args → Option St}
     (fo : FloorObligation St Args step) {s : St} {a : Args} {s' : St}
     (h : step s a = some s') : fo.floor s a :=
+  fo.gated s a s' h
+
+/-! ### §1b — `PostFloorObligation` — the POST-CONDITION floor (the freshness kind).
+
+Three of the named floors are PRE-state relations (`reservedField`/monotone-nonce/non-amp): the relation
+holds on `s`/`a` and the commit merely WITNESSES it, so `FloorObligation` (floor over `s a`) captures
+them. The lifecycle-FRESHNESS floor (§4c) is genuinely a POST-condition: the step WRITES the child's
+`delegationEpochAt` stamp, so the floor relates the POST-state stamp (`s'.delegationEpochAt child`) to a
+pre-state parent epoch. `floor : St → Args → St → Prop` exposes the post `s'`, and `gated` proves it on
+every commit — the same uniform contract (a typed obligation the step must meet), one slot wider. -/
+structure PostFloorObligation (St : Type) (Args : Type) (step : St → Args → Option St) where
+  /-- The named floor, now ALSO over the post-state `s'`: the post-condition the commit installs. -/
+  floor : St → Args → St → Prop
+  /-- OBLIGATION: every commit satisfies the post-floor. -/
+  gated : ∀ s a s', step s a = some s' → floor s a s'
+
+/-- A committed step DISCHARGES its post-floor obligation — the projection a refinement reuses to SHED
+the post-condition residual (e.g. the epoch-stamp residual) it USED to carry explicitly. -/
+theorem PostFloorObligation.discharge {St Args : Type} {step : St → Args → Option St}
+    (fo : PostFloorObligation St Args step) {s : St} {a : Args} {s' : St}
+    (h : step s a = some s') : fo.floor s a s' :=
   fo.gated s a s' h
 
 /-! ## §2 — Floor argument records (the args the two PoC floors range over).
@@ -219,6 +245,86 @@ def authNonAmpFloor : FloorObligation RecordKernelState DelegateArgs delegateAtt
     intro k a k' _
     exact recKDelegateAtten_non_amplifying k.caps a.delegator a.target a.keep
 
+/-! ## §4c — POC INSTANCE D (RELATIONAL FLOOR): LIFECYCLE FRESHNESS / DELEGATION-EPOCH, over the
+spawn-birth and refresh-restore chained steps (`spawnChainA` / `refreshDelegationChainA`).
+
+The freshness floor is the §P3 family — the delegation-epoch keystone: a freshly-SPAWNED or
+freshly-REFRESHED child must be stamped to its parent's CURRENT `delegationEpoch`, so it is NOT stale at
+birth / not stale at re-sync. (`delegationStale child = true` iff `delegationEpochAt child` falls
+STRICTLY below the parent's current `delegationEpoch` — the acceptor-side replay test a light client
+runs; a parent revoke bumps the epoch so old snapshots fall behind ⇒ stale.) A child left at the `0`
+default stamp under a nonzero-epoch parent would be INSTANTLY stale — the codex bug. This is RELATIONAL —
+it relates the child's post-state stamp `delegationEpochAt child` to the parent's epoch read off the
+pre-state (the spawner's `delegationEpoch actor`, or `parentEpoch` for refresh). NOT a Bool gate over
+args alone, exactly like monotone-nonce (§4) and non-amp (§4b).
+
+THE CLEAN DISCHARGE (the P2 §4b case repeated). Unlike the reserved-field / monotone floors — where the
+handler's `step` had to be RE-ROUTED through a fail-closing guard before the floor could be read off the
+commit — the chained executor steps `spawnChainA` / `refreshDelegationChainA` ALREADY stamp
+`delegationEpochAt` by construction (the banked triangle-D stamping, commit `85063e80`): spawn writes
+`if c = child then delegationEpoch actor`, refresh writes `if c = child then parentEpoch child`. So the
+freshness floor DISCHARGES from the EXISTING step's post-condition with NO re-route — `spawnChainA_stamps_epoch`
+/ `refreshDelegationChainA_restamps_epoch` are exactly the stamp facts. The `FloorObligation` simply
+PROMOTES the latent stamp to a typed obligation. A spawn/refresh variant that LEFT the child at the `0`
+default (the un-stamping codex mutation) could NOT inhabit this structure — the missing freshness gate
+becomes unrepresentable, as auth/admission/non-amp already are.
+
+(Note: the FROZEN-FACE handler mirror `refreshDelegationStep` (`Handlers/Lifecycle.lean`) models only the
+`delegations` snapshot — it does NOT stamp, which is exactly why `handler_refines_execFullA_refreshDelegation`
+USED to carry the epoch-stamp as a named kernel RESIDUAL. The floor here lives over the FAITHFUL chained
+step that DOES stamp, so the residual is shed by routing the refinement's stamp through this floor.) -/
+
+/-- Args for a spawn-birth freshness floor: the spawner `actor` (= the child's parent), the fresh
+`child`, and the cap-source `target`. -/
+structure SpawnFreshArgs where
+  /-- The spawner — the child's parent; the epoch source. -/
+  actor : CellId
+  /-- The freshly-born child whose `delegationEpochAt` is stamped. -/
+  child : CellId
+  /-- The held-cap source the spawn copies down. -/
+  target : CellId
+
+/-- Args for a refresh-restore freshness floor: the self-authorizing `actor` and the re-synced `child`. -/
+structure RefreshFreshArgs where
+  /-- The actor self-authorizing the refresh. -/
+  actor : CellId
+  /-- The child whose `delegationEpochAt` is re-stamped to the live parent epoch. -/
+  child : CellId
+
+/-- The spawn-birth step lifted to `SpawnFreshArgs` (the chained, stamping spawn). -/
+def spawnFreshStep (s : RecChainedState) (a : SpawnFreshArgs) : Option RecChainedState :=
+  spawnChainA s a.actor a.child a.target
+
+/-- The refresh-restore step lifted to `RefreshFreshArgs` (the chained, re-stamping refresh). -/
+def refreshFreshStep (s : RecChainedState) (a : RefreshFreshArgs) : Option RecChainedState :=
+  refreshDelegationChainA s a.actor a.child
+
+/-- **`spawnFreshnessFloor` — the BIRTH-FRESHNESS floor as a `PostFloorObligation`.** Floor: the born
+child's POST stamp `s'.delegationEpochAt child` EQUALS the spawner-parent's current `delegationEpoch`
+(read off the PRE-state, `s.kernel.delegationEpoch actor`) — a post-condition relating the installed stamp
+to the pre-state parent epoch, NOT a Bool gate. Discharged on EVERY commit by the banked
+`spawnChainA_stamps_epoch`: the chained spawn already stamps by construction, so the floor reads OFF the
+commit with no re-route (the §4b clean-discharge case). An un-stamping spawn (the `0` default codex bug)
+could not inhabit this. -/
+def spawnFreshnessFloor : PostFloorObligation RecChainedState SpawnFreshArgs spawnFreshStep where
+  floor := fun s a s' => s'.kernel.delegationEpochAt a.child = s.kernel.delegationEpoch a.actor
+  gated := by
+    intro s a s' h
+    exact spawnChainA_stamps_epoch h
+
+/-- **`refreshFreshnessFloor` — the FRESHNESS-RESTORE floor as a `PostFloorObligation`.** Floor: the
+refreshed child's POST stamp `s'.delegationEpochAt child` EQUALS the parent's current epoch
+(`parentEpoch s.kernel child`, read off the PRE-state) — a post-condition relating the re-installed stamp
+to the pre-state parent epoch, NOT a Bool gate. Discharged on EVERY commit by the banked
+`refreshDelegationChainA_restamps_epoch`: the chained refresh already re-stamps by construction, so the
+floor reads OFF the commit with no re-route (the §4b clean-discharge case). A refresh that left the stamp
+behind could not inhabit this. -/
+def refreshFreshnessFloor : PostFloorObligation RecChainedState RefreshFreshArgs refreshFreshStep where
+  floor := fun s a s' => s'.kernel.delegationEpochAt a.child = parentEpoch s.kernel a.child
+  gated := by
+    intro s a s' h
+    exact refreshDelegationChainA_restamps_epoch h
+
 /-! ## §5 — TEETH: the floors BITE (a violating step does not commit), and DISCHARGE works.
 
 The methodology pin: a step that would VIOLATE the floor returns `none`, so `gated` is never asked to
@@ -274,20 +380,78 @@ theorem authNonAmpFloor_discharges {k k' : RecordKernelState} {a : DelegateArgs}
       ≤ confRights (heldCapTo k.caps a.delegator a.target) :=
   authNonAmpFloor.discharge h
 
+/-- **`spawnFreshnessFloor` DISCHARGES** — a committed spawn SUPPLIES the birth-stamp equality
+(`s'.delegationEpochAt child = delegationEpoch actor`) WITHOUT a side-hypothesis. This is the epoch-stamp
+the chained spawn produces internally; the obligation reads it OFF the commit (the §P3 shed). -/
+theorem spawnFreshnessFloor_discharges {s s' : RecChainedState} {a : SpawnFreshArgs}
+    (h : spawnFreshStep s a = some s') :
+    s'.kernel.delegationEpochAt a.child = s.kernel.delegationEpoch a.actor :=
+  spawnFreshnessFloor.discharge h
+
+/-- **`refreshFreshnessFloor` DISCHARGES** — a committed refresh SUPPLIES the re-stamp equality
+(`s'.delegationEpochAt child = parentEpoch child`) WITHOUT a side-hypothesis. This is EXACTLY the
+epoch-stamp residual `HandlerExecutor.handler_refines_execFullA_refreshDelegation` USED to carry as a named
+kernel residual (`{ s'.kernel with delegationEpochAt := … }`); the obligation produces it from the commit,
+so the residual is shed by routing the refinement's stamp through the chained step. -/
+theorem refreshFreshnessFloor_discharges {s s' : RecChainedState} {a : RefreshFreshArgs}
+    (h : refreshFreshStep s a = some s') :
+    s'.kernel.delegationEpochAt a.child = parentEpoch s.kernel a.child :=
+  refreshFreshnessFloor.discharge h
+
+/-! ### §5b — the freshness floor BITES: a committed (hence stamped) child is NOT stale, AND an
+UN-stamped post IS stale (the mutation pole) — so the freshness floor is load-bearing, not vacuous. -/
+
+/-- **A committed spawn is FRESH AT BIRTH** — `delegationStale s'.kernel child = false`. The floor's
+discharge (the stamp) is exactly what makes the acceptor-side staleness test fail: the child is born at
+the parent's current epoch. The freshness floor is load-bearing — its discharge implies no-staleness. -/
+theorem spawnFreshnessFloor_not_stale {s s' : RecChainedState} {a : SpawnFreshArgs}
+    (h : spawnFreshStep s a = some s') : delegationStale s'.kernel a.child = false :=
+  spawnChainA_fresh_at_birth h
+
+/-- **A committed refresh is FRESH** — `delegationStale s'.kernel child = false` (for a child with parent
+`p`). The re-stamp discharge re-syncs the child to the live parent epoch, so the strict `<` freshness test
+fails. The freshness floor is load-bearing. -/
+theorem refreshFreshnessFloor_not_stale {s s' : RecChainedState} {a : RefreshFreshArgs} {p : CellId}
+    (h : refreshFreshStep s a = some s') (hp : s.kernel.delegate a.child = some p) :
+    delegationStale s'.kernel a.child = false :=
+  refreshDelegationChainA_fresh h hp
+
+/-- **THE MUTATION POLE (freshness floor BITES — un-stamped child is STALE-AT-BIRTH).** If a spawn-like
+step had LEFT the child at the `0` default stamp under a NONZERO-epoch parent (the codex un-stamping bug,
+the floor's negation), the child would be INSTANTLY stale: `delegationStale = true`. This witnesses that the
+freshness floor is NOT vacuous — its negation is a genuinely distinct, REJECTED post-state (the un-stamped
+post fails the freshness test the stamped post passes). The `delegationEpochAt`-`0` post + a parent at
+epoch `> 0` is exactly the state `spawnChainA`'s stamp REFUTES. -/
+theorem freshnessFloor_unstamped_is_stale (k : RecordKernelState) (child parent : CellId)
+    (hp : k.delegate child = some parent)
+    (hstamp0 : k.delegationEpochAt child = 0)
+    (hpe : 0 < k.delegationEpoch parent) :
+    delegationStale k child = true := by
+  simp only [delegationStale, hp, hstamp0]
+  exact decide_eq_true (by omega)
+
 /-! ## §6 — Axiom-hygiene pins (the floor surface + all instances rest only on the kernel triple). -/
 
 #assert_axioms FloorObligation.discharge
+#assert_axioms PostFloorObligation.discharge
 #assert_axioms reservedFieldFloor
 #assert_axioms nonceMonotoneFloor
 #assert_axioms authNonAmpFloor
+#assert_axioms spawnFreshnessFloor
+#assert_axioms refreshFreshnessFloor
 #assert_axioms reservedFieldFloor_discharges
 #assert_axioms nonceMonotoneFloor_discharges
 #assert_axioms authNonAmpFloor_discharges
+#assert_axioms spawnFreshnessFloor_discharges
+#assert_axioms refreshFreshnessFloor_discharges
 #assert_axioms reservedFieldFloor_bites
 #assert_axioms nonceMonotoneFloor_bites
 #assert_axioms authNonAmpFloor_overgrant_rejected
+#assert_axioms spawnFreshnessFloor_not_stale
+#assert_axioms refreshFreshnessFloor_not_stale
+#assert_axioms freshnessFloor_unstamped_is_stale
 
-/-! ## §P1 — DONE (the field-write family migrated; THREE side-hyps SHED). § P2 — THE NEXT FAMILY.
+/-! ## §P1/§P2/§P3 — DONE (field-write · authority-non-amp · lifecycle-freshness migrated). §P4 — NEXT.
 
 **P1 LANDED.** The developer `SetField` (`.setFieldA`) and the dedicated `IncrementNonce`
 (`.incrementNonceA`) now route through their OWN floor-carrying handlers (`Handlers/StateSupply.lean`,
@@ -326,11 +490,38 @@ The mutation teeth (`authNonAmpFloor_overgrant_rejected`) confirm the floor BITE
 delegator with NO held cap to the target produces no commit, so a manufactured stronger grant has no
 witness.
 
-**P3 — the next floor families** (the obligation table, `docs/CIRCUIT-FUNCTIONAL-CORRECTNESS.md`):
-  * **lifecycle freshness / delegation-epoch** — the `refreshDelegationA` residual (the
-    `delegationEpochAt` re-stamp `handler_refines_execFullA_refreshDelegation` carries as a named
-    kernel residual): route through an epoch-stamping step so the residual is internal.
-  * **forest-path / index-membership floors** — the `noteSpend`/heap-membership family: the spend's
-    non-membership + the heap leaf-index bound. -/
+**P3 — DONE (lifecycle FRESHNESS / delegation-epoch migrated; the epoch-stamp residual SHED).** The
+spawn-birth and refresh-restore families carry the freshness floor as a TYPED `PostFloorObligation`
+(`spawnFreshnessFloor` / `refreshFreshnessFloor`, §4c): the child's POST `delegationEpochAt` stamp EQUALS
+its parent's CURRENT epoch (`= delegationEpoch actor` at birth; `= parentEpoch child` at re-sync) — a
+POST-condition floor (the step WRITES the stamp, so the floor is genuinely over `s'`, hence
+`PostFloorObligation`, one slot wider than the §P1/§P2 pre-state `FloorObligation`). The CLEANER discharge
+(the §P2 §4b case repeated): the CHAINED executor steps `spawnChainA` / `refreshDelegationChainA` ALREADY
+stamp by construction (the banked triangle-D stamping, commit `85063e80`), so the floor discharges from the
+EXISTING step's post-condition — `spawnChainA_stamps_epoch` / `refreshDelegationChainA_restamps_epoch` ARE
+the stamp facts. No re-route: the handler was already strong enough; the obligation PROMOTES the latent
+stamp to a typed floor.
+
+`HandlerExecutor.handler_refines_execFullA_refreshDelegation` (AFTER) refines against the chained,
+stamping `refreshDelegationChainA` and delivers CLEAN kernel-agreement (NO `delegationEpochAt` residual)
+PLUS the freshness fact OFF the commit via `refreshFreshnessFloor_discharges` — SHEDDING the epoch-stamp
+residual the BEFORE shape (`…_refreshDelegation_residual`) carried in its conclusion (`s''.kernel = {
+s'.kernel with delegationEpochAt := … }`). `handler_refines_execFullA_spawn_fresh` does the same for the
+birth stamp (the §DEFER'd dimension the born-empty `…_spawn`/`createCellA` refinement left implicit is now
+certified internal). The mutation teeth (§5b): `spawnFreshnessFloor_not_stale` /
+`refreshFreshnessFloor_not_stale` confirm a committed (hence stamped) child is NOT stale; and
+`freshnessFloor_unstamped_is_stale` confirms the floor is LOAD-BEARING — an un-stamped child (`0` default
+stamp under a nonzero-epoch parent, the codex mutation = the floor's negation) IS stale-at-birth
+(`delegationStale = true`), the distinct REJECTED post the stamp refutes.
+
+**P4 — the next floor family: forest-path / index-membership** (the obligation table,
+`docs/CIRCUIT-FUNCTIONAL-CORRECTNESS.md`): the `noteSpend`/heap-membership floors — the spend's nullifier
+NON-MEMBERSHIP (no double-spend) + the heap leaf-INDEX bound. ⚑ NOTE: unlike the §P1–§P3 floors (which
+live over FLAT kernel/chained steps), these are FOREST-path floors — the LIVE executor routes spend +
+heap-write through the FOREST handler (`FullForest` / the forest fold), so the membership/index floors must
+be discharged on the FOREST step (the per-leaf path-membership the forest commitment binds), NOT the flat
+`noteSpendStep`/`heapWriteStep` handler mirror. So P4 likely needs the forest-handler refinement, not the
+flat-handler one — flag this before defining the floor (the flat mirror would discharge a WEAKER fact than
+the forest commitment actually binds). -/
 
 end Dregg2.Exec.HandlerFloors
