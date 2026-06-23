@@ -231,6 +231,23 @@ pub struct Shell {
     /// present (surface id → current frame digest). Seeded when a surface opens;
     /// the present path advances it, fail-closed on a refusal.
     frame_digests: Vec<(SurfaceId, u64)>,
+    /// The MIGRATED surfaces: surface id → its re-homed cap (a
+    /// `Capability{ Target::HostPd { pd }, rights }` the `migrate` verb minted).
+    /// A surface here no longer paints through the in-process `compositor`; its
+    /// `present`/`route_input` dispatch over the firmament Endpoint to the
+    /// confined child PD ([`Shell::present_transport`]). The cap's `Target::HostPd`
+    /// is the live-transport address the [`crate::dock::migrate::PresentTransport`]
+    /// round-trips against. Populated only under the `process-pd` live wire
+    /// ([`Shell::migrate_surface`]).
+    #[cfg(all(feature = "process-pd", unix))]
+    migrated: Vec<(SurfaceId, SurfaceCapability)>,
+    /// THE LIVE-TRANSPORT re-home (`process-pd`): the firmament surface Endpoint(s)
+    /// to the migrated surfaces' confined child PDs. Once a surface migrates
+    /// ([`Shell::migrate_surface`]), the shell routes its `present`/`route_input`
+    /// through this instead of the in-process compositor — the GLASS follows the
+    /// cap to the child. `None` until the first surface migrates.
+    #[cfg(all(feature = "process-pd", unix))]
+    present_transport: Option<crate::dock::migrate::PresentTransport>,
 }
 
 impl Default for Shell {
@@ -255,6 +272,10 @@ impl Shell {
             area: Rect::new(0.0, 0.0, 1280.0, 760.0),
             compositor: Compositor::new(),
             frame_digests: Vec::new(),
+            #[cfg(all(feature = "process-pd", unix))]
+            migrated: Vec::new(),
+            #[cfg(all(feature = "process-pd", unix))]
+            present_transport: None,
         }
     }
 
@@ -272,19 +293,10 @@ impl Shell {
     /// Open a cap-confined VIEW of `cell` as a new floating surface. Returns the
     /// [`SurfaceCapability`] the opener now holds — the ONLY authority over the
     /// new surface. The surface is raised to the front + focused on open.
-    pub fn open_cell_view(
-        &mut self,
-        cell: CellId,
-        title: impl Into<String>,
-    ) -> SurfaceCapability {
+    pub fn open_cell_view(&mut self, cell: CellId, title: impl Into<String>) -> SurfaceCapability {
         // Cascade fresh cell views so they don't all stack on the origin.
         let n = self.surfaces.iter().filter(|s| !s.is_console()).count() as f32;
-        let rect = Rect::new(
-            80.0 + n * 36.0,
-            80.0 + n * 36.0,
-            420.0,
-            300.0,
-        );
+        let rect = Rect::new(80.0 + n * 36.0, 80.0 + n * 36.0, 420.0, 300.0);
         self.open_surface(SurfaceKind::CellView, cell, title.into(), rect)
     }
 
@@ -321,8 +333,13 @@ impl Shell {
         let z = self.top_z() + 1;
         let surface = Surface::new(id, kind, cell, title, rect, z);
         self.surfaces.push(surface);
-        self.authorities
-            .push((id, SurfaceAuthority { backing_cell, owner }));
+        self.authorities.push((
+            id,
+            SurfaceAuthority {
+                backing_cell,
+                owner,
+            },
+        ));
         // Seed the compositor frame digest for this surface (the initial frame,
         // keyed off the surface id so it is non-trivial + distinct per surface).
         self.frame_digests.push((id, 0x100 + id.as_u64()));
@@ -380,12 +397,7 @@ impl Shell {
     /// Move the capability's surface by `(dx, dy)` (honored under `Float`; under
     /// tile/stack the shell re-derives geometry, so a move is recorded but the
     /// arrangement overrides it until the layout returns to float). Cap-gated.
-    pub fn move_by(
-        &mut self,
-        cap: &SurfaceCapability,
-        dx: f32,
-        dy: f32,
-    ) -> Result<(), ShellError> {
+    pub fn move_by(&mut self, cap: &SurfaceCapability, dx: f32, dy: f32) -> Result<(), ShellError> {
         let id = self.authorize(cap)?;
         if let Some(s) = self.get_mut(id) {
             let r = s.rect().translated(dx, dy);
@@ -396,12 +408,7 @@ impl Shell {
 
     /// Resize the capability's surface to `(w, h)` (clamped to a sane minimum).
     /// Cap-gated.
-    pub fn resize(
-        &mut self,
-        cap: &SurfaceCapability,
-        w: f32,
-        h: f32,
-    ) -> Result<(), ShellError> {
+    pub fn resize(&mut self, cap: &SurfaceCapability, w: f32, h: f32) -> Result<(), ShellError> {
         let id = self.authorize(cap)?;
         if let Some(s) = self.get_mut(id) {
             let r = s.rect();
@@ -507,7 +514,14 @@ impl Shell {
         let z = self.top_z() + 1;
         let n = self.surfaces.iter().filter(|s| !s.is_console()).count() as f32;
         let rect = Rect::new(100.0 + n * 28.0, 100.0 + n * 28.0, 420.0, 300.0);
-        let surface = Surface::new(new_id, kind, view_cell, format!("shared s{}", id.as_u64()), rect, z);
+        let surface = Surface::new(
+            new_id,
+            kind,
+            view_cell,
+            format!("shared s{}", id.as_u64()),
+            rect,
+            z,
+        );
         self.surfaces.push(surface);
         self.authorities.push((
             new_id,
@@ -654,11 +668,8 @@ impl Shell {
     /// surface's self-description). Minimized surfaces are excluded (they paint
     /// nothing). This is the closed-over scene the §4 `sceneAdmit` decides over.
     pub fn compose_scene(&self, world: &World) -> CompositorScene {
-        let mut ordered: Vec<&Surface> = self
-            .surfaces
-            .iter()
-            .filter(|s| !s.is_minimized())
-            .collect();
+        let mut ordered: Vec<&Surface> =
+            self.surfaces.iter().filter(|s| !s.is_minimized()).collect();
         ordered.sort_by_key(|s| s.z());
         let surfaces = ordered
             .iter()
@@ -704,6 +715,18 @@ impl Shell {
         claims_focus: bool,
         new_digest: u64,
     ) -> Result<FrameCommit, ShellError> {
+        // (0) the GLASS-FOLLOWS-THE-CAP fork: if this surface MIGRATED to a
+        // confined child PD, the present does NOT go to the in-process compositor
+        // — it crosses the firmament Endpoint to the child, which renders in its
+        // own MMU-isolated memory and returns the frame (the digest folds into the
+        // shell's bookkeeping below). The in-process path is untouched for every
+        // non-migrated surface. (The registry is only ever populated under the
+        // `process-pd` live wire — `migrate_surface` is gated on it.)
+        #[cfg(all(feature = "process-pd", unix))]
+        if self.is_migrated(cap.surface()) {
+            return self.present_migrated(cap, world, regions, new_digest);
+        }
+
         // (1) the WINDOW-cap gate: you can only present a window you hold.
         let id = self.authorize(cap)?;
         let Some(surface) = self.get(id) else {
@@ -743,11 +766,200 @@ impl Shell {
     /// receive the event; the gate confirms it against the unique focus holder,
     /// refusing a misroute. Returns the (single) cell input is delivered to.
     pub fn route_input(&mut self, claimed: CellId, world: &World) -> Result<CellId, ShellError> {
+        // (0) the GLASS-FOLLOWS-THE-CAP fork: if the input is for a surface that
+        // MIGRATED to a confined child PD, it crosses the firmament Endpoint to the
+        // child (which folds it into its private surface state and re-renders),
+        // NOT the in-process compositor's focus gate. The claimed cell still has to
+        // be the unique focus holder — the T3 routing law is enforced first below,
+        // then (if it names a migrated surface) the event is delivered over the
+        // child's Endpoint.
         let scene = self.compose_scene(world);
         self.compositor.set_scene(scene);
-        self.compositor
+        let delivered = self
+            .compositor
             .route_input(&claimed)
-            .map_err(ShellError::PresentRefused)
+            .map_err(ShellError::PresentRefused)?;
+        // The compositor confirmed `claimed` is the focus holder. If that focus
+        // holder's surface is migrated, deliver the input over the child's Endpoint
+        // (the glass + the input both flow through the confined child now).
+        #[cfg(all(feature = "process-pd", unix))]
+        if let Some(id) = self.migrated_surface_for_cell(delivered) {
+            let cap = self.migrated_cap(id).ok_or(ShellError::Unauthorized)?;
+            let _frame = self.route_input_migrated(&cap)?;
+        }
+        Ok(delivered)
+    }
+
+    // --- SURFACE MIGRATION dispatch (the glass-follows-the-cap re-home) -------
+    //
+    // `migrate(surface_cap, HostPd{pd})` (dock/migrate.rs) re-mints the surface's
+    // cap onto a confined child PD; these methods make the SHELL route that
+    // surface's present/route_input over the child's firmament Endpoint instead of
+    // the in-process compositor. The migration registry + the lookups are
+    // unconditional (gpui-free); only the live dispatch needs the `process-pd`
+    // wire.
+
+    /// Whether a surface has MIGRATED to a confined child PD (its present/input now
+    /// dispatch over the firmament Endpoint, not the in-process compositor).
+    #[cfg(all(feature = "process-pd", unix))]
+    fn is_migrated(&self, id: SurfaceId) -> bool {
+        self.migrated.iter().any(|(sid, _)| *sid == id)
+    }
+
+    /// The re-homed (`Target::HostPd`) cap recorded for a migrated surface, if any.
+    #[cfg(all(feature = "process-pd", unix))]
+    fn migrated_cap(&self, id: SurfaceId) -> Option<SurfaceCapability> {
+        self.migrated
+            .iter()
+            .find(|(sid, _)| *sid == id)
+            .map(|(_, c)| c.clone())
+    }
+
+    /// The migrated surface (if any) owning `cell` — the bridge from
+    /// `route_input`'s claimed CellId to a re-homed surface. A migrated surface
+    /// keeps its viewed-cell identity (migration relocates transport, not the
+    /// cell), so the focus holder's cell maps back to its surface here.
+    #[cfg(all(feature = "process-pd", unix))]
+    fn migrated_surface_for_cell(&self, cell: CellId) -> Option<SurfaceId> {
+        self.migrated
+            .iter()
+            .find_map(|(sid, _)| self.get(*sid).filter(|s| s.cell() == cell).map(|_| *sid))
+    }
+
+    /// MIGRATE a held surface to a confined child PD and bind its live transport —
+    /// the full glass-follows-the-cap move through the SHELL. This re-mints the
+    /// surface's cap onto `target` (the attenuating `migrate` verb, which refuses a
+    /// widening), records the surface as migrated, and installs the
+    /// [`PresentTransport`](crate::dock::migrate::PresentTransport) (the firmament
+    /// surface Endpoint to the child whose surface socket has been registered).
+    /// Thereafter [`Shell::present`]/[`Shell::route_input`] for this surface
+    /// dispatch over that Endpoint — the in-process compositor never sees it again.
+    ///
+    /// Returns the re-homed [`SurfaceCapability`] (the cap now naming
+    /// `Target::HostPd { pd }`). The presented `cap` is authenticated FIRST (you
+    /// can only migrate a window you hold) through the same firmament gate every
+    /// op runs.
+    #[cfg(all(feature = "process-pd", unix))]
+    pub fn migrate_surface(
+        &mut self,
+        cap: &SurfaceCapability,
+        target: crate::dock::migrate::MigrationTarget,
+        transport: crate::dock::migrate::PresentTransport,
+    ) -> Result<SurfaceCapability, ShellError> {
+        // You can only migrate a window you actually hold (cap-gated like every op).
+        let id = self.authorize(cap)?;
+        // The attenuating re-mint (refuses a widening migration — `granted ⊆ held`).
+        let rehomed = crate::dock::migrate::migrate(cap, &target)
+            .map_err(|e| ShellError::ShareDenied(e.to_string()))?;
+        // Record the surface as migrated + install the live transport. From now on
+        // its present/input cross the child's Endpoint.
+        self.migrated.retain(|(sid, _)| *sid != id);
+        self.migrated.push((id, rehomed.clone()));
+        self.present_transport = Some(transport);
+        Ok(rehomed)
+    }
+
+    /// PRESENT a migrated surface over the child PD's firmament Endpoint (the
+    /// `process-pd` live transport). The confined child renders the frame; its
+    /// digest folds into the shell's `frame_digests` + a [`FrameCommit`] (so the
+    /// migrated frame is recorded in the shell's bookkeeping exactly like an
+    /// in-process one). The cap's rights gate the round-trip through the SAME
+    /// `granted ⊆ held` law (the host backing's `present_over_endpoint`).
+    #[cfg(all(feature = "process-pd", unix))]
+    fn present_migrated(
+        &mut self,
+        cap: &SurfaceCapability,
+        world: &World,
+        _regions: Vec<crate::compositor::RegionId>,
+        new_digest: u64,
+    ) -> Result<FrameCommit, ShellError> {
+        let id = cap.surface();
+        // The re-homed cap (Target::HostPd) the transport addresses. We dispatch
+        // against the RECORDED cap (the migration authority), not the presented one
+        // — they share the SurfaceId, and the recorded cap carries the live target.
+        let rehomed = self.migrated_cap(id).ok_or(ShellError::Unauthorized)?;
+        // The present sequence is the new digest's low bits (a monotone-ish seq the
+        // child echoes; the child's returned digest is the load-bearing frame id).
+        let seq = new_digest;
+        let frame = {
+            let transport = self
+                .present_transport
+                .as_ref()
+                .ok_or(ShellError::Unauthorized)?;
+            transport
+                .present(&rehomed, seq)
+                .map_err(|e| ShellError::ShareDenied(format!("{e:?}")))?
+        };
+        Ok(self.commit_migrated_frame(id, world, frame.digest))
+    }
+
+    /// ROUTE an input to a migrated surface over the child PD's Endpoint — the
+    /// child folds it into its private surface state and re-renders. The returned
+    /// frame's digest folds into the shell's bookkeeping (the input AND the glass
+    /// both flow through the confined child now).
+    #[cfg(all(feature = "process-pd", unix))]
+    fn route_input_migrated(&mut self, cap: &SurfaceCapability) -> Result<FrameCommit, ShellError> {
+        let id = cap.surface();
+        let rehomed = self.migrated_cap(id).ok_or(ShellError::Unauthorized)?;
+        // The input code: the surface id (a stable, surface-scoped event code for
+        // the e2e — the real cockpit threads the actual keystroke/pointer code).
+        let code = id.as_u64();
+        let frame = {
+            let transport = self
+                .present_transport
+                .as_ref()
+                .ok_or(ShellError::Unauthorized)?;
+            transport
+                .route_input(&rehomed, code)
+                .map_err(|e| ShellError::ShareDenied(format!("{e:?}")))?
+        };
+        // Fold the child's re-rendered frame into the shell (no world needed — an
+        // input re-render keeps the surface's source-state binding).
+        Ok(self.commit_migrated_frame_digest(id, frame.digest))
+    }
+
+    /// Fold a CONFINED-CHILD frame digest into the shell's bookkeeping: advance the
+    /// per-surface `frame_digests` and synthesize a [`FrameCommit`] bound to the
+    /// surface's live source-state-root + genuine label (so a migrated frame is
+    /// recorded with the SAME provenance shape as an in-process present). Used by
+    /// the `present` path (it has the world for the live root).
+    #[cfg(all(feature = "process-pd", unix))]
+    fn commit_migrated_frame(&mut self, id: SurfaceId, world: &World, digest: u64) -> FrameCommit {
+        let (presenter, root) = match self.get(id) {
+            Some(s) => {
+                let cell = s.cell();
+                (cell, self.source_state_root(cell, world))
+            }
+            None => (CellId::from_bytes([0u8; 32]), 0xDEAD_0000_DEAD_0000),
+        };
+        self.set_frame_digest(id, digest);
+        FrameCommit {
+            presenter,
+            regions: vec![id.region()],
+            digest,
+            source_state_root: root,
+            label: label_of(&presenter, root),
+        }
+    }
+
+    /// Like [`Self::commit_migrated_frame`] but without re-reading the world (the
+    /// input re-render path): advance the digest + record a FrameCommit bound to
+    /// the surface's presenter cell at the digest's own root sentinel. The
+    /// load-bearing fact is the child's digest crossing back into the shell.
+    #[cfg(all(feature = "process-pd", unix))]
+    fn commit_migrated_frame_digest(&mut self, id: SurfaceId, digest: u64) -> FrameCommit {
+        let presenter = self
+            .get(id)
+            .map(|s| s.cell())
+            .unwrap_or_else(|| CellId::from_bytes([0u8; 32]));
+        self.set_frame_digest(id, digest);
+        FrameCommit {
+            presenter,
+            regions: vec![id.region()],
+            digest,
+            source_state_root: digest,
+            label: label_of(&presenter, digest),
+        }
     }
 
     /// The compositor's committed frame log (the scene's provenance — every
@@ -1016,8 +1228,15 @@ mod tests {
         assert!(shell.focus(&cap).is_ok());
         // It is backed by the real service cell.
         let scene = shell.compose(&world);
-        let item = scene.items.iter().find(|it| it.surface.cell() == service).unwrap();
-        assert!(item.identity.backed, "the cell-view is backed by a real ledger cell");
+        let item = scene
+            .items
+            .iter()
+            .find(|it| it.surface.cell() == service)
+            .unwrap();
+        assert!(
+            item.identity.backed,
+            "the cell-view is backed by a real ledger cell"
+        );
         assert_eq!(item.identity.lifecycle, "live");
     }
 
@@ -1045,7 +1264,10 @@ mod tests {
         );
         assert!(!shell.validates(&forged));
         assert_eq!(shell.focus(&forged), Err(ShellError::Unauthorized));
-        assert_eq!(shell.move_by(&forged, 10.0, 10.0), Err(ShellError::Unauthorized));
+        assert_eq!(
+            shell.move_by(&forged, 10.0, 10.0),
+            Err(ShellError::Unauthorized)
+        );
         assert_eq!(shell.close(&forged), Err(ShellError::Unauthorized));
 
         // A cap for a surface that doesn't exist is likewise refused.
@@ -1059,7 +1281,10 @@ mod tests {
         // is also refused — it carries no backing surface cell to bind.
         let mislabeled =
             SurfaceCapability::new(real.surface(), Capability::local(0, AuthRequired::None));
-        assert!(matches!(mislabeled.authority().target, Target::Local { .. }));
+        assert!(matches!(
+            mislabeled.authority().target,
+            Target::Local { .. }
+        ));
         assert_eq!(shell.focus(&mislabeled), Err(ShellError::Unauthorized));
 
         // The REAL cap still works — the gate refuses forgeries, not the holder.
@@ -1126,7 +1351,10 @@ mod tests {
         // b opened last → it's the front. Focusing a raises it above b.
         assert_eq!(shell.compose(&world).front().unwrap().surface.cell(), user);
         shell.focus(&a).unwrap();
-        assert_eq!(shell.compose(&world).front().unwrap().surface.cell(), service);
+        assert_eq!(
+            shell.compose(&world).front().unwrap().surface.cell(),
+            service
+        );
         // The console is still present, behind.
         assert!(shell.validates(&console));
         assert_eq!(shell.surface_count(), 3);
@@ -1207,7 +1435,10 @@ mod tests {
             .unwrap()
             .identity
             .lifecycle;
-        assert_eq!(sealed_badge, "sealed", "the shell's identity badge follows the live ledger");
+        assert_eq!(
+            sealed_badge, "sealed",
+            "the shell's identity badge follows the live ledger"
+        );
     }
 
     #[test]
@@ -1297,7 +1528,10 @@ mod tests {
         // (full-area) is under it — the console spans the work area, so a point
         // inside the area but outside the cell view falls through to the console.
         let hit = shell.hit_test(5.0, 5.0, &world);
-        assert!(hit.is_some(), "a point in the work area hits at least the console");
+        assert!(
+            hit.is_some(),
+            "a point in the work area hits at least the console"
+        );
     }
 
     #[test]
@@ -1324,11 +1558,19 @@ mod tests {
         let _b = shell.open_cell_view(anchors[2], "User");
         let scene = shell.compose_scene(&world);
         // Every surface owns disjoint regions.
-        let mut all_regions: Vec<u64> = scene.surfaces.iter().flat_map(|s| s.regions.clone()).collect();
+        let mut all_regions: Vec<u64> = scene
+            .surfaces
+            .iter()
+            .flat_map(|s| s.regions.clone())
+            .collect();
         let n = all_regions.len();
         all_regions.sort_unstable();
         all_regions.dedup();
-        assert_eq!(all_regions.len(), n, "surface regions are pairwise-disjoint (T1)");
+        assert_eq!(
+            all_regions.len(),
+            n,
+            "surface regions are pairwise-disjoint (T1)"
+        );
         // At-most-one focus flag (T3 focus-exclusivity, by construction).
         assert!(scene.surfaces.iter().filter(|s| s.focus_flag).count() <= 1);
         let _ = a;
@@ -1347,7 +1589,11 @@ mod tests {
             .present(&a, &world, vec![region], /*claims_focus*/ true, 0xABCD)
             .expect("the honest present by the focused surface commits");
         assert_eq!(commit.digest, 0xABCD);
-        assert_eq!(shell.frame_log().len(), 1, "the present is logged (provenance)");
+        assert_eq!(
+            shell.frame_log().len(),
+            1,
+            "the present is logged (provenance)"
+        );
     }
 
     #[test]
@@ -1364,7 +1610,10 @@ mod tests {
         let b_region = b.surface().region();
         let r = shell.present(&a, &world, vec![b_region], false, 0x1111);
         assert!(
-            matches!(r, Err(ShellError::PresentRefused(PresentError::Overpaint { .. }))),
+            matches!(
+                r,
+                Err(ShellError::PresentRefused(PresentError::Overpaint { .. }))
+            ),
             "overpainting another surface's region is refused (T1), got {r:?}"
         );
         // Fail-closed: nothing was logged.
@@ -1382,9 +1631,20 @@ mod tests {
         // `b` opened last so it is focused; `a` is NOT focused. `a` paints its
         // own region (T1 ok) but asserts focus → input-misroute (T3).
         let a_region = a.surface().region();
-        let r = shell.present(&a, &world, vec![a_region], /*claims_focus*/ true, 0x2222);
+        let r = shell.present(
+            &a,
+            &world,
+            vec![a_region],
+            /*claims_focus*/ true,
+            0x2222,
+        );
         assert!(
-            matches!(r, Err(ShellError::PresentRefused(PresentError::InputMisroute { .. }))),
+            matches!(
+                r,
+                Err(ShellError::PresentRefused(
+                    PresentError::InputMisroute { .. }
+                ))
+            ),
             "a non-focused surface asserting focus is refused (T3), got {r:?}"
         );
         assert_eq!(shell.frame_log().len(), 0);
@@ -1402,7 +1662,9 @@ mod tests {
         // Routing input to the non-focused Service cell is refused.
         assert!(matches!(
             shell.route_input(anchors[1], &world),
-            Err(ShellError::PresentRefused(PresentError::InputMisroute { .. }))
+            Err(ShellError::PresentRefused(
+                PresentError::InputMisroute { .. }
+            ))
         ));
     }
 
@@ -1425,7 +1687,11 @@ mod tests {
         );
         let region = real.surface().region();
         let r = shell.present(&forged, &world, vec![region], true, 0x3333);
-        assert_eq!(r, Err(ShellError::Unauthorized), "the window-cap gate refuses a forged cap first");
+        assert_eq!(
+            r,
+            Err(ShellError::Unauthorized),
+            "the window-cap gate refuses a forged cap first"
+        );
     }
 
     #[test]
@@ -1445,7 +1711,10 @@ mod tests {
         let t = world.turn(fresh, vec![crate::world::transfer(fresh, other, 100)]);
         assert!(world.commit_turn(t).is_committed());
         let root_after = shell.source_state_root(fresh, &world);
-        assert_ne!(root_before, root_after, "the source-state-root moves with the cell's live state");
+        assert_ne!(
+            root_before, root_after,
+            "the source-state-root moves with the cell's live state"
+        );
         // The genuine label re-binds to the new root (the §5 state-root binding).
         assert_ne!(
             label_of(&fresh, root_before),
@@ -1455,6 +1724,8 @@ mod tests {
         // A present now carries the CURRENT binding (computed by the shell), so
         // an honest present by the focused surface still commits.
         let region = cap.surface().region();
-        assert!(shell.present(&cap, &world, vec![region], true, 0x4242).is_ok());
+        assert!(shell
+            .present(&cap, &world, vec![region], true, 0x4242)
+            .is_ok());
     }
 }

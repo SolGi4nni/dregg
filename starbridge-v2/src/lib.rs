@@ -183,6 +183,13 @@ pub mod app_worldspine;
 #[cfg(feature = "embedded-executor")]
 pub mod shared_fork;
 
+// AGENT ATTACH — bind the confined agent's `run_js` (deos-js) to the cockpit's LIVE
+// World, so a Claude in Hermes drives the operator's ACTUAL cells (or a fork). The
+// cockpit-side `deos_js::WorldSink` weld + the cap-bounded attach. Gated on
+// `agent-js` (pulls deos-js's mozjs/SpiderMonkey).
+#[cfg(feature = "agent-js")]
+pub mod agent_attach;
+
 // The comms-PD chat source — the REAL, executor-backed `deos_matrix::ChatSource`
 // the interactive deos-chat surface drives: it holds a live `World` and makes the
 // chat UI's membrane affordances genuine (mint/rehydrate/drive/stitch over real
@@ -267,13 +274,13 @@ pub mod scene;
 // prediction is the live executor's verdict run one turn ahead; the live world is
 // never touched until commit. gpui-free, `cargo test`-able.
 #[cfg(feature = "embedded-executor")]
-pub mod simulate;
+pub mod organ_ops;
 #[cfg(feature = "embedded-executor")]
 pub mod shell;
 #[cfg(feature = "embedded-executor")]
-pub mod surface;
+pub mod simulate;
 #[cfg(feature = "embedded-executor")]
-pub mod organ_ops;
+pub mod surface;
 #[cfg(feature = "embedded-executor")]
 pub mod swarm;
 #[cfg(feature = "embedded-executor")]
@@ -370,9 +377,9 @@ pub mod meta_debug;
 // breadcrumb (the reflective tower). Reuses replay/ui_snapshot/meta_debug — never a
 // parallel time/debug model. The cockpit's TIME tab paints this pure projection.
 #[cfg(feature = "embedded-executor")]
-pub mod time_travel;
-#[cfg(feature = "embedded-executor")]
 pub mod cell_inspector;
+#[cfg(feature = "embedded-executor")]
+pub mod time_travel;
 // THE READ-CAP / PRIVACY lens — the read-confidentiality membrane, welded onto the
 // landed `dregg_cell_crypto::read_cap` organ (docs/deos/PRIVACY-CONFIDENTIALITY.md M0): the
 // encrypted-field set off live field-visibility, the `granted ⊆ held` read-lattice
@@ -399,13 +406,13 @@ pub mod desktop_doc;
 // committed) + the cell's lifecycle posture + the un-turn model. Lights up the
 // cockpit's "⟲ history / undo" lens (was the last weld placeholder).
 #[cfg(feature = "embedded-executor")]
-pub mod history_lens;
-#[cfg(feature = "embedded-executor")]
-pub mod receipts_inspector;
-#[cfg(feature = "embedded-executor")]
 pub mod cap_inspector;
 #[cfg(feature = "embedded-executor")]
+pub mod history_lens;
+#[cfg(feature = "embedded-executor")]
 pub mod predicate_composer;
+#[cfg(feature = "embedded-executor")]
+pub mod receipts_inspector;
 // THE TRUST PANEL (human-layer M1 · docs/deos/HUMAN-LAYER.md §3) — the WHO-I-AM face
 // (identity card: devices = the current key set, guardians-as-faces = the recovery
 // council with its M-of-N threshold drawn, the KEL/rotation timeline) + the recovery
@@ -419,16 +426,16 @@ pub mod trust_panel;
 // cap_inspector (attenuation/cap-crown) · cell_inspector (deep state) · receipts_inspector
 // (time-travel) · token_inspector (macaroon loop). See docs/deos/INSPECTOR-FRAMEWORK.md.
 #[cfg(feature = "embedded-executor")]
-pub mod turn_builder;
-#[cfg(feature = "embedded-executor")]
 pub mod settlement_inspector;
+#[cfg(feature = "embedded-executor")]
+pub mod turn_builder;
 // L8/L9 INSPECTORS: federation_inspector (consensus/blocklace/finality — wire-backed +
 // honest remote-path catalog) · circuit_inspector (the 8-felt commitment anti-omission
 // binding, nullifier non-membership, proof tiers). On the spine; see INSPECTOR-FRAMEWORK.md.
 #[cfg(feature = "embedded-executor")]
-pub mod federation_inspector;
-#[cfg(feature = "embedded-executor")]
 pub mod circuit_inspector;
+#[cfg(feature = "embedded-executor")]
+pub mod federation_inspector;
 // THE CV-BRIDGE (milestone #1): "blame this cell" — ClusterVision's provenance
 // (`cv blame`) wired into the inspector as a Presentable. Bridges EXTERNALLY (cv
 // as the read/query face; no substrate change), degrades honestly when cv is
@@ -449,11 +456,11 @@ pub mod cv_provenance;
 // at the inbound mirror-cap's authorized depth — never amplifying). gpui-free,
 // `cargo test`-able (the in-process netlayer fabric, no sockets).
 #[cfg(feature = "embedded-executor")]
+pub mod netlayer_image;
+#[cfg(feature = "embedded-executor")]
 pub mod remote_mirror;
 #[cfg(feature = "embedded-executor")]
 pub mod remote_mirror_live;
-#[cfg(feature = "embedded-executor")]
-pub mod netlayer_image;
 
 // BRANCH-AND-STITCH — distributed time-travel as two first-class effects:
 // `EnterVirtualization` (a cap-confined fork of a PAST config whose side-effects are
@@ -479,7 +486,7 @@ pub mod two_image_firmament;
 pub use presentable::{
     CommittingGadget, FocusTarget, Gadget, GadgetError, GadgetField, GadgetInput, GadgetKind,
     GadgetValidation, GaugeView, GraphView, Halo, HaloCommand, LatticeView, MerkleTreeView,
-    Presentable, PresentableExt, Presentation, PresentationBody, PresentationKind, PresentCtx,
+    PresentCtx, Presentable, PresentableExt, Presentation, PresentationBody, PresentationKind,
     ReflectedCell, Registry, SmState, SmTransition, Spotter, SpotterHit, StateMachineView,
     TimelineEvent, TimelineView, TraceStep, TraceView,
 };
@@ -492,33 +499,9 @@ pub use affordance::{
     FireError, FireOutcome, Rehydration,
 };
 #[cfg(feature = "embedded-executor")]
-pub use snapshot_editor::{
-    recipient_window_cap, Frustum, PareOutcome, SharedArtifact, SnapshotEditor, ShareError,
-    Verification, ALL_LENSES,
-};
-#[cfg(feature = "embedded-executor")]
-pub use web_cells::{
-    AffordanceRow, CellRow, SemiReinteractiveTransclusion, Transclusion, WebCellsBrowser,
-};
-#[cfg(feature = "embedded-executor")]
-pub use dreggverse_map::{DreggverseGraph, DreggverseLink, DreggverseMap};
-#[cfg(feature = "embedded-executor")]
-pub use links_here::{BacklinkRow, LinksHerePanel};
-#[cfg(feature = "embedded-executor")]
-pub use doc_editor::{
-    AttributedAlternative, ConflictView, DocAuthor, DocEditor, EditOutcome,
-};
-#[cfg(feature = "embedded-executor")]
-pub use powerbox::{
-    AppLauncher, CapabilityRequest, GrantableTarget, GrantedCap, LaunchedApp, Powerbox,
-    PowerboxOutcome,
-};
-#[cfg(feature = "embedded-executor")]
 pub use agent::{AgentActivity, AgentSurface};
 #[cfg(feature = "embedded-executor")]
 pub use buffer::{BufferCell, BufferDoc, BufferError, BufferView};
-#[cfg(feature = "embedded-executor")]
-pub use live_node::{LiveReflection, ReceiptFeed, SseParser, SseRecord};
 #[cfg(feature = "embedded-executor")]
 pub use compositor::{
     label_of, CompositedSurface, Compositor, CompositorScene, FrameCommit, Present, PresentError,
@@ -529,16 +512,31 @@ pub use coordination::{MandateArrow, NotifyArrow, SwarmGraph, SwarmNode};
 #[cfg(feature = "embedded-executor")]
 pub use demo::{render_headless_report, DemoError, DemoFrame, HeadlineDemo};
 #[cfg(feature = "embedded-executor")]
+pub use doc_editor::{AttributedAlternative, ConflictView, DocAuthor, DocEditor, EditOutcome};
+#[cfg(feature = "embedded-executor")]
+pub use dreggverse_map::{DreggverseGraph, DreggverseLink, DreggverseMap};
+#[cfg(feature = "embedded-executor")]
 pub use graph::{GraphEdge, GraphLayer, GraphNode, OcapGraph};
 #[cfg(feature = "embedded-executor")]
 pub use landing::{LandingPortal, PortalLine, PortalSection, Tone};
+#[cfg(feature = "embedded-executor")]
+pub use links_here::{BacklinkRow, LinksHerePanel};
+#[cfg(feature = "embedded-executor")]
+pub use live_node::{LiveReflection, ReceiptFeed, SseParser, SseRecord};
 #[cfg(feature = "embedded-executor")]
 pub use narration::{
     ClaimPosture, ClaimedAction, Correlation, Divergence, NarrationPanel, NarrationRow,
 };
 #[cfg(feature = "embedded-executor")]
+pub use organ_ops::{OrganDriver, OrganOp, OrganOpError, OrganOpOutcome};
+#[cfg(feature = "embedded-executor")]
 pub use organs::{
     FlashWellReflection, OrganKind, OrganReach, OrganSurvey, RemoteOrgan, TrustlineReflection,
+};
+#[cfg(feature = "embedded-executor")]
+pub use powerbox::{
+    AppLauncher, CapabilityRequest, GrantableTarget, GrantedCap, LaunchedApp, Powerbox,
+    PowerboxOutcome,
 };
 #[cfg(feature = "embedded-executor")]
 pub use proofs::{AttachStatus, ProofBoard, ProofEntry, VerificationTier};
@@ -548,12 +546,19 @@ pub use scene::{
     VerifiedScene, PRESENT_DIGEST_SLOT, SURFACE_FACTORY_VK,
 };
 #[cfg(feature = "embedded-executor")]
+pub use shell::{Layout, Scene, SceneItem, Shell, ShellError};
+#[cfg(feature = "embedded-executor")]
 pub use simulate::{
     commit as simulate_commit, render_outcome, simulate, CellDelta, DraftAction, EffectKind,
     IntentDraft, SimOutcome,
 };
 #[cfg(feature = "embedded-executor")]
-pub use organ_ops::{OrganDriver, OrganOp, OrganOpError, OrganOpOutcome};
+pub use snapshot_editor::{
+    recipient_window_cap, Frustum, PareOutcome, ShareError, SharedArtifact, SnapshotEditor,
+    Verification, ALL_LENSES,
+};
+#[cfg(feature = "embedded-executor")]
+pub use surface::{Rect, Surface, SurfaceCapability, SurfaceId, SurfaceKind};
 #[cfg(feature = "embedded-executor")]
 pub use swarm::{
     BudgetMeter, NotifyEdge, Swarm, SwarmBudget, SwarmError, SwarmMember, SwarmMemberView,
@@ -566,21 +571,13 @@ pub use swarm_budget::{
 #[cfg(feature = "embedded-executor")]
 pub use terminal::{Command, CommandError, OutputLine, TerminalCell, TerminalView};
 #[cfg(feature = "embedded-executor")]
-pub use shell::{Layout, Scene, SceneItem, Shell, ShellError};
-#[cfg(feature = "embedded-executor")]
-pub use surface::{Rect, Surface, SurfaceCapability, SurfaceId, SurfaceKind};
+pub use web_cells::{
+    AffordanceRow, CellRow, SemiReinteractiveTransclusion, Transclusion, WebCellsBrowser,
+};
 #[cfg(feature = "embedded-executor")]
 pub use world::{demo_genesis, demo_world, CommitOutcome, DemoSeed, World};
 
 // THE REFLEXIVE DISTRIBUTED IMAGE (n > 1) re-exports.
-#[cfg(feature = "embedded-executor")]
-pub use remote_mirror::{
-    FixtureImage, MirrorCap, MirrorDepth, MirrorRefusal, RemoteImage, RemoteMirror, RemoteReflection,
-};
-#[cfg(feature = "embedded-executor")]
-pub use remote_mirror_live::{LiveMirror, LiveRefusal, LiveStep, LiveTail};
-#[cfg(feature = "embedded-executor")]
-pub use netlayer_image::{ImageResponder, MirrorFrame, NetlayerImage, ResponderError};
 #[cfg(feature = "embedded-executor")]
 pub use branch_stitch::{
     Atom, BranchCap, BranchDebit, CrossPartyResolution, DocGraph, MainFrontier, SettleOutcome,
@@ -590,6 +587,15 @@ pub use branch_stitch::{
 pub use distributed_timetravel::{
     run_collaborative_rewind, AlternateHistory, BranchEdit, Party, RewindRun, SharedTimeline, Tick,
 };
+#[cfg(feature = "embedded-executor")]
+pub use netlayer_image::{ImageResponder, MirrorFrame, NetlayerImage, ResponderError};
+#[cfg(feature = "embedded-executor")]
+pub use remote_mirror::{
+    FixtureImage, MirrorCap, MirrorDepth, MirrorRefusal, RemoteImage, RemoteMirror,
+    RemoteReflection,
+};
+#[cfg(feature = "embedded-executor")]
+pub use remote_mirror_live::{LiveMirror, LiveRefusal, LiveStep, LiveTail};
 #[cfg(feature = "embedded-executor")]
 pub use two_image_firmament::{run_two_image_firmament, TwoImageOutcome, TwoImageRefusal};
 
@@ -603,7 +609,13 @@ pub use two_image_firmament::{run_two_image_firmament, TwoImageOutcome, TwoImage
 // the gate is the union of the two gpui feature paths. (The native-only surface
 // backends they reach — dev-surfaces' deos-zed/deos-terminal, web-shell's servo —
 // are each independently feature-gated INSIDE these modules, OFF on the web path.)
-#[cfg(any(feature = "gpui-ui", feature = "gpui-web"))]
+// Also available under `process-pd` (without gpui): the shell's surface-migration
+// LIVE TRANSPORT (`dock::migrate::PresentTransport`) is the firmament Endpoint
+// re-home `Shell::migrate_surface` drives, and it must compile in the gpui-free
+// `process-pd` test/headless path. `dock/mod.rs` independently gates its
+// gpui-only submodules, so pulling `dock` in here pulls only its gpui-free members
+// (`migrate`, gated on `embedded-executor`, which `process-pd` implies).
+#[cfg(any(feature = "gpui-ui", feature = "gpui-web", feature = "process-pd"))]
 pub mod dock;
 
 // THE COCKPIT — the comprehensive visual master interface (the dock + the 28
@@ -621,7 +633,11 @@ pub mod showcase;
 // strip, with the dense inspector NOT shown by default but SUMMONABLE (⌘K). The
 // "after you dismiss the inspector" view. Needs the dock surfaces (`dev-surfaces`)
 // + the app registry (`app-registry`) + gpui. See `--render-guest` in main.rs.
-#[cfg(all(feature = "gpui-ui", feature = "dev-surfaces", feature = "app-registry"))]
+#[cfg(all(
+    feature = "gpui-ui",
+    feature = "dev-surfaces",
+    feature = "app-registry"
+))]
 pub mod guest;
 // THE SELF-HOSTING LOOP, DEMONSTRATED — both REAL halves in one view: a firmament
 // editor over the live World (a save = a real receipted turn) + a live-PTY

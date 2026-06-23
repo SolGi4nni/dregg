@@ -23,17 +23,28 @@
 //! is self-contained and compiling, ready to integrate as a clean next step.
 //! See the migration note in the module that mounts it.
 
+// The gpui-bearing dock engine (theme/pane/split-tree/tearoff). These need gpui,
+// so they compile only on the gpui paths. The `migrate` verb below is gpui-FREE
+// (it depends only on the firmament cap), so it stays available on the gpui-free
+// `process-pd` live-transport path too (this whole module is now reachable under
+// `process-pd` for `Shell::migrate_surface`; only these gpui members are gated).
+#[cfg(any(feature = "gpui-ui", feature = "gpui-web"))]
 mod theme;
 
+#[cfg(any(feature = "gpui-ui", feature = "gpui-web"))]
 pub mod dock;
+#[cfg(any(feature = "gpui-ui", feature = "gpui-web"))]
 pub mod pane;
+#[cfg(any(feature = "gpui-ui", feature = "gpui-web"))]
 pub mod pane_group;
+#[cfg(any(feature = "gpui-ui", feature = "gpui-web"))]
 pub mod surface;
 
 // SURFACE MIGRATION (the Local→Surface tear-off): a dock pane pops OUT into its
 // own OS window with its surface identity preserved — the first concrete
 // migration of `docs/deos/SURFACE-MIGRATION.md`. gpui-only (no host-type
 // dependency); the cockpit drives it through a stored render callback.
+#[cfg(any(feature = "gpui-ui", feature = "gpui-web"))]
 pub mod tearoff;
 
 // SURFACE MIGRATION (the `migrate(surface_cap, target)` verb): relocate a surface
@@ -59,13 +70,18 @@ pub mod hermes_surface;
 #[cfg(feature = "dev-surfaces")]
 pub mod terminal_surface;
 
+#[cfg(any(feature = "gpui-ui", feature = "gpui-web"))]
 pub use dock::{Dock, DockPanel, DockPosition, DraggedDock};
+#[cfg(feature = "embedded-executor")]
+pub use migrate::{migrate, MigrateError, MigrationTarget};
+#[cfg(any(feature = "gpui-ui", feature = "gpui-web"))]
 pub use pane::Pane;
+#[cfg(any(feature = "gpui-ui", feature = "gpui-web"))]
 pub use pane_group::{
     ActivePaneDecorator, Member, PaneAxis, PaneGroup, PaneLeaderDecorator, SplitDirection,
     HANDLE_HITBOX_SIZE,
 };
-#[cfg(feature = "embedded-executor")]
-pub use migrate::{migrate, MigrateError, MigrationTarget};
+#[cfg(any(feature = "gpui-ui", feature = "gpui-web"))]
 pub use surface::{CockpitSurface, SurfaceId};
+#[cfg(any(feature = "gpui-ui", feature = "gpui-web"))]
 pub use tearoff::{TornOffWindow, TornSurfaceId, WindowRegistry};
