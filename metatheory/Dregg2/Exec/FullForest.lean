@@ -552,6 +552,102 @@ def sameTargetChildren (tp : CellId) : List FullChildA → Prop
       targetOf sub.action = tp ∧ sameTargetForest sub ∧ sameTargetChildren tp rest
 end
 
+/-! ## §9.CONFINE — AUTHORITY CONFINEMENT: the child USES the delegated cap (not just the handoff).
+
+`execFullForestA_no_amplify` (§6) bounds the inserted HANDOFF (`attenuate keep parentCap ⊆ parentCap`),
+and `recCDelegateAtten_executed_no_amplify` (§6.EXECUTED) bounds the cap INSTALLED into `holder`'s slot
+(`granted ⊆ held`). But neither says the child SUBTREE actually CONFINES itself to that delegated cap:
+the executor runs `sub` as an ordinary `execFullForestA` whose root action may target ANY cell. The
+delegation grants authority over `t := capTarget parentCap` (the cell the parentCap confers an edge to);
+a confined child is one whose root action ACTS ON that delegated cell `t` — i.e. it USES the delegated
+authority rather than reaching for an unrelated one.
+
+`confinedForest` is the STRUCTURAL precondition that binds this: every child's root action targets the
+cell its edge delegated authority to (`targetOf sub.action = t`), recursively. `execFullChildrenA_confined_uses_delegated`
+is the theorem that, COMBINED with the executed-handoff bound, makes the no-amplification law bound the
+authority the child USES (its target = the delegated `t`, and the rights usable at `t` are `⊆` the
+delegator's HELD rights), not merely the handoff.
+
+THE NAMED RESIDUAL (the precise edge of what is and is NOT bounded here):
+  * BOUNDED: the child's root action operates on the DELEGATED target cell `t`, under a cap whose
+    rights at `t` are `⊆` the delegator's held rights (`recCDelegateAtten_executed_no_amplify`). The
+    child cannot use the edge to reach an UNRELATED cell.
+  * RESIDUAL #1 — per-FACET / per-effect use (does the child's effect stay within `keep`'s facets, and
+    is its ACTOR exactly `holder`?) is the NODE-LEVEL gate's job: `execFullA`'s `authorizedB` /
+    `stateAuthB` / `mintAuthorizedB` already fail-close a node whose actor lacks the cap-table rights
+    for its effect on `t` (`execFullForestA_each_attests` carries the per-node obligation). The forest
+    edge binds the TARGET; the node gate binds the FACET+actor. This is defense-in-depth, not a hole.
+  * RESIDUAL #2 — `confinedForest` is a PRECONDITION (a property of the forest data the caller asserts),
+    not yet a runtime check baked into `execFullForestA` (that would force a `capTarget`-vs-`targetOf`
+    branch in the executor and is the cross-target routing's concern; a non-confined child is the
+    cross-cell axis, routed to `Exec/CrossCellForest.lean`). We prove the confinement THEOREM under this
+    precondition; making it an executor-enforced gate is the cross-target rotation. -/
+
+mutual
+/-- **`confinedForest`** — the AUTHORITY-CONFINEMENT predicate: every child's root action targets the
+cell its delegation edge granted authority to (`targetOf sub.action = capTarget parentCap`, when the
+edge delegates a real cap), recursively. A confined forest's children USE their delegated caps (act on
+the delegated target), not arbitrary authority. A `null` parentCap (`capTarget = none`) delegates
+nothing, so its child is unconstrained by THIS edge (it runs under its own independent authority). -/
+def confinedForest : FullForestA → Prop
+  | ⟨_, kids⟩ => confinedChildren kids
+
+/-- Every child whose edge delegates a real cap has its subtree-root action targeting that cap's target
+`t` (`targetOf sub.action = t`), AND each subtree is itself confined. -/
+def confinedChildren : List FullChildA → Prop
+  | []                             => True
+  | ⟨_, _, parentCap, sub⟩ :: rest =>
+      (match capTarget parentCap with
+       | some t => targetOf sub.action = t
+       | none   => True)
+      ∧ confinedForest sub ∧ confinedChildren rest
+end
+
+/-- **`execFullChildrenA_confined_uses_delegated` — the child USES the delegated authority.** For a
+CONFINED child list whose first edge delegates a real cap to `t := capTarget parentCap` and whose
+executed handoff COMMITS, the child's root action targets EXACTLY `t` (it acts on the delegated cell),
+and the cap installed into `holder`'s slot confers rights `⊆` the delegator's HELD cap to `t`. So the
+authority the child USES (its target cell + the rights available there) is bounded by what was actually
+delegated — NOT merely the handoff. (`recCDelegateAtten_executed_no_amplify` supplies the rights bound;
+`confinedForest` supplies the target bound — together they confine USED authority.) -/
+theorem execFullChildrenA_confined_uses_delegated
+    (delegator : CellId) (s : RecChainedState)
+    (holder : Label) (keep : List Auth) (t : Label) (parentCap : Cap)
+    (sub : FullForestA) (rest : List FullChildA)
+    (ht : capTarget parentCap = some t)
+    (hconf : confinedChildren (⟨holder, keep, parentCap, sub⟩ :: rest)) :
+    targetOf sub.action = t
+      ∧ (∀ s1, recCDelegateAtten s delegator holder t keep = some s1 →
+          confRights (attenuate keep (heldCapTo s.kernel.caps delegator t))
+            ≤ confRights (heldCapTo s.kernel.caps delegator t)) := by
+  refine ⟨?_, ?_⟩
+  · -- the confinement precondition pins the child's target to the delegated `t`.
+    have htarget : (match capTarget parentCap with
+                    | some t => targetOf sub.action = t
+                    | none   => True) := hconf.1
+    rw [ht] at htarget
+    exact htarget
+  · intro s1 hc
+    exact (recCDelegateAtten_executed_no_amplify s s1 delegator holder t keep hc).2
+
+/-- **`execFullForestA_confined_root_target` — the root edge's child targets the delegated cell.** A
+confined forest with at least one child (delegating a real cap to `t`) has that child's root action
+targeting `t`. The forest-level face of confinement's TARGET bound: the delegation edge's authority is
+USED on the cell it was granted for (NOT an arbitrary cell). This is the structural half that the
+EXECUTED-handoff rights bound (`recCDelegateAtten_executed_no_amplify`) completes into full used-authority
+confinement. -/
+theorem execFullForestA_confined_root_target
+    (a : FullActionA) (holder : Label) (keep : List Auth) (t : Label) (parentCap : Cap)
+    (sub : FullForestA) (rest : List FullChildA)
+    (ht : capTarget parentCap = some t)
+    (hconf : confinedForest ⟨a, ⟨holder, keep, parentCap, sub⟩ :: rest⟩) :
+    targetOf sub.action = t := by
+  have htarget : (match capTarget parentCap with
+                  | some t => targetOf sub.action = t
+                  | none   => True) := hconf.1
+  rw [ht] at htarget
+  exact htarget
+
 /-! ## §10 — Axiom-hygiene tripwires (the honesty pins over the forest keystones). -/
 
 #assert_axioms execFullForestA_eq_execFullTurnA
@@ -567,6 +663,8 @@ end
 #assert_axioms execFullForestA_each_attests
 #assert_axioms execFullForestA_root_attests
 #assert_axioms execFullForestA_unauthorized_fails
+#assert_axioms execFullChildrenA_confined_uses_delegated
+#assert_axioms execFullForestA_confined_root_target
 
 /-! ## §11 — Non-vacuity (`#eval`): the FULL op-set tree commits per-asset; laundering CAUGHT;
 unauthorized child rejected; no-amplify edge witness.
@@ -629,6 +727,37 @@ def goodFullForest : FullForestA :=
 -- Every delegation edge is non-amplifying: each child's keep ⊆ its parent's cap rights.
 #guard ((forestEdgesA goodFullForest).map (fun e => decide
         ((capAuthConferred (attenuate e.1 e.2)).length ≤ (capAuthConferred e.2).length))) == [true, true]  --  [true, true]
+
+/-! ### CONFINEMENT non-vacuity (§9.CONFINE). `confinedForest` has TEETH: `goodFullForest` is NOT
+authority-confined — its root edge delegates a cap to cell **1** (`capTarget (endpoint 1 …) = 1`) but
+the child action `balanceA ⟨0,0,1,30⟩` TARGETS cell **0** (`src = 0 ≠ 1`). So the child uses the
+delegated cap to reach a DIFFERENT cell than the cap was for — exactly the unconfined-authority shape
+the predicate catches. (`goodFullForest` still COMMITS and is non-amplifying — confinement is an
+ORTHOGONAL, stronger property that the §6 theorems did NOT establish.) -/
+
+/-- `goodFullForest` is NOT confined: the root child's target (cell 0) ≠ the delegated target (cell 1). -/
+example : ¬ confinedForest goodFullForest := by
+  intro h
+  -- `confinedForest` unfolds to `confinedChildren …`; the head edge's target obligation is `0 = 1`.
+  have htgt : targetOf (FullActionA.balanceA ⟨0, 0, 1, 30⟩ 0) = 1 := by
+    have := h.1                       -- the head edge's `match capTarget (endpoint 1 …)` obligation
+    simpa using this
+  exact absurd htgt (by decide)
+
+/-- **`confinedFullForest`** — `goodFullForest`'s confined twin: the root delegates `node 0`
+(`capTarget = 0`) and the child action TARGETS cell 0 (`balanceA ⟨0,0,1,30⟩ 0` has `src = 0`), so the
+child USES the delegated cap on the cell it was granted for; the grandchild edge delegates `node 0`
+(target 0) and `burnA 9 0 1 50` targets cell 0. EVERY child's action targets its delegated cell. -/
+def confinedFullForest : FullForestA :=
+  ⟨ .mintA 9 0 1 50
+  , [ { holder := 0, keep := [Auth.read], parentCap := .node 0
+      , sub := ⟨ .balanceA ⟨0, 0, 1, 30⟩ 0
+               , [ { holder := 9, keep := [], parentCap := .node 0
+                   , sub := ⟨ .burnA 9 0 1 50, [] ⟩ } ] ⟩ } ] ⟩
+
+/-- The confined twin SATISFIES `confinedForest`: each child's action targets its delegated cell 0. -/
+example : confinedForest confinedFullForest := by
+  refine ⟨?_, ⟨?_, ?_⟩, ?_⟩ <;> first | rfl | trivial
 
 /-- **`forgedEdgeForest` — THE ADVERSARIAL TWIN (the proof the delegation gate is REAL, NON-vacuous).**
 IDENTICAL to `goodFullForest` EXCEPT the first delegation edge's `parentCap` claims an edge to cell

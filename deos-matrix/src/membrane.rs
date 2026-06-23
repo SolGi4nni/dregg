@@ -199,10 +199,21 @@ pub enum ConflictReason {
 /// where the executor + firmament caps + web-of-cells live. It is stated here so
 /// the seam is a typed contract, not prose.
 ///
-/// All four methods correspond to real machinery (named per-method). The chat UI
-/// holds a `dyn MembraneHost` from the comms-PD; absent the deos side (e.g. the
-/// pure-mock demo) the UI simply renders the inert [`MembraneEnvelope`] as a
-/// "membrane attached — rehydrate in deos" affordance.
+/// **The real, executor-backed impl is `starbridge_v2::shared_fork::ForkMembraneHost`**
+/// (gated on `dev-surfaces`, where this crate's wire types are in scope). It
+/// `mint`s a frustum-snapshot of a genuine `World` fork (real `dregg_cell::Cell`s,
+/// the same serde the image-root commits over), `rehydrate`s it into a real
+/// `World`, `drive`s a real verified turn, and `stitch`es the REAL diff through
+/// the branch-and-stitch settlement gate. That is the default the comms-PD hands
+/// the chat UI. [`MockMembraneHost`] below is NOT that seam — it is a wire-shape
+/// stand-in (a synthetic key→value table with an FNV root) so the round-trip
+/// renders/tests offline in THIS standalone workspace, which cannot link the
+/// Lean-backed executor. A `MembraneEnvelope` minted by either impl is the same
+/// serializable wire shape; only `ForkMembraneHost`'s is executor-real.
+///
+/// The chat UI holds a `dyn MembraneHost` from the comms-PD; absent the deos side
+/// (e.g. the pure-mock demo) the UI simply renders the inert [`MembraneEnvelope`]
+/// as a "membrane attached — rehydrate in deos" affordance.
 pub trait MembraneHost {
     type Error: std::error::Error;
 
@@ -287,7 +298,16 @@ fn hex8(b: &[u8; 32]) -> String {
 // (mint → serialize → rehydrate-shape → drive → stitch) is exercisable with NO
 // deos executor. This is to MembraneHost what MockSource is to ChatSource: the
 // SAME typed contract, a synthetic world, so the star feature renders and tests
-// end-to-end offline. The real impl lives in the confined comms-PD.
+// end-to-end offline IN THIS STANDALONE WORKSPACE (which cannot link the
+// Lean-backed executor).
+//
+// It is NOT the real seam: its "ledger" is a synthetic key→value table and its
+// root is an FNV stand-in (`root_of`), not the sorted-Poseidon2/`Cell`-postcard
+// commitment. The REAL, executor-backed host is
+// `starbridge_v2::shared_fork::ForkMembraneHost`, which snapshots/rehydrates
+// genuine `dregg_cell::Cell`s through the verified `World` executor and stitches
+// the real diff (see that module + its `adapter_tests`). Both emit the SAME
+// `MembraneEnvelope` wire shape; only `ForkMembraneHost`'s payload is real.
 // ---------------------------------------------------------------------------
 
 use std::sync::Mutex;
@@ -346,8 +366,10 @@ impl MockMembraneHost {
 
     /// The canonical root of a set of cells — the anti-substitution tooth, computed
     /// the same way at mint and at rehydrate so they MUST agree (else fail-closed).
-    /// A real host uses the sorted-Poseidon2 ledger root; this is a stand-in that
-    /// has the same load-bearing property: it binds exactly the included cells.
+    /// A real host (`ForkMembraneHost`) folds the `Cell`-postcard frustum root; this
+    /// FNV stand-in has the same load-bearing property — it binds exactly the
+    /// included cells — but over the mock's synthetic key→value table, not real
+    /// `dregg_cell::Cell`s. (Wire-shape parity only; not the executor commitment.)
     fn root_of(cells: &[([u8; 32], Vec<u8>)]) -> [u8; 32] {
         // FNV-1a over (id ‖ value) of every cell, in cell-id order (sorted, so the
         // root is order-independent — mirrors the sorted-Poseidon2 discipline).

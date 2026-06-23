@@ -681,6 +681,551 @@ fn verify_consent_witness(
     Ok(())
 }
 
+// ===========================================================================
+// THE REAL MEMBRANE — a frustum-snapshot of the REAL shared fork that
+// SERIALIZES, travels (e.g. over Matrix), and REHYDRATES into a real `World`
+// fork the recipient drives, whose driven mutation STITCHES back through the
+// real branch-and-stitch settlement gate.
+//
+// This replaces the mock seam: `deos_matrix::MockMembraneHost` minted a
+// synthetic key→value "ledger" with a stand-in FNV root; the live Matrix test
+// shipped `MockMembraneHost::sample_envelope()`, never touching the executor.
+// Here the snapshot is the genuine `dregg_cell::Cell` subgraph of MY authority
+// (the SAME cells `World::fork` deep-clones + the SAME `Cell` serde the image
+// root commits over), so mint → serialize → rehydrate → drive → stitch is the
+// REAL executor end to end. The `deos-matrix` adapter below (gated on that
+// dep) carries this payload in the `MembraneEnvelope` wire shape.
+// ===========================================================================
+
+use dregg_cell::Cell;
+use serde::{Deserialize, Serialize};
+
+/// **A real, serializable frustum-snapshot of a shared fork.**
+///
+/// This is the cap-bounded cell subgraph (the frustum cull) the membrane
+/// carries — genuine [`dregg_cell::Cell`]s, not a synthetic key→value table.
+/// It serializes (postcard, the SAME canonical `Cell` codec the image root
+/// commits over), so it can ride the `deos-matrix` [`MembraneEnvelope`]
+/// `snapshot` field and rehydrate, byte-for-byte, into a real [`World`] fork.
+///
+/// The membrane is minted from a REAL `World::fork` ([`SharedFork::construct`]
+/// has already granted the embedded subgraph + withheld the boundaries on that
+/// fork): we then cull the cells in view of the guest's c-list (the guest cell
+/// + every cell its capabilities reach, to a bounded depth) and snapshot
+/// exactly those. A recipient cannot rehydrate a cell that was culled away —
+/// confinement by omission (the anti-amplification floor).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MembraneFrustum {
+    /// The focus cell the cull is centered on (the guest principal whose c-list
+    /// reach defines the in-view subgraph).
+    pub focus: CellId,
+    /// Max hops along capability edges from the focus (the far plane).
+    pub max_depth: u8,
+    /// The cells in view, in cell-id order (the snapshot's deterministic
+    /// content — the root binds exactly this set, sorted).
+    pub cells: Vec<Cell>,
+    /// The witness cursor (height) the fork was minted at.
+    pub minted_height: u64,
+}
+
+impl MembraneFrustum {
+    /// **Mint a frustum from a constructed shared fork.** BFS over capability
+    /// edges from `focus` (the guest) to `max_depth`, collecting each reached
+    /// cell from the fork's ledger. The result snapshots EXACTLY the in-view
+    /// subgraph — a recipient gets the guest's reach and nothing beyond it.
+    ///
+    /// `fork` is the already-constructed fork ([`SharedFork::construct`] has
+    /// granted the embedded caps into the guest's c-list and withheld the
+    /// boundaries), so the cull naturally captures the embedded targets (in the
+    /// guest's c-list) and NOT the boundary targets (no cap rides to them — they
+    /// are unreachable from the guest's c-list and so fall outside the frustum).
+    pub fn mint(fork: &World, focus: CellId, max_depth: u8) -> Self {
+        let ledger = fork.ledger();
+        let mut seen: HashSet<CellId> = HashSet::new();
+        let mut frontier: Vec<CellId> = vec![focus];
+        seen.insert(focus);
+        for _ in 0..=max_depth {
+            let mut next: Vec<CellId> = Vec::new();
+            for id in frontier.drain(..) {
+                if let Some(cell) = ledger.get(&id) {
+                    for cap in cell.capabilities.iter() {
+                        if seen.insert(cap.target) {
+                            next.push(cap.target);
+                        }
+                    }
+                }
+            }
+            if next.is_empty() {
+                break;
+            }
+            frontier = next;
+        }
+        let mut cells: Vec<Cell> = seen
+            .iter()
+            .filter_map(|id| ledger.get(id).cloned())
+            .collect();
+        cells.sort_by(|a, b| a.id().as_bytes().cmp(b.id().as_bytes()));
+        MembraneFrustum {
+            focus,
+            max_depth,
+            cells,
+            minted_height: fork.height(),
+        }
+    }
+
+    /// **The frustum root — the anti-substitution tooth.** A commitment over
+    /// EXACTLY the culled cells (sorted by id, the SAME canonical `Cell`
+    /// postcard the image root folds), so mint and rehydrate MUST agree (else
+    /// fail-closed). Distinct from the whole-image `World::state_root` (which
+    /// also folds height + receipt head) — this binds the membrane's subgraph.
+    pub fn frustum_root(&self) -> [u8; 32] {
+        let mut sorted: Vec<&Cell> = self.cells.iter().collect();
+        sorted.sort_by(|a, b| a.id().as_bytes().cmp(b.id().as_bytes()));
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(b"deos-membrane-frustum-root-v1");
+        hasher.update(&(sorted.len() as u64).to_le_bytes());
+        for cell in sorted {
+            hasher.update(cell.id().as_bytes());
+            if let Ok(bytes) = postcard::to_stdvec(cell) {
+                hasher.update(&(bytes.len() as u64).to_le_bytes());
+                hasher.update(&bytes);
+            }
+        }
+        *hasher.finalize().as_bytes()
+    }
+
+    /// Serialize the frustum for the wire (the bytes that ride the envelope's
+    /// `snapshot` field). Postcard — the canonical `Cell` codec.
+    pub fn to_snapshot_bytes(&self) -> Vec<u8> {
+        postcard::to_stdvec(self).expect("frustum is postcard-serializable")
+    }
+
+    /// Deserialize a frustum from wire bytes (fail-closed on a malformed
+    /// snapshot).
+    pub fn from_snapshot_bytes(bytes: &[u8]) -> Result<Self, MembraneError> {
+        postcard::from_bytes(bytes).map_err(|_| MembraneError::MalformedSnapshot)
+    }
+
+    /// **Rehydrate this frustum into a REAL `World` fork.** The recipient gets a
+    /// genuine [`World`] holding EXACTLY the culled subgraph (anti-amplification:
+    /// a cell that was not in the frustum is absent and unreachable). The
+    /// `expected_root` tooth fires fail-closed if the snapshot does not reproduce
+    /// the claimed root (a substituted snapshot is refused before a single cell
+    /// is installed).
+    ///
+    /// The returned `World` runs the SAME verified executor; a recipient drives
+    /// real turns on it through [`World::commit_turn`], byte-identical to a turn
+    /// on the source fork. The fork holds NO cap to mainline — its mutations are
+    /// structurally imaginary to the source until stitched.
+    pub fn rehydrate(&self, expected_root: [u8; 32]) -> Result<World, MembraneError> {
+        // (a) Anti-substitution: the snapshot MUST reproduce the claimed root.
+        if self.frustum_root() != expected_root {
+            return Err(MembraneError::RootMismatch);
+        }
+        // (b) Install exactly the culled cells into a fresh, signing-keyed world.
+        //     A fresh `World` deep-clones nothing of mainline — the recipient's
+        //     fork is precisely the frustum, no more (confinement by omission).
+        let mut fork = World::new();
+        for cell in &self.cells {
+            // Genesis-install the snapshotted cell verbatim (id-addressed; a
+            // duplicate id would be a malformed snapshot — fail-closed).
+            if fork.ledger().get(&cell.id()).is_some() {
+                return Err(MembraneError::MalformedSnapshot);
+            }
+            fork.genesis_install(cell.clone());
+        }
+        // (c) The rehydrated fork must reproduce the same frustum root over its
+        //     own ledger — a final tooth that the install was faithful.
+        let rehydrated = MembraneFrustum::mint(&fork, self.focus, self.max_depth);
+        // `mint` re-culls from the focus; if the installed graph re-derives a
+        // different root the install dropped/added reachability — fail-closed.
+        if rehydrated.frustum_root() != expected_root {
+            return Err(MembraneError::RootMismatch);
+        }
+        Ok(fork)
+    }
+
+    /// **The real branch graph of a DRIVEN rehydrated fork** — the genuine diff,
+    /// not a hand-coded atom. After a recipient drives turns on the rehydrated
+    /// fork, this reads back the ACTUAL mutated cells (every cell whose state
+    /// diverged from the minted snapshot) as live [`Atom`](crate::branch_stitch::Atom)s,
+    /// keyed by a stable per-cell key, so the stitch folds the real mutation.
+    ///
+    /// Returns `(baseline, driven)`: the baseline is the frustum's own atom set
+    /// (the cells as minted), the driven graph is the rehydrated-and-driven
+    /// fork's atom set. A cell that changed appears in `driven` keyed identically
+    /// to `baseline` but at its NEW content — so the stitch's pushout folds the
+    /// guest's real driven turn back, and the settlement gate (authority held at
+    /// the tip) governs whether a conferred cap is admitted or lossy-dropped.
+    pub fn driven_graphs(
+        &self,
+        driven_fork: &World,
+    ) -> (crate::branch_stitch::DocGraph, crate::branch_stitch::DocGraph) {
+        use crate::branch_stitch::{Atom, DocGraph};
+        // A stable atom key per cell: the low 8 bytes of its id (deterministic,
+        // collision-resistant enough for the in-view subgraph the frustum bounds).
+        fn cell_key(id: &CellId) -> u64 {
+            let b = id.as_bytes();
+            u64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]])
+        }
+        // The baseline atoms: every minted cell, Alive.
+        let baseline = DocGraph {
+            atoms: self
+                .cells
+                .iter()
+                .map(|c| (cell_key(&c.id()), Atom::Alive))
+                .collect(),
+        };
+        // The driven atoms: every cell in the driven fork whose state DIVERGED
+        // from the minted snapshot (a real mutation), surfaced as a live atom at
+        // a key derived from BOTH the cell id AND its post-state — so the stitch
+        // sees the driven content as a NEW atom over the baseline's, folding the
+        // mutation rather than fabricating one. An unchanged cell contributes its
+        // baseline atom (clean, I-confluent).
+        let minted: std::collections::HashMap<CellId, &Cell> =
+            self.cells.iter().map(|c| (c.id(), c)).collect();
+        let mut driven_atoms = std::collections::BTreeMap::new();
+        for (id, cell) in driven_fork.ledger().iter() {
+            let key = cell_key(id);
+            match minted.get(id) {
+                Some(base) if base.state == cell.state => {
+                    // Unchanged — the same atom (clean merge).
+                    driven_atoms.insert(key, Atom::Alive);
+                }
+                Some(_) | None => {
+                    // Diverged (or freshly born in the fork) — a real driven
+                    // mutation. Key it by (id ‖ post-state) so it is a NEW atom
+                    // distinct from the baseline's, the stitch's value-bearing
+                    // discovery.
+                    let mut h = blake3::Hasher::new();
+                    h.update(b"deos-driven-atom-v1");
+                    h.update(id.as_bytes());
+                    if let Ok(bytes) = postcard::to_stdvec(&cell.state) {
+                        h.update(&bytes);
+                    }
+                    let digest = *h.finalize().as_bytes();
+                    let driven_key =
+                        u64::from_le_bytes(digest[..8].try_into().expect("8 bytes"));
+                    driven_atoms.insert(driven_key, Atom::Alive);
+                }
+            }
+        }
+        let driven = DocGraph { atoms: driven_atoms };
+        (baseline, driven)
+    }
+}
+
+/// Errors the real membrane raises (the fail-closed paths — the same teeth the
+/// mock named, now over genuine cells). `Display`/`Error` are hand-written (no
+/// macro dep) so the substrate compiles under the lean `embedded-executor`
+/// build the honest-verify exercises.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MembraneError {
+    /// The snapshot bytes did not deserialize into a frustum (a corrupt or
+    /// truncated wire payload) — fail-closed.
+    MalformedSnapshot,
+    /// The rehydrated frustum did not reproduce the claimed root — the
+    /// anti-substitution tooth fired (refuse before trusting one cell).
+    RootMismatch,
+    /// No such live fork (driven/stitched after it was dropped, or an id the
+    /// host never minted).
+    NoSuchFork(u64),
+    /// The drive turn bytes did not decode into a real `Turn` — fail-closed.
+    MalformedTurn,
+    /// The driven turn was refused by the rehydrated fork's verified executor.
+    DriveRefused(String),
+}
+
+impl std::fmt::Display for MembraneError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MembraneError::MalformedSnapshot => {
+                write!(f, "membrane snapshot is malformed (not a valid frustum)")
+            }
+            MembraneError::RootMismatch => write!(
+                f,
+                "frustum root mismatch — refusing to rehydrate a substituted snapshot"
+            ),
+            MembraneError::NoSuchFork(id) => write!(f, "no such rehydrated fork: {id}"),
+            MembraneError::MalformedTurn => write!(f, "drive turn bytes are not a valid Turn"),
+            MembraneError::DriveRefused(why) => {
+                write!(f, "the driven turn was refused by the fork executor: {why}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for MembraneError {}
+
+// ---------------------------------------------------------------------------
+// THE REAL `MembraneHost` — backed by the genuine executor, adapting
+// `MembraneFrustum` into the `deos_matrix` `MembraneEnvelope` wire shape. This
+// REPLACES `MockMembraneHost` as the default for any build that carries the
+// deos-matrix wire types (the `dev-surfaces` graph, where the chat lane lives).
+// `mint` snapshots a REAL fork; `rehydrate` restores a REAL `World`; `drive`
+// commits a REAL turn; `stitch` folds the REAL diff through the settlement gate.
+// ---------------------------------------------------------------------------
+#[cfg(feature = "dev-surfaces")]
+pub use membrane_host::ForkMembraneHost;
+
+#[cfg(feature = "dev-surfaces")]
+mod membrane_host {
+    use super::*;
+    use deos_matrix::membrane::{
+        ForkHandle, FrustumCut, Liveness, MembraneEnvelope, MembraneHost, StitchOutcome,
+        TurnReceiptDigest, WitnessCursor,
+    };
+    use std::sync::Mutex;
+
+    /// **The real, executor-backed [`MembraneHost`].** Holds the owner's live
+    /// world and the constructed shared fork the membrane projects; mints a real
+    /// [`MembraneFrustum`] into a [`MembraneEnvelope`], rehydrates received
+    /// envelopes into real [`World`] forks, drives real turns, and stitches the
+    /// real diff back. The `deos-matrix` chat lane holds a `dyn MembraneHost`
+    /// pointing at one of these (inside the confined comms-PD, where the executor
+    /// lives) — so a membrane minted here, serialized over Matrix, and rehydrated
+    /// elsewhere is the genuine executor end to end.
+    pub struct ForkMembraneHost {
+        /// The owner's world the frustum is minted FROM (already forked +
+        /// constructed by [`SharedFork::construct`] before being handed here).
+        source_fork: World,
+        /// The guest principal the frustum culls in view of.
+        guest: CellId,
+        /// Live rehydrated forks: handle id → (the real `World` fork, the minted
+        /// frustum it rehydrated from, for the stitch diff).
+        forks: Mutex<Vec<(u64, World, MembraneFrustum)>>,
+        /// Monotone fork-id source.
+        next_fork: Mutex<u64>,
+    }
+
+    impl ForkMembraneHost {
+        /// Build a host over a constructed shared fork (the `source_fork` is the
+        /// already-forked, already-`SharedFork::construct`ed world; `guest` is the
+        /// confined recipient the frustum culls around).
+        pub fn new(source_fork: World, guest: CellId) -> Self {
+            ForkMembraneHost {
+                source_fork,
+                guest,
+                forks: Mutex::new(Vec::new()),
+                next_fork: Mutex::new(1),
+            }
+        }
+    }
+
+    impl MembraneHost for ForkMembraneHost {
+        type Error = MembraneError;
+
+        fn mint(&self, _focus: [u8; 32], mut cut: FrustumCut) -> Result<MembraneEnvelope, Self::Error> {
+            // ANTI-AMPLIFICATION: a membrane is ALWAYS in view of the host's own
+            // confined guest principal — never an arbitrary caller-supplied focus.
+            // Centring the cull on a non-guest cell would be a path to snapshot
+            // cells outside the guest's reach, so the caller's `_focus` is
+            // deliberately ignored and the frustum is pinned to `self.guest`: it
+            // can only ever be the guest's own subgraph.
+            let focus = self.guest;
+            cut.focus_cell = focus.0;
+            // Mint the real frustum from the source fork, centred on the guest.
+            let frustum = MembraneFrustum::mint(&self.source_fork, focus, cut.max_depth);
+            let root = frustum.frustum_root();
+            cut.cell_count = frustum.cells.len() as u32;
+            let snapshot = frustum.to_snapshot_bytes();
+            Ok(MembraneEnvelope {
+                version: MembraneEnvelope::VERSION,
+                frustum_root: root,
+                sturdyref: format!("dregg://fork/{}", hex32(&root)),
+                // The lineage carries the focus so a recipient can verify the
+                // frustum is in view of the intended principal (the real
+                // attenuation meet lives in the cell c-lists themselves — a
+                // recipient cannot rehydrate authority not present in the cells).
+                lineage: focus.0.to_vec(),
+                snapshot,
+                cut,
+                cursor: WitnessCursor {
+                    height: frustum.minted_height,
+                    commit_index: 0,
+                },
+            })
+        }
+
+        fn rehydrate(&self, env: &MembraneEnvelope) -> Result<(ForkHandle, Liveness), Self::Error> {
+            if !env.is_rehydratable() {
+                // Forward-compat tooth — refuse a newer wire version, fail-closed.
+                return Err(MembraneError::RootMismatch);
+            }
+            let frustum = MembraneFrustum::from_snapshot_bytes(&env.snapshot)?;
+            // Rehydrate into a REAL `World` fork (the anti-substitution tooth is
+            // inside `rehydrate`, fail-closed on a root mismatch).
+            let fork = frustum.rehydrate(env.frustum_root)?;
+            let id = {
+                let mut n = self.next_fork.lock().unwrap();
+                let id = *n;
+                *n += 1;
+                id
+            };
+            self.forks.lock().unwrap().push((id, fork, frustum));
+            // Liveness DERIVED: a verified deterministic restore of a frozen
+            // frustum is `ReplayedDeterministic`.
+            Ok((ForkHandle(id), Liveness::ReplayedDeterministic))
+        }
+
+        fn drive(&self, fork: &ForkHandle, turn_bytes: &[u8]) -> Result<TurnReceiptDigest, Self::Error> {
+            let mut forks = self.forks.lock().unwrap();
+            let entry = forks
+                .iter_mut()
+                .find(|(id, _, _)| *id == fork.0)
+                .ok_or(MembraneError::NoSuchFork(fork.0))?;
+            // Decode a REAL `Turn` and commit it through the rehydrated fork's
+            // verified executor — identical conservation/ocap/program guarantees.
+            let turn: Turn =
+                postcard::from_bytes(turn_bytes).map_err(|_| MembraneError::MalformedTurn)?;
+            let outcome = entry.1.commit_turn(turn);
+            if !outcome.is_committed() {
+                return Err(MembraneError::DriveRefused(format!("{outcome:?}")));
+            }
+            Ok(TurnReceiptDigest {
+                post_root: entry.1.state_root(),
+                turn_index: entry.1.height(),
+            })
+        }
+
+        fn stitch(&self, fork: &ForkHandle) -> Result<StitchOutcome, Self::Error> {
+            use crate::branch_stitch::{BranchCap, SettleOutcome, Stitch};
+            let forks = self.forks.lock().unwrap();
+            let entry = forks
+                .iter()
+                .find(|(id, _, _)| *id == fork.0)
+                .ok_or(MembraneError::NoSuchFork(fork.0))?;
+            // The REAL diff: the driven fork's actual mutated atoms vs the minted
+            // baseline (NOT a fabricated atom at a hand-coded key).
+            let (baseline, driven) = entry.2.driven_graphs(&entry.1);
+            // Confer back only what is in view in the frustum (the cells the guest
+            // genuinely held) — the settlement gate re-checks authority at the tip.
+            let conferred: Vec<BranchCap> = entry
+                .2
+                .cells
+                .iter()
+                .map(|c| BranchCap { target: cell_key(&c.id()), debit_reach: false })
+                .collect();
+            let stitch = Stitch { main: baseline, branch: driven.clone(), conferred: conferred.clone() };
+            match stitch.settle(&conferred, None) {
+                SettleOutcome::Settled(merged) => Ok(StitchOutcome {
+                    settled_root: Some(entry.1.state_root()),
+                    merged: merged
+                        .atoms
+                        .keys()
+                        .map(|k| {
+                            let mut h = [0u8; 32];
+                            h[..8].copy_from_slice(&k.to_le_bytes());
+                            h
+                        })
+                        .collect(),
+                    dropped: Vec::new(),
+                }),
+                SettleOutcome::Refused { over_authorized_target } => {
+                    use deos_matrix::membrane::{ConflictObject, ConflictReason};
+                    let mut ev = [0u8; 32];
+                    ev[..8].copy_from_slice(&over_authorized_target.to_le_bytes());
+                    Ok(StitchOutcome {
+                        settled_root: None,
+                        merged: Vec::new(),
+                        dropped: vec![ConflictObject {
+                            event: ev,
+                            reason: ConflictReason::CapAmplification,
+                        }],
+                    })
+                }
+            }
+        }
+    }
+
+    /// A stable atom key per cell (the low 8 bytes of its id) — shared by the
+    /// stitch diff and the conferred-cap set so they key identically.
+    fn cell_key(id: &CellId) -> u64 {
+        let b = id.as_bytes();
+        u64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]])
+    }
+
+    fn hex32(b: &[u8; 32]) -> String {
+        let mut s = String::with_capacity(8);
+        for byte in &b[..4] {
+            s.push_str(&format!("{byte:02x}"));
+        }
+        s
+    }
+
+    #[cfg(test)]
+    mod adapter_tests {
+        use super::*;
+        use crate::world::make_open_cell;
+
+        fn signed_world() -> (World, CellId, CellId, CellId) {
+            let mut w = World::new().with_executor_signing_key([0x42u8; 32]);
+            let docs = w.genesis_cell(0xD0, 0);
+            let guest = w.genesis_cell(0xA9, 0);
+            let mut owner_cell = make_open_cell(0x55, 0);
+            owner_cell.capabilities.grant(docs, AuthRequired::None).expect("owner holds docs");
+            let owner = w.genesis_install(owner_cell);
+            (w, owner, guest, docs)
+        }
+
+        #[test]
+        fn real_host_mint_serialize_rehydrate_drive_stitch_end_to_end() {
+            // A REAL host over a REAL constructed fork — the closure of the mock.
+            let (mut world, owner, guest, docs) = signed_world();
+            let mut fork = world.fork();
+            let _sf = SharedFork::construct(
+                &mut fork, owner, guest, &[(docs, AuthRequired::None)], vec![], vec![],
+            );
+            let host = ForkMembraneHost::new(fork, guest);
+
+            // MINT a real envelope (the wire shape the Matrix message carries).
+            let cut = FrustumCut {
+                focus_cell: [0u8; 32],
+                max_depth: 3,
+                authority_bounded: true,
+                cell_count: 0,
+            };
+            let env = host.mint(guest.0, cut).expect("mint a real envelope");
+            assert!(env.cut.cell_count >= 1, "the frustum culled real cells");
+            assert_eq!(env.version, MembraneEnvelope::VERSION);
+
+            // SERIALIZE over the wire (the envelope is the Matrix custom-content JSON).
+            let json = serde_json::to_string(&env).expect("envelope is JSON");
+            let back: MembraneEnvelope = serde_json::from_str(&json).expect("round-trip");
+            assert_eq!(back, env, "the real envelope survives the wire");
+
+            // REHYDRATE into a REAL fork (anti-substitution tooth inside).
+            let (handle, liveness) = host.rehydrate(&back).expect("rehydrate a real fork");
+            assert_eq!(liveness, Liveness::ReplayedDeterministic);
+
+            // DRIVE a REAL turn on the rehydrated fork (decoded from postcard bytes).
+            let turn = {
+                // We need a turn FROM the rehydrated fork (chain head/timestamp);
+                // build it via a fresh rehydrate of the same frustum to author it.
+                let frustum = MembraneFrustum::from_snapshot_bytes(&back.snapshot).unwrap();
+                let driver = frustum.rehydrate(back.frustum_root).unwrap();
+                driver.turn(guest, vec![crate::world::set_field(docs, 1, [42u8; 32])])
+            };
+            let turn_bytes = postcard::to_stdvec(&turn).unwrap();
+            let digest = host.drive(&handle, &turn_bytes).expect("drive a real turn");
+            assert!(digest.turn_index >= 1, "a real turn committed (height advanced)");
+
+            // STITCH the REAL diff back through the settlement gate.
+            let outcome = host.stitch(&handle).expect("stitch");
+            assert!(
+                outcome.settled_root.is_some(),
+                "the in-authority stitch of the real diff settles: {outcome:?}"
+            );
+
+            // Fail-closed: an unknown fork handle is refused.
+            assert!(matches!(
+                host.drive(&ForkHandle(999), &turn_bytes).unwrap_err(),
+                MembraneError::NoSuchFork(999)
+            ));
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1450,6 +1995,182 @@ mod tests {
         match amp.settle(&settlement_held, Some(&BTreeSet::from([docs_key]))) {
             crate::branch_stitch::SettleOutcome::Refused { over_authorized_target } => {
                 assert_eq!(over_authorized_target, peer_key, "the stitch drops the over-authorized peer cap");
+            }
+            other => panic!("an over-authorized stitch must be refused: {other:?}"),
+        }
+    }
+
+    // ── THE REAL MEMBRANE: mint → serialize → rehydrate → drive → stitch ──────────
+    //
+    // The same round-trip as above, but end-to-end on the GENUINE executor and
+    // GENUINE serialization — no hand-coded DocGraph, no toy keys. A frustum of
+    // REAL `Cell`s is minted from a real fork, serialized to wire bytes, rehydrated
+    // into a real `World` fork, driven with a real turn, and its REAL diff stitches
+    // back. This is the closure of the mock seam.
+
+    #[test]
+    fn real_membrane_mints_serializes_rehydrates_into_a_real_fork() {
+        // (1) MINT — a real shared fork: docs EMBEDDED into the guest's c-list,
+        //     peer a NETWORKBOUNDARY (no cap rides in). Then frustum-cull the
+        //     in-view subgraph (the guest + the cells its c-list reaches).
+        let (world, owner, guest, docs, peer, _seed) = signed_fork_world();
+        let mut fork = world.fork();
+        let _sf = SharedFork::construct(
+            &mut fork,
+            owner,
+            guest,
+            &[(docs, AuthRequired::Signature)], // embedded
+            vec![],
+            vec![NetworkBoundary { target: peer, ceiling: AuthRequired::Signature }],
+        );
+
+        let frustum = MembraneFrustum::mint(&fork, guest, 3);
+        let root = frustum.frustum_root();
+
+        // ANTI-AMPLIFICATION (by construction): the frustum holds the guest + docs
+        // (embedded, in the guest's c-list) but NOT peer (the boundary withheld no
+        // cap, so peer is unreachable from the guest's c-list and culled away).
+        let ids: HashSet<CellId> = frustum.cells.iter().map(|c| c.id()).collect();
+        assert!(ids.contains(&guest), "the guest principal is in the frustum");
+        assert!(ids.contains(&docs), "the embedded docs cell is in view (granted into the c-list)");
+        assert!(
+            !ids.contains(&peer),
+            "anti-amplification: the boundary cell is NOT in the frustum (unreachable, culled)"
+        );
+
+        // (2) SERIALIZE — the frustum rides the wire as postcard bytes (what the
+        //     `MembraneEnvelope.snapshot` field carries over Matrix).
+        let wire = frustum.to_snapshot_bytes();
+        let back = MembraneFrustum::from_snapshot_bytes(&wire).expect("frustum round-trips the wire");
+        assert_eq!(back, frustum, "the real frustum survives serialization byte-for-byte");
+        assert_eq!(back.frustum_root(), root, "the root is stable across the wire");
+
+        // (3) REHYDRATE — into a REAL `World` fork (not a mock). Fail-closed on a
+        //     substituted snapshot; on success the fork holds EXACTLY the granted
+        //     subgraph.
+        let rehydrated = back.rehydrate(root).expect("rehydrate into a real fork");
+        assert!(
+            rehydrated.ledger().get(&docs).is_some(),
+            "the rehydrated fork holds the granted docs cell (real World, real executor)"
+        );
+        assert!(
+            rehydrated.ledger().get(&guest).is_some(),
+            "the rehydrated fork holds the guest principal"
+        );
+        assert!(
+            rehydrated.ledger().get(&peer).is_none(),
+            "anti-amplification end-to-end: peer was culled, so it cannot be rehydrated"
+        );
+        // The rehydrated fork's docs cell is byte-identical to the minted one.
+        assert_eq!(
+            rehydrated.ledger().get(&docs).unwrap().state.fields,
+            fork.ledger().get(&docs).unwrap().state.fields,
+            "the rehydrated cell is faithful to the minted snapshot"
+        );
+    }
+
+    #[test]
+    fn real_membrane_rehydrate_fails_closed_on_a_substituted_snapshot() {
+        let (world, owner, guest, docs, _peer, _seed) = signed_fork_world();
+        let mut fork = world.fork();
+        let _sf = SharedFork::construct(
+            &mut fork, owner, guest, &[(docs, AuthRequired::Signature)], vec![], vec![],
+        );
+        let frustum = MembraneFrustum::mint(&fork, guest, 3);
+        let root = frustum.frustum_root();
+
+        // Substitute the snapshot (drop a cell) WITHOUT updating the root → the
+        // anti-substitution tooth must fire, fail-closed.
+        let mut tampered = frustum.clone();
+        tampered.cells.pop();
+        // `World` is not `Debug`, so match the `Err` directly (no `unwrap_err`).
+        match tampered.rehydrate(root) {
+            Err(MembraneError::RootMismatch) => {}
+            other => panic!("a substituted snapshot must be refused (RootMismatch), got Ok/other: {:?}", other.err()),
+        }
+        // A malformed wire payload is also refused (not trusted as an empty fork).
+        assert!(matches!(
+            MembraneFrustum::from_snapshot_bytes(b"not a frustum").unwrap_err(),
+            MembraneError::MalformedSnapshot
+        ));
+    }
+
+    #[test]
+    fn real_membrane_driven_turn_stitches_back_through_the_real_settlement_gate() {
+        use crate::branch_stitch::{BranchCap, Stitch};
+
+        // Mint a real frustum, rehydrate it into a real fork.
+        let (world, owner, guest, docs, peer, _seed) = signed_fork_world();
+        let mut src_fork = world.fork();
+        let _sf = SharedFork::construct(
+            &mut src_fork,
+            owner,
+            guest,
+            &[(docs, AuthRequired::None)], // embed docs at full authority so the guest can write it
+            vec![],
+            vec![NetworkBoundary { target: peer, ceiling: AuthRequired::Signature }],
+        );
+        let frustum = MembraneFrustum::mint(&src_fork, guest, 3);
+        let root = frustum.frustum_root();
+        let mut rehydrated = frustum.rehydrate(root).expect("rehydrate");
+
+        // (4) DRIVE — the recipient commits a REAL turn on the rehydrated fork over
+        //     its embedded docs cap. This mutates the real fork's ledger.
+        let pre = rehydrated.ledger().get(&docs).unwrap().state.fields[1];
+        let drive = rehydrated.turn(guest, vec![crate::world::set_field(docs, 1, [42u8; 32])]);
+        assert!(rehydrated.commit_turn(drive).is_committed(), "the recipient drives a real turn");
+        assert_eq!(
+            rehydrated.ledger().get(&docs).unwrap().state.fields[1], [42u8; 32],
+            "the driven turn really mutated the rehydrated fork"
+        );
+        assert_ne!(pre, [42u8; 32], "the field genuinely changed");
+
+        // (5) STITCH — fold the REAL driven mutation back. `driven_graphs` reads
+        //     the ACTUAL diff (the mutated docs cell as a live atom), NOT a
+        //     hand-coded `Atom::Alive` at a toy key. The clean part merges; the
+        //     settlement gate governs conferred authority.
+        let (baseline, driven) = frustum.driven_graphs(&rehydrated);
+        assert_ne!(
+            baseline, driven,
+            "the driven graph reflects the REAL mutation (a new atom over the baseline)"
+        );
+
+        // A stitch conferring docs (which the owner DOES hold at settlement) settles
+        // clean and FOLDS THE REAL DRIVEN ATOM into main.
+        fn cell_key(id: &CellId) -> u64 {
+            let b = id.as_bytes();
+            u64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]])
+        }
+        let docs_key = cell_key(&docs);
+        let peer_key = cell_key(&peer);
+        let clean = Stitch {
+            main: baseline.clone(),
+            branch: driven.clone(),
+            conferred: vec![BranchCap { target: docs_key, debit_reach: false }],
+        };
+        let settlement_held = vec![BranchCap { target: docs_key, debit_reach: false }];
+        match clean.settle(&settlement_held, None) {
+            crate::branch_stitch::SettleOutcome::Settled(merged) => {
+                // Every real driven atom is present in the merged main (the LUB
+                // folds the guest's genuine mutation back).
+                for k in driven.atoms.keys() {
+                    assert!(merged.atoms.contains_key(k), "the real driven atom merged into main");
+                }
+            }
+            other => panic!("a clean, in-authority stitch of the REAL diff must settle: {other:?}"),
+        }
+
+        // CONSERVATION / over-authorized DROP: a stitch conferring peer (a
+        // networkboundary the owner did NOT embed → not held at settlement) is
+        // REFUSED — a cap-amplification at merge is a linear DROP, not a conjure.
+        let amp = Stitch {
+            main: baseline,
+            branch: driven,
+            conferred: vec![BranchCap { target: peer_key, debit_reach: true }],
+        };
+        match amp.settle(&settlement_held, None) {
+            crate::branch_stitch::SettleOutcome::Refused { over_authorized_target } => {
+                assert_eq!(over_authorized_target, peer_key, "the over-authorized peer cap is dropped (lossy)");
             }
             other => panic!("an over-authorized stitch must be refused: {other:?}"),
         }

@@ -119,6 +119,15 @@ async fn live_login_sync_send_membrane_roundtrip() {
 
     // 5. SEND a MEMBRANE-bearing message and read it back as a TYPED envelope —
     //    the deos-pilling over real Matrix (custom event key inside m.room.message).
+    //    This test proves the WIRE leg: a `MembraneEnvelope` survives a real
+    //    homeserver round-trip and re-extracts as a typed envelope. It uses the
+    //    mock host's sample only because THIS standalone workspace cannot link the
+    //    Lean-backed executor; the EXECUTOR-REAL round-trip (mint a genuine `Cell`
+    //    frustum from `ForkMembraneHost` → serialize → rehydrate into a real `World`
+    //    fork → drive a verified turn → stitch the real diff) is proven where the
+    //    executor lives: `starbridge_v2::shared_fork` (`real_membrane_*` +
+    //    `membrane_host::adapter_tests`). A `ForkMembraneHost` envelope is the SAME
+    //    `MembraneEnvelope` shape this test ships, so the wire leg covers both.
     let env = MockMembraneHost::sample_envelope();
     let mem_id = client
         .send_membrane(&room_id, "", &env)

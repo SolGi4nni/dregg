@@ -16,7 +16,7 @@ namespace Dregg2.Exec.AdmissionWire
 
 open Dregg2.Exec
 open Dregg2.Exec.Admission
-open Dregg2.Exec.FullForest (FullForestA FullChildA)
+open Dregg2.Exec.FullForest (FullForestA FullChildA capTarget targetOf lowerForestA lowerChildrenA)
 open Dregg2.Exec.TurnExecutorFull (FullActionA)
 open Dregg2.Exec.Receipts (genesisSentinel)
 
@@ -71,18 +71,24 @@ def actionWriteSet : FullActionA → List CellId
   -- §MA-heap: the heap write mutates the `target` cell (its heap leaves + `heap_root` register).
   | .heapWriteA _ target _ _ _ => [target]
 
-mutual
-/-- Write-set of a structural `FullForestA` tree (pre-order union). -/
-def forestWriteSet : FullForestA → List CellId
-  | ⟨a, kids⟩ => addAll (actionWriteSet a) (forestWriteSetChildren kids)
+/-! The write-set the executor ACTUALLY touches is the union of `actionWriteSet` over the EXECUTED
+action list — which is `lowerForestA root`, NOT the node-action tree. `lowerForestA` interleaves, BEFORE
+each child subtree, the EXECUTED `delegateAttenA delegator holder t keep` the forest executor inserts
+(`execFullChildrenA`'s `recCDelegateAtten` handoff). That handoff MUTATES the `holder`'s cap slot
+(`actionWriteSet (.delegateAttenA _ rec _ _) = [rec]`). A write-set built from the node-action tree
+alone would OMIT these implicit per-child delegation writes, so a FROZEN `holder` could be cap-mutated
+by the implicit edge WITHOUT appearing in the freeze/conflict write-set — the very hole the freeze gate
+(`admissible` leg 6) exists to close. We therefore extract the write-set from `lowerForestA`, which
+contains exactly the actions (nodes AND inserted handoffs) the executor runs. -/
 
-/-- Union write-sets of child edges. -/
-def forestWriteSetChildren : List FullChildA → List CellId
-  | [] => []
-  | ⟨_, _, _, sub⟩ :: rest => addAll (forestWriteSet sub) (forestWriteSetChildren rest)
-end
+/-- Write-set of the EXECUTED action list of a `FullForestA` tree: the `actionWriteSet`-union over the
+pre-order lowering `lowerForestA` — so the per-child implicit `delegateAttenA` (the `holder` cap-slot
+write the forest executor inserts) IS included, closing the frozen-holder freeze-bypass. -/
+def forestWriteSet (root : FullForestA) : List CellId :=
+  (lowerForestA root).foldl (fun acc a => addAll (actionWriteSet a) acc) []
 
-/-- The full turn write-set: agent (always written by the prologue) ∪ forest cells. -/
+/-- The full turn write-set: agent (always written by the prologue) ∪ the EXECUTED-action cells
+(forest nodes AND the inserted per-child delegation handoffs). -/
 def turnWriteSet (agent : CellId) (root : FullForestA) : List CellId :=
   addUnique agent (forestWriteSet root)
 
@@ -106,5 +112,38 @@ def turnHdrOf (agent : CellId) (root : FullForestA) (nonce : Nat) (fee : Int)
 /-- Build an `AdmCtx` from host-fed wire fields. -/
 def admCtxOf (now : Nat) (frozen : List CellId) (storedHead : Option Nat) (budget : Nat) : AdmCtx :=
   { now := now, frozen := frozen, storedHead := storedHead, budget := budget }
+
+/-! ## §4 — the IMPLICIT-DELEGATION-WRITE teeth (frozen-holder freeze-bypass closed).
+
+The forest executor inserts, per child edge, an EXECUTED `delegateAttenA delegator holder t keep` that
+MUTATES `holder`'s cap slot (`recCDelegateAtten` ⇒ `actionWriteSet … = [holder]`). The write-set must
+include these implicit writes, or a FROZEN `holder` could be cap-mutated WITHOUT the freeze gate
+(`admissible` leg 6) catching it. `forestWriteSet` is now built from `lowerForestA`, which contains the
+inserted handoffs — so the holder IS in the write-set. The witness below has a `holder` that is NOT any
+node-action target, so the OLD node-only write-set would have OMITTED it. -/
+
+/-- A tree whose single child edge delegates to `holder := 4` — a cell that NO node action touches (the
+root `mintA 9 0 1 5` writes `[0]` and well `1`; the child `burnA 9 0 1 5` writes `[0]` and well `1`).
+So `4` appears in the write-set ONLY via the inserted `delegateAttenA … 4 …` handoff. -/
+def implicitDelegWitness : FullForestA :=
+  ⟨ .mintA 9 0 1 5
+  , [ { holder := 4, keep := [], parentCap := .node 0
+      , sub := ⟨ .burnA 9 0 1 5, [] ⟩ } ] ⟩
+
+-- The implicit-delegation holder `4` IS now in the forest write-set (it was OMITTED by the old
+-- node-only `forestWriteSetChildren` — the freeze-bypass):
+#guard ((forestWriteSet implicitDelegWitness).contains 4)  --  true (the inserted delegateAtten write)
+-- ...and therefore in the full turn write-set the admission header carries:
+#guard ((turnWriteSet 7 implicitDelegWitness).contains 4)  --  true
+
+/-- A frozen-holder context: the delegation HOLDER `4` is frozen, but agent `7` and every node-target
+cell is NOT. Pre-fix this admitted (holder `4` was invisible to the freeze gate); post-fix it REJECTS. -/
+def frozenHolderCtx : AdmCtx := { now := 0, frozen := [4], storedHead := none, budget := 1000000000 }
+
+-- MUTATION-CONFIRM: a frozen HOLDER now makes the turn INADMISSIBLE (the implicit cap-mutation is
+-- caught). The write-set's `4` trips `admissible` leg 6 (`writeSet.all (!isFrozen)` = false):
+#guard ((frozenHolderCtx.frozen.contains 4))  --  true (holder 4 is frozen)
+#guard ((turnHdrOf 7 implicitDelegWitness 0 0 0 0).writeSet.all
+        (fun c => !isFrozen frozenHolderCtx c)) == false  --  false (frozen holder ⇒ leg-6 REJECT)
 
 end Dregg2.Exec.AdmissionWire
