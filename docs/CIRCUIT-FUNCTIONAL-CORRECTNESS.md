@@ -60,25 +60,32 @@ correct circuit; the deploy makes the running system match it. (One remaining co
 the per-effect `<e>TraceReadout` column-reads into the single `WitnessDecodes` floor so the carried set
 reads exactly {StarkSound, hash CR, WitnessDecodes}; the row-designation stays the prover witness.)
 
-> **⚠ CONNECTION-TO-DEPLOYMENT CORRECTION (2026-06-18, adversarial re-review — read before trusting the
-> "VALUE rung proven" grades below).** The Lean apex CORE is clean (axiom-checked, no laundering). But the
-> proof being "closed about the correct circuit" is NOT the same as the deployed verifier realizing it, and
-> the review found the gap is wider than "one VK epoch" for two families:
-> - **Record-pin family** (setPermissions/setVK/cellSeal/cellUnseal/cellDestroy/refusal/receiptArchive —
->   the "PRINCIPLED-FIX ≈12" grade below). Their forcing gate `rotateV3WithRecordPin` pins `after_limb ==
->   PI[piCount]` where `PI[piCount]` is a FREE public input the prover chooses; the deployed verifier does
->   NOT anchor it to `compute_authority_digest_felt(trusted post-cell)`. So the "anti-ghost" is VACUOUS as a
->   deployment-forcing gate (it forces published==published), and these effects are NOT routed live (the
->   cipherclerk producer models only Transfer/SetField/IncNonce). Genuine but LATENT — no live forgery, but
->   "SOUND-IN-DEPLOYED" is FALSE for them. Fix = verifier-anchored PI + producer models the after-state
->   (task #214).
-> - **In-deployment truth:** only `transfer` (+ the economic effects that move a column the commitment
->   already binds) is genuinely FORCED through the live sovereign verifier today; the Transfer path is sound
->   (PI[35]↔col-261 STATE_COMMIT, tamper test green). The cap-open authority leg is now genuine submask
->   membership + decoded tier, refining the LIVE descriptor (commits 3d139220d, a18c7a1c4). The note/set
->   family's double-spend soundness lives in `verify_full_turn` (a different, sound verifier).
-> Read the grades below as "proven about the descriptor"; "realized in the deployed verifier" holds today
-> only for the VALUE_FORCED row + the cap-open authority. The rest are genuine residuals (#214/#215).
+> **CONNECTION-TO-DEPLOYMENT STATUS (updated — the 2026-06-18 vacuity correction is now CLOSED for the
+> record-pin family).** The Lean apex CORE is clean (axiom-checked, no laundering), and the deployed
+> commitment now realizes it (the `record_digest` limb — see "The commitment preimage" below). The
+> per-effect deployment status:
+> - **Record-pin family** (setPermissions/setVK/refusal via the record-digest limb `B_RECORD_DIGEST = 24`;
+>   cellSeal/cellUnseal/cellDestroy/receiptArchive via the lifecycle limb `B_LIFECYCLE = 29`). Their gate
+>   `rotateV3WithRecordPin` pins `after_limb == PI[piCount]`, and the deployed verifier
+>   (`turn/src/executor/proof_verify.rs::verify_and_commit_proof_rotated`, step 6b) now ANCHORS that PI: it
+>   clones the trusted before-cell, applies the kernel effect through the SHARED
+>   `dregg_turn::rotation_witness::apply_effect_to_cell` weld (the same projection the producer uses, so
+>   honest proofs are NOT rejected), and overrides the published limb to
+>   `compute_authority_digest_felt(post_cell)` (record-digest class) / `lifecycle_felt_cell(post_cell)`
+>   (lifecycle class). So the pin is a GENUINE forcing gate, not `published==published`. The fan-out fixed
+>   3 latent bugs the vacuous pin had masked (refusal mis-routed to `fields[4]`; cellSeal/Unseal/Destroy
+>   producer/verifier projection divergence) — the model-finds-the-bug loop. Both-polarity tests green:
+>   `sdk/tests/sovereign_rotated_c1.rs` `record_pin_anchor` (7 accept/reject pairs — honest accept BITES,
+>   forged-after rejected by the anchor mismatch). Lean: `rotateV3WithRecordPin_rejects_wrong_post`.
+> - **VALUE_FORCED** (`transfer` + the economic effects moving a column the commitment already binds) is
+>   forced through the live sovereign verifier (Transfer path sound: PI[35]↔col-261 STATE_COMMIT, tamper
+>   test green). The cap-open authority leg is genuine submask membership + decoded tier, refining the LIVE
+>   descriptor (commits 3d139220d, a18c7a1c4). The note/set family's double-spend soundness lives in
+>   `verify_full_turn` (a different, sound verifier).
+> Genuine residuals: extending the verifier anchor + rotated routing to the effects OUTSIDE the record-pin
+> family (createCell/spawn/noteCreate/noteSpend/the cap family — the side-table-root + sorted-tree limbs),
+> and lifting the rotated arms into the whole-turn forest apex (the `hidx0` residual). These are per-effect
+> descriptor-gate + verifier-anchor work, NOT a commitment change (the commitment now binds the fields).
 
 ## (historical) per-effect terrain — every effect's VALUE rung proven; the runtime commitment + VK epoch
 
@@ -185,74 +192,94 @@ criterion above.
 | class | effects | what it means |
 |---|---|---|
 | **VALUE_FORCED** (rung PROVEN) | `transfer`✓, `burn`✓, `mint`✓, `bridgeMint`✓, `setField`✓, `incrementNonce`✓ | a gate pins the moved column into the commitment |
+| **RECORD-PIN FORCED** (gate + verifier-anchor wired) | `setPermissions`✓, `setVK`✓, `refusal`✓ (record-digest limb 24); `cellSeal`✓, `cellUnseal`✓, `cellDestroy`✓, `receiptArchive`✓ (lifecycle limb 29) | the write lands in the `record_digest`/lifecycle limb the commitment now binds, the descriptor pins it, AND `proof_verify.rs` step 6b anchors the PI to `compute_authority_digest_felt`/`lifecycle_felt_cell(trusted post-cell)` — both-polarity tests green |
 | **VALUE_PARTIAL** (forces some, named gap) | `attenuate` (in-circuit submask non-amp ✓; base post-root is a *supplied* digest, recompute lives only in the unwired Genuine variant), `setFieldDyn` (value on memory readback, not the cell-write column), `incrementNonce` (forces a generic +1 tick, not the leaf's `nonce → n`), `makeSovereign` (forces one mode bit, not the rebind), `pipelinedSend` (freezes economic block; nonce-tick contradicts the leaf's literal-freeze frame; receipt unbound) | a real but partial binding |
-| **VALUE_MISSING** (real gap — the runtime freezes the target column and routes the write off-row) | `setPermissions`, `setVK`, `emitEvent`, `refusal`, `receiptArchive`, `createCell`, `createCellFromFactory`, `spawn`, `cellSeal`, `cellUnseal`, `cellDestroy`, `exercise`, `noteSpend`, `noteCreate`, `introduce`, `grantCap`, `refresh`, (`delegate`/`delegateAtten` have **no live descriptor at all**) | nothing forces `pubPost` to reflect the change — needs a RUNTIME+circuit fix (below), then a proof |
+| **VALUE_MISSING** (per-effect residual — the field IS in the commitment preimage now, but no gate+anchor routes the specific write) | `emitEvent`, `createCell`, `createCellFromFactory`, `spawn`, `exercise`, `noteSpend`, `noteCreate`, `introduce`, `grantCap`, `refresh`, (`delegate`/`delegateAtten` have **no live descriptor at all**) | the commitment now binds these fields (side-table roots / sorted cap-tree / nullifier-commitment accumulators, all folded into `record_digest`/`system_roots`), so they are provable-in-principle; the residual is a per-effect descriptor gate forcing the specific write + the verifier anchor (the record-pin pattern, extended), NOT a commitment change |
 
 ### The commitment preimage — the exact binding boundary (the criterion, ground-truth)
 
 A light client's `pi.post` binds exactly the per-cell **state commitment**, whose preimage is
-(`circuit/src/effect_vm/cell_state.rs:76`, `compute_commitment`):
+(`circuit/src/effect_vm/cell_state.rs`, `compute_commitment` / `compute_commitment_8`):
 
 ```
-hash( balance_lo, balance_hi, nonce, field[0..7], capability_root )
+hash( balance_lo, balance_hi, nonce, field[0..7], capability_root, record_digest )
 ```
 
-and NOTHING else. The 8 `field[i]` slots are **generic** developer slots (`slotName slot =
-"slotfield{n}"`), not the kernel's semantic fields. So `reserved`/`mode_flag`/`sealed_field_mask` are
-**not** committed; and the kernel's semantic fields (`permissions`, `verification_key`, `lifecycle`,
-`deathCert`, `refusal`, the sorted cap-table, `nullifiers`, `commitments`) are committed only insofar
-as the executor projects them onto a generic `field[i]` slot or the `cap_root`. The criterion for
-`descriptorRefines` is therefore sharp: **a write is light-client-bound iff its target is `balance`,
-`nonce`, a `field[i]` slot, or `cap_root`, AND the runtime actually writes it there.** (This corrects
-two earlier PARTIAL guesses: `makeSovereign`'s `reserved += 256` mode bit is NOT in the preimage, so it
-is genuinely unbound, not partial.)
+a `hash_4_to_1` tree over four intermediates, the LAST of which absorbs the **`record_digest`** — a
+single Poseidon2 felt that folds ALL authority-bearing cell state the other limbs do not carry:
+`permissions`, `verification_key`, `lifecycle`, `deathCert`, `delegate`, `delegation`, `program`,
+`mode`, the field-visibility / sealed-mask, the side-table roots (`system_roots_digest`,
+`fields_root`, `swiss/refcount` roots), and `fields[8..]`. The digest is computed cell-locally by
+`dregg_cell::compute_authority_digest_felt` (`cell/src/commitment.rs`); a cell with no residue beyond
+the named limbs carries the cell-independent `cap_root::empty_record_digest()` (`ZERO`), so for such
+cells the absorption is byte-identical to the old lossy `hash_4_to_1(i1,i2,i3,ZERO)` — a no-op cutover
+(no flag-day). The 8-felt PI form (`compute_commitment_8`) squeezes the SAME four intermediates +
+`record_digest` to ~124-bit collision resistance, matching the FRI floor.
 
-### The deepest finding — the Lean commitment is RICHER than the circuit realizes
+This realizes the Lean `recStateCommit = cmb(cellDigest, RH)` (`record_digest` IS the deployed `RH`
+limb) and `cellCommitS = compressN(rest ++ [systemRootsDigest])` (one absorbed digest limb). The
+criterion for `descriptorRefines` is therefore: **a write is light-client-bound iff its target is
+`balance`, `nonce`, a `field[i]` slot, `cap_root`, OR any authority field folded into `record_digest`,
+AND the runtime actually writes it there.** The previously-unbound kernel fields
+(`permissions`/`verification_key`/`lifecycle`/`deathCert`/refusal-audit/…) are now ALL inside the
+commitment preimage. Mutation-confirm (green): `cell_state.rs` test `record_digest_binds_commitment_p0_2`
+— two cells differing ONLY in their authority residue now commit DIFFERENTLY (was indistinguishable);
+`empty_record_digest_is_legacy_noop` — a residue-free cell reproduces the legacy commitment exactly.
+
+### The Lean commitment and the deployed circuit now AGREE (closed — was the deepest gap)
 
 The Lean apex's commitment is `recStateCommit k t = cmb(cellDigest …, RH k)` (`StateCommit.lean:196`),
-and `RH` is *assumed* injective on the **whole kernel** — `RestHashIffFrame` (`:229`) binds `accounts`,
-`caps`, `bal`, `nullifiers`, `revoked`, `commitments`, `slotCaveats`, `factories`, **`lifecycle`**,
+with `RH` injective on the **whole kernel** — `RestHashIffFrame` (`:229`) binds `accounts`, `caps`,
+`bal`, `nullifiers`, `revoked`, `commitments`, `slotCaveats`, `factories`, **`lifecycle`**,
 **`deathCert`**, `delegate`, `delegations`, `delegationEpoch(At)`, `heaps`. That is what makes
 `StateDecode` faithfulness (`stateDecode_post_faithful`) hold: equal commitment ⇒ equal *full* kernel.
+The concrete `CommitSurface` instance `S_live` (`ClosureSurface.lean`) has `.commit = recStateCommit`
+with `.commit_binds = recStateCommit_binds_kernel` proven from the standard Poseidon CR carriers — no
+narrower wire commitment, no new axiom. `lake build Dregg2.Circuit.{StateCommit,ClosureSurface}` +
+`Dregg2.Exec.SystemRoots` green.
 
-But the **deployed per-effect-VM circuit does not realize that commitment**. Its `state_commit` binds
-only `balance/nonce/8-generic-fields/cap_root` (`cell_state.rs:76`), and `circuit/src/effect_vm/pi.rs`
-publishes **no** `system_roots`. The Lean `system_roots` sub-block (`Exec/SystemRoots.lean`) is 8 roots
-indexed for specific side-tables, and `lifecycle`/`deathCert`/`permissions`/`verification_key` are **not
-among them**. So `RestHashIffFrame` is, for those fields, a CR carrier **stronger than the deployed
-circuit computes** — the circuit cannot distinguish two post-states that differ only in `lifecycle` (or
-permissions, deathCert, …), yet the apex assumes the commitment does.
+The deployed per-effect-VM circuit now **realizes that commitment**: `record_digest` is a real trace
+column (`STATE_RECORD_DIGEST`, aux 96; rotated limb `B_RECORD_DIGEST = r23 = 24`) absorbed into
+`compute_commitment`'s root hash, so `state_commit` / `OLD_COMMIT` / `NEW_COMMIT` bind the FULL cell
+state. Two post-states differing only in `lifecycle` (or permissions, deathCert, …) now produce
+DIFFERENT commitments — the circuit CAN distinguish them. This closed the old gap (commit `548ac920`
+"deployed commitment now binds the FULL kernel — P0-2 closed"; Phase C 8-felt `80ebce3d`). The
+`Exec/SystemRoots.lean` sub-block + `compute_authority_digest_felt`'s `system_roots_digest` fold cover
+the side-tables; the per-cell `record_digest` covers `lifecycle`/`deathCert`/`permissions`/`vk`/… that
+no systemRoot indexes.
 
-This is the precise reason the ~16 VALUE_MISSING effects need a **commitment change, not a proof**: the
-deployed circuit must actually bind those fields (extend the per-cell preimage, or publish system_roots
-covering them — the principled unification is a per-touched-cell **record-digest** column that realizes
-`RH`), and the runtime must emit them. Only then can the concrete `CommitSurface` instance satisfy
-`commit_binds` for those fields and the per-effect `descriptorRefines` discharge. Until then, the apex
-is faithful *to a commitment richer than the deployed VK* — honest as a Lean theorem, but its concrete
-realization is exactly this gap. (The 6 VALUE_FORCED effects move only columns the circuit DOES bind, so
-their rungs are realized.)
+So the ~16 formerly-VALUE_MISSING effects are now **provable-in-principle**: their write is
+light-client-visible (inside the commitment preimage). The remaining work is **per-effect**: each
+effect's rotated descriptor must GATE its specific write into the `record_digest` (or lifecycle) limb,
+AND the deployed verifier must ANCHOR the published PI for that limb to
+`compute_authority_digest_felt(trusted post-cell)` so the gate forces `pubPost = digest(stepped pre)`
+rather than `published == published`. That anchor IS wired for the record-pin family (next section);
+the residual is extending it to the remaining effects + lifting the rotated arms into the forest apex.
 
-### The VALUE_MISSING wall — it is a runtime fix, not a Lean-only one (the session's key finding)
+### The commitment wall — REALIZED (the record-digest column shipped); the residual is per-effect
 
-The six VALUE_FORCED rungs are exactly the effects whose runtime writes one of those bound columns
-(`bal` for transfer/burn/mint, `field[slot]` for setField, `nonce` for incrementNonce).
+The six VALUE_FORCED rungs are the effects whose runtime writes a directly-named bound column
+(`bal` for transfer/burn/mint, `field[slot]` for setField, `nonce` for incrementNonce). The
+**record-digest column** is the principled unification this doc earlier named as the *unbuilt* fix — it
+is now BUILT and live in the deployed circuit: `CellState::record_digest` (aux col 96 / rotated limb
+`B_RECORD_DIGEST = r23 = 24`), absorbed as the fourth root input of `compute_commitment`, computed from
+`dregg_cell::compute_authority_digest_felt(cell)` which folds permissions / VK / lifecycle / deathCert /
+delegate / delegation / program / mode / the side-table roots (`system_roots_digest`, `fields_root`,
+swiss/refcount) / `fields[8..]`. So **all** these formerly-off-row kernel writes are now INSIDE the
+commitment preimage — `pubPost` can no longer hide them (commit `548ac920`; Phase C 8-felt `80ebce3d`).
 
-For the ~17 VALUE_MISSING effects, the **runtime hand-AIR runs a Stage-3 passthrough row that FREEZES
-all 8 `field[i]` columns** and routes the actual write off-row — through `params[0]` + `effects_hash`
-(setPermissions/setVK/refusal/emitEvent/receiptArchive) or into kernel **side-tables that have no
-committed column or systemRoot** (`lifecycle` for seal/unseal/destroy, `deathCert` for destroy,
-`nullifiers`/`commitments` for the note family, the **sorted** cap-table for the capability family — see
-attenuate's accumulator-vs-sorted-tree note above). Because the value is not in a bound column, no gate
-can force `pubPost` to reflect it; transplanting a `setField`-style write-gate would force a column the
-runtime freezes and make the honest trace UNSAT (a degradation, not a fix).
-
-So closing these requires a **runtime + circuit change**: bind each effect's real write into a committed
-column/root and have the runtime emit it there, then a `setField`-style refinement discharges. The
-principled unification (matching the dregg3 "sorted-Poseidon2 everywhere" line): a **per-touched-cell
-record-digest column** recomputed in-circuit would bind *all* cell-field writes (permissions/vk/lifecycle/
-refusal/deathCert) at once; the capability family wants the **openable sorted cap-tree update**
-(cap-reshape phase-D, #103); the note family wants **accumulator-root columns** for `nullifiers`/
-`commitments`. Each is VK-affecting (and the deploy is the ember-gated VK epoch).
+What remains is per-effect, and it is two-part (the record-pin pattern, see the deployment-status callout
+at the top): (1) the rotated descriptor must GATE the effect's specific write into its limb (record-digest
+or lifecycle), and (2) the deployed verifier must ANCHOR the published PI for that limb to the trusted
+post-cell's digest (`compute_authority_digest_felt` / `lifecycle_felt_cell` applied to the cross-checked
+before-cell stepped by the effect) so the gate forces `pubPost = digest(stepped pre)` rather than
+`published == published`. Both parts are wired for the record-pin family (setPermissions/setVK/refusal +
+cellSeal/Unseal/Destroy/receiptArchive — `proof_verify.rs` step 6b, both-polarity tests green). The
+remaining effects need the same gate+anchor extended: the capability family wants the **openable sorted
+cap-tree update** (cap-reshape phase-D, #103); the note family wants the **accumulator-root** gate for
+`nullifiers`/`commitments` (the roots already fold into `record_digest`/`system_roots`; the residual is
+the in-circuit recompute gate, not the commitment). None of this is a commitment change now — the deploy
+that shipped the limb was the ember-gated VK epoch.
 
 Two flagged severities:
 
@@ -270,17 +297,20 @@ material to wire in.
 
 ## What "closed-closed" requires (honest)
 
-1. **Discharge `descriptorRefines` for every live effect.** 5/36 done (the VALUE_FORCED rungs). The
-   ~5 PARTIAL need bounded extra binding; the ~17 MISSING need **descriptor fixes** (emit gates that
-   bind the actual lifecycle/permissions/vk/log/handoff/deathCert/cap change into the committed column),
-   then proofs. This is real circuit engineering, not only Lean — and it is VK-affecting.
+1. **Discharge `descriptorRefines` for every live effect.** Done: the 6 VALUE_FORCED rungs + the 7
+   RECORD-PIN FORCED (setPermissions/setVK/refusal + cellSeal/Unseal/Destroy/receiptArchive — gate +
+   verifier-anchor, both-polarity green). The commitment now binds the full kernel (the `record_digest`
+   limb shipped), so the remaining effects are provable-in-principle; each needs its own descriptor gate
+   (forcing the specific write into its limb) + the verifier anchor (the record-pin pattern, extended) —
+   circuit engineering on a realized commitment, no further commitment change.
 2. **Wire each effect's faithful arm** into `fullActionStepFacet` (the cap-open authority, as transfer
    does) and lift the forest beyond all-transfer turns (retire the `hidx0 : e = 0` residual).
 3. **Discharge `WitnessDecodes`** per effect.
 4. **Prover wiring** — build the cap path-witness from the c-list (`sdk/src/full_turn_proof.rs:662`
    passes `&[]` today) and connect `TransferAuthoritySource`.
-5. **VK epoch** — the descriptor fixes change the VK; an ember-gated epoch + re-pin after the live N=3
-   run validates.
+5. **VK epoch — SHIPPED for the commitment.** The record-digest limb + Phase C 8-felt widening were the
+   VK-affecting change; it deployed as the epoch (`548ac920`/`80ebce3d`). Future per-effect descriptor
+   gates that change the VK ship as the next ember-gated epoch + re-pin after the live N=3 run validates.
 
 The crypto floors that legitimately remain are `StarkSound` and the Poseidon2 / permutation CR.
 
