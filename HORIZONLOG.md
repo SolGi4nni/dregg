@@ -11,6 +11,15 @@ reason.)*
 Last sweep: 2026-06-13 (flagged-items burndown — removed ~14 landed/struck items,
 deduped the DreggDL/sel4/snapshot landings into git history, kept live tails).
 
+### MULTIPLAYER MEMBRANE — the killer primitive, DEMONSTRATED by running (2026-06-23).
+`2bdb6ed2` (`shared_fork.rs`). ONE minted `MembraneFrustum` (the screenshot-of-the-moment, a cap-bounded
+`World::fork` cull) → carried over the postcard wire shape (the `MembraneEnvelope.snapshot` bytes) →
+rehydrated into TWO independent real `World`s under TWO distinct principals (both `frustum_root`-matched =
+anti-substitution) → each drives a real verified `commit_turn` (overlapping conflict + disjoint private) →
+both stitched via `Stitch::settle`: disjoint pushout-merge clean, the overlapping divergence resolves by
+the linear Dead-wins join TRANSPARENTLY (not silent LWW), an over-authorized confer is REFUSED (lossy-drop,
+`SettleOutcome::Refused`). Σδ=0 + authority sound. 21 `shared_fork` tests pass on the real embedded executor.
+
 ### FEDERATION QUORUM VOTES — landed, with a net/-layer delivery ceiling (2026-06-23).
 Phase 1 (REAL 2-node federation) is PROVEN by running: two `dregg-node` procs sharing a 2-validator genesis
 (`--federation-mode full`, gossip ports cross-pointing) form an n=2 committee, `peer_count:1`, mesh ready;
