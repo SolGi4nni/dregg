@@ -11,6 +11,17 @@ reason.)*
 Last sweep: 2026-06-13 (flagged-items burndown — removed ~14 landed/struck items,
 deduped the DreggDL/sel4/snapshot landings into git history, kept live tails).
 
+### FULL ZED WORKSPACE over FirmamentFs — RUNS, by running (2026-06-23).
+`333342ab` (`deos-zed-full`). A real `workspace::Workspace` instantiates over a `Project` whose `Fs` IS the
+dregg cell-ledger; Zed's OWN `project_panel` + `outline_panel` + `terminal_panel` `Panel::load`+dock+resolve
+(all `Some`); the project panel lists cells-as-files; `command_palette` + `search` register; a cell opened
+as a `language::Buffer`, edited, and `project.save_buffer`'d through the WORKSPACE fires a verified
+`TurnReceipt` — a save from the whole IDE is a turn. 3 full-zed tests green; bare + `--features full-zed`
+build green. Caught+fixed a latent break: editor-lane `d11c72e9` made `FirmamentFs` `!Send` (`Rc<RefCell>`)
+vs Zed's `Send+Sync` `Fs` → added `SyncCellFs` over `OwnedSpine` (`Arc<Mutex>`), no `deos-zed` edit. SEAMS:
+nested-dir lazy expansion (drive `expand_entry` / wire `watch` off the receipt log), terminal PTY spawn,
+git/agent/collab panels (mapped, unwired). `deos-zed-full` is a separate workspace — starbridge-v2 unaffected.
+
 ### SELF-HOSTING LOOP — DEMONSTRATED, ran + screenshotted (2026-06-23).
 `f4597aeb` (`starbridge-v2/src/self_hosting.rs` + `main.rs --render-self-hosting` bake). BOTH halves real,
 side by side: (1) the firmament EDITOR fired a real cap-gated `SetField` turn → live `TurnReceipt` 5→6 on
