@@ -9,7 +9,7 @@ cohort member against the rotated 25+…-limb state block — as ONE parametric 
 
   * **§1 the appended geometry** — each rotated descriptor carries, PAST its v1 layout
     (every v1 column index, constraint, and theorem untouched): a rotated BEFORE block at
-    `d.traceWidth` (35 absorption-ordered limbs · iroot · state_commit · 12 chain carriers
+    `d.traceWidth` (37 absorption-ordered limbs · iroot · state_commit · 12 chain carriers
     = 51 columns, the R=24 register geometry PLUS the `commitments_root` + `lifecycle_disc` +
     `perms_digest` + `vk_digest` + `mode` + `fields_root` limbs), a rotated AFTER block at `d.traceWidth + 51`, and the
     WIDENED-CAVEAT region at `d.traceWidth + 102` (29-felt manifest · 9 chain carriers · caveat
