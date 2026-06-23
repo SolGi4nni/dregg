@@ -4509,3 +4509,43 @@ refused).
 ### `dregg-circuit-prove` (default core resolves + tests green). STILL TODO: port `tests/tier_c_real_proof.rs`'s
 ### internal `dregg_circuit::{ivc_turn_chain,joint_turn_aggregation}` paths to the split crate (test is wholly
 ### `#[cfg(feature="tier-c")]`, does NOT block the core). Bundle packaging (one-command PG18 + auto-load) = next.
+
+### ⚑⚑⚑ OVERNIGHT AUTONOMOUS — THE FULL-DEOS GOAL (2026-06-23, /goal set, stop-hook active)
+GOAL: deos as a COMPLETE RUNNING self-hosting verified desktop OS, usable to develop dregg from within.
+Prove by RUNNING (not compiling). Full vision: usable-dev-loop · WHOLE Zed IDE embedded · Xanadu
+(doc-language+transclusion) · REHYDRATION/membrane (real cross-user) · web-deos PAINTING in a browser ·
+servo browsing real pages net-cap-gated · data-plane · network-portable migrate verb · polis · MUD · live
+Hermes · chat-on-live-homeserver · the literate atlas. DISCIPLINE (load-bearing, from the audit): "done"=
+RAN not compiled/mock/first-slice; report real-state-only (wired vs seam); NOT the metatheory/circuit
+(other agents own it — DON'T touch).
+
+⚑ THE 3 AUDIT LEDGERS are the deficiency backlog (in this session's transcript). The repeated failure caught:
+session-summaries compressed compiles/mock/first-slice into done/runs/real. The DOCS were honest; the SUMMARY
+wasn't. Fix the words AND the code.
+
+LANDED REAL (the honest way) this push:
+- data-plane Bus is now the real delivery spine (b79af125): SSE delivery drains the Bus in lockstep
+  (queued→handled witnessed live, inbox bounded), off-by-one fixed, "RUNS IN PRODUCTION" wording corrected.
+- Hermes-UX interactive (33b001f8): typed prompt→streamed reply→live gated tool-calls→depleting budgets;
+  brain=MockHermesPeer (honest), live Bedrock path real but not yet wired to the input box.
+- theming dark+system-aware (14a9a837): the flashbang was gpui_component defaulting to LIGHT; fixed at all
+  6 init sites + cohesive palette. (Hermes signature seam since fixed by main loop — native-full builds green.)
+- gpui-cockpit-in-browser (ae65327f): HONEST — bundled + booted in headless Chrome + WebGPU up + boot_cockpit
+  invoked, but STOPS at a gpui_web run-loop closure-reentrancy BEFORE first paint. The paint gap is in the
+  gpui_web FORK's scheduler. build-gpui.sh + verify-gpui.mjs land it reproducibly. THIS is the model of honest
+  "ran it, here's the real ceiling" reporting.
+
+RUNNING LANES (check via task notifications): node-runs+cockpit-attach (ac3d1dc3) · servo real-pages+net-cap
+(ac77fac0) · editor-on-FirmamentFs-mounted (a4f573a5) · cross-user-membrane-not-mock (a82f43b5) · migrate-verb
++tearoff-tests (a52ea649). Whole-Zed foundation LANDED (0a809467 + DESIGN-FULL-ZED-EMBED.md staging ladder:
+editor→+project-panel/outline/search/palette→+terminal→+git/agent→+collab; real Zed editor over FirmamentZedFs
+TESTED).
+
+KEY SEAMS / NEXT (real-state):
+- web-deos PAINT: fix the gpui_web fork run-loop closure-reentrancy so the cockpit paints (then app backends).
+- ⚠ shared_fork.rs added a thiserror use that doesn't wasm-link under gpui-web (the cross-user-membrane lane) —
+  breaks the gpui-web build until cleared; integrate.
+- chat-LIVE (cockpit chat uses MockSource not a live homeserver) + wasm spawn_local sync: FIRE after the
+  membrane lane clears deos-matrix (collision).
+- devtools federation-config = honestly-stubbed (no live federation in embedded image) — NOT a code gap.
+- the migrate verb (Local→HostPd→Distributed), Xanadu transclusion buildout, the whole-Zed Workspace stages.
