@@ -1261,6 +1261,155 @@ impl ProcessKernel {
         self.spawn_pd_inner(granted, body, true)
     }
 
+    /// SPAWN a CONFINED PD that ALSO holds a dedicated SURFACE Endpoint — the
+    /// live-transport re-home of `docs/deos/SURFACE-MIGRATION.md` §2(b). It is
+    /// [`Self::spawn_pd_confined`] plus a SECOND `socketpair`: the child keeps
+    /// BOTH its control socket AND the surface socket through confinement (every
+    /// OTHER fd is still closed; file/network/exec are still denied), and the
+    /// body receives the surface socket as a [`UnixStream`] to run its surface
+    /// renderer on. The PARENT gets the compositor's end of the surface Endpoint
+    /// (returned alongside the [`PdProcess`]) — the channel a migrated surface's
+    /// `present`/`route_input` round-trips on (`SurfaceEvent` → `SurfaceFrame`).
+    ///
+    /// This is the channel that makes "the glass follows the cap" real: after a
+    /// migrate, the surface's present/input cross THIS socket to the confined
+    /// child, which renders in its OWN (MMU-isolated) memory and replies a frame.
+    ///
+    /// Fail-closed exactly like [`Self::spawn_pd_confined`]: if confinement
+    /// cannot be applied the child `_exit`s with [`CONFINE_FAILED_EXIT`] before
+    /// the body runs.
+    #[cfg(all(feature = "process-pd-sandbox", unix))]
+    pub fn spawn_pd_confined_with_surface<F>(
+        &self,
+        granted: Vec<CapHandle>,
+        body: F,
+    ) -> Result<(PdProcess, UnixStream), SpawnError>
+    where
+        F: FnOnce(KernelClient, UnixStream, Vec<CapHandle>) -> i32,
+    {
+        // The SURFACE socketpair — the second firmament Endpoint, alongside the
+        // control socketpair `spawn_pd_inner` makes. Created BEFORE the fork so
+        // both ends exist in the parent; the child keeps its end through
+        // confinement, the parent keeps the compositor's end.
+        let mut surf_fds = [0 as RawFd; 2];
+        let rc =
+            unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, surf_fds.as_mut_ptr()) };
+        if rc != 0 {
+            return Err(SpawnError::SocketPair(io::Error::last_os_error()));
+        }
+        let parent_surf_fd = surf_fds[0];
+        let child_surf_fd = surf_fds[1];
+
+        // Spawn with the surface child-fd carried into the confinement keep-list
+        // and handed to the body. `spawn_pd_inner` closes the parent's surface
+        // end in the child and keeps only the granted fds (control + surface).
+        let res = self.spawn_pd_inner_with_extra(
+            granted,
+            child_surf_fd,
+            parent_surf_fd,
+            move |client, surf, granted| {
+                // The body owns the surface socket as a UnixStream (its renderer
+                // Endpoint), plus the kernel client + granted handles.
+                body(client, surf, granted)
+            },
+            true,
+        );
+
+        match res {
+            Ok(pd) => {
+                // Parent keeps the compositor's end of the surface Endpoint.
+                let parent_surf = unsafe { UnixStream::from_raw_fd(parent_surf_fd) };
+                Ok((pd, parent_surf))
+            }
+            Err(e) => {
+                unsafe {
+                    libc::close(parent_surf_fd);
+                    libc::close(child_surf_fd);
+                }
+                Err(e)
+            }
+        }
+    }
+
+    /// The fork core that ALSO carries one extra child fd (the surface Endpoint)
+    /// into the child + the confinement keep-list. Mirrors [`Self::spawn_pd_inner`]
+    /// but hands the body the extra socket and confines keeping BOTH the control
+    /// socket and `child_extra_fd`. `parent_extra_fd` is closed in the CHILD (the
+    /// parent owns that end). Only built under the sandbox feature (its only
+    /// caller is [`Self::spawn_pd_confined_with_surface`]).
+    #[cfg(all(feature = "process-pd-sandbox", unix))]
+    fn spawn_pd_inner_with_extra<F>(
+        &self,
+        granted: Vec<CapHandle>,
+        child_extra_fd: RawFd,
+        parent_extra_fd: RawFd,
+        body: F,
+        confine: bool,
+    ) -> Result<PdProcess, SpawnError>
+    where
+        F: FnOnce(KernelClient, UnixStream, Vec<CapHandle>) -> i32,
+    {
+        let mut fds = [0 as RawFd; 2];
+        let rc = unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, fds.as_mut_ptr()) };
+        if rc != 0 {
+            return Err(SpawnError::SocketPair(io::Error::last_os_error()));
+        }
+        let parent_fd = fds[0];
+        let child_fd = fds[1];
+
+        let pid = unsafe { libc::fork() };
+        if pid < 0 {
+            let e = io::Error::last_os_error();
+            unsafe {
+                libc::close(parent_fd);
+                libc::close(child_fd);
+            }
+            return Err(SpawnError::Fork(e));
+        }
+
+        if pid == 0 {
+            // ── CHILD (the PD process) ──
+            // Close the parent's control + surface ends; keep ours.
+            unsafe {
+                libc::close(parent_fd);
+                libc::close(parent_extra_fd);
+            }
+
+            // THE CONFINEMENT — keep BOTH the control socket AND the surface
+            // Endpoint; close every other fd; drop file/network/exec authority.
+            #[cfg(all(feature = "process-pd-sandbox", unix))]
+            if confine {
+                let c = crate::sandbox::Confinement::endpoint_only(child_fd)
+                    .with_fds([child_extra_fd]);
+                if let Err(e) = crate::sandbox::confine_child(&c) {
+                    eprintln!("[pd] CONFINEMENT FAILED — refusing to run body: {e}");
+                    use std::io::Write as _;
+                    let _ = std::io::stderr().flush();
+                    unsafe { libc::_exit(CONFINE_FAILED_EXIT) };
+                }
+            }
+
+            let client = unsafe { KernelClient::from_raw_fd(child_fd) };
+            let surf = unsafe { UnixStream::from_raw_fd(child_extra_fd) };
+            let code = body(client, surf, granted);
+            use std::io::Write as _;
+            let _ = std::io::stdout().flush();
+            unsafe { libc::_exit(code) };
+        }
+
+        // ── PARENT (the kernel) ──
+        unsafe { libc::close(child_fd) };
+        // NOTE: parent_extra_fd is NOT closed here — the caller
+        // (`spawn_pd_confined_with_surface`) adopts it as the compositor's
+        // surface Endpoint after this returns Ok. We also do NOT close
+        // child_extra_fd in the parent: it was inherited by the child and the
+        // parent's copy must be closed so the child holds the only writer — do
+        // that here.
+        unsafe { libc::close(child_extra_fd) };
+        let kernel_sock = unsafe { UnixStream::from_raw_fd(parent_fd) };
+        Ok(PdProcess { pid, kernel_sock })
+    }
+
     fn spawn_pd_inner<F>(
         &self,
         granted: Vec<CapHandle>,

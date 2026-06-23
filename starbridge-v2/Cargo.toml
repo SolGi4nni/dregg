@@ -163,6 +163,17 @@ dev-surfaces = ["dep:deos-zed", "dep:deos-terminal", "dep:deos-hermes", "dep:deo
 # cockpit build carries it; turning it off gives the disk (RealFs) editor pane.
 firmament = ["deos-zed/firmament"]
 
+# process-pd — the LIVE-TRANSPORT re-home of `migrate` (`docs/deos/SURFACE-MIGRATION.md`
+# §2(b)). Forwards to `dregg-firmament`'s `process-pd` + `process-pd-sandbox`: a
+# surface can migrate to a CONFINED child PD (a forked, OS-sandboxed process whose
+# only channels are its firmament Endpoints — file/network/exec denied), and the
+# surface's present/route_input re-home onto that child's SURFACE Endpoint so the
+# GLASS follows the cap. Unix-only (fork/socketpair/seatbelt-or-LSM); OFF by default
+# (the fast `cargo test` keeps the in-process compositor). `dock/migrate.rs`'s
+# `PresentTransport` is gated on this. Requires `embedded-executor` for the
+# `dregg-firmament` dep + `crate::surface::SurfaceCapability`.
+process-pd = ["embedded-executor", "dregg-firmament/process-pd", "dregg-firmament/process-pd-sandbox"]
+
 # The LIVE-NODE connection — the real HTTP+SSE link to a running dregg node
 # (`NodeClient::Http` + the `/api/events/stream` reader). Pulls `reqwest` (its
 # blocking client runs its own internal runtime on a private thread, so it needs

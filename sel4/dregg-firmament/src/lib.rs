@@ -159,7 +159,9 @@ pub use compositor_pd::{
     LABEL_PRESENT_REFUSED,
 };
 pub use distributed::DistributedBacking;
-pub use host_pd::HostPdBacking;
+pub use host_pd::{HostPdBacking, SurfaceEvent, SurfaceFrame};
+#[cfg(all(feature = "process-pd", unix))]
+pub use host_pd::{serve_one_surface_event, surface_read_framed, surface_write_framed};
 pub use emulated_kernel::{
     EmulatedKernel, IpcError, Message, NotifyCap, ObjectId, ObjectType, ReplyToken, RetypeError,
 };

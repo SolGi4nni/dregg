@@ -174,6 +174,94 @@ pub fn migrate(
     Ok(SurfaceCapability::new(surface_cap.surface(), relocated))
 }
 
+// ─────────────────── THE LIVE TRANSPORT RE-HOME (process-pd) ─────────────────
+//
+// `migrate` above produces the re-homed CAP. This is the OTHER half: once a
+// surface migrates to a confined child PD, its present/route_input round-trips
+// cross the child's firmament SURFACE Endpoint instead of the in-process
+// compositor — the GLASS follows the cap. Gated on `process-pd` (Unix), which
+// brings in the confined-child spawn + the surface Endpoint transport.
+
+#[cfg(all(feature = "process-pd", unix))]
+mod transport {
+    use super::*;
+    use dregg_firmament::{HostPdBacking, SurfaceEvent, SurfaceFrame};
+
+    /// THE GLASS-FOLLOWS-THE-CAP transport: binds a migrated [`SurfaceCapability`]
+    /// (whose `Target` is now `HostPd { pd }`) to the LIVE surface Endpoint of a
+    /// confined child PD, and re-points its present/route_input over that Endpoint.
+    ///
+    /// The compositor builds one of these AFTER [`migrate`] re-mints the cap and
+    /// after the firmament has registered the child's surface Endpoint
+    /// ([`HostPdBacking::register_surface`]). Thereafter a present/input for the
+    /// migrated surface does NOT go to the in-process compositor — it crosses the
+    /// Endpoint to the confined child, which renders in its own MMU-isolated
+    /// memory and returns the frame. The cap's rights gate every round-trip
+    /// through the SAME `granted ⊆ held` law (the host backing's
+    /// `present_over_endpoint`).
+    pub struct PresentTransport {
+        /// The host backing holding the registered surface Endpoint to the child.
+        host: HostPdBacking,
+    }
+
+    /// Why a re-homed present/input failed.
+    #[derive(Debug)]
+    pub enum TransportError {
+        /// The cap is not targeting a host-PD (it was not migrated, or the
+        /// surface Endpoint was never registered for it).
+        NotReHomed,
+        /// The firmament rejected the round-trip (closed Endpoint / over-broad
+        /// rights / malformed frame). Carries the backing's reason.
+        Backing(String),
+    }
+
+    impl PresentTransport {
+        /// Wrap a host backing whose surface Endpoint(s) are already registered.
+        pub fn new(host: HostPdBacking) -> Self {
+            PresentTransport { host }
+        }
+
+        /// PRESENT the migrated surface over the child's Endpoint — the frame the
+        /// confined child rendered crosses back. The `cap` MUST be a re-homed
+        /// surface cap (`Target::HostPd { pd }`); its rights gate the op.
+        pub fn present(
+            &self,
+            cap: &SurfaceCapability,
+            seq: u64,
+        ) -> Result<SurfaceFrame, TransportError> {
+            let pd = self.pd_of(cap)?;
+            self.host
+                .present_over_endpoint(pd, cap.rights(), SurfaceEvent::Present { seq })
+                .map_err(|e| TransportError::Backing(format!("{e:?}")))
+        }
+
+        /// ROUTE an input event to the migrated surface over the child's Endpoint
+        /// — the child folds it and returns the re-rendered frame. The glass
+        /// (rendering) AND the input both now flow through the confined child.
+        pub fn route_input(
+            &self,
+            cap: &SurfaceCapability,
+            code: u64,
+        ) -> Result<SurfaceFrame, TransportError> {
+            let pd = self.pd_of(cap)?;
+            self.host
+                .present_over_endpoint(pd, cap.rights(), SurfaceEvent::Input { code })
+                .map_err(|e| TransportError::Backing(format!("{e:?}")))
+        }
+
+        /// The host-PD a re-homed cap names, or [`TransportError::NotReHomed`].
+        fn pd_of(&self, cap: &SurfaceCapability) -> Result<HostPdId, TransportError> {
+            match cap.authority().target {
+                Target::HostPd { pd } => Ok(pd),
+                _ => Err(TransportError::NotReHomed),
+            }
+        }
+    }
+}
+
+#[cfg(all(feature = "process-pd", unix))]
+pub use transport::{PresentTransport, TransportError};
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -303,5 +391,139 @@ mod tests {
             },
         )
         .is_ok());
+    }
+}
+
+// ───────────── THE FULL LIVE-TRANSPORT E2E (authority + glass), by RUNNING ────
+//
+// The tests above prove the AUTHORITY half (the re-mint + the gate). This module
+// proves the WHOLE move end-to-end on the live transport: a real held surface
+// cap is MIGRATED to a CONFINED child PD, the child's surface Endpoint is
+// re-homed, and present/input round-trips cross the Endpoint to the child — the
+// glass follows the migrated cap. Gated on `process-pd` (Unix); runs with:
+//   cargo test --features process-pd --lib dock::migrate::live_transport -- --nocapture
+#[cfg(all(feature = "process-pd", unix))]
+mod live_transport {
+    use super::transport::PresentTransport;
+    use super::{migrate, MigrationTarget};
+    use crate::surface::{SurfaceCapability, SurfaceId};
+    use dregg_firmament::process_kernel::ProcessKernel;
+    use dregg_firmament::{
+        serve_one_surface_event, AuthRequired, Capability, CellId, HostPdBacking, SurfaceEvent,
+        SurfaceFrame,
+    };
+
+    /// The renderer's deterministic frame digest (same on both sides so the
+    /// compositor can verify the child genuinely rendered the events it received).
+    fn render_digest(state: u64, seq: u64) -> u64 {
+        let mut x = state ^ seq.rotate_left(32);
+        x ^= x >> 30;
+        x = x.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        x ^= x >> 27;
+        x
+    }
+
+    /// FULL E2E: hold a surface cap → migrate it to a confined child PD →
+    /// re-home its surface Endpoint → drive input + present over the Endpoint
+    /// through [`PresentTransport`]. The frames the confined child rendered come
+    /// back. The glass follows the migrated cap.
+    #[test]
+    fn a_held_surface_migrates_and_its_glass_follows_to_a_confined_child() {
+        let kernel = ProcessKernel::new();
+
+        // ── spawn the CONFINED child surface renderer (its only channels are its
+        //    two firmament Endpoints; file/network/exec denied) ──
+        let (pd, parent_surf) = kernel
+            .spawn_pd_confined_with_surface(vec![], |_client, mut surf, _granted| {
+                let mut acc: u64 = 0;
+                let mut seq: u64 = 0;
+                loop {
+                    let cont = serve_one_surface_event(&mut surf, &mut acc, |state, ev| match ev {
+                        SurfaceEvent::Input { code } => {
+                            *state = state.wrapping_mul(31).wrapping_add(code);
+                            seq += 1;
+                            SurfaceFrame {
+                                seq,
+                                digest: render_digest(*state, seq),
+                            }
+                        }
+                        SurfaceEvent::Present { seq: pseq } => {
+                            seq = pseq;
+                            SurfaceFrame {
+                                seq: pseq,
+                                digest: render_digest(*state, pseq),
+                            }
+                        }
+                    });
+                    if !matches!(cont, Ok(true)) {
+                        break;
+                    }
+                }
+                0
+            })
+            .expect("spawn confined surface child");
+
+        // Service the control socket in the background.
+        let k = kernel.clone();
+        let mut ctrl = pd.kernel_sock.try_clone().expect("clone control");
+        let server = std::thread::spawn(move || while k.serve_one(&mut ctrl).unwrap_or(false) {});
+
+        // ── register the child + its surface Endpoint in the host backing ──
+        let mut host = HostPdBacking::new();
+        let pd_id = host.register(
+            pd.kernel_sock.try_clone().expect("clone host"),
+            AuthRequired::Either,
+        );
+        assert!(host.register_surface(pd_id, parent_surf));
+
+        // ── the AUTHORITY half: a real held surface cap, migrated to HostPd{pd} ──
+        let mut bytes = [0u8; 32];
+        bytes[0] = 0x5A;
+        let held = SurfaceCapability::new(
+            SurfaceId(3),
+            Capability::surface(CellId::from_bytes(bytes), AuthRequired::Either),
+        );
+        let migrated = migrate(
+            &held,
+            &MigrationTarget::HostPd {
+                pd: pd_id,
+                rights: AuthRequired::Either,
+            },
+        )
+        .expect("migrate re-mints the cap to the confined child");
+        // Identity preserved; the cap now names the child PD.
+        assert_eq!(migrated.surface(), SurfaceId(3));
+        assert!(migrated.authority().target.is_host_pd());
+
+        // ── the GLASS half: drive input + present over the child's Endpoint ──
+        let transport = PresentTransport::new(host);
+
+        // input crosses to the child; the frame it rendered returns.
+        let f1 = transport
+            .route_input(&migrated, 7)
+            .expect("input crosses to the confined child");
+        let acc = 0u64.wrapping_mul(31).wrapping_add(7);
+        assert_eq!(f1.seq, 1);
+        assert_eq!(f1.digest, render_digest(acc, 1));
+
+        // a present renders the child's surface; the OUTPUT comes back.
+        let f2 = transport
+            .present(&migrated, 99)
+            .expect("present renders the migrated surface in the child");
+        assert_eq!(f2.seq, 99);
+        assert_eq!(f2.digest, render_digest(acc, 99));
+
+        // teardown: drop the transport (closes the surface Endpoint) → child EOFs,
+        // then reap the child (PdProcess::join drops the kernel sock + waitpids).
+        drop(transport);
+        let code = pd.join().expect("reap confined surface child");
+        server.join().unwrap();
+        assert_eq!(code, 0);
+
+        println!(
+            "E2E: a held surface MIGRATED to a confined child PD and its GLASS \
+             followed — input + present crossed the firmament Endpoint, the \
+             child rendered, the frames returned. (づ｡◕‿‿◕｡)づ"
+        );
     }
 }
