@@ -74,6 +74,18 @@ libservo = [
     # the `HeaderMap` types UNIFY (a second `http` would make our header a different
     # type than servo's `Response.headers`). See `src/netcap_http.rs`.
     "dep:http",
+    # ── THE TLS LEG of the cap-gated byte socket (`https://`). ──────────────────────
+    # `rustls` is ALREADY in servo-net's graph (via `hyper-rustls`/`tokio-rustls`),
+    # built with the `aws_lc_rs` crypto provider — so this adds NO new heavy dep and
+    # NO version conflict: we pin the EXACT in-graph versions so a single `rustls`
+    # (and its `aws-lc-rs` provider) is shared. After the cap gate admits an `https`
+    # origin and the real `TcpStream` connects, `netcap_http` wraps it in a rustls
+    # `ClientConnection` keyed on the SNI host and does the HTTP/1.1 GET over the
+    # encrypted `StreamOwned`. `webpki-roots` supplies the production trust anchors;
+    # `rustls-pki-types` is the shared `ServerName`/`CertificateDer` vocabulary.
+    "dep:rustls",
+    "dep:rustls-pki-types",
+    "dep:webpki-roots",
     # The `surfman::Connection` the real `RenderingContext::connection()` returns.
     # servo-paint's `register_rendering_context` (`paint.rs:236`) UNCONDITIONALLY
     # calls `rendering_context.connection().expect("Failed to get connection")` then
@@ -184,6 +196,24 @@ surfman = { version = "0.11", optional = true }
 # (`HeaderValue` / `CONTENT_TYPE`). Pinned to servo-net's `http 1.4` so the
 # `HeaderMap` unifies with servo's `Response.headers`. Only linked on libservo.
 http = { version = "1.4", optional = true }
+
+# ── THE TLS LEG (https over the cap-gated socket). ───────────────────────────────
+# `rustls` ALREADY resolves in servo-net's graph at 0.23.x (via hyper-rustls /
+# tokio-rustls), built with the `aws_lc_rs` crypto provider. We depend on the SAME
+# version + the SAME `aws_lc_rs`/`tls12` features so cargo unifies to ONE `rustls`
+# (and ONE `aws-lc-rs`) — no second TLS stack, no version conflict. `default-features
+# = false` + explicit features keeps us from silently flipping servo's selection;
+# `aws_lc_rs` matches what hyper-rustls already turns on. The handler wraps the
+# cap-admitted `TcpStream` in a `rustls::ClientConnection` + `StreamOwned` and does
+# the HTTP/1.1 GET over it for `https://`. Only linked on libservo.
+rustls = { version = "0.23", default-features = false, features = ["std", "aws_lc_rs", "tls12", "logging"], optional = true }
+# The shared `ServerName` / `CertificateDer` / `UnixTime` vocabulary (rustls re-exports
+# `pki_types`); pinned to servo-net's `1.14` so the types unify with rustls's copy.
+rustls-pki-types = { version = "1.14", optional = true }
+# The Mozilla CA trust anchors for the PRODUCTION https verifier (a cap-admitted
+# public https origin is verified against these real roots — no danger-accept in the
+# default path). The SAME `webpki-roots 1.0` already in servo-net's graph.
+webpki-roots = { version = "1.0", optional = true }
 
 [dev-dependencies]
 # (tests live inline + in tests/)

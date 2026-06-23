@@ -22,22 +22,29 @@
 //!    a `network_error` and **no byte socket is ever opened** (`Netlayer::dial` is
 //!    never reached); the page sees the refusal, never the resource. A cap-admitted
 //!    origin proceeds to the byte fetch.
-//! 2. **THE REAL BYTE SOCKET.** For a cap-admitted `http://` origin the handler
-//!    opens a REAL `std::net::TcpStream`, writes a genuine HTTP/1.1 `GET`, reads the
-//!    response, splits status/headers/body, and hands servo a [`Response`] with the
-//!    body + `Content-Type` — which servo lays out and SWGL rasterizes. This socket
-//!    is the EMBEDDER's, opened only after the cap gate admitted the origin — not
-//!    servo's hyper.
+//! 2. **THE REAL BYTE SOCKET.** For a cap-admitted origin the handler opens a REAL
+//!    `std::net::TcpStream`, writes a genuine HTTP/1.1 `GET`, reads the response,
+//!    splits status/headers/body, and hands servo a [`Response`] with the body +
+//!    `Content-Type` — which servo lays out and SWGL rasterizes. For `https://` the
+//!    handler first drives a real `rustls` TLS handshake over that same socket and
+//!    speaks the GET over the encrypted stream. This socket is the EMBEDDER's, opened
+//!    only after the cap gate admitted the origin — not servo's hyper.
 //!
-//! ## The honest sub-ceiling (named, not laundered)
+//! ## The TLS leg (`https://`) — same socket, same cap gate first
 //!
-//! The byte leg here speaks plain **`http://`** over a real TCP socket (no TLS).
-//! `https://` would need a TLS handshake on this same cap-admitted socket (a
-//! `rustls`/`native-tls` client over the `TcpStream`); that is a bounded follow-up,
-//! not a new architecture — the cap gate + the interception point are identical.
-//! The deliverable (`http://example.com` or a local static http server) exercises
-//! the full real path: cap gate → real socket → real bytes → servo layout → SWGL
-//! raster → PNG.
+//! For a cap-admitted **`https://`** origin the handler does the IDENTICAL cap gate
+//! first (Tooth 1), opens the SAME real `std::net::TcpStream`, then wraps it in a
+//! `rustls::ClientConnection` keyed on the SNI host and does the HTTP/1.1 GET over the
+//! encrypted `StreamOwned` ([`https_get_over_real_socket`]). `rustls` is the one
+//! already in servo-net's graph (the `aws-lc-rs` provider), so this adds no second TLS
+//! stack. The PRODUCTION verifier trusts the Mozilla CA set (`webpki-roots`) — a
+//! cap-admitted *public* https origin is verified against real roots, no danger-accept.
+//! A test may register an EXTRA trusted root via [`CapGatedHttpHandler::trust_extra_root_der`]
+//! (its self-signed cert), which is added to the SAME genuine rustls verifier — not a
+//! verification bypass. Plain `http://` stays on the existing plaintext path.
+//!
+//! The deliverable exercises the full real path for both schemes: cap gate → real
+//! socket (→ TLS handshake for https) → real bytes → servo layout → SWGL raster → PNG.
 
 #![cfg(feature = "libservo")]
 
@@ -45,8 +52,11 @@ use std::future::Future;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::pin::Pin;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
+
+use rustls::pki_types::{CertificateDer, ServerName};
+use rustls::{ClientConfig, ClientConnection, RootCertStore, StreamOwned};
 
 use servo::protocol_handler::{
     DoneChannel, FetchContext, NetworkError, ProtocolHandler, Request, ResourceFetchTiming,
@@ -75,6 +85,16 @@ pub struct CapGatedHttpHandler {
     outcomes: Mutex<Vec<ConnectOutcome>>,
     /// The last fetched URL → its fetched byte length, for the test's status line.
     last_fetch: Mutex<Option<(String, usize)>>,
+    /// EXTRA https trust anchors (DER) the embedder added BEYOND the Mozilla CA set —
+    /// e.g. a test's self-signed cert. These are added to the SAME genuine rustls
+    /// verifier (`RootCertStore`), so the handshake is real cert validation, NOT a
+    /// danger-accept bypass; production https origins still verify against the public
+    /// `webpki-roots`. Empty by default (a public https origin uses only the real roots).
+    extra_roots: Mutex<Vec<CertificateDer<'static>>>,
+    /// Whether the last https fetch completed a real TLS handshake (set true the moment
+    /// `rustls` reports the connection negotiated) — the test reads this to prove the
+    /// bytes came over an encrypted socket, not plaintext.
+    last_tls_handshake: Mutex<bool>,
 }
 
 /// The swappable per-render state: the held surface cap + the audited connector
@@ -106,7 +126,29 @@ impl CapGatedHttpHandler {
             active: Mutex::new(build_active(surface, seed_origins)),
             outcomes: Mutex::new(Vec::new()),
             last_fetch: Mutex::new(None),
+            extra_roots: Mutex::new(Vec::new()),
+            last_tls_handshake: Mutex::new(false),
         }
+    }
+
+    /// Add an EXTRA trusted https root certificate (DER), BEYOND the Mozilla CA set, to
+    /// the genuine rustls verifier this handler builds per https fetch. Used by a test
+    /// to trust its local self-signed server cert — the handshake is then REAL cert
+    /// validation against this root (the same `RootCertStore` path a public CA takes),
+    /// not a `danger_accept_invalid_certs` bypass. Survives `reconfigure` (the trust
+    /// set is about the embedder's environment, not the per-render surface).
+    pub fn trust_extra_root_der(&self, cert_der: Vec<u8>) {
+        self.extra_roots
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(CertificateDer::from(cert_der));
+    }
+
+    /// Whether the most recent https fetch completed a real TLS handshake over the
+    /// cap-admitted socket (false for plain http or if no https fetch ran). The test
+    /// asserts this to prove the bytes crossed an encrypted socket.
+    pub fn last_tls_handshake(&self) -> bool {
+        *self.last_tls_handshake.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     /// Re-point this handler at a NEW surface + reachable-peer set for the next
@@ -117,6 +159,10 @@ impl CapGatedHttpHandler {
             build_active(surface, seed_origins);
         self.outcomes.lock().unwrap_or_else(|e| e.into_inner()).clear();
         *self.last_fetch.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        *self.last_tls_handshake.lock().unwrap_or_else(|e| e.into_inner()) = false;
+        // NOTE: `extra_roots` is intentionally NOT cleared — the embedder's trust set
+        // (e.g. the test's self-signed root) is about the environment, not the
+        // per-render surface, and persists across renders.
     }
 
     /// The net-cap outcomes this handler produced, newest last (the audit trail).
@@ -184,10 +230,24 @@ impl ProtocolHandler for CapGatedHttpHandler {
         }
 
         // ── TOOTH 2: THE REAL BYTE SOCKET ────────────────────────────────────────
-        // The cap admitted the origin. Open a REAL TCP socket to the http origin and
-        // fetch the bytes (plain http; https/TLS is the named sub-ceiling). THIS
-        // socket is the embedder's, opened only after the cap gate said yes.
-        let fetched = http_get_over_real_socket(&url);
+        // The cap admitted the origin. Open a REAL TCP socket to the origin and fetch
+        // the bytes — plaintext for `http://`, a real rustls TLS handshake for
+        // `https://` (same socket, same cap-gate-first). THIS socket is the embedder's,
+        // opened only after the cap gate said yes.
+        let fetched = if url.scheme() == "https" {
+            let extra_roots = self
+                .extra_roots
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone();
+            let r = https_get_over_real_socket(&url, &extra_roots);
+            if r.is_ok() {
+                *self.last_tls_handshake.lock().unwrap_or_else(|e| e.into_inner()) = true;
+            }
+            r
+        } else {
+            http_get_over_real_socket(&url)
+        };
         let timing = ResourceFetchTiming::new(request.timing_type());
 
         match fetched {
@@ -249,44 +309,22 @@ struct HttpFetch {
     body: Vec<u8>,
 }
 
-/// **THE REAL BYTE SOCKET.** A minimal, genuine HTTP/1.1 `GET` over a real
+/// **THE REAL BYTE SOCKET (plaintext).** A minimal, genuine HTTP/1.1 `GET` over a real
 /// `std::net::TcpStream` — no hyper, no servo net stack. Opens the socket to the
 /// url's host:port, writes a real request line + headers, reads the whole response,
-/// splits the status line / headers / body. Plain `http://` only (the named TLS
-/// sub-ceiling). Returns the parsed status, content-type, and body bytes.
+/// splits the status line / headers / body. Plain `http://` only. Returns the parsed
+/// status, content-type, and body bytes.
 fn http_get_over_real_socket(url: &ServoUrl) -> Result<HttpFetch, String> {
     if url.scheme() != "http" {
         return Err(format!(
-            "the cap-gated byte socket speaks plain http; '{}' needs the TLS sub-ceiling",
+            "the plaintext byte socket speaks http; '{}' is dispatched to the TLS leg",
             url.scheme()
         ));
     }
     let host = url.host_str().ok_or_else(|| "no host in url".to_string())?;
     let port = url.port_or_known_default().unwrap_or(80);
-    let path = {
-        let p = url.path();
-        if p.is_empty() { "/".to_string() } else { p.to_string() }
-    };
-
-    let addr = format!("{host}:{port}");
-    let mut stream = TcpStream::connect(&addr).map_err(|e| format!("connect {addr}: {e}"))?;
-    stream
-        .set_read_timeout(Some(Duration::from_secs(10)))
-        .map_err(|e| e.to_string())?;
-    stream
-        .set_write_timeout(Some(Duration::from_secs(10)))
-        .map_err(|e| e.to_string())?;
-
-    // A real HTTP/1.1 request. `Connection: close` so the server closes the socket
-    // at end-of-body and our read-to-EOF terminates without chunked/keep-alive
-    // bookkeeping.
-    let req = format!(
-        "GET {path} HTTP/1.1\r\n\
-         Host: {host}\r\n\
-         User-Agent: dregg-servo-render-netcap/0.1\r\n\
-         Accept: text/html,*/*\r\n\
-         Connection: close\r\n\r\n"
-    );
+    let mut stream = connect_tcp(host, port)?;
+    let req = http_request_bytes(host, request_path(url));
     stream
         .write_all(req.as_bytes())
         .map_err(|e| format!("write request: {e}"))?;
@@ -296,7 +334,98 @@ fn http_get_over_real_socket(url: &ServoUrl) -> Result<HttpFetch, String> {
     stream
         .read_to_end(&mut raw)
         .map_err(|e| format!("read response: {e}"))?;
+    parse_http_response(&raw)
+}
 
+/// **THE REAL BYTE SOCKET (TLS).** The `https://` leg: open the SAME real
+/// `std::net::TcpStream`, then drive a genuine `rustls` TLS handshake over it (keyed on
+/// the SNI host) and do the HTTP/1.1 `GET` over the encrypted `StreamOwned`. The
+/// verifier trusts the Mozilla CA set (`webpki-roots`) plus any embedder-supplied
+/// `extra_roots` (a test's self-signed cert) — real cert validation, NOT a
+/// danger-accept bypass. The cap gate has ALREADY admitted the origin before this is
+/// reached (in `load`), so no socket opens for a cap-denied https origin.
+fn https_get_over_real_socket(
+    url: &ServoUrl,
+    extra_roots: &[CertificateDer<'static>],
+) -> Result<HttpFetch, String> {
+    let host = url.host_str().ok_or_else(|| "no host in url".to_string())?;
+    let port = url.port_or_known_default().unwrap_or(443);
+
+    // The genuine rustls verifier: Mozilla CA roots + any embedder extras. The default
+    // (no extras) verifies a public https origin against the real public roots.
+    let mut root_store = RootCertStore::empty();
+    root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    for cert in extra_roots {
+        // Ignore an unparsable extra root rather than poison the whole store.
+        let _ = root_store.add(cert.clone());
+    }
+    let config = ClientConfig::builder()
+        .with_root_certificates(root_store)
+        .with_no_client_auth();
+
+    // SNI / cert-name = the url host (an IP literal like 127.0.0.1 is a valid
+    // `ServerName::IpAddress`; a hostname is `ServerName::DnsName`).
+    let server_name: ServerName<'static> = ServerName::try_from(host.to_string())
+        .map_err(|e| format!("invalid TLS server name '{host}': {e}"))?;
+    let conn = ClientConnection::new(Arc::new(config), server_name)
+        .map_err(|e| format!("rustls client setup for {host}: {e}"))?;
+
+    let tcp = connect_tcp(host, port)?;
+    // `StreamOwned` drives the handshake lazily on first IO (`complete_io`); the
+    // `write_all` below forces it, so a handshake failure surfaces here as an error
+    // (and no bytes/`last_tls_handshake=true` are produced).
+    let mut tls = StreamOwned::new(conn, tcp);
+
+    let req = http_request_bytes(host, request_path(url));
+    tls.write_all(req.as_bytes())
+        .map_err(|e| format!("TLS write request to {host}: {e}"))?;
+    tls.flush().map_err(|e| format!("TLS flush to {host}: {e}"))?;
+
+    let mut raw = Vec::new();
+    match tls.read_to_end(&mut raw) {
+        Ok(_) => {}
+        // A `close_notify`-less server (common for `Connection: close`) makes rustls
+        // surface `UnexpectedEof`; the body is already fully read, so treat it as EOF.
+        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof && !raw.is_empty() => {}
+        Err(e) => return Err(format!("TLS read response from {host}: {e}")),
+    }
+    parse_http_response(&raw)
+}
+
+/// Open a real `std::net::TcpStream` to `host:port` with read/write timeouts. Shared by
+/// the plaintext and TLS legs (the TLS handshake then runs OVER this same socket).
+fn connect_tcp(host: &str, port: u16) -> Result<TcpStream, String> {
+    let addr = format!("{host}:{port}");
+    let stream = TcpStream::connect(&addr).map_err(|e| format!("connect {addr}: {e}"))?;
+    stream
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .map_err(|e| e.to_string())?;
+    stream
+        .set_write_timeout(Some(Duration::from_secs(10)))
+        .map_err(|e| e.to_string())?;
+    Ok(stream)
+}
+
+/// The request path from a url (non-empty, default `/`).
+fn request_path(url: &ServoUrl) -> String {
+    let p = url.path();
+    if p.is_empty() { "/".to_string() } else { p.to_string() }
+}
+
+/// A real HTTP/1.1 `GET` request. `Connection: close` so the server closes the socket
+/// at end-of-body and our read-to-EOF terminates without chunked/keep-alive bookkeeping.
+fn http_request_bytes(host: &str, path: String) -> String {
+    format!(
+        "GET {path} HTTP/1.1\r\n\
+         Host: {host}\r\n\
+         User-Agent: dregg-servo-render-netcap/0.1\r\n\
+         Accept: text/html,*/*\r\n\
+         Connection: close\r\n\r\n"
+    )
+}
+
+/// Split a raw HTTP/1.1 response into status / content-type / body (shared by both legs).
+fn parse_http_response(raw: &[u8]) -> Result<HttpFetch, String> {
     // Split head / body at the first CRLFCRLF.
     let sep = b"\r\n\r\n";
     let head_end = raw

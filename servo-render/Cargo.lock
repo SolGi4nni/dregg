@@ -8129,12 +8129,15 @@ dependencies = [
  "glow",
  "http 1.4.2",
  "image",
+ "rustls",
+ "rustls-pki-types",
  "servo",
  "servo-paint-api",
  "starbridge-web-surface",
  "surfman",
  "swgl",
  "url",
+ "webpki-roots",
  "webrender_api",
 ]
 
