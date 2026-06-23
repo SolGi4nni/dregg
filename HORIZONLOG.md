@@ -183,8 +183,16 @@ restore at every reentrant site (window.rs/events.rs); VERIFIED no `window.rs:29
 frames. REMAINING BLOCKER (precisely pinpointed, app-wiring not gpui_web): the cockpit uses
 `gpui_component::input::InputState` (URL bar) but never wraps its window root in `gpui_component::Root` →
 `Root::read` `.unwrap()`s None + ABORTS at `gpui-component/crates/ui/src/root.rs:148`; under wasm
-`panic=abort` that poisons the App `RefCell` (the borrow cascade is a SYMPTOM). Live web cockpit = install a
-`Root` wrapper in the web boot (`cockpit_web::WebCockpitRoot`) — a tractable cockpit-wiring fix.
+`panic=abort` that poisons the App `RefCell` (the borrow cascade is a SYMPTOM). LIVE WEB COCKPIT CLOSED
+`f086a803b`: `boot_cockpit` now sets `gpui_component::Root::new(web_root, …).bordered(false)` as the gpui_web
+window root → `Root::read` finds a real Root, `InputState` works, no abort. Headless Chrome: VERDICT
+SUSTAINED — 1006 rAF frames, 37/38 non-blank, 3 distinct fingerprints (live content), no abort/panic/borrow
+cascade. PNG `cockpit-gpui-web-live.png` = the real painted cockpit + editor (`/deos/main.rs`) + chat dock.
+- GATE-KEEPER (native-full build) — NOT broken: the `dregg_rt_string_cstr defined multiple times` the
+  web-mount lane hit was the sibling FFI lane's TRANSIENT mid-edit working-tree (`dregg-lean-ffi/lean_init.c`
+  /`build.rs` uncommitted mid-regen), since self-healed. Confirmed `2026-06-23` by an actual BUILD+LINK:
+  `cd starbridge-v2 && cargo build --features native-full --bin starbridge-v2` → Finished 57s, links clean
+  (the native cockpit also ran earlier for the self-hosting bakes). The native desktop builds + runs.
 - ⚠ OPS: disk hit ~117Mi free during builds; the lane reclaimed 72G of `target/debug/incremental`. Now
   ~44Gi free on a 100%-used volume — TIGHT. Heavy parallel rust builds can refill it; prune build caches.
 
