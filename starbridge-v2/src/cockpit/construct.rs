@@ -380,6 +380,9 @@ impl Cockpit {
             // first render (`ensure_pane_group`).
             pane_group: None,
             active_pane: None,
+            // SURFACE MIGRATION: no surfaces torn off at boot (the single-window
+            // cockpit). The registry fills as the operator pops panes out.
+            window_registry: WindowRegistry::new(),
             // THE ⚙ DEVTOOLS surface boots on the NETWORK sub-tab with an empty
             // filter (the whole data plane in view).
             devtools_sub: 0,

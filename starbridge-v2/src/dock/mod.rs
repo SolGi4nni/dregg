@@ -30,6 +30,12 @@ pub mod pane;
 pub mod pane_group;
 pub mod surface;
 
+// SURFACE MIGRATION (the Local→Surface tear-off): a dock pane pops OUT into its
+// own OS window with its surface identity preserved — the first concrete
+// migration of `docs/deos/SURFACE-MIGRATION.md`. gpui-only (no host-type
+// dependency); the cockpit drives it through a stored render callback.
+pub mod tearoff;
+
 // The self-hosting dev-loop surfaces (the light, gpui-native ones): a real editor
 // + a real terminal as dock panes, so deos development happens INSIDE deos. Chat
 // (matrix-rust-sdk's heavy async tree) is deliberately NOT statically linked here —
@@ -48,3 +54,4 @@ pub use pane_group::{
     HANDLE_HITBOX_SIZE,
 };
 pub use surface::{CockpitSurface, SurfaceId};
+pub use tearoff::{TornOffWindow, TornSurfaceId, WindowRegistry};

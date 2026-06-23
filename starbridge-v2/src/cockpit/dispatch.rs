@@ -125,6 +125,11 @@ impl Cockpit {
             CommandId::ShellOverpaintFocused => self.shell_overpaint_focused(cx),
             CommandId::ShellInputSteal => self.shell_input_steal(cx),
 
+            // SURFACE MIGRATION — the Local→Surface tear-off (the active surface
+            // pops into its own OS window; pop-back closes it). Windowed-only.
+            CommandId::TearOffActiveSurface => self.tear_off_active_tab(cx),
+            CommandId::PopBackActiveSurface => self.pop_back_active_tab(cx),
+
             CommandId::ReplayStepBack => self.replay_step_back(cx),
             CommandId::ReplayStepForward => self.replay_step_forward(cx),
             CommandId::ReplayToGenesis => self.replay_to_genesis(cx),

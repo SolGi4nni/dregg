@@ -47,6 +47,7 @@ pub(crate) use gpui_component::{Selectable, Sizable};
 // side-by-side behind the draggable `PaneAxisElement` divider.
 pub(crate) use starbridge_v2::dock::{
     ActivePaneDecorator, CockpitSurface, Pane, PaneGroup, SplitDirection, SurfaceId as DockSurfaceId,
+    WindowRegistry,
 };
 
 pub(crate) use crate::views::{pill, section_title, theme};
@@ -912,6 +913,17 @@ pub struct Cockpit {
     /// target + the active-pane border anchor. Kept in sync as panes are
     /// activated/split. `None` until the group is seeded.
     active_pane: Option<Entity<Pane>>,
+
+    // --- SURFACE MIGRATION (the Local→Surface tear-off) ---------------------
+    /// THE WINDOW REGISTRY — the record of which surfaces are currently TORN OFF
+    /// into their own OS windows (`docs/deos/SURFACE-MIGRATION.md`, the first
+    /// concrete migration). A tear-off relocates a surface along the firmament
+    /// distance axis from `Surface`-in-the-cockpit to its OWN `Surface` window,
+    /// identity preserved (the same [`Tab`] body over the same cell). The cockpit
+    /// drives `tear_off`/`pop_back` through this; an empty registry is the
+    /// single-window cockpit (the headless bake never tears off). See
+    /// [`Self::tear_off_tab`].
+    window_registry: WindowRegistry,
 
     // --- THE ⚙ DEVTOOLS surface ---------------------------------------------
     /// Which DEVTOOLS inspector sub-tab is open, as a `u8` index

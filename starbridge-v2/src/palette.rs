@@ -117,6 +117,16 @@ pub enum CommandId {
     /// ADOS dev-loop made visible. (A no-op if dev-surfaces is off.)
     OpenAgentPane,
 
+    // --- SURFACE MIGRATION (the Local→Surface tear-off) ---
+    /// TEAR OFF the active surface into its own OS window — the Local→Surface
+    /// migration: relocate the surface along the firmament distance axis from
+    /// composited-in-the-cockpit to its own window, identity preserved (the same
+    /// cell, the same body). Windowed-only; a no-op in the headless bake.
+    TearOffActiveSurface,
+    /// POP BACK the active surface's torn-off window into the dock (the inverse
+    /// Surface-window → Surface-in-dock migration): close the second OS window.
+    PopBackActiveSurface,
+
     // --- the cap-first SHELL / compositor (surfaces over real cells) ---
     /// Open a cap-confined surface (window) viewing the selected cell.
     ShellOpenSelected,
@@ -218,7 +228,8 @@ impl CommandId {
             ClerkMint | ClerkAttenuate | ClerkDelegate | ClerkDischarge => Category::Clerk,
             ShellOpenSelected | ShellFocusFront | ShellCloseFocused | ShellCycleLayout
             | ShellMinimizeFocused | ShellShareFocused | ShellOverShareFocused
-            | ShellPresentFocused | ShellOverpaintFocused | ShellInputSteal => Category::Shell,
+            | ShellPresentFocused | ShellOverpaintFocused | ShellInputSteal
+            | TearOffActiveSurface | PopBackActiveSurface => Category::Shell,
             DebugRetargetSelected => Category::Debug,
             SelectImage => Category::Inspect,
             Dismiss => Category::Palette,
@@ -294,6 +305,8 @@ impl CommandId {
             ShellPresentFocused => "Shell: present the focused surface (T1∧T2∧T3 commits)",
             ShellOverpaintFocused => "Shell: ⚠ overpaint another surface's region (T1 REJECT)",
             ShellInputSteal => "Shell: ⚠ steal input focus (T3 REJECT)",
+            TearOffActiveSurface => "Shell: ↗ tear off the active surface into its own window (Local→Surface migration, identity preserved)",
+            PopBackActiveSurface => "Shell: ↩ pop the active surface back into the dock (close its torn-off window)",
             ReplayStepBack => "Replay: step back one turn",
             ReplayStepForward => "Replay: step forward one turn",
             ReplayToGenesis => "Replay: jump to genesis",
@@ -386,6 +399,8 @@ impl CommandId {
             ShellPresentFocused => "present paint frame surface composite commit scene verified t1 t2 t3",
             ShellOverpaintFocused => "overpaint region reject non-overlap t1 amplify paint another scene security",
             ShellInputSteal => "input steal focus keystroke reject t3 route misroute volition scene security",
+            TearOffActiveSurface => "tear off pop out window detach surface migration firmament distance relocate move multi-window split-out identity preserved local surface",
+            PopBackActiveSurface => "pop back dock reattach close window torn-off surface migration return home merge",
             ReplayStepBack => "rewind previous undo back",
             ReplayStepForward => "advance next redo forward",
             ReplayToGenesis => "start beginning empty zero",
@@ -470,6 +485,8 @@ pub fn all_commands() -> Vec<Command> {
         ShellOpenSelected, ShellFocusFront, ShellCloseFocused, ShellCycleLayout,
         ShellMinimizeFocused, ShellShareFocused, ShellOverShareFocused,
         ShellPresentFocused, ShellOverpaintFocused, ShellInputSteal,
+        // SURFACE MIGRATION — the Local→Surface tear-off (pop a pane into its own window)
+        TearOffActiveSurface, PopBackActiveSurface,
         // the A1 IDE developer surfaces (editor buffer + terminal)
         BufferType, BufferCommit, BufferReadOnlyWrite,
         TerminalRunInMandate, TerminalRunOutOfMandate,

@@ -235,6 +235,59 @@ impl Cockpit {
                 );
             }
 
+            // The ↗ POP OUT control — SURFACE MIGRATION (Local→Surface): tear the
+            // pane's ACTIVE surface off into its own OS window, identity preserved.
+            // It TOGGLES: while the surface is torn off it reads "↩ pop in" and
+            // closes the window (the inverse migration). Drives the cockpit's
+            // `tear_off_tab` / `pop_back_tab` (deferred, so the window op runs with
+            // the app at rest). The torn-off window renders the same body over the
+            // same cell. A no-op in the headless bake (no second window opens there).
+            {
+                let weak = weak.clone();
+                // The active surface's tab + whether it is currently torn off (read
+                // through the host so the control's label reflects live state).
+                let pane_tab = pane
+                    .active_item()
+                    .map(|s| Tab::from_index(s.item_id().as_u64() as usize));
+                let is_torn = pane_tab
+                    .and_then(|t| weak.upgrade())
+                    .map(|c| c.read(cx).tab_is_torn_off(pane_tab.unwrap()))
+                    .unwrap_or(false);
+                row = row.child(
+                    div()
+                        .id("pane-popout")
+                        .px_2()
+                        .py_1()
+                        .rounded_md()
+                        .bg(theme::panel())
+                        .text_xs()
+                        .text_color(theme::accent())
+                        .cursor_pointer()
+                        .hover(|s| s.bg(theme::border()))
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |pane: &mut Pane, _ev, _window, cx| {
+                                // Toggle the surface THIS pane is showing between
+                                // its own window and the dock (a split pane may show
+                                // a different tab than the cockpit's active one).
+                                let tab = pane
+                                    .active_item()
+                                    .map(|s| Tab::from_index(s.item_id().as_u64() as usize));
+                                if let Some(tab) = tab {
+                                    let _ = weak.update(cx, |cockpit, cx| {
+                                        if cockpit.tab_is_torn_off(tab) {
+                                            cockpit.pop_back_tab(tab, cx);
+                                        } else {
+                                            cockpit.tear_off_tab_deferred(tab, cx);
+                                        }
+                                    });
+                                }
+                            }),
+                        )
+                        .child(if is_torn { "↩ pop in" } else { "↗ pop out" }),
+                );
+            }
+
             for (ix, item) in pane.items().iter().enumerate() {
                 let is_active = ix == active;
                 let label = item.tab_label();
@@ -522,6 +575,108 @@ impl Cockpit {
             }
             row.into_any_element()
         });
+    }
+
+    // === SURFACE MIGRATION — the Local→Surface tear-off ====================
+    // A dock pane pops OUT into its own OS window, the surface IDENTITY preserved
+    // (`docs/deos/SURFACE-MIGRATION.md`, the first concrete migration). The torn-
+    // off window re-renders the SAME tab body over the SAME cell through the SAME
+    // `panel_for_tab` re-entry the in-dock `TabSurface` uses — so it is a live
+    // MIRROR of the surface in a second window, not a copy of its state. The dock
+    // pane is never removed (non-destructive); pop-back just closes the window.
+
+    /// TEAR OFF the cockpit's CURRENTLY-ACTIVE tab into its own OS window — the
+    /// Local→Surface migration on the active surface. Driven by the ⌘K command /
+    /// the pane "↗ pop out" control. Deferred so it runs with a live `&mut Window`
+    /// AFTER the current update unwinds (the same reason the dev-pane opens defer:
+    /// `dispatch` holds only a `Context`, and opening a window re-enters the app).
+    pub(crate) fn tear_off_active_tab(&mut self, cx: &mut Context<Self>) {
+        let tab = self.active_tab();
+        self.tear_off_tab_deferred(tab, cx);
+    }
+
+    /// Defer the tear-off of `tab` so it opens with the app at rest (a window open
+    /// must not run inside the cockpit's own in-flight update). Re-enters the
+    /// cockpit on the deferred app pass and calls [`Self::tear_off_tab`].
+    pub(crate) fn tear_off_tab_deferred(&mut self, tab: Tab, cx: &mut Context<Self>) {
+        let weak = cx.entity().downgrade();
+        cx.defer(move |app: &mut App| {
+            let _ = weak.update(app, |this, cx| this.tear_off_tab(tab, cx));
+        });
+    }
+
+    /// TEAR OFF `tab` into its own OS window NOW (a live app pass). Mints a window
+    /// whose root renders `tab`'s body via the host re-entry — the SAME body, over
+    /// the SAME cell, the dock pane showed (identity preserved). Idempotent in the
+    /// surface identity: a second tear-off of an already-torn `tab` re-focuses the
+    /// existing window. Records the window in [`Self::window_registry`]. A platform
+    /// refusal is surfaced fail-closed in the outcome banner (nothing is recorded).
+    pub(crate) fn tear_off_tab(&mut self, tab: Tab, cx: &mut Context<Self>) {
+        // Drop any windows the user closed via the titlebar before we decide.
+        self.window_registry.prune_closed(cx);
+
+        let id = DockSurfaceId(tab.index() as u64);
+        // The render callback is the identity-preserving seam: it re-enters THIS
+        // cockpit (weak handle) and dispatches the SAME `panel_for_tab(tab)` the
+        // in-dock `TabSurface` calls — so the torn-off window paints the live
+        // surface, never a snapshot. Cloning the weak handle keeps the window from
+        // retaining the cockpit.
+        let weak = cx.entity().downgrade();
+        let label = tab.label();
+        let render = move |_window: &mut Window, app: &mut App| -> gpui::AnyElement {
+            weak.update(app, |cockpit, cx| cockpit.panel_for_tab(tab, cx))
+                .unwrap_or_else(|_| {
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .size_full()
+                        .text_color(theme::muted())
+                        .child(SharedString::from(label))
+                        .into_any_element()
+                })
+        };
+
+        match self.window_registry.tear_off(id, label, render, cx) {
+            Ok(_handle) => {
+                let torn = self.window_registry.len();
+                self.last_outcome = Some(format!(
+                    "↗ tore off {label} into its own window — surface identity preserved \
+                     (Local→Surface migration; {torn} torn-off window{})",
+                    if torn == 1 { "" } else { "s" }
+                ));
+            }
+            Err(e) => {
+                self.last_outcome = Some(format!("could not tear off {label}: {e}"));
+            }
+        }
+        cx.notify();
+    }
+
+    /// POP BACK the active tab's torn-off window (the inverse Surface-window →
+    /// Surface-in-dock migration): close the OS window, the surface lives only in
+    /// the dock again. A no-op (with an honest banner) if it is not torn off.
+    pub(crate) fn pop_back_active_tab(&mut self, cx: &mut Context<Self>) {
+        let tab = self.active_tab();
+        self.pop_back_tab(tab, cx);
+    }
+
+    /// POP BACK `tab`'s torn-off window if open. Returns whether one was closed.
+    pub(crate) fn pop_back_tab(&mut self, tab: Tab, cx: &mut Context<Self>) {
+        let id = DockSurfaceId(tab.index() as u64);
+        let label = tab.label();
+        if self.window_registry.pop_back(id, cx) {
+            self.last_outcome = Some(format!("↩ popped {label} back into the dock"));
+        } else {
+            self.last_outcome = Some(format!("{label} is not torn off (nothing to pop back)"));
+        }
+        cx.notify();
+    }
+
+    /// Whether `tab` is currently torn off into its own window (drives the pane
+    /// control's ↗/↩ label so it toggles pop-out ⇄ pop-back).
+    pub(crate) fn tab_is_torn_off(&self, tab: Tab) -> bool {
+        self.window_registry.is_torn_off(DockSurfaceId(tab.index() as u64))
     }
 
     /// THE HOME panel — the warm LANDING portal (the boot view). Renders the
