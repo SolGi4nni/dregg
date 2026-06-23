@@ -127,6 +127,20 @@ remaining wire is hooking `deos-zed`'s in-editor `save` to call `save_to_node`
 Last sweep: 2026-06-13 (flagged-items burndown — removed ~14 landed/struck items,
 deduped the DreggDL/sel4/snapshot landings into git history, kept live tails).
 
+### HANDLER-FLOORS CAMPAIGN COMPLETE — silent-gate-hole class RETIRED on the executor/forest layer (2026-06-23).
+The proof-carrying handler executor (research found it ~80% pre-built; we finished it). All 6 missing floors are now
+typed `FloorObligation`s discharged from the commit, mutation-teethed, axiom-clean: P0 surface `b9a70cecc` -> P1
+reserved-field/caveat/nonce-monotone `34574c77` -> P2 non-amp `b45a1016c` -> P3 epoch-freshness `125c30636` -> P4
+index-membership `e649e89bb`. A forgotten gate is now a TYPE ERROR (the side-hypotheses that WERE the codex/pre-codex
+holes are internal obligations). KEY (verified in source, refuting the "forest needs its own cutover" worry):
+execFullForestA = execFullTurnA ∘ lowerForestA, so the LIVE forest path inherits all 6 floors per-node FOR FREE. HONEST
+BOUNDARY (not overclaimed): this is the EXECUTOR layer; the CIRCUIT/descriptor frontier (bind heaps into RestHashIffFrame;
+in-circuit SortedTreeNonMembership <-> executor-set agreement) is a SEPARATE remaining layer. Also banked this stretch:
+caveat-AST D6 `9210ab2a` (CaveatPred reification — expressiveness, fork-debt named); research docs
+docs/RESEARCH-{handler-executor,predicate-language,epoch-cutover}.md (all 3 campaigns were 60-80% pre-built — verify
+source, not harvest). Caveat-AST continuation (fan DreggGrant vocab / wire caveatsAdmit / 3-algebra convergence) +
+epoch flag-day (deferred, 2 of 3 residual-kinds now subsumed as floors) remain as named campaigns.
+
 ### CIRCUIT-SOUNDNESS pre-codex review — 3 P1/P2 findings RESOLVED + named follow-ups (2026-06-23).
 Own adversarial pass before spending codex credits: single-transition unfoolability SOLID (no forge found). The 3
 findings were all "docs claim more than the artifact" — fixed (`ccee7ea21`): **P1 cross-turn freshness CLOSED BY
