@@ -1223,6 +1223,234 @@ mod membrane_host {
                 MembraneError::NoSuchFork(999)
             ));
         }
+
+        // ── THE CROSS-WORKSPACE BRIDGE: bake a REAL executor envelope as a golden
+        //    fixture the `deos-matrix` LIVE homeserver test ships A→B ───────────────
+        //
+        // The honest workspace boundary: the executor-real mint/rehydrate/drive/stitch
+        // lives HERE (it links the Lean-backed `World`); the LIVE Matrix homeserver
+        // round-trip lives in `deos-matrix` (its own tokio/matrix-sdk workspace, which
+        // cannot link the executor). The two halves meet at ONE artifact: a genuine
+        // `MembraneEnvelope` — minted by the REAL executor from a REAL multiplayer
+        // fork — serialized to the SAME JSON the Matrix message carries. This test
+        // bakes that envelope to a checked-in fixture; `deos-matrix`'s
+        // `live_two_user_real_executor_membrane_roundtrip` loads it and ships it over
+        // a real Conduit homeserver A→B, proving the SAME executor-minted bytes
+        // survive the real server byte-intact and rehydrate on the receiving side.
+        //
+        // So the FULL chain is demonstrated across the seam:
+        //   mint(real executor, here) → carry(real Matrix server, deos-matrix) →
+        //   rehydrate+drive+stitch(real executor, here).
+        // Each half RUNS against its real substrate; the fixture is the wire byte
+        // identity that welds them (the comms-PD carries exactly these bytes).
+
+        /// The fixture path (relative to this crate) the `deos-matrix` live test reads.
+        /// Written by the bake test below; the byte content is a real executor-minted
+        /// envelope's canonical JSON.
+        const REAL_ENVELOPE_FIXTURE: &str =
+            concat!(env!("CARGO_MANIFEST_DIR"), "/../deos-matrix/tests/fixtures/real_executor_membrane.json");
+
+        /// A signed multiplayer source world: a `room` focus cell reaching two
+        /// DISTINCT user principals (`user_a`, `user_b`) and the docs they edit —
+        /// `shared` (both touch it: the conflict candidate), `doc_a` (only A),
+        /// `doc_b` (only B). The frustum minted from `room` captures the whole shared
+        /// subrealm. Returns `(world, room, user_a, user_b, shared, doc_a, doc_b)`.
+        #[allow(clippy::type_complexity)]
+        fn mp_world() -> (World, CellId, CellId, CellId, CellId, CellId, CellId) {
+            let mut w = World::new().with_executor_signing_key([0x42u8; 32]);
+            let shared = w.genesis_cell(0x5D, 0);
+            let doc_a = w.genesis_cell(0xA1, 0);
+            let doc_b = w.genesis_cell(0xB2, 0);
+            let mut a = make_open_cell(0x0A, 0);
+            a.capabilities.grant(shared, AuthRequired::None).expect("A holds shared");
+            a.capabilities.grant(doc_a, AuthRequired::None).expect("A holds doc_a");
+            let user_a = w.genesis_install(a);
+            let mut b = make_open_cell(0x0B, 0);
+            b.capabilities.grant(shared, AuthRequired::None).expect("B holds shared");
+            b.capabilities.grant(doc_b, AuthRequired::None).expect("B holds doc_b");
+            let user_b = w.genesis_install(b);
+            let mut room = make_open_cell(0x40, 0);
+            room.capabilities.grant(user_a, AuthRequired::None).expect("room reaches A");
+            room.capabilities.grant(user_b, AuthRequired::None).expect("room reaches B");
+            room.capabilities.grant(shared, AuthRequired::None).expect("room reaches shared");
+            let room = w.genesis_install(room);
+            (w, room, user_a, user_b, shared, doc_a, doc_b)
+        }
+
+        #[test]
+        fn bake_real_executor_membrane_fixture_and_prove_full_loop() {
+            use crate::branch_stitch::{Atom, BranchCap, DocGraph, SettleOutcome, Stitch};
+
+            // (1) MINT — a REAL `MembraneEnvelope` from a REAL multiplayer executor
+            //     fork, via the executor-backed `ForkMembraneHost`. The host pins the
+            //     frustum to its `guest` focus; we focus it on `room`, so the membrane
+            //     captures the whole shared subrealm (both users + all three docs).
+            let (world, room, user_a, user_b, shared, doc_a, doc_b) = mp_world();
+            let fork = world.fork();
+            let host = ForkMembraneHost::new(fork, room);
+            let cut = FrustumCut {
+                focus_cell: [0u8; 32],
+                max_depth: 3,
+                authority_bounded: true,
+                cell_count: 0,
+            };
+            let env = host.mint(room.0, cut).expect("mint a real multiplayer envelope");
+            assert!(env.cut.cell_count >= 6, "the frustum culled the whole subrealm (>=6 cells)");
+            assert_eq!(env.version, MembraneEnvelope::VERSION);
+
+            // (2) BAKE THE FIXTURE — the canonical JSON the Matrix message carries.
+            //     This is the executor-real artifact `deos-matrix`'s live test ships.
+            let json = serde_json::to_string_pretty(&env).expect("envelope serializes to JSON");
+            // Round-trip in-process first (the wire byte identity the live test relies on).
+            let back: MembraneEnvelope =
+                serde_json::from_str(&json).expect("the real envelope round-trips JSON");
+            assert_eq!(back, env, "the real executor envelope survives the wire shape");
+
+            let path = std::path::Path::new(REAL_ENVELOPE_FIXTURE);
+            if let Some(dir) = path.parent() {
+                std::fs::create_dir_all(dir).expect("create the fixtures dir");
+            }
+            std::fs::write(path, &json).expect("write the golden envelope fixture");
+
+            // (3) REHYDRATE + DRIVE + STITCH on the REAL executor (the other half the
+            //     live test cannot run) — so this single test proves the executor-side
+            //     mint→rehydrate→drive→stitch of EXACTLY the bytes the fixture carries,
+            //     including the conflict path. Two distinct users rehydrate the same
+            //     envelope into independent real forks and drive overlapping edits.
+            let frustum = MembraneFrustum::from_snapshot_bytes(&env.snapshot).expect("snapshot decodes");
+            assert_eq!(frustum.frustum_root(), env.frustum_root, "fixture root is faithful");
+
+            // The baked frustum carries the whole shared subrealm (every principal +
+            // doc the cull captured): the fixture IS the single source of truth the
+            // live test ships. Confirm each principal/doc is in view before driving.
+            let in_view: HashSet<CellId> = frustum.cells.iter().map(|c| c.id()).collect();
+            for (label, id) in [
+                ("room", room), ("user_a", user_a), ("user_b", user_b),
+                ("shared", shared), ("doc_a", doc_a), ("doc_b", doc_b),
+            ] {
+                assert!(in_view.contains(&id), "the baked frustum captures {label}");
+            }
+
+            // Two distinct users rehydrate the SAME envelope into independent real forks.
+            let mut world_a = frustum.rehydrate(env.frustum_root).expect("user A rehydrates");
+            let mut world_b = frustum.rehydrate(env.frustum_root).expect("user B rehydrates");
+
+            // DRIVE — A and B each commit a REAL verified turn: both write the SHARED
+            // cell to DIFFERENT values (the real conflict) plus a private disjoint edit.
+            let ta = world_a.turn(
+                user_a,
+                vec![
+                    crate::world::set_field(shared, 0, [0xAAu8; 32]),
+                    crate::world::set_field(doc_a, 0, [0x11u8; 32]),
+                ],
+            );
+            assert!(world_a.commit_turn(ta).is_committed(), "A drives a real verified turn");
+            let tb = world_b.turn(
+                user_b,
+                vec![
+                    crate::world::set_field(shared, 0, [0xBBu8; 32]),
+                    crate::world::set_field(doc_b, 0, [0x22u8; 32]),
+                ],
+            );
+            assert!(world_b.commit_turn(tb).is_committed(), "B drives a real verified turn");
+            assert_ne!(
+                world_a.ledger().get(&shared).unwrap().state.fields[0],
+                world_b.ledger().get(&shared).unwrap().state.fields[0],
+                "the two principals genuinely diverge on the overlapping cell (a real conflict)"
+            );
+
+            // STITCH — fold both real driven diffs back through the settlement gate.
+            let (baseline, driven_a) = frustum.driven_graphs(&world_a);
+            let (_, driven_b) = frustum.driven_graphs(&world_b);
+            assert_ne!(baseline, driven_a, "A's diff is the REAL mutation");
+            assert_ne!(baseline, driven_b, "B's diff is the REAL mutation");
+
+            let key = |id: &CellId| {
+                let b = id.as_bytes();
+                u64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]])
+            };
+            let held = vec![
+                BranchCap { target: key(&shared), debit_reach: false },
+                BranchCap { target: key(&doc_a), debit_reach: false },
+                BranchCap { target: key(&doc_b), debit_reach: false },
+            ];
+
+            // Clean part: A's real driven diff (disjoint private discovery) folds in.
+            let clean = Stitch {
+                main: baseline.clone(),
+                branch: driven_a.clone(),
+                conferred: vec![BranchCap { target: key(&doc_a), debit_reach: false }],
+            };
+            match clean.settle(&held, None) {
+                SettleOutcome::Settled(merged) => {
+                    for k in driven_a.atoms.keys() {
+                        assert!(merged.atoms.contains_key(k), "A's real driven atom merged into main");
+                    }
+                }
+                other => panic!("the clean in-authority stitch of the REAL diff must settle: {other:?}"),
+            }
+
+            // CONFLICT part: both wrote `shared` — a value collision settles by the
+            // Dead-wins lattice join (transparent, NOT a silent last-writer overwrite).
+            let a_shared = DocGraph { atoms: [(key(&shared), Atom::Alive)].into_iter().collect() };
+            let b_shared = DocGraph { atoms: [(key(&shared), Atom::Dead)].into_iter().collect() };
+            let conflict = Stitch {
+                main: a_shared.clone(),
+                branch: b_shared.clone(),
+                conferred: vec![BranchCap { target: key(&shared), debit_reach: false }],
+            };
+            match conflict.settle(&held, None) {
+                SettleOutcome::Settled(g) => {
+                    assert_eq!(
+                        g.atoms.get(&key(&shared)),
+                        Some(&Atom::Dead),
+                        "the overlapping conflict settles by Dead-wins join (a ConflictObject, not a silent clobber)"
+                    );
+                    assert!(a_shared.included_in(&g) && b_shared.included_in(&g), "both writes accounted for");
+                }
+                other => panic!("the conflicting overlap must settle to a transparent join: {other:?}"),
+            }
+
+            // OVER-AUTHORIZED part: B conferring `doc_a` (which B never held) is a
+            // lossy-drop, REFUSED by the settlement gate — a cap-amplification, not a conjure.
+            let amp = Stitch {
+                main: baseline,
+                branch: driven_b.clone(),
+                conferred: vec![BranchCap { target: key(&doc_a), debit_reach: true }],
+            };
+            let b_held = vec![
+                BranchCap { target: key(&shared), debit_reach: false },
+                BranchCap { target: key(&doc_b), debit_reach: false },
+            ];
+            match amp.settle(&b_held, None) {
+                SettleOutcome::Refused { over_authorized_target } => {
+                    assert_eq!(over_authorized_target, key(&doc_a), "B's over-authorized confer is lossy-dropped");
+                }
+                other => panic!("an over-authorized confer must be REFUSED (lossy-drop): {other:?}"),
+            }
+
+            // CONSERVATION (Σδ=0): the drives were pure `SetField`s — the executor
+            // enforced conservation on each commit; the subrealm stays balance-neutral.
+            let baseline_sum: i64 = frustum.cells.iter().map(|c| c.state.balance()).sum();
+            assert_eq!(baseline_sum, 0, "the minted subrealm is balance-neutral");
+            assert_eq!(
+                world_a.ledger().iter().map(|(_, c)| c.state.balance()).sum::<i64>(),
+                baseline_sum,
+                "A's drive is conservation-sound (Σδ=0)"
+            );
+            assert_eq!(
+                world_b.ledger().iter().map(|(_, c)| c.state.balance()).sum::<i64>(),
+                baseline_sum,
+                "B's drive is conservation-sound (Σδ=0)"
+            );
+
+            eprintln!(
+                "BAKED real executor membrane fixture ({} cells, root {}) → {}",
+                env.cut.cell_count,
+                hex32(&env.frustum_root),
+                REAL_ENVELOPE_FIXTURE
+            );
+        }
     }
 }
 

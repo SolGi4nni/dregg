@@ -3,8 +3,18 @@
 #   1. bring up a throwaway Conduit homeserver in Docker (docker-compose.test.yml);
 #   2. wait for it to answer the client-server API;
 #   3. register two users (A = ember, B = quill) via open registration;
-#   4. run the creds-gated live tests against it (single-client + cross-user A→B);
+#   4. run the creds-gated live tests against it (single-client + cross-user A→B,
+#      INCLUDING `live_two_user_real_executor_membrane_roundtrip` — A ships the
+#      GENUINE executor-minted membrane fixture A→B and B extracts it byte-intact);
 #   5. tear the homeserver down (unless KEEP_HS=1).
+#
+# The executor-real membrane fixture (tests/fixtures/real_executor_membrane.json)
+# is checked in. To REGENERATE it from the real Lean-backed executor (and prove the
+# executor-side mint→rehydrate→drive→stitch with the conflict path in one run), from
+# the repo root run:
+#   cd starbridge-v2 && cargo test --no-default-features \
+#     --features "embedded-executor dev-surfaces" --lib bake_real_executor_membrane_fixture
+# (BAKE_FIXTURE=1 ./scripts/live-test.sh does this for you before the live run.)
 #
 # This is the realistic local-homeserver path per the repo's Docker convention —
 # NO direct host install. `cargo test` without this script is GREEN (the live
@@ -35,6 +45,17 @@ cleanup() {
   fi
 }
 trap cleanup EXIT
+
+# Optionally regenerate the executor-real membrane fixture from the Lean-backed
+# executor before the live run (heavy build). The fixture is checked in, so this is
+# off by default; set BAKE_FIXTURE=1 to refresh it (and re-prove the executor-side
+# mint→rehydrate→drive→stitch loop in the same step).
+if [[ "${BAKE_FIXTURE:-0}" == "1" ]]; then
+  echo "==> baking the executor-real membrane fixture (real Lean-backed executor)"
+  ( cd "$HERE/../starbridge-v2" && cargo test --no-default-features \
+      --features "embedded-executor dev-surfaces" --lib \
+      bake_real_executor_membrane_fixture -- --nocapture )
+fi
 
 echo "==> bringing up Conduit homeserver"
 $COMPOSE up -d

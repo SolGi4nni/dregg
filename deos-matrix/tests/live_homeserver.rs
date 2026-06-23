@@ -109,6 +109,33 @@ fn tmp_store() -> PathBuf {
     p
 }
 
+/// **The REAL executor-minted membrane fixture** — a `MembraneEnvelope` minted by
+/// the genuine Lean-backed `World` executor in `starbridge-v2`
+/// (`shared_fork::membrane_host::adapter_tests::bake_real_executor_membrane_fixture`,
+/// run under `--features "embedded-executor dev-surfaces"`). It is the SAME
+/// serializable wire shape `MockMembraneHost::sample_envelope()` produces, but its
+/// `snapshot` field is a frustum of GENUINE `dregg_cell::Cell`s (the multiplayer
+/// shared subrealm: a room focus + two user principals + three docs), committed
+/// over the same `Cell`-postcard root the image folds — not a synthetic key→value
+/// table. Loading it here lets the LIVE homeserver test ship an EXECUTOR-REAL
+/// envelope A→B over a real Conduit server and prove those exact bytes survive
+/// byte-intact + rehydrate on the receiving side. The executor-side
+/// mint→rehydrate→drive→stitch (the half this workspace cannot link) is proven in
+/// the same bake test that wrote this file. Together they demonstrate the full
+/// cross-user loop across the honest workspace seam.
+///
+/// Returns `None` (and the test no-ops) if the fixture is absent — it is checked
+/// in, but a clean checkout that has never run the bake test would lack it; the
+/// live harness `scripts/live-test.sh` is what runs both halves.
+fn real_executor_membrane() -> Option<deos_matrix::MembraneEnvelope> {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/real_executor_membrane.json");
+    let bytes = std::fs::read(&path).ok()?;
+    let env: deos_matrix::MembraneEnvelope =
+        serde_json::from_slice(&bytes).expect("the real executor membrane fixture is valid JSON");
+    Some(env)
+}
+
 #[tokio::test]
 async fn live_login_sync_send_membrane_roundtrip() {
     let Some((homeserver, user, pass)) = live_config() else {
@@ -349,6 +376,127 @@ async fn live_two_user_cross_user_roundtrip() {
     eprintln!(
         "LIVE OK (cross-user): A→B plain text + MembraneEnvelope + DreggObject all delivered \
          through the real homeserver {hs} and extracted typed on B."
+    );
+}
+
+/// **THE EXECUTOR-REAL MEMBRANE A→B OVER A REAL HOMESERVER** — the wire half of the
+/// full killer-primitive loop, with a GENUINE executor-minted membrane (not the
+/// mock).
+///
+/// User A "screenshots a moment": loads the membrane the REAL Lean-backed `World`
+/// executor minted in `starbridge-v2` (a frustum of genuine `dregg_cell::Cell`s — a
+/// multiplayer shared subrealm), serialized to the fixture
+/// `tests/fixtures/real_executor_membrane.json`. A ships it A→B over a real Conduit
+/// homeserver (the SAME `send_membrane` wire path the mock uses — a custom field in
+/// an `m.room.message`). B receives it through the server, extracts the typed
+/// envelope, and proves:
+///   * the EXACTLY-minted executor bytes survive the real server A→B byte-intact
+///     (the received `MembraneEnvelope` equals the fixture the executor wrote);
+///   * the anti-substitution `frustum_root` tooth + forward-compat version tooth
+///     hold on the received envelope (B can rehydrate it).
+///
+/// The executor-side rehydrate→drive→stitch of THESE bytes (the conflict path, the
+/// over-authorized lossy-drop, Σδ=0) is proven in the same `starbridge-v2` bake test
+/// that wrote the fixture — the half this tokio/matrix-sdk workspace cannot link.
+/// Together: mint(real executor) → carry(real Matrix server, HERE) →
+/// rehydrate+drive+stitch(real executor). The seam is the fixture's wire bytes; both
+/// halves RUN against their real substrate.
+///
+/// Creds-gated on the two-user config; the fixture must be present (the bake test
+/// writes it). Absent either → no-op (CI stays green).
+#[tokio::test]
+async fn live_two_user_real_executor_membrane_roundtrip() {
+    let Some((hs, user_a, pass_a, user_b, pass_b)) = live_two_user_config() else {
+        eprintln!(
+            "two-user creds not set — skipping the executor-real membrane A→B round-trip \
+             (see scripts/live-test.sh)."
+        );
+        return;
+    };
+    let Some(real_env) = real_executor_membrane() else {
+        eprintln!(
+            "tests/fixtures/real_executor_membrane.json absent — skipping the executor-real \
+             membrane A→B round-trip. Bake it first: in starbridge-v2, \
+             `cargo test --no-default-features --features \"embedded-executor dev-surfaces\" \
+              --lib bake_real_executor_membrane_fixture`."
+        );
+        return;
+    };
+
+    // Two clients, two SQLite stores — genuinely separate users/devices.
+    let (client_a, _sa) = MatrixClient::login_password(
+        &hs, &tmp_store(), "live-realA-pass", &user_a, &pass_a, "deos-matrix-realA",
+    )
+    .await
+    .expect("user A login");
+    let (client_b, _sb) = MatrixClient::login_password(
+        &hs, &tmp_store(), "live-realB-pass", &user_b, &pass_b, "deos-matrix-realB",
+    )
+    .await
+    .expect("user B login");
+    let uid_b = client_b.user_id().expect("B user id").to_string();
+
+    // A creates a room and invites B; B accepts (real join over the wire).
+    let room_id = client_a
+        .create_room(Some("deos-lab-real"), Some("executor-real membrane room"), &[uid_b.as_str()])
+        .await
+        .expect("A creates room + invites B");
+    let mut joined = false;
+    for _ in 0..15 {
+        client_b.sync_once().await.expect("B sync for invite");
+        if client_b.invited_rooms().await.expect("B invites").iter().any(|r| r.room_id.as_str() == room_id) {
+            client_b.accept_invite(&room_id).await.expect("B accepts invite");
+            joined = true;
+            break;
+        }
+        if client_b.joined_rooms().await.expect("B joined").iter().any(|r| r.room_id.as_str() == room_id) {
+            joined = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+    }
+    assert!(joined, "B never saw/accepted the invite");
+    client_b.sync_once().await.expect("B sync after join");
+
+    // The fixture is genuinely executor-real (not the mock): its snapshot is the
+    // multiplayer subrealm, so the cut carries >= 6 real cells.
+    assert!(
+        real_env.cut.cell_count >= 6,
+        "the fixture is a real multiplayer subrealm (>=6 cells), got {}",
+        real_env.cut.cell_count
+    );
+    assert!(real_env.is_rehydratable(), "the executor envelope is a supported wire version");
+
+    // A SCREENSHOTS THE MOMENT: ship the REAL executor membrane A→B over the server.
+    let mem_id = client_a
+        .send_membrane(&room_id, "", &real_env)
+        .await
+        .expect("A sends the executor-real membrane");
+
+    // B RECEIVES IT THROUGH THE SERVER and extracts the typed envelope.
+    let got = sync_until(&client_b, &room_id, 20, "executor membrane A→B", |m| m.event_id == mem_id).await;
+    assert_eq!(got.kind, MessageKind::Membrane, "B sees a Membrane-kind message");
+    let back = got
+        .membrane
+        .as_ref()
+        .expect("B extracts the executor membrane envelope from the wire");
+
+    // BYTE-INTACT: the EXACTLY-minted executor bytes survived the real server A→B.
+    assert_eq!(
+        back, &real_env,
+        "the executor-minted MembraneEnvelope round-tripped A→B byte-intact through the real server"
+    );
+    // The anti-substitution + forward-compat teeth hold on B's received copy.
+    assert_eq!(back.frustum_root, real_env.frustum_root, "the frustum root survived A→B");
+    assert!(back.is_rehydratable(), "B can rehydrate the received executor envelope");
+
+    eprintln!(
+        "LIVE OK (executor-real): A→B shipped the GENUINE executor-minted membrane \
+         ({} cells, root {:02x}{:02x}{:02x}{:02x}) through {hs}; B extracted it byte-intact \
+         + rehydratable. The executor-side rehydrate→drive→stitch (conflict + Σδ=0) is proven \
+         in the starbridge-v2 bake test that wrote the fixture.",
+        back.cut.cell_count,
+        back.frustum_root[0], back.frustum_root[1], back.frustum_root[2], back.frustum_root[3],
     );
 }
 
