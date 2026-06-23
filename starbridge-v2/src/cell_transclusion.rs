@@ -390,8 +390,11 @@ impl ComposedCellDocument {
     /// composition of cells.
     pub fn resolve_for(&self, viewer: &Membrane) -> ComposedCellDocumentView {
         let own_affordances = self.own_surface.project_for(viewer.held());
-        let own_affordance_names: Vec<String> =
+        let mut own_affordance_names: Vec<String> =
             own_affordances.iter().map(|a| a.name.clone()).collect();
+        // Sorted-stable readout (see the field doc + `visible_affordance_names`): the
+        // panel/test readout is order-independent of the surface's declaration order.
+        own_affordance_names.sort();
         let embed_views: Vec<EmbeddedCellView> =
             self.embeds.iter().map(|e| e.project_for(viewer)).collect();
         let darkened_embeds = embed_views.iter().filter(|v| !v.is_visible()).count();
@@ -595,11 +598,17 @@ mod tests {
     //     whole-cell analogue of a darkened span — provenance kept, surface withheld.
     #[test]
     fn an_overreach_reader_sees_the_embed_darkened() {
-        // The embed's lineage is Either. A reader holding `Proof` is INCOMPARABLE with
-        // Either (neither attenuates the other) — there is NO projection both admit.
+        // The embed's lineage is Either. A reader holding a `Custom { vk_hash }` identity
+        // is INCOMPARABLE with Either (neither attenuates the other — see
+        // `cell/src/permissions.rs`: Custom is comparable only with an identical Custom,
+        // None, or Impossible) — there is NO projection both admit. (A `Proof` reader, by
+        // contrast, IS comparable: Proof ⊆ Either, a valid narrowing — so it would see in.)
         let (_web, embed) = embed_of(7, 8);
-        let proof_reader = Membrane::new(SurfaceCapability::root(cid(13), AuthRequired::Proof));
-        let v = embed.project_for(&proof_reader);
+        let custom_reader = Membrane::new(SurfaceCapability::root(
+            cid(13),
+            AuthRequired::Custom { vk_hash: [7u8; 32] },
+        ));
+        let v = embed.project_for(&custom_reader);
         assert!(
             !v.is_visible(),
             "an incomparable-authority reader cannot see into the embed — it darkens"
@@ -722,11 +731,11 @@ mod tests {
     #[test]
     fn a_reader_darkens_one_embed_but_sees_the_rest() {
         let host = cid(21);
-        let (_w, normal_embed) = embed_of(21, 32);
-        // A second embed whose lineage is Signature (so a Proof reader is incomparable
-        // with it and darkens it), while the first (Either lineage) is ALSO incomparable
-        // with Proof... so to get a MIXED result, make the second embed's lineage None
-        // (root) — Proof ⊆ None, so a Proof reader CAN see it.
+        let (_w, normal_embed) = embed_of(21, 32); // Either lineage
+        // The reader holds a `Custom { vk_hash }` identity — INCOMPARABLE with the first
+        // embed's Either lineage (so it darkens), but a valid attenuation of a `None`
+        // (root) lineage (Custom ⊆ None — anything narrows None), so it CAN see the
+        // second. A mixed result: one embed withheld, the rest of the composition usable.
         let mut web2 = WebOfCells::new(3);
         let uri2 = web2.publish(33, b"<root-lineage cell>", "dregg://root-cell");
         let root_embed = WholeCellTransclusion::embed(
@@ -740,15 +749,18 @@ mod tests {
 
         let own = AffordanceSurface::new(host);
         let doc = ComposedCellDocument::new(host, own)
-            .embed(normal_embed) // Either lineage — Proof incomparable → darkens
-            .embed(root_embed); // None lineage — Proof ⊆ None → visible
+            .embed(normal_embed) // Either lineage — Custom incomparable → darkens
+            .embed(root_embed); // None lineage — Custom ⊆ None → visible
 
-        let proof_reader = Membrane::new(SurfaceCapability::root(cid(13), AuthRequired::Proof));
-        let view = doc.resolve_for(&proof_reader);
+        let custom_reader = Membrane::new(SurfaceCapability::root(
+            cid(13),
+            AuthRequired::Custom { vk_hash: [7u8; 32] },
+        ));
+        let view = doc.resolve_for(&custom_reader);
         assert_eq!(view.embed_views.len(), 2);
-        // First embed (Either lineage): darkened (Proof incomparable with Either).
+        // First embed (Either lineage): darkened (Custom incomparable with Either).
         assert!(!view.embed_views[0].is_visible());
-        // Second embed (None/root lineage): visible (Proof ⊆ None).
+        // Second embed (None/root lineage): visible (Custom ⊆ None).
         assert!(view.embed_views[1].is_visible());
         // Exactly one embed darkened — the rest of the composition is usable.
         assert_eq!(view.darkened_embeds, 1);

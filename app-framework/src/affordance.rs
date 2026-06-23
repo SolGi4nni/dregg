@@ -1064,9 +1064,15 @@ mod tests {
 
     #[test]
     fn the_gate_refuses_a_viewer_who_holds_an_incomparable_right() {
-        // A holder of `Proof` is INCOMPARABLE to `Either`/`Signature` (neither ⊆ the
-        // other), so those affordances are refused — the gate is the real lattice,
-        // not a numeric rank.
+        // The gate is `required ⊆ held` (`authorized_for` = `is_attenuation(held,
+        // required)`): a holder clears an affordance only if their authority is at least
+        // as BROAD as it demands. A holder of `Proof` is a strict NARROWING of `Either`
+        // (Proof ⊆ Either, per `cell/src/permissions.rs`), so it is NOT broad enough to
+        // clear an `Either`-requiring affordance (`comment`); and `Signature ⊄ Proof`, so
+        // it does not clear `view` either. Both refused — the real lattice, not a numeric
+        // rank. (Note: this directional gate differs from the transclusion DARKENING
+        // test, which keys on mutual incomparability — there a Proof reader, being a valid
+        // narrowing of an Either lineage, WOULD see in; a `Custom` identity is what darkens.)
         let doc = cid(7);
         let surface = doc_surface(doc);
         let proof_held = AuthRequired::Proof;
