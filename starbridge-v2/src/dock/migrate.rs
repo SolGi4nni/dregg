@@ -31,24 +31,24 @@
 //!      and the carried (narrowed-or-equal) rights. The backing cell is unchanged
 //!      — a migration relocates the cap's transport, never the cell it points at.
 //!
-//! ## The honest distance: the live re-home seam
+//! ## Two halves: the authority re-mint AND the live transport re-home
 //!
-//! [`migrate`] produces the re-homed CAP — the authority half of the move, which
-//! is fully real and proven here. What it does NOT do is the live TRANSPORT
-//! re-home: actually spawning/selecting the child PD and re-routing the surface's
-//! `present`/`route_input` round-trips over that PD's firmament Endpoint instead
-//! of the in-process compositor. That needs the live compositor seam:
+//! [`migrate`] produces the re-homed CAP — the authority half of the move. The
+//! caller passes the destination [`dregg_firmament::HostPdId`] it has registered
+//! (the firmament's `HostPdBacking::register` over a real confined-child control
+//! socket); `migrate` re-mints the cap to name it.
 //!
-//!   * a registered [`dregg_firmament::HostPdId`] for a real confined child (the
-//!     firmament's `HostPdBacking::register` over a live control socket, behind
-//!     `--features process-pd` on unix), and
-//!   * the compositor re-pointing `Shell::present` / `Shell::route_input` for this
-//!     surface at that Endpoint.
-//!
-//! The caller passes the destination [`dregg_firmament::HostPdId`] it has already
-//! registered; `migrate` re-mints the cap to name it. Re-pointing the live present
-//! path is the named remaining seam — the cap migrates here today; the glass
-//! follows when the compositor binds the re-homed cap to the child's Endpoint.
+//! The LIVE TRANSPORT re-home — re-routing the surface's `present`/`route_input`
+//! round-trips over that child PD's firmament SURFACE Endpoint instead of the
+//! in-process compositor — is the [`PresentTransport`] (under `--features
+//! process-pd` on unix). Once the firmament binds the child's surface Endpoint
+//! ([`dregg_firmament::HostPdBacking::register_surface`]), a present/input for the
+//! migrated surface crosses that Endpoint to the CONFINED child, which renders in
+//! its own MMU-isolated memory and returns the frame
+//! ([`dregg_firmament::HostPdBacking::present_over_endpoint`], gated by the SAME
+//! `granted ⊆ held` law). The glass follows the cap — proven by the
+//! `live_transport` e2e test below (a held surface migrates and its present/input
+//! cross to a confined child by running).
 
 use dregg_firmament::{is_attenuation, HostPdId, Rights, Target};
 
