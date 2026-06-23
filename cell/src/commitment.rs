@@ -543,6 +543,16 @@ pub fn compute_canonical_capability_root_felt(
     caps: &CapabilitySet,
 ) -> dregg_circuit::field::BabyBear {
     use dregg_circuit::cap_root;
+    // Per-cell sub-root cache (`docs/INCREMENTAL-COMMITMENT.md` step 2): a turn
+    // that did not touch the cap set reuses the last-folded root instead of
+    // re-folding the sorted-Poseidon2 tree. The cache is invalidated by EVERY
+    // c-list mutation (see `CapabilitySet::invalidate_cap_root_cache` callers),
+    // so a cache hit is byte-identical to a fresh fold (pinned by the
+    // `cap_root_cache_matches_fresh` differential). The fold below is the
+    // authoritative recompute used on a miss, and its result is stored back.
+    if let Some(cached) = caps.cached_cap_root() {
+        return cached;
+    }
     let leaves: Vec<cap_root::CapLeaf> = caps.iter().map(cap_ref_to_leaf).collect();
     // TOMBSTONE deletion (cap crown, the cell↔circuit revoke reconciliation):
     // a revoked slot leaves a ZERO/padding leaf at its sorted POSITION rather
@@ -556,7 +566,9 @@ pub fn compute_canonical_capability_root_felt(
     // this is byte-identical to the plain `compute_capability_root`.
     let tombstone_keys: Vec<dregg_circuit::field::BabyBear> =
         caps.tombstoned_slots().map(cap_root::slot_hash).collect();
-    cap_root::compute_capability_root_with_tombstones(leaves, &tombstone_keys)
+    let root = cap_root::compute_capability_root_with_tombstones(leaves, &tombstone_keys);
+    caps.store_cap_root(root);
+    root
 }
 
 /// Compute the canonical 32-byte capability root of a `CapabilitySet`.
@@ -1214,6 +1226,155 @@ mod tests {
         );
         let after = compute_canonical_capability_root(&caps);
         assert_ne!(before, after);
+    }
+
+    /// **THE STEP-2 SUB-ROOT-CACHE DIFFERENTIAL** (`docs/INCREMENTAL-COMMITMENT.md`).
+    ///
+    /// Over a random corpus of interleaved mutation sequences (grants/revokes/
+    /// attenuations/restores/field-writes/heap-writes/nonce-ticks/balance-changes),
+    /// at EVERY step assert two byte-identities:
+    ///
+    ///   1. the CACHED-path `compute_canonical_state_commitment(&cell)` equals an
+    ///      always-recompute reference (a postcard round-trip of the cell, whose
+    ///      `#[serde(skip)]` cap-root cache reconstructs DIRTY, forcing a fresh
+    ///      fold), and
+    ///   2. the cached `compute_canonical_capability_root(&cell.capabilities)`
+    ///      equals the cap-root of that freshly-folded round-tripped cell.
+    ///
+    /// A single mismatch would mean a mutation path failed to invalidate the
+    /// cache (a stale cached root = a silent wrong commitment). 0 mismatches over
+    /// the corpus is the completeness witness.
+    #[test]
+    fn cap_root_cache_matches_fresh() {
+        use crate::capability::CapabilityRef;
+
+        // A tiny deterministic LCG so the corpus is reproducible without a
+        // `rand` dependency.
+        struct Lcg(u64);
+        impl Lcg {
+            fn next(&mut self) -> u64 {
+                self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                self.0 >> 16
+            }
+            fn pick(&mut self, n: u64) -> u64 {
+                self.next() % n
+            }
+        }
+
+        // Always-recompute reference: round-trip the cell through postcard so
+        // every derived cache (the `#[serde(skip)]` cap-root cache) is dropped
+        // and reconstructed DIRTY, forcing the authoritative fold on read.
+        fn fresh_commitment(cell: &Cell) -> [u8; 32] {
+            let bytes = postcard::to_allocvec(cell).expect("serialize cell");
+            let reloaded: Cell = postcard::from_bytes(&bytes).expect("deserialize cell");
+            compute_canonical_state_commitment(&reloaded)
+        }
+        fn fresh_cap_root(caps: &CapabilitySet) -> [u8; 32] {
+            let bytes = postcard::to_allocvec(caps).expect("serialize caps");
+            let reloaded: CapabilitySet = postcard::from_bytes(&bytes).expect("deserialize caps");
+            compute_canonical_capability_root(&reloaded)
+        }
+
+        for seed in 0..8u64 {
+            let mut lcg = Lcg(0x9E37_79B9_7F4A_7C15 ^ seed.wrapping_mul(0xD1B5_4A32_D192_ED03));
+            let mut cell = Cell::new(test_key((seed as u8) | 1), test_token((seed as u8) | 1));
+            // Track granted slots so we can revoke/attenuate live ones.
+            let mut live_slots: Vec<u32> = Vec::new();
+
+            for step in 0..120u64 {
+                let target =
+                    CellId::derive_raw(&test_key((lcg.pick(250) + 1) as u8), &test_token((lcg.pick(250) + 1) as u8));
+                match lcg.pick(9) {
+                    0 => {
+                        // grant
+                        if let Some(slot) = cell.capabilities.grant(target, AuthRequired::Signature) {
+                            live_slots.push(slot);
+                        }
+                    }
+                    1 => {
+                        // grant_faceted
+                        if let Some(slot) = cell.capabilities.grant_faceted(
+                            target,
+                            AuthRequired::Either,
+                            crate::facet::EFFECT_TRANSFER,
+                        ) {
+                            live_slots.push(slot);
+                        }
+                    }
+                    2 => {
+                        // grant_with_expiry
+                        if let Some(slot) =
+                            cell.capabilities.grant_with_expiry(target, AuthRequired::Proof, 1000)
+                        {
+                            live_slots.push(slot);
+                        }
+                    }
+                    3 => {
+                        // revoke a live slot
+                        if !live_slots.is_empty() {
+                            let idx = lcg.pick(live_slots.len() as u64) as usize;
+                            let slot = live_slots.remove(idx);
+                            cell.capabilities.revoke(slot);
+                        }
+                    }
+                    4 => {
+                        // attenuate_in_place a live slot (Signature is narrower than Either)
+                        if !live_slots.is_empty() {
+                            let idx = lcg.pick(live_slots.len() as u64) as usize;
+                            let slot = live_slots[idx];
+                            let _ = cell.capabilities.attenuate_in_place(
+                                slot,
+                                AuthRequired::Impossible,
+                                None,
+                                None,
+                            );
+                        }
+                    }
+                    5 => {
+                        // iter_mut-bypass mutation (the executor-rollback leak path):
+                        // mutate a cap field directly through the `&mut` borrow.
+                        if !live_slots.is_empty() {
+                            let idx = lcg.pick(live_slots.len() as u64) as usize;
+                            let slot = live_slots[idx];
+                            if let Some(cap) =
+                                cell.capabilities.iter_mut().find(|r: &&mut CapabilityRef| r.slot == slot)
+                            {
+                                cap.expires_at = Some(lcg.next());
+                            }
+                        }
+                    }
+                    6 => {
+                        // nonce tick — MUST NOT change the cap-root (cache stays valid)
+                        let _ = cell.state.increment_nonce();
+                    }
+                    7 => {
+                        // balance change — MUST NOT change the cap-root
+                        let _ = cell.state.apply_balance_change((lcg.next() % 7) as i64);
+                    }
+                    _ => {
+                        // field + heap writes — MUST NOT change the cap-root
+                        let mut v = [0u8; 32];
+                        v[31] = (lcg.next() % 251) as u8;
+                        let key = 16 + (lcg.pick(8));
+                        cell.state.set_field_ext(key, v);
+                        cell.state.set_heap(1, (lcg.pick(8)) as u32, v);
+                    }
+                }
+
+                // (1) whole-cell commitment: cached path == always-recompute.
+                assert_eq!(
+                    compute_canonical_state_commitment(&cell),
+                    fresh_commitment(&cell),
+                    "seed {seed} step {step}: cached commitment diverged from fresh recompute"
+                );
+                // (2) the cap sub-root itself: cached == fresh fold.
+                assert_eq!(
+                    compute_canonical_capability_root(&cell.capabilities),
+                    fresh_cap_root(&cell.capabilities),
+                    "seed {seed} step {step}: cached cap-root diverged from fresh fold"
+                );
+            }
+        }
     }
 
     /// canonical_to_babybear_pi: same input → same output (deterministic).
@@ -1933,3 +2094,4 @@ mod tests {
         assert_eq!(&bytes[4..], &[0u8; 28], "felt encoding zero-pads the tail");
     }
 }
+

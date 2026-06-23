@@ -132,11 +132,83 @@ pub struct AttenuatedCap {
     pub stored_epoch: Option<u64>,
 }
 
+/// Per-cell-state sub-root cache for the capability tree
+/// (`docs/INCREMENTAL-COMMITMENT.md` step 2). Holds the last-materialized
+/// canonical cap-root felt (as its `u32` value) so a turn that does NOT touch
+/// the cap set reuses it instead of re-folding the sorted-Poseidon2 tree.
+///
+/// **Invalidation completeness is the soundness crux.** This is `None` (dirty)
+/// after construction, after deserialization, and after EVERY mutation of the
+/// c-list — `grant*`, `revoke`, `attenuate_in_place`, `insert_attenuated`,
+/// `restore`, and `iter_mut` (which hands out `&mut CapabilityRef` and so MUST
+/// conservatively invalidate). A stale cache would be a silent wrong commitment,
+/// so the cache is private and EVERY `&mut self` path through this module clears
+/// it; the differential `cap_root_cache_matches_fresh` pins byte-identity.
+///
+/// An `AtomicU64` gives `Sync` interior mutability so the lazy materialize can
+/// run behind the shared `&CapabilitySet` the commitment path holds, AND so a
+/// `Cell` carrying it stays `Send + Sync` (the node/app-framework share cells
+/// across threads — a `std::cell::Cell` would make the whole type `!Sync`). The
+/// `Option<u32>` is packed as `u64`: the present-flag in bit 32, the cap-root
+/// felt's `u32` value in the low 32 bits; `DIRTY` (0) means no cached value.
+/// It is NOT serialized (a derived value), NOT part of `PartialEq`/`Eq` (two
+/// equal c-lists with different cache states are equal), and a `Clone` copies
+/// the current cached value (the c-list bytes are identical, so the root is
+/// valid for the clone too).
+#[derive(Debug, Default)]
+pub struct CapRootCache(std::sync::atomic::AtomicU64);
+
+impl CapRootCache {
+    const PRESENT: u64 = 1u64 << 32;
+
+    #[inline]
+    fn load(&self) -> Option<u32> {
+        let packed = self.0.load(std::sync::atomic::Ordering::Relaxed);
+        if packed & Self::PRESENT != 0 {
+            Some((packed & 0xFFFF_FFFF) as u32)
+        } else {
+            None
+        }
+    }
+
+    #[inline]
+    fn store(&self, value: Option<u32>) {
+        let packed = match value {
+            Some(v) => Self::PRESENT | v as u64,
+            None => 0,
+        };
+        self.0.store(packed, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+impl Clone for CapRootCache {
+    fn clone(&self) -> Self {
+        CapRootCache(std::sync::atomic::AtomicU64::new(
+            self.0.load(std::sync::atomic::Ordering::Relaxed),
+        ))
+    }
+}
+
+impl PartialEq for CapRootCache {
+    fn eq(&self, _other: &Self) -> bool {
+        // The cache is a derived value, not part of the c-list's identity.
+        true
+    }
+}
+impl Eq for CapRootCache {}
+
 /// The c-list: the set of capabilities a cell holds.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CapabilitySet {
     refs: Vec<CapabilityRef>,
     next_slot: u32,
+    /// Cached canonical cap-root felt value (`docs/INCREMENTAL-COMMITMENT.md`
+    /// step 2). `#[serde(skip)]` so it is never persisted and always
+    /// reconstructs as dirty (`None`) on deserialize — the byte-identical fold
+    /// fills it on first read. Excluded from `PartialEq`/`Eq` via the
+    /// `CapRootCache` impls above.
+    #[serde(skip)]
+    cap_root_cache: CapRootCache,
     /// Slot numbers of REVOKED capabilities — the c-list's TOMBSTONE set (cap
     /// crown, the cell↔circuit revoke reconciliation).
     ///
@@ -176,7 +248,35 @@ impl CapabilitySet {
             refs: Vec::new(),
             next_slot: 0,
             tombstones: Vec::new(),
+            cap_root_cache: CapRootCache::default(),
         }
+    }
+
+    /// Mark the cached cap-root dirty (`docs/INCREMENTAL-COMMITMENT.md` step 2).
+    /// Called by EVERY path that can change the c-list bytes — the completeness
+    /// guarantee. Cheap (a single `Cell::set`), so calling it unconditionally
+    /// (even when a mutator turns out to be a no-op, e.g. a `revoke` of a missing
+    /// slot) is harmless: a dirty cache only costs ONE extra fold on the next
+    /// read, never a wrong root.
+    #[inline]
+    fn invalidate_cap_root_cache(&self) {
+        self.cap_root_cache.store(None);
+    }
+
+    /// Read the cached canonical cap-root felt, or `None` if dirty. Used by the
+    /// commitment path to skip the fold when the cap set has not changed.
+    #[inline]
+    pub(crate) fn cached_cap_root(&self) -> Option<dregg_circuit::field::BabyBear> {
+        self.cap_root_cache
+            .load()
+            .map(dregg_circuit::field::BabyBear::new)
+    }
+
+    /// Store a freshly-computed canonical cap-root felt into the cache. The
+    /// commitment path calls this after a dirty-fold so the next read is O(1).
+    #[inline]
+    pub(crate) fn store_cap_root(&self, felt: dregg_circuit::field::BabyBear) {
+        self.cap_root_cache.store(Some(felt.as_u32()));
     }
 
     /// Grant a capability to reach `target` with the given authorization requirement.
@@ -193,6 +293,8 @@ impl CapabilitySet {
         permissions: AuthRequired,
         breadstuff: Option<[u8; 32]>,
     ) -> Option<u32> {
+        // INVALIDATE the cached cap-root: this method appends to the c-list.
+        self.invalidate_cap_root_cache();
         let slot = self.next_slot;
         self.next_slot = self.next_slot.checked_add(1)?;
         self.refs.push(CapabilityRef {
@@ -216,6 +318,8 @@ impl CapabilitySet {
         permissions: AuthRequired,
         expires_at: u64,
     ) -> Option<u32> {
+        // INVALIDATE the cached cap-root: this method appends to the c-list.
+        self.invalidate_cap_root_cache();
         let slot = self.next_slot;
         self.next_slot = self.next_slot.checked_add(1)?;
         self.refs.push(CapabilityRef {
@@ -241,6 +345,8 @@ impl CapabilitySet {
         breadstuff: Option<[u8; 32]>,
         expires_at: Option<u64>,
     ) -> Option<u32> {
+        // INVALIDATE the cached cap-root: this method appends to the c-list.
+        self.invalidate_cap_root_cache();
         let slot = self.next_slot;
         self.next_slot = self.next_slot.checked_add(1)?;
         self.refs.push(CapabilityRef {
@@ -265,6 +371,8 @@ impl CapabilitySet {
     /// Returns the assigned slot number, or `None` if the slot counter would
     /// overflow.
     pub fn grant_ref(&mut self, cap: &CapabilityRef) -> Option<u32> {
+        // INVALIDATE the cached cap-root: this method appends to the c-list.
+        self.invalidate_cap_root_cache();
         let slot = self.next_slot;
         self.next_slot = self.next_slot.checked_add(1)?;
         self.refs.push(CapabilityRef {
@@ -290,6 +398,8 @@ impl CapabilitySet {
         breadstuff: Option<[u8; 32]>,
         stored_epoch: u64,
     ) -> Option<u32> {
+        // INVALIDATE the cached cap-root: this method appends to the c-list.
+        self.invalidate_cap_root_cache();
         let slot = self.next_slot;
         self.next_slot = self.next_slot.checked_add(1)?;
         self.refs.push(CapabilityRef {
@@ -318,6 +428,8 @@ impl CapabilitySet {
         permissions: AuthRequired,
         effect_mask: EffectMask,
     ) -> Option<u32> {
+        // INVALIDATE the cached cap-root: this method appends to the c-list.
+        self.invalidate_cap_root_cache();
         let slot = self.next_slot;
         self.next_slot = self.next_slot.checked_add(1)?;
         self.refs.push(CapabilityRef {
@@ -344,6 +456,8 @@ impl CapabilitySet {
     /// `cell_cap_root == circuit_cap_root` after a revoke (the seam this closes).
     /// See [`Self::tombstones`] for the full rationale.
     pub fn revoke(&mut self, slot: u32) -> bool {
+        // INVALIDATE the cached cap-root: a revoke drops a leaf + tombstones it.
+        self.invalidate_cap_root_cache();
         let before = self.refs.len();
         self.refs.retain(|r| r.slot != slot);
         let removed = self.refs.len() < before;
@@ -509,6 +623,8 @@ impl CapabilitySet {
         };
 
         // Second pass: mutate in place and compute commitment.
+        // INVALIDATE the cached cap-root: this narrows a leaf's fields.
+        self.invalidate_cap_root_cache();
         let cap = self.refs.iter_mut().find(|r| r.slot == slot)?;
         cap.permissions = narrower;
         cap.allowed_effects = new_effects;
@@ -528,6 +644,8 @@ impl CapabilitySet {
     /// c-list assigns its own slot number rather than inheriting the parent's.
     /// Returns the assigned slot number, or `None` if the slot counter would overflow.
     pub fn insert_attenuated(&mut self, cap: AttenuatedCap) -> Option<u32> {
+        // INVALIDATE the cached cap-root: this method appends to the c-list.
+        self.invalidate_cap_root_cache();
         let slot = self.next_slot;
         self.next_slot = self.next_slot.checked_add(1)?;
         self.refs.push(CapabilityRef {
@@ -549,6 +667,8 @@ impl CapabilitySet {
     /// position), so an undone revoke returns the cap-root EXACTLY to its
     /// pre-revoke value — the rollback is a true inverse of [`Self::revoke`].
     pub fn restore(&mut self, cap: CapabilityRef) {
+        // INVALIDATE the cached cap-root: clears a tombstone and may re-insert a leaf.
+        self.invalidate_cap_root_cache();
         self.tombstones.retain(|&s| s != cap.slot);
         if !self.refs.iter().any(|r| r.slot == cap.slot) {
             self.refs.push(cap);
@@ -586,6 +706,13 @@ impl CapabilitySet {
     /// rollback path to restore in-place narrowings; not for general use
     /// (apps should go through `attenuate_in_place` / `grant`).
     pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut CapabilityRef> {
+        // CONSERVATIVELY INVALIDATE the cached cap-root: this hands out
+        // `&mut CapabilityRef`, so the caller (the executor's rollback path)
+        // may mutate any cap field. We cannot observe the write, so we must
+        // assume the c-list changed. This closes the only mutation path that
+        // bypasses a dedicated mutator (the staleness leak the design audit
+        // names) — a fresh `&mut` borrow always re-derives the root next read.
+        self.invalidate_cap_root_cache();
         self.refs.iter_mut()
     }
 
