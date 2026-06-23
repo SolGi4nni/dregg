@@ -279,11 +279,32 @@ the consent-touching work re-clears the boundary at the settlement tip.
   (binding → fail-closed). The earlier `resolve_condition`-direct keystone test is
   retained as the generic one-shot-shape proof.
 
-* A **boundary descriptor** on the fork that intercepts an exercise of a marked
-  target and turns it into a `ConsentRequest` + a pending `ConditionalTurn`
-  automatically (today the interception is manual — the guest must *choose* to
-  raise the request rather than the fork *forcing* it; making the fork's executor
-  fail-closed on an un-consented boundary exercise is the genuine new gate).
+* **FINDING — automatic fail-closed boundary interception (CLOSED).** The fork's
+  commit path no longer relies on the guest *choosing* to raise a consent request:
+  `SharedFork::commit_turn_gated` (`shared_fork.rs`) is the executor-forcing door.
+  It classifies the driven turn over the SAME `touched_cells` the live commit path
+  uses (`world.rs`); a turn touching NO boundary target passes through to
+  `World::commit_turn` (an embedded exercise — or a studyref inspect — runs locally,
+  no consent); a turn touching a marked `NetworkBoundary` target is REFUSED,
+  fail-closed, UNLESS it is paired with a valid `ConsentWitness` — the owner's signed
+  grant receipt, re-verified at the gate by `verify_consent_witness` (the identical
+  three teeth: turn-hash binding to the bound grant, signature authenticity under a
+  trusted executor key, and the one-shot proof nullifier). On a valid witness the
+  consent's hole-fill is a REAL attenuated `Powerbox::grant` of the boundary cap into
+  the FORK (owner → guest, at the boundary `ceiling`, so the powerbox's own two gates
+  cap it), and only THEN does the consented turn run — the boundary "elaborates here"
+  exactly once. With no consent the gate hands back the `ConsentRequest` the owner
+  resolves (via the existing `resolve_consent`). **The compulsion is structural:**
+  `commit_turn_gated` is the mandatory door, and exercise-without-consent is refused,
+  not merely discouraged. Proven by: `gate_refuses_a_boundary_exercise_without_consent_fail_closed`
+  (a, the executor never runs the un-consented exercise — fail-closed, not "the guest
+  didn't ask"), `gate_admits_the_same_boundary_exercise_after_a_valid_consent` (b, the
+  SAME turn commits once a valid signed consent resolves),
+  `gate_never_gates_an_embedded_cap_exercise` (c, an embedded exercise is never gated),
+  `gate_refuses_a_forged_or_wrong_consent_witness` (d, untrusted-key / wrong-grant /
+  wrong-boundary witnesses are each refused), and
+  `gate_replay_of_a_consent_fires_the_boundary_only_once` (the one-shot nullifier,
+  end-to-end through the gate).
 * The **studyref → upgrade-request** routing as a typed flow (today it is a
   `CapabilityRequest` raised by hand).
 * The chat lane's binding of a real recipient key to the guest principal, and the
@@ -294,10 +315,13 @@ is now built + tested** — the three-tier graduation typing, the mint → rehyd
 → drive → stitch round-trip, the consent-signing-domain resolution, and the
 always-on anti-amplification tooth are live code with passing tests
 (`cargo test -p starbridge-web-surface`; `cd starbridge-v2 && cargo test
---features embedded-executor --lib shared_fork`). What remains is the *automatic*
-fail-closed boundary interception (today the guest chooses to raise the consent
-request; making the fork's executor force it is the genuine next gate) and the
-chat lane's transport binding — both named above.
+--no-default-features --features embedded-executor --lib shared_fork`). The
+*automatic* fail-closed boundary interception is now CLOSED too:
+`SharedFork::commit_turn_gated` COMPELS consent — a boundary cap cannot reach the
+executor without the owner's signed grant; the gate, not the guest's good manners,
+is the door. What remains is the chat lane's transport binding (a real recipient
+key to the guest principal, delivery of the `SharedFork` / `ConsentRequest` /
+`ConsentGrant` envelopes) — named above.
 
 ---
 

@@ -50,7 +50,7 @@ use dregg_turn::conditional::{
 use dregg_turn::turn::{Turn, TurnReceipt};
 
 use crate::powerbox::{Powerbox, PowerboxOutcome};
-use crate::world::World;
+use crate::world::{touched_cells, CommitOutcome, World};
 
 /// **A cap fully granted into the fork — the EMBEDDED tier.**
 ///
@@ -190,6 +190,79 @@ impl ConsentOutcome {
     }
 }
 
+/// The default height-window a fail-closed boundary refusal keeps its emitted
+/// [`ConsentRequest`] live (so the owner has time to resolve it before it expires).
+pub const DEFAULT_CONSENT_TIMEOUT: u64 = 100;
+
+/// **A resolved consent witness** — the owner's signed grant receipt for a SPECIFIC
+/// boundary, paired with the boundary it consents to and the height it expires at.
+///
+/// Produced from a [`ConsentOutcome::Granted`] (its `receipt`) plus the boundary
+/// target and the pending turn's `timeout_height`. Handed to
+/// [`SharedFork::commit_turn_gated`] to OPEN the boundary gate for one turn. The
+/// witness is verified again at the gate (binding + authenticity + one-shot), so it
+/// cannot be forged or replayed — it is a one-shot key, not a flag.
+#[derive(Clone, Debug)]
+pub struct ConsentWitness {
+    /// The boundary target this consent opens (must equal the gated turn's boundary).
+    pub boundary: CellId,
+    /// The height past which this consent is stale (fail-closed).
+    pub timeout_height: u64,
+    /// The owner's grant receipt — the signed witness `verify_consent_witness` checks.
+    pub receipt: TurnReceipt,
+}
+
+impl ConsentWitness {
+    /// Build a witness from a granted [`ConsentOutcome`] for the given boundary +
+    /// timeout. Returns `None` if the outcome was a denial (fail-closed: no key).
+    pub fn from_outcome(boundary: CellId, timeout_height: u64, outcome: ConsentOutcome) -> Option<Self> {
+        match outcome {
+            ConsentOutcome::Granted { receipt } => Some(ConsentWitness {
+                boundary,
+                timeout_height,
+                receipt,
+            }),
+            ConsentOutcome::Denied { .. } => None,
+        }
+    }
+}
+
+/// The outcome of [`SharedFork::commit_turn_gated`] — the fail-closed boundary gate.
+#[derive(Debug)]
+pub enum GatedCommit {
+    /// The gate OPENED: the turn ran on the fork (the inner [`CommitOutcome`] is the
+    /// executor's verdict). `fired_boundary` is `Some(target)` when the turn crossed
+    /// a boundary that a valid consent opened (its nullifier was recorded — fired
+    /// once); `None` for a purely-embedded turn (no boundary touched).
+    Committed {
+        outcome: CommitOutcome,
+        fired_boundary: Option<CellId>,
+    },
+    /// FAIL-CLOSED: the turn touched a boundary with no valid consent. It did NOT
+    /// run; nothing reached "elsewhere". `request` carries the [`ConsentRequest`] the
+    /// owner must resolve (present only for the no-consent case; `None` when a
+    /// supplied witness was invalid).
+    Refused {
+        /// The boundary target whose exercise was refused.
+        target: CellId,
+        /// The consent request the owner resolves to open the gate (no-consent case).
+        request: Option<ConsentRequest>,
+        /// Why the exercise was refused.
+        reason: String,
+    },
+}
+
+impl GatedCommit {
+    /// Did the gated turn actually commit on the fork?
+    pub fn is_committed(&self) -> bool {
+        matches!(self, GatedCommit::Committed { outcome, .. } if outcome.is_committed())
+    }
+    /// Was the turn refused at the boundary gate (fail-closed)?
+    pub fn is_refused(&self) -> bool {
+        matches!(self, GatedCommit::Refused { .. })
+    }
+}
+
 /// **THE SHARED FORK** — a confined sub-world handed to another principal, whose
 /// culled cap-subgraph is graduated into the three tiers.
 ///
@@ -287,6 +360,171 @@ impl SharedFork {
     /// unreachable (the guest holds no cap to it — the confinement floor).
     pub fn boundary_for(&self, target: &CellId) -> Option<&NetworkBoundary> {
         self.boundaries.iter().find(|b| &b.target == target)
+    }
+
+    /// **FAIL-CLOSED BOUNDARY INTERCEPTION — the compulsion gate.**
+    ///
+    /// This is the executor-forcing seam: the guest does NOT *choose* to raise a
+    /// consent request — the fork's commit path REFUSES, fail-closed, any turn that
+    /// touches a [`NetworkBoundary`] target unless the turn is paired with a valid,
+    /// resolved consent witness for that boundary. There is no path by which a
+    /// boundary cap reaches the executor without consent: an embedded turn commits
+    /// freely; a turn touching a marked boundary is structurally refused absent the
+    /// owner's signed grant.
+    ///
+    /// Classification (over the SAME [`touched_cells`] the live commit path uses):
+    /// * touches NO boundary target → pass through to [`World::commit_turn`] (an
+    ///   embedded exercise — or a studyref inspect — runs locally, no consent). A
+    ///   studyref *exercise* never reaches here as a committed write: the guest holds
+    ///   no write cap, so the executor itself refuses it (no gate needed); if a
+    ///   studyref target is ALSO marked a boundary, it is gated like any boundary.
+    /// * touches a boundary target with NO consent supplied → [`GatedCommit::Refused`]
+    ///   carrying the [`ConsentRequest`] the owner must resolve. The turn is NOT run
+    ///   — fail-closed. (`consent` is `None`.)
+    /// * touches a boundary target WITH a consent witness that
+    ///   [`verify_consent_witness`] accepts (bound to the right grant, signed by a
+    ///   trusted executor key, not yet replayed) → the turn passes through to
+    ///   [`World::commit_turn`] and the boundary's nullifier is recorded
+    ///   ([`GatedCommit::Committed`]). The consent fires the boundary exactly once.
+    /// * touches a boundary target WITH an INVALID witness → [`GatedCommit::Refused`]
+    ///   (the witness reason is carried). Fail-closed.
+    ///
+    /// `consent` (if present) is a [`ConsentWitness`] carrying the boundary it opens
+    /// + the receipt of the owner's grant of that boundary (produced by
+    /// [`Self::resolve_consent`] → [`ConsentOutcome::Granted`], wrapped by
+    /// [`ConsentWitness::from_outcome`]). `owner` is the principal whose consent mints
+    /// the boundary cap INTO the fork when the gate opens (the consent's hole-fill: a
+    /// real attenuated `Effect::GrantCapability` from owner→guest on the fork, so the
+    /// now-consented turn can commit against the fork's executor). `used_proof_hashes`
+    /// is the fork's persistent nullifier set (the witness fires the boundary once).
+    /// `current_height` is the live height the consent timeout is checked against.
+    ///
+    /// The single mandatory entry: the guest drives turns through this method (never
+    /// `fork.commit_turn` directly) — the gate is the executor-forcing door. The
+    /// existing [`Self::resolve_consent`] produces the witness this gate consumes.
+    pub fn commit_turn_gated(
+        &self,
+        fork: &mut World,
+        owner: CellId,
+        turn: Turn,
+        consent: Option<&ConsentWitness>,
+        trusted_executor_keys: &[[u8; 32]],
+        current_height: u64,
+        used_proof_hashes: &mut HashSet<[u8; 32]>,
+    ) -> GatedCommit {
+        // (1) Classify the turn against the fork's boundaries over the SAME
+        //     `touched_cells` the live commit path uses — no parallel reachability.
+        let touched = touched_cells(&turn);
+        let crossed: Vec<&NetworkBoundary> = self
+            .boundaries
+            .iter()
+            .filter(|b| touched.iter().any(|t| t == &b.target))
+            .collect();
+
+        // (2) No boundary touched → an embedded (or studyref-inspect) exercise:
+        //     it elaborates only LOCALLY, so it commits with no consent door.
+        if crossed.is_empty() {
+            return GatedCommit::Committed {
+                outcome: fork.commit_turn(turn),
+                fired_boundary: None,
+            };
+        }
+
+        // (3) A boundary IS touched. THE COMPULSION: without a valid consent witness
+        //     the turn is refused, fail-closed — the guest could not commit it even
+        //     if it tried, because this is the only door to the executor.
+        let boundary = crossed[0]; // gate on the first crossed boundary (one per turn)
+        let Some(witness) = consent else {
+            // No consent supplied → refuse + hand back the consent REQUEST the owner
+            // must resolve. The turn did NOT run; nothing reached "elsewhere".
+            let request = boundary.consent_request(
+                self.guest,
+                turn,
+                [0u8; 32], // the owner binds the real grant-turn hash when resolving
+                current_height,
+                current_height.saturating_add(DEFAULT_CONSENT_TIMEOUT),
+            );
+            return GatedCommit::Refused {
+                target: boundary.target,
+                request: Some(request),
+                reason: "networkboundary exercise refused: no consent witness present (fail-closed)"
+                    .to_string(),
+            };
+        };
+
+        // (4) The consent must be FOR this boundary's target (a witness for another
+        //     boundary cannot fire this one).
+        if witness.boundary != boundary.target {
+            return GatedCommit::Refused {
+                target: boundary.target,
+                request: None,
+                reason: format!(
+                    "consent witness is for a different boundary ({} ≠ {})",
+                    crate::reflect::short_hex(&witness.boundary.0),
+                    crate::reflect::short_hex(&boundary.target.0),
+                ),
+            };
+        }
+
+        // (5) The consent must not have expired (a witness arriving after the gated
+        //     turn would have timed out is fail-closed, mirroring `resolve_consent`).
+        if current_height > witness.timeout_height {
+            return GatedCommit::Refused {
+                target: boundary.target,
+                request: None,
+                reason: "consent witness arrived after the boundary turn expired (fail-closed)"
+                    .to_string(),
+            };
+        }
+
+        // (6) Verify the witness in the executor's own signing domain — the IDENTICAL
+        //     three teeth `resolve_consent` applies (turn-hash binding to the bound
+        //     grant, signature authenticity under a trusted key, one-shot nullifier).
+        //     This records the nullifier on success → the boundary fires exactly once.
+        let condition = ProofCondition::TurnExecuted {
+            turn_hash: witness.receipt.turn_hash,
+        };
+        match verify_consent_witness(
+            &condition,
+            &witness.receipt,
+            trusted_executor_keys,
+            used_proof_hashes,
+        ) {
+            Ok(()) => {
+                // CONSENT PRESENT + VALID → the gate opens. The consent's hole-fill is
+                // a REAL attenuated grant of the boundary cap into the FORK (owner →
+                // guest, at the boundary's ceiling): the powerbox's own two gates fire,
+                // so consent can never mint wider than the owner holds. Only THEN does
+                // the consented turn run — the boundary "elaborated here" exactly once.
+                // (The nullifier is already recorded by `verify_consent_witness`; an
+                // over-amplifying ceiling would be refused by the grant, fail-closed,
+                // and the boundary would not fire.)
+                match Powerbox::grant(
+                    fork,
+                    owner,
+                    self.guest,
+                    boundary.target,
+                    boundary.ceiling.clone(),
+                ) {
+                    PowerboxOutcome::Granted { .. } => GatedCommit::Committed {
+                        outcome: fork.commit_turn(turn),
+                        fired_boundary: Some(boundary.target),
+                    },
+                    PowerboxOutcome::Denied { reason } => GatedCommit::Refused {
+                        target: boundary.target,
+                        request: None,
+                        reason: format!(
+                            "consent valid but the boundary grant did not land on the fork (fail-closed): {reason}"
+                        ),
+                    },
+                }
+            }
+            Err(reason) => GatedCommit::Refused {
+                target: boundary.target,
+                request: None,
+                reason: format!("networkboundary exercise refused (invalid consent): {reason}"),
+            },
+        }
     }
 
     /// **Resolve a consent request** the guest raised by attempting a boundary
@@ -883,6 +1121,226 @@ mod tests {
         let req = study.upgrade_request(guest, AuthRequired::Signature);
         assert_eq!(req.app_cell, guest);
         assert!(req.reason.contains("upgrade"));
+    }
+
+    // ── THE COMPULSION: fail-closed boundary interception (the NEW property) ──────
+    //
+    // Beyond the opt-in tests above (where the GUEST chooses to raise a consent
+    // request), these prove the fork's commit gate COMPELS consent: a turn that
+    // touches a networkboundary target cannot reach the executor without a valid
+    // resolved witness. Exercise-without-consent is structurally refused, not merely
+    // discouraged — `commit_turn_gated` is the only door, and it is fail-closed.
+
+    /// Helper: a constructed signed fork with `docs` embedded + `peer` a boundary.
+    /// Returns `(world, fork, sf, owner, guest, docs, peer, exec_pub)`.
+    fn gated_fork() -> (World, World, SharedFork, CellId, CellId, CellId, CellId, [u8; 32]) {
+        let (mut world, owner, guest, docs, peer, _seed) = signed_fork_world();
+        let exec_pub = world.executor_public_key().expect("the world signs receipts");
+        let mut fork = world.fork();
+        let sf = SharedFork::construct(
+            &mut fork,
+            owner,
+            guest,
+            &[(docs, AuthRequired::None)], // docs embedded (free local exercise)
+            vec![],
+            vec![NetworkBoundary { target: peer, ceiling: AuthRequired::Signature }], // peer gated
+        );
+        (world, fork, sf, owner, guest, docs, peer, exec_pub)
+    }
+
+    #[test]
+    fn gate_refuses_a_boundary_exercise_without_consent_fail_closed() {
+        // (a) THE COMPULSION: a guest turn touching the networkboundary `peer` WITHOUT
+        //     a consent witness is REFUSED by the gate — the executor never ran it.
+        //     This is not "the guest didn't ask": the guest DID try (drove the turn),
+        //     and the fork's only commit door refused it, fail-closed.
+        let (_world, mut fork, sf, owner, guest, _docs, peer, exec_pub) = gated_fork();
+
+        let pre_nonce = fork.ledger().get(&peer).map(|c| c.state.nonce()).unwrap_or(0);
+        let exercise = fork.turn(guest, vec![dregg_turn::action::Effect::IncrementNonce { cell: peer }]);
+
+        let mut used = HashSet::new();
+        let gated = sf.commit_turn_gated(&mut fork, owner, exercise, None, &[exec_pub], 10, &mut used);
+
+        assert!(gated.is_refused(), "a boundary exercise with no consent is REFUSED (fail-closed)");
+        assert!(!gated.is_committed(), "the turn did NOT run");
+        match &gated {
+            GatedCommit::Refused { target, request, reason } => {
+                assert_eq!(*target, peer, "the refused exercise names the boundary");
+                assert!(request.is_some(), "the gate hands back the consent REQUEST the owner resolves");
+                assert!(reason.contains("no consent"), "the refusal cites the missing consent: {reason}");
+            }
+            _ => unreachable!(),
+        }
+        // The executor never touched `peer` — nothing reached "elsewhere".
+        assert_eq!(
+            fork.ledger().get(&peer).map(|c| c.state.nonce()).unwrap_or(0),
+            pre_nonce,
+            "the boundary cell is untouched — the refused exercise had no effect"
+        );
+        assert!(used.is_empty(), "no nullifier recorded — the boundary never fired");
+    }
+
+    #[test]
+    fn gate_admits_the_same_boundary_exercise_after_a_valid_consent() {
+        // (b) THE SAME turn, AFTER a valid signed consent resolves, is ACCEPTED — the
+        //     gate opens for exactly one boundary exercise. The compulsion is a door,
+        //     not a wall: consent is the key.
+        let (mut world, mut fork, sf, owner, guest, _docs, peer, exec_pub) = gated_fork();
+
+        // The owner resolves the consent: a REAL powerbox grant over the LIVE world,
+        // bound to the SPECIFIC grant turn (the same `grant_turn` `resolve_consent`
+        // runs), producing the signed witness.
+        let intended = fork.turn(guest, vec![dregg_turn::action::Effect::IncrementNonce { cell: peer }]);
+        let grant_turn = Powerbox::grant_turn(&world, owner, guest, peer, AuthRequired::Signature);
+        let request = NetworkBoundary { target: peer, ceiling: AuthRequired::Signature }
+            .consent_request(guest, intended.clone(), grant_turn.hash(), 0, 100);
+
+        let mut used = HashSet::new();
+        let outcome = SharedFork::resolve_consent(
+            &mut world, owner, &request, AuthRequired::Signature, &[exec_pub], 10, &mut used,
+        );
+        assert!(outcome.is_granted(), "the owner's real grant resolves the consent");
+        // The resolver already recorded the nullifier; the GATE re-verifies the same
+        // witness with a FRESH nullifier set (the fork's own one-shot ledger).
+        let witness = ConsentWitness::from_outcome(peer, 100, outcome).expect("granted → a witness");
+
+        let pre_nonce = fork.ledger().get(&peer).map(|c| c.state.nonce()).unwrap_or(0);
+        let mut fork_used = HashSet::new();
+        let gated = sf.commit_turn_gated(&mut fork, owner, intended, Some(&witness), &[exec_pub], 10, &mut fork_used);
+
+        assert!(gated.is_committed(), "the SAME exercise commits once a valid consent is present");
+        match &gated {
+            GatedCommit::Committed { fired_boundary, outcome } => {
+                assert_eq!(*fired_boundary, Some(peer), "the boundary fired (consent opened it)");
+                assert!(outcome.is_committed(), "the executor accepted the now-consented turn");
+            }
+            _ => unreachable!(),
+        }
+        assert_eq!(
+            fork.ledger().get(&peer).map(|c| c.state.nonce()).unwrap_or(0),
+            pre_nonce + 1,
+            "the consented exercise really ran on the fork (nonce advanced)"
+        );
+        assert_eq!(fork_used.len(), 1, "the boundary fired exactly once → one nullifier");
+    }
+
+    #[test]
+    fn gate_never_gates_an_embedded_cap_exercise() {
+        // (c) An embedded-cap turn (docs is embedded) is NEVER gated — it touches no
+        //     boundary, so it commits with no consent and no witness, every time.
+        let (_world, mut fork, sf, owner, guest, docs, _peer, exec_pub) = gated_fork();
+
+        let drive = fork.turn(guest, vec![crate::world::set_field(docs, 2, [7u8; 32])]);
+        let mut used = HashSet::new();
+        let gated = sf.commit_turn_gated(&mut fork, owner, drive, None, &[exec_pub], 10, &mut used);
+
+        assert!(gated.is_committed(), "an embedded exercise commits freely (no boundary touched)");
+        match &gated {
+            GatedCommit::Committed { fired_boundary, .. } => {
+                assert_eq!(*fired_boundary, None, "no boundary fired — purely local");
+            }
+            _ => unreachable!(),
+        }
+        assert_eq!(
+            fork.ledger().get(&docs).unwrap().state.fields[2], [7u8; 32],
+            "the embedded exercise really mutated the fork — ungated"
+        );
+        assert!(used.is_empty(), "an embedded exercise records no boundary nullifier");
+    }
+
+    #[test]
+    fn gate_refuses_a_forged_or_wrong_consent_witness() {
+        // (d) The teeth: a boundary exercise paired with an INVALID witness is refused,
+        //     fail-closed. Three forgeries, each refused by the gate's re-verification.
+        let (mut world, _fork0, _sf0, owner, guest, _docs, peer, exec_pub) = gated_fork();
+
+        // Build a real, valid witness once (a genuine grant), to mutate into forgeries.
+        let grant_turn = Powerbox::grant_turn(&world, owner, guest, peer, AuthRequired::Signature);
+        let dummy = world.turn(guest, vec![dregg_turn::action::Effect::IncrementNonce { cell: peer }]);
+        let req = NetworkBoundary { target: peer, ceiling: AuthRequired::Signature }
+            .consent_request(guest, dummy, grant_turn.hash(), 0, 100);
+        let mut used = HashSet::new();
+        let good = ConsentWitness::from_outcome(
+            peer, 100,
+            SharedFork::resolve_consent(&mut world, owner, &req, AuthRequired::Signature, &[exec_pub], 10, &mut used),
+        ).expect("a real witness");
+
+        // Forgery 1: the witness verified under a WRONG trusted key is refused.
+        {
+            let (_w, mut fork, sf, o, g, _d, p, _ep) = gated_fork();
+            let ex = fork.turn(g, vec![dregg_turn::action::Effect::IncrementNonce { cell: p }]);
+            let attacker = ed25519_dalek::SigningKey::from_bytes(&[0x99; 32]).verifying_key().to_bytes();
+            let mut u = HashSet::new();
+            let gated = sf.commit_turn_gated(&mut fork, o, ex, Some(&good), &[attacker], 10, &mut u);
+            assert!(gated.is_refused(), "a witness not signed by a trusted key is refused at the gate");
+            assert!(u.is_empty(), "no nullifier — the boundary never fired");
+        }
+
+        // Forgery 2: a witness whose `turn_hash` is NOT the bound grant (mutated) —
+        //   the binding tooth refuses it (a stray receipt cannot open the gate).
+        {
+            let (_w, mut fork, sf, o, g, _d, p, ep) = gated_fork();
+            let ex = fork.turn(g, vec![dregg_turn::action::Effect::IncrementNonce { cell: p }]);
+            let mut wrong = good.clone();
+            wrong.receipt.turn_hash = [0xABu8; 32]; // not the signed grant turn
+            let mut u = HashSet::new();
+            let gated = sf.commit_turn_gated(&mut fork, o, ex, Some(&wrong), &[ep], 10, &mut u);
+            assert!(gated.is_refused(), "a witness for a DIFFERENT grant cannot open the gate");
+            assert!(u.is_empty());
+        }
+
+        // Forgery 3: a valid witness for the WRONG boundary cannot open THIS boundary.
+        {
+            let (_w, mut fork, sf, o, g, _d, p, ep) = gated_fork();
+            let ex = fork.turn(g, vec![dregg_turn::action::Effect::IncrementNonce { cell: p }]);
+            let mut other = good.clone();
+            other.boundary = CellId([0xEEu8; 32]); // a different boundary target
+            let mut u = HashSet::new();
+            let gated = sf.commit_turn_gated(&mut fork, o, ex, Some(&other), &[ep], 10, &mut u);
+            assert!(gated.is_refused(), "a witness for another boundary cannot open this one");
+            match gated {
+                GatedCommit::Refused { reason, .. } => {
+                    assert!(reason.contains("different boundary"), "names the mismatch: {reason}");
+                }
+                _ => unreachable!(),
+            }
+            assert!(u.is_empty());
+        }
+    }
+
+    #[test]
+    fn gate_replay_of_a_consent_fires_the_boundary_only_once() {
+        // The one-shot tooth, end-to-end through the gate: a witness opens the boundary
+        // ONCE; re-presenting the SAME witness (same nullifier set) is refused — the
+        // proof-hole-is-a-nullifier, enforced by the commit gate itself.
+        let (mut world, mut fork, sf, owner, guest, _docs, peer, exec_pub) = gated_fork();
+        let grant_turn = Powerbox::grant_turn(&world, owner, guest, peer, AuthRequired::Signature);
+        let ex1 = fork.turn(guest, vec![dregg_turn::action::Effect::IncrementNonce { cell: peer }]);
+        let req = NetworkBoundary { target: peer, ceiling: AuthRequired::Signature }
+            .consent_request(guest, ex1.clone(), grant_turn.hash(), 0, 100);
+        let mut resolve_used = HashSet::new();
+        let witness = ConsentWitness::from_outcome(
+            peer, 100,
+            SharedFork::resolve_consent(&mut world, owner, &req, AuthRequired::Signature, &[exec_pub], 10, &mut resolve_used),
+        ).expect("granted");
+
+        let mut fork_used = HashSet::new();
+        let first = sf.commit_turn_gated(&mut fork, owner, ex1, Some(&witness), &[exec_pub], 10, &mut fork_used);
+        assert!(first.is_committed(), "the first consented exercise fires the boundary");
+
+        // Replay the SAME witness for a second exercise — refused by the nullifier.
+        let ex2 = fork.turn(guest, vec![dregg_turn::action::Effect::IncrementNonce { cell: peer }]);
+        let second = sf.commit_turn_gated(&mut fork, owner, ex2, Some(&witness), &[exec_pub], 10, &mut fork_used);
+        assert!(second.is_refused(), "re-presenting the SAME consent fires the boundary at most once");
+        match second {
+            GatedCommit::Refused { reason, .. } => assert!(
+                reason.contains("already used"),
+                "the replay is refused by the one-shot nullifier: {reason}"
+            ),
+            _ => unreachable!(),
+        }
+        assert_eq!(fork_used.len(), 1, "exactly one nullifier across the two attempts");
     }
 
     // ── THE ROUND-TRIP: mint → rehydrate → drive → stitch (each property) ─────────

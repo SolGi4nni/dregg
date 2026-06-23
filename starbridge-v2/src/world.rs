@@ -55,6 +55,7 @@ use crate::persistence::{OpenError, RecoveredImage};
 use crate::replay::History;
 
 /// The outcome of attempting to commit a turn against the embedded executor.
+#[derive(Debug)]
 pub enum CommitOutcome {
     /// The turn committed. The real receipt + the dynamics events it produced.
     Committed {
@@ -1378,7 +1379,7 @@ fn push_unique(ids: &mut Vec<CellId>, id: CellId) {
 }
 
 /// All cell ids a turn's effects touch (for pre/post balance diffing).
-fn touched_cells(turn: &Turn) -> Vec<CellId> {
+pub(crate) fn touched_cells(turn: &Turn) -> Vec<CellId> {
     let mut ids = Vec::new();
     for tree in &turn.call_forest.roots {
         push_unique(&mut ids, tree.action.target);
