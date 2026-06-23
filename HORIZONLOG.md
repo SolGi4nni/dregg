@@ -298,6 +298,31 @@ vs Zed's `Send+Sync` `Fs` → added `SyncCellFs` over `OwnedSpine` (`Arc<Mutex>`
 nested-dir lazy expansion (drive `expand_entry` / wire `watch` off the receipt log), terminal PTY spawn,
 git/agent/collab panels (mapped, unwired). `deos-zed-full` is a separate workspace — starbridge-v2 unaffected.
 
+### THE WHOLE ZED WORKSPACE AS ONE RUNNING THING + PNG — by running (2026-06-23).
+`2d4fdca5` (`deos-zed-full`). The per-panel proofs (project/outline/terminal `333342ab`, nested+PTY `c25ff6c8`,
+git-over-cells `809a7e74`, Hermes agent `2d319930`) UNIFIED into ONE `workspace::Workspace`:
+`unified_workspace_one_running_thing` (#[gpui::test], GREEN) — all four panels docked + `panel::<T>()` is
+`Some`, git AUTO-DISCOVERED (GitStore picks up `CellLedgerGit`, HEAD=refs/heads/main, main.rs modified), a
+real `ProjectSearchView` deployed, the `CommandPalette` modal toggled (`active_modal::<CommandPalette>()` is
+`Some`), a running PTY (`echo` reaches the grid), and a save-through-the-Workspace = a `TurnReceipt`.
+`unified_workspace_png_bake` (#[test], GREEN) bakes a 3600x2200 PNG of that one Workspace via the REAL
+headless GPU renderer (`HeadlessAppContext` + `current_headless_renderer`; built non-test via `AppState::test`
++ `Project::local` + `Workspace::new` + `boot::load_all_panels`). Teardown forgets the cx (the live
+Editor/TerminalView detached tasks survive window-removal → would trip the leak detector; clean for a
+one-shot bake).
+⚑ COCKPIT MOUNT SEAM — `src/zed_full_pane.rs` is the `CockpitSurface` that hosts the full
+`Entity<workspace::Workspace>` (written + dormant, gated on an UNDECLARED `zed-full-pane` feature). The mount
+is BLOCKED by a HARD `links = "sqlite3"` native-lib conflict — deos-zed-full → `workspace` → `sqlez` →
+`libsqlite3-sys 0.30` vs this cockpit's `deos-matrix` → `matrix-sdk` → `matrix-sdk-sqlite` →
+`libsqlite3-sys 0.35`. gpui is NOT the blocker (the gpui patch unifies; `cargo metadata --features
+zed-full-pane` resolves; the pane module compiles the instant the dep is declarable). Cargo forbids two
+packages with the same `links` value, and merely DECLARING the optional dep breaks `native-full` (the `web/`
+member pulls the matrix sqlite path), so the dep + feature + render-arm are intentionally UNDECLARED →
+`native-full` stays GREEN. CLOSE = reconcile the two `libsqlite3-sys` (drop sqlez's sqlite from the embedded
+`workspace` persistence, or unify on one libsqlite3-sys), then re-add the dep + `zed-full-pane` feature +
+mount in a cockpit pane. A second possible path: a separate process/PD hosting the full Workspace, surfaced
+via firmament (no in-binary sqlite merge).
+
 ### SELF-HOSTING LOOP — DEMONSTRATED, ran + screenshotted (2026-06-23).
 `f4597aeb` (`starbridge-v2/src/self_hosting.rs` + `main.rs --render-self-hosting` bake). BOTH halves real,
 side by side: (1) the firmament EDITOR fired a real cap-gated `SetField` turn → live `TurnReceipt` 5→6 on
