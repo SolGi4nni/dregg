@@ -78,8 +78,26 @@ cockpit). `9174b966` = **deos-js slice 2**: `deos.world.cells()/.ocap()`, `deos.
 5 string-returning natives + a JSON prelude (`reflect_binding.rs`, no serde). Proven by running:
 from JS, crawl the ledger, read a cell's `balance` substance, confirm `.as(viewer)` is cap-bounded
 (self observable; a stranger absent + `reflect()===null`) — and the crawl commits NO turns
-(reflection is a READ). NEXT: fan out the moldable `present()` faces as JS objects (Rust side done in
-`deos-reflect::present`), `snapshot`/`rewind` time-travel, `spotter`; then slice 3 = the gpui view.
+(reflection is a READ).
+### deos-js FAN-OUT + SYMBOLIC drive + VIEW-TREE model — by running (2026-06-23).
+`8bd57077` (deos-js only; deos-reflect unchanged). Three workstreams, all green on one big-stack
+SpiderMonkey thread: (1) **fan-out** — `deos.cell(id).present()` → the 4 moldable faces as JS objects
+(DomainVisual=Live, Provenance=the fired turn), `.affordances(viewer)` → cap-gated message list
+(Signature viewer can't see a Proof affordance), `deos.world.snapshot()/.rewind(token)` → fork
+time-travel (engine state_snapshot/load_state; audit tape truncates — no phantom receipts),
+`deos.search(q)` → fuzzy spotter. Each a READ (no turns). (2) **Symbolic-by-default** — the applet
+executor runs `WitnessMode::Symbolic`; a local turn defers only the WITNESS (`pre/post_state_hash` →
+`DEFERRED_STATE_HASH`) while state applies + every GATE runs. Proven: Symbolic inc applies (model=8)
+AND a Proof-gated reset held by a Signature driver is REFUSED (gate not deferred); receipt
+`is_deferred`==true. `set_full_witness()` reaches publishable mode. (3) **view-tree MODEL** (slice 3,
+GPUI-FREE): `deos.ui.{vstack,row,text,button,input,list,table,bind}` build a serializable element-tree
+(DATA, not gpui); button onClick=`{turn,arg}` (real turn when fired); `bind(()=>expr)` = signal binding.
+Proven: counter view-tree shape correct; firing a bound handler commits a REAL turn (0→1); bound value
+re-reads; building the tree commits nothing. ⚑ **OPEN FORK (ember's call)** — the RENDER of the
+view-tree (§7.1): (A) new `deos-view` crate (deos-js + gpui-component, reusable, gpui in one crate;
+MY LEAN) vs (B) a cockpit-side renderer in starbridge-v2 (reuses cockpit gpui but couples the toolkit
+to the desktop). The model + firing path RUN; the fork gates only the pixels. Design doc updated
+(`docs/deos/SCRIPTING-AND-DISTRIBUTED-DOM.md` §6 slices 2.5/2.6/3 LANDED + §7.1 the render fork).
 ### CIRCUIT/KERNEL CONCORDANCE — codex review closed + 5 executor triangles + 32/32 extraction (2026-06-23).
 Full circuit/kernel concordance proven for all 32 effects, axiom-clean (lake Dregg2.Claims green, 4123 jobs):
 (1) commitment binds every kernel write (record_digest realizes RH, `548ac920`/`80ebce3d`); (2) hostile-witness

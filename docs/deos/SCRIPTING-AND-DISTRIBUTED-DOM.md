@@ -189,12 +189,25 @@ the entire gpui-free reflective API (proven live via dregg-mcp).
   `.canObserve` / `.reflect`) bound to mozjs over `deos-reflect` (JSON via string-returning natives).
   Proven by running: from JS, crawl the ledger, read a cell's `balance` substance, and confirm the
   frustum is cap-bounded (self observable; a stranger absent + `reflect()===null`) — and the crawl
-  commits NO turns (reflection is a READ). *Still to fan out:* the moldable `present()` faces as JS
-  objects (the Rust side is done in `deos-reflect::present`), `snapshot`/`rewind` time-travel, and a
-  `spotter` fuzzy search.
-- **Slice 3 — view (the QML toolkit, next):** render an applet's `obs` as a gpui element tree from JS
-  (declarative view + affordance handlers = turns), the moldable faces as inspectable surfaces. The
-  per-node↔coarse dial (§4.1) is a property of how you factor applets into cells.
+  commits NO turns (reflection is a READ).
+- **Slice 2.5 — fan-out (LANDED, green by running):** `deos.cell(id).present()` → the moldable faces
+  as JS objects (RawFields · Graph · DomainVisual · Provenance); `deos.cell(id).affordances(viewer)`
+  → the cap-gated message list (projected by `is_attenuation`); `deos.world.snapshot()/.rewind(token)`
+  → cheap fork time-travel (engine `state_snapshot`/`load_state`; the audit tape truncates on rewind —
+  no phantom receipts); `deos.search(q)` → a fuzzy spotter over every cell's faces. Each proven a READ
+  (no turns). DomainVisual=Live, Provenance=the fired turn, affordances cap-gated.
+- **Slice 2.6 — Symbolic-by-default drive (LANDED, green by running):** the applet executor runs
+  `WitnessMode::Symbolic` by default — a local turn defers only the WITNESS (`pre/post_state_hash` →
+  `DEFERRED_STATE_HASH`) while the state applies and every GATE runs. `set_full_witness()` reaches the
+  publishable mode on demand. Proven: a Symbolic `inc` applies AND a Proof-gated `reset` held by a
+  Signature driver is still REFUSED (the gate is not deferred); `is_deferred(receipt)===true`.
+- **Slice 3 — view-tree MODEL (LANDED, green by running; render is the open fork):** `deos.ui.{vstack,
+  row,text,button,input,list,table,bind}` build a **serializable element-tree (DATA, not gpui)**: a
+  button's `onClick = {turn, arg}` (a real turn when fired); `bind(()=>expr)` is a fine-grained signal
+  binding. **deos-js pulls NO gpui** — the JS `view` produces the tree; a separate renderer draws it.
+  Proven: a counter view-tree has the right shape; firing a bound handler commits a REAL verified turn
+  (model 0→1); the bound value re-reads correctly; building the tree commits nothing. **THE RENDER
+  ARCHITECTURE IS AN OPEN FORK (ember's call) — see §7.1.**
 - **Throughout:** language-agnostic binding (JS-first; the binding is the artifact). Reflection
   stays cap-bounded + attested; interaction stays production-under-non-forgeability.
 
@@ -223,6 +236,32 @@ The applet's `view` renders `obs` as a gpui element tree from JS. Decisions:
 - **Drive path runs `WitnessMode::Symbolic` by default** for local turns: the witness defers (the gates
   never do), collapse only at a boundary. The ledger's Merkle is already incremental — no symbolic-
   frontier framework needed.
+
+### 7.1 The render architecture — an OPEN FORK (ember's call)
+
+The view-tree MODEL is built + proven in `deos-js` (gpui-free): JS produces a serializable element-tree
+(`deos.ui.*`), a button's `onClick` is `{turn, arg}`, a `bind` node carries a `read()` closure. What is
+NOT yet decided is **which crate RENDERS that tree into real gpui-component widgets**. Two shapes (this
+is the same kind of fork the `deos-reflect` extraction was — named, not decided):
+
+- **(A) a new `deos-view` crate** depending on `deos-js` + `gpui-component`. It owns the tree→widget map
+  (`vstack`→`v_flex`, `button`→`Button` with the `onClick` wired to `app.fire(turn,arg)`, `bind`→a
+  signal subscription riding the `WorldEvent` dirty-set), and the moldable `present()` faces render
+  through the SAME `gpui-component` vocabulary (the §7 unification: an applet's `view` is its
+  `DomainVisual` face; the inspector is the other faces). Pro: the render lives WITH the binding, one
+  cohesive toolkit crate, reusable outside the cockpit. Con: a new crate that pulls gpui + the
+  gpui-component fork.
+- **(B) a cockpit-side renderer** in `starbridge-v2` consuming `deos-js`'s view-tree. Pro: reuses the
+  cockpit's existing `gpui-component` setup + its `Presentable`/Registry render path directly. Con: ties
+  the JS view toolkit to the cockpit (less reusable; couples the scripting surface to the desktop), and
+  the cockpit is a standalone rolling-nightly workspace.
+
+The signal-binding invalidation source is settled either way (§7): the `WorldEvent` dirty-set / dynamics
+stream (`EFFICIENCY-WELD-PLAN.md` M1/M2), SolidJS-shaped — NOT a pull-memoize framework. The fork is
+purely *where the tree→widget renderer lives*, and it gates slice-3's pixels (the model + the firing
+path already run). **Lean: (A) `deos-view`** — it keeps the toolkit reusable and the gpui blast radius
+in one crate, mirroring how `deos-reflect` kept the reflective substrate gpui-free and shared. But it's
+ember's to pick.
 
 ## 8. Chat & comms — dregg-native, BRIDGED not bundled
 
