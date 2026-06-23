@@ -8,6 +8,26 @@ lot: per WE-DO-NOT-NAME-WE-SHIP, anything that sits here across many sessions
 should be either scheduled or explicitly demoted to the Research tier with a
 reason.)*
 
+## ✅ MEMBRANE FULL LOOP — the killer primitive RUNS cross-user, ONE process, no fixture shirk (2026-06-23)
+The "screenshot a moment → carry over real Matrix → rehydrate into a drivable fork →
+drive a real turn → stitch back sound" loop now runs END-TO-END in a SINGLE process,
+live. Proven by running: `starbridge_v2::shared_fork::membrane_host::adapter_tests::`
+`full_loop_one_process_real_executor_over_real_matrix` (creds-gated; 1 passed against a
+real Conduit homeserver in Docker). The seam that forced the earlier two-halves+fixture
+proof is CLOSED: `matrix-sdk` is a NATIVE-target dep, so `starbridge-v2`'s `dev-surfaces`
+graph links BOTH the Lean-backed executor AND the live Matrix client at once. In one run:
+A's real executor mints a multiplayer `MembraneEnvelope` (6 real `Cell`s, root `1ee74207`)
+→ A ships it over the real homeserver via the live `MatrixHandle` (real tokio worker on
+its OS thread) → B receives it OFF THE WIRE in its own sync loop → B rehydrates the
+RECEIVED bytes into a real `World` fork, drives a real verified turn, and stitches it back
+(clean fold + Dead-wins conflict ConflictObject + over-auth lossy-drop + Σδ=0). NO fixture
+— B drives the bytes it received. Wire enabler: extended `deos_matrix::worker::MatrixWorker`
+with `create_room`/`invited_rooms`/`accept_invite` (the cross-user flow now runs through
+the sync↔async facade). The earlier fixture path (`real_executor_membrane.json` +
+`deos-matrix`'s `live_two_user_real_executor_membrane_roundtrip`) stays as the
+deos-matrix-workspace-only proof of the SAME wire shape; the one-process loop is the true
+closure. Harness: `FULL_LOOP=1 ./deos-matrix/scripts/live-test.sh`. No residue.
+
 ## ✅ EDITOR-SAVE WRITE-BACK TO THE NODE — the self-hosting seam CLOSED, by running (2026-06-23)
 The `--node`-attached cockpit editor save now lands on the NODE's ledger over the
 wire. Proven by running: a fresh `dregg-node` (lean producer), cockpit attached,

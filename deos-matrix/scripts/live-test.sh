@@ -109,4 +109,18 @@ export DEOS_MATRIX_TEST_USER_B="$USER_B"
 export DEOS_MATRIX_TEST_PASS_B="$PASS_B"
 
 cargo test --test live_homeserver -- --nocapture --test-threads=1
-echo "==> live tests passed"
+echo "==> deos-matrix live tests passed"
+
+# THE FULL LOOP IN ONE PROCESS — the true closure of the workspace seam (no fixture
+# handoff): a single process in starbridge-v2 that links BOTH the real Lean-backed
+# executor AND the live Matrix client. A's executor mints a membrane → ships it over
+# THIS homeserver → B receives it off the wire → B rehydrates + drives a real verified
+# turn + stitches it back (conflict path + Σδ=0). Heavy build (the embedded executor),
+# so it is gated on FULL_LOOP=1. The env quintet above is already exported.
+if [[ "${FULL_LOOP:-0}" == "1" ]]; then
+  echo "==> running the single-process FULL membrane loop (real executor over real Matrix)"
+  ( cd "$HERE/../starbridge-v2" && cargo test --no-default-features \
+      --features "embedded-executor dev-surfaces" --lib \
+      full_loop_one_process_real_executor_over_real_matrix -- --nocapture --test-threads=1 )
+  echo "==> single-process full loop passed"
+fi

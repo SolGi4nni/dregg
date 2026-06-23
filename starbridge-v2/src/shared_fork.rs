@@ -1451,6 +1451,235 @@ mod membrane_host {
                 REAL_ENVELOPE_FIXTURE
             );
         }
+
+        // ── THE FULL LOOP IN ONE PROCESS — no fixture, no byte-identity shirk ──────
+        //
+        // The closure of the seam: a SINGLE process that links BOTH the real
+        // Lean-backed executor (the `World`/`ForkMembraneHost` above) AND the live
+        // Matrix client (`deos_matrix::worker::MatrixHandle`, which owns its own
+        // tokio runtime on an OS thread — the sync↔async bridge). This is possible
+        // because `starbridge-v2`'s `dev-surfaces` graph pulls `deos-matrix`, and
+        // `matrix-sdk` is a NATIVE-target dep (always linked on native), so the
+        // comms-PD genuinely holds both halves at once.
+        //
+        // ONE run drives the WHOLE killer primitive, live:
+        //   A: the REAL executor mints a `MembraneEnvelope` (the "screenshot of a
+        //      moment" — a multiplayer frustum of genuine `Cell`s);
+        //   A→B: A ships it over a REAL Conduit homeserver via `MatrixHandle`
+        //        (real tokio worker, real socket); B receives it THROUGH the server
+        //        in its own sync loop (separate client, separate store);
+        //   B: B extracts the typed envelope, REHYDRATES it into a real `World` fork,
+        //      DRIVES a real verified turn (an edit) on it, and STITCHES the driven
+        //      diff back through the settlement gate — clean part folds, the
+        //      overlapping conflict surfaces as a ConflictObject (Dead-wins join,
+        //      not a silent overwrite), Σδ=0.
+        //
+        // Creds-gated on the two-user env quintet + a reachable homeserver (the same
+        // `scripts/live-test.sh` server). Absent → no-op (CI stays green). There is
+        // NO fixture handoff: B drives and stitches the bytes it received off the
+        // wire, in this process, against the real executor.
+
+        /// The two-user live config: `(hs, user_a, pass_a, user_b, pass_b)`. Absent
+        /// → the test no-ops. Mirrors `deos-matrix`'s `live_homeserver` gating.
+        fn live_two_user() -> Option<(String, String, String, String, String)> {
+            Some((
+                std::env::var("DEOS_MATRIX_TEST_HS").ok()?,
+                std::env::var("DEOS_MATRIX_TEST_USER").ok()?,
+                std::env::var("DEOS_MATRIX_TEST_PASS").ok()?,
+                std::env::var("DEOS_MATRIX_TEST_USER_B").ok()?,
+                std::env::var("DEOS_MATRIX_TEST_PASS_B").ok()?,
+            ))
+        }
+
+        fn tmp_store(tag: &str) -> std::path::PathBuf {
+            let mut p = std::env::temp_dir();
+            p.push(format!(
+                "starbridge-membrane-live-{tag}-{}",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            p
+        }
+
+        #[test]
+        fn full_loop_one_process_real_executor_over_real_matrix() {
+            use crate::branch_stitch::{Atom, BranchCap, DocGraph, SettleOutcome, Stitch};
+            use deos_matrix::worker::MatrixWorker;
+
+            let Some((hs, user_a, pass_a, user_b, pass_b)) = live_two_user() else {
+                eprintln!(
+                    "DEOS_MATRIX_TEST_HS/_USER/_PASS/_USER_B/_PASS_B not set — skipping the \
+                     single-process FULL membrane loop (mint→real Matrix A→B→rehydrate→drive→stitch). \
+                     Run it via the live harness (the executor links both halves): from \
+                     starbridge-v2, with a homeserver up + the env quintet set, \
+                     `cargo test --no-default-features --features \"embedded-executor dev-surfaces\" \
+                      --lib full_loop_one_process -- --nocapture`."
+                );
+                return;
+            };
+
+            // (A) MINT — the REAL executor mints a multiplayer membrane (the moment).
+            // `_user_a_cell` is in view of the cull (A's principal in the captured
+            // moment); B drives against the same subrealm, so it is not referenced here.
+            let (world, room, _user_a_cell, user_b_cell, shared, doc_a, doc_b) = mp_world();
+            let fork = world.fork();
+            let host = ForkMembraneHost::new(fork, room);
+            let env = host
+                .mint(
+                    room.0,
+                    FrustumCut { focus_cell: [0u8; 32], max_depth: 3, authority_bounded: true, cell_count: 0 },
+                )
+                .expect("the real executor mints the membrane");
+            assert!(env.cut.cell_count >= 6, "a real multiplayer subrealm (>=6 cells)");
+            let root = env.frustum_root;
+
+            // Two live Matrix workers — genuinely separate clients/devices/stores,
+            // each owning its own tokio runtime (the comms-PD bridge).
+            let (a, a_thread) = MatrixWorker::spawn().expect("spawn worker A");
+            let (b, b_thread) = MatrixWorker::spawn().expect("spawn worker B");
+            a.login_password(
+                hs.clone(), tmp_store("A"), "live-A-pass".into(), user_a.clone(), pass_a, "starbridge-membrane-A".into(),
+            ).expect("A logs in");
+            b.login_password(
+                hs.clone(), tmp_store("B"), "live-B-pass".into(), user_b.clone(), pass_b, "starbridge-membrane-B".into(),
+            ).expect("B logs in");
+            let uid_b = b.whoami().expect("B has a user id");
+
+            // (A→B WIRE) A creates the shared room + invites B; B accepts (real join).
+            let room_id = a
+                .create_room(Some("deos membrane loop".into()), Some("the live full loop".into()), vec![uid_b.clone()])
+                .expect("A creates the room + invites B");
+            let mut joined = false;
+            for _ in 0..20 {
+                b.sync_once().expect("B sync for invite");
+                if b.invited_rooms().map(|v| v.iter().any(|r| r.room_id == room_id)).unwrap_or(false) {
+                    b.accept_invite(room_id.clone()).expect("B accepts the invite");
+                    joined = true;
+                    break;
+                }
+                if b.joined_rooms().map(|v| v.iter().any(|r| r.room_id == room_id)).unwrap_or(false) {
+                    joined = true;
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(400));
+            }
+            assert!(joined, "B never saw/accepted the invite");
+            b.sync_once().expect("B sync after join");
+
+            // (A→B) A SHIPS the real executor membrane over the REAL homeserver.
+            let mem_id = a
+                .send_membrane(room_id.clone(), String::new(), env.clone())
+                .expect("A ships the real membrane A→B");
+
+            // (B RECEIVES off the wire) — B syncs until the membrane arrives THROUGH
+            // the server, then extracts the typed envelope.
+            let received = {
+                let mut found = None;
+                for _ in 0..25 {
+                    b.sync_once().expect("B sync for membrane");
+                    let tl = b.recent_timeline(room_id.clone(), 100).expect("B timeline");
+                    if let Some(m) = tl.into_iter().find(|m| m.event_id == mem_id) {
+                        found = Some(m);
+                        break;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(400));
+                }
+                found.expect("B received the membrane through the real server")
+            };
+            let wire_env = received
+                .membrane
+                .clone()
+                .expect("B extracts the membrane envelope off the wire");
+            // The bytes B drives are EXACTLY what arrived over the server (no fixture).
+            assert_eq!(wire_env, env, "the executor membrane arrived A→B byte-intact over the real server");
+            assert_eq!(wire_env.frustum_root, root, "anti-substitution root survived the wire");
+            assert!(wire_env.is_rehydratable(), "B can rehydrate the received envelope");
+
+            // (B REHYDRATES + DRIVES) — B opens the RECEIVED bytes into a real `World`
+            // fork (the real executor, in THIS process) and drives a real verified turn.
+            let frustum = MembraneFrustum::from_snapshot_bytes(&wire_env.snapshot)
+                .expect("B decodes the received frustum");
+            assert_eq!(frustum.frustum_root(), root, "B's received frustum reproduces the root");
+            let mut b_world = frustum.rehydrate(wire_env.frustum_root).expect("B rehydrates a real fork");
+            // B drives a real edit on the shared cell + its own doc (user_b authors it).
+            let drive = b_world.turn(
+                user_b_cell,
+                vec![
+                    crate::world::set_field(shared, 0, [0xBBu8; 32]),
+                    crate::world::set_field(doc_b, 0, [0x22u8; 32]),
+                ],
+            );
+            assert!(b_world.commit_turn(drive).is_committed(), "B drives a real verified turn off the wire bytes");
+            assert_eq!(b_world.ledger().get(&shared).unwrap().state.fields[0], [0xBBu8; 32]);
+
+            // (B STITCHES) — fold B's real driven diff back through the settlement gate.
+            let (baseline, driven) = frustum.driven_graphs(&b_world);
+            assert_ne!(baseline, driven, "B's diff is the REAL driven mutation off the wire");
+            let key = |id: &CellId| {
+                let bz = id.as_bytes();
+                u64::from_le_bytes([bz[0], bz[1], bz[2], bz[3], bz[4], bz[5], bz[6], bz[7]])
+            };
+            let held = vec![
+                BranchCap { target: key(&shared), debit_reach: false },
+                BranchCap { target: key(&doc_b), debit_reach: false },
+            ];
+            // Clean part: B's real driven diff folds into main (LUB).
+            let clean = Stitch { main: baseline.clone(), branch: driven.clone(), conferred: vec![BranchCap { target: key(&doc_b), debit_reach: false }] };
+            match clean.settle(&held, None) {
+                SettleOutcome::Settled(merged) => {
+                    for k in driven.atoms.keys() {
+                        assert!(merged.atoms.contains_key(k), "B's real driven atom merged into main");
+                    }
+                }
+                other => panic!("B's clean in-authority stitch must settle: {other:?}"),
+            }
+            // Conflict part: A also wrote `shared` (the moment A captured) — the
+            // overlap settles by the Dead-wins lattice join (a ConflictObject,
+            // transparent, NOT a silent overwrite).
+            let a_shared = DocGraph { atoms: [(key(&shared), Atom::Alive)].into_iter().collect() };
+            let b_shared = DocGraph { atoms: [(key(&shared), Atom::Dead)].into_iter().collect() };
+            let conflict = Stitch { main: a_shared.clone(), branch: b_shared.clone(), conferred: vec![BranchCap { target: key(&shared), debit_reach: false }] };
+            match conflict.settle(&held, None) {
+                SettleOutcome::Settled(g) => {
+                    assert_eq!(g.atoms.get(&key(&shared)), Some(&Atom::Dead), "the overlap settles by Dead-wins join (a ConflictObject, not a clobber)");
+                    assert!(a_shared.included_in(&g) && b_shared.included_in(&g), "both writes accounted for");
+                }
+                other => panic!("the conflicting overlap must settle to a transparent join: {other:?}"),
+            }
+            // Over-authorized part: B conferring `doc_a` (which B never held) is a
+            // lossy-drop, REFUSED — a cap-amplification, not a conjure.
+            let amp = Stitch { main: baseline, branch: driven, conferred: vec![BranchCap { target: key(&doc_a), debit_reach: true }] };
+            match amp.settle(&held, None) {
+                SettleOutcome::Refused { over_authorized_target } => {
+                    assert_eq!(over_authorized_target, key(&doc_a), "B's over-authorized confer is lossy-dropped");
+                }
+                other => panic!("an over-authorized confer must be REFUSED (lossy-drop): {other:?}"),
+            }
+            // Σδ=0: B's drive was pure SetField — conservation-sound.
+            let baseline_sum: i64 = frustum.cells.iter().map(|c| c.state.balance()).sum();
+            assert_eq!(baseline_sum, 0, "the minted subrealm is balance-neutral");
+            assert_eq!(
+                b_world.ledger().iter().map(|(_, c)| c.state.balance()).sum::<i64>(),
+                baseline_sum,
+                "B's drive off the wire is conservation-sound (Σδ=0)"
+            );
+
+            a.shutdown();
+            b.shutdown();
+            let _ = a_thread.join();
+            let _ = b_thread.join();
+
+            eprintln!(
+                "LIVE FULL LOOP (one process): A minted the real executor membrane ({} cells, root {}); \
+                 shipped A→B over {hs}; B received it off the wire, rehydrated a real World fork, drove a \
+                 real verified turn, and stitched it back (clean fold + Dead-wins conflict + over-auth \
+                 lossy-drop + Σδ=0). No fixture — B drove the bytes it received.",
+                env.cut.cell_count,
+                hex32(&root),
+            );
+        }
     }
 }
 

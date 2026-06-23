@@ -83,6 +83,25 @@ pub enum WorkerRequest {
     Whoami {
         reply: oneshot::Sender<Option<String>>,
     },
+    /// Create a room (optionally named/topic'd) and invite the given user ids;
+    /// reply carries the new room id. The cross-user multiplayer flow A→B starts
+    /// here (A creates the shared room and invites B).
+    CreateRoom {
+        name: Option<String>,
+        topic: Option<String>,
+        invites: Vec<String>,
+        reply: oneshot::Sender<Result<String>>,
+    },
+    /// List rooms this client has been INVITED to (pending accept) — the receive
+    /// side's first sight of a room A opened for it.
+    InvitedRooms {
+        reply: oneshot::Sender<Result<Vec<RoomSummary>>>,
+    },
+    /// Accept a pending invite (real join over the wire); reply carries the room id.
+    AcceptInvite {
+        room_id: String,
+        reply: oneshot::Sender<Result<String>>,
+    },
     /// Shut the worker down.
     Shutdown,
 }
@@ -190,6 +209,27 @@ impl MatrixWorker {
                 WorkerRequest::Whoami { reply } => {
                     let me = client.as_ref().and_then(|c| c.user_id().map(|u| u.to_string()));
                     let _ = reply.send(me);
+                }
+                WorkerRequest::CreateRoom {
+                    name,
+                    topic,
+                    invites,
+                    reply,
+                } => {
+                    let _ = reply.send(
+                        Self::with(&client, |c| async move {
+                            let invite_refs: Vec<&str> = invites.iter().map(|s| s.as_str()).collect();
+                            c.create_room(name.as_deref(), topic.as_deref(), &invite_refs).await
+                        })
+                        .await,
+                    );
+                }
+                WorkerRequest::InvitedRooms { reply } => {
+                    let _ = reply.send(Self::with(&client, |c| c.invited_rooms()).await);
+                }
+                WorkerRequest::AcceptInvite { room_id, reply } => {
+                    let _ = reply
+                        .send(Self::with(&client, |c| c.accept_invite(&room_id)).await);
                 }
                 WorkerRequest::Shutdown => break,
             }
@@ -308,6 +348,31 @@ impl MatrixHandle {
             return None;
         }
         reply_rx.blocking_recv().ok().flatten()
+    }
+
+    /// Create a room and invite the given full user ids; returns the new room id.
+    pub fn create_room(
+        &self,
+        name: Option<String>,
+        topic: Option<String>,
+        invites: Vec<String>,
+    ) -> Result<String> {
+        self.call(|reply| WorkerRequest::CreateRoom {
+            name,
+            topic,
+            invites,
+            reply,
+        })
+    }
+
+    /// List rooms this client has a pending invite to.
+    pub fn invited_rooms(&self) -> Result<Vec<RoomSummary>> {
+        self.call(|reply| WorkerRequest::InvitedRooms { reply })
+    }
+
+    /// Accept a pending invite (real join over the wire); returns the room id.
+    pub fn accept_invite(&self, room_id: String) -> Result<String> {
+        self.call(|reply| WorkerRequest::AcceptInvite { room_id, reply })
     }
 
     /// Ask the worker to stop. The caller may then `join` the worker thread.
