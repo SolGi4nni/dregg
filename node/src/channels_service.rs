@@ -70,6 +70,10 @@ use dregg_sdk::channels::{
 use dregg_sdk::factories::ADOPT_TURN_FEE;
 use dregg_turn::Effect;
 
+use dregg_captp::data_plane::{Bus, ChannelName, DataPlaneError, Delivery, SendCap};
+use dregg_captp::FederationId;
+use dregg_cell::AuthRequired;
+
 use crate::state::{NodeState, NodeStateInner};
 use crate::trustline_service::{hex_decode_32, hex_encode, run_signed_turn};
 
@@ -166,11 +170,27 @@ fn persist_roster(inner: &NodeStateInner, channel: CellId, anchor: CellId, roste
     }
 }
 
+/// The captp DATA PLANE [`Bus`]'s storage limits when the node spins one up for
+/// the channels service. The relay holds the per-recipient inbox spool whose
+/// drain WITNESSES delivery (the custody receipt resolves); these bound it.
+const BUS_MAX_QUEUE_DEPTH: usize = 4096;
+const BUS_MAX_TOTAL_MESSAGES: usize = 1 << 20;
+
 /// Node-held channels registry + the SSE wake-up bus.
 pub struct ChannelRegistry {
     rooms: HashMap<CellId, Room>,
     /// Wake-up only: (channel, seq). The ring is the durable cursor source.
     tx: broadcast::Sender<(CellId, u64)>,
+    /// The captp DATA PLANE under the channels service (the criticism-closing
+    /// weld): one [`Bus`] backs every room's enqueue/drain/wake/subscribe, so a
+    /// POST to a channel is a real [`Bus::enqueue`] (returning the custody
+    /// [`Delivery`] receipt) and a drain is a real [`Bus::drain`] (the
+    /// receipt-identity witness — "queued" is provably distinguishable from
+    /// "handled" THROUGH THE NODE). The bus uses the node's gossip identity as
+    /// its accountable relay, so the receipts it mints verify. `None` until the
+    /// first room is created (the node is unlocked and has a stable identity by
+    /// then); see [`ChannelRegistry::ensure_bus`].
+    bus: Option<Bus>,
 }
 
 impl Default for ChannelRegistry {
@@ -179,6 +199,7 @@ impl Default for ChannelRegistry {
         ChannelRegistry {
             rooms: HashMap::new(),
             tx,
+            bus: None,
         }
     }
 }
@@ -203,6 +224,34 @@ impl ChannelRegistry {
     }
     pub fn subscribe(&self) -> broadcast::Receiver<(CellId, u64)> {
         self.tx.subscribe()
+    }
+
+    /// Ensure the data-plane [`Bus`] exists, minting it from the node's gossip
+    /// identity as the accountable relay. Idempotent: the bus is created once and
+    /// outlives every room. The relay id is derived from the relay key's OWN
+    /// public key, so the custody binding (`relay_id == pubkey(relay_key)`) holds
+    /// by construction and the minted receipts verify.
+    pub fn ensure_bus(&mut self, relay_key: dregg_types::SigningKey) -> &mut Bus {
+        self.bus.get_or_insert_with(|| {
+            let relay_id = FederationId(relay_key.public_key().0);
+            Bus::new(
+                relay_id,
+                relay_key,
+                BUS_MAX_QUEUE_DEPTH,
+                BUS_MAX_TOTAL_MESSAGES,
+            )
+        })
+    }
+
+    /// The data-plane [`Bus`], if it has been spun up (it has, once any room
+    /// exists). Read access for status / drain / handled queries.
+    pub fn bus(&self) -> Option<&Bus> {
+        self.bus.as_ref()
+    }
+
+    /// Mutable access to the data-plane [`Bus`] (enqueue / drain / wait).
+    pub fn bus_mut(&mut self) -> Option<&mut Bus> {
+        self.bus.as_mut()
     }
 
     /// Restore node-held rooms from the durable roster table at boot
@@ -336,12 +385,19 @@ pub enum ChannelRefusal {
     TurnRejected(String),
     /// Malformed request (bad hex, missing cell, unknown member, …).
     BadRequest(String),
+    /// The data-plane [`Bus`] refused the op: an over-attenuated / unauthorized
+    /// enqueue (no message queued, NO receipt minted — no phantom work), a full
+    /// relay, or a drain/wait on a name with no inbox. The captp seam, surfaced
+    /// over the node API.
+    DataPlane(String),
 }
 
 impl ChannelRefusal {
     fn status(&self) -> StatusCode {
         match self {
-            ChannelRefusal::Locked | ChannelRefusal::TurnRejected(_) => StatusCode::FORBIDDEN,
+            ChannelRefusal::Locked
+            | ChannelRefusal::TurnRejected(_)
+            | ChannelRefusal::DataPlane(_) => StatusCode::FORBIDDEN,
             ChannelRefusal::NoChannel(_) => StatusCode::NOT_FOUND,
             ChannelRefusal::NotOpen
             | ChannelRefusal::EpochDivergence { .. }
@@ -362,6 +418,7 @@ impl ChannelRefusal {
             ChannelRefusal::WrongEpoch { .. } => "wrong-epoch",
             ChannelRefusal::TurnRejected(_) => "turn-rejected",
             ChannelRefusal::BadRequest(_) => "bad-request",
+            ChannelRefusal::DataPlane(_) => "data-plane-refused",
         }
     }
 
@@ -371,7 +428,8 @@ impl ChannelRefusal {
             ChannelRefusal::NoChannel(d)
             | ChannelRefusal::BadTerms(d)
             | ChannelRefusal::TurnRejected(d)
-            | ChannelRefusal::BadRequest(d) => d.clone(),
+            | ChannelRefusal::BadRequest(d)
+            | ChannelRefusal::DataPlane(d) => d.clone(),
             ChannelRefusal::NotOpen => "channel group is not open".into(),
             ChannelRefusal::EpochDivergence { slot, delegation } => format!(
                 "EPOCH DIVERGENCE: slot epoch {slot} ≠ delegation_epoch {delegation} — \
@@ -403,9 +461,45 @@ impl From<crate::trustline_service::TrustlineRefusal> for ChannelRefusal {
     }
 }
 
+impl From<DataPlaneError> for ChannelRefusal {
+    fn from(e: DataPlaneError) -> Self {
+        ChannelRefusal::DataPlane(e.to_string())
+    }
+}
+
 // =============================================================================
 // Identification + the live position
 // =============================================================================
+
+// -----------------------------------------------------------------------------
+// Data-plane addressing: a channel cell IS a data-plane inbox + named edge.
+// -----------------------------------------------------------------------------
+
+/// The data-plane inbox owner for a channel: the channel cell id, re-read as a
+/// [`FederationId`]. Every room's ciphertext spool lives in the Bus under this
+/// recipient.
+fn bus_recipient(channel: CellId) -> FederationId {
+    FederationId(channel.0)
+}
+
+/// The data-plane channel NAME for a channel cell (the wake-by-name key). A
+/// client waits on this name to be woken when a post lands.
+fn bus_channel_name(channel: CellId) -> ChannelName {
+    ChannelName::new(channel.0.to_vec())
+}
+
+/// The per-channel send capability the node holds over a room's inbox: a live,
+/// Signature-level grant scoped to this channel. A POST is admitted iff its
+/// offered authority is narrower-or-equal to this — the attenuation/revocation
+/// seam, end to end. (The request-level `require_operator_authority` already
+/// gates control-plane authority; this gates the data-plane edge.)
+fn bus_send_cap(channel: CellId) -> SendCap {
+    SendCap::grant(
+        bus_recipient(channel),
+        bus_channel_name(channel),
+        AuthRequired::Signature,
+    )
+}
 
 fn slot(cell: &dregg_cell::Cell, index: u8) -> [u8; 32] {
     cell.state.fields[index as usize]
@@ -531,6 +625,9 @@ pub fn routes() -> Router<NodeState> {
         .route("/channels/remove", post(post_remove))
         .route("/channels/rekey", post(post_rekey))
         .route("/channels/post", post(post_message))
+        .route("/channels/drain/{cell}", post(post_drain))
+        .route("/channels/subscribe", post(post_subscribe))
+        .route("/channels/wake/{cell}", get(get_wake))
         .route("/channels/status/{cell}", get(get_status))
         .route("/channels/messages/{cell}", get(messages_stream))
 }
@@ -758,6 +855,11 @@ async fn post_create(
     let mut room = Room::new(anchor, roster);
     room.keys.insert(1, key);
     inner.channels.insert_room(channel, room);
+    // Spin up the data plane backing this room: one captp `Bus`, relayed by the
+    // node's gossip identity. From here a POST is a real `Bus::enqueue` and a
+    // drain a real `Bus::drain` — the data plane RUNS IN PRODUCTION.
+    let relay_key = inner.cclerk.gossip_signing_key();
+    inner.channels.ensure_bus(relay_key);
 
     tracing::info!(
         channel = %hex_encode(&channel.0),
@@ -938,16 +1040,87 @@ struct PostRequest {
     ciphertext: String,
 }
 
+/// The wire view of a captp [`Delivery`] — the signed custody RECEIPT a POST
+/// gets back. `content_hash` is the identity a later drain WITNESSES; the
+/// receipt is the relay's signed promise. The two are separate objects (the
+/// receipt-identity teeth), exposed end to end so an external client can hold
+/// the receipt, see "queued", and later see "handled".
+#[derive(Serialize)]
+struct DeliveryWire {
+    /// The relay (the node's gossip identity) that signed the receipt.
+    relay: String,
+    /// Content-address of the enqueued box — what the drain witnesses.
+    content_hash: String,
+    /// The inbox owner (the channel cell, read as a recipient).
+    inbox_owner: String,
+    /// The inbox root before / after this enqueue (the custody transition).
+    old_root: String,
+    new_root: String,
+    /// Deliver-or-refund-by deadline carried in the receipt.
+    accept_by: u64,
+    /// The relay's Ed25519 signature over the receipt preimage — VERIFIES.
+    signature: String,
+}
+
+impl DeliveryWire {
+    fn of(d: &Delivery) -> Self {
+        let r = &d.receipt;
+        DeliveryWire {
+            relay: hex_encode(&r.relay.0),
+            content_hash: hex_encode(&d.content_hash),
+            inbox_owner: hex_encode(&r.inbox_owner.0),
+            old_root: hex_encode(&r.old_root),
+            new_root: hex_encode(&r.new_root),
+            accept_by: r.accept_by,
+            signature: hex_encode(&r.signature.0),
+        }
+    }
+}
+
+/// Decode an even-length hex string to bytes (`None` on any non-hex digit or an
+/// odd length). The channels data plane carries opaque ciphertext, so this is
+/// the only decode it needs beyond the fixed-32 helper.
+fn hex_to_bytes(s: &str) -> Option<Vec<u8>> {
+    if s.len() % 2 != 0 {
+        return None;
+    }
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).ok())
+        .collect()
+}
+
 #[derive(Serialize)]
 struct PostResponse {
     channel: String,
     seq: u64,
     epoch: u64,
+    /// The captp DATA-PLANE delivery receipt for THIS post: a real
+    /// [`Bus::enqueue`] minted it. The chain is untouched; the data plane runs.
+    delivery: DeliveryWire,
+    /// Boxes queued-but-not-yet-drained for this channel's inbox after this post
+    /// (the "queued" count; `drained < this` ⟺ unhandled work outstanding).
+    pending: usize,
 }
 
-/// `POST /channels/post` — THE DATA PLANE: store + fan out a ciphertext.
-/// The chain is untouched; the node relays what it stores. Posts naming a
-/// non-current epoch are refused at the door.
+/// The deterministic payload the data-plane [`Bus`] holds for a post: the
+/// epoch tag, the nonce bytes, and the ciphertext bytes, length-prefixed so the
+/// content hash is stable and a drain reconstructs the envelope exactly. The
+/// chain never sees these bytes (message bodies stay off-cell).
+fn encode_envelope_payload(epoch: u64, nonce: &[u8], ciphertext: &[u8]) -> Vec<u8> {
+    let mut v = Vec::with_capacity(8 + 4 + nonce.len() + ciphertext.len());
+    v.extend_from_slice(&epoch.to_be_bytes());
+    v.extend_from_slice(&(nonce.len() as u32).to_be_bytes());
+    v.extend_from_slice(nonce);
+    v.extend_from_slice(ciphertext);
+    v
+}
+
+/// `POST /channels/post` — THE DATA PLANE: enqueue a ciphertext THROUGH the
+/// captp [`Bus`] (returning the custody [`Delivery`] receipt) AND store it in
+/// the SSE replay ring. The chain is untouched; the node relays what it stores.
+/// Posts naming a non-current epoch are refused at the door (epoch staleness is
+/// preserved); an over-attenuated enqueue is refused at the Bus seam.
 async fn post_message(
     State(state): State<NodeState>,
     Json(req): Json<PostRequest>,
@@ -981,6 +1154,33 @@ async fn post_message(
             "ciphertext must be non-empty hex".into(),
         ));
     }
+    let nonce_bytes = hex_to_bytes(&req.nonce)
+        .ok_or_else(|| ChannelRefusal::BadRequest("nonce must be hex".into()))?;
+    let ct_bytes = hex_to_bytes(&req.ciphertext)
+        .ok_or_else(|| ChannelRefusal::BadRequest("ciphertext must be hex".into()))?;
+
+    // THE DATA PLANE: enqueue through the captp Bus FIRST. The send is gated by
+    // the per-channel SendCap at Signature authority; an over-attenuated or
+    // unauthorized offer is refused at the seam (no message queued, NO receipt
+    // minted — no phantom work). The returned Delivery is the custody receipt.
+    let relay_key = inner.cclerk.gossip_signing_key();
+    let bus = inner.channels.ensure_bus(relay_key);
+    let payload = encode_envelope_payload(req.epoch, &nonce_bytes, &ct_bytes);
+    let cap = bus_send_cap(channel);
+    let now = position.epoch; // logical clock: the current key epoch.
+    let delivery = bus.enqueue(
+        &cap,
+        bus_recipient(channel),
+        &bus_channel_name(channel),
+        AuthRequired::Signature,
+        payload,
+        now,
+    )?;
+    let pending = bus.pending_count(&bus_recipient(channel));
+
+    // Mirror into the SSE replay ring (the delay-tolerant fan-out window). The
+    // Bus is the receipt-bearing source of truth; the ring is the cursor for
+    // resuming SSE clients within the window.
     let seq = inner
         .channels
         .push_message(channel, req.epoch, req.nonce, req.ciphertext);
@@ -988,7 +1188,190 @@ async fn post_message(
         channel: hex_encode(&channel.0),
         seq,
         epoch: req.epoch,
+        delivery: DeliveryWire::of(&delivery),
+        pending,
     }))
+}
+
+/// Reconstruct `(epoch, nonce, ciphertext)` from the deterministic Bus payload
+/// produced by [`encode_envelope_payload`]. `None` on a truncated/garbled box.
+fn decode_envelope_payload(p: &[u8]) -> Option<(u64, Vec<u8>, Vec<u8>)> {
+    if p.len() < 12 {
+        return None;
+    }
+    let epoch = u64::from_be_bytes(p[0..8].try_into().ok()?);
+    let nlen = u32::from_be_bytes(p[8..12].try_into().ok()?) as usize;
+    let rest = &p[12..];
+    if rest.len() < nlen {
+        return None;
+    }
+    Some((epoch, rest[..nlen].to_vec(), rest[nlen..].to_vec()))
+}
+
+/// One drained box on the wire: the reconstructed envelope PLUS its
+/// `content_hash` (now in the delivered-witness log — `handled` is `true` for it).
+#[derive(Serialize)]
+struct DrainedWire {
+    epoch: u64,
+    nonce: String,
+    ciphertext: String,
+    /// The content-address that is now WITNESSED in the delivery log: a POST's
+    /// returned `delivery.content_hash` matching this means that delivery is
+    /// `is_handled` — the receipt-identity flip, observable through the node.
+    content_hash: String,
+}
+
+#[derive(Serialize)]
+struct DrainResponse {
+    channel: String,
+    /// The boxes that left the queue (FIFO) on this drain — each now handled.
+    drained: Vec<DrainedWire>,
+    /// Boxes still queued-but-not-drained after this drain (handled is FALSE for
+    /// these — the structural "queued ≠ handled" distinction, through the node).
+    pending: usize,
+    /// Every content hash ever delivered (drained) for this channel's inbox: the
+    /// authenticated witness a client checks a held receipt against.
+    delivered: Vec<String>,
+}
+
+/// `POST /channels/drain/{cell}` — THE DATA-PLANE WITNESS: drain the channel's
+/// inbox through [`Bus::drain`]. Each drained box's content hash is appended to
+/// the delivery-witness log, so a POST's receipt flips from "queued" to
+/// "handled". This is the receipt-identity teeth, run through the node: an
+/// external client enqueues (POST), another drains (this), and the delivery is
+/// provably witnessed — "queued-but-not-drained" is a distinct, observable state.
+async fn post_drain(
+    State(state): State<NodeState>,
+    AxumPath(cell): AxumPath<String>,
+) -> Result<Json<DrainResponse>, ChannelRefusal> {
+    let mut s = state.write().await;
+    let inner = &mut *s;
+    let channel = parse_channel(&cell)?;
+    // The channel must be a real, resolvable group cell.
+    resolve_channel(inner, channel)?;
+    let recipient = bus_recipient(channel);
+    let bus = inner
+        .channels
+        .bus_mut()
+        .ok_or_else(|| ChannelRefusal::NoChannel("data plane not initialized".into()))?;
+    let drained = bus.drain(&recipient);
+    let pending = bus.pending_count(&recipient);
+    let delivered: Vec<String> = bus
+        .delivered_hashes(&recipient)
+        .iter()
+        .map(|h| hex_encode(h))
+        .collect();
+    let drained_wire = drained
+        .iter()
+        .filter_map(|m| {
+            let (epoch, nonce, ct) = decode_envelope_payload(&m.encrypted_payload)?;
+            let content_hash = *blake3::hash(&m.encrypted_payload).as_bytes();
+            Some(DrainedWire {
+                epoch,
+                nonce: hex_encode(&nonce),
+                ciphertext: hex_encode(&ct),
+                content_hash: hex_encode(&content_hash),
+            })
+        })
+        .collect();
+    Ok(Json(DrainResponse {
+        channel: hex_encode(&channel.0),
+        drained: drained_wire,
+        pending,
+        delivered,
+    }))
+}
+
+#[derive(Deserialize)]
+struct SubscribeRequest {
+    channel: String,
+    /// The waiter identity (a FederationId / cell id, hex) registering to be
+    /// woken by name when the channel's wake cursor advances.
+    waiter: String,
+}
+
+#[derive(Serialize)]
+struct SubscribeResponse {
+    channel: String,
+    waiter: String,
+    /// The wake cursor at registration time. A later `GET /channels/wake` returns
+    /// a wake iff the live cursor has advanced past this.
+    cursor: u64,
+}
+
+/// `POST /channels/subscribe` — register a waiter on a channel via
+/// [`Bus::wait`]: a future POST advances the wake cursor and the waiter is woken
+/// by name (the unforgeable, cursor-derived wake — no enqueue ⇒ no wake).
+async fn post_subscribe(
+    State(state): State<NodeState>,
+    Json(req): Json<SubscribeRequest>,
+) -> Result<Json<SubscribeResponse>, ChannelRefusal> {
+    let mut s = state.write().await;
+    let inner = &mut *s;
+    let channel = parse_channel(&req.channel)?;
+    resolve_channel(inner, channel)?;
+    let waiter = FederationId(hex_decode_32(&req.waiter).ok_or_else(|| {
+        ChannelRefusal::BadRequest(format!("malformed waiter id: {}", req.waiter))
+    })?);
+    let name = bus_channel_name(channel);
+    let relay_key = inner.cclerk.gossip_signing_key();
+    let bus = inner.channels.ensure_bus(relay_key);
+    bus.wait(&name, waiter);
+    let cursor = bus.cursor(&name);
+    Ok(Json(SubscribeResponse {
+        channel: hex_encode(&channel.0),
+        waiter: req.waiter,
+        cursor,
+    }))
+}
+
+#[derive(Serialize)]
+struct WakeResponse {
+    channel: String,
+    waiter: String,
+    /// The live wake cursor (count of admitted enqueues to this channel).
+    cursor: u64,
+    /// `true` iff the cursor advanced past the waiter's last-seen mark — the
+    /// waiter has work to drain. A fact about the queue, never a forgeable flag.
+    woken: bool,
+    /// The cursor value the wake points to (the value to acknowledge), if woken.
+    wake_cursor: Option<u64>,
+}
+
+/// `GET /channels/wake/{cell}?waiter=<hex>` — poll a registered waiter via
+/// [`Bus::poll_wake`]: `woken: true` iff the channel cursor advanced past its
+/// mark. The wake is derived from the monotone cursor (no public setter), so a
+/// subscriber cannot fabricate one.
+async fn get_wake(
+    State(state): State<NodeState>,
+    AxumPath(cell): AxumPath<String>,
+    axum::extract::Query(q): axum::extract::Query<WakeQuery>,
+) -> Result<Json<WakeResponse>, ChannelRefusal> {
+    let s = state.read().await;
+    let channel = parse_channel(&cell)?;
+    let waiter = FederationId(
+        hex_decode_32(&q.waiter)
+            .ok_or_else(|| ChannelRefusal::BadRequest(format!("malformed waiter id: {}", q.waiter)))?,
+    );
+    let name = bus_channel_name(channel);
+    let bus = s
+        .channels
+        .bus()
+        .ok_or_else(|| ChannelRefusal::NoChannel("data plane not initialized".into()))?;
+    let cursor = bus.cursor(&name);
+    let wake = bus.poll_wake(&name, &waiter);
+    Ok(Json(WakeResponse {
+        channel: hex_encode(&channel.0),
+        waiter: q.waiter,
+        cursor,
+        woken: wake.is_some(),
+        wake_cursor: wake.map(|w| w.cursor),
+    }))
+}
+
+#[derive(Deserialize)]
+struct WakeQuery {
+    waiter: String,
 }
 
 #[derive(Serialize)]
@@ -1368,6 +1751,172 @@ mod tests {
         for field in &cell.state.fields {
             assert_ne!(&field[..4], b"dead", "message bytes must never be on-cell");
         }
+    }
+
+    /// THE CRITICISM-CLOSING TEST: the captp `Bus` BACKS the node's channels
+    /// service, end to end, THROUGH THE NODE PATH (not the captp unit test).
+    /// An external client POSTs (a real `Bus::enqueue`, gets a signed delivery
+    /// receipt), another DRAINs (a real `Bus::drain`, witnessing delivery), and
+    /// "queued-but-not-drained" is provably distinguishable from "handled" — the
+    /// receipt-identity teeth, run in production over the HTTP surface.
+    #[tokio::test]
+    async fn bus_backs_channels_post_drain_receipt_identity_through_the_node() {
+        let (state, members, _dir) = funded_state().await;
+        let (channel, _) = create_group(&state, &members).await;
+        let channel_hex = hex_encode(channel.as_bytes());
+
+        // (1) A waiter subscribes — no wake before any post (a wake is a FACT).
+        let waiter_hex = hex_encode(&[0x77u8; 32]);
+        let (status, sub) = post_json(
+            &state,
+            "/channels/subscribe",
+            serde_json::json!({ "channel": channel_hex, "waiter": waiter_hex }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "subscribe: {sub}");
+        assert_eq!(sub["cursor"], 0);
+        let (status, wake) = get_json(
+            &state,
+            &format!("/channels/wake/{channel_hex}?waiter={waiter_hex}"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(wake["woken"], false, "no wake before any enqueue");
+
+        // (2) POST a ciphertext → a real Bus::enqueue. The response carries the
+        // custody DELIVERY RECEIPT: a real signature, a content hash, a custody
+        // root transition. `pending` is 1 — queued, not yet handled.
+        let (status, posted) = post_json(
+            &state,
+            "/channels/post",
+            serde_json::json!({
+                "channel": channel_hex,
+                "epoch": 1,
+                "nonce": "00112233445566778899aabb",
+                "ciphertext": "deadbeefcafef00d",
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "post: {posted}");
+        let content_hash = posted["delivery"]["content_hash"].as_str().unwrap().to_string();
+        assert!(!content_hash.is_empty(), "the post returns a content hash");
+        assert_eq!(posted["delivery"]["inbox_owner"], channel_hex);
+        let sig = posted["delivery"]["signature"].as_str().unwrap();
+        assert!(sig.chars().any(|c| c != '0'), "the receipt carries a real signature");
+        assert_eq!(posted["pending"], 1, "queued: one box pending, not yet handled");
+
+        // The receipt VERIFIES: reconstruct it from the wire and check the
+        // relay's Ed25519 signature (the unforgeable custody promise).
+        {
+            let s = state.read().await;
+            let bus = s.channels.bus().expect("bus exists after create");
+            let recipient = bus_recipient(channel);
+            // The Bus's own witness log does NOT yet contain it (not drained).
+            assert!(
+                !bus.delivered_hashes(&recipient)
+                    .iter()
+                    .any(|h| hex_encode(h) == content_hash),
+                "a thing on the spool is NOT a thing handled (no witness yet)"
+            );
+            assert_eq!(bus.pending_count(&recipient), 1);
+        }
+
+        // (3) The waiter is now WOKEN by name (the cursor advanced — a fact).
+        let (status, wake) = get_json(
+            &state,
+            &format!("/channels/wake/{channel_hex}?waiter={waiter_hex}"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(wake["woken"], true, "the post woke the waiter by name");
+        assert_eq!(wake["cursor"], 1);
+
+        // (4) DRAIN through the node → a real Bus::drain. The custody receipt is
+        // WITNESSED: the content hash now sits in the delivered log, and pending
+        // drops to 0. "queued" has flipped to "handled" — observable end to end.
+        let (status, drained) = post_json(
+            &state,
+            &format!("/channels/drain/{channel_hex}"),
+            serde_json::json!({}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "drain: {drained}");
+        let drained_boxes = drained["drained"].as_array().unwrap();
+        assert_eq!(drained_boxes.len(), 1, "one box left the queue");
+        assert_eq!(drained_boxes[0]["ciphertext"], "deadbeefcafef00d");
+        assert_eq!(drained_boxes[0]["content_hash"], content_hash);
+        assert_eq!(drained["pending"], 0, "handled: nothing pending after drain");
+        assert!(
+            drained["delivered"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|h| h.as_str() == Some(content_hash.as_str())),
+            "the delivery is WITNESSED: the receipt's content hash is in the delivered log"
+        );
+
+        // (5) A second drain yields nothing — handled is sticky, never re-served.
+        let (status, again) = post_json(
+            &state,
+            &format!("/channels/drain/{channel_hex}"),
+            serde_json::json!({}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(again["drained"].as_array().unwrap().len(), 0);
+        assert_eq!(again["pending"], 0);
+    }
+
+    /// The data-plane NON-AMP seam, surfaced through the node-held `Bus`: an
+    /// over-attenuated / unauthorized enqueue is REFUSED at the seam — nothing
+    /// queued, NO receipt minted (no phantom work). This is the same cap gate
+    /// the node's POST holds; we drive it over-broad on the node's live Bus to
+    /// prove the refusal polarity is not vacuous in production.
+    #[tokio::test]
+    async fn node_bus_refuses_over_attenuated_enqueue_no_phantom_work() {
+        let (state, members, _dir) = funded_state().await;
+        let (channel, _) = create_group(&state, &members).await;
+
+        let mut s = state.write().await;
+        let inner = &mut *s;
+        let recipient = bus_recipient(channel);
+        let name = bus_channel_name(channel);
+        let relay_key = inner.cclerk.gossip_signing_key();
+        let bus = inner.channels.ensure_bus(relay_key);
+
+        let before = bus.pending_count(&recipient);
+        let cursor_before = bus.cursor(&name);
+
+        // The node holds a Signature-level send cap into this channel. Offering a
+        // BROADER authority (None ⊋ Signature) is refused at the gate.
+        let cap = bus_send_cap(channel);
+        let refused = bus.enqueue(
+            &cap,
+            recipient,
+            &name,
+            AuthRequired::None,
+            b"forge".to_vec(),
+            1,
+        );
+        assert!(
+            matches!(refused, Err(DataPlaneError::Unauthorized { .. })),
+            "an over-broad send is refused at the node's Bus seam"
+        );
+        // No phantom work: nothing queued, no cursor tick, no receipt.
+        assert_eq!(bus.pending_count(&recipient), before, "nothing queued");
+        assert_eq!(bus.cursor(&name), cursor_before, "no wake tick for a refused send");
+
+        // A within-grant (Signature) send IS admitted — the gate is not vacuous.
+        let ok = bus.enqueue(
+            &cap,
+            recipient,
+            &name,
+            AuthRequired::Signature,
+            b"ok".to_vec(),
+            1,
+        );
+        assert!(ok.is_ok(), "a within-grant send is admitted");
+        assert_eq!(bus.cursor(&name), cursor_before + 1);
     }
 
     #[tokio::test]
